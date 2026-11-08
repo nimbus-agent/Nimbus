@@ -4177,6 +4177,7 @@ describe("I29 — egress-ledger completeness over the executor chokepoint", () =
     for (const { label, action } of writesUnderTest()) {
       const db = freshEgressDb();
       let dispatches = 0;
+      let discards = 0;
       // A bound write (D1c) is prepared before anyone is asked: its read is ledgered, then denied.
       const boundRow = CONNECTOR_WRITE_ROWS.find(
         (r) => r.actionType === action.type && r.bound !== undefined,
@@ -4194,6 +4195,12 @@ describe("I29 — egress-ledger completeness over the executor chokepoint", () =
         {
           dispatch: async (a: { type: string }) => {
             if (prepared !== undefined && a.type.endsWith(".write.prepare")) return prepared;
+            // D2 (static D43): the gateway's own cleanup of the unused change set is the one
+            // dispatch a declined write may be followed by; it is counted apart.
+            if (a.type === "iac.cloudformation.changeset.discard") {
+              discards += 1;
+              return {};
+            }
             dispatches += 1;
             return {};
           },
@@ -4206,9 +4213,16 @@ describe("I29 — egress-ledger completeness over the executor chokepoint", () =
       const rows = egressRows(db);
       if (r.status !== "rejected") failures.push(`${label}: status ${r.status}`);
       if (dispatches !== 0) failures.push(`${label}: dispatched`);
-      const want = boundRow === undefined ? 1 : 2;
-      if (rows.length !== want || rows.at(-1)?.resultStatus !== "blocked") {
+      // The discard follows only a declined CloudFormation deploy, with its own ledger row.
+      const discarding = action.type === "iac.cloudformation.deploy";
+      if (discards !== (discarding ? 1 : 0)) failures.push(`${label}: ${discards} discards`);
+      const want = (boundRow === undefined ? 1 : 2) + (discarding ? 1 : 0);
+      const writeRow = rows.at(discarding ? -2 : -1);
+      if (rows.length !== want || writeRow?.resultStatus !== "blocked") {
         failures.push(`${label}: rows ${JSON.stringify(rows)}`);
+      }
+      if (discarding && rows.at(-1)?.hitlStatus !== "not_required") {
+        failures.push(`${label}: the discard is not its own not_required row`);
       }
       db.close();
     }
@@ -11827,6 +11841,13 @@ describe("I53 — a first-party connector write reaches the model only through t
           {
             dispatch: async (a: { type: string }) => {
               if (prepared !== undefined && a.type.endsWith(".write.prepare")) return prepared;
+              // D2 (static D43): the gateway's own discard of an unused change set is not the write.
+              if (
+                a.type === "iac.cloudformation.changeset.discard" &&
+                row.actionType !== "iac.cloudformation.changeset.discard"
+              ) {
+                return {};
+              }
               dispatched += 1;
               return {};
             },
