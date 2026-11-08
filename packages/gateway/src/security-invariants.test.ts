@@ -12933,12 +12933,13 @@ describe("I54 — a bound connector write is dispatched only with the values its
     ).resolves.toBe("ran");
   });
 
-  test("the prepare phase runs before any approval: resolveHitlApproval orders it after the before-state and before the confirm text and the approval", async () => {
+  test("the prepare phase runs before any approval: resolveHitlApproval orders it after the before-state and the preflight, and before the confirm text and the approval", async () => {
     const exec = stripComments(await read("packages/gateway/src/engine/executor.ts"));
     const at = exec.indexOf("private async resolveHitlApproval(");
     const body = exec.slice(at, exec.indexOf("\n  }\n", at));
     const order = [
       "this.captureBeforePhase(",
+      "this.preflightPhase(",
       "this.preparePhase(",
       "this.renderConfirmPhase(",
       "this.approvalPhase(",

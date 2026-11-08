@@ -4507,6 +4507,7 @@ describe("D42 — a bound write is dispatched only with its own prepare step's v
     "  }",
     "  private async resolveHitlApproval(action, opts, record, scope) {",
     "    const captured = await this.captureBeforePhase(action, opts);",
+    "    if (!(await this.preflightPhase(action, record, scope))) return false;",
     "    const prepared = await this.preparePhase(action, opts, scope);",
     "    const confirm = this.renderConfirmPhase(action);",
     "    return this.approvalPhase(action, preview, confirm, record);",
@@ -4657,6 +4658,23 @@ const d = renderUnifiedDiff(files);
       "    const confirm = this.renderConfirmPhase(action);\n    const prepared = await this.preparePhase(action, opts, scope);\n",
     );
     expect(rules(replace(EXECUTOR, after))).toContain("bound-order-pinned");
+  });
+
+  test("(b) FAILS when the preflight phase is missing or runs after the prepare phase (D2)", () => {
+    const pre = "    if (!(await this.preflightPhase(action, record, scope))) return false;\n";
+    const prep = "    const prepared = await this.preparePhase(action, opts, scope);\n";
+    const confirm = "    const confirm = this.renderConfirmPhase(action);\n";
+    expect(rules(replace(EXECUTOR, EXECUTOR_GOOD))).toEqual([]);
+    const missing = EXECUTOR_GOOD.replace(pre, "");
+    expect(missing).not.toBe(EXECUTOR_GOOD);
+    expect(rules(replace(EXECUTOR, missing))).toContain("bound-order-pinned");
+    const late = EXECUTOR_GOOD.replace(pre + prep, prep + pre);
+    expect(late).not.toBe(EXECUTOR_GOOD);
+    expect(rules(replace(EXECUTOR, late))).toContain("bound-order-pinned");
+    // After the confirm text is no better.
+    const afterConfirm = EXECUTOR_GOOD.replace(pre + prep + confirm, prep + confirm + pre);
+    expect(afterConfirm).not.toBe(EXECUTOR_GOOD);
+    expect(rules(replace(EXECUTOR, afterConfirm))).toContain("bound-order-pinned");
   });
 
   test("(b) FAILS on a second or misplaced injection or prepare call, and on a reordered execute", () => {

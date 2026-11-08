@@ -9,7 +9,9 @@ import {
   synthBound,
   synthBoundRow,
 } from "../connectors/connector-writes/bound-fixtures.test-helpers.ts";
+import { IAC_LIMITS } from "../connectors/connector-writes/iac-limits.ts";
 import { BEFORE_STATE_MAX_FIELDS, type BoundWrite } from "../connectors/connector-writes/types.ts";
+import type { SettleContext, SettledWrite } from "./bound-write-capabilities.ts";
 import {
   boundInputRefusal,
   injectBoundFields,
@@ -736,5 +738,191 @@ describe("PREPARE_REFUSALS (D2)", () => {
       expect(reason.startsWith("prepare: ")).toBe(true);
       expect(reason).not.toMatch(/[{}$]/u);
     }
+  });
+});
+
+describe("runPrepareStep: the settle step (D2, I54)", () => {
+  const SHOW = "synth_show";
+  const IDS: ReadonlySet<string> = new Set([SYNTH_PREPARE_TOOL, SHOW]);
+  const bindOf = (field: string) => ({
+    field,
+    from: (r: unknown) => (r as Record<string, string>)[field],
+  });
+  const cfnBound = (): BoundWrite => ({
+    ...synthBound({ settle: "iac-cfn" }),
+    binds: [bindOf("changeSetId")],
+  });
+  const tfBound = (): BoundWrite => ({
+    ...synthBound({ settle: "iac-terraform", settleTool: SHOW }),
+    binds: [bindOf("planFile"), bindOf("planSha256")],
+  });
+  const PLAN = {
+    lines: ["Deletes: 0"],
+    text: "Deletes: 0",
+    bytes: 10,
+    sha256: "a".repeat(64),
+  } as const;
+  const settled = (over: Partial<SettledWrite> = {}): SettledWrite => ({
+    values: { changeSetId: "arn-settled" },
+    fields: [{ label: "Stack", value: "prod" }],
+    plan: PLAN,
+    cleanup: async () => undefined,
+    ...over,
+  });
+
+  test("a settle row with no settle capability is refused before any read or gate", async () => {
+    const { ops, calls } = opsOf();
+    const reason = await refusalOf(
+      runPrepareStep(ops, ROW, cfnBound(), ACTION, { prepareToolIds: IDS }),
+    );
+    expect(reason).toBe(PREPARE_REFUSALS.capabilityMissing);
+    expect(calls.log).toEqual([]);
+  });
+
+  test("a settle tool that is not a declared prepare tool is refused before any read", async () => {
+    const { ops, calls } = opsOf({ settle: async () => settled() });
+    const reason = await refusalOf(
+      runPrepareStep(ops, ROW, tfBound(), ACTION, { prepareToolIds: SYNTH_PREPARE_IDS }),
+    );
+    expect(reason).toBe(PREPARE_REFUSALS.toolNotAllowed);
+    expect(calls.log).toEqual([]);
+  });
+
+  test("the settler values and facts are bound and shown, never the prepare reply", async () => {
+    const seen: Array<{ id: string; ctx: SettleContext }> = [];
+    let cleaned = 0;
+    const { ops } = opsOf(
+      {
+        settle: async (id, ctx) => {
+          seen.push({ id, ctx });
+          return settled({
+            // A key the row does not bind is dropped, not injected.
+            values: { changeSetId: "arn-settled", extra: "x" },
+            cleanup: async () => {
+              cleaned += 1;
+            },
+          });
+        },
+      },
+      { summary: "forged", digest: "d", changeSetId: "arn-forged" },
+    );
+    const out = await runPrepareStep(ops, ROW, cfnBound(), ACTION, { prepareToolIds: IDS });
+    expect(out.values).toEqual({ changeSetId: "arn-settled" });
+    expect(out.fields).toEqual([{ label: "Stack", value: "prod" }]);
+    expect(out.plan).toEqual(PLAN);
+    expect(seen).toHaveLength(1);
+    expect(seen[0]?.id).toBe(ROW.toolId);
+    expect(seen[0]?.ctx.settle).toBe("iac-cfn");
+    expect(seen[0]?.ctx.input).toEqual({ dir: "prod" });
+    expect(seen[0]?.ctx.reply).toMatchObject({ changeSetId: "arn-forged" });
+    // A CloudFormation settle has no show tool.
+    expect(seen[0]?.ctx.showPlan).toBeUndefined();
+    expect(cleaned).toBe(0);
+    await out.cleanup?.();
+    expect(cleaned).toBe(1);
+  });
+
+  test("a settled result without a plan has none", async () => {
+    const { plan: _plan, ...noPlan } = settled();
+    const { ops } = opsOf({ settle: async () => noPlan });
+    const out = await runPrepareStep(ops, ROW, cfnBound(), ACTION, { prepareToolIds: IDS });
+    expect(out.plan).toBeUndefined();
+  });
+
+  test("settled facts are sanitised and capped, the overflow counted with the settler own", async () => {
+    const many = Array.from({ length: BEFORE_STATE_MAX_FIELDS + 2 }, (_, i) => ({
+      label: `L${String(i)}`,
+      value: i === 0 ? "a‮b" : "v",
+    }));
+    const { ops } = opsOf({ settle: async () => settled({ fields: many, notShown: 3 }) });
+    const out = await runPrepareStep(ops, ROW, cfnBound(), ACTION, { prepareToolIds: IDS });
+    expect(out.fields).toHaveLength(BEFORE_STATE_MAX_FIELDS);
+    expect(out.fields[0]?.value).not.toContain("‮");
+    expect(out.notShown).toBe(5);
+  });
+
+  test("a settler refusal passes through; any other failure is the fixed settleFailed", async () => {
+    const refused = opsOf({
+      settle: async () => {
+        throw new PrepareRefusedError(PREPARE_REFUSALS.nothingToApply);
+      },
+    });
+    expect(
+      await refusalOf(
+        runPrepareStep(refused.ops, ROW, cfnBound(), ACTION, { prepareToolIds: IDS }),
+      ),
+    ).toBe(PREPARE_REFUSALS.nothingToApply);
+    const boom = opsOf({
+      settle: async () => {
+        throw new Error("/secret/path leaked");
+      },
+    });
+    expect(
+      await refusalOf(runPrepareStep(boom.ops, ROW, cfnBound(), ACTION, { prepareToolIds: IDS })),
+    ).toBe(PREPARE_REFUSALS.settleFailed);
+  });
+
+  test("a settled result missing a bound value, or showing nothing, is refused after its cleanup", async () => {
+    let cleaned = 0;
+    const cleanup = async () => {
+      cleaned += 1;
+    };
+    for (const bad of [{ values: {} }, { values: { changeSetId: "" } }]) {
+      const { ops } = opsOf({ settle: async () => settled({ ...bad, cleanup }) });
+      expect(
+        await refusalOf(runPrepareStep(ops, ROW, cfnBound(), ACTION, { prepareToolIds: IDS })),
+      ).toBe(PREPARE_REFUSALS.unbound);
+    }
+    const { ops } = opsOf({ settle: async () => settled({ fields: [], cleanup }) });
+    expect(
+      await refusalOf(runPrepareStep(ops, ROW, cfnBound(), ACTION, { prepareToolIds: IDS })),
+    ).toBe(PREPARE_REFUSALS.unshowable);
+    expect(cleaned).toBe(3);
+  });
+
+  test("the settler show read is one more prepare read: own gate, own dispatch, the show tool, the show budget", async () => {
+    const clock = fakeTimers();
+    let shown: unknown;
+    const { ops, calls } = opsOf({
+      settle: async (_id, ctx) => {
+        shown = await ctx.showPlan?.({ workingDirectory: "/w", planFile: "/p/plan.tfplan" });
+        return settled({ values: { planFile: "/p/plan.tfplan", planSha256: "h" } });
+      },
+    });
+    const out = await runPrepareStep(ops, ROW, tfBound(), ACTION, {
+      prepareToolIds: IDS,
+      timers: clock.timers,
+    });
+    expect(out.values).toEqual({ planFile: "/p/plan.tfplan", planSha256: "h" });
+    expect(shown).toEqual(SYNTH_REPLY);
+    expect(calls.gated.map((a) => a.type)).toEqual(["iac.write.prepare", "iac.write.prepare"]);
+    expect(calls.gated[1]?.payload).toEqual({
+      mcpToolId: "iac_synth_show",
+      input: { workingDirectory: "/w", planFile: "/p/plan.tfplan" },
+    });
+    expect(clock.delays).toEqual([1000, IAC_LIMITS.showBudgetMs]);
+  });
+
+  test("a show read the gate refuses surfaces as the fixed refused reason", async () => {
+    let seen = "";
+    const { ops } = opsOf({
+      gate: async (a) =>
+        String(a.payload?.["mcpToolId"]).endsWith(SHOW)
+          ? { status: "rejected", reason: "policy requires approval" }
+          : "proceed",
+      settle: async (_id, ctx) => {
+        try {
+          await ctx.showPlan?.({ workingDirectory: "/w", planFile: "/p" });
+        } catch (e) {
+          seen = (e as PrepareRefusedError).reason;
+          throw e;
+        }
+        return settled();
+      },
+    });
+    expect(
+      await refusalOf(runPrepareStep(ops, ROW, tfBound(), ACTION, { prepareToolIds: IDS })),
+    ).toBe(PREPARE_REFUSALS.refused);
+    expect(seen).toBe(PREPARE_REFUSALS.refused);
   });
 });

@@ -34,6 +34,7 @@ import {
   isBeforeReadActionType,
   throwIfWave4WithoutPreview,
 } from "./before-state.ts";
+import type { BoundWriteCapabilities, SettleContext } from "./bound-write-capabilities.ts";
 import { type RemoteApprovalOutcome, resolveDelegatedApproval } from "./delegated-approval.ts";
 import type { DelegationReader } from "./delegation-store.ts";
 import {
@@ -591,6 +592,12 @@ const USER_DECLINED_REASON = "User declined consent gate.";
 export const CONFIRM_UNSUPPORTED_REASON =
   "This channel cannot collect the typed confirmation this action requires.";
 
+/** The preflight found a bound IaC row with no typed confirm target (it can only be approved by typing). */
+export const PREFLIGHT_NO_CONFIRM_REASON = "preflight: the write has no typed confirmation";
+
+/** The preflight capability threw: the write is refused, not skipped (fail closed). */
+export const PREFLIGHT_FAILED_REASON = "preflight: the approved-directory check failed";
+
 /** The reason when a payload `mcpToolId` names a connector write that belongs to another action type. */
 export const TOOL_TYPE_MISMATCH_REASON =
   "The action names a connector write tool that belongs to another action type.";
@@ -636,6 +643,7 @@ function withPrepared(
       ...(prepared.notShown === undefined ? {} : { notShown: prepared.notShown }),
     },
     ...(prepared.diff === undefined ? {} : { diff: prepared.diff }),
+    ...(prepared.plan === undefined ? {} : { plan: prepared.plan }),
   };
 }
 
@@ -791,6 +799,8 @@ interface GateScope {
   /** True only for the gate call the prepare step makes for its own read (see `preparePhase`). */
   readonly prepareStep?: boolean;
   prepared?: PreparedWrite;
+  /** Written by `preflightPhase` (D2): frees the per-workdir lock; `execute()` calls it when the run ends. */
+  release?: () => void;
 }
 
 export class ToolExecutor {
@@ -956,9 +966,12 @@ export class ToolExecutor {
    * Resolve a HITL action's approval, as ONE ordered list of named phases (the order is the
    * invariant; read it here, do not hunt for it):
    *   1. `captureBeforePhase`  the model door's before-state read and the typed preview;
-   *   2. `preparePhase`       a bound write's prepare step (I54): its values and facts, or a refusal;
-   *   3. `renderConfirmPhase`  the Wave 4 confirm text, or a refusal before anyone is asked;
-   *   4. `approvalPhase`       a delegate (Wave 4: only with the typed text) or the local owner;
+   *   2. `preflightPhase`     a bound IaC write's cheap refusals BEFORE any child exists (D2): a
+   *                           typed confirm that renders, a channel that can collect it, the
+   *                           approved directory or cloud;
+   *   3. `preparePhase`       a bound write's prepare step (I54): its values and facts, or a refusal;
+   *   4. `renderConfirmPhase`  the Wave 4 confirm text, or a refusal before anyone is asked;
+   *   5. `approvalPhase`       a delegate (Wave 4: only with the typed text) or the local owner;
    * and after the gate, in `execute()`: `dispatchBoundPhase`, the only place bound values are
    * injected. A delegated approval therefore can never skip the prepare. The prepared facts reach
    * only the local owner's prompt: a bound write is never delegated (`tryDelegatedApproval`).
@@ -970,12 +983,16 @@ export class ToolExecutor {
     scope: GateScope,
   ): Promise<boolean> {
     const captured = await this.captureBeforePhase(action, opts);
+    if (!(await this.preflightPhase(action, record, scope))) return false;
     const prepared = await this.preparePhase(action, opts, scope);
     if (prepared !== undefined) record.boundValuesSha256 = boundValuesDigest(prepared.values);
     if (prepared?.diff !== undefined) {
       record.diffSha256 = prepared.diff.sha256;
       // The prepare step proved the list well-formed before it rendered a diff.
       record.filesSha256 = commitFilesDigest(action.payload);
+    } else if (prepared?.plan !== undefined) {
+      // The plan or change set text the gateway rendered and the owner saw (D2).
+      record.diffSha256 = prepared.plan.sha256;
     }
     const preview = withPrepared(captured, prepared);
     const confirm = this.renderConfirmPhase(action);
@@ -988,7 +1005,53 @@ export class ToolExecutor {
   }
 
   /**
-   * Phase 2 (I54). A bound row's prepare read runs through THIS executor's gate and dispatcher
+   * Phase 2 (D2). For a row that declares `bound.prepare.preflight`, the refusals that must cost
+   * nothing run BEFORE the prepare child exists (a Terraform plan loads the owner's providers, with
+   * network and the cloud credential): the typed confirm must render for this input; the consent
+   * channel must be able to collect it (ChatOps cannot: refused here, not after a plan ran); and
+   * the dispatcher's preflight capability (the approved workdir or cloud, and the one-run-per-
+   * workdir lock) must accept. A missing or throwing capability refuses (fail closed). Returns
+   * `false` with the record filled in when the gate ends; a lock the capability took is freed by
+   * `execute()`, whatever the outcome. Found by TYPE alone (I3); a row without the tag is untouched.
+   */
+  private async preflightPhase(
+    action: PlannedAction,
+    record: GateRecord,
+    scope: GateScope,
+  ): Promise<boolean> {
+    const row = this.boundRowOf(action);
+    if (row?.bound?.prepare.preflight === undefined) return true;
+    const refuse = (reason: string): false => {
+      record.rejectReason = reason;
+      record.hitlRejectReason = reason;
+      return false;
+    };
+    const confirm = this.renderConfirmPhase(action);
+    if (confirm.kind === "refuse") return refuse(confirm.reason);
+    if (confirm.kind === "none") return refuse(PREFLIGHT_NO_CONFIRM_REASON);
+    if (this.consent.requestConfirmedApproval === undefined) {
+      record.confirm = "unsupported_channel";
+      record.rejectReason = CONFIRM_UNSUPPORTED_REASON;
+      return false;
+    }
+    const capabilities = this.connectors.boundWriteCapabilities;
+    if (capabilities === undefined) return refuse(PREPARE_REFUSALS.capabilityMissing);
+    let outcome: Awaited<ReturnType<BoundWriteCapabilities["preflight"]>>;
+    try {
+      outcome = await capabilities.preflight(
+        row.toolId,
+        extractToolInput(action) as Record<string, unknown>,
+      );
+    } catch {
+      return refuse(PREFLIGHT_FAILED_REASON);
+    }
+    if (!outcome.ok) return refuse(outcome.reason);
+    scope.release = outcome.release;
+    return true;
+  }
+
+  /**
+   * Phase 3 (I54). A bound row's prepare read runs through THIS executor's gate and dispatcher
    * (audited and ledgered, I29) before anyone is asked: the values it binds are kept in the gate
    * scope for `dispatchBoundPhase`, its selected facts go to the preview. Any failure throws
    * {@link PrepareRefusedError}, which `gate()` records as a rejection on every door. An action
@@ -1001,11 +1064,15 @@ export class ToolExecutor {
   ): Promise<PreparedWrite | undefined> {
     const row = this.boundRowOf(action);
     if (row?.bound === undefined) return undefined;
+    const capabilities = this.connectors.boundWriteCapabilities;
     const prepared = await runPrepareStep(
       {
         // The one gate call allowed to run a prepare type: this step's own, never a caller's.
         gate: (a) => this.gateWithin(a, undefined, { bind: false, prepareStep: true }),
         dispatch: (a) => this.connectors.dispatch(a),
+        ...(capabilities === undefined
+          ? {}
+          : { settle: (id: string, ctx: SettleContext) => capabilities.settle(id, ctx) }),
       },
       row,
       row.bound,
@@ -1298,13 +1365,32 @@ export class ToolExecutor {
     // what was shown.
     const action = structuredClone(planned);
     const scope: GateScope = { bind: true };
-    const gateResult = await this.gateWithin(action, opts, scope);
-    if (gateResult === "proceed") {
-      const toDispatch = this.dispatchBoundPhase(action, scope);
-      const result = await this.connectors.dispatch(toDispatch);
-      return { status: "ok", result };
+    try {
+      const gateResult = await this.gateWithin(action, opts, scope);
+      if (gateResult === "proceed") {
+        const toDispatch = this.dispatchBoundPhase(action, scope);
+        const result = await this.connectors.dispatch(toDispatch);
+        return { status: "ok", result };
+      }
+      return gateResult;
+    } finally {
+      await this.finishScope(scope);
     }
-    return gateResult;
+  }
+
+  /**
+   * The end of a bound run, on every path (approved, declined, refused, thrown, timed out): what a
+   * settle left on disk is removed (a plan secret does not linger), then the lock the preflight took
+   * is freed. A cleanup that fails is best effort (the gateway sweeps its run directory at boot).
+   */
+  private async finishScope(scope: GateScope): Promise<void> {
+    try {
+      await scope.prepared?.cleanup?.();
+    } catch {
+      // Best effort: a plan left behind is swept at the next gateway boot.
+    } finally {
+      scope.release?.();
+    }
   }
 }
 

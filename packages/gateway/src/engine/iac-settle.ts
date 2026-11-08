@@ -44,56 +44,21 @@ import { basename, isAbsolute, join } from "node:path";
 import { IAC_LIMITS } from "../connectors/connector-writes/iac-limits.ts";
 import {
   escapeOneLine,
-  type RenderedText,
   renderedText,
   renderPlanPreview,
 } from "../connectors/connector-writes/iac-plan-preview.ts";
-import type { BeforeStateField, PrepareSettle } from "../connectors/connector-writes/types.ts";
 import { sha256HexEqualConstantTime } from "../util/timing-safe-compare.ts";
+import type { SettledWrite } from "./bound-write-capabilities.ts";
 import { PREPARE_REFUSALS, PrepareRefusedError } from "./prepare-step.ts";
 
-// ---------------------------------------------------------------------------------------------
-// The shapes the gate sees.
-
-/** What a settler hands the gate: the values to inject, the facts to show, and the cleanup. */
-export interface SettledWrite {
-  /** One string per bound field, produced by the settler only. */
-  readonly values: Readonly<Record<string, string>>;
-  readonly fields: readonly BeforeStateField[];
-  readonly notShown?: number;
-  /** The change text the gateway rendered (the plan, or the change set). */
-  readonly plan?: RenderedText;
-  /** Removes what this settle left on disk. Idempotent; never throws. */
-  cleanup(): Promise<void>;
-}
-
-/** What the gate hands a capability's `settle`: the row's tag, the caller's input and the reply. */
-export interface SettleContext {
-  readonly settle: PrepareSettle;
-  readonly input: Readonly<Record<string, unknown>>;
-  readonly reply: unknown;
-  /** The gate's own `iac_terraform_show_json` call (an `iac.write.prepare` action, audited and ledgered). */
-  readonly showPlan?: (args: {
-    readonly workingDirectory: string;
-    readonly planFile: string;
-  }) => Promise<unknown>;
-}
-
-export type PreflightOutcome =
-  | { readonly ok: true; readonly release: () => void }
-  | { readonly ok: false; readonly reason: string };
-
-/**
- * The runtime capabilities of a bound IaC row, carried by the `ConnectorDispatcher` the executor
- * already receives (round-2 fix 1: no new constructor parameter). Only the production dispatcher
- * built in `connectors/registry.ts` sets it. TYPE ONLY here: nothing implements or calls it yet.
- */
-export interface BoundWriteCapabilities {
-  /** The settle step of `rowToolId` (the Terraform move-hash-show, the CFN cross-check). */
-  settle(rowToolId: string, ctx: SettleContext): Promise<SettledWrite>;
-  /** The preflight of `rowToolId`: the workdir or cloud grant and the per-workdir mutex. */
-  preflight(rowToolId: string, input: Readonly<Record<string, unknown>>): Promise<PreflightOutcome>;
-}
+// The shapes the gate sees live in ./bound-write-capabilities.ts (a leaf module, so the dispatcher's
+// type can name them without a cycle); re-exported here for the settlers' callers.
+export type {
+  BoundWriteCapabilities,
+  PreflightOutcome,
+  SettleContext,
+  SettledWrite,
+} from "./bound-write-capabilities.ts";
 
 // ---------------------------------------------------------------------------------------------
 // The filesystem, injected.

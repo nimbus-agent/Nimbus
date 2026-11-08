@@ -2615,8 +2615,9 @@ function d41OrderPin(f: FileEntry, code: string): Violation[] {
 //     predicate `isConnectorWriteOrPrepareToolId`, D1c; that file and that name only); `PREPARE_TOOL_IDS` only in prepare-tools.ts, `connectors/connector-writes/
 //     types.ts` (the `withBound` default), the executor and the registry;
 // (b) the order is pinned in `engine/executor.ts`: `resolveHitlApproval` calls `captureBeforePhase`,
-//     then `preparePhase`, then `renderConfirmPhase`, then `approvalPhase` (a delegate can never
-//     skip the prepare); `runPrepareStep(` is called once, in `preparePhase`; `injectBoundFields(`
+//     then `preflightPhase` (D2: the refusals that must cost no child, before the prepare child
+//     exists), then `preparePhase`, then `renderConfirmPhase`, then `approvalPhase` (a delegate can
+//     never skip the prepare); `runPrepareStep(` is called once, in `preparePhase`; `injectBoundFields(`
 //     once, in `dispatchBoundPhase`; and `execute` calls `gateWithin`, then `dispatchBoundPhase`,
 //     then `connectors.dispatch`;
 // (c) no production code replaces the write table: `writeTable`, `WriteTable` and `prepareToolIds`
@@ -2800,13 +2801,14 @@ function d42ExecutorPins(f: FileEntry, code: string): Violation[] {
   const at = (needle: string): number => resolve.indexOf(needle);
   const phases = [
     at("this.captureBeforePhase("),
+    at("this.preflightPhase("),
     at("this.preparePhase("),
     at("this.renderConfirmPhase("),
     at("this.approvalPhase("),
   ];
   if (phases.some((p, i) => p === -1 || (i > 0 && p < (phases[i - 1] ?? 0)))) {
     fail(
-      "resolveHitlApproval must call captureBeforePhase, preparePhase, renderConfirmPhase, approvalPhase in that order",
+      "resolveHitlApproval must call captureBeforePhase, preflightPhase, preparePhase, renderConfirmPhase, approvalPhase in that order",
     );
   }
   const once = (needle: RegExp, inside: string, what: string): void => {

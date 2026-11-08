@@ -23,7 +23,12 @@
  */
 
 import { type PreviewDiff, renderUnifiedDiff } from "../connectors/connector-writes/diff.ts";
-import { isPlainObject, sanitisePreviewText } from "../connectors/connector-writes/preview.ts";
+import { IAC_LIMITS } from "../connectors/connector-writes/iac-limits.ts";
+import {
+  isPlainObject,
+  type PreviewPlan,
+  sanitisePreviewText,
+} from "../connectors/connector-writes/preview.ts";
 import {
   BEFORE_STATE_MAX_FIELDS,
   type BeforeStateField,
@@ -33,6 +38,7 @@ import {
   pickBeforeReaderArgs,
 } from "../connectors/connector-writes/types.ts";
 import { mcpClientToolKey } from "../connectors/lazy-mesh/tool-map.ts";
+import type { SettleContext, SettledWrite } from "./bound-write-capabilities.ts";
 import { serviceOf } from "./service-of.ts";
 import { extractToolInput } from "./tool-input.ts";
 import type { ActionResult, PlannedAction } from "./types.ts";
@@ -70,6 +76,7 @@ export const PREPARE_REFUSALS = Object.freeze({
   nothingToCommit: "prepare: the change would change nothing",
   nothingToApply: "prepare: the plan would change nothing",
   settleFailed: "prepare: the plan could not be fixed and shown",
+  capabilityMissing: "prepare: this connection cannot fix and show the plan",
 });
 
 /** Thrown by {@link runPrepareStep}; `gate()` records it as a rejection with this fixed reason. */
@@ -86,6 +93,12 @@ export class PrepareRefusedError extends Error {
 export interface PrepareOps {
   gate(action: PlannedAction): Promise<ActionResult | "proceed">;
   dispatch(action: PlannedAction): Promise<unknown>;
+  /**
+   * D2: the settle capability of a row that names a `settle` tag (the dispatcher's
+   * `boundWriteCapabilities.settle`, bound by the executor). Absent = no such row can be prepared:
+   * it is refused before any read (fail closed), never skipped.
+   */
+  settle?(rowToolId: string, ctx: SettleContext): Promise<SettledWrite>;
 }
 
 export interface PrepareStepOptions {
@@ -108,6 +121,10 @@ export interface PreparedWrite {
   readonly notShown?: number;
   /** The change as a unified diff the GATEWAY rendered (D1c, D42(g)); only for a row with `prepare.diff`. */
   readonly diff?: PreviewDiff;
+  /** The plan or change set the GATEWAY rendered (D2), for a row with a `settle`. */
+  readonly plan?: PreviewPlan;
+  /** Removes what a settle left on disk (D2); the executor calls it when the run ends. Never throws. */
+  readonly cleanup?: () => Promise<void>;
 }
 
 /** The JSON length of `v`; `Infinity` when it cannot be encoded (so a cap always refuses it). */
@@ -325,6 +342,49 @@ function preparedDiff(
   return rendered.diff;
 }
 
+/**
+ * The settled alternative to {@link boundValues} and {@link shownFacts} (D2): a gateway-side
+ * settler fixes the plan's identity from the prepare reply and the caller's input, and ITS values
+ * and facts are the ones bound and shown; the prepare child's own claims are never read here. A
+ * settler that throws anything but a {@link PrepareRefusedError} is `settleFailed`; a result that
+ * does not carry every bound field, or shows nothing, is refused after the settler's cleanup runs.
+ */
+async function settledPrepare(
+  settle: NonNullable<PrepareOps["settle"]>,
+  ctx: { row: ConnectorWriteRow; bound: BoundWrite; context: SettleContext },
+): Promise<PreparedWrite> {
+  let settled: SettledWrite;
+  try {
+    settled = await settle(ctx.row.toolId, ctx.context);
+  } catch (e) {
+    throw e instanceof PrepareRefusedError
+      ? e
+      : new PrepareRefusedError(PREPARE_REFUSALS.settleFailed);
+  }
+  const entries = ctx.bound.binds.map((b) => [b.field, settled.values[b.field]] as const);
+  if (entries.some(([, v]) => typeof v !== "string" || v === "")) {
+    await settled.cleanup();
+    throw new PrepareRefusedError(PREPARE_REFUSALS.unbound);
+  }
+  if (settled.fields.length === 0) {
+    await settled.cleanup();
+    throw new PrepareRefusedError(PREPARE_REFUSALS.unshowable);
+  }
+  const shown = settled.fields.slice(0, BEFORE_STATE_MAX_FIELDS).map((f) => ({
+    label: sanitisePreviewText(f.label),
+    value: sanitisePreviewText(f.value),
+  }));
+  const notShown = settled.fields.length - shown.length + (settled.notShown ?? 0);
+  return {
+    binds: ctx.bound.binds,
+    values: Object.fromEntries(entries) as Record<string, string>,
+    fields: shown,
+    ...(notShown > 0 ? { notShown } : {}),
+    ...(settled.plan === undefined ? {} : { plan: settled.plan }),
+    cleanup: settled.cleanup,
+  };
+}
+
 const REAL_TIMERS: Timers = {
   set: (fn, ms) => setTimeout(fn, ms),
   clear: (h) => clearTimeout(h as ReturnType<typeof setTimeout>),
@@ -347,6 +407,14 @@ export async function runPrepareStep(
     throw new PrepareRefusedError(PREPARE_REFUSALS.toolNotAllowed);
   }
   if (opts.toolUnlisted === true) throw new PrepareRefusedError(PREPARE_REFUSALS.toolUnavailable);
+  const { settle, settleTool } = prepare;
+  if (settleTool !== undefined && !opts.prepareToolIds.has(settleTool)) {
+    throw new PrepareRefusedError(PREPARE_REFUSALS.toolNotAllowed);
+  }
+  // Before any child exists: a row that needs a settle capability the dispatcher lacks is refused.
+  if (settle !== undefined && ops.settle === undefined) {
+    throw new PrepareRefusedError(PREPARE_REFUSALS.capabilityMissing);
+  }
   const input = extractToolInput(action) as Record<string, unknown>;
   const args = prepareArgs(bound, input);
   if (args === undefined) throw new PrepareRefusedError(PREPARE_REFUSALS.argsFailed);
@@ -355,14 +423,42 @@ export async function runPrepareStep(
     type: prepareActionType(service),
     payload: { mcpToolId: mcpClientToolKey(service, prepare.tool), input: args },
   };
+  const timers = opts.timers ?? REAL_TIMERS;
   const got = await raceWithBudget(
     (spent) => gateThenDispatch(readAction, ops, spent),
     prepare.budgetMs,
-    opts.timers ?? REAL_TIMERS,
+    timers,
   );
   if ("refusal" in got) throw new PrepareRefusedError(got.refusal);
   if (serialisedLength(got.reply) > prepare.maxReplyBytes) {
     throw new PrepareRefusedError(PREPARE_REFUSALS.replyTooLarge);
+  }
+  if (settle !== undefined && ops.settle !== undefined) {
+    // The settler's own `show` read is one more prepare read of this step (own audit and egress row).
+    const showPlan =
+      settleTool === undefined
+        ? undefined
+        : async (args: { readonly workingDirectory: string; readonly planFile: string }) => {
+            const showAction: PlannedAction = {
+              type: prepareActionType(service),
+              payload: {
+                mcpToolId: mcpClientToolKey(service, settleTool),
+                input: { workingDirectory: args.workingDirectory, planFile: args.planFile },
+              },
+            };
+            const shown = await raceWithBudget(
+              (spent) => gateThenDispatch(showAction, ops, spent),
+              IAC_LIMITS.showBudgetMs,
+              timers,
+            );
+            if ("refusal" in shown) throw new PrepareRefusedError(shown.refusal);
+            return shown.reply;
+          };
+    return settledPrepare(ops.settle.bind(ops), {
+      row,
+      bound,
+      context: { settle, input, reply: got.reply, ...(showPlan === undefined ? {} : { showPlan }) },
+    });
   }
   const diff = preparedDiff(bound, input, got.reply);
   const values = boundValues(bound, got.reply);
