@@ -3,6 +3,8 @@ import { describe, expect, test } from "bun:test";
 import type { PlannedAction } from "../engine/types.ts";
 import {
   createConnectorDispatcher,
+  DEFAULT_TOOL_TIMEOUT_MS,
+  iacToolTimeoutMs,
   type McpToolListingClient,
   meshDispatcherClient,
 } from "./registry.ts";
@@ -709,5 +711,69 @@ describe("the dispatcher and the REAL commit prepare tools (D1c, I54)", () => {
       );
     }
     expect(ran).toEqual([]);
+  });
+});
+
+describe("the dispatcher race of the iac tools (D2)", () => {
+  const ok = {
+    async execute() {
+      return "ran";
+    },
+  };
+  const clientOf = (...keys: string[]): McpToolListingClient => ({
+    async listTools() {
+      return Object.fromEntries(keys.map((k) => [k, ok]));
+    },
+  });
+
+  /** The delay of the race timer a dispatch arms (the timer is cleared as the call finishes). */
+  async function raceMs(
+    key: string,
+    type: string,
+    options?: { toolTimeoutMs: number },
+  ): Promise<number | undefined> {
+    const seen: number[] = [];
+    const real = globalThis.setTimeout;
+    globalThis.setTimeout = ((fn: () => void, ms?: number) => {
+      if (typeof ms === "number" && ms >= 1000) seen.push(ms);
+      return real(fn, ms);
+    }) as typeof setTimeout;
+    try {
+      const d = createConnectorDispatcher(clientOf(key), {
+        prepareToolIds: new Set(["iac_terraform_plan"]),
+        ...options,
+      });
+      await d.dispatch({ type, payload: { mcpToolId: key } });
+    } finally {
+      globalThis.setTimeout = real;
+    }
+    return seen[0];
+  }
+
+  test("each iac tool has its own outer bound; the plan and apply outlive the generic 60 s", () => {
+    expect(iacToolTimeoutMs("iac_iac_terraform_plan")).toBe(600_000);
+    expect(iacToolTimeoutMs("iac_iac_terraform_destroy_plan")).toBe(600_000);
+    expect(iacToolTimeoutMs("iac_iac_terraform_show_json")).toBe(120_000);
+    expect(iacToolTimeoutMs("iac_iac_cloudformation_changeset_create")).toBe(180_000);
+    expect(iacToolTimeoutMs("iac_iac_terraform_apply")).toBe(30 * 60_000);
+    expect(iacToolTimeoutMs("iac_iac_terraform_destroy")).toBe(30 * 60_000);
+    expect(iacToolTimeoutMs("iac_iac_cloudformation_deploy")).toBe(60_000);
+    expect(iacToolTimeoutMs("iac_iac_cloudformation_changeset_discard")).toBe(60_000);
+    expect(iacToolTimeoutMs("iac_iac_pulumi_up")).toBeUndefined();
+    // Another server's tool that merely ends in an iac name is not an iac tool.
+    expect(iacToolTimeoutMs("github_iac_terraform_apply")).toBeUndefined();
+    expect(iacToolTimeoutMs("iac_terraform_apply")).toBe(30 * 60_000);
+  });
+
+  test("the race a dispatch arms is the resolved key's own, the default elsewhere", async () => {
+    expect(await raceMs("iac_iac_terraform_apply", "iac.terraform.apply")).toBe(30 * 60_000);
+    expect(await raceMs("iac_iac_terraform_plan", "iac.write.prepare")).toBe(600_000);
+    expect(await raceMs("github_repo_list", "github_repo_list")).toBe(DEFAULT_TOOL_TIMEOUT_MS);
+  });
+
+  test("an explicit toolTimeoutMs still wins for every tool (the test seam)", async () => {
+    expect(
+      await raceMs("iac_iac_terraform_apply", "iac.terraform.apply", { toolTimeoutMs: 5000 }),
+    ).toBe(5000);
   });
 });

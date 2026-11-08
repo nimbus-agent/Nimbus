@@ -42,6 +42,23 @@ export const IAC_LIMITS = Object.freeze({
 });
 
 /**
+ * The dispatcher's per-call race for the iac tools, by bare tool id (D2 task 5). The generic 60 s
+ * race would kill a plan or an apply long before it can finish. Each is the OUTER bound over a
+ * prepare step's own budget (`terraform.budgetMs`, `cfn.budgetMs`), which fires first. An apply
+ * that outlives its budget is killed by the runner and reported as possibly partly changed.
+ */
+export const IAC_TOOL_TIMEOUTS_MS: Readonly<Record<string, number>> = Object.freeze({
+  iac_terraform_plan: 10 * 60_000,
+  iac_terraform_destroy_plan: 10 * 60_000,
+  iac_terraform_show_json: 120_000,
+  iac_cloudformation_changeset_create: 180_000,
+  iac_terraform_apply: 30 * 60_000,
+  iac_terraform_destroy: 30 * 60_000,
+  iac_cloudformation_deploy: 60_000,
+  iac_cloudformation_changeset_discard: 60_000,
+});
+
+/**
  * Every reason an iac input check can give: fixed text, never built from the input (so an input
  * cannot put its own words in front of the model or the owner).
  */

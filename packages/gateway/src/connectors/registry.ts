@@ -10,6 +10,7 @@ import { isReadOnlyToolId } from "../share/read-tool-registry.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
 import { MCP_TOOL_RESULT_MAX_BYTES } from "./_lib/mcp-tool-result.ts";
 import { isConnectorWriteToolId } from "./connector-write-registry.ts";
+import { IAC_TOOL_TIMEOUTS_MS } from "./connector-writes/iac-limits.ts";
 import { CONNECTOR_WRITE_ROWS } from "./connector-writes/index.ts";
 import { isPrepareToolId, PREPARE_TOOL_IDS } from "./connector-writes/prepare-tools.ts";
 import { createLazyConnectorMesh, type LazyConnectorMesh } from "./lazy-mesh/index.ts";
@@ -92,6 +93,18 @@ export function meshDispatcherClient(mesh: {
 }
 
 export const DEFAULT_TOOL_TIMEOUT_MS = 60_000;
+
+/**
+ * The race for the tool the dispatcher resolved: a longer one for the iac tools (a plan or an apply
+ * outlives the generic 60 s), otherwise the default. Matched on the resolved mesh key itself, never
+ * on the payload, and only for the `iac` server.
+ */
+export function iacToolTimeoutMs(resolvedKey: string): number | undefined {
+  for (const [id, ms] of Object.entries(IAC_TOOL_TIMEOUTS_MS)) {
+    if (resolvedKey === id || resolvedKey === mcpClientToolKey("iac", id)) return ms;
+  }
+  return undefined;
+}
 export const MAX_TOOL_RESULT_BYTES = MCP_TOOL_RESULT_MAX_BYTES;
 
 export function createConnectorDispatcher(
@@ -104,7 +117,8 @@ export function createConnectorDispatcher(
   },
 ): ConnectorDispatcher {
   const prepareToolIds = options?.prepareToolIds ?? PREPARE_TOOL_IDS;
-  const toolTimeoutMs = options?.toolTimeoutMs ?? DEFAULT_TOOL_TIMEOUT_MS;
+  const toolTimeoutFor = (resolvedKey: string): number =>
+    options?.toolTimeoutMs ?? iacToolTimeoutMs(resolvedKey) ?? DEFAULT_TOOL_TIMEOUT_MS;
   const maxResultBytes = options?.maxResultBytes ?? MAX_TOOL_RESULT_BYTES;
   let toolsPromise: ReturnType<McpToolListingClient["listTools"]> | undefined;
   let cachedEpoch = -1;
@@ -168,6 +182,7 @@ export function createConnectorDispatcher(
         throw new Error(`MCP tool "${toolId}" has no execute implementation`);
       }
       const input = extractToolInput(action);
+      const toolTimeoutMs = toolTimeoutFor(resolvedKey);
 
       let timer: ReturnType<typeof setTimeout> | undefined;
       const result = await Promise.race([
