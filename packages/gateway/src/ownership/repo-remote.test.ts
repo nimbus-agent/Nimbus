@@ -105,6 +105,55 @@ describe("selectRemoteName", () => {
 // Every test below passes its fake explicitly via the injected `RemoteSpawn`
 // parameter — none relies on the `Bun.spawn` default, so no test here can
 // shell out to a real `git`.
+describe("parseRemoteUrl with configured forge hosts (GitHub Enterprise Server)", () => {
+  const extra = new Map([["ghe.example.com", "github"]]);
+
+  test("maps a GHES ssh remote and an https remote (port in the URL) to github", () => {
+    expect(parseRemoteUrl("git@ghe.example.com:acme/web.git", extra)).toEqual({
+      service: "github",
+      ownerName: "acme/web",
+    });
+    expect(parseRemoteUrl("https://ghe.example.com:8443/acme/web.git", extra)).toEqual({
+      service: "github",
+      ownerName: "acme/web",
+    });
+  });
+
+  test("host match is case-insensitive", () => {
+    expect(parseRemoteUrl("git@GHE.Example.COM:acme/web.git", extra)).toEqual({
+      service: "github",
+      ownerName: "acme/web",
+    });
+  });
+
+  test("an unconfigured or lookalike host never maps", () => {
+    expect(parseRemoteUrl("git@ghe.example.com:acme/web.git")).toBeNull();
+    expect(parseRemoteUrl("git@ghe.example.com.evil.net:acme/web.git", extra)).toBeNull();
+    expect(parseRemoteUrl("git@evil-ghe.example.com:acme/web.git", extra)).toBeNull();
+  });
+
+  test("the built-in SaaS hosts still map with the extra map supplied", () => {
+    expect(parseRemoteUrl("https://github.com/o/r.git", extra)?.service).toBe("github");
+  });
+});
+
+describe("resolveRepoRemote with configured forge hosts", () => {
+  test("a GHES origin resolves only when its host is passed", async () => {
+    const results = [
+      { out: "origin\n", code: 0 },
+      { out: "git@ghe.example.com:acme/web.git\n", code: 0 },
+    ];
+    expect(await resolveRepoRemote("/r", recordingSpawn(results).spawn)).toBeNull();
+    expect(
+      await resolveRepoRemote(
+        "/r",
+        recordingSpawn(results).spawn,
+        new Map([["ghe.example.com", "github"]]),
+      ),
+    ).toEqual({ service: "github", ownerName: "acme/web" });
+  });
+});
+
 describe("resolveRepoRemote", () => {
   test("origin present: returns the parsed remote and reads origin's URL", async () => {
     const { spawn, calls } = recordingSpawn([

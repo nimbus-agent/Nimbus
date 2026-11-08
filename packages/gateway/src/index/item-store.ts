@@ -402,3 +402,52 @@ export function listDistinctMetadataValues(
   }
   return out;
 }
+
+/** Escapes backslash, `%` and `_` so a value is matched literally by `LIKE ? ESCAPE '\'`. */
+export function escapeLikeLiteral(value: string): string {
+  return value.replace(/[\\%_]/g, String.raw`\$&`);
+}
+
+/**
+ * The bound `LIKE` pattern (for `url LIKE ? ESCAPE '\'`) that matches every URL on `webOrigin`
+ * (`https://host[:port]`). The trailing `/` is part of the pattern, so `https://ghe.example.com`
+ * never matches `https://ghe.example.com.evil.test/...`.
+ */
+export function webOriginUrlLikePattern(webOrigin: string): string {
+  return `${escapeLikeLiteral(webOrigin)}/%`;
+}
+
+/**
+ * `listDistinctMetadataValues`, restricted to rows whose `url` is on `webOrigin`. A row with a NULL
+ * `url` never matches (fail closed): this feeds loops that turn indexed rows into outbound
+ * requests, and a row that cannot prove which instance it came from must not produce one.
+ */
+export function listDistinctMetadataValuesForOrigin(
+  db: Database,
+  service: string,
+  metadataKey: string,
+  webOrigin: string,
+): string[] {
+  if (!/^[A-Za-z_]\w*$/.test(metadataKey)) {
+    throw new Error(`unsafe metadata key ${JSON.stringify(metadataKey)}`);
+  }
+  const path = `$.${metadataKey}`;
+  const rows = db
+    .query<{ v: string | null }, [string, string, string, string, string]>(
+      String.raw`SELECT DISTINCT json_extract(metadata, ?) AS v
+       FROM item
+       WHERE service = ?
+         AND url LIKE ? ESCAPE '\'
+         AND json_extract(metadata, ?) IS NOT NULL
+         AND length(trim(json_extract(metadata, ?))) > 0`,
+    )
+    .all(path, service, webOriginUrlLikePattern(webOrigin), path, path);
+  const out: string[] = [];
+  for (const r of rows) {
+    const v = r.v?.trim() ?? "";
+    if (v !== "") {
+      out.push(v);
+    }
+  }
+  return out;
+}

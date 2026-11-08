@@ -375,6 +375,10 @@ describe("PAT handlers — the exact Vault plan, then the shared registration ta
       markConnectorReauthenticated: (id: string): void => {
         seq.push(`reauth:${id}`);
       },
+      // github clears both sync cursors when its base changes (an instance switch).
+      clearConnectorSyncCursor: (id: string): void => {
+        seq.push(`clear:${id}`);
+      },
     } as unknown as LocalIndex;
     return {
       rec: { service, ...fields },

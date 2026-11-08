@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite";
 
+import { webOriginUrlLikePattern } from "../index/item-store.ts";
 import type { Provider } from "../sync/rate-limiter.ts";
 import { RateLimitError, type SyncContext, UnauthenticatedError } from "../sync/types.ts";
 import type { ChangedFileRow } from "./pr-changed-file-store.ts";
@@ -43,6 +44,14 @@ export const PR_FILES_PAGE_SIZE = 100;
  */
 export const MAX_FILES_PER_PR = 300;
 
+/**
+ * Which rows a candidate read may return. REQUIRED at every call: an optional filter would fail
+ * open at a missed caller. `webOrigin` keeps only rows whose `url` is on that origin (a NULL url
+ * never matches). `anyOrigin` is for the forges that have no instance concept here (GitLab,
+ * Bitbucket); the selector refuses it for `github`.
+ */
+export type PrCandidateScope = { readonly webOrigin: string } | { readonly anyOrigin: true };
+
 export type PrFileCandidate = {
   readonly itemId: string;
   readonly repoFull: string;
@@ -61,18 +70,31 @@ export function selectPrFileCandidates(
   db: Database,
   service: string,
   limit: number,
+  scope: PrCandidateScope,
 ): PrFileCandidate[] {
+  if ("anyOrigin" in scope && service === "github") {
+    // GitHub rows are only ever fetched from the CURRENT instance (GHES support): an unfiltered
+    // read would turn a row from another instance into a request carrying this instance's PAT.
+    throw new Error("selectPrFileCandidates: github requires a webOrigin scope");
+  }
+  const originOnly = "webOrigin" in scope;
   const rows = db
     .query(
-      `SELECT i.id AS id, i.external_id AS external_id
+      String.raw`SELECT i.id AS id, i.external_id AS external_id
          FROM item i
         WHERE i.type = 'pr'
           AND i.service = ?1
+          AND (?3 = 0 OR i.url LIKE ?4 ESCAPE '\')
           AND NOT EXISTS (SELECT 1 FROM pr_files_state s WHERE s.item_id = i.id)
         ORDER BY i.modified_at DESC
         LIMIT ?2`,
     )
-    .all(service, limit) as Array<{ id: string; external_id: string }>;
+    .all(
+      service,
+      limit,
+      originOnly ? 1 : 0,
+      originOnly ? webOriginUrlLikePattern(scope.webOrigin) : "",
+    ) as Array<{ id: string; external_id: string }>;
   const out: PrFileCandidate[] = [];
   for (const r of rows) {
     // Every forge keys a PR as `<repoFull><sep><num>`: `#` on GitHub and Bitbucket, `!` for
@@ -221,11 +243,13 @@ export async function runPrFilePass(
     readonly service: Provider;
     readonly fetchPage: FetchPage;
     readonly nowMs: number;
+    readonly scope: PrCandidateScope;
   },
 ): Promise<number> {
   const candidates = ctx.prFileCandidates(
     args.service,
     MAX_PRS_PER_TICK * PR_ATTEMPT_BUDGET_MULTIPLIER,
+    args.scope,
   );
   let recorded = 0;
   for (const c of candidates) {

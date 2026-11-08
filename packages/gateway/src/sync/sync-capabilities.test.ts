@@ -70,6 +70,7 @@ describe("the capability set exposes no raw handle", () => {
       "itemExists",
       "itemMetadata",
       "listIndexedMetadataValues",
+      "listIndexedMetadataValuesForOrigin",
       "prEnrichCandidates",
       "prFileCandidates",
       "pruneBlameForFile",
@@ -282,33 +283,76 @@ describe("every capability routes to its gateway function", () => {
 
   test("listIndexedMetadataValues returns distinct non-empty values", () => {
     const { caps: c } = caps();
-    for (const [i, repo] of ["o/a", "o/a", "o/b"].entries()) {
+    for (const [i, project] of ["g/a", "g/a", "g/b"].entries()) {
       c.upsertItem({
-        service: "github",
+        service: "gitlab",
         type: "pull_request",
-        externalId: `o/r#${String(10 + i)}`,
-        title: "PR",
+        externalId: `g/r!${String(10 + i)}`,
+        title: "MR",
         bodyPreview: "b",
         modifiedAt: 1,
-        metadata: { repo },
+        metadata: { project },
         syncedAt: 1,
       });
     }
-    expect(c.listIndexedMetadataValues("github", "repo").sort()).toEqual(["o/a", "o/b"]);
+    expect(c.listIndexedMetadataValues("gitlab", "project").sort()).toEqual(["g/a", "g/b"]);
+  });
+
+  test("listIndexedMetadataValues refuses github outright (origin-filtered variant only)", () => {
+    const { caps: c } = caps();
+    expect(() => c.listIndexedMetadataValues("github", "repo")).toThrow(
+      /listIndexedMetadataValuesForOrigin/,
+    );
   });
 
   test("listIndexedMetadataValues refuses a metadata key it cannot bind", () => {
     // The key is interpolated into a JSON path, the one place a bound parameter cannot do the job.
     const { caps: c } = caps();
-    expect(() => c.listIndexedMetadataValues("github", "a'; DROP TABLE item; --")).toThrow(
+    expect(() => c.listIndexedMetadataValues("gitlab", "a'; DROP TABLE item; --")).toThrow(
       /unsafe metadata key/,
     );
+    expect(() =>
+      c.listIndexedMetadataValuesForOrigin(
+        "github",
+        "a'; DROP TABLE item; --",
+        "https://github.com",
+      ),
+    ).toThrow(/unsafe metadata key/);
+  });
+
+  test("listIndexedMetadataValuesForOrigin keeps only repos whose url is on the origin", () => {
+    const { caps: c } = caps();
+    const rows: Array<[string, string | null]> = [
+      ["o/dotcom", "https://github.com/o/dotcom/pull/1"],
+      ["o/ghes", "https://ghe.example.com/o/ghes/pull/1"],
+      ["o/lookalike", "https://ghe.example.com.evil.test/o/lookalike/pull/1"],
+      ["o/nourl", null],
+    ];
+    for (const [i, [repo, url]] of rows.entries()) {
+      c.upsertItem({
+        service: "github",
+        type: "pr",
+        externalId: `${repo}#${String(i + 1)}`,
+        title: "PR",
+        bodyPreview: "b",
+        url,
+        modifiedAt: 1,
+        metadata: { repo },
+        syncedAt: 1,
+      });
+    }
+    expect(
+      c.listIndexedMetadataValuesForOrigin("github", "repo", "https://ghe.example.com"),
+    ).toEqual(["o/ghes"]);
+    expect(c.listIndexedMetadataValuesForOrigin("github", "repo", "https://github.com")).toEqual([
+      "o/dotcom",
+    ]);
   });
 
   test("prEnrichCandidates and prFileCandidates return empty on an empty index", () => {
     const { caps: c } = caps();
-    expect(c.prEnrichCandidates(10)).toEqual([]);
-    expect(c.prFileCandidates("github", 10)).toEqual([]);
+    expect(c.prEnrichCandidates(10, "https://github.com")).toEqual([]);
+    expect(c.prFileCandidates("github", 10, { webOrigin: "https://github.com" })).toEqual([]);
   });
 
   test("the blame writers round-trip", () => {

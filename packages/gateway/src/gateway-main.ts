@@ -4,6 +4,7 @@ import pino from "pino";
 import { runWorkflowExecution } from "./automation/workflow-runner.ts";
 import { createConnectorWriteDispatcher } from "./connectors/connector-write-dispatch.ts";
 import { createModelWriteToolSource } from "./connectors/connector-writes/model-write-source.ts";
+import { previewCredentialResolver } from "./connectors/connector-writes/preview-credential.ts";
 import {
   createConnectorDispatcher,
   type McpToolListingClient,
@@ -261,7 +262,10 @@ export async function main(): Promise<void> {
       // I22: agent-planned actions are the path an org's `[policy.hitl] require` list most
       // needs to reach, so the overlay rides along with the delegation dep.
       policyHitl: platform.policyHitl,
-      previewCredentialFor: (s) => platform.connectorWriteDeps.credentialFor(s).credential,
+      previewCredentialFor: previewCredentialResolver(
+        platform.connectorWriteDeps,
+        platform.connectorMesh,
+      ),
       // I42 (user-MCP model access): decided at the IPC entry from the live session's kind
       // (`USER_MCP_OFFER_BY_KIND`); only a literal `true` offers.
       offerUserMcpTools: ctx.offerUserMcpTools === true,
@@ -303,7 +307,10 @@ export async function main(): Promise<void> {
         ? {}
         : { sessionMemoryStore: platform.sessionMemoryStore }),
       policyHitl: platform.policyHitl,
-      previewCredentialFor: (s) => platform.connectorWriteDeps.credentialFor(s).credential,
+      previewCredentialFor: previewCredentialResolver(
+        platform.connectorWriteDeps,
+        platform.connectorMesh,
+      ),
       // I42: a ChatOps mention is never the local owner's turn, so owner-registered user-MCP
       // tools are never offered here. Literal, not looked up: this call's clientId "chatops" is
       // not a registered ClientKind and would read as `unknown` (the plain CLI, an OWNER kind)

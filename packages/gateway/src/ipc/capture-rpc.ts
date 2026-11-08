@@ -18,6 +18,7 @@ import { proposableWriteTool } from "../connectors/proposable-actions.ts";
 import { userMcpToolKeyForActionType } from "../connectors/user-mcp-store.ts";
 import type { EgressSink } from "../egress/egress-ledger.ts";
 import { bindConsentChannel, type ExecutorPolicyDep, ToolExecutor } from "../engine/executor.ts";
+import { serviceOf } from "../engine/service-of.ts";
 import type { AuditSink, ConnectorDispatcher, ConsentChannel } from "../engine/types.ts";
 import { formatActionConsent, formatActionProvenanceLines } from "../mcp-sink/capture-act.ts";
 import {
@@ -208,6 +209,15 @@ export function buildActDeps(
         // Never dispatch a first-party write by its type (spec § 6.3): no routing row, no call.
         // This exact message is what classifyActionError maps to ERR_ACTION_TOOL_NOT_FOUND.
         throw new Error("Tool not found");
+      }
+      // The prompt must name the instance the write WILL run against, read fresh from the Vault
+      // the write uses (as the executor does on every other door). A credential whose instance
+      // cannot be established (a present but invalid base) is rejected here: no prompt, no
+      // dispatch, a fixed outcome that echoes no stored value.
+      try {
+        await w.previewCredentialFor?.refresh?.(serviceOf(actionType));
+      } catch {
+        return { status: "rejected" };
       }
       const { prompt, details } = actConsentDisplay(w, actionType, toolId, input, provenance);
       const consent = provenanceConsent(bindConsentChannel(coordinator, clientId), prompt, details);

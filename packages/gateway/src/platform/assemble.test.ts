@@ -364,7 +364,13 @@ describe("httpOriginFor", () => {
     expect(await httpOriginFor(vault, "gitlab")).toBeNull();
   });
 
-  it("returns null immediately for github/bitbucket — no self-hosted variant", async () => {
+  it("returns null for github even when github.api_base is stored (https only)", async () => {
+    const vault = makeInMemoryVault();
+    await writeConnectorSecret(vault, "github", "api_base", "https://ghe.example.com/api/v3");
+    expect(await httpOriginFor(vault, "github")).toBeNull();
+  });
+
+  it("returns null immediately for bitbucket and for github with no base", async () => {
     const vault = makeInMemoryVault();
     expect(await httpOriginFor(vault, "github")).toBeNull();
     expect(await httpOriginFor(vault, "bitbucket")).toBeNull();

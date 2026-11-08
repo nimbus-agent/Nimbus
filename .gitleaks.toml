@@ -167,10 +167,21 @@ paths = [
 #    (anchored, by value, the files stay scanned). The private half is held
 #    only in that repository's protected `trust-signing` environment secret
 #    and an offline backup; it never enters this repository.
+#
+# 11. A HISTORICAL synthetic `gh` token fixture, by VALUE:
+#    `gho_0123456789abcdefghij0123456789`, the `gh auth token` stdout stub in
+#    `packages/gateway/src/ipc/connector-rpc-handlers/auth-github-ghes.test.ts`
+#    (the GitHub Enterprise Server PR, #1936). It was never a credential: it is
+#    the digits and the alphabet in order. The fixture now uses the house
+#    sentinel `nimbus_SENTINEL_not_a_real_token_0123456789` (the one
+#    `adopt-local-auth.test.ts` already uses); the old literal survives only in
+#    that PR's branch commits, which the PR scan reads. ANCHORED, like entries
+#    8 to 10, so it matches only this exact fake value.
 regexes = [
   '''sk_live_never_echoed_9f8e7d''',
   '''^api_key=sk_live_123$''',
   '''^tBHSfVjFZzyMoSVR69FbZfMyUstbLdUcfGwHKIaY/qA=$''',
   '''^wrUu5uyn3aS2efQOEAUd1eC6H3uqX/RwzIEqQHvAZ9A=$''',
   '''^4mmB1juQtm6dygsXcKlwlBxwW\+urkMWQebUJptd6ppY=$''',
+  '''^gho_0123456789abcdefghij0123456789$''',
 ]

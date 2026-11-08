@@ -37,6 +37,7 @@ import {
   type ModelWritesDeps,
   refuseExtensionBackedRemoval,
   resolveConnectorAddMcp,
+  withConfiguredInstance,
 } from "./connector-rpc-handlers/index.ts";
 import { asRecord, ConnectorRpcError } from "./connector-rpc-shared.ts";
 
@@ -210,7 +211,7 @@ export async function dispatchConnectorRpc(options: {
     case "connector.setInterval":
       return handleConnectorSetInterval(ctx);
     case "connector.status":
-      return handleConnectorStatus(ctx);
+      return withConfiguredInstance(ctx, handleConnectorStatus(ctx));
     case "connector.healthHistory":
       return handleConnectorHealthHistory(ctx);
     case "connector.remove": {
@@ -263,6 +264,7 @@ export async function dispatchConnectorRpc(options: {
         // The token travels in-process only, inside this synthetic rec; it never crosses IPC.
         authenticate: (authRec) => handleConnectorAuth({ ...ctx, rec: authRec }),
         readGcpKeyPath: buildReadGcpKeyPath(vault),
+        readGithubApiBase: () => readConnectorSecret(vault, "github", "api_base"),
       });
       return { kind: "hit", value };
     }

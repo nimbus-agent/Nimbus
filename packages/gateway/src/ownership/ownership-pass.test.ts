@@ -5,6 +5,7 @@ import { DEFAULT_NIMBUS_OWNERSHIP_TOML } from "../config/nimbus-toml.ts";
 import { readEntityMetadata, upsertGraphEntityNamespaced } from "../graph/relationship-graph.ts";
 import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
+import { resolveFileByRemote } from "../index/resolve-file-by-remote.ts";
 import { directoryAncestors, rankOwners, runOwnershipPass } from "./ownership-pass.ts";
 
 const DAY = 86_400_000;
@@ -400,6 +401,35 @@ describe("runOwnershipPass", () => {
       .all(`filesystem:${ROOT}`) as { repo: string }[];
     expect(tracked).toHaveLength(1);
     expect(tracked[0]?.repo).toBe("github:acme/new");
+  });
+
+  test("a GHES remote is tracked as a github repo only when its host is configured", async () => {
+    seedLine(d, "src/a.ts", 1, "a@x.com", "A", 0);
+    const spawn = fakeSpawn("origin\n", "git@ghe.example.com:acme/web.git");
+    const tracked = (): string[] =>
+      (
+        d
+          .query(
+            `SELECT repo.external_id AS repo FROM graph_relation r
+               JOIN graph_entity repo ON repo.id = r.to_id
+              WHERE r.type = 'tracks_remote'`,
+          )
+          .all() as { repo: string }[]
+      ).map((r) => r.repo);
+    await runOwnershipPass(d, baseOpts({ spawn }));
+    expect(tracked()).toEqual([]);
+    await runOwnershipPass(
+      d,
+      baseOpts({ spawn, extraForgeHosts: new Map([["ghe.example.com", "github"]]) }),
+    );
+    expect(tracked()).toEqual(["github:acme/web"]);
+    // The forge coordinate carries no host, so the same coordinate now finds the workspace.
+    const r = resolveFileByRemote(d, {
+      service: "github",
+      repo: "acme/web",
+      refAndPath: "main/src/a.ts",
+    });
+    expect(r.ok || r.reason !== "remote_not_tracked").toBe(true);
   });
 
   // The `belongs_to` twin of the unconditional-placement test above: a service

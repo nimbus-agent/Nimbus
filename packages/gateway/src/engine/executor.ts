@@ -1073,6 +1073,23 @@ export class ToolExecutor {
   }
 
   /**
+   * Before any preview is built: the resolver reads the instance the write will run against, fresh.
+   * A credential whose instance cannot be established refuses the write here, with a fixed reason,
+   * before any prompt (the same rejection a before-state guard gives).
+   */
+  private async refreshPreviewInstance(action: PlannedAction): Promise<void> {
+    const refresh = this.previewCredentialFor?.refresh;
+    if (refresh === undefined) return;
+    try {
+      await refresh(serviceOf(action.type));
+    } catch {
+      throw new PrepareRefusedError(
+        "the credential's instance could not be established (its stored base is not valid); nothing was run",
+      );
+    }
+  }
+
+  /**
    * Phase 1. The typed preview for the owner's prompt. Without a before-state runner it is exactly the
    * builder's. With one (the door executor), it is built over the runner's rows (production: the
    * same table) and, when the row has a `before` reader, carries the reads' outcome; each read goes
@@ -1084,6 +1101,7 @@ export class ToolExecutor {
     action: PlannedAction,
     opts: ExecuteOptions | undefined,
   ): Promise<ConnectorWritePreview | undefined> {
+    await this.refreshPreviewInstance(action);
     const runner = this.beforeState;
     const preview = buildConnectorWritePreviewFrom(action, this.rows(), this.previewCredentialFor);
     if (runner === undefined) return preview;

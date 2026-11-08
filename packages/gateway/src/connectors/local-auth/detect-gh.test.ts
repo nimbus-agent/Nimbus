@@ -119,14 +119,45 @@ describe("detectGh", () => {
     ]);
   });
 
-  test("a GitHub Enterprise host is listed unsupported with the specific reason", () => {
+  test("a GHES host in hosts.yml is available, not unsupported", () => {
     const findings = detectGh(host({ readFile: () => WITH_GHE }), false);
     const ghe = findings.find((f) => f.host === "ghe.acme.example");
-    expect(ghe?.status).toBe("unsupported");
-    expect(ghe?.reason).toBe(
-      "GitHub Enterprise needs github.api_base, which the GitHub connector does not have yet",
+    expect(ghe?.status).toBe("available");
+    expect(ghe?.accounts).toEqual(["me"]);
+    expect(ghe?.reason).toBeUndefined();
+  });
+
+  test("alreadyConfigured is the real value for a GHES host, not forced false", () => {
+    const findings = detectGh(host({ readFile: () => WITH_GHE }), true);
+    expect(findings.find((f) => f.host === "ghe.acme.example")?.alreadyConfigured).toBe(true);
+  });
+
+  test("a *.ghe.com host stays unsupported with the data-residency reason", () => {
+    const findings = detectGh(host({ readFile: () => "acme.ghe.com:\n    user: me\n" }), false);
+    expect(findings[0]?.status).toBe("unsupported");
+    expect(findings[0]?.reason).toContain("GHE.com");
+    expect(findings[0]?.alreadyConfigured).toBe(false);
+  });
+
+  test("a host key with a path, a scheme, a space or a loopback name is unsupported", () => {
+    for (const key of [
+      "ghe.example.com/api/v3",
+      "https://ghe.example.com",
+      "my ghe.example.com",
+      "localhost",
+      "api.github.com",
+    ]) {
+      const findings = detectGh(host({ readFile: () => `"${key}":\n    user: me\n` }), false);
+      expect(findings[0]?.status).toBe("unsupported");
+    }
+  });
+
+  test("a GHES host with no account is not_logged_in", () => {
+    const findings = detectGh(
+      host({ readFile: () => "ghe.acme.example:\n    git_protocol: https\n" }),
+      false,
     );
-    expect(ghe?.alreadyConfigured).toBe(false);
+    expect(findings[0]?.status).toBe("not_logged_in");
   });
 
   test("github.com listed with neither user nor users → not_logged_in", () => {

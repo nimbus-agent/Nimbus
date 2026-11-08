@@ -442,6 +442,8 @@ async function runBitbucketPrFilePassBestEffort(
     await runPrFilePass(ctx, {
       service: SERVICE_ID,
       nowMs: now,
+      // GitLab/Bitbucket rows carry no GitHub-instance concept; the selector refuses this for github.
+      scope: { anyOrigin: true },
       fetchPage: async (c, page) => {
         const cut = c.externalId.lastIndexOf("#");
         if (cut < 0) return null;

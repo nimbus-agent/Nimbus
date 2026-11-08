@@ -2995,8 +2995,8 @@ code_execution=true
     );
     // The destructuring from `buildTeamCredentialContexts`, the ChatOps boot (see (j)), the
     // services literal, the I28 act door's dispatcher inside the `captureRpcCtx.act` wiring, and —
-    // the fifth — that wiring's typed-preview credential READ (`.credentialFor(s).credential`, no
-    // copy of the context), both pinned exactly just below: five.
+    // the fifth — that wiring's typed-preview credential READ (`previewCredentialResolver`, which reads
+    // `.credentialFor(s).credential` and adds the GitHub Enterprise Server instance, no copy of the context), both pinned exactly just below: five.
     expect(assembly.match(/\bconnectorWriteDeps\b/g)).toHaveLength(5);
     const captureAt = assembly.indexOf("ipcOpts.captureRpcCtx = {");
     expect(captureAt).toBeGreaterThan(-1);
@@ -3008,7 +3008,7 @@ code_execution=true
     );
     expect(captureCtx.match(/\bconnectorWriteDeps\b/g)).toHaveLength(2);
     expect(captureCtx).toContain(
-      "previewCredentialFor: (s) => connectorWriteDeps.credentialFor(s).credential,",
+      "previewCredentialFor: previewCredentialResolver(connectorWriteDeps, connectorMesh),",
     );
     const main = stripComments(await read("packages/gateway/src/gateway-main.ts"));
     expect(main).toMatch(

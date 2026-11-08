@@ -13,6 +13,7 @@ import {
   buildConnectorWritePreviewFrom,
   renderConnectorWritePreviewLines,
 } from "../connectors/connector-writes/preview.ts";
+import { previewCredentialResolver } from "../connectors/connector-writes/preview-credential.ts";
 import { row, textField, withPreview } from "../connectors/connector-writes/types.ts";
 import { classifyActionType, proposableWriteTool } from "../connectors/proposable-actions.ts";
 import {
@@ -381,6 +382,123 @@ describe("buildActDeps: the typed preview for a templated proposable row (F5)", 
       expiresAt: 60_000,
     });
     expect(details["destination"]).toEqual({ service: "jira", credential: "team" });
+  });
+
+  test("the MCP act door's prompt for a GitHub write names the GHES instance after Credential", async () => {
+    const GITHUB = CONNECTOR_WRITE_ROWS.filter((r) => r.toolId === "github_issue_comment_create");
+    const prompts: string[] = [];
+    const coord = {
+      requestConsent: (_c: string, req: { prompt: string }) => {
+        prompts.push(req.prompt);
+        return Promise.resolve(true);
+      },
+    } as unknown as ConsentCoordinator;
+    const act = buildActDeps(
+      {
+        dispatcher: { dispatch: () => Promise.resolve({ ok: true }) },
+        egressSink: makeEgressSink(db),
+        audit: { recordAudit: (e) => appendAuditEntry(db, e) },
+        policyHitl: NO_POLICY_OVERLAY,
+        previewCredentialFor: () => ({ credential: "personal", instance: "ghe.example.com" }),
+        previewRows: GITHUB,
+      },
+      coord,
+      "c-cli",
+    );
+    await act.execute(
+      "github.issue.comment.create",
+      { owner: "acme", repo: "web", issueNumber: 7, body: "hello" },
+      PROV,
+    );
+    const lines = (prompts[0] ?? "").split(String.fromCharCode(10));
+    const at = lines.indexOf("Credential: personal");
+    expect(at).toBeGreaterThan(-1);
+    expect(lines[at + 1]).toBe("Instance: ghe.example.com");
+    expect(lines[at - 1]).toBe("Service: github");
+  });
+
+  describe("the github act-door prompt reads the instance fresh (team and personal)", () => {
+    const GITHUB = CONNECTOR_WRITE_ROWS.filter((r) => r.toolId === "github_issue_comment_create");
+    const INPUT = { owner: "acme", repo: "web", issueNumber: 7, body: "hello" };
+
+    async function harness(
+      pin: { credential: "personal" | "team"; teamEntry?: string },
+      entries: Record<string, string>,
+      mesh?: string,
+    ) {
+      const vault = createMockVault();
+      for (const [k, v] of Object.entries(entries)) await vault.set(k, v);
+      const prompts: string[] = [];
+      const dispatched: string[] = [];
+      const coord = {
+        requestConsent: (_c: string, req: { prompt: string }) => {
+          prompts.push(req.prompt);
+          return Promise.resolve(true);
+        },
+      } as unknown as ConsentCoordinator;
+      const act = buildActDeps(
+        {
+          dispatcher: {
+            dispatch: (a) => {
+              dispatched.push(a.type);
+              return Promise.resolve({ ok: true });
+            },
+          },
+          egressSink: makeEgressSink(db),
+          audit: { recordAudit: (e) => appendAuditEntry(db, e) },
+          policyHitl: NO_POLICY_OVERLAY,
+          previewCredentialFor: previewCredentialResolver(
+            { credentialFor: () => pin, vault },
+            { githubInstance: () => mesh },
+          ),
+          previewRows: GITHUB,
+        },
+        coord,
+        "c-cli",
+      );
+      return { act, prompts, dispatched };
+    }
+
+    test("team pin + team GHES base: the prompt names the team host, not the owner's", async () => {
+      const h = await harness(
+        { credential: "team", teamEntry: "prod" },
+        {
+          "github.api_base": "https://owner.example.com",
+          "teamvault.prod.github.pat": "T",
+          "teamvault.prod.github.api_base": "https://team.example.com",
+        },
+        "owner.example.com",
+      );
+      await h.act.execute("github.issue.comment.create", INPUT, PROV);
+      expect(h.prompts[0]).toContain("Credential: team");
+      expect(h.prompts[0]).toContain("Instance: team.example.com");
+      expect(h.prompts[0]).not.toContain("owner.example.com");
+    });
+
+    test("team pin + invalid team base: rejected, no prompt, nothing dispatched", async () => {
+      const h = await harness(
+        { credential: "team", teamEntry: "prod" },
+        {
+          "teamvault.prod.github.pat": "T",
+          "teamvault.prod.github.api_base": "http://evil.example.com",
+        },
+      );
+      const out = await h.act.execute("github.issue.comment.create", INPUT, PROV);
+      expect(out).toEqual({ status: "rejected" });
+      expect(h.prompts).toEqual([]);
+      expect(h.dispatched).toEqual([]);
+    });
+
+    test("personal GHES: the prompt shows the fresh personal host, not a stale snapshot", async () => {
+      const h = await harness(
+        { credential: "personal" },
+        { "github.api_base": "https://fresh.example.com" },
+        "stale.example.com",
+      );
+      await h.act.execute("github.issue.comment.create", INPUT, PROV);
+      expect(h.prompts[0]).toContain("Instance: fresh.example.com");
+      expect(h.prompts[0]).not.toContain("stale.example.com");
+    });
   });
 
   test("no template: today's verbatim prompt and { actionType, input } details, exactly", async () => {
