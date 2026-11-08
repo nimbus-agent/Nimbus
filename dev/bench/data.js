@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794123647119,
+  "lastUpdate": 1794160727585,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "5de0a7676f22b37974e1ee78ac8984acd4b131ea",
-          "message": "docs(spec): the whitelist test needs 70 KB, not 60 — 60 never crossed the ceiling (#1287)\n\n## Summary\n\nCorrects an arithmetic error in the clip-source-metadata design spec\n(merged 2026-08-20), and records why it changed.\n\nThe spec's Testing section specified **a 60 KB unknown member** as the\ncase that proves the `source` whitelist, on the reasoning that without\nthe whitelist the item \"would exceed the store's 64 KB metadata ceiling\nand `upsertIndexedItem` would throw, so a page could deny ingestion of\nits own clip.\"\n\nIt would not. `RAW_META_MAX_BYTES` is 65,536, and that metadata\nserialises to **60,112 bytes** — comfortably under. The implementation\nin #1285 copied the number faithfully, which produced a test that passed\non its `toEqual` assertion while advertising itself as a\ndenial-of-ingestion fence. Review caught it before merge and shipped\n**70 KB** (70,112 bytes), which genuinely crosses.\n\nTwo edits:\n\n- The Testing bullet now says 70 KB, and states plainly that the size\nhas to be *over* the ceiling rather than merely large — with the\noriginal 60 KB error recorded rather than quietly overwritten, since the\narithmetic is the entire point of that bullet.\n- The \"Unknown members are discarded\" rule no longer names a specific\nsize at all. It now cites `RAW_META_MAX_BYTES` (65,536 bytes) and says\n\"enough to cross that ceiling\", which cannot go stale.\n\n## Related Issue\n\nFollow-up to #1285 (2.5 S2). No issue number.\n\n## Type of Change\n\n- [x] Documentation only\n\n## Non-Negotiables Checklist\n\n- [x] `bun run typecheck` passes with zero errors (no code changed)\n- [x] `bun run lint` passes (no code changed)\n- [x] All existing tests pass (no code changed — the shipped test\nalready uses 70 KB)\n- [x] New behaviour is covered by tests (n/a — documentation only)\n- [x] No `any` types introduced\n- [x] No credentials, tokens, or secret values appear in logs, IPC\nmessages, config, or test fixtures\n- [x] Platform-specific code is behind the `PlatformServices`\nabstraction (n/a)\n- [x] The HITL consent gate has not been weakened, bypassed, or made\nconfigurable\n- [x] Does not touch `docs/README.md`\n\n## Testing\n\n`bun run lint:markdown` — 138 files, 0 issues. `bun\nscripts/structure-audit/check-doc-references.ts --check` — 1,208 refs\nacross 41 docs, all resolve. No code paths touched.\n\n## Notes for Reviewers\n\nWorth doing now rather than later because **S3 of roadmap 2.5 is gated\non S2 being released**, and S3's author will read this spec. Leaving the\nwrong number in it invites re-deriving a test that looks like a DoS\nfence and isn't.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n- **Documentation**\n- Updated the clip source metadata specification with a clearer\noversized-field validation example.\n- Increased the example payload from 60 KB to 70 KB to explicitly exceed\nthe 64 KB metadata limit.\n- Added an explanation of the size calculation and clarified that\noversized unknown fields are excluded before storage.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->",
-          "timestamp": "2026-08-21T09:51:55+03:00",
-          "tree_id": "080cdc7c069d266d9cd1dcf8112c73c466942fea",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/5de0a7676f22b37974e1ee78ac8984acd4b131ea"
-        },
-        "date": 1787296269537,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 327.9537767999973,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 334.50936349999904,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 183.29081059999734,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "4dbe6ab5cf46282cf7deed06df2eecb626c594b7",
+          "message": "feat(gateway): the model can propose a GitHub or GitLab commit, approved over a full gateway-rendered diff with a bound head (#1943)\n\nThis is Phase 9.7 PR D1c: model-proposed commits. The model can now\npropose a GitHub or GitLab commit (`github_file_commit`,\n`gitlab_commit_create`). Each one is a bound Wave 4 write that the local\nowner approves over a full, gateway-rendered diff, with the head the\ncommit is bound to pinned by Nimbus. No connectors release is needed:\nthis uses the 0.8.0 pin from D1.\n\n**Bound writes, on every door (I54)**\n- The gate runs the connector's prepare tool (`github_commit_prepare` /\n`gitlab_commit_prepare`) before the prompt.\n- Nimbus injects the head it read (`expectedHeadSha`) into the\ndispatched input. A caller-supplied head is refused.\n- The two prepare tools join `PREPARE_TOOL_IDS`. They are refused over\nfederation (`isConnectorWriteOrPrepareToolId`, I26). Before this PR, a\npeer with a team-vault grant could call an unclassified prepare tool.\n\n**The diff**\n- **What it shows:** the gateway renders the diff itself, a Myers diff\nwith a step budget and a whole-file fallback. It compares the caller's\nexact input against the old text the prepare step read. A forged diff or\nsummary in the connector's reply cannot change it.\n- **Never truncated:** it is shown in full, with \"End of diff: N files,\n+A -D\". A diff that is too large is refused.\n- **Escaping is injective over the raw bytes:**\n  - a backslash is doubled;\n- every Cc character except LF, and every Cf, Zl, Zp, Cs and\nDefault_Ignorable character, plus U+2800, is shown as `\\u{XXXX}`.\n\nSo a real bidi control can never look the same as its literal escape\ntext.\n- **Audit:** the audit row carries `boundValuesSha256`, `diffSha256`\n(over the shown text) and `filesSha256` (over the exact dispatched\nbytes), first. No file text is recorded in the audit row or the egress\nledger.\n\n**Caps, refused on every door and never truncated.** Owner ruling: 20\nfiles, 32 KiB of new text, 32 KiB of old text, 64 KiB of rendered diff,\nand a message of 1 to 5,000 characters. A top-level input key the\nconnector does not take is also refused. The worst-case consent frame\nmeasures 864 KB, 82% of the 1 MiB IPC line cap, and a frame over the cap\nfails closed.\n\n**Model door.** Owner ruling: offer both commits, with refusals.\n- **Path refusals:** a commit is refused before any prompt if it\ntouches:\n- CI configuration: GitHub, GitLab, Gitea and Forgejo workflows,\nCircleCI, Jenkins (`Jenkinsfile`, `Jenkinsfile.*`, `Jenkinsfile-*`),\nAzure Pipelines, Bitbucket, Buildkite, Travis, Drone, Cirrus, AppVeyor,\nWoodpecker, Semaphore, Cloud Build, CodeBuild, Bitrise or Codemagic, in\nboth YAML spellings;\n  - hooks: `.husky`, `.githooks`, pre-commit or lefthook;\n  - `.devcontainer`;\n- `CODEOWNERS`, `.gitattributes` or `.gitmodules`, matched by name in\nany directory;\n  - any path that fails the gateway's path-safety check.\n- **Content refusals:** a commit is also refused if its new content has\na bidi control (Trojan Source) or looks like a credential. The\ncredential scan uses bounded, non-global copies of the patterns and runs\nonly after the size cap; a linear-time test covers it.\n- **The model never sees the bound field:** it is removed from the\noffered schema, and bound rows get the gateway's own description.\n- **No branch refusal:** a commit to the default or a protected branch\nis not refused. Owner ruling: the platform's branch protection decides.\n- **Not scanned:** the commit message is shown in full and is not\nscanned for credentials, per the owner ruling on content. File content\nis not scanned as Markdown.\n\n**Other doors**\n- **CLI:** prints the prompt once, with the diff last.\n- **Desktop:** `DiffView` shows one `<pre>` per file, with no collapse.\nApprove stays disabled for a malformed or missing diff.\n- **ChatOps:** refused structurally. A bound row is never delegated, and\nChatOps has no typed-confirm channel.\n- **MCP act door:** stays denied, and a test asserts that no bound row\nis proposable.\n\n**Counts:** 96 offerable writes, up from 94. 115 rows, 2 of them bound.\n173 HITL types. 47 proposable, 126 denied and 8 `not_yet_offered`,\nunchanged.\n\n**Invariants:** I54 has its first production bound rows. D42 gains (g),\nwhich confines the diff renderer, and its allowlist gains\n`connector-write-registry.ts` for `isPrepareToolId` only. The I26, I28,\nI53 and I54 text is updated. There is no new invariant and no migration.\n`engine/executor.ts` stays at 100% line and branch coverage.\n\n**Stated bounds**\n- The BEFORE side is the connector's claim about each file's existence\nand old text, pinned by the head check.\n- GitLab's head check is not atomic; GitHub's update is fast-forward\nonly.\n- A BOM is stripped by the connector's decoder.\n- Live account behaviour (signing, mention notifications, no-change\ncommits) was not verified.\n- The path list is a list, not a proof.\n\n**Review:** the plan was approved by Antigravity in round 2, after round\n1's 8 binding fixes. The build went through two adversarial reviews and\na whole-branch review. They found:\n- non-injective escaping;\n- file text in the egress ledger;\n- a quadratic credential pattern scanned before the caps;\n- unknown keys that could overflow the consent frame;\n- missing hook and CI paths;\n- an unescaped default-ignorable class;\n- the connector description naming the bound field;\n- the audit digests cut off by the 4,096-character cap.\n\nAll are fixed, and each security test was red-proved by reverting its\nfix.\n\n**Docs:** CLAUDE.md and GEMINI.md (mirrored), roadmap, architecture,\ndocs/README, cli-reference, SECURITY-INVARIANTS and CHANGELOG.\n\n**Gates, run locally**\n- preflight:fast, typecheck:tests, `security-invariants.test.ts`,\n`scripts/structure-audit`, the federated census in\n`test/integration/connectors`, and the connector-writes, engine, ipc,\nfederation and `packages/cli/src` test sets all pass.\n- The desktop HITL tests pass under vitest, 118 of them.\n- Serial Istanbul coverage: `executor.ts`, `prepare-step.ts`, `diff.ts`,\n`commit-bound.ts`, `commit-paths.ts` and `federation-rpc.ts` are at 100%\nline and branch.\n- verify:docker --changed: the gateway and CLI parts pass. The UI files\nfail there only because the harness runs vitest tests under `bun test`,\nwhich has no DOM.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JmSjrFVpyNKH4Je3NEDnLV\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Added GitHub and GitLab multi-file commit actions with a\ngateway-generated diff preview, branch-head checks, and exact typed\nconfirmation before writing.\n* Added refusals for sensitive or unsafe paths, credential-like content,\noversized changes, and commits with no changes.\n* Added commit audit records with file-content redaction and hashes.\nCommit actions are not available through federated or MCP action routes.\n* **Documentation**\n* Updated product guides and status records to reflect the new actions\nand revised available-write counts.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-08T17:52:43Z",
+          "tree_id": "a36418ee9405f9a73f8c1bd672afb50fdac08cf3",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/4dbe6ab5cf46282cf7deed06df2eecb626c594b7"
+        },
+        "date": 1794160724211,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 178.0662910999992,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 177.31661019999956,
             "unit": "ms"
           }
         ]
