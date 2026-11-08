@@ -162,6 +162,62 @@ describe("connector.writesEnable iac (V85)", () => {
     expect(text).toContain("write access to them");
   });
 
+  describe("the host-enforcement line follows the sandbox's real posture (review 4)", () => {
+    type Runner = NonNullable<ModelWritesDeps["sandboxRunner"]>;
+    const runner = (o: {
+      platform: NodeJS.Platform;
+      active: boolean;
+      refused?: boolean;
+      scope?: "per_port" | "all_or_nothing";
+    }): Runner =>
+      ({
+        platform: o.platform,
+        isFullyActive: () => o.active,
+        degradedReason: () => (o.active ? null : "no helper"),
+        networkRefused: () => o.refused === true,
+        ...(o.scope === undefined ? {} : { networkScope: () => o.scope }),
+        canConfine: () => null,
+      }) as unknown as Runner;
+
+    async function promptText(r: Runner | undefined): Promise<string> {
+      const prompts: unknown[] = [];
+      await handleConnectorWritesEnable(
+        { service: "iac", wave: 4, workdirs: [work] },
+        { ...deps(true, prompts), ...(r === undefined ? {} : { sandboxRunner: r }) },
+      );
+      const details =
+        (prompts[0] as { payload?: Record<string, unknown> } | undefined)?.payload ?? prompts[0];
+      return (enableWritesPromptLines(details as Record<string, unknown>) ?? []).join("\n");
+    }
+    const PER_HOST = "Hosts are enforced one by one on this system.";
+
+    test("Linux with the helper claims per-host enforcement", async () => {
+      expect(await promptText(runner({ platform: "linux", active: true }))).toContain(PER_HOST);
+    });
+
+    test("Linux without the helper (the fallback) does NOT claim it", async () => {
+      const text = await promptText(runner({ platform: "linux", active: false }));
+      expect(text).not.toContain(PER_HOST);
+      expect(text).toContain("limits the port, not the host");
+    });
+
+    test("a system that cannot confine a network says Terraform will not start", async () => {
+      const text = await promptText(runner({ platform: "linux", active: false, refused: true }));
+      expect(text).not.toContain(PER_HOST);
+      expect(text).toContain("will not start");
+    });
+
+    test("macOS and Windows runners and an absent runner never claim it", async () => {
+      for (const r of [
+        runner({ platform: "darwin", active: true, scope: "per_port" }),
+        runner({ platform: "win32", active: true, scope: "all_or_nothing" }),
+        undefined,
+      ]) {
+        expect(await promptText(r)).not.toContain(PER_HOST);
+      }
+    });
+  });
+
   test("a payload for iac with no scope is malformed and the prompt is refused", () => {
     expect(enableWritesPromptLines({ service: "iac", maxWave: 4, writes: [] })).toBeUndefined();
   });

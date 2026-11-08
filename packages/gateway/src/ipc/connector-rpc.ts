@@ -188,6 +188,8 @@ export async function dispatchConnectorRpc(options: {
     toolExecutor,
     getEnforcedPolicy,
     now: now ?? Date.now,
+    // The enable prompt's host line is read from the sandbox's live posture (D2 review 4).
+    ...(sandboxRunner === undefined ? {} : { sandboxRunner }),
     // The Obsidian opt-in is also the trigger of its sandbox write grant (I15, B4b).
     ...(connectorMesh === undefined
       ? {}

@@ -87,6 +87,8 @@ const IAC_HOST_SCOPE_LINES: Readonly<Record<string, string>> = {
     "This platform limits the port, not the host: code in an approved directory could send the credential to any host on port 443.",
   all_or_nothing:
     "This platform limits the port, not the host: code in an approved directory could send the credential to any host on port 443.",
+  refusing:
+    "This system cannot confine a child's network right now: Terraform will not start until it can.",
 };
 
 /** The iac scope lines; `undefined` when the scope is missing or malformed (refuse, never guess). */

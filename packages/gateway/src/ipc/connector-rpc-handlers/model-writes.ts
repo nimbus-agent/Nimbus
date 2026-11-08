@@ -37,6 +37,11 @@ import type {
 } from "../../connectors/connector-writes/types.ts";
 import { iacWildcardHosts } from "../../connectors/lazy-mesh/first-party-manifests.ts";
 import type { ToolExecutor } from "../../engine/executor.ts";
+import type { ReachRunner } from "../../extensions/extension-reach.ts";
+import {
+  type SandboxNetworkPosture,
+  sandboxNetworkPosture,
+} from "../../platform/sandbox/sandbox-posture.ts";
 import type { EnforcedPolicy } from "../../policy/policy-gate.ts";
 import { ConnectorRpcError } from "../connector-rpc-shared.ts";
 
@@ -59,6 +64,11 @@ export interface ModelWritesDeps {
    * refused (it cannot canonicalise a directory it cannot see).
    */
   readonly iacPathDeps?: IacPathDeps;
+  /**
+   * The sandbox runner the iac children will run under; the enable prompt's host line is read from
+   * its live posture. Absent: the prompt makes no per-host claim.
+   */
+  readonly sandboxRunner?: ReachRunner;
   /**
    * What approving the Obsidian append would let its sandbox write now (`LazyConnectorMesh.
    * obsidianWriteScope`), shown in the enable prompt. Absent: the prompt says the folders are unknown.
@@ -131,7 +141,10 @@ function parseIacGrants(
 }
 
 /** What the prompt shows for the grants: names only, never a credential value. */
-function iacPromptScope(grants: IacGrants, platform: NodeJS.Platform): Record<string, unknown> {
+function iacPromptScope(
+  grants: IacGrants,
+  posture: SandboxNetworkPosture,
+): Record<string, unknown> {
   const cfn = grants.clouds.includes("aws")
     ? iacCfnHosts(grants.regions[0] ?? "").concat(grants.regions.slice(1).flatMap(iacCfnHosts))
     : [];
@@ -149,8 +162,9 @@ function iacPromptScope(grants: IacGrants, platform: NodeJS.Platform): Record<st
         ...grants.net,
       ]),
     ].sort(),
-    hostScope:
-      platform === "linux" ? "per_host" : platform === "darwin" ? "per_port" : "all_or_nothing",
+    // The SAME decision the sandbox makes at spawn (helper found and the forwarder probe passing
+    // on Linux), never a guess from the platform name.
+    hostScope: posture,
   };
 }
 
@@ -237,10 +251,12 @@ export async function handleConnectorWritesEnable(
   // The approved directories and clouds are named in the prompt the owner approves (D2, I15).
   const iacGrants = service === IAC_SERVICE ? parseIacGrants(rec, deps) : undefined;
   if (iacGrants !== undefined) {
-    payload["iacGrants"] = iacPromptScope(
-      iacGrants,
-      deps.iacPathDeps?.platform ?? process.platform,
-    );
+    // No runner to ask: say the weakest thing (a port, not a host), never "per host".
+    const posture =
+      deps.sandboxRunner === undefined
+        ? "all_or_nothing"
+        : sandboxNetworkPosture(deps.sandboxRunner);
+    payload["iacGrants"] = iacPromptScope(iacGrants, posture);
   }
   // The Obsidian widening is named in the prompt the owner approves (I15, OR-B4-1).
   const scope = obsidianScopeFor(service, writes, deps);
