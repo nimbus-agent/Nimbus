@@ -18,6 +18,12 @@ export function createConnectorWriteDispatcher(
   deps: ConnectorWriteContext,
 ): ConnectorDispatcher {
   return {
+    // D2 (I54): the wrapper must not strip what the inner dispatcher carries. The bound-write
+    // capabilities are how an iac row reaches its preflight and settle step; without this line every
+    // iac write is refused `capabilityMissing` on the three doors that build this chain.
+    ...(inner.boundWriteCapabilities === undefined
+      ? {}
+      : { boundWriteCapabilities: inner.boundWriteCapabilities }),
     dispatch(action: PlannedAction): Promise<unknown> {
       const write = connectorWriteByActionType(action.type);
       if (write === undefined) return inner.dispatch(action);
