@@ -463,7 +463,8 @@ describe("HitlPopupPage with a commit diff (D1c)", () => {
     ["github.file.commit", "github/commit acme/api@feat/x"],
     ["gitlab.commit.create", "gitlab/commit acme/api@feat/x"],
   ])("%s with NO diff key keeps Approve disabled even with the exact text typed", (type, text) => {
-    const [req] = commit(goodDiff);
+    const req = commit(goodDiff)[0];
+    if (req === undefined) throw new Error("the commit fixture is empty");
     const { diff: _omitted, ...details } = (req as { details: Record<string, unknown> }).details;
     storeState.pending = [{ ...req, actionType: type, confirmText: text, details }];
     render(<HitlPopupPage />);
@@ -472,7 +473,8 @@ describe("HitlPopupPage with a commit diff (D1c)", () => {
   });
 
   it("a write that carries no diff by design is not held back by the rule", () => {
-    const [req] = commit(goodDiff);
+    const req = commit(goodDiff)[0];
+    if (req === undefined) throw new Error("the commit fixture is empty");
     const { diff: _omitted, ...details } = (req as { details: Record<string, unknown> }).details;
     storeState.pending = [{ ...req, actionType: "github.pr.merge", details }];
     render(<HitlPopupPage />);
