@@ -107,6 +107,8 @@ describe("HITL_REQUIRED", () => {
       "iac.terraform.destroy",
       "iac.cloudformation.deploy",
       "iac.pulumi.up",
+      "iac.cloudformation.changeset.discard",
+      "kubernetes.manifest.apply",
     ]) {
       expect(HITL_REQUIRED.has(t)).toBe(true);
     }

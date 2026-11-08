@@ -158,4 +158,15 @@ export const CLOUD_INFRA_ROWS: readonly ConnectorWriteRow[] = [
   withConfirm(row("iac_pulumi_up", "iac.pulumi.up", "mesh", 4), {
     template: "up {workingDirectory}",
   }),
+  // Connectors 0.9.0. The change-set discard is a WRITE (connector fix 19) that only the gateway's
+  // own cleanup of a change set it created would ever call; until then it is an owner-typed,
+  // never-offered row. `k8s_manifest_apply` is D3's: classified so the build stays green, with
+  // placeholder confirm text, never offered, denied on the act door; D3 owns every behaviour.
+  withConfirm(
+    row("iac_cloudformation_changeset_discard", "iac.cloudformation.changeset.discard", "mesh", 4),
+    { template: "discard {stackName}" },
+  ),
+  withConfirm(row("k8s_manifest_apply", "kubernetes.manifest.apply", "mesh", 4), {
+    template: "apply {namespace}",
+  }),
 ];

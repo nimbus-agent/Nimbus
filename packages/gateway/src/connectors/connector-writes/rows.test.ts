@@ -111,9 +111,9 @@ const REFUSED_BEFORE_A1: readonly string[] = [
 ];
 
 describe("connector write rows", () => {
-  test("115 rows, unique tool ids", () => {
-    expect(CONNECTOR_WRITE_ROWS).toHaveLength(115);
-    expect(new Set(CONNECTOR_WRITE_ROWS.map((r) => r.toolId)).size).toBe(115);
+  test("117 rows, unique tool ids", () => {
+    expect(CONNECTOR_WRITE_ROWS).toHaveLength(117);
+    expect(new Set(CONNECTOR_WRITE_ROWS.map((r) => r.toolId)).size).toBe(117);
   });
 
   test("every row's action type is in the HITL frozen set", () => {
@@ -404,7 +404,7 @@ describe("connectors 0.6.0 writes (C1)", () => {
 });
 
 describe("the B4a rows on the act door (plan Task A4)", () => {
-  test("the calendar and Drive creates are templated and proposable; overall 47 proposable, 126 denied (8 not_yet_offered)", () => {
+  test("the calendar and Drive creates are templated and proposable; overall 47 proposable, 128 denied (8 not_yet_offered)", () => {
     for (const id of [
       "outlook_calendar_create",
       "apple_calendar_event_create",
@@ -418,7 +418,7 @@ describe("the B4a rows on the act door (plan Task A4)", () => {
     }
     const entries = Object.values(ACTION_PROPOSABILITY);
     expect(entries.filter((e) => e.kind === "proposable")).toHaveLength(47);
-    expect(entries.filter((e) => e.kind === "denied")).toHaveLength(126);
+    expect(entries.filter((e) => e.kind === "denied")).toHaveLength(128);
     expect(
       entries.filter((e) => e.kind === "denied" && e.class === "not_yet_offered"),
     ).toHaveLength(8);

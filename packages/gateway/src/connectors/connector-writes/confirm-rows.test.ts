@@ -7,6 +7,7 @@ import { serviceOf } from "../../engine/service-of.ts";
 import {
   constStatement,
   declaredInputKeys,
+  matchingClose,
   requiredInputKeys,
   withSchemaArgumentDeclarations,
 } from "../testing/connector-schema-source.ts";
@@ -35,8 +36,25 @@ function gitlabPipelineDeclaration(): string {
   return parts.join("\n");
 }
 
+/**
+ * The two Terraform applies share one input object declared as a local `applyShape` constant (the
+ * registering call passes `z.object(applyShape)`), so the scan finds no schema in their call: the
+ * declaration is that constant's literal wrapped back into the `z.object(...)` it feeds.
+ */
+function iacApplyDeclaration(): string {
+  const code = codeByFile.get("connectors/iac/src/tools.ts") ?? "";
+  const at = code.indexOf("const applyShape = {");
+  if (at < 0) throw new Error("iac tools.ts: no applyShape declaration");
+  const open = code.indexOf("{", at);
+  const close = matchingClose(code, open);
+  return `z.object(${code.slice(open, close + 1)})`;
+}
+
 function declaration(toolId: string): string {
   if (toolId.startsWith("gitlab_pipeline_")) return gitlabPipelineDeclaration();
+  if (toolId === "iac_terraform_apply" || toolId === "iac_terraform_destroy") {
+    return iacApplyDeclaration();
+  }
   const reg = scan.registrations.find((r) => r.id === toolId);
   if (reg === undefined) throw new Error(`${toolId}: not a registered write`);
   const code = codeByFile.get(reg.file) ?? "";
@@ -60,8 +78,8 @@ function altPlaceholders(r: ConnectorWriteRow): string[] {
 }
 
 describe("every wave 4 row declares a type-to-confirm target", () => {
-  test("there are 41 wave 4 rows, each with a confirm template that parses", () => {
-    expect(WAVE4).toHaveLength(41);
+  test("there are 43 wave 4 rows, each with a confirm template that parses", () => {
+    expect(WAVE4).toHaveLength(43);
     for (const r of WAVE4) {
       expect(r.confirm, r.toolId).toBeDefined();
       expect(parseConfirmTemplate(r.confirm?.template ?? "").ok, r.toolId).toBe(true);

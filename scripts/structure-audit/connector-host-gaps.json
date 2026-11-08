@@ -14,6 +14,30 @@
   },
   "literalGaps": [
     {
+      "connector": "kubernetes",
+      "host": "ingress.networking.k8s.io",
+      "kind": "not called",
+      "reason": "A kubectl `-o name` resource prefix (kind.group) the manifest check compares with kubectl's own output, never fetched (connectors 0.9.0, tools.ts)."
+    },
+    {
+      "connector": "kubernetes",
+      "host": "networkpolicy.networking.k8s.io",
+      "kind": "not called",
+      "reason": "A kubectl `-o name` resource prefix (kind.group) the manifest check compares with kubectl's own output, never fetched (connectors 0.9.0, tools.ts)."
+    },
+    {
+      "connector": "kubernetes",
+      "host": "role.rbac.authorization.k8s.io",
+      "kind": "not called",
+      "reason": "A kubectl `-o name` resource prefix (kind.group) the manifest check compares with kubectl's own output, never fetched (connectors 0.9.0, tools.ts)."
+    },
+    {
+      "connector": "kubernetes",
+      "host": "rolebinding.rbac.authorization.k8s.io",
+      "kind": "not called",
+      "reason": "A kubectl `-o name` resource prefix (kind.group) the manifest check compares with kubectl's own output, never fetched (connectors 0.9.0, tools.ts)."
+    },
+    {
       "connector": "discord",
       "host": "github.com",
       "kind": "not called",
@@ -347,10 +371,10 @@
     },
     "iac": {
       "reaches": "terraform, pulumi and aws CLIs; hosts depend on each workspace.",
-      "decision": "Not declarable. Empty list, so no network today. In knownUnreachable.",
+      "decision": "Not declarable in the shared slot. Empty list, so no network today. In knownUnreachable. Re-read against connectors 0.9.0: terraform plan, show and apply (a local plan file), aws cloudformation (create-change-set, describe-change-set, describe-stacks, delete-change-set, delete-stack, execute-change-set) and pulumi preview; the Pulumi apply is refused in the connector itself and no longer shells out. The plan and apply hosts are declared per call by the gateway's per-profile runner, not by this slot.",
       "covers": {
         "env": [],
-        "cli": ["aws cloudformation", "pulumi preview", "pulumi up", "terraform"],
+        "cli": ["aws", "aws cloudformation", "cloudformation", "pulumi preview", "terraform"],
         "dynamicUrls": []
       }
     },
@@ -383,10 +407,10 @@
     },
     "kubernetes": {
       "reaches": "kubectl to the cluster in the kubeconfig; exec auth plugins may reach more.",
-      "decision": "Not declared: no parser for the kubeconfig at spawn. Empty list, so no network today. In knownUnreachable.",
+      "decision": "Not declared: no parser for the kubeconfig at spawn. Empty list, so no network today. In knownUnreachable. Re-read against connectors 0.9.0: apply (kubectl apply --server-side --dry-run=server) and diff (kubectl diff --server-side) are the manifest plan and apply, D3's, and reach the same cluster; the signals v1 and y are not commands, they are the first words of the apiVersion arrays and the YAML 1.1 word list in manifest-scan.ts.",
       "covers": {
         "env": [],
-        "cli": ["delete", "get", "kubectl", "rollout", "scale"],
+        "cli": ["apply", "delete", "diff", "get", "kubectl", "rollout", "scale", "v1", "y"],
         "dynamicUrls": []
       }
     },

@@ -78,11 +78,11 @@ describe("ACTION_PROPOSABILITY", () => {
       .sort();
     expect(got).toEqual(PROPOSABLE);
   });
-  test("counts, derived: 47 proposable, 126 denied, 8 of them not_yet_offered", () => {
+  test("counts, derived: 47 proposable, 128 denied, 8 of them not_yet_offered", () => {
     const all = Object.values(ACTION_PROPOSABILITY);
     expect(PROPOSABLE).toHaveLength(47);
     expect(all.filter((p) => p.kind === "proposable")).toHaveLength(47);
-    expect(all.filter((p) => p.kind === "denied")).toHaveLength(126);
+    expect(all.filter((p) => p.kind === "denied")).toHaveLength(128);
     expect(all.filter((p) => p.kind === "denied" && p.class === "not_yet_offered")).toHaveLength(8);
     expect(all).toHaveLength(HITL_REQUIRED.size);
   });
@@ -240,7 +240,7 @@ describe("extension service ids are not proposable on the act door", () => {
 
 test("D1: every Wave 4 row stays denied on the act door, in the class it had (nothing becomes proposable, the act door runs no before-read)", () => {
   const wave4 = CONNECTOR_WRITE_ROWS.filter((r) => r.wave === 4);
-  expect(wave4).toHaveLength(41);
+  expect(wave4).toHaveLength(43);
   const classes = new Map<string, string>();
   for (const r of wave4) {
     const p = ACTION_PROPOSABILITY[r.actionType];

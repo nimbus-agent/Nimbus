@@ -714,6 +714,95 @@ describe("the dispatcher and the REAL commit prepare tools (D1c, I54)", () => {
   });
 });
 
+describe("the dispatcher and the REAL iac and Kubernetes prepare, discard and apply tools (D2, I54)", () => {
+  const KEYS = {
+    plan: "iac_iac_terraform_plan",
+    destroyPlan: "iac_iac_terraform_destroy_plan",
+    show: "iac_iac_terraform_show_json",
+    cfn: "iac_iac_cloudformation_changeset_create",
+    k8sPlan: "kubernetes_k8s_manifest_plan",
+    discard: "iac_iac_cloudformation_changeset_discard",
+    apply: "iac_iac_terraform_apply",
+    k8sApply: "kubernetes_k8s_manifest_apply",
+  } as const;
+  const listing = () => {
+    const ran: string[] = [];
+    const tools: Record<string, { execute: () => Promise<unknown> }> = {};
+    for (const k of Object.values(KEYS)) {
+      tools[k] = {
+        execute: async () => {
+          ran.push(k);
+          return {};
+        },
+      };
+    }
+    return { d: createConnectorDispatcher({ listTools: async () => tools }), ran };
+  };
+  const call = (type: string, mcpToolId: string): PlannedAction => ({
+    type,
+    payload: { mcpToolId, input: {} },
+  });
+
+  test("the control: each prepare tool dispatches under its own service's prepare type", async () => {
+    const { d, ran } = listing();
+    for (const key of [KEYS.plan, KEYS.destroyPlan, KEYS.show, KEYS.cfn]) {
+      await d.dispatch(call("iac.write.prepare", key));
+    }
+    await d.dispatch(call("kubernetes.write.prepare", KEYS.k8sPlan));
+    expect(ran).toEqual([KEYS.plan, KEYS.destroyPlan, KEYS.show, KEYS.cfn, KEYS.k8sPlan]);
+  });
+
+  test("under a write or read action type every prepare tool is ERR_PREPARE_OUTSIDE_STEP and runs nothing", async () => {
+    const { d, ran } = listing();
+    for (const key of [KEYS.plan, KEYS.destroyPlan, KEYS.show, KEYS.cfn, KEYS.k8sPlan]) {
+      for (const type of ["iac.terraform.apply", "iac.cloudformation.deploy", "search.run"]) {
+        await expect(d.dispatch(call(type, key))).rejects.toThrow("ERR_PREPARE_OUTSIDE_STEP");
+      }
+    }
+    expect(ran).toEqual([]);
+  });
+
+  test("iac.write.prepare resolving to another service's prepare tool, a write or a read is refused", async () => {
+    const { d, ran } = listing();
+    await expect(d.dispatch(call("iac.write.prepare", KEYS.k8sPlan))).rejects.toThrow(
+      "ERR_PREPARE_SERVICE_MISMATCH",
+    );
+    await expect(d.dispatch(call("kubernetes.write.prepare", KEYS.plan))).rejects.toThrow(
+      "ERR_PREPARE_SERVICE_MISMATCH",
+    );
+    for (const key of [KEYS.apply, KEYS.discard]) {
+      await expect(d.dispatch(call("iac.write.prepare", key))).rejects.toThrow(
+        "ERR_PREPARE_NOT_A_PREPARE_TOOL",
+      );
+    }
+    expect(ran).toEqual([]);
+  });
+
+  test("the discard and the Kubernetes apply run only under their own row's action type", async () => {
+    const { d, ran } = listing();
+    await d.dispatch(call("iac.cloudformation.changeset.discard", KEYS.discard));
+    await d.dispatch(call("kubernetes.manifest.apply", KEYS.k8sApply));
+    expect(ran).toEqual([KEYS.discard, KEYS.k8sApply]);
+    for (const type of ["iac.cloudformation.deploy", "iac.terraform.apply", "iac.write.prepare"]) {
+      await expect(d.dispatch(call(type, KEYS.discard))).rejects.toThrow(
+        /ERR_(WRITE_TOOL|PREPARE)/,
+      );
+    }
+    await expect(d.dispatch(call("kubernetes.pod.delete", KEYS.k8sApply))).rejects.toThrow(
+      "ERR_WRITE_TOOL_ACTION_MISMATCH",
+    );
+    expect(ran).toEqual([KEYS.discard, KEYS.k8sApply]);
+  });
+
+  test("a before-state read cannot reach a prepare tool (it is not a read verb)", async () => {
+    const { d, ran } = listing();
+    await expect(d.dispatch(call("iac.before.read", KEYS.show))).rejects.toThrow(
+      "ERR_BEFORE_READ_NOT_A_READ",
+    );
+    expect(ran).toEqual([]);
+  });
+});
+
 describe("the dispatcher race of the iac tools (D2)", () => {
   const ok = {
     async execute() {

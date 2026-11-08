@@ -22,7 +22,10 @@ import {
   CONNECTOR_CODE_EXECUTION_TOOL_IDS,
   isConnectorCodeExecutionToolId,
 } from "./connector-code-execution-tool-ids.ts";
-import { isConnectorWriteToolId } from "./connector-write-registry.ts";
+import {
+  isConnectorWriteOrPrepareToolId,
+  isConnectorWriteToolId,
+} from "./connector-write-registry.ts";
 import { scanProcessSpawningConnectors } from "./testing/connector-process-spawns.ts";
 import {
   installedConnectorsPackageRoot,
@@ -36,7 +39,8 @@ const SCAN = scanProcessSpawningConnectors(
 /**
  * The review: every connector whose source can start a process, and each of its READ tools that
  * does so without letting the caller pick what runs. Writes are not listed: I26 refuses them all.
- * Reviewed 2026-10-05 against @nimbus-dev/connectors 0.2.1 and 0.2.2, identical for these eleven.
+ * Reviewed 2026-10-05 against @nimbus-dev/connectors 0.2.1 and 0.2.2, identical for these eleven;
+ * the iac, kubernetes and prepare-tool entries re-reviewed 2026-11-08 against 0.9.0.
  */
 const REVIEWED_PROCESS_CONNECTORS: Readonly<
   Record<string, { readonly reads: readonly string[]; readonly why: string }>
@@ -79,8 +83,8 @@ const REVIEWED_PROCESS_CONNECTORS: Readonly<
     why: "its reads invoke `gcloud`, a `.cmd` wrapper on Windows whose argv cmd.exe re-parses; a caller value reaches it (gcp_cloud_run_service_list's projectId/region in `--flag=value`), so all reads are refused as code execution",
   },
   iac: {
-    reads: [],
-    why: "every tool hands terraform or pulumi a caller-named directory, which evaluates its code",
+    reads: ["iac_cloudformation_stack_get"],
+    why: "every other tool hands terraform or pulumi a caller-named directory, which evaluates its code (the plan, the destroy plan and `show -json` are refused as code execution); the stack read is a fixed `aws cloudformation describe-stacks` with a guarded stack name (aws → native .exe); the change-set prepare tool is refused as a prepare tool",
   },
   kubernetes: {
     reads: ["k8s_deployment_get", "k8s_deployment_list", "k8s_event_list", "k8s_pod_list"],
@@ -108,6 +112,11 @@ function serverKey(connector: string): string {
 function verdict(connector: string, toolId: string): string {
   if (isConnectorCodeExecutionToolId(toolId)) return "refused: code execution";
   if (isConnectorWriteToolId(toolId)) return "refused: write";
+  // A prepare tool (connectors 0.9.0) is refused by the composed federated predicate: the peer
+  // never runs the step that precedes a write either. `iac_cloudformation_changeset_create` creates
+  // an object in AWS (remote execution, `aws` is a native executable) and `k8s_manifest_plan` asks
+  // the API server for a dry run (`kubectl` likewise): reviewed, not code execution on this machine.
+  if (isConnectorWriteOrPrepareToolId(toolId)) return "refused: prepare";
   return REVIEWED_PROCESS_CONNECTORS[connector]?.reads.includes(toolId) === true
     ? "reviewed read"
     : "UNCLASSIFIED";

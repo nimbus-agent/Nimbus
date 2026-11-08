@@ -3375,7 +3375,9 @@ describe("I26 — every connector write row is confined to the local I2 path; fe
   test("a federated peer naming a PREPARE tool (bare or namespaced) is refused write_forbidden and never runs (I54, D1c)", async () => {
     const ids = new Set<string>();
     for (const id of PREPARE_TOOL_IDS) {
-      const server = id.split("_")[0] as string;
+      // The server key a session lists it under (`k8s_*` tools live in the `kubernetes` server).
+      const head = id.split("_")[0] as string;
+      const server = head === "k8s" ? "kubernetes" : head;
       ids.add(id);
       ids.add(`${server}_${id}`);
     }
@@ -3552,7 +3554,7 @@ describe("I26 — every connector write row is confined to the local I2 path; fe
   });
 
   test("every connector write row is HITL-gated via its action type (local path)", () => {
-    expect(CONNECTOR_WRITE_ROWS.length).toBe(115);
+    expect(CONNECTOR_WRITE_ROWS.length).toBe(117);
     expect(CONNECTOR_WRITE_ROWS.filter((r) => !HITL_REQUIRED.has(r.actionType))).toEqual([]);
   });
 
@@ -3703,11 +3705,17 @@ describe("I27 — outbound share gated by share.publish HITL action", () => {
     const { isReadOnlyToolId } = await import("./share/read-tool-registry.ts");
     for (const id of [
       "iac_terraform_plan",
+      "iac_terraform_destroy_plan",
+      "iac_terraform_show_json",
       "iac_terraform_apply",
       "iac_terraform_destroy",
+      "iac_cloudformation_changeset_create",
+      "iac_cloudformation_changeset_discard",
       "iac_cloudformation_deploy",
       "iac_pulumi_preview",
       "iac_pulumi_up",
+      "k8s_manifest_plan",
+      "k8s_manifest_apply",
     ]) {
       expect(isReadOnlyToolId(id)).toBe(false);
     }
@@ -4189,7 +4197,7 @@ describe("I29 — egress-ledger completeness over the executor chokepoint", () =
   });
 
   test("the coverage set is the whole table", () => {
-    expect(CONNECTOR_WRITE_ROWS.length).toBe(115);
+    expect(CONNECTOR_WRITE_ROWS.length).toBe(117);
     expect(writesUnderTest().length).toBe(CONNECTOR_WRITE_ROWS.length + 4);
   });
 
@@ -11727,7 +11735,7 @@ describe("I53 — a first-party connector write reaches the model only through t
   test("D0a: every Wave 4 write on every door reaches dispatch only after an exact type-to-confirm match at the executor gate", async () => {
     const { NO_POLICY_OVERLAY, ToolExecutor } = await import("./engine/executor.ts");
     const wave4 = CONNECTOR_WRITE_ROWS.filter((r) => r.wave === 4);
-    expect(wave4).toHaveLength(41);
+    expect(wave4).toHaveLength(43);
     const failures: string[] = [];
     for (const row of wave4) {
       const input = confirmableInput(row);
@@ -11797,7 +11805,7 @@ describe("I53 — a first-party connector write reaches the model only through t
     const { NO_POLICY_OVERLAY, ToolExecutor } = await import("./engine/executor.ts");
     const { createConnectorDispatcher } = await import("./connectors/registry.ts");
     const wave4 = CONNECTOR_WRITE_ROWS.filter((r) => r.wave === 4 && r.transport === "mesh");
-    expect(wave4.length).toBe(33);
+    expect(wave4.length).toBe(35);
     const failures: string[] = [];
     for (const row of wave4) {
       const input = confirmableInput(row);
@@ -11881,8 +11889,10 @@ describe("I53 — a first-party connector write reaches the model only through t
     expect(isModelOfferableRow({ ...base, before: reader, confirm: { template: "{id}" } })).toBe(
       true,
     );
-    // The seven mail sends (OR-W34-1) and, since D1, the Bitbucket merge (no head precondition).
-    expect(MODEL_NEVER_OFFERED_TOOL_IDS.size).toBe(8);
+    // The seven mail sends (OR-W34-1), since D1 the Bitbucket merge (no head precondition), and
+    // since D2 the four rows that stay owner-only: Terraform destroy, Pulumi, the change-set
+    // discard and D3's Kubernetes apply.
+    expect(MODEL_NEVER_OFFERED_TOOL_IDS.size).toBe(12);
     expect(MODEL_NEVER_OFFERED_TOOL_IDS.has("bitbucket_pr_merge")).toBe(true);
     for (const r of CONNECTOR_WRITE_ROWS) {
       if (r.wave === 4) expect(r.confirm, r.toolId).toBeDefined();
@@ -12865,7 +12875,7 @@ describe("I54 — a bound connector write is dispatched only with the values its
     );
   });
 
-  test("the bound production rows are exactly the two multi-file commits and the prepare set is exactly their two prepare tools, frozen (D1c)", () => {
+  test("the prepare set is exactly the seven declared tools, frozen; the bound production rows name members of it (D1c, D2)", () => {
     expect(
       CONNECTOR_WRITE_ROWS.filter((r) => r.bound !== undefined)
         .map((r) => r.toolId)
@@ -12874,12 +12884,17 @@ describe("I54 — a bound connector write is dispatched only with the values its
     expect([...PREPARE_TOOL_IDS].sort()).toEqual([
       "github_commit_prepare",
       "gitlab_commit_prepare",
+      "iac_cloudformation_changeset_create",
+      "iac_terraform_destroy_plan",
+      "iac_terraform_plan",
+      "iac_terraform_show_json",
+      "k8s_manifest_plan",
     ]);
     for (const r of CONNECTOR_WRITE_ROWS.filter((x) => x.bound !== undefined)) {
       expect(PREPARE_TOOL_IDS.has(r.bound?.prepare.tool ?? ""), r.toolId).toBe(true);
     }
     expect(() => (PREPARE_TOOL_IDS as unknown as Set<string>).add("x_plan")).toThrow(TypeError);
-    expect(PREPARE_TOOL_IDS.size).toBe(2);
+    expect(PREPARE_TOOL_IDS.size).toBe(7);
   });
 
   test("the public gate() never binds: a bound row reaching it is refused, audited and not dispatched", async () => {
