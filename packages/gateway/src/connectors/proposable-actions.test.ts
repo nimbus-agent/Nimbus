@@ -273,3 +273,27 @@ test("D1: every Wave 4 row stays denied on the act door, in the class it had (no
     "gitlab.commit.create": "vcs",
   });
 });
+
+describe("a bound row is never proposable on the MCP act door (D1c, spec 15.5)", () => {
+  // `provenanceConsent` (ipc/capture-rpc.ts) REPLACES the executor's prompt and details with the
+  // act door's own display, built from the input alone: no before-state, no prepared facts, no diff.
+  // A proposable bound row would therefore be approved WITHOUT the diff and without the prepared
+  // head. Making one proposable needs provenanceConsent to carry the executor's preview first.
+  const bound = CONNECTOR_WRITE_ROWS.filter((r) => r.bound !== undefined);
+
+  test("the bound rows are exactly the two commits", () => {
+    expect(bound.map((r) => r.actionType).sort()).toEqual([
+      "github.file.commit",
+      "gitlab.commit.create",
+    ]);
+  });
+
+  test("no bound row is in the proposable set, the routing table or the classification", () => {
+    for (const r of bound) {
+      expect(ACTION_PROPOSABILITY[r.actionType]?.kind, r.actionType).toBe("denied");
+      expect(proposableWriteTool(r.actionType), r.actionType).toBeUndefined();
+      expect(PROPOSABLE_WRITE_TOOLS[r.actionType], r.actionType).toBeUndefined();
+      expect(classifyActionType(r.actionType, OPEN).kind, r.actionType).toBe("denied");
+    }
+  });
+});

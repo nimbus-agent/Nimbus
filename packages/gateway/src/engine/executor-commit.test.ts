@@ -400,3 +400,46 @@ for (const which of ["github", "gitlab"] as const) {
     });
   });
 }
+
+// ChatOps (D1c, plan 2.8): its consent channel has `requestApproval` only, and a bound write is
+// never delegated, so a commit can never be approved there: no typed-confirm channel, and a chat
+// card could not show a 64 KiB diff in full anyway. Refused structurally, after the (ledgered)
+// prepare read, before anything is dispatched.
+for (const which of ["github", "gitlab"] as const) {
+  describe(`${ROWS[which].type} on a channel with no typed confirmation (ChatOps)`, () => {
+    test("is rejected as unsupported_channel; no plain approval is asked and no write runs", async () => {
+      const dispatched: PlannedAction[] = [];
+      const egress: EgressEntry[] = [];
+      const audits: Array<{ actionType: string; actionJson: string }> = [];
+      let plainAsked = 0;
+      const exec = new ToolExecutor(
+        {
+          requestApproval: async () => {
+            plainAsked += 1;
+            return true;
+          },
+        },
+        { recordAudit: (e) => audits.push({ actionType: e.actionType, actionJson: e.actionJson }) },
+        {
+          dispatch: async (a) => {
+            dispatched.push(a);
+            if (a.type.endsWith(".write.prepare")) return mcp(ROWS[which].reply);
+            return { committed: true };
+          },
+        },
+        undefined,
+        { append: (e) => egress.push(e) },
+        NO_POLICY_OVERLAY,
+      );
+      const r = await exec.execute(actionOf(which));
+      expect(r.status).toBe("rejected");
+      expect(plainAsked).toBe(0);
+      expect(dispatched.map((a) => a.type)).toEqual([ROWS[which].prepareType]);
+      expect(egress.map((e) => [e.method, e.resultStatus])).toEqual([
+        [ROWS[which].prepareType, "authorized"],
+        [ROWS[which].type, "blocked"],
+      ]);
+      expect(audits.at(-1)?.actionJson).toContain('"confirm":"unsupported_channel"');
+    });
+  });
+}
