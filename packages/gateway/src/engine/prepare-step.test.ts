@@ -721,3 +721,20 @@ describe("runPrepareStep: the diff (D1c, D42(g))", () => {
     }
   });
 });
+
+describe("PREPARE_REFUSALS (D2)", () => {
+  test("carries the nothingToApply and settleFailed reasons, frozen, all distinct", () => {
+    expect(PREPARE_REFUSALS.nothingToApply).toBe("prepare: the plan would change nothing");
+    expect(PREPARE_REFUSALS.settleFailed).toBe("prepare: the plan could not be fixed and shown");
+    expect(Object.isFrozen(PREPARE_REFUSALS)).toBe(true);
+    const all = Object.values(PREPARE_REFUSALS);
+    expect(new Set(all).size).toBe(all.length);
+  });
+
+  test("no reason is built from input: every one is a fixed `prepare: ` sentence without a placeholder", () => {
+    for (const reason of Object.values(PREPARE_REFUSALS)) {
+      expect(reason.startsWith("prepare: ")).toBe(true);
+      expect(reason).not.toMatch(/[{}$]/u);
+    }
+  });
+});

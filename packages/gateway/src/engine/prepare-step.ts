@@ -68,6 +68,8 @@ export const PREPARE_REFUSALS = Object.freeze({
   unshowable: "prepare: the prepare reply cannot be shown",
   diffTooLarge: "prepare: the change is too large to show in full",
   nothingToCommit: "prepare: the change would change nothing",
+  nothingToApply: "prepare: the plan would change nothing",
+  settleFailed: "prepare: the plan could not be fixed and shown",
 });
 
 /** Thrown by {@link runPrepareStep}; `gate()` records it as a rejection with this fixed reason. */

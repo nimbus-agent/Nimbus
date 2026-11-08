@@ -135,7 +135,34 @@ export interface PrepareRead {
    * will make as a unified diff. See {@link PrepareDiff}.
    */
   readonly diff?: PrepareDiff;
+  /**
+   * D2: a closed tag naming the GATEWAY-side settler that fixes the plan's identity after the
+   * prepare reply (a Terraform plan file moved, hashed and rendered by the gateway; a CloudFormation
+   * change set cross-checked against the input). Its values REPLACE the ones `binds` read from the
+   * reply. A tag, never code: the settler is looked up by this exact key at run time.
+   */
+  readonly settle?: PrepareSettle;
+  /** The prepare tool a Terraform settler calls to render the saved plan (`terraform show -json`). */
+  readonly settleTool?: string;
+  /**
+   * D2: run the preflight phase (consent-channel capability, confirm renderability, approved
+   * workdir or cloud) BEFORE the prepare child exists. Only `"iac"`.
+   */
+  readonly preflight?: "iac";
 }
+
+/** The settlers a prepare read may name (D2). Closed: a row cannot name code. */
+export type PrepareSettle = "iac-terraform" | "iac-cfn";
+
+/**
+ * The value keys each settler returns, which a settled row's `binds` must name exactly. The
+ * Terraform settler returns its own moved plan path and its own hash; the CloudFormation settler
+ * returns the change set's ARN.
+ */
+export const SETTLE_VALUE_KEYS: Readonly<Record<PrepareSettle, readonly string[]>> = Object.freeze({
+  "iac-terraform": Object.freeze(["planFile", "planSha256"]),
+  "iac-cfn": Object.freeze(["changeSetId"]),
+});
 
 /**
  * How a bound write's change is shown in full (D1c, D42(g)). `files` pairs the caller's input (the
@@ -404,6 +431,40 @@ export function withConfirm(r: ConnectorWriteRow, confirm: ConfirmTemplate): Con
   return Object.freeze({ ...r, confirm });
 }
 
+/** The structural problems of a bound declaration's settle, settle tool and preflight tags (D2). */
+function settleProblems(
+  r: ConnectorWriteRow,
+  bound: BoundWrite,
+  prepareToolIds: ReadonlySet<string>,
+): string[] {
+  const { prepare, binds } = bound;
+  const out: string[] = [];
+  if (prepare.preflight !== undefined && prepare.preflight !== "iac") {
+    out.push('preflight must be "iac"');
+  }
+  const { settle, settleTool } = prepare;
+  if (settle === undefined) {
+    if (settleTool !== undefined) out.push("has a settle tool without a settle");
+    return out;
+  }
+  if (!Object.hasOwn(SETTLE_VALUE_KEYS, settle)) return [...out, "settle is not a known settler"];
+  if (settle === "iac-cfn") {
+    if (settleTool !== undefined) out.push("takes no settle tool");
+  } else if (settleTool === undefined) {
+    out.push("needs a settle tool");
+  } else {
+    if (!prepareToolIds.has(settleTool)) out.push("settle tool is not a declared prepare tool");
+    if (settleTool === r.toolId) out.push("settle tool is the write tool itself");
+    if (settleTool === prepare.tool) out.push("settle tool is the prepare tool itself");
+  }
+  const expected = SETTLE_VALUE_KEYS[settle];
+  const fields = binds.map((b) => b.field);
+  if (fields.length !== expected.length || !expected.every((k) => fields.includes(k))) {
+    out.push("bound fields must be exactly the settler's values");
+  }
+  return out;
+}
+
 /** The structural problems of a bound declaration (empty when none). */
 export function boundWriteProblems(
   r: ConnectorWriteRow,
@@ -438,6 +499,7 @@ export function boundWriteProblems(
   ] as const) {
     if (!Number.isInteger(n) || n <= 0) out.push(`prepare ${name} must be a positive integer`);
   }
+  out.push(...settleProblems(r, bound, prepareToolIds));
   const diffFields = r.preview.fields.filter((f) => f.kind === "diff");
   if (diffFields.length > 0 && prepare.diff === undefined) {
     out.push("has a diff field but the prepare read has no diff");
