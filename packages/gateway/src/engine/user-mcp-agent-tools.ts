@@ -107,11 +107,38 @@ export function readListedJsonSchema(listed: unknown): unknown {
   }
 }
 
-export function offeredInputSchema(listed: unknown): StandardSchemaWithJSON {
+/**
+ * `omit` names top-level properties the model must not be shown (a gateway-bound field, I54): they
+ * are removed from `properties` and `required` BEFORE the allowlist rebuild.
+ */
+export function offeredInputSchema(
+  listed: unknown,
+  omit: readonly string[] = [],
+): StandardSchemaWithJSON {
   const json = readListedJsonSchema(listed);
   const sanitised =
-    json === undefined ? { ...PERMISSIVE_USER_MCP_INPUT_SCHEMA } : sanitiseUserMcpInputSchema(json);
+    json === undefined
+      ? { ...PERMISSIVE_USER_MCP_INPUT_SCHEMA }
+      : sanitiseUserMcpInputSchema(omit.length === 0 ? json : withoutProperties(json, omit));
   return toStandardSchema(sanitised);
+}
+
+function withoutProperties(json: unknown, omit: readonly string[]): unknown {
+  if (!isPlainObject(json)) return json;
+  const out: Record<string, unknown> = { ...json };
+  const props = out["properties"];
+  if (isPlainObject(props)) {
+    out["properties"] = Object.fromEntries(
+      Object.entries(props).filter(([k]) => !omit.includes(k)),
+    );
+  }
+  const required = out["required"];
+  if (Array.isArray(required)) {
+    out["required"] = (required as unknown[]).filter(
+      (k) => typeof k !== "string" || !omit.includes(k),
+    );
+  }
+  return out;
 }
 
 const NON_OBJECT_INPUT_REFUSAL = "input must be an object";
