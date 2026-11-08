@@ -52,8 +52,12 @@ import {
   workdirsOverlap,
 } from "../connector-writes/iac-grants.ts";
 import {
+  IAC_APPLY_ESCALATE_AFTER_MS,
+  IAC_ESCALATE_AFTER_MS,
+  IAC_EXIT_WAIT_MS,
   IAC_PREFLIGHT_REFUSALS,
   IAC_TOOL_TIMEOUTS_MS,
+  iacEscalationGraceMs,
   isPlainStackName,
 } from "../connector-writes/iac-limits.ts";
 import { manifestForFirstParty } from "./first-party-manifests.ts";
@@ -397,27 +401,16 @@ export function iacChildFromProcess(proc: ChildProcess): IacChild {
   };
 }
 
-const ESCALATE_AFTER_MS = 3_000;
 /** At gateway stop: the grace children get to finish (a state write) before SIGKILL. */
 const STOP_GRACE_MS = 15_000;
 const STOP_KILL_WAIT_MS = 5_000;
-/**
- * After the budget, a SIGTERM; the SIGKILL follows this much later. A Terraform apply or destroy and
- * a CloudFormation deploy get a minute to write state and release the lock before they are killed
- * hard (a killed apply leaves a partly-written state); a plan and the rest keep the short grace. The
- * worst case a timed-out call holds its run is therefore its budget plus this grace.
- */
-export const APPLY_ESCALATE_AFTER_MS = 60_000;
-const LONG_GRACE_TOOLS: ReadonlySet<string> = new Set([
-  "iac_terraform_apply",
-  "iac_terraform_destroy",
-  "iac_cloudformation_deploy",
-]);
-export function escalationGraceMs(toolId: string): number {
-  return LONG_GRACE_TOOLS.has(toolId) ? APPLY_ESCALATE_AFTER_MS : ESCALATE_AFTER_MS;
-}
-/** A plan child that answered gets the escalation plus this long to be reaped before the plan fails. */
-const EXIT_WAIT_MS = ESCALATE_AFTER_MS + 5_000;
+// The SIGTERM-to-SIGKILL grace, the plan's reap wait and the dispatcher's race over them live in
+// `iac-limits.ts`, so the dispatcher's timeout is derived from the same numbers (it must outlast
+// all of these: the runner always settles first).
+export const APPLY_ESCALATE_AFTER_MS = IAC_APPLY_ESCALATE_AFTER_MS;
+export const escalationGraceMs = iacEscalationGraceMs;
+const ESCALATE_AFTER_MS = IAC_ESCALATE_AFTER_MS;
+const EXIT_WAIT_MS = IAC_EXIT_WAIT_MS;
 
 /** What one call to a child produced; `exited` resolves when the process is really gone. */
 interface ChildCall {

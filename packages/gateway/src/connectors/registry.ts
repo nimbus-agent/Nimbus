@@ -16,7 +16,12 @@ import { isReadOnlyToolId } from "../share/read-tool-registry.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
 import { MCP_TOOL_RESULT_MAX_BYTES } from "./_lib/mcp-tool-result.ts";
 import { isConnectorWriteToolId } from "./connector-write-registry.ts";
-import { IAC_DISCARD, IAC_TOOL_TIMEOUTS_MS } from "./connector-writes/iac-limits.ts";
+import {
+  IAC_DISCARD,
+  IAC_TOOL_TIMEOUTS_MS,
+  type IacDispatchTiming,
+  iacDispatchTimeoutMs,
+} from "./connector-writes/iac-limits.ts";
 import { CONNECTOR_WRITE_ROWS } from "./connector-writes/index.ts";
 import { isPrepareToolId, PREPARE_TOOL_IDS } from "./connector-writes/prepare-tools.ts";
 import type { IacHost } from "./lazy-mesh/iac-runner.ts";
@@ -148,12 +153,19 @@ export const DEFAULT_TOOL_TIMEOUT_MS = 60_000;
 
 /**
  * The race for the tool the dispatcher resolved: a longer one for the iac tools (a plan or an apply
- * outlives the generic 60 s), otherwise the default. Matched on the resolved mesh key itself, never
- * on the payload, and only for the `iac` server.
+ * outlives the generic 60 s), otherwise the default. It is the runner's budget PLUS its escalation
+ * grace and a margin ({@link iacDispatchTimeoutMs}), so the runner settles first and its message
+ * reaches the caller. Matched on the resolved mesh key itself, never on the payload, and only for
+ * the `iac` server.
  */
-export function iacToolTimeoutMs(resolvedKey: string): number | undefined {
-  for (const [id, ms] of Object.entries(IAC_TOOL_TIMEOUTS_MS)) {
-    if (resolvedKey === id || resolvedKey === mcpClientToolKey("iac", id)) return ms;
+export function iacToolTimeoutMs(
+  resolvedKey: string,
+  timing?: IacDispatchTiming,
+): number | undefined {
+  for (const id of Object.keys(timing?.budgetsMs ?? IAC_TOOL_TIMEOUTS_MS)) {
+    if (resolvedKey === id || resolvedKey === mcpClientToolKey("iac", id)) {
+      return iacDispatchTimeoutMs(id, timing);
+    }
   }
   return undefined;
 }
@@ -166,11 +178,15 @@ export function createConnectorDispatcher(
     maxResultBytes?: number;
     /** Test seam for the declared prepare tools; static rule D42(c) forbids production code to pass it. */
     prepareToolIds?: ReadonlySet<string>;
+    /** Test seam: the runner's injected budgets and graces, so the race stays above them. */
+    iacTiming?: IacDispatchTiming;
   },
 ): ConnectorDispatcher {
   const prepareToolIds = options?.prepareToolIds ?? PREPARE_TOOL_IDS;
   const toolTimeoutFor = (resolvedKey: string): number =>
-    options?.toolTimeoutMs ?? iacToolTimeoutMs(resolvedKey) ?? DEFAULT_TOOL_TIMEOUT_MS;
+    options?.toolTimeoutMs ??
+    iacToolTimeoutMs(resolvedKey, options?.iacTiming) ??
+    DEFAULT_TOOL_TIMEOUT_MS;
   const maxResultBytes = options?.maxResultBytes ?? MAX_TOOL_RESULT_BYTES;
   let toolsPromise: ReturnType<McpToolListingClient["listTools"]> | undefined;
   let cachedEpoch = -1;

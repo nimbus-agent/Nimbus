@@ -1,6 +1,11 @@
 import { describe, expect, test } from "bun:test";
 
 import type { PlannedAction } from "../engine/types.ts";
+import {
+  IAC_EXIT_WAIT_MS,
+  IAC_TOOL_TIMEOUTS_MS,
+  iacEscalationGraceMs,
+} from "./connector-writes/iac-limits.ts";
 import type { IacHost } from "./lazy-mesh/iac-runner.ts";
 import {
   createConnectorDispatcher,
@@ -840,24 +845,31 @@ describe("the dispatcher race of the iac tools (D2)", () => {
     return seen[0];
   }
 
-  test("each iac tool has its own outer bound; the plan and apply outlive the generic 60 s", () => {
-    expect(iacToolTimeoutMs("iac_iac_terraform_plan")).toBe(600_000);
-    expect(iacToolTimeoutMs("iac_iac_terraform_destroy_plan")).toBe(600_000);
-    expect(iacToolTimeoutMs("iac_iac_terraform_show_json")).toBe(120_000);
-    expect(iacToolTimeoutMs("iac_iac_cloudformation_changeset_create")).toBe(180_000);
-    expect(iacToolTimeoutMs("iac_iac_terraform_apply")).toBe(30 * 60_000);
-    expect(iacToolTimeoutMs("iac_iac_terraform_destroy")).toBe(30 * 60_000);
-    expect(iacToolTimeoutMs("iac_iac_cloudformation_deploy")).toBe(60_000);
-    expect(iacToolTimeoutMs("iac_iac_cloudformation_changeset_discard")).toBe(60_000);
+  test("each iac tool's race is the runner's budget plus its grace and a margin; the plan and apply outlive the generic 60 s", () => {
+    expect(iacToolTimeoutMs("iac_iac_terraform_plan")).toBe(641_000);
+    expect(iacToolTimeoutMs("iac_iac_terraform_destroy_plan")).toBe(641_000);
+    expect(iacToolTimeoutMs("iac_iac_terraform_show_json")).toBe(161_000);
+    expect(iacToolTimeoutMs("iac_iac_cloudformation_changeset_create")).toBe(221_000);
+    expect(iacToolTimeoutMs("iac_iac_terraform_apply")).toBe(1_898_000);
+    expect(iacToolTimeoutMs("iac_iac_terraform_destroy")).toBe(1_898_000);
+    expect(iacToolTimeoutMs("iac_iac_cloudformation_deploy")).toBe(158_000);
+    expect(iacToolTimeoutMs("iac_iac_cloudformation_changeset_discard")).toBe(101_000);
     expect(iacToolTimeoutMs("iac_iac_pulumi_up")).toBeUndefined();
     // Another server's tool that merely ends in an iac name is not an iac tool.
     expect(iacToolTimeoutMs("github_iac_terraform_apply")).toBeUndefined();
-    expect(iacToolTimeoutMs("iac_terraform_apply")).toBe(30 * 60_000);
+    expect(iacToolTimeoutMs("iac_terraform_apply")).toBe(1_898_000);
+  });
+
+  test("the race is strictly longer than the runner's budget plus its grace and reap wait, for every iac tool", () => {
+    for (const [id, budget] of Object.entries(IAC_TOOL_TIMEOUTS_MS)) {
+      const race = iacToolTimeoutMs(id) ?? 0;
+      expect(race).toBeGreaterThan(budget + iacEscalationGraceMs(id) + IAC_EXIT_WAIT_MS);
+    }
   });
 
   test("the race a dispatch arms is the resolved key's own, the default elsewhere", async () => {
-    expect(await raceMs("iac_iac_terraform_apply", "iac.terraform.apply")).toBe(30 * 60_000);
-    expect(await raceMs("iac_iac_terraform_plan", "iac.write.prepare")).toBe(600_000);
+    expect(await raceMs("iac_iac_terraform_apply", "iac.terraform.apply")).toBe(1_898_000);
+    expect(await raceMs("iac_iac_terraform_plan", "iac.write.prepare")).toBe(641_000);
     expect(await raceMs("github_repo_list", "github_repo_list")).toBe(DEFAULT_TOOL_TIMEOUT_MS);
   });
 

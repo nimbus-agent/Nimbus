@@ -42,10 +42,12 @@ export const IAC_LIMITS = Object.freeze({
 });
 
 /**
- * The dispatcher's per-call race for the iac tools, by bare tool id (D2 task 5). The generic 60 s
- * race would kill a plan or an apply long before it can finish. Each is the OUTER bound over a
- * prepare step's own budget (`terraform.budgetMs`, `cfn.budgetMs`), which fires first. An apply
- * that outlives its budget is killed by the runner and reported as possibly partly changed.
+ * The RUNNER's child budget for each iac tool, by bare tool id (D2 task 5): the time `IacRunner`
+ * gives the child before it sends SIGTERM and rejects the call with its own fixed text (an apply
+ * that outlives its budget is reported as possibly partly changed). The generic 60 s race would
+ * kill a plan or an apply long before it can finish. This is NOT the dispatcher's race: that is
+ * {@link iacDispatchTimeoutMs}, which is strictly longer, so the runner always settles first and
+ * its message is the one the caller gets.
  */
 export const IAC_TOOL_TIMEOUTS_MS: Readonly<Record<string, number>> = Object.freeze({
   iac_terraform_plan: 10 * 60_000,
@@ -57,6 +59,58 @@ export const IAC_TOOL_TIMEOUTS_MS: Readonly<Record<string, number>> = Object.fre
   iac_cloudformation_deploy: 60_000,
   iac_cloudformation_changeset_discard: 60_000,
 });
+
+/** After the budget, the SIGTERM-to-SIGKILL grace of a plan and the other short tools. */
+export const IAC_ESCALATE_AFTER_MS = 3_000;
+/**
+ * The same grace for a Terraform apply or destroy and a CloudFormation deploy: a minute to write
+ * state and release the lock before they are killed hard (a killed apply leaves a partly-written
+ * state). The worst case a timed-out call holds its run is its budget plus this grace.
+ */
+export const IAC_APPLY_ESCALATE_AFTER_MS = 60_000;
+/** A plan child that answered gets the escalation plus this long to be reaped before the plan fails. */
+export const IAC_EXIT_WAIT_MS = IAC_ESCALATE_AFTER_MS + 5_000;
+/** Slack on top of the runner's worst case for the spawn and grant preparation before its timer starts. */
+export const IAC_DISPATCH_MARGIN_MS = 30_000;
+
+const IAC_LONG_GRACE_TOOLS: ReadonlySet<string> = new Set([
+  "iac_terraform_apply",
+  "iac_terraform_destroy",
+  "iac_cloudformation_deploy",
+]);
+export function iacEscalationGraceMs(toolId: string): number {
+  return IAC_LONG_GRACE_TOOLS.has(toolId) ? IAC_APPLY_ESCALATE_AFTER_MS : IAC_ESCALATE_AFTER_MS;
+}
+
+/** Test seams for {@link iacDispatchTimeoutMs}: the runner's own injected values. */
+export interface IacDispatchTiming {
+  readonly budgetsMs?: Readonly<Record<string, number>>;
+  /** Replaces the per-tool grace (the runner's `escalateAfterMs` seam). */
+  readonly escalateAfterMs?: number;
+  readonly exitWaitMs?: number;
+  readonly marginMs?: number;
+}
+
+/**
+ * The dispatcher's per-call race for the iac tools: the runner's budget plus its escalation grace,
+ * plus the time a plan waits for its child to be reaped, plus a margin. STRICTLY longer than
+ * anything the runner does on its own, so the runner's rejection (for an apply: "the infrastructure
+ * may be partly changed; check the Terraform state") always reaches the caller, never the
+ * dispatcher's generic "exceeded" text. Undefined for a tool the runner does not run.
+ */
+export function iacDispatchTimeoutMs(
+  toolId: string,
+  timing: IacDispatchTiming = {},
+): number | undefined {
+  const budget = (timing.budgetsMs ?? IAC_TOOL_TIMEOUTS_MS)[toolId];
+  if (budget === undefined) return undefined;
+  return (
+    budget +
+    (timing.escalateAfterMs ?? iacEscalationGraceMs(toolId)) +
+    (timing.exitWaitMs ?? IAC_EXIT_WAIT_MS) +
+    (timing.marginMs ?? IAC_DISPATCH_MARGIN_MS)
+  );
+}
 
 /**
  * Every reason an iac input check can give: fixed text, never built from the input (so an input

@@ -17,6 +17,7 @@ import { createMockVault } from "../../vault/mock.ts";
 import { IAC_CLOUD_ENV_NAMES } from "../connector-writes/iac-clouds.ts";
 import type { IacGrants, IacPathDeps } from "../connector-writes/iac-grants.ts";
 import { IAC_PREFLIGHT_REFUSALS } from "../connector-writes/iac-limits.ts";
+import { createConnectorDispatcher } from "../registry.ts";
 import {
   APPLY_ESCALATE_AFTER_MS,
   buildIacProfile,
@@ -1192,4 +1193,44 @@ describe("a Git repository beneath the working directory (owner ruling OR-D2-8)"
     expect(children).toEqual([]);
     run.release();
   });
+});
+
+describe("the dispatcher's race stays above the runner's budget (D2 whole-branch review 3)", () => {
+  test("a hung apply reaches the caller with the runner's own text, not the dispatcher's generic one", async () => {
+    const timing = {
+      budgetsMs: { iac_terraform_apply: 40 },
+      escalateAfterMs: 20,
+      exitWaitMs: 20,
+      marginMs: 40,
+    };
+    const { r } = runner("hang-ignore-term", {
+      timeoutsMs: timing.budgetsMs,
+      escalateAfterMs: timing.escalateAfterMs,
+      exitWaitMs: timing.exitWaitMs,
+    });
+    const run = await openRun(r);
+    const approved = join(iacRoot, "approved", "e".repeat(32), "f".repeat(32));
+    mkdirSync(approved, { recursive: true });
+    const planFile = join(approved, "plan.tfplan");
+    writeFileSync(planFile, "x");
+    const merged: Record<string, { execute?: (i: unknown) => Promise<unknown> }> = {
+      iac_iac_terraform_apply: { execute: async () => "original" },
+    };
+    routeIacTools(merged, r);
+    const dispatcher = createConnectorDispatcher(
+      { listTools: async () => merged as never },
+      { iacTiming: timing },
+    );
+    await expect(
+      dispatcher.dispatch({
+        type: "iac.terraform.apply",
+        payload: {
+          mcpToolId: "iac_iac_terraform_apply",
+          input: { workingDirectory: work, planFile, planSha256: "0".repeat(64) },
+        },
+      }),
+    ).rejects.toThrow("may be partly changed; check the Terraform state");
+    run.release();
+    await new Promise((res) => setTimeout(res, 100));
+  }, 10_000);
 });
