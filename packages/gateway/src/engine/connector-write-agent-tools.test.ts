@@ -1009,6 +1009,31 @@ describe("a bound row's prepare tool at offer time", () => {
     expect(ex.opts).toEqual([[]]);
   });
 
+  test("a bound row's description is the gateway's own: the connector's text, which names the bound field, is not passed on", async () => {
+    const bound = synthBound({ argKeys: ["name"] }).binds.map((b) => b.field);
+    expect(bound.length).toBeGreaterThan(0);
+    const src = fakeSource([boundRow(4)], {
+      argocd: {
+        [SYNC_KEY]: entry(`Sync an app but only if the head is still ${bound.join(" and ")}`),
+        [PREPARE_KEY]: entry("Plan"),
+      },
+    });
+    const tools = await buildConnectorWriteAgentTools(
+      src,
+      () => optsExecutor(),
+      wrapSpy().wrap,
+      NONE,
+    );
+    const offered = tools[SYNC_NAME] as unknown as { description: string; inputSchema: unknown };
+    for (const field of bound) {
+      expect(offered.description).not.toContain(field);
+      expect(JSON.stringify(offered.inputSchema)).not.toContain(field);
+    }
+    expect(offered.description).toContain("Every call asks the owner");
+    expect(offered.description).toContain("pins it; never supply it");
+    expect(offered.description).not.toContain("1 to 20 files"); // the commit caps are for the commit rows
+  });
+
   test("wave 4 whose prepare tool is missing (or not a plain object) is NOT offered, with one warning", async () => {
     for (const extra of [{}, { [PREPARE_KEY]: "nope" }]) {
       const src = fakeSource([boundRow(4)], { argocd: argocdListing(extra) });

@@ -380,11 +380,26 @@ function readDiff(raw: unknown): DiffViewModel | undefined {
 }
 
 /**
- * Whether the details carry a `diff` the view cannot read. The popup then keeps Approve disabled:
- * an owner is never asked to approve a change the screen could not show in full.
+ * The write types whose approval is bound to a diff the gateway renders (the multi-file commits,
+ * D1c). For these a MISSING diff is as unapprovable as an unreadable one: the owner would be typing
+ * a confirmation for a change the screen never showed.
  */
-export function isDiffMalformed(details: Record<string, unknown> | undefined): boolean {
-  if (details === undefined || !Object.hasOwn(details, "diff")) return false;
+const DIFF_REQUIRED_ACTION_TYPES: ReadonlySet<string> = new Set([
+  "github.file.commit",
+  "gitlab.commit.create",
+]);
+
+/**
+ * Whether the details carry a `diff` the view cannot read, or (for a write type that must carry
+ * one) no diff at all. The popup then keeps Approve disabled: an owner is never asked to approve a
+ * change the screen could not show in full.
+ */
+export function isDiffMalformed(
+  details: Record<string, unknown> | undefined,
+  actionType?: string,
+): boolean {
+  const required = actionType !== undefined && DIFF_REQUIRED_ACTION_TYPES.has(actionType);
+  if (details === undefined || !Object.hasOwn(details, "diff")) return required;
   return readDiff(details["diff"]) === undefined;
 }
 

@@ -52,18 +52,19 @@ export function sanitisePreviewText(s: string): string {
 /**
  * Characters {@link escapeDiffText} always escapes: every control (Cc), format (Cf: bidi, zero-width,
  * soft hyphen, the tag block, interlinear annotation, ...), line and paragraph separator (Zl, Zp),
- * surrogate (Cs), the variation selectors and supplement, and the blank-looking letters (combining
- * grapheme joiner, Hangul fillers, braille blank), and the backslash itself. One linear pass.
- * The source holds escapes, never the invisible characters themselves.
+ * surrogate (Cs), every Default_Ignorable_Code_Point (the variation selectors and supplement, the
+ * combining grapheme joiner, the Hangul and Khmer fillers, the Mongolian free variation selectors,
+ * the unassigned U+2065, U+FFF0-U+FFF8 and tag-block gaps), the braille blank U+2800 (not default
+ * ignorable, but blank), and the backslash itself. One linear pass. The source holds escapes,
+ * never the invisible characters themselves.
  */
-const DIFF_ESCAPED =
-  /[\\\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Cs}\u3164\uFFA0\u2800]|\u034F|\u115F|\u1160|[\uFE00-\uFE0F]|[\u{E0100}-\u{E01EF}]/gu;
+const DIFF_ESCAPED = /[\\\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Cs}\p{Default_Ignorable_Code_Point}\u2800]/gu;
 
 /**
  * The diff's text escaper (D1c). Unlike {@link sanitisePreviewText} it is INJECTIVE: a literal
  * backslash is shown `\\`, so a real character shown `\u{XXXX}` (a tab is `\u{0009}`, a CR
- * `\u{000D}`) can never look like the same characters typed literally, and it escapes every
- * invisible or format character, not the shorter list of the field previews. Only LF is kept (a
+ * `\u{000D}`) can never look like the same characters typed literally, and it escapes the classes
+ * of {@link DIFF_ESCAPED}, not the shorter list of the field previews. Only LF is kept (a
  * diff line never holds one).
  */
 export function escapeDiffText(s: string): string {

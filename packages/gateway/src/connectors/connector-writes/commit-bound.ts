@@ -15,7 +15,12 @@
 // `expectedHeadSha` and sends that file's id itself.
 
 import { arrayAt, beforeReplyJson, boolAt, nonEmptyString, stringAt } from "./before-select.ts";
-import { COMMIT_LIMITS, commitInputRefusal } from "./commit-limits.ts";
+import {
+  COMMIT_LIMITS,
+  commitInputRefusal,
+  GITHUB_COMMIT_KEYS,
+  GITLAB_COMMIT_KEYS,
+} from "./commit-limits.ts";
 import type { DiffInputFile } from "./diff.ts";
 import type { BeforeStateField, BoundField, BoundWrite, PrepareRead } from "./types.ts";
 
@@ -169,11 +174,10 @@ function selectHead(reply: unknown, extra: readonly BeforeStateField[]): BeforeS
   ];
 }
 
-const COMMON: Pick<PrepareRead, "budgetMs" | "maxInputBytes" | "maxReplyBytes" | "inputRefusal"> = {
+const COMMON: Pick<PrepareRead, "budgetMs" | "maxInputBytes" | "maxReplyBytes"> = {
   budgetMs: COMMIT_LIMITS.budgetMs,
   maxInputBytes: COMMIT_LIMITS.maxInputChars,
   maxReplyBytes: COMMIT_LIMITS.maxReplyChars,
-  inputRefusal: commitInputRefusal,
 };
 
 const DIFF_LIMITS = {
@@ -189,6 +193,7 @@ export const GITHUB_COMMIT_BOUND: BoundWrite = {
     args: (input) => prepareArgsOf(input, ["owner", "repo", "branch"]),
     select: (reply) => selectHead(reply, []),
     diff: { files: (picked, reply) => pairFiles(picked, reply, githubModeOf), ...DIFF_LIMITS },
+    inputRefusal: (input) => commitInputRefusal(input, GITHUB_COMMIT_KEYS),
     ...COMMON,
   },
   binds: [EXPECTED_HEAD],
@@ -213,6 +218,7 @@ export const GITLAB_COMMIT_BOUND: BoundWrite = {
         },
       ]),
     diff: { files: (picked, reply) => pairFiles(picked, reply, gitlabModeOf), ...DIFF_LIMITS },
+    inputRefusal: (input) => commitInputRefusal(input, GITLAB_COMMIT_KEYS),
     ...COMMON,
   },
   binds: [EXPECTED_HEAD],

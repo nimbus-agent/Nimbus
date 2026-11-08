@@ -5,10 +5,14 @@
 // owner's own doors are not restricted. Pure and fixed-text: nothing of the input is echoed.
 //
 // STATED BOUND: the path table is a LIST, not a proof. A build file the list omits (`Makefile`,
-// `package.json` scripts, `Dockerfile`, a `Jenkinsfile` in a subdirectory) also runs code; the
+// `package.json` scripts, `Dockerfile`, a CI product the list does not name) also runs code; the
 // owner can still commit those, and the model door's diff is shown in full either way.
 import { SECRET_PATTERNS } from "../../security/secret-patterns.ts";
-import { COMMIT_INPUT_REFUSALS, isSafeCommitPathGateway } from "./commit-limits.ts";
+import {
+  COMMIT_INPUT_REFUSALS,
+  commitSizeRefusal,
+  isSafeCommitPathGateway,
+} from "./commit-limits.ts";
 
 export const COMMIT_PATH_REFUSAL =
   "the model cannot commit a CI, workflow, hook or review-rule file; ask the owner to commit it";
@@ -58,6 +62,34 @@ export const COMMIT_REFUSED_PATHS: ReadonlyArray<{ readonly entry: string; reado
       { entry: ".husky", why: "git hooks run on a developer's machine" },
       { entry: ".githooks", why: "git hooks run on a developer's machine" },
       { entry: ".devcontainer", why: "dev containers run commands on open" },
+      ...bothYaml(".pre-commit-config").map((entry) => ({
+        entry,
+        why: "pre-commit hooks run on a developer's machine",
+      })),
+      ...["lefthook", ".lefthook", "lefthook-local", ".lefthook-local"].flatMap((base) =>
+        ["yml", "yaml", "json", "toml"].map((ext) => ({
+          entry: `${base}.${ext}`,
+          why: "lefthook git hooks run on a developer's machine",
+        })),
+      ),
+      ...bothYaml(".cirrus").map((entry) => ({ entry, why: "Cirrus CI" })),
+      ...bothYaml("appveyor").map((entry) => ({ entry, why: "AppVeyor" })),
+      ...bothYaml(".appveyor").map((entry) => ({ entry, why: "AppVeyor" })),
+      ...bothYaml(".woodpecker").map((entry) => ({ entry, why: "Woodpecker CI" })),
+      { entry: ".woodpecker", why: "Woodpecker CI pipelines" },
+      { entry: ".semaphore", why: "Semaphore CI" },
+      ...bothYaml("cloudbuild").map((entry) => ({ entry, why: "Google Cloud Build" })),
+      ...bothYaml("buildspec").map((entry) => ({ entry, why: "AWS CodeBuild" })),
+      ...bothYaml("bitrise").map((entry) => ({ entry, why: "Bitrise" })),
+      ...bothYaml("codemagic").map((entry) => ({ entry, why: "Codemagic" })),
+      {
+        entry: ".gitea/workflows",
+        why: "Gitea Actions workflows run with the repository's secrets",
+      },
+      {
+        entry: ".forgejo/workflows",
+        why: "Forgejo Actions workflows run with the repository's secrets",
+      },
     ].map((e) => Object.freeze(e)),
   );
 
@@ -73,16 +105,44 @@ export function isRefusedCommitPath(path: string): boolean {
   const lower = path.toLowerCase();
   const base = lower.slice(lower.lastIndexOf("/") + 1);
   if (COMMIT_REFUSED_BASENAMES.has(base)) return true;
+  // Jenkins reads a `Jenkinsfile` (and `Jenkinsfile.release`, `Jenkinsfile-deploy`) in ANY directory.
+  if (
+    base === "jenkinsfile" ||
+    base.startsWith("jenkinsfile.") ||
+    base.startsWith("jenkinsfile-")
+  ) {
+    return true;
+  }
   return COMMIT_REFUSED_PATHS.some((e) => lower === e.entry || lower.startsWith(`${e.entry}/`));
 }
 
+/** The longest run a credential pattern may match in one token class (see {@link boundedSource}). */
+const TOKEN_RUN_MAX = 4096;
+
 /**
- * NON-GLOBAL clones of the high-confidence secret patterns, compiled once at load. The shared
- * `SECRET_PATTERNS` regexes are global (`lastIndex` state), so calling `.test()` on them would make
- * a second check of the same text depend on the first.
+ * A LINEAR-TIME copy of a shared pattern's source. The shared patterns have unbounded runs (`+`,
+ * `{n,}`), so text like `eyJ-eyJ-eyJ-...` made each start rescan the whole rest (quadratic). Here
+ * every unbounded run is capped at {@link TOKEN_RUN_MAX}, which bounds the work per start, and a
+ * word boundary (`\b`) after an unbounded run is dropped (a prefix of a longer token is still a
+ * credential-looking token, so nothing is lost by matching it). Fixed-length patterns are as is.
+ */
+function boundedSource(source: string): string {
+  const unboundedEnd = /(?:\+|\{\d+,\})\\b$/u;
+  const noTail = unboundedEnd.test(source) ? source.slice(0, -2) : source;
+  return noTail
+    .replaceAll(/\{(\d+),\}/gu, `{$1,${String(TOKEN_RUN_MAX)}}`)
+    .replaceAll(/(\])\+/gu, `$1{1,${String(TOKEN_RUN_MAX)}}`);
+}
+
+/**
+ * NON-GLOBAL, bounded clones of the high-confidence secret patterns, compiled once at load. The
+ * shared `SECRET_PATTERNS` regexes are global (`lastIndex` state), so calling `.test()` on them
+ * would make a second check of the same text depend on the first.
  */
 const CREDENTIAL_PATTERNS: readonly RegExp[] = Object.freeze(
-  SECRET_PATTERNS.map((p) => new RegExp(p.regex.source, p.regex.flags.replaceAll("g", ""))),
+  SECRET_PATTERNS.map(
+    (p) => new RegExp(boundedSource(p.regex.source), p.regex.flags.replaceAll("g", "")),
+  ),
 );
 
 /** Whether `text` looks like a credential by any high-confidence pattern. */
@@ -104,6 +164,10 @@ export function commitModelRefusal(
   input: Readonly<Record<string, unknown>>,
 ): string | undefined {
   if (!COMMIT_WRITE_TOOL_IDS.has(toolId)) return undefined;
+  // The size caps FIRST: nothing below (path checks, the bidi and credential scans) runs on a
+  // model input larger than the prepare step would ever accept.
+  const tooLarge = commitSizeRefusal(input);
+  if (tooLarge !== undefined) return tooLarge;
   const files: unknown = Object.hasOwn(input, "files") ? input["files"] : undefined;
   if (!Array.isArray(files)) return undefined;
   const entries = files as unknown[];

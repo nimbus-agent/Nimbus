@@ -3,7 +3,9 @@
 // and the PURE input check the commit rows hand to the prepare step (`PrepareRead.inputRefusal`).
 // Imports nothing from the row table or the executor. The connector's own caps are looser (192 KiB
 // combined, `shared/commit-files.ts`); the gateway's are tighter on purpose, so the diff the owner
-// is shown in full is always small enough to read and to carry in one IPC frame.
+// is shown in full stays small enough to read and to carry in one IPC frame. Whether the WHOLE
+// `consent.request` frame (diff, message, paths, the prompt copy) stays under the IPC line cap is
+// measured, not assumed: `ipc/consent-diff-frame.test.ts` builds the worst combined frame.
 
 /** The three caps (and their backstops) of a commit the gateway will prepare and show. */
 export const COMMIT_LIMITS = Object.freeze({
@@ -37,7 +39,29 @@ export const COMMIT_INPUT_REFUSALS = Object.freeze({
   messageInvalid: "commit: the message must be 1 to 5000 characters",
   contentBad: "commit: file text may not contain a NUL or an unpaired surrogate",
   contentTooLarge: "commit: the new file text is over 32 KiB in total",
+  inputTooLarge: "commit: the input is too large",
+  fieldNotTaken: "commit: the input has a field this write does not take",
 });
+
+/**
+ * The top-level input keys each commit row takes (pinned against the installed connector schemas
+ * by a test). `expectedHeadSha` is deliberately absent: the gateway binds it and refuses a caller
+ * that supplies it before this check runs. Any other key would be rendered into the owner's
+ * prompt as an "other field", so it is refused here instead.
+ */
+export const GITHUB_COMMIT_KEYS: readonly string[] = Object.freeze([
+  "owner",
+  "repo",
+  "branch",
+  "message",
+  "files",
+]);
+export const GITLAB_COMMIT_KEYS: readonly string[] = Object.freeze([
+  "projectPath",
+  "branch",
+  "message",
+  "files",
+]);
 
 /**
  * A character the approval preview cannot be trusted to show as it is: control (Cc), format (Cf),
@@ -91,13 +115,48 @@ function utf8Length(text: string): number {
   return new TextEncoder().encode(text).length;
 }
 
+/** Characters of the serialised input, or infinity when it cannot be serialised. */
+function serialisedChars(v: unknown): number {
+  try {
+    return (JSON.stringify(v) ?? "").length;
+  } catch {
+    return Number.POSITIVE_INFINITY;
+  }
+}
+
+/**
+ * The size caps alone, cheap and run FIRST on every door (before any content scan): the serialised
+ * input, then the UTF-8 bytes of the new text of the file entries that are well-formed enough to
+ * count. A malformed input returns `undefined` here (the shape checks refuse it).
+ */
+export function commitSizeRefusal(input: Readonly<Record<string, unknown>>): string | undefined {
+  if (serialisedChars(input) > COMMIT_LIMITS.maxInputChars) {
+    return COMMIT_INPUT_REFUSALS.inputTooLarge;
+  }
+  const files: unknown = Object.hasOwn(input, "files") ? input["files"] : undefined;
+  if (!Array.isArray(files)) return undefined;
+  let bytes = 0;
+  for (const f of files as unknown[]) {
+    const content: unknown = isRecord(f) ? f["content"] : undefined;
+    if (typeof content === "string") bytes += utf8Length(content);
+    if (bytes > COMMIT_LIMITS.maxNewContentBytes) return COMMIT_INPUT_REFUSALS.contentTooLarge;
+  }
+  return undefined;
+}
+
 /**
  * Why a commit input may not enter the prepare step, or `undefined`. PURE and fixed-text. Order:
- * shape of `files`, each entry, path safety of EVERY path, uniqueness, the message, then the
+ * the input's own keys (only `allowedKeys`; the default is both rows' union), shape of `files`, each entry, path safety of EVERY path, uniqueness, the message, then the
  * content (NUL, unpaired surrogate) and the 32 KiB total. Run before any read or prompt.
  */
-export function commitInputRefusal(input: Readonly<Record<string, unknown>>): string | undefined {
+export function commitInputRefusal(
+  input: Readonly<Record<string, unknown>>,
+  allowedKeys: readonly string[] = [...GITHUB_COMMIT_KEYS, ...GITLAB_COMMIT_KEYS],
+): string | undefined {
   if (!isRecord(input)) return COMMIT_INPUT_REFUSALS.filesInvalid;
+  if (Object.keys(input).some((k) => !allowedKeys.includes(k))) {
+    return COMMIT_INPUT_REFUSALS.fieldNotTaken;
+  }
   const files = input["files"];
   if (!Array.isArray(files) || files.length < 1 || files.length > COMMIT_LIMITS.maxFiles) {
     return COMMIT_INPUT_REFUSALS.filesInvalid;

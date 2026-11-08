@@ -459,6 +459,27 @@ describe("HitlPopupPage with a commit diff (D1c)", () => {
     expect(approve).toBeEnabled();
   });
 
+  it.each([
+    ["github.file.commit", "github/commit acme/api@feat/x"],
+    ["gitlab.commit.create", "gitlab/commit acme/api@feat/x"],
+  ])("%s with NO diff key keeps Approve disabled even with the exact text typed", (type, text) => {
+    const [req] = commit(goodDiff);
+    const { diff: _omitted, ...details } = (req as { details: Record<string, unknown> }).details;
+    storeState.pending = [{ ...req, actionType: type, confirmText: text, details }];
+    render(<HitlPopupPage />);
+    fireEvent.change(screen.getByLabelText(/Type the text above/i), { target: { value: text } });
+    expect(screen.getByRole("button", { name: /Approve/i })).toBeDisabled();
+  });
+
+  it("a write that carries no diff by design is not held back by the rule", () => {
+    const [req] = commit(goodDiff);
+    const { diff: _omitted, ...details } = (req as { details: Record<string, unknown> }).details;
+    storeState.pending = [{ ...req, actionType: "github.pr.merge", details }];
+    render(<HitlPopupPage />);
+    fireEvent.change(screen.getByLabelText(/Type the text above/i), { target: { value: TEXT } });
+    expect(screen.getByRole("button", { name: /Approve/i })).toBeEnabled();
+  });
+
   it("a malformed diff keeps Approve disabled even with the exact text typed; Reject still works", async () => {
     storeState.pending = commit({ files: "not a list" });
     consentRespond.mockResolvedValue(undefined);

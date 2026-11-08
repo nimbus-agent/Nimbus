@@ -214,7 +214,7 @@ describe("D1c through the real door", () => {
         expect((await door(c, { omitPrepare: true })).offered).toEqual([]);
       });
 
-      test("the offered schema has no expectedHeadSha, in properties or required, and the description says why", async () => {
+      test("the offered schema has no expectedHeadSha, in properties or required, and the description is the gateway's own and never names the bound field", async () => {
         setModelWriteEnablement(db, c.service, 4, 1, [c.tool]);
         const d = await door(c);
         const tool = d.tools[d.name] as { inputSchema: unknown; description: string };
@@ -227,7 +227,15 @@ describe("D1c through the real door", () => {
         );
         expect(json.required ?? []).not.toContain("expectedHeadSha");
         expect(JSON.stringify(json)).not.toContain("expectedHeadSha");
-        expect(tool.description).toContain("The branch head is read and pinned by Nimbus");
+        // The connector's own description names the bound field; the offered one must not.
+        expect(tool.description).not.toContain("expectedHeadSha");
+        expect(tool.description).not.toMatch(/head sha/iu);
+        expect(tool.description).toContain(
+          "itself, shows it to the owner and pins it; never supply it",
+        );
+        expect(tool.description).toContain("1 to 20 files");
+        expect(tool.description).toContain("1 to 5000 characters");
+        expect(tool.description).toContain("32 KiB");
       });
 
       test("a call without the head reaches the prompt with the diff last; the exact text writes with the gateway's head", async () => {

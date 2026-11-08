@@ -4,6 +4,7 @@
 // spellings, safe-path-first ordering, and credential-looking content through NON-GLOBAL clones.
 import { describe, expect, test } from "bun:test";
 import { SECRET_PATTERNS } from "../../security/secret-patterns.ts";
+import { expectLinearGrowth } from "../../testing/linear-growth.ts";
 import { COMMIT_INPUT_REFUSALS } from "./commit-limits.ts";
 import {
   COMMIT_BIDI_REFUSAL,
@@ -121,7 +122,7 @@ describe("the refused path table", () => {
     expect(isRefusedCommitPath("src/.github/workflows/a.yml")).toBe(false);
     expect(isRefusedCommitPath("docs/.husky-notes.md")).toBe(false);
     expect(isRefusedCommitPath("mycodeowners")).toBe(false);
-    expect(isRefusedCommitPath("jenkinsfile.bak")).toBe(false);
+    expect(isRefusedCommitPath("jenkinsfiles")).toBe(false);
     // The directory itself, as a file path, is refused.
     expect(isRefusedCommitPath(".github/workflows")).toBe(true);
     // A path that only CONTAINS a segment of an entry is allowed.
@@ -248,5 +249,113 @@ describe("bidirectional controls in new content (Trojan Source)", () => {
       commitModelRefusal(GH, withFiles({ path: "a.md", content: String.raw`\u{202E}` })),
     ).toBeUndefined();
     expect(COMMIT_BIDI_REFUSAL).not.toContain("202");
+  });
+});
+
+describe("hook and CI files of other products (review fix 3)", () => {
+  const refused = [
+    ".pre-commit-config.yaml",
+    ".pre-commit-config.yml",
+    "lefthook.yml",
+    "lefthook.yaml",
+    ".lefthook.yml",
+    ".lefthook.yaml",
+    "lefthook-local.yml",
+    "lefthook.json",
+    "lefthook.toml",
+    ".lefthook.json",
+    "lefthook-local.toml",
+    "Jenkinsfile",
+    "ci/Jenkinsfile",
+    "a/b/JENKINSFILE",
+    "Jenkinsfile.release",
+    "services/api/Jenkinsfile-deploy",
+    ".cirrus.yml",
+    ".cirrus.yaml",
+    "appveyor.yml",
+    "appveyor.yaml",
+    ".appveyor.yml",
+    ".appveyor.yaml",
+    ".woodpecker.yml",
+    ".woodpecker.yaml",
+    ".woodpecker/build.yml",
+    ".semaphore/semaphore.yml",
+    "cloudbuild.yaml",
+    "cloudbuild.yml",
+    "buildspec.yml",
+    "buildspec.yaml",
+    "bitrise.yml",
+    "bitrise.yaml",
+    "codemagic.yaml",
+    "codemagic.yml",
+    ".gitea/workflows/ci.yml",
+    ".forgejo/workflows/ci.yaml",
+  ];
+  test.each(refused)("%s is refused on both rows", (path) => {
+    expect(isRefusedCommitPath(path)).toBe(true);
+    for (const tool of [GH, GL]) {
+      expect(commitModelRefusal(tool, withFiles({ path }))).toBe(COMMIT_PATH_REFUSAL);
+    }
+  });
+
+  test.each([
+    "docs/pre-commit-config.md",
+    "src/lefthook.ts",
+    "lefthook-notes.md",
+    "my-jenkinsfile",
+    "jenkinsfiles/readme.md",
+    "jenkinsfile.bak/readme.md",
+    ".gitea/issue_template/bug.md",
+    ".forgejo/workflowsx/a.yml",
+    "docs/cloudbuild.md",
+    "src/semaphore/a.ts",
+  ])("lookalike %s is allowed", (path) => {
+    // `jenkinsfile.bak/readme.md` has base `readme.md`: only the FINAL segment is tested.
+    expect(isRefusedCommitPath(path), path).toBe(false);
+  });
+});
+
+describe("the credential scan is linear and runs after the size caps (review fix 1)", () => {
+  // Each builder repeats the start of the jwt pattern, the one whose unbounded runs could rescan the rest of the text from every start and match nothing (the other patterns match at the first repeat, so they cannot be made quadratic).
+  const BUILDERS: Readonly<Record<string, (n: number) => string>> = {
+    jwt: (n) => "eyJ-".repeat(Math.ceil(n / 4)).slice(0, n),
+    "jwt (second segment)": (n) => `eyJa.${"eyJ-".repeat(Math.ceil(n / 4))}`.slice(0, n),
+  };
+
+  test.each(Object.keys(BUILDERS))(
+    "%s: 200 KB of repeated starts takes linear time and matches nothing",
+    (name) => {
+      const build = BUILDERS[name] as (n: number) => string;
+      const timings = expectLinearGrowth({
+        sizes: [25_000, 50_000, 100_000, 200_000],
+        repeats: 1,
+        perSizeCeilingMs: 1500,
+        makeCall: (n) => {
+          const text = build(n);
+          return () => {
+            expect(looksLikeCredential(text)).toBe(false);
+          };
+        },
+      });
+      expect(timings.length).toBe(4);
+    },
+    60_000,
+  );
+
+  test("the size caps run before any scan: an oversized quadratic input is refused fast", () => {
+    const text = "eyJ-".repeat(50_000); // 200 KB, over both the input and the content cap
+    const started = performance.now();
+    const out = commitModelRefusal(GH, withFiles({ path: "a.txt", content: text }));
+    expect(performance.now() - started).toBeLessThan(500);
+    expect(out).toBe(COMMIT_INPUT_REFUSALS.inputTooLarge);
+    const big = "x".repeat(33 * 1024);
+    expect(commitModelRefusal(GL, withFiles({ path: "a.txt", content: big }))).toBe(
+      COMMIT_INPUT_REFUSALS.contentTooLarge,
+    );
+  });
+
+  test("a bounded copy still matches a token far longer than the run bound", () => {
+    const long = `gh${"p_"}${"a".repeat(9000)}`;
+    expect(looksLikeCredential(long)).toBe(true);
   });
 });

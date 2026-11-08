@@ -59,9 +59,10 @@ export function HitlPopupPage(): ReactNode {
   // The gateway judges the answer; this page only withholds the button until it matches.
   const confirmText =
     head?.confirmText !== undefined && head.confirmText !== "" ? head.confirmText : undefined;
-  // A `diff` the page cannot read keeps Approve disabled whatever is typed (D1c).
+  // A `diff` the page cannot read, or a commit with no `diff` at all, keeps Approve disabled
+  // whatever is typed (D1c).
   const typedMatches =
-    (confirmText === undefined || typed === confirmText) && !isDiffMalformed(head?.details);
+    (confirmText === undefined || typed === confirmText) && !isDiffMalformed(head?.details, action);
 
   // Focus is placed imperatively, keyed on the action, NOT via the `autoFocus` attribute. React
   // honours `autoFocus` only at mount, and this popup does not remount between queued requests —

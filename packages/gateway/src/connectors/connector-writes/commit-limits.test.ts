@@ -6,6 +6,9 @@ import {
   COMMIT_INPUT_REFUSALS,
   COMMIT_LIMITS,
   commitInputRefusal,
+  commitSizeRefusal,
+  GITHUB_COMMIT_KEYS,
+  GITLAB_COMMIT_KEYS,
   isSafeCommitPathGateway,
 } from "./commit-limits.ts";
 
@@ -25,7 +28,7 @@ describe("COMMIT_LIMITS", () => {
     expect(Object.isFrozen(COMMIT_LIMITS)).toBe(true);
   });
 
-  test("relationships: the gateway is tighter than the connector, the diff fits one IPC line", () => {
+  test("relationships: the gateway is tighter than the connector, the diff ALONE fits one IPC line", () => {
     // The connector's combined cap is 192 KiB; old + new here is 64 KiB.
     expect(COMMIT_LIMITS.maxNewContentBytes + COMMIT_LIMITS.maxOldContentBytes).toBeLessThan(
       192 * 1024,
@@ -34,7 +37,8 @@ describe("COMMIT_LIMITS", () => {
     expect(COMMIT_LIMITS.maxInputChars).toBeGreaterThan(COMMIT_LIMITS.maxNewContentBytes);
     // A reply carries up to 32 KiB of old content per the cap, escaped at worst twice.
     expect(COMMIT_LIMITS.maxReplyChars).toBeGreaterThan(COMMIT_LIMITS.maxOldContentBytes * 2);
-    // The diff travels twice in consent.request (prompt and details) and each frame is < 1 MiB.
+    // The diff travels twice in consent.request (prompt and details). This is the diff ALONE; the
+    // whole frame (message, paths, prompt) is measured in ipc/consent-diff-frame.test.ts.
     // (the structured copy is up to ~24 bytes per 2-byte diff line: ipc/consent-diff-frame.test.ts
     // measures the real worst case, about 785 KB)
     expect(
@@ -216,8 +220,8 @@ describe("isSafeCommitPathGateway is pinned against the connector's isSafeCommit
     "a\u200bb",
     "a\u2066b",
     "a\ufeffb",
-    "a b",
-    "a b",
+    "a\u{2028}b",
+    "a\u{2029}b",
     "a\ud800b",
     "a\udfffb",
     "é.md",
@@ -246,5 +250,79 @@ describe("isSafeCommitPathGateway is pinned against the connector's isSafeCommit
     expect(mod.isSafeCommitPath(decomposed)).toBe(true);
     expect(isSafeCommitPathGateway(decomposed)).toBe(false);
     expect(isSafeCommitPathGateway(decomposed.normalize("NFC"))).toBe(true);
+  });
+});
+
+describe("commitInputRefusal: only the keys the row takes (review fix 2)", () => {
+  const okGh = { owner: "o", repo: "r", branch: "main", message: "m", files: ok().files };
+  const okGl = { projectPath: "g/p", branch: "main", message: "m", files: ok().files };
+
+  test("a row's own keys pass; any other top-level key is refused, whatever its value", () => {
+    expect(commitInputRefusal(okGh, GITHUB_COMMIT_KEYS)).toBeUndefined();
+    expect(commitInputRefusal(okGl, GITLAB_COMMIT_KEYS)).toBeUndefined();
+    const extra = "x".repeat(90_000);
+    for (const key of ["x", "expectedHeadSha", "__proto__", "Message"]) {
+      const input = Object.fromEntries([...Object.entries(okGh), [key, extra]]);
+      expect(commitInputRefusal(input, GITHUB_COMMIT_KEYS), key).toBe(
+        COMMIT_INPUT_REFUSALS.fieldNotTaken,
+      );
+    }
+    // a GitLab key on the GitHub row, and the reverse
+    expect(commitInputRefusal({ ...okGh, projectPath: "g/p" }, GITHUB_COMMIT_KEYS)).toBe(
+      COMMIT_INPUT_REFUSALS.fieldNotTaken,
+    );
+    expect(commitInputRefusal({ ...okGl, owner: "o" }, GITLAB_COMMIT_KEYS)).toBe(
+      COMMIT_INPUT_REFUSALS.fieldNotTaken,
+    );
+  });
+
+  /** The keys of the object literal that starts at `marker` (up to its closing `})`). */
+  function literalKeys(source: string, marker: string): string[] {
+    const at = source.indexOf(marker);
+    expect(at, marker).toBeGreaterThanOrEqual(0);
+    const rest = source.slice(at + marker.length);
+    const end = rest.search(/\n\s*\}\)/u);
+    return [...rest.slice(0, end).matchAll(/^\s+(\w+):/gmu)].map((m) => m[1] as string);
+  }
+
+  test("the key lists are the installed connector schemas' keys, less the bound head", async () => {
+    const root = installedConnectorsPackageRoot();
+    const gh = await Bun.file(join(root, "connectors", "github", "src", "tools.ts")).text();
+    const gl = await Bun.file(join(root, "connectors", "gitlab", "src", "tools.ts")).text();
+    const ghKeys = [
+      ...literalKeys(gh, "const repoSlugArgs = z.object({"),
+      ...literalKeys(gh, "const githubCommitInputSchema = repoSlugArgs.extend({"),
+      ...literalKeys(gh, "githubCommitInputSchema.extend({"),
+    ];
+    const glKeys = [
+      ...literalKeys(gl, "const projectPathArg = z.object({"),
+      ...literalKeys(gl, "const gitlabCommitInputSchema = projectPathArg.extend({"),
+      ...literalKeys(gl, "gitlabCommitInputSchema.extend({"),
+    ];
+    expect(ghKeys).toContain("expectedHeadSha");
+    expect(glKeys).toContain("expectedHeadSha");
+    expect([...GITHUB_COMMIT_KEYS].sort()).toEqual(
+      ghKeys.filter((k) => k !== "expectedHeadSha").sort(),
+    );
+    expect([...GITLAB_COMMIT_KEYS].sort()).toEqual(
+      glKeys.filter((k) => k !== "expectedHeadSha").sort(),
+    );
+  });
+});
+
+describe("commitSizeRefusal", () => {
+  test("refuses an input over the JSON backstop, then over the content cap; malformed passes", () => {
+    expect(commitSizeRefusal({ message: "m", files: ok().files })).toBeUndefined();
+    expect(commitSizeRefusal({ message: "x".repeat(100_000) })).toBe(
+      COMMIT_INPUT_REFUSALS.inputTooLarge,
+    );
+    expect(
+      commitSizeRefusal({ files: [{ path: "a", content: "é".repeat(17_000) }], message: "m" }),
+    ).toBe(COMMIT_INPUT_REFUSALS.contentTooLarge);
+    expect(commitSizeRefusal({ files: "x" })).toBeUndefined();
+    expect(commitSizeRefusal({ files: [null, 1, { content: 2 }] })).toBeUndefined();
+    const cyclic: Record<string, unknown> = {};
+    cyclic["self"] = cyclic;
+    expect(commitSizeRefusal(cyclic)).toBe(COMMIT_INPUT_REFUSALS.inputTooLarge);
   });
 });
