@@ -220,3 +220,41 @@ export const IAC_DISCARD = Object.freeze({
   toolId: "iac_cloudformation_changeset_discard",
   actionType: "iac.cloudformation.changeset.discard",
 });
+
+/**
+ * The reasons the preflight capability refuses a bound iac write with (fixed text, never the path):
+ * the approved-directory and cloud-credential checks and the one-run-per-directory lock. The model
+ * door passes these back verbatim as `{ refused }` (no prompt happened).
+ */
+export const IAC_PREFLIGHT_REFUSALS = Object.freeze({
+  notApprovedDirectory: "iac: the working directory is not an approved directory",
+  noCloudCredential: "iac: no cloud credential is granted for this change",
+  busy: "iac: another run is using this working directory",
+});
+
+/** What the MODEL door alone refuses for an iac write (the owner's doors are not restricted). */
+export const IAC_MODEL_REFUSALS = Object.freeze({
+  iamCapability:
+    "iac: IAM capabilities are not available to the model; the owner applies those themselves",
+});
+
+const IAM_CAPABILITIES: ReadonlySet<string> = new Set(["CAPABILITY_IAM", "CAPABILITY_NAMED_IAM"]);
+
+/**
+ * The model-door refusal of an iac write, pure and input-only: a CloudFormation deploy asking for an
+ * IAM capability (a model creating roles and users). A malformed `capabilities` is left to the
+ * row's own input hook, which refuses it with its own fixed text.
+ */
+export function iacModelRefusal(
+  toolId: string,
+  input: Readonly<Record<string, unknown>>,
+): string | undefined {
+  if (toolId !== "iac_cloudformation_deploy") return undefined;
+  const capabilities: unknown = Object.hasOwn(input, "capabilities")
+    ? input["capabilities"]
+    : undefined;
+  if (!Array.isArray(capabilities)) return undefined;
+  return (capabilities as unknown[]).some((c) => typeof c === "string" && IAM_CAPABILITIES.has(c))
+    ? IAC_MODEL_REFUSALS.iamCapability
+    : undefined;
+}

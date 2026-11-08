@@ -38,6 +38,11 @@ export interface ModelWriteSourceDeps {
    * is configured, so nothing is refused for it. A throw refuses the call (fail closed).
    */
   readonly getTribalKbConfig?: () => TribalKbConfig | undefined;
+  /**
+   * The canonical working directories the owner approved for the iac connector (D2), read per
+   * call. Absent, empty or a throw: the Terraform apply is not offered (no directory to pick).
+   */
+  readonly approvedWorkdirs?: () => readonly string[];
 }
 
 function policyAllows(deps: ModelWriteSourceDeps): boolean {
@@ -63,15 +68,30 @@ function offeredUnder(e: ModelWriteEnablement | undefined, row: ConnectorWriteRo
   );
 }
 
+/** The approved working directories, or none (fail closed on a throw). */
+function workdirsOf(deps: ModelWriteSourceDeps): readonly string[] {
+  try {
+    return deps.approvedWorkdirs?.() ?? [];
+  } catch {
+    return [];
+  }
+}
+
+/** A Terraform row can be offered only while there is an approved directory to name (D2). */
+function directoryAvailable(deps: ModelWriteSourceDeps, row: ConnectorWriteRow): boolean {
+  return row.bound?.prepare.settle !== "iac-terraform" || workdirsOf(deps).length > 0;
+}
+
 export function createModelWriteToolSource(deps: ModelWriteSourceDeps): ConnectorWriteToolSource {
   const rows = deps.rows ?? CONNECTOR_WRITE_ROWS;
   return {
+    approvedWorkdirs: () => workdirsOf(deps),
     offerableEnabledRows: () => {
       if (!policyAllows(deps)) return [];
       const out: ConnectorWriteRow[] = [];
       for (const e of listModelWriteEnablement(deps.db)) {
         for (const r of rows) {
-          if (offeredUnder(e, r)) out.push(r);
+          if (offeredUnder(e, r) && directoryAvailable(deps, r)) out.push(r);
         }
       }
       return out;
@@ -80,7 +100,10 @@ export function createModelWriteToolSource(deps: ModelWriteSourceDeps): Connecto
     toolsEpoch: deps.toolsEpoch,
     recheck: (row) => {
       if (!policyAllows(deps)) return false;
-      return offeredUnder(getModelWriteEnablement(deps.db, serviceOf(row.actionType)), row);
+      return (
+        offeredUnder(getModelWriteEnablement(deps.db, serviceOf(row.actionType)), row) &&
+        directoryAvailable(deps, row)
+      );
     },
     // F3/F4 and OR1 (`modelWriteRefusal`: ChatOps channel, broadcast mention, knowledge base): the
     // ChatOps bindings come from the SAME live enforced policy the offer reads; a throw or an
