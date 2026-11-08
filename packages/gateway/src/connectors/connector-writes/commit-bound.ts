@@ -82,7 +82,7 @@ function strictString(entry: unknown, key: string): string | undefined {
 interface ReplyFile {
   readonly exists: boolean;
   readonly oldContent: string | undefined;
-  readonly mode: string | undefined;
+  readonly mode: string;
 }
 
 type ModeOf = (entry: unknown, exists: boolean) => string | undefined;
@@ -127,7 +127,7 @@ function pairFiles(
         path: f.path,
         oldContent: r.exists ? r.oldContent : undefined,
         newContent: f.content,
-        ...(r.mode === undefined ? {} : { mode: r.mode }),
+        mode: r.mode,
       });
     }
     return out;

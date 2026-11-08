@@ -353,6 +353,21 @@ describe("select: the prepared facts", () => {
     expect(facts?.[2]?.value).toContain("other files may change before this lands");
   });
 
+  test("a reply with a head but no file list shows zero files rather than failing", () => {
+    expect(GH_ROW.bound?.prepare.select({ headSha: HEAD })?.[1]?.value).toContain(
+      "0 new, 0 already",
+    );
+  });
+
+  test("a null-prototype reply and entries are read like plain ones", () => {
+    const entry = Object.assign(Object.create(null), GH_REPLY.files[1]);
+    const old = Object.assign(Object.create(null), GH_REPLY.files[0]);
+    const reply = Object.assign(Object.create(null), { headSha: HEAD, files: [old, entry] });
+    expect(GH_ROW.bound?.prepare.diff?.files(GH_INPUT as never, reply)?.map((f) => f.path)).toEqual(
+      ["src/a.ts", "docs/new.md"],
+    );
+  });
+
   test("a reply with no head throws (the step turns that into unshowable)", () => {
     expect(() => GH_ROW.bound?.prepare.select({ files: [] })).toThrow();
   });

@@ -111,6 +111,8 @@ describe("the builder shows the diff field as a path list", () => {
   test("a malformed value is shown as it is, quoted", () => {
     expect(build("nope")?.fields[1]?.value).toBe('"nope"');
     expect(build([{ nopath: 1 }])?.fields[1]?.value).toBe('[{"nopath":1}]');
+    expect(build([null])?.fields[1]?.value).toBe("[null]");
+    expect(build(["a.txt"])?.fields[1]?.value).toBe('["a.txt"]');
   });
 
   test("the builder never sets a diff", () => {

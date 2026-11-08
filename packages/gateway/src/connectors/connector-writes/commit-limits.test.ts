@@ -125,6 +125,12 @@ describe("commitInputRefusal", () => {
     expect(commitInputRefusal(wide)).toBe(COMMIT_INPUT_REFUSALS.contentTooLarge);
   });
 
+  test("a null-prototype input and entries are plain objects too", () => {
+    const entry = Object.assign(Object.create(null), { path: "a", content: "x" });
+    const input = Object.assign(Object.create(null), { message: "m", files: [entry] });
+    expect(commitInputRefusal(input)).toBeUndefined();
+  });
+
   test("not an object is refused", () => {
     expect(commitInputRefusal(null as unknown as Record<string, unknown>)).toBe(
       COMMIT_INPUT_REFUSALS.filesInvalid,

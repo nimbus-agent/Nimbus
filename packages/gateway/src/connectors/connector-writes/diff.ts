@@ -110,8 +110,10 @@ function myers(a: readonly string[], b: readonly string[], budget: { left: numbe
   const off = max + 1;
   const v = new Int32Array(2 * max + 3);
   const trace: Int32Array[] = [];
-  let found = -1;
-  for (let d = 0; d <= max && found < 0; d++) {
+  // Myers: the end is always reached by d = n + m, so this initial value is never used.
+  let found = max;
+  let reached = false;
+  for (let d = 0; d <= max && !reached; d++) {
     for (let k = -d; k <= d; k += 2) {
       if (budget.left <= 0) return undefined;
       budget.left -= 1;
@@ -127,12 +129,13 @@ function myers(a: readonly string[], b: readonly string[], budget: { left: numbe
         y++;
       }
       v[k + off] = x;
-      if (x >= n && y >= m) found = d;
+      if (x >= n && y >= m) {
+        found = d;
+        reached = true;
+      }
     }
     trace.push(v.slice(off - d, off + d + 1));
   }
-  /* c8 ignore next: the loop always finds the end by d = n + m */
-  if (found < 0) return undefined;
   // Backtrack: a list of moves from the end, each "=", "+" (insert b[i]) or "-" (delete a[i]).
   const moves: Array<{ op: " " | "+" | "-"; i: number }> = [];
   let x = n;
@@ -158,11 +161,7 @@ function myers(a: readonly string[], b: readonly string[], budget: { left: numbe
     x = prevX;
     y = prevY;
   }
-  while (x > 0 && y > 0) {
-    x--;
-    y--;
-    moves.push({ op: " ", i: x });
-  }
+  // At d = 0 the path is the common prefix, which the caller stripped: (x, y) is (0, 0) here.
   moves.reverse();
   return moves;
 }
