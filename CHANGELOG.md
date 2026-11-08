@@ -2,6 +2,13 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [10.41.0](https://github.com/nimbus-agent/Nimbus/compare/v10.40.0...v10.41.0) (2026-11-08)
+
+
+### Features
+
+* **gateway:** the model can propose a GitHub or GitLab commit, approved over a full gateway-rendered diff with a bound head ([#1943](https://github.com/nimbus-agent/Nimbus/issues/1943)) ([4dbe6ab](https://github.com/nimbus-agent/Nimbus/commit/4dbe6ab5cf46282cf7deed06df2eecb626c594b7))
+
 ## [10.40.0](https://github.com/nimbus-agent/Nimbus/compare/v10.39.0...v10.40.0) (2026-11-08)
 
 
