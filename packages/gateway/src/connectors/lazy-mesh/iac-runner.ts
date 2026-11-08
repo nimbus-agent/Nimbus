@@ -52,7 +52,6 @@ import {
   workdirsOverlap,
 } from "../connector-writes/iac-grants.ts";
 import {
-  IAC_DISCARD,
   IAC_PREFLIGHT_REFUSALS,
   IAC_TOOL_TIMEOUTS_MS,
   isPlainStackName,
@@ -1040,7 +1039,7 @@ export class IacRunner implements IacHost {
     const creds = await loadAwsCreds(this.deps.vault);
     if (!creds.ok) throw new Error(IAC_RUNNER_REFUSALS.noCredential);
     const region = creds.region !== "" ? creds.region : (grants.regions[0] ?? "");
-    if (toolId === IAC_DISCARD.toolId && !isOurChangeSet(args, region)) {
+    if (toolId === "iac_cloudformation_changeset_discard" && !isOurChangeSet(args, region)) {
       throw new Error(IAC_RUNNER_REFUSALS.notOurChangeSet);
     }
     const callId = this.hex(8);

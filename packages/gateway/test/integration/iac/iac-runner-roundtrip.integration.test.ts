@@ -11,11 +11,11 @@ import {
 } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { scanForGitEntry } from "../../../src/connectors/connector-writes/iac-git-scan.ts";
 import type {
   IacGrants,
   IacPathDeps,
 } from "../../../src/connectors/connector-writes/iac-grants.ts";
-import { scanForGitEntry } from "../../../src/connectors/connector-writes/iac-git-scan.ts";
 import { IacRunner, iacRootFor } from "../../../src/connectors/lazy-mesh/iac-runner.ts";
 import { buildBoundWriteCapabilities } from "../../../src/connectors/registry.ts";
 import { isCompiledBinary } from "../../../src/platform/runtime-layout.ts";
