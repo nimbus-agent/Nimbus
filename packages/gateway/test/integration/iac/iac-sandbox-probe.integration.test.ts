@@ -116,6 +116,8 @@ function runConfined(
   const read = [...new Set([...policy.permissions.filesystem.read, ...grants.write])];
   const finalPolicy: SandboxPolicy = {
     ...policy,
+    // The iac profile flag: on Linux Go's pidfd_send_signal probe answers ENOSYS instead of killing (OR-D2-5).
+    iacProfile: true,
     permissions: { network: [], filesystem: { read, write: grants.write } },
   };
   const env = extensionProcessEnv({

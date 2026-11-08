@@ -1,7 +1,13 @@
+import { randomBytes } from "node:crypto";
 import pino from "pino";
-
 import { isBeforeReadActionType } from "../engine/before-state.ts";
-import { isPrepareActionType } from "../engine/prepare-step.ts";
+import type { BoundWriteCapabilities } from "../engine/bound-write-capabilities.ts";
+import { nodeSettleFs, settleCfnChangeSet, settleTerraformPlan } from "../engine/iac-settle.ts";
+import {
+  isPrepareActionType,
+  PREPARE_REFUSALS,
+  PrepareRefusedError,
+} from "../engine/prepare-step.ts";
 import { serviceOf } from "../engine/service-of.ts";
 import { extractToolInput } from "../engine/tool-input.ts";
 import type { ConnectorDispatcher, PlannedAction } from "../engine/types.ts";
@@ -13,6 +19,7 @@ import { isConnectorWriteToolId } from "./connector-write-registry.ts";
 import { IAC_DISCARD, IAC_TOOL_TIMEOUTS_MS } from "./connector-writes/iac-limits.ts";
 import { CONNECTOR_WRITE_ROWS } from "./connector-writes/index.ts";
 import { isPrepareToolId, PREPARE_TOOL_IDS } from "./connector-writes/prepare-tools.ts";
+import type { IacHost } from "./lazy-mesh/iac-runner.ts";
 import { createLazyConnectorMesh, type LazyConnectorMesh } from "./lazy-mesh/index.ts";
 import { mcpClientToolKey, meshServerForToolKey, resolveServerTool } from "./lazy-mesh/tool-map.ts";
 import {
@@ -69,7 +76,50 @@ export type McpToolListingClient = {
   listFirstPartyServerTools?: (
     service: string,
   ) => Promise<Readonly<Record<string, unknown>> | undefined>;
+  /**
+   * The iac runner (D2): when present the dispatcher carries the bound-write capabilities of the
+   * plan-bound iac rows. Only this module turns it into {@link BoundWriteCapabilities} (D42(h)).
+   */
+  iacHost?: () => IacHost | undefined;
 };
+
+/**
+ * The runtime capabilities of a bound IaC row (I54), built here and nowhere else (static D42(h)):
+ * the preflight is the runner's (approved directory, cloud credential, one run per directory), and
+ * the settle is the batch-1 settlers over the run's own staging and approved directories. A row
+ * whose tag the host cannot serve is refused with a fixed reason, never skipped.
+ */
+export function buildBoundWriteCapabilities(host: IacHost): BoundWriteCapabilities {
+  return {
+    preflight: (rowToolId, input) => host.preflight(rowToolId, input),
+    async settle(rowToolId, ctx) {
+      if (ctx.settle === "iac-cfn") {
+        return settleCfnChangeSet({ input: ctx.input, reply: ctx.reply });
+      }
+      const dirs =
+        ctx.workingDirectory === undefined
+          ? undefined
+          : host.terraformRunDirs(ctx.workingDirectory);
+      if (dirs === undefined || ctx.workingDirectory === undefined || ctx.showPlan === undefined) {
+        throw new PrepareRefusedError(PREPARE_REFUSALS.unbound);
+      }
+      return settleTerraformPlan(
+        {
+          fs: nodeSettleFs(),
+          show: ctx.showPlan,
+          randomHex: (n) => randomBytes(n).toString("hex"),
+        },
+        {
+          destroy: rowToolId.endsWith("_destroy"),
+          workingDirectory: ctx.workingDirectory,
+          reply: ctx.reply,
+          stagingDir: dirs.stagingDir,
+          approvedRoot: dirs.approvedRoot,
+        },
+      );
+    },
+  };
+}
 
 type DispatcherToolMap = Record<
   string,
@@ -84,11 +134,13 @@ export function meshDispatcherClient(mesh: {
   listToolsForDispatcher(): Promise<DispatcherToolMap>;
   getToolsEpoch(): number;
   listOwnerCodeServerToolsForDispatcher(serviceId: string): Promise<DispatcherToolMap | undefined>;
+  iacHost?(): IacHost | undefined;
 }): McpToolListingClient {
   return {
     listTools: () => mesh.listToolsForDispatcher(),
     getToolsEpoch: () => mesh.getToolsEpoch(),
     listUserMcpTools: (serviceId) => mesh.listOwnerCodeServerToolsForDispatcher(serviceId),
+    iacHost: () => mesh.iacHost?.(),
   };
 }
 
@@ -151,7 +203,11 @@ export function createConnectorDispatcher(
     return (await listOne(serviceId)) ?? {};
   }
 
+  const iacHost = client.iacHost?.();
   return {
+    ...(iacHost === undefined
+      ? {}
+      : { boundWriteCapabilities: buildBoundWriteCapabilities(iacHost) }),
     async dispatch(action: PlannedAction): Promise<unknown> {
       const fromPayload = action.payload?.["mcpToolId"];
       const toolId =

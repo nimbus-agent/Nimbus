@@ -127,6 +127,7 @@ import {
 import { createConnectorWriteDispatcher } from "../connectors/connector-write-dispatch.ts";
 import type { ConnectorWriteContext } from "../connectors/connector-write-transport.ts";
 import { isObsidianWriteGrantApproved } from "../connectors/connector-writes/enablement-store.ts";
+import { getIacGrants } from "../connectors/connector-writes/iac-grants.ts";
 import type { TribalKbConfig } from "../connectors/connector-writes/model-write-refusals.ts";
 import { previewCredentialResolver } from "../connectors/connector-writes/preview-credential.ts";
 import { createExtensionCredentialsResolver } from "../connectors/extension-sync/extension-identity.ts";
@@ -1066,6 +1067,8 @@ async function createSchedulerWithMesh(opts: SchedulerWithMeshOpts): Promise<{
     // I15 (B4b): the Obsidian sandbox may write today's daily note of each vault under those roots only while the
     // owner's `connector writes enable obsidian` approval includes the append, read LIVE per spawn.
     obsidianWriteGrantEnabled: () => isObsidianWriteGrantApproved(db),
+    // D2: the owner's approved Terraform directories and clouds (V85), read fresh for every child.
+    iacGrants: () => getIacGrants(db),
     isConnectorAllowed,
     ...(filesystemSpawnGate === undefined ? {} : { filesystemSpawnGate }),
     ...(extensionSlots === undefined ? {} : { extensionSlots, extensionSpawnGate }),

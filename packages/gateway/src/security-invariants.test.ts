@@ -342,10 +342,21 @@ describe("I1 — extensionProcessEnv is the only env source for spawned MCP chil
     // keeps the wrapper out of the connector-spec classification without reopening the hole.
     const files = await readDirFiles("packages/gateway/src/connectors/lazy-mesh");
     const WRAPPER = "wrap-server-spec.ts";
+    // The iac runner builds its per-run children itself (D2, static D43(d)): its env is checked
+    // below, in its own assertion, instead of by this per-file classifier.
+    const IAC_RUNNER = "iac-runner.ts";
     const unexplained: string[] = [];
     let wiredSites = 0;
     for (const f of files) {
       if (f.rel === WRAPPER) continue;
+      if (f.rel === IAC_RUNNER) {
+        // Exactly one child env, built by extensionProcessEnv INSIDE the wrapIacServerSpec call.
+        expect(f.contents).toMatch(
+          /wrapIacServerSpec\(\s*\{\s*\.\.\.connectorSpawn\("iac"\),\s*env: extensionProcessEnv\(/,
+        );
+        expect((f.contents.match(/connectorSpawn\(/g) ?? []).length).toBe(1);
+        continue;
+      }
       wiredSites += (f.contents.match(/env\s*:\s*extensionProcessEnv\(/g) ?? []).length;
       const locals = new Set(
         [...f.contents.matchAll(/const\s+([A-Za-z_$][\w$]*)\s*=\s*extensionProcessEnv\s*\(/g)].map(
@@ -1367,7 +1378,11 @@ describe("I15 — SandboxRunner is intrinsic to every extension spawn", () => {
       const code = src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
       expect(code).not.toMatch(/"NIMBUS_SANDBOX_(POLICY_JSON|CWD)"/);
     }
-    expect(producer).toMatch(/\[SANDBOX_POLICY_ENV\]:\s*JSON\.stringify\(policyFromManifest\(/);
+    // The policy is always policyFromManifest(manifest), plus (only for wrapIacServerSpec) the one
+    // `iacProfile` flag; nothing else is spread into it.
+    expect(producer).toMatch(
+      /\[SANDBOX_POLICY_ENV\]:\s*JSON\.stringify\(\{\s*\.\.\.policyFromManifest\(manifest\),\s*\.\.\.\(iacProfile \? \{ iacProfile: true \} : \{\}\),\s*\}\)/,
+    );
     expect(consumer).toMatch(/process\.env\[SANDBOX_POLICY_ENV\]/);
   });
 
@@ -1507,6 +1522,17 @@ describe("I15 — SandboxRunner is intrinsic to every extension spawn", () => {
       let literals = 0;
       for (const f of files) {
         const code = stripComments(await readFile(resolve(dir, f), "utf8"));
+        if (f === "iac-runner.ts") {
+          // D2: the iac profiles' write list is built in ONE function from three inputs only: the
+          // approved canonical workdir, this run's staging directory and this call's scratch
+          // directory. Every assignment of it is pinned here instead of the literal scan below.
+          expect([...code.matchAll(/\bwrite = ([^;]*);/g)].map((m) => m[1])).toEqual([
+            "[...wd, ...(req.stagingDir === undefined ? [] : [req.stagingDir])]",
+            "[...wd]",
+            "req.scratchDir === undefined ? [] : [req.scratchDir]",
+          ]);
+          continue;
+        }
         // A write list that is not a literal would evade the element scan: refuse it outright.
         expect(code).not.toMatch(/\bwrite:\s*(?!\[)[\w.]/);
         for (const m of code.matchAll(/\bwrite:\s*\[([^\]]*)\]/g)) {

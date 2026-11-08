@@ -194,6 +194,7 @@ export async function dispatchConnectorRpc(options: {
       : {
           onObsidianGrantChanged: () => connectorMesh.restartObsidian(),
           obsidianWriteScope: () => connectorMesh.obsidianWriteScope(),
+          iacPathDeps: connectorMesh.iacPathDepsForEnable(),
         }),
   });
 

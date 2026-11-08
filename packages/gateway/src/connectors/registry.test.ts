@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import type { PlannedAction } from "../engine/types.ts";
+import type { IacHost } from "./lazy-mesh/iac-runner.ts";
 import {
   createConnectorDispatcher,
   DEFAULT_TOOL_TIMEOUT_MS,
@@ -918,5 +919,64 @@ describe("the change-set discard type resolves only to its own tool (D2, static 
       await expect(d.dispatch(call(type, KEY))).rejects.toThrow(/^ERR_/);
     }
     expect(ran).toEqual([]);
+  });
+});
+
+describe("the bound-write capabilities of the production dispatcher (D2, D42(h))", () => {
+  const host: IacHost = {
+    preflight: async () => ({ ok: true, release: () => undefined }),
+    terraformRunDirs: (wd) =>
+      wd === "/w" ? { stagingDir: "/nope/staging", approvedRoot: "/nope/approved" } : undefined,
+  };
+  const noTools = { listTools: async () => ({}) };
+
+  test("a client with an iac host gives the dispatcher the capabilities; without one it has none", () => {
+    expect(createConnectorDispatcher(noTools).boundWriteCapabilities).toBeUndefined();
+    expect(
+      createConnectorDispatcher({ ...noTools, iacHost: () => undefined }).boundWriteCapabilities,
+    ).toBeUndefined();
+    const d = createConnectorDispatcher({ ...noTools, iacHost: () => host });
+    expect(d.boundWriteCapabilities).toBeDefined();
+  });
+
+  test("preflight is the host's", async () => {
+    const d = createConnectorDispatcher({ ...noTools, iacHost: () => host });
+    const out = await d.boundWriteCapabilities?.preflight("iac_terraform_apply", {});
+    expect(out?.ok).toBe(true);
+  });
+
+  test("a Terraform settle with no run, no show call or a forged reply is refused with a fixed reason", async () => {
+    const caps = createConnectorDispatcher({
+      ...noTools,
+      iacHost: () => host,
+    }).boundWriteCapabilities;
+    const base = { settle: "iac-terraform" as const, input: {}, reply: {} };
+    await expect(
+      caps?.settle("iac_terraform_apply", { ...base, workingDirectory: "/other" }),
+    ).rejects.toThrow("does not carry a required value");
+    await expect(
+      caps?.settle("iac_terraform_apply", { ...base, workingDirectory: "/w" }),
+    ).rejects.toThrow("does not carry a required value");
+    await expect(
+      caps?.settle("iac_terraform_destroy", {
+        ...base,
+        workingDirectory: "/w",
+        showPlan: async () => ({}),
+      }),
+    ).rejects.toThrow("does not carry a required value");
+  });
+
+  test("a CloudFormation settle cross-checks the reply against the input (a stack mismatch is refused)", async () => {
+    const caps = createConnectorDispatcher({
+      ...noTools,
+      iacHost: () => host,
+    }).boundWriteCapabilities;
+    await expect(
+      caps?.settle("iac_cloudformation_deploy", {
+        settle: "iac-cfn",
+        input: { stackName: "a", templateBody: "x" },
+        reply: { stackName: "b" },
+      }),
+    ).rejects.toThrow("does not carry a required value");
   });
 });

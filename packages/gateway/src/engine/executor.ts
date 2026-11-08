@@ -21,6 +21,7 @@ import {
   rowNamedByToolId,
 } from "../connectors/connector-writes/preview.ts";
 import type {
+  BoundWrite,
   ConnectorWriteRow,
   PreviewCredentialResolver,
 } from "../connectors/connector-writes/types.ts";
@@ -51,6 +52,7 @@ import {
   PREPARE_REFUSALS,
   type PreparedWrite,
   PrepareRefusedError,
+  prepareLeftover,
   runPrepareStep,
 } from "./prepare-step.ts";
 import { serviceOf } from "./service-of.ts";
@@ -850,15 +852,6 @@ interface GateScope {
   orphan?: DiscardTarget;
 }
 
-/**
- * The refusals that can follow a CloudFormation change set the connector created without the gateway
- * having seen the reply that names it (the budget ran out, the child failed after creating it).
- */
-const UNPROVEN_ORPHAN_REASONS: ReadonlySet<string> = new Set([
-  PREPARE_REFUSALS.timeout,
-  PREPARE_REFUSALS.failed,
-]);
-
 /** Writes `directory` as the working directory of the action's tool input (nested or flat). */
 function pinWorkingDirectory(action: PlannedAction, directory: string): void {
   const payload: Record<string, unknown> = { ...action.payload };
@@ -1210,7 +1203,7 @@ export class ToolExecutor {
         },
       );
     } catch (e) {
-      this.noteOrphan(action, scope, row, e);
+      this.noteOrphan(action, scope, row.bound, e);
       throw e;
     }
     scope.prepared = prepared;
@@ -1223,16 +1216,12 @@ export class ToolExecutor {
    * the caller's, its ARN names it) for the discard; otherwise do not guess, and say so once with
    * the fixed pointer when the refusal is one that can follow a created change set.
    */
-  private noteOrphan(
-    action: PlannedAction,
-    scope: GateScope,
-    row: ConnectorWriteRow,
-    e: unknown,
-  ): void {
-    if (row.bound?.prepare.settle !== "iac-cfn" || !(e instanceof PrepareRefusedError)) return;
-    if (e.orphan !== undefined) {
-      scope.orphan = e.orphan;
-    } else if (UNPROVEN_ORPHAN_REASONS.has(e.reason)) {
+  private noteOrphan(action: PlannedAction, scope: GateScope, bound: BoundWrite, e: unknown): void {
+    if (bound.prepare.settle !== "iac-cfn") return;
+    const left = prepareLeftover(e);
+    if (left.orphan !== undefined) {
+      scope.orphan = left.orphan;
+    } else if (left.unproven) {
       executorLog.warn(
         { actionType: action.type },
         "a CloudFormation change set may have been left by a prepare step that did not finish; remove it in the AWS console",

@@ -39,3 +39,29 @@ describe("deriveCfnOrphan", () => {
     expect(deriveCfnOrphan(input, reply)).toBeUndefined();
   });
 });
+
+import { PREPARE_REFUSALS, PrepareRefusedError, prepareLeftover } from "./prepare-step.ts";
+
+describe("prepareLeftover", () => {
+  const orphan = { stackName: "prod", changeSetId: ARN };
+
+  test("a refusal that carries a proven change set hands it on", () => {
+    const e = new PrepareRefusedError(PREPARE_REFUSALS.diffTooLarge);
+    e.orphan = orphan;
+    expect(prepareLeftover(e)).toEqual({ orphan, unproven: false });
+  });
+
+  test("a timeout or a failed child with no proof is unproven", () => {
+    for (const reason of [PREPARE_REFUSALS.timeout, PREPARE_REFUSALS.failed]) {
+      expect(prepareLeftover(new PrepareRefusedError(reason))).toEqual({ unproven: true });
+    }
+  });
+
+  test("any other refusal, error or non-error leaves nothing to say", () => {
+    expect(prepareLeftover(new PrepareRefusedError(PREPARE_REFUSALS.unbound))).toEqual({
+      unproven: false,
+    });
+    expect(prepareLeftover(new Error("x"))).toEqual({ unproven: false });
+    expect(prepareLeftover(null)).toEqual({ unproven: false });
+  });
+});

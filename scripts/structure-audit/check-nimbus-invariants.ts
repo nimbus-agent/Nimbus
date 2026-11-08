@@ -108,6 +108,8 @@ export const I15_EXEMPT: readonly string[] = [
 const I15_SPEC_LITERAL_RE = /\.\.\.\s*connectorSpawn\s*\(/g;
 /** The wrapper itself — always accepted, wherever it appears. */
 const I15_WRAPPER_CALLEE = "wrapServerSpec";
+/** The iac runner's per-run wrapper (D2): `wrapServerSpecInCwd` plus the iac policy flag; still the sandbox. */
+const I15_IAC_WRAPPER_CALLEE = "wrapIacServerSpec";
 /**
  * The file-local alias, accepted ONLY in a file that defines it as a delegation to the wrapper.
  *
@@ -165,7 +167,10 @@ export function checkWrapServerSpecInvariant(files: readonly FileEntry[]): Viola
     let m: RegExpExecArray | null = I15_SPEC_LITERAL_RE.exec(stripped);
     while (m !== null) {
       const callee = enclosingCallee(stripped, m.index);
-      const wrapped = callee === I15_WRAPPER_CALLEE || (callee === I15_ALIAS_CALLEE && aliasIsReal);
+      const wrapped =
+        callee === I15_WRAPPER_CALLEE ||
+        callee === I15_IAC_WRAPPER_CALLEE ||
+        (callee === I15_ALIAS_CALLEE && aliasIsReal);
       if (!wrapped) {
         const line = stripped.slice(0, m.index).split("\n").length;
         out.push({
@@ -683,6 +688,9 @@ const CONNECTOR_WRITE_ALLOWED = [
   "packages/gateway/src/connectors/connector-write-dispatch.ts",
   "packages/gateway/src/connectors/proposable-actions.ts",
   "packages/gateway/src/connectors/connector-code-execution-tool-ids.ts",
+  // D2: the iac runner's routing table names the tools it runs in their own sandboxed children
+  // (static D43(c)); the row table, not this file, decides that any of them is a write.
+  "packages/gateway/src/connectors/lazy-mesh/iac-runner.ts",
 ];
 const WRITE_ID_SHAPE = /^[a-z0-9_]+$/;
 /** Build the D20 regex from the row tool ids; a malformed id throws rather than widening it. */
@@ -3078,7 +3086,8 @@ function d43ExecutorPins(f: FileEntry, code: string, commentFree: string): Viola
     /\[\s*["'`]discardStep["'`]\s*\]/,
     /["'`]discardStep["'`]\s*:/,
   ]) {
-    if (re.test(commentFree)) fail(`discardStep set by a form the rule does not count: ${re.source}`);
+    if (re.test(commentFree))
+      fail(`discardStep set by a form the rule does not count: ${re.source}`);
   }
   // `dispatched` only ever becomes true, once: a reset would let a discard follow a dispatch.
   if (

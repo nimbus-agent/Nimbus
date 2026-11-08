@@ -465,6 +465,25 @@ export async function runPrepareStep(
   }
 }
 
+/**
+ * What a failed prepare step may have left behind (CloudFormation): the change set the gateway can
+ * PROVE (see {@link deriveCfnOrphan}), or `unproven` when the failure is one that can follow a
+ * created change set the gateway never saw named (the budget ran out, the child failed). Any other
+ * error, or a non-error, leaves nothing to say. Branch-free for the executor, which stays at 100%.
+ */
+export function prepareLeftover(e: unknown): { orphan?: CfnOrphan; unproven: boolean } {
+  const refused = e instanceof PrepareRefusedError ? e : undefined;
+  return {
+    ...(refused?.orphan === undefined ? {} : { orphan: refused.orphan }),
+    unproven: refused !== undefined && UNPROVEN_REASONS.has(refused.reason),
+  };
+}
+
+const UNPROVEN_REASONS: ReadonlySet<string> = new Set([
+  PREPARE_REFUSALS.timeout,
+  PREPARE_REFUSALS.failed,
+]);
+
 /** {@link replyJson} for a reader that must not throw: `undefined` when the reply cannot be read. */
 function safeReplyJson(reply: unknown): unknown {
   try {
