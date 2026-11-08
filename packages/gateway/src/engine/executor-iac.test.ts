@@ -459,8 +459,9 @@ describe("the settle hand-off: the gateway's values, its plan, its cleanup (D2, 
     expect(h.log).toContain("release");
   });
 
-  test("a settle row with no preflight tag and no capability is refused before the prepare read", async () => {
-    const h = harness({ row: iacRow({ preflight: false }), caps: "none" });
+  test("a settled row with no capability is refused at the preflight, before the prepare read (a row cannot declare a settle without a preflight)", async () => {
+    expect(() => iacRow({ preflight: false })).toThrow("a settled row must declare preflight");
+    const h = harness({ caps: "none" });
     rejectedWith(await h.exec.execute(ACTION), PREPARE_REFUSALS.capabilityMissing);
     expect(prepares(h)).toEqual([]);
   });

@@ -474,6 +474,9 @@ function settleProblems(
     return out;
   }
   if (!Object.hasOwn(SETTLE_VALUE_KEYS, settle)) return [...out, "settle is not a known settler"];
+  // The confirm, channel and workdir-lock checks run in the preflight phase; a settled row without
+  // the tag would skip them and run its child first.
+  if (prepare.preflight === undefined) out.push("a settled row must declare preflight");
   if (settle === "iac-cfn") {
     if (settleTool !== undefined) out.push("takes no settle tool");
   } else if (settleTool === undefined) {

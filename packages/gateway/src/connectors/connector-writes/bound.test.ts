@@ -133,7 +133,12 @@ describe("settled prepare reads (D2): the settle tag, its tool and its bound fie
     { field: "planSha256", from: () => "x" },
   ];
   const settled = (over: Record<string, unknown>, binds = tfBinds): BoundWrite => ({
-    ...synthBound({ settle: "iac-terraform", settleTool: "synth_show", ...over } as never),
+    ...synthBound({
+      settle: "iac-terraform",
+      settleTool: "synth_show",
+      preflight: "iac",
+      ...over,
+    } as never),
     binds,
   });
 
@@ -143,12 +148,12 @@ describe("settled prepare reads (D2): the settle tag, its tool and its bound fie
 
   test("a cfn settle takes no settle tool and binds exactly changeSetId", () => {
     const cfn = {
-      ...synthBound({ settle: "iac-cfn" } as never),
+      ...synthBound({ settle: "iac-cfn", preflight: "iac" } as never),
       binds: [{ field: "changeSetId", from: () => "x" }],
     } as BoundWrite;
     expect(() => withBound(PREVIEWED, cfn, two)).not.toThrow();
     const withTool = {
-      ...synthBound({ settle: "iac-cfn", settleTool: "synth_show" } as never),
+      ...synthBound({ settle: "iac-cfn", settleTool: "synth_show", preflight: "iac" } as never),
       binds: cfn.binds,
     } as BoundWrite;
     expect(() => withBound(PREVIEWED, withTool, two)).toThrow("takes no settle tool");
@@ -189,6 +194,17 @@ describe("settled prepare reads (D2): the settle tag, its tool and its bound fie
         two,
       ),
     ).toThrow("bound fields must be exactly the settler's values");
+  });
+
+  test("a settled row must declare preflight: its confirm, channel and workdir-lock checks run there", () => {
+    expect(() => withBound(PREVIEWED, settled({ preflight: undefined }), two)).toThrow(
+      "a settled row must declare preflight",
+    );
+    const cfn = {
+      ...synthBound({ settle: "iac-cfn" } as never),
+      binds: [{ field: "changeSetId", from: () => "x" }],
+    } as BoundWrite;
+    expect(() => withBound(PREVIEWED, cfn, two)).toThrow("a settled row must declare preflight");
   });
 
   test("a preflight tag is accepted only as iac", () => {
