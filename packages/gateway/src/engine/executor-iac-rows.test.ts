@@ -68,6 +68,8 @@ interface Harness {
   readonly audits: Array<{ actionType: string; hitlStatus: string; actionJson: string }>;
   readonly egress: EgressEntry[];
   readonly dispatched: PlannedAction[];
+  readonly settleWorkdirs: Array<string | undefined>;
+  readonly preflightInputs: Array<Record<string, unknown>>;
 }
 
 interface Options {
@@ -75,6 +77,8 @@ interface Options {
   readonly typed?: string;
   readonly channel?: "typed" | "plain-only";
   readonly caps?: "none";
+  /** The real path the preflight capability resolved the working directory to. */
+  readonly resolved?: string;
   readonly prepareReply?: (a: PlannedAction) => unknown;
   readonly settleThrows?: boolean;
   readonly cleanup?: () => Promise<void>;
@@ -87,6 +91,8 @@ function harness(o: Options = {}): Harness {
   const audits: Harness["audits"] = [];
   const egress: EgressEntry[] = [];
   const dispatched: PlannedAction[] = [];
+  const settleWorkdirs: Array<string | undefined> = [];
+  const preflightInputs: Array<Record<string, unknown>> = [];
   const defaultReply = (a: PlannedAction): unknown => {
     const tool = String(a.payload?.["mcpToolId"]);
     if (tool.endsWith("show_json")) return { planJson: "{}", planSha256: PLAN_HASH };
@@ -101,9 +107,17 @@ function harness(o: Options = {}): Harness {
     o.caps === "none"
       ? undefined
       : {
-          preflight: async () => ({ ok: true, release: () => log.push("release") }),
+          preflight: async (_id, input) => {
+            preflightInputs.push(structuredClone({ ...input }));
+            return {
+              ok: true,
+              release: () => log.push("release"),
+              ...(o.resolved === undefined ? {} : { workingDirectory: o.resolved }),
+            };
+          },
           settle: async (id, ctx): Promise<SettledWrite> => {
             log.push(`settle:${id}`);
+            settleWorkdirs.push(ctx.workingDirectory);
             if (o.settleThrows === true) throw new Error("boom");
             const cleanup = o.cleanup ?? (async () => void log.push("cleanup"));
             if (ctx.settle === "iac-terraform") {
@@ -172,7 +186,17 @@ function harness(o: Options = {}): Harness {
     },
     NO_POLICY_OVERLAY,
   );
-  return { exec, log, prompts, confirmed, audits, egress, dispatched };
+  return {
+    exec,
+    log,
+    prompts,
+    confirmed,
+    audits,
+    egress,
+    dispatched,
+    settleWorkdirs,
+    preflightInputs,
+  };
 }
 
 const writesOf = (h: Harness): PlannedAction[] =>
@@ -331,6 +355,49 @@ describe("Terraform apply and destroy through the production table (D2, I54)", (
       expect(h.log).toContain("cleanup");
       expect(h.log.at(-1)).toBe("release");
     }
+  });
+});
+
+describe("the gateway-resolved working directory is the one every child and the prompt use (D2 review)", () => {
+  const REAL = "/mnt/real/infra/prod";
+
+  test("plan, show, the write, the confirm text and the prompt all carry the resolved path; the caller's string reaches only the preflight", async () => {
+    const h = harness({ resolved: REAL });
+    const r = await h.exec.execute(structuredClone(TF_APPLY));
+    expect(r.status).toBe("ok");
+    expect(h.preflightInputs[0]?.["workingDirectory"]).toBe(WD);
+    const dirs = h.dispatched.map((a) => inputOf(a)["workingDirectory"]);
+    expect(dirs).toEqual([REAL, REAL, REAL]);
+    expect(h.settleWorkdirs).toEqual([REAL]);
+    expect(h.confirmed[0]?.confirmText).toBe(`iac/apply ${REAL}`);
+    expect(h.prompts[0]).toContain(REAL);
+    expect(h.prompts[0]).not.toContain(WD);
+  });
+
+  test("a flat payload is pinned too", async () => {
+    const h = harness({ resolved: REAL });
+    const flat: PlannedAction = {
+      type: "iac.terraform.apply",
+      payload: { mcpToolId: "iac_iac_terraform_apply", workingDirectory: WD },
+    };
+    expect((await h.exec.execute(flat)).status).toBe("ok");
+    expect(
+      h.dispatched.map((a) => a.payload?.["workingDirectory"] ?? inputOf(a)["workingDirectory"]),
+    ).toEqual([REAL, REAL, REAL]);
+  });
+
+  test("a preflight that resolves no directory (CloudFormation) changes nothing", async () => {
+    const h = harness();
+    expect((await h.exec.execute(structuredClone(CFN_DEPLOY))).status).toBe("ok");
+    expect(h.settleWorkdirs).toEqual([undefined]);
+    expect(JSON.stringify(h.dispatched)).not.toContain("workingDirectory");
+  });
+
+  test("the caller's own object is not touched", async () => {
+    const h = harness({ resolved: REAL });
+    const mine = structuredClone(TF_APPLY);
+    await h.exec.execute(mine);
+    expect(inputOf(mine)["workingDirectory"]).toBe(WD);
   });
 });
 

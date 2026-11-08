@@ -107,6 +107,8 @@ export interface PrepareStepOptions {
   readonly prepareToolIds: ReadonlySet<string>;
   /** The door found the prepare tool missing from its server's listing. */
   readonly toolUnlisted?: boolean;
+  /** The working directory the preflight pinned (D2); the settle's `show` read uses it. */
+  readonly workingDirectory?: string;
   readonly timers?: {
     set(fn: () => void, ms: number): unknown;
     clear(handle: unknown): void;
@@ -457,7 +459,10 @@ export async function runPrepareStep(
               type: prepareActionType(service),
               payload: {
                 mcpToolId: mcpClientToolKey(service, settleTool),
-                input: { workingDirectory: args.workingDirectory, planFile: args.planFile },
+                input: {
+                  workingDirectory: opts.workingDirectory ?? args.workingDirectory,
+                  planFile: args.planFile,
+                },
               },
             };
             const shown = await raceWithBudget(
@@ -474,6 +479,7 @@ export async function runPrepareStep(
       context: {
         settle,
         input,
+        ...(opts.workingDirectory === undefined ? {} : { workingDirectory: opts.workingDirectory }),
         reply: replyJson(got.reply),
         ...(showPlan === undefined ? {} : { showPlan }),
       },

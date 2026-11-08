@@ -15,6 +15,7 @@ import {
   buildConnectorWritePreviewFrom,
   type ConnectorWritePreview,
   findConnectorWriteRow,
+  isPlainObject,
   renderConnectorWritePreviewLines,
   rowNamedByToolId,
 } from "../connectors/connector-writes/preview.ts";
@@ -821,12 +822,23 @@ interface GateScope {
   prepared?: PreparedWrite;
   /** Written by `preflightPhase` (D2): frees the per-workdir lock; `execute()` calls it when the run ends. */
   release?: () => void;
+  /** Written by `preflightPhase`: the real working directory it pinned into the action (D2). */
+  workingDirectory?: string;
   /**
    * Static D43: set by `discardUnusedChangeSet` alone, for the ONE change set this same gate run's
    * settle bound. Under it the discard action of exactly that stack and id needs no prompt (I2's one
    * stated exception); any other action in the scope is refused.
    */
   readonly discardStep?: DiscardTarget;
+}
+
+/** Writes `directory` as the working directory of the action's tool input (nested or flat). */
+function pinWorkingDirectory(action: PlannedAction, directory: string): void {
+  const payload = action.payload ?? {};
+  const nested = payload["input"];
+  const holder = Object.hasOwn(payload, "input") && isPlainObject(nested) ? nested : payload;
+  holder["workingDirectory"] = directory;
+  action.payload = payload;
 }
 
 /** The change set a discard scope may remove: the stack it belongs to and the id the settler bound. */
@@ -1045,8 +1057,13 @@ export class ToolExecutor {
     record: GateRecord,
     scope: GateScope,
   ): Promise<boolean> {
-    const captured = await this.captureBeforePhase(action, opts);
+    const earlier = await this.captureBeforePhase(action, opts);
     if (!(await this.preflightPhase(action, record, scope))) return false;
+    // A pinned working directory changes what the preview's target shows: rebuild it from the action.
+    const captured =
+      scope.workingDirectory === undefined
+        ? earlier
+        : buildConnectorWritePreviewFrom(action, this.rows(), this.previewCredentialFor);
     const prepared = await this.preparePhase(action, opts, scope);
     if (prepared !== undefined) record.boundValuesSha256 = boundValuesDigest(prepared.values);
     if (prepared?.diff !== undefined) {
@@ -1110,6 +1127,12 @@ export class ToolExecutor {
     }
     if (!outcome.ok) return refuse(outcome.reason);
     scope.release = outcome.release;
+    if (outcome.workingDirectory !== undefined) {
+      // Every later child, the confirm text and the prompt use the gateway-resolved path, not the
+      // caller's string (it is this run's own clone: only `execute()` reaches a bound row).
+      pinWorkingDirectory(action, outcome.workingDirectory);
+      scope.workingDirectory = outcome.workingDirectory;
+    }
     return true;
   }
 
@@ -1143,6 +1166,9 @@ export class ToolExecutor {
       {
         prepareToolIds: this.prepareToolIds(),
         toolUnlisted: opts?.prepareToolUnlisted === true,
+        ...(scope.workingDirectory === undefined
+          ? {}
+          : { workingDirectory: scope.workingDirectory }),
       },
     );
     scope.prepared = prepared;

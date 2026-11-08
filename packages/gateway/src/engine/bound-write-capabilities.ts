@@ -25,6 +25,8 @@ export interface SettledWrite {
 export interface SettleContext {
   readonly settle: PrepareSettle;
   readonly input: Readonly<Record<string, unknown>>;
+  /** The gateway-resolved working directory the preflight pinned (absent for CloudFormation). */
+  readonly workingDirectory?: string;
   readonly reply: unknown;
   /** The gate's own `iac_terraform_show_json` call (an `iac.write.prepare` action, audited and ledgered). */
   readonly showPlan?: (args: {
@@ -34,7 +36,17 @@ export interface SettleContext {
 }
 
 export type PreflightOutcome =
-  | { readonly ok: true; readonly release: () => void }
+  | {
+      readonly ok: true;
+      readonly release: () => void;
+      /**
+       * The real path the capability resolved the caller's working directory to (symlinks and
+       * aliases followed, after the approved-directory check). When present the gate pins it: the
+       * plan, show and apply children, the typed confirm text and the prompt all use THIS string, so
+       * a link swapped in after the check is never re-resolved by a later child.
+       */
+      readonly workingDirectory?: string;
+    }
   | { readonly ok: false; readonly reason: string };
 
 /**
