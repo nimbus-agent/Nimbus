@@ -349,7 +349,10 @@ function build(plan: Obj, planSha256: string, limits: PlanPreviewLimits): PlanPr
     lines.add("Outputs:");
     for (const o of outputs) lines.add(`  ${escapeOneLine(o.name)}: ${o.label}`);
   }
-  lines.add(`End of plan: ${String(changeCount)} changes (${String(deleteCount)} deletes)`);
+  // The header counts deletes and replaces apart; so does the footer (a replace is a delete AND a create).
+  lines.add(
+    `End of plan: ${String(changeCount)} changes (${String(counts.delete)} deletes, ${String(counts.replace)} replaces)`,
+  );
 
   const text = lines.list.join("\n");
   return {

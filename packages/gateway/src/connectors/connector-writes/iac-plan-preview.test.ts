@@ -136,7 +136,7 @@ describe("renderPlanPreview: shape and order", () => {
   });
 
   test("the footer is last and states the change and delete counts", () => {
-    expect(p.lines.at(-1)).toBe("End of plan: 4 changes (2 deletes)");
+    expect(p.lines.at(-1)).toBe("End of plan: 4 changes (1 deletes, 1 replaces)");
   });
 
   test("lists every non-no-op change once, in plan order, and no no-op", () => {
@@ -374,7 +374,7 @@ describe("renderPlanPreview: a plan the owner could not be shown is refused", ()
   test("an empty plan (no resource_changes at all) renders with zero counts", () => {
     const p = render({ ...plan([]), resource_changes: undefined });
     expect(p.lines[0]).toBe("Deletes: 0, Replaces: 0, Creates: 0, Updates: 0");
-    expect(p.lines.at(-1)).toBe("End of plan: 0 changes (0 deletes)");
+    expect(p.lines.at(-1)).toBe("End of plan: 0 changes (0 deletes, 0 replaces)");
   });
 
   test("a plan holding only no-ops renders empty counts and lists nothing", () => {

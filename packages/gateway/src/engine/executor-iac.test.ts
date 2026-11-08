@@ -37,8 +37,12 @@ import type {
 const DIR = "prod";
 const CONFIRM_TEXT = "iac/prod";
 const PLAN = {
-  lines: ["Deletes: 1, Replaces: 0, Creates: 2, Updates: 0", "  - aws_s3_bucket.logs"],
-  text: "Deletes: 1, Replaces: 0, Creates: 2, Updates: 0\n  - aws_s3_bucket.logs",
+  lines: [
+    "Deletes: 1, Replaces: 0, Creates: 2, Updates: 0",
+    "  - aws_s3_bucket.logs",
+    "End of plan: 3 changes (1 deletes, 0 replaces)",
+  ],
+  text: "Deletes: 1, Replaces: 0, Creates: 2, Updates: 0\n  - aws_s3_bucket.logs\nEnd of plan: 3 changes (1 deletes, 0 replaces)",
   bytes: 70,
   sha256: "c".repeat(64),
   changeCount: 3,
@@ -373,7 +377,8 @@ describe("the settle hand-off: the gateway's values, its plan, its cleanup (D2, 
     expect(sent).toEqual({ dir: DIR, changeSetId: "arn:settled" });
     expect(JSON.stringify(writes(h))).not.toContain(SYNTH_REPLY.digest);
     expect(h.prompts[0]).toContain("aws_s3_bucket.logs");
-    expect(h.prompts[0]).toContain("End of plan: 3 changes (1 deletes)");
+    expect(h.prompts[0]).toContain("End of plan: 3 changes (1 deletes, 0 replaces)");
+    expect(h.prompts[0]?.split("End of plan").length).toBe(2);
     const shown = h.details[0] as { plan?: { sha256?: string } };
     expect(shown.plan?.sha256).toBe(PLAN.sha256);
     expect(h.settleCalls[0]?.settle).toBe("iac-cfn");
@@ -389,7 +394,7 @@ describe("the settle hand-off: the gateway's values, its plan, its cleanup (D2, 
     expect(h.audits.at(-1)?.actionJson).not.toContain("aws_s3_bucket.logs");
   });
 
-  test("a settled plan with no counts ends with a line count", async () => {
+  test("the prompt adds no footer of its own: a plan without one shows none", async () => {
     const h = harness({
       caps: {
         settle: async () => ({
@@ -401,7 +406,9 @@ describe("the settle hand-off: the gateway's values, its plan, its cleanup (D2, 
       },
     });
     await h.exec.execute(ACTION);
-    expect(h.prompts[0]).toContain("End of plan: 2 lines");
+    expect(h.prompts[0]).toContain("a\nb");
+    expect(h.prompts[0]).not.toContain("End of plan");
+    expect(h.prompts[0]).not.toContain(" lines");
   });
 
   test("a settle with no plan shows only the prepared facts", async () => {

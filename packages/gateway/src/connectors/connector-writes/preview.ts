@@ -323,13 +323,13 @@ function diffLines(d: PreviewDiff): string[] {
   ];
 }
 
-/** The plan in full, last on screen, then a footer so an owner scrolling up knows where it ends. */
+/**
+ * The plan in full, last on screen. Its own renderer ends the lines with the one footer (it is part
+ * of the hashed text the owner approves), so none is added here: a second would disagree with the
+ * first about what a "delete" is.
+ */
 function planLines(p: PreviewPlan): string[] {
-  const counted =
-    p.changeCount === undefined || p.deleteCount === undefined
-      ? `${String(p.lines.length)} lines`
-      : `${String(p.changeCount)} changes (${String(p.deleteCount)} deletes)`;
-  return [...p.lines.map(oneLine), `End of plan: ${counted}`];
+  return p.lines.map(oneLine);
 }
 
 /**

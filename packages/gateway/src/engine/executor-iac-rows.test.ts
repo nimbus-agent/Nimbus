@@ -27,7 +27,11 @@ const PLAN_HASH = "a".repeat(64);
 const ARN =
   "arn:aws:cloudformation:eu-west-1:123456789012:changeSet/nimbus-x/00000000-0000-0000-0000-000000000000";
 const PLAN = {
-  lines: ["Deletes: 1, Replaces: 0, Creates: 0, Updates: 0", "  - aws_s3_bucket.old"],
+  lines: [
+    "Deletes: 1, Replaces: 0, Creates: 0, Updates: 0",
+    "  - aws_s3_bucket.old",
+    "End of plan: 1 changes (1 deletes, 0 replaces)",
+  ],
   text: "x",
   bytes: 1,
   sha256: "b".repeat(64),
@@ -250,7 +254,9 @@ describe("Terraform apply and destroy through the production table (D2, I54)", (
       expect(h.confirmed).toHaveLength(1);
       expect(h.confirmed[0]?.confirmText).toBe(text);
       expect(h.prompts[0]).toContain("aws_s3_bucket.old");
-      expect(h.prompts[0]).toContain("End of plan: 1 changes (1 deletes)");
+      // Exactly one footer: the renderer's own, never a second one added by the prompt builder.
+      expect(h.prompts[0]).toContain("End of plan: 1 changes (1 deletes, 0 replaces)");
+      expect(h.prompts[0]?.split("End of plan").length).toBe(2);
       const audit = JSON.parse(h.audits.at(-1)?.actionJson ?? "{}") as Record<string, unknown>;
       expect(audit["diffSha256"]).toBe(PLAN.sha256);
       expect(typeof audit["boundValuesSha256"]).toBe("string");
