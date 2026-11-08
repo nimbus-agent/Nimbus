@@ -153,7 +153,7 @@ describe("buildIacProfile — the per-profile grants", () => {
 // ---------------------------------------------------------------------------------------------
 // A scripted child.
 
-type Behaviour = "answer" | "hang" | "hang-ignore-term" | "exit-early" | "silent";
+type Behaviour = "answer" | "answer-linger" | "hang" | "hang-ignore-term" | "exit-early" | "silent";
 
 class FakeChild implements IacChild {
   readonly sent: Array<Record<string, unknown>> = [];
@@ -176,7 +176,7 @@ class FakeChild implements IacChild {
         this.lineCb?.(JSON.stringify({ jsonrpc: "2.0", id: msg["id"], result: {} })),
       );
     } else if (msg["method"] === "tools/call") {
-      if (this.behaviour === "answer") {
+      if (this.behaviour === "answer" || this.behaviour === "answer-linger") {
         queueMicrotask(() => {
           this.lineCb?.(JSON.stringify({ jsonrpc: "2.0", id: msg["id"], result: this.reply }));
         });
@@ -194,7 +194,9 @@ class FakeChild implements IacChild {
   }
   kill(force: boolean): void {
     this.kills.push(force);
-    if (force || this.behaviour !== "hang-ignore-term") this.exit(null);
+    if (force || (this.behaviour !== "hang-ignore-term" && this.behaviour !== "answer-linger")) {
+      this.exit(null);
+    }
   }
   closeInput(): void {
     this.inputClosed = true;
@@ -817,6 +819,51 @@ describe("the Windows ledger keeps one entry per live profile (review item 1)", 
     await expect(r.execute("iac_terraform_plan", PLAN_INPUT)).rejects.toThrow("no sandbox");
     expect(ledger.entries).toEqual([]);
     expect(log.length).toBeGreaterThan(0);
+    run.release();
+  });
+});
+
+describe("a plan is settled only after its child has exited (review item 2)", () => {
+  test("the plan call does not return while the child is alive, and returns once it is gone", async () => {
+    const { r, children } = runner("answer-linger");
+    const run = await openRun(r);
+    let returned = false;
+    const call = r.execute("iac_terraform_plan", PLAN_INPUT).then((v) => {
+      returned = true;
+      return v;
+    });
+    await new Promise((res) => setTimeout(res, 100));
+    const child = children[0] as FakeChild;
+    expect(child.sent.some((m) => m["method"] === "tools/call")).toBe(true);
+    expect(child.exited).toBe(false);
+    expect(returned).toBe(false); // the connector answered, but the process is still there
+    child.exit(0);
+    expect(await call).toEqual({ content: [{ type: "text", text: "{}" }] });
+    expect(child.exited).toBe(true);
+    run.release();
+  });
+
+  test("a child that never goes away fails the plan closed and keeps the run locked", async () => {
+    const { r, children } = runner("answer-linger", { exitWaitMs: 50 });
+    const run = await openRun(r);
+    await expect(r.execute("iac_terraform_plan", PLAN_INPUT)).rejects.toThrow("did not exit");
+    run.release();
+    expect((await r.preflight("iac_terraform_apply", { workingDirectory: work })).ok).toBe(false);
+    (children[0] as FakeChild).exit(0);
+    await new Promise((res) => setTimeout(res, 30));
+    expect((await r.preflight("iac_terraform_apply", { workingDirectory: work })).ok).toBe(true);
+  });
+
+  test("show, apply and the destroy plan's siblings do not wait: only a plan writes a file the gateway hashes", async () => {
+    const { r, children } = runner("answer-linger");
+    const run = await openRun(r);
+    const approved = join(iacRoot, "approved", "e".repeat(32), "f".repeat(32));
+    mkdirSync(approved, { recursive: true });
+    const planFile = join(approved, "plan.tfplan");
+    writeFileSync(planFile, "x");
+    await r.execute("iac_terraform_show_json", { workingDirectory: work, planFile });
+    expect(children[0]?.exited).toBe(false);
+    children[0]?.exit(0);
     run.release();
   });
 });

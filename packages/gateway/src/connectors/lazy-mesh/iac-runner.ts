@@ -319,6 +319,8 @@ export const spawnIacChild: IacChildSpawner = (spec) => {
 };
 
 const ESCALATE_AFTER_MS = 3_000;
+/** A plan child that answered gets the escalation plus this long to be reaped before the plan fails. */
+const EXIT_WAIT_MS = ESCALATE_AFTER_MS + 5_000;
 
 /** What one call to a child produced; `exited` resolves when the process is really gone. */
 interface ChildCall {
@@ -497,6 +499,11 @@ export interface IacRunnerDeps {
   /** Test seam for removing a directory tree; production: forced `rmSync` with retries. */
   readonly removeTree?: (p: string) => void;
   readonly timeoutsMs?: Readonly<Record<string, number>>;
+  /**
+   * How long a plan call waits, after the connector answered, for its process to be gone before it
+   * fails closed ({@link EXIT_WAIT_MS} when absent).
+   */
+  readonly exitWaitMs?: number;
   /**
    * Test seam: extra READ paths for every child (never write). A dev tree runs the connector as
    * `bun <gateway source>`, which a sandboxed child cannot read; the integration test hands it the
@@ -729,6 +736,7 @@ export class IacRunner implements IacHost {
         ? `timed out after ${String(Math.round(budget / 60_000))} minutes; the infrastructure may be partly changed; check the Terraform state`
         : "iac: the call exceeded its time limit";
     // The run stays alive until the child has actually exited (onExited), whatever the call did.
+    // A plan writes the file the gateway will move, hash and show: its process must be gone first.
     return this.spawnAndCall(
       profile,
       { ...cloudEnv.env },
@@ -737,6 +745,7 @@ export class IacRunner implements IacHost {
       budget,
       timeoutText,
       onExited,
+      kind === "plan",
     );
   }
 
@@ -815,6 +824,7 @@ export class IacRunner implements IacHost {
     budget: number,
     timeoutText: string,
     onExited: () => void,
+    awaitExit = false,
   ): Promise<unknown> {
     const manifest = profile.manifest;
     const cwd = join(this.iacRoot, "cwd", manifest.id);
@@ -846,12 +856,32 @@ export class IacRunner implements IacHost {
       throw e;
     }
     const call = callChildTool(child, toolId, args, budget, timeoutText);
-    void call.exited.then(async () => {
+    const done = call.exited.then(async () => {
       await this.afterExit(manifest.id, paths);
       this.safeRemove(cwd);
       onExited();
     });
-    return call.result;
+    if (!awaitExit) return call.result;
+    // The connector's answer is not the end of the process: a descendant holding a writable handle
+    // on the plan file could still rewrite it after it was hashed and shown. Wait for the child to be
+    // reaped (on Linux the namespace teardown takes its tree with it) BEFORE the settler moves,
+    // reads and hashes the file. A child that will not go away fails the plan; the run stays locked.
+    const out = await call.result;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([
+        done,
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(
+            () => reject(new Error("iac: the plan process did not exit")),
+            this.deps.exitWaitMs ?? EXIT_WAIT_MS,
+          );
+        }),
+      ]);
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+    }
+    return out;
   }
 
   private safeRemove(p: string): void {
