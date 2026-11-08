@@ -60,12 +60,22 @@ function altPlaceholders(r: ConnectorWriteRow): string[] {
 }
 
 describe("every wave 4 row declares a type-to-confirm target", () => {
-  test("there are 39 wave 4 rows, each with a confirm template that parses", () => {
-    expect(WAVE4).toHaveLength(39);
+  test("there are 41 wave 4 rows, each with a confirm template that parses", () => {
+    expect(WAVE4).toHaveLength(41);
     for (const r of WAVE4) {
       expect(r.confirm, r.toolId).toBeDefined();
       expect(parseConfirmTemplate(r.confirm?.template ?? "").ok, r.toolId).toBe(true);
     }
+  });
+
+  test("the two commit writes confirm on commit {owner}/{repo}@{branch} and commit {projectPath}@{branch}", () => {
+    const byId = new Map(WAVE4.map((r) => [r.toolId, r]));
+    expect(byId.get("github_file_commit")?.confirm?.template).toBe(
+      "commit {owner}/{repo}@{branch}",
+    );
+    expect(byId.get("gitlab_commit_create")?.confirm?.template).toBe(
+      "commit {projectPath}@{branch}",
+    );
   });
 
   test("no wave 2 or 3 row carries one (the control is wave 4's)", () => {
@@ -74,10 +84,11 @@ describe("every wave 4 row declares a type-to-confirm target", () => {
     }
   });
 
-  test("the three opaque-id deletes confirm on the id's last 8 characters (OR-W34-8)", () => {
+  test("the three opaque-id deletes confirm on the id's last 8 characters (OR-W34-8), and the Cloud Run deploy on its image's last 8 (D1)", () => {
     const tail = WAVE4.filter((r) => r.confirm?.template.includes(":tail8"));
     expect(tail.map((r) => r.toolId).sort((a, b) => a.localeCompare(b))).toEqual([
       "apple_calendar_event_delete",
+      "gcp_cloud_run_deploy",
       "onedrive_item_delete",
       "outlook_calendar_delete",
     ]);
@@ -177,6 +188,18 @@ describe("rendering from a plausible input", () => {
     expect(text("mlflow_model_promote", { name: "fraud", version: "4" })).toBe(
       "mlflow/promote fraud/v4",
     );
+    // D1: the deploy names its image by the last 8 characters; a slashed branch is typeable.
+    expect(
+      text("gcp_cloud_run_deploy", {
+        projectId: "p1",
+        region: "us-east1",
+        service: "api",
+        image: "us-docker.pkg.dev/p1/repo/api@sha256:0123456789abcdef",
+      }),
+    ).toBe("gcp/deploy p1/us-east1/api 89abcdef");
+    expect(text("github_branch_delete", { owner: "acme", repo: "api", branch: "feat/x" })).toBe(
+      "github/delete acme/api@feat/x",
+    );
     expect(text("argocd_app_rollback", { name: "web", id: 12 })).toBe("argocd/rollback web@12");
     expect(text("outlook_calendar_delete", { eventId: "AAMkAGI2THVSAAA1B2c3D4" })).toBe(
       "outlook/delete A1B2c3D4",
@@ -199,6 +222,21 @@ describe("no two Wave 4 rows of one service render the same confirm text", () =>
       byService.set(s, [...(byService.get(s) ?? []), r]);
     }
     let pairs = 0;
+    /**
+     * An array is joined with single spaces, so a field followed by text holding a space can never
+     * take one (its elements would read as the following text). An array's type is fixed by the
+     * connector's schema, so no such row ever sees one; the array case skips exactly those rows.
+     */
+    const takesArrays = (r: ConnectorWriteRow): boolean => {
+      const parsed = parseConfirmTemplate(r.confirm?.template ?? "");
+      if (!parsed.ok) throw new Error(parsed.reason);
+      return !parsed.segments.some(
+        (seg, i) =>
+          seg.kind === "field" &&
+          parsed.segments[i + 1]?.kind === "text" &&
+          (parsed.segments[i + 1] as { text: string }).text.includes(" "),
+      );
+    };
     for (const [service, rows] of byService) {
       for (let i = 0; i < rows.length; i++) {
         for (let j = i + 1; j < rows.length; j++) {
@@ -207,6 +245,7 @@ describe("no two Wave 4 rows of one service render the same confirm text", () =>
           if (a === undefined || b === undefined) continue;
           pairs++;
           for (const value of ["v1", 7, ["v1", "v2"]]) {
+            if (Array.isArray(value) && !(takesArrays(a) && takesArrays(b))) continue;
             const input = Object.fromEntries(Object.keys(sharedInput(a, b)).map((k) => [k, value]));
             const ta = renderConfirmText(a, input);
             const tb = renderConfirmText(b, input);

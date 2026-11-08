@@ -5,7 +5,11 @@ import { describe, expect, test } from "bun:test";
 import { serviceOf } from "../../engine/service-of.ts";
 import { offerableWritesEnabledBy, writesEnabledBy } from "./enablement-store.ts";
 import { CONNECTOR_WRITE_ROWS } from "./index.ts";
-import { isModelOfferableRow, MODEL_NEVER_OFFERED_TOOL_IDS } from "./model-offerable.ts";
+import {
+  isModelOfferableRow,
+  MODEL_NEVER_OFFERED_REASONS,
+  MODEL_NEVER_OFFERED_TOOL_IDS,
+} from "./model-offerable.ts";
 import { type ConnectorWriteRow, previewTemplateKeys } from "./types.ts";
 
 function rowOf(toolId: string): ConnectorWriteRow {
@@ -69,11 +73,30 @@ const SCHEMA_KEYS: Readonly<Record<(typeof DOWN_TO_WAVE_3)[number], readonly str
 };
 
 describe("C0: the sends are never offered to the model (OR-W34-1)", () => {
-  test("the set is exactly the seven sends, each a real row whose action type ends in .send", () => {
-    expect([...MODEL_NEVER_OFFERED_TOOL_IDS].sort((a, b) => a.localeCompare(b))).toEqual([
-      ...SENDS,
-    ]);
+  test("the set is the seven sends (each a real row whose action type ends in .send) and the Bitbucket merge (D1), each with a reason", () => {
+    expect([...MODEL_NEVER_OFFERED_TOOL_IDS].sort((a, b) => a.localeCompare(b))).toEqual(
+      [...SENDS, "bitbucket_pr_merge"].sort((a, b) => a.localeCompare(b)),
+    );
     for (const id of SENDS) expect(rowOf(id).actionType.endsWith(".send"), id).toBe(true);
+    expect(Object.keys(MODEL_NEVER_OFFERED_REASONS).sort((a, b) => a.localeCompare(b))).toEqual(
+      [...MODEL_NEVER_OFFERED_TOOL_IDS].sort((a, b) => a.localeCompare(b)),
+    );
+    for (const [id, reason] of Object.entries(MODEL_NEVER_OFFERED_REASONS)) {
+      expect(reason.trim(), id).not.toBe("");
+    }
+    expect(Object.isFrozen(MODEL_NEVER_OFFERED_REASONS)).toBe(true);
+  });
+
+  test("the Bitbucket merge keeps its preview and its reader but is never offered, whatever its template (D1 round-1 fix 8)", () => {
+    const r = rowOf("bitbucket_pr_merge");
+    expect(r.preview).toBeDefined();
+    expect(r.before).toBeDefined();
+    expect(r.confirm).toBeDefined();
+    expect(isModelOfferableRow(r)).toBe(false);
+    expect(MODEL_NEVER_OFFERED_REASONS["bitbucket_pr_merge"]).toContain("head-commit");
+    for (const wave of [2, 3, 4] as const) {
+      expect(offerableWritesEnabledBy("bitbucket", wave).map((x) => x.toolId)).toEqual([]);
+    }
   });
 
   test("the set is frozen", () => {
@@ -131,7 +154,7 @@ describe("C0: the reclassification (OR-W34-3)", () => {
     }
   });
 
-  test("the seven are outside a wave-3 opt-in and not offerable (no template yet)", () => {
+  test("the seven are outside a wave-3 opt-in; since D1 six are offerable at wave 4 and the Bitbucket merge never is", () => {
     for (const id of UP_TO_WAVE_4) {
       const r = rowOf(id);
       const service = serviceOf(r.actionType);
@@ -143,7 +166,7 @@ describe("C0: the reclassification (OR-W34-3)", () => {
         writesEnabledBy(service, 4).map((x) => x.toolId),
         id,
       ).toContain(id);
-      expect(isModelOfferableRow(r), id).toBe(false);
+      expect(isModelOfferableRow(r), id).toBe(id !== "bitbucket_pr_merge");
     }
   });
 

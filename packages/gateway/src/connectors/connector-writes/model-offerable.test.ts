@@ -46,7 +46,7 @@ describe("isModelOfferableRow (M1)", () => {
   test("a wave 2 or 3 row needs no confirm target", () => {
     expect(isModelOfferableRow(row({ wave: 3, preview: template }))).toBe(true);
   });
-  test("exactly the 67 rows are offerable: the 38 B1-B4b rows, the ten wave-3 refreshes and data-quality rows (C0) the eight wave-3 file, PR and incident rows (C1) the six wave-3 branch, pull request and merge request rows (C2) and the five wave-3 flag and alert rows (C3)", () => {
+  test("exactly the 94 rows are offerable: the 38 B1-B4b rows, the ten wave-3 refreshes and data-quality rows (C0) the eight wave-3 file, PR and incident rows (C1) the six wave-3 branch, pull request and merge request rows (C2), the five wave-3 flag and alert rows (C3) and the 27 Wave 4 rows with a before-state (D1)", () => {
     expect(
       CONNECTOR_WRITE_ROWS.filter(isModelOfferableRow)
         .map((r) => r.toolId)
@@ -120,11 +120,40 @@ describe("isModelOfferableRow (M1)", () => {
         "slack_message_post_dm",
         "teams_message_post",
         "teams_message_post_chat",
+        // D1: Wave 4, each with a before-state and a typed confirmation.
+        "argocd_app_rollback",
+        "argocd_app_sync",
+        "apple_calendar_event_delete",
+        "aws_ec2_instance_start",
+        "aws_ec2_instance_stop",
+        "aws_ecs_service_update",
+        "aws_lambda_invoke",
+        "circleci_job_cancel",
+        "circleci_pipeline_trigger",
+        "flux_helmrelease_reconcile",
+        "flux_kustomization_reconcile",
+        "gha_run_cancel",
+        "gha_run_trigger",
+        "github_branch_delete",
+        "github_pr_merge",
+        "github_tag_create",
+        "gitlab_mr_merge",
+        "gitlab_pipeline_cancel",
+        "gitlab_pipeline_retry",
+        "jenkins_build_abort",
+        "jenkins_build_trigger",
+        "mlflow_model_promote",
+        "mlflow_model_transition_stage",
+        "onedrive_item_delete",
+        "outlook_calendar_delete",
+        "snowflake_comment_set",
+        "snowflake_tag_set",
       ].sort((a, b) => a.localeCompare(b)),
     );
-    expect(CONNECTOR_WRITE_ROWS.filter(isModelOfferableRow)).toHaveLength(67);
-    // Wave 4 still needs a before reader: argocd's templated wave-4 rows stay out.
-    expect(offerableWritesEnabledBy("argocd", 4)).toEqual([]);
+    expect(CONNECTOR_WRITE_ROWS.filter(isModelOfferableRow)).toHaveLength(94);
+    // Wave 4 needs a before reader: argocd's two rows are offered at wave 4 and not before.
+    expect(offerableWritesEnabledBy("argocd", 4)).toHaveLength(2);
+    expect(offerableWritesEnabledBy("argocd", 3)).toEqual([]);
     expect(writesEnabledBy("argocd", 4)).toHaveLength(2);
     expect(offerableWritesEnabledBy("slack", 2)).toHaveLength(2);
     expect(offerableWritesEnabledBy("github", 2)).toHaveLength(5);

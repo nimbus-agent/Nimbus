@@ -7,6 +7,12 @@ import {
   stringAt,
 } from "./before-select.ts";
 import {
+  hasFacet,
+  onedriveParent,
+  selectOnedriveItemDelete,
+  singleIdArgs,
+} from "./delete-readers.ts";
+import {
   type BeforeStateField,
   type BeforeStateRead,
   type ConnectorWriteRow,
@@ -92,13 +98,6 @@ function isTrueAt(j: unknown, key: string): boolean {
     : false;
 }
 
-/** Whether `j` has an own property `key` that is a non-null object (a Graph facet). */
-function hasFacet(j: unknown, key: string): boolean {
-  if (typeof j !== "object" || j === null || !Object.hasOwn(j, key)) return false;
-  const v = (j as Record<string, unknown>)[key];
-  return typeof v === "object" && v !== null;
-}
-
 /** A non-empty string input, else `undefined`: the reads never run on a number, null or "". */
 function idArg(v: unknown): string | undefined {
   return typeof v === "string" && v !== "" ? v : undefined;
@@ -174,11 +173,6 @@ export function selectDriveFileMove(
     },
   );
   return out;
-}
-
-/** The parent reference of a Graph driveItem: its path when it has one, else its id. */
-function onedriveParent(j: unknown): string | undefined {
-  return stringAt(j, ["parentReference", "path"]) ?? stringAt(j, ["parentReference", "id"]);
 }
 
 /**
@@ -310,7 +304,23 @@ export const FILES_ROWS: readonly ConnectorWriteRow[] = [
       select: selectOnedriveItemMove,
     },
   ),
-  withConfirm(row("onedrive_item_delete", "onedrive.item.delete", "mesh", 4), {
-    template: "delete {itemId:tail8}",
-  }),
+  // D1: the delete is shown beside the item it removes. The connector describes it as permanent
+  // (it captures only the id), so the summary says Nimbus cannot undo it.
+  withConfirm(
+    withBefore(
+      withPreview(row("onedrive_item_delete", "onedrive.item.delete", "mesh", 4), {
+        target: "{itemId}",
+        summary:
+          "Delete OneDrive item {itemId}; the connector describes this as permanent and Nimbus cannot undo it",
+        fields: [textField("itemId", "Item id")],
+      }),
+      {
+        tool: "onedrive_item_get",
+        argKeys: ["itemId"],
+        args: singleIdArgs("itemId", "itemId"),
+        select: selectOnedriveItemDelete,
+      },
+    ),
+    { template: "delete {itemId:tail8}" },
+  ),
 ];

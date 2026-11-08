@@ -1,5 +1,11 @@
 // packages/gateway/src/connectors/connector-writes/flags.ts
-import { beforeReplyJson, excerptHead, presentFields, stringAt } from "./before-select.ts";
+import {
+  beforeReplyJson,
+  excerptHead,
+  positiveIntegerArg,
+  presentFields,
+  stringAt,
+} from "./before-select.ts";
 import {
   BEFORE_STATE_MAX_FIELDS,
   type BeforeStateField,
@@ -10,7 +16,6 @@ import {
   withBefore,
   withPreview,
 } from "./types.ts";
-import { positiveIntegerArg } from "./vcs-ci.ts";
 
 function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);

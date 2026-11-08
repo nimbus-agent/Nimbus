@@ -136,8 +136,10 @@ describe("I26 — the code-execution refusal holds in the form a federated sessi
     // The iac five evaluate a caller-named directory; the az/gcloud reads reach a `.cmd` wrapper's
     // argv on Windows. (azure/gcp writes are refused by the WRITE predicate, asserted above.)
     expect(refused.sort()).toEqual([
+      "azure_azure_aks_node_pool_get",
       "azure_azure_app_service_list",
       "gcp_gcp_cloud_run_service_list",
+      "gcp_gcp_gke_workload_get",
       "iac_iac_pulumi_preview",
       "iac_iac_pulumi_up",
       "iac_iac_terraform_apply",

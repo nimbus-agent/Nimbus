@@ -53,6 +53,22 @@ describe("parseConfirmTemplate", () => {
     }
   });
 
+  test("refuses two adjacent placeholders (the text would not be injective), with or without a modifier", () => {
+    for (const t of ["x {a}{b}", "{a}{b}", "{a:tail8}{b}", "{a}{b:tail8} y"]) {
+      expect(parseConfirmTemplate(t), t).toEqual({
+        ok: false,
+        reason: "has two adjacent placeholders",
+      });
+    }
+    expect(parseConfirmTemplate("{a}/{b}").ok).toBe(true);
+  });
+
+  test("refuses an = in literal text (it is allowed in values only)", () => {
+    expect(parseConfirmTemplate("a={b}").ok).toBe(false);
+    expect(parseConfirmTemplate("{a}={b}").ok).toBe(false);
+    expect(parseConfirmTemplate("x {a}").ok).toBe(true);
+  });
+
   test("refuses literal text outside the confirm character set", () => {
     const r = parseConfirmTemplate("{a}é");
     expect(r.ok).toBe(false);
@@ -67,10 +83,10 @@ describe("parseConfirmTemplate", () => {
 });
 
 describe("isConfirmChar", () => {
-  test("allows exactly letters, digits, space and _ - . / backslash : # @ !", () => {
-    for (const c of "azAZ09 _-./:#@!" + String.fromCharCode(92))
+  test("allows exactly letters, digits, space and _ - . / backslash : # @ ! =", () => {
+    for (const c of "azAZ09 _-./:#@!=" + String.fromCharCode(92))
       expect(isConfirmChar(c.codePointAt(0) ?? 0)).toBe(true);
-    for (const c of ["(", ")", "~", "\t", "\n", "é", "…", "%", "+", "="]) {
+    for (const c of ["(", ")", "~", "\t", "\n", "é", "…", "%", "+"]) {
       expect(isConfirmChar(c.codePointAt(0) ?? 0)).toBe(false);
     }
   });

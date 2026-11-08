@@ -12,12 +12,17 @@ import {
   type ConnectorWriteRow,
   row,
   withBefore,
+  withConfirm,
   withPreview,
 } from "../connectors/connector-writes/types.ts";
 import { makeEgressSink } from "../egress/egress-ledger.ts";
 import { LocalIndex } from "../index/local-index.ts";
 import { ConsentDisconnectedError } from "../ipc/consent.ts";
-import { createBeforeStateRunner, isBeforeReadActionType } from "./before-state.ts";
+import {
+  createBeforeStateRunner,
+  isBeforeReadActionType,
+  WAVE4_BEFORE_REFUSAL,
+} from "./before-state.ts";
 import { NO_POLICY_OVERLAY, ToolExecutor } from "./executor.ts";
 import type { AuditSink, ConnectorDispatcher, ConsentChannel, PlannedAction } from "./types.ts";
 
@@ -67,6 +72,7 @@ function harness(opts: {
   readReply?: unknown;
   withRunner?: boolean;
   consent?: ConsentChannel["requestApproval"];
+  rows?: readonly ConnectorWriteRow[];
 }) {
   db = new Database(":memory:");
   LocalIndex.ensureSchema(db);
@@ -103,7 +109,7 @@ function harness(opts: {
     makeEgressSink(ledger),
     NO_POLICY_OVERLAY,
     undefined,
-    opts.withRunner === false ? undefined : createBeforeStateRunner({ rows: [ROW] }),
+    opts.withRunner === false ? undefined : createBeforeStateRunner({ rows: opts.rows ?? [ROW] }),
   );
   const egress = (): Array<{ method: string; result_status: string; hitl_status: string }> =>
     ledger
@@ -203,5 +209,81 @@ describe("the before-state guard inside gate() (B2a)", () => {
       },
     });
     await expect(exec.execute(WRITE)).rejects.toThrow("consent channel broke");
+  });
+});
+
+describe("a Wave 4 model write whose current state cannot be read is refused inside gate() (D1)", () => {
+  /** An unguarded Wave 4 row: the generic rule, not a guard, refuses. */
+  const { guard: _guard, ...NO_GUARD_READER } = READER;
+  const WAVE4_ROW: ConnectorWriteRow = withConfirm(
+    withBefore(
+      withPreview(row("jira_issue_update", "jira.issue.update", "mesh", 4), {
+        target: "{issueKey}",
+        summary: "Update {issueKey}",
+        fields: [{ key: "summary", label: "Summary", kind: "text" }],
+      }),
+      NO_GUARD_READER,
+    ),
+    { template: "update {summary}" },
+  );
+
+  test("a failed read: no prompt, no write dispatched, rejected with the fixed reason, audited, egress blocked", async () => {
+    const { exec, rec, egress } = harness({
+      readReply: new Error("boom"),
+      rows: [WAVE4_ROW],
+    });
+    expect(await exec.execute(WRITE)).toEqual({ status: "rejected", reason: WAVE4_BEFORE_REFUSAL });
+    expect(rec.prompts).toEqual([]);
+    expect(rec.dispatched.map((a) => a.type)).toEqual(["jira.before.read"]);
+    const writeAudit = JSON.parse(rec.audits[1]?.actionJson ?? "{}") as Record<string, unknown>;
+    expect(writeAudit["hitlRejectReason"]).toBe(WAVE4_BEFORE_REFUSAL);
+    expect(egress()).toEqual([
+      { method: "jira.before.read", result_status: "authorized", hitl_status: "not_required" },
+      { method: "jira.issue.update", result_status: "blocked", hitl_status: "rejected" },
+    ]);
+  });
+
+  test("control: with a readable state the refusal is not the Wave 4 one (the plain channel cannot type the confirmation, so the write itself stops later)", async () => {
+    const { exec, rec } = harness({ readReply: { open: true }, rows: [WAVE4_ROW] });
+    const out = await exec.execute(WRITE);
+    expect(out).not.toEqual({ status: "rejected", reason: WAVE4_BEFORE_REFUSAL });
+    expect(rec.dispatched.map((x) => x.type)).toEqual(["jira.before.read"]);
+  });
+});
+
+describe("a Wave 4 model write with no typed preview is refused inside gate() (D1)", () => {
+  const NO_PREVIEW_ROW: ConnectorWriteRow = withConfirm(
+    row("github_file_commit", "github.file.commit", "mesh", 4),
+    {
+      template: "commit {owner}/{repo}",
+    },
+  );
+  const COMMIT = (model: boolean): PlannedAction => ({
+    type: "github.file.commit",
+    ...(model ? { origin: "model" as const } : {}),
+    payload: { mcpToolId: "github_file_commit", input: { owner: "o", repo: "r" } },
+  });
+
+  test("origin model: no prompt, audited rejection, blocked egress row, nothing dispatched", async () => {
+    const { exec, rec, egress } = harness({ rows: [NO_PREVIEW_ROW] });
+    expect(await exec.execute(COMMIT(true))).toEqual({
+      status: "rejected",
+      reason: WAVE4_BEFORE_REFUSAL,
+    });
+    expect(rec.prompts).toEqual([]);
+    expect(rec.dispatched).toEqual([]);
+    expect(rec.audits.map((a) => [a.actionType, a.hitlStatus])).toEqual([
+      ["github.file.commit", "rejected"],
+    ]);
+    expect(egress()).toEqual([
+      { method: "github.file.commit", result_status: "blocked", hitl_status: "rejected" },
+    ]);
+  });
+
+  test("a non-model origin is unchanged: not refused with the Wave 4 reason", async () => {
+    const { exec, rec } = harness({ rows: [NO_PREVIEW_ROW] });
+    const out = await exec.execute(COMMIT(false));
+    expect(out).not.toEqual({ status: "rejected", reason: WAVE4_BEFORE_REFUSAL });
+    expect(rec.dispatched.map((a) => a.type)).not.toContain("github.before.read");
   });
 });

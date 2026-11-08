@@ -1,9 +1,15 @@
 // packages/gateway/src/connectors/connector-writes/warehouse-bi.ts
 import {
+  selectSnowflakeComment,
+  selectSnowflakeTag,
+  snowflakeMetadataReadArgs,
+} from "./gitops-readers.ts";
+import {
   type ConnectorWriteRow,
   fieldlessWrite,
   row,
   textField,
+  withBefore,
   withConfirm,
   withPreview,
 } from "./types.ts";
@@ -11,13 +17,23 @@ import {
 export const WAREHOUSE_BI_ROWS: readonly ConnectorWriteRow[] = [
   // Spec § 15, owner ruling OR-W34-3 (2026-11-06): the refreshes and the data-quality
   // acknowledge/resolve rows are wave 3 (low blast radius); the two Snowflake writes stay wave 4.
+  // D1: both read the table's metadata first (the read returns direct AND inherited tags). `value`
+  // and `comment` are shown in full and not scanned (see the free-text table in d1-templates.test.ts).
   withConfirm(
-    withPreview(row("snowflake_tag_set", "snowflake.tag.set", "write", 4), {
-      target: "{object}",
-      summary: "Set or remove tag {tag} on {object}",
-      // The upstream handler runs UNSET TAG when `value` is omitted.
-      fields: [textField("tag"), textField("value", undefined, "(not set: the tag is REMOVED)")],
-    }),
+    withBefore(
+      withPreview(row("snowflake_tag_set", "snowflake.tag.set", "write", 4), {
+        target: "{object}",
+        summary: "Set or remove tag {tag} on {object}",
+        // The upstream handler runs UNSET TAG when `value` is omitted.
+        fields: [textField("tag"), textField("value", undefined, "(not set: the tag is REMOVED)")],
+      }),
+      {
+        tool: "snowflake_object_metadata_get",
+        argKeys: ["object", "tag"],
+        args: snowflakeMetadataReadArgs,
+        select: selectSnowflakeTag,
+      },
+    ),
     {
       template: "set tag {object}/{tag}",
       // No `value`: the connector runs UNSET TAG, so the owner types a removal, not a "set".
@@ -25,11 +41,19 @@ export const WAREHOUSE_BI_ROWS: readonly ConnectorWriteRow[] = [
     },
   ),
   withConfirm(
-    withPreview(row("snowflake_comment_set", "snowflake.comment.set", "write", 4), {
-      target: "{object}",
-      summary: "Set the comment on {object}",
-      fields: [textField("comment", "Comment")],
-    }),
+    withBefore(
+      withPreview(row("snowflake_comment_set", "snowflake.comment.set", "write", 4), {
+        target: "{object}",
+        summary: "Set the comment on {object}",
+        fields: [textField("comment", "Comment")],
+      }),
+      {
+        tool: "snowflake_object_metadata_get",
+        argKeys: ["object"],
+        args: snowflakeMetadataReadArgs,
+        select: selectSnowflakeComment,
+      },
+    ),
     { template: "set comment {object}" },
   ),
   fieldlessWrite(

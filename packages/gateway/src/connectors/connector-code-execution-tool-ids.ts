@@ -62,7 +62,9 @@ export const DIRECTORY_EVALUATION_TOOL_IDS: ReadonlySet<string> = new Set([
  */
 export const WINDOWS_CLI_ARG_INJECTION_TOOL_IDS: ReadonlySet<string> = new Set([
   "azure_app_service_list", // az
+  "azure_aks_node_pool_get", // az
   "gcp_cloud_run_service_list", // gcloud
+  "gcp_gke_workload_get", // gcloud (kubectl, with a private kubeconfig fetched by gcloud)
   "cloud_logging_get", // gcloud
   "cloud_logging_list", // gcloud
   "cloud_logging_search", // gcloud

@@ -81,9 +81,12 @@ import {
 import { type ObsidianGrantSkip, obsidianWriteGrantPaths } from "./obsidian-write-grant.ts";
 import {
   phase3AddArgocdMcp,
+  phase3AddAwsMcp,
+  phase3AddAzureMcp,
   phase3AddBigeyeMcp,
   phase3AddFlagsmithMcp,
   phase3AddFluxMcp,
+  phase3AddGcpMcp,
   phase3AddLaunchdarklyMcp,
   phase3AddLookerMcp,
   phase3AddMlflowMcp,
@@ -127,11 +130,14 @@ const PHASE3_LISTING_ADDERS: Readonly<Record<string, Phase3ServerAdder>> = {
   launchdarkly: phase3AddLaunchdarklyMcp,
   flagsmith: phase3AddFlagsmithMcp,
   mlflow: phase3AddMlflowMcp,
+  aws: phase3AddAwsMcp,
+  azure: phase3AddAzureMcp,
+  gcp: phase3AddGcpMcp,
 };
 
 /**
- * The per-service slots (the name is historical: it began as the wave-2 services, and C1 added
- * `onedrive` and `pagerduty`): the slot each one's server runs in and the mesh method that ensures
+ * The per-service slots (the name is historical: it began as the wave-2 services; C1 added
+ * `onedrive` and `pagerduty`, and D1 `bitbucket`, `jenkins`, `circleci` and `github_actions`): the slot each one's server runs in and the mesh method that ensures
  * exactly that slot, in ONE row so the two cannot drift. Their credential check is
  * {@link isServiceCredentialConfigured} (per SERVICE, never per slot: the Google and Microsoft
  * bundles host siblings).
@@ -147,6 +153,11 @@ const WAVE2_LISTING: Readonly<
   pagerduty: { slot: LAZY_MESH.pagerduty, ensure: "ensurePagerdutyRunning" },
   github: { slot: LAZY_MESH.github, ensure: "ensureGithubRunning" },
   gitlab: { slot: LAZY_MESH.gitlab, ensure: "ensureGitlabRunning" },
+  // GitHub Actions is a second server in the github client: the same slot, the same PAT.
+  github_actions: { slot: LAZY_MESH.github, ensure: "ensureGithubRunning" },
+  bitbucket: { slot: LAZY_MESH.bitbucket, ensure: "ensureBitbucketRunning" },
+  jenkins: { slot: LAZY_MESH.jenkins, ensure: "ensureJenkinsRunning" },
+  circleci: { slot: LAZY_MESH.circleci, ensure: "ensureCircleciRunning" },
   slack: { slot: LAZY_MESH.slack, ensure: "ensureSlackRunning" },
   linear: { slot: LAZY_MESH.linear, ensure: "ensureLinearRunning" },
   jira: { slot: LAZY_MESH.jira, ensure: "ensureJiraRunning" },
@@ -366,7 +377,7 @@ export class LazyConnectorMesh {
   }
 
   /**
-   * The explicit listing map: the 11 phase-3 services on the phase-3 bundle (today's spawner probe)
+   * The explicit listing map: the 14 phase-3 services on the phase-3 bundle (the 11 of C1 plus aws, azure and gcp) (today's spawner probe)
    * and each per-service-slot service (`WAVE2_LISTING`) on its own slot. Each `ensure` calls the mesh's own `ensure*Running`
    * method at call time (a test seam), and names exactly that service's slot.
    */
