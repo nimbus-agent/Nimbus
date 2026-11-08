@@ -212,10 +212,10 @@ describe("isSafeCommitPathGateway is pinned against the connector's isSafeCommit
     "a\u007fb",
     "a\u0085b",
     "a\u009fb",
-    "a‮b",
-    "a​b",
-    "a⁦b",
-    "a﻿b",
+    "a\u202eb",
+    "a\u200bb",
+    "a\u2066b",
+    "a\ufeffb",
     "a b",
     "a b",
     "a\ud800b",

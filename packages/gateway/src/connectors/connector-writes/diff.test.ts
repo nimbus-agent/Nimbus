@@ -185,7 +185,7 @@ describe("renderUnifiedDiff: states and hunks", () => {
       return diff.files[0]?.hunks[0]?.lines[0]?.text;
     };
     // real U+202E vs the literal text \u{202E}
-    expect(text("‮")).toBe("\\u{202E}");
+    expect(text("\u202e")).toBe("\\u{202E}");
     expect(text("\\u{202E}")).toBe("\\\\u{202E}");
     // real tab vs literal \t and vs literal \u{0009}
     expect(text("\t")).not.toBe(text("\\t"));
@@ -195,7 +195,7 @@ describe("renderUnifiedDiff: states and hunks", () => {
     expect(text("\\u{000D}")).toBe("\\\\u{000D}");
     // a backslash alone is doubled, and the mapping has no collisions over a mixed set
     expect(text("a\\b")).toBe("a\\\\b");
-    const samples = ["\t", "\\t", "\r", "\\r", "\\u{000D}", "\\", "\\\\", "‮", "\\u{202E}"];
+    const samples = ["\t", "\\t", "\r", "\\r", "\\u{000D}", "\\", "\\\\", "\u202e", "\\u{202E}"];
     expect(new Set(samples.map(text)).size).toBe(samples.length);
   });
 
@@ -212,10 +212,10 @@ describe("renderUnifiedDiff: states and hunks", () => {
       "\u{1d17a}",
       " ",
       " ",
-      "​",
-      "‍",
-      "⁠",
-      "﻿",
+      "\u200b",
+      "\u200d",
+      "\u2060",
+      "\ufeff",
       "︀",
       "️",
       "\u{e0100}",
@@ -241,7 +241,7 @@ describe("renderUnifiedDiff: states and hunks", () => {
   });
 
   test("every unsafe class is escaped in paths, modes and lines", () => {
-    const unsafe = ["\u001b[31m", "\u0007", "\u009b", "\u007f", "‮", "⁦", "​", "﻿", " ", "\u{e0041}"];
+    const unsafe = ["\u001b[31m", "\u0007", "\u009b", "\u007f", "\u202e", "\u2066", "\u200b", "\ufeff", " ", "\u{e0041}"];
     for (const u of unsafe) {
       const { diff } = render([f(`p${u}q`, `o${u}\n`, `n${u}\n`, `m${u}`)]);
       const text = diffTextLines(diff).join("\n");

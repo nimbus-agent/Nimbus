@@ -96,7 +96,7 @@ describe("the builder shows the diff field as a path list", () => {
   test("sanitised paths and a count", () => {
     const p = build([
       { path: "a/b.ts", content: "SECRET-BODY" },
-      { path: "c‮.md", content: "x" },
+      { path: "c\u202e.md", content: "x" },
     ]);
     const files = p?.fields.find((f) => f.label === "Files");
     expect(files?.kind).toBe("diff");
@@ -179,13 +179,13 @@ describe("the prompt lines carry the diff last, with a footer", () => {
       {
         path: "p\u001b[2Jq",
         oldContent: undefined,
-        newContent: "a\tb\r\nc‮d\u001b]0;x\u0007\n",
+        newContent: "a\tb\r\nc\u202ed\u001b]0;x\u0007\n",
       },
     ]);
     const lines = renderConnectorWritePreviewLines({ ...base, diff });
     for (const l of lines) {
       // biome-ignore lint/suspicious/noControlCharactersInRegex: asserting their absence
-      expect(l).not.toMatch(/[\u0000-\u001f\u007f-\u009f‮]/);
+      expect(l).not.toMatch(/[\u0000-\u001f\u007f-\u009f\u202e]/);
     }
     expect(lines.join("\n")).toContain("+a\\u{0009}b\\u{000D}");
     expect(lines.at(-1)).toBe("End of diff: 1 file, +2 -0");
