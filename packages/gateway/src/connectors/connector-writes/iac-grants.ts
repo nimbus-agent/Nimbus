@@ -225,3 +225,18 @@ export function gateWorkdir(
   }
   return undefined;
 }
+
+/**
+ * Do two canonical workdirs overlap (equal, or one inside the other)? Compared by path segment, so
+ * `/a` does not match `/ab`; case-insensitive on win32 and darwin, like the gate's grant compare.
+ */
+export function workdirsOverlap(a: string, b: string, platform: NodeJS.Platform): boolean {
+  const insensitive = platform === "win32" || platform === "darwin";
+  const api = pathApiFor(platform);
+  const norm = (p: string): string => (insensitive ? p.toLowerCase() : p);
+  const inside = (inner: string, outer: string): boolean => {
+    const rel = api.relative(norm(outer), norm(inner));
+    return rel === "" || (!api.isAbsolute(rel) && rel !== ".." && !rel.startsWith(`..${api.sep}`));
+  };
+  return inside(a, b) || inside(b, a);
+}

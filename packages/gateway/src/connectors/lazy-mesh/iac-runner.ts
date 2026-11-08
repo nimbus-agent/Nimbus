@@ -49,6 +49,7 @@ import {
   type IacCloud,
   type IacGrants,
   type IacPathDeps,
+  workdirsOverlap,
 } from "../connector-writes/iac-grants.ts";
 import { IAC_PREFLIGHT_REFUSALS, IAC_TOOL_TIMEOUTS_MS } from "../connector-writes/iac-limits.ts";
 import { manifestForFirstParty } from "./first-party-manifests.ts";
@@ -551,6 +552,7 @@ export class IacRunner implements IacHost {
   private readonly runs = new Map<string, Run>();
   private readonly iacRoot: string;
   private swept = false;
+  private realApproved: string | undefined;
   private ledgerTail: Promise<void> = Promise.resolve();
   private readonly hex: (bytes: number) => string;
   private readonly removeTree: (p: string) => void;
@@ -564,6 +566,20 @@ export class IacRunner implements IacHost {
   /** `<iacRoot>/approved`: where the settler moves an approved plan. */
   private approvedRoot(): string {
     return join(this.iacRoot, "approved");
+  }
+
+  /**
+   * The same directory as the kernel names it (a macOS `/var`, a Windows 8.3 or junction component
+   * resolved), cached once it exists. A plan path is compared with THIS, never the configured spelling.
+   */
+  private realApprovedRoot(): string {
+    if (this.realApproved !== undefined) return this.realApproved;
+    try {
+      this.realApproved = realpathSync.native(this.approvedRoot());
+      return this.realApproved;
+    } catch {
+      return this.approvedRoot();
+    }
   }
 
   terraformRunDirs(workdir: string): { stagingDir: string; approvedRoot: string } | undefined {
@@ -599,7 +615,12 @@ export class IacRunner implements IacHost {
     if (workdir === undefined)
       return { ok: false, reason: IAC_PREFLIGHT_REFUSALS.notApprovedDirectory };
     // One run per workdir, held until its children have exited (not merely until the gate returns).
-    if (this.runs.has(workdir)) return { ok: false, reason: IAC_PREFLIGHT_REFUSALS.busy };
+    // Nested directories overlap too: a plan child writing `/a` can edit `/a/b` between its plan and apply.
+    for (const live of this.runs.keys()) {
+      if (workdirsOverlap(live, workdir, this.deps.pathDeps.platform)) {
+        return { ok: false, reason: IAC_PREFLIGHT_REFUSALS.busy };
+      }
+    }
     const id = this.hex(8);
     const run: Run = {
       id,
@@ -675,13 +696,59 @@ export class IacRunner implements IacHost {
       if (approvedRunDir === undefined) throw new Error(IAC_RUNNER_REFUSALS.badPlanFile);
       run.approvedRunDirs.add(approvedRunDir);
     }
-    const cloudEnv =
-      kind === "show"
-        ? { env: {}, files: [] as string[] }
-        : await this.cloudEnv(this.deps.grants());
+    // Taken BEFORE the first await: a gate that finishes while the credential loads must not free
+    // the run (and delete its staging) under a child that is about to start.
+    run.live += 1;
+    const onExited = (): void => {
+      run.live -= 1;
+      this.maybeFree(run);
+    };
+    let cloudEnv: { env: Record<string, string>; files: string[] };
+    let profile: IacProfile;
+    try {
+      cloudEnv =
+        kind === "show"
+          ? { env: {}, files: [] as string[] }
+          : await this.cloudEnv(this.deps.grants());
+      profile = this.terraformProfile(
+        kind,
+        run,
+        workdir,
+        approvedRunDir,
+        terraform,
+        cloudEnv.files,
+      );
+    } catch (e) {
+      onExited();
+      throw e;
+    }
+    const timeoutText =
+      kind === "apply"
+        ? `timed out after ${String(Math.round(budget / 60_000))} minutes; the infrastructure may be partly changed; check the Terraform state`
+        : "iac: the call exceeded its time limit";
+    // The run stays alive until the child has actually exited (onExited), whatever the call did.
+    return this.spawnAndCall(
+      profile,
+      { ...cloudEnv.env },
+      toolId,
+      args,
+      budget,
+      timeoutText,
+      onExited,
+    );
+  }
+
+  private terraformProfile(
+    kind: "plan" | "show" | "apply",
+    run: Run,
+    workdir: string,
+    approvedRunDir: string | undefined,
+    terraform: string,
+    credentialFiles: string[],
+  ): IacProfile {
     const callId = this.hex(8);
     if (kind === "plan") mkdirSync(run.stagingDir, { recursive: true, mode: 0o700 });
-    const profile = buildIacProfile({
+    return buildIacProfile({
       kind,
       runId: callId,
       platform: this.deps.platform,
@@ -694,26 +761,8 @@ export class IacRunner implements IacHost {
         ...installTreeReads(terraform, this.deps.platform),
         ...(this.deps.extraReadPaths ?? []),
       ],
-      credentialFiles: cloudEnv.files,
+      credentialFiles,
     });
-    const timeoutText =
-      kind === "apply"
-        ? `timed out after ${String(Math.round(budget / 60_000))} minutes; the infrastructure may be partly changed; check the Terraform state`
-        : "iac: the call exceeded its time limit";
-    run.live += 1;
-    // The run stays alive until the child has actually exited (onExited), whatever the call did.
-    return this.spawnAndCall(
-      profile,
-      { ...cloudEnv.env },
-      toolId,
-      args,
-      budget,
-      timeoutText,
-      () => {
-        run.live -= 1;
-        this.maybeFree(run);
-      },
-    );
   }
 
   private async runCfn(
@@ -816,13 +865,14 @@ export class IacRunner implements IacHost {
     } catch {
       return undefined;
     }
-    const rel = relative(this.approvedRoot(), real).split(sep);
+    const approvedRoot = this.realApprovedRoot();
+    const rel = relative(approvedRoot, real).split(sep);
     // <runId>/<planId>/<plan.tfplan|destroy.tfplan>, and nothing else.
     if (rel.length !== 3 || rel.some((s) => s === "" || s === "..")) return undefined;
     const [runId, planId, name] = rel as [string, string, string];
     if (!HEX32.test(planId) || !/^[0-9a-f]{32}$/.test(runId) || !PLAN_NAMES.has(name))
       return undefined;
-    return join(this.approvedRoot(), runId);
+    return join(approvedRoot, runId);
   }
 
   private resolve(name: "terraform" | "aws"): string | undefined {

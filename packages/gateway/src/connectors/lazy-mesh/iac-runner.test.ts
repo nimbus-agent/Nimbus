@@ -1,5 +1,13 @@
 import { afterAll, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseSandboxPolicy, SANDBOX_POLICY_ENV } from "../../platform/sandbox/sandbox-policy.ts";
@@ -592,5 +600,112 @@ describe("callChildTool", () => {
     c["lineCb"]?.(JSON.stringify({ jsonrpc: "2.0", id: 1, error: { message: "secret path /x" } }));
     await expect(call.result).rejects.toThrow("the connector reported an error");
     await call.exited;
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// Adversarial-review fixes (items 4, 5, 6): the approved root, the nested-workdir lock, the
+// live count taken before the first await.
+
+describe("a symlinked or junctioned cache root (review item 4)", () => {
+  test("show and apply accept a plan under an approved root reached through a link", async () => {
+    const realCache = join(root, "real-cache");
+    mkdirSync(join(realCache, "sandbox"), { recursive: true });
+    const linkCache = join(root, "link-cache");
+    symlinkSync(realCache, linkCache, "junction");
+    const linkedPaths = { ...paths, sandboxDir: join(linkCache, "sandbox") };
+    const { r, children } = runner("answer", { paths: linkedPaths });
+    const run = await openRun(r); // the first preflight sweeps the iac root
+    const approved = join(linkCache, "iac-runs", "approved", "a".repeat(32), "b".repeat(32));
+    mkdirSync(approved, { recursive: true });
+    const planFile = join(approved, "plan.tfplan");
+    writeFileSync(planFile, "x");
+    await r.execute("iac_terraform_show_json", { workingDirectory: work, planFile });
+    await r.execute("iac_terraform_apply", {
+      workingDirectory: work,
+      planFile,
+      planSha256: "0".repeat(64),
+    });
+    expect(children).toHaveLength(2);
+    // The grant is on the REAL directory, the one the kernel resolves.
+    const show = parseSandboxPolicy(children[0]?.spec.env[SANDBOX_POLICY_ENV] ?? "");
+    expect(show.permissions.filesystem.read).toContain(
+      join(realpathSync.native(realCache), "iac-runs", "approved", "a".repeat(32)),
+    );
+    run.release();
+  });
+});
+
+describe("the run lock covers nested workdirs (review item 5)", () => {
+  const nested = join(work, "nested");
+  const sibling = join(root, "work-sibling");
+  mkdirSync(nested, { recursive: true });
+  mkdirSync(sibling, { recursive: true });
+  const both = { grants: () => ({ ...GRANTS, workdirs: [work, sibling] }) };
+
+  test("a run inside a live run's directory, and one containing it, are refused", async () => {
+    const { r } = runner("answer", both);
+    const outer = await openRun(r);
+    const inner = await r.preflight("iac_terraform_apply", { workingDirectory: nested });
+    expect(inner).toEqual({
+      ok: false,
+      reason: "iac: another run is using this working directory",
+    });
+    outer.release();
+    const innerRun = await r.preflight("iac_terraform_apply", { workingDirectory: nested });
+    expect(innerRun.ok).toBe(true);
+    const outerAgain = await r.preflight("iac_terraform_apply", { workingDirectory: work });
+    expect(outerAgain.ok).toBe(false);
+    if (innerRun.ok) innerRun.release();
+  });
+
+  test("a directory that merely shares a name prefix is not nested", async () => {
+    const { r } = runner("answer", both);
+    const outer = await openRun(r);
+    const other = await r.preflight("iac_terraform_apply", { workingDirectory: sibling });
+    expect(other.ok).toBe(true);
+    outer.release();
+    if (other.ok) other.release();
+  });
+});
+
+describe("the live count is taken before the first await (review item 6)", () => {
+  test("a gate that finishes while the credential is loading does not free the run", async () => {
+    const removed: string[] = [];
+    const { r, children } = runner(
+      "answer",
+      {
+        grants: () => ({ ...GRANTS, clouds: ["azure"] }),
+        removeTree: (p) => {
+          removed.push(p);
+        },
+      },
+      { content: [] },
+    );
+    const run = await openRun(r);
+    removed.length = 0;
+    const call = r.execute("iac_terraform_plan", PLAN_INPUT);
+    run.release(); // the gate is done while cloudEnv is still awaiting
+    const stillLocked = r.preflight("iac_terraform_apply", { workingDirectory: work });
+    expect((await stillLocked).ok).toBe(false);
+    expect(removed.filter((p) => p.includes("staging"))).toEqual([]);
+    await call;
+    expect(children).toHaveLength(1);
+    await new Promise((res) => setTimeout(res, 30));
+    expect((await r.preflight("iac_terraform_apply", { workingDirectory: work })).ok).toBe(true);
+  });
+
+  test("a failure while the credential loads frees the count again", async () => {
+    const vault = createMockVault();
+    const failing = { ...vault, get: async () => Promise.reject(new Error("vault locked")) };
+    const { r, children } = runner("answer", {
+      vault: failing as unknown as IacRunnerDeps["vault"],
+      grants: () => ({ ...GRANTS, clouds: ["azure"] }),
+    });
+    const run = await openRun(r);
+    await expect(r.execute("iac_terraform_plan", PLAN_INPUT)).rejects.toThrow();
+    run.release();
+    expect(children).toEqual([]);
+    expect((await r.preflight("iac_terraform_apply", { workingDirectory: work })).ok).toBe(true);
   });
 });
