@@ -1455,7 +1455,10 @@ export class LazyConnectorMesh {
     // shutdown, the one production caller, stops the sync scheduler and IPC server before this.
     // An extension preparation still in flight is not in that snapshot, so it is told not to connect.
     this.extensionSlots.markAllStopped();
+    // The IaC runner's per-run children are not in a slot: stop it too (kills them and waits, frees).
+    const iacStopped = this.iacRunner.stop().catch(() => undefined);
     await Promise.all(Array.from(this.lazySlots.keys(), (key) => this.stopLazyClient(key)));
+    await iacStopped;
     try {
       await this.filesystem.disconnect();
     } catch {

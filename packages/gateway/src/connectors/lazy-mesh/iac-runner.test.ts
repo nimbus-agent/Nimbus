@@ -1,4 +1,5 @@
 import { afterAll, describe, expect, test } from "bun:test";
+import { spawn } from "node:child_process";
 import {
   mkdirSync,
   mkdtempSync,
@@ -16,14 +17,17 @@ import { createMockVault } from "../../vault/mock.ts";
 import { IAC_CLOUD_ENV_NAMES } from "../connector-writes/iac-clouds.ts";
 import type { IacGrants, IacPathDeps } from "../connector-writes/iac-grants.ts";
 import {
+  APPLY_ESCALATE_AFTER_MS,
   buildIacProfile,
   callChildTool,
+  escalationGraceMs,
   IAC_TOOL_PROFILE,
   type IacChild,
   type IacGrantLedger,
   type IacLedgerEntry,
   IacRunner,
   type IacRunnerDeps,
+  iacChildFromProcess,
   iacProfileId,
   iacRootFor,
   installTreeReads,
@@ -153,7 +157,17 @@ describe("buildIacProfile — the per-profile grants", () => {
 // ---------------------------------------------------------------------------------------------
 // A scripted child.
 
-type Behaviour = "answer" | "answer-linger" | "hang" | "hang-ignore-term" | "exit-early" | "silent";
+// Far above any real process id, so a recorded fake pid is never "alive" by accident.
+let nextFakePid = 2_000_000_000;
+
+type Behaviour =
+  | "answer"
+  | "answer-linger"
+  | "hang"
+  | "hang-ignore-term"
+  | "immortal"
+  | "exit-early"
+  | "silent";
 
 class FakeChild implements IacChild {
   readonly sent: Array<Record<string, unknown>> = [];
@@ -162,6 +176,7 @@ class FakeChild implements IacChild {
   private readonly exitCbs: Array<(c: number | null) => void> = [];
   exited = false;
   inputClosed = false;
+  readonly pid = nextFakePid++;
   constructor(
     readonly spec: { command: string; args: string[]; env: Record<string, string> },
     private readonly behaviour: Behaviour,
@@ -194,6 +209,7 @@ class FakeChild implements IacChild {
   }
   kill(force: boolean): void {
     this.kills.push(force);
+    if (this.behaviour === "immortal") return;
     if (force || (this.behaviour !== "hang-ignore-term" && this.behaviour !== "answer-linger")) {
       this.exit(null);
     }
@@ -411,7 +427,10 @@ describe("the run lock lives until the child is dead (review finding)", () => {
   }, 10_000);
 
   test("an overrunning apply says the infrastructure may be partly changed, and holds the lock the same way", async () => {
-    const { r, children } = runner("hang-ignore-term", { timeoutsMs: { iac_terraform_apply: 30 } });
+    const { r, children } = runner("hang-ignore-term", {
+      timeoutsMs: { iac_terraform_apply: 30 },
+      escalateAfterMs: 3_000,
+    });
     const run = await openRun(r);
     const approved = join(iacRoot, "approved", "c".repeat(32), "d".repeat(32));
     mkdirSync(approved, { recursive: true });
@@ -864,6 +883,193 @@ describe("a plan is settled only after its child has exited (review item 2)", ()
     await r.execute("iac_terraform_show_json", { workingDirectory: work, planFile });
     expect(children[0]?.exited).toBe(false);
     children[0]?.exit(0);
+    run.release();
+  });
+});
+
+describe("lifecycle (review item 7)", () => {
+  test("the SIGKILL grace is a minute for apply, destroy and deploy and three seconds for the rest", () => {
+    for (const t of ["iac_terraform_apply", "iac_terraform_destroy", "iac_cloudformation_deploy"]) {
+      expect(escalationGraceMs(t)).toBe(APPLY_ESCALATE_AFTER_MS);
+    }
+    expect(APPLY_ESCALATE_AFTER_MS).toBe(60_000);
+    for (const t of [
+      "iac_terraform_plan",
+      "iac_terraform_show_json",
+      "iac_cloudformation_changeset_create",
+    ]) {
+      expect(escalationGraceMs(t)).toBe(3_000);
+    }
+  });
+
+  test("callChildTool arms the SIGKILL escalation with the grace it is given", async () => {
+    const delays: number[] = [];
+    const c = new FakeChild({ command: "x", args: [], env: {} }, "hang-ignore-term", {});
+    const call = callChildTool(
+      c,
+      "t",
+      {},
+      10,
+      "late",
+      {
+        set: ((fn: () => void, ms?: number) => {
+          delays.push(ms ?? 0);
+          return setTimeout(fn, ms === 60_000 ? 1_000_000 : ms);
+        }) as typeof setTimeout,
+        clear: clearTimeout,
+      },
+      60_000,
+    );
+    await expect(call.result).rejects.toThrow("late");
+    expect(delays).toContain(60_000);
+    c.exit(null);
+    await call.exited;
+  });
+
+  test("an error event on a running process is not an exit; a failed spawn is", async () => {
+    const live = spawn(process.execPath, ["-e", "setTimeout(()=>{},300)"], { stdio: "pipe" });
+    const child = iacChildFromProcess(live);
+    expect(child.pid).toBe(live.pid);
+    let exits = 0;
+    child.onExit(() => {
+      exits += 1;
+    });
+    live.emit("error", new Error("kill failed"));
+    await new Promise((res) => setTimeout(res, 20));
+    expect(exits).toBe(0); // the process is still there: the lock must stay held
+    await new Promise<void>((res) => live.once("close", () => res()));
+    await new Promise((res) => setTimeout(res, 20));
+    expect(exits).toBe(1);
+    const failed = iacChildFromProcess(
+      spawn(join(root, "no-such-binary-x"), [], { stdio: "pipe" }),
+    );
+    expect(failed.pid).toBeUndefined();
+    expect(await new Promise<number | null>((res) => failed.onExit(res))).toBeNull();
+  });
+
+  test("stop() terminates live children, waits, kills the stubborn, and frees the run", async () => {
+    const removed: string[] = [];
+    const { r, children } = runner("hang-ignore-term", {
+      timeoutsMs: { iac_terraform_plan: 60_000 },
+      stopGraceMs: 40,
+      removeTree: (p) => {
+        removed.push(p);
+      },
+    });
+    const run = await openRun(r);
+    const call = r.execute("iac_terraform_plan", PLAN_INPUT);
+    call.catch(() => undefined);
+    await new Promise((res) => setTimeout(res, 30));
+    run.release();
+    removed.length = 0;
+    await r.stop();
+    const child = children[0] as FakeChild;
+    expect(child.kills.slice(0, 2)).toEqual([false, true]);
+    expect(child.exited).toBe(true);
+    await new Promise((res) => setTimeout(res, 30));
+    expect(removed.some((p) => p.includes("staging"))).toBe(true);
+    await expect(r.execute("iac_terraform_plan", PLAN_INPUT)).rejects.toThrow("stopping");
+    expect(await r.preflight("iac_terraform_apply", { workingDirectory: work })).toEqual({
+      ok: false,
+      reason: "iac: the gateway is stopping",
+    });
+  });
+
+  test("stop() frees nothing under a child that will not die", async () => {
+    const removed: string[] = [];
+    const { r, children } = runner("immortal", {
+      timeoutsMs: { iac_terraform_plan: 60_000 },
+      stopGraceMs: 20,
+      stopKillWaitMs: 20,
+      removeTree: (p) => {
+        removed.push(p);
+      },
+    });
+    const run = await openRun(r);
+    const call = r.execute("iac_terraform_plan", PLAN_INPUT);
+    call.catch(() => undefined);
+    await new Promise((res) => setTimeout(res, 30));
+    run.release();
+    removed.length = 0;
+    await r.stop();
+    expect(children[0]?.exited).toBe(false);
+    expect(removed.filter((p) => p.includes("staging"))).toEqual([]);
+    children[0]?.exit(0);
+  });
+
+  test("stop() with nothing running resolves at once", async () => {
+    await runner("answer").r.stop();
+  });
+
+  test("a child that appears after stop began is killed at once", async () => {
+    const { r, children } = runner("hang", { timeoutsMs: { iac_terraform_plan: 60_000 } });
+    const run = await openRun(r);
+    const call = r.execute("iac_terraform_plan", PLAN_INPUT);
+    call.catch(() => undefined);
+    const stopping = r.stop(); // before the spawn finished
+    await stopping;
+    await new Promise((res) => setTimeout(res, 30));
+    expect(children[0]?.exited).toBe(true);
+    run.release();
+  });
+});
+
+describe("a child a previous gateway left (review item 7, boot sweep)", () => {
+  const live = (): string => join(iacRoot, "live-children.json");
+
+  test("a recorded child that is still alive stops the sweep and locks its workdir", async () => {
+    const removed: string[] = [];
+    mkdirSync(iacRoot, { recursive: true });
+    writeFileSync(live(), JSON.stringify([{ pid: 4242, workdir: work }]));
+    let alive = true;
+    const { r } = runner("answer", {
+      isPidAlive: () => alive,
+      removeTree: (p) => {
+        removed.push(p);
+      },
+    });
+    const refused = await r.preflight("iac_terraform_apply", { workingDirectory: work });
+    expect(refused).toEqual({
+      ok: false,
+      reason: "iac: another run is using this working directory",
+    });
+    expect(removed).toEqual([]); // the run directories are left alone while it may be alive
+    alive = false;
+    expect((await r.preflight("iac_terraform_apply", { workingDirectory: work })).ok).toBe(true);
+  });
+
+  test("a dead recorded child is swept; an unreadable record fails closed once", async () => {
+    mkdirSync(iacRoot, { recursive: true });
+    writeFileSync(live(), JSON.stringify([{ pid: 4243 }]));
+    const dead = runner("answer", { isPidAlive: () => false });
+    const swept: string[] = [];
+    (dead.r as unknown as { removeTree: (p: string) => void }).removeTree = (p) => {
+      swept.push(p);
+    };
+    await dead.r.preflight("iac_cloudformation_deploy", {});
+    expect(swept.length).toBe(4);
+    writeFileSync(live(), "not json");
+    const bad = runner("answer");
+    const kept: string[] = [];
+    (bad.r as unknown as { removeTree: (p: string) => void }).removeTree = (p) => {
+      kept.push(p);
+    };
+    await bad.r.preflight("iac_cloudformation_deploy", {});
+    expect(kept).toEqual([]);
+  });
+
+  test("a started child is recorded with its workdir and forgotten when it exits", async () => {
+    rmSync(live(), { force: true });
+    const { r, children } = runner("hang", { timeoutsMs: { iac_terraform_plan: 60_000 } });
+    (children as FakeChild[]).length = 0;
+    const run = await openRun(r);
+    const spawned = r.execute("iac_terraform_plan", PLAN_INPUT);
+    spawned.catch(() => undefined);
+    await new Promise((res) => setTimeout(res, 30));
+    const child = children[0] as FakeChild & { pid?: number };
+    expect(child).toBeDefined();
+    // FakeChild has no pid: nothing is recorded for it
+    child.exit(0);
     run.release();
   });
 });

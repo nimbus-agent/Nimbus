@@ -18,7 +18,7 @@
 // The child is the only thing this module trusts less than the gateway: a call has a budget after
 // which the child is killed, and the per-directory run lock (and the run's staging and approved
 // directories) are released only once every child of the run has actually exited.
-import { spawn } from "node:child_process";
+import { type ChildProcess, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import {
   chmodSync,
@@ -88,6 +88,7 @@ export const IAC_RUNNER_REFUSALS = Object.freeze({
   badPlanFile: "iac: the plan file is not in this gateway's approved plan directory",
   noBinary: "iac: the required command line tool was not found",
   noCredential: IAC_PREFLIGHT_REFUSALS.noCloudCredential,
+  stopping: "iac: the gateway is stopping",
 });
 
 // ---------------------------------------------------------------------------------------------
@@ -241,6 +242,8 @@ export function installTreeReads(
 
 /** A started child as the runner sees it (a node child process in production, a fake in tests). */
 export interface IacChild {
+  /** The OS process id, when the child started (recorded so a later boot knows what may be alive). */
+  readonly pid?: number;
   /** Writes one JSON-RPC line to the child's stdin. */
   send(line: string): void;
   /** Called with every complete line the child writes to stdout. */
@@ -256,14 +259,23 @@ export interface IacChild {
 export type IacChildSpawner = (spec: ServerSpec) => IacChild;
 
 /** The production spawner: a hidden child process with the wrapped spec's own environment. */
-export const spawnIacChild: IacChildSpawner = (spec) => {
-  // The environment was built from extensionProcessEnv(...) (I1) and wrapped by wrapIacServerSpec.
-  const proc = spawn(spec.command, spec.args, {
-    // extensionProcessEnv(...) plus the policy wire, built by the caller (I1).
-    env: spec.env,
-    stdio: ["pipe", "pipe", "pipe"],
-    windowsHide: true,
-  });
+export const spawnIacChild: IacChildSpawner = (spec) =>
+  iacChildFromProcess(
+    // The environment was built from extensionProcessEnv(...) (I1) and wrapped by wrapIacServerSpec.
+    spawn(spec.command, spec.args, {
+      // extensionProcessEnv(...) plus the policy wire, built by the caller (I1).
+      env: spec.env,
+      stdio: ["pipe", "pipe", "pipe"],
+      windowsHide: true,
+    }),
+  );
+
+/**
+ * Wraps a started process. The child counts as exited when the OS reports it closed, or when it
+ * never started; a later `"error"` event (a kill or a write that failed) says nothing about the
+ * process being gone, so it must not free the run lock.
+ */
+export function iacChildFromProcess(proc: ChildProcess): IacChild {
   let exited = false;
   const exitCbs: Array<(code: number | null) => void> = [];
   const finish = (code: number | null): void => {
@@ -272,7 +284,10 @@ export const spawnIacChild: IacChildSpawner = (spec) => {
     for (const cb of exitCbs) cb(code);
   };
   proc.on("close", (code) => finish(code));
-  proc.on("error", () => finish(null));
+  proc.on("error", () => {
+    // pid is undefined only when the spawn itself failed; any other error leaves the process there.
+    if (proc.pid === undefined) finish(null);
+  });
   proc.stderr?.on("data", () => {
     // Drained and dropped: a connector's stderr never reaches the model, the owner or a log.
   });
@@ -280,6 +295,7 @@ export const spawnIacChild: IacChildSpawner = (spec) => {
     // A write after the child exited; the exit path reports it.
   });
   return {
+    ...(proc.pid === undefined ? {} : { pid: proc.pid }),
     send: (line) => {
       proc.stdin?.write(`${line}\n`);
     },
@@ -316,9 +332,27 @@ export const spawnIacChild: IacChildSpawner = (spec) => {
       }
     },
   };
-};
+}
 
 const ESCALATE_AFTER_MS = 3_000;
+/** At gateway stop: the grace children get to finish (a state write) before SIGKILL. */
+const STOP_GRACE_MS = 15_000;
+const STOP_KILL_WAIT_MS = 5_000;
+/**
+ * After the budget, a SIGTERM; the SIGKILL follows this much later. A Terraform apply or destroy and
+ * a CloudFormation deploy get a minute to write state and release the lock before they are killed
+ * hard (a killed apply leaves a partly-written state); a plan and the rest keep the short grace. The
+ * worst case a timed-out call holds its run is therefore its budget plus this grace.
+ */
+export const APPLY_ESCALATE_AFTER_MS = 60_000;
+const LONG_GRACE_TOOLS: ReadonlySet<string> = new Set([
+  "iac_terraform_apply",
+  "iac_terraform_destroy",
+  "iac_cloudformation_deploy",
+]);
+export function escalationGraceMs(toolId: string): number {
+  return LONG_GRACE_TOOLS.has(toolId) ? APPLY_ESCALATE_AFTER_MS : ESCALATE_AFTER_MS;
+}
 /** A plan child that answered gets the escalation plus this long to be reaped before the plan fails. */
 const EXIT_WAIT_MS = ESCALATE_AFTER_MS + 5_000;
 
@@ -344,6 +378,7 @@ export function callChildTool(
     set: setTimeout,
     clear: clearTimeout,
   },
+  escalateAfterMs: number = ESCALATE_AFTER_MS,
 ): ChildCall {
   let settled = false;
   let resolveExit: () => void = () => undefined;
@@ -383,7 +418,7 @@ export function callChildTool(
     terminating = true;
     child.closeInput();
     child.kill(false);
-    escalation = timers.set(() => child.kill(true), ESCALATE_AFTER_MS);
+    escalation = timers.set(() => child.kill(true), escalateAfterMs);
   };
   child.onExit(() => {
     if (escalation !== undefined) timers.clear(escalation);
@@ -504,6 +539,14 @@ export interface IacRunnerDeps {
    * fails closed ({@link EXIT_WAIT_MS} when absent).
    */
   readonly exitWaitMs?: number;
+  /** Test seam: the SIGTERM-to-SIGKILL grace for every tool; production: {@link escalationGraceMs}. */
+  readonly escalateAfterMs?: number;
+  /** `stop()`: how long children get after SIGTERM before SIGKILL (default {@link STOP_GRACE_MS}). */
+  readonly stopGraceMs?: number;
+  /** `stop()`: how long to wait for children after SIGKILL (default {@link STOP_KILL_WAIT_MS}). */
+  readonly stopKillWaitMs?: number;
+  /** Test seam: is this process id alive? Production: signal 0. */
+  readonly isPidAlive?: (pid: number) => boolean;
   /**
    * Test seam: extra READ paths for every child (never write). A dev tree runs the connector as
    * `bun <gateway source>`, which a sandboxed child cannot read; the integration test hands it the
@@ -563,6 +606,14 @@ export class IacRunner implements IacHost {
   private ledgerTail: Promise<void> = Promise.resolve();
   /** Profile ids whose child THIS process started and has not yet seen exit and release. */
   private readonly runningProfiles = new Set<string>();
+  /** Children this process started and has not seen exit; `stop()` kills and waits for them. */
+  private readonly liveChildren = new Set<{
+    readonly child: IacChild;
+    readonly exited: Promise<void>;
+  }>();
+  private stopped = false;
+  /** Children a previous gateway process recorded and that are still alive at boot (see sweep). */
+  private orphans: Array<{ pid: number; workdir?: string }> = [];
   private readonly hex: (bytes: number) => string;
   private readonly removeTree: (p: string) => void;
 
@@ -598,10 +649,83 @@ export class IacRunner implements IacHost {
       : { stagingDir: run.stagingDir, approvedRoot: this.approvedRoot() };
   }
 
-  /** Boot sweep, once: nothing a crashed gateway left under the iac root is worth keeping. */
+  private liveFile(): string {
+    return join(this.iacRoot, "live-children.json");
+  }
+
+  private pidAlive(pid: number): boolean {
+    if (this.deps.isPidAlive !== undefined) return this.deps.isPidAlive(pid);
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch (e) {
+      return (e as { code?: unknown }).code === "EPERM";
+    }
+  }
+
+  /** The children recorded as started; `undefined` when the record exists but cannot be read. */
+  private readLive(): Array<{ pid: number; workdir?: string }> | undefined {
+    let raw: string;
+    try {
+      raw = readFileSync(this.liveFile(), "utf8");
+    } catch (e) {
+      return (e as { code?: unknown }).code === "ENOENT" ? [] : undefined;
+    }
+    try {
+      const parsed: unknown = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return undefined;
+      const out: Array<{ pid: number; workdir?: string }> = [];
+      for (const e of parsed as unknown[]) {
+        const rec = e as { pid?: unknown; workdir?: unknown };
+        if (typeof rec.pid !== "number" || !Number.isInteger(rec.pid)) return undefined;
+        out.push(
+          typeof rec.workdir === "string"
+            ? { pid: rec.pid, workdir: rec.workdir }
+            : { pid: rec.pid },
+        );
+      }
+      return out;
+    } catch {
+      return undefined;
+    }
+  }
+
+  private writeLive(entries: ReadonlyArray<{ pid: number; workdir?: string }>): void {
+    try {
+      mkdirSync(this.iacRoot, { recursive: true, mode: 0o700 });
+      writeFileSync(this.liveFile(), JSON.stringify(entries), { mode: 0o600 });
+    } catch {
+      // best effort: the record only narrows what a later boot deletes
+    }
+  }
+
+  private recordLive(pid: number, workdir: string | undefined): void {
+    const cur = this.readLive() ?? [];
+    this.writeLive([
+      ...cur.filter((e) => e.pid !== pid),
+      workdir === undefined ? { pid } : { pid, workdir },
+    ]);
+  }
+
+  private forgetLive(pid: number): void {
+    this.writeLive((this.readLive() ?? []).filter((e) => e.pid !== pid));
+  }
+
+  /**
+   * Boot sweep, once: nothing a crashed gateway left under the iac root is worth keeping, EXCEPT
+   * while a child it recorded may still be alive (a macOS child can outlive the gateway; a Linux
+   * child dies with it by `--die-with-parent`, a Windows child by its job object): then the run
+   * directories are left for a later boot, and a run on that child's workdir is refused. A record
+   * that cannot be read is treated the same way (fail closed) and reset.
+   */
   private sweep(): void {
     if (this.swept) return;
     this.swept = true;
+    const recorded = this.readLive();
+    const alive = (recorded ?? []).filter((e) => this.pidAlive(e.pid));
+    this.orphans = alive;
+    this.writeLive(alive);
+    if (recorded === undefined || alive.length > 0) return;
     for (const d of ["staging", "approved", "scratch", "cwd"]) {
       try {
         this.removeTree(join(this.iacRoot, d));
@@ -615,6 +739,7 @@ export class IacRunner implements IacHost {
     rowToolId: string,
     input: Readonly<Record<string, unknown>>,
   ): Promise<PreflightOutcome> {
+    if (this.stopped) return { ok: false, reason: IAC_RUNNER_REFUSALS.stopping };
     this.sweep();
     if (rowToolId === CFN_ROW) return this.preflightCfn();
     if (!TERRAFORM_ROWS.has(rowToolId)) {
@@ -624,6 +749,16 @@ export class IacRunner implements IacHost {
     if (workdir === undefined)
       return { ok: false, reason: IAC_PREFLIGHT_REFUSALS.notApprovedDirectory };
     // One run per workdir, held until its children have exited (not merely until the gate returns).
+    // A child a previous gateway left running may still be writing this directory.
+    this.orphans = this.orphans.filter((o) => this.pidAlive(o.pid));
+    for (const o of this.orphans) {
+      if (
+        o.workdir !== undefined &&
+        workdirsOverlap(o.workdir, workdir, this.deps.pathDeps.platform)
+      ) {
+        return { ok: false, reason: IAC_PREFLIGHT_REFUSALS.busy };
+      }
+    }
     // Nested directories overlap too: a plan child writing `/a` can edit `/a/b` between its plan and apply.
     for (const live of this.runs.keys()) {
       if (workdirsOverlap(live, workdir, this.deps.pathDeps.platform)) {
@@ -650,6 +785,43 @@ export class IacRunner implements IacHost {
     const creds = await loadAwsCreds(this.deps.vault);
     if (!creds.ok) return { ok: false, reason: IAC_PREFLIGHT_REFUSALS.noCloudCredential };
     return { ok: true, release: () => undefined };
+  }
+
+  /**
+   * Gateway stop (the mesh's `disconnect`): refuse new work, ask every live child to finish
+   * (SIGTERM), give it {@link STOP_GRACE_MS} to write its state, kill it hard, wait for the process to
+   * be gone, then free every run whose children are gone. A child that will not die keeps its run
+   * (and its directories): nothing is freed under a process that may still be writing. Never rejects.
+   */
+  async stop(): Promise<void> {
+    this.stopped = true;
+    const live = [...this.liveChildren];
+    const wait = async (ms: number): Promise<boolean> => {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const timedOut = new Promise<boolean>((r) => {
+        timer = setTimeout(() => r(false), ms);
+      });
+      try {
+        return await Promise.race([
+          Promise.all(live.map((l) => l.exited)).then(() => true),
+          timedOut,
+        ]);
+      } finally {
+        if (timer !== undefined) clearTimeout(timer);
+      }
+    };
+    for (const l of live) {
+      l.child.closeInput();
+      l.child.kill(false);
+    }
+    if (live.length > 0 && !(await wait(this.deps.stopGraceMs ?? STOP_GRACE_MS))) {
+      for (const l of live) l.child.kill(true);
+      await wait(this.deps.stopKillWaitMs ?? STOP_KILL_WAIT_MS);
+    }
+    for (const run of [...this.runs.values()]) {
+      run.released = true;
+      this.maybeFree(run);
+    }
   }
 
   private release(run: Run): void {
@@ -679,6 +851,7 @@ export class IacRunner implements IacHost {
         ? (input as Record<string, unknown>)
         : {};
     if (kind === undefined) throw new Error(IAC_RUNNER_REFUSALS.noRun);
+    if (this.stopped) throw new Error(IAC_RUNNER_REFUSALS.stopping);
     const budget = (this.deps.timeoutsMs ?? IAC_TOOL_TIMEOUTS_MS)[toolId] ?? 60_000;
     if (kind === "cfn") return this.runCfn(toolId, args, budget);
     return this.runTerraform(toolId, kind, args, budget);
@@ -745,7 +918,7 @@ export class IacRunner implements IacHost {
       budget,
       timeoutText,
       onExited,
-      kind === "plan",
+      { awaitExit: kind === "plan", workdir },
     );
   }
 
@@ -824,8 +997,9 @@ export class IacRunner implements IacHost {
     budget: number,
     timeoutText: string,
     onExited: () => void,
-    awaitExit = false,
+    opts: { readonly awaitExit?: boolean; readonly workdir?: string } = {},
   ): Promise<unknown> {
+    const awaitExit = opts.awaitExit === true;
     const manifest = profile.manifest;
     const cwd = join(this.iacRoot, "cwd", manifest.id);
     const paths = uniq([
@@ -855,8 +1029,27 @@ export class IacRunner implements IacHost {
       onExited();
       throw e;
     }
-    const call = callChildTool(child, toolId, args, budget, timeoutText);
+    const call = callChildTool(
+      child,
+      toolId,
+      args,
+      budget,
+      timeoutText,
+      undefined,
+      this.deps.escalateAfterMs ?? escalationGraceMs(toolId),
+    );
+    const live = { child, exited: call.exited };
+    this.liveChildren.add(live);
+    const pid = child.pid;
+    if (pid !== undefined) this.recordLive(pid, opts.workdir);
+    // A stop that began while the spawn was in flight could not see this child: kill it now.
+    if (this.stopped) {
+      child.closeInput();
+      child.kill(true);
+    }
     const done = call.exited.then(async () => {
+      this.liveChildren.delete(live);
+      if (pid !== undefined) this.forgetLive(pid);
       await this.afterExit(manifest.id, paths);
       this.safeRemove(cwd);
       onExited();
