@@ -87,10 +87,11 @@ class Child implements IacChild {
 function make(
   grants: IacGrants,
   vault: NimbusVault,
-  over: Partial<IacRunnerDeps> = {},
+  over: Partial<IacRunnerDeps> & { systemLookup?: boolean } = {},
 ): { r: IacRunner; children: Child[]; removed: string[] } {
   const children: Child[] = [];
   const removed: string[] = [];
+  const { systemLookup, ...deps } = over;
   const r = new IacRunner({
     paths,
     vault,
@@ -102,11 +103,11 @@ function make(
       children.push(c);
       return c;
     },
-    resolveBinary: (name) => `/opt/${name}/${name}`,
+    ...(systemLookup === true ? {} : { resolveBinary: (name: string) => `/opt/${name}/${name}` }),
     removeTree: (p) => {
       removed.push(p);
     },
-    ...over,
+    ...deps,
   });
   return { r, children, removed };
 }
@@ -340,7 +341,7 @@ describe("the Terraform call: binary lookup and plan-file shape", () => {
   });
 
   test("the default binary lookup resolves what Bun.which finds, and refuses when it finds nothing", async () => {
-    const { r, children } = make(grants, createMockVault(), { resolveBinary: undefined });
+    const { r, children } = make(grants, createMockVault(), { systemLookup: true });
     const run = await r.preflight("iac_terraform_apply", planInput);
     if (Bun.which("terraform") === null) {
       await expect(r.execute("iac_terraform_plan", planInput)).rejects.toThrow(

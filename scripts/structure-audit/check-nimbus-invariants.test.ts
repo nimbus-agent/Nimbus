@@ -4618,7 +4618,7 @@ describe("D42 — a bound write is dispatched only with its own prepare step's v
     expect(rules([...GOOD, file(OTHER, "const d = renderUnifiedDiff(files);")])).toEqual([
       "bound-name-confined",
     ]);
-    expect(rules([...GOOD, file(EXECUTOR + ".x.ts", "renderUnifiedDiff(files);")])).toEqual([
+    expect(rules([...GOOD, file(`${EXECUTOR}.x.ts`, "renderUnifiedDiff(files);")])).toEqual([
       "bound-name-confined",
     ]);
     expect(
