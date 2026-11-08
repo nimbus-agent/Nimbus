@@ -1,6 +1,7 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import { spawn } from "node:child_process";
 import {
+  existsSync,
   mkdirSync,
   mkdtempSync,
   realpathSync,
@@ -15,9 +16,10 @@ import { parseSandboxPolicy, SANDBOX_POLICY_ENV } from "../../platform/sandbox/s
 import type { AppContainerGrantRevoker } from "../../platform/sandbox/win32-grant-revoke.ts";
 import { createMockVault } from "../../vault/mock.ts";
 import { IAC_CLOUD_ENV_NAMES } from "../connector-writes/iac-clouds.ts";
+import { scanForGitEntry } from "../connector-writes/iac-git-scan.ts";
 import type { IacGrants, IacPathDeps } from "../connector-writes/iac-grants.ts";
 import { IAC_PREFLIGHT_REFUSALS } from "../connector-writes/iac-limits.ts";
-import { createConnectorDispatcher } from "../registry.ts";
+import { buildBoundWriteCapabilities, createConnectorDispatcher } from "../registry.ts";
 import {
   APPLY_ESCALATE_AFTER_MS,
   buildIacProfile,
@@ -1233,4 +1235,61 @@ describe("the dispatcher's race stays above the runner's budget (D2 whole-branch
     run.release();
     await new Promise((res) => setTimeout(res, 100));
   }, 10_000);
+});
+
+describe("recheckGit: the bounded scan after the plan child has exited (D2 whole-branch review 5)", () => {
+  test("a directory that gained a .git since the preflight is refused with the fixed reason; a clean one is not", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "nimbus-iac-recheck-"));
+    try {
+      const { r } = runner("answer", {
+        pathDeps: { ...pathDeps, gitScan: (d: string) => scanForGitEntry(d) },
+      });
+      expect(r.recheckGit(dir)).toBeUndefined();
+      mkdirSync(join(dir, "sub", ".git"), { recursive: true });
+      expect(r.recheckGit(dir)).toBe(IAC_PREFLIGHT_REFUSALS.gitRepository);
+      // Nothing is deleted: the owner's directory is left as the child left it.
+      expect(existsSync(join(dir, "sub", ".git"))).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("through the production capabilities over the real runner: a .git planted after the preflight stops the settle", async () => {
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), "nimbus-iac-recheck2-")));
+    try {
+      const { r } = runner("answer", {
+        grants: () => ({ workdirs: [dir], clouds: [], regions: [], net: [] }),
+        pathDeps: { ...pathDeps, gitScan: (d: string) => scanForGitEntry(d) },
+      });
+      const run = await r.preflight("iac_terraform_apply", { workingDirectory: dir });
+      expect(run.ok).toBe(true);
+      const caps = buildBoundWriteCapabilities(r);
+      const ctx = {
+        settle: "iac-terraform" as const,
+        input: {},
+        reply: {},
+        workingDirectory: dir,
+        showPlan: async () => ({}),
+      };
+      // Clean: the settle goes on (and fails later, on the reply it was not given).
+      await expect(caps.settle("iac_terraform_apply", ctx)).rejects.not.toThrow(
+        IAC_PREFLIGHT_REFUSALS.gitRepository,
+      );
+      mkdirSync(join(dir, ".git"));
+      await expect(caps.settle("iac_terraform_apply", ctx)).rejects.toThrow(
+        IAC_PREFLIGHT_REFUSALS.gitRepository,
+      );
+      expect(existsSync(join(dir, ".git"))).toBe(true);
+      if (run.ok) run.release();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("an unreadable or over-cap tree is not clean (fail closed)", () => {
+    for (const answer of ["unreadable", "over-cap"] as const) {
+      const { r } = runner("answer", { pathDeps: { ...pathDeps, gitScan: () => answer } });
+      expect(r.recheckGit(work)).toBe(IAC_PREFLIGHT_REFUSALS.gitRepository);
+    }
+  });
 });

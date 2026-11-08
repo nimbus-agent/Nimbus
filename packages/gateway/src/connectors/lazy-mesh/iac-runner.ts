@@ -614,6 +614,13 @@ export interface IacRunnerDeps {
 /** What the registry's `BoundWriteCapabilities` needs of the runner. */
 export interface IacHost {
   preflight(rowToolId: string, input: Readonly<Record<string, unknown>>): Promise<PreflightOutcome>;
+  /**
+   * The bounded `.git` scan, run again after the plan child has exited and before anything is shown
+   * to the owner (D2 review 5): a plan child can write a `.git` into its working directory. The fixed
+   * refusal reason when the directory is not clean (found, over the caps or unreadable), else
+   * `undefined`. It deletes nothing: the owner's directory is left as the child left it.
+   */
+  recheckGit(workdir: string): string | undefined;
   /** The directories THIS run's plan child writes and the settler reads. */
   terraformRunDirs(
     workdir: string,
@@ -696,6 +703,12 @@ export class IacRunner implements IacHost {
     } catch {
       return this.approvedRoot();
     }
+  }
+
+  recheckGit(workdir: string): string | undefined {
+    return this.deps.pathDeps.gitScan(workdir) === "clean"
+      ? undefined
+      : IAC_PREFLIGHT_REFUSALS.gitRepository;
   }
 
   terraformRunDirs(workdir: string): { stagingDir: string; approvedRoot: string } | undefined {

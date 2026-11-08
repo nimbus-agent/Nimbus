@@ -101,6 +101,12 @@ export function buildBoundWriteCapabilities(host: IacHost): BoundWriteCapabiliti
       if (ctx.settle === "iac-cfn") {
         return settleCfnChangeSet({ input: ctx.input, reply: ctx.reply });
       }
+      // After the plan child has exited and before the owner sees anything: a plan can plant a
+      // `.git` in its working directory. The run is refused with the fixed reason (D2 review 5).
+      if (ctx.workingDirectory !== undefined) {
+        const planted = host.recheckGit(ctx.workingDirectory);
+        if (planted !== undefined) throw new PrepareRefusedError(planted);
+      }
       const dirs =
         ctx.workingDirectory === undefined
           ? undefined

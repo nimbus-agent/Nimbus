@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test";
 import type { PlannedAction } from "../engine/types.ts";
 import {
   IAC_EXIT_WAIT_MS,
+  IAC_PREFLIGHT_REFUSALS,
   IAC_TOOL_TIMEOUTS_MS,
   iacEscalationGraceMs,
 } from "./connector-writes/iac-limits.ts";
@@ -937,6 +938,7 @@ describe("the change-set discard type resolves only to its own tool (D2, static 
 describe("the bound-write capabilities of the production dispatcher (D2, D42(h))", () => {
   const host: IacHost = {
     preflight: async () => ({ ok: true, release: () => undefined }),
+    recheckGit: () => undefined,
     terraformRunDirs: (wd) =>
       wd === "/w" ? { stagingDir: "/nope/staging", approvedRoot: "/nope/approved" } : undefined,
   };
@@ -990,5 +992,41 @@ describe("the bound-write capabilities of the production dispatcher (D2, D42(h))
         reply: { stackName: "b" },
       }),
     ).rejects.toThrow("does not carry a required value");
+  });
+});
+
+describe("a .git planted by the plan child is caught before the prompt (D2 whole-branch review 5)", () => {
+  const noTools = { listTools: async () => ({}) };
+  const baseHost = (git: string | undefined): IacHost => ({
+    preflight: async () => ({ ok: true, release: () => undefined }),
+    recheckGit: () => git,
+    terraformRunDirs: () => ({ stagingDir: "/nope/s", approvedRoot: "/nope/a" }),
+  });
+  const ctx = {
+    settle: "iac-terraform" as const,
+    input: {},
+    reply: {},
+    workingDirectory: "/w",
+    showPlan: async () => ({}),
+  };
+
+  test("the Terraform settle refuses with the fixed reason before it touches the plan", async () => {
+    const caps = createConnectorDispatcher({
+      ...noTools,
+      iacHost: () => baseHost(IAC_PREFLIGHT_REFUSALS.gitRepository),
+    }).boundWriteCapabilities;
+    for (const row of ["iac_terraform_apply", "iac_terraform_destroy"]) {
+      await expect(caps?.settle(row, ctx)).rejects.toThrow(IAC_PREFLIGHT_REFUSALS.gitRepository);
+    }
+  });
+
+  test("a clean directory goes on to the ordinary settle", async () => {
+    const caps = createConnectorDispatcher({
+      ...noTools,
+      iacHost: () => baseHost(undefined),
+    }).boundWriteCapabilities;
+    await expect(caps?.settle("iac_terraform_apply", ctx)).rejects.toThrow(
+      "does not carry a required value",
+    );
   });
 });
