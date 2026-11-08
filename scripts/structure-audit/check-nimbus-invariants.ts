@@ -2606,12 +2606,13 @@ function d41OrderPin(f: FileEntry, code: string): Violation[] {
 
 // ---- D42 (bound writes, I54, Phase 9.7 D0b) ------------------------------------------------------
 // A BOUND connector write (a row that declares `bound`) is dispatched only with the values its own
-// gate-run prepare step produced, injected by the gateway. Five clauses keep that the only way in:
+// gate-run prepare step produced, injected by the gateway. Seven clauses keep that the only way in:
 // (a) confinement of the spelling and the capability: the `.write.prepare` action-type literal only
 //     in `engine/prepare-step.ts`; `injectBoundFields` and `runPrepareStep` only in that module and
 //     `engine/executor.ts`; `isPrepareActionType` additionally in `connectors/registry.ts` (the
-//     dispatcher guard); `isPrepareToolId` only in `connectors/connector-writes/prepare-tools.ts`
-//     and the registry; `PREPARE_TOOL_IDS` only in prepare-tools.ts, `connectors/connector-writes/
+//     dispatcher guard); `isPrepareToolId` only in `connectors/connector-writes/prepare-tools.ts`,
+//     the registry and `connectors/connector-write-registry.ts` (the one composed federation
+//     predicate `isConnectorWriteOrPrepareToolId`, D1c; that file and that name only); `PREPARE_TOOL_IDS` only in prepare-tools.ts, `connectors/connector-writes/
 //     types.ts` (the `withBound` default), the executor and the registry;
 // (b) the order is pinned in `engine/executor.ts`: `resolveHitlApproval` calls `captureBeforePhase`,
 //     then `preparePhase`, then `renderConfirmPhase`, then `approvalPhase` (a delegate can never
@@ -2633,6 +2634,10 @@ function d41OrderPin(f: FileEntry, code: string): Violation[] {
 //     `preparePhase`, and `runGateChecks` (the ordered checks `gateWithin` runs first) tests `isPrepareActionType(` together with
 //     `scope.prepareStep` before it reaches `resolveHitlApproval(`, so a caller's `<svc>.write.prepare`
 //     is refused whichever door sent it.
+// (g) the unified diff an approver is shown is rendered only by the prepare step (D1c): the
+//     `renderUnifiedDiff` name is confined to `engine/prepare-step.ts` and `connectors/connector-writes/
+//     diff.ts` itself, so no other module can put a diff of its own making in front of an approver.
+//     The executor only carries `prepared.diff` into the preview (a source pin on `withPrepared`).
 // Comments and string literals are stripped before identifiers are matched; test files and anything
 // outside packages/gateway/src/ are not scanned. STATED BOUND, as D33(c)/D41: a dynamically composed
 // name evades a text scan, a second use inside an allow-listed file is exempt whole-file (the order
@@ -2644,12 +2649,15 @@ const D42_STEP = "packages/gateway/src/engine/prepare-step.ts";
 const D42_REGISTRY = "packages/gateway/src/connectors/registry.ts";
 const D42_TOOLS = "packages/gateway/src/connectors/connector-writes/prepare-tools.ts";
 const D42_TYPES = "packages/gateway/src/connectors/connector-writes/types.ts";
+const D42_WRITE_REGISTRY = "packages/gateway/src/connectors/connector-write-registry.ts";
+const D42_DIFF = "packages/gateway/src/connectors/connector-writes/diff.ts";
 const D42_LITERAL_RE = /\.write\.prepare\b/g;
 const D42_NAMES: ReadonlyArray<readonly [RegExp, readonly string[]]> = [
   [/\binjectBoundFields\b/g, [D42_STEP, D42_EXECUTOR]],
   [/\brunPrepareStep\b/g, [D42_STEP, D42_EXECUTOR]],
   [/\bisPrepareActionType\b/g, [D42_STEP, D42_EXECUTOR, D42_REGISTRY]],
-  [/\bisPrepareToolId\b/g, [D42_TOOLS, D42_REGISTRY]],
+  [/\bisPrepareToolId\b/g, [D42_TOOLS, D42_REGISTRY, D42_WRITE_REGISTRY]],
+  [/\brenderUnifiedDiff\b/g, [D42_STEP, D42_DIFF]],
   [/\bPREPARE_TOOL_IDS\b/g, [D42_TOOLS, D42_TYPES, D42_EXECUTOR, D42_REGISTRY]],
   [/\b(?:writeTable|WriteTable)\b/g, [D42_EXECUTOR]],
   [/\bprepareToolIds\b/g, [D42_STEP, D42_TOOLS, D42_TYPES, D42_EXECUTOR, D42_REGISTRY]],
@@ -2840,6 +2848,12 @@ function d42ExecutorPins(f: FileEntry, code: string): Violation[] {
     });
   }
   d42PrepareScopePins(code, span, fail);
+  // Clause (g): the diff the approver is shown is the prepare step's own, carried unchanged.
+  const carry = d41Span(code, /\bfunction\s+withPrepared\s*\(/, "\n}\n");
+  const carried = carry === undefined ? "" : code.slice(carry[0], carry[1]);
+  if (!/\bdiff\s*:\s*prepared\.diff\b/.test(carried)) {
+    fail("withPrepared must carry only prepared.diff into the preview");
+  }
   const refusal = span(/\bprivate\s+boundRefusal\s*\(/);
   const guard = refusal.search(/!\s*scope\.bind\b/);
   const input = refusal.search(/\bboundInputRefusal\s*\(/);
@@ -4327,7 +4341,7 @@ async function run(): Promise<void> {
       "bound-prepare-literal-confined":
         "(a) the .write.prepare action-type literal outside engine/prepare-step.ts",
       "bound-name-confined":
-        "(a)/(c) a bound-write name (injectBoundFields, runPrepareStep, isPrepareActionType, isPrepareToolId, PREPARE_TOOL_IDS, writeTable, prepareToolIds) outside its files",
+        "(a)/(c) a bound-write name (injectBoundFields, runPrepareStep, isPrepareActionType, isPrepareToolId, renderUnifiedDiff, PREPARE_TOOL_IDS, writeTable, prepareToolIds) outside its files",
       "bound-order-pinned":
         "(b) the executor's prepare phase is out of order, or the injection is called from anywhere but dispatchBoundPhase",
       "bound-seam-not-production":

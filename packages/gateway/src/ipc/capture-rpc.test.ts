@@ -957,6 +957,20 @@ describe("B1 act door: the destination refusal, real messagingDestinationRefusal
       await refusedCode(submit(actCtx([]), "jira.issue.transition", { issueKey: "NIM-1" })),
     ).toEqual({ code: "ERR_CAPTURE_ACTION_NOT_PROPOSABLE" });
   });
+  test("the two bound commits are refused at submit as not proposable (D1c): the act door cannot show a diff", async () => {
+    policy = boundPolicy([]);
+    for (const type of ["github.file.commit", "gitlab.commit.create"]) {
+      expect(
+        await refusedCode(
+          submit(actCtx([]), type, {
+            message: "m",
+            files: [{ path: "src/a.ts", content: "x" }],
+          }),
+        ),
+        type,
+      ).toEqual({ code: "ERR_CAPTURE_ACTION_NOT_PROPOSABLE" });
+    }
+  });
 });
 
 // ---- B2: the issue writes on the act door (plan Task 4b, R8; OR-B2-2/3/4) --------------------

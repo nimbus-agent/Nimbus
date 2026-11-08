@@ -43,7 +43,11 @@ import { isModelOfferableRow } from "./model-offerable.ts";
 import { createModelWriteToolSource } from "./model-write-source.ts";
 import { type ConnectorWriteRow, previewTemplateKeys } from "./types.ts";
 
-const D1_OFFERED = CONNECTOR_WRITE_ROWS.filter((r) => r.wave === 4 && isModelOfferableRow(r));
+// The D1 rows: the Wave 4 rows offered through a before-state. The two bound commits (D1c) have
+// their own door tests.
+const D1_OFFERED = CONNECTOR_WRITE_ROWS.filter(
+  (r) => r.wave === 4 && r.bound === undefined && isModelOfferableRow(r),
+);
 const D1_SERVICES = [...new Set(D1_OFFERED.map((r) => serviceOf(r.actionType)))].sort((a, b) =>
   a.localeCompare(b),
 );
@@ -204,7 +208,10 @@ describe("D1 through the real door", () => {
     }
     expect(
       D1_SERVICES.reduce(
-        (n, s) => n + offerableWritesEnabledBy(s, 4).filter((r) => r.wave === 4).length,
+        (n, s) =>
+          n +
+          offerableWritesEnabledBy(s, 4).filter((r) => r.wave === 4 && r.bound === undefined)
+            .length,
         0,
       ),
     ).toBe(27);

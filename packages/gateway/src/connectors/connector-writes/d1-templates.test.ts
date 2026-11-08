@@ -86,7 +86,7 @@ const PREVIEW_ONLY = [
   "gcp_cloud_run_deploy",
 ] as const;
 
-/** The two multi-file commit writes: classified, never offered, no preview (D1c). */
+/** The two multi-file commit writes (D1c): bound, previewed with a diff and offered; tested in commit-bound.test.ts. */
 const COMMITS = ["github_file_commit", "gitlab_commit_create"] as const;
 
 const WITH_PREVIEW = [...OFFERED, ...READER_NEVER_OFFERED, ...PREVIEW_ONLY] as const;
@@ -342,14 +342,14 @@ describe("D1 rows: shape and offerability", () => {
     }
   });
 
-  test("exactly the 27 are offered; the Bitbucket merge, the three preview-only rows and the two commits are not", () => {
+  test("exactly the 27 are offered through a before-state; the Bitbucket merge and the three preview-only rows are not", () => {
     for (const id of OFFERED) {
       const r = rowOf(id);
       expect(r.preview, id).toBeDefined();
       expect(r.before, id).toBeDefined();
       expect(isModelOfferableRow(r), id).toBe(true);
     }
-    for (const id of [...READER_NEVER_OFFERED, ...PREVIEW_ONLY, ...COMMITS]) {
+    for (const id of [...READER_NEVER_OFFERED, ...PREVIEW_ONLY]) {
       expect(isModelOfferableRow(rowOf(id)), id).toBe(false);
     }
     expect(rowOf("bitbucket_pr_merge").before).toBeDefined();
@@ -358,7 +358,12 @@ describe("D1 rows: shape and offerability", () => {
       expect(rowOf(id).preview, id).toBeDefined();
       expect(rowOf(id).before, id).toBeUndefined();
     }
-    for (const id of COMMITS) expect(rowOf(id).preview, id).toBeUndefined();
+    // The commits are offered through a bound prepare step instead (D1c), not a before-state.
+    for (const id of COMMITS) {
+      expect(rowOf(id).before, id).toBeUndefined();
+      expect(rowOf(id).bound, id).toBeDefined();
+      expect(isModelOfferableRow(rowOf(id)), id).toBe(true);
+    }
   });
 
   test("the four Kubernetes and GKE rows and the four iac rows are untouched: confirm only", () => {

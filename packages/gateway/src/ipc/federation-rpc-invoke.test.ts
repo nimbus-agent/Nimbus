@@ -11,6 +11,7 @@ import {
   CONNECTOR_WRITES,
   isConnectorWriteToolId,
 } from "../connectors/connector-write-registry.ts";
+import { PREPARE_TOOL_IDS } from "../connectors/connector-writes/prepare-tools.ts";
 import { type LazyMeshToolMap, resolveServerTool } from "../connectors/lazy-mesh/tool-map.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import { __setSessionSpawnerForTest } from "../teamvault/connector-session.ts";
@@ -307,6 +308,22 @@ describe("federation.invoke over a real-shaped session: the peer names the liste
       expect(spawns).toEqual([]); // refused before runTool: nothing was spawned
       expect(ran).toEqual([]);
     });
+  }
+
+  // I26/I54 (D1c): a prepare tool reads a repository's files at a branch head, so a granted peer
+  // may not name it either, bare or as the listed `<server>_<tool>` key.
+  for (const prepareId of PREPARE_TOOL_IDS) {
+    const service = prepareId.split("_")[0] as string;
+    for (const toolId of [prepareId, `${service}_${prepareId}`]) {
+      test(`${toolId}: a granted prepare tool is refused at the I26 door through the real handler, before any spawn`, async () => {
+        const { db, runTool } = anchor([{ service, toolId }]);
+        const { spawns, ran } = serveListed(new Map([[service, [toolId]]]));
+        expect(await invoke(rpc(db, runTool), service, toolId)).toEqual(REFUSED);
+        expect(lastDecision(db)).toBe("teamvault.invoke.write_forbidden");
+        expect(spawns).toEqual([]);
+        expect(ran).toEqual([]);
+      });
+    }
   }
 
   // The federated seam never resolves a bare id, so whether a granted bare id may run does not

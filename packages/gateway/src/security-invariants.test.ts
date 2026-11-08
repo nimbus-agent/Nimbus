@@ -56,7 +56,11 @@ import {
 } from "./config/layered-config.ts";
 import { CONNECTOR_SERVICE_IDS } from "./connectors/connector-catalog.ts";
 import { createConnectorWriteDispatcher } from "./connectors/connector-write-dispatch.ts";
-import { CONNECTOR_WRITES, isConnectorWriteToolId } from "./connectors/connector-write-registry.ts";
+import {
+  CONNECTOR_WRITES,
+  isConnectorWriteOrPrepareToolId,
+  isConnectorWriteToolId,
+} from "./connectors/connector-write-registry.ts";
 import {
   type ConnectorWriteContext,
   invokeConnectorWrite,
@@ -66,6 +70,10 @@ import {
   SYNTH_REPLY,
   synthBoundRow,
 } from "./connectors/connector-writes/bound-fixtures.test-helpers.ts";
+import {
+  COMMIT_CREDENTIAL_REFUSAL,
+  COMMIT_PATH_REFUSAL,
+} from "./connectors/connector-writes/commit-paths.ts";
 import {
   confirmTemplateKeys,
   parseConfirmTemplate,
@@ -86,6 +94,7 @@ import {
   mcpClientToolKey,
   resolveServerTool,
 } from "./connectors/lazy-mesh/tool-map.ts";
+import { ACTION_PROPOSABILITY } from "./connectors/proposable-actions.ts";
 import { createConnectorDispatcher } from "./connectors/registry.ts";
 import { egressSourceTypeForClientKind } from "./egress/egress-bearing-kinds.ts";
 import { COVERAGE_CLASSES, THIS_BINARY_COVERAGE } from "./egress/egress-coverage.ts";
@@ -102,6 +111,7 @@ import {
   ToolExecutor,
 } from "./engine/executor.ts";
 import { serviceOf } from "./engine/service-of.ts";
+import { extractToolInput } from "./engine/tool-input.ts";
 import type { PlannedAction } from "./engine/types.ts";
 import { buildUserMcpAgentTools } from "./engine/user-mcp-agent-tools.ts";
 import type { ContinuityEntry } from "./extensions/continuity/continuity-table.ts";
@@ -3286,7 +3296,29 @@ function confirmableInput(row: ConnectorWriteRow): Record<string, unknown> {
   for (const name of confirmTemplateKeys(parsed.segments)) {
     input[name] = name === "instanceIds" ? ["i-1"] : "x1";
   }
+  // A multi-file commit (D1c) must also pass its row's input check: one small new file.
+  if (row.bound?.prepare.inputRefusal !== undefined) {
+    input["message"] = "m";
+    input["files"] = [{ path: "a.txt", content: "x" }];
+  }
   return input;
+}
+
+/**
+ * What a fake connector answers to a BOUND row's prepare read (D1c): a head and every file as new.
+ * `undefined` for a row that is not bound.
+ */
+function censusPrepareReply(
+  row: ConnectorWriteRow | undefined,
+  input: Record<string, unknown>,
+): unknown {
+  if (row?.bound === undefined) return undefined;
+  const files = (input["files"] as Array<{ path: string }>).map((f) => ({
+    path: f.path,
+    exists: false,
+    mode: "100644",
+  }));
+  return { headSha: "a".repeat(40), files };
 }
 
 /** Every row (built the way its door builds it, ruling E2) plus the four gate-confined writes. */
@@ -3334,10 +3366,75 @@ function egressRows(
 }
 
 describe("I26 — every connector write row is confined to the local I2 path; federated gate rejects them", () => {
-  test("answerFederatedInvoke is wired with the union isConnectorWriteToolId predicate in federation-rpc.ts", async () => {
+  test("answerFederatedInvoke is wired with the union write-or-prepare predicate in federation-rpc.ts", async () => {
     const src = await read("packages/gateway/src/ipc/federation-rpc.ts");
-    expect(src).toContain("isWriteForbiddenToolId");
-    expect(src).toContain("isConnectorWriteToolId");
+    expect(src).toMatch(/isWriteForbiddenToolId:\s*isConnectorWriteOrPrepareToolId\s*,/);
+    expect(src).not.toContain("isWriteForbiddenToolId: isConnectorWriteToolId");
+  });
+
+  test("a federated peer naming a PREPARE tool (bare or namespaced) is refused write_forbidden and never runs (I54, D1c)", async () => {
+    const ids = new Set<string>();
+    for (const id of PREPARE_TOOL_IDS) {
+      const server = id.split("_")[0] as string;
+      ids.add(id);
+      ids.add(`${server}_${id}`);
+    }
+    expect(ids.size).toBe(PREPARE_TOOL_IDS.size * 2);
+    // The production wiring is what federation-rpc.ts passes.
+    const failures: string[] = [];
+    const db = freshEgressDb();
+    const store = new TeamVaultStore(db);
+    store.createEntry("prod-gh", "github", "owner", 1000);
+    for (const toolId of ids) {
+      store.grant("prod-gh", "peer:abc", toolId, 1000);
+      let ran = 0;
+      const ctx: InvokeGateCtx = {
+        db,
+        store,
+        quorumFor: () => undefined,
+        runQuorum: async () => ({ outcome: "approved", approvers: [] }),
+        runTool: async () => {
+          ran += 1;
+          return {};
+        },
+        isCodeExecutionForbiddenToolId: () => false,
+        isWriteForbiddenToolId: isConnectorWriteOrPrepareToolId,
+        isConnectorAllowed: () => true,
+        now: () => 5000,
+      };
+      const count = (): number =>
+        (
+          db
+            .query(
+              "SELECT COUNT(*) AS n FROM audit_log WHERE action_type = 'teamvault.invoke.write_forbidden'",
+            )
+            .get() as { n: number }
+        ).n;
+      const before = count();
+      const r = await answerFederatedInvoke(ctx, {
+        peerId: "peer:abc",
+        entry: "prod-gh",
+        toolId,
+        args: { owner: "o", repo: "r", branch: "main", files: [] },
+        purpose: "x",
+      });
+      if (r.kind !== "error" || r.error !== "no_grant") {
+        failures.push(`${toolId}: result ${JSON.stringify(r)}`);
+      }
+      if (ran !== 0) failures.push(`${toolId}: runTool was called`);
+      if (count() - before !== 1) failures.push(`${toolId}: audit rows ${count() - before}`);
+    }
+    db.close();
+    expect(failures).toEqual([]);
+  });
+
+  test("the plain files read is NOT a prepare tool: the composed predicate leaves it alone", () => {
+    expect(isConnectorWriteOrPrepareToolId("github_files_get")).toBe(false);
+    expect(isConnectorWriteOrPrepareToolId("github_github_files_get")).toBe(false);
+    expect(isConnectorWriteOrPrepareToolId("github_github_commit_prepare")).toBe(true);
+    expect(isConnectorWriteOrPrepareToolId("gitlab_commit_prepare")).toBe(true);
+    // Every write is still refused through the composed predicate.
+    expect(isConnectorWriteOrPrepareToolId("github_file_commit")).toBe(true);
   });
 
   test("the federated invoke gate fail-closed rejects write-classified tool ids (D20 predicate)", async () => {
@@ -3959,6 +4056,15 @@ describe("I29 — egress-ledger completeness over the executor chokepoint", () =
       let prompts = 0;
       let dispatches = 0;
       let rowsAtDispatch = -1;
+      // A bound write (D1c) runs its prepare read first: one more audited and ledgered row, before it.
+      const boundRow = CONNECTOR_WRITE_ROWS.find(
+        (r) => r.actionType === action.type && r.bound !== undefined,
+      );
+      const prepared = censusPrepareReply(
+        boundRow,
+        extractToolInput(action) as Record<string, unknown>,
+      );
+      const rowsExpected = boundRow === undefined ? 1 : 2;
       const exec = new ToolExecutor(
         {
           requestApproval: async () => {
@@ -3973,7 +4079,8 @@ describe("I29 — egress-ledger completeness over the executor chokepoint", () =
         },
         { recordAudit: () => {} },
         {
-          dispatch: async () => {
+          dispatch: async (a: { type: string }) => {
+            if (prepared !== undefined && a.type.endsWith(".write.prepare")) return prepared;
             dispatches += 1;
             rowsAtDispatch = egressRows(db).length;
             return {};
@@ -3986,9 +4093,11 @@ describe("I29 — egress-ledger completeness over the executor chokepoint", () =
       const rows = egressRows(db);
       if (prompts !== 1) failures.push(`${label}: consent asked ${prompts} times`);
       if (dispatches !== 1) failures.push(`${label}: dispatched ${dispatches} times`);
-      if (rowsAtDispatch !== 1) failures.push(`${label}: ${rowsAtDispatch} rows at dispatch`);
-      const row = rows[0];
-      if (rows.length !== 1 || row === undefined) {
+      if (rowsAtDispatch !== rowsExpected) {
+        failures.push(`${label}: ${rowsAtDispatch} rows at dispatch`);
+      }
+      const row = rows.at(-1);
+      if (rows.length !== rowsExpected || row === undefined) {
         failures.push(`${label}: ${rows.length} rows after`);
       } else {
         if (row.resultStatus !== "authorized")
@@ -4009,11 +4118,23 @@ describe("I29 — egress-ledger completeness over the executor chokepoint", () =
     for (const { label, action } of writesUnderTest()) {
       const db = freshEgressDb();
       let dispatches = 0;
+      // A bound write (D1c) is prepared before anyone is asked: its read is ledgered, then denied.
+      const boundRow = CONNECTOR_WRITE_ROWS.find(
+        (r) => r.actionType === action.type && r.bound !== undefined,
+      );
+      const prepared = censusPrepareReply(
+        boundRow,
+        extractToolInput(action) as Record<string, unknown>,
+      );
       const exec = new ToolExecutor(
-        { requestApproval: async () => false },
+        {
+          requestApproval: async () => false,
+          requestConfirmedApproval: async () => ({ approved: false, typed: "" }),
+        },
         { recordAudit: () => {} },
         {
-          dispatch: async () => {
+          dispatch: async (a: { type: string }) => {
+            if (prepared !== undefined && a.type.endsWith(".write.prepare")) return prepared;
             dispatches += 1;
             return {};
           },
@@ -4025,7 +4146,8 @@ describe("I29 — egress-ledger completeness over the executor chokepoint", () =
       const rows = egressRows(db);
       if (r.status !== "rejected") failures.push(`${label}: status ${r.status}`);
       if (dispatches !== 0) failures.push(`${label}: dispatched`);
-      if (rows.length !== 1 || rows[0]?.resultStatus !== "blocked") {
+      const want = boundRow === undefined ? 1 : 2;
+      if (rows.length !== want || rows.at(-1)?.resultStatus !== "blocked") {
         failures.push(`${label}: rows ${JSON.stringify(rows)}`);
       }
       db.close();
@@ -11613,6 +11735,8 @@ describe("I53 — a first-party connector write reaches the model only through t
         type: row.actionType,
         payload: row.transport === "mesh" ? { mcpToolId: row.toolId, input } : input,
       };
+      // A bound row (D1c) is prepared first; the fake connector answers that read.
+      const prepared = censusPrepareReply(row, input);
       const attempt = async (
         channel: "plain" | "exact" | "wrong" | "empty",
       ): Promise<{ status: string; dispatched: number; plainAsked: number }> => {
@@ -11640,7 +11764,8 @@ describe("I53 — a first-party connector write reaches the model only through t
           },
           { recordAudit: () => {} },
           {
-            dispatch: async () => {
+            dispatch: async (a: { type: string }) => {
+              if (prepared !== undefined && a.type.endsWith(".write.prepare")) return prepared;
               dispatched += 1;
               return {};
             },
@@ -11784,8 +11909,13 @@ describe("I53 — a first-party connector write reaches the model only through t
     );
     const { isReadOnlyToolId } = await import("./share/read-tool-registry.ts");
     const offeredWave4 = CONNECTOR_WRITE_ROWS.filter((r) => r.wave === 4 && isModelOfferableRow(r));
-    expect(offeredWave4).toHaveLength(27);
-    for (const r of offeredWave4) {
+    // 27 through a before-state (D1) and the two bound multi-file commits (D1c) through a prepare step.
+    expect(offeredWave4).toHaveLength(29);
+    expect(offeredWave4.filter((r) => r.bound !== undefined).map((r) => r.toolId)).toEqual([
+      "github_file_commit",
+      "gitlab_commit_create",
+    ]);
+    for (const r of offeredWave4.filter((x) => x.bound === undefined)) {
       expect(r.before, r.toolId).toBeDefined();
       expect(r.confirm, r.toolId).toBeDefined();
       const tools = [r.before?.tool, r.before?.also?.tool].filter(
@@ -12604,6 +12734,60 @@ describe("I53 / I28 - B3w: sent mail, Teams and forge Markdown cannot load remot
   });
 });
 
+describe("I53 / I54 - D1c: a commit the model proposes is refused for a CI, hook or credential path and never carries the bound head", () => {
+  const SRC = join(import.meta.dir, "connectors", "connector-writes");
+  const COMMIT_FILES = [{ path: ".github/workflows/ci.yml", content: "on: push\n" }];
+
+  test("modelWriteRefusal calls commitModelRefusal after the messaging check; actDoorRefusal never does", async () => {
+    const src = stripComments(await readFile(join(SRC, "model-write-refusals.ts"), "utf8"));
+    const model = src.slice(src.indexOf("export function modelWriteRefusal("));
+    expect(model).toMatch(
+      /messagingDestinationRefusal\([\s\S]*commitModelRefusal\(toolId, input\)[\s\S]*knowledgeBaseRefusal\(/,
+    );
+    const act = src.slice(
+      src.indexOf("export function actDoorRefusal("),
+      src.indexOf("function knowledgeBaseRefusal("),
+    );
+    expect(act).not.toContain("commitModelRefusal");
+  });
+
+  test("behaviour: a workflow path, a CODEOWNERS file and a credential are refused on the model door, and not on the act door", () => {
+    const model = (files: unknown) =>
+      modelWriteRefusal(
+        "github_file_commit",
+        { owner: "o", repo: "r", branch: "b", message: "m", files },
+        { chatops: undefined, kb: undefined },
+      );
+    expect(model(COMMIT_FILES)).toBe(COMMIT_PATH_REFUSAL);
+    expect(model([{ path: "docs/CODEOWNERS", content: "x" }])).toBe(COMMIT_PATH_REFUSAL);
+    const token = `gh${"p_"}${"a".repeat(36)}`;
+    expect(model([{ path: "a.ts", content: token }])).toBe(COMMIT_CREDENTIAL_REFUSAL);
+    expect(model([{ path: "a.ts", content: "ok" }])).toBeUndefined();
+    expect(
+      actDoorRefusal(
+        "github_file_commit",
+        { owner: "o", repo: "r", branch: "b", message: "m", files: COMMIT_FILES },
+        { chatops: undefined, kb: undefined, kbUnreadable: false },
+      ),
+    ).toBeUndefined();
+  });
+
+  test("the offered schema drops the bound head: the door strips every bound field from the listing", async () => {
+    const src = stripComments(
+      await readFile(join(import.meta.dir, "engine", "connector-write-agent-tools.ts"), "utf8"),
+    );
+    expect(src).toMatch(
+      /offeredInputSchema\(\s*entry\["inputSchema"\],[\s\S]{0,120}binds\.map\(\(b\) => b\.field\)/,
+    );
+  });
+
+  test("no bound row is proposable on the MCP act door (provenanceConsent shows no diff)", () => {
+    for (const r of CONNECTOR_WRITE_ROWS.filter((row) => row.bound !== undefined)) {
+      expect(ACTION_PROPOSABILITY[r.actionType]?.kind, r.actionType).toBe("denied");
+    }
+  });
+});
+
 describe("I54 — a bound connector write is dispatched only with the values its own gate-run prepare step produced", () => {
   const action = (input: Record<string, unknown>): PlannedAction => ({
     type: "iac.terraform.apply",
@@ -12681,10 +12865,21 @@ describe("I54 — a bound connector write is dispatched only with the values its
     );
   });
 
-  test("D0b ships the mechanism and no bound row: the production table declares none and the prepare set is empty and immutable", () => {
-    expect(CONNECTOR_WRITE_ROWS.filter((r) => r.bound !== undefined)).toEqual([]);
-    expect(PREPARE_TOOL_IDS.size).toBe(0);
+  test("the bound production rows are exactly the two multi-file commits and the prepare set is exactly their two prepare tools, frozen (D1c)", () => {
+    expect(
+      CONNECTOR_WRITE_ROWS.filter((r) => r.bound !== undefined)
+        .map((r) => r.toolId)
+        .sort(),
+    ).toEqual(["github_file_commit", "gitlab_commit_create"]);
+    expect([...PREPARE_TOOL_IDS].sort()).toEqual([
+      "github_commit_prepare",
+      "gitlab_commit_prepare",
+    ]);
+    for (const r of CONNECTOR_WRITE_ROWS.filter((x) => x.bound !== undefined)) {
+      expect(PREPARE_TOOL_IDS.has(r.bound?.prepare.tool ?? ""), r.toolId).toBe(true);
+    }
     expect(() => (PREPARE_TOOL_IDS as unknown as Set<string>).add("x_plan")).toThrow(TypeError);
+    expect(PREPARE_TOOL_IDS.size).toBe(2);
   });
 
   test("the public gate() never binds: a bound row reaching it is refused, audited and not dispatched", async () => {

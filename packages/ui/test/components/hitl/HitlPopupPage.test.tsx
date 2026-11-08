@@ -410,3 +410,86 @@ To approve, type exactly: ${TEXT}`,
     await waitFor(() => expect(consentRespond).toHaveBeenCalledWith("plain", true));
   });
 });
+
+describe("HitlPopupPage with a commit diff (D1c)", () => {
+  const TEXT = "github/commit acme/api@feat/x";
+  const goodDiff = {
+    files: [
+      {
+        path: "a.ts",
+        state: "new",
+        additions: 1,
+        deletions: 0,
+        hunks: [
+          { oldStart: 0, oldLines: 0, newStart: 1, newLines: 1, lines: [{ op: "+", text: "x" }] },
+        ],
+      },
+    ],
+    additions: 1,
+    deletions: 0,
+  };
+  const commit = (diff: unknown) => [
+    {
+      requestId: "c1",
+      prompt: "Commit?",
+      receivedAtMs: 1,
+      actionType: "github.file.commit",
+      confirmText: TEXT,
+      details: {
+        kind: "connector-write",
+        service: "github",
+        actionType: "github.file.commit",
+        target: "acme/api@feat/x",
+        summary: "Commit",
+        fields: [],
+        otherFields: [],
+        destination: { service: "github" },
+        diff,
+      },
+    },
+  ];
+
+  it("a readable diff is shown and Approve is still gated by the typed text alone", () => {
+    storeState.pending = commit(goodDiff);
+    render(<HitlPopupPage />);
+    expect(screen.getByTestId("connector-write-diff")).toBeInTheDocument();
+    const approve = screen.getByRole("button", { name: /Approve/i });
+    expect(approve).toBeDisabled();
+    fireEvent.change(screen.getByLabelText(/Type the text above/i), { target: { value: TEXT } });
+    expect(approve).toBeEnabled();
+  });
+
+  it.each([
+    ["github.file.commit", "github/commit acme/api@feat/x"],
+    ["gitlab.commit.create", "gitlab/commit acme/api@feat/x"],
+  ])("%s with NO diff key keeps Approve disabled even with the exact text typed", (type, text) => {
+    const req = commit(goodDiff)[0];
+    if (req === undefined) throw new Error("the commit fixture is empty");
+    const { diff: _omitted, ...details } = (req as { details: Record<string, unknown> }).details;
+    storeState.pending = [{ ...req, actionType: type, confirmText: text, details }];
+    render(<HitlPopupPage />);
+    fireEvent.change(screen.getByLabelText(/Type the text above/i), { target: { value: text } });
+    expect(screen.getByRole("button", { name: /Approve/i })).toBeDisabled();
+  });
+
+  it("a write that carries no diff by design is not held back by the rule", () => {
+    const req = commit(goodDiff)[0];
+    if (req === undefined) throw new Error("the commit fixture is empty");
+    const { diff: _omitted, ...details } = (req as { details: Record<string, unknown> }).details;
+    storeState.pending = [{ ...req, actionType: "github.pr.merge", details }];
+    render(<HitlPopupPage />);
+    fireEvent.change(screen.getByLabelText(/Type the text above/i), { target: { value: TEXT } });
+    expect(screen.getByRole("button", { name: /Approve/i })).toBeEnabled();
+  });
+
+  it("a malformed diff keeps Approve disabled even with the exact text typed; Reject still works", async () => {
+    storeState.pending = commit({ files: "not a list" });
+    consentRespond.mockResolvedValue(undefined);
+    render(<HitlPopupPage />);
+    expect(screen.getByTestId("connector-write-diff-error")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText(/Type the text above/i), { target: { value: TEXT } });
+    expect(screen.getByRole("button", { name: /Approve/i })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: /Reject/i }));
+    await waitFor(() => expect(consentRespond).toHaveBeenCalledWith("c1", false, ""));
+  });
+});

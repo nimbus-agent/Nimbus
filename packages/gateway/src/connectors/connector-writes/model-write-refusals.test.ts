@@ -495,6 +495,12 @@ describe("B2 tripwires: every offerable GitHub/GitLab text and label field is sc
     gitlab_mr_merge: [],
     gitlab_pipeline_retry: [],
     gitlab_pipeline_cancel: [],
+    // D1c: the multi-file commits. `message` and `files[].content` are shown in full and not
+    // scanned (a nested file text is code, spec § 15.3; the commit message's notification behaviour
+    // is not verified live, plan open question 6). The named test of that decision lands with the
+    // model-door refusals.
+    github_file_commit: [],
+    gitlab_commit_create: [],
   };
 
   /** The quick-action keys of every offerable GitLab row (never a title: ruling R-QA). */
@@ -511,6 +517,7 @@ describe("B2 tripwires: every offerable GitHub/GitLab text and label field is sc
     gitlab_mr_merge: [],
     gitlab_pipeline_retry: [],
     gitlab_pipeline_cancel: [],
+    gitlab_commit_create: [],
   };
 
   test("the broadcast map names exactly the offerable GitHub/GitLab rows, and each row scans those keys", () => {

@@ -22,6 +22,7 @@
  * both levels before it writes the gateway's own values.
  */
 
+import { type PreviewDiff, renderUnifiedDiff } from "../connectors/connector-writes/diff.ts";
 import { isPlainObject, sanitisePreviewText } from "../connectors/connector-writes/preview.ts";
 import {
   BEFORE_STATE_MAX_FIELDS,
@@ -65,6 +66,8 @@ export const PREPARE_REFUSALS = Object.freeze({
   replyTooLarge: "prepare: the prepare reply is too large",
   unbound: "prepare: the prepare reply does not carry a required value",
   unshowable: "prepare: the prepare reply cannot be shown",
+  diffTooLarge: "prepare: the change is too large to show in full",
+  nothingToCommit: "prepare: the change would change nothing",
 });
 
 /** Thrown by {@link runPrepareStep}; `gate()` records it as a rejection with this fixed reason. */
@@ -101,6 +104,8 @@ export interface PreparedWrite {
   readonly values: Readonly<Record<string, string>>;
   readonly fields: readonly BeforeStateField[];
   readonly notShown?: number;
+  /** The change as a unified diff the GATEWAY rendered (D1c, D42(g)); only for a row with `prepare.diff`. */
+  readonly diff?: PreviewDiff;
 }
 
 /** The JSON length of `v`; `Infinity` when it cannot be encoded (so a cap always refuses it). */
@@ -116,7 +121,9 @@ function serialisedLength(v: unknown): number {
  * Why this action may not enter the prepare step, or `undefined`. Pure, and run FIRST by the gate
  * (before any read or prompt): the input must be an object, none of the gateway-bound fields may
  * be present at the payload root or inside `payload.input` (own keys, so `__proto__`-style names
- * count), and the serialised input stays within the row's cap.
+ * count), the serialised input stays within the row's cap, and the row's own pure input hook (the
+ * commit rows' file count, path and content rules) finds nothing to refuse. A hook that throws, or
+ * returns anything but a string or `undefined`, refuses: fail closed.
  */
 export function boundInputRefusal(bound: BoundWrite, action: PlannedAction): string | undefined {
   const input = extractToolInput(action);
@@ -127,7 +134,22 @@ export function boundInputRefusal(bound: BoundWrite, action: PlannedAction): str
   );
   if (supplied) return PREPARE_REFUSALS.callerBound;
   if (serialisedLength(input) > bound.prepare.maxInputBytes) return PREPARE_REFUSALS.inputTooLarge;
-  return undefined;
+  return rowInputRefusal(bound, input);
+}
+
+function rowInputRefusal(
+  bound: BoundWrite,
+  input: Readonly<Record<string, unknown>>,
+): string | undefined {
+  const hook = bound.prepare.inputRefusal;
+  if (hook === undefined) return undefined;
+  try {
+    const reason: unknown = hook(input);
+    if (reason === undefined) return undefined;
+    return typeof reason === "string" ? reason : PREPARE_REFUSALS.notObject;
+  } catch {
+    return PREPARE_REFUSALS.notObject;
+  }
 }
 
 function omitKeys(
@@ -266,6 +288,41 @@ function prepareArgs(
   }
 }
 
+function utf8Length(text: string): number {
+  return new TextEncoder().encode(text).length;
+}
+
+/**
+ * The change a bound write will make, rendered by THIS module from the caller's input (the after
+ * side) and the reply's old text (the before side); nothing else in the reply is read (D42(g)). A
+ * row with no `prepare.diff` has none. Every failure is one of the fixed reasons.
+ */
+function preparedDiff(
+  bound: BoundWrite,
+  input: Readonly<Record<string, unknown>>,
+  reply: unknown,
+): PreviewDiff | undefined {
+  const spec = bound.prepare.diff;
+  if (spec === undefined) return undefined;
+  let files: ReturnType<typeof spec.files>;
+  try {
+    files = spec.files(pickBeforeReaderArgs(bound.prepare.argKeys, input), reply);
+  } catch {
+    files = undefined;
+  }
+  if (!Array.isArray(files) || files.length === 0) {
+    throw new PrepareRefusedError(PREPARE_REFUSALS.unshowable);
+  }
+  const oldBytes = files.reduce((n, f) => n + utf8Length(f.oldContent ?? ""), 0);
+  if (oldBytes > spec.maxOldBytes) throw new PrepareRefusedError(PREPARE_REFUSALS.replyTooLarge);
+  const rendered = renderUnifiedDiff(files, { maxBytes: spec.maxDiffBytes });
+  if (!rendered.ok) throw new PrepareRefusedError(PREPARE_REFUSALS.diffTooLarge);
+  if (rendered.diff.files.every((f) => f.state === "unchanged")) {
+    throw new PrepareRefusedError(PREPARE_REFUSALS.nothingToCommit);
+  }
+  return rendered.diff;
+}
+
 const REAL_TIMERS: Timers = {
   set: (fn, ms) => setTimeout(fn, ms),
   clear: (h) => clearTimeout(h as ReturnType<typeof setTimeout>),
@@ -288,7 +345,8 @@ export async function runPrepareStep(
     throw new PrepareRefusedError(PREPARE_REFUSALS.toolNotAllowed);
   }
   if (opts.toolUnlisted === true) throw new PrepareRefusedError(PREPARE_REFUSALS.toolUnavailable);
-  const args = prepareArgs(bound, extractToolInput(action) as Record<string, unknown>);
+  const input = extractToolInput(action) as Record<string, unknown>;
+  const args = prepareArgs(bound, input);
   if (args === undefined) throw new PrepareRefusedError(PREPARE_REFUSALS.argsFailed);
   const service = serviceOf(row.actionType);
   const readAction: PlannedAction = {
@@ -304,6 +362,7 @@ export async function runPrepareStep(
   if (serialisedLength(got.reply) > prepare.maxReplyBytes) {
     throw new PrepareRefusedError(PREPARE_REFUSALS.replyTooLarge);
   }
+  const diff = preparedDiff(bound, input, got.reply);
   const values = boundValues(bound, got.reply);
   if (values === undefined) throw new PrepareRefusedError(PREPARE_REFUSALS.unbound);
   const shown = shownFacts(bound, got.reply);
@@ -313,5 +372,6 @@ export async function runPrepareStep(
     values,
     fields: shown.fields,
     ...(shown.notShown > 0 ? { notShown: shown.notShown } : {}),
+    ...(diff === undefined ? {} : { diff }),
   };
 }

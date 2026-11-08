@@ -6,7 +6,9 @@
 import { serviceOf } from "../../engine/service-of.ts";
 import { extractToolInput } from "../../engine/tool-input.ts";
 import type { PlannedAction } from "../../engine/types.ts";
+import { diffTextLines, type PreviewDiff } from "./diff.ts";
 import { CONNECTOR_WRITE_ROWS } from "./index.ts";
+import { sanitisePreviewText } from "./sanitise.ts";
 import {
   type ConnectorWriteBeforeState,
   type ConnectorWritePreviewTemplate,
@@ -54,54 +56,16 @@ export interface ConnectorWritePreview {
    * before approving; the model never does.
    */
   readonly prepared?: ConnectorWriteBeforeState;
+  /**
+   * The change a bound multi-file write will make, as a unified diff the gateway rendered from the
+   * caller's input and the prepare reply (D1c, I54); set only by the executor's `preparePhase`,
+   * never by the builder, and shown in full or the write is refused.
+   */
+  readonly diff?: PreviewDiff;
 }
 
-/**
- * Replaces every character that could repaint, retitle, forge or hide text in the owner's prompt
- * with a visible escape `\u{XXXX}` (uppercase hex, at least 4 digits), so the owner sees exactly
- * what will be sent and two different keys cannot collapse into one. Ranges:
- *  - U+0000-U+0008, U+000B-U+001F: C0 controls except TAB (U+0009) and LF (U+000A). This includes
- *    CR (U+000D), BEL and every ESC (U+001B): no CSI, OSC (titles, hyperlinks, clipboard), DCS or
- *    two-byte escape (RIS, reverse line feed, cursor save) can act.
- *  - U+007F-U+009F: DEL and the C1 range (8-bit CSI/OSC introducers).
- *  - U+2028, U+2029: Unicode line and paragraph separators.
- *  - U+202A-U+202E, U+2066-U+2069: bidi embeddings, overrides and isolates.
- *  - U+200B-U+200F: zero-width space/joiners and the LRM/RLM marks; U+061C: Arabic letter mark;
- *    U+2060-U+2064: word joiner and invisible operators; U+180E: Mongolian vowel separator;
- *    U+FEFF: BOM / zero-width no-break space.
- *  - U+E0000-U+E007F: the tag block (invisible "ASCII smuggling" characters).
- * Tab and newline are kept here; the CLI renderer shows them as `\t` and `\n`. A literal backslash
- * in the input is left as is, so `\u{...}` in the output is ambiguous only with a literal input
- * backslash-u; that is accepted.
- */
-function isUnsafeCodePoint(c: number): boolean {
-  return (
-    c <= 0x08 ||
-    (c >= 0x0b && c <= 0x1f) || // C0 except TAB and LF (includes CR, BEL, ESC)
-    (c >= 0x7f && c <= 0x9f) || // DEL and C1
-    (c >= 0x200b && c <= 0x200f) || // zero-width, LRM, RLM
-    c === 0x061c ||
-    c === 0x2028 ||
-    c === 0x2029 || // line / paragraph separators
-    (c >= 0x202a && c <= 0x202e) || // bidi embeddings and overrides
-    (c >= 0x2060 && c <= 0x2064) || // word joiner, invisible operators
-    (c >= 0x2066 && c <= 0x2069) || // bidi isolates
-    c === 0x180e ||
-    c === 0xfeff ||
-    (c >= 0xe0000 && c <= 0xe007f) // tag block
-  );
-}
-
-export function sanitisePreviewText(s: string): string {
-  let out = "";
-  for (const ch of s) {
-    const c = ch.codePointAt(0) ?? 0;
-    out += isUnsafeCodePoint(c)
-      ? String.raw`\u{${c.toString(16).toUpperCase().padStart(4, "0")}}`
-      : ch;
-  }
-  return out;
-}
+/** Lives in `./sanitise.ts` (the diff renderer needs it without importing this builder). */
+export { sanitisePreviewText };
 
 const NOT_SET = "(not set)";
 
@@ -165,7 +129,23 @@ function renderField(
     const rawText = typeof raw === "string" ? raw : rawJson(raw);
     return `(hidden, ${[...rawText].length} characters)`;
   }
+  if (f.kind === "diff") return renderFileList(raw);
   return renderQuoted(raw);
+}
+
+/**
+ * The `diff` field before the diff exists: the sanitised path list with a count (the builder sees
+ * only the input). A value that is not a list of `{path}` objects is shown as it is, quoted.
+ */
+function renderFileList(raw: unknown): string {
+  if (!Array.isArray(raw)) return renderQuoted(raw);
+  const paths: string[] = [];
+  for (const entry of raw as unknown[]) {
+    const p = isPlainObject(entry) ? entry["path"] : undefined;
+    if (typeof p !== "string") return renderQuoted(raw);
+    paths.push(sanitisePreviewText(p));
+  }
+  return `${String(paths.length)} ${paths.length === 1 ? "file" : "files"}: ${paths.join(", ")}`;
 }
 
 /** The row a payload `mcpToolId` names, as the bare `<toolId>` or `<service>_<toolId>`, whatever its type. */
@@ -304,7 +284,20 @@ export function renderConnectorWritePreviewLines(p: ConnectorWritePreview): stri
   }
   if (p.before !== undefined) lines.push("", ...stateLines("Before", p.before));
   if (p.prepared !== undefined) lines.push("", ...stateLines("Prepared", p.prepared));
+  if (p.diff !== undefined) lines.push("", ...diffLines(p.diff));
   return lines;
+}
+
+/**
+ * The diff in full, last on screen, then one footer line so an owner scrolling up knows where it
+ * ends. Every line was sanitised when the diff was built; a TAB is shown as `	` like any value.
+ */
+function diffLines(d: PreviewDiff): string[] {
+  const n = d.files.length;
+  return [
+    ...diffTextLines(d).map(oneLine),
+    `End of diff: ${String(n)} ${n === 1 ? "file" : "files"}, +${String(d.additions)} -${String(d.deletions)}`,
+  ];
 }
 
 /**

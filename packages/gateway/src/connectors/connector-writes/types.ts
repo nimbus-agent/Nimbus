@@ -4,6 +4,7 @@ import {
   isSensitiveFieldName,
   parseConfirmTemplate,
 } from "./confirm-template.ts";
+import type { DiffInputFile } from "./diff.ts";
 import { PREPARE_TOOL_IDS } from "./prepare-tools.ts";
 
 /** `write` rows have a dispatch path (the credential-aware transport); `mesh` rows are refused by
@@ -76,7 +77,7 @@ export interface ConnectorWriteRow {
   /**
    * A bound write (Phase 9.7 D0b, I54): the gateway runs this row's PREPARE read at the gate and
    * injects the values it binds into the write's input; the caller never supplies them. Set with
-   * {@link withBound}. No row declares one yet.
+   * {@link withBound}. Two rows declare one (D1c): the GitHub and GitLab multi-file commits.
    */
   readonly bound?: BoundWrite;
 }
@@ -123,6 +124,35 @@ export interface PrepareRead {
   readonly maxInputBytes: number;
   /** The prepare reply, serialised, may not exceed this many characters. */
   readonly maxReplyBytes: number;
+  /**
+   * A PURE input check run last in `boundInputRefusal`, before any read or prompt: a fixed-text
+   * reason to refuse the write, or `undefined`. It must never echo input; a throw refuses (fail
+   * closed). The commit rows use it for the file count, the path rules and the content cap.
+   */
+  inputRefusal?(input: Readonly<Record<string, unknown>>): string | undefined;
+  /**
+   * Set on a row whose preview has a `diff` field: how the gateway renders the change the write
+   * will make as a unified diff. See {@link PrepareDiff}.
+   */
+  readonly diff?: PrepareDiff;
+}
+
+/**
+ * How a bound write's change is shown in full (D1c, D42(g)). `files` pairs the caller's input (the
+ * AFTER side, byte for byte what the connector writes) with the prepare reply's BEFORE side; it
+ * returns `undefined` when the reply cannot be paired exactly (a missing, extra or duplicate entry,
+ * an existing file with no old text), which refuses the write. Nothing else the reply says about
+ * the change is read. `files` receives the pick of the write input over the prepare `argKeys`.
+ */
+export interface PrepareDiff {
+  files(
+    picked: Readonly<Record<string, unknown>>,
+    reply: unknown,
+  ): readonly DiffInputFile[] | undefined;
+  /** The summed UTF-8 length of the BEFORE sides may not exceed this. */
+  readonly maxOldBytes: number;
+  /** The rendered, sanitised diff text may not exceed this many UTF-8 bytes. */
+  readonly maxDiffBytes: number;
 }
 
 export interface BoundWrite {
@@ -399,8 +429,24 @@ export function boundWriteProblems(
     ["budgetMs", prepare.budgetMs],
     ["maxInputBytes", prepare.maxInputBytes],
     ["maxReplyBytes", prepare.maxReplyBytes],
+    ...(prepare.diff === undefined
+      ? []
+      : ([
+          ["diff maxOldBytes", prepare.diff.maxOldBytes],
+          ["diff maxDiffBytes", prepare.diff.maxDiffBytes],
+        ] as const)),
   ] as const) {
     if (!Number.isInteger(n) || n <= 0) out.push(`prepare ${name} must be a positive integer`);
+  }
+  const diffFields = r.preview.fields.filter((f) => f.kind === "diff");
+  if (diffFields.length > 0 && prepare.diff === undefined) {
+    out.push("has a diff field but the prepare read has no diff");
+  }
+  if (diffFields.length === 0 && prepare.diff !== undefined) {
+    out.push("the prepare read has a diff but the preview has no diff field");
+  }
+  for (const f of diffFields) {
+    if (!prepare.argKeys.includes(f.key)) out.push(`diff field ${f.key} is not a prepare argKey`);
   }
   return out;
 }
@@ -424,7 +470,8 @@ export function withBound(
   return Object.freeze({ ...r, bound });
 }
 
-export type PreviewFieldKind = "text" | "markdown" | "list" | "secret";
+/** `diff`: the change a bound write will make, rendered by the gateway (D1c); at most one per row. */
+export type PreviewFieldKind = "text" | "markdown" | "list" | "secret" | "diff";
 
 export interface PreviewFieldTemplate {
   readonly key: string;
@@ -456,6 +503,9 @@ export function withPreview(
   r: ConnectorWriteRow,
   preview: ConnectorWritePreviewTemplate,
 ): ConnectorWriteRow {
+  if (preview.fields.filter((f) => f.kind === "diff").length > 1) {
+    throw new Error(`connector write preview: at most one diff field (row ${r.toolId})`);
+  }
   const secrets = new Set(preview.fields.filter((f) => f.kind === "secret").map((f) => f.key));
   for (const text of [preview.target, preview.summary]) {
     for (const m of text.matchAll(TEMPLATE_PLACEHOLDER)) {

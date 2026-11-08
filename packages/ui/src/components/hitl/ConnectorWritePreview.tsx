@@ -185,6 +185,7 @@ export function ConnectorWritePreview({
       )}
       <BeforeState raw={details["before"]} title="Before" testId="connector-write-before" />
       <BeforeState raw={details["prepared"]} title="Prepared" testId="connector-write-prepared" />
+      <DiffView raw={details["diff"]} />
       <ProposedBy details={details} />
     </div>
   );
@@ -298,6 +299,149 @@ function ProposedBy({ details }: { readonly details: Record<string, unknown> }):
     >
       <h3 className="text-sm font-semibold">Unverified agent proposal</h3>
       <Rows rows={rows} />
+    </section>
+  );
+}
+
+// ---- The gateway's unified diff of a multi-file commit (D1c, I54) ----------------------------------
+
+interface DiffFileView {
+  readonly path: string;
+  readonly state: "new" | "modified" | "unchanged";
+  readonly mode: string | undefined;
+  /** The file's lines exactly as the gateway renders them (header, hunk headers and lines). */
+  readonly text: string;
+}
+
+interface DiffViewModel {
+  readonly files: readonly DiffFileView[];
+  readonly additions: number;
+  readonly deletions: number;
+}
+
+const DIFF_OPS: ReadonlySet<string> = new Set([" ", "+", "-", "\\"]);
+
+function count(v: unknown): number | undefined {
+  return typeof v === "number" && Number.isInteger(v) && v >= 0 ? v : undefined;
+}
+
+function readHunkText(raw: unknown): string[] | undefined {
+  const h = asRecord(raw);
+  const nums = [h["oldStart"], h["oldLines"], h["newStart"], h["newLines"]].map(count);
+  if (nums.some((n) => n === undefined) || !Array.isArray(h["lines"])) return undefined;
+  const [oldStart, oldLines, newStart, newLines] = nums as number[];
+  const out = [`@@ -${oldStart},${oldLines} +${newStart},${newLines} @@`];
+  for (const l of h["lines"] as unknown[]) {
+    const line = asRecord(l);
+    const op = line["op"];
+    const t = line["text"];
+    if (typeof op !== "string" || !DIFF_OPS.has(op) || typeof t !== "string") return undefined;
+    out.push(op === "\\" ? `\\ ${t}` : `${op}${t}`);
+  }
+  return out;
+}
+
+function readDiffFile(raw: unknown): DiffFileView | undefined {
+  const f = asRecord(raw);
+  const path = f["path"];
+  const state = f["state"];
+  const mode = f["mode"];
+  if (typeof path !== "string" || !Array.isArray(f["hunks"])) return undefined;
+  if (state !== "new" && state !== "modified" && state !== "unchanged") return undefined;
+  if (mode !== undefined && typeof mode !== "string") return undefined;
+  const label = state === "new" ? "new file" : state === "unchanged" ? "no change" : "modified";
+  const lines = [`=== ${path} (${label}${mode === undefined ? "" : `, mode ${mode}`})`];
+  if (state !== "unchanged") {
+    lines.push(state === "new" ? "--- /dev/null" : `--- a/${path}`, `+++ b/${path}`);
+    for (const h of f["hunks"] as unknown[]) {
+      const hunk = readHunkText(h);
+      if (hunk === undefined) return undefined;
+      lines.push(...hunk);
+    }
+  }
+  return { path, state, mode, text: lines.join("\n") };
+}
+
+/** `undefined` when `raw` is not a well-formed gateway diff. */
+function readDiff(raw: unknown): DiffViewModel | undefined {
+  const d = asRecord(raw);
+  const additions = count(d["additions"]);
+  const deletions = count(d["deletions"]);
+  if (additions === undefined || deletions === undefined || !Array.isArray(d["files"])) {
+    return undefined;
+  }
+  const files: DiffFileView[] = [];
+  for (const entry of d["files"] as unknown[]) {
+    const file = readDiffFile(entry);
+    if (file === undefined) return undefined;
+    files.push(file);
+  }
+  return { files, additions, deletions };
+}
+
+/**
+ * The write types whose approval is bound to a diff the gateway renders (the multi-file commits,
+ * D1c). For these a MISSING diff is as unapprovable as an unreadable one: the owner would be typing
+ * a confirmation for a change the screen never showed.
+ */
+const DIFF_REQUIRED_ACTION_TYPES: ReadonlySet<string> = new Set([
+  "github.file.commit",
+  "gitlab.commit.create",
+]);
+
+/**
+ * Whether the details carry a `diff` the view cannot read, or (for a write type that must carry
+ * one) no diff at all. The popup then keeps Approve disabled: an owner is never asked to approve a
+ * change the screen could not show in full.
+ */
+export function isDiffMalformed(
+  details: Record<string, unknown> | undefined,
+  actionType?: string,
+): boolean {
+  const required = actionType !== undefined && DIFF_REQUIRED_ACTION_TYPES.has(actionType);
+  if (details === undefined || !Object.hasOwn(details, "diff")) return required;
+  return readDiff(details["diff"]) === undefined;
+}
+
+/**
+ * The diff, shown in FULL: every file expanded, ONE `<pre>` text node per file (no per-line
+ * elements, no collapse, never cut), inside a bounded scroll box. Text nodes only (I8). Malformed
+ * input is an error and nothing else (see {@link isDiffMalformed}).
+ */
+function DiffView({ raw }: { readonly raw: unknown }): ReactNode {
+  if (raw === undefined) return null;
+  const diff = readDiff(raw);
+  if (diff === undefined) {
+    return (
+      <p
+        data-testid="connector-write-diff-error"
+        role="alert"
+        className="text-sm text-[var(--color-error)]"
+      >
+        The change could not be displayed in full, so it cannot be approved here. Reject it.
+      </p>
+    );
+  }
+  const n = diff.files.length;
+  return (
+    <section data-testid="connector-write-diff" className="flex flex-col gap-1">
+      <h3 className="text-sm font-semibold">
+        Changes: {n} {n === 1 ? "file" : "files"}, +{diff.additions} -{diff.deletions}
+      </h3>
+      <div className="max-h-96 overflow-auto rounded border border-[var(--color-border)] p-2">
+        {diff.files.map((file) => (
+          <pre
+            key={file.path}
+            data-testid="connector-write-diff-file"
+            className="whitespace-pre-wrap break-words font-mono text-xs"
+          >
+            {file.text}
+          </pre>
+        ))}
+      </div>
+      <p className="text-xs text-[var(--color-fg-muted)]">
+        End of diff: {n} {n === 1 ? "file" : "files"}, +{diff.additions} -{diff.deletions}
+      </p>
     </section>
   );
 }
