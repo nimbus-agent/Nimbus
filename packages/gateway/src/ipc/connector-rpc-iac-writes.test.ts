@@ -40,6 +40,7 @@ const pathDeps: IacPathDeps = {
   homeDir: join(root, "home"),
   tmpDir: join(root, "tmp"),
   protectedRoots: [join(root, "nimbus")],
+  gitScan: () => "clean" as const,
 };
 
 let db: Database;

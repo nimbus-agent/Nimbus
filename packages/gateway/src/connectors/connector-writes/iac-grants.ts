@@ -16,6 +16,7 @@ import type { Database } from "bun:sqlite";
 import { dbRun } from "../../db/write.ts";
 import { findProtectedOverlap, isSameOrInside, pathApiFor } from "../../util/path-overlap.ts";
 import { isConfirmChar } from "./confirm-template.ts";
+import type { GitScan } from "./iac-git-scan.ts";
 import { IAC_LIMITS, terraformInputRefusal } from "./iac-limits.ts";
 
 export const IAC_CLOUDS = ["aws", "azure", "gcp"] as const;
@@ -104,6 +105,8 @@ export const IAC_WORKDIR_REFUSALS = Object.freeze({
   tooLong: "the path is too long to type in a confirm text",
   terraformDir: "the directory is or is inside a .terraform folder",
   shape: "the path is not a plain absolute path",
+  gitRepository:
+    "the directory has a Git repository in it or beneath it (a .git folder or file); point Terraform at a subdirectory without a repository",
 });
 export type IacWorkdirRefusal = (typeof IAC_WORKDIR_REFUSALS)[keyof typeof IAC_WORKDIR_REFUSALS];
 
@@ -117,6 +120,11 @@ export interface IacPathDeps {
   readonly tmpDir: string;
   /** Nimbus's own folders: data, config, sandbox, the iac root, the extensions dir. */
   readonly protectedRoots: readonly string[];
+  /**
+   * Is there a `.git` entry anywhere beneath the directory (owner ruling OR-D2-8)? Only `clean`
+   * lets a directory through; production wires {@link scanForGitEntry}.
+   */
+  readonly gitScan: (dir: string) => GitScan;
 }
 
 function isDeviceOrUnc(p: string, platform: NodeJS.Platform): boolean {
@@ -199,6 +207,8 @@ export function approveWorkdir(
   if (terraformInputRefusal({ workingDirectory: canonical }) !== undefined) {
     return no(IAC_WORKDIR_REFUSALS.shape);
   }
+  // Last (it walks the tree): a plan or apply child writes the whole directory and could plant hooks.
+  if (deps.gitScan(canonical) !== "clean") return no(IAC_WORKDIR_REFUSALS.gitRepository);
   return { ok: true, path: canonical };
 }
 
@@ -213,30 +223,52 @@ export function gateWorkdir(
   grants: IacGrants,
   deps: IacPathDeps,
 ): string | undefined {
+  const checked = gateWorkdirChecked(input, grants, deps);
+  return checked.ok ? checked.path : undefined;
+}
+
+/** What {@link gateWorkdirChecked} found: the canonical path, or which fixed refusal applies. */
+export type GateWorkdirResult =
+  | { readonly ok: true; readonly path: string }
+  | { readonly ok: false; readonly reason: "not-approved" | "git" };
+
+/**
+ * {@link gateWorkdir} with the reason. `git` is reported only for a directory that is otherwise
+ * approved and canonical (an unapproved path learns nothing about its contents), after the cheap
+ * checks, since it walks the tree.
+ */
+export function gateWorkdirChecked(
+  input: unknown,
+  grants: IacGrants,
+  deps: IacPathDeps,
+): GateWorkdirResult {
+  const no: GateWorkdirResult = { ok: false, reason: "not-approved" };
   if (
     typeof input !== "string" ||
     terraformInputRefusal({ workingDirectory: input }) !== undefined
   ) {
-    return undefined;
+    return no;
   }
   let canonical: string;
   try {
     canonical = deps.realpath(input);
   } catch {
-    return undefined;
+    return no;
   }
-  if (canonical !== input || !deps.isDirectory(canonical)) return undefined;
-  if (workdirPlacementRefusal(canonical, deps) !== undefined) return undefined;
+  if (canonical !== input || !deps.isDirectory(canonical)) return no;
+  if (workdirPlacementRefusal(canonical, deps) !== undefined) return no;
   const insensitive = deps.platform === "win32" || deps.platform === "darwin";
   const norm = (p: string): string => (insensitive ? p.toLowerCase() : p);
   const api = pathApiFor(deps.platform);
   for (const granted of grants.workdirs) {
     const rel = api.relative(norm(granted), norm(canonical));
     if (rel === "" || (!api.isAbsolute(rel) && rel !== ".." && !rel.startsWith(`..${api.sep}`))) {
-      return canonical;
+      return deps.gitScan(canonical) === "clean"
+        ? { ok: true, path: canonical }
+        : { ok: false, reason: "git" };
     }
   }
-  return undefined;
+  return no;
 }
 
 /**

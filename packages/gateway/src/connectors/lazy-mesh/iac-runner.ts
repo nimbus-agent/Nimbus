@@ -45,7 +45,7 @@ import { gcloudKeyFileEnv, loadGcpAuthFromVault } from "../_lib/gcp-auth.ts";
 import { readConnectorSecret } from "../connector-vault.ts";
 import { iacCfnHosts, iacTerraformHosts } from "../connector-writes/iac-clouds.ts";
 import {
-  gateWorkdir,
+  gateWorkdirChecked,
   type IacCloud,
   type IacGrants,
   type IacPathDeps,
@@ -751,9 +751,13 @@ export class IacRunner implements IacHost {
     if (!TERRAFORM_ROWS.has(rowToolId)) {
       return { ok: false, reason: IAC_RUNNER_REFUSALS.noRun };
     }
-    const workdir = gateWorkdir(input["workingDirectory"], this.deps.grants(), this.deps.pathDeps);
-    if (workdir === undefined)
-      return { ok: false, reason: IAC_PREFLIGHT_REFUSALS.notApprovedDirectory };
+    const gated = gateWorkdirChecked(
+      input["workingDirectory"],
+      this.deps.grants(),
+      this.deps.pathDeps,
+    );
+    if (!gated.ok) return { ok: false, reason: this.gateRefusal(gated.reason) };
+    const workdir = gated.path;
     // One run per workdir, held until its children have exited (not merely until the gate returns).
     // A child a previous gateway left running may still be writing this directory.
     this.orphans = this.orphans.filter((o) => this.pidAlive(o.pid));
@@ -782,6 +786,12 @@ export class IacRunner implements IacHost {
     };
     this.runs.set(workdir, run);
     return { ok: true, workingDirectory: workdir, release: () => this.release(run) };
+  }
+
+  private gateRefusal(reason: "not-approved" | "git"): string {
+    return reason === "git"
+      ? IAC_PREFLIGHT_REFUSALS.gitRepository
+      : IAC_PREFLIGHT_REFUSALS.notApprovedDirectory;
   }
 
   private async preflightCfn(): Promise<PreflightOutcome> {
@@ -871,8 +881,13 @@ export class IacRunner implements IacHost {
   ): Promise<unknown> {
     // Defence in depth: the workdir is re-checked against a FRESH read of the owner's grants for
     // every child, and must belong to a run the preflight opened.
-    const workdir = gateWorkdir(args["workingDirectory"], this.deps.grants(), this.deps.pathDeps);
-    if (workdir === undefined) throw new Error(IAC_RUNNER_REFUSALS.notApproved);
+    const gated = gateWorkdirChecked(
+      args["workingDirectory"],
+      this.deps.grants(),
+      this.deps.pathDeps,
+    );
+    if (!gated.ok) throw new Error(this.gateRefusal(gated.reason));
+    const workdir = gated.path;
     const run = this.runs.get(workdir);
     if (run === undefined) throw new Error(IAC_RUNNER_REFUSALS.noRun);
     const terraform = this.resolve("terraform");

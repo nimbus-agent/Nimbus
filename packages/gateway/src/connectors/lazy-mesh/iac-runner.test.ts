@@ -16,6 +16,7 @@ import type { AppContainerGrantRevoker } from "../../platform/sandbox/win32-gran
 import { createMockVault } from "../../vault/mock.ts";
 import { IAC_CLOUD_ENV_NAMES } from "../connector-writes/iac-clouds.ts";
 import type { IacGrants, IacPathDeps } from "../connector-writes/iac-grants.ts";
+import { IAC_PREFLIGHT_REFUSALS } from "../connector-writes/iac-limits.ts";
 import {
   APPLY_ESCALATE_AFTER_MS,
   buildIacProfile,
@@ -250,6 +251,7 @@ const pathDeps: IacPathDeps = {
   homeDir: join(root, "home"),
   tmpDir: join(root, "tmp"),
   protectedRoots: [],
+  gitScan: () => "clean" as const,
 };
 
 const GRANTS: IacGrants = { workdirs: [work], clouds: [], regions: [], net: [] };
@@ -1104,5 +1106,40 @@ describe("the folders an approved Terraform directory may not overlap (review it
     expect(iacProtectedRootsFor(p, "linux", "/run/user/1")).toContain("/run/user/1");
     expect(iacProtectedRootsFor(p, "linux", undefined)).not.toContain("/run/user/1");
     expect(iacProtectedRootsFor(p, "linux", "")).not.toContain("");
+  });
+});
+
+describe("a Git repository beneath the working directory (owner ruling OR-D2-8)", () => {
+  const GIT_REASON = IAC_PREFLIGHT_REFUSALS.gitRepository;
+
+  test("the preflight refuses it with the fixed reason that names a subdirectory", async () => {
+    const { r } = runner("answer", { pathDeps: { ...pathDeps, gitScan: () => "found" } });
+    const out = await r.preflight("iac_terraform_apply", { workingDirectory: work });
+    expect(out).toEqual({ ok: false, reason: GIT_REASON });
+    expect(GIT_REASON).toContain("subdirectory without a repository");
+  });
+
+  test("a walk over its caps or unreadable is refused too (fail closed)", async () => {
+    for (const scan of ["over-cap", "unreadable"] as const) {
+      const { r } = runner("answer", { pathDeps: { ...pathDeps, gitScan: () => scan } });
+      expect(await r.preflight("iac_terraform_apply", { workingDirectory: work })).toEqual({
+        ok: false,
+        reason: GIT_REASON,
+      });
+    }
+  });
+
+  test("a repository that appears after the preflight stops the next child", async () => {
+    let scan: "clean" | "found" = "clean";
+    const { r, children } = runner("answer", {
+      pathDeps: { ...pathDeps, gitScan: () => scan },
+    });
+    const run = await openRun(r);
+    scan = "found";
+    await expect(r.execute("iac_terraform_plan", PLAN_INPUT)).rejects.toThrow(
+      "Git repository in it or beneath it",
+    );
+    expect(children).toEqual([]);
+    run.release();
   });
 });

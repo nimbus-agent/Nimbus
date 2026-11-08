@@ -18,6 +18,7 @@ import {
 import type { NimbusVault } from "../../vault/nimbus-vault.ts";
 import { extractMcpToolText, MCP_TOOL_RESULT_MAX_BYTES } from "../_lib/mcp-tool-result.ts";
 import { readConnectorSecret } from "../connector-vault.ts";
+import { scanForGitEntry } from "../connector-writes/iac-git-scan.ts";
 import {
   EMPTY_IAC_GRANTS,
   type IacGrants,
@@ -383,6 +384,7 @@ export class LazyConnectorMesh {
       tmpDir: tmpdir(),
       // Nimbus's own folders: no approved Terraform directory may overlap them.
       protectedRoots: iacProtectedRootsFor(paths, platform, processEnvGet("XDG_RUNTIME_DIR")),
+      gitScan: (dir) => scanForGitEntry(dir),
     };
     this.iacRunner = new IacRunner({
       paths,

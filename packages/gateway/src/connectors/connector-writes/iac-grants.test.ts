@@ -13,10 +13,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { runIndexedSchemaMigrations } from "../../index/migrations/runner.ts";
+import { scanForGitEntry } from "./iac-git-scan.ts";
 import {
   approveWorkdir,
   EMPTY_IAC_GRANTS,
   gateWorkdir,
+  gateWorkdirChecked,
   getIacGrants,
   IAC_WORKDIR_REFUSALS,
   type IacGrants,
@@ -105,6 +107,7 @@ function fake(
       platform === "win32"
         ? ["C:\\Users\\me\\AppData\\Roaming\\Nimbus"]
         : ["/home/me/.config/nimbus"],
+    gitScan: () => "clean",
     ...over,
   };
 }
@@ -249,6 +252,7 @@ describe("the real filesystem", () => {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "nimbus-iac-grants-")));
   afterAll(() => rmSync(root, { recursive: true, force: true }));
   const real: IacPathDeps = {
+    gitScan: (d) => scanForGitEntry(d),
     platform: process.platform,
     realpath: (p) => realpathSync.native(p),
     isDirectory: (p) => {
@@ -321,6 +325,92 @@ describe("gateWorkdir repeats the path rules of approval (review item 10)", () =
     for (const stale of ["/", "/home", "/home/me", "/tmp"]) {
       const g: IacGrants = { ...EMPTY_IAC_GRANTS, workdirs: [stale] };
       expect(gateWorkdir(stale, g, plain)).toBeUndefined();
+    }
+  });
+});
+
+describe("a Git repository in or beneath a working directory (owner ruling OR-D2-8)", () => {
+  const dirs = [...POSIX_DIRS, "/home/me/infra/other"];
+  const withScan = (scan: (d: string) => "clean" | "found" | "over-cap" | "unreadable") =>
+    fake("linux", dirs, {}, { gitScan: scan });
+  const g: IacGrants = { ...EMPTY_IAC_GRANTS, workdirs: ["/home/me/infra"] };
+  const recording =
+    (seen: string[], answer: (d: string) => "clean" | "found") =>
+    (d: string): "clean" | "found" => {
+      seen.push(d);
+      return answer(d);
+    };
+
+  test.each(["found", "over-cap", "unreadable"] as const)("approval refuses it: %s", (scan) => {
+    const r = approveWorkdir(
+      "/home/me/infra",
+      withScan(() => scan),
+    );
+    expect(r).toEqual({ ok: false, reason: IAC_WORKDIR_REFUSALS.gitRepository });
+    expect(IAC_WORKDIR_REFUSALS.gitRepository).toContain("subdirectory without a repository");
+  });
+
+  test("approval passes a clean tree and scans the canonical form once, last", () => {
+    const seen: string[] = [];
+    const r = approveWorkdir("/home/me/infra", withScan(recording(seen, () => "clean")));
+    expect(r).toEqual({ ok: true, path: "/home/me/infra" });
+    expect(seen).toEqual(["/home/me/infra"]);
+    // a path refused for another reason is never walked
+    seen.length = 0;
+    approveWorkdir("/", withScan(recording(seen, () => "clean")));
+    expect(seen).toEqual([]);
+  });
+
+  test.each(["found", "over-cap", "unreadable"] as const)("the gate refuses it too: %s", (scan) => {
+    const deps = withScan(() => scan);
+    expect(gateWorkdir("/home/me/infra", g, deps)).toBeUndefined();
+    expect(gateWorkdirChecked("/home/me/infra", g, deps)).toEqual({ ok: false, reason: "git" });
+  });
+
+  test("the gate scans the directory it returns (a repository inside a granted parent is caught)", () => {
+    const seen: string[] = [];
+    const deps = withScan(recording(seen, (d) => (d.endsWith("other") ? "found" : "clean")));
+    expect(gateWorkdir("/home/me/infra/other", g, deps)).toBeUndefined();
+    expect(gateWorkdirChecked("/home/me/infra", g, deps)).toEqual({
+      ok: true,
+      path: "/home/me/infra",
+    });
+  });
+
+  test("an unapproved path learns nothing about its contents: not-approved, never scanned", () => {
+    const seen: string[] = [];
+    const deps = withScan(recording(seen, () => "found"));
+    expect(gateWorkdirChecked("/home/me/infra2", g, deps)).toEqual({
+      ok: false,
+      reason: "not-approved",
+    });
+    expect(gateWorkdirChecked("/tmp", g, deps)).toEqual({ ok: false, reason: "not-approved" });
+    expect(seen).toEqual([]);
+  });
+
+  test("on the real filesystem a .git file three levels down refuses the directory", () => {
+    const base = realpathSync(mkdtempSync(join(tmpdir(), "nimbus-iac-git-real-")));
+    try {
+      const proj = join(base, "proj");
+      mkdirSync(join(proj, "a", "b", "c"), { recursive: true });
+      const deps: IacPathDeps = {
+        gitScan: (d) => scanForGitEntry(d),
+        platform: process.platform,
+        realpath: (p) => realpathSync.native(p),
+        isDirectory: (p) => statSync(p).isDirectory(),
+        homeDir: join(base, "home"),
+        tmpDir: join(base, "tmp"),
+        protectedRoots: [],
+      };
+      expect(approveWorkdir(proj, deps)).toEqual({ ok: true, path: proj });
+      writeFileSync(join(proj, "a", "b", "c", ".git"), "gitdir: ../elsewhere");
+      expect(approveWorkdir(proj, deps)).toEqual({
+        ok: false,
+        reason: IAC_WORKDIR_REFUSALS.gitRepository,
+      });
+      expect(gateWorkdir(proj, { ...EMPTY_IAC_GRANTS, workdirs: [proj] }, deps)).toBeUndefined();
+    } finally {
+      rmSync(base, { recursive: true, force: true });
     }
   });
 });

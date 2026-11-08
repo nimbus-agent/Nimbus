@@ -45,6 +45,7 @@ const pathDeps: IacPathDeps = {
   homeDir: join(root, "home"),
   tmpDir: join(root, "tmp"),
   protectedRoots: [],
+  gitScan: () => "clean" as const,
 };
 
 class Child implements IacChild {

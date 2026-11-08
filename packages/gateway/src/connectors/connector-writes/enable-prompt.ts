@@ -76,7 +76,7 @@ function obsidianScopeLines(scope: unknown): string[] | undefined {
 
 /** The fixed sentences of the iac approval (D2, I15): what a Terraform run in an approved directory can do. */
 export const IAC_CODE_LINE =
-  "Terraform runs the code in these directories (providers, provisioners, external data sources) with the credential below and write access to them; Nimbus does not read or police it.";
+  "Terraform runs the code in these directories (providers, provisioners, external data sources) with the credential below and write access to them; Nimbus does not read or police it. A directory with a Git repository in or beneath it is refused: point Terraform at a subdirectory without one.";
 export const IAC_NO_DOWNLOAD_LINE =
   "Provider and module downloads are not allowed: run terraform init yourself.";
 export const IAC_EACH_APPLY_LINE =

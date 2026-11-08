@@ -229,6 +229,8 @@ export const IAC_PREFLIGHT_REFUSALS = Object.freeze({
   notApprovedDirectory: "iac: the working directory is not an approved directory",
   noCloudCredential: "iac: no cloud credential is granted for this change",
   busy: "iac: another run is using this working directory",
+  gitRepository:
+    "iac: the working directory has a Git repository in it or beneath it (a .git folder or file); point Terraform at a subdirectory without a repository",
 });
 
 /** What the MODEL door alone refuses for an iac write (the owner's doors are not restricted). */
