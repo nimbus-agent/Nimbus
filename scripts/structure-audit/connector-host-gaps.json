@@ -136,7 +136,7 @@
       "connector": "iac",
       "hosts": "registry.terraform.io, provider and backend hosts, api.pulumi.com, cloudformation.<region>.amazonaws.com",
       "kind": "no network today",
-      "reason": "The list is empty, so the policy is no-network already, and the hosts depend on each workspace's own configuration. This forwarder changes nothing here."
+      "reason": "The listing slot's list is empty, so its policy is no-network already, and it stays that way: it only lists the tools. Terraform plan and apply, and the CloudFormation calls, run in their own per-run children (connectors/lazy-mesh/iac-runner.ts), which declare the hosts of the clouds the owner granted at spawn, drawn from the vendors' documented endpoints and UNVERIFIED against a credentialed plan (an unlisted host is refused on Linux and the owner adds it with --net). There are no registry hosts: provider and module downloads are not allowed."
     }
   ],
   "handRead": {
@@ -371,7 +371,7 @@
     },
     "iac": {
       "reaches": "terraform, pulumi and aws CLIs; hosts depend on each workspace.",
-      "decision": "Not declarable in the shared slot. Empty list, so no network today. In knownUnreachable. Re-read against connectors 0.9.0: terraform plan, show and apply (a local plan file), aws cloudformation (create-change-set, describe-change-set, describe-stacks, delete-change-set, delete-stack, execute-change-set) and pulumi preview; the Pulumi apply is refused in the connector itself and no longer shells out. The plan and apply hosts are declared per call by the gateway's per-profile runner, not by this slot.",
+      "decision": "The shared listing slot declares nothing (empty list, in knownUnreachable). The credentialed children are declared per run by the iac runner, per granted cloud (iac-clouds.ts and the iac_* wildcard rows of the first-party table), UNVERIFIED completeness. Re-read against connectors 0.9.0: terraform plan, show and apply (a local plan file), aws cloudformation (create-change-set, describe-change-set, describe-stacks, delete-change-set, delete-stack, execute-change-set) and pulumi preview; the Pulumi apply is refused in the connector itself and no longer shells out. The plan and apply hosts are declared per call by the gateway's per-profile runner, not by this slot.",
       "covers": {
         "env": [],
         "cli": ["aws", "aws cloudformation", "cloudformation", "pulumi preview", "terraform"],
