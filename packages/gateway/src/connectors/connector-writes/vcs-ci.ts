@@ -8,6 +8,7 @@ import {
   requiredStringAt,
   stringAt,
 } from "./before-select.ts";
+import { GITHUB_COMMIT_BOUND, GITLAB_COMMIT_BOUND } from "./commit-bound.ts";
 import { gitlabTitleIsDraftExact, gitlabTitleLooksDraft } from "./gitlab-draft.ts";
 import {
   type BeforeStateField,
@@ -15,6 +16,7 @@ import {
   row,
   textField,
   withBefore,
+  withBound,
   withConfirm,
   withPreview,
 } from "./types.ts";
@@ -517,15 +519,45 @@ export const VCS_CI_ROWS: readonly ConnectorWriteRow[] = [
     ),
     { template: "merge {projectPath}!{mergeRequestIid}" },
   ),
-  // The multi-file commit writes (connectors 0.8, Project D). Classified here with a confirm
-  // template only: no preview, bound or reader, so neither is ever offered to the model and the
-  // act door denies both (class vcs). D1c brings the `diff` preview and the bound prepare step.
-  withConfirm(row("github_file_commit", "github.file.commit", "mesh", 4), {
-    template: "commit {owner}/{repo}@{branch}",
-  }),
-  withConfirm(row("gitlab_commit_create", "gitlab.commit.create", "mesh", 4), {
-    template: "commit {projectPath}@{branch}",
-  }),
+  // The multi-file commit writes (connectors 0.8, Project D; bound and previewed in D1c). Each is
+  // BOUND to the branch head its prepare tool read (`expectedHeadSha`, injected by the gateway, never
+  // the caller's) and shows the owner the whole change as a unified diff the gateway renders from
+  // the caller's text and the prepare reply (`commit-bound.ts`, `diff.ts`). `message` and the file
+  // text are shown in full and are not scanned for remote content: file text is code (spec § 15.3).
+  // The act door denies both (class vcs): its consent display has no diff (`proposable-actions.ts`).
+  withConfirm(
+    withBound(
+      withPreview(row("github_file_commit", "github.file.commit", "mesh", 4), {
+        target: "{owner}/{repo}@{branch}",
+        summary: "Commit to branch {branch} of {owner}/{repo} as ONE commit (full diff below)",
+        fields: [
+          textField("owner", "Owner"),
+          textField("repo", "Repository"),
+          textField("branch", "Branch"),
+          textField("message", "Commit message"),
+          { key: "files", label: "Files", kind: "diff" },
+        ],
+      }),
+      GITHUB_COMMIT_BOUND,
+    ),
+    { template: "commit {owner}/{repo}@{branch}" },
+  ),
+  withConfirm(
+    withBound(
+      withPreview(row("gitlab_commit_create", "gitlab.commit.create", "mesh", 4), {
+        target: "{projectPath}@{branch}",
+        summary: "Commit to branch {branch} of {projectPath} as ONE commit (full diff below)",
+        fields: [
+          textField("projectPath", "Project"),
+          textField("branch", "Branch"),
+          textField("message", "Commit message"),
+          { key: "files", label: "Files", kind: "diff" },
+        ],
+      }),
+      GITLAB_COMMIT_BOUND,
+    ),
+    { template: "commit {projectPath}@{branch}" },
+  ),
   withBefore(
     withPreview(row("gitlab_mr_note_create", "gitlab.mr.note.create", "mesh", 2), {
       target: "{projectPath}!{mergeRequestIid}",

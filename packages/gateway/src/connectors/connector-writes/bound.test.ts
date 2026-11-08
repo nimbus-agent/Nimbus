@@ -104,9 +104,13 @@ describe("withBound", () => {
   });
 });
 
-describe("the production table in D0b", () => {
-  test("no production row declares `bound`", () => {
-    expect(CONNECTOR_WRITE_ROWS.filter((r) => r.bound !== undefined)).toEqual([]);
+describe("the production table (D0b mechanism, D1c rows)", () => {
+  test("the bound production rows are exactly the two multi-file commits", () => {
+    expect(
+      CONNECTOR_WRITE_ROWS.filter((r) => r.bound !== undefined)
+        .map((r) => r.toolId)
+        .sort(),
+    ).toEqual(["github_file_commit", "gitlab_commit_create"]);
   });
 
   test("no production row's tool id is a prepare tool (the classes stay apart)", () => {

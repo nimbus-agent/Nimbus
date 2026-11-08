@@ -329,7 +329,7 @@ describe("connectors 0.6.0 writes (C1)", () => {
     }
   });
 
-  test("the two commit writes are wave-4 mesh rows, confirm-only, never model-offered, act door denied (vcs)", () => {
+  test("the two commit writes are wave-4 mesh rows, bound with a diff preview, model-offered, act door denied (vcs)", () => {
     for (const [id, actionType] of [
       ["github_file_commit", "github.file.commit"],
       ["gitlab_commit_create", "gitlab.commit.create"],
@@ -338,14 +338,18 @@ describe("connectors 0.6.0 writes (C1)", () => {
       expect(r?.actionType, id).toBe(actionType);
       expect(r?.transport, id).toBe("mesh");
       expect(r?.wave, id).toBe(4);
-      expect(r?.preview, id).toBeUndefined();
-      expect(r?.bound, id).toBeUndefined();
+      expect(r?.preview, id).toBeDefined();
+      expect(
+        r?.preview?.fields.filter((f) => f.kind === "diff"),
+        id,
+      ).toHaveLength(1);
+      expect(r?.bound, id).toBeDefined();
       expect(r?.before, id).toBeUndefined();
       expect(r?.confirm, id).toBeDefined();
       expect(HITL_REQUIRED.has(actionType), id).toBe(true);
       expect(isConnectorWriteToolId(id), id).toBe(true);
       expect(isConnectorWriteToolId(`${id.split("_")[0]}_${id}`), id).toBe(true);
-      expect(r !== undefined && isModelOfferableRow(r), id).toBe(false);
+      expect(r !== undefined && isModelOfferableRow(r), id).toBe(true);
       const p = ACTION_PROPOSABILITY[actionType];
       expect(p?.kind, id).toBe("denied");
       expect(p?.kind === "denied" ? p.class : undefined, id).toBe("vcs");

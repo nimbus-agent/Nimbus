@@ -4493,7 +4493,12 @@ describe("D42 — a bound write is dispatched only with its own prepare step's v
   const TOOLS = "packages/gateway/src/connectors/connector-writes/prepare-tools.ts";
   const TYPES = "packages/gateway/src/connectors/connector-writes/types.ts";
   const OTHER = "packages/gateway/src/ipc/other.ts";
+  const DIFF = "packages/gateway/src/connectors/connector-writes/diff.ts";
+  const WRITE_REGISTRY = "packages/gateway/src/connectors/connector-write-registry.ts";
   const EXECUTOR_GOOD = [
+    "function withPrepared(preview, prepared) {",
+    "  return { ...preview, prepared: { status: 'ok' }, ...(prepared.diff === undefined ? {} : { diff: prepared.diff }) };",
+    "}",
     "class ToolExecutor {",
     "  constructor(a, b, c, d, e, f, g, h, private readonly writeTable) {}",
     "  private boundRefusal(action, requiresHITL, scope) {",
@@ -4537,7 +4542,12 @@ describe("D42 — a bound write is dispatched only with its own prepare step's v
     file(EXECUTOR, EXECUTOR_GOOD),
     file(
       STEP,
-      'const S = ".write.prepare"; export function runPrepareStep() {} export function injectBoundFields() {} export function isPrepareActionType() {}',
+      'const S = ".write.prepare"; export function runPrepareStep() {} export function injectBoundFields() {} export function isPrepareActionType() {} const d = renderUnifiedDiff(files);',
+    ),
+    file(DIFF, "export function renderUnifiedDiff() {}"),
+    file(
+      WRITE_REGISTRY,
+      "import { isPrepareToolId } from './p'; export const f = (id) => isPrepareToolId(id);",
     ),
     file(REGISTRY, REGISTRY_GOOD),
     file(TOOLS, TOOLS_GOOD),
@@ -4578,6 +4588,62 @@ describe("D42 — a bound write is dispatched only with its own prepare step's v
     expect(rules(replace(REGISTRY, `${REGISTRY_GOOD} injectBoundFields();`))).toEqual([
       "bound-name-confined",
     ]);
+  });
+
+  test("(a) isPrepareToolId is allowed in connector-write-registry.ts, and ONLY in it (D1c)", () => {
+    expect(checkBoundWrites(GOOD)).toEqual([]);
+    // The federation predicate file may name it; any other file still may not.
+    const otherFile = "packages/gateway/src/connectors/connector-write-transport.ts";
+    expect(rules([...GOOD, file(otherFile, "isPrepareToolId(k);")])).toEqual([
+      "bound-name-confined",
+    ]);
+    expect(
+      rules([...GOOD, file("packages/gateway/src/ipc/federation-rpc.ts", "isPrepareToolId(k);")]),
+    ).toEqual(["bound-name-confined"]);
+    // ...and the registry file may not name the OTHER bound-write names.
+    expect(
+      rules(replace(WRITE_REGISTRY, "import { isPrepareToolId } from './p'; injectBoundFields();")),
+    ).toEqual(["bound-name-confined"]);
+    expect(
+      rules(
+        replace(WRITE_REGISTRY, "import { isPrepareToolId } from './p'; PREPARE_TOOL_IDS.has(k);"),
+      ),
+    ).toEqual(["bound-name-confined"]);
+  });
+
+  test("(g) renderUnifiedDiff is allowed only in the prepare step and diff.ts (D1c)", () => {
+    expect(rules([...GOOD, file(OTHER, "const d = renderUnifiedDiff(files);")])).toEqual([
+      "bound-name-confined",
+    ]);
+    expect(rules([...GOOD, file(EXECUTOR + ".x.ts", "renderUnifiedDiff(files);")])).toEqual([
+      "bound-name-confined",
+    ]);
+    expect(
+      rules(
+        replace(
+          EXECUTOR,
+          `${EXECUTOR_GOOD}
+const d = renderUnifiedDiff(files);
+`,
+        ),
+      ),
+    ).toEqual(["bound-name-confined"]);
+    expect(
+      rules(replace(WRITE_REGISTRY, "import { isPrepareToolId } from './p'; renderUnifiedDiff();")),
+    ).toEqual(["bound-name-confined"]);
+    // Tests are exempt.
+    expect(
+      rules([...GOOD, file("packages/gateway/src/ipc/x.test.ts", "renderUnifiedDiff(f);")]),
+    ).toEqual([]);
+  });
+
+  test("(g) FAILS when withPrepared stops carrying only prepared.diff", () => {
+    const own = EXECUTOR_GOOD.replace("diff: prepared.diff", "diff: makeMyOwnDiff()");
+    expect(rules(replace(EXECUTOR, own))).toEqual(["bound-order-pinned"]);
+    const start = EXECUTOR_GOOD.indexOf("function withPrepared");
+    const end = EXECUTOR_GOOD.indexOf("\n}\n", start) + 3;
+    const gone = EXECUTOR_GOOD.slice(0, start) + EXECUTOR_GOOD.slice(end);
+    expect(rules(replace(EXECUTOR, gone))).toEqual(["bound-order-pinned"]);
   });
 
   test("(b) FAILS when the prepare phase is missing, moved after the confirm text, or reordered", () => {

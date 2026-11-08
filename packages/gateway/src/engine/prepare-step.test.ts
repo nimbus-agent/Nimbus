@@ -9,7 +9,7 @@ import {
   synthBound,
   synthBoundRow,
 } from "../connectors/connector-writes/bound-fixtures.test-helpers.ts";
-import { BEFORE_STATE_MAX_FIELDS } from "../connectors/connector-writes/types.ts";
+import { BEFORE_STATE_MAX_FIELDS, type BoundWrite } from "../connectors/connector-writes/types.ts";
 import {
   boundInputRefusal,
   injectBoundFields,
@@ -498,5 +498,226 @@ describe("runPrepareStep", () => {
     const e = new PrepareRefusedError("r");
     expect(e.name).toBe("PrepareRefusedError");
     expect(e.reason).toBe("r");
+  });
+});
+
+describe("boundInputRefusal: the row's input hook (D1c)", () => {
+  test("the hook's reason is the refusal, after the cap, and before any read", () => {
+    const calls: unknown[] = [];
+    const b = synthBound({
+      inputRefusal: (input) => {
+        calls.push(input);
+        return "hook: too many files";
+      },
+    });
+    expect(boundInputRefusal(b, ACTION)).toBe("hook: too many files");
+    expect(calls).toEqual([{ dir: "prod" }]);
+  });
+
+  test("the hook runs last: a caller-bound field or an over-cap input is refused first", () => {
+    let ran = false;
+    const b = synthBound({
+      maxInputBytes: 5,
+      inputRefusal: () => {
+        ran = true;
+        return "hook";
+      },
+    });
+    expect(boundInputRefusal(b, ACTION)).toBe(PREPARE_REFUSALS.inputTooLarge);
+    const forged: PlannedAction = {
+      type: "iac.terraform.apply",
+      payload: { input: { dir: "p", planDigest: "x" } },
+    };
+    expect(boundInputRefusal(b, forged)).toBe(PREPARE_REFUSALS.callerBound);
+    expect(ran).toBe(false);
+  });
+
+  test("a hook that returns undefined passes; one that throws or returns a non-string refuses (fail closed)", () => {
+    expect(
+      boundInputRefusal(synthBound({ inputRefusal: () => undefined }), ACTION),
+    ).toBeUndefined();
+    const throwing = synthBound({
+      inputRefusal: () => {
+        throw new Error("secret detail");
+      },
+    });
+    expect(boundInputRefusal(throwing, ACTION)).toBe(PREPARE_REFUSALS.notObject);
+    const odd = synthBound({ inputRefusal: () => 5 as unknown as string });
+    expect(boundInputRefusal(odd, ACTION)).toBe(PREPARE_REFUSALS.notObject);
+  });
+
+  test("a row with no hook behaves as before", () => {
+    expect(boundInputRefusal(BOUND, ACTION)).toBeUndefined();
+  });
+});
+
+describe("runPrepareStep: the diff (D1c, D42(g))", () => {
+  const options = { prepareToolIds: SYNTH_PREPARE_IDS };
+  const FILES_ACTION: PlannedAction = {
+    type: "iac.terraform.apply",
+    payload: {
+      mcpToolId: "iac_synth_apply",
+      input: {
+        dir: "prod",
+        files: [
+          { path: "a.txt", content: "A2\n" },
+          { path: "b.txt", content: "fresh\n" },
+        ],
+      },
+    },
+  };
+  const reply = (over: Record<string, unknown> = {}) => ({
+    summary: "2 files",
+    digest: "sha256:abc123",
+    files: [
+      { path: "a.txt", exists: true, oldContent: "A1\n" },
+      { path: "b.txt", exists: false },
+    ],
+    ...over,
+  });
+  type Picked = Readonly<Record<string, unknown>>;
+  const pair = (picked: Picked, r: unknown) => {
+    const inFiles = picked["files"] as Array<{ path: string; content: string }>;
+    const got = (r as { files?: Array<{ path: string; exists: boolean; oldContent?: string }> })
+      .files;
+    if (got === undefined || got.length !== inFiles.length) return undefined;
+    const out: Array<{ path: string; oldContent: string | undefined; newContent: string }> = [];
+    for (const [i, f] of inFiles.entries()) {
+      const e = got[i];
+      if (e === undefined || e.path !== f.path) return undefined;
+      out.push({
+        path: f.path,
+        oldContent: e.exists ? e.oldContent : undefined,
+        newContent: f.content,
+      });
+    }
+    return out;
+  };
+  const withDiff = (over: Partial<BoundWrite["prepare"]> = {}) =>
+    synthBound({
+      argKeys: ["dir", "files"],
+      args: (input) => ({ dir: input["dir"], files: input["files"] }),
+      diff: { files: pair, maxOldBytes: 1000, maxDiffBytes: 5000 },
+      maxReplyBytes: 100_000,
+      ...over,
+    });
+
+  test("the diff is computed from the caller's text and the reply's old text", async () => {
+    const { ops } = opsOf({}, reply());
+    const prepared = await runPrepareStep(ops, ROW, withDiff(), FILES_ACTION, options);
+    expect(prepared.diff?.files.map((f) => [f.path, f.state])).toEqual([
+      ["a.txt", "modified"],
+      ["b.txt", "new"],
+    ]);
+    expect(prepared.diff?.additions).toBe(2);
+    expect(prepared.diff?.deletions).toBe(1);
+  });
+
+  test("nothing the reply says about the change is shown: forged diff, preview and hunks are never read", async () => {
+    const forged = reply({
+      diff: "+++ FORGED-DIFF",
+      preview: "FORGED-PREVIEW",
+      hunks: [{ lines: [{ op: "+", text: "FORGED-HUNK" }] }],
+      patch: "FORGED-PATCH",
+    });
+    const { ops } = opsOf({}, forged);
+    const prepared = await runPrepareStep(ops, ROW, withDiff(), FILES_ACTION, options);
+    const shown = JSON.stringify(prepared.diff);
+    for (const word of ["FORGED-DIFF", "FORGED-PREVIEW", "FORGED-HUNK", "FORGED-PATCH"]) {
+      expect(shown).not.toContain(word);
+    }
+    // The plus lines are exactly the caller's new text.
+    const plus = prepared.diff?.files.flatMap((f) =>
+      f.hunks.flatMap((h) => h.lines.filter((l) => l.op === "+").map((l) => l.text)),
+    );
+    expect(plus).toEqual(["A2", "fresh"]);
+  });
+
+  test("a reply the row cannot pair refuses as unshowable (and a throwing pairer too)", async () => {
+    const bad = [
+      reply({ files: [] }),
+      reply({
+        files: [
+          { path: "zzz", exists: false },
+          { path: "b.txt", exists: false },
+        ],
+      }),
+    ];
+    for (const r of bad) {
+      const { ops } = opsOf({}, r);
+      expect(await refusalOf(runPrepareStep(ops, ROW, withDiff(), FILES_ACTION, options))).toBe(
+        PREPARE_REFUSALS.unshowable,
+      );
+    }
+    const throwing = withDiff({
+      diff: {
+        files: () => {
+          throw new Error("boom");
+        },
+        maxOldBytes: 1000,
+        maxDiffBytes: 5000,
+      },
+    });
+    expect(
+      await refusalOf(runPrepareStep(opsOf({}, reply()).ops, ROW, throwing, FILES_ACTION, options)),
+    ).toBe(PREPARE_REFUSALS.unshowable);
+    const empty = withDiff({ diff: { files: () => [], maxOldBytes: 1000, maxDiffBytes: 5000 } });
+    expect(
+      await refusalOf(runPrepareStep(opsOf({}, reply()).ops, ROW, empty, FILES_ACTION, options)),
+    ).toBe(PREPARE_REFUSALS.unshowable);
+  });
+
+  test("old text over the cap refuses as a too-large reply; at the cap it passes", async () => {
+    const r = reply({
+      files: [
+        { path: "a.txt", exists: true, oldContent: "x".repeat(10) },
+        { path: "b.txt", exists: false },
+      ],
+    });
+    const at = withDiff({ diff: { files: pair, maxOldBytes: 10, maxDiffBytes: 5000 } });
+    await runPrepareStep(opsOf({}, r).ops, ROW, at, FILES_ACTION, options);
+    const over = withDiff({ diff: { files: pair, maxOldBytes: 9, maxDiffBytes: 5000 } });
+    expect(
+      await refusalOf(runPrepareStep(opsOf({}, r).ops, ROW, over, FILES_ACTION, options)),
+    ).toBe(PREPARE_REFUSALS.replyTooLarge);
+    // Multi-byte text is counted in UTF-8.
+    const wide = reply({
+      files: [
+        { path: "a.txt", exists: true, oldContent: "€€€€" },
+        { path: "b.txt", exists: false },
+      ],
+    });
+    expect(
+      await refusalOf(runPrepareStep(opsOf({}, wide).ops, ROW, over, FILES_ACTION, options)),
+    ).toBe(PREPARE_REFUSALS.replyTooLarge);
+  });
+
+  test("a rendered diff over the cap refuses as diffTooLarge", async () => {
+    const small = withDiff({ diff: { files: pair, maxOldBytes: 1000, maxDiffBytes: 40 } });
+    expect(
+      await refusalOf(runPrepareStep(opsOf({}, reply()).ops, ROW, small, FILES_ACTION, options)),
+    ).toBe(PREPARE_REFUSALS.diffTooLarge);
+  });
+
+  test("a change in which every file is unchanged refuses as nothingToCommit", async () => {
+    const action: PlannedAction = {
+      type: "iac.terraform.apply",
+      payload: { input: { dir: "prod", files: [{ path: "a.txt", content: "A1\n" }] } },
+    };
+    const r = reply({ files: [{ path: "a.txt", exists: true, oldContent: "A1\n" }] });
+    expect(
+      await refusalOf(runPrepareStep(opsOf({}, r).ops, ROW, withDiff(), action, options)),
+    ).toBe(PREPARE_REFUSALS.nothingToCommit);
+  });
+
+  test("a row with no diff returns none", async () => {
+    const { ops } = opsOf();
+    expect((await runPrepareStep(ops, ROW, BOUND, ACTION, options)).diff).toBeUndefined();
+  });
+
+  test("the new reasons are fixed text", () => {
+    for (const k of ["diffTooLarge", "nothingToCommit"] as const) {
+      expect(PREPARE_REFUSALS[k]).toMatch(/^prepare: /);
+    }
   });
 });

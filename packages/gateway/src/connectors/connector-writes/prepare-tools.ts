@@ -4,11 +4,16 @@
 // runs only inside the executor's prepare step (`engine/prepare-step.ts`), under a
 // `<service>.write.prepare` action type, never as a model tool and never as a write.
 //
-// EMPTY in D0b: no real row declares `bound` yet. The real ids arrive with the rows that need them
-// (D-X, D1c, D2, D3), each with a test that it is registered, not a read verb and not a write id.
-// Tests exercise the mechanism with synthetic ids through the executor's and the dispatcher's
-// constructor seams, which static rule D42(c) forbids production code to use.
-const PREPARE_TOOL_ID_BACKING: ReadonlySet<string> = new Set<string>([]);
+// Two ids since D1c: the GitHub and GitLab multi-file commit prepare tools (connectors 0.8, the
+// connector's own `shared/prepare-tool-ids.ts` lists exactly these; a test pins the two lists equal,
+// so a third prepare tool fails the gateway until a row classifies it). Each later id arrives with
+// the row that needs it (D2, D3), with a test that it is registered, not a read verb and not a
+// write id. Tests exercise the mechanism with synthetic ids through the executor's and the
+// dispatcher's constructor seams, which static rule D42(c) forbids production code to use.
+const PREPARE_TOOL_ID_BACKING: ReadonlySet<string> = new Set<string>([
+  "github_commit_prepare",
+  "gitlab_commit_prepare",
+]);
 
 /** Frozen: `add`, `delete` and `clear` throw, so the production set cannot grow at runtime (D42(d)). */
 export const PREPARE_TOOL_IDS: ReadonlySet<string> = Object.freeze({

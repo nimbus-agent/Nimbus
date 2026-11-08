@@ -640,3 +640,74 @@ describe("createConnectorDispatcher — a prepare tool runs only inside the prep
     );
   });
 });
+
+describe("the dispatcher and the REAL commit prepare tools (D1c, I54)", () => {
+  const listing = (keys: readonly string[]) => {
+    const ran: string[] = [];
+    const tools: Record<string, { execute: (input: unknown) => Promise<unknown> }> = {};
+    for (const k of keys) {
+      tools[k] = {
+        execute: async () => {
+          ran.push(k);
+          return { headSha: "x" };
+        },
+      };
+    }
+    const client: McpToolListingClient = { listTools: async () => tools };
+    return { d: createConnectorDispatcher(client), ran };
+  };
+  const call = (type: string, mcpToolId: string): PlannedAction => ({
+    type,
+    payload: { mcpToolId, input: {} },
+  });
+
+  test("the control: each real prepare tool dispatches under its own service's prepare type", async () => {
+    const { d, ran } = listing(["github_github_commit_prepare", "gitlab_gitlab_commit_prepare"]);
+    await d.dispatch(call("github.write.prepare", "github_github_commit_prepare"));
+    await d.dispatch(call("gitlab.write.prepare", "gitlab_gitlab_commit_prepare"));
+    expect(ran).toEqual(["github_github_commit_prepare", "gitlab_gitlab_commit_prepare"]);
+  });
+
+  test("under a write or read action type a real prepare tool is ERR_PREPARE_OUTSIDE_STEP and runs nothing", async () => {
+    const { d, ran } = listing(["github_github_commit_prepare", "gitlab_gitlab_commit_prepare"]);
+    const cases: Array<[string, string]> = [
+      ["github.file.commit", "github_github_commit_prepare"],
+      ["gitlab.commit.create", "gitlab_gitlab_commit_prepare"],
+      ["github.issue.get", "github_github_commit_prepare"],
+      ["search.run", "gitlab_gitlab_commit_prepare"],
+    ];
+    for (const [type, key] of cases) {
+      await expect(d.dispatch(call(type, key))).rejects.toThrow("ERR_PREPARE_OUTSIDE_STEP");
+    }
+    expect(ran).toEqual([]);
+  });
+
+  test("a before-state read cannot reach a prepare tool either (it is not a read verb)", async () => {
+    const { d, ran } = listing(["github_github_commit_prepare"]);
+    await expect(
+      d.dispatch(call("github.before.read", "github_github_commit_prepare")),
+    ).rejects.toThrow("ERR_BEFORE_READ_NOT_A_READ");
+    expect(ran).toEqual([]);
+  });
+
+  test("github.write.prepare resolving to gitlab_commit_prepare is ERR_PREPARE_SERVICE_MISMATCH", async () => {
+    const { d, ran } = listing(["gitlab_gitlab_commit_prepare", "github_github_commit_prepare"]);
+    await expect(
+      d.dispatch(call("github.write.prepare", "gitlab_gitlab_commit_prepare")),
+    ).rejects.toThrow("ERR_PREPARE_SERVICE_MISMATCH");
+    await expect(
+      d.dispatch(call("gitlab.write.prepare", "github_github_commit_prepare")),
+    ).rejects.toThrow("ERR_PREPARE_SERVICE_MISMATCH");
+    expect(ran).toEqual([]);
+  });
+
+  test("a prepare type never reaches the plain files read or the write", async () => {
+    const { d, ran } = listing(["github_github_files_get", "github_github_file_commit"]);
+    for (const key of ["github_github_files_get", "github_github_file_commit"]) {
+      await expect(d.dispatch(call("github.write.prepare", key))).rejects.toThrow(
+        "ERR_PREPARE_NOT_A_PREPARE_TOOL",
+      );
+    }
+    expect(ran).toEqual([]);
+  });
+});

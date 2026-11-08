@@ -1,36 +1,80 @@
 // packages/gateway/src/connectors/connector-writes/prepare-tools.test.ts
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { isReadOnlyToolId } from "../../share/read-tool-registry.ts";
 import { isConnectorWriteToolId } from "../connector-write-registry.ts";
+import { installedConnectorsPackageRoot } from "../testing/connector-write-registrations.ts";
 import { isPrepareToolId, PREPARE_TOOL_IDS } from "./prepare-tools.ts";
 
-describe("PREPARE_TOOL_IDS (D0b)", () => {
-  test("is empty in D0b: no real row declares a bound write yet", () => {
-    expect(PREPARE_TOOL_IDS.size).toBe(0);
-    expect([...PREPARE_TOOL_IDS]).toEqual([]);
+const COMMIT_PREPARE_IDS = ["github_commit_prepare", "gitlab_commit_prepare"] as const;
+
+describe("PREPARE_TOOL_IDS (D0b, D1c)", () => {
+  test("is exactly the two commit prepare tools", () => {
+    expect(PREPARE_TOOL_IDS.size).toBe(2);
+    expect([...PREPARE_TOOL_IDS].sort()).toEqual([...COMMIT_PREPARE_IDS]);
   });
 
   test("is immutable: add, delete and clear throw", () => {
     expect(() => (PREPARE_TOOL_IDS as unknown as Set<string>).add("x_plan")).toThrow(TypeError);
     expect(() => (PREPARE_TOOL_IDS as unknown as Set<string>).delete("x")).toThrow(TypeError);
     expect(() => (PREPARE_TOOL_IDS as unknown as Set<string>).clear()).toThrow(TypeError);
-    expect(PREPARE_TOOL_IDS.size).toBe(0);
+    expect(PREPARE_TOOL_IDS.size).toBe(2);
   });
 
-  test("the set interface answers like an empty set", () => {
-    let calls = 0;
-    // biome-ignore lint/complexity/noForEach: the Set interface itself is under test
-    PREPARE_TOOL_IDS.forEach(() => {
-      calls += 1;
+  test("the set interface answers like a two-member set", () => {
+    const seen: string[] = [];
+    PREPARE_TOOL_IDS.forEach((v, v2, set) => {
+      expect(v2).toBe(v);
+      expect(set).toBe(PREPARE_TOOL_IDS);
+      seen.push(v);
     });
-    expect(calls).toBe(0);
-    expect([...PREPARE_TOOL_IDS.entries()]).toEqual([]);
-    expect([...PREPARE_TOOL_IDS.keys()]).toEqual([]);
-    expect([...PREPARE_TOOL_IDS.values()]).toEqual([]);
+    expect(seen.sort()).toEqual([...COMMIT_PREPARE_IDS]);
+    expect([...PREPARE_TOOL_IDS.entries()].map(([a, b]) => [a, b]).sort()).toEqual(
+      COMMIT_PREPARE_IDS.map((i) => [i, i]),
+    );
+    expect([...PREPARE_TOOL_IDS.keys()].sort()).toEqual([...COMMIT_PREPARE_IDS]);
+    expect([...PREPARE_TOOL_IDS.values()].sort()).toEqual([...COMMIT_PREPARE_IDS]);
+    expect(PREPARE_TOOL_IDS.has("github_commit_prepare")).toBe(true);
+    expect(PREPARE_TOOL_IDS.has("github_files_get")).toBe(false);
     expect(PREPARE_TOOL_IDS.has("anything")).toBe(false);
   });
 
-  test("every declared id is not a connector write id (vacuous while empty, pinned for later)", () => {
-    for (const id of PREPARE_TOOL_IDS) expect(isConnectorWriteToolId(id)).toBe(false);
+  test("every declared id is not a connector write id and not a read verb", () => {
+    for (const id of PREPARE_TOOL_IDS) {
+      expect(isConnectorWriteToolId(id), id).toBe(false);
+      expect(isReadOnlyToolId(id), id).toBe(false);
+    }
+  });
+});
+
+describe("PREPARE_TOOL_IDS against the installed connectors package", () => {
+  const root = installedConnectorsPackageRoot();
+  const read = (...rel: string[]): string => readFileSync(join(root, ...rel), "utf8");
+
+  test("equals the connector's own list (a third prepare tool fails the gateway until classified)", () => {
+    const text = read("shared", "prepare-tool-ids.ts");
+    const m = /export const PREPARE_TOOL_IDS = \[([^\]]*)\] as const;/.exec(text);
+    expect(m).not.toBeNull();
+    const ids = [...(m?.[1] ?? "").matchAll(/"([a-z0-9_]+)"/g)].map((x) => x[1] as string);
+    expect(ids.length).toBeGreaterThan(0);
+    expect([...ids].sort()).toEqual([...PREPARE_TOOL_IDS].sort());
+  });
+
+  test("each id is registered through the prepare registrar in its connector's server source", () => {
+    const src: Record<string, string> = {
+      github: read("connectors", "github", "src", "tools.ts"),
+      gitlab: read("connectors", "gitlab", "src", "tools.ts"),
+    };
+    for (const id of PREPARE_TOOL_IDS) {
+      const server = id.split("_")[0] as string;
+      const text = src[server];
+      expect(text, id).toBeDefined();
+      expect(text, id).toMatch(new RegExp(String.raw`registerPrepareTool\(\s*"${id}"`));
+      // Registered once, and never also as a plain tool or a write.
+      expect(text?.split(`"${id}"`).length, id).toBeLessThanOrEqual(3);
+      expect(text, id).not.toMatch(new RegExp(String.raw`registerWriteTool\(\s*"${id}"`));
+    }
   });
 });
 
@@ -41,6 +85,17 @@ describe("isPrepareToolId", () => {
     expect(isPrepareToolId("srv_svc_plan", ids)).toBe(true);
     expect(isPrepareToolId("svc_planner", ids)).toBe(false);
     expect(isPrepareToolId("svc_plan", PREPARE_TOOL_IDS)).toBe(false);
+  });
+
+  test("the real ids match bare and as the mesh key tail, and nothing longer", () => {
+    for (const id of COMMIT_PREPARE_IDS) {
+      const server = id.split("_")[0];
+      expect(isPrepareToolId(id)).toBe(true);
+      expect(isPrepareToolId(`${server}_${id}`)).toBe(true);
+      expect(isPrepareToolId(`${id}s`)).toBe(false);
+      expect(isPrepareToolId(`${id.replace("_prepare", "_get")}`)).toBe(false);
+    }
+    expect(isPrepareToolId("github_files_get")).toBe(false);
   });
 
   test("a mixed set: the iteration reaches every member", () => {
