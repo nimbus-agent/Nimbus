@@ -132,6 +132,20 @@ export function buildBoundWriteCapabilities(host: IacHost): BoundWriteCapabiliti
   };
 }
 
+/**
+ * A dispatcher that wraps another one (the connector-write transport router) must keep the inner
+ * dispatcher's bound-write capabilities, or every bound iac write is refused `capabilityMissing`.
+ * Kept here because only this module names the member (static D42(h)).
+ */
+export function forwardBoundWriteCapabilities(
+  inner: ConnectorDispatcher,
+  outer: ConnectorDispatcher,
+): ConnectorDispatcher {
+  return inner.boundWriteCapabilities === undefined
+    ? outer
+    : { ...outer, boundWriteCapabilities: inner.boundWriteCapabilities };
+}
+
 type DispatcherToolMap = Record<
   string,
   { execute?: (a: unknown, b?: unknown) => Promise<unknown> }

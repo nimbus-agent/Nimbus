@@ -46,7 +46,9 @@ describe("ConnectorDispatcher implementers", () => {
 
   test("each implementer forwards boundWriteCapabilities or is listed with a reason", () => {
     for (const f of implementers) {
-      const forwards = f.text.includes("boundWriteCapabilities");
+      const forwards =
+        f.text.includes("boundWriteCapabilities") ||
+        f.text.includes("forwardBoundWriteCapabilities");
       const listed = NOT_ON_AN_IAC_PATH[f.rel] !== undefined;
       expect({ file: f.rel, ok: forwards || listed }).toEqual({ file: f.rel, ok: true });
     }
