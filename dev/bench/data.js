@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794078529389,
+  "lastUpdate": 1794117809813,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "5ce7505be84d5cc3e5c0f36e96dae6872c1102b0",
-          "message": "feat(engine): negation predicates reach nimbus ask and MCP clients, refusing rather than guessing (W6-B.2) (#1281)\n\nCloses **W6-B**, the last open Wave 6 answer-quality row. B.1 put three\nnegation predicates on\n`nimbus query` / `nimbus people list`; this puts the same three in front\nof a model, on two\nsurfaces:\n\n```text\nfindPrsNotTouching(pathGlob, service?, limit?)\nfindDeploymentsWithoutIncident(service?, limit?)\nfindPeopleWithoutReviews(sinceDays?, limit?)\n```\n\n- **the gateway engine** — Mastra tools, so `nimbus ask` can use them,\nand the desktop, VS Code and\n  ChatOps surfaces that share that engine get them too;\n- **the MCP server** — the same three names in `INDEX_TOOL_SPECS`, for\nexternal MCP clients.\n\n## Why a model surface is a different problem from a flag\n\nB.1's refusal is structural: an empty substrate means exit `1`, no rows,\nnothing else on screen.\nHand that same result to a model and every part of the guarantee becomes\na request. The model can\nparaphrase the refusal into a hedge, drop it, or route around it\nentirely by calling\n`searchLocalIndex` and answering the negation from ranked results — the\nconfident-wrong answer B.1\nexists to prevent, now with a fluent explanation attached.\n\nSo each tool records a disclosure sentence onto the per-request store,\nand\n`runConversationalAgent` drains it and appends it to the answer — and\nstreams the same text, so the\ndesktop cannot show less than the CLI — outside the model's control.\nEach tool also embeds the same\nsentence in its own payload, so the guarantee degrades to \"the model saw\nit\" rather than to silence\nif the store is ever missing.\n\n## What this delivery does NOT guarantee\n\nFour bounds, stated because a reader would otherwise assume otherwise:\n\n1. **The two surfaces are not equally protected.** Refusals are\nstructural on both — a refusing\ntool returns only the refusal, so there are no rows to present instead.\nBut **exclusion counts\nare guaranteed only on the engine surface**: the append lives in the\ngateway engine, and an\nexternal MCP client never reaches it, so its model can report the rows\nand drop \"12 excluded\".\n2. **The local-router path has no tools at all.** With\n`[llm].prefer_local = true` a turn goes\nthrough `runViaLocalRouter`, and the router has no tool-calling support\nwhatsoever — so the\nnegation tools are unreachable there, as is `searchLocalIndex`. For that\nuser the predicates\nremain available through the CLI or an MCP client, and \"negation in\n`nimbus ask`\" is inert.\n   Pre-existing, not introduced here, and previously unstated.\n3. **A model can still ignore the tool descriptions** and answer a\nnegation from a ranked search,\nwith no disclosure attached because no negation tool ran. Steering is by\ndescription only; there\nis deliberately no detector, because classifying free text as \"a\nnegation\" is a guess and a false\npositive would attach a scary caveat to a correct answer. Known, open,\nnot closed here.\n4. **What the ALS probe proves, precisely.** The design's top risk was\nthat the request store might\nnot survive Mastra's tool scheduling, which would make every disclosure\nvanish silently. A test\nproves the store survives retrieval through a real Mastra `Agent`. It\ndoes **not** prove\nMastra's own scheduling between the model's tool-call decision and\n`execute`, which the spec\nsaid up front cannot be proven in CI. That gap is why the\npayload-embedded copy exists.\n\n## Shape of the change\n\nThe probe-refuse-count-explain sequence B.1 left inline in two IPC\nhandlers moved into one module,\n`index/negation-query.ts`, now shared by both handlers and the three\ntools. Wire-shaped validation\nstayed in the RPC layer, so the engine never imports IPC error types.\nThe refactor is\nbehaviour-preserving: both handlers' test files pass unchanged, apart\nfrom two assertions that pin\na remediation string this delivery deliberately makes surface-neutral —\nB.1 told users to \"widen\n`--since`\", which is wrong advice on a surface with no CLI flags.\n\nType scoping moved from validated to intrinsic: each tool pins its own\nitem type, so there is no\n`itemType` argument to get wrong.\n\n**No schema migration, no new IPC method, no new HTTP route, no new\ninvariant, `ALLOWED_METHODS`\nunchanged at 105, and no `egress_ledger` row on either surface** — the\nengine tools read local\nSQLite and never reach `connectors.dispatch`, and MCP *index* tools have\nnever been ledgered.\n\n## Verification\n\n- `bun test packages/gateway` — 14468 pass, 32 skip, **0 fail** across\n1067 files\n- `bun test packages/cli` — 2459 pass, **0 fail** across 140 files\n- `bun run preflight:fast` — PASSED, 29/29 gates\n- `bun run typecheck` clean; `audit:any` at baseline; `lint:markdown`,\n`audit:status-drift`,\n  `audit:doc-refs`, `audit:links` all clean\n\nEvery guard was red-proved by reverting it and watching the covering\ntest fail: the read-once\ndrain, the substrate refusal, the streamed half of the append, the\nembedded disclosure copy, and\nthe `sinceDays` conversion.\n\nTwo defects found in review are worth naming because tests alone would\nnot have caught them. The\nshared orchestrator initially hardcoded the item type, so a\ncaller-supplied `types` filter was\nsilently overridden — the pre-refactor behaviour returned nothing, the\nnew one returned PRs.\nAnd the ChatOps path shares the engine and its tools but was calling\n`runAsk` outside the request\nstore, so a refusal there was warn-logged and dropped; it is now\nwrapped, with a test.\n\nDesign: `docs/superpowers/specs/2026-08-20-negation-in-ask-design.md`.\nPlan: `docs/superpowers/plans/2026-08-20-negation-in-ask.md`.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-08-21T04:16:49Z",
-          "tree_id": "e72aa0658540b97c66ef216f50b835ce046dfc96",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/5ce7505be84d5cc3e5c0f36e96dae6872c1102b0"
-        },
-        "date": 1787286476608,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 319.4396718999957,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 318.8771335499936,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 304.01061409999636,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "7686d74e52bee5b67f4d3161db705a1bcdbd2133",
+          "message": "feat(gateway): one GitHub Enterprise Server instance through github.api_base (#1936)\n\nThis PR delivers the S4 carried-in item: one GitHub Enterprise Server\ninstance. The new optional Vault key `github.api_base` connects the\nGitHub connector and GitHub Actions to ONE self-hosted instance. There\nis no migration, no new IPC method, and no invariant is added or\nretired. I15, I29 and I53 gain stated bounds.\n\n**Connecting**\n- `nimbus connector auth github --token <pat> --api-base\nhttps://ghe.example.com`.\n- Or a `gh` login on that host, through `nimbus connector detect\n--host`.\n\n**Where the PAT goes.** The PAT only ever goes to the instance it is\nstored with. An absent base means github.com.\n\n**Validation** happens in `connectors/github-api-base.ts`, the one place\nit is enforced.\n- The host is canonicalised first: lower-cased, trailing dot removed,\nIDN converted to ASCII.\n- The URL must be https, with no user, password, query or fragment, and\na path of `/` or `/api/v3`.\n- These are refused: github.com and api.github.com, GHE.com\n(`*.ghe.com`), loopback (including `*.localhost`), 0.0.0.0/8, link-local\naddresses including the cloud metadata address, and IPv6 literals.\n- RFC 1918 hosts are allowed.\n\n**Failing closed.** A stored base that no longer validates fails closed\neverywhere: no spawn, no sync request and no probe request. It never\nfalls back to api.github.com.\n\n**Redirects.** Every PAT-bearing gateway fetch uses\n`fetchSameOriginOnly`. It handles redirects manually and follows only\nsame-origin hops, at most 3. A cross-origin hop or a downgrade to\n`http:` is refused.\n\n**Reading the PAT and base as a pair.**\n- Every reader reads base, then PAT, then base again\n(`readGithubCredentialPair`), and makes no request if the base changed\nbetween the two reads.\n- Every writer writes the PAT last. `connector auth github` deletes the\nPAT, writes or deletes the base, then writes the PAT.\n- A github team-vault put follows the same order, deletes a stale base\nwhen the put carries none, and refuses a base without a PAT.\n\n**One instance at a time**\n- Every loop that turns indexed GitHub rows into requests is filtered by\nthe current instance's web origin. That covers PR enrichment, PR files,\nthe GitHub Actions repo list, and CircleCI, which is pinned to\ngithub.com. The filter is a required parameter, with an escaped LIKE\npattern.\n- Changing the base clears both sync cursors and never deletes indexed\nitems.\n- The fetch-host boundary claims only the GHES host, and an invalid base\nclaims none.\n- Remote parsing and the repo-context query follow the base.\n\n**Consent integrity, on both doors**\n- A write's prompt carries an `Instance:` line naming the instance of\nthe credential that will run. For a team credential, that is the team\nentry's instance.\n- The line is read fresh from the Vault when the prompt is built. An\ninvalid base refuses the write before any prompt.\n- The `ToolExecutor` constructor is unchanged, so the I53 positional\npins hold.\n\n**Team entries.** A team entry may carry its own optional\n`github.api_base`, and its PAT goes only to the host its own entry\nnames.\n\n**Stated bounds**\n- One instance at a time.\n- DNS rebinding is not prevented by the literal check.\n- The egress ledger records `github` for either host.\n- A Vault change between approval and dispatch can differ from what was\nshown. The spawn re-validates the base but does not compare it with the\nhost on the prompt.\n- Two complete re-auths that restore the same base inside one read are\nnot detected.\n- With GHES configured, a github.com checkout and a GHES repo with the\nsame owner and name share one `repo` entity. That affects ownership\nedges only, not credentials.\n\n**Review.** The plan was approved by Antigravity in round 5. The build\nhad four adversarial review rounds, which found and fixed:\n- team entries with only a PAT being broken;\n- the `Instance:` line on team-credentialed writes and on the MCP act\ndoor;\n- the order of the PAT and base writes;\n- the read race between the PAT and the base;\n- the team-vault put leaving a stale base behind;\n- the validator gaps and the fetch-host boundary.\nEvery security test was red-proved by reverting its fix.\n\n**Docs:** CLAUDE.md and GEMINI.md (mirrored), roadmap, architecture,\ncli-reference, SECURITY-INVARIANTS, CHANGELOG, and the GitHub, GitHub\nActions and GitLab connector pages. docs/README is unchanged: it indexes\ndocuments, not Vault keys.\n\n**Gates, run locally**\n- preflight:fast, typecheck:tests, `security-invariants.test.ts` and\n`scripts/structure-audit` all pass.\n- Scoped Istanbul coverage over every directory touched, plus\n`test/unit` and `test/integration/http`, with 0 failures. Every changed\nsource file is at or above 85% of lines and 80% of branches, and\n`engine/executor.ts` is at 100% of both. `assemble.ts`,\n`gateway-main.ts` and `lazy-mesh/slot.ts` are coverage-exempt.\n- verify:docker --changed.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Connect GitHub and GitHub Actions to one supported GitHub Enterprise\nServer instance at a time using `nimbus connector auth github\n--api-base`.\n* Detect and adopt GitHub Enterprise logins, and see the configured\ninstance in status and write-consent prompts.\n* Use Enterprise-hosted repositories for GitHub sync, repository\ncontext, and ownership resolution.\n* **Bug Fixes**\n* Invalid or changing instance settings now stop GitHub requests and\nconnector startup rather than falling back to GitHub.com.\n  * Corrected the documented GitLab API-base setting.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-08T07:55:18+02:00",
+          "tree_id": "bc88e4f5148b3f46c36879c7a02bec88332528f0",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/7686d74e52bee5b67f4d3161db705a1bcdbd2133"
+        },
+        "date": 1794117805854,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 232.15687494999548,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 233.49719175000064,
             "unit": "ms"
           }
         ]
