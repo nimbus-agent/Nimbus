@@ -304,7 +304,9 @@ describe("the CloudFormation call", () => {
     const policy = parseSandboxPolicy(children[0]?.spec.env[SANDBOX_POLICY_ENV] ?? "");
     expect(policy.permissions.network.some((h) => h.includes("cloudformation.eu-west-1."))).toBe(
       true,
-    );
+    ); // The child is told that region, not left to a profile's own.
+    expect(children[0]?.spec.env["AWS_DEFAULT_REGION"]).toBe("eu-west-1");
+    expect(children[0]?.spec.env["AWS_REGION"]).toBe("eu-west-1");
   });
 
   test("no aws grant, no binary or no stored credential refuses before any child", async () => {

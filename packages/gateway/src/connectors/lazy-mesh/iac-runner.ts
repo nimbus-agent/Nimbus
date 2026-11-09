@@ -1114,7 +1114,8 @@ export class IacRunner implements IacHost {
     });
     return this.spawnAndCall(
       profile,
-      { ...creds.env },
+      // The approved region, always: a profile-only credential would otherwise use its own.
+      { ...creds.env, AWS_DEFAULT_REGION: region, AWS_REGION: region },
       toolId,
       args,
       budget,
