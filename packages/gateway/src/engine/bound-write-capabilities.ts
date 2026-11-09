@@ -1,4 +1,12 @@
 // packages/gateway/src/engine/bound-write-capabilities.ts
+/**
+ * DECLARATION-ONLY. Do not add runtime logic to this file.
+ *
+ * It is coverage-exempt by exact path (`scripts/coverage-floor/exclusions.ts`) because a file with
+ * no executable statement emits no lcov record, reads as 0%, and can never rejoin the floor. The
+ * moment a function or constant lands here that exemption becomes a hole rather than an accounting
+ * fact — put such code in `iac-settle.ts`, `prepare-step.ts` or `executor.ts`, which are gated normally.
+ */
 // The runtime capabilities of a bound IaC row (Phase 9.7 D2, invariant I54), as TYPES. A leaf module
 // (it imports only types) so `engine/types.ts` can name them on `ConnectorDispatcher` without a
 // cycle with `engine/prepare-step.ts` or `engine/iac-settle.ts`. They reach the gate ONLY through
