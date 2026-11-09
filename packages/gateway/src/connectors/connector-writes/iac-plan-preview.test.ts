@@ -181,12 +181,12 @@ describe("renderPlanPreview: shape and order", () => {
 
 describe("renderPlanPreview: values", () => {
   test("a sensitive value never prints, on either side, whatever its type", () => {
-    const secret = "hunter2-SECRET";
+    const hiddenValue = "masked-fixture-value";
     const p = render(
       plan([
         change("aws_db_instance.db", ["update"], {
-          before: { password: secret, port: 5432, config: { token: secret } },
-          after: { password: `${secret}-2`, port: 5433, config: { token: `${secret}-2` } },
+          before: { password: hiddenValue, port: 5432, config: { token: hiddenValue } },
+          after: { password: `${hiddenValue}-2`, port: 5433, config: { token: `${hiddenValue}-2` } },
           before_sensitive: { password: true, config: { token: true } },
           after_sensitive: { password: true, config: { token: true } },
         }),

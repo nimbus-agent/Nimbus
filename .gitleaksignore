@@ -76,3 +76,8 @@ bec23fb33d83e2478adbd8874242fd49bd83fbf0:packages/gateway/src/security-invariant
 # ("BEFORE-REPLY-MARKER-7f3a", a plain test string, never a credential); renamed REPLY_MARK in HEAD,
 # but the branch commit that introduced it keeps the old name, which trips `generic-api-key`.
 199f189b177dc5103e783dfdb5161052cd8f1a93:packages/gateway/src/engine/before-state.test.ts:generic-api-key:36
+
+# Phase 9.7 D2 (2026-11-09): a plan-preview test fixture held a sensitive-value marker in a variable
+# named `secret` ("hunter2-SECRET", a plain test string, never a credential); renamed `hiddenValue`
+# in HEAD, but the branch commit that introduced it keeps the old line, which trips `generic-api-key`.
+5626fc8b5ed4c44c40ddfd99731b202b54366f1f:packages/gateway/src/connectors/connector-writes/iac-plan-preview.test.ts:generic-api-key:184
