@@ -31,6 +31,7 @@ import type { EgressSink } from "../egress/egress-ledger.ts";
 import { buildEgressEntry } from "../egress/egress-record.ts";
 import type { ConsentCoordinator } from "../ipc/consent.ts";
 import { ConsentDisconnectedError } from "../ipc/consent.ts";
+import { codeUnitCompare } from "../util/code-unit-compare.ts";
 import { getAgentRequestSessionId } from "./agent-request-context.ts";
 import { withoutTemplateText } from "./audit-bodies.ts";
 import { commitFilesDigest, withoutFileText } from "./audit-files.ts";
@@ -875,7 +876,10 @@ interface DiscardTarget {
 function isDiscardOf(action: PlannedAction, target: DiscardTarget): boolean {
   if (action.type !== IAC_DISCARD.actionType) return false;
   const payload = action.payload;
-  if (payload === undefined || Object.keys(payload).sort().join(",") !== "input,mcpToolId") {
+  if (
+    payload === undefined ||
+    Object.keys(payload).sort(codeUnitCompare).join(",") !== "input,mcpToolId"
+  ) {
     return false;
   }
   if (payload["mcpToolId"] !== mcpClientToolKey("iac", IAC_DISCARD.toolId)) return false;
@@ -883,7 +887,7 @@ function isDiscardOf(action: PlannedAction, target: DiscardTarget): boolean {
   if (typeof input !== "object" || input === null) return false;
   const given = input as Record<string, unknown>;
   return (
-    Object.keys(given).sort().join(",") === "changeSetId,stackName" &&
+    Object.keys(given).sort(codeUnitCompare).join(",") === "changeSetId,stackName" &&
     given["stackName"] === target.stackName &&
     given["changeSetId"] === target.changeSetId
   );

@@ -47,6 +47,7 @@ import {
   renderedText,
   renderPlanPreview,
 } from "../connectors/connector-writes/iac-plan-preview.ts";
+import { codeUnitCompare } from "../util/code-unit-compare.ts";
 import { sha256HexEqualConstantTime } from "../util/timing-safe-compare.ts";
 import type { SettledWrite } from "./bound-write-capabilities.ts";
 import { PREPARE_REFUSALS, PrepareRefusedError } from "./prepare-step.ts";
@@ -465,7 +466,8 @@ export function settleCfnChangeSet(
   const destructive = changes.filter(isDestructive);
   const rest = changes.filter((c) => !isDestructive(c));
 
-  const capabilityText = wantCaps.length === 0 ? "(none)" : [...wantCaps].sort().join(", ");
+  const capabilityText =
+    wantCaps.length === 0 ? "(none)" : [...wantCaps].sort(codeUnitCompare).join(", ");
   const templateText = `${String(templateBytes)} bytes, sha256 ${templateSha256.slice(0, 16)}`;
   const stackText = escapeOneLine(stackName);
   const lines = [

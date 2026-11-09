@@ -43,6 +43,7 @@ import {
   sandboxNetworkPosture,
 } from "../../platform/sandbox/sandbox-posture.ts";
 import type { EnforcedPolicy } from "../../policy/policy-gate.ts";
+import { codeUnitCompare } from "../../util/code-unit-compare.ts";
 import { ConnectorRpcError } from "../connector-rpc-shared.ts";
 
 export interface ModelWritesDeps {
@@ -133,10 +134,10 @@ function parseIacGrants(
     bad("name at least one --workdir or --cloud");
   }
   return {
-    workdirs: [...new Set(workdirs)].sort(),
-    clouds: [...new Set(clouds)].sort(),
-    regions: [...new Set(regions)].sort(),
-    net: [...new Set(net)].sort(),
+    workdirs: [...new Set(workdirs)].sort(codeUnitCompare),
+    clouds: [...new Set(clouds)].sort(codeUnitCompare),
+    regions: [...new Set(regions)].sort(codeUnitCompare),
+    net: [...new Set(net)].sort(codeUnitCompare),
   };
 }
 
@@ -161,7 +162,7 @@ function iacPromptScope(
         ...cfn,
         ...grants.net,
       ]),
-    ].sort(),
+    ].sort(codeUnitCompare),
     // The SAME decision the sandbox makes at spawn (helper found and the forwarder probe passing
     // on Linux), never a guess from the platform name.
     hostScope: posture,
