@@ -560,12 +560,14 @@ describe("nodeSettleFs", () => {
     await nodeSettleFs({ rename: () => Promise.reject(exdev) }).move(a, b);
     expect(existsSync(a)).toBe(false);
     expect(readFileSync(b).equals(PLAN_BYTES)).toBe(true);
-    writeFileSync(a, PLAN_BYTES);
+    // A fresh source for the second case: re-writing `a` after checking it reads as a race.
+    const a2 = join(root, "a-eperm.bin");
+    writeFileSync(a2, PLAN_BYTES);
     const eperm = Object.assign(new Error("denied"), { code: "EPERM" });
     await expect(
-      nodeSettleFs({ rename: () => Promise.reject(eperm) }).move(a, join(root, "c")),
+      nodeSettleFs({ rename: () => Promise.reject(eperm) }).move(a2, join(root, "c")),
     ).rejects.toThrow("denied");
-    expect(existsSync(a)).toBe(true);
+    expect(existsSync(a2)).toBe(true);
   });
 
   test("the copy fallback never overwrites an existing destination", async () => {
