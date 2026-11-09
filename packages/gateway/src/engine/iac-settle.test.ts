@@ -4,8 +4,10 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import {
+  chmodSync,
   existsSync,
   linkSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
@@ -46,7 +48,20 @@ beforeEach(() => {
   mkdirSync(join(staging, PLAN_ID), { recursive: true });
 });
 
+// A settled plan directory is 0o500 (the applying child may only read it), so on POSIX its
+// entries cannot be unlinked until it is writable again. Restore owner write on every directory
+// under the temp root, never following a link, before removing it.
+function makeTreeRemovable(dir: string): void {
+  if (!lstatSync(dir, { throwIfNoEntry: false })?.isDirectory()) return;
+  chmodSync(dir, 0o700);
+  for (const name of readdirSync(dir)) {
+    const child = join(dir, name);
+    if (lstatSync(child).isDirectory()) makeTreeRemovable(child);
+  }
+}
+
 afterEach(() => {
+  makeTreeRemovable(root);
   rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
 });
 
