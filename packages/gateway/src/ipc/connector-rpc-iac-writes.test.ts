@@ -192,13 +192,15 @@ describe("connector.writesEnable iac (V85)", () => {
     const PER_HOST = "Hosts are enforced one by one on this system.";
 
     test("Linux with the helper claims per-host enforcement", async () => {
-      expect(await promptText(runner({ platform: "linux", active: true }))).toContain(PER_HOST);
+      const text = await promptText(runner({ platform: "linux", active: true }));
+      expect(text).toContain(PER_HOST);
+      expect(text).toContain("someone else's bucket");
     });
 
     test("Linux without the helper (the fallback) does NOT claim it", async () => {
       const text = await promptText(runner({ platform: "linux", active: false }));
       expect(text).not.toContain(PER_HOST);
-      expect(text).toContain("limits the port, not the host");
+      expect(text).toContain("any host on any port");
     });
 
     test("a system that cannot confine a network says Terraform will not start", async () => {
@@ -215,6 +217,16 @@ describe("connector.writesEnable iac (V85)", () => {
       ]) {
         expect(await promptText(r)).not.toContain(PER_HOST);
       }
+    });
+
+    test("macOS says the port is limited; Windows says neither host nor port is (review)", async () => {
+      const mac = await promptText(runner({ platform: "darwin", active: true, scope: "per_port" }));
+      expect(mac).toContain("any host on port 443");
+      const win = await promptText(
+        runner({ platform: "win32", active: true, scope: "all_or_nothing" }),
+      );
+      expect(win).toContain("any host on any port");
+      expect(win).not.toContain("port 443");
     });
   });
 

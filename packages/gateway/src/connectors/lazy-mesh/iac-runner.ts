@@ -91,14 +91,28 @@ export function iacRoutedKeys(): readonly string[] {
 
 /** The reasons a call is refused before any child exists; fixed text, never the path or the input. */
 export const IAC_RUNNER_REFUSALS = Object.freeze({
-  noRun: "iac: this call has no active run",
+  noRun: IAC_PREFLIGHT_REFUSALS.noRun,
   notApproved: IAC_PREFLIGHT_REFUSALS.notApprovedDirectory,
   badPlanFile: "iac: the plan file is not in this gateway's approved plan directory",
   noBinary: "iac: the required command line tool was not found",
   noCredential: IAC_PREFLIGHT_REFUSALS.noCloudCredential,
   notOurChangeSet: "iac: that change set is not one this gateway created",
-  stopping: "iac: the gateway is stopping",
+  stopping: IAC_PREFLIGHT_REFUSALS.stopping,
+  regionNotApproved: IAC_PREFLIGHT_REFUSALS.regionNotApproved,
 });
+
+/**
+ * The region a CloudFormation child uses: the Vault credential's own region, else the first
+ * approved one, and ONLY when it is an approved region, so the child never reaches a host the
+ * owner's enable prompt did not list. `undefined` refuses the call.
+ */
+export function cfnRegionFor(
+  credentialRegion: string,
+  approved: readonly string[],
+): string | undefined {
+  const region = credentialRegion !== "" ? credentialRegion : (approved[0] ?? "");
+  return region !== "" && approved.includes(region) ? region : undefined;
+}
 
 // ---------------------------------------------------------------------------------------------
 // Profiles (pure).
@@ -677,6 +691,8 @@ export class IacRunner implements IacHost {
   private stopped = false;
   /** Children a previous gateway process recorded and that are still alive at boot (see sweep). */
   private orphans: Array<{ pid: number; workdir?: string }> = [];
+  /** The live-children record existed but could not be read: no run starts until it can be. */
+  private liveRecordUnreadable = false;
   private readonly hex: (bytes: number) => string;
   private readonly removeTree: (p: string) => void;
 
@@ -762,14 +778,19 @@ export class IacRunner implements IacHost {
   private writeLive(entries: ReadonlyArray<{ pid: number; workdir?: string }>): void {
     try {
       mkdirSync(this.iacRoot, { recursive: true, mode: 0o700 });
-      writeFileSync(this.liveFile(), JSON.stringify(entries), { mode: 0o600 });
+      // Atomic: a crash mid-write leaves the previous record, never a truncated one.
+      const tmp = `${this.liveFile()}.tmp`;
+      writeFileSync(tmp, JSON.stringify(entries), { mode: 0o600 });
+      renameSync(tmp, this.liveFile());
     } catch {
       // best effort: the record only narrows what a later boot deletes
     }
   }
 
+  // An unreadable record is never overwritten: it is the only evidence of what may still be running.
   private recordLive(pid: number, workdir: string | undefined): void {
-    const cur = this.readLive() ?? [];
+    const cur = this.readLive();
+    if (cur === undefined) return;
     this.writeLive([
       ...cur.filter((e) => e.pid !== pid),
       workdir === undefined ? { pid } : { pid, workdir },
@@ -777,7 +798,9 @@ export class IacRunner implements IacHost {
   }
 
   private forgetLive(pid: number): void {
-    this.writeLive((this.readLive() ?? []).filter((e) => e.pid !== pid));
+    const cur = this.readLive();
+    if (cur === undefined) return;
+    this.writeLive(cur.filter((e) => e.pid !== pid));
   }
 
   /**
@@ -785,16 +808,21 @@ export class IacRunner implements IacHost {
    * while a child it recorded may still be alive (a macOS child can outlive the gateway; a Linux
    * child dies with it by `--die-with-parent`, a Windows child by its job object): then the run
    * directories are left for a later boot, and a run on that child's workdir is refused. A record
-   * that cannot be read is treated the same way (fail closed) and reset.
+   * that cannot be read fails closed: it is kept as it is, nothing is deleted, and every run is
+   * refused until a later read of it succeeds ({@link liveRecordRefusal}).
    */
   private sweep(): void {
     if (this.swept) return;
     this.swept = true;
     const recorded = this.readLive();
-    const alive = (recorded ?? []).filter((e) => this.pidAlive(e.pid));
+    if (recorded === undefined) {
+      this.liveRecordUnreadable = true;
+      return;
+    }
+    const alive = recorded.filter((e) => this.pidAlive(e.pid));
     this.orphans = alive;
     this.writeLive(alive);
-    if (recorded === undefined || alive.length > 0) return;
+    if (alive.length > 0) return;
     for (const d of ["staging", "approved", "scratch", "cwd"]) {
       try {
         this.removeTree(join(this.iacRoot, d));
@@ -810,6 +838,8 @@ export class IacRunner implements IacHost {
   ): Promise<PreflightOutcome> {
     if (this.stopped) return { ok: false, reason: IAC_RUNNER_REFUSALS.stopping };
     this.sweep();
+    const unreadable = this.liveRecordRefusal();
+    if (unreadable !== undefined) return { ok: false, reason: unreadable };
     if (rowToolId === CFN_ROW) return this.preflightCfn();
     if (!TERRAFORM_ROWS.has(rowToolId)) {
       return { ok: false, reason: IAC_RUNNER_REFUSALS.noRun };
@@ -851,6 +881,20 @@ export class IacRunner implements IacHost {
     return { ok: true, workingDirectory: workdir, release: () => this.release(run) };
   }
 
+  /**
+   * While the live-children record is unreadable, re-read it: once it parses, its live children
+   * become the orphans a run must not overlap (their directories are still not deleted this boot).
+   */
+  private liveRecordRefusal(): string | undefined {
+    if (!this.liveRecordUnreadable) return undefined;
+    const recorded = this.readLive();
+    if (recorded === undefined) return IAC_PREFLIGHT_REFUSALS.liveRecordUnreadable;
+    this.liveRecordUnreadable = false;
+    this.orphans = recorded.filter((e) => this.pidAlive(e.pid));
+    this.writeLive(this.orphans);
+    return undefined;
+  }
+
   private gateRefusal(reason: "not-approved" | "git"): string {
     return reason === "git"
       ? IAC_PREFLIGHT_REFUSALS.gitRepository
@@ -863,6 +907,9 @@ export class IacRunner implements IacHost {
       return { ok: false, reason: IAC_PREFLIGHT_REFUSALS.noCloudCredential };
     const creds = await loadAwsCreds(this.deps.vault);
     if (!creds.ok) return { ok: false, reason: IAC_PREFLIGHT_REFUSALS.noCloudCredential };
+    if (cfnRegionFor(creds.region, grants.regions) === undefined) {
+      return { ok: false, reason: IAC_PREFLIGHT_REFUSALS.regionNotApproved };
+    }
     return { ok: true, release: () => undefined };
   }
 
@@ -1044,7 +1091,8 @@ export class IacRunner implements IacHost {
     if (aws === undefined) throw new Error(IAC_RUNNER_REFUSALS.noBinary);
     const creds = await loadAwsCreds(this.deps.vault);
     if (!creds.ok) throw new Error(IAC_RUNNER_REFUSALS.noCredential);
-    const region = creds.region !== "" ? creds.region : (grants.regions[0] ?? "");
+    const region = cfnRegionFor(creds.region, grants.regions);
+    if (region === undefined) throw new Error(IAC_RUNNER_REFUSALS.regionNotApproved);
     if (toolId === "iac_cloudformation_changeset_discard" && !isOurChangeSet(args, region)) {
       throw new Error(IAC_RUNNER_REFUSALS.notOurChangeSet);
     }

@@ -4,6 +4,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   realpathSync,
   rmSync,
   statSync,
@@ -25,6 +26,7 @@ import {
   buildIacProfile,
   callChildTool,
   escalationGraceMs,
+  IAC_RUNNER_REFUSALS,
   IAC_TOOL_PROFILE,
   type IacChild,
   type IacGrantLedger,
@@ -549,6 +551,19 @@ describe("the run lock lives until the child is dead (review finding)", () => {
 });
 
 describe("preflight", () => {
+  test("every reason the runner's preflight returns is a fixed preflight refusal (review)", () => {
+    const preflight = new Set<string>(Object.values(IAC_PREFLIGHT_REFUSALS));
+    for (const k of [
+      "noRun",
+      "notApproved",
+      "noCredential",
+      "stopping",
+      "regionNotApproved",
+    ] as const) {
+      expect({ k, fixed: preflight.has(IAC_RUNNER_REFUSALS[k]) }).toEqual({ k, fixed: true });
+    }
+  });
+
   test("an unapproved or non-canonical directory is refused with the fixed text", async () => {
     const { r } = runner("answer");
     const refusal = {
@@ -1112,6 +1127,45 @@ describe("a child a previous gateway left (review item 7, boot sweep)", () => {
     };
     await bad.r.preflight("iac_cloudformation_deploy", {});
     expect(kept).toEqual([]);
+  });
+
+  test("an unreadable record refuses every run, is kept as it is, and is used once it reads (review)", async () => {
+    mkdirSync(iacRoot, { recursive: true });
+    writeFileSync(live(), "{truncated");
+    const removed: string[] = [];
+    let alive = true;
+    const { r } = runner("answer", {
+      isPidAlive: () => alive,
+      removeTree: (p) => {
+        removed.push(p);
+      },
+    });
+    const refusal = { ok: false as const, reason: IAC_PREFLIGHT_REFUSALS.liveRecordUnreadable };
+    expect(await r.preflight("iac_terraform_apply", { workingDirectory: work })).toEqual(refusal);
+    expect(await r.preflight("iac_cloudformation_deploy", {})).toEqual(refusal);
+    expect(readFileSync(live(), "utf8")).toBe("{truncated"); // never reset
+    expect(removed).toEqual([]);
+    // Once it reads, its live child still locks that workdir, and nothing is deleted this boot.
+    writeFileSync(live(), JSON.stringify([{ pid: 4244, workdir: work }]));
+    expect(await r.preflight("iac_terraform_apply", { workingDirectory: work })).toEqual({
+      ok: false,
+      reason: IAC_PREFLIGHT_REFUSALS.busy,
+    });
+    alive = false;
+    const run = await openRun(r);
+    run.release();
+    // Only this run's own staging directory goes; the boot sweep's roots are never removed.
+    const sweepRoots = ["staging", "approved", "scratch", "cwd"].map((d) => join(iacRoot, d));
+    expect(removed.filter((p) => sweepRoots.includes(p))).toEqual([]);
+  });
+
+  test("the record is written by rename, so no partial file is left behind", async () => {
+    rmSync(live(), { force: true });
+    const { r } = runner("answer", { isPidAlive: () => false });
+    const run = await openRun(r);
+    run.release();
+    expect(JSON.parse(readFileSync(live(), "utf8"))).toEqual([]);
+    expect(existsSync(`${live()}.tmp`)).toBe(false);
   });
 
   test("a started child is recorded with its workdir and forgotten when it exits", async () => {

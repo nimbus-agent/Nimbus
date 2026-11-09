@@ -283,6 +283,12 @@ export const IAC_PREFLIGHT_REFUSALS = Object.freeze({
   notApprovedDirectory: "iac: the working directory is not an approved directory",
   noCloudCredential: "iac: no cloud credential is granted for this change",
   busy: "iac: another run is using this working directory",
+  stopping: "iac: the gateway is stopping",
+  noRun: "iac: this call has no active run",
+  regionNotApproved:
+    "iac: the AWS credential's region is not one of the approved regions; approve it with --region",
+  liveRecordUnreadable:
+    "iac: the gateway cannot read its record of running iac children, so no run starts until that record is readable again",
   gitRepository:
     "iac: the working directory has a Git repository in it or beneath it (a .git folder or file); point Terraform at a subdirectory without a repository",
 });

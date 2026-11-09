@@ -82,11 +82,12 @@ export const IAC_NO_DOWNLOAD_LINE =
 export const IAC_EACH_APPLY_LINE =
   "Each apply will still show the plan and ask you to type the target.";
 const IAC_HOST_SCOPE_LINES: Readonly<Record<string, string>> = {
-  per_host: "Hosts are enforced one by one on this system.",
+  per_host:
+    "Hosts are enforced one by one on this system. The shared storage hosts it allows (S3, Azure Blob, Google APIs) also reach storage other accounts own, so code in an approved directory could still send the credential or data to someone else's bucket.",
   per_port:
     "This platform limits the port, not the host: code in an approved directory could send the credential to any host on port 443.",
   all_or_nothing:
-    "This platform limits the port, not the host: code in an approved directory could send the credential to any host on port 443.",
+    "This system cannot limit the host or the port: code in an approved directory could send the credential to any host on any port.",
   refusing:
     "This system cannot confine a child's network right now: Terraform will not start until it can.",
 };

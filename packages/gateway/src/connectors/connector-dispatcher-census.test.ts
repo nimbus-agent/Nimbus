@@ -29,6 +29,15 @@ function walk(dir: string, out: string[]): void {
   }
 }
 
+/** Whether `text` calls `forwardBoundWriteCapabilities(` or assigns `boundWriteCapabilities:`. */
+function forwardsCapability(text: string): boolean {
+  const code = text.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+  return (
+    /\bforwardBoundWriteCapabilities\s*\(/.test(code) ||
+    /\bboundWriteCapabilities\s*:\s*[^\s;,}]/.test(code)
+  );
+}
+
 const IMPLEMENTS = /(:\s*ConnectorDispatcher\s*=\s*\{|\)\s*:\s*ConnectorDispatcher\s*\{)/;
 
 describe("ConnectorDispatcher implementers", () => {
@@ -46,12 +55,29 @@ describe("ConnectorDispatcher implementers", () => {
 
   test("each implementer forwards boundWriteCapabilities or is listed with a reason", () => {
     for (const f of implementers) {
-      const forwards =
-        f.text.includes("boundWriteCapabilities") ||
-        f.text.includes("forwardBoundWriteCapabilities");
+      // The CALL or the property ASSIGNMENT, in code with comments removed: a leftover import, a
+      // comment or a type reference naming the capability must not pass (review).
+      const forwards = forwardsCapability(f.text);
       const listed = NOT_ON_AN_IAC_PATH[f.rel] !== undefined;
       expect({ file: f.rel, ok: forwards || listed }).toEqual({ file: f.rel, ok: true });
     }
+  });
+
+  test("forwardsCapability: a call or an assignment passes; an import, a comment or a type does not", () => {
+    expect(forwardsCapability("return forwardBoundWriteCapabilities(inner, { dispatch });")).toBe(
+      true,
+    );
+    expect(forwardsCapability("const d = { dispatch, boundWriteCapabilities: caps };")).toBe(true);
+    expect(forwardsCapability('import { forwardBoundWriteCapabilities } from "./x.ts";')).toBe(
+      false,
+    );
+    expect(
+      forwardsCapability("// forwards boundWriteCapabilities: see forwardBoundWriteCapabilities()"),
+    ).toBe(false);
+    expect(forwardsCapability("/* boundWriteCapabilities: x */ return { dispatch };")).toBe(false);
+    expect(forwardsCapability('type T = ConnectorDispatcher["boundWriteCapabilities"];')).toBe(
+      false,
+    );
   });
 
   test("every listed exception is still an implementer (no stale entries)", () => {

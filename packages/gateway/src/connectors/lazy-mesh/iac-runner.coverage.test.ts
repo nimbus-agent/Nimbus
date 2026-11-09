@@ -7,7 +7,9 @@ import { createMockVault } from "../../vault/mock.ts";
 import type { NimbusVault } from "../../vault/nimbus-vault.ts";
 import { writeConnectorSecret } from "../connector-vault.ts";
 import type { IacGrants, IacPathDeps } from "../connector-writes/iac-grants.ts";
+import { IAC_PREFLIGHT_REFUSALS } from "../connector-writes/iac-limits.ts";
 import {
+  cfnRegionFor,
   fileIacGrantLedger,
   type IacChild,
   IacRunner,
@@ -249,7 +251,36 @@ describe("the CloudFormation call", () => {
     else await writeConnectorSecret(vault, "aws", "profile", "dev");
     return vault;
   }
-  const granted: IacGrants = { workdirs: [], clouds: ["aws"], regions: ["eu-west-1"], net: [] };
+  const granted: IacGrants = {
+    workdirs: [],
+    clouds: ["aws"],
+    regions: ["eu-west-1", "us-east-1"],
+    net: [],
+  };
+
+  test("a stored region the owner did not approve is refused at preflight and at the call (review)", async () => {
+    const onlyEu: IacGrants = { ...granted, regions: ["eu-west-1"] };
+    const { r, children } = make(onlyEu, await awsVault("us-east-1"));
+    expect(await r.preflight("iac_cloudformation_deploy", {})).toEqual({
+      ok: false,
+      reason: IAC_PREFLIGHT_REFUSALS.regionNotApproved,
+    });
+    await expect(r.execute("iac_cloudformation_deploy", { stackName: "s" })).rejects.toThrow(
+      IAC_PREFLIGHT_REFUSALS.regionNotApproved,
+    );
+    // No region approved at all: refused even with no stored region.
+    const noRegion = make({ ...granted, regions: [] }, await awsVault(null));
+    expect((await noRegion.r.preflight("iac_cloudformation_deploy", {})).ok).toBe(false);
+    expect([...children, ...noRegion.children]).toEqual([]);
+  });
+
+  test("cfnRegionFor: the stored region when approved, else the first approved, else nothing", () => {
+    expect(cfnRegionFor("us-east-1", ["eu-west-1", "us-east-1"])).toBe("us-east-1");
+    expect(cfnRegionFor("", ["eu-west-1", "us-east-1"])).toBe("eu-west-1");
+    expect(cfnRegionFor("ap-south-1", ["eu-west-1"])).toBeUndefined();
+    expect(cfnRegionFor("", [])).toBeUndefined();
+    expect(cfnRegionFor("us-east-1", [])).toBeUndefined();
+  });
 
   test("a deploy runs in its own scratch directory under the stored region, then removes it", async () => {
     const { r, children, removed } = make(granted, await awsVault("us-east-1"));

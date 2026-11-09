@@ -196,7 +196,7 @@ describe("renderPlanPreview: values", () => {
         }),
       ]),
     );
-    expect(p.text).not.toContain("SECRET");
+    expect(p.text).not.toContain(hiddenValue);
     expect(p.lines).toContain("    password: (sensitive) -> (sensitive)");
     expect(p.lines).toContain("    config: (sensitive) -> (sensitive)");
     expect(p.lines).toContain("    port: 5432 -> 5433");

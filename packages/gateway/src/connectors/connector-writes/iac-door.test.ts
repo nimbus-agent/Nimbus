@@ -368,6 +368,15 @@ describe("D2 through the real model door", () => {
     expect(writes(nothing)).toEqual([]);
   });
 
+  test("every runner preflight refusal (shutdown, no run, region, unreadable record) is { refused }, never { declined } (review)", async () => {
+    enableBoth();
+    for (const reason of Object.values(IAC_PREFLIGHT_REFUSALS)) {
+      const d = await door({ preflightReason: reason });
+      expect(await d.call(APPLY, { workingDirectory: WD })).toEqual({ refused: reason });
+      expect(d.dispatched).toEqual([]);
+    }
+  });
+
   test("a mismatched text or a denial is declined and writes nothing", async () => {
     enableBoth();
     const mismatch = await door({ answer: () => ({ approved: true, typed: "iac/apply /other" }) });
