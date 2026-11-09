@@ -2,6 +2,13 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [10.42.0](https://github.com/nimbus-agent/Nimbus/compare/v10.41.0...v10.42.0) (2026-11-09)
+
+
+### Features
+
+* **gateway:** the model can propose a Terraform apply or CloudFormation deploy, in owner-approved directories, behind the full plan ([#1945](https://github.com/nimbus-agent/Nimbus/issues/1945)) ([5ba90ee](https://github.com/nimbus-agent/Nimbus/commit/5ba90ee45c07f5a0ac7fe0f915273829d9f5859d))
+
 ## [10.41.0](https://github.com/nimbus-agent/Nimbus/compare/v10.40.0...v10.41.0) (2026-11-08)
 
 
