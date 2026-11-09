@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794161299701,
+  "lastUpdate": 1794212520957,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "7a9480ca2969be5c8e7cda3ce784d238a9424836",
-          "message": "docs: close Spine S1, open S2, and record where CI's 31 minutes go (#1289)\n\nS1 (Local Brain) has had zero open roadmap rows since W6-B.2 landed on\n2026-08-20, but every status surface still declared it the current build\nslot. This closes S1, opens S2, deletes the specs and plans whose work\nshipped, corrects three factual errors in the skills, and records a\nmeasured CI diagnosis.\n\n## Closing S1, opening S2\n\n`docs/roadmap.md` moves the S1 section into Shipped under a new\n`#spine-s1` anchor, with a delivery summary and the three bounds S1\ncarried rather than closed: the `allow-remote` synthesis path is wired\nbut unreachable in production, the local-router path has no tool-calling\nsupport so the negation predicates cannot be reached there, and\nexclusion\ncounts on a negation are guaranteed only on the gateway engine surface.\n\n`## Active` becomes S2 — Local Compute Fleet, drawn from Phase 14 plus\nthe two overlay rows, and marked as nothing-shipped-yet. The\nbring-your-own-frontier-model row is called out as the one that would\nmake the `model` egress class append a row for the first time.\n\nThe mirrored surfaces follow: `CLAUDE.md` and `GEMINI.md` status\nparagraphs, the `docs/README.md` phase table, the roadmap Status\nOverview, contents list, spine table and Phase 6 cross-reference. The\ntwo\nmirrors were byte-identical before this change and still are.\n\nHistorical links that read `[S1 — Local Brain](#active)` now point at\n`#spine-s1`, so they resolve to what they meant when written.\n\n## The parked MCP-server row is closed as delivered\n\nThe server ships in-repo over stdio with no network port, the launcher\nis\npublished and listed in the MCP Registry, and W6-B.2 took the tool\nsurface from 18 to 21. What did not ship is the owner-sink write\nsurface,\nwhich is stated as the reason `I28` stays reserved, and re-scoped onto\nS3 along with the transport conditions that were never reached.\n\n## Deleted specs and plans\n\n45 files across nine shipped workstreams. The rule applied: delete only\nwhat shipped AND is not linked from `docs/CHANGELOG.md`. The changelog\nis\na permanent record and `lychee` checks every markdown link under\n`docs/`,\nso a spec the changelog cites stays. That preserved the mcp-launcher,\ndistribution-program and negation-in-ask sets.\n\nTwo source comments cited the deleted negation-queries spec. Both now\npoint at `docs/cli-reference.md`, which carries the same three\ninvocations; the pin test that keeps the doc examples parseable still\npasses.\n\n## Skill corrections\n\nThese were wrong, not merely stale.\n\n- `nimbus-tauri-allowlist` claimed the size assertion is 106. The code\n  asserts 105 — negotiate added one in #1166 and #1225 removed\n  unreachable methods afterwards.\n- `nimbus-agent-patterns` listed thirteen agents and omitted `negotiate`\n  from both its description and its file roster. There are fourteen.\n- `nimbus-commands` had none of S1's back half. Added `pre-mortem`,\n  `negotiate`, `stats`, the three negation predicates and `--devil`,\n  each with the bound that matters.\n- `nimbus-architecture` build-slot line updated.\n\n## CI diagnosis\n\nNew spec at\n`docs/superpowers/specs/2026-08-21-ci-critical-path-design.md`,\nmeasured against run 32452626344, which took 31m11s. No workflow file is\ntouched by this PR.\n\nThe obvious suspect is not the answer. `Unit + Coverage` at 12m21s is\nthe\nsecond-longest job; the run is set by the Windows cross-platform job at\n30m35s. That job ran the gateway suite twice, because one test timed out\non attempt 1 and passed on the retry, so a single flake cost roughly\neleven minutes while the job still reported green.\n\nSix files out of 831 account for 74% of the Windows suite. The worst is\n`diagnostics-rpc.test.ts` at 447 seconds, dominated by the 22\n`index.queryItems` tests that landed the day before in W6-B.1. Those\nsame\ntests run in 8.66 seconds locally, so this is an 18x runner gap rather\nthan badly written tests.\n\nThe spec also declines the \"move something to a new repo\" idea on\nCI-time grounds and shows why: all 95 connectors are 97.5 seconds of\ntest\ntime on a job that is not the bottleneck, against a gateway that is\n62.5k\nLOC and eleven minutes on Windows. It suggests revisiting that on\nownership grounds instead.\n\nSix proposals are ranked with estimated savings and risk. None is\napplied\nhere; they go on their own branch so a red CI experiment never blocks a\ndocs merge.\n\n## Verification\n\n`bun run preflight:fast` passes all 30 gates. `bun run audit:links`\nreports 0 errors across 1458 links. `audit:doc-refs` resolves 1212\nreferences. The two touched CLI source files pass their tests.",
-          "timestamp": "2026-08-21T07:27:18Z",
-          "tree_id": "ce6732500663338bbee673438610dd4ffc2e535c",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/7a9480ca2969be5c8e7cda3ce784d238a9424836"
-        },
-        "date": 1787297915719,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 312.5090811499969,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 311.80578334999916,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 217.26204404999515,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "5ba90ee45c07f5a0ac7fe0f915273829d9f5859d",
+          "message": "feat(gateway): the model can propose a Terraform apply or CloudFormation deploy, in owner-approved directories, behind the full plan (#1945)\n\nPhase 9.7 PR D2: the model is offered the Terraform apply and the\nCloudFormation deploy, inside working directories and clouds the owner\napproved. Schema V85; no new invariant; I2, I15, I50 and I54 text\nextended; static D42(b)/(h) extended and D43 new; the gateway pins\n`@nimbus-dev/connectors` `^0.9.0`.\n\n## What the model can now do\n\nThe model has 98 writes: `iac_terraform_apply` and\n`iac_cloudformation_deploy` join D1c's 96. Both are plan-bound (I54),\nand the executor runs five ordered phases:\n\n1. **preflight** refuses, before any child exists, a channel that cannot\ncollect a typed confirmation (ChatOps), an unapproved working directory\nor cloud, a directory that holds a `.git` entry anywhere beneath it\n(owner ruling OR-D2-8), and a second run on a directory already in use.\nThe real directory is pinned for the rest of the run.\n2. **prepare** runs the connector's prepare tool (`iac_terraform_plan`,\n`iac_cloudformation_changeset_create`) through the same gate and\ndispatcher.\n3. **settle** fixes the identity of what will be applied:\n- The gateway moves the plan into its own `approved/<run>/<plan>/`\ndirectory, reads it once, hashes it and makes it read-only.\n- A second child with no network and no credential renders the plan with\n`terraform show -json`. The hash that child reports must equal the\ngateway's own.\n   - The gateway rescans for a `.git` the plan child planted.\n- A CloudFormation change set is cross-checked against the caller's own\nstack, template hash, change-set name and capabilities.\n4. **consent** shows the full plan, led by the counts of deletes,\nreplaces, creates and updates and closed by the plan hash, or shows the\ntemplate in full up to 50 KiB. The owner types `iac/apply <dir>` or\n`iac/deploy <stack>`. A plan over 500 changes or 64 KiB of text is\nrefused, never cut.\n5. **dispatch** hands the apply the settled path and hash, never the\ncaller's. A caller-supplied `planFile`, `planSha256` or `changeSetId` is\nrefused before any read.\n\n## Owner opt-in and refusals\n\nThe owner approves the scope with:\n\n```\nnimbus connector writes enable iac --wave 4 --workdir <dir> --cloud aws,azure,gcp [--region <r>] [--net <host>]\n```\n\nThe grant is stored in the V85 table `connector_write_iac_grant`. A\ndirectory must be the exact canonical spelling of an approved one, so no\nlink, 8.3 alias, case variant, `..`, UNC or device path is accepted.\n\nNever offered to the model:\n- **Terraform destroy:** an owner-only action (OR-D2-2).\n- **Pulumi:** refused on every door, because saved update plans are\nexperimental (OR-W34-2).\n- **IAM capabilities on a CloudFormation deploy.**\n\nThe MCP act door denies every iac row. Only the gateway itself may\ndiscard an unused or orphaned CloudFormation change set: an audited,\nledgered write with no prompt, for a target it derives from its own\ninput, never after a dispatch (D43).\n\n## Sandbox\n\nEach call runs in its own short-lived child under one of four per-run\nprofiles (`plan`, `show`, `apply`, `cfn`). These profiles are built only\nin `connectors/lazy-mesh/iac-runner.ts`.\n- **Hosts and credential:** the granted clouds' hosts and the credential\nreach only the `plan`, `apply` and `cfn` profiles. `show` gets neither.\n- **Terraform binary:** the sandbox grants the Terraform binary file\nonly, never its directory.\n- **Linux:** an iac profile answers `pidfd_send_signal` with ENOSYS,\nbecause Go's runtime probes it (OR-D2-5). Only the runner's builder sets\nthat flag (D43(d)).\n- **Windows:** each run gets its own AppContainer profile id, and its\ngrants are revoked from a persisted ledger before the next start.\n- **Budget:** a child is killed when its time budget runs out. An apply\nor deploy then gets a 60 s grace before it is force-killed.\n- **Lock:** the per-directory lock is released only once the child has\nexited.\n- **CI** installs a SHA-pinned Terraform (`hashicorp/setup-terraform`\nv4.0.1), so the sandbox probe and a local-provider round trip run on all\nthree OSes.\n\n## Fixes from the whole-branch review\n\n- **Dispatcher wrapper:** it dropped the bound-write capabilities, so\nevery iac write was refused. It forwards them now, through the\nproduction chain. A census test requires every `ConnectorDispatcher`\nimplementer to forward them or be listed with a reason.\n- **Workdir grants:** they were never wired into the model's tool\nsource. The source now reads the V85 grants itself on every listing and\nevery recheck.\n- **Dispatcher timeout:** it now covers the runner's budget plus the\ngrace, so the runner's \"may be partly changed\" text reaches the caller.\n- **Enable-prompt host line:** it now follows the sandbox's live network\nposture instead of claiming per-host enforcement everywhere.\n- **Planted `.git`:** the settle step rescans for a `.git` the plan\nchild planted before anything is shown.\n\n## Stated bounds\n\n- **Credential reach on macOS and Windows:** on macOS (ports only) and\non Windows (all or nothing), a `local-exec` provisioner or a malicious\nprovider in an approved directory could send the credential to any host\non 443 (OR-D2-1).\n- **Host lists:** the per-cloud host lists come from documented\nendpoints and are UNVERIFIED until a credentialed probe runs.\n- **Providers and modules:** these are never downloaded. The owner runs\n`terraform init` themselves.\n- **CloudFormation change list:** this is the connector's word,\ncross-checked. What AWS executes is the immutable change set named by\nthe bound ARN.\n- **Gateway crash:** a crash can leave a change set behind, because the\nboot sweep clears directories only.\n- **macOS:** CI's sandbox probe is its first run.\n- **Windows dev-tree round trip:** this test skips.\n\n## Verification\n\n- **Static gates:** `preflight:fast`, `typecheck:tests` (0 new),\n`security-invariants` (493 pass) and the invariants, hosts and\nconnector-version-skew audits.\n- **Tests:**\n- gateway src: 28281 pass. The one failure is a `trust-store.test.ts`\ntimeout under load; that file passes alone.\n  - cli: 5622 pass. scripts: 1643 pass.\n  - connector and iac integration: 303 pass.\n  - UI vitest: 135 pass.\n  - Windows `test/integration/platform`: 29 pass, 0 fail.\n- **Linux (CI image):**\n- the 69 changed gateway, cli and scripts test files: 3203 pass, 0 fail.\nThe changed UI files run under vitest above.\n  - the real-runner round trip: 15/15.\n- Istanbul coverage: `executor.ts` is at 100% line and 100% branch\n(365/365, 335/335), and every changed source file not on the exclusions\nlist is above 85/80.\n\nCore docs updated: CLAUDE.md and GEMINI.md, `docs/roadmap.md`,\n`docs/architecture.md`, `docs/README.md` and `docs/cli-reference.md`,\nplus `docs/SECURITY-INVARIANTS.md` and `docs/CHANGELOG.md`.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JmSjrFVpyNKH4Je3NEDnLV\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Added Terraform apply and CloudFormation deploy with approved-scope\ncontrols, plan previews, and typed confirmation.\n* Added CLI options for approving IaC working directories, clouds,\nregions, and network hosts.\n* Added clearer IaC approval status and plan details in write previews.\n* **Behavior Changes**\n* Terraform destroy remains owner-only; Pulumi writes remain\nunavailable.\n* **Documentation**\n* Updated guides and release history with the IaC write workflow and its\nlimitations.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-09T08:10:44Z",
+          "tree_id": "f59eed6fb4428c068737698a07fe80d00c29abf6",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/5ba90ee45c07f5a0ac7fe0f915273829d9f5859d"
+        },
+        "date": 1794212516102,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 289.2348515500009,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 291.9554681500016,
             "unit": "ms"
           }
         ]
