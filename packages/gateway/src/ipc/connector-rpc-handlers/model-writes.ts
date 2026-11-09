@@ -12,14 +12,38 @@ import {
   setModelWriteEnablement,
   writesEnabledBy,
 } from "../../connectors/connector-writes/enablement-store.ts";
+import {
+  IAC_CLOUD_ENV_NAMES,
+  iacCfnHosts,
+  iacTerraformHosts,
+  isSafeIacRegion,
+  isValidIacExtraHost,
+} from "../../connectors/connector-writes/iac-clouds.ts";
+import {
+  approveWorkdir,
+  getIacGrants,
+  IAC_CLOUDS,
+  type IacCloud,
+  type IacGrants,
+  type IacPathDeps,
+  removeIacGrants,
+  setIacGrants,
+} from "../../connectors/connector-writes/iac-grants.ts";
 import { isModelOfferableRow } from "../../connectors/connector-writes/model-offerable.ts";
 import { isConnectorWriteModelAccessEnabled } from "../../connectors/connector-writes/model-write-capability.ts";
 import type {
   ConnectorWriteRow,
   ConnectorWriteWave,
 } from "../../connectors/connector-writes/types.ts";
+import { iacWildcardHosts } from "../../connectors/lazy-mesh/first-party-manifests.ts";
 import type { ToolExecutor } from "../../engine/executor.ts";
+import type { ReachRunner } from "../../extensions/extension-reach.ts";
+import {
+  type SandboxNetworkPosture,
+  sandboxNetworkPosture,
+} from "../../platform/sandbox/sandbox-posture.ts";
 import type { EnforcedPolicy } from "../../policy/policy-gate.ts";
+import { codeUnitCompare } from "../../util/code-unit-compare.ts";
 import { ConnectorRpcError } from "../connector-rpc-shared.ts";
 
 export interface ModelWritesDeps {
@@ -37,6 +61,16 @@ export interface ModelWritesDeps {
    */
   readonly onObsidianGrantChanged?: () => Promise<void>;
   /**
+   * The filesystem facts the approved-directory rule reads (D2, V85). Absent: `enable iac` is
+   * refused (it cannot canonicalise a directory it cannot see).
+   */
+  readonly iacPathDeps?: IacPathDeps;
+  /**
+   * The sandbox runner the iac children will run under; the enable prompt's host line is read from
+   * its live posture. Absent: the prompt makes no per-host claim.
+   */
+  readonly sandboxRunner?: ReachRunner;
+  /**
    * What approving the Obsidian append would let its sandbox write now (`LazyConnectorMesh.
    * obsidianWriteScope`), shown in the enable prompt. Absent: the prompt says the folders are unknown.
    */
@@ -45,6 +79,93 @@ export interface ModelWritesDeps {
     /** Per vault, its daily-note file pattern (`<vault>/<daily folder>/<format>.md`). */
     readonly notes: readonly string[];
     readonly skipped: readonly { readonly path: string; readonly reason: string }[];
+  };
+}
+
+/** The service whose opt-in also carries the approved directories and clouds (D2, V85, I15). */
+const IAC_SERVICE = "iac";
+
+function stringArray(raw: unknown, what: string): string[] {
+  if (raw === undefined) return [];
+  if (!Array.isArray(raw) || !raw.every((x): x is string => typeof x === "string")) {
+    throw new ConnectorRpcError(
+      -32602,
+      `ERR_CONNECTOR_WRITES_IAC_BAD_ARGS: ${what} must be a list of strings`,
+    );
+  }
+  return raw;
+}
+
+/** Validates the `enable iac` arguments into the grants to store; every refusal is a fixed sentence. */
+function parseIacGrants(
+  rec: Record<string, unknown> | undefined,
+  deps: ModelWritesDeps,
+): IacGrants {
+  const bad = (m: string): never => {
+    throw new ConnectorRpcError(-32602, `ERR_CONNECTOR_WRITES_IAC_BAD_ARGS: ${m}`);
+  };
+  if (deps.iacPathDeps === undefined) {
+    throw new ConnectorRpcError(
+      -32603,
+      "ERR_CONNECTOR_WRITES_IAC_UNAVAILABLE: this gateway cannot check directories",
+    );
+  }
+  const workdirs: string[] = [];
+  for (const raw of stringArray(rec?.["workdirs"], "workdirs")) {
+    const r = approveWorkdir(raw, deps.iacPathDeps);
+    if (!r.ok) {
+      throw new ConnectorRpcError(-32602, `ERR_CONNECTOR_WRITES_IAC_WORKDIR: ${r.reason}`);
+    }
+    workdirs.push(r.path);
+  }
+  const clouds = stringArray(rec?.["clouds"], "clouds").map((c) =>
+    (IAC_CLOUDS as readonly string[]).includes(c)
+      ? (c as IacCloud)
+      : bad("a cloud must be aws, azure or gcp"),
+  );
+  const regions = stringArray(rec?.["regions"], "regions").map((r) =>
+    isSafeIacRegion(r) ? r : bad("a region is not a plain region name"),
+  );
+  const net = stringArray(rec?.["net"], "net").map((h) => {
+    const host = h.trim().toLowerCase();
+    return isValidIacExtraHost(host) ? host : bad("a host must be a plain host name or host:port");
+  });
+  if (workdirs.length === 0 && clouds.length === 0) {
+    bad("name at least one --workdir or --cloud");
+  }
+  return {
+    workdirs: [...new Set(workdirs)].sort(codeUnitCompare),
+    clouds: [...new Set(clouds)].sort(codeUnitCompare),
+    regions: [...new Set(regions)].sort(codeUnitCompare),
+    net: [...new Set(net)].sort(codeUnitCompare),
+  };
+}
+
+/** What the prompt shows for the grants: names only, never a credential value. */
+function iacPromptScope(
+  grants: IacGrants,
+  posture: SandboxNetworkPosture,
+): Record<string, unknown> {
+  const cfn = grants.clouds.includes("aws")
+    ? iacCfnHosts(grants.regions[0] ?? "").concat(grants.regions.slice(1).flatMap(iacCfnHosts))
+    : [];
+  return {
+    workdirs: grants.workdirs,
+    clouds: grants.clouds,
+    regions: grants.regions,
+    net: grants.net,
+    envNames: Object.fromEntries(grants.clouds.map((c) => [c, IAC_CLOUD_ENV_NAMES[c]])),
+    hosts: [
+      ...new Set([
+        ...iacTerraformHosts(grants.clouds),
+        ...iacWildcardHosts(grants.clouds),
+        ...cfn,
+        ...grants.net,
+      ]),
+    ].sort(codeUnitCompare),
+    // The SAME decision the sandbox makes at spawn (helper found and the forwarder probe passing
+    // on Linux), never a guess from the platform name.
+    hostScope: posture,
   };
 }
 
@@ -128,6 +249,16 @@ export async function handleConnectorWritesEnable(
     return { toolId: r.toolId, actionType: r.actionType, wave: r.wave, offerable, state };
   });
   const payload: Record<string, unknown> = { service, maxWave, writes };
+  // The approved directories and clouds are named in the prompt the owner approves (D2, I15).
+  const iacGrants = service === IAC_SERVICE ? parseIacGrants(rec, deps) : undefined;
+  if (iacGrants !== undefined) {
+    // No runner to ask: say the weakest thing (a port, not a host), never "per host".
+    const posture =
+      deps.sandboxRunner === undefined
+        ? "all_or_nothing"
+        : sandboxNetworkPosture(deps.sandboxRunner);
+    payload["iacGrants"] = iacPromptScope(iacGrants, posture);
+  }
   // The Obsidian widening is named in the prompt the owner approves (I15, OR-B4-1).
   const scope = obsidianScopeFor(service, writes, deps);
   if (scope !== undefined) payload["fileWriteScope"] = scope;
@@ -138,6 +269,7 @@ export async function handleConnectorWritesEnable(
   // The approved set is exactly the offerable-now writes the owner just saw listed (V84).
   const approved = writes.filter((w) => w.offerable).map((w) => w.toolId);
   setModelWriteEnablement(deps.db, service, maxWave, deps.now(), approved);
+  if (iacGrants !== undefined) setIacGrants(deps.db, iacGrants, deps.now());
   // After the row: the restart's next spawn reads the grant from it.
   if (service === OBSIDIAN_SERVICE) await deps.onObsidianGrantChanged?.();
   return { service, maxWave, writes: writes.length };
@@ -149,7 +281,9 @@ export async function handleConnectorWritesDisable(
   deps: ModelWritesDeps,
 ): Promise<{ removed: boolean }> {
   const service = parseServiceForDisable(rec?.["service"]);
-  const removed = removeModelWriteEnablement(deps.db, service);
+  let removed = removeModelWriteEnablement(deps.db, service);
+  // Disabling `iac` drops the approved directories and clouds too (narrowing needs no approval).
+  if (service === IAC_SERVICE && removeIacGrants(deps.db)) removed = true;
   if (service === OBSIDIAN_SERVICE) await deps.onObsidianGrantChanged?.();
   return { removed };
 }
@@ -165,6 +299,8 @@ export function handleConnectorWritesStatus(deps: ModelWritesDeps): {
     enabled: boolean;
     maxWave?: ConnectorWriteWave;
     enabledAt?: number;
+    /** `iac` only: the approved directories, clouds, regions and extra hosts. */
+    iacGrants?: IacGrants;
     writes: number;
     offerable: number;
     awaitingApproval: number;
@@ -182,9 +318,10 @@ export function handleConnectorWritesStatus(deps: ModelWritesDeps): {
       offerable: approved,
       awaitingApproval: offerableNow.length - approved,
     };
+    const extra = service === IAC_SERVICE ? { iacGrants: getIacGrants(deps.db) } : {};
     return e === undefined
-      ? { service, enabled: false, ...counts }
-      : { service, enabled: true, maxWave: e.maxWave, enabledAt: e.enabledAt, ...counts };
+      ? { service, enabled: false, ...counts, ...extra }
+      : { service, enabled: true, maxWave: e.maxWave, enabledAt: e.enabledAt, ...counts, ...extra };
   });
   return {
     services,

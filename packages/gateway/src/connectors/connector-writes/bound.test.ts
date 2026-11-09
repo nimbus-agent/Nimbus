@@ -105,15 +105,114 @@ describe("withBound", () => {
 });
 
 describe("the production table (D0b mechanism, D1c rows)", () => {
-  test("the bound production rows are exactly the two multi-file commits", () => {
+  test("the bound production rows are the two multi-file commits and the three plan-bound iac writes", () => {
     expect(
       CONNECTOR_WRITE_ROWS.filter((r) => r.bound !== undefined)
         .map((r) => r.toolId)
         .sort(),
-    ).toEqual(["github_file_commit", "gitlab_commit_create"]);
+    ).toEqual(
+      [
+        "github_file_commit",
+        "gitlab_commit_create",
+        "iac_cloudformation_deploy",
+        "iac_terraform_apply",
+        "iac_terraform_destroy",
+      ].sort(),
+    );
   });
 
   test("no production row's tool id is a prepare tool (the classes stay apart)", () => {
     for (const r of CONNECTOR_WRITE_ROWS) expect(isPrepareToolId(r.toolId)).toBe(false);
+  });
+});
+
+describe("settled prepare reads (D2): the settle tag, its tool and its bound field names", () => {
+  const two = new Set([SYNTH_PREPARE_TOOL, "synth_show"]);
+  const tfBinds = [
+    { field: "planFile", from: () => "x" },
+    { field: "planSha256", from: () => "x" },
+  ];
+  const settled = (over: Record<string, unknown>, binds = tfBinds): BoundWrite => ({
+    ...synthBound({
+      settle: "iac-terraform",
+      settleTool: "synth_show",
+      preflight: "iac",
+      ...over,
+    } as never),
+    binds,
+  });
+
+  test("a terraform settle with its show tool and planFile + planSha256 declares", () => {
+    expect(() => withBound(PREVIEWED, settled({}), two)).not.toThrow();
+  });
+
+  test("a cfn settle takes no settle tool and binds exactly changeSetId", () => {
+    const cfn = {
+      ...synthBound({ settle: "iac-cfn", preflight: "iac" } as never),
+      binds: [{ field: "changeSetId", from: () => "x" }],
+    } as BoundWrite;
+    expect(() => withBound(PREVIEWED, cfn, two)).not.toThrow();
+    const withTool = {
+      ...synthBound({ settle: "iac-cfn", settleTool: "synth_show", preflight: "iac" } as never),
+      binds: cfn.binds,
+    } as BoundWrite;
+    expect(() => withBound(PREVIEWED, withTool, two)).toThrow("takes no settle tool");
+  });
+
+  test("refuses a terraform settle without a settle tool, and a settle tool without a settle", () => {
+    expect(() => withBound(PREVIEWED, settled({ settleTool: undefined }), two)).toThrow(
+      "needs a settle tool",
+    );
+    const orphan = synthBound({ settleTool: "synth_show" } as never);
+    expect(() => withBound(PREVIEWED, orphan, two)).toThrow("settle tool without a settle");
+  });
+
+  test("refuses a settle tool that is not declared, is the write tool or is the prepare tool", () => {
+    expect(() => withBound(PREVIEWED, settled({ settleTool: "nope" }), two)).toThrow(
+      "settle tool is not a declared prepare tool",
+    );
+    expect(() =>
+      withBound(
+        PREVIEWED,
+        settled({ settleTool: "synth_apply" }),
+        new Set([...two, "synth_apply"]),
+      ),
+    ).toThrow("settle tool is the write tool itself");
+    expect(() => withBound(PREVIEWED, settled({ settleTool: SYNTH_PREPARE_TOOL }), two)).toThrow(
+      "settle tool is the prepare tool itself",
+    );
+  });
+
+  test("refuses bound field names that are not the settler's value keys", () => {
+    expect(() =>
+      withBound(PREVIEWED, settled({}, [{ field: "planFile", from: () => "x" }]), two),
+    ).toThrow("bound fields must be exactly the settler's values");
+    expect(() =>
+      withBound(
+        PREVIEWED,
+        settled({}, [...tfBinds, { field: "extraBound", from: () => "x" }]),
+        two,
+      ),
+    ).toThrow("bound fields must be exactly the settler's values");
+  });
+
+  test("a settled row must declare preflight: its confirm, channel and workdir-lock checks run there", () => {
+    expect(() => withBound(PREVIEWED, settled({ preflight: undefined }), two)).toThrow(
+      "a settled row must declare preflight",
+    );
+    const cfn = {
+      ...synthBound({ settle: "iac-cfn" } as never),
+      binds: [{ field: "changeSetId", from: () => "x" }],
+    } as BoundWrite;
+    expect(() => withBound(PREVIEWED, cfn, two)).toThrow("a settled row must declare preflight");
+  });
+
+  test("a preflight tag is accepted only as iac", () => {
+    expect(() =>
+      withBound(PREVIEWED, synthBound({ preflight: "iac" } as never), two),
+    ).not.toThrow();
+    expect(() => withBound(PREVIEWED, synthBound({ preflight: "other" } as never), two)).toThrow(
+      "preflight",
+    );
   });
 });

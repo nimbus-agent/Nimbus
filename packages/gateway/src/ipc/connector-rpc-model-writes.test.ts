@@ -743,6 +743,7 @@ describe("the Obsidian opt-in restarts the Obsidian connector (B4b, I15)", () =>
   test("dispatchConnectorRpc wires the restart to the mesh's restartObsidian", async () => {
     let restarts = 0;
     const connectorMesh = {
+      iacPathDepsForEnable: () => undefined,
       restartObsidian: () => {
         restarts += 1;
         return Promise.resolve();
@@ -844,6 +845,7 @@ describe("the Obsidian enable prompt names the folders it may write (B4b Task B3
   test("dispatchConnectorRpc reads the scope from the mesh", async () => {
     let reads = 0;
     const connectorMesh = {
+      iacPathDepsForEnable: () => undefined,
       restartObsidian: () => Promise.resolve(),
       obsidianWriteScope: () => {
         reads += 1;

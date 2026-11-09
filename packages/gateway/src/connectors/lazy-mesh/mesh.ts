@@ -1,5 +1,5 @@
-import { existsSync, realpathSync, rmSync } from "node:fs";
-import { homedir } from "node:os";
+import { existsSync, realpathSync, rmSync, statSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 
 import { MCPClient } from "@mastra/mcp";
 import { writeToolCallLog } from "../../db/tool-call-log.ts";
@@ -8,6 +8,7 @@ import { serviceOf } from "../../engine/service-of.ts";
 import { wrapToolOutput } from "../../engine/tool-output-envelope.ts";
 import { EXTENSION_SERVICE_ID_PATTERN } from "../../extensions/extension-service-id.ts";
 import { extensionProcessEnv } from "../../extensions/spawn-env.ts";
+import { processEnvGet } from "../../platform/env-access.ts";
 import type { PlatformPaths } from "../../platform/paths.ts";
 import { extensionStageRootFor, sandboxCwdFor } from "../../platform/sandbox/sandbox-cwd.ts";
 import {
@@ -17,6 +18,12 @@ import {
 import type { NimbusVault } from "../../vault/nimbus-vault.ts";
 import { extractMcpToolText, MCP_TOOL_RESULT_MAX_BYTES } from "../_lib/mcp-tool-result.ts";
 import { readConnectorSecret } from "../connector-vault.ts";
+import { scanForGitEntry } from "../connector-writes/iac-git-scan.ts";
+import {
+  EMPTY_IAC_GRANTS,
+  type IacGrants,
+  type IacPathDeps,
+} from "../connector-writes/iac-grants.ts";
 import { CONNECTOR_WRITE_ROWS } from "../connector-writes/index.ts";
 import type { ExtensionSyncRequest } from "../extension-sync/sync-response.ts";
 import { resolveGithubBase } from "../github-api-base.ts";
@@ -61,6 +68,13 @@ import {
 import type { ExtensionSlotSource } from "./extension-slot-source.ts";
 import { manifestForFirstParty } from "./first-party-manifests.ts";
 import {
+  type IacHost,
+  IacRunner,
+  type IacRunnerDeps,
+  iacProtectedRootsFor,
+  routeIacTools,
+} from "./iac-runner.ts";
+import {
   EXT_MESH_PREFIX,
   extensionMeshKey,
   LAZY_MESH,
@@ -87,6 +101,7 @@ import {
   phase3AddFlagsmithMcp,
   phase3AddFluxMcp,
   phase3AddGcpMcp,
+  phase3AddIacMcp,
   phase3AddLaunchdarklyMcp,
   phase3AddLookerMcp,
   phase3AddMlflowMcp,
@@ -133,6 +148,10 @@ const PHASE3_LISTING_ADDERS: Readonly<Record<string, Phase3ServerAdder>> = {
   aws: phase3AddAwsMcp,
   azure: phase3AddAzureMcp,
   gcp: phase3AddGcpMcp,
+  // D2: the iac server, LISTED in its no-network bundle slot so the model door can read the write
+  // and prepare tools' schemas; the plan, show, apply and CloudFormation children run in their own
+  // per-call profiles, never in this slot.
+  iac: phase3AddIacMcp,
 };
 
 /**
@@ -202,6 +221,8 @@ export class LazyConnectorMesh {
   private readonly listedFirstParty = new Set<string>();
   private readonly firstPartyListing: Readonly<Record<string, FirstPartyListingEntry>>;
   private readonly spawnContext: MeshSpawnContext;
+  private readonly iacRunner: IacRunner;
+  private readonly iacPathDeps: IacPathDeps;
   private readonly paths: PlatformPaths;
   private readonly removeSandboxDir: (dir: string) => void;
   private readonly sandboxDirExists: (dir: string) => boolean;
@@ -268,6 +289,10 @@ export class LazyConnectorMesh {
       now?: () => Date;
       /** Test seam: the Obsidian grant ledger. Production: a file under `configDir`. */
       obsidianGrantLedger?: ObsidianGrantLedgerStore;
+      /** The owner's V85 approval of IaC directories and clouds, read fresh per call. Absent: nothing approved. */
+      iacGrants?: () => IacGrants;
+      /** Test seam: overrides of the IaC runner's dependencies. */
+      iacRunnerDeps?: Partial<IacRunnerDeps>;
     },
   ) {
     // Only stored here; `collectBuiltInToolMaps` and `listUserMcpTools` await it (undefined means
@@ -345,6 +370,30 @@ export class LazyConnectorMesh {
       bumpToolsEpoch: () => this.bumpToolsEpoch(),
       scheduleLazyDisconnect: (k) => this.scheduleLazyDisconnect(k),
     };
+    this.iacPathDeps = {
+      platform,
+      realpath: (p) => realpathSync.native(p),
+      isDirectory: (p) => {
+        try {
+          return statSync(p).isDirectory();
+        } catch {
+          return false;
+        }
+      },
+      homeDir: homedir(),
+      tmpDir: tmpdir(),
+      // Nimbus's own folders: no approved Terraform directory may overlap them.
+      protectedRoots: iacProtectedRootsFor(paths, platform, processEnvGet("XDG_RUNTIME_DIR")),
+      gitScan: (dir) => scanForGitEntry(dir),
+    };
+    this.iacRunner = new IacRunner({
+      paths,
+      vault,
+      platform,
+      grants: options?.iacGrants ?? (() => EMPTY_IAC_GRANTS),
+      pathDeps: this.iacPathDeps,
+      ...options?.iacRunnerDeps,
+    });
     this.firstPartyListing = this.buildFirstPartyListing();
     this.extensionSlots = new ExtensionSlots(
       {
@@ -364,6 +413,16 @@ export class LazyConnectorMesh {
     );
   }
 
+  /** The iac runner, for the dispatcher's bound-write capabilities (D2). */
+  iacHost(): IacHost {
+    return this.iacRunner;
+  }
+
+  /** The filesystem facts the `enable iac` directory rule reads. */
+  iacPathDepsForEnable(): IacPathDeps {
+    return this.iacPathDeps;
+  }
+
   getToolsEpoch(): number {
     return this.toolsEpoch;
   }
@@ -377,7 +436,7 @@ export class LazyConnectorMesh {
   }
 
   /**
-   * The explicit listing map: the 14 phase-3 services on the phase-3 bundle (the 11 of C1 plus aws, azure and gcp) (today's spawner probe)
+   * The explicit listing map: the 15 phase-3 services on the phase-3 bundle (the 11 of C1 plus aws, azure and gcp, and iac for D2) (today's spawner probe)
    * and each per-service-slot service (`WAVE2_LISTING`) on its own slot. Each `ensure` calls the mesh's own `ensure*Running`
    * method at call time (a test seam), and names exactly that service's slot.
    */
@@ -1316,6 +1375,8 @@ export class LazyConnectorMesh {
     this.dropDisallowedConnectorTools(merged);
     const slotForTool = await this.buildSlotForToolMap();
     this.wrapMergedToolsWithRefcount(merged, slotForTool);
+    // The iac tools run in their own per-run children (D2), not in the listing slot.
+    routeIacTools(merged, this.iacRunner);
     return merged;
   }
 
@@ -1397,7 +1458,10 @@ export class LazyConnectorMesh {
     // shutdown, the one production caller, stops the sync scheduler and IPC server before this.
     // An extension preparation still in flight is not in that snapshot, so it is told not to connect.
     this.extensionSlots.markAllStopped();
+    // The IaC runner's per-run children are not in a slot: stop it too (kills them and waits, frees).
+    const iacStopped = this.iacRunner.stop().catch(() => undefined);
     await Promise.all(Array.from(this.lazySlots.keys(), (key) => this.stopLazyClient(key)));
+    await iacStopped;
     try {
       await this.filesystem.disconnect();
     } catch {
@@ -1438,6 +1502,7 @@ export function createLazyConnectorMesh(
     filesystemSpawnGate?: Promise<void>;
     extensionSlots?: ExtensionSlotSource;
     extensionSpawnGate?: Promise<void>;
+    iacGrants?: () => IacGrants;
   },
 ): Promise<LazyConnectorMesh> {
   return Promise.try(() => new LazyConnectorMesh(paths, vault, options));

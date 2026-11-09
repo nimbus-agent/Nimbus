@@ -17,6 +17,13 @@ export const MODEL_NEVER_OFFERED_REASONS: Readonly<Record<string, string>> = Obj
   outlook_mail_send: "mail sends are never offered to the model (OR-B3w-1)",
   bitbucket_pr_merge:
     "the Bitbucket merge exposes no head-commit precondition the connector can send, so a merge cannot be tied to the commit the owner reviewed (D1 round-1 fix 8)",
+  iac_terraform_destroy:
+    "irreversible deletion of every resource in a configuration stays an owner action (OR-D2-2)",
+  iac_pulumi_up:
+    "no plan-bound Pulumi apply exists (saved update plans are experimental): refused on every door",
+  iac_cloudformation_changeset_discard:
+    "only the gateway's own cleanup of a change set it created may discard one",
+  k8s_manifest_apply: "Kubernetes apply is D3: not offered until its sandbox grants exist",
 });
 
 /** The tool ids of {@link MODEL_NEVER_OFFERED_REASONS}: a row in this set is never offered. */

@@ -71,7 +71,10 @@ describe("withoutFileText: only the commit action types and their prepare reads"
   const PREPARE_TYPES = ["github.write.prepare", "gitlab.write.prepare"];
 
   test("the recognised types are exactly the bound rows' types and their prepare reads", () => {
-    const bound = CONNECTOR_WRITE_ROWS.filter((r) => r.bound !== undefined);
+    // The commit rows only: the iac rows are bound too (D2), and carry a template, not files.
+    const bound = CONNECTOR_WRITE_ROWS.filter(
+      (r) => r.bound !== undefined && !r.actionType.startsWith("iac."),
+    );
     expect([...COMMIT_WRITE_ACTION_TYPES].sort()).toEqual(bound.map((r) => r.actionType).sort());
     expect(bound.map((r) => `${serviceOf(r.actionType)}.write.prepare`).sort()).toEqual(
       PREPARE_TYPES,

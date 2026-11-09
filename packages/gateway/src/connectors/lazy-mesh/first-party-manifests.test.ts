@@ -195,12 +195,41 @@ describe("firstPartyWildcardHosts", () => {
       athena: [...aws("athena"), ...aws("sts")],
       cloudwatch: [...aws("logs"), ...aws("sts")],
       sagemaker: [...aws("api.sagemaker"), ...aws("sts")],
+      iac_aws: [
+        ...[
+          "ec2",
+          "sts",
+          "kms",
+          "logs",
+          "rds",
+          "sns",
+          "sqs",
+          "ssm",
+          "ecs",
+          "ecr",
+          "eks",
+          "lambda",
+          "dynamodb",
+          "autoscaling",
+          "elasticloadbalancing",
+          "secretsmanager",
+          "apigateway",
+          "events",
+          "cloudwatch",
+          "monitoring",
+        ].flatMap((x) => aws(x)),
+        "*.s3.amazonaws.com",
+      ],
+      iac_azure: ["*.blob.core.windows.net", "*.vault.azure.net"],
+      iac_gcp: ["*.googleapis.com"],
     });
   });
 
   test("every pattern is valid, and every key is a manifest key", () => {
     for (const [key, patterns] of Object.entries(FIRST_PARTY_WILDCARD_HOSTS)) {
-      expect(FIRST_PARTY_MANIFESTS[key]).toBeDefined();
+      // `iac_<cloud>` keys are not manifests: they are selected by the clouds the owner granted
+      // (`iacWildcardHosts`) and merged into the iac profile's manifest.
+      if (!key.startsWith("iac_")) expect(FIRST_PARTY_MANIFESTS[key]).toBeDefined();
       for (const pattern of patterns) expect(isValidWildcardHost(pattern)).toBe(true);
     }
   });

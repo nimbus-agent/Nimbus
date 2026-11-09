@@ -73,9 +73,16 @@ const SCHEMA_KEYS: Readonly<Record<(typeof DOWN_TO_WAVE_3)[number], readonly str
 };
 
 describe("C0: the sends are never offered to the model (OR-W34-1)", () => {
-  test("the set is the seven sends (each a real row whose action type ends in .send) and the Bitbucket merge (D1), each with a reason", () => {
+  test("the set is the seven sends (each a real row whose action type ends in .send), the Bitbucket merge (D1) and the D2 rows that stay owner-only (destroy, Pulumi, the change-set discard, D3's Kubernetes apply), each with a reason", () => {
     expect([...MODEL_NEVER_OFFERED_TOOL_IDS].sort((a, b) => a.localeCompare(b))).toEqual(
-      [...SENDS, "bitbucket_pr_merge"].sort((a, b) => a.localeCompare(b)),
+      [
+        ...SENDS,
+        "bitbucket_pr_merge",
+        "iac_terraform_destroy",
+        "iac_pulumi_up",
+        "iac_cloudformation_changeset_discard",
+        "k8s_manifest_apply",
+      ].sort((a, b) => a.localeCompare(b)),
     );
     for (const id of SENDS) expect(rowOf(id).actionType.endsWith(".send"), id).toBe(true);
     expect(Object.keys(MODEL_NEVER_OFFERED_REASONS).sort((a, b) => a.localeCompare(b))).toEqual(

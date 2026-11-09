@@ -37,6 +37,7 @@
 // named only inside their own gates (D17/D19).
 import type { ChatopsPolicy } from "../../policy/types.ts";
 import { commitModelRefusal } from "./commit-paths.ts";
+import { iacModelRefusal } from "./iac-limits.ts";
 import {
   driveContentFormats,
   type RemoteContentFormat,
@@ -1052,5 +1053,8 @@ export function modelWriteRefusal(
   // act door never proposes a commit.
   const commit = commitModelRefusal(toolId, input);
   if (commit !== undefined) return commit;
+  // D2: a CloudFormation deploy asking for an IAM capability. MODEL door only.
+  const iac = iacModelRefusal(toolId, input);
+  if (iac !== undefined) return iac;
   return knowledgeBaseRefusal(toolId, input, ctx.kb);
 }

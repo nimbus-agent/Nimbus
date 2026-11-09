@@ -77,9 +77,17 @@ export interface ConnectorWriteRow {
   /**
    * A bound write (Phase 9.7 D0b, I54): the gateway runs this row's PREPARE read at the gate and
    * injects the values it binds into the write's input; the caller never supplies them. Set with
-   * {@link withBound}. Two rows declare one (D1c): the GitHub and GitLab multi-file commits.
+   * {@link withBound}. Five rows declare one: the GitHub and GitLab multi-file commits (D1c) and
+   * the Terraform apply, Terraform destroy and CloudFormation deploy (D2).
    */
   readonly bound?: BoundWrite;
+  /**
+   * D2: a fixed reason the gate refuses this write with on EVERY door, before any capture, prepare
+   * or prompt (nothing is shown, nobody is asked, the connector is never called). Set with
+   * {@link withRefusal}; found by action TYPE only (I3). The Pulumi apply carries one: saved update
+   * plans are experimental, so there is nothing an apply could be bound to.
+   */
+  readonly refuse?: string;
 }
 
 /**
@@ -135,7 +143,34 @@ export interface PrepareRead {
    * will make as a unified diff. See {@link PrepareDiff}.
    */
   readonly diff?: PrepareDiff;
+  /**
+   * D2: a closed tag naming the GATEWAY-side settler that fixes the plan's identity after the
+   * prepare reply (a Terraform plan file moved, hashed and rendered by the gateway; a CloudFormation
+   * change set cross-checked against the input). Its values REPLACE the ones `binds` read from the
+   * reply. A tag, never code: the settler is looked up by this exact key at run time.
+   */
+  readonly settle?: PrepareSettle;
+  /** The prepare tool a Terraform settler calls to render the saved plan (`terraform show -json`). */
+  readonly settleTool?: string;
+  /**
+   * D2: run the preflight phase (consent-channel capability, confirm renderability, approved
+   * workdir or cloud) BEFORE the prepare child exists. Only `"iac"`.
+   */
+  readonly preflight?: "iac";
 }
+
+/** The settlers a prepare read may name (D2). Closed: a row cannot name code. */
+export type PrepareSettle = "iac-terraform" | "iac-cfn";
+
+/**
+ * The value keys each settler returns, which a settled row's `binds` must name exactly. The
+ * Terraform settler returns its own moved plan path and its own hash; the CloudFormation settler
+ * returns the change set's ARN.
+ */
+export const SETTLE_VALUE_KEYS: Readonly<Record<PrepareSettle, readonly string[]>> = Object.freeze({
+  "iac-terraform": Object.freeze(["planFile", "planSha256"]),
+  "iac-cfn": Object.freeze(["changeSetId"]),
+});
 
 /**
  * How a bound write's change is shown in full (D1c, D42(g)). `files` pairs the caller's input (the
@@ -404,6 +439,61 @@ export function withConfirm(r: ConnectorWriteRow, confirm: ConfirmTemplate): Con
   return Object.freeze({ ...r, confirm });
 }
 
+/**
+ * A frozen copy of `r` that the gate refuses with `reason` on every door (D2). Throws at declaration
+ * unless the row is a Wave 4 row with no preview, reader or bound prepare step (a refused write has
+ * nothing to show or read), and the reason is a non-empty single line.
+ */
+export function withRefusal(r: ConnectorWriteRow, reason: string): ConnectorWriteRow {
+  if (r.wave !== 4) throw new Error(`connector write refusal: row ${r.toolId} is not Wave 4`);
+  if (r.preview !== undefined || r.before !== undefined || r.bound !== undefined) {
+    throw new Error(
+      `connector write refusal: row ${r.toolId} has a preview, reader or prepare step`,
+    );
+  }
+  if (reason.trim() === "" || reason.includes("\n") || reason.includes("\r")) {
+    throw new Error(`connector write refusal: row ${r.toolId} reason must be one non-empty line`);
+  }
+  return Object.freeze({ ...r, refuse: reason });
+}
+
+/** The structural problems of a bound declaration's settle, settle tool and preflight tags (D2). */
+function settleProblems(
+  r: ConnectorWriteRow,
+  bound: BoundWrite,
+  prepareToolIds: ReadonlySet<string>,
+): string[] {
+  const { prepare, binds } = bound;
+  const out: string[] = [];
+  if (prepare.preflight !== undefined && prepare.preflight !== "iac") {
+    out.push('preflight must be "iac"');
+  }
+  const { settle, settleTool } = prepare;
+  if (settle === undefined) {
+    if (settleTool !== undefined) out.push("has a settle tool without a settle");
+    return out;
+  }
+  if (!Object.hasOwn(SETTLE_VALUE_KEYS, settle)) return [...out, "settle is not a known settler"];
+  // The confirm, channel and workdir-lock checks run in the preflight phase; a settled row without
+  // the tag would skip them and run its child first.
+  if (prepare.preflight === undefined) out.push("a settled row must declare preflight");
+  if (settle === "iac-cfn") {
+    if (settleTool !== undefined) out.push("takes no settle tool");
+  } else if (settleTool === undefined) {
+    out.push("needs a settle tool");
+  } else {
+    if (!prepareToolIds.has(settleTool)) out.push("settle tool is not a declared prepare tool");
+    if (settleTool === r.toolId) out.push("settle tool is the write tool itself");
+    if (settleTool === prepare.tool) out.push("settle tool is the prepare tool itself");
+  }
+  const expected = SETTLE_VALUE_KEYS[settle];
+  const fields = binds.map((b) => b.field);
+  if (fields.length !== expected.length || !expected.every((k) => fields.includes(k))) {
+    out.push("bound fields must be exactly the settler's values");
+  }
+  return out;
+}
+
 /** The structural problems of a bound declaration (empty when none). */
 export function boundWriteProblems(
   r: ConnectorWriteRow,
@@ -438,6 +528,7 @@ export function boundWriteProblems(
   ] as const) {
     if (!Number.isInteger(n) || n <= 0) out.push(`prepare ${name} must be a positive integer`);
   }
+  out.push(...settleProblems(r, bound, prepareToolIds));
   const diffFields = r.preview.fields.filter((f) => f.kind === "diff");
   if (diffFields.length > 0 && prepare.diff === undefined) {
     out.push("has a diff field but the prepare read has no diff");

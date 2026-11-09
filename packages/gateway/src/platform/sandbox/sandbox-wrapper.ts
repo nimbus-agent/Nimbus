@@ -261,6 +261,8 @@ export async function runSandboxWrapper(
       env: childEnv,
       cwd,
       stdio: "inherit",
+      // The iac profile id is new on every run, so its grants are released when the child exits.
+      ...(policy.iacProfile === true ? { releaseGrantsOnExit: true } : {}),
       ...(writer === null ? {} : { observer: writer }),
     });
   } catch (e) {

@@ -476,3 +476,106 @@ describe("ConnectorWritePreview: the gateway's diff (D1c)", () => {
     expect(src).not.toContain("dangerouslySetInnerHTML");
   });
 });
+
+describe("ConnectorWritePreview: the gateway's plan (D2)", () => {
+  const plan = (over: Record<string, unknown> = {}) => ({
+    lines: [
+      "Deletes: 0, Replaces: 1, Creates: 1, Updates: 0",
+      "Terraform 1.9.5",
+      "[replace: delete, create] aws_instance.web (aws_instance, registry.terraform.io/hashicorp/aws)",
+      "<img src=x onerror=alert(1)>",
+      "End of plan: 2 changes (0 deletes, 1 replaces)",
+    ],
+    bytes: 200,
+    sha256: "b".repeat(64),
+    changeCount: 2,
+    ...over,
+  });
+  const iac = (p: unknown) =>
+    details({ actionType: "iac.terraform.apply", service: "iac", plan: p });
+
+  it("shows every line in one text node inside a bounded scroll box, with the digest and no second footer", () => {
+    const { container } = render(<ConnectorWritePreview details={iac(plan())} />);
+    const section = screen.getByTestId("connector-write-plan");
+    const pre = screen.getByTestId("connector-write-plan-text");
+    expect(pre.textContent).toBe(plan().lines.join("\n"));
+    expect(pre.childNodes).toHaveLength(1);
+    expect(section).toHaveTextContent("b".repeat(64));
+    expect(section.textContent?.match(/End of plan/gu)).toHaveLength(1);
+    // text nodes only (I8): the markup-looking line is text, never an element
+    expect(container.querySelector("img")).toBeNull();
+    expect(pre.textContent).toContain("<img src=x onerror=alert(1)>");
+  });
+
+  it("a 64 KiB plan is one text node with no per-line elements and no cut", () => {
+    const lines = Array.from({ length: 20_000 }, (_, i) => `line ${String(i)}`);
+    lines.push("End of plan: 0 changes (0 deletes, 0 replaces)");
+    render(<ConnectorWritePreview details={iac(plan({ lines }))} />);
+    const pre = screen.getByTestId("connector-write-plan-text");
+    expect(pre.textContent).toBe(lines.join("\n"));
+    expect(screen.getByTestId("connector-write-plan").querySelectorAll("*").length).toBeLessThan(8);
+  });
+
+  it("a plan the view cannot read is an error, never a partial view", () => {
+    for (const bad of [
+      "text",
+      { lines: "not a list" },
+      { lines: [] },
+      { lines: ["ok", 7] },
+      plan({ sha256: 7 }),
+      plan({ sha256: "b".repeat(63) }),
+      plan({ sha256: "B".repeat(64) }),
+      plan({ sha256: undefined }),
+      plan({ changeCount: -1 }),
+      plan({ changeCount: "2" }),
+      plan({ deleteCount: 1.5 }),
+      plan({ bytes: "200" }),
+      // a plan cut before its footer is not a whole plan
+      plan({ lines: ["Deletes: 0, Replaces: 1, Creates: 1, Updates: 0", "Terraform 1.9.5"] }),
+      plan({ lines: ["End of plan: 1 changes", "one more line after the footer"] }),
+      plan({ lines: ["Unrelated: End of plan: 2 changes"] }),
+    ]) {
+      const { unmount } = render(<ConnectorWritePreview details={iac(bad)} />);
+      expect(screen.getByTestId("connector-write-plan-error")).toBeInTheDocument();
+      expect(screen.queryByTestId("connector-write-plan")).toBeNull();
+      unmount();
+    }
+  });
+
+  it("no plan, no section", () => {
+    render(<ConnectorWritePreview details={details()} />);
+    expect(screen.queryByTestId("connector-write-plan")).toBeNull();
+    expect(screen.queryByTestId("connector-write-plan-error")).toBeNull();
+  });
+});
+
+describe("ConnectorWritePreview: a plan-bound write is never collapsed (D2 review)", () => {
+  const template = `Resources:
+  Fn:
+    UserData: ${"A".repeat(5_000)}
+    Hidden: PAYLOAD-AT-THE-END`;
+  const deploy = (type: string) =>
+    details({
+      actionType: type,
+      service: "iac",
+      fields: [{ label: "Template", kind: "text", value: template }],
+    });
+
+  it.each(["iac.cloudformation.deploy", "iac.terraform.apply", "iac.terraform.destroy"])(
+    "%s shows a long field in full in a bounded scroll box, with no Show full button",
+    (type) => {
+      render(<ConnectorWritePreview details={deploy(type)} />);
+      const pre = screen.getByTestId("connector-write-full-value");
+      expect(pre.textContent).toBe(template);
+      expect(pre.textContent).toContain("PAYLOAD-AT-THE-END");
+      expect(pre.parentElement?.className).toContain("overflow-auto");
+      expect(screen.queryByRole("button", { name: /Show full/i })).toBeNull();
+    },
+  );
+
+  it("another write type still collapses a long value (the plan-bound rule is not global)", () => {
+    render(<ConnectorWritePreview details={deploy("github.issue.create")} />);
+    expect(screen.queryByTestId("connector-write-full-value")).toBeNull();
+    expect(screen.getByRole("button", { name: /Show full/i })).toBeInTheDocument();
+  });
+});

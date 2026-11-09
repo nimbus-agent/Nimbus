@@ -7,11 +7,25 @@ import { isConnectorWriteToolId } from "../connector-write-registry.ts";
 import { installedConnectorsPackageRoot } from "../testing/connector-write-registrations.ts";
 import { isPrepareToolId, PREPARE_TOOL_IDS } from "./prepare-tools.ts";
 
-const COMMIT_PREPARE_IDS = ["github_commit_prepare", "gitlab_commit_prepare"] as const;
+const COMMIT_PREPARE_IDS = [
+  "github_commit_prepare",
+  "gitlab_commit_prepare",
+  "iac_cloudformation_changeset_create",
+  "iac_terraform_destroy_plan",
+  "iac_terraform_plan",
+  "iac_terraform_show_json",
+  "k8s_manifest_plan",
+] as const;
+
+/** The connector directory (= mesh server) each prepare id is registered in. */
+function serverOf(id: string): string {
+  const head = id.split("_")[0] as string;
+  return head === "k8s" ? "kubernetes" : head;
+}
 
 describe("PREPARE_TOOL_IDS (D0b, D1c)", () => {
-  test("is exactly the two commit prepare tools", () => {
-    expect(PREPARE_TOOL_IDS.size).toBe(2);
+  test("is exactly the seven prepare tools: two commits, four iac, and D3's manifest plan", () => {
+    expect(PREPARE_TOOL_IDS.size).toBe(7);
     expect([...PREPARE_TOOL_IDS].sort()).toEqual([...COMMIT_PREPARE_IDS]);
   });
 
@@ -19,10 +33,10 @@ describe("PREPARE_TOOL_IDS (D0b, D1c)", () => {
     expect(() => (PREPARE_TOOL_IDS as unknown as Set<string>).add("x_plan")).toThrow(TypeError);
     expect(() => (PREPARE_TOOL_IDS as unknown as Set<string>).delete("x")).toThrow(TypeError);
     expect(() => (PREPARE_TOOL_IDS as unknown as Set<string>).clear()).toThrow(TypeError);
-    expect(PREPARE_TOOL_IDS.size).toBe(2);
+    expect(PREPARE_TOOL_IDS.size).toBe(7);
   });
 
-  test("the set interface answers like a two-member set", () => {
+  test("the set interface answers like a seven-member set", () => {
     const seen: string[] = [];
     PREPARE_TOOL_IDS.forEach((v, v2, set) => {
       expect(v2).toBe(v);
@@ -65,9 +79,11 @@ describe("PREPARE_TOOL_IDS against the installed connectors package", () => {
     const src: Record<string, string> = {
       github: read("connectors", "github", "src", "tools.ts"),
       gitlab: read("connectors", "gitlab", "src", "tools.ts"),
+      iac: read("connectors", "iac", "src", "tools.ts"),
+      kubernetes: read("connectors", "kubernetes", "src", "tools.ts"),
     };
     for (const id of PREPARE_TOOL_IDS) {
-      const server = id.split("_")[0] as string;
+      const server = serverOf(id);
       const text = src[server];
       expect(text, id).toBeDefined();
       expect(text, id).toMatch(new RegExp(String.raw`registerPrepareTool\(\s*"${id}"`));
@@ -89,11 +105,11 @@ describe("isPrepareToolId", () => {
 
   test("the real ids match bare and as the mesh key tail, and nothing longer", () => {
     for (const id of COMMIT_PREPARE_IDS) {
-      const server = id.split("_")[0];
+      const server = serverOf(id);
       expect(isPrepareToolId(id)).toBe(true);
       expect(isPrepareToolId(`${server}_${id}`)).toBe(true);
       expect(isPrepareToolId(`${id}s`)).toBe(false);
-      expect(isPrepareToolId(`${id.replace("_prepare", "_get")}`)).toBe(false);
+      expect(isPrepareToolId(`${id.replace(/_(prepare|plan|json|create)$/, "_get")}`)).toBe(false);
     }
     expect(isPrepareToolId("github_files_get")).toBe(false);
   });

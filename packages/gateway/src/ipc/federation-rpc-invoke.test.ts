@@ -313,7 +313,9 @@ describe("federation.invoke over a real-shaped session: the peer names the liste
   // I26/I54 (D1c): a prepare tool reads a repository's files at a branch head, so a granted peer
   // may not name it either, bare or as the listed `<server>_<tool>` key.
   for (const prepareId of PREPARE_TOOL_IDS) {
-    const service = prepareId.split("_")[0] as string;
+    // The server a prepare tool is listed under (`k8s_*` tools live in the `kubernetes` server).
+    const head = prepareId.split("_")[0] as string;
+    const service = head === "k8s" ? "kubernetes" : head;
     for (const toolId of [prepareId, `${service}_${prepareId}`]) {
       test(`${toolId}: a granted prepare tool is refused at the I26 door through the real handler, before any spawn`, async () => {
         const { db, runTool } = anchor([{ service, toolId }]);

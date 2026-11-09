@@ -18,6 +18,7 @@ function wrapWithCwd(
   manifest: ExtensionManifest,
   cwd: string,
   wrapperEnv: Readonly<Record<string, string>> = {},
+  iacProfile = false,
 ): ServerSpec {
   const { command, args } = selfSpawn("sandbox", [spec.command, ...spec.args]);
   return {
@@ -28,7 +29,10 @@ function wrapWithCwd(
       // A child with no network needs neither, so a no-network spawn keeps exactly the baseline env.
       ...(declaresNetwork(policyFromManifest(manifest)) ? sandboxWrapperOnlyEnv() : {}),
       ...wrapperEnv,
-      [SANDBOX_POLICY_ENV]: JSON.stringify(policyFromManifest(manifest)),
+      [SANDBOX_POLICY_ENV]: JSON.stringify({
+        ...policyFromManifest(manifest),
+        ...(iacProfile ? { iacProfile: true } : {}),
+      }),
       [SANDBOX_CWD_ENV]: cwd,
     },
   };
@@ -89,4 +93,20 @@ export function wrapServerSpecInCwd(
 ): ServerSpec {
   if (wrapperEnv !== undefined) assertWrapperOnly(wrapperEnv);
   return wrapWithCwd(spec, manifest, cwd, wrapperEnv);
+}
+
+/**
+ * The iac connector's per-run iac child, D2, OR-D2-5, static D43(d): `wrapServerSpecInCwd` plus the
+ * policy's `iacProfile` flag, which gives a Linux child the seccomp program that answers
+ * `pidfd_send_signal` with ENOSYS (Terraform's Go runtime probes it) and makes the Windows wrapper
+ * release the run's grants on exit. The ONLY function that sets the flag; only
+ * `connectors/lazy-mesh/iac-runner.ts` may call it (a static rule pins that), and it takes the
+ * exact per-run working directory, never `dataDir`, `configDir` or the iac root.
+ */
+export function wrapIacServerSpec(
+  spec: ServerSpec,
+  manifest: ExtensionManifest,
+  cwd: string,
+): ServerSpec {
+  return wrapWithCwd(spec, manifest, cwd, {}, true);
 }

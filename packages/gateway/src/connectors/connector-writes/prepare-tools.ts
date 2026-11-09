@@ -4,15 +4,22 @@
 // runs only inside the executor's prepare step (`engine/prepare-step.ts`), under a
 // `<service>.write.prepare` action type, never as a model tool and never as a write.
 //
-// Two ids since D1c: the GitHub and GitLab multi-file commit prepare tools (connectors 0.8, the
-// connector's own `shared/prepare-tool-ids.ts` lists exactly these; a test pins the two lists equal,
-// so a third prepare tool fails the gateway until a row classifies it). Each later id arrives with
-// the row that needs it (D2, D3), with a test that it is registered, not a read verb and not a
-// write id. Tests exercise the mechanism with synthetic ids through the executor's and the
+// Seven ids since D2 (connectors 0.9.0): the GitHub and GitLab multi-file commit prepare tools (D1c),
+// the four iac ones (Terraform plan, destroy plan, show-json; CloudFormation change-set create) and
+// D3's `k8s_manifest_plan`. The connector's own `shared/prepare-tool-ids.ts` lists exactly these; a
+// test pins the two lists equal, so a further prepare tool fails the gateway until a row classifies
+// it, with a test that it is registered, not a read verb and not a write id. Tests exercise the mechanism with synthetic ids through the executor's and the
 // dispatcher's constructor seams, which static rule D42(c) forbids production code to use.
 const PREPARE_TOOL_ID_BACKING: ReadonlySet<string> = new Set<string>([
   "github_commit_prepare",
   "gitlab_commit_prepare",
+  "iac_terraform_plan",
+  "iac_terraform_destroy_plan",
+  "iac_terraform_show_json",
+  "iac_cloudformation_changeset_create",
+  // D3's: classified here because the equality test pins this list to the connector's own; no row
+  // uses it until the Kubernetes apply lands.
+  "k8s_manifest_plan",
 ]);
 
 /** Frozen: `add`, `delete` and `clear` throw, so the production set cannot grow at runtime (D42(d)). */

@@ -9,7 +9,9 @@ export interface ConnectorWritesDeps {
   readonly error: (line: string) => void;
 }
 
-const ENABLE_USAGE = "Usage: nimbus connector writes enable <service> [--wave 2|3|4]";
+const ENABLE_USAGE =
+  "Usage: nimbus connector writes enable <service> [--wave 2|3|4]\n" +
+  "       nimbus connector writes enable iac --wave 4 [--workdir <dir> ...] [--cloud aws,azure,gcp] [--region <r> ...] [--net <host> ...]";
 const DISABLE_USAGE = "Usage: nimbus connector writes disable <service>";
 const STATUS_USAGE = "Usage: nimbus connector writes status [--json]";
 const WRITES_USAGE = `${ENABLE_USAGE}\n${DISABLE_USAGE}\n${STATUS_USAGE}`;
@@ -26,6 +28,10 @@ const REFUSALS: ReadonlyArray<readonly [code: string, message: string]> = [
     "Refused: your organisation's policy forbids model connector writes (connector_write_model_access).",
   ],
   ["ERR_CONNECTOR_WRITES_DECLINED", "Not enabled: the approval was declined."],
+  [
+    "ERR_CONNECTOR_WRITES_IAC_UNAVAILABLE",
+    "Refused: this gateway cannot check directories, so no Terraform directory can be approved.",
+  ],
 ];
 
 function defaultDeps(): ConnectorWritesDeps {
@@ -66,22 +72,48 @@ function isRecord(v: unknown): v is Record<string, unknown> {
 
 type Parsed<T> = { readonly ok: true; readonly value: T } | { readonly ok: false };
 
-function parseEnableArgs(tail: string[]): Parsed<{ service: string; wave: 2 | 3 | 4 | undefined }> {
+/** The approved scope of `enable iac` (D2): every flag repeats, `--cloud` also takes a comma list. */
+interface IacScope {
+  workdirs: string[];
+  clouds: string[];
+  regions: string[];
+  net: string[];
+}
+
+const IAC_FLAGS: Readonly<Record<string, keyof IacScope>> = {
+  "--workdir": "workdirs",
+  "--cloud": "clouds",
+  "--region": "regions",
+  "--net": "net",
+};
+
+function parseEnableArgs(
+  tail: string[],
+): Parsed<{ service: string; wave: 2 | 3 | 4 | undefined; iac: IacScope }> {
   let service: string | undefined;
   let wave: 2 | 3 | 4 | undefined;
+  const iac: IacScope = { workdirs: [], clouds: [], regions: [], net: [] };
   for (let i = 0; i < tail.length; i++) {
     const a = tail[i] as string;
+    const iacKey = IAC_FLAGS[a];
     if (a === "--wave") {
       const v = tail[++i];
       if (v !== "2" && v !== "3" && v !== "4") return { ok: false };
       wave = Number(v) as 2 | 3 | 4;
+    } else if (iacKey !== undefined) {
+      const v = tail[++i];
+      if (v === undefined || v === "") return { ok: false };
+      iac[iacKey].push(...(iacKey === "clouds" ? v.split(",") : [v]));
     } else if (a.startsWith("-") || service !== undefined) {
       return { ok: false };
     } else {
       service = a;
     }
   }
-  return service === undefined ? { ok: false } : { ok: true, value: { service, wave } };
+  const hasIac = Object.values(iac).some((l) => l.length > 0);
+  // The scope flags belong to `iac` alone: any other service would silently ignore them.
+  if (service === undefined || (hasIac && service !== "iac")) return { ok: false };
+  return { ok: true, value: { service, wave, iac } };
 }
 
 async function runEnable(d: ConnectorWritesDeps, tail: string[]): Promise<void> {
@@ -90,11 +122,12 @@ async function runEnable(d: ConnectorWritesDeps, tail: string[]): Promise<void> 
     usage(d, ENABLE_USAGE);
     return;
   }
-  const { service, wave } = parsed.value;
+  const { service, wave, iac } = parsed.value;
   try {
     const res = await d.call("connector.writesEnable", {
       service,
       ...(wave === undefined ? {} : { wave }),
+      ...(service === "iac" ? iac : {}),
     });
     const r = isRecord(res) ? res : {};
     d.log(
@@ -130,6 +163,7 @@ interface StatusRow {
   writes: number;
   offerable?: number;
   awaitingApproval?: number;
+  iacGrants?: { workdirs?: string[]; clouds?: string[]; regions?: string[]; net?: string[] };
 }
 
 /**
@@ -139,6 +173,17 @@ interface StatusRow {
 function awaitingSuffix(row: StatusRow): string {
   const n = row.awaitingApproval;
   return typeof n === "number" && n > 0 ? `, ${String(n)} awaiting approval` : "";
+}
+
+/** `status` for `iac`: what the owner approved, one line per kind. */
+function logIacGrants(d: ConnectorWritesDeps, row: StatusRow): void {
+  const g = row.iacGrants ?? {};
+  const list = (v: string[] | undefined): string =>
+    v === undefined || v.length === 0 ? "(none)" : v.join(", ");
+  d.log(`  directories: ${list(g.workdirs)}`);
+  d.log(`  clouds: ${list(g.clouds)}`);
+  d.log(`  regions: ${list(g.regions)}`);
+  d.log(`  extra hosts: ${list(g.net)}`);
 }
 
 async function runStatus(d: ConnectorWritesDeps, tail: string[]): Promise<void> {
@@ -163,6 +208,7 @@ async function runStatus(d: ConnectorWritesDeps, tail: string[]): Promise<void> 
           ? `${name}  enabled  wave ${String(row.maxWave)}  ${String(row.writes)} writes, ${String(row.offerable ?? 0)} offerable now${awaitingSuffix(row)}`
           : `${name}  off`,
       );
+      if (row.service === "iac") logIacGrants(d, row);
     }
     d.log(
       r["policyAllows"] === true

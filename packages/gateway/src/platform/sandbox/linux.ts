@@ -29,7 +29,7 @@ import { planForwardEntries } from "./net-forward-host.ts";
 import type { NetworkObserver } from "./network-observation-writer.ts";
 import { declaresNetwork, type SandboxPolicy } from "./sandbox-policy.ts";
 import type { SandboxRunner, SandboxSpawnOptions } from "./sandbox-runner.ts";
-import { buildDefaultSeccompFilter } from "./seccomp-filter.ts";
+import { buildDefaultSeccompFilter, buildIacSeccompFilter } from "./seccomp-filter.ts";
 
 export type NetworkMode = "no-net" | "per-host" | "fallback";
 
@@ -411,6 +411,7 @@ function spawnBehindForwarder(
 }
 
 let sharedSeccompPath: string | null = null;
+let sharedIacSeccompPath: string | null = null;
 
 /**
  * One file per process: the program never changes, so a runner per caller gains nothing, and each
@@ -424,6 +425,21 @@ function seccompFile(): string {
   writeFileSync(path, buildDefaultSeccompFilter(), { mode: 0o600 });
   process.once("exit", () => rmSync(dir, { recursive: true, force: true }));
   sharedSeccompPath = path;
+  return path;
+}
+
+/**
+ * The iac profiles' program (`pidfd_send_signal` answers ENOSYS, OR-D2-5), written once per process
+ * beside the default one. Chosen per spawn by `policy.iacProfile`, which only `wrapIacServerSpec`
+ * sets; no other policy ever reads this file.
+ */
+function iacSeccompFile(): string {
+  if (sharedIacSeccompPath !== null) return sharedIacSeccompPath;
+  const dir = mkdtempSync(join(tmpdir(), "nimbus-sandbox-"));
+  const path = join(dir, "seccomp-iac.bpf");
+  writeFileSync(path, buildIacSeccompFilter(), { mode: 0o600 });
+  process.once("exit", () => rmSync(dir, { recursive: true, force: true }));
+  sharedIacSeccompPath = path;
   return path;
 }
 
@@ -597,17 +613,20 @@ export function createLinuxSandboxRunner(
       assertSpawnable(bwrapPath, bwrapMissing, opts.policy);
       // Only a helper that is not there at all takes the documented fallback.
       const mode = decideNetworkMode(opts.policy, { helperAvailable: HELPER_PATH !== null });
+      // OR-D2-5: only an iac profile (`iacProfile`, set by `wrapIacServerSpec` alone) gets the
+      // program that answers `pidfd_send_signal` with ENOSYS; every other policy keeps the kill.
+      const programPath = opts.policy.iacProfile === true ? iacSeccompFile() : seccompPath;
       if (mode === "per-host" && HELPER_PATH !== null) {
         assertForwarderReady(helper, probe);
         return spawnBehindForwarder(
-          { bwrapPath, helperPath: HELPER_PATH, seccompPath, ownExecutable },
+          { bwrapPath, helperPath: HELPER_PATH, seccompPath: programPath, ownExecutable },
           cmd,
           args,
           opts,
         );
       }
       return spawnWithoutForwarder(
-        { bwrapPath, seccompPath, ownExecutable },
+        { bwrapPath, seccompPath: programPath, ownExecutable },
         mode,
         cmd,
         args,

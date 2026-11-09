@@ -62,6 +62,28 @@ export interface ConnectorWritePreview {
    * never by the builder, and shown in full or the write is refused.
    */
   readonly diff?: PreviewDiff;
+  /**
+   * The plan or change set a bound IaC write will apply, as text the GATEWAY rendered (D2, I54);
+   * set only by the executor's `preparePhase` from a settler's result, never by the builder, and
+   * shown in full or the write is refused.
+   */
+  readonly plan?: PreviewPlan;
+}
+
+/** The rendered change of a bound IaC write (see {@link ConnectorWritePreview.plan}). */
+export interface PreviewPlan {
+  /** Every line is already escaped; none holds a newline. */
+  readonly lines: readonly string[];
+  /** The lines joined by a newline (the text `sha256` covers). */
+  readonly text: string;
+  /** UTF-8 bytes of `text`. */
+  readonly bytes: number;
+  /** SHA-256 of that text: the audit row's `diffSha256`. */
+  readonly sha256: string;
+  /** Creates + updates + deletes + replaces, when the renderer counted them. */
+  readonly changeCount?: number;
+  /** Deletes + replaces, when the renderer counted them. */
+  readonly deleteCount?: number;
 }
 
 /** Lives in `./sanitise.ts` (the diff renderer needs it without importing this builder). */
@@ -285,6 +307,7 @@ export function renderConnectorWritePreviewLines(p: ConnectorWritePreview): stri
   if (p.before !== undefined) lines.push("", ...stateLines("Before", p.before));
   if (p.prepared !== undefined) lines.push("", ...stateLines("Prepared", p.prepared));
   if (p.diff !== undefined) lines.push("", ...diffLines(p.diff));
+  if (p.plan !== undefined) lines.push("", ...planLines(p.plan));
   return lines;
 }
 
@@ -298,6 +321,15 @@ function diffLines(d: PreviewDiff): string[] {
     ...diffTextLines(d).map(oneLine),
     `End of diff: ${String(n)} ${n === 1 ? "file" : "files"}, +${String(d.additions)} -${String(d.deletions)}`,
   ];
+}
+
+/**
+ * The plan in full, last on screen. Its own renderer ends the lines with the one footer (it is part
+ * of the hashed text the owner approves), so none is added here: a second would disagree with the
+ * first about what a "delete" is.
+ */
+function planLines(p: PreviewPlan): string[] {
+  return p.lines.map(oneLine);
 }
 
 /**

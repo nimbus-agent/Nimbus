@@ -366,16 +366,15 @@ describe("D1 rows: shape and offerability", () => {
     }
   });
 
-  test("the four Kubernetes and GKE rows and the four iac rows are untouched: confirm only", () => {
+  test("the four Kubernetes and GKE rows, the Pulumi apply and the two D2 classified-only rows are untouched: confirm only (the three plan-bound iac rows are D2's)", () => {
     for (const id of [
       "k8s_rollout_restart",
       "k8s_deployment_scale",
       "k8s_pod_delete",
       "gcp_gke_workload_restart",
-      "iac_terraform_apply",
-      "iac_terraform_destroy",
-      "iac_cloudformation_deploy",
       "iac_pulumi_up",
+      "iac_cloudformation_changeset_discard",
+      "k8s_manifest_apply",
     ]) {
       const r = rowOf(id);
       expect(r.preview, id).toBeUndefined();
