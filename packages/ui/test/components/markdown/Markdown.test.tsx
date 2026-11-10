@@ -137,7 +137,8 @@ describe("Markdown: remaining token shapes", () => {
     const c = renderMd("[ref]: https://example.com/doc\n\nSee [the doc][ref].");
     expect(c.textContent).toContain("the doc");
     expect(c.textContent).toContain("https://example.com/doc");
-    expect(c.textContent?.match(/example\.com\/doc/g)).toHaveLength(1);
+    // The URL appears exactly once: the definition itself rendered nothing.
+    expect(c.textContent?.split("https://example.com/doc")).toHaveLength(2);
     expect(c.querySelector("a")).toBeNull();
   });
 

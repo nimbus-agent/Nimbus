@@ -36,7 +36,7 @@ export function bwrapApparmorInstallShell(sudo: boolean): string {
   const as = sudo ? "sudo " : "";
   const path = BWRAP_APPARMOR_PROFILE_PATH;
   return String.raw`if [ -e ${RESTRICT_SYSCTL_PATH} ] && [ -x /usr/bin/bwrap ] && [ -e ${ABI_PATH} ] \
-    && ${EXISTING_BWRAP_PROFILES.map((p) => `[ ! -e ${p} ]`).join(" && ")} \\
+    && ${EXISTING_BWRAP_PROFILES.map((p) => `[ ! -e ${p} ]`).join(" && ")} \
     && command -v apparmor_parser >/dev/null 2>&1; then
     if ${PROFILE_PRINTF} | ${as}tee ${path} >/dev/null && ${as}apparmor_parser -r ${path}; then
         echo "Installed the AppArmor profile that lets bubblewrap start: ${path}"

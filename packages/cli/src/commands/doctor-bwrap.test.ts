@@ -506,6 +506,20 @@ describe("the AppArmor shell blocks", () => {
     expect(block).toContain("[ ! -e /etc/apparmor.d/bwrap ]");
   });
 
+  test("every line continuation is ONE backslash, so sh joins the condition into one command", () => {
+    for (const sudo of [true, false]) {
+      for (const block of [bwrapApparmorInstallShell(sudo), bwrapApparmorRemoveShell(sudo)]) {
+        const continued = block.split("\n").filter((line) => line.endsWith("\\"));
+        for (const line of continued) expect(line).not.toMatch(/\\\\$/);
+      }
+    }
+    expect(
+      bwrapApparmorInstallShell(false)
+        .split("\n")
+        .filter((l) => l.endsWith(" \\")),
+    ).toHaveLength(2);
+  });
+
   test("a failed load removes the file, so it cannot fail at every boot", () => {
     expect(bwrapApparmorInstallShell(false)).toContain(`rm -f ${BWRAP_APPARMOR_PROFILE_PATH}`);
   });

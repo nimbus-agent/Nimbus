@@ -374,9 +374,9 @@ describe("trust-maintain edge cases", () => {
 
   test("an unexpected failure exits 1 with its message, not the usage code", async () => {
     await init();
-    // A file where the publishers directory belongs: readdir fails with a plain Error.
-    rmSync(join(feed, "publishers"), { recursive: true, force: true });
-    writeFileSync(join(feed, "publishers"), "not a directory");
+    // A directory where the signed feed belongs: reading it fails with EISDIR on every OS.
+    rmSync(join(feed, "trust.json"), { force: true });
+    mkdirSync(join(feed, "trust.json"));
     const r = await run(["plan", feed]);
     expect(r.code).toBe(1);
     expect(r.err.length).toBeGreaterThan(0);
