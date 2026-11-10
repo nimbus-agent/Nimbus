@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794214157681,
+  "lastUpdate": 1794286430861,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "6e5fbfdea1a3e095095aec665cc6e0f9d5d10711",
-          "message": "perf(test): a migrated-once schema template and a deadline-bounded poll, for the Windows hot path (#1291)\n\nP1 and P2 from the CI critical-path spec that lands in #1289. Run\n32452626344 took 31m11s, and the critical path was the Windows\ncross-platform job at 30m35s, not the 12-minute Unit + Coverage job.\nThis attacks that job from two directions.\n\n## P2 — stop replaying 55 migrations per test\n\nHundreds of tests build a throwaway index by calling\n`LocalIndex.ensureSchema` on a fresh file, which replays every migration\nfrom zero. The shape is right: each test gets a private database no\nsibling can see. The replay is pure repetition, and on the\n`windows-2025` runner it dominates.\n\nMeasured on a dev machine at `LocalIndex.SCHEMA_VERSION` 55:\n\n```\nmigrations only      146.5 ms\nvec load only          0.5 ms\ncopy template + vec    2.7 ms\nfull ensureSchema    142.8 ms\n```\n\nNew `packages/gateway/src/index/migrated-db-template.ts` builds the\nschema once per process and hands out byte copies. The isolation\nproperty is unchanged — every caller still gets its own file, or its own\ndeserialized in-memory database. Only the construction is shared.\n\nThe template is built by calling `LocalIndex.ensureSchema` itself, not\nby\na hand-listed migration set, so a copy is definitionally identical to\nwhat a caller would have built. Its builder connection is closed before\nthe file is copied, so any WAL content is checkpointed in first and the\ncopy is complete.\n\nThree exports, each with a reason to exist separately: `openMigratedDb`\nreplaces `new Database(p)` plus `ensureSchema`; `materializeMigratedDb`\nleaves a complete file with no handle on it, which is what the two HTTP\ntest servers need because the server opens its own handles;\n`openMigratedMemoryDb` serves the `:memory:` callers via\nserialize/deserialize.\n\n## P1 — the flake, and the retry that hid it\n\nThe Windows job ran the gateway suite twice. Attempt 1 took 882.41s and\nexited 1; attempt 2 took 646.58s and passed. One test failed:\n\n```\npackages\\gateway\\src\\briefs\\brief-e2e.test.ts\n(fail) leak check: the bearer token, the fed source body, and its URL\n       never appear in any response or audit row [60006.53ms]\n```\n\nThe overshoot is 6.53 ms, so the harness timer fired on schedule and the\nevent loop was responsive. That rules out starvation. The test polls up\nto 200 times with a 5 ms sleep, which makes its real budget 200 times\nsleep-plus-one-loopback-round-trip. At roughly 300 ms per round trip on\na loaded runner that reaches 60 s before the iteration counter runs out,\nso the test died on the harness timeout rather than on its own error\nmessage.\n\nNew `poll-until-terminal.ts` replaces the iteration count with a\nwall-clock deadline and raises the sleep to 25 ms. A slow runner now\nspends its budget on fewer, more expensive polls, and an exhausted\nbudget throws naming the elapsed time, the poll count and the last\nstatus seen. The leak-check test keeps its own inline loop, because its\nassertion inspects every response body it saw, but gets the same\ndeadline treatment.\n\nBoth retry wrappers now surface what they retried. Attempt 1's output\ngoes to a file, is echoed to the log unchanged, and its failing test\nnames become annotations plus a job-summary block; a second attempt that\npasses says so explicitly. Redirect-then-cat rather than a pipe into\ntee, because a pipeline makes the shell variable the exit code of the\nlast command and would silently turn every failure into a success. The\nlogs go to RUNNER_TEMP so nothing lands in the workspace that a later\nSonar or artifact step could pick up.\n\n## Measured effect, locally\n\n| File | Before | After |\n|---|---|---|\n| `ipc/diagnostics-rpc.test.ts` | 13.17 s | 4.34 s |\n| `briefs/brief-e2e.test.ts` | 2.25 s | 0.45 s |\n| `agent-runs/agent-http-e2e.test.ts` | 2.89 s | 0.44 s |\n| `briefs/brief-http.test.ts` | 1.66 s | 0.34 s |\n| `platform/assemble.test.ts` | 11.79 s | 11.19 s |\n| `embedding/lazy-scheduler.test.ts` | 2.30 s | 2.04 s |\n| Total | 34.06 s | 18.80 s |\n\nTwo honest notes on that table. `assemble.test.ts` barely moved: only\ntwo of its 24 tests use the migrating `beforeEach`, so its cost is\nsomewhere else and this change does not address it.\n`lazy-scheduler.test.ts` is untouched on purpose — its harness migrates\nto version 0 or 30, never to current, so the template does not apply and\nforcing it would have been wrong.\n\nOn Windows CI these same six files were 447, 232, 159, 139, 95 and 57\nseconds across both attempts, which is 74% of the whole suite.\n\n## Verification\n\n`bun run preflight:fast` passes all 30 gates. `bun run verify:docker`\npasses every fast-tier gate in the CI Linux image. Every directory that\ntouches the changed harnesses — ipc, index, platform, briefs, agent-runs\n— runs green: 2781 tests across 187 files.\n\nThe template's schema-identity test was red-proved by building the\ntemplate three versions behind: three of its tests fail, and the\nidentity test names the first missing table rather than just reporting a\nversion mismatch. The retry wrapper's control flow was probed against a\nstub across four scenarios; the load-bearing one is two genuine failures\npropagating attempt 2's exit code rather than reporting green.\n\n`poll-until-terminal.ts` is added to the coverage-floor exclusion\nregistry as the fourth test-only harness of that shape. Its sibling\n`migrated-db-template.ts` is deliberately not excluded: it carries a\nload-bearing claim and is tested directly, so it earns its coverage.\n\nOne residual risk, stated rather than glossed: the per-file coverage\nfloor is Linux-authoritative and `verify:docker --full` is the only\nlocal way to run it, which OOMs on this machine. By inspection\n`migrated-db-template.ts` has one uncovered line and one uncovered\nbranch arm, both in a defensive catch, which clears both floors — but\nthat is reasoning, not a measurement, and CI is the check.",
-          "timestamp": "2026-08-21T10:42:21+03:00",
-          "tree_id": "2236427161ec85d3f89f18828e6a829169c86db5",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/6e5fbfdea1a3e095095aec665cc6e0f9d5d10711"
-        },
-        "date": 1787299333218,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 331.0179015999987,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 330.1027467999993,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 186.7200644000022,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "112912968+SaxonWolcott@users.noreply.github.com",
+            "name": "Saxon Wolcott",
+            "username": "SaxonWolcott"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "ebaa3a2f1314c37bc4b0789b1d4ae4a90af29008",
+          "message": "test(gateway): prove stop() swallows a failing latency flush (#1938)\n\n## Summary\n\nAdds the missing test for the third error-isolation arm in\n`startLatencyFlushScheduler`: the flush inside `stop()`. The new test\npushes a sample, makes inserts fail with the file's existing\n`breakInserts()` trigger, and checks that `stop()` doesn't throw, writes\nnothing, and still removes its SIGTERM and SIGINT listeners. It goes in\n`latency-ring-buffer.coverage.test.ts`, next to the tick and signal\ntests, and the file's header comment now names the third trigger. No\nsource file changes.\n\nScope note: when I measured the baseline on main (`7350b29e`), #1603 had\nalready covered the tick and signal arms, so this PR covers only the\n`stop()` arm, the one acceptance item still open. I posted the\nmeasurements on the issue before building.\n\n## Related Issue\n\nFixes #976\n\n## Linked Discussion\n\nN/A: no discussion; the scope note is on the issue thread.\n\n## Type of Change\n\n- [ ] Bug fix (non-breaking change that fixes an issue)\n- [ ] New feature (non-breaking change that adds functionality)\n- [ ] Breaking change (fix or feature that changes existing behaviour)\n- [ ] Refactor (no behaviour change)\n- [x] Test improvement\n- [ ] Documentation only\n- [ ] CI / tooling\n\n## Non-Negotiables Checklist\n\n- [x] `bun run typecheck` passes with zero errors\n- [x] `bun run lint` passes (Biome — format + lint)\n- [ ] All existing tests pass (`bun test`): I ran the db suites\n(`packages/gateway/src/db` and `packages/gateway/test/unit/db`, 394\npass, 0 fail) and `bun run preflight:fast`, not the whole suite; CI runs\nthe rest\n- [x] New behaviour is covered by tests\n- [x] No `any` types introduced — `unknown` is used for external data\n- [x] No credentials, tokens, or secret values appear in logs, IPC\nmessages, config, or test fixtures\n- [x] Platform-specific code is behind the `PlatformServices`\nabstraction (no OS checks in business logic): N/A, test-only change\n- [x] The HITL consent gate has not been weakened, bypassed, or made\nconfigurable: N/A, not touched\n- [x] If this PR touches `docs/README.md`, a screenshot of the rendered\npage (light + dark) is attached: N/A, not touched\n\n## Coverage (if you added or changed source files)\n\n- [x] New or changed source files are covered by tests, or the PR\ndescription says why a file is excluded: no source files changed. With\nthe issue's Istanbul command, `db/latency-ring-buffer.ts` is at 91/91\nlines and 22/24 branches both before and after (the issue's 94.2% /\n82.4% baseline predates #1603). Istanbul doesn't count try/catch as a\nbranch, so the numbers don't move; the flush line in `stop()` goes from\n8 hits to 9. Measured on Windows, so CI's Linux run is the authoritative\nnumber.\n\n## Testing\n\nRed-prove of the `stop()` arm, running `bun test\nsrc/db/latency-ring-buffer` from `packages/gateway` with the\n`try`/`catch` around the flush in `stop()` deleted:\n\n- Before (main): 37 pass, 0 fail. No test notices.\n- After (this branch): 37 pass, 1 fail. `(fail) the flush inside stop()\n> a flush that throws inside stop() is swallowed, and its listeners are\nstill removed`, with `expect(received).not.toThrow()`.\n- With the catch restored: 38 pass, 0 fail.\n\nChecks on the branch (Windows 11 ARM64, Bun 1.4.4): `bun run typecheck`\nexit 0, `bun run lint` exit 0, `bun test packages/gateway/src/db\npackages/gateway/test/unit/db` 394 pass / 3 skip / 0 fail, `bun run\npreflight:fast` \"preflight PASSED\".\n\n## Screenshots / Output\n\nN/A: the test output is quoted under Testing.\n\n## Notes for Reviewers\n\n- The scheduler in the new test is a local variable, not the file-level\n`scheduler`, so the file's `afterEach` doesn't stop it a second time.\n- The listener counts are read right before `startLatencyFlushScheduler`\nand right after `stop()`, the same way the older `stop()` test in\n`latency-ring-buffer.test.ts` does it.\n- AI use: I used Claude Code to read the scheduler and the #1603 tests,\ndraft the test and run the checks. I reviewed the test and ran the\nred-prove and every check above myself.\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>\nCo-authored-by: Asaf <asafgolombek@gmail.com>",
+          "timestamp": "2026-11-10T04:43:15Z",
+          "tree_id": "a05817fa63af1efe057deaac5747494fa46eed97",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/ebaa3a2f1314c37bc4b0789b1d4ae4a90af29008"
+        },
+        "date": 1794286426132,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 282.8675744000007,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 284.18005970000195,
             "unit": "ms"
           }
         ]
