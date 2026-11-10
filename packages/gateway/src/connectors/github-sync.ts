@@ -735,11 +735,8 @@ export async function enrichPrDetail(
   let enriched = 0;
   for (const c of candidates) {
     await ctx.rateLimiter.acquire("github"); // NOSONAR S9382: fail-fast by design - a 401 or a rate limit (both throw below) must stop the pass before the next request is sent
-    const res = await fetchSameOriginOnly(
-      pullDetailUrl(base.restRoot, c.repoFull, c.num),
-      { headers },
-      fetchImpl,
-    ); // NOSONAR S9382: fail-fast by design - this response's 401/rate-limit check decides whether the next request is sent at all
+    const detailUrl = pullDetailUrl(base.restRoot, c.repoFull, c.num);
+    const res = await fetchSameOriginOnly(detailUrl, { headers }, fetchImpl); // NOSONAR S9382: fail-fast by design - this response's 401/rate-limit check decides whether the next request is sent at all
     if (res.status === 401) {
       throw new UnauthenticatedError("GitHub pull detail: unauthorized (401)");
     }

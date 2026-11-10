@@ -232,7 +232,7 @@ function refusesNotion(
   });
 }
 
-const CANONICAL_PAGE_ID = /^[1-9][0-9]*$/;
+const CANONICAL_PAGE_ID = /^[1-9]\d*$/;
 
 /** F4 (Confluence): a KB-capable key naming the KB parent page, compared as trimmed strings. */
 function refusesConfluence(
@@ -369,14 +369,48 @@ const BROADCAST_RULES: Readonly<Record<BroadcastService, readonly RegExp[]>> = {
  * incomplete sanitizer (a tag rebuilt by a strip passes it), so they read the tokens of the
  * structural tokenizer (`markup-tokens.ts`) instead. Here it only ADDS matching forms.
  */
-const TAG_PATTERNS: readonly RegExp[] = [/<[^<>]*>/g, /<[^>]*>/g];
+const TAG_STRIPPERS: ReadonlyArray<(text: string) => string> = [
+  (text) => stripTags(text, true),
+  (text) => stripTags(text, false),
+];
+
+/**
+ * Removes every `<...>` run left to right, in one linear pass (the equivalent regular expressions,
+ * `/<[^<>]*>/g` and `/<[^>]*>/g`, rescan to the end of the text from every `<` that has no `>`).
+ * `innermost`: the run holds no `<` (`<x<y>` removes only `<y>`); otherwise it runs to the first `>`.
+ */
+function stripTags(text: string, innermost: boolean): string {
+  let out = "";
+  let from = 0;
+  let at = text.indexOf("<");
+  while (at !== -1) {
+    let close = -1;
+    let stop = at + 1;
+    if (innermost) {
+      while (stop < text.length && text[stop] !== "<" && text[stop] !== ">") stop++;
+      if (text[stop] === ">") close = stop;
+    } else {
+      close = text.indexOf(">", at + 1);
+      if (close === -1) break;
+    }
+    if (close === -1) {
+      // No run starts at `at`; the next candidate is the `<` that stopped the scan.
+      at = text[stop] === "<" ? stop : -1;
+      continue;
+    }
+    out += text.slice(from, at);
+    from = close + 1;
+    at = text.indexOf("<", from);
+  }
+  return out + text.slice(from);
+}
 
 function tagStrippedForms(text: string): string[] {
   const out: string[] = [];
-  for (const tag of TAG_PATTERNS) {
+  for (const strip of TAG_STRIPPERS) {
     let prev = text;
     for (;;) {
-      const next = prev.replaceAll(tag, "");
+      const next = strip(prev);
       if (next === prev) break;
       out.push(next);
       prev = next;
@@ -669,7 +703,7 @@ const APPLE_CALENDAR_TEXT_KEYS: readonly string[] = [
  */
 export function calendarTimeIsExplicit(toolId: string, key: string, value: unknown): boolean {
   const spec = ownLookup(CALENDAR_TIME_KEYS, toolId);
-  if (spec === undefined || !spec.keys.includes(key)) return false;
+  if (!spec?.keys.includes(key)) return false;
   if (typeof value !== "string") return false;
   const m = spec.form.exec(value);
   return m !== null && isRealDateTime(m);

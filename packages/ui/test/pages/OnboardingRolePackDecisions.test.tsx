@@ -222,7 +222,7 @@ describe("Onboarding → Decisions", () => {
       await act(async () => {
         vi.advanceTimersByTime(10_000);
       });
-      expect(callMock.mock.calls.length).toBe(before);
+      expect(callMock.mock.calls).toHaveLength(before);
     } finally {
       vi.useRealTimers();
     }

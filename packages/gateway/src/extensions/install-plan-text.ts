@@ -103,7 +103,8 @@ function publisherText(p: PlannedPackage): string {
 
 function requiredByText(p: PlannedPackage): string {
   if (p.requiredBy.length === 0) return "";
-  return ` (${p.requiredBy.map((e) => `${oneLine(e.from)} needs ${oneLine(e.range)}`).join("; ")})`;
+  const needs = p.requiredBy.map((e) => `${oneLine(e.from)} needs ${oneLine(e.range)}`);
+  return ` (${needs.join("; ")})`;
 }
 
 function packageBlock(p: PlannedPackage): string[] {

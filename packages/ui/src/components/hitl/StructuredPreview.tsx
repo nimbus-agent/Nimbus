@@ -159,11 +159,11 @@ function readStringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((v) => typeof v === "string") : [];
 }
 
-const SIGNATURE_STATUSES: readonly string[] = [
+const SIGNATURE_STATUSES: ReadonlySet<string> = new Set([
   "verified",
   "signature_failed",
   "publisher_key_conflict",
-];
+]);
 
 /**
  * The update's signature status. `publisherStatus` meant "the signature verified" (never "Nimbus
@@ -172,7 +172,7 @@ const SIGNATURE_STATUSES: readonly string[] = [
 function readSignature(details: Record<string, unknown>): SignatureStatus | undefined {
   const v = details["verificationStatus"];
   if (typeof v === "string") {
-    return SIGNATURE_STATUSES.includes(v) ? (v as SignatureStatus) : undefined;
+    return SIGNATURE_STATUSES.has(v) ? (v as SignatureStatus) : undefined;
   }
   return details["publisherStatus"] === "verified" ? "verified" : undefined;
 }

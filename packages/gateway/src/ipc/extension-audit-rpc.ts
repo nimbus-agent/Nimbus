@@ -119,7 +119,7 @@ function entryFor(
   const approved = source.approved === undefined ? undefined : normalisedSet(source.approved);
   const used = ofOutcome(rows, "used");
   const usedKeys = new Set(used.map((u) => `${u.destination}:${u.port}`.toLowerCase()));
-  const networkObserved = coverage !== undefined && coverage.network_observed === 1;
+  const networkObserved = coverage?.network_observed === 1;
   const base = {
     id,
     version,

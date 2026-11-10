@@ -160,8 +160,8 @@ export async function* validateUnsigned(
     const candidate = readCandidate(git, ref, coords, cwd);
     let verdict: PublishVerdict;
     try {
-      // NOSONAR S9382: sequential by design - each version is validated against the bindings this run already added, so two new dirs cannot disagree
-      verdict = await input.validate(candidate, input.bindings(), input.config, input.work);
+      // Sequential by design: each version is validated against the bindings this run already added, so two new dirs cannot disagree.
+      verdict = await input.validate(candidate, input.bindings(), input.config, input.work); // NOSONAR S9382 sequential by design
     } catch (e) {
       if (!(e instanceof RegistryError)) throw e;
       yield { kind: "skipped", dir, reason: e.message };

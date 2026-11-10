@@ -52,7 +52,6 @@ import {
   workdirsOverlap,
 } from "../connector-writes/iac-grants.ts";
 import {
-  IAC_APPLY_ESCALATE_AFTER_MS,
   IAC_ESCALATE_AFTER_MS,
   IAC_EXIT_WAIT_MS,
   IAC_PREFLIGHT_REFUSALS,
@@ -158,13 +157,26 @@ function uniq(values: readonly string[]): string[] {
   return [...new Set(values)];
 }
 
+/** A one-element list for a defined value, else an empty one. */
+function listOf(value: string | undefined): string[] {
+  return value === undefined ? [] : [value];
+}
+
+function setEnvIfDefined(
+  env: Record<string, string>,
+  key: string,
+  value: string | undefined,
+): void {
+  if (value !== undefined) env[key] = value;
+}
+
 /**
  * The profile of one call, per the plan's table (section 2.7 as corrected by the Task 0 probe).
  * PURE: `show` has no network and writes nothing; `read` is always (declared reads) UNION (writes).
  */
 export function buildIacProfile(req: IacProfileRequest): IacProfile {
   const { kind } = req;
-  const wd = req.workdir === undefined ? [] : [req.workdir];
+  const wd = listOf(req.workdir);
   let network: string[] = [];
   let declaredRead: string[] = [];
   let write: string[] = [];
@@ -180,32 +192,28 @@ export function buildIacProfile(req: IacProfileRequest): IacProfile {
       network = [...iacTerraformHosts(req.clouds), ...req.net];
       declaredRead = [...req.installTrees, ...(req.credentialFiles ?? [])];
       write = [...wd, ...(req.stagingDir === undefined ? [] : [req.stagingDir])];
-      if (req.stagingDir !== undefined) env["NIMBUS_IAC_PLAN_DIR"] = req.stagingDir;
+      setEnvIfDefined(env, "NIMBUS_IAC_PLAN_DIR", req.stagingDir);
       break;
     case "show":
       // No network, no credential, no write: it renders one saved plan and nothing else.
-      declaredRead = [
-        ...wd,
-        ...(req.approvedRunDir === undefined ? [] : [req.approvedRunDir]),
-        ...req.installTrees,
-      ];
-      if (req.approvedRunDir !== undefined) env["NIMBUS_IAC_PLAN_DIR"] = req.approvedRunDir;
+      declaredRead = [...wd, ...listOf(req.approvedRunDir), ...req.installTrees];
+      setEnvIfDefined(env, "NIMBUS_IAC_PLAN_DIR", req.approvedRunDir);
       break;
     case "apply":
       network = [...iacTerraformHosts(req.clouds), ...req.net];
       declaredRead = [
-        ...(req.approvedRunDir === undefined ? [] : [req.approvedRunDir]),
+        ...listOf(req.approvedRunDir),
         ...req.installTrees,
         ...(req.credentialFiles ?? []),
       ];
       write = [...wd];
-      if (req.approvedRunDir !== undefined) env["NIMBUS_IAC_PLAN_DIR"] = req.approvedRunDir;
+      setEnvIfDefined(env, "NIMBUS_IAC_PLAN_DIR", req.approvedRunDir);
       break;
     case "cfn":
       network = iacCfnHosts(req.region ?? "");
       declaredRead = [...req.installTrees];
       write = req.scratchDir === undefined ? [] : [req.scratchDir];
-      if (req.scratchDir !== undefined) env["NIMBUS_CONNECTOR_SCRATCH_DIR"] = req.scratchDir;
+      setEnvIfDefined(env, "NIMBUS_CONNECTOR_SCRATCH_DIR", req.scratchDir);
       break;
   }
   const writes = uniq(write);
@@ -418,10 +426,11 @@ export function iacChildFromProcess(proc: ChildProcess): IacChild {
 /** At gateway stop: the grace children get to finish (a state write) before SIGKILL. */
 const STOP_GRACE_MS = 15_000;
 const STOP_KILL_WAIT_MS = 5_000;
+
 // The SIGTERM-to-SIGKILL grace, the plan's reap wait and the dispatcher's race over them live in
 // `iac-limits.ts`, so the dispatcher's timeout is derived from the same numbers (it must outlast
 // all of these: the runner always settles first).
-export const APPLY_ESCALATE_AFTER_MS = IAC_APPLY_ESCALATE_AFTER_MS;
+export { IAC_APPLY_ESCALATE_AFTER_MS as APPLY_ESCALATE_AFTER_MS } from "../connector-writes/iac-limits.ts";
 export const escalationGraceMs = iacEscalationGraceMs;
 const ESCALATE_AFTER_MS = IAC_ESCALATE_AFTER_MS;
 const EXIT_WAIT_MS = IAC_EXIT_WAIT_MS;
@@ -430,6 +439,11 @@ const EXIT_WAIT_MS = IAC_EXIT_WAIT_MS;
 interface ChildCall {
   readonly result: Promise<unknown>;
   readonly exited: Promise<void>;
+}
+
+/** The global timers, read at call time (a test may replace them after this module loads). */
+function globalTimers(): { set: typeof setTimeout; clear: typeof clearTimeout } {
+  return { set: setTimeout, clear: clearTimeout };
 }
 
 /**
@@ -444,10 +458,7 @@ export function callChildTool(
   args: Record<string, unknown>,
   budgetMs: number,
   timeoutText: string,
-  timers: { set: typeof setTimeout; clear: typeof clearTimeout } = {
-    set: setTimeout,
-    clear: clearTimeout,
-  },
+  timers: { set: typeof setTimeout; clear: typeof clearTimeout } = globalTimers(),
   escalateAfterMs: number = ESCALATE_AFTER_MS,
 ): ChildCall {
   let settled = false;
@@ -944,7 +955,7 @@ export class IacRunner implements IacHost {
       for (const l of live) l.child.kill(true);
       await wait(this.deps.stopKillWaitMs ?? STOP_KILL_WAIT_MS);
     }
-    for (const run of [...this.runs.values()]) {
+    for (const run of this.runs.values()) {
       run.released = true;
       this.maybeFree(run);
     }
@@ -1044,10 +1055,7 @@ export class IacRunner implements IacHost {
     return this.spawnAndCall(
       profile,
       { ...cloudEnv.env },
-      toolId,
-      args,
-      budget,
-      timeoutText,
+      { toolId, args, budget, timeoutText },
       onExited,
       { awaitExit: kind === "plan", workdir },
     );
@@ -1116,10 +1124,7 @@ export class IacRunner implements IacHost {
       profile,
       // The approved region, always: a profile-only credential would otherwise use its own.
       { ...creds.env, AWS_DEFAULT_REGION: region, AWS_REGION: region },
-      toolId,
-      args,
-      budget,
-      "iac: the call exceeded its time limit",
+      { toolId, args, budget, timeoutText: "iac: the call exceeded its time limit" },
       () => this.safeRemove(scratchDir),
     );
   }
@@ -1128,13 +1133,16 @@ export class IacRunner implements IacHost {
   private async spawnAndCall(
     profile: IacProfile,
     credentialEnv: Record<string, string>,
-    toolId: string,
-    args: Record<string, unknown>,
-    budget: number,
-    timeoutText: string,
+    callSpec: {
+      readonly toolId: string;
+      readonly args: Record<string, unknown>;
+      readonly budget: number;
+      readonly timeoutText: string;
+    },
     onExited: () => void,
     opts: { readonly awaitExit?: boolean; readonly workdir?: string } = {},
   ): Promise<unknown> {
+    const { toolId, args, budget, timeoutText } = callSpec;
     const awaitExit = opts.awaitExit === true;
     const manifest = profile.manifest;
     const cwd = join(this.iacRoot, "cwd", manifest.id);
@@ -1319,7 +1327,7 @@ export class IacRunner implements IacHost {
           keep.push(e);
           continue;
         }
-        await this.revoker(e.id).revoke(e.paths);
+        await this.revoker(e.id).revoke(e.paths); // NOSONAR S9382: ACL revocations run one at a time, in ledger order, under the serial lock
       }
       ledger.save([...keep, { id: profileId, paths }]);
       this.runningProfiles.add(profileId);

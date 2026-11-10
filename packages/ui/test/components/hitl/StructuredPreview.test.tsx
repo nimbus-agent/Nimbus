@@ -197,9 +197,19 @@ describe("StructuredPreview — auto-update action types (T2 PR 3)", () => {
     expect(screen.getByText("api.new-host.com")).toBeInTheDocument();
   });
 
-  it("omits permission diff when no axis widened", () => {
+  it.each([
+    ["omits permission diff when no axis widened", "auto-update-permission-diff"],
+    [
+      "an approval without the field (a rollback, an older gateway) shows no quality row",
+      "auto-update-quality-change",
+    ],
+    [
+      "an update from a gateway that sends neither field shows no reach section",
+      "auto-update-access",
+    ],
+  ])("%s", (_title, testId) => {
     render(<StructuredPreview details={autoUpdateDetails()} action="extension.autoUpdate" />);
-    expect(screen.queryByTestId("auto-update-permission-diff")).toBeNull();
+    expect(screen.queryByTestId(testId)).toBeNull();
   });
 
   it("lists the packages an update adds, their permissions together, and the unmet connectors", () => {
@@ -401,16 +411,6 @@ describe("StructuredPreview — auto-update action types (T2 PR 3)", () => {
     expect(screen.getByTestId("auto-update-quality-change").textContent).toContain(
       "quality not compared",
     );
-  });
-
-  it("an approval without the field (a rollback, an older gateway) shows no quality row", () => {
-    render(<StructuredPreview details={autoUpdateDetails()} action="extension.autoUpdate" />);
-    expect(screen.queryByTestId("auto-update-quality-change")).toBeNull();
-  });
-
-  it("an update from a gateway that sends neither field shows no reach section", () => {
-    render(<StructuredPreview details={autoUpdateDetails()} action="extension.autoUpdate" />);
-    expect(screen.queryByTestId("auto-update-access")).toBeNull();
   });
 
   it("an install prompt shows reach and file outcome whole, past 80 characters", () => {

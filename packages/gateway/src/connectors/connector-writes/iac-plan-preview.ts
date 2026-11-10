@@ -178,7 +178,8 @@ function showValue(
   if (typeof value === "string") {
     if (value.length > maxValueChars)
       return `(string of ${String(value.length)} characters, not shown)`;
-    return `"${escapeOneLine(value).replaceAll('"', String.raw`\"`)}"`;
+    const escaped = escapeOneLine(value).replaceAll('"', String.raw`\"`);
+    return `"${escaped}"`;
   }
   if (Array.isArray(value)) return `(list, ${String(value.length)} items)`;
   if (isObj(value)) return `(object, ${String(Object.keys(value).length)} keys)`;
@@ -196,10 +197,10 @@ function changedAttributes(c: Obj): string[] {
   }
   const out: string[] = [];
   for (const k of names) {
-    const b = isObj(before) ? own(before, k) : undefined;
-    const a = isObj(after) ? own(after, k) : undefined;
+    const was = isObj(before) ? own(before, k) : undefined;
+    const now = isObj(after) ? own(after, k) : undefined;
     const unk = markerOf(unknownAfter, k);
-    if (!sameValue(b, a) || marksAny(unk)) out.push(k);
+    if (!sameValue(was, now) || marksAny(unk)) out.push(k);
   }
   return out;
 }

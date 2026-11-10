@@ -216,22 +216,39 @@ function conflicts(
   const problems: string[] = [];
   for (const other of others) {
     if (other.id === packId) continue;
-    for (const [key, value] of scalars) {
-      const theirs = other.scalars.get(key);
-      if (theirs !== undefined && theirs !== value) {
-        problems.push(`${scalarLabel(key)}: pack ${other.id} sets ${String(theirs)}`);
-      }
+    problems.push(...scalarConflicts(other, scalars));
+    problems.push(...jobConflicts(other, jobNames));
+    problems.push(...sourceMapConflicts(other, sourceMap));
+  }
+  return problems;
+}
+
+function scalarConflicts(other: CleanPack, scalars: ReadonlyMap<string, PackScalar>): string[] {
+  const problems: string[] = [];
+  for (const [key, value] of scalars) {
+    const theirs = other.scalars.get(key);
+    if (theirs !== undefined && theirs !== value) {
+      problems.push(`${scalarLabel(key)}: pack ${other.id} sets ${String(theirs)}`);
     }
-    for (const name of jobNames) {
-      if (other.jobNames.includes(name)) {
-        problems.push(`[[fleet.job]] ${name} is also set by pack ${other.id}`);
-      }
-    }
-    for (const [type, kind] of sourceMap) {
-      const theirs = other.sourceMap.get(type);
-      if (theirs !== undefined && theirs !== kind) {
-        problems.push(`[sources] map ${type}: pack ${other.id} maps it to ${theirs}`);
-      }
+  }
+  return problems;
+}
+
+function jobConflicts(other: CleanPack, jobNames: readonly string[]): string[] {
+  return jobNames
+    .filter((name) => other.jobNames.includes(name))
+    .map((name) => `[[fleet.job]] ${name} is also set by pack ${other.id}`);
+}
+
+function sourceMapConflicts(
+  other: CleanPack,
+  sourceMap: ReadonlyMap<string, SourceKind>,
+): string[] {
+  const problems: string[] = [];
+  for (const [type, kind] of sourceMap) {
+    const theirs = other.sourceMap.get(type);
+    if (theirs !== undefined && theirs !== kind) {
+      problems.push(`[sources] map ${type}: pack ${other.id} maps it to ${theirs}`);
     }
   }
   return problems;

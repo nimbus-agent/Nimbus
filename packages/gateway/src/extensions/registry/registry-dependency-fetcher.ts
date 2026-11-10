@@ -33,7 +33,6 @@ import {
   type ExtensionManifestForSolver,
   type RegistryFetcher,
   registryNameOf,
-  type SourceKey,
   sourceKey,
 } from "../dependency-types.ts";
 import {
@@ -80,7 +79,7 @@ export interface StagedDependency extends VerifiedDependency {
 
 export interface RegistryDependencyResolver {
   readonly fetcher: RegistryFetcher;
-  readonly rootSource: SourceKey;
+  readonly rootSource: string;
   /**
    * The root registry's verified index: the resolver's own memoised read, so a plan that already
    * read it for a dependency causes no second fetch, and a caller that reads it first shares it.
@@ -89,7 +88,7 @@ export interface RegistryDependencyResolver {
   /** Phase-1 results, by `${id}@${version}`: exactly the manifests the solve used. */
   verified(id: string, version: string): VerifiedDependency | undefined;
   /** The URL of a registry this resolution met (the root's, or one a dependency named); else null. */
-  registryUrl(source: SourceKey): string | null;
+  registryUrl(source: string): string | null;
   /** Phase 2 (after approval): stage each node's package under `intoDir/<n>/`; throws on the first failure. */
   stage(
     nodes: readonly { id: string; version: string }[],
@@ -97,7 +96,7 @@ export interface RegistryDependencyResolver {
   ): Promise<readonly StagedDependency[]>;
 }
 
-function keyOf(reg: RegistryRow): SourceKey {
+function keyOf(reg: RegistryRow): string {
   return sourceKey(reg.name, reg.rootFingerprint);
 }
 
@@ -125,7 +124,7 @@ function forSolver(m: ExtensionManifest): ExtensionManifestForSolver {
   };
 }
 
-function rowSource(row: ExtensionRow): SourceKey | null {
+function rowSource(row: ExtensionRow): string | null {
   return row.source_registry != null && row.source_root_fingerprint != null
     ? sourceKey(row.source_registry, row.source_root_fingerprint)
     : null;
@@ -156,15 +155,15 @@ export function createRegistryDependencyResolver(
     index?: RegistryIndex;
     signal?: AbortSignal;
     /** Verified index reads shared with other resolvers (one detection poll's); absent ⇒ its own. */
-    indexes?: Map<SourceKey, Promise<RegistryIndex>>;
+    indexes?: Map<string, Promise<RegistryIndex>>;
   },
 ): RegistryDependencyResolver {
   const fetchDeps: RegistryFetchDeps = { ...deps.fetch, db: deps.db };
   const rootSource = keyOf(root.reg);
-  const registries = new Map<SourceKey, RegistryRow>([[rootSource, root.reg]]);
+  const registries = new Map<string, RegistryRow>([[rootSource, root.reg]]);
   // One verified read per registry per resolver (or per shared map); the root's registry reuses
   // the root's read. A key names the root fingerprint too, so a re-pinned registry is read afresh.
-  const indexes = root.indexes ?? new Map<SourceKey, Promise<RegistryIndex>>();
+  const indexes = root.indexes ?? new Map<string, Promise<RegistryIndex>>();
   if (root.index !== undefined && !indexes.has(rootSource)) {
     indexes.set(rootSource, Promise.resolve(root.index));
   }
@@ -172,7 +171,7 @@ export function createRegistryDependencyResolver(
   const channels: readonly string[] = root.channel === "beta" ? ["stable", "beta"] : ["stable"];
 
   /** The registry a source names: one this resolver met, or an installed node's recorded source. */
-  function registryOf(source: SourceKey): RegistryRow {
+  function registryOf(source: string): RegistryRow {
     const known = registries.get(source);
     if (known !== undefined) return known;
     const name = registryNameOf(source);
@@ -187,7 +186,7 @@ export function createRegistryDependencyResolver(
     return reg;
   }
 
-  function indexOf(source: SourceKey): Promise<RegistryIndex> {
+  function indexOf(source: string): Promise<RegistryIndex> {
     let read = indexes.get(source);
     if (read === undefined) {
       read = fetchVerifiedIndex(fetchDeps, registryOf(source), root.signal);
@@ -200,7 +199,7 @@ export function createRegistryDependencyResolver(
   function installedManifest(
     id: string,
     version: string,
-    source: SourceKey | null,
+    source: string | null,
   ): ExtensionManifestForSolver | undefined {
     const row = listExtensions(deps.db).find((r) => r.id === id);
     if (row?.version !== version || rowSource(row) !== source) return undefined;
@@ -208,7 +207,7 @@ export function createRegistryDependencyResolver(
   }
 
   const fetcher: RegistryFetcher = {
-    targetSource(parentSource: SourceKey | null, depId: string, spec: DependencySpec) {
+    targetSource(parentSource: string | null, depId: string, spec: DependencySpec) {
       // A node from a local folder names no registry its dependencies could come from.
       if (parentSource === null) return null;
       // Naming a registry contacts nothing (it reads the database and the baked built-in row), so
@@ -225,7 +224,7 @@ export function createRegistryDependencyResolver(
       return key;
     },
 
-    async listVersions(id: string, source: SourceKey | null) {
+    async listVersions(id: string, source: string | null) {
       if (source === null) return [];
       const reg = registryOf(source);
       const entry = (await indexOf(source)).extensions[id];
@@ -239,7 +238,7 @@ export function createRegistryDependencyResolver(
         .sort((a, b) => Bun.semver.order(a, b));
     },
 
-    async fetchManifest(id: string, version: string, source: SourceKey | null) {
+    async fetchManifest(id: string, version: string, source: string | null) {
       const installed = installedManifest(id, version, source);
       if (installed !== undefined) return installed;
       if (source === null) {

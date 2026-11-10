@@ -24,8 +24,10 @@ export function planLines(plan: FeedPlan, skipped: readonly FeedSkip[]): string[
   const lines: string[] = [];
   for (const b of plan.blocks) lines.push(blockLine(b));
   for (const v of plan.verified) {
+    const github = code(`@${v.github}`);
+    const keys = v.keys.map((k) => code(publisherKeyFingerprint(k))).join(", ");
     lines.push(
-      `- **verify** publisher ${code(v.publisherId)} as GitHub ${code(`@${v.github}`)} (${v.change}), keys ${v.keys.map((k) => code(publisherKeyFingerprint(k))).join(", ")}`,
+      `- **verify** publisher ${code(v.publisherId)} as GitHub ${github} (${v.change}), keys ${keys}`,
     );
   }
   for (const id of plan.unverified) lines.push(`- **un-verify** publisher ${code(id)}`);

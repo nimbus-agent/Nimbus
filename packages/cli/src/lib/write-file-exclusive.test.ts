@@ -222,7 +222,7 @@ describe("sweepStaleTempFiles", () => {
     }
     sweepStaleTempFiles(p);
     expect(existsSync(join(dir, stale))).toBe(false);
-    expect(readdirSync(dir).length).toBe(4);
+    expect(readdirSync(dir)).toHaveLength(4);
   });
 
   test("a missing directory is not an error", () => {

@@ -106,6 +106,16 @@ function parsePublishArgs(args: string[]): PublishArgs {
       positional.push(a);
     }
   }
+  return finishPublishArgs(positional, options, noPr, statements);
+}
+
+/** The checks that run once every flag is read: the directory, the repository and the channel. */
+function finishPublishArgs(
+  positional: readonly string[],
+  options: ReadonlyMap<string, string>,
+  noPr: boolean,
+  statements: string[],
+): PublishArgs {
   const [dir] = positional;
   if (dir === undefined || positional.length !== 1) throw new PublishError("publish needs <dir>");
   const repo = options.get("--registry-repo");
@@ -352,10 +362,8 @@ async function commitBranch(
 }
 
 function prBody(v: PublishVerdict, statements: readonly TrustStatement[]): string {
-  const carried =
-    statements.length === 0
-      ? ""
-      : ` Carries ${statements.map((s) => `${s.kind} ${trustStatementId(s).slice(0, 12)}`).join(", ")}.`;
+  const ids = statements.map((s) => `${s.kind} ${trustStatementId(s).slice(0, 12)}`).join(", ");
+  const carried = statements.length === 0 ? "" : ` Carries ${ids}.`;
   return (
     `Publishes ${v.id}@${v.version} (${v.channel}) from publisher ${v.publisher.id}, ` +
     `key fingerprint ${publisherKeyFingerprint(v.publisher.key)}.${carried} Opened by nimbus extension publish.`

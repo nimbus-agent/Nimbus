@@ -30,8 +30,9 @@ function entryNamed(
   key: readonly string[],
   want: unknown,
 ): unknown {
-  const list =
-    path.length === 0 ? (Array.isArray(j) ? (j as unknown[]) : undefined) : arrayAt(j, path);
+  let list: readonly unknown[] | undefined;
+  if (path.length > 0) list = arrayAt(j, path);
+  else if (Array.isArray(j)) list = j as unknown[];
   if (list === undefined) throw new Error(`before reply: no ${path.join(".") || "list"}`);
   if (typeof want !== "string") return undefined;
   return list.find((e) => stringAt(e, key) === want);
@@ -97,10 +98,9 @@ export function selectEc2Instance(
     const j = beforeReplyJson(reply);
     const id = requiredStringAt(j, ["instanceId"]);
     const state = stringAt(j, ["state"]);
+    const doing = action === "stop" ? "stopping" : "starting";
     const shownState =
-      state === already
-        ? `${state}: it is already ${already}, so ${action === "stop" ? "stopping" : "starting"} it does nothing`
-        : state;
+      state === already ? `${state}: it is already ${already}, so ${doing} it does nothing` : state;
     return [
       { label: "Instance", value: excerptHead(id) },
       ...presentFields([

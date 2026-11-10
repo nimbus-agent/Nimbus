@@ -236,12 +236,7 @@ export const GITLAB_MERGE_SHA_GUARD: BeforeStateGuard = {
   allows: (reply, picked) => {
     const sha = picked["sha"];
     const head = stringAt(beforeReplyJson(reply), ["sha"]);
-    return (
-      typeof sha === "string" &&
-      sha !== "" &&
-      head !== undefined &&
-      sha.toLowerCase() === head.toLowerCase()
-    );
+    return typeof sha === "string" && sha !== "" && sha.toLowerCase() === head?.toLowerCase();
   },
 };
 

@@ -45,12 +45,9 @@ export function previewCredentialResolver(
     const { credential } = cfg;
     if (service !== "github") return credential;
     const hit = fresh.get(keyOf(cfg));
-    const instance =
-      hit !== undefined && Date.now() - hit.at < FRESH_MS
-        ? hit.instance
-        : credential === "personal"
-          ? mesh.githubInstance()
-          : undefined;
+    let instance: string | undefined;
+    if (hit !== undefined && Date.now() - hit.at < FRESH_MS) instance = hit.instance;
+    else if (credential === "personal") instance = mesh.githubInstance();
     return instance === undefined ? credential : { credential, instance };
   };
 

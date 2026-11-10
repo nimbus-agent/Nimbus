@@ -383,8 +383,8 @@ export async function runLivenessCheck(
     const ctx: Ctx = { opts, deps, work, deadline, index, hostAllowance: createHostAllowance() };
     for (const { id, version } of newestStableVersions(index)) {
       try {
-        // NOSONAR S9382: sequential by design - one sandboxed role at a time
-        const entry = await checkPackage(ctx, id, version);
+        // One sandboxed role at a time, by design.
+        const entry = await checkPackage(ctx, id, version); // NOSONAR S9382 sequential by design
         if (entry !== undefined) extensions[`${id}@${version}`] = entry;
       } catch (e) {
         deps.io.log(

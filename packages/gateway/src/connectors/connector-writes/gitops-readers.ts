@@ -61,7 +61,9 @@ function hasObject(j: unknown, path: readonly string[]): boolean {
 /** The deployment history entry whose `id` is `id` (compared as text), else `undefined`. */
 function historyEntry(j: unknown, id: unknown): unknown {
   const history = arrayAt(j, ["status", "history"]);
-  const want = typeof id === "number" ? String(id) : typeof id === "string" ? id : undefined;
+  let want: string | undefined;
+  if (typeof id === "number") want = String(id);
+  else if (typeof id === "string") want = id;
   if (history === undefined || want === undefined) return undefined;
   return history.find((e) => stringAt(e, ["id"]) === want);
 }
@@ -150,12 +152,8 @@ export function selectFluxResource(reply: unknown): readonly BeforeStateField[] 
   const readyStatus = ready === undefined ? undefined : stringAt(ready, ["status"]);
   const reason = ready === undefined ? undefined : stringAt(ready, ["reason"]);
   const message = ready === undefined ? undefined : stringAt(ready, ["message"]);
-  const readyText =
-    readyStatus === undefined
-      ? undefined
-      : reason === undefined
-        ? readyStatus
-        : `${readyStatus} (${reason})`;
+  let readyText: string | undefined = readyStatus;
+  if (readyStatus !== undefined && reason !== undefined) readyText = `${readyStatus} (${reason})`;
   return [
     { label: "Resource", value: excerptHead(name) },
     ...presentFields([
@@ -226,11 +224,10 @@ export function selectMlflowModel(
         value: excerptHead(versionsInStage(latest, "Production")),
       });
     }
+    const targetStage = typeof target === "string" ? excerptHead(target) : "the target stage";
     fields.push({
       label: "Archives incumbent versions",
-      value: archives
-        ? `yes: the versions already in ${typeof target === "string" ? excerptHead(target) : "the target stage"} become Archived`
-        : "no",
+      value: archives ? `yes: the versions already in ${targetStage} become Archived` : "no",
     });
     return fields;
   };
@@ -250,37 +247,51 @@ function identifierSegments(identifier: string): string[] | undefined {
   const out: string[] = [];
   let i = 0;
   while (i <= identifier.length) {
-    let seg = "";
-    if (identifier.charAt(i) === '"') {
-      i++;
-      for (;;) {
-        if (i >= identifier.length) return undefined;
-        const ch = identifier.charAt(i);
-        if (ch === '"') {
-          if (identifier.charAt(i + 1) === '"') {
-            seg += '"';
-            i += 2;
-            continue;
-          }
-          i++;
-          break;
-        }
-        seg += ch;
-        i++;
-      }
-    } else {
-      const dot = identifier.indexOf(".", i);
-      const end = dot === -1 ? identifier.length : dot;
-      seg = identifier.slice(i, end).toUpperCase();
-      if (seg === "" || seg.includes('"')) return undefined;
-      i = end;
-    }
-    out.push(seg);
+    const parsed =
+      identifier.charAt(i) === '"'
+        ? quotedSegment(identifier, i + 1)
+        : unquotedSegment(identifier, i);
+    if (parsed === undefined) return undefined;
+    out.push(parsed.seg);
+    i = parsed.next;
     if (i === identifier.length) return out;
     if (identifier.charAt(i) !== ".") return undefined;
     i++;
   }
   return undefined;
+}
+
+/** A quoted segment starting just after its opening quote: its text and the index after the close. */
+function quotedSegment(
+  identifier: string,
+  start: number,
+): { seg: string; next: number } | undefined {
+  let seg = "";
+  let i = start;
+  for (;;) {
+    if (i >= identifier.length) return undefined;
+    const ch = identifier.charAt(i);
+    if (ch === '"') {
+      if (identifier.charAt(i + 1) !== '"') return { seg, next: i + 1 };
+      seg += '"';
+      i += 2;
+      continue;
+    }
+    seg += ch;
+    i++;
+  }
+}
+
+/** An unquoted segment: upper-cased, up to the next dot or the end; it may not hold a quote. */
+function unquotedSegment(
+  identifier: string,
+  start: number,
+): { seg: string; next: number } | undefined {
+  const dot = identifier.indexOf(".", start);
+  const end = dot === -1 ? identifier.length : dot;
+  const seg = identifier.slice(start, end).toUpperCase();
+  if (seg === "" || seg.includes('"')) return undefined;
+  return { seg, next: end };
 }
 
 /** What a tag's value shows when the reply cannot be tied to the tag the write names. */
@@ -302,10 +313,10 @@ function tagValueNow(
 ): { readonly value: string | undefined; readonly unidentified: boolean } {
   const want = wanted === undefined ? undefined : identifierSegments(wanted);
   if (want === undefined) return { value: undefined, unidentified: wanted !== undefined };
-  const wantName = want[want.length - 1];
+  const wantName = want.at(-1);
   const sameName = tags.filter((t) => {
     const segs = identifierSegments(stringAt(t, ["name"]) ?? "");
-    return segs !== undefined && segs[segs.length - 1] === wantName;
+    return segs?.at(-1) === wantName;
   });
   if (sameName.length === 0) return { value: undefined, unidentified: false };
   const exact = sameName.filter((t) => {
@@ -321,6 +332,12 @@ function tagValueNow(
   return hit === undefined
     ? { value: undefined, unidentified: true }
     : { value: stringAt(hit, ["value"]) ?? "(no value)", unidentified: false };
+}
+
+function tagNowText(value: string | undefined, unidentified: boolean): string {
+  if (unidentified) return TAG_NOT_IDENTIFIED;
+  if (value === undefined) return "(not set)";
+  return excerptHead(`${value} (the read also returns tags inherited from the schema or database)`);
 }
 
 /**
@@ -349,13 +366,7 @@ export function selectSnowflakeTag(reply: unknown, picked: Picked): readonly Bef
     { label: "Table", value: excerptHead(object) },
     {
       label: "Tag now",
-      value: unidentified
-        ? TAG_NOT_IDENTIFIED
-        : value === undefined
-          ? "(not set)"
-          : excerptHead(
-              `${value} (the read also returns tags inherited from the schema or database)`,
-            ),
+      value: tagNowText(value, unidentified),
     },
     ...presentFields([["All tags on the table", shown(all)]]),
   ];

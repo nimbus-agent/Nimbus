@@ -297,12 +297,11 @@ export function verifyTrustStatement(
   opts: { readonly nimbusRootKey?: string; readonly registryRootKey?: string },
 ): StatementSignerRole | null {
   if (!signatureVerifies(s)) return null;
-  const root: StatementSignerRole | null =
-    opts.nimbusRootKey !== undefined && s.signerKey === opts.nimbusRootKey
-      ? "nimbus"
-      : opts.registryRootKey !== undefined && s.signerKey === opts.registryRootKey
-        ? "registry"
-        : null;
+  let root: StatementSignerRole | null = null;
+  if (opts.nimbusRootKey !== undefined && s.signerKey === opts.nimbusRootKey) root = "nimbus";
+  else if (opts.registryRootKey !== undefined && s.signerKey === opts.registryRootKey) {
+    root = "registry";
+  }
   switch (s.kind) {
     case "key.revoke":
       if (publisherKeyFingerprint(s.signerKey) === s.keyFingerprint) return "publisher";

@@ -45,15 +45,14 @@ export function Sidebar(): ReactNode {
       {BEFORE_BRIEFS.map(renderEntry)}
       {renderEntry(BRIEFS_ENTRY)}
       {sections.map((s) => (
-        // biome-ignore lint/a11y/useSemanticElements: a <fieldset> brings a border and legend styling the nav does not want
-        <div key={s.id} role="group" aria-label={s.name}>
+        <fieldset key={s.id} aria-label={s.name} className="m-0 min-w-0 border-0 p-0">
           <div className="px-3 pt-2 pb-1 text-[10px] uppercase tracking-wide text-[var(--color-fg-muted)] truncate">
             {s.name}
           </div>
           {s.agents.map((a) => (
             <NavItem key={a.name} to={`/briefs/${a.name}`} icon="•" label={a.displayName} />
           ))}
-        </div>
+        </fieldset>
       ))}
       {AFTER_BRIEFS.map(renderEntry)}
     </nav>

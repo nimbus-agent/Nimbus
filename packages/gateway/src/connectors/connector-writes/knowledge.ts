@@ -375,7 +375,7 @@ export function notionKbChildAllowed(reply: unknown, kb: TribalKbConfig | undefi
 function canonicalConfluenceId(v: unknown): string | undefined {
   if (typeof v !== "string") return undefined;
   const t = v.trim();
-  if (!/^[0-9]+$/.test(t)) return undefined;
+  if (!/^\d+$/.test(t)) return undefined;
   const c = t.replace(/^0+/, "");
   return c === "" ? undefined : c;
 }

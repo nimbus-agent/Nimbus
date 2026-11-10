@@ -1,4 +1,4 @@
-// nimbus-action-dist bun=1.3.14 inputHash=sha256:b795b79be55f685c498883908d0d66b363713890dce102ae6a7864016f1c82ec
+// nimbus-action-dist bun=1.3.14 inputHash=sha256:19c15d99de63ba0bbd25af74200b63ec825554c7b347ae6ea20d8d6aae362ded
 import { createRequire } from "node:module";
 var __create = Object.create;
 var __getProtoOf = Object.getPrototypeOf;
@@ -5924,7 +5924,12 @@ function signatureVerifies(s) {
 function verifyTrustStatement(s, opts) {
   if (!signatureVerifies(s))
     return null;
-  const root = opts.nimbusRootKey !== undefined && s.signerKey === opts.nimbusRootKey ? "nimbus" : opts.registryRootKey !== undefined && s.signerKey === opts.registryRootKey ? "registry" : null;
+  let root = null;
+  if (opts.nimbusRootKey !== undefined && s.signerKey === opts.nimbusRootKey)
+    root = "nimbus";
+  else if (opts.registryRootKey !== undefined && s.signerKey === opts.registryRootKey) {
+    root = "registry";
+  }
   switch (s.kind) {
     case "key.revoke":
       if (publisherKeyFingerprint(s.signerKey) === s.keyFingerprint)
@@ -9924,7 +9929,7 @@ var MAX_REGISTRY_STATEMENTS = 1000;
 var MAX_ROTATIONS_PER_PUBLISHER = 20;
 var MAX_STATEMENTS_PER_PUBLISHER = 50;
 function publisherAfterPublish(existing, signer) {
-  return existing !== undefined && existing.publisher.key === signer.key ? existing.publisher : signer;
+  return existing?.publisher.key === signer.key ? existing.publisher : signer;
 }
 function indexedPublisherStatements(index) {
   return readStatementList(index.statements).statements.filter((s3) => (s3.kind === "key.rotate" || s3.kind === "key.revoke") && verifyTrustStatement(s3, {}) === "publisher");
@@ -10662,7 +10667,7 @@ async function verifiedStatements(prev, source, seed, at2) {
       out.push(kept);
       continue;
     }
-    out.push(await signTrustStatement({
+    const unsigned = {
       kind: "publisher.verified",
       publisherId: entry.publisherId,
       keys: [...entry.keys],
@@ -10670,7 +10675,8 @@ async function verifiedStatements(prev, source, seed, at2) {
       verifiedAt: at2,
       issuedAt: at2,
       signerKey: prev.rootKey
-    }, seed));
+    };
+    out.push(await signTrustStatement(unsigned, seed));
   }
   return out;
 }
@@ -11763,17 +11769,21 @@ function baselineFact(b2) {
 }
 
 // src/score.ts
+function timeoutBudgetNote(timeoutMs) {
+  return timeoutMs < ROLE_TIMEOUT_MS ? ` (the score job's remaining time budget; the cap is ${duration(ROLE_TIMEOUT_MS)})` : "";
+}
 function judgeRoleRun(r, want, timeoutMs = ROLE_TIMEOUT_MS) {
   if (r.timedOut) {
-    const why = timeoutMs < ROLE_TIMEOUT_MS ? ` (the score job's remaining time budget; the cap is ${duration(ROLE_TIMEOUT_MS)})` : "";
-    return fail("ERR_EVAL_TIMEOUT", `the eval did not finish within ${duration(timeoutMs)}${why}`);
+    return fail("ERR_EVAL_TIMEOUT", `the eval did not finish within ${duration(timeoutMs)}${timeoutBudgetNote(timeoutMs)}`);
   }
   if (r.overflow) {
     return fail("ERR_EVAL_OUTPUT_TOO_LARGE", `the eval role printed more than ${String(ROLE_STDOUT_MAX_BYTES)} bytes`);
   }
   if (r.code !== 0) {
     const last = lastLine(r.stderrTail);
-    return fail("ERR_EVAL_ROLE_FAILED", `the eval role exited ${r.code === null ? "without an exit code" : String(r.code)}${last === "" ? "" : `: ${last}`}`);
+    const exited = r.code === null ? "without an exit code" : String(r.code);
+    const tail = last === "" ? "" : `: ${last}`;
+    return fail("ERR_EVAL_ROLE_FAILED", `the eval role exited ${exited}${tail}`);
   }
   const lines = r.stdout.split(`
 `).filter((l) => l.trim() !== "");
@@ -11832,7 +11842,8 @@ function assertGateway(gateway) {
     throw new Error(`input "nimbus-gateway" must be an absolute path to an existing file; got ${JSON.stringify(gateway)}`);
   }
 }
-function writeFileAtomic(path, text, fs2 = { writeFileSync: writeFileSync4, renameSync }) {
+var REAL_ATOMIC_WRITE_FS = { writeFileSync: writeFileSync4, renameSync };
+function writeFileAtomic(path, text, fs2 = REAL_ATOMIC_WRITE_FS) {
   const temp = join5(dirname(path), `.${basename(path)}.${randomUUID()}.tmp`);
   try {
     fs2.writeFileSync(temp, text, { flag: "wx" });
@@ -12205,7 +12216,8 @@ function requestLine(f2) {
 function checkRequestPullRequest(git2, index, changes, cwd, io2) {
   const offending = changes.filter((c) => c.status !== "A" || !c.path.startsWith(REQUESTS_DIR));
   if (offending.length > 0) {
-    throw new Error(`a maintainer request pull request may only add ${REQUESTS_DIR}<name>.json files; it also changes: ${offending.map((c) => `${c.status} ${c.path}`).join(", ")}`);
+    const changed = offending.map((c) => `${c.status} ${c.path}`).join(", ");
+    throw new Error(`a maintainer request pull request may only add ${REQUESTS_DIR}<name>.json files; it also changes: ${changed}`);
   }
   const files = readRequestFiles(git2, "HEAD", cwd, new Set(changes.map((c) => c.path)));
   for (const f2 of files.requests) {
@@ -12216,7 +12228,8 @@ function checkRequestPullRequest(git2, index, changes, cwd, io2) {
     }
   }
   if (files.skipped.length > 0) {
-    throw new Error(`invalid maintainer request: ${files.skipped.map((f2) => `${f2.path} ${f2.reason}`).join("; ")}`);
+    const invalid8 = files.skipped.map((f2) => `${f2.path} ${f2.reason}`).join("; ");
+    throw new Error(`invalid maintainer request: ${invalid8}`);
   }
   io2.summary([
     "## Registry maintainer request",
@@ -13429,7 +13442,9 @@ function planLines(plan, skipped) {
   for (const b2 of plan.blocks)
     lines.push(blockLine(b2));
   for (const v2 of plan.verified) {
-    lines.push(`- **verify** publisher ${code(v2.publisherId)} as GitHub ${code(`@${v2.github}`)} (${v2.change}), keys ${v2.keys.map((k2) => code(publisherKeyFingerprint(k2))).join(", ")}`);
+    const github = code(`@${v2.github}`);
+    const keys = v2.keys.map((k2) => code(publisherKeyFingerprint(k2))).join(", ");
+    lines.push(`- **verify** publisher ${code(v2.publisherId)} as GitHub ${github} (${v2.change}), keys ${keys}`);
   }
   for (const id of plan.unverified)
     lines.push(`- **un-verify** publisher ${code(id)}`);
@@ -13454,7 +13469,8 @@ function assertSourceOnly(changes) {
     throw new Error("the pull request changes no files");
   const offending = changes.filter((c) => !FEED_SOURCE_DIRS.some((d) => c.path.startsWith(d)));
   if (offending.length > 0) {
-    throw new Error(`a trust feed pull request may only change ${FEED_SOURCE_DIRS.join(", ")}; it also changes: ${offending.map((c) => `${c.status} ${c.path}`).join(", ")} (workflows and nimbus-trust.json are maintainer edits made by hand)`);
+    const changed = offending.map((c) => `${c.status} ${c.path}`).join(", ");
+    throw new Error(`a trust feed pull request may only change ${FEED_SOURCE_DIRS.join(", ")}; it also changes: ${changed} (workflows and nimbus-trust.json are maintainer edits made by hand)`);
   }
 }
 async function runTrustCheck(opts, deps = SHARED7) {
@@ -13486,7 +13502,8 @@ async function runTrustCheck(opts, deps = SHARED7) {
   ].join(`
 `));
   if (bad3.length > 0) {
-    throw new Error(`the trust feed would not sign: ${bad3.map((s3) => `${code(s3.path)}: ${s3.reason}`).join("; ")}`);
+    const unsigned = bad3.map((s3) => `${code(s3.path)}: ${s3.reason}`).join("; ");
+    throw new Error(`the trust feed would not sign: ${unsigned}`);
   }
   deps.io.log(`trust-check passed: ${plan.status}`);
 }

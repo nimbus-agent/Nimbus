@@ -1413,7 +1413,7 @@ describe("doctorPrintPackUpdates", () => {
         pack("other", "2.0.0"),
       ],
     }));
-    expect(await doctorPrintPackUpdates(client)).toBe(0);
+    expect(await doctorPrintPackUpdates(client)).toBeUndefined();
     expect(out.stdout).toBe(
       '[info] pack updates available (profile "default"): pm 1.0.0 -> 1.1.0, devops version unknown -> 1.1.0. Re-install with: nimbus pack install <id>\n',
     );
@@ -1424,7 +1424,7 @@ describe("doctorPrintPackUpdates", () => {
       profile: "default",
       installed: [pack("pm", "1.0.0", { updateAvailable: true })],
     }));
-    expect(await doctorPrintPackUpdates(client)).toBe(0);
+    expect(await doctorPrintPackUpdates(client)).toBeUndefined();
     expect(out.stdout).toContain("pm 1.0.0 -> a different build.");
   });
 
@@ -1443,18 +1443,18 @@ describe("doctorPrintPackUpdates", () => {
       profile: "default",
       installed: [{ id: "pm", version: 3, updateAvailable: true, bundledVersion: "1.1.0" }],
     }));
-    expect(await doctorPrintPackUpdates(client)).toBe(0);
+    expect(await doctorPrintPackUpdates(client)).toBeUndefined();
     expect(out.stdout).toContain("pm version unknown -> 1.1.0.");
   });
 
   it("prints nothing for a null pack.list result", async () => {
-    expect(await doctorPrintPackUpdates(byMethod(() => null))).toBe(0);
+    expect(await doctorPrintPackUpdates(byMethod(() => null))).toBeUndefined();
     expect(out.stdout).toBe("");
   });
 
   it("no line when no installed pack has updateAvailable", async () => {
     const client = byMethod(() => ({ profile: "default", installed: [pack("pm", "1.0.0")] }));
-    expect(await doctorPrintPackUpdates(client)).toBe(0);
+    expect(await doctorPrintPackUpdates(client)).toBeUndefined();
     expect(out.stdout).toBe("");
   });
 
@@ -1462,11 +1462,11 @@ describe("doctorPrintPackUpdates", () => {
     const notFound = byMethod(() => {
       throw Object.assign(new Error("Method not found"), { code: -32601 });
     });
-    expect(await doctorPrintPackUpdates(notFound)).toBe(0);
+    expect(await doctorPrintPackUpdates(notFound)).toBeUndefined();
     const down = byMethod(() => {
       throw new Error("down");
     });
-    expect(await doctorPrintPackUpdates(down)).toBe(0);
+    expect(await doctorPrintPackUpdates(down)).toBeUndefined();
     expect(out.stdout).toBe("");
   });
 
@@ -1483,13 +1483,13 @@ describe("doctorPrintPackUpdates", () => {
   });
 
   it("prints nothing for a malformed result and never throws", async () => {
-    expect(await doctorPrintPackUpdates(byMethod(() => "garbage"))).toBe(0);
-    expect(await doctorPrintPackUpdates(byMethod(() => ({ installed: "x" })))).toBe(0);
+    expect(await doctorPrintPackUpdates(byMethod(() => "garbage"))).toBeUndefined();
+    expect(await doctorPrintPackUpdates(byMethod(() => ({ installed: "x" })))).toBeUndefined();
     const rows = byMethod(() => ({
       profile: "default",
       installed: [{ id: 7, version: "1", updateAvailable: true }, null],
     }));
-    expect(await doctorPrintPackUpdates(rows)).toBe(0);
+    expect(await doctorPrintPackUpdates(rows)).toBeUndefined();
     expect(out.stdout).toBe("");
   });
 });

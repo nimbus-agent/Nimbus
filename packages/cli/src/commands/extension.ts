@@ -489,6 +489,15 @@ export async function runExtensionInfo(
     );
     return;
   }
+  printExtensionInfo(out, sandboxCap, args);
+}
+
+/** The text form of `extension info` for an installed extension. */
+function printExtensionInfo(
+  out: { extension: ExtensionListEntry; message?: string },
+  sandboxCap: Awaited<ReturnType<typeof fetchSandboxPosture>>,
+  args: string[],
+): void {
   const e = out.extension;
   console.log(`Extension: ${e.id}`);
   console.log(`Version:   ${e.version}`);
@@ -634,13 +643,8 @@ function printedPromotion(out: { id: string; promoted?: boolean }): boolean {
 const INSTALL_USAGE =
   "Usage: nimbus extension install <path | id> [--registry <name>] [--version <v>] [--channel beta] [--accept-publisher-key <fingerprint>] [--publisher-key <path>] [--yes]";
 
-/** `nimbus extension install <id>`: resolve, verify and install from a registry (never `--yes`). */
-async function runExtensionInstallFromRegistry(
-  client: IPCClient,
-  args: string[],
-  id: string,
-  walk: InstallWalkDeps | undefined,
-): Promise<void> {
+/** The flags a registry install refuses, checked before the consent handler is registered. */
+function assertRegistryInstallFlags(args: string[]): void {
   if (hasFlag(args, "--yes") || hasFlag(args, "-y")) {
     throw new Error(
       "--yes is not accepted for a registry install: it is always confirmed by the owner's approval prompt (answered interactively, or by NIMBUS_SCRIPT_CONSENT_SOURCE for scripted use)",
@@ -653,7 +657,10 @@ async function runExtensionInstallFromRegistry(
   if (channel !== undefined && channel !== "stable" && channel !== "beta") {
     throw new Error("--channel must be stable or beta");
   }
-  registerConsentFor(client, { kind: "prompt" });
+}
+
+/** The `registry.install` params from the flags that name the registry, version and key. */
+function registryInstallParams(args: string[], id: string): Record<string, unknown> {
   const params: Record<string, unknown> = { id };
   for (const [flag, key] of [
     ["--registry", "registry"],
@@ -664,6 +671,19 @@ async function runExtensionInstallFromRegistry(
     const v = takeFlagValue(args, flag);
     if (v !== undefined) params[key] = v;
   }
+  return params;
+}
+
+/** `nimbus extension install <id>`: resolve, verify and install from a registry (never `--yes`). */
+async function runExtensionInstallFromRegistry(
+  client: IPCClient,
+  args: string[],
+  id: string,
+  walk: InstallWalkDeps | undefined,
+): Promise<void> {
+  assertRegistryInstallFlags(args);
+  registerConsentFor(client, { kind: "prompt" });
+  const params = registryInstallParams(args, id);
   const out = await client.call<{
     id: string;
     version: string;
@@ -702,9 +722,8 @@ async function runExtensionInstallFromRegistry(
     ...(rootIsPack ? [] : [out.id]),
   ];
   if (toApprove.length > 0) {
-    console.log(
-      `Nothing runs until you approve it: ${toApprove.map((i) => `nimbus extension approve ${i}`).join(" && ")}`,
-    );
+    const commands = toApprove.map((i) => `nimbus extension approve ${i}`).join(" && ");
+    console.log(`Nothing runs until you approve it: ${commands}`);
   }
   printNeeds(out.connectorRequirements);
   console.log(JSON.stringify(out, undefined, 2));
@@ -854,7 +873,7 @@ function approveNetworkFlag(args: string[]): { network?: string[] | "none" } {
   }
   if (raw.trim() === "none") return { network: "none" };
   const entries = raw.split(",").map((e) => e.trim());
-  if (entries.some((e) => e === "")) {
+  if (entries.includes("")) {
     throw new Error(`--network has an empty entry in "${printable(raw)}". ${APPROVE_USAGE}`);
   }
   return { network: entries };
@@ -920,11 +939,11 @@ export async function runExtensionApprove(
   const network = approveNetworkFlag(args);
   const out = await callApproveRun(client, { id, modelAccess, ...network });
   const granted = out.grants?.network ?? [];
-  const model =
-    `model access: ${out.modelAccess === true ? "on" : "off"}` +
-    (network.network === undefined
-      ? ""
-      : `; network: ${granted.length === 0 ? "none" : granted.map(declaredName).join(", ")}`);
+  let model = `model access: ${out.modelAccess === true ? "on" : "off"}`;
+  if (network.network !== undefined) {
+    const names = granted.length === 0 ? "none" : granted.map(declaredName).join(", ");
+    model += `; network: ${names}`;
+  }
   console.log(
     out.changed
       ? `${out.id}: approved to run as ${out.serviceId} (tree digest ${out.treeDigest}; ${model}). It starts on first use: \`nimbus connector tools ${out.serviceId}\`.`
@@ -1258,12 +1277,8 @@ function applySigningPublisherKey(
   );
 }
 
-export async function runExtensionSign(args: string[]): Promise<number> {
-  const extDir = args[0];
-  if (extDir === undefined || extDir.startsWith("--")) {
-    process.stderr.write("usage: nimbus extension sign <ext-dir> [--key <path>]\n");
-    return 2;
-  }
+/** The signing key `--key` names (default `~/.nimbus/publisher-key`), or the refusal to print. */
+function loadSigningKey(args: string[]): { priv: Uint8Array } | { refusal: string } {
   const keyIdx = args.indexOf("--key");
   let keyPath = join(homedir(), ".nimbus", "publisher-key");
   if (keyIdx >= 0 && keyIdx + 1 < args.length) {
@@ -1275,13 +1290,24 @@ export async function runExtensionSign(args: string[]): Promise<number> {
     priv = decodeBase64(readFileSync(keyPath, "utf8").trim());
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    process.stderr.write(`could not read key file ${keyPath}: ${msg}\n`);
+    return { refusal: `could not read key file ${keyPath}: ${msg}\n` };
+  }
+  if (priv.length !== 32) return { refusal: `key file ${keyPath} did not decode to 32 bytes\n` };
+  return { priv };
+}
+
+export async function runExtensionSign(args: string[]): Promise<number> {
+  const extDir = args[0];
+  if (extDir === undefined || extDir.startsWith("--")) {
+    process.stderr.write("usage: nimbus extension sign <ext-dir> [--key <path>]\n");
     return 2;
   }
-  if (priv.length !== 32) {
-    process.stderr.write(`key file ${keyPath} did not decode to 32 bytes\n`);
+  const key = loadSigningKey(args);
+  if ("refusal" in key) {
+    process.stderr.write(key.refusal);
     return 2;
   }
+  const { priv } = key;
   const manifestPath = join(extDir, "nimbus.extension.json");
   let text: string;
   try {

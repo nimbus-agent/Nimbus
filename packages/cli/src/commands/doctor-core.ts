@@ -956,14 +956,14 @@ function packFromVersion(versionUnknown: boolean, version: unknown): string {
 /**
  * Role packs: one `[info]` line naming each installed pack the bundled copy differs from. "Update
  * available" means the digest differs, not that the bundled copy is newer, so a missing
- * `bundledVersion` prints "a different build". Always exit 0 (a stale pack is not a fault), and
+ * `bundledVersion` prints "a different build". Never affects the exit code (a stale pack is not a fault), and
  * silent when the gateway cannot answer `pack.list` (an older binary, or any error).
  */
-export async function doctorPrintPackUpdates(client: Pick<IPCClient, "call">): Promise<number> {
+export async function doctorPrintPackUpdates(client: Pick<IPCClient, "call">): Promise<void> {
   const raw = await client.call<unknown>("pack.list", {}).catch(() => undefined);
-  if (raw === null || typeof raw !== "object") return 0;
+  if (raw === null || typeof raw !== "object") return;
   const { profile, installed } = raw as { profile?: unknown; installed?: unknown };
-  if (typeof profile !== "string" || !Array.isArray(installed)) return 0;
+  if (typeof profile !== "string" || !Array.isArray(installed)) return;
   const updates: string[] = [];
   for (const row of installed as unknown[]) {
     if (row === null || typeof row !== "object") continue;
@@ -989,7 +989,6 @@ export async function doctorPrintPackUpdates(client: Pick<IPCClient, "call">): P
       `[info] pack updates available (profile "${stripControlChars(profile)}"): ${updates.join(", ")}. Re-install with: nimbus pack install <id>`,
     );
   }
-  return 0;
 }
 
 /** JSON-RPC -32601: the gateway does not serve the method (an older binary). */
@@ -1173,7 +1172,7 @@ async function doctorRunGatewayRpcs(
   exit = Math.max(exit, await doctorPrintRegistries(client));
   exit = Math.max(exit, await doctorPrintTrust(client));
   exit = Math.max(exit, await doctorPrintMigrations(client));
-  exit = Math.max(exit, await doctorPrintPackUpdates(client));
+  await doctorPrintPackUpdates(client);
   // Reported BEFORE connector health: a dead embedding runtime disables semantic search for the
   // whole gateway run, which outranks any one connector being unreachable.
   exit = Math.max(exit, doctorPrintEmbeddingFromSnapshot(snap));

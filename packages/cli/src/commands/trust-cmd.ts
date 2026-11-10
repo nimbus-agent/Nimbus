@@ -42,14 +42,19 @@ export function formatTrustStatus(s: TrustStatusView): string {
   if (!s.configured) {
     return `No trust feed is configured in this build.\nStored statements: ${counts}`;
   }
-  const age = s.ageDays === null ? "" : ` (${s.ageDays} day${s.ageDays === 1 ? "" : "s"} ago)`;
+  let age = "";
+  if (s.ageDays !== null) {
+    const unit = s.ageDays === 1 ? "day" : "days";
+    age = ` (${s.ageDays} ${unit} ago)`;
+  }
+  const interval = s.intervalHours === null ? "?" : `${s.intervalHours} h`;
   return (
     `Trust feed: ${s.url ?? "?"}\n` +
     `Root fingerprint: ${s.rootFingerprint ?? "?"}\n` +
     `Sequence: ${s.sequence === null ? "none accepted yet" : String(s.sequence)}\n` +
     `Last updated: ${iso(s.lastFetchedAt)}${age}\n` +
     `Last attempt: ${iso(s.lastAttemptedAt)}\n` +
-    `Checked every: ${s.intervalHours === null ? "?" : `${s.intervalHours} h`}\n` +
+    `Checked every: ${interval}\n` +
     `Stored statements: ${counts}`
   );
 }

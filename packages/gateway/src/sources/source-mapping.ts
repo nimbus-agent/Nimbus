@@ -84,7 +84,7 @@ const isDefined = <T>(x: T | undefined): x is T => x !== undefined;
 export function sourceMapFromList(
   entries: readonly string[] | undefined,
 ): ReadonlyMap<string, SourceKind> {
-  const parsed = (entries === undefined ? [] : entries).map(parseSourceMapEntry).filter(isDefined);
+  const parsed = (entries ?? []).map(parseSourceMapEntry).filter(isDefined);
   return new Map(parsed.map((e) => [e.serviceType, e.kind]));
 }
 

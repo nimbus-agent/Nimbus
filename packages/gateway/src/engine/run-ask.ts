@@ -790,11 +790,11 @@ function githubIssueContextItemsForRepo(
   const rows = localIndex
     .getDatabase()
     .query(
-      `SELECT id, service, type, title, body_preview, url
+      String.raw`SELECT id, service, type, title, body_preview, url
        FROM item
        WHERE service = 'github'
          AND type IN ('issue', 'pr')
-         AND (lower(external_id) LIKE ? ESCAPE '\\' OR lower(url) LIKE ? ESCAPE '\\')
+         AND (lower(external_id) LIKE ? ESCAPE '\' OR lower(url) LIKE ? ESCAPE '\')
        ORDER BY modified_at DESC, synced_at DESC, title ASC
        LIMIT ?`,
     )

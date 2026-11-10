@@ -61,7 +61,7 @@ export function AtlassianForm({
   return (
     <div style={{ marginTop: 8, fontSize: 12 }}>
       <label style={{ display: "block" }}>
-        Email
+        <span>Email</span>
         <input
           aria-label={`${displayName} email`}
           type="email"
@@ -71,7 +71,7 @@ export function AtlassianForm({
         />
       </label>
       <label style={{ display: "block", marginTop: 6 }}>
-        API token
+        <span>API token</span>
         <input
           aria-label={`${displayName} API token`}
           type="password"
@@ -82,7 +82,7 @@ export function AtlassianForm({
         />
       </label>
       <label style={{ display: "block", marginTop: 6 }}>
-        Site URL
+        <span>Site URL</span>
         <input
           aria-label={`${displayName} site URL`}
           type="url"

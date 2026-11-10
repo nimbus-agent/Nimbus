@@ -16,7 +16,7 @@ import { posix } from "node:path";
 export const BWRAP_APPARMOR_PROFILE_PATH = "/etc/apparmor.d/nimbus-bwrap";
 
 const PROFILE_PRINTF =
-  "printf '%s\\n' 'abi <abi/4.0>,' 'include <tunables/global>' " +
+  String.raw`printf '%s\n' 'abi <abi/4.0>,' 'include <tunables/global>' ` +
   "'profile nimbus-bwrap /usr/bin/bwrap flags=(unconfined) {' '  userns,' '}'";
 
 const RESTRICT_SYSCTL_PATH = "/proc/sys/kernel/apparmor_restrict_unprivileged_userns";
@@ -35,7 +35,7 @@ const EXISTING_BWRAP_PROFILES = [
 export function bwrapApparmorInstallShell(sudo: boolean): string {
   const as = sudo ? "sudo " : "";
   const path = BWRAP_APPARMOR_PROFILE_PATH;
-  return `if [ -e ${RESTRICT_SYSCTL_PATH} ] && [ -x /usr/bin/bwrap ] && [ -e ${ABI_PATH} ] \\
+  return String.raw`if [ -e ${RESTRICT_SYSCTL_PATH} ] && [ -x /usr/bin/bwrap ] && [ -e ${ABI_PATH} ] \
     && ${EXISTING_BWRAP_PROFILES.map((p) => `[ ! -e ${p} ]`).join(" && ")} \\
     && command -v apparmor_parser >/dev/null 2>&1; then
     if ${PROFILE_PRINTF} | ${as}tee ${path} >/dev/null && ${as}apparmor_parser -r ${path}; then

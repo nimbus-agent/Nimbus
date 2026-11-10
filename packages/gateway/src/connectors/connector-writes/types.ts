@@ -457,6 +457,27 @@ export function withRefusal(r: ConnectorWriteRow, reason: string): ConnectorWrit
   return Object.freeze({ ...r, refuse: reason });
 }
 
+/** The structural problems of the settle tool a settled row names (or must not name). */
+function settleToolProblems(
+  r: ConnectorWriteRow,
+  prepareTool: string,
+  settle: string,
+  settleTool: string | undefined,
+  prepareToolIds: ReadonlySet<string>,
+): string[] {
+  const out: string[] = [];
+  if (settle === "iac-cfn") {
+    if (settleTool !== undefined) out.push("takes no settle tool");
+  } else if (settleTool === undefined) {
+    out.push("needs a settle tool");
+  } else {
+    if (!prepareToolIds.has(settleTool)) out.push("settle tool is not a declared prepare tool");
+    if (settleTool === r.toolId) out.push("settle tool is the write tool itself");
+    if (settleTool === prepareTool) out.push("settle tool is the prepare tool itself");
+  }
+  return out;
+}
+
 /** The structural problems of a bound declaration's settle, settle tool and preflight tags (D2). */
 function settleProblems(
   r: ConnectorWriteRow,
@@ -477,15 +498,7 @@ function settleProblems(
   // The confirm, channel and workdir-lock checks run in the preflight phase; a settled row without
   // the tag would skip them and run its child first.
   if (prepare.preflight === undefined) out.push("a settled row must declare preflight");
-  if (settle === "iac-cfn") {
-    if (settleTool !== undefined) out.push("takes no settle tool");
-  } else if (settleTool === undefined) {
-    out.push("needs a settle tool");
-  } else {
-    if (!prepareToolIds.has(settleTool)) out.push("settle tool is not a declared prepare tool");
-    if (settleTool === r.toolId) out.push("settle tool is the write tool itself");
-    if (settleTool === prepare.tool) out.push("settle tool is the prepare tool itself");
-  }
+  out.push(...settleToolProblems(r, prepare.tool, settle, settleTool, prepareToolIds));
   const expected = SETTLE_VALUE_KEYS[settle];
   const fields = binds.map((b) => b.field);
   if (fields.length !== expected.length || !expected.every((k) => fields.includes(k))) {
@@ -515,6 +528,15 @@ export function boundWriteProblems(
       out.push(`bound field ${JSON.stringify(b.field)} is not allowed`);
     if (named.has(b.field)) out.push(`bound field ${b.field} is a key the preview names`);
   }
+  out.push(...prepareLimitProblems(prepare));
+  out.push(...settleProblems(r, bound, prepareToolIds));
+  out.push(...diffFieldProblems(r.preview, prepare));
+  return out;
+}
+
+/** Every prepare limit must be a positive integer. */
+function prepareLimitProblems(prepare: BoundWrite["prepare"]): string[] {
+  const out: string[] = [];
   for (const [name, n] of [
     ["budgetMs", prepare.budgetMs],
     ["maxInputBytes", prepare.maxInputBytes],
@@ -528,8 +550,16 @@ export function boundWriteProblems(
   ] as const) {
     if (!Number.isInteger(n) || n <= 0) out.push(`prepare ${name} must be a positive integer`);
   }
-  out.push(...settleProblems(r, bound, prepareToolIds));
-  const diffFields = r.preview.fields.filter((f) => f.kind === "diff");
+  return out;
+}
+
+/** The preview's diff fields and the prepare read's diff must agree, each field an argKey. */
+function diffFieldProblems(
+  preview: NonNullable<ConnectorWriteRow["preview"]>,
+  prepare: BoundWrite["prepare"],
+): string[] {
+  const out: string[] = [];
+  const diffFields = preview.fields.filter((f) => f.kind === "diff");
   if (diffFields.length > 0 && prepare.diff === undefined) {
     out.push("has a diff field but the prepare read has no diff");
   }

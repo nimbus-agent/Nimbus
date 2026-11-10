@@ -723,7 +723,8 @@ export function networkEntryFromUrl(input: string): string | null {
     const url = new URL(input.trim());
     const host = url.hostname.toLowerCase().replace(/\.$/, "");
     if (host === "" || host.startsWith("[")) return null;
-    const port = url.port !== "" ? url.port : url.protocol === "http:" ? "80" : "443";
+    const defaultPort = url.protocol === "http:" ? "80" : "443";
+    const port = url.port === "" ? defaultPort : url.port;
     return port === "443" ? host : `${host}:${port}`;
   } catch {
     return null;

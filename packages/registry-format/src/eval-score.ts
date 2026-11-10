@@ -99,7 +99,7 @@ export function matchesJsonPattern(pattern: unknown, value: unknown): boolean {
   return pattern === value;
 }
 
-const CANONICAL_INDEX = /^(0|[1-9][0-9]*)$/;
+const CANONICAL_INDEX = /^(0|[1-9]\d*)$/;
 
 function step(node: unknown, token: string): { found: true; value: unknown } | { found: false } {
   if (Array.isArray(node)) {

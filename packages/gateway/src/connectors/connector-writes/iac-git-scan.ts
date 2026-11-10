@@ -36,27 +36,42 @@ export function scanForGitEntry(
   limits: { readonly maxDepth: number; readonly maxEntries: number } = IAC_GIT_SCAN_LIMITS,
   read: ReadDirEntries = readEntries,
 ): GitScan {
-  let examined = 0;
+  const counter = { examined: 0 };
   let level: string[] = [root];
-  for (let depth = 0; level.length > 0; depth += 1) {
+  let depth = 0;
+  while (level.length > 0) {
     const next: string[] = [];
     for (const dir of level) {
-      let entries: readonly Dirent[];
-      try {
-        entries = read(dir);
-      } catch {
-        return "unreadable";
-      }
-      for (const entry of entries) {
-        examined += 1;
-        if (examined > limits.maxEntries) return "over-cap";
-        if (entry.name.toLowerCase() === ".git") return "found";
-        // isDirectory() is false for a link (the entry is not followed), true only for a real folder.
-        if (entry.isDirectory()) next.push(join(dir, entry.name));
-      }
+      const verdict = scanDirectory(dir, next, counter, limits.maxEntries, read);
+      if (verdict !== "clean") return verdict;
     }
     if (next.length > 0 && depth + 1 > limits.maxDepth) return "over-cap";
     level = next;
+    depth += 1;
+  }
+  return "clean";
+}
+
+/** One directory: a verdict other than `clean` ends the scan; real subfolders are queued in `next`. */
+function scanDirectory(
+  dir: string,
+  next: string[],
+  counter: { examined: number },
+  maxEntries: number,
+  read: ReadDirEntries,
+): GitScan {
+  let entries: readonly Dirent[];
+  try {
+    entries = read(dir);
+  } catch {
+    return "unreadable";
+  }
+  for (const entry of entries) {
+    counter.examined += 1;
+    if (counter.examined > maxEntries) return "over-cap";
+    if (entry.name.toLowerCase() === ".git") return "found";
+    // isDirectory() is false for a link (the entry is not followed), true only for a real folder.
+    if (entry.isDirectory()) next.push(join(dir, entry.name));
   }
   return "clean";
 }

@@ -13,7 +13,6 @@ import {
   type ExtensionManifestForSolver,
   type RegistryFetcher,
   registryNameOf,
-  type SourceKey,
   sourceKey,
 } from "./dependency-types.ts";
 
@@ -360,7 +359,7 @@ type Catalog = Record<string, Record<string, ExtensionManifestForSolver>>;
  */
 function makeSourcedFetcher(
   catalog: Record<string, Catalog>,
-  registries: Record<string, SourceKey> = {},
+  registries: Record<string, string> = {},
 ): RegistryFetcher & {
   readonly listed: string[];
   readonly fetched: string[];

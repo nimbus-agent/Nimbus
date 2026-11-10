@@ -27,7 +27,7 @@ export function isPagerdutyFromEmail(value: string): boolean {
   let at = -1;
   for (let i = 0; i < v.length; i++) {
     const ch = v.charAt(i);
-    if (isControl(v.charCodeAt(i)) || ch.trim() === "") return false;
+    if (isControl(v.codePointAt(i) ?? 0) || ch.trim() === "") return false;
     if (ch === "@") {
       if (at !== -1) return false;
       at = i;

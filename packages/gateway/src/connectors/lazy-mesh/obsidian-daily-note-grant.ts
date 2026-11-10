@@ -103,7 +103,7 @@ export function utcDay(d: Date): string {
   return d.toISOString().slice(0, 10);
 }
 
-const CONFIG_DIRS = [".obsidian", ".git"];
+const CONFIG_DIRS: ReadonlySet<string> = new Set([".obsidian", ".git"]);
 
 /**
  * `.obsidian` or `.git` in ANY case, on every OS: NTFS and APFS (macOS's default) are
@@ -111,7 +111,7 @@ const CONFIG_DIRS = [".obsidian", ".git"];
  * filesystem refusing a look-alike costs nothing (re-review finding 3).
  */
 function isConfigDir(_platform: NodeJS.Platform, segment: string): boolean {
-  return CONFIG_DIRS.includes(segment.toLowerCase());
+  return CONFIG_DIRS.has(segment.toLowerCase());
 }
 
 function errCode(err: unknown): unknown {
@@ -135,57 +135,103 @@ export function prepareDailyNote(
   const rel = resolveDailyNotePath(vault, date).relativePath;
   const segments = rel.split(/[\\/]+/).filter((s) => s !== "");
   const target = api.join(vault, ...segments);
+  const refused = (reason: DailyNoteSkip) => ({ path: target, reason });
+  // The checks run in this order, and the first refusal ends the call.
+  const nameRefusal = segmentRefusal(api, rel, segments, platform);
+  if (nameRefusal !== undefined) return refused(nameRefusal);
+  const folderRefusal = ensureFolders(api, vault, segments, fs);
+  if (folderRefusal !== undefined) return refused(folderRefusal);
+  const noteRefusal = ensureNoteFile(target, fs);
+  if (noteRefusal !== undefined) return refused(noteRefusal);
+  const real = verifiedRealPath(api, vault, target, segments, platform, fs);
+  return "file" in real ? real : refused(real.reason);
+}
+
+type PathApi = ReturnType<typeof pathApiFor>;
+
+/** Step 1: the note's relative path stays inside the vault and names no config folder. */
+function segmentRefusal(
+  api: PathApi,
+  rel: string,
+  segments: readonly string[],
+  platform: NodeJS.Platform,
+): DailyNoteSkip | undefined {
   if (
     segments.length === 0 ||
     api.isAbsolute(rel) ||
     segments.some((s) => s === "." || s === "..")
   ) {
-    return { path: target, reason: "outside-vault" };
+    return "outside-vault";
   }
-  if (segments.some((s) => isConfigDir(platform, s))) return { path: target, reason: "config-dir" };
+  if (segments.some((s) => isConfigDir(platform, s))) return "config-dir";
+  return undefined;
+}
+
+/** Step 2: every folder on the way is a real folder (created one level at a time when missing). */
+function ensureFolders(
+  api: PathApi,
+  vault: string,
+  segments: readonly string[],
+  fs: DailyNoteFs,
+): DailyNoteSkip | undefined {
   let cur = vault;
   for (const seg of segments.slice(0, -1)) {
     cur = api.join(cur, seg);
     try {
       const st = fs.lstat(cur);
-      if (st.isSymbolicLink()) return { path: target, reason: "link" };
-      if (!st.isDirectory()) return { path: target, reason: "not-a-file" };
+      if (st.isSymbolicLink()) return "link";
+      if (!st.isDirectory()) return "not-a-file";
     } catch (err) {
-      if (errCode(err) !== "ENOENT") return { path: target, reason: "unwritable" };
+      if (errCode(err) !== "ENOENT") return "unwritable";
       try {
         fs.mkdir(cur);
         const made = fs.lstat(cur);
-        if (made.isSymbolicLink() || !made.isDirectory()) return { path: target, reason: "link" };
+        if (made.isSymbolicLink() || !made.isDirectory()) return "link";
       } catch {
-        return { path: target, reason: "unwritable" };
+        return "unwritable";
       }
     }
   }
+  return undefined;
+}
+
+/** Step 3: the note is a plain single-link file, created with `O_EXCL` when missing. */
+function ensureNoteFile(target: string, fs: DailyNoteFs): DailyNoteSkip | undefined {
   try {
     const st = fs.lstat(target);
-    if (st.isSymbolicLink()) return { path: target, reason: "link" };
-    if (!st.isFile()) return { path: target, reason: "not-a-file" };
-    if (st.nlink > 1) return { path: target, reason: "hard-link" };
+    if (st.isSymbolicLink()) return "link";
+    if (!st.isFile()) return "not-a-file";
+    if (st.nlink > 1) return "hard-link";
   } catch (err) {
-    if (errCode(err) !== "ENOENT") return { path: target, reason: "unwritable" };
+    if (errCode(err) !== "ENOENT") return "unwritable";
     try {
       fs.createExclusive(target);
       const made = fs.lstat(target);
-      if (made.isSymbolicLink() || !made.isFile() || made.nlink > 1) {
-        return { path: target, reason: "link" };
-      }
+      if (made.isSymbolicLink() || !made.isFile() || made.nlink > 1) return "link";
     } catch {
-      return { path: target, reason: "unwritable" };
+      return "unwritable";
     }
   }
+  return undefined;
+}
+
+/** Step 4: the note's real path is the vault's real path plus the same names. */
+function verifiedRealPath(
+  api: PathApi,
+  vault: string,
+  target: string,
+  segments: readonly string[],
+  platform: NodeJS.Platform,
+  fs: DailyNoteFs,
+): { file: string } | { reason: DailyNoteSkip } {
   try {
     const real = fs.realpath(target);
     const expected = api.join(fs.realpath(vault), ...segments);
     const same =
       platform === "win32" ? real.toLowerCase() === expected.toLowerCase() : real === expected;
-    return same ? { file: real } : { path: target, reason: "link" };
+    return same ? { file: real } : { reason: "link" };
   } catch {
-    return { path: target, reason: "unwritable" };
+    return { reason: "unwritable" };
   }
 }
 

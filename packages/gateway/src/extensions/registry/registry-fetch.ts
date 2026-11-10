@@ -19,12 +19,11 @@ import {
   currentRegistryFloor,
   recordAnyRegistryFetch,
 } from "./builtin-registry.ts";
-import { FETCH_FAILURE_CODES } from "./fetch-failure-codes.ts";
 import type { RegistryRow } from "./registry-store.ts";
 import { resolveRegistryLocation, resolveRegistryResource } from "./registry-transport.ts";
 
 /** Re-exported for existing importers; the set lives in a leaf module (no I/O). */
-export { FETCH_FAILURE_CODES };
+export { FETCH_FAILURE_CODES } from "./fetch-failure-codes.ts";
 
 export interface RegistryFetchDeps {
   db: Database;
@@ -94,11 +93,12 @@ async function readCapped(res: Response, maxBytes: number): Promise<Uint8Array> 
     const { done, value } = await reader.read(); // NOSONAR S9382: a stream yields one chunk per read
     if (done) break;
     total += value.byteLength;
-    if (total > maxBytes) {
-      await reader.cancel();
-      throw tooLarge(maxBytes);
-    }
+    if (total > maxBytes) break;
     chunks.push(value);
+  }
+  if (total > maxBytes) {
+    await reader.cancel();
+    throw tooLarge(maxBytes);
   }
   const out = new Uint8Array(total);
   let off = 0;
@@ -222,6 +222,7 @@ async function fetchRemote(
   let url = startUrl;
   try {
     // Sequential by definition: each hop's URL comes from the previous hop's answer.
+    let res: Awaited<ReturnType<RegistryFetchDeps["fetchFn"]>>;
     for (let hop = 0; ; hop++) {
       // One ledger row per outbound REQUEST, each redirect hop included; a failed append aborts
       // this hop before it is made.
@@ -233,14 +234,12 @@ async function fetchRemote(
         host: new URL(url).host,
         now: deps.now(),
       });
-      const res = await deps.fetchFn(url, { redirect: "manual", signal: combined }); // NOSONAR S9382: each hop's URL comes from the previous answer
-      if (REDIRECT_STATUSES.has(res.status)) {
-        url = await redirectTarget(deps, res, url, hop);
-        continue;
-      }
-      await refuseUnsuccessful(res);
-      return await readCapped(res, meta.maxBytes);
+      res = await deps.fetchFn(url, { redirect: "manual", signal: combined }); // NOSONAR S9382: each hop's URL comes from the previous answer
+      if (!REDIRECT_STATUSES.has(res.status)) break;
+      url = await redirectTarget(deps, res, url, hop);
     }
+    await refuseUnsuccessful(res);
+    return await readCapped(res, meta.maxBytes);
   } catch (e) {
     if (e instanceof RegistryError) throw e;
     throw unreachable(e instanceof Error ? e.message : "registry request failed");
@@ -397,24 +396,34 @@ function listedPublisherKeysOf(
       s.kind === "key.rotate" && verifyTrustStatement(s, {}) === "publisher",
   );
   for (const [publisherId, keys] of listed) {
-    const mine = rotations.filter((r) => r.publisherId === publisherId);
-    let grew = true;
-    while (grew) {
-      grew = false;
-      for (const r of mine) {
-        for (const [a, b] of [
-          [r.fromKey, r.toKey],
-          [r.toKey, r.fromKey],
-        ] as const) {
-          if (keys.has(a) && !keys.has(b)) {
-            keys.add(b);
-            grew = true;
-          }
+    closeOverRotations(
+      keys,
+      rotations.filter((r) => r.publisherId === publisherId),
+    );
+  }
+  return listed;
+}
+
+/** Grows `keys` in place, in both directions, along every rotation until nothing more joins. */
+function closeOverRotations(
+  keys: Set<string>,
+  rotations: readonly Extract<TrustStatement, { kind: "key.rotate" }>[],
+): void {
+  let grew = true;
+  while (grew) {
+    grew = false;
+    for (const r of rotations) {
+      for (const [a, b] of [
+        [r.fromKey, r.toKey],
+        [r.toKey, r.fromKey],
+      ] as const) {
+        if (keys.has(a) && !keys.has(b)) {
+          keys.add(b);
+          grew = true;
         }
       }
     }
   }
-  return listed;
 }
 
 /** Self-verify only (the key is not pinned yet); used by `registry add`. */

@@ -1069,7 +1069,7 @@ describe("lifecycle (review item 7)", () => {
   });
 
   test("stop() with nothing running resolves at once", async () => {
-    await runner("answer").r.stop();
+    await expect(runner("answer").r.stop()).resolves.toBeUndefined();
   });
 
   test("a child that appears after stop began is killed at once", async () => {
@@ -1118,7 +1118,7 @@ describe("a child a previous gateway left (review item 7, boot sweep)", () => {
       swept.push(p);
     };
     await dead.r.preflight("iac_cloudformation_deploy", {});
-    expect(swept.length).toBe(4);
+    expect(swept).toHaveLength(4);
     writeFileSync(live(), "not json");
     const bad = runner("answer");
     const kept: string[] = [];

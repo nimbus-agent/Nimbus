@@ -3217,8 +3217,8 @@ describe("runExtensionApprove", () => {
     expect(caught).toBeInstanceOf(Error);
     const message = (caught as Error).message;
     expect(message).toContain('"a?[31m?.example.com" is not a network entry');
-    expect(message.includes(esc)).toBe(false);
-    expect(message.includes(rlo)).toBe(false);
+    expect(message).not.toContain(esc);
+    expect(message).not.toContain(rlo);
   });
 
   test("printable keeps ordinary text and marks each control or invisible character", () => {

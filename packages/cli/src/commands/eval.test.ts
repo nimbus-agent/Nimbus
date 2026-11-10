@@ -342,7 +342,7 @@ describe("runEval --installed", () => {
         },
       };
       expect(await runEval([...h.args, "--json"], deps)).toBe(want);
-      expect(h.logs.length).toBe(1);
+      expect(h.logs).toHaveLength(1);
       expect(h.logs[0]).not.toContain("disconnect failed");
     }
   });

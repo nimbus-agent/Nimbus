@@ -14,7 +14,7 @@ import {
   isDependencyConflictError,
   isOfflineDependencyResolutionError,
 } from "./dependency-errors.ts";
-import { type ExtensionManifestForSolver, type SourceKey, sourceKey } from "./dependency-types.ts";
+import { type ExtensionManifestForSolver, sourceKey } from "./dependency-types.ts";
 import type { ExtensionSource } from "./registry/registry-store.ts";
 import type {
   CollectedRegistryUpdates,
@@ -138,8 +138,8 @@ export class ExtensionAutoUpdater {
         : await this.opts.collect(rows, this.abort.signal);
     // This poll's verified index reads, shared by every update's plan: each registry is read at
     // most once per poll (the sources `collect` already read are reused). Never kept across polls.
-    const pollIndexes = new Map<SourceKey, Promise<RegistryIndex>>(
-      [...(collected.indexes ?? new Map<SourceKey, RegistryIndex>())].map(
+    const pollIndexes = new Map<string, Promise<RegistryIndex>>(
+      [...(collected.indexes ?? new Map<string, RegistryIndex>())].map(
         ([key, index]) => [key, Promise.resolve(index)] as const,
       ),
     );
@@ -158,7 +158,7 @@ export class ExtensionAutoUpdater {
     found: AvailableUpdate,
     collected: CollectedRegistryUpdates,
     installed: readonly InstalledExtensionRow[],
-    pollIndexes: Map<SourceKey, Promise<RegistryIndex>>,
+    pollIndexes: Map<string, Promise<RegistryIndex>>,
   ): Promise<void> {
     const planned = await this.computeUpdateConflicts(found, collected, pollIndexes);
     const oldRequires = installed.find((r) => r.id === found.id)?.manifest.requires?.connectors;
@@ -214,7 +214,7 @@ export class ExtensionAutoUpdater {
   private async computeUpdateConflicts(
     found: AvailableUpdate,
     collected: CollectedRegistryUpdates,
-    pollIndexes: Map<SourceKey, Promise<RegistryIndex>>,
+    pollIndexes: Map<string, Promise<RegistryIndex>>,
   ): Promise<Pick<AvailableUpdate, "conflicts" | "addedPackages">> {
     if (found.verificationStatus !== "verified") return {};
     const newDependsOn = collected.dependsOn.get(found.id);

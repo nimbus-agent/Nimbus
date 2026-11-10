@@ -301,7 +301,7 @@ describe("self-check property", () => {
     ];
     for (const [a, b] of pairs) {
       const r = one(a, b);
-      expect(r.suite.cases.length).toBe(1);
+      expect(r.suite.cases).toHaveLength(1);
       const c = roundTrip(r);
       expect(judgeCase(c, a).pass).toBe(true);
       expect(judgeCase(c, b).pass).toBe(true);
@@ -327,7 +327,7 @@ describe("self-check property", () => {
   test("zero recordable cases still returns an empty suite and the skips", () => {
     const r = one(failed, failed);
     expect(r.suite.cases).toEqual([]);
-    expect(r.skipped.length).toBe(1);
+    expect(r.skipped).toHaveLength(1);
     expect(() => serialiseEvalSuite(r.suite)).toThrow(/ERR_REGISTRY_EVAL_SUITE_INVALID/);
   });
 });

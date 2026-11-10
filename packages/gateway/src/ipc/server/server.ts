@@ -61,6 +61,17 @@ import {
 } from "./socket-listeners.ts";
 import { rpcVaultOrMethodNotFound } from "./vault-dispatch.ts";
 
+async function rpcGetSessionTranscript(ctx: ServerCtx, params: unknown): Promise<unknown> {
+  const li = ctx.options.localIndex;
+  if (li === undefined) {
+    throw new RpcMethodError(
+      -32603,
+      "engine.getSessionTranscript requires a configured local index",
+    );
+  }
+  return await createGetSessionTranscriptHandler(li.rawDb)(params);
+}
+
 /**
  * `hostPlatform` chooses the transport, and exists as a test seam: the coverage run is Linux-only,
  * so the named-pipe arm below — the ONLY IPC transport on Windows — would otherwise never be
@@ -224,16 +235,8 @@ export function createIpcServer(
         return dispatchEngineAskStream(ctx, session, clientId, params);
       case "engine.cancelStream":
         return createCancelStreamHandler(ctx.streamRegistry)(params);
-      case "engine.getSessionTranscript": {
-        const li = ctx.options.localIndex;
-        if (li === undefined) {
-          throw new RpcMethodError(
-            -32603,
-            "engine.getSessionTranscript requires a configured local index",
-          );
-        }
-        return await createGetSessionTranscriptHandler(li.rawDb)(params);
-      }
+      case "engine.getSessionTranscript":
+        return await rpcGetSessionTranscript(ctx, params);
       default:
         return await rpcVaultOrMethodNotFound(ctx, method, params, clientId);
     }

@@ -343,7 +343,7 @@ describe("error-reply adapter", () => {
 
   test("scalars and objects without hidden content pass through", () => {
     expect(normaliseEvalReply(5, hidden([]))).toBe(5);
-    expect(normaliseEvalReply(null, hidden([]))).toBe(null);
+    expect(normaliseEvalReply(null, hidden([]))).toBeNull();
     const o = { y: 1 };
     expect(normaliseEvalReply(o, () => undefined)).toBe(o);
   });

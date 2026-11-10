@@ -186,10 +186,10 @@ describe("parseEvalSuite", () => {
 
   test("input size cap", () => {
     const ok = { a: "x".repeat(64 * 1024 - 8) };
-    expect(enc.encode(JSON.stringify(ok)).length).toBe(64 * 1024);
+    expect(enc.encode(JSON.stringify(ok))).toHaveLength(64 * 1024);
     parse(suiteWith({ input: ok }));
     const big = { a: "x".repeat(64 * 1024 - 7) };
-    expect(enc.encode(JSON.stringify(big)).length).toBe(65_537);
+    expect(enc.encode(JSON.stringify(big))).toHaveLength(65_537);
     expectRefused(() => parse(suiteWith({ input: big })), "input");
   });
 

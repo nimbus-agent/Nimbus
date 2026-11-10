@@ -390,8 +390,8 @@ async function signRequests(
   for (const f of [...files.requests].sort((a, b) => codeUnitCompare(a.name, b.name))) {
     if (alreadyCarried(current, f.request)) continue;
     try {
-      // NOSONAR S9382: sequential by design - each request is checked against the ones signed before it
-      const s = await signRegistryRequest(f.request, current, at.seed, at.issuedAt);
+      // Sequential by design: each request is checked against the ones signed before it.
+      const s = await signRegistryRequest(f.request, current, at.seed, at.issuedAt); // NOSONAR S9382 sequential by design
       signed.push(s);
       const prior = Array.isArray(current.statements) ? current.statements : [];
       current = { ...current, statements: [...prior, s] };

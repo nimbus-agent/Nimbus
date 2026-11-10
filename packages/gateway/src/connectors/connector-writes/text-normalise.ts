@@ -36,7 +36,7 @@ const NAMED_ENTITIES: Readonly<Record<string, string>> = {
   nbsp: String.fromCodePoint(0xa0),
 };
 
-const ENTITY = /&(?:#x([0-9a-f]+)|#([0-9]+)|([a-z]+));?/gi;
+const ENTITY = /&(?:#x([0-9a-f]+)|#(\d+)|([a-z]+));?/gi;
 
 /** One pass of HTML entity decoding; an unknown name or an invalid code point is left as is. */
 export function decodeEntitiesOnce(s: string): string {
@@ -67,7 +67,7 @@ function isLineBreak(cp: number): boolean {
 /** Printable ASCII (U+0020-U+007E) without `&` (U+0026): unchanged by one round. */
 function isRoundFixedPoint(s: string): boolean {
   for (let i = 0; i < s.length; i++) {
-    const c = s.charCodeAt(i);
+    const c = s.codePointAt(i) ?? 0;
     if (c < 0x20 || c > 0x7e || c === 0x26) return false;
   }
   return true;

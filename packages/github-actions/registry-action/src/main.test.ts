@@ -120,20 +120,34 @@ describe("main", () => {
     expect(rest).not.toContain(key);
   });
 
-  test("sign without a root key fails the step", async () => {
-    process.env["INPUT_MODE"] = "sign";
-    delete process.env["INPUT_ROOT-KEY"];
+  test.each([
+    {
+      title: "sign without a root key fails the step",
+      env: { INPUT_MODE: "sign", "INPUT_ROOT-KEY": undefined },
+      annotation: '::error::input "root-key" is required',
+    },
+    {
+      title: "a refused check fails the step with an error annotation",
+      env: { INPUT_MODE: "check", GITHUB_BASE_REF: undefined },
+      annotation: "::error::check runs on pull_request",
+    },
+    {
+      title: "check passes a set nimbus-gateway input on",
+      env: {
+        INPUT_MODE: "check",
+        GITHUB_BASE_REF: "main",
+        "INPUT_NIMBUS-GATEWAY": "nimbus-gateway",
+      },
+      annotation: '::error::input "nimbus-gateway" must be an absolute path',
+    },
+  ] as const)("$title", async ({ env, annotation }) => {
+    for (const [k, v] of Object.entries(env as Record<string, string | undefined>)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
     await main();
     expect(process.exitCode).toBe(1);
-    expect(out.join("")).toContain('::error::input "root-key" is required');
-  });
-
-  test("a refused check fails the step with an error annotation", async () => {
-    process.env["INPUT_MODE"] = "check";
-    delete process.env["GITHUB_BASE_REF"];
-    await main();
-    expect(process.exitCode).toBe(1);
-    expect(out.join("")).toContain("::error::check runs on pull_request");
+    expect(out.join("")).toContain(annotation);
   });
 
   test.each(["root-key", "github-token"])(
@@ -185,15 +199,6 @@ describe("main", () => {
     await main();
     expect(process.exitCode).toBe(1);
     expect(out.join("")).toContain(`::error::refusing to sign: the scores input (${outside})`);
-  });
-
-  test("check passes a set nimbus-gateway input on", async () => {
-    process.env["INPUT_MODE"] = "check";
-    process.env["GITHUB_BASE_REF"] = "main";
-    process.env["INPUT_NIMBUS-GATEWAY"] = "nimbus-gateway";
-    await main();
-    expect(process.exitCode).toBe(1);
-    expect(out.join("")).toContain('::error::input "nimbus-gateway" must be an absolute path');
   });
 
   test("check with nimbus-gateway refuses a github-token: masked, dropped, never printed", async () => {

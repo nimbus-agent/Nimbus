@@ -504,38 +504,50 @@ interface AfterReply {
   readonly timers: Timers;
 }
 
+/**
+ * The settler's own `show` read, one more prepare read of this step (own audit and egress row),
+ * or `undefined` when the row declares no settle tool.
+ */
+function showPlanReader(
+  ops: PrepareOps,
+  a: AfterReply,
+):
+  | ((args: { readonly workingDirectory: string; readonly planFile: string }) => Promise<unknown>)
+  | undefined {
+  const { opts, service, timers, bound } = a;
+  const settleTool = bound.prepare.settleTool;
+  if (settleTool === undefined) return undefined;
+  return async (args) => {
+    const showAction: PlannedAction = {
+      type: prepareActionType(service),
+      payload: {
+        mcpToolId: mcpClientToolKey(service, settleTool),
+        input: {
+          workingDirectory: opts.workingDirectory ?? args.workingDirectory,
+          planFile: args.planFile,
+        },
+      },
+    };
+    const shown = await raceWithBudget(
+      (spent) => gateThenDispatch(showAction, ops, spent),
+      IAC_LIMITS.showBudgetMs,
+      timers,
+    );
+    if ("refusal" in shown) throw new PrepareRefusedError(shown.refusal);
+    return replyJson(shown.reply);
+  };
+}
+
 /** Everything after the prepare child answered: the size cap, then the settle or the plain binds. */
 async function afterReply(ops: PrepareOps, a: AfterReply): Promise<PreparedWrite> {
-  const { row, bound, opts, input, got, service, timers } = a;
+  const { row, bound, opts, input, got } = a;
   const { prepare } = bound;
-  const { settle, settleTool } = prepare;
+  const { settle } = prepare;
   if (serialisedLength(got.reply) > prepare.maxReplyBytes) {
     throw new PrepareRefusedError(PREPARE_REFUSALS.replyTooLarge);
   }
   if (settle !== undefined && ops.settle !== undefined) {
-    // The settler's own `show` read is one more prepare read of this step (own audit and egress row).
-    const showPlan =
-      settleTool === undefined
-        ? undefined
-        : async (args: { readonly workingDirectory: string; readonly planFile: string }) => {
-            const showAction: PlannedAction = {
-              type: prepareActionType(service),
-              payload: {
-                mcpToolId: mcpClientToolKey(service, settleTool),
-                input: {
-                  workingDirectory: opts.workingDirectory ?? args.workingDirectory,
-                  planFile: args.planFile,
-                },
-              },
-            };
-            const shown = await raceWithBudget(
-              (spent) => gateThenDispatch(showAction, ops, spent),
-              IAC_LIMITS.showBudgetMs,
-              timers,
-            );
-            if ("refusal" in shown) throw new PrepareRefusedError(shown.refusal);
-            return replyJson(shown.reply);
-          };
+    const showPlan = showPlanReader(ops, a);
     return settledPrepare(ops.settle.bind(ops), {
       row,
       bound,

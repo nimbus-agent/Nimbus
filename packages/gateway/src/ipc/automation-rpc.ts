@@ -965,6 +965,29 @@ function resolveExtensionInfoExtras(
   return { prevVersion, cachedUpdate: ctx.autoUpdate?.cache.get(row.id) ?? null };
 }
 
+/** The trimmed `publisherKeyPath` param, or `undefined` when it is absent or not a string. */
+function publisherKeyPathOf(rec: Record<string, unknown> | undefined): string | undefined {
+  const raw = rec?.["publisherKeyPath"];
+  return typeof raw === "string" ? raw.trim() : undefined;
+}
+
+/**
+ * The RPC error a failed local install becomes. A rollback that left packages behind is warned and
+ * named in the refusal (never swallowed).
+ */
+function localInstallRefusal(
+  ctx: AutomationCtx,
+  sourcePath: string,
+  e: unknown,
+): AutomationRpcError {
+  const note = reportIncompleteRollback(ctx.logger ?? automationRpcLog, sourcePath, e);
+  const msg = `${e instanceof Error ? e.message : String(e)}${note}`;
+  return new AutomationRpcError(
+    e instanceof ExtensionInstallNotApprovedError ? -32603 : -32602,
+    msg,
+  );
+}
+
 async function handleExtensionInstall(
   rec: Record<string, unknown> | undefined,
   ctx: AutomationCtx,
@@ -981,10 +1004,7 @@ async function handleExtensionInstall(
   if (ownerGate === undefined) {
     throw new AutomationRpcError(-32603, "extension.install requires the owner's HITL gate");
   }
-  const publisherKeyPath =
-    rec !== undefined && typeof rec["publisherKeyPath"] === "string"
-      ? rec["publisherKeyPath"].trim()
-      : undefined;
+  const publisherKeyPath = publisherKeyPathOf(rec);
   let installed: Awaited<ReturnType<typeof installExtensionFromLocalDirectory>>;
   try {
     installed = await installExtensionFromLocalDirectory({
@@ -1016,13 +1036,7 @@ async function handleExtensionInstall(
         }),
     });
   } catch (e) {
-    // A rollback that left packages behind is warned and named in the refusal (never swallowed).
-    const note = reportIncompleteRollback(ctx.logger ?? automationRpcLog, sourcePath, e);
-    const msg = `${e instanceof Error ? e.message : String(e)}${note}`;
-    throw new AutomationRpcError(
-      e instanceof ExtensionInstallNotApprovedError ? -32603 : -32602,
-      msg,
-    );
+    throw localInstallRefusal(ctx, sourcePath, e);
   }
   // A dependency kept by an explicit install: nothing was copied or approved, only its marker moved.
   if (isPromotedInstall(installed)) {

@@ -248,6 +248,11 @@ export async function runExtensionInfoRemote(
     deps.stdout(`${JSON.stringify(out, undefined, 2)}\n`);
     return 0;
   }
+  printRemoteInfo(out, deps);
+  return 0;
+}
+
+function printRemoteInfo(out: RemoteInfo, deps: ExtensionRegistryDeps): void {
   deps.stdout(`Extension: ${clean(out.id)}\n`);
   deps.stdout(`Registry:  ${clean(out.registry)}\n`);
   const evidenceFor = evidenceForLine(out.evidenceFor);
@@ -270,5 +275,4 @@ export async function runExtensionInfoRemote(
       for (const l of formatPermissions(v.permissions)) deps.stdout(`${clean(l)}\n`);
     }
   }
-  return 0;
 }

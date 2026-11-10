@@ -127,9 +127,9 @@ export function Marketplace() {
     <div className="p-6 flex flex-col gap-4">
       {orphanNotice !== null && (
         <div className="flex items-start gap-2">
-          <p role="status" data-testid="orphan-notice" className="text-sm text-amber-700">
+          <output data-testid="orphan-notice" className="block text-sm text-amber-700">
             {orphanNotice}
-          </p>
+          </output>
           <button
             type="button"
             aria-label="Dismiss notice"

@@ -55,7 +55,7 @@ export async function fetchSameOriginOnly(
     }
     // Release the followed 3xx's connection before the next hop; a cancel error never masks the flow.
     try {
-      await res.body?.cancel();
+      await res.body?.cancel(); // NOSONAR S9382: each hop depends on the previous response, so its body is released before the next request
     } catch {
       // ignored: the redirect body is discarded either way
     }

@@ -307,7 +307,7 @@ export async function runEvalSession(
     for (const suite of src.suites) {
       for (const c of suite.cases) {
         assertTimeLeft(run);
-        outcomes.push(await runCase(run, suite, c));
+        outcomes.push(await runCase(run, suite, c)); // NOSONAR S9382: the cases share ONE server and one deadline; a timeout or crash respawns it for the next case, so they run in order
       }
     }
     return scoreOutcomes(outcomes);
@@ -342,7 +342,7 @@ async function recordInput(run: EvalRun, input: EvalRecordInput): Promise<EvalRe
 /** One pass over every input in order. The server is killed after it: the next pass stages afresh. */
 async function recordPass(run: EvalRun, inputs: EvalRecordInputs): Promise<EvalReply[]> {
   const replies: EvalReply[] = [];
-  for (const input of inputs.cases) replies.push(await recordInput(run, input));
+  for (const input of inputs.cases) replies.push(await recordInput(run, input)); // NOSONAR S9382: the inputs share ONE server and one deadline within a pass; each is recorded in order
   await killServer(run);
   return replies;
 }

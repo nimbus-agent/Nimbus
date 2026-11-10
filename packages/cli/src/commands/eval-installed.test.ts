@@ -139,7 +139,7 @@ describe("candidatesOf", () => {
       (s) => errs.push(s),
     );
     expect(out).toEqual([{ id: "a/good", version: "1.0.0", source_registry: null }]);
-    expect(errs.length).toBe(8);
+    expect(errs).toHaveLength(8);
   });
 
   test("empty or whitespace source_registry is a local install", () => {
@@ -222,7 +222,7 @@ describe("runEvalInstalled", () => {
     const h = harness({ list: listOf() });
     expect(await runEvalInstalled({ threshold: 7, json: true }, h.deps)).toBe(0);
     expect(JSON.parse(h.logs[0] ?? "")).toEqual({ threshold: 7, results: [] });
-    expect(h.logs.length).toBe(1);
+    expect(h.logs).toHaveLength(1);
   });
 
   test("51 candidates: ERR_EVAL_TOO_MANY_EXTENSIONS, exit 2, no extension.eval", async () => {
@@ -337,7 +337,7 @@ describe("runEvalInstalled", () => {
   test("happy path --json: exactly one document of the documented shape", async () => {
     const h = happy();
     expect(await runEvalInstalled({ threshold: 5, json: true }, h.deps)).toBe(1);
-    expect(h.logs.length).toBe(1);
+    expect(h.logs).toHaveLength(1);
     expect(JSON.parse(h.logs[0] ?? "")).toEqual({
       threshold: 5,
       results: [
@@ -475,7 +475,7 @@ describe("runEvalInstalled", () => {
       info: { "r/a/x": new Error("ERR_REGISTRY_FETCH: line one\nline two") },
     });
     expect(await runEvalInstalled({ threshold: 5, json: false }, h.deps)).toBe(0);
-    expect(h.logs.length).toBe(3);
+    expect(h.logs).toHaveLength(3);
     const status = tableRows(h.logs)[0]?.at(-1);
     expect(status).toBe(
       "no registry score: registry unreadable: ERR_REGISTRY_FETCH: line one line two",

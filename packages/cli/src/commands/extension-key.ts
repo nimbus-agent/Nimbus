@@ -61,7 +61,7 @@ interface ParsedArgs {
 function parseArgs(args: readonly string[]): ParsedArgs {
   const [sub, ...rest] = args;
   if (sub !== "rotate" && sub !== "revoke") {
-    throw new KeyCmdError(`unknown subcommand ${sub === undefined ? "(none)" : sub}`);
+    throw new KeyCmdError(`unknown subcommand ${sub ?? "(none)"}`);
   }
   const allowed = VALUE_OPTIONS[sub] ?? [];
   const options = new Map<string, string>();

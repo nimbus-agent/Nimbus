@@ -348,7 +348,7 @@ async function settle(
 /** The change set ARN the connector accepts (its own regex), with the region and account captured. */
 const CHANGE_SET_ARN =
   /^arn:aws[a-z-]*:cloudformation:([a-z0-9-]+):(\d{12}):changeSet\/([A-Za-z][-A-Za-z0-9]{0,127})\/[0-9a-f-]{36}$/;
-const CHANGE_SET_TYPES: readonly string[] = ["CREATE", "UPDATE"];
+const CHANGE_SET_TYPES: ReadonlySet<string> = new Set(["CREATE", "UPDATE"]);
 
 export interface CfnSettleRequest {
   /** The write's input: `{stackName, templateBody, capabilities?}`. */
@@ -446,7 +446,7 @@ export function settleCfnChangeSet(
     !new RegExp(`^nimbus-${templateSha256}-[0-9a-f]{12}$`).test(name) ||
     typeof id !== "string" ||
     typeof type !== "string" ||
-    !CHANGE_SET_TYPES.includes(type) ||
+    !CHANGE_SET_TYPES.has(type) ||
     replyCaps === undefined ||
     wantCaps === undefined ||
     !sameSet(replyCaps, wantCaps)
@@ -454,7 +454,7 @@ export function settleCfnChangeSet(
     throw refuse(PREPARE_REFUSALS.unbound);
   }
   const arn = CHANGE_SET_ARN.exec(id);
-  if (arn === null || arn[3] !== name) throw refuse(PREPARE_REFUSALS.unbound);
+  if (arn?.[3] !== name) throw refuse(PREPARE_REFUSALS.unbound);
   const [, region, account] = arn;
 
   const rawChanges = field(reply, "changes");

@@ -88,11 +88,13 @@ export function selectJiraOpsAlert(reply: unknown): readonly BeforeStateField[] 
   } else if (ack === true || status === "acked") {
     note = "Already acknowledged: acknowledging it again changes nothing (it can still be closed)";
   }
+  let ackText: string | undefined;
+  if (typeof ack === "boolean") ackText = ack ? "yes" : "no";
   return [
     { label: "Message", value: excerptHead(message) },
     ...presentFields([
       ["Status", shown(["status"])],
-      ["Acknowledged", typeof ack === "boolean" ? (ack ? "yes" : "no") : undefined],
+      ["Acknowledged", ackText],
       ["Priority", shown(["priority"])],
       ["Source", shown(["source"])],
       ["Count", shown(["count"])],
