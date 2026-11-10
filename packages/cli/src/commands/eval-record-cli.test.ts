@@ -10,11 +10,18 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { EvalRecordDocument } from "@nimbus-dev/registry-format";
+import {
+  type EvalRecordDocument,
+  MAX_EVAL_CASES,
+  MAX_EVAL_SUITES,
+} from "@nimbus-dev/registry-format";
 import {
   prepareRecord,
+  RECORD_NOTE,
   type RecordPlan,
+  renderRecorded,
   sameFileName,
+  skipLines,
   writeRecordedSuite,
 } from "./eval-record-cli.ts";
 
@@ -144,5 +151,115 @@ describe("prepareRecord", () => {
     expect(prep(pkg, f).ok).toBe(true);
     expect(existsSync(stale)).toBe(false);
     expect(existsSync(other)).toBe(true);
+  });
+});
+
+describe("prepareRecord refusals before any launch", () => {
+  const inputsText = JSON.stringify({
+    format: 1,
+    name: "g",
+    cases: [{ name: "a", tool: "echo", input: {} }],
+  });
+
+  function prepWith(
+    pkg: string,
+    over: { out?: string; force?: boolean; inputs?: string } = {},
+    warn: (s: string) => void = () => {},
+  ) {
+    const inputs = join(pkg, "i.json");
+    writeFileSync(inputs, over.inputs ?? inputsText);
+    return prepareRecord({ pkg, record: inputs, out: over.out, force: over.force ?? false }, warn);
+  }
+
+  function message(r: ReturnType<typeof prepareRecord>): string {
+    return r.ok ? "" : r.message;
+  }
+
+  test("an inputs file that is not valid inputs says why", () => {
+    const pkg = pkgDir();
+    const r = prepWith(pkg, { inputs: "{nope" });
+    expect(r.ok).toBe(false);
+    expect(message(r).length).toBeGreaterThan(0);
+  });
+
+  test.each([
+    ["an absolute --out", join(tmpdir(), "a.eval.json"), "relative to the package"],
+    ["a --out that leaves the package", "../a.eval.json", "stay inside the package"],
+    ["a --out that is not an eval suite file", "evals/notes.txt", "named <name>.eval.json"],
+    ["a --out with a colon", "evals/a:b.eval.json", "':' or control characters"],
+    ["a --out naming a Windows device", "evals/con.eval.json", "reserved device"],
+  ])("refuses %s", (_n, out, fragment) => {
+    const pkg = pkgDir();
+    const r = prepWith(pkg, { out });
+    expect(r.ok).toBe(false);
+    expect(message(r)).toContain(fragment);
+  });
+
+  test("an existing target needs --force, and --force allows a regular file", () => {
+    const pkg = pkgDir();
+    mkdirSync(join(pkg, "evals"));
+    writeFileSync(join(pkg, "evals", "golden.eval.json"), "old");
+    expect(message(prepWith(pkg))).toContain("without --force");
+    expect(prepWith(pkg, { force: true }).ok).toBe(true);
+  });
+
+  test("an evals that is a plain file is refused", () => {
+    const pkg = pkgDir();
+    writeFileSync(join(pkg, "evals"), "file");
+    expect(message(prepWith(pkg))).toContain("not a plain directory");
+  });
+
+  test("a broken sibling suite is warned about and not counted", () => {
+    const pkg = pkgDir();
+    mkdirSync(join(pkg, "evals"));
+    writeFileSync(join(pkg, "evals", "broken.eval.json"), "{nope");
+    const warnings: string[] = [];
+    const r = prepWith(pkg, {}, (s) => warnings.push(s));
+    expect(r.ok).toBe(true);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain("evals/broken.eval.json is not counted");
+  });
+
+  test("too many existing suites, or too many cases in them, is refused", () => {
+    const suite = (name: string, n: number) =>
+      JSON.stringify({
+        format: 1,
+        name,
+        cases: Array.from({ length: n }, (_, i) => ({
+          name: `c${String(i)}`,
+          tool: "echo",
+          input: {},
+          expect: { rubric: "exact", value: "x" },
+        })),
+      });
+    const many = pkgDir();
+    mkdirSync(join(many, "evals"));
+    for (let i = 0; i < MAX_EVAL_SUITES; i++) {
+      writeFileSync(join(many, "evals", `s${String(i)}.eval.json`), suite(`s${String(i)}`, 1));
+    }
+    expect(message(prepWith(many))).toContain(`at most ${String(MAX_EVAL_SUITES)} are scored`);
+
+    const big = pkgDir();
+    mkdirSync(join(big, "evals"));
+    writeFileSync(join(big, "evals", "big.eval.json"), suite("big", MAX_EVAL_CASES));
+    expect(message(prepWith(big))).toContain("case cap");
+  });
+});
+
+describe("renderRecorded and skipLines", () => {
+  test("report the counts, each skip's reason with control characters stripped, and the note", () => {
+    const lines = renderRecorded("evals/golden.eval.json", {
+      ...doc,
+      skipped: [
+        { case: "bad\u001b[31mname", why: "call-failed" },
+        { case: "other", why: "reply-too-large" },
+      ],
+    });
+    expect(lines[0]).toBe("wrote evals/golden.eval.json: 1 cases recorded, 2 skipped");
+    expect(lines[1]).toContain(": the tool call failed");
+    expect(lines[1]).not.toContain("\u001b");
+    expect(lines[2]).toBe("  other: its reply was too large to record");
+    expect(lines.at(-1)).toBe(RECORD_NOTE);
+    expect(skipLines([])).toEqual([]);
   });
 });

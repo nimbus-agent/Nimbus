@@ -140,4 +140,42 @@ describe("nimbus extension report", () => {
     expect(await runExtensionReport([], h.deps)).toBe(2);
     expect(h.calls).toEqual([]);
   });
+
+  function bodyOf(out: string): string {
+    const printed = out.split("\n").find((l) => l.startsWith("https://")) ?? "";
+    return new URL(printed).searchParams.get("body") ?? "";
+  }
+
+  test("an extension with no stored fingerprint derives it from the publisher key", async () => {
+    const key = Buffer.alloc(32, 7).toString("base64");
+    const h = harness({
+      extension: {
+        ...EXTENSION,
+        publisher_key_fingerprint: undefined,
+        publisher: { id: "acme", key },
+      },
+    });
+    expect(await runExtensionReport(["acme/tool"], h.deps)).toBe(0);
+    expect(bodyOf(h.out())).toMatch(/key fingerprint [0-9a-f]{32}\)/);
+  });
+
+  test("an unsigned extension is reported with placeholders, not made up", async () => {
+    const h = harness({
+      extension: { ...EXTENSION, publisher_key_fingerprint: undefined, publisher: undefined },
+    });
+    expect(await runExtensionReport(["acme/tool"], h.deps)).toBe(0);
+    expect(bodyOf(h.out())).toContain("Publisher: (unsigned) (key fingerprint unknown)");
+  });
+
+  test("a failure that is not a report problem is not swallowed", async () => {
+    const h = harness();
+    const broken = {
+      call: async () => {
+        throw new Error("socket closed");
+      },
+    } as unknown as IPCClient;
+    await expect(runExtensionReport(["acme/tool"], { ...h.deps, client: broken })).rejects.toThrow(
+      "socket closed",
+    );
+  });
 });

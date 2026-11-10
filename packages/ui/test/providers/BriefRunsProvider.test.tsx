@@ -1,4 +1,4 @@
-import { act, render, screen } from "@testing-library/react";
+import { act, cleanup, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { JsonRpcNotification } from "../../src/ipc/types";
 
@@ -127,5 +127,64 @@ describe("BriefRunsProvider", () => {
       await expect(api?.start("decisions", {})).rejects.toThrow("nope");
     });
     expect(screen.getByTestId("s").textContent).toBe("none");
+  });
+
+  it("a non-Error rejection from the call is wrapped in an Error", async () => {
+    call.mockRejectedValue("plain");
+    mount();
+    await vi.waitFor(() => expect(handler).toBeDefined());
+    await act(async () => {
+      await expect(api?.start("decisions", {})).rejects.toThrow("plain");
+    });
+  });
+
+  it("a non-Error rejection from subscribe is wrapped in an Error", async () => {
+    sub.impl = () => Promise.reject("no bridge text");
+    mount();
+    await act(async () => {
+      await expect(api?.start("decisions", {})).rejects.toThrow("no bridge text");
+    });
+  });
+
+  it("a reply without a sessionId is refused and registers nothing", async () => {
+    for (const reply of [null, "x", {}, { sessionId: "" }, { sessionId: 4 }]) {
+      call.mockResolvedValueOnce(reply);
+      mount();
+      await vi.waitFor(() => expect(handler).toBeDefined());
+      await act(async () => {
+        await expect(api?.start("decisions", {})).rejects.toThrow(
+          "agents.decisions returned no sessionId",
+        );
+      });
+      cleanup();
+      handler = undefined;
+    }
+  });
+
+  it("a notification that is not a brief outcome changes nothing", async () => {
+    call.mockResolvedValue({ sessionId: "s1" });
+    mount();
+    await vi.waitFor(() => expect(handler).toBeDefined());
+    await act(async () => {
+      await api?.start("decisions", {});
+    });
+    act(() => handler?.({ method: "gateway.event", params: { sessionId: "s1" } }));
+    expect(screen.getByTestId("s").textContent).toBe("pending");
+  });
+
+  it("unmounting before the subscription resolves releases the listener once it does", async () => {
+    let resolveSub: (fn: () => void) => void = () => undefined;
+    const unlisten = vi.fn();
+    sub.impl = () =>
+      new Promise((resolve) => {
+        resolveSub = resolve;
+      });
+    mount();
+    cleanup();
+    await act(async () => {
+      resolveSub(unlisten);
+      await Promise.resolve();
+    });
+    expect(unlisten).toHaveBeenCalledTimes(1);
   });
 });

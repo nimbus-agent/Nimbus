@@ -1,9 +1,18 @@
 import { describe, expect, it } from "bun:test";
-import { readFileSync } from "node:fs";
-import { isAbsolute } from "node:path";
+import { mkdtempSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { type PackIo, runPack, runPackWith } from "./pack.ts";
+import type { CliPlatformPaths } from "../paths.ts";
+import {
+  installPackInteractive,
+  type PackIo,
+  runPack,
+  runPackWith,
+  withPackClient,
+  withTerminalConsentClient,
+} from "./pack.ts";
 
 interface Harness {
   readonly io: PackIo;
@@ -406,5 +415,48 @@ describe("runPack", () => {
       process.stderr.write = orig;
     }
     expect(chunks.join("")).toContain("Usage: nimbus pack");
+  });
+});
+
+describe("the terminal-consent client with no gateway running", () => {
+  const emptyPaths = (demo?: true): CliPlatformPaths => {
+    const root = mkdtempSync(join(tmpdir(), "nimbus-pack-"));
+    return {
+      configDir: root,
+      dataDir: root,
+      logDir: root,
+      socketPath: join(root, "none.sock"),
+      extensionsDir: root,
+      tempDir: root,
+      sandboxDir: root,
+      ...(demo === undefined ? {} : { demo }),
+    };
+  };
+
+  it("withTerminalConsentClient refuses before running the callback", async () => {
+    let ran = false;
+    await expect(
+      withTerminalConsentClient(
+        async () => {
+          ran = true;
+          return 1;
+        },
+        1000,
+        emptyPaths(),
+      ),
+    ).rejects.toThrow("Gateway is not running. Start with:");
+    expect(ran).toBe(false);
+  });
+
+  it("names the demo root when the demo paths are active", async () => {
+    await expect(withPackClient(async () => 1, emptyPaths(true))).rejects.toThrow(
+      "Gateway is not running (demo root)",
+    );
+  });
+
+  it("installPackInteractive fails the same way", async () => {
+    await expect(installPackInteractive("some-pack", emptyPaths())).rejects.toThrow(
+      "Gateway is not running",
+    );
   });
 });

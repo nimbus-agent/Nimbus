@@ -648,4 +648,11 @@ describe("the real role dependencies", () => {
     expect(typeof (await REAL_EVAL_LOADERS.sandboxDir())).toBe("string");
     expect((await REAL_EVAL_LOADERS.runtimeReadPaths()).length).toBeGreaterThan(0);
   });
+
+  test("the real listing client factory builds a client that disconnects without spawning", async () => {
+    const create = await REAL_EVAL_LOADERS.listingClient();
+    const client = create(`nimbus-eval-listing-test-${crypto.randomUUID()}`, {});
+    expect(typeof client.disconnect).toBe("function");
+    await client.disconnect();
+  });
 });

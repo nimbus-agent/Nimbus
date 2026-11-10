@@ -6,22 +6,18 @@
 // `cloud-infra.ts`). Imported BY `cloud-infra.ts`, so it imports nothing from the row table.
 import {
   arrayAt,
+  type BeforeInput,
+  type BeforePicked,
   beforeReplyJson,
   excerptHead,
   listAt,
   nonEmptyString,
   presentFields,
   requiredStringAt,
+  shownHead,
   stringAt,
 } from "./before-select.ts";
 import type { BeforeStateField } from "./types.ts";
-
-type Picked = Readonly<Record<string, unknown>>;
-type Input = Readonly<Record<string, unknown>>;
-
-function shown(v: string | undefined): string | undefined {
-  return v === undefined ? undefined : excerptHead(v);
-}
 
 /** The entry of the list reply at `path` whose string at `key` equals `want`, else `undefined`. */
 function entryNamed(
@@ -42,7 +38,7 @@ function entryNamed(
  * `aws_lambda_list` input: the list takes no input; the function name is validated here so a write
  * without one reads nothing (the entry is picked out of the reply by name).
  */
-export function lambdaListReadArgs(input: Input): Record<string, unknown> | undefined {
+export function lambdaListReadArgs(input: BeforeInput): Record<string, unknown> | undefined {
   return nonEmptyString(input["functionName"]) === undefined ? undefined : {};
 }
 
@@ -50,7 +46,10 @@ export function lambdaListReadArgs(input: Input): Record<string, unknown> | unde
  * AWS `aws_lambda_list` (before-state) for an invoke: the function's configuration. A function that
  * is not in the (first-page) list throws, so the write is refused.
  */
-export function selectLambdaFunction(reply: unknown, picked: Picked): readonly BeforeStateField[] {
+export function selectLambdaFunction(
+  reply: unknown,
+  picked: BeforePicked,
+): readonly BeforeStateField[] {
   const j = beforeReplyJson(reply);
   const fn = entryNamed(j, ["Functions"], ["FunctionName"], picked["functionName"]);
   if (fn === undefined) throw new Error("before reply: function not in the list");
@@ -59,18 +58,18 @@ export function selectLambdaFunction(reply: unknown, picked: Picked): readonly B
   return [
     { label: "Function", value: excerptHead(requiredStringAt(fn, ["FunctionName"])) },
     ...presentFields([
-      ["Runtime", shown(stringAt(fn, ["Runtime"]))],
-      ["Handler", shown(stringAt(fn, ["Handler"]))],
+      ["Runtime", shownHead(stringAt(fn, ["Runtime"]))],
+      ["Handler", shownHead(stringAt(fn, ["Handler"]))],
       ["Memory", memory === undefined ? undefined : `${memory} MB`],
       ["Timeout", timeout === undefined ? undefined : `${timeout} s`],
-      ["Last modified", shown(stringAt(fn, ["LastModified"]))],
-      ["Description", shown(stringAt(fn, ["Description"]))],
+      ["Last modified", shownHead(stringAt(fn, ["LastModified"]))],
+      ["Description", shownHead(stringAt(fn, ["Description"]))],
     ]),
   ];
 }
 
 /** `aws_ec2_instance_get` input: the write's single `instanceIds` string as the read's `instanceId`. */
-export function ec2InstanceReadArgs(input: Input): Record<string, unknown> | undefined {
+export function ec2InstanceReadArgs(input: BeforeInput): Record<string, unknown> | undefined {
   const instanceId = nonEmptyString(input["instanceIds"]);
   return instanceId === undefined ? undefined : { instanceId };
 }
@@ -104,25 +103,28 @@ export function selectEc2Instance(
     return [
       { label: "Instance", value: excerptHead(id) },
       ...presentFields([
-        ["State", shown(shownState)],
-        ["Type", shown(stringAt(j, ["instanceType"]))],
-        ["Launched", shown(stringAt(j, ["launchTime"]))],
-        ["Tags", shown(instanceTags(j))],
-        ["IAM profile", shown(stringAt(j, ["iamProfileArn"]))],
+        ["State", shownHead(shownState)],
+        ["Type", shownHead(stringAt(j, ["instanceType"]))],
+        ["Launched", shownHead(stringAt(j, ["launchTime"]))],
+        ["Tags", shownHead(instanceTags(j))],
+        ["IAM profile", shownHead(stringAt(j, ["iamProfileArn"]))],
       ]),
     ];
   };
 }
 
 /** `aws_ecs_service_get` input: the cluster and the service. */
-export function ecsServiceReadArgs(input: Input): Record<string, unknown> | undefined {
+export function ecsServiceReadArgs(input: BeforeInput): Record<string, unknown> | undefined {
   const cluster = nonEmptyString(input["cluster"]);
   const service = nonEmptyString(input["service"]);
   return cluster === undefined || service === undefined ? undefined : { cluster, service };
 }
 
 /** AWS `aws_ecs_service_get` (before-state) for an update: the service as it runs now, beside the new task definition. */
-export function selectEcsService(reply: unknown, picked: Picked): readonly BeforeStateField[] {
+export function selectEcsService(
+  reply: unknown,
+  picked: BeforePicked,
+): readonly BeforeStateField[] {
   const j = beforeReplyJson(reply);
   const name = requiredStringAt(j, ["serviceName"]);
   const next = picked["taskDefinition"];
@@ -134,11 +136,11 @@ export function selectEcsService(reply: unknown, picked: Picked): readonly Befor
   return [
     { label: "Service", value: excerptHead(name) },
     ...presentFields([
-      ["Status", shown(stringAt(j, ["status"]))],
+      ["Status", shownHead(stringAt(j, ["status"]))],
       ["Desired count", stringAt(j, ["desiredCount"])],
       ["Running count", stringAt(j, ["runningCount"])],
-      ["Task definition", shown(task)],
-      ["Launch type", shown(stringAt(j, ["launchType"]))],
+      ["Task definition", shownHead(task)],
+      ["Launch type", shownHead(stringAt(j, ["launchType"]))],
     ]),
   ];
 }

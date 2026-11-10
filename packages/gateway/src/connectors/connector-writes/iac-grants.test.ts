@@ -25,6 +25,7 @@ import {
   type IacPathDeps,
   removeIacGrants,
   setIacGrants,
+  workdirsOverlap,
 } from "./iac-grants.ts";
 
 function db(): Database {
@@ -412,5 +413,23 @@ describe("a Git repository in or beneath a working directory (owner ruling OR-D2
     } finally {
       rmSync(base, { recursive: true, force: true });
     }
+  });
+});
+
+describe("workdirsOverlap", () => {
+  test("equal paths and a path inside the other overlap, in either order", () => {
+    expect(workdirsOverlap("/home/me/infra", "/home/me/infra", "linux")).toBe(true);
+    expect(workdirsOverlap("/home/me/infra/envs", "/home/me/infra", "linux")).toBe(true);
+    expect(workdirsOverlap("/home/me/infra", "/home/me/infra/envs", "linux")).toBe(true);
+  });
+
+  test("a sibling that shares a prefix does not overlap (compared by segment)", () => {
+    expect(workdirsOverlap("/home/me/infra", "/home/me/infra2", "linux")).toBe(false);
+    expect(workdirsOverlap("/a", "/b", "linux")).toBe(false);
+  });
+
+  test("case differences matter on linux but not on darwin", () => {
+    expect(workdirsOverlap("/home/Me/infra", "/home/me/infra", "linux")).toBe(false);
+    expect(workdirsOverlap("/home/Me/infra", "/home/me/infra", "darwin")).toBe(true);
   });
 });

@@ -576,3 +576,34 @@ describe("HitlPopupPage with a plan-bound write (D2)", () => {
     expect(screen.getByRole("button", { name: /Approve/i })).toBeEnabled();
   });
 });
+
+describe("HitlPopupPage edge paths", () => {
+  it("ignores a failing close_hitl_popup once the queue is empty", async () => {
+    vi.useFakeTimers();
+    storeState.pending = [];
+    invoke.mockRejectedValue(new Error("window already gone"));
+    render(<HitlPopupPage />);
+    vi.advanceTimersByTime(500);
+    await vi.runAllTimersAsync();
+    expect(invoke).toHaveBeenCalledWith("close_hitl_popup");
+    vi.useRealTimers();
+  });
+
+  it("rejecting a type-to-confirm prompt sends an empty typed text, whatever was typed", async () => {
+    const TEXT = "github/acme/api#42";
+    storeState.pending = [
+      {
+        requestId: "rj",
+        prompt: `Merge?\n\nTo approve, type exactly: ${TEXT}`,
+        receivedAtMs: 1,
+        actionType: "github.pr.merge",
+        confirmText: TEXT,
+      },
+    ];
+    consentRespond.mockResolvedValue(undefined);
+    render(<HitlPopupPage />);
+    fireEvent.change(screen.getByLabelText(/Type the text above/i), { target: { value: TEXT } });
+    fireEvent.click(screen.getByRole("button", { name: /Reject/i }));
+    await waitFor(() => expect(consentRespond).toHaveBeenCalledWith("rj", false, ""));
+  });
+});

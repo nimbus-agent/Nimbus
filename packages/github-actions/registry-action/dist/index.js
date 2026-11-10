@@ -1,4 +1,4 @@
-// nimbus-action-dist bun=1.3.14 inputHash=sha256:19c15d99de63ba0bbd25af74200b63ec825554c7b347ae6ea20d8d6aae362ded
+// nimbus-action-dist bun=1.3.14 inputHash=sha256:ce776c61a05efb4348b011100da5edb4d82d86a9c086a279acadd9412f2a93dd
 import { createRequire } from "node:module";
 var __create = Object.create;
 var __getProtoOf = Object.getPrototypeOf;
@@ -4423,15 +4423,40 @@ function codeUnitCompare(a, b) {
   }
   return 0;
 }
+// ../../registry-format/src/eval-role-envelope.ts
+function isObject2(v) {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+function parseEvalRoleEnvelope(text) {
+  let raw;
+  try {
+    raw = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  if (!isObject2(raw))
+    return null;
+  if (raw["ok"] === false) {
+    const e = raw["error"];
+    if (isObject2(e) && typeof e["code"] === "string" && typeof e["message"] === "string") {
+      return { kind: "error", error: { code: e["code"], message: e["message"] } };
+    }
+    return null;
+  }
+  if (raw["ok"] !== true)
+    return null;
+  const { extensionId, version } = raw;
+  if (typeof extensionId !== "string" || typeof version !== "string")
+    return null;
+  return { kind: "ok", extensionId, version, raw };
+}
+
 // ../../registry-format/src/eval-baseline.ts
 var EVAL_BASELINE_SCORER_VERSION = 1;
 var EVAL_BASELINE_FAILURES = ["no-listing", "listing-timeout", "invalid-tool"];
 var MAX_EVAL_BASELINE_TOOLS = 1e6;
 function bad(why) {
   return new RegistryError("ERR_REGISTRY_EVAL_QUALITY_INVALID", why);
-}
-function isObject2(v) {
-  return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 function isFailure(v) {
   return EVAL_BASELINE_FAILURES.includes(v);
@@ -4462,28 +4487,18 @@ function parseEvalBaseline(raw) {
   return { scorer: 1, passed: false, tools, failure };
 }
 function parseEvalBaselineDocument(text) {
-  let raw;
+  const envelope = parseEvalRoleEnvelope(text);
+  if (envelope === null)
+    return null;
+  if (envelope.kind === "error")
+    return { ok: false, error: envelope.error };
   try {
-    raw = JSON.parse(text);
-  } catch {
-    return null;
-  }
-  if (!isObject2(raw))
-    return null;
-  if (raw["ok"] === false) {
-    const e = raw["error"];
-    if (isObject2(e) && typeof e["code"] === "string" && typeof e["message"] === "string") {
-      return { ok: false, error: { code: e["code"], message: e["message"] } };
-    }
-    return null;
-  }
-  if (raw["ok"] !== true)
-    return null;
-  const { extensionId, version } = raw;
-  if (typeof extensionId !== "string" || typeof version !== "string")
-    return null;
-  try {
-    return { ok: true, extensionId, version, baseline: parseEvalBaseline(raw["baseline"]) };
+    return {
+      ok: true,
+      extensionId: envelope.extensionId,
+      version: envelope.version,
+      baseline: parseEvalBaseline(envelope.raw["baseline"])
+    };
   } catch {
     return null;
   }
@@ -4593,14 +4608,11 @@ function parseEvalQuality(raw) {
 var MAX_EVAL_RECORD_INPUTS_BYTES = 1024 * 1024;
 var SCALAR_TYPES = new Set(["string", "number", "boolean"]);
 // ../../registry-format/src/eval-role-document.ts
-function isObject3(v) {
-  return typeof v === "object" && v !== null && !Array.isArray(v);
-}
 function isResult(v) {
-  return isObject3(v) && typeof v["suite"] === "string" && typeof v["case"] === "string" && typeof v["rubric"] === "string" && typeof v["pass"] === "boolean" && (v["reason"] === null || typeof v["reason"] === "string");
+  return isObject2(v) && typeof v["suite"] === "string" && typeof v["case"] === "string" && typeof v["rubric"] === "string" && typeof v["pass"] === "boolean" && (v["reason"] === null || typeof v["reason"] === "string");
 }
 function parseEvalReport(raw) {
-  if (!isObject3(raw) || !Array.isArray(raw["results"]))
+  if (!isObject2(raw) || !Array.isArray(raw["results"]))
     return null;
   if (!raw["results"].every(isResult))
     return null;
@@ -4618,29 +4630,15 @@ function parseEvalReport(raw) {
   return raw;
 }
 function parseEvalRoleDocument(text) {
-  let raw;
-  try {
-    raw = JSON.parse(text);
-  } catch {
+  const envelope = parseEvalRoleEnvelope(text);
+  if (envelope === null)
     return null;
-  }
-  if (!isObject3(raw))
-    return null;
-  if (raw["ok"] === false) {
-    const e = raw["error"];
-    if (isObject3(e) && typeof e["code"] === "string" && typeof e["message"] === "string") {
-      return { ok: false, error: { code: e["code"], message: e["message"] } };
-    }
-    return null;
-  }
-  if (raw["ok"] !== true)
-    return null;
-  if (typeof raw["extensionId"] !== "string" || typeof raw["version"] !== "string")
-    return null;
-  const report = parseEvalReport(raw["report"]);
+  if (envelope.kind === "error")
+    return { ok: false, error: envelope.error };
+  const report = parseEvalReport(envelope.raw["report"]);
   if (report === null)
     return null;
-  return { ok: true, extensionId: raw["extensionId"], version: raw["version"], report };
+  return { ok: true, extensionId: envelope.extensionId, version: envelope.version, report };
 }
 // ../../registry-format/src/extension-env.ts
 var BASELINE_KEYS = [
@@ -9718,7 +9716,7 @@ function signLivenessFile(unsigned, seed) {
     resolve2({ ...rest, signature: sig.toString("base64") });
   });
 }
-function isObject4(v2) {
+function isObject3(v2) {
   return typeof v2 === "object" && v2 !== null && !Array.isArray(v2);
 }
 function onlyKeys(o, allowed) {
@@ -9728,7 +9726,7 @@ function isCount(v2, min, max) {
   return typeof v2 === "number" && Number.isInteger(v2) && v2 >= min && v2 <= max;
 }
 function readHosts(raw) {
-  if (!isObject4(raw) || !onlyKeys(raw, ["declared", "answered"]))
+  if (!isObject3(raw) || !onlyKeys(raw, ["declared", "answered"]))
     throw invalid5("hosts");
   const declared = raw["declared"];
   if (!isCount(declared, 1, MAX_HOSTS))
@@ -9739,7 +9737,7 @@ function readHosts(raw) {
   return { declared, answered };
 }
 function readTests(raw) {
-  if (!isObject4(raw))
+  if (!isObject3(raw))
     throw invalid5("tests");
   if (Object.hasOwn(raw, "failure")) {
     const failure = raw["failure"];
@@ -9771,7 +9769,7 @@ function readBaseline(raw) {
   }
 }
 function parseLivenessEntry(raw) {
-  if (!isObject4(raw) || !onlyKeys(raw, ["checkedAt", "hosts", "tests", "baseline"])) {
+  if (!isObject3(raw) || !onlyKeys(raw, ["checkedAt", "hosts", "tests", "baseline"])) {
     throw invalid5("entry");
   }
   const checkedAt = raw["checkedAt"];
@@ -9797,9 +9795,9 @@ var REPOSITORY_RE = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})\/[A-Za-z0-9._-]{1,100}$/
 var COMMIT_RE = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 var WORKFLOW_RE = /^[A-Za-z0-9._/@+-]{1,200}$/;
 var SLSA_V1 = "https://slsa.dev/provenance/v1";
-var isObject5 = (v2) => v2 !== null && typeof v2 === "object" && !Array.isArray(v2);
+var isObject4 = (v2) => v2 !== null && typeof v2 === "object" && !Array.isArray(v2);
 function readManifestRepository(rawManifest) {
-  if (!isObject5(rawManifest))
+  if (!isObject4(rawManifest))
     return;
   const v2 = rawManifest["repository"];
   return typeof v2 === "string" && REPOSITORY_RE.test(v2) ? v2 : undefined;
@@ -9827,16 +9825,16 @@ function githubPath(uri) {
   return { repository, rest: rest.join("/") };
 }
 function fromEntry(entry, repository, verifiedAt) {
-  if (!isObject5(entry))
+  if (!isObject4(entry))
     return { ok: false, reason: "an attestation entry is not an object" };
   const result = entry["verificationResult"];
-  const statement = isObject5(result) ? result["statement"] : undefined;
-  if (!isObject5(statement) || statement["predicateType"] !== SLSA_V1) {
+  const statement = isObject4(result) ? result["statement"] : undefined;
+  if (!isObject4(statement) || statement["predicateType"] !== SLSA_V1) {
     return { ok: false, reason: "not a SLSA v1 build provenance attestation" };
   }
-  const signature = isObject5(result) ? result["signature"] : undefined;
-  const cert = isObject5(signature) ? signature["certificate"] : undefined;
-  if (!isObject5(cert))
+  const signature = isObject4(result) ? result["signature"] : undefined;
+  const cert = isObject4(signature) ? signature["certificate"] : undefined;
+  if (!isObject4(cert))
     return { ok: false, reason: "the attestation carries no certificate" };
   const source = githubPath(cert["sourceRepositoryURI"]);
   if (source?.rest !== "" || !sameRepository(source.repository, repository)) {
@@ -10499,7 +10497,7 @@ var PUBLISHER_FILE_KEYS = ["publisherId", "keys", "github"];
 function invalid7(detail) {
   return new RegistryError("ERR_TRUST_STATEMENT_INVALID", detail);
 }
-var isObject6 = (v2) => v2 !== null && typeof v2 === "object" && !Array.isArray(v2);
+var isObject5 = (v2) => v2 !== null && typeof v2 === "object" && !Array.isArray(v2);
 function baseName(path, dir) {
   if (!path.startsWith(dir) || !path.endsWith(".json"))
     return;
@@ -10507,13 +10505,13 @@ function baseName(path, dir) {
   return name === "" || name.includes("/") ? undefined : name;
 }
 function parseFeedConfig(raw) {
-  if (!isObject6(raw) || Object.keys(raw).length !== 1 || raw["format"] !== 1) {
+  if (!isObject5(raw) || Object.keys(raw).length !== 1 || raw["format"] !== 1) {
     throw new RegistryError("ERR_TRUST_FEED_INVALID", `${FEED_CONFIG_FILE} must be exactly { "format": 1 }`);
   }
   return { format: 1 };
 }
 function parsePublisherFile(path, raw) {
-  if (!isObject6(raw))
+  if (!isObject5(raw))
     throw invalid7("a publisher file must be an object");
   for (const k2 of Object.keys(raw)) {
     if (!PUBLISHER_FILE_KEYS.includes(k2)) {
@@ -10536,7 +10534,7 @@ function parsePublisherFile(path, raw) {
 function carriedEntries(prev) {
   if (!Array.isArray(prev.statements))
     return [];
-  return prev.statements.filter((e) => !(isObject6(e) && e["kind"] === "publisher.verified"));
+  return prev.statements.filter((e) => !(isObject5(e) && e["kind"] === "publisher.verified"));
 }
 function previousVerified(prev) {
   const out = new Map;
@@ -12890,13 +12888,29 @@ function pushCommit(commit, branch, cwd) {
     throw new Error(`git push to ${branch} failed: ${text.trim()}`);
   }
 }
+var MAX_PUSH_ATTEMPTS = 3;
+async function signWithRetries(s3) {
+  for (let attempt2 = 1;attempt2 <= MAX_PUSH_ATTEMPTS; attempt2++) {
+    const a = await s3.attempt();
+    if (a.commit === undefined) {
+      s3.report(a, false);
+      return;
+    }
+    await s3.beforePush?.(attempt2);
+    if (pushCommit(a.commit, s3.branch, s3.workspace) === "pushed") {
+      s3.report(a, true);
+      return;
+    }
+    s3.log(`${s3.branch} moved during attempt ${String(attempt2)}; starting over`);
+  }
+  throw new Error(`refusing to continue: the push to ${s3.branch} lost to a concurrent update ${String(MAX_PUSH_ATTEMPTS)} times`);
+}
 
 // src/liveness-sign.ts
 var MAX_LIVENESS_RESULTS_BYTES = 4 * 1024 * 1024;
 var RESULTS_MAX_AGE_MS = 24 * 3600000;
 var RESULTS_MAX_SKEW_MS = 5 * 60000;
 var SHARED5 = { git: exports_git_tree, io: GHA_IO, now: Date.now };
-var MAX_ATTEMPTS = 3;
 var KEY_INPUT_RE = /^[A-Za-z0-9+/]{43}=$/;
 var ENTRY_KEY_RE = /^(.+)@([^@]+)$/;
 var ENVELOPE_KEYS = new Set(["format", "nimbusVersion", "extensions"]);
@@ -13075,20 +13089,14 @@ function report(io2, a, pushed) {
 async function signLoop(opts, seed, deps) {
   const ownKey = Buffer.from(publicKeyFromSeed(seed)).toString("base64");
   const defaultBranch = opts.defaultBranch ?? deps.git.remoteDefaultBranch({ cwd: opts.workspace });
-  for (let attempt2 = 1;attempt2 <= MAX_ATTEMPTS; attempt2++) {
-    const a = await attemptSign({ ...opts, defaultBranch }, seed, ownKey, deps);
-    if (a.commit === undefined) {
-      report(deps.io, a, false);
-      return;
-    }
-    await deps.beforePush?.(attempt2);
-    if (pushCommit(a.commit, PAGES_BRANCH, opts.workspace) === "pushed") {
-      report(deps.io, a, true);
-      return;
-    }
-    deps.io.log(`${PAGES_BRANCH} moved during attempt ${String(attempt2)}; starting over`);
-  }
-  throw new Error(`refusing to continue: the push to ${PAGES_BRANCH} lost to a concurrent update ${String(MAX_ATTEMPTS)} times`);
+  await signWithRetries({
+    branch: PAGES_BRANCH,
+    workspace: opts.workspace,
+    attempt: () => attemptSign({ ...opts, defaultBranch }, seed, ownKey, deps),
+    beforePush: deps.beforePush,
+    report: (a, pushed) => report(deps.io, a, pushed),
+    log: (line) => deps.io.log(line)
+  });
 }
 async function runLivenessSign(opts, deps = SHARED5) {
   const seed = parseLivenessKey(opts.livenessKey);
@@ -13110,7 +13118,7 @@ var SHARED6 = {
   io: GHA_IO,
   tmpdir: osTmpdir6
 };
-var MAX_ATTEMPTS2 = 3;
+var MAX_ATTEMPTS = 3;
 var ROOT_KEY_RE = /^[A-Za-z0-9+/]{43}=$/;
 function parseRootKey(raw) {
   const s3 = raw.trim();
@@ -13329,7 +13337,7 @@ async function signLoop2(opts, seed, scores, deps) {
   let last;
   const run2 = { seed, rootKey, memo: new Map, scores };
   try {
-    for (let attempt2 = 1;attempt2 <= MAX_ATTEMPTS2; attempt2++) {
+    for (let attempt2 = 1;attempt2 <= MAX_ATTEMPTS; attempt2++) {
       last = await attemptSign2({ ...opts, defaultBranch }, run2, deps);
       if (last.commit === undefined) {
         report2(deps.io, last, false);
@@ -13348,7 +13356,7 @@ async function signLoop2(opts, seed, scores, deps) {
     throw e;
   }
   warnSkipped(deps.io, last);
-  throw new Error(`refusing to continue: the push to ${PAGES_BRANCH} lost to a concurrent update ${String(MAX_ATTEMPTS2)} times`);
+  throw new Error(`refusing to continue: the push to ${PAGES_BRANCH} lost to a concurrent update ${String(MAX_ATTEMPTS)} times`);
 }
 async function runSign(opts, deps = SHARED6) {
   const seed = parseRootKey(opts.rootKey);
@@ -13510,7 +13518,6 @@ async function runTrustCheck(opts, deps = SHARED7) {
 
 // src/trust-sign.ts
 var SHARED8 = { git: exports_git_tree, io: GHA_IO };
-var MAX_ATTEMPTS3 = 3;
 var ROOT_KEY_RE2 = /^[A-Za-z0-9+/]{43}=$/;
 function parseRootKey2(raw) {
   const s3 = raw.trim();
@@ -13551,20 +13558,14 @@ function report3(io2, a, pushed) {
 async function signLoop3(opts, seed, deps) {
   const rootKey = Buffer.from(publicKeyFromSeed(seed)).toString("base64");
   const defaultBranch = opts.defaultBranch ?? deps.git.remoteDefaultBranch({ cwd: opts.workspace });
-  for (let attempt2 = 1;attempt2 <= MAX_ATTEMPTS3; attempt2++) {
-    const a = await attemptSign3({ ...opts, defaultBranch }, seed, rootKey, deps.git);
-    if (a.commit === undefined) {
-      report3(deps.io, a, false);
-      return;
-    }
-    await deps.beforePush?.(attempt2);
-    if (pushCommit(a.commit, PAGES_BRANCH, opts.workspace) === "pushed") {
-      report3(deps.io, a, true);
-      return;
-    }
-    deps.io.log(`${PAGES_BRANCH} moved during attempt ${String(attempt2)}; starting over`);
-  }
-  throw new Error(`refusing to continue: the push to ${PAGES_BRANCH} lost to a concurrent update ${String(MAX_ATTEMPTS3)} times`);
+  await signWithRetries({
+    branch: PAGES_BRANCH,
+    workspace: opts.workspace,
+    attempt: () => attemptSign3({ ...opts, defaultBranch }, seed, rootKey, deps.git),
+    beforePush: deps.beforePush,
+    report: (a, pushed) => report3(deps.io, a, pushed),
+    log: (line) => deps.io.log(line)
+  });
 }
 async function runTrustSign(opts, deps = SHARED8) {
   const seed = parseRootKey2(opts.rootKey);

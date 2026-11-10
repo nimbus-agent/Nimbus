@@ -323,3 +323,13 @@ describe("parseNote — frontmatter with CRLF line endings", () => {
     expect(out.body).toBe("CRLF body");
   });
 });
+
+describe("parseNote: title edges", () => {
+  test("the heading's own text is the title, taken from the first H1 line", () => {
+    expect(parseNote("notes/x.md", "#   Spaced Out  \nbody\n").title).toBe("Spaced Out");
+  });
+
+  test("the .md extension is stripped case-insensitively from the fallback title", () => {
+    expect(parseNote("notes/Shout.MD", "text only").title).toBe("Shout");
+  });
+});

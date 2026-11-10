@@ -232,3 +232,46 @@ describe("brief prefill", () => {
     expect(prefillValues(params, new URLSearchParams("sinceMs=123"))).toEqual({});
   });
 });
+
+describe("decisions progress: wording fallbacks", () => {
+  it("an unknown kind counts as 'item(s)' and an unknown service keeps its id", () => {
+    const v = decisionsView(
+      status({
+        sources: [
+          { service: "mystery", type: "x", kind: "widget", items: 1 },
+          { service: "slack", type: "message", kind: "widget", items: 2 },
+          { service: "jira", type: "issue", kind: "doc", items: 3 },
+        ],
+      }),
+      SYNCED,
+    );
+    expect(v.headline).toBe(
+      "We read 1 item from mystery, 2 items from Slack and 3 docs from Jira and found no clear decisions.",
+    );
+  });
+
+  it("a single extracted candidate uses the singular verb", () => {
+    const v = decisionsView(
+      status({ candidates: { pending: 0, extracted: 1, vetoed: 0 } }),
+      SYNCED,
+    );
+    expect(v.reason).toBe(
+      "1 possible decision was too uncertain to show (below your confidence floor).",
+    );
+  });
+
+  it("a syncing connector reads 'Syncing', a settled one reads its count", () => {
+    const v = decisionsView(status({ shown: 2 }), [
+      { id: "a", displayName: "A", status: "syncing", itemCount: 1, lastSyncAt: 1 },
+      { id: "b", displayName: "B", status: "ok", itemCount: 4, lastSyncAt: 1 },
+    ]);
+    expect(v.syncLines).toEqual(["Syncing A… 1 item", "B: 4 items"]);
+  });
+
+  it("rejects a reply whose sources or recent list is not an array", () => {
+    expect(asDecisionStatus({ ...status(), sources: "x" })).toBeNull();
+    expect(asDecisionStatus({ ...status(), recent: {} })).toBeNull();
+    expect(asDecisionStatus({ ...status(), candidates: [] })).toBeNull();
+    expect(asDecisionStatus({ ...status(), shown: "1" })).toBeNull();
+  });
+});

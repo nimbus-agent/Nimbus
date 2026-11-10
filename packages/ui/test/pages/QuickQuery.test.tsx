@@ -115,4 +115,45 @@ describe("QuickQuery", () => {
     });
     expect(await screen.findByText(/gpt-4o/)).toBeTruthy();
   });
+
+  it("ignores keys other than Escape", () => {
+    renderQQ();
+    fireEvent.keyDown(window, { key: "a" });
+    expect(closeMock).not.toHaveBeenCalled();
+  });
+
+  it("labels a local model with no name as unknown and a remote one as remote", async () => {
+    callMock.mockResolvedValueOnce({ streamId: "s5" });
+    renderQQ();
+    submitPrompt("hi");
+    await waitFor(() => expect(notifHandlers.length).toBeGreaterThan(0));
+    emitNotif({ method: "engine.streamDone", params: { streamId: "s5", meta: { isLocal: true } } });
+    expect(await screen.findByText(/local · unknown/)).toBeTruthy();
+
+    callMock.mockResolvedValueOnce({ streamId: "s6" });
+    submitPrompt("again");
+    await waitFor(() => expect(notifHandlers.length).toBeGreaterThan(1));
+    act(() =>
+      (notifHandlers.at(1) as NotifHandler)({
+        method: "engine.streamDone",
+        params: { streamId: "s6", meta: { isLocal: false } },
+      }),
+    );
+    expect(await screen.findByText(/remote/)).toBeTruthy();
+  });
+
+  it("ignores tokens, completions and notifications that belong to another stream", async () => {
+    callMock.mockResolvedValueOnce({ streamId: "mine" });
+    renderQQ();
+    submitPrompt("hi");
+    await waitFor(() => expect(notifHandlers.length).toBeGreaterThan(0));
+    emitNotif({ method: "engine.streamToken", params: { streamId: "other", text: "LEAK" } });
+    emitNotif({ method: "engine.streamDone", params: { streamId: "other", model: "x" } });
+    emitNotif({ method: "something.else", params: { streamId: "mine", text: "LEAK" } });
+    expect(screen.queryByText(/LEAK/)).toBeNull();
+    act(() => {
+      vi.advanceTimersByTime(2100);
+    });
+    expect(closeMock).not.toHaveBeenCalled();
+  });
 });

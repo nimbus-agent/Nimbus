@@ -1985,3 +1985,17 @@ describe("B3w final review item 2: a fence language spelled with character refer
     expectAllowed("forge-markdown", `${F}t&#115;\nlet a = 1;\n${F}`);
   });
 });
+
+describe("remoteContentIn: a raw-text element opened inside another raw-text element", () => {
+  test("a script start inside a style is refused even with the tripwire off (nesting is never needed)", () => {
+    const nested = "<style><script>1</script></style>";
+    expect(remoteContentIn("outlook-html", nested, { tripwire: false })).toBe(true);
+    expect(remoteContentIn("drive-markup", nested, { tripwire: false })).toBe(true);
+  });
+
+  test("a plain style element with inert CSS is not refused for its shape", () => {
+    expect(
+      remoteContentIn("outlook-html", "<style>p{color:red}</style>", { tripwire: false }),
+    ).toBe(false);
+  });
+});

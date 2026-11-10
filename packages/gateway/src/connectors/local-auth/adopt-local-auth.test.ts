@@ -696,3 +696,25 @@ describe("adoptLocalAuth — gcloud", () => {
     expect(summary).toContain("clears the GCP service-account key path");
   });
 });
+
+describe("adoptLocalAuth: remaining edges", () => {
+  test("a stored GitHub api base that is not a URL is described without echoing it", async () => {
+    const h = harness();
+    await adoptLocalAuth(
+      { source: "gh", account: "octocat", replace: true },
+      h.deps({ configured: true, githubApiBase: "not a url ::" }),
+    );
+    const summary = String(h.gated[0]?.payload?.["summary"]);
+    expect(summary).toContain("a configured GitHub Enterprise Server");
+    expect(summary).not.toContain("not a url");
+  });
+
+  test("a hosts.yml that lists no login at all is refused as unavailable, and gates nothing", async () => {
+    const h = harness();
+    await expect(
+      adoptLocalAuth({ source: "gh", replace: false }, h.deps({ hosts: "" })),
+    ).rejects.toThrow(/ERR_LOCAL_AUTH_SOURCE_UNAVAILABLE/);
+    expect(h.gated).toEqual([]);
+    expect(h.authed).toEqual([]);
+  });
+});

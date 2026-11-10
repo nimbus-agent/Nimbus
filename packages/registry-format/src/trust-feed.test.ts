@@ -177,3 +177,41 @@ describe("readStatementList", () => {
     expect(read.dropped).toBe(3);
   });
 });
+
+describe("parseTrustFeed refusals and a malformed signature", () => {
+  test("bytes that are not UTF-8 are refused", () => {
+    expect(() => parseTrustFeed(Uint8Array.from([0xff, 0xfe, 0xfd]))).toThrow(
+      "trust.json is not valid UTF-8",
+    );
+  });
+
+  test("a JSON value that is not an object is refused", () => {
+    for (const v of [null, [], 4, "x"]) {
+      expect(() => parseTrustFeed(enc(v))).toThrow("trust.json must be an object");
+    }
+  });
+
+  test("a malformed signature and a malformed timestamp are refused", async () => {
+    const feed = await signTrustFeed(unsignedFeed([]), ROOT_SEED);
+    expect(() => parseTrustFeed(enc({ ...feed, signature: "not base64!" }))).toThrow(
+      "signature is malformed",
+    );
+    expect(() => parseTrustFeed(enc({ ...feed, generatedAt: "yesterday" }))).toThrow(
+      "generatedAt is not a timestamp",
+    );
+  });
+
+  test("a signature of the wrong length fails verification as an invalid signature", async () => {
+    const feed = await signTrustFeed(unsignedFeed([]), ROOT_SEED);
+    let code: string | undefined;
+    try {
+      await verifyTrustFeedPinned(
+        { ...feed, signature: encodeBase64(new Uint8Array(3)) },
+        ROOT_KEY,
+      );
+    } catch (e) {
+      code = (e as { code?: string }).code;
+    }
+    expect(code).toBe("ERR_TRUST_FEED_SIGNATURE_INVALID");
+  });
+});

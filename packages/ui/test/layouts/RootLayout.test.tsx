@@ -194,4 +194,59 @@ describe("RootLayout", () => {
     );
     expect(byId).toEqual({ rec: "data.delete", "rec-old": undefined, live: "extension.migrate" });
   });
+
+  it("carries confirm_text on a live and a recovered request, and drops an empty one", async () => {
+    invokeMock.mockImplementation(async (cmd: string) => {
+      if (cmd === "get_pending_hitl") {
+        return [
+          { request_id: "rec-c", prompt: "x", confirm_text: "svc/target", received_at_ms: 3 },
+          { request_id: "rec-e", prompt: "y", confirm_text: "", received_at_ms: 4 },
+        ];
+      }
+      return undefined;
+    });
+    renderWith();
+    await waitFor(() => expect(useNimbusStore.getState().pending).toHaveLength(2));
+    await waitFor(() => expect(listenHandlers.get("consent://request")?.length).toBeGreaterThan(0));
+    act(() => {
+      fire("consent://request", {
+        request_id: "live-c",
+        prompt: "p",
+        confirm_text: "svc/other",
+        received_at_ms: 5,
+      });
+      fire("consent://request", {
+        request_id: "live-e",
+        prompt: "p",
+        confirm_text: "",
+        received_at_ms: 6,
+      });
+    });
+    const byId = Object.fromEntries(
+      useNimbusStore.getState().pending.map((p) => [p.requestId, p.confirmText]),
+    );
+    expect(byId).toEqual({
+      "rec-c": "svc/target",
+      "rec-e": undefined,
+      "live-c": "svc/other",
+      "live-e": undefined,
+    });
+  });
+
+  it("tolerates get_pending_hitl returning nothing or failing", async () => {
+    invokeMock.mockResolvedValue(null);
+    const first = renderWith();
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    expect(useNimbusStore.getState().pending).toHaveLength(0);
+    first.unmount();
+    invokeMock.mockRejectedValue(new Error("bridge down"));
+    renderWith();
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    expect(screen.getByText("child")).toBeTruthy();
+    expect(useNimbusStore.getState().pending).toHaveLength(0);
+  });
 });

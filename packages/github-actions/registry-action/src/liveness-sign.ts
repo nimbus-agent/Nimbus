@@ -12,7 +12,7 @@
  *
  * Every attempt starts from a fresh fetch of `gh-pages`, and refuses - nothing committed - when the
  * index names no liveness key, the `liveness-key` input is not that key, or it is the root key. A
- * push that loses a race starts over, at most `MAX_ATTEMPTS` times. The key is parsed in memory only
+ * push that loses a race starts over, at most three times. The key is parsed in memory only
  * and zeroed afterwards (best-effort: the decoded Buffer may be pooled and the input string is
  * immutable, so copies can outlive the zeroing - the mask and the scoped
  * environment are the defence); refusals name fingerprints of PUBLIC keys. `main.ts` masks the
@@ -38,7 +38,7 @@ import * as gitTree from "./git-tree.ts";
 import { type LivenessResults, newestStableVersions } from "./liveness-check.ts";
 import { PAGES_BRANCH, PAGES_REF, readVerifiedIndex } from "./registry-state.ts";
 import { type ActionIo, code, GHA_IO } from "./report.ts";
-import { commitSite, pushCommit } from "./site-commit.ts";
+import { commitSite, signWithRetries } from "./site-commit.ts";
 
 export const MAX_LIVENESS_RESULTS_BYTES = 4 * 1024 * 1024;
 export const RESULTS_MAX_AGE_MS = 24 * 3_600_000;
@@ -65,8 +65,6 @@ export interface LivenessSignDeps {
 }
 
 const SHARED: LivenessSignDeps = { git: gitTree, io: GHA_IO, now: Date.now };
-
-const MAX_ATTEMPTS = 3;
 
 const KEY_INPUT_RE = /^[A-Za-z0-9+/]{43}=$/;
 const ENTRY_KEY_RE = /^(.+)@([^@]+)$/;
@@ -333,23 +331,14 @@ async function signLoop(
 ): Promise<void> {
   const ownKey = Buffer.from(publicKeyFromSeed(seed)).toString("base64");
   const defaultBranch = opts.defaultBranch ?? deps.git.remoteDefaultBranch({ cwd: opts.workspace });
-  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-    // NOSONAR S9382: sequential by design - each attempt starts from a fresh fetch after a lost race
-    const a = await attemptSign({ ...opts, defaultBranch }, seed, ownKey, deps);
-    if (a.commit === undefined) {
-      report(deps.io, a, false);
-      return;
-    }
-    await deps.beforePush?.(attempt);
-    if (pushCommit(a.commit, PAGES_BRANCH, opts.workspace) === "pushed") {
-      report(deps.io, a, true);
-      return;
-    }
-    deps.io.log(`${PAGES_BRANCH} moved during attempt ${String(attempt)}; starting over`);
-  }
-  throw new Error(
-    `refusing to continue: the push to ${PAGES_BRANCH} lost to a concurrent update ${String(MAX_ATTEMPTS)} times`,
-  );
+  await signWithRetries({
+    branch: PAGES_BRANCH,
+    workspace: opts.workspace,
+    attempt: () => attemptSign({ ...opts, defaultBranch }, seed, ownKey, deps),
+    beforePush: deps.beforePush,
+    report: (a, pushed) => report(deps.io, a, pushed),
+    log: (line) => deps.io.log(line),
+  });
 }
 
 /** Run the `liveness-sign` mode. Throws (failing the run, nothing pushed) on any refusal. */

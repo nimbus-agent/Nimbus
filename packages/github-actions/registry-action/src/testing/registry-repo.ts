@@ -203,6 +203,30 @@ export interface RegistryRepo {
   workspace: string;
 }
 
+/** Commit the maintainer's `main` as `init` and begin an empty orphan `gh-pages` branch. */
+function commitMainAndStartSite(maintainer: string): void {
+  git(maintainer, "add", "-A");
+  git(maintainer, "commit", "-q", "-m", "init");
+
+  git(maintainer, "checkout", "-q", "--orphan", "gh-pages");
+  git(maintainer, "rm", "-rq", "--cached", ".");
+}
+
+/** Return to `main`, push both branches to a fresh bare `origin` and clone the workspace from it. */
+function pushToOrigin(root: string, maintainer: string): RegistryRepo {
+  git(maintainer, "checkout", "-q", "main");
+
+  const origin = join(root, "origin.git");
+  git(root, "init", "-q", "--bare", "-b", "main", origin);
+  const originUrl = pathToFileURL(origin).href;
+  git(maintainer, "remote", "add", "origin", originUrl);
+  git(maintainer, "push", "-q", "origin", "main", "gh-pages");
+
+  const workspace = join(root, "workspace");
+  git(root, "clone", "-q", "--branch", "main", originUrl, workspace);
+  return { root, origin, originUrl, maintainer, workspace };
+}
+
 export interface RegistryRepoOpts {
   requirePublisherNamespace?: boolean;
   /** The root seed the `gh-pages` index is signed with. */
@@ -225,11 +249,7 @@ export async function makeRegistryRepo(
   write(maintainer, "extensions/.gitkeep", "");
   write(maintainer, ".github/workflows/registry-check.yml", "name: check\n");
   write(maintainer, "README.md", "registry\n");
-  git(maintainer, "add", "-A");
-  git(maintainer, "commit", "-q", "-m", "init");
-
-  git(maintainer, "checkout", "-q", "--orphan", "gh-pages");
-  git(maintainer, "rm", "-rq", "--cached", ".");
+  commitMainAndStartSite(maintainer);
   for (const f of ["README.md", ".github/workflows/registry-check.yml", "extensions/.gitkeep"]) {
     git(maintainer, "clean", "-fq", "--", f);
   }
@@ -243,17 +263,7 @@ export async function makeRegistryRepo(
   write(maintainer, ".gitattributes", "* -text\n");
   git(maintainer, "add", "index.json", "nimbus-registry.json", ".nojekyll", ".gitattributes");
   git(maintainer, "commit", "-q", "-m", "site");
-  git(maintainer, "checkout", "-q", "main");
-
-  const origin = join(root, "origin.git");
-  git(root, "init", "-q", "--bare", "-b", "main", origin);
-  const originUrl = pathToFileURL(origin).href;
-  git(maintainer, "remote", "add", "origin", originUrl);
-  git(maintainer, "push", "-q", "origin", "main", "gh-pages");
-
-  const workspace = join(root, "workspace");
-  git(root, "clone", "-q", "--branch", "main", originUrl, workspace);
-  return { root, origin, originUrl, maintainer, workspace };
+  return pushToOrigin(root, maintainer);
 }
 
 /**
@@ -380,11 +390,7 @@ export async function makeTrustFeedRepo(
   write(maintainer, "nimbus-trust.json", `${JSON.stringify({ format: 1 }, null, 2)}\n`);
   for (const d of ["publishers", "requests", "statements"]) write(maintainer, `${d}/.gitkeep`, "");
   write(maintainer, ".github/workflows/trust-sign.yml", "name: sign\n");
-  git(maintainer, "add", "-A");
-  git(maintainer, "commit", "-q", "-m", "init");
-
-  git(maintainer, "checkout", "-q", "--orphan", "gh-pages");
-  git(maintainer, "rm", "-rq", "--cached", ".");
+  commitMainAndStartSite(maintainer);
   git(maintainer, "clean", "-fdq");
   const feed = await signTrustFeed(
     emptyTrustFeed(b64(publicKeyFromSeed(rootSeed)), "2026-10-27T00:00:00.000Z"),
@@ -394,14 +400,5 @@ export async function makeTrustFeedRepo(
   write(maintainer, ".nojekyll", "");
   git(maintainer, "add", "trust.json", ".nojekyll");
   git(maintainer, "commit", "-q", "-m", "site");
-  git(maintainer, "checkout", "-q", "main");
-
-  const origin = join(root, "origin.git");
-  git(root, "init", "-q", "--bare", "-b", "main", origin);
-  const originUrl = pathToFileURL(origin).href;
-  git(maintainer, "remote", "add", "origin", originUrl);
-  git(maintainer, "push", "-q", "origin", "main", "gh-pages");
-  const workspace = join(root, "workspace");
-  git(root, "clone", "-q", "--branch", "main", originUrl, workspace);
-  return { root, origin, originUrl, maintainer, workspace };
+  return pushToOrigin(root, maintainer);
 }

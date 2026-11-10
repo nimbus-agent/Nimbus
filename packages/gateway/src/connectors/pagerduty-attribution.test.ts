@@ -201,3 +201,87 @@ test("collects only the actor ids still missing an email", () => {
   const map = pagerdutyEmailMapFromIncidents(incidents);
   expect(pagerdutyUnresolvedActorIds(incidents, map)).toEqual(["PUSER9"]);
 });
+
+test("the email map skips service actors, malformed rows, id-less actors and unusable emails, and keeps the first email per id", () => {
+  const map = pagerdutyEmailMapFromIncidents([
+    "junk",
+    {
+      assignments: [
+        { assignee: { id: "SVC", type: "service_reference", email: "svc@example.com" } },
+        { assignee: { email: "noid@example.com" } },
+        { assignee: { id: "", email: "empty@example.com" } },
+        { assignee: { id: "U1", email: "not an email" } },
+        { assignee: { id: "U2", email: "first@example.com" } },
+        { assignee: { id: "U2", email: "second@example.com" } },
+        "no assignee",
+        { assignee: "x" },
+      ],
+      acknowledgements: "nope",
+    },
+  ]);
+  expect([...map.entries()]).toEqual([["U2", "first@example.com"]]);
+});
+
+test("a non-list assignments value yields no assignees", () => {
+  expect(extractPagerdutyActors({ assignments: "x" }, new Map())).toEqual({
+    assigneeEmails: [],
+    resolvedByEmail: null,
+    unattributed: 0,
+  });
+});
+
+test("an assignee is resolved through the page map, repeats collapse, and the rest are unattributed", () => {
+  const actors = extractPagerdutyActors(
+    {
+      assignments: [
+        { assignee: { id: "U1" } },
+        { assignee: { id: "U1b", email: "mapped@example.com" } },
+        { assignee: { id: "U1" } },
+        { assignee: { id: "U9" } },
+        { assignee: { email: "" } },
+        { assignee: { id: "SVC", type: "service_reference" } },
+      ],
+    },
+    new Map([["U1", "mapped@example.com"]]),
+  );
+  expect(actors.assigneeEmails).toEqual(["mapped@example.com"]);
+  expect(actors.unattributed).toBe(2);
+});
+
+test("a resolver counts only on a resolved incident and only when it is a person", () => {
+  const map = new Map([["R1", "res@example.com"]]);
+  const resolved = (by: unknown, status = "resolved") =>
+    extractPagerdutyActors({ status, last_status_change_by: by }, map);
+  expect(resolved({ id: "R1" }).resolvedByEmail).toBe("res@example.com");
+  expect(resolved({ id: "R1" }, "triggered")).toEqual({
+    assigneeEmails: [],
+    resolvedByEmail: null,
+    unattributed: 0,
+  });
+  expect(resolved({ id: "SVC", type: "service_reference" }).unattributed).toBe(0);
+  expect(resolved({ id: "UNKNOWN" })).toMatchObject({ resolvedByEmail: null, unattributed: 1 });
+  expect(resolved({ email: "" }).unattributed).toBe(1);
+});
+
+test("unresolved actor ids exclude services, known emails, known ids and id-less actors, and include a resolved incident's resolver", () => {
+  const ids = pagerdutyUnresolvedActorIds(
+    [
+      "junk",
+      {
+        status: "resolved",
+        last_status_change_by: { id: "R9" },
+        assignments: [
+          { assignee: { id: "A1" } },
+          { assignee: { id: "A2", email: "has@example.com" } },
+          { assignee: { id: "KNOWN" } },
+          { assignee: { id: "SVC", type: "service_reference" } },
+          { assignee: {} },
+          { assignee: { id: "" } },
+        ],
+        acknowledgements: [{ acknowledger: { id: "ACK" } }],
+      },
+    ],
+    new Map([["KNOWN", "k@example.com"]]),
+  );
+  expect(ids.sort()).toEqual(["A1", "ACK", "R9"]);
+});

@@ -15,7 +15,11 @@ import {
   type DoctorVaultExec,
   type DoctorVaultRun,
   doctorPrintBunCheck,
+  doctorPrintCaptures,
   doctorPrintEmbeddingFromSnapshot,
+  doctorPrintExtensionObservation,
+  doctorPrintNotifications,
+  doctorPrintTrust,
   doctorVaultLine,
   doctorVaultStatus,
   formatDoctorVaultLine,
@@ -428,5 +432,59 @@ describe("runDoctor — IPC edges", () => {
     expect(failing).toEqual(control);
     expect(control.stdout).toContain("[ok] Gateway: IPC OK (uptime ~5s).\n");
     expect(failing.stdout).not.toContain("socket already closed");
+  });
+});
+
+describe("doctor RPC sections tolerate a failing or older gateway", () => {
+  const sections: Array<[string, string, (c: Pick<IPCClient, "call">) => Promise<number>, string]> =
+    [
+      [
+        "notifications.status",
+        "Notifications: status check failed",
+        doctorPrintNotifications,
+        "boom",
+      ],
+      ["capture.status", "MCP capture sink: status check failed", doctorPrintCaptures, "boom"],
+      [
+        "extension.audit",
+        "Extensions: network observation check failed",
+        doctorPrintExtensionObservation,
+        "boom",
+      ],
+      ["trust.status", "Trust feed: status check failed", doctorPrintTrust, "boom"],
+    ];
+
+  for (const [method, line, print, message] of sections) {
+    it(`${method}: an unexpected failure is a [warn] and exit 1`, async () => {
+      out.reset();
+      const client = {
+        call: async () => {
+          throw new Error(message);
+        },
+      } as unknown as Pick<IPCClient, "call">;
+      expect(await print(client)).toBe(1);
+      expect(out.stdout).toContain(`[warn] ${line} (${message}).`);
+    });
+
+    it(`${method}: an older gateway (-32601) is silent and exit 0`, async () => {
+      out.reset();
+      const client = {
+        call: async () => {
+          throw Object.assign(new Error("not found"), { code: -32601 });
+        },
+      } as unknown as Pick<IPCClient, "call">;
+      expect(await print(client)).toBe(0);
+      expect(out.stdout).toBe("");
+    });
+  }
+
+  it("a malformed notifications or capture answer is reported, not thrown", async () => {
+    out.reset();
+    const client = { call: async () => "garbage" } as unknown as Pick<IPCClient, "call">;
+    expect(await doctorPrintNotifications(client)).toBe(1);
+    expect(out.stdout).toContain("[warn] Notifications:");
+    out.reset();
+    expect(await doctorPrintCaptures(client)).toBe(1);
+    expect(out.stdout).toContain("[warn] MCP capture sink:");
   });
 });

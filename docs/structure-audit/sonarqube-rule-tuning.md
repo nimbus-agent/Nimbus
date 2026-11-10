@@ -449,6 +449,49 @@ concurrency cap of its own. Then delete the marker and its row together.
 | `ui/src/pages/onboarding/Connect.tsx` `onAuth` | `typescript:S9382` | each connector.auth runs an interactive sign-in (OAuth opens a browser consent page + loopback callback) - one provider prompt at a time |
 | `ui/src/providers/GatewayConnectionProvider.tsx` `runFirstConnect` | `typescript:S9382` | retry loop - the backoff must elapse before the next first-connect attempt |
 
+## 2026-11-10 — sweep: 48 findings decided on the board, not in code
+
+A sweep of the 276 open findings on `main` fixed about 230 in code (no rule disabled, no Sonar,
+coverage or duplication exclusion added). The owner decided the rest on the SonarCloud board
+instead of with new markers: each of the 48 below is **Accepted** there, with its reason as an
+issue comment, and the 13 `NOSONAR` markers the sweep had added were removed again (their reasons
+stay as plain comments). Seven pre-existing `// NOSONAR typescript:S9382` markers that sat on the
+line ABOVE the reported await (and were therefore ignored) were moved onto the reported line.
+
+- `typescript:S9382` (27): sequential by design, as in the 2026-10-03 section: each iteration
+  depends on the previous result, shares one budget, server or deadline, or is an ordered owner
+  prompt.
+- `typescript:S1313` (20): the literal is the point: the registry action's private, loopback and
+  reserved-range blocklist (`host-probe.ts`), and the public probe address the Linux forwarder's
+  first-party address rule requires (`linux-forwarder.ts`).
+- `typescript:S3776` (2): `engine/executor.ts` `runGateChecks` and `mcp-sink/capture-act.ts`
+  `acceptAction` are ordered security gates whose order of checks is pinned by static D42(b)/D43
+  and by the I28 test "acceptAction claims BEFORE execute"; splitting either failed those pins.
+
+| File | Rule | Findings |
+|---|---|---|
+| `gateway/src/platform/sandbox/linux-forwarder.ts` | `typescript:S1313` | 1 |
+| `github-actions/registry-action/src/host-probe.ts` | `typescript:S1313` | 18 |
+| `gateway/src/engine/executor.ts` | `typescript:S3776` | 1 |
+| `gateway/src/mcp-sink/capture-act.ts` | `typescript:S3776` | 1 |
+| `cli/src/commands/eval-installed.ts` | `typescript:S9382` | 1 |
+| `cli/src/commands/extension-post-install.ts` | `typescript:S9382` | 5 |
+| `cli/src/commands/extension.ts` | `typescript:S9382` | 1 |
+| `cli/src/commands/init-role.ts` | `typescript:S9382` | 2 |
+| `gateway/src/connectors/github-sync.ts` | `typescript:S9382` | 1 |
+| `gateway/src/connectors/google-drive-sync.ts` | `typescript:S9382` | 3 |
+| `gateway/src/connectors/lazy-mesh/iac-runner.ts` | `typescript:S9382` | 1 |
+| `gateway/src/connectors/same-origin-fetch.ts` | `typescript:S9382` | 1 |
+| `gateway/src/extensions/eval/eval-runtime.ts` | `typescript:S9382` | 2 |
+| `gateway/src/extensions/installed-eval.ts` | `typescript:S9382` | 2 |
+| `gateway/src/extensions/registry/__fixtures__/build-test-registry.ts` | `typescript:S9382` | 1 |
+| `gateway/src/platform/sandbox/net-forward-host.ts` | `typescript:S9382` | 1 |
+| `github-actions/registry-action/src/candidates.ts` | `typescript:S9382` | 1 |
+| `github-actions/registry-action/src/host-probe.ts` | `typescript:S9382` | 1 |
+| `github-actions/registry-action/src/liveness-check.ts` | `typescript:S9382` | 1 |
+| `github-actions/registry-action/src/sign.ts` | `typescript:S9382` | 1 |
+| `registry-format/src/trust-feed-build.ts` | `typescript:S9382` | 2 |
+
 If you disable a rule, record:
 
 - Rule key (e.g., `typescript:S1135`)

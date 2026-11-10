@@ -235,3 +235,23 @@ describe("loadOpenApiDocument", () => {
     expect(e.message).toContain("not http:");
   });
 });
+
+describe("loadOpenApiDocument sources", () => {
+  test("a source that is neither a file nor a valid URL is refused", async () => {
+    const fetched: string[] = [];
+    const deps = depsFor({}, (async (u: string) => {
+      fetched.push(u);
+      throw new Error("must not fetch");
+    }) as unknown as typeof fetch);
+    const e = await rejectionOf(loadOpenApiDocument("https://", deps));
+    expect(e).toBeInstanceOf(OpenApiLoadError);
+    expect(e.message).toContain("Not a valid URL");
+    expect(fetched).toEqual([]);
+  });
+
+  test("a plain http URL is refused before any request", async () => {
+    const e = await rejectionOf(loadOpenApiDocument("http://example.com/o.json", depsFor({})));
+    expect(e).toBeInstanceOf(OpenApiLoadError);
+    expect(e.message).toContain("Only https: URLs are supported");
+  });
+});

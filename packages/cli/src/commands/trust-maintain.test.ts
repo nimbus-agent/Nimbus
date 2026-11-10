@@ -11,7 +11,12 @@ import {
 } from "@nimbus-dev/registry-format";
 import nacl from "tweetnacl";
 
-import { readFeedSource, runTrustMaintain, type TrustMaintainEnv } from "./trust-maintain.ts";
+import {
+  formatFeedPlan,
+  readFeedSource,
+  runTrustMaintain,
+  type TrustMaintainEnv,
+} from "./trust-maintain.ts";
 
 const b64 = (u: Uint8Array): string => Buffer.from(u).toString("base64");
 const PUB_SEED = new Uint8Array(32).fill(41);
@@ -356,5 +361,59 @@ describe("dispatch", () => {
 
   test("an unknown option is a usage error", async () => {
     expect((await run(["plan", feed, "--what"])).err).toContain("unknown option --what");
+  });
+});
+
+describe("trust-maintain edge cases", () => {
+  test("unverify-publisher without a publisher id is a usage error", async () => {
+    await init();
+    const r = await run(["unverify-publisher", feed]);
+    expect(r.code).toBe(2);
+    expect(r.err).toContain("unverify-publisher needs <dir> <publisherId>");
+  });
+
+  test("an unexpected failure exits 1 with its message, not the usage code", async () => {
+    await init();
+    // A file where the publishers directory belongs: readdir fails with a plain Error.
+    rmSync(join(feed, "publishers"), { recursive: true, force: true });
+    writeFileSync(join(feed, "publishers"), "not a directory");
+    const r = await run(["plan", feed]);
+    expect(r.code).toBe(1);
+    expect(r.err.length).toBeGreaterThan(0);
+  });
+
+  test("formatFeedPlan names a versioned takedown and an unknown publisher", () => {
+    const text = formatFeedPlan(
+      {
+        status: "changed",
+        blocks: [
+          {
+            path: "requests/a.json",
+            request: {
+              kind: "extension.takedown",
+              extensionId: "acme/tool",
+              versions: ["1.0.0", "1.1.0"],
+              reason: "r",
+            },
+          },
+          {
+            path: "requests/b.json",
+            request: {
+              kind: "extension.takedown",
+              extensionId: "acme/other",
+              versions: "*",
+              reason: "r",
+            },
+          },
+        ],
+        verified: [],
+        unverified: [],
+        admitted: [],
+        skipped: [],
+      },
+      [],
+    );
+    expect(text).toContain("take down acme/tool@1.0.0,1.1.0 of ? (requests/a.json)");
+    expect(text).toContain("take down acme/other of ? (requests/b.json)");
   });
 });

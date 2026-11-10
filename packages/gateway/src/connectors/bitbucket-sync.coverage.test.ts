@@ -345,3 +345,42 @@ describe("bitbucketFetchOneUrlIsSupported", () => {
     expect(bitbucketFetchOneUrlIsSupported(url)).toBe(supported);
   });
 });
+
+describe("a stored metadata value that cannot be read", () => {
+  test("malformed stored JSON carries no branch forward, and the PR still upserts", async () => {
+    mock.respond("GET", PR_LIST_RE, { values: [{ id: 7, title: "no source branch" }] });
+    const db = createMemoryIndexDb();
+    const ctx: SyncContext = { ...ctxFor(db), itemMetadata: () => "{not json" };
+
+    const r = await createBitbucketSyncable(ENSURE_MCP).sync(
+      ctx,
+      cursorWith({ ...SETTLED, pendingRepos: ["ws/repo"] }),
+    );
+
+    expect(r.itemsUpserted).toBe(1);
+    const row = db
+      .query("SELECT json_extract(metadata, '$.branch') AS branch FROM item WHERE external_id = ?")
+      .get("ws/repo#7") as { branch: unknown };
+    expect(row.branch).toBeNull();
+    db.close();
+  });
+
+  test("stored metadata with an empty or non-string branch carries nothing forward", async () => {
+    for (const stored of ['{"branch":""}', '{"branch":5}', "[1]"]) {
+      mock.respond("GET", PR_LIST_RE, { values: [{ id: 8, title: "no source branch" }] });
+      const db = createMemoryIndexDb();
+      const ctx: SyncContext = { ...ctxFor(db), itemMetadata: () => stored };
+      await createBitbucketSyncable(ENSURE_MCP).sync(
+        ctx,
+        cursorWith({ ...SETTLED, pendingRepos: ["ws/repo"] }),
+      );
+      const row = db
+        .query(
+          "SELECT json_extract(metadata, '$.branch') AS branch FROM item WHERE external_id = ?",
+        )
+        .get("ws/repo#8") as { branch: unknown };
+      expect(row.branch).toBeNull();
+      db.close();
+    }
+  });
+});

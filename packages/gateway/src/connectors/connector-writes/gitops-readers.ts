@@ -7,6 +7,8 @@
 // `warehouse-bi.ts`, so it imports nothing from the row table.
 import {
   arrayAt,
+  type BeforeInput,
+  type BeforePicked,
   beforeReplyJson,
   boolAt,
   excerptHead,
@@ -14,20 +16,14 @@ import {
   nonEmptyString,
   presentFields,
   requiredStringAt,
+  shownHead,
   stringAt,
   yesNo,
 } from "./before-select.ts";
 import type { BeforeStateField, BeforeStateGuard } from "./types.ts";
 
-type Picked = Readonly<Record<string, unknown>>;
-type Input = Readonly<Record<string, unknown>>;
-
-function shown(v: string | undefined): string | undefined {
-  return v === undefined ? undefined : excerptHead(v);
-}
-
 /** `argocd_get` input: the application name. */
-export function argocdReadArgs(input: Input): Record<string, unknown> | undefined {
+export function argocdReadArgs(input: BeforeInput): Record<string, unknown> | undefined {
   const name = nonEmptyString(input["name"]);
   return name === undefined ? undefined : { name };
 }
@@ -76,14 +72,14 @@ function argocdFields(j: unknown): BeforeStateField[] {
   return [
     { label: "Application", value: excerptHead(name) },
     ...presentFields([
-      ["Sync status", shown(stringAt(j, ["status", "sync", "status"]))],
-      ["Health", shown(stringAt(j, ["status", "health", "status"]))],
-      ["Synced revision", shown(stringAt(j, ["status", "sync", "revision"]))],
-      ["Target revision", shown(stringAt(j, ["spec", "source", "targetRevision"]))],
-      ["Repo", shown(stringAt(j, ["spec", "source", "repoURL"]))],
-      ["Destination", shown(argocdDestination(j))],
+      ["Sync status", shownHead(stringAt(j, ["status", "sync", "status"]))],
+      ["Health", shownHead(stringAt(j, ["status", "health", "status"]))],
+      ["Synced revision", shownHead(stringAt(j, ["status", "sync", "revision"]))],
+      ["Target revision", shownHead(stringAt(j, ["spec", "source", "targetRevision"]))],
+      ["Repo", shownHead(stringAt(j, ["spec", "source", "repoURL"]))],
+      ["Destination", shownHead(argocdDestination(j))],
       ["Auto-sync", auto.text],
-      ["Last operation", shown(phase)],
+      ["Last operation", shownHead(phase)],
     ]),
   ];
 }
@@ -97,7 +93,10 @@ export function selectArgocdSync(reply: unknown): readonly BeforeStateField[] {
  * Argo CD `argocd_get` (before-state) for a rollback: the application, then the history entry the
  * write names (its revision and deploy time), and a note that auto-sync makes Argo CD refuse it.
  */
-export function selectArgocdRollback(reply: unknown, picked: Picked): readonly BeforeStateField[] {
+export function selectArgocdRollback(
+  reply: unknown,
+  picked: BeforePicked,
+): readonly BeforeStateField[] {
   const j = beforeReplyJson(reply);
   const fields = argocdFields(j);
   const entry = historyEntry(j, picked["id"]);
@@ -135,7 +134,7 @@ export const ARGOCD_ROLLBACK_HISTORY_GUARD: BeforeStateGuard = {
 /** `flux_get` input for a reconcile of `kind`: the namespace and the name. */
 export function fluxReadArgs(
   kind: "kustomization" | "helm_release",
-): (input: Input) => Record<string, unknown> | undefined {
+): (input: BeforeInput) => Record<string, unknown> | undefined {
   return (input) => {
     const namespace = nonEmptyString(input["namespace"]);
     const name = nonEmptyString(input["name"]);
@@ -157,23 +156,23 @@ export function selectFluxResource(reply: unknown): readonly BeforeStateField[] 
   return [
     { label: "Resource", value: excerptHead(name) },
     ...presentFields([
-      ["Ready", shown(readyText)],
-      ["Ready message", shown(message)],
+      ["Ready", shownHead(readyText)],
+      ["Ready message", shownHead(message)],
       ["Suspended", yesNo(boolAt(j, ["spec", "suspend"]))],
       [
         "Last applied revision",
-        shown(
+        shownHead(
           stringAt(j, ["status", "lastAppliedRevision"]) ??
             stringAt(j, ["status", "lastAttemptedRevision"]),
         ),
       ],
-      ["Interval", shown(stringAt(j, ["spec", "interval"]))],
+      ["Interval", shownHead(stringAt(j, ["spec", "interval"]))],
     ]),
   ];
 }
 
 /** `mlflow_get` input: the registered model's name. */
-export function mlflowReadArgs(input: Input): Record<string, unknown> | undefined {
+export function mlflowReadArgs(input: BeforeInput): Record<string, unknown> | undefined {
   const name = nonEmptyString(input["name"]);
   return name === undefined ? undefined : { name };
 }
@@ -195,7 +194,7 @@ function versionsInStage(latest: readonly unknown[], stage: string): string {
  */
 export function selectMlflowModel(
   mode: "promote" | "transition",
-): (reply: unknown, picked: Picked) => readonly BeforeStateField[] {
+): (reply: unknown, picked: BeforePicked) => readonly BeforeStateField[] {
   return (reply, picked) => {
     const j = beforeReplyJson(reply);
     const name = requiredStringAt(j, ["registered_model", "name"]);
@@ -234,7 +233,7 @@ export function selectMlflowModel(
 }
 
 /** `snowflake_object_metadata_get` input: the table (the tag and comment writes support tables only). */
-export function snowflakeMetadataReadArgs(input: Input): Record<string, unknown> | undefined {
+export function snowflakeMetadataReadArgs(input: BeforeInput): Record<string, unknown> | undefined {
   const object = nonEmptyString(input["object"]);
   return object === undefined ? undefined : { object };
 }
@@ -346,7 +345,10 @@ function tagNowText(value: string | undefined, unidentified: boolean): string {
  * returns direct AND inherited tags, so the value may be inherited) and every tag on the table,
  * capped.
  */
-export function selectSnowflakeTag(reply: unknown, picked: Picked): readonly BeforeStateField[] {
+export function selectSnowflakeTag(
+  reply: unknown,
+  picked: BeforePicked,
+): readonly BeforeStateField[] {
   const j = beforeReplyJson(reply);
   const object = requiredStringAt(j, ["object"]);
   const tags = arrayAt(j, ["tags"]);
@@ -368,7 +370,7 @@ export function selectSnowflakeTag(reply: unknown, picked: Picked): readonly Bef
       label: "Tag now",
       value: tagNowText(value, unidentified),
     },
-    ...presentFields([["All tags on the table", shown(all)]]),
+    ...presentFields([["All tags on the table", shownHead(all)]]),
   ];
 }
 

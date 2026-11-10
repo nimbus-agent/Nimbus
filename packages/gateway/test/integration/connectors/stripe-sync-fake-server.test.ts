@@ -26,6 +26,8 @@ interface FakeStripeConfig {
   pages?: Record<string, StripePage>;
   status?: number;
   badJson?: boolean;
+  /** A 200 whose JSON body is an array, not an object. */
+  nonObjectJson?: boolean;
 }
 
 interface FakeStripe {
@@ -53,6 +55,9 @@ function startFakeStripe(config: FakeStripeConfig): FakeStripe {
         }
         if (config.badJson === true) {
           return new Response("{not json", { status: 200 });
+        }
+        if (config.nonObjectJson === true) {
+          return Response.json([1, 2, 3]);
         }
         const after = u.searchParams.get("starting_after") ?? "";
         const page = config.pages?.[after] ?? { data: [], has_more: false };
@@ -257,6 +262,16 @@ describe("stripe-sync against Bun.serve fake API", () => {
 
   test("first-page parse error degrades gracefully (zero upserts, pass-1 cursor)", async () => {
     h = startHarness({ badJson: true });
+    restoreFetch = withRewrittenFetch(h.fake.baseUrl);
+    await h.vault.set("stripe.api_key", "k");
+    const syncable = createStripeSyncable({ ensureStripeMcpRunning: async () => {} });
+    const result = await syncable.sync(h.ctx, null);
+    expect(result.itemsUpserted).toBe(0);
+    expect(result.cursor?.startsWith("nimbus-stripe1:")).toBe(true);
+  });
+
+  test("first-page JSON that is not an object degrades gracefully (zero upserts, pass-1 cursor)", async () => {
+    h = startHarness({ nonObjectJson: true });
     restoreFetch = withRewrittenFetch(h.fake.baseUrl);
     await h.vault.set("stripe.api_key", "k");
     const syncable = createStripeSyncable({ ensureStripeMcpRunning: async () => {} });

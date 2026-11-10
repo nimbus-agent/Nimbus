@@ -1535,3 +1535,66 @@ describe("a network the owner narrowed (--network, I52)", () => {
     expect(out.grants.network).toEqual(["api.example.com", "imap.example.com:993"]);
   });
 });
+
+describe("approval and manifest-read edges", () => {
+  test("a row whose install directory holds no manifest is refused as having no manifest", async () => {
+    const { db, root } = await setup();
+    const row = listExtensions(db).find((r) => r.id === "com.example.run");
+    if (row === undefined) throw new Error("premise: the extension row exists");
+    const empty = join(root, "empty-install");
+    mkdirSync(empty, { recursive: true });
+    expect(() => readVerifiedManifest({ ...row, install_path: empty })).toThrow(/has no manifest/);
+  });
+
+  test("a manifest path that cannot be read as a file is refused as unreadable", async () => {
+    const { db, installPath } = await setup();
+    const row = listExtensions(db).find((r) => r.id === "com.example.run");
+    if (row === undefined) throw new Error("premise: the extension row exists");
+    const manifestPath = join(installPath, "nimbus.extension.json");
+    rmSync(manifestPath, { force: true });
+    mkdirSync(manifestPath, { recursive: true });
+    expect(() => readVerifiedManifest(row)).toThrow(/manifest could not be read/);
+  });
+
+  test("the install tree vanishing while the prompt is open refuses as changed", async () => {
+    const s = await setup();
+    await expect(
+      approveExtensionRun("com.example.run", {
+        db: s.db,
+        env: s.env,
+        gate: async () => {
+          rmSync(s.installPath, { recursive: true, force: true });
+          return true;
+        },
+        runtimeEnabled: true,
+        now: () => 1,
+      }),
+    ).rejects.toThrow(/ERR_EXTENSION_RUN_CHANGED/);
+    expect(getRunGrant(s.db, "com.example.run")).toBeNull();
+  });
+
+  test("grants that cannot be re-resolved once the prompt is open refuse as changed", async () => {
+    const s = await setup();
+    let promptOpen = false;
+    const env: ExtensionRunGrantEnv = {
+      ...s.env,
+      realpath: (p) => {
+        if (promptOpen) throw new Error("path vanished");
+        return realpathSync.native(p);
+      },
+    };
+    await expect(
+      approveExtensionRun("com.example.run", {
+        db: s.db,
+        env,
+        gate: async () => {
+          promptOpen = true;
+          return true;
+        },
+        runtimeEnabled: true,
+        now: () => 1,
+      }),
+    ).rejects.toThrow(/ERR_EXTENSION_RUN_CHANGED/);
+    expect(getRunGrant(s.db, "com.example.run")).toBeNull();
+  });
+});

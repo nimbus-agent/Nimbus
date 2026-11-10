@@ -2132,7 +2132,6 @@ function automationServerOptions(
       ? {}
       : { extensionsRuntimeEnabled: o.extensionsRuntimeEnabled }),
     ...(o.extensionSync === undefined ? {} : { extensionSync: o.extensionSync }),
-    ...(o.continuityTable === undefined ? {} : { continuityTable: o.continuityTable }),
   };
 }
 
@@ -2156,6 +2155,9 @@ async function dispatchExtensionAutomationRpc(
       params,
       db: ctx.options.localIndex.getDatabase(),
       ...automationServerOptions(ctx),
+      ...(ctx.options.continuityTable === undefined
+        ? {}
+        : { continuityTable: ctx.options.continuityTable }),
       vault: ctx.options.vault,
       ...(autoUpdateDeps === undefined ? {} : { autoUpdate: autoUpdateDeps }),
       ...(ownerGate === undefined ? {} : { ownerGate }),

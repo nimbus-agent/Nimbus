@@ -198,3 +198,16 @@ test("bounded: a wide fanout crossing MAX_PARTS stops the walk", () => {
   expect(result).toContain("part-0");
   expect(result).not.toContain("part-509");
 });
+
+test("a part whose type is neither text/plain nor text/html is not indexed, even with inline data", () => {
+  expect(
+    gmailMessageBodyText({
+      mimeType: "multipart/mixed",
+      parts: [
+        { mimeType: "image/png", body: { data: b64url("not text") } },
+        { body: { data: b64url("no type at all") } },
+        { mimeType: "text/plain", body: { data: b64url("kept") } },
+      ],
+    }),
+  ).toBe("kept");
+});

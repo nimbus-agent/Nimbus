@@ -14,7 +14,7 @@ import { describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { expectLinearGrowth } from "../../testing/linear-growth.ts";
 import { IAC_LIMITS } from "./iac-limits.ts";
-import { type PlanPreview, renderPlanPreview } from "./iac-plan-preview.ts";
+import { type PlanPreview, renderedText, renderPlanPreview } from "./iac-plan-preview.ts";
 
 const SHA = "a".repeat(64);
 
@@ -542,5 +542,98 @@ describe("renderPlanPreview: costs linear, not quadratic, time", () => {
         };
       },
     });
+  });
+});
+
+describe("renderPlanPreview: remaining edges", () => {
+  test("renderedText joins lines and describes the joined text exactly", () => {
+    const r = renderedText(["a", "bé"]);
+    expect(r.text).toBe("a\nbé");
+    expect(r.bytes).toBe(Buffer.byteLength("a\nbé", "utf8"));
+    expect(r.sha256).toBe(createHash("sha256").update("a\nbé").digest("hex"));
+    expect(r.lines).toEqual(["a", "bé"]);
+  });
+
+  test("a create-then-delete pair is a replace and lists both actions in order", () => {
+    const p = render(
+      plan([change("a.b", ["create", "delete"], { before: { x: 1 }, after: { x: 2 } })]),
+    );
+    expect(p.counts.replace).toBe(1);
+    expect(p.text).toContain("[replace: create, delete] a.b");
+    expect(p.deleteCount).toBe(1);
+  });
+
+  test("an output value that is not an object is unshowable", () => {
+    expect(reason(plan([], { output_changes: { o: "create" } }))).toBe("unshowable");
+  });
+
+  test("a non-string action_reason is ignored, a string one is shown", () => {
+    const withNumber = { ...change("a.b", ["update"], { before: { x: 1 }, after: { x: 2 } }) };
+    withNumber["action_reason"] = 5;
+    expect(render(plan([withNumber])).text).not.toContain("reason:");
+    const p = render(
+      plan([
+        change("a.b", ["update"], { action_reason: "tainted", before: { x: 1 }, after: { x: 2 } }),
+      ]),
+    );
+    expect(p.text).toContain("    reason: tainted");
+  });
+
+  test("an attribute only unknown after apply is listed, with an absent before side", () => {
+    const p = render(
+      plan([change("a.b", ["update"], { before: {}, after: {}, after_unknown: { id: true } })]),
+    );
+    expect(p.text).toContain("    id: (none) -> (known after apply)");
+  });
+
+  test("a partly unknown nested attribute says so; a nested marker object marks its attribute", () => {
+    const p = render(
+      plan([
+        change("a.b", ["update"], {
+          before: { tags: { a: 1 } },
+          after: { tags: { a: 1 } },
+          after_unknown: { tags: { b: true } },
+        }),
+      ]),
+    );
+    expect(p.text).toContain("    tags: (object, 1 keys) -> (partly known after apply)");
+  });
+
+  test("objects of equal shape are the same, arrays of unequal length differ", () => {
+    const same = render(
+      plan([
+        change("a.b", ["update"], {
+          before: { o: { a: [1, 2] }, l: [1] },
+          after: { o: { a: [1, 2] }, l: [1, 2] },
+        }),
+      ]),
+    );
+    expect(same.text).toContain("    l: (list, 1 items) -> (list, 2 items)");
+    expect(same.text).not.toContain("    o:");
+    const keyDiff = render(
+      plan([change("a.b", ["update"], { before: { o: { a: 1 } }, after: { o: { b: 1 } } })]),
+    );
+    expect(keyDiff.text).toContain("    o: (object, 1 keys) -> (object, 1 keys)");
+  });
+
+  test("a non-JSON value kind prints as not shown", () => {
+    const p = render(
+      plan([change("a.b", ["update"], { before: { v: 1 }, after: { v: BigInt(2) } })]),
+    );
+    expect(p.text).toContain("    v: 1 -> (value not shown)");
+  });
+
+  test("a class instance is not a plain object and is shown as not-shown", () => {
+    class Odd {}
+    const p = render(
+      plan([change("a.b", ["update"], { before: { v: new Odd() }, after: { v: new Odd() } })]),
+    );
+    expect(p.text).toContain("    v: (value not shown) -> (value not shown)");
+  });
+
+  test("a null-prototype object is a plain object", () => {
+    const o = Object.assign(Object.create(null) as Record<string, unknown>, { k: 1 });
+    const p = render(plan([change("a.b", ["update"], { before: { v: 0 }, after: { v: o } })]));
+    expect(p.text).toContain("    v: 0 -> (object, 1 keys)");
   });
 });

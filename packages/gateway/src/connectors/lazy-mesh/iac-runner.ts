@@ -1327,7 +1327,7 @@ export class IacRunner implements IacHost {
           keep.push(e);
           continue;
         }
-        await this.revoker(e.id).revoke(e.paths); // NOSONAR S9382: ACL revocations run one at a time, in ledger order, under the serial lock
+        await this.revoker(e.id).revoke(e.paths); // ACL revocations run one at a time, in ledger order, under the serial lock
       }
       ledger.save([...keep, { id: profileId, paths }]);
       this.runningProfiles.add(profileId);

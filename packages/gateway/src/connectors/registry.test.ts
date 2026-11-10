@@ -1055,3 +1055,17 @@ describe("a .git planted by the plan child is caught before the prompt (D2 whole
     );
   });
 });
+
+describe("createConnectorDispatcher — a listed tool that cannot be run", () => {
+  test("a tool without an execute implementation is refused, not called", async () => {
+    const client: McpToolListingClient = {
+      async listTools() {
+        return { filesystem_noop: {} };
+      },
+    };
+    const d = createConnectorDispatcher(client);
+    await expect(d.dispatch({ type: "filesystem_noop", payload: {} })).rejects.toThrow(
+      'MCP tool "filesystem_noop" has no execute implementation',
+    );
+  });
+});

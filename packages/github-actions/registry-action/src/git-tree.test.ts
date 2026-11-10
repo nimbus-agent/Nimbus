@@ -374,3 +374,10 @@ describe("empty branch lists and failing merge-base", () => {
     );
   });
 });
+
+describe("fetchRefs when git itself cannot run", () => {
+  test("a failure with no git stderr is reported through the error's own message", () => {
+    const missing = join(tmp, "no-such-directory");
+    expect(() => fetchRefs(["main"], { cwd: missing })).toThrow(/git fetch main failed: .+/);
+  });
+});

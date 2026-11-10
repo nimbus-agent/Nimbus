@@ -5,15 +5,12 @@
  * Pure: no Bun, no gateway imports.
  */
 import { parseEvalQuality } from "./eval-quality.ts";
+import { isObject, parseEvalRoleEnvelope } from "./eval-role-envelope.ts";
 import type { EvalReport } from "./eval-score.ts";
 
 export type EvalRoleDocument =
   | { ok: true; extensionId: string; version: string; report: EvalReport }
   | { ok: false; error: { code: string; message: string } };
-
-function isObject(v: unknown): v is Record<string, unknown> {
-  return typeof v === "object" && v !== null && !Array.isArray(v);
-}
 
 function isResult(v: unknown): boolean {
   return (
@@ -47,23 +44,10 @@ export function parseEvalReport(raw: unknown): EvalReport | null {
 
 /** Validate the role's document; null when it is not one. */
 export function parseEvalRoleDocument(text: string): EvalRoleDocument | null {
-  let raw: unknown;
-  try {
-    raw = JSON.parse(text);
-  } catch {
-    return null;
-  }
-  if (!isObject(raw)) return null;
-  if (raw["ok"] === false) {
-    const e = raw["error"];
-    if (isObject(e) && typeof e["code"] === "string" && typeof e["message"] === "string") {
-      return { ok: false, error: { code: e["code"], message: e["message"] } };
-    }
-    return null;
-  }
-  if (raw["ok"] !== true) return null;
-  if (typeof raw["extensionId"] !== "string" || typeof raw["version"] !== "string") return null;
-  const report = parseEvalReport(raw["report"]);
+  const envelope = parseEvalRoleEnvelope(text);
+  if (envelope === null) return null;
+  if (envelope.kind === "error") return { ok: false, error: envelope.error };
+  const report = parseEvalReport(envelope.raw["report"]);
   if (report === null) return null;
-  return { ok: true, extensionId: raw["extensionId"], version: raw["version"], report };
+  return { ok: true, extensionId: envelope.extensionId, version: envelope.version, report };
 }

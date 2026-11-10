@@ -21,6 +21,8 @@ interface FakeLeverConfig {
   pages?: unknown[][];
   status?: number;
   badJson?: boolean;
+  /** A 200 whose JSON body is an array, not an object. */
+  nonObjectJson?: boolean;
 }
 
 interface FakeLever {
@@ -48,6 +50,9 @@ function startFakeLever(config: FakeLeverConfig): FakeLever {
         }
         if (config.badJson === true) {
           return new Response("{not json", { status: 200 });
+        }
+        if (config.nonObjectJson === true) {
+          return Response.json([1, 2, 3]);
         }
         const pages = config.pages ?? [[]];
         const offset = Number(u.searchParams.get("offset") ?? "0");
@@ -272,6 +277,16 @@ describe("lever-sync against Bun.serve fake API", () => {
 
   test("first-page parse error degrades gracefully (zero upserts, pass-1 cursor)", async () => {
     h = startHarness({ badJson: true });
+    restoreFetch = withRewrittenFetch(h.fake.baseUrl);
+    await h.vault.set("lever.api_key", "k");
+    const syncable = createLeverSyncable({ ensureLeverMcpRunning: async () => {} });
+    const result = await syncable.sync(h.ctx, null);
+    expect(result.itemsUpserted).toBe(0);
+    expect(result.cursor?.startsWith("nimbus-lever1:")).toBe(true);
+  });
+
+  test("first-page JSON that is not an object degrades gracefully (zero upserts, pass-1 cursor)", async () => {
+    h = startHarness({ nonObjectJson: true });
     restoreFetch = withRewrittenFetch(h.fake.baseUrl);
     await h.vault.set("lever.api_key", "k");
     const syncable = createLeverSyncable({ ensureLeverMcpRunning: async () => {} });

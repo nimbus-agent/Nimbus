@@ -11,13 +11,16 @@ import { IAC_PREFLIGHT_REFUSALS } from "../connector-writes/iac-limits.ts";
 import {
   cfnRegionFor,
   fileIacGrantLedger,
+  IAC_TOOL_PROFILE,
   type IacChild,
   IacRunner,
   type IacRunnerDeps,
   iacGrantLedgerFile,
   iacRootFor,
+  iacRoutedKeys,
   spawnIacChild,
 } from "./iac-runner.ts";
+import { mcpClientToolKey } from "./tool-map.ts";
 
 // The branches the main runner test file leaves out: the production child spawner, the file-backed
 // Windows ledger, the cloud credential readers, the CloudFormation call, the default binary lookup
@@ -428,5 +431,15 @@ describe("the Terraform call: binary lookup and plan-file shape", () => {
       expect(children).toHaveLength(1);
     }
     if (run.ok) run.release();
+  });
+});
+
+describe("iacRoutedKeys", () => {
+  test("is one mesh key per routed iac tool, each under the iac service", () => {
+    const keys = iacRoutedKeys();
+    expect(keys).toHaveLength(Object.keys(IAC_TOOL_PROFILE).length);
+    expect(keys).toContain(mcpClientToolKey("iac", "iac_terraform_apply"));
+    expect(keys).toContain(mcpClientToolKey("iac", "iac_cloudformation_deploy"));
+    expect(new Set(keys).size).toBe(keys.length);
   });
 });

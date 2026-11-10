@@ -31,6 +31,8 @@ let rootKey: string;
 /** Remote registries are served from these folders by a fake `fetchFn`: `https://<name>.test/`. */
 const served = new Map<string, string>();
 let failing: Set<string>;
+/** Registries whose index is served but every other file (manifests, packages) is not. */
+let indexOnly: Set<string>;
 
 beforeEach(() => {
   db = new Database(":memory:");
@@ -39,6 +41,7 @@ beforeEach(() => {
   vault = new MockVault();
   served.clear();
   failing = new Set();
+  indexOnly = new Set();
 });
 
 afterEach(() => {
@@ -79,6 +82,9 @@ function fetchDeps(): RegistryFetchDeps {
       const name = u.hostname.replace(/\.test$/, "");
       const dir = served.get(name);
       if (dir === undefined || failing.has(name)) return new Response("down", { status: 503 });
+      if (indexOnly.has(name) && !u.pathname.endsWith("/index.json")) {
+        return new Response("down", { status: 503 });
+      }
       try {
         return new Response(readFileSync(join(dir, ...u.pathname.split("/").filter(Boolean))));
       } catch {
@@ -325,6 +331,21 @@ describe("collectRegistryUpdates", () => {
     expect(out.errors).toHaveLength(1);
     expect(out.errors[0]?.registry).toBe("down");
     expect(out.errors[0]?.error).toContain("ERR_REGISTRY_UNREACHABLE");
+  });
+
+  test("a manifest that cannot be fetched is recorded against its extension without blocking the next one", async () => {
+    const dir = await buildRegistry("main", { "com.a": V12, "com.b": V12 });
+    addRegistry("main", dir, true);
+    indexOnly.add("main");
+    const out = await collectRegistryUpdates(
+      deps(),
+      [row("com.a", "main"), row("com.b", "main")],
+      signal,
+    );
+    expect(out.updates).toEqual([]);
+    expect(out.errors.map((e) => e.registry)).toEqual(["main", "main"]);
+    expect(out.errors[0]?.error.startsWith("com.a: ")).toBe(true);
+    expect(out.errors[1]?.error.startsWith("com.b: ")).toBe(true);
   });
 
   test("a remote registry is refused under air-gap while a local one still answers", async () => {

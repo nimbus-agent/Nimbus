@@ -242,3 +242,128 @@ describe("dailyNotePattern (the enable prompt; creates nothing)", () => {
     });
   });
 });
+
+describe("prepareDailyNote: failures fail closed with a reason, never a write (I15)", () => {
+  const code = (c: string): Error => Object.assign(new Error(c), { code: c });
+  const run = (b: string, over: Partial<ReturnType<typeof fs>> = {}) => {
+    const v = vault(join(b, "notes"), "Work");
+    return {
+      v,
+      r: prepareDailyNote(v, NOW, process.platform, { ...fs(), ...over }),
+    };
+  };
+
+  test("an lstat error other than ENOENT on the note is unwritable", () => {
+    const b = base();
+    const { v, r } = run(b, {
+      lstat: (p) => {
+        if (p.endsWith(`${DAY}.md`)) throw code("EACCES");
+        return lstatSync(p);
+      },
+    });
+    expect(r).toEqual({ path: join(v, `${DAY}.md`), reason: "unwritable" });
+  });
+
+  test("a failed exclusive create is unwritable, and nothing is left behind", () => {
+    const b = base();
+    const { v, r } = run(b, {
+      createExclusive: () => {
+        throw code("EEXIST");
+      },
+    });
+    expect(r).toMatchObject({ reason: "unwritable" });
+    expect(existsSync(join(v, `${DAY}.md`))).toBe(false);
+  });
+
+  test("a note that turns out to be a hard link right after creation is refused as a link", () => {
+    const b = base();
+    const { r } = run(b, {
+      lstat: (p) => {
+        const st = lstatSync(p);
+        return p.endsWith(`${DAY}.md`) ? Object.assign(st, { nlink: 2 }) : st;
+      },
+      createExclusive: (p) => writeFileSync(p, "", { flag: "wx" }),
+    });
+    // The first lstat (before creation) throws ENOENT in the real fs only when missing; here the
+    // note is missing, so the post-create lstat sees the doctored link count.
+    expect(r).toMatchObject({ reason: expect.stringMatching(/^(link|hard-link)$/) });
+  });
+
+  test("an existing note with several hard links is refused", () => {
+    const b = base();
+    const v = vault(join(b, "notes"), "Work");
+    const note = join(v, `${DAY}.md`);
+    writeFileSync(note, "");
+    linkSync(note, join(b, "other-name.md"));
+    expect(prepareDailyNote(v, NOW, process.platform, fs())).toEqual({
+      path: note,
+      reason: "hard-link",
+    });
+  });
+
+  test("a note path that is a folder is not a file", () => {
+    const b = base();
+    const v = vault(join(b, "notes"), "Work");
+    mkdirSync(join(v, `${DAY}.md`));
+    expect(prepareDailyNote(v, NOW, process.platform, fs())).toMatchObject({
+      reason: "not-a-file",
+    });
+  });
+
+  test("a real path that cannot be resolved is unwritable", () => {
+    const b = base();
+    const { r } = run(b, {
+      realpath: () => {
+        throw code("EIO");
+      },
+    });
+    expect(r).toMatchObject({ reason: "unwritable" });
+  });
+
+  test("a real path that differs from the vault plus the names is a link", () => {
+    const b = base();
+    const { r } = run(b, { realpath: (p) => (p.endsWith(".md") ? join(b, "elsewhere.md") : p) });
+    expect(r).toMatchObject({ reason: "link" });
+  });
+
+  test("a folder on the way that cannot be inspected, created, or turns into a link", () => {
+    const b = base();
+    const root = join(b, "notes");
+    const v = vault(root, "Work", { folder: "Journal" });
+    const inspect = prepareDailyNote(v, NOW, process.platform, {
+      ...fs(),
+      lstat: () => {
+        throw code("EACCES");
+      },
+    });
+    expect(inspect).toMatchObject({ reason: "unwritable" });
+    const mk = prepareDailyNote(v, NOW, process.platform, {
+      ...fs(),
+      mkdir: () => {
+        throw code("EACCES");
+      },
+    });
+    expect(mk).toMatchObject({ reason: "unwritable" });
+    const planted = prepareDailyNote(v, NOW, process.platform, {
+      ...fs(),
+      mkdir: (p) => {
+        mkdirSync(p);
+      },
+      lstat: (p) => {
+        const st = lstatSync(p, { throwIfNoEntry: false });
+        if (st === undefined) throw code("ENOENT");
+        return p.endsWith("Journal") ? Object.assign(st, { isDirectory: () => false }) : st;
+      },
+    });
+    expect(planted).toMatchObject({ reason: expect.stringMatching(/^(link|not-a-file)$/) });
+  });
+
+  test("a folder on the way that is a file is not-a-file", () => {
+    const b = base();
+    const v = vault(join(b, "notes"), "Work", { folder: "Journal" });
+    writeFileSync(join(v, "Journal"), "x");
+    expect(prepareDailyNote(v, NOW, process.platform, fs())).toMatchObject({
+      reason: "not-a-file",
+    });
+  });
+});

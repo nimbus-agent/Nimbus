@@ -415,3 +415,27 @@ describe("parseEvalRecordDocument", () => {
     expect(cut?.ok === false && cut.error.message.length).toBe(1000);
   });
 });
+
+describe("buildRecordedSuite robustness", () => {
+  test("a reply count that does not match the case count is refused", () => {
+    expect(() => buildRecordedSuite(inputsFor(2), [reply("a")], [reply("a"), reply("a")])).toThrow(
+      /a reply is missing for a case/,
+    );
+    expect(() => buildRecordedSuite(inputsFor(1), [reply("a")], [])).toThrow(
+      /a reply is missing for a case/,
+    );
+  });
+
+  test("a reply that blows up while it is read is that case's self-check-failed", () => {
+    const hostile = {
+      kind: "reply",
+      isError: false,
+      get text(): string {
+        throw new Error("boom");
+      },
+    } as unknown as EvalReply;
+    const r = one(hostile, reply("x"));
+    expect(r.suite.cases).toEqual([]);
+    expect(r.skipped).toEqual([{ case: "c0", why: "self-check-failed" }]);
+  });
+});

@@ -318,3 +318,74 @@ describe("connector tools / call: extension ids", () => {
     process.exitCode = 0;
   });
 });
+
+describe("connector call / add --mcp: remaining branches", () => {
+  let sent: Sent[];
+  let out: string[];
+  let err: string[];
+  beforeEach(() => {
+    sent = [];
+    out = [];
+    err = [];
+    process.exitCode = 0;
+  });
+  afterEach(() => {
+    process.exitCode = 0;
+  });
+
+  test("--input without a value is a usage error and sends nothing", async () => {
+    await runConnectorCall(
+      ["mcp_x", "echo", "--input"],
+      makeDeps(() => ({}), sent, out, err),
+    );
+    expect(err[0]).toContain("Missing value for --input");
+    expect(sent).toHaveLength(0);
+    expect(process.exitCode).toBe(1);
+  });
+
+  test("a third positional argument is a usage error", async () => {
+    await runConnectorCall(
+      ["mcp_x", "echo", "extra"],
+      makeDeps(() => ({}), sent, out, err),
+    );
+    expect(err[0]).toContain("Usage: nimbus connector call");
+    expect(sent).toHaveLength(0);
+  });
+
+  test("a rejected call with --json prints the outcome and exits 2", async () => {
+    const res = { status: "rejected", reason: "denied" };
+    await runConnectorCall(
+      ["mcp_x", "echo", "--json"],
+      makeDeps(() => res, sent, out, err),
+    );
+    expect(JSON.parse(out.join("\n"))).toEqual(res);
+    expect(process.exitCode).toBe(2);
+  });
+
+  test("an ok outcome with no result prints null", async () => {
+    await runConnectorCall(
+      ["mcp_x", "echo"],
+      makeDeps(() => ({ status: "ok" }), sent, out, err),
+    );
+    expect(out).toEqual(["null"]);
+  });
+
+  test("a rejection without a reason says no reason was given", async () => {
+    await runConnectorAddMcp(
+      ["mcp_x", "--", "npx", "pkg"],
+      makeDeps(() => ({ status: "rejected" }), sent, out, err),
+      "/work",
+    );
+    expect(out).toEqual(["Refused: no reason given"]);
+    expect(process.exitCode).toBe(2);
+  });
+
+  test("--model prints the model-access grant line", async () => {
+    await runConnectorAddMcp(
+      ["mcp_x", "--model", "--", "npx", "pkg"],
+      makeDeps(() => ({ serviceId: "mcp_x" }), sent, out, err),
+      "/work",
+    );
+    expect(out.some((l) => l.includes("tools offered to the model"))).toBe(true);
+  });
+});

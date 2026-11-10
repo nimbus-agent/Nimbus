@@ -112,6 +112,27 @@ describe("resolveConnectorAddMcp — parameter validation", () => {
     ["non-string commandLine", { serviceId: "mcp_test", commandLine: 42 }, "commandLine"],
     ["empty commandLine", { serviceId: "mcp_test", commandLine: "   " }, "empty"],
     ["invalid serviceId format", { serviceId: "not-mcp", commandLine: "echo" }, "mcp_"],
+    [
+      "both argv and commandLine",
+      { serviceId: "mcp_test", argv: ["a"], commandLine: "a" },
+      "exactly one",
+    ],
+    ["neither argv nor commandLine", { serviceId: "mcp_test" }, "exactly one"],
+    [
+      "non-array readPaths",
+      { serviceId: "mcp_test", argv: ["a"], readPaths: "/x" },
+      "readPaths must be",
+    ],
+    [
+      "non-string netHosts entry",
+      { serviceId: "mcp_test", argv: ["a"], netHosts: [1] },
+      "netHosts must be",
+    ],
+    [
+      "non-boolean modelAccess",
+      { serviceId: "mcp_test", argv: ["a"], modelAccess: "yes" },
+      "modelAccess must be a boolean",
+    ],
   ])("%s -> -32602", (_label, rec, fragment) => {
     try {
       resolveConnectorAddMcp(resolveCtx(rec));

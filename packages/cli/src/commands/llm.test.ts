@@ -303,3 +303,30 @@ describe("column separation at and beyond the column width", () => {
     });
   }
 });
+
+describe("an availability reason this build does not know", () => {
+  beforeEach(() => {
+    out.reset();
+  });
+
+  it("is shown as given in the table, and a route with no reason reads as unknown", async () => {
+    const ipc = createMockIpcClient([
+      {
+        routes: [
+          {
+            routeId: "x/a",
+            providerId: "x",
+            modelName: "a",
+            isLocal: false,
+            available: false,
+            reason: "quota_exceeded",
+          },
+          { routeId: "x/b", providerId: "x", modelName: "b", available: false },
+        ],
+      },
+    ]);
+    await runLlmStatusImpl(ipc.client, { json: false });
+    expect(out.stdout).toContain("no (quota_exceeded)");
+    expect(out.stdout).toContain("no (unknown)");
+  });
+});

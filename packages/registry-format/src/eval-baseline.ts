@@ -8,6 +8,7 @@
  */
 import { codeUnitCompare } from "./code-unit-compare.ts";
 import { RegistryError } from "./errors.ts";
+import { isObject, parseEvalRoleEnvelope } from "./eval-role-envelope.ts";
 import type { RegistryVersionEntry } from "./index-format.ts";
 
 export const EVAL_BASELINE_SCORER_VERSION = 1;
@@ -37,10 +38,6 @@ export type VersionBaseline =
 
 function bad(why: string): RegistryError {
   return new RegistryError("ERR_REGISTRY_EVAL_QUALITY_INVALID", why);
-}
-
-function isObject(v: unknown): v is Record<string, unknown> {
-  return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
 function isFailure(v: unknown): v is EvalBaselineFailure {
@@ -160,25 +157,16 @@ export type EvalBaselineDocument =
 
 /** Validate the role's baseline document; null when it is not one of the two shapes. */
 export function parseEvalBaselineDocument(text: string): EvalBaselineDocument | null {
-  let raw: unknown;
+  const envelope = parseEvalRoleEnvelope(text);
+  if (envelope === null) return null;
+  if (envelope.kind === "error") return { ok: false, error: envelope.error };
   try {
-    raw = JSON.parse(text);
-  } catch {
-    return null;
-  }
-  if (!isObject(raw)) return null;
-  if (raw["ok"] === false) {
-    const e = raw["error"];
-    if (isObject(e) && typeof e["code"] === "string" && typeof e["message"] === "string") {
-      return { ok: false, error: { code: e["code"], message: e["message"] } };
-    }
-    return null;
-  }
-  if (raw["ok"] !== true) return null;
-  const { extensionId, version } = raw;
-  if (typeof extensionId !== "string" || typeof version !== "string") return null;
-  try {
-    return { ok: true, extensionId, version, baseline: parseEvalBaseline(raw["baseline"]) };
+    return {
+      ok: true,
+      extensionId: envelope.extensionId,
+      version: envelope.version,
+      baseline: parseEvalBaseline(envelope.raw["baseline"]),
+    };
   } catch {
     return null;
   }

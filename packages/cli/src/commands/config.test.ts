@@ -962,6 +962,13 @@ describe("runConfig profile awareness and the effective view", () => {
     expect(process.exitCode).toBe(1);
   });
 
+  it("--effective rethrows a failure that is not a missing gateway", async () => {
+    const withIpc = (): Promise<never> => Promise.reject(new Error("socket reset"));
+    await expect(
+      runConfig(["get", "--effective", "a.b.c"], undefined, { withIpc }),
+    ).rejects.toThrow("socket reset");
+  });
+
   it("list --effective --json without a gateway keeps stdout empty for JSON consumers", async () => {
     const { GatewayNotRunningError } = await import("../lib/with-gateway-ipc.ts");
     const withIpc = (): Promise<never> => Promise.reject(new GatewayNotRunningError());

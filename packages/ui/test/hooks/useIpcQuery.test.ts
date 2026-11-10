@@ -111,3 +111,57 @@ describe("useIpcQuery", () => {
     await waitFor(() => expect(callMock).toHaveBeenCalledTimes(2));
   });
 });
+
+describe("useIpcQuery: gating and stale replies", () => {
+  beforeEach(() => {
+    callMock.mockReset();
+    Object.defineProperty(document, "visibilityState", {
+      value: "visible",
+      writable: true,
+      configurable: true,
+    });
+  });
+
+  it("does not call while disabled", async () => {
+    callMock.mockResolvedValue("v");
+    renderHook(() => useIpcQuery<string>("m", 1_000, undefined, { enabled: false }));
+    await Promise.resolve();
+    expect(callMock).not.toHaveBeenCalled();
+  });
+
+  it("does not call on mount while the tab is hidden", async () => {
+    Object.defineProperty(document, "visibilityState", { value: "hidden" });
+    callMock.mockResolvedValue("v");
+    renderHook(() => useIpcQuery<string>("m", 1_000));
+    await Promise.resolve();
+    expect(callMock).not.toHaveBeenCalled();
+  });
+
+  it("reports a non-Error rejection as its string form", async () => {
+    callMock.mockRejectedValue("plain failure");
+    const { result } = renderHook(() => useIpcQuery<string>("m", 30_000));
+    await waitFor(() => expect(result.current.error).toBe("plain failure"));
+  });
+
+  it("ignores a reply that a newer call has superseded", async () => {
+    let resolveFirst: (v: string) => void = () => undefined;
+    callMock.mockImplementationOnce(
+      () =>
+        new Promise<string>((r) => {
+          resolveFirst = r;
+        }),
+    );
+    callMock.mockResolvedValueOnce("fresh");
+    const { result } = renderHook(() => useIpcQuery<string>("m", 30_000));
+    await waitFor(() => expect(callMock).toHaveBeenCalledTimes(1));
+    act(() => {
+      result.current.refetch();
+    });
+    await waitFor(() => expect(result.current.data).toBe("fresh"));
+    await act(async () => {
+      resolveFirst("stale");
+      await Promise.resolve();
+    });
+    expect(result.current.data).toBe("fresh");
+  });
+});

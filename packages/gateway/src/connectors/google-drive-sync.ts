@@ -396,7 +396,7 @@ async function countAppliedDriveChanges(
   let itemsUpserted = 0;
   let itemsDeleted = 0;
   for (const ch of changes) {
-    const r = await applyChange(deps, ch); // NOSONAR S9382: sequential by design - each change draws on the shared doc-export budget and the pass stops on the first throw
+    const r = await applyChange(deps, ch); // sequential by design - each change draws on the shared doc-export budget and the pass stops on the first throw
     if (r === "upsert") {
       itemsUpserted += 1;
     } else if (r === "delete") {
@@ -514,11 +514,11 @@ async function runDocsRelist(
       deps.accessToken,
       DOCS_RELIST_QUERY,
       pageToken,
-    ); // NOSONAR S9382: each page's token comes from the previous page's response
+    ); // each page's token comes from the previous page's response
     bytes += pageBytes;
     for (const f of data.files ?? []) {
       if (inDocsRelistScope(ctx, f, sinceMs) && (await writeDriveFile(deps, f))) {
-        // NOSONAR S9382: sequential by design - each write draws on the shared doc-export budget
+        // sequential by design - each write draws on the shared doc-export budget
         itemsUpserted += 1;
       }
     }
@@ -668,7 +668,7 @@ export function createGoogleDriveSyncable(options: GoogleDriveSyncableOptions): 
         let itemsUpserted = 0;
         for (const f of data.files ?? []) {
           if (await writeDriveFile(deps, f)) {
-            // NOSONAR S9382: sequential by design - each write draws on the shared doc-export budget
+            // sequential by design - each write draws on the shared doc-export budget
             itemsUpserted += 1;
           }
         }

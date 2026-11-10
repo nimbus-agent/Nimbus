@@ -4,7 +4,7 @@ import { createRpcFixture, type RpcFixture } from "../../../test/helpers/rpc-har
 import type { ResolvedUserMcpRegistration } from "../../connectors/user-mcp-registration.ts";
 import type { Syncable, SyncContext } from "../../sync/types.ts";
 import { ConnectorRpcError } from "../connector-rpc-shared.ts";
-import { handleConnectorAddMcp } from "./config.ts";
+import { assertUserMcpSandboxClean, handleConnectorAddMcp } from "./config.ts";
 import type { ConnectorRpcHandlerContext } from "./context.ts";
 
 /**
@@ -123,5 +123,45 @@ describe("handleConnectorAddMcp — store failures", () => {
     expect(err.rpcCode).toBe(-32602);
     expect(err.message).toBe("User MCP connector already exists: mcp_lower");
     expect(h.registered).toEqual([]);
+  });
+});
+
+describe("assertUserMcpSandboxClean", () => {
+  function ctxWith(mesh: unknown): ConnectorRpcHandlerContext {
+    return {
+      ...harness("mcp_x").ctx,
+      connectorMesh: mesh as ConnectorRpcHandlerContext["connectorMesh"],
+    };
+  }
+
+  test("without a connector mesh it refuses with -32603", async () => {
+    const ctx = { ...harness("mcp_x").ctx, connectorMesh: undefined };
+    const err = await assertUserMcpSandboxClean(ctx, "mcp_x").catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ConnectorRpcError);
+    expect((err as ConnectorRpcError).rpcCode).toBe(-32603);
+  });
+
+  test("a leaf that is cleared lets the registration continue", async () => {
+    const cleared: string[] = [];
+    const ctx = ctxWith({
+      ensureUserMcpSandboxClean: async (id: string) => {
+        cleared.push(id);
+        return true;
+      },
+    });
+    await assertUserMcpSandboxClean(ctx, "mcp_x");
+    expect(cleared).toEqual(["mcp_x"]);
+  });
+
+  test("a leaf that cannot be cleared refuses and names it", async () => {
+    const ctx = ctxWith({
+      ensureUserMcpSandboxClean: async () => false,
+      userMcpSandboxLeaf: (id: string) => `/sandbox/${id}`,
+    });
+    const err = await assertUserMcpSandboxClean(ctx, "mcp_x").catch((e: unknown) => e);
+    expect((err as ConnectorRpcError).rpcCode).toBe(-32602);
+    expect((err as ConnectorRpcError).message).toContain(
+      "ERR_USER_MCP_SANDBOX_NOT_CLEAN: /sandbox/mcp_x",
+    );
   });
 });

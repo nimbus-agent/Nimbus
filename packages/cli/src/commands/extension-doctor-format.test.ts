@@ -388,3 +388,13 @@ describe("doctorExtensionsLines, unneeded dependencies", () => {
     ).toEqual({ lines: [], exit: 0 });
   });
 });
+
+describe("doctorMigrationLines malformed input", () => {
+  test("a reply without a migrations array throws", () => {
+    for (const bad of [null, "x", {}, { migrations: "no" }]) {
+      expect(() => doctorMigrationLines(bad)).toThrow(
+        "malformed migration.list response from the gateway",
+      );
+    }
+  });
+});

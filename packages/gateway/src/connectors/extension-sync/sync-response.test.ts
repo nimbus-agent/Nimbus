@@ -185,3 +185,74 @@ describe("sync v1 corpus", () => {
     });
   }
 });
+
+describe("parseSyncResponse: item validation and envelope", () => {
+  const dropped = (over: Record<string, unknown>) => page(ok([item(over)]));
+
+  test("a body, a truncation flag and a preview are accepted only in their valid combinations", () => {
+    const full = page(ok([item({ body: "text", bodyTruncated: true })]));
+    expect(full.rows[0]).toMatchObject({ body: "text", bodyTruncated: true });
+    const plain = page(ok([item({ body: "text" })]));
+    expect(plain.rows[0]).toMatchObject({ body: "text" });
+    expect(plain.rows[0]).not.toHaveProperty("bodyTruncated");
+    const preview = page(ok([item({ bodyPreview: "short" })]));
+    expect(preview.rows[0]).toMatchObject({ bodyPreview: "short" });
+    expect(page(ok([item()])).dropped.malformed).toBe(0);
+  });
+
+  test.each([
+    ["both body and preview", { body: "a", bodyPreview: "b" }],
+    ["a non-string body", { body: 5 }],
+    ["a non-boolean bodyTruncated beside a body", { body: "a", bodyTruncated: "yes" }],
+    ["bodyTruncated without a body", { bodyTruncated: true }],
+    ["a non-string preview", { bodyPreview: 5 }],
+    ["a non-string url", { url: 5 }],
+    ["a non-string canonicalUrl", { canonicalUrl: {} }],
+    ["an empty externalId", { externalId: "" }],
+    ["a fractional modifiedAt", { modifiedAt: 1.5 }],
+    ["a negative modifiedAt", { modifiedAt: -1 }],
+    ["array metadata", { metadata: [] }],
+    ["a non-string title", { title: 3 }],
+  ])("%s is dropped as malformed", (_n, over) => {
+    const p = dropped(over);
+    expect(p.rows).toHaveLength(0);
+    expect(p.dropped.malformed).toBe(1);
+  });
+
+  test("null urls and a non-object item are handled", () => {
+    const p = page(ok([item({ url: null, canonicalUrl: "https://x" }), "junk", null]));
+    expect(p.rows).toHaveLength(1);
+    expect(p.rows[0]).toMatchObject({ url: null, canonicalUrl: "https://x" });
+    expect(p.dropped.malformed).toBe(2);
+  });
+
+  test("a malformed envelope is a response error, never a partial page", () => {
+    const bad = (raw: unknown): void => {
+      expect(() => parseSyncResponse(raw, ctx)).toThrow(ExtensionSyncResponseError);
+    };
+    bad("nope");
+    bad([]);
+    bad({ status: "ok", items: "x", cursor: null, hasMore: false });
+    bad({ status: "ok", items: [], cursor: 5, hasMore: false });
+    bad({ status: "ok", items: [], cursor: null, hasMore: "no" });
+    bad({ status: "ok", items: [], cursor: null, hasMore: true });
+    bad({ status: "ok", items: [], cursor: "", hasMore: true });
+    bad({ status: "mystery" });
+  });
+
+  test("rate limits and authentication failures are passed through", () => {
+    expect(parseSyncResponse({ status: "rate_limited" }, ctx)).toEqual({ status: "rate_limited" });
+    expect(parseSyncResponse({ status: "rate_limited", retryAfterMs: 30 }, ctx)).toEqual({
+      status: "rate_limited",
+      retryAfterMs: 30,
+    });
+    expect(parseSyncResponse({ status: "unauthenticated" }, ctx)).toEqual({
+      status: "unauthenticated",
+    });
+    for (const retryAfterMs of [-1, 1.5, "5"]) {
+      expect(() => parseSyncResponse({ status: "rate_limited", retryAfterMs }, ctx)).toThrow(
+        "retryAfterMs",
+      );
+    }
+  });
+});

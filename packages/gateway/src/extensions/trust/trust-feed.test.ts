@@ -259,6 +259,19 @@ describe("applyTrustSnapshot", () => {
     expect(await applyTrustSnapshot(db, null, CFG(), 1)).toEqual({ status: "not_configured" });
     expect(await applyTrustSnapshot(db, "{}", null, 1)).toEqual({ status: "not_configured" });
   });
+
+  test("a failure that is not a registry refusal is reported as ERR_TRUST_FEED_FAILED, never thrown", async () => {
+    const snap = await feedText(7, []);
+    const closed = new Database(":memory:");
+    runIndexedSchemaMigrations(closed, 77);
+    closed.close();
+    const r = await applyTrustSnapshot(closed, snap, CFG(), 1);
+    expect(r.status).toBe("refused");
+    if (r.status === "refused") {
+      expect(r.code).toBe("ERR_TRUST_FEED_FAILED");
+      expect(r.detail.length).toBeGreaterThan(0);
+    }
+  });
 });
 
 describe("the baked trust feed (trust layer PR 5)", () => {

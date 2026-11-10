@@ -96,6 +96,17 @@ test("malformed model output yields ok/zero themes — the model ran and produce
   expect(await extractThemes(EPICS, { llm })).toEqual({ kind: "ok", themes: [] });
 });
 
+test.each([
+  ["a JSON array", '["themes"]'],
+  ["a JSON scalar", "42"],
+  ["JSON null", "null"],
+  ["an object with no themes list", '{"other":[]}'],
+  ["an object whose themes is not a list", '{"themes":"billing"}'],
+])("model output that is %s yields ok/zero themes", async (_label, reply) => {
+  const llm = { complete: async () => reply };
+  expect(await extractThemes(EPICS, { llm })).toEqual({ kind: "ok", themes: [] });
+});
+
 test("a null completion reports no-model — the real no-Ollama case", async () => {
   const llm = { complete: async () => null };
   expect(await extractThemes(EPICS, { llm })).toEqual({ kind: "no-model" });

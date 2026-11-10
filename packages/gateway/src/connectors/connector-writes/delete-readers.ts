@@ -5,6 +5,7 @@
 // Imported BY `files.ts` and `mail-calendar.ts`, so it imports nothing from the row table.
 import {
   arrayAt,
+  type BeforeInput,
   beforeReplyJson,
   boolAt,
   excerptHead,
@@ -12,16 +13,11 @@ import {
   nonEmptyString,
   presentFields,
   requiredStringAt,
+  shownHead,
   stringAt,
   yesNo,
 } from "./before-select.ts";
 import type { BeforeStateField } from "./types.ts";
-
-type Input = Readonly<Record<string, unknown>>;
-
-function shown(v: string | undefined): string | undefined {
-  return v === undefined ? undefined : excerptHead(v);
-}
 
 /** Whether `j` has an own property `key` that is a non-null object (a Graph facet). */
 export function hasFacet(j: unknown, key: string): boolean {
@@ -39,7 +35,7 @@ export function onedriveParent(j: unknown): string | undefined {
 export function singleIdArgs(
   key: string,
   fromKey: string,
-): (input: Input) => Record<string, unknown> | undefined {
+): (input: BeforeInput) => Record<string, unknown> | undefined {
   return (input) => {
     const id = nonEmptyString(input[fromKey]);
     return id === undefined ? undefined : { [key]: id };
@@ -68,9 +64,9 @@ export function selectOnedriveItemDelete(reply: unknown): readonly BeforeStateFi
     { label: "Type", value: type },
     ...presentFields([
       ["Size", size === undefined ? undefined : `${size} bytes`],
-      ["Parent", shown(parent)],
+      ["Parent", shownHead(parent)],
       ["Shared", hasFacet(j, "shared") ? "yes: others can open it" : "no"],
-      ["Modified", shown(stringAt(j, ["lastModifiedDateTime"]))],
+      ["Modified", shownHead(stringAt(j, ["lastModifiedDateTime"]))],
     ]),
   ];
 }
@@ -113,11 +109,11 @@ export function selectOutlookEventDelete(reply: unknown): readonly BeforeStateFi
   return [
     { label: "Subject", value: excerptHead(subject) },
     ...presentFields([
-      ["Start", shown(graphTime(j, "start"))],
-      ["End", shown(graphTime(j, "end"))],
-      ["Organizer", shown(organizer)],
+      ["Start", shownHead(graphTime(j, "start"))],
+      ["End", shownHead(graphTime(j, "end"))],
+      ["Organizer", shownHead(organizer)],
       ["Is organizer", yesNo(boolAt(j, ["isOrganizer"]))],
-      ["Attendees", shown(graphAttendees(j))],
+      ["Attendees", shownHead(graphAttendees(j))],
       ["Cancelled", yesNo(boolAt(j, ["isCancelled"]))],
     ]),
   ];
@@ -149,12 +145,12 @@ export function selectAppleEventDelete(reply: unknown): readonly BeforeStateFiel
   return [
     { label: "Summary", value: excerptHead(stringAt(j, ["summary"]) ?? "(no title)") },
     ...presentFields([
-      ["Start", shown(stringAt(j, ["start"]))],
-      ["End", shown(stringAt(j, ["end"]))],
-      ["Calendar", shown(stringAt(j, ["calendar"]))],
-      ["Organizer", shown(stringAt(j, ["organizer"]))],
-      ["Attendees", shown(viewAttendees(j))],
-      ["Location", shown(stringAt(j, ["location"]))],
+      ["Start", shownHead(stringAt(j, ["start"]))],
+      ["End", shownHead(stringAt(j, ["end"]))],
+      ["Calendar", shownHead(stringAt(j, ["calendar"]))],
+      ["Organizer", shownHead(stringAt(j, ["organizer"]))],
+      ["Attendees", shownHead(viewAttendees(j))],
+      ["Location", shownHead(stringAt(j, ["location"]))],
       [
         "Recurrence",
         rrule === undefined

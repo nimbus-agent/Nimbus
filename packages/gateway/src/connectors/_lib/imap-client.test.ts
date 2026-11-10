@@ -301,3 +301,120 @@ describe("fetchImapMessages", () => {
     expect(out.ok).toBe(false);
   });
 });
+
+describe("imap-client: remaining branches", () => {
+  const config = {
+    host: "imap.example.com",
+    port: 993,
+    username: "u",
+    password: "p",
+    mailbox: "INBOX",
+  } as unknown as ImapConnectionConfig;
+
+  test("a non-Error thrown by connect or by fetch is reported as its string form", async () => {
+    const connectFactory: ImapClientFactory = () => ({
+      async connect() {
+        throw "plain connect failure";
+      },
+      async getMailboxLock() {
+        return { release() {} };
+      },
+      mailbox: false,
+      async *fetch() {},
+      async logout() {},
+    });
+    expect(await fetchImapMessages(config, 5, connectFactory)).toEqual({
+      ok: false,
+      error: "plain connect failure",
+    });
+
+    const fetchFactory: ImapClientFactory = () => ({
+      async connect() {},
+      async getMailboxLock() {
+        return { release() {} };
+      },
+      mailbox: { uidValidity: 1n, exists: 1 },
+      // biome-ignore lint/correctness/useYield: throws before yielding
+      async *fetch() {
+        throw "plain fetch failure";
+      },
+      async logout() {},
+    });
+    expect(await fetchImapMessages(config, 5, fetchFactory)).toEqual({
+      ok: false,
+      error: "plain fetch failure",
+    });
+  });
+
+  test("a logout that throws is swallowed and the fetched messages are still returned", async () => {
+    const factory: ImapClientFactory = () => ({
+      async connect() {},
+      async getMailboxLock() {
+        return { release() {} };
+      },
+      mailbox: { uidValidity: 9, exists: 1 },
+      async *fetch() {
+        yield fakeMsg(1);
+      },
+      async logout() {
+        throw new Error("logout refused");
+      },
+    });
+    const out = await fetchImapMessages(config, 5, factory);
+    expect(out.ok).toBe(true);
+    if (out.ok) expect(out.messages.map((m) => m.uid)).toEqual([1]);
+  });
+
+  test("the fetch range covers only the most recent `limit` messages", async () => {
+    const ranges: string[] = [];
+    const factory: ImapClientFactory = () => ({
+      async connect() {},
+      async getMailboxLock() {
+        return { release() {} };
+      },
+      mailbox: { uidValidity: 9, exists: 100 },
+      async *fetch(range: string) {
+        ranges.push(range);
+        yield fakeMsg(100);
+      },
+      async logout() {},
+    });
+    await fetchImapMessages(config, 10, factory);
+    await fetchImapMessages(config, 500, factory);
+    expect(ranges).toEqual(["91:100", "1:100"]);
+  });
+
+  test("an attachment is named by its disposition filename first, else by its name parameter", () => {
+    const parts = extractAttachments(
+      node({
+        childNodes: [
+          node({ type: "application/pdf", dispositionParameters: { filename: "a.pdf" }, size: 3 }),
+          node({ type: "image/png", parameters: { name: "b.png" } }),
+          node({
+            type: "text/plain",
+            dispositionParameters: { filename: "" },
+            parameters: { name: "" },
+          }),
+        ],
+      }),
+    );
+    expect(parts.map((p) => p.filename)).toEqual(["a.pdf", "b.png"]);
+    expect(parts[1]?.sizeBytes).toBeNull();
+  });
+
+  test("a text part with no part number or type defaults to part 1", () => {
+    expect(findTextPlainPart(node({}))).toBe("1");
+    expect(findTextPlainPart(node({ type: "TEXT/HTML" }))).toBe("1");
+    expect(
+      findTextPlainPart(
+        node({
+          childNodes: [node({ type: "text/html", part: "2" }), node({ type: "TEXT/Plain" })],
+        }),
+      ),
+    ).toBe("1");
+  });
+
+  test("an address with only a name keeps the name; an empty one stays empty", () => {
+    expect(addresses([{ name: "N" }, {}])).toEqual(["N", ""]);
+  });
+});

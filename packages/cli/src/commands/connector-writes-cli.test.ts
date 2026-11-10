@@ -276,3 +276,24 @@ describe("connector writes enable iac", () => {
     expect(h.logs).toContain("  regions: (none)");
   });
 });
+
+describe("connector writes failures", () => {
+  it("disable reports an unexpected gateway error and exits 1", async () => {
+    const h = harness(new Error("gateway exploded"));
+    await runConnectorWrites(["disable", "github"], h.deps);
+    expect(h.errors).toEqual(["gateway exploded"]);
+    expect(process.exitCode).toBe(1);
+  });
+
+  it("status reports a gateway error and exits 1, and a policy refusal and exits 2", async () => {
+    const h = harness(new Error("gateway exploded"));
+    await runConnectorWrites(["status"], h.deps);
+    expect(h.errors).toEqual(["gateway exploded"]);
+    expect(process.exitCode).toBe(1);
+
+    const r = harness(new Error("ERR_CONNECTOR_WRITES_DECLINED"));
+    await runConnectorWrites(["status"], r.deps);
+    expect(r.errors).toEqual(["Not enabled: the approval was declined."]);
+    expect(process.exitCode).toBe(2);
+  });
+});

@@ -105,3 +105,48 @@ describe("brief-runs", () => {
     ).toEqual({ sessionId: "s", outcome: { kind: "error", message: "e" } });
   });
 });
+
+describe("brief-runs: remaining branches", () => {
+  it("parseBriefNotification refuses non-object params, an empty session and a wrong-typed payload", () => {
+    expect(
+      parseBriefNotification({ method: "x.briefReady", params: undefined } as never),
+    ).toBeNull();
+    expect(parseBriefNotification({ method: "x.briefReady", params: [] } as never)).toBeNull();
+    expect(
+      parseBriefNotification({ method: "x.briefReady", params: { sessionId: "", brief: "b" } }),
+    ).toBeNull();
+    expect(
+      parseBriefNotification({ method: "x.briefReady", params: { sessionId: "s", brief: 1 } }),
+    ).toBeNull();
+    expect(
+      parseBriefNotification({ method: "x.briefError", params: { sessionId: "s", error: 1 } }),
+    ).toBeNull();
+    expect(
+      parseBriefNotification({ method: "x.somethingElse", params: { sessionId: "s" } }),
+    ).toBeNull();
+  });
+
+  it("a second early outcome for the same session is not buffered twice", () => {
+    let s = applyOutcome(emptyBriefRuns(), "s1", ready, 100);
+    s = applyOutcome(s, "s1", { kind: "error", message: "later" }, 150);
+    expect(s.early).toHaveLength(1);
+    expect(s.early[0]?.outcome).toEqual(ready);
+  });
+
+  it("re-registering a session keeps one entry and moves it to the front", () => {
+    let s = registerRun(emptyBriefRuns(), "a", "s1", 1);
+    s = registerRun(s, "a", "s2", 2);
+    s = registerRun(s, "a", "s1", 3);
+    expect(s.byAgent["a"]).toEqual(["s1", "s2"]);
+  });
+
+  it("latestRun is undefined for an agent with no runs", () => {
+    expect(latestRun(emptyBriefRuns(), "nobody")).toBeUndefined();
+  });
+
+  it("an error outcome finishes a pending run as an error", () => {
+    let s = registerRun(emptyBriefRuns(), "a", "s1", 1);
+    s = applyOutcome(s, "s1", { kind: "error", message: "boom" }, 5);
+    expect(latestRun(s, "a")).toMatchObject({ status: "error", message: "boom", finishedAt: 5 });
+  });
+});

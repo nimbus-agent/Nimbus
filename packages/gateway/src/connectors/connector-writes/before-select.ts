@@ -143,6 +143,17 @@ export function excerptHead(s: string, max: number = BEFORE_EXCERPT_MAX_CHARS): 
   return `${cps.slice(0, max).join("")} (${String(cut)} more characters not shown)`;
 }
 
+/** A reader's input object, as the before-state `args`/`select` functions receive it. */
+export type BeforeInput = Readonly<Record<string, unknown>>;
+
+/** A picked reply object. */
+export type BeforePicked = Readonly<Record<string, unknown>>;
+
+/** {@link excerptHead} of a value that may be absent; `undefined` stays `undefined`. */
+export function shownHead(v: string | undefined): string | undefined {
+  return v === undefined ? undefined : excerptHead(v);
+}
+
 /**
  * The last `max` code points of `s`, preceded by `(<k> earlier characters not shown) ` when `k`
  * code points were cut; `s` as is within the cap.

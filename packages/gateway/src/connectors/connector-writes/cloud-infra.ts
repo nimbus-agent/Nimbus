@@ -10,6 +10,7 @@ import {
 } from "./cloud-readers.ts";
 import { CFN_DEPLOY_BOUND, TERRAFORM_APPLY_BOUND, TERRAFORM_DESTROY_BOUND } from "./iac-bound.ts";
 import {
+  type ConnectorWritePreviewTemplate,
   type ConnectorWriteRow,
   row,
   textField,
@@ -19,6 +20,16 @@ import {
   withPreview,
   withRefusal,
 } from "./types.ts";
+
+/** A wave 4 mesh row with a typed preview and a confirm text (the common shape of this table). */
+function meshConfirmRow(
+  toolId: string,
+  actionType: string,
+  preview: ConnectorWritePreviewTemplate,
+  template: string,
+): ConnectorWriteRow {
+  return withConfirm(withPreview(row(toolId, actionType, "mesh", 4), preview), { template });
+}
 
 /** The EC2 stop and start differ only in their words and in which state is "already". */
 function ec2Row(toolId: string, actionType: string, action: "stop" | "start"): ConnectorWriteRow {
@@ -95,8 +106,10 @@ export const CLOUD_INFRA_ROWS: readonly ConnectorWriteRow[] = [
   // code-execution class excludes from `isReadOnlyToolId` (a model-supplied value would reach a
   // `.cmd` wrapper's argv on Windows BEFORE the owner approves), so the before-read dispatcher
   // refuses them. Widening that is a security decision left to the owner (see the D1 report).
-  withConfirm(
-    withPreview(row("azure_app_service_restart", "azure.app_service.restart", "mesh", 4), {
+  meshConfirmRow(
+    "azure_app_service_restart",
+    "azure.app_service.restart",
+    {
       target: "{resourceGroup}/{name}",
       summary: "Restart Azure App Service {name} in resource group {resourceGroup}",
       fields: [
@@ -104,11 +117,13 @@ export const CLOUD_INFRA_ROWS: readonly ConnectorWriteRow[] = [
         textField("resourceGroup", "Resource group"),
         textField("name", "App Service"),
       ],
-    }),
-    { template: "restart {resourceGroup}/{name}" },
+    },
+    "restart {resourceGroup}/{name}",
   ),
-  withConfirm(
-    withPreview(row("azure_aks_node_pool_scale", "azure.aks.node_pool.scale", "mesh", 4), {
+  meshConfirmRow(
+    "azure_aks_node_pool_scale",
+    "azure.aks.node_pool.scale",
+    {
       target: "{resourceGroup}/{clusterName}/{poolName}",
       summary: "Scale AKS node pool {poolName} of cluster {clusterName} to {nodeCount} nodes",
       fields: [
@@ -118,13 +133,15 @@ export const CLOUD_INFRA_ROWS: readonly ConnectorWriteRow[] = [
         textField("poolName", "Node pool"),
         textField("nodeCount", "New node count"),
       ],
-    }),
-    { template: "scale {resourceGroup}/{clusterName}/{poolName} to {nodeCount}" },
+    },
+    "scale {resourceGroup}/{clusterName}/{poolName} to {nodeCount}",
   ),
   // The confirm text names the image (its last 8 characters, so a long digest stays typeable): the
   // deploy's blast is the image, which the old text did not name (D1 § 2.7).
-  withConfirm(
-    withPreview(row("gcp_cloud_run_deploy", "gcp.cloud_run.deploy", "mesh", 4), {
+  meshConfirmRow(
+    "gcp_cloud_run_deploy",
+    "gcp.cloud_run.deploy",
+    {
       target: "{projectId}/{region}/{service}",
       summary: "Deploy image {image} to Cloud Run service {service} in {projectId}/{region}",
       fields: [
@@ -133,8 +150,8 @@ export const CLOUD_INFRA_ROWS: readonly ConnectorWriteRow[] = [
         textField("service"),
         textField("image", "Container image"),
       ],
-    }),
-    { template: "deploy {projectId}/{region}/{service} {image:tail8}" },
+    },
+    "deploy {projectId}/{region}/{service} {image:tail8}",
   ),
   // D3's: the Kubernetes and GKE rows wait for the sandbox grants they need to run at all.
   withConfirm(row("gcp_gke_workload_restart", "gcp.gke.workload.restart", "mesh", 4), {

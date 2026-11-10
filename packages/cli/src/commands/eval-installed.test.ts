@@ -633,3 +633,25 @@ describe("runEvalInstalled", () => {
     expect(tableRows(h.logs)[0]?.[0]?.length).toBe(120);
   });
 });
+
+describe("parseEvalResults malformed failure entries", () => {
+  test.each([
+    ["a missing error object", { id: "a", ok: false }],
+    ["a non-string error code", { id: "a", ok: false, error: { code: 1, message: "m" } }],
+    ["a non-string error message", { id: "a", ok: false, error: { code: "E", message: 2 } }],
+    ["an ok flag that is neither true nor false", { id: "a", ok: "yes" }],
+    ["an ok entry with no version", { id: "a", ok: true, report: {} }],
+  ])("%s is rejected", (_n, entry) => {
+    expect(parseEvalResults({ results: [entry] }, ["a"])).toBeNull();
+  });
+
+  test("a failure entry without a version keeps a null version", () => {
+    const out = parseEvalResults(
+      { results: [{ id: "a", ok: false, error: { code: "E", message: "m" } }] },
+      ["a"],
+    );
+    expect(out).toEqual([
+      { id: "a", version: null, ok: false, error: { code: "E", message: "m" } },
+    ]);
+  });
+});

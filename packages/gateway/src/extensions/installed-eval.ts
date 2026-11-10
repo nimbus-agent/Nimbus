@@ -148,7 +148,7 @@ async function prepareAll(
 ): Promise<Prepared[]> {
   const prepared: Prepared[] = [];
   for (const id of ids) {
-    const r = await prepareOne(id, deps, io); // NOSONAR S9382: preparing reads and verifies one installed extension at a time, in id order, before the single owner approval
+    const r = await prepareOne(id, deps, io); // preparing reads and verifies one installed extension at a time, in id order, before the single owner approval
     if ("ok" in r) results.set(id, r);
     else prepared.push(r);
   }
@@ -217,7 +217,7 @@ async function evaluateEach(
   const createClient = clientFactory(deps);
   for (const p of prepared) {
     try {
-      const report = await evaluateOne(p, deps, io, createClient); // NOSONAR S9382: one sandboxed evaluation at a time, in order, after the single owner approval
+      const report = await evaluateOne(p, deps, io, createClient); // one sandboxed evaluation at a time, in order, after the single owner approval
       results.set(p.id, { id: p.id, version: p.version, ok: true, report });
     } catch (e) {
       results.set(p.id, failure(p.id, p.version, e));

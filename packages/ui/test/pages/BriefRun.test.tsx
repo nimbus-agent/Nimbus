@@ -332,3 +332,38 @@ describe("BriefRun", () => {
     expect((screen.getByRole("button", { name: "Run" }) as HTMLButtonElement).disabled).toBe(false);
   });
 });
+
+describe("BriefRun form fields", () => {
+  it("a missing required field blocks Run and names the problem", async () => {
+    CATALOG.agents = [
+      agent("a", [{ name: "topic", kind: "string", label: "Topic", required: true }]),
+    ];
+    const user = userEvent.setup();
+    renderAt("a");
+    await user.click(screen.getByRole("button", { name: "Run" }));
+    expect(screen.getByRole("alert").textContent).toContain("Topic is required");
+    expect(h.start).not.toHaveBeenCalled();
+    // Once filled in, the problem goes away and Run starts the brief.
+    await user.type(screen.getByLabelText("Topic *"), "launch");
+    await user.click(screen.getByRole("button", { name: "Run" }));
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(h.start).toHaveBeenCalledWith("a", { topic: "launch" });
+  });
+
+  it("a checkbox, a number and a list field are sent as their own types", async () => {
+    CATALOG.agents = [
+      agent("a", [
+        { name: "deep", kind: "boolean", label: "Deep", required: false },
+        { name: "limit", kind: "number", label: "Limit", required: false },
+        { name: "tags", kind: "stringArray", label: "Tags", required: false },
+      ]),
+    ];
+    const user = userEvent.setup();
+    renderAt("a");
+    await user.click(screen.getByLabelText("Deep"));
+    await user.type(screen.getByLabelText("Limit"), "5");
+    await user.type(screen.getByLabelText("Tags"), "x, y");
+    await user.click(screen.getByRole("button", { name: "Run" }));
+    expect(h.start).toHaveBeenCalledWith("a", { deep: true, limit: 5, tags: ["x", "y"] });
+  });
+});

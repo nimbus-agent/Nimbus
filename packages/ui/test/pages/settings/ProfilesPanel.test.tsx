@@ -169,4 +169,46 @@ describe("ProfilesPanel", () => {
     useNimbusStore.setState({ connectionState: "disconnected" });
     await waitFor(() => expect(screen.getByRole("button", { name: /create…/i })).toBeDisabled());
   });
+
+  it("Cancel closes the create dialog and forgets the typed name", async () => {
+    profileListMock.mockResolvedValue({ profiles: [{ name: "default" }], active: "default" });
+    renderPanel();
+    await screen.findByText("default");
+    await userEvent.click(screen.getByRole("button", { name: /create…/i }));
+    await userEvent.type(screen.getByLabelText(/profile name/i), "scratch");
+    await userEvent.click(screen.getByRole("button", { name: /^cancel$/i }));
+    expect(screen.queryByRole("dialog", { name: /create profile/i })).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: /create…/i }));
+    expect((screen.getByLabelText(/profile name/i) as HTMLInputElement).value).toBe("");
+    expect(profileCreateMock).not.toHaveBeenCalled();
+  });
+
+  it("a blank name creates nothing", async () => {
+    profileListMock.mockResolvedValue({ profiles: [{ name: "default" }], active: "default" });
+    renderPanel();
+    await screen.findByText("default");
+    await userEvent.click(screen.getByRole("button", { name: /create…/i }));
+    await userEvent.type(screen.getByLabelText(/profile name/i), "   ");
+    await userEvent.click(screen.getByRole("button", { name: /^create$/i }));
+    expect(profileCreateMock).not.toHaveBeenCalled();
+  });
+
+  it("declining the delete confirmation deletes nothing", async () => {
+    profileListMock.mockResolvedValue({
+      profiles: [{ name: "default" }, { name: "scratch" }],
+      active: "default",
+    });
+    renderPanel();
+    await screen.findByText("scratch");
+    await userEvent.click(screen.getByRole("button", { name: "Delete scratch" }));
+    await screen.findByRole("button", { name: "Delete" });
+    await userEvent.click(screen.getByRole("button", { name: /cancel/i }));
+    expect(profileDeleteMock).not.toHaveBeenCalled();
+  });
+
+  it("shows why the profile list could not be loaded", async () => {
+    profileListMock.mockRejectedValue(new Error("gateway unreachable"));
+    renderPanel();
+    expect(await screen.findByText(/gateway unreachable/)).toBeInTheDocument();
+  });
 });
