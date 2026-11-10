@@ -24,12 +24,17 @@ import {
  * profile would hand it, against a throwaway TLS stub API server on 127.0.0.1?
  *
  * Probe items, through the gateway's real sandbox runner (the one `wrapServerSpec` uses):
- *   1. `kubectl version --client` starts (Linux: without the iac flag the seccomp filter kills Go's
- *      `pidfd_send_signal` probe, exit 159, and with it the child starts: OR-D2-5 extended).
+ *   1. `kubectl version --client` starts. On Linux it starts WITHOUT the iac flag too: Go probes
+ *      `pidfd_send_signal` only when it starts a child, and kubectl starts none (an exec credential
+ *      plugin would, and the gateway's kubeconfig refuses one). The kube profile keeps the flag
+ *      anyway (OR-D2-5 extended), so a future kubectl that does start a child is not killed.
  *   2. `kubectl get --raw /version` reaches the owner-configured loopback `host:port` (Linux through
  *      the forwarder, macOS by port, Windows all-or-nothing).
  *   3. A host NOT in the policy is refused (asserted on Linux, where the forwarder enforces it;
  *      recorded as an observation elsewhere: macOS is ports-only and Windows is all-or-nothing).
+ *      On a Linux box with no sandbox helper the runner's `canConfine` refuses every policy that
+ *      declares a network, so the production child never starts; that refusal is what is asserted
+ *      there (this file's direct `spawn` would take the degraded fallback production never reaches).
  *   4. `kubectl apply --server-side --dry-run=server -o json` and `kubectl get ... -o json
  *      --ignore-not-found` return parseable JSON (the connector's built-in diff reads both). The
  *      stub serves no OpenAPI document, so the apply passes `--validate=false`: the stub cannot
@@ -301,7 +306,7 @@ describe.skipIf(!READY)(
     }, 120_000);
 
     it.skipIf(!IS_LINUX)(
-      "1b. Linux: without the iac flag Go's pidfd probe is killed (exit 159)",
+      "1b. Linux: kubectl starts no child, so it also runs without the iac flag",
       async () => {
         const r = await runConfined("noflag", ["version", "--client"], {
           read: kubeRead(),
@@ -309,7 +314,9 @@ describe.skipIf(!READY)(
           network: [],
           iacFlag: false,
         });
-        expect(r.exit).toBe(159);
+        // Exit 159 (SIGSYS) here would mean kubectl now starts a child and NEEDS the kube profile's
+        // iac flag, which it has; the file comment then needs revising.
+        expect({ exit: r.exit, stderr: r.stderr.slice(0, 300) }).toEqual({ exit: 0, stderr: "" });
       },
       120_000,
     );
@@ -335,13 +342,28 @@ describe.skipIf(!READY)(
       async () => {
         stubHits = [];
         // The config names `port`; the policy allows only `otherPort`.
+        const network = [`${PROBE_HOST}:${String(otherPort)}`];
+        if (IS_LINUX) {
+          const why = (RUNNER as SandboxRunner).canConfine({
+            id: "kube-probe-confine",
+            iacProfile: true,
+            ownerConfiguredNetwork: network,
+            permissions: { network, filesystem: { read: kubeRead(), write: [scratch] } },
+          });
+          if (why !== null) {
+            // No helper: production refuses to start any network-bearing child at all.
+            console.log(`[probe 3] linux: canConfine refuses (${why})`);
+            expect(why).toContain("helper");
+            return;
+          }
+        }
         const r = await runConfined(
           "unlisted",
           ["--context", "probe", "get", "--raw", "/version"],
           {
             read: kubeRead(),
             write: [scratch],
-            network: [`${PROBE_HOST}:${String(otherPort)}`],
+            network,
           },
         );
         console.log(
