@@ -39,8 +39,8 @@ function timeAt(v: unknown, path: readonly string[]): string | undefined {
   const s = stringAt(v, path);
   if (s === undefined) return undefined;
   if (/^[0-9]{12,14}$/.test(s)) {
-    const d = new Date(Number(s));
-    return Number.isNaN(d.getTime()) ? s : d.toISOString();
+    // At most 14 digits is far below the Date range limit, so the time is always valid.
+    return new Date(Number(s)).toISOString();
   }
   return s;
 }
