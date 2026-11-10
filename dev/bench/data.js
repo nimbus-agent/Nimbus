@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794286430861,
+  "lastUpdate": 1794290898908,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
-            "name": "nimbus-release-bot[bot]",
-            "username": "nimbus-release-bot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "9b905f165430c0d267294f7ff8ce98a26a8c7dd8",
-          "message": "chore: release main (#1293)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>2.12.1</summary>\n\n##\n[2.12.1](https://github.com/nimbus-agent/Nimbus/compare/v2.12.0...v2.12.1)\n(2026-08-21)\n\n\n### Performance Improvements\n\n* **test:** a migrated-once schema template and a deadline-bounded poll,\nfor the Windows hot path\n([#1291](https://github.com/nimbus-agent/Nimbus/issues/1291))\n([6e5fbfd](https://github.com/nimbus-agent/Nimbus/commit/6e5fbfdea1a3e095095aec665cc6e0f9d5d10711))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
-          "timestamp": "2026-08-21T07:55:38Z",
-          "tree_id": "889c2c13cb5b6b836f8334f81c595eda1230f73b",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/9b905f165430c0d267294f7ff8ce98a26a8c7dd8"
-        },
-        "date": 1787299844090,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 223.80725894999557,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 223.06961080000036,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 284.18005970000195,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "53511743fde07784ec46166bdd8e20a9cd8c81c2",
+          "message": "feat(gateway): the model can propose a Vercel, Netlify, Bitrise or Codemagic build or a TestFlight or Firebase release, each behind its before-state and a typed confirmation (#1950)\n\nPhase 9.7 Project D, cut D3b. The model is now offered seven Wave 4\nwrites for deploy triggers and mobile release. Each one shows a typed\npreview with its before-state, and the owner must type a confirmation:\n\n- `vercel_deployment_redeploy`\n- `vercel_deployment_promote`\n- `netlify_build_trigger`\n- `bitrise_build_trigger`\n- `codemagic_build_trigger`\n- `testflight_build_distribute`\n- `firebase_app_distribution_distribute`\n\nThis PR pins `@nimbus-dev/connectors` `^0.10.0` (nimbus-mcp-servers #77,\nreleased by #78).\n\nPlan: `2026-11-09-connector-writes-d3-k8s-deploy.md`, Part B.\nAntigravity approved it in round 3.\n\n## Owner rulings\n- **OR-D3-1:** production deploys are offered: a Vercel production\nredeploy, a Vercel promote and a Netlify production publish.\n- **OR-D3-2:** Firebase on the model door may target groups only;\n`testerEmails` is refused.\n- **OR-D3-3:** TestFlight's preview shows every target group's\npublic-link state, and the model door refuses a group whose public link\nis on.\n- **OR-D3-7:** all seven writes are Wave 4.\n\nEach write is offered only after `nimbus connector writes enable\n<service> --wave 4` and approval by name (V84). An earlier opt-in offers\nnone of them.\n\n## What changed\n- **`connector-writes/deploy-mobile.ts`:** the seven rows.\n- **`deploy-readers.ts`:** before-readers and guards.\n- Netlify: a branch equal to `build_settings.repo_branch` is refused,\nand so is a production branch the read cannot show. Either would be a\nproduction publish without `production: true`.\n- TestFlight: a target group is refused if it is not the app's, if its\npublic link is on, or if its link state is not a boolean.\n- **`deploy-refusals.ts`:** model-door refusals that read only the\ninput.\n  - Netlify needs exactly one of a branch or `production: true`.\n  - Firebase allows groups only.\n- **`share/read-tool-registry.ts` `EXTRA_READ_TOOL_IDS`:**\n`bitrise_build_latest` and `codemagic_build_latest` end in `_latest`,\nwhich is not a read verb.\n  - They are named one by one rather than adding a verb.\n- A sync test over the installed package fails on any other `_latest`\ntool.\n- The list is consulted only after the write-id, code-execution and\nuser-MCP refusals.\n- Its only consumers are the before-read dispatcher and `share.replay`.\n- **Listing:** the six services were added to `PHASE3_LISTING_ADDERS`.\n- **HITL types:** +7.\n- **Act door:** all seven stay denied, under a new `mobile_release`\nclass plus `pipeline` and `deployment`.\n- **Null optional fields:** the null-field refusal is extended to these\nrows' optional keys, on both doors.\n- **Host audit:** `connector-host-gaps.json` records that bitrise,\ncodemagic and netlify import `isSafeGitRef` from `shared/github-rest.ts`\nand never call `api.github.com`.\n\nCounts: 124 write rows (Wave 4: 50), 110 templated, 75 with a\nbefore-state, 182 HITL types, 105 model-offerable, and 47 proposable /\n135 denied / 8 `not_yet_offered`. Schema is unchanged at V85.\n\n## Stated bounds\n- **TestFlight read-to-dispatch window:** the public-link guard checks\nat read time. Connectors 0.11.0 (nimbus-mcp-servers #79) adds a check at\ndispatch plus `allowPublicLink`, and D3a adopts it.\n- **Vercel redeploy:** the preview cannot show the deployment a redeploy\nreplaces, because the request names no project. The prompt says so.\n- **Owner-door Netlify branch builds** run no production-branch check;\nthe model door has one.\n- **Unverified vendor reply shapes:** `vercel_get`, `netlify_get`,\n`firebase_get` and Codemagic's field names. Their tests are labelled\n\"documented shape\", and nothing was run against a live account.\n\n## Verification\n- `bun run preflight:fast`: PASSED.\n- `typecheck:tests`: 0 new errors.\n- 20,592 tests pass, 0 fail, across `connectors`, `engine`, `ipc`,\n`federation`, `mcp-sink`, `share`, `automation`, `cli`, and the\nintegration census, which now includes the six new packages.\n- `check-nimbus-invariants`, `check-connector-hosts`, `audit:doc-refs`\nand `audit:status-drift`: all OK.\n- `gen:connector-write-manifest` adds exactly the seven ids.\n- **Coverage** (istanbul, scoped run):\n  - `deploy-readers.ts`: 97.5% branch.\n  - `deploy-refusals.ts`: 100%.\n  - `read-tool-registry.ts`: 14/15 branches.\n- **Red-proofs:**\n  - Reverting the Netlify and TestFlight guards fails four tests.\n- Emptying `EXTRA_READ_TOOL_IDS` fails the before-read dispatcher test\nwith `ERR_BEFORE_READ_NOT_A_READ`.\n\nDocs updated: CLAUDE.md and GEMINI.md (the same edit), roadmap,\narchitecture, docs/README, cli-reference, SECURITY-INVARIANTS and\nCHANGELOG.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JmSjrCsRuevvkksqrnLRGc\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Added seven deployment, build, and mobile-release actions across\nVercel, Netlify, Bitrise, Codemagic, TestFlight, and Firebase App\nDistribution.\n* Actions are available in Wave 4 when the service is enabled, with a\nnamed approval required for each write. Previews show relevant\ncurrent-state details before confirmation.\n  * Added read-only access to the latest Bitrise and Codemagic builds.\n* **Documentation**\n* Updated release and product documentation with the new actions, safety\nlimits, and revised totals.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-10T05:55:35Z",
+          "tree_id": "770e7e02a140adb41a79fb9414cfb8431d544222",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/53511743fde07784ec46166bdd8e20a9cd8c81c2"
+        },
+        "date": 1794290894619,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 306.847101400003,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 309.85686980000065,
             "unit": "ms"
           }
         ]
