@@ -425,10 +425,20 @@
     },
     "kubernetes": {
       "reaches": "kubectl to the cluster in the kubeconfig; exec auth plugins may reach more.",
-      "decision": "Not declared: no parser for the kubeconfig at spawn. Empty list, so no network today. In knownUnreachable. Re-read against connectors 0.9.0: apply (kubectl apply --server-side --dry-run=server) and diff (kubectl diff --server-side) are the manifest plan and apply, D3's, and reach the same cluster; the signals v1 and y are not commands, they are the first words of the apiVersion arrays and the YAML 1.1 word list in manifest-scan.ts.",
+      "decision": "Not declared: no parser for the kubeconfig at spawn. Empty list, so no network today. In knownUnreachable. Re-read against connectors 0.11.0: apply (kubectl apply --server-side, a dry run first) and get are the manifest plan and apply, D3's, and reach the same cluster (the plan computes its own diff from two `-o json` replies, so there is no kubectl diff); config is `kubectl config current-context`, a local read of the kubeconfig copy; the signals v1 and y are not commands, they are the first words of the apiVersion arrays and the YAML 1.1 word list in manifest-scan.ts.",
       "covers": {
         "env": [],
-        "cli": ["apply", "delete", "diff", "get", "kubectl", "rollout", "scale", "v1", "y"],
+        "cli": [
+          "apply",
+          "delete",
+          "get",
+          "kubectl",
+          "kubectl config",
+          "rollout",
+          "scale",
+          "v1",
+          "y"
+        ],
         "dynamicUrls": []
       }
     },

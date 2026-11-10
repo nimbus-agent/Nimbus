@@ -61,6 +61,7 @@ const ALL_CONFIGURED: Record<string, string> = {
   "jenkins.username": "u",
   "jenkins.api_token": "t",
   "circleci.api_token": "t",
+  "kubernetes.kubeconfig": "/home/me/.kube/config",
 };
 
 describe("isServiceCredentialConfigured", () => {
@@ -102,6 +103,19 @@ describe("isServiceCredentialConfigured", () => {
     expect(await isServiceCredentialConfigured(v3, "confluence", {})).toBe(false);
     const v4 = await vaultWith({ "apple.icloud_app_password": "p" });
     expect(await isServiceCredentialConfigured(v4, "apple", {})).toBe(false);
+  });
+
+  test("kubernetes is configured by a non-blank kubeconfig path, never by reading the file (D3a)", async () => {
+    expect(
+      await isServiceCredentialConfigured(
+        await vaultWith({ "kubernetes.kubeconfig": "/k/config" }),
+        "kubernetes",
+        {},
+      ),
+    ).toBe(true);
+    for (const v of [{}, { "kubernetes.kubeconfig": "   " }]) {
+      expect(await isServiceCredentialConfigured(await vaultWith(v), "kubernetes", {})).toBe(false);
+    }
   });
 
   test("onedrive rides the shared Microsoft OAuth key, like outlook and teams", async () => {

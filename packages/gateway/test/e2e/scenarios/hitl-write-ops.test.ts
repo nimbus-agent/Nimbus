@@ -220,15 +220,15 @@ const HITL_WRITE_PAYLOADS: Record<string, Record<string, unknown>> = {
   },
   "kubernetes.rollout.restart": {
     mcpToolId: "kubernetes_k8s_rollout_restart",
-    input: { namespace: "default", resourceType: "deployment", name: "api" },
+    input: { context: "dev", namespace: "default", resourceType: "deployment", name: "api" },
   },
   "kubernetes.pod.delete": {
     mcpToolId: "kubernetes_k8s_pod_delete",
-    input: { namespace: "default", podName: "p1" },
+    input: { context: "dev", namespace: "default", podName: "p1" },
   },
   "kubernetes.deployment.scale": {
     mcpToolId: "kubernetes_k8s_deployment_scale",
-    input: { namespace: "default", deploymentName: "api", replicas: 2 },
+    input: { context: "dev", namespace: "default", deploymentName: "api", replicas: 2 },
   },
   "pagerduty.incident.acknowledge": {
     mcpToolId: "pagerduty_pd_incident_acknowledge",

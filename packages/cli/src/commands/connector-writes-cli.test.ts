@@ -297,3 +297,95 @@ describe("connector writes failures", () => {
     expect(process.exitCode).toBe(2);
   });
 });
+
+describe("connector writes enable kubernetes", () => {
+  it("sends every --grant as { namespace, context }, split at the FIRST @", async () => {
+    const h = harness({ service: "kubernetes", maxWave: 4, writes: 1 });
+    await runConnectorWrites(
+      [
+        "enable",
+        "kubernetes",
+        "--wave",
+        "4",
+        "--grant",
+        "shop@prod",
+        "--grant",
+        "api@me@cluster.example",
+      ],
+      h.deps,
+    );
+    expect(h.calls).toEqual([
+      {
+        method: "connector.writesEnable",
+        params: {
+          service: "kubernetes",
+          wave: 4,
+          k8sGrants: [
+            { namespace: "shop", context: "prod" },
+            { namespace: "api", context: "me@cluster.example" },
+          ],
+        },
+      },
+    ]);
+  });
+
+  it("refuses a malformed grant, a grant for another service, and kubernetes without one", async () => {
+    for (const args of [
+      ["enable", "kubernetes", "--grant", "noat"],
+      ["enable", "kubernetes", "--grant", "@ctx"],
+      ["enable", "kubernetes", "--grant", "ns@"],
+      ["enable", "kubernetes", "--grant"],
+      ["enable", "github", "--grant", "a@b"],
+      ["enable", "kubernetes", "--wave", "4"],
+    ]) {
+      const h = harness({});
+      await runConnectorWrites(args, h.deps);
+      expect(h.calls).toEqual([]);
+      expect(process.exitCode).toBe(2);
+      process.exitCode = 0;
+    }
+  });
+
+  it("maps the unavailable refusal to one line", async () => {
+    const h = harness(new Error("ERR_CONNECTOR_WRITES_K8S_UNAVAILABLE: x"));
+    await runConnectorWrites(["enable", "kubernetes", "--wave", "4", "--grant", "a@b"], h.deps);
+    expect(h.errors[0]).toContain("cannot read a kubeconfig");
+    expect(process.exitCode).toBe(2);
+    process.exitCode = 0;
+  });
+
+  it("status kubernetes lists the approved pairs with server and credential form", async () => {
+    const h = harness({
+      services: [
+        {
+          service: "kubernetes",
+          enabled: true,
+          maxWave: 4,
+          writes: 1,
+          offerable: 0,
+          k8sGrants: [
+            {
+              context: "prod",
+              namespace: "shop",
+              server: "a.example:6443",
+              credentialForm: "token",
+            },
+          ],
+        },
+        { service: "gitlab", enabled: false, writes: 3 },
+      ],
+      policyAllows: true,
+    });
+    await runConnectorWrites(["status"], h.deps);
+    expect(h.logs).toContain("  prod: shop  (a.example:6443, token)");
+  });
+
+  it("status kubernetes with nothing approved says so", async () => {
+    const h = harness({
+      services: [{ service: "kubernetes", enabled: true, maxWave: 4, writes: 1 }],
+      policyAllows: true,
+    });
+    await runConnectorWrites(["status"], h.deps);
+    expect(h.logs).toContain("  namespaces: (none)");
+  });
+});

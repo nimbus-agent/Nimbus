@@ -104,6 +104,11 @@ export interface ConfirmTemplate {
    * the main template's.
    */
   readonly whenUnset?: { readonly field: string; readonly template: string };
+  /**
+   * D3a: the `{target}` placeholder is not an input field but a value the gateway DERIVES from its own
+   * parse of the input (`k8sConfirmTarget`). Only the bound Kubernetes apply may declare it.
+   */
+  readonly derive?: "k8s-target";
 }
 
 /**
@@ -154,22 +159,25 @@ export interface PrepareRead {
   readonly settleTool?: string;
   /**
    * D2: run the preflight phase (consent-channel capability, confirm renderability, approved
-   * workdir or cloud) BEFORE the prepare child exists. Only `"iac"`.
+   * workdir or cloud, or D3a: approved context and namespace) BEFORE the prepare child exists.
+   * `"iac"` for the Terraform and CloudFormation rows, `"kubernetes"` for the Kubernetes apply.
    */
-  readonly preflight?: "iac";
+  readonly preflight?: "iac" | "kubernetes";
 }
 
 /** The settlers a prepare read may name (D2). Closed: a row cannot name code. */
-export type PrepareSettle = "iac-terraform" | "iac-cfn";
+export type PrepareSettle = "iac-terraform" | "iac-cfn" | "k8s-manifest";
 
 /**
  * The value keys each settler returns, which a settled row's `binds` must name exactly. The
  * Terraform settler returns its own moved plan path and its own hash; the CloudFormation settler
- * returns the change set's ARN.
+ * returns the change set's ARN; the Kubernetes settler returns the plan hash and the diff hash, both
+ * computed by the gateway from the input it shows and the diff text it rendered (D3a).
  */
 export const SETTLE_VALUE_KEYS: Readonly<Record<PrepareSettle, readonly string[]>> = Object.freeze({
   "iac-terraform": Object.freeze(["planFile", "planSha256"]),
   "iac-cfn": Object.freeze(["changeSetId"]),
+  "k8s-manifest": Object.freeze(["planSha256", "diffSha256"]),
 });
 
 /**
@@ -402,6 +410,34 @@ export function withBefore(r: ConnectorWriteRow, before: BeforeStateReader): Con
 }
 
 /**
+ * The `derive` rules of a confirm template (D3a): a derived `{target}` belongs to the bound Kubernetes
+ * apply only, and that row must derive it (the connector has no `target` input). Returns the derived
+ * placeholder name, or `undefined` when the template derives nothing.
+ */
+function checkDerive(
+  r: ConnectorWriteRow,
+  confirm: ConfirmTemplate,
+  names: readonly string[],
+): string | undefined {
+  const isK8s = r.bound?.prepare.settle === "k8s-manifest";
+  if (confirm.derive === undefined) {
+    if (isK8s && names.includes("target")) {
+      throw new Error(`connector write confirm: row ${r.toolId} names {target} without derive`);
+    }
+    return undefined;
+  }
+  if (!isK8s) {
+    throw new Error(`connector write confirm: row ${r.toolId} may not derive its target`);
+  }
+  if (!names.includes("target") || confirm.whenUnset !== undefined) {
+    throw new Error(
+      `connector write confirm: row ${r.toolId} derives {target} but its template does not name it`,
+    );
+  }
+  return "target";
+}
+
+/**
  * A frozen copy of `r` carrying `confirm`. Throws at declaration when the template is malformed or
  * names no placeholder, when a placeholder is a field the row's preview marks secret, or when a
  * placeholder's name looks like a credential (key, token, secret, password, credential, bearer,
@@ -429,7 +465,9 @@ export function withConfirm(r: ConnectorWriteRow, confirm: ConfirmTemplate): Con
       );
     }
   }
+  const derivedTarget = checkDerive(r, confirm, names);
   for (const name of names) {
+    if (name === derivedTarget) continue; // gateway-derived, not an input key
     if (secrets.has(name) || isSensitiveFieldName(name)) {
       throw new Error(
         `connector write confirm: placeholder {${name}} names a secret-looking field (row ${r.toolId})`,
@@ -466,7 +504,7 @@ function settleToolProblems(
   prepareToolIds: ReadonlySet<string>,
 ): string[] {
   const out: string[] = [];
-  if (settle === "iac-cfn") {
+  if (settle === "iac-cfn" || settle === "k8s-manifest") {
     if (settleTool !== undefined) out.push("takes no settle tool");
   } else if (settleTool === undefined) {
     out.push("needs a settle tool");
@@ -486,8 +524,12 @@ function settleProblems(
 ): string[] {
   const { prepare, binds } = bound;
   const out: string[] = [];
-  if (prepare.preflight !== undefined && prepare.preflight !== "iac") {
-    out.push('preflight must be "iac"');
+  if (
+    prepare.preflight !== undefined &&
+    prepare.preflight !== "iac" &&
+    prepare.preflight !== "kubernetes"
+  ) {
+    out.push('preflight must be "iac" or "kubernetes"');
   }
   const { settle, settleTool } = prepare;
   if (settle === undefined) {
@@ -498,6 +540,12 @@ function settleProblems(
   // The confirm, channel and workdir-lock checks run in the preflight phase; a settled row without
   // the tag would skip them and run its child first.
   if (prepare.preflight === undefined) out.push("a settled row must declare preflight");
+  // A settler and its preflight are one pair: the Kubernetes settler is reached only behind the
+  // Kubernetes preflight (context, namespace, lock), and the iac settlers only behind the iac one.
+  const wantPreflight = settle === "k8s-manifest" ? "kubernetes" : "iac";
+  if (prepare.preflight !== undefined && prepare.preflight !== wantPreflight) {
+    out.push(`settle ${settle} needs preflight "${wantPreflight}"`);
+  }
   out.push(...settleToolProblems(r, prepare.tool, settle, settleTool, prepareToolIds));
   const expected = SETTLE_VALUE_KEYS[settle];
   const fields = binds.map((b) => b.field);

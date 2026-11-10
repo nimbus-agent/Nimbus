@@ -39,6 +39,7 @@ import type { ChatopsPolicy } from "../../policy/types.ts";
 import { commitModelRefusal } from "./commit-paths.ts";
 import { deployModelRefusal } from "./deploy-refusals.ts";
 import { iacModelRefusal } from "./iac-limits.ts";
+import { k8sModelRefusal } from "./k8s-manifest.ts";
 import {
   driveContentFormats,
   type RemoteContentFormat,
@@ -1095,6 +1096,12 @@ export function modelWriteRefusal(
   // D2: a CloudFormation deploy asking for an IAM capability. MODEL door only.
   const iac = iacModelRefusal(toolId, input);
   if (iac !== undefined) return iac;
+  // D3a (OR-D3-6): RBAC kinds and privileged or host-access settings in a model-written manifest.
+  // MODEL door only.
+  if (toolId === "k8s_manifest_apply") {
+    const k8s = k8sModelRefusal(input);
+    if (k8s !== undefined) return k8s;
+  }
   // D3b (OR-D3-1..3): a Netlify build with neither or both of branch and production, and a
   // Firebase distribute to tester emails. MODEL door only.
   const deploy = deployModelRefusal(toolId, input);

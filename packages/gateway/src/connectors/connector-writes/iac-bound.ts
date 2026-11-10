@@ -29,7 +29,7 @@ import type { BoundField, BoundWrite, PrepareRead } from "./types.ts";
  * A string of the connector's reply, or `undefined`: only the shape is read, the settler decides.
  * Only a real string counts (`stringAt` would turn a number into text).
  */
-function replyString(key: string): BoundField["from"] {
+export function replyString(key: string): BoundField["from"] {
   return (reply) => {
     try {
       const json = beforeReplyJson(reply);
@@ -59,7 +59,7 @@ function pickKeys(
  * does not call it for a row with a `settle` tag); it is declared because every prepare read has
  * one, and it shows nothing.
  */
-const NO_REPLY_FACTS: PrepareRead["select"] = () => [];
+export const NO_REPLY_FACTS: PrepareRead["select"] = () => [];
 
 function terraformBound(destroy: boolean): BoundWrite {
   return {

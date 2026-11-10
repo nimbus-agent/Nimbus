@@ -128,6 +128,7 @@ import { createConnectorWriteDispatcher } from "../connectors/connector-write-di
 import type { ConnectorWriteContext } from "../connectors/connector-write-transport.ts";
 import { isObsidianWriteGrantApproved } from "../connectors/connector-writes/enablement-store.ts";
 import { getIacGrants } from "../connectors/connector-writes/iac-grants.ts";
+import { getK8sGrants } from "../connectors/connector-writes/k8s-grants.ts";
 import type { TribalKbConfig } from "../connectors/connector-writes/model-write-refusals.ts";
 import { previewCredentialResolver } from "../connectors/connector-writes/preview-credential.ts";
 import { createExtensionCredentialsResolver } from "../connectors/extension-sync/extension-identity.ts";
@@ -1069,6 +1070,8 @@ async function createSchedulerWithMesh(opts: SchedulerWithMeshOpts): Promise<{
     obsidianWriteGrantEnabled: () => isObsidianWriteGrantApproved(db),
     // D2: the owner's approved Terraform directories and clouds (V85), read fresh for every child.
     iacGrants: () => getIacGrants(db),
+    // D3a: the owner's approved Kubernetes (context, namespace) pairs (V86), read fresh for every child.
+    k8sGrants: () => getK8sGrants(db),
     isConnectorAllowed,
     ...(filesystemSpawnGate === undefined ? {} : { filesystemSpawnGate }),
     ...(extensionSlots === undefined ? {} : { extensionSlots, extensionSpawnGate }),

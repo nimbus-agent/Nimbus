@@ -2894,6 +2894,13 @@ function d42ExecutorPins(f: FileEntry, code: string): Violation[] {
 const D42H_PROP_RE = /\bboundWriteCapabilities\b/g;
 const D42H_TYPES = "packages/gateway/src/engine/types.ts";
 const D42H_PROP_ALLOWED: readonly string[] = [D42_EXECUTOR, D42H_TYPES, D42_REGISTRY];
+// (h3) the Kubernetes settler (D3a) is named only by its own module and the registry, which reaches
+// it through the capability's `settle`: no other production file can settle a plan on its own.
+const D42H_K8S_SETTLER_RE = /\bsettleK8sManifest\b/g;
+const D42H_K8S_SETTLER_ALLOWED: readonly string[] = [
+  "packages/gateway/src/engine/k8s-settle.ts",
+  D42_REGISTRY,
+];
 const D42H_BUILD_RE =
   /:\s*BoundWriteCapabilities(?:\s*\|\s*undefined)?\s*(?:=|\{)|\bimplements\s+BoundWriteCapabilities\b|\b(?:as|satisfies)\s+BoundWriteCapabilities\b/g;
 
@@ -2918,6 +2925,10 @@ export function checkBoundCapabilities(files: readonly FileEntry[]): Violation[]
     }
     if (f.relPath !== D42_REGISTRY) {
       for (const m of code.matchAll(D42H_BUILD_RE))
+        add(f, "bound-capability-confined", code, m.index);
+    }
+    if (!D42H_K8S_SETTLER_ALLOWED.includes(f.relPath)) {
+      for (const m of code.matchAll(D42H_K8S_SETTLER_RE))
         add(f, "bound-capability-confined", code, m.index);
     }
     if (f.relPath !== D42_EXECUTOR) continue;
@@ -2963,8 +2974,8 @@ export function checkBoundCapabilities(files: readonly FileEntry[]): Violation[]
 //     (`cloud-infra.ts`, `iac-limits.ts`), the executor (frozen set, the discard step), the registry
 //     (the dispatcher pin), `proposable-actions.ts`, `manifest.generated.ts`, the model-offerable
 //     never-offered table and the iac runner's routing table.
-// Clause (d) of the plan (only `lazy-mesh/iac-runner.ts` builds an iac `ServerSpec`, through
-// `wrapServerSpec`) is added with the runner itself. Comments are stripped (strings kept for (c));
+// Clause (d) (only `lazy-mesh/iac-runner.ts` builds an iac or kubernetes `ServerSpec`, and only
+// through `wrapIacServerSpec`; D3a added the kubernetes `kube` profile to it) is below. Comments are stripped (strings kept for (c));
 // test files are not scanned. The behaviour is pinned by `engine/executor-iac-discard.test.ts`.
 const D43_BASE = "packages/gateway/src/connectors/";
 const D43_NAME_RE = /iac_cloudformation_changeset_discard|iac\.cloudformation\.changeset\.discard/g;
@@ -2978,8 +2989,12 @@ const D43_NAME_ALLOWED: readonly string[] = [
   D42_EXECUTOR,
 ];
 const D43_CONSTANT_RE = /\bIAC_DISCARD\b/g;
-// Clause (d) (the iac connector's per-run spawns): only `lazy-mesh/iac-runner.ts` builds an iac
-// `ServerSpec`, and only through `wrapIacServerSpec` (defined in `wrap-server-spec.ts`); the policy
+// Clause (d) (the iac and kubernetes connectors' per-run spawns): only `lazy-mesh/iac-runner.ts`
+// builds an iac or kubernetes `ServerSpec`, and only through `wrapIacServerSpec` (defined in
+// `wrap-server-spec.ts`; the kubernetes listing slot in `connector-spawns.ts` keeps `wrapServerSpec`,
+// no network, and so a second file wrapping `connectorSpawn("kubernetes")` with the flag is a
+// `wrapIacServerSpec` violation); the routing table of the nine kubernetes tools
+// (`KUBE_TOOL_PROFILE`) is named only by the runner; the policy
 // flag `iacProfile` and the seccomp program that answers `pidfd_send_signal` with ENOSYS (OR-D2-5)
 // are named only by the policy wire, the wrapper, the Linux runner and the wrap function.
 const D43_SPAWN_BASE = "packages/gateway/src/";
@@ -3011,6 +3026,7 @@ const D43_SPAWN_RULES: ReadonlyArray<{
     keepStrings: false,
   },
   { re: /com\.nimbus\.iac-/g, allowed: [D43_RUNNER], keepStrings: true },
+  { re: /\bKUBE_TOOL_PROFILE\b/g, allowed: [D43_RUNNER], keepStrings: false },
 ];
 const D43_CONSTANT_ALLOWED: readonly string[] = [
   `${D43_BASE}connector-writes/iac-limits.ts`,

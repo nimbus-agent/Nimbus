@@ -202,13 +202,14 @@ describe("a Wave 4 write needs the exact typed text (b-f)", () => {
     // A row with a plain confirm target (the iac applies are plan-bound since D2 and need their
     // capabilities; their own tests are `executor-iac-rows.test.ts`): the character set is the point.
     const wd = `C:${String.fromCharCode(92)}infra${String.fromCharCode(92)}prod`;
-    const h = harness({ confirmAnswer: { approved: true, typed: `kubernetes/delete ${wd}` } });
+    const text = `kubernetes/delete prod/shop/${wd}`;
+    const h = harness({ confirmAnswer: { approved: true, typed: text } });
     const res = await h.exec.execute({
       type: "kubernetes.pod.delete",
-      payload: { podName: wd },
+      payload: { context: "prod", namespace: "shop", podName: wd },
     });
     expect(res.status).toBe("ok");
-    expect(h.confirmed[0]?.confirmText).toBe(`kubernetes/delete ${wd}`);
+    expect(h.confirmed[0]?.confirmText).toBe(text);
     expect(auditOf(h)["confirm"]).toBe("matched");
   });
 

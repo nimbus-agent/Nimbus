@@ -25,6 +25,7 @@ import {
   type IacPathDeps,
 } from "../connector-writes/iac-grants.ts";
 import { CONNECTOR_WRITE_ROWS } from "../connector-writes/index.ts";
+import type { K8sGrant } from "../connector-writes/k8s-grants.ts";
 import type { ExtensionSyncRequest } from "../extension-sync/sync-response.ts";
 import { resolveGithubBase } from "../github-api-base.ts";
 import { discoverVaultsForWriteGrant } from "../obsidian-discovery.ts";
@@ -199,6 +200,8 @@ const WAVE2_LISTING: Readonly<
   discord: { slot: LAZY_MESH.discord, ensure: "ensureDiscordRunning" },
   apple: { slot: LAZY_MESH.apple, ensure: "ensureAppleRunning" },
   obsidian: { slot: LAZY_MESH.obsidian, ensure: "ensureObsidianRunning" },
+  // D3a: the listing slot (no network) only LISTS the nine k8s tools; the runner executes them.
+  kubernetes: { slot: LAZY_MESH.kubernetes, ensure: "ensureKubernetesRunning" },
 };
 
 /** One {@link LazyConnectorMesh.listFirstPartyServerTools} entry: its slot, credential and ensure. */
@@ -305,6 +308,8 @@ export class LazyConnectorMesh {
       obsidianGrantLedger?: ObsidianGrantLedgerStore;
       /** The owner's V85 approval of IaC directories and clouds, read fresh per call. Absent: nothing approved. */
       iacGrants?: () => IacGrants;
+      /** The owner's V86 Kubernetes (context, namespace) approvals, read fresh per call. Absent: nothing approved. */
+      k8sGrants?: () => readonly K8sGrant[];
       /** Test seam: overrides of the IaC runner's dependencies. */
       iacRunnerDeps?: Partial<IacRunnerDeps>;
     },
@@ -405,6 +410,7 @@ export class LazyConnectorMesh {
       vault,
       platform,
       grants: options?.iacGrants ?? (() => EMPTY_IAC_GRANTS),
+      ...(options?.k8sGrants === undefined ? {} : { k8sGrants: options.k8sGrants }),
       pathDeps: this.iacPathDeps,
       ...options?.iacRunnerDeps,
     });
@@ -1512,6 +1518,7 @@ export function createLazyConnectorMesh(
     extensionSlots?: ExtensionSlotSource;
     extensionSpawnGate?: Promise<void>;
     iacGrants?: () => IacGrants;
+    k8sGrants?: () => readonly K8sGrant[];
   },
 ): Promise<LazyConnectorMesh> {
   return Promise.try(() => new LazyConnectorMesh(paths, vault, options));

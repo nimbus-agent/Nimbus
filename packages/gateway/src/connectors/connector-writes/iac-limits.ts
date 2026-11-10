@@ -58,6 +58,16 @@ export const IAC_TOOL_TIMEOUTS_MS: Readonly<Record<string, number>> = Object.fre
   iac_terraform_destroy: 30 * 60_000,
   iac_cloudformation_deploy: 60_000,
   iac_cloudformation_changeset_discard: 60_000,
+  // D3a: the nine kubernetes tools (the plan is a dry run, a read and a diff on a cold sandbox).
+  k8s_manifest_plan: 120_000,
+  k8s_manifest_apply: 300_000,
+  k8s_pod_list: 60_000,
+  k8s_deployment_get: 60_000,
+  k8s_deployment_list: 60_000,
+  k8s_event_list: 60_000,
+  k8s_rollout_restart: 60_000,
+  k8s_deployment_scale: 60_000,
+  k8s_pod_delete: 60_000,
 });
 
 /** After the budget, the SIGTERM-to-SIGKILL grace of a plan and the other short tools. */

@@ -76,7 +76,7 @@ const BOUND_BY_ROW: ReadonlyArray<readonly [string, BoundWrite, string, readonly
 ];
 
 describe("the three bound iac rows are the production bound rows beside the two commits (D2)", () => {
-  test("exactly five bound rows, each Wave 4 with a typed preview and a confirm target", () => {
+  test("exactly six bound rows (the Kubernetes apply is D3a's), each Wave 4 with a typed preview and a confirm target", () => {
     const bound = CONNECTOR_WRITE_ROWS.filter((r) => r.bound !== undefined);
     expect(bound.map((r) => r.toolId).sort()).toEqual(
       [
@@ -85,6 +85,7 @@ describe("the three bound iac rows are the production bound rows beside the two 
         "iac_cloudformation_deploy",
         "iac_terraform_apply",
         "iac_terraform_destroy",
+        "k8s_manifest_apply",
       ].sort(),
     );
     for (const r of bound) {
@@ -184,14 +185,14 @@ describe("the prepare reads' arguments and the reply shape readers", () => {
 });
 
 describe("what the model may be offered (D2)", () => {
-  test("apply and deploy are offerable; destroy, Pulumi, the discard and Kubernetes apply never are", () => {
+  test("apply and deploy are offerable (and the Kubernetes apply, D3a); destroy, Pulumi and the discard never are", () => {
     expect(isModelOfferableRow(rowOf("iac_terraform_apply"))).toBe(true);
     expect(isModelOfferableRow(rowOf("iac_cloudformation_deploy"))).toBe(true);
+    expect(isModelOfferableRow(rowOf("k8s_manifest_apply"))).toBe(true);
     for (const id of [
       "iac_terraform_destroy",
       "iac_pulumi_up",
       "iac_cloudformation_changeset_discard",
-      "k8s_manifest_apply",
     ]) {
       expect(isModelOfferableRow(rowOf(id)), id).toBe(false);
     }

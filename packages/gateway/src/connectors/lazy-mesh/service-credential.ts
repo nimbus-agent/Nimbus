@@ -98,6 +98,10 @@ const PREDICATES: Readonly<Record<string, Predicate>> = {
       readConnectorSecret(vault, "apple", "icloud_app_password"),
     ]),
   obsidian: (_vault, ctx) => Promise.resolve((ctx.obsidianVaultPaths ?? []).length > 0),
+  // D3a: a kubeconfig path is stored. Whether the file is readable and its context is the approved
+  // cluster is the runner's preflight, not this no-network predicate.
+  kubernetes: async (vault) =>
+    presentTrimmed(await readConnectorSecret(vault, "kubernetes", "kubeconfig")),
 };
 
 /** The services this module has a predicate for (a test pins it against the listing map). */

@@ -520,7 +520,7 @@ function readPlan(raw: unknown): PlanViewModel | undefined {
 }
 
 /**
- * The write types whose approval is bound to a plan or change set the gateway renders (D2). For
+ * The write types whose approval is bound to a plan or change set the gateway renders (D2, D3a). For
  * these a MISSING plan is as unapprovable as an unreadable one: the owner would be typing a
  * confirmation for a change the screen never showed.
  */
@@ -528,9 +528,11 @@ const PLAN_REQUIRED_ACTION_TYPES: ReadonlySet<string> = new Set([
   "iac.terraform.apply",
   "iac.terraform.destroy",
   "iac.cloudformation.deploy",
+  // D3a: the Kubernetes apply is plan-bound too (the objects and the diff above the typed text).
+  "kubernetes.manifest.apply",
 ]);
 
-/** Is this a plan-bound IaC write type (its approval must show a plan and carry a typed confirm)? */
+/** Is this a plan-bound write type (IaC or Kubernetes) (its approval must show a plan and carry a typed confirm)? */
 export function isPlanBoundAction(actionType: string | undefined): boolean {
   return actionType !== undefined && PLAN_REQUIRED_ACTION_TYPES.has(actionType);
 }

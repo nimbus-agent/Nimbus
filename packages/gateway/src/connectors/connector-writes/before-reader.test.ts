@@ -168,7 +168,7 @@ describe("BeforeStateReader (spec § 5.4)", () => {
     expect(Object.getPrototypeOf(picked)).toBeNull();
   });
 
-  test("the rows with readers are exactly the 75 (seven B1 comments, nine B2 issue writes, five B3 page writes, the B4a Drive create, the B4b Obsidian append, the eight C1 file, PR and incident writes, the four C2 branch, PR and MR rows with a reader, the five C3 flag and alert rows, the 28 D1 Wave 4 rows, and the seven D3b deploy and mobile rows), and every reader passes", () => {
+  test("the rows with readers are exactly the 77 (seven B1 comments, nine B2 issue writes, five B3 page writes, the B4a Drive create, the B4b Obsidian append, the eight C1 file, PR and incident writes, the four C2 branch, PR and MR rows with a reader, the five C3 flag and alert rows, the 28 D1 Wave 4 rows, the seven D3b deploy and mobile rows, and the two D3c Kubernetes rows), and every reader passes", () => {
     const withReader = CONNECTOR_WRITE_ROWS.filter((r) => r.before !== undefined)
       .map((r) => r.toolId)
       .sort((a, b) => a.localeCompare(b));
@@ -201,6 +201,8 @@ describe("BeforeStateReader (spec § 5.4)", () => {
         "jira_issue_update",
         "jira_ops_alert_acknowledge",
         "jira_ops_alert_close",
+        "k8s_deployment_scale",
+        "k8s_rollout_restart",
         "launchdarkly_flag_rollout_set",
         "launchdarkly_flag_toggle",
         "linear_comment_create",
@@ -253,7 +255,7 @@ describe("BeforeStateReader (spec § 5.4)", () => {
         "firebase_app_distribution_distribute",
       ].sort((a, b) => a.localeCompare(b)),
     );
-    expect(withReader).toHaveLength(75);
+    expect(withReader).toHaveLength(77);
     for (const r of CONNECTOR_WRITE_ROWS) expect(beforeReaderProblems(r)).toEqual([]);
   });
 });

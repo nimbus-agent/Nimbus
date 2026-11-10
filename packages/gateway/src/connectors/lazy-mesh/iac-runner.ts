@@ -1,13 +1,16 @@
 // packages/gateway/src/connectors/lazy-mesh/iac-runner.ts
-// The IaC runner (Phase 9.7 D2, invariants I15, I1, I50, I54; static D43(d)). The `iac` connector's
-// listing slot has no network and no filesystem, so it can list its tools but cannot run Terraform.
-// This module runs each Terraform or CloudFormation tool call in its OWN short-lived connector child
-// under one of four per-RUN profiles, each built here and nowhere else:
+// The IaC runner (Phase 9.7 D2 and D3a, invariants I15, I1, I50, I54; static D43(d)). The `iac` and
+// `kubernetes` connectors' listing slots have no network and no filesystem, so they can list their
+// tools but cannot run Terraform or kubectl. This module runs each Terraform, CloudFormation or
+// Kubernetes tool call in its OWN short-lived connector child under one of five per-RUN profiles,
+// each built here and nowhere else:
 //
 //   plan  network of the granted clouds, their credential; workdir read+write, this run's staging dir
 //   show  NO network, NO credential; workdir read, the approved plan directory read, no write
 //   apply the granted clouds' network and credential; workdir read+write, approved dir read-only
 //   cfn   CloudFormation + STS endpoints, the AWS credential; this call's scratch dir read+write
+//   kube  ONE owner-approved API server (host:port); read: a gateway-built single-context
+//         kubeconfig; write: this call's scratch directory ONLY (no owner directory is writable)
 //
 // A profile's read list is DERIVED as (its declared reads) UNION (its writes): a directory a child
 // writes and a CLI then reads is readable on macOS, whose profile builds `file-read*` from the read
@@ -59,6 +62,15 @@ import {
   iacEscalationGraceMs,
   isPlainStackName,
 } from "../connector-writes/iac-limits.ts";
+import { type K8sGrant, k8sGrantFor } from "../connector-writes/k8s-grants.ts";
+import { K8S_PREFLIGHT_REFUSALS } from "../connector-writes/k8s-limits.ts";
+import {
+  buildSingleContextKubeconfig,
+  inspectKubeconfig,
+  type KubeFs,
+  kubeconfigMatchesGrant,
+  nodeKubeFs,
+} from "../connector-writes/kubeconfig-facts.ts";
 import { manifestForFirstParty } from "./first-party-manifests.ts";
 import { connectorSpawn } from "./keys.ts";
 import { loadAwsCreds } from "./phase3-shared.ts";
@@ -69,23 +81,46 @@ import { wrapIacServerSpec } from "./wrap-server-spec.ts";
 // ---------------------------------------------------------------------------------------------
 // Routing: which tool runs in which profile.
 
-export type IacProfileKind = "plan" | "show" | "apply" | "cfn";
+export type IacProfileKind = "plan" | "show" | "apply" | "cfn" | "kube";
+
+/** The CLIs an iac or kube child runs. */
+export type IacBinary = "terraform" | "aws" | "kubectl";
 
 /** The eight tools the runner executes. Everything else the `iac` slot lists stays in the slot. */
-export const IAC_TOOL_PROFILE: Readonly<Record<string, IacProfileKind>> = Object.freeze({
-  iac_terraform_plan: "plan",
-  iac_terraform_destroy_plan: "plan",
-  iac_terraform_show_json: "show",
-  iac_terraform_apply: "apply",
-  iac_terraform_destroy: "apply",
-  iac_cloudformation_changeset_create: "cfn",
-  iac_cloudformation_changeset_discard: "cfn",
-  iac_cloudformation_deploy: "cfn",
+export const IAC_TOOL_PROFILE: Readonly<Record<string, Exclude<IacProfileKind, "kube">>> =
+  Object.freeze({
+    iac_terraform_plan: "plan",
+    iac_terraform_destroy_plan: "plan",
+    iac_terraform_show_json: "show",
+    iac_terraform_apply: "apply",
+    iac_terraform_destroy: "apply",
+    iac_cloudformation_changeset_create: "cfn",
+    iac_cloudformation_changeset_discard: "cfn",
+    iac_cloudformation_deploy: "cfn",
+  });
+
+/**
+ * The nine `kubernetes` tools the runner executes, ALL of them (D3a): the listing slot has no
+ * network, so every `k8s_*` tool, the reads a before-state needs included, runs in a `kube` child.
+ */
+export const KUBE_TOOL_PROFILE: Readonly<Record<string, "kube">> = Object.freeze({
+  k8s_pod_list: "kube",
+  k8s_deployment_get: "kube",
+  k8s_deployment_list: "kube",
+  k8s_event_list: "kube",
+  k8s_rollout_restart: "kube",
+  k8s_pod_delete: "kube",
+  k8s_deployment_scale: "kube",
+  k8s_manifest_plan: "kube",
+  k8s_manifest_apply: "kube",
 });
 
-/** The mesh key of a routed tool (`iac_<tool id>`), for the mesh's override. */
+/** The mesh key of a routed tool (`<server>_<tool id>`), for the mesh's override. */
 export function iacRoutedKeys(): readonly string[] {
-  return Object.keys(IAC_TOOL_PROFILE).map((id) => mcpClientToolKey("iac", id));
+  return [
+    ...Object.keys(IAC_TOOL_PROFILE).map((id) => mcpClientToolKey("iac", id)),
+    ...Object.keys(KUBE_TOOL_PROFILE).map((id) => mcpClientToolKey("kubernetes", id)),
+  ];
 }
 
 /** The reasons a call is refused before any child exists; fixed text, never the path or the input. */
@@ -98,6 +133,13 @@ export const IAC_RUNNER_REFUSALS = Object.freeze({
   notOurChangeSet: "iac: that change set is not one this gateway created",
   stopping: IAC_PREFLIGHT_REFUSALS.stopping,
   regionNotApproved: IAC_PREFLIGHT_REFUSALS.regionNotApproved,
+  kubeNoRun: "kubernetes: this call is not part of an approved run",
+  kubeNoBinary: K8S_PREFLIGHT_REFUSALS.noCommandLineTool,
+  kubeNotApproved: K8S_PREFLIGHT_REFUSALS.notApprovedNamespace,
+  kubeDrift: K8S_PREFLIGHT_REFUSALS.kubeconfigDrift,
+  kubeBusy: K8S_PREFLIGHT_REFUSALS.busy,
+  kubeStopping: K8S_PREFLIGHT_REFUSALS.stopping,
+  kubeNoContext: "kubernetes: name the context; more than one is approved",
 });
 
 /**
@@ -138,6 +180,12 @@ export interface IacProfileRequest {
   readonly installTrees: readonly string[];
   /** A credential file the child must read (GCP key file). */
   readonly credentialFiles?: readonly string[];
+  /** kube: the one approved API server as `host:port`. */
+  readonly server?: string;
+  /** kube: the pinned context (`KUBE_CONTEXT`). */
+  readonly context?: string;
+  /** kube: the gateway-built single-context kubeconfig FILE the child reads. */
+  readonly kubeconfigFile?: string;
 }
 
 export interface IacProfile {
@@ -170,24 +218,23 @@ function setEnvIfDefined(
   if (value !== undefined) env[key] = value;
 }
 
-/**
- * The profile of one call, per the plan's table (section 2.7 as corrected by the Task 0 probe).
- * PURE: `show` has no network and writes nothing; `read` is always (declared reads) UNION (writes).
- */
-export function buildIacProfile(req: IacProfileRequest): IacProfile {
-  const { kind } = req;
-  const wd = listOf(req.workdir);
+/** What one profile kind may reach, read and write, before the manifest is assembled. */
+interface KindGrants {
+  readonly network: readonly string[];
+  readonly declaredRead: readonly string[];
+  readonly write: readonly string[];
+}
+
+/** Phase 1 of a profile: the network, reads and writes of its kind (and the env they need). */
+function kindGrants(
+  req: IacProfileRequest,
+  wd: readonly string[],
+  env: Record<string, string>,
+): KindGrants {
   let network: string[] = [];
   let declaredRead: string[] = [];
   let write: string[] = [];
-  const env: Record<string, string> = {};
-  const terraform = kind !== "cfn";
-  if (terraform) {
-    env["TF_IN_AUTOMATION"] = "1";
-    env["TF_INPUT"] = "0";
-    env["CHECKPOINT_DISABLE"] = "1";
-  }
-  switch (kind) {
+  switch (req.kind) {
     case "plan":
       network = [...iacTerraformHosts(req.clouds), ...req.net];
       declaredRead = [...req.installTrees, ...(req.credentialFiles ?? [])];
@@ -215,13 +262,68 @@ export function buildIacProfile(req: IacProfileRequest): IacProfile {
       write = req.scratchDir === undefined ? [] : [req.scratchDir];
       setEnvIfDefined(env, "NIMBUS_CONNECTOR_SCRATCH_DIR", req.scratchDir);
       break;
+    case "kube":
+      return kubeGrants(req, env);
   }
+  return { network, declaredRead, write };
+}
+
+/**
+ * The kube profile's grants (D3a). One owner-approved API server (an owner-configured entry: a
+ * private or loopback cluster is reachable because the owner chose it; no wildcard). The ONLY
+ * credential is the gateway's copy; the ONLY writable path is this call's scratch directory.
+ */
+function kubeGrants(req: IacProfileRequest, env: Record<string, string>): KindGrants {
+  const network = req.server === undefined ? [] : [req.server];
+  const declaredRead = [
+    ...req.installTrees,
+    ...(req.kubeconfigFile === undefined ? [] : [dirname(req.kubeconfigFile)]),
+  ];
+  const write = req.scratchDir === undefined ? [] : [req.scratchDir];
+  if (req.kubeconfigFile !== undefined) env["KUBECONFIG"] = req.kubeconfigFile;
+  if (req.context !== undefined) env["KUBE_CONTEXT"] = req.context;
+  if (req.scratchDir !== undefined) {
+    env["NIMBUS_CONNECTOR_SCRATCH_DIR"] = req.scratchDir;
+    env["KUBECACHEDIR"] = join(req.scratchDir, "cache");
+  }
+  return { network, declaredRead, write };
+}
+
+/**
+ * The hosts the owner configured (rather than the first-party table): the kube server, a terraform
+ * plan's or apply's owner-typed extra hosts; none for show and cfn.
+ */
+function ownerConfiguredHosts(
+  req: IacProfileRequest,
+  network: readonly string[],
+): readonly string[] {
+  if (req.kind === "kube") return network;
+  if (req.kind === "plan" || req.kind === "apply") return req.net;
+  return [];
+}
+
+/**
+ * The profile of one call, per the plan's table (section 2.7 as corrected by the Task 0 probe).
+ * PURE: `show` has no network and writes nothing; `read` is always (declared reads) UNION (writes).
+ * Two phases in order: the kind's grants (`kindGrants`), then the manifest built from them.
+ */
+export function buildIacProfile(req: IacProfileRequest): IacProfile {
+  const { kind } = req;
+  const env: Record<string, string> = {};
+  const terraform = kind === "plan" || kind === "show" || kind === "apply";
+  if (terraform) {
+    env["TF_IN_AUTOMATION"] = "1";
+    env["TF_INPUT"] = "0";
+    env["CHECKPOINT_DISABLE"] = "1";
+  }
+  const { network, declaredRead, write } = kindGrants(req, listOf(req.workdir), env);
   const writes = uniq(write);
   const reads = uniq([...declaredRead, ...writes]);
   const base = manifestForFirstParty(
-    "iac",
+    kind === "kube" ? "kubernetes" : "iac",
     terraform && kind !== "show" ? req.clouds.map((c) => `iac_${c}`) : [],
   );
+  const owned = ownerConfiguredHosts(req, network);
   const manifest: ExtensionManifest = {
     ...base,
     id: iacProfileId(kind, req.runId),
@@ -229,9 +331,7 @@ export function buildIacProfile(req: IacProfileRequest): IacProfile {
       network: uniq(network),
       filesystem: { read: reads, write: writes },
     },
-    ...(kind === "show" || req.net.length === 0 || !terraform
-      ? {}
-      : { ownerConfiguredNetwork: [...req.net] }),
+    ...(owned.length === 0 ? {} : { ownerConfiguredNetwork: uniq(owned) }),
     canonicalWritePaths: writes,
   };
   return { manifest, env };
@@ -316,13 +416,13 @@ function isVettedInstallRoot(
 export function installReads(
   binaryRealPath: string | undefined,
   platform: NodeJS.Platform,
-  tool: "terraform" | "aws",
+  tool: IacBinary,
   env: InstallReadEnv,
 ): string[] {
   if (binaryRealPath === undefined || platform === "win32") return [];
   const tree = dirname(binaryRealPath);
   if (isSystemOwnedDir(tree, platform)) return [];
-  if (tool === "terraform" || !isVettedInstallRoot(tree, env, platform)) return [binaryRealPath];
+  if (tool !== "aws" || !isVettedInstallRoot(tree, env, platform)) return [binaryRealPath];
   return [binaryRealPath, tree];
 }
 
@@ -607,7 +707,13 @@ export interface IacRunnerDeps {
   /** Test seam; production: {@link spawnIacChild}. */
   readonly spawnChild?: IacChildSpawner;
   /** Test seam; production: `Bun.which` then realpath. */
-  readonly resolveBinary?: (name: "terraform" | "aws") => string | undefined;
+  readonly resolveBinary?: (name: IacBinary) => string | undefined;
+  /** The owner's V86 (context, namespace) approvals, read fresh for every call. Absent: nothing approved. */
+  readonly k8sGrants?: () => readonly K8sGrant[];
+  /** Test seam for the kubeconfig reads; production: {@link nodeKubeFs}. */
+  readonly kubeFs?: KubeFs;
+  /** The kubeconfig path the Vault holds for the kubernetes connector; production reads the Vault. */
+  readonly kubeconfigPath?: () => Promise<string | undefined>;
   /** Windows only. Production: the helper-backed revoker. */
   readonly revokerFor?: (profileId: string) => AppContainerGrantRevoker;
   readonly ledger?: IacGrantLedger;
@@ -650,6 +756,8 @@ export interface IacHost {
   terraformRunDirs(
     workdir: string,
   ): { readonly stagingDir: string; readonly approvedRoot: string } | undefined;
+  /** The API server `host:port` the owner approved for exactly this (context, namespace), or `undefined`. */
+  k8sServerFor?(context: string, namespace: string): string | undefined;
 }
 
 interface Run {
@@ -659,6 +767,28 @@ interface Run {
   readonly approvedRunDirs: Set<string>;
   released: boolean;
   live: number;
+}
+
+/** One in-flight bound Kubernetes apply per (context, namespace), held until its children have exited. */
+interface KubeRun {
+  released: boolean;
+  live: number;
+}
+
+const K8S_APPLY_ROW = "k8s_manifest_apply";
+/** The two tools of a bound run: they run only inside a run the preflight opened. */
+const KUBE_RUN_TOOLS: ReadonlySet<string> = new Set(["k8s_manifest_plan", "k8s_manifest_apply"]);
+/** The reads: `namespace` may be absent (the connector defaults it to `default`), `context` too. */
+const KUBE_READ_TOOLS: ReadonlySet<string> = new Set([
+  "k8s_pod_list",
+  "k8s_deployment_get",
+  "k8s_deployment_list",
+  "k8s_event_list",
+]);
+
+/** The lock key of a pair. NUL cannot occur in either name, so two pairs never share a key. */
+function kubeRunKey(context: string, namespace: string): string {
+  return `${context}\0${namespace}`;
 }
 
 const TERRAFORM_ROWS: ReadonlySet<string> = new Set([
@@ -688,6 +818,7 @@ function defaultRemoveTree(p: string): void {
 
 export class IacRunner implements IacHost {
   private readonly runs = new Map<string, Run>();
+  private readonly kubeRuns = new Map<string, KubeRun>();
   private readonly iacRoot: string;
   private swept = false;
   private realApproved: string | undefined;
@@ -736,6 +867,10 @@ export class IacRunner implements IacHost {
     return this.deps.pathDeps.gitScan(workdir) === "clean"
       ? undefined
       : IAC_PREFLIGHT_REFUSALS.gitRepository;
+  }
+
+  k8sServerFor(context: string, namespace: string): string | undefined {
+    return k8sGrantFor(this.deps.k8sGrants?.() ?? [], context, namespace)?.server;
   }
 
   terraformRunDirs(workdir: string): { stagingDir: string; approvedRoot: string } | undefined {
@@ -834,7 +969,7 @@ export class IacRunner implements IacHost {
     this.orphans = alive;
     this.writeLive(alive);
     if (alive.length > 0) return;
-    for (const d of ["staging", "approved", "scratch", "cwd"]) {
+    for (const d of ["staging", "approved", "scratch", "cwd", "kube"]) {
       try {
         this.removeTree(join(this.iacRoot, d));
       } catch {
@@ -852,6 +987,7 @@ export class IacRunner implements IacHost {
     const unreadable = this.liveRecordRefusal();
     if (unreadable !== undefined) return { ok: false, reason: unreadable };
     if (rowToolId === CFN_ROW) return this.preflightCfn();
+    if (rowToolId === K8S_APPLY_ROW) return this.preflightKube(input);
     if (!TERRAFORM_ROWS.has(rowToolId)) {
       return { ok: false, reason: IAC_RUNNER_REFUSALS.noRun };
     }
@@ -912,6 +1048,63 @@ export class IacRunner implements IacHost {
       : IAC_PREFLIGHT_REFUSALS.notApprovedDirectory;
   }
 
+  /**
+   * The Kubernetes apply's cheap refusals (D3a), before any child exists: the (context, namespace)
+   * pair is one the owner approved, no other bound run holds it, the kubeconfig still names the
+   * approved cluster, and `kubectl` resolves. The lock is taken BEFORE the first await and given
+   * back on every refusal; it is held until the gate releases it AND every child has exited.
+   */
+  private async preflightKube(input: Readonly<Record<string, unknown>>): Promise<PreflightOutcome> {
+    const context = input["context"];
+    const namespace = input["namespace"];
+    const refuse = (reason: string): PreflightOutcome => ({ ok: false, reason });
+    if (typeof context !== "string" || typeof namespace !== "string") {
+      return refuse(IAC_RUNNER_REFUSALS.kubeNotApproved);
+    }
+    const grant = k8sGrantFor(this.deps.k8sGrants?.() ?? [], context, namespace);
+    if (grant === undefined) return refuse(IAC_RUNNER_REFUSALS.kubeNotApproved);
+    const key = kubeRunKey(context, namespace);
+    if (this.kubeRuns.has(key)) return refuse(IAC_RUNNER_REFUSALS.kubeBusy);
+    const run: KubeRun = { released: false, live: 0 };
+    this.kubeRuns.set(key, run);
+    const release = (): void => {
+      run.released = true;
+      this.maybeFreeKube(key, run);
+    };
+    let reason: string | undefined;
+    try {
+      reason = await this.kubeRefusal(context, grant);
+    } catch {
+      reason = IAC_RUNNER_REFUSALS.kubeDrift;
+    }
+    if (reason !== undefined) {
+      release();
+      return refuse(reason);
+    }
+    return { ok: true, release };
+  }
+
+  /** Why a Kubernetes call for `grant` cannot start now: the kubeconfig drifted or kubectl is missing. */
+  private async kubeRefusal(context: string, grant: K8sGrant): Promise<string | undefined> {
+    const facts = inspectKubeconfig(
+      this.deps.kubeFs ?? nodeKubeFs,
+      await this.kubeconfigPath(),
+      context,
+    );
+    if (!facts.ok || !kubeconfigMatchesGrant(facts, grant)) return IAC_RUNNER_REFUSALS.kubeDrift;
+    return this.resolve("kubectl") === undefined ? IAC_RUNNER_REFUSALS.kubeNoBinary : undefined;
+  }
+
+  private async kubeconfigPath(): Promise<string | undefined> {
+    if (this.deps.kubeconfigPath !== undefined) return this.deps.kubeconfigPath();
+    return (await readConnectorSecret(this.deps.vault, "kubernetes", "kubeconfig")) ?? undefined;
+  }
+
+  private maybeFreeKube(key: string, run: KubeRun): void {
+    if (!run.released || run.live > 0) return;
+    if (this.kubeRuns.get(key) === run) this.kubeRuns.delete(key);
+  }
+
   private async preflightCfn(): Promise<PreflightOutcome> {
     const grants = this.deps.grants();
     if (!grants.clouds.includes("aws"))
@@ -959,6 +1152,10 @@ export class IacRunner implements IacHost {
       run.released = true;
       this.maybeFree(run);
     }
+    for (const [key, run] of this.kubeRuns) {
+      run.released = true;
+      this.maybeFreeKube(key, run);
+    }
   }
 
   private release(run: Run): void {
@@ -982,16 +1179,142 @@ export class IacRunner implements IacHost {
 
   /** Runs one routed tool. Rejects with a fixed-text error; never a path or the connector's words. */
   async execute(toolId: string, input: unknown): Promise<unknown> {
-    const kind = IAC_TOOL_PROFILE[toolId];
     const args =
       typeof input === "object" && input !== null && !Array.isArray(input)
         ? (input as Record<string, unknown>)
         : {};
+    const budget = (this.deps.timeoutsMs ?? IAC_TOOL_TIMEOUTS_MS)[toolId] ?? 60_000;
+    if (Object.hasOwn(KUBE_TOOL_PROFILE, toolId)) {
+      if (this.stopped) throw new Error(IAC_RUNNER_REFUSALS.kubeStopping);
+      return this.runKube(toolId, args, budget);
+    }
+    const kind = Object.hasOwn(IAC_TOOL_PROFILE, toolId) ? IAC_TOOL_PROFILE[toolId] : undefined;
     if (kind === undefined) throw new Error(IAC_RUNNER_REFUSALS.noRun);
     if (this.stopped) throw new Error(IAC_RUNNER_REFUSALS.stopping);
-    const budget = (this.deps.timeoutsMs ?? IAC_TOOL_TIMEOUTS_MS)[toolId] ?? 60_000;
     if (kind === "cfn") return this.runCfn(toolId, args, budget);
     return this.runTerraform(toolId, kind, args, budget);
+  }
+
+  /**
+   * The approved pair a kube call runs for, read from a FRESH copy of the owner's V86 approvals: a
+   * read that names no context takes the only approved one (refused when there are several) and no
+   * namespace means `default`; a write names both. Anything not approved is refused.
+   */
+  private approvedKubePair(
+    toolId: string,
+    args: Record<string, unknown>,
+  ): { context: string; grant: NonNullable<ReturnType<typeof k8sGrantFor>>; key: string } {
+    const grants = this.deps.k8sGrants?.() ?? [];
+    const isRead = KUBE_READ_TOOLS.has(toolId);
+    const contexts = [...new Set(grants.map((g) => g.context))];
+    let context: unknown = args["context"];
+    if (context === undefined && isRead) {
+      if (contexts.length > 1) throw new Error(IAC_RUNNER_REFUSALS.kubeNoContext);
+      context = contexts[0];
+    }
+    const given = args["namespace"];
+    const namespace: unknown = given === undefined && isRead ? "default" : given;
+    if (typeof context !== "string" || typeof namespace !== "string") {
+      throw new TypeError(IAC_RUNNER_REFUSALS.kubeNotApproved);
+    }
+    const grant = k8sGrantFor(grants, context, namespace);
+    if (grant === undefined) throw new Error(IAC_RUNNER_REFUSALS.kubeNotApproved);
+    return { context, grant, key: kubeRunKey(context, namespace) };
+  }
+
+  /** The open, unreleased run a plan or apply belongs to (refused without one); undefined for a read. */
+  private openKubeRunFor(toolId: string, key: string): KubeRun | undefined {
+    if (!KUBE_RUN_TOOLS.has(toolId)) return undefined;
+    const run = this.kubeRuns.get(key);
+    if (run === undefined || run.released) throw new Error(IAC_RUNNER_REFUSALS.kubeNoRun);
+    return run;
+  }
+
+  /**
+   * One Kubernetes tool call in its own `kube` child (D3a). The (context, namespace) pair is
+   * re-checked against a FRESH read of the owner's V86 approvals for every child, the child's
+   * kubeconfig is rebuilt from the owner's file for exactly that context (its server and credential
+   * form must still equal what the owner approved), and a plan or apply runs only inside the run the
+   * preflight opened. A read that names no context takes the only approved one.
+   */
+  private async runKube(
+    toolId: string,
+    args: Record<string, unknown>,
+    budget: number,
+  ): Promise<unknown> {
+    // A read can be the first call after boot: the boot sweep must have run (it clears the run
+    // directories a crashed gateway left) before this call makes its own, and an unreadable
+    // live-children record refuses, as it does for a preflight.
+    this.sweep();
+    const unreadable = this.liveRecordRefusal();
+    if (unreadable !== undefined) throw new Error(unreadable);
+    // Phase 1: the (context, namespace) pair, against a FRESH read of the owner's approvals.
+    const { context, grant, key } = this.approvedKubePair(toolId, args);
+    // Phase 2: a plan or apply only inside the run the preflight opened.
+    const run = this.openKubeRunFor(toolId, key);
+    // Taken BEFORE the first await: a gate that releases while the kubeconfig is read must not free
+    // the run under a child that is about to start.
+    if (run !== undefined) run.live += 1;
+    const callId = this.hex(8);
+    const kubeDir = join(this.iacRoot, "kube", callId);
+    const scratchDir = join(this.iacRoot, "scratch", callId);
+    const onExited = (): void => {
+      this.safeRemove(kubeDir);
+      this.safeRemove(scratchDir);
+      if (run !== undefined) {
+        run.live -= 1;
+        this.maybeFreeKube(key, run);
+      }
+    };
+    let handedOff = false;
+    try {
+      const kubectl = this.resolve("kubectl");
+      if (kubectl === undefined) throw new Error(IAC_RUNNER_REFUSALS.kubeNoBinary);
+      const built = buildSingleContextKubeconfig(
+        this.deps.kubeFs ?? nodeKubeFs,
+        await this.kubeconfigPath(),
+        context,
+      );
+      if (!built.ok || !kubeconfigMatchesGrant(built, grant)) {
+        throw new Error(IAC_RUNNER_REFUSALS.kubeDrift);
+      }
+      mkdirSync(kubeDir, { recursive: true, mode: 0o700 });
+      const kubeconfigFile = join(kubeDir, "config");
+      writeFileSync(kubeconfigFile, built.text, { mode: 0o600 });
+      mkdirSync(scratchDir, { recursive: true, mode: 0o700 });
+      const profile = buildIacProfile({
+        kind: "kube",
+        runId: callId,
+        platform: this.deps.platform,
+        scratchDir,
+        clouds: [],
+        net: [],
+        installTrees: [
+          ...installReads(kubectl, this.deps.platform, "kubectl", this.deps.pathDeps),
+          ...(this.deps.extraReadPaths ?? []),
+        ],
+        server: grant.server,
+        context,
+        kubeconfigFile,
+      });
+      const timeoutText =
+        toolId === K8S_APPLY_ROW
+          ? "timed out; the cluster may be partly changed; check it with kubectl"
+          : "kubernetes: the call exceeded its time limit";
+      // The child is told the context it was granted, always: a read that named none gets it here.
+      // From here `spawnAndCall` owns `onExited`: it runs it on a failed spawn or when the child exits.
+      handedOff = true;
+      return await this.spawnAndCall(
+        profile,
+        {},
+        { toolId, args: { ...args, context }, budget, timeoutText },
+        onExited,
+        { service: "kubernetes" },
+      );
+    } catch (e) {
+      if (!handedOff) onExited();
+      throw e;
+    }
   }
 
   private async runTerraform(
@@ -1140,7 +1463,12 @@ export class IacRunner implements IacHost {
       readonly timeoutText: string;
     },
     onExited: () => void,
-    opts: { readonly awaitExit?: boolean; readonly workdir?: string } = {},
+    opts: {
+      readonly awaitExit?: boolean;
+      readonly workdir?: string;
+      /** The connector whose entrypoint the child runs (default `iac`). */
+      readonly service?: "iac" | "kubernetes";
+    } = {},
   ): Promise<unknown> {
     const { toolId, args, budget, timeoutText } = callSpec;
     const awaitExit = opts.awaitExit === true;
@@ -1159,7 +1487,7 @@ export class IacRunner implements IacHost {
       // I1: the child's environment is extensionProcessEnv plus exactly the named variables.
       const wrapped = wrapIacServerSpec(
         {
-          ...connectorSpawn("iac"),
+          ...connectorSpawn(opts.service ?? "iac"),
           env: extensionProcessEnv({ ...profile.env, ...credentialEnv }),
         },
         manifest,
@@ -1248,7 +1576,7 @@ export class IacRunner implements IacHost {
     return join(approvedRoot, runId);
   }
 
-  private resolve(name: "terraform" | "aws"): string | undefined {
+  private resolve(name: IacBinary): string | undefined {
     if (this.deps.resolveBinary !== undefined) return this.deps.resolveBinary(name);
     const found = Bun.which(name);
     if (found === null) return undefined;
@@ -1406,8 +1734,13 @@ export function routeIacTools(
   merged: Record<string, { execute?: (input: unknown, context?: unknown) => Promise<unknown> }>,
   runner: Pick<IacRunner, "execute">,
 ): void {
-  for (const id of Object.keys(IAC_TOOL_PROFILE)) {
-    const key = mcpClientToolKey("iac", id);
+  const routed: ReadonlyArray<readonly [string, string]> = [
+    ...Object.keys(IAC_TOOL_PROFILE).map((id) => ["iac", id] as const),
+    // D3a: every kubernetes tool runs in a `kube` child (the listing slot has no network).
+    ...Object.keys(KUBE_TOOL_PROFILE).map((id) => ["kubernetes", id] as const),
+  ];
+  for (const [server, id] of routed) {
+    const key = mcpClientToolKey(server, id);
     if (merged[key]?.execute === undefined) continue;
     merged[key] = { execute: (input: unknown) => runner.execute(id, input) };
   }
