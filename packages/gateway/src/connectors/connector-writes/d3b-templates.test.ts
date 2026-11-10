@@ -27,6 +27,7 @@ import { DEPLOY_MOBILE_ROWS } from "./deploy-mobile.ts";
 import {
   FIREBASE_TESTER_EMAIL_REFUSAL,
   NETLIFY_BRANCH_OR_PRODUCTION_REFUSAL,
+  TESTFLIGHT_ALLOW_PUBLIC_LINK_REFUSAL,
 } from "./deploy-refusals.ts";
 import { CONNECTOR_WRITE_ROWS } from "./index.ts";
 import { isModelOfferableRow } from "./model-offerable.ts";
@@ -50,14 +51,14 @@ const IDS = [
 ] as const;
 type Id = (typeof IDS)[number];
 
-/** The input keys the installed 0.10.0 source declares for each write (sorted). */
+/** The input keys the installed 0.11.0 source declares for each write (sorted). */
 const DECLARED: Readonly<Record<Id, readonly string[]>> = {
   vercel_deployment_redeploy: ["deploymentId", "target", "withLatestCommit"],
   vercel_deployment_promote: ["deploymentId", "projectId"],
   netlify_build_trigger: ["branch", "clearCache", "production", "siteId"],
   bitrise_build_trigger: ["appSlug", "branch", "workflow"],
   codemagic_build_trigger: ["appId", "branch", "workflowId"],
-  testflight_build_distribute: ["appId", "betaGroupIds", "buildId"],
+  testflight_build_distribute: ["allowPublicLink", "appId", "betaGroupIds", "buildId"],
   firebase_app_distribution_distribute: ["appId", "groupAliases", "releaseId", "testerEmails"],
 };
 
@@ -817,6 +818,20 @@ describe("D3b model-door refusals", () => {
     ).toBeUndefined();
     expect(
       refuse("firebase_app_distribution_distribute", { ...base, groupAliases: ["qa"] }),
+    ).toBeUndefined();
+  });
+
+  test("testflight: allowPublicLink true is refused on the model door; absent or false is allowed (R2-4)", () => {
+    const base = { appId: "1", buildId: "b", betaGroupIds: ["g"] };
+    expect(refuse("testflight_build_distribute", { ...base, allowPublicLink: true })).toBe(
+      TESTFLIGHT_ALLOW_PUBLIC_LINK_REFUSAL,
+    );
+    expect(refuse("testflight_build_distribute", { ...base, allowPublicLink: "yes" })).toBe(
+      TESTFLIGHT_ALLOW_PUBLIC_LINK_REFUSAL,
+    );
+    expect(refuse("testflight_build_distribute", base)).toBeUndefined();
+    expect(
+      refuse("testflight_build_distribute", { ...base, allowPublicLink: false }),
     ).toBeUndefined();
   });
 

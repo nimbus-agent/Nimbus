@@ -166,6 +166,9 @@ export const DEPLOY_MOBILE_ROWS: readonly ConnectorWriteRow[] = [
           textField("appId", "App"),
           textField("buildId", "Build"),
           textField("betaGroupIds", "Beta groups (every id in full)"),
+          // Connectors 0.11.0 (R2-4): the connector refuses a public-link group at dispatch unless
+          // this is true; the model door refuses `true`.
+          textField("allowPublicLink", "Allow a public-link group", "(no)"),
         ],
       }),
       {

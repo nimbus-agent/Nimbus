@@ -17,6 +17,10 @@ export const NETLIFY_BRANCH_OR_PRODUCTION_REFUSAL =
 export const FIREBASE_TESTER_EMAIL_REFUSAL =
   "the model cannot send a Firebase release to tester emails, only to groups: an address that is not a tester yet is created as one and emailed an invitation that cannot be unsent";
 
+export const TESTFLIGHT_ALLOW_PUBLIC_LINK_REFUSAL =
+  "the model cannot allow a TestFlight public-link group: anyone with the link could install the build";
+
+const TESTFLIGHT_ROW = "testflight_build_distribute";
 const NETLIFY_ROW = "netlify_build_trigger";
 const FIREBASE_ROW = "firebase_app_distribution_distribute";
 
@@ -47,6 +51,16 @@ function firebaseRefusal(input: Readonly<Record<string, unknown>>): string | und
   return Array.isArray(emails) && emails.length === 0 ? undefined : FIREBASE_TESTER_EMAIL_REFUSAL;
 }
 
+/**
+ * TestFlight (OR-D3-3, connectors 0.11.0): `allowPublicLink` is the owner's switch for a group whose
+ * public link is on. The connector re-checks each group at dispatch and refuses without it, which
+ * closes the read-to-dispatch window the before-reader guard leaves; the model may not set it.
+ */
+function testflightRefusal(input: Readonly<Record<string, unknown>>): string | undefined {
+  const allow = own(input, "allowPublicLink");
+  return allow === undefined || allow === false ? undefined : TESTFLIGHT_ALLOW_PUBLIC_LINK_REFUSAL;
+}
+
 /** The fixed model-door refusal of a D3b write, or `undefined` to allow it. */
 export function deployModelRefusal(
   toolId: string,
@@ -54,5 +68,6 @@ export function deployModelRefusal(
 ): string | undefined {
   if (toolId === NETLIFY_ROW) return netlifyRefusal(input);
   if (toolId === FIREBASE_ROW) return firebaseRefusal(input);
+  if (toolId === TESTFLIGHT_ROW) return testflightRefusal(input);
   return undefined;
 }
