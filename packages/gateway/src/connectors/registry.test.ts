@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-
 import type { PlannedAction } from "../engine/types.ts";
+import { DEPLOY_MOBILE_ROWS } from "./connector-writes/deploy-mobile.ts";
 import {
   IAC_EXIT_WAIT_MS,
   IAC_PREFLIGHT_REFUSALS,
@@ -555,6 +555,31 @@ describe("createConnectorDispatcher — a before-state read dispatches only a re
       d.dispatch(read("github.before.read", "github_actions_gha_run_get")),
     ).rejects.toThrow("ERR_BEFORE_READ_SERVICE_MISMATCH");
     expect(ran).toEqual([]);
+  });
+
+  // D3b: every reader of the seven deploy and mobile rows (the two _latest reads included, which
+  // only EXTRA_READ_TOOL_IDS makes reads) dispatches under its own service's before.read type,
+  // and the row's own write does not.
+  test("D3b: each reader of the deploy and mobile rows dispatches under its own service; its write does not", async () => {
+    for (const r of DEPLOY_MOBILE_ROWS) {
+      const service = r.actionType.slice(0, r.actionType.indexOf("."));
+      const reads = [r.before?.tool, r.before?.also?.tool].filter(
+        (t): t is string => t !== undefined,
+      );
+      expect(reads.length, r.toolId).toBeGreaterThan(0);
+      for (const tool of reads) {
+        const key = `${service}_${tool}`;
+        const { d, ran } = mapOf([key]);
+        await d.dispatch(read(`${service}.before.read`, key));
+        expect(ran, key).toEqual([key]);
+      }
+      const writeKey = `${service}_${r.toolId}`;
+      const { d, ran } = mapOf([writeKey]);
+      await expect(d.dispatch(read(`${service}.before.read`, writeKey))).rejects.toThrow(
+        "ERR_BEFORE_READ_NOT_A_READ",
+      );
+      expect(ran).toEqual([]);
+    }
   });
 
   test("the same keys under an ordinary type are untouched by the guard", async () => {

@@ -188,8 +188,11 @@ export function netlifyDeploysReadArgs(input: Input): Record<string, unknown> | 
 
 /** The site's production branch (`build_settings.repo_branch`, which the connector's own search reads). */
 function netlifyProductionBranch(site: unknown): string | undefined {
-  const b = stringAt(site, ["build_settings", "repo_branch"]);
-  return b === undefined || b.trim() === "" ? undefined : b;
+  // A real string only: `stringAt` would read a number as its digits, and a guard that compared a
+  // branch against a coerced number would be comparing something Netlify never reported.
+  const settings: unknown = (site as { build_settings?: unknown } | null)?.build_settings;
+  const raw: unknown = (settings as { repo_branch?: unknown } | null)?.repo_branch;
+  return typeof raw === "string" && raw.trim() !== "" ? raw : undefined;
 }
 
 /** A branch name without a leading `refs/heads/`, so the long form cannot slip past the comparison. */

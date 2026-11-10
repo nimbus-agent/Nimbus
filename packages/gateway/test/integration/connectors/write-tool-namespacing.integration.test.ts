@@ -42,6 +42,14 @@ const CONNECTORS = [
   { pkg: "iac", server: "iac" }, // the code-execution half: its reads run caller-directed code
   { pkg: "azure", server: "azure" }, // az → `.cmd` on Windows: its read is refused as code execution
   { pkg: "gcp", server: "gcp" }, // gcloud → `.cmd` on Windows: its read is refused too
+  // Connectors 0.10.0 (D3b): the deploy triggers and mobile release. Plain HTTPS connectors: no
+  // process, no code execution; each lists its tools with no credential (read at call time).
+  { pkg: "vercel", server: "vercel" },
+  { pkg: "netlify", server: "netlify" },
+  { pkg: "bitrise", server: "bitrise" },
+  { pkg: "codemagic", server: "codemagic" },
+  { pkg: "testflight", server: "testflight" },
+  { pkg: "firebase", server: "firebase" },
 ] as const;
 
 const PROBE = join(import.meta.dir, "..", "..", "fixtures", "session-tool-keys-probe.ts");
@@ -123,6 +131,14 @@ describe("I26 — the predicate refuses a write in the form a federated session 
         "slack_slack_message_post_dm",
         "slack_slack_chat_post", // a gate-confined write (D17), refused through its gate's set
         "github_actions_gha_run_trigger",
+        // Connectors 0.10.0 (D3b): the seven deploy and mobile-release writes, namespaced.
+        "vercel_vercel_deployment_redeploy",
+        "vercel_vercel_deployment_promote",
+        "netlify_netlify_build_trigger",
+        "bitrise_bitrise_build_trigger",
+        "codemagic_codemagic_build_trigger",
+        "testflight_testflight_build_distribute",
+        "firebase_firebase_app_distribution_distribute",
       ]),
     );
   }, 120_000);
