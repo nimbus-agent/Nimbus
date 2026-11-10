@@ -1838,6 +1838,28 @@ describe("LocalIndex audit methods", () => {
     expect(entries[1]?.actionType).toBe("fs.read");
   });
 
+  test("listAudit and listAuditWithChain return a standing_approved row (the fourth status, SA1)", () => {
+    const idx = makeIndex();
+    idx.recordAudit({
+      actionType: "gmail.thread.archive",
+      hitlStatus: "standing_approved",
+      actionJson: "{}",
+      timestamp: 5,
+    });
+    expect(idx.listAudit(10)[0]?.hitlStatus).toBe("standing_approved");
+    expect(idx.listAuditWithChain(10)[0]?.hitlStatus).toBe("standing_approved");
+  });
+
+  test("a stored status outside the four is corrupt and throws", () => {
+    const idx = makeIndex();
+    idx.rawDb.run("DROP TABLE audit_log");
+    idx.rawDb.run(
+      "CREATE TABLE audit_log (id INTEGER PRIMARY KEY, action_type TEXT, hitl_status TEXT, action_json TEXT, timestamp INTEGER, row_hash TEXT, prev_hash TEXT)",
+    );
+    idx.rawDb.run("INSERT INTO audit_log VALUES (1, 'x', 'bogus', '{}', 1, 'h', 'p')");
+    expect(() => idx.listAudit(10)).toThrow(/invalid hitl_status/);
+  });
+
   test("listAudit limit is clamped to [1, 1000]", () => {
     const idx = makeIndex();
     idx.recordAudit({ actionType: "x", hitlStatus: "approved", actionJson: "{}", timestamp: 1 });

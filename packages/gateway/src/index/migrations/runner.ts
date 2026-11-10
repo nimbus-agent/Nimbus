@@ -62,6 +62,7 @@ import { GLOSSARY_V45_SQL } from "../glossary-v45-sql.ts";
 import { GRAPH_LINEAGE_TYPES_V40_SQL } from "../graph-lineage-types-v40-sql.ts";
 import { GRAPH_RELATION_TYPES_V12_SQL } from "../graph-relation-types-v12-sql.ts";
 import { GRAPH_V7_MIGRATION_SQL } from "../graph-v7-sql.ts";
+import { rebuildHitlStatusTables } from "../hitl-status-v87-sql.ts";
 import { V34_IDENTITY_SQL } from "../identity-v34-sql.ts";
 import { KNOWN_NAMESPACES_V38_SQL } from "../known-namespaces-v38-sql.ts";
 import { LAN_PEERS_V19_SQL } from "../lan-peers-v19-sql.ts";
@@ -417,6 +418,24 @@ function migrateIndexedV68ToV69(db: Database, now: number): void {
   })();
 }
 
+/**
+ * V86→V87 is hand-written rather than a `simpleStep`: the two CHECK rebuilds derive their DDL from
+ * the live tables and must re-run each table's indexes and triggers afterwards (a static SQL list
+ * cannot snapshot or compare them).
+ */
+function migrateIndexedV86ToV87(db: Database, now: number): void {
+  db.transaction(() => {
+    rebuildHitlStatusTables(db);
+    dbExec(db, "PRAGMA user_version = 87");
+    recordMigration(
+      db,
+      87,
+      "audit_log + egress_ledger hitl_status gains standing_approved (v87)",
+      now,
+    );
+  })();
+}
+
 function migrateIndexedV51ToV52(db: Database, now: number): void {
   db.transaction(() => {
     for (const sql of RESOLVE_KEY_V52_SQL) {
@@ -735,6 +754,7 @@ const INDEXED_SCHEMA_STEPS: readonly IndexedSchemaStep[] = [
   simpleStep(83, 84, "connector write approved set (re-consent)", CONNECTOR_WRITE_APPROVED_V84_SQL),
   simpleStep(84, 85, "iac approved directories and clouds", CONNECTOR_WRITE_IAC_V85_SQL),
   simpleStep(85, 86, "kubernetes approved contexts and namespaces", CONNECTOR_WRITE_K8S_V86_SQL),
+  { fromVersion: 86, toVersion: 87, apply: migrateIndexedV86ToV87 },
 ];
 
 /**
