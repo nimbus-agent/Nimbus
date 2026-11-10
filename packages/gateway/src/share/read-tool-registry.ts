@@ -59,6 +59,23 @@ const READ_VERBS: ReadonlySet<string> = new Set([
 ]);
 
 /**
+ * Reads whose names do not end in a read verb, named by id. `latest` is NOT a verb here for the
+ * reason `preview` is not: the list classifies by name, and a verb earns a place only when every
+ * tool that can carry it is a read. These two (connectors 0.10.0) are the only registered tools
+ * ending in `_latest`, both plain GET reads projected to one build; a sync test over the installed
+ * package fails on any other `_latest` tool, so a new one is a decision, not an accident. Matched
+ * bare and namespaced (`<server>_<tool>`) exactly like a write id. Their consumers are the
+ * before-state read dispatcher (`ERR_BEFORE_READ_NOT_A_READ`) and `share.replay`; the federated
+ * invoke gate does not consult this set.
+ */
+export const EXTRA_READ_TOOL_IDS: ReadonlySet<string> = new Set([
+  "bitrise_build_latest",
+  "codemagic_build_latest",
+]);
+
+const EXTRA_READ_LONGEST = Math.max(...[...EXTRA_READ_TOOL_IDS].map((id) => id.length));
+
+/**
  * Every connector write tool id, from the row table (`connector-writes/index.ts`, never
  * `connector-write-registry.ts`, which pulls in the ChatOps and tribal gates). The gate-confined
  * ids are left out of the table on purpose; they are refused elsewhere.
@@ -92,6 +109,11 @@ export function isReadOnlyToolId(
   if (isConnectorCodeExecutionToolId(toolId)) return false;
   // I42: a user-MCP tool is never replayable — every call to one needs the local owner.
   if (isOwnerCodeServerToolKey(toolId)) return false;
+  if (
+    matchesBareOrNamespacedToolId(toolId, (id) => EXTRA_READ_TOOL_IDS.has(id), EXTRA_READ_LONGEST)
+  ) {
+    return true;
+  }
   const idx = toolId.lastIndexOf("_");
   if (idx <= 0 || idx === toolId.length - 1) return false; // no prefix, or trailing "_"
   return READ_VERBS.has(toolId.slice(idx + 1));

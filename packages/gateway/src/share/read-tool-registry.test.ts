@@ -1,9 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import { CONNECTOR_WRITES } from "../connectors/connector-write-registry.ts";
 import { CONNECTOR_WRITE_ROWS } from "../connectors/connector-writes/index.ts";
+import {
+  installedConnectorsPackageRoot,
+  readConnectorPackageSources,
+} from "../connectors/testing/connector-write-registrations.ts";
 import { HITL_REQUIRED } from "../engine/executor.ts";
 import { serviceOf } from "../engine/service-of.ts";
-import { isReadOnlyToolId } from "./read-tool-registry.ts";
+import { EXTRA_READ_TOOL_IDS, isReadOnlyToolId } from "./read-tool-registry.ts";
 
 describe("isReadOnlyToolId — connector write ids", () => {
   // Regression guard, not a failing-capable test: no real write id ends in a read verb today.
@@ -130,5 +134,47 @@ describe("isReadOnlyToolId — user-MCP tool keys (I42)", () => {
 
   test("a first-party key with the same verb is unaffected", () => {
     expect(isReadOnlyToolId("notes_search")).toBe(true);
+  });
+});
+
+// Connectors 0.10.0 added two reads that end in `_latest`, a suffix `READ_VERBS` deliberately does
+// not carry (a verb earns a place only when every tool that can carry it is a read). They are
+// named by id instead, bare and namespaced.
+describe("isReadOnlyToolId — EXTRA_READ_TOOL_IDS (the two `_latest` reads)", () => {
+  test("exactly the two build-latest reads, bare and namespaced", () => {
+    expect([...EXTRA_READ_TOOL_IDS].sort()).toEqual([
+      "bitrise_build_latest",
+      "codemagic_build_latest",
+    ]);
+    for (const id of ["bitrise_build_latest", "codemagic_build_latest"]) {
+      expect(isReadOnlyToolId(id), id).toBe(true);
+      expect(isReadOnlyToolId(`${id.split("_")[0]}_${id}`), id).toBe(true);
+    }
+  });
+
+  test("a different `_latest` tool is still not a read, and no verb was added", () => {
+    expect(isReadOnlyToolId("bitrise_build_latest_extra")).toBe(false);
+    expect(isReadOnlyToolId("acme_build_latest")).toBe(false);
+    expect(isReadOnlyToolId("acme_deploy_latest")).toBe(false);
+  });
+
+  test("a connector write id is never a read, even named like an extra read", () => {
+    expect(isReadOnlyToolId("bitrise_build_latest", new Set(["bitrise_build_latest"]))).toBe(false);
+  });
+
+  test("a user-MCP key ending in an extra read id is still refused (I42)", () => {
+    expect(isReadOnlyToolId("mcp_x_bitrise_build_latest")).toBe(false);
+  });
+
+  // The installed package decides: any registered tool ending in `_latest` outside the list fails
+  // here until someone decides what it is.
+  test("the installed connectors register no other `_latest` tool", () => {
+    const sources = readConnectorPackageSources(installedConnectorsPackageRoot());
+    expect(sources.length).toBeGreaterThan(100);
+    const found = new Set<string>();
+    for (const s of sources) {
+      for (const m of s.text.matchAll(/["'`]([a-z0-9_]+_latest)["'`]/g)) found.add(m[1] ?? "");
+    }
+    expect([...found].sort()).toEqual([...EXTRA_READ_TOOL_IDS].sort());
   });
 });
