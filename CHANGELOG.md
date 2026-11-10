@@ -2,6 +2,13 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [10.43.0](https://github.com/nimbus-agent/Nimbus/compare/v10.42.0...v10.43.0) (2026-11-10)
+
+
+### Features
+
+* **gateway:** the model can propose a Vercel, Netlify, Bitrise or Codemagic build or a TestFlight or Firebase release, each behind its before-state and a typed confirmation ([#1950](https://github.com/nimbus-agent/Nimbus/issues/1950)) ([5351174](https://github.com/nimbus-agent/Nimbus/commit/53511743fde07784ec46166bdd8e20a9cd8c81c2))
+
 ## [10.42.0](https://github.com/nimbus-agent/Nimbus/compare/v10.41.0...v10.42.0) (2026-11-09)
 
 
