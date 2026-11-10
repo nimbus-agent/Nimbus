@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794339053956,
+  "lastUpdate": 1794342777272,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "934779b29fcab02a7d234402e949a14b80264a92",
-          "message": "fix(build): bundle the gateway workers so they exist in a compiled binary (#1299)\n\nBoth of the gateway's `new Worker()` sites — 2 of 2 — were dead in every\ncompiled release, for the\nentire life of the project. `nimbus query --sql` and semantic search\nalike:\n\n```text\n$ nimbus query --sql \"SELECT 1\"\nBuildMessage: ModuleNotFound resolving \"B:\\~BUN\\root\\query-guard-worker.ts\" (entry point)\n```\n\n`git log -S worker -- scripts/build-release.ts scripts/build-debug.ts`\nreturns **no commits**: no\nworker was ever passed to the build, so no worker was ever included.\nEvery source-tree test passed\nthroughout, because from source the `.ts` file really is there.\n\n## What actually works, measured\n\n`new Worker(new URL(\"./w.ts\", import.meta.url))` resolves at\n**runtime**, so the bundler never sees\nthe dependency. On Bun 1.3.14 I built four probes and ran each from a\ndirectory with no source\npresent:\n\n| approach | result |\n|---|---|\n| `new Worker(new URL(…, import.meta.url))`, inline | `ModuleNotFound` |\n| same, hoisted to a variable first | `ModuleNotFound` |\n| worker passed as a second `--compile` entry point | `ModuleNotFound` |\n| embed the `.ts` with `{ type: \"file\" }` | embeds, but the Worker realm\nparses TS as JS and dies on the first type annotation |\n| **pre-bundle to JS, embed that with `{ type: \"file\" }`** | **works** |\n\nSo the inline-form theory is wrong and multiple entry points do not\nhelp. The last row is what this\nPR implements — the same shape the admin console has always used in\n`ipc/embedded-assets.ts`.\n\n## The change\n\n- `src/workers/worker-entries.ts` — one manifest of worker entry points.\n- `scripts/build-workers.ts` — bundles each to\n`packages/gateway/dist/workers/<name>.js` (gitignored).\n- `src/workers/embedded-workers.ts` — embeds those with `{ type: \"file\"\n}` and exports the paths.\n- Both spawn sites take their path from that module. One code path for\ndev and compiled, so a test\nexercises what the binary ships — which is the specific thing that went\nwrong here.\n- `prepare` builds the workers, and `compile-gateway.ts` rebuilds them\nimmediately before\n`bun build --compile` rather than trusting them to be fresh, matching\nhow it already handles the\n  admin-console dist.\n\n## The guard\n\n`scripts/structure-audit/check-worker-entries.ts`, wired into the fast\npreflight tier: a\n`new Worker(...)` argument in `packages/gateway/src` must be an\nidentifier exported by\n`embedded-workers.ts`. Written as what cannot pass — 2 of 2 sites were\nwrong, so the sample was not\nthe exception. Comments are stripped first, because several of the\nprotected files explain the\nbanned form in prose and a guard that fires on its own rationale gets\ndeleted.\n\nRed-proved by reverting `query-guard.ts` to `new Worker(new URL(...))`:\nexit 1, then exit 0\nrestored. Eleven unit tests cover the pure functions, including the\n`.href` spelling and a bare\nstring literal.\n\n## Verification against a real binary\n\nCompiled the gateway, copied `nimbus-gateway.exe` and `vec0.dll` to a\ndirectory with no source\ntree, booted it against an isolated config and data dir, and called the\nRPC directly:\n\n```text\n{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"rows\":[{\"one\":1}],\"meta\":{\"count\":1}}}\n```\n\n`index.querySql` works from a packaged binary. **F22 is closed.**\n\n## F15 is NOT closed by this PR\n\nBeing explicit, because under-claiming is the whole point of the audit\nthis comes from. The\nembedding worker now **loads and executes** — the `ModuleNotFound\nresolving\n\"B:\\~BUN\\root\\embedding-worker.ts\"` is gone — and fails on a second,\ndistinct cause underneath:\n\n```text\n[gateway] embeddings: unavailable (ResolveMessage: Cannot find module\n  '../bin/napi-v3/win32/x64/onnxruntime_binding.node' from 'B:\\~BUN\\root\\embedding-worker-df0bgt75.js')\n```\n\nThat is a native `.node` addon, which cannot be embedded the way a JS\nbundle can — it needs a\nsidecar copy plus a resolution change, the shape `copy-vec0-sidecar.ts`\nalready solves for\n`vec0.dll`. Deliberately out of scope here: it is a separate problem\nacross three platforms, and\nfolding it in would make an already broad PR unreviewable. Semantic\nsearch remains unavailable in\ncompiled builds until that lands.\n\n`bun run preflight:fast` passes, including the new gate. 1,163 tests\nacross the touched scopes pass.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-08-21T20:47:01+03:00",
-          "tree_id": "71a9118ae4aea112deb346280c8d03b5ebf46db0",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/934779b29fcab02a7d234402e949a14b80264a92"
-        },
-        "date": 1787335119991,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 332.71293944999525,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 335.7845551999977,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 292.8543833000054,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "6b497dc5e0d1d598d389298d3f385a52a093504b",
+          "message": "refactor(gateway): close Phase 9.7; the four CLI-read cloud writes and the pod delete join the never-offered set (#1957)\n\nCloses Phase 9.7 (connector write-enablement). All four waves have\nshipped: Wave 1 (A1–A5b), Wave 2 (B0a–B4b with B3r and B3w), Wave 3\n(C0–C3) and Wave 4 (D0a–D3a).\n\n## Owner rulings (2026-11-10)\n- **OR-97-1:** the Azure App Service restart, the AKS node-pool scale,\nthe Cloud Run deploy and the GKE workload restart are a stated exclusion\nfrom the model door.\n- Reason: a Wave 4 model write needs a before-state, and their only\nreaders are `az` / `gcloud` reads, which are code-execution class\n(OR-D1-1).\n- Building REST before-readers with a Vault-held cloud token was\nconsidered and not taken.\n- **OR-97-2:** the standing-approval and taint integration moves to\nPhase 10's standing-approval row. So does the acceptance criterion that\na Wave 4 write is never auto-fired by a standing rule. No standing rule\nexists yet, so no write can be auto-fired today.\n\n## What changed\n- **`model-offerable.ts`:** the four cloud rows and `k8s_pod_delete`\njoin `MODEL_NEVER_OFFERED_REASONS`, each with its reason.\n- Before, they were unoffered only because no before-state reader or\ntemplate backed them. A later reader could have made them offerable\nwithout anyone ruling on it. Now the exclusion holds structurally.\n- Nothing changes at runtime: none of the five was offerable before, and\nall five stay on the owner's own doors behind the typed confirmation.\n- Including the pod delete encodes the existing \"never offered to the\nmodel\" claim in CLAUDE.md and `cloud-infra.ts`.\n- **Counts:** 124 write rows: 108 model-offerable and 16 never offered\n(11 at D3a), so every row is now either offerable or excluded with a\nrecorded reason. Proposability is unchanged (47 / 135 / 8).\n- **Roadmap:**\n  - Phase 9.7 gets a closed status line.\n- Three boxes are ticked: the Obsidian daily note (shipped in B4b and\nleft unticked), the deploy triggers (with the Cloud Run exclusion), and\nthe data and ML writes (C0 and D1).\n- The standing-approval box and the auto-fire criterion are re-homed to\nPhase 10.\n  - The status of the first three acceptance criteria is recorded.\n\n## Docs\nAll five core docs are updated:\n- **CLAUDE.md and GEMINI.md:** a Phase 9.7 close line, and the I53\nnever-offered list.\n- **`docs/roadmap.md`:** as above.\n- **`docs/architecture.md`:** the never-offered list.\n- **`docs/README.md`:** the S4 paragraph.\n- **`docs/cli-reference.md`:** unchanged here, because #1955 already\nlists these rows as `(not offered yet)` in the enable prompt's marker\nlist, which stays true.\n\nAlso updated: `docs/SECURITY-INVARIANTS.md` (the I53 statement) and\n`docs/CHANGELOG.md`.\n\n## Verification\n- `bun run preflight:fast`: PASSED.\n- **Tests:**\n  - The three touched test files: 613 pass, 0 fail.\n- The connectors, engine, ipc, cli commands and security-invariants\ntrees: 19,205 pass.\n- Three `extension publish` tests hit 5 s timeouts under `--parallel` on\nthis machine and pass when run alone (27 / 27).\n- `c0-reclassify.test.ts` pins the exact 16 ids, `d1-templates.test.ts`\npins the three preview-only cloud rows as never offered, and the I53\ntest in `security-invariants.test.ts` pins the size at 16.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JmSjrCsRuevvkksqrnLRGc\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **Behavior & Safeguards**\n* 108 of 124 connector write actions may be offered to the model; 16\nremain excluded, including mail sends, Bitbucket merge, owner-only\ninfrastructure actions, four cloud actions, and Kubernetes pod deletion.\n* Four cloud actions remain available only through owner-approved\nworkflows with typed confirmation. Write previews and approval\nrequirements remain in place.\n* **Documentation**\n* Updated project status, security guidance, and roadmap to record Phase\n9.7 completion and defer standing-approval and taint integration to\nPhase 10.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-10T20:26:21Z",
+          "tree_id": "4a1226edd151a310b7fc73a89dc6de879a211458",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/6b497dc5e0d1d598d389298d3f385a52a093504b"
+        },
+        "date": 1794342772944,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 199.85233484999952,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 207.70731855000122,
             "unit": "ms"
           }
         ]
