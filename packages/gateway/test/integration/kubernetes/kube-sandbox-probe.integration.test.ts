@@ -384,8 +384,10 @@ describe.skipIf(!READY)(
             permissions: { network, filesystem: { read: kubeRead(), write: [scratch] } },
           });
           if (why !== null) {
-            // No helper: production refuses to start any network-bearing child at all.
+            // No helper: production refuses to start any network-bearing child at all. CI's helper
+            // step sets NIMBUS_REQUIRE_SANDBOX_HELPER, so there a missing helper fails instead.
             console.log(`[probe 3] linux: canConfine refuses (${why})`);
+            expect(process.env["NIMBUS_REQUIRE_SANDBOX_HELPER"]).not.toBe("1");
             expect(why).toContain("helper");
             return;
           }
