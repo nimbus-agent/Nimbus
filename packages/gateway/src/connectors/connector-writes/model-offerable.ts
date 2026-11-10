@@ -1,11 +1,18 @@
 // packages/gateway/src/connectors/connector-writes/model-offerable.ts
 import type { ConnectorWriteRow } from "./types.ts";
 
+/** The reason of the four cloud rows whose only before-state readers are CLI reads (OR-97-1). */
+const CLI_READ_ONLY =
+  "the only readers are `az` / `gcloud` reads, which are code-execution class (OR-D1-1), and a Wave 4 model write needs a before-state: a stated exclusion at the Phase 9.7 close (OR-97-1)";
+
 /**
  * Why a row is never offered to the model, keyed by tool id (a row's identity). The seven mail
  * sends are owner ruling OR-W34-1 (spec § 15, 2026-11-06; OR-B3w-1 for Outlook): no mail send is
  * ever offered, whatever template or reader it later gets. The model writes drafts; the owner
  * sends. The sends stay reachable on the other doors. `bitbucket_pr_merge` is D1 round-1 fix 8.
+ * The four cloud rows and the pod delete were closed out of the model door at the Phase 9.7 close
+ * (owner ruling OR-97-1, 2026-11-10): listed here so a later reader or template cannot make them
+ * offerable without a new ruling. All five stay reachable on the owner's own doors.
  */
 export const MODEL_NEVER_OFFERED_REASONS: Readonly<Record<string, string>> = Object.freeze({
   gmail_message_send: "mail sends are never offered to the model (OR-W34-1)",
@@ -23,6 +30,11 @@ export const MODEL_NEVER_OFFERED_REASONS: Readonly<Record<string, string>> = Obj
     "no plan-bound Pulumi apply exists (saved update plans are experimental): refused on every door",
   iac_cloudformation_changeset_discard:
     "only the gateway's own cleanup of a change set it created may discard one",
+  azure_app_service_restart: CLI_READ_ONLY,
+  azure_aks_node_pool_scale: CLI_READ_ONLY,
+  gcp_cloud_run_deploy: CLI_READ_ONLY,
+  gcp_gke_workload_restart: CLI_READ_ONLY,
+  k8s_pod_delete: "a pod delete stays an owner action (destroy-class, OR-D2-2 spirit; OR-97-1)",
 });
 
 /** The tool ids of {@link MODEL_NEVER_OFFERED_REASONS}: a row in this set is never offered. */
