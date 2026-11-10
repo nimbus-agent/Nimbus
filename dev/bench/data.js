@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794290898908,
+  "lastUpdate": 1794292260054,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "54c20c98714a85b1a57d5166938c4cd2bedcc457",
-          "message": "feat(sandbox): a real Windows sandbox leg, and a policy-shaped runner interface (#1294)\n\n## What this fixes\n\n`createWin32SandboxRunner().spawn()` threw unconditionally, and every\nconnector `ServerSpec` reaches the sandbox through `wrapServerSpec` →\n`__nimbus-sandbox`. So **no MCP connector could start on Windows at\nall**.\nReproduced on `main` before any change here:\n\n```\n$ bun packages/gateway/src/index.ts __nimbus-sandbox cmd /c echo hello\nerror: Windows sandbox spawn FFI is a work-in-progress in PR 1 ...\n  at spawn (packages/gateway/src/platform/sandbox/win32.ts:21:17)\nEXIT=1\n```\n\nConnector *sync* was unaffected — those modules fetch in-process and\nnever\nspawn — which is why indexing worked and the mesh tool path did not.\n\nMeanwhile `docs/architecture.md` credited \"AppContainer + orphan-reap on\nWindows\" as the mitigation for *Extension sandbox escape*, and\n`reapOrphanedAppContainers` had zero production callers. Both halves of\nthat mitigation were inert.\n\n## What it does\n\n- **An unprivileged native helper**, `nimbus-sandbox-helper.exe`,\nmirroring\nthe existing Linux `main.c` pattern rather than the `bun:ffi` route the\n  old stub's message assumed. Node spawns the helper with pipes, so the\n  AppContainer child inherits them and MCP JSON-RPC over stdio keeps\nworking with no extra plumbing. `CreateAppContainerProfile` is per-user,\n  so there is no install-time privilege step.\n- **`SandboxRunner` takes a `SandboxPolicy`**, not an\n`ExtensionManifest`.\nThe runners only ever read `.permissions` and `.id`; narrowing the input\n  lets a one-shot execution use the same runners without fabricating a\n  manifest.\n- **A cross-platform integration test** that spawns through\n  `__nimbus-sandbox` for real, asserting stdout round-trip, exit-code\n  propagation, argv fidelity, and refusal of an out-of-policy path. That\n  last one is what makes it a sandbox test rather than a spawn test.\n- **The orphan reaper is wired** at boot, and the two documents that\n  described it as running now describe what executes.\n\n## Grant policy\n\nThe helper grants the leaf `--cwd` and explicit policy paths, and\n**nothing else, ever**. An earlier revision granted cwd ancestors; it\nwas\nremoved deliberately. To spawn a connector it would have rewritten the\nDACL of `%LOCALAPPDATA%` and the user's home directory — paths Nimbus\ndoes\nnot own — to add an AppContainer SID. Both remaining grant sites are\nfail-closed at exit 66.\n\n## Known limitation, measured not assumed\n\nA `bun <script>` child cannot start under a profile-nested cwd; it fails\nwith `CouldntReadCurrentDirectory`. A plain Win32 binary at the\nidentical\npath with identical grants runs fine, which pins the failure on Bun's\nstartup rather than on AppContainer. Production spawns the compiled\n`nimbus-gateway.exe __nimbus-connector <id>` with no script path and is\nunaffected; a Windows contributor running a dev tree will see it.\nDocumented in `docs/sandbox.md` rather than left to be discovered.\n\nPer-host network filtering on Windows remains all-or-nothing. That gap\npredates this work and is unchanged.\n\n## Verification\n\n- Gateway suites: 14,498 pass, 0 fail.\n- Coverage floor on a Linux lcov build: `win32-reap.ts` 38.10/25.00 →\n  100/100 and `win32.ts` 54.55/36.36 → 90.91/86.36, with the pre-fix red\n  state confirmed by reverting. No exclusions added.\n- `preflight:fast`, `typecheck`, `typecheck:tests` and `verify:docker`\n  fast tier all green on the rebased tree.\n- The wrapper-spawn suite ran for real on Windows and on Linux in\n  `oven/bun:1.3` with bubblewrap. **macOS has never executed it** — this\n  push is its first run.\n\nThe suite now fails loudly on CI when its prerequisites are missing\nrather\nthan skipping, because as originally written it would have skipped on\nevery CI platform: the `integration` job builds neither the helper nor\nbubblewrap. A skipped suite and a passing suite are indistinguishable in\na\nCI summary, which is how the original defect survived a green three-OS\nmatrix.\n\n## Follow-up, not addressed here\n\n`buildBwrapArgv` binds `/usr`, `/bin`, `/lib`, `/etc`, `/dev`, a tmpfs\n`/tmp`, the cwd and policy paths. A Linux install puts `nimbus-gateway`\nin\n`~/.local/bin`, outside all of them. If that analysis holds, Linux has a\ngap of the same shape as the one this PR fixes, and no existing test\nwould\ncatch it — the only Linux sandbox test straces the raw helper and never\nspawns through bwrap. Worth its own investigation.\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n## Summary by CodeRabbit\n\n* **New Features**\n* Added unprivileged Windows sandboxing with filesystem and optional\nnetwork restrictions.\n* Added automatic cleanup of orphaned Windows sandbox profiles during\ngateway startup.\n* Sandbox execution now fails safely when required capabilities are\nunavailable.\n* **Installer & Release**\n* Windows installers and release packages now include the required\nsandbox helper.\n  * Uninstallers remove the helper automatically.\n* **Documentation**\n* Updated security, sandbox, architecture, and changelog documentation.\n* **Tests**\n  * Expanded cross-platform and Windows sandbox integration coverage.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-08-21T15:46:51Z",
-          "tree_id": "d6be5e2542024dafbf50158fa58a70b7925d295c",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/54c20c98714a85b1a57d5166938c4cd2bedcc457"
-        },
-        "date": 1787327741956,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 249.02584404999942,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 253.02105875001143,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 309.85686980000065,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
+            "name": "nimbus-release-bot[bot]",
+            "username": "nimbus-release-bot[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "caec9f3ec9a9133aa7675cf1e57cce4a77ce8c68",
+          "message": "chore: release main (#1951)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>10.43.0</summary>\n\n##\n[10.43.0](https://github.com/nimbus-agent/Nimbus/compare/v10.42.0...v10.43.0)\n(2026-11-10)\n\n\n### Features\n\n* **gateway:** the model can propose a Vercel, Netlify, Bitrise or\nCodemagic build or a TestFlight or Firebase release, each behind its\nbefore-state and a typed confirmation\n([#1950](https://github.com/nimbus-agent/Nimbus/issues/1950))\n([5351174](https://github.com/nimbus-agent/Nimbus/commit/53511743fde07784ec46166bdd8e20a9cd8c81c2))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
+          "timestamp": "2026-11-10T08:18:28+02:00",
+          "tree_id": "445148e988482bd46f46846ffd4068e124ce90c7",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/caec9f3ec9a9133aa7675cf1e57cce4a77ce8c68"
+        },
+        "date": 1794292255554,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 303.9625761499963,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 307.05854620000935,
             "unit": "ms"
           }
         ]
