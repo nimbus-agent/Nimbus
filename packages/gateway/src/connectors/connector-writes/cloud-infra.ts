@@ -210,7 +210,8 @@ export const CLOUD_INFRA_ROWS: readonly ConnectorWriteRow[] = [
     ),
     { template: "scale {context}/{namespace}/{deploymentName} to {replicas}" },
   ),
-  // Never offered to the model (destroy-class, OR-D2-2 spirit): a pod delete stays an owner action.
+  // Never offered to the model (destroy-class, OR-D2-2 spirit; MODEL_NEVER_OFFERED_REASONS, OR-97-1):
+  // a pod delete stays an owner action.
   withConfirm(row("k8s_pod_delete", "kubernetes.pod.delete", "mesh", 4), {
     template: "delete {context}/{namespace}/{podName}",
   }),

@@ -12018,8 +12018,10 @@ describe("I53 — a first-party connector write reaches the model only through t
     );
     // The seven mail sends (OR-W34-1), since D1 the Bitbucket merge (no head precondition), and
     // since D2 the three rows that stay owner-only: Terraform destroy, Pulumi and the change-set
-    // discard (D3a took the Kubernetes apply off the list: it is offered while a pair is approved).
-    expect(MODEL_NEVER_OFFERED_TOOL_IDS.size).toBe(11);
+    // discard (D3a took the Kubernetes apply off the list: it is offered while a pair is approved),
+    // and since the Phase 9.7 close (OR-97-1) the four az/gcloud-read cloud rows and the pod delete.
+    expect(MODEL_NEVER_OFFERED_TOOL_IDS.size).toBe(16);
+    expect(MODEL_NEVER_OFFERED_TOOL_IDS.has("gcp_cloud_run_deploy")).toBe(true);
     expect(MODEL_NEVER_OFFERED_TOOL_IDS.has("bitbucket_pr_merge")).toBe(true);
     for (const r of CONNECTOR_WRITE_ROWS) {
       if (r.wave === 4) expect(r.confirm, r.toolId).toBeDefined();

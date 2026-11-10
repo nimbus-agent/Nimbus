@@ -357,6 +357,8 @@ describe("D1 rows: shape and offerability", () => {
     for (const id of PREVIEW_ONLY) {
       expect(rowOf(id).preview, id).toBeDefined();
       expect(rowOf(id).before, id).toBeUndefined();
+      // OR-97-1: never offered even if a reader is added later.
+      expect(MODEL_NEVER_OFFERED_TOOL_IDS.has(id), id).toBe(true);
     }
     // The commits are offered through a bound prepare step instead (D1c), not a before-state.
     for (const id of COMMITS) {
