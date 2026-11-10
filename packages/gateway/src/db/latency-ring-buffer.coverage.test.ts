@@ -3,7 +3,8 @@
  * fires: the 30-second tick (driven on a fake clock) and the SIGTERM / SIGINT handlers (invoked
  * directly — the handler this scheduler registered, never a real signal and never another
  * module's listener). Both are best-effort: a flush that throws is swallowed and loses only its
- * own batch, and the scheduler keeps running.
+ * own batch, and the scheduler keeps running. The third flush, the one inside `stop()`, is
+ * covered here too, against a failing write: shutdown must finish and remove its listeners.
  */
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, jest, test } from "bun:test";
@@ -128,5 +129,20 @@ describe("the shutdown signal handlers", () => {
     push(55, "vector");
     expect(() => onSignal("SIGTERM")).not.toThrow();
     expect(logged()).toEqual([]);
+  });
+});
+
+describe("the flush inside stop()", () => {
+  test("a flush that throws inside stop() is swallowed, and its listeners are still removed", () => {
+    const sigtermBefore = process.listenerCount("SIGTERM");
+    const sigintBefore = process.listenerCount("SIGINT");
+    const started = startLatencyFlushScheduler(db);
+    breakInserts();
+    push(57, "hybrid");
+
+    expect(() => started.stop()).not.toThrow();
+    expect(logged()).toEqual([]);
+    expect(process.listenerCount("SIGTERM")).toBe(sigtermBefore);
+    expect(process.listenerCount("SIGINT")).toBe(sigintBefore);
   });
 });
