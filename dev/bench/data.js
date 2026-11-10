@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794342777272,
+  "lastUpdate": 1794354353516,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "344e2173300bec92886d7f329ba6fe220360c234",
-          "message": "fix(ci): make the sandbox spawn suite report why it failed, and gate it on the platforms it is about (#1298)\n\nTwo defects, both mine, both surfaced by #1294 going red on `main`\nminutes after merge.\n\n## 1. The diagnostic was blind on the platforms that failed\n\nThe dump added in #1294 matched stderr against `[\"bwrap:\",\n\"nimbus-sandbox-wrapper:\"]` — the Linux launcher and the cross-platform\nwrapper. macOS launches through `sandbox-exec` and Windows through\n`nimbus-sandbox-helper.exe`; neither prefix was listed. So both failing\nruns reported a bare `Expected: \"hello-from-sandbox\" / Received: \"\"`\nwith the reason nowhere in the log, on runners nobody can log into.\n\nAn allow-list of failure signatures is the wrong shape for a diagnostic:\nit recognises only failures someone already thought of and fails silent\non the rest. It now dumps on anything **anomalous**, derived from the\nshape of the run rather than from known strings:\n\n- any stderr at all — no launcher prints on a clean launch;\n- `status === null` — killed by a signal, which no case expects;\n- exit 0 with empty stdout — the shape of \"the child never really ran\".\n\nThe two cases that legitimately produce empty stdout exit 7 and 77, so\nneither trips it.\n\n**Red-proved** by reproducing the exact CI symptom locally (a child that\nexits 0 printing nothing): the dump fires with platform, tmpdir, cwd,\npolicy, argv, status, stdout and stderr. **Verified quiet** on the green\npath — 0 dumps across all five passing cases.\n\n## 2. The PR gate never ran this suite off Linux\n\n`pr-quality`'s cross-platform job runs `bun test packages/<pkg>/src` —\nscoped to `src/`, so it never collects\n`packages/gateway/test/integration/`. On the PR gate that integration\nsuite runs on **Ubuntu only**.\n\nThat is how a Windows- and macOS-broken spawn suite merged green: the\nsuite written specifically to prove the wrapper spawns on all three\nplatforms had never once run on two of them before reaching `main`. The\npush matrix found it minutes later.\n\nThis does **not** widen the PR gate to the whole integration suite —\nthat would add minutes to every PR on two slow runners for tests that\nare not platform-sensitive. It adds one step running\n`packages/gateway/test/integration/platform/sandbox/` (seconds), plus\nthe Windows helper build it needs, both gated on `code-changed` and `pkg\n== gateway`. Without it, this branch's own fix could not be verified\nbefore merge either, and the cycle would repeat.\n\n## What this does NOT fix\n\nThe underlying failures. This makes CI say what they are.\n\nKnown so far, from the push-matrix logs:\n\n| Platform | Symptom |\n| --- | --- |\n| macOS | exit **134** (SIGABRT) on every case — the Bun child dies at\nstartup |\n| Windows | only the two **stdout-reading** cases fail; exit-code\npropagation (7) and policy refusal (77) both **pass** |\n\nSo on Windows the sandbox itself works and the stdio path does not — a\nmuch narrower problem than it first looked. Neither failure reproduces\non a local Windows machine, including with output redirected and\n`CI=true`, which is why the diagnostics come first.\n\n**This PR is expected to go red on the new Windows and macOS steps.**\nThat is the point: it is the first run that will print why.\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n- **Bug Fixes**\n- Improved macOS sandbox startup reliability by allowing required system\nmetadata and device access while preserving restricted access to `/dev`.\n- Added regression coverage for sandbox startup permissions and\ndefault-deny behavior.\n- Improved launcher anomaly diagnostics across platforms, including\nclearer handling of unexpected output and exits.\n\n- **Tests**\n- Expanded cross-platform gateway integration testing in CI, with\nplatform-specific setup and per-test time limits.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-08-21T20:47:14+03:00",
-          "tree_id": "a2c2db0c5a6f2f09a1c879bcff2ce51d3f7f7f49",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/344e2173300bec92886d7f329ba6fe220360c234"
-        },
-        "date": 1787335801040,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 305.72869035000184,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 307.3363510500105,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 207.70731855000122,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "1c9730729fa161818258e7f95eb9f94d5499f7d6",
+          "message": "feat(gateway): record where each approval came from, and make room for a standing-approved status (Phase 10 SA1) (#1958)\n\nPhase 10 standing approvals, PR SA1 of six (spec approved by Antigravity\nin round 3, plan in round 2; specs and plans stay off `main`). It lays\nthe groundwork and changes no behaviour: every approval now records\nwhere its answer came from, and the audit trail gains room for a fourth\nstatus, `standing_approved`, which nothing produces yet. SA3 adds the\nonly producer, under the new invariant I55.\n\n## What changed\n- **Where the answer came from.** `ConsentChannel.requestApproval`\nreturns `{ approved, answerSource }`, and `requestConfirmedApproval`\nreturns the same plus `typed`.\n- The values are `human`, `auto` (`--yes`), `script`\n(`--script-consent-source`), `unknown` (an older client that reports\nnone), `delegate`, `remote` (ChatOps) and `none` (no prompt was shown).\n- The CLI's interactive prompt, its `--yes` and script handlers, and the\ndesktop popup each report their own value.\n- A reply that names any value other than `human`/`auto`/`script` is a\n**denial**: the request is settled and the reply returns `-32602`.\n- Every prompted decision's audit `action_json` carries `answerSource`.\n- The value is client-reported (spec § 6.1). It feeds evidence and\napproval learning (SA5) and never decides whether a write dispatches.\n- **A typed outcome.** `approvalPhase`, `confirmedOwnerPrompt` and\n`resolveHitlApproval` return an `ApprovalOutcome` (`approved` |\n`rejected` | `standing_approved`). An exported pure function,\n`gateResultOf`, maps it to the gate result.\n- Reject texts, delegation order and the D41(d)/D42(b) pins are\nunchanged.\n- A source pin asserts that no production code builds a\n`standing_approved` outcome in SA1.\n- **Schema V87.** `audit_log` and `egress_ledger` are rebuilt with\n`standing_approved` added to their `hitl_status` CHECK. The bespoke step\n`migrateIndexedV86ToV87` (`index/hitl-status-v87-sql.ts`):\n1. Snapshots each table's indexes and triggers, and refuses if a view or\nanother table's trigger names the table.\n2. Builds the new table from the live DDL with one anchored CHECK\nreplace, which must match exactly once.\n3. Copies every row by explicit column list, with no rehash, so the hash\nchain is untouched.\n4. Drops the old table and renames the new one under\n`legacy_alter_table`. This is needed because SQLite's rename re-parses\nother triggers, including the session-memory triggers on `vec0` tables,\nand that extension is not loaded yet when migrations run.\n5. Re-runs every index and trigger verbatim and asserts the sets are\nidentical.\n\nIt reads through `prepare` + `finalize`, so the connection can still\nclose. The historical DDL (`schema-sql.ts`, `egress-ledger-v44-sql.ts`)\nis not edited; a fresh install reaches the same tables through step 87.\n- **Renderers.** The CLI `nimbus audit` list, the desktop audit panel,\nits feed, filter chips and store all accept the fourth status.\n\n## Invariants\n- **I4** now lists four `hitl_status` values, with `standing_approved`\nreserved for I55 and not yet produced. Its docs and its\n`security-invariants.test.ts` block are updated.\n- No new invariant yet: I55 lands with its producer in SA3.\n\n## Docs\n- CLAUDE.md and GEMINI.md: schema V87, the I4 line, an SA1 status\nsentence.\n- `docs/roadmap.md`: the Phase 10 standing-approval row.\n- `docs/architecture.md`: the audit and egress status, and the answer\nsource.\n- `docs/cli-reference.md`: `--yes` and script consent are recorded as\n`auto` / `script`.\n- `docs/SECURITY-INVARIANTS.md` (I4) and `docs/CHANGELOG.md`.\n- `docs/README.md` is unchanged: it has no user-facing surface to\nupdate.\n\n## Verification\n- `bun run preflight:fast`: PASSED.\n- `typecheck`, `lint` and `typecheck:tests` (0 new) all pass.\n- **Tests:**\n- engine, egress, index, ipc, chatops, mcp-sink,\n`security-invariants.test.ts`, cli `lib` and `audit`: 8,157 pass, 0\nfail.\n  - UI vitest on the touched files: 574 pass.\n- **New tests:**\n- `index/migrations/runner-v87.test.ts` (12): seeded V86 database; row\ncounts and the last `row_hash` unchanged; full audit-chain and egress\nverification; a fourth-status insert succeeds and a bogus one fails;\nindex and trigger sets identical, including hand-added ones; a reopened\non-disk V86 file with no `vec0` loaded migrates and closes cleanly; a\nfresh 0→87 database matches a migrated one.\n- `engine/approval-outcome.test.ts`: `gateResultOf` over all three\nkinds, the source pins, a census of `ConsentChannel` users, and the\nrecorded source for each kind.\n  - `ipc/consent.test.ts`: answer-source cases.\n- **Coverage (istanbul, scoped):** `index/hitl-status-v87-sql.ts` is at\n96.4% line / 81.8% branch, and `ipc/consent.ts` at 96.6% / 89.1%.\nCoverage is enforced only by the Linux CI floor.\n- **Red-proofs:**\n  - Disabling the index and trigger re-run fails the V87 test.\n  - Letting an unknown `answerSource` approve fails two consent tests.\n  - Dropping `legacy_alter_table` fails the reopened-file test.\n- **Not run locally:** the toolgen saved-tool integration tests fail in\na fresh worktree with `ERR_TOOLGEN_SANDBOX_DEGRADED` because the sandbox\nhelper isn't built there; CI builds it.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JmSjrCsRuevvkksqrnLRGc\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Approval audit records now include the reported answer source, such as\nhuman, automatic, scripted, delegated, or remote. Unsupported source\nvalues are denied.\n* Audit views, filters, and CLI output recognize the reserved “standing\napproved” status and display it as a successful outcome. The application\ndoes not yet produce this status.\n* Updated the database schema to support the new audit status while\npreserving existing records and audit history.\n\n* **Documentation**\n* Updated architecture, security, CLI, roadmap, and changelog\ndocumentation to reflect these approval and audit changes.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-10T23:37:22Z",
+          "tree_id": "812277674449d737e75bee2005e2dc67884f4325",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/1c9730729fa161818258e7f95eb9f94d5499f7d6"
+        },
+        "date": 1794354348912,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 228.2172551000003,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 222.69380849999615,
             "unit": "ms"
           }
         ]
