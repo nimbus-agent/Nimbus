@@ -3,6 +3,7 @@ import pino from "pino";
 import { isBeforeReadActionType } from "../engine/before-state.ts";
 import type { BoundWriteCapabilities } from "../engine/bound-write-capabilities.ts";
 import { nodeSettleFs, settleCfnChangeSet, settleTerraformPlan } from "../engine/iac-settle.ts";
+import { settleK8sManifest } from "../engine/k8s-settle.ts";
 import {
   isPrepareActionType,
   PREPARE_REFUSALS,
@@ -100,6 +101,17 @@ export function buildBoundWriteCapabilities(host: IacHost): BoundWriteCapabiliti
     async settle(rowToolId, ctx) {
       if (ctx.settle === "iac-cfn") {
         return settleCfnChangeSet({ input: ctx.input, reply: ctx.reply });
+      }
+      if (ctx.settle === "k8s-manifest") {
+        // A pure settle (D3a): the API server shown beside the context is the one the OWNER approved
+        // for this pair, never a name the child or the caller gave. No grant for the pair: unbound.
+        const { context, namespace } = ctx.input;
+        const server =
+          typeof context === "string" && typeof namespace === "string"
+            ? host.k8sServerFor?.(context, namespace)
+            : undefined;
+        if (server === undefined) throw new PrepareRefusedError(PREPARE_REFUSALS.unbound);
+        return settleK8sManifest({ input: ctx.input, reply: ctx.reply, server });
       }
       // After the plan child has exited and before the owner sees anything: a plan can plant a
       // `.git` in its working directory. The run is refused with the fixed reason (D2 review 5).

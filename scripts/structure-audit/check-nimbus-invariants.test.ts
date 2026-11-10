@@ -4888,6 +4888,28 @@ describe("D42(h) — the bound IaC capabilities are reached only from the prefli
     ).toEqual([]);
   });
 
+  test("(h3) FAILS when a file other than the settler and the registry names the Kubernetes settler", () => {
+    expect(
+      rules([
+        ...GOOD,
+        file("packages/gateway/src/engine/k8s-settle.ts", "export function settleK8sManifest() {}"),
+      ]),
+    ).toEqual([]);
+    expect(
+      rules([
+        ...GOOD.filter((f) => f.relPath !== REGISTRY),
+        file(
+          REGISTRY,
+          "const caps: BoundWriteCapabilities = { settle: () => settleK8sManifest(x) };",
+        ),
+      ]),
+    ).toEqual([]);
+    expect(rules([...GOOD, file(OTHER, "settleK8sManifest({ input, reply });")])).toEqual([
+      "bound-capability-confined",
+    ]);
+    expect(rules([...GOOD, file(OTHER, "// settleK8sManifest")])).toEqual([]);
+  });
+
   test("(h2) FAILS when another method of the executor reads the member or calls a capability", () => {
     for (const body of [
       "private other() { return this.connectors.boundWriteCapabilities; }",
@@ -5076,5 +5098,30 @@ describe("D43 — the unused change set is discarded only by the executor's own 
       expect(rules([...GOOD, file(OTHER, body)]), body).toEqual(["iac-spawn-confined"]);
     }
     expect(rules([...GOOD, file(OTHER, "// wrapIacServerSpec iacProfile")])).toEqual([]);
+  });
+
+  test("(d) FAILS when a second file wraps a kubernetes spawn with the flag or names the kube routing table (D3a)", () => {
+    const RUNNER = "packages/gateway/src/connectors/lazy-mesh/iac-runner.ts";
+    expect(
+      rules([
+        ...GOOD,
+        file(
+          RUNNER,
+          'wrapIacServerSpec(connectorSpawn("kubernetes"), m, c); const t = KUBE_TOOL_PROFILE; const i = "com.nimbus.iac-kube.x";',
+        ),
+      ]),
+    ).toEqual([]);
+    for (const body of [
+      'const s = wrapIacServerSpec({ ...connectorSpawn("kubernetes"), env }, manifest, cwd);',
+      "const t = KUBE_TOOL_PROFILE;",
+      'const id = "com.nimbus.iac-kube.abc";',
+      "const p = { iacProfile: true, id: 'kube' };",
+    ]) {
+      expect(rules([...GOOD, file(OTHER, body)]), body).toContain("iac-spawn-confined");
+    }
+    // The listing slot's own wrap (no flag) is not this rule's business.
+    expect(
+      rules([...GOOD, file(OTHER, 'const s = wrapServerSpec(connectorSpawn("kubernetes"), m);')]),
+    ).toEqual([]);
   });
 });

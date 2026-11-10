@@ -190,9 +190,12 @@ describe("D1c through the real door", () => {
   const writes = (d: { dispatched: PlannedAction[] }) =>
     d.dispatched.filter((a) => !isPrepareActionType(a.type));
 
-  test("the two commit rows are bound, previewed and offerable, and no other VCS row is bound (the iac rows are D2's)", () => {
+  test("the two commit rows are bound, previewed and offerable, and no other VCS row is bound (the iac rows are D2's, the Kubernetes apply D3a's)", () => {
     const bound = CONNECTOR_WRITE_ROWS.filter(
-      (r) => r.bound !== undefined && !r.actionType.startsWith("iac."),
+      (r) =>
+        r.bound !== undefined &&
+        !r.actionType.startsWith("iac.") &&
+        !r.actionType.startsWith("kubernetes."),
     ).map((r) => r.toolId);
     expect(bound.sort()).toEqual(["github_file_commit", "gitlab_commit_create"]);
   });

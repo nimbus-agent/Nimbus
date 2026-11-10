@@ -3,12 +3,16 @@
 import {
   ec2InstanceReadArgs,
   ecsServiceReadArgs,
+  k8sRestartReadArgs,
+  k8sScaleReadArgs,
   lambdaListReadArgs,
   selectEc2Instance,
   selectEcsService,
+  selectK8sDeployment,
   selectLambdaFunction,
 } from "./cloud-readers.ts";
 import { CFN_DEPLOY_BOUND, TERRAFORM_APPLY_BOUND, TERRAFORM_DESTROY_BOUND } from "./iac-bound.ts";
+import { K8S_APPLY_BOUND } from "./k8s-bound.ts";
 import {
   type ConnectorWritePreviewTemplate,
   type ConnectorWriteRow,
@@ -153,18 +157,62 @@ export const CLOUD_INFRA_ROWS: readonly ConnectorWriteRow[] = [
     },
     "deploy {projectId}/{region}/{service} {image:tail8}",
   ),
-  // D3's: the Kubernetes and GKE rows wait for the sandbox grants they need to run at all.
+  // D3's: the GKE restart stays un-offered (its reader is code-execution class, OR-D1-1).
   withConfirm(row("gcp_gke_workload_restart", "gcp.gke.workload.restart", "mesh", 4), {
     template: "restart {projectId}/{cluster}/{namespace}/{deployment}",
   }),
-  withConfirm(row("k8s_rollout_restart", "kubernetes.rollout.restart", "mesh", 4), {
-    template: "restart {resourceType}/{name}",
-  }),
-  withConfirm(row("k8s_deployment_scale", "kubernetes.deployment.scale", "mesh", 4), {
-    template: "scale {deploymentName} to {replicas}",
-  }),
+  // D3c: a restart and a scale of a DEPLOYMENT, each with a typed preview, the deployment's current
+  // state (`k8s_deployment_get`) and a confirm that names the context, namespace and deployment.
+  // `context` and `namespace` are required connector inputs (0.11.0) and the runner re-checks the
+  // pair against the owner's V86 approval for every child. A restart of any other resource type has
+  // no reader, hence no before-state, hence is refused on every door.
+  withConfirm(
+    withBefore(
+      withPreview(row("k8s_rollout_restart", "kubernetes.rollout.restart", "mesh", 4), {
+        target: "{context}/{namespace}/{name}",
+        summary:
+          "Restart the rollout of {resourceType} {name} in namespace {namespace} of context {context}",
+        fields: [
+          textField("context", "Context"),
+          textField("namespace", "Namespace"),
+          textField("resourceType", "Resource type"),
+          textField("name", "Name"),
+        ],
+      }),
+      {
+        tool: "k8s_deployment_get",
+        argKeys: ["context", "namespace", "resourceType", "name"],
+        args: k8sRestartReadArgs,
+        select: selectK8sDeployment("restart", "name"),
+      },
+    ),
+    { template: "restart {context}/{namespace}/{name}" },
+  ),
+  withConfirm(
+    withBefore(
+      withPreview(row("k8s_deployment_scale", "kubernetes.deployment.scale", "mesh", 4), {
+        target: "{context}/{namespace}/{deploymentName}",
+        summary:
+          "Scale deployment {deploymentName} in namespace {namespace} of context {context} to {replicas} replicas",
+        fields: [
+          textField("context", "Context"),
+          textField("namespace", "Namespace"),
+          textField("deploymentName", "Deployment"),
+          textField("replicas", "Replicas"),
+        ],
+      }),
+      {
+        tool: "k8s_deployment_get",
+        argKeys: ["context", "namespace", "deploymentName", "replicas"],
+        args: k8sScaleReadArgs,
+        select: selectK8sDeployment("scale", "deploymentName"),
+      },
+    ),
+    { template: "scale {context}/{namespace}/{deploymentName} to {replicas}" },
+  ),
+  // Never offered to the model (destroy-class, OR-D2-2 spirit): a pod delete stays an owner action.
   withConfirm(row("k8s_pod_delete", "kubernetes.pod.delete", "mesh", 4), {
-    template: "delete {podName}",
+    template: "delete {context}/{namespace}/{podName}",
   }),
   // D2: the three plan-bound IaC writes (`iac-bound.ts`). Each is BOUND to the identity of the plan
   // or change set its prepare tool made, as the GATEWAY settled it (a saved plan moved, hashed and
@@ -223,13 +271,30 @@ export const CLOUD_INFRA_ROWS: readonly ConnectorWriteRow[] = [
   ),
   // Connectors 0.9.0. The change-set discard is a WRITE (connector fix 19) that only the gateway's
   // own cleanup of a change set it created would ever call; until then it is an owner-typed,
-  // never-offered row. `k8s_manifest_apply` is D3's: classified so the build stays green, with
-  // placeholder confirm text, never offered, denied on the act door; D3 owns every behaviour.
+  // never-offered row.
   withConfirm(
     row("iac_cloudformation_changeset_discard", "iac.cloudformation.changeset.discard", "mesh", 4),
     { template: "discard {stackName}" },
   ),
-  withConfirm(row("k8s_manifest_apply", "kubernetes.manifest.apply", "mesh", 4), {
-    template: "apply {namespace}",
-  }),
+  // D3a: the sixth bound row. Bound to the plan `k8s_manifest_plan` made, as the GATEWAY settled it
+  // (both hashes computed by the gateway; its parse of the manifest must agree with the connector's
+  // scan); the owner sees the manifest, the objects and the diff in full and types the DERIVED
+  // target (`<context>/<namespace> <Kind>/<name>`, or the object count and a hash prefix).
+  // `planSha256` and `diffSha256` are the gateway's: the preview never names them. The act door
+  // denies it (class k8s): its consent display has no plan.
+  withConfirm(
+    withBound(
+      withPreview(row("k8s_manifest_apply", "kubernetes.manifest.apply", "mesh", 4), {
+        target: "{context}/{namespace}",
+        summary: "Apply the manifest below to namespace {namespace} of context {context}",
+        fields: [
+          textField("context", "Context"),
+          textField("namespace", "Namespace"),
+          textField("manifest", "Manifest"),
+        ],
+      }),
+      K8S_APPLY_BOUND,
+    ),
+    { template: "apply {target}", derive: "k8s-target" },
+  ),
 ];

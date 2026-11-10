@@ -578,6 +578,7 @@ describe("listFirstPartyServerTools: wave-2 services on their own slots", () => 
         "google_drive",
         "jenkins",
         "jira",
+        "kubernetes",
         "linear",
         "notion",
         "obsidian",

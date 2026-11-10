@@ -15,6 +15,7 @@ import {
 } from "./enablement-store.ts";
 import { getIacGrants } from "./iac-grants.ts";
 import { CONNECTOR_WRITE_ROWS } from "./index.ts";
+import { getK8sGrants } from "./k8s-grants.ts";
 import { isModelOfferableRow } from "./model-offerable.ts";
 import { isConnectorWriteModelAccessEnabled } from "./model-write-capability.ts";
 import {
@@ -46,6 +47,15 @@ export interface ModelWriteSourceDeps {
    * is not offered (no directory to pick).
    */
   readonly approvedWorkdirs?: () => readonly string[];
+  /**
+   * The (context, namespace) pairs the owner approved for the Kubernetes apply (D3a, V86), read per
+   * call. Absent: the stored grants, read fresh on every call. Empty or a throw: the Kubernetes
+   * apply is not offered (no pair to pick from).
+   */
+  readonly approvedK8sPairs?: () => ReadonlyArray<{
+    readonly context: string;
+    readonly namespace: string;
+  }>;
 }
 
 function policyAllows(deps: ModelWriteSourceDeps): boolean {
@@ -82,8 +92,25 @@ function workdirsOf(deps: ModelWriteSourceDeps): readonly string[] {
   }
 }
 
-/** A Terraform row can be offered only while there is an approved directory to name (D2). */
+/** The approved Kubernetes (context, namespace) pairs, or none (fail closed on a throw). */
+function k8sPairsOf(
+  deps: ModelWriteSourceDeps,
+): ReadonlyArray<{ readonly context: string; readonly namespace: string }> {
+  try {
+    return deps.approvedK8sPairs === undefined ? getK8sGrants(deps.db) : deps.approvedK8sPairs();
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * A Terraform row can be offered only while there is an approved directory to name (D2), and a
+ * Kubernetes row (D3a apply, D3c restart and scale) only while the owner approved at least one
+ * (context, namespace) pair.
+ */
 function directoryAvailable(deps: ModelWriteSourceDeps, row: ConnectorWriteRow): boolean {
+  // Every Kubernetes row (the apply, the restart, the scale) needs an approved pair to name.
+  if (serviceOf(row.actionType) === "kubernetes") return k8sPairsOf(deps).length > 0;
   return row.bound?.prepare.settle !== "iac-terraform" || workdirsOf(deps).length > 0;
 }
 
@@ -91,6 +118,7 @@ export function createModelWriteToolSource(deps: ModelWriteSourceDeps): Connecto
   const rows = deps.rows ?? CONNECTOR_WRITE_ROWS;
   return {
     approvedWorkdirs: () => workdirsOf(deps),
+    approvedK8sPairs: () => k8sPairsOf(deps),
     offerableEnabledRows: () => {
       if (!policyAllows(deps)) return [];
       const out: ConnectorWriteRow[] = [];

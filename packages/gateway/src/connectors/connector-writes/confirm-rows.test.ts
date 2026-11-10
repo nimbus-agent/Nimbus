@@ -74,6 +74,13 @@ function placeholders(r: ConnectorWriteRow): string[] {
   return parsed.segments.flatMap((s) => (s.kind === "field" && s.name !== derived ? [s.name] : []));
 }
 
+/** A real manifest input: the derived target of the bound Kubernetes apply is computed from it (D3a). */
+const K8S_SAMPLE: Record<string, unknown> = {
+  context: "prod",
+  namespace: "shop",
+  manifest: ["apiVersion: apps/v1", "kind: Deployment", "metadata:", "  name: api", ""].join("\n"),
+};
+
 /** Every placeholder of the row's alternative template, and the optional field that selects it. */
 function altPlaceholders(r: ConnectorWriteRow): string[] {
   const alt = r.confirm?.whenUnset;
@@ -179,6 +186,7 @@ describe("snowflake_tag_set names the effect that will run", () => {
 describe("rendering from a plausible input", () => {
   const VALUE = "abc-123";
   function sampleInput(r: ConnectorWriteRow): Record<string, unknown> {
+    if (r.confirm?.derive !== undefined) return K8S_SAMPLE;
     const out: Record<string, unknown> = {};
     for (const name of placeholders(r))
       out[name] = name === "instanceIds" ? ["i-0a1", "i-0b2"] : VALUE;
@@ -218,8 +226,13 @@ describe("rendering from a plausible input", () => {
       "aws/stop i-0a1 i-0b2",
     );
     expect(
-      text("k8s_rollout_restart", { resourceType: "deployment", name: "api", namespace: "x" }),
-    ).toBe("kubernetes/restart deployment/api");
+      text("k8s_rollout_restart", {
+        context: "prod",
+        namespace: "x",
+        resourceType: "deployment",
+        name: "api",
+      }),
+    ).toBe("kubernetes/restart prod/x/api");
     expect(text("mlflow_model_promote", { name: "fraud", version: "4" })).toBe(
       "mlflow/promote fraud/v4",
     );
@@ -282,8 +295,9 @@ describe("no two Wave 4 rows of one service render the same confirm text", () =>
           for (const value of ["v1", 7, ["v1", "v2"]]) {
             if (Array.isArray(value) && !(takesArrays(a) && takesArrays(b))) continue;
             const input = Object.fromEntries(Object.keys(sharedInput(a, b)).map((k) => [k, value]));
-            const ta = renderConfirmText(a, input);
-            const tb = renderConfirmText(b, input);
+            // The derived Kubernetes target needs a manifest, not a shared value.
+            const ta = renderConfirmText(a, a.confirm?.derive === undefined ? input : K8S_SAMPLE);
+            const tb = renderConfirmText(b, b.confirm?.derive === undefined ? input : K8S_SAMPLE);
             // A failed render is a failure, not a skip: every row must render these inputs.
             expect(ta.ok, `${service}: ${a.toolId} renders ${JSON.stringify(value)}`).toBe(true);
             expect(tb.ok, `${service}: ${b.toolId} renders ${JSON.stringify(value)}`).toBe(true);

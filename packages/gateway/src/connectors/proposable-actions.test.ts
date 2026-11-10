@@ -289,13 +289,14 @@ describe("a bound row is never proposable on the MCP act door (D1c, spec 15.5)",
   // head. Making one proposable needs provenanceConsent to carry the executor's preview first.
   const bound = CONNECTOR_WRITE_ROWS.filter((r) => r.bound !== undefined);
 
-  test("the bound rows are exactly the two commits and the three plan-bound iac writes (D2)", () => {
+  test("the bound rows are exactly the two commits, the three plan-bound iac writes and the Kubernetes apply (D3a)", () => {
     expect(bound.map((r) => r.actionType).sort()).toEqual([
       "github.file.commit",
       "gitlab.commit.create",
       "iac.cloudformation.deploy",
       "iac.terraform.apply",
       "iac.terraform.destroy",
+      "kubernetes.manifest.apply",
     ]);
   });
 

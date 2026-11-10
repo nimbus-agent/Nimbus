@@ -144,3 +144,78 @@ export function selectEcsService(
     ]),
   ];
 }
+
+// ---- Kubernetes (D3a, D3c): the deployment a restart or a scale will touch ----------------------
+
+/** The resource types a restart's reader applies to (the reader reads a DEPLOYMENT). */
+const DEPLOYMENT_RESOURCE_TYPES: ReadonlySet<string> = new Set([
+  "deployment",
+  "deployments",
+  "deploy",
+]);
+
+/** Whether `resourceType` names a deployment (so `k8s_deployment_get` can show the target). */
+export function isDeploymentResourceType(resourceType: unknown): boolean {
+  return typeof resourceType === "string" && DEPLOYMENT_RESOURCE_TYPES.has(resourceType);
+}
+
+function k8sGetArgs(context: unknown, namespace: unknown, name: unknown) {
+  const ctx = nonEmptyString(context);
+  const ns = nonEmptyString(namespace);
+  const n = nonEmptyString(name);
+  return ctx === undefined || ns === undefined || n === undefined
+    ? undefined
+    : { context: ctx, namespace: ns, name: n };
+}
+
+/**
+ * `k8s_deployment_get` input for a restart: the write's context, namespace and name, and ONLY when
+ * the resource type is a deployment. Any other type reads nothing, so the write has no before-state
+ * and a Wave 4 write without one is refused on every door.
+ */
+export function k8sRestartReadArgs(input: Input): Record<string, unknown> | undefined {
+  if (!isDeploymentResourceType(input["resourceType"])) return undefined;
+  return k8sGetArgs(input["context"], input["namespace"], input["name"]);
+}
+
+/** `k8s_deployment_get` input for a scale: the write's context, namespace and `deploymentName`. */
+export function k8sScaleReadArgs(input: Input): Record<string, unknown> | undefined {
+  return k8sGetArgs(input["context"], input["namespace"], input["deploymentName"]);
+}
+
+/**
+ * `k8s_deployment_get` (before-state), the connector's projection `{name, namespace, replicas,
+ * readyReplicas, generation, observedGeneration, restartedAt, images}`. The reply must name the
+ * deployment the write names, in the namespace the write names (else it throws and the write is
+ * refused: the reader never shows another object's state as this one's). A scale shows the replica
+ * change; a restart shows the last restart and the images.
+ */
+export function selectK8sDeployment(
+  kind: "restart" | "scale",
+  nameKey: "name" | "deploymentName",
+): (reply: unknown, picked: Picked) => readonly BeforeStateField[] {
+  return (reply, picked) => {
+    const j = beforeReplyJson(reply);
+    const name = requiredStringAt(j, ["name"]);
+    const namespace = requiredStringAt(j, ["namespace"]);
+    if (name !== picked[nameKey] || namespace !== picked["namespace"]) {
+      throw new Error("before reply: not the deployment the write names");
+    }
+    const replicas = stringAt(j, ["replicas"]);
+    const next = picked["replicas"];
+    const change =
+      kind === "scale" && replicas !== undefined && typeof next === "number"
+        ? `${replicas} -> ${String(next)}`
+        : replicas;
+    return [
+      { label: "Deployment", value: excerptHead(name) },
+      { label: "Namespace", value: excerptHead(namespace) },
+      ...presentFields([
+        [kind === "scale" ? "Replicas (now -> new)" : "Replicas", change],
+        ["Ready replicas", stringAt(j, ["readyReplicas"])],
+        ["Last restarted", shown(stringAt(j, ["restartedAt"]))],
+        ["Images", shown(listAt(j, ["images"]))],
+      ]),
+    ];
+  };
+}

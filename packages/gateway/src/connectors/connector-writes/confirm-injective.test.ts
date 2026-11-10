@@ -12,7 +12,6 @@ import { describe, expect, test } from "bun:test";
 import { renderConfirmText } from "./confirm.ts";
 import { type ConfirmSegment, parseConfirmTemplate } from "./confirm-template.ts";
 import { CONNECTOR_WRITE_ROWS } from "./index.ts";
-import { k8sTestRow } from "./k8s-row.test-helpers.ts";
 import { type ConnectorWriteRow, row } from "./types.ts";
 
 /** Seeded, so a failure reproduces. */
@@ -261,7 +260,11 @@ describe("brute-force oracle: no two accepted projected tuples render the same t
 });
 
 describe("the derived Kubernetes target is injective over what it names (D3a)", () => {
-  const ROW = k8sTestRow();
+  const ROW = (() => {
+    const found = CONNECTOR_WRITE_ROWS.find((r) => r.toolId === "k8s_manifest_apply");
+    if (found === undefined) throw new Error("the production Kubernetes apply row is missing");
+    return found;
+  })();
   const POOL = [
     ["apps/v1", "Deployment", "api"],
     ["apps/v1", "Deployment", "web"],

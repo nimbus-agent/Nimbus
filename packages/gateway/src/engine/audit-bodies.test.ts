@@ -61,18 +61,29 @@ describe("omitTemplateText", () => {
 
 describe("withoutTemplateText: only the deploy write and the iac prepare read", () => {
   test("the recognised write type is the CloudFormation bound row's, and the prepare read is iac's", () => {
-    const cfn = CONNECTOR_WRITE_ROWS.filter(
+    // The CloudFormation deploy carries `templateBody`, the Kubernetes apply (D3a) carries `manifest`.
+    const text = CONNECTOR_WRITE_ROWS.filter(
       (r) =>
-        r.bound?.prepare.settle === "iac-cfn" &&
-        r.preview?.fields.some((f) => f.key === "templateBody"),
+        (r.bound?.prepare.settle === "iac-cfn" &&
+          r.preview?.fields.some((f) => f.key === "templateBody")) ||
+        (r.bound?.prepare.settle === "k8s-manifest" &&
+          r.preview?.fields.some((f) => f.key === "manifest")),
     );
-    expect([...TEMPLATE_WRITE_ACTION_TYPES].sort()).toEqual(cfn.map((r) => r.actionType).sort());
-    for (const type of ["iac.cloudformation.deploy", "iac.write.prepare"]) {
+    expect([...TEMPLATE_WRITE_ACTION_TYPES].sort()).toEqual(text.map((r) => r.actionType).sort());
+    for (const type of [
+      "iac.cloudformation.deploy",
+      "iac.write.prepare",
+      "kubernetes.manifest.apply",
+      "kubernetes.write.prepare",
+    ]) {
       expect(carriesTemplateText(type), type).toBe(true);
     }
     for (const type of [
       "github.write.prepare",
       "iac.write.prepare.x",
+      "kubernetes.write.prepare.x",
+      "kubernetes.write",
+      "kubernetes.pod.delete",
       "iac.write",
       "iac",
       "iac.terraform.apply",

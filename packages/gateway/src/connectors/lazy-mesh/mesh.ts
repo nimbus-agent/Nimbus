@@ -200,6 +200,8 @@ const WAVE2_LISTING: Readonly<
   discord: { slot: LAZY_MESH.discord, ensure: "ensureDiscordRunning" },
   apple: { slot: LAZY_MESH.apple, ensure: "ensureAppleRunning" },
   obsidian: { slot: LAZY_MESH.obsidian, ensure: "ensureObsidianRunning" },
+  // D3a: the listing slot (no network) only LISTS the nine k8s tools; the runner executes them.
+  kubernetes: { slot: LAZY_MESH.kubernetes, ensure: "ensureKubernetesRunning" },
 };
 
 /** One {@link LazyConnectorMesh.listFirstPartyServerTools} entry: its slot, credential and ensure. */

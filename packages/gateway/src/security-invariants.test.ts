@@ -350,9 +350,10 @@ describe("I1 — extensionProcessEnv is the only env source for spawned MCP chil
     for (const f of files) {
       if (f.rel === WRAPPER) continue;
       if (f.rel === IAC_RUNNER) {
-        // Exactly one child env, built by extensionProcessEnv INSIDE the wrapIacServerSpec call.
+        // Exactly one child env, built by extensionProcessEnv INSIDE the wrapIacServerSpec call. The
+        // connector is the iac one or (D3a) the kubernetes one, chosen by the profile, never by a caller.
         expect(f.contents).toMatch(
-          /wrapIacServerSpec\(\s*\{\s*\.\.\.connectorSpawn\("iac"\),\s*env: extensionProcessEnv\(/,
+          /wrapIacServerSpec\(\s*\{\s*\.\.\.connectorSpawn\(opts\.service \?\? "iac"\),\s*env: extensionProcessEnv\(/,
         );
         expect(f.contents.match(/connectorSpawn\(/g) ?? []).toHaveLength(1);
         continue;
@@ -1527,10 +1528,13 @@ describe("I15 — SandboxRunner is intrinsic to every extension spawn", () => {
         if (f === "iac-runner.ts") {
           // D2: the iac profiles' write list is built in ONE function from three inputs only: the
           // approved canonical workdir, this run's staging directory and this call's scratch
-          // directory. Every assignment of it is pinned here instead of the literal scan below.
+          // directory. D3a: the `kube` profile writes its scratch directory ONLY (the fourth
+          // entry: no owner directory, no kubeconfig directory). Every assignment of it is pinned
+          // here instead of the literal scan below.
           expect([...code.matchAll(/\bwrite = ([^;]*);/g)].map((m) => m[1])).toEqual([
             "[...wd, ...(req.stagingDir === undefined ? [] : [req.stagingDir])]",
             "[...wd]",
+            "req.scratchDir === undefined ? [] : [req.scratchDir]",
             "req.scratchDir === undefined ? [] : [req.scratchDir]",
           ]);
           continue;
@@ -3334,6 +3338,15 @@ function confirmableInput(row: ConnectorWriteRow): Record<string, unknown> {
   // A plan-bound IaC row (D2) passes its own input check too: an absolute directory, a template.
   if (row.bound?.prepare.settle === "iac-terraform") input["workingDirectory"] = "/srv/x1";
   if (row.bound?.prepare.settle === "iac-cfn") input["templateBody"] = "Resources: {}";
+  // The Kubernetes apply (D3a) derives its typed target from a manifest the gateway parses: its
+  // input is three real keys, never a `target`.
+  if (row.bound?.prepare.settle === "k8s-manifest") {
+    return {
+      context: "x1",
+      namespace: "x1",
+      manifest: ["apiVersion: v1", "kind: ConfigMap", "metadata:", "  name: x1", ""].join("\n"),
+    };
+  }
   return input;
 }
 
@@ -12004,9 +12017,9 @@ describe("I53 — a first-party connector write reaches the model only through t
       true,
     );
     // The seven mail sends (OR-W34-1), since D1 the Bitbucket merge (no head precondition), and
-    // since D2 the four rows that stay owner-only: Terraform destroy, Pulumi, the change-set
-    // discard and D3's Kubernetes apply.
-    expect(MODEL_NEVER_OFFERED_TOOL_IDS.size).toBe(12);
+    // since D2 the three rows that stay owner-only: Terraform destroy, Pulumi and the change-set
+    // discard (D3a took the Kubernetes apply off the list: it is offered while a pair is approved).
+    expect(MODEL_NEVER_OFFERED_TOOL_IDS.size).toBe(11);
     expect(MODEL_NEVER_OFFERED_TOOL_IDS.has("bitbucket_pr_merge")).toBe(true);
     for (const r of CONNECTOR_WRITE_ROWS) {
       if (r.wave === 4) expect(r.confirm, r.toolId).toBeDefined();
@@ -12035,13 +12048,16 @@ describe("I53 — a first-party connector write reaches the model only through t
     const offeredWave4 = CONNECTOR_WRITE_ROWS.filter((r) => r.wave === 4 && isModelOfferableRow(r));
     // 27 through a before-state (D1), the two bound multi-file commits (D1c) and the Terraform apply
     // and CloudFormation deploy (D2) through a prepare step, and the seven deploy-trigger and
-    // mobile-release writes (D3b) through a before-state; the destroy is bound but never offered.
-    expect(offeredWave4).toHaveLength(38);
+    // mobile-release writes (D3b) through a before-state, the Kubernetes apply (D3a) through a
+    // prepare step and the Kubernetes restart and scale (D3c) through a before-state; the destroy
+    // is bound but never offered.
+    expect(offeredWave4).toHaveLength(41);
     expect(offeredWave4.filter((r) => r.bound !== undefined).map((r) => r.toolId)).toEqual([
       "github_file_commit",
       "gitlab_commit_create",
       "iac_terraform_apply",
       "iac_cloudformation_deploy",
+      "k8s_manifest_apply",
     ]);
     for (const r of offeredWave4.filter((x) => x.bound === undefined)) {
       expect(r.before, r.toolId).toBeDefined();
@@ -12504,7 +12520,7 @@ describe("I53 — a first-party connector write reaches the model only through t
     expect(naming).toEqual(["engine/run-ask.ts"]);
   });
 
-  test("the production rows with a before reader are B1's seven comment rows, B2's nine issue writes, B3's five page writes, B4a's Drive create, B4b's Obsidian append (all wave 2), C1's eight wave-3 file, pull request and incident writes, C2's four wave-3 branch, pull request and merge request writes and C3's five wave-3 flag and alert writes, D1's 28 wave-4 rows (27 offered, plus the never-offered Bitbucket merge) and D3b's seven deploy and mobile-release rows", () => {
+  test("the production rows with a before reader are B1's seven comment rows, B2's nine issue writes, B3's five page writes, B4a's Drive create, B4b's Obsidian append (all wave 2), C1's eight wave-3 file, pull request and incident writes, C2's four wave-3 branch, pull request and merge request writes and C3's five wave-3 flag and alert writes, D1's 28 wave-4 rows (27 offered, plus the never-offered Bitbucket merge) and D3b's seven deploy and mobile-release rows and D3c's two Kubernetes rows", () => {
     const withReader = CONNECTOR_WRITE_ROWS.filter((r) => r.before !== undefined);
     const D1_WAVE4 = [
       "apple_calendar_event_delete",
@@ -12532,6 +12548,8 @@ describe("I53 — a first-party connector write reaches the model only through t
       "gitlab_pipeline_retry",
       "jenkins_build_abort",
       "jenkins_build_trigger",
+      "k8s_deployment_scale",
+      "k8s_rollout_restart",
       "mlflow_model_promote",
       "mlflow_model_transition_stage",
       "netlify_build_trigger",
@@ -13033,7 +13051,7 @@ describe("I54 — a bound connector write is dispatched only with the values its
     ]);
   });
 
-  test("the prepare set is exactly the seven declared tools, frozen; the bound production rows name members of it (D1c, D2)", () => {
+  test("the prepare set is exactly the seven declared tools, frozen; the bound production rows name members of it (D1c, D2, D3a)", () => {
     expect(
       CONNECTOR_WRITE_ROWS.filter((r) => r.bound !== undefined)
         .map((r) => r.toolId)
@@ -13045,6 +13063,7 @@ describe("I54 — a bound connector write is dispatched only with the values its
         "iac_cloudformation_deploy",
         "iac_terraform_apply",
         "iac_terraform_destroy",
+        "k8s_manifest_apply",
       ].sort(),
     );
     expect([...PREPARE_TOOL_IDS].sort()).toEqual([
@@ -13061,6 +13080,30 @@ describe("I54 — a bound connector write is dispatched only with the values its
     }
     expect(() => (PREPARE_TOOL_IDS as unknown as Set<string>).add("x_plan")).toThrow(TypeError);
     expect(PREPARE_TOOL_IDS.size).toBe(7);
+  });
+
+  test("the Kubernetes apply (D3a) is the sixth bound row: settled by the gateway's own pure settler, reached only through the capability, with both hashes gateway-computed", async () => {
+    const row = CONNECTOR_WRITE_ROWS.find((r) => r.toolId === "k8s_manifest_apply");
+    expect(row?.bound?.prepare.settle).toBe("k8s-manifest");
+    expect(row?.bound?.prepare.preflight).toBe("kubernetes");
+    expect(row?.bound?.prepare.tool).toBe("k8s_manifest_plan");
+    // Both identities are bound; the model never sees either (the door strips every bound field).
+    expect(row?.bound?.binds.map((b) => b.field)).toEqual(["planSha256", "diffSha256"]);
+    // The settler is named by its own module and the registry's capability only; the executor
+    // reaches it through `boundWriteCapabilities.settle` and never by name.
+    const registry = stripComments(await read("packages/gateway/src/connectors/registry.ts"));
+    expect(registry.match(/\bsettleK8sManifest\(/g) ?? []).toHaveLength(1);
+    const executor = stripComments(await read("packages/gateway/src/engine/executor.ts"));
+    expect(executor).not.toMatch(/settleK8sManifest/);
+    // The settler computes both hashes itself and compares the reply's to them in constant time.
+    const settle = stripComments(await read("packages/gateway/src/engine/k8s-settle.ts"));
+    expect(settle).toMatch(/const planSha256 = k8sPlanHash\(context, namespace, manifest\)/);
+    expect(settle).toMatch(/const diffSha256 = k8sDiffHash\(diff\)/);
+    expect((settle.match(/sha256HexEqualConstantTime\(/g) ?? []).length).toBe(2);
+    // A pod's manifest text is never in the audit: the kubernetes apply is a text-carrying type.
+    const { carriesTemplateText } = await import("./engine/audit-bodies.ts");
+    expect(carriesTemplateText("kubernetes.manifest.apply")).toBe(true);
+    expect(carriesTemplateText("kubernetes.write.prepare")).toBe(true);
   });
 
   test("the public gate() never binds: a bound row reaching it is refused, audited and not dispatched", async () => {

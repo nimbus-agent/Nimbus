@@ -5,14 +5,19 @@
 import { describe, expect, test } from "bun:test";
 import { renderConfirmText } from "./confirm.ts";
 import { CONFIRM_MAX_LENGTH } from "./confirm-template.ts";
+import { CONNECTOR_WRITE_ROWS } from "./index.ts";
+import { K8S_APPLY_BOUND } from "./k8s-bound.ts";
 import { k8sPlanHash } from "./k8s-manifest.ts";
-import { K8S_TEST_BOUND, k8sTestRow } from "./k8s-row.test-helpers.ts";
 import { row, textField, withBound, withConfirm, withPreview } from "./types.ts";
 
 const DEPLOY = "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: api\n";
 const CM = "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: cfg\n";
 
-const ROW = k8sTestRow();
+const ROW = (() => {
+  const found = CONNECTOR_WRITE_ROWS.find((r) => r.toolId === "k8s_manifest_apply");
+  if (found === undefined) throw new Error("the production Kubernetes apply row is missing");
+  return found;
+})();
 const input = (manifest: string, extra: Record<string, unknown> = {}) => ({
   context: "prod",
   namespace: "shop",
@@ -133,7 +138,7 @@ describe("declaration rules", () => {
   });
 
   test("the bound Kubernetes row must derive a {target} it names", () => {
-    const bound = withBound(base(), K8S_TEST_BOUND);
+    const bound = withBound(base(), K8S_APPLY_BOUND);
     expect(() => withConfirm(bound, { template: "apply {target}" })).toThrow(
       "names {target} without derive",
     );
@@ -149,13 +154,13 @@ describe("declaration rules", () => {
     ).toThrow();
   });
 
-  test("the production-shaped row declares and renders", () => {
+  test("the production row declares and renders", () => {
     expect(ROW.confirm?.derive).toBe("k8s-target");
     expect(ROW.confirm?.template).toBe("apply {target}");
   });
 
   test("the other placeholders of a derived template still obey the secret-name rule", () => {
-    const bound = withBound(base(), K8S_TEST_BOUND);
+    const bound = withBound(base(), K8S_APPLY_BOUND);
     expect(() =>
       withConfirm(bound, { template: "apply {target} {token}", derive: "k8s-target" }),
     ).toThrow("secret-looking");

@@ -1,6 +1,6 @@
 // packages/gateway/src/engine/audit-bodies.ts
-// What the audit row and the egress ledger record of a CloudFormation `templateBody` (Phase 9.7 D2):
-// its size and SHA-256, never the template text. A template is up to 51,200 bytes of arbitrary text
+// What the audit row and the egress ledger record of a CloudFormation `templateBody` (Phase 9.7 D2)
+// and of a Kubernetes `manifest` (D3a): its size and SHA-256, never the text. A template is up to 51,200 bytes of arbitrary text
 // (parameter defaults, inline policies, user data), the audit payload is capped at 4096 characters,
 // and the credential patterns the redactor knows are not all that a template can hold. What was
 // approved is reconciled by the write's `diffSha256` (the SHA-256 of the change set text the owner
@@ -17,29 +17,53 @@ import type { PlannedAction } from "./types.ts";
  */
 export const TEMPLATE_WRITE_ACTION_TYPES: ReadonlySet<string> = new Set([
   "iac.cloudformation.deploy",
+  // D3a: the Kubernetes apply carries a manifest of up to 48 KiB (it may name Secrets-adjacent
+  // config, image pull settings, annotations); its hash is what the write's `diffSha256` reconciles.
+  "kubernetes.manifest.apply",
 ]);
 
-/** Whether `type` is the deploy write or the iac prepare read that carries its template. */
+/** The services whose `<service>.write.prepare` read carries the same kind of text. */
+const PREPARE_TEXT_SERVICES: ReadonlySet<string> = new Set(["iac", "kubernetes"]);
+
+/** Whether `type` is the deploy/apply write or the prepare read that carries its template or manifest. */
 export function carriesTemplateText(type: string): boolean {
   if (TEMPLATE_WRITE_ACTION_TYPES.has(type)) return true;
   const [service, write, prepare, ...rest] = type.split(".");
-  return service === "iac" && write === "write" && prepare === "prepare" && rest.length === 0;
+  return (
+    service !== undefined &&
+    PREPARE_TEXT_SERVICES.has(service) &&
+    write === "write" &&
+    prepare === "prepare" &&
+    rest.length === 0
+  );
 }
 
-/** `holder` with its `templateBody` replaced by its size and hash, or `undefined` when it has none. */
+/** The text-carrying keys and the names of their size and hash. */
+const TEXT_KEYS: ReadonlyArray<readonly [string, string, string, string]> = [
+  ["templateBody", "templateBytes", "templateSha256", "templateMalformed"],
+  ["manifest", "manifestBytes", "manifestSha256", "manifestMalformed"],
+];
+
+/** `holder` with its `templateBody` and `manifest` replaced by size and hash, or `undefined` when it has neither. */
 function summariseHolder(
   holder: Readonly<Record<string, unknown>>,
 ): Record<string, unknown> | undefined {
-  if (!Object.hasOwn(holder, "templateBody")) return undefined;
-  const { templateBody, ...rest } = holder;
-  const summary: Record<string, unknown> =
-    typeof templateBody === "string"
-      ? {
-          templateBytes: Buffer.byteLength(templateBody, "utf8"),
-          templateSha256: createHash("sha256").update(templateBody, "utf8").digest("hex"),
-        }
-      : { templateMalformed: true };
-  return { ...rest, ...summary };
+  let out: Record<string, unknown> | undefined;
+  for (const [key, bytesKey, hashKey, malformedKey] of TEXT_KEYS) {
+    const current: Record<string, unknown> = out ?? { ...holder };
+    if (!Object.hasOwn(current, key)) continue;
+    const { [key]: text, ...rest } = current;
+    out = {
+      ...rest,
+      ...(typeof text === "string"
+        ? {
+            [bytesKey]: Buffer.byteLength(text, "utf8"),
+            [hashKey]: createHash("sha256").update(text, "utf8").digest("hex"),
+          }
+        : { [malformedKey]: true }),
+    };
+  }
+  return out;
 }
 
 /**

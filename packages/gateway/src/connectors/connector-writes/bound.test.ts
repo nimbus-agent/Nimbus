@@ -106,7 +106,7 @@ describe("withBound", () => {
 });
 
 describe("the production table (D0b mechanism, D1c rows)", () => {
-  test("the bound production rows are the two multi-file commits and the three plan-bound iac writes", () => {
+  test("the bound production rows are the two multi-file commits, the three plan-bound iac writes and the Kubernetes apply", () => {
     expect(
       CONNECTOR_WRITE_ROWS.filter((r) => r.bound !== undefined)
         .map((r) => r.toolId)
@@ -118,6 +118,7 @@ describe("the production table (D0b mechanism, D1c rows)", () => {
         "iac_cloudformation_deploy",
         "iac_terraform_apply",
         "iac_terraform_destroy",
+        "k8s_manifest_apply",
       ].sort(),
     );
   });
