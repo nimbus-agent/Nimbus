@@ -282,7 +282,7 @@ describe("D3b confirm texts", () => {
   test("a Netlify production publish types a different text from a branch build", () => {
     const branch = text("netlify_build_trigger", MIN.netlify_build_trigger);
     const prod = text("netlify_build_trigger", {
-      siteId: MIN.netlify_build_trigger.siteId,
+      siteId: MIN.netlify_build_trigger["siteId"],
       production: true,
     });
     expect(prod).toBe("netlify/publish production 55555555");
