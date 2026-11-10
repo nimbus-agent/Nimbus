@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794338350412,
+  "lastUpdate": 1794339053956,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "622c51f90fbb72001f7f900846a82c8c3833e548",
-          "message": "docs: a local-LLM audit of the shipped 2.10.0 binary — 31 findings, four of which would change a release decision (#1296)\n\nA black-box audit of the shipped `nimbus` **2.10.0** binary driven\nagainst a local\nOllama `llama3.2`, filed as\n`docs/superpowers/specs/2026-08-21-local-llm-audit-findings.md`.\nDocs only — no runtime change. Also adds\n`scripts/diagnostics/test-google-oauth-refresh.ps1`,\nthe probe used to establish F10.\n\n## Why this exists\n\nThe question the audit set out to answer: **when a brief or an answer\ncomes back wrong, is that\nNimbus or the model?** The rule applied throughout is that a defect\ncounts as a Nimbus defect if a\nfrontier model would receive the same bad input, or would be permitted\nthe same bad output by the\nsame guard. Where a failure is genuinely \"3B is weak\", it is filed under\n§ Not-a-Nimbus-bug with **no fix proposed**.\n\nThe weak local model turned out to be a good instrument rather than a\nconfound: it fails loudly and\nliterally, which surfaced guard gaps a more fluent model would have\npapered over. Several of the\nhighest-severity findings have no model in them at all.\n\n## The four that would change a release decision\n\n- **F24a — `nimbus deploy preflight --mode block` returns `ok` and exits\n0 for a service that is\nnot in config.** `unconfiguredEnvelope` hard-codes `verdict: \"ok\"`, the\nvocabulary is only\n`ok|warn`, and the CLI blocks only on `\"warn\"`. The first-party GitHub\nAction calls the same\ndispatcher and emits no annotations on `ok`. Its `allow-gateway-failure`\ndefaults to false, so the\ntransport is fail-closed while the configuration is fail-open. A unit\ntest asserts the `ok`\n  verdict, so the fix must invert an existing assertion.\n- **F15 + F22 — both `new Worker` sites are dead in every compiled\nrelease.** Semantic search and\n`nimbus query --sql` alike. Neither worker is a `bun build --compile`\nentry point, and\n`git log -S worker` over both build scripts returns nothing, so this has\nnever worked in a\n  packaged build. Every source-tree test and all of CI pass.\n- **F16 — `nimbus vault set` and `vault delete` can never succeed**; the\nHITL consent handler is\n  never registered, so both always time out.\n- **F29 — the reserved-section leak is 6 of 8 briefs, in 3 shapes.** The\nstrip is keyed on heading\nlevel, which is the wrong property: the renderer writes each reserved\nsection exactly once at\nlevel 2, so any second occurrence of a reserved name — at any level or\nnone — is fabrication.\n\n## Also recorded\n\n- **F25 — a disclosure can be perfectly guarded and false.** `nimbus\ndecisions` still says \"no\nconnector indexes changed-file paths\" to justify a 0.86 confidence\nceiling; V55 shipped\n`pr_changed_file` and the same gateway prints \"PR file coverage: 173 /\n173\". I31 protected that\nsentence flawlessly. I31 guarantees a disclosure survives; nothing\nguarantees it is still true.\n- **F26 — a split identity zeroes a whole brief.** `resolveSelfPerson`\ntries `git config user.email`\nfirst, landing on the Gmail person record, so `negotiate` renders six\nzeros for someone who\nauthored 160 of 173 indexed PRs. `catchup` shares the resolver, which is\nthe cause under F3.\n- **F20 — `--not-touching` binds any string into SQLite `GLOB`.** Five\nnatural spellings of one path\n— no wildcard, wrong case, backslashes, a leading slash, a `./` prefix —\neach match nothing,\nexclude nothing, and return every PR as satisfying the negation while\nthe Gaps line reports\n  `0 excluded`.\n- **F19 — `nimbus help` names 38 of the 65 commands the CLI\ndispatches.** The 27 omitted include 9\n  of the 14 agents, `prove`, `mcp-server` and `update`.\n- A § MCP surface section recording which findings get worse when the\nconsumer is a model, and a\n  § Not probed note for the default-off `[briefs]` HTTP surface.\n\n## Method and its limits\n\nThe binary under test is 2.10.0; root causes were read at `origin/main`,\npost-2.12. Where a root\ncause is cited, the shipped source was diffed to confirm the code is\nidentical; anything not so\nconfirmed is marked in the document. Every finding carries the command\nthat reproduces it, and the\n§ Reproduction section at the end collects them.\n\nThe document corrects itself in two places rather than leaving the\nearlier claim standing: F2's\n\"one-line fix, smallest diff\" framing is wrong given F28 and F29, and\nthe suggested first PR moves\nfrom F2 to F24a.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Added a diagnostic tool for checking Google OAuth refresh token\nstatus.\n* Supports testing individual tokens, all configured Google OAuth\ntokens, or a directly provided token.\n* Reports token validity, expiry details, and actionable status results\nwithout exposing sensitive token values.\n\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-08-21T20:33:34+03:00",
-          "tree_id": "48e64dce6d1c586f16ae66452394b88d86ff44d1",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/622c51f90fbb72001f7f900846a82c8c3833e548"
-        },
-        "date": 1787334103626,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 246.5065080999997,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 247.80632434998952,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 218.94866120000188,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
+            "name": "nimbus-release-bot[bot]",
+            "username": "nimbus-release-bot[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "2164f9b0486a538ddfee4eee14663ac307b4e2d9",
+          "message": "chore: release main (#1956)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>10.44.0</summary>\n\n##\n[10.44.0](https://github.com/nimbus-agent/Nimbus/compare/v10.43.0...v10.44.0)\n(2026-11-10)\n\n\n### Features\n\n* **gateway:** the model can propose a Kubernetes apply, rollout restart\nor scale, in owner-approved namespaces, behind the full diff and a typed\nconfirmation\n([#1955](https://github.com/nimbus-agent/Nimbus/issues/1955))\n([be71be3](https://github.com/nimbus-agent/Nimbus/commit/be71be39c9ddd665f8ed8a1c935c888ad87c1389))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
+          "timestamp": "2026-11-10T19:19:02Z",
+          "tree_id": "71f0584476b937d4abcea4f152bfdf6355f40374",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/2164f9b0486a538ddfee4eee14663ac307b4e2d9"
+        },
+        "date": 1794339049038,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 292.23949334999486,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 292.8543833000054,
             "unit": "ms"
           }
         ]
