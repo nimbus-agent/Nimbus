@@ -11,7 +11,8 @@ export interface ConnectorWritesDeps {
 
 const ENABLE_USAGE =
   "Usage: nimbus connector writes enable <service> [--wave 2|3|4]\n" +
-  "       nimbus connector writes enable iac --wave 4 [--workdir <dir> ...] [--cloud aws,azure,gcp] [--region <r> ...] [--net <host> ...]";
+  "       nimbus connector writes enable iac --wave 4 [--workdir <dir> ...] [--cloud aws,azure,gcp] [--region <r> ...] [--net <host> ...]\n" +
+  "       nimbus connector writes enable kubernetes --wave 4 --grant <namespace>@<context> [--grant ...]";
 const DISABLE_USAGE = "Usage: nimbus connector writes disable <service>";
 const STATUS_USAGE = "Usage: nimbus connector writes status [--json]";
 const WRITES_USAGE = `${ENABLE_USAGE}\n${DISABLE_USAGE}\n${STATUS_USAGE}`;
@@ -31,6 +32,10 @@ const REFUSALS: ReadonlyArray<readonly [code: string, message: string]> = [
   [
     "ERR_CONNECTOR_WRITES_IAC_UNAVAILABLE",
     "Refused: this gateway cannot check directories, so no Terraform directory can be approved.",
+  ],
+  [
+    "ERR_CONNECTOR_WRITES_K8S_UNAVAILABLE",
+    "Refused: this gateway cannot read a kubeconfig, so no Kubernetes namespace can be approved.",
   ],
 ];
 
@@ -80,6 +85,18 @@ interface IacScope {
   net: string[];
 }
 
+/** One `--grant <namespace>@<context>`, split at the FIRST `@` (a namespace is a DNS label; a context may hold `@`). */
+interface K8sGrantArg {
+  namespace: string;
+  context: string;
+}
+
+function parseGrantArg(v: string): K8sGrantArg | undefined {
+  const at = v.indexOf("@");
+  if (at <= 0 || at === v.length - 1) return undefined;
+  return { namespace: v.slice(0, at), context: v.slice(at + 1) };
+}
+
 const IAC_FLAGS: Readonly<Record<string, keyof IacScope>> = {
   "--workdir": "workdirs",
   "--cloud": "clouds",
@@ -94,12 +111,16 @@ function takeIacValue(iac: IacScope, key: keyof IacScope, v: string | undefined)
   return true;
 }
 
-function parseEnableArgs(
-  tail: string[],
-): Parsed<{ service: string; wave: 2 | 3 | 4 | undefined; iac: IacScope }> {
+function parseEnableArgs(tail: string[]): Parsed<{
+  service: string;
+  wave: 2 | 3 | 4 | undefined;
+  iac: IacScope;
+  grants: K8sGrantArg[];
+}> {
   let service: string | undefined;
   let wave: 2 | 3 | 4 | undefined;
   const iac: IacScope = { workdirs: [], clouds: [], regions: [], net: [] };
+  const grants: K8sGrantArg[] = [];
   for (let i = 0; i < tail.length; i++) {
     const a = tail[i] as string;
     const iacKey = IAC_FLAGS[a];
@@ -107,6 +128,10 @@ function parseEnableArgs(
       const v = tail[++i];
       if (v !== "2" && v !== "3" && v !== "4") return { ok: false };
       wave = Number(v) as 2 | 3 | 4;
+    } else if (a === "--grant") {
+      const g = parseGrantArg(tail[++i] ?? "");
+      if (g === undefined) return { ok: false };
+      grants.push(g);
     } else if (iacKey !== undefined) {
       if (!takeIacValue(iac, iacKey, tail[++i])) return { ok: false };
     } else if (a.startsWith("-") || service !== undefined) {
@@ -118,7 +143,9 @@ function parseEnableArgs(
   const hasIac = Object.values(iac).some((l) => l.length > 0);
   // The scope flags belong to `iac` alone: any other service would silently ignore them.
   if (service === undefined || (hasIac && service !== "iac")) return { ok: false };
-  return { ok: true, value: { service, wave, iac } };
+  // `--grant` belongs to `kubernetes` alone, and `kubernetes` needs at least one.
+  if (grants.length > 0 !== (service === "kubernetes")) return { ok: false };
+  return { ok: true, value: { service, wave, iac, grants } };
 }
 
 async function runEnable(d: ConnectorWritesDeps, tail: string[]): Promise<void> {
@@ -127,12 +154,13 @@ async function runEnable(d: ConnectorWritesDeps, tail: string[]): Promise<void> 
     usage(d, ENABLE_USAGE);
     return;
   }
-  const { service, wave, iac } = parsed.value;
+  const { service, wave, iac, grants } = parsed.value;
   try {
     const res = await d.call("connector.writesEnable", {
       service,
       ...(wave === undefined ? {} : { wave }),
       ...(service === "iac" ? iac : {}),
+      ...(service === "kubernetes" ? { k8sGrants: grants } : {}),
     });
     const r = isRecord(res) ? res : {};
     d.log(
@@ -169,6 +197,12 @@ interface StatusRow {
   offerable?: number;
   awaitingApproval?: number;
   iacGrants?: { workdirs?: string[]; clouds?: string[]; regions?: string[]; net?: string[] };
+  k8sGrants?: Array<{
+    context?: string;
+    namespace?: string;
+    server?: string;
+    credentialForm?: string;
+  }>;
 }
 
 /**
@@ -189,6 +223,17 @@ function logIacGrants(d: ConnectorWritesDeps, row: StatusRow): void {
   d.log(`  clouds: ${list(g.clouds)}`);
   d.log(`  regions: ${list(g.regions)}`);
   d.log(`  extra hosts: ${list(g.net)}`);
+}
+
+/** `status` for `kubernetes`: one line per approved (context, namespace). */
+function logK8sGrants(d: ConnectorWritesDeps, row: StatusRow): void {
+  const grants = row.k8sGrants ?? [];
+  if (grants.length === 0) d.log("  namespaces: (none)");
+  for (const g of grants) {
+    d.log(
+      `  ${String(g.context)}: ${String(g.namespace)}  (${String(g.server)}, ${String(g.credentialForm)})`,
+    );
+  }
 }
 
 async function runStatus(d: ConnectorWritesDeps, tail: string[]): Promise<void> {
@@ -214,6 +259,7 @@ async function runStatus(d: ConnectorWritesDeps, tail: string[]): Promise<void> 
           : `${name}  off`,
       );
       if (row.service === "iac") logIacGrants(d, row);
+      if (row.service === "kubernetes" && row.enabled) logK8sGrants(d, row);
     }
     d.log(
       r["policyAllows"] === true

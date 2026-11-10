@@ -92,6 +92,69 @@ const IAC_HOST_SCOPE_LINES: Readonly<Record<string, string>> = {
     "This system cannot confine a child's network right now: Terraform will not start until it can.",
 };
 
+/** The fixed sentences of the Kubernetes approval (D3a, I54): what an apply can do and what Nimbus guarantees. */
+export const K8S_CLUSTER_LINE =
+  "kubectl runs with this cluster credential and your cluster's permissions; Nimbus does not police what a namespaced manifest asks the cluster to do (admission and Pod Security decide).";
+export const K8S_REFUSED_LINE =
+  "Cluster-scoped kinds, Secrets and host-access settings are refused; a Secret is never applied by Nimbus.";
+export const K8S_EACH_APPLY_LINE =
+  "Each apply will still show the objects and the diff and ask you to type the target.";
+export const K8S_LOCAL_SERVER_LINE =
+  "An API server on this machine (localhost, Docker Desktop, kind, minikube) cannot be reached from the Windows sandbox: applies to it will fail here. A cluster on another host works.";
+const K8S_HOST_SCOPE_LINES: Readonly<Record<string, string>> = {
+  per_host:
+    "The API server host and port are enforced one by one on this system; kubectl reaches no other host.",
+  per_port:
+    "This platform limits the port, not the host: a compromised kubectl could send the credential to any host on that port.",
+  all_or_nothing:
+    "This system cannot limit the host or the port: a compromised kubectl could send the credential to any host on any port.",
+  refusing:
+    "This system cannot confine a child's network right now: kubectl will not start until it can.",
+};
+const K8S_FORMS: Readonly<Record<string, string>> = {
+  "client-certificate": "client certificate",
+  token: "token",
+};
+
+/** The Kubernetes scope lines; `undefined` when the scope is missing or malformed (refuse, never guess). */
+function k8sScopeLines(scope: unknown): string[] | undefined {
+  if (typeof scope !== "object" || scope === null) return undefined;
+  const rec = scope as Record<string, unknown>;
+  const grants = rec["grants"];
+  const hostScope = rec["hostScope"];
+  if (
+    !Array.isArray(grants) ||
+    grants.length === 0 ||
+    typeof hostScope !== "string" ||
+    !Object.hasOwn(K8S_HOST_SCOPE_LINES, hostScope) ||
+    typeof rec["localServerOnWindows"] !== "boolean"
+  ) {
+    return undefined;
+  }
+  const lines = [
+    "Approving lets Nimbus apply manifests to these namespaces (context: namespace, API server, credential form):",
+  ];
+  for (const g of grants as unknown[]) {
+    const r = g as Record<string, unknown> | null;
+    if (
+      typeof r?.["context"] !== "string" ||
+      typeof r["namespace"] !== "string" ||
+      typeof r["server"] !== "string" ||
+      typeof r["form"] !== "string" ||
+      !Object.hasOwn(K8S_FORMS, r["form"])
+    ) {
+      return undefined;
+    }
+    lines.push(
+      `  ${sanitisePreviewText(r["context"])}: ${sanitisePreviewText(r["namespace"])}  (${sanitisePreviewText(r["server"])}, ${K8S_FORMS[r["form"]]})`,
+    );
+  }
+  lines.push(K8S_CLUSTER_LINE, K8S_REFUSED_LINE, K8S_HOST_SCOPE_LINES[hostScope] as string);
+  if (rec["localServerOnWindows"] === true) lines.push(K8S_LOCAL_SERVER_LINE);
+  lines.push(K8S_EACH_APPLY_LINE);
+  return lines;
+}
+
 /** The iac scope lines; `undefined` when the scope is missing or malformed (refuse, never guess). */
 function iacScopeLines(scope: unknown): string[] | undefined {
   if (typeof scope !== "object" || scope === null) return undefined;
@@ -176,6 +239,11 @@ export function enableWritesPromptLines(
   }
   if (service === "iac") {
     const scopeLines = iacScopeLines(payload?.["iacGrants"]);
+    if (scopeLines === undefined) return undefined;
+    lines.push("", ...scopeLines);
+  }
+  if (service === "kubernetes") {
+    const scopeLines = k8sScopeLines(payload?.["k8sGrants"]);
     if (scopeLines === undefined) return undefined;
     lines.push("", ...scopeLines);
   }

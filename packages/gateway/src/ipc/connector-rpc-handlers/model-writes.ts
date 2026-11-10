@@ -29,6 +29,18 @@ import {
   removeIacGrants,
   setIacGrants,
 } from "../../connectors/connector-writes/iac-grants.ts";
+import {
+  getK8sGrants,
+  type K8sGrant,
+  removeK8sGrants,
+  setK8sGrants,
+} from "../../connectors/connector-writes/k8s-grants.ts";
+import { isDnsLabel, isProtectedNamespace } from "../../connectors/connector-writes/k8s-limits.ts";
+import { isPlainContext } from "../../connectors/connector-writes/k8s-manifest.ts";
+import {
+  inspectKubeconfig,
+  type KubeFs,
+} from "../../connectors/connector-writes/kubeconfig-facts.ts";
 import { isModelOfferableRow } from "../../connectors/connector-writes/model-offerable.ts";
 import { isConnectorWriteModelAccessEnabled } from "../../connectors/connector-writes/model-write-capability.ts";
 import type {
@@ -71,6 +83,15 @@ export interface ModelWritesDeps {
    */
   readonly sandboxRunner?: ReachRunner;
   /**
+   * D3a: the kubeconfig path the Vault holds for the `kubernetes` connector (`kubernetes.kubeconfig`),
+   * and the filesystem its facts are read from. Absent: `enable kubernetes` is refused (it cannot
+   * read a kubeconfig it cannot see).
+   */
+  readonly readKubeconfigPath?: () => Promise<string | undefined>;
+  readonly kubeFs?: KubeFs;
+  /** The OS the gateway runs on (the Windows local-cluster warning); default `process.platform`. */
+  readonly platform?: NodeJS.Platform;
+  /**
    * What approving the Obsidian append would let its sandbox write now (`LazyConnectorMesh.
    * obsidianWriteScope`), shown in the enable prompt. Absent: the prompt says the folders are unknown.
    */
@@ -79,6 +100,104 @@ export interface ModelWritesDeps {
     /** Per vault, its daily-note file pattern (`<vault>/<daily folder>/<format>.md`). */
     readonly notes: readonly string[];
     readonly skipped: readonly { readonly path: string; readonly reason: string }[];
+  };
+}
+
+/** The service whose opt-in also carries the approved contexts and namespaces (D3a, V86). */
+const KUBERNETES_SERVICE = "kubernetes";
+
+/** Hosts that name this machine: a sandboxed child on Windows cannot reach them (probed 2026-11-10). */
+function isLocalApiServer(server: string): boolean {
+  const host = server.slice(0, server.lastIndexOf(":"));
+  return (
+    host === "localhost" ||
+    host.endsWith(".localhost") ||
+    /^127./.test(host) ||
+    host === "host.docker.internal" ||
+    host === "kubernetes.docker.internal"
+  );
+}
+
+const MAX_K8S_GRANTS = 100;
+
+/**
+ * Validates the `enable kubernetes` arguments into the grants to store: every (context, namespace)
+ * pair is checked (a plain DNS-label namespace outside the protected three, a context that can be
+ * typed), and every distinct context is read from the kubeconfig the Vault names, which must pass the
+ * allowlist (R2-6). Every refusal is a fixed sentence that echoes nothing.
+ */
+async function parseK8sGrants(
+  rec: Record<string, unknown> | undefined,
+  maxWave: ConnectorWriteWave,
+  deps: ModelWritesDeps,
+): Promise<K8sGrant[]> {
+  const bad = (m: string): never => {
+    throw new ConnectorRpcError(-32602, `ERR_CONNECTOR_WRITES_K8S_BAD_ARGS: ${m}`);
+  };
+  if (deps.readKubeconfigPath === undefined || deps.kubeFs === undefined) {
+    throw new ConnectorRpcError(
+      -32603,
+      "ERR_CONNECTOR_WRITES_K8S_UNAVAILABLE: this gateway cannot read a kubeconfig",
+    );
+  }
+  if (maxWave !== 4) bad("kubernetes writes are wave 4: pass --wave 4");
+  const raw = rec?.["k8sGrants"];
+  if (!Array.isArray(raw) || raw.length === 0)
+    bad("name at least one --grant <namespace>@<context>");
+  const list = raw as unknown[];
+  if (list.length > MAX_K8S_GRANTS) bad("too many grants");
+  const pairs = new Map<string, { namespace: string; context: string }>();
+  for (const entry of list) {
+    const e = typeof entry === "object" && entry !== null ? (entry as Record<string, unknown>) : {};
+    const { namespace, context } = e;
+    if (!isDnsLabel(namespace) || !isPlainContext(context)) {
+      bad("a grant needs a namespace name and a context name that can be typed");
+    }
+    if (isProtectedNamespace(namespace as string)) {
+      bad("kube-system, kube-public and kube-node-lease cannot be approved");
+    }
+    pairs.set(JSON.stringify([context, namespace]), {
+      namespace: namespace as string,
+      context: context as string,
+    });
+  }
+  const path = await deps.readKubeconfigPath();
+  const facts = new Map<string, { server: string; credentialForm: K8sGrant["credentialForm"] }>();
+  const grants: K8sGrant[] = [];
+  for (const { namespace, context } of [...pairs.values()].sort(
+    (a, b) => codeUnitCompare(a.context, b.context) || codeUnitCompare(a.namespace, b.namespace),
+  )) {
+    let f = facts.get(context);
+    if (f === undefined) {
+      const r = inspectKubeconfig(deps.kubeFs, path, context);
+      if (!r.ok) {
+        throw new ConnectorRpcError(-32602, `ERR_CONNECTOR_WRITES_K8S_KUBECONFIG: ${r.reason}`);
+      }
+      f = { server: r.server, credentialForm: r.credentialForm };
+      facts.set(context, f);
+    }
+    grants.push({ context, namespace, server: f.server, credentialForm: f.credentialForm });
+  }
+  return grants;
+}
+
+/** What the prompt shows for the grants: names, servers and credential FORMS, never a value. */
+function k8sPromptScope(
+  grants: readonly K8sGrant[],
+  posture: SandboxNetworkPosture,
+  platform: NodeJS.Platform,
+): Record<string, unknown> {
+  return {
+    grants: grants.map((g) => ({
+      context: g.context,
+      namespace: g.namespace,
+      server: g.server,
+      // Not `credentialForm`: the prompt's redaction masks any key with "credential" in it.
+      form: g.credentialForm,
+    })),
+    hostScope: posture,
+    // A cluster on this machine cannot be reached from the Windows sandbox.
+    localServerOnWindows: platform === "win32" && grants.some((g) => isLocalApiServer(g.server)),
   };
 }
 
@@ -259,6 +378,15 @@ export async function handleConnectorWritesEnable(
         : sandboxNetworkPosture(deps.sandboxRunner);
     payload["iacGrants"] = iacPromptScope(iacGrants, posture);
   }
+  const k8sGrants =
+    service === KUBERNETES_SERVICE ? await parseK8sGrants(rec, maxWave, deps) : undefined;
+  if (k8sGrants !== undefined) {
+    const posture =
+      deps.sandboxRunner === undefined
+        ? "all_or_nothing"
+        : sandboxNetworkPosture(deps.sandboxRunner);
+    payload["k8sGrants"] = k8sPromptScope(k8sGrants, posture, deps.platform ?? process.platform);
+  }
   // The Obsidian widening is named in the prompt the owner approves (I15, OR-B4-1).
   const scope = obsidianScopeFor(service, writes, deps);
   if (scope !== undefined) payload["fileWriteScope"] = scope;
@@ -270,6 +398,7 @@ export async function handleConnectorWritesEnable(
   const approved = writes.filter((w) => w.offerable).map((w) => w.toolId);
   setModelWriteEnablement(deps.db, service, maxWave, deps.now(), approved);
   if (iacGrants !== undefined) setIacGrants(deps.db, iacGrants, deps.now());
+  if (k8sGrants !== undefined) setK8sGrants(deps.db, k8sGrants, deps.now());
   // After the row: the restart's next spawn reads the grant from it.
   if (service === OBSIDIAN_SERVICE) await deps.onObsidianGrantChanged?.();
   return { service, maxWave, writes: writes.length };
@@ -284,6 +413,8 @@ export async function handleConnectorWritesDisable(
   let removed = removeModelWriteEnablement(deps.db, service);
   // Disabling `iac` drops the approved directories and clouds too (narrowing needs no approval).
   if (service === IAC_SERVICE && removeIacGrants(deps.db)) removed = true;
+  // Disabling `kubernetes` drops the approved contexts and namespaces too.
+  if (service === KUBERNETES_SERVICE && removeK8sGrants(deps.db)) removed = true;
   if (service === OBSIDIAN_SERVICE) await deps.onObsidianGrantChanged?.();
   return { removed };
 }
@@ -301,6 +432,8 @@ export function handleConnectorWritesStatus(deps: ModelWritesDeps): {
     enabledAt?: number;
     /** `iac` only: the approved directories, clouds, regions and extra hosts. */
     iacGrants?: IacGrants;
+    /** `kubernetes` only: the approved (context, namespace) pairs with their server and form. */
+    k8sGrants?: K8sGrant[];
     writes: number;
     offerable: number;
     awaitingApproval: number;
@@ -318,7 +451,9 @@ export function handleConnectorWritesStatus(deps: ModelWritesDeps): {
       offerable: approved,
       awaitingApproval: offerableNow.length - approved,
     };
-    const extra = service === IAC_SERVICE ? { iacGrants: getIacGrants(deps.db) } : {};
+    let extra: Record<string, unknown> = {};
+    if (service === IAC_SERVICE) extra = { iacGrants: getIacGrants(deps.db) };
+    if (service === KUBERNETES_SERVICE) extra = { k8sGrants: getK8sGrants(deps.db) };
     return e === undefined
       ? { service, enabled: false, ...counts, ...extra }
       : { service, enabled: true, maxWave: e.maxWave, enabledAt: e.enabledAt, ...counts, ...extra };

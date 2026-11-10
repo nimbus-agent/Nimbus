@@ -1,10 +1,14 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   buildSingleContextKubeconfig,
   inspectKubeconfig,
   KUBECONFIG_REFUSALS,
   type KubeFs,
   kubeconfigMatchesGrant,
+  nodeKubeFs,
 } from "./kubeconfig-facts.ts";
 
 const CFG = "/home/me/.kube/config";
@@ -384,5 +388,21 @@ describe("drift against the approved facts", () => {
         credentialForm: "client-certificate",
       }),
     ).toBe(false);
+  });
+});
+
+describe("nodeKubeFs (the real filesystem)", () => {
+  test("lstat reports a regular file and its size, a missing path as undefined, and reads bytes", () => {
+    const dir = mkdtempSync(join(tmpdir(), "nimbus-kubefs-"));
+    try {
+      const file = join(dir, "config");
+      writeFileSync(file, "abc");
+      expect(nodeKubeFs.lstat(file)).toEqual({ isFile: true, isSymbolicLink: false, size: 3 });
+      expect(nodeKubeFs.lstat(join(dir, "missing"))).toBeUndefined();
+      expect(nodeKubeFs.lstat(dir)?.isFile).toBe(false);
+      expect(new TextDecoder().decode(nodeKubeFs.readFile(file))).toBe("abc");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

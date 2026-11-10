@@ -13,6 +13,7 @@
 // copy's behaviour. Certificate and key FILES are read here, outside the sandbox, and inlined as
 // `-data`, so the child needs read access to one config file and nothing else of the owner's.
 
+import { lstatSync, readFileSync } from "node:fs";
 import { delimiter, isAbsolute } from "node:path";
 import { CORE_SCHEMA, load } from "js-yaml";
 import { K8S_PREFLIGHT_REFUSALS } from "./k8s-limits.ts";
@@ -62,6 +63,19 @@ export interface KubeFs {
   lstat(path: string): { isFile: boolean; isSymbolicLink: boolean; size: number } | undefined;
   readFile(path: string): Uint8Array;
 }
+
+/** The real filesystem, for the enable handler (the runner builds its own copy through the same reads). */
+export const nodeKubeFs: KubeFs = {
+  lstat(path) {
+    try {
+      const st = lstatSync(path);
+      return { isFile: st.isFile(), isSymbolicLink: st.isSymbolicLink(), size: st.size };
+    } catch {
+      return undefined;
+    }
+  },
+  readFile: (path) => readFileSync(path),
+};
 
 export interface KubeContextFacts {
   /** The API server as `host:port` (443 when the address had no port). */

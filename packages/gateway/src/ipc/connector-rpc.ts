@@ -1,4 +1,5 @@
 import { readConnectorSecret } from "../connectors/connector-vault.ts";
+import { nodeKubeFs } from "../connectors/connector-writes/kubeconfig-facts.ts";
 import type { LazyConnectorMesh } from "../connectors/lazy-mesh/index.ts";
 import { adoptLocalAuth, parseAdoptRequest } from "../connectors/local-auth/adopt-local-auth.ts";
 import { detectLocalAuth, parseSources } from "../connectors/local-auth/detect-local-auth.ts";
@@ -185,6 +186,10 @@ export async function dispatchConnectorRpc(options: {
 
   const modelWritesDeps = (): ModelWritesDeps => ({
     db: localIndex.getDatabase(),
+    // D3a: the kubeconfig the Vault names, read through the real filesystem (kubectl never sees it).
+    readKubeconfigPath: async () =>
+      (await readConnectorSecret(vault, "kubernetes", "kubeconfig")) ?? undefined,
+    kubeFs: nodeKubeFs,
     toolExecutor,
     getEnforcedPolicy,
     now: now ?? Date.now,
