@@ -1,11 +1,20 @@
 import { afterAll, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseSandboxPolicy, SANDBOX_POLICY_ENV } from "../../platform/sandbox/sandbox-policy.ts";
 import type { AppContainerGrantRevoker } from "../../platform/sandbox/win32-grant-revoke.ts";
 import { createMockVault } from "../../vault/mock.ts";
 import type { IacPathDeps } from "../connector-writes/iac-grants.ts";
+import { IAC_PREFLIGHT_REFUSALS } from "../connector-writes/iac-limits.ts";
 import type { K8sGrant } from "../connector-writes/k8s-grants.ts";
 import type { KubeFs } from "../connector-writes/kubeconfig-facts.ts";
 import {
@@ -510,6 +519,21 @@ describe("execute: one kube child per call", () => {
     have = true;
     expect((await r2.preflight("k8s_manifest_apply", input)).ok).toBe(true);
     void r;
+  });
+
+  test("a read that is the first call after boot sweeps the run directories first, and an unreadable live record refuses it", async () => {
+    mkdirSync(iacRootFor(paths), { recursive: true });
+    const live = join(iacRootFor(paths), "live-children.json");
+    writeFileSync(live, "not json");
+    const { r, children } = makeRunner();
+    await expect(r.execute("k8s_pod_list", { context: "prod", namespace: "web" })).rejects.toThrow(
+      IAC_PREFLIGHT_REFUSALS.liveRecordUnreadable,
+    );
+    expect(children).toEqual([]);
+    rmSync(live);
+    // Once the record reads, the same runner serves the call.
+    await r.execute("k8s_pod_list", { context: "prod", namespace: "web" });
+    expect(children).toHaveLength(1);
   });
 
   test("k8sServerFor names the approved server for a pair only", () => {

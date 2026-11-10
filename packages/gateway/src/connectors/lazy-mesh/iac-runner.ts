@@ -1168,6 +1168,12 @@ export class IacRunner implements IacHost {
     args: Record<string, unknown>,
     budget: number,
   ): Promise<unknown> {
+    // A read can be the first call after boot: the boot sweep must have run (it clears the run
+    // directories a crashed gateway left) before this call makes its own, and an unreadable
+    // live-children record refuses, as it does for a preflight.
+    this.sweep();
+    const unreadable = this.liveRecordRefusal();
+    if (unreadable !== undefined) throw new Error(unreadable);
     const grants = this.deps.k8sGrants?.() ?? [];
     const isRead = KUBE_READ_TOOLS.has(toolId);
     const contexts = [...new Set(grants.map((g) => g.context))];
