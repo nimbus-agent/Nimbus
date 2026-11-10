@@ -32,7 +32,7 @@ async function setup(
   const consent: ConsentChannel = {
     requestApproval: async (p: string) => {
       prompts.push(p);
-      return true;
+      return { approved: true, answerSource: "human" as const };
     },
   };
   const audit: AuditSink = { recordAudit: () => {} };

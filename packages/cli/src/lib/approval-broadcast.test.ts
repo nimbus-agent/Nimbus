@@ -213,7 +213,10 @@ describe("interactiveCommandDeps", () => {
     }
 
     expect(calls).toEqual([
-      { method: "consent.respond", params: { requestId: "c1", approved: false } },
+      {
+        method: "consent.respond",
+        params: { requestId: "c1", approved: false, answerSource: "human" },
+      },
     ]);
   });
 

@@ -54,8 +54,14 @@ describe("registerScriptConsentHandler", () => {
     await handler({ requestId: "req-2", prompt: "Second action" });
 
     expect(calls).toEqual([
-      { method: "consent.respond", params: { requestId: "req-1", approved: true } },
-      { method: "consent.respond", params: { requestId: "req-2", approved: false } },
+      {
+        method: "consent.respond",
+        params: { requestId: "req-1", approved: true, answerSource: "script" },
+      },
+      {
+        method: "consent.respond",
+        params: { requestId: "req-2", approved: false, answerSource: "script" },
+      },
     ]);
   });
 

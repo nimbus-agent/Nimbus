@@ -102,7 +102,7 @@ describe("nimbus connector migrate", () => {
     await new Promise((r) => setTimeout(r, 0));
     expect(h.calls[2]).toEqual({
       method: "consent.respond",
-      params: { requestId: "r1", approved: true },
+      params: { requestId: "r1", approved: true, answerSource: "human" },
     });
   });
 
@@ -116,7 +116,7 @@ describe("nimbus connector migrate", () => {
       await new Promise((r) => setTimeout(r, 0));
       expect(h.calls[2]).toEqual({
         method: "consent.respond",
-        params: { requestId: "r2", approved: false },
+        params: { requestId: "r2", approved: false, answerSource: "human" },
       });
     } finally {
       if (prior === undefined) delete process.env["NIMBUS_SCRIPT_CONSENT_SOURCE"];

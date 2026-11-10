@@ -465,7 +465,7 @@ describe("I2 — HITL frozen-set membership", () => {
       {
         requestApproval: async (prompt: string) => {
           raised.push(prompt);
-          return false;
+          return { approved: false, answerSource: "human" as const };
         },
       },
       { recordAudit: () => {} },
@@ -743,6 +743,33 @@ describe("I4 — hitlStatus is consent-output-only in production paths", () => {
       if (!/hitlStatus:\s*"approved"/.test(src)) stale.push(rel);
     }
     expect(stale).toEqual([]);
+  });
+});
+
+describe("I4 — the fourth status is reserved (Phase 10 SA1)", () => {
+  test("the gate, the audit sink and the ledger name exactly four statuses", async () => {
+    const four = /"approved"\s*\|\s*"rejected"\s*\|\s*"not_required"\s*\|\s*"standing_approved"/;
+    expect(await read("packages/gateway/src/engine/executor.ts")).toMatch(
+      new RegExp(`type HitlStatus = ${four.source}`),
+    );
+    expect(await read("packages/gateway/src/engine/types.ts")).toMatch(four);
+    expect(await read("packages/gateway/src/egress/egress-record.ts")).toMatch(
+      /"approved"\s*\|\s*"not_required"\s*\|\s*"rejected"\s*\|\s*"standing_approved"/,
+    );
+  });
+
+  test("only the migration DDL (V87) and the status maps mention standing_approved as a value", async () => {
+    // the standing-approval gate will produce it; until then no production path may CONSTRUCT the outcome or write the
+    // row. The same pin lives in `engine/approval-outcome.test.ts` for the outcome kind.
+    const offenders: string[] = [];
+    const root = resolve(REPO_ROOT, "packages", "gateway", "src");
+    for (const f of await readdir(root, { recursive: true })) {
+      const rel = f.replaceAll("\\", "/");
+      if (!rel.endsWith(".ts") || rel.endsWith(".test.ts")) continue;
+      const src = await readFile(resolve(root, f), "utf8");
+      if (/(?:kind|hitlStatus):\s*"standing_approved"\s*[,}]/.test(src)) offenders.push(rel);
+    }
+    expect(offenders).toEqual([]);
   });
 });
 
@@ -2278,10 +2305,10 @@ describe("I20 — a delegated approval is honored only from a live, identity-val
       const dispatched: string[] = [];
       const exec = new ToolExecutor(
         {
-          requestApproval: async () => true,
+          requestApproval: async () => ({ approved: true, answerSource: "human" as const }),
           requestConfirmedApproval: async (req) => {
             ownerTyped += 1;
-            return { approved: true, typed: req.confirmText };
+            return { approved: true, typed: req.confirmText, answerSource: "human" as const };
           },
         },
         { recordAudit: () => {} },
@@ -2379,7 +2406,7 @@ describe("I20 — a delegated approval is honored only from a live, identity-val
         {
           requestApproval: async () => {
             prompts += 1;
-            return false;
+            return { approved: false, answerSource: "human" as const };
           },
         },
         { recordAudit: () => {} },
@@ -2417,7 +2444,7 @@ describe("I20 — a delegated approval is honored only from a live, identity-val
         {
           requestApproval: async () => {
             prompts += 1;
-            return true;
+            return { approved: true, answerSource: "human" as const };
           },
         },
         { recordAudit: () => {} },
@@ -4091,7 +4118,9 @@ describe("I29 — egress-ledger completeness over the executor chokepoint", () =
     const { ToolExecutor } = await import("./engine/executor.ts");
     const order: string[] = [];
     const appended: Array<{ resultStatus: string }> = [];
-    const consent = { requestApproval: async () => true };
+    const consent = {
+      requestApproval: async () => ({ approved: true, answerSource: "human" as const }),
+    };
     const audit = { recordAudit: () => {} };
     const connectors = {
       dispatch: async () => {
@@ -4111,7 +4140,9 @@ describe("I29 — egress-ledger completeness over the executor chokepoint", () =
 
     // deny → blocked row, no dispatch
     const order2: string[] = [];
-    const denyConsent = { requestApproval: async () => false };
+    const denyConsent = {
+      requestApproval: async () => ({ approved: false, answerSource: "human" as const }),
+    };
     const sink2 = { append: (e: { resultStatus: string }) => order2.push(e.resultStatus) };
     const connectors2 = {
       dispatch: async () => {
@@ -4156,12 +4187,12 @@ describe("I29 — egress-ledger completeness over the executor chokepoint", () =
         {
           requestApproval: async () => {
             prompts += 1;
-            return true;
+            return { approved: true, answerSource: "human" as const };
           },
           // A wave 4 write is approved by typing its confirm text; this owner types it exactly.
           requestConfirmedApproval: async (req) => {
             prompts += 1;
-            return { approved: true, typed: req.confirmText };
+            return { approved: true, typed: req.confirmText, answerSource: "human" as const };
           },
         },
         { recordAudit: () => {} },
@@ -4229,8 +4260,12 @@ describe("I29 — egress-ledger completeness over the executor chokepoint", () =
       );
       const exec = new ToolExecutor(
         {
-          requestApproval: async () => false,
-          requestConfirmedApproval: async () => ({ approved: false, typed: "" }),
+          requestApproval: async () => ({ approved: false, answerSource: "human" as const }),
+          requestConfirmedApproval: async () => ({
+            approved: false,
+            typed: "",
+            answerSource: "human" as const,
+          }),
         },
         { recordAudit: () => {} },
         {
@@ -4276,7 +4311,7 @@ describe("I29 — egress-ledger completeness over the executor chokepoint", () =
     for (const { label, action } of writesUnderTest()) {
       let dispatches = 0;
       const exec = new ToolExecutor(
-        { requestApproval: async () => true },
+        { requestApproval: async () => ({ approved: true, answerSource: "human" as const }) },
         { recordAudit: () => {} },
         {
           dispatch: async () => {
@@ -7134,7 +7169,7 @@ describe("I42 — every user-MCP tool call needs the local owner's approval", ()
       {
         requestApproval: async () => {
           prompts += 1;
-          return false;
+          return { approved: false, answerSource: "human" as const };
         },
       },
       { recordAudit: () => {} },
@@ -7264,7 +7299,7 @@ describe("I42 — every user-MCP tool call needs the local owner's approval", ()
       {
         requestApproval: async (prompt, details) => {
           prompts.push({ prompt, details });
-          return false;
+          return { approved: false, answerSource: "human" as const };
         },
       },
       { recordAudit: (e) => audits.push(e.actionJson) },
@@ -7365,7 +7400,7 @@ describe("I42 — every user-MCP tool call needs the local owner's approval", ()
       {
         requestApproval: async () => {
           prompts += 1;
-          return false;
+          return { approved: false, answerSource: "human" as const };
         },
       },
       { recordAudit: () => {} },
@@ -7393,7 +7428,7 @@ describe("I42 — every user-MCP tool call needs the local owner's approval", ()
       {
         requestApproval: async () => {
           prompts += 1;
-          return false;
+          return { approved: false, answerSource: "human" as const };
         },
       },
       { recordAudit: () => {} },
@@ -9779,7 +9814,7 @@ describe("I47 — a role-pack layer is written only after the owner approved pac
       {
         requestApproval: async (prompt: string) => {
           prompts.push(prompt);
-          return approve;
+          return { approved: approve, answerSource: "human" as const };
         },
       },
       { recordAudit: (row: { actionJson: string }) => void audit.push(row.actionJson) },
@@ -9822,7 +9857,7 @@ describe("I47 — a role-pack layer is written only after the owner approved pac
       {
         requestApproval: async () => {
           prompts += 1;
-          return false;
+          return { approved: false, answerSource: "human" as const };
         },
       },
       { recordAudit: () => {} },
@@ -10969,7 +11004,7 @@ describe("I49 — extension code runs for evaluation only offline, without crede
         {
           requestApproval: async (prompt: string) => {
             raised.push(prompt);
-            return false;
+            return { approved: false, answerSource: "human" as const };
           },
         },
         { recordAudit: () => {} },
@@ -11812,7 +11847,7 @@ describe("I52 — a stored run grant is equal to or narrower than its manifest, 
       {
         requestApproval: async () => {
           prompts += 1;
-          return false;
+          return { approved: false, answerSource: "human" as const };
         },
       },
       { recordAudit: () => {} },
@@ -11862,7 +11897,7 @@ describe("I53 — a first-party connector write reaches the model only through t
           {
             requestApproval: async () => {
               plainAsked += 1;
-              return true;
+              return { approved: true, answerSource: "human" as const };
             },
             ...(channel === "plain"
               ? {}
@@ -11875,6 +11910,7 @@ describe("I53 — a first-party connector write reaches the model only through t
                         : channel === "wrong"
                           ? `${req.confirmText} `
                           : "",
+                    answerSource: "human" as const,
                   }),
                 }),
           },
@@ -11946,11 +11982,11 @@ describe("I53 — a first-party connector write reaches the model only through t
             {
               requestApproval: async () => {
                 asked += 1;
-                return true;
+                return { approved: true, answerSource: "human" as const };
               },
               requestConfirmedApproval: async (req: { confirmText: string }) => {
                 asked += 1;
-                return { approved: true, typed: req.confirmText };
+                return { approved: true, typed: req.confirmText, answerSource: "human" as const };
               },
             },
             { recordAudit: () => {} },
@@ -12176,7 +12212,7 @@ describe("I53 — a first-party connector write reaches the model only through t
         {
           requestApproval: async () => {
             prompts += 1;
-            return true;
+            return { approved: true, answerSource: "human" as const };
           },
         },
         { recordAudit: () => {} },
@@ -12257,10 +12293,10 @@ describe("I53 — a first-party connector write reaches the model only through t
     expect(body).not.toMatch(/trim|toLowerCase|toUpperCase|localeCompare|normalize/);
     const consent = stripComments(await read("packages/gateway/src/ipc/consent.ts"));
     expect(consent).not.toMatch(/\.typed\s*[!=]==|confirmText\s*[!=]==\s*(?!undefined)\S/);
-    // The plain channel method is unchanged: three parameters, a boolean answer.
+    // The plain channel method keeps its three parameters; its answer now names its source (SA1).
     const types = stripComments(await read("packages/gateway/src/engine/types.ts"));
     expect(types).toMatch(
-      /requestApproval\(\s*prompt: string,\s*details\?: Record<string, unknown>,\s*actionType\?: string,\s*\): Promise<boolean>;/,
+      /requestApproval\(\s*prompt: string,\s*details\?: Record<string, unknown>,\s*actionType\?: string,\s*\): Promise<ApprovalAnswer>;/,
     );
   });
 
@@ -12764,7 +12800,7 @@ describe("I53 — a first-party connector write reaches the model only through t
       {
         requestApproval: async () => {
           prompts += 1;
-          return true;
+          return { approved: true, answerSource: "human" as const };
         },
       },
       { recordAudit: () => {} },
@@ -12957,7 +12993,7 @@ describe("I54 — a bound connector write is dispatched only with the values its
       {
         requestApproval: async (prompt) => {
           prompts.push(prompt);
-          return approve;
+          return { approved: approve, answerSource: "human" as const };
         },
       },
       { recordAudit: () => undefined },
@@ -13200,7 +13236,7 @@ describe("Phase 9.7 D0c — typed confirmation over ChatOps (I20, I23, I29, D17,
       ownerChannelFor: () => "C1",
     });
     const exec = new ToolExecutor(
-      { requestApproval: async () => false },
+      { requestApproval: async () => ({ approved: false, answerSource: "human" as const }) },
       { recordAudit: () => {} },
       {
         dispatch: async (a) => {

@@ -76,7 +76,7 @@ export interface IndexMetrics {
 export interface AuditEntry {
   readonly id: number;
   readonly actionType: string;
-  readonly hitlStatus: "approved" | "rejected" | "not_required";
+  readonly hitlStatus: "approved" | "rejected" | "not_required" | "standing_approved";
   readonly actionJson: string;
   readonly timestamp: number;
 }
@@ -220,7 +220,7 @@ export type AuditVerifyResult = AuditVerifyOk | AuditVerifyBroken;
 export interface AuditExportRow {
   readonly id: number;
   readonly actionType: string;
-  readonly hitlStatus: "approved" | "rejected" | "not_required";
+  readonly hitlStatus: "approved" | "rejected" | "not_required" | "standing_approved";
   readonly actionJson: string;
   readonly timestamp: number;
   readonly rowHash: string;

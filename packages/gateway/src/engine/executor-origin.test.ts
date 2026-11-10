@@ -98,7 +98,7 @@ describe("executor — origin model", () => {
       {
         requestApproval: async () => {
           prompts += 1;
-          return true;
+          return { approved: true, answerSource: "human" as const };
         },
       },
       { recordAudit: (r) => audits.push(r.actionJson) },
@@ -202,7 +202,7 @@ describe("one typed preview per gate", () => {
       {
         requestApproval: async (prompt, details) => {
           shown = { prompt, details };
-          return false;
+          return { approved: false, answerSource: "human" as const };
         },
       },
       { recordAudit: () => undefined },

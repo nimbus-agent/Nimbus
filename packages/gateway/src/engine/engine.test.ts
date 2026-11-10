@@ -143,9 +143,9 @@ function createMocks(initialApprove = true): {
   let approveNext = initialApprove;
 
   const consent: ConsentChannel = {
-    requestApproval(prompt: string): Promise<boolean> {
+    requestApproval(prompt: string): Promise<{ approved: boolean; answerSource: "human" }> {
       consentCalls.push(prompt);
-      return Promise.resolve(approveNext);
+      return Promise.resolve({ approved: approveNext, answerSource: "human" as const });
     },
   };
 
@@ -964,8 +964,8 @@ describe("ToolExecutor — approval, ordering, and consent channel", () => {
   test("audit record is written before the connector dispatch", async () => {
     const order: string[] = [];
     const consent: ConsentChannel = {
-      requestApproval(): Promise<boolean> {
-        return Promise.resolve(true);
+      requestApproval(): Promise<{ approved: boolean; answerSource: "human" }> {
+        return Promise.resolve({ approved: true, answerSource: "human" as const });
       },
     };
     const audit: AuditSink = {
@@ -986,7 +986,7 @@ describe("ToolExecutor — approval, ordering, and consent channel", () => {
 
   test("ConsentDisconnectedError rejects without connector; audit records rejected with disconnect reason", async () => {
     const consent: ConsentChannel = {
-      requestApproval(): Promise<boolean> {
+      requestApproval(): Promise<{ approved: boolean; answerSource: "human" }> {
         return Promise.reject(new ConsentDisconnectedError("client disconnected"));
       },
     };
@@ -1020,7 +1020,7 @@ describe("ToolExecutor — approval, ordering, and consent channel", () => {
 
   test("non-consent errors from the consent channel propagate (no audit, no dispatch)", async () => {
     const consent: ConsentChannel = {
-      requestApproval(): Promise<boolean> {
+      requestApproval(): Promise<{ approved: boolean; answerSource: "human" }> {
         return Promise.reject(new Error("network glitch"));
       },
     };
@@ -1053,7 +1053,7 @@ describe("ToolExecutor — approval, ordering, and consent channel", () => {
     expect(lastRequestId.length).toBeGreaterThan(0);
     const err = coordinator.handleRespond("c1", { requestId: lastRequestId, approved: true });
     expect(err).toBeNull();
-    await expect(pending).resolves.toBe(true);
+    await expect(pending).resolves.toEqual({ approved: true, answerSource: "unknown" });
   });
 });
 

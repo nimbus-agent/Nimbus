@@ -24,7 +24,13 @@ function msToDateInput(ms: number | null): string {
   return `${yyyy}-${mm}-${dd}`;
 }
 
-const OUTCOMES: ReadonlyArray<AuditOutcomeFilter> = ["all", "approved", "rejected", "not_required"];
+const OUTCOMES: ReadonlyArray<AuditOutcomeFilter> = [
+  "all",
+  "approved",
+  "rejected",
+  "not_required",
+  "standing_approved",
+];
 
 export function AuditFilterChips({
   filter,

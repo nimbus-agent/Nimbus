@@ -1,3 +1,5 @@
+import type { AnswerSource } from "../engine/types.ts";
+import { REPORTED_ANSWER_SOURCES } from "../engine/types.ts";
 import { notifyApprovalPending } from "../util/approval-pending.ts";
 import { emitGatewayEvent } from "./gateway-events.ts";
 import type { JsonRpcNotification } from "./jsonrpc.ts";
@@ -21,7 +23,7 @@ export interface ConsentCoordinator {
       details?: unknown;
       actionType?: string | undefined;
     },
-  ): Promise<boolean>;
+  ): Promise<{ approved: boolean; answerSource: AnswerSource }>;
   /**
    * Phase 9.7 D0a: a consent request that also asks the owner to TYPE `confirmText`. Resolves
    * with the owner's answer and the text they typed; the coordinator never compares them
@@ -36,7 +38,7 @@ export interface ConsentCoordinator {
       actionType?: string | undefined;
       confirmText: string;
     },
-  ): Promise<{ approved: boolean; typed: string }>;
+  ): Promise<{ approved: boolean; typed: string; answerSource: AnswerSource }>;
   rejectAllPending(message: string, hitlAuditReason: string): void;
   pendingCount(): number;
 }
@@ -44,13 +46,20 @@ export interface ConsentCoordinator {
 /** The longest `typed` answer `consent.respond` accepts; a confirm text is at most 200 characters. */
 export const CONSENT_TYPED_MAX_LENGTH = 512;
 
+/** What a pending request resolves with: the decision, the typed text and who answered (SA1). */
+type ConsentAnswer = { approved: boolean; typed: string; answerSource: AnswerSource };
+
 type PendingConsent = {
-  readonly resolve: (answer: { approved: boolean; typed: string }) => void;
+  readonly resolve: (answer: ConsentAnswer) => void;
   readonly reject: (err: Error) => void;
   readonly clientId: string;
   /** True for a type-to-confirm request: a missing `typed` then resolves as the empty string. */
   readonly confirm: boolean;
 };
+
+function isReportedAnswerSource(v: unknown): v is (typeof REPORTED_ANSWER_SOURCES)[number] {
+  return typeof v === "string" && (REPORTED_ANSWER_SOURCES as readonly string[]).includes(v);
+}
 
 export type ConsentSessionWriter = (notification: JsonRpcNotification) => void;
 
@@ -67,8 +76,11 @@ export class ConsentCoordinatorImpl implements ConsentCoordinator {
       details?: unknown;
       actionType?: string | undefined;
     },
-  ): Promise<boolean> {
-    return this.open(clientId, params, undefined, (answer) => answer.approved);
+  ): Promise<{ approved: boolean; answerSource: AnswerSource }> {
+    return this.open(clientId, params, undefined, (answer) => ({
+      approved: answer.approved,
+      answerSource: answer.answerSource,
+    }));
   }
 
   requestConfirmedConsent(
@@ -80,7 +92,7 @@ export class ConsentCoordinatorImpl implements ConsentCoordinator {
       actionType?: string | undefined;
       confirmText: string;
     },
-  ): Promise<{ approved: boolean; typed: string }> {
+  ): Promise<{ approved: boolean; typed: string; answerSource: AnswerSource }> {
     return this.open(clientId, params, params.confirmText, (answer) => answer);
   }
 
@@ -95,10 +107,10 @@ export class ConsentCoordinatorImpl implements ConsentCoordinator {
       actionType?: string | undefined;
     },
     confirmText: string | undefined,
-    toResult: (answer: { approved: boolean; typed: string }) => T,
+    toResult: (answer: ConsentAnswer) => T,
   ): Promise<T> {
     return new Promise<T>((resolveResult, reject) => {
-      const resolve = (answer: { approved: boolean; typed: string }): void => {
+      const resolve = (answer: ConsentAnswer): void => {
         resolveResult(toResult(answer));
       };
       const write = this.getWriter(clientId);
@@ -172,10 +184,21 @@ export class ConsentCoordinatorImpl implements ConsentCoordinator {
       return { code: -32602, message: "Unknown or foreign consent request" };
     }
     this.pending.delete(o["requestId"]);
+    // SA1 (spec § 6.1): the client reports where the answer came from. Absent (an older client) is
+    // `unknown`; any other value than the three a client may report is malformed, and a malformed
+    // reply is a DENIAL (fail closed). The request is settled either way, never left hanging.
+    const reported = o["answerSource"];
+    const answerSource: AnswerSource = isReportedAnswerSource(reported) ? reported : "unknown";
+    const known = reported === undefined || answerSource !== "unknown";
+    const approved = known && o["approved"];
     // A plain request ignores `typed`; a confirm request without one is a mismatch for the executor.
-    entry.resolve({ approved: o["approved"], typed: entry.confirm ? (typed ?? "") : "" });
-    emitGatewayEvent("hitl.resolved", { requestId: o["requestId"], approved: o["approved"] });
-    return null;
+    entry.resolve({
+      approved,
+      typed: entry.confirm ? (typed ?? "") : "",
+      answerSource,
+    });
+    emitGatewayEvent("hitl.resolved", { requestId: o["requestId"], approved });
+    return known ? null : { code: -32602, message: "Invalid params" };
   }
 
   onClientDisconnect(clientId: string): void {

@@ -525,7 +525,9 @@ describe("buildChatopsBoot — full production graph", () => {
     // A non-owner click is not honored as a delegate (I20); the executor then falls back to the
     // bound local consent channel. Binding an approve-returning consent drives the dispatch.
     const h = await buildHarness();
-    h.boot.bindLocalConsent(() => Promise.resolve(true));
+    h.boot.bindLocalConsent(() =>
+      Promise.resolve({ approved: true, answerSource: "human" as const }),
+    );
     await h.boot.service.start();
     h.socket.emit(
       mention("C0", "U_BOB", "@nimbus run deployment.rollback service=payment-service", "31"),
@@ -550,7 +552,7 @@ describe("buildChatopsBoot — full production graph", () => {
     const asked: { prompt: string; details: unknown }[] = [];
     h.boot.bindLocalConsent((prompt, details) => {
       asked.push({ prompt, details });
-      return Promise.resolve(true);
+      return Promise.resolve({ approved: true, answerSource: "human" as const });
     });
     await h.boot.service.start();
     h.socket.emit(
@@ -569,7 +571,9 @@ describe("buildChatopsBoot — full production graph", () => {
     // ChatopsBootDeps.egressSink is now REQUIRED (dropped the `?? NULL_EGRESS_SINK` default) —
     // this proves the executor actually calls the sink it was handed, wired into a real dispatch.
     const h = await buildHarness();
-    h.boot.bindLocalConsent(() => Promise.resolve(true));
+    h.boot.bindLocalConsent(() =>
+      Promise.resolve({ approved: true, answerSource: "human" as const }),
+    );
     await h.boot.service.start();
     h.socket.emit(
       mention("C0", "U_BOB", "@nimbus run deployment.rollback service=payment-service", "31b"),

@@ -3660,7 +3660,8 @@ function bindChatopsLocalConsent(
   );
   chatopsBoot.bindLocalConsent(async (prompt) => {
     const r = await delegatedApprovalBroker.request({ prompt }, CHATOPS_LOCAL_CONSENT_TIMEOUT_MS);
-    return r.kind === "answered" ? r.approved : false;
+    // SA1: a ChatOps-triggered request answered through the broker is recorded as `remote`.
+    return { approved: r.kind === "answered" ? r.approved : false, answerSource: "remote" };
   });
   // Headless gateway: the bot comes up with the gateway. A failed transport start (e.g. bot
   // tokens not yet provisioned) is logged and retryable via `nimbus chatops start`.

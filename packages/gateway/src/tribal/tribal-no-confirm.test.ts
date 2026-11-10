@@ -41,7 +41,7 @@ describe("the tribal in-chat executor cannot approve a Wave 4 write", () => {
       {
         requestApproval: async () => {
           asked += 1;
-          return true;
+          return { approved: true, answerSource: "human" as const };
         },
       },
       { recordAudit: () => {} },

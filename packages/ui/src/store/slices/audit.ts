@@ -1,7 +1,12 @@
 import type { StateCreator } from "zustand";
 import type { AuditSummary } from "../../ipc/types";
 
-export type AuditOutcomeFilter = "all" | "approved" | "rejected" | "not_required";
+export type AuditOutcomeFilter =
+  | "all"
+  | "approved"
+  | "rejected"
+  | "not_required"
+  | "standing_approved";
 
 export interface AuditFilter {
   readonly service: string;

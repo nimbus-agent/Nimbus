@@ -52,7 +52,7 @@ function executor(approve: boolean, prompts: string[] = []): ToolExecutor {
     {
       requestApproval: async (prompt: string) => {
         prompts.push(prompt);
-        return approve;
+        return { approved: approve, answerSource: "human" as const };
       },
     },
     localIndex,
@@ -423,7 +423,7 @@ describe("re-consent on the real B1 and B2 rows (V84; B1 and B2 Task 5)", () => 
       {
         requestApproval: async (_p: string, details?: Record<string, unknown>) => {
           seen.push(details);
-          return true;
+          return { approved: true, answerSource: "human" as const };
         },
       },
       localIndex,
@@ -901,7 +901,7 @@ describe("D1: the Wave 4 writes are new to an earlier opt-in until it is re-run 
     const seen: Array<{ writes: Write[] }> = [];
     const exec = new ToolExecutor(
       {
-        requestApproval: async () => true,
+        requestApproval: async () => ({ approved: true, answerSource: "human" as const }),
       },
       localIndex,
       { dispatch: async () => ({}) },

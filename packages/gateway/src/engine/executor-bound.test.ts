@@ -98,14 +98,18 @@ function harness(o: HarnessOptions = {}): Harness {
       log.push("prompt");
       prompts.push(prompt);
       details.push(d);
-      return o.approve ?? true;
+      return { approved: o.approve ?? true, answerSource: "human" as const };
     },
     requestConfirmedApproval: async (
       req: ConfirmedApprovalRequest,
     ): Promise<ConfirmedApprovalResult> => {
       log.push("prompt:confirmed");
       confirmed.push(req);
-      return { approved: o.approve ?? true, typed: o.typed ?? CONFIRM_TEXT };
+      return {
+        approved: o.approve ?? true,
+        typed: o.typed ?? CONFIRM_TEXT,
+        answerSource: "human" as const,
+      };
     },
   };
   const exec = new ToolExecutor(
@@ -471,7 +475,7 @@ describe("execute() works on a private copy of the action (fix 5)", () => {
         requestApproval: async () => {
           input["dir"] = "evil";
           input["planDigest"] = "forged";
-          return true;
+          return { approved: true, answerSource: "human" as const };
         },
       },
       { recordAudit: () => undefined },
@@ -593,7 +597,7 @@ function harnessWithRunnerRows(o: HarnessOptions): Harness {
   const base = harness({ ...o, table: "none" });
   const row = o.row ?? synthBoundRow(3);
   const exec = new ToolExecutor(
-    { requestApproval: async () => true },
+    { requestApproval: async () => ({ approved: true, answerSource: "human" as const }) },
     {
       recordAudit: (e) =>
         base.audits.push({

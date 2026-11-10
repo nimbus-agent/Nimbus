@@ -32,7 +32,11 @@ describe("requestConfirmedConsent", () => {
     expect(
       c.handleRespond("a", { requestId: "r1", approved: true, typed: "github/acme/api#42" }),
     ).toBeNull();
-    expect(await p).toEqual({ approved: true, typed: "github/acme/api#42" });
+    expect(await p).toEqual({
+      approved: true,
+      typed: "github/acme/api#42",
+      answerSource: "unknown",
+    });
     expect(c.pendingCount()).toBe(0);
   });
 
@@ -40,14 +44,14 @@ describe("requestConfirmedConsent", () => {
     const { c } = setup();
     const p = c.requestConfirmedConsent("a", { requestId: "r1", prompt: "p", confirmText: "x" });
     expect(c.handleRespond("a", { requestId: "r1", approved: true })).toBeNull();
-    expect(await p).toEqual({ approved: true, typed: "" });
+    expect(await p).toEqual({ approved: true, typed: "", answerSource: "unknown" });
   });
 
   test("a decline resolves approved false", async () => {
     const { c } = setup();
     const p = c.requestConfirmedConsent("a", { requestId: "r1", prompt: "p", confirmText: "x" });
     c.handleRespond("a", { requestId: "r1", approved: false, typed: "x" });
-    expect(await p).toEqual({ approved: false, typed: "x" });
+    expect(await p).toEqual({ approved: false, typed: "x", answerSource: "unknown" });
   });
 
   test("hitl.requested does not carry the confirm text or the prompt", () => {
@@ -100,7 +104,7 @@ describe("handleRespond typed", () => {
     const { c } = setup();
     const p = c.requestConsent("a", { requestId: "r1", prompt: "p" });
     expect(c.handleRespond("a", { requestId: "r1", approved: true, typed: "anything" })).toBeNull();
-    expect(await p).toBe(true);
+    expect(await p).toEqual({ approved: true, answerSource: "unknown" });
   });
 
   test("a non-string typed is -32602 and leaves the request pending", () => {
@@ -136,6 +140,60 @@ describe("handleRespond typed", () => {
     expect(c.handleRespond("b", { requestId: "r1", approved: true, typed: "x" })?.code).toBe(
       -32602,
     );
+    expect(c.pendingCount()).toBe(1);
+  });
+});
+
+describe("handleRespond answerSource (Phase 10 SA1, spec 6.1)", () => {
+  test("each client-reported source is carried back with the decision", async () => {
+    for (const answerSource of ["human", "auto", "script"] as const) {
+      const { c } = setup();
+      const p = c.requestConsent("a", { requestId: "r1", prompt: "p" });
+      expect(c.handleRespond("a", { requestId: "r1", approved: true, answerSource })).toBeNull();
+      expect(await p).toEqual({ approved: true, answerSource });
+    }
+  });
+
+  test("the confirmed arm carries it with the typed text", async () => {
+    const { c } = setup();
+    const p = c.requestConfirmedConsent("a", { requestId: "r1", prompt: "p", confirmText: "x" });
+    c.handleRespond("a", { requestId: "r1", approved: true, typed: "x", answerSource: "auto" });
+    expect(await p).toEqual({ approved: true, typed: "x", answerSource: "auto" });
+  });
+
+  test("an absent field (an older client) is recorded as unknown", async () => {
+    const { c } = setup();
+    const p = c.requestConsent("a", { requestId: "r1", prompt: "p" });
+    c.handleRespond("a", { requestId: "r1", approved: true });
+    expect(await p).toEqual({ approved: true, answerSource: "unknown" });
+  });
+
+  test("any other value is malformed: the request is DENIED and settled, never approved or left hanging", async () => {
+    for (const bad of ["robot", "delegate", "remote", "none", "unknown", "", 1, true, null, {}]) {
+      const { c } = setup();
+      const p = c.requestConsent("a", { requestId: "r1", prompt: "p" });
+      expect(c.handleRespond("a", { requestId: "r1", approved: true, answerSource: bad })).toEqual({
+        code: -32602,
+        message: "Invalid params",
+      });
+      expect(await p).toEqual({ approved: false, answerSource: "unknown" });
+      expect(c.pendingCount()).toBe(0);
+    }
+  });
+
+  test("a malformed source on a confirmed request denies it too", async () => {
+    const { c } = setup();
+    const p = c.requestConfirmedConsent("a", { requestId: "r1", prompt: "p", confirmText: "x" });
+    c.handleRespond("a", { requestId: "r1", approved: true, typed: "x", answerSource: "robot" });
+    expect(await p).toEqual({ approved: false, typed: "x", answerSource: "unknown" });
+  });
+
+  test("another client's malformed reply settles nothing", () => {
+    const { c } = setup();
+    void c.requestConsent("a", { requestId: "r1", prompt: "p" });
+    expect(
+      c.handleRespond("b", { requestId: "r1", approved: true, answerSource: "robot" })?.code,
+    ).toBe(-32602);
     expect(c.pendingCount()).toBe(1);
   });
 });

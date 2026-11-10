@@ -496,7 +496,11 @@ describe("runConnector reindex", () => {
     // The approval reached the Gateway BEFORE the gated call resolved — the ordering
     // the Gateway's gate actually requires.
     const respond = ipc.calls.find((c) => c.method === "consent.respond");
-    expect(respond?.params).toEqual({ requestId: "req-1", approved: true });
+    expect(respond?.params).toEqual({
+      requestId: "req-1",
+      approved: true,
+      answerSource: "human",
+    });
 
     releaseReindex();
     await done;
@@ -525,6 +529,7 @@ describe("runConnector reindex", () => {
     expect(ipc.calls.find((c) => c.method === "consent.respond")?.params).toEqual({
       requestId: "req-2",
       approved: false,
+      answerSource: "human",
     });
   });
 
@@ -826,7 +831,10 @@ describe("runConnector remove", () => {
     const stderr = await withCapturedStderr(() => runConnector(["remove", "github", "--yes"]));
     expect(gw.calls).toEqual([
       { method: "connector.remove", params: { serviceId: "github" } },
-      { method: "consent.respond", params: { requestId: "req-remove-1", approved: true } },
+      {
+        method: "consent.respond",
+        params: { requestId: "req-remove-1", approved: true, answerSource: "auto" },
+      },
     ]);
     expect(stderr).toContain("[--yes] auto-approving HITL request");
     expect(out.stdout).toContain("Removed index rows: 7");
@@ -850,7 +858,10 @@ describe("runConnector remove", () => {
     expect(promptCount).toBe(1);
     expect(gw.calls).toEqual([
       { method: "connector.remove", params: { serviceId: "github" } },
-      { method: "consent.respond", params: { requestId: "req-remove-1", approved: true } },
+      {
+        method: "consent.respond",
+        params: { requestId: "req-remove-1", approved: true, answerSource: "auto" },
+      },
     ]);
     expect(stderr).toContain("[confirmed] auto-approving HITL request");
     expect(out.stdout).toContain("Removed index rows: 4");
@@ -2245,7 +2256,10 @@ describe("runConnector detect — the production local-auth wiring", () => {
         method: "connector.adoptLocalAuth",
         params: { source: "gcloud", project: "acme-prod", replace: false },
       },
-      { method: "consent.respond", params: { requestId: "consent-1", approved: false } },
+      {
+        method: "consent.respond",
+        params: { requestId: "consent-1", approved: false, answerSource: "human" },
+      },
     ]);
     expect(out.stdout).toContain("  Skipped — not approved.");
   });

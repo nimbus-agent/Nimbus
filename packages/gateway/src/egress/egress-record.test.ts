@@ -70,4 +70,16 @@ describe("buildEgressEntry", () => {
     expect(e.resultStatus).toBe("blocked");
     expect(e.hitlStatus).toBe("rejected");
   });
+
+  test("a standing-approved gate yields an authorized entry with that status (SA1)", () => {
+    const e = buildEgressEntry({
+      action: { type: "gmail.thread.archive", payload: {} },
+      hitlStatus: "standing_approved",
+      resultStatus: "authorized",
+      sessionId: undefined,
+      now: 3,
+    });
+    expect(e.hitlStatus).toBe("standing_approved");
+    expect(e.resultStatus).toBe("authorized");
+  });
 });

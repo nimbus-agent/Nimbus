@@ -5,7 +5,7 @@ export interface AuditDisplayRow {
   readonly tsIso: string;
   readonly service: string;
   readonly action: string;
-  readonly outcome: "approved" | "rejected" | "not_required";
+  readonly outcome: "approved" | "rejected" | "not_required" | "standing_approved";
   readonly actor: string;
   readonly rowHash: string;
 }

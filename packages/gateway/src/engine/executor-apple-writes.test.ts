@@ -39,13 +39,13 @@ function harness(approve: boolean): {
     requestApproval: async (prompt: string) => {
       order.push("consent");
       prompts.push(prompt);
-      return approve;
+      return { approved: approve, answerSource: "human" as const };
     },
     // The Wave 4 delete: the typed confirmation is its consent.
     requestConfirmedApproval: async (req) => {
       order.push("consent");
       prompts.push(req.prompt);
-      return { approved: approve, typed: req.confirmText };
+      return { approved: approve, typed: req.confirmText, answerSource: "human" as const };
     },
   };
   const audit: AuditSink = { recordAudit: () => {} };

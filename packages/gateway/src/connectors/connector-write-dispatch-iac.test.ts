@@ -62,8 +62,12 @@ describe("the production write-dispatcher chain keeps the bound-write capabiliti
   test("through the executor, an iac apply reaches the runner's preflight, not capabilityMissing", async () => {
     const exec = new ToolExecutor(
       {
-        requestApproval: async () => true,
-        requestConfirmedApproval: async (req) => ({ approved: true, typed: req.confirmText }),
+        requestApproval: async () => ({ approved: true, answerSource: "human" as const }),
+        requestConfirmedApproval: async (req) => ({
+          approved: true,
+          typed: req.confirmText,
+          answerSource: "human" as const,
+        }),
       },
       { recordAudit: () => undefined },
       productionChain(),

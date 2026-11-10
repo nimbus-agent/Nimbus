@@ -37,10 +37,14 @@ const stubPaths: PlatformPaths = {
 const demoPaths: PlatformPaths = { ...stubPaths, demo: true };
 
 const stubConsent: ConsentCoordinator = {
-  async requestConsent(): Promise<boolean> {
-    return false;
+  async requestConsent(): Promise<{ approved: boolean; answerSource: "human" }> {
+    return { approved: false, answerSource: "human" as const };
   },
-  requestConfirmedConsent: async () => ({ approved: false, typed: "" }),
+  requestConfirmedConsent: async () => ({
+    approved: false,
+    typed: "",
+    answerSource: "human" as const,
+  }),
   rejectAllPending(): void {},
   pendingCount(): number {
     return 0;

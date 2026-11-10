@@ -7,7 +7,7 @@ import type { EgressSourceType } from "./egress-source-type.ts";
 const EGRESS_SUMMARY_MAX_BYTES = 256;
 
 export type EgressResultStatus = "authorized" | "blocked";
-export type EgressHitlStatus = "approved" | "not_required" | "rejected";
+export type EgressHitlStatus = "approved" | "not_required" | "rejected" | "standing_approved";
 
 export interface EgressEntry {
   readonly timestamp: number;

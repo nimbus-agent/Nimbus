@@ -362,7 +362,7 @@ describe("the bare ids the gateway sends, through each caller, over the real lis
         const ran: string[] = [];
         const tools = await listedMap("comms", ran);
         const executor = new ToolExecutor(
-          { requestApproval: async () => true },
+          { requestApproval: async () => ({ approved: true, answerSource: "human" as const }) },
           { recordAudit: () => {} },
           createConnectorDispatcher({ listTools: async () => tools }),
           undefined,

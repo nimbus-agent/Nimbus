@@ -687,7 +687,7 @@ describe("B2: the Linear assignee guard through the production door executor (OR
     const consent: ConsentChannel = {
       requestApproval: async (prompt) => {
         prompts.push(prompt);
-        return approve;
+        return { approved: approve, answerSource: "human" as const };
       },
     };
     const audit: AuditSink = { recordAudit: () => {} };
@@ -780,7 +780,7 @@ describe("B3: the KB-child guard through the production door executor (OR-B3-3)"
     const consent: ConsentChannel = {
       requestApproval: async (prompt) => {
         prompts.push(prompt);
-        return true;
+        return { approved: true, answerSource: "human" as const };
       },
     };
     const audit: AuditSink = { recordAudit: () => {} };
@@ -859,7 +859,7 @@ describe("B3r: remote content is refused on the real rows through the real door"
     const consent: ConsentChannel = {
       requestApproval: async (prompt) => {
         prompts.push(prompt);
-        return true;
+        return { approved: true, answerSource: "human" as const };
       },
     };
     const audit: AuditSink = { recordAudit: () => {} };

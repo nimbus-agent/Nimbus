@@ -101,6 +101,32 @@ describe("AuditPanel", () => {
     expect(screen.getByText("3 of 3 rows")).toBeTruthy();
   });
 
+  it("shows a standing_approved row, coloured like an approval and filterable by outcome", async () => {
+    callMock.mockImplementation(async (method: string) => {
+      if (method === "audit.list") {
+        return [
+          ...SAMPLE_ROWS,
+          {
+            id: 4,
+            actionType: "gmail.thread.archive",
+            hitlStatus: "standing_approved" as const,
+            actionJson: "{}",
+            timestamp: 1745126400000,
+          },
+        ];
+      }
+      return [];
+    });
+    renderAt("/settings/audit");
+    await waitFor(() => expect(screen.getAllByTestId("audit-row")).toHaveLength(4));
+    expect(screen.getByText("standing_approved", { selector: "span" }).className).toContain(
+      "text-green-600",
+    );
+    const select = screen.getByLabelText("Outcome filter") as HTMLSelectElement;
+    fireEvent.change(select, { target: { value: "standing_approved" } });
+    await waitFor(() => expect(screen.getAllByTestId("audit-row")).toHaveLength(1));
+  });
+
   it("filters by service via the chip", async () => {
     await renderAndWaitForRows();
     const select = screen.getByLabelText("Service filter") as HTMLSelectElement;

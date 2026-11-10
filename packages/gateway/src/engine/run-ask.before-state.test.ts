@@ -70,11 +70,15 @@ function harness() {
     door: undefined,
   };
   const consentCoordinator: ConsentCoordinator = {
-    async requestConsent(_clientId, req): Promise<boolean> {
+    async requestConsent(_clientId, req): Promise<{ approved: boolean; answerSource: "human" }> {
       details.push(req.details as Record<string, unknown> | undefined);
-      return true;
+      return { approved: true, answerSource: "human" as const };
     },
-    requestConfirmedConsent: async () => ({ approved: false, typed: "" }),
+    requestConfirmedConsent: async () => ({
+      approved: false,
+      typed: "",
+      answerSource: "human" as const,
+    }),
     rejectAllPending(): void {},
     pendingCount(): number {
       return 0;

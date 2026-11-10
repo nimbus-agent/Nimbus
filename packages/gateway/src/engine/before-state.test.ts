@@ -345,7 +345,7 @@ function executorHarness(opts: {
     requestApproval: async (prompt, details) => {
       seen.prompts.push(prompt);
       seen.details.push(details);
-      return true;
+      return { approved: true, answerSource: "human" as const };
     },
   };
   const audit: AuditSink = {
@@ -442,7 +442,7 @@ describe("before-state through the door's ToolExecutor", () => {
         requestApproval: async (prompt, details) => {
           seen.prompts.push(prompt);
           seen.details.push(details);
-          return true;
+          return { approved: true, answerSource: "human" as const };
         },
       },
       { recordAudit: () => {} },

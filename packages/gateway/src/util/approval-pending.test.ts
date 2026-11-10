@@ -192,7 +192,7 @@ describe("seam: ConsentCoordinatorImpl (executor HITL)", () => {
     expect(toasts[0]?.body).toContain("slack.message.post");
     assertClean(toasts);
     expect(c.handleRespond("client-a", { requestId: "r1", approved: true })).toBeNull();
-    expect(await p).toBe(true);
+    expect(await p).toEqual({ approved: true, answerSource: "unknown" });
     expect(toasts).toHaveLength(1);
   });
 
@@ -234,7 +234,7 @@ describe("seam: ConsentCoordinatorImpl (executor HITL)", () => {
       expect(unicast).toHaveLength(1);
       expect(c.pendingCount()).toBe(1);
       c.handleRespond("client-a", { requestId: "r1", approved: false });
-      expect(await p).toBe(false);
+      expect(await p).toEqual({ approved: false, answerSource: "unknown" });
     }
   });
 });

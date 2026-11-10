@@ -35,8 +35,8 @@ function createExecutorHarness(initialApprove: boolean): {
   const auditCalls: AuditRecord[] = [];
 
   const consent: ConsentChannel = {
-    requestApproval(): Promise<boolean> {
-      return Promise.resolve(initialApprove);
+    requestApproval(): Promise<{ approved: boolean; answerSource: "human" }> {
+      return Promise.resolve({ approved: initialApprove, answerSource: "human" as const });
     },
   };
 
@@ -139,8 +139,12 @@ describe("audit payload safety (§7.8)", () => {
 
   test("bindConsentChannel + executor still yields clean audit JSON", async () => {
     const coordinator = {
-      requestConsent: async () => true,
-      requestConfirmedConsent: async () => ({ approved: false, typed: "" }),
+      requestConsent: async () => ({ approved: true, answerSource: "human" as const }),
+      requestConfirmedConsent: async () => ({
+        approved: false,
+        typed: "",
+        answerSource: "human" as const,
+      }),
       rejectAllPending: () => {
         /* noop */
       },

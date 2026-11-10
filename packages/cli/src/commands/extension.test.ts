@@ -555,7 +555,7 @@ describe("runExtensionInstall", () => {
     await Bun.sleep(0);
     expect(calls[1]).toEqual({
       method: "consent.respond",
-      params: { requestId: "r-1", approved: true },
+      params: { requestId: "r-1", approved: true, answerSource: "auto" },
     });
   });
 });

@@ -48,6 +48,28 @@ describe("runAuditList", () => {
     expect(out.stdout).toContain("user-cancelled");
   });
 
+  it("lists a standing_approved row (the longest status) in an aligned column", async () => {
+    const { client } = createMockIpcClient([
+      [
+        {
+          id: 2,
+          actionType: "gmail.thread.archive",
+          hitlStatus: "standing_approved",
+          actionJson: "{}",
+          timestamp: 1700000000000,
+        },
+      ],
+    ]);
+    await runAuditList(client, 10);
+    const row =
+      out.stdout.split(String.fromCharCode(10)).find((l) => l.includes("gmail.thread.archive")) ??
+      "";
+    expect(row).toContain("standing_approved");
+    expect(row.indexOf("standing_approved") + "standing_approved".length + 1).toBe(
+      row.indexOf("—"),
+    );
+  });
+
   it("renders '—' when actionJson has no hitlRejectReason", async () => {
     const { client } = createMockIpcClient([
       [

@@ -68,7 +68,9 @@ function VerifyToast({
 
 function outcomeClass(outcome: string): string {
   if (outcome === "rejected") return "text-red-500 font-medium";
-  if (outcome === "approved") return "text-green-600 font-medium";
+  if (outcome === "approved" || outcome === "standing_approved") {
+    return "text-green-600 font-medium";
+  }
   return "text-[var(--color-text-muted)]";
 }
 
@@ -98,7 +100,7 @@ export function AuditPanel() {
     Array<{
       id: number;
       actionType: string;
-      hitlStatus: "approved" | "rejected" | "not_required";
+      hitlStatus: "approved" | "rejected" | "not_required" | "standing_approved";
       actionJson: string;
       timestamp: number;
     }>

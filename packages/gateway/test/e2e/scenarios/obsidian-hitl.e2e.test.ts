@@ -32,7 +32,10 @@ test("audit log entry is written before the dispatcher executes the append", asy
     },
   };
   const consent: ConsentChannel = {
-    requestApproval: async (_prompt: string, _details?: Record<string, unknown>) => true,
+    requestApproval: async (_prompt: string, _details?: Record<string, unknown>) => ({
+      approved: true,
+      answerSource: "human" as const,
+    }),
   };
   const exec = new ToolExecutor(consent, audit, dispatch, undefined, NULL_EGRESS_SINK);
   const result = await exec.execute({
@@ -53,7 +56,7 @@ test("rejecting the consent prompt returns rejected and never dispatches", async
   writeFileSync(dailyPath, "before");
 
   const consent: ConsentChannel = {
-    requestApproval: async () => false,
+    requestApproval: async () => ({ approved: false, answerSource: "human" as const }),
   };
   let auditCalls = 0;
   const audit: AuditSink = {

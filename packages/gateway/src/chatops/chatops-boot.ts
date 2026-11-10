@@ -5,7 +5,12 @@ import { buildLedgeredChatPosts, buildLedgeredConfirmModal } from "../egress/cha
 import type { EgressSink } from "../egress/egress-ledger.ts";
 import { EgressAppendFailedError } from "../egress/model-egress.ts";
 import { CONFIRM_UNSUPPORTED_REASON, HITL_REQUIRED, ToolExecutor } from "../engine/executor.ts";
-import type { AuditSink, ConnectorDispatcher, ConsentChannel } from "../engine/types.ts";
+import type {
+  ApprovalAnswer,
+  AuditSink,
+  ConnectorDispatcher,
+  ConsentChannel,
+} from "../engine/types.ts";
 import { EXTERNAL_AGENT_NAMES } from "../ipc/agents-rpc.ts";
 import type { ChatopsRpcCtx } from "../ipc/chatops-rpc.ts";
 import { ConsentDisconnectedError } from "../ipc/consent.ts";
@@ -186,7 +191,7 @@ export interface ChatopsBoot {
    * Slice 6c: the chatops owner-consent channel (the same I2 fallback the chatops executor uses),
    * exposed so an in-chat tribal capture routes its HITL approval to the LOCAL owner.
    */
-  requestOwnerApproval(prompt: string, details?: Record<string, unknown>): Promise<boolean>;
+  requestOwnerApproval(prompt: string, details?: Record<string, unknown>): Promise<ApprovalAnswer>;
   /**
    * Slice 6c: true if the sender resolves to a mapped (SCIM-enrolled) identity. An intercepted
    * command (e.g. in-chat tribal capture) consults this so an unenrolled user cannot trigger the
@@ -400,6 +405,8 @@ export async function buildChatopsBoot(deps: ChatopsBootDeps): Promise<ChatopsBo
         return identity.isOperatorValid(scim.issuer);
       },
       requestRemote: () => presenter.requestApproval(),
+      // SA1: a ChatOps answer is recorded as `remote`, not as a generic delegate.
+      answerSource: "remote",
       // Phase 9.7 D0c: a Wave 4 write's typed text arrives from a Slack modal or a Teams card
       // input; the executor alone compares it (D41).
       requestRemoteConfirmed: (_actionType, confirmText) =>

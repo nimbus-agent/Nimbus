@@ -48,7 +48,10 @@ describe("registerAutoApproveConsentHandler (BUG-002)", () => {
     registerAutoApproveConsentHandler(client);
     await fireConsent({ requestId: "req-123", prompt: "Approve data.export?" });
     expect(calls).toEqual([
-      { method: "consent.respond", params: { requestId: "req-123", approved: true } },
+      {
+        method: "consent.respond",
+        params: { requestId: "req-123", approved: true, answerSource: "auto" },
+      },
     ]);
   });
 
@@ -109,7 +112,10 @@ describe("registerInteractiveCliIpcHandlers env-var dispatch", () => {
       process.stdout.write = originalStdout;
     }
     expect(calls).toEqual([
-      { method: "consent.respond", params: { requestId: "r-1", approved: false } },
+      {
+        method: "consent.respond",
+        params: { requestId: "r-1", approved: false, answerSource: "script" },
+      },
     ]);
   });
 
@@ -216,7 +222,10 @@ describe("selectConsentHandler", () => {
     selectConsentHandler(client, { yes: true });
     await fire("consent.request", { requestId: "r-1", prompt: "p" });
     expect(calls).toEqual([
-      { method: "consent.respond", params: { requestId: "r-1", approved: true } },
+      {
+        method: "consent.respond",
+        params: { requestId: "r-1", approved: true, answerSource: "auto" },
+      },
     ]);
   });
 
@@ -245,7 +254,10 @@ describe("selectConsentHandler", () => {
     }
     expect(stderrCapture).toContain("overrides");
     expect(calls).toEqual([
-      { method: "consent.respond", params: { requestId: "r-2", approved: false } },
+      {
+        method: "consent.respond",
+        params: { requestId: "r-2", approved: false, answerSource: "script" },
+      },
     ]);
   });
 
@@ -279,7 +291,10 @@ describe("selectConsentHandler", () => {
     }
     expect(stderrCapture).not.toContain("overrides");
     expect(calls).toEqual([
-      { method: "consent.respond", params: { requestId: "r-3", approved: true } },
+      {
+        method: "consent.respond",
+        params: { requestId: "r-3", approved: true, answerSource: "script" },
+      },
     ]);
   });
 });
@@ -322,7 +337,10 @@ describe("registerAutoApproveConsentHandler — prompt fallback branches", () =>
     expect(warning).toContain("[confirmed] auto-approving HITL request: Remove connector?");
     expect(warning).not.toContain("[--yes]");
     expect(calls).toEqual([
-      { method: "consent.respond", params: { requestId: "req-labelled", approved: true } },
+      {
+        method: "consent.respond",
+        params: { requestId: "req-labelled", approved: true, answerSource: "auto" },
+      },
     ]);
   });
 
@@ -352,7 +370,10 @@ describe("registerConsentPromptHandler — confirm DI seam", () => {
     registerConsentPromptHandler(client, fakeConfirm);
     await fire("consent.request", { requestId: "r-ok", prompt: "Allow?" });
     expect(calls).toEqual([
-      { method: "consent.respond", params: { requestId: "r-ok", approved: true } },
+      {
+        method: "consent.respond",
+        params: { requestId: "r-ok", approved: true, answerSource: "human" },
+      },
     ]);
   });
 
@@ -362,7 +383,10 @@ describe("registerConsentPromptHandler — confirm DI seam", () => {
     registerConsentPromptHandler(client, fakeConfirm);
     await fire("consent.request", { requestId: "r-deny", prompt: "Allow?" });
     expect(calls).toEqual([
-      { method: "consent.respond", params: { requestId: "r-deny", approved: false } },
+      {
+        method: "consent.respond",
+        params: { requestId: "r-deny", approved: false, answerSource: "human" },
+      },
     ]);
   });
 
@@ -374,7 +398,10 @@ describe("registerConsentPromptHandler — confirm DI seam", () => {
     registerConsentPromptHandler(client, fakeConfirm);
     await fire("consent.request", { requestId: "r-cancel" });
     expect(calls).toEqual([
-      { method: "consent.respond", params: { requestId: "r-cancel", approved: false } },
+      {
+        method: "consent.respond",
+        params: { requestId: "r-cancel", approved: false, answerSource: "human" },
+      },
     ]);
   });
 
@@ -510,7 +537,10 @@ describe("registerScriptConsentHandler — notification handler branches", () =>
     }
     expect(capturedOut).toContain("(no prompt)");
     expect(calls).toEqual([
-      { method: "consent.respond", params: { requestId: "r-noprompt", approved: true } },
+      {
+        method: "consent.respond",
+        params: { requestId: "r-noprompt", approved: true, answerSource: "script" },
+      },
     ]);
   });
 
@@ -536,7 +566,10 @@ describe("registerScriptConsentHandler — notification handler branches", () =>
     expect(capturedOut).toContain("[scripted: reject]");
     expect(capturedOut).not.toContain(" — ");
     expect(calls).toEqual([
-      { method: "consent.respond", params: { requestId: "r-rej", approved: false } },
+      {
+        method: "consent.respond",
+        params: { requestId: "r-rej", approved: false, answerSource: "script" },
+      },
     ]);
   });
 
@@ -562,7 +595,10 @@ describe("registerScriptConsentHandler — notification handler branches", () =>
     expect(capturedOut).toContain("[scripted: approve]");
     expect(capturedOut).toContain(" — because CI");
     expect(calls).toEqual([
-      { method: "consent.respond", params: { requestId: "r-note", approved: true } },
+      {
+        method: "consent.respond",
+        params: { requestId: "r-note", approved: true, answerSource: "script" },
+      },
     ]);
   });
 
@@ -583,7 +619,10 @@ describe("registerScriptConsentHandler — notification handler branches", () =>
       process.stdout.write = origOut;
     }
     expect(calls).toEqual([
-      { method: "consent.respond", params: { requestId: "r-blank", approved: true } },
+      {
+        method: "consent.respond",
+        params: { requestId: "r-blank", approved: true, answerSource: "script" },
+      },
     ]);
   });
 });
@@ -636,7 +675,10 @@ describe("type-to-confirm (Phase 9.7 D0a)", () => {
       cap.restore();
     }
     expect(calls).toEqual([
-      { method: "consent.respond", params: { requestId: "w4", approved: true, typed: CONFIRM } },
+      {
+        method: "consent.respond",
+        params: { requestId: "w4", approved: true, typed: CONFIRM, answerSource: "human" },
+      },
     ]);
     expect(cap.out()).toContain("Merge PR?");
     expect(messages[0]).toContain(CONFIRM);
@@ -652,7 +694,12 @@ describe("type-to-confirm (Phase 9.7 D0a)", () => {
     } finally {
       cap.restore();
     }
-    expect(calls[0]?.params).toEqual({ requestId: "w4s", approved: true, typed: ` ${CONFIRM}` });
+    expect(calls[0]?.params).toEqual({
+      requestId: "w4s",
+      approved: true,
+      typed: ` ${CONFIRM}`,
+      answerSource: "human",
+    });
   });
 
   test("a cancelled or empty answer sends approved false with empty typed", async () => {
@@ -666,7 +713,10 @@ describe("type-to-confirm (Phase 9.7 D0a)", () => {
         cap.restore();
       }
       expect(calls).toEqual([
-        { method: "consent.respond", params: { requestId: "w4c", approved: false, typed: "" } },
+        {
+          method: "consent.respond",
+          params: { requestId: "w4c", approved: false, typed: "", answerSource: "human" },
+        },
       ]);
     }
   });
@@ -680,7 +730,10 @@ describe("type-to-confirm (Phase 9.7 D0a)", () => {
     );
     await fire("consent.request", { requestId: "plain", prompt: "p", confirmText: "" });
     expect(calls).toEqual([
-      { method: "consent.respond", params: { requestId: "plain", approved: true } },
+      {
+        method: "consent.respond",
+        params: { requestId: "plain", approved: true, answerSource: "human" },
+      },
     ]);
   });
 
@@ -694,7 +747,10 @@ describe("type-to-confirm (Phase 9.7 D0a)", () => {
       cap.restore();
     }
     expect(calls).toEqual([
-      { method: "consent.respond", params: { requestId: "w4y", approved: false } },
+      {
+        method: "consent.respond",
+        params: { requestId: "w4y", approved: false, answerSource: "auto" },
+      },
     ]);
     expect(cap.err()).toBe(CONFIRM_TEXT_DENIED_LINE);
     expect(cap.err()).not.toContain("auto-approving");
@@ -714,8 +770,14 @@ describe("type-to-confirm (Phase 9.7 D0a)", () => {
       cap.restore();
     }
     expect(calls).toEqual([
-      { method: "consent.respond", params: { requestId: "w4j", approved: false } },
-      { method: "consent.respond", params: { requestId: "after", approved: true } },
+      {
+        method: "consent.respond",
+        params: { requestId: "w4j", approved: false, answerSource: "script" },
+      },
+      {
+        method: "consent.respond",
+        params: { requestId: "after", approved: true, answerSource: "script" },
+      },
     ]);
     expect(cap.err()).toBe(CONFIRM_TEXT_DENIED_LINE);
   });
@@ -774,7 +836,10 @@ describe("a multi-file commit prompt on the typed-confirm path (D1c)", () => {
     expect(messages[0]?.length).toBeLessThan(300);
     expect(messages[0]).not.toContain("line 5 of");
     expect(calls).toEqual([
-      { method: "consent.respond", params: { requestId: "c1", approved: true, typed: CONFIRM } },
+      {
+        method: "consent.respond",
+        params: { requestId: "c1", approved: true, typed: CONFIRM, answerSource: "human" },
+      },
     ]);
   });
 });
@@ -820,7 +885,10 @@ describe("a plan-bound write prompt on the typed-confirm path (D2)", () => {
     expect(shown).toEqual([`${prompt}\n`]);
     expect(prompt.split("\n").filter((l) => l.startsWith("End of "))).toHaveLength(1);
     expect(calls).toEqual([
-      { method: "consent.respond", params: { requestId: "p1", approved: true, typed: CONFIRM } },
+      {
+        method: "consent.respond",
+        params: { requestId: "p1", approved: true, typed: CONFIRM, answerSource: "human" },
+      },
     ]);
   });
 });

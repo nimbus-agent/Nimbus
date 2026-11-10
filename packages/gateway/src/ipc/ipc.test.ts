@@ -319,7 +319,7 @@ describe("ipc server integration", () => {
           throw new Error("expected client id");
         }
 
-        let consentP!: Promise<boolean>;
+        let consentP!: Promise<{ approved: boolean; answerSource: string }>;
         const notifLine = await new Promise<string>((resolve, reject) => {
           sock.on("data", (b: Buffer) => {
             const { next, line } = appendAndTakeFirstLine(buf, b.toString("utf8"));
@@ -348,11 +348,11 @@ describe("ipc server integration", () => {
           })}\n`,
         );
 
-        await expect(consentP).resolves.toBe(true);
+        await expect(consentP).resolves.toEqual({ approved: true, answerSource: "unknown" });
         sock.end();
       } else {
         let buf = "";
-        let consentP!: Promise<boolean>;
+        let consentP!: Promise<{ approved: boolean; answerSource: string }>;
         const sock = await Bun.connect({
           unix: listenPath,
           socket: {
@@ -399,7 +399,7 @@ describe("ipc server integration", () => {
           })}\n`,
         );
 
-        await expect(consentP).resolves.toBe(true);
+        await expect(consentP).resolves.toEqual({ approved: true, answerSource: "unknown" });
         sock.end();
       }
     } finally {

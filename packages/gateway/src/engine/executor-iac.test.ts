@@ -146,11 +146,11 @@ function harness(o: HarnessOptions = {}): Harness {
             log.push("prompt");
             prompts.push(p);
             details.push(d);
-            return true;
+            return { approved: true, answerSource: "human" as const };
           },
         }
       : {
-          requestApproval: async () => true,
+          requestApproval: async () => ({ approved: true, answerSource: "human" as const }),
           requestConfirmedApproval: async (
             req: ConfirmedApprovalRequest,
           ): Promise<ConfirmedApprovalResult> => {
@@ -158,7 +158,11 @@ function harness(o: HarnessOptions = {}): Harness {
             prompts.push(req.prompt);
             details.push(req.details);
             if (o.promptThrows !== undefined) throw o.promptThrows;
-            return { approved: o.approve ?? true, typed: o.typed ?? CONFIRM_TEXT };
+            return {
+              approved: o.approve ?? true,
+              typed: o.typed ?? CONFIRM_TEXT,
+              answerSource: "human" as const,
+            };
           },
         };
   const exec = new ToolExecutor(

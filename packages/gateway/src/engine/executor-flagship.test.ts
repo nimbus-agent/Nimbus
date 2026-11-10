@@ -17,7 +17,9 @@ import type { AuditSink, ConnectorDispatcher, ConsentChannel } from "./types.ts"
 type AuditRecord = Parameters<AuditSink["recordAudit"]>[0];
 
 function approvingExecutor(auditCalls: AuditRecord[]): ToolExecutor {
-  const consent: ConsentChannel = { requestApproval: () => Promise.resolve(true) };
+  const consent: ConsentChannel = {
+    requestApproval: () => Promise.resolve({ approved: true, answerSource: "human" as const }),
+  };
   const audit: AuditSink = { recordAudit: (e) => auditCalls.push(e) };
   const connectors: ConnectorDispatcher = { dispatch: () => Promise.resolve({ ok: true }) };
   return new ToolExecutor(consent, audit, connectors, undefined, NULL_EGRESS_SINK);

@@ -414,7 +414,11 @@ describe("runVault — the Gateway's HITL gate (F16)", () => {
     await runVault(["set", "azure.tenant_id", "6875a760"]);
 
     expect(gw.calls.map((c) => c.method)).toEqual(["vault.set", "consent.respond"]);
-    expect(gw.calls[1]?.params).toEqual({ requestId: "req-vault.set", approved: true });
+    expect(gw.calls[1]?.params).toEqual({
+      requestId: "req-vault.set",
+      approved: true,
+      answerSource: "human",
+    });
     expect(out.stdout).toBe("Stored.\n");
   });
 
@@ -445,6 +449,10 @@ describe("runVault — the Gateway's HITL gate (F16)", () => {
 
     await runVault(["set", "azure.tenant_id", "6875a760"]);
 
-    expect(gw.calls[1]?.params).toEqual({ requestId: "req-vault.set", approved: false });
+    expect(gw.calls[1]?.params).toEqual({
+      requestId: "req-vault.set",
+      approved: false,
+      answerSource: "human",
+    });
   });
 });

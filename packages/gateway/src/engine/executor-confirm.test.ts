@@ -56,7 +56,7 @@ interface Harness {
 
 function harness(opts: {
   /** The confirm channel's answer; `"absent"` builds a channel with no `requestConfirmedApproval`. */
-  readonly confirmAnswer?: ConfirmedApprovalResult | "absent";
+  readonly confirmAnswer?: Omit<ConfirmedApprovalResult, "answerSource"> | "absent";
   readonly plainAnswer?: boolean;
   readonly delegation?: ExecutorDelegationDep;
   readonly runner?: BeforeStateRunner;
@@ -70,14 +70,14 @@ function harness(opts: {
   const consent: ConsentChannel = {
     requestApproval: async (prompt) => {
       plain.push(prompt);
-      return opts.plainAnswer ?? true;
+      return { approved: opts.plainAnswer ?? true, answerSource: "human" as const };
     },
     ...(answer === "absent"
       ? {}
       : {
           requestConfirmedApproval: async (req: ConfirmedApprovalRequest) => {
             confirmed.push(req);
-            return answer;
+            return { ...answer, answerSource: "human" as const };
           },
         }),
   };
@@ -232,6 +232,7 @@ describe("a Wave 4 write needs the exact typed text (b-f)", () => {
     expect(auditOf(h)["confirm"]).toBe("mismatched");
     expect(h.audits.at(-1)?.hitlStatus).toBe("rejected");
     expect(h.egress.at(-1)?.resultStatus).toBe("blocked");
+    expect(auditOf(h)["answerSource"]).toBe("human");
   });
 
   test("approved with empty typed (an old client): mismatched", async () => {
@@ -273,6 +274,8 @@ describe("a channel without requestConfirmedApproval cannot approve Wave 4 (g)",
     expect(h.dispatched).toHaveLength(0);
     expect(auditOf(h)["confirm"]).toBe("unsupported_channel");
     expect(h.egress.at(-1)?.resultStatus).toBe("blocked");
+    // No prompt was shown, so there is no answer source to record.
+    expect("answerSource" in auditOf(h)).toBe(false);
   });
 });
 

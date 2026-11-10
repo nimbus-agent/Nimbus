@@ -55,7 +55,7 @@ function deps(approve: boolean, prompts: unknown[] = []): ModelWritesDeps {
     {
       requestApproval: async (_prompt: string, details?: unknown) => {
         prompts.push(details);
-        return approve;
+        return { approved: approve, answerSource: "human" as const };
       },
     },
     new LocalIndex(db),

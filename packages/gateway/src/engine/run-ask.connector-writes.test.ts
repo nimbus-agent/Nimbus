@@ -66,11 +66,15 @@ function harness(over: Partial<RunAskParams> = {}): Harness {
   const egress: EgressEntry[] = [];
   const dispatched: string[] = [];
   const consentCoordinator: ConsentCoordinator = {
-    async requestConsent(clientId: string): Promise<boolean> {
+    async requestConsent(clientId: string): Promise<{ approved: boolean; answerSource: "human" }> {
       consentClientIds.push(clientId);
-      return true;
+      return { approved: true, answerSource: "human" as const };
     },
-    requestConfirmedConsent: async () => ({ approved: false, typed: "" }),
+    requestConfirmedConsent: async () => ({
+      approved: false,
+      typed: "",
+      answerSource: "human" as const,
+    }),
     rejectAllPending(): void {},
     pendingCount(): number {
       return 0;

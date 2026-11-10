@@ -26,10 +26,34 @@ export interface ConfirmedApprovalRequest {
   confirmText: string;
 }
 
+/**
+ * Where an approval answer came from (Phase 10 SA1, spec § 6.1). Client-reported for the owner's
+ * prompt: `human` (a person answered), `auto` (`--yes`), `script` (a scripted consent); `unknown`
+ * is an older client that sent none; `delegate` and `remote` are set by the gateway for a delegated
+ * and a ChatOps answer; `none` is a decision no prompt was shown for.
+ */
+export type AnswerSource = "human" | "auto" | "script" | "unknown" | "delegate" | "remote" | "none";
+
+/** The answer sources an IPC consent reply may carry (the client-reported subset). */
+export const REPORTED_ANSWER_SOURCES = ["human", "auto", "script"] as const;
+
+/** What the approval phase decided: an owner/delegate answer, or (reserved for I55) a standing rule. */
+export type ApprovalOutcome =
+  | { kind: "approved"; answerSource: AnswerSource }
+  | { kind: "rejected"; reason: string; answerSource: AnswerSource }
+  | { kind: "standing_approved"; ruleId: string; fireId: string };
+
 /** The owner's answer to a {@link ConfirmedApprovalRequest}: the decision and what they typed. */
 export interface ConfirmedApprovalResult {
   approved: boolean;
   typed: string;
+  answerSource: AnswerSource;
+}
+
+/** The owner's answer to a plain approval request. */
+export interface ApprovalAnswer {
+  approved: boolean;
+  answerSource: AnswerSource;
 }
 
 export interface ConsentChannel {
@@ -37,7 +61,7 @@ export interface ConsentChannel {
     prompt: string,
     details?: Record<string, unknown>,
     actionType?: string,
-  ): Promise<boolean>;
+  ): Promise<ApprovalAnswer>;
   /**
    * Collects a typed confirmation. A channel without it cannot approve a Wave 4 write: the
    * executor denies it (`confirm: unsupported_channel`) and never falls back to
@@ -50,7 +74,7 @@ export interface ConsentChannel {
 export interface AuditSink {
   recordAudit(entry: {
     actionType: string;
-    hitlStatus: "approved" | "rejected" | "not_required";
+    hitlStatus: "approved" | "rejected" | "not_required" | "standing_approved";
     actionJson: string;
     timestamp: number;
     sessionId?: string;

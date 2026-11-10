@@ -611,7 +611,7 @@ describe("C1 through the real door", () => {
       {
         requestApproval: async (p: string) => {
           prompts.push(p);
-          return true;
+          return { approved: true, answerSource: "human" as const };
         },
       } as ConsentChannel,
       { recordAudit: () => {} } as AuditSink,
