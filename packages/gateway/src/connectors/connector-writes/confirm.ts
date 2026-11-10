@@ -10,6 +10,7 @@ import {
   isConfirmChar,
   parseConfirmTemplate,
 } from "./confirm-template.ts";
+import { k8sConfirmTarget } from "./k8s-manifest.ts";
 import { isPlainObject } from "./preview.ts";
 import type { ConnectorWriteRow } from "./types.ts";
 
@@ -165,13 +166,16 @@ export function renderConfirmText(row: ConnectorWriteRow, input: unknown): Confi
     alt !== undefined && input[alt.field] === undefined ? alt.template : row.confirm.template;
   const parsed = parseConfirmTemplate(template);
   if (!parsed.ok) return refuse(`template ${parsed.reason}`);
+  // D3a: a derived `{target}` is computed from the gateway's own parse, replacing any caller field.
+  const values: Record<string, unknown> =
+    row.confirm.derive === "k8s-target" ? { ...input, target: k8sConfirmTarget(input) } : input;
   let text = `${serviceOf(row.actionType)}/`;
   for (const [i, seg] of parsed.segments.entries()) {
     if (seg.kind === "text") {
       text += seg.text;
       continue;
     }
-    const value = fieldText(seg, input, followingText(parsed.segments, i));
+    const value = fieldText(seg, values, followingText(parsed.segments, i));
     if (value === undefined) return refuse(`field ${seg.name} is not a usable value`);
     text += value;
   }

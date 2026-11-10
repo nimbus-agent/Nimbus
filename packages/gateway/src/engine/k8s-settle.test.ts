@@ -95,8 +95,8 @@ describe("settleK8sManifest: the happy path", () => {
       planSha256: k8sPlanHash(CONTEXT, NS, MANIFEST),
       diffSha256: k8sDiffHash(String(b.reply["diff"])),
     });
-    expect(out.values["planSha256"]).toBe(b.reply["planSha256"]);
-    expect(out.values["diffSha256"]).toBe(b.reply["diffSha256"]);
+    expect(out.values["planSha256"]).toBe(String(b.reply["planSha256"]));
+    expect(out.values["diffSha256"]).toBe(String(b.reply["diffSha256"]));
   });
 
   test("the fields name the cluster, namespace, objects, differences and the plan hash", () => {
@@ -240,7 +240,7 @@ describe("settleK8sManifest: every cross-check refuses with a fixed text", () =>
   });
 
   test("the connector's diffSha256 and the gateway's agree on the real diff text", () => {
-    expect(k8sDiffHash(String(b.reply["diff"]))).toBe(b.reply["diffSha256"]);
+    expect(k8sDiffHash(String(b.reply["diff"]))).toBe(String(b.reply["diffSha256"]));
   });
 
   test("51 objects are refused", () => {

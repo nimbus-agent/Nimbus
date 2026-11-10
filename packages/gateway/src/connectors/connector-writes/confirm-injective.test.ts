@@ -12,6 +12,7 @@ import { describe, expect, test } from "bun:test";
 import { renderConfirmText } from "./confirm.ts";
 import { type ConfirmSegment, parseConfirmTemplate } from "./confirm-template.ts";
 import { CONNECTOR_WRITE_ROWS } from "./index.ts";
+import { k8sTestRow } from "./k8s-row.test-helpers.ts";
 import { type ConnectorWriteRow, row } from "./types.ts";
 
 /** Seeded, so a failure reproduces. */
@@ -256,5 +257,67 @@ describe("brute-force oracle: no two accepted projected tuples render the same t
 
   test("adjacent fields never reach the oracle: the template does not parse", () => {
     expect(parseConfirmTemplate("{a}{b}").ok).toBe(false);
+  });
+});
+
+describe("the derived Kubernetes target is injective over what it names (D3a)", () => {
+  const ROW = k8sTestRow();
+  const POOL = [
+    ["apps/v1", "Deployment", "api"],
+    ["apps/v1", "Deployment", "web"],
+    ["v1", "ConfigMap", "cfg"],
+    ["v1", "Service", "svc"],
+    ["batch/v1", "CronJob", "nightly"],
+  ] as const;
+  const CONTEXTS = ["prod", "staging", "prod/east", "me@x"];
+  const NAMESPACES = ["shop", "shop2", "x"];
+
+  function manifestOf(indexes: readonly number[]): string {
+    return indexes
+      .map((i) => {
+        const [apiVersion, kind, name] = POOL[i] ?? POOL[0];
+        return `apiVersion: ${apiVersion}\nkind: ${kind}\nmetadata:\n  name: ${name}\n`;
+      })
+      .join("---\n");
+  }
+
+  test("one text names one (context, namespace, objects): random inputs never collide on different ones", () => {
+    const rnd = prng(0xc0ffee);
+    const seen = new Map<string, string>();
+    let rendered = 0;
+    for (let n = 0; n < 4000; n++) {
+      const count = 1 + Math.floor(rnd() * 3);
+      const picks: number[] = [];
+      while (picks.length < count) {
+        const i = Math.floor(rnd() * POOL.length);
+        if (!picks.includes(i)) picks.push(i);
+      }
+      const context = CONTEXTS[Math.floor(rnd() * CONTEXTS.length)] ?? "prod";
+      const namespace = NAMESPACES[Math.floor(rnd() * NAMESPACES.length)] ?? "shop";
+      const manifest = manifestOf(picks);
+      const out = renderConfirmText(ROW, { context, namespace, manifest });
+      if (!out.ok) continue;
+      rendered++;
+      // What the text commits to: one object is named; several are the count plus the manifest hash.
+      const identity = JSON.stringify([context, namespace, count === 1 ? picks : manifest]);
+      const earlier = seen.get(out.text);
+      if (earlier !== undefined) expect(earlier, out.text).toBe(identity);
+      seen.set(out.text, identity);
+    }
+    expect(rendered).toBeGreaterThan(3000);
+  });
+
+  test("two object sets of the same size in one namespace give different texts", () => {
+    const a = renderConfirmText(ROW, {
+      context: "prod",
+      namespace: "shop",
+      manifest: manifestOf([0, 2]),
+    });
+    const b = renderConfirmText(ROW, {
+      context: "prod",
+      namespace: "shop",
+      manifest: manifestOf([1, 3]),
+    });
+    expect(a.ok && b.ok && a.text !== b.text).toBe(true);
   });
 });

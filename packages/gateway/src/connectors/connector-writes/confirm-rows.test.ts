@@ -62,10 +62,16 @@ function declaration(toolId: string): string {
   return withSchemaArgumentDeclarations(sources, code, call);
 }
 
+/**
+ * The placeholders that must be required keys of the tool's input. A DERIVED `{target}` (D3a: the
+ * bound Kubernetes apply, whose target the gateway computes from its own parse) is not an input key
+ * and is the one exception; the declaration refuses `derive` on any other row.
+ */
 function placeholders(r: ConnectorWriteRow): string[] {
   const parsed = parseConfirmTemplate(r.confirm?.template ?? "");
   if (!parsed.ok) throw new Error(parsed.reason);
-  return parsed.segments.flatMap((s) => (s.kind === "field" ? [s.name] : []));
+  const derived = r.confirm?.derive === undefined ? undefined : "target";
+  return parsed.segments.flatMap((s) => (s.kind === "field" && s.name !== derived ? [s.name] : []));
 }
 
 /** Every placeholder of the row's alternative template, and the optional field that selects it. */
@@ -94,6 +100,11 @@ describe("every wave 4 row declares a type-to-confirm target", () => {
     expect(byId.get("gitlab_commit_create")?.confirm?.template).toBe(
       "commit {projectPath}@{branch}",
     );
+  });
+
+  test("only the bound Kubernetes apply may derive its target (D3a)", () => {
+    const deriving = CONNECTOR_WRITE_ROWS.filter((r) => r.confirm?.derive !== undefined);
+    expect(deriving.every((r) => r.toolId === "k8s_manifest_apply")).toBe(true);
   });
 
   test("no wave 2 or 3 row carries one (the control is wave 4's)", () => {

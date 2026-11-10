@@ -104,6 +104,11 @@ export interface ConfirmTemplate {
    * the main template's.
    */
   readonly whenUnset?: { readonly field: string; readonly template: string };
+  /**
+   * D3a: the `{target}` placeholder is not an input field but a value the gateway DERIVES from its own
+   * parse of the input (`k8sConfirmTarget`). Only the bound Kubernetes apply may declare it.
+   */
+  readonly derive?: "k8s-target";
 }
 
 /**
@@ -405,6 +410,34 @@ export function withBefore(r: ConnectorWriteRow, before: BeforeStateReader): Con
 }
 
 /**
+ * The `derive` rules of a confirm template (D3a): a derived `{target}` belongs to the bound Kubernetes
+ * apply only, and that row must derive it (the connector has no `target` input). Returns the derived
+ * placeholder name, or `undefined` when the template derives nothing.
+ */
+function checkDerive(
+  r: ConnectorWriteRow,
+  confirm: ConfirmTemplate,
+  names: readonly string[],
+): string | undefined {
+  const isK8s = r.bound?.prepare.settle === "k8s-manifest";
+  if (confirm.derive === undefined) {
+    if (isK8s && names.includes("target")) {
+      throw new Error(`connector write confirm: row ${r.toolId} names {target} without derive`);
+    }
+    return undefined;
+  }
+  if (!isK8s) {
+    throw new Error(`connector write confirm: row ${r.toolId} may not derive its target`);
+  }
+  if (!names.includes("target") || confirm.whenUnset !== undefined) {
+    throw new Error(
+      `connector write confirm: row ${r.toolId} derives {target} but its template does not name it`,
+    );
+  }
+  return "target";
+}
+
+/**
  * A frozen copy of `r` carrying `confirm`. Throws at declaration when the template is malformed or
  * names no placeholder, when a placeholder is a field the row's preview marks secret, or when a
  * placeholder's name looks like a credential (key, token, secret, password, credential, bearer,
@@ -432,7 +465,9 @@ export function withConfirm(r: ConnectorWriteRow, confirm: ConfirmTemplate): Con
       );
     }
   }
+  const derivedTarget = checkDerive(r, confirm, names);
   for (const name of names) {
+    if (name === derivedTarget) continue; // gateway-derived, not an input key
     if (secrets.has(name) || isSensitiveFieldName(name)) {
       throw new Error(
         `connector write confirm: placeholder {${name}} names a secret-looking field (row ${r.toolId})`,
