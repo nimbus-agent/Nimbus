@@ -3,6 +3,8 @@
 import { stripTrailingSlashes } from "../string/strip-trailing-slashes.ts";
 import { basicAuthHeader } from "./atlassian-api-sync-helpers.ts";
 import type { ConnectorServiceId } from "./connector-catalog.ts";
+import { resolveGithubBase } from "./github-api-base.ts";
+import { fetchSameOriginOnly } from "./same-origin-fetch.ts";
 
 /**
  * Bounds the single probe request. Without it `nimbus connector auth` — an
@@ -33,13 +35,22 @@ export type CredentialProbe = (creds: Record<string, string>) => ProbeRequest;
  * of inventing a verdict.
  */
 export const CREDENTIAL_PROBES: Partial<Record<ConnectorServiceId, CredentialProbe>> = {
-  github: (c) => ({
-    url: "https://api.github.com/user",
-    headers: {
-      Authorization: `Bearer ${c["pat"] ?? ""}`,
-      Accept: "application/vnd.github+json",
-    },
-  }),
+  github: (c) => {
+    // Absent api_base = github.com; PRESENT but invalid fails closed (throws, caught by
+    // `runCredentialProbe` as "unconfirmed") and makes NO request, never a fall back to
+    // api.github.com for an enterprise PAT.
+    const base = resolveGithubBase(c["api_base"]);
+    if (!base.ok) {
+      throw new Error("github api_base is not a valid GitHub Enterprise Server base");
+    }
+    return {
+      url: `${base.restRoot}/user`,
+      headers: {
+        Authorization: `Bearer ${c["pat"] ?? ""}`,
+        Accept: "application/vnd.github+json",
+      },
+    };
+  },
   gitlab: (c) => ({
     url: `${stripTrailingSlashes(c["api_base"] ?? "https://gitlab.com/api/v4")}/user`,
     headers: { "PRIVATE-TOKEN": c["pat"] ?? "" },
@@ -145,11 +156,18 @@ export async function runCredentialProbe(
   }
   try {
     const req = probe(creds);
-    const res = await fetchFn(req.url, {
+    const init: RequestInit = {
       method: "GET",
       headers: req.headers,
       signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
-    });
+    };
+    // GitHub's probe can target an owner-typed enterprise host, so it never follows a redirect off
+    // that origin (the PAT is in the request). The other probes keep the default behaviour: none of
+    // them has been verified to tolerate manual redirects.
+    const res =
+      serviceId === "github"
+        ? await fetchSameOriginOnly(req.url, init, fetchFn)
+        : await fetchFn(req.url, init);
     const verdict = verdictForProbeResponse(res.status);
     if (verdict.kind === "valid" && serviceId === "github") {
       return { kind: "valid", scopes: parseOAuthScopes(res.headers.get("x-oauth-scopes")) };

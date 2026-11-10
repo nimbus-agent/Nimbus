@@ -74,6 +74,63 @@ function obsidianScopeLines(scope: unknown): string[] | undefined {
   return lines;
 }
 
+/** The fixed sentences of the iac approval (D2, I15): what a Terraform run in an approved directory can do. */
+export const IAC_CODE_LINE =
+  "Terraform runs the code in these directories (providers, provisioners, external data sources) with the credential below and write access to them; Nimbus does not read or police it. A directory with a Git repository in or beneath it is refused: point Terraform at a subdirectory without one.";
+export const IAC_NO_DOWNLOAD_LINE =
+  "Provider and module downloads are not allowed: run terraform init yourself.";
+export const IAC_EACH_APPLY_LINE =
+  "Each apply will still show the plan and ask you to type the target.";
+const IAC_HOST_SCOPE_LINES: Readonly<Record<string, string>> = {
+  per_host:
+    "Hosts are enforced one by one on this system. The shared storage hosts it allows (S3, Azure Blob, Google APIs) also reach storage other accounts own, so code in an approved directory could still send the credential or data to someone else's bucket.",
+  per_port:
+    "This platform limits the port, not the host: code in an approved directory could send the credential to any host on port 443.",
+  all_or_nothing:
+    "This system cannot limit the host or the port: code in an approved directory could send the credential to any host on any port.",
+  refusing:
+    "This system cannot confine a child's network right now: Terraform will not start until it can.",
+};
+
+/** The iac scope lines; `undefined` when the scope is missing or malformed (refuse, never guess). */
+function iacScopeLines(scope: unknown): string[] | undefined {
+  if (typeof scope !== "object" || scope === null) return undefined;
+  const rec = scope as Record<string, unknown>;
+  const workdirs = stringList(rec["workdirs"]);
+  const clouds = stringList(rec["clouds"]);
+  const hosts = stringList(rec["hosts"]);
+  const envNames = rec["envNames"];
+  const hostScope = rec["hostScope"];
+  if (
+    workdirs === undefined ||
+    clouds === undefined ||
+    hosts === undefined ||
+    typeof envNames !== "object" ||
+    envNames === null ||
+    typeof hostScope !== "string" ||
+    !Object.hasOwn(IAC_HOST_SCOPE_LINES, hostScope)
+  ) {
+    return undefined;
+  }
+  const lines = ["Approving also lets Terraform run in these directories:"];
+  if (workdirs.length === 0) lines.push("  (no directory: only CloudFormation)");
+  for (const w of workdirs) lines.push(`  ${sanitisePreviewText(w)}`);
+  lines.push(IAC_CODE_LINE);
+  for (const c of clouds) {
+    const names = stringList((envNames as Record<string, unknown>)[c]);
+    if (names === undefined) return undefined;
+    lines.push(
+      `Credential for ${sanitisePreviewText(c)} (environment variable names): ${names.map(sanitisePreviewText).join(", ")}`,
+    );
+  }
+  if (clouds.length === 0) lines.push("No cloud credential is granted.");
+  lines.push("Hosts it may reach:");
+  if (hosts.length === 0) lines.push("  (none)");
+  for (const h of hosts) lines.push(`  ${sanitisePreviewText(h)}`);
+  lines.push(IAC_HOST_SCOPE_LINES[hostScope] as string, IAC_NO_DOWNLOAD_LINE, IAC_EACH_APPLY_LINE);
+  return lines;
+}
+
 /** One line per write, then the fixed sentence; undefined when the payload is malformed. */
 export function enableWritesPromptLines(
   payload: Record<string, unknown> | undefined,
@@ -114,6 +171,11 @@ export function enableWritesPromptLines(
   );
   if (service === "obsidian" && appendOffered) {
     const scopeLines = obsidianScopeLines(payload?.["fileWriteScope"]);
+    if (scopeLines === undefined) return undefined;
+    lines.push("", ...scopeLines);
+  }
+  if (service === "iac") {
+    const scopeLines = iacScopeLines(payload?.["iacGrants"]);
     if (scopeLines === undefined) return undefined;
     lines.push("", ...scopeLines);
   }

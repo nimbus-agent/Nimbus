@@ -45,6 +45,7 @@ import {
   writePerServiceOAuthKey,
 } from "../../connectors/connector-vault.ts";
 import { hasCredentialProbe, runCredentialProbe } from "../../connectors/credential-probe.ts";
+import { normaliseGithubApiBase } from "../../connectors/github-api-base.ts";
 import { isPagerdutyFromEmail } from "../../connectors/pagerduty-from-email.ts";
 import { recordSyncEgress } from "../../egress/sync-egress.ts";
 import type { LocalIndex } from "../../index/local-index.ts";
@@ -231,24 +232,87 @@ async function verifyBeforeStore(
   return (await verifyBeforeStoreWithScopes(ctx, serviceId, creds)).state;
 }
 
+/**
+ * The GitHub Enterprise Server base the caller supplied, normalised, or `null` for github.com
+ * (left out or blank, the GitLab rule). A value that is not a string, or does not validate, throws
+ * -32602 BEFORE the probe or any write; the message is the validator's fixed reason and never
+ * echoes the value.
+ */
+function githubBaseFromRequest(rec: Record<string, unknown> | undefined): string | null {
+  const raw = rec?.["apiBaseUrl"] ?? rec?.["api_base"];
+  if (raw === undefined || raw === null) return null;
+  if (typeof raw !== "string") {
+    throw new ConnectorRpcError(
+      -32602,
+      "Invalid GitHub Enterprise Server URL. Nothing was stored.",
+    );
+  }
+  if (raw.trim() === "") return null;
+  const n = normaliseGithubApiBase(raw);
+  if (!n.ok) {
+    throw new ConnectorRpcError(
+      -32602,
+      `Invalid GitHub Enterprise Server URL: ${n.reason}. Nothing was stored.`,
+    );
+  }
+  return n.base;
+}
+
+/**
+ * GitHub's two services sync from ONE Vault credential and ONE optional `github.api_base`. The
+ * single `connector.auth github` path is the only writer of that key (a `gh` adoption calls this
+ * same handler), so the cursor rule lives here once.
+ *
+ * Switching instance (github.com to a GHES, a GHES to another, or back) clears BOTH sync cursors
+ * (`github`, `github_actions`) because they were issued by the previous instance. It never
+ * removes indexed items: that is `removeConnectorIndexData`, which is the owner's explicit
+ * `connector remove`. An unchanged base clears nothing.
+ */
 async function connectorAuthGithub(ctx: ConnectorRpcHandlerContext): Promise<ConnectorRpcHit> {
   const token = aliasedStringField(ctx.rec, PAT_TOKEN_FIELDS);
   if (token === "") {
     throw new ConnectorRpcError(-32602, "Missing personalAccessToken for github");
   }
-  const probed = await verifyBeforeStoreWithScopes(ctx, "github", { pat: token });
-  await writeConnectorSecret(ctx.vault, "github", "pat", token);
-  const now = Date.now();
-  ctx.localIndex.ensureConnectorSchedulerRegistration(
+  // Validate BEFORE the probe: an invalid base must never cause a request.
+  const base = githubBaseFromRequest(ctx.rec);
+  const probed = await verifyBeforeStoreWithScopes(
+    ctx,
     "github",
-    defaultSyncIntervalMsForService("github"),
-    now,
+    base === null ? { pat: token } : { pat: token, api_base: base },
   );
-  ctx.localIndex.ensureConnectorSchedulerRegistration(
-    "github_actions",
-    defaultSyncIntervalMsForService("github_actions"),
-    now,
-  );
+  // The running child reads the PAT and the base at spawn only, so ANY outcome of the writes below
+  // (including a throw midway) must retire it. A refused or invalid auth threw above, before any
+  // write, and never reaches this.
+  try {
+    const previous = await readConnectorSecret(ctx.vault, "github", "api_base");
+    // Fail closed on a partial write: the old PAT goes FIRST and the new one is written LAST, so a
+    // throw anywhere in between leaves NO PAT. A new enterprise PAT can then never sit beside an
+    // absent (or the previous) base and be sent to the wrong host.
+    await deleteConnectorSecret(ctx.vault, "github", "pat");
+    if (base === null) {
+      await deleteConnectorSecret(ctx.vault, "github", "api_base");
+    } else {
+      await writeConnectorSecret(ctx.vault, "github", "api_base", base);
+    }
+    await writeConnectorSecret(ctx.vault, "github", "pat", token);
+    const now = Date.now();
+    ctx.localIndex.ensureConnectorSchedulerRegistration(
+      "github",
+      defaultSyncIntervalMsForService("github"),
+      now,
+    );
+    ctx.localIndex.ensureConnectorSchedulerRegistration(
+      "github_actions",
+      defaultSyncIntervalMsForService("github_actions"),
+      now,
+    );
+    if ((previous ?? null) !== base) {
+      ctx.localIndex.clearConnectorSyncCursor("github");
+      ctx.localIndex.clearConnectorSyncCursor("github_actions");
+    }
+  } finally {
+    ctx.connectorMesh?.restartGithub();
+  }
   return authSuccess("github", probed.state, probed.scopes);
 }
 

@@ -3,6 +3,7 @@ import { CHATOPS_POST_TOOL_IDS } from "../chatops/transport/connector-post.ts";
 import { serviceOf } from "../engine/service-of.ts";
 import { TRIBAL_KB_WRITE_TOOL_IDS } from "../tribal/tribal-write-gate.ts";
 import { CONNECTOR_WRITE_ROWS } from "./connector-writes/index.ts";
+import { isPrepareToolId } from "./connector-writes/prepare-tools.ts";
 import type { ConnectorWrite, ConnectorWriteRow } from "./connector-writes/types.ts";
 import { matchesBareOrNamespacedToolId } from "./namespaced-tool-id.ts";
 
@@ -63,6 +64,18 @@ const LONGEST_WRITE_TOOL_ID = Math.max(
  */
 export function isConnectorWriteToolId(toolId: string): boolean {
   return matchesBareOrNamespacedToolId(toolId, isWriteToolIdExactly, LONGEST_WRITE_TOOL_ID);
+}
+
+/**
+ * I26/I54: true for a connector write tool id OR a prepare-class tool id (bare, or the tail of a
+ * `<server>_<tool>` key). The federated peer invoke gate refuses both. A prepare tool is not a write
+ * id and its name ends in no read verb, so `isConnectorWriteToolId` alone let a peer holding a
+ * team-vault grant read a repository's files at a branch head of its choosing through
+ * `github_commit_prepare` with the team credential. This is the ONE place that composes the two
+ * (static rule D42(a) lets this file, and only this name, use `isPrepareToolId`).
+ */
+export function isConnectorWriteOrPrepareToolId(toolId: string): boolean {
+  return isConnectorWriteToolId(toolId) || isPrepareToolId(toolId);
 }
 
 /** The dispatchable (`write`-transport) write for an action type. */

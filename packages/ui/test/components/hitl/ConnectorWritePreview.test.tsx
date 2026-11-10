@@ -329,3 +329,253 @@ describe("ConnectorWritePreview — the target's current state (spec § 5.4)", (
     }
   });
 });
+
+describe("ConnectorWritePreview: the gateway's diff (D1c)", () => {
+  const NO_NEWLINE = String.fromCharCode(92);
+  const diff = (over: Record<string, unknown> = {}) => ({
+    files: [
+      {
+        path: "src/a.ts",
+        state: "modified",
+        mode: "100644",
+        additions: 1,
+        deletions: 1,
+        hunks: [
+          {
+            oldStart: 1,
+            oldLines: 2,
+            newStart: 1,
+            newLines: 2,
+            lines: [
+              { op: " ", text: "keep" },
+              { op: "-", text: "old <img src=x onerror=alert(1)>" },
+              { op: "+", text: "new" },
+            ],
+          },
+        ],
+      },
+      {
+        path: "docs/new.md",
+        state: "new",
+        additions: 1,
+        deletions: 0,
+        hunks: [
+          {
+            oldStart: 0,
+            oldLines: 0,
+            newStart: 1,
+            newLines: 1,
+            lines: [
+              { op: "+", text: "# New" },
+              { op: NO_NEWLINE, text: "No newline at end of file" },
+            ],
+          },
+        ],
+      },
+      { path: "same.txt", state: "unchanged", additions: 0, deletions: 0, hunks: [] },
+    ],
+    additions: 2,
+    deletions: 1,
+    bytes: 100,
+    sha256: "x".repeat(64),
+    ...over,
+  });
+
+  it("shows every file expanded, one <pre> per file, with a header and the footer", () => {
+    const { container } = render(<ConnectorWritePreview details={details({ diff: diff() })} />);
+    const files = screen.getAllByTestId("connector-write-diff-file");
+    expect(files).toHaveLength(3);
+    expect(files[0]?.tagName).toBe("PRE");
+    expect(files[0]).toHaveTextContent("=== src/a.ts (modified, mode 100644)");
+    expect(files[0]?.textContent).toContain("--- a/src/a.ts");
+    expect(files[0]?.textContent).toContain("@@ -1,2 +1,2 @@");
+    expect(files[0]?.textContent).toContain("-old <img src=x onerror=alert(1)>");
+    expect(files[1]?.textContent).toContain("--- /dev/null");
+    expect(files[1]?.textContent).toContain(`${NO_NEWLINE} No newline at end of file`);
+    expect(files[2]?.textContent).toBe("=== same.txt (no change)");
+    const section = screen.getByTestId("connector-write-diff");
+    expect(section).toHaveTextContent("Changes: 3 files, +2 -1");
+    expect(section).toHaveTextContent("End of diff: 3 files, +2 -1");
+    // text nodes only: the HTML-looking line is not an element, and nothing collapses
+    expect(container.querySelector("img")).toBeNull();
+    expect(screen.queryByRole("button", { name: /show full/i })).toBeNull();
+    expect(section.querySelectorAll("pre")).toHaveLength(3);
+  });
+
+  it("a 64 KiB diff is one text node per file, with no per-line elements and no cut", () => {
+    const lines = Array.from({ length: 8000 }, (_, i) => ({ op: "+", text: `line ${i}` }));
+    const big = diff({
+      files: [
+        {
+          path: "big.txt",
+          state: "new",
+          additions: 8000,
+          deletions: 0,
+          hunks: [{ oldStart: 0, oldLines: 0, newStart: 1, newLines: 8000, lines }],
+        },
+      ],
+      additions: 8000,
+      deletions: 0,
+    });
+    render(<ConnectorWritePreview details={details({ diff: big })} />);
+    const pre = screen.getByTestId("connector-write-diff-file");
+    expect(pre.childElementCount).toBe(0);
+    expect(pre.textContent).toContain("+line 7999");
+    expect(pre.textContent?.split("\n")).toHaveLength(8000 + 4);
+    expect(screen.getByTestId("connector-write-diff").querySelectorAll("*").length).toBeLessThan(
+      10,
+    );
+  });
+
+  it("a diff the view cannot read is an error, never a partial view", () => {
+    for (const bad of [
+      "nope",
+      null,
+      { files: "x", additions: 0, deletions: 0 },
+      diff({ additions: -1 }),
+      diff({ files: [{ path: "a", state: "weird", hunks: [] }] }),
+      diff({ files: [{ path: "a", state: "new", hunks: [{ oldStart: 0, lines: [] }] }] }),
+      diff({
+        files: [
+          {
+            path: "a",
+            state: "new",
+            hunks: [
+              {
+                oldStart: 0,
+                oldLines: 0,
+                newStart: 1,
+                newLines: 1,
+                lines: [{ op: "?", text: "x" }],
+              },
+            ],
+          },
+        ],
+      }),
+    ]) {
+      const { unmount } = render(<ConnectorWritePreview details={details({ diff: bad })} />);
+      expect(screen.getByTestId("connector-write-diff-error")).toBeInTheDocument();
+      expect(screen.queryByTestId("connector-write-diff")).toBeNull();
+      unmount();
+    }
+  });
+
+  it("no diff, no section", () => {
+    render(<ConnectorWritePreview details={details()} />);
+    expect(screen.queryByTestId("connector-write-diff")).toBeNull();
+    expect(screen.queryByTestId("connector-write-diff-error")).toBeNull();
+  });
+
+  it("never uses dangerouslySetInnerHTML", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const src = readFileSync(
+      join(__dirname, "../../../src/components/hitl/ConnectorWritePreview.tsx"),
+      "utf8",
+    );
+    expect(src).not.toContain("dangerouslySetInnerHTML");
+  });
+});
+
+describe("ConnectorWritePreview: the gateway's plan (D2)", () => {
+  const plan = (over: Record<string, unknown> = {}) => ({
+    lines: [
+      "Deletes: 0, Replaces: 1, Creates: 1, Updates: 0",
+      "Terraform 1.9.5",
+      "[replace: delete, create] aws_instance.web (aws_instance, registry.terraform.io/hashicorp/aws)",
+      "<img src=x onerror=alert(1)>",
+      "End of plan: 2 changes (0 deletes, 1 replaces)",
+    ],
+    bytes: 200,
+    sha256: "b".repeat(64),
+    changeCount: 2,
+    ...over,
+  });
+  const iac = (p: unknown) =>
+    details({ actionType: "iac.terraform.apply", service: "iac", plan: p });
+
+  it("shows every line in one text node inside a bounded scroll box, with the digest and no second footer", () => {
+    const { container } = render(<ConnectorWritePreview details={iac(plan())} />);
+    const section = screen.getByTestId("connector-write-plan");
+    const pre = screen.getByTestId("connector-write-plan-text");
+    expect(pre.textContent).toBe(plan().lines.join("\n"));
+    expect(pre.childNodes).toHaveLength(1);
+    expect(section).toHaveTextContent("b".repeat(64));
+    expect(section.textContent?.match(/End of plan/gu)).toHaveLength(1);
+    // text nodes only (I8): the markup-looking line is text, never an element
+    expect(container.querySelector("img")).toBeNull();
+    expect(pre.textContent).toContain("<img src=x onerror=alert(1)>");
+  });
+
+  it("a 64 KiB plan is one text node with no per-line elements and no cut", () => {
+    const lines = Array.from({ length: 20_000 }, (_, i) => `line ${String(i)}`);
+    lines.push("End of plan: 0 changes (0 deletes, 0 replaces)");
+    render(<ConnectorWritePreview details={iac(plan({ lines }))} />);
+    const pre = screen.getByTestId("connector-write-plan-text");
+    expect(pre.textContent).toBe(lines.join("\n"));
+    expect(screen.getByTestId("connector-write-plan").querySelectorAll("*").length).toBeLessThan(8);
+  });
+
+  it("a plan the view cannot read is an error, never a partial view", () => {
+    for (const bad of [
+      "text",
+      { lines: "not a list" },
+      { lines: [] },
+      { lines: ["ok", 7] },
+      plan({ sha256: 7 }),
+      plan({ sha256: "b".repeat(63) }),
+      plan({ sha256: "B".repeat(64) }),
+      plan({ sha256: undefined }),
+      plan({ changeCount: -1 }),
+      plan({ changeCount: "2" }),
+      plan({ deleteCount: 1.5 }),
+      plan({ bytes: "200" }),
+      // a plan cut before its footer is not a whole plan
+      plan({ lines: ["Deletes: 0, Replaces: 1, Creates: 1, Updates: 0", "Terraform 1.9.5"] }),
+      plan({ lines: ["End of plan: 1 changes", "one more line after the footer"] }),
+      plan({ lines: ["Unrelated: End of plan: 2 changes"] }),
+    ]) {
+      const { unmount } = render(<ConnectorWritePreview details={iac(bad)} />);
+      expect(screen.getByTestId("connector-write-plan-error")).toBeInTheDocument();
+      expect(screen.queryByTestId("connector-write-plan")).toBeNull();
+      unmount();
+    }
+  });
+
+  it("no plan, no section", () => {
+    render(<ConnectorWritePreview details={details()} />);
+    expect(screen.queryByTestId("connector-write-plan")).toBeNull();
+    expect(screen.queryByTestId("connector-write-plan-error")).toBeNull();
+  });
+});
+
+describe("ConnectorWritePreview: a plan-bound write is never collapsed (D2 review)", () => {
+  const template = `Resources:
+  Fn:
+    UserData: ${"A".repeat(5_000)}
+    Hidden: PAYLOAD-AT-THE-END`;
+  const deploy = (type: string) =>
+    details({
+      actionType: type,
+      service: "iac",
+      fields: [{ label: "Template", kind: "text", value: template }],
+    });
+
+  it.each(["iac.cloudformation.deploy", "iac.terraform.apply", "iac.terraform.destroy"])(
+    "%s shows a long field in full in a bounded scroll box, with no Show full button",
+    (type) => {
+      render(<ConnectorWritePreview details={deploy(type)} />);
+      const pre = screen.getByTestId("connector-write-full-value");
+      expect(pre.textContent).toBe(template);
+      expect(pre.textContent).toContain("PAYLOAD-AT-THE-END");
+      expect(pre.parentElement?.className).toContain("overflow-auto");
+      expect(screen.queryByRole("button", { name: /Show full/i })).toBeNull();
+    },
+  );
+
+  it("another write type still collapses a long value (the plan-bound rule is not global)", () => {
+    render(<ConnectorWritePreview details={deploy("github.issue.create")} />);
+    expect(screen.queryByTestId("connector-write-full-value")).toBeNull();
+    expect(screen.getByRole("button", { name: /Show full/i })).toBeInTheDocument();
+  });
+});

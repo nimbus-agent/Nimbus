@@ -1,3 +1,5 @@
+import type { BoundWriteCapabilities } from "./bound-write-capabilities.ts";
+
 export type PlannedAction = {
   type: string;
   payload?: Record<string, unknown>;
@@ -57,4 +59,11 @@ export interface AuditSink {
 
 export interface ConnectorDispatcher {
   dispatch(action: PlannedAction): Promise<unknown>;
+  /**
+   * D2 (I54): the runtime capabilities of a bound IaC row (its settle step and its preflight).
+   * Optional and read-only; set only by the production dispatcher built in `connectors/registry.ts`
+   * (a test dispatcher sets its own). The gate reaches it ONLY from its preflight and prepare
+   * phases, and a bound row whose tag needs it is refused when it is absent.
+   */
+  readonly boundWriteCapabilities?: BoundWriteCapabilities;
 }

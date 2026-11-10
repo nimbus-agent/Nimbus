@@ -4,7 +4,10 @@ import { resolveGoogleOAuthVaultKey } from "../auth/google-access-token.ts";
 import { TEAM_CREDENTIAL_SYNC_CONNECTORS } from "../config/nimbus-toml-connectors.ts";
 import { hasUsableAwsCredentials } from "../connectors/_lib/aws-cli.ts";
 import { loadGcpAuthFromVault } from "../connectors/_lib/gcp-auth.ts";
-import { CONNECTOR_VAULT_SECRET_KEYS } from "../connectors/connector-secrets-manifest.ts";
+import {
+  CONNECTOR_VAULT_SECRET_KEYS,
+  requiredSecretKeysFor,
+} from "../connectors/connector-secrets-manifest.ts";
 import { readConnectorSecret } from "../connectors/connector-vault.ts";
 import {
   credentialsConfigured,
@@ -95,9 +98,7 @@ async function isTeamEntryConfigured(
   if (entry === undefined || !ENTRY_RE.test(entry)) {
     return false;
   }
-  const keys = Object.hasOwn(CONNECTOR_VAULT_SECRET_KEYS, serviceId)
-    ? (CONNECTOR_VAULT_SECRET_KEYS as Record<string, readonly string[]>)[serviceId]
-    : undefined;
+  const keys = requiredSecretKeysFor(serviceId);
   if (keys === undefined || keys.length === 0) {
     return false;
   }
@@ -246,9 +247,7 @@ export async function isConnectorConfigured(
   if (derivedCheck !== undefined) {
     return derivedCheck(vault);
   }
-  const keys = Object.hasOwn(CONNECTOR_VAULT_SECRET_KEYS, serviceId)
-    ? (CONNECTOR_VAULT_SECRET_KEYS as Record<string, readonly string[]>)[serviceId]
-    : undefined;
+  const keys = requiredSecretKeysFor(serviceId);
   if (keys === undefined || keys.length === 0) {
     return true;
   }

@@ -197,3 +197,82 @@ describe("connector writes dispatch", () => {
     }
   });
 });
+
+describe("connector writes enable iac", () => {
+  it("sends every scope flag; --cloud takes a comma list and every flag repeats", async () => {
+    const h = harness({ service: "iac", maxWave: 4, writes: 7 });
+    await runConnectorWrites(
+      [
+        "enable",
+        "iac",
+        "--wave",
+        "4",
+        "--workdir",
+        "/a",
+        "--workdir",
+        "/b",
+        "--cloud",
+        "aws,gcp",
+        "--region",
+        "eu-west-1",
+        "--net",
+        "app.terraform.io",
+      ],
+      h.deps,
+    );
+    expect(h.calls).toEqual([
+      {
+        method: "connector.writesEnable",
+        params: {
+          service: "iac",
+          wave: 4,
+          workdirs: ["/a", "/b"],
+          clouds: ["aws", "gcp"],
+          regions: ["eu-west-1"],
+          net: ["app.terraform.io"],
+        },
+      },
+    ]);
+  });
+
+  it("refuses the scope flags for any other service, or without a value", async () => {
+    for (const args of [
+      ["enable", "github", "--workdir", "/a"],
+      ["enable", "iac", "--workdir"],
+      ["enable", "iac", "--cloud", ""],
+    ]) {
+      const h = harness({});
+      await runConnectorWrites(args, h.deps);
+      expect(h.calls).toEqual([]);
+      expect(process.exitCode).toBe(2);
+      process.exitCode = 0;
+    }
+  });
+
+  it("maps the unavailable refusal to one line", async () => {
+    const h = harness(new Error("ERR_CONNECTOR_WRITES_IAC_UNAVAILABLE: x"));
+    await runConnectorWrites(["enable", "iac", "--workdir", "/a"], h.deps);
+    expect(h.errors[0]).toContain("cannot check directories");
+    expect(process.exitCode).toBe(2);
+  });
+
+  it("status iac lists the approved directories, clouds, regions and hosts", async () => {
+    const h = harness({
+      services: [
+        {
+          service: "iac",
+          enabled: true,
+          maxWave: 4,
+          writes: 7,
+          offerable: 2,
+          iacGrants: { workdirs: ["/a"], clouds: ["aws"], regions: [], net: [] },
+        },
+      ],
+      policyAllows: true,
+    });
+    await runConnectorWrites(["status"], h.deps);
+    expect(h.logs).toContain("  directories: /a");
+    expect(h.logs).toContain("  clouds: aws");
+    expect(h.logs).toContain("  regions: (none)");
+  });
+});

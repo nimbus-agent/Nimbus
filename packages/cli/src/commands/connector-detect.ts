@@ -36,6 +36,8 @@ export type AdoptParams = {
   profile?: string;
   context?: string;
   project?: string;
+  /** gh only: the `hosts.yml` host (a GitHub Enterprise Server); omitted means github.com. */
+  host?: string;
   replace: boolean;
 };
 
@@ -58,19 +60,22 @@ export interface ConnectorDetectDeps {
 }
 
 const USAGE =
-  "Usage: nimbus connector detect [--json] [--source gh|aws|kubectl|gcloud]... [--replace] [--project <id>]";
+  "Usage: nimbus connector detect [--json] [--source gh|aws|kubectl|gcloud]... [--replace] [--project <id>] [--host <gh host>]";
 
 interface Opts {
   readonly json: boolean;
   readonly replace: boolean;
   readonly sources: readonly Source[] | undefined;
   readonly project: string | undefined;
+  /** Restricts the gh walk to one `hosts.yml` host. */
+  readonly host: string | undefined;
 }
 
 function parseOpts(tail: readonly string[]): Opts {
   let json = false;
   let replace = false;
   let project: string | undefined;
+  let host: string | undefined;
   const sources: Source[] = [];
   for (let i = 0; i < tail.length; i++) {
     const a = tail[i];
@@ -89,9 +94,14 @@ function parseOpts(tail: readonly string[]): Opts {
       if (v === undefined || v === "") throw new Error(USAGE);
       project = v;
       i += 1;
+    } else if (a === "--host") {
+      const v = tail[i + 1]?.trim().toLowerCase();
+      if (v === undefined || v === "") throw new Error(USAGE);
+      host = v;
+      i += 1;
     } else throw new Error(USAGE);
   }
-  return { json, replace, sources: sources.length === 0 ? undefined : sources, project };
+  return { json, replace, sources: sources.length === 0 ? undefined : sources, project, host };
 }
 
 /**
@@ -226,7 +236,15 @@ async function chooseFromList(
   // computed property, which would widen the object past `AdoptParams`.
   switch (c.key) {
     case "account":
-      return { source: f.source, account: chosen, replace: false };
+      // A GitHub Enterprise Server login names its host; github.com's request stays as it was.
+      return {
+        source: f.source,
+        account: chosen,
+        ...(f.source === "gh" && f.host !== undefined && f.host !== "github.com"
+          ? { host: f.host }
+          : {}),
+        replace: false,
+      };
     case "profile":
       return { source: f.source, profile: chosen, replace: false };
     case "context":
@@ -295,6 +313,9 @@ function reportOutcome(p: AdoptParams, out: AdoptOutcomeWire, deps: ConnectorDet
   const verified = verificationLabel(out.verified);
   deps.log(`  ✓ ${out.service} connected (${verified}).`);
   if (p.source === "gh") {
+    if (p.host !== undefined) {
+      deps.log(`  Instance: ${p.host} (one instance at a time: github.com is no longer synced).`);
+    }
     deps.log(
       `  Token scopes: ${out.scopes.length === 0 ? "(not reported)" : out.scopes.join(", ")}`,
     );
@@ -349,7 +370,12 @@ export async function runConnectorDetect(
   deps: ConnectorDetectDeps = defaultConnectorDetectDeps(),
 ): Promise<void> {
   const opts = parseOpts(tail);
-  const findings = await deps.detect(opts.sources);
+  const detected = await deps.detect(opts.sources);
+  // `--host` narrows the gh logins to one `hosts.yml` host; other sources are untouched.
+  const findings =
+    opts.host === undefined
+      ? detected
+      : detected.filter((f) => f.source !== "gh" || (f.host ?? "github.com") === opts.host);
   if (opts.json) {
     deps.log(JSON.stringify(findings, null, 2));
     return;

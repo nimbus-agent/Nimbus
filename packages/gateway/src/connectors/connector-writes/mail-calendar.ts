@@ -1,10 +1,16 @@
 // packages/gateway/src/connectors/connector-writes/mail-calendar.ts
 import {
+  selectAppleEventDelete,
+  selectOutlookEventDelete,
+  singleIdArgs,
+} from "./delete-readers.ts";
+import {
   type ConnectorWritePreviewTemplate,
   type ConnectorWriteRow,
   type PreviewFieldTemplate,
   row,
   textField,
+  withBefore,
   withConfirm,
   withPreview,
 } from "./types.ts";
@@ -124,12 +130,40 @@ export const MAIL_CALENDAR_ROWS: readonly ConnectorWriteRow[] = [
     ],
   }),
   // Spec § 15, OR-W34-3: the calendar deletes are irreversible, so wave 4.
-  withConfirm(row("outlook_calendar_delete", "outlook.calendar.delete", "mesh", 4), {
-    template: "delete {eventId:tail8}",
-  }),
-  withConfirm(row("apple_calendar_event_delete", "apple.calendar.event.delete", "mesh", 4), {
-    template: "delete {href:tail8}",
-  }),
+  // D1: each delete is shown beside the event it removes; the full id or href is in the preview
+  // beside the 8 characters the owner types.
+  withConfirm(
+    withBefore(
+      withPreview(row("outlook_calendar_delete", "outlook.calendar.delete", "mesh", 4), {
+        target: "{eventId}",
+        summary: "Delete Outlook calendar event {eventId}; Nimbus cannot undo it",
+        fields: [textField("eventId", "Event id")],
+      }),
+      {
+        tool: "outlook_calendar_get",
+        argKeys: ["eventId"],
+        args: singleIdArgs("eventId", "eventId"),
+        select: selectOutlookEventDelete,
+      },
+    ),
+    { template: "delete {eventId:tail8}" },
+  ),
+  withConfirm(
+    withBefore(
+      withPreview(row("apple_calendar_event_delete", "apple.calendar.event.delete", "mesh", 4), {
+        target: "{href}",
+        summary: "Delete iCloud calendar event {href}; Nimbus cannot undo it",
+        fields: [textField("href", "Event href")],
+      }),
+      {
+        tool: "apple_calendar_event_get",
+        argKeys: ["href"],
+        args: singleIdArgs("href", "href"),
+        select: selectAppleEventDelete,
+      },
+    ),
+    { template: "delete {href:tail8}" },
+  ),
   row("gmail_draft_send", "gmail.draft.send", "mesh", 3),
   row("gmail_message_send", "gmail.message.send", "mesh", 3),
   // No template, so the model is never offered it (B3w W3, owner ruling OR-B3w-1); the act door's

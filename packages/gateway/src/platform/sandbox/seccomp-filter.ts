@@ -662,6 +662,15 @@ export interface SeccompFilterOverrides {
   killList?: readonly string[];
 }
 
+/**
+ * The one call an iac profile answers differently (D2, OR-D2-5). Go 1.23+ (Terraform, its
+ * providers, kubectl) probes `pidfd_open` and then `pidfd_send_signal` when it first starts a child;
+ * the default filter KILLS a process that calls the second (exit 159), so no provider could start.
+ * With ENOSYS Go falls back to its non-pidfd mode (verified). It is removed from the kill list and
+ * so lands on the catch-all ENOSYS. Used ONLY through {@link buildIacSeccompFilter}.
+ */
+export const IAC_ENOSYS_SYSCALLS: readonly string[] = Object.freeze(["pidfd_send_signal"]);
+
 export function buildDefaultSeccompFilter(overrides: SeccompFilterOverrides = {}): Buffer {
   const allowList = overrides.allowList ?? SYS_ALLOW;
   const blockList = overrides.blockList ?? SYS_BLOCK_EPERM;
@@ -716,4 +725,16 @@ export function buildDefaultSeccompFilter(overrides: SeccompFilterOverrides = {}
     instr(BPF_RET | BPF_K, 0, 0, SECCOMP_RET_ERRNO_ENOSYS),
   );
   return emit(program);
+}
+
+/**
+ * The seccomp program of the iac profiles (`connectors/lazy-mesh/iac-runner.ts`, through the
+ * policy's `iacProfile` flag, which only `wrapIacServerSpec` sets): the default filter, except that
+ * {@link IAC_ENOSYS_SYSCALLS} answer ENOSYS instead of killing. Every other kill, EPERM and allow
+ * verdict is unchanged.
+ */
+export function buildIacSeccompFilter(): Buffer {
+  return buildDefaultSeccompFilter({
+    killList: SYS_KILL_ALWAYS.filter((n) => !IAC_ENOSYS_SYSCALLS.includes(n)),
+  });
 }

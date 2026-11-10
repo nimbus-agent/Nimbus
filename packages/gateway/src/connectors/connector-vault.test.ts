@@ -27,6 +27,14 @@ describe("readConnectorSecret", () => {
     expect(await readConnectorSecret(vault, "github", "pat")).toBe("ghp_test");
   });
 
+  test("github api_base round-trips", async () => {
+    const vault = createMemoryVault();
+    await vault.set("github.api_base", "https://ghe.example.com/api/v3");
+    expect(await readConnectorSecret(vault, "github", "api_base")).toBe(
+      "https://ghe.example.com/api/v3",
+    );
+  });
+
   test("returns null when the key is absent", async () => {
     const vault = createMemoryVault();
     expect(await readConnectorSecret(vault, "github", "pat")).toBeNull();
@@ -59,7 +67,7 @@ describe("readConnectorSecret", () => {
 
   test("compile-time: rejects non-manifested keys", async () => {
     const vault = createMemoryVault();
-    // @ts-expect-error — manifest is ["github.pat"]; "oauth" is not a github key.
+    // @ts-expect-error — manifest is ["github.pat", "github.api_base"]; "oauth" is not a github key.
     void readConnectorSecret(vault, "github", "oauth");
 
     // @ts-expect-error — google_drive manifest is empty; ConnectorSecretKeyOf resolves to never.
@@ -75,7 +83,7 @@ describe("readConnectorSecret", () => {
 describe("ConnectorSecretKeyOf — type pins", () => {
   // The earlier `@ts-expect-error` directives only assert that bad inputs are
   test("pins to manifest-derived bare-key suffixes (compile-time)", () => {
-    assertEq<ConnectorSecretKeyOf<"github">, "pat">(true);
+    assertEq<ConnectorSecretKeyOf<"github">, "pat" | "api_base">(true);
     assertEq<ConnectorSecretKeyOf<"slack">, "oauth" | "bot_token" | "app_token">(true);
     assertEq<ConnectorSecretKeyOf<"linear">, "api_key">(true);
     assertEq<ConnectorSecretKeyOf<"gitlab">, "pat" | "api_base">(true);
@@ -91,12 +99,12 @@ describe("ConnectorSecretKeyOf — type pins", () => {
     assertEq<ConnectorSecretKeyOf<"teams">, "bot_app_id" | "bot_app_password">(true);
     assertEq<ConnectorSecretKeyOf<"github_actions">, never>(true);
 
-    // @ts-expect-error — `ConnectorSecretKeyOf<"github">` is `"pat"`, not `string`.
+    // @ts-expect-error — `ConnectorSecretKeyOf<"github">` is `"pat" | "api_base"`, not `string`.
     assertEq<ConnectorSecretKeyOf<"github">, string>(true);
     // @ts-expect-error — `ConnectorSecretKeyOf<"google_drive">` is `never`, not `string`.
     assertEq<ConnectorSecretKeyOf<"google_drive">, string>(true);
 
-    assertEq<Parameters<typeof writeConnectorSecret<"github">>[2], "pat">(true);
+    assertEq<Parameters<typeof writeConnectorSecret<"github">>[2], "pat" | "api_base">(true);
     assertEq<Parameters<typeof writeConnectorSecret<"datadog">>[2], "api_key" | "app_key" | "site">(
       true,
     );
@@ -104,7 +112,7 @@ describe("ConnectorSecretKeyOf — type pins", () => {
     assertEq<Parameters<typeof sharedOAuthKey>[0], "google" | "microsoft">(true);
     assertEq<ReturnType<typeof sharedOAuthKey>, "google.oauth" | "microsoft.oauth">(true);
 
-    assertEq<Parameters<typeof deleteConnectorSecret<"github">>[2], "pat">(true);
+    assertEq<Parameters<typeof deleteConnectorSecret<"github">>[2], "pat" | "api_base">(true);
     assertEq<ReturnType<typeof deleteConnectorSecret>, Promise<void>>(true);
 
     // The assertEq calls above are compile-time; exercise one symbol at runtime.

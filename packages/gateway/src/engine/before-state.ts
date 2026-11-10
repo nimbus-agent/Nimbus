@@ -22,6 +22,12 @@
  *  - never reaches the model or the write's audit row: only the selected, sanitised values reach
  *    the preview, and the write's result is the write's own reply.
  *
+ * A Wave 4 write is read-or-refuse (D1): whatever the reason the current state is not available to
+ * show (no reader or preview on the row, a reader tool unlisted, `args` failing, a timeout, a failed
+ * or policy-refused read, `select` failing), the runner returns `{ status: "refused", reason }`
+ * with {@link WAVE4_BEFORE_REFUSAL}, or the guard's own reason when a guard applies. Waves 2 and 3
+ * keep showing `unavailable (<reason>)` and still prompt.
+ *
  * A reader may carry a GUARD (B2a). When the guard applies to the write's input, the runner returns
  * `{ status: "refused", reason }` unless every read succeeded and the guard's `allows` returned
  * exactly `true`; every other path (a reader tool unlisted, `args` failing, a timeout, a failed or
@@ -67,6 +73,14 @@ export const BEFORE_STATE_TIMEOUT_MS = 5000;
 
 /** The one spelling of the read's action-type suffix (D40(a): confined to this module and the guard). */
 const BEFORE_READ_SUFFIX = ".before.read";
+
+/**
+ * The one fixed reason a Wave 4 model write is refused when the current state of its target could
+ * not be read (D1, spec 5.4 and 15.2: the prompt for an irreversible write must show the target as
+ * it is now). It names no target, no tool and no error text.
+ */
+export const WAVE4_BEFORE_REFUSAL =
+  "the current state of the target could not be read, so nothing was sent";
 
 /** The audit reason `gate()` records when it refuses a before-read that would need approval. */
 export const BEFORE_READ_HITL_REFUSAL = "policy requires approval";
@@ -115,6 +129,21 @@ export class BeforeStateRefusedError extends Error {
   }
 }
 
+/**
+ * D1: an `origin: "model"` action of a Wave 4 type whose typed preview could not be built has no
+ * before-state to show, so it is refused like any other unread Wave 4 target, before any prompt,
+ * with {@link WAVE4_BEFORE_REFUSAL}. The row is found from `action.type` alone (I3). Called by
+ * `ToolExecutor` only when its preview is absent; any other action passes through.
+ */
+export function throwIfWave4WithoutPreview(
+  action: PlannedAction,
+  rows: readonly ConnectorWriteRow[],
+): void {
+  if (action.origin === "model" && rows.some((r) => r.wave === 4 && r.actionType === action.type)) {
+    throw new BeforeStateRefusedError(WAVE4_BEFORE_REFUSAL);
+  }
+}
+
 export interface BeforeStateRunner {
   /** The rows the door executor previews with (production: the write table). */
   readonly rows: readonly ConnectorWriteRow[];
@@ -144,6 +173,11 @@ export interface BeforeStateRunnerOptions {
   };
 }
 
+/** The ONE construction of a refusal: a guard's reason, or {@link WAVE4_BEFORE_REFUSAL}. */
+function refusalOf(reason: string): BeforeStateRefusal {
+  return { status: "refused", reason };
+}
+
 const unavailable = (reason: BeforeStateUnavailableReason): ConnectorWriteBeforeState => ({
   status: "unavailable",
   reason,
@@ -167,10 +201,12 @@ interface Replies {
 
 /**
  * The reader's fields, sanitised and capped; `undefined` when `select` throws or returns anything
- * but an array of `{ label: string, value: string }`. Values are never cut; fields past the cap are
+ * but an array of `{ label: string, value: string }`, and, for a Wave 4 row, when no field has a
+ * non-blank value. Values are never cut; fields past the cap are
  * counted.
  */
 function selectFields(
+  row: ConnectorWriteRow,
   reader: BeforeStateReader,
   replies: Replies,
 ): ConnectorWriteBeforeState | undefined {
@@ -188,6 +224,9 @@ function selectFields(
     if (typeof label !== "string" || typeof value !== "string") return undefined;
     fields.push({ label: sanitisePreviewText(label), value: sanitisePreviewText(value) });
   }
+  // D1: a Wave 4 prompt must show the target as it is now, so a selection that shows nothing (no
+  // field, or only blank values) counts as a failed read, which a Wave 4 row turns into a refusal.
+  if (row.wave === 4 && fields.every((f) => f.value.trim() === "")) return undefined;
   const shown = fields.slice(0, BEFORE_STATE_MAX_FIELDS);
   const notShown = fields.length - shown.length;
   return notShown > 0 ? { status: "ok", fields: shown, notShown } : { status: "ok", fields: shown };
@@ -380,8 +419,18 @@ export function createBeforeStateRunner(options: BeforeStateRunnerOptions = {}):
     async read(action, ops, opts = {}) {
       if (action.origin !== "model") return undefined;
       const row = findConnectorWriteRow(action, rows);
-      const reader = row?.before;
-      if (row === undefined || reader === undefined || row.preview === undefined) return undefined;
+      if (row === undefined) return undefined;
+      const reader = row.before;
+      if (reader === undefined || row.preview === undefined) {
+        // A bound row's prepare step (I54) is its current state, as `isModelOfferableRow` says
+        // (`before || bound`): with a preview, it is the executor's prepare phase that reads.
+        if (reader === undefined && row.preview !== undefined && row.bound !== undefined) {
+          return undefined;
+        }
+        // Defence in depth: such a row is never offered (`isModelOfferableRow`), but an
+        // `origin: "model"` action can reach an executor through other paths.
+        return row.wave === 4 ? refusalOf(WAVE4_BEFORE_REFUSAL) : undefined;
+      }
       const input = extractToolInput(action);
       const picked = isPlainObject(input)
         ? pickBeforeReaderArgs(beforeReaderArgKeys(reader), input)
@@ -392,9 +441,13 @@ export function createBeforeStateRunner(options: BeforeStateRunnerOptions = {}):
       const ctx =
         reader.guard === undefined ? undefined : snapshotGuardContext(options.guardContext);
       const guarded = guardApplies(reader, picked, ctx);
-      const refusal: BeforeStateRefusal = { status: "refused", reason: reader.guard?.reason ?? "" };
+      // A guard that applies refuses with its own reason; a Wave 4 row without one refuses with
+      // the fixed Wave 4 text. Any other row only shows `unavailable`.
+      const mustRead = guarded || row.wave === 4;
+      const guardReason = guarded ? reader.guard?.reason : undefined;
+      const refusal = refusalOf(guardReason ?? WAVE4_BEFORE_REFUSAL);
       const fail = (reason: BeforeStateUnavailableReason): BeforeStateOutcome =>
-        guarded ? refusal : unavailable(reason);
+        mustRead ? refusal : unavailable(reason);
       if (opts.readerUnlisted === true || picked === undefined || !isPlainObject(input)) {
         return fail("failed");
       }
@@ -414,7 +467,7 @@ export function createBeforeStateRunner(options: BeforeStateRunnerOptions = {}):
       if (outcome.kind === "unavailable") return fail(outcome.reason);
       const replies: Replies = { reply: outcome.reply, alsoReply: outcome.alsoReply, picked };
       if (guarded && !guardAllows(reader, replies, ctx)) return refusal;
-      return selectFields(reader, replies) ?? fail("failed");
+      return selectFields(row, reader, replies) ?? fail("failed");
     },
   };
 }

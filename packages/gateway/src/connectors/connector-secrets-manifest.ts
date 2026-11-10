@@ -10,7 +10,8 @@ export const CONNECTOR_VAULT_SECRET_KEYS = {
   outlook: [],
   teams: ["teams.bot_app_id", "teams.bot_app_password"],
   slack: ["slack.oauth", "slack.bot_token", "slack.app_token"],
-  github: ["github.pat"],
+  // `github.api_base` is OPTIONAL: a GitHub Enterprise Server API root (see github-api-base.ts).
+  github: ["github.pat", "github.api_base"],
   github_actions: [],
   gitlab: ["gitlab.pat", "gitlab.api_base"],
   bitbucket: ["bitbucket.username", "bitbucket.app_password"],
@@ -229,6 +230,27 @@ export const TEAM_SECRET_ANYOF_GROUPS: Partial<
   flux: [["flux.token"]],
   mlflow: [["mlflow.token"]],
 };
+
+/**
+ * Keys of `CONNECTOR_VAULT_SECRET_KEYS` that a credential never NEEDS: absent means the default
+ * (github.com). They stay in the manifest so `connector remove` clears them and the vault-key rule
+ * knows them, but they are not required for a team entry (I19 presence check) and do not by
+ * themselves make a connector "configured". A team entry may carry its own `github.api_base`; it
+ * cannot set github.com (the validator refuses that), so absent is the only way to say github.com.
+ */
+export const OPTIONAL_SECRET_KEYS: Partial<Record<ConnectorServiceId, readonly string[]>> = {
+  github: ["github.api_base"],
+};
+
+/** The manifest keys a credential for `service` must hold: the full list minus the optional keys. */
+export function requiredSecretKeysFor(service: string): readonly string[] | undefined {
+  if (!Object.hasOwn(CONNECTOR_VAULT_SECRET_KEYS, service)) return undefined;
+  const all = (CONNECTOR_VAULT_SECRET_KEYS as Record<string, readonly string[]>)[service];
+  const optional: readonly string[] = Object.hasOwn(OPTIONAL_SECRET_KEYS, service)
+    ? ((OPTIONAL_SECRET_KEYS as Record<string, readonly string[]>)[service] ?? [])
+    : [];
+  return all?.filter((k) => !optional.includes(k));
+}
 
 export async function clearConnectorVaultSecretKeys(
   vault: NimbusVault,

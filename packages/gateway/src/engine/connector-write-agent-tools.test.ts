@@ -17,6 +17,7 @@ import {
   withConfirm,
   withPreview,
 } from "../connectors/connector-writes/types.ts";
+import { WAVE4_BEFORE_REFUSAL } from "./before-state.ts";
 import {
   buildConnectorWriteAgentTools,
   CONNECTOR_WRITE_DESCRIPTION_MAX,
@@ -736,6 +737,18 @@ describe("a row's before reader at offer time", () => {
 // ---------- B2a: a second read at offer time, and a guard's refusal ----------
 
 describe("a two-read reader at offer time, and a guard refusal at call time (B2a)", () => {
+  const { guard: _guard, ...NO_GUARD_READER } = {
+    tool: "argocd_app_get",
+    argKeys: ["name"],
+    args: (input: Readonly<Record<string, unknown>>) => ({ name: input["name"] }),
+    also: {
+      tool: "argocd_app_history_list",
+      argKeys: ["name"],
+      args: (input: Readonly<Record<string, unknown>>) => ({ name: input["name"] }),
+    },
+    guard: { reason: "x", appliesTo: () => true, allows: () => true },
+    select: () => [],
+  };
   const READ_KEY = "argocd_argocd_app_get";
   const ALSO_KEY = "argocd_argocd_app_history_list";
   const GUARD_REASON = "the model cannot sync this app; ask the owner";
@@ -819,6 +832,33 @@ describe("a two-read reader at offer time, and a guard refusal at call time (B2a
     tools = await buildConnectorWriteAgentTools(
       fakeSource([twoReadRow(2)], { argocd: listing }),
       () => declined,
+      wrapSpy().wrap,
+      NONE,
+    );
+    expect(await call(tools, SYNC_NAME, { name: "web" })).toEqual({
+      declined: DECLINED_RESULT_TEXT,
+    });
+  });
+
+  test("D1: a Wave 4 row's unread-state rejection is { refused: WAVE4_BEFORE_REFUSAL }, not declined, since no prompt happened; a lower wave never passes it back", async () => {
+    const listing = argocdListing({ [READ_KEY]: entry("Get"), [ALSO_KEY]: entry("History") });
+    const w4ex = optsExecutor({ status: "rejected", reason: WAVE4_BEFORE_REFUSAL });
+    let tools = await buildConnectorWriteAgentTools(
+      fakeSource([{ ...twoReadRow(4), before: NO_GUARD_READER }], {
+        argocd: listing,
+      }),
+      () => w4ex,
+      wrapSpy().wrap,
+      NONE,
+    );
+    expect(await call(tools, SYNC_NAME, { name: "web" })).toEqual({
+      refused: WAVE4_BEFORE_REFUSAL,
+    });
+    tools = await buildConnectorWriteAgentTools(
+      fakeSource([{ ...twoReadRow(3), before: NO_GUARD_READER }], {
+        argocd: listing,
+      }),
+      () => w4ex,
       wrapSpy().wrap,
       NONE,
     );
@@ -967,6 +1007,31 @@ describe("a bound row's prepare tool at offer time", () => {
     expect(keys(tools)).toEqual([SYNC_NAME]);
     await call(tools, SYNC_NAME, { name: "web" });
     expect(ex.opts).toEqual([[]]);
+  });
+
+  test("a bound row's description is the gateway's own: the connector's text, which names the bound field, is not passed on", async () => {
+    const bound = synthBound({ argKeys: ["name"] }).binds.map((b) => b.field);
+    expect(bound.length).toBeGreaterThan(0);
+    const src = fakeSource([boundRow(4)], {
+      argocd: {
+        [SYNC_KEY]: entry(`Sync an app but only if the head is still ${bound.join(" and ")}`),
+        [PREPARE_KEY]: entry("Plan"),
+      },
+    });
+    const tools = await buildConnectorWriteAgentTools(
+      src,
+      () => optsExecutor(),
+      wrapSpy().wrap,
+      NONE,
+    );
+    const offered = tools[SYNC_NAME] as unknown as { description: string; inputSchema: unknown };
+    for (const field of bound) {
+      expect(offered.description).not.toContain(field);
+      expect(JSON.stringify(offered.inputSchema)).not.toContain(field);
+    }
+    expect(offered.description).toContain("Every call asks the owner");
+    expect(offered.description).toContain("pins it; never supply it");
+    expect(offered.description).not.toContain("1 to 20 files"); // the commit caps are for the commit rows
   });
 
   test("wave 4 whose prepare tool is missing (or not a plain object) is NOT offered, with one warning", async () => {

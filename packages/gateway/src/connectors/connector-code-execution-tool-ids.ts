@@ -49,6 +49,10 @@ export const DIRECTORY_EVALUATION_TOOL_IDS: ReadonlySet<string> = new Set([
   // Reads that evaluate the caller-named directory.
   "iac_terraform_plan",
   "iac_pulumi_preview",
+  // Prepare tools (connectors 0.9.0) that load the caller-named directory's providers too: the
+  // destroy plan evaluates it like the plan, and `show -json` loads its provider schemas.
+  "iac_terraform_destroy_plan",
+  "iac_terraform_show_json",
   // Writes that evaluate it too — also refused by the I26 write predicate, which runs first.
   "iac_terraform_apply",
   "iac_terraform_destroy",
@@ -62,7 +66,9 @@ export const DIRECTORY_EVALUATION_TOOL_IDS: ReadonlySet<string> = new Set([
  */
 export const WINDOWS_CLI_ARG_INJECTION_TOOL_IDS: ReadonlySet<string> = new Set([
   "azure_app_service_list", // az
+  "azure_aks_node_pool_get", // az
   "gcp_cloud_run_service_list", // gcloud
+  "gcp_gke_workload_get", // gcloud (kubectl, with a private kubeconfig fetched by gcloud)
   "cloud_logging_get", // gcloud
   "cloud_logging_list", // gcloud
   "cloud_logging_search", // gcloud

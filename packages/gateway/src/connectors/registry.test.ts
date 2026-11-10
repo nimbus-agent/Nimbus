@@ -2,7 +2,16 @@ import { describe, expect, test } from "bun:test";
 
 import type { PlannedAction } from "../engine/types.ts";
 import {
+  IAC_EXIT_WAIT_MS,
+  IAC_PREFLIGHT_REFUSALS,
+  IAC_TOOL_TIMEOUTS_MS,
+  iacEscalationGraceMs,
+} from "./connector-writes/iac-limits.ts";
+import type { IacHost } from "./lazy-mesh/iac-runner.ts";
+import {
   createConnectorDispatcher,
+  DEFAULT_TOOL_TIMEOUT_MS,
+  iacToolTimeoutMs,
   type McpToolListingClient,
   meshDispatcherClient,
 } from "./registry.ts";
@@ -637,6 +646,387 @@ describe("createConnectorDispatcher — a prepare tool runs only inside the prep
     );
     await expect(d.dispatch(call("jira.write.prepare", "jira_jira_issue_update"))).rejects.toThrow(
       "ERR_PREPARE_NOT_A_PREPARE_TOOL",
+    );
+  });
+});
+
+describe("the dispatcher and the REAL commit prepare tools (D1c, I54)", () => {
+  const listing = (keys: readonly string[]) => {
+    const ran: string[] = [];
+    const tools: Record<string, { execute: (input: unknown) => Promise<unknown> }> = {};
+    for (const k of keys) {
+      tools[k] = {
+        execute: async () => {
+          ran.push(k);
+          return { headSha: "x" };
+        },
+      };
+    }
+    const client: McpToolListingClient = { listTools: async () => tools };
+    return { d: createConnectorDispatcher(client), ran };
+  };
+  const call = (type: string, mcpToolId: string): PlannedAction => ({
+    type,
+    payload: { mcpToolId, input: {} },
+  });
+
+  test("the control: each real prepare tool dispatches under its own service's prepare type", async () => {
+    const { d, ran } = listing(["github_github_commit_prepare", "gitlab_gitlab_commit_prepare"]);
+    await d.dispatch(call("github.write.prepare", "github_github_commit_prepare"));
+    await d.dispatch(call("gitlab.write.prepare", "gitlab_gitlab_commit_prepare"));
+    expect(ran).toEqual(["github_github_commit_prepare", "gitlab_gitlab_commit_prepare"]);
+  });
+
+  test("under a write or read action type a real prepare tool is ERR_PREPARE_OUTSIDE_STEP and runs nothing", async () => {
+    const { d, ran } = listing(["github_github_commit_prepare", "gitlab_gitlab_commit_prepare"]);
+    const cases: Array<[string, string]> = [
+      ["github.file.commit", "github_github_commit_prepare"],
+      ["gitlab.commit.create", "gitlab_gitlab_commit_prepare"],
+      ["github.issue.get", "github_github_commit_prepare"],
+      ["search.run", "gitlab_gitlab_commit_prepare"],
+    ];
+    for (const [type, key] of cases) {
+      await expect(d.dispatch(call(type, key))).rejects.toThrow("ERR_PREPARE_OUTSIDE_STEP");
+    }
+    expect(ran).toEqual([]);
+  });
+
+  test("a before-state read cannot reach a prepare tool either (it is not a read verb)", async () => {
+    const { d, ran } = listing(["github_github_commit_prepare"]);
+    await expect(
+      d.dispatch(call("github.before.read", "github_github_commit_prepare")),
+    ).rejects.toThrow("ERR_BEFORE_READ_NOT_A_READ");
+    expect(ran).toEqual([]);
+  });
+
+  test("github.write.prepare resolving to gitlab_commit_prepare is ERR_PREPARE_SERVICE_MISMATCH", async () => {
+    const { d, ran } = listing(["gitlab_gitlab_commit_prepare", "github_github_commit_prepare"]);
+    await expect(
+      d.dispatch(call("github.write.prepare", "gitlab_gitlab_commit_prepare")),
+    ).rejects.toThrow("ERR_PREPARE_SERVICE_MISMATCH");
+    await expect(
+      d.dispatch(call("gitlab.write.prepare", "github_github_commit_prepare")),
+    ).rejects.toThrow("ERR_PREPARE_SERVICE_MISMATCH");
+    expect(ran).toEqual([]);
+  });
+
+  test("a prepare type never reaches the plain files read or the write", async () => {
+    const { d, ran } = listing(["github_github_files_get", "github_github_file_commit"]);
+    for (const key of ["github_github_files_get", "github_github_file_commit"]) {
+      await expect(d.dispatch(call("github.write.prepare", key))).rejects.toThrow(
+        "ERR_PREPARE_NOT_A_PREPARE_TOOL",
+      );
+    }
+    expect(ran).toEqual([]);
+  });
+});
+
+describe("the dispatcher and the REAL iac and Kubernetes prepare, discard and apply tools (D2, I54)", () => {
+  const KEYS = {
+    plan: "iac_iac_terraform_plan",
+    destroyPlan: "iac_iac_terraform_destroy_plan",
+    show: "iac_iac_terraform_show_json",
+    cfn: "iac_iac_cloudformation_changeset_create",
+    k8sPlan: "kubernetes_k8s_manifest_plan",
+    discard: "iac_iac_cloudformation_changeset_discard",
+    apply: "iac_iac_terraform_apply",
+    k8sApply: "kubernetes_k8s_manifest_apply",
+  } as const;
+  const listing = () => {
+    const ran: string[] = [];
+    const tools: Record<string, { execute: () => Promise<unknown> }> = {};
+    for (const k of Object.values(KEYS)) {
+      tools[k] = {
+        execute: async () => {
+          ran.push(k);
+          return {};
+        },
+      };
+    }
+    return { d: createConnectorDispatcher({ listTools: async () => tools }), ran };
+  };
+  const call = (type: string, mcpToolId: string): PlannedAction => ({
+    type,
+    payload: { mcpToolId, input: {} },
+  });
+
+  test("the control: each prepare tool dispatches under its own service's prepare type", async () => {
+    const { d, ran } = listing();
+    for (const key of [KEYS.plan, KEYS.destroyPlan, KEYS.show, KEYS.cfn]) {
+      await d.dispatch(call("iac.write.prepare", key));
+    }
+    await d.dispatch(call("kubernetes.write.prepare", KEYS.k8sPlan));
+    expect(ran).toEqual([KEYS.plan, KEYS.destroyPlan, KEYS.show, KEYS.cfn, KEYS.k8sPlan]);
+  });
+
+  test("under a write or read action type every prepare tool is ERR_PREPARE_OUTSIDE_STEP and runs nothing", async () => {
+    const { d, ran } = listing();
+    for (const key of [KEYS.plan, KEYS.destroyPlan, KEYS.show, KEYS.cfn, KEYS.k8sPlan]) {
+      for (const type of ["iac.terraform.apply", "iac.cloudformation.deploy", "search.run"]) {
+        await expect(d.dispatch(call(type, key))).rejects.toThrow("ERR_PREPARE_OUTSIDE_STEP");
+      }
+    }
+    expect(ran).toEqual([]);
+  });
+
+  test("iac.write.prepare resolving to another service's prepare tool, a write or a read is refused", async () => {
+    const { d, ran } = listing();
+    await expect(d.dispatch(call("iac.write.prepare", KEYS.k8sPlan))).rejects.toThrow(
+      "ERR_PREPARE_SERVICE_MISMATCH",
+    );
+    await expect(d.dispatch(call("kubernetes.write.prepare", KEYS.plan))).rejects.toThrow(
+      "ERR_PREPARE_SERVICE_MISMATCH",
+    );
+    for (const key of [KEYS.apply, KEYS.discard]) {
+      await expect(d.dispatch(call("iac.write.prepare", key))).rejects.toThrow(
+        "ERR_PREPARE_NOT_A_PREPARE_TOOL",
+      );
+    }
+    expect(ran).toEqual([]);
+  });
+
+  test("the discard and the Kubernetes apply run only under their own row's action type", async () => {
+    const { d, ran } = listing();
+    await d.dispatch(call("iac.cloudformation.changeset.discard", KEYS.discard));
+    await d.dispatch(call("kubernetes.manifest.apply", KEYS.k8sApply));
+    expect(ran).toEqual([KEYS.discard, KEYS.k8sApply]);
+    for (const type of ["iac.cloudformation.deploy", "iac.terraform.apply", "iac.write.prepare"]) {
+      await expect(d.dispatch(call(type, KEYS.discard))).rejects.toThrow(
+        /ERR_(WRITE_TOOL|PREPARE)/,
+      );
+    }
+    await expect(d.dispatch(call("kubernetes.pod.delete", KEYS.k8sApply))).rejects.toThrow(
+      "ERR_WRITE_TOOL_ACTION_MISMATCH",
+    );
+    expect(ran).toEqual([KEYS.discard, KEYS.k8sApply]);
+  });
+
+  test("a before-state read cannot reach a prepare tool (it is not a read verb)", async () => {
+    const { d, ran } = listing();
+    await expect(d.dispatch(call("iac.before.read", KEYS.show))).rejects.toThrow(
+      "ERR_BEFORE_READ_NOT_A_READ",
+    );
+    expect(ran).toEqual([]);
+  });
+});
+
+describe("the dispatcher race of the iac tools (D2)", () => {
+  const ok = {
+    async execute() {
+      return "ran";
+    },
+  };
+  const clientOf = (...keys: string[]): McpToolListingClient => ({
+    async listTools() {
+      return Object.fromEntries(keys.map((k) => [k, ok]));
+    },
+  });
+
+  /** The delay of the race timer a dispatch arms (the timer is cleared as the call finishes). */
+  async function raceMs(
+    key: string,
+    type: string,
+    options?: { toolTimeoutMs: number },
+  ): Promise<number | undefined> {
+    const seen: number[] = [];
+    const real = globalThis.setTimeout;
+    globalThis.setTimeout = ((fn: () => void, ms?: number) => {
+      if (typeof ms === "number" && ms >= 1000) seen.push(ms);
+      return real(fn, ms);
+    }) as typeof setTimeout;
+    try {
+      const d = createConnectorDispatcher(clientOf(key), {
+        prepareToolIds: new Set(["iac_terraform_plan"]),
+        ...options,
+      });
+      await d.dispatch({ type, payload: { mcpToolId: key } });
+    } finally {
+      globalThis.setTimeout = real;
+    }
+    return seen[0];
+  }
+
+  test("each iac tool's race is the runner's budget plus its grace and a margin; the plan and apply outlive the generic 60 s", () => {
+    expect(iacToolTimeoutMs("iac_iac_terraform_plan")).toBe(641_000);
+    expect(iacToolTimeoutMs("iac_iac_terraform_destroy_plan")).toBe(641_000);
+    expect(iacToolTimeoutMs("iac_iac_terraform_show_json")).toBe(161_000);
+    expect(iacToolTimeoutMs("iac_iac_cloudformation_changeset_create")).toBe(221_000);
+    expect(iacToolTimeoutMs("iac_iac_terraform_apply")).toBe(1_898_000);
+    expect(iacToolTimeoutMs("iac_iac_terraform_destroy")).toBe(1_898_000);
+    expect(iacToolTimeoutMs("iac_iac_cloudformation_deploy")).toBe(158_000);
+    expect(iacToolTimeoutMs("iac_iac_cloudformation_changeset_discard")).toBe(101_000);
+    expect(iacToolTimeoutMs("iac_iac_pulumi_up")).toBeUndefined();
+    // Another server's tool that merely ends in an iac name is not an iac tool.
+    expect(iacToolTimeoutMs("github_iac_terraform_apply")).toBeUndefined();
+    expect(iacToolTimeoutMs("iac_terraform_apply")).toBe(1_898_000);
+  });
+
+  test("the race is strictly longer than the runner's budget plus its grace and reap wait, for every iac tool", () => {
+    for (const [id, budget] of Object.entries(IAC_TOOL_TIMEOUTS_MS)) {
+      const race = iacToolTimeoutMs(id) ?? 0;
+      expect(race).toBeGreaterThan(budget + iacEscalationGraceMs(id) + IAC_EXIT_WAIT_MS);
+    }
+  });
+
+  test("the race a dispatch arms is the resolved key's own, the default elsewhere", async () => {
+    expect(await raceMs("iac_iac_terraform_apply", "iac.terraform.apply")).toBe(1_898_000);
+    expect(await raceMs("iac_iac_terraform_plan", "iac.write.prepare")).toBe(641_000);
+    expect(await raceMs("github_repo_list", "github_repo_list")).toBe(DEFAULT_TOOL_TIMEOUT_MS);
+  });
+
+  test("an explicit toolTimeoutMs still wins for every tool (the test seam)", async () => {
+    expect(
+      await raceMs("iac_iac_terraform_apply", "iac.terraform.apply", { toolTimeoutMs: 5000 }),
+    ).toBe(5000);
+  });
+});
+
+describe("the change-set discard type resolves only to its own tool (D2, static D43)", () => {
+  const DISCARD_TYPE = "iac.cloudformation.changeset.discard";
+  const KEY = "iac_iac_cloudformation_changeset_discard";
+  const listing = (keys: readonly string[]) => {
+    const ran: string[] = [];
+    const tools: Record<string, { execute: (input: unknown) => Promise<unknown> }> = {};
+    for (const k of keys) {
+      tools[k] = {
+        execute: async () => {
+          ran.push(k);
+          return { ok: true };
+        },
+      };
+    }
+    const client: McpToolListingClient = { listTools: async () => tools };
+    return { d: createConnectorDispatcher(client), ran };
+  };
+  const call = (type: string, mcpToolId: string): PlannedAction => ({
+    type,
+    payload: { mcpToolId, input: {} },
+  });
+
+  test("the control: the discard type runs the discard tool, as the mesh key or bare", async () => {
+    const { d, ran } = listing([KEY]);
+    await d.dispatch(call(DISCARD_TYPE, KEY));
+    await d.dispatch(call(DISCARD_TYPE, "iac_cloudformation_changeset_discard"));
+    expect(ran).toEqual([KEY, KEY]);
+  });
+
+  test("the discard type never reaches a read, a prepare, another write or another server's tool", async () => {
+    const keys = [
+      "iac_iac_cloudformation_stack_get",
+      "iac_iac_cloudformation_changeset_create",
+      "iac_iac_cloudformation_deploy",
+      "iac_iac_terraform_apply",
+      "github_github_issue_get",
+      "github_iac_cloudformation_changeset_discard",
+    ];
+    const { d, ran } = listing(keys);
+    for (const key of keys) {
+      await expect(d.dispatch(call(DISCARD_TYPE, key))).rejects.toThrow(/^ERR_/);
+    }
+    expect(ran).toEqual([]);
+  });
+
+  test("the discard tool under any other action type is refused (the write pin), and runs nothing", async () => {
+    const { d, ran } = listing([KEY]);
+    for (const type of ["iac.cloudformation.deploy", "iac.write.prepare", "search.run"]) {
+      await expect(d.dispatch(call(type, KEY))).rejects.toThrow(/^ERR_/);
+    }
+    expect(ran).toEqual([]);
+  });
+});
+
+describe("the bound-write capabilities of the production dispatcher (D2, D42(h))", () => {
+  const host: IacHost = {
+    preflight: async () => ({ ok: true, release: () => undefined }),
+    recheckGit: () => undefined,
+    terraformRunDirs: (wd) =>
+      wd === "/w" ? { stagingDir: "/nope/staging", approvedRoot: "/nope/approved" } : undefined,
+  };
+  const noTools = { listTools: async () => ({}) };
+
+  test("a client with an iac host gives the dispatcher the capabilities; without one it has none", () => {
+    expect(createConnectorDispatcher(noTools).boundWriteCapabilities).toBeUndefined();
+    expect(
+      createConnectorDispatcher({ ...noTools, iacHost: () => undefined }).boundWriteCapabilities,
+    ).toBeUndefined();
+    const d = createConnectorDispatcher({ ...noTools, iacHost: () => host });
+    expect(d.boundWriteCapabilities).toBeDefined();
+  });
+
+  test("preflight is the host's", async () => {
+    const d = createConnectorDispatcher({ ...noTools, iacHost: () => host });
+    const out = await d.boundWriteCapabilities?.preflight("iac_terraform_apply", {});
+    expect(out?.ok).toBe(true);
+  });
+
+  test("a Terraform settle with no run, no show call or a forged reply is refused with a fixed reason", async () => {
+    const caps = createConnectorDispatcher({
+      ...noTools,
+      iacHost: () => host,
+    }).boundWriteCapabilities;
+    const base = { settle: "iac-terraform" as const, input: {}, reply: {} };
+    await expect(
+      caps?.settle("iac_terraform_apply", { ...base, workingDirectory: "/other" }),
+    ).rejects.toThrow("does not carry a required value");
+    await expect(
+      caps?.settle("iac_terraform_apply", { ...base, workingDirectory: "/w" }),
+    ).rejects.toThrow("does not carry a required value");
+    await expect(
+      caps?.settle("iac_terraform_destroy", {
+        ...base,
+        workingDirectory: "/w",
+        showPlan: async () => ({}),
+      }),
+    ).rejects.toThrow("does not carry a required value");
+  });
+
+  test("a CloudFormation settle cross-checks the reply against the input (a stack mismatch is refused)", async () => {
+    const caps = createConnectorDispatcher({
+      ...noTools,
+      iacHost: () => host,
+    }).boundWriteCapabilities;
+    await expect(
+      caps?.settle("iac_cloudformation_deploy", {
+        settle: "iac-cfn",
+        input: { stackName: "a", templateBody: "x" },
+        reply: { stackName: "b" },
+      }),
+    ).rejects.toThrow("does not carry a required value");
+  });
+});
+
+describe("a .git planted by the plan child is caught before the prompt (D2 whole-branch review 5)", () => {
+  const noTools = { listTools: async () => ({}) };
+  const baseHost = (git: string | undefined): IacHost => ({
+    preflight: async () => ({ ok: true, release: () => undefined }),
+    recheckGit: () => git,
+    terraformRunDirs: () => ({ stagingDir: "/nope/s", approvedRoot: "/nope/a" }),
+  });
+  const ctx = {
+    settle: "iac-terraform" as const,
+    input: {},
+    reply: {},
+    workingDirectory: "/w",
+    showPlan: async () => ({}),
+  };
+
+  test("the Terraform settle refuses with the fixed reason before it touches the plan", async () => {
+    const caps = createConnectorDispatcher({
+      ...noTools,
+      iacHost: () => baseHost(IAC_PREFLIGHT_REFUSALS.gitRepository),
+    }).boundWriteCapabilities;
+    for (const row of ["iac_terraform_apply", "iac_terraform_destroy"]) {
+      await expect(caps?.settle(row, ctx)).rejects.toThrow(IAC_PREFLIGHT_REFUSALS.gitRepository);
+    }
+  });
+
+  test("a clean directory goes on to the ordinary settle", async () => {
+    const caps = createConnectorDispatcher({
+      ...noTools,
+      iacHost: () => baseHost(undefined),
+    }).boundWriteCapabilities;
+    await expect(caps?.settle("iac_terraform_apply", ctx)).rejects.toThrow(
+      "does not carry a required value",
     );
   });
 });

@@ -21,7 +21,11 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { isConnectorCodeExecutionToolId } from "../../../src/connectors/connector-code-execution-tool-ids.ts";
-import { isConnectorWriteToolId } from "../../../src/connectors/connector-write-registry.ts";
+import {
+  isConnectorWriteOrPrepareToolId,
+  isConnectorWriteToolId,
+} from "../../../src/connectors/connector-write-registry.ts";
+import { PREPARE_TOOL_IDS } from "../../../src/connectors/connector-writes/prepare-tools.ts";
 import { scanProcessSpawningConnectors } from "../../../src/connectors/testing/connector-process-spawns.ts";
 import {
   installedConnectorsPackageRoot,
@@ -113,11 +117,44 @@ describe("I26 — the predicate refuses a write in the form a federated session 
         "aws_aws_ec2_instance_stop",
         "aws_aws_ecs_service_update",
         "kubernetes_k8s_pod_delete",
+        // Connectors 0.9.0 (D2): the change-set discard is a write, and so is D3's manifest apply.
+        "iac_iac_cloudformation_changeset_discard",
+        "kubernetes_k8s_manifest_apply",
         "slack_slack_message_post_dm",
         "slack_slack_chat_post", // a gate-confined write (D17), refused through its gate's set
         "github_actions_gha_run_trigger",
       ]),
     );
+  }, 120_000);
+});
+
+describe("I54 — a prepare tool is refused to a federated peer in the form a session executes it", () => {
+  test("every prepare id a real connector lists is refused, bare and namespaced; the composed predicate is the only one that sees it", async () => {
+    const keysByPackage = await probedKeys();
+    const listed: string[] = [];
+    for (const { pkg, server } of CONNECTORS) {
+      for (const key of keysByPackage[pkg] ?? []) {
+        const bare = key.slice(server.length + 1);
+        expect(isConnectorWriteOrPrepareToolId(key), key).toBe(
+          isConnectorWriteOrPrepareToolId(bare),
+        );
+        if ([...PREPARE_TOOL_IDS].includes(bare)) {
+          listed.push(key);
+          expect(isConnectorWriteOrPrepareToolId(key), key).toBe(true);
+          expect(isConnectorWriteOrPrepareToolId(bare), bare).toBe(true);
+          // A prepare tool is not a write: only the composed predicate refuses it.
+          expect(isConnectorWriteToolId(key), key).toBe(false);
+        }
+      }
+    }
+    // Every prepare id of the iac and kubernetes connectors that the seven real processes list.
+    expect(listed.sort()).toEqual([
+      "iac_iac_cloudformation_changeset_create",
+      "iac_iac_terraform_destroy_plan",
+      "iac_iac_terraform_plan",
+      "iac_iac_terraform_show_json",
+      "kubernetes_k8s_manifest_plan",
+    ]);
   }, 120_000);
 });
 
@@ -133,16 +170,22 @@ describe("I26 — the code-execution refusal holds in the form a federated sessi
       }
     }
     // Exactly these, out of every key seven real connectors list: no bypass, and no over-blocking.
-    // The iac five evaluate a caller-named directory; the az/gcloud reads reach a `.cmd` wrapper's
+    // The iac seven evaluate a caller-named directory (D2 added the destroy plan and `show -json`,
+    // which load the directory's providers); a CloudFormation change set and the Kubernetes dry run
+    // run remotely and are prepare tools, refused by the composed predicate instead; the az/gcloud reads reach a `.cmd` wrapper's
     // argv on Windows. (azure/gcp writes are refused by the WRITE predicate, asserted above.)
     expect(refused.sort()).toEqual([
+      "azure_azure_aks_node_pool_get",
       "azure_azure_app_service_list",
       "gcp_gcp_cloud_run_service_list",
+      "gcp_gcp_gke_workload_get",
       "iac_iac_pulumi_preview",
       "iac_iac_pulumi_up",
       "iac_iac_terraform_apply",
       "iac_iac_terraform_destroy",
+      "iac_iac_terraform_destroy_plan",
       "iac_iac_terraform_plan",
+      "iac_iac_terraform_show_json",
     ]);
   }, 120_000);
 

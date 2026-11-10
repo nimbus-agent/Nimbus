@@ -39,8 +39,12 @@ async function runGit(
 }
 
 /** `host` + `owner/name` from an ssh or https remote URL; null if the host is
- * not one we can form a `repo` entity id for, or the path is not `owner/name`. */
-export function parseRemoteUrl(url: string): RemoteRef | null {
+ * not one we can form a `repo` entity id for, or the path is not `owner/name`.
+ * `extraHosts` adds configured self-hosted hosts (host to service) to the SaaS table. */
+export function parseRemoteUrl(
+  url: string,
+  extraHosts?: ReadonlyMap<string, string>,
+): RemoteRef | null {
   const raw = url.trim();
   if (raw === "") return null;
 
@@ -60,7 +64,10 @@ export function parseRemoteUrl(url: string): RemoteRef | null {
     }
   }
 
-  const service = HOST_TO_SERVICE.get(host.toLowerCase());
+  const lowered = host.toLowerCase();
+  // `extraHosts` is the owner's configured self-hosted forge hosts (exact, lower-case hostnames
+  // from `configuredForgeHosts`); the built-in table wins, and a host in neither never maps.
+  const service = HOST_TO_SERVICE.get(lowered) ?? extraHosts?.get(lowered);
   if (service === undefined) return null;
 
   // A linear scan, not `.replace(/\/+$/, "")`: that trailing-anchored form is
@@ -90,6 +97,7 @@ export function selectRemoteName(names: readonly string[]): string | null {
 export async function resolveRepoRemote(
   root: string,
   spawn: RemoteSpawn = Bun.spawn,
+  extraHosts?: ReadonlyMap<string, string>,
 ): Promise<RemoteRef | null> {
   const listed = await runGit(root, ["remote"], spawn);
   if (listed.code !== 0) return null;
@@ -101,5 +109,5 @@ export async function resolveRepoRemote(
   if (chosen === null) return null;
   const url = await runGit(root, ["remote", "get-url", chosen], spawn);
   if (url.code !== 0) return null;
-  return parseRemoteUrl(url.out.trim());
+  return parseRemoteUrl(url.out.trim(), extraHosts);
 }

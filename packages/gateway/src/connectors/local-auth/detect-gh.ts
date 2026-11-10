@@ -2,13 +2,28 @@ import { join } from "node:path";
 
 import { JSON_SCHEMA, load } from "js-yaml";
 
+import { normaliseGithubApiBase } from "../github-api-base.ts";
 import type { LocalAuthHostDeps } from "./local-auth-host.ts";
 import type { GhFinding } from "./local-auth-types.ts";
 
 export const GITHUB_DOTCOM = "github.com";
 
-const GHE_REASON =
-  "GitHub Enterprise needs github.api_base, which the GitHub connector does not have yet";
+/**
+ * The GitHub Enterprise Server API base a `hosts.yml` host name would be connected as, through the
+ * SAME validator `--api-base` uses. A `hosts.yml` key is data from a file, so it must be exactly a
+ * bare host: anything the validator normalises into something else (a path, a scheme, a
+ * trailing dot, an upper-case spelling) is refused rather than trusted.
+ */
+export function ghesBaseForHost(
+  host: string,
+): { readonly ok: true; readonly base: string } | { readonly ok: false; readonly reason: string } {
+  const n = normaliseGithubApiBase(`https://${host}`);
+  if (!n.ok) return n;
+  if (n.host !== host.toLowerCase()) {
+    return { ok: false, reason: "the host is not a plain GitHub Enterprise Server host name" };
+  }
+  return { ok: true, base: n.base };
+}
 
 function nonEmpty(v: string | undefined): v is string {
   return v !== undefined && v.trim() !== "";
@@ -105,7 +120,19 @@ export function detectGh(deps: LocalAuthHostDeps, alreadyConfigured: boolean): G
       multiAccount: e.multiAccount,
     };
     if (e.host !== GITHUB_DOTCOM) {
-      return { ...base, status: "unsupported", reason: GHE_REASON, alreadyConfigured: false };
+      const ghes = ghesBaseForHost(e.host);
+      if (!ghes.ok) {
+        return { ...base, status: "unsupported", reason: ghes.reason, alreadyConfigured: false };
+      }
+      if (e.accounts.length === 0) {
+        return {
+          ...base,
+          status: "not_logged_in",
+          reason: `gh lists ${e.host} with no account — run: gh auth login --hostname ${e.host}`,
+          alreadyConfigured,
+        };
+      }
+      return { ...base, status: "available", alreadyConfigured };
     }
     if (e.accounts.length === 0) {
       return {

@@ -2,7 +2,12 @@ import { invoke } from "@tauri-apps/api/core";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { createIpcClient } from "../../ipc/client";
 import { useNimbusStore } from "../../store";
-import { isConnectorWriteDetails } from "./ConnectorWritePreview";
+import {
+  isConnectorWriteDetails,
+  isDiffMalformed,
+  isPlanBoundAction,
+  isPlanMalformed,
+} from "./ConnectorWritePreview";
 import { StructuredPreview } from "./StructuredPreview";
 
 const DESTRUCTIVE_PATTERNS: readonly RegExp[] = [
@@ -59,7 +64,14 @@ export function HitlPopupPage(): ReactNode {
   // The gateway judges the answer; this page only withholds the button until it matches.
   const confirmText =
     head?.confirmText !== undefined && head.confirmText !== "" ? head.confirmText : undefined;
-  const typedMatches = confirmText === undefined || typed === confirmText;
+  // A `diff` the page cannot read, or a commit with no `diff` at all, keeps Approve disabled
+  // whatever is typed (D1c); the same for a `plan` of a plan-bound IaC write (D2).
+  // A plan-bound write with NO confirm text is never "matched": there is nothing to type, so
+  // nothing proves the owner read the target (D2).
+  const typedMatches =
+    (confirmText === undefined ? !isPlanBoundAction(action) : typed === confirmText) &&
+    !isDiffMalformed(head?.details, action) &&
+    !isPlanMalformed(head?.details, action);
 
   // Focus is placed imperatively, keyed on the action, NOT via the `autoFocus` attribute. React
   // honours `autoFocus` only at mount, and this popup does not remount between queued requests —

@@ -114,9 +114,16 @@ describe("connector write manifest", () => {
         : fileCode.slice(reg.span[0], reg.span[1] + 1);
       // A tool whose input schema is a local const (`slackMessagePostSchema`, or a `.extend` of
       // one) declares its keys in that const's statement, outside the call: follow it alone.
-      const call = reg.tags.includes("forwarder")
+      const declared = reg.tags.includes("forwarder")
         ? own
         : withSchemaArgumentDeclarations(sources, fileCode, own);
+      // The two Terraform applies pass `z.object(applyShape)`, a const local to the registering
+      // function (D2): follow it too.
+      const shape = /^iac_terraform_(apply|destroy)$/.test(r.toolId)
+        ? (fileCode.match(/const applyShape = \{[^}]*\}/)?.[0] ?? "")
+        : "";
+      const call = `${declared}
+${shape}`;
       return templateKeys(r, extra)
         .filter((k) => !call.includes(`${k}:`))
         .map((k) => `${r.toolId}: ${k}`);

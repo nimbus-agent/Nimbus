@@ -168,7 +168,7 @@ describe("BeforeStateReader (spec § 5.4)", () => {
     expect(Object.getPrototypeOf(picked)).toBeNull();
   });
 
-  test("the rows with readers are exactly the forty (seven B1 comments, nine B2 issue writes, five B3 page writes, the B4a Drive create, the B4b Obsidian append, the eight C1 file, PR and incident writes, the four C2 branch, PR and MR rows with a reader, and the five C3 flag and alert rows), and every reader passes", () => {
+  test("the rows with readers are exactly the 68 (seven B1 comments, nine B2 issue writes, five B3 page writes, the B4a Drive create, the B4b Obsidian append, the eight C1 file, PR and incident writes, the four C2 branch, PR and MR rows with a reader, the five C3 flag and alert rows, and the 28 D1 Wave 4 rows), and every reader passes", () => {
     const withReader = CONNECTOR_WRITE_ROWS.filter((r) => r.before !== undefined)
       .map((r) => r.toolId)
       .sort((a, b) => a.localeCompare(b));
@@ -214,9 +214,38 @@ describe("BeforeStateReader (spec § 5.4)", () => {
         "pd_incident_acknowledge",
         "pd_incident_escalate",
         "pd_incident_resolve",
+        // D1: the 31 Wave 4 rows (27 offerable, plus the never-offered Bitbucket merge).
+        "argocd_app_rollback",
+        "argocd_app_sync",
+        "apple_calendar_event_delete",
+        "aws_ec2_instance_start",
+        "aws_ec2_instance_stop",
+        "aws_ecs_service_update",
+        "aws_lambda_invoke",
+        "bitbucket_pr_merge",
+        "circleci_job_cancel",
+        "circleci_pipeline_trigger",
+        "flux_helmrelease_reconcile",
+        "flux_kustomization_reconcile",
+        "gha_run_cancel",
+        "gha_run_trigger",
+        "github_branch_delete",
+        "github_pr_merge",
+        "github_tag_create",
+        "gitlab_mr_merge",
+        "gitlab_pipeline_cancel",
+        "gitlab_pipeline_retry",
+        "jenkins_build_abort",
+        "jenkins_build_trigger",
+        "mlflow_model_promote",
+        "mlflow_model_transition_stage",
+        "onedrive_item_delete",
+        "outlook_calendar_delete",
+        "snowflake_comment_set",
+        "snowflake_tag_set",
       ].sort((a, b) => a.localeCompare(b)),
     );
-    expect(withReader).toHaveLength(40);
+    expect(withReader).toHaveLength(68);
     for (const r of CONNECTOR_WRITE_ROWS) expect(beforeReaderProblems(r)).toEqual([]);
   });
 });
@@ -724,15 +753,20 @@ describe("a second read (`also`) and the guard (B2a)", () => {
     expect(beforeReaderArgKeys(READER)).toEqual(["issueKey"]);
   });
 
-  test("in production only the Jira transition and the two file moves (Drive, OneDrive) take a second read, and the rows with a guard are exactly eight (B2, B3, C2, C3)", () => {
+  test("in production only the Jira transition and the two file moves (Drive, OneDrive) take a second read, and the rows with a guard are exactly thirteen (B2, B3, C2, C3, D1)", () => {
     expect(
       CONNECTOR_WRITE_ROWS.filter((r) => r.before?.also !== undefined).map((r) => r.toolId),
     ).toEqual(["jira_issue_transition", "gdrive_file_move", "onedrive_item_move"]);
     const guarded = CONNECTOR_WRITE_ROWS.filter((r) => r.before?.guard !== undefined);
     expect(guarded.map((r) => r.toolId).sort((a, b) => a.localeCompare(b))).toEqual([
+      "argocd_app_rollback",
+      "circleci_pipeline_trigger",
       "confluence_page_append",
       "confluence_page_update",
+      "github_pr_merge",
       "github_pr_update",
+      "github_tag_create",
+      "gitlab_mr_merge",
       "gitlab_mr_update",
       "launchdarkly_flag_rollout_set",
       "linear_issue_update",

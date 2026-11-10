@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import pino from "pino";
 import { redactAuditPayload } from "../audit/format-audit-payload.ts";
 import {
   CONFIRM_ROW_MISMATCH_REASON,
@@ -6,6 +7,7 @@ import {
   renderConfirmText,
 } from "../connectors/connector-writes/confirm.ts";
 import { enableWritesPromptLines } from "../connectors/connector-writes/enable-prompt.ts";
+import { IAC_DISCARD } from "../connectors/connector-writes/iac-limits.ts";
 import { CONNECTOR_WRITE_ROWS } from "../connectors/connector-writes/index.ts";
 import { PREPARE_TOOL_IDS } from "../connectors/connector-writes/prepare-tools.ts";
 import {
@@ -13,25 +15,34 @@ import {
   buildConnectorWritePreviewFrom,
   type ConnectorWritePreview,
   findConnectorWriteRow,
+  isPlainObject,
+  type PreviewPlan,
   renderConnectorWritePreviewLines,
   rowNamedByToolId,
 } from "../connectors/connector-writes/preview.ts";
 import type {
+  BoundWrite,
   ConnectorWriteRow,
   PreviewCredentialResolver,
 } from "../connectors/connector-writes/types.ts";
+import { mcpClientToolKey } from "../connectors/lazy-mesh/tool-map.ts";
 import { isOwnerCodeServerServiceId } from "../connectors/owner-code-server.ts";
 import type { EgressSink } from "../egress/egress-ledger.ts";
 import { buildEgressEntry } from "../egress/egress-record.ts";
 import type { ConsentCoordinator } from "../ipc/consent.ts";
 import { ConsentDisconnectedError } from "../ipc/consent.ts";
+import { codeUnitCompare } from "../util/code-unit-compare.ts";
 import { getAgentRequestSessionId } from "./agent-request-context.ts";
+import { withoutTemplateText } from "./audit-bodies.ts";
+import { commitFilesDigest, withoutFileText } from "./audit-files.ts";
 import {
   BEFORE_READ_HITL_REFUSAL,
   BeforeStateRefusedError,
   type BeforeStateRunner,
   isBeforeReadActionType,
+  throwIfWave4WithoutPreview,
 } from "./before-state.ts";
+import type { BoundWriteCapabilities, SettleContext } from "./bound-write-capabilities.ts";
 import { type RemoteApprovalOutcome, resolveDelegatedApproval } from "./delegated-approval.ts";
 import type { DelegationReader } from "./delegation-store.ts";
 import {
@@ -42,6 +53,7 @@ import {
   PREPARE_REFUSALS,
   type PreparedWrite,
   PrepareRefusedError,
+  prepareLeftover,
   runPrepareStep,
 } from "./prepare-step.ts";
 import { serviceOf } from "./service-of.ts";
@@ -55,6 +67,11 @@ import type {
   ConsentChannel,
   PlannedAction,
 } from "./types.ts";
+
+const executorLog = pino({
+  name: "executor",
+  level: process.env["NIMBUS_LOG_LEVEL"] ?? "info",
+});
 
 const HITL_REQUIRED_BACKING = new Set<string>([
   "file.delete",
@@ -157,6 +174,9 @@ const HITL_REQUIRED_BACKING = new Set<string>([
   // Wave 3 — repos + CI.
   "bitbucket.pr.merge",
   "gitlab.mr.merge",
+  // Wave 4 — multi-file commits (classified, never offered; D1c adds their bound preview).
+  "github.file.commit",
+  "gitlab.commit.create",
   "pipeline.trigger",
   "pipeline.cancel",
   "pipeline.rerun",
@@ -180,9 +200,11 @@ const HITL_REQUIRED_BACKING = new Set<string>([
   "iac.terraform.destroy",
   "iac.cloudformation.deploy",
   "iac.pulumi.up",
+  "iac.cloudformation.changeset.discard",
   "kubernetes.rollout.restart",
   "kubernetes.pod.delete",
   "kubernetes.deployment.scale",
+  "kubernetes.manifest.apply",
   "pagerduty.incident.acknowledge",
   "pagerduty.incident.resolve",
   "pagerduty.incident.escalate",
@@ -369,8 +391,13 @@ export function consentDisplayPayload(
 ): Record<string, unknown> | undefined {
   // A connector write with a preview template is shown as the gateway-built typed preview. No
   // user-MCP type has a row, so this cannot shadow the verbatim user-MCP display below.
-  const typed = preview ?? buildConnectorWritePreview(action, credentialFor);
-  if (typed !== undefined) {
+  const built = preview ?? buildConnectorWritePreview(action, credentialFor);
+  if (built !== undefined) {
+    // The structured copy of a plan carries its lines and digest, not the joined text: the desktop
+    // renders the lines and the audit keeps the digest, so the plan crosses the IPC line twice
+    // (the prompt and these lines), not three times.
+    const typed: ConnectorWritePreview =
+      built.plan === undefined ? built : { ...built, plan: structuredPlan(built.plan) };
     if (action.origin !== "model") return typed as unknown as Record<string, unknown>;
     const withOrigin: ConnectorWritePreview = { ...typed, requestedBy: "model" };
     return withOrigin as unknown as Record<string, unknown>;
@@ -378,6 +405,12 @@ export function consentDisplayPayload(
   const shown = shownPayload(action);
   if (action.origin !== "model") return shown;
   return { ...shown, requestedBy: "model" };
+}
+
+/** A plan without its joined `text` (see {@link consentDisplayPayload}). */
+function structuredPlan(plan: PreviewPlan): PreviewPlan {
+  const { text: _joined, ...rest } = plan;
+  return rest as PreviewPlan;
 }
 
 /** The non-preview display payload, without the origin (the CLI prints that on its own line). */
@@ -556,7 +589,9 @@ function auditedAction(action: PlannedAction): PlannedAction {
   if (action.type === "pack.install") return { ...action, payload: omitPromptText(action.payload) };
   // The rendered plan repeats `plan`, which the row keeps.
   if (hasPlanText(action)) return { ...action, payload: omitPlanText(action.payload) };
-  return action;
+  // A multi-file write keeps its file count and size, never the file text (D1c); a CloudFormation
+  // write its template's size and hash, never the template (D2).
+  return withoutTemplateText(withoutFileText(action));
 }
 
 /** What a type-to-confirm approval came to, for the audit row (never the typed text itself). */
@@ -572,6 +607,12 @@ interface GateRecord {
   hitlRejectReason?: string;
   confirm?: ConfirmOutcome;
   boundValuesSha256?: string;
+  /** SHA-256 of the rendered diff the approver was shown (a bound write with a diff, D1c). */
+  diffSha256?: string;
+  /** SHA-256 of the exact files a commit write dispatches (length-prefixed, in order, D1c). */
+  filesSha256?: string | undefined;
+  /** Set only on the gateway's own discard of an unused change set (D2, static D43). */
+  discard?: "unused_changeset";
 }
 
 /** The default reason of a rejected gate: the owner (or a delegate) said no. */
@@ -580,6 +621,16 @@ const USER_DECLINED_REASON = "User declined consent gate.";
 /** The reason when the acting channel has no way to collect a typed confirmation (Wave 4). */
 export const CONFIRM_UNSUPPORTED_REASON =
   "This channel cannot collect the typed confirmation this action requires.";
+
+/** The preflight found a bound IaC row with no typed confirm target (it can only be approved by typing). */
+export const PREFLIGHT_NO_CONFIRM_REASON = "preflight: the write has no typed confirmation";
+
+/** The preflight capability threw: the write is refused, not skipped (fail closed). */
+export const PREFLIGHT_FAILED_REASON = "preflight: the approved-directory check failed";
+
+/** A gate run in a discard scope was handed an action that is not that scope's own discard (D43). */
+export const DISCARD_MISMATCH_REASON =
+  "The action is not the discard of the change set this run created.";
 
 /** The reason when a payload `mcpToolId` names a connector write that belongs to another action type. */
 export const TOOL_TYPE_MISMATCH_REASON =
@@ -625,6 +676,8 @@ function withPrepared(
       fields: prepared.fields,
       ...(prepared.notShown === undefined ? {} : { notShown: prepared.notShown }),
     },
+    ...(prepared.diff === undefined ? {} : { diff: prepared.diff }),
+    ...(prepared.plan === undefined ? {} : { plan: prepared.plan }),
   };
 }
 
@@ -656,6 +709,9 @@ function auditExtrasOf(record: GateRecord): AuditExtras {
     ...(record.boundValuesSha256 === undefined
       ? {}
       : { boundValuesSha256: record.boundValuesSha256 }),
+    ...(record.diffSha256 === undefined ? {} : { diffSha256: record.diffSha256 }),
+    ...(record.filesSha256 === undefined ? {} : { filesSha256: record.filesSha256 }),
+    ...(record.discard === undefined ? {} : { discard: record.discard }),
   };
 }
 
@@ -665,10 +721,24 @@ interface AuditExtras {
   hitlRejectReason?: string;
   confirm?: ConfirmOutcome;
   boundValuesSha256?: string;
+  diffSha256?: string;
+  filesSha256?: string;
+  discard?: "unused_changeset";
 }
 
+/**
+ * The audit row's JSON. A bound write's two digests come FIRST: the payload is capped, so a long
+ * action (a 5000-character commit message) must never push them out of the row.
+ */
 function auditPayload(action: PlannedAction, extras: AuditExtras): string {
-  return redactAuditPayload({ action: auditedAction(action), ...extras });
+  const { boundValuesSha256, diffSha256, filesSha256, ...rest } = extras;
+  return redactAuditPayload({
+    ...(boundValuesSha256 === undefined ? {} : { boundValuesSha256 }),
+    ...(diffSha256 === undefined ? {} : { diffSha256 }),
+    ...(filesSha256 === undefined ? {} : { filesSha256 }),
+    action: auditedAction(action),
+    ...rest,
+  });
 }
 
 /**
@@ -765,6 +835,62 @@ interface GateScope {
   /** True only for the gate call the prepare step makes for its own read (see `preparePhase`). */
   readonly prepareStep?: boolean;
   prepared?: PreparedWrite;
+  /** Written by `preflightPhase` (D2): frees the per-workdir lock; `execute()` calls it when the run ends. */
+  release?: () => void;
+  /** Written by `preflightPhase`: the real working directory it pinned into the action (D2). */
+  workingDirectory?: string;
+  /**
+   * Static D43: set by `discardUnusedChangeSet` alone, for the ONE change set this same gate run's
+   * settle bound. Under it the discard action of exactly that stack and id needs no prompt (I2's one
+   * stated exception); any other action in the scope is refused.
+   */
+  readonly discardStep?: DiscardTarget;
+  /**
+   * Written by `preparePhase` when the prepare step refused AFTER the connector may have created a
+   * change set, and the gateway could prove which (`deriveCfnOrphan`). `finishScope` discards it
+   * exactly as it would a settled one, and only if the write was never dispatched.
+   */
+  orphan?: DiscardTarget;
+}
+
+/** Writes `directory` as the working directory of the action's tool input (nested or flat). */
+function pinWorkingDirectory(action: PlannedAction, directory: string): void {
+  const payload: Record<string, unknown> = { ...action.payload };
+  const nested = payload["input"];
+  action.payload =
+    Object.hasOwn(payload, "input") && isPlainObject(nested)
+      ? { ...payload, input: { ...nested, workingDirectory: directory } }
+      : { ...payload, workingDirectory: directory };
+}
+
+/** The change set a discard scope may remove: the stack it belongs to and the id the settler bound. */
+interface DiscardTarget {
+  readonly stackName: string;
+  readonly changeSetId: string;
+}
+
+/**
+ * Whether `action` is, key for key, the discard of `target`: the discard type, the discard tool,
+ * exactly the two input keys, equal to the target's. Nothing else rides along (static D43).
+ */
+function isDiscardOf(action: PlannedAction, target: DiscardTarget): boolean {
+  if (action.type !== IAC_DISCARD.actionType) return false;
+  const payload = action.payload;
+  if (
+    payload === undefined ||
+    Object.keys(payload).sort(codeUnitCompare).join(",") !== "input,mcpToolId"
+  ) {
+    return false;
+  }
+  if (payload["mcpToolId"] !== mcpClientToolKey("iac", IAC_DISCARD.toolId)) return false;
+  const input = payload["input"];
+  if (typeof input !== "object" || input === null) return false;
+  const given = input as Record<string, unknown>;
+  return (
+    Object.keys(given).sort(codeUnitCompare).join(",") === "changeSetId,stackName" &&
+    given["stackName"] === target.stackName &&
+    given["changeSetId"] === target.changeSetId
+  );
 }
 
 export class ToolExecutor {
@@ -806,6 +932,16 @@ export class ToolExecutor {
    */
   private boundRowOf(action: PlannedAction): ConnectorWriteRow | undefined {
     return this.rows().find((r) => r.bound !== undefined && r.actionType === action.type);
+  }
+
+  /**
+   * D2: the fixed reason a row refuses its writes with on EVERY door (`ConnectorWriteRow.refuse`),
+   * found by action TYPE alone (I3, so the payload can neither lift nor trigger it). It ends the
+   * gate before any capture, prepare or prompt: the refused write is audited rejected and ledgered
+   * blocked, and never dispatched.
+   */
+  private rowRefusal(action: PlannedAction): string | undefined {
+    return this.rows().find((r) => r.refuse !== undefined && r.actionType === action.type)?.refuse;
   }
 
   /**
@@ -930,9 +1066,12 @@ export class ToolExecutor {
    * Resolve a HITL action's approval, as ONE ordered list of named phases (the order is the
    * invariant; read it here, do not hunt for it):
    *   1. `captureBeforePhase`  the model door's before-state read and the typed preview;
-   *   2. `preparePhase`       a bound write's prepare step (I54): its values and facts, or a refusal;
-   *   3. `renderConfirmPhase`  the Wave 4 confirm text, or a refusal before anyone is asked;
-   *   4. `approvalPhase`       a delegate (Wave 4: only with the typed text) or the local owner;
+   *   2. `preflightPhase`     a bound IaC write's cheap refusals BEFORE any child exists (D2): a
+   *                           typed confirm that renders, a channel that can collect it, the
+   *                           approved directory or cloud;
+   *   3. `preparePhase`       a bound write's prepare step (I54): its values and facts, or a refusal;
+   *   4. `renderConfirmPhase`  the Wave 4 confirm text, or a refusal before anyone is asked;
+   *   5. `approvalPhase`       a delegate (Wave 4: only with the typed text) or the local owner;
    * and after the gate, in `execute()`: `dispatchBoundPhase`, the only place bound values are
    * injected. A delegated approval therefore can never skip the prepare. The prepared facts reach
    * only the local owner's prompt: a bound write is never delegated (`tryDelegatedApproval`).
@@ -943,9 +1082,23 @@ export class ToolExecutor {
     record: GateRecord,
     scope: GateScope,
   ): Promise<boolean> {
-    const captured = await this.captureBeforePhase(action, opts);
+    const earlier = await this.captureBeforePhase(action, opts);
+    if (!(await this.preflightPhase(action, record, scope))) return false;
+    // A pinned working directory changes what the preview's target shows: rebuild it from the action.
+    const captured =
+      scope.workingDirectory === undefined
+        ? earlier
+        : buildConnectorWritePreviewFrom(action, this.rows(), this.previewCredentialFor);
     const prepared = await this.preparePhase(action, opts, scope);
     if (prepared !== undefined) record.boundValuesSha256 = boundValuesDigest(prepared.values);
+    if (prepared?.diff !== undefined) {
+      record.diffSha256 = prepared.diff.sha256;
+      // The prepare step proved the list well-formed before it rendered a diff.
+      record.filesSha256 = commitFilesDigest(action.payload);
+    } else if (prepared?.plan !== undefined) {
+      // The plan or change set text the gateway rendered and the owner saw (D2).
+      record.diffSha256 = prepared.plan.sha256;
+    }
     const preview = withPrepared(captured, prepared);
     const confirm = this.renderConfirmPhase(action);
     if (confirm.kind === "refuse") {
@@ -957,7 +1110,67 @@ export class ToolExecutor {
   }
 
   /**
-   * Phase 2 (I54). A bound row's prepare read runs through THIS executor's gate and dispatcher
+   * Phase 2 (D2). For a row that declares `bound.prepare.preflight`, the refusals that must cost
+   * nothing run BEFORE the prepare child exists (a Terraform plan loads the owner's providers, with
+   * network and the cloud credential): the typed confirm must render for this input; the consent
+   * channel must be able to collect it (ChatOps cannot: refused here, not after a plan ran); and
+   * the dispatcher's preflight capability (the approved workdir or cloud, and the one-run-per-
+   * workdir lock) must accept. A missing or throwing capability refuses (fail closed). Returns
+   * `false` with the record filled in when the gate ends; a lock the capability took is freed by
+   * `execute()`, whatever the outcome. Found by TYPE alone (I3); a row without the tag is untouched.
+   */
+  private async preflightPhase(
+    action: PlannedAction,
+    record: GateRecord,
+    scope: GateScope,
+  ): Promise<boolean> {
+    const row = this.boundRowOf(action);
+    if (row?.bound?.prepare.preflight === undefined) return true;
+    const refuse = (reason: string): false => {
+      record.rejectReason = reason;
+      record.hitlRejectReason = reason;
+      return false;
+    };
+    const confirm = this.renderConfirmPhase(action);
+    if (confirm.kind === "refuse") return refuse(confirm.reason);
+    if (confirm.kind === "none") return refuse(PREFLIGHT_NO_CONFIRM_REASON);
+    if (this.consent.requestConfirmedApproval === undefined) {
+      record.confirm = "unsupported_channel";
+      record.rejectReason = CONFIRM_UNSUPPORTED_REASON;
+      return false;
+    }
+    const capabilities = this.connectors.boundWriteCapabilities;
+    if (capabilities === undefined) return refuse(PREPARE_REFUSALS.capabilityMissing);
+    let outcome: Awaited<ReturnType<BoundWriteCapabilities["preflight"]>>;
+    try {
+      outcome = await capabilities.preflight(
+        row.toolId,
+        extractToolInput(action) as Record<string, unknown>,
+      );
+    } catch {
+      return refuse(PREFLIGHT_FAILED_REASON);
+    }
+    if (!outcome.ok) return refuse(outcome.reason);
+    scope.release = outcome.release;
+    if (outcome.workingDirectory !== undefined) {
+      // Every later child, the confirm text and the prompt use the gateway-resolved path, not the
+      // caller's string (it is this run's own clone: only `execute()` reaches a bound row).
+      pinWorkingDirectory(action, outcome.workingDirectory);
+      scope.workingDirectory = outcome.workingDirectory;
+      // The pinned path is a different string from the one checked above (a link was followed): it
+      // gets the same two refusals NOW, before the plan child exists, not after it ran.
+      const shape = row.bound.prepare.inputRefusal?.(
+        extractToolInput(action) as Record<string, unknown>,
+      );
+      if (shape !== undefined) return refuse(shape);
+      const pinned = this.renderConfirmPhase(action);
+      if (pinned.kind === "refuse") return refuse(pinned.reason);
+    }
+    return true;
+  }
+
+  /**
+   * Phase 3 (I54). A bound row's prepare read runs through THIS executor's gate and dispatcher
    * (audited and ledgered, I29) before anyone is asked: the values it binds are kept in the gate
    * scope for `dispatchBoundPhase`, its selected facts go to the preview. Any failure throws
    * {@link PrepareRefusedError}, which `gate()` records as a rejection on every door. An action
@@ -970,22 +1183,54 @@ export class ToolExecutor {
   ): Promise<PreparedWrite | undefined> {
     const row = this.boundRowOf(action);
     if (row?.bound === undefined) return undefined;
-    const prepared = await runPrepareStep(
-      {
-        // The one gate call allowed to run a prepare type: this step's own, never a caller's.
-        gate: (a) => this.gateWithin(a, undefined, { bind: false, prepareStep: true }),
-        dispatch: (a) => this.connectors.dispatch(a),
-      },
-      row,
-      row.bound,
-      action,
-      {
-        prepareToolIds: this.prepareToolIds(),
-        toolUnlisted: opts?.prepareToolUnlisted === true,
-      },
-    );
+    const capabilities = this.connectors.boundWriteCapabilities;
+    let prepared: PreparedWrite;
+    try {
+      prepared = await runPrepareStep(
+        {
+          // The one gate call allowed to run a prepare type: this step's own, never a caller's.
+          gate: (a) => this.gateWithin(a, undefined, { bind: false, prepareStep: true }),
+          dispatch: (a) => this.connectors.dispatch(a),
+          ...(capabilities === undefined
+            ? {}
+            : { settle: (id: string, ctx: SettleContext) => capabilities.settle(id, ctx) }),
+        },
+        row,
+        row.bound,
+        action,
+        {
+          prepareToolIds: this.prepareToolIds(),
+          toolUnlisted: opts?.prepareToolUnlisted === true,
+          ...(scope.workingDirectory === undefined
+            ? {}
+            : { workingDirectory: scope.workingDirectory }),
+        },
+      );
+    } catch (e) {
+      this.noteOrphan(action, scope, row.bound, e);
+      throw e;
+    }
     scope.prepared = prepared;
     return prepared;
+  }
+
+  /**
+   * A refused prepare step of a CloudFormation row may have left a change set the connector made.
+   * Keep the one the gateway can prove (its name carries the SHA-256 of THIS template, its stack is
+   * the caller's, its ARN names it) for the discard; otherwise do not guess, and say so once with
+   * the fixed pointer when the refusal is one that can follow a created change set.
+   */
+  private noteOrphan(action: PlannedAction, scope: GateScope, bound: BoundWrite, e: unknown): void {
+    if (bound.prepare.settle !== "iac-cfn") return;
+    const left = prepareLeftover(e);
+    if (left.orphan !== undefined) {
+      scope.orphan = left.orphan;
+    } else if (left.unproven) {
+      executorLog.warn(
+        { actionType: action.type },
+        "a CloudFormation change set may have been left by a prepare step that did not finish; remove it in the AWS console",
+      );
+    }
   }
 
   /**
@@ -1073,6 +1318,23 @@ export class ToolExecutor {
   }
 
   /**
+   * Before any preview is built: the resolver reads the instance the write will run against, fresh.
+   * A credential whose instance cannot be established refuses the write here, with a fixed reason,
+   * before any prompt (the same rejection a before-state guard gives).
+   */
+  private async refreshPreviewInstance(action: PlannedAction): Promise<void> {
+    const refresh = this.previewCredentialFor?.refresh;
+    if (refresh === undefined) return;
+    try {
+      await refresh(serviceOf(action.type));
+    } catch {
+      throw new PrepareRefusedError(
+        "the credential's instance could not be established (its stored base is not valid); nothing was run",
+      );
+    }
+  }
+
+  /**
    * Phase 1. The typed preview for the owner's prompt. Without a before-state runner it is exactly the
    * builder's. With one (the door executor), it is built over the runner's rows (production: the
    * same table) and, when the row has a `before` reader, carries the reads' outcome; each read goes
@@ -1084,10 +1346,14 @@ export class ToolExecutor {
     action: PlannedAction,
     opts: ExecuteOptions | undefined,
   ): Promise<ConnectorWritePreview | undefined> {
+    await this.refreshPreviewInstance(action);
     const runner = this.beforeState;
     const preview = buildConnectorWritePreviewFrom(action, this.rows(), this.previewCredentialFor);
     if (runner === undefined) return preview;
-    if (preview === undefined) return undefined;
+    if (preview === undefined) {
+      throwIfWave4WithoutPreview(action, this.rows());
+      return undefined;
+    }
     const before = await runner.read(
       action,
       { gate: (a) => this.gate(a), dispatch: (a) => this.connectors.dispatch(a) },
@@ -1152,6 +1418,15 @@ export class ToolExecutor {
       // I54: a bound write that cannot enter (the public gate, a non-HITL type, another tool, a
       // caller-supplied bound field, an oversized input): refused before any read or prompt.
       return refuseGate(record, boundRefusal);
+    } else if (requiresHITL && scope.discardStep !== undefined) {
+      // Static D43: the one HITL type that runs without a prompt, and only as the gateway's own
+      // cleanup of the change set THIS run created (the scope names it); anything else in the scope
+      // is refused. Audited `not_required` with its own marker, ledgered, never shown to a model.
+      if (!isDiscardOf(action, scope.discardStep)) {
+        return refuseGate(record, DISCARD_MISMATCH_REASON);
+      }
+      record.discard = "unused_changeset";
+      return "not_required";
     } else if (requiresHITL) {
       const approved = await this.resolveHitlApproval(action, opts, record, scope);
       return approved ? "approved" : "rejected";
@@ -1196,7 +1471,7 @@ export class ToolExecutor {
     // sources — a consent disconnect, a before-state guard, a confirm refusal — overwrite it), so it
     // is always a defined string by the time the rejected branch returns it.
     const record: GateRecord = { rejectReason: USER_DECLINED_REASON };
-    const boundRefusal = this.boundRefusal(action, requiresHITL, scope);
+    const boundRefusal = this.rowRefusal(action) ?? this.boundRefusal(action, requiresHITL, scope);
 
     // Phases, in order: the ordered refusal checks then the prompt (a throw maps to a status), then
     // the audit row, then the egress row (I29), then the result.
@@ -1225,7 +1500,8 @@ export class ToolExecutor {
 
     this.egressSink.append(
       buildEgressEntry({
-        action,
+        // The ledger's payload summary never holds the text of a commit's files either (D1c).
+        action: withoutTemplateText(withoutFileText(action)),
         hitlStatus,
         resultStatus: hitlStatus === "rejected" ? "blocked" : "authorized",
         sessionId,
@@ -1245,13 +1521,82 @@ export class ToolExecutor {
     // what was shown.
     const action = structuredClone(planned);
     const scope: GateScope = { bind: true };
-    const gateResult = await this.gateWithin(action, opts, scope);
-    if (gateResult === "proceed") {
-      const toDispatch = this.dispatchBoundPhase(action, scope);
-      const result = await this.connectors.dispatch(toDispatch);
-      return { status: "ok", result };
+    // True from the moment the write is handed to the dispatcher: after that, nothing is discarded.
+    let dispatched: boolean | undefined;
+    try {
+      const gateResult = await this.gateWithin(action, opts, scope);
+      if (gateResult === "proceed") {
+        const toDispatch = this.dispatchBoundPhase(action, scope);
+        dispatched = true;
+        const result = await this.connectors.dispatch(toDispatch);
+        return { status: "ok", result };
+      }
+      return gateResult;
+    } finally {
+      await this.finishScope(action, scope, dispatched === true);
     }
-    return gateResult;
+  }
+
+  /**
+   * The end of a bound run, on every path (approved, declined, refused, thrown, timed out): what a
+   * settle left on disk is removed (a plan secret does not linger); a change set that was made and
+   * never dispatched is discarded (D43); then the lock the preflight took is freed. A cleanup that
+   * fails is best effort (the gateway sweeps its run directory at boot).
+   */
+  private async finishScope(
+    action: PlannedAction,
+    scope: GateScope,
+    dispatched: boolean,
+  ): Promise<void> {
+    try {
+      try {
+        await scope.prepared?.cleanup?.();
+      } catch {
+        // Best effort: a plan left behind is swept at the next gateway boot.
+      }
+      if (!dispatched) await this.discardUnusedChangeSet(action, scope);
+    } finally {
+      scope.release?.();
+    }
+  }
+
+  /**
+   * Static D43. When a CloudFormation deploy ended without its write being dispatched (the owner
+   * declined, mistyped, timed out, or something threw first) and this run's settle bound a change
+   * set, remove that change set: it exists only because this run made it. The target is the id the
+   * SETTLER bound and the stack the caller's input named (which the settler cross-checked), so a
+   * run with no settled change set has nothing to discard. The discard goes through this executor's
+   * own gate in a discard scope (no prompt, its own audit and egress rows) and its dispatch is
+   * pinned by the dispatcher to the discard tool alone. A failure is logged and changes nothing.
+   */
+  private async discardUnusedChangeSet(action: PlannedAction, scope: GateScope): Promise<void> {
+    const target = this.discardTargetOf(action, scope);
+    if (target === undefined) return;
+    const discard: PlannedAction = {
+      type: IAC_DISCARD.actionType,
+      payload: {
+        mcpToolId: mcpClientToolKey("iac", IAC_DISCARD.toolId),
+        input: { stackName: target.stackName, changeSetId: target.changeSetId },
+      },
+    };
+    try {
+      const gated = await this.gateWithin(discard, undefined, { bind: false, discardStep: target });
+      if (gated === "proceed") await this.connectors.dispatch(discard);
+    } catch (e) {
+      executorLog.warn(
+        { err: e instanceof Error ? e.message : "unknown" },
+        "the unused CloudFormation change set could not be discarded; remove it in the AWS console",
+      );
+    }
+  }
+
+  /** The change set a finished run may discard, or `undefined` when it holds no settled one. */
+  private discardTargetOf(action: PlannedAction, scope: GateScope): DiscardTarget | undefined {
+    if (this.boundRowOf(action)?.bound?.prepare.settle !== "iac-cfn") return undefined;
+    const changeSetId = scope.prepared?.values["changeSetId"];
+    const stackName = (extractToolInput(action) as Record<string, unknown>)["stackName"];
+    if (typeof changeSetId !== "string" || typeof stackName !== "string") return scope.orphan;
+    return { stackName, changeSetId };
   }
 }
 

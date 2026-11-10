@@ -1,4 +1,5 @@
 import { readConnectorSecret } from "../connectors/connector-vault.ts";
+import { resolveGithubBase } from "../connectors/github-api-base.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
 
 /**
@@ -109,7 +110,8 @@ async function extraRequiredSecretsPresent(
 
 /**
  * The Vault secret whose value carries a service's self-hosted origin, or `null` for a
- * SaaS-only service (`github`, `bitbucket`) that has no self-hosted variant to resolve.
+ * service that has none to resolve here: `bitbucket` (SaaS only) and `github`, whose
+ * `github.api_base` needs validation and is resolved by `githubSelfHostedHost` instead.
  *
  * `gitlab` uses `api_base`, NOT `base_url` — the Jenkins/Jira `base_url` convention does not
  * cover it, and a map built by scanning for `*.base_url` would silently omit self-hosted GitLab.
@@ -133,6 +135,19 @@ async function selfHostedOriginSecret(
   }
 }
 
+/**
+ * The GitHub Enterprise Server web host a configured `github.api_base` names, resolved through
+ * the ONE validator (`resolveGithubBase`): absent means github.com (`{ ok: true, host: null }`),
+ * valid gives the instance's `host[:port]`, and a PRESENT but invalid base is `{ ok: false }` so
+ * the caller claims NO host (never github.com: the PAT beside a GHES base is an enterprise one).
+ */
+async function githubSelfHostedHost(
+  vault: NimbusVault,
+): Promise<{ readonly ok: true; readonly host: string | null } | { readonly ok: false }> {
+  const resolved = resolveGithubBase(await readConnectorSecret(vault, "github", "api_base"));
+  return resolved.ok ? { ok: true, host: resolved.host } : { ok: false };
+}
+
 /** The host of a URL, lowercased, or null when the value is not a usable http(s) origin. */
 function hostOf(raw: string): string | null {
   let parsed: URL;
@@ -145,6 +160,25 @@ function hostOf(raw: string): string | null {
     return null;
   }
   return parsed.host.toLowerCase();
+}
+
+/**
+ * Git-remote hosts (lower-cased hostname, NO port: a remote URL's port is the clone port, not the
+ * web one) that the owner's configuration adds to the built-in SaaS table in
+ * `ownership/repo-remote.ts`, each mapped to a service id. Today only a configured GitHub
+ * Enterprise Server, and only while github is configured with a valid `github.api_base`; a
+ * missing PAT or an invalid base contributes nothing. One instance at a time, so the mapping
+ * carries no host: the repo entity it produces is `github:<owner>/<name>` like github.com's.
+ */
+export async function configuredForgeHosts(
+  vault: NimbusVault,
+): Promise<ReadonlyMap<string, string>> {
+  const hosts = new Map<string, string>();
+  const config = await resolveServiceConfig(vault, "github");
+  if (config.configured && config.selfHostedHost !== null) {
+    hosts.set(new URL(`https://${config.selfHostedHost}`).hostname.toLowerCase(), "github");
+  }
+  return hosts;
 }
 
 /**
@@ -171,6 +205,11 @@ async function resolveServiceConfig(
   }
   if (!(await extraRequiredSecretsPresent(vault, service))) {
     return { configured: false };
+  }
+
+  if (service === "github") {
+    const github = await githubSelfHostedHost(vault);
+    return github.ok ? { configured: true, selfHostedHost: github.host } : { configured: false };
   }
 
   const origin = await selfHostedOriginSecret(vault, service);

@@ -199,14 +199,16 @@ describe("a Wave 4 write needs the exact typed text (b-f)", () => {
   });
 
   test("a Windows working directory (backslashes) is typeable: the exact text approves", async () => {
+    // A row with a plain confirm target (the iac applies are plan-bound since D2 and need their
+    // capabilities; their own tests are `executor-iac-rows.test.ts`): the character set is the point.
     const wd = `C:${String.fromCharCode(92)}infra${String.fromCharCode(92)}prod`;
-    const h = harness({ confirmAnswer: { approved: true, typed: `iac/apply ${wd}` } });
+    const h = harness({ confirmAnswer: { approved: true, typed: `kubernetes/delete ${wd}` } });
     const res = await h.exec.execute({
-      type: "iac.terraform.apply",
-      payload: { workingDirectory: wd },
+      type: "kubernetes.pod.delete",
+      payload: { podName: wd },
     });
     expect(res.status).toBe("ok");
-    expect(h.confirmed[0]?.confirmText).toBe(`iac/apply ${wd}`);
+    expect(h.confirmed[0]?.confirmText).toBe(`kubernetes/delete ${wd}`);
     expect(auditOf(h)["confirm"]).toBe("matched");
   });
 
@@ -534,7 +536,7 @@ describe("delegation (j, k) - I20", () => {
 
 describe("the frozen HITL set is untouched (n)", () => {
   test("HITL_REQUIRED keeps its size and holds every Wave 4 type", () => {
-    expect(HITL_REQUIRED.size).toBe(171);
+    expect(HITL_REQUIRED.size).toBe(175);
     for (const r of CONNECTOR_WRITE_ROWS.filter((x) => x.wave === 4)) {
       expect(HITL_REQUIRED.has(r.actionType), r.actionType).toBe(true);
     }

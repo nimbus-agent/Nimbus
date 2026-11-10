@@ -32,7 +32,7 @@ function seedGithubRepo(ctx: SyncContext, fullName: string): void {
     externalId: `repo:${fullName}`,
     title: fullName,
     bodyPreview: "",
-    url: null,
+    url: `https://github.com/${fullName}`,
     canonicalUrl: null,
     modifiedAt: now,
     authorId: null,
@@ -93,6 +93,51 @@ describe("circleci-sync — credential short-circuits", () => {
       await iso.vault.set("circleci.api_token", "circleci-stub-token");
       const syncable = createCircleciSyncable(ENSURE_MCP);
       const res = await syncable.sync(iso.createSyncContext("circleci"), "preserved-cursor");
+      expect(iso.fetchMock.calls).toHaveLength(0);
+      expect(res.cursor).toBe("preserved-cursor");
+    });
+  });
+});
+
+describe("circleci-sync — GitHub Enterprise Server repos never reach circleci.com", () => {
+  function seedGhesRepo(ctx: SyncContext, fullName: string): void {
+    const now = Date.now();
+    ctx.upsertItem({
+      service: "github",
+      type: "repository",
+      externalId: `repo:${fullName}`,
+      title: fullName,
+      bodyPreview: "",
+      url: `https://ghe.example.com/${fullName}`,
+      canonicalUrl: null,
+      modifiedAt: now,
+      authorId: null,
+      metadata: { repo: fullName },
+      pinned: false,
+      syncedAt: now,
+    });
+  }
+
+  test("with GHES items beside github.com items, only the github.com repo is requested", async () => {
+    await withIsolatedFixture(async (iso) => {
+      await iso.vault.set("circleci.api_token", "circleci-stub-token");
+      await iso.vault.set("github.api_base", "https://ghe.example.com/api/v3");
+      seedGithubRepo(iso.createSyncContext("circleci"), "acme/repo-a");
+      seedGhesRepo(iso.createSyncContext("circleci"), "corp/internal-app");
+      iso.fetchMock.respond("GET", PIPELINES_URL_ACME_REPO_A, { items: [] });
+      await createCircleciSyncable(ENSURE_MCP).sync(iso.createSyncContext("circleci"), null);
+      expect(iso.fetchMock.calls.map((c) => c.url)).toEqual([PIPELINES_URL_ACME_REPO_A]);
+    });
+  });
+
+  test("with only GHES items indexed, circleci makes no request and keeps its cursor", async () => {
+    await withIsolatedFixture(async (iso) => {
+      await iso.vault.set("circleci.api_token", "circleci-stub-token");
+      seedGhesRepo(iso.createSyncContext("circleci"), "corp/internal-app");
+      const res = await createCircleciSyncable(ENSURE_MCP).sync(
+        iso.createSyncContext("circleci"),
+        "preserved-cursor",
+      );
       expect(iso.fetchMock.calls).toHaveLength(0);
       expect(res.cursor).toBe("preserved-cursor");
     });

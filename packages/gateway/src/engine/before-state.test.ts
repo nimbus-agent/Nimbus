@@ -36,6 +36,7 @@ import {
   classifyBeforeStateError,
   createBeforeStateRunner,
   isBeforeReadActionType,
+  WAVE4_BEFORE_REFUSAL,
 } from "./before-state.ts";
 import { type ExecutorPolicyDep, NO_POLICY_OVERLAY, ToolExecutor } from "./executor.ts";
 import type { AuditSink, ConnectorDispatcher, ConsentChannel, PlannedAction } from "./types.ts";
@@ -1913,4 +1914,234 @@ describe("the KB-child guard on the real page rows (OR-B3-3)", () => {
       });
     });
   }
+});
+
+// ---- D1: the Wave 4 fail-closed rule ------------------------------------------------------
+
+const W4_REFUSED = { status: "refused", reason: WAVE4_BEFORE_REFUSAL } as const;
+
+describe("Wave 4: an unread current state refuses the write (D1, fail closed)", () => {
+  const ok = { summary: "old" };
+
+  test("the reason is one fixed text that names no target", () => {
+    expect(WAVE4_BEFORE_REFUSAL).toBe(
+      "the current state of the target could not be read, so nothing was sent",
+    );
+  });
+
+  test("a Wave 4 row with no reader, or no preview, is refused (defence in depth)", async () => {
+    const { before: _b, ...noReader } = rowWith(READER, 4);
+    const { preview: _p, ...noPreview } = rowWith(READER, 4);
+    for (const r of [noReader as ConnectorWriteRow, noPreview as ConnectorWriteRow]) {
+      const seen: PlannedAction[] = [];
+      const runner = createBeforeStateRunner({ rows: [r] });
+      expect(await runner.read(WRITE, opsReturning(ok, seen))).toEqual(W4_REFUSED);
+      expect(seen).toEqual([]);
+    }
+  });
+
+  test("a Wave 4 BOUND row with a preview and no reader is not refused here: its prepare step is the state", async () => {
+    // `isModelOfferableRow` offers a Wave 4 row with `before` OR `bound`; the runner must agree, or
+    // a bound-only row would be listed and then refused on every call.
+    const { before: _b, ...noReader } = rowWith(READER, 4);
+    const bound = {
+      ...noReader,
+      bound: { prepare: {} as never, binds: [] },
+    } as unknown as ConnectorWriteRow;
+    const seen: PlannedAction[] = [];
+    const runner = createBeforeStateRunner({ rows: [bound] });
+    expect(await runner.read(WRITE, opsReturning(ok, seen))).toBeUndefined();
+    expect(seen).toEqual([]);
+    // Without a preview it is still refused, bound or not.
+    const { preview: _p, ...boundNoPreview } = bound;
+    const r2 = createBeforeStateRunner({ rows: [boundNoPreview as ConnectorWriteRow] });
+    expect(await r2.read(WRITE, opsReturning(ok))).toEqual(W4_REFUSED);
+  });
+
+  test("a Wave 3 row with no reader is still not read at all", async () => {
+    const { before: _b, ...noReader } = rowWith(READER, 3);
+    const runner = createBeforeStateRunner({ rows: [noReader as ConnectorWriteRow] });
+    expect(await runner.read(WRITE, opsReturning(ok))).toBeUndefined();
+  });
+
+  test("a Wave 4 action that is not origin model is not read at all (unchanged early return)", async () => {
+    const { origin: _o, ...notModel } = WRITE;
+    const seen: PlannedAction[] = [];
+    const runner = createBeforeStateRunner({ rows: [rowWith(READER, 4)] });
+    expect(await runner.read(notModel, opsReturning(ok, seen))).toBeUndefined();
+    expect(seen).toEqual([]);
+  });
+
+  test("the reader tool unlisted at call time: refused, no read runs", async () => {
+    const seen: PlannedAction[] = [];
+    const runner = createBeforeStateRunner({ rows: [rowWith(READER, 4)] });
+    expect(await runner.read(WRITE, opsReturning(ok, seen), { readerUnlisted: true })).toEqual(
+      W4_REFUSED,
+    );
+    expect(seen).toEqual([]);
+  });
+
+  test("args returning undefined or throwing, and a non-object input: refused", async () => {
+    const readers: BeforeStateReader[] = [
+      { ...READER, args: () => undefined },
+      {
+        ...READER,
+        args: () => {
+          throw new Error("x");
+        },
+      },
+    ];
+    for (const reader of readers) {
+      const runner = createBeforeStateRunner({ rows: [rowWith(reader, 4)] });
+      expect(await runner.read(WRITE, opsReturning(ok))).toEqual(W4_REFUSED);
+    }
+    const odd: PlannedAction = {
+      ...WRITE,
+      payload: { mcpToolId: "jira_jira_issue_update", input: 7 },
+    };
+    const runner = createBeforeStateRunner({ rows: [rowWith(READER, 4)] });
+    expect(await runner.read(odd, opsReturning(ok))).toEqual(W4_REFUSED);
+  });
+
+  test("a failed read, a not-found read, a policy-refused read: refused", async () => {
+    const runner = createBeforeStateRunner({ rows: [rowWith(READER, 4)] });
+    for (const err of ["boom", "Tool not found"]) {
+      const ops: BeforeReadOps = {
+        gate: async () => "proceed",
+        dispatch: async () => {
+          throw new Error(err);
+        },
+      };
+      expect(await runner.read(WRITE, ops)).toEqual(W4_REFUSED);
+    }
+    const refusingGate: BeforeReadOps = {
+      gate: async () => ({ status: "rejected", reason: BEFORE_READ_HITL_REFUSAL }),
+      dispatch: async () => ok,
+    };
+    expect(await runner.read(WRITE, refusingGate)).toEqual(W4_REFUSED);
+  });
+
+  test("select throwing or returning undefined or a malformed list: refused", async () => {
+    const selects: BeforeStateReader["select"][] = [
+      () => {
+        throw new Error("select boom");
+      },
+      () => undefined as unknown as [],
+      () => "nope" as unknown as [],
+      () => ["not an object"] as unknown as [],
+    ];
+    for (const select of selects) {
+      const runner = createBeforeStateRunner({ rows: [rowWith({ ...READER, select }, 4)] });
+      expect(await runner.read(WRITE, opsReturning(ok))).toEqual(W4_REFUSED);
+    }
+  });
+
+  test("select showing nothing (no field, or only blank values): a Wave 4 row is refused, a Wave 2 row keeps its empty state", async () => {
+    const empty: BeforeStateReader["select"][] = [
+      () => [],
+      () => [{ label: "Summary", value: "" }],
+      () => [
+        { label: "Summary", value: "  " },
+        { label: "Status", value: "" },
+      ],
+    ];
+    for (const select of empty) {
+      const w4 = createBeforeStateRunner({ rows: [rowWith({ ...READER, select }, 4)] });
+      expect(await w4.read(WRITE, opsReturning(ok))).toEqual(W4_REFUSED);
+      const w2 = createBeforeStateRunner({ rows: [rowWith({ ...READER, select }, 2)] });
+      expect((await w2.read(WRITE, opsReturning(ok)))?.status).toBe("ok");
+    }
+    const some = createBeforeStateRunner({
+      rows: [
+        rowWith(
+          {
+            ...READER,
+            select: () => [
+              { label: "A", value: "" },
+              { label: "B", value: "x" },
+            ],
+          },
+          4,
+        ),
+      ],
+    });
+    expect((await some.read(WRITE, opsReturning(ok)))?.status).toBe("ok");
+  });
+
+  test("a read that times out: refused", async () => {
+    const clock = fakeClock();
+    const runner = createBeforeStateRunner({ rows: [rowWith(READER, 4)], timers: clock.timers });
+    const pending = runner.read(WRITE, {
+      gate: async () => "proceed",
+      dispatch: () => new Promise(() => {}),
+    });
+    await Promise.resolve();
+    clock.advance(BEFORE_STATE_TIMEOUT_MS);
+    expect(await pending).toEqual(W4_REFUSED);
+  });
+
+  test("a second read failing refuses on Wave 4, and is only unavailable on its Wave 3 twin", async () => {
+    const failing = (): BeforeReadOps =>
+      opsByTool({ ...READS_OK, jira_jira_issue_get: throwing("x") });
+    const w3 = createBeforeStateRunner({ rows: [transitionRow(twoReadReader(newSeen()))] });
+    expect(await w3.read(TRANSITION, failing())).toEqual({
+      status: "unavailable",
+      reason: "failed",
+    });
+    const w4Row: ConnectorWriteRow = { ...transitionRow(twoReadReader(newSeen())), wave: 4 };
+    const w4 = createBeforeStateRunner({ rows: [w4Row] });
+    expect(await w4.read(TRANSITION, failing())).toEqual(W4_REFUSED);
+  });
+
+  test("a Wave 3 row with the same failures is unavailable, never refused", async () => {
+    const runner = createBeforeStateRunner({
+      rows: [rowWith({ ...READER, args: () => undefined }, 3)],
+    });
+    expect(await runner.read(WRITE, opsReturning(ok))).toEqual({
+      status: "unavailable",
+      reason: "failed",
+    });
+  });
+
+  test("a Wave 4 row whose reads succeed returns the fields", async () => {
+    const runner = createBeforeStateRunner({ rows: [rowWith(READER, 4)] });
+    expect(await runner.read(WRITE, opsReturning(ok))).toEqual({
+      status: "ok",
+      fields: [{ label: "Summary", value: "old" }],
+    });
+  });
+
+  test("a guard that applies keeps its OWN reason on every failure and on a false allows", async () => {
+    const guard: BeforeStateGuard = {
+      reason: GUARD_REASON,
+      appliesTo: () => true,
+      allows: (reply) => (reply as { summary?: unknown }).summary === "old",
+    };
+    const runner = createBeforeStateRunner({ rows: [rowWith({ ...READER, guard }, 4)] });
+    expect(await runner.read(WRITE, opsReturning({ summary: "other" }))).toEqual(REFUSED);
+    expect(await runner.read(WRITE, opsReturning(ok), { readerUnlisted: true })).toEqual(REFUSED);
+    const throwingOps: BeforeReadOps = {
+      gate: async () => "proceed",
+      dispatch: async () => {
+        throw new Error("x");
+      },
+    };
+    expect(await runner.read(WRITE, throwingOps)).toEqual(REFUSED);
+    expect(await runner.read(WRITE, opsReturning(ok))).toEqual({
+      status: "ok",
+      fields: [{ label: "Summary", value: "old" }],
+    });
+  });
+
+  test("a guard that does not apply to this input still fails closed on a Wave 4 row, with the fixed reason", async () => {
+    const guard: BeforeStateGuard = {
+      reason: GUARD_REASON,
+      appliesTo: () => false,
+      allows: () => true,
+    };
+    const runner = createBeforeStateRunner({
+      rows: [rowWith({ ...READER, guard, args: () => undefined }, 4)],
+    });
+    expect(await runner.read(WRITE, opsReturning(ok))).toEqual(W4_REFUSED);
+  });
 });

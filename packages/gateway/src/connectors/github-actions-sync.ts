@@ -2,7 +2,9 @@ import { syncPassCursorSuccess } from "../sync/pass-cursor-sync-result.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
 import { buildCiRunMetadata, normalizeGithubActionsConclusion } from "./ci-run-meta.ts";
 import { storedRunIsUnfinished } from "./ci-run-refresh.ts";
+import { readGithubCredentialPair } from "./github-api-base.ts";
 import { decodeNimbusJsonCursorObject, encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
+import { fetchSameOriginOnly } from "./same-origin-fetch.ts";
 import { asRecord, numberField, stringField } from "./unknown-record.ts";
 
 const SERVICE_ID = "github_actions";
@@ -180,6 +182,8 @@ type GithubActionsRepoSyncArgs = {
   owner: string;
   repo: string;
   headers: Record<string, string>;
+  /** The resolved REST root (github.com or the configured GHES `/api/v3`). */
+  restRoot: string;
   lastSeen: number;
   floorMs: number;
   now: number;
@@ -188,13 +192,13 @@ type GithubActionsRepoSyncArgs = {
 async function syncGithubActionsForRepo(
   args: GithubActionsRepoSyncArgs,
 ): Promise<{ upserted: number; bytes: number; maxId: number }> {
-  const { ctx, full, owner, repo, headers, lastSeen, floorMs, now } = args;
+  const { ctx, full, owner, repo, headers, restRoot, lastSeen, floorMs, now } = args;
   await ctx.rateLimiter.acquire("github");
   const u = new URL(
-    `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/actions/runs`,
+    `${restRoot}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/actions/runs`,
   );
   u.searchParams.set("per_page", "30");
-  const res = await fetch(u.toString(), { headers });
+  const res = await fetchSameOriginOnly(u.toString(), { headers });
   const text = await res.text();
   const bytes = text.length;
   applyGithubRateLimitPenaltyIfNeeded(ctx, res);
@@ -235,12 +239,25 @@ export function createGithubActionsSyncable(options: GithubActionsSyncableOption
       const t0 = performance.now();
       await options.ensureGithubMcpRunning();
 
-      const pat = await ctx.getSharedSecret("github", "pat");
+      // The base is a shared secret, read exactly like the PAT, as ONE consistent pair. Absent =
+      // github.com; present but invalid, or changed mid-read, FAILS CLOSED (no request, never
+      // api.github.com).
+      const pair = await readGithubCredentialPair((k) => ctx.getSharedSecret("github", k));
+      if (pair.kind !== "ok") {
+        ctx.logger.warn(
+          { serviceId: SERVICE_ID },
+          "github_actions sync: the stored github api_base is not valid or changed mid-read; making no request",
+        );
+        return syncNoopResult(cursor, t0);
+      }
+      const pat = pair.pat;
       if (pat === null || pat.trim() === "") {
         return syncNoopResult(cursor, t0);
       }
+      const base = pair.base;
 
-      const repos = ctx.listIndexedMetadataValues("github", "repo");
+      // Only repositories indexed from THIS instance (their `url` is on its web origin).
+      const repos = ctx.listIndexedMetadataValuesForOrigin("github", "repo", base.webOrigin);
       if (repos.length === 0) {
         return syncNoopResult(cursor, t0);
       }
@@ -270,6 +287,7 @@ export function createGithubActionsSyncable(options: GithubActionsSyncableOption
           owner: parts.owner,
           repo: parts.repo,
           headers,
+          restRoot: base.restRoot,
           lastSeen,
           floorMs,
           now,

@@ -236,11 +236,13 @@ describe("connector.writesDisable and writesStatus", () => {
       maxWave: 2,
     });
     expect(s.services.find((x) => x.service === "kubernetes")?.enabled).toBe(false);
-    // Covered but not offerable: argocd's writes have previews but are wave 4 with no reader.
+    // Since D1 argocd's two wave-4 writes have a reader and a confirm text: offerable, but a
+    // service that is not enabled has nothing approved, so both await approval.
     expect(s.services.find((x) => x.service === "argocd")).toMatchObject({
       enabled: false,
       writes: 2,
       offerable: 0,
+      awaitingApproval: 2,
     });
     // The approved enable covered the five offerable github writes (B1's comment, B2's issues).
     expect(s.services.find((x) => x.service === "github")).toMatchObject({
@@ -741,6 +743,7 @@ describe("the Obsidian opt-in restarts the Obsidian connector (B4b, I15)", () =>
   test("dispatchConnectorRpc wires the restart to the mesh's restartObsidian", async () => {
     let restarts = 0;
     const connectorMesh = {
+      iacPathDepsForEnable: () => undefined,
       restartObsidian: () => {
         restarts += 1;
         return Promise.resolve();
@@ -842,6 +845,7 @@ describe("the Obsidian enable prompt names the folders it may write (B4b Task B3
   test("dispatchConnectorRpc reads the scope from the mesh", async () => {
     let reads = 0;
     const connectorMesh = {
+      iacPathDepsForEnable: () => undefined,
       restartObsidian: () => Promise.resolve(),
       obsidianWriteScope: () => {
         reads += 1;
@@ -868,5 +872,89 @@ describe("the Obsidian enable prompt names the folders it may write (B4b Task B3
         ? 1
         : 0,
     );
+  });
+});
+
+describe("D1: the Wave 4 writes are new to an earlier opt-in until it is re-run at --wave 4", () => {
+  type Write = { toolId: string; wave: number; offerable: boolean; state: string };
+
+  test("an opt-in at wave 3 offers none of Argo CD's two Wave 4 writes; enabling at wave 4 lists them as new, and approving offers them by name", async () => {
+    await call("connector.writesEnable", { service: "argocd", wave: 3 }, { exec: executor(true) });
+    expect(getModelWriteEnablement(db, "argocd")?.approvedToolIds.size).toBe(0);
+    const prompts: string[] = [];
+    await call(
+      "connector.writesEnable",
+      { service: "argocd", wave: 4 },
+      { exec: executor(true, prompts) },
+    );
+    expect(prompts[0]).toContain("argocd_app_sync");
+    expect(prompts[0]).toContain("(new: offered after you approve)");
+    const e = getModelWriteEnablement(db, "argocd");
+    expect(e?.maxWave).toBe(4);
+    expect([...(e?.approvedToolIds ?? [])].sort((a, b) => a.localeCompare(b))).toEqual([
+      "argocd_app_rollback",
+      "argocd_app_sync",
+    ]);
+  });
+
+  test("the enable payload marks each Wave 4 write newly_offerable on a first approval and already_approved on a re-run; the Bitbucket merge is never offerable", async () => {
+    const seen: Array<{ writes: Write[] }> = [];
+    const exec = new ToolExecutor(
+      {
+        requestApproval: async () => true,
+      },
+      localIndex,
+      { dispatch: async () => ({}) },
+      undefined,
+      NULL_EGRESS_SINK,
+      NO_POLICY_OVERLAY,
+    );
+    const original = exec.gate.bind(exec);
+    exec.gate = async (action) => {
+      seen.push(action.payload as { writes: Write[] });
+      return original(action);
+    };
+    await call("connector.writesEnable", { service: "jenkins", wave: 4 }, { exec });
+    await call("connector.writesEnable", { service: "jenkins", wave: 4 }, { exec });
+    expect(seen[0]?.writes.map((w) => [w.toolId, w.wave, w.state])).toEqual([
+      ["jenkins_build_trigger", 4, "newly_offerable"],
+      ["jenkins_build_abort", 4, "newly_offerable"],
+    ]);
+    expect(seen[1]?.writes.map((w) => w.state)).toEqual(["already_approved", "already_approved"]);
+
+    await call("connector.writesEnable", { service: "bitbucket", wave: 4 }, { exec });
+    const bb = seen[2]?.writes ?? [];
+    expect(bb).toHaveLength(1);
+    expect(bb[0]).toMatchObject({
+      toolId: "bitbucket_pr_merge",
+      offerable: false,
+      state: "not_offerable",
+    });
+    expect(getModelWriteEnablement(db, "bitbucket")?.approvedToolIds.size).toBe(0);
+  });
+
+  test("status counts: Jenkins at wave 3 has 0 offerable and 2 awaiting; at wave 4, approved, 2 offerable", async () => {
+    type Status = {
+      services: Array<{
+        service: string;
+        offerable: number;
+        awaitingApproval: number;
+        writes: number;
+      }>;
+    };
+    await call("connector.writesEnable", { service: "jenkins", wave: 3 }, { exec: executor(true) });
+    let s = (await call("connector.writesStatus", {})) as Status;
+    expect(s.services.find((x) => x.service === "jenkins")).toMatchObject({
+      writes: 0,
+      offerable: 0,
+      awaitingApproval: 0,
+    });
+    await call("connector.writesEnable", { service: "jenkins", wave: 4 }, { exec: executor(true) });
+    s = (await call("connector.writesStatus", {})) as Status;
+    expect(s.services.find((x) => x.service === "jenkins")).toMatchObject({
+      writes: 2,
+      offerable: 2,
+      awaitingApproval: 0,
+    });
   });
 });

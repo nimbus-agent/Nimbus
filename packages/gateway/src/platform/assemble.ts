@@ -116,7 +116,8 @@ import {
   defaultSyncIntervalMsForService,
 } from "../connectors/connector-catalog.ts";
 import {
-  CONNECTOR_VAULT_SECRET_KEYS,
+  type CONNECTOR_VAULT_SECRET_KEYS,
+  requiredSecretKeysFor as manifestRequiredSecretKeysFor,
   TEAM_SECRET_ANYOF_GROUPS,
 } from "../connectors/connector-secrets-manifest.ts";
 import {
@@ -126,7 +127,9 @@ import {
 import { createConnectorWriteDispatcher } from "../connectors/connector-write-dispatch.ts";
 import type { ConnectorWriteContext } from "../connectors/connector-write-transport.ts";
 import { isObsidianWriteGrantApproved } from "../connectors/connector-writes/enablement-store.ts";
+import { getIacGrants } from "../connectors/connector-writes/iac-grants.ts";
 import type { TribalKbConfig } from "../connectors/connector-writes/model-write-refusals.ts";
+import { previewCredentialResolver } from "../connectors/connector-writes/preview-credential.ts";
 import { createExtensionCredentialsResolver } from "../connectors/extension-sync/extension-identity.ts";
 import { createFilesystemV2Syncable } from "../connectors/filesystem-v2-sync.ts";
 import { githubFetchOneUrlIsSupported } from "../connectors/github-sync.ts";
@@ -332,6 +335,7 @@ import type { ShareRecord } from "../share/share-store.ts";
 import { getShareRecord } from "../share/share-store.ts";
 import { sourceMappingFor } from "../sources/source-mapping.ts";
 import {
+  configuredForgeHosts,
   deriveFetchHostMap,
   type FetchableService,
   serviceForHost,
@@ -935,7 +939,10 @@ async function createSchedulerWithMesh(opts: SchedulerWithMeshOpts): Promise<{
   const ownershipRefresher = ownershipCfg.enabled
     ? createOwnershipRefresher({
         debounceMs: ownershipCfg.debounceMs,
-        runPass: () => {
+        runPass: async () => {
+          // A GitHub Enterprise Server clone only becomes a `repo` entity (and so a forge
+          // coordinate `resolve-file` can find) once its host is known; read fresh per pass.
+          const extraForgeHosts = await configuredForgeHosts(vault);
           const roots = gitAwareRootPaths(
             loadNimbusFilesystemRootsFromConfigDir(paths.configDir),
             loadRegisteredRoots(paths.configDir),
@@ -958,6 +965,7 @@ async function createSchedulerWithMesh(opts: SchedulerWithMeshOpts): Promise<{
             roots,
             config: ownershipCfg,
             serviceRepoUrns,
+            extraForgeHosts,
           });
         },
         onError: (err) => {
@@ -1059,10 +1067,15 @@ async function createSchedulerWithMesh(opts: SchedulerWithMeshOpts): Promise<{
     // I15 (B4b): the Obsidian sandbox may write today's daily note of each vault under those roots only while the
     // owner's `connector writes enable obsidian` approval includes the append, read LIVE per spawn.
     obsidianWriteGrantEnabled: () => isObsidianWriteGrantApproved(db),
+    // D2: the owner's approved Terraform directories and clouds (V85), read fresh for every child.
+    iacGrants: () => getIacGrants(db),
     isConnectorAllowed,
     ...(filesystemSpawnGate === undefined ? {} : { filesystemSpawnGate }),
     ...(extensionSlots === undefined ? {} : { extensionSlots, extensionSpawnGate }),
   });
+  // Snapshot the GitHub Enterprise Server host now (the constructor reads no Vault key) so the first
+  // write preview, which can come before the lazy child first spawns, already names the instance.
+  void connectorMesh.primeGithubInstance();
   const pagerdutyCfg = loadNimbusPagerdutyFromConfigDir(paths.configDir);
   const workdayCfg = loadNimbusWorkdayFromConfigDir(paths.configDir);
   // Policy connector-allowlist (I22): a blocked connector must never SYNC, not just be hidden from
@@ -1431,8 +1444,7 @@ async function bootFederationIntoIpcOpts(
         {
           vault,
           sandboxCwd: paths.sandboxDir,
-          requiredSecretKeysFor: (service: string) =>
-            CONNECTOR_VAULT_SECRET_KEYS[service as keyof typeof CONNECTOR_VAULT_SECRET_KEYS],
+          requiredSecretKeysFor: manifestRequiredSecretKeysFor,
           anyOfSecretGroupsFor: (service: string) =>
             TEAM_SECRET_ANYOF_GROUPS[service as keyof typeof CONNECTOR_VAULT_SECRET_KEYS],
           spawnAndCall: spawnTeamToolAndCall,
@@ -2617,8 +2629,7 @@ function buildTeamCredentialContexts(deps: {
         {
           vault,
           sandboxCwd: paths.sandboxDir,
-          requiredSecretKeysFor: (service: string) =>
-            CONNECTOR_VAULT_SECRET_KEYS[service as keyof typeof CONNECTOR_VAULT_SECRET_KEYS],
+          requiredSecretKeysFor: manifestRequiredSecretKeysFor,
           anyOfSecretGroupsFor: (service: string) =>
             TEAM_SECRET_ANYOF_GROUPS[service as keyof typeof CONNECTOR_VAULT_SECRET_KEYS],
           openSession: resolveTeamListOpenSession(
@@ -2654,8 +2665,7 @@ function buildTeamCredentialContexts(deps: {
         {
           vault,
           sandboxCwd: paths.sandboxDir,
-          requiredSecretKeysFor: (service: string) =>
-            CONNECTOR_VAULT_SECRET_KEYS[service as keyof typeof CONNECTOR_VAULT_SECRET_KEYS],
+          requiredSecretKeysFor: manifestRequiredSecretKeysFor,
           anyOfSecretGroupsFor: (service: string) =>
             TEAM_SECRET_ANYOF_GROUPS[service as keyof typeof CONNECTOR_VAULT_SECRET_KEYS],
           spawnAndCall: spawnTeamWriteAndCall,
@@ -3061,8 +3071,9 @@ export function bootChatopsAgentInvoker(deps: {
  * service's own self-hosted origin secret — but ONLY when that origin is itself `http:`.
  *
  * Mirrors `sync/fetch-host-boundary.ts`'s module-private `selfHostedOriginSecret` vault-key mapping
- * (`gitlab` → `api_base`, `jenkins`/`jira` → `base_url`; `github`/`bitbucket` have no self-hosted
- * variant) rather than importing it — that helper is private by design, and this is the one other
+ * (`gitlab` → `api_base`, `jenkins`/`jira` → `base_url`; `bitbucket` has no self-hosted
+ * variant, and `github`'s `api_base` is https-only so it never carries an `http:` exception)
+ * rather than importing it — that helper is private by design, and this is the one other
  * call site that needs the same mapping. `sync/fetch-host-boundary.ts` is on the "do not modify"
  * list for this task, so a short, obviously-mirrored switch here is the alternative to changing
  * that module's public surface.
@@ -3071,7 +3082,8 @@ export function bootChatopsAgentInvoker(deps: {
  * against `parsed.origin`, which is always scheme+host+port with no trailing slash and a lowercase
  * host — a raw Vault value with a trailing slash or an uppercase host would never match, silently
  * breaking the exception for an otherwise-legitimate self-hosted `http:` service. Returns `null`
- * for a SaaS-only service, an absent/blank secret, an unparseable one, or one configured over
+ * for a SaaS-only service, for `github` (its `github.api_base` must be https, so the GitHub
+ * targeted-fetch `http:` path is never opened even for a GitHub Enterprise Server), an absent/blank secret, an unparseable one, or one configured over
  * anything but `http:`.
  */
 export async function httpOriginFor(
@@ -4683,7 +4695,7 @@ export async function assemblePlatformServices(
       audit: { recordAudit: (e) => appendAuditEntry(db, e) },
       policyHitl,
       // The typed preview's `Credential:` line reads the same pin the write itself uses (as runAsk).
-      previewCredentialFor: (s) => connectorWriteDeps.credentialFor(s).credential,
+      previewCredentialFor: previewCredentialResolver(connectorWriteDeps, connectorMesh),
     },
   };
 

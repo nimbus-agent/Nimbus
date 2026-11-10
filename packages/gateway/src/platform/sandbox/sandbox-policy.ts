@@ -52,6 +52,14 @@ export interface SandboxPolicy {
    * name). Each must also be in `permissions.filesystem.write`. Set only by gateway code.
    */
   readonly canonicalWriteFiles?: readonly string[];
+  /**
+   * True for a spawn of one of the iac connector's per-run profiles (D2, OR-D2-5). On Linux its
+   * seccomp program answers `pidfd_send_signal` with ENOSYS instead of killing (Terraform's Go
+   * runtime probes it); on Windows the wrapper releases the spawn's grants when the child exits (the
+   * profile id is new on every run). Set ONLY by `wrapIacServerSpec`; `policyFromManifest` never
+   * emits it, so no manifest, `ServerSpec` or caller can turn it on.
+   */
+  readonly iacProfile?: boolean;
 }
 
 /** The single manifest -> policy derivation. `wrapServerSpec` is its only production caller. */
@@ -289,5 +297,8 @@ export function parseSandboxPolicy(json: string): SandboxPolicy {
     ...(o["canonicalWriteFiles"] === undefined
       ? {}
       : { canonicalWriteFiles: strings(o["canonicalWriteFiles"], "policy.canonicalWriteFiles") }),
+    ...(o["iacProfile"] === undefined
+      ? {}
+      : { iacProfile: booleanField(o["iacProfile"], "policy.iacProfile") }),
   };
 }

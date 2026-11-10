@@ -78,11 +78,11 @@ describe("ACTION_PROPOSABILITY", () => {
       .sort();
     expect(got).toEqual(PROPOSABLE);
   });
-  test("counts, derived: 47 proposable, 124 denied, 8 of them not_yet_offered", () => {
+  test("counts, derived: 47 proposable, 128 denied, 8 of them not_yet_offered", () => {
     const all = Object.values(ACTION_PROPOSABILITY);
     expect(PROPOSABLE).toHaveLength(47);
     expect(all.filter((p) => p.kind === "proposable")).toHaveLength(47);
-    expect(all.filter((p) => p.kind === "denied")).toHaveLength(124);
+    expect(all.filter((p) => p.kind === "denied")).toHaveLength(128);
     expect(all.filter((p) => p.kind === "denied" && p.class === "not_yet_offered")).toHaveLength(8);
     expect(all).toHaveLength(HITL_REQUIRED.size);
   });
@@ -235,5 +235,83 @@ describe("extension service ids are not proposable on the act door", () => {
       userMcpModelAccessAllowed: () => true,
     };
     expect(classifyActionType("ext_foo.echo", ctx)).toEqual({ kind: "unknown" });
+  });
+});
+
+test("D1: every Wave 4 row stays denied on the act door, in the class it had (nothing becomes proposable, the act door runs no before-read)", () => {
+  const wave4 = CONNECTOR_WRITE_ROWS.filter((r) => r.wave === 4);
+  expect(wave4).toHaveLength(43);
+  const classes = new Map<string, string>();
+  for (const r of wave4) {
+    const p = ACTION_PROPOSABILITY[r.actionType];
+    expect(p?.kind, r.toolId).toBe("denied");
+    expect(proposableWriteTool(r.actionType), r.toolId).toBeUndefined();
+    classes.set(r.actionType, p?.kind === "denied" ? p.class : "");
+  }
+  // The 31 with a typed preview (27 offered to the model, plus the Bitbucket merge and the three
+  // Azure and Cloud Run rows) keep the class they had before D1.
+  expect(Object.fromEntries(classes)).toMatchObject({
+    "github.pr.merge": "vcs",
+    "github.branch.delete": "vcs",
+    "github.tag.create": "vcs",
+    "gitlab.mr.merge": "vcs",
+    "bitbucket.pr.merge": "vcs",
+    "jenkins.build.trigger": "pipeline",
+    "github_actions.run.trigger": "pipeline",
+    "circleci.pipeline.trigger": "pipeline",
+    "gitlab.pipeline.cancel": "pipeline",
+    "aws.lambda.invoke": "cloud",
+    "azure.app_service.restart": "cloud",
+    "gcp.cloud_run.deploy": "cloud",
+    "argocd.app.sync": "deployment",
+    "mlflow.model.promote": "deployment",
+    "snowflake.tag.set": "data_platform",
+    "onedrive.item.delete": "file",
+    "outlook.calendar.delete": "calendar_delete",
+    "apple.calendar.event.delete": "calendar_delete",
+    "github.file.commit": "vcs",
+    "gitlab.commit.create": "vcs",
+  });
+});
+
+describe("a bound row is never proposable on the MCP act door (D1c, spec 15.5)", () => {
+  // `provenanceConsent` (ipc/capture-rpc.ts) REPLACES the executor's prompt and details with the
+  // act door's own display, built from the input alone: no before-state, no prepared facts, no diff.
+  // A proposable bound row would therefore be approved WITHOUT the diff and without the prepared
+  // head. Making one proposable needs provenanceConsent to carry the executor's preview first.
+  const bound = CONNECTOR_WRITE_ROWS.filter((r) => r.bound !== undefined);
+
+  test("the bound rows are exactly the two commits and the three plan-bound iac writes (D2)", () => {
+    expect(bound.map((r) => r.actionType).sort()).toEqual([
+      "github.file.commit",
+      "gitlab.commit.create",
+      "iac.cloudformation.deploy",
+      "iac.terraform.apply",
+      "iac.terraform.destroy",
+    ]);
+  });
+
+  test("the act door's classes for the iac and Kubernetes writes D2 touched are all denied", () => {
+    for (const [type, cls] of [
+      ["iac.terraform.apply", "iac"],
+      ["iac.terraform.destroy", "iac"],
+      ["iac.cloudformation.deploy", "iac"],
+      ["iac.cloudformation.changeset.discard", "iac"],
+      ["iac.pulumi.up", "iac"],
+      ["kubernetes.manifest.apply", "k8s"],
+    ] as const) {
+      const p = ACTION_PROPOSABILITY[type];
+      expect(p?.kind, type).toBe("denied");
+      expect(p?.kind === "denied" ? p.class : "", type).toBe(cls);
+    }
+  });
+
+  test("no bound row is in the proposable set, the routing table or the classification", () => {
+    for (const r of bound) {
+      expect(ACTION_PROPOSABILITY[r.actionType]?.kind, r.actionType).toBe("denied");
+      expect(proposableWriteTool(r.actionType), r.actionType).toBeUndefined();
+      expect(PROPOSABLE_WRITE_TOOLS[r.actionType], r.actionType).toBeUndefined();
+      expect(classifyActionType(r.actionType, OPEN).kind, r.actionType).toBe("denied");
+    }
   });
 });

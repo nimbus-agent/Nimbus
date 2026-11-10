@@ -4,6 +4,7 @@ import {
   isSensitiveFieldName,
   parseConfirmTemplate,
 } from "./confirm-template.ts";
+import type { DiffInputFile } from "./diff.ts";
 import { PREPARE_TOOL_IDS } from "./prepare-tools.ts";
 
 /** `write` rows have a dispatch path (the credential-aware transport); `mesh` rows are refused by
@@ -14,7 +15,27 @@ export type ConnectorWriteTransport = "write" | "mesh";
  * Which credential kind a write to `service` will use. Config-derived (never read from the
  * payload). Lives here, not in the executor, so the preview builder never imports the executor.
  */
-export type PreviewCredentialResolver = (service: string) => "personal" | "team";
+export type PreviewCredentialResolver = ((
+  service: string,
+) => "personal" | "team" | PreviewCredentialInfo) & {
+  /**
+   * Optional async read the executor awaits BEFORE it builds a prompt, so the instance shown is the
+   * one the write will run against (read fresh, never a snapshot). It throws when that credential's
+   * instance cannot be established (present but invalid): the write is then refused, no prompt shown.
+   */
+  readonly refresh?: (service: string) => Promise<void>;
+};
+
+/**
+ * The widened resolver result: the credential kind, plus the self-hosted INSTANCE host the
+ * service's connector is connected to (today a GitHub Enterprise Server's `host[:port]`), which the
+ * consent preview shows as an `Instance:` line. It rides inside the existing resolver so no
+ * `ToolExecutor` constructor position moves (I53 pins them).
+ */
+export interface PreviewCredentialInfo {
+  readonly credential: "personal" | "team";
+  readonly instance?: string;
+}
 
 /** The migration wave the row was classified in. */
 export type ConnectorWriteWave = 2 | 3 | 4;
@@ -30,15 +51,20 @@ export interface ConnectorWriteRow {
   readonly preview?: ConnectorWritePreviewTemplate;
   /**
    * Reads the target's current state for the typed preview (spec § 5.4), shown beside the new
-   * values on the model door's prompt only. Set with {@link withBefore}. Since C3 forty rows
-   * have one: the seven comment rows (B1), nine issue writes (B2), five page writes (B3), the
+   * values on the model door's prompt only. Set with {@link withBefore}. Since D1 sixty-eight rows
+   * have one: the 28 Wave 4 rows of D1 (27 offered, plus the never-offered Bitbucket merge: the
+   * merges, the branch delete and tag create, the Jenkins, GitHub Actions, CircleCI and GitLab
+   * pipeline writes, the AWS Lambda, EC2 and ECS writes, the Argo CD, Flux, MLflow and Snowflake
+   * writes and the three deletes; five of them carry a guard (a head sha, a resolved commit, a history id,
+   * or the CircleCI branch-and-tag refusal), and the 40 from before it: the seven comment rows (B1), nine issue writes (B2),
+   * five page writes (B3), the
    * Drive file create (B4a, its target folder), the Obsidian append (B4b, the note's end) and the
    * eight Wave 3 file, PR and incident writes (C1: Drive move, rename and trash, the OneDrive move,
    * the GitHub pull request close and the three PagerDuty incident writes) and the four C2 VCS rows
    * (the GitHub branch create, the pull request create and update, the GitLab merge request
    * update) and the five C3 flag and alert writes (the LaunchDarkly toggle and rollout, the
    * Flagsmith state set, the two Jira Operations alert writes); the Jira transition and the two
-   * file moves take two reads, and eight rows carry a guard (the Linear update, the four
+   * file moves take two reads, and thirteen rows carry a guard (the Linear update, the four
    * Notion/Confluence page updates and appends with the KB-child guard, the two C2 updates that
    * refuse an empty update, and the C3 LaunchDarkly rollout, which must name every variation).
    */
@@ -51,9 +77,17 @@ export interface ConnectorWriteRow {
   /**
    * A bound write (Phase 9.7 D0b, I54): the gateway runs this row's PREPARE read at the gate and
    * injects the values it binds into the write's input; the caller never supplies them. Set with
-   * {@link withBound}. No row declares one yet.
+   * {@link withBound}. Five rows declare one: the GitHub and GitLab multi-file commits (D1c) and
+   * the Terraform apply, Terraform destroy and CloudFormation deploy (D2).
    */
   readonly bound?: BoundWrite;
+  /**
+   * D2: a fixed reason the gate refuses this write with on EVERY door, before any capture, prepare
+   * or prompt (nothing is shown, nobody is asked, the connector is never called). Set with
+   * {@link withRefusal}; found by action TYPE only (I3). The Pulumi apply carries one: saved update
+   * plans are experimental, so there is nothing an apply could be bound to.
+   */
+  readonly refuse?: string;
 }
 
 /**
@@ -98,6 +132,62 @@ export interface PrepareRead {
   readonly maxInputBytes: number;
   /** The prepare reply, serialised, may not exceed this many characters. */
   readonly maxReplyBytes: number;
+  /**
+   * A PURE input check run last in `boundInputRefusal`, before any read or prompt: a fixed-text
+   * reason to refuse the write, or `undefined`. It must never echo input; a throw refuses (fail
+   * closed). The commit rows use it for the file count, the path rules and the content cap.
+   */
+  inputRefusal?(input: Readonly<Record<string, unknown>>): string | undefined;
+  /**
+   * Set on a row whose preview has a `diff` field: how the gateway renders the change the write
+   * will make as a unified diff. See {@link PrepareDiff}.
+   */
+  readonly diff?: PrepareDiff;
+  /**
+   * D2: a closed tag naming the GATEWAY-side settler that fixes the plan's identity after the
+   * prepare reply (a Terraform plan file moved, hashed and rendered by the gateway; a CloudFormation
+   * change set cross-checked against the input). Its values REPLACE the ones `binds` read from the
+   * reply. A tag, never code: the settler is looked up by this exact key at run time.
+   */
+  readonly settle?: PrepareSettle;
+  /** The prepare tool a Terraform settler calls to render the saved plan (`terraform show -json`). */
+  readonly settleTool?: string;
+  /**
+   * D2: run the preflight phase (consent-channel capability, confirm renderability, approved
+   * workdir or cloud) BEFORE the prepare child exists. Only `"iac"`.
+   */
+  readonly preflight?: "iac";
+}
+
+/** The settlers a prepare read may name (D2). Closed: a row cannot name code. */
+export type PrepareSettle = "iac-terraform" | "iac-cfn";
+
+/**
+ * The value keys each settler returns, which a settled row's `binds` must name exactly. The
+ * Terraform settler returns its own moved plan path and its own hash; the CloudFormation settler
+ * returns the change set's ARN.
+ */
+export const SETTLE_VALUE_KEYS: Readonly<Record<PrepareSettle, readonly string[]>> = Object.freeze({
+  "iac-terraform": Object.freeze(["planFile", "planSha256"]),
+  "iac-cfn": Object.freeze(["changeSetId"]),
+});
+
+/**
+ * How a bound write's change is shown in full (D1c, D42(g)). `files` pairs the caller's input (the
+ * AFTER side, byte for byte what the connector writes) with the prepare reply's BEFORE side; it
+ * returns `undefined` when the reply cannot be paired exactly (a missing, extra or duplicate entry,
+ * an existing file with no old text), which refuses the write. Nothing else the reply says about
+ * the change is read. `files` receives the pick of the write input over the prepare `argKeys`.
+ */
+export interface PrepareDiff {
+  files(
+    picked: Readonly<Record<string, unknown>>,
+    reply: unknown,
+  ): readonly DiffInputFile[] | undefined;
+  /** The summed UTF-8 length of the BEFORE sides may not exceed this. */
+  readonly maxOldBytes: number;
+  /** The rendered, sanitised diff text may not exceed this many UTF-8 bytes. */
+  readonly maxDiffBytes: number;
 }
 
 export interface BoundWrite {
@@ -349,6 +439,61 @@ export function withConfirm(r: ConnectorWriteRow, confirm: ConfirmTemplate): Con
   return Object.freeze({ ...r, confirm });
 }
 
+/**
+ * A frozen copy of `r` that the gate refuses with `reason` on every door (D2). Throws at declaration
+ * unless the row is a Wave 4 row with no preview, reader or bound prepare step (a refused write has
+ * nothing to show or read), and the reason is a non-empty single line.
+ */
+export function withRefusal(r: ConnectorWriteRow, reason: string): ConnectorWriteRow {
+  if (r.wave !== 4) throw new Error(`connector write refusal: row ${r.toolId} is not Wave 4`);
+  if (r.preview !== undefined || r.before !== undefined || r.bound !== undefined) {
+    throw new Error(
+      `connector write refusal: row ${r.toolId} has a preview, reader or prepare step`,
+    );
+  }
+  if (reason.trim() === "" || reason.includes("\n") || reason.includes("\r")) {
+    throw new Error(`connector write refusal: row ${r.toolId} reason must be one non-empty line`);
+  }
+  return Object.freeze({ ...r, refuse: reason });
+}
+
+/** The structural problems of a bound declaration's settle, settle tool and preflight tags (D2). */
+function settleProblems(
+  r: ConnectorWriteRow,
+  bound: BoundWrite,
+  prepareToolIds: ReadonlySet<string>,
+): string[] {
+  const { prepare, binds } = bound;
+  const out: string[] = [];
+  if (prepare.preflight !== undefined && prepare.preflight !== "iac") {
+    out.push('preflight must be "iac"');
+  }
+  const { settle, settleTool } = prepare;
+  if (settle === undefined) {
+    if (settleTool !== undefined) out.push("has a settle tool without a settle");
+    return out;
+  }
+  if (!Object.hasOwn(SETTLE_VALUE_KEYS, settle)) return [...out, "settle is not a known settler"];
+  // The confirm, channel and workdir-lock checks run in the preflight phase; a settled row without
+  // the tag would skip them and run its child first.
+  if (prepare.preflight === undefined) out.push("a settled row must declare preflight");
+  if (settle === "iac-cfn") {
+    if (settleTool !== undefined) out.push("takes no settle tool");
+  } else if (settleTool === undefined) {
+    out.push("needs a settle tool");
+  } else {
+    if (!prepareToolIds.has(settleTool)) out.push("settle tool is not a declared prepare tool");
+    if (settleTool === r.toolId) out.push("settle tool is the write tool itself");
+    if (settleTool === prepare.tool) out.push("settle tool is the prepare tool itself");
+  }
+  const expected = SETTLE_VALUE_KEYS[settle];
+  const fields = binds.map((b) => b.field);
+  if (fields.length !== expected.length || !expected.every((k) => fields.includes(k))) {
+    out.push("bound fields must be exactly the settler's values");
+  }
+  return out;
+}
+
 /** The structural problems of a bound declaration (empty when none). */
 export function boundWriteProblems(
   r: ConnectorWriteRow,
@@ -374,8 +519,25 @@ export function boundWriteProblems(
     ["budgetMs", prepare.budgetMs],
     ["maxInputBytes", prepare.maxInputBytes],
     ["maxReplyBytes", prepare.maxReplyBytes],
+    ...(prepare.diff === undefined
+      ? []
+      : ([
+          ["diff maxOldBytes", prepare.diff.maxOldBytes],
+          ["diff maxDiffBytes", prepare.diff.maxDiffBytes],
+        ] as const)),
   ] as const) {
     if (!Number.isInteger(n) || n <= 0) out.push(`prepare ${name} must be a positive integer`);
+  }
+  out.push(...settleProblems(r, bound, prepareToolIds));
+  const diffFields = r.preview.fields.filter((f) => f.kind === "diff");
+  if (diffFields.length > 0 && prepare.diff === undefined) {
+    out.push("has a diff field but the prepare read has no diff");
+  }
+  if (diffFields.length === 0 && prepare.diff !== undefined) {
+    out.push("the prepare read has a diff but the preview has no diff field");
+  }
+  for (const f of diffFields) {
+    if (!prepare.argKeys.includes(f.key)) out.push(`diff field ${f.key} is not a prepare argKey`);
   }
   return out;
 }
@@ -399,7 +561,8 @@ export function withBound(
   return Object.freeze({ ...r, bound });
 }
 
-export type PreviewFieldKind = "text" | "markdown" | "list" | "secret";
+/** `diff`: the change a bound write will make, rendered by the gateway (D1c); at most one per row. */
+export type PreviewFieldKind = "text" | "markdown" | "list" | "secret" | "diff";
 
 export interface PreviewFieldTemplate {
   readonly key: string;
@@ -431,6 +594,9 @@ export function withPreview(
   r: ConnectorWriteRow,
   preview: ConnectorWritePreviewTemplate,
 ): ConnectorWriteRow {
+  if (preview.fields.filter((f) => f.kind === "diff").length > 1) {
+    throw new Error(`connector write preview: at most one diff field (row ${r.toolId})`);
+  }
   const secrets = new Set(preview.fields.filter((f) => f.kind === "secret").map((f) => f.key));
   for (const text of [preview.target, preview.summary]) {
     for (const m of text.matchAll(TEMPLATE_PLACEHOLDER)) {

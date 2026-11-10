@@ -2,7 +2,7 @@
 import type { ConnectorDispatcher, PlannedAction } from "../engine/types.ts";
 import { connectorWriteByActionType } from "./connector-write-registry.ts";
 import { type ConnectorWriteContext, invokeConnectorWrite } from "./connector-write-transport.ts";
-import { extractToolInput } from "./registry.ts";
+import { extractToolInput, forwardBoundWriteCapabilities } from "./registry.ts";
 
 /**
  * Wraps the base connector dispatcher: a connector write action.type (warehouse/BI ∪ GitOps/ML) is
@@ -17,7 +17,11 @@ export function createConnectorWriteDispatcher(
   inner: ConnectorDispatcher,
   deps: ConnectorWriteContext,
 ): ConnectorDispatcher {
-  return {
+  // D2 (I54): a wrapper must not strip what the inner dispatcher carries. The bound-write
+  // capabilities are how an iac row reaches its preflight and settle step; without them every iac
+  // write is refused `capabilityMissing` on the three doors that build this chain. The registry
+  // alone names them (static D42(h)), so it does the forwarding.
+  return forwardBoundWriteCapabilities(inner, {
     dispatch(action: PlannedAction): Promise<unknown> {
       const write = connectorWriteByActionType(action.type);
       if (write === undefined) return inner.dispatch(action);
@@ -43,5 +47,5 @@ export function createConnectorWriteDispatcher(
         args: extractToolInput(action),
       });
     },
-  };
+  });
 }

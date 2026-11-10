@@ -2,6 +2,34 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [10.42.0](https://github.com/nimbus-agent/Nimbus/compare/v10.41.0...v10.42.0) (2026-11-09)
+
+
+### Features
+
+* **gateway:** the model can propose a Terraform apply or CloudFormation deploy, in owner-approved directories, behind the full plan ([#1945](https://github.com/nimbus-agent/Nimbus/issues/1945)) ([5ba90ee](https://github.com/nimbus-agent/Nimbus/commit/5ba90ee45c07f5a0ac7fe0f915273829d9f5859d))
+
+## [10.41.0](https://github.com/nimbus-agent/Nimbus/compare/v10.40.0...v10.41.0) (2026-11-08)
+
+
+### Features
+
+* **gateway:** the model can propose a GitHub or GitLab commit, approved over a full gateway-rendered diff with a bound head ([#1943](https://github.com/nimbus-agent/Nimbus/issues/1943)) ([4dbe6ab](https://github.com/nimbus-agent/Nimbus/commit/4dbe6ab5cf46282cf7deed06df2eecb626c594b7))
+
+## [10.40.0](https://github.com/nimbus-agent/Nimbus/compare/v10.39.0...v10.40.0) (2026-11-08)
+
+
+### Features
+
+* **gateway:** the model can propose 27 irreversible writes (merges, deletes, CI runs, cloud ops, GitOps, ML, warehouse), each behind its before-state and a typed confirmation ([#1940](https://github.com/nimbus-agent/Nimbus/issues/1940)) ([bf5df09](https://github.com/nimbus-agent/Nimbus/commit/bf5df09b6e83da270e6484d2bfbfd803f12b8349))
+
+## [10.39.0](https://github.com/nimbus-agent/Nimbus/compare/v10.38.1...v10.39.0) (2026-11-08)
+
+
+### Features
+
+* **gateway:** one GitHub Enterprise Server instance through github.api_base ([#1936](https://github.com/nimbus-agent/Nimbus/issues/1936)) ([7686d74](https://github.com/nimbus-agent/Nimbus/commit/7686d74e52bee5b67f4d3161db705a1bcdbd2133))
+
 ## [10.38.1](https://github.com/nimbus-agent/Nimbus/compare/v10.38.0...v10.38.1) (2026-11-07)
 
 

@@ -8,6 +8,7 @@ import type {
   TribalKbConfig,
 } from "../connectors/connector-writes/types.ts";
 import type { EgressSink } from "../egress/egress-ledger.ts";
+import { escapeLikeLiteral } from "../index/item-store.ts";
 import type { LocalIndex } from "../index/local-index.ts";
 import type { RankedIndexItem } from "../index/ranked-item.ts";
 import { describeRetrieval } from "../index/search-retrieval.ts";
@@ -780,8 +781,12 @@ function githubIssueContextItemsForRepo(
   // Issues AND PRs (F12a). This filtered to `type = 'issue'`, so asking about a repo silently
   // excluded every pull request — and on the audited index `github`/`issue` held ZERO rows, so
   // the path contributed nothing at all while 16 PRs sat unreachable.
-  const like = `${repoSlug}#%`;
-  const urlLike = `%github.com/${repoSlug}/%`;
+  // `_` (legal in a slug) and `%` are LIKE wildcards: escape them, and say so with ESCAPE.
+  const escapedSlug = escapeLikeLiteral(repoSlug);
+  const like = `${escapedSlug}#%`;
+  // Host-agnostic on purpose: the service filter below already restricts to `github` rows, and a
+  // gateway serves github.com OR one GitHub Enterprise Server, so a GHES `html_url` must match too.
+  const urlLike = `%/${escapedSlug}/%`;
   const rows = localIndex
     .getDatabase()
     .query(
@@ -789,7 +794,7 @@ function githubIssueContextItemsForRepo(
        FROM item
        WHERE service = 'github'
          AND type IN ('issue', 'pr')
-         AND (lower(external_id) LIKE ? OR lower(url) LIKE ?)
+         AND (lower(external_id) LIKE ? ESCAPE '\\' OR lower(url) LIKE ? ESCAPE '\\')
        ORDER BY modified_at DESC, synced_at DESC, title ASC
        LIMIT ?`,
     )

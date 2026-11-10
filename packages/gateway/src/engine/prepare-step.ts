@@ -22,7 +22,14 @@
  * both levels before it writes the gateway's own values.
  */
 
-import { isPlainObject, sanitisePreviewText } from "../connectors/connector-writes/preview.ts";
+import { beforeReplyJson } from "../connectors/connector-writes/before-select.ts";
+import { type PreviewDiff, renderUnifiedDiff } from "../connectors/connector-writes/diff.ts";
+import { IAC_LIMITS } from "../connectors/connector-writes/iac-limits.ts";
+import {
+  isPlainObject,
+  type PreviewPlan,
+  sanitisePreviewText,
+} from "../connectors/connector-writes/preview.ts";
 import {
   BEFORE_STATE_MAX_FIELDS,
   type BeforeStateField,
@@ -32,6 +39,8 @@ import {
   pickBeforeReaderArgs,
 } from "../connectors/connector-writes/types.ts";
 import { mcpClientToolKey } from "../connectors/lazy-mesh/tool-map.ts";
+import type { SettleContext, SettledWrite } from "./bound-write-capabilities.ts";
+import { type CfnOrphan, deriveCfnOrphan } from "./iac-orphan.ts";
 import { serviceOf } from "./service-of.ts";
 import { extractToolInput } from "./tool-input.ts";
 import type { ActionResult, PlannedAction } from "./types.ts";
@@ -65,12 +74,23 @@ export const PREPARE_REFUSALS = Object.freeze({
   replyTooLarge: "prepare: the prepare reply is too large",
   unbound: "prepare: the prepare reply does not carry a required value",
   unshowable: "prepare: the prepare reply cannot be shown",
+  diffTooLarge: "prepare: the change is too large to show in full",
+  nothingToCommit: "prepare: the change would change nothing",
+  nothingToApply: "prepare: the plan would change nothing",
+  settleFailed: "prepare: the plan could not be fixed and shown",
+  capabilityMissing: "prepare: this connection cannot fix and show the plan",
 });
 
 /** Thrown by {@link runPrepareStep}; `gate()` records it as a rejection with this fixed reason. */
 export class PrepareRefusedError extends Error {
   override readonly name = "PrepareRefusedError";
   readonly reason: string;
+  /**
+   * A CloudFormation change set the prepare child created before this refusal, derived and validated
+   * by the gateway from the reply (`deriveCfnOrphan`); the executor discards it. Absent whenever the
+   * gateway cannot prove one exists.
+   */
+  orphan?: CfnOrphan | undefined;
   constructor(reason: string) {
     super(reason);
     this.reason = reason;
@@ -81,6 +101,12 @@ export class PrepareRefusedError extends Error {
 export interface PrepareOps {
   gate(action: PlannedAction): Promise<ActionResult | "proceed">;
   dispatch(action: PlannedAction): Promise<unknown>;
+  /**
+   * D2: the settle capability of a row that names a `settle` tag (the dispatcher's
+   * `boundWriteCapabilities.settle`, bound by the executor). Absent = no such row can be prepared:
+   * it is refused before any read (fail closed), never skipped.
+   */
+  settle?(rowToolId: string, ctx: SettleContext): Promise<SettledWrite>;
 }
 
 export interface PrepareStepOptions {
@@ -88,6 +114,8 @@ export interface PrepareStepOptions {
   readonly prepareToolIds: ReadonlySet<string>;
   /** The door found the prepare tool missing from its server's listing. */
   readonly toolUnlisted?: boolean;
+  /** The working directory the preflight pinned (D2); the settle's `show` read uses it. */
+  readonly workingDirectory?: string;
   readonly timers?: {
     set(fn: () => void, ms: number): unknown;
     clear(handle: unknown): void;
@@ -101,6 +129,12 @@ export interface PreparedWrite {
   readonly values: Readonly<Record<string, string>>;
   readonly fields: readonly BeforeStateField[];
   readonly notShown?: number;
+  /** The change as a unified diff the GATEWAY rendered (D1c, D42(g)); only for a row with `prepare.diff`. */
+  readonly diff?: PreviewDiff;
+  /** The plan or change set the GATEWAY rendered (D2), for a row with a `settle`. */
+  readonly plan?: PreviewPlan;
+  /** Removes what a settle left on disk (D2); the executor calls it when the run ends. Never throws. */
+  readonly cleanup?: () => Promise<void>;
 }
 
 /** The JSON length of `v`; `Infinity` when it cannot be encoded (so a cap always refuses it). */
@@ -116,7 +150,9 @@ function serialisedLength(v: unknown): number {
  * Why this action may not enter the prepare step, or `undefined`. Pure, and run FIRST by the gate
  * (before any read or prompt): the input must be an object, none of the gateway-bound fields may
  * be present at the payload root or inside `payload.input` (own keys, so `__proto__`-style names
- * count), and the serialised input stays within the row's cap.
+ * count), the serialised input stays within the row's cap, and the row's own pure input hook (the
+ * commit rows' file count, path and content rules) finds nothing to refuse. A hook that throws, or
+ * returns anything but a string or `undefined`, refuses: fail closed.
  */
 export function boundInputRefusal(bound: BoundWrite, action: PlannedAction): string | undefined {
   const input = extractToolInput(action);
@@ -127,7 +163,22 @@ export function boundInputRefusal(bound: BoundWrite, action: PlannedAction): str
   );
   if (supplied) return PREPARE_REFUSALS.callerBound;
   if (serialisedLength(input) > bound.prepare.maxInputBytes) return PREPARE_REFUSALS.inputTooLarge;
-  return undefined;
+  return rowInputRefusal(bound, input);
+}
+
+function rowInputRefusal(
+  bound: BoundWrite,
+  input: Readonly<Record<string, unknown>>,
+): string | undefined {
+  const hook = bound.prepare.inputRefusal;
+  if (hook === undefined) return undefined;
+  try {
+    const reason: unknown = hook(input);
+    if (reason === undefined) return undefined;
+    return typeof reason === "string" ? reason : PREPARE_REFUSALS.notObject;
+  } catch {
+    return PREPARE_REFUSALS.notObject;
+  }
 }
 
 function omitKeys(
@@ -266,6 +317,97 @@ function prepareArgs(
   }
 }
 
+function utf8Length(text: string): number {
+  return new TextEncoder().encode(text).length;
+}
+
+/**
+ * The change a bound write will make, rendered by THIS module from the caller's input (the after
+ * side) and the reply's old text (the before side); nothing else in the reply is read (D42(g)). A
+ * row with no `prepare.diff` has none. Every failure is one of the fixed reasons.
+ */
+function preparedDiff(
+  bound: BoundWrite,
+  input: Readonly<Record<string, unknown>>,
+  reply: unknown,
+): PreviewDiff | undefined {
+  const spec = bound.prepare.diff;
+  if (spec === undefined) return undefined;
+  let files: ReturnType<typeof spec.files>;
+  try {
+    files = spec.files(pickBeforeReaderArgs(bound.prepare.argKeys, input), reply);
+  } catch {
+    files = undefined;
+  }
+  if (!Array.isArray(files) || files.length === 0) {
+    throw new PrepareRefusedError(PREPARE_REFUSALS.unshowable);
+  }
+  const oldBytes = files.reduce((n, f) => n + utf8Length(f.oldContent ?? ""), 0);
+  if (oldBytes > spec.maxOldBytes) throw new PrepareRefusedError(PREPARE_REFUSALS.replyTooLarge);
+  const rendered = renderUnifiedDiff(files, { maxBytes: spec.maxDiffBytes });
+  if (!rendered.ok) throw new PrepareRefusedError(PREPARE_REFUSALS.diffTooLarge);
+  if (rendered.diff.files.every((f) => f.state === "unchanged")) {
+    throw new PrepareRefusedError(PREPARE_REFUSALS.nothingToCommit);
+  }
+  return rendered.diff;
+}
+
+/**
+ * The settled alternative to {@link boundValues} and {@link shownFacts} (D2): a gateway-side
+ * settler fixes the plan's identity from the prepare reply and the caller's input, and ITS values
+ * and facts are the ones bound and shown; the prepare child's own claims are never read here. A
+ * settler that throws anything but a {@link PrepareRefusedError} is `settleFailed`; a result that
+ * does not carry every bound field, or shows nothing, is refused after the settler's cleanup runs.
+ */
+async function settledPrepare(
+  settle: NonNullable<PrepareOps["settle"]>,
+  ctx: { row: ConnectorWriteRow; bound: BoundWrite; context: SettleContext },
+): Promise<PreparedWrite> {
+  let settled: SettledWrite;
+  try {
+    settled = await settle(ctx.row.toolId, ctx.context);
+  } catch (e) {
+    throw e instanceof PrepareRefusedError
+      ? e
+      : new PrepareRefusedError(PREPARE_REFUSALS.settleFailed);
+  }
+  const entries = ctx.bound.binds.map((b) => [b.field, settled.values[b.field]] as const);
+  if (entries.some(([, v]) => typeof v !== "string" || v === "")) {
+    await settled.cleanup();
+    throw new PrepareRefusedError(PREPARE_REFUSALS.unbound);
+  }
+  if (settled.fields.length === 0) {
+    await settled.cleanup();
+    throw new PrepareRefusedError(PREPARE_REFUSALS.unshowable);
+  }
+  const shown = settled.fields.slice(0, BEFORE_STATE_MAX_FIELDS).map((f) => ({
+    label: sanitisePreviewText(f.label),
+    value: sanitisePreviewText(f.value),
+  }));
+  const notShown = settled.fields.length - shown.length + (settled.notShown ?? 0);
+  return {
+    binds: ctx.bound.binds,
+    values: Object.fromEntries(entries) as Record<string, string>,
+    fields: shown,
+    ...(notShown > 0 ? { notShown } : {}),
+    ...(settled.plan === undefined ? {} : { plan: settled.plan }),
+    cleanup: settled.cleanup,
+  };
+}
+
+/**
+ * A settler reads the reply as JSON, whatever the dispatcher handed back: an MCP `CallToolResult`
+ * (its first text part, under the 4 MiB cap) is unwrapped, a plain object is used as is, and
+ * anything else is refused as unshowable. The settler never sees the envelope.
+ */
+function replyJson(reply: unknown): unknown {
+  try {
+    return beforeReplyJson(reply);
+  } catch {
+    throw new PrepareRefusedError(PREPARE_REFUSALS.unshowable);
+  }
+}
+
 const REAL_TIMERS: Timers = {
   set: (fn, ms) => setTimeout(fn, ms),
   clear: (h) => clearTimeout(h as ReturnType<typeof setTimeout>),
@@ -288,22 +430,125 @@ export async function runPrepareStep(
     throw new PrepareRefusedError(PREPARE_REFUSALS.toolNotAllowed);
   }
   if (opts.toolUnlisted === true) throw new PrepareRefusedError(PREPARE_REFUSALS.toolUnavailable);
-  const args = prepareArgs(bound, extractToolInput(action) as Record<string, unknown>);
+  const { settle, settleTool } = prepare;
+  if (settleTool !== undefined && !opts.prepareToolIds.has(settleTool)) {
+    throw new PrepareRefusedError(PREPARE_REFUSALS.toolNotAllowed);
+  }
+  // Before any child exists: a row that needs a settle capability the dispatcher lacks is refused.
+  if (settle !== undefined && ops.settle === undefined) {
+    throw new PrepareRefusedError(PREPARE_REFUSALS.capabilityMissing);
+  }
+  const input = extractToolInput(action) as Record<string, unknown>;
+  const args = prepareArgs(bound, input);
   if (args === undefined) throw new PrepareRefusedError(PREPARE_REFUSALS.argsFailed);
   const service = serviceOf(row.actionType);
   const readAction: PlannedAction = {
     type: prepareActionType(service),
     payload: { mcpToolId: mcpClientToolKey(service, prepare.tool), input: args },
   };
+  const timers = opts.timers ?? REAL_TIMERS;
   const got = await raceWithBudget(
     (spent) => gateThenDispatch(readAction, ops, spent),
     prepare.budgetMs,
-    opts.timers ?? REAL_TIMERS,
+    timers,
   );
   if ("refusal" in got) throw new PrepareRefusedError(got.refusal);
+  try {
+    return await afterReply(ops, { row, bound, action, opts, input, got, service, timers });
+  } catch (e) {
+    // The connector answered, so a CloudFormation change set may exist even though this refusal means
+    // no settled value will: name it for the executor's discard, when (and only when) it can be proven.
+    if (e instanceof PrepareRefusedError && settle === "iac-cfn") {
+      e.orphan = deriveCfnOrphan(input, safeReplyJson(got.reply));
+    }
+    throw e;
+  }
+}
+
+/**
+ * What a failed prepare step may have left behind (CloudFormation): the change set the gateway can
+ * PROVE (see {@link deriveCfnOrphan}), or `unproven` when the failure is one that can follow a
+ * created change set the gateway never saw named (the budget ran out, the child failed). Any other
+ * error, or a non-error, leaves nothing to say. Branch-free for the executor, which stays at 100%.
+ */
+export function prepareLeftover(e: unknown): { orphan?: CfnOrphan; unproven: boolean } {
+  const refused = e instanceof PrepareRefusedError ? e : undefined;
+  return {
+    ...(refused?.orphan === undefined ? {} : { orphan: refused.orphan }),
+    unproven: refused !== undefined && UNPROVEN_REASONS.has(refused.reason),
+  };
+}
+
+const UNPROVEN_REASONS: ReadonlySet<string> = new Set([
+  PREPARE_REFUSALS.timeout,
+  PREPARE_REFUSALS.failed,
+]);
+
+/** {@link replyJson} for a reader that must not throw: `undefined` when the reply cannot be read. */
+function safeReplyJson(reply: unknown): unknown {
+  try {
+    return replyJson(reply);
+  } catch {
+    return undefined;
+  }
+}
+
+interface AfterReply {
+  readonly row: ConnectorWriteRow;
+  readonly bound: BoundWrite;
+  readonly action: PlannedAction;
+  readonly opts: PrepareStepOptions;
+  readonly input: Record<string, unknown>;
+  readonly got: { readonly reply: unknown };
+  readonly service: string;
+  readonly timers: Timers;
+}
+
+/** Everything after the prepare child answered: the size cap, then the settle or the plain binds. */
+async function afterReply(ops: PrepareOps, a: AfterReply): Promise<PreparedWrite> {
+  const { row, bound, opts, input, got, service, timers } = a;
+  const { prepare } = bound;
+  const { settle, settleTool } = prepare;
   if (serialisedLength(got.reply) > prepare.maxReplyBytes) {
     throw new PrepareRefusedError(PREPARE_REFUSALS.replyTooLarge);
   }
+  if (settle !== undefined && ops.settle !== undefined) {
+    // The settler's own `show` read is one more prepare read of this step (own audit and egress row).
+    const showPlan =
+      settleTool === undefined
+        ? undefined
+        : async (args: { readonly workingDirectory: string; readonly planFile: string }) => {
+            const showAction: PlannedAction = {
+              type: prepareActionType(service),
+              payload: {
+                mcpToolId: mcpClientToolKey(service, settleTool),
+                input: {
+                  workingDirectory: opts.workingDirectory ?? args.workingDirectory,
+                  planFile: args.planFile,
+                },
+              },
+            };
+            const shown = await raceWithBudget(
+              (spent) => gateThenDispatch(showAction, ops, spent),
+              IAC_LIMITS.showBudgetMs,
+              timers,
+            );
+            if ("refusal" in shown) throw new PrepareRefusedError(shown.refusal);
+            return replyJson(shown.reply);
+          };
+    return settledPrepare(ops.settle.bind(ops), {
+      row,
+      bound,
+      context: {
+        settle,
+        input,
+        ...(opts.workingDirectory === undefined ? {} : { workingDirectory: opts.workingDirectory }),
+        reply: replyJson(got.reply),
+        ...(showPlan === undefined ? {} : { showPlan }),
+      },
+    });
+  }
+  const diff = preparedDiff(bound, input, got.reply);
   const values = boundValues(bound, got.reply);
   if (values === undefined) throw new PrepareRefusedError(PREPARE_REFUSALS.unbound);
   const shown = shownFacts(bound, got.reply);
@@ -313,5 +558,6 @@ export async function runPrepareStep(
     values,
     fields: shown.fields,
     ...(shown.notShown > 0 ? { notShown: shown.notShown } : {}),
+    ...(diff === undefined ? {} : { diff }),
   };
 }

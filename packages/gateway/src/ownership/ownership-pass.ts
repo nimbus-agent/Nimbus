@@ -29,6 +29,8 @@ export type OwnershipPassOptions = {
   readonly config: NimbusOwnershipToml;
   readonly serviceRepoUrns: ReadonlyMap<string, readonly string[]>;
   readonly spawn?: RemoteSpawn;
+  /** Configured self-hosted forge hosts (lower-case hostname to service) for remote parsing. */
+  readonly extraForgeHosts?: ReadonlyMap<string, string>;
 };
 
 /** Every ancestor directory of a root-relative path, nearest first, with the
@@ -818,7 +820,7 @@ export async function runOwnershipPass(
   const remoteByRoot = new Map<string, Awaited<ReturnType<typeof resolveRepoRemote>>>();
   await Promise.all(
     opts.roots.map(async (root) => {
-      remoteByRoot.set(root, await resolveRepoRemote(root, opts.spawn));
+      remoteByRoot.set(root, await resolveRepoRemote(root, opts.spawn, opts.extraForgeHosts));
     }),
   );
 

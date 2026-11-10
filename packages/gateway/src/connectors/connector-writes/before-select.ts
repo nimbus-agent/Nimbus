@@ -44,6 +44,35 @@ export function stringAt(v: unknown, path: readonly string[]): string | undefine
   return undefined;
 }
 
+/** The boolean at `path` (own properties only, through plain objects); `undefined` when absent or not a boolean. */
+export function boolAt(v: unknown, path: readonly string[]): boolean | undefined {
+  const cur = valueAt(v, path);
+  return typeof cur === "boolean" ? cur : undefined;
+}
+
+/** `yes` or `no` for a boolean; `undefined` otherwise (the field is then omitted). */
+export function yesNo(b: boolean | undefined): string | undefined {
+  if (b === undefined) return undefined;
+  return b ? "yes" : "no";
+}
+
+/** The array at `path` (own properties only, through plain objects); `undefined` when absent or not an array. */
+export function arrayAt(v: unknown, path: readonly string[]): readonly unknown[] | undefined {
+  const cur = valueAt(v, path);
+  return Array.isArray(cur) ? (cur as unknown[]) : undefined;
+}
+
+/** A non-empty string input, else `undefined`: a reader never runs on a number, null or "". */
+export function nonEmptyString(v: unknown): string | undefined {
+  return typeof v === "string" && v !== "" ? v : undefined;
+}
+
+/** A positive integer given as a number or a string of digits, else `undefined`. */
+export function positiveIntegerArg(v: unknown): number | undefined {
+  const n = typeof v === "string" && /^[0-9]+$/.test(v) ? Number(v) : v;
+  return typeof n === "number" && Number.isSafeInteger(n) && n >= 1 ? n : undefined;
+}
+
 /** `stringAt`, but a missing value throws: for the field that names the target. */
 export function requiredStringAt(v: unknown, path: readonly string[]): string {
   const s = stringAt(v, path);

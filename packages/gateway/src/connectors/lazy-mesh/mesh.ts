@@ -1,5 +1,5 @@
-import { existsSync, realpathSync, rmSync } from "node:fs";
-import { homedir } from "node:os";
+import { existsSync, realpathSync, rmSync, statSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 
 import { MCPClient } from "@mastra/mcp";
 import { writeToolCallLog } from "../../db/tool-call-log.ts";
@@ -8,6 +8,7 @@ import { serviceOf } from "../../engine/service-of.ts";
 import { wrapToolOutput } from "../../engine/tool-output-envelope.ts";
 import { EXTENSION_SERVICE_ID_PATTERN } from "../../extensions/extension-service-id.ts";
 import { extensionProcessEnv } from "../../extensions/spawn-env.ts";
+import { processEnvGet } from "../../platform/env-access.ts";
 import type { PlatformPaths } from "../../platform/paths.ts";
 import { extensionStageRootFor, sandboxCwdFor } from "../../platform/sandbox/sandbox-cwd.ts";
 import {
@@ -16,8 +17,16 @@ import {
 } from "../../platform/sandbox/win32-grant-revoke.ts";
 import type { NimbusVault } from "../../vault/nimbus-vault.ts";
 import { extractMcpToolText, MCP_TOOL_RESULT_MAX_BYTES } from "../_lib/mcp-tool-result.ts";
+import { readConnectorSecret } from "../connector-vault.ts";
+import { scanForGitEntry } from "../connector-writes/iac-git-scan.ts";
+import {
+  EMPTY_IAC_GRANTS,
+  type IacGrants,
+  type IacPathDeps,
+} from "../connector-writes/iac-grants.ts";
 import { CONNECTOR_WRITE_ROWS } from "../connector-writes/index.ts";
 import type { ExtensionSyncRequest } from "../extension-sync/sync-response.ts";
+import { resolveGithubBase } from "../github-api-base.ts";
 import { discoverVaultsForWriteGrant } from "../obsidian-discovery.ts";
 import type { UserMcpConnectorRow } from "../user-mcp-store.ts";
 import {
@@ -59,6 +68,13 @@ import {
 import type { ExtensionSlotSource } from "./extension-slot-source.ts";
 import { manifestForFirstParty } from "./first-party-manifests.ts";
 import {
+  type IacHost,
+  IacRunner,
+  type IacRunnerDeps,
+  iacProtectedRootsFor,
+  routeIacTools,
+} from "./iac-runner.ts";
+import {
   EXT_MESH_PREFIX,
   extensionMeshKey,
   LAZY_MESH,
@@ -79,9 +95,13 @@ import {
 import { type ObsidianGrantSkip, obsidianWriteGrantPaths } from "./obsidian-write-grant.ts";
 import {
   phase3AddArgocdMcp,
+  phase3AddAwsMcp,
+  phase3AddAzureMcp,
   phase3AddBigeyeMcp,
   phase3AddFlagsmithMcp,
   phase3AddFluxMcp,
+  phase3AddGcpMcp,
+  phase3AddIacMcp,
   phase3AddLaunchdarklyMcp,
   phase3AddLookerMcp,
   phase3AddMlflowMcp,
@@ -125,11 +145,18 @@ const PHASE3_LISTING_ADDERS: Readonly<Record<string, Phase3ServerAdder>> = {
   launchdarkly: phase3AddLaunchdarklyMcp,
   flagsmith: phase3AddFlagsmithMcp,
   mlflow: phase3AddMlflowMcp,
+  aws: phase3AddAwsMcp,
+  azure: phase3AddAzureMcp,
+  gcp: phase3AddGcpMcp,
+  // D2: the iac server, LISTED in its no-network bundle slot so the model door can read the write
+  // and prepare tools' schemas; the plan, show, apply and CloudFormation children run in their own
+  // per-call profiles, never in this slot.
+  iac: phase3AddIacMcp,
 };
 
 /**
- * The per-service slots (the name is historical: it began as the wave-2 services, and C1 added
- * `onedrive` and `pagerduty`): the slot each one's server runs in and the mesh method that ensures
+ * The per-service slots (the name is historical: it began as the wave-2 services; C1 added
+ * `onedrive` and `pagerduty`, and D1 `bitbucket`, `jenkins`, `circleci` and `github_actions`): the slot each one's server runs in and the mesh method that ensures
  * exactly that slot, in ONE row so the two cannot drift. Their credential check is
  * {@link isServiceCredentialConfigured} (per SERVICE, never per slot: the Google and Microsoft
  * bundles host siblings).
@@ -145,6 +172,11 @@ const WAVE2_LISTING: Readonly<
   pagerduty: { slot: LAZY_MESH.pagerduty, ensure: "ensurePagerdutyRunning" },
   github: { slot: LAZY_MESH.github, ensure: "ensureGithubRunning" },
   gitlab: { slot: LAZY_MESH.gitlab, ensure: "ensureGitlabRunning" },
+  // GitHub Actions is a second server in the github client: the same slot, the same PAT.
+  github_actions: { slot: LAZY_MESH.github, ensure: "ensureGithubRunning" },
+  bitbucket: { slot: LAZY_MESH.bitbucket, ensure: "ensureBitbucketRunning" },
+  jenkins: { slot: LAZY_MESH.jenkins, ensure: "ensureJenkinsRunning" },
+  circleci: { slot: LAZY_MESH.circleci, ensure: "ensureCircleciRunning" },
   slack: { slot: LAZY_MESH.slack, ensure: "ensureSlackRunning" },
   linear: { slot: LAZY_MESH.linear, ensure: "ensureLinearRunning" },
   jira: { slot: LAZY_MESH.jira, ensure: "ensureJiraRunning" },
@@ -189,6 +221,8 @@ export class LazyConnectorMesh {
   private readonly listedFirstParty = new Set<string>();
   private readonly firstPartyListing: Readonly<Record<string, FirstPartyListingEntry>>;
   private readonly spawnContext: MeshSpawnContext;
+  private readonly iacRunner: IacRunner;
+  private readonly iacPathDeps: IacPathDeps;
   private readonly paths: PlatformPaths;
   private readonly removeSandboxDir: (dir: string) => void;
   private readonly sandboxDirExists: (dir: string) => boolean;
@@ -205,6 +239,10 @@ export class LazyConnectorMesh {
   /** Windows only: every path ever handed a write grant and not yet revoked, persisted. */
   private readonly obsidianLedger: ObsidianGrantLedgerStore;
   private obsidianRevokeFailing = false;
+  /** The GitHub Enterprise Server host the GitHub child was (or will next be) started with. */
+  private githubInstanceHost: string | null = null;
+  /** Bumped by every spawn record, so an older {@link primeGithubInstance} read cannot overwrite it. */
+  private githubInstanceSeq = 0;
   /** Tail of the Obsidian spawn/restart queue (see {@link runObsidianSerial}). */
   private obsidianTail: Promise<void> = Promise.resolve();
 
@@ -251,6 +289,10 @@ export class LazyConnectorMesh {
       now?: () => Date;
       /** Test seam: the Obsidian grant ledger. Production: a file under `configDir`. */
       obsidianGrantLedger?: ObsidianGrantLedgerStore;
+      /** The owner's V85 approval of IaC directories and clouds, read fresh per call. Absent: nothing approved. */
+      iacGrants?: () => IacGrants;
+      /** Test seam: overrides of the IaC runner's dependencies. */
+      iacRunnerDeps?: Partial<IacRunnerDeps>;
     },
   ) {
     // Only stored here; `collectBuiltInToolMaps` and `listUserMcpTools` await it (undefined means
@@ -321,12 +363,37 @@ export class LazyConnectorMesh {
       obsidianSerial: <T>(fn: () => Promise<T>) => this.runObsidianSerial(fn),
       obsidianRefreshStale: () => this.refreshStaleObsidian(),
       sandboxCwd: paths.sandboxDir,
+      recordGithubInstance: (host) => this.recordGithubInstance(host),
       clearLazyIdle: (k) => this.clearLazyIdle(k),
       getLazyClient: (k) => this.getLazyClient(k),
       setLazyClient: (k, c) => this.setLazyClient(k, c),
       bumpToolsEpoch: () => this.bumpToolsEpoch(),
       scheduleLazyDisconnect: (k) => this.scheduleLazyDisconnect(k),
     };
+    this.iacPathDeps = {
+      platform,
+      realpath: (p) => realpathSync.native(p),
+      isDirectory: (p) => {
+        try {
+          return statSync(p).isDirectory();
+        } catch {
+          return false;
+        }
+      },
+      homeDir: homedir(),
+      tmpDir: tmpdir(),
+      // Nimbus's own folders: no approved Terraform directory may overlap them.
+      protectedRoots: iacProtectedRootsFor(paths, platform, processEnvGet("XDG_RUNTIME_DIR")),
+      gitScan: (dir) => scanForGitEntry(dir),
+    };
+    this.iacRunner = new IacRunner({
+      paths,
+      vault,
+      platform,
+      grants: options?.iacGrants ?? (() => EMPTY_IAC_GRANTS),
+      pathDeps: this.iacPathDeps,
+      ...options?.iacRunnerDeps,
+    });
     this.firstPartyListing = this.buildFirstPartyListing();
     this.extensionSlots = new ExtensionSlots(
       {
@@ -346,6 +413,16 @@ export class LazyConnectorMesh {
     );
   }
 
+  /** The iac runner, for the dispatcher's bound-write capabilities (D2). */
+  iacHost(): IacHost {
+    return this.iacRunner;
+  }
+
+  /** The filesystem facts the `enable iac` directory rule reads. */
+  iacPathDepsForEnable(): IacPathDeps {
+    return this.iacPathDeps;
+  }
+
   getToolsEpoch(): number {
     return this.toolsEpoch;
   }
@@ -359,7 +436,7 @@ export class LazyConnectorMesh {
   }
 
   /**
-   * The explicit listing map: the 11 phase-3 services on the phase-3 bundle (today's spawner probe)
+   * The explicit listing map: the 15 phase-3 services on the phase-3 bundle (the 11 of C1 plus aws, azure and gcp, and iac for D2) (today's spawner probe)
    * and each per-service-slot service (`WAVE2_LISTING`) on its own slot. Each `ensure` calls the mesh's own `ensure*Running`
    * method at call time (a test seam), and names exactly that service's slot.
    */
@@ -1027,6 +1104,49 @@ export class LazyConnectorMesh {
   }
 
   /**
+   * Called after EVERY `connector.auth github`, successful or not past validation. The child reads
+   * `GITHUB_PAT` and `GITHUB_API_BASE_URL` at spawn only, so a changed PAT or a changed (or
+   * removed) GitHub Enterprise Server base would otherwise keep serving the old credential and host
+   * until an idle disconnect. Both children (`github`, `github_actions`) share this one slot.
+   * Same contract as {@link LazyConnectorMesh.restartPagerduty}.
+   */
+  restartGithub(): void {
+    void this.detachLazyClient(LAZY_MESH.github);
+    // The next spawn reads the Vault again; show the same instance until then.
+    void this.primeGithubInstance();
+  }
+
+  /** The GitHub Enterprise Server host[:port] the consent preview names; undefined for github.com. */
+  githubInstance(): string | undefined {
+    return this.githubInstanceHost ?? undefined;
+  }
+
+  /** Called by the GitHub spawn with the host it started the child with (`null`: github.com). */
+  recordGithubInstance(host: string | null): void {
+    this.githubInstanceSeq += 1;
+    this.githubInstanceHost = host;
+  }
+
+  /**
+   * Reads `github.api_base` once and snapshots its host, so a write previewed BEFORE the lazy child
+   * first spawns still names the instance. A spawn's own record (above) wins over an older read that
+   * finishes later; a read or validation failure shows no instance (never a raw value). Never rejects.
+   */
+  async primeGithubInstance(): Promise<void> {
+    const seq = this.githubInstanceSeq;
+    let host: string | null = null;
+    try {
+      const resolved = resolveGithubBase(
+        await readConnectorSecret(this.vault, "github", "api_base"),
+      );
+      host = resolved.ok ? resolved.host : null;
+    } catch {
+      host = null;
+    }
+    if (seq === this.githubInstanceSeq) this.githubInstanceHost = host;
+  }
+
+  /**
    * Called after the owner's Obsidian opt-in changes (enable approved, or disable). Returns
    * promptly, never waiting on an in-flight call:
    *  1. the `mesh:obsidian` slot is DETACHED at once: its client is cleared and its generation and
@@ -1255,6 +1375,8 @@ export class LazyConnectorMesh {
     this.dropDisallowedConnectorTools(merged);
     const slotForTool = await this.buildSlotForToolMap();
     this.wrapMergedToolsWithRefcount(merged, slotForTool);
+    // The iac tools run in their own per-run children (D2), not in the listing slot.
+    routeIacTools(merged, this.iacRunner);
     return merged;
   }
 
@@ -1336,7 +1458,10 @@ export class LazyConnectorMesh {
     // shutdown, the one production caller, stops the sync scheduler and IPC server before this.
     // An extension preparation still in flight is not in that snapshot, so it is told not to connect.
     this.extensionSlots.markAllStopped();
+    // The IaC runner's per-run children are not in a slot: stop it too (kills them and waits, frees).
+    const iacStopped = this.iacRunner.stop().catch(() => undefined);
     await Promise.all(Array.from(this.lazySlots.keys(), (key) => this.stopLazyClient(key)));
+    await iacStopped;
     try {
       await this.filesystem.disconnect();
     } catch {
@@ -1377,6 +1502,7 @@ export function createLazyConnectorMesh(
     filesystemSpawnGate?: Promise<void>;
     extensionSlots?: ExtensionSlotSource;
     extensionSpawnGate?: Promise<void>;
+    iacGrants?: () => IacGrants;
   },
 ): Promise<LazyConnectorMesh> {
   return Promise.try(() => new LazyConnectorMesh(paths, vault, options));

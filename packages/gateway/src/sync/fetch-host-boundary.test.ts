@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { deriveFetchHostMap, SAAS_HOSTS, serviceForHost } from "./fetch-host-boundary.ts";
+import {
+  configuredForgeHosts,
+  deriveFetchHostMap,
+  SAAS_HOSTS,
+  serviceForHost,
+} from "./fetch-host-boundary.ts";
 
 /** `readConnectorSecret` calls `vault.get("<service>.<key>")` — so the fake keys on the FULL key. */
 function fakeVault(secrets: Record<string, string>) {
@@ -256,5 +261,76 @@ describe("fetch-host-boundary", () => {
       },
     } as unknown as Parameters<typeof deriveFetchHostMap>[0];
     await expect(deriveFetchHostMap(vault)).rejects.toThrow("keychain locked");
+  });
+
+  describe("github with github.api_base (GitHub Enterprise Server)", () => {
+    test("claims the GHES host (with its port) and NOT github.com", async () => {
+      const map = await deriveFetchHostMap(
+        fakeVault({ "github.pat": "t", "github.api_base": "https://ghe.example.com:8443/api/v3" }),
+      );
+      expect(serviceForHost(map, "ghe.example.com:8443")).toBe("github");
+      // A github.com URL must never reach the GHES instance under the enterprise PAT, and no
+      // egress row may be claimed for it.
+      expect(serviceForHost(map, "github.com")).toBeNull();
+      expect(map.size).toBe(1);
+    });
+
+    test("a present but invalid base claims NO host (fails closed, never github.com)", async () => {
+      for (const bad of ["http://ghe.example.com", "https://x.ghe.com", "not a url", "  "]) {
+        const map = await deriveFetchHostMap(
+          fakeVault({ "github.pat": "t", "github.api_base": bad }),
+        );
+        expect(map.size).toBe(0);
+      }
+    });
+
+    test("without a base github.com is claimed as before", async () => {
+      const map = await deriveFetchHostMap(fakeVault({ "github.pat": "t" }));
+      expect(serviceForHost(map, "github.com")).toBe("github");
+    });
+
+    test("a base without the PAT claims nothing", async () => {
+      const map = await deriveFetchHostMap(
+        fakeVault({ "github.api_base": "https://ghe.example.com" }),
+      );
+      expect(map.size).toBe(0);
+    });
+
+    test("a GHES host equal to a jira base_url host is ambiguous and refused for both", async () => {
+      const map = await deriveFetchHostMap(
+        fakeVault({
+          "github.pat": "t",
+          "github.api_base": "https://ghe.example.com",
+          "jira.api_token": "t",
+          "jira.email": "a@b.c",
+          "jira.base_url": "https://ghe.example.com",
+        }),
+      );
+      expect(serviceForHost(map, "ghe.example.com")).toBeNull();
+    });
+  });
+
+  describe("configuredForgeHosts", () => {
+    test("maps the GHES hostname (port stripped) to github", async () => {
+      const m = await configuredForgeHosts(
+        fakeVault({ "github.pat": "t", "github.api_base": "https://GHE.example.com:8443" }),
+      );
+      expect([...m]).toEqual([["ghe.example.com", "github"]]);
+    });
+
+    test("is empty without a base, with an invalid base, or without the PAT", async () => {
+      expect((await configuredForgeHosts(fakeVault({ "github.pat": "t" }))).size).toBe(0);
+      expect(
+        (
+          await configuredForgeHosts(
+            fakeVault({ "github.pat": "t", "github.api_base": "http://ghe.example.com" }),
+          )
+        ).size,
+      ).toBe(0);
+      expect(
+        (await configuredForgeHosts(fakeVault({ "github.api_base": "https://ghe.example.com" })))
+          .size,
+      ).toBe(0);
+    });
   });
 });

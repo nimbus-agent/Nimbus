@@ -720,3 +720,107 @@ describe("type-to-confirm (Phase 9.7 D0a)", () => {
     expect(cap.err()).toBe(CONFIRM_TEXT_DENIED_LINE);
   });
 });
+
+describe("a multi-file commit prompt on the typed-confirm path (D1c)", () => {
+  const CONFIRM = "github/commit acme/api@feat/x";
+  const FOOTER = "End of diff: 2 files, +1200 -3";
+
+  test("the whole prompt (diff last, then the footer and the typed line) is written ONCE; the text prompt stays one short line", async () => {
+    const body = Array.from({ length: 1200 }, (_, i) => `+line ${String(i)} of the new file`);
+    const prompt = [
+      "Service: github",
+      "Target:  acme/api@feat/x",
+      "",
+      "=== src/a.ts (modified)",
+      "@@ -1,3 +1,1200 @@",
+      ...body,
+      FOOTER,
+      "",
+      `To approve, type exactly: ${CONFIRM}`,
+    ].join("\n");
+    expect(prompt.length).toBeGreaterThan(30_000);
+    const { client, fire, calls } = makeMultiClient();
+    const writes: string[] = [];
+    const messages: string[] = [];
+    const o = process.stdout.write.bind(process.stdout);
+    process.stdout.write = ((c: unknown) => {
+      writes.push(String(c));
+      return true;
+    }) as typeof process.stdout.write;
+    try {
+      registerConsentPromptHandler(
+        client,
+        async () => {
+          throw new Error("the yes/no prompt must not be used");
+        },
+        async (opts) => {
+          messages.push(opts.message);
+          return CONFIRM;
+        },
+      );
+      await fire("consent.request", { requestId: "c1", prompt, confirmText: CONFIRM });
+    } finally {
+      process.stdout.write = o;
+    }
+    const full = writes.filter((w) => w.includes("line 1199 of the new file"));
+    expect(full).toHaveLength(1);
+    expect(full[0]).toBe(`${prompt}\n`);
+    // the diff is last: the footer is the final line before the blank line and the typed text line
+    const lines = prompt.split("\n");
+    expect(lines.at(-3)).toBe(FOOTER);
+    expect(lines.at(-1)).toBe(`To approve, type exactly: ${CONFIRM}`);
+    // the interactive prompt never redraws the diff
+    expect(messages).toHaveLength(1);
+    expect(messages[0]?.length).toBeLessThan(300);
+    expect(messages[0]).not.toContain("line 5 of");
+    expect(calls).toEqual([
+      { method: "consent.respond", params: { requestId: "c1", approved: true, typed: CONFIRM } },
+    ]);
+  });
+});
+
+describe("a plan-bound write prompt on the typed-confirm path (D2)", () => {
+  const CONFIRM = "iac/apply /srv/infra/prod";
+  const FOOTER = "End of plan: 2 changes (0 deletes, 1 replaces)";
+
+  test("the plan prompt (counts first, ONE footer, then the typed line) is written once, verbatim", async () => {
+    const prompt = [
+      "Service: iac",
+      "Target:  /srv/infra/prod",
+      "",
+      "Deletes: 0, Replaces: 1, Creates: 1, Updates: 0",
+      "Terraform 1.9.5",
+      `Plan SHA-256: ${"a".repeat(64)}`,
+      "[replace: delete, create] aws_instance.web (aws_instance, registry.terraform.io/hashicorp/aws)",
+      "[create] aws_s3_bucket.new (aws_s3_bucket, registry.terraform.io/hashicorp/aws)",
+      FOOTER,
+      "",
+      `To approve, type exactly: ${CONFIRM}`,
+    ].join("\n");
+    const { client, fire, calls } = makeMultiClient();
+    const writes: string[] = [];
+    const o = process.stdout.write.bind(process.stdout);
+    process.stdout.write = ((c: unknown) => {
+      writes.push(String(c));
+      return true;
+    }) as typeof process.stdout.write;
+    try {
+      registerConsentPromptHandler(
+        client,
+        async () => {
+          throw new Error("the yes/no prompt must not be used");
+        },
+        async () => CONFIRM,
+      );
+      await fire("consent.request", { requestId: "p1", prompt, confirmText: CONFIRM });
+    } finally {
+      process.stdout.write = o;
+    }
+    const shown = writes.filter((w) => w.includes("Deletes: 0, Replaces: 1"));
+    expect(shown).toEqual([`${prompt}\n`]);
+    expect(prompt.split("\n").filter((l) => l.startsWith("End of "))).toHaveLength(1);
+    expect(calls).toEqual([
+      { method: "consent.respond", params: { requestId: "p1", approved: true, typed: CONFIRM } },
+    ]);
+  });
+});

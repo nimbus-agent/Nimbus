@@ -1336,6 +1336,71 @@ describe("runAsk", () => {
     localIndex.close();
   });
 
+  test("githubIssueContextItemsForRepo matches a GitHub Enterprise Server html_url by repo slug", async () => {
+    const db = new Database(":memory:");
+    LocalIndex.ensureSchema(db);
+    // external_id deliberately does not start with the slug, so only the URL arm can match.
+    db.run(
+      `INSERT INTO item (id, service, type, external_id, title, body_preview, url, modified_at, synced_at)
+       VALUES ('github:ghes-1', 'github', 'pr', 'ghes-opaque-1', 'ghes pr', 'ghes body text', 'https://ghe.example.com/myorg/myrepo/pull/7', 1, 1)`,
+    );
+    const localIndex = new LocalIndex(db);
+    const calls: string[] = [];
+
+    await runAsk({
+      input:
+        "Using only the local indexed Nimbus GitHub context for myorg/myrepo, list pull requests",
+      stream: false,
+      clientId: "test-client",
+      paths: stubPaths,
+      consentCoordinator: stubConsent,
+      localIndex,
+      dispatcher: stubDispatcher,
+      egressSink: NULL_EGRESS_SINK,
+      getTribalKbConfig: () => undefined,
+      sendChunk: () => {},
+      llmRouter: fakeLocalRouter(calls, "found ghes pr", true),
+      classify: async () => {
+        throw new GatewayAgentUnavailableError({ reason: "no_api_key" });
+      },
+    });
+
+    expect(calls[0]).toContain("ghes body text");
+    expect(calls[0]).toContain("ghe.example.com/myorg/myrepo/pull/7");
+    localIndex.close();
+  });
+
+  test("githubIssueContextItemsForRepo treats _ in a repo slug literally (not a LIKE wildcard)", async () => {
+    const db = new Database(":memory:");
+    LocalIndex.ensureSchema(db);
+    db.run(
+      `INSERT INTO item (id, service, type, external_id, title, body_preview, url, modified_at, synced_at)
+       VALUES ('github:u-1', 'github', 'pr', 'opaque-u1', 'under pr', 'under body', 'https://ghe.example.com/org/a_b/pull/1', 1, 1),
+              ('github:u-2', 'github', 'pr', 'opaque-u2', 'other pr', 'other body', 'https://ghe.example.com/org/axb/pull/2', 1, 1)`,
+    );
+    const localIndex = new LocalIndex(db);
+    const calls: string[] = [];
+    await runAsk({
+      input: "Using only the local indexed Nimbus GitHub context for org/a_b, list pull requests",
+      stream: false,
+      clientId: "test-client",
+      paths: stubPaths,
+      consentCoordinator: stubConsent,
+      localIndex,
+      dispatcher: stubDispatcher,
+      egressSink: NULL_EGRESS_SINK,
+      getTribalKbConfig: () => undefined,
+      sendChunk: () => {},
+      llmRouter: fakeLocalRouter(calls, "ok", true),
+      classify: async () => {
+        throw new GatewayAgentUnavailableError({ reason: "no_api_key" });
+      },
+    });
+    expect(calls[0]).toContain("under body");
+    expect(calls[0]).not.toContain("other body");
+    localIndex.close();
+  });
+
   test("clipContextText clips text longer than maxChars (line 230 false branch)", async () => {
     // Insert an item with a very long body_preview to trigger clipContextText (> 900 chars)
     const db = new Database(":memory:");

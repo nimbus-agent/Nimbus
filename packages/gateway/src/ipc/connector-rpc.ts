@@ -37,6 +37,7 @@ import {
   type ModelWritesDeps,
   refuseExtensionBackedRemoval,
   resolveConnectorAddMcp,
+  withConfiguredInstance,
 } from "./connector-rpc-handlers/index.ts";
 import { asRecord, ConnectorRpcError } from "./connector-rpc-shared.ts";
 
@@ -187,12 +188,15 @@ export async function dispatchConnectorRpc(options: {
     toolExecutor,
     getEnforcedPolicy,
     now: now ?? Date.now,
+    // The enable prompt's host line is read from the sandbox's live posture (D2 review 4).
+    ...(sandboxRunner === undefined ? {} : { sandboxRunner }),
     // The Obsidian opt-in is also the trigger of its sandbox write grant (I15, B4b).
     ...(connectorMesh === undefined
       ? {}
       : {
           onObsidianGrantChanged: () => connectorMesh.restartObsidian(),
           obsidianWriteScope: () => connectorMesh.obsidianWriteScope(),
+          iacPathDeps: connectorMesh.iacPathDepsForEnable(),
         }),
   });
 
@@ -210,7 +214,7 @@ export async function dispatchConnectorRpc(options: {
     case "connector.setInterval":
       return handleConnectorSetInterval(ctx);
     case "connector.status":
-      return handleConnectorStatus(ctx);
+      return withConfiguredInstance(ctx, handleConnectorStatus(ctx));
     case "connector.healthHistory":
       return handleConnectorHealthHistory(ctx);
     case "connector.remove": {
@@ -263,6 +267,7 @@ export async function dispatchConnectorRpc(options: {
         // The token travels in-process only, inside this synthetic rec; it never crosses IPC.
         authenticate: (authRec) => handleConnectorAuth({ ...ctx, rec: authRec }),
         readGcpKeyPath: buildReadGcpKeyPath(vault),
+        readGithubApiBase: () => readConnectorSecret(vault, "github", "api_base"),
       });
       return { kind: "hit", value };
     }

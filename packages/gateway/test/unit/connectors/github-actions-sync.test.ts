@@ -39,7 +39,7 @@ function seedGithubRepo(ctx: SyncContext, fullName: string): void {
     externalId: `repo:${fullName}`,
     title: fullName,
     bodyPreview: "",
-    url: null,
+    url: `https://github.com/${fullName}`,
     canonicalUrl: null,
     modifiedAt: now,
     authorId: null,

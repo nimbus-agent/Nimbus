@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 
 import { basicAuthHeader } from "./atlassian-api-sync-helpers.ts";
 import {
@@ -70,7 +70,10 @@ test("every registered probe builds an absolute https url", () => {
     api_base: "https://gitlab.example.com/api/v4",
   };
   for (const [service, probe] of Object.entries(CREDENTIAL_PROBES)) {
-    const req = (probe as (c: Record<string, string>) => { url: string })(creds);
+    // `api_base` is service-specific: GitHub's must be a valid Enterprise Server base.
+    const forService =
+      service === "github" ? { ...creds, api_base: "https://ghe.example.com" } : creds;
+    const req = (probe as (c: Record<string, string>) => { url: string })(forService);
     expect(new URL(req.url).protocol, `${service} probe scheme`).toBe("https:");
   }
 });
@@ -167,4 +170,98 @@ test("a valid non-GitHub probe carries no scopes field at all", async () => {
   const fetchFn = async (): Promise<Response> =>
     new Response("{}", { status: 200, headers: { "X-OAuth-Scopes": "api" } });
   expect(await runCredentialProbe("gitlab", { pat: "glpat" }, fetchFn)).toEqual({ kind: "valid" });
+});
+
+describe("github probe and a GitHub Enterprise Server base", () => {
+  test("targets <base>/user when api_base is given", async () => {
+    let seenUrl = "";
+    await runCredentialProbe(
+      "github",
+      { pat: "p", api_base: "https://ghe.example.com/api/v3" },
+      (url) => {
+        seenUrl = url;
+        return Promise.resolve(new Response(null, { status: 200 }));
+      },
+    );
+    expect(seenUrl).toBe("https://ghe.example.com/api/v3/user");
+  });
+
+  test("a present but invalid api_base makes NO request and never falls back to api.github.com", async () => {
+    const urls: string[] = [];
+    for (const bad of ["http://ghe.example.com", "junk", "", "https://u:p@ghe.example.com"]) {
+      const verdict = await runCredentialProbe("github", { pat: "p", api_base: bad }, (url) => {
+        urls.push(url);
+        return Promise.resolve(new Response(null, { status: 200 }));
+      });
+      expect(verdict).toEqual({ kind: "unconfirmed" });
+    }
+    expect(urls).toEqual([]);
+  });
+
+  test("probe requests are made with redirect: manual", async () => {
+    let redirectMode: string | undefined;
+    await runCredentialProbe("github", { pat: "p" }, (_url, init) => {
+      redirectMode = init?.redirect;
+      return Promise.resolve(new Response(null, { status: 200 }));
+    });
+    expect(redirectMode).toBe("manual");
+  });
+
+  test("a cross-origin 302 is refused: the PAT never reaches the second host", async () => {
+    const urls: string[] = [];
+    const verdict = await runCredentialProbe(
+      "github",
+      { pat: "p", api_base: "https://ghe.example.com/api/v3" },
+      (url) => {
+        urls.push(url);
+        return Promise.resolve(
+          new Response(null, { status: 302, headers: { location: "https://evil.example.net/x" } }),
+        );
+      },
+    );
+    expect(verdict).toEqual({ kind: "unconfirmed" });
+    expect(urls).toEqual(["https://ghe.example.com/api/v3/user"]);
+  });
+
+  test("a 307 to http: is refused", async () => {
+    const urls: string[] = [];
+    const verdict = await runCredentialProbe("github", { pat: "p" }, (url) => {
+      urls.push(url);
+      return Promise.resolve(
+        new Response(null, { status: 307, headers: { location: "http://api.github.com/user" } }),
+      );
+    });
+    expect(verdict).toEqual({ kind: "unconfirmed" });
+    expect(urls).toHaveLength(1);
+  });
+
+  test("a same-origin hop is followed", async () => {
+    const urls: string[] = [];
+    const verdict = await runCredentialProbe(
+      "github",
+      { pat: "p", api_base: "https://ghe.example.com/api/v3" },
+      (url) => {
+        urls.push(url);
+        return Promise.resolve(
+          urls.length === 1
+            ? new Response(null, { status: 301, headers: { location: "/api/v3/user?x=1" } })
+            : new Response(null, { status: 200 }),
+        );
+      },
+    );
+    expect(verdict?.kind).toBe("valid");
+    expect(urls).toEqual([
+      "https://ghe.example.com/api/v3/user",
+      "https://ghe.example.com/api/v3/user?x=1",
+    ]);
+  });
+
+  test("other services' probes do not use manual redirects", async () => {
+    let redirectMode: string | undefined = "unset";
+    await runCredentialProbe("gitlab", { pat: "p" }, (_url, init) => {
+      redirectMode = init?.redirect;
+      return Promise.resolve(new Response(null, { status: 200 }));
+    });
+    expect(redirectMode).toBeUndefined();
+  });
 });

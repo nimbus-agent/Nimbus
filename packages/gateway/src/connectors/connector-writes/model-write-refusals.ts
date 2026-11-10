@@ -36,6 +36,8 @@
 // This module names only model-offerable write rows; the gate-confined post and KB tools stay
 // named only inside their own gates (D17/D19).
 import type { ChatopsPolicy } from "../../policy/types.ts";
+import { commitModelRefusal } from "./commit-paths.ts";
+import { iacModelRefusal } from "./iac-limits.ts";
 import {
   driveContentFormats,
   type RemoteContentFormat,
@@ -1046,5 +1048,13 @@ export function modelWriteRefusal(
 ): string | undefined {
   const messaging = messagingDestinationRefusal(toolId, input, { chatops: ctx.chatops });
   if (messaging !== undefined) return messaging;
+  // D1c (owner ruling 1): a commit touching a CI, workflow, hook or review-rule file, or carrying
+  // credential-looking text. MODEL door only: the owner's own doors are not restricted, and the
+  // act door never proposes a commit.
+  const commit = commitModelRefusal(toolId, input);
+  if (commit !== undefined) return commit;
+  // D2: a CloudFormation deploy asking for an IAM capability. MODEL door only.
+  const iac = iacModelRefusal(toolId, input);
+  if (iac !== undefined) return iac;
   return knowledgeBaseRefusal(toolId, input, ctx.kb);
 }

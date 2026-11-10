@@ -215,6 +215,9 @@ async function syncCircleciProjectPipelines(
   return { upserted, bytes, maxNum };
 }
 
+/** The only GitHub origin CircleCI Cloud's `gh/` project namespace can name. */
+const CIRCLECI_GITHUB_WEB_ORIGIN = "https://github.com";
+
 export type CircleciSyncableOptions = {
   ensureCircleciMcpRunning: () => Promise<void>;
 };
@@ -234,7 +237,13 @@ export function createCircleciSyncable(options: CircleciSyncableOptions): Syncab
         return syncNoopResult(cursor, t0);
       }
 
-      const repos = ctx.listIndexedMetadataValues("github", "repo");
+      // CircleCI Cloud's `gh/` namespace exists only for github.com, so a GitHub Enterprise
+      // Server repository name must never reach circleci.com: only github.com-indexed repos.
+      const repos = ctx.listIndexedMetadataValuesForOrigin(
+        "github",
+        "repo",
+        CIRCLECI_GITHUB_WEB_ORIGIN,
+      );
       if (repos.length === 0) {
         return syncNoopResult(cursor, t0);
       }

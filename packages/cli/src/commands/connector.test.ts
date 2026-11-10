@@ -1688,6 +1688,32 @@ describe("runConnector auth — env-fallback success + secondary error branches"
     expect(out.stdout).toContain("Stored: datadog (not verified)");
   });
 
+  it("github passes --api-base through as apiBaseUrl (a GitHub Enterprise Server), and omits it otherwise", async () => {
+    const withBase = fixtureOk("github");
+    await runConnector([
+      "auth",
+      "github",
+      "--token",
+      "ghp_x",
+      "--api-base",
+      "https://ghe.example.com/",
+    ]);
+    expect(withBase.calls[0]).toEqual({
+      method: "connector.auth",
+      params: {
+        service: "github",
+        personalAccessToken: "ghp_x",
+        apiBaseUrl: "https://ghe.example.com",
+      },
+    });
+    const without = fixtureOk("github");
+    await runConnector(["auth", "github", "--token", "ghp_x"]);
+    expect(without.calls[0]).toEqual({
+      method: "connector.auth",
+      params: { service: "github", personalAccessToken: "ghp_x" },
+    });
+  });
+
   it("gitlab passes through the optional --api-base", async () => {
     fixtureOk("gitlab");
     await runConnector([

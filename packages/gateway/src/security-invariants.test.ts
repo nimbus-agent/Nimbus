@@ -24,6 +24,7 @@ import { parseRolePackManifestValue, publisherKeyFingerprint } from "@nimbus-dev
 import {
   checkAgentEmitterImportConfinement,
   checkBeforeStateRead,
+  checkBoundCapabilities,
   checkBoundWrites,
   checkChatopsReplySurfaceInvariant,
   checkChatopsUnwrappedPost,
@@ -31,6 +32,7 @@ import {
   checkEgressChokepointConfinement,
   checkEmbeddingConstructorConfinement,
   checkEvalConfinement,
+  checkIacDiscard,
   checkModelWriteDoor,
   checkWrapServerSpecInvariant,
   RULE_ANCHORS,
@@ -56,7 +58,11 @@ import {
 } from "./config/layered-config.ts";
 import { CONNECTOR_SERVICE_IDS } from "./connectors/connector-catalog.ts";
 import { createConnectorWriteDispatcher } from "./connectors/connector-write-dispatch.ts";
-import { CONNECTOR_WRITES, isConnectorWriteToolId } from "./connectors/connector-write-registry.ts";
+import {
+  CONNECTOR_WRITES,
+  isConnectorWriteOrPrepareToolId,
+  isConnectorWriteToolId,
+} from "./connectors/connector-write-registry.ts";
 import {
   type ConnectorWriteContext,
   invokeConnectorWrite,
@@ -66,6 +72,10 @@ import {
   SYNTH_REPLY,
   synthBoundRow,
 } from "./connectors/connector-writes/bound-fixtures.test-helpers.ts";
+import {
+  COMMIT_CREDENTIAL_REFUSAL,
+  COMMIT_PATH_REFUSAL,
+} from "./connectors/connector-writes/commit-paths.ts";
 import {
   confirmTemplateKeys,
   parseConfirmTemplate,
@@ -86,6 +96,7 @@ import {
   mcpClientToolKey,
   resolveServerTool,
 } from "./connectors/lazy-mesh/tool-map.ts";
+import { ACTION_PROPOSABILITY } from "./connectors/proposable-actions.ts";
 import { createConnectorDispatcher } from "./connectors/registry.ts";
 import { egressSourceTypeForClientKind } from "./egress/egress-bearing-kinds.ts";
 import { COVERAGE_CLASSES, THIS_BINARY_COVERAGE } from "./egress/egress-coverage.ts";
@@ -102,6 +113,7 @@ import {
   ToolExecutor,
 } from "./engine/executor.ts";
 import { serviceOf } from "./engine/service-of.ts";
+import { extractToolInput } from "./engine/tool-input.ts";
 import type { PlannedAction } from "./engine/types.ts";
 import { buildUserMcpAgentTools } from "./engine/user-mcp-agent-tools.ts";
 import type { ContinuityEntry } from "./extensions/continuity/continuity-table.ts";
@@ -330,10 +342,21 @@ describe("I1 — extensionProcessEnv is the only env source for spawned MCP chil
     // keeps the wrapper out of the connector-spec classification without reopening the hole.
     const files = await readDirFiles("packages/gateway/src/connectors/lazy-mesh");
     const WRAPPER = "wrap-server-spec.ts";
+    // The iac runner builds its per-run children itself (D2, static D43(d)): its env is checked
+    // below, in its own assertion, instead of by this per-file classifier.
+    const IAC_RUNNER = "iac-runner.ts";
     const unexplained: string[] = [];
     let wiredSites = 0;
     for (const f of files) {
       if (f.rel === WRAPPER) continue;
+      if (f.rel === IAC_RUNNER) {
+        // Exactly one child env, built by extensionProcessEnv INSIDE the wrapIacServerSpec call.
+        expect(f.contents).toMatch(
+          /wrapIacServerSpec\(\s*\{\s*\.\.\.connectorSpawn\("iac"\),\s*env: extensionProcessEnv\(/,
+        );
+        expect((f.contents.match(/connectorSpawn\(/g) ?? []).length).toBe(1);
+        continue;
+      }
       wiredSites += (f.contents.match(/env\s*:\s*extensionProcessEnv\(/g) ?? []).length;
       const locals = new Set(
         [...f.contents.matchAll(/const\s+([A-Za-z_$][\w$]*)\s*=\s*extensionProcessEnv\s*\(/g)].map(
@@ -1355,7 +1378,11 @@ describe("I15 — SandboxRunner is intrinsic to every extension spawn", () => {
       const code = src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
       expect(code).not.toMatch(/"NIMBUS_SANDBOX_(POLICY_JSON|CWD)"/);
     }
-    expect(producer).toMatch(/\[SANDBOX_POLICY_ENV\]:\s*JSON\.stringify\(policyFromManifest\(/);
+    // The policy is always policyFromManifest(manifest), plus (only for wrapIacServerSpec) the one
+    // `iacProfile` flag; nothing else is spread into it.
+    expect(producer).toMatch(
+      /\[SANDBOX_POLICY_ENV\]:\s*JSON\.stringify\(\{\s*\.\.\.policyFromManifest\(manifest\),\s*\.\.\.\(iacProfile \? \{ iacProfile: true \} : \{\}\),\s*\}\)/,
+    );
     expect(consumer).toMatch(/process\.env\[SANDBOX_POLICY_ENV\]/);
   });
 
@@ -1495,6 +1522,17 @@ describe("I15 — SandboxRunner is intrinsic to every extension spawn", () => {
       let literals = 0;
       for (const f of files) {
         const code = stripComments(await readFile(resolve(dir, f), "utf8"));
+        if (f === "iac-runner.ts") {
+          // D2: the iac profiles' write list is built in ONE function from three inputs only: the
+          // approved canonical workdir, this run's staging directory and this call's scratch
+          // directory. Every assignment of it is pinned here instead of the literal scan below.
+          expect([...code.matchAll(/\bwrite = ([^;]*);/g)].map((m) => m[1])).toEqual([
+            "[...wd, ...(req.stagingDir === undefined ? [] : [req.stagingDir])]",
+            "[...wd]",
+            "req.scratchDir === undefined ? [] : [req.scratchDir]",
+          ]);
+          continue;
+        }
         // A write list that is not a literal would evade the element scan: refuse it outright.
         expect(code).not.toMatch(/\bwrite:\s*(?!\[)[\w.]/);
         for (const m of code.matchAll(/\bwrite:\s*\[([^\]]*)\]/g)) {
@@ -2995,8 +3033,8 @@ code_execution=true
     );
     // The destructuring from `buildTeamCredentialContexts`, the ChatOps boot (see (j)), the
     // services literal, the I28 act door's dispatcher inside the `captureRpcCtx.act` wiring, and —
-    // the fifth — that wiring's typed-preview credential READ (`.credentialFor(s).credential`, no
-    // copy of the context), both pinned exactly just below: five.
+    // the fifth — that wiring's typed-preview credential READ (`previewCredentialResolver`, which reads
+    // `.credentialFor(s).credential` and adds the GitHub Enterprise Server instance, no copy of the context), both pinned exactly just below: five.
     expect(assembly.match(/\bconnectorWriteDeps\b/g)).toHaveLength(5);
     const captureAt = assembly.indexOf("ipcOpts.captureRpcCtx = {");
     expect(captureAt).toBeGreaterThan(-1);
@@ -3008,7 +3046,7 @@ code_execution=true
     );
     expect(captureCtx.match(/\bconnectorWriteDeps\b/g)).toHaveLength(2);
     expect(captureCtx).toContain(
-      "previewCredentialFor: (s) => connectorWriteDeps.credentialFor(s).credential,",
+      "previewCredentialFor: previewCredentialResolver(connectorWriteDeps, connectorMesh),",
     );
     const main = stripComments(await read("packages/gateway/src/gateway-main.ts"));
     expect(main).toMatch(
@@ -3286,7 +3324,65 @@ function confirmableInput(row: ConnectorWriteRow): Record<string, unknown> {
   for (const name of confirmTemplateKeys(parsed.segments)) {
     input[name] = name === "instanceIds" ? ["i-1"] : "x1";
   }
+  // A multi-file commit (D1c) must also pass its row's input check: one small new file.
+  if (row.bound?.prepare.inputRefusal !== undefined && row.bound.prepare.settle === undefined) {
+    input["message"] = "m";
+    input["files"] = [{ path: "a.txt", content: "x" }];
+  }
+  // A plan-bound IaC row (D2) passes its own input check too: an absolute directory, a template.
+  if (row.bound?.prepare.settle === "iac-terraform") input["workingDirectory"] = "/srv/x1";
+  if (row.bound?.prepare.settle === "iac-cfn") input["templateBody"] = "Resources: {}";
   return input;
+}
+
+/**
+ * What a fake connector answers to a BOUND row's prepare read (D1c): a head and every file as new.
+ * `undefined` for a row that is not bound.
+ */
+function censusPrepareReply(
+  row: ConnectorWriteRow | undefined,
+  input: Record<string, unknown>,
+): unknown {
+  if (row?.bound === undefined) return undefined;
+  // A settled row (D2) takes its values from the settler, not from this reply.
+  if (row.bound.prepare.settle !== undefined) return {};
+  const files = (input["files"] as Array<{ path: string }>).map((f) => ({
+    path: f.path,
+    exists: false,
+    mode: "100644",
+  }));
+  return { headSha: "a".repeat(40), files };
+}
+
+/**
+ * The capabilities a settled bound row (D2) needs on its dispatcher: a preflight that accepts and a
+ * settler that binds a placeholder for each of the row's bound fields (the production settlers are
+ * tested on their own). `undefined` for every other row, so they run on a dispatcher without them.
+ */
+function censusCapabilities(row: ConnectorWriteRow | undefined):
+  | {
+      boundWriteCapabilities: {
+        preflight: () => Promise<{ ok: true; release: () => void }>;
+        settle: () => Promise<{
+          values: Record<string, string>;
+          fields: Array<{ label: string; value: string }>;
+          cleanup: () => Promise<void>;
+        }>;
+      };
+    }
+  | Record<string, never> {
+  if (row?.bound?.prepare.settle === undefined) return {};
+  const fields = row.bound.binds.map((b) => b.field);
+  return {
+    boundWriteCapabilities: {
+      preflight: async () => ({ ok: true, release: () => undefined }),
+      settle: async () => ({
+        values: Object.fromEntries(fields.map((f) => [f, `settled-${f}`])),
+        fields: [{ label: "Plan", value: "settled" }],
+        cleanup: async () => undefined,
+      }),
+    },
+  };
 }
 
 /** Every row (built the way its door builds it, ruling E2) plus the four gate-confined writes. */
@@ -3334,10 +3430,77 @@ function egressRows(
 }
 
 describe("I26 — every connector write row is confined to the local I2 path; federated gate rejects them", () => {
-  test("answerFederatedInvoke is wired with the union isConnectorWriteToolId predicate in federation-rpc.ts", async () => {
+  test("answerFederatedInvoke is wired with the union write-or-prepare predicate in federation-rpc.ts", async () => {
     const src = await read("packages/gateway/src/ipc/federation-rpc.ts");
-    expect(src).toContain("isWriteForbiddenToolId");
-    expect(src).toContain("isConnectorWriteToolId");
+    expect(src).toMatch(/isWriteForbiddenToolId:\s*isConnectorWriteOrPrepareToolId\s*,/);
+    expect(src).not.toContain("isWriteForbiddenToolId: isConnectorWriteToolId");
+  });
+
+  test("a federated peer naming a PREPARE tool (bare or namespaced) is refused write_forbidden and never runs (I54, D1c)", async () => {
+    const ids = new Set<string>();
+    for (const id of PREPARE_TOOL_IDS) {
+      // The server key a session lists it under (`k8s_*` tools live in the `kubernetes` server).
+      const head = id.split("_")[0] as string;
+      const server = head === "k8s" ? "kubernetes" : head;
+      ids.add(id);
+      ids.add(`${server}_${id}`);
+    }
+    expect(ids.size).toBe(PREPARE_TOOL_IDS.size * 2);
+    // The production wiring is what federation-rpc.ts passes.
+    const failures: string[] = [];
+    const db = freshEgressDb();
+    const store = new TeamVaultStore(db);
+    store.createEntry("prod-gh", "github", "owner", 1000);
+    for (const toolId of ids) {
+      store.grant("prod-gh", "peer:abc", toolId, 1000);
+      let ran = 0;
+      const ctx: InvokeGateCtx = {
+        db,
+        store,
+        quorumFor: () => undefined,
+        runQuorum: async () => ({ outcome: "approved", approvers: [] }),
+        runTool: async () => {
+          ran += 1;
+          return {};
+        },
+        isCodeExecutionForbiddenToolId: () => false,
+        isWriteForbiddenToolId: isConnectorWriteOrPrepareToolId,
+        isConnectorAllowed: () => true,
+        now: () => 5000,
+      };
+      const count = (): number =>
+        (
+          db
+            .query(
+              "SELECT COUNT(*) AS n FROM audit_log WHERE action_type = 'teamvault.invoke.write_forbidden'",
+            )
+            .get() as { n: number }
+        ).n;
+      const before = count();
+      const r = await answerFederatedInvoke(ctx, {
+        peerId: "peer:abc",
+        entry: "prod-gh",
+        toolId,
+        args: { owner: "o", repo: "r", branch: "main", files: [] },
+        purpose: "x",
+      });
+      if (r.kind !== "error" || r.error !== "no_grant") {
+        failures.push(`${toolId}: result ${JSON.stringify(r)}`);
+      }
+      if (ran !== 0) failures.push(`${toolId}: runTool was called`);
+      if (count() - before !== 1) failures.push(`${toolId}: audit rows ${count() - before}`);
+    }
+    db.close();
+    expect(failures).toEqual([]);
+  });
+
+  test("the plain files read is NOT a prepare tool: the composed predicate leaves it alone", () => {
+    expect(isConnectorWriteOrPrepareToolId("github_files_get")).toBe(false);
+    expect(isConnectorWriteOrPrepareToolId("github_github_files_get")).toBe(false);
+    expect(isConnectorWriteOrPrepareToolId("github_github_commit_prepare")).toBe(true);
+    expect(isConnectorWriteOrPrepareToolId("gitlab_commit_prepare")).toBe(true);
+    // Every write is still refused through the composed predicate.
+    expect(isConnectorWriteOrPrepareToolId("github_file_commit")).toBe(true);
   });
 
   test("the federated invoke gate fail-closed rejects write-classified tool ids (D20 predicate)", async () => {
@@ -3455,7 +3618,7 @@ describe("I26 — every connector write row is confined to the local I2 path; fe
   });
 
   test("every connector write row is HITL-gated via its action type (local path)", () => {
-    expect(CONNECTOR_WRITE_ROWS.length).toBe(113);
+    expect(CONNECTOR_WRITE_ROWS.length).toBe(117);
     expect(CONNECTOR_WRITE_ROWS.filter((r) => !HITL_REQUIRED.has(r.actionType))).toEqual([]);
   });
 
@@ -3521,7 +3684,7 @@ describe("I26 — every connector write row is confined to the local I2 path; fe
     const { WINDOWS_CLI_ARG_INJECTION_TOOL_IDS, isConnectorCodeExecutionToolId } = await import(
       "./connectors/connector-code-execution-tool-ids.ts"
     );
-    expect(WINDOWS_CLI_ARG_INJECTION_TOOL_IDS.size).toBeGreaterThanOrEqual(8);
+    expect(WINDOWS_CLI_ARG_INJECTION_TOOL_IDS.size).toBe(10);
     for (const id of WINDOWS_CLI_ARG_INJECTION_TOOL_IDS) {
       expect(isConnectorCodeExecutionToolId(id), id).toBe(true);
       expect(isConnectorCodeExecutionToolId(`azure_${id}`), id).toBe(true);
@@ -3606,11 +3769,17 @@ describe("I27 — outbound share gated by share.publish HITL action", () => {
     const { isReadOnlyToolId } = await import("./share/read-tool-registry.ts");
     for (const id of [
       "iac_terraform_plan",
+      "iac_terraform_destroy_plan",
+      "iac_terraform_show_json",
       "iac_terraform_apply",
       "iac_terraform_destroy",
+      "iac_cloudformation_changeset_create",
+      "iac_cloudformation_changeset_discard",
       "iac_cloudformation_deploy",
       "iac_pulumi_preview",
       "iac_pulumi_up",
+      "k8s_manifest_plan",
+      "k8s_manifest_apply",
     ]) {
       expect(isReadOnlyToolId(id)).toBe(false);
     }
@@ -3959,6 +4128,15 @@ describe("I29 — egress-ledger completeness over the executor chokepoint", () =
       let prompts = 0;
       let dispatches = 0;
       let rowsAtDispatch = -1;
+      // A bound write (D1c) runs its prepare read first: one more audited and ledgered row, before it.
+      const boundRow = CONNECTOR_WRITE_ROWS.find(
+        (r) => r.actionType === action.type && r.bound !== undefined,
+      );
+      const prepared = censusPrepareReply(
+        boundRow,
+        extractToolInput(action) as Record<string, unknown>,
+      );
+      const rowsExpected = boundRow === undefined ? 1 : 2;
       const exec = new ToolExecutor(
         {
           requestApproval: async () => {
@@ -3973,22 +4151,38 @@ describe("I29 — egress-ledger completeness over the executor chokepoint", () =
         },
         { recordAudit: () => {} },
         {
-          dispatch: async () => {
+          dispatch: async (a: { type: string }) => {
+            if (prepared !== undefined && a.type.endsWith(".write.prepare")) return prepared;
             dispatches += 1;
             rowsAtDispatch = egressRows(db).length;
             return {};
           },
+          ...censusCapabilities(boundRow),
         },
         undefined,
         makeEgressSink(db),
       );
       await exec.execute(action);
       const rows = egressRows(db);
+      // A row the gate refuses itself (D2: the Pulumi apply) asks nobody and dispatches nothing,
+      // but is still ledgered, blocked.
+      if (
+        CONNECTOR_WRITE_ROWS.some((r) => r.actionType === action.type && r.refuse !== undefined)
+      ) {
+        if (prompts !== 0 || dispatches !== 0) failures.push(`${label}: a refused row ran`);
+        if (rows.length !== 1 || rows[0]?.resultStatus !== "blocked") {
+          failures.push(`${label}: a refused row is not one blocked row`);
+        }
+        db.close();
+        continue;
+      }
       if (prompts !== 1) failures.push(`${label}: consent asked ${prompts} times`);
       if (dispatches !== 1) failures.push(`${label}: dispatched ${dispatches} times`);
-      if (rowsAtDispatch !== 1) failures.push(`${label}: ${rowsAtDispatch} rows at dispatch`);
-      const row = rows[0];
-      if (rows.length !== 1 || row === undefined) {
+      if (rowsAtDispatch !== rowsExpected) {
+        failures.push(`${label}: ${rowsAtDispatch} rows at dispatch`);
+      }
+      const row = rows.at(-1);
+      if (rows.length !== rowsExpected || row === undefined) {
         failures.push(`${label}: ${rows.length} rows after`);
       } else {
         if (row.resultStatus !== "authorized")
@@ -4009,14 +4203,34 @@ describe("I29 — egress-ledger completeness over the executor chokepoint", () =
     for (const { label, action } of writesUnderTest()) {
       const db = freshEgressDb();
       let dispatches = 0;
+      let discards = 0;
+      // A bound write (D1c) is prepared before anyone is asked: its read is ledgered, then denied.
+      const boundRow = CONNECTOR_WRITE_ROWS.find(
+        (r) => r.actionType === action.type && r.bound !== undefined,
+      );
+      const prepared = censusPrepareReply(
+        boundRow,
+        extractToolInput(action) as Record<string, unknown>,
+      );
       const exec = new ToolExecutor(
-        { requestApproval: async () => false },
+        {
+          requestApproval: async () => false,
+          requestConfirmedApproval: async () => ({ approved: false, typed: "" }),
+        },
         { recordAudit: () => {} },
         {
-          dispatch: async () => {
+          dispatch: async (a: { type: string }) => {
+            if (prepared !== undefined && a.type.endsWith(".write.prepare")) return prepared;
+            // D2 (static D43): the gateway's own cleanup of the unused change set is the one
+            // dispatch a declined write may be followed by; it is counted apart.
+            if (a.type === "iac.cloudformation.changeset.discard") {
+              discards += 1;
+              return {};
+            }
             dispatches += 1;
             return {};
           },
+          ...censusCapabilities(boundRow),
         },
         undefined,
         makeEgressSink(db),
@@ -4025,8 +4239,16 @@ describe("I29 — egress-ledger completeness over the executor chokepoint", () =
       const rows = egressRows(db);
       if (r.status !== "rejected") failures.push(`${label}: status ${r.status}`);
       if (dispatches !== 0) failures.push(`${label}: dispatched`);
-      if (rows.length !== 1 || rows[0]?.resultStatus !== "blocked") {
+      // The discard follows only a declined CloudFormation deploy, with its own ledger row.
+      const discarding = action.type === "iac.cloudformation.deploy";
+      if (discards !== (discarding ? 1 : 0)) failures.push(`${label}: ${discards} discards`);
+      const want = (boundRow === undefined ? 1 : 2) + (discarding ? 1 : 0);
+      const writeRow = rows.at(discarding ? -2 : -1);
+      if (rows.length !== want || writeRow?.resultStatus !== "blocked") {
         failures.push(`${label}: rows ${JSON.stringify(rows)}`);
+      }
+      if (discarding && rows.at(-1)?.hitlStatus !== "not_required") {
+        failures.push(`${label}: the discard is not its own not_required row`);
       }
       db.close();
     }
@@ -4067,7 +4289,7 @@ describe("I29 — egress-ledger completeness over the executor chokepoint", () =
   });
 
   test("the coverage set is the whole table", () => {
-    expect(CONNECTOR_WRITE_ROWS.length).toBe(113);
+    expect(CONNECTOR_WRITE_ROWS.length).toBe(117);
     expect(writesUnderTest().length).toBe(CONNECTOR_WRITE_ROWS.length + 4);
   });
 
@@ -11605,7 +11827,7 @@ describe("I53 — a first-party connector write reaches the model only through t
   test("D0a: every Wave 4 write on every door reaches dispatch only after an exact type-to-confirm match at the executor gate", async () => {
     const { NO_POLICY_OVERLAY, ToolExecutor } = await import("./engine/executor.ts");
     const wave4 = CONNECTOR_WRITE_ROWS.filter((r) => r.wave === 4);
-    expect(wave4).toHaveLength(39);
+    expect(wave4).toHaveLength(43);
     const failures: string[] = [];
     for (const row of wave4) {
       const input = confirmableInput(row);
@@ -11613,6 +11835,9 @@ describe("I53 — a first-party connector write reaches the model only through t
         type: row.actionType,
         payload: row.transport === "mesh" ? { mcpToolId: row.toolId, input } : input,
       };
+      // A bound row (D1c) is prepared first; the fake connector answers that read.
+      const prepared = censusPrepareReply(row, input);
+      const refusedByRow = row.refuse !== undefined;
       const attempt = async (
         channel: "plain" | "exact" | "wrong" | "empty",
       ): Promise<{ status: string; dispatched: number; plainAsked: number }> => {
@@ -11640,10 +11865,19 @@ describe("I53 — a first-party connector write reaches the model only through t
           },
           { recordAudit: () => {} },
           {
-            dispatch: async () => {
+            dispatch: async (a: { type: string }) => {
+              if (prepared !== undefined && a.type.endsWith(".write.prepare")) return prepared;
+              // D2 (static D43): the gateway's own discard of an unused change set is not the write.
+              if (
+                a.type === "iac.cloudformation.changeset.discard" &&
+                row.actionType !== "iac.cloudformation.changeset.discard"
+              ) {
+                return {};
+              }
               dispatched += 1;
               return {};
             },
+            ...censusCapabilities(row),
           },
           undefined,
           NULL_EGRESS_SINK,
@@ -11652,6 +11886,17 @@ describe("I53 — a first-party connector write reaches the model only through t
         const res = await exec.execute(action);
         return { status: res.status, dispatched, plainAsked };
       };
+      // A row the gate refuses itself (D2: the Pulumi apply) is refused on every channel, exact
+      // text included, and nobody is asked.
+      if (refusedByRow) {
+        for (const channel of ["plain", "exact", "wrong", "empty"] as const) {
+          const r = await attempt(channel);
+          if (r.status !== "rejected" || r.dispatched !== 0 || r.plainAsked !== 0) {
+            failures.push(`${row.toolId}: a row-refused write ran on the ${channel} channel`);
+          }
+        }
+        continue;
+      }
       const plain = await attempt("plain");
       if (plain.status !== "rejected" || plain.dispatched !== 0 || plain.plainAsked !== 0) {
         failures.push(`${row.toolId}: a plain-only channel approved or was asked`);
@@ -11672,7 +11917,7 @@ describe("I53 — a first-party connector write reaches the model only through t
     const { NO_POLICY_OVERLAY, ToolExecutor } = await import("./engine/executor.ts");
     const { createConnectorDispatcher } = await import("./connectors/registry.ts");
     const wave4 = CONNECTOR_WRITE_ROWS.filter((r) => r.wave === 4 && r.transport === "mesh");
-    expect(wave4.length).toBeGreaterThan(30);
+    expect(wave4.length).toBe(35);
     const failures: string[] = [];
     for (const row of wave4) {
       const input = confirmableInput(row);
@@ -11756,9 +12001,188 @@ describe("I53 — a first-party connector write reaches the model only through t
     expect(isModelOfferableRow({ ...base, before: reader, confirm: { template: "{id}" } })).toBe(
       true,
     );
-    expect(MODEL_NEVER_OFFERED_TOOL_IDS.size).toBe(7);
+    // The seven mail sends (OR-W34-1), since D1 the Bitbucket merge (no head precondition), and
+    // since D2 the four rows that stay owner-only: Terraform destroy, Pulumi, the change-set
+    // discard and D3's Kubernetes apply.
+    expect(MODEL_NEVER_OFFERED_TOOL_IDS.size).toBe(12);
+    expect(MODEL_NEVER_OFFERED_TOOL_IDS.has("bitbucket_pr_merge")).toBe(true);
     for (const r of CONNECTOR_WRITE_ROWS) {
       if (r.wave === 4) expect(r.confirm, r.toolId).toBeDefined();
+    }
+  });
+
+  test("D1 (source): isModelOfferableRow checks the never-offered set first and needs a before reader or a bound write AND a confirm target for every Wave 4 row", async () => {
+    const src = stripComments(
+      await read("packages/gateway/src/connectors/connector-writes/model-offerable.ts"),
+    );
+    const body = src.slice(src.indexOf("export function isModelOfferableRow("));
+    expect(body.indexOf("MODEL_NEVER_OFFERED_TOOL_IDS.has(row.toolId)")).toBeGreaterThan(-1);
+    expect(body.indexOf("MODEL_NEVER_OFFERED_TOOL_IDS.has(row.toolId)")).toBeLessThan(
+      body.indexOf("row.preview !== undefined"),
+    );
+    expect(body.replaceAll(/\s+/g, " ")).toContain(
+      "row.preview !== undefined && (row.wave < 4 || ((row.before !== undefined || row.bound !== undefined) && row.confirm !== undefined))",
+    );
+  });
+
+  test("D1: every model-offerable Wave 4 row has a reader the before-read dispatcher accepts (a read of its own connector), and a connector write is never one", async () => {
+    const { isModelOfferableRow } = await import(
+      "./connectors/connector-writes/model-offerable.ts"
+    );
+    const { isReadOnlyToolId } = await import("./share/read-tool-registry.ts");
+    const offeredWave4 = CONNECTOR_WRITE_ROWS.filter((r) => r.wave === 4 && isModelOfferableRow(r));
+    // 27 through a before-state (D1), the two bound multi-file commits (D1c) and the Terraform apply
+    // and CloudFormation deploy (D2) through a prepare step; the destroy is bound but never offered.
+    expect(offeredWave4).toHaveLength(31);
+    expect(offeredWave4.filter((r) => r.bound !== undefined).map((r) => r.toolId)).toEqual([
+      "github_file_commit",
+      "gitlab_commit_create",
+      "iac_terraform_apply",
+      "iac_cloudformation_deploy",
+    ]);
+    for (const r of offeredWave4.filter((x) => x.bound === undefined)) {
+      expect(r.before, r.toolId).toBeDefined();
+      expect(r.confirm, r.toolId).toBeDefined();
+      const tools = [r.before?.tool, r.before?.also?.tool].filter(
+        (t): t is string => t !== undefined,
+      );
+      for (const tool of tools) {
+        // The dispatcher (`assertBeforeReadIsOwnRead`) refuses any other tool, so an `az` /
+        // `gcloud` read (code-execution class) can back no model-offered row.
+        expect(isReadOnlyToolId(tool), `${r.toolId} reads ${tool}`).toBe(true);
+        expect(isConnectorWriteToolId(tool), `${r.toolId} reads ${tool}`).toBe(false);
+      }
+    }
+    // A Wave 4 row with a preview and a confirm text but no reader is never offered.
+    for (const id of [
+      "azure_app_service_restart",
+      "azure_aks_node_pool_scale",
+      "gcp_cloud_run_deploy",
+    ]) {
+      const r = CONNECTOR_WRITE_ROWS.find((x) => x.toolId === id);
+      expect(r?.before, id).toBeUndefined();
+      expect(r !== undefined && isModelOfferableRow(r), id).toBe(false);
+    }
+  });
+
+  test("D1 (behaviour): a Wave 4 model write whose current state cannot be read is refused before any prompt, dispatches no write and is ledgered as blocked", async () => {
+    const { ToolExecutor, NO_POLICY_OVERLAY } = await import("./engine/executor.ts");
+    const { createBeforeStateRunner, WAVE4_BEFORE_REFUSAL } = await import(
+      "./engine/before-state.ts"
+    );
+    const { row, withPreview, withConfirm } = await import(
+      "./connectors/connector-writes/types.ts"
+    );
+    const { mcpClientToolKey } = await import("./connectors/lazy-mesh/tool-map.ts");
+    // A Wave 4 row with a preview and a confirm text but no reader (nothing to read).
+    const noReader = withConfirm(
+      withPreview(row("jenkins_build_abort", "jenkins.build.abort", "mesh", 4), {
+        target: "{jobName}",
+        summary: "Abort {jobName}",
+        fields: [],
+      }),
+      { template: "abort {jobName}" },
+    );
+    const cases: ReadonlyArray<{
+      readonly name: string;
+      readonly rows: readonly ConnectorWriteRow[] | undefined;
+      readonly toolId: string;
+      readonly input: Record<string, unknown>;
+      readonly reply: () => unknown;
+      readonly reason: string;
+      readonly dispatched: readonly string[];
+    }> = [
+      {
+        name: "the read fails",
+        rows: undefined,
+        toolId: "jenkins_build_trigger",
+        input: { jobName: "deploy" },
+        reply: () => {
+          throw new Error("down");
+        },
+        reason: WAVE4_BEFORE_REFUSAL,
+        dispatched: ["jenkins.before.read"],
+      },
+      {
+        name: "the reply names no job",
+        rows: undefined,
+        toolId: "jenkins_build_trigger",
+        input: { jobName: "deploy" },
+        reply: () => ({ content: [{ type: "text", text: "{}" }] }),
+        reason: WAVE4_BEFORE_REFUSAL,
+        dispatched: ["jenkins.before.read"],
+      },
+      {
+        name: "the reader cannot be built from the input",
+        rows: undefined,
+        toolId: "jenkins_build_trigger",
+        input: { jobName: "" },
+        reply: () => ({}),
+        reason: WAVE4_BEFORE_REFUSAL,
+        dispatched: [],
+      },
+      {
+        name: "the row has no reader",
+        rows: [noReader],
+        toolId: "jenkins_build_abort",
+        input: { jobName: "deploy" },
+        reply: () => ({}),
+        reason: WAVE4_BEFORE_REFUSAL,
+        dispatched: [],
+      },
+      {
+        name: "a GitHub merge names no head sha (the guard's own reason)",
+        rows: undefined,
+        toolId: "github_pr_merge",
+        input: { owner: "acme", repo: "api", pullNumber: 42 },
+        reply: () => ({
+          content: [
+            { type: "text", text: JSON.stringify({ title: "T", head: { sha: "a".repeat(40) } }) },
+          ],
+        }),
+        reason:
+          "the merge must name the pull request's current head commit as sha, and it is not that commit",
+        dispatched: ["github.before.read"],
+      },
+    ];
+    for (const c of cases) {
+      const target = CONNECTOR_WRITE_ROWS.find((r) => r.toolId === c.toolId);
+      const actionType = c.rows?.[0]?.actionType ?? target?.actionType ?? "";
+      let prompts = 0;
+      const dispatched: string[] = [];
+      const egress: string[] = [];
+      const exec = new ToolExecutor(
+        {
+          requestApproval: async () => {
+            prompts += 1;
+            return true;
+          },
+        },
+        { recordAudit: () => {} },
+        {
+          dispatch: async (a) => {
+            dispatched.push(a.type);
+            return c.reply();
+          },
+        },
+        undefined,
+        { append: (e) => void egress.push(`${e.method}:${e.resultStatus}`) },
+        NO_POLICY_OVERLAY,
+        undefined,
+        createBeforeStateRunner(c.rows === undefined ? {} : { rows: c.rows }),
+      );
+      const out = await exec.execute({
+        type: actionType,
+        origin: "model",
+        payload: {
+          mcpToolId: mcpClientToolKey(serviceOf(actionType), c.toolId),
+          input: c.input,
+        },
+      });
+      expect(out, c.name).toEqual({ status: "rejected", reason: c.reason });
+      expect(prompts, c.name).toBe(0);
+      expect(dispatched, c.name).toEqual([...c.dispatched]);
+      expect(egress[egress.length - 1], c.name).toBe(`${actionType}:blocked`);
     }
   });
 
@@ -12077,9 +12501,52 @@ describe("I53 — a first-party connector write reaches the model only through t
     expect(naming).toEqual(["engine/run-ask.ts"]);
   });
 
-  test("the production rows with a before reader are B1's seven comment rows, B2's nine issue writes, B3's five page writes, B4a's Drive create, B4b's Obsidian append (all wave 2), C1's eight wave-3 file, pull request and incident writes, C2's four wave-3 branch, pull request and merge request writes and C3's five wave-3 flag and alert writes (no wave-4 row has one, so none is offerable)", () => {
+  test("the production rows with a before reader are B1's seven comment rows, B2's nine issue writes, B3's five page writes, B4a's Drive create, B4b's Obsidian append (all wave 2), C1's eight wave-3 file, pull request and incident writes, C2's four wave-3 branch, pull request and merge request writes and C3's five wave-3 flag and alert writes, and D1's 28 wave-4 rows (27 offered, plus the never-offered Bitbucket merge)", () => {
     const withReader = CONNECTOR_WRITE_ROWS.filter((r) => r.before !== undefined);
-    expect(withReader.map((r) => r.toolId).sort((a, b) => a.localeCompare(b))).toEqual([
+    const D1_WAVE4 = [
+      "apple_calendar_event_delete",
+      "argocd_app_rollback",
+      "argocd_app_sync",
+      "aws_ec2_instance_start",
+      "aws_ec2_instance_stop",
+      "aws_ecs_service_update",
+      "aws_lambda_invoke",
+      "bitbucket_pr_merge",
+      "circleci_job_cancel",
+      "circleci_pipeline_trigger",
+      "flux_helmrelease_reconcile",
+      "flux_kustomization_reconcile",
+      "gha_run_cancel",
+      "gha_run_trigger",
+      "github_branch_delete",
+      "github_pr_merge",
+      "github_tag_create",
+      "gitlab_mr_merge",
+      "gitlab_pipeline_cancel",
+      "gitlab_pipeline_retry",
+      "jenkins_build_abort",
+      "jenkins_build_trigger",
+      "mlflow_model_promote",
+      "mlflow_model_transition_stage",
+      "onedrive_item_delete",
+      "outlook_calendar_delete",
+      "snowflake_comment_set",
+      "snowflake_tag_set",
+    ];
+    expect(
+      withReader
+        .filter((r) => r.wave === 4)
+        .map((r) => r.toolId)
+        .sort((a, b) => a.localeCompare(b)),
+    ).toEqual(D1_WAVE4);
+    for (const r of withReader.filter((x) => x.wave === 4))
+      expect(r.confirm, r.toolId).toBeDefined();
+    expect(
+      withReader
+        .filter((r) => r.wave !== 4)
+        .map((r) => r.toolId)
+        .sort((a, b) => a.localeCompare(b)),
+    ).toEqual([
       "confluence_comment_add",
       "confluence_page_append",
       "confluence_page_update",
@@ -12123,7 +12590,7 @@ describe("I53 — a first-party connector write reaches the model only through t
     ]);
     expect(
       withReader
-        .filter((r) => r.wave !== 2)
+        .filter((r) => r.wave === 3)
         .map((r) => r.toolId)
         .sort((a, b) => a.localeCompare(b)),
     ).toEqual([
@@ -12212,11 +12679,12 @@ describe("I53 — a first-party connector write reaches the model only through t
       "engine/executor.ts",
     ]);
     const runner = stripComments(await read("packages/gateway/src/engine/before-state.ts"));
-    // The ONE construction of the refusal, from the reader's own guard reason.
+    // The ONE construction of the refusal (`refusalOf`), from the reader's own guard reason, or
+    // (D1) the fixed Wave 4 text when no guard applies to a Wave 4 row.
     expect(runner.match(/status: "refused"/g)).toHaveLength(2); // the type's field, and the value
-    expect(runner).toContain(
-      'const refusal: BeforeStateRefusal = { status: "refused", reason: reader.guard?.reason ?? "" };',
-    );
+    expect(runner.match(/refusalOf[(]/g)).toHaveLength(3); // the definition and its two uses
+    expect(runner).toContain("const guardReason = guarded ? reader.guard?.reason : undefined;");
+    expect(runner).toContain("const refusal = refusalOf(guardReason ?? WAVE4_BEFORE_REFUSAL);");
     const exec = stripComments(await read("packages/gateway/src/engine/executor.ts"));
     const previewAt = exec.indexOf("private async captureBeforePhase(");
     const previewBody = exec.slice(previewAt, exec.indexOf("\n  }\n", previewAt));
@@ -12224,6 +12692,10 @@ describe("I53 — a first-party connector write reaches the model only through t
       'if (before.status === "refused") throw new BeforeStateRefusedError(before.reason);',
     );
     expect(exec.match(/new BeforeStateRefusedError\(/g)).toHaveLength(1);
+    // D1: a Wave 4 model write whose preview is absent is refused by the runner module's own
+    // helper (the error is constructed there), before any read or prompt.
+    expect(previewBody).toContain("throwIfWave4WithoutPreview(action, this.rows());");
+    expect(runner).toContain("export function throwIfWave4WithoutPreview(");
     const gateAt = exec.indexOf("private statusOfGateThrow(");
     const gateBody = exec.slice(gateAt, exec.indexOf("\n  }\n", gateAt));
     expect(exec.match(/instanceof BeforeStateRefusedError/g)).toHaveLength(1);
@@ -12387,6 +12859,60 @@ describe("I53 / I28 - B3w: sent mail, Teams and forge Markdown cannot load remot
   });
 });
 
+describe("I53 / I54 - D1c: a commit the model proposes is refused for a CI, hook or credential path and never carries the bound head", () => {
+  const SRC = join(import.meta.dir, "connectors", "connector-writes");
+  const COMMIT_FILES = [{ path: ".github/workflows/ci.yml", content: "on: push\n" }];
+
+  test("modelWriteRefusal calls commitModelRefusal after the messaging check; actDoorRefusal never does", async () => {
+    const src = stripComments(await readFile(join(SRC, "model-write-refusals.ts"), "utf8"));
+    const model = src.slice(src.indexOf("export function modelWriteRefusal("));
+    expect(model).toMatch(
+      /messagingDestinationRefusal\([\s\S]*commitModelRefusal\(toolId, input\)[\s\S]*knowledgeBaseRefusal\(/,
+    );
+    const act = src.slice(
+      src.indexOf("export function actDoorRefusal("),
+      src.indexOf("function knowledgeBaseRefusal("),
+    );
+    expect(act).not.toContain("commitModelRefusal");
+  });
+
+  test("behaviour: a workflow path, a CODEOWNERS file and a credential are refused on the model door, and not on the act door", () => {
+    const model = (files: unknown) =>
+      modelWriteRefusal(
+        "github_file_commit",
+        { owner: "o", repo: "r", branch: "b", message: "m", files },
+        { chatops: undefined, kb: undefined },
+      );
+    expect(model(COMMIT_FILES)).toBe(COMMIT_PATH_REFUSAL);
+    expect(model([{ path: "docs/CODEOWNERS", content: "x" }])).toBe(COMMIT_PATH_REFUSAL);
+    const token = `gh${"p_"}${"a".repeat(36)}`;
+    expect(model([{ path: "a.ts", content: token }])).toBe(COMMIT_CREDENTIAL_REFUSAL);
+    expect(model([{ path: "a.ts", content: "ok" }])).toBeUndefined();
+    expect(
+      actDoorRefusal(
+        "github_file_commit",
+        { owner: "o", repo: "r", branch: "b", message: "m", files: COMMIT_FILES },
+        { chatops: undefined, kb: undefined, kbUnreadable: false },
+      ),
+    ).toBeUndefined();
+  });
+
+  test("the offered schema drops the bound head: the door strips every bound field from the listing", async () => {
+    const src = stripComments(
+      await readFile(join(import.meta.dir, "engine", "connector-write-agent-tools.ts"), "utf8"),
+    );
+    expect(src).toMatch(
+      /offeredInputSchema\(\s*entry\["inputSchema"\],[\s\S]{0,120}binds\.map\(\(b\) => b\.field\)/,
+    );
+  });
+
+  test("no bound row is proposable on the MCP act door (provenanceConsent shows no diff)", () => {
+    for (const r of CONNECTOR_WRITE_ROWS.filter((row) => row.bound !== undefined)) {
+      expect(ACTION_PROPOSABILITY[r.actionType]?.kind, r.actionType).toBe("denied");
+    }
+  });
+});
+
 describe("I54 — a bound connector write is dispatched only with the values its own gate-run prepare step produced", () => {
   const action = (input: Record<string, unknown>): PlannedAction => ({
     type: "iac.terraform.apply",
@@ -12464,10 +12990,67 @@ describe("I54 — a bound connector write is dispatched only with the values its
     );
   });
 
-  test("D0b ships the mechanism and no bound row: the production table declares none and the prepare set is empty and immutable", () => {
-    expect(CONNECTOR_WRITE_ROWS.filter((r) => r.bound !== undefined)).toEqual([]);
-    expect(PREPARE_TOOL_IDS.size).toBe(0);
+  test("D43 and D42(h) exist, run() calls them, the production tree is clean and a rogue file is rejected", async () => {
+    const audit = await read("scripts/structure-audit/check-nimbus-invariants.ts");
+    const runAt = audit.indexOf("async function run(");
+    expect(audit.slice(runAt)).toContain("checkIacDiscard(files)");
+    expect(audit.slice(runAt)).toContain("checkBoundCapabilities(files)");
+    for (const id of [
+      "discard-step-confined",
+      "discard-name-confined",
+      "discard-order-pinned",
+      "bound-capability-confined",
+      "bound-capability-calls",
+    ]) {
+      expect(audit).toContain(id);
+    }
+    const files = (await readDirFiles("packages/gateway/src")).map((f) => ({
+      relPath: `packages/gateway/src/${f.rel}`,
+      contents: f.contents,
+    }));
+    expect(checkIacDiscard(files)).toEqual([]);
+    expect(checkBoundCapabilities(files)).toEqual([]);
+    const rogue = {
+      relPath: "packages/gateway/src/ipc/rogue.ts",
+      contents:
+        'gate(a, undefined, { discardStep: t });\nconst k = "iac_cloudformation_changeset_discard";\nd.boundWriteCapabilities;\n',
+    };
+    expect(new Set(checkIacDiscard([...files, rogue]).map((v) => v.rule))).toEqual(
+      new Set(["discard-step-confined", "discard-name-confined"]),
+    );
+    expect(checkBoundCapabilities([...files, rogue]).map((v) => v.rule)).toEqual([
+      "bound-capability-confined",
+    ]);
+  });
+
+  test("the prepare set is exactly the seven declared tools, frozen; the bound production rows name members of it (D1c, D2)", () => {
+    expect(
+      CONNECTOR_WRITE_ROWS.filter((r) => r.bound !== undefined)
+        .map((r) => r.toolId)
+        .sort(),
+    ).toEqual(
+      [
+        "github_file_commit",
+        "gitlab_commit_create",
+        "iac_cloudformation_deploy",
+        "iac_terraform_apply",
+        "iac_terraform_destroy",
+      ].sort(),
+    );
+    expect([...PREPARE_TOOL_IDS].sort()).toEqual([
+      "github_commit_prepare",
+      "gitlab_commit_prepare",
+      "iac_cloudformation_changeset_create",
+      "iac_terraform_destroy_plan",
+      "iac_terraform_plan",
+      "iac_terraform_show_json",
+      "k8s_manifest_plan",
+    ]);
+    for (const r of CONNECTOR_WRITE_ROWS.filter((x) => x.bound !== undefined)) {
+      expect(PREPARE_TOOL_IDS.has(r.bound?.prepare.tool ?? ""), r.toolId).toBe(true);
+    }
     expect(() => (PREPARE_TOOL_IDS as unknown as Set<string>).add("x_plan")).toThrow(TypeError);
+    expect(PREPARE_TOOL_IDS.size).toBe(7);
   });
 
   test("the public gate() never binds: a bound row reaching it is refused, audited and not dispatched", async () => {
@@ -12521,12 +13104,13 @@ describe("I54 — a bound connector write is dispatched only with the values its
     ).resolves.toBe("ran");
   });
 
-  test("the prepare phase runs before any approval: resolveHitlApproval orders it after the before-state and before the confirm text and the approval", async () => {
+  test("the prepare phase runs before any approval: resolveHitlApproval orders it after the before-state and the preflight, and before the confirm text and the approval", async () => {
     const exec = stripComments(await read("packages/gateway/src/engine/executor.ts"));
     const at = exec.indexOf("private async resolveHitlApproval(");
     const body = exec.slice(at, exec.indexOf("\n  }\n", at));
     const order = [
       "this.captureBeforePhase(",
+      "this.preflightPhase(",
       "this.preparePhase(",
       "this.renderConfirmPhase(",
       "this.approvalPhase(",

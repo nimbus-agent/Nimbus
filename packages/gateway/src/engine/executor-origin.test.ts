@@ -55,6 +55,40 @@ describe("formatConsentPrompt — origin model", () => {
   });
 });
 
+describe("formatConsentPrompt — a GitHub write on a GitHub Enterprise Server", () => {
+  const write: PlannedAction = {
+    type: "github.issue.comment.create",
+    origin: "model",
+    payload: {
+      mcpToolId: "github_issue_comment_create",
+      input: { owner: "acme", repo: "web", issueNumber: 7, body: "hello" },
+    },
+  };
+  const ghes = () => ({ credential: "personal" as const, instance: "ghe.example.com" });
+
+  test("the model door's prompt shows Instance after Credential, and Requested by: the model", () => {
+    const lines = formatConsentPrompt(write, ghes).split("\n");
+    const at = lines.indexOf("Credential: personal");
+    expect(at).toBeGreaterThan(-1);
+    expect(lines[at + 1]).toBe("Instance: ghe.example.com");
+    expect(lines).toContain(LINE);
+  });
+
+  test("without the instance the prompt is the one it always was (no Instance line)", () => {
+    expect(formatConsentPrompt(write, () => "personal")).not.toContain("Instance:");
+    expect(formatConsentPrompt(write)).not.toContain("Instance:");
+  });
+
+  test("the desktop's details carry the instance in the typed destination", () => {
+    const d = consentDisplayPayload(write, ghes);
+    expect(d?.["destination"]).toEqual({
+      service: "github",
+      credential: "personal",
+      instance: "ghe.example.com",
+    });
+  });
+});
+
 describe("executor — origin model", () => {
   function make(origin: boolean) {
     let remote = 0;

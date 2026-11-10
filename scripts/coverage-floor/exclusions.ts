@@ -276,6 +276,9 @@ export const EXCLUSIONS: readonly ExclusionPattern[] = Object.freeze([
   // so the gate reads 0% and it can never rejoin the floor. Not named `*types.ts`, so the basename
   // regexes above do not reach it. Guardian header on the file forbids runtime logic.
   { kind: "exact", path: "packages/gateway/src/exec/exec-result.ts" },
+  // bound-write-capabilities.ts (Phase 9.7 D2): the plan-bound write seam's interfaces and union
+  // types only, no executable statement, so no `SF:` record. Guardian header forbids runtime logic.
+  { kind: "exact", path: "packages/gateway/src/engine/bound-write-capabilities.ts" },
   // cu-types.ts: declaration-only (types and interfaces, no executable statement) by the same
   // guardian-header rule. Its basename already matches the `-types\.ts$` regex above, so this
   // entry is belt-and-suspenders rather than load-bearing — listed explicitly anyway so the

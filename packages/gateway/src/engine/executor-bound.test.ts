@@ -747,3 +747,104 @@ describe("Wave 4 composes with the bound write (D0a)", () => {
     expect(writesOf(h)).toEqual([]);
   });
 });
+
+describe("a bound write with a diff shows it and records its digest (D1c)", () => {
+  const FILES_INPUT = {
+    dir: DIR,
+    files: [
+      { path: "a.txt", content: "A2\n" },
+      { path: "b.txt", content: "fresh\n" },
+    ],
+  };
+  const DIFF_ACTION: PlannedAction = {
+    type: "iac.terraform.apply",
+    payload: { mcpToolId: "iac_synth_apply", input: FILES_INPUT },
+  };
+  const diffReply = () => ({
+    ...SYNTH_REPLY,
+    files: [
+      { path: "a.txt", exists: true, oldContent: "A1\n" },
+      { path: "b.txt", exists: false },
+    ],
+    diff: "FORGED-BY-CONNECTOR",
+  });
+  function diffRow(): ConnectorWriteRow {
+    const base = withPreview(makeRow("synth_apply", "iac.terraform.apply", "write", 3), {
+      target: "{dir}",
+      summary: "Apply {dir}",
+      fields: [textField("dir"), { key: "files", label: "Files", kind: "diff" }],
+    });
+    const bound = synthBound({
+      argKeys: ["dir", "files"],
+      args: (input) => ({ dir: input["dir"], files: input["files"] }),
+      maxReplyBytes: 100_000,
+      maxInputBytes: 100_000,
+      diff: {
+        maxOldBytes: 1000,
+        maxDiffBytes: 5000,
+        files: (picked, reply) => {
+          const inFiles = picked["files"] as Array<{ path: string; content: string }>;
+          const got = (reply as ReturnType<typeof diffReply>).files;
+          if (got.length !== inFiles.length) return undefined;
+          return inFiles.map((f, i) => ({
+            path: f.path,
+            oldContent: got[i]?.exists === true ? got[i]?.oldContent : undefined,
+            newContent: f.content,
+          }));
+        },
+      },
+    });
+    return withBound(base, bound, SYNTH_PREPARE_IDS);
+  }
+
+  test("the preview carries the gateway's diff, and the prompt text contains it", async () => {
+    const h = harness({ row: diffRow(), prepareReply: diffReply });
+    const r = await h.exec.execute(DIFF_ACTION);
+    expect(r.status).toBe("ok");
+    const shown = h.details[0] as { diff?: { files: Array<{ path: string; state: string }> } };
+    expect(shown.diff?.files.map((f) => [f.path, f.state])).toEqual([
+      ["a.txt", "modified"],
+      ["b.txt", "new"],
+    ]);
+    expect(h.prompts[0]).toContain("=== a.txt (modified)");
+    expect(h.prompts[0]).toContain("-A1");
+    expect(h.prompts[0]).toContain("+A2");
+    expect(h.prompts[0]).toContain("+fresh");
+    expect(h.prompts[0]).toContain("End of diff: 2 files, +2 -1");
+    expect(h.prompts[0]).not.toContain("FORGED-BY-CONNECTOR");
+    // The diff is the last thing in the prompt body.
+    expect(h.prompts[0]?.trimEnd().endsWith("End of diff: 2 files, +2 -1")).toBe(true);
+  });
+
+  test("the audit row carries diffSha256 of the rendered diff; the diff itself is not stored", async () => {
+    const h = harness({ row: diffRow(), prepareReply: diffReply });
+    await h.exec.execute(DIFF_ACTION);
+    const shown = h.details[0] as { diff?: { sha256: string } };
+    const audit = lastAuditJson(h);
+    expect(audit["diffSha256"]).toBe(shown.diff?.sha256);
+    expect(audit["diffSha256"]).toMatch(/^[0-9a-f]{64}$/);
+    expect(h.audits.at(-1)?.actionJson).not.toContain("-A1");
+  });
+
+  test("a declined write still records the digest of what was shown", async () => {
+    const h = harness({ row: diffRow(), prepareReply: diffReply, approve: false });
+    await h.exec.execute(DIFF_ACTION);
+    expect(lastAuditJson(h)["diffSha256"]).toBeString();
+  });
+
+  test("a row without a diff shows none and records no digest", async () => {
+    const h = harness();
+    await h.exec.execute(NESTED);
+    expect(h.details[0]).not.toHaveProperty("diff");
+    expect(h.prompts[0]).not.toContain("End of diff");
+    expect(lastAuditJson(h)["diffSha256"]).toBeUndefined();
+  });
+
+  test("a diff the step cannot make refuses before any prompt", async () => {
+    const h = harness({ row: diffRow(), prepareReply: () => ({ ...diffReply(), files: [] }) });
+    const r = await h.exec.execute(DIFF_ACTION);
+    expect(r.status).toBe("rejected");
+    expect(h.prompts).toEqual([]);
+    expect(writesOf(h)).toEqual([]);
+  });
+});

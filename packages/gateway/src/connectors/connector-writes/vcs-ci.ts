@@ -2,10 +2,13 @@
 import {
   beforeReplyJson,
   excerptHead,
+  nonEmptyString,
+  positiveIntegerArg,
   presentFields,
   requiredStringAt,
   stringAt,
 } from "./before-select.ts";
+import { GITHUB_COMMIT_BOUND, GITLAB_COMMIT_BOUND } from "./commit-bound.ts";
 import { gitlabTitleIsDraftExact, gitlabTitleLooksDraft } from "./gitlab-draft.ts";
 import {
   type BeforeStateField,
@@ -13,9 +16,40 @@ import {
   row,
   textField,
   withBefore,
+  withBound,
   withConfirm,
   withPreview,
 } from "./types.ts";
+import {
+  bitbucketPrReadArgs,
+  CIRCLECI_BRANCH_AND_TAG_GUARD,
+  circleciJobReadArgs,
+  circleciPipelineReadArgs,
+  GITHUB_MERGE_SHA_GUARD,
+  GITHUB_TAG_SHA_GUARD,
+  GITLAB_MERGE_SHA_GUARD,
+  ghaLatestRunReadArgs,
+  ghaRunReadArgs,
+  githubBranchDeleteReadArgs,
+  githubCommitReadArgs,
+  githubPrReadArgs,
+  gitlabMrReadArgs,
+  gitlabPipelineReadArgs,
+  jenkinsReadArgs,
+  selectBitbucketPrMerge,
+  selectCircleciJob,
+  selectCircleciLatestPipeline,
+  selectGhaLatestRun,
+  selectGhaRun,
+  selectGithubBranchDelete,
+  selectGithubPrMerge,
+  selectGithubTagCreate,
+  selectGitlabMrMerge,
+  selectGitlabPipelineCancel,
+  selectGitlabPipelineRetry,
+  selectJenkinsBuild,
+  selectJenkinsJob,
+} from "./vcs-ci-readers.ts";
 
 /** GitLab `gitlab_mr_get` (before-state, spec 5.4): title, state and the branches; never the body. */
 export function selectGitlabMrIdentity(reply: unknown): readonly BeforeStateField[] {
@@ -64,34 +98,10 @@ export function selectGithubPrIdentity(reply: unknown): readonly BeforeStateFiel
   ];
 }
 
-/** A positive integer given as a number or a string of digits, else `undefined`. */
-export function positiveIntegerArg(v: unknown): number | undefined {
-  const n = typeof v === "string" && /^[0-9]+$/.test(v) ? Number(v) : v;
-  return typeof n === "number" && Number.isSafeInteger(n) && n >= 1 ? n : undefined;
-}
-
-/** `github_pr_get` input from a PR write: string owner and repo, a positive pull number; else no read. */
-function githubPrReadArgs(
-  input: Readonly<Record<string, unknown>>,
-): Record<string, unknown> | undefined {
-  const owner = input["owner"];
-  const repo = input["repo"];
-  const pullNumber = positiveIntegerArg(input["pullNumber"]);
-  if (typeof owner !== "string" || owner === "" || typeof repo !== "string" || repo === "") {
-    return undefined;
-  }
-  return pullNumber === undefined ? undefined : { owner, repo, pullNumber };
-}
-
 /** The GitHub `github_pr_get` reply's boolean `draft`, else `undefined`. */
 function draftOf(j: unknown): boolean | undefined {
   const d = typeof j === "object" && j !== null ? (j as { draft?: unknown }).draft : undefined;
   return typeof d === "boolean" ? d : undefined;
-}
-
-/** A non-empty string input, else `undefined`. */
-function nonEmptyString(v: unknown): string | undefined {
-  return typeof v === "string" && v !== "" ? v : undefined;
 }
 
 const SHA_40 = /^[0-9a-f]{40}$/i;
@@ -243,9 +253,40 @@ function excerptOpt(v: string | undefined): string | undefined {
 export const VCS_CI_ROWS: readonly ConnectorWriteRow[] = [
   // Spec § 15, OR-W34-3: merges, branch delete and tag create are irreversible, so wave 4 (always
   // prompts, needs a before-state and type-to-confirm, never auto-fires).
-  withConfirm(row("github_pr_merge", "github.pr.merge", "mesh", 4), {
-    template: "merge {owner}/{repo}#{pullNumber}",
-  }),
+  // D1: the merge is shown beside the pull request it will merge. The model must send `sha` (the
+  // head commit it saw); the reader's guard refuses unless the head is exactly that commit, and
+  // GitHub enforces the same pin at merge time with a 409 (round-1 fix 1). `commitTitle` is shown
+  // in full and not scanned (see the free-text table in d1-templates.test.ts).
+  withConfirm(
+    withBefore(
+      withPreview(row("github_pr_merge", "github.pr.merge", "mesh", 4), {
+        target: "{owner}/{repo}#{pullNumber}",
+        summary:
+          "Merge GitHub pull request {owner}/{repo}#{pullNumber}; Nimbus cannot undo a merge",
+        fields: [
+          textField("owner"),
+          textField("repo"),
+          textField("pullNumber", "Pull request number"),
+          textField(
+            "sha",
+            "Head commit that must match",
+            "(not set: NOT PINNED, the merge uses whatever the head is when it runs)",
+          ),
+          textField("mergeMethod", "Merge method", "(not set: a merge commit)"),
+          textField("commitTitle", "Commit title", "(not set: GitHub's default title)"),
+        ],
+      }),
+      {
+        tool: "github_pr_get",
+        // `sha` is declared for the select and the guard, never sent to the read.
+        argKeys: ["owner", "repo", "pullNumber", "sha"],
+        args: githubPrReadArgs,
+        select: selectGithubPrMerge,
+        guard: GITHUB_MERGE_SHA_GUARD,
+      },
+    ),
+    { template: "merge {owner}/{repo}#{pullNumber}" },
+  ),
   // Close without merging (PATCH `state: closed`); recoverable, the pull request can be reopened.
   withBefore(
     withPreview(row("github_pr_close", "github.pr.close", "mesh", 3), {
@@ -400,15 +441,123 @@ export const VCS_CI_ROWS: readonly ConnectorWriteRow[] = [
       ),
     },
   ),
-  withConfirm(row("github_branch_delete", "github.branch.delete", "mesh", 4), {
-    template: "delete {owner}/{repo}@{branch}",
-  }),
-  withConfirm(row("github_tag_create", "github.tag.create", "mesh", 4), {
-    template: "create {owner}/{repo}@{tag}",
-  }),
-  withConfirm(row("gitlab_mr_merge", "gitlab.mr.merge", "mesh", 4), {
-    template: "merge {projectPath}!{mergeRequestIid}",
-  }),
+  withConfirm(
+    withBefore(
+      withPreview(row("github_branch_delete", "github.branch.delete", "mesh", 4), {
+        target: "{owner}/{repo}@{branch}",
+        summary:
+          "Delete GitHub branch {branch} from {owner}/{repo}; the commits only it holds become unreachable",
+        fields: [textField("owner"), textField("repo"), textField("branch")],
+      }),
+      {
+        tool: "github_ref_get",
+        argKeys: ["owner", "repo", "branch"],
+        args: githubBranchDeleteReadArgs,
+        select: selectGithubBranchDelete,
+      },
+    ),
+    { template: "delete {owner}/{repo}@{branch}" },
+  ),
+  // D1 (round-1 fix 7): the commit read resolves `sha` (7 to 40 characters) and the guard refuses
+  // unless the resolved commit starts with it, so a branch or tag name cannot stand for a sha.
+  withConfirm(
+    withBefore(
+      withPreview(row("github_tag_create", "github.tag.create", "mesh", 4), {
+        target: "{owner}/{repo}@{tag}",
+        summary: "Create GitHub tag {tag} in {owner}/{repo} pointing at commit {sha}",
+        fields: [
+          textField("owner"),
+          textField("repo"),
+          textField("tag"),
+          textField("sha", "Commit sha"),
+        ],
+      }),
+      {
+        tool: "github_commit_get",
+        argKeys: ["owner", "repo", "sha"],
+        args: githubCommitReadArgs,
+        select: selectGithubTagCreate,
+        guard: GITHUB_TAG_SHA_GUARD,
+      },
+    ),
+    { template: "create {owner}/{repo}@{tag}" },
+  ),
+  // D1: `sha` is optional on GitLab. When the model sends one the guard refuses a mismatch with the
+  // merge request's head; without one the preview says NOT PINNED and GitLab merges whatever the
+  // head is. `mergeCommitMessage` is shown in full and not scanned.
+  withConfirm(
+    withBefore(
+      withPreview(row("gitlab_mr_merge", "gitlab.mr.merge", "mesh", 4), {
+        target: "{projectPath}!{mergeRequestIid}",
+        summary:
+          "Merge GitLab merge request {projectPath}!{mergeRequestIid}; Nimbus cannot undo a merge",
+        fields: [
+          textField("projectPath"),
+          textField("mergeRequestIid", "Merge request number"),
+          textField(
+            "sha",
+            "Pinned head commit",
+            "(not set: NOT PINNED, the merge uses whatever the head is when it runs)",
+          ),
+          textField("squash", "Squash", "(not set: the merge request's own setting)"),
+          textField(
+            "shouldRemoveSourceBranch",
+            "Delete the source branch",
+            "(not set: the merge request's own setting)",
+          ),
+          textField("mergeCommitMessage", "Merge commit message", "(not set: GitLab's default)"),
+        ],
+      }),
+      {
+        tool: "gitlab_mr_get",
+        // `sha` is declared for the guard, never sent to the read.
+        argKeys: ["projectPath", "mergeRequestIid", "sha"],
+        args: gitlabMrReadArgs,
+        select: selectGitlabMrMerge,
+        guard: GITLAB_MERGE_SHA_GUARD,
+      },
+    ),
+    { template: "merge {projectPath}!{mergeRequestIid}" },
+  ),
+  // The multi-file commit writes (connectors 0.8, Project D; bound and previewed in D1c). Each is
+  // BOUND to the branch head its prepare tool read (`expectedHeadSha`, injected by the gateway, never
+  // the caller's) and shows the owner the whole change as a unified diff the gateway renders from
+  // the caller's text and the prepare reply (`commit-bound.ts`, `diff.ts`). `message` and the file
+  // text are shown in full and are not scanned for remote content: file text is code (spec § 15.3).
+  // The act door denies both (class vcs): its consent display has no diff (`proposable-actions.ts`).
+  withConfirm(
+    withBound(
+      withPreview(row("github_file_commit", "github.file.commit", "mesh", 4), {
+        target: "{owner}/{repo}@{branch}",
+        summary: "Commit to branch {branch} of {owner}/{repo} as ONE commit (full diff below)",
+        fields: [
+          textField("owner", "Owner"),
+          textField("repo", "Repository"),
+          textField("branch", "Branch"),
+          textField("message", "Commit message"),
+          { key: "files", label: "Files", kind: "diff" },
+        ],
+      }),
+      GITHUB_COMMIT_BOUND,
+    ),
+    { template: "commit {owner}/{repo}@{branch}" },
+  ),
+  withConfirm(
+    withBound(
+      withPreview(row("gitlab_commit_create", "gitlab.commit.create", "mesh", 4), {
+        target: "{projectPath}@{branch}",
+        summary: "Commit to branch {branch} of {projectPath} as ONE commit (full diff below)",
+        fields: [
+          textField("projectPath", "Project"),
+          textField("branch", "Branch"),
+          textField("message", "Commit message"),
+          { key: "files", label: "Files", kind: "diff" },
+        ],
+      }),
+      GITLAB_COMMIT_BOUND,
+    ),
+    { template: "commit {projectPath}@{branch}" },
+  ),
   withBefore(
     withPreview(row("gitlab_mr_note_create", "gitlab.mr.note.create", "mesh", 2), {
       target: "{projectPath}!{mergeRequestIid}",
@@ -425,31 +574,180 @@ export const VCS_CI_ROWS: readonly ConnectorWriteRow[] = [
       select: selectGitlabMrIdentity,
     },
   ),
-  withConfirm(row("bitbucket_pr_merge", "bitbucket.pr.merge", "mesh", 4), {
-    template: "merge {repoFull}#{pullRequestId}",
-  }),
-  withConfirm(row("jenkins_build_trigger", "jenkins.build.trigger", "mesh", 4), {
-    template: "trigger {jobName}",
-  }),
-  withConfirm(row("jenkins_build_abort", "jenkins.build.abort", "mesh", 4), {
-    template: "abort {jobName}#{buildNumber}",
-  }),
-  withConfirm(row("gha_run_trigger", "github_actions.run.trigger", "mesh", 4), {
-    template: "trigger {owner}/{repo}:{workflowId}",
-  }),
-  withConfirm(row("gha_run_cancel", "github_actions.run.cancel", "mesh", 4), {
-    template: "cancel {owner}/{repo}#{runId}",
-  }),
-  withConfirm(row("circleci_pipeline_trigger", "circleci.pipeline.trigger", "mesh", 4), {
-    template: "trigger {projectSlug}",
-  }),
-  withConfirm(row("circleci_job_cancel", "circleci.job.cancel", "mesh", 4), {
-    template: "cancel {projectSlug}#{jobNumber}",
-  }),
-  withConfirm(row("gitlab_pipeline_retry", "gitlab.pipeline.retry", "mesh", 4), {
-    template: "retry {projectPath}#{pipelineId}",
-  }),
-  withConfirm(row("gitlab_pipeline_cancel", "gitlab.pipeline.cancel", "mesh", 4), {
-    template: "cancel {projectPath}#{pipelineId}",
-  }),
+  // The Bitbucket merge has no head precondition the connector can send, so it is NEVER offered to
+  // the model (`MODEL_NEVER_OFFERED_TOOL_IDS`, round-1 fix 8). It keeps its preview and its
+  // reader for the owner's own doors. `message` is shown in full and not scanned.
+  withConfirm(
+    withBefore(
+      withPreview(row("bitbucket_pr_merge", "bitbucket.pr.merge", "mesh", 4), {
+        target: "{repoFull}#{pullRequestId}",
+        summary:
+          "Merge Bitbucket pull request {repoFull}#{pullRequestId}; Nimbus cannot undo a merge",
+        fields: [
+          textField("repoFull", "Repository"),
+          textField("pullRequestId", "Pull request number"),
+          textField(
+            "mergeStrategy",
+            "Merge strategy",
+            "(not set: the repository's default strategy)",
+          ),
+          textField("message", "Merge commit message", "(not set: Bitbucket's default message)"),
+        ],
+      }),
+      {
+        tool: "bitbucket_pr_get",
+        argKeys: ["repoFull", "pullRequestId"],
+        args: bitbucketPrReadArgs,
+        select: selectBitbucketPrMerge,
+      },
+    ),
+    { template: "merge {repoFull}#{pullRequestId}" },
+  ),
+  withConfirm(
+    withBefore(
+      withPreview(row("jenkins_build_trigger", "jenkins.build.trigger", "mesh", 4), {
+        target: "{jobName}",
+        summary:
+          "Start a new build of Jenkins job {jobName}; the connector sends no build parameters",
+        fields: [textField("jobName", "Job")],
+      }),
+      {
+        tool: "jenkins_job_get",
+        argKeys: ["jobName"],
+        args: (input) => jenkinsReadArgs(input, false),
+        select: selectJenkinsJob,
+      },
+    ),
+    { template: "trigger {jobName}" },
+  ),
+  withConfirm(
+    withBefore(
+      withPreview(row("jenkins_build_abort", "jenkins.build.abort", "mesh", 4), {
+        target: "{jobName}#{buildNumber}",
+        summary: "Abort build {buildNumber} of Jenkins job {jobName}",
+        fields: [textField("jobName", "Job"), textField("buildNumber", "Build number")],
+      }),
+      {
+        tool: "jenkins_build_get",
+        argKeys: ["jobName", "buildNumber"],
+        args: (input) => jenkinsReadArgs(input, true),
+        select: selectJenkinsBuild,
+      },
+    ),
+    { template: "abort {jobName}#{buildNumber}" },
+  ),
+  // `inputs` is shown in full and not scanned; the read shows the latest run on the branch the
+  // dispatch will use (any workflow), the nearest the connector's reads come to "what is running".
+  withConfirm(
+    withBefore(
+      withPreview(row("gha_run_trigger", "github_actions.run.trigger", "mesh", 4), {
+        target: "{owner}/{repo}:{workflowId}",
+        summary: "Dispatch GitHub Actions workflow {workflowId} in {owner}/{repo}",
+        fields: [
+          textField("owner"),
+          textField("repo"),
+          textField("workflowId", "Workflow (id or file name)"),
+          textField("ref", "Branch or tag", "(not set: main)"),
+          textField("inputs", "Workflow inputs", "(not set: none)"),
+        ],
+      }),
+      {
+        tool: "gha_run_list",
+        // `ref` is read for the branch the dispatch uses (the connector defaults it to main).
+        argKeys: ["owner", "repo", "ref"],
+        args: ghaLatestRunReadArgs,
+        select: selectGhaLatestRun,
+      },
+    ),
+    { template: "trigger {owner}/{repo}:{workflowId}" },
+  ),
+  withConfirm(
+    withBefore(
+      withPreview(row("gha_run_cancel", "github_actions.run.cancel", "mesh", 4), {
+        target: "{owner}/{repo}#{runId}",
+        summary: "Cancel GitHub Actions run {runId} in {owner}/{repo}",
+        fields: [textField("owner"), textField("repo"), textField("runId", "Run id")],
+      }),
+      {
+        tool: "gha_run_get",
+        argKeys: ["owner", "repo", "runId"],
+        args: ghaRunReadArgs,
+        select: selectGhaRun,
+      },
+    ),
+    { template: "cancel {owner}/{repo}#{runId}" },
+  ),
+  // The connector sends `tag` when one is set and `branch` (default main) otherwise; `parameters`
+  // is shown in full and not scanned.
+  withConfirm(
+    withBefore(
+      withPreview(row("circleci_pipeline_trigger", "circleci.pipeline.trigger", "mesh", 4), {
+        target: "{projectSlug}",
+        summary: "Start a CircleCI pipeline on project {projectSlug}",
+        fields: [
+          textField("projectSlug", "Project"),
+          textField("branch", "Branch", "(not set: main, unless a tag is given)"),
+          textField("tag", "Tag", "(not set: none)"),
+          textField("parameters", "Pipeline parameters", "(not set: none)"),
+        ],
+      }),
+      {
+        tool: "circleci_pipeline_list",
+        // `branch` and `tag` are declared for the guard, never sent to the read.
+        argKeys: ["projectSlug", "branch", "tag"],
+        args: circleciPipelineReadArgs,
+        select: selectCircleciLatestPipeline,
+        guard: CIRCLECI_BRANCH_AND_TAG_GUARD,
+      },
+    ),
+    { template: "trigger {projectSlug}" },
+  ),
+  withConfirm(
+    withBefore(
+      withPreview(row("circleci_job_cancel", "circleci.job.cancel", "mesh", 4), {
+        target: "{projectSlug}#{jobNumber}",
+        summary: "Cancel job {jobNumber} of CircleCI project {projectSlug}",
+        fields: [textField("projectSlug", "Project"), textField("jobNumber", "Job number")],
+      }),
+      {
+        tool: "circleci_job_get",
+        argKeys: ["projectSlug", "jobNumber"],
+        args: circleciJobReadArgs,
+        select: selectCircleciJob,
+      },
+    ),
+    { template: "cancel {projectSlug}#{jobNumber}" },
+  ),
+  withConfirm(
+    withBefore(
+      withPreview(row("gitlab_pipeline_retry", "gitlab.pipeline.retry", "mesh", 4), {
+        target: "{projectPath}#{pipelineId}",
+        summary: "Retry the failed jobs of GitLab pipeline {pipelineId} in {projectPath}",
+        fields: [textField("projectPath"), textField("pipelineId", "Pipeline id")],
+      }),
+      {
+        tool: "gitlab_pipeline_get",
+        argKeys: ["projectPath", "pipelineId"],
+        args: gitlabPipelineReadArgs,
+        select: selectGitlabPipelineRetry,
+      },
+    ),
+    { template: "retry {projectPath}#{pipelineId}" },
+  ),
+  withConfirm(
+    withBefore(
+      withPreview(row("gitlab_pipeline_cancel", "gitlab.pipeline.cancel", "mesh", 4), {
+        target: "{projectPath}#{pipelineId}",
+        summary: "Cancel GitLab pipeline {pipelineId} in {projectPath}",
+        fields: [textField("projectPath"), textField("pipelineId", "Pipeline id")],
+      }),
+      {
+        tool: "gitlab_pipeline_get",
+        argKeys: ["projectPath", "pipelineId"],
+        args: gitlabPipelineReadArgs,
+        select: selectGitlabPipelineCancel,
+      },
+    ),
+    { template: "cancel {projectPath}#{pipelineId}" },
+  ),
 ];
