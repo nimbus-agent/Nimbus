@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794354353516,
+  "lastUpdate": 1794354933942,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "6742411706b8c41b3730f93e91ba45bd5129fd75",
-          "message": "fix(agents): strip a fabricated reserved section at any level, and in its non-heading form (#1302)\n\nCloses **F2**, **F28** and **F29** in one change, because they are one\ndefect seen three ways.\n\nA synthesized brief was shipping the `Gaps` block **twice** — once as\nthe canonical, renderer-built\nsection, and once as a fabricated copy in raw internal syntax, sitting\nabove it:\n\n```text\n# Gaps                                          ← fabricated by the model\ncategory: missing_relation_emit\ndetail: No downstream impact resolved.\nremediation: graph-populator emits `depends_on` only at workspace→package …\n\n## Gaps                                         ← canonical, re-attached verbatim ✅\n- No reverse `depends_on` edges to the start entity. …\n```\n\nI31 held throughout — no disclosure was ever lost. What shipped was a\nsecond copy of it, leaking\nthe envelope field names into user-facing output.\n\n## The survey\n\nEight briefs run against a live gateway with `[agents] synthesis =\n\"local\"`. **Six leaked**, in\n**three** spellings:\n\n| shape | briefs | old `h.level !== 2` rule |\n|---|---|---|\n| promoted `# Gaps` | impact, conflicts, expert, huddle, janitor |\nmissed |\n| demoted `### Gaps` under a fabricated `# Deterministic Findings` | why\n| missed |\n| non-heading `Gaps:` label / bare `Gaps` line | negotiate, janitor |\nmissed |\n\nFive of the six carried `category:` / `detail:` / `remediation:` into\nthe rendered brief.\n\n## The guard was keyed on the wrong property\n\nEvery previous version of the rule asked *what level is this heading*.\nThe fact that actually\nseparates fabrication from the canonical section is neither the level\nnor even the headingness:\n\n> The renderer writes each reserved section **exactly once, at level\n2**, and `reservedBlocksFor`\n> re-attaches it verbatim. So any occurrence the model produces is\nfabrication by construction,\n> whatever level it carries.\n\n`stripSections` now keys on the reserved **name** at any level, with\neach section ending at the\nnext heading of the same level or higher. One rule instead of chasing\nspellings.\n\nThe demotion rationale in the old doc comment was sound *as written* —\nwidening the strip could\ndelete legitimate sub-structure — but it does not hold for a reserved\nname, and the `why` transcript\nis the counterexample: that `### Gaps` was nested under a heading the\nmodel invented, so it was not\nsub-structure of anything the renderer wrote. The old test asserting a\ndemoted `### Gaps` survives\nis **inverted on purpose**, with a comment saying so.\n\n`sectionBody`'s own `h.level === 2` rule is deliberately unchanged: it\nlocates the *canonical*\nsection, which the renderer always writes at level 2. Finding the\ncanonical block and deleting a\nfabricated one are opposite jobs.\n\n## The non-heading form needed a different mechanism\n\n`stripSections` parses headings, so a `Gaps:` paragraph is invisible to\nit at every level — which\nis why neither the old rule nor the new one closes F28.\n`stripSerializedGapEnvelope` handles it by\nthe internal field names, which no renderer emits.\n\nFail-closed in the other direction, deliberately: a run counts as an\nenvelope only when it contains\na `category:` line carrying a known `GapCategory`. Prose can\nlegitimately start a line with\n`detail:` — a definition quoted verbatim out of a Notion page — and\ndeleting that would be a real\nloss for no gain. The five category values are derived from the SDK\nunion with `satisfies`, so a\nsixth cannot leave the guard silently narrower than the type it is\nabout.\n\nFence tracking is hoisted into a shared `fencedLineFlags` rather than\nduplicated, so the heading\nscan and the envelope scan cannot disagree about where a fence starts —\nthe same\ntwo-copies-drift shape `brief-disclosures.ts` exists to prevent one\nlevel up.\n\n## Tests\n\nThe four captured transcripts are a regression suite of their own, each\nnamed for the brief it came\nfrom, run through **both** strips in the order `synthesize.ts` applies\nthem. They are recordings,\nnot hypotheticals.\n\nWorth noting: my first draft of that suite asserted the canonical `-\ncanonical` text survived the\nstrip. It does not, and must not — the strip runs on the model's\nmarkdown and `joinReserved`\nre-attaches the renderer-built block immediately after. The assertion\nwas wrong, not the code; it\nnow says so in a comment so the next reader does not re-introduce it.\n\nEvery new heading-level test was red-proved before the fix: four\nfailing, then passing.\n\nDocs updated in the same commit per the triple rule —\n`docs/SECURITY-INVARIANTS.md`, `CLAUDE.md`\nand `GEMINI.md`. The old wording, *\"a reserved section the model invents\nanyway is stripped\"*, was\nan overclaim while the strip was level-2-only; it is now accurate and\nsays what it covers.\n\n`bun run preflight:fast` passes. 634 agent tests and the 130\nsecurity-invariant tests pass.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-08-22T04:32:09Z",
-          "tree_id": "e53a3b5fa40164467c08bf682a77dccd7b0bac05",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/6742411706b8c41b3730f93e91ba45bd5129fd75"
-        },
-        "date": 1787374081226,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 315.58292135000045,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 316.537979850002,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 222.69380849999615,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
+            "name": "nimbus-release-bot[bot]",
+            "username": "nimbus-release-bot[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "66c7e086b13adfd07efb48bae3f94ac6ba59284f",
+          "message": "chore: release main (#1959)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>10.45.0</summary>\n\n##\n[10.45.0](https://github.com/nimbus-agent/Nimbus/compare/v10.44.0...v10.45.0)\n(2026-11-10)\n\n\n### Features\n\n* **gateway:** record where each approval came from, and make room for a\nstanding-approved status (Phase 10 SA1)\n([#1958](https://github.com/nimbus-agent/Nimbus/issues/1958))\n([1c97307](https://github.com/nimbus-agent/Nimbus/commit/1c9730729fa161818258e7f95eb9f94d5499f7d6))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
+          "timestamp": "2026-11-10T23:47:00Z",
+          "tree_id": "a11de2167f5dbcd09c91143dfb9c569ac1473e61",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/66c7e086b13adfd07efb48bae3f94ac6ba59284f"
+        },
+        "date": 1794354929734,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 223.10706784999783,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 222.68152925000578,
             "unit": "ms"
           }
         ]
