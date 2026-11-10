@@ -770,6 +770,10 @@ jobs:
           cppcheck --enable=all --error-exitcode=1 --suppress=missingIncludeSystem packages/gateway/src-native/sandbox-helper/main.c
           # Not the forwarder's real-network file: the next step runs it with the restriction on.
           bun test packages/gateway/src/platform/sandbox --timeout 60000 --path-ignore-patterns='**/linux-forwarder-network.test.ts'
+          # The kube probe again, now WITH the helper: the integration step above ran it without one
+          # (canConfine refuses a network-bearing policy there), so only this run proves the forwarder
+          # refuses a host:port the policy does not name (D3a A0, probe 3).
+          bun test packages/gateway/test/integration/kubernetes/kube-sandbox-probe.integration.test.ts --timeout 60000
         env:
           CI: "true"
           NIMBUS_REQUIRE_SANDBOX_HELPER: "1"
