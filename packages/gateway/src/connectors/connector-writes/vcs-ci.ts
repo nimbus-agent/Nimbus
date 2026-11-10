@@ -92,10 +92,16 @@ export function selectGithubPrIdentity(reply: unknown): readonly BeforeStateFiel
         "Branches",
         head === undefined || base === undefined ? undefined : excerptHead(`${head} -> ${base}`),
       ],
-      ["Draft", typeof draft === "boolean" ? (draft ? "yes" : "no") : undefined],
+      ["Draft", yesNo(typeof draft === "boolean" ? draft : undefined)],
       ["Author", excerptOpt(stringAt(j, ["user", "login"]))],
     ]),
   ];
+}
+
+/** `yes` or `no` for a boolean, else `undefined` (the line is then left out). */
+function yesNo(value: boolean | undefined): string | undefined {
+  if (value === undefined) return undefined;
+  return value ? "yes" : "no";
 }
 
 /** The GitHub `github_pr_get` reply's boolean `draft`, else `undefined`. */
@@ -196,7 +202,7 @@ export function selectGithubPrUpdate(
     ...presentFields([
       ["State", shownState === undefined ? undefined : excerptHead(shownState)],
       ["Base", retargetValue(stringAt(j, ["base", "ref"]), picked["base"])],
-      ["Draft", draft === undefined ? undefined : draft ? "yes" : "no"],
+      ["Draft", yesNo(draft)],
     ]),
   ];
 }

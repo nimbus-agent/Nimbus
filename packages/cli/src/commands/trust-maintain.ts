@@ -244,7 +244,7 @@ function readKeyFile(path: string): string {
   }
 }
 
-async function maintainVerify(args: string[], env: TrustMaintainEnv): Promise<void> {
+function maintainVerify(args: string[], env: TrustMaintainEnv): void {
   const p = parseArgs(args, ["--github"], [], ["--key"]);
   const [rawDir, publisherId] = p.positional;
   const dir = requireDir(rawDir, "verify-publisher");
@@ -270,7 +270,7 @@ async function maintainVerify(args: string[], env: TrustMaintainEnv): Promise<vo
   );
 }
 
-async function maintainUnverify(args: string[], env: TrustMaintainEnv): Promise<void> {
+function maintainUnverify(args: string[], env: TrustMaintainEnv): void {
   const p = parseArgs(args, [], []);
   const [rawDir, publisherId] = p.positional;
   const dir = requireDir(rawDir, "unverify-publisher");
@@ -289,11 +289,11 @@ async function maintainUnverify(args: string[], env: TrustMaintainEnv): Promise<
   );
 }
 
-async function maintainBlock(
+function maintainBlock(
   kind: "key.revoke" | "extension.takedown",
   args: string[],
   env: TrustMaintainEnv,
-): Promise<void> {
+): void {
   const p = parseArgs(args, ["--publisher", "--reason"], []);
   const [rawDir, subject] = p.positional;
   const name = kind === "key.revoke" ? "revoke-key" : "takedown";
@@ -312,7 +312,7 @@ async function maintainBlock(
   );
 }
 
-async function maintainAddStatement(args: string[], env: TrustMaintainEnv): Promise<void> {
+function maintainAddStatement(args: string[], env: TrustMaintainEnv): void {
   const p = parseArgs(args, [], []);
   const [rawDir, file] = p.positional;
   const dir = requireDir(rawDir, "add-statement");
@@ -335,7 +335,8 @@ async function maintainAddStatement(args: string[], env: TrustMaintainEnv): Prom
   const id = trustStatementId(s);
   mkdirSync(join(dir, FEED_STATEMENTS_DIR), { recursive: true });
   writeAtomic(join(dir, FEED_STATEMENTS_DIR), `${id}.json`, json(s));
-  env.io.stdout(`wrote ${join(dir, FEED_STATEMENTS_DIR, `${id}.json`)}\n${SOURCE_NOTE}`);
+  const written = join(dir, FEED_STATEMENTS_DIR, `${id}.json`);
+  env.io.stdout(`wrote ${written}\n${SOURCE_NOTE}`);
 }
 
 /* ------------------------------------------------------------------------------------------------ */
@@ -387,11 +388,12 @@ export function formatFeedPlan(plan: FeedPlan, skipped: readonly FeedSkip[]): st
   const lines: string[] = [];
   for (const b of plan.blocks) {
     const r = b.request;
-    lines.push(
-      r.kind === "key.revoke"
-        ? `  revoke key ${r.keyFingerprint} of ${r.publisherId} (${b.path})`
-        : `  take down ${r.extensionId}${r.versions === "*" ? "" : `@${r.versions.join(",")}`} of ${r.publisherId ?? "?"} (${b.path})`,
-    );
+    if (r.kind === "key.revoke") {
+      lines.push(`  revoke key ${r.keyFingerprint} of ${r.publisherId} (${b.path})`);
+    } else {
+      const versions = r.versions === "*" ? "" : `@${r.versions.join(",")}`;
+      lines.push(`  take down ${r.extensionId}${versions} of ${r.publisherId ?? "?"} (${b.path})`);
+    }
   }
   for (const v of plan.verified) {
     lines.push(
@@ -405,7 +407,8 @@ export function formatFeedPlan(plan: FeedPlan, skipped: readonly FeedSkip[]): st
     plan.status === "unchanged" ? "Nothing to sign.\n" : `The next feed:\n${lines.join("\n")}\n`;
   const skips = [...skipped, ...plan.skipped];
   if (skips.length === 0) return head;
-  return `${head}Skipped (not signed):\n${skips.map((s) => `  ${s.path}: ${s.reason}`).join("\n")}\n`;
+  const skipLines = skips.map((s) => `  ${s.path}: ${s.reason}`).join("\n");
+  return `${head}Skipped (not signed):\n${skipLines}\n`;
 }
 
 async function maintainPlan(args: string[], env: TrustMaintainEnv): Promise<void> {
@@ -442,7 +445,7 @@ export async function runTrustMaintain(
   env: TrustMaintainEnv = DEFAULT_ENV,
 ): Promise<number> {
   const [sub, ...rest] = args;
-  const handlers: Record<string, (a: string[], env: TrustMaintainEnv) => Promise<void>> = {
+  const handlers: Record<string, (a: string[], env: TrustMaintainEnv) => void | Promise<void>> = {
     init: maintainInit,
     "verify-publisher": maintainVerify,
     "unverify-publisher": maintainUnverify,

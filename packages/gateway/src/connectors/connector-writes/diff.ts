@@ -102,8 +102,21 @@ interface Edit {
   readonly line: SourceLine;
 }
 
-/** The edit script of the middle by Myers O(ND), or `undefined` when the budget ran out. */
-function myers(a: readonly string[], b: readonly string[], budget: { left: number }) {
+/** The furthest x on diagonal `k` after step `d`: down from k + 1, or right from k - 1. */
+function furthestX(v: Int32Array, off: number, k: number, d: number): number {
+  const down = k === -d || (k !== d && (v[k - 1 + off] as number) < (v[k + 1 + off] as number));
+  return down ? (v[k + 1 + off] as number) : (v[k - 1 + off] as number) + 1;
+}
+
+/**
+ * The forward pass of Myers: the V array after each step `d`, and the `d` at which the end was
+ * reached, or `undefined` when the budget ran out.
+ */
+function myersForward(
+  a: readonly string[],
+  b: readonly string[],
+  budget: { left: number },
+): { trace: Int32Array[]; found: number } | undefined {
   const n = a.length;
   const m = b.length;
   const max = n + m;
@@ -117,12 +130,7 @@ function myers(a: readonly string[], b: readonly string[], budget: { left: numbe
     for (let k = -d; k <= d; k += 2) {
       if (budget.left <= 0) return undefined;
       budget.left -= 1;
-      let x: number;
-      if (k === -d || (k !== d && (v[k - 1 + off] as number) < (v[k + 1 + off] as number))) {
-        x = v[k + 1 + off] as number;
-      } else {
-        x = (v[k - 1 + off] as number) + 1;
-      }
+      let x = furthestX(v, off, k, d);
       let y = x - k;
       while (x < n && y < m && a[x] === b[y]) {
         x++;
@@ -136,7 +144,16 @@ function myers(a: readonly string[], b: readonly string[], budget: { left: numbe
     }
     trace.push(v.slice(off - d, off + d + 1));
   }
-  // Backtrack: a list of moves from the end, each "=", "+" (insert b[i]) or "-" (delete a[i]).
+  return { trace, found };
+}
+
+/** Backtrack: a list of moves from the end, each "=", "+" (insert b[i]) or "-" (delete a[i]). */
+function myersBacktrack(
+  trace: readonly Int32Array[],
+  found: number,
+  n: number,
+  m: number,
+): Array<{ op: " " | "+" | "-"; i: number }> {
   const moves: Array<{ op: " " | "+" | "-"; i: number }> = [];
   let x = n;
   let y = m;
@@ -153,17 +170,20 @@ function myers(a: readonly string[], b: readonly string[], budget: { left: numbe
       y--;
       moves.push({ op: " ", i: x });
     }
-    if (down) {
-      moves.push({ op: "+", i: prevY });
-    } else {
-      moves.push({ op: "-", i: prevX });
-    }
+    moves.push(down ? { op: "+", i: prevY } : { op: "-", i: prevX });
     x = prevX;
     y = prevY;
   }
   // At d = 0 the path is the common prefix, which the caller stripped: (x, y) is (0, 0) here.
   moves.reverse();
   return moves;
+}
+
+/** The edit script of the middle by Myers O(ND), or `undefined` when the budget ran out. */
+function myers(a: readonly string[], b: readonly string[], budget: { left: number }) {
+  const forward = myersForward(a, b, budget);
+  if (forward === undefined) return undefined;
+  return myersBacktrack(forward.trace, forward.found, a.length, b.length);
 }
 
 /** Every old line `-`, every new line `+`. */
@@ -230,7 +250,7 @@ function buildHunks(edits: readonly Edit[]): DiffHunk[] {
   // Group the changes whose gap of unchanged lines is at most 2 * CONTEXT.
   const groups: Array<[number, number]> = [];
   for (const i of changed) {
-    const g = groups[groups.length - 1];
+    const g = groups.at(-1);
     if (g !== undefined && i - g[1] - 1 <= 2 * CONTEXT) g[1] = i;
     else groups.push([i, i]);
   }
@@ -276,21 +296,26 @@ function countOps(hunks: readonly DiffHunk[], op: "+" | "-"): number {
   return c;
 }
 
+function fileStateLabel(state: DiffFileState): string {
+  if (state === "new") return "new file";
+  if (state === "unchanged") return "no change";
+  return "modified";
+}
+
 /** The text of the diff exactly as it is shown, one entry per line (no footer). */
 export function diffTextLines(diff: PreviewDiff): string[] {
   const out: string[] = [];
   for (const file of diff.files) {
     const mode = file.mode === undefined ? "" : `, mode ${file.mode}`;
-    const label =
-      file.state === "new" ? "new file" : file.state === "unchanged" ? "no change" : "modified";
-    out.push(`=== ${file.path} (${label}${mode})`);
+    out.push(`=== ${file.path} (${fileStateLabel(file.state)}${mode})`);
     if (file.state === "unchanged") continue;
     out.push(file.state === "new" ? "--- /dev/null" : `--- a/${file.path}`, `+++ b/${file.path}`);
     for (const h of file.hunks) {
       out.push(
         `@@ -${String(h.oldStart)},${String(h.oldLines)} +${String(h.newStart)},${String(h.newLines)} @@`,
       );
-      for (const l of h.lines) out.push(l.op === "\\" ? `\\ ${l.text}` : `${l.op}${l.text}`);
+      for (const l of h.lines)
+        out.push(l.op === "\\" ? String.raw`\ ${l.text}` : `${l.op}${l.text}`);
     }
   }
   return out;

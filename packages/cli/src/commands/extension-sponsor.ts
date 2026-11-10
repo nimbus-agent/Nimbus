@@ -68,7 +68,7 @@ function parseArgs(args: readonly string[]): Parsed | undefined {
   }
   const [id] = positional;
   const raw = flags["--index"] ?? "1";
-  if (id === undefined || positional.length !== 1 || !/^[1-9][0-9]*$/.test(raw)) return undefined;
+  if (id === undefined || positional.length !== 1 || !/^[1-9]\d*$/.test(raw)) return undefined;
   const registry = flags["--registry"];
   return registry === undefined ? { id, index: Number(raw) } : { id, registry, index: Number(raw) };
 }

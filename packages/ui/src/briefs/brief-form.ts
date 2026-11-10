@@ -85,6 +85,42 @@ export function hasRequiredParams(agent: CatalogAgent): boolean {
   return model.plain.some((p) => p.required) || model.groups.some((g) => g.required);
 }
 
+type FieldRead = { value: unknown } | { problem: string } | undefined;
+
+function readNumberField(p: CatalogParam, v: FormValues[string] | undefined): FieldRead {
+  const s = typeof v === "string" ? v.trim() : "";
+  if (s === "" || (p.name === "sinceMs" && s === "Default")) return undefined;
+  const n = Number(s);
+  return Number.isFinite(n) ? { value: n } : { problem: `${p.label} must be a number` };
+}
+
+function readStringArrayField(v: FormValues[string] | undefined): FieldRead {
+  if (typeof v !== "string") return undefined;
+  const items = v
+    .split(",")
+    .map((x) => x.trim())
+    .filter((x) => x !== "");
+  return items.length > 0 ? { value: items } : undefined;
+}
+
+function readTextField(v: FormValues[string] | undefined): FieldRead {
+  const s = typeof v === "string" ? v.trim() : "";
+  return s === "" ? undefined : { value: s };
+}
+
+function readField(p: CatalogParam, v: FormValues[string] | undefined): FieldRead {
+  switch (p.kind) {
+    case "boolean":
+      return v === true ? { value: true } : undefined;
+    case "number":
+      return readNumberField(p, v);
+    case "stringArray":
+      return readStringArrayField(v);
+    default:
+      return readTextField(v);
+  }
+}
+
 /** `undefined` means "omit". A value the field cannot hold is reported through `problems`. */
 function collectOne(
   p: CatalogParam,
@@ -93,44 +129,16 @@ function collectOne(
   params: Record<string, unknown>,
   problems: string[],
 ): void {
-  const v = values[p.name];
-  let out: unknown;
-  switch (p.kind) {
-    case "boolean":
-      if (v === true) out = true;
-      break;
-    case "number": {
-      const s = typeof v === "string" ? v.trim() : "";
-      if (s === "" || (p.name === "sinceMs" && s === "Default")) break;
-      const n = Number(s);
-      if (Number.isFinite(n)) out = n;
-      else {
-        problems.push(`${p.label} must be a number`);
-        return;
-      }
-      break;
-    }
-    case "stringArray": {
-      const items =
-        typeof v === "string"
-          ? v
-              .split(",")
-              .map((x) => x.trim())
-              .filter((x) => x !== "")
-          : [];
-      if (items.length > 0) out = items;
-      break;
-    }
-    default: {
-      const s = typeof v === "string" ? v.trim() : "";
-      if (s !== "") out = s;
-    }
-  }
-  if (out === undefined) {
+  const read = readField(p, values[p.name]);
+  if (read === undefined) {
     if (required) problems.push(`${p.label} is required`);
     return;
   }
-  params[p.name] = out;
+  if ("problem" in read) {
+    problems.push(read.problem);
+    return;
+  }
+  params[p.name] = read.value;
 }
 
 export function collectParams(

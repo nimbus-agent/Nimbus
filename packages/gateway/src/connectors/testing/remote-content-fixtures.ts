@@ -91,10 +91,14 @@ function obsidian(label: string, content: string): RemoteContentDoorCase {
   };
 }
 
+const SVG_MIME: Readonly<Record<string, unknown>> = Object.freeze({
+  mimeType: "image/svg+xml",
+});
+
 function drive(
   label: string,
   content: string,
-  over: Readonly<Record<string, unknown>> = { mimeType: "image/svg+xml" },
+  over: Readonly<Record<string, unknown>> = SVG_MIME,
 ): RemoteContentDoorCase {
   return {
     label: `drive create: ${label}`,
@@ -334,7 +338,7 @@ const OBSIDIAN_REFUSED: ReadonlyArray<readonly [string, string]> = [
   ["an inline iframe", "<iframe src=//h></iframe>"],
   ["an inline link element", "<link href=x>"],
   ["a fullwidth bang", `${FULLWIDTH_BANG}[](https://h)`],
-  ["an escaped bang (stated)", "\\![x](https://h)"],
+  ["an escaped bang (stated)", String.raw`\![x](https://h)`],
   [
     "a mermaid click URL",
     `${BACKTICKS}mermaid${LF}graph TD${LF}click A "https://h/x"${LF}${BACKTICKS}`,
@@ -565,7 +569,7 @@ const FORGE_REFUSED: ReadonlyArray<readonly [string, string]> = [
   ["an entity bang", "&#33;[x](https://h)"],
   ["a fullwidth bang", `${FULLWIDTH_BANG}[x](https://h)`],
   ["a zero-width space after the bang", `!${ZWSP}[x](https://h)`],
-  ["an escaped bang (stated)", "\\![x](https://h)"],
+  ["an escaped bang (stated)", String.raw`\![x](https://h)`],
   ["an HTML image", `<img src="https://h">`],
   ["an upper-case HTML image", "<IMG SRC=//h>"],
   ["a picture source", `<picture><source srcset="https://h/x.png"></picture>`],

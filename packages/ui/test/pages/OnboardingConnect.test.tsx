@@ -245,3 +245,79 @@ describe("Onboarding → Connect", () => {
     expect(cont.disabled).toBe(true);
   });
 });
+
+describe("Onboarding → Connect navigation and polling", () => {
+  beforeEach(() => {
+    callMock.mockReset();
+    useNimbusStore.getState().resetOnboarding();
+  });
+
+  function renderWithBack() {
+    return render(
+      <MemoryRouter initialEntries={["/onboarding/connect"]}>
+        <Routes>
+          <Route path="/onboarding/connect" element={<Connect />} />
+          <Route path="/onboarding/role" element={<div>role step</div>} />
+          <Route path="/onboarding/pack" element={<div>pack step</div>} />
+        </Routes>
+      </MemoryRouter>,
+    );
+  }
+
+  it("Back returns to the role step when no pack was chosen", async () => {
+    gateway();
+    renderWithBack();
+    fireEvent.click(await screen.findByRole("button", { name: /back/i }));
+    expect(await screen.findByText("role step")).toBeTruthy();
+  });
+
+  it("Back returns to the pack step when a pack was chosen", async () => {
+    useNimbusStore.getState().setChosenPack("pm", true);
+    gateway();
+    renderWithBack();
+    fireEvent.click(await screen.findByRole("button", { name: /back/i }));
+    expect(await screen.findByText("pack step")).toBeTruthy();
+  });
+
+  it("does not poll connector status while the window is hidden", async () => {
+    const visibility = vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+    try {
+      gateway();
+      renderAt();
+      expect(await screen.findByText("Slack")).toBeTruthy();
+      expect(callMock.mock.calls.some(([m]) => m === "connector.listStatus")).toBe(false);
+    } finally {
+      visibility.mockRestore();
+    }
+  });
+
+  it("falls back to the default suggestions when the catalog cannot be read", async () => {
+    callMock.mockImplementation(async (method: string) => {
+      if (method === "catalog.list") throw new Error("catalog down");
+      if (method === "connector.listStatus") return [];
+      throw new Error(`unexpected ${method}`);
+    });
+    renderAt();
+    expect(await screen.findByText("google_drive")).toBeTruthy();
+  });
+
+  it("shows Signing in… while a sign-in is running and ignores a second press", async () => {
+    let finish: () => void = () => undefined;
+    gateway({
+      auth: () =>
+        new Promise((resolve) => {
+          finish = () => resolve(null);
+        }),
+    });
+    renderAt();
+    fireEvent.click(await screen.findByText("Slack"));
+    fireEvent.click(screen.getByRole("button", { name: /sign in \(1\)/i }));
+    const busy = await screen.findByRole("button", { name: "Signing in…" });
+    expect((busy as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(busy);
+    expect(authCalls()).toHaveLength(1);
+    await act(async () => {
+      finish();
+    });
+  });
+});

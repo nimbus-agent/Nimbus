@@ -134,7 +134,7 @@ export function Decisions(): ReactNode {
           ))}
         </ul>
       )}
-      <p role="status">{view.headline}</p>
+      <output style={{ display: "block", margin: "1em 0" }}>{view.headline}</output>
       {view.reason !== undefined && <p>{view.reason}</p>}
       {(status?.recent.length ?? 0) > 0 && (
         <ul style={{ lineHeight: 1.6 }}>

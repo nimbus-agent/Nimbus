@@ -54,6 +54,7 @@ export function HitlPopupPage(): ReactNode {
   // The type is the gateway's own `actionType` on `consent.request`, and nothing else: not a key of
   // the payload (the payload is the action's data) and not the prompt text (it embeds that data).
   const action = head?.actionType;
+  const actionProps = action === undefined ? {} : { action };
   const isMigrate = action === "extension.migrate";
   // The gateway renders a role pack's prompt itself — the pack's exact defaults text — and it is
   // multi-line, so it is shown verbatim in a bounded scroll box rather than as a heading.
@@ -152,7 +153,7 @@ export function HitlPopupPage(): ReactNode {
           {head.prompt}
         </pre>
       ) : (
-        <StructuredPreview details={head.details} {...(action === undefined ? {} : { action })} />
+        <StructuredPreview details={head.details} {...actionProps} />
       )}
       {confirmText !== undefined && (
         <div className="space-y-1">

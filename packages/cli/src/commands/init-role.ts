@@ -234,6 +234,23 @@ async function packStep(
   }
 }
 
+/** One at a time: each offer is an owner prompt, and the answers arrive in order. */
+async function offerBrowserConnects(
+  rows: ReturnType<typeof connectorSuggestions>,
+  deps: RoleStepDeps,
+): Promise<void> {
+  for (const r of rows) {
+    if (r.connected || r.signIn !== "browser") continue;
+    if (!(await deps.confirmConnect(r.displayName))) continue;
+    try {
+      await deps.connectorAuth(r.id);
+      deps.log(`  ${r.displayName}: connected.`);
+    } catch (e) {
+      deps.error(`  ${r.displayName}: ${errorText(e)}`);
+    }
+  }
+}
+
 async function connectorStep(answer: RoleAnswer, deps: RoleStepDeps): Promise<void> {
   // Read after the pack step, so a just-installed pack's suggestions and visible agents are the
   // ones shown.
@@ -258,18 +275,7 @@ async function connectorStep(answer: RoleAnswer, deps: RoleStepDeps): Promise<vo
         : `  ${r.displayName}  not connected — nimbus connector auth ${r.id}`,
     );
   }
-  if (deps.interactive) {
-    for (const r of rows) {
-      if (r.connected || r.signIn !== "browser") continue;
-      if (!(await deps.confirmConnect(r.displayName))) continue;
-      try {
-        await deps.connectorAuth(r.id);
-        deps.log(`  ${r.displayName}: connected.`);
-      } catch (e) {
-        deps.error(`  ${r.displayName}: ${errorText(e)}`);
-      }
-    }
-  }
+  if (deps.interactive) await offerBrowserConnects(rows, deps);
   if (installedRow?.visibleAgents.includes("decisions") === true) {
     deps.log("");
     deps.log("Nimbus looks for decisions after your connectors sync: nimbus decisions");

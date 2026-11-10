@@ -343,7 +343,7 @@ describe("error-reply adapter", () => {
 
   test("scalars and objects without hidden content pass through", () => {
     expect(normaliseEvalReply(5, hidden([]))).toBe(5);
-    expect(normaliseEvalReply(null, hidden([]))).toBe(null);
+    expect(normaliseEvalReply(null, hidden([]))).toBeNull();
     const o = { y: 1 };
     expect(normaliseEvalReply(o, () => undefined)).toBe(o);
   });
@@ -647,5 +647,12 @@ describe("the real role dependencies", () => {
     expect(verdict === null || typeof verdict === "string").toBe(true);
     expect(typeof (await REAL_EVAL_LOADERS.sandboxDir())).toBe("string");
     expect((await REAL_EVAL_LOADERS.runtimeReadPaths()).length).toBeGreaterThan(0);
+  });
+
+  test("the real listing client factory builds a client that disconnects without spawning", async () => {
+    const create = await REAL_EVAL_LOADERS.listingClient();
+    const client = create(`nimbus-eval-listing-test-${crypto.randomUUID()}`, {});
+    expect(typeof client.disconnect).toBe("function");
+    await client.disconnect();
   });
 });

@@ -387,3 +387,54 @@ describe("Drive Docs — the one-time re-list", () => {
     expect(decodeDriveSyncCursor(raw)).toEqual({ v: 1, phase: "delta", pageToken: "t" });
   });
 });
+
+describe("Drive Docs — export budget and re-list scope edges", () => {
+  test("a changes page of more Docs than the export budget indexes the rest without text", async () => {
+    const count = DOC_EXPORTS_PER_SYNC + 3;
+    changesPage(Array.from({ length: count }, (_, i) => docFile(`b${String(i)}`)));
+    fetchStub.respondWithText("GET", EXPORT_RE, "text");
+
+    const { res } = await syncDelta(RELIST_DONE);
+
+    expect(exportCalls()).toHaveLength(DOC_EXPORTS_PER_SYNC);
+    expect(res.itemsUpserted).toBe(count);
+    const overflow = row(`b${String(count - 1)}`);
+    expect(overflow).not.toBeNull();
+    expect(overflow?.body_complete).not.toBe(1);
+  });
+
+  test("a re-listed Doc with no id, or an empty one, is skipped; a valid one still gets its text", async () => {
+    changesPage([]);
+    fetchStub.respond("GET", RELIST_RE, {
+      files: [
+        { name: "no id", mimeType: DOC_MIME, modifiedTime: isoDaysAgo(1) },
+        { id: "", name: "empty id", mimeType: DOC_MIME, modifiedTime: isoDaysAgo(1) },
+        docFile("good", isoDaysAgo(1)),
+      ],
+    });
+    fetchStub.respondWithText("GET", EXPORT_RE, "body");
+
+    const { res } = await syncDelta(undefined);
+
+    expect(exportCalls()).toEqual(["good"]);
+    expect(res.itemsUpserted).toBe(1);
+    expect(row("good")?.type).toBe("doc");
+  });
+
+  test("a re-listed Doc that was never indexed and has no readable modified time stays out", async () => {
+    changesPage([]);
+    fetchStub.respond("GET", RELIST_RE, {
+      files: [
+        { id: "undated", name: "undated", mimeType: DOC_MIME },
+        { id: "baddate", name: "baddate", mimeType: DOC_MIME, modifiedTime: "not a date" },
+      ],
+    });
+
+    const { res } = await syncDelta(undefined);
+
+    expect(exportCalls()).toEqual([]);
+    expect(res.itemsUpserted).toBe(0);
+    expect(row("undated")).toBeNull();
+    expect(row("baddate")).toBeNull();
+  });
+});

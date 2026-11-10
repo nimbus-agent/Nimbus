@@ -1,14 +1,12 @@
 import type { DependencySpec } from "@nimbus-dev/registry-format";
 
 /** Identifies a registry as a source: `${name}#${rootFingerprint}` (a re-pinned registry is a different source). */
-export type SourceKey = string;
-
-export function sourceKey(registry: string, rootFingerprint: string): SourceKey {
+export function sourceKey(registry: string, rootFingerprint: string): string {
   return `${registry}#${rootFingerprint}`;
 }
 
 /** The registry NAME part of a key (what `ResolvedDep.registry` and `extension_dependency.depends_on_registry` store). */
-export function registryNameOf(key: SourceKey): string {
+export function registryNameOf(key: string): string {
   const hash = key.lastIndexOf("#");
   return hash < 0 ? key : key.slice(0, hash);
 }
@@ -27,7 +25,7 @@ export interface ResolvedNode {
   readonly newlyInstalled: boolean;
   readonly deps: readonly ResolvedDep[];
   /** Where this node comes from; null for a local folder (or a solve that fetches nothing). */
-  readonly source: SourceKey | null;
+  readonly source: string | null;
 }
 
 export interface InstallPlan {
@@ -36,16 +34,12 @@ export interface InstallPlan {
 
 export interface RegistryFetcher {
   /** Where `depId` (declared by a node whose source is `parentSource`) must come from. null = installed copies only. */
-  targetSource(
-    parentSource: SourceKey | null,
-    depId: string,
-    spec: DependencySpec,
-  ): SourceKey | null;
-  listVersions(id: string, source: SourceKey | null): Promise<readonly string[]>;
+  targetSource(parentSource: string | null, depId: string, spec: DependencySpec): string | null;
+  listVersions(id: string, source: string | null): Promise<readonly string[]>;
   fetchManifest(
     id: string,
     version: string,
-    source: SourceKey | null,
+    source: string | null,
   ): Promise<ExtensionManifestForSolver>;
 }
 
@@ -57,7 +51,7 @@ export interface ExtensionManifestForSolver {
 
 export interface InstalledForSolver {
   readonly version: string;
-  readonly source: SourceKey | null;
+  readonly source: string | null;
 }
 
 export interface ResolveClosureOptions {

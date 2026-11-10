@@ -5,7 +5,7 @@
  * does not verify against its own root, the `root-key` input is not that root, or the default branch
  * has no valid `nimbus-trust.json`. Then the next feed is built from the default branch's source by
  * the same builder `nimbus trust maintain sign` runs (`buildTrustFeed`), committed to `gh-pages` and
- * pushed; a push that loses a race starts over, at most `MAX_ATTEMPTS` times. Nothing new means no
+ * pushed; a push that loses a race starts over, at most three times. Nothing new means no
  * new signature and no commit.
  *
  * The root key is a secret: parsed in memory only, never written, never named (refusals name
@@ -22,7 +22,7 @@ import {
 import * as gitTree from "./git-tree.ts";
 import { PAGES_BRANCH, PAGES_REF } from "./registry-state.ts";
 import { type ActionIo, code, GHA_IO } from "./report.ts";
-import { commitSite, pushCommit } from "./site-commit.ts";
+import { commitSite, signWithRetries } from "./site-commit.ts";
 import { assertFeedConfig, readFeedSourceAt, readVerifiedFeed } from "./trust-state.ts";
 import { planLines } from "./trust-summary.ts";
 
@@ -42,8 +42,6 @@ export interface TrustSignDeps {
 }
 
 const SHARED: TrustSignDeps = { git: gitTree, io: GHA_IO };
-
-const MAX_ATTEMPTS = 3;
 
 const ROOT_KEY_RE = /^[A-Za-z0-9+/]{43}=$/;
 
@@ -116,23 +114,14 @@ async function signLoop(
 ): Promise<void> {
   const rootKey = Buffer.from(publicKeyFromSeed(seed)).toString("base64");
   const defaultBranch = opts.defaultBranch ?? deps.git.remoteDefaultBranch({ cwd: opts.workspace });
-  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-    // NOSONAR S9382: sequential by design - each attempt starts from a fresh fetch after a lost race
-    const a = await attemptSign({ ...opts, defaultBranch }, seed, rootKey, deps.git);
-    if (a.commit === undefined) {
-      report(deps.io, a, false);
-      return;
-    }
-    await deps.beforePush?.(attempt);
-    if (pushCommit(a.commit, PAGES_BRANCH, opts.workspace) === "pushed") {
-      report(deps.io, a, true);
-      return;
-    }
-    deps.io.log(`${PAGES_BRANCH} moved during attempt ${String(attempt)}; starting over`);
-  }
-  throw new Error(
-    `refusing to continue: the push to ${PAGES_BRANCH} lost to a concurrent update ${String(MAX_ATTEMPTS)} times`,
-  );
+  await signWithRetries({
+    branch: PAGES_BRANCH,
+    workspace: opts.workspace,
+    attempt: () => attemptSign({ ...opts, defaultBranch }, seed, rootKey, deps.git),
+    beforePush: deps.beforePush,
+    report: (a, pushed) => report(deps.io, a, pushed),
+    log: (line) => deps.io.log(line),
+  });
 }
 
 /** Run the `trust-sign` mode. Throws (failing the run, nothing pushed) on any refusal. */

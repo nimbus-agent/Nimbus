@@ -273,4 +273,35 @@ describe("ModelPanel", () => {
     await screen.findByRole("button", { name: /pull new model/i });
     expect(screen.getByRole("button", { name: /pull new model/i })).toBeDisabled();
   });
+
+  it("releases a subscription that resolves after the panel was closed", async () => {
+    llmListModelsMock.mockResolvedValue({ models: [] });
+    llmGetRouterStatusMock.mockResolvedValue({ decisions: {} });
+    const unlisten = vi.fn();
+    let resolveSub: (fn: () => void) => void = () => undefined;
+    subscribeMock.mockImplementation(
+      () =>
+        new Promise<() => void>((r) => {
+          resolveSub = r;
+        }),
+    );
+    const view = renderPanel();
+    await screen.findByRole("button", { name: /pull new model/i });
+    view.unmount();
+    resolveSub(unlisten);
+    await waitFor(() => expect(unlisten).toHaveBeenCalledTimes(1));
+  });
+
+  it("choosing the empty default-for option sets nothing", async () => {
+    llmListModelsMock.mockResolvedValueOnce({
+      models: [{ provider: "ollama", modelName: "gemma:2b" }],
+    });
+    llmGetRouterStatusMock.mockResolvedValueOnce({ decisions: {} });
+    renderPanel();
+    const picker = await screen.findByLabelText("gemma:2b default-for");
+    await userEvent.selectOptions(picker, "reasoning");
+    await waitFor(() => expect(llmSetDefaultMock).toHaveBeenCalledTimes(1));
+    await userEvent.selectOptions(picker, "");
+    expect(llmSetDefaultMock).toHaveBeenCalledTimes(1);
+  });
 });

@@ -252,9 +252,9 @@ describe("prepare args: the write's own keys, files rebuilt as bare pairs", () =
     ]) {
       expect(GH_ROW.bound?.prepare.args(bad as never)).toBeUndefined();
     }
-    expect(GL_ROW.bound?.prepare.args({ ...GL_INPUT, projectPath: undefined } as never)).toBe(
-      undefined,
-    );
+    expect(
+      GL_ROW.bound?.prepare.args({ ...GL_INPUT, projectPath: undefined } as never),
+    ).toBeUndefined();
   });
 });
 
@@ -523,9 +523,9 @@ describe("boundInputRefusal on the real rows", () => {
         }),
       ),
     ).toBe(COMMIT_INPUT_REFUSALS.pathUnsafe);
-    expect(boundInputRefusal(GH_ROW.bound as never, act("github_file_commit", GH_INPUT))).toBe(
-      undefined,
-    );
+    expect(
+      boundInputRefusal(GH_ROW.bound as never, act("github_file_commit", GH_INPUT)),
+    ).toBeUndefined();
   });
 
   test("a caller-supplied expectedHeadSha is refused first, at the root and in input", () => {

@@ -599,12 +599,7 @@ export class LazyConnectorMesh {
             new Promise<void>((r) => setTimeout(r, 10 * 60_000)),
           ])
         : Promise.resolve();
-    return drained.then(() =>
-      c.disconnect().then(
-        () => undefined,
-        () => undefined,
-      ),
-    );
+    return drained.then(() => disconnectQuietly(c));
   }
 
   private async stopUserMcpClient(serviceId: string): Promise<void> {
@@ -1520,4 +1515,13 @@ export function createLazyConnectorMesh(
   },
 ): Promise<LazyConnectorMesh> {
   return Promise.try(() => new LazyConnectorMesh(paths, vault, options));
+}
+
+/** Disconnects a client; a failure is ignored (the slot is already detached). */
+async function disconnectQuietly(client: { disconnect(): Promise<unknown> }): Promise<void> {
+  try {
+    await client.disconnect();
+  } catch {
+    // ignored: the client is gone either way
+  }
 }

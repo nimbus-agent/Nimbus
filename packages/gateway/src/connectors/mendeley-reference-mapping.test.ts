@@ -99,3 +99,51 @@ describe("mapMendeleyDocumentToItem", () => {
     expect(missing?.canonicalUrl).toBeNull();
   });
 });
+
+describe("mapMendeleyDocumentToItem: edge cases", () => {
+  const ctx = { syncedAt: SYNCED_AT };
+
+  test("an author with only one name part, and an author that is not a record, are handled", () => {
+    const row = mapMendeleyDocumentToItem(
+      doc({
+        abstract: undefined,
+        authors: [{ first_name: "Plato" }, { last_name: "Kant" }, {}, "x"],
+      }),
+      ctx,
+    );
+    expect(row?.metadata["creators"]).toEqual(["Plato", "Kant"]);
+    expect(row?.bodyPreview).toBe("Plato, Kant");
+  });
+
+  test("a document without authors previews by its title; authors that are not a list are ignored", () => {
+    const row = mapMendeleyDocumentToItem(doc({ abstract: undefined, authors: "n/a" }), ctx);
+    expect(row?.metadata["creators"]).toEqual([]);
+    expect(row?.bodyPreview).toBe("Exponential backoff with jitter");
+  });
+
+  test("a missing title is named by its type and id, else a generic reference", () => {
+    expect(mapMendeleyDocumentToItem(doc({ title: "  " }), ctx)?.title).toBe("journal 9f8e-1234");
+    expect(mapMendeleyDocumentToItem(doc({ title: "", type: "" }), ctx)?.title).toBe(
+      "Reference 9f8e-1234",
+    );
+    expect(mapMendeleyDocumentToItem(doc({ title: undefined, type: undefined }), ctx)?.title).toBe(
+      "Reference 9f8e-1234",
+    );
+  });
+
+  test("keywords and websites that are not usable lists are dropped", () => {
+    const row = mapMendeleyDocumentToItem(doc({ keywords: "x", websites: ["", 5] }), ctx);
+    expect(row?.metadata["keywords"]).toEqual([]);
+    expect(row?.url).toBeNull();
+    expect(mapMendeleyDocumentToItem(doc({ websites: "x" }), ctx)?.url).toBeNull();
+  });
+
+  test("a document without identifiers has no DOI, and unparseable times fall back to the sync time", () => {
+    const row = mapMendeleyDocumentToItem(
+      doc({ identifiers: undefined, last_modified: "bad", created: 5 }),
+      ctx,
+    );
+    expect(row?.metadata["doi"]).toBeNull();
+    expect(row?.modifiedAt).toBe(SYNCED_AT);
+  });
+});

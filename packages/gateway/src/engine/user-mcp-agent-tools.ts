@@ -116,11 +116,9 @@ export function offeredInputSchema(
   omit: readonly string[] = [],
 ): StandardSchemaWithJSON {
   const json = readListedJsonSchema(listed);
-  const sanitised =
-    json === undefined
-      ? { ...PERMISSIVE_USER_MCP_INPUT_SCHEMA }
-      : sanitiseUserMcpInputSchema(omit.length === 0 ? json : withoutProperties(json, omit));
-  return toStandardSchema(sanitised);
+  if (json === undefined) return toStandardSchema({ ...PERMISSIVE_USER_MCP_INPUT_SCHEMA });
+  const trimmed = omit.length === 0 ? json : withoutProperties(json, omit);
+  return toStandardSchema(sanitiseUserMcpInputSchema(trimmed));
 }
 
 function withoutProperties(json: unknown, omit: readonly string[]): unknown {

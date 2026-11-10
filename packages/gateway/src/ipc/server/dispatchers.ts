@@ -2119,6 +2119,22 @@ function observationDirOf(dataDir: string | undefined): string | undefined {
   return dataDir === undefined ? undefined : extensionObservationDirFor(dataDir);
 }
 
+/** The automation dispatcher's inputs that come straight from the server's options, each present only when set. */
+function automationServerOptions(
+  ctx: ServerCtx,
+): Partial<Parameters<typeof dispatchAutomationRpc>[0]> {
+  const o = ctx.options;
+  return {
+    ...(o.extensionsDir === undefined ? {} : { extensionsDir: o.extensionsDir }),
+    ...(o.connectorMesh === undefined ? {} : { mesh: o.connectorMesh }),
+    ...(o.sandboxRunner === undefined ? {} : { sandboxRunner: o.sandboxRunner }),
+    ...(o.extensionsRuntimeEnabled === undefined
+      ? {}
+      : { extensionsRuntimeEnabled: o.extensionsRuntimeEnabled }),
+    ...(o.extensionSync === undefined ? {} : { extensionSync: o.extensionSync }),
+  };
+}
+
 async function dispatchExtensionAutomationRpc(
   ctx: ServerCtx,
   clientId: string,
@@ -2138,28 +2154,16 @@ async function dispatchExtensionAutomationRpc(
       method,
       params,
       db: ctx.options.localIndex.getDatabase(),
-      ...(ctx.options.extensionsDir === undefined
+      ...automationServerOptions(ctx),
+      ...(ctx.options.continuityTable === undefined
         ? {}
-        : { extensionsDir: ctx.options.extensionsDir }),
-      ...(ctx.options.connectorMesh === undefined ? {} : { mesh: ctx.options.connectorMesh }),
+        : { continuityTable: ctx.options.continuityTable }),
       vault: ctx.options.vault,
       ...(autoUpdateDeps === undefined ? {} : { autoUpdate: autoUpdateDeps }),
       ...(ownerGate === undefined ? {} : { ownerGate }),
       ...(runGrantEnv === undefined ? {} : { runGrantEnv }),
-      ...(ctx.options.sandboxRunner === undefined
-        ? {}
-        : { sandboxRunner: ctx.options.sandboxRunner }),
       ...(evalDeps === undefined ? {} : { evalDeps }),
       ...(evidence === undefined ? {} : { evidence }),
-      ...(ctx.options.extensionsRuntimeEnabled === undefined
-        ? {}
-        : { extensionsRuntimeEnabled: ctx.options.extensionsRuntimeEnabled }),
-      ...(ctx.options.extensionSync === undefined
-        ? {}
-        : { extensionSync: ctx.options.extensionSync }),
-      ...(ctx.options.continuityTable === undefined
-        ? {}
-        : { continuityTable: ctx.options.continuityTable }),
       observationDir: observationDirOf(ctx.options.dataDir),
     });
     if (out.kind === "hit") {

@@ -15,7 +15,6 @@ import {
   type ResolvedDep,
   type ResolvedNode,
   registryNameOf,
-  type SourceKey,
 } from "./dependency-types.ts";
 import { FETCH_FAILURE_CODES } from "./registry/fetch-failure-codes.ts";
 import { TrustBlockError } from "./trust/trust-blocks.ts";
@@ -27,7 +26,7 @@ type Ranges = Map<string, DependencyConstraint[]>;
  */
 type Pin = {
   readonly version: string;
-  readonly source: SourceKey | null;
+  readonly source: string | null;
   readonly planned: boolean;
 };
 type Pinned = Map<string, Pin>;
@@ -55,7 +54,7 @@ function isRegistryUnreachable(e: unknown): boolean {
  */
 export async function resolveClosure(
   root: ExtensionManifestForSolver,
-  rootSource: SourceKey | null,
+  rootSource: string | null,
   fetcher: RegistryFetcher,
   opts: ResolveClosureOptions,
 ): Promise<InstallPlan> {
@@ -136,16 +135,11 @@ export function assertRootConstraintsSatisfied(
   }
 }
 
-function describeSource(source: SourceKey | null): string {
+function describeSource(source: string | null): string {
   return source === null ? "a local folder" : registryNameOf(source);
 }
 
-function sourceMismatch(
-  depId: string,
-  parentId: string,
-  pin: Pin,
-  target: SourceKey,
-): RegistryError {
+function sourceMismatch(depId: string, parentId: string, pin: Pin, target: string): RegistryError {
   const targetName = registryNameOf(target);
   const from =
     pin.source !== null && registryNameOf(pin.source) === targetName
@@ -166,7 +160,7 @@ function sourceMismatch(
 async function listVersionsOrOffline(
   depId: string,
   parentId: string,
-  source: SourceKey | null,
+  source: string | null,
   fetcher: RegistryFetcher,
 ): Promise<readonly string[]> {
   try {
@@ -187,10 +181,10 @@ async function listVersionsOrOffline(
 async function resolveDepCandidate(
   depId: string,
   parentId: string,
-  target: SourceKey | null,
+  target: string | null,
   constraintList: DependencyConstraint[],
   { pinned, fetcher }: Pick<SolveContext, "pinned" | "fetcher">,
-): Promise<{ version: string; source: SourceKey | null }> {
+): Promise<{ version: string; source: string | null }> {
   const pin = pinned.get(depId);
   if (pin !== undefined) {
     if (target !== null && pin.source !== target) {
@@ -226,7 +220,7 @@ async function loadDepManifest(
   depId: string,
   parentId: string,
   candidate: string,
-  source: SourceKey | null,
+  source: string | null,
   { fetcher, manifestCache }: Pick<SolveContext, "fetcher" | "manifestCache">,
 ): Promise<ExtensionManifestForSolver> {
   const cacheKey = `${source}|${depId}@${candidate}`;
@@ -272,7 +266,7 @@ function validatedRange(depId: string, fromId: string, spec: DependencySpec): st
 /** Solves one of `current`'s dependencies: its version, its source, then its own subtree. */
 async function visitDependency(
   current: ExtensionManifestForSolver,
-  currentSource: SourceKey | null,
+  currentSource: string | null,
   depId: string,
   spec: DependencySpec,
   deps: ResolvedDep[],
@@ -312,7 +306,7 @@ async function visitDependency(
 
 async function visit(
   current: ExtensionManifestForSolver,
-  currentSource: SourceKey | null,
+  currentSource: string | null,
   ctx: SolveContext,
 ): Promise<void> {
   ctx.ancestors.add(current.id);

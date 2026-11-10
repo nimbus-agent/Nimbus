@@ -185,6 +185,21 @@ function insertStatement(
 }
 
 /**
+ * Whether a statement from a REGISTRY is over its cap: a publisher-signed statement the index does
+ * not tie to a listed or installed key, or one past the per-source limit. Nothing else is capped.
+ */
+function cappedAtRegistry(
+  db: Database,
+  s: TrustStatement,
+  role: StatementSignerRole,
+  source: StatementSource,
+  storedPublisher: number,
+): boolean {
+  if (source.kind !== "registry" || role !== "publisher") return false;
+  return !publisherAdmitted(db, s, source) || storedPublisher >= MAX_STORED_STATEMENTS_PER_SOURCE;
+}
+
+/**
  * Records the statements a document carried, and that this document's source carried them.
  * Idempotent by (statement id, source). Never throws on DATA: every statement lands in exactly one
  * of the four counts; a known statement from a new source counts as `alreadyKnown` but its id is
@@ -212,11 +227,7 @@ export function recordTrustStatements(
         out.refused++;
         continue;
       }
-      const capped =
-        source.kind === "registry" &&
-        role === "publisher" &&
-        (!publisherAdmitted(db, s, source) || storedPublisher >= MAX_STORED_STATEMENTS_PER_SOURCE);
-      if (capped) {
+      if (cappedAtRegistry(db, s, role, source, storedPublisher)) {
         out.capped++;
         continue;
       }
@@ -226,13 +237,14 @@ export function recordTrustStatements(
       // root: its own scope columns), and only one not yet global gains reach from a new source.
       const wasGlobal = !isNew && role === "publisher" && hasGlobalSource(db, id);
       const newSource = addSource(db, id, column, now);
-      if (newSource && role === "publisher") storedPublisher++;
+      const gainedPublisherSource = newSource && role === "publisher";
+      if (gainedPublisherSource) storedPublisher++;
       if (isNew) {
         out.inserted++;
       } else {
         out.alreadyKnown++;
       }
-      if (isNew || (newSource && role === "publisher" && !wasGlobal)) out.insertedIds.push(id);
+      if (isNew || (gainedPublisherSource && !wasGlobal)) out.insertedIds.push(id);
     }
   })();
   return out;
@@ -504,7 +516,7 @@ export function recordFeedAccepted(
   );
   if (r.changes > 0) return "accepted";
   const cur = readFeedFloor(db, name);
-  return cur !== undefined && cur.lastSequence === f.sequence ? "equivocation" : "rollback";
+  return cur?.lastSequence === f.sequence ? "equivocation" : "rollback";
 }
 
 /** Notes a fetch attempt that did not advance the floor. Touches an existing row only. */

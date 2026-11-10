@@ -669,7 +669,7 @@ export class ForwardHost {
       if (conn.closing) return null;
       try {
         // Deliberately sequential: kept addresses are tried in order, and the first success stops it.
-        return await this.opts.connect(ip, port);
+        return await this.opts.connect(ip, port); // kept addresses are tried in order; the first success stops the loop
       } catch {
         // The next kept address, if any.
       }

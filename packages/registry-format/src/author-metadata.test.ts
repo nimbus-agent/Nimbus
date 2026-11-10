@@ -171,3 +171,15 @@ describe("assertAuthorMetadata", () => {
     expect(() => assertAuthorMetadata({})).not.toThrow();
   });
 });
+
+describe("isFundingUrl", () => {
+  test("accepts a clean https URL and refuses everything else", async () => {
+    const { isFundingUrl } = await import("./author-metadata.ts");
+    expect(isFundingUrl("https://github.com/sponsors/x")).toBe(true);
+    expect(isFundingUrl("http://github.com/sponsors/x")).toBe(false);
+    expect(isFundingUrl("https://user:pw@example.com/")).toBe(false);
+    expect(isFundingUrl("https://a b.com/")).toBe(false);
+    expect(isFundingUrl(42)).toBe(false);
+    expect(isFundingUrl("")).toBe(false);
+  });
+});

@@ -135,7 +135,7 @@ describe("terraformInputRefusal", () => {
 
   test("accepts a path exactly at the length limit", () => {
     const p = `/${"a".repeat(IAC_LIMITS.maxWorkdirChars - 1)}`;
-    expect(p.length).toBe(IAC_LIMITS.maxWorkdirChars);
+    expect(p).toHaveLength(IAC_LIMITS.maxWorkdirChars);
     expect(terraformInputRefusal({ workingDirectory: p })).toBeUndefined();
   });
 

@@ -161,7 +161,7 @@ export async function buildMultiExtensionRegistry(
   let index: Record<string, unknown> = {};
   let keys = { rootKey: "", publisherKey: "" };
   for (const [id, versions] of Object.entries(exts)) {
-    const built = await buildTestRegistry(dir, { id, versions, ...extra });
+    const built = await buildTestRegistry(dir, { id, versions, ...extra }); // every extension is built into the SAME directory, and each build rewrites index.json that the next reads
     keys = { rootKey: built.rootKey, publisherKey: built.publisherKey };
     index = JSON.parse(readFileSync(join(dir, "index.json"), "utf8")) as Record<string, unknown>;
     Object.assign(merged, index["extensions"] as Record<string, unknown>);

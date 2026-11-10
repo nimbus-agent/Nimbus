@@ -344,7 +344,7 @@ describe.skipIf(!sandboxAvailable)("the __nimbus-eval role over a real sandboxed
     ].map((root) => join(root, EXTENSION_STAGE_DIR_NAME));
     const used = stageRoots.filter((dir) => existsSync(dir));
     // Positive control: the role really resolved its sandbox dir inside this file's temp dir.
-    expect(used.length).toBe(1);
+    expect(used).toHaveLength(1);
     for (const dir of used) {
       expect(readdirSync(dir).filter((n) => n.startsWith("eval-"))).toEqual([]);
     }

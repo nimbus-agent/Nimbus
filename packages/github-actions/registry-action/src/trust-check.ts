@@ -37,8 +37,9 @@ function assertSourceOnly(changes: readonly gitTree.TreeChange[]): void {
   if (changes.length === 0) throw new Error("the pull request changes no files");
   const offending = changes.filter((c) => !FEED_SOURCE_DIRS.some((d) => c.path.startsWith(d)));
   if (offending.length > 0) {
+    const changed = offending.map((c) => `${c.status} ${c.path}`).join(", ");
     throw new Error(
-      `a trust feed pull request may only change ${FEED_SOURCE_DIRS.join(", ")}; it also changes: ${offending.map((c) => `${c.status} ${c.path}`).join(", ")} (workflows and nimbus-trust.json are maintainer edits made by hand)`,
+      `a trust feed pull request may only change ${FEED_SOURCE_DIRS.join(", ")}; it also changes: ${changed} (workflows and nimbus-trust.json are maintainer edits made by hand)`,
     );
   }
 }
@@ -80,9 +81,8 @@ export async function runTrustCheck(
     ].join("\n"),
   );
   if (bad.length > 0) {
-    throw new Error(
-      `the trust feed would not sign: ${bad.map((s) => `${code(s.path)}: ${s.reason}`).join("; ")}`,
-    );
+    const unsigned = bad.map((s) => `${code(s.path)}: ${s.reason}`).join("; ");
+    throw new Error(`the trust feed would not sign: ${unsigned}`);
   }
   deps.io.log(`trust-check passed: ${plan.status}`);
 }

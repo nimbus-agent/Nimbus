@@ -33,3 +33,19 @@ describe("format", () => {
     expect(formatRelative(new Date(now - 3_600_000).toISOString(), now)).toBe("1 h ago");
   });
 });
+
+describe("format edge cases", () => {
+  it("rolls bytes through every unit and stops at TB", () => {
+    expect(formatBytes(1023)).toBe("1023 B");
+    expect(formatBytes(5 * 1024 ** 2)).toBe("5.0 MB");
+    expect(formatBytes(3 * 1024 ** 4)).toBe("3.0 TB");
+    expect(formatBytes(2048 * 1024 ** 4)).toBe("2048.0 TB");
+  });
+  it("relative time covers seconds, days, a bad date and a future date", () => {
+    const now = 10_000_000_000;
+    expect(formatRelative(new Date(now - 30_000).toISOString(), now)).toBe("30 s ago");
+    expect(formatRelative(new Date(now - 3 * 86_400_000).toISOString(), now)).toBe("3 d ago");
+    expect(formatRelative("not a date", now)).toBe("—");
+    expect(formatRelative(new Date(now + 60_000).toISOString(), now)).toBe("just now");
+  });
+});

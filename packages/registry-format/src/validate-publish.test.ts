@@ -421,6 +421,34 @@ describe("validatePublish", () => {
     );
   });
 
+  test("a publish request whose id or version is not a string is refused", async () => {
+    await expectRefused(
+      validatePublish(await candidate({ req: request({ id: 5 }) }), await indexOf(), NS, work),
+      "ERR_REGISTRY_PUBLISH_REQUEST_INVALID",
+      "must be strings",
+    );
+    await expectRefused(
+      validatePublish(await candidate({ req: request({ version: 1 }) }), await indexOf(), NS, work),
+      "ERR_REGISTRY_PUBLISH_REQUEST_INVALID",
+      "must be strings",
+    );
+  });
+
+  test("a publish request fingerprint that is not 32 lowercase hex characters is refused", async () => {
+    for (const bad of [42, "ABCDEF", "a".repeat(31)]) {
+      await expectRefused(
+        validatePublish(
+          await candidate({ req: request({ publisherFingerprint: bad }) }),
+          await indexOf(),
+          NS,
+          work,
+        ),
+        "ERR_REGISTRY_PUBLISH_REQUEST_INVALID",
+        "32 lowercase hex characters",
+      );
+    }
+  });
+
   // Rule 2
   test("an oversized manifest is refused before it is parsed", async () => {
     const manifest = enc(" ".repeat(MAX_MANIFEST_BYTES + 1));

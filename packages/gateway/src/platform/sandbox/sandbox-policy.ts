@@ -166,11 +166,11 @@ export const SANDBOX_OBSERVATION_FILE_ENV = "NIMBUS_SANDBOX_OBSERVATION_PREFIX";
 export const SANDBOX_OBSERVATION_LABEL_ENV = "NIMBUS_SANDBOX_OBSERVATION_LABEL";
 
 /** Every key the wrapper strips from its child's environment, on every OS. */
-const WRAPPER_ONLY_ENV: readonly string[] = [
+const WRAPPER_ONLY_ENV: ReadonlySet<string> = new Set<string>([
   ...LINUX_WRAPPER_ONLY_ENV,
   SANDBOX_OBSERVATION_FILE_ENV,
   SANDBOX_OBSERVATION_LABEL_ENV,
-];
+]);
 
 /** Whether a child under this policy has any network to reach. Wildcards alone count. */
 export function declaresNetwork(policy: SandboxPolicy): boolean {
@@ -193,7 +193,7 @@ export function declaredNetworkPorts(network: readonly string[]): number[] {
 
 /** True for a key the wrapper keeps from its child. It reads no platform: the same on every OS. */
 export function isSandboxWrapperOnlyEnv(key: string): boolean {
-  return WRAPPER_ONLY_ENV.includes(key);
+  return WRAPPER_ONLY_ENV.has(key);
 }
 
 export function sandboxWrapperOnlyEnv(

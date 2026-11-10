@@ -297,14 +297,24 @@ async function checkPackage(
 /** Never sign a fact the budget caused: a timeout of a run the budget shortened is not recorded. */
 const BUDGET_TIMEOUT_NOTE = "budget-shortened run timed out; not recorded";
 
+/** A candidate version being checked: its verdict and the package bytes it was verified from. */
+interface RunCandidate {
+  verdict: { id: string; version: string; packageSha256: string };
+  packageBytes: Uint8Array;
+}
+
+/** Where and until when a check may run: the gateway, the work directory and the deadline. */
+interface RunWindow {
+  gateway: string;
+  work: string;
+  deadline: number;
+}
+
 /** The baseline within the budget, or `undefined` for none (logged). */
 async function runBaseline(
   c: Ctx,
-  cand: {
-    verdict: { id: string; version: string; packageSha256: string };
-    packageBytes: Uint8Array;
-  },
-  at: { gateway: string; work: string; deadline: number },
+  cand: RunCandidate,
+  at: RunWindow,
 ): Promise<EvalBaseline | undefined> {
   const { deps } = c;
   const ref = `${cand.verdict.id}@${cand.verdict.version}`;
@@ -327,11 +337,8 @@ async function runBaseline(
 /** The suites within the budget; `undefined` when skipped for budget (not a failure). */
 async function runSuites(
   c: Ctx,
-  cand: {
-    verdict: { id: string; version: string; packageSha256: string };
-    packageBytes: Uint8Array;
-  },
-  at: { gateway: string; work: string; deadline: number },
+  cand: RunCandidate,
+  at: RunWindow,
 ): Promise<LivenessEntry["tests"]> {
   const { deps } = c;
   const left = budgetLeft(at, deps.now);
@@ -383,8 +390,8 @@ export async function runLivenessCheck(
     const ctx: Ctx = { opts, deps, work, deadline, index, hostAllowance: createHostAllowance() };
     for (const { id, version } of newestStableVersions(index)) {
       try {
-        // NOSONAR S9382: sequential by design - one sandboxed role at a time
-        const entry = await checkPackage(ctx, id, version);
+        // One sandboxed role at a time, by design.
+        const entry = await checkPackage(ctx, id, version); // NOSONAR S9382 sequential by design
         if (entry !== undefined) extensions[`${id}@${version}`] = entry;
       } catch (e) {
         deps.io.log(

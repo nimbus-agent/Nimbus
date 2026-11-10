@@ -320,21 +320,17 @@ async function verifiedStatements(
       out.push(kept);
       continue;
     }
-    out.push(
-      // NOSONAR S9382: sequential by design - one signature at a time, in publisher-id order
-      await signTrustStatement(
-        {
-          kind: "publisher.verified",
-          publisherId: entry.publisherId,
-          keys: [...entry.keys],
-          github: entry.github,
-          verifiedAt: at,
-          issuedAt: at,
-          signerKey: prev.rootKey,
-        },
-        seed,
-      ),
-    );
+    const unsigned: Parameters<typeof signTrustStatement>[0] = {
+      kind: "publisher.verified",
+      publisherId: entry.publisherId,
+      keys: [...entry.keys],
+      github: entry.github,
+      verifiedAt: at,
+      issuedAt: at,
+      signerKey: prev.rootKey,
+    };
+    // One signature at a time, in publisher-id order.
+    out.push(await signTrustStatement(unsigned, seed)); // NOSONAR S9382 sequential by design
   }
   return out;
 }
@@ -366,8 +362,8 @@ export async function buildTrustFeed(
   if (plan.status === "unchanged") return { plan, feed: undefined };
   const blocks: TrustStatement[] = [];
   for (const b of plan.blocks) {
-    // NOSONAR S9382: sequential by design - one signature at a time, in file-name order
-    blocks.push(await signFeedRequest(b.request, prev.rootKey, seed, at));
+    // One signature at a time, in file-name order.
+    blocks.push(await signFeedRequest(b.request, prev.rootKey, seed, at)); // NOSONAR S9382 sequential by design
   }
   const statements = [
     ...carriedEntries(prev),

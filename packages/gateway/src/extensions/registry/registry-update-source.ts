@@ -21,7 +21,7 @@ import type {
   InstalledExtensionManifestSlice,
   VerificationStatus,
 } from "../auto-update-types.ts";
-import { type SourceKey, sourceKey } from "../dependency-types.ts";
+import { sourceKey } from "../dependency-types.ts";
 import { publisherKeyDecision } from "../trust/publisher-key-decision.ts";
 import { type BlockSubject, blocksFor } from "../trust/trust-blocks.ts";
 import { builtinRegistryOf, resolveRegistry } from "./builtin-registry.ts";
@@ -63,13 +63,13 @@ export interface CollectedRegistryUpdates {
    * Each registry's index as verified this tick, by `sourceKey(name, rootFingerprint)`, so the
    * update plan reuses it instead of reading it again.
    */
-  indexes?: ReadonlyMap<SourceKey, RegistryIndex>;
+  indexes?: ReadonlyMap<string, RegistryIndex>;
 }
 
 type CollectedOut = CollectedRegistryUpdates & {
   dependsOn: Map<string, Readonly<Record<string, DependencySpec>>>;
   requires: Map<string, readonly string[]>;
-  indexes: Map<SourceKey, RegistryIndex>;
+  indexes: Map<string, RegistryIndex>;
 };
 
 function message(e: unknown): string {
@@ -156,7 +156,7 @@ async function detectOne(
         )
       : null;
   let verificationStatus: VerificationStatus;
-  if (decision === null || !decision.ok) {
+  if (!decision?.ok) {
     verificationStatus = "publisher_key_conflict";
   } else {
     verificationStatus = await verifyRegistryManifestSignature(

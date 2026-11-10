@@ -172,7 +172,7 @@ describe.skipIf(!sandboxAvailable)("extension.eval over a real gateway", () => {
     });
     expect(out.results).toHaveLength(1);
     expect(out.results[0]).toMatchObject({ id: "e2e.not-installed", ok: false });
-    expect(prompts.length).toBe(before);
+    expect(prompts).toHaveLength(before);
   }, 60_000);
 
   test(
@@ -239,7 +239,7 @@ describe.skipIf(!sandboxAvailable)("extension.eval over a real gateway", () => {
       approve = true;
       staged = watch.stop();
     }
-    expect(prompts.length).toBe(before + 1);
+    expect(prompts).toHaveLength(before + 1);
     // Nothing ran: no eval stage was seen during the call, and the root's entries are unchanged.
     expect(staged.filter((n) => !entriesBefore.includes(n))).toEqual([]);
     expect(stageEntries()).toEqual(entriesBefore);

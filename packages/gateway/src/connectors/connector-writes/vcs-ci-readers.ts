@@ -6,6 +6,8 @@
 // projections). Imported BY `vcs-ci.ts`, so it imports nothing from the row table.
 import {
   arrayAt,
+  type BeforeInput,
+  type BeforePicked,
   beforeReplyJson,
   boolAt,
   excerptHead,
@@ -13,20 +15,14 @@ import {
   positiveIntegerArg,
   presentFields,
   requiredStringAt,
+  shownHead,
   stringAt,
   yesNo,
 } from "./before-select.ts";
 import type { BeforeStateField, BeforeStateGuard } from "./types.ts";
 
-type Picked = Readonly<Record<string, unknown>>;
-type Input = Readonly<Record<string, unknown>>;
-
 const SHA_40 = /^[0-9a-f]{40}$/i;
 const SHA_PREFIX = /^[0-9a-f]{7,40}$/i;
-
-function shown(v: string | undefined): string | undefined {
-  return v === undefined ? undefined : excerptHead(v);
-}
 
 /** `head -> base` from two optional names, else `undefined`. */
 function arrow(from: string | undefined, to: string | undefined): string | undefined {
@@ -34,7 +30,7 @@ function arrow(from: string | undefined, to: string | undefined): string | undef
 }
 
 /** `github_pr_get` input from a PR write: string owner and repo, a positive pull number; else no read. */
-export function githubPrReadArgs(input: Input): Record<string, unknown> | undefined {
+export function githubPrReadArgs(input: BeforeInput): Record<string, unknown> | undefined {
   const owner = nonEmptyString(input["owner"]);
   const repo = nonEmptyString(input["repo"]);
   const pullNumber = positiveIntegerArg(input["pullNumber"]);
@@ -73,13 +69,13 @@ export function selectGithubPrMerge(reply: unknown): readonly BeforeStateField[]
   return [
     { label: "Title", value: excerptHead(title) },
     ...presentFields([
-      ["State", shown(shownState)],
+      ["State", shownHead(shownState)],
       ["Branches", arrow(stringAt(j, ["head", "ref"]), stringAt(j, ["base", "ref"]))],
-      ["Head commit", shown(stringAt(j, ["head", "sha"]))],
+      ["Head commit", shownHead(stringAt(j, ["head", "sha"]))],
       ["Draft", yesNo(boolAt(j, ["draft"]))],
-      ["Mergeable", shown(stringAt(j, ["mergeable_state"]))],
-      ["Changes", shown(prChanges(j))],
-      ["Author", shown(stringAt(j, ["user", "login"]))],
+      ["Mergeable", shownHead(stringAt(j, ["mergeable_state"]))],
+      ["Changes", shownHead(prChanges(j))],
+      ["Author", shownHead(stringAt(j, ["user", "login"]))],
     ]),
   ];
 }
@@ -115,7 +111,9 @@ export const CIRCLECI_BRANCH_AND_TAG_GUARD: BeforeStateGuard = {
 };
 
 /** `github_ref_get` input for a branch delete: the branch as `heads/<branch>`, so `kind` is a branch. */
-export function githubBranchDeleteReadArgs(input: Input): Record<string, unknown> | undefined {
+export function githubBranchDeleteReadArgs(
+  input: BeforeInput,
+): Record<string, unknown> | undefined {
   const owner = nonEmptyString(input["owner"]);
   const repo = nonEmptyString(input["repo"]);
   const branch = nonEmptyString(input["branch"]);
@@ -127,7 +125,7 @@ export function githubBranchDeleteReadArgs(input: Input): Record<string, unknown
 /** GitHub `github_ref_get` (before-state) for a branch delete: the commit the branch holds, which a delete loses. */
 export function selectGithubBranchDelete(
   reply: unknown,
-  picked: Picked,
+  picked: BeforePicked,
 ): readonly BeforeStateField[] {
   const j = beforeReplyJson(reply);
   const sha = requiredStringAt(j, ["sha"]);
@@ -140,7 +138,7 @@ export function selectGithubBranchDelete(
 }
 
 /** `github_commit_get` input for a tag create: `owner/repo` and the sha the tag will point at. */
-export function githubCommitReadArgs(input: Input): Record<string, unknown> | undefined {
+export function githubCommitReadArgs(input: BeforeInput): Record<string, unknown> | undefined {
   const owner = nonEmptyString(input["owner"]);
   const repo = nonEmptyString(input["repo"]);
   const sha = nonEmptyString(input["sha"]);
@@ -154,7 +152,10 @@ export function githubCommitReadArgs(input: Input): Record<string, unknown> | un
  * the sha the model named (an abbreviation resolves to the full one), the commit's first message
  * line, author and date.
  */
-export function selectGithubTagCreate(reply: unknown, picked: Picked): readonly BeforeStateField[] {
+export function selectGithubTagCreate(
+  reply: unknown,
+  picked: BeforePicked,
+): readonly BeforeStateField[] {
   const j = beforeReplyJson(reply);
   const sha = requiredStringAt(j, ["sha"]);
   const requested = picked["sha"];
@@ -165,9 +166,9 @@ export function selectGithubTagCreate(reply: unknown, picked: Picked): readonly 
       value: typeof requested === "string" ? excerptHead(requested) : "(not a string)",
     },
     ...presentFields([
-      ["Message", shown(stringAt(j, ["message"]))],
-      ["Author", shown(stringAt(j, ["authorName"]))],
-      ["Authored", shown(stringAt(j, ["authorDate"]))],
+      ["Message", shownHead(stringAt(j, ["message"]))],
+      ["Author", shownHead(stringAt(j, ["authorName"]))],
+      ["Authored", shownHead(stringAt(j, ["authorDate"]))],
     ]),
   ];
 }
@@ -188,7 +189,7 @@ export const GITHUB_TAG_SHA_GUARD: BeforeStateGuard = {
 };
 
 /** `gitlab_mr_get` input for a merge: a project path and a merge request iid. */
-export function gitlabMrReadArgs(input: Input): Record<string, unknown> | undefined {
+export function gitlabMrReadArgs(input: BeforeInput): Record<string, unknown> | undefined {
   const projectPath = nonEmptyString(input["projectPath"]);
   const mergeRequestIid = positiveIntegerArg(input["mergeRequestIid"]);
   return projectPath === undefined || mergeRequestIid === undefined
@@ -207,13 +208,13 @@ export function selectGitlabMrMerge(reply: unknown): readonly BeforeStateField[]
   return [
     { label: "Title", value: excerptHead(title) },
     ...presentFields([
-      ["State", shown(stringAt(j, ["state"]))],
+      ["State", shownHead(stringAt(j, ["state"]))],
       ["Branches", arrow(stringAt(j, ["source_branch"]), stringAt(j, ["target_branch"]))],
-      ["Head commit", shown(stringAt(j, ["sha"]))],
+      ["Head commit", shownHead(stringAt(j, ["sha"]))],
       ["Draft", yesNo(boolAt(j, ["draft"]))],
       [
         "Merge status",
-        shown(stringAt(j, ["detailed_merge_status"]) ?? stringAt(j, ["merge_status"])),
+        shownHead(stringAt(j, ["detailed_merge_status"]) ?? stringAt(j, ["merge_status"])),
       ],
       ["Conflicts", yesNo(boolAt(j, ["has_conflicts"]))],
       ["Squash (the merge request's own setting)", yesNo(boolAt(j, ["squash"]))],
@@ -221,7 +222,7 @@ export function selectGitlabMrMerge(reply: unknown): readonly BeforeStateField[]
         "Removes source branch (the merge request's own setting)",
         yesNo(boolAt(j, ["force_remove_source_branch"])),
       ],
-      ["Changes", shown(stringAt(j, ["changes_count"]))],
+      ["Changes", shownHead(stringAt(j, ["changes_count"]))],
     ]),
   ];
 }
@@ -236,17 +237,12 @@ export const GITLAB_MERGE_SHA_GUARD: BeforeStateGuard = {
   allows: (reply, picked) => {
     const sha = picked["sha"];
     const head = stringAt(beforeReplyJson(reply), ["sha"]);
-    return (
-      typeof sha === "string" &&
-      sha !== "" &&
-      head !== undefined &&
-      sha.toLowerCase() === head.toLowerCase()
-    );
+    return typeof sha === "string" && sha !== "" && sha.toLowerCase() === head?.toLowerCase();
   },
 };
 
 /** `bitbucket_pr_get` input for a merge: a `workspace/repo` and a pull request id. */
-export function bitbucketPrReadArgs(input: Input): Record<string, unknown> | undefined {
+export function bitbucketPrReadArgs(input: BeforeInput): Record<string, unknown> | undefined {
   const repoFull = nonEmptyString(input["repoFull"]);
   const pullRequestId = positiveIntegerArg(input["pullRequestId"]);
   return repoFull === undefined || pullRequestId === undefined
@@ -261,7 +257,7 @@ export function selectBitbucketPrMerge(reply: unknown): readonly BeforeStateFiel
   return [
     { label: "Title", value: excerptHead(title) },
     ...presentFields([
-      ["State", shown(stringAt(j, ["state"]))],
+      ["State", shownHead(stringAt(j, ["state"]))],
       [
         "Branches",
         arrow(
@@ -269,8 +265,8 @@ export function selectBitbucketPrMerge(reply: unknown): readonly BeforeStateFiel
           stringAt(j, ["destination", "branch", "name"]),
         ),
       ],
-      ["Source commit", shown(stringAt(j, ["source", "commit", "hash"]))],
-      ["Author", shown(stringAt(j, ["author", "display_name"]))],
+      ["Source commit", shownHead(stringAt(j, ["source", "commit", "hash"]))],
+      ["Author", shownHead(stringAt(j, ["author", "display_name"]))],
       ["Closes source branch", yesNo(boolAt(j, ["close_source_branch"]))],
     ]),
   ];
@@ -278,7 +274,7 @@ export function selectBitbucketPrMerge(reply: unknown): readonly BeforeStateFiel
 
 /** `jenkins_job_get` / `jenkins_build_get` input: the job name, and the build number when given. */
 export function jenkinsReadArgs(
-  input: Input,
+  input: BeforeInput,
   withBuild: boolean,
 ): Record<string, unknown> | undefined {
   const jobName = nonEmptyString(input["jobName"]);
@@ -306,7 +302,7 @@ export function selectJenkinsJob(reply: unknown): readonly BeforeStateField[] {
       ["Last build", buildRef(j, "lastBuild")],
       ["Last successful", buildRef(j, "lastSuccessfulBuild")],
       ["Last failed", buildRef(j, "lastFailedBuild")],
-      ["Status", shown(stringAt(j, ["color"]))],
+      ["Status", shownHead(stringAt(j, ["color"]))],
     ]),
   ];
 }
@@ -331,7 +327,7 @@ export function selectJenkinsBuild(reply: unknown): readonly BeforeStateField[] 
     { label: "Build", value: excerptHead(name) },
     ...presentFields([
       ["Building", buildingValue],
-      ["Result", shown(stringAt(j, ["result"]))],
+      ["Result", shownHead(stringAt(j, ["result"]))],
       ["Started", isoOfMillis(stringAt(j, ["timestamp"]))],
       ["Duration", duration === undefined ? undefined : `${duration} ms`],
     ]),
@@ -339,7 +335,7 @@ export function selectJenkinsBuild(reply: unknown): readonly BeforeStateField[] 
 }
 
 /** `gha_run_list` input for a workflow dispatch: the latest run on the branch the dispatch will use. */
-export function ghaLatestRunReadArgs(input: Input): Record<string, unknown> | undefined {
+export function ghaLatestRunReadArgs(input: BeforeInput): Record<string, unknown> | undefined {
   const owner = nonEmptyString(input["owner"]);
   const repo = nonEmptyString(input["repo"]);
   if (owner === undefined || repo === undefined) return undefined;
@@ -350,7 +346,10 @@ export function ghaLatestRunReadArgs(input: Input): Record<string, unknown> | un
 }
 
 /** GitHub Actions `gha_run_list` (before-state) for a dispatch: the latest run on the branch, ANY workflow. */
-export function selectGhaLatestRun(reply: unknown, picked: Picked): readonly BeforeStateField[] {
+export function selectGhaLatestRun(
+  reply: unknown,
+  picked: BeforePicked,
+): readonly BeforeStateField[] {
   const j = beforeReplyJson(reply);
   const runs = arrayAt(j, ["workflow_runs"]);
   if (runs === undefined) throw new Error("before reply: no workflow_runs");
@@ -367,20 +366,20 @@ export function selectGhaLatestRun(reply: unknown, picked: Picked): readonly Bef
   return [
     branchField,
     ...presentFields([
-      ["Workflow", shown(stringAt(run, ["name"]))],
+      ["Workflow", shownHead(stringAt(run, ["name"]))],
       ["Run number", stringAt(run, ["run_number"])],
-      ["Status", shown(stringAt(run, ["status"]))],
-      ["Conclusion", shown(stringAt(run, ["conclusion"]))],
-      ["Event", shown(stringAt(run, ["event"]))],
-      ["Commit", shown(stringAt(run, ["head_sha"]))],
-      ["Started", shown(stringAt(run, ["run_started_at"]))],
-      ["Actor", shown(stringAt(run, ["actor", "login"]))],
+      ["Status", shownHead(stringAt(run, ["status"]))],
+      ["Conclusion", shownHead(stringAt(run, ["conclusion"]))],
+      ["Event", shownHead(stringAt(run, ["event"]))],
+      ["Commit", shownHead(stringAt(run, ["head_sha"]))],
+      ["Started", shownHead(stringAt(run, ["run_started_at"]))],
+      ["Actor", shownHead(stringAt(run, ["actor", "login"]))],
     ]),
   ];
 }
 
 /** `gha_run_get` input for a cancel. */
-export function ghaRunReadArgs(input: Input): Record<string, unknown> | undefined {
+export function ghaRunReadArgs(input: BeforeInput): Record<string, unknown> | undefined {
   const owner = nonEmptyString(input["owner"]);
   const repo = nonEmptyString(input["repo"]);
   const runId = positiveIntegerArg(input["runId"]);
@@ -402,17 +401,17 @@ export function selectGhaRun(reply: unknown): readonly BeforeStateField[] {
     { label: "Workflow", value: excerptHead(name) },
     ...presentFields([
       ["Run number", stringAt(j, ["run_number"])],
-      ["Branch", shown(stringAt(j, ["head_branch"]))],
-      ["Status", shown(shownStatus)],
-      ["Conclusion", shown(stringAt(j, ["conclusion"]))],
-      ["Event", shown(stringAt(j, ["event"]))],
-      ["Commit", shown(stringAt(j, ["head_sha"]))],
+      ["Branch", shownHead(stringAt(j, ["head_branch"]))],
+      ["Status", shownHead(shownStatus)],
+      ["Conclusion", shownHead(stringAt(j, ["conclusion"]))],
+      ["Event", shownHead(stringAt(j, ["event"]))],
+      ["Commit", shownHead(stringAt(j, ["head_sha"]))],
     ]),
   ];
 }
 
 /** `circleci_pipeline_list` input for a trigger: the project slug (the list cannot filter by branch). */
-export function circleciPipelineReadArgs(input: Input): Record<string, unknown> | undefined {
+export function circleciPipelineReadArgs(input: BeforeInput): Record<string, unknown> | undefined {
   const projectSlug = nonEmptyString(input["projectSlug"]);
   return projectSlug === undefined ? undefined : { projectSlug };
 }
@@ -430,16 +429,16 @@ export function selectCircleciLatestPipeline(reply: unknown): readonly BeforeSta
   return [
     { label: "Latest pipeline (ANY branch)", value: `#${requiredStringAt(latest, ["number"])}` },
     ...presentFields([
-      ["State", shown(stringAt(latest, ["state"]))],
-      ["Branch or tag", shown(ref)],
-      ["Trigger", shown(stringAt(latest, ["trigger", "type"]))],
-      ["Created", shown(stringAt(latest, ["created_at"]))],
+      ["State", shownHead(stringAt(latest, ["state"]))],
+      ["Branch or tag", shownHead(ref)],
+      ["Trigger", shownHead(stringAt(latest, ["trigger", "type"]))],
+      ["Created", shownHead(stringAt(latest, ["created_at"]))],
     ]),
   ];
 }
 
 /** `circleci_job_get` input for a cancel. */
-export function circleciJobReadArgs(input: Input): Record<string, unknown> | undefined {
+export function circleciJobReadArgs(input: BeforeInput): Record<string, unknown> | undefined {
   const projectSlug = nonEmptyString(input["projectSlug"]);
   const jobNumber = positiveIntegerArg(input["jobNumber"]);
   return projectSlug === undefined || jobNumber === undefined
@@ -460,16 +459,16 @@ export function selectCircleciJob(reply: unknown): readonly BeforeStateField[] {
   return [
     { label: "Name", value: excerptHead(name) },
     ...presentFields([
-      ["Status", shown(shownStatus)],
-      ["Started", shown(stringAt(j, ["startedAt"]))],
-      ["Stopped", shown(stopped)],
-      ["Pipeline id", shown(stringAt(j, ["pipelineId"]))],
+      ["Status", shownHead(shownStatus)],
+      ["Started", shownHead(stringAt(j, ["startedAt"]))],
+      ["Stopped", shownHead(stopped)],
+      ["Pipeline id", shownHead(stringAt(j, ["pipelineId"]))],
     ]),
   ];
 }
 
 /** `gitlab_pipeline_get` input for a retry or cancel. */
-export function gitlabPipelineReadArgs(input: Input): Record<string, unknown> | undefined {
+export function gitlabPipelineReadArgs(input: BeforeInput): Record<string, unknown> | undefined {
   const projectPath = nonEmptyString(input["projectPath"]);
   const pipelineId = positiveIntegerArg(input["pipelineId"]);
   return projectPath === undefined || pipelineId === undefined
@@ -489,13 +488,13 @@ const GITLAB_PIPELINE_ACTIVE = new Set([
 
 function gitlabPipelineFields(j: unknown, status: string | undefined): BeforeStateField[] {
   return presentFields([
-    ["Status", shown(status)],
-    ["Ref", shown(stringAt(j, ["ref"]))],
-    ["Commit", shown(stringAt(j, ["sha"]))],
-    ["Source", shown(stringAt(j, ["source"]))],
-    ["Created", shown(stringAt(j, ["created_at"]))],
-    ["Finished", shown(stringAt(j, ["finished_at"]))],
-    ["User", shown(stringAt(j, ["user", "username"]) ?? stringAt(j, ["user", "name"]))],
+    ["Status", shownHead(status)],
+    ["Ref", shownHead(stringAt(j, ["ref"]))],
+    ["Commit", shownHead(stringAt(j, ["sha"]))],
+    ["Source", shownHead(stringAt(j, ["source"]))],
+    ["Created", shownHead(stringAt(j, ["created_at"]))],
+    ["Finished", shownHead(stringAt(j, ["finished_at"]))],
+    ["User", shownHead(stringAt(j, ["user", "username"]) ?? stringAt(j, ["user", "name"]))],
   ]);
 }
 

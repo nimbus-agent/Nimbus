@@ -539,3 +539,36 @@ describe("registry maintain add — parity with the shared publish validator", (
     expect(msg).toContain("ERR_REGISTRY_PACKAGE_FILE_SET");
   });
 });
+
+describe("registry maintain trust-layer usage errors", () => {
+  test("revoke-key and takedown name what they need", async () => {
+    const { dir, key } = await init();
+    expect(await run(["revoke-key", dir, "--key", key], 2)).toContain(
+      "revoke-key needs (<dir> | --github <clone>) <fingerprint>",
+    );
+    expect(await run(["takedown", dir, "--key", key], 2)).toContain(
+      "takedown needs (<dir> | --github <clone>) <id>[@<version>]",
+    );
+    expect(await run(["takedown", "--github", join(tmp, "clone"), "a", "b"], 2)).toContain(
+      "takedown needs",
+    );
+  });
+
+  test("set-report-url needs exactly <dir> <https url>", async () => {
+    const { dir, key } = await init();
+    expect(await run(["set-report-url", dir, "--key", key], 2)).toContain(
+      "set-report-url needs <dir> <https url>",
+    );
+  });
+
+  test("set-liveness-key with a public key refuses --liveness-key and --force", async () => {
+    const { dir, key } = await init();
+    const pub = encodeBase64(generateEd25519Keypair().pubkey);
+    expect(
+      await run(["set-liveness-key", dir, pub, "--liveness-key", join(tmp, "lk"), "--key", key], 2),
+    ).toContain("--liveness-key and --force go with --generate");
+    expect(await run(["set-liveness-key", dir, pub, "--force", "--key", key], 2)).toContain(
+      "--liveness-key and --force go with --generate",
+    );
+  });
+});

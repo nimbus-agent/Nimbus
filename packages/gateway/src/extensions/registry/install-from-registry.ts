@@ -428,6 +428,40 @@ export interface InstallVerifiedRegistryPackageOptions {
   readonly dependencies?: "registry" | "installed-only";
 }
 
+/** The optional plan-installer inputs the deps carry, each present only when set. */
+function optionalPlanDeps(
+  deps: InstallFromRegistryDeps,
+): Pick<InstallFromRegistryDeps, "planStagingRoot" | "continuityTable" | "requirementStatuses"> {
+  return {
+    ...(deps.planStagingRoot === undefined ? {} : { planStagingRoot: deps.planStagingRoot }),
+    ...(deps.continuityTable === undefined ? {} : { continuityTable: deps.continuityTable }),
+    ...(deps.requirementStatuses === undefined
+      ? {}
+      : { requirementStatuses: deps.requirementStatuses }),
+  };
+}
+
+/**
+ * What a failed local install is reported as: a registry, approval or trust-block error as it is;
+ * anything else as `ERR_REGISTRY_INSTALL_REFUSED`. The refusal code changes; what the plan
+ * rollback could not undo is carried over unchanged.
+ */
+function registryInstallFailure(e: unknown): unknown {
+  if (
+    e instanceof RegistryError ||
+    e instanceof ExtensionInstallNotApprovedError ||
+    e instanceof TrustBlockError
+  ) {
+    return e;
+  }
+  const failures = rollbackFailuresOf(e);
+  return Object.assign(
+    new RegistryError("ERR_REGISTRY_INSTALL_REFUSED", e instanceof Error ? e.message : String(e)),
+    { cause: e },
+    failures.length === 0 ? {} : { rollbackFailures: failures },
+  );
+}
+
 /**
  * Installs a package `fetchVerifiedRegistryPackage` already verified, with every dependency it is
  * missing: the Vault is already checked; the solve reads each dependency's manifest only through a
@@ -483,29 +517,12 @@ export async function installVerifiedRegistryPackage(
         pkg.evidence,
       ),
       ...(resolver === undefined ? {} : { registryPlan: { resolver, channel } }),
-      ...(deps.planStagingRoot === undefined ? {} : { planStagingRoot: deps.planStagingRoot }),
-      ...(deps.continuityTable === undefined ? {} : { continuityTable: deps.continuityTable }),
-      ...(deps.requirementStatuses === undefined
-        ? {}
-        : { requirementStatuses: deps.requirementStatuses }),
+      ...optionalPlanDeps(deps),
       // Checked by the plan installer before anything is recorded: a mismatch undoes every package.
       expectedRootEntryHash: pkg.entryHash,
     });
   } catch (e) {
-    if (
-      e instanceof RegistryError ||
-      e instanceof ExtensionInstallNotApprovedError ||
-      e instanceof TrustBlockError
-    ) {
-      throw e;
-    }
-    // The refusal code changes; what the plan rollback could not undo is carried over unchanged.
-    const failures = rollbackFailuresOf(e);
-    throw Object.assign(
-      new RegistryError("ERR_REGISTRY_INSTALL_REFUSED", e instanceof Error ? e.message : String(e)),
-      { cause: e },
-      failures.length === 0 ? {} : { rollbackFailures: failures },
-    );
+    throw registryInstallFailure(e);
   }
   // Unreachable: a registry-driven local install never promotes (the fetch refused an installed id).
   if (isPromotedInstall(installed)) {

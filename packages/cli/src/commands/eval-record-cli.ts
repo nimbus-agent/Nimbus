@@ -129,9 +129,8 @@ function existingTotals(evalsDir: string, targetName: string, warn: (s: string) 
       suites += 1;
     } catch (e) {
       const why = e instanceof Error ? e.message : String(e);
-      warn(
-        `warning: ${stripControlChars(`evals/${name}`)} is not counted: ${stripControlChars(why)}`,
-      );
+      const label = stripControlChars(`evals/${name}`);
+      warn(`warning: ${label} is not counted: ${stripControlChars(why)}`);
     }
   }
   return { suites, cases };

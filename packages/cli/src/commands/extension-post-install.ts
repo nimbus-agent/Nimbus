@@ -112,18 +112,9 @@ export async function runPostInstallWalk(
       io.log(`  ${connector}: connect it with: ${req.fix.map(stripControl).join(" && ")}`);
       continue;
     }
-    // Nothing that needs this connector will run: asking to connect it now only adds prompts.
-    if (req.requiredBy.length > 0 && req.requiredBy.every((id) => declined.has(id))) {
-      io.log(
-        `  ${connector}: skipped — ${req.requiredBy.map(stripControl).join(", ")} not approved`,
-      );
-      continue;
-    }
-    // A fix that would approve a package the owner just declined would raise the same prompt
-    // again; say so once instead of asking.
-    const refused = declinedApprovalIn(req, declined);
-    if (refused !== undefined) {
-      io.log(`  ${connector}: skipped — ${stripControl(refused)} was not approved`);
+    const skipped = skipReason(req, declined);
+    if (skipped !== undefined) {
+      io.log(`  ${connector}: skipped — ${skipped}`);
       continue;
     }
     try {
@@ -134,6 +125,19 @@ export async function runPostInstallWalk(
       io.log(`  ${connector}: not connected (${messageOf(e)})`);
     }
   }
+}
+
+/**
+ * Why asking to connect this requirement is pointless, if it is: nothing that needs the connector
+ * will run (asking only adds prompts), or a fix would approve a package the owner just declined
+ * and raise the same prompt again; say so once instead of asking.
+ */
+function skipReason(req: RequirementStatusView, declined: ReadonlySet<string>): string | undefined {
+  if (req.requiredBy.length > 0 && req.requiredBy.every((id) => declined.has(id))) {
+    return `${req.requiredBy.map(stripControl).join(", ")} not approved`;
+  }
+  const refused = declinedApprovalIn(req, declined);
+  return refused === undefined ? undefined : `${stripControl(refused)} was not approved`;
 }
 
 /** The first package a requirement's fix would approve that the owner declined, if any. */

@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { draftGeneratedTool, extractJsonPayload, type ToolgenDraftDeps } from "./toolgen-draft.ts";
+import {
+  createDraftToolClosure,
+  draftGeneratedTool,
+  extractJsonPayload,
+  type ToolgenDraftDeps,
+} from "./toolgen-draft.ts";
 import type { ToolgenError } from "./toolgen-types.ts";
 
 const REQ = { sessionId: "s1", description: "list issues", hosts: ["api.github.com"] };
@@ -192,6 +197,17 @@ describe("draftGeneratedTool", () => {
       expect(prompts[1]).toContain("Reason: reply is not JSON:");
     });
 
+    test.each(["[1,2]", "42", "null"])(
+      "a reply that is valid JSON but not an object (%s) fails rung 1 by name",
+      async (reply) => {
+        const { deps: d, prompts } = depsCapturingPrompts([reply, GOOD]);
+        const out = await draftGeneratedTool(REQ, d, SUBJECT);
+        expect(out.attempts).toBe(2);
+        expect(prompts[1]).toContain("Failed check: rung 1 (output envelope)");
+        expect(prompts[1]).toContain("Reason: reply is not a JSON object");
+      },
+    );
+
     test("a rung 2 (input schema) failure is attributed by name and reason", async () => {
       const { deps: d, prompts } = depsCapturingPrompts([RUNG_2_BAD, GOOD]);
       const out = await draftGeneratedTool(REQ, d, SUBJECT);
@@ -361,5 +377,14 @@ describe("draftGeneratedTool", () => {
     );
     expect(prompt).toContain("api.github.com");
     expect(prompt).not.toContain("https://api.github.com/v1");
+  });
+});
+
+describe("createDraftToolClosure", () => {
+  test("binds the deps so the closure drafts exactly as draftGeneratedTool does", async () => {
+    const draft = createDraftToolClosure(deps([GOOD]));
+    const out = await draft(REQ, SUBJECT);
+    expect(out.attempts).toBe(1);
+    expect(out.inputSchema.required).toEqual(["owner"]);
   });
 });

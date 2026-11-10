@@ -261,6 +261,18 @@ describe("explainConfig", () => {
     expect(r.notes).toContain('NIMBUS_LAN_PORT is set to "abc" but does not override this value');
   });
 
+  test("an env override on a path no file sets is the only source", () => {
+    const env = (k: string): string | undefined => (k === "NIMBUS_LAN_PORT" ? "9999" : undefined);
+    const r = explainConfig(initLayeredConfig(dir), "lan.port", env);
+    expect(r.entries).toHaveLength(1);
+    expect(r.entries[0]?.source).toEqual({ kind: "env", envVar: "NIMBUS_LAN_PORT" });
+    expect(r.entries[0]?.shadowed).toEqual([]);
+  });
+
+  test("the openapi section loader reads an empty config dir", () => {
+    expect(SECTION_LOADERS["openapi"]?.(dir)).toBeDefined();
+  });
+
   test("a quoted header beats its unquoted twin for a quoted path", () => {
     writeBase('[a."b.c"]\nk = 1\n[a.b.c]\nk = 2\n');
     const reader = initLayeredConfig(dir);

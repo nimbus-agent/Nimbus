@@ -337,7 +337,7 @@ describe("the credential scan is linear and runs after the size caps (review fix
           };
         },
       });
-      expect(timings.length).toBe(4);
+      expect(timings).toHaveLength(4);
     },
     60_000,
   );

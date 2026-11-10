@@ -355,7 +355,7 @@ function count(v: unknown): number | undefined {
 function readHunkText(raw: unknown): string[] | undefined {
   const h = asRecord(raw);
   const nums = [h["oldStart"], h["oldLines"], h["newStart"], h["newLines"]].map(count);
-  if (nums.some((n) => n === undefined) || !Array.isArray(h["lines"])) return undefined;
+  if (nums.includes(undefined) || !Array.isArray(h["lines"])) return undefined;
   const [oldStart, oldLines, newStart, newLines] = nums as number[];
   const out = [`@@ -${oldStart},${oldLines} +${newStart},${newLines} @@`];
   for (const l of h["lines"] as unknown[]) {
@@ -363,9 +363,20 @@ function readHunkText(raw: unknown): string[] | undefined {
     const op = line["op"];
     const t = line["text"];
     if (typeof op !== "string" || !DIFF_OPS.has(op) || typeof t !== "string") return undefined;
-    out.push(op === "\\" ? `\\ ${t}` : `${op}${t}`);
+    out.push(op === "\\" ? String.raw`\ ${t}` : `${op}${t}`);
   }
   return out;
+}
+
+const DIFF_STATE_LABELS = {
+  new: "new file",
+  unchanged: "no change",
+  modified: "modified",
+} as const;
+
+function diffFileHeader(path: string, state: DiffFileView["state"], mode: string | undefined) {
+  const modeNote = mode === undefined ? "" : `, mode ${mode}`;
+  return `=== ${path} (${DIFF_STATE_LABELS[state]}${modeNote})`;
 }
 
 function readDiffFile(raw: unknown): DiffFileView | undefined {
@@ -376,8 +387,7 @@ function readDiffFile(raw: unknown): DiffFileView | undefined {
   if (typeof path !== "string" || !Array.isArray(f["hunks"])) return undefined;
   if (state !== "new" && state !== "modified" && state !== "unchanged") return undefined;
   if (mode !== undefined && typeof mode !== "string") return undefined;
-  const label = state === "new" ? "new file" : state === "unchanged" ? "no change" : "modified";
-  const lines = [`=== ${path} (${label}${mode === undefined ? "" : `, mode ${mode}`})`];
+  const lines = [diffFileHeader(path, state, mode)];
   if (state !== "unchanged") {
     lines.push(state === "new" ? "--- /dev/null" : `--- a/${path}`, `+++ b/${path}`);
     for (const h of f["hunks"] as unknown[]) {
@@ -504,7 +514,7 @@ function readPlan(raw: unknown): PlanViewModel | undefined {
   if (typeof sha !== "string" || !SHA256_HEX.test(sha)) return undefined;
   if (!optionalCount(p["changeCount"]) || !optionalCount(p["deleteCount"])) return undefined;
   if (!optionalCount(p["bytes"])) return undefined;
-  const last = (lines as string[])[lines.length - 1] as string;
+  const last = (lines as string[]).at(-1) as string;
   if (!PLAN_FOOTERS.some((footer) => last.startsWith(footer))) return undefined;
   return { lines: lines as string[], sha256: sha };
 }

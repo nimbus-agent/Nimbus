@@ -73,7 +73,8 @@ function variationLabel(v: Record<string, unknown>, id: string): string {
   let text = "";
   if (typeof value === "string") text = value;
   else if (isRecord(value) || Array.isArray(value)) text = jsonText(value) ?? "";
-  else if (value !== undefined && value !== null) text = String(value);
+  else if (typeof value === "number" || typeof value === "boolean" || typeof value === "bigint")
+    text = String(value);
   return text === "" ? id : text;
 }
 

@@ -8,7 +8,7 @@ import {
   type SyncTestFetchParams,
   silentSyncContextExtras,
 } from "./connector-sync-test-helpers.ts";
-import { createGitlabSyncable, mrDiffsUrl } from "./gitlab-sync.ts";
+import { createGitlabSyncable, gitlabFetchOneUrlIsSupported, mrDiffsUrl } from "./gitlab-sync.ts";
 
 function ctxWithPat(
   db: ReturnType<typeof createMemoryIndexDb>,
@@ -330,4 +330,19 @@ test("mrDiffsUrl requests the diffs endpoint, a page number, and the page-size p
   expect(u).toBe(
     "https://gitlab.example.com/api/v4/projects/grp%2Fsub%2Fproj/merge_requests/7/diffs?page=2&per_page=100",
   );
+});
+
+test("gitlabFetchOneUrlIsSupported accepts a merge request URL and declines every other shape", () => {
+  expect(gitlabFetchOneUrlIsSupported("https://gitlab.com/group/proj/-/merge_requests/12")).toBe(
+    true,
+  );
+  expect(gitlabFetchOneUrlIsSupported("https://gitlab.example.com/a/b/c/-/merge_requests/3")).toBe(
+    true,
+  );
+  expect(gitlabFetchOneUrlIsSupported("https://gitlab.com/group/proj/-/issues/12")).toBe(false);
+  expect(gitlabFetchOneUrlIsSupported("https://gitlab.com/group/proj/-/merge_requests/abc")).toBe(
+    false,
+  );
+  expect(gitlabFetchOneUrlIsSupported("not a url")).toBe(false);
+  expect(gitlabFetchOneUrlIsSupported("https://gitlab.com/../-/merge_requests/1")).toBe(false);
 });

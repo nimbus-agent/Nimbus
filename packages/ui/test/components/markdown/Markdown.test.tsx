@@ -124,3 +124,39 @@ describe("Markdown", () => {
     expect(sets).toBe(0);
   });
 });
+
+describe("Markdown: remaining token shapes", () => {
+  it("a hard line break renders a <br>", () => {
+    const c = renderMd("first  \nsecond");
+    expect(c.querySelectorAll("br")).toHaveLength(1);
+    expect(c.textContent).toContain("first");
+    expect(c.textContent).toContain("second");
+  });
+
+  it("a link reference definition renders nothing, and a reference link shows its URL", () => {
+    const c = renderMd("[ref]: https://example.com/doc\n\nSee [the doc][ref].");
+    expect(c.textContent).toContain("the doc");
+    expect(c.textContent).toContain("https://example.com/doc");
+    // The URL appears exactly once: the definition itself rendered nothing.
+    expect(c.textContent?.split("https://example.com/doc")).toHaveLength(2);
+    expect(c.querySelector("a")).toBeNull();
+  });
+
+  it("strikethrough and an ordered list render as del and ol", () => {
+    const c = renderMd("~~gone~~\n\n1. one\n2. two");
+    expect(c.querySelector("del")?.textContent).toBe("gone");
+    expect(c.querySelector("ol")?.querySelectorAll("li")).toHaveLength(2);
+  });
+
+  it("repeated header cells and repeated rows still render every cell", () => {
+    const c = renderMd("| a | a |\n|---|---|\n| x | x |\n| x | x |");
+    expect(c.querySelectorAll("th")).toHaveLength(2);
+    expect(c.querySelectorAll("td")).toHaveLength(4);
+  });
+
+  it("a link whose label is empty falls back to its text", () => {
+    const c = renderMd("[](https://example.com/only)");
+    expect(c.textContent).toContain("https://example.com/only");
+    expect(c.querySelector("a")).toBeNull();
+  });
+});

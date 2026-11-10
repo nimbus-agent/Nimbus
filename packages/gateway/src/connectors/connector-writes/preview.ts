@@ -193,7 +193,7 @@ export function findConnectorWriteRow(
 }
 
 /** A bare `host[:port]` as `normaliseGithubApiBase` produces it: nothing else is ever shown. */
-const INSTANCE_HOST = /^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?(?::[0-9]{1,5})?$/;
+const INSTANCE_HOST = /^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?(?::\d{1,5})?$/;
 
 /**
  * The credential kind and instance host the resolver names. The resolver can never break the

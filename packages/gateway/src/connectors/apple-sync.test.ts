@@ -577,3 +577,54 @@ describe("createAppleSyncable (calendar path)", () => {
     expect(r.itemsUpserted).toBe(2);
   });
 });
+
+describe("createAppleSyncable (calendar pass that throws)", () => {
+  test("a calendar fetcher that throws is non-fatal: the mail result is kept and a warning is logged", async () => {
+    const db = createMemoryIndexDb();
+    const base = syncTestContext(db, credsVault(), "apple");
+    const warnings: Array<{ obj: unknown; msg: unknown }> = [];
+    const ctx = {
+      ...base,
+      logger: {
+        ...base.logger,
+        warn: (obj: unknown, msg?: unknown) => {
+          warnings.push({ obj, msg });
+        },
+      },
+    } as typeof base;
+    const syncable = createAppleSyncable({
+      ensureAppleMcpRunning: async () => {},
+      fetchMessages: fakeFetcher([makeMessage({ messageId: "<throws@icloud.com>" })]),
+      fetchEvents: async () => {
+        throw new Error("caldav exploded");
+      },
+    });
+
+    const r = await syncable.sync(ctx, null);
+
+    expect(r.itemsUpserted).toBe(1);
+    expect(r.cursor).not.toBeNull();
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]?.obj).toEqual({ serviceId: "apple", err: "caldav exploded" });
+    expect(String(warnings[0]?.msg)).toContain("non-fatal");
+  });
+
+  test("a non-Error throw is reported as its string form", async () => {
+    const db = createMemoryIndexDb();
+    const base = syncTestContext(db, credsVault(), "apple");
+    const seen: unknown[] = [];
+    const ctx = {
+      ...base,
+      logger: { ...base.logger, warn: (obj: unknown) => void seen.push(obj) },
+    } as typeof base;
+    const syncable = createAppleSyncable({
+      ensureAppleMcpRunning: async () => {},
+      fetchMessages: fakeFetcher([]),
+      fetchEvents: async () => {
+        throw "plain string";
+      },
+    });
+    await syncable.sync(ctx, null);
+    expect(seen).toEqual([{ serviceId: "apple", err: "plain string" }]);
+  });
+});

@@ -287,3 +287,20 @@ describe("StructuredPreview — auto-update payload coercion", () => {
     expect(screen.queryByText("api.gone.com")).toBeNull();
   });
 });
+
+describe("StructuredPreview — publisher badge when the registry vouches for nobody", () => {
+  it("an explicit null verifiedPublisher reads as an unverified publisher", () => {
+    render(
+      <StructuredPreview
+        details={autoUpdateDetails({ verifiedPublisher: null })}
+        action="extension.autoUpdate"
+      />,
+    );
+    expect(screen.getByTestId("publisher-badge").textContent).toBe("Unverified publisher");
+  });
+
+  it("no verifiedPublisher and no sentence shows no badge at all", () => {
+    render(<StructuredPreview details={autoUpdateDetails()} action="extension.autoUpdate" />);
+    expect(screen.queryByTestId("publisher-badge")).toBeNull();
+  });
+});

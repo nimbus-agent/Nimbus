@@ -366,7 +366,7 @@ export function sameKeyBytes(a: unknown, b: unknown): boolean {
 }
 
 /** The index's liveness key: `undefined` when absent, `"invalid"` when present but not canonical. */
-export function readRegistryLivenessKey(index: RegistryIndex): string | undefined | "invalid" {
+export function readRegistryLivenessKey(index: RegistryIndex): string | undefined {
   const v = index.livenessKey;
   if (v === undefined) return undefined;
   return typeof v === "string" && canonicalKeyBytes(v) !== undefined ? v : "invalid";

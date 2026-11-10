@@ -1,6 +1,6 @@
 import type { DependencySpec, RegistryIndex } from "@nimbus-dev/registry-format";
 import type { ConnectorRequirementStatus } from "./connector-requirements.ts";
-import type { DependencyConflict, InstallPlan, SourceKey } from "./dependency-types.ts";
+import type { DependencyConflict, InstallPlan } from "./dependency-types.ts";
 import type { PlannedPackage } from "./install-plan-text.ts";
 import type { RegistryDependencyResolver } from "./registry/registry-dependency-fetcher.ts";
 import type { QualityChange } from "./registry/version-evidence.ts";
@@ -66,7 +66,7 @@ export interface UpdatePlanContext {
    * One poll's verified index reads, by source, shared by every plan of that poll so each
    * registry's index is read at most once per poll. Created per poll, never kept across polls.
    */
-  readonly indexes?: Map<SourceKey, Promise<RegistryIndex>>;
+  readonly indexes?: Map<string, Promise<RegistryIndex>>;
 }
 
 export interface UpdatePlan {

@@ -579,3 +579,61 @@ describe("ConnectorWritePreview: a plan-bound write is never collapsed (D2 revie
     expect(screen.getByRole("button", { name: /Show full/i })).toBeInTheDocument();
   });
 });
+
+describe("ConnectorWritePreview: malformed pieces are dropped, never guessed", () => {
+  it("before fields without a string label or value are dropped", () => {
+    render(
+      <ConnectorWritePreview
+        details={details({
+          before: {
+            status: "ok",
+            fields: [
+              { label: 1, value: "x" },
+              { label: "Kept", value: 2 },
+              { label: "Ok", value: "v" },
+            ],
+          },
+        })}
+      />,
+    );
+    const block = screen.getByTestId("connector-write-before");
+    expect(block).toHaveTextContent("Ok");
+    expect(block).not.toHaveTextContent("Kept");
+  });
+
+  it("proposer timestamps that are not valid times are omitted", () => {
+    render(
+      <ConnectorWritePreview
+        details={details({
+          proposedBy: {
+            clientLabel: "c",
+            unverifiedSummary: "s",
+            createdAt: "yesterday",
+            expiresAt: 1e20,
+          },
+        })}
+      />,
+    );
+    const block = screen.getByTestId("connector-write-proposed-by");
+    expect(block).not.toHaveTextContent("Proposed at");
+    expect(block).not.toHaveTextContent("Expires");
+  });
+
+  it("a diff file with no path, or a non-string mode, is an error", () => {
+    for (const files of [
+      [{ path: 5, state: "new", hunks: [] }],
+      [{ path: "a", state: "new", hunks: "x" }],
+      [{ path: "a", state: "new", mode: 644, hunks: [] }],
+    ]) {
+      const { unmount } = render(
+        <ConnectorWritePreview
+          details={details({
+            diff: { files, additions: 0, deletions: 0, bytes: 1, sha256: "x".repeat(64) },
+          })}
+        />,
+      );
+      expect(screen.getByTestId("connector-write-diff-error")).toBeInTheDocument();
+      unmount();
+    }
+  });
+});

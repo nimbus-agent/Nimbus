@@ -142,6 +142,24 @@ describe("runAsk — the item count", () => {
     expect(last?.classifier).toEqual({ called: false, reason: "index is empty" });
     expect(last?.question).toBe("what changed in billing");
   });
+
+  test("an explain recorder that throws does not change the answer", async () => {
+    const attempts: unknown[] = [];
+    const failing = {
+      record: (r: unknown) => {
+        attempts.push(r);
+        throw new Error("recorder is full");
+      },
+    } as unknown as AskExplainRecorder;
+    const idx = realIndex(0);
+    try {
+      const out = await runAsk(baseParams({ localIndex: idx, explainRecorder: failing }));
+      expect(out.reply).toContain("No data indexed yet");
+    } finally {
+      idx.close();
+    }
+    expect(attempts).toHaveLength(1);
+  });
 });
 
 describe("runAsk — the classifier's own refusals", () => {

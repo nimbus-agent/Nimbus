@@ -68,8 +68,8 @@ describe("runExtensionSponsor", () => {
     expect(h.out()).toContain("Funding links for acme/tool:");
     expect(h.out()).toContain("  1. GitHub https://github.com/sponsors/acme");
     expect(h.out()).toContain("Open https://github.com/sponsors/acme in your browser to sponsor.");
-    expect(h.questions.length).toBe(0);
-    expect(h.opened.length).toBe(0);
+    expect(h.questions).toHaveLength(0);
+    expect(h.opened).toHaveLength(0);
   });
 
   test("on a TTY a yes opens the first link", async () => {
@@ -82,7 +82,7 @@ describe("runExtensionSponsor", () => {
   test("on a TTY a no opens nothing", async () => {
     const h = harness({ tty: true, answer: false });
     expect(await runExtensionSponsor(["acme/tool"], h.deps)).toBe(0);
-    expect(h.opened.length).toBe(0);
+    expect(h.opened).toHaveLength(0);
   });
 
   test("--index 2 opens the second kept entry", async () => {
@@ -194,7 +194,7 @@ describe("runExtensionSponsor", () => {
       local: { id: "acme/tool", version: "1", funding: [{ url: "javascript:x" }] },
     });
     expect(await runExtensionSponsor(["acme/tool"], dropped.deps)).toBe(1);
-    expect(dropped.opened.length).toBe(0);
+    expect(dropped.opened).toHaveLength(0);
   });
 
   test("a registry or not-found IPC error prints its cleaned message, exit 1", async () => {

@@ -123,7 +123,7 @@ function pairFiles(
   try {
     const input = filePairs(picked["files"]);
     const got = replyFiles(reply, modeOf);
-    if (input === undefined || got === undefined || got.size !== input.length) return undefined;
+    if (input === undefined || got?.size !== input.length) return undefined;
     const out: DiffInputFile[] = [];
     for (const f of input) {
       const r = got.get(f.path);

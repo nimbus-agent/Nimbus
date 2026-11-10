@@ -51,9 +51,7 @@ export function publisherAfterPublish(
   existing: RegistryExtensionEntry | undefined,
   signer: { id: string; key: string },
 ): RegistryExtensionEntry["publisher"] {
-  return existing !== undefined && existing.publisher.key === signer.key
-    ? existing.publisher
-    : signer;
+  return existing?.publisher.key === signer.key ? existing.publisher : signer;
 }
 
 /** The parts of an index this module reads; a signed or an unsigned index both qualify. */

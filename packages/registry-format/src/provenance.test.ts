@@ -5,6 +5,7 @@ import { join } from "node:path";
 import {
   provenanceFromGhVerify,
   provenanceMatching,
+  provenanceNote,
   readManifestRepository,
   readVersionProvenance,
   type VersionProvenance,
@@ -190,5 +191,27 @@ describe("readVersionProvenance / provenanceMatching", () => {
     expect(provenanceMatching({ provenance: OK }, "other/cli")).toBeUndefined();
     expect(provenanceMatching({ provenance: OK }, undefined)).toBeUndefined();
     expect(provenanceMatching({}, "cli/cli")).toBeUndefined();
+  });
+});
+
+describe("provenanceNote", () => {
+  const base: VersionProvenance = {
+    sourceRepository: "cli/cli",
+    commit: "0123456789abcdef0123456789abcdef01234567",
+    workflow: ".github/workflows/release.yml@refs/tags/v1",
+    runner: "github-hosted",
+    verifiedAt: AT,
+  };
+
+  test("names the registry, the repository, a 12 character commit and the workflow", () => {
+    expect(provenanceNote(base, "official")).toBe(
+      "Provenance verified by official: built from cli/cli at 0123456789ab by .github/workflows/release.yml@refs/tags/v1",
+    );
+  });
+
+  test("says so when the runner is self-hosted", () => {
+    expect(provenanceNote({ ...base, runner: "self-hosted" }, "r")).toEndWith(
+      "release.yml@refs/tags/v1 on a self-hosted runner",
+    );
   });
 });

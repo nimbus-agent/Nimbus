@@ -140,3 +140,54 @@ describe("isSensitiveFieldName", () => {
     expect(isSensitiveFieldName("projectKey")).toBe(true);
   });
 });
+
+describe("confirm-template: remaining branches", () => {
+  test("names the exact refusal for each placeholder defect", () => {
+    expect(parseConfirmTemplate("a/{}")).toEqual({
+      ok: false,
+      reason: "has a placeholder {} with a bad name",
+    });
+    expect(parseConfirmTemplate("a/{1abc}")).toEqual({
+      ok: false,
+      reason: "has a placeholder {1abc} with a bad name",
+    });
+    expect(parseConfirmTemplate("a/{ab-c}")).toEqual({
+      ok: false,
+      reason: "has a placeholder {ab-c} with a bad name",
+    });
+    expect(parseConfirmTemplate("a/{x:head8}")).toEqual({
+      ok: false,
+      reason: "has a placeholder {x:head8} with an unknown modifier",
+    });
+    expect(parseConfirmTemplate("a/{x:}")).toEqual({
+      ok: false,
+      reason: "has a placeholder {x:} with an unknown modifier",
+    });
+    expect(parseConfirmTemplate("a/{x{y}}")).toEqual({ ok: false, reason: "has a nested {" });
+    expect(parseConfirmTemplate("a/{x")).toEqual({ ok: false, reason: "has an unclosed {" });
+    expect(parseConfirmTemplate("a}/{x}")).toEqual({ ok: false, reason: "has a stray }" });
+  });
+
+  test("an empty template names no placeholder; a leading placeholder has no text segment", () => {
+    expect(parseConfirmTemplate("")).toEqual({ ok: false, reason: "names no placeholder" });
+    expect(parseConfirmTemplate("{x}")).toEqual({
+      ok: true,
+      segments: [{ kind: "field", name: "x", tail8: false }],
+    });
+  });
+
+  test("a field name may hold digits and underscores after its first character", () => {
+    expect(parseConfirmTemplate("_a1_b2/{_a1_b2}").ok).toBe(true);
+  });
+
+  test("sensitive names: acronym runs, digits and separators split into words", () => {
+    expect(isSensitiveFieldName("APIKey")).toBe(true);
+    expect(isSensitiveFieldName("v2Token")).toBe(true);
+    expect(isSensitiveFieldName("api__key")).toBe(true);
+    expect(isSensitiveFieldName("_secret")).toBe(true);
+    expect(isSensitiveFieldName("URL")).toBe(false);
+    expect(isSensitiveFieldName("")).toBe(false);
+    expect(isSensitiveFieldName("author")).toBe(false);
+    expect(isSensitiveFieldName("AUTH")).toBe(true);
+  });
+});

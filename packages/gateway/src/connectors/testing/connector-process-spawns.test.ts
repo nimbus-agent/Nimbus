@@ -211,3 +211,43 @@ describe("connector process census — what it refuses rather than skips", () =>
     ]);
   });
 });
+
+describe("connector process census — literal and list edge cases", () => {
+  test("a tool id with a backslash or a line break is not read as a literal id", () => {
+    const body =
+      'const p = Bun.spawn(a);\nreg(\'fx_esc\\aped\', "x", s, h);\nreg("fx_multi\n", "x", s, h);';
+    const [fx] = scanProcessSpawningConnectors(pkg(body)).connectors;
+    expect(fx?.toolIds).toEqual(["fx_read", "fx_run"]);
+  });
+
+  test("an unterminated quote ends the literal scan without a tool id", () => {
+    const sources = pkg("const p = Bun.spawn(a);", [
+      { rel: "connectors/fx/src/other.ts", text: 'reg("fx_open' },
+    ]);
+    const [fx] = scanProcessSpawningConnectors(sources).connectors;
+    expect(fx?.toolIds).toEqual(["fx_read", "fx_run"]);
+  });
+
+  test("a single-quoted sole-literal import is followed like a double-quoted one", () => {
+    const sources = pkg("const m = await import('./helper.ts');", [
+      { rel: "connectors/fx/src/helper.ts", text: `import { spawn } from "node:child_process";` },
+    ]);
+    const scan = scanProcessSpawningConnectors(sources);
+    expect(scan.violations).toEqual([]);
+    expect(scan.connectors.map((c) => c.id)).toEqual(["fx"]);
+  });
+
+  test("a literal followed by more arguments is a computed specifier and is refused", () => {
+    const scan = scanProcessSpawningConnectors(pkg(`const m = require("x", extra);`));
+    expect(scan.violations.map((v) => v.reason)).toEqual([
+      "a dynamic import/require whose specifier is not a plain string literal",
+    ]);
+  });
+
+  test("an unclosed *_TOOL_NAMES list is treated as no declaration", () => {
+    const scan = scanProcessSpawningConnectors(
+      pkg(`const p = Bun.spawn(a);\nexport const FX_TOOL_NAMES = [ "fx_read"`),
+    );
+    expect(scan.violations).toEqual([]);
+  });
+});

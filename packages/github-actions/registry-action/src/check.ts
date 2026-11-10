@@ -356,8 +356,9 @@ function checkRequestPullRequest(
 ): void {
   const offending = changes.filter((c) => c.status !== "A" || !c.path.startsWith(REQUESTS_DIR));
   if (offending.length > 0) {
+    const changed = offending.map((c) => `${c.status} ${c.path}`).join(", ");
     throw new Error(
-      `a maintainer request pull request may only add ${REQUESTS_DIR}<name>.json files; it also changes: ${offending.map((c) => `${c.status} ${c.path}`).join(", ")}`,
+      `a maintainer request pull request may only add ${REQUESTS_DIR}<name>.json files; it also changes: ${changed}`,
     );
   }
   const files = readRequestFiles(git, "HEAD", cwd, new Set(changes.map((c) => c.path)));
@@ -370,9 +371,8 @@ function checkRequestPullRequest(
     }
   }
   if (files.skipped.length > 0) {
-    throw new Error(
-      `invalid maintainer request: ${files.skipped.map((f) => `${f.path} ${f.reason}`).join("; ")}`,
-    );
+    const invalid = files.skipped.map((f) => `${f.path} ${f.reason}`).join("; ");
+    throw new Error(`invalid maintainer request: ${invalid}`);
   }
   io.summary(
     [

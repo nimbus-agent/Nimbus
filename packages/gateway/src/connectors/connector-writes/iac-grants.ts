@@ -100,8 +100,7 @@ export const IAC_WORKDIR_REFUSALS = Object.freeze({
   notADirectory: "that path is not a directory",
   root: "a filesystem root, a drive root, or a folder that holds your home or temp folder cannot be approved",
   protected: "the directory overlaps a folder Nimbus owns",
-  notTypeable:
-    "the path has a character that cannot be typed in a confirm text (use plain ASCII letters, digits, spaces and _ - . / \\ : # @ !)",
+  notTypeable: String.raw`the path has a character that cannot be typed in a confirm text (use plain ASCII letters, digits, spaces and _ - . / \ : # @ !)`,
   tooLong: "the path is too long to type in a confirm text",
   terraformDir: "the directory is or is inside a .terraform folder",
   shape: "the path is not a plain absolute path",

@@ -367,6 +367,20 @@ type RaceOutcome =
   | { readonly kind: "replies"; readonly reply: unknown; readonly alsoReply: unknown }
   | { readonly kind: "unavailable"; readonly reason: BeforeStateUnavailableReason };
 
+/**
+ * The outcome for a model-origin row with no reader or no preview. A bound row's prepare step
+ * (I54) is its current state, as `isModelOfferableRow` says (`before || bound`): with a preview,
+ * it is the executor's prepare phase that reads. Otherwise, as defence in depth (such a row is
+ * never offered, but an `origin: "model"` action can reach an executor through other paths), a
+ * Wave 4 row is refused and any other row is left alone.
+ */
+function unreadableRowOutcome(row: ConnectorWriteRow): BeforeStateOutcome | undefined {
+  if (row.before === undefined && row.preview !== undefined && row.bound !== undefined) {
+    return undefined;
+  }
+  return row.wave === 4 ? refusalOf(WAVE4_BEFORE_REFUSAL) : undefined;
+}
+
 export function createBeforeStateRunner(options: BeforeStateRunnerOptions = {}): BeforeStateRunner {
   const rows = options.rows ?? CONNECTOR_WRITE_ROWS;
   const timeoutMs = options.timeoutMs ?? BEFORE_STATE_TIMEOUT_MS;
@@ -421,16 +435,7 @@ export function createBeforeStateRunner(options: BeforeStateRunnerOptions = {}):
       const row = findConnectorWriteRow(action, rows);
       if (row === undefined) return undefined;
       const reader = row.before;
-      if (reader === undefined || row.preview === undefined) {
-        // A bound row's prepare step (I54) is its current state, as `isModelOfferableRow` says
-        // (`before || bound`): with a preview, it is the executor's prepare phase that reads.
-        if (reader === undefined && row.preview !== undefined && row.bound !== undefined) {
-          return undefined;
-        }
-        // Defence in depth: such a row is never offered (`isModelOfferableRow`), but an
-        // `origin: "model"` action can reach an executor through other paths.
-        return row.wave === 4 ? refusalOf(WAVE4_BEFORE_REFUSAL) : undefined;
-      }
+      if (reader === undefined || row.preview === undefined) return unreadableRowOutcome(row);
       const input = extractToolInput(action);
       const picked = isPlainObject(input)
         ? pickBeforeReaderArgs(beforeReaderArgKeys(reader), input)

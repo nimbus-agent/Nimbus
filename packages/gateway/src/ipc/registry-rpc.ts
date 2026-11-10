@@ -36,7 +36,10 @@ import {
   builtinRegistryOf,
 } from "../extensions/registry/builtin-registry.ts";
 import { cloneRegistrySource } from "../extensions/registry/clone-source.ts";
-import { installFromRegistry } from "../extensions/registry/install-from-registry.ts";
+import {
+  type InstallFromRegistryRequest,
+  installFromRegistry,
+} from "../extensions/registry/install-from-registry.ts";
 import {
   fetchRegistryBytes,
   fetchUnpinnedIndex,
@@ -287,6 +290,76 @@ function installDeps(o: RegistryRpcOptions): {
   return { ownerGate, fetch, extensionsDir: o.extensionsDir, vault: o.vault };
 }
 
+/** The request `installFromRegistry` takes: the id, plus each selector the caller gave. */
+function installRequestOf(
+  id: string,
+  given: {
+    [K in keyof Omit<InstallFromRegistryRequest, "id">]-?:
+      | InstallFromRegistryRequest[K]
+      | undefined;
+  },
+): InstallFromRegistryRequest {
+  const { registry, version, channel, acceptPublisherKey } = given;
+  return {
+    id,
+    ...(registry !== undefined && { registry }),
+    ...(version !== undefined && { version }),
+    ...(channel !== undefined && { channel }),
+    ...(acceptPublisherKey !== undefined && { acceptPublisherKey }),
+  };
+}
+
+/**
+ * The error a failed registry install is thrown as, after the failure is announced. A rollback
+ * that left packages behind is warned and named in the refusal (never swallowed).
+ */
+function installRefusal(o: RegistryRpcOptions, id: string, e: unknown): unknown {
+  const note = reportIncompleteRollback(o.logger ?? registryRpcLog, id, e);
+  const message = `${e instanceof Error ? e.message : String(e)}${note}`;
+  emitGatewayEvent("extension.stateChanged", {
+    extensionId: id,
+    action: "install",
+    ok: false,
+    error: message,
+  });
+  // A trust block (I48) is a registry-class refusal like the others, not invalid params.
+  if (e instanceof RegistryError || e instanceof TrustBlockError) {
+    // As `dispatchRegistryRpc` maps it, with the note on the message.
+    return note === "" ? e : new RpcMethodError(-32000, message);
+  }
+  if (e instanceof RpcMethodError) {
+    return note === "" ? e : new RpcMethodError(e.rpcCode, message, e.rpcData);
+  }
+  // A refusal AFTER the owner was involved is internal-class, like `extension.install`'s.
+  return new RpcMethodError(
+    e instanceof ExtensionInstallNotApprovedError ? -32603 : -32602,
+    message,
+  );
+}
+
+/** The result of a landed registry install: the root and each dependency it added. */
+function installedValue(
+  o: RegistryRpcOptions,
+  installed: Exclude<Awaited<ReturnType<typeof installFromRegistry>>, { promoted?: unknown }>,
+  connectorRequirements: unknown,
+) {
+  return {
+    id: installed.id,
+    version: installed.version,
+    sourceRegistry: installed.sourceRegistry,
+    rootFingerprint: installed.rootFingerprint,
+    publisher: installed.publisher,
+    installPath: installed.installPath,
+    treeDigest: installed.treeDigest,
+    kind: installedKindOf(o.db, installed.id),
+    dependencies: installed.dependencies.map((d) => ({
+      ...d,
+      kind: installedKindOf(o.db, d.id),
+    })),
+    ...(connectorRequirements === undefined ? {} : { connectorRequirements }),
+  };
+}
+
 async function handleInstall(
   rec: Record<string, unknown> | undefined,
   o: RegistryRpcOptions,
@@ -321,13 +394,7 @@ async function handleInstall(
             },
           }),
       },
-      {
-        id,
-        ...(registry !== undefined && { registry }),
-        ...(version !== undefined && { version }),
-        ...(channel !== undefined && { channel }),
-        ...(acceptPublisherKey !== undefined && { acceptPublisherKey }),
-      },
+      installRequestOf(id, { registry, version, channel, acceptPublisherKey }),
     );
     if (!isPromotedInstall(installed)) {
       emitGatewayEvent("extension.stateChanged", {
@@ -337,28 +404,7 @@ async function handleInstall(
       });
     }
   } catch (e) {
-    // A rollback that left packages behind is warned and named in the refusal (never swallowed).
-    const note = reportIncompleteRollback(o.logger ?? registryRpcLog, id, e);
-    const message = `${e instanceof Error ? e.message : String(e)}${note}`;
-    emitGatewayEvent("extension.stateChanged", {
-      extensionId: id,
-      action: "install",
-      ok: false,
-      error: message,
-    });
-    // A trust block (I48) is a registry-class refusal like the others, not invalid params.
-    if (e instanceof RegistryError || e instanceof TrustBlockError) {
-      // As `dispatchRegistryRpc` maps it, with the note on the message.
-      throw note === "" ? e : new RpcMethodError(-32000, message);
-    }
-    if (e instanceof RpcMethodError) {
-      throw note === "" ? e : new RpcMethodError(e.rpcCode, message, e.rpcData);
-    }
-    // A refusal AFTER the owner was involved is internal-class, like `extension.install`'s.
-    throw new RpcMethodError(
-      e instanceof ExtensionInstallNotApprovedError ? -32603 : -32602,
-      message,
-    );
+    throw installRefusal(o, id, e);
   }
   // A dependency kept by an explicit install: nothing was fetched or installed, only its marker moved.
   if (isPromotedInstall(installed)) {
@@ -386,24 +432,7 @@ async function handleInstall(
     [installed.id, ...installed.dependencies.map((d) => d.id)],
     o.requirementStatuses,
   );
-  return {
-    kind: "hit",
-    value: {
-      id: installed.id,
-      version: installed.version,
-      sourceRegistry: installed.sourceRegistry,
-      rootFingerprint: installed.rootFingerprint,
-      publisher: installed.publisher,
-      installPath: installed.installPath,
-      treeDigest: installed.treeDigest,
-      kind: installedKindOf(o.db, installed.id),
-      dependencies: installed.dependencies.map((d) => ({
-        ...d,
-        kind: installedKindOf(o.db, d.id),
-      })),
-      ...(connectorRequirements === undefined ? {} : { connectorRequirements }),
-    },
-  };
+  return { kind: "hit", value: installedValue(o, installed, connectorRequirements) };
 }
 
 /**

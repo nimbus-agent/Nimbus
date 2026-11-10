@@ -301,7 +301,7 @@ describe("self-check property", () => {
     ];
     for (const [a, b] of pairs) {
       const r = one(a, b);
-      expect(r.suite.cases.length).toBe(1);
+      expect(r.suite.cases).toHaveLength(1);
       const c = roundTrip(r);
       expect(judgeCase(c, a).pass).toBe(true);
       expect(judgeCase(c, b).pass).toBe(true);
@@ -327,7 +327,7 @@ describe("self-check property", () => {
   test("zero recordable cases still returns an empty suite and the skips", () => {
     const r = one(failed, failed);
     expect(r.suite.cases).toEqual([]);
-    expect(r.skipped.length).toBe(1);
+    expect(r.skipped).toHaveLength(1);
     expect(() => serialiseEvalSuite(r.suite)).toThrow(/ERR_REGISTRY_EVAL_SUITE_INVALID/);
   });
 });
@@ -413,5 +413,29 @@ describe("parseEvalRecordDocument", () => {
     const cut = parseEvalRecordDocument(err("m".repeat(5000)));
     expect(cut).not.toBeNull();
     expect(cut?.ok === false && cut.error.message.length).toBe(1000);
+  });
+});
+
+describe("buildRecordedSuite robustness", () => {
+  test("a reply count that does not match the case count is refused", () => {
+    expect(() => buildRecordedSuite(inputsFor(2), [reply("a")], [reply("a"), reply("a")])).toThrow(
+      /a reply is missing for a case/,
+    );
+    expect(() => buildRecordedSuite(inputsFor(1), [reply("a")], [])).toThrow(
+      /a reply is missing for a case/,
+    );
+  });
+
+  test("a reply that blows up while it is read is that case's self-check-failed", () => {
+    const hostile = {
+      kind: "reply",
+      isError: false,
+      get text(): string {
+        throw new Error("boom");
+      },
+    } as unknown as EvalReply;
+    const r = one(hostile, reply("x"));
+    expect(r.suite.cases).toEqual([]);
+    expect(r.skipped).toEqual([{ case: "c0", why: "self-check-failed" }]);
   });
 });

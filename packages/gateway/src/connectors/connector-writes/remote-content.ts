@@ -55,7 +55,7 @@ export type RemoteContentFormat =
 
 const SCHEME = /^[a-z][a-z0-9+.-]*:/;
 /** A character reference the gateway's six-name decoder left unresolved (`;` required). */
-const UNRESOLVED_REFERENCE = /&(?:[a-z][a-z0-9]*|#[0-9]+|#x[0-9a-f]+);/;
+const UNRESOLVED_REFERENCE = /&(?:[a-z][a-z0-9]*|#\d+|#x[0-9a-f]+);/;
 
 /** The RAW form: lower-cased, TAB/LF/CR deleted anywhere, leading and trailing C0 and space trimmed. */
 function rawUrlForm(value: string): string {
@@ -65,8 +65,8 @@ function rawUrlForm(value: string): string {
   }
   let lo = 0;
   let hi = out.length;
-  while (lo < hi && out.charCodeAt(lo) <= 0x20) lo++;
-  while (hi > lo && out.charCodeAt(hi - 1) <= 0x20) hi--;
+  while (lo < hi && (out.codePointAt(lo) ?? 0) <= 0x20) lo++;
+  while (hi > lo && (out.codePointAt(hi - 1) ?? 0) <= 0x20) hi--;
   return out.slice(lo, hi);
 }
 
@@ -305,21 +305,33 @@ function cssWithoutComments(css: string): string | undefined {
     }
     if (quote !== "") {
       out += ch;
-      if (ch === quote || isCssNewline(ch)) quote = "";
+      if (closesCssString(ch, quote)) quote = "";
       i++;
       continue;
     }
-    if (ch === "/" && css.charAt(i + 1) === "*") {
+    if (startsCssComment(css, i)) {
       const close = css.indexOf("*/", i + 2);
       if (close === -1) return undefined;
       i = close + 2;
       continue;
     }
-    if (ch === '"' || ch === "'") quote = ch;
+    if (isCssQuote(ch)) quote = ch;
     out += ch;
     i++;
   }
   return out;
+}
+
+function closesCssString(ch: string, quote: string): boolean {
+  return ch === quote || isCssNewline(ch);
+}
+
+function startsCssComment(css: string, i: number): boolean {
+  return css.charAt(i) === "/" && css.charAt(i + 1) === "*";
+}
+
+function isCssQuote(ch: string): boolean {
+  return ch === '"' || ch === "'";
 }
 
 /** U+FFFD, written as a number (a formatter can turn an escape into the character itself). */
@@ -330,6 +342,12 @@ function escapedCodePoint(hex: string): string {
   const cp = Number.parseInt(hex, 16);
   const invalid = cp === 0 || cp > 0x10ffff || (cp >= 0xd800 && cp <= 0xdfff);
   return String.fromCodePoint(invalid ? REPLACEMENT_CHARACTER : cp);
+}
+
+/** The offset past the one whitespace (CRLF counts as one) that ends a hex escape at `j`. */
+function afterEscapeTerminator(css: string, j: number): number {
+  if (css.charAt(j) === "\r" && css.charAt(j + 1) === "\n") return j + 2;
+  return isCssSpace(css.charAt(j)) ? j + 1 : j;
 }
 
 /** `css` with its escapes decoded, in one forward pass (an escaped newline joins the lines). */
@@ -347,9 +365,7 @@ function cssEscapesDecoded(css: string): string {
     while (j < css.length && j - i <= 6 && isHexDigit(css.charAt(j))) j++;
     if (j > i + 1) {
       out += escapedCodePoint(css.slice(i + 1, j));
-      if (css.charAt(j) === "\r" && css.charAt(j + 1) === "\n") j += 2;
-      else if (isCssSpace(css.charAt(j))) j++;
-      i = j;
+      i = afterEscapeTerminator(css, j);
       continue;
     }
     // `\` + a newline (a continuation) or at the end of input contributes nothing.
@@ -437,7 +453,7 @@ function cssUrlLoads(
     for (let m = pattern.exec(form); m !== null; m = pattern.exec(form)) {
       if (!allowFragmentUrl) return true;
       const arg = urlArgument(form, m.index + m[0].length);
-      if (arg === undefined || !arg.value.startsWith("#")) return true;
+      if (!arg?.value.startsWith("#")) return true;
       pattern.lastIndex = arg.end;
     }
     return false;
@@ -490,8 +506,8 @@ function localIn(name: string, set: ReadonlySet<string>): boolean {
 function asciiLower(s: string): string {
   let out = "";
   for (let i = 0; i < s.length; i++) {
-    const c = s.charCodeAt(i);
-    out += c >= 0x41 && c <= 0x5a ? String.fromCharCode(c + 0x20) : s.charAt(i);
+    const c = s.codePointAt(i) ?? 0;
+    out += c >= 0x41 && c <= 0x5a ? String.fromCodePoint(c + 0x20) : s.charAt(i);
   }
   return out;
 }
@@ -517,9 +533,9 @@ function htmlRawTextClosers(text: string): ReadonlyMap<string, readonly number[]
   const out = new Map<string, number[]>();
   for (let at = text.indexOf("</"); at !== -1; at = text.indexOf("</", at + 2)) {
     let j = at + 2;
-    while (j < text.length && isAsciiLetterCode(text.charCodeAt(j))) j++;
+    while (j < text.length && isAsciiLetterCode(text.codePointAt(j) ?? -1)) j++;
     const name = asciiLower(text.slice(at + 2, j));
-    if (!RAW_TEXT_ELEMENTS.has(name) || !isHtmlEndDelimiter(text.charCodeAt(j))) continue;
+    if (!RAW_TEXT_ELEMENTS.has(name) || !isHtmlEndDelimiter(text.codePointAt(j) ?? -1)) continue;
     const list = out.get(name) ?? [];
     list.push(at);
     out.set(name, list);
@@ -537,6 +553,50 @@ interface RawTextSpan {
   readonly unionEnd: number;
 }
 
+/** The first unused HTML closer of `qname` at or after the start tag's end (advances `cursor`). */
+function nextHtmlCloser(
+  qname: string,
+  open: StartToken,
+  closers: ReadonlyMap<string, readonly number[]>,
+  cursor: Map<string, number>,
+): number | undefined {
+  const list = closers.get(qname) ?? [];
+  let c = cursor.get(qname) ?? 0;
+  while (c < list.length && (list[c] ?? 0) < open.end) c++;
+  cursor.set(qname, c);
+  return list[c];
+}
+
+/**
+ * The token index of the XML end tag of the raw-text element opened at `k`, or `undefined` when a
+ * raw-text start tag comes first (no nesting) or none closes it.
+ */
+function xmlEndTokenIndex(
+  tokens: readonly MarkupToken[],
+  k: number,
+  qname: string,
+): number | undefined {
+  for (let j = k + 1; j < tokens.length; j++) {
+    const u = tokens[j];
+    if (u?.kind === "start" && localIn(u.name, RAW_TEXT_ELEMENTS)) return undefined;
+    if (u?.kind === "end" && asciiLower(u.name) === qname) return j;
+  }
+  return undefined;
+}
+
+/** Whether a raw-text start tag begins among the tokens from `from` that start before `unionEnd`. */
+function startsRawTextBefore(
+  tokens: readonly MarkupToken[],
+  from: number,
+  unionEnd: number,
+): boolean {
+  for (let j = from; j < tokens.length && (tokens[j]?.start ?? unionEnd) < unionEnd; j++) {
+    const u = tokens[j];
+    if (u?.kind === "start" && localIn(u.name, RAW_TEXT_ELEMENTS)) return true;
+  }
+  return false;
+}
+
 /**
  * The extent of the raw-text element opened at `k`, or `undefined` (refused) when either view
  * never closes it (Review fix 2) or another raw-text element starts inside it (nesting is never
@@ -552,28 +612,15 @@ function rawTextSpan(
   cursor: Map<string, number>,
 ): RawTextSpan | undefined {
   const qname = asciiLower(open.name);
-  let htmlEnd: number | undefined;
-  if (RAW_TEXT_ELEMENTS.has(qname)) {
-    const list = closers.get(qname) ?? [];
-    let c = cursor.get(qname) ?? 0;
-    while (c < list.length && (list[c] ?? 0) < open.end) c++;
-    cursor.set(qname, c);
-    htmlEnd = list[c];
-    if (htmlEnd === undefined) return undefined;
-  }
-  let xmlEnd = -1;
-  for (let j = k + 1; j < tokens.length && xmlEnd === -1; j++) {
-    const u = tokens[j];
-    if (u?.kind === "start" && localIn(u.name, RAW_TEXT_ELEMENTS)) return undefined;
-    if (u?.kind === "end" && asciiLower(u.name) === qname) xmlEnd = j;
-  }
+  const isRawText = RAW_TEXT_ELEMENTS.has(qname);
+  const htmlEnd = isRawText ? nextHtmlCloser(qname, open, closers, cursor) : undefined;
+  if (isRawText && htmlEnd === undefined) return undefined;
+  const xmlEnd = xmlEndTokenIndex(tokens, k, qname);
+  if (xmlEnd === undefined) return undefined;
   const close = tokens[xmlEnd];
   if (close === undefined) return undefined;
   const unionEnd = Math.max(close.start, htmlEnd ?? 0);
-  for (let j = xmlEnd + 1; j < tokens.length && (tokens[j]?.start ?? unionEnd) < unionEnd; j++) {
-    const u = tokens[j];
-    if (u?.kind === "start" && localIn(u.name, RAW_TEXT_ELEMENTS)) return undefined;
-  }
+  if (startsRawTextBefore(tokens, xmlEnd + 1, unionEnd)) return undefined;
   return { xmlEnd, htmlEnd, unionEnd };
 }
 
@@ -665,8 +712,8 @@ const URL_ASSIGNMENT_TRIPWIRE =
   /\b(?:src|srcset|lowsrc|dynsrc|poster|background)\s*=\s*(?:["'\x60]\s*)?(?:[\\/][\\/]|[a-z][a-z0-9+.-]*:)/;
 const CSS_TRIPWIRE = /url\s*\(|@import|(?:image|image-set|cross-fade|element|src)\(/;
 /** Drive markup: a `url(` whose argument starts with `#` (an SVG fragment) is not tripped. */
-const CSS_TRIPWIRE_DRIVE =
-  /url\s*\((?!\s*(?:["']\s*)?#)|@import|(?:image|image-set|cross-fade|element|src)\(/;
+const CSS_TRIPWIRE_DRIVE_URL = /url\s*\((?!\s*(?:["']\s*)?#)/;
+const CSS_TRIPWIRE_DRIVE_OTHER = /@import|(?:image|image-set|cross-fade|element|src)\(/;
 
 type TripwireKind = "outlook" | "default" | "drive";
 
@@ -676,8 +723,11 @@ function tripwire(text: string, kind: TripwireKind): boolean {
   const spaced = settle(text, " ");
   if (deleted === undefined || spaced === undefined) return true;
   const assignment = kind === "outlook" ? URL_ASSIGNMENT_TRIPWIRE_CID : URL_ASSIGNMENT_TRIPWIRE;
-  const css = kind === "drive" ? CSS_TRIPWIRE_DRIVE : CSS_TRIPWIRE;
-  return [text.toLowerCase(), deleted, spaced].some((f) => assignment.test(f) || css.test(f));
+  const css =
+    kind === "drive" ? [CSS_TRIPWIRE_DRIVE_URL, CSS_TRIPWIRE_DRIVE_OTHER] : [CSS_TRIPWIRE];
+  return [text.toLowerCase(), deleted, spaced].some(
+    (f) => assignment.test(f) || css.some((r) => r.test(f)),
+  );
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -698,7 +748,7 @@ interface NestedBudget {
 function nestedOpeners(source: string): number[] {
   const out: number[] = [];
   for (let at = source.indexOf("<", 1); at !== -1; at = source.indexOf("<", at + 1)) {
-    if (isAsciiLetterCode(source.charCodeAt(at + 1))) out.push(at);
+    if (isAsciiLetterCode(source.codePointAt(at + 1) ?? -1)) out.push(at);
   }
   return out;
 }
@@ -770,6 +820,8 @@ function refusesTags(tokens: readonly MarkupToken[], text: string, rules: Markup
 interface DetectOptions {
   readonly tripwire: boolean;
 }
+
+const DEFAULT_DETECT_OPTIONS: DetectOptions = Object.freeze({ tripwire: true });
 
 /** What distinguishes one HTML message format from another (B3w: Outlook and Teams). */
 interface HtmlProfile {
@@ -1213,6 +1265,13 @@ function notionObjectRefused(obj: Readonly<Record<string, unknown>>): boolean {
   });
 }
 
+/** The children to walk of an array or plain object node; `undefined` when the object is refused. */
+function notionChildrenOf(value: unknown): readonly unknown[] | undefined {
+  if (Array.isArray(value)) return value;
+  if (!isPlainObject(value) || notionObjectRefused(value)) return undefined;
+  return Object.values(value);
+}
+
 /** R8: Notion `childrenJson` (an array) or `propertiesJson` (a plain object). */
 function notionRemote(text: string, shape: "blocks" | "properties"): boolean {
   let root: unknown;
@@ -1228,15 +1287,9 @@ function notionRemote(text: string, shape: "blocks" | "properties"): boolean {
     nodes++;
     if (nodes > NOTION_SCAN_MAX_NODES) return true;
     const { value, depth } = top;
-    let children: readonly unknown[];
-    if (Array.isArray(value)) {
-      children = value;
-    } else if (isPlainObject(value)) {
-      if (notionObjectRefused(value)) return true;
-      children = Object.values(value);
-    } else {
-      continue;
-    }
+    if (!Array.isArray(value) && !isPlainObject(value)) continue;
+    const children = notionChildrenOf(value);
+    if (children === undefined) return true;
     if (depth > NOTION_SCAN_MAX_DEPTH) return true;
     for (const child of children) stack.push({ value: child, depth: depth + 1 });
   }
@@ -1323,12 +1376,8 @@ function listMarkerEnd(line: string, i: number): number {
   return next === "" || next === " " || next === "\t" ? j : -1;
 }
 
-/**
- * The fence run a line holds after any spaces, TABs, blockquote `>` markers and list markers, or
- * `undefined`. Any indent is accepted for an opener (an over-approximation: a 4-space-indented
- * "fence" is read as one, fail closed); a closer is checked separately.
- */
-function fenceLineOf(line: string): FenceLine | undefined {
+/** The container markers, indent and offset where a line's fence run (if any) would start. */
+function skipFenceContainers(line: string): { markers: string; indent: number; i: number } {
   let markers = "";
   let indent = 0;
   let i = 0;
@@ -1351,6 +1400,16 @@ function fenceLineOf(line: string): FenceLine | undefined {
     indent = 0;
     i = end;
   }
+  return { markers, indent, i };
+}
+
+/**
+ * The fence run a line holds after any spaces, TABs, blockquote `>` markers and list markers, or
+ * `undefined`. Any indent is accepted for an opener (an over-approximation: a 4-space-indented
+ * "fence" is read as one, fail closed); a closer is checked separately.
+ */
+function fenceLineOf(line: string): FenceLine | undefined {
+  const { markers, indent, i } = skipFenceContainers(line);
   const ch = line.charAt(i);
   if (ch !== "\x60" && ch !== "~") return undefined;
   let j = i;
@@ -1360,8 +1419,8 @@ function fenceLineOf(line: string): FenceLine | undefined {
 
 /** Only spaces and TABs. */
 function isBlank(text: string): boolean {
-  for (let i = 0; i < text.length; i++) {
-    if (text[i] !== " " && text[i] !== "\t") return false;
+  for (const ch of text) {
+    if (ch !== " " && ch !== "\t") return false;
   }
   return true;
 }
@@ -1399,7 +1458,7 @@ function lineLoads(line: string): boolean {
  * loads nothing are refused too. `kroki` fences take every format's tokens (fail closed).
  */
 const PLANTUML_LOADERS = ["!include", "!import", "!theme", "%load_json", "%loadjson", "<img"];
-const VEGA_LOADERS = ["url", "signal", "expr", "loader", "\\u"];
+const VEGA_LOADERS = ["url", "signal", "expr", "loader", String.raw`\u`];
 const SUBSTITUTION_LOADERS = ["${"];
 const STRUCTURIZR_LOADERS = ["!include", "!script", "!plugin", "${"];
 const DIAGRAM_LOADERS: ReadonlyMap<string, readonly string[]> = new Map([
@@ -1526,25 +1585,44 @@ function diagramLinesLoad(lines: readonly string[], names: ReadonlySet<string>):
   for (let i = lines.length - 1; i >= 0; i--) {
     const line = lines[i] ?? "";
     const f = fenceLineOf(line);
-    if (f !== undefined && isDiagramInfo(f.info, names)) {
-      let bound = nextLoad;
-      for (const l of loaderLanguagesOf(f.info, names)) {
-        bound = Math.min(bound, nextLoader.get(l) ?? Number.POSITIVE_INFINITY);
-      }
-      if (
-        bound !== Number.POSITIVE_INFINITY &&
-        bound < nearestCloser(closers.get(f.markers + f.ch), f.len)
-      )
-        return true;
-    }
+    if (f !== undefined && openerLoads(f, names, nextLoad, nextLoader, closers)) return true;
     if (f !== undefined && isStrictCloser(f)) pushCloser(closers, f.markers + f.ch, f.len, i);
     if (lineLoads(line)) nextLoad = i;
-    const compact = loaderLanguages.length > 0 ? compactLine(line) : "";
-    for (const l of loaderLanguages) {
-      if ((DIAGRAM_LOADERS.get(l) ?? []).some((t) => compact.includes(t))) nextLoader.set(l, i);
-    }
+    noteLoaderLines(line, loaderLanguages, nextLoader, i);
   }
   return false;
+}
+
+/** Records line `i` as the nearest loader line of each language whose token it holds. */
+function noteLoaderLines(
+  line: string,
+  loaderLanguages: readonly string[],
+  nextLoader: Map<string, number>,
+  i: number,
+): void {
+  const compact = loaderLanguages.length > 0 ? compactLine(line) : "";
+  for (const l of loaderLanguages) {
+    if ((DIAGRAM_LOADERS.get(l) ?? []).some((t) => compact.includes(t))) nextLoader.set(l, i);
+  }
+}
+
+/** Whether a diagram opener `f` has a URL or loader line after it, before its strict closer. */
+function openerLoads(
+  f: FenceLine,
+  names: ReadonlySet<string>,
+  nextLoad: number,
+  nextLoader: ReadonlyMap<string, number>,
+  closers: CloserStacks,
+): boolean {
+  if (!isDiagramInfo(f.info, names)) return false;
+  let bound = nextLoad;
+  for (const l of loaderLanguagesOf(f.info, names)) {
+    bound = Math.min(bound, nextLoader.get(l) ?? Number.POSITIVE_INFINITY);
+  }
+  return (
+    bound !== Number.POSITIVE_INFINITY &&
+    bound < nearestCloser(closers.get(f.markers + f.ch), f.len)
+  );
 }
 
 /**
@@ -1927,7 +2005,7 @@ function driveMarkupRemote(text: string, opts: DetectOptions): boolean {
 export function remoteContentIn(
   format: RemoteContentFormat,
   text: string,
-  opts: DetectOptions = { tripwire: true },
+  opts: DetectOptions = DEFAULT_DETECT_OPTIONS,
 ): boolean {
   if (text.length > REMOTE_SCAN_MAX_CHARS) return true;
   try {

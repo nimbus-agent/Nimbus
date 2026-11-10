@@ -255,3 +255,11 @@ describe("parseLivenessEntry", () => {
     }
   });
 });
+
+describe("verifyLivenessFile with an undecodable signature", () => {
+  test("a signature of the wrong length is an invalid signature, not a crash", async () => {
+    const doc = await signed();
+    const bad: LivenessFile = { ...doc, signature: b64(new Uint8Array(3)) };
+    expect(await codeOf(verifyLivenessFile(bad, KEY))).toBe("ERR_LIVENESS_SIGNATURE_INVALID");
+  });
+});

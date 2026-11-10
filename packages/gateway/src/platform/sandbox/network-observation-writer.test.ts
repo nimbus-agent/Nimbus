@@ -1,5 +1,13 @@
 import { afterAll, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import {
@@ -416,6 +424,33 @@ describe("writeObservationFileAtomic", () => {
       }),
     ).toThrow("no space left on device");
     expect(readdirSync(dir)).toEqual([]);
+  });
+
+  test("a rename that fails removes the temp file and rethrows", () => {
+    const dir = tempRoot();
+    // The destination is a non-empty directory, so publishing the temp file over it must fail.
+    const path = join(dir, "ext_x.1.abcdef01.0.json");
+    mkdirSync(path);
+    writeFileSync(join(path, "keep"), "x");
+    expect(() => writeObservationFileAtomic(path, new TextEncoder().encode("{}"))).toThrow();
+    expect(readdirSync(dir)).toEqual(["ext_x.1.abcdef01.0.json"]);
+  });
+
+  test("every temporary name being taken is a refusal, not a silent success", () => {
+    const dir = tempRoot();
+    const path = join(dir, "ext_x.1.abcdef01.0.json");
+    const taken = Object.assign(new Error("exists"), { code: "EEXIST" });
+    let tries = 0;
+    expect(() =>
+      writeObservationFileAtomic(path, new TextEncoder().encode("{}"), {
+        writeTemp: () => {
+          tries += 1;
+          throw taken;
+        },
+      }),
+    ).toThrow("no free temporary name for the observation file");
+    expect(tries).toBeGreaterThan(1);
+    expect(existsSync(path)).toBe(false);
   });
 
   test("the temp name is <prefix>.<seq>.<pid>.<4 hex>.tmp", () => {

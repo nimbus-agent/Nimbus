@@ -16,6 +16,8 @@
 // Imported BY `deploy-mobile.ts`, so it imports nothing from the row table.
 import {
   arrayAt,
+  type BeforeInput,
+  type BeforePicked,
   beforeReplyJson,
   boolAt,
   excerptHead,
@@ -23,16 +25,10 @@ import {
   nonEmptyString,
   presentFields,
   requiredStringAt,
+  shownHead,
   stringAt,
 } from "./before-select.ts";
 import type { BeforeStateField, BeforeStateGuard } from "./types.ts";
-
-type Picked = Readonly<Record<string, unknown>>;
-type Input = Readonly<Record<string, unknown>>;
-
-function shown(v: string | undefined): string | undefined {
-  return v === undefined ? undefined : excerptHead(v);
-}
 
 /** An epoch in milliseconds as an ISO time; a string as is; anything else `undefined`. */
 function timeAt(v: unknown, path: readonly string[]): string | undefined {
@@ -68,18 +64,18 @@ function vercelDeploymentFields(j: unknown, prefix: string): readonly BeforeStat
   const id = stringAt(j, ["id"]) ?? stringAt(j, ["uid"]);
   const target = stringAt(j, ["target"]);
   return presentFields([
-    [`${prefix}deployment`, shown(id)],
-    [`${prefix}project`, shown(stringAt(j, ["name"]))],
-    [`${prefix}target`, target === undefined ? "preview" : shown(target)],
-    [`${prefix}state`, shown(stringAt(j, ["readyState"]) ?? stringAt(j, ["state"]))],
-    [`${prefix}URL`, shown(stringAt(j, ["url"]))],
-    [`${prefix}created`, shown(timeAt(j, ["createdAt"]))],
-    [`${prefix}commit message`, shown(vercelCommitMessage(j))],
+    [`${prefix}deployment`, shownHead(id)],
+    [`${prefix}project`, shownHead(stringAt(j, ["name"]))],
+    [`${prefix}target`, target === undefined ? "preview" : shownHead(target)],
+    [`${prefix}state`, shownHead(stringAt(j, ["readyState"]) ?? stringAt(j, ["state"]))],
+    [`${prefix}URL`, shownHead(stringAt(j, ["url"]))],
+    [`${prefix}created`, shownHead(timeAt(j, ["createdAt"]))],
+    [`${prefix}commit message`, shownHead(vercelCommitMessage(j))],
   ]);
 }
 
 /** `vercel_get` input for a redeploy: the source deployment id. */
-export function vercelRedeployReadArgs(input: Input): Record<string, unknown> | undefined {
+export function vercelRedeployReadArgs(input: BeforeInput): Record<string, unknown> | undefined {
   const idOrUrl = nonEmptyString(input["deploymentId"]);
   return idOrUrl === undefined ? undefined : { idOrUrl };
 }
@@ -90,7 +86,10 @@ export function vercelRedeployReadArgs(input: Input): Record<string, unknown> | 
  * a production redeploy replaces is not shown: the request names no project, so no read can say
  * which one is live (a stated limit, said on the prompt).
  */
-export function selectVercelRedeploy(reply: unknown, picked: Picked): readonly BeforeStateField[] {
+export function selectVercelRedeploy(
+  reply: unknown,
+  picked: BeforePicked,
+): readonly BeforeStateField[] {
   const j = beforeReplyJson(reply);
   const asked = picked["target"];
   const sourceTarget = stringAt(j, ["target"]) ?? "preview";
@@ -118,13 +117,15 @@ export function selectVercelRedeploy(reply: unknown, picked: Picked): readonly B
 }
 
 /** `vercel_project_production_get` input for a promote: the project id. */
-export function vercelPromoteReadArgs(input: Input): Record<string, unknown> | undefined {
+export function vercelPromoteReadArgs(input: BeforeInput): Record<string, unknown> | undefined {
   const projectId = nonEmptyString(input["projectId"]);
   return projectId === undefined ? undefined : { projectId };
 }
 
 /** `vercel_get` input for a promote: the deployment that would become production. */
-export function vercelPromoteDeploymentReadArgs(input: Input): Record<string, unknown> | undefined {
+export function vercelPromoteDeploymentReadArgs(
+  input: BeforeInput,
+): Record<string, unknown> | undefined {
   const idOrUrl = nonEmptyString(input["deploymentId"]);
   return idOrUrl === undefined ? undefined : { idOrUrl };
 }
@@ -137,7 +138,7 @@ export function vercelPromoteDeploymentReadArgs(input: Input): Record<string, un
  */
 export function selectVercelPromote(
   reply: unknown,
-  picked: Picked,
+  picked: BeforePicked,
   alsoReply: unknown,
 ): readonly BeforeStateField[] {
   const project = beforeReplyJson(reply);
@@ -156,14 +157,14 @@ export function selectVercelPromote(
     production === undefined
       ? presentFields([["Current production", "(none)"]])
       : presentFields([
-          ["Current production", shown(production)],
-          ["Current production URL", shown(stringAt(project, ["production", "url"]))],
-          ["Current production state", shown(stringAt(project, ["production", "readyState"]))],
-          ["Current production since", shown(timeAt(project, ["production", "createdAt"]))],
+          ["Current production", shownHead(production)],
+          ["Current production URL", shownHead(stringAt(project, ["production", "url"]))],
+          ["Current production state", shownHead(stringAt(project, ["production", "readyState"]))],
+          ["Current production since", shownHead(timeAt(project, ["production", "createdAt"]))],
         ]);
   return [
     { label: "Project", value: excerptHead(requiredStringAt(project, ["projectId"])) },
-    ...presentFields([["Project name", shown(stringAt(project, ["name"]))]]),
+    ...presentFields([["Project name", shownHead(stringAt(project, ["name"]))]]),
     ...current,
     ...vercelDeploymentFields(next, "Will become production: "),
     ...presentFields([["Note", note]]),
@@ -175,13 +176,13 @@ export function selectVercelPromote(
 // ---------------------------------------------------------------------------------------------
 
 /** `netlify_get` input: the site id. */
-export function netlifySiteReadArgs(input: Input): Record<string, unknown> | undefined {
+export function netlifySiteReadArgs(input: BeforeInput): Record<string, unknown> | undefined {
   const siteId = nonEmptyString(input["siteId"]);
   return siteId === undefined ? undefined : { siteId };
 }
 
 /** `netlify_deploy_list` input: the site id and the last five deploys (the connector's maximum is ten). */
-export function netlifyDeploysReadArgs(input: Input): Record<string, unknown> | undefined {
+export function netlifyDeploysReadArgs(input: BeforeInput): Record<string, unknown> | undefined {
   const siteId = nonEmptyString(input["siteId"]);
   return siteId === undefined ? undefined : { siteId, perPage: 5 };
 }
@@ -220,7 +221,7 @@ function netlifyDeployLine(d: unknown): string | undefined {
  */
 export function selectNetlifyBuild(
   reply: unknown,
-  picked: Picked,
+  picked: BeforePicked,
   alsoReply: unknown,
 ): readonly BeforeStateField[] {
   const site = beforeReplyJson(reply);
@@ -247,16 +248,16 @@ export function selectNetlifyBuild(
   return [
     { label: "Site", value: excerptHead(name ?? requiredStringAt(site, ["id"])) },
     ...presentFields([
-      ["URL", shown(stringAt(site, ["ssl_url"]) ?? stringAt(site, ["url"]))],
+      ["URL", shownHead(stringAt(site, ["ssl_url"]) ?? stringAt(site, ["url"]))],
       [
         "Production branch",
-        production === undefined ? "(not shown: unreadable)" : shown(production),
+        production === undefined ? "(not shown: unreadable)" : shownHead(production),
       ],
       [
         "Live deploy",
         published === undefined
           ? undefined
-          : shown(
+          : shownHead(
               [
                 published,
                 stringAt(site, ["published_deploy", "state"]),
@@ -272,7 +273,7 @@ export function selectNetlifyBuild(
         "Recent deploys",
         lines.length === 0
           ? "(none)"
-          : shown(lines.map((l, i) => `${String(i + 1)}. ${l}`).join("; ")),
+          : shownHead(lines.map((l, i) => `${String(i + 1)}. ${l}`).join("; ")),
       ],
     ]),
   ];
@@ -313,7 +314,7 @@ export const NETLIFY_PRODUCTION_BRANCH_GUARD: BeforeStateGuard = {
 // ---------------------------------------------------------------------------------------------
 
 /** `bitrise_build_latest` input: the app, branch and workflow the trigger will build. */
-export function bitriseLatestReadArgs(input: Input): Record<string, unknown> | undefined {
+export function bitriseLatestReadArgs(input: BeforeInput): Record<string, unknown> | undefined {
   const appSlug = nonEmptyString(input["appSlug"]);
   const branch = nonEmptyString(input["branch"]);
   const workflow = nonEmptyString(input["workflow"]);
@@ -333,17 +334,17 @@ export function selectBitriseLatest(reply: unknown): readonly BeforeStateField[]
   return [
     { label: "Latest build", value: excerptHead(slug) },
     ...presentFields([
-      ["Status", shown(stringAt(j, ["build", "status_text"]))],
-      ["Branch", shown(stringAt(j, ["build", "branch"]))],
-      ["Workflow", shown(stringAt(j, ["build", "triggered_workflow"]))],
-      ["Triggered", shown(stringAt(j, ["build", "triggered_at"]))],
-      ["Finished", shown(stringAt(j, ["build", "finished_at"]))],
+      ["Status", shownHead(stringAt(j, ["build", "status_text"]))],
+      ["Branch", shownHead(stringAt(j, ["build", "branch"]))],
+      ["Workflow", shownHead(stringAt(j, ["build", "triggered_workflow"]))],
+      ["Triggered", shownHead(stringAt(j, ["build", "triggered_at"]))],
+      ["Finished", shownHead(stringAt(j, ["build", "finished_at"]))],
     ]),
   ];
 }
 
 /** `codemagic_build_latest` input: the app, workflow and branch the trigger will build. */
-export function codemagicLatestReadArgs(input: Input): Record<string, unknown> | undefined {
+export function codemagicLatestReadArgs(input: BeforeInput): Record<string, unknown> | undefined {
   const appId = nonEmptyString(input["appId"]);
   const workflowId = nonEmptyString(input["workflowId"]);
   const branch = nonEmptyString(input["branch"]);
@@ -376,12 +377,12 @@ export function selectCodemagicLatest(reply: unknown): readonly BeforeStateField
   return [
     { label: "Latest build", value: excerptHead(id) },
     ...presentFields([
-      ["Status", shown(stringAt(j, ["build", "status"]))],
-      ["Branch", shown(stringAt(j, ["build", "branch"]))],
-      ["Workflow", shown(stringAt(j, ["build", "workflowId"]))],
-      ["Build number", shown(stringAt(j, ["build", "index"]))],
-      ["Created", shown(timeAt(j, ["build", "createdAt"]))],
-      ["Finished", shown(timeAt(j, ["build", "finishedAt"]))],
+      ["Status", shownHead(stringAt(j, ["build", "status"]))],
+      ["Branch", shownHead(stringAt(j, ["build", "branch"]))],
+      ["Workflow", shownHead(stringAt(j, ["build", "workflowId"]))],
+      ["Build number", shownHead(stringAt(j, ["build", "index"]))],
+      ["Created", shownHead(timeAt(j, ["build", "createdAt"]))],
+      ["Finished", shownHead(timeAt(j, ["build", "finishedAt"]))],
     ]),
   ];
 }
@@ -391,19 +392,21 @@ export function selectCodemagicLatest(reply: unknown): readonly BeforeStateField
 // ---------------------------------------------------------------------------------------------
 
 /** `testflight_beta_groups_list` input: the app's groups, at the connector's maximum of 200. */
-export function testflightGroupsReadArgs(input: Input): Record<string, unknown> | undefined {
+export function testflightGroupsReadArgs(input: BeforeInput): Record<string, unknown> | undefined {
   const appId = nonEmptyString(input["appId"]);
   return appId === undefined ? undefined : { appId, limit: 200 };
 }
 
 /** `testflight_build_groups_get` input: the build id. */
-export function testflightBuildGroupsReadArgs(input: Input): Record<string, unknown> | undefined {
+export function testflightBuildGroupsReadArgs(
+  input: BeforeInput,
+): Record<string, unknown> | undefined {
   const buildId = nonEmptyString(input["buildId"]);
   return buildId === undefined ? undefined : { buildId };
 }
 
 /** The target group ids from the input, or `undefined` when they are not a list of strings. */
-function targetGroupIds(picked: Picked): readonly string[] | undefined {
+function targetGroupIds(picked: BeforePicked): readonly string[] | undefined {
   const v = picked["betaGroupIds"];
   if (!Array.isArray(v)) return undefined;
   const ids: string[] = [];
@@ -451,7 +454,7 @@ function groupLine(g: unknown): string {
  */
 export function selectTestflightDistribute(
   reply: unknown,
-  picked: Picked,
+  picked: BeforePicked,
   alsoReply: unknown,
 ): readonly BeforeStateField[] {
   const groups = beforeReplyJson(reply);
@@ -517,7 +520,7 @@ export const TESTFLIGHT_PUBLIC_LINK_GUARD: BeforeStateGuard = {
 // ---------------------------------------------------------------------------------------------
 
 /** `firebase_get` input: the app and the release. */
-export function firebaseReleaseReadArgs(input: Input): Record<string, unknown> | undefined {
+export function firebaseReleaseReadArgs(input: BeforeInput): Record<string, unknown> | undefined {
   const appId = nonEmptyString(input["appId"]);
   const releaseId = nonEmptyString(input["releaseId"]);
   return appId === undefined || releaseId === undefined ? undefined : { appId, releaseId };
@@ -537,11 +540,11 @@ export function selectFirebaseRelease(reply: unknown): readonly BeforeStateField
   }
   return [
     ...presentFields([
-      ["Display version", shown(version)],
-      ["Build version", shown(build)],
-      ["Created", shown(stringAt(j, ["createTime"]))],
-      ["Test state", shown(stringAt(j, ["testState"]))],
-      ["Release notes", shown(stringAt(j, ["releaseNotes", "text"]))],
+      ["Display version", shownHead(version)],
+      ["Build version", shownHead(build)],
+      ["Created", shownHead(stringAt(j, ["createTime"]))],
+      ["Test state", shownHead(stringAt(j, ["testState"]))],
+      ["Release notes", shownHead(stringAt(j, ["releaseNotes", "text"]))],
     ]),
     {
       label: "Already sent",

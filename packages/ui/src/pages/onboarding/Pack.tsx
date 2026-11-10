@@ -94,7 +94,9 @@ export function Pack(): ReactNode {
       <p style={{ color: "var(--color-fg-muted)" }}>
         You'll be asked to approve exactly what it changes. Your own settings always win.
       </p>
-      {phase === "waiting" && <p role="status">Waiting for your approval…</p>}
+      {phase === "waiting" && (
+        <output style={{ display: "block", margin: "1em 0" }}>Waiting for your approval…</output>
+      )}
       {phase === "failed" && error !== null && (
         <p role="alert" style={{ color: "var(--color-error)" }}>
           {error}

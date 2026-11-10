@@ -92,8 +92,10 @@ export function beforeReaderSelectionProblems(reader: BeforeStateReader): string
     // With a context naming both KB destinations (so a context-reading guard runs past its
     // `appliesTo`), and with none (the unreadable-config path).
     for (const ctx of [PROBE_GUARD_CONTEXT, undefined]) {
-      probes.push(["guard appliesTo", (pick) => guard.appliesTo(pick, ctx)]);
-      probes.push(["guard allows", (pick) => guard.allows(undefined, pick, undefined, ctx)]);
+      probes.push(
+        ["guard appliesTo", (pick) => guard.appliesTo(pick, ctx)],
+        ["guard allows", (pick) => guard.allows(undefined, pick, undefined, ctx)],
+      );
     }
   }
   for (const [name, call] of probes) {

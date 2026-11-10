@@ -387,7 +387,7 @@ describe("the Obsidian daily-note file grant under the real sandbox", () => {
     async () => {
       const r = await runSandboxed(obsidianPolicy(true));
       expect(r.status).toBe(0);
-      expect(r.stdout.length).toBe(Object.keys(TARGETS).length);
+      expect(r.stdout).toHaveLength(Object.keys(TARGETS).length);
       expect(written("today")).toBe(true);
       for (const t of NOT_TODAY) expect(written(t), t).toBe(false);
     },
@@ -400,7 +400,7 @@ describe("the Obsidian daily-note file grant under the real sandbox", () => {
       resetTargets();
       const r = await runSandboxed(obsidianPolicy(false));
       expect(r.status).toBe(0);
-      expect(r.stdout.length).toBe(Object.keys(TARGETS).length);
+      expect(r.stdout).toHaveLength(Object.keys(TARGETS).length);
       for (const t of Object.keys(TARGETS) as Target[]) expect(written(t), t).toBe(false);
     },
   );

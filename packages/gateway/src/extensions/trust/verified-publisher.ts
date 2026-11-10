@@ -23,7 +23,7 @@ export function verifiedPublisherFor(
   if (s.publisherId === null || s.keyFingerprint === null) return null;
   if (readIndexedUserVersion(db) < 76) return null;
   const v = readCurrentVerification(db, s.publisherId);
-  if (v === null || !v.keyFingerprints.has(s.keyFingerprint)) return null;
+  if (!v?.keyFingerprints.has(s.keyFingerprint)) return null;
   if (isKeyRevoked(db, { publisherId: s.publisherId, source: s.source }, s.keyFingerprint)) {
     return null;
   }

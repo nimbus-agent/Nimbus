@@ -102,10 +102,15 @@ interface Read {
 /** The result of the tag-open state: a token, "this `<` is text", or does not tokenize. */
 type TagOpen = Read | "text" | undefined;
 
+/** The code point at `i`, or -1 past the end (never equal to a delimiter). */
+function codeAt(src: string, i: number): number {
+  return src.codePointAt(i) ?? -1;
+}
+
 /** The offset past the first run of tag whitespace from `i`. */
 function skipTagSpace(src: string, i: number): number {
   let j = i;
-  while (j < src.length && isTagSpace(src.charCodeAt(j))) j++;
+  while (j < src.length && isTagSpace(codeAt(src, j))) j++;
   return j;
 }
 
@@ -113,7 +118,7 @@ function skipTagSpace(src: string, i: number): number {
 function readTagName(src: string, i: number): number {
   let j = i;
   while (j < src.length) {
-    const c = src.charCodeAt(j);
+    const c = codeAt(src, j);
     if (isTagSpace(c) || c === SLASH || c === GT) break;
     j++;
   }
@@ -127,7 +132,7 @@ function readAttributeValue(
 ): { readonly value: string; readonly quoted: boolean; readonly next: number } | undefined {
   const i = skipTagSpace(src, afterEquals);
   if (i >= src.length) return undefined;
-  const c = src.charCodeAt(i);
+  const c = codeAt(src, i);
   if (c === DQUOTE || c === SQUOTE) {
     const close = src.indexOf(src.charAt(i), i + 1);
     if (close === -1) return undefined;
@@ -135,7 +140,7 @@ function readAttributeValue(
   }
   let j = i;
   while (j < src.length) {
-    const d = src.charCodeAt(j);
+    const d = codeAt(src, j);
     if (isTagSpace(d) || d === GT) break;
     j++;
   }
@@ -146,7 +151,7 @@ function readAttributeValue(
 function readAttributeName(src: string, i: number): number {
   let j = i + 1;
   while (j < src.length) {
-    const c = src.charCodeAt(j);
+    const c = codeAt(src, j);
     if (isTagSpace(c) || c === SLASH || c === GT || c === EQUALS) break;
     j++;
   }
@@ -168,26 +173,34 @@ function readAttributes(
   for (;;) {
     i = skipTagSpace(src, i);
     if (i >= src.length) return undefined;
-    const c = src.charCodeAt(i);
+    const c = codeAt(src, i);
     if (c === GT) return { attrs, selfClosing: false, next: i + 1 };
     if (c === SLASH) {
-      if (src.charCodeAt(i + 1) === GT) return { attrs, selfClosing: true, next: i + 2 };
+      if (codeAt(src, i + 1) === GT) return { attrs, selfClosing: true, next: i + 2 };
       i++;
       continue;
     }
-    const nameEnd = readAttributeName(src, i);
-    const name = src.slice(i, nameEnd);
-    const afterName = skipTagSpace(src, nameEnd);
-    if (afterName < src.length && src.charCodeAt(afterName) === EQUALS) {
-      const v = readAttributeValue(src, afterName + 1);
-      if (v === undefined) return undefined;
-      attrs.push({ name, value: v.value, quoted: v.quoted });
-      i = v.next;
-    } else {
-      attrs.push({ name, value: "", quoted: false });
-      i = afterName;
-    }
+    const one = readAttribute(src, i);
+    if (one === undefined) return undefined;
+    attrs.push(one.attr);
+    i = one.next;
   }
+}
+
+/** One attribute starting at `i` (its name, then an optional `=` and value). */
+function readAttribute(
+  src: string,
+  i: number,
+): { readonly attr: MarkupAttr; readonly next: number } | undefined {
+  const nameEnd = readAttributeName(src, i);
+  const name = src.slice(i, nameEnd);
+  const afterName = skipTagSpace(src, nameEnd);
+  if (afterName < src.length && codeAt(src, afterName) === EQUALS) {
+    const v = readAttributeValue(src, afterName + 1);
+    if (v === undefined) return undefined;
+    return { attr: { name, value: v.value, quoted: v.quoted }, next: v.next };
+  }
+  return { attr: { name, value: "", quoted: false }, next: afterName };
 }
 
 /** A start tag at `lt` (`<` + ASCII letter). */
@@ -234,7 +247,9 @@ function readComment(src: string, lt: number): Read | undefined {
   // `indexOf` calls, one of them for a closer that may never come, would each scan to the end of
   // the input for every comment: quadratic over many comments.)
   for (let at = src.indexOf("--", body); at !== -1; at = src.indexOf("--", at + 1)) {
-    const width = src.startsWith(">", at + 2) ? 3 : src.startsWith("!>", at + 2) ? 4 : 0;
+    let width = 0;
+    if (src.startsWith(">", at + 2)) width = 3;
+    else if (src.startsWith("!>", at + 2)) width = 4;
     if (width === 0) continue;
     const end = at + width;
     return { token: { kind: "comment", text: src.slice(body, at), start: lt, end }, next: end };
@@ -264,10 +279,10 @@ function readDeclaration(src: string, lt: number): Read | undefined {
 
 /** Tag-open state, at a `<`: which construct starts here. */
 function readTagOpen(src: string, lt: number): TagOpen {
-  const c = src.charCodeAt(lt + 1);
+  const c = codeAt(src, lt + 1);
   if (isAsciiLetter(c)) return readStartTag(src, lt);
   if (c === SLASH) {
-    return isAsciiLetter(src.charCodeAt(lt + 2)) ? readEndTag(src, lt) : readDeclaration(src, lt);
+    return isAsciiLetter(codeAt(src, lt + 2)) ? readEndTag(src, lt) : readDeclaration(src, lt);
   }
   if (c === BANG) {
     if (src.startsWith("<!--", lt)) return readComment(src, lt);

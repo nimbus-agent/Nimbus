@@ -62,8 +62,8 @@ function policyAllows(deps: ModelWriteSourceDeps): boolean {
  * tool id by name (V84 re-consent). A pre-V84 opt-in has an empty approved set: nothing offered.
  */
 function offeredUnder(e: ModelWriteEnablement | undefined, row: ConnectorWriteRow): boolean {
+  if (e === undefined) return false;
   return (
-    e !== undefined &&
     serviceOf(row.actionType) === e.service &&
     row.wave <= e.maxWave &&
     isModelOfferableRow(row) &&

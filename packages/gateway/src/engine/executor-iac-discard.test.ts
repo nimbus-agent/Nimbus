@@ -368,7 +368,7 @@ describe("the discard scope is a closed door (D43)", () => {
     ];
     for (const v of variants) {
       const r = await gateAs(h, v);
-      expect(r === "proceed").toBe(false);
+      expect(r).not.toBe("proceed");
     }
     expect(h.confirmed).toEqual([]);
   });

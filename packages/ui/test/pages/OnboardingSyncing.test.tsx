@@ -49,4 +49,49 @@ describe("Onboarding → Syncing", () => {
     );
     expect(await screen.findByText("dashboard")).toBeTruthy();
   });
+
+  it("hiding the window records completion once, even when the gateway refuses", async () => {
+    callMock.mockImplementation(async (method) => {
+      if (method === "diag.snapshot") return { indexTotalItems: 1, connectorCount: 1 };
+      if (method === "db.setMeta") throw new Error("db busy");
+      throw new Error(`unexpected ${method}`);
+    });
+    renderAt();
+    await screen.findByRole("button", { name: /open dashboard/i });
+    const visibility = vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+    try {
+      document.dispatchEvent(new Event("visibilitychange"));
+      document.dispatchEvent(new Event("visibilitychange"));
+      await waitFor(() =>
+        expect(callMock.mock.calls.filter(([m]) => m === "db.setMeta")).toHaveLength(1),
+      );
+    } finally {
+      visibility.mockRestore();
+    }
+  });
+
+  it("keeps rendering when a snapshot poll fails", async () => {
+    callMock.mockImplementation(async () => {
+      throw new Error("gateway down");
+    });
+    renderAt();
+    expect(await screen.findByRole("button", { name: /open dashboard/i })).toBeTruthy();
+  });
+
+  it("closing the step before opening the dashboard records completion", async () => {
+    callMock.mockImplementation(async (method) => {
+      if (method === "diag.snapshot") return { indexTotalItems: 0, connectorCount: 0 };
+      if (method === "db.setMeta") return null;
+      throw new Error(`unexpected ${method}`);
+    });
+    const r = renderAt();
+    await screen.findByRole("button", { name: /open dashboard/i });
+    r.unmount();
+    await waitFor(() =>
+      expect(callMock).toHaveBeenCalledWith(
+        "db.setMeta",
+        expect.objectContaining({ key: "onboarding_completed" }),
+      ),
+    );
+  });
 });

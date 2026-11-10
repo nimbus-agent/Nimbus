@@ -226,7 +226,8 @@ function iacDescriptionSentence(
     used += piece.length;
   }
   const left = workdirs.length - shown.length;
-  return `${head}${shown.join("")}${left > 0 ? ` (and ${String(left)} more).` : ""}`;
+  const more = left > 0 ? ` (and ${String(left)} more).` : "";
+  return `${head}${shown.join("")}${more}`;
 }
 
 function describeFor(
@@ -442,52 +443,78 @@ function prepareToolMissing(
   });
 }
 
+/** What every row of ONE service's offer shares. */
+interface ServiceOffer {
+  readonly source: ConnectorWriteToolSource;
+  readonly executor: () => Pick<ToolExecutor, "execute"> | undefined;
+  readonly wrap: Wrap;
+  readonly taken: ReadonlySet<string>;
+  readonly out: Record<string, unknown>;
+  readonly service: string;
+  readonly listing: Readonly<Record<string, unknown>>;
+  readonly epoch: number;
+}
+
+/** The name a row is offered under, or `undefined` (warned) when it fits no name or collides. */
+function offerableName(offer: ServiceOffer, row: ConnectorWriteRow): string | undefined {
+  const { source, service, taken, out } = offer;
+  const name = connectorWriteModelToolName(service, row.toolId);
+  if (name === undefined) {
+    source.warn(
+      { service, toolId: row.toolId },
+      `connector write tool name does not fit [A-Za-z0-9_-]{1,${CONNECTOR_WRITE_TOOL_NAME_MAX}}; not offered`,
+    );
+    return undefined;
+  }
+  if (taken.has(name) || Object.hasOwn(out, name)) {
+    source.warn(
+      { service, toolId: row.toolId, offeredName: name },
+      "connector write tool name collides with one already offered; not offered",
+    );
+    return undefined;
+  }
+  return name;
+}
+
+/**
+ * The listed entry of a row whose server listing carries it with an input schema its preview
+ * template fits, or `undefined` (warned) when the tool is missing or has drifted.
+ */
+function listedEntryFor(
+  offer: ServiceOffer,
+  row: ConnectorWriteRow,
+  key: string,
+): Record<string, unknown> | undefined {
+  const { source, service, listing, epoch } = offer;
+  const entry = Object.hasOwn(listing, key) ? listing[key] : undefined;
+  if (!isPlainObject(entry)) {
+    const warned = `${String(epoch)}:${service}:${row.toolId}`;
+    if (!missingToolWarned.has(warned)) {
+      missingToolWarned.add(warned);
+      source.warn(
+        { service, toolId: row.toolId, listedKey: key },
+        "connector write is not in its server's listing; not offered",
+      );
+    }
+    return undefined;
+  }
+  const json = readListedJsonSchema(entry["inputSchema"]);
+  if (!isPlainObject(json) || !templateKeysInSchema(row, json)) {
+    warnDriftOnce(source, epoch, service, row.toolId);
+    return undefined;
+  }
+  return entry;
+}
+
 /** The offered tools for ONE service's rows, given its listing. */
-function offerService(
-  source: ConnectorWriteToolSource,
-  executor: () => Pick<ToolExecutor, "execute"> | undefined,
-  wrap: Wrap,
-  taken: ReadonlySet<string>,
-  out: Record<string, unknown>,
-  service: string,
-  rows: readonly ConnectorWriteRow[],
-  listing: Readonly<Record<string, unknown>>,
-  epoch: number,
-): void {
+function offerService(offer: ServiceOffer, rows: readonly ConnectorWriteRow[]): void {
+  const { source, executor, wrap, out, service, listing, epoch } = offer;
   for (const row of rows) {
-    const name = connectorWriteModelToolName(service, row.toolId);
-    if (name === undefined) {
-      source.warn(
-        { service, toolId: row.toolId },
-        `connector write tool name does not fit [A-Za-z0-9_-]{1,${CONNECTOR_WRITE_TOOL_NAME_MAX}}; not offered`,
-      );
-      continue;
-    }
-    if (taken.has(name) || Object.hasOwn(out, name)) {
-      source.warn(
-        { service, toolId: row.toolId, offeredName: name },
-        "connector write tool name collides with one already offered; not offered",
-      );
-      continue;
-    }
+    const name = offerableName(offer, row);
+    if (name === undefined) continue;
     const key = mcpClientToolKey(service, row.toolId);
-    const entry = Object.hasOwn(listing, key) ? listing[key] : undefined;
-    if (!isPlainObject(entry)) {
-      const warned = `${String(epoch)}:${service}:${row.toolId}`;
-      if (!missingToolWarned.has(warned)) {
-        missingToolWarned.add(warned);
-        source.warn(
-          { service, toolId: row.toolId, listedKey: key },
-          "connector write is not in its server's listing; not offered",
-        );
-      }
-      continue;
-    }
-    const json = readListedJsonSchema(entry["inputSchema"]);
-    if (!isPlainObject(json) || !templateKeysInSchema(row, json)) {
-      warnDriftOnce(source, epoch, service, row.toolId);
-      continue;
-    }
+    const entry = listedEntryFor(offer, row, key);
+    if (entry === undefined) continue;
     const beforeReaderUnlisted = beforeReaderMissing(row, service, listing);
     if (beforeReaderUnlisted && row.wave === 4) {
       // Spec § 5.4: the current state is mandatory on a wave-4 prompt, so no reader, no offer.
@@ -552,7 +579,7 @@ export async function buildConnectorWriteAgentTools(
         source.warn({ service }, "connector write server has no known slot; not offered");
         continue;
       }
-      offerService(source, executor, wrap, taken, out, service, serviceRows, listing, epoch);
+      offerService({ source, executor, wrap, taken, out, service, listing, epoch }, serviceRows);
     } catch (err) {
       source.warn(
         { service, err: errText(err) },

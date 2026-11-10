@@ -2,6 +2,8 @@ import { describe, expect, test } from "bun:test";
 
 import {
   enableWritesPromptLines,
+  IAC_EACH_APPLY_LINE,
+  IAC_NO_DOWNLOAD_LINE,
   OBSIDIAN_NOTHING_ELSE_LINE,
   OBSIDIAN_WIDENING_LINES,
 } from "./enable-prompt.ts";
@@ -271,5 +273,74 @@ describe("enableWritesPromptLines: the Obsidian write widening (B4b, I15)", () =
       "  obsidian_append_to_daily_note  obsidian.note.append  wave 2  (not offered yet)",
       ...TAIL,
     ]);
+  });
+});
+
+describe("enableWritesPromptLines: the iac grants (D2, I15)", () => {
+  const writes = [
+    {
+      toolId: "iac_terraform_apply",
+      actionType: "iac.terraform.apply",
+      wave: 4,
+      offerable: true,
+      state: "newly_offerable",
+    },
+  ];
+  const grants = {
+    workdirs: ["/work/infra"],
+    clouds: ["aws"],
+    hosts: ["sts.amazonaws.com"],
+    envNames: { aws: ["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"] },
+    hostScope: "per_host",
+  };
+  const lines = (iacGrants: unknown): string[] | undefined =>
+    enableWritesPromptLines({ service: "iac", maxWave: 4, writes, iacGrants });
+
+  test("names the directories, the credential variable names, the hosts and the fixed sentences", () => {
+    const out = lines(grants) as string[];
+    expect(out).toContain("Approving also lets Terraform run in these directories:");
+    expect(out).toContain("  /work/infra");
+    expect(out).toContain(
+      "Credential for aws (environment variable names): AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY",
+    );
+    expect(out).toContain("  sts.amazonaws.com");
+    expect(out).toContain(IAC_NO_DOWNLOAD_LINE);
+    expect(out).toContain(IAC_EACH_APPLY_LINE);
+    expect(out.some((l) => l.startsWith("Terraform runs the code in these directories"))).toBe(
+      true,
+    );
+    expect(out.at(-1)).toBe("Each call will still ask you before it runs.");
+  });
+
+  test("says so when no directory, no cloud and no host is granted", () => {
+    const out = lines({ ...grants, workdirs: [], clouds: [], hosts: [], hostScope: "refusing" });
+    expect(out).toContain("  (no directory: only CloudFormation)");
+    expect(out).toContain("No cloud credential is granted.");
+    expect(out).toContain("  (none)");
+    expect(out?.some((l) => l.includes("Terraform will not start"))).toBe(true);
+  });
+
+  test("each host scope has its own wording", () => {
+    const perPort = lines({ ...grants, hostScope: "per_port" });
+    const all = lines({ ...grants, hostScope: "all_or_nothing" });
+    expect(perPort?.some((l) => l.includes("any host on port 443"))).toBe(true);
+    expect(all?.some((l) => l.includes("any host on any port"))).toBe(true);
+  });
+
+  test("a missing or malformed grants object is a malformed payload (refuse, never guess)", () => {
+    expect(lines(undefined)).toBeUndefined();
+    expect(lines(null)).toBeUndefined();
+    expect(lines({ ...grants, workdirs: "x" })).toBeUndefined();
+    expect(lines({ ...grants, clouds: [1] })).toBeUndefined();
+    expect(lines({ ...grants, hosts: undefined })).toBeUndefined();
+    expect(lines({ ...grants, envNames: null })).toBeUndefined();
+    expect(lines({ ...grants, hostScope: "toString" })).toBeUndefined();
+    expect(lines({ ...grants, hostScope: 3 })).toBeUndefined();
+    expect(lines({ ...grants, envNames: {} })).toBeUndefined();
+  });
+
+  test("paths and names are sanitised", () => {
+    const out = lines({ ...grants, workdirs: ["/w\u001b[31m"] }) as string[];
+    expect(out.join("\n")).not.toContain("\u001b");
   });
 });

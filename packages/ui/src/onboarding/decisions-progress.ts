@@ -116,11 +116,11 @@ export function decisionsView(
     };
   }
   const headline = `We read ${read} and found no clear decisions.`;
+  const extracted = status.candidates.extracted;
+  const verb = extracted === 1 ? "decision was" : "decisions were";
   const reason =
-    status.candidates.extracted > 0
-      ? `${String(status.candidates.extracted)} possible ${
-          status.candidates.extracted === 1 ? "decision was" : "decisions were"
-        } too uncertain to show (below your confidence floor).`
+    extracted > 0
+      ? `${String(extracted)} possible ${verb} too uncertain to show (below your confidence floor).`
       : "None of it used decision language like 'we decided' or 'Decision:'.";
   return { phase: "none", syncLines, headline, reason };
 }

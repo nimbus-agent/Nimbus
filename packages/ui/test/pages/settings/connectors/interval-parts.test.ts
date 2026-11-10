@@ -23,4 +23,9 @@ describe("interval-parts", () => {
     expect(toMs({ value: 2, unit: "hr" })).toBe(7_200_000);
     expect(toMs({ value: 45, unit: "sec" })).toBe(45_000);
   });
+
+  it("falls back to one minute for a zero or negative interval", () => {
+    expect(fromMs(0)).toEqual({ value: 1, unit: "min" });
+    expect(fromMs(-5)).toEqual({ value: 1, unit: "min" });
+  });
 });

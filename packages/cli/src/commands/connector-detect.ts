@@ -71,6 +71,14 @@ interface Opts {
   readonly host: string | undefined;
 }
 
+/** The value after a flag, normalised; a missing or empty one is a usage error. */
+function flagValue(tail: readonly string[], i: number, normalise: (v: string) => string): string {
+  const v = tail[i + 1];
+  const out = v === undefined ? "" : normalise(v);
+  if (out === "") throw new Error(USAGE);
+  return out;
+}
+
 function parseOpts(tail: readonly string[]): Opts {
   let json = false;
   let replace = false;
@@ -82,22 +90,18 @@ function parseOpts(tail: readonly string[]): Opts {
     if (a === "--json") json = true;
     else if (a === "--replace") replace = true;
     else if (a === "--source") {
-      const v = tail[i + 1];
-      if (v === undefined || !(SOURCES as readonly string[]).includes(v)) throw new Error(USAGE);
+      const v = flagValue(tail, i, (x) => x);
+      if (!(SOURCES as readonly string[]).includes(v)) throw new Error(USAGE);
       sources.push(v as Source);
       i += 1;
     } else if (a === "--project") {
       // Trimmed here for the same reason `readLine` trims the interactive answer (below) — a
       // whitespace-only value is not a project id, and the two paths must agree on what counts
       // as "empty" rather than one silently forwarding " " to the gateway.
-      const v = tail[i + 1]?.trim();
-      if (v === undefined || v === "") throw new Error(USAGE);
-      project = v;
+      project = flagValue(tail, i, (x) => x.trim());
       i += 1;
     } else if (a === "--host") {
-      const v = tail[i + 1]?.trim().toLowerCase();
-      if (v === undefined || v === "") throw new Error(USAGE);
-      host = v;
+      host = flagValue(tail, i, (x) => x.trim().toLowerCase());
       i += 1;
     } else throw new Error(USAGE);
   }
@@ -208,28 +212,35 @@ function choices(f: FindingWire): {
   }
 }
 
+/** Interactive numbered pick; `undefined` = not a choice, `null` = skipped. */
+async function pickFromList(
+  f: FindingWire,
+  c: ReturnType<typeof choices>,
+  deps: ConnectorDetectDeps,
+): Promise<string | null | undefined> {
+  deps.log(`  ${f.source}: which ${c.key}?`);
+  c.items.forEach((item, i) => {
+    deps.log(`    ${String(i + 1)}) ${item}${i === c.preselect ? "  (default)" : ""}`);
+  });
+  const answer = await deps.ask(`  [Enter = ${String(c.preselect + 1)}, 0 = skip] `);
+  if (answer === "0") return null;
+  if (answer === "") return c.items[c.preselect];
+  const n = Number(answer);
+  const picked = Number.isInteger(n) && n >= 1 && n <= c.items.length ? c.items[n - 1] : undefined;
+  if (picked === undefined) deps.log("  Not a choice — skipping.");
+  return picked;
+}
+
 /** The generic numbered-pick path shared by gh/aws/kubectl. */
 async function chooseFromList(
   f: FindingWire,
   deps: ConnectorDetectDeps,
 ): Promise<AdoptParams | null> {
   const c = choices(f);
-  let chosen = c.items[c.preselect];
+  let chosen: string | null | undefined = c.items[c.preselect];
   if (c.items.length > 1) {
-    deps.log(`  ${f.source}: which ${c.key}?`);
-    c.items.forEach((item, i) => {
-      deps.log(`    ${String(i + 1)}) ${item}${i === c.preselect ? "  (default)" : ""}`);
-    });
-    const answer = await deps.ask(`  [Enter = ${String(c.preselect + 1)}, 0 = skip] `);
-    if (answer === "0") return null;
-    if (answer !== "") {
-      const n = Number(answer);
-      chosen = Number.isInteger(n) && n >= 1 && n <= c.items.length ? c.items[n - 1] : undefined;
-      if (chosen === undefined) {
-        deps.log("  Not a choice — skipping.");
-        return null;
-      }
-    }
+    chosen = await pickFromList(f, c, deps);
+    if (chosen === null) return null;
   }
   if (chosen === undefined) return null;
   // `replace` is set by the caller from --replace — one source of truth. Built per key, not with a

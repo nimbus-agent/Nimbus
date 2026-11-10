@@ -138,4 +138,43 @@ describe("runCatalog", () => {
     expect(process.exitCode).toBe(1);
     expect(out.stderr + out.stdout).toContain("nimbus catalog");
   });
+
+  test("help prints usage", async () => {
+    for (const flag of ["help", "--help", "-h"]) {
+      out.reset();
+      await runCatalog([flag]);
+      expect(out.stdout).toContain("Usage: nimbus catalog");
+    }
+    expect(process.exitCode).toBe(0);
+  });
+
+  test("an extra positional argument is a usage error", async () => {
+    await runCatalog(["agents", "connectors"]);
+    expect(process.exitCode).toBe(1);
+    expect(out.stderr + out.stdout).toContain("Usage: nimbus catalog");
+  });
+
+  test("a response without the expected shape is refused", async () => {
+    for (const bad of [null, [], { agents: [], connectors: [] }, { ...RESULT, agents: "x" }]) {
+      setFixture({
+        gatewayState: { socketPath: FAKE_SOCKET_PATH },
+        ipcClient: createMockIpcClient([bad]).client,
+      });
+      await expect(runCatalog(["agents"])).rejects.toThrow("Malformed catalog.list response");
+    }
+  });
+
+  test("a non-object row prints as an empty row and a blank name as (no name)", async () => {
+    const odd = {
+      ...RESULT,
+      agents: ["junk"],
+      connectors: [{ kind: "builtin", id: "b1", displayName: "   ", category: "code" }, 7],
+    };
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: createMockIpcClient([odd]).client,
+    });
+    await runCatalog([]);
+    expect(out.stdout).toMatch(/b1\s+\(no name\)\s+code/);
+  });
 });

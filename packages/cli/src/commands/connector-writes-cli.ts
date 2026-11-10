@@ -87,6 +87,13 @@ const IAC_FLAGS: Readonly<Record<string, keyof IacScope>> = {
   "--net": "net",
 };
 
+/** Takes the value of an `enable iac` scope flag into its list; false when the value is missing. */
+function takeIacValue(iac: IacScope, key: keyof IacScope, v: string | undefined): boolean {
+  if (v === undefined || v === "") return false;
+  iac[key].push(...(key === "clouds" ? v.split(",") : [v]));
+  return true;
+}
+
 function parseEnableArgs(
   tail: string[],
 ): Parsed<{ service: string; wave: 2 | 3 | 4 | undefined; iac: IacScope }> {
@@ -101,9 +108,7 @@ function parseEnableArgs(
       if (v !== "2" && v !== "3" && v !== "4") return { ok: false };
       wave = Number(v) as 2 | 3 | 4;
     } else if (iacKey !== undefined) {
-      const v = tail[++i];
-      if (v === undefined || v === "") return { ok: false };
-      iac[iacKey].push(...(iacKey === "clouds" ? v.split(",") : [v]));
+      if (!takeIacValue(iac, iacKey, tail[++i])) return { ok: false };
     } else if (a.startsWith("-") || service !== undefined) {
       return { ok: false };
     } else {

@@ -373,14 +373,16 @@ function renderReport(subject: { id: string; version: string; report: EvalReport
     if (!r.pass)
       lines.push(`  FAIL ${clean(r.suite)} ${clean(r.case)}: ${clean(r.reason ?? "failed")}`);
   }
-  lines.push(`score ${report.score}/100 (${report.passed} of ${report.cases} cases)`);
-  lines.push("measured locally; a registry's published score is measured by its CI");
+  lines.push(
+    `score ${report.score}/100 (${report.passed} of ${report.cases} cases)`,
+    "measured locally; a registry's published score is measured by its CI",
+  );
   return lines;
 }
 
 /** `--threshold <n>`: decimal digits only, 0 to 100; null when it is not that. */
 function parseThreshold(v: string): number | null {
-  if (!/^[0-9]+$/.test(v)) return null;
+  if (!/^\d+$/.test(v)) return null;
   const n = Number(v);
   return n <= 100 ? n : null;
 }

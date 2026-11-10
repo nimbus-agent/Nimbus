@@ -1598,3 +1598,29 @@ test("the fetchOne (mr) branch also writes number from iid and the current meta_
   expect(m["number"]).toBe(9);
   expect(m["meta_v"]).toBe(PR_META_VERSION);
 });
+
+describeWithFetchRestore("syncGitlabEventsPages — unreadable stored metadata", () => {
+  test.each([
+    ["malformed JSON", "{not json"],
+    ["JSON that is not an object", "[1, 2]"],
+  ])("%s stored for the item is ignored, and the event still upserts", async (_label, stored) => {
+    const db = createMemoryIndexDb();
+    const base = syncTestContext(db, createStubVault({}), "gitlab");
+    const ctx = { ...base, itemMetadata: () => stored };
+    globalThis.fetch = (() =>
+      Promise.resolve(makeEventsResponse([makeMrEvent()]))) as unknown as typeof fetch;
+
+    const result = await syncGitlabEventsPages(
+      ctx,
+      "pat-token",
+      "https://gitlab.com/api/v4",
+      "https://gitlab.com",
+      new Date(Date.now() - 86400_000).toISOString(),
+      1,
+      performance.now(),
+    );
+
+    expect(result.itemsUpserted).toBe(1);
+    expectServiceItemCount(db, "gitlab", 1);
+  });
+});

@@ -461,7 +461,7 @@ export const GOLDEN_FULL: Readonly<Record<string, readonly string[]>> = {
     "Invoke AWS Lambda function charge-card; the function's own code decides what that does",
     "",
     '  Function: "charge-card"',
-    '  Payload (JSON, sent as is): "{\\"id\\":1}"',
+    String.raw`  Payload (JSON, sent as is): "{\"id\":1}"`,
   ],
   argocd_app_sync: [
     "Service: argocd",

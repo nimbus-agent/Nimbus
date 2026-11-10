@@ -168,6 +168,19 @@ describe("Oncall page", () => {
     expect(screen.queryByRole("button", { name: /retry/i })).toBeNull();
   });
 
+  it("5b: a failed brief with no failure code reads as unknown", () => {
+    setQuery(FAIL_ID, { brief: { ...fixture.getFailed.brief, failureCode: null } });
+    render(ui(`/oncall?id=${enc(FAIL_ID)}`));
+    expect(screen.getByText(new RegExp(`${FAIL_ID} could not be assembled: unknown`))).toBeTruthy();
+  });
+
+  it("5c: a brief with no markdown renders an empty body, not a crash", () => {
+    setQuery(OK_ID, { brief: { ...fixture.getOk.brief, briefMarkdown: null } });
+    const { container } = render(ui(`/oncall?id=${enc(OK_ID)}`));
+    expect(container.querySelector("article")).toBeTruthy();
+    expect(container.querySelector("article h1")).toBeNull();
+  });
+
   it("6: a pruned id is announced, cleared from the URL, and falls back to the newest", async () => {
     setQuery("pagerduty:NOPE", fixture.getMissing);
     render(ui("/oncall?id=pagerduty:NOPE"));

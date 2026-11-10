@@ -119,6 +119,16 @@ export interface ScoreOptions {
   defaultBranch?: string;
 }
 
+/**
+ * A deadline under the role's own cap was set by the score run's remaining budget: say so, so a
+ * maintainer does not blame a suite that earlier, hanging versions starved of time.
+ */
+function timeoutBudgetNote(timeoutMs: number): string {
+  return timeoutMs < ROLE_TIMEOUT_MS
+    ? ` (the score job's remaining time budget; the cap is ${duration(ROLE_TIMEOUT_MS)})`
+    : "";
+}
+
 /** The role's run, judged: a quality for exactly this `<id>@<version>`, or an error. */
 export function judgeRoleRun(
   r: RoleRun,
@@ -126,13 +136,10 @@ export function judgeRoleRun(
   timeoutMs: number = ROLE_TIMEOUT_MS,
 ): { quality: EvalQuality } | { error: ScoreError } {
   if (r.timedOut) {
-    // A deadline under the role's own cap was set by the score run's remaining budget: say so,
-    // so a maintainer does not blame a suite that earlier, hanging versions starved of time.
-    const why =
-      timeoutMs < ROLE_TIMEOUT_MS
-        ? ` (the score job's remaining time budget; the cap is ${duration(ROLE_TIMEOUT_MS)})`
-        : "";
-    return fail("ERR_EVAL_TIMEOUT", `the eval did not finish within ${duration(timeoutMs)}${why}`);
+    return fail(
+      "ERR_EVAL_TIMEOUT",
+      `the eval did not finish within ${duration(timeoutMs)}${timeoutBudgetNote(timeoutMs)}`,
+    );
   }
   if (r.overflow) {
     return fail(
@@ -142,10 +149,9 @@ export function judgeRoleRun(
   }
   if (r.code !== 0) {
     const last = lastLine(r.stderrTail);
-    return fail(
-      "ERR_EVAL_ROLE_FAILED",
-      `the eval role exited ${r.code === null ? "without an exit code" : String(r.code)}${last === "" ? "" : `: ${last}`}`,
-    );
+    const exited = r.code === null ? "without an exit code" : String(r.code);
+    const tail = last === "" ? "" : `: ${last}`;
+    return fail("ERR_EVAL_ROLE_FAILED", `the eval role exited ${exited}${tail}`);
   }
   const lines = r.stdout.split("\n").filter((l) => l.trim() !== "");
   const doc = lines.length === 1 ? parseEvalRoleDocument(lines[0] ?? "") : null;
@@ -236,6 +242,13 @@ export function assertGateway(gateway: string): void {
   }
 }
 
+interface AtomicWriteFs {
+  writeFileSync: (p: string, data: string, opts: { flag: string }) => void;
+  renameSync: (from: string, to: string) => void;
+}
+
+const REAL_ATOMIC_WRITE_FS: AtomicWriteFs = { writeFileSync, renameSync };
+
 /**
  * Writes `text` to `path` through a temp sibling (exclusive create) and a rename, so a reader never
  * sees a partial file; a failure removes the temp file.
@@ -243,10 +256,7 @@ export function assertGateway(gateway: string): void {
 export function writeFileAtomic(
   path: string,
   text: string,
-  fs: {
-    writeFileSync: (p: string, data: string, opts: { flag: string }) => void;
-    renameSync: (from: string, to: string) => void;
-  } = { writeFileSync, renameSync },
+  fs: AtomicWriteFs = REAL_ATOMIC_WRITE_FS,
 ): void {
   const temp = join(dirname(path), `.${basename(path)}.${randomUUID()}.tmp`);
   try {

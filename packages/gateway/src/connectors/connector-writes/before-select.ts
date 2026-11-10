@@ -69,7 +69,7 @@ export function nonEmptyString(v: unknown): string | undefined {
 
 /** A positive integer given as a number or a string of digits, else `undefined`. */
 export function positiveIntegerArg(v: unknown): number | undefined {
-  const n = typeof v === "string" && /^[0-9]+$/.test(v) ? Number(v) : v;
+  const n = typeof v === "string" && /^\d+$/.test(v) ? Number(v) : v;
   return typeof n === "number" && Number.isSafeInteger(n) && n >= 1 ? n : undefined;
 }
 
@@ -141,6 +141,17 @@ export function excerptHead(s: string, max: number = BEFORE_EXCERPT_MAX_CHARS): 
   if (cps.length <= max) return s;
   const cut = cps.length - max;
   return `${cps.slice(0, max).join("")} (${String(cut)} more characters not shown)`;
+}
+
+/** A reader's input object, as the before-state `args`/`select` functions receive it. */
+export type BeforeInput = Readonly<Record<string, unknown>>;
+
+/** A picked reply object. */
+export type BeforePicked = Readonly<Record<string, unknown>>;
+
+/** {@link excerptHead} of a value that may be absent; `undefined` stays `undefined`. */
+export function shownHead(v: string | undefined): string | undefined {
+  return v === undefined ? undefined : excerptHead(v);
 }
 
 /**

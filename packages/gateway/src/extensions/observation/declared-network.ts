@@ -40,7 +40,7 @@ export function declaredNetworkFor(
   const stored = grant === null ? undefined : parseRunGrants(grant.permissions_json)?.network;
   const approved = stored !== undefined && grant?.version === version ? [...stored] : undefined;
   const row = installed.find((r) => r.id === id);
-  if (row !== undefined && row.version === version) {
+  if (row?.version === version) {
     try {
       const manifest = readVerifiedManifest(row);
       return {

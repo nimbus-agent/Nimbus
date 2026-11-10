@@ -139,7 +139,7 @@ describe("candidatesOf", () => {
       (s) => errs.push(s),
     );
     expect(out).toEqual([{ id: "a/good", version: "1.0.0", source_registry: null }]);
-    expect(errs.length).toBe(8);
+    expect(errs).toHaveLength(8);
   });
 
   test("empty or whitespace source_registry is a local install", () => {
@@ -222,7 +222,7 @@ describe("runEvalInstalled", () => {
     const h = harness({ list: listOf() });
     expect(await runEvalInstalled({ threshold: 7, json: true }, h.deps)).toBe(0);
     expect(JSON.parse(h.logs[0] ?? "")).toEqual({ threshold: 7, results: [] });
-    expect(h.logs.length).toBe(1);
+    expect(h.logs).toHaveLength(1);
   });
 
   test("51 candidates: ERR_EVAL_TOO_MANY_EXTENSIONS, exit 2, no extension.eval", async () => {
@@ -337,7 +337,7 @@ describe("runEvalInstalled", () => {
   test("happy path --json: exactly one document of the documented shape", async () => {
     const h = happy();
     expect(await runEvalInstalled({ threshold: 5, json: true }, h.deps)).toBe(1);
-    expect(h.logs.length).toBe(1);
+    expect(h.logs).toHaveLength(1);
     expect(JSON.parse(h.logs[0] ?? "")).toEqual({
       threshold: 5,
       results: [
@@ -475,7 +475,7 @@ describe("runEvalInstalled", () => {
       info: { "r/a/x": new Error("ERR_REGISTRY_FETCH: line one\nline two") },
     });
     expect(await runEvalInstalled({ threshold: 5, json: false }, h.deps)).toBe(0);
-    expect(h.logs.length).toBe(3);
+    expect(h.logs).toHaveLength(3);
     const status = tableRows(h.logs)[0]?.at(-1);
     expect(status).toBe(
       "no registry score: registry unreadable: ERR_REGISTRY_FETCH: line one line two",
@@ -631,5 +631,27 @@ describe("runEvalInstalled", () => {
     });
     expect(await runEvalInstalled({ threshold: 5, json: false }, h.deps)).toBe(0);
     expect(tableRows(h.logs)[0]?.[0]?.length).toBe(120);
+  });
+});
+
+describe("parseEvalResults malformed failure entries", () => {
+  test.each([
+    ["a missing error object", { id: "a", ok: false }],
+    ["a non-string error code", { id: "a", ok: false, error: { code: 1, message: "m" } }],
+    ["a non-string error message", { id: "a", ok: false, error: { code: "E", message: 2 } }],
+    ["an ok flag that is neither true nor false", { id: "a", ok: "yes" }],
+    ["an ok entry with no version", { id: "a", ok: true, report: {} }],
+  ])("%s is rejected", (_n, entry) => {
+    expect(parseEvalResults({ results: [entry] }, ["a"])).toBeNull();
+  });
+
+  test("a failure entry without a version keeps a null version", () => {
+    const out = parseEvalResults(
+      { results: [{ id: "a", ok: false, error: { code: "E", message: "m" } }] },
+      ["a"],
+    );
+    expect(out).toEqual([
+      { id: "a", version: null, ok: false, error: { code: "E", message: "m" } },
+    ]);
   });
 });

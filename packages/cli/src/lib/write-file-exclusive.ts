@@ -143,8 +143,8 @@ export function writeFileExclusive(
  * exactly the pattern `writeFileExclusive` gives this target, and only regular files. Never throws.
  */
 export function sweepStaleTempFiles(path: string): void {
-  const escaped = basename(path).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const pattern = new RegExp(`^\\.${escaped}\\.[0-9a-f]{${TEMP_HEX_BYTES * 2}}\\.tmp$`);
+  const escaped = basename(path).replace(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
+  const pattern = new RegExp(String.raw`^\.${escaped}\.[0-9a-f]{${TEMP_HEX_BYTES * 2}}\.tmp$`);
   const dir = dirname(path);
   try {
     for (const name of readdirSync(dir)) {

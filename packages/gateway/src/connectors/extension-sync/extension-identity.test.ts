@@ -13,8 +13,10 @@ import { isConnectorConfigured } from "../../sync/connector-configured.ts";
 import { createMockVault } from "../../vault/mock.ts";
 import {
   createExtensionCredentialsResolver,
+  extensionIdBackingServiceId,
   indexServiceIdForCodeServer,
   listExtensionIdentities,
+  parseCredentials,
   resolveExtensionIdentity,
 } from "./extension-identity.ts";
 
@@ -249,5 +251,58 @@ describe("createExtensionCredentialsResolver — an ext_ id reads its grant dire
     await vault.set(`ext.${CODE_ID}.token`, "tok");
     expect(await isConnectorConfigured(vault, CODE_ID, resolve)).toBe(true);
     db.close();
+  });
+});
+
+describe("parseCredentials", () => {
+  test("accepts the stored shape and an empty object", () => {
+    expect(parseCredentials('{"token":{"env":"T","vaultKey":"k"}}')).toEqual({
+      token: { env: "T", vaultKey: "k" },
+    });
+    expect(parseCredentials("{}")).toEqual({});
+  });
+
+  test.each([
+    ["invalid JSON", "{nope"],
+    ["an array", "[]"],
+    ["null", "null"],
+    ["a scalar entry", '{"token":"x"}'],
+    ["a null entry", '{"token":null}'],
+    ["a missing vaultKey", '{"token":{"env":"T"}}'],
+    ["a non-string env", '{"token":{"env":1,"vaultKey":"k"}}'],
+  ])("rejects %s", (_n, json) => {
+    expect(parseCredentials(json)).toBeUndefined();
+  });
+});
+
+describe("extensionIdBackingServiceId", () => {
+  test("an ext_ code-server id is answered by its grant alone, with no manifest read", () => {
+    const db = seed({ fingerprint: null });
+    const never = (): ExtensionManifest | undefined => {
+      throw new Error("must not read the manifest");
+    };
+    expect(extensionIdBackingServiceId(db, CODE_ID, TABLE, never)).toBe(EXT_ID);
+  });
+
+  test("a bound legacy index id resolves through the manifest to its extension", () => {
+    const db = seed({ fingerprint: OFFICIAL_FP });
+    expect(extensionIdBackingServiceId(db, "readwise", TABLE, () => manifest())).toBe(EXT_ID);
+  });
+
+  test("a bound id whose manifest is unreadable, an unbound built-in and an unknown ext_ id are none", () => {
+    const db = seed({ fingerprint: OFFICIAL_FP });
+    expect(extensionIdBackingServiceId(db, "readwise", TABLE, () => undefined)).toBeUndefined();
+    expect(extensionIdBackingServiceId(db, "github", TABLE, () => manifest())).toBeUndefined();
+    expect(
+      extensionIdBackingServiceId(db, "ext_com_other_thing", TABLE, () => manifest()),
+    ).toBeUndefined();
+  });
+
+  test("an unbound extension's index id is its code-server id", () => {
+    const db = seed({ fingerprint: null });
+    expect(indexServiceIdForCodeServer(db, CODE_ID, TABLE, () => manifest())).toBe(CODE_ID);
+    expect(indexServiceIdForCodeServer(db, "ext_unknown", TABLE, () => manifest())).toBe(
+      "ext_unknown",
+    );
   });
 });

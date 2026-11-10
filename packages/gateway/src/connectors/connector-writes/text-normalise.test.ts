@@ -96,3 +96,42 @@ describe("settleUrl (B3r, plan R2)", () => {
     expect(settleUrl("&amp;amp;lt;")).toBe("<");
   });
 });
+
+describe("text-normalise: remaining edges", () => {
+  test("named entities are case-insensitive and need no semicolon; unknown names stay", () => {
+    expect(decodeEntitiesOnce("&LT;&Amp&bogus;")).toBe("<&&bogus;");
+    expect(decodeEntitiesOnce("&NBSP;")).toBe(NBSP);
+  });
+
+  test("numeric entities: surrogates and out-of-range code points stay as written", () => {
+    expect(decodeEntitiesOnce("&#xD800;")).toBe("&#xD800;");
+    expect(decodeEntitiesOnce("&#55296;")).toBe("&#55296;");
+    expect(decodeEntitiesOnce("&#x110000;")).toBe("&#x110000;");
+    expect(decodeEntitiesOnce("&#99999999999999999999;")).toBe("&#99999999999999999999;");
+    expect(decodeEntitiesOnce("&#x41;&#66")).toBe("AB");
+  });
+
+  test("settle with keepLines turns every break form into one LF and tabs into spaces", () => {
+    const cr = String.fromCodePoint(0x0d);
+    const nel = String.fromCodePoint(0x85);
+    const vt = String.fromCodePoint(0x0b);
+    expect(settle(`A${cr}B${nel}C${LINE_SEP}D${vt}E${TAB}F`, " ", true)).toBe("a\nb\nc\nd\ne f");
+  });
+
+  test("settle without keepLines collapses breaks and runs of space to one space", () => {
+    expect(settle(`A${LF}${LF}  B`, " ")).toBe("a b");
+  });
+
+  test("settle replaces an invisible with the given replacement", () => {
+    expect(settle(`a${ZWSP}b`, "_")).toBe("a_b");
+    expect(settle(`a${ZWSP}b`, "")).toBe("ab");
+  });
+
+  test("settle of printable ASCII without & returns it lower-cased", () => {
+    expect(settle("Hello World", " ")).toBe("hello world");
+  });
+
+  test("settleUrl of an already stable value is trimmed and lower-cased", () => {
+    expect(settleUrl("  HTTP://Host/Path  ")).toBe("http://host/path");
+  });
+});

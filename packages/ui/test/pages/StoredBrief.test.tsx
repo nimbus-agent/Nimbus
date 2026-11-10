@@ -107,3 +107,31 @@ describe("StoredBrief", () => {
     expect(screen.queryByText("Alpha text")).toBeNull();
   });
 });
+
+describe("StoredBrief: odd answers", () => {
+  beforeEach(() => {
+    h.data.clear();
+    h.error = null;
+  });
+
+  it("shows the query error while nothing usable has arrived", () => {
+    h.error = "fleet.show failed";
+    renderAt("a");
+    expect(screen.getByRole("alert").textContent).toBe("fleet.show failed");
+  });
+
+  it("treats a reply of the wrong shape as not arrived yet", () => {
+    for (const bad of ["text", { nope: 1 }, { brief: "str" }, { brief: { id: 1 } }]) {
+      h.data.set("a", bad);
+      const { unmount } = renderAt("a");
+      expect(screen.getByText("Loading…")).toBeTruthy();
+      unmount();
+    }
+  });
+
+  it("falls back to the method name for an agent the catalog does not list", () => {
+    h.data.set("a", { brief: row({ agentMethod: "agents.unlisted" }) });
+    renderAt("a");
+    expect(screen.getByText(/agents\.unlisted · job nightly/)).toBeTruthy();
+  });
+});

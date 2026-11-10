@@ -53,7 +53,6 @@ import {
   type RegistryFetcher,
   type ResolvedNode,
   registryNameOf,
-  type SourceKey,
   sourceKey,
 } from "./dependency-types.ts";
 import {
@@ -477,7 +476,7 @@ function promotableLocalDependency(
 ): ExtensionRow | undefined {
   if (options.registryPlan !== undefined || options.sourceRegistry !== undefined) return undefined;
   const row = installedDependencyRow(options.db, manifest.id);
-  if (row === undefined || row.version !== manifest.version) return undefined;
+  if (row?.version !== manifest.version) return undefined;
   return sha256HexEqualConstantTime(row.manifest_hash, sha256HexOfBytes(manifestBytes))
     ? row
     : undefined;
@@ -702,19 +701,20 @@ export function reportIncompleteRollback(
   e: unknown,
 ): string {
   const note = rollbackIncompleteNote(e);
-  if (note === "") return note;
-  logger.warn(
-    {
-      installing,
-      rollbackFailures: rollbackFailuresOf(e).map((f) => ({
-        step: f.step,
-        id: f.id,
-        dir: f.dir,
-        error: f.error instanceof Error ? f.error.message : String(f.error),
-      })),
-    },
-    "extension install refused, and its rollback left packages behind",
-  );
+  if (note !== "") {
+    logger.warn(
+      {
+        installing,
+        rollbackFailures: rollbackFailuresOf(e).map((f) => ({
+          step: f.step,
+          id: f.id,
+          dir: f.dir,
+          error: f.error instanceof Error ? f.error.message : String(f.error),
+        })),
+      },
+      "extension install refused, and its rollback left packages behind",
+    );
+  }
   return note;
 }
 
@@ -755,9 +755,10 @@ function withRollbackFailures(e: unknown, failures: readonly RollbackFailure[]):
   if (failures.length === 0 || !(e instanceof Error)) return e;
   Object.assign(e, { rollbackFailures: failures });
   if (e.cause === undefined) {
+    const steps = failures.map((f) => `${f.step} ${f.id ?? f.dir}`).join(", ");
     e.cause = new AggregateError(
       failures.map((f) => f.error),
-      `rollback incomplete: ${failures.map((f) => `${f.step} ${f.id ?? f.dir}`).join(", ")}`,
+      `rollback incomplete: ${steps}`,
     );
   }
   return e;
@@ -1065,7 +1066,7 @@ function plannedDetails(
   };
 }
 
-function registryUrlOf(options: InstallFromLocalOptions, source: SourceKey): string | null {
+function registryUrlOf(options: InstallFromLocalOptions, source: string): string | null {
   return (
     options.registryPlan?.resolver.registryUrl(source) ??
     getRegistry(options.db, registryNameOf(source))?.url ??
@@ -1401,6 +1402,28 @@ async function requireInstallApproval(
   }
 }
 
+/** The source key of the root package: its registry plan's, else its recorded registry, else none. */
+function rootSourceOf(options: InstallFromLocalOptions): string | null {
+  if (options.registryPlan !== undefined) return options.registryPlan.resolver.rootSource;
+  if (options.sourceRegistry !== undefined && options.rootFingerprint !== undefined) {
+    return sourceKey(options.sourceRegistry, options.rootFingerprint);
+  }
+  return null;
+}
+
+/**
+ * A starter pack's entry IS its manifest, under the current name only (`extensionEntryRelPath`),
+ * so a pack under the legacy name would otherwise fail later as a missing entry file.
+ */
+function assertStarterPackManifestName(manifest: ExtensionManifest, manifestPath: string): void {
+  if (isStarterPack(manifest) && basename(manifestPath) !== EXTENSION_MANIFEST_FILENAME) {
+    throw new RegistryError(
+      "ERR_REGISTRY_MANIFEST_INVALID",
+      `a starter pack's manifest must be named ${EXTENSION_MANIFEST_FILENAME}`,
+    );
+  }
+}
+
 export async function installExtensionFromLocalDirectory(
   options: InstallFromLocalOptions,
 ): Promise<InstallExtensionFromLocalResult | PromotedInstallResult> {
@@ -1429,14 +1452,7 @@ export async function installExtensionFromLocalDirectory(
 
   const manifestBytes = readFileSync(srcManifestPath);
   const manifest = parseExtensionManifestJson(manifestBytes.toString("utf8"));
-  // A starter pack's entry IS its manifest, under the current name only (`extensionEntryRelPath`),
-  // so a pack under the legacy name would otherwise fail later as a missing entry file.
-  if (isStarterPack(manifest) && basename(srcManifestPath) !== EXTENSION_MANIFEST_FILENAME) {
-    throw new RegistryError(
-      "ERR_REGISTRY_MANIFEST_INVALID",
-      `a starter pack's manifest must be named ${EXTENSION_MANIFEST_FILENAME}`,
-    );
-  }
+  assertStarterPackManifestName(manifest, srcManifestPath);
 
   // An explicit install of the same package already installed as a dependency keeps it: before
   // solving and before the owner is asked, since it installs nothing.
@@ -1456,11 +1472,7 @@ export async function installExtensionFromLocalDirectory(
     version: manifest.version,
     ...(manifest.dependsOn === undefined ? {} : { dependsOn: manifest.dependsOn }),
   };
-  const rootSource =
-    options.registryPlan?.resolver.rootSource ??
-    (options.sourceRegistry !== undefined && options.rootFingerprint !== undefined
-      ? sourceKey(options.sourceRegistry, options.rootFingerprint)
-      : null);
+  const rootSource = rootSourceOf(options);
   const plan = await resolveClosure(solverRoot, rootSource, solverFetcher, {
     installed: installedMap,
     activeConstraints,

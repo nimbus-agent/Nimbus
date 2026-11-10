@@ -16,7 +16,7 @@ const CLOUD_ID_CHARS = 36;
 export function isAtlassianCloudId(value: string): boolean {
   if (value.length !== CLOUD_ID_CHARS) return false;
   for (let i = 0; i < CLOUD_ID_CHARS; i++) {
-    const c = value.charCodeAt(i);
+    const c = value.codePointAt(i) ?? -1;
     const digit = c >= 0x30 && c <= 0x39;
     const lower = c >= 0x61 && c <= 0x66;
     const upper = c >= 0x41 && c <= 0x46;

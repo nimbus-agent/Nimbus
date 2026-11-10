@@ -211,6 +211,142 @@ describe("Onboarding → Decisions", () => {
     ).toBeTruthy();
   });
 
+  it("keeps only well-formed, connected suggested connectors and fills in defaults", async () => {
+    callMock.mockImplementation(async (m: string) => {
+      if (m === "catalog.list") return CATALOG;
+      if (m === "decisions.status") return base;
+      if (m === "connector.listStatus") {
+        return [
+          null,
+          { serviceId: 5, healthState: "healthy" },
+          { serviceId: "github", healthState: "healthy" },
+          { serviceId: "jira", healthState: "unauthenticated" },
+          { serviceId: "jira", healthState: 3 },
+          {
+            serviceId: "slack",
+            healthState: "healthy",
+            status: 7,
+            itemCount: "many",
+            lastSyncAt: "x",
+          },
+        ];
+      }
+      if (m === "db.setMeta") return null;
+      throw new Error(`unexpected ${m}`);
+    });
+    routes("/onboarding/decisions");
+    expect(await screen.findByText("Slack: 0 items")).toBeTruthy();
+    expect(screen.queryByText(/Jira/)).toBeNull();
+    expect(screen.queryByText(/github/)).toBeNull();
+  });
+
+  it("shows every connected connector by id when the catalog cannot be read", async () => {
+    callMock.mockImplementation(async (m: string) => {
+      if (m === "catalog.list") throw new Error("catalog down");
+      if (m === "decisions.status") return base;
+      if (m === "connector.listStatus") {
+        return [{ serviceId: "mystery", healthState: "healthy", status: "syncing", itemCount: 1 }];
+      }
+      if (m === "db.setMeta") return null;
+      throw new Error(`unexpected ${m}`);
+    });
+    routes("/onboarding/decisions");
+    expect(await screen.findByText("Syncing mystery… 1 item")).toBeTruthy();
+  });
+
+  it("an unreadable connector list does not break the step", async () => {
+    callMock.mockImplementation(async (m: string) => {
+      if (m === "catalog.list") return CATALOG;
+      if (m === "decisions.status") return base;
+      if (m === "connector.listStatus") return { not: "an array" };
+      if (m === "db.setMeta") return null;
+      throw new Error(`unexpected ${m}`);
+    });
+    routes("/onboarding/decisions");
+    await waitFor(() => expect(callMock).toHaveBeenCalledWith("connector.listStatus", {}));
+    expect(screen.queryByText(/Syncing/)).toBeNull();
+    expect(screen.getByRole("button", { name: "Open dashboard →" })).toBeTruthy();
+  });
+
+  it("keeps the last answer when a poll fails", async () => {
+    callMock.mockImplementation(async (m: string) => {
+      if (m === "catalog.list") return CATALOG;
+      if (m === "decisions.status") throw new Error("gateway restarting");
+      if (m === "connector.listStatus") return synced;
+      throw new Error(`unexpected ${m}`);
+    });
+    routes("/onboarding/decisions");
+    await waitFor(() => expect(callMock).toHaveBeenCalledWith("decisions.status", {}));
+    expect(screen.getByRole("button", { name: "Open dashboard →" })).toBeTruthy();
+  });
+
+  it("ignores an answer that arrives after the step was left", async () => {
+    let release: (v: unknown) => void = () => undefined;
+    const slow = new Promise<unknown>((r) => {
+      release = r;
+    });
+    callMock.mockImplementation(async (m: string) => {
+      if (m === "catalog.list") return CATALOG;
+      if (m === "decisions.status") return slow;
+      if (m === "connector.listStatus") return synced;
+      if (m === "db.setMeta") return null;
+      throw new Error(`unexpected ${m}`);
+    });
+    const r = routes("/onboarding/decisions");
+    await waitFor(() => expect(callMock).toHaveBeenCalledWith("decisions.status", {}));
+    r.unmount();
+    release(base);
+    await act(async () => {
+      await slow;
+    });
+    // Leaving the step completed onboarding exactly once.
+    expect(callMock.mock.calls.filter(([m]) => m === "db.setMeta")).toHaveLength(1);
+  });
+
+  it("hiding the window completes onboarding once", async () => {
+    gateway(base);
+    routes("/onboarding/decisions");
+    await screen.findByText("We read 40 messages from Slack and found no clear decisions.");
+    const visibility = vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+    try {
+      document.dispatchEvent(new Event("visibilitychange"));
+      document.dispatchEvent(new Event("visibilitychange"));
+      await waitFor(() =>
+        expect(callMock.mock.calls.filter(([m]) => m === "db.setMeta")).toHaveLength(1),
+      );
+    } finally {
+      visibility.mockRestore();
+    }
+  });
+
+  it("still leaves the step when recording completion fails, and records it only once", async () => {
+    callMock.mockImplementation(async (m: string) => {
+      if (m === "catalog.list") return CATALOG;
+      if (m === "decisions.status") return base;
+      if (m === "connector.listStatus") return synced;
+      if (m === "db.setMeta") throw new Error("db busy");
+      throw new Error(`unexpected ${m}`);
+    });
+    routes("/onboarding/decisions");
+    fireEvent.click(await screen.findByRole("button", { name: "Open dashboard →" }));
+    expect(await screen.findByText("dashboard")).toBeTruthy();
+    expect(callMock.mock.calls.filter(([m]) => m === "db.setMeta")).toHaveLength(1);
+  });
+
+  it("Connect Notion or Google Drive goes back to the connect step", async () => {
+    gateway(base);
+    routes("/onboarding/decisions");
+    fireEvent.click(await screen.findByRole("button", { name: "Connect Notion or Google Drive" }));
+    expect(await screen.findByText("connect step")).toBeTruthy();
+  });
+
+  it("Add a channel leaves for the connectors settings", async () => {
+    gateway(base);
+    routes("/onboarding/decisions");
+    fireEvent.click(await screen.findByRole("button", { name: "Add a channel" }));
+    expect(await screen.findByText("connectors settings")).toBeTruthy();
+  });
+
   it("stops polling when it unmounts", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {
@@ -222,7 +358,7 @@ describe("Onboarding → Decisions", () => {
       await act(async () => {
         vi.advanceTimersByTime(10_000);
       });
-      expect(callMock.mock.calls.length).toBe(before);
+      expect(callMock.mock.calls).toHaveLength(before);
     } finally {
       vi.useRealTimers();
     }

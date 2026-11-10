@@ -44,6 +44,27 @@ describe("verifyEgressChain", () => {
   test("an empty ledger verifies ok with 0 rows", () => {
     expect(verifyEgressChain(db)).toEqual({ ok: true, verifiedRows: 0 });
   });
+  test("verifying from a mid-chain id walks only the later rows, linked to the row it starts after", () => {
+    appendEgressEntry(db, e({ method: "a.x", timestamp: 1 }));
+    appendEgressEntry(db, e({ method: "b.y", timestamp: 2 }));
+    appendEgressEntry(db, e({ method: "c.z", timestamp: 3 }));
+    const firstId = (
+      db.query(`SELECT id FROM egress_ledger ORDER BY id ASC LIMIT 1`).get() as { id: number }
+    ).id;
+    expect(verifyEgressChain(db, firstId)).toEqual({ ok: true, verifiedRows: 2 });
+  });
+  test("verifying from an id that is not in the ledger links the first later row to genesis and so fails", () => {
+    appendEgressEntry(db, e({ method: "a.x", timestamp: 1 }));
+    appendEgressEntry(db, e({ method: "b.y", timestamp: 2 }));
+    const r = verifyEgressChain(db, 9_999_999);
+    expect(r).toEqual({ ok: true, verifiedRows: 0 });
+    const firstId = (
+      db.query(`SELECT id FROM egress_ledger ORDER BY id ASC LIMIT 1`).get() as { id: number }
+    ).id;
+    db.run(`DELETE FROM egress_ledger WHERE id = ?`, [firstId]);
+    const broken = verifyEgressChain(db, firstId);
+    expect(broken.ok).toBe(false);
+  });
   test("a clean 3-row chain verifies ok", () => {
     appendEgressEntry(db, e({ method: "a.x", timestamp: 1 }));
     appendEgressEntry(db, e({ method: "b.y", timestamp: 2 }));

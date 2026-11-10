@@ -1,7 +1,11 @@
 import { describe, expect, test } from "bun:test";
 
 import type { IPCClient } from "../ipc-client/index.ts";
-import { registryAddPrecheck, runRegistryClient } from "./registry-client-cmds.ts";
+import {
+  registryAddPrecheck,
+  registryClientTimeoutMs,
+  runRegistryClient,
+} from "./registry-client-cmds.ts";
 
 function harness(responses: Record<string, unknown> = {}, isTty = true) {
   const calls: Array<{ method: string; params: unknown }> = [];
@@ -186,5 +190,76 @@ describe("nimbus registry refresh / remove", () => {
     const h = harness();
     expect(await runRegistryClient("remove", [], h.deps)).toBe(2);
     expect(h.stderr()).toContain("Usage:");
+  });
+});
+
+describe("nimbus registry: json output, usage errors and timeouts", () => {
+  test("add with a wrong positional count is a usage error", async () => {
+    const h = harness();
+    expect(await runRegistryClient("add", ["only-a-name"], h.deps)).toBe(2);
+    expect(h.stderr()).toContain("nimbus registry");
+    expect(h.calls).toEqual([]);
+  });
+
+  test("list --json prints the raw reply", async () => {
+    const reply = { registries: [] };
+    const h = harness({ "registry.list": reply });
+    expect(await runRegistryClient("list", ["--json"], h.deps)).toBe(0);
+    expect(JSON.parse(h.stdout())).toEqual(reply);
+  });
+
+  test("list of nothing says how to add a registry", async () => {
+    const h = harness({ "registry.list": { registries: [] } });
+    expect(await runRegistryClient("list", [], h.deps)).toBe(0);
+    expect(h.stdout()).toContain("no registries added");
+  });
+
+  test("refresh rejects two names and sends nothing", async () => {
+    const h = harness();
+    expect(await runRegistryClient("refresh", ["a", "b"], h.deps)).toBe(2);
+    expect(h.calls).toEqual([]);
+  });
+
+  test("refresh --json prints the reply and exits 0 when all succeeded", async () => {
+    const reply = { results: [{ name: "a", ok: true, sequence: 3, extensionCount: 1 }] };
+    const h = harness({ "registry.refresh": reply });
+    expect(await runRegistryClient("refresh", ["--json"], h.deps)).toBe(0);
+    expect(JSON.parse(h.stdout())).toEqual(reply);
+  });
+
+  test("refresh with no registries says so; a success and an unnamed failure print their lines", async () => {
+    const none = harness({ "registry.refresh": { results: [] } });
+    expect(await runRegistryClient("refresh", [], none.deps)).toBe(0);
+    expect(none.stdout()).toContain("(no registries added)");
+    const mixed = harness({
+      "registry.refresh": {
+        results: [
+          { name: "a", ok: true },
+          { name: "b", ok: false },
+        ],
+      },
+    });
+    expect(await runRegistryClient("refresh", [], mixed.deps)).toBe(1);
+    expect(mixed.stdout()).toContain("a: ok (sequence ?, 0 extension(s))");
+    expect(mixed.stdout()).toContain("b: FAILED unknown error");
+  });
+
+  test("remove of an unknown registry says so, and one with orphans lists them", async () => {
+    const missing = harness({ "registry.remove": { removed: false, orphanedExtensions: [] } });
+    expect(await runRegistryClient("remove", ["gone"], missing.deps)).toBe(0);
+    expect(missing.stdout()).toContain("No registry named gone.");
+    const orphans = harness({
+      "registry.remove": { removed: true, orphanedExtensions: ["x@1", "y@2"] },
+    });
+    expect(await runRegistryClient("remove", ["main"], orphans.deps)).toBe(0);
+    expect(orphans.stdout()).toContain("Removed registry main.");
+    expect(orphans.stdout()).toContain("x@1, y@2");
+  });
+
+  test("only add and refresh get the long interactive timeout", () => {
+    expect(registryClientTimeoutMs("add")).toBeGreaterThan(0);
+    expect(registryClientTimeoutMs("refresh")).toBe(registryClientTimeoutMs("add"));
+    expect(registryClientTimeoutMs("list")).toBeUndefined();
+    expect(registryClientTimeoutMs("remove")).toBeUndefined();
   });
 });

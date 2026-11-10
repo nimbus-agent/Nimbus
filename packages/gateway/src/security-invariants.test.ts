@@ -354,7 +354,7 @@ describe("I1 — extensionProcessEnv is the only env source for spawned MCP chil
         expect(f.contents).toMatch(
           /wrapIacServerSpec\(\s*\{\s*\.\.\.connectorSpawn\("iac"\),\s*env: extensionProcessEnv\(/,
         );
-        expect((f.contents.match(/connectorSpawn\(/g) ?? []).length).toBe(1);
+        expect(f.contents.match(/connectorSpawn\(/g) ?? []).toHaveLength(1);
         continue;
       }
       wiredSites += (f.contents.match(/env\s*:\s*extensionProcessEnv\(/g) ?? []).length;
@@ -1478,7 +1478,9 @@ describe("I15 — SandboxRunner is intrinsic to every extension spawn", () => {
       );
       expect(dn).toMatch(/if \("file" in r\) files\.push\(r\.file\);/);
       expect(dn).not.toMatch(/files\.push\(vault\)/);
-      expect(dn).toMatch(/const CONFIG_DIRS = \["\.obsidian", "\.git"\];/);
+      expect(dn).toMatch(
+        /const CONFIG_DIRS: ReadonlySet<string> = new Set\(\["\.obsidian", "\.git"\]\);/,
+      );
       const approved = fnBody(src, "obsidianWriteGrantApproved");
       expect(approved).toMatch(/ctx\.obsidianWriteGrantEnabled/);
       const start = fnBody(src, "startObsidianMcp");
@@ -3618,7 +3620,7 @@ describe("I26 — every connector write row is confined to the local I2 path; fe
   });
 
   test("every connector write row is HITL-gated via its action type (local path)", () => {
-    expect(CONNECTOR_WRITE_ROWS.length).toBe(124);
+    expect(CONNECTOR_WRITE_ROWS).toHaveLength(124);
     expect(CONNECTOR_WRITE_ROWS.filter((r) => !HITL_REQUIRED.has(r.actionType))).toEqual([]);
   });
 
@@ -4028,7 +4030,7 @@ describe("I28 — MCP content enters only through the capture gate, in a fixed o
     expect(load).toBeGreaterThan(0);
     expect(gate).toBeGreaterThan(load);
     // Loaded once: the act door and the platform accessor read the same value.
-    expect(assemble.split("loadNimbusTribalFromConfigDir(paths.configDir)").length).toBe(2);
+    expect(assemble.split("loadNimbusTribalFromConfigDir(paths.configDir)")).toHaveLength(2);
   });
 
   test("act door: acceptCapture routes an action row to an acceptAction CALL, after the owner check", async () => {
@@ -4289,8 +4291,8 @@ describe("I29 — egress-ledger completeness over the executor chokepoint", () =
   });
 
   test("the coverage set is the whole table", () => {
-    expect(CONNECTOR_WRITE_ROWS.length).toBe(124);
-    expect(writesUnderTest().length).toBe(CONNECTOR_WRITE_ROWS.length + 4);
+    expect(CONNECTOR_WRITE_ROWS).toHaveLength(124);
+    expect(writesUnderTest()).toHaveLength(CONNECTOR_WRITE_ROWS.length + 4);
   });
 
   test("D22 confines connectors.dispatch to executor.ts, the egress append to egress/*, the agent brief append to agents-rpc.ts, emitter imports to agents-rpc.ts, and registerRoute to llm/registry.ts", async () => {
@@ -8998,7 +9000,7 @@ describe("I44 — registry-sourced extension code arrives only through the verif
     expect(asked).toHaveLength(1);
     const approved = new Set((asked[0]?.plan ?? []).map((p) => p.id));
     const installed = installedIds(s.db);
-    expect(installed.length).toBe(3);
+    expect(installed).toHaveLength(3);
     for (const id of installed) expect(approved.has(id), id).toBe(true);
   });
 
@@ -11917,7 +11919,7 @@ describe("I53 — a first-party connector write reaches the model only through t
     const { NO_POLICY_OVERLAY, ToolExecutor } = await import("./engine/executor.ts");
     const { createConnectorDispatcher } = await import("./connectors/registry.ts");
     const wave4 = CONNECTOR_WRITE_ROWS.filter((r) => r.wave === 4 && r.transport === "mesh");
-    expect(wave4.length).toBe(42);
+    expect(wave4).toHaveLength(42);
     const failures: string[] = [];
     for (const row of wave4) {
       const input = confirmableInput(row);

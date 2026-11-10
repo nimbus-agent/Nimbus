@@ -52,6 +52,7 @@ import {
   type MigrationConsentPayload,
   type MigrationEngine,
   type MigrationEngineDeps,
+  migrationConsentViaGate,
   pauseLegacyService,
 } from "./migration-engine.ts";
 import {
@@ -2355,5 +2356,31 @@ describe("Task 7.4 (C12): the extension runtime is off", () => {
     await engine({ runtimeEnabled: false }).evaluate();
     expect(getConnectorHealth(db, LEGACY).lastError).toBe(before);
     expect(onlyRow().state).toBe("declined");
+  });
+});
+
+describe("migrationConsentViaGate", () => {
+  test("asks the gate under extension.migrate with a copy of the payload and returns its answer", async () => {
+    const asked: { type: string; payload: Record<string, unknown> }[] = [];
+    const consent = migrationConsentViaGate(async (action) => {
+      asked.push(action as { type: string; payload: Record<string, unknown> });
+      return false;
+    });
+    const payload: MigrationConsentPayload = {
+      migrationId: "m1",
+      extensionId: "com.example.x",
+      summary: "s",
+      publisher: { id: "p", fingerprint: "fp" },
+      version: "1.0.0",
+      network: "none",
+      readTools: "none",
+      knownLoss: "none",
+      fromRenderer: false,
+    };
+    expect(await consent(payload)).toBe(false);
+    expect(asked).toHaveLength(1);
+    expect(asked[0]?.type).toBe("extension.migrate");
+    expect(asked[0]?.payload).toEqual({ ...payload });
+    expect(asked[0]?.payload).not.toBe(payload);
   });
 });

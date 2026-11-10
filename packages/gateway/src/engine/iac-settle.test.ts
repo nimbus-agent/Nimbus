@@ -594,7 +594,7 @@ describe("nodeSettleFs", () => {
   });
 
   test("removeTree on a missing path is a no-op", async () => {
-    await nodeSettleFs().removeTree(join(root, "nope"));
+    await expect(nodeSettleFs().removeTree(join(root, "nope"))).resolves.toBeUndefined();
   });
 });
 
@@ -833,7 +833,9 @@ describe("settleCfnChangeSet", () => {
   });
 
   test("cleanup is a no-op (the discard of an unused change set is the gate's step)", async () => {
-    await settleCfnChangeSet({ input: cfnInput(), reply: cfnReply() }).cleanup();
+    await expect(
+      settleCfnChangeSet({ input: cfnInput(), reply: cfnReply() }).cleanup(),
+    ).resolves.toBeUndefined();
   });
 
   test("the change text costs linear time in the size of the change list", () => {

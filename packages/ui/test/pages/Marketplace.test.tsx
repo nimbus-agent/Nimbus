@@ -256,6 +256,52 @@ describe("Marketplace page", () => {
     expect(extensionInstallMock).not.toHaveBeenCalled();
   });
 
+  it("does not remove anything when the confirmation is declined", async () => {
+    stubExtensionList([EXT_1]);
+    vi.spyOn(globalThis, "confirm").mockReturnValue(false);
+    renderPage();
+    expect(await screen.findByText("nimbus-git")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: /remove extension nimbus-git/i }));
+    expect(extensionRemoveMock).not.toHaveBeenCalled();
+  });
+
+  it("shows why an install failed", async () => {
+    stubExtensionList([]);
+    openMock.mockResolvedValue("/my/extension/dir");
+    extensionInstallMock.mockRejectedValue(new Error("manifest is invalid"));
+    renderPage();
+    await waitFor(() => expect(callMock).toHaveBeenCalled());
+    await userEvent.click(screen.getByRole("button", { name: /install from directory/i }));
+    expect(await screen.findByText("manifest is invalid")).toBeInTheDocument();
+  });
+
+  it("shows a non-Error install failure as text", async () => {
+    stubExtensionList([]);
+    openMock.mockResolvedValue("/my/extension/dir");
+    extensionInstallMock.mockRejectedValue("plain failure");
+    renderPage();
+    await waitFor(() => expect(callMock).toHaveBeenCalled());
+    await userEvent.click(screen.getByRole("button", { name: /install from directory/i }));
+    expect(await screen.findByText("plain failure")).toBeInTheDocument();
+  });
+
+  it("ignores a second toggle while the first is still in flight", async () => {
+    let release: (v: unknown) => void = () => undefined;
+    extensionDisableMock.mockImplementation(
+      () =>
+        new Promise((r) => {
+          release = r;
+        }),
+    );
+    stubExtensionList([EXT_1]);
+    renderPage();
+    const box = await screen.findByLabelText("nimbus-git enabled");
+    await userEvent.click(box);
+    await userEvent.click(box);
+    expect(extensionDisableMock).toHaveBeenCalledTimes(1);
+    release({ ok: true });
+  });
+
   it("shows error state when extension.list fails", async () => {
     callMock.mockRejectedValue(new Error("socket closed"));
     renderPage();

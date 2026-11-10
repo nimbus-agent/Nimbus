@@ -60,4 +60,45 @@ describe("AuditFeed", () => {
     expect(screen.getByText("weird.entry")).toBeInTheDocument();
     expect(screen.getByText("approved")).toBeInTheDocument();
   });
+
+  it("shows no subject for an empty or subject-less action, and a placeholder for a bad time", () => {
+    hookState.data = [
+      { id: 1, actionType: "a.empty", hitlStatus: "approved", actionJson: "", timestamp: 0 },
+      {
+        id: 2,
+        actionType: "a.nosubject",
+        hitlStatus: "approved",
+        actionJson: JSON.stringify({ other: 1 }),
+        timestamp: 0,
+      },
+      {
+        id: 3,
+        actionType: "a.blank",
+        hitlStatus: "approved",
+        actionJson: JSON.stringify({ subject: "" }),
+        timestamp: 0,
+      },
+      {
+        id: 4,
+        actionType: "a.null",
+        hitlStatus: "approved",
+        actionJson: "null",
+        timestamp: Number.NaN,
+      },
+    ];
+    const { container } = render(<AuditFeed />);
+    expect(screen.getAllByRole("listitem")).toHaveLength(4);
+    for (const li of screen.getAllByRole("listitem")) {
+      expect(li.querySelectorAll("span")).toHaveLength(2);
+    }
+    expect(container).toHaveTextContent("--:--");
+  });
+
+  it("colours a pending outcome with the muted style", () => {
+    hookState.data = [
+      { id: 1, actionType: "x", hitlStatus: "pending", actionJson: "{}", timestamp: 0 },
+    ];
+    render(<AuditFeed />);
+    expect(screen.getByText("pending").className).toContain("fg-muted");
+  });
 });

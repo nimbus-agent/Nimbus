@@ -284,7 +284,7 @@ export async function probeHosts(
     while (next < work.length) {
       const entry = work[next] as { host: string; port: number };
       next += 1;
-      if (await probeHost(entry, deps)) answered += 1;
+      if (await probeHost(entry, deps)) answered += 1; // worker pool: each worker probes one host at a time
     }
   };
   await Promise.all(Array.from({ length: Math.min(HOST_CONCURRENCY, work.length) }, worker));

@@ -125,3 +125,59 @@ describe("a call budget that runs out on the listing that finishes the last guil
     db.close();
   });
 });
+
+describe("replies that are not lists, and malformed entries in lists", () => {
+  function discordCtx(db: ReturnType<typeof createMemoryIndexDb>) {
+    return syncTestContext(
+      db,
+      createStubVault({ "discord.enabled": "1", "discord.bot_token": "bot" }),
+      "discord",
+    );
+  }
+
+  test("a guild list that is an object fails the run instead of reading as no guilds", async () => {
+    mock.respond("GET", GUILDS_URL, { message: "unexpected" });
+    const db = createMemoryIndexDb();
+    await expect(
+      createDiscordSyncable({ ensureDiscordMcpRunning: async () => {} }).sync(discordCtx(db), null),
+    ).rejects.toThrow(/Discord guilds 200/);
+    db.close();
+  });
+
+  test("a channel list that is an object fails the run, naming the status", async () => {
+    mock.respond("GET", GUILDS_URL, [{ id: "g1" }, "junk", { id: "" }]);
+    mock.respond("GET", CHANNELS_URL_RE, { message: "unexpected" });
+    const db = createMemoryIndexDb();
+    await expect(
+      createDiscordSyncable({ ensureDiscordMcpRunning: async () => {} }).sync(discordCtx(db), null),
+    ).rejects.toThrow(/Discord channels 200/);
+    expect(mock.calls.map((c) => c.url)).toEqual([
+      GUILDS_URL,
+      "https://discord.com/api/v10/guilds/g1/channels",
+    ]);
+    db.close();
+  });
+
+  test("channels of a text type are kept, others and malformed ones dropped", async () => {
+    mock.respond("GET", GUILDS_URL, [{ id: "g1" }]);
+    mock.respond("GET", CHANNELS_URL_RE, [
+      "junk",
+      { id: "", type: 0 },
+      { id: "c-bad-type", type: "0" },
+      { id: "voice", type: 2 },
+      { id: "text-1", type: 0 },
+    ]);
+    mock.respond("GET", /\/channels\/text-1\/messages/, []);
+    const db = createMemoryIndexDb();
+    const result = await createDiscordSyncable({ ensureDiscordMcpRunning: async () => {} }).sync(
+      discordCtx(db),
+      null,
+    );
+    expect(result.itemsUpserted).toBe(0);
+    const urls = mock.calls.map((c) => c.url);
+    expect(urls.some((u) => u.includes("/channels/text-1/messages"))).toBe(true);
+    expect(urls.some((u) => u.includes("/channels/voice/"))).toBe(false);
+    expect(urls.some((u) => u.includes("c-bad-type"))).toBe(false);
+    db.close();
+  });
+});

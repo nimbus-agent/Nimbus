@@ -103,3 +103,45 @@ export function pushCommit(commit: string, branch: string, cwd: string): PushRes
     throw new Error(`git push to ${branch} failed: ${text.trim()}`);
   }
 }
+
+/** How often a sign mode starts over from a fresh fetch after its push loses a race. */
+const MAX_PUSH_ATTEMPTS = 3;
+
+export interface SignLoopSteps<A extends { commit: string | undefined }> {
+  /** The branch pushed to. */
+  branch: string;
+  workspace: string;
+  /** One attempt from a fresh fetch; `commit` is undefined when there is nothing to publish. */
+  attempt: () => Promise<A>;
+  /** A test seam that runs just before each push. */
+  beforePush?: ((attempt: number) => void | Promise<void>) | undefined;
+  /** Report an attempt's outcome (`pushed` is false when there was nothing to push). */
+  report: (a: A, pushed: boolean) => void;
+  log: (line: string) => void;
+}
+
+/**
+ * The retry loop the two signing modes share: attempt, push, and start over (at most
+ * {@link MAX_PUSH_ATTEMPTS} times) when the push loses a race to a concurrent update.
+ */
+export async function signWithRetries<A extends { commit: string | undefined }>(
+  s: SignLoopSteps<A>,
+): Promise<void> {
+  for (let attempt = 1; attempt <= MAX_PUSH_ATTEMPTS; attempt++) {
+    // NOSONAR S9382: sequential by design - each attempt starts from a fresh fetch after a lost race
+    const a = await s.attempt();
+    if (a.commit === undefined) {
+      s.report(a, false);
+      return;
+    }
+    await s.beforePush?.(attempt);
+    if (pushCommit(a.commit, s.branch, s.workspace) === "pushed") {
+      s.report(a, true);
+      return;
+    }
+    s.log(`${s.branch} moved during attempt ${String(attempt)}; starting over`);
+  }
+  throw new Error(
+    `refusing to continue: the push to ${s.branch} lost to a concurrent update ${String(MAX_PUSH_ATTEMPTS)} times`,
+  );
+}

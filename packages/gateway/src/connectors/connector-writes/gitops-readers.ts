@@ -7,6 +7,8 @@
 // `warehouse-bi.ts`, so it imports nothing from the row table.
 import {
   arrayAt,
+  type BeforeInput,
+  type BeforePicked,
   beforeReplyJson,
   boolAt,
   excerptHead,
@@ -14,20 +16,14 @@ import {
   nonEmptyString,
   presentFields,
   requiredStringAt,
+  shownHead,
   stringAt,
   yesNo,
 } from "./before-select.ts";
 import type { BeforeStateField, BeforeStateGuard } from "./types.ts";
 
-type Picked = Readonly<Record<string, unknown>>;
-type Input = Readonly<Record<string, unknown>>;
-
-function shown(v: string | undefined): string | undefined {
-  return v === undefined ? undefined : excerptHead(v);
-}
-
 /** `argocd_get` input: the application name. */
-export function argocdReadArgs(input: Input): Record<string, unknown> | undefined {
+export function argocdReadArgs(input: BeforeInput): Record<string, unknown> | undefined {
   const name = nonEmptyString(input["name"]);
   return name === undefined ? undefined : { name };
 }
@@ -61,7 +57,9 @@ function hasObject(j: unknown, path: readonly string[]): boolean {
 /** The deployment history entry whose `id` is `id` (compared as text), else `undefined`. */
 function historyEntry(j: unknown, id: unknown): unknown {
   const history = arrayAt(j, ["status", "history"]);
-  const want = typeof id === "number" ? String(id) : typeof id === "string" ? id : undefined;
+  let want: string | undefined;
+  if (typeof id === "number") want = String(id);
+  else if (typeof id === "string") want = id;
   if (history === undefined || want === undefined) return undefined;
   return history.find((e) => stringAt(e, ["id"]) === want);
 }
@@ -74,14 +72,14 @@ function argocdFields(j: unknown): BeforeStateField[] {
   return [
     { label: "Application", value: excerptHead(name) },
     ...presentFields([
-      ["Sync status", shown(stringAt(j, ["status", "sync", "status"]))],
-      ["Health", shown(stringAt(j, ["status", "health", "status"]))],
-      ["Synced revision", shown(stringAt(j, ["status", "sync", "revision"]))],
-      ["Target revision", shown(stringAt(j, ["spec", "source", "targetRevision"]))],
-      ["Repo", shown(stringAt(j, ["spec", "source", "repoURL"]))],
-      ["Destination", shown(argocdDestination(j))],
+      ["Sync status", shownHead(stringAt(j, ["status", "sync", "status"]))],
+      ["Health", shownHead(stringAt(j, ["status", "health", "status"]))],
+      ["Synced revision", shownHead(stringAt(j, ["status", "sync", "revision"]))],
+      ["Target revision", shownHead(stringAt(j, ["spec", "source", "targetRevision"]))],
+      ["Repo", shownHead(stringAt(j, ["spec", "source", "repoURL"]))],
+      ["Destination", shownHead(argocdDestination(j))],
       ["Auto-sync", auto.text],
-      ["Last operation", shown(phase)],
+      ["Last operation", shownHead(phase)],
     ]),
   ];
 }
@@ -95,7 +93,10 @@ export function selectArgocdSync(reply: unknown): readonly BeforeStateField[] {
  * Argo CD `argocd_get` (before-state) for a rollback: the application, then the history entry the
  * write names (its revision and deploy time), and a note that auto-sync makes Argo CD refuse it.
  */
-export function selectArgocdRollback(reply: unknown, picked: Picked): readonly BeforeStateField[] {
+export function selectArgocdRollback(
+  reply: unknown,
+  picked: BeforePicked,
+): readonly BeforeStateField[] {
   const j = beforeReplyJson(reply);
   const fields = argocdFields(j);
   const entry = historyEntry(j, picked["id"]);
@@ -133,7 +134,7 @@ export const ARGOCD_ROLLBACK_HISTORY_GUARD: BeforeStateGuard = {
 /** `flux_get` input for a reconcile of `kind`: the namespace and the name. */
 export function fluxReadArgs(
   kind: "kustomization" | "helm_release",
-): (input: Input) => Record<string, unknown> | undefined {
+): (input: BeforeInput) => Record<string, unknown> | undefined {
   return (input) => {
     const namespace = nonEmptyString(input["namespace"]);
     const name = nonEmptyString(input["name"]);
@@ -150,32 +151,28 @@ export function selectFluxResource(reply: unknown): readonly BeforeStateField[] 
   const readyStatus = ready === undefined ? undefined : stringAt(ready, ["status"]);
   const reason = ready === undefined ? undefined : stringAt(ready, ["reason"]);
   const message = ready === undefined ? undefined : stringAt(ready, ["message"]);
-  const readyText =
-    readyStatus === undefined
-      ? undefined
-      : reason === undefined
-        ? readyStatus
-        : `${readyStatus} (${reason})`;
+  let readyText: string | undefined = readyStatus;
+  if (readyStatus !== undefined && reason !== undefined) readyText = `${readyStatus} (${reason})`;
   return [
     { label: "Resource", value: excerptHead(name) },
     ...presentFields([
-      ["Ready", shown(readyText)],
-      ["Ready message", shown(message)],
+      ["Ready", shownHead(readyText)],
+      ["Ready message", shownHead(message)],
       ["Suspended", yesNo(boolAt(j, ["spec", "suspend"]))],
       [
         "Last applied revision",
-        shown(
+        shownHead(
           stringAt(j, ["status", "lastAppliedRevision"]) ??
             stringAt(j, ["status", "lastAttemptedRevision"]),
         ),
       ],
-      ["Interval", shown(stringAt(j, ["spec", "interval"]))],
+      ["Interval", shownHead(stringAt(j, ["spec", "interval"]))],
     ]),
   ];
 }
 
 /** `mlflow_get` input: the registered model's name. */
-export function mlflowReadArgs(input: Input): Record<string, unknown> | undefined {
+export function mlflowReadArgs(input: BeforeInput): Record<string, unknown> | undefined {
   const name = nonEmptyString(input["name"]);
   return name === undefined ? undefined : { name };
 }
@@ -197,7 +194,7 @@ function versionsInStage(latest: readonly unknown[], stage: string): string {
  */
 export function selectMlflowModel(
   mode: "promote" | "transition",
-): (reply: unknown, picked: Picked) => readonly BeforeStateField[] {
+): (reply: unknown, picked: BeforePicked) => readonly BeforeStateField[] {
   return (reply, picked) => {
     const j = beforeReplyJson(reply);
     const name = requiredStringAt(j, ["registered_model", "name"]);
@@ -226,18 +223,17 @@ export function selectMlflowModel(
         value: excerptHead(versionsInStage(latest, "Production")),
       });
     }
+    const targetStage = typeof target === "string" ? excerptHead(target) : "the target stage";
     fields.push({
       label: "Archives incumbent versions",
-      value: archives
-        ? `yes: the versions already in ${typeof target === "string" ? excerptHead(target) : "the target stage"} become Archived`
-        : "no",
+      value: archives ? `yes: the versions already in ${targetStage} become Archived` : "no",
     });
     return fields;
   };
 }
 
 /** `snowflake_object_metadata_get` input: the table (the tag and comment writes support tables only). */
-export function snowflakeMetadataReadArgs(input: Input): Record<string, unknown> | undefined {
+export function snowflakeMetadataReadArgs(input: BeforeInput): Record<string, unknown> | undefined {
   const object = nonEmptyString(input["object"]);
   return object === undefined ? undefined : { object };
 }
@@ -250,37 +246,51 @@ function identifierSegments(identifier: string): string[] | undefined {
   const out: string[] = [];
   let i = 0;
   while (i <= identifier.length) {
-    let seg = "";
-    if (identifier.charAt(i) === '"') {
-      i++;
-      for (;;) {
-        if (i >= identifier.length) return undefined;
-        const ch = identifier.charAt(i);
-        if (ch === '"') {
-          if (identifier.charAt(i + 1) === '"') {
-            seg += '"';
-            i += 2;
-            continue;
-          }
-          i++;
-          break;
-        }
-        seg += ch;
-        i++;
-      }
-    } else {
-      const dot = identifier.indexOf(".", i);
-      const end = dot === -1 ? identifier.length : dot;
-      seg = identifier.slice(i, end).toUpperCase();
-      if (seg === "" || seg.includes('"')) return undefined;
-      i = end;
-    }
-    out.push(seg);
+    const parsed =
+      identifier.charAt(i) === '"'
+        ? quotedSegment(identifier, i + 1)
+        : unquotedSegment(identifier, i);
+    if (parsed === undefined) return undefined;
+    out.push(parsed.seg);
+    i = parsed.next;
     if (i === identifier.length) return out;
     if (identifier.charAt(i) !== ".") return undefined;
     i++;
   }
   return undefined;
+}
+
+/** A quoted segment starting just after its opening quote: its text and the index after the close. */
+function quotedSegment(
+  identifier: string,
+  start: number,
+): { seg: string; next: number } | undefined {
+  let seg = "";
+  let i = start;
+  for (;;) {
+    if (i >= identifier.length) return undefined;
+    const ch = identifier.charAt(i);
+    if (ch === '"') {
+      if (identifier.charAt(i + 1) !== '"') return { seg, next: i + 1 };
+      seg += '"';
+      i += 2;
+      continue;
+    }
+    seg += ch;
+    i++;
+  }
+}
+
+/** An unquoted segment: upper-cased, up to the next dot or the end; it may not hold a quote. */
+function unquotedSegment(
+  identifier: string,
+  start: number,
+): { seg: string; next: number } | undefined {
+  const dot = identifier.indexOf(".", start);
+  const end = dot === -1 ? identifier.length : dot;
+  const seg = identifier.slice(start, end).toUpperCase();
+  if (seg === "" || seg.includes('"')) return undefined;
+  return { seg, next: end };
 }
 
 /** What a tag's value shows when the reply cannot be tied to the tag the write names. */
@@ -302,10 +312,10 @@ function tagValueNow(
 ): { readonly value: string | undefined; readonly unidentified: boolean } {
   const want = wanted === undefined ? undefined : identifierSegments(wanted);
   if (want === undefined) return { value: undefined, unidentified: wanted !== undefined };
-  const wantName = want[want.length - 1];
+  const wantName = want.at(-1);
   const sameName = tags.filter((t) => {
     const segs = identifierSegments(stringAt(t, ["name"]) ?? "");
-    return segs !== undefined && segs[segs.length - 1] === wantName;
+    return segs?.at(-1) === wantName;
   });
   if (sameName.length === 0) return { value: undefined, unidentified: false };
   const exact = sameName.filter((t) => {
@@ -323,13 +333,22 @@ function tagValueNow(
     : { value: stringAt(hit, ["value"]) ?? "(no value)", unidentified: false };
 }
 
+function tagNowText(value: string | undefined, unidentified: boolean): string {
+  if (unidentified) return TAG_NOT_IDENTIFIED;
+  if (value === undefined) return "(not set)";
+  return excerptHead(`${value} (the read also returns tags inherited from the schema or database)`);
+}
+
 /**
  * Snowflake `snowflake_object_metadata_get` (before-state) for a tag set or removal: the table, the
  * tag's value now (shown only for the same fully-qualified tag, see {@link tagValueNow}; the read
  * returns direct AND inherited tags, so the value may be inherited) and every tag on the table,
  * capped.
  */
-export function selectSnowflakeTag(reply: unknown, picked: Picked): readonly BeforeStateField[] {
+export function selectSnowflakeTag(
+  reply: unknown,
+  picked: BeforePicked,
+): readonly BeforeStateField[] {
   const j = beforeReplyJson(reply);
   const object = requiredStringAt(j, ["object"]);
   const tags = arrayAt(j, ["tags"]);
@@ -349,15 +368,9 @@ export function selectSnowflakeTag(reply: unknown, picked: Picked): readonly Bef
     { label: "Table", value: excerptHead(object) },
     {
       label: "Tag now",
-      value: unidentified
-        ? TAG_NOT_IDENTIFIED
-        : value === undefined
-          ? "(not set)"
-          : excerptHead(
-              `${value} (the read also returns tags inherited from the schema or database)`,
-            ),
+      value: tagNowText(value, unidentified),
     },
-    ...presentFields([["All tags on the table", shown(all)]]),
+    ...presentFields([["All tags on the table", shownHead(all)]]),
   ];
 }
 

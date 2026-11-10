@@ -272,6 +272,18 @@ function isCurrentDoc(ctx: SyncContext, id: string, modifiedAt: number): boolean
   );
 }
 
+/** The file's modified time in ms, or `now` when it has none or it does not parse. */
+function driveModifiedAt(f: DriveFile, now: number): number {
+  const ms = f.modifiedTime === undefined ? now : Date.parse(f.modifiedTime);
+  return Number.isFinite(ms) ? ms : now;
+}
+
+/** The description (else the name), cut to 512 characters. */
+function driveBodyPreview(description: string, name: string): string {
+  const base = description === "" ? name : description;
+  return base.length > 512 ? base.slice(0, 512) : base;
+}
+
 /**
  * Writes one Drive file. Returns false when nothing was written: a missing id or name, a trashed
  * file (deleted instead), or a Doc whose stored text is already this revision's.
@@ -288,11 +300,8 @@ async function writeDriveFile(deps: DriveWriteDeps, f: DriveFile): Promise<boole
     return false;
   }
   const mime = f.mimeType ?? "";
-  const modifiedMs = f.modifiedTime === undefined ? now : Date.parse(f.modifiedTime);
-  const safeModified = Number.isFinite(modifiedMs) ? modifiedMs : now;
-  const desc = f.description ?? "";
-  const previewBase = desc === "" ? name : desc;
-  const bodyPreview = previewBase.length > 512 ? previewBase.slice(0, 512) : previewBase;
+  const safeModified = driveModifiedAt(f, now);
+  const bodyPreview = driveBodyPreview(f.description ?? "", name);
   // `service` and `type` stay on each write's own literal: the index-lane census reads a writer as
   // an object literal carrying both (scripts/structure-audit/lane-census/writer-emissions.ts).
   const base = {
@@ -387,7 +396,7 @@ async function countAppliedDriveChanges(
   let itemsUpserted = 0;
   let itemsDeleted = 0;
   for (const ch of changes) {
-    const r = await applyChange(deps, ch);
+    const r = await applyChange(deps, ch); // sequential by design - each change draws on the shared doc-export budget and the pass stops on the first throw
     if (r === "upsert") {
       itemsUpserted += 1;
     } else if (r === "delete") {
@@ -499,15 +508,17 @@ async function runDocsRelist(
     page < DOCS_RELIST_PAGES_PER_SYNC && deps.budget.left >= LIST_PAGE_SIZE;
     page += 1
   ) {
+    const pageToken = token ?? undefined;
     const { data, bytes: pageBytes } = await listFilesPage(
       ctx,
       deps.accessToken,
       DOCS_RELIST_QUERY,
-      token ?? undefined,
-    );
+      pageToken,
+    ); // each page's token comes from the previous page's response
     bytes += pageBytes;
     for (const f of data.files ?? []) {
       if (inDocsRelistScope(ctx, f, sinceMs) && (await writeDriveFile(deps, f))) {
+        // sequential by design - each write draws on the shared doc-export budget
         itemsUpserted += 1;
       }
     }
@@ -657,6 +668,7 @@ export function createGoogleDriveSyncable(options: GoogleDriveSyncableOptions): 
         let itemsUpserted = 0;
         for (const f of data.files ?? []) {
           if (await writeDriveFile(deps, f)) {
+            // sequential by design - each write draws on the shared doc-export budget
             itemsUpserted += 1;
           }
         }
