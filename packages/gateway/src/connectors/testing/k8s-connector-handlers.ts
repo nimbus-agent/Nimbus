@@ -1,4 +1,4 @@
-// packages/gateway/src/connectors/connector-writes/k8s-connector-handlers.test-helpers.ts
+// packages/gateway/src/connectors/testing/k8s-connector-handlers.ts
 // TEST-ONLY. A child-process script for `k8s-connector.differential.test.ts`: it registers the
 // INSTALLED `@nimbus-dev/connectors` kubernetes tools on a fake MCP server in the connector's
 // `gateway` mode (raw handlers, the way the gateway runs them) and calls them with the cases it is

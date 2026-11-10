@@ -226,7 +226,7 @@ describe("the real handlers, in a child process", () => {
     cases: readonly { tool: string; args: unknown }[],
     env: Record<string, string>,
   ): Promise<Reply[]> {
-    const helper = join(import.meta.dir, "k8s-connector-handlers.test-helpers.ts");
+    const helper = join(import.meta.dir, "..", "testing", "k8s-connector-handlers.ts");
     const proc = Bun.spawn([process.execPath, helper], {
       env: { ...process.env, K8S_PROBE_CASES: JSON.stringify(cases), ...env },
       stdout: "pipe",
