@@ -27,6 +27,7 @@ import { CONNECTOR_MIGRATION_V73_SQL } from "../connector-migration-v73-sql.ts";
 import { CONNECTOR_WRITE_APPROVED_V84_SQL } from "../connector-write-approved-v84-sql.ts";
 import { CONNECTOR_WRITE_ENABLEMENT_V83_SQL } from "../connector-write-enablement-v83-sql.ts";
 import { CONNECTOR_WRITE_IAC_V85_SQL } from "../connector-write-iac-v85-sql.ts";
+import { CONNECTOR_WRITE_K8S_V86_SQL } from "../connector-write-k8s-v86-sql.ts";
 import { DECISIONS_V47_SQL } from "../decisions-v47-sql.ts";
 import { DEPLOYMENT_V28_SCHEMA_SQL } from "../deployment-v28-sql.ts";
 import { DEPTH_DEFAULT_V49_SQL } from "../depth-default-v49-sql.ts";
@@ -733,6 +734,7 @@ const INDEXED_SCHEMA_STEPS: readonly IndexedSchemaStep[] = [
   simpleStep(82, 83, "connector write opt-in table", CONNECTOR_WRITE_ENABLEMENT_V83_SQL),
   simpleStep(83, 84, "connector write approved set (re-consent)", CONNECTOR_WRITE_APPROVED_V84_SQL),
   simpleStep(84, 85, "iac approved directories and clouds", CONNECTOR_WRITE_IAC_V85_SQL),
+  simpleStep(85, 86, "kubernetes approved contexts and namespaces", CONNECTOR_WRITE_K8S_V86_SQL),
 ];
 
 /**
