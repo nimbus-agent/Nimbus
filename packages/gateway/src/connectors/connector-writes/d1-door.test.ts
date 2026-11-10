@@ -33,6 +33,7 @@ import { runIndexedSchemaMigrations } from "../../index/migrations/runner.ts";
 import type { EnforcedPolicy } from "../../policy/policy-gate.ts";
 import { mcpClientToolKey } from "../lazy-mesh/tool-map.ts";
 import { D1_SHA, MIN_INPUT } from "./d1-golden.test-helpers.ts";
+import { DEPLOY_MOBILE_ROWS } from "./deploy-mobile.ts";
 import {
   offerableWritesEnabledBy,
   setModelWriteEnablement,
@@ -43,10 +44,12 @@ import { isModelOfferableRow } from "./model-offerable.ts";
 import { createModelWriteToolSource } from "./model-write-source.ts";
 import { type ConnectorWriteRow, previewTemplateKeys } from "./types.ts";
 
-// The D1 rows: the Wave 4 rows offered through a before-state. The two bound commits (D1c) have
-// their own door tests.
+// The D1 rows: the Wave 4 rows offered through a before-state. The two bound commits (D1c) and the
+// seven deploy and mobile rows (D3b, `d3b-door.test.ts`) have their own door tests.
+const D3B_TOOL_IDS: ReadonlySet<string> = new Set(DEPLOY_MOBILE_ROWS.map((r) => r.toolId));
 const D1_OFFERED = CONNECTOR_WRITE_ROWS.filter(
-  (r) => r.wave === 4 && r.bound === undefined && isModelOfferableRow(r),
+  (r) =>
+    r.wave === 4 && r.bound === undefined && isModelOfferableRow(r) && !D3B_TOOL_IDS.has(r.toolId),
 );
 const D1_SERVICES = [...new Set(D1_OFFERED.map((r) => serviceOf(r.actionType)))].sort((a, b) =>
   a.localeCompare(b),

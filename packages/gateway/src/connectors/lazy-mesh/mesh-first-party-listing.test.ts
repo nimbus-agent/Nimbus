@@ -446,6 +446,85 @@ describe("listFirstPartyServerTools: wave-2 services on their own slots", () => 
     });
   }
 
+  // D3b: the deploy triggers and mobile release run in the phase-3 bundle, so each lists through
+  // the spawner's own credential check (no predicate in service-credential.ts is needed).
+  const D3B_SERVICES = [
+    {
+      service: "vercel",
+      secrets: { "vercel.token": "t" },
+      tool: "vercel_vercel_deployment_promote",
+    },
+    {
+      service: "netlify",
+      secrets: { "netlify.token": "t" },
+      tool: "netlify_netlify_build_trigger",
+    },
+    {
+      service: "bitrise",
+      secrets: { "bitrise.token": "t" },
+      tool: "bitrise_bitrise_build_trigger",
+    },
+    {
+      service: "codemagic",
+      secrets: { "codemagic.token": "t" },
+      tool: "codemagic_codemagic_build_trigger",
+    },
+    {
+      service: "testflight",
+      secrets: {
+        "testflight.issuer_id": "i",
+        "testflight.key_id": "k",
+        "testflight.private_key": "p",
+      },
+      tool: "testflight_testflight_build_distribute",
+    },
+    {
+      service: "firebase",
+      secrets: { "firebase.service_account_json": "{}", "firebase.app_ids": "1:1:android:a" },
+      tool: "firebase_firebase_app_distribution_distribute",
+    },
+  ] as const;
+  for (const c of D3B_SERVICES) {
+    test(`${c.service} (D3b): configured lists its phase-3 slot and ensures the bundle; unconfigured, or with only a sibling's credential, is -1 with no ensure`, async () => {
+      const slots = {
+        [LAZY_MESH.phase3Bundle]: {
+          [c.tool]: { inputSchema: SCHEMA },
+          foreign_x_y: { inputSchema: SCHEMA },
+        },
+      };
+      const on = await build({ secrets: c.secrets, slots });
+      expect(Object.keys((await on.m.listFirstPartyServerTools(c.service)) ?? {})).toEqual([
+        c.tool,
+      ]);
+      expect(on.m.toolsGenerationFor(c.service)).toBeGreaterThanOrEqual(0);
+      expect(on.calls).toEqual(["ensurePhase3BundleRunning"]);
+      await on.m.disconnect();
+      // The Vercel token configures Vercel only; an incomplete credential set configures nothing.
+      const sibling = await build({ secrets: ARGO, slots });
+      expect(await sibling.m.listFirstPartyServerTools(c.service)).toBeUndefined();
+      expect(sibling.m.toolsGenerationFor(c.service)).toBe(-1);
+      expect(sibling.ensures()).toBe(0);
+    });
+  }
+
+  test("testflight and firebase need every credential part: one part alone lists nothing", async () => {
+    const slots = {
+      [LAZY_MESH.phase3Bundle]: {
+        testflight_x: { inputSchema: SCHEMA },
+        firebase_x: { inputSchema: SCHEMA },
+      },
+    };
+    const t = await build({
+      secrets: { "testflight.issuer_id": "i", "testflight.key_id": "k" },
+      slots,
+    });
+    expect(await t.m.listFirstPartyServerTools("testflight")).toBeUndefined();
+    await t.m.disconnect();
+    const f = await build({ secrets: { "firebase.service_account_json": "{}" }, slots });
+    expect(await f.m.listFirstPartyServerTools("firebase")).toBeUndefined();
+    expect(f.ensures()).toBe(0);
+  });
+
   test("github_actions is not configured by a GitLab token or a Bitbucket login (its own check, its own slot)", async () => {
     const { m, ensures } = await build({
       secrets: { "gitlab.pat": "p", "bitbucket.username": "u", "bitbucket.app_password": "p" },

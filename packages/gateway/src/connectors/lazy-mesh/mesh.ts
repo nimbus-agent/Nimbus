@@ -98,6 +98,9 @@ import {
   phase3AddAwsMcp,
   phase3AddAzureMcp,
   phase3AddBigeyeMcp,
+  phase3AddBitriseMcp,
+  phase3AddCodemagicMcp,
+  phase3AddFirebaseMcp,
   phase3AddFlagsmithMcp,
   phase3AddFluxMcp,
   phase3AddGcpMcp,
@@ -106,9 +109,12 @@ import {
   phase3AddLookerMcp,
   phase3AddMlflowMcp,
   phase3AddMonteCarloMcp,
+  phase3AddNetlifyMcp,
   phase3AddPowerBiMcp,
   phase3AddSnowflakeMcp,
   phase3AddTableauMcp,
+  phase3AddTestflightMcp,
+  phase3AddVercelMcp,
 } from "./phase3-config.ts";
 import { isServiceCredentialConfigured } from "./service-credential.ts";
 import type { LazyMcpSlot, MeshLogger, MeshSpawnContext, ServerSpec } from "./slot.ts";
@@ -152,6 +158,14 @@ const PHASE3_LISTING_ADDERS: Readonly<Record<string, Phase3ServerAdder>> = {
   // and prepare tools' schemas; the plan, show, apply and CloudFormation children run in their own
   // per-call profiles, never in this slot.
   iac: phase3AddIacMcp,
+  // D3b: the deploy triggers and mobile release. Each adder is the SPAWNER's own credential check
+  // (a token, or the TestFlight key trio, or the Firebase service account and app ids).
+  vercel: phase3AddVercelMcp,
+  netlify: phase3AddNetlifyMcp,
+  bitrise: phase3AddBitriseMcp,
+  codemagic: phase3AddCodemagicMcp,
+  testflight: phase3AddTestflightMcp,
+  firebase: phase3AddFirebaseMcp,
 };
 
 /**

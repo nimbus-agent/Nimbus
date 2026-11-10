@@ -168,7 +168,7 @@ describe("BeforeStateReader (spec § 5.4)", () => {
     expect(Object.getPrototypeOf(picked)).toBeNull();
   });
 
-  test("the rows with readers are exactly the 68 (seven B1 comments, nine B2 issue writes, five B3 page writes, the B4a Drive create, the B4b Obsidian append, the eight C1 file, PR and incident writes, the four C2 branch, PR and MR rows with a reader, the five C3 flag and alert rows, and the 28 D1 Wave 4 rows), and every reader passes", () => {
+  test("the rows with readers are exactly the 75 (seven B1 comments, nine B2 issue writes, five B3 page writes, the B4a Drive create, the B4b Obsidian append, the eight C1 file, PR and incident writes, the four C2 branch, PR and MR rows with a reader, the five C3 flag and alert rows, the 28 D1 Wave 4 rows, and the seven D3b deploy and mobile rows), and every reader passes", () => {
     const withReader = CONNECTOR_WRITE_ROWS.filter((r) => r.before !== undefined)
       .map((r) => r.toolId)
       .sort((a, b) => a.localeCompare(b));
@@ -243,9 +243,17 @@ describe("BeforeStateReader (spec § 5.4)", () => {
         "outlook_calendar_delete",
         "snowflake_comment_set",
         "snowflake_tag_set",
+        // D3b: the seven deploy-trigger and mobile-release rows.
+        "vercel_deployment_redeploy",
+        "vercel_deployment_promote",
+        "netlify_build_trigger",
+        "bitrise_build_trigger",
+        "codemagic_build_trigger",
+        "testflight_build_distribute",
+        "firebase_app_distribution_distribute",
       ].sort((a, b) => a.localeCompare(b)),
     );
-    expect(withReader).toHaveLength(68);
+    expect(withReader).toHaveLength(75);
     for (const r of CONNECTOR_WRITE_ROWS) expect(beforeReaderProblems(r)).toEqual([]);
   });
 });
@@ -753,10 +761,17 @@ describe("a second read (`also`) and the guard (B2a)", () => {
     expect(beforeReaderArgKeys(READER)).toEqual(["issueKey"]);
   });
 
-  test("in production only the Jira transition and the two file moves (Drive, OneDrive) take a second read, and the rows with a guard are exactly thirteen (B2, B3, C2, C3, D1)", () => {
+  test("in production only the Jira transition, the two file moves (Drive, OneDrive) and three D3b rows (the Vercel promote, the Netlify build, the TestFlight distribute) take a second read, and the rows with a guard are exactly fifteen (B2, B3, C2, C3, D1, D3b)", () => {
     expect(
       CONNECTOR_WRITE_ROWS.filter((r) => r.before?.also !== undefined).map((r) => r.toolId),
-    ).toEqual(["jira_issue_transition", "gdrive_file_move", "onedrive_item_move"]);
+    ).toEqual([
+      "jira_issue_transition",
+      "gdrive_file_move",
+      "onedrive_item_move",
+      "vercel_deployment_promote",
+      "netlify_build_trigger",
+      "testflight_build_distribute",
+    ]);
     const guarded = CONNECTOR_WRITE_ROWS.filter((r) => r.before?.guard !== undefined);
     expect(guarded.map((r) => r.toolId).sort((a, b) => a.localeCompare(b))).toEqual([
       "argocd_app_rollback",
@@ -770,8 +785,10 @@ describe("a second read (`also`) and the guard (B2a)", () => {
       "gitlab_mr_update",
       "launchdarkly_flag_rollout_set",
       "linear_issue_update",
+      "netlify_build_trigger",
       "notion_block_append",
       "notion_page_update",
+      "testflight_build_distribute",
     ]);
     for (const r of guarded) {
       const reason = r.before?.guard?.reason ?? "";

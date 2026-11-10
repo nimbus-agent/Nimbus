@@ -3618,7 +3618,7 @@ describe("I26 — every connector write row is confined to the local I2 path; fe
   });
 
   test("every connector write row is HITL-gated via its action type (local path)", () => {
-    expect(CONNECTOR_WRITE_ROWS.length).toBe(117);
+    expect(CONNECTOR_WRITE_ROWS.length).toBe(124);
     expect(CONNECTOR_WRITE_ROWS.filter((r) => !HITL_REQUIRED.has(r.actionType))).toEqual([]);
   });
 
@@ -4289,7 +4289,7 @@ describe("I29 — egress-ledger completeness over the executor chokepoint", () =
   });
 
   test("the coverage set is the whole table", () => {
-    expect(CONNECTOR_WRITE_ROWS.length).toBe(117);
+    expect(CONNECTOR_WRITE_ROWS.length).toBe(124);
     expect(writesUnderTest().length).toBe(CONNECTOR_WRITE_ROWS.length + 4);
   });
 
@@ -11827,7 +11827,7 @@ describe("I53 — a first-party connector write reaches the model only through t
   test("D0a: every Wave 4 write on every door reaches dispatch only after an exact type-to-confirm match at the executor gate", async () => {
     const { NO_POLICY_OVERLAY, ToolExecutor } = await import("./engine/executor.ts");
     const wave4 = CONNECTOR_WRITE_ROWS.filter((r) => r.wave === 4);
-    expect(wave4).toHaveLength(43);
+    expect(wave4).toHaveLength(50);
     const failures: string[] = [];
     for (const row of wave4) {
       const input = confirmableInput(row);
@@ -11917,7 +11917,7 @@ describe("I53 — a first-party connector write reaches the model only through t
     const { NO_POLICY_OVERLAY, ToolExecutor } = await import("./engine/executor.ts");
     const { createConnectorDispatcher } = await import("./connectors/registry.ts");
     const wave4 = CONNECTOR_WRITE_ROWS.filter((r) => r.wave === 4 && r.transport === "mesh");
-    expect(wave4.length).toBe(35);
+    expect(wave4.length).toBe(42);
     const failures: string[] = [];
     for (const row of wave4) {
       const input = confirmableInput(row);
@@ -12032,8 +12032,9 @@ describe("I53 — a first-party connector write reaches the model only through t
     const { isReadOnlyToolId } = await import("./share/read-tool-registry.ts");
     const offeredWave4 = CONNECTOR_WRITE_ROWS.filter((r) => r.wave === 4 && isModelOfferableRow(r));
     // 27 through a before-state (D1), the two bound multi-file commits (D1c) and the Terraform apply
-    // and CloudFormation deploy (D2) through a prepare step; the destroy is bound but never offered.
-    expect(offeredWave4).toHaveLength(31);
+    // and CloudFormation deploy (D2) through a prepare step, and the seven deploy-trigger and
+    // mobile-release writes (D3b) through a before-state; the destroy is bound but never offered.
+    expect(offeredWave4).toHaveLength(38);
     expect(offeredWave4.filter((r) => r.bound !== undefined).map((r) => r.toolId)).toEqual([
       "github_file_commit",
       "gitlab_commit_create",
@@ -12501,7 +12502,7 @@ describe("I53 — a first-party connector write reaches the model only through t
     expect(naming).toEqual(["engine/run-ask.ts"]);
   });
 
-  test("the production rows with a before reader are B1's seven comment rows, B2's nine issue writes, B3's five page writes, B4a's Drive create, B4b's Obsidian append (all wave 2), C1's eight wave-3 file, pull request and incident writes, C2's four wave-3 branch, pull request and merge request writes and C3's five wave-3 flag and alert writes, and D1's 28 wave-4 rows (27 offered, plus the never-offered Bitbucket merge)", () => {
+  test("the production rows with a before reader are B1's seven comment rows, B2's nine issue writes, B3's five page writes, B4a's Drive create, B4b's Obsidian append (all wave 2), C1's eight wave-3 file, pull request and incident writes, C2's four wave-3 branch, pull request and merge request writes and C3's five wave-3 flag and alert writes, D1's 28 wave-4 rows (27 offered, plus the never-offered Bitbucket merge) and D3b's seven deploy and mobile-release rows", () => {
     const withReader = CONNECTOR_WRITE_ROWS.filter((r) => r.before !== undefined);
     const D1_WAVE4 = [
       "apple_calendar_event_delete",
@@ -12512,8 +12513,11 @@ describe("I53 — a first-party connector write reaches the model only through t
       "aws_ecs_service_update",
       "aws_lambda_invoke",
       "bitbucket_pr_merge",
+      "bitrise_build_trigger",
       "circleci_job_cancel",
       "circleci_pipeline_trigger",
+      "codemagic_build_trigger",
+      "firebase_app_distribution_distribute",
       "flux_helmrelease_reconcile",
       "flux_kustomization_reconcile",
       "gha_run_cancel",
@@ -12528,10 +12532,14 @@ describe("I53 — a first-party connector write reaches the model only through t
       "jenkins_build_trigger",
       "mlflow_model_promote",
       "mlflow_model_transition_stage",
+      "netlify_build_trigger",
       "onedrive_item_delete",
       "outlook_calendar_delete",
       "snowflake_comment_set",
       "snowflake_tag_set",
+      "testflight_build_distribute",
+      "vercel_deployment_promote",
+      "vercel_deployment_redeploy",
     ];
     expect(
       withReader

@@ -78,8 +78,8 @@ function altPlaceholders(r: ConnectorWriteRow): string[] {
 }
 
 describe("every wave 4 row declares a type-to-confirm target", () => {
-  test("there are 43 wave 4 rows, each with a confirm template that parses", () => {
-    expect(WAVE4).toHaveLength(43);
+  test("there are 50 wave 4 rows, each with a confirm template that parses", () => {
+    expect(WAVE4).toHaveLength(50);
     for (const r of WAVE4) {
       expect(r.confirm, r.toolId).toBeDefined();
       expect(parseConfirmTemplate(r.confirm?.template ?? "").ok, r.toolId).toBe(true);
@@ -102,13 +102,19 @@ describe("every wave 4 row declares a type-to-confirm target", () => {
     }
   });
 
-  test("the three opaque-id deletes confirm on the id's last 8 characters (OR-W34-8), and the Cloud Run deploy on its image's last 8 (D1)", () => {
+  test("the three opaque-id deletes confirm on the id's last 8 characters (OR-W34-8), the Cloud Run deploy on its image's last 8 (D1), and the D3b deploy and build triggers on their opaque ids", () => {
     const tail = WAVE4.filter((r) => r.confirm?.template.includes(":tail8"));
     expect(tail.map((r) => r.toolId).sort((a, b) => a.localeCompare(b))).toEqual([
       "apple_calendar_event_delete",
+      "bitrise_build_trigger",
+      "codemagic_build_trigger",
       "gcp_cloud_run_deploy",
+      "netlify_build_trigger",
       "onedrive_item_delete",
       "outlook_calendar_delete",
+      "testflight_build_distribute",
+      "vercel_deployment_promote",
+      "vercel_deployment_redeploy",
     ]);
   });
 });
