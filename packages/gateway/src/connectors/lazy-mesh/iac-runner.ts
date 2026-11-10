@@ -1249,10 +1249,7 @@ export class IacRunner implements IacHost {
       return await this.spawnAndCall(
         profile,
         {},
-        toolId,
-        { ...args, context },
-        budget,
-        timeoutText,
+        { toolId, args: { ...args, context }, budget, timeoutText },
         onExited,
         { service: "kubernetes" },
       );

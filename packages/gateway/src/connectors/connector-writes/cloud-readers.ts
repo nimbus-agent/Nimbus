@@ -173,13 +173,13 @@ function k8sGetArgs(context: unknown, namespace: unknown, name: unknown) {
  * the resource type is a deployment. Any other type reads nothing, so the write has no before-state
  * and a Wave 4 write without one is refused on every door.
  */
-export function k8sRestartReadArgs(input: Input): Record<string, unknown> | undefined {
+export function k8sRestartReadArgs(input: BeforeInput): Record<string, unknown> | undefined {
   if (!isDeploymentResourceType(input["resourceType"])) return undefined;
   return k8sGetArgs(input["context"], input["namespace"], input["name"]);
 }
 
 /** `k8s_deployment_get` input for a scale: the write's context, namespace and `deploymentName`. */
-export function k8sScaleReadArgs(input: Input): Record<string, unknown> | undefined {
+export function k8sScaleReadArgs(input: BeforeInput): Record<string, unknown> | undefined {
   return k8sGetArgs(input["context"], input["namespace"], input["deploymentName"]);
 }
 
@@ -193,7 +193,7 @@ export function k8sScaleReadArgs(input: Input): Record<string, unknown> | undefi
 export function selectK8sDeployment(
   kind: "restart" | "scale",
   nameKey: "name" | "deploymentName",
-): (reply: unknown, picked: Picked) => readonly BeforeStateField[] {
+): (reply: unknown, picked: BeforePicked) => readonly BeforeStateField[] {
   return (reply, picked) => {
     const j = beforeReplyJson(reply);
     const name = requiredStringAt(j, ["name"]);
@@ -213,8 +213,8 @@ export function selectK8sDeployment(
       ...presentFields([
         [kind === "scale" ? "Replicas (now -> new)" : "Replicas", change],
         ["Ready replicas", stringAt(j, ["readyReplicas"])],
-        ["Last restarted", shown(stringAt(j, ["restartedAt"]))],
-        ["Images", shown(listAt(j, ["images"]))],
+        ["Last restarted", shownHead(stringAt(j, ["restartedAt"]))],
+        ["Images", shownHead(listAt(j, ["images"]))],
       ]),
     ];
   };

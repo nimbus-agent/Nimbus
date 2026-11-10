@@ -18,6 +18,7 @@ import {
   iacGrantLedgerFile,
   iacRootFor,
   iacRoutedKeys,
+  KUBE_TOOL_PROFILE,
   spawnIacChild,
 } from "./iac-runner.ts";
 import { mcpClientToolKey } from "./tool-map.ts";
@@ -435,9 +436,12 @@ describe("the Terraform call: binary lookup and plan-file shape", () => {
 });
 
 describe("iacRoutedKeys", () => {
-  test("is one mesh key per routed iac tool, each under the iac service", () => {
+  test("is one mesh key per routed iac and kubernetes tool, each under its own service", () => {
     const keys = iacRoutedKeys();
-    expect(keys).toHaveLength(Object.keys(IAC_TOOL_PROFILE).length);
+    expect(keys).toHaveLength(
+      Object.keys(IAC_TOOL_PROFILE).length + Object.keys(KUBE_TOOL_PROFILE).length,
+    );
+    expect(keys).toContain(mcpClientToolKey("kubernetes", "k8s_manifest_apply"));
     expect(keys).toContain(mcpClientToolKey("iac", "iac_terraform_apply"));
     expect(keys).toContain(mcpClientToolKey("iac", "iac_cloudformation_deploy"));
     expect(new Set(keys).size).toBe(keys.length);
