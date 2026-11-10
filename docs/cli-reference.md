@@ -5789,9 +5789,11 @@ nimbus audit --json
 nimbus audit --limit 100 --json | jq -r '.[] | select(.hitlStatus == "rejected") | .actionType'
 ```
 
+**Where an approval came from.** Every prompted decision records an `answerSource` in the row's `actionJson`: `human` (you answered at the terminal or in the desktop popup), `auto` (`--yes`, or a caller that had already asked you), `script` (`--script-consent-source` / `NIMBUS_SCRIPT_CONSENT_SOURCE`), `unknown` (a client that reported none), `delegate` (a delegated approval) or `remote` (ChatOps). It is reported by the client, so treat it as evidence, not proof; an unrecognised value makes the gateway deny the request. `--json` shows it inside `actionJson`.
+
 `--limit` (default 50) and `--json` are the only flags parsed. There is no `--service` or `--since` **filtering** here — such arguments are silently ignored, and the most recent `--limit` rows are returned regardless; `--json` changes the rendering only, never the row set.
 
-**Columns:** `Timestamp`, `Action`, `Status` (`approved` / `rejected` / `not_required`), `Reason` (the HITL reject reason from `action_json`; `—` when absent).
+**Columns:** `Timestamp`, `Action`, `Status` (`approved` / `rejected` / `not_required` / `standing_approved`; the last is reserved for Phase 10 standing approvals and does not appear yet), `Reason` (the HITL reject reason from `action_json`; `—` when absent).
 
 **`--json` shape.** A JSON array of the raw `audit.list` rows: `{ id, actionType, hitlStatus, actionJson, timestamp }`, newest first, honouring `--limit` (default 50). `actionJson` stays the **string** the chain stored — it is not parsed for you, so a row whose payload is malformed still appears rather than being dropped; the human table's "Reason" column is that string's `hitlRejectReason` field. `--json` applies to the listing only; `nimbus audit verify` and `nimbus audit export` have their own output contracts.
 
