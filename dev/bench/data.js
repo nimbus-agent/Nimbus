@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794302944763,
+  "lastUpdate": 1794338350412,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "6ae5a53fd3ca911373ca511dafa5ad48e29f1d69",
-          "message": "fix(preflight): an unknown service must not pass the deploy gate (#1297)\n\n`nimbus deploy preflight --service <not-in-config> --target-ref main\n--mode block` printed `[ok]`\nand exited **0**. The gate passed for a service that does not exist.\n\n```text\n$ nimbus deploy preflight --service totally-made-up --target-ref main --mode block\nDeploy preflight — totally-made-up @ main  [ok]\n  Active P1 incidents             0  [no_pagerduty_mapping]\n  Failing CI runs                 0  [no_repos]\n  Open PR merge conflicts         0  [no_repos]\n$ echo $?\n0\n```\n\n## Why it failed open\n\n`ipc/preflight-rpc.ts`'s `unconfiguredEnvelope` hard-coded `verdict:\n\"ok\"`. The verdict vocabulary\nis only `ok | warn`, and both consumers block on `warn` alone —\n`commands/deploy.ts` and the\nAction's `decideExitCode`. So a healthy service and a nonexistent one\nproduced byte-identical\nenvelopes apart from their gap labels, and a typo'd or renamed\n`--service` was indistinguishable\nfrom a clean bill of health.\n\nThe same dispatcher serves `GET /v1/preflight/deploy`, which is what the\nfirst-party\n`preflight-query` Action calls, and `render.ts` emits **no annotations\nat all** on an `ok` verdict.\nA workflow whose service id drifted out of `nimbus.toml` went green and\nsilent.\n\nWorth noting the contrast that made this a defect rather than a choice:\nthe Action's\n`allow-gateway-failure` defaults to `false`, so an **unreachable\ngateway** already fails the\nworkflow. The transport was fail-closed; the configuration was\nfail-open.\n\n## The fix\n\n`unconfiguredEnvelope` now returns `verdict: \"warn\"` with `gap:\n\"unknown_service\"` on all three\nchecks and counts still zero. `--mode block` exits 1, the Action\nannotates, and the reason is\nlegible.\n\n**`warn`, not a new third verdict** — this is the load-bearing decision.\nThe published Action's\n`safeVerdict` read:\n\n```ts\nfunction safeVerdict(raw: unknown): \"ok\" | \"warn\" {\n  return raw === \"warn\" ? \"warn\" : \"ok\";\n}\n```\n\nEvery value it did not recognise became `ok`. A `verdict:\n\"unknown_service\"` would therefore have\narrived at an already-deployed Action as `ok` and reintroduced the\nidentical fail-open one layer\nout. `warn` is the only value that fails closed in every consumer, old\nand new; the reason travels\nin the gap, which is a free-form string on the wire.\n\nThat coercion is fixed in the same PR, in the safe direction: only the\nliteral `\"ok\"` now yields\n`\"ok\"`. An unrecognised verdict is precisely the case where the Action\ncannot tell whether it is\nsafe to deploy.\n\n**F24b**, same envelope one command over: `metrics dora` reported\n`no_repos` for a service that was\nnever defined — \"exists, no repositories bound\", a different and much\nmore fixable-looking problem,\nand what an agent calling the `getDoraMetrics` MCP tool would act on.\n`DoraGap` gains\n`unknown_service`. The soft-envelope **shape** asymmetry with\n`metrics.stats`, which refuses\noutright, is deliberate and documented in `metrics-rpc.ts` and is\nunchanged — only the label moved.\n\n## Tests\n\nTwo pre-existing assertions pinned the fail-open and are **inverted on\npurpose**, each with a\ncomment saying so:\n\n- `test/unit/ipc/preflight-rpc.test.ts` asserted `verdict: \"ok\"` for an\nunconfigured service.\n- `preflight-query/src/main.test.ts` asserted `verdict: \"danger\"`\nnormalizes to `\"ok\"` — under the\n  name *\"normalizes verdict\"*.\n\nNew coverage: a table-driven check that seven unrecognised verdicts all\ncoerce to `warn` and only\nliteral `\"ok\"` survives; zero-count/no-findings assertions so `warn`\ncannot be misread as \"found\nthree problems\"; and an end-to-end CLI test that this exact envelope\nmakes `--mode block` exit\nnon-zero. That last one was red-proved by disabling the block branch,\nnot by watching it pass.\n\n`packages/gateway/openapi/v1.yaml` had already drifted from both source\nenums — `PreflightGap` was\nmissing `pagerduty_urgency_without_priority` and `DoraGap` was missing\n`mixed_source`. Both synced\nhere alongside the new member. `audit:openapi-drift` compares routes,\nnot enum members, which is\nwhy it did not catch that.\n\n`bun run preflight:fast` passes; 556 tests across the affected scopes\npass.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-08-21T16:58:57Z",
-          "tree_id": "7bbf62324e3a9f5559e926f4b401f289a2e06791",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/6ae5a53fd3ca911373ca511dafa5ad48e29f1d69"
-        },
-        "date": 1787332039629,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 252.6164970500009,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 251.60582689999902,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 306.4212200500027,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "be71be39c9ddd665f8ed8a1c935c888ad87c1389",
+          "message": "feat(gateway): the model can propose a Kubernetes apply, rollout restart or scale, in owner-approved namespaces, behind the full diff and a typed confirmation (#1955)\n\nPhase 9.7 Project D, cut D3a (Kubernetes, with D3c's restart and scale\nfolded in). The model is now offered three more Wave 4 writes, each\nbehind a typed preview and the type-to-confirm text, and each only while\nthe owner approved a (context, namespace) pair and the write by name:\n\n- `k8s_manifest_apply`: the sixth bound row (I54)\n- `k8s_rollout_restart`: deployments only\n- `k8s_deployment_scale`\n\nPins `@nimbus-dev/connectors` `^0.11.0` (nimbus-mcp-servers #79,\nreleased by #80; `bun.lock` locks the published 0.11.0). Schema V86\n(`connector_write_k8s_grant`). No new invariant or static rule number;\nI15, I20, I50, I53 and I54 text and static D42(h) / D43(d) are extended.\n\nPlan: `2026-11-09-connector-writes-d3-k8s-deploy.md`, Part A.\nAntigravity approved it.\n\n## Owner rulings\n- **OR-D3-4:** exec-plugin clusters (typical EKS, GKE, AKS) are not\nsupported. The kubeconfig the gateway builds refuses `exec`,\n`auth-provider` and the other forms that run code or hide the endpoint.\n- **OR-D3-5:** Secrets are refused on every door.\n- **OR-D3-6:** the model door also refuses RBAC kinds and privileged or\nhost-access pod settings.\n- **OR-D3-8:** the apply re-diffs inside the connector and refuses `the\ncluster changed since the plan was approved` when the diff no longer\nmatches.\n- **OR-D3-9:** the diff is the connector's built-in line diff; no `diff`\nprogram on any OS.\n- **OR-D3-12:** no loopback exemption on Windows (stated limit; the\nenable prompt says so).\n- **OR-D3-13:** cluster and context `extensions` are accepted and\ndropped from the copy.\n- Several contexts may be approved (`--grant <namespace>@<context>`,\nrepeatable).\n\n## What changed\n- **Grants:** `nimbus connector writes enable kubernetes --wave 4\n--grant <namespace>@<context>`. Each context is pinned in V86 to its API\nserver `host:port` and credential form, and the prompt shows both.\n`kube-system`, `kube-public` and `kube-node-lease` are never approvable.\n`status` lists the pairs.\n- **Settle (`engine/k8s-settle.ts`):** the gateway computes the plan\nhash (`nimbus-k8s-manifest-v2`, over context, namespace and manifest)\nand the diff hash (`nimbus-k8s-diff-v1`, over the diff it shows). Its\nown `js-yaml` parse must agree with the connector's scan and with\n`kubectl`'s object list, and both hashes are bound.\n- **Confirm text:** derived from the gateway's parse: `kubernetes/apply\n<context>/<namespace> <Kind>/<name>`, or `<N> objects <first 12 hex of\nthe plan hash>`. A restart types `kubernetes/restart\n<context>/<namespace>/<name>`, and a scale types `kubernetes/scale\n<context>/<namespace>/<deploymentName> to <replicas>`.\n- **`kube` runner profile (`connectors/lazy-mesh/iac-runner.ts`):**\nevery kubernetes call runs in its own short-lived child.\n  - The network is the one approved API server.\n- The only credential is a single-context kubeconfig the gateway builds.\n  - The only writable path is the call's scratch directory.\n  - The pair is re-checked against V86 for every child.\n  - One bound apply runs per pair at a time.\n- **Doors:** ChatOps is refused before any child is started, and the MCP\nact door denies all three (class `k8s`).\n- **Audit:** the audit row and the egress ledger hold the manifest's\nsize and SHA-256, never its text.\n- **TestFlight (R2-10):** `allowPublicLink` appears on the preview and\nis refused on the model door. Connectors 0.11.0 also checks the public\nlink at dispatch.\n\nCounts: 124 write rows (wave 4 x50), 113 templated, 77 with a\nbefore-state, 6 bound, 7 prepare ids, 182 HITL types, 108\nmodel-offerable, 11 never offered. Proposability: 47 proposable, 135\ndenied, 8 `not_yet_offered`.\n\n## Stated bounds\n- **No real cluster yet:** a REAL `kubectl apply` against a real cluster\nis UNVERIFIED. The CI stub API server cannot exercise client-side\nvalidation.\n- **Linux and macOS:** the `kube` profile runs under the Linux and macOS\nsandboxes for the first time in CI.\n- The first Linux run corrected two probe claims. `kubectl` starts no\nchild, so Go never probes `pidfd_send_signal` and it runs without the\niac flag; the kube profile keeps the flag as defence in depth.\n- The integration job has no sandbox helper. There `canConfine` refuses\nevery policy that declares a network, so no kube child starts at all,\nand that refusal is what the test asserts.\n- The probe now also runs in the helper step that follows, with\n`NIMBUS_SANDBOX_HELPER_PATH` set to the helper built there. It fails if\nno helper is found, so the forwarder's per-host refusal is checked on\nLinux.\n- **Windows and a Chocolatey shim:** on the windows-2025 runner,\n`kubectl` on PATH is a Chocolatey shim. Every sandboxed run of it hung\nuntil the probe's time limit.\n- The probe now runs the real exe behind the shim and logs the path it\nused.\n- Production resolves `kubectl` from PATH, so an owner whose `kubectl`\nis such a shim would see each kubernetes call refused at its time limit.\nThat is fail-closed, but it does not work: install or point PATH at the\nreal `kubectl.exe`.\n- Confirmed on CI: run directly, the real exe\n(`C:\\ProgramData\\Chocolatey\\lib\\kubernetes-cli\\tools\\kubernetes\\client\\bin\\kubectl.exe`)\nstarts in the AppContainer and all four Windows probes pass.\n- **Windows local clusters (OR-D3-12):** on Windows the AppContainer\ncannot reach an API server on this machine, so Docker Desktop, kind and\nminikube clusters cannot take a sandboxed call there.\n- **Host limits:** on macOS the host limit is by port, and on Windows it\nis all or nothing. The residual risk there is a compromised `kubectl`,\nnot a manifest.\n- **The plan touches the cluster:** a plan contacts the cluster before\nthe prompt. It is read-only, except for admission webhooks.\n- **Re-diff window:** the residual window is the milliseconds between\nthe connector's re-read and the apply.\n- **Generated fields:** the diff drops a Pod's generated\n`kube-api-access-xxxxx` token volume and masks a Job's uid-derived\nselector and template labels, so two dry runs of a new object diff the\nsame.\n- Other server-generated values that differ between dry runs (for\nexample a new Service's `clusterIP` / `nodePort`) are not masked. The\napply then refuses as a changed cluster. That is fail-closed, a false\nrefusal, never a silent apply.\n- **Restart:** the single-object typed text proves which object, not\nwhat changes. The manifest and the diff are shown above it.\n- **Never offered to the model:** `k8s_pod_delete` and the GKE workload\nrows.\n\n## Verification\n- `bun run preflight:fast`: PASSED, after the rebase onto `20a4a29ed`\n(#1953).\n- `typecheck`: clean. `typecheck:tests`: 0 new errors. `lint`: clean.\n- **Tests:** 21,918 pass across `engine`, `connectors`, `ipc`,\n`cli/src/commands`, `security-invariants`, the e2e `hitl-write-ops`\nscenario and `scripts`.\n- The 9 local failures are this Windows machine's environment: the\n`install.ps1` / `ps1` verifier tests, plus two 5 s timeouts in\n`iterateSourceFiles` and `cast-driver`.\n- **Audits:** `audit:connector-version-skew` (pinned 0.11.0, latest\n0.11.0) and `audit:connector-hosts` (94 connectors) are OK.\n`gen:connector-write-manifest` leaves the manifest unchanged against the\npublished package.\n- **Coverage:** every changed source file is over the floor (`k8s-bound`\n100/100, `local-index` 99.1/96.0, `migrations/runner` 98.5/92.9).\n- **Rebase fixes:** `settleProblems` pairs `k8s-manifest` with the\n`kubernetes` preflight inside main's extracted `settleToolProblems`; the\nkube child uses main's `spawnAndCall` call-spec shape; the k8s readers\nuse the shared `BeforeInput` / `BeforePicked` / `shownHead` helpers; and\nthe `iacRoutedKeys` coverage test counts the kube keys.\n\nDocs: CLAUDE.md, GEMINI.md, `docs/roadmap.md`, `docs/architecture.md`,\n`docs/README.md`, `docs/cli-reference.md`, `docs/SECURITY-INVARIANTS.md`\nand `docs/CHANGELOG.md` are updated.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JmSjrCsRuevvkksqrnLRGc\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Added Kubernetes support for manifest apply, deployment rollout\nrestart, and replica scaling, available only for owner-approved context\nand namespace pairs.\n  * Added CLI controls for configuring and viewing Kubernetes grants.\n* Added previews, before-state details, and typed confirmations for\nKubernetes changes.\n\n* **Security**\n* Kubernetes changes are sandboxed and checked against approved cluster\naccess. Unsafe manifest settings and unsupported resources are refused;\napply plans and diffs are verified before confirmation.\n* TestFlight distribution requests that allow public links are refused.\n\n* **Documentation**\n* Updated connector, security, architecture, and roadmap documentation\nto reflect Kubernetes support and current write availability.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-10T19:10:58Z",
+          "tree_id": "6da65b0a8f52dfc386571124582500823811d9a2",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/be71be39c9ddd665f8ed8a1c935c888ad87c1389"
+        },
+        "date": 1794338346273,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 220.06747130000295,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 218.94866120000188,
             "unit": "ms"
           }
         ]
