@@ -154,22 +154,25 @@ export interface PrepareRead {
   readonly settleTool?: string;
   /**
    * D2: run the preflight phase (consent-channel capability, confirm renderability, approved
-   * workdir or cloud) BEFORE the prepare child exists. Only `"iac"`.
+   * workdir or cloud, or D3a: approved context and namespace) BEFORE the prepare child exists.
+   * `"iac"` for the Terraform and CloudFormation rows, `"kubernetes"` for the Kubernetes apply.
    */
-  readonly preflight?: "iac";
+  readonly preflight?: "iac" | "kubernetes";
 }
 
 /** The settlers a prepare read may name (D2). Closed: a row cannot name code. */
-export type PrepareSettle = "iac-terraform" | "iac-cfn";
+export type PrepareSettle = "iac-terraform" | "iac-cfn" | "k8s-manifest";
 
 /**
  * The value keys each settler returns, which a settled row's `binds` must name exactly. The
  * Terraform settler returns its own moved plan path and its own hash; the CloudFormation settler
- * returns the change set's ARN.
+ * returns the change set's ARN; the Kubernetes settler returns the plan hash and the diff hash, both
+ * computed by the gateway from the input it shows and the diff text it rendered (D3a).
  */
 export const SETTLE_VALUE_KEYS: Readonly<Record<PrepareSettle, readonly string[]>> = Object.freeze({
   "iac-terraform": Object.freeze(["planFile", "planSha256"]),
   "iac-cfn": Object.freeze(["changeSetId"]),
+  "k8s-manifest": Object.freeze(["planSha256", "diffSha256"]),
 });
 
 /**
@@ -466,7 +469,7 @@ function settleToolProblems(
   prepareToolIds: ReadonlySet<string>,
 ): string[] {
   const out: string[] = [];
-  if (settle === "iac-cfn") {
+  if (settle === "iac-cfn" || settle === "k8s-manifest") {
     if (settleTool !== undefined) out.push("takes no settle tool");
   } else if (settleTool === undefined) {
     out.push("needs a settle tool");
@@ -486,8 +489,12 @@ function settleProblems(
 ): string[] {
   const { prepare, binds } = bound;
   const out: string[] = [];
-  if (prepare.preflight !== undefined && prepare.preflight !== "iac") {
-    out.push('preflight must be "iac"');
+  if (
+    prepare.preflight !== undefined &&
+    prepare.preflight !== "iac" &&
+    prepare.preflight !== "kubernetes"
+  ) {
+    out.push('preflight must be "iac" or "kubernetes"');
   }
   const { settle, settleTool } = prepare;
   if (settle === undefined) {
@@ -498,6 +505,12 @@ function settleProblems(
   // The confirm, channel and workdir-lock checks run in the preflight phase; a settled row without
   // the tag would skip them and run its child first.
   if (prepare.preflight === undefined) out.push("a settled row must declare preflight");
+  // A settler and its preflight are one pair: the Kubernetes settler is reached only behind the
+  // Kubernetes preflight (context, namespace, lock), and the iac settlers only behind the iac one.
+  const wantPreflight = settle === "k8s-manifest" ? "kubernetes" : "iac";
+  if (prepare.preflight !== undefined && prepare.preflight !== wantPreflight) {
+    out.push(`settle ${settle} needs preflight "${wantPreflight}"`);
+  }
   out.push(...settleToolProblems(r, prepare.tool, settle, settleTool, prepareToolIds));
   const expected = SETTLE_VALUE_KEYS[settle];
   const fields = binds.map((b) => b.field);

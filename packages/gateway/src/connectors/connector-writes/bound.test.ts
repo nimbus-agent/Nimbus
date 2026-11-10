@@ -14,6 +14,7 @@ import {
   type BoundWrite,
   boundWriteProblems,
   row as makeRow,
+  SETTLE_VALUE_KEYS,
   textField,
   withBound,
   withPreview,
@@ -214,5 +215,51 @@ describe("settled prepare reads (D2): the settle tag, its tool and its bound fie
     expect(() => withBound(PREVIEWED, synthBound({ preflight: "other" } as never), two)).toThrow(
       "preflight",
     );
+  });
+
+  test("a preflight tag is accepted only as iac or kubernetes", () => {
+    expect(() =>
+      withBound(PREVIEWED, synthBound({ preflight: "kubernetes" } as never), two),
+    ).not.toThrow();
+  });
+
+  describe("the Kubernetes settler (D3a)", () => {
+    const k8sBinds = [
+      { field: "planSha256", from: () => "x" },
+      { field: "diffSha256", from: () => "x" },
+    ];
+    const k8s = (over: Record<string, unknown> = {}, binds = k8sBinds): BoundWrite => ({
+      ...synthBound({ settle: "k8s-manifest", preflight: "kubernetes", ...over } as never),
+      binds,
+    });
+
+    test("k8s-manifest with the kubernetes preflight and exactly planSha256 + diffSha256 declares", () => {
+      expect(() => withBound(PREVIEWED, k8s(), two)).not.toThrow();
+    });
+
+    test("the value keys are the settler's two hashes", () => {
+      expect([...SETTLE_VALUE_KEYS["k8s-manifest"]]).toEqual(["planSha256", "diffSha256"]);
+      expect(() => withBound(PREVIEWED, k8s({}, [k8sBinds[0] as never]), two)).toThrow(
+        "bound fields must be exactly the settler's values",
+      );
+    });
+
+    test("takes no settle tool", () => {
+      expect(() => withBound(PREVIEWED, k8s({ settleTool: "synth_show" }), two)).toThrow(
+        "takes no settle tool",
+      );
+    });
+
+    test("a settler and its preflight are one pair", () => {
+      expect(() => withBound(PREVIEWED, k8s({ preflight: "iac" }), two)).toThrow(
+        'needs preflight "kubernetes"',
+      );
+      expect(() => withBound(PREVIEWED, settled({ preflight: "kubernetes" }), two)).toThrow(
+        'needs preflight "iac"',
+      );
+      expect(() => withBound(PREVIEWED, k8s({ preflight: undefined }), two)).toThrow(
+        "a settled row must declare preflight",
+      );
+    });
   });
 });
