@@ -58,7 +58,38 @@ if (IS_WIN && process.env["NIMBUS_SANDBOX_HELPER_PATH"] === undefined && existsS
 }
 
 const KUBECTL = Bun.which("kubectl");
-const KUBECTL_REAL = KUBECTL === null ? null : realpathSync(KUBECTL);
+
+/**
+ * The real kubectl behind a Chocolatey shim (`<choco>\\bin\\kubectl.exe`, a launcher that starts
+ * the real exe from `<choco>\\lib\\kubernetes-cli\\tools\\...` and waits for it), else `null`.
+ * The windows-2025 runner installs kubectl through Chocolatey, and a shim spawned inside the
+ * AppContainer never returned there (every run hit the time limit), so the probe runs the real exe.
+ */
+function realBehindChocolateyShim(path: string): string | null {
+  const bin = dirname(path);
+  if (!IS_WIN || !/[\\/]chocolatey[\\/]bin$/i.test(bin)) return null;
+  const tools = join(dirname(bin), "lib", "kubernetes-cli", "tools");
+  const stack = [tools];
+  while (stack.length > 0) {
+    const dir = stack.pop() as string;
+    let entries: string[];
+    try {
+      entries = readdirSync(dir);
+    } catch {
+      continue;
+    }
+    for (const e of entries) {
+      const full = join(dir, e);
+      if (e.toLowerCase() === "kubectl.exe") return realpathSync(full);
+      if (!e.includes(".")) stack.push(full);
+    }
+  }
+  return null;
+}
+
+const KUBECTL_REAL =
+  KUBECTL === null ? null : (realBehindChocolateyShim(KUBECTL) ?? realpathSync(KUBECTL));
+console.log(`[probe] kubectl: ${String(KUBECTL)} -> ${String(KUBECTL_REAL)}`);
 const OPENSSL = Bun.which("openssl");
 /** The address the stub listens on and the kubeconfig names; set NIMBUS_KUBE_PROBE_HOST to a LAN address to compare with loopback. */
 const PROBE_HOST = process.env["NIMBUS_KUBE_PROBE_HOST"] ?? "127.0.0.1";
@@ -102,7 +133,9 @@ interface Run {
   readonly ms: number;
 }
 
-const RUN_TIMEOUT_MS = 90_000;
+// A sandboxed kubectl answers a no-op in well under a second (probe 8); a hang is a finding, and
+// at 90 s each the Windows leg would spend six minutes per attempt on it.
+const RUN_TIMEOUT_MS = 30_000;
 
 function configBody(server: string, caB64: string): string {
   return [
