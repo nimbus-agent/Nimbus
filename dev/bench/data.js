@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794292260054,
+  "lastUpdate": 1794302944763,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
-            "name": "nimbus-release-bot[bot]",
-            "username": "nimbus-release-bot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "1e90a3dc72f1d0ef0c0598e1e37c9a75b8f53e56",
-          "message": "chore: release main (#1295)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>2.13.0</summary>\n\n##\n[2.13.0](https://github.com/nimbus-agent/Nimbus/compare/v2.12.1...v2.13.0)\n(2026-08-21)\n\n\n### Features\n\n* **sandbox:** a real Windows sandbox leg, and a policy-shaped runner\ninterface ([#1294](https://github.com/nimbus-agent/Nimbus/issues/1294))\n([54c20c9](https://github.com/nimbus-agent/Nimbus/commit/54c20c98714a85b1a57d5166938c4cd2bedcc457))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
-          "timestamp": "2026-08-21T16:02:03Z",
-          "tree_id": "d1fdad0bf9073bf24437eb106218090f32633882",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/1e90a3dc72f1d0ef0c0598e1e37c9a75b8f53e56"
-        },
-        "date": 1787328657835,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 260.6472328500036,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 259.18891910000127,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 307.05854620000935,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "20a4a29ede1cc2cd7046ad01e347efc3713d2958",
+          "message": "refactor: clear the SonarCloud backlog, remove duplication and raise test coverage (#1953)\n\nClears the SonarCloud backlog on `main` (276 open findings), removes\nduplicated code, and adds tests for the files with the most uncovered\nlines and branches. No behaviour change is intended. No Sonar rule,\ncoverage or duplication exclusion is added.\n\n## Sonar findings (276)\n- **About 230 fixed in code.** Cognitive-complexity splits are named\nhelpers called in the original order; the rest are idiomatic rewrites:\nnested ternaries and templates, `codePointAt`, `String.raw`, optional\nchains, `Set` membership, matcher idioms and real assertions in tests,\n`<output>`/`<fieldset>` and stable keys in the UI.\n- **48 Accepted on the SonarCloud board** (owner decision), each with\nits reason as an issue comment, and recorded in\n`docs/structure-audit/sonarqube-rule-tuning.md`:\n  - `S9382` x27: loops that are sequential by design.\n- `S1313` x20: the registry action's SSRF blocklist and the Linux\nforwarder's required public probe address.\n- `S3776` x2: `executor.ts` `runGateChecks` and `capture-act.ts`\n`acceptAction`. Their order of checks is pinned by D42(b)/D43 and by the\nI28 order test; splitting them failed those pins, so they are unchanged.\n- **NOSONAR markers.** The 13 the sweep added were removed again. Seven\npre-existing `NOSONAR S9382` markers that sat on the line above the\nreported await (where Sonar ignores them) moved onto the reported line.\n- **Security pins kept.** The iac write list in `iac-runner.ts` stays\nspelled inline (I15 pin). The Obsidian `CONFIG_DIRS` pin follows the\n`Set` spelling with the same two members. `dispatchers.ts` keeps\n`continuityTable` inline at the `dispatchAutomationRpc` call (C7 pin).\n\n## Duplication\nFive groups are removed by shared helpers:\n- the connector-write row factories in `cloud-infra.ts` and\n`gitops-ml.ts`; the old and new row tables were compared and are\nidentical;\n- the before-reader input and selection types, now shared from\n`before-select.ts`;\n- `registry-format` `eval-role-envelope.ts`, which has its own tests;\n- the registry action's signing retry loop and its test-repo helpers.\nThe action's `dist/` is rebuilt, and `audit:action-dist` passes.\n\njscpd: 405 → 398 clones. The remaining cross-package copies (the\ninvisible-character table shared by cli/gateway/ui, and the explain wire\ntypes shared by cli/gateway) are left as they are, because cli and ui\nmay not import gateway source. That is an owner decision.\n\n## Coverage\nNew and extended tests cover about 115 source files. Only test files\nchange, apart from one fixture helper. Refusal paths were the priority:\nObsidian daily-note grant, iac grants and enable prompt, LaunchDarkly\nrollout guard, remote-content scan, capture gate/validate,\nregistry/automation RPC. Code that can't be reached (dead defensive\nbranches, real TTY, real sandbox or network) is left untested rather\nthan excluded.\n\n## Verification (Windows, local)\n- `bun run preflight:fast` passes. `bun run typecheck:tests` reports 0\nnew errors. `check-nimbus-invariants.ts` passes, and\n`security-invariants.test.ts` passes (493 tests).\n- UI vitest: 1385 pass. registry-format + registry-action: 1256 pass.\n- `bun test packages/gateway packages/cli scripts --parallel`: 40217\npass, 36 fail. One failure was real (the C7 pin) and is fixed.\n- The rest pass when run alone, apart from two groups. The toolgen files\nneed the Windows sandbox helper built; with it built they pass. The\nPowerShell installer and verify tests fail identically on `main` on this\nmachine.\n- The coverage floor is CI-Linux-authoritative and was not run locally.\n\n## Docs\n`CLAUDE.md`/`GEMINI.md`, `docs/roadmap.md`, `docs/architecture.md`,\n`docs/README.md` and `docs/cli-reference.md` are unchanged: no feature,\ncommand, invariant or architecture changes here.\n`docs/structure-audit/sonarqube-rule-tuning.md` records the board\ndecisions.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JmSjrH4dTEhgCBgnQWE7oP\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-10T11:16:46+02:00",
+          "tree_id": "906394c37b35fad90a8ed026262cdf6a79cf49c7",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/20a4a29ede1cc2cd7046ad01e347efc3713d2958"
+        },
+        "date": 1794302940339,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 306.76385795000317,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 306.4212200500027,
             "unit": "ms"
           }
         ]
