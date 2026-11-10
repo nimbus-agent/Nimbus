@@ -132,10 +132,16 @@ describe("D2 through the real model door", () => {
     const confirmed: ConfirmedApprovalRequest[] = [];
     const dispatched: PlannedAction[] = [];
     const consent: ConsentChannel = {
-      requestApproval: async () => true,
+      requestApproval: async () => ({ approved: true, answerSource: "human" as const }),
       requestConfirmedApproval: async (req) => {
         confirmed.push(req);
-        return opts.answer?.(req) ?? { approved: true, typed: req.confirmText };
+        return (
+          opts.answer?.(req) ?? {
+            approved: true,
+            typed: req.confirmText,
+            answerSource: "human" as const,
+          }
+        );
       },
     };
     const dispatcher: ConnectorDispatcher = {
@@ -379,7 +385,9 @@ describe("D2 through the real model door", () => {
 
   test("a mismatched text or a denial is declined and writes nothing", async () => {
     enableBoth();
-    const mismatch = await door({ answer: () => ({ approved: true, typed: "iac/apply /other" }) });
+    const mismatch = await door({
+      answer: () => ({ approved: true, typed: "iac/apply /other", answerSource: "human" as const }),
+    });
     expect(await mismatch.call(APPLY, { workingDirectory: WD })).toEqual({
       declined: DECLINED_RESULT_TEXT,
     });

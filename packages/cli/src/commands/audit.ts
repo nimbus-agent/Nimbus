@@ -39,8 +39,8 @@ export async function runAuditList(
     console.log(JSON.stringify(rows, null, 2));
     return;
   }
-  console.log(`${"Timestamp".padEnd(20)} ${"Action".padEnd(22)} ${"Status".padEnd(14)} Reason`);
-  console.log("-".repeat(72));
+  console.log(`${"Timestamp".padEnd(20)} ${"Action".padEnd(22)} ${"Status".padEnd(17)} Reason`);
+  console.log("-".repeat(75));
   for (const r of rows) {
     const ts = new Date(r.timestamp).toISOString().replace("T", " ").slice(0, 19);
     let reason = "—";
@@ -55,7 +55,7 @@ export async function runAuditList(
     } catch {
       // Skip malformed action_json; keep default reason.
     }
-    console.log(`${ts.padEnd(20)} ${r.actionType.padEnd(22)} ${r.hitlStatus.padEnd(14)} ${reason}`);
+    console.log(`${ts.padEnd(20)} ${r.actionType.padEnd(22)} ${r.hitlStatus.padEnd(17)} ${reason}`);
   }
 }
 

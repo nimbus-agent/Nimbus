@@ -142,7 +142,10 @@ describe("selectConsentHandler", () => {
 
     expect(warning).toContain("--script-consent-source overrides --yes");
     expect(calls).toEqual([
-      { method: "consent.respond", params: { requestId: "req-1", approved: true } },
+      {
+        method: "consent.respond",
+        params: { requestId: "req-1", approved: true, answerSource: "script" },
+      },
     ]);
   });
 
@@ -163,7 +166,10 @@ describe("selectConsentHandler", () => {
 
     expect(warning).toBe("");
     expect(calls).toEqual([
-      { method: "consent.respond", params: { requestId: "req-2", approved: false } },
+      {
+        method: "consent.respond",
+        params: { requestId: "req-2", approved: false, answerSource: "script" },
+      },
     ]);
   });
 
@@ -186,7 +192,10 @@ describe("selectConsentHandler", () => {
     expect(stderrOutput).not.toContain("--script-consent-source overrides --yes");
     expect(stderrOutput).toContain("auto-approving");
     expect(calls).toEqual([
-      { method: "consent.respond", params: { requestId: "req-3", approved: true } },
+      {
+        method: "consent.respond",
+        params: { requestId: "req-3", approved: true, answerSource: "auto" },
+      },
     ]);
   });
 

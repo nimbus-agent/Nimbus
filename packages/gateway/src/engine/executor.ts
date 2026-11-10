@@ -60,6 +60,9 @@ import { serviceOf } from "./service-of.ts";
 import { extractToolInput } from "./tool-input.ts";
 import type {
   ActionResult,
+  AnswerSource,
+  ApprovalAnswer,
+  ApprovalOutcome,
   AuditSink,
   ConfirmedApprovalRequest,
   ConfirmedApprovalResult,
@@ -610,6 +613,8 @@ export type ConfirmOutcome = "matched" | "mismatched" | "unsupported_channel";
  * phases, not a closure per arm: the gate writes the row exactly once, whichever phase ended it.
  */
 interface GateRecord {
+  /** Where the prompted decision came from; absent when no prompt decided (SA1). */
+  answerSource?: AnswerSource;
   /** Defaults to the user-declined message; a phase that ends the gate for another reason overwrites it. */
   rejectReason: string;
   hitlRejectReason?: string;
@@ -621,6 +626,18 @@ interface GateRecord {
   filesSha256?: string | undefined;
   /** Set only on the gateway's own discard of an unused change set (D2, static D43). */
   discard?: "unused_changeset";
+}
+
+/** A refusal a phase already recorded (reason in the record), with no prompt shown. */
+function gateRefusal(record: GateRecord): ApprovalOutcome {
+  return { kind: "rejected", reason: record.rejectReason, answerSource: "none" };
+}
+
+/** The owner's prompt answer as an outcome; a decline carries the record's current reason. */
+function ownerOutcome(answer: ApprovalAnswer, declinedReason: string): ApprovalOutcome {
+  return answer.approved
+    ? { kind: "approved", answerSource: answer.answerSource }
+    : { kind: "rejected", reason: declinedReason, answerSource: answer.answerSource };
 }
 
 /** The default reason of a rejected gate: the owner (or a delegate) said no. */
@@ -712,6 +729,7 @@ function byCodeUnit(a: string, b: string): number {
 /** The audit fields of a record: only the ones a phase set, so an ordinary row is unchanged. */
 function auditExtrasOf(record: GateRecord): AuditExtras {
   return {
+    ...(record.answerSource === undefined ? {} : { answerSource: record.answerSource }),
     ...(record.hitlRejectReason === undefined ? {} : { hitlRejectReason: record.hitlRejectReason }),
     ...(record.confirm === undefined ? {} : { confirm: record.confirm }),
     ...(record.boundValuesSha256 === undefined
@@ -723,9 +741,26 @@ function auditExtrasOf(record: GateRecord): AuditExtras {
   };
 }
 
-type HitlStatus = "approved" | "rejected" | "not_required";
+export type HitlStatus = "approved" | "rejected" | "not_required" | "standing_approved";
+
+/**
+ * How an {@link ApprovalOutcome} reads as a gate verdict: the audit status, and for a rejection the
+ * reason the caller gets back. A pure map, so every kind is unit-tested (Phase 10 SA1).
+ */
+export function gateResultOf(outcome: ApprovalOutcome): { status: HitlStatus; reason?: string } {
+  switch (outcome.kind) {
+    case "approved":
+      return { status: "approved" };
+    case "rejected":
+      return { status: "rejected", reason: outcome.reason };
+    case "standing_approved":
+      return { status: "standing_approved" };
+  }
+}
 
 interface AuditExtras {
+  /** Where each prompted decision came from (SA1, spec 6.1). */
+  answerSource?: AnswerSource;
   hitlRejectReason?: string;
   confirm?: ConfirmOutcome;
   boundValuesSha256?: string;
@@ -779,6 +814,11 @@ export interface ExecutorDelegationDep {
     actionType: string,
     confirmText: string,
   ) => Promise<RemoteApprovalOutcome>;
+  /**
+   * What the audit row records as the source of a delegated answer (SA1): `delegate` by default,
+   * `remote` for the ChatOps delegation, which answers from a chat card.
+   */
+  readonly answerSource?: "delegate" | "remote";
 }
 
 /**
@@ -1089,9 +1129,9 @@ export class ToolExecutor {
     opts: ExecuteOptions | undefined,
     record: GateRecord,
     scope: GateScope,
-  ): Promise<boolean> {
+  ): Promise<ApprovalOutcome> {
     const earlier = await this.captureBeforePhase(action, opts);
-    if (!(await this.preflightPhase(action, record, scope))) return false;
+    if (!(await this.preflightPhase(action, record, scope))) return gateRefusal(record);
     // A pinned working directory changes what the preview's target shows: rebuild it from the action.
     const captured =
       scope.workingDirectory === undefined
@@ -1112,7 +1152,7 @@ export class ToolExecutor {
     if (confirm.kind === "refuse") {
       record.rejectReason = confirm.reason;
       record.hitlRejectReason = confirm.reason;
-      return false;
+      return gateRefusal(record);
     }
     return this.approvalPhase(action, preview, confirm, record);
   }
@@ -1285,13 +1325,18 @@ export class ToolExecutor {
     preview: ConnectorWritePreview | undefined,
     confirm: Exclude<ConfirmPlan, { kind: "refuse" }>,
     record: GateRecord,
-  ): Promise<boolean> {
+  ): Promise<ApprovalOutcome> {
     const delegated = await this.tryDelegatedApproval(action, confirm, record);
-    if (delegated !== "fallback") return delegated === "approved";
+    const delegateSource = this.delegation?.answerSource ?? "delegate";
+    if (delegated === "approved") return { kind: "approved", answerSource: delegateSource };
+    if (delegated === "rejected") {
+      return { kind: "rejected", reason: record.rejectReason, answerSource: delegateSource };
+    }
     const details = consentDisplayPayload(action, this.previewCredentialFor, preview);
     const prompt = formatConsentPrompt(action, this.previewCredentialFor, preview);
     if (confirm.kind === "none") {
-      return this.consent.requestApproval(prompt, details, action.type);
+      const answer = await this.consent.requestApproval(prompt, details, action.type);
+      return ownerOutcome(answer, record.rejectReason);
     }
     return this.confirmedOwnerPrompt(
       { prompt, details, actionType: action.type, confirmText: confirm.text },
@@ -1307,22 +1352,24 @@ export class ToolExecutor {
   private async confirmedOwnerPrompt(
     req: ConfirmedApprovalRequest,
     record: GateRecord,
-  ): Promise<boolean> {
+  ): Promise<ApprovalOutcome> {
     const channel = this.consent;
     if (channel.requestConfirmedApproval === undefined) {
       record.confirm = "unsupported_channel";
       record.rejectReason = CONFIRM_UNSUPPORTED_REASON;
-      return false;
+      return { kind: "rejected", reason: CONFIRM_UNSUPPORTED_REASON, answerSource: "none" };
     }
     const answer = await channel.requestConfirmedApproval({
       ...req,
       prompt: `${req.prompt}\n\n${confirmPromptLine(req.confirmText)}`,
     });
-    if (!answer.approved) return false;
+    if (!answer.approved) return ownerOutcome(answer, record.rejectReason);
     const matched = answer.typed === req.confirmText;
     record.confirm = matched ? "matched" : "mismatched";
     if (!matched) record.rejectReason = CONFIRM_MISMATCH_REASON;
-    return matched;
+    return matched
+      ? { kind: "approved", answerSource: answer.answerSource }
+      : { kind: "rejected", reason: CONFIRM_MISMATCH_REASON, answerSource: answer.answerSource };
   }
 
   /**
@@ -1436,8 +1483,14 @@ export class ToolExecutor {
       record.discard = "unused_changeset";
       return "not_required";
     } else if (requiresHITL) {
-      const approved = await this.resolveHitlApproval(action, opts, record, scope);
-      return approved ? "approved" : "rejected";
+      const outcome = await this.resolveHitlApproval(action, opts, record, scope);
+      // A decision no prompt was shown for (`none`) records no source; every prompted one does.
+      if (outcome.kind !== "standing_approved" && outcome.answerSource !== "none") {
+        record.answerSource = outcome.answerSource;
+      }
+      const verdict = gateResultOf(outcome);
+      if (verdict.reason !== undefined) record.rejectReason = verdict.reason;
+      return verdict.status;
     } else {
       return "not_required";
     }
@@ -1617,7 +1670,7 @@ export function bindConsentChannel(
       prompt: string,
       details?: Record<string, unknown>,
       actionType?: string,
-    ): Promise<boolean> {
+    ): Promise<ApprovalAnswer> {
       return coordinator.requestConsent(clientId, {
         requestId: randomUUID(),
         prompt,

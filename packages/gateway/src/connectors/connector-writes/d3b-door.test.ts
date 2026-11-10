@@ -134,10 +134,16 @@ describe("D3b through the real door", () => {
     const confirmed: ConfirmedApprovalRequest[] = [];
     const dispatched: PlannedAction[] = [];
     const consent: ConsentChannel = {
-      requestApproval: async () => true,
+      requestApproval: async () => ({ approved: true, answerSource: "human" as const }),
       requestConfirmedApproval: async (req) => {
         confirmed.push(req);
-        return opts.answer?.(req) ?? { approved: true, typed: req.confirmText };
+        return (
+          opts.answer?.(req) ?? {
+            approved: true,
+            typed: req.confirmText,
+            answerSource: "human" as const,
+          }
+        );
       },
     };
     const replies = { ...REPLIES, ...opts.replies };
@@ -265,13 +271,19 @@ describe("D3b through the real door", () => {
     enableAll(4, () => true);
     const input = { projectId: "prj_0123456789abcdef", deploymentId: "dpl_new00000001" };
     const mismatch = await door({
-      answer: () => ({ approved: true, typed: "vercel/promote other" }),
+      answer: () => ({
+        approved: true,
+        typed: "vercel/promote other",
+        answerSource: "human" as const,
+      }),
     });
     expect(await mismatch.call("vercel__vercel_deployment_promote", input)).toEqual({
       declined: DECLINED_RESULT_TEXT,
     });
     expect(writesOnly(mismatch)).toEqual([]);
-    const denied = await door({ answer: () => ({ approved: false, typed: "" }) });
+    const denied = await door({
+      answer: () => ({ approved: false, typed: "", answerSource: "human" as const }),
+    });
     expect(await denied.call("vercel__vercel_deployment_promote", input)).toEqual({
       declined: DECLINED_RESULT_TEXT,
     });

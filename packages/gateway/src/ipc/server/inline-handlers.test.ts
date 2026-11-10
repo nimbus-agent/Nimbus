@@ -997,7 +997,7 @@ describe("rpcConsentRespond — the accepted answer", () => {
     expect(rpcConsentRespond(ctx, "client-1", { requestId: "req-1", approved: true })).toEqual({
       ok: true,
     });
-    expect(await pending).toBe(true);
+    expect(await pending).toEqual({ approved: true, answerSource: "unknown" });
   });
 
   test("another client cannot answer it — the request stays pending for its owner", async () => {
@@ -1019,7 +1019,7 @@ describe("rpcConsentRespond — the accepted answer", () => {
     expect(rpcConsentRespond(ctx, "client-1", { requestId: "req-2", approved: false })).toEqual({
       ok: true,
     });
-    expect(await pending).toBe(false);
+    expect(await pending).toEqual({ approved: false, answerSource: "unknown" });
   });
 });
 

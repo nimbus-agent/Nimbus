@@ -242,7 +242,7 @@ try {
     {
       requestApproval: async (_prompt, details, actionType) => {
         consents.push({ type: actionType, details });
-        return approve;
+        return { approved: approve, answerSource: "human" as const };
       },
     },
     index,

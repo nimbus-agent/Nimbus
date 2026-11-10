@@ -139,6 +139,13 @@ describe("listEgress", () => {
     expect(listEgress(db, { since: 15, until: 25 })).toHaveLength(1);
     expect(listEgress(db, { limit: 2 })).toHaveLength(2);
   });
+
+  test("lists, chains and verifies a standing_approved row (the fourth status, SA1)", () => {
+    appendEgressEntry(db, e({ timestamp: 10, hitlStatus: "standing_approved" }));
+    appendEgressEntry(db, e({ timestamp: 11 }));
+    expect(listEgress(db, {}).map((r) => r.hitlStatus)).toEqual(["standing_approved", "approved"]);
+    expect(verifyEgressChain(db, 0).ok).toBe(true);
+  });
 });
 
 /** n chained rows, timestamps 1..n, ids 1..n. Appended, never INSERTed — a raw

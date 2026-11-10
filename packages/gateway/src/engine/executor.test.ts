@@ -31,7 +31,10 @@ function deps(over: { approve?: boolean; onDispatch?: () => void }): {
     },
   };
   const consent: ConsentChannel = {
-    requestApproval: async () => over.approve ?? true,
+    requestApproval: async () => ({
+      approved: over.approve ?? true,
+      answerSource: "human" as const,
+    }),
   };
   const audit: AuditSink = { recordAudit: () => {} };
   const connectors: ConnectorDispatcher = {

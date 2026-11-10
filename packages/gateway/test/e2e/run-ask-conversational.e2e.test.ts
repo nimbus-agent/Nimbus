@@ -26,8 +26,12 @@ function baseParams(
       sandboxDir: "/sandbox",
     },
     consentCoordinator: {
-      requestConsent: async () => false,
-      requestConfirmedConsent: async () => ({ approved: false, typed: "" }),
+      requestConsent: async () => ({ approved: false, answerSource: "human" as const }),
+      requestConfirmedConsent: async () => ({
+        approved: false,
+        typed: "",
+        answerSource: "human" as const,
+      }),
       rejectAllPending: () => {
         /* noop */
       },

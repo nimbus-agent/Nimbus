@@ -29,6 +29,13 @@ describe("AuditFeed", () => {
         actionJson: "{}",
         timestamp: Date.now(),
       },
+      {
+        id: 4,
+        actionType: "gmail.thread.archive",
+        hitlStatus: "standing_approved",
+        actionJson: "{}",
+        timestamp: Date.now(),
+      },
     ];
     render(<AuditFeed />);
     expect(screen.getByText("file.create")).toBeInTheDocument();
@@ -37,6 +44,7 @@ describe("AuditFeed", () => {
     expect(screen.getByText("approved")).toBeInTheDocument();
     expect(screen.getByText("rejected")).toBeInTheDocument();
     expect(screen.getByText("not_required")).toBeInTheDocument();
+    expect(screen.getByText("standing_approved")).toBeInTheDocument();
     expect(screen.getByText("doc.md")).toBeInTheDocument();
   });
 

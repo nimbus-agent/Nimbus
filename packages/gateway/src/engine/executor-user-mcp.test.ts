@@ -35,7 +35,7 @@ function harness(approve: boolean): {
     consent: {
       requestApproval: async (prompt: string) => {
         prompts.push(prompt);
-        return approve;
+        return { approved: approve, answerSource: "human" as const };
       },
     },
     audit: {
@@ -184,7 +184,7 @@ describe("I42 — the owner sees a user-MCP payload unredacted at the consent pr
       {
         requestApproval: async (prompt, details) => {
           shown.push({ prompt, details });
-          return false;
+          return { approved: false, answerSource: "human" as const };
         },
       },
       { recordAudit: (row) => auditJson.push(row.actionJson) },

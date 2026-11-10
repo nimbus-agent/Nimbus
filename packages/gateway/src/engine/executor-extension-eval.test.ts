@@ -42,7 +42,7 @@ function harness(delegate: boolean): {
       requestApproval: async (p: string, d?: Record<string, unknown>) => {
         prompts.push(p);
         details.push(d);
-        return false;
+        return { approved: false, answerSource: "human" as const };
       },
     },
     { recordAudit: () => {} },

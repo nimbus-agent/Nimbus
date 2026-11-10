@@ -39,7 +39,7 @@ function harness(over: { approve?: boolean } = {}): {
     consent: {
       requestApproval: async (prompt: string) => {
         prompts.push(prompt);
-        return over.approve ?? true;
+        return { approved: over.approve ?? true, answerSource: "human" as const };
       },
     },
     audit: { recordAudit: () => {} },

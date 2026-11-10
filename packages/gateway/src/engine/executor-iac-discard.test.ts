@@ -94,9 +94,9 @@ function harness(o: Options = {}) {
       };
   const consent =
     o.consent === "plain-only"
-      ? { requestApproval: async () => true }
+      ? { requestApproval: async () => ({ approved: true, answerSource: "human" as const }) }
       : {
-          requestApproval: async () => true,
+          requestApproval: async () => ({ approved: true, answerSource: "human" as const }),
           requestConfirmedApproval: async (
             req: ConfirmedApprovalRequest,
           ): Promise<ConfirmedApprovalResult> => {
@@ -104,8 +104,13 @@ function harness(o: Options = {}) {
             confirmed.push(req);
             if (o.consent === "throws") throw new Error("approval timed out");
             if (o.consent === "disconnects") throw new ConsentDisconnectedError();
-            if (o.consent === "decline") return { approved: false, typed: "" };
-            return { approved: true, typed: o.consent === "mismatch" ? "nope" : req.confirmText };
+            if (o.consent === "decline")
+              return { approved: false, typed: "", answerSource: "human" as const };
+            return {
+              approved: true,
+              typed: o.consent === "mismatch" ? "nope" : req.confirmText,
+              answerSource: "human" as const,
+            };
           },
         };
   const exec = new ToolExecutor(

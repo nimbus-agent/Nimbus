@@ -43,7 +43,7 @@ let gate: CaptureGateDeps;
 let ctx: CaptureRpcCtx;
 
 const coordinator = {
-  requestConsent: () => consentBehaviour(),
+  requestConsent: async () => ({ approved: await consentBehaviour(), answerSource: "human" }),
 } as unknown as ConsentCoordinator;
 
 beforeEach(() => {

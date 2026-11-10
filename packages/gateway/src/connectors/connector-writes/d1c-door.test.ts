@@ -138,11 +138,17 @@ describe("D1c through the real door", () => {
     const consent: ConsentChannel = {
       requestApproval: async (prompt) => {
         plain.push(prompt);
-        return true;
+        return { approved: true, answerSource: "human" as const };
       },
       requestConfirmedApproval: async (req) => {
         confirmed.push(req);
-        return opts.answer?.(req) ?? { approved: true, typed: req.confirmText };
+        return (
+          opts.answer?.(req) ?? {
+            approved: true,
+            typed: req.confirmText,
+            answerSource: "human" as const,
+          }
+        );
       },
     };
     const exec = new ToolExecutor(
@@ -379,11 +385,17 @@ describe("D1c through the real door", () => {
       test("a mismatched text or a denial is declined and writes nothing", async () => {
         setModelWriteEnablement(db, c.service, 4, 1, [c.tool]);
         const mismatch = await door(c, {
-          answer: () => ({ approved: true, typed: "github/commit other/repo@main" }),
+          answer: () => ({
+            approved: true,
+            typed: "github/commit other/repo@main",
+            answerSource: "human" as const,
+          }),
         });
         expect(await mismatch.call(inputOf(c))).toEqual({ declined: DECLINED_RESULT_TEXT });
         expect(writes(mismatch)).toEqual([]);
-        const denied = await door(c, { answer: () => ({ approved: false, typed: "" }) });
+        const denied = await door(c, {
+          answer: () => ({ approved: false, typed: "", answerSource: "human" as const }),
+        });
         expect(await denied.call(inputOf(c))).toEqual({ declined: DECLINED_RESULT_TEXT });
         expect(writes(denied)).toEqual([]);
       });

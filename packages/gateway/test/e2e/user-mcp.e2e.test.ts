@@ -589,6 +589,8 @@ describe.skipIf(!sandboxAvailable)("a scaffolded user MCP over a real gateway", 
         type: "mcp_echo_srv.echo",
         payload: { mcpToolId: "mcp_echo_srv_echo", input: { text: "from-the-agent" } },
       },
+      // SA1: the test's owner client reports no answer source, so the row records `unknown`.
+      answerSource: "unknown",
     });
   }, 60_000);
 

@@ -530,9 +530,12 @@ describe("boot surface members", () => {
     const asked: { prompt: string; details: unknown }[] = [];
     h.boot.bindLocalConsent((prompt, details) => {
       asked.push({ prompt, details });
-      return Promise.resolve(true);
+      return Promise.resolve({ approved: true, answerSource: "human" as const });
     });
-    expect(await h.boot.requestOwnerApproval("capture?", { id: 1 })).toBe(true);
+    expect(await h.boot.requestOwnerApproval("capture?", { id: 1 })).toEqual({
+      approved: true,
+      answerSource: "human",
+    });
     expect(asked).toEqual([{ prompt: "capture?", details: { id: 1 } }]);
   });
 

@@ -147,18 +147,22 @@ function harness(o: Options = {}): Harness {
           requestApproval: async (p: string) => {
             log.push("prompt");
             prompts.push(p);
-            return true;
+            return { approved: true, answerSource: "human" as const };
           },
         }
       : {
-          requestApproval: async () => true,
+          requestApproval: async () => ({ approved: true, answerSource: "human" as const }),
           requestConfirmedApproval: async (
             req: ConfirmedApprovalRequest,
           ): Promise<ConfirmedApprovalResult> => {
             log.push("prompt:confirmed");
             prompts.push(req.prompt);
             confirmed.push(req);
-            return { approved: o.approve ?? true, typed: o.typed ?? req.confirmText };
+            return {
+              approved: o.approve ?? true,
+              typed: o.typed ?? req.confirmText,
+              answerSource: "human" as const,
+            };
           },
         };
   const exec = new ToolExecutor(

@@ -9,7 +9,7 @@ import { MockVault } from "../../src/vault/mock.ts";
 import type { NimbusVault } from "../../src/vault/nimbus-vault.ts";
 
 const autoApproveExecutor = new ToolExecutor(
-  { requestApproval: async () => true },
+  { requestApproval: async () => ({ approved: true, answerSource: "human" as const }) },
   { recordAudit: () => {} },
   {
     dispatch(): Promise<unknown> {

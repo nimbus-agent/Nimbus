@@ -248,6 +248,8 @@ export function createIpcClient(): NimbusIpcClient {
       await this.call<unknown>("consent.respond", {
         requestId,
         approved,
+        // SA1: the desktop popup is a person answering (spec 6.1).
+        answerSource: "human",
         ...(typed === undefined ? {} : { typed }),
       });
       await invoke("hitl_resolved", { requestId, approved });

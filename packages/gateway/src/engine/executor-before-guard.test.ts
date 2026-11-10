@@ -71,7 +71,7 @@ interface Recorded {
 function harness(opts: {
   readReply?: unknown;
   withRunner?: boolean;
-  consent?: ConsentChannel["requestApproval"];
+  consent?: (prompt: string, details?: Record<string, unknown>, type?: string) => Promise<boolean>;
   rows?: readonly ConnectorWriteRow[];
 }) {
   db = new Database(":memory:");
@@ -81,7 +81,10 @@ function harness(opts: {
   const consent: ConsentChannel = {
     requestApproval: async (prompt, details, type) => {
       rec.prompts.push(prompt);
-      return opts.consent === undefined ? true : opts.consent(prompt, details, type);
+      return {
+        approved: opts.consent === undefined ? true : await opts.consent(prompt, details, type),
+        answerSource: "human" as const,
+      };
     },
   };
   const audit: AuditSink = {

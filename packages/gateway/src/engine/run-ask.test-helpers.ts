@@ -35,10 +35,14 @@ const stubPaths: PlatformPaths = {
 // throw — which is exactly what an `async` body's `throw` surfaced to its caller.
 
 const stubConsent: ConsentCoordinator = {
-  requestConsent(): Promise<boolean> {
-    return Promise.resolve(false);
+  requestConsent(): Promise<{ approved: boolean; answerSource: "human" }> {
+    return Promise.resolve({ approved: false, answerSource: "human" as const });
   },
-  requestConfirmedConsent: async () => ({ approved: false, typed: "" }),
+  requestConfirmedConsent: async () => ({
+    approved: false,
+    typed: "",
+    answerSource: "human" as const,
+  }),
   rejectAllPending(): void {},
   pendingCount(): number {
     return 0;

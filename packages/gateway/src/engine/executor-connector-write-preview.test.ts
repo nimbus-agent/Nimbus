@@ -16,7 +16,7 @@ function harness(approve: boolean, credentialFor?: PreviewCredentialResolver) {
     requestApproval: async (prompt: string, d?: Record<string, unknown>) => {
       prompts.push(prompt);
       details.push(d);
-      return approve;
+      return { approved: approve, answerSource: "human" as const };
     },
   };
   const audit: AuditSink = {

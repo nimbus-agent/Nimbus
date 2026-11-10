@@ -281,7 +281,7 @@ function harness(
   const seenByModel: string[] = [];
 
   const consentCoordinator: ConsentCoordinator = {
-    async requestConsent(clientId, req): Promise<boolean> {
+    async requestConsent(clientId, req): Promise<{ approved: boolean; answerSource: "human" }> {
       consents.push({
         clientId,
         prompt: req.prompt,
@@ -289,9 +289,16 @@ function harness(
         actionType: req.actionType,
       });
       // The owner approves the user-MCP READ the tool-reply fixture needs; the write is the test's.
-      return req.actionType === writeType ? ownerAnswer : true;
+      return {
+        approved: req.actionType === writeType ? ownerAnswer : true,
+        answerSource: "human" as const,
+      };
     },
-    requestConfirmedConsent: async () => ({ approved: false, typed: "" }),
+    requestConfirmedConsent: async () => ({
+      approved: false,
+      typed: "",
+      answerSource: "human" as const,
+    }),
     rejectAllPending(): void {},
     pendingCount(): number {
       return 0;

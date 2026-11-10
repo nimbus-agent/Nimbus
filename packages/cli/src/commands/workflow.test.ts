@@ -357,6 +357,7 @@ describe("runWorkflowCli (dispatcher)", () => {
     expect(ipc.calls.find((c) => c.method === "consent.respond")?.params).toEqual({
       requestId: "req-1",
       approved: true,
+      answerSource: "human",
     });
 
     releaseRun();

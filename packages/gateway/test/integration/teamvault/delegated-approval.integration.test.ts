@@ -87,7 +87,7 @@ test("a delegated HITL approval is recorded in BOTH the owner's and the delegate
     const consent: ConsentChannel = {
       requestApproval: async () => {
         localPrompted += 1;
-        return true;
+        return { approved: true, answerSource: "human" as const };
       },
     };
     const requestRemote = buildDelegatedRequestRemote({

@@ -164,7 +164,7 @@ for (const target of ["notion", "confluence"] as const) {
     const listedKey = `${target}_${target}_kb_append`;
     const ran: Array<{ key: string; input: unknown }> = [];
     const executor = new ToolExecutor(
-      { requestApproval: async () => true },
+      { requestApproval: async () => ({ approved: true, answerSource: "human" as const }) },
       { recordAudit: () => {} },
       createConnectorDispatcher({
         async listTools() {

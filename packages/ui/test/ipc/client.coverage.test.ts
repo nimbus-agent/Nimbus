@@ -272,7 +272,13 @@ describe("consentRespond", () => {
     invokeMock.mockResolvedValue(undefined);
     await createIpcClient().consentRespond("req-1", true);
     expect(invokeMock.mock.calls).toEqual([
-      ["rpc_call", { method: "consent.respond", params: { requestId: "req-1", approved: true } }],
+      [
+        "rpc_call",
+        {
+          method: "consent.respond",
+          params: { requestId: "req-1", approved: true, answerSource: "human" },
+        },
+      ],
       ["hitl_resolved", { requestId: "req-1", approved: true }],
     ]);
   });

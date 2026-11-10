@@ -14,7 +14,9 @@ import { buildActDeps } from "../../../src/ipc/capture-rpc.ts";
 import type { ConsentCoordinator } from "../../../src/ipc/consent.ts";
 
 const PROV = { captureId: "cap_1", clientLabel: null, createdAt: 0, expiresAt: 1, summary: "s" };
-const approve = { requestConsent: () => Promise.resolve(true) } as unknown as ConsentCoordinator;
+const approve = {
+  requestConsent: () => Promise.resolve({ approved: true, answerSource: "human" }),
+} as unknown as ConsentCoordinator;
 
 function meshTools(calls: Array<[string, unknown]>) {
   const tool = (key: string) => ({

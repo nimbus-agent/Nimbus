@@ -257,15 +257,23 @@ function buildMocks(approve: boolean): {
   const dispatchCalls: PlannedAction[] = [];
 
   const consent: ConsentChannel = {
-    requestApproval(prompt: string): Promise<boolean> {
+    requestApproval(prompt: string): Promise<{ approved: boolean; answerSource: "human" }> {
       consentCalls.push(prompt);
-      return Promise.resolve(approve);
+      return Promise.resolve({ approved: approve, answerSource: "human" });
     },
     // A Wave 4 write (Phase 9.7 D0a) is asked through this method: the fake owner types the
     // confirm text exactly when approving, so the gate fires once either way.
-    requestConfirmedApproval(req): Promise<{ approved: boolean; typed: string }> {
+    requestConfirmedApproval(req): Promise<{
+      approved: boolean;
+      typed: string;
+      answerSource: "human";
+    }> {
       consentCalls.push(req.prompt);
-      return Promise.resolve({ approved: approve, typed: approve ? req.confirmText : "" });
+      return Promise.resolve({
+        approved: approve,
+        typed: approve ? req.confirmText : "",
+        answerSource: "human",
+      });
     },
   };
 

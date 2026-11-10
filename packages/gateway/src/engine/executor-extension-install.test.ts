@@ -30,7 +30,7 @@ function capture(): {
       requestApproval: async (prompt: string, d?: Record<string, unknown>) => {
         prompts.push(prompt);
         details.push(d);
-        return false;
+        return { approved: false, answerSource: "human" as const };
       },
     },
     { recordAudit: (row: { actionJson: string }) => auditJson.push(row.actionJson) },

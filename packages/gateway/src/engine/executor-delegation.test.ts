@@ -29,7 +29,7 @@ describe("executor gate — delegation branch", () => {
     const consent = {
       requestApproval: async () => {
         localPrompted = true;
-        return false;
+        return { approved: false, answerSource: "human" as const };
       },
     };
     const remote = async (): Promise<RemoteApprovalOutcome> => ({
@@ -67,7 +67,7 @@ describe("executor gate — delegation branch", () => {
     const consent = {
       requestApproval: async () => {
         localPrompted = true;
-        return true;
+        return { approved: true, answerSource: "human" as const };
       },
     };
     const exec = new ToolExecutor(
@@ -93,7 +93,7 @@ describe("executor gate — delegation branch", () => {
     const consent = {
       requestApproval: async () => {
         localPrompted = true;
-        return true;
+        return { approved: true, answerSource: "human" as const };
       },
     };
     const exec = new ToolExecutor(
@@ -129,7 +129,7 @@ describe("executor gate — delegation branch", () => {
     const consent = {
       requestApproval: async () => {
         localPrompted = true;
-        return true; // would approve — must be bypassed by the delegate's deny
+        return { approved: true, answerSource: "human" as const }; // would approve — must be bypassed by the delegate's deny
       },
     };
     const remote = async (): Promise<RemoteApprovalOutcome> => ({
@@ -161,7 +161,7 @@ describe("executor gate — delegation branch", () => {
     const consent = {
       requestApproval: async () => {
         localPrompted = true;
-        return true;
+        return { approved: true, answerSource: "human" as const };
       },
     };
     const exec = new ToolExecutor(consent, audit, connectors, undefined, NULL_EGRESS_SINK);
@@ -188,7 +188,7 @@ describe("executor gate — connector.writes.enable is never delegated (I20)", (
       {
         requestApproval: async () => {
           localPrompted += 1;
-          return false;
+          return { approved: false, answerSource: "human" as const };
         },
       },
       audit,

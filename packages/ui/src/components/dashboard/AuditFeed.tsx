@@ -12,6 +12,7 @@ function formatTime(ms: number): string {
 function outcomeColour(o: AuditEntry["hitlStatus"]): string {
   switch (o) {
     case "approved":
+    case "standing_approved":
       return "text-[var(--color-ok)]";
     case "rejected":
       return "text-[var(--color-error)]";

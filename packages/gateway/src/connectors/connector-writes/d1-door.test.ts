@@ -124,11 +124,17 @@ describe("D1 through the real door", () => {
     const consent: ConsentChannel = {
       requestApproval: async (prompt) => {
         plain.push(prompt);
-        return true;
+        return { approved: true, answerSource: "human" as const };
       },
       requestConfirmedApproval: async (req) => {
         confirmed.push(req);
-        return opts.answer?.(req) ?? { approved: true, typed: req.confirmText };
+        return (
+          opts.answer?.(req) ?? {
+            approved: true,
+            typed: req.confirmText,
+            answerSource: "human" as const,
+          }
+        );
       },
     };
     const exec = new ToolExecutor(
@@ -311,7 +317,11 @@ describe("D1 through the real door", () => {
 
     const mismatch = await door({
       readReply: reply,
-      answer: () => ({ approved: true, typed: "jenkins/trigger other" }),
+      answer: () => ({
+        approved: true,
+        typed: "jenkins/trigger other",
+        answerSource: "human" as const,
+      }),
     });
     expect(
       await mismatch.call("jenkins__jenkins_build_trigger", { jobName: "deploy-prod" }),
@@ -322,7 +332,7 @@ describe("D1 through the real door", () => {
 
     const denied = await door({
       readReply: reply,
-      answer: () => ({ approved: false, typed: "" }),
+      answer: () => ({ approved: false, typed: "", answerSource: "human" as const }),
     });
     expect(await denied.call("jenkins__jenkins_build_trigger", { jobName: "deploy-prod" })).toEqual(
       {

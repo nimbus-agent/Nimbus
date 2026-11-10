@@ -102,13 +102,17 @@ function harness(o: Opts = {}) {
       requestApproval: async (prompt: string) => {
         prompts.push(prompt);
         log.push("prompt");
-        return o.approve ?? true;
+        return { approved: o.approve ?? true, answerSource: "human" as const };
       },
       requestConfirmedApproval: async (req: ConfirmedApprovalRequest) => {
         confirmed.push(req);
         prompts.push(req.prompt);
         log.push("prompt:confirmed");
-        return { approved: o.approve ?? true, typed: o.typed ?? ROWS[which].confirm };
+        return {
+          approved: o.approve ?? true,
+          typed: o.typed ?? ROWS[which].confirm,
+          answerSource: "human" as const,
+        };
       },
     },
     {
@@ -423,7 +427,7 @@ for (const which of ["github", "gitlab"] as const) {
         {
           requestApproval: async () => {
             plainAsked += 1;
-            return true;
+            return { approved: true, answerSource: "human" as const };
           },
         },
         { recordAudit: (e) => audits.push({ actionType: e.actionType, actionJson: e.actionJson }) },

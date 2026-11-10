@@ -86,7 +86,7 @@ export type SearchRankOptions = {
 export type AuditEntry = {
   id: number;
   actionType: string;
-  hitlStatus: "approved" | "rejected" | "not_required";
+  hitlStatus: "approved" | "rejected" | "not_required" | "standing_approved";
   actionJson: string;
   timestamp: number;
 };
@@ -113,7 +113,12 @@ type AuditLogRow = {
  */
 function auditEntryFromRow(r: AuditLogRow): AuditEntry {
   const status = r.hitl_status;
-  if (status !== "approved" && status !== "rejected" && status !== "not_required") {
+  if (
+    status !== "approved" &&
+    status !== "rejected" &&
+    status !== "not_required" &&
+    status !== "standing_approved"
+  ) {
     throw new Error("Corrupt audit_log row: invalid hitl_status");
   }
   return {
@@ -281,7 +286,7 @@ export interface LanPeerRow {
   last_seen_at: string | null;
 }
 
-export const CURRENT_SCHEMA_VERSION = 86;
+export const CURRENT_SCHEMA_VERSION = 87;
 
 // `role_pack_card_dismissed`: the desktop's "Try a role pack" card, set once when an upgraded user
 // dismisses it so it never returns (role packs P5).

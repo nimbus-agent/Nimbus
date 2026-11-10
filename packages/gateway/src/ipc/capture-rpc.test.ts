@@ -230,7 +230,7 @@ describe("buildActDeps (act door)", () => {
     const coord = {
       requestConsent: (_c: string, req: { prompt: string; details?: unknown }) => {
         prompts.push({ prompt: req.prompt, details: req.details });
-        return Promise.resolve(approve);
+        return Promise.resolve({ approved: approve, answerSource: "human" as const });
       },
     } as unknown as ConsentCoordinator;
     const w: CaptureActWiring = {
@@ -325,7 +325,7 @@ describe("buildActDeps: the typed preview for a templated proposable row (F5)", 
     const coord = {
       requestConsent: (_c: string, req: { prompt: string; details?: Record<string, unknown> }) => {
         prompts.push({ prompt: req.prompt, details: req.details ?? {} });
-        return Promise.resolve(true);
+        return Promise.resolve({ approved: true, answerSource: "human" as const });
       },
     } as unknown as ConsentCoordinator;
     const w: CaptureActWiring = {
@@ -390,7 +390,7 @@ describe("buildActDeps: the typed preview for a templated proposable row (F5)", 
     const coord = {
       requestConsent: (_c: string, req: { prompt: string }) => {
         prompts.push(req.prompt);
-        return Promise.resolve(true);
+        return Promise.resolve({ approved: true, answerSource: "human" as const });
       },
     } as unknown as ConsentCoordinator;
     const act = buildActDeps(
@@ -433,7 +433,7 @@ describe("buildActDeps: the typed preview for a templated proposable row (F5)", 
       const coord = {
         requestConsent: (_c: string, req: { prompt: string }) => {
           prompts.push(req.prompt);
-          return Promise.resolve(true);
+          return Promise.resolve({ approved: true, answerSource: "human" as const });
         },
       } as unknown as ConsentCoordinator;
       const act = buildActDeps(
@@ -572,7 +572,7 @@ describe("captures.accept on an action (act door wiring)", () => {
     const consent = {
       requestConsent: (clientId: string) => {
         asked.push(clientId);
-        return Promise.resolve(true);
+        return Promise.resolve({ approved: true, answerSource: "human" as const });
       },
     } as unknown as ConsentCoordinator;
     const out = await dispatchCaptureRpc(
@@ -655,7 +655,7 @@ describe("B1 act door: every proposable B1 type shows its typed preview (Task 4)
     const coord = {
       requestConsent: (_c: string, req: { prompt: string; details?: Record<string, unknown> }) => {
         prompts.push({ prompt: req.prompt, details: req.details ?? {} });
-        return Promise.resolve(true);
+        return Promise.resolve({ approved: true, answerSource: "human" as const });
       },
     } as unknown as ConsentCoordinator;
     const w: CaptureActWiring = {
@@ -840,7 +840,7 @@ describe("B1 act door: the destination refusal, real messagingDestinationRefusal
     const id = (sub.value as { id: string }).id;
     policy = boundPolicy(["C0123ABCD"]);
     const consent = {
-      requestConsent: () => Promise.resolve(true),
+      requestConsent: () => Promise.resolve({ approved: true, answerSource: "human" as const }),
     } as unknown as ConsentCoordinator;
     let rpcData: unknown;
     try {
@@ -938,7 +938,7 @@ describe("B1 act door: the destination refusal, real messagingDestinationRefusal
       expiresAt: now + 3_600_000,
     });
     const consent = {
-      requestConsent: () => Promise.resolve(true),
+      requestConsent: () => Promise.resolve({ approved: true, answerSource: "human" as const }),
     } as unknown as ConsentCoordinator;
     let rpcData: unknown;
     try {
@@ -1019,7 +1019,7 @@ describe("B2 act door: every proposable issue write shows its typed preview, wit
     const coord = {
       requestConsent: (_c: string, req: { prompt: string; details?: Record<string, unknown> }) => {
         prompts.push({ prompt: req.prompt, details: req.details ?? {} });
-        return Promise.resolve(true);
+        return Promise.resolve({ approved: true, answerSource: "human" as const });
       },
     } as unknown as ConsentCoordinator;
     const w: CaptureActWiring = {
@@ -1106,7 +1106,7 @@ describe("B3 act door: every draft and page write shows its typed preview, with 
     const coord = {
       requestConsent: (_c: string, req: { prompt: string; details?: Record<string, unknown> }) => {
         prompts.push({ prompt: req.prompt, details: req.details ?? {} });
-        return Promise.resolve(true);
+        return Promise.resolve({ approved: true, answerSource: "human" as const });
       },
     } as unknown as ConsentCoordinator;
     const w: CaptureActWiring = {
@@ -1206,7 +1206,7 @@ describe("B4a act door: the calendar and Drive creates show their typed preview,
     const coord = {
       requestConsent: (_c: string, req: { prompt: string; details?: Record<string, unknown> }) => {
         prompts.push({ prompt: req.prompt, details: req.details ?? {} });
-        return Promise.resolve(true);
+        return Promise.resolve({ approved: true, answerSource: "human" as const });
       },
     } as unknown as ConsentCoordinator;
     const w: CaptureActWiring = {
@@ -1414,7 +1414,7 @@ describe("B2 act door: actDoorRefusal at submit and at accept (OR-B2-2, OR-B2-3)
       const d: PlannedAction[] = [];
       const strict = actCtx(d);
       const consent = {
-        requestConsent: () => Promise.resolve(true),
+        requestConsent: () => Promise.resolve({ approved: true, answerSource: "human" as const }),
       } as unknown as ConsentCoordinator;
       expect(
         await outcome(dispatchCaptureRpc("captures.accept", { id }, strict, OWNER, consent)),
@@ -1610,7 +1610,7 @@ describe("B3 act door: the KB-target and KB-child refusals at submit and at acce
     const id = (sub.value as { id: string }).id;
     kbAccessor = () => ({ confluence: KB.confluence });
     const consent = {
-      requestConsent: () => Promise.resolve(true),
+      requestConsent: () => Promise.resolve({ approved: true, answerSource: "human" as const }),
     } as unknown as ConsentCoordinator;
     expect(await outcome(dispatchCaptureRpc("captures.accept", { id }, c, OWNER, consent))).toEqual(
       REFUSED,
@@ -1628,7 +1628,7 @@ describe("B3 act door: the KB-target and KB-child refusals at submit and at acce
     const id = (sub.value as { id: string }).id;
     kbAccessor = () => ({ confluence: KB.confluence });
     const consent = {
-      requestConsent: () => Promise.resolve(true),
+      requestConsent: () => Promise.resolve({ approved: true, answerSource: "human" as const }),
     } as unknown as ConsentCoordinator;
     expect(await outcome(dispatchCaptureRpc("captures.accept", { id }, c, OWNER, consent))).toEqual(
       REFUSED,
@@ -1645,7 +1645,7 @@ describe("B3 act door: the KB-target and KB-child refusals at submit and at acce
     if (sub.kind !== "hit") throw new Error("submit missed");
     const id = (sub.value as { id: string }).id;
     const consent = {
-      requestConsent: () => Promise.resolve(true),
+      requestConsent: () => Promise.resolve({ approved: true, answerSource: "human" as const }),
     } as unknown as ConsentCoordinator;
     await dispatchCaptureRpc("captures.accept", { id }, c, OWNER, consent);
     expect(d.map((a) => a.type)).toEqual(["confluence.page.update"]);
@@ -1835,7 +1835,7 @@ describe("B3r act door: remote content is refused at submit and at accept", () =
       const d: PlannedAction[] = [];
       const strict = actCtx(d);
       const consent = {
-        requestConsent: () => Promise.resolve(true),
+        requestConsent: () => Promise.resolve({ approved: true, answerSource: "human" as const }),
       } as unknown as ConsentCoordinator;
       expect(
         await outcome(dispatchCaptureRpc("captures.accept", { id }, strict, OWNER, consent)),
@@ -1857,7 +1857,7 @@ describe("B3r act door: remote content is refused at submit and at accept", () =
     if (sub.kind !== "hit") throw new Error("submit missed");
     const id = (sub.value as { id: string }).id;
     const consent = {
-      requestConsent: () => Promise.resolve(true),
+      requestConsent: () => Promise.resolve({ approved: true, answerSource: "human" as const }),
     } as unknown as ConsentCoordinator;
     await dispatchCaptureRpc("captures.accept", { id }, c, OWNER, consent);
     expect(d.map((a) => a.type)).toEqual(["confluence.comment.add"]);
@@ -1887,7 +1887,7 @@ describe("B3r act door: remote content is refused at submit and at accept", () =
       ({
         requestConsent: (_c: string, req: { prompt: string }) => {
           prompts.push(req.prompt);
-          return Promise.resolve(true);
+          return Promise.resolve({ approved: true, answerSource: "human" as const });
         },
       }) as unknown as ConsentCoordinator;
 
@@ -2033,10 +2033,10 @@ describe("provenanceConsent: type-to-confirm on the act door (Phase 9.7 D0a)", (
   test("a Wave 4 write is approved only by typed text, with the provenance prompt plus the fixed line", async () => {
     const seen: ConfirmedApprovalRequest[] = [];
     const inner: ConsentChannel = {
-      requestApproval: async () => true,
+      requestApproval: async () => ({ approved: true, answerSource: "human" as const }),
       requestConfirmedApproval: async (req) => {
         seen.push(req);
-        return { approved: true, typed: TEXT };
+        return { approved: true, typed: TEXT, answerSource: "human" as const };
       },
     };
     const d: PlannedAction[] = [];
@@ -2050,8 +2050,12 @@ describe("provenanceConsent: type-to-confirm on the act door (Phase 9.7 D0a)", (
 
   test("wrong text is declined, nothing dispatched", async () => {
     const inner: ConsentChannel = {
-      requestApproval: async () => true,
-      requestConfirmedApproval: async () => ({ approved: true, typed: "github/acme/api#43" }),
+      requestApproval: async () => ({ approved: true, answerSource: "human" as const }),
+      requestConfirmedApproval: async () => ({
+        approved: true,
+        typed: "github/acme/api#43",
+        answerSource: "human" as const,
+      }),
     };
     const d: PlannedAction[] = [];
     expect((await executorOver(inner, d).execute(MERGE)).status).toBe("rejected");
@@ -2063,7 +2067,7 @@ describe("provenanceConsent: type-to-confirm on the act door (Phase 9.7 D0a)", (
     const inner: ConsentChannel = {
       requestApproval: async (p) => {
         asked.push(p);
-        return true;
+        return { approved: true, answerSource: "human" as const };
       },
     };
     const channel = provenanceConsent(inner, "p", {});
@@ -2079,7 +2083,7 @@ describe("provenanceConsent: type-to-confirm on the act door (Phase 9.7 D0a)", (
     const inner: ConsentChannel = {
       requestApproval: async (prompt, _d, actionType) => {
         asked.push({ prompt, actionType });
-        return true;
+        return { approved: true, answerSource: "human" as const };
       },
       requestConfirmedApproval: async () => {
         throw new Error("must not be called");

@@ -52,6 +52,7 @@ export function registerConsentPromptHandler(
         requestId: p.requestId,
         approved: typed !== "",
         typed,
+        answerSource: "human",
       });
       return;
     }
@@ -60,6 +61,7 @@ export function registerConsentPromptHandler(
     await client.call("consent.respond", {
       requestId: p.requestId,
       approved,
+      answerSource: "human",
     });
   });
 }
@@ -83,7 +85,11 @@ export function registerAutoApproveConsentHandler(client: IPCClient, sourceLabel
     }
     if (confirmTextOf(p) !== undefined) {
       process.stderr.write(CONFIRM_TEXT_DENIED_LINE);
-      await client.call("consent.respond", { requestId: p.requestId, approved: false });
+      await client.call("consent.respond", {
+        requestId: p.requestId,
+        approved: false,
+        answerSource: "auto",
+      });
       return;
     }
     const detail = typeof p.prompt === "string" && p.prompt.length > 0 ? p.prompt : p.requestId;
@@ -91,6 +97,7 @@ export function registerAutoApproveConsentHandler(client: IPCClient, sourceLabel
     await client.call("consent.respond", {
       requestId: p.requestId,
       approved: true,
+      answerSource: "auto",
     });
   });
 }
@@ -147,7 +154,11 @@ export function registerScriptConsentHandler(client: IPCClient, source: string):
     if (confirmTextOf(p) !== undefined) {
       // Denied without consuming a scripted decision: a script line cannot carry typed text.
       process.stderr.write(CONFIRM_TEXT_DENIED_LINE);
-      await client.call("consent.respond", { requestId: p.requestId, approved: false });
+      await client.call("consent.respond", {
+        requestId: p.requestId,
+        approved: false,
+        answerSource: "script",
+      });
       return;
     }
     if (cursor >= decisions.length) {
@@ -171,6 +182,7 @@ export function registerScriptConsentHandler(client: IPCClient, source: string):
     await client.call("consent.respond", {
       requestId: p.requestId,
       approved: decision.approved,
+      answerSource: "script",
     });
   });
 }
