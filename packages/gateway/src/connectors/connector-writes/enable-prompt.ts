@@ -194,6 +194,29 @@ function iacScopeLines(scope: unknown): string[] | undefined {
   return lines;
 }
 
+/**
+ * The service's own scope block: the Obsidian file grant (only when the append is offered), the
+ * iac directories and clouds, or the Kubernetes pairs. Null when the service has none; undefined
+ * when its scope is malformed (the whole prompt is then refused).
+ */
+function serviceScopeLines(
+  service: string,
+  payload: Record<string, unknown> | undefined,
+  writes: readonly unknown[],
+): string[] | null | undefined {
+  if (service === "obsidian") {
+    const appendOffered = writes.some(
+      (w) =>
+        (w as { toolId?: unknown }).toolId === OBSIDIAN_APPEND_TOOL_ID &&
+        (w as { offerable?: unknown }).offerable === true,
+    );
+    return appendOffered ? obsidianScopeLines(payload?.["fileWriteScope"]) : null;
+  }
+  if (service === "iac") return iacScopeLines(payload?.["iacGrants"]);
+  if (service === "kubernetes") return k8sScopeLines(payload?.["k8sGrants"]);
+  return null;
+}
+
 /** One line per write, then the fixed sentence; undefined when the payload is malformed. */
 export function enableWritesPromptLines(
   payload: Record<string, unknown> | undefined,
@@ -227,26 +250,9 @@ export function enableWritesPromptLines(
       `  ${sanitisePreviewText(r.toolId)}  ${sanitisePreviewText(r.actionType)}  wave ${r.wave}  ${marker}`,
     );
   }
-  const appendOffered = (writes as unknown[]).some(
-    (w) =>
-      (w as { toolId?: unknown }).toolId === OBSIDIAN_APPEND_TOOL_ID &&
-      (w as { offerable?: unknown }).offerable === true,
-  );
-  if (service === "obsidian" && appendOffered) {
-    const scopeLines = obsidianScopeLines(payload?.["fileWriteScope"]);
-    if (scopeLines === undefined) return undefined;
-    lines.push("", ...scopeLines);
-  }
-  if (service === "iac") {
-    const scopeLines = iacScopeLines(payload?.["iacGrants"]);
-    if (scopeLines === undefined) return undefined;
-    lines.push("", ...scopeLines);
-  }
-  if (service === "kubernetes") {
-    const scopeLines = k8sScopeLines(payload?.["k8sGrants"]);
-    if (scopeLines === undefined) return undefined;
-    lines.push("", ...scopeLines);
-  }
+  const scope = serviceScopeLines(service, payload, writes as unknown[]);
+  if (scope === undefined) return undefined;
+  if (scope !== null) lines.push("", ...scope);
   lines.push("", "Each call will still ask you before it runs.");
   return lines;
 }

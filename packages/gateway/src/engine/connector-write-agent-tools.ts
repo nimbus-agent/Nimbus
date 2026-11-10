@@ -230,17 +230,35 @@ function iacDescriptionSentence(
   }
   const head =
     " Applies the Terraform plan Nimbus makes for one working directory, after the owner has seen every change. workingDirectory must be exactly one of:";
+  return cappedListSentence(
+    head,
+    workdirs.map((dir) => ` ${sanitisePreviewText(dir)};`),
+    room,
+  );
+}
+
+/**
+ * `head` followed by as many of `pieces` as fit in `room` characters (room is kept for the count of
+ * those left out, which follows them).
+ */
+function cappedListSentence(head: string, pieces: readonly string[], room: number): string {
   const shown: string[] = [];
   let used = head.length + " (and 999 more).".length;
-  for (const dir of workdirs) {
-    const piece = ` ${sanitisePreviewText(dir)};`;
+  for (const piece of pieces) {
     if (used + piece.length > room) break;
     shown.push(piece);
     used += piece.length;
   }
-  const left = workdirs.length - shown.length;
+  const left = pieces.length - shown.length;
   const more = left > 0 ? ` (and ${String(left)} more).` : "";
   return `${head}${shown.join("")}${more}`;
+}
+
+/** Each approved Kubernetes pair as one list piece (context/namespace). */
+function k8sPairPieces(pairs: readonly K8sPair[]): string[] {
+  return pairs.map(
+    (pair) => ` ${sanitisePreviewText(pair.context)}/${sanitisePreviewText(pair.namespace)};`,
+  );
 }
 
 /** One approved Kubernetes pair, as the description lists it. */
@@ -254,31 +272,13 @@ type K8sPair = { readonly context: string; readonly namespace: string };
 function k8sDescriptionSentence(pairs: readonly K8sPair[], room: number): string {
   const head =
     " Applies a Kubernetes manifest (at most 48 KiB, namespaced kinds only) that Nimbus plans and pins; the owner reviews every object and the diff. Secrets, RBAC objects and privileged or host-access pod settings are refused. context and namespace must be exactly one of (context/namespace):";
-  const shown: string[] = [];
-  let used = head.length + " (and 999 more).".length;
-  for (const pair of pairs) {
-    const piece = ` ${sanitisePreviewText(pair.context)}/${sanitisePreviewText(pair.namespace)};`;
-    if (used + piece.length > room) break;
-    shown.push(piece);
-    used += piece.length;
-  }
-  const left = pairs.length - shown.length;
-  return `${head}${shown.join("")}${left > 0 ? ` (and ${String(left)} more).` : ""}`;
+  return cappedListSentence(head, k8sPairPieces(pairs), room);
 }
 
 /** The approved Kubernetes pairs as one short sentence (at most 300 characters; the rest are counted). */
 function k8sPairsSentence(pairs: readonly K8sPair[]): string {
   const head = " context and namespace must be one of (context/namespace):";
-  const shown: string[] = [];
-  let used = head.length + " (and 999 more).".length;
-  for (const pair of pairs) {
-    const piece = ` ${sanitisePreviewText(pair.context)}/${sanitisePreviewText(pair.namespace)};`;
-    if (used + piece.length > 300) break;
-    shown.push(piece);
-    used += piece.length;
-  }
-  const left = pairs.length - shown.length;
-  return `${head}${shown.join("")}${left > 0 ? ` (and ${String(left)} more).` : ""}`;
+  return cappedListSentence(head, k8sPairPieces(pairs), 300);
 }
 
 function describeFor(

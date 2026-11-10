@@ -2,7 +2,7 @@
 // INSTALLED `@nimbus-dev/connectors` kubernetes connector (D3a, plan R3-7). Fakes cannot catch a
 // contract mismatch (the wire, not the ends): the kind table, the plan hash domain and the diff
 // hash domain are each pinned here against the connector's own code, not against a copy of it.
-import { describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -89,7 +89,7 @@ describe("the kind table against the connector's scanner, pair by pair", () => {
   });
 
   test("the gateway lists 18 kinds, the connector's resource prefixes equal the gateway's", () => {
-    expect(listed.length).toBe(18);
+    expect(listed).toHaveLength(18);
     expect(Object.keys(diffMod.RESOURCE_PREFIX).sort()).toEqual([...listed].sort());
     for (const kind of listed) {
       expect(K8S_KINDS[kind]?.prefix).toBe(diffMod.RESOURCE_PREFIX[kind]);
@@ -336,7 +336,7 @@ describe("the real handlers, in a child process", () => {
     }
   });
 
-  test("cleanup", () => {
+  afterAll(() => {
     rmSync(work, { recursive: true, force: true });
   });
 });

@@ -111,6 +111,33 @@ function takeIacValue(iac: IacScope, key: keyof IacScope, v: string | undefined)
   return true;
 }
 
+interface EnableFlags {
+  wave: 2 | 3 | 4 | undefined;
+  iac: IacScope;
+  grants: K8sGrantArg[];
+}
+
+/** Whether `a` is one of the `enable` flags that take a value. */
+function isEnableValueFlag(a: string): boolean {
+  return a === "--wave" || a === "--grant" || Object.hasOwn(IAC_FLAGS, a);
+}
+
+/** Takes one `enable` flag's value into `flags`; false when the value is missing or malformed. */
+function takeEnableFlag(flags: EnableFlags, a: string, v: string | undefined): boolean {
+  if (a === "--wave") {
+    if (v !== "2" && v !== "3" && v !== "4") return false;
+    flags.wave = Number(v) as 2 | 3 | 4;
+    return true;
+  }
+  if (a === "--grant") {
+    const g = parseGrantArg(v ?? "");
+    if (g === undefined) return false;
+    flags.grants.push(g);
+    return true;
+  }
+  return takeIacValue(flags.iac, IAC_FLAGS[a] as keyof IacScope, v);
+}
+
 function parseEnableArgs(tail: string[]): Parsed<{
   service: string;
   wave: 2 | 3 | 4 | undefined;
@@ -118,28 +145,22 @@ function parseEnableArgs(tail: string[]): Parsed<{
   grants: K8sGrantArg[];
 }> {
   let service: string | undefined;
-  let wave: 2 | 3 | 4 | undefined;
-  const iac: IacScope = { workdirs: [], clouds: [], regions: [], net: [] };
-  const grants: K8sGrantArg[] = [];
+  const flags: EnableFlags = {
+    wave: undefined,
+    iac: { workdirs: [], clouds: [], regions: [], net: [] },
+    grants: [],
+  };
   for (let i = 0; i < tail.length; i++) {
     const a = tail[i] as string;
-    const iacKey = IAC_FLAGS[a];
-    if (a === "--wave") {
-      const v = tail[++i];
-      if (v !== "2" && v !== "3" && v !== "4") return { ok: false };
-      wave = Number(v) as 2 | 3 | 4;
-    } else if (a === "--grant") {
-      const g = parseGrantArg(tail[++i] ?? "");
-      if (g === undefined) return { ok: false };
-      grants.push(g);
-    } else if (iacKey !== undefined) {
-      if (!takeIacValue(iac, iacKey, tail[++i])) return { ok: false };
+    if (isEnableValueFlag(a)) {
+      if (!takeEnableFlag(flags, a, tail[++i])) return { ok: false };
     } else if (a.startsWith("-") || service !== undefined) {
       return { ok: false };
     } else {
       service = a;
     }
   }
+  const { wave, iac, grants } = flags;
   const hasIac = Object.values(iac).some((l) => l.length > 0);
   // The scope flags belong to `iac` alone: any other service would silently ignore them.
   if (service === undefined || (hasIac && service !== "iac")) return { ok: false };

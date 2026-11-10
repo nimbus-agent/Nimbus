@@ -176,7 +176,7 @@ function valueRefused(raw: string): boolean {
   const v = raw.slice(skipSpaces(raw, 0));
   if (v === "" || v.startsWith("#")) return false;
   if (FORBIDDEN_START.includes(v[0] ?? "") || v.startsWith("<<")) return true;
-  if (v[0] === '"' || v[0] === "'") return quotedEnd(v) === -1;
+  if (v.startsWith('"') || v.startsWith("'")) return quotedEnd(v) === -1;
   return false;
 }
 
@@ -219,32 +219,45 @@ function lineRefusal(
   }
   if (valueRefused(value)) return { refused: true };
   const v = value.slice(skipSpaces(value, 0));
-  const isBlock = v[0] === "|" || v[0] === ">";
+  const isBlock = v.startsWith("|") || v.startsWith(">");
   return { refused: false, blockColumn: isBlock ? column : undefined };
 }
 
 /**
+ * Phase 1 of a line: what it is at column 0. A line starting with `---` must be exactly a document
+ * separator (else refused); `...` and `%` are refused; anything else is content.
+ */
+function documentMarker(line: string): "separator" | "refused" | "content" {
+  if (line.startsWith("---")) return DOC_SEPARATOR.test(line) ? "separator" : "refused";
+  if (line.startsWith("...") || line.startsWith("%")) return "refused";
+  return "content";
+}
+
+/** Phase 2 of a line: whether it is still the content of the open block scalar (and so skipped). */
+function insideBlockScalar(rest: string, indent: number, blockColumn: number | undefined): boolean {
+  return blockColumn !== undefined && (rest === "" || indent > blockColumn);
+}
+
+/**
  * The lexical pre-scan: true when the text holds a form the connector's scanner refuses and that
- * the gateway therefore never lets a parser interpret. Block scalar content is skipped (as the
- * connector's is); a line starting with `---` must be exactly a separator; `...` and `%` at
- * column 0 are refused.
+ * the gateway therefore never lets a parser interpret. Each line goes through three phases in
+ * order: its column-0 document marker (`documentMarker`), the block scalar skip (block content is
+ * skipped, as the connector's is: `insideBlockScalar`), and the scan of its content (`lineRefusal`).
  */
 function prescanRefuses(text: string): boolean {
   let blockColumn: number | undefined;
   for (const raw of text.split("\n")) {
     const line = raw.endsWith("\r") ? raw.slice(0, -1) : raw;
-    if (line.startsWith("---")) {
-      if (!DOC_SEPARATOR.test(line)) return true;
+    const marker = documentMarker(line);
+    if (marker === "refused") return true;
+    if (marker === "separator") {
       blockColumn = undefined;
       continue;
     }
-    if (line.startsWith("...") || line.startsWith("%")) return true;
     const indent = skipSpaces(line, 0);
     const rest = line.slice(indent);
-    if (blockColumn !== undefined) {
-      if (rest === "" || indent > blockColumn) continue;
-      blockColumn = undefined;
-    }
+    if (insideBlockScalar(rest, indent, blockColumn)) continue;
+    blockColumn = undefined;
     if (rest === "" || rest.startsWith("#")) continue;
     const scanned = lineRefusal(rest, indent);
     if (scanned.refused) return true;

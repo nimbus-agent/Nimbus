@@ -46,19 +46,23 @@ const cases = JSON.parse(process.env["K8S_PROBE_CASES"] ?? "[]") as {
   tool: string;
   args: unknown;
 }[];
+/** Prints one result as one JSON line. */
+function printLine(result: { ok: boolean; text?: string; message?: string }): void {
+  process.stdout.write(`${JSON.stringify(result)}\n`);
+}
+
+// One case at a time, in order: the parent reads the lines by position, and the handlers share the
+// process's environment.
 for (const c of cases) {
   const h = handlers.get(c.tool);
   if (h === undefined) {
-    process.stdout.write(`${JSON.stringify({ ok: false, message: `no such tool ${c.tool}` })}
-`);
+    printLine({ ok: false, message: `no such tool ${c.tool}` });
     continue;
   }
   try {
     const out = await h(c.args);
-    process.stdout.write(`${JSON.stringify({ ok: true, text: out.content?.[0]?.text ?? "" })}
-`);
+    printLine({ ok: true, text: out.content?.[0]?.text ?? "" });
   } catch (e) {
-    process.stdout.write(`${JSON.stringify({ ok: false, message: e instanceof Error ? e.message : String(e) })}
-`);
+    printLine({ ok: false, message: e instanceof Error ? e.message : String(e) });
   }
 }

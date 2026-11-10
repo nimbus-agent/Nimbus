@@ -13099,7 +13099,7 @@ describe("I54 — a bound connector write is dispatched only with the values its
     const settle = stripComments(await read("packages/gateway/src/engine/k8s-settle.ts"));
     expect(settle).toMatch(/const planSha256 = k8sPlanHash\(context, namespace, manifest\)/);
     expect(settle).toMatch(/const diffSha256 = k8sDiffHash\(diff\)/);
-    expect((settle.match(/sha256HexEqualConstantTime\(/g) ?? []).length).toBe(2);
+    expect(settle.match(/sha256HexEqualConstantTime\(/g) ?? []).toHaveLength(2);
     // A pod's manifest text is never in the audit: the kubernetes apply is a text-carrying type.
     const { carriesTemplateText } = await import("./engine/audit-bodies.ts");
     expect(carriesTemplateText("kubernetes.manifest.apply")).toBe(true);

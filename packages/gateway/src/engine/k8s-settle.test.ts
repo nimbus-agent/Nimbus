@@ -277,7 +277,7 @@ describe("settleK8sManifest: every cross-check refuses with a fixed text", () =>
 
   test("diff lines are escaped: nothing in a line can start another", () => {
     const planned = diffMod.unpackKubeJson({ kind: "List", items: [dep, cmPlanned] });
-    const evil = `--- live x\n+++ planned x\n+‮evil\u0007\n`;
+    const evil = `--- live x\n+++ planned x\n+\u202Eevil\u0007\n`;
     const out = settleK8sManifest({
       input: b.input,
       reply: {
@@ -288,7 +288,7 @@ describe("settleK8sManifest: every cross-check refuses with a fixed text", () =>
       },
     });
     const text = out.plan?.text ?? "";
-    expect(text).not.toContain("‮");
+    expect(text).not.toContain("\u202E");
     expect(text).not.toContain("\u0007");
   });
 });

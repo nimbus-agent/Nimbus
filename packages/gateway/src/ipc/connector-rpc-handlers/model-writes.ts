@@ -131,37 +131,57 @@ async function parseK8sGrants(
   maxWave: ConnectorWriteWave,
   deps: ModelWritesDeps,
 ): Promise<K8sGrant[]> {
-  const bad = (m: string): never => {
-    throw new ConnectorRpcError(-32602, `ERR_CONNECTOR_WRITES_K8S_BAD_ARGS: ${m}`);
-  };
   if (deps.readKubeconfigPath === undefined || deps.kubeFs === undefined) {
     throw new ConnectorRpcError(
       -32603,
       "ERR_CONNECTOR_WRITES_K8S_UNAVAILABLE: this gateway cannot read a kubeconfig",
     );
   }
-  if (maxWave !== 4) bad("kubernetes writes are wave 4: pass --wave 4");
+  // Phase 1: every pair is checked before the kubeconfig is read at all.
+  const pairs = validatedK8sPairs(rec, maxWave);
+  // Phase 2: every distinct context is read from the kubeconfig the Vault names.
+  return k8sGrantsFromKubeconfig(pairs, deps.kubeFs, await deps.readKubeconfigPath());
+}
+
+function k8sBadArgs(m: string): never {
+  throw new ConnectorRpcError(-32602, `ERR_CONNECTOR_WRITES_K8S_BAD_ARGS: ${m}`);
+}
+
+/** The distinct (context, namespace) pairs of the arguments, each checked; a fixed refusal otherwise. */
+function validatedK8sPairs(
+  rec: Record<string, unknown> | undefined,
+  maxWave: ConnectorWriteWave,
+): Map<string, { namespace: string; context: string }> {
+  if (maxWave !== 4) k8sBadArgs("kubernetes writes are wave 4: pass --wave 4");
   const raw = rec?.["k8sGrants"];
   if (!Array.isArray(raw) || raw.length === 0)
-    bad("name at least one --grant <namespace>@<context>");
+    k8sBadArgs("name at least one --grant <namespace>@<context>");
   const list = raw as unknown[];
-  if (list.length > MAX_K8S_GRANTS) bad("too many grants");
+  if (list.length > MAX_K8S_GRANTS) k8sBadArgs("too many grants");
   const pairs = new Map<string, { namespace: string; context: string }>();
   for (const entry of list) {
     const e = typeof entry === "object" && entry !== null ? (entry as Record<string, unknown>) : {};
     const { namespace, context } = e;
     if (!isDnsLabel(namespace) || !isPlainContext(context)) {
-      bad("a grant needs a namespace name and a context name that can be typed");
+      k8sBadArgs("a grant needs a namespace name and a context name that can be typed");
     }
     if (isProtectedNamespace(namespace as string)) {
-      bad("kube-system, kube-public and kube-node-lease cannot be approved");
+      k8sBadArgs("kube-system, kube-public and kube-node-lease cannot be approved");
     }
     pairs.set(JSON.stringify([context, namespace]), {
       namespace: namespace as string,
       context: context as string,
     });
   }
-  const path = await deps.readKubeconfigPath();
+  return pairs;
+}
+
+/** The grants to store, in a stable order: each pair with its context's server and credential form. */
+function k8sGrantsFromKubeconfig(
+  pairs: ReadonlyMap<string, { namespace: string; context: string }>,
+  kubeFs: KubeFs,
+  path: string | undefined,
+): K8sGrant[] {
   const facts = new Map<string, { server: string; credentialForm: K8sGrant["credentialForm"] }>();
   const grants: K8sGrant[] = [];
   for (const { namespace, context } of [...pairs.values()].sort(
@@ -169,7 +189,7 @@ async function parseK8sGrants(
   )) {
     let f = facts.get(context);
     if (f === undefined) {
-      const r = inspectKubeconfig(deps.kubeFs, path, context);
+      const r = inspectKubeconfig(kubeFs, path, context);
       if (!r.ok) {
         throw new ConnectorRpcError(-32602, `ERR_CONNECTOR_WRITES_K8S_KUBECONFIG: ${r.reason}`);
       }
