@@ -266,7 +266,14 @@ interface ClusterOut {
 function readCluster(fs: KubeFs, cluster: Obj): ClusterOut {
   onlyKeys(
     cluster,
-    ["server", "certificate-authority-data", "certificate-authority", "disable-compression"],
+    [
+      "server",
+      "certificate-authority-data",
+      "certificate-authority",
+      "disable-compression",
+      // OR-D3-13: provenance written by minikube and kind; kubectl ignores it and the copy drops it.
+      "extensions",
+    ],
     KUBECONFIG_REFUSALS.clusterKey,
   );
   const compression = own(cluster, "disable-compression");
@@ -358,7 +365,8 @@ function resolve(fs: KubeFs, path: string, contextName: string): Resolved {
     entriesNamed(doc, "contexts", "context", contextName),
     KUBECONFIG_REFUSALS.noContext,
   );
-  onlyKeys(ctx, ["cluster", "user", "namespace"], KUBECONFIG_REFUSALS.contextKey);
+  // `extensions` is accepted and dropped (OR-D3-13); the user entry still refuses it.
+  onlyKeys(ctx, ["cluster", "user", "namespace", "extensions"], KUBECONFIG_REFUSALS.contextKey);
   const clusterName = own(ctx, "cluster");
   const userName = own(ctx, "user");
   if (typeof clusterName !== "string" || typeof userName !== "string") {

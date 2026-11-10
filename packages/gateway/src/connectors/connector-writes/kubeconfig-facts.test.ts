@@ -131,6 +131,19 @@ describe("a token context", () => {
     expect(r.text).toContain('"server": "https://prod.example.com:6443"');
   });
 
+  test("cluster and context extensions are accepted and dropped from the copy (OR-D3-13)", () => {
+    const ext = "\n    extensions:\n    - name: minikube.sigs.k8s.io\n      extension: {a: b}";
+    const text = config({
+      cluster: `    server: https://prod.example.com:6443\n    certificate-authority-data: ${CA}${ext}`,
+      context: `    cluster: prod-cluster\n    user: prod-user${ext}`,
+    });
+    expect(inspect(text)).toMatchObject({ ok: true, server: "prod.example.com:6443" });
+    const r = build(text);
+    if (!r.ok) throw new Error(r.reason);
+    expect(r.text).not.toContain("minikube");
+    expect(r.text).not.toContain("extensions");
+  });
+
   test("a token file is read and inlined as a token", () => {
     const r = build(config({ user: "    tokenFile: /secrets/tok" }), {
       "/secrets/tok": "file-token\n",
@@ -215,21 +228,6 @@ describe("refused forms (fixed texts, nothing echoed)", () => {
       "tls-server-name",
       { cluster: `    server: https://prod.example.com\n    tls-server-name: evil` },
       R.clusterKey,
-    ],
-    [
-      "a cluster extension",
-      {
-        cluster: `    server: https://prod.example.com\n    extensions:\n    - name: x\n      extension: {}`,
-      },
-      R.clusterKey,
-    ],
-    [
-      "a context extension",
-      {
-        context:
-          "    cluster: prod-cluster\n    user: prod-user\n    extensions:\n    - name: x\n      extension: {}",
-      },
-      R.contextKey,
     ],
     ["an http server", { cluster: "    server: http://prod.example.com" }, R.badServer],
     ["an IPv6 server", { cluster: "    server: https://[::1]:6443" }, R.badServer],
