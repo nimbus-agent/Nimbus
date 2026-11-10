@@ -176,14 +176,18 @@ export const DEFAULT_TOOL_TIMEOUT_MS = 60_000;
  * outlives the generic 60 s), otherwise the default. It is the runner's budget PLUS its escalation
  * grace and a margin ({@link iacDispatchTimeoutMs}), so the runner settles first and its message
  * reaches the caller. Matched on the resolved mesh key itself, never on the payload, and only for
- * the `iac` server.
+ * the `iac` and `kubernetes` servers.
  */
 export function iacToolTimeoutMs(
   resolvedKey: string,
   timing?: IacDispatchTiming,
 ): number | undefined {
   for (const id of Object.keys(timing?.budgetsMs ?? IAC_TOOL_TIMEOUTS_MS)) {
-    if (resolvedKey === id || resolvedKey === mcpClientToolKey("iac", id)) {
+    if (
+      resolvedKey === id ||
+      resolvedKey === mcpClientToolKey("iac", id) ||
+      resolvedKey === mcpClientToolKey("kubernetes", id)
+    ) {
       return iacDispatchTimeoutMs(id, timing);
     }
   }

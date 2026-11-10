@@ -1118,7 +1118,7 @@ describe("a child a previous gateway left (review item 7, boot sweep)", () => {
       swept.push(p);
     };
     await dead.r.preflight("iac_cloudformation_deploy", {});
-    expect(swept).toHaveLength(4);
+    expect(swept).toHaveLength(5); // staging, approved, scratch, cwd and (D3a) kube
     writeFileSync(live(), "not json");
     const bad = runner("answer");
     const kept: string[] = [];
