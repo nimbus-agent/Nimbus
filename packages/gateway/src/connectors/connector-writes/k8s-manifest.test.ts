@@ -390,6 +390,27 @@ describe("k8sModelRefusal", () => {
       `  securityContext:\n    sysctls:\n      - name: net.core.somaxconn\n        value: '1'\n${CONTAINER}`,
     ],
     [
+      "Windows hostProcess true",
+      "  containers:\n    - name: c\n      securityContext:\n        windowsOptions:\n          hostProcess: true\n",
+    ],
+    [
+      "Windows hostProcess at pod level",
+      `  securityContext:\n    windowsOptions:\n      hostProcess: true\n${CONTAINER}`,
+    ],
+    [
+      "SELinux type spc_t",
+      `  securityContext:\n    seLinuxOptions:\n      type: spc_t\n${CONTAINER}`,
+    ],
+    [
+      "SELinux user",
+      "  containers:\n    - name: c\n      securityContext:\n        seLinuxOptions:\n          user: system_u\n",
+    ],
+    ["SELinux role", `  securityContext:\n    seLinuxOptions:\n      role: sysadm_r\n${CONTAINER}`],
+    [
+      "SELinux options that are not a mapping",
+      `  securityContext:\n    seLinuxOptions: spc_t\n${CONTAINER}`,
+    ],
+    [
       "an initContainer",
       `  initContainers:\n    - name: i\n      securityContext:\n        privileged: true\n${CONTAINER}`,
     ],
@@ -423,6 +444,8 @@ describe("k8sModelRefusal", () => {
     const safe =
       "  hostNetwork: false\n  securityContext:\n    seccompProfile:\n      type: RuntimeDefault\n  containers:\n    - name: c\n      securityContext:\n        privileged: false\n        allowPrivilegeEscalation: false\n        procMount: Default\n        capabilities:\n          drop:\n            - ALL\n";
     expect(refuse(POD(safe))).toBeUndefined();
+    const baseline = `  securityContext:\n    windowsOptions:\n      hostProcess: false\n    seLinuxOptions:\n      type: container_t\n      level: 's0:c123,c456'\n${CONTAINER}`;
+    expect(refuse(POD(baseline))).toBeUndefined();
     // an empty `add` can only be written as a flow list, which the reader refuses (stated bound)
     expect(refuse(POD(safe.replace("drop:", "add: []\n          drop:")))).toBe(
       K8S_MODEL_REFUSALS.unreadable,

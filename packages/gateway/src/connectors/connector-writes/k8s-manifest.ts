@@ -473,6 +473,7 @@ function entryHoldsHostAccess(key: string, value: unknown): boolean {
     case "hostPID":
     case "hostIPC":
     case "allowPrivilegeEscalation":
+    case "hostProcess":
       return value !== false;
     case "procMount":
       return value !== "Default";
@@ -481,9 +482,41 @@ function entryHoldsHostAccess(key: string, value: unknown): boolean {
     case "seccompProfile":
     case "appArmorProfile":
       return isObj(value) && Object.hasOwn(value, "type") && !isConfined(value["type"]);
+    case "seLinuxOptions":
+      return !isBaselineSeLinux(value);
     default:
       return key.startsWith(APPARMOR_ANNOTATION) && isUnconfined(value);
   }
+}
+
+/** The SELinux `type` values the Pod Security baseline profile allows (an empty one included). */
+const BASELINE_SELINUX_TYPES: ReadonlySet<string> = new Set([
+  "",
+  "container_t",
+  "container_init_t",
+  "container_kvm_t",
+  "container_engine_t",
+]);
+
+/**
+ * Whether `seLinuxOptions` stays inside the Pod Security baseline: a mapping whose `type` is absent
+ * or one of {@link BASELINE_SELINUX_TYPES}, whose `user` and `role` are absent or empty, and with no
+ * other key than `level`. Anything else (another type, a user or role, a non-mapping) is refused.
+ */
+function isBaselineSeLinux(v: unknown): boolean {
+  if (!isObj(v)) return false;
+  for (const key of Object.keys(v)) {
+    const value = v[key];
+    if (key === "level") continue;
+    if (key === "type") {
+      if (typeof value !== "string" || !BASELINE_SELINUX_TYPES.has(value)) return false;
+    } else if (key === "user" || key === "role") {
+      if (value !== "") return false;
+    } else {
+      return false;
+    }
+  }
+  return true;
 }
 
 function isEmptyList(v: unknown): boolean {
