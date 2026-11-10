@@ -37,6 +37,7 @@
 // named only inside their own gates (D17/D19).
 import type { ChatopsPolicy } from "../../policy/types.ts";
 import { commitModelRefusal } from "./commit-paths.ts";
+import { deployModelRefusal } from "./deploy-refusals.ts";
 import { iacModelRefusal } from "./iac-limits.ts";
 import {
   driveContentFormats,
@@ -733,12 +734,16 @@ export function nullOptionalFieldRefusal(key: string): string {
   return `the field \`${key}\` cannot be null; omit it or give a value`;
 }
 
-/** The optional input keys of each B4a row and of the Flagsmith state set (C3), whose `null` the doors refuse. */
+/** The optional input keys of each B4a row, the Flagsmith state set (C3) and three D3b rows, whose `null` the doors refuse. */
 const NULL_REFUSED_OPTIONAL_KEYS: Readonly<Record<string, readonly string[]>> = {
   [OUTLOOK_CALENDAR_ROW]: ["timeZone", "attendees", "body"],
   [APPLE_CALENDAR_ROW]: ["calendar", "attendees", "location", "description", "uid"],
   gdrive_file_create: ["mimeType", "parentId", "content"],
   flagsmith_feature_state_set: ["value"],
+  // D3b: the optional keys of the deploy and mobile-release rows.
+  vercel_deployment_redeploy: ["withLatestCommit"],
+  netlify_build_trigger: ["branch", "production", "clearCache"],
+  firebase_app_distribution_distribute: ["groupAliases", "testerEmails"],
 };
 
 /** The optional keys whose `null` is refused for `toolId` (read-only, for its drift test). */
@@ -1056,5 +1061,9 @@ export function modelWriteRefusal(
   // D2: a CloudFormation deploy asking for an IAM capability. MODEL door only.
   const iac = iacModelRefusal(toolId, input);
   if (iac !== undefined) return iac;
+  // D3b (OR-D3-1..3): a Netlify build with neither or both of branch and production, and a
+  // Firebase distribute to tester emails. MODEL door only.
+  const deploy = deployModelRefusal(toolId, input);
+  if (deploy !== undefined) return deploy;
   return knowledgeBaseRefusal(toolId, input, ctx.kb);
 }

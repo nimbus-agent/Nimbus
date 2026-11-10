@@ -23,6 +23,7 @@ export type DeniedClass =
   | "deployment"
   | "incident"
   | "data_platform"
+  | "mobile_release"
   | "tribal_kb"
   | "chatops_confined"
   | "unroutable"
@@ -179,7 +180,11 @@ export const ACTION_PROPOSABILITY: Readonly<Record<string, Proposability>> = Obj
       "circleci.job.cancel",
       "gitlab.pipeline.retry",
       "gitlab.pipeline.cancel",
+      "bitrise.build.trigger",
+      "codemagic.build.trigger",
     ]),
+    // D3b: a build sent to testers (or a public-link group) cannot be unsent.
+    ...denied("mobile_release", ["testflight.build.distribute", "firebase.release.distribute"]),
     ...denied("cloud", [
       "aws.ecs.service.update",
       "aws.lambda.invoke",
@@ -219,6 +224,10 @@ export const ACTION_PROPOSABILITY: Readonly<Record<string, Proposability>> = Obj
       "flux.helmrelease.reconcile",
       "mlflow.model.promote",
       "mlflow.model.transition_stage",
+      // D3b: a production deploy cannot be taken back by this tool, so none is proposable.
+      "vercel.deployment.redeploy",
+      "vercel.deployment.promote",
+      "netlify.build.trigger",
     ]),
     ...denied("incident", [
       "pagerduty.incident.acknowledge",

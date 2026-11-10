@@ -1074,6 +1074,8 @@ describe("B4a: a present-but-null optional field on the calendar and Drive creat
     },
     gdrive_file_create: { name: "n.txt" },
     flagsmith_feature_state_set: { environmentKey: "e", featureId: 1, enabled: true },
+    vercel_deployment_redeploy: { deploymentId: "dpl_1", target: "preview" },
+    firebase_app_distribution_distribute: { appId: "1:123:android:abc", releaseId: "r1" },
   };
   const ROWS = Object.keys(CLEAN);
 
@@ -1108,6 +1110,9 @@ describe("B4a: a present-but-null optional field on the calendar and Drive creat
     ["gdrive_file_create", "mimeType"],
     ["gdrive_file_create", "parentId"],
     ["flagsmith_feature_state_set", "value"],
+    ["vercel_deployment_redeploy", "withLatestCommit"],
+    ["firebase_app_distribution_distribute", "groupAliases"],
+    ["firebase_app_distribution_distribute", "testerEmails"],
   ] as const) {
     test(`${toolId}: ${key} null is refused on every entry point, naming ${key}`, () => {
       const refusal = nullOptionalFieldRefusal(key);
