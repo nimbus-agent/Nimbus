@@ -197,6 +197,7 @@ New:
 - `packages/gateway/src/index/chat-read-marker-store.ts` (+ `.test.ts`)
 - `packages/gateway/src/index/migrations/runner-v92.test.ts`
 - `packages/gateway/src/index/slack-unread.ts` (+ `.test.ts`)
+- `packages/gateway/src/index/chat-unread-query.ts` (+ `.test.ts`) (Task 6b, the MB5 seam)
 - `packages/gateway/src/connectors/slack-cursor.ts` (+ `.test.ts`)
 - `packages/gateway/src/connectors/slack-read-markers.ts` (+ `.test.ts`)
 - `packages/gateway/test/integration/briefing/slack-unread.test.ts`
@@ -553,3 +554,35 @@ re-list) called out as owner-visible; stated bounds (~15 channels per pass at th
 not indexed, 14-day depth, Slack reply shapes documented not live-verified, string compare relies on
 10-digit ts); verification output; dependencies: MB5 needs MB1, MB3 and uses `countUnreadSlackThreads` +
 `loadSlackSelfUserId`. End with the attribution lines from the session. No `Release-As:` trailer.
+
+## Review notes applied (agy round 1, both NIT)
+
+- `countUnreadSlackThreads` returns `channelsWithoutMarker` de-duplicated and sorted (`[...new Set(ids)].sort(byCodeUnit)`, never a bare `.sort()`: Sonar S2871), with a test that seeds two unread messages in one marker-less channel.
+- The prune runs only when `opts.keepChannelIds !== undefined` (absent = prune nothing; `[]` = prune every marker of the service), with a test for each of the three cases.
+
+## Round 2 corrections (agy round 2: the MB5 seam; these OVERRIDE Task 6's result shape where they differ)
+
+**R2-1. One result shape.** `countUnreadSlackThreads` returns EXACTLY the MB5 seam's types (declared in
+`index/chat-unread-query.ts`, imported by `slack-unread.ts`), so the adapter is genuinely thin:
+`{ totalThreads, threads, channelsWithMarker, channelsWithoutMarker, oldestMarkerCapturedAtMs, newestMarkerCapturedAtMs }`
+(`channelsWithoutMarker: string[]` is an MB4 extra that MB5 ignores; it stays de-duplicated and sorted).
+The thread query selects, per `(channel, threadKey)` group: `item.id` of the NEWEST row (`itemId`), `COUNT(*)` (`unreadMessages`),
+`MAX(ts)` converted to epoch ms (`latestTsMs` = the integer seconds part × 1000 + the first three fraction digits,
+computed in TypeScript from the TEXT ts, never via a REAL cast), the newest row's `title` and `url`, `threadKey`, `channelId`,
+`channelName: null` (the writer stores no channel name), and `channelKind` mapped from `chat_read_marker.channel_kind`:
+`im` → `"dm"`, `mpim` → `"mpim"`, anything else → `"channel"` (one exhaustive switch with a test per arm).
+`channelsWithMarker` = count of this service's markers; `oldest/newestMarkerCapturedAtMs` = `MIN/MAX(captured_at)` (null when none).
+Tests pin every field against rows built FROM the slack-sync writer.
+
+**R2-2. Task 6b: `packages/gateway/src/index/chat-unread-query.ts` (+ `chat-unread-query.test.ts`).** Declares the seam types
+and `readUnreadChatThreads(db, { nowMs, limit })`: resolves the self user id with `loadSlackSelfUserId(db)`; when it is
+`null` returns the empty result (`totalThreads: 0`, `threads: []`, the marker counts still filled) so MB5 can say the
+self id is unknown; otherwise calls `countUnreadSlackThreads(db, { selfUserId, limit })` and returns it. `nowMs` is
+accepted for the seam and used for nothing but a future age filter (document that; no branch on it). Tests: self-id
+null, passthrough of `limit`, the full field mapping on a seeded index, DMs/mpims ordered first. Added to the file map
+(New) and to Task 10's coverage list. It is a read-only `index/` module: no D24 or static-rule allow-list change.
+
+**R2-3. `platform/assemble.ts`** is modified by MB4 ONLY if MB5 has already merged (then add the one wiring line MB5
+names); otherwise MB4 leaves it untouched and MB5 adds the line.
+
+**R3-1 (agy round 3, SHOULD).** `countUnreadSlackThreads(db, { selfUserId: string | null; limit?: number })` handles `selfUserId: null` itself (threads `[]`, `totalThreads` 0, marker counts still computed), and `readUnreadChatThreads` delegates to it UNCONDITIONALLY with `loadSlackSelfUserId(db)`. This supersedes the null branch in R2-2. The file map and Task 10 now name Task 6b; `channelsWithoutMarker` sorts with `byCodeUnit`.
