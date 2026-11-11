@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
 
+import { nonRunStepLabels, parseWorkflowSteps } from "../../automation/workflow-steps.ts";
+import { getWorkflowByName } from "../../automation/workflow-store.ts";
 import { asRecord } from "../../connectors/unknown-record.ts";
 import {
   describeEmbeddingWarming,
@@ -209,13 +211,68 @@ function parseWorkflowRunParamsOverride(
   return raw as Readonly<Record<string, Record<string, unknown>>>;
 }
 
+/**
+ * How a `workflow.run` started, derived from the client kind the CONNECTION declared (`cli` /
+ * `ui` on the local socket); every other kind gets no trigger, so its write actions carry no
+ * provenance. Never read from params (Phase 10 SA2, spec § 5.1).
+ */
+export function workflowTriggerOf(kind: ClientKind): WorkflowRunContext["trigger"] {
+  if (kind === "cli") return "owner_cli";
+  if (kind === "ui") return "owner_ui";
+  return undefined;
+}
+
+/** A `trigger` or `provenance` key in the params would be a caller naming its own origin. */
+function refuseSuppliedOrigin(rec: Record<string, unknown> | undefined): void {
+  if (rec === undefined) return;
+  for (const key of ["trigger", "provenance"]) {
+    if (Object.hasOwn(rec, key)) {
+      throw new RpcMethodError(
+        -32602,
+        `workflow.run: ${key} is derived by the gateway and may not be sent`,
+      );
+    }
+  }
+}
+
+/**
+ * Only `run` steps take `paramsOverride`: an entry keyed by a write or query step's label would
+ * change what the hashed definition says (review S2-3). A workflow that is unknown or does not parse
+ * is left to the runner, which reports it.
+ */
+function refuseNonRunOverrides(
+  ctx: ServerCtx,
+  workflowName: string,
+  paramsOverride: unknown,
+): void {
+  if (paramsOverride === undefined || ctx.options.localIndex === undefined) return;
+  const wf = getWorkflowByName(ctx.options.localIndex.getDatabase(), workflowName);
+  if (wf === null) return;
+  let fixed: string[];
+  try {
+    fixed = nonRunStepLabels(parseWorkflowSteps(wf.steps_json));
+  } catch {
+    return;
+  }
+  for (const key of Object.keys(paramsOverride as Record<string, unknown>)) {
+    if (fixed.includes(key)) {
+      throw new RpcMethodError(
+        -32602,
+        `workflow.run: paramsOverride may not name a write or query step ("${key}")`,
+      );
+    }
+  }
+}
+
 function buildWorkflowRunContext(
   clientId: string,
   session: ClientSession,
   params: unknown,
   signal: AbortSignal,
+  kind: ClientKind,
 ): { ctx: WorkflowRunContext; sessionId: string | undefined; streamId: string | undefined } {
   const rec = asRecord(params);
+  refuseSuppliedOrigin(rec);
   const workflowName = requireNonEmptyRpcString(rec, "name");
   const triggeredBy = parseOptionalString(rec, "triggeredBy") ?? clientId;
   const dryRun = rec?.["dryRun"] === true;
@@ -243,6 +300,8 @@ function buildWorkflowRunContext(
   if (agent !== undefined) ctx.agent = agent;
   if (paramsOverride !== undefined) ctx.paramsOverride = paramsOverride;
   if (streamId !== undefined) ctx.streamId = streamId;
+  const trigger = workflowTriggerOf(kind);
+  if (trigger !== undefined) ctx.trigger = trigger;
   return { ctx, sessionId, streamId };
 }
 
@@ -264,7 +323,8 @@ export async function dispatchWorkflowRunRpc(
     ctx: workflowCtx,
     sessionId,
     streamId,
-  } = buildWorkflowRunContext(clientId, session, params, ac.signal);
+  } = buildWorkflowRunContext(clientId, session, params, ac.signal, ctx.getClientKind(clientId));
+  refuseNonRunOverrides(ctx, workflowCtx.workflowName, workflowCtx.paramsOverride);
 
   // The id is supplied by the CLIENT: workflow.run resolves only when the run
   // ends, so a server-minted id could never reach the caller in time to cancel.

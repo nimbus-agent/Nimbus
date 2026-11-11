@@ -58,6 +58,18 @@ const runAskLog = pino({
   level: process.env["NIMBUS_LOG_LEVEL"] ?? "info",
 });
 
+/** The arguments every turn executor is built from; `RunAskParams` carries them all. */
+export type ExecutorBuildParams = Pick<
+  RunAskParams,
+  | "clientId"
+  | "consentCoordinator"
+  | "localIndex"
+  | "dispatcher"
+  | "egressSink"
+  | "policyHitl"
+  | "previewCredentialFor"
+>;
+
 export type RunAskParams = {
   input: string;
   stream: boolean;
@@ -567,7 +579,7 @@ function buildAskExecutor(p: RunAskParams): ToolExecutor {
  * the same arguments for both, so they cannot drift.
  */
 function newTurnExecutor(
-  p: RunAskParams,
+  p: ExecutorBuildParams,
   delegation: ExecutorDelegationDep | undefined,
   beforeState?: BeforeStateRunner,
 ): ToolExecutor {
@@ -603,6 +615,30 @@ export function buildModelWriteExecutor(p: RunAskParams): ToolExecutor {
     createBeforeStateRunner({
       ...(p.beforeStateRows === undefined ? {} : { rows: p.beforeStateRows }),
       // B3 (R11): the KB-child guards read the tribal KB destinations, snapshotted per read.
+      guardContext: () => ({ kb: p.getTribalKbConfig() }),
+    }),
+  );
+}
+
+/** What a workflow run needs to build its write executor: the ask turn's shared executor arguments. */
+export type WorkflowWriteExecutorParams = ExecutorBuildParams &
+  Pick<RunAskParams, "beforeStateRows" | "getTribalKbConfig">;
+
+/**
+ * The workflow write step's executor (Phase 10 SA2): {@link buildModelWriteExecutor}'s shape for
+ * the owner's OWN saved workflow. Consent is bound to the run's client, no delegation (only the
+ * owner approves a workflow write, I20), and the before-state runner, so a row's guard runs and the
+ * owner sees the current state beside the new values. It is the second (and last) place a
+ * before-state runner is built (static D40(b)). It offers nothing to the model: the actions come
+ * from the owner's stored steps, never from model output.
+ */
+export function buildWorkflowWriteExecutor(p: WorkflowWriteExecutorParams): ToolExecutor {
+  return newTurnExecutor(
+    p,
+    undefined,
+    createBeforeStateRunner({
+      readsEveryOrigin: true,
+      ...(p.beforeStateRows === undefined ? {} : { rows: p.beforeStateRows }),
       guardContext: () => ({ kb: p.getTribalKbConfig() }),
     }),
   );

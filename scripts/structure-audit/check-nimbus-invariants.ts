@@ -2195,7 +2195,8 @@ export function checkEvalConfinement(files: readonly FileEntry[]): Violation[] {
 //     `createConnectorDispatcher`, `createConnectorWriteDispatcher` or a `dispatch(` call (a
 //     destructured one included) — it runs an action through the turn's executor and nothing else;
 // (e) `buildConnectorWriteAgentTools` is named only by `engine/agent.ts` and the door, and
-//     `buildModelWriteExecutor` only by `engine/run-ask.ts`;
+//     `buildModelWriteExecutor` only by `engine/run-ask.ts`, and `buildWorkflowWriteExecutor` (SA2)
+//     only by `engine/run-ask.ts` and `gateway-main.ts`;
 // (d) the door file contains `origin: "model"`, the marker `tryDelegatedApproval` refuses to delegate.
 // Comments and string literals are stripped before identifiers are matched (the import clauses read
 // comment-stripped source, a specifier IS a string). Test files and anything outside
@@ -2226,6 +2227,11 @@ const D39_BUILDERS: ReadonlyArray<readonly [RegExp, readonly string[]]> = [
     ],
   ],
   [/\bbuildModelWriteExecutor\b/g, ["packages/gateway/src/engine/run-ask.ts"]],
+  // SA2: the workflow write executor is built by run-ask.ts and handed to the runner by the boot file.
+  [
+    /\bbuildWorkflowWriteExecutor\b/g,
+    ["packages/gateway/src/engine/run-ask.ts", "packages/gateway/src/gateway-main.ts"],
+  ],
 ];
 const D39_ORIGIN_RE = /\borigin\s*:\s*["']model["']/;
 const D39_ROWS_SPECIFIER_RE = /connectors\/connector-writes\/|connector-write-registry/;
@@ -2344,7 +2350,9 @@ export function checkModelWriteDoor(files: readonly FileEntry[]): Violation[] {
 //     type evades it, and what stops such an action is the gate refusal and the dispatcher guard;
 // (b) `createBeforeStateRunner` is named only by `engine/before-state.ts` (its definition) and
 //     `engine/run-ask.ts`, and inside run-ask.ts only on an import line or within the body of
-//     `buildModelWriteExecutor`, and it is never imported under an `as` alias (an alias would let
+//     `buildModelWriteExecutor` or `buildWorkflowWriteExecutor` (SA2: the owner's own workflow
+//     write step is the second carrier; it offers nothing to the model), and it is never imported
+//     under an `as` alias (an alias would let
 //     run-ask.ts call it outside that body unseen); a runner handed around as a value (an object
 //     literal, a re-export under another name in another module) is outside a text scan;
 // (c) `engine/executor.ts` (the structural refusal in `gate()`) and `connectors/registry.ts` (the
@@ -2367,12 +2375,16 @@ const D40_GUARD_SITES: readonly string[] = [
   "packages/gateway/src/connectors/registry.ts",
 ];
 
-/** `[start, end)` of `function buildModelWriteExecutor(`'s body in `code`, or undefined. */
-function d40DoorBuilderSpan(code: string): readonly [number, number] | undefined {
-  const at = code.search(/\bfunction\s+buildModelWriteExecutor\s*\(/);
-  if (at === -1) return undefined;
-  const end = code.indexOf("\n}\n", at);
-  return [at, end === -1 ? code.length : end];
+/** `[start, end)` of each permitted carrier's body (the door's and the workflow write step's). */
+function d40CarrierSpans(code: string): readonly (readonly [number, number])[] {
+  const spans: (readonly [number, number])[] = [];
+  for (const name of ["buildModelWriteExecutor", "buildWorkflowWriteExecutor"]) {
+    const at = code.search(new RegExp(`\\bfunction\\s+${name}\\s*\\(`));
+    if (at === -1) continue;
+    const end = code.indexOf("\n}\n", at);
+    spans.push([at, end === -1 ? code.length : end]);
+  }
+  return spans;
 }
 
 /** Whether `index` sits inside an `import … from` statement (single- or multi-line). */
@@ -2400,10 +2412,10 @@ export function checkBeforeStateRead(files: readonly FileEntry[]): Violation[] {
       }
     }
     if (f.relPath !== D40_RUNNER_DEF) {
-      const span = f.relPath === D40_RUN_ASK ? d40DoorBuilderSpan(code) : undefined;
+      const spans = f.relPath === D40_RUN_ASK ? d40CarrierSpans(code) : [];
       for (const m of code.matchAll(D40_RUNNER_RE)) {
         const i = m.index;
-        const inDoorBuilder = span !== undefined && i >= span[0] && i < span[1];
+        const inDoorBuilder = spans.some(([start, end]) => i >= start && i < end);
         const allowed =
           f.relPath === D40_RUN_ASK && (inDoorBuilder || d40InImportStatement(code, i));
         if (!allowed) push("before-state-runner-confined", code, i);
@@ -4558,7 +4570,7 @@ async function run(): Promise<void> {
       "connector-write-context-field-confined":
         "(b) the request-context field connectorWriteExecutor named outside agent-request-context.ts and run-ask.ts",
       "connector-write-builders-confined":
-        "(e) buildConnectorWriteAgentTools named outside agent.ts and the door, or buildModelWriteExecutor outside run-ask.ts",
+        "(e) buildConnectorWriteAgentTools named outside agent.ts and the door, or buildModelWriteExecutor outside run-ask.ts, or buildWorkflowWriteExecutor outside run-ask.ts and gateway-main.ts",
       "connector-write-door-names-transport":
         "(c) the door names a connector transport (invokeConnectorWrite, withConnectorSession, createConnectorDispatcher, createConnectorWriteDispatcher or dispatch())",
       "connector-write-door-origin-model": '(d) the door carries no origin: "model"',
@@ -4576,7 +4588,7 @@ async function run(): Promise<void> {
       "before-read-literal-confined":
         "(a) the .before.read action-type literal outside engine/before-state.ts and connectors/registry.ts",
       "before-state-runner-confined":
-        "(b) createBeforeStateRunner named outside engine/before-state.ts and run-ask.ts's buildModelWriteExecutor",
+        "(b) createBeforeStateRunner named outside engine/before-state.ts and run-ask.ts's buildModelWriteExecutor or buildWorkflowWriteExecutor",
       "before-read-guard-present":
         "(c) isBeforeReadActionType no longer called by engine/executor.ts or connectors/registry.ts",
     };

@@ -149,6 +149,20 @@ describe("before-state runner", () => {
     expect(await plain.read(WRITE, ops)).toBeUndefined();
   });
 
+  test("readsEveryOrigin (the workflow write step's runner) reads an action with no origin; the door's runner does not", async () => {
+    const { origin: _o, ...ownerAction } = WRITE;
+    const ops = opsReturning({ summary: "old" });
+    const workflow = createBeforeStateRunner({ rows: [rowWith(READER)], readsEveryOrigin: true });
+    expect(await workflow.read(ownerAction, ops)).toEqual({
+      status: "ok",
+      fields: [{ label: "Summary", value: "old" }],
+    });
+    // A row with no reader is still not read, whatever the origin.
+    expect(await workflow.read({ ...ownerAction, type: "jira.comment.add" }, ops)).toBeUndefined();
+    const door = createBeforeStateRunner({ rows: [rowWith(READER)] });
+    expect(await door.read(ownerAction, ops)).toBeUndefined();
+  });
+
   test("a reader tool the door found unlisted: failed, and no read runs", async () => {
     const seen: PlannedAction[] = [];
     const runner = createBeforeStateRunner({ rows: [rowWith(READER)] });

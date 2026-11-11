@@ -26,6 +26,7 @@ import {
   setWatcherEnabled,
 } from "../automation/watcher-store.ts";
 import { listWorkflowRuns } from "../automation/workflow-run-history.ts";
+import { stepsSaveRefusal } from "../automation/workflow-steps.ts";
 import {
   deleteWorkflowByName,
   listWorkflows,
@@ -543,13 +544,13 @@ const AUTOMATION_HANDLERS: Readonly<Record<string, AutomationHandler>> = {
   "workflow.save": (rec, ctx) => {
     const description =
       rec !== undefined && typeof rec["description"] === "string" ? rec["description"] : null;
-    const id = upsertWorkflowByName(
-      ctx.db,
-      requireString(rec, "name"),
-      description,
-      requireString(rec, "stepsJson"),
-      Date.now(),
-    );
+    const name = requireString(rec, "name");
+    const stepsJson = requireString(rec, "stepsJson");
+    // A query or write step is validated at SAVE and again at every run (Phase 10 SA2); a
+    // run-only workflow saves exactly as it always did.
+    const refusal = stepsSaveRefusal(stepsJson);
+    if (refusal !== undefined) throw new AutomationRpcError(-32602, `workflow.save: ${refusal}`);
+    const id = upsertWorkflowByName(ctx.db, name, description, stepsJson, Date.now());
     return { kind: "hit", value: { id } };
   },
 

@@ -522,6 +522,50 @@ describe("workflow.list / save / delete", () => {
     expect(row.steps_json).toBe("[1]");
   });
 
+  test("save validates a query or write step (SA2) with -32602, and stores nothing", async () => {
+    const db = seededDb();
+    const bad = JSON.stringify([
+      { kind: "write", tool: "github_pr_merge", input: { x: { const: 1 } } },
+    ]);
+    await expect(
+      dispatchAutomationRpc({
+        method: "workflow.save",
+        params: { name: "wf-bad", stepsJson: bad },
+        db,
+      }),
+    ).rejects.toMatchObject({ rpcCode: -32602, message: expect.stringContaining("wave 4") });
+    expect(db.query("SELECT COUNT(*) AS n FROM workflow").get()).toEqual({ n: 0 });
+  });
+
+  test("save stores a valid query and write workflow; run-only and legacy JSON save as before", async () => {
+    const db = seededDb();
+    const good = JSON.stringify([
+      {
+        kind: "query",
+        label: "q",
+        query: { service: "gmail", type: "email", select: "metadata.threadId", limit: 5 },
+      },
+      {
+        kind: "write",
+        tool: "gmail_thread_archive",
+        input: { threadId: { from: "q", column: "metadata.threadId" } },
+      },
+    ]);
+    for (const [name, stepsJson] of [
+      ["wf-good", good],
+      ["wf-run", JSON.stringify([{ run: "hi" }])],
+      ["wf-legacy-bad", "not json"],
+    ] as const) {
+      const out = await dispatchAutomationRpc({
+        method: "workflow.save",
+        params: { name, stepsJson },
+        db,
+      });
+      expect(out.kind).toBe("hit");
+    }
+    expect(db.query("SELECT COUNT(*) AS n FROM workflow").get()).toEqual({ n: 3 });
+  });
+
   test("save with non-string description stores null", async () => {
     const db = seededDb();
     const ins = await dispatchAutomationRpc({
