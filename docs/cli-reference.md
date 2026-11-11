@@ -1630,6 +1630,29 @@ surface is the capture tools above. A connector action can be PROPOSED (`propose
 Briefs served over MCP are recorded in the egress ledger (`I29`) — the adapter declares
 `kind: "mcp"` on connect, so `nimbus prove` accounts for them.
 
+### `nimbus approve`
+
+Standing approval rules (Phase 10 SA3, invariant I55): approve a recurring workflow write ONCE, so it runs without a prompt, and only that write. A rule names one write step of one saved workflow at one content hash. Creating a rule is itself an approval that only you can give: `nimbus approve add` and `resume` refuse `--yes`, the gateway refuses an approval whose source is not a person answering the prompt (a scripted consent file or an old client does not count), the connection must be the owner's CLI on the local socket, and org policy must not have locked `standing_approvals` off.
+
+```bash
+nimbus approve add --workflow <name> --step <label|number> [--days 1-90] [--max 1-500] [--window "Mon-Fri 06:00-10:00 Europe/Berlin"]
+nimbus approve list [--json]
+nimbus approve show <id> [--json]
+nimbus approve pause <id> [--json]
+nimbus approve resume <id>
+nimbus approve revoke <id> [--json]
+```
+
+`add` reads the STORED workflow, finds the write step (by label, or 1-based number), and shows you the rule's exact text: the workflow name and the first 12 hex of its content hash, the step, the tool and action type, every input field as the constant you wrote or the declared query it comes from, the window, the expiry date and the ceiling. You approve it at the prompt; it prints the new rule id. You never give a scope, a hash or a tool: the rule is derived from the step, so it cannot be wider than the step. Only a wave 2 or 3 connector write can have a rule, and not a bound one, a typed-confirm one, a never-offered one (a mail send), or a type that is HITL only because org policy added it. `--days` is the lifetime (default 30, at most 90); `--max` is the ceiling on actions (default 100, at most 500); `--window` limits the rule to weekdays and a time of day in an IANA zone (it cannot cross midnight).
+
+While a rule is live, each write of that step that is built by that exact workflow, started by you, with the values the rule names, runs with no prompt: it is recorded with status `standing_approved` and the rule and fire ids in the audit log and the egress ledger. Anything else asks as before: a different or edited workflow (its hash changes), a model-proposed write, a write from an MCP client, ChatOps or a peer, a different value, an expired, paused, revoked or used-up rule, a time outside the window, a recipient or content the model-door refusals reject. A rule does not cover runs nobody is watching (scheduled runs arrive with the scheduler).
+
+`list` shows id, workflow, step, tool, uses against the ceiling, expiry, last-fired time and state (`live`, `paused`, `revoked`, `expired`, `exhausted`). `pause` and `revoke` narrow what runs unprompted, need no approval and are audited; `revoke` is final. `resume` widens again, so it asks you again. Every method is in the `standing` IPC namespace: forbidden over LAN, and the desktop may call `list`, `show`, `fires`, `pause` and `revoke` only.
+
+**Exit codes:** `0` done, `1` the gateway refused (policy, not a person's answer, a bad request, a decline), `2` usage.
+
+---
+
 ### `nimbus captures`
 
 Review what MCP clients have written into your index. These are owner commands: they refuse the
@@ -5505,7 +5528,7 @@ nimbus workflow list
 
 ### `nimbus workflow run <name>`
 
-Run a named workflow pipeline. Same engine and same flags as [`nimbus run`](#nimbus-run) — it executes immediately unless a preview is asked for; HITL gated.
+Run a named workflow pipeline. Same engine and same flags as [`nimbus run`](#nimbus-run) — it executes immediately unless a preview is asked for; HITL gated. It declares the connection as the owner's CLI first (like `nimbus ask`), which is what lets a write step of the workflow carry your provenance for a standing rule.
 
 ```bash
 nimbus workflow run weekly-cleanup
@@ -5819,9 +5842,19 @@ nimbus audit --limit 100 --json | jq -r '.[] | select(.hitlStatus == "rejected")
 
 `--limit` (default 50) and `--json` are the only flags parsed. There is no `--service` or `--since` **filtering** here — such arguments are silently ignored, and the most recent `--limit` rows are returned regardless; `--json` changes the rendering only, never the row set.
 
-**Columns:** `Timestamp`, `Action`, `Status` (`approved` / `rejected` / `not_required` / `standing_approved`; the last is reserved for Phase 10 standing approvals and does not appear yet), `Reason` (the HITL reject reason from `action_json`; `—` when absent).
+**Columns:** `Timestamp`, `Action`, `Status` (`approved` / `rejected` / `not_required` / `standing_approved`; the last is an action a live standing rule approved, see [`nimbus approve`](#nimbus-approve)), `Reason` (the HITL reject reason from `action_json`; `—` when absent).
 
 **`--json` shape.** A JSON array of the raw `audit.list` rows: `{ id, actionType, hitlStatus, actionJson, timestamp }`, newest first, honouring `--limit` (default 50). `actionJson` stays the **string** the chain stored — it is not parsed for you, so a row whose payload is malformed still appears rather than being dropped; the human table's "Reason" column is that string's `hitlRejectReason` field. `--json` applies to the listing only; `nimbus audit verify` and `nimbus audit export` have their own output contracts.
+
+---
+
+### `nimbus audit standing`
+
+```bash
+nimbus audit standing [<rule id>] [--json]
+```
+
+The fires of one standing rule, or of every rule, oldest first: the time, rule id, fire id, action type and the audit row that recorded it (`#<id>`), or `NO AUDIT ROW` for a fire the log has no row for (a claim whose audit write failed uses up one action of the ceiling and dispatches nothing). `--json` prints the raw `standing.fires` result. Each fire is joined to its `standing_approved` audit row by the fire id inside the row's hashed JSON (`standingRule.fireId`).
 
 ---
 
