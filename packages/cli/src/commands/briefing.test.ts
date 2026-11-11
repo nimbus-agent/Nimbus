@@ -1,6 +1,7 @@
 import { describe, expect, spyOn, test } from "bun:test";
 
-import { cleanMarkdown, runBriefingWith } from "./briefing.ts";
+import { CliExit } from "../lib/cli-exit.ts";
+import { cleanMarkdown, runBriefingCommand, runBriefingWith } from "./briefing.ts";
 import {
   type BriefingStatusLike,
   doctorBriefingLines,
@@ -177,6 +178,42 @@ describe("nimbus briefing", () => {
     const j = harness({ "briefing.status": status() });
     await runBriefingWith(j.ipc, { mode: "status", json: true }, j.sink);
     expect(JSON.parse(j.out.join("")).enabled).toBe(true);
+  });
+});
+
+describe("nimbus briefing errors", () => {
+  test("a gateway error is printed (control characters stripped) and exits 1; --json prints it as JSON", async () => {
+    const h = harness({ "briefing.latest": new Error("gateway \x1b[31mdown\x1b[0m") });
+    expect(await runBriefingWith(h.ipc, { mode: "latest", json: false }, h.sink)).toBe(1);
+    expect(h.err.join("")).toContain("gateway");
+    expect(h.err.join("")).not.toContain("\x1b");
+    expect(h.out).toEqual([]);
+    const j = harness({ "briefing.status": new Error("nope") });
+    expect(await runBriefingWith(j.ipc, { mode: "status", json: true }, j.sink)).toBe(1);
+    expect(JSON.parse(j.out.join(""))).toEqual({ error: "nope" });
+  });
+
+  test("a non-Error rejection is stringified", async () => {
+    const out: string[] = [];
+    const err: string[] = [];
+    const ipc = {
+      call: async (): Promise<unknown> => {
+        throw "plain string";
+      },
+    };
+    const sink = { out: (s: string) => out.push(s), err: (s: string) => err.push(s) };
+    expect(await runBriefingWith(ipc, { mode: "list", json: false }, sink)).toBe(1);
+    expect(err.join("")).toBe("plain string\n");
+  });
+
+  test("runBriefingCommand: bad arguments print the usage and exit 1 without touching the gateway", async () => {
+    const write = spyOn(process.stderr, "write").mockImplementation(() => true);
+    try {
+      await expect(runBriefingCommand(["no-such-mode"])).rejects.toBeInstanceOf(CliExit);
+      expect(String(write.mock.calls[0]?.[0])).toContain("briefing");
+    } finally {
+      write.mockRestore();
+    }
   });
 });
 
