@@ -11,6 +11,8 @@ import {
   urlFromFetchInput,
 } from "./connector-sync-test-helpers.ts";
 import {
+  isPinnedNextUrl,
+  JSM_MAX_PAGES,
   JSM_MAX_SCHEDULES,
   JSM_OPS_ROOT,
   JSM_UNAVAILABLE_BACKOFF_MS,
@@ -112,8 +114,10 @@ describeWithFetchRestore("jsm oncall refresh", () => {
         const auth = (c.init?.headers as Record<string, string> | undefined)?.["Authorization"];
         expect(auth).toBe(`Basic ${Buffer.from("me@acme.com:tok").toString("base64")}`);
       }
-      for (const c of calls.filter((x) => !x.url.startsWith(SITE))) {
-        expect(c.url.startsWith(`${JSM_OPS_ROOT}/${CID}/v1/`)).toBe(true);
+      for (const c of calls.filter((x) => new URL(x.url).origin !== new URL(SITE).origin)) {
+        const u = new URL(c.url);
+        expect(u.origin).toBe(new URL(JSM_OPS_ROOT).origin);
+        expect(u.pathname.startsWith(`${new URL(JSM_OPS_ROOT).pathname}/${CID}/v1/`)).toBe(true);
       }
       expect(run.fields).toMatchObject({ ocAt: NOW, cid: CID, cidSite: SITE });
     } finally {
@@ -415,17 +419,305 @@ describeWithFetchRestore("jsm oncall refresh", () => {
       db.close();
     }
   });
+
+  test("an unparseable schedule entry is partial: nothing deleted, valid schedules still upserted", async () => {
+    const db = createMemoryIndexDb();
+    try {
+      install(happy());
+      await runJsmOncall(ctxFor(db, { "jira.cloud_id": CID }), CREDS, {}, NOW);
+      install(
+        happy({
+          [`${OPS}/schedules`]: {
+            body: { values: [{ name: "Primary" }, { id: "sch1", name: "P" }] },
+          },
+        }),
+      );
+      const run = await runJsmOncall(ctxFor(db, { "jira.cloud_id": CID }), CREDS, {}, NOW + 1);
+      expect(run.outcome).toEqual({ complete: false, upserted: 2, deleted: 0 });
+      install(happy({ [`${OPS}/schedules`]: { body: { values: [{ name: "Primary" }] } } }));
+      const only = await runJsmOncall(ctxFor(db, { "jira.cloud_id": CID }), CREDS, {}, NOW + 2);
+      expect(only.outcome).toEqual({ complete: false, upserted: 0, deleted: 0 });
+      expect(rows(db)).toHaveLength(2);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("a non-array participant field is partial and keeps the stored responders", async () => {
+    const db = createMemoryIndexDb();
+    try {
+      install(happy());
+      await runJsmOncall(ctxFor(db, { "jira.cloud_id": CID }), CREDS, {}, NOW);
+      install(
+        happy({ [`${OPS}/schedules/sch1/on-calls`]: { body: { onCallParticipants: "invalid" } } }),
+      );
+      const run = await runJsmOncall(ctxFor(db, { "jira.cloud_id": CID }), CREDS, {}, NOW + 1);
+      expect(run.outcome?.complete).toBe(false);
+      expect(run.outcome?.deleted).toBe(0);
+      expect(rows(db)).toHaveLength(2);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("a user nested in an escalation is indexed for both current and next shifts", async () => {
+    const db = createMemoryIndexDb();
+    try {
+      install(
+        happy({
+          [`${OPS}/schedules/sch1/on-calls`]: {
+            body: {
+              onCallParticipants: [
+                {
+                  id: "esc",
+                  type: "escalation",
+                  onCallParticipants: [{ id: "acc-9", name: "Nina", type: "user" }],
+                },
+              ],
+            },
+          },
+          [`${OPS}/schedules/sch1/next-on-calls`]: {
+            body: {
+              nextOnCallParticipants: [
+                {
+                  id: "esc",
+                  type: "escalation",
+                  nextOnCallParticipants: [{ id: "acc-8", name: "Omar", type: "user" }],
+                },
+              ],
+            },
+          },
+        }),
+      );
+      const run = await runJsmOncall(ctxFor(db, { "jira.cloud_id": CID }), CREDS, {}, NOW);
+      expect(run.outcome).toEqual({ complete: true, upserted: 2, deleted: 0 });
+      expect(rows(db).map((r) => r.title)).toEqual([
+        "On call: Nina — Primary rotation",
+        "Next on call: Omar — Primary rotation",
+      ]);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("links.next is followed on the pinned host: every page is read before the set is replaced", async () => {
+    const db = createMemoryIndexDb();
+    try {
+      const page2 = `${OPS}/schedules?offset=1`;
+      const { calls } = install(
+        happy({
+          [`${OPS}/schedules`]: {
+            body: { values: [{ id: "sch1", name: "A" }], links: { next: page2 } },
+          },
+          [page2]: { body: { values: [{ id: "sch2", name: "B" }] } },
+          [`${OPS}/schedules/sch2/on-calls`]: {
+            body: { onCallParticipants: [{ id: "acc-3", name: "Pia", type: "user" }] },
+          },
+          [`${OPS}/schedules/sch2/next-on-calls`]: { body: { nextOnCallParticipants: [] } },
+        }),
+      );
+      const run = await runJsmOncall(ctxFor(db, { "jira.cloud_id": CID }), CREDS, {}, NOW);
+      expect(run.outcome).toEqual({ complete: true, upserted: 3, deleted: 0 });
+      expect(calls.some((c) => c.url === page2)).toBe(true);
+      expect(calls.some((c) => c.url.includes("/schedules/sch2/on-calls"))).toBe(true);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("a links.next off the pinned host (or another cloud id) is never requested and is partial", async () => {
+    const db = createMemoryIndexDb();
+    try {
+      install(happy());
+      await runJsmOncall(ctxFor(db, { "jira.cloud_id": CID }), CREDS, {}, NOW);
+      for (const next of [
+        "https://evil.example/jsm/ops/api/x/v1/schedules",
+        "https://api.atlassian.com/jsm/ops/api/ffffffff-0000-4000-8000-000000000000/v1/schedules",
+        `http://api.atlassian.com/jsm/ops/api/${CID}/v1/schedules`,
+      ]) {
+        const { calls } = install(
+          happy({
+            [`${OPS}/schedules`]: {
+              body: { values: [{ id: "sch1", name: "P" }], links: { next } },
+            },
+          }),
+        );
+        const run = await runJsmOncall(ctxFor(db, { "jira.cloud_id": CID }), CREDS, {}, NOW + 1);
+        expect(calls.some((c) => c.url === next)).toBe(false);
+        expect(run.outcome?.complete).toBe(false);
+        expect(run.outcome?.deleted).toBe(0);
+      }
+      expect(rows(db)).toHaveLength(2);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("a failing or unparseable second schedules page is partial; page 1 schedules are still read", async () => {
+    const db = createMemoryIndexDb();
+    try {
+      for (const second of [{ status: 500 }, { text: "{nope" }] as Reply[]) {
+        const page2 = `${OPS}/schedules?offset=1`;
+        install(
+          happy({
+            [`${OPS}/schedules`]: {
+              body: { values: [{ id: "sch1", name: "P" }], links: { next: page2 } },
+            },
+            [page2]: second,
+          }),
+        );
+        const run = await runJsmOncall(ctxFor(db, { "jira.cloud_id": CID }), CREDS, {}, NOW);
+        expect(run.outcome).toEqual({ complete: false, upserted: 2, deleted: 0 });
+      }
+    } finally {
+      db.close();
+    }
+  });
+
+  test("the 50-schedule cap across pages, and an endless links.next chain, are partial", async () => {
+    const db = createMemoryIndexDb();
+    try {
+      const mk = (from: number): Array<{ id: string; name: string }> =>
+        Array.from({ length: 30 }, (_, i) => ({ id: `s${String(from + i)}`, name: "n" }));
+      const p2 = `${OPS}/schedules?offset=30`;
+      const { calls } = install((url) => {
+        if (url === `${SITE}/rest/api/3/myself`) return { body: { accountId: "x" } };
+        if (url === `${OPS}/schedules`) return { body: { values: mk(0), links: { next: p2 } } };
+        if (url === p2) {
+          return { body: { values: mk(30), links: { next: `${OPS}/schedules?offset=60` } } };
+        }
+        if (url.endsWith("/on-calls")) return { body: { onCallParticipants: [] } };
+        if (url.endsWith("/next-on-calls")) return { body: { nextOnCallParticipants: [] } };
+        return undefined;
+      });
+      const run = await runJsmOncall(ctxFor(db, { "jira.cloud_id": CID }), CREDS, {}, NOW);
+      expect(run.outcome?.complete).toBe(false);
+      expect(run.outcome?.deleted).toBe(0);
+      expect(calls.filter((c) => c.url.endsWith("/on-calls"))).toHaveLength(JSM_MAX_SCHEDULES);
+      expect(calls.some((c) => c.url.endsWith("offset=60"))).toBe(false);
+
+      const loop = install((url) => {
+        if (url === `${SITE}/rest/api/3/myself`) return { body: { accountId: "x" } };
+        if (new URL(url).pathname === new URL(`${OPS}/schedules`).pathname) {
+          return { body: { values: [], links: { next: `${OPS}/schedules?offset=1` } } };
+        }
+        return undefined;
+      });
+      const endless = await runJsmOncall(ctxFor(db, { "jira.cloud_id": CID }), CREDS, {}, NOW + 1);
+      expect(endless.outcome?.complete).toBe(false);
+      expect(loop.calls.filter((c) => c.url.includes("/schedules")).length).toBeLessThanOrEqual(
+        JSM_MAX_PAGES,
+      );
+    } finally {
+      db.close();
+    }
+  });
+
+  test("the budget covers a rate-limiter wait: a limiter that never grants a token ends the read, partial", async () => {
+    const db = createMemoryIndexDb();
+    try {
+      const { calls } = install(happy());
+      const ctx = ctxFor(db, { "jira.cloud_id": CID });
+      let asked = 0;
+      ctx.rateLimiter.tryAcquire = async () => {
+        asked += 1;
+        return asked <= 2; // /myself and /schedules, then the limiter is exhausted
+      };
+      let t = 0;
+      const clock = (): number => {
+        t += 20_000;
+        return t;
+      };
+      const run = await runJsmOncall(ctx, CREDS, {}, NOW, clock);
+      expect(run.outcome?.complete).toBe(false);
+      expect(run.outcome?.deleted).toBe(0);
+      expect(calls.some((c) => c.url.endsWith("/on-calls"))).toBe(false);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("the budget covers a hung request: its signal aborts at the deadline, partial", async () => {
+    const db = createMemoryIndexDb();
+    try {
+      let aborted = false;
+      globalThis.fetch = (async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+        const url = urlFromFetchInput(input);
+        if (url === `${SITE}/rest/api/3/myself`) return new Response('{"accountId":"a"}');
+        if (url === `${OPS}/schedules`) {
+          return new Response('{"values":[{"id":"sch1","name":"P"}]}');
+        }
+        return new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () => {
+            aborted = true;
+            reject(new Error("aborted"));
+          });
+        });
+      }) as typeof fetch;
+      let n = 0;
+      // The list request and the schedule check see the whole budget; the hung on-calls request
+      // then has 50 ms left, so its own deadline (not the 30 s request timeout) aborts it.
+      const clock = (): number => {
+        n += 1;
+        return n <= 4 ? 0 : 59_950;
+      };
+      const run = await runJsmOncall(ctxFor(db, { "jira.cloud_id": CID }), CREDS, {}, NOW, clock);
+      expect(aborted).toBe(true);
+      expect(run.outcome?.complete).toBe(false);
+      expect(run.outcome?.deleted).toBe(0);
+    } finally {
+      db.close();
+    }
+  });
 });
 
 describeWithFetchRestore("jsm oncall parsers", () => {
-  test("parseSchedules accepts values, schedules, a bare list and rejects junk", () => {
-    expect(parseSchedules('{"values":[{"id":"a","name":"A"},{"x":1},5]}')).toEqual([
-      { id: "a", name: "A" },
-    ]);
-    expect(parseSchedules('{"data":{"schedules":[{"id":"b"}]}}')).toEqual([{ id: "b", name: "b" }]);
-    expect(parseSchedules('[{"id":"c","name":"C"}]')).toEqual([{ id: "c", name: "C" }]);
+  test("parseSchedules accepts values, schedules, a bare list, counts unreadable entries, rejects junk", () => {
+    expect(parseSchedules('{"values":[{"id":"a","name":"A"},{"x":1},5]}')).toEqual({
+      schedules: [{ id: "a", name: "A" }],
+      skipped: 2,
+      next: null,
+    });
+    expect(parseSchedules('{"data":{"schedules":[{"id":"b"}]}}')).toEqual({
+      schedules: [{ id: "b", name: "b" }],
+      skipped: 0,
+      next: null,
+    });
+    expect(parseSchedules('[{"id":"c","name":"C"}]')?.schedules).toEqual([{ id: "c", name: "C" }]);
+    expect(parseSchedules('{"values":[{"name":"Primary"}]}')).toEqual({
+      schedules: [],
+      skipped: 1,
+      next: null,
+    });
     expect(parseSchedules("{}")).toBeNull();
     expect(parseSchedules("nope")).toBeNull();
+  });
+
+  test("parseSchedules reads links.next and rejects a malformed links block", () => {
+    expect(parseSchedules('{"values":[],"links":{"next":"https://x/y"}}')?.next).toBe(
+      "https://x/y",
+    );
+    expect(parseSchedules('{"values":[],"links":{"next":null}}')?.next).toBeNull();
+    expect(parseSchedules('{"values":[],"links":{"next":5}}')).toBeNull();
+    expect(parseSchedules('{"values":[],"links":"x"}')).toBeNull();
+  });
+
+  test("isPinnedNextUrl accepts only the fixed host, https, this cloud id and the schedules path", () => {
+    const ok = `${OPS}/schedules?offset=50`;
+    expect(isPinnedNextUrl(ok, CID)).toBe(true);
+    for (const bad of [
+      `https://evil.example/jsm/ops/api/${CID}/v1/schedules`,
+      `http://api.atlassian.com/jsm/ops/api/${CID}/v1/schedules`,
+      `https://api.atlassian.com:8443/jsm/ops/api/${CID}/v1/schedules`,
+      `https://u:p@api.atlassian.com/jsm/ops/api/${CID}/v1/schedules`,
+      `https://api.atlassian.com.evil.example/jsm/ops/api/${CID}/v1/schedules`,
+      `https://api.atlassian.com/jsm/ops/api/other-cloud/v1/schedules`,
+      `https://api.atlassian.com/jsm/ops/api/${CID}/v1/schedules/sch1/on-calls`,
+      "/jsm/ops/api/x",
+      "not a url",
+    ]) {
+      expect(isPinnedNextUrl(bad, CID)).toBe(false);
+    }
   });
 
   test("parseParticipants counts non-users and bad ids, and takes the first present key", () => {
@@ -445,15 +737,70 @@ describeWithFetchRestore("jsm oncall parsers", () => {
         ["onCallParticipants"],
       ),
     ).toEqual({ users: [{ id: "u", name: "U" }], skipped: 3 });
-    expect(parseParticipants('{"onCallParticipants":"nope"}', ["onCallParticipants"])).toEqual({
-      users: [],
-      skipped: 0,
-    });
     expect(
       parseParticipants('{"nextOnCallParticipants":[{"id":"n","type":"user"}]}', [
         "nextOnCallParticipants",
         "onCallParticipants",
       ]),
     ).toEqual({ users: [{ id: "n", name: "n" }], skipped: 0 });
+  });
+
+  test("a non-array participant field is a parse failure, at the top level and nested", () => {
+    expect(
+      parseParticipants('{"onCallParticipants":"invalid"}', ["onCallParticipants"]),
+    ).toBeNull();
+    expect(
+      parseParticipants(
+        '{"onCallParticipants":[{"id":"e","type":"escalation","onCallParticipants":"x"}]}',
+        ["onCallParticipants"],
+      ),
+    ).toBeNull();
+  });
+
+  test("users nested in an escalation are indexed once each (on-call and next-on-call forms)", () => {
+    const current = JSON.stringify({
+      onCallParticipants: [
+        {
+          id: "esc1",
+          type: "escalation",
+          onCallParticipants: [
+            { id: "u1", name: "One", type: "user" },
+            { id: "t1", type: "team" },
+          ],
+        },
+        { id: "u1", name: "One again", type: "user" },
+        { id: "u2", name: "Two", type: "user" },
+      ],
+    });
+    expect(parseParticipants(current, ["onCallParticipants"])).toEqual({
+      users: [
+        { id: "u1", name: "One" },
+        { id: "u2", name: "Two" },
+      ],
+      skipped: 1,
+    });
+    const next = JSON.stringify({
+      nextOnCallParticipants: [
+        {
+          id: "esc1",
+          type: "escalation",
+          nextOnCallParticipants: [{ id: "u3", name: "Three", type: "user" }],
+        },
+      ],
+    });
+    expect(parseParticipants(next, ["nextOnCallParticipants", "onCallParticipants"])).toEqual({
+      users: [{ id: "u3", name: "Three" }],
+      skipped: 0,
+    });
+  });
+
+  test("nesting deeper than the bound is a parse failure", () => {
+    let node: Record<string, unknown> = { id: "u", type: "user" };
+    for (let i = 0; i < 8; i += 1) {
+      node = { id: `e${String(i)}`, type: "escalation", onCallParticipants: [node] };
+    }
+    expect(
+      parseParticipants(JSON.stringify({ onCallParticipants: [node] }), ["onCallParticipants"]),
+    ).toBeNull();
   });
 });

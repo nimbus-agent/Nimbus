@@ -20,6 +20,7 @@ import { asRecord, stringField } from "./unknown-record.ts";
  */
 export const JSM_OPS_ROOT = "https://api.atlassian.com/jsm/ops/api";
 export const JSM_MAX_SCHEDULES = 50;
+export const JSM_MAX_PAGES = 10;
 export const JSM_STEP_BUDGET_MS = 60_000;
 export const JSM_UNAVAILABLE_BACKOFF_MS = 6 * 3_600_000;
 const REQUEST_TIMEOUT_MS = 30_000;
@@ -48,8 +49,39 @@ export interface JsmRun {
 
 type Get = { ok: true; text: string } | { ok: false; status: number };
 
-async function jsmGet(ctx: SyncContext, creds: JsmCreds, url: string): Promise<Get> {
-  await ctx.rateLimiter.acquire("jira"); // NOSONAR S9382: sequential on purpose; one request in flight at a time
+/** Milliseconds left of the step budget; <= 0 means expired. Unbounded before the budget starts. */
+type Remaining = () => number;
+const UNBOUNDED: Remaining = () => Number.POSITIVE_INFINITY;
+const LIMITER_POLL_MS = 200;
+
+function pause(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Waits for a rate-limit token without ever parking in the limiter's blocking queue (an abandoned
+ * `acquire` would keep its mutex hold): a bounded `tryAcquire` poll that gives up when the budget ends.
+ */
+async function acquireWithin(ctx: SyncContext, remaining: Remaining): Promise<boolean> {
+  for (;;) {
+    if (remaining() <= 0) return false;
+    if (await ctx.rateLimiter.tryAcquire("jira")) return true; // NOSONAR S9382: sequential on purpose
+    await pause(Math.min(LIMITER_POLL_MS, Math.max(1, remaining()))); // NOSONAR S9382: bounded poll
+  }
+}
+
+async function jsmGet(
+  ctx: SyncContext,
+  creds: JsmCreds,
+  url: string,
+  remaining: Remaining = UNBOUNDED,
+): Promise<Get> {
+  if (!(await acquireWithin(ctx, remaining))) return { ok: false, status: 0 };
+  const left = remaining();
+  if (left <= 0) return { ok: false, status: 0 };
+  // One deadline for the request AND its body read; the timer is cleared on every path.
+  const controller = new AbortController();
+  const timer = Number.isFinite(left) ? setTimeout(() => controller.abort(), left) : undefined;
   try {
     const res = await fetch(url, {
       headers: {
@@ -57,13 +89,15 @@ async function jsmGet(ctx: SyncContext, creds: JsmCreds, url: string): Promise<G
         Authorization: basicAuthHeader(creds.email, creds.token),
       },
       redirect: "manual",
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      signal: AbortSignal.any([controller.signal, AbortSignal.timeout(REQUEST_TIMEOUT_MS)]),
     });
     if (res.status === 429) ctx.rateLimiter.penalise("jira", RATE_LIMIT_PENALTY_MS);
     if (!res.ok) return { ok: false, status: res.status };
     return { ok: true, text: await res.text() }; // NOSONAR S9382: this request's own body
   } catch {
     return { ok: false, status: 0 };
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
   }
 }
 
@@ -138,8 +172,19 @@ async function accountIdOf(ctx: SyncContext, creds: JsmCreds): Promise<string | 
 
 type Schedule = { id: string; name: string };
 
-/** The schedules of a `/schedules` reply (`values`, `schedules` or a bare list). */
-export function parseSchedules(text: string): Schedule[] | null {
+export type SchedulePage = {
+  schedules: Schedule[];
+  /** Entries that carried no usable id: the page is not a complete list. */
+  skipped: number;
+  /** The raw `links.next`, or null when there is none. */
+  next: string | null;
+};
+
+/**
+ * One `/schedules` page (`values`, `schedules` or a bare list) with its `links.next`. Null when the reply
+ * is not that shape, or `links.next` is present but not a string.
+ */
+export function parseSchedules(text: string): SchedulePage | null {
   let root: unknown;
   try {
     root = JSON.parse(text) as unknown;
@@ -152,43 +197,106 @@ export function parseSchedules(text: string): Schedule[] | null {
     ? (root as unknown[])
     : (holder?.["values"] ?? holder?.["schedules"]);
   if (!Array.isArray(list)) return null;
-  const out: Schedule[] = [];
+  let next: string | null = null;
+  const links = holder === undefined ? undefined : holder["links"];
+  if (links !== undefined) {
+    const linkRec = asRecord(links);
+    if (linkRec === undefined) return null;
+    const raw = linkRec["next"];
+    if (typeof raw === "string" && raw !== "") next = raw;
+    else if (raw !== undefined && raw !== null) return null;
+  }
+  const schedules: Schedule[] = [];
+  let skipped = 0;
   for (const raw of list) {
     const s = asRecord(raw);
     const id = s === undefined ? undefined : stringField(s, "id");
-    if (s === undefined || id === undefined) continue;
-    out.push({ id, name: stringField(s, "name") ?? id });
+    if (s === undefined || id === undefined) {
+      skipped += 1;
+      continue;
+    }
+    schedules.push({ id, name: stringField(s, "name") ?? id });
   }
-  return out;
+  return { schedules, skipped, next };
+}
+
+/**
+ * A `links.next` is followed only when it is on the one fixed host, over https, with no credentials, no
+ * port and no fragment, under this cloud id's `schedules` path. Anything else stops the read (partial).
+ */
+export function isPinnedNextUrl(next: string, cloudId: string): boolean {
+  try {
+    const u = new URL(next);
+    const rootUrl = new URL(JSM_OPS_ROOT);
+    return (
+      u.protocol === "https:" &&
+      u.hostname === rootUrl.hostname &&
+      u.port === "" &&
+      u.username === "" &&
+      u.password === "" &&
+      u.hash === "" &&
+      u.pathname === `${rootUrl.pathname}/${cloudId}/v1/schedules`
+    );
+  } catch {
+    return false;
+  }
 }
 
 type Participant = { id: string; name: string };
 
-/** The user participants of an on-calls reply, and how many non-user participants were skipped. */
+const NESTED_KEYS = ["onCallParticipants", "nextOnCallParticipants"] as const;
+const MAX_NESTING = 4;
+
+type Walk = { users: Map<string, Participant>; skipped: number };
+
+/** Walks a participant list; false when any list has the wrong type or nests deeper than allowed. */
+function walkParticipants(list: unknown, depth: number, out: Walk): boolean {
+  if (!Array.isArray(list) || depth > MAX_NESTING) return false;
+  for (const raw of list) {
+    const p = asRecord(raw);
+    if (p === undefined) {
+      out.skipped += 1;
+      continue;
+    }
+    const id = stringField(p, "id");
+    const type = stringField(p, "type")?.toLowerCase();
+    if (type === "user") {
+      if (id === undefined || !SAFE_ACCOUNT_ID.test(id)) {
+        out.skipped += 1;
+      } else if (!out.users.has(id)) {
+        out.users.set(id, { id, name: stringField(p, "name") ?? id });
+      }
+      continue;
+    }
+    // An escalation (or any non-user) may carry the users it resolves to under a nested list.
+    const nested = NESTED_KEYS.filter((k) => k in p);
+    if (nested.length === 0) {
+      out.skipped += 1;
+      continue;
+    }
+    for (const k of nested) {
+      if (!walkParticipants(p[k], depth + 1, out)) return false;
+    }
+  }
+  return true;
+}
+
+/**
+ * The user participants of an on-calls reply (nested escalation participants included, each user once), and
+ * how many participants were skipped. Null when the reply is not the expected shape: no key present, the
+ * selected key is not a list, or a nested list is malformed.
+ */
 export function parseParticipants(
   text: string,
   keys: readonly string[],
 ): { users: Participant[]; skipped: number } | null {
   const body = bodyWith(parseJson(text), keys);
   if (body === undefined) return null;
-  const users: Participant[] = [];
-  let skipped = 0;
-  for (const key of keys) {
-    const list = body[key];
-    if (!Array.isArray(list)) continue;
-    for (const raw of list) {
-      const p = asRecord(raw);
-      const id = p === undefined ? undefined : stringField(p, "id");
-      const type = p === undefined ? undefined : stringField(p, "type")?.toLowerCase();
-      if (p === undefined || id === undefined || type !== "user" || !SAFE_ACCOUNT_ID.test(id)) {
-        skipped += 1;
-        continue;
-      }
-      users.push({ id, name: stringField(p, "name") ?? id });
-    }
-    return { users, skipped };
-  }
-  return { users, skipped };
+  const key = keys.find((k) => k in body);
+  if (key === undefined) return null;
+  const out: Walk = { users: new Map(), skipped: 0 };
+  if (!walkParticipants(body[key], 0, out)) return null;
+  return { users: [...out.users.values()], skipped: out.skipped };
 }
 
 const CURRENT_KEYS = ["onCallParticipants"] as const;
@@ -231,13 +339,14 @@ async function readSchedule(
   accountId: string | null,
   nowMs: number,
   acc: ReadSchedules,
+  remaining: Remaining,
 ): Promise<void> {
   const base = `${root}/schedules/${encodeURIComponent(schedule.id)}`;
   for (const [path, keys, shift] of [
     ["on-calls", CURRENT_KEYS, "current"],
     ["next-on-calls", NEXT_KEYS, "next"],
   ] as const) {
-    const res = await jsmGet(ctx, creds, `${base}/${path}`);
+    const res = await jsmGet(ctx, creds, `${base}/${path}`, remaining);
     const parsed = res.ok ? parseParticipants(res.text, keys) : null;
     if (parsed === null) {
       acc.complete = false;
@@ -264,6 +373,47 @@ function logOutcome(ctx: SyncContext, out: OncallOutcome, skipped: number, cappe
   );
 }
 
+type Collected = { schedules: Schedule[]; complete: boolean; capped: boolean; skipped: number };
+
+/**
+ * Follows `links.next` from the first page, bounded by `JSM_MAX_PAGES` and `JSM_MAX_SCHEDULES`, each next
+ * URL pinned to the fixed host and this cloud id. A cap, a bad next URL, a failed or unparseable page or an
+ * expired budget ends the read as partial; the schedules read so far are still returned.
+ */
+async function collectSchedules(
+  ctx: SyncContext,
+  creds: JsmCreds,
+  cloudId: string,
+  first: SchedulePage,
+  remaining: Remaining,
+): Promise<Collected> {
+  const out: Collected = { schedules: [], complete: true, capped: false, skipped: 0 };
+  let page: SchedulePage = first;
+  for (let n = 1; ; n += 1) {
+    out.skipped += page.skipped;
+    if (page.skipped > 0) out.complete = false;
+    out.schedules.push(...page.schedules);
+    if (out.schedules.length > JSM_MAX_SCHEDULES) {
+      out.schedules.length = JSM_MAX_SCHEDULES;
+      out.capped = true;
+      out.complete = false;
+      return out;
+    }
+    if (page.next === null) return out;
+    if (n >= JSM_MAX_PAGES || !isPinnedNextUrl(page.next, cloudId)) {
+      out.complete = false;
+      return out;
+    }
+    const res = await jsmGet(ctx, creds, page.next, remaining);
+    const parsed = res.ok ? parseSchedules(res.text) : null;
+    if (parsed === null) {
+      out.complete = false;
+      return out;
+    }
+    page = parsed;
+  }
+}
+
 /**
  * One refresh. `clock` is injectable so a test can end the 60 s budget. Never throws on a request
  * failure; the caller wraps the rest. `fields.ocAt` is set to `nowMs` (an ATTEMPT, so a failing provider
@@ -287,9 +437,10 @@ export async function runJsmOncall(
   fields.cid = id.cid;
   fields.cidSite = id.cidSite;
   const started = clock();
+  const remaining: Remaining = () => JSM_STEP_BUDGET_MS - (clock() - started);
   const root = `${JSM_OPS_ROOT}/${id.cid}/v1`;
   const accountId = await accountIdOf(ctx, creds);
-  const listed = await jsmGet(ctx, creds, `${root}/schedules`);
+  const listed = await jsmGet(ctx, creds, `${root}/schedules`, remaining);
   if (!listed.ok) {
     if (listed.status === 401 || listed.status === 403 || listed.status === 404) {
       fields.ocUntil = nowMs + JSM_UNAVAILABLE_BACKOFF_MS;
@@ -301,21 +452,22 @@ export async function runJsmOncall(
     return { outcome: { complete: false, upserted: 0, deleted: 0 }, fields };
   }
   delete fields.ocUntil;
-  const schedules = parseSchedules(listed.text);
-  if (schedules === null) return { outcome: { complete: false, upserted: 0, deleted: 0 }, fields };
-  const capped = schedules.length > JSM_MAX_SCHEDULES;
-  const acc: ReadSchedules = { keep: [], complete: !capped, skipped: 0 };
-  for (const schedule of schedules.slice(0, JSM_MAX_SCHEDULES)) {
+  const first = parseSchedules(listed.text);
+  if (first === null) return { outcome: { complete: false, upserted: 0, deleted: 0 }, fields };
+  const found = await collectSchedules(ctx, creds, id.cid, first, remaining);
+  const capped = found.capped;
+  const acc: ReadSchedules = { keep: [], complete: found.complete, skipped: found.skipped };
+  for (const schedule of found.schedules) {
     if (!SAFE_ID.test(schedule.id)) {
       acc.skipped += 1;
       acc.complete = false;
       continue;
     }
-    if (clock() - started > JSM_STEP_BUDGET_MS) {
+    if (remaining() <= 0) {
       acc.complete = false;
       break;
     }
-    await readSchedule(ctx, creds, root, schedule, accountId, nowMs, acc);
+    await readSchedule(ctx, creds, root, schedule, accountId, nowMs, acc, remaining);
   }
   const deleted = acc.complete ? ctx.replaceItemSet(ONCALL_SHIFT_ITEM_TYPE, acc.keep) : 0;
   const outcome = { complete: acc.complete, upserted: acc.keep.length, deleted };

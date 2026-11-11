@@ -110,7 +110,7 @@ describeWithFetchRestore("pagerduty oncall refresh", () => {
       ]);
       expect(acquired).toEqual(["pagerduty", "pagerduty", "pagerduty"]);
       for (const c of calls) {
-        expect(c.url.startsWith(HOST)).toBe(true);
+        expect(new URL(c.url).origin).toBe(new URL(HOST).origin);
         const h = c.init?.headers as Record<string, string>;
         expect(h["Authorization"]).toBe("Token token=tok");
         expect(h["Accept"]).toBe("application/vnd.pagerduty+json;version=2");

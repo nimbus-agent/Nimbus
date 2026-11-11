@@ -264,7 +264,7 @@ export async function runPagerdutyOncall(
   let deleted = 0;
   // An entry that could not be read may be a shift already indexed: keep the upserts, delete nothing.
   const complete = fetched.complete && skipped === 0;
-  if (complete) deleted =ctx.replaceItemSet(ONCALL_SHIFT_ITEM_TYPE, keep);
+  if (complete) deleted = ctx.replaceItemSet(ONCALL_SHIFT_ITEM_TYPE, keep);
   ctx.logger.info(
     {
       serviceId: "pagerduty",
