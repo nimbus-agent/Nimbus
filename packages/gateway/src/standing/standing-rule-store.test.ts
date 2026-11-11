@@ -9,6 +9,7 @@ import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import {
   claimFire,
   getRule,
+  hasLiveRuleFor,
   insertRule,
   listFires,
   listRules,
@@ -214,5 +215,35 @@ describe("scopeSha256", () => {
     expect(x).toBe(y);
     expect(x).toMatch(/^[0-9a-f]{64}$/);
     expect(scopeSha256({ a: { const: 2 } })).not.toBe(scopeSha256({ a: { const: 1 } }));
+  });
+});
+
+describe("hasLiveRuleFor", () => {
+  const k = { workflowId: "wf1", workflowSha256: "a".repeat(64), stepIndex: 1 };
+
+  test("true only for a live rule of the same workflow, hash and step", () => {
+    const db = fresh();
+    expect(hasLiveRuleFor(db, k, T0 + 1)).toBe(false);
+    const r = insertRule(db, newRule());
+    expect(hasLiveRuleFor(db, k, T0 + 1)).toBe(true);
+    expect(hasLiveRuleFor(db, { ...k, workflowSha256: "b".repeat(64) }, T0 + 1)).toBe(false);
+    expect(hasLiveRuleFor(db, { ...k, stepIndex: 2 }, T0 + 1)).toBe(false);
+    expect(hasLiveRuleFor(db, { ...k, workflowId: "other" }, T0 + 1)).toBe(false);
+    pauseRule(db, r.id, T0 + 2);
+    expect(hasLiveRuleFor(db, k, T0 + 3)).toBe(false);
+  });
+
+  test("an expired, exhausted or revoked rule is not live", () => {
+    const db = fresh();
+    insertRule(db, newRule({ expiresAt: T0 + 10 }));
+    expect(hasLiveRuleFor(db, k, T0 + 10)).toBe(false);
+    const db2 = fresh();
+    const r = insertRule(db2, newRule({ maxActions: 1 }));
+    claimFire(db2, r.id, T0 + 1, "gmail.thread.archive", "x");
+    expect(hasLiveRuleFor(db2, k, T0 + 2)).toBe(false);
+    const db3 = fresh();
+    const r3 = insertRule(db3, newRule());
+    revokeRule(db3, r3.id, T0 + 1);
+    expect(hasLiveRuleFor(db3, k, T0 + 2)).toBe(false);
   });
 });
