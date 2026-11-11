@@ -1655,6 +1655,8 @@ While a rule is live, each write of that step that is built by that exact workfl
 
 **Briefing data (Phase 10 MB1).** MB1 adds no command or flag. It adds one `nimbus.toml` key, `[briefing] snapshot_interval_minutes = 15` (an integer 5 to 240; a value outside that falls back to 15 and `nimbus config explain briefing.snapshot_interval_minutes` shows the fallback): how often the Jira, Linear and GitHub syncs may refresh their snapshot of your open work. `nimbus index rebody` clears the sync cursor of each service it re-syncs (`--service`, or every service that has recoverable rows, by body or by metadata version), so a Jira, Linear or GitHub snapshot is refreshed by a rebody run only when that service is part of the run; a service with nothing recoverable is left alone and keeps its interval. The briefing command and its other keys arrive with MB5.
 
+**Calendar sync (Phase 10 MB2b).** MB2b adds no other command or flag. `nimbus connector auth google_calendar` runs its own Google consent for `https://www.googleapis.com/auth/calendar.readonly` (so connecting Gmail or Drive never grants calendar access, and `nimbus connector auth google_calendar --help` prints the Google OAuth setup); once connected, the sync keeps each selected Google calendar (at most 20) for the window one day back to 30 days ahead, and the existing `outlook` connection keeps the same window of your mailbox calendar (a connection made before Outlook asked for `Calendars.Read` needs `nimbus connector auth outlook` again). `nimbus connector remove google_calendar` removes its credential like any connector.
+
 **Exit codes:** `0` done, `1` the gateway refused (policy, not a person's answer, a bad request, a decline, a stale suggestion), `2` usage.
 
 ---
@@ -2871,6 +2873,7 @@ The canonical per-connector credential keys live in `CONNECTOR_VAULT_SECRET_KEYS
 nimbus connector auth google_drive
 nimbus connector auth gmail
 nimbus connector auth google_photos
+nimbus connector auth google_calendar   # its own consent: calendar.readonly only
 nimbus connector auth onedrive
 nimbus connector auth outlook
 nimbus connector auth teams

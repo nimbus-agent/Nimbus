@@ -12,7 +12,7 @@ Tools are **registered conditionally** based on the granted Microsoft Graph scop
 ## What's indexed
 
 - **Service id:** `outlook`
-- **Item types:** `email` (sync only indexes mail; calendar and contacts are MCP-only surfaces)
+- **Item types:** `email` and `event` (sync indexes mail and your calendar; contacts are an MCP-only surface). Calendar events cover one day back to 30 days ahead and carry their start and end times; a connection made before Outlook requested `Calendars.Read` needs `nimbus connector auth outlook` again to index events.
 - **Body:** the message body, up to **16,384 UTF-16 code units**. The sync `$select`s Graph's `body` alongside
   `bodyPreview`, converts HTML to plain text, and strips quoted reply chains and signature blocks.
   A message with no extractable body falls back to Graph's ~255-character `bodyPreview`, which stays
