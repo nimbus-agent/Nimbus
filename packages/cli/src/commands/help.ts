@@ -153,6 +153,10 @@ CONFIG & DIAGNOSTICS
                               extensions, HITL (follow-only, no backfill)
   nimbus notifications status|test [--json]   OS notification (toast) backend status; send one
                               fixed-text test toast ([notifications] enabled/content in nimbus.toml)
+  nimbus approve add --workflow <name> --step <label|n> [--days N] [--max N] [--window "Mon-Fri 06:00-10:00 Europe/Berlin"]
+  nimbus approve list|show|pause|resume|revoke [<id>] [--json]   Standing approval rules: approve a
+                              recurring workflow write once, bound to the exact workflow; every
+                              run it covers is recorded (nimbus audit standing [<rule>])
   nimbus captures [list|show|accept|reject|revoke|purge <id>] [--json]   Review what MCP clients
                               captured or proposed ([mcp_sink] in nimbus.toml); accept --all takes
                               every proposed decision/term/link after one prompt; purge deletes a
