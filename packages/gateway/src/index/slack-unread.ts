@@ -98,25 +98,38 @@ export function slackTsToMs(ts: string): number {
   return Number(ts.slice(0, 10)) * 1000 + Number(ts.slice(11, 14));
 }
 
+/**
+ * Runs one read and finalizes its statement. Not `db.query`: bun's statement cache left statements of
+ * these window/CTE reads active so a file database could not close (the integration test caught it),
+ * and the project rule is that a prepared statement is finalized.
+ */
+function readAll<T>(db: Database, sql: string, ...params: Array<string | number>): T[] {
+  const stmt = db.prepare(sql);
+  try {
+    return stmt.all(...params) as T[];
+  } finally {
+    stmt.finalize();
+  }
+}
+
 function markerStats(db: Database): {
   count: number;
   oldest: number | null;
   newest: number | null;
 } {
-  const row = db
-    .query(
-      `SELECT COUNT(*) AS n, MIN(captured_at) AS lo, MAX(captured_at) AS hi
-       FROM chat_read_marker WHERE service = 'slack'`,
-    )
-    .get() as { n: number; lo: number | null; hi: number | null };
+  const row = readAll<{ n: number; lo: number | null; hi: number | null }>(
+    db,
+    `SELECT COUNT(*) AS n, MIN(captured_at) AS lo, MAX(captured_at) AS hi
+     FROM chat_read_marker WHERE service = 'slack'`,
+  )[0] as { n: number; lo: number | null; hi: number | null };
   return { count: row.n, oldest: row.lo, newest: row.hi };
 }
 
 // lane-census: scope=message service=slack
 function channelsWithoutMarker(db: Database): string[] {
-  const rows = db
-    .query(
-      `WITH msgs AS (
+  const rows = readAll<{ ch: unknown }>(
+    db,
+    `WITH msgs AS (
          SELECT CASE WHEN json_valid(metadata) THEN json_extract(metadata, '$.channel') END AS ch
          FROM item WHERE service = 'slack' AND type = 'message'
        )
@@ -124,8 +137,7 @@ function channelsWithoutMarker(db: Database): string[] {
        WHERE ch IS NOT NULL
          AND ch NOT IN (SELECT channel_id FROM chat_read_marker WHERE service = 'slack')
        ORDER BY ch`,
-    )
-    .all() as Array<{ ch: unknown }>;
+  );
   return rows.map((r) => String(r.ch));
 }
 
@@ -150,8 +162,8 @@ export function countUnreadSlackThreads(
   }
   const requested = opts.limit ?? DEFAULT_SLACK_UNREAD_LIMIT;
   const limit = Number.isFinite(requested) ? Math.max(0, Math.floor(requested)) : 0;
-  const total = db.query(TOTAL_SQL).get(opts.selfUserId) as { n: number };
-  const rows = db.query(THREADS_SQL).all(opts.selfUserId, limit) as ThreadRow[];
+  const total = readAll<{ n: number }>(db, TOTAL_SQL, opts.selfUserId)[0] as { n: number };
+  const rows = readAll<ThreadRow>(db, THREADS_SQL, opts.selfUserId, limit);
   const threads: ChatUnreadThread[] = rows.map((r) => ({
     itemId: r.id,
     channelId: r.ch,
