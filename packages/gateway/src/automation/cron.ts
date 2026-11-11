@@ -273,7 +273,11 @@ export function nextFire(expr: string, tz: string, afterMs: number): number | un
  * from each of 48 starts spread over a year (and over the minute of the day) are compared.
  * Returns the refusal text, or `undefined` when the schedule is acceptable.
  */
-export function scheduleRefusal(expr: string, tz: string): string | undefined {
+export function scheduleRefusal(
+  expr: string,
+  tz: string,
+  minIntervalMinutes: number = MIN_INTERVAL_MINUTES,
+): string | undefined {
   let spec: CronSpec;
   try {
     spec = parseCron(expr);
@@ -289,8 +293,8 @@ export function scheduleRefusal(expr: string, tz: string): string | undefined {
     if (first === undefined) continue;
     anyFire = true;
     const second = nextFireOf(spec, tz, first);
-    if (second !== undefined && second - first < MIN_INTERVAL_MINUTES * MINUTE_MS) {
-      return `a schedule may not fire more often than every ${String(MIN_INTERVAL_MINUTES)} minutes`;
+    if (second !== undefined && second - first < minIntervalMinutes * MINUTE_MS) {
+      return `a schedule may not fire more often than every ${String(minIntervalMinutes)} minutes`;
     }
   }
   return anyFire ? undefined : "this schedule never fires";
