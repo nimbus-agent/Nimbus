@@ -11,6 +11,7 @@ import {
   checkBeforeStateRead,
   checkBoundCapabilities,
   checkBoundWrites,
+  checkBriefingConfinement,
   checkBrokeredFetchLiteralConfinement,
   checkCaptureGateCallers,
   checkCaptureGateImporters,
@@ -5774,5 +5775,111 @@ describe("D24 - chat_read_marker is written only by its store (Phase 10 MB4)", (
     }
     expect(checkChatReadMarkerConfinement(files)).toEqual([]);
     expect(assertScanIsMeaningful(files)).toEqual([]);
+
+describe("D45 - the morning briefing delivers locally only (OR-10-11)", () => {
+  const file = (relPath: string, contents: string): FileEntry => ({ relPath, contents });
+  const SRC = "packages/gateway/src/";
+  const RUNNER = `${SRC}briefing/briefing-runner.ts`;
+  const BUILD = `${SRC}agents/_lib/briefing-build.ts`;
+  const QUERIES = `${SRC}agents/_lib/briefing-queries.ts`;
+  const GOOD: FileEntry[] = [
+    file(
+      RUNNER,
+      [
+        'import { emitGatewayEvent } from "../ipc/gateway-events.ts";',
+        'import { showWithOutcome } from "../platform/notifications/notifications-runtime.ts";',
+        'import { synthesize } from "../agents/_lib/synthesize.ts";',
+        'import { dbRun } from "../db/write.ts";',
+        'import type { X } from "../connectors/health.ts";',
+        'import { type A, type B } from "../connectors/x.ts";',
+        "",
+      ].join("\n"),
+    ),
+    file(BUILD, 'import { queryOncallNow } from "../../index/oncall-now-query.ts";\n'),
+    file(`${SRC}ipc/gateway-events.ts`, 'import type { H } from "../connectors/health.ts";\n'),
+    file(
+      `${SRC}briefing/briefing-runner.test.ts`,
+      'import { x } from "../chatops/x.ts";\nfetch("u");\n',
+    ),
+    file(
+      RUNNER.replace("runner", "comment"),
+      '// import { x } from "../chatops/x.ts"; fetch("u")\nconst s = "fetch(";\ndb.fetch(1);\n',
+    ),
+  ];
+  const rules = (files: FileEntry[]): string[] =>
+    checkBriefingConfinement(files).map((v) => v.rule);
+  const bad = (path: string, contents: string): FileEntry[] => [...GOOD, file(path, contents)];
+
+  test("the control passes", () => {
+    expect(checkBriefingConfinement(GOOD)).toEqual([]);
+  });
+
+  test.each([
+    'import { x } from "../chatops/x.ts";',
+    'import { x } from "../egress/x.ts";',
+    'import { x } from "../federation/x.ts";',
+    'import { x } from "../share/x.ts";',
+    'import { x } from "../connectors/x.ts";',
+    'import { type A, b } from "../connectors/x.ts";',
+    'const m = await import("../chatops/x.ts");',
+    'const m = require("../egress/x.ts");',
+    'export { x } from "../connectors/x.ts";',
+    'import type { X } from "../chatops/x.ts";',
+  ])("a forbidden import is flagged: %s", (body) => {
+    expect(rules(bad(RUNNER, body))).toEqual(["briefing-forbidden-import"]);
+    expect(rules(bad(QUERIES, body))).toEqual(["briefing-forbidden-import"]);
+  });
+
+  test.each([
+    'fetch("https://x");',
+    'globalThis.fetch("https://x");',
+    'Bun.fetch("https://x");',
+    'const w = new WebSocket("wss://x");',
+    "const x = new XMLHttpRequest();",
+    'import { get } from "node:http";',
+    'import { get } from "node:https";',
+    'import h from "node:http2";',
+    'import n from "node:net";',
+    'import t from "node:tls";',
+    'import d from "node:dgram";',
+    'import { fetch } from "undici";',
+  ])("a network primitive is flagged: %s", (body) => {
+    expect(rules(bad(RUNNER, body))).toEqual(["briefing-no-network"]);
+  });
+
+  test("a file outside the scope, a test, a comment and a string are not scanned", () => {
+    expect(
+      rules(bad(`${SRC}ipc/other.ts`, 'import { x } from "../chatops/x.ts"; fetch("u");')),
+    ).toEqual([]);
+    expect(
+      rules(bad(`${SRC}agents/_lib/render.ts`, 'import { x } from "../../chatops/x.ts";')),
+    ).toEqual([]);
+    expect(rules(bad(`${SRC}briefing/x.test.ts`, 'fetch("u");'))).toEqual([]);
+  });
+
+  test("the real repository satisfies the rule and the checker visits both halves of its scope", async () => {
+    const files: FileEntry[] = [];
+    for await (const f of iterateSourceFiles())
+      files.push({ relPath: f.relPath, contents: f.contents });
+    expect(checkBriefingConfinement(files)).toEqual([]);
+    const visited = files.filter(
+      (f) =>
+        !f.relPath.endsWith(".test.ts") &&
+        (f.relPath.startsWith(`${SRC}briefing/`) ||
+          /agents\/_lib\/briefing[\w.-]*\.ts$/.test(f.relPath)),
+    );
+    expect(visited.some((f) => f.relPath.startsWith(`${SRC}briefing/`))).toBe(true);
+    expect(visited.some((f) => f.relPath.includes("agents/_lib/briefing"))).toBe(true);
+  });
+
+  test("D44(d) separation: firedBy schedule is allowed under briefing/, trigger schedule is still refused", () => {
+    const ok = checkStandingApprovals([
+      file(`${SRC}briefing/x.ts`, 'const r = { firedBy: "schedule" };\n'),
+    ]);
+    expect(ok.map((v) => v.rule)).not.toContain("standing-unattended-confined");
+    const no = checkStandingApprovals([
+      file(`${SRC}briefing/x.ts`, 'const r = { trigger: "schedule" };\n'),
+    ]);
+    expect(no.map((v) => v.rule)).toContain("standing-unattended-confined");
   });
 });
