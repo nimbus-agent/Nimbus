@@ -841,9 +841,15 @@ export async function doctorPrintBriefing(client: Pick<IPCClient, "call">): Prom
     );
     return 1;
   }
-  const { lines, exit } = doctorBriefingLines(raw as BriefingStatusLike);
-  for (const l of lines) console.log(l);
-  return exit;
+  try {
+    if (raw === null || typeof raw !== "object") throw new TypeError("unexpected status reply");
+    const { lines, exit } = doctorBriefingLines(raw as BriefingStatusLike);
+    for (const l of lines) console.log(l);
+    return exit;
+  } catch (e) {
+    console.log(`[warn] Morning briefing: ${e instanceof Error ? e.message : String(e)}`);
+    return 1;
+  }
 }
 
 /**

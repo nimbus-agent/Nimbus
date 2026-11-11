@@ -331,4 +331,17 @@ describe("doctor", () => {
       log.mockRestore();
     }
   });
+
+  test("doctorPrintBriefing: a null or incomplete reply is a warn, never a throw", async () => {
+    const log = spyOn(console, "log").mockImplementation(() => {});
+    try {
+      for (const reply of [null, undefined, "x", {}, { enabled: true }]) {
+        log.mockClear();
+        expect(await doctorPrintBriefing({ call: async () => reply } as never)).toBe(1);
+        expect(String(log.mock.calls[0]?.[0])).toContain("[warn] Morning briefing:");
+      }
+    } finally {
+      log.mockRestore();
+    }
+  });
 });
