@@ -171,6 +171,9 @@ broadcast as `watcher.fired` on the `gateway.event` envelope.
 | `workflow.run` | request | Execute a pipeline (supports `dryRun: true`; streams `agent.chunk` with `stream: true`) |
 | `workflow.cancel` | request | Abort a run by its client-chosen `streamId`; honoured at the next step boundary |
 | `workflow.listRuns` | request | Run history with per-step status |
+| `workflow.scheduleList` | request | Scheduled workflows: cron, zone, next and last fire, last run status, any blocked run (Phase 10 SA4; renderer-safe read) |
+| `workflow.unschedule` | request | Clear a workflow's schedule (LAN write method; not on the renderer allowlist) |
+| `workflow.resume` | request | Continue a run blocked on an approval, `{ runId, discard? }`; local `cli`/`ui` only, LAN-forbidden (Phase 10 SA4) |
 
 ---
 

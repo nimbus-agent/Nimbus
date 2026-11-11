@@ -5490,6 +5490,8 @@ nimbus workflow save weekly-cleanup --file ./weekly-cleanup.yml --description "F
 
 `--description <text>` overrides the description parsed from the file.
 
+**Scheduling (Phase 10 SA4).** `--schedule "<cron>" [--tz <IANA zone>]` runs the workflow on a schedule, with no one at the terminal. The expression has the five standard fields (minute, hour, day of month, month, day of week; `*`, numbers, lists, ranges and steps; `@hourly`, `@daily`, `@weekly` and `@monthly`); names (`MON`, `JAN`), `L`, `W`, `#`, `?` and a seconds field are refused, and so is any schedule that can fire twice within **five minutes**. The zone defaults to this machine's and is stored when you save. The gateway accepts a schedule only from your CLI or desktop on the local socket (this command declares itself the CLI first); a workflow with a model (`run`) step cannot be scheduled. A save with no `--schedule` clears the old one, so does any edit from another kind of client, and any change to the steps changes the content hash a standing rule is bound to. A scheduled run asks nobody: a write that a live standing rule covers runs under the rule, and a write with no rule **stops the run** (see `nimbus workflow resume`). If the gateway was down at fire time, a miss of at most an hour runs once when it comes back; an older miss is skipped and recorded. `nimbus schedule list` shows what is scheduled.
+
 **Step kinds (Phase 10 SA2).** Each entry of `steps` is a `run` prompt (the default, `kind` optional) or one of two deterministic steps that involve no model:
 
 ```yaml
@@ -5522,6 +5524,40 @@ List saved workflow pipelines.
 
 ```bash
 nimbus workflow list
+```
+
+---
+
+### `nimbus workflow unschedule <name>`
+
+Clear a workflow's schedule (Phase 10 SA4). The workflow, its runs and its standing rules are untouched.
+
+```bash
+nimbus workflow unschedule weekly-cleanup
+```
+
+---
+
+### `nimbus workflow resume <runId> [--discard]`
+
+Continue a scheduled run that stopped at a write step no standing rule covered (Phase 10 SA4). The gateway told you when it stopped: one OS notification, "Workflow <name> is waiting for you: step <label> needs your approval", and `nimbus schedule list` prints this exact command. Resume runs from the blocked step **on your terminal with the normal prompt** (a standing rule you have since created may cover it); it re-runs the workflow's declared queries first, so it acts on what matches now, not on what matched when the run stopped. The blocked run is finished as `abandoned` and the continuation is a new run that records `resumedFrom`. `--discard` abandons the blocked run, runs nothing, and lets scheduling continue.
+
+The gateway refuses a resume when the run is not blocked, was recorded before schedules existed, or when the workflow was edited after it blocked (`ERR_WORKFLOW_CHANGED`: run it again instead); when the workflow is running right now (`ERR_WORKFLOW_BUSY`); and from any client that is not your CLI or desktop. While a workflow has a blocked run, its later scheduled fires are recorded as skipped ("waiting for approval") with no new run and no second notification.
+
+```bash
+nimbus workflow resume 3f2a9c1e-... 
+nimbus workflow resume 3f2a9c1e-... --discard
+```
+
+---
+
+### `nimbus schedule list [--json]`
+
+Every scheduled workflow with its cron expression and zone, its next and last fire (in that zone), the status of its last run, and, for a workflow that is waiting on you, the step and the exact `nimbus workflow resume <runId>` to run. Read-only.
+
+```bash
+nimbus schedule list
+nimbus schedule list --json
 ```
 
 ---
