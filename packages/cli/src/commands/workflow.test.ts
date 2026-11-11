@@ -16,7 +16,15 @@ import { createDeclaringMockIpcClient } from "../../test/helpers/mock-ipc-client
 import { INTERACTIVE_RPC_TIMEOUT_MS } from "../lib/rpc-timeouts.ts";
 
 const mod = await import("./workflow.ts");
-const { runWorkflowCli, runWorkflowList, runWorkflowDelete, runWorkflowSave, runWorkflowRun } = mod;
+const {
+  runWorkflowCli,
+  runWorkflowList,
+  runWorkflowDelete,
+  runWorkflowSave,
+  runWorkflowRun,
+  runWorkflowUnschedule,
+  runWorkflowResume,
+} = mod;
 
 /** Yield a macrotask so every pending microtask chain (connect → call → handler) settles. */
 const flush = (): Promise<void> => new Promise((r) => setTimeout(r, 0));
@@ -417,5 +425,91 @@ describe("runWorkflowCli (dispatcher)", () => {
     });
     await runWorkflowCli(["list"]);
     expect(listConstructions[0]?.opts).toBeUndefined();
+  });
+});
+
+describe("scheduling and resuming a workflow (Phase 10 SA4)", () => {
+  let tmpDir: string;
+  beforeEach(() => {
+    out.reset();
+    tmpDir = mkdtempSync(join(tmpdir(), "nimbus-wf-sched-"));
+  });
+  afterEach(() => {
+    clearFixture();
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  const writeWorkflow = (): string => {
+    const file = join(tmpDir, "w.json");
+    writeFileSync(file, JSON.stringify({ name: "w", steps: [{ run: "x" }] }));
+    return file;
+  };
+
+  it("save --schedule declares the cli kind first, then sends schedule and tz", async () => {
+    const ipc = createDeclaringMockIpcClient([{ id: "1", scheduled: true }]);
+    await runWorkflowSave(ipc.client, [
+      "w",
+      "--file",
+      writeWorkflow(),
+      "--schedule",
+      "0 6 * * *",
+      "--tz",
+      "Europe/Berlin",
+    ]);
+    expect(ipc.allCalls.map((c) => c.method)).toEqual(["session.declareKind", "workflow.save"]);
+    expect(ipc.calls[0]?.params).toMatchObject({
+      schedule: "0 6 * * *",
+      scheduleTz: "Europe/Berlin",
+    });
+  });
+
+  it("save without --schedule declares nothing and sends no schedule", async () => {
+    const ipc = createMockIpcClient([{ id: "1" }]);
+    await runWorkflowSave(ipc.client, ["w", "--file", writeWorkflow()]);
+    expect(ipc.calls.map((c) => c.method)).toEqual(["workflow.save"]);
+    expect(ipc.calls[0]?.params).not.toHaveProperty("schedule");
+  });
+
+  it("--tz without --schedule is refused before any call", async () => {
+    const ipc = createMockIpcClient([]);
+    await expect(
+      runWorkflowSave(ipc.client, ["w", "--file", writeWorkflow(), "--tz", "UTC"]),
+    ).rejects.toThrow("--tz needs --schedule");
+    expect(ipc.calls).toHaveLength(0);
+  });
+
+  it("unschedule calls workflow.unschedule and needs a name", async () => {
+    const ipc = createMockIpcClient([{ ok: true }]);
+    await runWorkflowUnschedule(ipc.client, [" w "]);
+    expect(ipc.calls[0]).toEqual({ method: "workflow.unschedule", params: { name: "w" } });
+    await expect(runWorkflowUnschedule(ipc.client, [])).rejects.toThrow("unschedule <name>");
+  });
+
+  it("resume declares the cli kind, sends the run id, and --discard when asked", async () => {
+    const ipc = createDeclaringMockIpcClient([{ status: "done" }, {}, { status: "abandoned" }]);
+    await runWorkflowResume(ipc.client, ["run-1"]);
+    expect(ipc.allCalls.map((c) => c.method)).toEqual(["session.declareKind", "workflow.resume"]);
+    expect(ipc.calls[0]).toEqual({ method: "workflow.resume", params: { runId: "run-1" } });
+    await runWorkflowResume(ipc.client, ["--discard", "run-2"]);
+    expect(ipc.calls[1]?.params).toEqual({ runId: "run-2", discard: true });
+    await expect(runWorkflowResume(ipc.client, ["--discard"])).rejects.toThrow("resume <runId>");
+  });
+
+  it("resume gets the interactive budget through the dispatcher", async () => {
+    const constructions: RecordedClientConstruction[] = [];
+    const ipc = createDeclaringMockIpcClient([{ status: "done" }]);
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      clientConstructions: constructions,
+      ipcClient: {
+        call: ipc.client.call,
+        connect: () => {},
+        disconnect: () => {},
+        onNotification: ipc.client.onNotification,
+      },
+    });
+    await runWorkflowCli(["resume", "run-1"]);
+    expect(constructions[0]?.opts).toEqual({ requestTimeoutMs: INTERACTIVE_RPC_TIMEOUT_MS });
+    await flush();
   });
 });

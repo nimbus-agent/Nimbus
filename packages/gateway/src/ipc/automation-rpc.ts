@@ -26,8 +26,10 @@ import {
   setWatcherEnabled,
 } from "../automation/watcher-store.ts";
 import { listWorkflowRuns } from "../automation/workflow-run-history.ts";
+import { resolveSaveSchedule, ScheduleSaveError } from "../automation/workflow-schedule.ts";
 import { stepsSaveRefusal } from "../automation/workflow-steps.ts";
 import {
+  clearScheduleByName,
   deleteWorkflowByName,
   listWorkflows,
   upsertWorkflowByName,
@@ -132,6 +134,7 @@ import { asRecord } from "./connector-rpc-shared.ts";
 import { readAuditEntries } from "./extension-audit-rpc.ts";
 import { emitGatewayEvent } from "./gateway-events.ts";
 import { requireTrimmedStringField } from "./rpc-params.ts";
+import type { ClientKind } from "./server/client-kind.ts";
 
 export class AutomationRpcError extends Error {
   readonly rpcCode: number;
@@ -158,6 +161,16 @@ function requireNumber(rec: Record<string, unknown> | undefined, key: string): n
     throw new AutomationRpcError(-32602, `Missing or invalid ${key}`);
   }
   return v;
+}
+
+/** A `clientKind` key in the params would be a caller naming its own kind: refused, not ignored. */
+function refuseSuppliedClientKind(rec: Record<string, unknown> | undefined, method: string): void {
+  if (rec !== undefined && Object.hasOwn(rec, "clientKind")) {
+    throw new AutomationRpcError(
+      -32602,
+      `${method}: clientKind is derived by the gateway and may not be sent`,
+    );
+  }
 }
 
 function handleValidateCondition(rec: Record<string, unknown> | undefined, db: Database): Hit {
@@ -216,6 +229,11 @@ export type AutomationEvalDeps = Pick<
 
 interface AutomationCtx {
   db: Database;
+  /**
+   * The CONNECTION's declared client kind, set by the server from the session (never from params;
+   * a `clientKind` key in params is refused). `workflow.save` sets a schedule only for `cli`/`ui`.
+   */
+  clientKind?: ClientKind;
   extensionsDir?: string;
   mesh?: AutomationRpcExtensionMeshHandle;
   vault?: NimbusVault;
@@ -550,8 +568,35 @@ const AUTOMATION_HANDLERS: Readonly<Record<string, AutomationHandler>> = {
     // run-only workflow saves exactly as it always did.
     const refusal = stepsSaveRefusal(stepsJson);
     if (refusal !== undefined) throw new AutomationRpcError(-32602, `workflow.save: ${refusal}`);
-    const id = upsertWorkflowByName(ctx.db, name, description, stepsJson, Date.now());
-    return { kind: "hit", value: { id } };
+    refuseSuppliedClientKind(rec, "workflow.save");
+    const now = Date.now();
+    // A save sets the schedule it names or clears the old one; only a local owner client may set one
+    // (SA4): the kind comes from the connection, and an absent kind is `unknown`, which is refused.
+    let schedule: ReturnType<typeof resolveSaveSchedule>;
+    try {
+      schedule = resolveSaveSchedule({
+        schedule: rec?.["schedule"],
+        scheduleTz: rec?.["scheduleTz"],
+        stepsJson,
+        clientKind: ctx.clientKind ?? "unknown",
+        now,
+      });
+    } catch (e) {
+      if (e instanceof ScheduleSaveError) {
+        throw new AutomationRpcError(-32602, `workflow.save: ${e.message}`);
+      }
+      throw e;
+    }
+    const id = upsertWorkflowByName(ctx.db, name, description, stepsJson, now, schedule);
+    return { kind: "hit", value: { id, scheduled: schedule !== null } };
+  },
+
+  "workflow.unschedule": (rec, ctx) => {
+    refuseSuppliedClientKind(rec, "workflow.unschedule");
+    return {
+      kind: "hit",
+      value: { ok: clearScheduleByName(ctx.db, requireString(rec, "name")) },
+    };
   },
 
   "workflow.delete": (rec, ctx) => ({
@@ -1457,6 +1502,8 @@ export async function dispatchAutomationRpc(options: {
   method: string;
   params: unknown;
   db: Database;
+  /** The connection's declared kind (`ctx.getClientKind(clientId)`); absent reads as `unknown`. */
+  clientKind?: ClientKind;
   extensionsDir?: string;
   mesh?: AutomationRpcExtensionMeshHandle;
   vault?: NimbusVault;
@@ -1481,6 +1528,7 @@ export async function dispatchAutomationRpc(options: {
   }
   const ctx: AutomationCtx = {
     db: options.db,
+    ...(options.clientKind !== undefined && { clientKind: options.clientKind }),
     ...(options.extensionsDir !== undefined && { extensionsDir: options.extensionsDir }),
     ...(options.mesh !== undefined && { mesh: options.mesh }),
     ...(options.vault !== undefined && { vault: options.vault }),

@@ -2202,6 +2202,9 @@ async function dispatchExtensionAutomationRpc(
       method,
       params,
       db: ctx.options.localIndex.getDatabase(),
+      // SA4: the CONNECTION's declared kind (server-held), so `workflow.save` can refuse a
+      // schedule from any client that is not the owner's CLI or desktop. Never from params.
+      clientKind: ctx.getClientKind(clientId),
       ...automationServerOptions(ctx),
       ...(ctx.options.continuityTable === undefined
         ? {}

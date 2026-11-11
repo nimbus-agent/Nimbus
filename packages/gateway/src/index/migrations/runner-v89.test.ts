@@ -25,7 +25,12 @@ describe("V89 migration — workflow schedules and blocked runs", () => {
       );
       runIndexedSchemaMigrations(db, 89);
       expect(cols(db, "workflow")).toEqual(
-        expect.arrayContaining(["schedule", "schedule_tz", "schedule_next_at", "schedule_last_fire_at"]),
+        expect.arrayContaining([
+          "schedule",
+          "schedule_tz",
+          "schedule_next_at",
+          "schedule_last_fire_at",
+        ]),
       );
       expect(cols(db, "workflow_run")).toEqual(
         expect.arrayContaining(["blocked_step", "blocked_at", "trigger", "workflow_sha256"]),
