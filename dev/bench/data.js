@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794360746076,
+  "lastUpdate": 1794374630956,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "576ba6e2d7d5fb4ea0cd8d81d0505b4c57f4f085",
-          "message": "fix(cli): a Gateway connection can always answer a HITL prompt (#1305)\n\nCloses F16 from the local-LLM audit — the last of that audit's four\nrelease-decision findings still open, and the only one rated critical.\n\n## The bug\n\n`nimbus vault set` and `nimbus vault delete` could never succeed. Both\nare in\nthe HITL frozen set, so `ipc/server/vault-dispatch.ts` runs them through\n`toolExecutor.gate` first; the gateway emits `consent.request` and\nblocks on\n`consent.respond`. `commands/vault.ts` called `withGatewayIpc` with no\n`onConnect`, so nothing on that connection could answer. Observed\nsymptom was a\nflat `IPC request timed out after 30000ms: vault.set` against a healthy\ngateway, with nothing stored.\n\n`ipc/consent.ts` has no timer at all. `requestConsent` settles on a\nresponse or\non client disconnect and on nothing else, so the client's own 30s\nrequest\ntimeout is the only bound and the gateway never recovers on its own.\n\nTwo docs strings and `nimbus help` all route users into this, and it is\nalso\nwhy the audit's suggested workaround for the dead embedding worker —\nstore an\nOpenAI key in the vault — was itself unreachable.\n\n## A third command, not in the audit\n\nWhile tracing which methods reach the consent broker I found\n`nimbus connector add --mcp` doing the same thing. `connector.addMcp` is\ngated\nin `ipc/connector-rpc.ts` — it asks the owner to authorize spawning an\narbitrary local process — and `runConnectorAddMcp` passes no `onConnect`\neither. Same 30s hang, same nothing-registered.\n\nI checked the rest of the HITL frozen set against real CLI call sites.\n`extension.install` and `teamvault.put` are NOT affected: neither RPC\nhandler\nconsults the gate, and `share.create` uses a deliberate out-of-band flow\nwhere\nthe owner answers separately with `nimbus share approve`. `data.*`,\n`connector.remove`, `connector.reindex` and `egress.prune` already\nregister\nhandlers.\n\n## The fix, and why it is the default and not one argument\n\nThe audit proposed passing `onConnect` from `commands/vault.ts`. That\ncloses\nthe reported case and leaves the shape intact, which matters here\nbecause this\nseam has now failed three times: the doc comment on `onConnect` already\nwarned\nthat `connector reindex --depth full` and `nimbus workflow run` had both\nshipped hanging on exactly this. A hazard documented beside its own\nhelper,\nwith two working mitigations available, that still recurs, is telling\nyou the\npolarity is wrong.\n\nSo `withGatewayIpc` now registers `registerDefaultConsentHandler`\nwhenever the\ncaller supplies no `onConnect`. Forgetting is no longer possible through\nthe\nshared helper; a caller has to pass an `onConnect` that omits consent in\norder\nto break, and none does. The default is consent only, with no\n`agent.chunk`\nsink — a connection not running an agent has no business writing agent\noutput\nto stdout, whereas every connection needs to be able to answer a prompt.\nIt\nhonours `NIMBUS_SCRIPT_CONSENT_SOURCE` the same way the interactive\nregistrar\ndoes.\n\n## Tests\n\nEvery one was red-proved by reverting the fix, not by observing green.\n\nGateway side, `ipc/server/vault-dispatch.test.ts`. Every existing test\nthere\npassed `undefined` for the ToolExecutor, so the blocking half was never\nexercised at all. Three new tests use the real `ConsentCoordinatorImpl`\nwith a\nreal writer: `vault.set` emits `consent.request` and does not settle\nuntil\nanswered, an unanswered request leaves it pending with nothing stored,\nand a\nrefusal leaves the vault untouched. Red-proved by short-circuiting the\ngate.\n\nCLI side, `commands/vault.test.ts` and `commands/connector.test.ts`. The\nexisting vault tests inject a client and call `runVaultSet` directly,\nwhich\nproves the CLI half against a fake and never observes that nothing on\nthe real\nconnection can answer. The new ones drive `runVault` and `runConnector`\nend to\nend against a fake gateway that blocks until consent is answered —\nmodelled on\nthe contract the gateway tests above now pin, rather than on what seemed\nplausible. Includes a refusal case, so the default cannot quietly become\nan\nauto-approver.\n\nSeam, `lib/with-gateway-ipc.test.ts`. The existing \"omitting it changes\nnothing\" test asserted the bug, so it is replaced by its inverse. Plus a\nstatic\nguard: any file passing `onConnect` must import a consent registrar.\n\nThat guard's first draft could not fail. Pointing `prove.ts` at a\ndo-nothing\nregistrar and deleting its import left it green, because a comment forty\nlines\naway mentions the registrar by name and a substring match found the\nprose. It\nnow strips comments and checks imports, and red-proves correctly. Its\nscope is\ndeliberately narrow and stated in the test: it covers the shared helper\nonly.\nAbout 20 commands build a bare `IPCClient` instead, and no gated method\nis\ncalled from any of them today — a checked fact, not a guarantee.\n\n## Verification\n\n`preflight:fast` green, all 31 gates. Full CLI suite 2396 pass and\ngateway IPC\nsuite 1805 pass, on Windows and again on Linux in the CI image, since\nthe\ncombined CLI run is the `mock.module` contamination surface.\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **New Features**\n  * Added default consent handling for gateway-connected CLI commands.\n  * Added support for scripted or interactive consent responses.\n\n* **Bug Fixes**\n  * Ensured vault changes remain pending until consent is approved.\n  * Prevented declined or unanswered requests from modifying vault data.\n\n* **Tests**\n* Expanded coverage for connector, vault, and gateway consent workflows,\nincluding approvals, refusals, and pending operations.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-08-22T05:51:43Z",
-          "tree_id": "5c03b4acf912add8a33a1f8f49409c1ae02b918a",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/576ba6e2d7d5fb4ea0cd8d81d0505b4c57f4f085"
-        },
-        "date": 1787378531063,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 311.4064592999974,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 312.3241215000024,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 178.35291460000116,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "e55bbb7e60b3266aca81b4bdbd793da1bd22f958",
+          "message": "feat(gateway): approve a recurring workflow write once, with a standing rule bound to the exact workflow (Phase 10 SA3, I55) (#1962)\n\nPhase 10 standing approvals, PR SA3 of six. The spec was approved by\nAntigravity in round 3 and this plan in round 2; both stay off `main`.\n\nThe owner can approve a recurring workflow write once. A standing rule\nnames exactly one write step of one workflow at one content hash. Inside\nthe executor's approval phase, a matching action is then approved\nwithout a prompt and recorded as `standing_approved` with the rule id.\nNew invariant **I55** (the taint barrier) and new static rule **D44**.\nSchema **V88**.\n\nUntil SA4 adds schedules, a rule fires only on owner-started runs\n(`nimbus workflow run`, which now declares the `cli` kind).\n\n## What changed\n- **V88:** `standing_rule` and `standing_rule_fire`, with CHECKs\n(`max_actions` 1..500, `actions_used` ≤ ceiling, `expires_at` > created)\nand an index on `(rule_id, fired_at)`.\n- **Deviation from spec § 6.2:** the workflow `schedule` columns and\n`workflow_run.blocked_*` move to SA4 as V89, alongside the scheduler\ncode that reads them.\n- **Store** (`standing/standing-rule-store.ts`): the only writer of both\ntables (D44(b)).\n- `claimFire` is one `immediate` transaction: `UPDATE … WHERE … AND\nactions_used < max_actions`, and the fire insert only when `changes ===\n1`.\n- **Rules** (`standing-rule-text.ts`, `standing-rule-derive.ts`):\n- Limits (OR-10-6): expiry 1..90 days (default 30) and a ceiling of\n1..500 actions (default 100).\n- An optional weekday/time window with an IANA zone (OR-10-5); no\novernight windows.\n- The caller names only `{ workflow, step, days?, max?, window? }`. The\nscope, hash, tool and action type are derived from the stored workflow\nand its write step; a rule can never be wider than its step.\n- **`standingRuleStep`** (`engine/standing-rule-step.ts`, I55), nine\nnamed steps in order:\n  1. Policy.\n2. `owner_workflow` provenance with trigger\n`schedule`/`owner_cli`/`owner_ui`, and no `origin`.\n  3. Every row of the type is an eligible wave 2/3 connector write.\n4. `mcpToolId` names one of those rows, and the payload is exactly\n`{mcpToolId, input}`.\n  5. Every input field is accounted for.\n6. A live rule exists for this workflow id, hash, step, type and tool,\ninside its window.\n7. The rule's scope equals the action's field sources, and each constant\nmatches (canonical JSON).\n8. `modelWriteRefusal` plus the null-optional and calendar-zone\nrefusals.\n  9. `claimFire`.\n\n**Where it runs:** it's called exactly once, in `approvalPhase`, after\n`renderConfirmPhase` and before `tryDelegatedApproval`; D41(d) and\nD42(b) are unchanged. The audit row carries `standingRule { ruleId,\nfireId, matchedScopeSha256 }` in its hashed JSON, and the egress summary\ncarries the ids.\n- **Executor:** the 8th constructor parameter is now `ToolExecutorExtras\n{ beforeState?, standingRules? }`. D42(c) still forbids a 9th production\nargument.\n- Only `buildWorkflowWriteExecutor` supplies `standingRules` (D44(e)). A\ncensus over every `new ToolExecutor(` site proves no other executor can\nstanding-approve.\n- **IPC** (`ipc/standing-rpc.ts`):\n`standing.list|show|fires|create|pause|resume|revoke`.\n- `create` and `resume` require the declared `cli` kind, the\n`standing_approvals` policy capability, and the local owner's approval\nof `standing.rule.create` / `standing.rule.resume`. That approval runs\nthrough an executor with no delegation; both types join the\nnever-delegated list (I20). Any answer whose source isn't `human`\nbecomes a decline.\n- `standing` is in `FORBIDDEN_OVER_LAN`. The Tauri allowlist gains\n`list`, `show`, `fires`, `pause` and `revoke` only (118 → 123).\n- `standing.fires` is a read-only addition to the spec's list, for the\ndesktop's rule history.\n- **Policy:** a new `ai_v2` capability, `standing_approvals`. An absent\npolicy accessor reads as off.\n- **CLI:** `nimbus approve add|list|show|pause|resume|revoke` (`add` and\n`resume` refuse `--yes`) and `nimbus audit standing [<id>] [--json]`.\n- **Static D44:**\n  - (a) Provenance is constructed only in `workflow-write-step.ts`.\n  - (b) The rule tables are written only by the store.\n- (c) `standingRuleStep(` appears once, placed as above. `kind:\n\"standing_approved\"` is built only by the executor and the check.\n  - (d) Reserved for SA4's `unattended` option.\n- (e) `standingRules` is handed over only in\n`buildWorkflowWriteExecutor`.\n\n## Invariants\n- **I55 (new):** the full entry is in `docs/SECURITY-INVARIANTS.md`,\nwith its stated bounds:\n- which items a declared query selects (a sender can make their own\nthread match);\n  - index staleness;\n  - `answerSource` is client-reported;\n  - the declared kind is trusted only on the local socket;\n  - a failed audit or egress append consumes a claim.\n- **Amended:** I2 (two stated exceptions), I4 (`standing_approved` is\nproduced, only here), I20 (the two standing types are never delegated)\nand I29.\n- CLAUDE.md and GEMINI.md now read I1–I55 and D10–D44.\n\n## Counts (re-derived)\n- 185 HITL types.\n- Proposability: 47 proposable, 138 denied, 9 `not_yet_offered`.\n- 125 write rows, unchanged.\n- Tauri allowlist 123; `ai_v2` capabilities 11; schema V88.\n\n## Verification\n- `typecheck` and `lint` pass; `typecheck:tests` reports 0 new;\n`audit:invariants`, `audit:status-drift` and `audit:doc-refs` pass.\n`preflight:fast`: PASSED.\n- `bun test packages/gateway/src --parallel`: 29,446 pass. One test,\n`recordTrustStatements` per-registry cap, times out at 5 s under\n`--parallel` and passes alone (17/17).\n- `bun test packages/gateway/test packages/cli --parallel`: 8,803 pass.\n- 9 toolgen saved-tool tests fail with `ERR_TOOLGEN_SANDBOX_DEGRADED`\nbecause the sandbox helper isn't built in this worktree.\n  - The `extension update` e2e (3/3) and `cli-smoke` pass alone.\n- `cargo test gateway_bridge`: 51 pass.\n- **The I55 block** in `security-invariants.test.ts` runs through a real\nexecutor, ledger and store. A matching action dispatches with zero\nconsent calls and one `standing_approved` audit row and egress row. Then\nthere's one negative test per independent clause (`BREAKERS`, about 26),\neach proving the owner prompt follows and nothing is claimed.\n- **Coverage** (istanbul, lines / branches):\n  - `standing-rule-store` 100 / 100\n  - `standing-rule-text` 100 / 92.3\n  - `standing-rule-derive` 100 / 95.2\n  - `standing-rule-capability` 100 / 100\n  - `standing-rule-step` 97.4 / 89.6\n  - `standing-rpc` 97.9 / 89.4\n  - CLI `approve` 91.2 / 83.0\n- **Red-proofs** (each reverted, tests failed, restored):\n  - the atomic ceiling;\n  - the provenance trigger check;\n  - the hash binding;\n  - `answerSource === \"human\"` on create;\n  - the LAN refusal;\n- `standingRules` handed to every executor (the census, the D44 test and\nthe checker all report it).\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JmSjrCsRuevvkksqrnLRGc\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Added standing approvals for eligible write actions in owner-authored\nworkflows started by the owner, allowing exact matches to proceed\nwithout a prompt.\n* Create, list, inspect, pause, resume, or revoke approval rules from\nthe command line. Rules are scoped to a workflow step and limited by\nexpiry, action count, and optional weekday and time windows.\n* Review recorded rule activity and its linked audit details. Human\napproval is required to create or resume rules.\n* Standing approvals can be disabled by policy and are unavailable over\nLAN connections.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-11T05:12:58Z",
+          "tree_id": "0945d6518f36d8f4700363afd4bdf5e594ec8e8d",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/e55bbb7e60b3266aca81b4bdbd793da1bd22f958"
+        },
+        "date": 1794374626331,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 294.4296513500005,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 296.54763084999576,
             "unit": "ms"
           }
         ]
