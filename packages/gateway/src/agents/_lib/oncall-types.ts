@@ -248,6 +248,8 @@ export type OncallOnCallNow = {
     readonly oldestFetchedMs: number | null;
     readonly stale: boolean;
   }>;
+  /** The query's completeness warnings (an incomplete service map), shown with the result. */
+  readonly gaps: readonly string[];
 };
 
 export type OncallBrief = {

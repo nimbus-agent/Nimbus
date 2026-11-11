@@ -396,6 +396,7 @@ describe("renderOncall: the on-call line (MB3)", () => {
     shifts: [shift()],
     next: [],
     sources: [src()],
+    gaps: [],
     ...over,
   });
   const line = (out: string): string =>
@@ -468,14 +469,59 @@ describe("renderOncall: the on-call line (MB3)", () => {
     expect(none).toContain("_nobody on call per the index (next: Bob (Payments primary");
     expect(
       line(renderOncall(brief({ onCallNow: now({ status: "none_on_call", shifts: [] }) }))),
-    ).toBe("- **On call now:** _nobody on call per the index_");
+    ).toBe("- **On call now:** _nobody on call per the index (PagerDuty data 3 min old)_");
     expect(
       line(renderOncall(brief({ onCallNow: now({ status: "no_data", shifts: [] }) }))),
     ).toContain("_no on-call data indexed_");
     expect(
       line(renderOncall(brief({ onCallNow: now({ status: "no_match", shifts: [] }) }))),
-    ).toContain("_no indexed schedule covers this service_");
+    ).toContain("_no indexed schedule covers this service (PagerDuty data 3 min old)_");
     expect(line(renderOncall(brief({ onCallNow: null })))).toContain("_unknown (no service id)_");
+  });
+
+  test("a stale source qualifies nobody-on-call and no-match with its age", () => {
+    const stale = [src({ oldestFetchedMs: NOW - 3 * 3_600_000, stale: true })];
+    for (const status of ["none_on_call", "no_match"] as const) {
+      const out = line(
+        renderOncall(brief({ onCallNow: now({ status, shifts: [], sources: stale }) })),
+      );
+      expect(out).toContain("PagerDuty data 3 h old; the shift may have changed");
+    }
+  });
+
+  test("the query gaps are rendered with the on-call result in every status", () => {
+    const gap = "The service map was incomplete for some shifts, try the schedule name.";
+    for (const status of ["ok", "none_on_call", "no_match"] as const) {
+      const out = line(
+        renderOncall(
+          brief({
+            onCallNow: now({ status, shifts: status === "ok" ? [shift()] : [], gaps: [gap] }),
+          }),
+        ),
+      );
+      expect(out).toContain(gap);
+    }
+    expect(line(renderOncall(brief({ onCallNow: now() })))).not.toContain("service map");
+  });
+
+  test("provider-supplied names are Markdown text, never a live link", () => {
+    const out = line(
+      renderOncall(
+        brief({
+          onCallNow: now({
+            shifts: [
+              shift({
+                userName: "[Bob](https://example.invalid/u)",
+                scheduleName: "[open rota](https://example.invalid/s)",
+              }),
+            ],
+          }),
+        }),
+      ),
+    );
+    expect(out).not.toContain("[open rota](");
+    expect(out).not.toContain("[Bob](");
+    expect(out).toContain("\\[open rota\\](https://example.invalid/s)");
   });
 
   test("provider-supplied names cannot start a heading", () => {

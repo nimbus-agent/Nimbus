@@ -448,6 +448,15 @@ describe("buildOncallBrief: who is on call (MB3)", () => {
     expect(b.gaps.some((g) => g.detail.includes("on-call schedule data"))).toBe(false);
   });
 
+  test("the query's incomplete-service-map gap is carried into the brief", () => {
+    const d = db();
+    seedShift(d, { serviceMapComplete: false });
+    expect(build({ db: d }).onCallNow?.gaps.join(" ")).toContain("service map");
+    const d2 = db();
+    seedShift(d2);
+    expect(build({ db: d2 }).onCallNow?.gaps).toEqual([]);
+  });
+
   test("no shift data adds a missing_connector gap; no service id adds none and is null", () => {
     const b = build({});
     expect(b.onCallNow?.status).toBe("no_data");

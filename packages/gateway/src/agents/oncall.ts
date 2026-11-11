@@ -322,6 +322,7 @@ function onCallNowFor(
     shifts: r.shifts.map(toNowShift),
     next: r.next.slice(0, ONCALL_NEXT_CAP).map(toNowShift),
     sources: r.sources,
+    gaps: r.gaps,
   };
 }
 

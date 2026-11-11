@@ -1464,11 +1464,11 @@ const SOURCE_LABELS = { pagerduty: "PagerDuty", jsm: "Jira Service Management" }
 function renderNowShift(s: OncallNowShift): string {
   const parts: string[] = [];
   const where = s.scheduleName ?? s.policyName;
-  if (where !== null) parts.push(stripLineStructureChars(where));
+  if (where !== null) parts.push(hardenedTitleLink(where, null));
   if (s.level !== null) parts.push(`level ${String(s.level)}`);
   if (s.endMs !== null) parts.push(`until ${isoMinuteUtc(s.endMs)}`);
   const detail = parts.length === 0 ? "" : ` (${parts.join(", ")})`;
-  return `${stripLineStructureChars(s.userName)}${detail}${s.isMe ? " (you)" : ""}`;
+  return `${hardenedTitleLink(s.userName, null)}${detail}${s.isMe ? " (you)" : ""}`;
 }
 
 function renderNowAges(n: OncallOnCallNow): string {
@@ -1483,17 +1483,24 @@ function renderNowAges(n: OncallOnCallNow): string {
   return out.length === 0 ? "" : ` (${out.join("; ")})`;
 }
 
+/** The completeness warnings the query attached (an incomplete service map), shown with the result. */
+function renderNowGaps(n: OncallOnCallNow): string {
+  return n.gaps.length === 0 ? "" : ` ${n.gaps.map(stripLineStructureChars).join(" ")}`;
+}
+
 /** The on-call line of `## Incident`: explicit about every case, so an empty list never reads as "nobody". */
 function renderOncallNow(brief: OncallBrief): string {
   const n = brief.onCallNow;
   if (n === null) return "_unknown (no service id)_";
   if (n.status === "no_data") return "_no on-call data indexed_";
-  if (n.status === "no_match") return "_no indexed schedule covers this service_";
+  if (n.status === "no_match") {
+    return `_no indexed schedule covers this service${renderNowAges(n)}_${renderNowGaps(n)}`;
+  }
   if (n.status === "none_on_call") {
     const next = n.next.length === 0 ? "" : ` (next: ${n.next.map(renderNowShift).join("; ")})`;
-    return `_nobody on call per the index${next}_`;
+    return `_nobody on call per the index${next}${renderNowAges(n)}_${renderNowGaps(n)}`;
   }
-  return `${n.shifts.map(renderNowShift).join("; ")}${renderNowAges(n)}`;
+  return `${n.shifts.map(renderNowShift).join("; ")}${renderNowAges(n)}${renderNowGaps(n)}`;
 }
 
 function oncallServiceLabel(brief: OncallBrief): string {
