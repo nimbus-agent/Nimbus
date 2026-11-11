@@ -843,6 +843,31 @@ describe("I5 — LAN method allowlist is intrinsic to LanServer", () => {
     );
   });
 
+  test("I5: oncall.now is refused over LAN by the WHOLE-namespace `oncall` entry (MB3)", async () => {
+    const src = await read("packages/gateway/src/ipc/lan-rpc.ts");
+    // A later narrowing of the namespace entry to per-method entries must be a deliberate edit.
+    expect(src).toMatch(/^\s*"oncall",\s*$/m);
+    const { checkLanMethodAllowed } = await import("./ipc/lan-rpc.ts");
+    for (const writeAllowed of [true, false]) {
+      expect(() => checkLanMethodAllowed("oncall.now", { peerId: "peer:x", writeAllowed })).toThrow(
+        /ERR_METHOD_NOT_ALLOWED/,
+      );
+    }
+  });
+
+  test("I29/MB3: the JSM on-call step names its fixed host once and sends every request with redirect manual", async () => {
+    const src = await read("packages/gateway/src/connectors/jsm-oncall.ts");
+    const code = stripComments(src);
+    expect([...code.matchAll(/https:\/\//g)]).toHaveLength(1);
+    expect(code).toMatch(/JSM_OPS_ROOT\s*=\s*"https:\/\/api\.atlassian\.com\/jsm\/ops\/api"/);
+    const fetches = [...code.matchAll(/\bfetch\(/g)];
+    expect(fetches).toHaveLength(1);
+    const call = code.slice(code.indexOf("fetch("), code.indexOf("fetch(") + 400);
+    expect(call).toContain('redirect: "manual"');
+    // The cloud id is validated before it enters a path.
+    expect(code).toContain("isAtlassianCloudId(");
+  });
+
   test("FORBIDDEN_OVER_LAN blocks extension.checkForUpdates + extension.update (T2 PR 3)", async () => {
     const src = await read("packages/gateway/src/ipc/lan-rpc.ts");
     expect(src).toMatch(/"extension\.checkForUpdates"/);
@@ -1894,9 +1919,9 @@ describe("I7 — Tauri ALLOWED_METHODS surface for T2 PR 3", () => {
     expect(rust).not.toContain("toolgen.");
   });
 
-  test("allowlist_exact_size assertion is 126", async () => {
+  test("allowlist_exact_size assertion is 127", async () => {
     const rust = await read("packages/ui/src-tauri/src/gateway_bridge.rs");
-    expect(rust).toMatch(/assert_eq!\s*\(\s*ALLOWED_METHODS\.len\(\),\s*126\s*\)/);
+    expect(rust).toMatch(/assert_eq!\s*\(\s*ALLOWED_METHODS\.len\(\),\s*127\s*\)/);
   });
 
   // Role packs Project 4: 111 + 7 - 2 = 116; Project 5 (onboarding): + pack.install, decisions.status
@@ -1926,8 +1951,12 @@ describe("I7 — Tauri ALLOWED_METHODS surface for T2 PR 3", () => {
 
   // By NAME, as for every brief/verb pair: a one-for-one swap of pushedGet for pushedRetry keeps
   // the count at 107. pushedRetry starts an agent run on the owner's behalf; it stays CLI-only.
-  test("oncall: the two reads are renderer-callable, pushedRetry never is", async () => {
+  // `oncall.now` (Phase 10 MB3) is the third read: a synchronous read of the local index, not long-running.
+  test("oncall: the three reads (pushedGet, pushedList, now) are renderer-callable, pushedRetry never is", async () => {
     const rust = await read("packages/ui/src-tauri/src/gateway_bridge.rs");
+    expect(rust).toMatch(/^\s*"oncall\.now",\s*$/m);
+    expect(rust).toContain('assert!(is_method_allowed("oncall.now"));');
+    expect(rust).toContain('assert!(!is_no_timeout_method("oncall.now"));');
     expect(rust).toMatch(/^\s*"oncall\.pushedGet",\s*$/m);
     expect(rust).toMatch(/^\s*"oncall\.pushedList",\s*$/m);
     expect(rust).not.toMatch(/^\s*"oncall\.pushedRetry",\s*$/m);
@@ -9615,7 +9644,7 @@ describe("I46 — a renderer can create an extension run grant only through migr
     }
     expect(rust).toContain('assert!(is_method_allowed("migration.list"));');
     expect(rust).toContain('assert!(is_method_allowed("migration.accept"));');
-    expect(rust).toMatch(/assert_eq!\s*\(\s*ALLOWED_METHODS\.len\(\),\s*126\s*\)/);
+    expect(rust).toMatch(/assert_eq!\s*\(\s*ALLOWED_METHODS\.len\(\),\s*127\s*\)/);
   });
 
   // ---- the positive control ------------------------------------------------------------------

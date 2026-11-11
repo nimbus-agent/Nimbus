@@ -119,7 +119,7 @@ describe("checkLanMethodAllowed", () => {
     },
   );
 
-  test.each(["oncall.pushedList", "oncall.pushedGet", "oncall.pushedRetry"])(
+  test.each(["oncall.pushedList", "oncall.pushedGet", "oncall.pushedRetry", "oncall.now"])(
     "%s is not callable over LAN regardless of grant-write",
     (method) => {
       for (const writeAllowed of [true, false]) {
