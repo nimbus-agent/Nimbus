@@ -26,14 +26,20 @@ import {
 } from "./atlassian-api-sync-helpers.ts";
 import { readConnectorSecret } from "./connector-vault.ts";
 import { fetchOneMissForResponse } from "./fetch-miss-reason.ts";
+import { type JsmCursorFields, runJsmOncall } from "./jsm-oncall.ts";
 import { decodeNimbusJsonCursorObject, encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
+import { ONCALL_REFRESH_INTERVAL_MS } from "./oncall-shift-items.ts";
 import { msFromIso, normalizeJiraStatusCategory, TICKET_META_VERSION } from "./ticket-depth.ts";
 
 const SERVICE_ID = "jira";
 const CURSOR_PREFIX = "nimbus-jra1:";
 
-/** `snapAt`: epoch ms of the last "my open work" snapshot ATTEMPT (success or failure). */
-type JiraSyncCursorV1 = { v: 1; floorJql: string | null; snapAt?: number };
+/**
+ * `snapAt`: epoch ms of the last "my open work" snapshot ATTEMPT (success or failure). The on-call keys
+ * (`ocAt`, `ocUntil`, `cid`, `cidSite`, see `jsm-oncall.ts`) are the JSM Operations refresh's pacing and
+ * cached cloud id.
+ */
+type JiraSyncCursorV1 = { v: 1; floorJql: string | null; snapAt?: number } & JsmCursorFields;
 
 function encodeCursor(c: JiraSyncCursorV1): string {
   return encodeNimbusJsonCursor(CURSOR_PREFIX, c);
@@ -56,6 +62,23 @@ function decodeCursor(raw: string | null): JiraSyncCursorV1 | null {
     v: 1,
     floorJql: typeof fj === "string" ? fj : null,
     ...(typeof snapAt === "number" && Number.isFinite(snapAt) ? { snapAt } : {}),
+    ...decodeOncallFields(rec),
+  };
+}
+
+function finiteNumber(v: unknown): number | undefined {
+  return typeof v === "number" && Number.isFinite(v) ? v : undefined;
+}
+
+function decodeOncallFields(rec: Record<string, unknown>): JsmCursorFields {
+  const ocAt = finiteNumber(rec["ocAt"]);
+  const ocUntil = finiteNumber(rec["ocUntil"]);
+  const cid = rec["cid"];
+  const cidSite = rec["cidSite"];
+  return {
+    ...(ocAt === undefined ? {} : { ocAt }),
+    ...(ocUntil === undefined ? {} : { ocUntil }),
+    ...(typeof cid === "string" && typeof cidSite === "string" ? { cid, cidSite } : {}),
   };
 }
 
@@ -762,6 +785,30 @@ async function jiraSnapshotIfDue(
   return now;
 }
 
+/**
+ * Runs the JSM Operations on-call refresh when due and returns the cursor's on-call fields. Due = never
+ * attempted (or the clock moved back) or 15 minutes since the last ATTEMPT, and not inside an `ocUntil`
+ * backoff. Never throws: the issue sync that already ran must not fail because this step did.
+ */
+async function jiraOncallIfDue(
+  ctx: SyncContext,
+  creds: JiraVaultCreds,
+  prev: JsmCursorFields,
+): Promise<JsmCursorFields> {
+  const now = Date.now();
+  // A backoff further out than the 6 h we ever set is a corrupted cursor value and is ignored.
+  if (prev.ocUntil !== undefined && prev.ocUntil > now && prev.ocUntil - now <= 6 * 3_600_000) {
+    return prev;
+  }
+  if (!snapshotDue(prev.ocAt ?? null, now, ONCALL_REFRESH_INTERVAL_MS)) return prev;
+  try {
+    return (await runJsmOncall(ctx, creds, prev, now)).fields;
+  } catch (err) {
+    ctx.logger.warn({ serviceId: SERVICE_ID, err }, "jsm oncall refresh failed");
+    return { ...prev, ocAt: now };
+  }
+}
+
 export function createJiraSyncable(options: JiraSyncableOptions): Syncable {
   const initialSyncDepthDays = 30;
   return {
@@ -829,10 +876,12 @@ export function createJiraSyncable(options: JiraSyncableOptions): Syncable {
           ? (prev?.floorJql ?? null)
           : isoToJqlExclusiveFloor(maxUpdatedIso.value);
       const snapAt = await jiraSnapshotIfDue(ctx, creds, prev?.snapAt, syncTime, options);
+      const oncall = await jiraOncallIfDue(ctx, creds, prev ?? {});
       const nextCursor = encodeCursor({
         v: 1,
         floorJql: nextFloor,
         ...(snapAt === undefined ? {} : { snapAt }),
+        ...oncall,
       });
 
       return syncPassCursorSuccess(t0, bytesTransferred, nextCursor, upserted);
