@@ -8,11 +8,7 @@ import {
 } from "../../briefing/briefing-due.ts";
 import { codeUnitCompare } from "../../util/code-unit-compare.ts";
 import type { BriefingDay } from "./briefing-types.ts";
-import {
-  isActiveIncidentStatus,
-  selectActiveAssignedIncidents,
-  selectAllActiveIncidents,
-} from "./oncall-queries.ts";
+import { selectActiveAssignedIncidents, selectAllActiveIncidents } from "./oncall-queries.ts";
 import type { OncallIncident } from "./oncall-types.ts";
 
 /**
@@ -26,9 +22,9 @@ import type { OncallIncident } from "./oncall-types.ts";
  */
 
 export const CALENDAR_SCAN_CAP = 20_000;
-export const MAIL_SCAN_CAP = 5_000;
-export const CI_SCAN_CAP = 5_000;
-export const MAIL_WINDOW_MS = 7 * 86_400_000;
+const MAIL_SCAN_CAP = 5_000;
+const CI_SCAN_CAP = 5_000;
+const MAIL_WINDOW_MS = 7 * 86_400_000;
 
 type Meta = Record<string, unknown>;
 
@@ -51,8 +47,6 @@ function strOf(v: unknown): string | null {
 }
 
 // ---- calendar -----------------------------------------------------------------------------------
-
-export const CALENDAR_SERVICES = ["apple", "google_calendar", "outlook"] as const;
 
 export type CalendarEntry = {
   readonly id: string;
@@ -211,8 +205,6 @@ export function selectIncidents(db: Database, personId: string | null): Incident
   ];
 }
 
-export { isActiveIncidentStatus };
-
 // ---- reviews ------------------------------------------------------------------------------------
 
 export type PrEntry = {
@@ -311,7 +303,7 @@ export function selectReviews(db: Database): ReviewsResult {
 
 // ---- tickets ------------------------------------------------------------------------------------
 
-export const TICKET_SERVICES: readonly DueService[] = ["jira", "linear", "github"];
+const TICKET_SERVICES: readonly DueService[] = ["jira", "linear", "github"];
 
 /**
  * Whether an assigned item is still open. A Jira or Linear item is open unless its category is

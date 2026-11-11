@@ -103,7 +103,7 @@ export function listLine(run: RunSummaryLike, zone?: string): string {
 }
 
 /** Sections with no connected service at all. */
-export function unconnectedSections(s: BriefingStatusLike): string[] {
+function unconnectedSections(s: BriefingStatusLike): string[] {
   return s.sources.filter((x) => !x.services.some((v) => v.connected)).map((x) => x.section);
 }
 

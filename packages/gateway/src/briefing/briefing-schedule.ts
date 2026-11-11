@@ -15,7 +15,7 @@ import { nextFire } from "../automation/cron.ts";
  * slot (a stated bound); a repeated fall-back minute fires once, at its first occurrence.
  */
 export const CATCH_UP_WINDOW_MS = 3 * 3_600_000;
-export const LOOKBACK_MS = 25 * 3_600_000;
+const LOOKBACK_MS = 25 * 3_600_000;
 export const MAX_SLOT_STEPS = 30;
 export const MISSED_REASON = "missed while the gateway was not running";
 

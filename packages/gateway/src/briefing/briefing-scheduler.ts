@@ -13,7 +13,7 @@ import { pruneDeadlineNotices } from "./deadline-scan.ts";
  * Config is re-read EVERY tick (the layered reader is mtime-cached), so an edit applies without a restart.
  * The deadline scan is independent of `[briefing] enabled`.
  */
-export const DEFAULT_TICK_MS = 60_000;
+const DEFAULT_TICK_MS = 60_000;
 export const DEADLINE_SCAN_EVERY_MS = 15 * 60_000;
 export const PRUNE_EVERY_MS = 3_600_000;
 const DAY_MS = 86_400_000;
