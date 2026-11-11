@@ -36,7 +36,7 @@ describe("Outlook sync cursor codec", () => {
       samples,
       encodeOutlookSyncCursor,
       decodeOutlookSyncCursor,
-      "nimbus-outl2:",
+      "nimbus-outl3:",
     );
   });
 });
@@ -913,5 +913,76 @@ describe("createOutlookSyncable", () => {
 
     expect(seenUrl).toContain("/me/messages/delta");
     expect(decodeURIComponent(seenUrl)).toContain("body");
+  });
+
+  test("a pre-upgrade outl2 cursor is ignored and the initial $select carries isRead", async () => {
+    const { ctx } = await createOAuthConnectorTestSetup("microsoft", "outlook");
+    const syncable = createOutlookSyncable({ ensureMicrosoftMcpRunning: async () => {} });
+    // A stored delta link keeps the projection that minted it, so an outl2 link would never
+    // return `isRead`: the prefix bump makes the mailbox re-list once through the initial URL.
+    const outl2Cursor = `nimbus-outl2:${Buffer.from(
+      JSON.stringify({ v: 1, nextUrl: "https://graph.microsoft.com/v1.0/me/messages/delta?x=1" }),
+    ).toString("base64url")}`;
+    expect(decodeOutlookSyncCursor(outl2Cursor)).toBeUndefined();
+
+    let seenUrl = "";
+    globalThis.fetch = (async (input: FetchInput) => {
+      seenUrl = requestUrlString(input);
+      return deltaResponse([]);
+    }) as typeof fetch;
+
+    await syncable.sync(ctx, outl2Cursor);
+
+    expect(new URL(seenUrl).searchParams.get("$select")).toBe(
+      "id,subject,bodyPreview,body,receivedDateTime,lastModifiedDateTime,webLink,from,isRead",
+    );
+  });
+
+  describe("read state", () => {
+    const metaOf = (db: import("bun:sqlite").Database, id: string): Record<string, unknown> => {
+      const row = db
+        .query("SELECT metadata FROM item WHERE id = ?")
+        .get(itemPrimaryKey("outlook", id)) as { metadata: string };
+      return JSON.parse(row.metadata) as Record<string, unknown>;
+    };
+    const msg = (id: string, extra: Record<string, unknown>) => ({
+      id,
+      subject: id,
+      bodyPreview: "p",
+      receivedDateTime: "2026-11-01T08:00:00Z",
+      lastModifiedDateTime: "2026-11-01T08:00:00Z",
+      ...extra,
+    });
+
+    test("isRead true and false index is_read with meta_v; a missing or non-boolean isRead writes neither", async () => {
+      const { db, ctx } = await createOAuthConnectorTestSetup("microsoft", "outlook");
+      const syncable = createOutlookSyncable({ ensureMicrosoftMcpRunning: async () => {} });
+      globalThis.fetch = (async () =>
+        deltaResponse([
+          msg("r", { isRead: true }),
+          msg("u", { isRead: false }),
+          msg("none", {}),
+          msg("odd", { isRead: "yes" }),
+        ])) as typeof fetch;
+      await syncable.sync(ctx, null);
+      expect(metaOf(db, "r")).toMatchObject({ is_read: true, meta_v: 1 });
+      expect(metaOf(db, "u")).toMatchObject({ is_read: false, meta_v: 1 });
+      for (const id of ["none", "odd"]) {
+        const m = metaOf(db, id);
+        expect("is_read" in m).toBe(false);
+        expect("meta_v" in m).toBe(false);
+      }
+    });
+
+    test("a later delta page that re-reports a message with isRead flipped updates the row", async () => {
+      const { db, ctx } = await createOAuthConnectorTestSetup("microsoft", "outlook");
+      const syncable = createOutlookSyncable({ ensureMicrosoftMcpRunning: async () => {} });
+      globalThis.fetch = (async () => deltaResponse([msg("m", { isRead: false })])) as typeof fetch;
+      await syncable.sync(ctx, null);
+      expect(metaOf(db, "m").is_read).toBe(false);
+      globalThis.fetch = (async () => deltaResponse([msg("m", { isRead: true })])) as typeof fetch;
+      await syncable.sync(ctx, null);
+      expect(metaOf(db, "m").is_read).toBe(true);
+    });
   });
 });

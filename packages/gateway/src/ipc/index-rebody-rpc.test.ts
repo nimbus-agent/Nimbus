@@ -5,6 +5,7 @@ import pino from "pino";
 import { gitlabMrMetadata } from "../connectors/_lib/gitlab/events.ts";
 import { createMemoryIndexDb } from "../connectors/connector-sync-test-helpers.ts";
 import { GIT_COMMIT_META_VERSION } from "../connectors/git-commit-meta.ts";
+import { OUTLOOK_MAIL_META_VERSION } from "../connectors/outlook-mail-meta.ts";
 import { PAGERDUTY_INCIDENT_META_VERSION } from "../connectors/pagerduty-attribution.ts";
 import { PR_META_VERSION } from "../connectors/pr-meta.ts";
 import { TICKET_META_VERSION } from "../connectors/ticket-depth.ts";
@@ -916,6 +917,39 @@ describe("REBODY_META_TARGETS", () => {
     // ci_run is never a target: the CI syncs fetch only recent runs, so older rows could never
     // reach the current meta_v and would keep pendingMeta non-zero forever (ruling R10).
     expect(REBODY_META_TARGETS.filter((t) => t.type === "ci_run")).toEqual([]);
+  });
+
+  test("outlook mail is a target; github issue and apple event are deliberately NOT (Phase 10 MB1)", () => {
+    expect(REBODY_META_TARGETS).toContainEqual({
+      service: "outlook",
+      type: "email",
+      requiredMetaVersion: OUTLOOK_MAIL_META_VERSION,
+    });
+    // The only writers of a github issue row are the events feed (no issue list: an old row can
+    // never be re-walked) and the open-work snapshot (which refreshes its own members): a target
+    // would stay pending forever.
+    expect(REBODY_META_TARGETS.filter((t) => t.service === "github" && t.type === "issue")).toEqual(
+      [],
+    );
+    // apple re-fetches the whole CalDAV window on every sync, so its events reach the new meta_v
+    // without rebody, and an event older than the window could never be re-walked.
+    expect(REBODY_META_TARGETS.filter((t) => t.service === "apple")).toEqual([]);
+  });
+
+  test("an outlook email without meta_v is pending; one with it is not; an event is never counted", () => {
+    const db = createMemoryIndexDb();
+    const ins = (id: string, type: string, meta: unknown): void => {
+      db.run(
+        `INSERT INTO item (id, service, type, external_id, title, url, modified_at, metadata, synced_at, body_complete)
+         VALUES (?, 'outlook', ?, ?, ?, NULL, 1, ?, 1, 1)`,
+        [id, type, id, id, JSON.stringify(meta)],
+      );
+    };
+    ins("outlook:m1", "email", { receivedDateTime: "2026-11-01T00:00:00Z" });
+    ins("outlook:m2", "email", { is_read: true, meta_v: OUTLOOK_MAIL_META_VERSION });
+    ins("outlook:e1", "event", {});
+    expect(computePendingMetaByService(db)).toEqual({ outlook: 1 });
+    db.close();
   });
 
   test("a github issue below version is NOT pending; a github pr below version is", () => {
