@@ -67,7 +67,8 @@ afterEach(() => {
   for (const d of tempDirs.splice(0)) rmDirWithRetry(d);
 });
 
-const JIRA_BASE = "https://example.atlassian.net";
+// Not an atlassian.net site: the MB3 on-call step then makes no request without a stored cloud id.
+const JIRA_BASE = "https://jira.example.com";
 const jiraVault = () =>
   createStubVault({
     "jira.email": "u@example.com",

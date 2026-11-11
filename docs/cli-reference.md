@@ -1106,6 +1106,7 @@ nimbus oncall
 nimbus oncall --service checkout
 nimbus oncall --incident "pagerduty:PXXXXX"
 nimbus oncall --since 3d --format slack
+nimbus oncall now --service payment-service
 ```
 
 **Options:**
@@ -1143,6 +1144,27 @@ nimbus oncall --since 3d --format slack
 **Read-only:** never triggers HITL, never makes a live connector API call. Reachable over the local HTTP API, as an MCP tool and from ChatOps — but **only on its explicit shapes**. The zero-parameter owner-scoped form is refused for an external caller, because it resolves the *gateway owner's* identity: a bearer token cannot ask about itself and would receive the owner's active incident, assignees included. That is the concern that keeps `agents.standup` off every external surface entirely; the difference here is that `oncall` has an answerable external shape, so the bound sits on the **shape** rather than the method — the same split invariant `I36` applies to `agents.ghost` / `agents.conflicts`. Eligible for `nimbus fleet`, where a job names its service and the prior-incident lane is the half a nightly digest watches move.
 
 ---
+
+### `nimbus oncall now`
+
+Who is on call right now, from the on-call shifts the index holds (PagerDuty and Jira Service Management Operations). It makes **no provider call**: the shifts are refreshed at most every 15 minutes by the existing `pagerduty` and `jira` syncs, so every answer carries the age of its data.
+
+```bash
+nimbus oncall now
+nimbus oncall now --service payment-service
+nimbus oncall now --service payment-service --json
+```
+
+| Flag | Description |
+|---|---|
+| `--service <id\|name>` | A Nimbus service id (resolved through its `[ci.service.<id>]` PagerDuty services), a PagerDuty service id or name, or a schedule or escalation-policy name. Tried in that order; the output says which matched. Omit it for every indexed shift. |
+| `--json` | Print the result object (`status`, `asOfMs`, `query`, `resolvedVia`, `youAreOnCall`, `sources`, `shifts`, `next`, `known`, `gaps`) on one line, with the same exit codes. |
+
+**Statuses and exit codes.** `ok` (exit 0): who is on call, with level, end time when known and a trailing `<- you` marker when it is you. `none_on_call` (exit 0): the data exists and matched but no shift covers now, with the next shifts; an answer. `no_match` (exit 1): nothing matches the term, and the known schedule, policy and service names are listed on stderr. `no_data` (exit 1): no on-call data is indexed, and the gap names what to connect. An empty list is never printed as "nobody".
+
+**Data age.** One line per source (`PagerDuty data 3 min old`), and `WARNING: older than 1 h; the shift may have changed` when a source's oldest row is stale or has no recorded age.
+
+**Bounds.** Reply shapes of the providers are not verified against live accounts. Jira Service Management shifts carry no start or end time and no service mapping (look them up by schedule name). PagerDuty `you` needs a user-level API token or `pagerduty.from_email` (`nimbus connector auth pagerduty --token <token> --username <email>`). `nimbus ask "who's on call for payment-service?"` uses the `oncall_now` tool only where the Mastra agent runs (with a remote model vendor); the local-router path has no tools, and there only ranked retrieval of the shift rows can surface the answer. The IPC method is `oncall.now` (LAN-forbidden, renderer-callable, served by a demo gateway); the `nimbus oncall` brief also carries an `On call now` line under `## Incident`.
 
 ### `nimbus oncall pushed`
 

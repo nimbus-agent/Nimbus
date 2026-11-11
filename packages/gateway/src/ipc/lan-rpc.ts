@@ -57,7 +57,8 @@ const FORBIDDEN_OVER_LAN = new Set([
   // here worth preserving over the wire — a peer with a legitimate question has `federation.ask`,
   // which goes through the I17 query gate.
   "fleet",
-  // `oncall.pushed*` — the on-call pushed brief (2026-10-02). The WHOLE namespace: briefs carry the
+  // `oncall.pushed*` and `oncall.now` (the indexed on-call shifts, Phase 10 MB3) — the on-call pushed
+  // brief (2026-10-02). The WHOLE namespace: briefs carry the
   // owner's incident, assignees and deploy history, and `pushedRetry` runs an agent. `agents.oncall`
   // is a different namespace and is unaffected.
   "oncall",

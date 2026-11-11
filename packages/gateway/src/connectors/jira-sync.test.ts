@@ -95,7 +95,12 @@ function singlePageIssueFetch(issue: Record<string, unknown>): typeof fetch {
  * the paging tests below count requests and must not see the "my open work" snapshot's.
  */
 function snapshotFreshCursor(): string {
-  return encodeNimbusJsonCursor("nimbus-jra1:", { v: 1, floorJql: null, snapAt: Date.now() });
+  return encodeNimbusJsonCursor("nimbus-jra1:", {
+    v: 1,
+    floorJql: null,
+    snapAt: Date.now(),
+    ocAt: Date.now(),
+  });
 }
 
 describeWithFetchRestore("jira-sync", () => {

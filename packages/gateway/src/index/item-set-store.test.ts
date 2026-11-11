@@ -233,7 +233,12 @@ describe("replaceItemSetRows — refusals", () => {
     });
   });
 
-  test("the allowlist names only the calendar services and the event type", () => {
-    expect(REPLACE_ITEM_SET_TYPES).toEqual({ google_calendar: ["event"], outlook: ["event"] });
+  test("the allowlist names only the calendar services (event) and the on-call sources (oncall_shift)", () => {
+    expect(REPLACE_ITEM_SET_TYPES).toEqual({
+      google_calendar: ["event"],
+      outlook: ["event"],
+      pagerduty: ["oncall_shift"],
+      jira: ["oncall_shift"],
+    });
   });
 });

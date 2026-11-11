@@ -82,6 +82,7 @@ describe("demoRefusal", () => {
     "trust.status",
     "pack.list",
     "pack.show",
+    "oncall.now",
   ])("%s is allowed", (m) => {
     expect(demoRefusal(m)).toBeUndefined();
   });

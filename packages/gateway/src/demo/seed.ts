@@ -77,7 +77,7 @@ export interface DemoSeedResult {
    * What the seeder wrote, counted from the corpus rather than from the table afterwards.
    *
    * `items` counts the corpus's DIRECT `upsertIndexedItem` writes only — issues, git commits, pull
-   * requests, reviews, CI runs, incidents and messages. It does NOT include deployments, which
+   * requests, reviews, CI runs, incidents, on-call shifts and messages. It does NOT include deployments, which
    * `annotateDeployment` also stores as `item` rows (reported separately under `deployments`),
    * nor the rows the extraction passes derive afterwards (the glossary pass indexes its terms as
    * `nimbus:glossary_term` items). So on a freshly seeded index the non-`nimbus` item rows number
@@ -326,6 +326,7 @@ function validateCorpus(corpus: DemoCorpus, at: At): BlamePlan[] {
     ...corpus.reviews,
     ...corpus.ciRuns,
     ...corpus.incidents,
+    ...corpus.oncallShifts,
     ...corpus.messages,
   ];
   for (const i of items) {
@@ -384,6 +385,7 @@ export async function seedDemoCorpus(
   writeDeployments(db, corpus.deployments, at, opts.nowMs);
 
   writeItems(db, corpus.people, corpus.incidents, at, opts.nowMs);
+  writeItems(db, corpus.people, corpus.oncallShifts, at, opts.nowMs);
   writeItems(db, corpus.people, corpus.messages, at, opts.nowMs);
 
   const blameLines = writeBlame(db, repoRoot, blame);
@@ -437,6 +439,7 @@ export async function seedDemoCorpus(
     corpus.reviews.length +
     corpus.ciRuns.length +
     corpus.incidents.length +
+    corpus.oncallShifts.length +
     corpus.messages.length;
 
   return {

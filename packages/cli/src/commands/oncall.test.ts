@@ -396,3 +396,22 @@ describe("runOncallCommand pushed dispatch", () => {
     expect(err).not.toContain("Unknown flag");
   });
 });
+
+describe("runOncallCommand now dispatch", () => {
+  test("`now --bogus` never reaches the incident flag parser", async () => {
+    const cap = createStreamCapture();
+    cap.install();
+    let thrown: unknown;
+    try {
+      await runOncallCommand(["now", "--bogus"], deps({ brief: "" }));
+    } catch (e) {
+      thrown = e;
+    } finally {
+      cap.restore();
+    }
+    const err = cap.stderrChunks.join("");
+    expect(thrown).toBeInstanceOf(CliExit);
+    expect(err).toContain("Usage: nimbus oncall now");
+    expect(err).not.toContain("Unknown flag");
+  });
+});

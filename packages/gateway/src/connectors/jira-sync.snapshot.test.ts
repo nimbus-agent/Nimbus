@@ -33,7 +33,8 @@ function setup() {
   const vault = createStubVault({
     "jira.email": "u@example.com",
     "jira.api_token": "tok",
-    "jira.base_url": "https://example.atlassian.net",
+    // Not an atlassian.net site: the MB3 on-call step makes no request without a stored cloud id.
+    "jira.base_url": "https://jira.example.com",
   });
   const logs: Array<{ level: string; obj: Record<string, unknown> }> = [];
   const log =

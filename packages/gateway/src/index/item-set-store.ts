@@ -10,6 +10,9 @@ import { deleteItemByPrimaryKey } from "./item-store.ts";
 export const REPLACE_ITEM_SET_TYPES: Readonly<Record<string, readonly string[]>> = {
   google_calendar: ["event"],
   outlook: ["event"],
+  // Phase 10 MB3: on-call shift snapshots (PagerDuty /oncalls; JSM Operations inside the jira sync).
+  pagerduty: ["oncall_shift"],
+  jira: ["oncall_shift"],
 };
 
 /** A bug guard far above any run's keep set (Google: 20 calendars x 10 pages x 250 events). */

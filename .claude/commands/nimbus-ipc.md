@@ -522,7 +522,7 @@ Handlers: `packages/gateway/src/ipc/{tour-rpc,locality-rpc}.ts`. CLI: `nimbus wo
 
 ---
 
-### Namespaces added since Spine S2 — LAN-forbidden (oncall's two reads and fleet's `briefs`/`show` are on the Tauri allowlist)
+### Namespaces added since Spine S2 — LAN-forbidden (oncall's three reads and fleet's `briefs`/`show` are on the Tauri allowlist)
 
 Every namespace below is in `FORBIDDEN_OVER_LAN` (`ipc/lan-rpc.ts`) as a whole, and none is on
 `ALLOWED_METHODS` except where its row says so. Design detail lives in `docs/architecture.md` § Spine S2 Subsystems; each handler
@@ -536,7 +536,7 @@ file is the authority for its method set.
 | `fleet.*` | `status`, `list`, `briefs`, `show`, `runNow`, `digest` | `ipc/fleet-rpc.ts` | overnight fleets (I38); only `briefs`/`show` are on the Tauri `ALLOWED_METHODS` (stored-brief reads) |
 | `toolgen.*` | `create`, `approvalRespond`, `save`, `saveApprovalRespond`, `list`, `invoke`, `revoke`, `credentialSet` | `ipc/toolgen-rpc.ts` | runtime tool generation (I39/I40) |
 | `ask.*` | `explainLast` | `ipc/diagnostics-rpc.ts` | `nimbus explain last`; also needs its entry in `tryDispatchDiagnosticsRpc`'s outer match |
-| `oncall.*` | `pushedList`, `pushedGet`, `pushedRetry` | `ipc/oncall-push-rpc.ts` | the on-call pushed brief, default-off `[oncall.push]`; `pushedList`/`pushedGet` ARE on the Tauri `ALLOWED_METHODS` (desktop On-call page), `pushedRetry` is CLI-only |
+| `oncall.*` | `now`, `pushedList`, `pushedGet`, `pushedRetry` | `ipc/oncall-now-rpc.ts` (`now`: who is on call from the indexed shifts, own dispatcher, no push runtime needed, served in a demo gateway), `ipc/oncall-push-rpc.ts` | the on-call pushed brief, default-off `[oncall.push]`; `now`, `pushedList` and `pushedGet` ARE on the Tauri `ALLOWED_METHODS` (desktop On-call page), `pushedRetry` is CLI-only |
 | `demo.*` | `seed`, `firePage` | `ipc/demo-rpc.ts` | claimed only by a demo-rooted gateway (I41) |
 | `notifications.*` | `status`, `test` | `ipc/notifications-rpc.ts` | OS toasts (pre-S3 E). `status` awaits the backend probe; `test` sends one fixed-text toast through the real service (rate limit + `title_only` apply) and returns `{ delivered: true, status }` or `{ delivered: false, reason, status }` — an undelivered toast is a result, never a JSON-RPC error. `nimbus notifications`, `nimbus doctor` |
 

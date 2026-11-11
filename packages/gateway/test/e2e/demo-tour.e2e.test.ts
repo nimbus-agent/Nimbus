@@ -383,6 +383,21 @@ describe("nimbus demo: the whole flow, end to end, on temp roots", () => {
     expect(`${r.stdout}\n${r.stderr}`).toContain("ERR_DEMO_FORBIDDEN");
   });
 
+  test("3b. `--demo oncall now --service payment-service --json` names the on-call person from the index, with no live API call (MB3)", async () => {
+    const r = await cli(["--demo", "oncall", "now", "--service", "payment-service", "--json"]);
+    expect(r.code).toBe(0);
+    const out = JSON.parse(r.stdout.trim()) as {
+      status: string;
+      youAreOnCall: boolean;
+      shifts: Array<{ userName: string }>;
+    };
+    expect(out.status).toBe("ok");
+    expect(out.youAreOnCall).toBe(true);
+    expect(out.shifts.map((s) => s.userName)).toEqual(["Sam Rivera"]);
+    // The telemetry/updater recorder sees nothing either: the read is local.
+    expectNoOutboundRequests();
+  });
+
   test(
     "4. `--demo ask`: exits within 90s (no hang) and prints something",
     async () => {
