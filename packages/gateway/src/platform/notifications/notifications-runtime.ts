@@ -38,6 +38,8 @@ import {
   createOsNotifications,
   createPlatformNotificationBackend,
   type NotificationLogger,
+  NotificationRateLimitedError,
+  NotificationUnavailableError,
   type OsNotificationService,
   type OsNotificationStatus,
 } from "./os-notifications.ts";
@@ -281,5 +283,38 @@ export async function showIgnoringFailure(
     await service.show(title, body);
   } catch {
     // Already logged by the service; swallowing is the point of this adapter.
+  }
+}
+
+/**
+ * How one local toast ended. `demo` is never returned by {@link showWithOutcome}: a demo-rooted
+ * caller records it itself, since it does not ask the service at all.
+ */
+export type ToastOutcome =
+  | "delivered"
+  | "not_delivering"
+  | "rate_limited"
+  | "unavailable"
+  | "failed"
+  | "demo";
+
+/**
+ * Like {@link showIgnoringFailure} but reports what happened, for a caller that stores an outcome
+ * (the morning briefing). Never rejects. A service that does not deliver (`delivers === false`) is
+ * not asked; the rate-limit drop and an unavailable backend are told apart from any other failure.
+ */
+export async function showWithOutcome(
+  service: Pick<NotificationService, "show" | "delivers">,
+  title: string,
+  body: string,
+): Promise<ToastOutcome> {
+  if (service.delivers === false) return "not_delivering";
+  try {
+    await service.show(title, body);
+    return "delivered";
+  } catch (e) {
+    if (e instanceof NotificationRateLimitedError) return "rate_limited";
+    if (e instanceof NotificationUnavailableError) return "unavailable";
+    return "failed";
   }
 }

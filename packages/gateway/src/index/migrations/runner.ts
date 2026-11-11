@@ -12,6 +12,7 @@ import { API_ENDPOINT_V25_SCHEMA_SQL } from "../api-endpoint-v25-sql.ts";
 import { AUDIT_CHAIN_V18_SCHEMA_SQL } from "../audit-chain-v18-sql.ts";
 import { AUDIT_SESSION_V24_SCHEMA_SQL } from "../audit-session-v24-sql.ts";
 import { BODY_STORE_V48_SQL, ITEM_FTS_UPDATE_TRIGGER_SQL } from "../body-store-v48-sql.ts";
+import { BRIEFING_V93_SQL } from "../briefing-v93-sql.ts";
 import { CAPTURE_ACTION_V69_COUNT_SQL, CAPTURE_ACTION_V69_SQL } from "../capture-action-v69-sql.ts";
 import {
   CAPTURE_NATIVE_V68_FINISH_SQL,
@@ -780,6 +781,7 @@ const INDEXED_SCHEMA_STEPS: readonly IndexedSchemaStep[] = [
   ),
   simpleStep(90, 91, "my open work snapshots (Phase 10 MB1)", WORK_SNAPSHOT_V91_SQL),
   simpleStep(91, 92, "slack read markers (Phase 10 MB4)", CHAT_READ_MARKER_V92_SQL),
+  simpleStep(92, 93, "morning briefing runs and deadline notices (Phase 10 MB5)", BRIEFING_V93_SQL),
 ];
 
 /**
