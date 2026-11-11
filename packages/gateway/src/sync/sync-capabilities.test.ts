@@ -75,6 +75,7 @@ describe("the capability set exposes no raw handle", () => {
       "prFileCandidates",
       "pruneBlameForFile",
       "recordPrChangedFiles",
+      "replaceItemSet",
       "replaceWorkSnapshot",
       "resolvePerson",
       "scopedVaultView",
@@ -398,6 +399,7 @@ describe("unbound and local-only capability sets", () => {
     }
     // The db members are built bound to "github"; a snapshot write must not inherit that.
     expect(() => c.replaceWorkSnapshot("assigned", [])).toThrow(/local-only syncable/);
+    expect(() => c.replaceItemSet("event", [])).toThrow(/local-only syncable/);
     // ...but it still writes to the index, which is its whole job.
     c.upsertItem({
       service: "obsidian",
@@ -446,5 +448,48 @@ describe("replaceWorkSnapshot is scoped to the calling service", () => {
   test("a service outside jira, linear and github is refused, naming the service", () => {
     const caps = buildSyncCapabilities(deps({}), "slack");
     expect(() => caps.replaceWorkSnapshot("assigned", [])).toThrow(/slack/);
+  });
+});
+
+describe("replaceItemSet is scoped to the calling service", () => {
+  function seedEvent(db: Database, service: string, type: string, ext: string): void {
+    db.run(
+      `INSERT INTO item (id, service, type, external_id, title, modified_at, synced_at)
+       VALUES (?, ?, ?, ?, 't', 1, 1)`,
+      [`${service}:${ext}`, service, type, ext],
+    );
+  }
+  function remaining(db: Database): string[] {
+    return (db.query("SELECT id FROM item ORDER BY id").all() as { id: string }[]).map((r) => r.id);
+  }
+
+  test("an outlook capability deletes only outlook event rows", () => {
+    const d = deps({});
+    seedEvent(d.db, "outlook", "event", "e1");
+    seedEvent(d.db, "outlook", "email", "m1");
+    seedEvent(d.db, "google_calendar", "event", "e1");
+    expect(buildSyncCapabilities(d, "outlook").replaceItemSet("event", [])).toBe(1);
+    expect(remaining(d.db)).toEqual(["google_calendar:e1", "outlook:m1"]);
+  });
+
+  test("a google_calendar capability deletes only google_calendar event rows (and honours a prefix)", () => {
+    const d = deps({});
+    seedEvent(d.db, "google_calendar", "event", "c1|1");
+    seedEvent(d.db, "google_calendar", "event", "c2|1");
+    seedEvent(d.db, "outlook", "event", "c1|1");
+    const caps = buildSyncCapabilities(d, "google_calendar");
+    expect(caps.replaceItemSet("event", [], { externalIdPrefix: "c1|" })).toBe(1);
+    expect(remaining(d.db)).toEqual(["google_calendar:c2|1", "outlook:c1|1"]);
+  });
+
+  test("a service without an allowlist entry is refused, naming it; outlook cannot name email", () => {
+    for (const svc of ["slack", "jira", "github"] as const) {
+      expect(() => buildSyncCapabilities(deps({}), svc).replaceItemSet("event", [])).toThrow(
+        new RegExp(svc),
+      );
+    }
+    expect(() => buildSyncCapabilities(deps({}), "outlook").replaceItemSet("email", [])).toThrow(
+      /email/,
+    );
   });
 });

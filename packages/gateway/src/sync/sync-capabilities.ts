@@ -18,6 +18,7 @@ import {
   selectItemMetadataJson,
   upsertIndexedItemForSync,
 } from "../index/item-store.ts";
+import { type ReplaceItemSetOptions, replaceItemSetRows } from "../index/item-set-store.ts";
 import { type ObsidianNoteWrite, writeObsidianVault } from "../index/obsidian-notes-store.ts";
 import {
   isWorkSnapshotService,
@@ -185,6 +186,18 @@ export interface SyncCapabilities<S extends ConnectorServiceId = ConnectorServic
     relation: WorkSnapshotRelation,
     externalIds: readonly string[],
   ): { stored: number; dropped: number };
+  /**
+   * Deletes THIS service's rows of `type` that are not in `keepExternalIds` (Phase 10 MB2b; see
+   * `index/item-set-store.ts`). Scoped to the bound service: the service is never a parameter, only
+   * the types `REPLACE_ITEM_SET_TYPES` lists for it may be named, and `opts` can only NARROW the set
+   * of candidate rows (`externalIdPrefix`, `endBeforeMs`). One transaction, through the delete path
+   * `deleteItem` uses. Returns the deleted count.
+   */
+  replaceItemSet(
+    type: string,
+    keepExternalIds: readonly string[],
+    opts?: ReplaceItemSetOptions,
+  ): number;
 }
 
 /**
@@ -299,6 +312,8 @@ export function buildSyncCapabilities<S extends ConnectorServiceId>(
       }
       return replaceWorkSnapshotRows(deps.db, serviceId, relation, externalIds, Date.now());
     },
+    replaceItemSet: (type, keepExternalIds, opts) =>
+      replaceItemSetRows(deps.db, serviceId, type, keepExternalIds, opts),
   };
 }
 
@@ -341,6 +356,7 @@ export function buildLocalOnlySyncCapabilities(
     accessToken: () => noCredentials("accessToken"),
     // The db members above are bound to "github"; a local-only syncable must not inherit its snapshot.
     replaceWorkSnapshot: () => noCredentials("replaceWorkSnapshot"),
+    replaceItemSet: () => noCredentials("replaceItemSet"),
   };
 }
 
@@ -372,6 +388,7 @@ export function unboundSyncCapabilities(): SyncCapabilities {
     upsertBlameLines: () => refuse("upsertBlameLines"),
     pruneBlameForFile: () => refuse("pruneBlameForFile"),
     replaceWorkSnapshot: () => refuse("replaceWorkSnapshot"),
+    replaceItemSet: () => refuse("replaceItemSet"),
     upsertItem: () => refuse("upsertItem"),
     resolvePerson: () => refuse("resolvePerson"),
     writeBatch: () => refuse("writeBatch"),

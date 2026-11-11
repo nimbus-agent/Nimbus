@@ -78,6 +78,7 @@ export function silentSyncContextExtras(): Pick<
   | "writeApiEndpointsForSpec"
   | "pruneBlameForFile"
   | "replaceWorkSnapshot"
+  | "replaceItemSet"
   | "upsertItem"
   | "resolvePerson"
   | "writeBatch"
