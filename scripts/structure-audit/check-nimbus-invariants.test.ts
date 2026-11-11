@@ -17,6 +17,7 @@ import {
   checkCaptureTableConfinement,
   checkChatopsReplySurfaceInvariant,
   checkChatopsUnwrappedPost,
+  checkChatReadMarkerConfinement,
   checkConfigReaderConfinement,
   checkConfirmComparison,
   checkConnectorSpawnIsHidden,
@@ -5663,6 +5664,115 @@ describe("D24 - work_snapshot is written only by the capability's store (Phase 1
       files.push({ relPath: f.relPath, contents: f.contents });
     }
     expect(checkWorkSnapshotConfinement(files)).toEqual([]);
+    expect(assertScanIsMeaningful(files)).toEqual([]);
+  });
+});
+
+describe("D24 - chat_read_marker is written only by its store (Phase 10 MB4)", () => {
+  const file = (relPath: string, contents: string): FileEntry => ({ relPath, contents });
+  const SRC = "packages/gateway/src/";
+  const STORE = `${SRC}index/chat-read-marker-store.ts`;
+  const DDL = `${SRC}index/chat-read-marker-v92-sql.ts`;
+  const CAP = `${SRC}sync/sync-capabilities.ts`;
+  const LOCAL_INDEX = `${SRC}index/local-index.ts`;
+  const DATA_DELETE = `${SRC}commands/data-delete.ts`;
+  const GOOD: FileEntry[] = [
+    file(
+      STORE,
+      'export function setChatReadMarkerRows() { dbRun(db, "INSERT INTO chat_read_marker (a) VALUES (1)"); dbRun(db, "DELETE FROM chat_read_marker WHERE service = ?"); }\nexport function deleteChatReadMarkersForService() {}\n',
+    ),
+    file(DDL, 'export const X = ["CREATE TABLE IF NOT EXISTS chat_read_marker (a)"];\n'),
+    file(CAP, "const r = setChatReadMarkerRows(db, s, markers, opts, now);\n"),
+    file(LOCAL_INDEX, "deleteChatReadMarkersForService(this.db, serviceId);\n"),
+    file(DATA_DELETE, "deleteChatReadMarkersForService(db, service);\n"),
+    file(
+      `${SRC}index/slack-unread.ts`,
+      'const q = "SELECT k.last_read_ts FROM item JOIN chat_read_marker k ON 1"; // INSERT INTO chat_read_marker\n',
+    ),
+    file(
+      `${SRC}connectors/slack-sync.test.ts`,
+      'db.run("INSERT INTO chat_read_marker VALUES (1)"); setChatReadMarkerRows(); deleteChatReadMarkersForService();\n',
+    ),
+  ];
+  const rules = (files: FileEntry[]): string[] =>
+    checkChatReadMarkerConfinement(files).map((v) => v.rule);
+  const withBad = (path: string, contents: string): FileEntry[] => [...GOOD, file(path, contents)];
+
+  test("the good set is clean", () => {
+    expect(checkChatReadMarkerConfinement(GOOD)).toEqual([]);
+  });
+
+  for (const [name, sql] of [
+    ["INSERT", 'dbRun(db, "INSERT INTO chat_read_marker (a) VALUES (1)")'],
+    ["DELETE", 'dbRun(db, "DELETE FROM chat_read_marker")'],
+    ["UPDATE", 'dbRun(db, "UPDATE chat_read_marker SET captured_at = 1")'],
+    ["UPDATE OR REPLACE", 'dbRun(db, "UPDATE OR REPLACE chat_read_marker SET captured_at = 1")'],
+    ["INSERT OR REPLACE", 'dbRun(db, "INSERT OR REPLACE INTO chat_read_marker (a) VALUES (1)")'],
+    ["REPLACE INTO", 'dbRun(db, "REPLACE INTO chat_read_marker (a) VALUES (1)")'],
+    ["DROP", 'dbRun(db, "DROP TABLE chat_read_marker")'],
+    ["ALTER", 'dbRun(db, "ALTER TABLE chat_read_marker ADD COLUMN x")'],
+    ["a quoted name", "dbRun(db, 'INSERT INTO \"chat_read_marker\" (a) VALUES (1)')"],
+    ["a bracketed name", "dbRun(db, 'INSERT INTO [chat_read_marker] (a) VALUES (1)')"],
+    ["a backticked name", "dbRun(db, 'INSERT INTO `chat_read_marker` (a) VALUES (1)')"],
+    ["a multi-line statement", "dbRun(db, `INSERT\n  INTO\n  chat_read_marker (a) VALUES (1)`)"],
+    ["a schema-qualified DELETE", 'dbRun(db, "DELETE FROM main.chat_read_marker")'],
+    ["a spaced schema qualifier", 'dbRun(db, "DELETE FROM main . chat_read_marker")'],
+  ] as const) {
+    test(`a syncable with ${name} is refused`, () => {
+      expect(rules(withBad(`${SRC}connectors/evil-sync.ts`, `${sql};\n`))).toEqual([
+        "chat-read-marker-confined",
+      ]);
+    });
+  }
+
+  test("an RPC file deleting from the table is refused", () => {
+    expect(
+      rules(withBad(`${SRC}ipc/x-rpc.ts`, 'db.run("DELETE FROM chat_read_marker");\n')),
+    ).toEqual(["chat-read-marker-confined"]);
+  });
+
+  test("the verb and the table on different lines are refused", () => {
+    expect(
+      rules(withBad(`${SRC}ipc/x-rpc.ts`, "db.run(`DELETE FROM\n  chat_read_marker`);\n")),
+    ).toEqual(["chat-read-marker-confined"]);
+  });
+
+  test("naming the upsert outside the store and the capability is refused", () => {
+    expect(
+      rules(
+        withBad(
+          `${SRC}connectors/evil-sync.ts`,
+          "setChatReadMarkerRows(db, 'slack', [], undefined, 1);\n",
+        ),
+      ),
+    ).toEqual(["chat-read-marker-confined"]);
+  });
+
+  test("naming the removal outside the store, local-index and data-delete is refused", () => {
+    for (const path of [`${SRC}connectors/evil-sync.ts`, CAP]) {
+      const files = [...GOOD.filter((f) => f.relPath !== path)];
+      files.push(file(path, "deleteChatReadMarkersForService(db, 'slack');\n"));
+      expect(rules(files), path).toEqual(["chat-read-marker-confined"]);
+    }
+  });
+
+  test("a comment and a read are not violations", () => {
+    expect(
+      rules(
+        withBad(
+          `${SRC}connectors/ok-sync.ts`,
+          '// INSERT INTO chat_read_marker\nconst q = "SELECT * FROM chat_read_marker";\n',
+        ),
+      ),
+    ).toEqual([]);
+  });
+
+  test("the real repository satisfies the rule and every anchor is scanned", async () => {
+    const files: FileEntry[] = [];
+    for await (const f of iterateSourceFiles()) {
+      files.push({ relPath: f.relPath, contents: f.contents });
+    }
+    expect(checkChatReadMarkerConfinement(files)).toEqual([]);
     expect(assertScanIsMeaningful(files)).toEqual([]);
   });
 });

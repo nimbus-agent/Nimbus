@@ -6,6 +6,12 @@ import { type FallbackPrCandidate, selectPrEnrichCandidates } from "../connector
 import { createServiceScopedVaultView } from "../connectors/service-scoped-vault-view.ts";
 import type { ResolveServiceId } from "../graph/graph-populator.ts";
 import { type ApiEndpointWrite, writeApiEndpointsForSpec } from "../index/api-endpoint-store.ts";
+import {
+  type ChatReadMarkerInput,
+  type ChatReadMarkerSetOptions,
+  isChatReadMarkerService,
+  setChatReadMarkerRows,
+} from "../index/chat-read-marker-store.ts";
 import { type ReplaceItemSetOptions, replaceItemSetRows } from "../index/item-set-store.ts";
 import {
   type BodyRow,
@@ -187,6 +193,17 @@ export interface SyncCapabilities<S extends ConnectorServiceId = ConnectorServic
     externalIds: readonly string[],
   ): { stored: number; dropped: number };
   /**
+   * Stores THIS service's Slack read markers (V92, Phase 10 MB4): the owner's `last_read` per
+   * channel, DM and group DM. Scoped to the bound service: the service is never a parameter and only
+   * `slack` may call it. One transaction; an invalid marker is skipped and counted. With
+   * `opts.keepChannelIds` the service's markers for any other channel are deleted in the same
+   * transaction (absent prunes nothing, `[]` prunes all).
+   */
+  setChatReadMarkers(
+    markers: readonly ChatReadMarkerInput[],
+    opts?: ChatReadMarkerSetOptions,
+  ): { stored: number; skipped: number; pruned: number };
+  /**
    * Deletes THIS service's rows of `type` that are not in `keepExternalIds` (Phase 10 MB2b; see
    * `index/item-set-store.ts`). Scoped to the bound service: the service is never a parameter, only
    * the types `REPLACE_ITEM_SET_TYPES` lists for it may be named, and `opts` can only NARROW the set
@@ -314,6 +331,12 @@ export function buildSyncCapabilities<S extends ConnectorServiceId>(
     },
     replaceItemSet: (type, keepExternalIds, opts) =>
       replaceItemSetRows(deps.db, serviceId, type, keepExternalIds, opts),
+    setChatReadMarkers: (markers, opts) => {
+      if (!isChatReadMarkerService(serviceId)) {
+        throw new Error(`setChatReadMarkers is not available to "${serviceId}".`);
+      }
+      return setChatReadMarkerRows(deps.db, serviceId, markers, opts, Date.now());
+    },
   };
 }
 
@@ -357,6 +380,7 @@ export function buildLocalOnlySyncCapabilities(
     // The db members above are bound to "github"; a local-only syncable must not inherit its snapshot.
     replaceWorkSnapshot: () => noCredentials("replaceWorkSnapshot"),
     replaceItemSet: () => noCredentials("replaceItemSet"),
+    setChatReadMarkers: () => noCredentials("setChatReadMarkers"),
   };
 }
 
@@ -389,6 +413,7 @@ export function unboundSyncCapabilities(): SyncCapabilities {
     pruneBlameForFile: () => refuse("pruneBlameForFile"),
     replaceWorkSnapshot: () => refuse("replaceWorkSnapshot"),
     replaceItemSet: () => refuse("replaceItemSet"),
+    setChatReadMarkers: () => refuse("setChatReadMarkers"),
     upsertItem: () => refuse("upsertItem"),
     resolvePerson: () => refuse("resolvePerson"),
     writeBatch: () => refuse("writeBatch"),
