@@ -1204,6 +1204,21 @@ the rule passing over nothing. Stated bounds: a text scan, so a dynamically comp
 evades it (as D33(b)); `iterateGlob` skips `-sql.ts` files, so the real scan never visits the DDL
 file (it stays in the allow-list for the synthetic fixtures); no invariant is added or retired.
 
+**Phase 10 MB4 extension, rule `chat-read-marker-confined`** (`checkChatReadMarkerConfinement`). The
+Slack read-marker table `chat_read_marker` (V92) is filled by a syncable only through the
+`setChatReadMarkers` capability. A write verb on the table (the same verbs, quoting and line-break
+forms as `work-snapshot-confined`) may appear only in `index/chat-read-marker-store.ts` and the DDL
+file `index/chat-read-marker-v92-sql.ts`; the store's upsert `setChatReadMarkerRows` may be named only
+by the store and `sync/sync-capabilities.ts`, and its removal `deleteChatReadMarkersForService` only by
+the store and the two paths that delete a service's items (`index/local-index.ts`,
+`commands/data-delete.ts`). The capability binds the calling service (never a parameter), refuses every
+service but `slack`, runs one transaction, and its optional prune deletes only this service's rows.
+Reads are unrestricted (the briefing reads the table). The store is in `RULE_ANCHORS`. Stated bounds: a
+text scan, so a dynamically composed table name evades it (as D33(b)); `iterateGlob` skips `-sql.ts`
+files, so the real scan never visits the DDL file; the marker pass is a `sync`-class fetch under the
+run's existing I29 row (`conversations.info`, `auth.test`), so I29's `sync` text is unchanged; no
+invariant is added or retired.
+
 **Known bound:** the rule is textual, so it cannot distinguish a syncable's `ctx` from an
 identically-named parameter of another type. `connectors/connector-write-transport.ts` is exempted
 for exactly that reason — its `ctx` is a `ConnectorWriteContext`, the executor's own write path.
