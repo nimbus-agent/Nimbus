@@ -2,6 +2,14 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [10.50.0](https://github.com/nimbus-agent/Nimbus/compare/v10.49.0...v10.50.0) (2026-11-11)
+
+
+### Features
+
+* **gateway:** index my open work, GitHub due dates, Outlook read state and iCloud event times for the morning briefing ([#1969](https://github.com/nimbus-agent/Nimbus/issues/1969)) ([a93ee4e](https://github.com/nimbus-agent/Nimbus/commit/a93ee4e2503613e5fd931eb0b778e0abadf67765))
+* **gateway:** sync Google Calendar and Outlook calendar events into the local index ([#1971](https://github.com/nimbus-agent/Nimbus/issues/1971)) ([675dee0](https://github.com/nimbus-agent/Nimbus/commit/675dee0252e2b7cd98c5e34a98de297eb9d60222))
+
 ## [10.49.0](https://github.com/nimbus-agent/Nimbus/compare/v10.48.0...v10.49.0) (2026-11-11)
 
 
