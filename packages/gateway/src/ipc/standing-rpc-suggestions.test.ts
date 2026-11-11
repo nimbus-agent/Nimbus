@@ -214,6 +214,25 @@ describe("standing.create { fromSuggestion }", () => {
     expect(listRules(h2.db)).toHaveLength(1);
   });
 
+  test("a workflow edited while the owner was asked makes the suggestion stale and no rule", async () => {
+    const h = harness();
+    const id = suggest(h, 5);
+    const ask = h.ctx.askOwner;
+    h.ctx = {
+      ...h.ctx,
+      askOwner: async (a) => {
+        // Another client saves an edited workflow during the prompt.
+        h.db.run("UPDATE workflow SET steps_json = '[]' WHERE id = ?", [h.wf.id]);
+        return ask(a);
+      },
+    };
+    expect(await code(call(h, "standing.create", { fromSuggestion: id }))).toBe(
+      "ERR_SUGGESTION_STALE",
+    );
+    expect(listRules(h.db)).toHaveLength(0);
+    expect(getSuggestion(h.db, id)?.status).toBe("stale");
+  });
+
   test("a plain create has no suggested-after line", async () => {
     const h = harness();
     await call(h, "standing.create", { workflow: "weekly-mail-clean", step: "archive" });

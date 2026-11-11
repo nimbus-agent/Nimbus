@@ -246,7 +246,13 @@ function commitFromSuggestion(
   from: FromSuggestion,
   now: number,
 ): ReturnType<typeof insertRule> {
-  const commit = ctx.db.transaction((): ReturnType<typeof insertRule> => {
+  const commit = ctx.db.transaction((): ReturnType<typeof insertRule> | "stale" => {
+    // The workflow may have been edited while the owner was asked: a rule for the old hash would
+    // never fire, so the suggestion goes stale instead and no rule is made.
+    if (currentWorkflowOf(ctx.db, newRule.workflowId)?.sha !== newRule.workflowSha256) {
+      markStale(ctx.db, from.id, now);
+      return "stale";
+    }
     const rule = insertRule(ctx.db, newRule);
     if (!markAccepted(ctx.db, from.id, rule.id, now)) {
       throw ERR(
@@ -256,7 +262,14 @@ function commitFromSuggestion(
     }
     return rule;
   });
-  return commit();
+  const out = commit();
+  if (out === "stale") {
+    throw ERR(
+      "ERR_SUGGESTION_STALE",
+      "the workflow changed while you were asked; no rule was created. Run it again to earn a new suggestion",
+    );
+  }
+  return out;
 }
 
 function suggestionIdOf(raw: unknown): string {
