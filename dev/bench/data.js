@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794421187211,
+  "lastUpdate": 1794425924048,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
-            "name": "nimbus-release-bot[bot]",
-            "username": "nimbus-release-bot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "02d31df69adf0093422456620003422977784f0b",
-          "message": "chore: release main (#1314)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>2.14.0</summary>\n\n##\n[2.14.0](https://github.com/nimbus-agent/Nimbus/compare/v2.13.4...v2.14.0)\n(2026-08-23)\n\n\n### Features\n\n* **exec:** sandboxed code execution behind the I33 owner gate (S2 slice\n1) ([#1313](https://github.com/nimbus-agent/Nimbus/issues/1313))\n([25e2c3b](https://github.com/nimbus-agent/Nimbus/commit/25e2c3bdf8ba9b8718cf24994a31bffc36745899))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
-          "timestamp": "2026-08-23T13:12:32+03:00",
-          "tree_id": "01f3df6e124fa9cfd2a365e47ba6577b81c29aeb",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/02d31df69adf0093422456620003422977784f0b"
-        },
-        "date": 1787480633167,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 310.53827769999845,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 310.2905781499958,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 300.68571100000264,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "675dee0252e2b7cd98c5e34a98de297eb9d60222",
+          "message": "feat(gateway): sync Google Calendar and Outlook calendar events into the local index (#1971)\n\nPhase 10, morning briefing, slice **MB2b**: Google Calendar and Outlook\ncalendar events enter the local index, alongside the iCloud events MB1\nnormalized. All three share one set of event metadata keys. This\nimplements owner ruling OR-10-12 (build Google + Outlook calendar sync).\n\n## What changes\n\n- **Pins `@nimbus-dev/connectors` 0.13.0**, which adds the read-only\n`google-calendar` connector (nimbus-mcp-servers #83). The regenerated\nbundled registry now holds 94 connectors. The model gets the connector's\nthree read tools; the sync itself calls the Calendar API directly, like\nevery other gateway sync.\n- **New service `google_calendar` with its own consent**\n(`calendar.readonly` only), registered at every site `google_meet` uses.\n- **Own key only:** unlike Meet, Photos and Drive, it never falls back\nto the shared `google.oauth` key, so a Gmail-only user is not shown\ncalendar as connected and makes no requests that would only 403.\n  - It is enabled with `nimbus connector auth google_calendar`.\n- **Google Calendar sync:**\n- Calendars: selected, readable and not hidden, at most 20, primary\nfirst.\n- Events: `events.list` with `singleEvents=true` over now−1 d … now+30\nd, then a per-calendar `syncToken`, filtered on the client because\nGoogle forbids `timeMin`/`timeMax` with a token.\n- A 410 restarts that calendar, and the window is re-anchored every 7\ndays. A cancelled event is deleted, and so are the rows of a calendar\nthat leaves the selection.\n- External id `<calendarId>|<eventId>`: Google event ids are unique only\nwithin one calendar.\n- **Outlook calendar** is a step inside the existing `outlook` syncable,\nusing `/me/calendarView/delta` over the same window. No re-auth is\nneeded (`Calendars.Read` is already granted).\n- The cursor prefix moves `nimbus-outl3:` → `nimbus-outl4:`, which\ncarries `{mail, calendar}`. MB1's `outl3` cursor is read as mail-only,\nso **mail does not resync again**.\n- A calendar failure never fails the mail sync; a 401/403 backs off for\n6 h.\n- **New sync capability `replaceItemSet(type, keep, opts)`** (D24),\nscoped to the calling service. It has a per-service type allowlist (so a\ncalendar sweep can never touch `email` rows), `endBeforeMs`, and\n`externalIdPrefix` (`startsWith`, never `LIKE`). The local-only and\nunbound contexts refuse it.\n- **Shared normalized event keys** for all three sources: `start_ms`,\n`end_ms`, `all_day`, `status`, `self_response`, `organizer_email`,\n`attendee_count`. Events are not prose-heavy for embeddings.\n\n## Owner action (not code)\n\n`calendar.readonly` is a Google **sensitive** scope. Before users other\nthan the OAuth app's test users can grant it, Google must verify the app\nfor it. This is recorded in the roadmap's owner items.\n\n## Stated bounds\n\n- The window is −1 d … +30 d. Between re-anchors the horizon shrinks to\nat least +23 d.\n- Google: at most 20 calendars, 10 pages per calendar and 12 per run.\nOutlook: at most 20 pages.\n- Live reply shapes for Google Calendar and Graph `calendarView/delta`\nare not verified against live accounts. That includes the `Prefer:\noutlook.timezone=\"UTC\"` header and the all-day shape.\n\n## Verification (local, Windows)\n\n- `bun test packages/gateway/src`: 29876 pass, 0 fail.\n- `bun test packages/gateway/test packages/cli`: only the 6 migration\ne2e tests that fail on `main` in that combined process.\n- `preflight:fast` and `typecheck:tests` (0 new) pass.\n- `audit:connector-version-skew` (0.13.0 = latest),\n`audit:connector-registry-drift` and `audit:lane-census --check` pass.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JmSjrCFSTQTQnUa4j8F5b1\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Added a read-only Google Calendar connector that indexes events from\nselected calendars, with updates every five minutes.\n* Outlook sync now indexes calendar events alongside email, covering a\nrolling window from one day ago to 30 days ahead.\n* Calendar events include normalized timing and event details, and are\nremoved from the index when deleted, cancelled, or no longer in scope.\n  * Google Calendar requires its own OAuth authorization and credential.\n* **Documentation**\n* Updated connector guides, CLI help, and release documentation with\nsetup steps, sync behavior, and supported calendar features.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-11T19:27:42Z",
+          "tree_id": "7b461ac84df560e3974d2aa5872a5d67aabbb644",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/675dee0252e2b7cd98c5e34a98de297eb9d60222"
+        },
+        "date": 1794425919050,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 280.8264548999985,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 285.71762580000103,
             "unit": "ms"
           }
         ]
