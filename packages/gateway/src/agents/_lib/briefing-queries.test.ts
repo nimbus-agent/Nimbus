@@ -172,6 +172,39 @@ describe("selectCalendarDay", () => {
   });
 });
 
+describe("selectCalendarDay scan cap", () => {
+  test("events on other days never push today's meeting out of the scan", () => {
+    gEvent("today", "Today meeting", "2026-11-12T09:00:00Z", "2026-11-12T10:00:00Z");
+    const other = JSON.stringify({
+      start_ms: Date.UTC(2026, 11, 20, 9),
+      end_ms: Date.UTC(2026, 11, 20, 10),
+      all_day: false,
+    });
+    const stmt = db.prepare(
+      "INSERT INTO item (id, service, type, external_id, title, modified_at, synced_at, metadata) VALUES (?, 'google_calendar', 'event', ?, 't', ?, 1, ?)",
+    );
+    db.transaction(() => {
+      for (let i = 0; i < CALENDAR_SCAN_CAP + 5; i++) {
+        stmt.run(`z${String(i)}`, `ze${String(i)}`, Date.UTC(2030, 0, 1) + i, other);
+      }
+    })();
+    stmt.finalize();
+    const r = selectCalendarDay(db, DAY, "UTC");
+    expect(r.rows.map((e) => e.title)).toEqual(["Today meeting"]);
+    expect(r.capped).toBe(false);
+  });
+
+  test("an all-day event whose dates straddle the zone offset is still found", () => {
+    seedGoogleEvent(
+      db,
+      { id: "ad", summary: "Holiday", start: { date: "2026-11-12" }, end: { date: "2026-11-13" } },
+      "Pacific/Auckland",
+    );
+    const r = selectCalendarDay(db, DAY, "Pacific/Auckland");
+    expect(r.rows.map((e) => e.title)).toEqual(["Holiday"]);
+  });
+});
+
 describe("selectIncidents", () => {
   const incident = (id: string, meta: Record<string, unknown>) =>
     seedItem(db, {

@@ -345,7 +345,7 @@ export const LANE_EXEMPTIONS: readonly LaneExemption[] = [
     file: "packages/gateway/src/agents/_lib/briefing-queries.ts",
     key: "start_ms",
     category: "census-blind",
-    reads: 1,
+    reads: 3,
     reason:
       "Google Calendar and Outlook write start_ms through normalizedEventKeys in connectors/_lib/calendar-event-normalize.ts, called from google-calendar-event-mapping.ts and outlook-calendar-mapping.ts: the census writer scan does not follow a spread across files, so only iCloud's direct write is seen. selectCalendarDay (the morning briefing) reads it from all three.",
   },
@@ -353,7 +353,7 @@ export const LANE_EXEMPTIONS: readonly LaneExemption[] = [
     file: "packages/gateway/src/agents/_lib/briefing-queries.ts",
     key: "end_ms",
     category: "census-blind",
-    reads: 1,
+    reads: 3,
     reason:
       "Google Calendar and Outlook write end_ms through normalizedEventKeys in connectors/_lib/calendar-event-normalize.ts, called from google-calendar-event-mapping.ts and outlook-calendar-mapping.ts: the census writer scan does not follow a spread across files, so only iCloud's direct write is seen. selectCalendarDay (the morning briefing) reads it from all three.",
   },

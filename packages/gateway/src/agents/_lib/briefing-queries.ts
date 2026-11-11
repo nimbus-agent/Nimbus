@@ -22,6 +22,7 @@ import type { OncallIncident } from "./oncall-types.ts";
  */
 
 export const CALENDAR_SCAN_CAP = 20_000;
+const ALL_DAY_SLACK_MS = 2 * 86_400_000;
 const MAIL_SCAN_CAP = 5_000;
 const CI_SCAN_CAP = 5_000;
 const MAIL_WINDOW_MS = 7 * 86_400_000;
@@ -160,13 +161,30 @@ export function selectCalendarDay(
   day: BriefingDay,
   gatewayZone: string,
 ): CalendarDay {
+  // The day filter runs BEFORE the scan cap: `modified_at` is the event's update time, not its start,
+  // so without it a pile of newer events on other days would push today's meeting out of the scan.
+  // A row whose metadata does not parse, or has no numeric start and end, is kept so it is counted.
+  // The window is a superset of `eventOnDay` (all-day events are compared by calendar date in the
+  // gateway zone, so they get two spare days each side); `eventOnDay` still decides.
   const rows = db
     .query(
       `SELECT id, service, title, url, metadata FROM item
         WHERE type = 'event' AND service IN ('apple','google_calendar','outlook')
-        ORDER BY modified_at DESC, id LIMIT ?`,
+          AND CASE
+            WHEN NOT json_valid(metadata) THEN 1
+            WHEN json_type(metadata, '$.start_ms') IN ('integer','real')
+             AND json_type(metadata, '$.end_ms') IN ('integer','real') THEN
+              CASE WHEN json_type(metadata, '$.all_day') = 'true'
+                THEN json_extract(metadata, '$.start_ms') < ?1 + ?3
+                 AND json_extract(metadata, '$.end_ms') >= ?2 - ?3
+                ELSE json_extract(metadata, '$.start_ms') < ?1
+                 AND json_extract(metadata, '$.end_ms') >= ?2
+              END
+            ELSE 1
+          END
+        ORDER BY modified_at DESC, id LIMIT ?4`,
     )
-    .all(CALENDAR_SCAN_CAP + 1) as EventRow[];
+    .all(day.endMs, day.startMs, ALL_DAY_SLACK_MS, CALENDAR_SCAN_CAP + 1) as EventRow[];
   const capped = rows.length > CALENDAR_SCAN_CAP;
   const scanned = capped ? rows.slice(0, CALENDAR_SCAN_CAP) : rows;
   const entries: CalendarEntry[] = [];
