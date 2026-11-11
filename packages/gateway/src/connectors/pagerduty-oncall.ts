@@ -47,8 +47,9 @@ export function parsePdPage(text: string, key: string): PdPage | null {
   }
   const rec = asRecord(root);
   const items = rec?.[key];
-  if (rec === undefined || !Array.isArray(items)) return null;
-  return { items, more: rec["more"] === true };
+  const more = rec?.["more"];
+  if (rec === undefined || !Array.isArray(items) || typeof more !== "boolean") return null;
+  return { items, more };
 }
 
 /** `{ user: { id, email } }` of `/users/me`; null when the body is not that shape. */
@@ -261,17 +262,19 @@ export async function runPagerdutyOncall(
   const services = await fetchServiceMap(ctx, token);
   const { keep, skipped } = writeShifts(ctx, fetched.rows, me, services, nowMs);
   let deleted = 0;
-  if (fetched.complete) deleted = ctx.replaceItemSet(ONCALL_SHIFT_ITEM_TYPE, keep);
+  // An entry that could not be read may be a shift already indexed: keep the upserts, delete nothing.
+  const complete = fetched.complete && skipped === 0;
+  if (complete) deleted =ctx.replaceItemSet(ONCALL_SHIFT_ITEM_TYPE, keep);
   ctx.logger.info(
     {
       serviceId: "pagerduty",
       shifts: keep.length,
       skipped,
       deleted,
-      oncall_partial: !fetched.complete,
+      oncall_partial: !complete,
       service_map_complete: services.complete,
     },
     "pagerduty oncall refresh",
   );
-  return { complete: fetched.complete, upserted: keep.length, deleted };
+  return { complete, upserted: keep.length, deleted };
 }

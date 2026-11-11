@@ -401,6 +401,42 @@ describeWithFetchRestore("pagerduty oncall refresh", () => {
     }
   });
 
+  test("a non-boolean or missing `more` is a parse failure: partial, nothing deleted", async () => {
+    const db = createMemoryIndexDb();
+    try {
+      install(standard([entry()]));
+      await runPagerdutyOncall(ctxFor(db), "t", NOW);
+      for (const body of [
+        { oncalls: [], more: "true" },
+        { oncalls: [], more: 1 },
+        { oncalls: [] },
+      ]) {
+        install(standard([], { "/oncalls": () => ({ body }) }));
+        const out = await runPagerdutyOncall(ctxFor(db), "t", NOW + 5);
+        expect(out.complete).toBe(false);
+        expect(out.deleted).toBe(0);
+      }
+      expect(shiftRows(db)).toHaveLength(1);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("an unreadable entry makes the snapshot partial: valid rows upserted, nothing deleted", async () => {
+    const db = createMemoryIndexDb();
+    try {
+      install(standard([entry(), entry({ user: { id: "U2", name: "Old" } })]));
+      await runPagerdutyOncall(ctxFor(db), "t", NOW);
+      expect(shiftRows(db)).toHaveLength(2);
+      install(standard([entry(), { user: {} }]));
+      const out = await runPagerdutyOncall(ctxFor(db), "t", NOW + 1);
+      expect(out).toEqual({ complete: false, upserted: 1, deleted: 0 });
+      expect(shiftRows(db)).toHaveLength(2);
+    } finally {
+      db.close();
+    }
+  });
+
   test("429 penalises the limiter and 401 does not throw; nothing is deleted", async () => {
     const db = createMemoryIndexDb();
     try {
