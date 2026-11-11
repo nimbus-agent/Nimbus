@@ -66,28 +66,52 @@ function intFlag(v: string | undefined): number | undefined {
 }
 
 /** `add`'s `--flag value` pairs; an unknown flag, a repeated one or a missing value refuses the parse. */
+type AddFlags = {
+  workflow?: string;
+  step?: string | number;
+  days?: number;
+  max?: number;
+  window?: StandingWindowArg;
+};
+
+/** Takes one `--flag value` pair into `acc`; false when the flag is unknown or its value is invalid. */
+function takeAddFlag(acc: AddFlags, k: string, v: string): boolean {
+  switch (k) {
+    case "--workflow":
+      acc.workflow = v;
+      return true;
+    case "--step":
+      acc.step = /^\d+$/.test(v) ? Number(v) : v;
+      return true;
+    case "--days":
+    case "--max": {
+      const n = intFlag(v);
+      if (n === undefined) return false;
+      acc[k === "--days" ? "days" : "max"] = n;
+      return true;
+    }
+    case "--window": {
+      const w = parseWindowArg(v);
+      if (w === undefined) return false;
+      acc.window = w;
+      return true;
+    }
+    default:
+      return false;
+  }
+}
+
 function parseAdd(flags: string[]): ApproveArgs | undefined {
   const seen = new Set<string>();
-  let workflow: string | undefined;
-  let step: string | number | undefined;
-  const out: { days?: number; max?: number; window?: StandingWindowArg } = {};
+  const acc: AddFlags = {};
   for (let i = 0; i < flags.length; i += 2) {
     const k = flags[i] ?? "";
     const v = flags[i + 1];
     if (v === undefined || v.startsWith("--") || seen.has(k)) return undefined;
     seen.add(k);
-    if (k === "--workflow") workflow = v;
-    else if (k === "--step") step = /^\d+$/.test(v) ? Number(v) : v;
-    else if (k === "--days" || k === "--max") {
-      const n = intFlag(v);
-      if (n === undefined) return undefined;
-      out[k === "--days" ? "days" : "max"] = n;
-    } else if (k === "--window") {
-      const w = parseWindowArg(v);
-      if (w === undefined) return undefined;
-      out.window = w;
-    } else return undefined;
+    if (!takeAddFlag(acc, k, v)) return undefined;
   }
+  const { workflow, step, ...out } = acc;
   if (workflow === undefined || workflow === "" || step === undefined) return undefined;
   return { verb: "add", workflow, step, ...out };
 }

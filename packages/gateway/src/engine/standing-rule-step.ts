@@ -133,8 +133,9 @@ function toolStep(
 ): { readonly row: ConnectorWriteRow; readonly input: PlainRecord } | undefined {
   const payload = action.payload;
   if (payload === undefined) return undefined;
-  const keys = Object.keys(payload).sort();
-  if (keys.length !== 2 || keys[0] !== "input" || keys[1] !== "mcpToolId") return undefined;
+  // Exactly `{ mcpToolId, input }`: two own keys, both of these names.
+  const keys = Object.keys(payload);
+  if (keys.length !== 2 || !keys.includes("input") || !keys.includes("mcpToolId")) return undefined;
   const named = payload["mcpToolId"];
   if (typeof named !== "string") return undefined;
   const row = rowNamedByToolId(named, rows);

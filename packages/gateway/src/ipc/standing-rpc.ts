@@ -267,7 +267,7 @@ function firesOf(ctx: StandingRpcCtx, params: unknown): Record<string, unknown> 
       return {
         ...f,
         // A fire with no audit row is shown as such, never silently dropped.
-        audit: a === undefined ? null : a,
+        audit: a ?? null,
       };
     }),
   };

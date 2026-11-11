@@ -1,6 +1,7 @@
 // packages/gateway/src/standing/standing-rule-text.ts
 // Limits, the weekday/time-of-day window and the exact text the owner approves (Phase 10 SA3,
 // OR-10-5 / OR-10-6, spec § 5.2). Pure: no I/O, no clock of its own (callers pass `now`).
+import { byCodeUnit } from "../automation/workflow-steps.ts";
 import { sanitisePreviewText } from "../connectors/connector-writes/preview.ts";
 import type { ScopeEntry, StandingScope, StandingWindow } from "./standing-rule-types.ts";
 import {
@@ -19,6 +20,12 @@ function refuse(message: string): never {
 }
 
 /** OR-10-6: days until expiry. Absent = 30; otherwise an integer from 1 to 90. */
+/** The rule text's ceiling line, with the actions used so far when known. */
+function ceilingLine(maxActions: number, actionsUsed: number | undefined): string {
+  const used = actionsUsed === undefined ? "" : ` (${String(actionsUsed)} used)`;
+  return `Ceiling: ${String(maxActions)} actions${used}`;
+}
+
 export function parseDays(raw: unknown): number {
   if (raw === undefined) return STANDING_DEFAULT_DAYS;
   if (typeof raw !== "number" || !Number.isInteger(raw) || raw < 1 || raw > STANDING_MAX_DAYS) {
@@ -215,11 +222,11 @@ export function renderRuleText(r: RuleTextInput, now: number): string[] {
     `Write: ${sanitisePreviewText(r.toolId)} (${sanitisePreviewText(r.actionType)})`,
     "Inputs:",
     ...Object.keys(r.scope)
-      .sort()
+      .sort(byCodeUnit)
       .map((f) => scopeLine(f, r.scope[f] as ScopeEntry)),
     `When: ${r.window === undefined ? "any time" : windowLabel(r.window)}`,
     `Expires: ${new Date(r.expiresAt).toISOString()} (${String(Math.max(1, Math.round((r.expiresAt - now) / DAY_MS)))} days from now)`,
-    `Ceiling: ${String(r.maxActions)} actions${r.actionsUsed === undefined ? "" : ` (${String(r.actionsUsed)} used)`}`,
+    ceilingLine(r.maxActions, r.actionsUsed),
     "",
     "While this rule is live, each matching write runs WITHOUT asking you, and only when this exact",
     "workflow (unchanged) is started by you. A run started by anything else, an edited workflow, a",
