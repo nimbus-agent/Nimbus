@@ -239,8 +239,10 @@ async function jiraFetchSearchPage(p: {
   jql: string;
   startAt: number;
   pageSize: number;
+  /** Bounds the request and its body read; the incremental search passes none. */
+  signal?: AbortSignal;
 }): Promise<JiraSearchPage> {
-  const { ctx, creds, jql, startAt, pageSize } = p;
+  const { ctx, creds, jql, startAt, pageSize, signal } = p;
   const body = JSON.stringify({
     jql,
     startAt,
@@ -266,6 +268,7 @@ async function jiraFetchSearchPage(p: {
       Authorization: basicAuthHeader(creds.email, creds.token),
     },
     body,
+    ...(signal === undefined ? {} : { signal }),
   });
   const text = await res.text();
 
@@ -676,6 +679,7 @@ async function jiraSnapshotAssigned(
   ctx: SyncContext,
   creds: JiraVaultCreds,
   syncTime: number,
+  signal: AbortSignal,
 ): Promise<SnapshotFetch> {
   const keys: string[] = [];
   let total: number | undefined;
@@ -688,6 +692,7 @@ async function jiraSnapshotAssigned(
       jql: JIRA_SNAPSHOT_JQL,
       startAt,
       pageSize: JIRA_SNAPSHOT_PAGE_SIZE,
+      signal,
     });
     ctx.writeBatch(() => {
       for (const issue of issues) {
@@ -732,6 +737,8 @@ export type JiraSyncableOptions = {
   ensureJiraMcpRunning: () => Promise<void>;
   /** `[briefing] snapshot_interval_minutes`, read per sync so an edit applies without a restart. */
   snapshotIntervalMinutes?: () => number;
+  /** Deadline of one snapshot attempt; absent is `SNAPSHOT_FETCH_TIMEOUT_MS` (tests inject a short one). */
+  snapshotTimeoutMs?: number;
 };
 
 /** Runs the snapshot when due; returns the cursor's new `snapAt` (an ATTEMPT, so a failing provider retries once per interval). */
@@ -745,8 +752,12 @@ async function jiraSnapshotIfDue(
   const now = Date.now();
   const interval = snapshotIntervalMs(options.snapshotIntervalMinutes?.());
   if (!snapshotDue(prevSnapAt ?? null, now, interval)) return prevSnapAt;
-  await applySnapshot(ctx, SERVICE_ID, "assigned", () =>
-    jiraSnapshotAssigned(ctx, creds, syncTime),
+  await applySnapshot(
+    ctx,
+    SERVICE_ID,
+    "assigned",
+    (signal) => jiraSnapshotAssigned(ctx, creds, syncTime, signal),
+    options.snapshotTimeoutMs,
   );
   return now;
 }

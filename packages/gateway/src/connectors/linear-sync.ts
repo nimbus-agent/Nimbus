@@ -112,6 +112,7 @@ type GqlEnvelope = {
 async function linearPost(
   apiKey: string,
   body: string,
+  signal?: AbortSignal,
 ): Promise<{ ok: boolean; status: number; json: GqlEnvelope | null; text: string }> {
   const res = await fetch(LINEAR_GQL, {
     method: "POST",
@@ -120,6 +121,7 @@ async function linearPost(
       Authorization: apiKey,
     },
     body,
+    ...(signal === undefined ? {} : { signal }),
   });
   const text = await res.text();
   let json: GqlEnvelope | null = null;
@@ -318,10 +320,17 @@ function parseSnapshotConnection(data: unknown): SnapshotConnection {
   if (conn === undefined || !Array.isArray(nodes) || pageInfo === undefined) {
     throw new Error("Linear snapshot: unexpected response shape");
   }
+  const hasNextPage = pageInfo["hasNextPage"];
+  if (typeof hasNextPage !== "boolean") {
+    throw new TypeError("Linear snapshot: pageInfo.hasNextPage is not a boolean");
+  }
   const end = pageInfo["endCursor"];
+  if (hasNextPage && (typeof end !== "string" || end === "")) {
+    throw new TypeError("Linear snapshot: hasNextPage without an endCursor");
+  }
   return {
     nodes: nodes as ReadonlyArray<Record<string, unknown>>,
-    hasNextPage: pageInfo["hasNextPage"] === true,
+    hasNextPage,
     endCursor: typeof end === "string" && end !== "" ? end : null,
   };
 }
@@ -330,7 +339,11 @@ function parseSnapshotConnection(data: unknown): SnapshotConnection {
  * Pages "my open work" (at most 3 x 100) and indexes every member WITHOUT touching the incremental
  * `since` mark. A failing request throws (a kept snapshot); more pages than the cap is `capped`.
  */
-async function linearSnapshotAssigned(ctx: SyncContext, apiKey: string): Promise<SnapshotFetch> {
+async function linearSnapshotAssigned(
+  ctx: SyncContext,
+  apiKey: string,
+  signal: AbortSignal,
+): Promise<SnapshotFetch> {
   const identifiers: string[] = [];
   let after: string | null = null;
   for (let page = 0; page < SNAPSHOT_MAX_PAGES; page += 1) {
@@ -338,6 +351,7 @@ async function linearSnapshotAssigned(ctx: SyncContext, apiKey: string): Promise
     const res = await linearPost(
       apiKey,
       JSON.stringify({ query: SNAPSHOT_QUERY, variables: after === null ? {} : { after } }),
+      signal,
     );
     const conn = parseSnapshotConnection(linearRequireData(ctx, res));
     ctx.writeBatch(() => {
@@ -371,7 +385,13 @@ async function linearSnapshotIfDue(
   ) {
     return prevSnapAt;
   }
-  await applySnapshot(ctx, SERVICE_ID, "assigned", () => linearSnapshotAssigned(ctx, apiKey));
+  await applySnapshot(
+    ctx,
+    SERVICE_ID,
+    "assigned",
+    (signal) => linearSnapshotAssigned(ctx, apiKey, signal),
+    options.snapshotTimeoutMs,
+  );
   return now;
 }
 
@@ -379,6 +399,8 @@ export type LinearSyncableOptions = {
   ensureLinearMcpRunning: () => Promise<void>;
   /** `[briefing] snapshot_interval_minutes`, read per sync so an edit applies without a restart. */
   snapshotIntervalMinutes?: () => number;
+  /** Deadline of one snapshot attempt; absent is `SNAPSHOT_FETCH_TIMEOUT_MS` (tests inject a short one). */
+  snapshotTimeoutMs?: number;
 };
 
 export function createLinearSyncable(options: LinearSyncableOptions): Syncable {

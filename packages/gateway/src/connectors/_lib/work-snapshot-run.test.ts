@@ -87,4 +87,31 @@ describe("applySnapshot", () => {
     );
     expect("total" in (logs[0]?.obj ?? {})).toBe(false);
   });
+
+  test("a fetch that ignores its signal is still cut off at the deadline as a partial", async () => {
+    const { ctx, logs, replaced } = fakeCtx();
+    await applySnapshot(ctx, "jira", "assigned", () => new Promise<SnapshotFetch>(() => {}), 20);
+    expect(replaced).toEqual([]);
+    expect(logs[0]?.level).toBe("warn");
+    expect(logs[0]?.obj).toMatchObject({ snapshot_partial: true });
+  });
+
+  test("the fetch receives a signal that aborts at the deadline", async () => {
+    const { ctx } = fakeCtx();
+    let aborted = false;
+    await applySnapshot(
+      ctx,
+      "jira",
+      "assigned",
+      (signal) =>
+        new Promise<SnapshotFetch>((_, reject) => {
+          signal.addEventListener("abort", () => {
+            aborted = true;
+            reject(new Error("aborted"));
+          });
+        }),
+      20,
+    );
+    expect(aborted).toBe(true);
+  });
 });

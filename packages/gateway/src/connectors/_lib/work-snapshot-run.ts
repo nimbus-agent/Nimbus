@@ -13,6 +13,13 @@ import type { SyncContext } from "../../sync/types.ts";
  */
 export const DEFAULT_SNAPSHOT_INTERVAL_MINUTES = 15;
 
+/**
+ * The deadline for ONE snapshot attempt (every request AND body read of it together). A provider that
+ * stalls must not hold the incremental sync that already succeeded, so the attempt is aborted and
+ * counts as `partial`: the previous snapshot is kept.
+ */
+export const SNAPSHOT_FETCH_TIMEOUT_MS = 30_000;
+
 export type SnapshotFetch =
   | {
       readonly kind: "complete";
@@ -46,22 +53,38 @@ function reasonOf(err: unknown): string {
   return msg.slice(0, MAX_REASON_CHARS);
 }
 
+/** Rejects when `signal` aborts, so an attempt that ignores the signal is still cut off. */
+function abortRejection(signal: AbortSignal): Promise<never> {
+  return new Promise<never>((_, reject) => {
+    const fail = (): void => reject(new Error("work snapshot timed out"));
+    if (signal.aborted) fail();
+    else signal.addEventListener("abort", fail, { once: true });
+  });
+}
+
 /**
- * Runs `fetch` and applies its outcome. NEVER throws: a rate limit, a 401 or any other error is a
- * `partial` (logged, previous snapshot kept), so the incremental sync that already succeeded does not
- * fail because the snapshot step did.
+ * Runs `fetch` and applies its outcome. NEVER throws: a rate limit, a 401, a timeout or any other
+ * error is a `partial` (logged, previous snapshot kept), so the incremental sync that already
+ * succeeded does not fail because the snapshot step did. `fetch` receives a signal that aborts after
+ * `timeoutMs` and must pass it to every request (it bounds the body read too).
  */
 export async function applySnapshot(
   ctx: SyncContext,
   service: string,
   relation: WorkSnapshotRelation,
-  fetch: () => Promise<SnapshotFetch>,
+  fetch: (signal: AbortSignal) => Promise<SnapshotFetch>,
+  timeoutMs: number = SNAPSHOT_FETCH_TIMEOUT_MS,
 ): Promise<void> {
   let outcome: SnapshotFetch;
+  // A ref'd timer of our own, not `AbortSignal.timeout` (whose timer does not keep the loop alive).
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    outcome = await fetch();
+    outcome = await Promise.race([fetch(controller.signal), abortRejection(controller.signal)]);
   } catch (err) {
     outcome = { kind: "partial", reason: reasonOf(err) };
+  } finally {
+    clearTimeout(timer);
   }
   if (outcome.kind === "partial") {
     ctx.logger.warn(

@@ -269,4 +269,30 @@ describeWithFetchRestore("jira my-open-work snapshot", () => {
     await syncable().sync(ctx, null);
     expect(snapRows(db)).toEqual([]);
   });
+
+  test("a snapshot request that never answers times out as a partial: old set kept, sync succeeds, cursor kept", async () => {
+    const { db, ctx, logs } = setup();
+    const reqs: Req[] = [];
+    let hang = false;
+    const inner = fakeFetch({ reqs, snap: () => page([issue("A-1")]) });
+    globalThis.fetch = ((input: unknown, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as Req;
+      if (hang && body.jql === JIRA_SNAPSHOT_JQL) {
+        return new Promise<Response>((_, reject) => {
+          init?.signal?.addEventListener("abort", () => reject(new Error("aborted")));
+        });
+      }
+      return (inner as unknown as (i: unknown, n?: RequestInit) => Promise<Response>)(input, init);
+    }) as unknown as typeof fetch;
+    const fast = () =>
+      createJiraSyncable({ ensureJiraMcpRunning: async () => {}, snapshotTimeoutMs: 20 });
+    await fast().sync(ctx, null);
+    expect(snapRows(db)).toEqual(["A-1"]);
+    hang = true;
+    const r = await fast().sync(ctx, null);
+    expect(snapRows(db)).toEqual(["A-1"]);
+    expect(logs.some((l) => l.level === "warn" && l.obj["snapshot_partial"] === true)).toBe(true);
+    const rec = decodeNimbusJsonCursorObject(r.cursor, PREFIX);
+    expect(Number(rec?.["snapAt"])).toBeGreaterThan(0);
+  });
 });

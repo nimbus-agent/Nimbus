@@ -242,4 +242,57 @@ describeWithFetchRestore("linear my-open-work snapshot", () => {
     await syncable().sync(ctx, bad);
     expect(reqs.some(isSnapshot)).toBe(true);
   });
+
+  test("a snapshot request that never answers times out as a partial: old set kept, cursor kept", async () => {
+    const { db, ctx, logs } = setup();
+    const reqs: Req[] = [];
+    let hang = false;
+    const inner = fakeFetch({ reqs, snap: () => snapPage([node("ENG-1")]) });
+    globalThis.fetch = ((input: unknown, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as Req;
+      if (hang && isSnapshot(body)) {
+        return new Promise<Response>((_, reject) => {
+          init?.signal?.addEventListener("abort", () => reject(new Error("aborted")));
+        });
+      }
+      return (inner as unknown as (i: unknown, n?: RequestInit) => Promise<Response>)(input, init);
+    }) as unknown as typeof fetch;
+    const fast = () =>
+      createLinearSyncable({ ensureLinearMcpRunning: async () => {}, snapshotTimeoutMs: 20 });
+    await fast().sync(ctx, null);
+    expect(snapRows(db)).toEqual(["ENG-1"]);
+    hang = true;
+    const r = await fast().sync(ctx, null);
+    expect(snapRows(db)).toEqual(["ENG-1"]);
+    expect(logs.some((l) => l.level === "warn" && l.obj["snapshot_partial"] === true)).toBe(true);
+    expect(typeof decodeNimbusJsonCursorObject(r.cursor, PREFIX)?.["snapAt"]).toBe("number");
+  });
+
+  test.each([
+    ["hasNextPage missing", { endCursor: null }],
+    ["hasNextPage not a boolean", { hasNextPage: "true", endCursor: "c" }],
+    ["hasNextPage true without endCursor", { hasNextPage: true }],
+    ["hasNextPage true with an empty endCursor", { hasNextPage: true, endCursor: "" }],
+  ])("a malformed pageInfo (%s) is partial and keeps the old set", async (_l, pageInfo) => {
+    const { db, ctx, logs } = setup();
+    const reqs: Req[] = [];
+    let bad = false;
+    globalThis.fetch = fakeFetch({
+      reqs,
+      snap: () =>
+        bad
+          ? new Response(
+              JSON.stringify({
+                data: { viewer: { assignedIssues: { nodes: [node("ENG-9")], pageInfo } } },
+              }),
+              { status: 200 },
+            )
+          : snapPage([node("ENG-1")]),
+    });
+    await syncable().sync(ctx, null);
+    bad = true;
+    await syncable().sync(ctx, null);
+    expect(snapRows(db)).toEqual(["ENG-1"]);
+    expect(logs.some((l) => l.obj["snapshot_partial"] === true)).toBe(true);
+  });
 });
