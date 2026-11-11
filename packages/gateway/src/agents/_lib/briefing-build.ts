@@ -9,6 +9,7 @@ import {
   selectIncidents,
   selectReviews,
   selectTickets,
+  SECTION_SERVICES,
   selectUnreadMail,
   serviceFreshness,
   type TicketEntry,
@@ -174,7 +175,7 @@ function calendarRow(e: CalendarEntry, ctx: Ctx): BriefingRow {
 }
 
 function calendarSection(ctx: Ctx): SectionOut {
-  if (!sourceCheck(ctx, "Calendar", ["apple", "google_calendar", "outlook"])) {
+  if (!sourceCheck(ctx, "Calendar", SECTION_SERVICES.calendar)) {
     return notConnected("calendar", "Calendar");
   }
   const r = selectCalendarDay(ctx.input.db, ctx.day, ctx.input.gatewayZone);
@@ -265,7 +266,7 @@ function oncallSection(ctx: Ctx): SectionOut {
 // ---- incidents ---------------------------------------------------------------------------------
 
 function incidentsSection(ctx: Ctx): SectionOut {
-  if (!sourceCheck(ctx, "Incidents", ["pagerduty"])) return notConnected("incidents", "Incidents");
+  if (!sourceCheck(ctx, "Incidents", SECTION_SERVICES.incidents)) return notConnected("incidents", "Incidents");
   const { selfPersonId } = ctx.input;
   const all = selectIncidents(ctx.input.db, selfPersonId);
   const rows: BriefingRow[] = all.slice(0, CAPS.incidents).map(({ incident: i, mine }) => {
@@ -298,7 +299,7 @@ function prWhere(repo: string | null, number: number | null): BriefingRow[number
 }
 
 function reviewsSection(ctx: Ctx): SectionOut {
-  if (!sourceCheck(ctx, "Reviews", ["github"])) return notConnected("reviews", "Reviews");
+  if (!sourceCheck(ctx, "Reviews", SECTION_SERVICES.reviews)) return notConnected("reviews", "Reviews");
   const r = selectReviews(ctx.input.db);
   const rows: BriefingRow[] = [
     ...r.requested
@@ -356,7 +357,7 @@ function ticketRow(t: TicketEntry, ctx: Ctx): BriefingRow {
 }
 
 function ticketsSection(ctx: Ctx): SectionOut {
-  const fresh = serviceFreshness(ctx.input.db, ["jira", "linear", "github"]);
+  const fresh = serviceFreshness(ctx.input.db, SECTION_SERVICES.tickets);
   const connected = fresh.some((f) => f.connected);
   const text = freshnessText(ctx.input.nowMs, fresh);
   if (!connected) {
@@ -407,7 +408,7 @@ function ticketsSection(ctx: Ctx): SectionOut {
 // ---- mail --------------------------------------------------------------------------------------
 
 function mailSection(ctx: Ctx): SectionOut {
-  if (!sourceCheck(ctx, "Mail", ["gmail", "outlook"])) return notConnected("mail", "Mail");
+  if (!sourceCheck(ctx, "Mail", SECTION_SERVICES.mail)) return notConnected("mail", "Mail");
   const r = selectUnreadMail(ctx.input.db, ctx.input.nowMs);
   const rows: BriefingRow[] = r.threads.slice(0, CAPS.mail).map((m) => {
     const parts: BriefingRow[number][] = [link(m.title, m.url)];
@@ -458,7 +459,7 @@ function chatSection(ctx: Ctx): SectionOut {
     addGap(ctx, "missing_connector", CHAT_UNAVAILABLE_TEXT);
     return chatEmpty("Not available yet (see Gaps).");
   }
-  if (!sourceCheck(ctx, "Chat", ["slack"])) return notConnected("chat", "Chat");
+  if (!sourceCheck(ctx, "Chat", SECTION_SERVICES.chat)) return notConnected("chat", "Chat");
   const r = reader(ctx.input.db, { nowMs: ctx.input.nowMs, limit: CAPS.chat });
   if (r.channelsWithMarker === 0) {
     addGap(

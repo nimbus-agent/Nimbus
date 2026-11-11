@@ -554,6 +554,17 @@ export function selectUnreadMail(db: Database, nowMs: number): MailResult {
 
 // ---- sources and freshness ----------------------------------------------------------------------
 
+/** The connector ids each section reads (a section is "connected" when any one has a `sync_state` row). */
+export const SECTION_SERVICES = {
+  calendar: ["apple", "google_calendar", "outlook"],
+  oncall: ["pagerduty"],
+  incidents: ["pagerduty"],
+  reviews: ["github"],
+  tickets: ["jira", "linear", "github"],
+  mail: ["gmail", "outlook"],
+  chat: ["slack"],
+} as const;
+
 export type ServiceFreshness = {
   readonly id: string;
   readonly connected: boolean;
