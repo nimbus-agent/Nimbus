@@ -335,4 +335,57 @@ describe("github my-open-work snapshot", () => {
     expect(rows(db, "assigned")).toEqual([]);
     expect(logs.some((l) => l.obj["snapshot_partial"] === true)).toBe(true);
   });
+
+  test("a search that never answers times out as a partial: old set kept, cursor still returned", async () => {
+    const { db, ctx, logs } = setup();
+    route({ assigned: () => search([hit("issue", 1)]) });
+    const fast = () => createGithubSyncable({ ...ENSURE_MCP, snapshotTimeoutMs: 20 });
+    await fast().sync(ctx, cursor());
+    expect(rows(db, "assigned")).toEqual(["o/r#issue-1"]);
+    const inner = globalThis.fetch;
+    globalThis.fetch = ((input: unknown, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : String(input);
+      if (url.includes("/search/issues?")) {
+        return new Promise<Response>((_, reject) => {
+          init?.signal?.addEventListener("abort", () => reject(new Error("aborted")));
+        });
+      }
+      return (inner as unknown as (i: unknown, n?: RequestInit) => Promise<Response>)(input, init);
+    }) as unknown as typeof fetch;
+    const r = await fast().sync(ctx, cursor());
+    expect(rows(db, "assigned")).toEqual(["o/r#issue-1"]);
+    expect(logs.some((l) => l.level === "warn" && l.obj["snapshot_partial"] === true)).toBe(true);
+    expect(typeof decodeNimbusJsonCursorObject(r.cursor, PREFIX)?.["snapAt"]).toBe("number");
+  });
+
+  test("a search hit that omits draft keeps an indexed draft flag; an explicit false clears it", async () => {
+    const { db, ctx } = setup();
+    const draftOf = (): unknown => {
+      const r = db.query("SELECT metadata FROM item WHERE external_id = 'o/r#7'").get() as {
+        metadata: string;
+      };
+      return (JSON.parse(r.metadata) as { draft?: unknown }).draft;
+    };
+    const { draft: _omit, ...noDraft } = hit("pr", 7);
+    route({ authored_open: () => search([hit("pr", 7, { draft: true })]) });
+    await createGithubSyncable(ENSURE_MCP).sync(ctx, cursor());
+    expect(draftOf()).toBe(true);
+    route({ authored_open: () => search([noDraft]) });
+    await createGithubSyncable(ENSURE_MCP).sync(ctx, cursor());
+    expect(draftOf()).toBe(true);
+    route({ authored_open: () => search([hit("pr", 7, { draft: false })]) });
+    await createGithubSyncable(ENSURE_MCP).sync(ctx, cursor());
+    expect(draftOf()).toBe(false);
+  });
+
+  test("a PR never indexed before that omits draft is not a draft", async () => {
+    const { db, ctx } = setup();
+    const { draft: _omit, ...noDraft } = hit("pr", 8);
+    route({ authored_open: () => search([noDraft]) });
+    await createGithubSyncable(ENSURE_MCP).sync(ctx, cursor());
+    const r = db.query("SELECT metadata FROM item WHERE external_id = 'o/r#8'").get() as {
+      metadata: string;
+    };
+    expect(JSON.parse(r.metadata)).toMatchObject({ draft: false });
+  });
 });
