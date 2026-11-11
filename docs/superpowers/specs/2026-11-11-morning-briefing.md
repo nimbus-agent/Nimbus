@@ -73,11 +73,36 @@ Decided by me (not owner questions; recorded so review can challenge them):
 | MB4 | Nimbus | Slack `last_read` markers (V92 `chat_read_marker`) and unread-thread counting |
 | MB5 | Nimbus | The briefing (`[briefing]` config, scheduler, brief, V93 `briefing_run`, IPC, CLI, event, OS headline) and deadline notices (`[briefing.deadlines]`, V93 `deadline_notice`); static D45 |
 
+**Release gate:** MB2a merges and its connectors release publishes to npm before MB2b bumps the pin
+(`audit:connector-version-skew` fails a pin to an unpublished version). MB1, MB3, MB4 and MB5 need no
+connectors release. MB5 needs MB1 and MB3 merged (snapshots, shifts); its calendar, mail and chat
+sections render a `## Gaps` line for any source not yet shipped, so MB5 does not wait for MB2b or MB4.
+
 Each slice updates the five core docs (CLAUDE.md + GEMINI.md, roadmap, architecture, docs/README,
 cli-reference) and CHANGELOG, and is independently useful (MB1–MB4 improve `nimbus ask` before MB5 lands).
 Migration numbers are assigned in merge order; if a slice is reordered, numbers follow merge order.
 
 ## 5. Design
+
+### 5.0 New sync capabilities (D24)
+
+Syncables never see a `Database` handle (D24, `sync/sync-capabilities.ts`); every write goes through a
+`SyncCapabilities` member. Rows are upserted with the existing `ctx.upsertItem(row)` (which runs
+`upsertIndexedItemForSync`), deletions with `ctx.deleteItem`. Three members are added, each SCOPED to the
+calling syncable's own service id the way `getSecret` is (a syncable cannot name another service; the
+gateway fills the service from the context), each one transaction, each bound-parameter SQL (I9/I14):
+
+- `replaceWorkSnapshot(relation, externalIds)` (MB1): resolves each external id to the item id of this
+  service's indexed row (ids with no row are dropped and counted in the return value), then deletes and
+  reinserts that (service, relation) set.
+- `replaceItemSet(type, keepExternalIds, opts?: { endBeforeMs?: number })` (MB2b, MB3): deletes this
+  service's rows of `type` whose external id is not in the keep set (for `event` after a FULL window
+  fetch only, or rows whose `end_ms` is before `opts.endBeforeMs`), through the same delete path as
+  `deleteItem`, so embeddings, FTS and graph edges go too. Returns the deleted count.
+- `setChatReadMarkers(markers)` (MB4): upserts `chat_read_marker` rows for this service.
+
+A static extension of D24 pins that only `sync/sync-capabilities.ts` writes `work_snapshot` and
+`chat_read_marker`; a unit test pins that a capability built for service A cannot touch service B's rows.
 
 ### 5.1 MB1 — my open work, due dates, read state
 
@@ -94,11 +119,13 @@ CREATE TABLE work_snapshot (
 CREATE INDEX work_snapshot_item ON work_snapshot(item_id);
 ```
 
-A snapshot for (service, relation) is REPLACED in one transaction (delete then insert) only after the
+A snapshot for (service, relation) is REPLACED through `ctx.replaceWorkSnapshot` (§ 5.0) only after the
 whole query succeeded; a failed or truncated fetch leaves the previous snapshot and records
 `snapshot_partial` in the sync's own log line (the briefing shows the snapshot's `captured_at`, § 5.5).
-Every snapshot member is also upserted as an ordinary item through `upsertIndexedItemForSync`, so the item
-row exists and carries current metadata. Item deletion cascades are by trigger
+Every snapshot member is first upserted as an ordinary item through `ctx.upsertItem`, so the item row
+exists and carries current metadata. Leaving a snapshot (reassigned, closed) removes only the snapshot row:
+the item stays indexed, as any closed ticket does today; an upstream deletion is handled by each sync's
+existing deletion path, unchanged. Item deletion cascades are by trigger
 (`AFTER DELETE ON item` deletes `work_snapshot` rows), since `item` deletes go through the existing paths.
 
 Per service, run after the existing incremental sync, at most once per `snapshot_interval_minutes`
@@ -119,9 +146,11 @@ Per service, run after the existing incremental sync, at most once per `snapshot
 **Outlook mail:** add `isRead` to the `$select` and the metadata (`is_read: boolean`). Existing rows lack
 it: the briefing counts only rows that HAVE the key and says so (`n of m Outlook messages predate read
 tracking`) until a resync; `REBODY_META_TARGETS` gains `outlook`/`email` at a new
-`OUTLOOK_MAIL_META_VERSION = 1`. The delta link is reset once (the `$select` changed; the existing
-"initial request URL holds `$select`" comment in `outlook-sync.ts` explains why) by bumping the cursor
-version, which the existing parser treats as "start over".
+`OUTLOOK_MAIL_META_VERSION = 1`. The delta link is reset once by changing `CURSOR_PREFIX` from
+`nimbus-outl2:` to `nimbus-outl3:` (`outlook-sync.ts:16-25` records the same move from `outl1`: a stored
+delta link keeps the projection that minted it, and `decodeMicrosoftGraphDeltaCursor` returns `undefined`
+on a prefix mismatch, so the sync falls through to the initial URL that carries the new `$select`). That
+one fresh delta re-lists the mailbox and backfills `is_read` for every message the delta returns.
 
 **Gmail:** nothing to add (`metadata.labelIds` contains `UNREAD`, kept current by history label events).
 
@@ -149,9 +178,11 @@ in MB2b (mind `audit:connector-version-skew`).
   calendar (cursor `{v:1, calendars: {[id]: {syncToken, windowStart}}}`). A 410 (token expired) restarts
   that calendar. The window is re-anchored (a fresh full list) once `windowStart` is more than 7 days old,
   deleting rows whose `end_ms` fell out of the window. `status: cancelled` → `ctx.deleteItem`.
-- **Outlook calendar:** inside the existing `outlook` syncable (one service, one cursor): the cursor
-  becomes `{v:2, mail:{nextUrl}, calendar:{nextUrl, windowStart}}`; a `v:1` cursor is read as
-  `{mail: v1, calendar: undefined}`, so mail does not resync. `GET /me/calendarView/delta?startDateTime&endDateTime`
+- **Outlook calendar:** inside the existing `outlook` syncable (one service, one cursor): MB2b moves the
+  prefix to `nimbus-outl4:` with the same base64-JSON encoding, payload
+  `{v:2, mail:{nextUrl}, calendar:{nextUrl, windowStart}}`. The decoder accepts `nimbus-outl4:` and also
+  `nimbus-outl3:` (MB1's mail-only cursor), which it reads as `{mail: <that cursor>, calendar: undefined}`,
+  so MB2b does NOT reset mail a second time; any older prefix falls through to the initial URLs as today. `GET /me/calendarView/delta?startDateTime&endDateTime`
   with the same window, `Prefer: odata.maxpagesize=50` (`fetchMicrosoftGraphJson` gains an optional
   headers argument), `@removed` → delete, re-anchored like Google. Uses the existing `Calendars.Read`
   grant; no re-auth.
@@ -173,16 +204,21 @@ service ids whose escalation policy this is), `is_me` (boolean, § below). Title
   `service_ids`. `is_me`: the token's user, `GET /users/me` (works for a user token; for an account-level
   token it 400s and `is_me` is `false` everywhere, a stated bound; the `pagerduty.from_email` Vault value,
   when set, is used as the fallback identity by e-mail match).
-- **JSM Operations** (inside the `jira` syncable, at most every 15 min, only when a cloud id resolves:
-  the Vault `jira.cloud_id`, else the connector's `tenant_info` discovery reproduced gateway-side over the
-  same host): `GET {OPS}/{cloudId}/v1/schedules` (cap 50 schedules) then per schedule
+- **JSM Operations** (inside the `jira` syncable's `run`, at most every 15 min, only when a cloud id
+  resolves: the Vault `jira.cloud_id` through `ctx.getSecret("cloud_id")`, else one `GET
+  {site}/_edge/tenant_info` made by the same syncable with the same credential and fetch path as its other
+  requests, so it is a sync-class request covered by that run's I29 row; the result is cached in the
+  syncable's cursor, never written to the Vault): `GET {OPS}/{cloudId}/v1/schedules` (cap 50 schedules) then per schedule
   `GET .../schedules/{id}/on-calls?flat=true` and `.../next-on-calls` for the next shift; Basic auth as the
   existing alert tools. `is_me` by the `/myself` accountId, which the Jira snapshot (MB1) already reads.
   JSM shifts have no PagerDuty service mapping; the schedule name is the join key users type.
-- **`nimbus oncall now [--service <id|name>] [--json]`**: deterministic, reads `oncall_shift` rows whose
-  window covers now. `--service` matches a `[ci.service.<id>]` binding's PagerDuty service id against
+- **`nimbus oncall now [--service <id|name>] [--json]`**: the CLI calls a new IPC method `oncall.now
+  {service?}` (read-only, local index; added to `FORBIDDEN_OVER_LAN`; added to Tauri `ALLOWED_METHODS`,
+  126 → 127). It reads `oncall_shift` rows whose window covers now. `--service` matches a `[ci.service.<id>]` binding's PagerDuty service id against
   `service_ids`, else a case-insensitive schedule/policy name match. Prints the data's age.
-- **Agent tool `oncall_now`** (read-only, local index, output through `wrapToolOutput`, I11): same query,
+- **Agent tool `oncall_now`** (read-only, local index; registered with the existing read-only index tools,
+  so it is logged to `tool_call_log` like them; its output goes through `wrapToolOutput`, which already
+  escapes a `</tool_output>` closer inside provider-supplied names, I11): same query,
   so `nimbus ask "who's on call for payment-service right now?"` answers from the index. Registered with
   the other read-only index tools; no HITL type, no egress.
 - The `nimbus oncall` incident brief gains an "On call now" line for the incident's service (reuses the
@@ -222,7 +258,13 @@ quiet_hours = 24                # "no recent activity" = modified_at older than 
 **Scheduler** (`briefing/briefing-scheduler.ts`): a 60 s unref'd tick (same shape as SA4's
 `WorkflowScheduler`, not shared: it fires no workflow). Fires when `nextFire(schedule, tz, lastFire)` ≤
 now; one catch-up if the gateway was off and starts within 3 h of a missed fire, else the fire is skipped
-and recorded `skipped`. Not started in demo (I41). The same tick runs the deadline scan every 15 min.
+and recorded `skipped`. DST follows `automation/cron.ts` (`nextFire` works on the zone's wall clock; a
+wall minute in a spring-forward gap is skipped, so a briefing scheduled inside the gap does not fire that
+day, a stated bound; a fall-back repeated minute fires once). "Today" in `tz` is the half-open instant
+range from the earliest instant whose wall clock reads local `00:00` to the same for the next local date
+(the `cron.ts` wall-to-instant helper, never `+ 86 400 000`), so a 23 h or 25 h day is one day; provider
+windows are sent as UTC instants. The same tick runs the deadline scan every 15 min. Not started in demo
+(I41).
 
 **The brief** (`agents/briefing.ts` + `agents/_lib/briefing-queries.ts`; a typed `MorningBriefing`, rendered by
 `synthesize(brief)` with no runner). Sections (each omitted from config is not built; each built section
@@ -244,22 +286,42 @@ with no source configured renders a `## Gaps` line, never silence):
 
 **Persistence** V93 `briefing_run(id, fired_at, trigger CHECK IN ('schedule','manual'), status CHECK IN
 ('ok','skipped','failed'), headline, markdown, counts_json, toast_outcome)`, pruned past `retention_days`;
-`deadline_notice(item_id, due_at_ms, notified_at, PRIMARY KEY(item_id, due_at_ms))` for exactly-once.
+`deadline_notice(item_id TEXT PRIMARY KEY, due_at_ms INTEGER NOT NULL, notified_at INTEGER NOT NULL)`,
+with an `AFTER DELETE ON item` trigger deleting its row and the scheduler pruning rows whose `due_at_ms` is
+more than 30 days past.
+
+**Section caps** (deterministic; each capped section ends with "and N more"): calendar 20 events, on call
+10 shifts, incidents 10, reviews 15 + authored 10, tickets 25 (overdue first, then due today, then the
+count of other open assigned items), mail 10 threads, chat 10 threads. There is no model and no token
+budget (OR-10-8); the caps bound the render and the desktop payload.
 
 **Delivery** (OR-10-11): the `briefing.ready` gateway event (id + headline + counts), then the OS toast
-(headline only, D-MB-4) through `showIgnoringFailure`; each outcome recorded in `toast_outcome`.
+through `showIgnoringFailure`; each outcome recorded in `toast_outcome`.
+
+**Toast text** (D-MB-4) is built by ONE function per kind whose input type holds numbers only
+(`briefingToastText(counts: BriefingCounts)`, `deadlineToastText(n: number)`), so no indexed string can
+reach it by construction: title `Nimbus briefing` / `Nimbus deadlines`; body like `3 meetings · 2 reviews
+waiting · 1 active incident · on call today` / `2 open items due within 24 h with no recent activity`.
+No title, sender, repository, channel, schedule name or time is ever in a toast. The gateway event carries
+the same counts plus the run id; the full text is fetched over IPC by the CLI or the desktop.
 
 **Deadline notices:** every 15 min, items in an `assigned` snapshot, open (Jira/Linear `status_category`
 not `done`/`canceled`; GitHub `state = open`), with `now < due_at_ms ≤ now + lead_hours` and `modified_at <
-now − quiet_hours`, and no `deadline_notice` row for (item, due_at_ms) → one toast per item ("Due in 23 h,
-no activity for 3 days: 1 ticket"; counts only when several fire in one scan, coalesced at 3 like
-`PUSH_NOTIFY_CAP`), insert the row first (an insert that fails sends nothing). A changed due date is a new
-notice.
+now − quiet_hours`, and not yet noticed → ONE counts-only toast per scan (`deadlineToastText`); each
+`deadline_notice` row is written first (a write that fails sends nothing for that item). An item already
+noticed is noticed again only when its `due_at_ms` moved by at least 1 hour (the row is then updated), so
+a re-sync or a time-zone re-rendering of the same date never repeats the notice.
 
 **IPC** (`briefing.*`; added to `FORBIDDEN_OVER_LAN`; not federated): `briefing.latest`, `briefing.list
 {limit}`, `briefing.get {id}`, `briefing.runNow` (manual trigger; returns the run), `briefing.status`
 (config, next fire, last outcome). Tauri `ALLOWED_METHODS` gains `briefing.latest`, `briefing.list`,
-`briefing.get`, `briefing.status` (126 → 130); `runNow` is CLI-only. Notification `briefing.ready`
+`briefing.get`, `briefing.status` (127 → 131, after MB3's `oncall.now`); `runNow` is CLI-only.
+
+**Demo (I41).** The scheduler and the deadline scan are not started in a demo gateway. The read methods
+and `oncall.now` serve the demo root's own synthetic index (they read nothing else, so nothing real can
+appear); `briefing.runNow` works in demo and emits the gateway event but never an OS toast. `demo-gate.ts`
+needs no entry (it refuses methods that bring real credentials or data in; these do neither); a test pins
+the demo behaviour. Notification `briefing.ready`
 classified for rebroadcast.
 
 **CLI:** `nimbus briefing` (= latest; `--json`), `nimbus briefing now` (run and print), `nimbus briefing
@@ -286,7 +348,7 @@ must stay true structurally, not by convention. A runtime test pins that `briefi
   I11 envelope when the owner asks; the briefing itself never reaches a model (OR-10-8).
 - **Privacy:** the toast carries counts only (D-MB-4); `briefing.*` is LAN-forbidden; the desktop gets reads
   only.
-- **Invariants:** none added or retired. I7 count changes (126 → 130), I29 text gains the new sync fetches
+- **Invariants:** none added or retired. I7 count changes (126 → 127 at MB3, → 131 at MB5), I29 text gains the new sync fetches
   under its existing `sync` class, D45 is a new static rule tied to no invariant.
 
 ## 7. Testing and acceptance
@@ -299,8 +361,16 @@ must stay true structurally, not by convention. A runtime test pins that `briefi
   — a configured 08:30 fire produces one `briefing_run` with all seven sections from seeded syncs; a
   deadline 23 h out with stale `modified_at` fires exactly one toast across 10 scans; `oncall now
   --service` names the PD on-call user from the index with the HTTP fake disabled.
-- Static: D45 fixtures (each forbidden import refused; a type-only import allowed).
-- Security-invariants: ALLOWED_METHODS pins 126 → 130; LAN denylist pin; zero egress rows per run.
+- Static: D45 fixtures (each forbidden import refused; a type-only import allowed); the D24 extension
+  (a write to `work_snapshot` / `chat_read_marker` outside `sync-capabilities.ts` refused).
+- Capability scoping: a capability built for one service cannot replace or delete another service's rows.
+- Time: DST spring-forward and fall-back days for the scheduler and the "today" window (23 h and 25 h
+  days); an event spanning midnight and a multi-day all-day event appear on each day they cover.
+- Toast: a property test seeding random titles/names into the index asserts no toast and no
+  `briefing.ready` payload contains any of them.
+- Demo: a demo gateway starts no scheduler; `runNow` emits the event and no toast.
+- Migrations V91–V93: a runner test per version (`runner-vNN.test.ts`), as for every migration.
+- Security-invariants: ALLOWED_METHODS pins 126 → 127 (MB3) → 131 (MB5); LAN denylist pin; zero egress rows per run.
 
 ## 8. Stated bounds
 
