@@ -226,9 +226,37 @@ async function createFromRequest(
     },
   });
   if (!approval.approved) throw refusalOf(approval);
-  const rule = insertRule(ctx.db, { ...derived.rule, approvalAuditId: approval.auditId });
-  if (from !== undefined) markAccepted(ctx.db, from.id, rule.id, now);
+  const newRule = { ...derived.rule, approvalAuditId: approval.auditId };
+  const rule =
+    from === undefined
+      ? insertRule(ctx.db, newRule)
+      : commitFromSuggestion(ctx, newRule, from, now);
   return viewOf(ctx.db, rule, now);
+}
+
+/**
+ * A rule made from a suggestion is stored only together with that suggestion's acceptance, in ONE
+ * transaction: if the suggestion stopped being open while the owner was being asked (another
+ * request accepted or dismissed it, or it went stale), the rule is not inserted and the request is
+ * refused, so one suggestion can never yield two rules.
+ */
+function commitFromSuggestion(
+  ctx: StandingRpcCtx,
+  newRule: Parameters<typeof insertRule>[1],
+  from: FromSuggestion,
+  now: number,
+): ReturnType<typeof insertRule> {
+  const commit = ctx.db.transaction((): ReturnType<typeof insertRule> => {
+    const rule = insertRule(ctx.db, newRule);
+    if (!markAccepted(ctx.db, from.id, rule.id, now)) {
+      throw ERR(
+        "ERR_SUGGESTION_NOT_OPEN",
+        "the suggestion was accepted, dismissed or became stale while you were asked; no rule was created",
+      );
+    }
+    return rule;
+  });
+  return commit();
 }
 
 function suggestionIdOf(raw: unknown): string {

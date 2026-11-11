@@ -366,13 +366,22 @@ function learnAfterWriteStep(
       p.learning,
     );
   } catch (err) {
-    p.learning.log?.(
+    reportLearningFailure(p.learning, err);
+  }
+}
+
+/** Reports a failed learning pass. A logger that itself throws is swallowed: learning never fails a run. */
+function reportLearningFailure(learning: LearningConfig, err: unknown): void {
+  try {
+    learning.log?.(
       {
         event: "standing.learning.failed",
         error: err instanceof Error ? err.message : String(err),
       },
       "approval learning failed; the run is unaffected",
     );
+  } catch {
+    /* the diagnostic is best effort; the run's outcome stands */
   }
 }
 

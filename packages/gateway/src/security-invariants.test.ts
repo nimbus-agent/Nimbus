@@ -14033,7 +14033,11 @@ describe("I55 SA5 — approval learning only suggests: it never creates, widens 
           }),
           timestamp: 2,
         });
-        learnFromStepRun(db, r, { enabled: () => true, suggestAfter: () => 5 });
+        learnFromStepRun(db, r, {
+          enabled: () => true,
+          suggestAfter: () => 5,
+          currentSha: () => r.workflowSha256,
+        });
       }
       return { suggestions: listSuggestions(db, "open").length, rules: listRules(db).length };
     };

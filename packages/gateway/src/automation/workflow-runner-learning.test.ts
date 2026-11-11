@@ -122,6 +122,23 @@ describe("the runner and approval learning", () => {
     expect(lines).toEqual(["approval learning failed; the run is unaffected"]);
   });
 
+  test("a logger that throws while reporting a failed pass does not fail the run either", async () => {
+    const r = await runWorkflowExecution(
+      params({
+        learning: {
+          enabled: () => {
+            throw new Error("policy exploded");
+          },
+          suggestAfter: () => 3,
+          log: () => {
+            throw new Error("logger exploded");
+          },
+        },
+      }),
+    );
+    expect(r.status).toBe("done");
+  });
+
   test("a failing write step is still learned from (any status)", async () => {
     const failing = {
       execute: async (a: PlannedAction): Promise<ActionResult> => {

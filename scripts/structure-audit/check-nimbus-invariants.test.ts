@@ -5319,10 +5319,23 @@ describe("D44 — a standing rule approves only inside approvalPhase, for an exa
   test("(f) the learning pass may read the owner_workflow literal but never construct it", () => {
     const reader = file(LEARNING, 'const ok = prov["kind"] === "owner_workflow";\n');
     expect(rules(GOOD.map((f) => (f.relPath === LEARNING ? reader : f)))).toEqual([]);
-    const builder = file(LEARNING, 'const p = { kind: "owner_workflow", runId: 1 };\n');
-    expect(rules(GOOD.map((f) => (f.relPath === LEARNING ? builder : f)))).toEqual([
-      "standing-provenance-confined",
-    ]);
+    for (const body of [
+      'const p = { kind: "owner_workflow", runId: 1 };',
+      'const p = { "kind": "owner_workflow", runId: 1 };',
+      "const p = { 'kind' : 'owner_workflow' };",
+      'p.kind = "owner_workflow";',
+      'p["kind"] = "owner_workflow";',
+    ]) {
+      const builder = file(LEARNING, `${body}\n`);
+      expect(rules(GOOD.map((f) => (f.relPath === LEARNING ? builder : f))), body).toEqual([
+        "standing-provenance-confined",
+      ]);
+    }
+    const compare = file(
+      LEARNING,
+      'const ok = p.kind === "owner_workflow" || p["kind"] == "owner_workflow";\n',
+    );
+    expect(rules(GOOD.map((f) => (f.relPath === LEARNING ? compare : f)))).toEqual([]);
     const shape = file(LEARNING, "const p: WorkflowProvenance = x; const q = p.fieldSources;\n");
     expect(rules(GOOD.map((f) => (f.relPath === LEARNING ? shape : f)))).toEqual([
       "standing-provenance-confined",

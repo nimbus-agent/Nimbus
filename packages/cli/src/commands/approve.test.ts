@@ -352,7 +352,7 @@ describe("suggestions (Phase 10 SA5)", () => {
 
   test("add --from-suggestion refuses --yes before anything is sent", async () => {
     const written: string[] = [];
-    const real = process.stderr.write.bind(process.stderr);
+    const real = process.stderr.write; // the exact original, restored in `finally`
     process.stderr.write = ((chunk: string) => {
       written.push(String(chunk));
       return true;
@@ -375,7 +375,7 @@ describe("runApproveCmd", () => {
       ["resume", "sr_1", "-y"],
     ]) {
       const written: string[] = [];
-      const real = process.stderr.write.bind(process.stderr);
+      const real = process.stderr.write; // the exact original, restored in `finally`
       process.stderr.write = ((chunk: string) => {
         written.push(String(chunk));
         return true;
@@ -391,7 +391,7 @@ describe("runApproveCmd", () => {
 
   test("an unparseable command prints the usage and exits 2", async () => {
     const written: string[] = [];
-    const real = process.stderr.write.bind(process.stderr);
+    const real = process.stderr.write; // the exact original, restored in `finally`
     process.stderr.write = ((chunk: string) => {
       written.push(String(chunk));
       return true;

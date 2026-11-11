@@ -23,6 +23,7 @@
 // COLUMN; the JSON is parsed in TypeScript (never `json_extract`, which raises on malformed JSON).
 import type { Database } from "bun:sqlite";
 
+import { parseWorkflowSteps, workflowStepsSha256 } from "../automation/workflow-steps.ts";
 import type { WorkflowTrigger } from "../engine/types.ts";
 import { hasLiveRuleFor } from "./standing-rule-store.ts";
 import {
@@ -52,12 +53,16 @@ export type LearningConfig = {
   /** `[standing] suggest_after`; `0` turns learning off. */
   readonly suggestAfter: () => number;
   readonly now?: () => number;
+  /** Test seam: the workflow's current content hash; absent reads the stored workflow. */
+  readonly currentSha?: (workflowId: string) => string | undefined;
   /** Receives the one `info` line a new suggestion logs (workflow, step, streak; no payload values). */
   readonly log?: (fields: Record<string, unknown>, message: string) => void;
 };
 
 export type LearningResult =
   | { readonly kind: "off" }
+  /** The workflow was edited since this run started: the run teaches nothing about the new content. */
+  | { readonly kind: "superseded" }
   | {
       readonly kind: "learned";
       readonly verdict: StepRunVerdict;
@@ -133,6 +138,19 @@ function readRows(db: Database, run: LearningStepRun): AuditRow[] {
     .all(run.actionType, run.startedAt) as AuditRow[];
 }
 
+/** The stored workflow's current content hash, or `undefined` when it is gone or does not parse. */
+function currentWorkflowSha(db: Database, workflowId: string): string | undefined {
+  const row = db.query("SELECT steps_json FROM workflow WHERE id = ?").get(workflowId) as {
+    steps_json: string;
+  } | null;
+  if (row === null) return undefined;
+  try {
+    return workflowStepsSha256(parseWorkflowSteps(row.steps_json));
+  } catch {
+    return undefined;
+  }
+}
+
 function isOwnerStarted(trigger: WorkflowTrigger | undefined): boolean {
   return trigger === "owner_cli" || trigger === "owner_ui";
 }
@@ -150,6 +168,10 @@ export function learnFromStepRun(
   if (!cfg.enabled() || !isOwnerStarted(run.trigger)) return { kind: "off" };
   const suggestAfter = cfg.suggestAfter();
   if (suggestAfter <= 0) return { kind: "off" };
+  // A run of content the workflow no longer has (it was edited while the run was going) changes no
+  // learning state: it must not drop the CURRENT hash's streak, nor start one for obsolete content.
+  const current = (cfg.currentSha ?? ((id: string) => currentWorkflowSha(db, id)))(run.workflowId);
+  if (current !== run.workflowSha256) return { kind: "superseded" };
   const now = (cfg.now ?? Date.now)();
   // A hash change is a new key: the old hash's open suggestions go stale and its streaks are dropped.
   markStaleFor(db, run.workflowId, run.workflowSha256, now);

@@ -14,6 +14,7 @@ import { HITL_REQUIRED } from "../engine/executor.ts";
 import type { PlannedAction } from "../engine/types.ts";
 import { listRules } from "../standing/standing-rule-store.ts";
 import {
+  dismissSuggestion,
   getSuggestion,
   listSuggestions,
   openSuggestion,
@@ -181,6 +182,36 @@ describe("standing.create { fromSuggestion }", () => {
     expect(s?.status).toBe("accepted");
     expect(s?.ruleId).toBe(rule.id);
     expect(listRules(h.db)).toHaveLength(1);
+  });
+
+  test("a suggestion closed while the owner was asked yields no rule (two accepts make ONE rule)", async () => {
+    const h = harness();
+    const id = suggest(h, 5);
+    // The owner is still being asked when another request dismisses the suggestion.
+    const ask = h.ctx.askOwner;
+    h.ctx = {
+      ...h.ctx,
+      askOwner: async (a) => {
+        dismissSuggestion(h.db, id, NOW);
+        return ask(a);
+      },
+    };
+    expect(await code(call(h, "standing.create", { fromSuggestion: id }))).toBe(
+      "ERR_SUGGESTION_NOT_OPEN",
+    );
+    expect(listRules(h.db)).toHaveLength(0);
+    expect(getSuggestion(h.db, id)?.status).toBe("dismissed");
+
+    // Two concurrent accepts of one suggestion: both are asked, exactly one rule is stored.
+    const h2 = harness();
+    const id2 = suggest(h2, 5);
+    const outcomes = await Promise.all([
+      code(call(h2, "standing.create", { fromSuggestion: id2 })),
+      code(call(h2, "standing.create", { fromSuggestion: id2 })),
+    ]);
+    expect(outcomes.filter((o) => o === undefined)).toHaveLength(1);
+    expect(outcomes).toContain("ERR_SUGGESTION_NOT_OPEN");
+    expect(listRules(h2.db)).toHaveLength(1);
   });
 
   test("a plain create has no suggested-after line", async () => {

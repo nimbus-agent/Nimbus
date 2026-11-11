@@ -3245,7 +3245,9 @@ const D44_NAME_RULES: ReadonlyArray<{
   },
   {
     rule: "standing-provenance-confined",
-    re: /\bkind\s*:\s*["']owner_workflow["']/g,
+    // Construction in any spelling: `kind:`, a quoted key `"kind":`, or an assignment `p.kind =` /
+    // `p["kind"] =` (never `===`, so a reader's comparison is not a construction).
+    re: /(?:\bkind|["']kind["'])\s*:\s*["']owner_workflow["']|(?:\.\s*kind|\[\s*["']kind["']\s*\])\s*=(?!=)\s*["']owner_workflow["']/g,
     allowed: [D44_WRITE_STEP, D44_TYPES],
     keepStrings: true,
   },

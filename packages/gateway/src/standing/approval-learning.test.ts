@@ -85,6 +85,8 @@ function cfg(over: Partial<LearningConfig> = {}): LearningConfig {
     enabled: () => true,
     suggestAfter: () => 3,
     now: () => T0 + 100,
+    // Each run in these tests is of the workflow's content at the time (H1 unless a test edits it).
+    currentSha: () => H1,
     ...over,
   };
 }
@@ -170,8 +172,38 @@ describe("learnFromStepRun: the streak and the suggestion", () => {
   function runHuman(db: Database, n: number, over: Partial<LearningStepRun> = {}) {
     const run = runOf({ runId: `run-${String(n)}`, ...over });
     addRow(db, human(), run);
-    return learnFromStepRun(db, run, cfg());
+    return learnFromStepRun(db, run, cfg({ currentSha: () => run.workflowSha256 }));
   }
+
+  test("a run of content the workflow no longer has changes nothing (it was edited mid-run)", () => {
+    const db = fresh();
+    for (let i = 1; i <= 2; i += 1) runHuman(db, i, { workflowSha256: H2 });
+    expect(streakOf(db, runOf({ workflowSha256: H2 }))).toBe(2);
+    // An H1 run finishes after the workflow became H2: no stale marking, no H1 streak.
+    const late = runOf({ runId: "run-late" });
+    addRow(db, human(), late);
+    expect(learnFromStepRun(db, late, cfg({ currentSha: () => H2 }))).toEqual({
+      kind: "superseded",
+    });
+    expect(streakOf(db, runOf({ workflowSha256: H2 }))).toBe(2);
+    expect(streakOf(db, late)).toBe(0);
+  });
+
+  test("without the seam the pass reads the stored workflow: a deleted or unparseable one is superseded", () => {
+    const db = fresh();
+    const run = runOf();
+    addRow(db, human(), run);
+    expect(learnFromStepRun(db, run, { enabled: () => true, suggestAfter: () => 3 })).toEqual({
+      kind: "superseded",
+    });
+    db.run(
+      "INSERT INTO workflow (id, name, description, steps_json, created_at, updated_at) VALUES ('wf', 'archive-old', NULL, '{not json', 1, 1)",
+    );
+    expect(learnFromStepRun(db, run, { enabled: () => true, suggestAfter: () => 3 })).toEqual({
+      kind: "superseded",
+    });
+    expect(streakOf(db, run)).toBe(0);
+  });
 
   test("a suggestion appears on the Nth hand-approved run, not before", () => {
     const db = fresh();
