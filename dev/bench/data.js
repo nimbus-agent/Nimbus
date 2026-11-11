@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794425924048,
+  "lastUpdate": 1794426333061,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "99b458740a67d2f3764ae817524be166f96f403c",
-          "message": "ci: PR cross-platform legs run the same whole-repo test command as the push matrix (#1315)\n\n## What\n\n`pr-quality-cross-platform` now runs **one leg per OS** — `macos-15` and\n`windows-2025` — each executing the **same whole-repo `bun test` command\nas the push matrix**, in one process:\n\n```\nbun test packages/gateway packages/cli packages/mcp-connectors scripts\n```\n\nIt previously ran a `{os, pkg}` matrix of `bun test packages/<pkg>/src`,\nnarrowed by changed paths, plus a separately-named sandbox integration\nstep. All three of those are gone: the whole-repo command collects the\nsandbox suite on its own, and there is no package dimension left to\nnarrow.\n\n## Why\n\nThe PR gate and the push gate ran **different test sets in different\nprocess shapes**, so a green PR leg was not predictive of the push leg\nthat follows it minutes later.\n\nOver the 200 CI runs on `main` between 2026-08-02 and 2026-08-22: 50\nfailed, 35 had a failing macOS job, and **33 of those 35 were in files\nthe PR gate never loaded at all** — `scripts/`, `test/integration/`,\n`test/e2e/`. There was no earlier place they could have been found. They\nwere all discovered after merge, on `main`.\n\nThe process composition matters as much as the file set, and that is the\nhalf that is easy to under-fix. `mock.module` is process-global in Bun,\nso a per-package run and a whole-repo run do not have the same mock\nregistrations in play. #1307 merged a test that was green on this job on\n**all three** OSes and red on the macOS push leg minutes later, purely\nbecause `packages/gateway/src` never loads the two files under\n`packages/gateway/test/` that mock its dependency. Widening the file set\nalone would not have caught it; running the same command in the same\nshape does.\n\n## Cost\n\nCheaper, not dearer. A PR touching both packages went from four legs to\ntwo. The per-leg run is longer, but there is no coverage instrumentation\non this job — the push leg's 14-minute Windows figure includes Istanbul\npreloads that this one does not pay for. The existing per-attempt\n15-minute wall-clock cap and the 40-minute job ceiling are unchanged.\n\n## The isolation the split used to buy\n\nSeparate matrix entries gave process isolation:\n`packages/cli/test/helpers/cli-mocks.ts` installs process-global mock\nregistrations, and running gateway + CLI in one process once let a\ngateway test's global `mock.restore` corrupt CLI repl tests on macOS.\n\nThat was never a property of the product — only of this job. The macOS\nand Windows **push** legs have run all four path groups in one process\nthe whole time, so `main` was already paying whatever that costs while\nthe PR gate was insulated from it. Checked against the 2026-08-22 macOS\npush run before changing anything: every `cli-mocks` consumer and\n`repl-core.test.ts` loaded in the same process as the gateway suite, and\nnot one CLI test failed. The hazard is stale — and if it returns, this\njob is where it should surface, at PR time on the contributor's branch\nrather than on `main`.\n\n## Drift protection\n\n`scripts/ci/cross-platform-parity.test.ts` pins the two commands\ntogether. A comment saying \"keep these in sync\" is not a mechanism: the\ntwo invocations sit in different files, ~500 lines apart, each with its\nown dense rationale block that reads complete on its own.\n\nThe test compares **positional path arguments only** — flags\nlegitimately differ, since the push leg adds Istanbul preloads and a\nJUnit reporter that the PR leg has no use for, and the PR leg wraps its\nattempt in `run-with-timeout.ts`. What must not drift is which tests\nrun. It also asserts each command is found **exactly once** before\nasserting equality, so a zero match cannot make the parity assertion\nvacuously true, and asserts the whole-repo shape on **both** lists\nindependently rather than resting one side on the equality check.\n\nRed-proved by reverting the PR-side command to `packages/gateway/src`\nand confirming 2 of 3 tests fail.\n\n## Verification\n\n- `bun run preflight:fast` — 32/32 gates pass\n- `bun test scripts` — 1555 pass, 27 skip, 0 fail\n- `bun test scripts/ci/cross-platform-parity.test.ts` — 3 pass;\nred-proved against the reverted state\n\n## Docs\n\n`CLAUDE.md`, `GEMINI.md`, `docs/architecture.md`, `docs/CONTRIBUTING.md`\nand the three `.claude/` skill/agent files are updated in the same\ncommit — including the \"what the PR legs still do NOT cover\" note, now\nnarrowed to coverage and packaging, both Ubuntu-only by design.\n\n## The Windows leg caught a red `main` — fixed here\n\nThe first run of this job failed on `windows-2025`: 20,066 pass, 2 fail.\nNot a timeout — the suite finished in 647s against the 900s cap, and\nmacOS was green in 5m.\n\n`main` was already failing on those same two tests, in its two most\nrecent Windows push runs, with the same 2 fail / 148 skip tally. This PR\ndid not introduce them; its new Windows leg is the first thing that\ncould report them before merge, which is the entire argument for the\nchange. Under the old per-package gate `packages/gateway/src` and\n`packages/gateway/test` never shared a process, so the defect was\nstructurally unreachable at PR time.\n\n**The defect.** `createWin32SandboxRunner`'s two default-path cases\nassert the probe's \"found nothing\" branch, which is reachable only while\n`NIMBUS_SANDBOX_HELPER_PATH` is unset — and they read it ambiently\nrather than controlling it. Two files assign that variable at module\n**top level with no cleanup**, both pointing at\n`src-native/sandbox-helper-win32/nimbus-sandbox-helper.exe`:\n\n-\n`packages/gateway/test/integration/platform/sandbox/exec-sandbox.test.ts`\n- `packages/gateway/test/e2e/exec-e2e.test.ts`\n\nOn Windows CI that path is a real, working binary, because the workflow\nbuilds it before the run. In a shared process the probe therefore found\na live helper, `isFullyActive()` returned true, and both cases failed.\nThe sibling test three lines above gets this right — it sets the\nvariable and restores it in a `finally`.\n\n**The fix** is `beforeEach`/`afterEach` on that describe: clear the\nvariable per test, then restore the prior value rather than deleting it,\nso the two files above keep working for their own purposes. The suite no\nlonger depends on import order.\n\nReproduced and verified locally on Windows, not inferred:\n\n| condition | before | after |\n|---|---|---|\n| clean env | 10 pass / 0 fail | 10 pass / 0 fail |\n| `NIMBUS_SANDBOX_HELPER_PATH` = the real built helper | **8 pass / 2\nfail** | **10 pass / 0 fail** |\n\nThe stale comment that encoded the wrong assumption — \"the default is\nderived from `process.execPath` … which never has\n`nimbus-sandbox-helper.exe` next to it\" — is corrected too. That was\ntrue about the *default*, and irrelevant once the variable is set.\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **CI Improvements**\n* macOS and Windows pull request checks now run the complete repository\ntest suite, including unit, integration, and E2E tests.\n* Cross-platform checks use one unified workflow per operating system\nfor testing and type-checking.\n* Improved retry handling, status reporting, and macOS failure\ndiagnostics.\n\n* **Documentation**\n* Updated CI, architecture, and contribution guidance to describe the\nunified testing process.\n\n* **Tests**\n* Added validation to ensure pull request and push workflows use\nmatching repository test paths.\n  * Improved Windows sandbox test reliability.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-08-23T12:17:29Z",
-          "tree_id": "153bb3a42dc7eb5c46f7111436573badb26f6986",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/99b458740a67d2f3764ae817524be166f96f403c"
-        },
-        "date": 1787488135159,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 316.81676764999867,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 317.6663287999916,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 285.71762580000103,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
+            "name": "nimbus-release-bot[bot]",
+            "username": "nimbus-release-bot[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "f36c27b6e44d96ff84e6d723362ee94ba6976a19",
+          "message": "chore: release main (#1970)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>10.50.0</summary>\n\n##\n[10.50.0](https://github.com/nimbus-agent/Nimbus/compare/v10.49.0...v10.50.0)\n(2026-11-11)\n\n\n### Features\n\n* **gateway:** index my open work, GitHub due dates, Outlook read state\nand iCloud event times for the morning briefing\n([#1969](https://github.com/nimbus-agent/Nimbus/issues/1969))\n([a93ee4e](https://github.com/nimbus-agent/Nimbus/commit/a93ee4e2503613e5fd931eb0b778e0abadf67765))\n* **gateway:** sync Google Calendar and Outlook calendar events into the\nlocal index\n([#1971](https://github.com/nimbus-agent/Nimbus/issues/1971))\n([675dee0](https://github.com/nimbus-agent/Nimbus/commit/675dee0252e2b7cd98c5e34a98de297eb9d60222))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
+          "timestamp": "2026-11-11T19:34:35Z",
+          "tree_id": "e0145a2b5970d5b6aefbc36693c76e2c72ae5603",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/f36c27b6e44d96ff84e6d723362ee94ba6976a19"
+        },
+        "date": 1794426328629,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 189.27253119999767,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 188.84947440000104,
             "unit": "ms"
           }
         ]
