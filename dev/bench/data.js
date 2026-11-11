@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794354933942,
+  "lastUpdate": 1794360358705,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "0407fb0c1410a15435c3e170b113a6163db8518e",
-          "message": "fix(ci): close the pre-push gaps behind most red PR checks (#1303)\n\n## Why\n\nMeasured over the last 152 `ci.yml` runs with `event == pull_request`:\n66 green, 18 red, and 68 cancelled by a newer push. That is a **21%\nfailure rate over concluded runs**, and the 45% cancellation rate is the\npush-and-see loop those failures produce.\n\nCutting the 18 failures down to failing steps:\n\n| Failing step | n | Catchable before push? |\n|---|---|---|\n| Unit tests with coverage — Linux | 6 | only in a Linux container |\n| Coverage floor, per-file 85 line / 80 branch | 3 | Docker |\n| Audit root overrides drift | 3 | **yes — `preflight:fast`** |\n| Setup Bun and install dependencies, lockfile drift | 2 | **yes —\n`preflight:fast`** |\n| Audit release-please manifest drift | 1 | **yes — `preflight:fast`** |\n\n**40% of failing steps were already catchable locally in two to three\nminutes.** Not races, not platform quirks — static audits nobody ran.\nThe repo ships `.githooks/pre-push`, which runs `preflight:fast` and\naborts the push on failure, and `core.hooksPath` was unset on the\nmaintainer machine, so it had never run once. That is a local config\nfix, not a code change, and it is recorded in the spec rather than\nshipped here.\n\nThis PR closes the gaps that *are* code.\n\n## What changed\n\n**`verify:pr` could report green on a PR that nothing was gating.** It\nlooped over reported checks only, so a PR whose merge-gating aggregator\nhad not been created yet looked identical to one that passed. That is\nthe exact shape of PR #1298, which merged at 17:47:15Z with `PR quality\n— required gates` not yet created; the check was created at 17:57:44Z\nand failed, putting two broken tests on `main`. `evaluatePrState` now\ntreats an absent required gate as its own failure reason.\n\n**`bun run verify:docker --changed`** — new. Runs the branch's changed\ntest files, plus the colocated `.test.ts` sibling of each changed source\nfile, inside the CI Linux image. Seconds once the image is cached,\nagainst roughly 12 minutes for a push. This targets the largest genuine\nfailure category above, which does not reproduce on Windows or macOS at\nall. Stated bound, printed by the tool itself: a narrow run cannot\nreproduce cross-file `mock.module` contamination, so a green result is\nevidence about those files and never about the suite. `--full` remains\nthe authority.\n\n**`bun run audit:platform-test-gaps`** — new, advisory, `soft`, inside\n`preflight:fast`. Names the tests in your diff that cannot run on your\nOS. A test gated on `skipIf` for `process.platform` never executes on\nthe matching dev box, so local green is silent about it. Measured here:\n`platform/sandbox/win32.test.ts` holds 4 tests that cannot run on\nWindows, including the one that reached `main` red. It exits 0 always\nand under-reports by design.\n\n**Stale CI facts corrected.** `CLAUDE.md`, `GEMINI.md`,\n`nimbus-preflight` and `nimbus-testing` all claimed PRs gate on Ubuntu\nonly. They have not for some time — `pr-quality-cross-platform` runs\nmacOS and Windows legs for gateway and cli, narrowed by changed paths.\nThat claim actively taught that cross-platform breakage surfaces only\nafter merge.\n\n**Merge discipline recorded** in `CLAUDE.md`, `GEMINI.md`, the\n`nimbus-preflight` skill, and as a Step 0 in the `nimbus-ci-doctor`\nagent: when `main` goes red, compare the merge timestamp to the required\ncheck `started_at` before assuming a flake. The ruleset's only bypass\nactor is `OrganizationAdmin` with bypass mode always, and using it\nleaves no annotation anywhere.\n\n**Two specs.** A new analysis doc, and a correction banner on the\nexisting critical-path doc whose central finding is now inverted: PR\n#1291 cut the Windows leg from 30m35s to 8m42s, so `Unit + Coverage` on\nUbuntu is now the longest job and 13 jobs wait on it. No workflow file\nis touched in this PR; the re-ranked pipeline proposals are written up\nfor review.\n\n## Verification\n\n- `bun run preflight:fast` — PASSED, 32 gates, including the new\nadvisory one.\n- `bun test scripts/ci scripts/lib/preflight-gates.test.ts` — 140 pass,\n0 fail.\n- `bash scripts/ci/verify-in-docker.sh --changed` — ran end to end\nagainst real Docker: exit 0 on green, and **exit 1 with a planted\nfailing test**, sentinel removed afterwards.\n- New logic red-proved by inverting it: flipping the skip-condition\nsense fails 3 tests, restoring it passes 14. The `verify:pr` change\nred-proved itself by breaking the pre-existing green-path test, which\nasserted on a placeholder check name.\n- The reporter's own test file produced 3 false positives on first run,\nfrom `skipIf` inside string literals. Fixed and covered.\n\n## Not included\n\nThe three tests currently red on `main` are being fixed in a separate\nchange. No `.github/workflows/` file is modified here.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-08-22T04:45:41Z",
-          "tree_id": "799a06b80b1df7ecc82e850bb7f37bb2af4218f4",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/0407fb0c1410a15435c3e170b113a6163db8518e"
-        },
-        "date": 1787374794092,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 333.48878074999413,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 325.8923572999982,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 222.68152925000578,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "6ada37de0fb5d33d6cfd0e85d896bafa45457471",
+          "message": "feat(gateway): a workflow can archive Gmail threads from a declared query, every write asked (Phase 10 SA2) (#1960)\n\nPhase 10 standing approvals, PR SA2 of six. The spec was approved by\nAntigravity in round 3 and this plan in round 2; specs and plans stay\noff `main`.\n\nA workflow can now run fixed steps alongside its model prompts: a\nclosed-form query over the local index, and a write to one connector\ntool. A write takes its values only from constants in the workflow or\nids the query returned. **Every write still asks the owner.** No\nstanding rule exists until SA3, so nothing is auto-approved yet. This PR\npins `@nimbus-dev/connectors` **0.12.0** (nimbus-mcp-servers #81,\nreleased by #82). That release adds `gmail_thread_archive`, and this PR\nadds its gateway row.\n\n## What changed\n- **Step kinds** (`automation/workflow-steps.ts`):\n- `run`: today's prompt step; `kind` is optional, so existing workflows\nare unchanged.\n  - `query`: a declared query.\n- `write`: `{ tool, input: { field: { const } | { from: <query label>,\ncolumn } } }`.\n- **Validated at `workflow.save` and again at run.** A write tool must\nbe a wave 2 or 3 connector write row that isn't never-offered, bound or\nrow-refused; wave 4 stays on the owner's typed doors. A write can\nreference only an earlier query, never a `run` step's output. Unknown\nkeys are refused.\n  - The SHA-256 of the steps a run loaded is computed here.\n- **Declared query** (`automation/declared-query.ts`):\n- Compiled to one bound SQL statement over `item`. The predicates are\n`contains`/`notContains`/`equals` on a metadata key validated as\n`^[A-Za-z][A-Za-z0-9_]{0,63}$`, and `olderThanDays`/`newerThanDays`.\n`limit` is required and at most 500.\n- Only values matching `^[A-Za-z0-9_.:-]{1,256}$` are returned; the rest\nare dropped and counted.\n- **Write steps** (`automation/workflow-write-step.ts`):\n- Each id becomes one `PlannedAction` through a new executor factory,\n`buildWorkflowWriteExecutor` in `engine/run-ask.ts`. That executor has\nconsent bound to the run's client, no delegation, the egress sink, the\npolicy overlay, and the before-state runner (with `readsEveryOrigin`),\nso the owner sees the thread's current state.\n- No model-door refusal runs here: it's the owner's own door (I53's\ntext). SA3 runs those refusals inside the rule check.\n  - A refused or failed write ends its step.\n- **Provenance and trigger:**\n- `PlannedAction.provenance` is a `WorkflowProvenance` (workflow id and\nhash, step, run, trigger, field sources), built only in\n`workflow-write-step.ts` (source pin).\n- `trigger` is derived from the declared client kind on the local\nsocket: `cli` → `owner_cli`, `ui` → `owner_ui`, anything else gets no\nprovenance.\n- `workflow.run` refuses `trigger`/`provenance` params and any\n`paramsOverride` naming a write or query step (-32602).\n- The audit row records the provenance without the field sources.\nNothing reads it until SA3.\n  - A workflow with no `run` step no longer needs a model.\n- **Gmail archive row:** `gmail_thread_archive` / `gmail.thread.archive`\nis wave 2 with a typed preview.\n- **Before-state:** subject, message count, unread count, in inbox, or\n\"already archived\".\n- **Wiring:** added to the HITL set, proposability `not_yet_offered`,\nand the manifest regenerated.\n- **Scopes (OR-10-7):**\n- Gmail's default scopes gain `gmail.modify`. Only a fresh `nimbus\nconnector auth gmail` gets it.\n  - `GOOGLE_OAUTH_SCOPES` is passed to the Gmail child only.\n- `connector writes status` and the enable prompt show the archive as\nnot offered, with the reason \"re-authorise Gmail to grant gmail.modify\",\nwhile the token lacks the scope.\n- **Static rules:**\n- D40(b) now permits the before-state runner in\n`buildWorkflowWriteExecutor` as well; a third function is still refused.\n- New D39(e) confines `buildWorkflowWriteExecutor` to `run-ask.ts` and\n`gateway-main.ts`.\n- **Counts** (re-derived from the tables and tests):\n- 125 write rows (wave 2 x39); 114 templated; 78 with a before-state; 6\nbound; 183 HITL types.\n  - 109 model-offerable, 16 never offered.\n  - Proposability: 47 proposable, 136 denied, 9 `not_yet_offered`.\n\n## Stated bounds\n- **Query selection:** which items a declared query selects is decided\nby indexed data, so a sender can make their own thread match. They can't\nchoose any other value, the action or the run. SA3 adds the rule\nceiling.\n- **Staleness:** the index is as fresh as the last sync.\n- **Trigger:** it trusts the client kind declared on the LOCAL socket;\nthe boundary is the socket's OS permissions.\n- **Existing Gmail connections** must re-authorise before the archive\ntool appears.\n- **`nimbus workflow run` doesn't declare its client kind yet,** so a\nCLI-started run carries no trigger and every write prompts. SA3 adds the\ndeclaration.\n\n## Verification\n- `bun run preflight:fast`: PASSED.\n- `audit:connector-version-skew`: ok, pinned 0.12.0 and latest 0.12.0.\n- `audit:connector-hosts`: OK.\n- `gen:connector-write-manifest`: 125 writes.\n- **Tests:** 18,267 pass across automation, engine, connectors, ipc,\nauth, `security-invariants`, `packages/gateway/test` and\n`packages/cli/test`.\n- 9 toolgen saved-tool tests fail locally with\n`ERR_TOOLGEN_SANDBOX_DEGRADED`, because the sandbox helper isn't built\nin this worktree.\n- `cli-smoke.e2e` (Yoga under `--parallel`) and the I4 source scan (a\ntimeout under `--parallel`) pass alone.\n- Earlier, the full `packages/cli/src` run: 20,656 pass; 10 TUI files\nhit Yoga under `--parallel` and each passes alone.\n- **Coverage** (istanbul, lines / branches):\n  - `declared-query.ts` 100 / 100.\n  - `workflow-steps.ts` 99.0 / 98.2.\n  - `workflow-write-step.ts` 100 / 95.8.\n  - `scope-gated.ts` 100 / 100.\n  - `workflow-runner.ts` 95.0 / 91.8.\n  - `oauth-vault-tokens.ts` 92.0 / 89.7.\n- **Red-proofs:** removing each of these fails its tests:\n  - the params-`trigger` refusal;\n  - the check that a write can't reference a run step;\n  - the metadata-key validation;\n  - the Gmail-only scopes env.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JmSjrCsRuevvkksqrnLRGc\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Saved workflows can now run deterministic query and connector-write\nsteps, including Gmail thread archiving. Queries can run without a\nmodel, and each write still requires owner approval.\n* Connector status now explains when Gmail archiving is unavailable\nbecause authorization needs updating.\n* **Documentation**\n* Updated workflow, connector, and project guidance to reflect these\ncapabilities, their requirements, and limitations.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-11T01:15:00Z",
+          "tree_id": "ec04cbb218565ad27c1ca93afe00a27435cfafb1",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/6ada37de0fb5d33d6cfd0e85d896bafa45457471"
+        },
+        "date": 1794360353810,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 287.62762555000535,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 295.0284222500013,
             "unit": "ms"
           }
         ]
