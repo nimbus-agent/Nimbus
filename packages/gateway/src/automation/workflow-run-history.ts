@@ -82,6 +82,7 @@ export function pruneWorkflowRuns(db: Database, workflowId: string, keep: number
     db,
     `DELETE FROM workflow_run
      WHERE workflow_id = ?
+       AND status <> 'blocked_on_approval'
        AND id NOT IN (
          SELECT id FROM workflow_run
          WHERE workflow_id = ?

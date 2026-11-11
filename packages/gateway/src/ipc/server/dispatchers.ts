@@ -129,7 +129,7 @@ import {
   sessionRpcSkipped,
   trustRpcSkipped,
 } from "./context.ts";
-import { dispatchWorkflowRunRpc } from "./inline-handlers.ts";
+import { dispatchWorkflowResumeRpc, dispatchWorkflowRunRpc } from "./inline-handlers.ts";
 import type { CreateIpcServerOptions } from "./options.ts";
 import { RpcMethodError } from "./rpc-error.ts";
 
@@ -2202,6 +2202,9 @@ async function dispatchExtensionAutomationRpc(
       method,
       params,
       db: ctx.options.localIndex.getDatabase(),
+      // SA4: the CONNECTION's declared kind (server-held), so `workflow.save` can refuse a
+      // schedule from any client that is not the owner's CLI or desktop. Never from params.
+      clientKind: ctx.getClientKind(clientId),
       ...automationServerOptions(ctx),
       ...(ctx.options.continuityTable === undefined
         ? {}
@@ -2235,6 +2238,10 @@ export async function tryDispatchAutomationRpc(
 ): Promise<unknown> {
   if (method === "workflow.run") {
     return dispatchWorkflowRunRpc(ctx, clientId, session, params);
+  }
+
+  if (method === "workflow.resume") {
+    return dispatchWorkflowResumeRpc(ctx, clientId, session, params);
   }
 
   if (method === "workflow.cancel") {

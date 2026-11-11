@@ -117,6 +117,7 @@ import { VEC_JOIN_INDEX_V62_SQL } from "../vec-join-index-v62-sql.ts";
 import { WATCHER_GRAPH_V22_SQL } from "../watcher-graph-v22-sql.ts";
 import { WATCHER_V8_MIGRATION_SQL } from "../watcher-v8-sql.ts";
 import { WORKFLOW_RUN_COLUMNS_V23_SQL } from "../workflow-run-columns-v23-sql.ts";
+import { WORKFLOW_SCHEDULE_V89_SQL } from "../workflow-schedule-v89-sql.ts";
 import { WORKFLOW_V9_MIGRATION_SQL } from "../workflow-v9-sql.ts";
 
 const MIGRATIONS_LEDGER_SQL = `
@@ -761,6 +762,12 @@ const INDEXED_SCHEMA_STEPS: readonly IndexedSchemaStep[] = [
     88,
     "standing approval rules and their fires (Phase 10 SA3)",
     STANDING_RULE_V88_SQL,
+  ),
+  simpleStep(
+    88,
+    89,
+    "workflow schedules and blocked runs (Phase 10 SA4)",
+    WORKFLOW_SCHEDULE_V89_SQL,
   ),
 ];
 

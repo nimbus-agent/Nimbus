@@ -1,6 +1,7 @@
 // Type-only module: NO executable runtime logic. It is exact-path-excluded from the coverage floor
 // in scripts/coverage-floor/exclusions.ts (a type-only file emits no SF: lcov record). Adding runtime
 // logic here would silently bypass the floor — put runtime logic in a separate, covered module.
+import type { WorkflowResume } from "../automation/workflow-runner.ts";
 import type { WorkflowTrigger } from "../engine/types.ts";
 
 export type WorkflowRunContext = {
@@ -22,6 +23,8 @@ export type WorkflowRunContext = {
    * (`cli` -> owner_cli, `ui` -> owner_ui); absent for any other kind. Never taken from params.
    */
   trigger?: WorkflowTrigger;
+  /** Set only by `workflow.resume` (SA4), after the dispatcher validated the blocked run. */
+  resume?: WorkflowResume;
 };
 
 export type WorkflowRunHandler = (ctx: WorkflowRunContext) => Promise<{

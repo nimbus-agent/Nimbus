@@ -10,6 +10,7 @@
 // derived server-side from a local owner client (`cli` / `ui`); a run of any other origin builds the
 // same action with no provenance, so nothing downstream can mistake it for the owner's.
 import { connectorWriteRowByToolId } from "../connectors/connector-write-registry.ts";
+import { UNATTENDED_NO_RULE_REASON } from "../engine/executor.ts";
 import type {
   ActionResult,
   PlannedAction,
@@ -42,7 +43,12 @@ export type WriteStepRun = {
 export type WriteStepOutcome =
   | { status: "done"; dispatched: number; message: string }
   | { status: "skipped"; dispatched: 0; message: string }
-  | { status: "error"; dispatched: number; message: string };
+  | { status: "error"; dispatched: number; message: string }
+  /**
+   * An unattended executor refused an action because no standing rule covered it (SA4): the run
+   * stops here and waits for the owner. Nothing was dispatched for this action or any later one.
+   */
+  | { status: "blocked"; dispatched: number; message: string };
 
 function fieldSourcesOf(
   step: WriteWorkflowStep,
@@ -122,7 +128,8 @@ export function buildWriteActions(step: WriteWorkflowStep, run: WriteStepRun): P
 /**
  * Runs the step's actions one after another through `executor`. The first action the owner
  * declines, a gate refuses or that throws ends the step (the rest are not asked): a step that was
- * stopped says how many were done.
+ * stopped says how many were done. An action an UNATTENDED executor refused for want of a standing
+ * rule ends it as `blocked`, which the runner turns into a run that waits for the owner.
  */
 export async function runWriteStep(
   step: WriteWorkflowStep,
@@ -151,6 +158,13 @@ export async function runWriteStep(
         status: "error",
         dispatched,
         message: `${msg} (stopped after ${String(dispatched)} of ${String(actions.length)})`,
+      };
+    }
+    if (result.status === "rejected" && result.reason === UNATTENDED_NO_RULE_REASON) {
+      return {
+        status: "blocked",
+        dispatched,
+        message: `waiting for approval after ${String(dispatched)} of ${String(actions.length)} done`,
       };
     }
     if (result.status === "rejected") {

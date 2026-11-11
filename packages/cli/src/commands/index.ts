@@ -56,6 +56,7 @@ export { runRegistry } from "./registry-cmd.ts";
 export { runRepl } from "./repl.ts";
 export { runWorkflowFromFile } from "./run-workflow.ts";
 export { runScaffold } from "./scaffold.ts";
+export { runScheduleCmd } from "./schedule.ts";
 export { runScim } from "./scim.ts";
 export { runSearch } from "./search.ts";
 export { runSecurity } from "./security.ts";

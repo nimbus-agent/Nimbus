@@ -129,7 +129,7 @@ TEAM (multi-machine — optional)
   nimbus admin …            Admin console surfaces
 
 AUTOMATION & EXTENSIONS
-  nimbus workflow …         List/save/run/delete saved workflows (agent steps)
+  nimbus workflow …         List/save/run/resume/unschedule/delete saved workflows (agent steps)
   nimbus run <file>         Save + run workflow from JSON/YAML file
   nimbus extension …        Install/list/enable/disable/remove local extensions
   nimbus extension pack <dir> --out <file>  Pack a directory into the .tgz a registry publishes (no gateway)
@@ -157,6 +157,10 @@ CONFIG & DIAGNOSTICS
   nimbus approve list|show|pause|resume|revoke [<id>] [--json]   Standing approval rules: approve a
                               recurring workflow write once, bound to the exact workflow; every
                               run it covers is recorded (nimbus audit standing [<rule>])
+  nimbus schedule list [--json]   Scheduled workflows: next and last fire, and any run waiting for you
+                              (set: nimbus workflow save <name> --file <path> --schedule "<cron>" [--tz <zone>];
+                              clear: nimbus workflow unschedule <name>; continue a blocked run:
+                              nimbus workflow resume <runId> [--discard])
   nimbus captures [list|show|accept|reject|revoke|purge <id>] [--json]   Review what MCP clients
                               captured or proposed ([mcp_sink] in nimbus.toml); accept --all takes
                               every proposed decision/term/link after one prompt; purge deletes a
