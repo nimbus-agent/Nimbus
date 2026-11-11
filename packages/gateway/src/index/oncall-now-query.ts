@@ -69,6 +69,8 @@ export interface OncallNowOptions {
   /** Matches ONLY rows whose escalation policy covers this PagerDuty service id (the incident brief). */
   pagerdutyServiceId?: string;
   serviceConfigs?: readonly OncallServiceBinding[];
+  /** Sort the caller's own shifts (`isMe`) ahead of the display cap, so the cap never drops them. */
+  ownFirst?: boolean;
 }
 
 type Row = {
@@ -284,9 +286,13 @@ export function queryOncallNow(db: Database, opts: OncallNowOptions): OncallNowR
   const upcoming = match.rows
     .filter((r) => !isCurrent(r, now) && isUpcoming(r, now))
     .map((r) => r.view);
-  const shifts = current.sort(compareViews).slice(0, ONCALL_NOW_MAX_CURRENT);
+  const own = (cmpFn: (a: OncallShiftView, b: OncallShiftView) => number) =>
+    opts.ownFirst === true
+      ? (a: OncallShiftView, b: OncallShiftView) => Number(b.isMe) - Number(a.isMe) || cmpFn(a, b)
+      : cmpFn;
+  const shifts = current.sort(own(compareViews)).slice(0, ONCALL_NOW_MAX_CURRENT);
   // Earliest start first (the cap must keep the NEXT shifts); untimed JSM rows follow the timed ones.
-  const next = upcoming.sort(compareUpcoming).slice(0, ONCALL_NOW_MAX_UPCOMING);
+  const next = upcoming.sort(own(compareUpcoming)).slice(0, ONCALL_NOW_MAX_UPCOMING);
   return {
     status: shifts.length > 0 ? "ok" : "none_on_call",
     asOfMs: now,

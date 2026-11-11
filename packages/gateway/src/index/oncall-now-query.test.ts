@@ -396,6 +396,38 @@ describe("queryOncallNow metadata", () => {
     });
   });
 
+  test("ownFirst keeps the owner's current and next shifts ahead of the display cap", () => {
+    withDb((db) => {
+      const cur = Array.from({ length: 60 }, (_, i) =>
+        shift({
+          userId: `c${String(i)}`,
+          userName: `User ${String(i).padStart(2, "0")}`,
+          scheduleName: "A sched",
+          isMe: i === 59,
+        }),
+      );
+      const nxt = Array.from({ length: 60 }, (_, i) =>
+        shift({
+          userId: `n${String(i)}`,
+          userName: `Next ${String(i).padStart(2, "0")}`,
+          scheduleName: "A sched",
+          startMs: NOW + HOUR,
+          endMs: NOW + 5 * HOUR,
+          isMe: i === 59,
+        }),
+      );
+      seed(db, [...cur, ...nxt]);
+      const plain = queryOncallNow(db, { nowMs: NOW });
+      expect(plain.shifts.some((s) => s.isMe)).toBe(false);
+      expect(plain.next.some((s) => s.isMe)).toBe(false);
+      const r = queryOncallNow(db, { nowMs: NOW, ownFirst: true });
+      expect(r.shifts).toHaveLength(50);
+      expect(r.shifts[0]?.isMe).toBe(true);
+      expect(r.next).toHaveLength(50);
+      expect(r.next[0]?.isMe).toBe(true);
+    });
+  });
+
   test("caps and deterministic ordering", () => {
     withDb((db) => {
       const many = Array.from({ length: 60 }, (_, i) =>

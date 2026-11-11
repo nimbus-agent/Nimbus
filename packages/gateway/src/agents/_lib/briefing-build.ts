@@ -213,7 +213,7 @@ function shiftRow(s: OncallShiftView, lead: string, tz: string): BriefingRow {
 
 function oncallSection(ctx: Ctx): SectionOut {
   const { db, nowMs, tz, serviceConfigs } = ctx.input;
-  const res = queryOncallNow(db, { nowMs, serviceConfigs });
+  const res = queryOncallNow(db, { nowMs, serviceConfigs, ownFirst: true });
   const mine = res.shifts.filter((s) => s.isMe);
   const later = res.next.filter(
     (s): s is OncallShiftView & { startMs: number } =>

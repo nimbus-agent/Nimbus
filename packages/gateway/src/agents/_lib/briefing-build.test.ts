@@ -388,6 +388,32 @@ describe("buildMorningBriefing", () => {
     expect(rows).toContain("from 23:00");
   });
 
+  test("on call: the owner's shifts are never lost to the 50-row display cap", () => {
+    connectAll();
+    for (let i = 0; i < 60; i += 1) {
+      const me = i === 59;
+      seedItem(db, {
+        service: "pagerduty",
+        type: "oncall_shift",
+        externalId: `cap${String(i)}`,
+        title: "x",
+        modifiedAt: NOW,
+        metadata: {
+          source: "pagerduty",
+          user_name: `User ${String(i).padStart(2, "0")}`,
+          is_me: me,
+          schedule_name: "A sched",
+          start_ms: NOW - HOUR,
+          end_ms: NOW + HOUR,
+          fetched_at_ms: NOW - 60_000,
+        },
+      });
+    }
+    const b = buildMorningBriefing(input({ sections: ["oncall"] }));
+    expect(JSON.stringify(b.sections[0]?.rows)).toContain("You are on call: ");
+    expect(b.sections[0]?.emptyText).toBeNull();
+  });
+
   test("on call: a later shift today, a binding line, a stale source and the no-data gap", () => {
     connectAll();
     const shift = (id: string, meta: Record<string, unknown>) =>
