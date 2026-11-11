@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794380861932,
+  "lastUpdate": 1794397338971,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "f9c6f92ee2c2ef27b96c2df26b8a68ee4b8dd60d",
-          "message": "fix(test): re-home the F11 Google-spawn isolation tests off a process-global mock (#1311)\n\n`main` is red on the macOS `Unit + Coverage` leg — and only that leg.\nUbuntu and Windows are green in the same run, on both attempts of the\nretry.\n\n## What failed\n\nSeven tests in\n`packages/gateway/src/connectors/lazy-mesh/google-spawn-isolation.test.ts`,\nadded in #1307 (F11). They plant a malformed payload in\n`google_drive.oauth` and assert `ensureGoogleDriveMcp` skips Drive and\nstill boots Gmail. On macOS, Drive booted anyway, health stayed\n`not_configured`, and zero warnings were logged.\n\n## Root cause — a leaked `mock.module`, not a flake\n\n`mock.module` is process-global in Bun, and two test files replace\n`src/auth/google-access-token.ts`:\n\n- `test/unit/connectors/google-drive-sync.test.ts` —\n`getValidGoogleAccessToken` returns a fake token\n- `test/unit/connectors/lazy-mesh/connector-spawns.test.ts` — the\ncanonical `connector-spawns.ts` test, same\n\n`bun test` walks files in filesystem order, and the mock takes effect\nfrom the moment its file loads. On Ubuntu and Windows the src-tree twin\nran first and saw the real resolver. On macOS\n`google-drive-sync.test.ts` ran first (log group at position 1133; the\ntwin at 1294), so by the time the twin ran, `getValidGoogleAccessToken`\nwas a stub that never throws — the malformed payload resolved to\n`fake-google-google_drive-access-token` and Drive spawned.\n\nBun merges a factory's keys into an already-loaded module rather than\nreplacing it wholesale, which is why the symptom was so specific:\n`resolveGoogleOAuthVaultKey` stayed real, so `google_meet` (no key at\nall) was still correctly skipped, while every service with a *present*\nkey registered. That matches the observed diff exactly — expected\n`[\"gmail\"]`, received `[\"gmail\", \"google_drive\", \"google_photos\"]`.\n\nThis is 100% reproducible on macOS and 0% reproducible anywhere else.\nRe-running would never have cleared it.\n\nThe header of `connector-spawns.test.ts` already forbade exactly this:\n\n> Do NOT add a sibling real-resolver test (e.g. a src-tree\nconnector-spawns.test.ts that drives ensure\\*Mcp through the REAL\ngetValid\\*AccessToken) … One such twin was removed for exactly this\nreason.\n\n#1307 added a second one.\n\n## The fix\n\n**Re-home the seven assertions into the canonical test file**, driven by\nthat file's *own* mock. `connector-spawns.test.ts` installs its\n`mock.module` at its own load, so nothing that loaded earlier can\noutrace it — the coverage is order-independent by construction rather\nthan by luck.\n\n- Deleted `src/connectors/lazy-mesh/google-spawn-isolation.test.ts`.\n- Added `googleTokenFailure`, a per-service injected-error map, to the\nexisting Google mock in `connector-spawns.test.ts`, cleared in\n`beforeEach`.\n- Ported all seven assertions plus one new one (the *other* branch of\n`classifyGoogleCredentialFailure` — a refused refresh — was previously\nunexercised, and its \"no provider text in stored state\" property now has\na test).\n- `makeCtx` gained a warning capture and an optional `healthDb`, so\nhealth-row attribution is asserted against the real `LocalIndex` schema.\n\nWhat changes is *how* the credential fails, not *what* the test proves:\nthe failure is now an injected throw rather than a malformed payload\nparsed by the real resolver. F11 is about the loop's reaction to a\nthrow, and the parse itself is covered by `oauth-vault-payload`'s own\ntests.\n\n**Also removed a second, latent instance of the same hazard.**\n`classifyGoogleCredentialFailure` in `connector-spawns.ts` matched\nagainst `GOOGLE_OAUTH_PARSE_ERRORS` imported from\n`google-access-token.ts` — i.e. production classification read its SSoT\nout of a module that two test files replace. It survived only because\nBun happens to merge rather than replace. The constant now lives in its\nown `src/auth/google-oauth-parse-errors.ts`, which nobody mocks;\n`google-access-token.ts` re-exports it, so no caller changed.\n\n## Verification\n\n- `bun test packages/gateway/test/unit/connectors/` — 1772 pass, 0 fail\n(97 files, includes both mocking files in one process).\n- **Red-proved**: reverting the F11 guard in `connector-spawns.ts` to\nthe unguarded `await getValidGoogleAccessToken(...)` fails 7 of the new\ntests. The old src-tree tests could not do this on macOS — they were\ngreen against a stub.\n- `bun run preflight:fast` — all 32 gates pass, including\n`typecheck:tests`.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)",
-          "timestamp": "2026-08-23T01:43:47Z",
-          "tree_id": "b16fc0afc188264bcf10c8803608abc2d3cf6aa8",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/f9c6f92ee2c2ef27b96c2df26b8a68ee4b8dd60d"
-        },
-        "date": 1787449961736,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 264.7231803999963,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 268.8181008000065,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 226.38143814999967,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "ee668ca5d44afe91db741aa8b481723668253524",
+          "message": "feat(gateway): Nimbus suggests a standing rule after you approve the same workflow step five runs in a row (Phase 10 SA5) (#1967)\n\nPhase 10 SA5, approval learning. When the owner approves the same write\nstep of the same workflow (at the same content hash) by hand, in five\nowner-started runs in a row, Nimbus records a suggestion. `nimbus\napprove list` shows it, and `nimbus approve add --from-suggestion <id>`\nturns it into a standing rule through the same owner approval as any\nrule. Nothing is ever created, widened or approved automatically.\n\n## How learning works\n- **It reads the audit log.** It needs no executor seam, no\n`ToolExecutorExtras` field and no consent-channel change. After each\nwrite step of an owner-started (`owner_cli`/`owner_ui`), non-dry run,\n`learnFromStepRun` reads that run's audit rows: the `hitl_status`\ncolumn, plus `action_json.action.provenance` and the top-level\n`answerSource`. It parses the JSON in TypeScript and never uses\n`json_extract`.\n- **The unit is one run of one step (owner ruling OR-10-9).**\n- The run counts only when every asked action of the step was `approved`\nwith `answerSource: \"human\"`.\n  - A human rejection resets the streak to 0.\n- Everything else changes nothing: `--yes` (`auto`), `script`,\n`delegate`, `remote`, `unknown`, `standing_approved`, guard refusals,\nruns with no asked action, scheduled runs.\n  - A hash change starts a new key.\n- **The 4 KiB audit cap.** The cap slices the serialized string, so a\ncapped row never parses. If any row of the step's action type in the\nrun's window does not parse, that run neither counts nor resets. So a\nstep whose payloads exceed the cap never earns a suggestion, and it can\nnever earn a wrong one.\n- **When a suggestion is not created:** a live rule for the key exists\n(`hasLiveRuleFor`, via `ruleState === \"live\"`), an open suggestion\nexists, or a dismissed one exists. A dismissal holds until the\nworkflow's hash changes (owner ruling OR-10-10). Accepting a suggestion\nresets the step's streak.\n- **When learning is off:** under the `standing_approvals` lockoff, when\nthe policy cannot be read, on a demo-rooted gateway, or with `[standing]\nsuggest_after = 0`. The default is 5; values 3–50 are allowed, and\nanything else is a config error naming the key.\n\n## What ships\n- **V90:** `standing_streak` and `standing_suggestion`, with a partial\nunique index so a key has at most one open suggestion. Both tables are\nwritten only by `standing/standing-suggestion-store.ts`.\n- **IPC:**\n- `standing.suggestions` and `standing.dismissSuggestion` are\nrenderer-safe; Tauri `ALLOWED_METHODS` goes from 124 to 126.\n- `standing.create { fromSuggestion }` reuses the existing create path\nunchanged: the same derived scope, the same `standing.rule.create` owner\nHITL, human answers only, never delegated, never `--yes`. It refuses a\nsuggestion that is not open, a stale hash (`ERR_SUGGESTION_STALE`), and\na request combining a suggestion with `workflow`/`step`. The prompt\ngains \"Suggested after N approvals in a row\".\n  - The `standing` namespace is already in `FORBIDDEN_OVER_LAN`.\n- **CLI:** `nimbus approve list` gains a Suggestions section (the\n`--json` output gains `suggestions`); also new are `nimbus approve add\n--from-suggestion <id>` and `nimbus approve dismiss <id>`. `approve\nlist` tolerates an older gateway without `standing.suggestions` (-32601)\nand still fails on any other error.\n- **Static rules:** D44(a)'s read rule allows\n`standing/approval-learning.ts`, but not the `kind: \"owner_workflow\"`\nwrite rule and not the `WorkflowProvenance`/`fieldSources` rule. The\nruntime twin in `workflow-provenance.sync.test.ts` matches. D44(f)\n(`standing-learning-confined`) is new and confines the two tables and\nthe learning entry points.\n- **The S4 roadmap:** owner ruling OR-S4-DEPS adds an org-wide\ndependency sweep as the LAST item of § Carried into S4. It covers every\nnimbus-agent repo, npm and Cargo, to latest including majors. A blocked\nmajor is re-tested and its reason recorded. The order is sdk/client/mcp\n→ nimbus-mcp-servers → Nimbus → vscode/web-clipper, with one PR per\nrepo.\n\n## Verification (local, Windows)\n- `preflight:fast` passed. `typecheck` is clean, and `typecheck:tests`\nreports 469 baselined errors and 0 new. `cargo test allowlist` passed 38\ntests.\n- The full run (`bun test packages/gateway/src packages/gateway/test\npackages/cli --parallel`) had 38,572 pass and 3 fail. All 3 failures\npass when run alone. The 11 Ink `Yoga` init errors also appear in the\nrun of `main`'s tree.\n- Coverage on every new or changed file is at or above the floor:\n\n  | File | Line | Branch |\n  | --- | --- | --- |\n  | `approval-learning.ts` | 100% | 100% |\n  | `standing-suggestion-store.ts` | 100% | 100% |\n  | `learning-config.ts` | 100% | 100% |\n  | `standing-rule-store.ts` | 100% | 100% |\n  | `config/standing-toml.ts` | 96.3% | 95.5% |\n  | `ipc/standing-rpc.ts` | 98.5% | 88.2% |\n  | `workflow-runner.ts` | 96.0% | 94.3% |\n  | `commands/approve.ts` | 93.0% | 84.0% |\n\n- Every guard was red-proven by reverting it. That includes the\nunreadable-row rule, the human-source check, live-rule suppression, the\nowner-trigger gate, the reset, the stale and open checks, the\nsuggestion-plus-workflow refusal, the older-gateway tolerance, and the\nD44 checker changes.\n\nSpecs and plans for Phase 10 live on `dev/asaf/p10-standing-approvals`\nand are not part of this PR.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JmSjrCFSTQTQnUa4j8F5b1\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* `nimbus approve list` displays suggestions after the configured number\nof consecutive owner-started workflow runs in which a person approves\nevery prompt for the same write step.\n* Owners can create a standing approval from a suggestion or dismiss it.\nCreating a rule still requires separate owner approval; suggestions\nnever create rules automatically.\n* The threshold defaults to five runs, can be set from 3 to 50, or\ndisabled with `0`. Rejections reset the streak; automated answers do not\ncount. Dismissals remain in effect until the workflow changes, and\nsuggestions become stale when it does.\n* **Documentation**\n* Updated the CLI reference and product documentation with suggestion\ncommands, thresholds, and eligibility details.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-11T11:30:41Z",
+          "tree_id": "dbe17338b36d67bb30c160f294c5dfb61e0b8d6e",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/ee668ca5d44afe91db741aa8b481723668253524"
+        },
+        "date": 1794397333595,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 314.88055109999914,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 311.9244443499971,
             "unit": "ms"
           }
         ]
