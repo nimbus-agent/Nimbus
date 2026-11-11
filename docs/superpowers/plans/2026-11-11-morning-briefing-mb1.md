@@ -316,6 +316,14 @@ Files: `scripts/structure-audit/check-nimbus-invariants.ts` and its `.test.ts`.
    (case-insensitive). Name rule: `\breplaceWorkSnapshotRows\b`, allowed in store + capability only.
    Stated bound for the docs: a dynamically composed table name evades a text scan (as D33(b) says);
    confinement of the capability is the real defense.
+   - Add `packages/gateway/src/index/work-snapshot-store.ts` and `packages/gateway/src/sync/sync-capabilities.ts`
+     to the flat `RULE_ANCHORS` array (`check-nimbus-invariants.ts:4429`), so `assertScanIsMeaningful`
+     fails loudly if either file moves or leaves the scan, instead of the rule passing vacuously.
+   - `iterateGlob` skips every `-sql.ts` file (`scripts/structure-audit/lib.ts:344`), so the real scan never
+     visits `work-snapshot-v91-sql.ts`; `D24_WS_DDL` stays in the allow-list only so the synthetic fixture
+     set (which feeds files directly) can carry the DDL. Say so in a comment beside the constant.
+   - One more violation fixture: the verb and the table on different lines (`INSERT\n  INTO\n  work_snapshot`),
+     which `\s+` must match.
 4. `bun test scripts/structure-audit/check-nimbus-invariants.test.ts` GREEN; `bun run audit:invariants`
    GREEN on the real tree.
 
