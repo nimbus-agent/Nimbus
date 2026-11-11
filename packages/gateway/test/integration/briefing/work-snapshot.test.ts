@@ -2,12 +2,20 @@
  * Morning briefing MB1, end to end over real SQLite: the three REAL syncables through the production
  * capability set (`syncTestContext` binds a service the way `sync/scheduler.ts` does), a fake HTTP
  * layer per provider. The first file of the directory MB5's acceptance test will use.
+ *
+ * The index is a real SQLite FILE in a fresh temp directory (so a test can close and reopen it), and
+ * everything runs in this process: production syncables run inside the gateway and this path starts no
+ * subprocess, so there is nothing a spawned gateway would add.
  */
+
+import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { createAppleSyncable } from "../../../src/connectors/apple-sync.ts";
 import {
-  createMemoryIndexDb,
   createStubVault,
   syncTestContext,
 } from "../../../src/connectors/connector-sync-test-helpers.ts";
@@ -19,10 +27,27 @@ import {
   encodeNimbusJsonCursor,
 } from "../../../src/connectors/nimbus-json-cursor.ts";
 import { createOutlookSyncable } from "../../../src/connectors/outlook-sync.ts";
+import { LocalIndex } from "../../../src/index/local-index.ts";
+import { ensureFullSqlite } from "../../../src/platform/sqlite-runtime.ts";
 import {
   createOAuthConnectorTestSetup,
   requestUrlString,
 } from "../../../src/testing/bun-test-support.ts";
+import { rmDirWithRetry } from "../../helpers/rm-dir-with-retry.ts";
+
+const tempDirs: string[] = [];
+
+/** A real SQLite file index in a fresh temp directory; `reopen` opens the same file again. */
+function createFileIndexDb(dir?: string): { db: Database; dir: string } {
+  ensureFullSqlite();
+  const root = dir ?? mkdtempSync(join(tmpdir(), "nimbus-work-snapshot-"));
+  if (dir === undefined) tempDirs.push(root);
+  const db = new Database(join(root, "index.db"));
+  LocalIndex.ensureSchema(db);
+  return { db, dir: root };
+}
+
+const createIndexDb = (): Database => createFileIndexDb().db;
 
 const realFetch = globalThis.fetch;
 let requests: string[] = [];
@@ -39,6 +64,7 @@ beforeEach(() => {
 
 afterEach(() => {
   globalThis.fetch = realFetch;
+  for (const d of tempDirs.splice(0)) rmDirWithRetry(d);
 });
 
 const JIRA_BASE = "https://example.atlassian.net";
@@ -61,7 +87,7 @@ function jiraIssue(key: string, due?: string): Record<string, unknown> {
   };
 }
 
-function snapshotCount(db: ReturnType<typeof createMemoryIndexDb>, service: string): number {
+function snapshotCount(db: Database, service: string): number {
   return (
     db.query("SELECT count(*) AS n FROM work_snapshot WHERE service = ?").get(service) as {
       n: number;
@@ -69,7 +95,7 @@ function snapshotCount(db: ReturnType<typeof createMemoryIndexDb>, service: stri
   ).n;
 }
 
-function joinedCount(db: ReturnType<typeof createMemoryIndexDb>, service: string): number {
+function joinedCount(db: Database, service: string): number {
   return (
     db
       .query(
@@ -95,7 +121,7 @@ function jiraRouter(members: () => Array<Record<string, unknown>>, fail: () => b
 
 describe("work snapshots, end to end", () => {
   test("jira: snapshot rows resolve to items, a deleted item takes its row, a failed re-snapshot keeps the old rows", async () => {
-    const db = createMemoryIndexDb();
+    const db = createIndexDb();
     const ctx = syncTestContext(db, jiraVault(), "jira");
     let failing = false;
     router = jiraRouter(
@@ -124,7 +150,7 @@ describe("work snapshots, end to end", () => {
   });
 
   test("two services in one index never mix: a github replace leaves jira unchanged", async () => {
-    const db = createMemoryIndexDb();
+    const db = createIndexDb();
     const jiraCtx = syncTestContext(db, jiraVault(), "jira");
     router = jiraRouter(
       () => [jiraIssue("A-1")],
@@ -171,7 +197,7 @@ describe("work snapshots, end to end", () => {
   });
 
   test("linear: the snapshot resolves to items", async () => {
-    const db = createMemoryIndexDb();
+    const db = createIndexDb();
     const ctx = syncTestContext(db, createStubVault({ "linear.api_key": "key" }), "linear");
     router = (_url, body) => {
       const isSnap = (JSON.parse(body) as { query: string }).query.includes("viewer");
@@ -197,7 +223,7 @@ describe("work snapshots, end to end", () => {
   });
 
   test("the interval end to end: syncs inside it make one set of requests, one after it makes a second, no cursor makes one at once", async () => {
-    const db = createMemoryIndexDb();
+    const db = createIndexDb();
     const ctx = syncTestContext(db, jiraVault(), "jira");
     router = jiraRouter(
       () => [jiraIssue("A-1")],
@@ -232,6 +258,36 @@ describe("work snapshots, end to end", () => {
     db.close();
   });
 
+  test("the cursor survives closing and reopening the index: snapAt is honoured and the snapshot rows stay", async () => {
+    const first = createFileIndexDb();
+    router = jiraRouter(
+      () => [jiraIssue("A-1"), jiraIssue("A-2")],
+      () => false,
+    );
+    const sync = createJiraSyncable({
+      ensureJiraMcpRunning: async () => {},
+      snapshotIntervalMinutes: () => 15,
+    });
+    const r1 = await sync.sync(syncTestContext(first.db, jiraVault(), "jira"), null);
+    expect(snapshotCount(first.db, "jira")).toBe(2);
+    const persisted = decodeNimbusJsonCursorObject(r1.cursor, "nimbus-jra1:");
+    expect(typeof persisted?.["snapAt"]).toBe("number");
+    const cursor = r1.cursor;
+    first.db.close();
+
+    const second = createFileIndexDb(first.dir);
+    expect(snapshotCount(second.db, "jira")).toBe(2);
+    requests = [];
+    const r2 = await sync.sync(syncTestContext(second.db, jiraVault(), "jira"), cursor);
+    // inside the interval: only the incremental request, no snapshot request, rows unchanged
+    expect(requests).toHaveLength(1);
+    expect(snapshotCount(second.db, "jira")).toBe(2);
+    expect(decodeNimbusJsonCursorObject(r2.cursor, "nimbus-jra1:")?.["snapAt"]).toBe(
+      persisted?.["snapAt"],
+    );
+    second.db.close();
+  });
+
   test("outlook: a real delta page indexes is_read and an outl2 cursor is ignored", async () => {
     const { db, ctx } = await createOAuthConnectorTestSetup("microsoft", "outlook");
     const sync = createOutlookSyncable({ ensureMicrosoftMcpRunning: async () => {} });
@@ -264,7 +320,7 @@ describe("work snapshots, end to end", () => {
   });
 
   test("icloud: a TZID event through the real parse yields its start_ms", async () => {
-    const db = createMemoryIndexDb();
+    const db = createIndexDb();
     const vault = createStubVault({
       "apple.icloud_email": "me@icloud.com",
       "apple.icloud_app_password": "pw",
