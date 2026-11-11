@@ -81,7 +81,7 @@ async function jsmGet(
   if (left <= 0) return { ok: false, status: 0 };
   // One deadline for the request AND its body read; the timer is cleared on every path.
   const controller = new AbortController();
-  const timer = Number.isFinite(left) ? setTimeout(() => controller.abort(), left) : undefined;
+  const timer = setTimeout(() => controller.abort(), Math.min(left, REQUEST_TIMEOUT_MS));
   try {
     const res = await fetch(url, {
       headers: {
@@ -89,7 +89,7 @@ async function jsmGet(
         Authorization: basicAuthHeader(creds.email, creds.token),
       },
       redirect: "manual",
-      signal: AbortSignal.any([controller.signal, AbortSignal.timeout(REQUEST_TIMEOUT_MS)]),
+      signal: controller.signal,
     });
     if (res.status === 429) ctx.rateLimiter.penalise("jira", RATE_LIMIT_PENALTY_MS);
     if (!res.ok) return { ok: false, status: res.status };
@@ -97,7 +97,7 @@ async function jsmGet(
   } catch {
     return { ok: false, status: 0 };
   } finally {
-    if (timer !== undefined) clearTimeout(timer);
+    clearTimeout(timer);
   }
 }
 
