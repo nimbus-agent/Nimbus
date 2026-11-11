@@ -1586,13 +1586,10 @@ describe("runConnector auth — per-service help branches", () => {
     ["google_calendar"],
     ["outlook"],
     ["teams"],
-  ])(
-    "auth %s --help prints provider-specific OAuth help",
-    async (service) => {
-      await runConnector(["auth", service, "--help"]);
-      expect(out.stdout.length).toBeGreaterThan(0);
-    },
-  );
+  ])("auth %s --help prints provider-specific OAuth help", async (service) => {
+    await runConnector(["auth", service, "--help"]);
+    expect(out.stdout.length).toBeGreaterThan(0);
+  });
 
   it("normalizes hyphenated service names in --help (google-drive)", async () => {
     await runConnector(["auth", "google-drive", "--help"]);

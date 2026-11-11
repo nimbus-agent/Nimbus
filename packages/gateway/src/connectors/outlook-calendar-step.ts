@@ -138,7 +138,9 @@ function applyPage(
         deleteIfIndexed(ctx, acc, mapped.externalId);
         continue;
       }
+      // lane-census: scope=event service=outlook
       const start = mapped.row.metadata["start_ms"];
+      // lane-census: scope=event service=outlook
       const end = mapped.row.metadata["end_ms"];
       if (
         typeof start === "number" &&

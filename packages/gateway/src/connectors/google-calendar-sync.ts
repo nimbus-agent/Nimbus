@@ -214,7 +214,9 @@ function applyPage(
             zone: run.zone,
             syncedAt: run.now,
           });
+      // lane-census: scope=event service=google_calendar
       const start = row?.metadata["start_ms"];
+      // lane-census: scope=event service=google_calendar
       const end = row?.metadata["end_ms"];
       const outside =
         typeof start === "number" &&
