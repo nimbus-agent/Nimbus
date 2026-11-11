@@ -10,10 +10,10 @@ import { codeUnitCompare } from "../../util/code-unit-compare.ts";
 import type { BriefingDay } from "./briefing-types.ts";
 import {
   isActiveIncidentStatus,
-  type OncallIncident,
   selectActiveAssignedIncidents,
   selectAllActiveIncidents,
 } from "./oncall-queries.ts";
+import type { OncallIncident } from "./oncall-types.ts";
 
 /**
  * The morning briefing's reads (Phase 10 MB5). Every function is synchronous, takes `db` and plain

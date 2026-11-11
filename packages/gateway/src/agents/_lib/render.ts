@@ -1155,10 +1155,20 @@ type RenderableEntry = {
  * {@link RenderableEntry} gives: it is security-relevant, and each inline copy of it is one more
  * place for it to drift.
  */
-function hardenedTitleLink(title: string, url: string | null): string {
+export function hardenedTitleLink(title: string, url: string | null): string {
   const text = escapeMarkdownLinkText(stripLineStructureChars(title));
   const href = url === null ? null : safeEvidenceHref(url);
   return href === null ? text : `[${text}](${href})`;
+}
+
+/**
+ * Indexed text shown as PLAIN text (a mail sender, a status, a repository name): line structure and
+ * backticks stripped, capped at `max` characters, and escaped so it can neither close a link nor
+ * open one. For text that is not a link title, where {@link hardenedTitleLink} does not apply.
+ */
+export function hardenedPlain(text: string, max = 80): string {
+  const s = stripLineStructureChars(text).replaceAll("`", "");
+  return escapeMarkdownLinkText(s.length > max ? `${s.slice(0, max)}…` : s);
 }
 
 /**
