@@ -75,6 +75,7 @@ describe("the capability set exposes no raw handle", () => {
       "prFileCandidates",
       "pruneBlameForFile",
       "recordPrChangedFiles",
+      "replaceWorkSnapshot",
       "resolvePerson",
       "scopedVaultView",
       "upsertBlameLines",
@@ -395,6 +396,8 @@ describe("unbound and local-only capability sets", () => {
     for (const name of ["getSecret", "getSharedSecret", "accessToken"]) {
       expect(() => asAny[name]?.()).toThrow(/local-only syncable/);
     }
+    // The db members are built bound to "github"; a snapshot write must not inherit that.
+    expect(() => c.replaceWorkSnapshot("assigned", [])).toThrow(/local-only syncable/);
     // ...but it still writes to the index, which is its whole job.
     c.upsertItem({
       service: "obsidian",
@@ -407,5 +410,41 @@ describe("unbound and local-only capability sets", () => {
       syncedAt: 1,
     });
     expect(d.db.query("SELECT COUNT(*) AS n FROM item").get()).toEqual({ n: 1 });
+  });
+});
+
+describe("replaceWorkSnapshot is scoped to the calling service", () => {
+  function seed(db: Database, service: string, ext: string): void {
+    db.run(
+      `INSERT INTO item (id, service, type, external_id, title, modified_at, synced_at)
+       VALUES (?, ?, 'issue', ?, 't', 1, 1)`,
+      [`${service}:${ext}`, service, ext],
+    );
+  }
+  function snap(db: Database): Array<{ service: string; item_id: string }> {
+    return db
+      .query("SELECT service, item_id FROM work_snapshot ORDER BY service, item_id")
+      .all() as Array<{ service: string; item_id: string }>;
+  }
+
+  test("replaces only the bound service's rows and cannot resolve another service's id", () => {
+    const d = deps({});
+    seed(d.db, "jira", "K-1");
+    seed(d.db, "github", "o/r#1");
+    seed(d.db, "linear", "L-1");
+    buildSyncCapabilities(d, "github").replaceWorkSnapshot("assigned", ["o/r#1"]);
+    buildSyncCapabilities(d, "linear").replaceWorkSnapshot("assigned", ["L-1"]);
+    const res = buildSyncCapabilities(d, "jira").replaceWorkSnapshot("assigned", ["K-1", "o/r#1"]);
+    expect(res).toEqual({ stored: 1, dropped: 1 });
+    expect(snap(d.db)).toEqual([
+      { service: "github", item_id: "github:o/r#1" },
+      { service: "jira", item_id: "jira:K-1" },
+      { service: "linear", item_id: "linear:L-1" },
+    ]);
+  });
+
+  test("a service outside jira, linear and github is refused, naming the service", () => {
+    const caps = buildSyncCapabilities(deps({}), "slack");
+    expect(() => caps.replaceWorkSnapshot("assigned", [])).toThrow(/slack/);
   });
 });

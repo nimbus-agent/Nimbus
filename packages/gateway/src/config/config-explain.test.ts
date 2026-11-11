@@ -379,6 +379,12 @@ describe("section fallbacks", () => {
     expect(r.sectionFallback).toContain("36500");
   });
 
+  test("an out-of-range [briefing] interval is reported as a fallback", () => {
+    writeBase("[briefing]\nsnapshot_interval_minutes = 1\n");
+    const r = explainConfig(initLayeredConfig(dir), "briefing.snapshot_interval_minutes", noEnv);
+    expect(r.sectionFallback).toContain("snapshot_interval_minutes");
+  });
+
   test("a loader that throws is reported as refused", () => {
     writeBase('[notifications]\ncontent = "bogus"\n');
     const r = explainConfig(initLayeredConfig(dir), "notifications.content", noEnv);

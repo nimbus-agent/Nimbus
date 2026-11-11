@@ -99,6 +99,8 @@ import type { SyncScheduler } from "../sync/scheduler.ts";
 export type ConnectorMeshSyncableOptions = {
   pagerdutyMaxPagesPerSync: number;
   workdayConfig: NimbusWorkdayToml;
+  /** `[briefing] snapshot_interval_minutes`, read per sync (Phase 10 MB1); absent means 15. */
+  briefingSnapshotIntervalMinutes?: () => number;
 };
 
 export function registerConnectorMeshSyncables(
@@ -106,6 +108,10 @@ export function registerConnectorMeshSyncables(
   connectorMesh: LazyConnectorMesh,
   options: ConnectorMeshSyncableOptions,
 ): void {
+  const snapshotInterval =
+    options.briefingSnapshotIntervalMinutes === undefined
+      ? {}
+      : { snapshotIntervalMinutes: options.briefingSnapshotIntervalMinutes };
   syncScheduler.register(
     createGoogleDriveSyncable({
       ensureGoogleDriveRunning: () => connectorMesh.ensureGoogleDriveRunning(),
@@ -139,6 +145,7 @@ export function registerConnectorMeshSyncables(
   syncScheduler.register(
     createGithubSyncable({
       ensureGithubMcpRunning: () => connectorMesh.ensureGithubRunning(),
+      ...snapshotInterval,
     }),
   );
   syncScheduler.register(
@@ -169,11 +176,13 @@ export function registerConnectorMeshSyncables(
   syncScheduler.register(
     createLinearSyncable({
       ensureLinearMcpRunning: () => connectorMesh.ensureLinearRunning(),
+      ...snapshotInterval,
     }),
   );
   syncScheduler.register(
     createJiraSyncable({
       ensureJiraMcpRunning: () => connectorMesh.ensureJiraRunning(),
+      ...snapshotInterval,
     }),
   );
   syncScheduler.register(

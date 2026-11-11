@@ -6,6 +6,7 @@ import { loadMultimodalConfig } from "../multimodal/multimodal-config.ts";
 import { processEnvGet } from "../platform/env-access.ts";
 import { sourceMappingFor } from "../sources/source-mapping.ts";
 import type { ProfileSource } from "./active-profile.ts";
+import { loadNimbusBriefingFromConfigDir } from "./briefing-toml.ts";
 import { CONFIG_ENV_OVERRIDES, isPolicyConstrainedPath } from "./config-env-overrides.ts";
 import { loadNimbusFilesystemRootsFromConfigDir } from "./filesystem-toml.ts";
 import {
@@ -80,6 +81,7 @@ export const SECTION_LOADERS: Readonly<Record<string, (configDir: string) => unk
   agents: loadNimbusAgentsFromConfigDir,
   audit: loadNimbusAuditFromConfigDir,
   automation: loadNimbusAutomationFromConfigDir,
+  briefing: loadNimbusBriefingFromConfigDir,
   briefs: loadNimbusBriefsFromConfigDir,
   chatops: loadNimbusChatopsFromConfigDir,
   "ci.service": loadNimbusServiceConfigsFromConfigDir,

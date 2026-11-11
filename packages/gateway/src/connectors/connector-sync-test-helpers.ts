@@ -77,6 +77,7 @@ export function silentSyncContextExtras(): Pick<
   | "writeObsidianVault"
   | "writeApiEndpointsForSpec"
   | "pruneBlameForFile"
+  | "replaceWorkSnapshot"
   | "upsertItem"
   | "resolvePerson"
   | "writeBatch"

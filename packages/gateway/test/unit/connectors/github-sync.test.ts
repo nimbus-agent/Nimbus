@@ -78,6 +78,14 @@ describe("github-sync — credential short-circuits", () => {
   });
 });
 
+/**
+ * The /user and events calls. The "my open work" snapshot (Phase 10 MB1) adds Search requests to a
+ * first sync; they are asserted in `src/connectors/github-sync.snapshot.test.ts`, not here.
+ */
+function syncCalls(): typeof fixture.fetchMock.calls {
+  return fixture.fetchMock.calls.filter((c) => !c.url.includes("/search/issues"));
+}
+
 function stageHappyPath(): void {
   fixture.fetchMock.respond("GET", USER_URL, { login: "octocat" });
   fixture.fetchMock.respond("GET", EVENTS_RE, [], { headers: { etag: '"e1"' } });
@@ -91,9 +99,9 @@ describe("github-sync — cursor decode failures", () => {
       null,
     );
     expect(res.hasMore).toBe(false);
-    expect(fixture.fetchMock.calls).toHaveLength(2);
-    expect(fixture.fetchMock.calls[0].url).toBe(USER_URL);
-    expect(fixture.fetchMock.calls[1].url).toMatch(EVENTS_RE);
+    expect(syncCalls()).toHaveLength(2);
+    expect(syncCalls()[0].url).toBe(USER_URL);
+    expect(syncCalls()[1].url).toMatch(EVENTS_RE);
   });
 
   test("empty string cursor falls back to default", async () => {
@@ -103,7 +111,7 @@ describe("github-sync — cursor decode failures", () => {
       "",
     );
     expect(res.hasMore).toBe(false);
-    expect(fixture.fetchMock.calls).toHaveLength(2);
+    expect(syncCalls()).toHaveLength(2);
   });
 
   test("wrong-prefix cursor falls back to default", async () => {
@@ -113,7 +121,7 @@ describe("github-sync — cursor decode failures", () => {
       "nimbus-other:abc",
     );
     expect(res.hasMore).toBe(false);
-    expect(fixture.fetchMock.calls).toHaveLength(2);
+    expect(syncCalls()).toHaveLength(2);
   });
 
   test("non-base64 / garbage cursor body falls back to default", async () => {
@@ -123,7 +131,7 @@ describe("github-sync — cursor decode failures", () => {
       `${CURSOR_PREFIX}!!!not-base64!!!`,
     );
     expect(res.hasMore).toBe(false);
-    expect(fixture.fetchMock.calls).toHaveLength(2);
+    expect(syncCalls()).toHaveLength(2);
   });
 
   test("cursor JSON parses to array → falls back", async () => {
@@ -133,7 +141,7 @@ describe("github-sync — cursor decode failures", () => {
       encodeCursor([1, 2, 3]),
     );
     expect(res.hasMore).toBe(false);
-    expect(fixture.fetchMock.calls).toHaveLength(2);
+    expect(syncCalls()).toHaveLength(2);
   });
 
   test("cursor JSON parses to null → falls back", async () => {
@@ -143,7 +151,7 @@ describe("github-sync — cursor decode failures", () => {
       encodeCursor(null),
     );
     expect(res.hasMore).toBe(false);
-    expect(fixture.fetchMock.calls).toHaveLength(2);
+    expect(syncCalls()).toHaveLength(2);
   });
 
   test("cursor missing login (legacy shape) re-resolves via /user", async () => {
@@ -153,9 +161,9 @@ describe("github-sync — cursor decode failures", () => {
       encodeCursor({ etag: '"legacy"' }),
     );
     expect(res.hasMore).toBe(false);
-    expect(fixture.fetchMock.calls[0].url).toBe(USER_URL);
-    expect(fixture.fetchMock.calls[1].url).toMatch(EVENTS_RE);
-    expect(fixture.fetchMock.calls[1].headers["if-none-match"]).toBeUndefined();
+    expect(syncCalls()[0].url).toBe(USER_URL);
+    expect(syncCalls()[1].url).toMatch(EVENTS_RE);
+    expect(syncCalls()[1].headers["if-none-match"]).toBeUndefined();
   });
 });
 
@@ -165,9 +173,9 @@ describe("github-sync — HTTP request paths", () => {
     fixture.fetchMock.respond("GET", EVENTS_RE, [], { headers: { etag: '"e1"' } });
     await createGithubSyncable(ENSURE_MCP).sync(fixture.createSyncContext("github"), null);
 
-    expect(fixture.fetchMock.calls).toHaveLength(2);
-    expect(fixture.fetchMock.calls[0].headers["authorization"]).toBe("Bearer github-stub-pat");
-    expect(fixture.fetchMock.calls[1].headers["authorization"]).toBe("Bearer github-stub-pat");
+    expect(syncCalls()).toHaveLength(2);
+    expect(syncCalls()[0].headers["authorization"]).toBe("Bearer github-stub-pat");
+    expect(syncCalls()[1].headers["authorization"]).toBe("Bearer github-stub-pat");
   });
 
   test("sends Accept: application/vnd.github+json on both requests", async () => {
@@ -175,7 +183,7 @@ describe("github-sync — HTTP request paths", () => {
     fixture.fetchMock.respond("GET", EVENTS_RE, [], { headers: { etag: '"e1"' } });
     await createGithubSyncable(ENSURE_MCP).sync(fixture.createSyncContext("github"), null);
 
-    for (const call of fixture.fetchMock.calls) {
+    for (const call of syncCalls()) {
       expect(call.headers["accept"]).toBe("application/vnd.github+json");
     }
   });
@@ -193,7 +201,7 @@ describe("github-sync — HTTP request paths", () => {
     fixture.fetchMock.respond("GET", EVENTS_RE, [], { headers: { etag: '"second"' } });
     await createGithubSyncable(ENSURE_MCP).sync(fixture.createSyncContext("github"), first.cursor);
 
-    const eventCalls = fixture.fetchMock.calls.filter((c) => EVENTS_RE.test(c.url));
+    const eventCalls = syncCalls().filter((c) => EVENTS_RE.test(c.url));
     expect(eventCalls).toHaveLength(2);
     expect(eventCalls[1].headers["if-none-match"]).toBe('"first"');
   });
@@ -332,9 +340,9 @@ describe("github-sync — login resolution", () => {
     fixture.fetchMock.respond("GET", EVENTS_RE, [], { headers: { etag: '"e1"' } });
     await createGithubSyncable(ENSURE_MCP).sync(fixture.createSyncContext("github"), null);
 
-    expect(fixture.fetchMock.calls).toHaveLength(2);
-    expect(fixture.fetchMock.calls[0].url).toBe(USER_URL);
-    expect(fixture.fetchMock.calls[1].url).toContain("/users/octocat/events");
+    expect(syncCalls()).toHaveLength(2);
+    expect(syncCalls()[0].url).toBe(USER_URL);
+    expect(syncCalls()[1].url).toContain("/users/octocat/events");
   });
 
   test("subsequent sync with cached login skips /user", async () => {
@@ -349,9 +357,9 @@ describe("github-sync — login resolution", () => {
     fixture.fetchMock.respond("GET", EVENTS_RE, [], { headers: { etag: '"e2"' } });
     await createGithubSyncable(ENSURE_MCP).sync(fixture.createSyncContext("github"), first.cursor);
 
-    const userCalls = fixture.fetchMock.calls.filter((c) => c.url === USER_URL);
+    const userCalls = syncCalls().filter((c) => c.url === USER_URL);
     expect(userCalls).toHaveLength(1);
-    const eventCalls = fixture.fetchMock.calls.filter((c) => EVENTS_RE.test(c.url));
+    const eventCalls = syncCalls().filter((c) => EVENTS_RE.test(c.url));
     expect(eventCalls).toHaveLength(2);
   });
 });

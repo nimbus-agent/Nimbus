@@ -1335,3 +1335,22 @@ CREATE TABLE connector_write_enablement (
 ```
 
 **SQLite write boundary.** Every production write goes through `dbRun` / `dbExec` / `dbStmtRun` in `packages/gateway/src/db/write.ts` (invariant `I14`). The wrappers translate `SQLITE_FULL` into a typed `DiskFullError`; the static-audit gate `D12` (`bun run audit:invariants`) fails the build on any direct `db.run(` / `db.exec(` outside the wrapper.
+
+## V91 — my open work snapshots (Phase 10 MB1, 2026-11-11)
+
+Authoritative source: `packages/gateway/src/index/work-snapshot-v91-sql.ts`. Written only by `index/work-snapshot-store.ts` through the `replaceWorkSnapshot` sync capability (static D24 rule `work-snapshot-confined`). A member is a pointer to an `item` row; the trigger is the cascade (`item` is not a foreign-key parent here). No backfill.
+
+```sql
+CREATE TABLE IF NOT EXISTS work_snapshot (
+  service TEXT NOT NULL,             -- jira | linear | github
+  relation TEXT NOT NULL CHECK (relation IN ('assigned','review_requested','authored_open')),
+  item_id TEXT NOT NULL,             -- item.id
+  captured_at INTEGER NOT NULL,      -- epoch ms of the replace that wrote the row
+  PRIMARY KEY (service, relation, item_id)
+);
+CREATE INDEX IF NOT EXISTS work_snapshot_item ON work_snapshot (item_id);
+CREATE TRIGGER IF NOT EXISTS work_snapshot_item_delete AFTER DELETE ON item
+BEGIN
+  DELETE FROM work_snapshot WHERE item_id = OLD.id;
+END;
+```

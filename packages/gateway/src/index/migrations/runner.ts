@@ -117,6 +117,7 @@ import {
 import { VEC_JOIN_INDEX_V62_SQL } from "../vec-join-index-v62-sql.ts";
 import { WATCHER_GRAPH_V22_SQL } from "../watcher-graph-v22-sql.ts";
 import { WATCHER_V8_MIGRATION_SQL } from "../watcher-v8-sql.ts";
+import { WORK_SNAPSHOT_V91_SQL } from "../work-snapshot-v91-sql.ts";
 import { WORKFLOW_RUN_COLUMNS_V23_SQL } from "../workflow-run-columns-v23-sql.ts";
 import { WORKFLOW_SCHEDULE_V89_SQL } from "../workflow-schedule-v89-sql.ts";
 import { WORKFLOW_V9_MIGRATION_SQL } from "../workflow-v9-sql.ts";
@@ -776,6 +777,7 @@ const INDEXED_SCHEMA_STEPS: readonly IndexedSchemaStep[] = [
     "approval learning streaks and suggestions (Phase 10 SA5)",
     STANDING_SUGGESTION_V90_SQL,
   ),
+  simpleStep(90, 91, "my open work snapshots (Phase 10 MB1)", WORK_SNAPSHOT_V91_SQL),
 ];
 
 /**

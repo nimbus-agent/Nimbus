@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite";
 import type { Logger } from "pino";
 import { GIT_COMMIT_META_VERSION } from "../connectors/git-commit-meta.ts";
+import { OUTLOOK_MAIL_META_VERSION } from "../connectors/outlook-mail-meta.ts";
 import { PAGERDUTY_INCIDENT_META_VERSION } from "../connectors/pagerduty-attribution.ts";
 import { PR_META_VERSION } from "../connectors/pr-meta.ts";
 import { TICKET_META_VERSION } from "../connectors/ticket-depth.ts";
@@ -159,6 +160,22 @@ export const REBODY_META_TARGETS: readonly RebodyMetaTarget[] = [
   { service: "bitbucket", type: "pr", requiredMetaVersion: PR_META_VERSION },
   { service: "gitlab", type: "pr", requiredMetaVersion: PR_META_VERSION },
   { service: "filesystem", type: "git_commit", requiredMetaVersion: GIT_COMMIT_META_VERSION },
+  // Outlook mail written before `is_read` (Phase 10 MB1). Type-scoped because `outlook` also writes
+  // `event` rows from MB2b on. Satisfiable: `rebody` clears the outlook cursor and the
+  // `nimbus-outl3:` reset re-lists the mailbox, re-writing every row with the field (a message the
+  // delta never returns again stays pending, the same bound as the ticket targets).
+  { service: "outlook", type: "email", requiredMetaVersion: OUTLOOK_MAIL_META_VERSION },
+  // Two Phase 10 MB1 depth versions are deliberately NOT listed, for the reason `ci_run` is not:
+  // a registered target nothing can satisfy keeps `pendingMeta` non-zero forever and makes every
+  // no-argument `nimbus index rebody` re-run an outbound resync for no gain.
+  //  - `github` / `issue` (GITHUB_ISSUE_META_VERSION): the only writers of an issue row are the
+  //    events feed, which has no issue list (an old row can never be re-walked to the new version),
+  //    and the open-work snapshot, which refreshes its own members within one interval. A missing
+  //    `due_at_ms` therefore reads as "no due date known".
+  //  - `apple` / `event` (EVENT_META_VERSION): `apple-sync.ts` re-fetches the whole CalDAV window on
+  //    EVERY pass, so every event in the window reaches the new version within one sync; an event
+  //    older than the window can never be re-walked, and `rebody` would clear the apple cursor,
+  //    which is the IMAP mail cursor, and re-walk the mailbox for nothing.
 ];
 
 /**

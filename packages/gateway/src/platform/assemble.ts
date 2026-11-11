@@ -52,6 +52,7 @@ import {
   resolveShellById,
 } from "../computer-use/cu-lanes/terminal-shells.ts";
 import { startCuSnapshotRetention } from "../computer-use/cu-snapshot-retention.ts";
+import { loadNimbusBriefingFromConfigDir } from "../config/briefing-toml.ts";
 import { loadNimbusFilesystemRootsFromConfigDir } from "../config/filesystem-toml.ts";
 import {
   DEFAULT_FLEET_CONFIG,
@@ -1097,6 +1098,8 @@ async function createSchedulerWithMesh(opts: SchedulerWithMeshOpts): Promise<{
     registerConnectorMeshSyncables(policyFilteredRegistrar, connectorMesh, {
       pagerdutyMaxPagesPerSync: pagerdutyCfg.maxPagesPerSync,
       workdayConfig: workdayCfg,
+      briefingSnapshotIntervalMinutes: () =>
+        loadNimbusBriefingFromConfigDir(paths.configDir).snapshotIntervalMinutes,
     });
     registerUserMcpSyncablesFromDatabase(db, policyFilteredRegistrar, connectorMesh);
     syncScheduler.start();

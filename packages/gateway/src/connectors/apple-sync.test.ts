@@ -456,6 +456,50 @@ describe("createAppleSyncable (calendar path)", () => {
     expect(meta["calendar"]).toBe("Work");
   });
 
+  test("the calendar pass passes the account address and the per-VEVENT extras to the mapper", async () => {
+    const db = createMemoryIndexDb();
+    const ics = [
+      "BEGIN:VCALENDAR",
+      "BEGIN:VEVENT",
+      "UID:tz-1",
+      "SUMMARY:Zoned",
+      "DTSTART;TZID=America/New_York:20261111T093000",
+      "DTEND;TZID=America/New_York:20261111T103000",
+      "ORGANIZER:mailto:boss@icloud.com",
+      'ATTENDEE;CN="Last, First";PARTSTAT=ACCEPTED:mailto:User@iCloud.com',
+      "END:VEVENT",
+      "BEGIN:VEVENT",
+      "UID:tz-1",
+      "RECURRENCE-ID;TZID=America/New_York:20261112T093000",
+      "DTSTART;TZID=Europe/London:20261112T140000",
+      "DURATION:PT2H",
+      "END:VEVENT",
+      "END:VCALENDAR",
+    ].join("\r\n");
+    const syncable = createAppleSyncable({
+      ensureAppleMcpRunning: async () => {},
+      fetchMessages: fakeFetcher([]),
+      fetchEvents: fakeEventFetcher([{ calendar: "Work", ics }]),
+    });
+    await syncable.sync(syncTestContext(db, credsVault(), "apple"), null);
+
+    const meta = (ext: string): Record<string, unknown> => {
+      const row = db
+        .prepare("SELECT metadata FROM item WHERE service = 'apple' AND external_id = ?")
+        .get(ext) as { metadata: string };
+      return JSON.parse(row.metadata) as Record<string, unknown>;
+    };
+    const master = meta("tz-1");
+    expect(master["start_ms"]).toBe(Date.UTC(2026, 10, 11, 14, 30));
+    expect(master["end_ms"]).toBe(Date.UTC(2026, 10, 11, 15, 30));
+    expect(master["self_response"]).toBe("accepted");
+    expect(master["organizer_email"]).toBe("boss@icloud.com");
+    const override = meta("tz-1:20261112T093000");
+    expect(override["start_ms"]).toBe(Date.UTC(2026, 10, 12, 14, 0));
+    expect(override["end_ms"]).toBe(Date.UTC(2026, 10, 12, 16, 0));
+    expect(override["self_response"]).toBeNull();
+  });
+
   test("per-calendar cap accumulates across ICS entries for the same calendar", async () => {
     const db = createMemoryIndexDb();
     // Two single-event ICS blobs, same calendar, distinct UIDs (so they don't dedup).

@@ -13,6 +13,12 @@ import {
 } from "../sync/types.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
 import {
+  applySnapshot,
+  type SnapshotFetch,
+  snapshotDue,
+  snapshotIntervalMs,
+} from "./_lib/work-snapshot-run.ts";
+import {
   asRecord,
   basicAuthHeader,
   normalizeAtlassianSiteBaseUrl,
@@ -26,7 +32,8 @@ import { msFromIso, normalizeJiraStatusCategory, TICKET_META_VERSION } from "./t
 const SERVICE_ID = "jira";
 const CURSOR_PREFIX = "nimbus-jra1:";
 
-type JiraSyncCursorV1 = { v: 1; floorJql: string | null };
+/** `snapAt`: epoch ms of the last "my open work" snapshot ATTEMPT (success or failure). */
+type JiraSyncCursorV1 = { v: 1; floorJql: string | null; snapAt?: number };
 
 function encodeCursor(c: JiraSyncCursorV1): string {
   return encodeNimbusJsonCursor(CURSOR_PREFIX, c);
@@ -44,7 +51,12 @@ function decodeCursor(raw: string | null): JiraSyncCursorV1 | null {
   if (fj !== null && fj !== undefined && typeof fj !== "string") {
     return null;
   }
-  return { v: 1, floorJql: typeof fj === "string" ? fj : null };
+  const snapAt = rec["snapAt"];
+  return {
+    v: 1,
+    floorJql: typeof fj === "string" ? fj : null,
+    ...(typeof snapAt === "number" && Number.isFinite(snapAt) ? { snapAt } : {}),
+  };
 }
 
 function isoToJqlExclusiveFloor(iso: string): string {
@@ -227,8 +239,10 @@ async function jiraFetchSearchPage(p: {
   jql: string;
   startAt: number;
   pageSize: number;
+  /** Bounds the request and its body read; the incremental search passes none. */
+  signal?: AbortSignal;
 }): Promise<JiraSearchPage> {
-  const { ctx, creds, jql, startAt, pageSize } = p;
+  const { ctx, creds, jql, startAt, pageSize, signal } = p;
   const body = JSON.stringify({
     jql,
     startAt,
@@ -254,6 +268,7 @@ async function jiraFetchSearchPage(p: {
       Authorization: basicAuthHeader(creds.email, creds.token),
     },
     body,
+    ...(signal === undefined ? {} : { signal }),
   });
   const text = await res.text();
 
@@ -423,11 +438,22 @@ function jiraIndexOneIssue(p: {
   baseUrl: string;
   maxUpdatedIso: { value: string };
 }): boolean {
+  return jiraIndexIssueKey(p) !== undefined;
+}
+
+/** Indexes one issue and returns its key, or `undefined` when the row has no usable key. */
+function jiraIndexIssueKey(p: {
+  ctx: SyncContext;
+  issue: Record<string, unknown>;
+  syncTime: number;
+  baseUrl: string;
+  maxUpdatedIso: { value: string };
+}): string | undefined {
   const { ctx, issue: row, syncTime, baseUrl, maxUpdatedIso } = p;
   const key = stringField(row, "key");
   const id = stringField(row, "id");
   if (key === undefined || key === "") {
-    return false;
+    return undefined;
   }
   const fields = asRecord(row["fields"]);
   const d = jiraIssueDerivedFromFields(fields, key, syncTime, maxUpdatedIso);
@@ -447,7 +473,7 @@ function jiraIndexOneIssue(p: {
     pinned: false,
     syncedAt: syncTime,
   });
-  return true;
+  return key;
 }
 
 function jiraShouldStopPaging(
@@ -639,9 +665,102 @@ async function fetchOneIssue(ctx: SyncContext, url: string): Promise<FetchOneRes
   return { status: "indexed", itemId: itemPrimaryKey(SERVICE_ID, returnedKey) };
 }
 
+/** The authenticated user's open Jira work, most urgent (earliest due) first. */
+export const JIRA_SNAPSHOT_JQL =
+  "assignee = currentUser() AND statusCategory != Done ORDER BY duedate ASC";
+const JIRA_SNAPSHOT_PAGE_SIZE = 100;
+const JIRA_SNAPSHOT_MAX_PAGES = 3;
+
+/**
+ * Pages "my open work" (at most 3 x 100) and indexes every member. A failing request throws, which
+ * `applySnapshot` turns into a kept snapshot; more than the cap reported is `capped`, not partial.
+ */
+async function jiraSnapshotAssigned(
+  ctx: SyncContext,
+  creds: JiraVaultCreds,
+  syncTime: number,
+  signal: AbortSignal,
+): Promise<SnapshotFetch> {
+  const keys: string[] = [];
+  let total: number | undefined;
+  for (let page = 0; page < JIRA_SNAPSHOT_MAX_PAGES; page += 1) {
+    await ctx.rateLimiter.acquire("jira");
+    const startAt = page * JIRA_SNAPSHOT_PAGE_SIZE;
+    const { issues, envelope } = await jiraFetchSearchPage({
+      ctx,
+      creds,
+      jql: JIRA_SNAPSHOT_JQL,
+      startAt,
+      pageSize: JIRA_SNAPSHOT_PAGE_SIZE,
+      signal,
+    });
+    ctx.writeBatch(() => {
+      for (const issue of issues) {
+        const row = asRecord(issue);
+        if (row === undefined) continue;
+        const key = jiraIndexIssueKey({
+          ctx,
+          issue: row,
+          syncTime,
+          baseUrl: creds.baseUrl,
+          maxUpdatedIso: { value: "" },
+        });
+        if (key !== undefined) keys.push(key);
+      }
+    });
+    total = typeof envelope.total === "number" ? envelope.total : total;
+    if (
+      jiraShouldStopPaging(
+        issues.length,
+        envelope,
+        startAt + JIRA_SNAPSHOT_PAGE_SIZE,
+        JIRA_SNAPSHOT_PAGE_SIZE,
+      )
+    ) {
+      return {
+        kind: "complete",
+        externalIds: keys,
+        capped: false,
+        ...(total === undefined ? {} : { total }),
+      };
+    }
+  }
+  return {
+    kind: "complete",
+    externalIds: keys,
+    capped: true,
+    ...(total === undefined ? {} : { total }),
+  };
+}
+
 export type JiraSyncableOptions = {
   ensureJiraMcpRunning: () => Promise<void>;
+  /** `[briefing] snapshot_interval_minutes`, read per sync so an edit applies without a restart. */
+  snapshotIntervalMinutes?: () => number;
+  /** Deadline of one snapshot attempt; absent is `SNAPSHOT_FETCH_TIMEOUT_MS` (tests inject a short one). */
+  snapshotTimeoutMs?: number;
 };
+
+/** Runs the snapshot when due; returns the cursor's new `snapAt` (an ATTEMPT, so a failing provider retries once per interval). */
+async function jiraSnapshotIfDue(
+  ctx: SyncContext,
+  creds: JiraVaultCreds,
+  prevSnapAt: number | undefined,
+  syncTime: number,
+  options: JiraSyncableOptions,
+): Promise<number | undefined> {
+  const now = Date.now();
+  const interval = snapshotIntervalMs(options.snapshotIntervalMinutes?.());
+  if (!snapshotDue(prevSnapAt ?? null, now, interval)) return prevSnapAt;
+  await applySnapshot(
+    ctx,
+    SERVICE_ID,
+    "assigned",
+    (signal) => jiraSnapshotAssigned(ctx, creds, syncTime, signal),
+    options.snapshotTimeoutMs,
+  );
+  return now;
+}
 
 export function createJiraSyncable(options: JiraSyncableOptions): Syncable {
   const initialSyncDepthDays = 30;
@@ -709,7 +828,12 @@ export function createJiraSyncable(options: JiraSyncableOptions): Syncable {
         maxUpdatedIso.value === ""
           ? (prev?.floorJql ?? null)
           : isoToJqlExclusiveFloor(maxUpdatedIso.value);
-      const nextCursor = encodeCursor({ v: 1, floorJql: nextFloor });
+      const snapAt = await jiraSnapshotIfDue(ctx, creds, prev?.snapAt, syncTime, options);
+      const nextCursor = encodeCursor({
+        v: 1,
+        floorJql: nextFloor,
+        ...(snapAt === undefined ? {} : { snapAt }),
+      });
 
       return syncPassCursorSuccess(t0, bytesTransferred, nextCursor, upserted);
     },

@@ -11,6 +11,7 @@ import {
   nextCursorFromODataDeltaLinks,
   parseODataDeltaPage,
 } from "./microsoft-graph-sync-shared.ts";
+import { OUTLOOK_MAIL_META_VERSION } from "./outlook-mail-meta.ts";
 
 const SERVICE_ID = "outlook";
 // Bumped from "nimbus-outl1:" so every stored delta link is invalidated ONCE
@@ -22,7 +23,11 @@ const SERVICE_ID = "outlook";
 // `nextUrl = dec?.nextUrl ?? null`, so an undecodable cursor falls through to
 // the INITIAL request URL, which is where $select lives. One fresh delta, no
 // new machinery, no error path.
-const CURSOR_PREFIX = "nimbus-outl2:";
+// Bumped again, "nimbus-outl2:" -> "nimbus-outl3:", when `isRead` joined the
+// projection (Phase 10 MB1), for the same reason: an outl2 delta link would never
+// return it. The mailbox re-lists ONCE. MB2b's decoder must accept `nimbus-outl3:`
+// as a mail-only cursor so mail is not reset a third time.
+const CURSOR_PREFIX = "nimbus-outl3:";
 const GRAPH = "https://graph.microsoft.com/v1.0";
 const PAGE_SIZE = 50;
 
@@ -34,6 +39,7 @@ type GraphMessage = {
   receivedDateTime?: string;
   lastModifiedDateTime?: string;
   webLink?: string;
+  isRead?: boolean;
   from?: { emailAddress?: { name?: string; address?: string } };
   "@removed"?: { reason?: string };
 };
@@ -98,6 +104,11 @@ function upsertMessage(ctx: SyncContext, m: GraphMessage, now: number): void {
     authorId,
     metadata: {
       receivedDateTime: m.receivedDateTime,
+      // Omission over guessing: only a boolean from Graph is recorded, so a row without it stays
+      // below the metadata version and `index.rebody` can still recover it.
+      ...(typeof m.isRead === "boolean"
+        ? { is_read: m.isRead, meta_v: OUTLOOK_MAIL_META_VERSION }
+        : {}),
     },
     pinned: false,
     syncedAt: now,
@@ -129,7 +140,7 @@ export function createOutlookSyncable(options: OutlookSyncableOptions): Syncable
         token,
         nextUrl,
         `${GRAPH}/me/messages/delta?$top=${String(PAGE_SIZE)}` +
-          `&$select=id,subject,bodyPreview,body,receivedDateTime,lastModifiedDateTime,webLink,from`,
+          `&$select=id,subject,bodyPreview,body,receivedDateTime,lastModifiedDateTime,webLink,from,isRead`,
         "Outlook",
       );
       const parsed = parseODataDeltaPage(json);
