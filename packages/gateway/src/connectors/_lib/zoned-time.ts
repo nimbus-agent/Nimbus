@@ -47,13 +47,15 @@ function offsetAt(f: Intl.DateTimeFormat, t: number): number {
   for (const p of f.formatToParts(new Date(t))) {
     if (p.type !== "literal") parts[p.type] = Number.parseInt(p.value, 10);
   }
+  // `formatToParts` with these options always yields every part; a missing one would be NaN here and
+  // make the whole result non-finite, which `wallToInstantMs` refuses. No silent default.
   const wall = Date.UTC(
-    parts["year"] ?? 1970,
-    (parts["month"] ?? 1) - 1,
-    parts["day"] ?? 1,
-    parts["hour"] ?? 0,
-    parts["minute"] ?? 0,
-    parts["second"] ?? 0,
+    Number(parts["year"]),
+    Number(parts["month"]) - 1,
+    Number(parts["day"]),
+    Number(parts["hour"]),
+    Number(parts["minute"]),
+    Number(parts["second"]),
   );
   const wholeSecond = t - (((t % 1000) + 1000) % 1000);
   return wall - wholeSecond;

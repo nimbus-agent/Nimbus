@@ -34,6 +34,12 @@ describe("wallToInstantMs", () => {
     expect(wallToInstantMs(w(2026, 11, 11, 9), "Asia/Kolkata")).toBe(Date.UTC(2026, 10, 11, 3, 30));
   });
 
+  test("an instant before 1970 (negative epoch ms) resolves", () => {
+    expect(wallToInstantMs(w(1965, 6, 1, 12, 0, 30), "Europe/London")).toBe(
+      Date.UTC(1965, 5, 1, 11, 0, 30),
+    );
+  });
+
   test("an unknown zone is undefined, and so is an impossible date", () => {
     expect(wallToInstantMs(w(2026, 11, 11, 9), "Not/AZone")).toBeUndefined();
     expect(wallToInstantMs(w(Number.NaN, 1, 1, 0), "UTC")).toBeUndefined();
