@@ -185,6 +185,20 @@ describe("runBriefing", () => {
     await runBriefing(deps({ store: broken }), { firedBy: "manual", toast: false });
   });
 
+  test("retention: a failed run also prunes expired rows", async () => {
+    store.insertRun({ firedAt: NOW - 31 * DAY, firedBy: "manual", status: "ok", headline: "old" });
+    const r = await runBriefing(
+      deps({
+        build: () => {
+          throw new Error("compose");
+        },
+      }),
+      { firedBy: "manual", toast: false },
+    );
+    expect(r?.status).toBe("failed");
+    expect(store.list(10).map((x) => x.headline)).not.toContain("old");
+  });
+
   test("a store failure other than a taken slot propagates", async () => {
     const broken: BriefingStore = {
       ...store,

@@ -86,6 +86,7 @@ export async function runBriefing(
         errorMsg: describeError(e),
         ...slotOf(req),
       });
+      prune(deps, nowMs);
       return { id, status: "failed", headline: FAILED_HEADLINE };
     } catch (inner) {
       if (inner instanceof SlotTakenError) return null;
