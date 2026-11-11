@@ -19,6 +19,7 @@ import {
   V68_EXPECTED_EVIDENCE_SQL,
 } from "../capture-native-v68-sql.ts";
 import { CAPTURE_V67_SQL } from "../capture-v67-sql.ts";
+import { CHAT_READ_MARKER_V92_SQL } from "../chat-read-marker-v92-sql.ts";
 import { COMPUTER_USE_V57_SQL } from "../computer-use-v57-sql.ts";
 import { CONNECTOR_CONFIGURED_V56_SQL } from "../connector-configured-v56-sql.ts";
 import { CONNECTOR_DEPTH_V21_SQL } from "../connector-depth-v21-sql.ts";
@@ -778,6 +779,7 @@ const INDEXED_SCHEMA_STEPS: readonly IndexedSchemaStep[] = [
     STANDING_SUGGESTION_V90_SQL,
   ),
   simpleStep(90, 91, "my open work snapshots (Phase 10 MB1)", WORK_SNAPSHOT_V91_SQL),
+  simpleStep(91, 92, "slack read markers (Phase 10 MB4)", CHAT_READ_MARKER_V92_SQL),
 ];
 
 /**

@@ -79,6 +79,7 @@ describe("the capability set exposes no raw handle", () => {
       "replaceWorkSnapshot",
       "resolvePerson",
       "scopedVaultView",
+      "setChatReadMarkers",
       "upsertBlameLines",
       "upsertItem",
       "writeApiEndpointsForSpec",
@@ -400,6 +401,7 @@ describe("unbound and local-only capability sets", () => {
     // The db members are built bound to "github"; a snapshot write must not inherit that.
     expect(() => c.replaceWorkSnapshot("assigned", [])).toThrow(/local-only syncable/);
     expect(() => c.replaceItemSet("event", [])).toThrow(/local-only syncable/);
+    expect(() => c.setChatReadMarkers([])).toThrow(/local-only syncable/);
     // ...but it still writes to the index, which is its whole job.
     c.upsertItem({
       service: "obsidian",
@@ -448,6 +450,42 @@ describe("replaceWorkSnapshot is scoped to the calling service", () => {
   test("a service outside jira, linear and github is refused, naming the service", () => {
     const caps = buildSyncCapabilities(deps({}), "slack");
     expect(() => caps.replaceWorkSnapshot("assigned", [])).toThrow(/slack/);
+  });
+});
+
+describe("setChatReadMarkers is scoped to the calling service", () => {
+  const marker = { channelId: "C1", channelKind: "im", lastReadTs: "1700000000.000001" } as const;
+  function rows(db: Database): Array<{ service: string; channel_id: string }> {
+    return db
+      .query("SELECT service, channel_id FROM chat_read_marker ORDER BY service, channel_id")
+      .all() as Array<{ service: string; channel_id: string }>;
+  }
+
+  test("writes service = slack rows and never touches another service's marker, even when pruning", () => {
+    const d = deps({});
+    d.db.run(
+      "INSERT INTO chat_read_marker (service, channel_id, channel_kind, last_read_ts, captured_at) VALUES ('other', 'C1', 'im', '1700000000.000009', 1)",
+    );
+    const caps = buildSyncCapabilities(d, "slack");
+    expect(caps.setChatReadMarkers([marker], { keepChannelIds: ["C1"] })).toEqual({
+      stored: 1,
+      skipped: 0,
+      pruned: 0,
+    });
+    expect(caps.setChatReadMarkers([], { keepChannelIds: [] }).pruned).toBe(1);
+    expect(rows(d.db)).toEqual([{ service: "other", channel_id: "C1" }]);
+  });
+
+  test("a caller-supplied service field is ignored (the service is never a parameter)", () => {
+    const d = deps({});
+    const forged = { ...marker, service: "other" } as unknown as typeof marker;
+    buildSyncCapabilities(d, "slack").setChatReadMarkers([forged]);
+    expect(rows(d.db)).toEqual([{ service: "slack", channel_id: "C1" }]);
+  });
+
+  test("any service other than slack is refused, naming it", () => {
+    const caps = buildSyncCapabilities(deps({}), "jira");
+    expect(() => caps.setChatReadMarkers([marker])).toThrow(/jira/);
   });
 });
 
