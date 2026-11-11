@@ -211,13 +211,19 @@ describe("zotero-sync against Bun.serve fake API", () => {
     expect(reqs).toHaveLength(20);
   });
 
-  test("skips attachment + note item types", async () => {
+  test("indexes notes as zotero:note, still skips attachments", async () => {
     h = startHarness({
       pages: [
         [
           reference("ABC1"),
           reference("ATT1", { data: { itemType: "attachment" } }),
-          reference("NOTE1", { data: { itemType: "note" } }),
+          reference("NOTE1", {
+            data: {
+              itemType: "note",
+              parentItem: "ABC1",
+              note: "<div><p>Key idea &amp; caveat</p><p>Second paragraph</p></div>",
+            },
+          }),
         ],
       ],
     });
@@ -227,13 +233,19 @@ describe("zotero-sync against Bun.serve fake API", () => {
     const syncable = createZoteroSyncable({ ensureZoteroMcpRunning: async () => {} });
     const result = await syncable.sync(h.ctx, null);
 
-    expect(result.itemsUpserted).toBe(1);
+    expect(result.itemsUpserted).toBe(2);
     const rows = h.db
-      .query<{ external_id: string }, []>(
-        "SELECT external_id FROM item WHERE service = 'zotero' ORDER BY external_id",
+      .query<{ external_id: string; type: string; title: string; body: string }, []>(
+        "SELECT external_id, type, title, body FROM item WHERE service = 'zotero' ORDER BY external_id",
       )
       .all();
-    expect(rows.map((r) => r.external_id)).toEqual(["ABC1"]);
+    expect(rows.map((r) => [r.external_id, r.type])).toEqual([
+      ["ABC1", "reference"],
+      ["NOTE1", "note"],
+    ]);
+    const note = rows.find((r) => r.external_id === "NOTE1");
+    expect(note?.title).toBe("Key idea & caveat");
+    expect(note?.body).toBe("Key idea & caveat Second paragraph");
   });
 
   test("noop when creds unset — no requests", async () => {
