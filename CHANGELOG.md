@@ -2,6 +2,13 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [10.52.0](https://github.com/nimbus-agent/Nimbus/compare/v10.51.0...v10.52.0) (2026-11-11)
+
+
+### Features
+
+* **gateway:** keep Slack read markers, index Slack DMs, and count unread threads for the morning briefing ([#1973](https://github.com/nimbus-agent/Nimbus/issues/1973)) ([e2870a1](https://github.com/nimbus-agent/Nimbus/commit/e2870a1a904112549a0752d9c22192ba0586e4ce))
+
 ## [10.51.0](https://github.com/nimbus-agent/Nimbus/compare/v10.50.0...v10.51.0) (2026-11-11)
 
 
