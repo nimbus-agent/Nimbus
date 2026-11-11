@@ -428,7 +428,7 @@ function canonicalMember(rec: Record<string, unknown>, k: string): string {
   return `${JSON.stringify(k)}:${canonicalJson(rec[k])}`;
 }
 
-function canonicalJson(v: unknown): string {
+export function canonicalJson(v: unknown): string {
   if (v === null || typeof v !== "object") return JSON.stringify(v) ?? "null";
   if (Array.isArray(v)) return `[${v.map(canonicalJson).join(",")}]`;
   const rec = v as Record<string, unknown>;
