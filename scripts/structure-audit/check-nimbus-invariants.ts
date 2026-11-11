@@ -3191,6 +3191,14 @@ function d43ExecutorPins(f: FileEntry, code: string, commentFree: string): Viola
 //     `newWorkflowWriteExecutor`, which only `buildWorkflowWriteExecutor` and
 //     `buildUnattendedWorkflowWriteExecutor` call (once each). Every other executor therefore has
 //     none and can never approve by a rule.
+// (f) approval learning (Phase 10 SA5): the `standing_streak` and `standing_suggestion` tables are
+//     referenced only by `standing/standing-suggestion-store.ts` and their V90 DDL, which also name
+//     neither rule table (clause (b) covers that: the store is not exempt from it); the store's
+//     streak and suggestion writers (`applyStepRun`, `openSuggestion`, `markStaleFor`) are named only by
+//     the store and the learning pass (`standing/approval-learning.ts`); `learnFromStepRun` is named
+//     only by that pass and the workflow runner (`automation/workflow-runner.ts`); and
+//     `hasLiveRuleFor`, the pass's one question to the rule store, only by the rule store and the
+//     pass. The pass may READ the `"owner_workflow"` literal (clause (a)) but never construct it.
 // Comments are stripped before matching (string literals are kept for the literal clauses); test
 // files, a test-support `*.test-helpers.ts` that no production file imports, and anything outside
 // packages/gateway/src/ are not scanned. STATED BOUND, as D33(c)/D41/D42: a dynamically composed
@@ -3207,6 +3215,16 @@ const D44_V88 = `${D44_SRC}index/standing-rule-v88-sql.ts`;
 const D44_RPC = `${D44_SRC}ipc/standing-rpc.ts`;
 const D44_RUN_ASK = `${D44_SRC}engine/run-ask.ts`;
 const D44_SCHEDULER = `${D44_SRC}automation/workflow-scheduler.ts`;
+const D44_LEARNING = `${D44_SRC}standing/approval-learning.ts`;
+const D44_SUGGESTION_STORE = `${D44_SRC}standing/standing-suggestion-store.ts`;
+const D44_V90 = `${D44_SRC}index/standing-suggestion-v90-sql.ts`;
+const D44_RUNNER = `${D44_SRC}automation/workflow-runner.ts`;
+const D44_LEARNING_TABLE_RES: readonly RegExp[] = ["standing_streak", "standing_suggestion"].map(
+  (t) => {
+    const re = sqlTableReferenceRe(t);
+    return new RegExp(re.source, "gi");
+  },
+);
 const D44_TABLE_RES: readonly RegExp[] = ["standing_rule", "standing_rule_fire"].map((t) => {
   const re = sqlTableReferenceRe(t);
   return new RegExp(re.source, "gi");
@@ -3221,7 +3239,8 @@ const D44_NAME_RULES: ReadonlyArray<{
   {
     rule: "standing-provenance-confined",
     re: /["']owner_workflow["']/g,
-    allowed: [D44_WRITE_STEP, D44_TYPES, D44_STEP],
+    // The learning pass READS the literal off a parsed audit row; the construction rule below is not widened.
+    allowed: [D44_WRITE_STEP, D44_TYPES, D44_STEP, D44_LEARNING],
     keepStrings: true,
   },
   {
@@ -3287,6 +3306,25 @@ const D44_NAME_RULES: ReadonlyArray<{
     allowed: [D44_EXECUTOR, D44_WRITE_STEP],
     keepStrings: false,
   },
+  // (f) approval learning.
+  {
+    rule: "standing-learning-confined",
+    re: /\blearnFromStepRun\b/g,
+    allowed: [D44_LEARNING, D44_RUNNER],
+    keepStrings: false,
+  },
+  {
+    rule: "standing-learning-confined",
+    re: /\b(?:applyStepRun|openSuggestion|markStaleFor)\b/g,
+    allowed: [D44_SUGGESTION_STORE, D44_LEARNING],
+    keepStrings: false,
+  },
+  {
+    rule: "standing-learning-confined",
+    re: /\bhasLiveRuleFor\b/g,
+    allowed: [D44_STORE, D44_LEARNING],
+    keepStrings: false,
+  },
 ];
 
 export function checkStandingApprovals(files: readonly FileEntry[]): Violation[] {
@@ -3309,6 +3347,12 @@ export function checkStandingApprovals(files: readonly FileEntry[]): Violation[]
       for (const re of D44_TABLE_RES) {
         for (const m of commentFree.matchAll(re))
           add(f, "standing-tables-confined", commentFree, m.index);
+      }
+    }
+    if (f.relPath !== D44_SUGGESTION_STORE && f.relPath !== D44_V90) {
+      for (const re of D44_LEARNING_TABLE_RES) {
+        for (const m of commentFree.matchAll(re))
+          add(f, "standing-learning-confined", commentFree, m.index);
       }
     }
     for (const r of D44_NAME_RULES) {
@@ -4968,6 +5012,8 @@ async function run(): Promise<void> {
         "(e) the standing-rule dependencies are handed to an executor other than the workflow write executors",
       "standing-unattended-confined":
         "(d) the unattended executor option, its refusal text or the schedule trigger is used outside its confinement",
+      "standing-learning-confined":
+        "(f) a learning table, writer or the learning pass is reached outside the suggestion store, the pass and the workflow runner",
     };
     for (const e of v) {
       console.error(

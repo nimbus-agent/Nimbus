@@ -5193,6 +5193,10 @@ describe("D44 — a standing rule approves only inside approvalPhase, for an exa
   const RUN_ASK = `${SRC}engine/run-ask.ts`;
   const OTHER = `${SRC}ipc/other.ts`;
   const SCHEDULER = `${SRC}automation/workflow-scheduler.ts`;
+  const LEARNING = `${SRC}standing/approval-learning.ts`;
+  const SUGG_STORE = `${SRC}standing/standing-suggestion-store.ts`;
+  const V90 = `${SRC}index/standing-suggestion-v90-sql.ts`;
+  const RUNNER = `${SRC}automation/workflow-runner.ts`;
   const EXECUTOR_GOOD = [
     "class ToolExecutor {",
     "  private async resolveHitlApproval(action, opts, record, scope) {",
@@ -5252,7 +5256,7 @@ describe("D44 — a standing rule approves only inside approvalPhase, for an exa
     ),
     file(
       STORE,
-      'db.run("INSERT INTO standing_rule (id) VALUES (1)"); export function insertRule() {} export function claimFire() {}\n',
+      'db.run("INSERT INTO standing_rule (id) VALUES (1)"); export function insertRule() {} export function claimFire() {} export function hasLiveRuleFor() {}\n',
     ),
     file(
       V88,
@@ -5262,6 +5266,19 @@ describe("D44 — a standing rule approves only inside approvalPhase, for an exa
       RPC,
       "insertRule(db, r); resumeRule(db, id); pauseRule(db, id, n); revokeRule(db, id, n);\n",
     ),
+    file(
+      LEARNING,
+      'if (prov["kind"] === "owner_workflow") { applyStepRun(); openSuggestion(); markStaleFor(); hasLiveRuleFor(); }\n',
+    ),
+    file(
+      SUGG_STORE,
+      'db.run("INSERT INTO standing_suggestion (id) VALUES (1)"); db.run("DELETE FROM standing_streak"); export function applyStepRun() {} export function openSuggestion() {} export function markStaleFor() {}\n',
+    ),
+    file(
+      V90,
+      'const a = "CREATE TABLE IF NOT EXISTS standing_streak (id TEXT)"; const b = "CREATE TABLE IF NOT EXISTS standing_suggestion (id TEXT)";\n',
+    ),
+    file(RUNNER, "learnFromStepRun(db, run, cfg);\n"),
   ];
   const rules = (files: FileEntry[]): string[] => [
     ...new Set(checkStandingApprovals(files).map((v) => v.rule)),
@@ -5296,6 +5313,68 @@ describe("D44 — a standing rule approves only inside approvalPhase, for an exa
     );
     expect(rules(GOOD.map((f) => (f.relPath === STEP ? reader : f)))).toEqual([
       "standing-provenance-confined",
+    ]);
+  });
+
+  test("(f) the learning pass may read the owner_workflow literal but never construct it", () => {
+    const reader = file(LEARNING, 'const ok = prov["kind"] === "owner_workflow";\n');
+    expect(rules(GOOD.map((f) => (f.relPath === LEARNING ? reader : f)))).toEqual([]);
+    const builder = file(LEARNING, 'const p = { kind: "owner_workflow", runId: 1 };\n');
+    expect(rules(GOOD.map((f) => (f.relPath === LEARNING ? builder : f)))).toEqual([
+      "standing-provenance-confined",
+    ]);
+    const shape = file(LEARNING, "const p: WorkflowProvenance = x; const q = p.fieldSources;\n");
+    expect(rules(GOOD.map((f) => (f.relPath === LEARNING ? shape : f)))).toEqual([
+      "standing-provenance-confined",
+    ]);
+  });
+
+  test("(f) FAILS when a learning table is referenced outside the suggestion store and its DDL", () => {
+    for (const body of [
+      'db.run("INSERT INTO standing_suggestion (id) VALUES (1)");',
+      'db.query("SELECT * FROM standing_streak");',
+      'db.run("UPDATE standing_streak SET streak = 9");',
+      'db.run("DELETE FROM standing_suggestion WHERE id = 1");',
+    ]) {
+      expect(rules([...GOOD, file(OTHER, body)]), body).toEqual(["standing-learning-confined"]);
+      expect(rules([...GOOD, file(LEARNING, body)]), body).toContain("standing-learning-confined");
+    }
+    expect(rules([...GOOD, file(OTHER, "// standing_streak standing_suggestion")])).toEqual([]);
+  });
+
+  test("(f) FAILS when the suggestion store or its DDL touches a rule table", () => {
+    const dirtyStore = file(SUGG_STORE, 'db.run("UPDATE standing_rule SET paused_at = 1");\n');
+    expect(rules(GOOD.map((f) => (f.relPath === SUGG_STORE ? dirtyStore : f)))).toEqual([
+      "standing-tables-confined",
+    ]);
+    const dirtyDdl = file(
+      V90,
+      'const s = "CREATE TABLE IF NOT EXISTS standing_rule_fire (id TEXT)";\n',
+    );
+    expect(rules(GOOD.map((f) => (f.relPath === V90 ? dirtyDdl : f)))).toEqual([
+      "standing-tables-confined",
+    ]);
+  });
+
+  test("(f) FAILS when the learning pass, a streak writer or the live-rule question is named elsewhere", () => {
+    for (const body of [
+      "learnFromStepRun(db, run, cfg);",
+      "applyStepRun(db, key, v, r, n);",
+      "openSuggestion(db, key, 5, n);",
+      "markStaleFor(db, id, sha, n);",
+      "hasLiveRuleFor(db, key, n);",
+    ]) {
+      expect(rules([...GOOD, file(OTHER, body)]), body).toEqual(["standing-learning-confined"]);
+    }
+    // The RPC handler and the scheduler do not get the pass.
+    expect(rules([...GOOD, file(RPC, "learnFromStepRun(db, run, cfg);")])).toEqual([
+      "standing-learning-confined",
+    ]);
+    expect(rules([...GOOD, file(RPC, "hasLiveRuleFor(db, key, n);")])).toEqual([
+      "standing-learning-confined",
+    ]);
+    expect(rules([...GOOD, file(SCHEDULER, "learnFromStepRun(db, run, cfg);")])).toEqual([
+      "standing-learning-confined",
     ]);
   });
 
