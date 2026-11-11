@@ -1164,7 +1164,7 @@ nimbus oncall now --service payment-service --json
 
 **Data age.** One line per source (`PagerDuty data 3 min old`), and `WARNING: older than 1 h; the shift may have changed` when a source's oldest row is stale or has no recorded age.
 
-**Bounds.** Reply shapes of the providers are not verified against live accounts. Jira Service Management shifts carry no start or end time and no service mapping (look them up by schedule name). PagerDuty `you` needs a user-level API token or `pagerduty.from_email` (`nimbus connector auth pagerduty --token <token> --username <email>`). `nimbus ask "who's on call for payment-service?"` uses the `oncall_now` tool when a remote model vendor is enabled, and otherwise relies on ranked retrieval. The IPC method is `oncall.now` (LAN-forbidden, renderer-callable, served by a demo gateway); the `nimbus oncall` brief also carries an `On call now` line under `## Incident`.
+**Bounds.** Reply shapes of the providers are not verified against live accounts. Jira Service Management shifts carry no start or end time and no service mapping (look them up by schedule name). PagerDuty `you` needs a user-level API token or `pagerduty.from_email` (`nimbus connector auth pagerduty --token <token> --username <email>`). `nimbus ask "who's on call for payment-service?"` uses the `oncall_now` tool only where the Mastra agent runs (with a remote model vendor); the local-router path has no tools, and there only ranked retrieval of the shift rows can surface the answer. The IPC method is `oncall.now` (LAN-forbidden, renderer-callable, served by a demo gateway); the `nimbus oncall` brief also carries an `On call now` line under `## Incident`.
 
 ### `nimbus oncall pushed`
 
