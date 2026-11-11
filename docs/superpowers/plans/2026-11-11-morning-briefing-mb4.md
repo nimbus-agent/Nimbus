@@ -13,6 +13,37 @@ indexes (public, private, DM, group DM) and keeps it in `chat_read_marker`; `cou
 
 > **Owner ruling OR-10-15 (2026-11-11):** index Slack direct and group DMs (`is_im` / `is_mpim`) as well as member channels. Deviation 1 is therefore ACCEPTED as written: keep the `is_im`/`is_mpim` condition and its DM tests.
 
+> **Seam for MB5 (added 2026-11-11, binding):** besides `index/slack-unread.ts` `countUnreadSlackThreads`, MB4 must export the briefing's reader exactly as the MB5 plan declares it: `readUnreadChatThreads(db: Database, opts: { nowMs: number; limit: number }): ChatUnreadResult` from `packages/gateway/src/index/chat-unread-query.ts` (a thin adapter over `countUnreadSlackThreads` that resolves the self user id itself), with types structurally identical to these from the MB5 plan. If MB5 has merged first, import its exported types instead of redeclaring them, and wire `readUnreadChat: readUnreadChatThreads` at the one line in `platform/assemble.ts` the MB5 plan names.
+
+```
+  `briefing.get {id}` -> `{ run }` or -32602 `ERR_BRIEFING_NOT_FOUND`; `briefing.status {}`;
+  `briefing.runNow {}` (CLI-only: not on the Tauri allowlist, not LAN-callable). A `BriefingRpcError` ->
+  `RpcMethodError` like `OncallNowRpcError`. Unknown params are refused (-32602) as `oncall.now` does.
+- **MB4 seam (exact).** MB5 never imports MB4. `agents/_lib/briefing-types.ts` declares
+  ```ts
+  export type ChatUnreadThread = { readonly itemId: string; readonly channelId: string;
+    readonly channelName: string | null; readonly channelKind: "dm" | "mpim" | "channel";
+    readonly threadKey: string; readonly latestTsMs: number; readonly title: string;
+    readonly url: string | null; readonly unreadMessages: number };
+  export type ChatUnreadResult = { readonly totalThreads: number;            // before the cap
+    readonly threads: readonly ChatUnreadThread[];                           // DMs and mpims first, then newest first, at most opts.limit
+    readonly channelsWithMarker: number;
+    readonly oldestMarkerCapturedAtMs: number | null; readonly newestMarkerCapturedAtMs: number | null };
+  export type ChatUnreadReader = (db: Database, opts: { readonly nowMs: number; readonly limit: number }) => ChatUnreadResult;
+  ```
+  and `BriefingDeps.readUnreadChat?: ChatUnreadReader`. **The function MB4 must export is
+  `readUnreadChatThreads(db: Database, opts: { nowMs: number; limit: number }): ChatUnreadResult` from
+  `packages/gateway/src/index/chat-unread-query.ts`**, declaring its own structurally identical result types
+  (neither slice imports the other; TypeScript structural typing joins them). The single join point is one
+  line in `platform/assemble.ts` where the runtime is built: `readUnreadChat: readUnreadChatThreads`.
+  *If MB5 merges first:* the line is absent, `readUnreadChat` is `undefined`, and the Chat section renders
+  `## Gaps` (`missing_connector`): "Unread Slack threads are not available yet: Slack read markers are not
+  indexed in this version." MB4's PR then adds the import and the line and flips the Gaps case in MB5's
+  acceptance test to the fake-reader case (MB5 ships both cases). *If MB4 merges first:* MB5's PR adds the
+  import and the line itself and the Gaps-for-absent-reader test keeps passing because it passes no reader.
+
+```
+
 ## Spec deviations (checked against the code; each has its evidence and the correction this plan makes)
 
 Where the spec is right the plan follows it. Where the code disagrees, the correction is binding for MB4,
