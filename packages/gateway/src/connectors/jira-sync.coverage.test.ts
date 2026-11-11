@@ -20,6 +20,7 @@ import {
   jiraFetchOneUrlIsSupported,
   jiraUrlMatchesConfiguredBase,
 } from "./jira-sync.ts";
+import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 
 const BASE = "https://acme.atlassian.net";
 
@@ -136,7 +137,8 @@ describe("periodic sync — sparse issues and creators", () => {
 
     const r = await createJiraSyncable({ ensureJiraMcpRunning: async () => {} }).sync(
       ctxFor(db, seen),
-      null,
+      // a fresh snapshot attempt: only the incremental request resolves people here
+      encodeNimbusJsonCursor("nimbus-jra1:", { v: 1, floorJql: null, snapAt: Date.now() }),
     );
 
     expect(r.itemsUpserted).toBe(2);
