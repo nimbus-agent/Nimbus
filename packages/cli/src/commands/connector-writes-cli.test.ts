@@ -167,6 +167,31 @@ describe("connector writes status", () => {
     ]);
   });
 
+  it("names a write the connector will not list until the owner re-authorises (SA2)", async () => {
+    const h = harness({
+      services: [
+        {
+          service: "gmail",
+          enabled: true,
+          maxWave: 2,
+          writes: 3,
+          offerable: 1,
+          awaitingApproval: 0,
+          notOffered: [
+            { toolId: "gmail_thread_archive", reason: "re-authorise Gmail to grant gmail.modify" },
+          ],
+        },
+      ],
+      policyAllows: true,
+    });
+    await runConnectorWrites(["status"], h.deps);
+    expect(h.logs).toEqual([
+      "gmail  enabled  wave 2  3 writes, 1 offerable now",
+      "  not offered: gmail_thread_archive (re-authorise Gmail to grant gmail.modify)",
+      "Policy: allows",
+    ]);
+  });
+
   it("reports a forbidding policy", async () => {
     const h = harness({ services: [], policyAllows: false });
     await runConnectorWrites(["status"], h.deps);

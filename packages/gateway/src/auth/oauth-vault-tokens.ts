@@ -1,4 +1,5 @@
 import { Config } from "../config.ts";
+import { perServiceOAuthVaultKey } from "../connectors/connector-vault.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
 import { MICROSOFT_OAUTH_CLIENT_ID_HELP } from "./oauth-env-help-messages.ts";
 import { getValidVaultAccessToken } from "./oauth-registry.ts";
@@ -71,7 +72,36 @@ export function microsoftOAuthAccessFromConfig(): {
 export async function readMicrosoftOAuthScopesForOutlookEnv(
   vault: NimbusVault,
 ): Promise<string | undefined> {
-  const raw = await vault.get("microsoft.oauth");
+  return oauthScopesFromVaultPayload(await vault.get("microsoft.oauth"));
+}
+
+/**
+ * Space-separated scopes of the credential Gmail would use (its own key, else the shared
+ * `google.oauth` one, the order `resolveGoogleOAuthVaultKey` uses), for the Gmail child's
+ * `GOOGLE_OAUTH_SCOPES`: the connector lists a scope-gated tool (`gmail_thread_archive`, which
+ * needs `gmail.modify`) only when its token holds the scope. `undefined` when there is no
+ * credential or it records no scopes, and the connector then hides every scope-gated tool. Passed
+ * to the Gmail child only, never Drive, Photos or Meet.
+ */
+export async function readGoogleOAuthScopesForGmailEnv(
+  vault: NimbusVault,
+): Promise<string | undefined> {
+  const own = perServiceOAuthVaultKey("gmail");
+  for (const key of own === undefined ? ["google.oauth"] : [own, "google.oauth"]) {
+    const raw = await vault.get(key);
+    if (raw !== null && raw !== "") {
+      return oauthScopesFromVaultPayload(raw);
+    }
+  }
+  return undefined;
+}
+
+/**
+ * The space-separated `scopes` of a stored OAuth vault payload, or `undefined` when the payload is
+ * absent, not a JSON object, or has no non-empty `scopes` array. Shared by the Outlook and Gmail
+ * scope reads so the two cannot parse a payload differently.
+ */
+export function oauthScopesFromVaultPayload(raw: string | null): string | undefined {
   if (raw === null || raw === "") {
     return undefined;
   }

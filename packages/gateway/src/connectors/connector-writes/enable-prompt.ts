@@ -235,6 +235,7 @@ export function enableWritesPromptLines(
       wave?: unknown;
       offerable?: unknown;
       state?: unknown;
+      reason?: unknown;
     } | null;
     if (
       typeof r?.toolId !== "string" ||
@@ -246,8 +247,12 @@ export function enableWritesPromptLines(
     }
     const marker = markerFor(r.state, r.offerable);
     if (marker === undefined) return undefined;
+    if (r.reason !== undefined && (typeof r.reason !== "string" || r.offerable)) return undefined;
+    // A write not offered because its credential lacks a scope says what to do (SA2).
+    const shown =
+      typeof r.reason === "string" ? `(not offered yet: ${sanitisePreviewText(r.reason)})` : marker;
     lines.push(
-      `  ${sanitisePreviewText(r.toolId)}  ${sanitisePreviewText(r.actionType)}  wave ${r.wave}  ${marker}`,
+      `  ${sanitisePreviewText(r.toolId)}  ${sanitisePreviewText(r.actionType)}  wave ${r.wave}  ${shown}`,
     );
   }
   const scope = serviceScopeLines(service, payload, writes as unknown[]);

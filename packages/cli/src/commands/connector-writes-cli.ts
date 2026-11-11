@@ -217,6 +217,7 @@ interface StatusRow {
   writes: number;
   offerable?: number;
   awaitingApproval?: number;
+  notOffered?: Array<{ toolId?: string; reason?: string }>;
   iacGrants?: { workdirs?: string[]; clouds?: string[]; regions?: string[]; net?: string[] };
   k8sGrants?: Array<{
     context?: string;
@@ -279,6 +280,9 @@ async function runStatus(d: ConnectorWritesDeps, tail: string[]): Promise<void> 
           ? `${name}  enabled  wave ${String(row.maxWave)}  ${String(row.writes)} writes, ${String(row.offerable ?? 0)} offerable now${awaitingSuffix(row)}`
           : `${name}  off`,
       );
+      for (const n of row.notOffered ?? []) {
+        d.log(`  not offered: ${String(n.toolId)} (${String(n.reason)})`);
+      }
       if (row.service === "iac") logIacGrants(d, row);
       if (row.service === "kubernetes" && row.enabled) logK8sGrants(d, row);
     }

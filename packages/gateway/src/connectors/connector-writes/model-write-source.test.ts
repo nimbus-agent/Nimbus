@@ -387,7 +387,7 @@ describe("the real messaging rows through the real door (plan Task 3)", () => {
         .map((r) => `${serviceOf(r.actionType)}__${r.toolId}`)
         .sort((a, b) => a.localeCompare(b)),
     );
-    expect(door.offered).toHaveLength(38);
+    expect(door.offered).toHaveLength(39);
   });
 
   test("Slack: the bound channel by id and any channel NAME are refused, the DM too; nothing executed", async () => {

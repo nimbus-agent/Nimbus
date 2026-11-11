@@ -17,7 +17,10 @@ import { getValidMendeleyAccessToken } from "../../auth/mendeley-access-token.ts
 import { getValidMicrosoftAccessToken } from "../../auth/microsoft-access-token.ts";
 import { getValidMiroAccessToken } from "../../auth/miro-access-token.ts";
 import { getValidNotionAccessToken } from "../../auth/notion-access-token.ts";
-import { readMicrosoftOAuthScopesForOutlookEnv } from "../../auth/oauth-vault-tokens.ts";
+import {
+  readGoogleOAuthScopesForGmailEnv,
+  readMicrosoftOAuthScopesForOutlookEnv,
+} from "../../auth/oauth-vault-tokens.ts";
 import {
   getValidSalesforceAccessToken,
   getValidSalesforceAuth,
@@ -202,10 +205,17 @@ export async function ensureGoogleDriveMcp(ctx: MeshSpawnContext): Promise<reado
       recordGoogleCredentialFailure(ctx, id, err);
       continue;
     }
+    // Gmail ALONE gets the token's scopes: it lists `gmail_thread_archive` only when they hold
+    // `gmail.modify`. Drive, Photos and Meet are given the access token and nothing else.
+    const gmailScopes =
+      id === "gmail" ? await readGoogleOAuthScopesForGmailEnv(ctx.vault) : undefined; // NOSONAR S9382: bundle order, as the token read above
     googleServers[id] = wrap(
       {
         ...connectorSpawn(GOOGLE_BUNDLE_SPAWNS[id]),
-        env: extensionProcessEnv({ GOOGLE_OAUTH_ACCESS_TOKEN: token }),
+        env: extensionProcessEnv({
+          GOOGLE_OAUTH_ACCESS_TOKEN: token,
+          ...(gmailScopes === undefined ? {} : { GOOGLE_OAUTH_SCOPES: gmailScopes }),
+        }),
       },
       id,
       ctx,

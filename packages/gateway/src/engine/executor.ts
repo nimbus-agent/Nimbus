@@ -69,6 +69,7 @@ import type {
   ConnectorDispatcher,
   ConsentChannel,
   PlannedAction,
+  WorkflowProvenance,
 } from "./types.ts";
 
 const executorLog = pino({
@@ -161,6 +162,7 @@ const HITL_REQUIRED_BACKING = new Set<string>([
   "gmail.draft.create",
   "gmail.draft.send",
   "gmail.message.send",
+  "gmail.thread.archive",
   "outlook.mail.send",
   "outlook.calendar.create",
   "outlook.calendar.delete",
@@ -595,6 +597,14 @@ function omitPromptText(payload: Record<string, unknown>): Record<string, unknow
 
 /** The payload the audit row records: the identifying fields, without a rendered prompt body. */
 function auditedAction(action: PlannedAction): PlannedAction {
+  if (action.provenance !== undefined) {
+    // SA2: the row names the workflow run; the field sources (for the standing-rule check) stay out.
+    // The history comes BEFORE the payload, which the row's size cap may cut.
+    const { fieldSources: _sources, ...history } = action.provenance;
+    const { provenance: _own, ...rest } = action;
+    const { type, ...others } = auditedAction(rest);
+    return { type, provenance: history as WorkflowProvenance, ...others };
+  }
   if (action.payload === undefined) return action;
   // The prompt text can run to many lines of pack content; the row keeps the identifying fields.
   if (action.type === "pack.install") return { ...action, payload: omitPromptText(action.payload) };

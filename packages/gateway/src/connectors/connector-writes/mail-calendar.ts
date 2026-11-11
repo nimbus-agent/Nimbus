@@ -1,10 +1,18 @@
 // packages/gateway/src/connectors/connector-writes/mail-calendar.ts
 import {
+  arrayAt,
+  beforeReplyJson,
+  excerptHead,
+  requiredStringAt,
+  stringAt,
+} from "./before-select.ts";
+import {
   selectAppleEventDelete,
   selectOutlookEventDelete,
   singleIdArgs,
 } from "./delete-readers.ts";
 import {
+  type BeforeStateField,
   type ConnectorWritePreviewTemplate,
   type ConnectorWriteRow,
   type PreviewFieldTemplate,
@@ -56,6 +64,62 @@ function draftTemplate(
     summary: `Save ${mailbox} draft addressed to {to}; nothing is sent`,
     fields,
   };
+}
+
+/** Whether `message` carries `INBOX` / `UNREAD` in its `labelIds`; `undefined` when it lists none. */
+function messageLabels(message: unknown): readonly string[] | undefined {
+  const labels = arrayAt(message, ["labelIds"]);
+  if (labels === undefined) return undefined;
+  return labels.filter((l): l is string => typeof l === "string");
+}
+
+/** The first `Subject` header of a Gmail message (`format: metadata`), if it has one. */
+function messageSubject(message: unknown): string | undefined {
+  const headers = arrayAt(message, ["payload", "headers"]);
+  if (headers === undefined) return undefined;
+  for (const h of headers) {
+    const name = stringAt(h, ["name"]);
+    if (name !== undefined && name.toLowerCase() === "subject") return stringAt(h, ["value"]);
+  }
+  return undefined;
+}
+
+/**
+ * Gmail `gmail_thread_read` (before-state, `format: metadata`) for an archive: the thread the owner
+ * is about to remove from the inbox. A thread with no message in the inbox reads "no (already
+ * archived)"; a thread that lists no messages, or whose messages carry no label list, throws, so the
+ * prompt reads `unavailable (failed)` rather than a state it could not read.
+ */
+export function selectGmailThreadArchive(reply: unknown): readonly BeforeStateField[] {
+  const j = beforeReplyJson(reply);
+  requiredStringAt(j, ["id"]);
+  const messages = arrayAt(j, ["messages"]);
+  if (messages === undefined || messages.length === 0) throw new Error("before reply: no messages");
+  let inInbox = 0;
+  let unread = 0;
+  for (const m of messages) {
+    const labels = messageLabels(m);
+    if (labels === undefined) throw new Error("before reply: a message lists no labels");
+    if (labels.includes("INBOX")) inInbox++;
+    if (labels.includes("UNREAD")) unread++;
+  }
+  const total = messages.length;
+  const subject = messageSubject(messages[0]);
+  return [
+    { label: "Subject", value: subject === undefined ? "(no subject)" : excerptHead(subject) },
+    { label: "Messages", value: String(total) },
+    {
+      label: "Unread",
+      value: unread === 0 ? "no" : `yes: ${String(unread)} of ${String(total)} messages`,
+    },
+    {
+      label: "In the inbox",
+      value:
+        inInbox === 0
+          ? "no (already archived)"
+          : `yes: ${String(inInbox)} of ${String(total)} messages`,
+    },
+  ];
 }
 
 export const MAIL_CALENDAR_ROWS: readonly ConnectorWriteRow[] = [
@@ -163,6 +227,30 @@ export const MAIL_CALENDAR_ROWS: readonly ConnectorWriteRow[] = [
       },
     ),
     { template: "delete {href:tail8}" },
+  ),
+  // Phase 10 SA2: a Gmail thread archive removes the `INBOX` label from every message of the thread
+  // (`users.threads.modify`); nothing is deleted and the thread is found again under All Mail. The
+  // connector lists the tool only when the token holds `gmail.modify` (or the full-mailbox scope),
+  // so an existing Gmail connection must be re-authorised. The before-state reads the thread's
+  // subject, size, unread count and whether any message is still in the inbox. Withheld from the MCP
+  // act door (`not_yet_offered`): that door shows no before-state.
+  withBefore(
+    withPreview(row("gmail_thread_archive", "gmail.thread.archive", "mesh", 2), {
+      target: "{threadId}",
+      summary: "Archive Gmail thread {threadId}: remove it from the inbox; nothing is deleted",
+      fields: [textField("threadId", "Thread id")],
+    }),
+    {
+      tool: "gmail_thread_read",
+      argKeys: ["threadId"],
+      args: (input) => {
+        const id = input["threadId"];
+        return typeof id === "string" && id !== ""
+          ? { threadId: id, format: "metadata" }
+          : undefined;
+      },
+      select: selectGmailThreadArchive,
+    },
   ),
   row("gmail_draft_send", "gmail.draft.send", "mesh", 3),
   row("gmail_message_send", "gmail.message.send", "mesh", 3),

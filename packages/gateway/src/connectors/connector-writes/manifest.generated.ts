@@ -77,6 +77,7 @@ export const CONNECTOR_WRITE_MANIFEST: readonly ConnectorWriteRegistration[] = [
   { toolId: "gmail_draft_create", connector: "gmail" },
   { toolId: "gmail_draft_send", connector: "gmail" },
   { toolId: "gmail_message_send", connector: "gmail" },
+  { toolId: "gmail_thread_archive", connector: "gmail" },
   { toolId: "iac_cloudformation_changeset_discard", connector: "iac" },
   { toolId: "iac_cloudformation_deploy", connector: "iac" },
   { toolId: "iac_pulumi_up", connector: "iac" },

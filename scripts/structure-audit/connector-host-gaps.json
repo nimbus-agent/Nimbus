@@ -44,6 +44,12 @@
       "reason": "The project link inside the User-Agent header value."
     },
     {
+      "connector": "gmail",
+      "host": "mail.google.com",
+      "kind": "not called",
+      "reason": "The full-mailbox OAuth scope string `https://mail.google.com/` the scope policy accepts in place of gmail.modify, compared with the granted scopes and never fetched (connectors 0.12.0, tool-scope-policy.ts)."
+    },
+    {
       "connector": "powerbi",
       "host": "analysis.windows.net",
       "kind": "not called",

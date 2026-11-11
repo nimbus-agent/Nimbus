@@ -43,6 +43,7 @@ import {
 } from "../../connectors/connector-writes/kubeconfig-facts.ts";
 import { isModelOfferableRow } from "../../connectors/connector-writes/model-offerable.ts";
 import { isConnectorWriteModelAccessEnabled } from "../../connectors/connector-writes/model-write-capability.ts";
+import { scopeGatedReason } from "../../connectors/connector-writes/scope-gated.ts";
 import type {
   ConnectorWriteRow,
   ConnectorWriteWave,
@@ -95,6 +96,13 @@ export interface ModelWritesDeps {
    * What approving the Obsidian append would let its sandbox write now (`LazyConnectorMesh.
    * obsidianWriteScope`), shown in the enable prompt. Absent: the prompt says the folders are unknown.
    */
+  /**
+   * Phase 10 SA2: per service, the space-separated OAuth scopes its stored credential holds (read
+   * before the call; `undefined` value: it records none). A write whose connector lists it only
+   * with a scope (`gmail_thread_archive`) is shown as not offered, with the re-authorise reason,
+   * when the credential lacks it. A service absent here makes no claim.
+   */
+  readonly grantedScopes?: Readonly<Record<string, string | undefined>>;
   readonly obsidianWriteScope?: () => {
     readonly roots: readonly string[];
     /** Per vault, its daily-note file pattern (`<vault>/<daily folder>/<format>.md`). */
@@ -379,13 +387,21 @@ export async function handleConnectorWritesEnable(
   // Read BEFORE the gate: the prompt says which writes the current opt-in already offers.
   const existing = getModelWriteEnablement(deps.db, service);
   const writes = writesEnabledBy(service, maxWave, deps.rows).map((r) => {
-    const offerable = isModelOfferableRow(r);
+    const reason = scopeGatedReason(r.toolId, deps.grantedScopes);
+    const offerable = isModelOfferableRow(r) && reason === undefined;
     let state: EnableWriteState = "not_offerable";
     if (offerable) {
       state =
         existing?.approvedToolIds.has(r.toolId) === true ? "already_approved" : "newly_offerable";
     }
-    return { toolId: r.toolId, actionType: r.actionType, wave: r.wave, offerable, state };
+    return {
+      toolId: r.toolId,
+      actionType: r.actionType,
+      wave: r.wave,
+      offerable,
+      state,
+      ...(reason === undefined ? {} : { reason }),
+    };
   });
   const payload: Record<string, unknown> = { service, maxWave, writes };
   // The approved directories and clouds are named in the prompt the owner approves (D2, I15).
@@ -457,6 +473,8 @@ export function handleConnectorWritesStatus(deps: ModelWritesDeps): {
     writes: number;
     offerable: number;
     awaitingApproval: number;
+    /** Offerable rows whose credential lacks a scope the connector needs to list them (SA2). */
+    notOffered?: Array<{ toolId: string; reason: string }>;
   }>;
   policyAllows: boolean;
 } {
@@ -464,16 +482,21 @@ export function handleConnectorWritesStatus(deps: ModelWritesDeps): {
   const services = modelWriteServices(deps.rows).map((service) => {
     const e = enabled.get(service);
     const maxWave = e?.maxWave ?? 4;
-    const offerableNow = offerableWritesEnabledBy(service, maxWave, deps.rows);
+    const gated: Array<{ toolId: string; reason: string }> = [];
+    const offerableNow = offerableWritesEnabledBy(service, maxWave, deps.rows).filter((r) => {
+      const reason = scopeGatedReason(r.toolId, deps.grantedScopes);
+      if (reason !== undefined) gated.push({ toolId: r.toolId, reason });
+      return reason === undefined;
+    });
     const approved = offerableNow.filter((r) => e?.approvedToolIds.has(r.toolId) === true).length;
     const counts = {
       writes: writesEnabledBy(service, maxWave, deps.rows).length,
       offerable: approved,
       awaitingApproval: offerableNow.length - approved,
     };
-    let extra: Record<string, unknown> = {};
-    if (service === IAC_SERVICE) extra = { iacGrants: getIacGrants(deps.db) };
-    if (service === KUBERNETES_SERVICE) extra = { k8sGrants: getK8sGrants(deps.db) };
+    let extra: Record<string, unknown> = gated.length > 0 ? { notOffered: gated } : {};
+    if (service === IAC_SERVICE) extra = { ...extra, iacGrants: getIacGrants(deps.db) };
+    if (service === KUBERNETES_SERVICE) extra = { ...extra, k8sGrants: getK8sGrants(deps.db) };
     return e === undefined
       ? { service, enabled: false, ...counts, ...extra }
       : { service, enabled: true, maxWave: e.maxWave, enabledAt: e.enabledAt, ...counts, ...extra };

@@ -111,9 +111,9 @@ const REFUSED_BEFORE_A1: readonly string[] = [
 ];
 
 describe("connector write rows", () => {
-  test("124 rows, unique tool ids", () => {
-    expect(CONNECTOR_WRITE_ROWS).toHaveLength(124);
-    expect(new Set(CONNECTOR_WRITE_ROWS.map((r) => r.toolId)).size).toBe(124);
+  test("125 rows, unique tool ids", () => {
+    expect(CONNECTOR_WRITE_ROWS).toHaveLength(125);
+    expect(new Set(CONNECTOR_WRITE_ROWS.map((r) => r.toolId)).size).toBe(125);
   });
 
   test("every row's action type is in the HITL frozen set", () => {
@@ -396,6 +396,7 @@ describe("connectors 0.6.0 writes (C1)", () => {
       [
         "github.pr.update",
         "gitlab.mr.update",
+        "gmail.thread.archive",
         ...CONNECTORS_0_6_0_WRITES.slice(6).map(([, t]) => t),
         "jira.issue.transition",
       ].sort((a, b) => a.localeCompare(b)),
@@ -404,7 +405,7 @@ describe("connectors 0.6.0 writes (C1)", () => {
 });
 
 describe("the B4a rows on the act door (plan Task A4)", () => {
-  test("the calendar and Drive creates are templated and proposable; overall 47 proposable, 135 denied (8 not_yet_offered)", () => {
+  test("the calendar and Drive creates are templated and proposable; overall 47 proposable, 136 denied (9 not_yet_offered)", () => {
     for (const id of [
       "outlook_calendar_create",
       "apple_calendar_event_create",
@@ -418,9 +419,9 @@ describe("the B4a rows on the act door (plan Task A4)", () => {
     }
     const entries = Object.values(ACTION_PROPOSABILITY);
     expect(entries.filter((e) => e.kind === "proposable")).toHaveLength(47);
-    expect(entries.filter((e) => e.kind === "denied")).toHaveLength(135);
+    expect(entries.filter((e) => e.kind === "denied")).toHaveLength(136);
     expect(
       entries.filter((e) => e.kind === "denied" && e.class === "not_yet_offered"),
-    ).toHaveLength(8);
+    ).toHaveLength(9);
   });
 });
