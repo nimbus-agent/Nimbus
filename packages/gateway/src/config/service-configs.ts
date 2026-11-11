@@ -17,7 +17,7 @@ export function loadServiceConfigsOrEmpty(
   } catch (err) {
     warn(
       `failed to load [metrics.dora.*]/[ci.service.*] from nimbus.toml ` +
-        `(${err instanceof Error ? err.message : String(err)}); service names will not resolve through bindings.`,
+        `(${String(err)}); service names will not resolve through bindings.`,
     );
     return [];
   }
