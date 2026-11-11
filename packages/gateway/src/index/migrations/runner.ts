@@ -95,6 +95,7 @@ import { SHARE_INBOX_V43_SQL } from "../share-inbox-v43-sql.ts";
 import { SHARE_RECORDS_V41_SQL } from "../share-records-v41-sql.ts";
 import { SOURCE_CATCHUP_V74_SQL } from "../source-catchup-v74-sql.ts";
 import { tryLoadSqliteVec } from "../sqlite-vec-load.ts";
+import { STANDING_RULE_V88_SQL } from "../standing-rule-v88-sql.ts";
 import { SUB_TASK_RESULTS_V17_SQL } from "../sub-task-results-v17-sql.ts";
 import { V35_TEAM_VAULT_SQL } from "../team-vault-v35-sql.ts";
 import { TOOL_CALL_LOG_V29_SCHEMA_SQL } from "../tool-call-log-v29-sql.ts";
@@ -755,6 +756,12 @@ const INDEXED_SCHEMA_STEPS: readonly IndexedSchemaStep[] = [
   simpleStep(84, 85, "iac approved directories and clouds", CONNECTOR_WRITE_IAC_V85_SQL),
   simpleStep(85, 86, "kubernetes approved contexts and namespaces", CONNECTOR_WRITE_K8S_V86_SQL),
   { fromVersion: 86, toVersion: 87, apply: migrateIndexedV86ToV87 },
+  simpleStep(
+    87,
+    88,
+    "standing approval rules and their fires (Phase 10 SA3)",
+    STANDING_RULE_V88_SQL,
+  ),
 ];
 
 /**
