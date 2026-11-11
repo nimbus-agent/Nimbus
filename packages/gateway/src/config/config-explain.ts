@@ -67,6 +67,7 @@ import { loadNimbusWorkdayFromConfigDir } from "./nimbus-toml-workday.ts";
 import { loadNimbusNotificationsFromConfigDir } from "./notifications-toml.ts";
 import { loadNimbusOncallPushFromConfigDir } from "./oncall-push-toml.ts";
 import { loadNimbusSessionFromConfigDir } from "./session-toml.ts";
+import { loadNimbusStandingFromConfigDir } from "./standing-toml.ts";
 import { loadNimbusTelemetryFromConfigDir } from "./telemetry-toml.ts";
 import { parseString } from "./toml-primitives.ts";
 
@@ -115,6 +116,7 @@ export const SECTION_LOADERS: Readonly<Record<string, (configDir: string) => unk
   security: loadNimbusSecurityFromConfigDir,
   sources: (configDir) => sourceMappingFor(configDir),
   session: loadNimbusSessionFromConfigDir,
+  standing: loadNimbusStandingFromConfigDir,
   "share.http_sink": loadNimbusShareHttpSink,
   telemetry: loadNimbusTelemetryFromConfigDir,
   tool_generation: loadNimbusToolGenerationFromConfigDir,

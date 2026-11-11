@@ -180,11 +180,13 @@ pub const ALLOWED_METHODS: &[&str] = &[
     "share.list",
     "share.pubkey",
     "share.verify",
+    "standing.dismissSuggestion",
     "standing.fires",
     "standing.list",
     "standing.pause",
     "standing.revoke",
     "standing.show",
+    "standing.suggestions",
     "team.auditMerged",
     "teamvault.list",
     "telemetry.getStatus",
@@ -835,6 +837,10 @@ mod tests {
         assert!(is_method_allowed("standing.fires"));
         assert!(is_method_allowed("standing.pause"));
         assert!(is_method_allowed("standing.revoke"));
+        // Phase 10 SA5: the desktop lists approval-learning suggestions and dismisses one (a
+        // narrowing); turning one into a rule is `standing.create`, which it can never call.
+        assert!(is_method_allowed("standing.suggestions"));
+        assert!(is_method_allowed("standing.dismissSuggestion"));
         assert!(!is_method_allowed("standing.create"));
         assert!(!is_method_allowed("standing.resume"));
         assert!(!is_no_timeout_method("standing.list"));
@@ -984,7 +990,7 @@ mod tests {
 
     #[test]
     fn allowlist_exact_size() {
-        assert_eq!(ALLOWED_METHODS.len(), 124);
+        assert_eq!(ALLOWED_METHODS.len(), 126);
     }
 
     #[test]

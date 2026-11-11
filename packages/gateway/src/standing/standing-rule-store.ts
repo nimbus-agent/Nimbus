@@ -178,6 +178,29 @@ export function listRulesFor(
   return rows.map(ruleOf);
 }
 
+/**
+ * Whether a LIVE rule (not revoked, paused, expired or exhausted: `ruleState(r, now) === "live"`)
+ * already covers this workflow id, content hash and step. Approval learning asks this and nothing
+ * else about rules, so a suggestion is never made for a step a rule covers (Phase 10 SA5).
+ */
+export function hasLiveRuleFor(
+  db: Database,
+  key: {
+    readonly workflowId: string;
+    readonly workflowSha256: string;
+    readonly stepIndex: number;
+  },
+  now: number,
+): boolean {
+  const rows = db
+    .query(
+      `SELECT ${RULE_COLUMNS} FROM standing_rule
+       WHERE workflow_id = ? AND workflow_sha256 = ? AND step_index = ?`,
+    )
+    .all(key.workflowId, key.workflowSha256, key.stepIndex) as RuleRow[];
+  return rows.some((r) => ruleState(ruleOf(r), now) === "live");
+}
+
 export function listFires(db: Database, ruleId?: string): StandingFire[] {
   const rows =
     ruleId === undefined

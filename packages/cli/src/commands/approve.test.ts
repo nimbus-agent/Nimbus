@@ -5,6 +5,7 @@ import {
   APPROVE_YES_REFUSAL,
   formatRuleDetail,
   formatRuleTable,
+  formatSuggestions,
   parseApproveArgs,
   parseWindowArg,
   runApproveCmd,
@@ -166,7 +167,9 @@ describe("runApproveWith", () => {
   });
 
   test("list prints a table with the state and strips terminal controls; --json prints the raw rules", async () => {
-    const { c } = client(() => ({ rules: [RULE] }));
+    const { c } = client((m) =>
+      m === "standing.suggestions" ? { suggestions: [] } : { rules: [RULE] },
+    );
     const o = sink();
     expect(await runApproveWith(c, { verb: "list", json: false }, o.s)).toBe(0);
     const text = o.out.join("");
@@ -180,7 +183,9 @@ describe("runApproveWith", () => {
   });
 
   test("an empty list says so", async () => {
-    const { c } = client(() => ({ rules: [] }));
+    const { c } = client((m) =>
+      m === "standing.suggestions" ? { suggestions: [] } : { rules: [] },
+    );
     const o = sink();
     await runApproveWith(c, { verb: "list", json: false }, o.s);
     expect(o.out.join("")).toBe("No standing rules.\n");
@@ -224,6 +229,145 @@ describe("runApproveWith", () => {
   });
 });
 
+const SUGGESTION = {
+  id: "ss_0123456789abcdef",
+  workflowName: "weekly\u001b[2J-clean",
+  workflowId: "wf1",
+  stepIndex: 1,
+  stepLabel: "arch\u001b[31mive",
+  toolId: "gmail_thread_archive",
+  streak: 5,
+  createdAt: Date.UTC(2026, 10, 11),
+};
+
+describe("suggestions (Phase 10 SA5)", () => {
+  const reply = (m: string): unknown =>
+    m === "standing.suggestions" ? { suggestions: [SUGGESTION] } : { rules: [RULE] };
+
+  test("add --from-suggestion takes only the id and the optional limits", () => {
+    expect(parseApproveArgs(["add", "--from-suggestion", SUGGESTION.id])).toEqual({
+      verb: "add",
+      fromSuggestion: SUGGESTION.id,
+    });
+    expect(
+      parseApproveArgs(["add", "--from-suggestion", SUGGESTION.id, "--days", "7", "--max", "5"]),
+    ).toEqual({ verb: "add", fromSuggestion: SUGGESTION.id, days: 7, max: 5 });
+  });
+
+  test("add --from-suggestion beside --workflow or --step, or with a rule id, does not parse", () => {
+    expect(
+      parseApproveArgs(["add", "--from-suggestion", SUGGESTION.id, "--workflow", "w"]),
+    ).toBeUndefined();
+    expect(
+      parseApproveArgs(["add", "--from-suggestion", SUGGESTION.id, "--step", "2"]),
+    ).toBeUndefined();
+    expect(parseApproveArgs(["add", "--from-suggestion", "sr_0123456789abcdef"])).toBeUndefined();
+    expect(parseApproveArgs(["add", "--from-suggestion", "nope"])).toBeUndefined();
+    expect(parseApproveArgs(["add", "--from-suggestion"])).toBeUndefined();
+  });
+
+  test("dismiss takes exactly one id", () => {
+    expect(parseApproveArgs(["dismiss", SUGGESTION.id])).toEqual({
+      verb: "dismiss",
+      id: SUGGESTION.id,
+      json: false,
+    });
+    expect(parseApproveArgs(["dismiss", SUGGESTION.id, "--json"])).toMatchObject({ json: true });
+    expect(parseApproveArgs(["dismiss"])).toBeUndefined();
+    expect(parseApproveArgs(["dismiss", "a", "b"])).toBeUndefined();
+  });
+
+  test("add --from-suggestion sends the suggestion id and nothing about the workflow", async () => {
+    const { c, calls } = client(() => ({ rule: RULE }));
+    const o = sink();
+    const code = await runApproveWith(
+      c,
+      { verb: "add", fromSuggestion: SUGGESTION.id, max: 5 },
+      o.s,
+    );
+    expect(code).toBe(0);
+    expect(calls).toEqual([
+      { method: "standing.create", params: { fromSuggestion: SUGGESTION.id, max: 5 } },
+    ]);
+    expect(o.out.join("")).toBe("Created standing rule sr_0123456789abcdef.\n");
+  });
+
+  test("list prints a Suggestions section after the rules, controls stripped", async () => {
+    const { c, calls } = client(reply);
+    const o = sink();
+    expect(await runApproveWith(c, { verb: "list", json: false }, o.s)).toBe(0);
+    expect(calls.map((x) => x.method)).toEqual(["standing.list", "standing.suggestions"]);
+    const text = o.out.join("");
+    expect(text.indexOf("sr_0123456789abcdef")).toBeLessThan(text.indexOf("Suggestions"));
+    expect(text).toContain("ss_0123456789abcdef");
+    expect(text).toContain("2 (arch[31mive)");
+    expect(text).toContain("nimbus approve add --from-suggestion <id>");
+    expect(text).not.toContain("\u001b");
+  });
+
+  test("list --json adds suggestions; no suggestions prints no section", async () => {
+    const { c } = client(reply);
+    const j = sink();
+    await runApproveWith(c, { verb: "list", json: true }, j.s);
+    const parsed = JSON.parse(j.out.join(""));
+    expect(parsed.suggestions[0].id).toBe(SUGGESTION.id);
+    expect(parsed.rules[0].id).toBe(RULE.id);
+    expect(formatSuggestions([])).toBe("");
+    expect(formatSuggestions([{ ...SUGGESTION, workflowName: null } as never])).toContain("wf1");
+  });
+
+  test("list on a gateway without standing.suggestions (-32601) prints the rules only; any other error fails", async () => {
+    const older = Object.assign(new Error("Method not found"), { code: -32601 });
+    const { c } = client((m) => (m === "standing.suggestions" ? older : reply(m)));
+    const o = sink();
+    expect(await runApproveWith(c, { verb: "list", json: false }, o.s)).toBe(0);
+    const text = o.out.join("");
+    expect(text).toContain("sr_0123456789abcdef");
+    expect(text).not.toContain("Suggestions");
+
+    const broken = Object.assign(new Error("database is locked"), { code: -32000 });
+    const failing = client((m) => (m === "standing.suggestions" ? broken : reply(m)));
+    const e = sink();
+    expect(await runApproveWith(failing.c, { verb: "list", json: false }, e.s)).toBe(1);
+    expect(e.err.join("")).toContain("database is locked");
+  });
+
+  test("dismiss calls the method and says what happened, or prints JSON", async () => {
+    const { c, calls } = client(() => ({ id: SUGGESTION.id, changed: true }));
+    const o = sink();
+    await runApproveWith(c, { verb: "dismiss", id: SUGGESTION.id, json: false }, o.s);
+    expect(calls[0]).toEqual({
+      method: "standing.dismissSuggestion",
+      params: { id: SUGGESTION.id },
+    });
+    expect(o.out.join("")).toBe(`Dismissed suggestion ${SUGGESTION.id}.\n`);
+    const no = client(() => ({ id: SUGGESTION.id, changed: false }));
+    const o2 = sink();
+    await runApproveWith(no.c, { verb: "dismiss", id: SUGGESTION.id, json: false }, o2.s);
+    expect(o2.out.join("")).toBe(`Suggestion ${SUGGESTION.id} was not open.\n`);
+    const o3 = sink();
+    await runApproveWith(c, { verb: "dismiss", id: SUGGESTION.id, json: true }, o3.s);
+    expect(JSON.parse(o3.out.join("")).changed).toBe(true);
+  });
+
+  test("add --from-suggestion refuses --yes before anything is sent", async () => {
+    const written: string[] = [];
+    const real = process.stderr.write; // the exact original, restored in `finally`
+    process.stderr.write = ((chunk: string) => {
+      written.push(String(chunk));
+      return true;
+    }) as typeof process.stderr.write;
+    try {
+      await expect(
+        runApproveCmd(["add", "--from-suggestion", SUGGESTION.id, "--yes"]),
+      ).rejects.toMatchObject({ code: 2 });
+    } finally {
+      process.stderr.write = real;
+    }
+    expect(written.join("")).toContain(APPROVE_YES_REFUSAL);
+  });
+});
+
 describe("runApproveCmd", () => {
   test("add and resume refuse --yes before anything is sent", async () => {
     for (const argv of [
@@ -231,7 +375,7 @@ describe("runApproveCmd", () => {
       ["resume", "sr_1", "-y"],
     ]) {
       const written: string[] = [];
-      const real = process.stderr.write.bind(process.stderr);
+      const real = process.stderr.write; // the exact original, restored in `finally`
       process.stderr.write = ((chunk: string) => {
         written.push(String(chunk));
         return true;
@@ -247,7 +391,7 @@ describe("runApproveCmd", () => {
 
   test("an unparseable command prints the usage and exits 2", async () => {
     const written: string[] = [];
-    const real = process.stderr.write.bind(process.stderr);
+    const real = process.stderr.write; // the exact original, restored in `finally`
     process.stderr.write = ((chunk: string) => {
       written.push(String(chunk));
       return true;

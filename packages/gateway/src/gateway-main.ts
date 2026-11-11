@@ -27,6 +27,7 @@ import { removeGatewayStateFile, writeGatewayStateFile } from "./platform/gatewa
 import { createPlatformServices } from "./platform/index.ts";
 import { showIgnoringFailure } from "./platform/notifications/notifications-runtime.ts";
 import type { SandboxRunner } from "./platform/sandbox/sandbox-runner.ts";
+import { buildLearningConfig } from "./standing/learning-config.ts";
 import { sweepToolgenCredentials } from "./toolgen/toolgen-credential-sweep.ts";
 import { removeAllToolScripts } from "./toolgen/toolgen-script-store.ts";
 import { GATEWAY_VERSION } from "./version.ts";
@@ -340,6 +341,7 @@ export async function main(): Promise<void> {
   // (`platform/assemble.ts`'s `bootChatopsAgentInvoker`), right after `ipcOpts.federationIdentity`
   // is populated, so nothing is left to do here.
 
+  const learningLogger = pino({ name: "standing-learning" });
   platform.ipc.setWorkflowRunHandler(async (ctx) => {
     // A `run` step genuinely REQUIRES an agent — unlike `runAsk`, it has no deterministic path
     // to fall back to. With no `[llm.remote.*]` vendor enabled there is no agent: the runner then
@@ -374,6 +376,14 @@ export async function main(): Promise<void> {
       ...(ctx.trigger === undefined ? {} : { trigger: ctx.trigger }),
       // SA4: set only by `workflow.resume`, after the dispatcher validated the blocked run.
       ...(ctx.resume === undefined ? {} : { resume: ctx.resume }),
+      // SA5: approval learning reads this run's audit rows after each write step. Off on a demo
+      // gateway, under the org lockoff, or when policy cannot be read; never changes a run.
+      learning: buildLearningConfig({
+        demo: platform.paths.demo === true,
+        configDir: platform.paths.configDir,
+        enforcedPolicy: platform.enforcedPolicy,
+        log: (fields, message) => learningLogger.info(fields, message),
+      }),
       workflowName: ctx.workflowName,
       triggeredBy: ctx.triggeredBy,
       dryRun: ctx.dryRun,
