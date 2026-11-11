@@ -919,6 +919,55 @@ export function checkSyncContextNoRawHandles(files: readonly FileEntry[]): Viola
   return out;
 }
 
+// ---- D24 extension: `work_snapshot` is written only by the capability's store (Phase 10 MB1) ------
+//
+// Rule `work-snapshot-confined`. A WRITE verb on `work_snapshot` may appear only in the store
+// (`index/work-snapshot-store.ts`) and the V91 DDL file; the store's writer `replaceWorkSnapshotRows`
+// may be NAMED only by the store and `sync/sync-capabilities.ts`. Reads are unrestricted (the morning
+// briefing reads the table). So no syncable, agent, RPC or other store writes a snapshot: a syncable
+// reaches it only through the `replaceWorkSnapshot` capability, which binds the service.
+//
+// Stated bounds: a text scan, so a dynamically composed table name evades it (as D33(b) says);
+// confinement of the capability itself (scoped to jira, linear and github) is the real defense.
+// `iterateGlob` skips every `-sql.ts` file, so the real scan never visits the DDL file; it stays in
+// the allow-list only so a synthetic file set (which feeds files directly) can carry it.
+const D24_WS_SRC = "packages/gateway/src/";
+const D24_WS_STORE = `${D24_WS_SRC}index/work-snapshot-store.ts`;
+const D24_WS_DDL = `${D24_WS_SRC}index/work-snapshot-v91-sql.ts`;
+const D24_WS_CAPABILITY = `${D24_WS_SRC}sync/sync-capabilities.ts`;
+// A constructor over `String.raw`, as the handle pattern above (a script-authored literal once lost
+// its `\b`): the rule is red-proved against planted violations.
+const D24_WS_WRITE_RE = new RegExp(
+  String.raw`\b(?:INSERT\s+(?:OR\s+\w+\s+)?INTO|REPLACE\s+INTO|DELETE\s+FROM|UPDATE|DROP\s+TABLE|ALTER\s+TABLE)\s+["'\`\[]?work_snapshot\b`,
+  "gi",
+);
+const D24_WS_NAME_RE = new RegExp(String.raw`\breplaceWorkSnapshotRows\b`, "g");
+
+export function checkWorkSnapshotConfinement(files: readonly FileEntry[]): Violation[] {
+  const out: Violation[] = [];
+  const add = (f: FileEntry, src: string, index: number | undefined): void => {
+    const line = src.slice(0, index).split("\n").length;
+    out.push({
+      rule: "work-snapshot-confined",
+      file: f.relPath,
+      line,
+      snippet: (f.contents.split("\n")[line - 1] ?? "").trim(),
+    });
+  };
+  for (const f of files) {
+    if (f.relPath.endsWith(".test.ts") || f.relPath.endsWith(".test-helpers.ts")) continue;
+    if (!f.relPath.startsWith(D24_WS_SRC)) continue;
+    const commentFree = stripComments(f.contents);
+    if (f.relPath !== D24_WS_STORE && f.relPath !== D24_WS_DDL) {
+      for (const m of commentFree.matchAll(D24_WS_WRITE_RE)) add(f, commentFree, m.index);
+    }
+    if (f.relPath !== D24_WS_STORE && f.relPath !== D24_WS_CAPABILITY) {
+      for (const m of commentFree.matchAll(D24_WS_NAME_RE)) add(f, commentFree, m.index);
+    }
+  }
+  return out;
+}
+
 // D25: a CONNECTOR SYNCABLE may not call `Bun.spawn` — it must go through
 // `platform/spawn-capture.ts`, which spawns with `windowsHide`.
 //
@@ -4550,6 +4599,10 @@ export const RULE_ANCHORS: readonly string[] = [
   "packages/gateway/src/engine/standing-rule-step.ts",
   "packages/gateway/src/standing/standing-rule-store.ts",
   "packages/gateway/src/automation/workflow-write-step.ts",
+  // D24 (work_snapshot-confined, Phase 10 MB1) — the only store and the only capability that names
+  // its writer; either moving would leave the rule passing over nothing.
+  "packages/gateway/src/index/work-snapshot-store.ts",
+  "packages/gateway/src/sync/sync-capabilities.ts",
 ];
 
 /** Fail loudly when the scanned set cannot support the rules about to run. */
@@ -4730,6 +4783,13 @@ async function run(): Promise<void> {
       );
     }
     if (handleViolations.length > 0) exit = 1;
+    const snapshotViolations = checkWorkSnapshotConfinement(files);
+    for (const e of snapshotViolations) {
+      console.error(
+        `::error file=${e.file},line=${e.line}::D24 work_snapshot written outside its store (rule work-snapshot-confined) — the replaceWorkSnapshot capability is the only route: ${e.snippet}`,
+      );
+    }
+    if (snapshotViolations.length > 0) exit = 1;
     const spawnViolations = checkConnectorSpawnIsHidden(files);
     for (const e of spawnViolations) {
       console.error(

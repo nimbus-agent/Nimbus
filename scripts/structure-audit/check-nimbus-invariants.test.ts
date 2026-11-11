@@ -50,6 +50,7 @@ import {
   checkSqliteRuntimeInit,
   checkStandingApprovals,
   checkSyncContextNoRawHandles,
+  checkWorkSnapshotConfinement,
   checkToolgenVaultKeyConfinement,
   checkTribalKbWriteInvariant,
   checkTrustTableConfinement,
@@ -5565,5 +5566,95 @@ describe("D44 — a standing rule approves only inside approvalPhase, for an exa
     expect(
       rules([...GOOD, file(OTHER, 'if (p.trigger === "schedule") {} type T = "schedule";')]),
     ).toEqual([]);
+  });
+});
+
+describe("D24 - work_snapshot is written only by the capability's store (Phase 10 MB1)", () => {
+  const file = (relPath: string, contents: string): FileEntry => ({ relPath, contents });
+  const SRC = "packages/gateway/src/";
+  const STORE = `${SRC}index/work-snapshot-store.ts`;
+  const DDL = `${SRC}index/work-snapshot-v91-sql.ts`;
+  const CAP = `${SRC}sync/sync-capabilities.ts`;
+  const GOOD: FileEntry[] = [
+    file(
+      STORE,
+      'export function replaceWorkSnapshotRows() { dbRun(db, "DELETE FROM work_snapshot WHERE service = ?"); dbRun(db, "INSERT INTO work_snapshot (a) VALUES (1)"); }\n',
+    ),
+    file(
+      DDL,
+      'export const X = ["CREATE TABLE IF NOT EXISTS work_snapshot (a)", "DELETE FROM work_snapshot WHERE item_id = OLD.id"];\n',
+    ),
+    file(CAP, "const r = replaceWorkSnapshotRows(db, s, rel, ids, now);\n"),
+    file(
+      `${SRC}agents/_lib/x.ts`,
+      'const q = "SELECT item_id FROM work_snapshot JOIN item ON 1"; // INSERT INTO work_snapshot\n',
+    ),
+    file(
+      `${SRC}connectors/jira-sync.test.ts`,
+      'db.run("INSERT INTO work_snapshot VALUES (1)"); replaceWorkSnapshotRows();\n',
+    ),
+  ];
+  const rules = (files: FileEntry[]): string[] =>
+    checkWorkSnapshotConfinement(files).map((v) => v.rule);
+  const withBad = (path: string, contents: string): FileEntry[] => [...GOOD, file(path, contents)];
+
+  test("the good set is clean", () => {
+    expect(checkWorkSnapshotConfinement(GOOD)).toEqual([]);
+  });
+
+  for (const [name, sql] of [
+    ["INSERT", 'dbRun(db, "INSERT INTO work_snapshot (a) VALUES (1)")'],
+    ["DELETE", 'dbRun(db, "DELETE FROM work_snapshot")'],
+    ["UPDATE", 'dbRun(db, "UPDATE work_snapshot SET captured_at = 1")'],
+    ["INSERT OR REPLACE", 'dbRun(db, "INSERT OR REPLACE INTO work_snapshot (a) VALUES (1)")'],
+    ["REPLACE INTO", 'dbRun(db, "REPLACE INTO work_snapshot (a) VALUES (1)")'],
+    ["DROP", 'dbRun(db, "DROP TABLE work_snapshot")'],
+    ["ALTER", 'dbRun(db, "ALTER TABLE work_snapshot ADD COLUMN x")'],
+    ["a quoted name", "dbRun(db, 'INSERT INTO \"work_snapshot\" (a) VALUES (1)')"],
+    ["a bracketed name", "dbRun(db, 'INSERT INTO [work_snapshot] (a) VALUES (1)')"],
+    ["a multi-line statement", "dbRun(db, `INSERT\n  INTO\n  work_snapshot (a) VALUES (1)`)"],
+  ] as const) {
+    test(`a syncable with ${name} is refused`, () => {
+      expect(rules(withBad(`${SRC}connectors/evil-sync.ts`, `${sql};\n`))).toEqual([
+        "work-snapshot-confined",
+      ]);
+    });
+  }
+
+  test("an RPC file deleting from the table is refused", () => {
+    expect(rules(withBad(`${SRC}ipc/x-rpc.ts`, 'db.run("DELETE FROM work_snapshot");\n'))).toEqual([
+      "work-snapshot-confined",
+    ]);
+  });
+
+  test("naming the store's writer outside the store and the capability is refused", () => {
+    expect(
+      rules(
+        withBad(
+          `${SRC}connectors/evil-sync.ts`,
+          "replaceWorkSnapshotRows(db, 'jira', 'assigned', [], 1);\n",
+        ),
+      ),
+    ).toEqual(["work-snapshot-confined"]);
+  });
+
+  test("a comment and a read are not violations", () => {
+    expect(
+      rules(
+        withBad(
+          `${SRC}connectors/ok-sync.ts`,
+          '// INSERT INTO work_snapshot\nconst q = "SELECT * FROM work_snapshot";\n',
+        ),
+      ),
+    ).toEqual([]);
+  });
+
+  test("the real repository satisfies the rule and every anchor is scanned", async () => {
+    const files: FileEntry[] = [];
+    for await (const f of iterateSourceFiles()) {
+      files.push({ relPath: f.relPath, contents: f.contents });
+    }
+    expect(checkWorkSnapshotConfinement(files)).toEqual([]);
+    expect(assertScanIsMeaningful(files)).toEqual([]);
   });
 });
