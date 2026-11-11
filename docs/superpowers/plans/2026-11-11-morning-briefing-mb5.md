@@ -509,7 +509,7 @@ Files: `agents/_lib/briefing-build.ts`, `briefing-render.ts`, `brief-kinds.ts`, 
    I31 scraper reads) and `briefing: "agents.briefing"` in `TOOL_NAME_BY_KIND`; `reserved-sections.ts`:
    `briefing: [GAPS_HEADING, BRIEFING_FRESHNESS_HEADING]` and a `reservedBlocksFor` branch building the
    freshness block from the brief (never by scanning markdown); `brief-contract.ts`: add `brief.kind ===
-   "briefing"` to the explicit empty list; `render.ts`: `export` `hardenedTitleLink`. Update the existing
+   "briefing"` to the explicit empty list; `render.ts`: `export` `hardenedTitleLink` and `stripLineStructureChars`. Update the existing
    tests that enumerate kinds: `reserved-sections.coverage.test.ts` table, `brief-contract` kind tests,
    and `security-invariants.test.ts:5263` needs no edit (it derives the set from `synthesize.ts`) - run it
    to prove totality. Update the stale "sixteen"/"seventeenth" comments only where they state a count the
@@ -664,11 +664,11 @@ Files: `cli/src/commands/briefing.ts`, `briefing-format.ts`, `index.ts`, `comman
    - `parseBriefingArgs`: `[]` -> latest, `--json`, `now`, `list [--limit N]`, `status [--json]`; unknown
      argument or a second subcommand -> `undefined` (usage on stderr, exit 1).
    - `nimbus briefing`: prints `run.markdown` with `stripControlChars` applied to the WHOLE text (ANSI escapes
-     from an indexed title cannot reach the terminal) and a footer `fired <local time> - <trigger>`;
+     from an indexed title cannot reach the terminal) and a footer `fired <local time> - <firedBy>`;
      `{run: null}` -> a hint (`No briefing yet. Run "nimbus briefing now", or enable [briefing] in nimbus.toml`)
      exit 1; `--json` prints the raw result.
    - `now`: calls `briefing.runNow` and prints the new run; `ERR_BRIEFING_BUSY` -> message, exit 1.
-   - `list`: one line per run (`<id8> <local time> <trigger> <status> <headline>`), `skipped` shows its reason.
+   - `list`: one line per run (`<id8> <local time> <firedBy> <status> <headline>`), `skipped` shows its reason.
    - `status`: enabled/off, schedule + zone + next fire in the configured zone, last run, deadlines block,
      per-section sources (`connected` / `not connected`), `toast: will show | will not show (...)`.
    - Doctor `doctorPrintBriefing(client)` in the `doctorPrintCaptures` shape: silent when `[briefing]
@@ -862,3 +862,27 @@ Description: summary of what the owner gets, the 17 deviations (short), the stat
 the dependency note (needs MB1, MB2b, MB3 merged; the MB4 seam and the migration-number rebase rule above),
 and the owner action carried from MB2b (Google `calendar.readonly` verification). End with the attribution
 lines from the session. No `Release-As:` trailer.
+
+## Review corrections (agy round 1; these OVERRIDE the tasks above where they differ)
+
+**R1-1 (BLOCKING, D44(d)).** `trigger: "schedule"` is reserved by static D44(d) (`standing-unattended-confined`,
+`check-nimbus-invariants.ts` ~3345) to `automation/workflow-scheduler.ts`, the one producer of an UNATTENDED WORKFLOW
+run. A briefing run is not a workflow run, so it must not borrow that vocabulary, and D44(d) is NOT widened (widening a
+security rule to admit a non-workflow producer would blur what it proves). Everywhere the briefing names how a run
+started, use `firedBy: "schedule" | "manual"` in TypeScript and a `fired_by TEXT NOT NULL CHECK (fired_by IN
+('schedule','manual'))` column in `briefing_run` (replacing the spec's `trigger` column). Tasks 7, 9, 14 and the schema
+task change accordingly. Add a D44 fixture test: a file under `briefing/` containing `firedBy: "schedule"` raises no
+`standing-unattended-confined` violation, and one containing `trigger: "schedule"` still does (so the separation is pinned).
+
+**R1-2.** `reserved-sections.coverage.test.ts` gains a dedicated test that `briefing` withholds `## Data freshness` under
+`omitReserved: true` and renders it otherwise (mirroring the existing `negotiate` test).
+
+**R1-3.** `showWithOutcome(service: Pick<NotificationService, "show" | "delivers">, title, body): Promise<ToastOutcome>`.
+
+**R1-4.** `export type ToastOutcome = "delivered" | "not_delivering" | "rate_limited" | "unavailable" | "failed" | "demo"`
+from `platform/notifications/notifications-runtime.ts`; `briefing-delivery.ts`, `briefing-runner.ts` and
+`briefing-store.ts` import it (the store's `toast_outcome` column holds exactly these values).
+
+**R1-5.** `scheduleRefusal(expr, tz, minIntervalMinutes = MIN_INTERVAL_MINUTES)` keeps the existing message template
+with the parameter: `schedule can fire more often than every ${minIntervalMinutes} minutes`; existing callers and their
+message tests are unchanged.
