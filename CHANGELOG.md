@@ -2,6 +2,13 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [10.51.0](https://github.com/nimbus-agent/Nimbus/compare/v10.50.0...v10.51.0) (2026-11-11)
+
+
+### Features
+
+* **gateway:** index on-call shifts from PagerDuty and Jira Service Management and answer who is on call from the index ([#1972](https://github.com/nimbus-agent/Nimbus/issues/1972)) ([2e5003f](https://github.com/nimbus-agent/Nimbus/commit/2e5003f6271661e675dedc5bafd64f8211337a67))
+
 ## [10.50.0](https://github.com/nimbus-agent/Nimbus/compare/v10.49.0...v10.50.0) (2026-11-11)
 
 
