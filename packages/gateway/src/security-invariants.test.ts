@@ -1178,6 +1178,14 @@ describe("I11 — Tool-result envelope on the LLM-facing path", () => {
     });
   }
 
+  test("oncall_now (MB3) reaches the model only through wrapToolForLlm: registered wrapped in agent.ts, never wrapped bare, and the tool file does not wrap itself", async () => {
+    const agent = stripComments(await read("packages/gateway/src/engine/agent.ts"));
+    expect(agent).toMatch(/oncall_now:\s*wrapToolForLlm\(\s*"index",\s*"oncall_now"/);
+    expect(agent).not.toMatch(/oncall_now:\s*oncallNowTool\b/);
+    const tool = stripComments(await read("packages/gateway/src/engine/oncall-now-tool.ts"));
+    expect(tool).not.toContain("wrapToolOutput(");
+  });
+
   test("cu-tools.ts's four textual browser tools each independently route through the shared runTextualAction wrap+log site", async () => {
     // Per-tool, not per-file, AND bounded to each tool's OWN block (fix round 2). A per-file
     // check (above) cannot catch ONE tool silently skipping the shared wrap+log helper while its

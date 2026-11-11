@@ -16,6 +16,7 @@ import { asRecord } from "../connectors/unknown-record.ts";
 import { writeToolCallLog } from "../db/tool-call-log.ts";
 import { wrapLedgeredMastraModel } from "../egress/mastra-model-egress.ts";
 import type { IndexSearchQuery, LocalIndex, TraverseGraphOptions } from "../index/local-index.ts";
+import type { OncallServiceBinding } from "../index/oncall-now-query.ts";
 import { retrievalNoteFor } from "../index/search-retrieval.ts";
 import type { SessionMemoryStore } from "../memory/session-memory-store.ts";
 import { searchPersons } from "../people/person-store.ts";
@@ -38,6 +39,7 @@ import {
 } from "./connector-write-agent-tools.ts";
 import { buildContextWindow } from "./context-ranker.ts";
 import { createNegationTools } from "./negation-tools.ts";
+import { createOncallNowTool } from "./oncall-now-tool.ts";
 import { wrapToolOutput } from "./tool-output-envelope.ts";
 import { buildUserMcpAgentTools, type UserMcpAgentToolSource } from "./user-mcp-agent-tools.ts";
 
@@ -195,6 +197,11 @@ export type NimbusEngineAgentDeps = {
   searchServicePriority?: ReadonlyMap<string, number>;
   sessionMemoryStore?: SessionMemoryStore;
   auditDb?: Database;
+  /**
+   * The `[ci.service.*]` bindings `oncall_now` resolves a service name through, as a function so a
+   * config edit applies on the next call (it degrades to none when the config is unreadable).
+   */
+  oncallServiceConfigs?: () => readonly OncallServiceBinding[];
   /**
    * The live computer-use browser session (if any) this agent may drive, plus everything
    * `runAction` (Task 10's gate) needs to act on it. Omitted in every caller today: the browser
@@ -560,9 +567,13 @@ export function createNimbusEngineAgent(deps: NimbusEngineAgentDeps): {
   const consentGuidance =
     " For destructive or irreversible actions (send/draft email, move/delete files, modify connector data, etc.), call the tool directly. Nimbus's structural consent gate surfaces a separate HITL dialog to the user before the action executes — that dialog is the authoritative consent surface. Do not ask the user in chat for permission, do not say 'are you happy with this?', and do not require a verbal go-ahead before invoking a tool. Just invoke it; the consent gate handles the rest.";
 
-  const toolGuidance = `Use searchLocalIndex for ranked index search; it returns a window of full items plus sourceSummary for the rest—call fetchMoreIndexResults(service, indexedType, offset, limit) when the user needs more rows from a bucket. Use traverseGraph(entityId, depth?, relationTypes?) when the user asks what is linked to a PR, issue, repo, channel, or person already identified in the index. Use resolvePerson to map names to person ids before reasoning about authors. Use listConnectors and getAuditLog as needed. For a negative question ("which X did NOT ..."), use findPrsNotTouching(pathGlob, service?, limit?), findDeploymentsWithoutIncident(service?, limit?) or findPeopleWithoutReviews(sinceDays?, limit?) rather than searchLocalIndex: only they prove the underlying data exists, and only they can tell "nothing matched" apart from "nothing was indexed". If one of them refuses, say so and stop — do not substitute a ranked search. Do not claim you moved or deleted files unless the user already did so outside this chat.${consentGuidance}`;
+  const toolGuidance = `Use searchLocalIndex for ranked index search; it returns a window of full items plus sourceSummary for the rest—call fetchMoreIndexResults(service, indexedType, offset, limit) when the user needs more rows from a bucket. Use traverseGraph(entityId, depth?, relationTypes?) when the user asks what is linked to a PR, issue, repo, channel, or person already identified in the index. Use resolvePerson to map names to person ids before reasoning about authors. Use listConnectors and getAuditLog as needed. For a negative question ("which X did NOT ..."), use findPrsNotTouching(pathGlob, service?, limit?), findDeploymentsWithoutIncident(service?, limit?) or findPeopleWithoutReviews(sinceDays?, limit?) rather than searchLocalIndex: only they prove the underlying data exists, and only they can tell "nothing matched" apart from "nothing was indexed". If one of them refuses, say so and stop — do not substitute a ranked search. For "who is on call" use oncall_now(service?), never searchLocalIndex: it answers from the indexed shifts and says how old they are. Do not claim you moved or deleted files unless the user already did so outside this chat.${consentGuidance}`;
 
   const negationTools = createNegationTools({ localIndex: deps.localIndex });
+  const oncallNowTool = createOncallNowTool({
+    localIndex: deps.localIndex,
+    serviceConfigs: deps.oncallServiceConfigs ?? (() => []),
+  });
 
   const baseTools = {
     searchLocalIndex: wrapToolForLlm("index", "searchLocalIndex", searchLocalIndex, deps.auditDb),
@@ -594,6 +605,7 @@ export function createNimbusEngineAgent(deps: NimbusEngineAgentDeps): {
       negationTools.findPeopleWithoutReviews,
       deps.auditDb,
     ),
+    oncall_now: wrapToolForLlm("index", "oncall_now", oncallNowTool, deps.auditDb),
     ...(recallSessionMemory !== undefined && appendSessionMemory !== undefined
       ? {
           recallSessionMemory: wrapToolForLlm(
