@@ -11,7 +11,6 @@ import {
   urlFromFetchInput,
 } from "./connector-sync-test-helpers.ts";
 import {
-  isPinnedNextUrl,
   JSM_MAX_PAGES,
   JSM_MAX_SCHEDULES,
   JSM_OPS_ROOT,
@@ -19,6 +18,7 @@ import {
   type JsmCreds,
   parseParticipants,
   parseSchedules,
+  resolvePinnedNextUrl,
   runJsmOncall,
 } from "./jsm-oncall.ts";
 
@@ -460,6 +460,49 @@ describeWithFetchRestore("jsm oncall refresh", () => {
     }
   });
 
+  test("a user entry with no readable id is partial and keeps the stored responder's shift", async () => {
+    const db = createMemoryIndexDb();
+    try {
+      install(happy());
+      await runJsmOncall(ctxFor(db, { "jira.cloud_id": CID }), CREDS, {}, NOW);
+      const before = rows(db).length;
+      install(
+        happy({
+          [`${OPS}/schedules/sch1/on-calls`]: {
+            body: { onCallParticipants: [{ type: "user", name: "Alice" }] },
+          },
+        }),
+      );
+      const run = await runJsmOncall(ctxFor(db, { "jira.cloud_id": CID }), CREDS, {}, NOW + 1);
+      expect(run.outcome?.complete).toBe(false);
+      expect(run.outcome?.deleted).toBe(0);
+      expect(rows(db)).toHaveLength(before);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("a relative links.next (Atlassian's documented form) is followed and the set is replaced", async () => {
+    const db = createMemoryIndexDb();
+    try {
+      install(
+        happy({
+          [`${OPS}/schedules`]: {
+            body: {
+              values: [{ id: "sch1", name: "A" }],
+              links: { next: "/v1/schedules?offset=1" },
+            },
+          },
+          [`${OPS}/schedules?offset=1`]: { body: { values: [], links: { next: null } } },
+        }),
+      );
+      const run = await runJsmOncall(ctxFor(db, { "jira.cloud_id": CID }), CREDS, {}, NOW);
+      expect(run.outcome?.complete).toBe(true);
+    } finally {
+      db.close();
+    }
+  });
+
   test("a user nested in an escalation is indexed for both current and next shifts", async () => {
     const db = createMemoryIndexDb();
     try {
@@ -702,9 +745,23 @@ describeWithFetchRestore("jsm oncall parsers", () => {
     expect(parseSchedules('{"values":[],"links":"x"}')).toBeNull();
   });
 
-  test("isPinnedNextUrl accepts only the fixed host, https, this cloud id and the schedules path", () => {
+  test("resolvePinnedNextUrl resolves Atlassian's relative /v1/ link against this cloud id's base", () => {
+    expect(resolvePinnedNextUrl("/v1/schedules?offset=50&size=25", CID)).toBe(
+      `${OPS}/schedules?offset=50&size=25`,
+    );
+    for (const bad of [
+      "/v1/schedules/sch1/on-calls",
+      "/v1/../../other/v1/schedules",
+      "//evil.example/v1/schedules",
+      "/v1/schedules#frag",
+    ]) {
+      expect(resolvePinnedNextUrl(bad, CID)).toBeNull();
+    }
+  });
+
+  test("resolvePinnedNextUrl accepts only the fixed host, https, this cloud id and the schedules path", () => {
     const ok = `${OPS}/schedules?offset=50`;
-    expect(isPinnedNextUrl(ok, CID)).toBe(true);
+    expect(resolvePinnedNextUrl(ok, CID)).toBe(ok);
     for (const bad of [
       `https://evil.example/jsm/ops/api/${CID}/v1/schedules`,
       `http://api.atlassian.com/jsm/ops/api/${CID}/v1/schedules`,
@@ -716,7 +773,7 @@ describeWithFetchRestore("jsm oncall parsers", () => {
       "/jsm/ops/api/x",
       "not a url",
     ]) {
-      expect(isPinnedNextUrl(bad, CID)).toBe(false);
+      expect(resolvePinnedNextUrl(bad, CID)).toBeNull();
     }
   });
 
@@ -736,13 +793,13 @@ describeWithFetchRestore("jsm oncall parsers", () => {
         }),
         ["onCallParticipants"],
       ),
-    ).toEqual({ users: [{ id: "u", name: "U" }], skipped: 3 });
+    ).toEqual({ users: [{ id: "u", name: "U" }], skipped: 3, unreadableUsers: 2 });
     expect(
       parseParticipants('{"nextOnCallParticipants":[{"id":"n","type":"user"}]}', [
         "nextOnCallParticipants",
         "onCallParticipants",
       ]),
-    ).toEqual({ users: [{ id: "n", name: "n" }], skipped: 0 });
+    ).toEqual({ users: [{ id: "n", name: "n" }], skipped: 0, unreadableUsers: 0 });
   });
 
   test("a non-array participant field is a parse failure, at the top level and nested", () => {
@@ -778,6 +835,7 @@ describeWithFetchRestore("jsm oncall parsers", () => {
         { id: "u2", name: "Two" },
       ],
       skipped: 1,
+      unreadableUsers: 0,
     });
     const next = JSON.stringify({
       nextOnCallParticipants: [
@@ -791,6 +849,7 @@ describeWithFetchRestore("jsm oncall parsers", () => {
     expect(parseParticipants(next, ["nextOnCallParticipants", "onCallParticipants"])).toEqual({
       users: [{ id: "u3", name: "Three" }],
       skipped: 0,
+      unreadableUsers: 0,
     });
   });
 

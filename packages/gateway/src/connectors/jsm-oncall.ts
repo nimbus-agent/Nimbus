@@ -221,25 +221,31 @@ export function parseSchedules(text: string): SchedulePage | null {
 }
 
 /**
- * A `links.next` is followed only when it is on the one fixed host, over https, with no credentials, no
- * port and no fragment, under this cloud id's `schedules` path. Anything else stops the read (partial).
+ * The URL a `links.next` points at, or null when it must not be followed. Atlassian documents the link as a
+ * path relative to the Operations API base (`/v1/schedules?offset=50&size=25`), so a value starting with
+ * `/v1/` is resolved against `<JSM_OPS_ROOT>/<cloudId>` by concatenation; an absolute URL is taken as is.
+ * Either way the result is followed only when it is on the one fixed host, over https, with no credentials,
+ * no port and no fragment, at exactly this cloud id's `schedules` path (a `//host` or `..` path changes the
+ * host or the path and fails the same check). Anything else stops the read (partial).
  */
-export function isPinnedNextUrl(next: string, cloudId: string): boolean {
+export function resolvePinnedNextUrl(next: string, cloudId: string): string | null {
+  const candidate = next.startsWith("/v1/") ? `${JSM_OPS_ROOT}/${cloudId}${next}` : next;
+  let u: URL;
   try {
-    const u = new URL(next);
-    const rootUrl = new URL(JSM_OPS_ROOT);
-    return (
-      u.protocol === "https:" &&
-      u.hostname === rootUrl.hostname &&
-      u.port === "" &&
-      u.username === "" &&
-      u.password === "" &&
-      u.hash === "" &&
-      u.pathname === `${rootUrl.pathname}/${cloudId}/v1/schedules`
-    );
+    u = new URL(candidate);
   } catch {
-    return false;
+    return null;
   }
+  const rootUrl = new URL(JSM_OPS_ROOT);
+  const pinned =
+    u.protocol === "https:" &&
+    u.hostname === rootUrl.hostname &&
+    u.port === "" &&
+    u.username === "" &&
+    u.password === "" &&
+    u.hash === "" &&
+    u.pathname === `${rootUrl.pathname}/${cloudId}/v1/schedules`;
+  return pinned ? u.toString() : null;
 }
 
 type Participant = { id: string; name: string };
@@ -247,7 +253,8 @@ type Participant = { id: string; name: string };
 const NESTED_KEYS = ["onCallParticipants", "nextOnCallParticipants"] as const;
 const MAX_NESTING = 4;
 
-type Walk = { users: Map<string, Participant>; skipped: number };
+/** `unreadableUsers` counts entries typed `user` whose id cannot be used: they block a replacement. */
+type Walk = { users: Map<string, Participant>; skipped: number; unreadableUsers: number };
 
 /** Walks a participant list; false when any list has the wrong type or nests deeper than allowed. */
 function walkParticipants(list: unknown, depth: number, out: Walk): boolean {
@@ -263,6 +270,7 @@ function walkParticipants(list: unknown, depth: number, out: Walk): boolean {
     if (type === "user") {
       if (id === undefined || !SAFE_ACCOUNT_ID.test(id)) {
         out.skipped += 1;
+        out.unreadableUsers += 1;
       } else if (!out.users.has(id)) {
         out.users.set(id, { id, name: stringField(p, "name") ?? id });
       }
@@ -289,14 +297,18 @@ function walkParticipants(list: unknown, depth: number, out: Walk): boolean {
 export function parseParticipants(
   text: string,
   keys: readonly string[],
-): { users: Participant[]; skipped: number } | null {
+): { users: Participant[]; skipped: number; unreadableUsers: number } | null {
   const body = bodyWith(parseJson(text), keys);
   if (body === undefined) return null;
   const key = keys.find((k) => k in body);
   if (key === undefined) return null;
-  const out: Walk = { users: new Map(), skipped: 0 };
+  const out: Walk = { users: new Map(), skipped: 0, unreadableUsers: 0 };
   if (!walkParticipants(body[key], 0, out)) return null;
-  return { users: [...out.users.values()], skipped: out.skipped };
+  return {
+    users: [...out.users.values()],
+    skipped: out.skipped,
+    unreadableUsers: out.unreadableUsers,
+  };
 }
 
 const CURRENT_KEYS = ["onCallParticipants"] as const;
@@ -353,6 +365,8 @@ async function readSchedule(
       continue;
     }
     acc.skipped += parsed.skipped;
+    // A responder we could not read may be one indexed before: replacing would delete their shift.
+    if (parsed.unreadableUsers > 0) acc.complete = false;
     for (const p of parsed.users) {
       acc.keep.push(upsertOncallShift(ctx, toShift(schedule, p, shift, accountId), nowMs));
     }
@@ -400,11 +414,12 @@ async function collectSchedules(
       return out;
     }
     if (page.next === null) return out;
-    if (n >= JSM_MAX_PAGES || !isPinnedNextUrl(page.next, cloudId)) {
+    const nextUrl = n >= JSM_MAX_PAGES ? null : resolvePinnedNextUrl(page.next, cloudId);
+    if (nextUrl === null) {
       out.complete = false;
       return out;
     }
-    const res = await jsmGet(ctx, creds, page.next, remaining);
+    const res = await jsmGet(ctx, creds, nextUrl, remaining);
     const parsed = res.ok ? parseSchedules(res.text) : null;
     if (parsed === null) {
       out.complete = false;
