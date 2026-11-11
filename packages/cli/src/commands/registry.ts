@@ -57,6 +57,7 @@ export const COMMAND_NAMES = [
   "repl",
   "run",
   "scaffold",
+  "schedule",
   "scim",
   "search",
   "security",
