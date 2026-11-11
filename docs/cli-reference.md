@@ -1636,7 +1636,9 @@ Standing approval rules (Phase 10 SA3, invariant I55): approve a recurring workf
 
 ```bash
 nimbus approve add --workflow <name> --step <label|number> [--days 1-90] [--max 1-500] [--window "Mon-Fri 06:00-10:00 Europe/Berlin"]
+nimbus approve add --from-suggestion <id> [--days 1-90] [--max 1-500] [--window "Mon-Fri 06:00-10:00 Europe/Berlin"]
 nimbus approve list [--json]
+nimbus approve dismiss <suggestion-id> [--json]
 nimbus approve show <id> [--json]
 nimbus approve pause <id> [--json]
 nimbus approve resume <id>
@@ -1649,7 +1651,9 @@ While a rule is live, each write of that step that is built by that exact workfl
 
 `list` shows id, workflow, step, tool, uses against the ceiling, expiry, last-fired time and state (`live`, `paused`, `revoked`, `expired`, `exhausted`). `pause` and `revoke` narrow what runs unprompted, need no approval and are audited; `revoke` is final. `resume` widens again, so it asks you again. Every method is in the `standing` IPC namespace: forbidden over LAN, and the desktop may call `list`, `show`, `fires`, `pause` and `revoke` only.
 
-**Exit codes:** `0` done, `1` the gateway refused (policy, not a person's answer, a bad request, a decline), `2` usage.
+**Suggestions (Phase 10 SA5).** When you have approved the same write step of the same workflow, unchanged, by hand at the prompt in `[standing] suggest_after` runs in a row (default 5), `nimbus approve list` adds a `Suggestions` section after the rules (id, workflow, step, how many runs in a row; `--json` adds a `suggestions` array). Only a run in which you were asked and approved every action of that step counts: a run answered with `--yes` or by a script, a run a standing rule already covered, a scheduled run and a run with nothing to ask change nothing, and a rejection by you resets the count to 0. A suggestion is only a note. `nimbus approve add --from-suggestion <id>` takes the workflow and step from it (naming them too is refused) and then asks you exactly as `add` does, with one more line at the top of the prompt, `Suggested after <n> approvals in a row`; it refuses `--yes` like `add`, and if the workflow was edited since it exits 1 with `ERR_SUGGESTION_STALE`. `nimbus approve dismiss <suggestion-id>` drops one, needs no approval and is audited; a dismissed suggestion does not return until the workflow's content changes. Set the threshold in `nimbus.toml`: `[standing] suggest_after = 5` (an integer 3 to 50, or `0` to turn learning off; a value outside that falls back to 5 with a warning). Learning is off under the `standing_approvals` org lockoff and on a demo install.
+
+**Exit codes:** `0` done, `1` the gateway refused (policy, not a person's answer, a bad request, a decline, a stale suggestion), `2` usage.
 
 ---
 
