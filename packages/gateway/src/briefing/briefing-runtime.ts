@@ -140,7 +140,8 @@ export function createBriefingRuntime(deps: BriefingRuntimeDeps): BriefingRuntim
         req,
       );
     })().finally(() => {
-      inFlight = undefined;
+      // Only the run that is still the current one clears the guard.
+      if (inFlight === run) inFlight = undefined;
     });
     inFlight = run;
     return run;
@@ -161,8 +162,9 @@ export function createBriefingRuntime(deps: BriefingRuntimeDeps): BriefingRuntim
         now: deps.now,
         loadConfig,
         fire: async (req) => {
-          // A scheduled slot waits for a manual run in flight rather than racing it.
-          if (inFlight !== undefined) await inFlight.catch(() => {});
+          // A scheduled slot waits for a run in flight rather than racing it. It re-checks after every
+          // wait: another run may have started in the gap before this callback resumed.
+          while (inFlight !== undefined) await inFlight.catch(() => {});
           return await doFire(req);
         },
         scan: async (cfg) => {

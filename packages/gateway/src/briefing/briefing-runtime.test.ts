@@ -194,6 +194,53 @@ describe("the scheduler it builds", () => {
     expect(rows.map((r) => r.firedBy).sort()).toEqual(["manual", "schedule", "schedule"]);
     expect(rows.filter((r) => r.slotAt === Date.UTC(2026, 10, 12, 8, 30))).toHaveLength(1);
   });
+
+  test("a scheduled slot never runs beside a manual run that started while it waited", async () => {
+    const cfg = parseNimbusTomlBriefing(
+      '[briefing]\nenabled = true\ntz = "UTC"\nschedule = "30 8 * * 1-5"\n',
+    );
+    const seed = createBriefingRuntime(deps({ loadConfig: () => cfg }));
+    seed.store.insertRun({
+      firedAt: NOW - 24 * HOUR,
+      firedBy: "schedule",
+      status: "ok",
+      headline: "y",
+      slotAt: Date.UTC(2026, 10, 11, 8, 30),
+    });
+    let release: () => void = () => {};
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    let calls = 0;
+    let active = 0;
+    let maxActive = 0;
+    const rt = createBriefingRuntime(
+      deps({
+        loadConfig: () => cfg,
+        resolveSelf: async () => {
+          calls += 1;
+          active += 1;
+          maxActive = Math.max(maxActive, active);
+          if (calls === 1) await gate;
+          else await new Promise((r) => setTimeout(r, 5));
+          active -= 1;
+          return null;
+        },
+      }),
+    );
+    const manual = rt.runNow();
+    const tick = rt.scheduler?.tick();
+    // The moment the first run returns, start a second manual run: the scheduled slot, still waiting
+    // on the first run, must notice it and wait again rather than run beside it.
+    let second: Promise<unknown> | undefined;
+    const started = manual.then(() => {
+      second = rt.runNow();
+    });
+    release();
+    await started;
+    await Promise.allSettled([second, tick]);
+    expect(maxActive).toBe(1);
+  });
 });
 
 describe("status", () => {
