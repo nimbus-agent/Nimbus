@@ -5294,6 +5294,29 @@ describe("I31 — disclosure integrity: a synthesized brief never says less than
     expect(out.markdown).toContain("I31-DISCLOSURE-SENTINEL");
   });
 
+  test("OR-10-8: the morning briefing never consults a model - no synthesis runner anywhere in its files", async () => {
+    const files = [
+      ...(await readDirFiles("packages/gateway/src/briefing")),
+      ...(await readDirFiles("packages/gateway/src/agents/_lib")).filter((f) =>
+        /(?:^|\/)briefing[\w.-]*\.ts$/.test(f.rel),
+      ),
+    ];
+    // The directory walk finds the real files: a pin that visits nothing proves nothing.
+    expect(files.some((f) => f.rel.includes("briefing-runner"))).toBe(true);
+    expect(files.some((f) => f.rel.includes("briefing-build"))).toBe(true);
+    for (const f of files) {
+      const code = stripComments(f.contents);
+      expect(code, f.rel).not.toMatch(
+        /\bSynthesisRunner\b|\bresolveForSynthesis\b|\bcreateLlm\w*\b|synthesis-llm|\brunner\s*:/,
+      );
+    }
+    // `synthesize` is called with exactly one argument.
+    const runner = files.find((f) => f.rel.endsWith("briefing-runner.ts"))?.contents ?? "";
+    const calls = [...stripComments(runner).matchAll(/\bsynthesize\s*\(([^)]*)\)/g)];
+    expect(calls.length).toBeGreaterThan(0);
+    for (const c of calls) expect(c[1]?.trim()).toMatch(/^[\w.]+$/);
+  });
+
   test("I31: the reserved registry is total over the brief union", async () => {
     // A fifteenth brief kind must be a compile error in `reserved-sections.ts`, not a silent
     // empty list. The runtime half of that claim: the registry has one entry per kind the

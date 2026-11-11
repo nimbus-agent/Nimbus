@@ -252,6 +252,7 @@ import { createGlossaryRefresher, type GlossaryRefresher } from "../glossary/glo
 import { buildIdentityBoot } from "../identity/identity-boot.ts";
 import { buildTeamsBotJwtValidator } from "../identity/teams-bot-jwt.ts";
 import { isOperatorValid } from "../identity/verifier.ts";
+import { readUnreadChatThreads } from "../index/chat-unread-query.ts";
 import {
   LocalIndex,
   type LocalIndexOptions,
@@ -4691,7 +4692,7 @@ export async function assemblePlatformServices(
   ipcOpts.oncallPushRpcCtx = { runtime: oncallPush };
   // Morning briefing (Phase 10 MB5): briefing.* (the four reads are renderer-callable, runNow is
   // CLI-only; LAN-forbidden). The scheduler exists only off the demo root (I41); `gateway-main.ts` starts
-  // and retires it. The unread-chat reader (MB4) is wired here once `index/chat-unread-query.ts` exists.
+  // and retires it. The unread-Slack reader (MB4) is the one seam line below.
   const briefing = createBriefingRuntime({
     db,
     configDir: paths.configDir,
@@ -4708,7 +4709,9 @@ export async function assemblePlatformServices(
     emit: (p) => emitGatewayEvent("briefing.ready", { ...p }),
     toast: (title, body) => showWithOutcome(notifications, title, body),
     toastDelivers: () => notifications.delivers !== false,
-    demo: paths.demo === true,
+    // Not spelled like the IPC options line: the I41 wiring pin counts that exact text once.
+    demo: Boolean(paths.demo),
+    readUnreadChat: readUnreadChatThreads,
     logger: syncLogger,
   });
   ipcOpts.briefingRpcCtx = { runtime: briefing };

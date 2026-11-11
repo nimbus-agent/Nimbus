@@ -4,12 +4,12 @@ import { dateKeyInZone, dayRange } from "../../briefing/briefing-day.ts";
 import { type OncallShiftView, queryOncallNow } from "../../index/oncall-now-query.ts";
 import {
   type CalendarEntry,
+  SECTION_SERVICES,
   type ServiceFreshness,
   selectCalendarDay,
   selectIncidents,
   selectReviews,
   selectTickets,
-  SECTION_SERVICES,
   selectUnreadMail,
   serviceFreshness,
   type TicketEntry,
@@ -266,7 +266,8 @@ function oncallSection(ctx: Ctx): SectionOut {
 // ---- incidents ---------------------------------------------------------------------------------
 
 function incidentsSection(ctx: Ctx): SectionOut {
-  if (!sourceCheck(ctx, "Incidents", SECTION_SERVICES.incidents)) return notConnected("incidents", "Incidents");
+  if (!sourceCheck(ctx, "Incidents", SECTION_SERVICES.incidents))
+    return notConnected("incidents", "Incidents");
   const { selfPersonId } = ctx.input;
   const all = selectIncidents(ctx.input.db, selfPersonId);
   const rows: BriefingRow[] = all.slice(0, CAPS.incidents).map(({ incident: i, mine }) => {
@@ -299,7 +300,8 @@ function prWhere(repo: string | null, number: number | null): BriefingRow[number
 }
 
 function reviewsSection(ctx: Ctx): SectionOut {
-  if (!sourceCheck(ctx, "Reviews", SECTION_SERVICES.reviews)) return notConnected("reviews", "Reviews");
+  if (!sourceCheck(ctx, "Reviews", SECTION_SERVICES.reviews))
+    return notConnected("reviews", "Reviews");
   const r = selectReviews(ctx.input.db);
   const rows: BriefingRow[] = [
     ...r.requested

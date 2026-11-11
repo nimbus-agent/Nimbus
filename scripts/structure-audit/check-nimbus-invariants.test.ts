@@ -5775,6 +5775,8 @@ describe("D24 - chat_read_marker is written only by its store (Phase 10 MB4)", (
     }
     expect(checkChatReadMarkerConfinement(files)).toEqual([]);
     expect(assertScanIsMeaningful(files)).toEqual([]);
+  });
+});
 
 describe("D45 - the morning briefing delivers locally only (OR-10-11)", () => {
   const file = (relPath: string, contents: string): FileEntry => ({ relPath, contents });

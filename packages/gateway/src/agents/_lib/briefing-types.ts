@@ -2,6 +2,11 @@ import type { Database } from "bun:sqlite";
 import type { GapNote } from "@nimbus-dev/sdk";
 
 import type { BriefingSection } from "../../config/briefing-toml.ts";
+import type {
+  ChatUnreadReader,
+  ChatUnreadResult,
+  ChatUnreadThread,
+} from "../../index/chat-unread-query.ts";
 import type { OncallServiceBinding } from "../../index/oncall-now-query.ts";
 
 /**
@@ -68,35 +73,8 @@ export type BriefingBrief = {
 };
 
 // ---- the MB4 seam: unread Slack threads ---------------------------------------------------------
-// MB4 exports `readUnreadChatThreads` from `index/chat-unread-query.ts` with structurally identical
-// types; neither slice imports the other. With no reader the chat section renders a `## Gaps` line.
-
-export type ChatUnreadThread = {
-  readonly itemId: string;
-  readonly channelId: string;
-  readonly channelName: string | null;
-  readonly channelKind: "dm" | "mpim" | "channel";
-  readonly threadKey: string;
-  readonly latestTsMs: number;
-  readonly title: string;
-  readonly url: string | null;
-  readonly unreadMessages: number;
-};
-
-export type ChatUnreadResult = {
-  /** Before the cap. */
-  readonly totalThreads: number;
-  /** DMs and mpims first, then newest first, at most `opts.limit`. */
-  readonly threads: readonly ChatUnreadThread[];
-  readonly channelsWithMarker: number;
-  readonly oldestMarkerCapturedAtMs: number | null;
-  readonly newestMarkerCapturedAtMs: number | null;
-};
-
-export type ChatUnreadReader = (
-  db: Database,
-  opts: { readonly nowMs: number; readonly limit: number },
-) => ChatUnreadResult;
+// MB4 owns these types and `readUnreadChatThreads`; the one wiring line is in `platform/assemble.ts`.
+export type { ChatUnreadReader, ChatUnreadResult, ChatUnreadThread };
 
 export type BriefingDeps = {
   readonly readUnreadChat?: ChatUnreadReader;
