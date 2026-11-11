@@ -131,3 +131,23 @@ describe("runScheduleCmd", () => {
     expect(written.join("")).toContain(SCHEDULE_USAGE);
   });
 });
+
+describe("remaining branches", () => {
+  test("a workflow that never ran reads 'no runs'; a non-Error rejection is printed", async () => {
+    expect(formatScheduleTable([{ ...ENTRY, lastRunStatus: null }])).toContain("no runs");
+    const c = {
+      call: async <T>(): Promise<T> => {
+        throw "plain string";
+      },
+    };
+    const e = sink();
+    expect(await runScheduleWith(c, { verb: "list", json: false }, e.s)).toBe(1);
+    expect(e.err.join("")).toContain("plain string");
+  });
+
+  test("a blocked run with a known step label names that step", () => {
+    expect(
+      formatScheduleTable([{ ...ENTRY, blockedRunId: "r1", blockedStepLabel: "archive" }]),
+    ).toContain("step archive");
+  });
+});
