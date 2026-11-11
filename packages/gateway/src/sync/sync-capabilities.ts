@@ -19,6 +19,11 @@ import {
   upsertIndexedItemForSync,
 } from "../index/item-store.ts";
 import { type ObsidianNoteWrite, writeObsidianVault } from "../index/obsidian-notes-store.ts";
+import {
+  isWorkSnapshotService,
+  replaceWorkSnapshotRows,
+  type WorkSnapshotRelation,
+} from "../index/work-snapshot-store.ts";
 import { resolvePersonForSync } from "../people/linker.ts";
 import type { PersonSyncHints } from "../people/person-types.ts";
 import { recordPrChangedFiles } from "../prfiles/pr-changed-file-store.ts";
@@ -170,6 +175,16 @@ export interface SyncCapabilities<S extends ConnectorServiceId = ConnectorServic
    * them. Nesting is allowed and joins the outer batch.
    */
   writeBatch<T>(fn: () => T): T;
+  /**
+   * Replaces THIS service's snapshot of one relation of "my open work" (V91, Phase 10 MB1). Scoped to
+   * the bound service: the service is never a parameter, an external id resolves only among this
+   * service's items, and only `jira`, `linear` and `github` may call it. One transaction; an id with no
+   * indexed item is dropped and counted.
+   */
+  replaceWorkSnapshot(
+    relation: WorkSnapshotRelation,
+    externalIds: readonly string[],
+  ): { stored: number; dropped: number };
 }
 
 /**
@@ -278,6 +293,12 @@ export function buildSyncCapabilities<S extends ConnectorServiceId>(
     pruneBlameForFile: (repoRoot, filePath) => {
       pruneBlameForFile(deps.db, repoRoot, filePath);
     },
+    replaceWorkSnapshot: (relation, externalIds) => {
+      if (!isWorkSnapshotService(serviceId)) {
+        throw new Error(`replaceWorkSnapshot is not available to "${serviceId}".`);
+      }
+      return replaceWorkSnapshotRows(deps.db, serviceId, relation, externalIds, Date.now());
+    },
   };
 }
 
@@ -318,6 +339,8 @@ export function buildLocalOnlySyncCapabilities(
     getSecret: () => noCredentials("getSecret"),
     getSharedSecret: () => noCredentials("getSharedSecret"),
     accessToken: () => noCredentials("accessToken"),
+    // The db members above are bound to "github"; a local-only syncable must not inherit its snapshot.
+    replaceWorkSnapshot: () => noCredentials("replaceWorkSnapshot"),
   };
 }
 
@@ -348,6 +371,7 @@ export function unboundSyncCapabilities(): SyncCapabilities {
     recordPrChangedFiles: () => refuse("recordPrChangedFiles"),
     upsertBlameLines: () => refuse("upsertBlameLines"),
     pruneBlameForFile: () => refuse("pruneBlameForFile"),
+    replaceWorkSnapshot: () => refuse("replaceWorkSnapshot"),
     upsertItem: () => refuse("upsertItem"),
     resolvePerson: () => refuse("resolvePerson"),
     writeBatch: () => refuse("writeBatch"),
