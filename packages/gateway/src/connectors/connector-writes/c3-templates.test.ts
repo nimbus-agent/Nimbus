@@ -920,7 +920,7 @@ describe("C3 through the real door", () => {
       makeEgressSink(db),
       NO_POLICY_OVERLAY,
       undefined,
-      createBeforeStateRunner(),
+      { beforeState: createBeforeStateRunner() },
     );
     const tools = await buildConnectorWriteAgentTools(
       src,

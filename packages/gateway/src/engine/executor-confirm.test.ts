@@ -95,7 +95,7 @@ function harness(opts: {
     sink,
     NO_POLICY_OVERLAY,
     undefined,
-    opts.runner,
+    { beforeState: opts.runner },
   );
   return { exec, plain, confirmed, audits, egress, dispatched };
 }
@@ -540,7 +540,7 @@ describe("delegation (j, k) - I20", () => {
 
 describe("the frozen HITL set is untouched (n)", () => {
   test("HITL_REQUIRED keeps its size and holds every Wave 4 type", () => {
-    expect(HITL_REQUIRED.size).toBe(183);
+    expect(HITL_REQUIRED.size).toBe(185);
     for (const r of CONNECTOR_WRITE_ROWS.filter((x) => x.wave === 4)) {
       expect(HITL_REQUIRED.has(r.actionType), r.actionType).toBe(true);
     }

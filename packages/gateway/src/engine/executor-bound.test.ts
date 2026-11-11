@@ -616,7 +616,7 @@ function harnessWithRunnerRows(o: HarnessOptions): Harness {
     { append: (e) => base.egress.push(e) },
     NO_POLICY_OVERLAY,
     undefined,
-    { rows: [row], read: async () => undefined },
+    { beforeState: { rows: [row], read: async () => undefined } },
   );
   return { ...base, exec };
 }

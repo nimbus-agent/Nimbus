@@ -16,6 +16,8 @@ const NOT_ON_AN_IAC_PATH: Readonly<Record<string, string>> = {
   "ipc/server/dispatchers.ts":
     "inline stub dispatchers whose dispatch() refuses or throws; they never reach a connector",
   "ipc/server/vault-dispatch.ts": "a stub whose dispatch() throws; it never reaches a connector",
+  "ipc/standing-rpc.ts":
+    "the standing-rule approval gate's stub: dispatch() rejects, nothing reaches a connector",
 };
 
 /** A file that builds a dispatcher MUST name the capability (it forwards or sets it). */

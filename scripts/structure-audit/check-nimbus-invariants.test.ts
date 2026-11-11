@@ -48,6 +48,7 @@ import {
   checkSharePublishConfinement,
   checkSpawnInvariant,
   checkSqliteRuntimeInit,
+  checkStandingApprovals,
   checkSyncContextNoRawHandles,
   checkToolgenVaultKeyConfinement,
   checkTribalKbWriteInvariant,
@@ -5152,5 +5153,206 @@ describe("D43 — the unused change set is discarded only by the executor's own 
     expect(
       rules([...GOOD, file(OTHER, 'const s = wrapServerSpec(connectorSpawn("kubernetes"), m);')]),
     ).toEqual([]);
+  });
+});
+
+describe("D44 — a standing rule approves only inside approvalPhase, for an exactly matching owner-workflow action (I55)", () => {
+  const file = (relPath: string, contents: string): FileEntry => ({ relPath, contents });
+  const SRC = "packages/gateway/src/";
+  const EXECUTOR = `${SRC}engine/executor.ts`;
+  const STEP = `${SRC}engine/standing-rule-step.ts`;
+  const TYPES = `${SRC}engine/types.ts`;
+  const WRITE_STEP = `${SRC}automation/workflow-write-step.ts`;
+  const STORE = `${SRC}standing/standing-rule-store.ts`;
+  const V88 = `${SRC}index/standing-rule-v88-sql.ts`;
+  const RPC = `${SRC}ipc/standing-rpc.ts`;
+  const RUN_ASK = `${SRC}engine/run-ask.ts`;
+  const OTHER = `${SRC}ipc/other.ts`;
+  const EXECUTOR_GOOD = [
+    "class ToolExecutor {",
+    "  private async resolveHitlApproval(action, opts, record, scope) {",
+    "    const confirm = this.renderConfirmPhase(action);",
+    "    return this.approvalPhase(action, preview, confirm, record);",
+    "  }",
+    "  private async approvalPhase(action, preview, confirm, record) {",
+    "    const match = standingRuleStep(action, { deps: this.standingRules, rows: this.rows() });",
+    "    if (match !== undefined) {",
+    '      return { kind: "standing_approved", ruleId: match.ruleId, fireId: match.fireId };',
+    "    }",
+    "    const delegated = await this.tryDelegatedApproval(action, confirm, record);",
+    "    return delegated;",
+    "  }",
+    "}",
+    "",
+  ].join("\n");
+  const RUN_ASK_GOOD = [
+    "export function buildModelWriteExecutor(p) {",
+    "  return newTurnExecutor(p, undefined, { beforeState: runner });",
+    "}",
+    "export function buildWorkflowWriteExecutor(p) {",
+    "  return newTurnExecutor(p, undefined, { standingRules: createStandingRuleDeps(p) });",
+    "}",
+    "",
+  ].join("\n");
+  const GOOD: FileEntry[] = [
+    file(EXECUTOR, EXECUTOR_GOOD),
+    file(RUN_ASK, RUN_ASK_GOOD),
+    file(
+      STEP,
+      'export function standingRuleStep(a, c) { if (a.provenance?.kind !== "owner_workflow") return; return claimFire(); }\n',
+    ),
+    file(
+      WRITE_STEP,
+      'const p = { kind: "owner_workflow" }; const q = WorkflowProvenance; const f = fieldSources;\n',
+    ),
+    file(
+      TYPES,
+      'export type X = { readonly kind: "owner_workflow"; fieldSources: 1 } | { kind: "standing_approved" };\n',
+    ),
+    file(
+      STORE,
+      'db.run("INSERT INTO standing_rule (id) VALUES (1)"); export function insertRule() {} export function claimFire() {}\n',
+    ),
+    file(
+      V88,
+      'const sql = "CREATE TABLE IF NOT EXISTS standing_rule (id TEXT)"; const f = "CREATE TABLE standing_rule_fire (id TEXT)";\n',
+    ),
+    file(
+      RPC,
+      "insertRule(db, r); resumeRule(db, id); pauseRule(db, id, n); revokeRule(db, id, n);\n",
+    ),
+  ];
+  const rules = (files: FileEntry[]): string[] => [
+    ...new Set(checkStandingApprovals(files).map((v) => v.rule)),
+  ];
+  const swapExecutor = (contents: string): FileEntry[] =>
+    GOOD.map((f) => (f.relPath === EXECUTOR ? file(EXECUTOR, contents) : f));
+  const swapRunAsk = (contents: string): FileEntry[] =>
+    GOOD.map((f) => (f.relPath === RUN_ASK ? file(RUN_ASK, contents) : f));
+
+  test("the control: the allowed shape is clean", () => {
+    expect(checkStandingApprovals(GOOD)).toEqual([]);
+  });
+
+  test("(a) FAILS when the owner_workflow provenance is built or its shape named outside its files", () => {
+    for (const body of [
+      'const p = { kind: "owner_workflow", workflowId: 1 };',
+      'const t = "owner_workflow";',
+      "const x: WorkflowProvenance = y;",
+      "const s = { fieldSources: {} };",
+    ]) {
+      expect(rules([...GOOD, file(OTHER, body)]), body).toEqual(["standing-provenance-confined"]);
+    }
+    expect(
+      rules([...GOOD, file(OTHER, "// owner_workflow WorkflowProvenance fieldSources")]),
+    ).toEqual([]);
+  });
+
+  test("(a) the check may READ the literal but never construct it", () => {
+    const reader = file(
+      STEP,
+      'if (p.kind !== "owner_workflow") return; const x = { kind: "owner_workflow" };\n',
+    );
+    expect(rules(GOOD.map((f) => (f.relPath === STEP ? reader : f)))).toEqual([
+      "standing-provenance-confined",
+    ]);
+  });
+
+  test("(b) FAILS when either standing table is referenced outside the store and its DDL", () => {
+    for (const body of [
+      'db.run("INSERT INTO standing_rule (id) VALUES (1)");',
+      'db.query("SELECT * FROM standing_rule_fire");',
+      'db.run("UPDATE standing_rule SET actions_used = 0");',
+      'db.run("DELETE FROM standing_rule WHERE id = 1");',
+    ]) {
+      expect(rules([...GOOD, file(OTHER, body)]), body).toEqual(["standing-tables-confined"]);
+    }
+    expect(rules([...GOOD, file(OTHER, "// standing_rule")])).toEqual([]);
+  });
+
+  test("(b) FAILS when a store writer or the claim is named elsewhere", () => {
+    for (const body of [
+      "insertRule(db, r);",
+      "resumeRule(db, id);",
+      "revokeRule(db, id, n);",
+      "pauseRule(db, id, n);",
+      "claimFire(db, id, n, t, h);",
+    ]) {
+      expect(rules([...GOOD, file(OTHER, body)]), body).toEqual(["standing-tables-confined"]);
+    }
+  });
+
+  test("(b) test files and test-support helpers are not scanned", () => {
+    expect(rules([...GOOD, file(`${SRC}ipc/other.test.ts`, "insertRule(db, r);")])).toEqual([]);
+    expect(rules([...GOOD, file(`${SRC}ipc/x.test-helpers.ts`, "insertRule(db, r);")])).toEqual([]);
+  });
+
+  test("(c) FAILS when the step is called twice, outside approvalPhase, or after the delegate", () => {
+    expect(
+      rules(swapExecutor(`${EXECUTOR_GOOD}\nfunction other() { standingRuleStep(a, c); }\n`)),
+    ).toContain("standing-step-order-pinned");
+    expect(
+      rules(
+        swapExecutor(EXECUTOR_GOOD.replace("standingRuleStep(action,", "somethingElse(action,")),
+      ),
+    ).toContain("standing-step-order-pinned");
+    const late = EXECUTOR_GOOD.replace(
+      "    const match = standingRuleStep(action, { deps: this.standingRules, rows: this.rows() });",
+      "    const delegated = await this.tryDelegatedApproval(action, confirm, record);\n    const match = standingRuleStep(action, { deps: this.standingRules, rows: this.rows() });",
+    ).replace(
+      "    const delegated = await this.tryDelegatedApproval(action, confirm, record);\n    return delegated;",
+      "    return 1;",
+    );
+    expect(rules(swapExecutor(late))).toContain("standing-step-order-pinned");
+  });
+
+  test("(c) FAILS when approvalPhase runs before the confirm phase in resolveHitlApproval", () => {
+    const swapped = EXECUTOR_GOOD.replace(
+      "    const confirm = this.renderConfirmPhase(action);\n    return this.approvalPhase(action, preview, confirm, record);",
+      "    return this.approvalPhase(action, preview, confirm, record);\n    const confirm = this.renderConfirmPhase(action);",
+    );
+    expect(rules(swapExecutor(swapped))).toEqual(["standing-step-order-pinned"]);
+  });
+
+  test("(c) FAILS when the step name or the standing_approved outcome is used elsewhere", () => {
+    expect(rules([...GOOD, file(OTHER, "standingRuleStep(a, c);")])).toEqual([
+      "standing-outcome-confined",
+    ]);
+    for (const body of [
+      'return { kind: "standing_approved", ruleId: r, fireId: f };',
+      'record({ hitlStatus: "standing_approved" });',
+    ]) {
+      expect(rules([...GOOD, file(OTHER, body)]), body).toEqual(["standing-outcome-confined"]);
+    }
+    // A status MAP or a SQL CHECK names the string without constructing the outcome.
+    expect(rules([...GOOD, file(OTHER, 'case "standing_approved": return 1;')])).toEqual([]);
+  });
+
+  test("(e) FAILS when the dependency is named by any other file", () => {
+    expect(
+      rules([
+        ...GOOD,
+        file(OTHER, "new ToolExecutor(a, b, c, d, e, f, g, { standingRules: deps });"),
+      ]),
+    ).toEqual(["standing-rules-dep-confined"]);
+    expect(rules([...GOOD, file(OTHER, "const d = exec.standingRules;")])).toEqual([
+      "standing-rules-dep-confined",
+    ]);
+  });
+
+  test("(e) FAILS when run-ask writes the dependency outside buildWorkflowWriteExecutor, or twice", () => {
+    const door = RUN_ASK_GOOD.replace(
+      "{ beforeState: runner }",
+      "{ beforeState: runner, standingRules: createStandingRuleDeps(p) }",
+    );
+    expect(rules(swapRunAsk(door))).toEqual(["standing-rules-dep-confined"]);
+    const twice = RUN_ASK_GOOD.replace(
+      "{ standingRules: createStandingRuleDeps(p) }",
+      "{ standingRules: createStandingRuleDeps(p), standingRules: other }",
+    );
+    expect(rules(swapRunAsk(twice))).toEqual(["standing-rules-dep-confined"]);
+    expect(
+      rules(swapRunAsk("export function buildWorkflowWriteExecutor(p) { return 1; }\n")),
+    ).toEqual(["standing-rules-dep-confined"]);
   });
 });

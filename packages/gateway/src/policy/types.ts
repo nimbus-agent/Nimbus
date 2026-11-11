@@ -75,6 +75,12 @@ export const AI_V2_CAPABILITIES = [
    * (`connectors/connector-writes/model-write-capability.ts`).
    */
   "connector_write_model_access",
+  /**
+   * Standing approvals (Phase 10 SA3, I55): a rule approving a recurring workflow write without a
+   * prompt. Locked off, `standing.create` and `standing.resume` refuse and no rule fires. Fail-closed
+   * when the policy accessor is absent (`standing/standing-rule-capability.ts`).
+   */
+  "standing_approvals",
 ] as const;
 
 /** Where a persisted policy came from. */

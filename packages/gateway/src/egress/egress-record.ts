@@ -46,6 +46,8 @@ export function buildEgressEntry(args: {
   readonly resultStatus: EgressResultStatus;
   readonly sessionId: string | undefined;
   readonly now: number;
+  /** I55: the standing rule that approved the action, named first so the summary cap keeps it. */
+  readonly standingFire?: { readonly ruleId: string; readonly fireId: string };
 }): EgressEntry {
   return {
     timestamp: args.now,
@@ -53,7 +55,11 @@ export function buildEgressEntry(args: {
     sourceId: args.sessionId ?? null,
     destination: summarizeDestination(args.action.type),
     method: args.action.type,
-    payloadSummary: redactEgressSummary(args.action.payload),
+    payloadSummary: redactEgressSummary(
+      args.standingFire === undefined
+        ? args.action.payload
+        : { standingFire: args.standingFire, ...args.action.payload },
+    ),
     hitlStatus: args.hitlStatus,
     resultStatus: args.resultStatus,
   };

@@ -34,6 +34,7 @@ import {
   checkEvalConfinement,
   checkIacDiscard,
   checkModelWriteDoor,
+  checkStandingApprovals,
   checkWrapServerSpecInvariant,
   RULE_ANCHORS,
 } from "../../../scripts/structure-audit/check-nimbus-invariants.ts";
@@ -89,6 +90,19 @@ import {
 } from "./connectors/connector-writes/model-write-refusals.ts";
 import { PREPARE_TOOL_IDS } from "./connectors/connector-writes/prepare-tools.ts";
 import { buildConnectorWritePreview } from "./connectors/connector-writes/preview.ts";
+import {
+  archiveAction as i55ArchiveAction,
+  NOW as i55Now,
+} from "./connectors/connector-writes/standing-fixtures.test-helpers.ts";
+import {
+  BREAKERS as I55_BREAKERS,
+  type Scenario as I55Scenario,
+  aimAtRow as i55AimAtRow,
+  baseScenario as i55BaseScenario,
+  ruleCounters as i55Counters,
+  openDeps as i55OpenDeps,
+  setRuleColumn as i55SetRuleColumn,
+} from "./connectors/connector-writes/standing-scenarios.test-helpers.ts";
 import type { ConnectorWriteRow } from "./connectors/connector-writes/types.ts";
 import { transitionHealth } from "./connectors/health.ts";
 import {
@@ -98,15 +112,18 @@ import {
 } from "./connectors/lazy-mesh/tool-map.ts";
 import { ACTION_PROPOSABILITY } from "./connectors/proposable-actions.ts";
 import { createConnectorDispatcher } from "./connectors/registry.ts";
+import { appendAuditEntry } from "./db/audit-chain.ts";
+import { verifyAuditChain } from "./db/audit-verify.ts";
 import { egressSourceTypeForClientKind } from "./egress/egress-bearing-kinds.ts";
 import { COVERAGE_CLASSES, THIS_BINARY_COVERAGE } from "./egress/egress-coverage.ts";
 import { makeEgressSink, NULL_EGRESS_SINK } from "./egress/egress-ledger.ts";
 import { EGRESS_SOURCE_TYPES, MARKER_SOURCE_TYPES } from "./egress/egress-source-type.ts";
-import { egressHead, listEgress } from "./egress/egress-verify.ts";
+import { egressHead, listEgress, verifyEgressChain } from "./egress/egress-verify.ts";
 import { wrapLedgeredVlm } from "./egress/vlm-egress.ts";
 import {
   BOUND_VIA_GATE_REASON,
   consentDisplayPayload,
+  type ExecutorPolicyDep,
   formatConsentPrompt,
   HITL_REQUIRED,
   NO_POLICY_OVERLAY,
@@ -153,6 +170,7 @@ import { phase4RpcSkipped, type ServerCtx } from "./ipc/server/context.ts";
 import { demoRefusal } from "./ipc/server/demo-gate.ts";
 import { tryDispatchDemoRpc } from "./ipc/server/dispatchers.ts";
 import { RpcMethodError } from "./ipc/server/rpc-error.ts";
+import { createStandingOwnerAsk, dispatchStandingRpc } from "./ipc/standing-rpc.ts";
 import { AnthropicProvider } from "./llm/anthropic-provider.ts";
 import { GeminiProvider } from "./llm/gemini-provider.ts";
 import { LlamaCppProvider } from "./llm/llamacpp-provider.ts";
@@ -184,6 +202,11 @@ import { type LocalBaseline, PolicyGate } from "./policy/policy-gate.ts";
 import { refreshPolicy } from "./policy/policy-runtime.ts";
 import { signPolicy } from "./policy/policy-signing.ts";
 import { PolicyStore } from "./policy/policy-store.ts";
+import { createStandingRuleDeps } from "./standing/standing-rule-capability.ts";
+import {
+  getRule as i55GetRule,
+  listFires as i55ListFires,
+} from "./standing/standing-rule-store.ts";
 import { ProviderRateLimiter } from "./sync/rate-limiter.ts";
 import { SyncScheduler } from "./sync/scheduler.ts";
 import { setPaused } from "./sync/scheduler-store.ts";
@@ -759,8 +782,9 @@ describe("I4 — the fourth status is reserved (Phase 10 SA1)", () => {
   });
 
   test("only the migration DDL (V87) and the status maps mention standing_approved as a value", async () => {
-    // the standing-approval gate will produce it; until then no production path may CONSTRUCT the outcome or write the
-    // row. The same pin lives in `engine/approval-outcome.test.ts` for the outcome kind.
+    // I55 (SA3): the executor's `standingApproval`, from `standingRuleStep`'s match, is the ONLY
+    // production path that CONSTRUCTS the outcome or writes the row. The same pin lives in
+    // `engine/approval-outcome.test.ts` for the outcome kind.
     const offenders: string[] = [];
     const root = resolve(REPO_ROOT, "packages", "gateway", "src");
     for (const f of await readdir(root, { recursive: true })) {
@@ -769,7 +793,7 @@ describe("I4 — the fourth status is reserved (Phase 10 SA1)", () => {
       const src = await readFile(resolve(root, f), "utf8");
       if (/(?:kind|hitlStatus):\s*"standing_approved"\s*[,}]/.test(src)) offenders.push(rel);
     }
-    expect(offenders).toEqual([]);
+    expect(offenders).toEqual(["engine/executor.ts"]);
   });
 });
 
@@ -1868,9 +1892,9 @@ describe("I7 — Tauri ALLOWED_METHODS surface for T2 PR 3", () => {
     expect(rust).not.toContain("toolgen.");
   });
 
-  test("allowlist_exact_size assertion is 118", async () => {
+  test("allowlist_exact_size assertion is 123", async () => {
     const rust = await read("packages/ui/src-tauri/src/gateway_bridge.rs");
-    expect(rust).toMatch(/assert_eq!\s*\(\s*ALLOWED_METHODS\.len\(\),\s*118\s*\)/);
+    expect(rust).toMatch(/assert_eq!\s*\(\s*ALLOWED_METHODS\.len\(\),\s*123\s*\)/);
   });
 
   // Role packs Project 4: 111 + 7 - 2 = 116; Project 5 (onboarding): + pack.install, decisions.status
@@ -9589,7 +9613,7 @@ describe("I46 — a renderer can create an extension run grant only through migr
     }
     expect(rust).toContain('assert!(is_method_allowed("migration.list"));');
     expect(rust).toContain('assert!(is_method_allowed("migration.accept"));');
-    expect(rust).toMatch(/assert_eq!\s*\(\s*ALLOWED_METHODS\.len\(\),\s*118\s*\)/);
+    expect(rust).toMatch(/assert_eq!\s*\(\s*ALLOWED_METHODS\.len\(\),\s*123\s*\)/);
   });
 
   // ---- the positive control ------------------------------------------------------------------
@@ -12226,7 +12250,7 @@ describe("I53 — a first-party connector write reaches the model only through t
         { append: (e) => void egress.push(`${e.method}:${e.resultStatus}`) },
         NO_POLICY_OVERLAY,
         undefined,
-        createBeforeStateRunner(c.rows === undefined ? {} : { rows: c.rows }),
+        { beforeState: createBeforeStateRunner(c.rows === undefined ? {} : { rows: c.rows }) },
       );
       const out = await exec.execute({
         type: actionType,
@@ -12310,8 +12334,12 @@ describe("I53 — a first-party connector write reaches the model only through t
     const at = src.indexOf("export function buildModelWriteExecutor(");
     expect(at).toBeGreaterThan(-1);
     const body = src.slice(at, src.indexOf("\n}\n", at));
-    // Delegation is argument 2 (`undefined`); argument 3 is the before-state runner (spec § 5.4).
-    expect(body).toMatch(/newTurnExecutor\(\s*p,\s*undefined,\s*createBeforeStateRunner\(/);
+    // Delegation is argument 2 (`undefined`); argument 3 is the extras object (Phase 10 SA3), whose
+    // `beforeState` is the runner (spec § 5.4) and which carries no standing-rule dependencies.
+    expect(body).toMatch(
+      /newTurnExecutor\(\s*p,\s*undefined,\s*\{\s*beforeState:\s*createBeforeStateRunner\(/,
+    );
+    expect(body).not.toContain("standingRules");
     expect(body).not.toContain("delegation");
   });
 
@@ -12320,7 +12348,9 @@ describe("I53 — a first-party connector write reaches the model only through t
     const at = src.indexOf("export function buildWorkflowWriteExecutor(");
     expect(at).toBeGreaterThan(-1);
     const body = src.slice(at, src.indexOf("\n}\n", at));
-    expect(body).toMatch(/newTurnExecutor\(\s*p,\s*undefined,\s*createBeforeStateRunner\(/);
+    expect(body).toMatch(
+      /newTurnExecutor\(\s*p,\s*undefined,\s*\{\s*beforeState:\s*createBeforeStateRunner\(/,
+    );
     expect(body).not.toContain("delegation");
     expect(body).toMatch(
       /guardContext:\s*\(\)\s*=>\s*\(\{\s*kb:\s*p\.getTribalKbConfig\(\)\s*\}\)/,
@@ -12717,7 +12747,7 @@ describe("I53 — a first-party connector write reaches the model only through t
     expect(askBody).not.toContain("createBeforeStateRunner");
     const exec = stripComments(await read("packages/gateway/src/engine/executor.ts"));
     expect(exec).toMatch(
-      /private readonly previewCredentialFor\?: PreviewCredentialResolver,\s*private readonly beforeState\?: BeforeStateRunner,\s*private readonly writeTable\?: WriteTable,\s*\)/,
+      /private readonly previewCredentialFor\?: PreviewCredentialResolver,\s*extras: ToolExecutorExtras = \{\},\s*private readonly writeTable\?: WriteTable,\s*\)/,
     );
   });
 
@@ -12843,7 +12873,7 @@ describe("I53 — a first-party connector write reaches the model only through t
       { append: (e) => void egress.push(`${e.method}:${e.resultStatus}`) },
       NO_POLICY_OVERLAY,
       undefined,
-      createBeforeStateRunner({ rows: [guardedRow] }),
+      { beforeState: createBeforeStateRunner({ rows: [guardedRow] }) },
     );
     const out = await exec.execute({
       type: "jira.issue.update",
@@ -13411,5 +13441,447 @@ describe("Phase 9.7 D0c — typed confirmation over ChatOps (I20, I23, I29, D17,
         },
       ]),
     ).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// I55 — the standing-approval taint barrier (Phase 10 SA3)
+// ---------------------------------------------------------------------------------------------
+describe("I55 — a standing rule approves a write only inside approvalPhase, for an exactly matching owner-workflow action", () => {
+  type Seen = {
+    prompts: number;
+    confirmPrompts: number;
+    dispatched: string[];
+    auditAtDispatch: number;
+    egressAtDispatch: number;
+  };
+
+  /** A real executor, a real audit chain and a real egress ledger over the scenario's database. */
+  function liveExecutor(
+    s: I55Scenario,
+    opts: {
+      readonly answer?: { approved: boolean; answerSource: "human" | "auto" };
+      readonly withRules?: boolean;
+      readonly failAudit?: boolean;
+      readonly writeTable?: ConstructorParameters<typeof ToolExecutor>[8];
+      readonly policy?: ExecutorPolicyDep;
+    } = {},
+  ): { exec: ToolExecutor; seen: Seen } {
+    const seen: Seen = {
+      prompts: 0,
+      confirmPrompts: 0,
+      dispatched: [],
+      auditAtDispatch: -1,
+      egressAtDispatch: -1,
+    };
+    const answer = opts.answer ?? { approved: false, answerSource: "human" as const };
+    const countRows = (table: string): number =>
+      (s.db.query(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number }).n;
+    const exec = new ToolExecutor(
+      {
+        requestApproval: async () => {
+          seen.prompts += 1;
+          return answer;
+        },
+        requestConfirmedApproval: async () => {
+          seen.confirmPrompts += 1;
+          return { approved: false, typed: "", answerSource: "human" as const };
+        },
+      },
+      {
+        recordAudit: (e) => {
+          if (opts.failAudit === true) throw new Error("audit append failed");
+          appendAuditEntry(s.db, e);
+        },
+      },
+      {
+        dispatch: async (a) => {
+          seen.dispatched.push(a.type);
+          seen.auditAtDispatch = countRows("audit_log");
+          seen.egressAtDispatch = countRows("egress_ledger");
+          return { ok: true };
+        },
+      },
+      undefined,
+      makeEgressSink(s.db),
+      opts.policy ?? NO_POLICY_OVERLAY,
+      undefined,
+      opts.withRules === false ? {} : { standingRules: s.deps },
+      opts.writeTable,
+    );
+    return { exec, seen };
+  }
+
+  const auditRows = (db: Database): Array<{ hitl_status: string; action_json: string }> =>
+    db.query("SELECT hitl_status, action_json FROM audit_log ORDER BY id").all() as Array<{
+      hitl_status: string;
+      action_json: string;
+    }>;
+
+  test("a matching action dispatches with ZERO consent calls and one standing_approved audit row and egress row carrying the fire id", async () => {
+    const s = i55BaseScenario();
+    const { exec, seen } = liveExecutor(s);
+    const out = await exec.execute(s.action);
+    expect(out).toEqual({ status: "ok", result: { ok: true } });
+    expect(seen.prompts).toBe(0);
+    expect(seen.confirmPrompts).toBe(0);
+    expect(seen.dispatched).toEqual(["gmail.thread.archive"]);
+    // I29: the audit row and the egress row were appended BEFORE the dispatch.
+    expect(seen.auditAtDispatch).toBe(1);
+    expect(seen.egressAtDispatch).toBe(1);
+    const rows = auditRows(s.db);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.hitl_status).toBe("standing_approved");
+    const fires = i55ListFires(s.db, s.rule.id);
+    expect(fires).toHaveLength(1);
+    const fireId = fires[0]?.fireId as string;
+    const audited = JSON.parse(rows[0]?.action_json ?? "{}") as {
+      standingRule: { ruleId: string; fireId: string; matchedScopeSha256: string };
+      action: { provenance?: { fieldSources?: unknown } };
+    };
+    expect(audited.standingRule).toEqual({
+      ruleId: s.rule.id,
+      fireId,
+      matchedScopeSha256: fires[0]?.matchedScopeSha256 as string,
+    });
+    // The row names the workflow run, never the field sources the check reads.
+    expect(audited.action.provenance?.fieldSources).toBeUndefined();
+    const egress = s.db
+      .query("SELECT hitl_status, result_status, payload_summary FROM egress_ledger")
+      .all() as Array<{ hitl_status: string; result_status: string; payload_summary: string }>;
+    expect(egress).toHaveLength(1);
+    expect(egress[0]?.hitl_status).toBe("standing_approved");
+    expect(egress[0]?.result_status).toBe("authorized");
+    expect(egress[0]?.payload_summary).toContain(fireId);
+    expect(i55GetRule(s.db, s.rule.id)?.actionsUsed).toBe(1);
+    // Both hash chains verify with the new status in them.
+    expect(verifyAuditChain(new LocalIndex(s.db), { fromId: 0 }).ok).toBe(true);
+    expect(verifyEgressChain(s.db, 0).ok).toBe(true);
+  });
+
+  test("every independent clause, broken alone on an otherwise matching action, ends in the owner's prompt and claims nothing", async () => {
+    // The wave 4 breaker is the one prompt the executor makes a typed confirmation of.
+    for (const breaker of I55_BREAKERS) {
+      if (breaker.name === "HITL only by an org policy require") continue; // its own test below
+      const s = i55BaseScenario();
+      breaker.apply(s);
+      const before = i55Counters(s);
+      const { exec, seen } = liveExecutor(s);
+      const out = await exec.execute(s.action);
+      expect(out.status, breaker.name).toBe("rejected");
+      // A bound row (I54) and a tool named under another row's type (I53) are refused at the gate
+      // before anyone is asked; every other clause ends in the owner's prompt (the wave 4 row's is
+      // the typed confirmation).
+      const refusedBeforePrompt = ["a bound row", "mcpToolId names another row's tool"];
+      if (!refusedBeforePrompt.includes(breaker.name)) {
+        expect(seen.prompts + seen.confirmPrompts, breaker.name).toBeGreaterThanOrEqual(1);
+      }
+      expect(seen.dispatched, breaker.name).toEqual([]);
+      expect(
+        auditRows(s.db).map((r) => r.hitl_status),
+        breaker.name,
+      ).not.toContain("standing_approved");
+      if (breaker.name !== "an exhausted ceiling")
+        expect(i55Counters(s), breaker.name).toEqual(before);
+    }
+  });
+
+  test("a type that is HITL only because org policy requires it is not standing-approved", async () => {
+    const s = i55BaseScenario();
+    const synthetic = {
+      toolId: "synthetic_write",
+      actionType: "synthetic.thing.write",
+      transport: "mesh",
+      wave: 2,
+    } as const;
+    i55AimAtRow(s, synthetic, { a: "b" });
+    const { exec, seen } = liveExecutor(s, {
+      writeTable: { rows: [synthetic], prepareToolIds: new Set<string>() },
+      policy: { isHitlRequiredByPolicy: (t: string) => t === "synthetic.thing.write" },
+    });
+    expect((await exec.execute(s.action)).status).toBe("rejected");
+    expect(seen.prompts).toBe(1);
+    expect(seen.dispatched).toEqual([]);
+  });
+
+  test("outside the rule's window, by hour and by weekday, the owner is asked", async () => {
+    const window = { days: [1, 2, 3, 4, 5], from: "09:00", to: "10:00", tz: "UTC" };
+    for (const at of [Date.UTC(2026, 10, 11, 10, 0), Date.UTC(2026, 10, 14, 9, 30)]) {
+      const s = i55BaseScenario({ window });
+      s.deps = i55OpenDeps(s.db, { now: () => at });
+      const { exec, seen } = liveExecutor(s);
+      expect((await exec.execute(s.action)).status).toBe("rejected");
+      expect(seen.prompts).toBe(1);
+      expect(i55Counters(s)).toEqual({ used: 0, fires: 0 });
+    }
+    const s = i55BaseScenario({ window });
+    s.deps = i55OpenDeps(s.db, { now: () => Date.UTC(2026, 10, 11, 9, 30) });
+    const { exec, seen } = liveExecutor(s);
+    expect((await exec.execute(s.action)).status).toBe("ok");
+    expect(seen.prompts).toBe(0);
+  });
+
+  test("a constant whose dispatched value differs from the rule's constant asks the owner; key order is irrelevant", async () => {
+    const s = i55BaseScenario({ variant: "const" });
+    s.action = {
+      ...s.action,
+      payload: { mcpToolId: "gmail_thread_archive", input: { threadId: "T-other" } },
+    };
+    const { exec, seen } = liveExecutor(s);
+    expect((await exec.execute(s.action)).status).toBe("rejected");
+    expect(seen.prompts).toBe(1);
+    const t = i55BaseScenario({ variant: "const" });
+    i55SetRuleColumn(t, "scope_json", JSON.stringify({ threadId: { const: { a: 1, b: 2 } } }));
+    t.action = {
+      ...t.action,
+      payload: { mcpToolId: "gmail_thread_archive", input: { threadId: { b: 2, a: 1 } } },
+    };
+    const again = liveExecutor(t);
+    expect((await again.exec.execute(t.action)).status).toBe("ok");
+    expect(again.seen.prompts).toBe(0);
+  });
+
+  test("a door refusal on the actual input (a null optional field, a calendar time without its zone) asks the owner", async () => {
+    for (const bad of [{ timeZone: null }, { startDateTime: "tomorrow at ten" }]) {
+      const s = i55BaseScenario({ variant: "calendar" });
+      s.deps = createStandingRuleDeps({
+        db: s.db,
+        enforcedPolicy: () => ({ capabilitiesDisabled: new Set(), chatops: [] }) as never,
+        getTribalKbConfig: () => undefined,
+        now: () => i55Now,
+      });
+      const payload = s.action.payload as { input: Record<string, unknown> };
+      const input = { ...payload.input, ...bad };
+      const scope = Object.fromEntries(Object.entries(input).map(([k, v]) => [k, { const: v }]));
+      i55SetRuleColumn(s, "scope_json", JSON.stringify(scope));
+      s.action = { ...s.action, payload: { ...payload, input } };
+      const { exec, seen } = liveExecutor(s);
+      expect((await exec.execute(s.action)).status, JSON.stringify(bad)).toBe("rejected");
+      expect(seen.prompts).toBe(1);
+      expect(i55Counters(s)).toEqual({ used: 0, fires: 0 });
+    }
+  });
+
+  test("a policy with standing approvals locked off, or no policy accessor at all, never fires a rule", async () => {
+    for (const enforced of [
+      undefined,
+      () => undefined,
+      () => ({ capabilitiesDisabled: new Set(["standing_approvals"]) }),
+    ]) {
+      const s = i55BaseScenario();
+      s.deps = createStandingRuleDeps({
+        db: s.db,
+        enforcedPolicy: enforced as never,
+        getTribalKbConfig: () => undefined,
+        now: () => i55Now,
+      });
+      const { exec, seen } = liveExecutor(s);
+      expect((await exec.execute(s.action)).status).toBe("rejected");
+      expect(seen.prompts).toBe(1);
+    }
+  });
+
+  test("two concurrent claims with one action left: exactly one standing_approved, the other is asked", async () => {
+    const s = i55BaseScenario();
+    i55SetRuleColumn(s, "max_actions", 1);
+    const a = liveExecutor(s, { answer: { approved: true, answerSource: "human" } });
+    const b = liveExecutor(s, { answer: { approved: true, answerSource: "human" } });
+    const second = i55ArchiveAction(s.wf, { threadId: "thread-2" });
+    const [r1, r2] = await Promise.all([a.exec.execute(s.action), b.exec.execute(second)]);
+    expect(r1.status).toBe("ok");
+    expect(r2.status).toBe("ok");
+    const statuses = auditRows(s.db)
+      .map((r) => r.hitl_status)
+      .sort();
+    expect(statuses).toEqual(["approved", "standing_approved"]);
+    expect(a.seen.prompts + b.seen.prompts).toBe(1);
+    expect(i55Counters(s)).toEqual({ used: 1, fires: 1 });
+  });
+
+  test("a failed audit append dispatches nothing and the claim stays consumed (stated bound)", async () => {
+    const s = i55BaseScenario();
+    const { exec, seen } = liveExecutor(s, { failAudit: true });
+    await expect(exec.execute(s.action)).rejects.toThrow("audit append failed");
+    expect(seen.dispatched).toEqual([]);
+    expect(i55Counters(s)).toEqual({ used: 1, fires: 1 });
+  });
+
+  test("an executor built WITHOUT the standing-rule dependencies never standing-approves a perfectly matching action", async () => {
+    const s = i55BaseScenario();
+    const { exec, seen } = liveExecutor(s, { withRules: false });
+    expect((await exec.execute(s.action)).status).toBe("rejected");
+    expect(seen.prompts).toBe(1);
+    expect(i55Counters(s)).toEqual({ used: 0, fires: 0 });
+  });
+
+  test("census: no production `new ToolExecutor(` site is handed standing-rule dependencies, except through buildWorkflowWriteExecutor", async () => {
+    const sites: string[] = [];
+    for (const f of await readDirFiles("packages/gateway/src")) {
+      if (f.rel.endsWith(".test-helpers.ts")) continue;
+      const code = stripComments(f.contents);
+      let at = code.indexOf("new ToolExecutor(");
+      while (at !== -1) {
+        // The argument list: up to the matching close paren.
+        let depth = 0;
+        let end = at + "new ToolExecutor".length;
+        for (; end < code.length; end++) {
+          if (code[end] === "(") depth++;
+          else if (code[end] === ")" && --depth === 0) break;
+        }
+        const args = code.slice(at, end);
+        sites.push(f.rel);
+        expect(args, `${f.rel} passes standing rules to a ToolExecutor directly`).not.toMatch(
+          /standingRules/,
+        );
+        at = code.indexOf("new ToolExecutor(", end);
+      }
+    }
+    expect(sites.length).toBeGreaterThan(5);
+    // The one place the dependencies are given: run-ask's workflow executor, via newTurnExecutor.
+    const askSrc = stripComments(await read("packages/gateway/src/engine/run-ask.ts"));
+    const at = askSrc.indexOf("export function buildWorkflowWriteExecutor(");
+    const body = askSrc.slice(at, askSrc.indexOf("\n}\n", at));
+    expect(body).toMatch(/standingRules:\s*createStandingRuleDeps\(/);
+    expect(askSrc.match(/standingRules\s*:/g) ?? []).toHaveLength(1);
+    // The model door's and the ask turn's executors have none.
+    const door = askSrc.slice(
+      askSrc.indexOf("export function buildModelWriteExecutor("),
+      askSrc.indexOf("export function buildWorkflowWriteExecutor("),
+    );
+    expect(door).not.toContain("standingRules");
+  });
+
+  test("gateway-main hands the workflow executor the LIVE policy accessor, and nothing else the check reads", async () => {
+    const src = stripComments(await read("packages/gateway/src/gateway-main.ts"));
+    const at = src.indexOf("buildWorkflowWriteExecutor({");
+    const body = src.slice(at, src.indexOf("\n          }),", at));
+    expect(body).toMatch(/enforcedPolicy:\s*platform\.enforcedPolicy/);
+  });
+
+  test("the HITL set holds both standing action types and ACTION_PROPOSABILITY denies them (never an MCP proposal)", async () => {
+    for (const t of ["standing.rule.create", "standing.rule.resume"]) {
+      expect(HITL_REQUIRED.has(t), t).toBe(true);
+      expect(ACTION_PROPOSABILITY[t]).toEqual({ kind: "denied", class: "gateway_internal" });
+    }
+  });
+
+  test("I20: an active delegate is never asked to approve standing.rule.create or standing.rule.resume", async () => {
+    for (const type of ["standing.rule.create", "standing.rule.resume"]) {
+      let asked = 0;
+      let prompts = 0;
+      const exec = new ToolExecutor(
+        {
+          requestApproval: async () => {
+            prompts += 1;
+            return { approved: false, answerSource: "human" as const };
+          },
+        },
+        { recordAudit: () => {} },
+        { dispatch: async () => ({}) },
+        {
+          store: {
+            activeDelegateePeer: () => "peer:delegate",
+            activeDelegateFor: () => true,
+          } as never,
+          requestRemote: async () => {
+            asked += 1;
+            return { kind: "answered", approved: true, peerId: "peer:delegate" } as never;
+          },
+          isOperatorValid: () => true,
+        } as never,
+        NULL_EGRESS_SINK,
+      );
+      const out = await exec.gate({ type, payload: { promptText: "x" } });
+      expect(out, type).toEqual({ status: "rejected", reason: "User declined consent gate." });
+      expect(asked, type).toBe(0);
+      expect(prompts, type).toBe(1);
+    }
+    const src = stripComments(await read("packages/gateway/src/engine/executor.ts"));
+    expect(src).toMatch(/isStandingRuleActionType\(action\.type\)/);
+  });
+
+  test("a standing.create answered by --yes (auto), a script or an old client (unknown) is refused; only a human counts", async () => {
+    for (const answerSource of ["auto", "script", "unknown"] as const) {
+      const s = i55BaseScenario();
+      const ask = createStandingOwnerAsk({
+        consent: { requestApproval: async () => ({ approved: true, answerSource }) },
+        db: s.db,
+        audit: { recordAudit: (e) => void appendAuditEntry(s.db, e) },
+      });
+      const out = await dispatchStandingRpc(
+        "standing.create",
+        { workflow: "weekly-mail-clean", step: "archive" },
+        {
+          db: s.db,
+          callerKind: "cli",
+          policyAllows: () => true,
+          askOwner: ask,
+          recordNarrowing: () => {},
+          frozenHitl: (t) => HITL_REQUIRED.has(t),
+          now: () => i55Now,
+        },
+      ).then(
+        () => "created",
+        (e: unknown) => (e as { rpcData?: { code?: string } }).rpcData?.code,
+      );
+      expect(out, answerSource).toBe("ERR_STANDING_NEEDS_HUMAN");
+    }
+  });
+
+  test("standing.* is refused over LAN for every method, a write-permitted peer included", async () => {
+    const { checkLanMethodAllowed } = await import("./ipc/lan-rpc.ts");
+    for (const m of ["list", "show", "fires", "create", "pause", "resume", "revoke", "anything"]) {
+      expect(
+        () => checkLanMethodAllowed(`standing.${m}`, { peerId: "peer:x", writeAllowed: true }),
+        m,
+      ).toThrow(/ERR_METHOD_NOT_ALLOWED/);
+    }
+  });
+
+  test("the renderer allowlist names standing list/show/fires/pause/revoke and neither create nor resume", async () => {
+    const rust = await read("packages/ui/src-tauri/src/gateway_bridge.rs");
+    for (const m of ["fires", "list", "pause", "revoke", "show"]) {
+      expect(rust).toMatch(new RegExp(`^\\s*"standing\\.${m}",\\s*$`, "m"));
+    }
+    for (const m of ["create", "resume"]) {
+      expect(rust).not.toMatch(new RegExp(`^\\s*"standing\\.${m}",\\s*$`, "m"));
+      expect(rust).toContain(`assert!(!is_method_allowed("standing.${m}"));`);
+    }
+  });
+
+  test("workflow.run derives the trigger from the connection: LAN, mcp, unknown and http runs carry no provenance", async () => {
+    const { workflowTriggerOf } = await import("./ipc/server/inline-handlers.ts");
+    expect(workflowTriggerOf("cli")).toBe("owner_cli");
+    expect(workflowTriggerOf("ui")).toBe("owner_ui");
+    for (const kind of ["unknown", "mcp", "http", "chatops", "fleet", "push"] as const) {
+      expect(workflowTriggerOf(kind), kind).toBeUndefined();
+    }
+  });
+
+  test("D44 exists with its clauses, run() calls it, and the production tree has no violation", async () => {
+    const audit = await read("scripts/structure-audit/check-nimbus-invariants.ts");
+    for (const id of [
+      "standing-provenance-confined",
+      "standing-tables-confined",
+      "standing-step-order-pinned",
+      "standing-outcome-confined",
+      "standing-rules-dep-confined",
+    ]) {
+      expect(audit).toContain(id);
+    }
+    const runAt = audit.indexOf("async function run(");
+    expect(audit.slice(runAt)).toContain("checkStandingApprovals(files)");
+    const files = (await readDirFiles("packages/gateway/src")).map((f) => ({
+      relPath: `packages/gateway/src/${f.rel}`,
+      contents: f.contents,
+    }));
+    expect(checkStandingApprovals(files)).toEqual([]);
+    for (const anchor of [
+      "packages/gateway/src/standing/standing-rule-store.ts",
+      "packages/gateway/src/engine/standing-rule-step.ts",
+      "packages/gateway/src/automation/workflow-write-step.ts",
+    ]) {
+      expect(RULE_ANCHORS).toContain(anchor);
+    }
   });
 });

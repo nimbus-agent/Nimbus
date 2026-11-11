@@ -69,9 +69,9 @@ const count = (db: Database, table: string): number =>
   (db.query(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number }).n;
 
 describe("V87 migration: hitl_status gains standing_approved", () => {
-  test("the registered maximum and the current schema are 87 and agree", () => {
-    expect(CURRENT_SCHEMA_VERSION).toBe(87);
-    expect(maxRegisteredIndexedSchemaVersion()).toBe(87);
+  test("the registered maximum and the current schema are at least 87 and agree", () => {
+    expect(CURRENT_SCHEMA_VERSION).toBeGreaterThanOrEqual(87);
+    expect(maxRegisteredIndexedSchemaVersion()).toBe(CURRENT_SCHEMA_VERSION);
   });
 
   test("rows and chain survive, and both chains still verify", () => {

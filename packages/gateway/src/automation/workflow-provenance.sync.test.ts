@@ -1,8 +1,8 @@
 // Phase 10 SA2 (spec § 5.1): `provenance` on a PlannedAction is constructed ONLY in
-// `automation/workflow-write-step.ts`. This source pin is the check until the standing-approval
-// static rule (D44(a), SA3) takes it over: no IPC method, door, ChatOps path, LAN, HTTP or payload
-// builder names the provenance shape, so none can supply one. The two other files that name it
-// only READ it (the type, and the audit row's trimmed copy).
+// `automation/workflow-write-step.ts`. Static rule D44(a) (SA3) is the check; this source pin stays as
+// its readable twin: no IPC method, door, ChatOps path, LAN, HTTP or payload builder names the
+// provenance shape, so none can supply one. The files that name it only READ it (the type, the audit
+// row's trimmed copy, and the standing-rule check `engine/standing-rule-step.ts`).
 import { describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
@@ -11,7 +11,7 @@ import { stripComments } from "../../../../scripts/structure-audit/lib.ts";
 
 const SRC = join(import.meta.dir, "..");
 const CONSTRUCTOR = "automation/workflow-write-step.ts";
-const READERS = ["engine/types.ts", "engine/executor.ts"];
+const READERS = ["engine/types.ts", "engine/executor.ts", "engine/standing-rule-step.ts"];
 
 function sources(dir: string, out: string[] = []): string[] {
   for (const name of readdirSync(dir)) {
@@ -45,7 +45,10 @@ describe("provenance is constructed only by the workflow write step", () => {
 
   test('the literal kind "owner_workflow" appears only in the constructor and the type', () => {
     const named = files.filter((f) => /["']owner_workflow["']/.test(f.code)).map((f) => f.rel);
-    expect(named.sort()).toEqual([CONSTRUCTOR, "engine/types.ts"].sort());
+    // The check READS the literal (it never builds one); the constructor and the type are D44(a).
+    expect(named.sort()).toEqual(
+      [CONSTRUCTOR, "engine/standing-rule-step.ts", "engine/types.ts"].sort(),
+    );
   });
 
   test("the WorkflowProvenance type is named only by the constructor and the two readers", () => {

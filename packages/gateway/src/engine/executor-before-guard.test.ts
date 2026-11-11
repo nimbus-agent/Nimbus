@@ -112,7 +112,12 @@ function harness(opts: {
     makeEgressSink(ledger),
     NO_POLICY_OVERLAY,
     undefined,
-    opts.withRunner === false ? undefined : createBeforeStateRunner({ rows: opts.rows ?? [ROW] }),
+    {
+      beforeState:
+        opts.withRunner === false
+          ? undefined
+          : createBeforeStateRunner({ rows: opts.rows ?? [ROW] }),
+    },
   );
   const egress = (): Array<{ method: string; result_status: string; hitl_status: string }> =>
     ledger

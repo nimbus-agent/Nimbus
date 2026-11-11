@@ -5,12 +5,16 @@ import { AI_V2_CAPABILITIES } from "./types.ts";
 describe("AI_V2_CAPABILITIES", () => {
   test("mcp_action is a lockoff-able ai_v2 capability", () => {
     expect([...AI_V2_CAPABILITIES]).toContain("mcp_action");
-    expect(AI_V2_CAPABILITIES).toHaveLength(10);
+    expect(AI_V2_CAPABILITIES).toHaveLength(11);
   });
 
   test("agent_fleet is a lockoff-able ai_v2 capability", () => {
     expect([...AI_V2_CAPABILITIES]).toContain("agent_fleet");
-    expect(AI_V2_CAPABILITIES).toHaveLength(10);
+    expect(AI_V2_CAPABILITIES).toHaveLength(11);
+  });
+
+  test("standing_approvals is a lockoff-able ai_v2 capability (Phase 10 SA3, I55)", () => {
+    expect([...AI_V2_CAPABILITIES]).toContain("standing_approvals");
   });
 
   test("mcp_capture is a lockoff-able ai_v2 capability", () => {
@@ -37,6 +41,18 @@ describe("AI_V2_CAPABILITIES", () => {
       `[policy]\nversion=1\norg="x"\n[policy.capabilities.ai_v2]\nagent_fleet=false\n`,
     );
     expect(parsed.capabilities.disabled).toContain("agent_fleet");
+  });
+
+  test("an `[policy.capabilities.ai_v2] standing_approvals = false` block parses to a lockoff", () => {
+    const parsed = parsePolicyToml(
+      `[policy]
+version=1
+org="x"
+[policy.capabilities.ai_v2]
+standing_approvals=false
+`,
+    );
+    expect(parsed.capabilities.disabled).toContain("standing_approvals");
   });
 
   test("a typo next to it is still ignored rather than carried", () => {

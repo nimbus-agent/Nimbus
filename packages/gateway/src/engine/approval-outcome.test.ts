@@ -45,7 +45,7 @@ const GATEWAY_SRC = resolve(import.meta.dir, "..");
 const rel = (p: string): string => relative(GATEWAY_SRC, p).replaceAll("\\", "/");
 
 describe("SA1 source pins", () => {
-  test("no production path constructs a standing_approved outcome or row yet (I55 is reserved)", () => {
+  test("only the executor constructs a standing_approved outcome or row (I55, static D44(c))", () => {
     const offenders = srcFiles(GATEWAY_SRC)
       .filter((f) =>
         /(?:kind|hitlStatus):\s*"standing_approved"\s*[,}]|return\s+"standing_approved"/.test(
@@ -53,7 +53,8 @@ describe("SA1 source pins", () => {
         ),
       )
       .map(rel);
-    expect(offenders).toEqual([]);
+    // SA3: the executor's `standingApproval` builds the outcome from `standingRuleStep`'s match.
+    expect(offenders).toEqual(["engine/executor.ts"]);
   });
 
   test("the ConsentChannel implementers are exactly the known production set", () => {
@@ -69,6 +70,8 @@ describe("SA1 source pins", () => {
       "engine/index.ts",
       "engine/types.ts",
       "ipc/capture-rpc.ts",
+      // SA3: the standing-rule gate wraps the connection's channel so only a person's answer counts.
+      "ipc/standing-rpc.ts",
     ]);
   });
 });

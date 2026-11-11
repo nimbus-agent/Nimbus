@@ -168,7 +168,7 @@ describe("D3b through the real door", () => {
       makeEgressSink(db),
       NO_POLICY_OVERLAY,
       undefined,
-      createBeforeStateRunner(),
+      { beforeState: createBeforeStateRunner() },
     );
     const tools = await buildConnectorWriteAgentTools(
       src,
