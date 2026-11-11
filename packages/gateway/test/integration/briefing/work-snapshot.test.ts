@@ -291,22 +291,31 @@ describe("work snapshots, end to end", () => {
   test("outlook: a real delta page indexes is_read and an outl2 cursor is ignored", async () => {
     const { db, ctx } = await createOAuthConnectorTestSetup("microsoft", "outlook");
     const sync = createOutlookSyncable({ ensureMicrosoftMcpRunning: async () => {} });
-    router = () =>
-      new Response(
-        JSON.stringify({
-          value: [
-            {
-              id: "m1",
-              subject: "s",
-              bodyPreview: "p",
-              receivedDateTime: "2026-11-01T08:00:00Z",
-              isRead: false,
-            },
-          ],
-          "@odata.deltaLink": "https://graph.microsoft.com/v1.0/me/messages/delta?token=end",
-        }),
-        { status: 200 },
-      );
+    // Since MB2b the syncable also asks for the calendar; a message page read as events would
+    // overwrite the mail row, so that request gets its own (empty) answer.
+    router = (url) =>
+      url.includes("/calendarView/")
+        ? new Response(
+            JSON.stringify({
+              value: [],
+              "@odata.deltaLink": "https://graph.microsoft.com/v1.0/me/calendarView/delta?t=1",
+            }),
+          )
+        : new Response(
+            JSON.stringify({
+              value: [
+                {
+                  id: "m1",
+                  subject: "s",
+                  bodyPreview: "p",
+                  receivedDateTime: "2026-11-01T08:00:00Z",
+                  isRead: false,
+                },
+              ],
+              "@odata.deltaLink": "https://graph.microsoft.com/v1.0/me/messages/delta?token=end",
+            }),
+            { status: 200 },
+          );
     const stale = `nimbus-outl2:${Buffer.from(
       JSON.stringify({ v: 1, nextUrl: "https://graph.microsoft.com/v1.0/me/messages/delta?x=1" }),
     ).toString("base64url")}`;

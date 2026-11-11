@@ -883,6 +883,70 @@ describe("assemblePlatformServices — in-process assembly", () => {
     ]);
   }, 30000);
 
+  // Phase 10 MB2b: Google Calendar is its OWN consent, so a Gmail-only install must not make it
+  // look configured (a `sync` row per run for a request that would be a 403), while its own key
+  // does: exactly ONE row, destination `google_calendar`, through the real assembly.
+  it("google_calendar ledgers ONE sync row once its OWN key is set, and none for a Gmail-only Vault", async () => {
+    const paths = makePaths();
+    rmSync(paths.configDir, { recursive: true, force: true });
+    mkdirSync(paths.configDir, { recursive: true });
+    services = await assemblePlatformServices(paths, makeInMemoryVault(), NO_TRUST_FEED);
+    services.syncScheduler.pause("google_calendar");
+    const waveDb = services.localIndex.getDatabase();
+    const waveDeadline = Date.now() + 30_000;
+    const othersPending = (): number =>
+      (
+        waveDb
+          .query(
+            "SELECT COUNT(*) AS c FROM scheduler_state WHERE last_sync_at IS NULL AND service_id != 'google_calendar'",
+          )
+          .get() as { c: number }
+      ).c;
+    while (othersPending() > 0 && Date.now() < waveDeadline) {
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    await new Promise((r) => setTimeout(r, 20));
+
+    const token = JSON.stringify({
+      accessToken: "t",
+      refreshToken: "r",
+      expiresAt: Date.now() + 3_600_000,
+    });
+    const originalFetch = globalThis.fetch;
+    const calendarUrls: string[] = [];
+    globalThis.fetch = (async (input: string | URL | Request) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      if (url.includes("www.googleapis.com/calendar/")) {
+        calendarUrls.push(url);
+        return new Response(JSON.stringify({ items: [] }), { status: 200 });
+      }
+      return originalFetch(input);
+    }) as typeof fetch;
+    const countRows = (): number =>
+      (
+        waveDb
+          .query(
+            "SELECT COUNT(*) AS c FROM egress_ledger WHERE source_type = 'sync' AND destination = 'google_calendar'",
+          )
+          .get() as { c: number }
+      ).c;
+    try {
+      // a Gmail-only install (and the shared legacy key): not configured, so no row and no request
+      await services.vault.set("google_gmail.oauth", token);
+      await services.vault.set("google.oauth", token);
+      await services.syncScheduler.forceSync("google_calendar").catch(() => undefined);
+      expect(countRows()).toBe(0);
+      expect(calendarUrls).toHaveLength(0);
+
+      await services.vault.set("google_calendar.oauth", token);
+      await services.syncScheduler.forceSync("google_calendar");
+      expect(countRows()).toBe(1);
+      expect(calendarUrls.length).toBeGreaterThan(0);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  }, 60000);
+
   // I29 CRITICAL fix: `filesystem`/`blame`/`openapi`/`obsidian` are registered on the SAME
   // scheduler as every cloud connector but make NO outbound network request — a syncable that
   // performs a LOCAL mutation, not egress, must not be ledgered as egress (the `NULL_EGRESS_SINK`
