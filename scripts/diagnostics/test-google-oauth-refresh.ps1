@@ -98,7 +98,8 @@ $ALL_GOOGLE_KEYS = @(
   'google_drive.oauth',
   'google_gmail.oauth',
   'google_photos.oauth',
-  'google_meet.oauth'
+  'google_meet.oauth',
+  'google_calendar.oauth'
 )
 
 function Get-ServiceIdForKey([string] $VaultKey) {
@@ -107,6 +108,7 @@ function Get-ServiceIdForKey([string] $VaultKey) {
     'google_gmail.oauth'  { return 'gmail' }
     'google_photos.oauth' { return 'google_photos' }
     'google_meet.oauth'   { return 'google_meet' }
+    'google_calendar.oauth' { return 'google_calendar' }
     'google.oauth'        { return 'google_drive' }
     default               { return 'google_drive' }
   }

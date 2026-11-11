@@ -712,12 +712,12 @@ describe("assemblePlatformServices — in-process assembly", () => {
   // `DERIVED_CONFIGURED_CHECKS`) used to fall through the manifest check's "no signal, no gate"
   // branch and were ledgered as `authorized` on EVERY run against an EMPTY Vault — proven by a
   // real boot + instrumented `globalThis.fetch`: 0 network attempts, 15 fabricated `sync` rows
-  // before this fix. Forcing all 13 against a real, empty-Vault assembly must now ledger ZERO
+  // before this fix. Forcing all 14 against a real, empty-Vault assembly must now ledger ZERO
   // rows AND make ZERO `fetch` calls (the four of the 13 that go over HTTP rather than an
   // AWS/GCP CLI spawn — `gmail`/`google_drive`/`google_photos`/`google_meet` also apply, but
   // `github_actions`/`onedrive`/`outlook` are the ones this process can reach without native
   // repos/mailboxes already indexed).
-  it("force-syncing all 13 empty-manifest syncables against an EMPTY Vault ledgers ZERO sync egress rows and makes ZERO fetch calls", async () => {
+  it("force-syncing all 14 empty-manifest syncables against an EMPTY Vault ledgers ZERO sync egress rows and makes ZERO fetch calls", async () => {
     const paths = makePaths();
     rmSync(paths.configDir, { recursive: true, force: true });
     mkdirSync(paths.configDir, { recursive: true });
@@ -728,6 +728,7 @@ describe("assemblePlatformServices — in-process assembly", () => {
       "gmail",
       "google_photos",
       "google_meet",
+      "google_calendar",
       "onedrive",
       "outlook",
       "github_actions",
@@ -746,7 +747,7 @@ describe("assemblePlatformServices — in-process assembly", () => {
       return originalFetch(...args);
     }) as typeof fetch;
     try {
-      // Six of these thirteen (`google_drive`/`gmail`/`google_photos`/`google_meet`/`onedrive`/
+      // Seven of these fourteen (`google_drive`/`gmail`/`google_photos`/`google_meet`/`google_calendar`/`onedrive`/
       // `outlook`) throw a "not configured" Error out of their own `sync()` when unconfigured. The
       // scheduler now skips an unconfigured run before `sync()`, so none should reject here; each
       // rejection is still swallowed individually, because what this test asserts is the egress

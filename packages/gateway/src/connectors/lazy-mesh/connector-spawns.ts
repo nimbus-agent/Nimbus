@@ -108,6 +108,7 @@ const GOOGLE_BUNDLE_SPAWNS: Readonly<Record<GoogleConnectorOAuthServiceId, strin
   gmail: "gmail",
   google_photos: "google-photos",
   google_meet: "google-meet",
+  google_calendar: "google-calendar",
 };
 
 const GOOGLE_BUNDLE_IDS = Object.keys(GOOGLE_BUNDLE_SPAWNS) as GoogleConnectorOAuthServiceId[];

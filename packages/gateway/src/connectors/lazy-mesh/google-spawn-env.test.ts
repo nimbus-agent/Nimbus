@@ -104,3 +104,23 @@ describe("ensureGoogleDriveMcp passes the token's scopes to Gmail only", () => {
     expect(Object.hasOwn(servers()["gmail"]?.env ?? {}, "GOOGLE_OAUTH_SCOPES")).toBe(false);
   });
 });
+
+describe("google_calendar is own-key-only at the bundle", () => {
+  test("a shared google.oauth does NOT start the google_calendar server (see the 4-server pin above)", async () => {
+    await ensureGoogleDriveMcp(spawnCtx(await sharedGoogleVault(undefined)));
+    expect(Object.keys(servers())).not.toContain("google_calendar");
+  });
+
+  test("its own key starts it with an access token and no scopes", async () => {
+    const vault = await sharedGoogleVault(undefined);
+    await vault.set(
+      "google_calendar.oauth",
+      JSON.stringify({ accessToken: "cal", refreshToken: "ref", expiresAt: Date.now() + 3_600_000 }),
+    );
+    await ensureGoogleDriveMcp(spawnCtx(vault));
+    const s = servers();
+    expect(Object.keys(s)).toContain("google_calendar");
+    expect(s["google_calendar"]?.env?.["GOOGLE_OAUTH_ACCESS_TOKEN"]).toBe("cal");
+    expect(Object.hasOwn(s["google_calendar"]?.env ?? {}, "GOOGLE_OAUTH_SCOPES")).toBe(false);
+  });
+});

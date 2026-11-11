@@ -281,6 +281,7 @@ function printConnectorAuthServiceHelp(normalized: string): void {
     case "gmail":
     case "google_photos":
     case "google_meet":
+    case "google_calendar":
       console.log(GOOGLE_OAUTH_CLIENT_ID_HELP);
       return;
     case "onedrive":
@@ -1429,7 +1430,7 @@ Usage:
 Services (examples): google_drive, gmail, google_photos, onedrive, outlook, teams, github, gitlab, linear, jira, notion, confluence, jenkins, circleci, pagerduty, kubernetes
 
 OAuth PKCE — set env vars before nimbus start, or run for setup steps:
-  nimbus connector auth google_drive --help    (gmail, google_photos)
+  nimbus connector auth google_drive --help    (gmail, google_photos, google_calendar)
   nimbus connector auth onedrive --help        (outlook, teams)
   nimbus connector auth slack --help
   nimbus connector auth notion --help

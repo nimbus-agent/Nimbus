@@ -1579,7 +1579,14 @@ describe("runConnector auth — per-service help branches", () => {
     clearFixture();
   });
 
-  it.each([["gmail"], ["google_photos"], ["google_meet"], ["outlook"], ["teams"]])(
+  it.each([
+    ["gmail"],
+    ["google_photos"],
+    ["google_meet"],
+    ["google_calendar"],
+    ["outlook"],
+    ["teams"],
+  ])(
     "auth %s --help prints provider-specific OAuth help",
     async (service) => {
       await runConnector(["auth", service, "--help"]);

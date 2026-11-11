@@ -78,6 +78,29 @@ describe("isConnectorConfigured", () => {
     });
   });
 
+  describe("google_calendar — its own per-service key ONLY", () => {
+    test("is NOT configured against an empty vault", async () => {
+      expect(await isConnectorConfigured(fakeVault({}), "google_calendar")).toBe(false);
+    });
+    test("is configured via google_calendar.oauth", async () => {
+      expect(
+        await isConnectorConfigured(fakeVault({ "google_calendar.oauth": "t" }), "google_calendar"),
+      ).toBe(true);
+    });
+    test("is NOT configured by the shared google.oauth or another Google service's key", async () => {
+      expect(
+        await isConnectorConfigured(fakeVault({ "google.oauth": "t" }), "google_calendar"),
+      ).toBe(false);
+      expect(
+        await isConnectorConfigured(fakeVault({ "google_gmail.oauth": "t" }), "google_calendar"),
+      ).toBe(false);
+      // control: the sibling still reads the shared key
+      expect(await isConnectorConfigured(fakeVault({ "google.oauth": "t" }), "google_meet")).toBe(
+        true,
+      );
+    });
+  });
+
   describe("onedrive/outlook — the single shared microsoft.oauth key", () => {
     for (const serviceId of ["onedrive", "outlook"] as const) {
       test(`${serviceId} is NOT configured against an empty vault`, async () => {
@@ -229,7 +252,7 @@ describe("isConnectorConfigured", () => {
       .filter(([, keys]) => keys.length === 0)
       .map(([serviceId]) => serviceId);
 
-    // Sanity: this is exactly the 13 services Fix 1 closes — if this drifts, the manifest
+    // Sanity: this is exactly the 14 services Fix 1 closes — if this drifts, the manifest
     // changed and this test's premise needs re-checking, not silent adaptation.
     expect(emptyManifestServiceIds.sort()).toEqual(
       [
@@ -237,6 +260,7 @@ describe("isConnectorConfigured", () => {
         "gmail",
         "google_photos",
         "google_meet",
+        "google_calendar",
         "onedrive",
         "outlook",
         "github_actions",

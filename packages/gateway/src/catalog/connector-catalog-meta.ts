@@ -62,6 +62,7 @@ export const CONNECTOR_CATALOG_META = Object.freeze({
   gmail: m("Gmail", "email", "Google's email service"),
   google_photos: m("Google Photos", "storage", "Google's photo and video storage service"),
   google_meet: m("Google Meet", "meetings", "Google's video meeting service"),
+  google_calendar: m("Google Calendar", "calendar", "Google's calendar service"),
   onedrive: m("OneDrive", "storage", "Microsoft's cloud file storage service"),
   outlook: m("Outlook", "email", "Microsoft's email and calendar service"),
   teams: m("Microsoft Teams", "chat", "Microsoft's team chat and meeting service"),
