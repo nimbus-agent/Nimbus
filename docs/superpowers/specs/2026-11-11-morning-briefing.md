@@ -1,6 +1,6 @@
 # Phase 10 — Morning briefing, deadline tracking and on-call awareness
 
-Status: DRAFT for Antigravity review. Owner rulings below are binding; do not reopen them.
+Status: APPROVED by Antigravity (round 2, 2026-11-11). Owner rulings below are binding; do not reopen them.
 Date: 2026-11-11. Slot: S4. Roadmap: `docs/roadmap.md` § Phase 10 → *Core — Standing Approvals &
 Scheduling* (rows **Morning briefing**, **Deadline tracking**) and *Core — Incident Correlation Engine*
 (row **On-call schedule awareness**). Phase 10 standing approvals (SA0–SA5) shipped first; this project
@@ -128,7 +128,9 @@ the item stays indexed, as any closed ticket does today; an upstream deletion is
 existing deletion path, unchanged. Item deletion cascades are by trigger
 (`AFTER DELETE ON item` deletes `work_snapshot` rows), since `item` deletes go through the existing paths.
 
-Per service, run after the existing incremental sync, at most once per `snapshot_interval_minutes`
+Per service, run after the existing incremental sync, at most once per `[briefing] snapshot_interval_minutes`
+(one global key, read by each syncable through its existing config view; it applies whether or not the
+briefing itself is enabled)
 (default 15, 5–240) so a 60 s sync cadence does not multiply calls:
 
 - **Jira:** `search` with JQL `assignee = currentUser() AND statusCategory != Done ORDER BY duedate ASC`,
@@ -196,7 +198,8 @@ are deleted). Metadata: `source` (`pagerduty`|`jsm`), `user_name`, `user_email` 
 `escalation_policy_id`, `escalation_policy_name`, `escalation_level` (PagerDuty; `null` for JSM),
 `schedule_id`, `schedule_name`, `start_ms`, `end_ms` (`null` = open-ended), `service_ids` (PagerDuty
 service ids whose escalation policy this is), `is_me` (boolean, § below). Title:
-`On call: <user> — <schedule or policy> (level N) until <time>` so FTS/semantic search finds it.
+`On call: <user> — <schedule or policy> (level N) until <time>` (without `until <time>` when `end_ms` is
+`null`) so FTS/semantic search finds it.
 
 - **PagerDuty** (inside the `pagerduty` syncable, at most every 15 min): `GET /oncalls?since=now&until=now+7d`
   `&include[]=users&include[]=escalation_policies&include[]=schedules`, offset paging as the incident sync,
@@ -248,6 +251,7 @@ schedule = "30 8 * * 1-5"       # automation/cron.ts grammar; at least 1 h apart
 tz = "Europe/London"            # IANA; default: the OS zone
 sections = ["calendar","oncall","incidents","reviews","tickets","mail","chat"]  # order = render order
 retention_days = 30             # 1..365
+snapshot_interval_minutes = 15  # 5..240; MB1 "my open work" refresh (§ 5.1)
 
 [briefing.deadlines]
 enabled = false
@@ -284,8 +288,22 @@ with no source configured renders a `## Gaps` line, never silence):
 - **Chat:** Slack unread threads per § 5.4, DMs first; top 10 + count.
 - **Data freshness** (reserved, I31): each section's source and the age of its newest sync/snapshot.
 
-**Persistence** V93 `briefing_run(id, fired_at, trigger CHECK IN ('schedule','manual'), status CHECK IN
-('ok','skipped','failed'), headline, markdown, counts_json, toast_outcome)`, pruned past `retention_days`;
+**Persistence** V93:
+
+```sql
+CREATE TABLE briefing_run (
+  id            TEXT PRIMARY KEY,
+  fired_at      INTEGER NOT NULL,
+  trigger       TEXT NOT NULL CHECK (trigger IN ('schedule','manual')),
+  status        TEXT NOT NULL CHECK (status IN ('ok','skipped','failed')),
+  headline      TEXT NOT NULL,
+  markdown      TEXT,
+  counts_json   TEXT,
+  toast_outcome TEXT
+);
+```
+
+pruned past `retention_days`;
 `deadline_notice(item_id TEXT PRIMARY KEY, due_at_ms INTEGER NOT NULL, notified_at INTEGER NOT NULL)`,
 with an `AFTER DELETE ON item` trigger deleting its row and the scheduler pruning rows whose `due_at_ms` is
 more than 30 days past.
