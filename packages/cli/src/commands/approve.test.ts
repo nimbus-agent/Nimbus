@@ -231,10 +231,10 @@ describe("runApproveWith", () => {
 
 const SUGGESTION = {
   id: "ss_0123456789abcdef",
-  workflowName: "weekly[2J-clean",
+  workflowName: "weekly\u001b[2J-clean",
   workflowId: "wf1",
   stepIndex: 1,
-  stepLabel: "arch[31mive",
+  stepLabel: "arch\u001b[31mive",
   toolId: "gmail_thread_archive",
   streak: 5,
   createdAt: Date.UTC(2026, 10, 11),
@@ -302,7 +302,7 @@ describe("suggestions (Phase 10 SA5)", () => {
     expect(text).toContain("ss_0123456789abcdef");
     expect(text).toContain("2 (arch[31mive)");
     expect(text).toContain("nimbus approve add --from-suggestion <id>");
-    expect(text).not.toContain("");
+    expect(text).not.toContain("\u001b");
   });
 
   test("list --json adds suggestions; no suggestions prints no section", async () => {
@@ -314,6 +314,22 @@ describe("suggestions (Phase 10 SA5)", () => {
     expect(parsed.rules[0].id).toBe(RULE.id);
     expect(formatSuggestions([])).toBe("");
     expect(formatSuggestions([{ ...SUGGESTION, workflowName: null } as never])).toContain("wf1");
+  });
+
+  test("list on a gateway without standing.suggestions (-32601) prints the rules only; any other error fails", async () => {
+    const older = Object.assign(new Error("Method not found"), { code: -32601 });
+    const { c } = client((m) => (m === "standing.suggestions" ? older : reply(m)));
+    const o = sink();
+    expect(await runApproveWith(c, { verb: "list", json: false }, o.s)).toBe(0);
+    const text = o.out.join("");
+    expect(text).toContain("sr_0123456789abcdef");
+    expect(text).not.toContain("Suggestions");
+
+    const broken = Object.assign(new Error("database is locked"), { code: -32000 });
+    const failing = client((m) => (m === "standing.suggestions" ? broken : reply(m)));
+    const e = sink();
+    expect(await runApproveWith(failing.c, { verb: "list", json: false }, e.s)).toBe(1);
+    expect(e.err.join("")).toContain("database is locked");
   });
 
   test("dismiss calls the method and says what happened, or prints JSON", async () => {

@@ -266,10 +266,24 @@ function ruleOf(raw: unknown): RuleView {
 
 type Client = Pick<IPCClient, "call">;
 
+/** JSON-RPC -32601: the gateway does not serve the method (an older binary). */
+function isMethodNotFound(e: unknown): boolean {
+  return typeof e === "object" && e !== null && "code" in e && e.code === -32601;
+}
+
+/** The open suggestions; none from a gateway older than SA5. Any other failure is thrown. */
+async function suggestionsOf(c: Client): Promise<unknown[]> {
+  try {
+    return (await c.call<{ suggestions: unknown[] }>("standing.suggestions", {})).suggestions;
+  } catch (e) {
+    if (isMethodNotFound(e)) return [];
+    throw e;
+  }
+}
+
 async function runList(c: Client, a: { json: boolean }, sink: Sink): Promise<void> {
   const rules = (await c.call<{ rules: unknown[] }>("standing.list", {})).rules;
-  const suggestions = (await c.call<{ suggestions: unknown[] }>("standing.suggestions", {}))
-    .suggestions;
+  const suggestions = await suggestionsOf(c);
   if (a.json) {
     sink.out(`${JSON.stringify({ rules, suggestions }, undefined, 2)}\n`);
     return;

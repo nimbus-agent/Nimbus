@@ -45,9 +45,15 @@ describe("provenance is constructed only by the workflow write step", () => {
 
   test('the literal kind "owner_workflow" appears only in the constructor and the type', () => {
     const named = files.filter((f) => /["']owner_workflow["']/.test(f.code)).map((f) => f.rel);
-    // The check READS the literal (it never builds one); the constructor and the type are D44(a).
+    // The check and the approval-learning pass (SA5, which reads the parsed audit row) READ the
+    // literal and never build one; the constructor and the type are D44(a).
     expect(named.sort()).toEqual(
-      [CONSTRUCTOR, "engine/standing-rule-step.ts", "engine/types.ts"].sort(),
+      [
+        CONSTRUCTOR,
+        "engine/standing-rule-step.ts",
+        "engine/types.ts",
+        "standing/approval-learning.ts",
+      ].sort(),
     );
   });
 
