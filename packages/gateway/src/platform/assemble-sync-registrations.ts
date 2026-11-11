@@ -145,6 +145,7 @@ export function registerConnectorMeshSyncables(
   syncScheduler.register(
     createGithubSyncable({
       ensureGithubMcpRunning: () => connectorMesh.ensureGithubRunning(),
+      ...snapshotInterval,
     }),
   );
   syncScheduler.register(
