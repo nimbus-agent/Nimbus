@@ -1,6 +1,7 @@
 import { Database } from "bun:sqlite";
 import { beforeEach, describe, expect, test } from "bun:test";
 import { memVault, newIndex } from "../../test/fixtures/data-test-helpers.ts";
+import { listChatReadMarkers, setChatReadMarkerRows } from "../index/chat-read-marker-store.ts";
 import type { LocalIndex } from "../index/local-index.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
 import { runDataDelete } from "./data-delete.ts";
@@ -35,6 +36,19 @@ describe("data delete", () => {
   beforeEach(() => {
     vault = memVault();
     idx = newIndex();
+  });
+
+  test("deletion removes the service's Slack read markers; a dry run keeps them", async () => {
+    const marker = { channelId: "C1", channelKind: "im", lastReadTs: "1700000000.000001" } as const;
+    setChatReadMarkerRows(idx.rawDb, "slack", [marker], undefined, 1);
+    idx.rawDb.run(
+      "INSERT INTO chat_read_marker (service, channel_id, channel_kind, last_read_ts, captured_at) VALUES ('other', 'C1', 'im', '1700000000.000001', 1)",
+    );
+    await runDataDelete({ service: "slack", dryRun: true, vault, index: idx });
+    expect(listChatReadMarkers(idx.rawDb, "slack")).toHaveLength(1);
+    await runDataDelete({ service: "slack", dryRun: false, vault, index: idx });
+    expect(listChatReadMarkers(idx.rawDb, "slack")).toEqual([]);
+    expect(listChatReadMarkers(idx.rawDb, "other")).toHaveLength(1);
   });
 
   test("--dry-run reports counts and does not delete", async () => {

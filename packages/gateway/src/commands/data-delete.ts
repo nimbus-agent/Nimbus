@@ -1,4 +1,5 @@
 import { dbRun } from "../db/write.ts";
+import { deleteChatReadMarkersForService } from "../index/chat-read-marker-store.ts";
 import type { LocalIndex } from "../index/local-index.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
 
@@ -85,6 +86,7 @@ export async function runDataDelete(input: RunDataDeleteInput): Promise<RunDataD
 
   input.index.rawDb.transaction(() => {
     dbRun(input.index.rawDb, `DELETE FROM item WHERE service = ?`, [input.service]);
+    deleteChatReadMarkersForService(input.index.rawDb, input.service);
     dbRun(
       input.index.rawDb,
       `DELETE FROM sync_state WHERE ${SYNC_STATE_FOR_SERVICE}`,

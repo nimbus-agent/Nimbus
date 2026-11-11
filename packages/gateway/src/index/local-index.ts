@@ -41,6 +41,7 @@ import {
 } from "../sync/scheduler-store.ts";
 import { statusLastError } from "../sync/status-last-error.ts";
 import type { SyncStatus } from "../sync/types.ts";
+import { deleteChatReadMarkersForService } from "./chat-read-marker-store.ts";
 import { buildItemListSql, type ItemListQueryParams } from "./item-list-query.ts";
 import {
   deleteAllItemsForService,
@@ -498,6 +499,7 @@ export class LocalIndex {
     return this.db.transaction(() => {
       const n = countItemsForService(this.db, serviceId);
       deleteAllItemsForService(this.db, serviceId);
+      deleteChatReadMarkersForService(this.db, serviceId);
       deleteSchedulerStateRow(this.db, serviceId);
       dbRun(this.db, "DELETE FROM sync_state WHERE connector_id = ?", [serviceId]);
       prunePeopleAfterServiceRemoval(this.db, serviceId);
