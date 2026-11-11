@@ -4,7 +4,7 @@ import { readGatewayState } from "../lib/gateway-process.ts";
 import { getCliPlatformPaths } from "../paths.ts";
 import { flagValue } from "./_agent-brief-cli.ts";
 
-export type TailCategory = "connector" | "watcher" | "sync" | "extension" | "hitl" | "oncall";
+export type TailCategory = "connector" | "watcher" | "sync" | "extension" | "hitl" | "oncall" | "briefing";
 
 const ALL_CATEGORIES: readonly TailCategory[] = [
   "connector",
@@ -13,6 +13,7 @@ const ALL_CATEGORIES: readonly TailCategory[] = [
   "extension",
   "hitl",
   "oncall",
+  "briefing",
 ];
 
 export type TailCliArgs = {
@@ -136,6 +137,7 @@ function categoryOf(method: string, params: unknown): TailCategory | null {
   if (kind.startsWith("extension.")) return "extension";
   if (kind.startsWith("hitl.")) return "hitl";
   if (kind.startsWith("oncall.")) return "oncall";
+  if (kind.startsWith("briefing.")) return "briefing";
   return null;
 }
 
@@ -206,6 +208,11 @@ function renderGatewayEvent(o: Record<string, unknown>): string | null {
       const word = str(payload, "status") === "ok" ? "ready" : "FAILED";
       return `${at} [oncall] brief ${word} for ${id} — nimbus oncall pushed ${id}`;
     }
+  }
+
+  if (kind === "briefing.ready") {
+    const headline = str(payload, "headline");
+    if (headline !== null) return `${at} [briefing] ${oneLine(headline)} - nimbus briefing`;
   }
 
   // Never dropped: a stream that discards what it does not recognise is the same failure as a
