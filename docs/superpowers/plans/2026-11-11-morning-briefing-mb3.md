@@ -338,7 +338,7 @@ Files: `connectors/pagerduty-oncall.ts` (new), `connectors/pagerduty-sync.ts`, t
      `/users/me` answers 400 and `from_email` is `me@x.com` (through `ctx.getSecret("from_email")`) -> match by e-mail,
      case-insensitive; 400 and no `from_email` -> every `is_me` false and the log line names the bound; a network error on
      `/users/me` behaves as the 400 case and the step continues;
-   - paging: two `oncalls` pages with `more: true` then `false` -> 3 requests for oncalls (offset 0, 100); a reply with
+   - paging: two `oncalls` pages with `more: true` then `false` -> 2 requests to `/oncalls` (offset 0, then 100), plus 1 to `/users/me`; a reply with
      `more: true` forever stops at 10 pages, upserts everything read, calls NO replace and logs `oncall_partial: true`
      (deviation 9); `/services` with `more: true` forever stops at 5 pages and rows carry `service_map_complete: false` while
      replace STILL runs;
@@ -480,7 +480,10 @@ Read the `nimbus-tauri-allowlist` skill's checklist again before editing; this t
      "allowlist_exact_size assertion is 126" and the regex in the migration test) become 127 (re-derive the lines with
      `git grep -n "ALLOWED_METHODS\\\\.len"`); add `oncall.now` to the named-on-both-sides assertion pattern the SA5 test uses
      (a one-for-one swap must not keep the count): the Rust source contains `"oncall.now",` in the array and
-     `assert!(is_method_allowed("oncall.now"));` in `allowlist_oncall_reads_only`.
+     `assert!(is_method_allowed("oncall.now"));` in `allowlist_oncall_reads_only`. Rename the test at
+     `security-invariants.test.ts` ~1929, "allows oncall.pushedGet and oncall.pushedList (the two reads) in
+     ALLOWED_METHODS", to name all three reads (`oncall.pushedGet`, `oncall.pushedList` and `oncall.now`) and assert the
+     third.
    - Rust: extend `allowlist_oncall_reads_only` with `assert!(is_method_allowed("oncall.now"));` and
      `assert!(!is_no_timeout_method("oncall.now"));`, keep `oncall.pushedRetry` refused, and bump `allowlist_exact_size` to
      127.
