@@ -979,7 +979,6 @@ Additionally, all tool outputs are wrapped in `<tool_output>` tags (Invariant I1
 
 ---
 
-
 ### Morning briefing (Phase 10 MB5)
 
 **Module map.** `briefing/` is orchestration: `briefing-store.ts` (the only writer of `briefing_run` and `deadline_notice`, V93), `briefing-schedule.ts` (`planFire`, pure), `briefing-scheduler.ts` (a 60 s `unref`d tick, the first at once, re-reading `[briefing]` every tick), `briefing-runner.ts` and `briefing-delivery.ts` (build, render, claim the slot, emit, toast), `deadline-scan.ts`, `briefing-toast.ts` (counts-only text), `briefing-due.ts`, `briefing-day.ts` and `briefing-runtime.ts` (single-flight, status). `agents/_lib/briefing-{types,queries,build,render}.ts` is the pure brief. Both sets are D45's scope. The wall-to-instant helpers live in `util/zoned-time.ts` (the old `connectors/_lib/zoned-time.ts` re-exports them).

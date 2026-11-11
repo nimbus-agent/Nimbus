@@ -307,12 +307,7 @@ describe("the briefing, end to end", () => {
     });
     setSnapshot(db, "github", "assigned", ["o/r#9"], now);
     noNetwork();
-    const rt = runtime(
-      `${LONDON}[briefing.deadlines]\nenabled = true\n`.replace(
-        "enabled = true\ntz",
-        "enabled = false\ntz",
-      ),
-    );
+    const rt = runtime(DEADLINES_ONLY);
     for (let i = 0; i < 10; i++) {
       await rt.scheduler?.tick();
       now += 15 * 60_000;
@@ -426,12 +421,7 @@ describe("the briefing, end to end", () => {
     const count = () =>
       (db.query("SELECT count(*) AS n FROM egress_ledger").get() as { n: number }).n;
     const before = count();
-    const rt = runtime(
-      `${LONDON}[briefing.deadlines]\nenabled = true\n`.replace(
-        "enabled = true\ntz",
-        "enabled = false\ntz",
-      ),
-    );
+    const rt = runtime(DEADLINES_ONLY);
     await rt.runNow();
     await rt.scheduler?.tick();
     expect(count()).toBe(before);
