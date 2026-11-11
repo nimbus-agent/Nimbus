@@ -160,6 +160,22 @@ describe("runOncallNowWith text output", () => {
     expect(o.s.err).not.toContain("Known names");
   });
 
+  test("no_match prints the source ages and the gaps before exiting 1", async () => {
+    const c = fake({
+      ...BASE,
+      status: "no_match",
+      shifts: [],
+      gaps: ["service map incomplete"],
+      sources: [{ source: "pagerduty", oldestFetchedMs: NOW - 3 * 3_600_000, stale: true }],
+    });
+    const { s, sink: k } = sink();
+    expect(await runOncallNowWith(c, { json: false }, k)).toBe(1);
+    expect(s.err).toContain("Note: service map incomplete");
+    expect(s.err).toContain("PagerDuty data 180 min old");
+    expect(s.err).toContain("WARNING: older than 1 h");
+    expect(s.out).toBe("");
+  });
+
   test("no_data prints the gaps to stderr, exit 1", async () => {
     const c = fake({ ...BASE, status: "no_data", shifts: [], gaps: ["connect PagerDuty or Jira"] });
     const { s, sink: k } = sink();

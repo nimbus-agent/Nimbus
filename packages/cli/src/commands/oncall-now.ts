@@ -105,6 +105,8 @@ function renderResult(r: NowResult, sink: OncallNowSink): number {
   if (r.status === "no_match") {
     sink.err(`No on-call schedule, policy or service matches "${target}".\n`);
     if (r.known.length > 0) sink.err(`Known names: ${r.known.map(clean).join(", ")}\n`);
+    for (const g of r.gaps) sink.err(`Note: ${clean(g)}\n`);
+    sink.err(ageLines(r));
     return 1;
   }
   if (r.status === "none_on_call") {
