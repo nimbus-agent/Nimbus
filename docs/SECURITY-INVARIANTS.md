@@ -1193,7 +1193,7 @@ through the `replaceWorkSnapshot` capability and nothing else may write. A write
 any quoting, over comment-stripped source with strings kept, across line breaks) may appear only in
 `index/work-snapshot-store.ts` and the DDL file `index/work-snapshot-v91-sql.ts`, and the store's
 writer `replaceWorkSnapshotRows` may be named only by the store and `sync/sync-capabilities.ts`.
-Reads are unrestricted (the briefing reads the table). The capability is the real defense: it binds
+Reads are unrestricted (the briefing reads the table). Phase 10 MB2b adds one more capability member in the same class, `replaceItemSet` (`index/item-set-store.ts`): it binds the calling service (never a parameter), names only the types `REPLACE_ITEM_SET_TYPES` lists for it (`event` for `google_calendar` and `outlook`), deletes through the same path `deleteItem` uses in one transaction, can only NARROW its candidate set, and is refused to a local-only syncable; no new static rule, since no syncable reaches `ctx.db`. The `sync` egress class of I29 covers the calendar fetches (`www.googleapis.com` for Google Calendar, which is its own consent and resolves only its own key, and the Graph `calendarView/delta` request) under the scheduler's per-run row. The `work_snapshot` capability is the real defense: it binds
 the calling service (never a parameter), resolves external ids only among that service's items,
 refuses every service but `jira`, `linear` and `github` (an extension syncable is built through the
 same function; a local-only syncable gets a refusal), and runs one transaction. The two anchors

@@ -2,16 +2,17 @@ import type { IndexedItemBodyInput } from "../index/item-store.ts";
 import { stripQuotedTail } from "../string/email-quoted-text.ts";
 import { plainTextFromHtmlLines } from "../string/html-plain-text-lines.ts";
 import type { Syncable, SyncContext, SyncResult } from "../sync/types.ts";
+import { gatewayZone } from "./_lib/zoned-time.ts";
 import {
   decodeMicrosoftGraphDeltaCursor,
-  encodeMicrosoftGraphDeltaCursor,
   fetchMicrosoftGraphJson,
-  type MicrosoftGraphDeltaCursorV1,
   modifiedMsFromIso,
-  nextCursorFromODataDeltaLinks,
   parseODataDeltaPage,
 } from "./microsoft-graph-sync-shared.ts";
+import { decodeNimbusJsonCursorObject, encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
+import { type OutlookCalendarCursor, runOutlookCalendarStep } from "./outlook-calendar-step.ts";
 import { OUTLOOK_MAIL_META_VERSION } from "./outlook-mail-meta.ts";
+import { asRecord, numberField } from "./unknown-record.ts";
 
 const SERVICE_ID = "outlook";
 // Bumped from "nimbus-outl1:" so every stored delta link is invalidated ONCE
@@ -25,9 +26,13 @@ const SERVICE_ID = "outlook";
 // new machinery, no error path.
 // Bumped again, "nimbus-outl2:" -> "nimbus-outl3:", when `isRead` joined the
 // projection (Phase 10 MB1), for the same reason: an outl2 delta link would never
-// return it. The mailbox re-lists ONCE. MB2b's decoder must accept `nimbus-outl3:`
-// as a mail-only cursor so mail is not reset a third time.
-const CURSOR_PREFIX = "nimbus-outl3:";
+// return it. The mailbox re-lists ONCE.
+// Bumped a third time, "nimbus-outl3:" -> "nimbus-outl4:", when the cursor became TWO streams
+// (Phase 10 MB2b: `{ v: 2, mail, calendar }`). This bump invalidates nothing: `nimbus-outl3:` is
+// still DECODED, as a mail-only cursor (its `nextUrl` becomes `mail.nextUrl`, calendar absent), so
+// the mailbox is not re-listed a third time. outl1/outl2 still fall to the initial URL.
+const CURSOR_PREFIX = "nimbus-outl4:";
+const CURSOR_PREFIX_V3 = "nimbus-outl3:";
 const GRAPH = "https://graph.microsoft.com/v1.0";
 const PAGE_SIZE = 50;
 
@@ -44,14 +49,55 @@ type GraphMessage = {
   "@removed"?: { reason?: string };
 };
 
-export type OutlookSyncCursorV1 = MicrosoftGraphDeltaCursorV1;
+export type { OutlookCalendarCursor } from "./outlook-calendar-step.ts";
 
-export function encodeOutlookSyncCursor(c: OutlookSyncCursorV1): string {
-  return encodeMicrosoftGraphDeltaCursor(CURSOR_PREFIX, c);
+export type OutlookSyncCursorV2 = {
+  readonly v: 2;
+  readonly mail: { readonly nextUrl: string | null };
+  readonly calendar?: OutlookCalendarCursor;
+};
+
+export function encodeOutlookSyncCursor(c: OutlookSyncCursorV2): string {
+  return encodeNimbusJsonCursor(CURSOR_PREFIX, c);
 }
 
-export function decodeOutlookSyncCursor(raw: string): OutlookSyncCursorV1 | undefined {
-  return decodeMicrosoftGraphDeltaCursor(raw, CURSOR_PREFIX);
+function decodeCalendarHalf(v: unknown): OutlookCalendarCursor | undefined {
+  const rec = asRecord(v);
+  if (rec === undefined) return undefined;
+  const windowStart = numberField(rec, "windowStart");
+  const nextUrl = rec["nextUrl"];
+  if (windowStart === undefined || (nextUrl !== null && typeof nextUrl !== "string")) {
+    return undefined;
+  }
+  const checkedAt = numberField(rec, "checkedAt");
+  const retryAt = numberField(rec, "retryAt");
+  return {
+    nextUrl,
+    windowStart,
+    ...(rec["draining"] === true ? { draining: true } : {}),
+    ...(checkedAt === undefined ? {} : { checkedAt }),
+    ...(retryAt === undefined ? {} : { retryAt }),
+  };
+}
+
+/**
+ * `nimbus-outl4:` is read as written; `nimbus-outl3:` is read as a mail-only cursor (so mail is not
+ * reset); anything else (outl1, outl2, junk, a malformed mail half) is `undefined` and both streams
+ * start fresh. A malformed CALENDAR half is dropped on its own: the calendar restarts, mail is kept.
+ */
+export function decodeOutlookSyncCursor(raw: string): OutlookSyncCursorV2 | undefined {
+  const r = decodeNimbusJsonCursorObject(raw, CURSOR_PREFIX);
+  if (r !== null) {
+    const mail = asRecord(r["mail"]);
+    const nextUrl = mail === undefined ? undefined : mail["nextUrl"];
+    if (r["v"] !== 2 || mail === undefined || (nextUrl !== null && typeof nextUrl !== "string")) {
+      return undefined;
+    }
+    const calendar = decodeCalendarHalf(r["calendar"]);
+    return { v: 2, mail: { nextUrl }, ...(calendar === undefined ? {} : { calendar }) };
+  }
+  const legacy = decodeMicrosoftGraphDeltaCursor(raw, CURSOR_PREFIX_V3);
+  return legacy === undefined ? undefined : { v: 2, mail: { nextUrl: legacy.nextUrl } };
 }
 
 function upsertMessage(ctx: SyncContext, m: GraphMessage, now: number): void {
@@ -117,7 +163,60 @@ function upsertMessage(ctx: SyncContext, m: GraphMessage, now: number): void {
 
 export type OutlookSyncableOptions = {
   ensureMicrosoftMcpRunning: () => Promise<void>;
+  /** Test seams; production passes none. */
+  readonly now?: () => number;
+  readonly zone?: string;
 };
+
+type MailStepResult = {
+  readonly nextUrl: string | null;
+  readonly upserted: number;
+  readonly deleted: number;
+  readonly bytes: number;
+  readonly hasMore: boolean;
+};
+
+/** The mail stream, unchanged in behaviour: one delta page per run. */
+async function runMailStep(
+  ctx: SyncContext,
+  token: string,
+  nextUrl: string | null,
+): Promise<MailStepResult> {
+  const { json, bytes } = await fetchMicrosoftGraphJson(
+    ctx,
+    token,
+    nextUrl,
+    `${GRAPH}/me/messages/delta?$top=${String(PAGE_SIZE)}` +
+      `&$select=id,subject,bodyPreview,body,receivedDateTime,lastModifiedDateTime,webLink,from,isRead`,
+    "Outlook",
+  );
+  const parsed = parseODataDeltaPage(json);
+  const values = (parsed.value ?? []) as GraphMessage[];
+  const now = Date.now();
+  let upserted = 0;
+  let deleted = 0;
+
+  for (const msg of values) {
+    const removed = msg["@removed"] !== undefined && msg["@removed"] !== null;
+    const id = msg.id;
+    if (removed && id !== undefined && id !== "") {
+      ctx.deleteItem(SERVICE_ID, id);
+      deleted += 1;
+      continue;
+    }
+    upsertMessage(ctx, msg, now);
+    upserted += 1;
+  }
+
+  const nextLink = parsed["@odata.nextLink"];
+  const deltaLink = parsed["@odata.deltaLink"];
+  const hasNext = typeof nextLink === "string" && nextLink !== "";
+  const hasDelta = typeof deltaLink === "string" && deltaLink !== "";
+  let stored: string | null = null;
+  if (hasNext) stored = nextLink;
+  else if (hasDelta) stored = deltaLink;
+  return { nextUrl: stored, upserted, deleted, bytes, hasMore: hasNext };
+}
 
 export function createOutlookSyncable(options: OutlookSyncableOptions): Syncable {
   return {
@@ -129,47 +228,35 @@ export function createOutlookSyncable(options: OutlookSyncableOptions): Syncable
       await options.ensureMicrosoftMcpRunning();
       const token = await ctx.accessToken();
 
-      let nextUrl: string | null = null;
-      if (cursor !== null && cursor !== "") {
-        const dec = decodeOutlookSyncCursor(cursor);
-        nextUrl = dec?.nextUrl ?? null;
-      }
-
-      const { json, bytes } = await fetchMicrosoftGraphJson(
+      const dec = cursor === null || cursor === "" ? undefined : decodeOutlookSyncCursor(cursor);
+      // The mail result is computed FIRST: a calendar failure can never lose it, and a mail error
+      // propagates exactly as it did before the calendar existed.
+      const mail = await runMailStep(ctx, token, dec?.mail.nextUrl ?? null);
+      const calendar = await runOutlookCalendarStep(
         ctx,
         token,
-        nextUrl,
-        `${GRAPH}/me/messages/delta?$top=${String(PAGE_SIZE)}` +
-          `&$select=id,subject,bodyPreview,body,receivedDateTime,lastModifiedDateTime,webLink,from,isRead`,
-        "Outlook",
+        dec?.calendar,
+        options.now?.() ?? Date.now(),
+        options.zone ?? gatewayZone(),
       );
-      const parsed = parseODataDeltaPage(json);
-      const values = (parsed.value ?? []) as GraphMessage[];
-      const now = Date.now();
-      let upserted = 0;
-      let deleted = 0;
-
-      for (const msg of values) {
-        const removed = msg["@removed"] !== undefined && msg["@removed"] !== null;
-        const id = msg.id;
-        if (removed && id !== undefined && id !== "") {
-          ctx.deleteItem(SERVICE_ID, id);
-          deleted += 1;
-          continue;
-        }
-        upsertMessage(ctx, msg, now);
-        upserted += 1;
+      if (calendar.unresolved > 0) {
+        ctx.logger.info(
+          { serviceId: SERVICE_ID, calendar_unresolved: calendar.unresolved },
+          "Outlook calendar events with a time zone that could not be resolved were indexed without start and end times",
+        );
       }
 
-      const { stored, hasMore } = nextCursorFromODataDeltaLinks(parsed, encodeOutlookSyncCursor);
-
       return {
-        cursor: stored,
-        itemsUpserted: upserted,
-        itemsDeleted: deleted,
-        hasMore,
+        cursor: encodeOutlookSyncCursor({
+          v: 2,
+          mail: { nextUrl: mail.nextUrl },
+          ...(calendar.half === undefined ? {} : { calendar: calendar.half }),
+        }),
+        itemsUpserted: mail.upserted + calendar.upserted,
+        itemsDeleted: mail.deleted + calendar.deleted,
+        hasMore: mail.hasMore || calendar.hasMore,
         durationMs: Math.round(performance.now() - t0),
-        bytesTransferred: bytes,
+        bytesTransferred: mail.bytes + calendar.bytes,
       };
     },
   };

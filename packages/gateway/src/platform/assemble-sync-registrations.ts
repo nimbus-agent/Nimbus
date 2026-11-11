@@ -35,6 +35,7 @@ import { createGithubActionsSyncable } from "../connectors/github-actions-sync.t
 import { createGithubSyncable } from "../connectors/github-sync.ts";
 import { createGitlabSyncable } from "../connectors/gitlab-sync.ts";
 import { createGmailSyncable } from "../connectors/gmail-sync.ts";
+import { createGoogleCalendarSyncable } from "../connectors/google-calendar-sync.ts";
 import { createGoogleDriveSyncable } from "../connectors/google-drive-sync.ts";
 import { createGoogleMeetSyncable } from "../connectors/google-meet-sync.ts";
 import { createGooglePhotosSyncable } from "../connectors/google-photos-sync.ts";
@@ -132,6 +133,9 @@ export function registerConnectorMeshSyncables(
       ensureGoogleMcpRunning: () => connectorMesh.ensureGoogleDriveRunning(),
     }),
   );
+  // No mesh option: Calendar calls the REST API with its own token, so a 5-minute cadence never
+  // keeps the Google MCP bundle spawned for a user who has only Calendar.
+  syncScheduler.register(createGoogleCalendarSyncable());
   syncScheduler.register(
     createOneDriveSyncable({
       ensureMicrosoftMcpRunning: () => connectorMesh.ensureMicrosoftBundleRunning(),

@@ -176,6 +176,10 @@ export const REBODY_META_TARGETS: readonly RebodyMetaTarget[] = [
   //    EVERY pass, so every event in the window reaches the new version within one sync; an event
   //    older than the window can never be re-walked, and `rebody` would clear the apple cursor,
   //    which is the IMAP mail cursor, and re-walk the mailbox for nothing.
+  //  - `google_calendar` / `event` and `outlook` / `event` (MB2b: GOOGLE_CALENDAR_EVENT_META_VERSION,
+  //    OUTLOOK_EVENT_META_VERSION): each sync re-writes the whole window at every (re)anchor, so a
+  //    live event reaches the version within one re-anchor period and an older one can never be
+  //    re-walked.
 ];
 
 /**

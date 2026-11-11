@@ -10,10 +10,30 @@ import {
   createOutlookSyncable,
   decodeOutlookSyncCursor,
   encodeOutlookSyncCursor,
-  type OutlookSyncCursorV1,
+  type OutlookSyncCursorV2,
 } from "./outlook-sync.ts";
 
 type FetchInput = string | URL | Request;
+
+/**
+ * Mail-focused tests answer EVERY url with a message page. Since MB2b the syncable also asks for the
+ * calendar, and a message page read as events would overwrite the mail rows, so the calendar request
+ * gets an empty (settled) page here. Calendar behaviour has its own tests.
+ */
+function withEmptyCalendar(inner: typeof fetch): typeof fetch {
+  return (async (input: FetchInput, init?: RequestInit) => {
+    if (requestUrlString(input).includes("/calendarView/")) {
+      return new Response(
+        JSON.stringify({
+          value: [],
+          "@odata.deltaLink": "https://graph.microsoft.com/v1.0/me/calendarView/delta?token=end",
+        }),
+        { status: 200 },
+      );
+    }
+    return inner(input, init);
+  }) as typeof fetch;
+}
 
 /** Builds a minimal Graph delta response with a deltaLink (no more pages). */
 function deltaResponse(messages: unknown[]): Response {
@@ -28,15 +48,34 @@ function deltaResponse(messages: unknown[]): Response {
 
 describe("Outlook sync cursor codec", () => {
   test("round-trip", () => {
-    const samples: OutlookSyncCursorV1[] = [
-      { v: 1, nextUrl: null },
-      { v: 1, nextUrl: "https://graph.microsoft.com/v1.0/me/messages/delta?$skiptoken=a" },
+    const samples: OutlookSyncCursorV2[] = [
+      { v: 2, mail: { nextUrl: null } },
+      {
+        v: 2,
+        mail: { nextUrl: "https://graph.microsoft.com/v1.0/me/messages/delta?$skiptoken=a" },
+      },
+      {
+        v: 2,
+        mail: { nextUrl: null },
+        calendar: {
+          nextUrl: "https://graph.microsoft.com/v1.0/me/calendarView/delta?$skiptoken=c",
+          windowStart: 5,
+          draining: true,
+          checkedAt: 6,
+        },
+      },
+      {
+        v: 2,
+        mail: { nextUrl: "x" },
+        calendar: { nextUrl: null, windowStart: 5, checkedAt: 6, retryAt: 7 },
+      },
+      { v: 2, mail: { nextUrl: null }, calendar: { nextUrl: "d", windowStart: 1 } },
     ];
     expectPrefixedCursorCodecRoundTrip(
       samples,
       encodeOutlookSyncCursor,
       decodeOutlookSyncCursor,
-      "nimbus-outl3:",
+      "nimbus-outl4:",
     );
   });
 });
@@ -49,7 +88,7 @@ describe("createOutlookSyncable", () => {
     const { db, ctx } = await createOAuthConnectorTestSetup("microsoft", "outlook");
     const syncable = createOutlookSyncable({ ensureMicrosoftMcpRunning: async () => {} });
 
-    globalThis.fetch = (async (input: FetchInput) => {
+    globalThis.fetch = withEmptyCalendar((async (input: FetchInput) => {
       const url = requestUrlString(input);
       if (url.includes("/messages/delta")) {
         return new Response(
@@ -72,7 +111,7 @@ describe("createOutlookSyncable", () => {
         );
       }
       throw new Error(`unexpected fetch: ${url}`);
-    }) as typeof fetch;
+    }) as typeof fetch);
 
     const r = await syncable.sync(ctx, null);
     expect(r.itemsUpserted).toBe(1);
@@ -95,7 +134,7 @@ describe("createOutlookSyncable", () => {
     const { db, ctx } = await createOAuthConnectorTestSetup("microsoft", "outlook");
     const syncable = createOutlookSyncable({ ensureMicrosoftMcpRunning: async () => {} });
 
-    globalThis.fetch = (async (input: FetchInput) => {
+    globalThis.fetch = withEmptyCalendar((async (input: FetchInput) => {
       const url = requestUrlString(input);
       if (url.includes("/messages/delta")) {
         return deltaResponse([
@@ -109,7 +148,7 @@ describe("createOutlookSyncable", () => {
         ]);
       }
       throw new Error(`unexpected fetch: ${url}`);
-    }) as typeof fetch;
+    }) as typeof fetch);
 
     await syncable.sync(ctx, null);
 
@@ -129,7 +168,7 @@ describe("createOutlookSyncable", () => {
     const { db, ctx } = await createOAuthConnectorTestSetup("microsoft", "outlook");
     const syncable = createOutlookSyncable({ ensureMicrosoftMcpRunning: async () => {} });
 
-    globalThis.fetch = (async (input: FetchInput) => {
+    globalThis.fetch = withEmptyCalendar((async (input: FetchInput) => {
       const url = requestUrlString(input);
       if (url.includes("/messages/delta")) {
         return deltaResponse([
@@ -138,7 +177,7 @@ describe("createOutlookSyncable", () => {
         ]);
       }
       throw new Error(`unexpected fetch: ${url}`);
-    }) as typeof fetch;
+    }) as typeof fetch);
 
     await syncable.sync(ctx, null);
 
@@ -153,13 +192,13 @@ describe("createOutlookSyncable", () => {
     const { db, ctx } = await createOAuthConnectorTestSetup("microsoft", "outlook");
     const syncable = createOutlookSyncable({ ensureMicrosoftMcpRunning: async () => {} });
 
-    globalThis.fetch = (async (input: FetchInput) => {
+    globalThis.fetch = withEmptyCalendar((async (input: FetchInput) => {
       const url = requestUrlString(input);
       if (url.includes("/messages/delta")) {
         return deltaResponse([{ id: "nosub", lastModifiedDateTime: "2024-05-01T10:00:00Z" }]);
       }
       throw new Error(`unexpected fetch: ${url}`);
-    }) as typeof fetch;
+    }) as typeof fetch);
 
     const r = await syncable.sync(ctx, null);
     expect(r.itemsUpserted).toBe(1);
@@ -175,13 +214,13 @@ describe("createOutlookSyncable", () => {
     const { db, ctx } = await createOAuthConnectorTestSetup("microsoft", "outlook");
     const syncable = createOutlookSyncable({ ensureMicrosoftMcpRunning: async () => {} });
 
-    globalThis.fetch = (async (input: FetchInput) => {
+    globalThis.fetch = withEmptyCalendar((async (input: FetchInput) => {
       const url = requestUrlString(input);
       if (url.includes("/messages/delta")) {
         return deltaResponse([{ id: "empsub", subject: "" }]);
       }
       throw new Error(`unexpected fetch: ${url}`);
-    }) as typeof fetch;
+    }) as typeof fetch);
 
     await syncable.sync(ctx, null);
 
@@ -196,13 +235,13 @@ describe("createOutlookSyncable", () => {
     const { db, ctx } = await createOAuthConnectorTestSetup("microsoft", "outlook");
     const syncable = createOutlookSyncable({ ensureMicrosoftMcpRunning: async () => {} });
 
-    globalThis.fetch = (async (input: FetchInput) => {
+    globalThis.fetch = withEmptyCalendar((async (input: FetchInput) => {
       const url = requestUrlString(input);
       if (url.includes("/messages/delta")) {
         return deltaResponse([{ id: "nobody", subject: "Test" }]);
       }
       throw new Error(`unexpected fetch: ${url}`);
-    }) as typeof fetch;
+    }) as typeof fetch);
 
     await syncable.sync(ctx, null);
 
@@ -217,13 +256,13 @@ describe("createOutlookSyncable", () => {
     const { db, ctx } = await createOAuthConnectorTestSetup("microsoft", "outlook");
     const syncable = createOutlookSyncable({ ensureMicrosoftMcpRunning: async () => {} });
 
-    globalThis.fetch = (async (input: FetchInput) => {
+    globalThis.fetch = withEmptyCalendar((async (input: FetchInput) => {
       const url = requestUrlString(input);
       if (url.includes("/messages/delta")) {
         return deltaResponse([{ id: "nolink", subject: "No link" }]);
       }
       throw new Error(`unexpected fetch: ${url}`);
-    }) as typeof fetch;
+    }) as typeof fetch);
 
     await syncable.sync(ctx, null);
 
@@ -238,7 +277,7 @@ describe("createOutlookSyncable", () => {
     const { db, ctx } = await createOAuthConnectorTestSetup("microsoft", "outlook");
     const syncable = createOutlookSyncable({ ensureMicrosoftMcpRunning: async () => {} });
 
-    globalThis.fetch = (async (input: FetchInput) => {
+    globalThis.fetch = withEmptyCalendar((async (input: FetchInput) => {
       const url = requestUrlString(input);
       if (url.includes("/messages/delta")) {
         return deltaResponse([
@@ -246,7 +285,7 @@ describe("createOutlookSyncable", () => {
         ]);
       }
       throw new Error(`unexpected fetch: ${url}`);
-    }) as typeof fetch;
+    }) as typeof fetch);
 
     await syncable.sync(ctx, null);
 
@@ -262,13 +301,13 @@ describe("createOutlookSyncable", () => {
     const { db, ctx } = await createOAuthConnectorTestSetup("microsoft", "outlook");
     const syncable = createOutlookSyncable({ ensureMicrosoftMcpRunning: async () => {} });
 
-    globalThis.fetch = (async (input: FetchInput) => {
+    globalThis.fetch = withEmptyCalendar((async (input: FetchInput) => {
       const url = requestUrlString(input);
       if (url.includes("/messages/delta")) {
         return deltaResponse([{ id: "nofrom", subject: "No from" }]);
       }
       throw new Error(`unexpected fetch: ${url}`);
-    }) as typeof fetch;
+    }) as typeof fetch);
 
     await syncable.sync(ctx, null);
 
@@ -283,7 +322,7 @@ describe("createOutlookSyncable", () => {
     const { db, ctx } = await createOAuthConnectorTestSetup("microsoft", "outlook");
     const syncable = createOutlookSyncable({ ensureMicrosoftMcpRunning: async () => {} });
 
-    globalThis.fetch = (async (input: FetchInput) => {
+    globalThis.fetch = withEmptyCalendar((async (input: FetchInput) => {
       const url = requestUrlString(input);
       if (url.includes("/messages/delta")) {
         return deltaResponse([
@@ -291,7 +330,7 @@ describe("createOutlookSyncable", () => {
         ]);
       }
       throw new Error(`unexpected fetch: ${url}`);
-    }) as typeof fetch;
+    }) as typeof fetch);
 
     await syncable.sync(ctx, null);
 
@@ -306,7 +345,7 @@ describe("createOutlookSyncable", () => {
     const { db, ctx } = await createOAuthConnectorTestSetup("microsoft", "outlook");
     const syncable = createOutlookSyncable({ ensureMicrosoftMcpRunning: async () => {} });
 
-    globalThis.fetch = (async (input: FetchInput) => {
+    globalThis.fetch = withEmptyCalendar((async (input: FetchInput) => {
       const url = requestUrlString(input);
       if (url.includes("/messages/delta")) {
         return deltaResponse([
@@ -318,7 +357,7 @@ describe("createOutlookSyncable", () => {
         ]);
       }
       throw new Error(`unexpected fetch: ${url}`);
-    }) as typeof fetch;
+    }) as typeof fetch);
 
     const r = await syncable.sync(ctx, null);
     expect(r.itemsUpserted).toBe(1);
@@ -334,7 +373,7 @@ describe("createOutlookSyncable", () => {
     const { db, ctx } = await createOAuthConnectorTestSetup("microsoft", "outlook");
     const syncable = createOutlookSyncable({ ensureMicrosoftMcpRunning: async () => {} });
 
-    globalThis.fetch = (async (input: FetchInput) => {
+    globalThis.fetch = withEmptyCalendar((async (input: FetchInput) => {
       const url = requestUrlString(input);
       if (url.includes("/messages/delta")) {
         return deltaResponse([
@@ -346,7 +385,7 @@ describe("createOutlookSyncable", () => {
         ]);
       }
       throw new Error(`unexpected fetch: ${url}`);
-    }) as typeof fetch;
+    }) as typeof fetch);
 
     const r = await syncable.sync(ctx, null);
     expect(r.itemsUpserted).toBe(1);
@@ -363,13 +402,13 @@ describe("createOutlookSyncable", () => {
     const syncable = createOutlookSyncable({ ensureMicrosoftMcpRunning: async () => {} });
     const longSubject = "A".repeat(600);
 
-    globalThis.fetch = (async (input: FetchInput) => {
+    globalThis.fetch = withEmptyCalendar((async (input: FetchInput) => {
       const url = requestUrlString(input);
       if (url.includes("/messages/delta")) {
         return deltaResponse([{ id: "longsubj", subject: longSubject }]);
       }
       throw new Error(`unexpected fetch: ${url}`);
-    }) as typeof fetch;
+    }) as typeof fetch);
 
     await syncable.sync(ctx, null);
 
@@ -386,14 +425,14 @@ describe("createOutlookSyncable", () => {
     const syncable = createOutlookSyncable({ ensureMicrosoftMcpRunning: async () => {} });
 
     const capturedUrls: string[] = [];
-    globalThis.fetch = (async (input: FetchInput) => {
+    globalThis.fetch = withEmptyCalendar((async (input: FetchInput) => {
       const url = requestUrlString(input);
       capturedUrls.push(url);
       if (url.includes("/messages/delta")) {
         return deltaResponse([]);
       }
       throw new Error(`unexpected fetch: ${url}`);
-    }) as typeof fetch;
+    }) as typeof fetch);
 
     await syncable.sync(ctx, null);
 
@@ -407,14 +446,14 @@ describe("createOutlookSyncable", () => {
     const syncable = createOutlookSyncable({ ensureMicrosoftMcpRunning: async () => {} });
 
     const capturedUrls: string[] = [];
-    globalThis.fetch = (async (input: FetchInput) => {
+    globalThis.fetch = withEmptyCalendar((async (input: FetchInput) => {
       const url = requestUrlString(input);
       capturedUrls.push(url);
       if (url.includes("/messages/delta")) {
         return deltaResponse([]);
       }
       throw new Error(`unexpected fetch: ${url}`);
-    }) as typeof fetch;
+    }) as typeof fetch);
 
     await syncable.sync(ctx, "");
 
@@ -426,14 +465,14 @@ describe("createOutlookSyncable", () => {
     const { ctx } = await createOAuthConnectorTestSetup("microsoft", "outlook");
     const syncable = createOutlookSyncable({ ensureMicrosoftMcpRunning: async () => {} });
     const nextUrl = "https://graph.microsoft.com/v1.0/me/messages/delta?$skiptoken=continuation123";
-    const cursor = encodeOutlookSyncCursor({ v: 1, nextUrl });
+    const cursor = encodeOutlookSyncCursor({ v: 2, mail: { nextUrl } });
 
     const capturedUrls: string[] = [];
-    globalThis.fetch = (async (input: FetchInput) => {
+    globalThis.fetch = withEmptyCalendar((async (input: FetchInput) => {
       const url = requestUrlString(input);
       capturedUrls.push(url);
       return deltaResponse([]);
-    }) as typeof fetch;
+    }) as typeof fetch);
 
     await syncable.sync(ctx, cursor);
 
@@ -448,14 +487,14 @@ describe("createOutlookSyncable", () => {
     const badCursor = "nimbus-OTHER:abc123";
 
     const capturedUrls: string[] = [];
-    globalThis.fetch = (async (input: FetchInput) => {
+    globalThis.fetch = withEmptyCalendar((async (input: FetchInput) => {
       const url = requestUrlString(input);
       capturedUrls.push(url);
       if (url.includes("/messages/delta")) {
         return deltaResponse([]);
       }
       throw new Error(`unexpected fetch: ${url}`);
-    }) as typeof fetch;
+    }) as typeof fetch);
 
     await syncable.sync(ctx, badCursor);
 
@@ -468,13 +507,13 @@ describe("createOutlookSyncable", () => {
     const { ctx } = await createOAuthConnectorTestSetup("microsoft", "outlook");
     const syncable = createOutlookSyncable({ ensureMicrosoftMcpRunning: async () => {} });
 
-    globalThis.fetch = (async (input: FetchInput) => {
+    globalThis.fetch = withEmptyCalendar((async (input: FetchInput) => {
       const url = requestUrlString(input);
       if (url.includes("/messages/delta")) {
         return deltaResponse([]); // empty value
       }
       throw new Error(`unexpected fetch: ${url}`);
-    }) as typeof fetch;
+    }) as typeof fetch);
 
     const r = await syncable.sync(ctx, null);
     expect(r.itemsUpserted).toBe(0);
@@ -486,7 +525,7 @@ describe("createOutlookSyncable", () => {
     const { ctx } = await createOAuthConnectorTestSetup("microsoft", "outlook");
     const syncable = createOutlookSyncable({ ensureMicrosoftMcpRunning: async () => {} });
 
-    globalThis.fetch = (async (input: FetchInput) => {
+    globalThis.fetch = withEmptyCalendar((async (input: FetchInput) => {
       const url = requestUrlString(input);
       if (url.includes("/messages/delta")) {
         // No value key at all
@@ -498,7 +537,7 @@ describe("createOutlookSyncable", () => {
         );
       }
       throw new Error(`unexpected fetch: ${url}`);
-    }) as typeof fetch;
+    }) as typeof fetch);
 
     const r = await syncable.sync(ctx, null);
     expect(r.itemsUpserted).toBe(0);
@@ -510,25 +549,25 @@ describe("createOutlookSyncable", () => {
     const syncable = createOutlookSyncable({ ensureMicrosoftMcpRunning: async () => {} });
 
     // First upsert the message so it exists in the db
-    globalThis.fetch = (async (input: FetchInput) => {
+    globalThis.fetch = withEmptyCalendar((async (input: FetchInput) => {
       const url = requestUrlString(input);
       if (url.includes("/messages/delta")) {
         return deltaResponse([{ id: "todelete", subject: "Will be deleted" }]);
       }
       throw new Error(`unexpected fetch: ${url}`);
-    }) as typeof fetch;
+    }) as typeof fetch);
 
     const r1 = await syncable.sync(ctx, null);
     expect(r1.itemsUpserted).toBe(1);
 
     // Now send the same id as removed
-    globalThis.fetch = (async (input: FetchInput) => {
+    globalThis.fetch = withEmptyCalendar((async (input: FetchInput) => {
       const url = requestUrlString(input);
       if (url.includes("/messages/delta")) {
         return deltaResponse([{ id: "todelete", "@removed": { reason: "deleted" } }]);
       }
       throw new Error(`unexpected fetch: ${url}`);
-    }) as typeof fetch;
+    }) as typeof fetch);
 
     const r2 = await syncable.sync(ctx, null);
     expect(r2.itemsDeleted).toBe(1);
@@ -547,7 +586,7 @@ describe("createOutlookSyncable", () => {
     const { db, ctx } = await createOAuthConnectorTestSetup("microsoft", "outlook");
     const syncable = createOutlookSyncable({ ensureMicrosoftMcpRunning: async () => {} });
 
-    globalThis.fetch = (async (input: FetchInput) => {
+    globalThis.fetch = withEmptyCalendar((async (input: FetchInput) => {
       const url = requestUrlString(input);
       if (url.includes("/messages/delta")) {
         return deltaResponse([
@@ -555,7 +594,7 @@ describe("createOutlookSyncable", () => {
         ]);
       }
       throw new Error(`unexpected fetch: ${url}`);
-    }) as typeof fetch;
+    }) as typeof fetch);
 
     const r = await syncable.sync(ctx, null);
     // No delete should have fired
@@ -571,7 +610,7 @@ describe("createOutlookSyncable", () => {
     const syncable = createOutlookSyncable({ ensureMicrosoftMcpRunning: async () => {} });
     const nextLink = "https://graph.microsoft.com/v1.0/me/messages/delta?$skiptoken=page2";
 
-    globalThis.fetch = (async (input: FetchInput) => {
+    globalThis.fetch = withEmptyCalendar((async (input: FetchInput) => {
       const url = requestUrlString(input);
       if (url.includes("/messages/delta")) {
         return new Response(
@@ -583,28 +622,28 @@ describe("createOutlookSyncable", () => {
         );
       }
       throw new Error(`unexpected fetch: ${url}`);
-    }) as typeof fetch;
+    }) as typeof fetch);
 
     const r = await syncable.sync(ctx, null);
     expect(r.hasMore).toBe(true);
     expect(r.itemsUpserted).toBe(1);
 
     const dec = decodeOutlookSyncCursor(r.cursor ?? "");
-    expect(dec?.nextUrl).toBe(nextLink);
+    expect(dec?.mail.nextUrl).toBe(nextLink);
   });
 
   // ── cursor with null nextUrl → dec.nextUrl is null → fallback to initial ─
   test("cursor with null nextUrl falls back to initial URL", async () => {
     const { ctx } = await createOAuthConnectorTestSetup("microsoft", "outlook");
     const syncable = createOutlookSyncable({ ensureMicrosoftMcpRunning: async () => {} });
-    const cursor = encodeOutlookSyncCursor({ v: 1, nextUrl: null });
+    const cursor = encodeOutlookSyncCursor({ v: 2, mail: { nextUrl: null } });
 
     const capturedUrls: string[] = [];
-    globalThis.fetch = (async (input: FetchInput) => {
+    globalThis.fetch = withEmptyCalendar((async (input: FetchInput) => {
       const url = requestUrlString(input);
       capturedUrls.push(url);
       return deltaResponse([]);
-    }) as typeof fetch;
+    }) as typeof fetch);
 
     await syncable.sync(ctx, cursor);
 
@@ -618,7 +657,7 @@ describe("createOutlookSyncable", () => {
     const { db, ctx } = await createOAuthConnectorTestSetup("microsoft", "outlook");
     const syncable = createOutlookSyncable({ ensureMicrosoftMcpRunning: async () => {} });
 
-    globalThis.fetch = (async (input: FetchInput) => {
+    globalThis.fetch = withEmptyCalendar((async (input: FetchInput) => {
       const url = requestUrlString(input);
       if (url.includes("/messages/delta")) {
         return deltaResponse([
@@ -630,7 +669,7 @@ describe("createOutlookSyncable", () => {
         ]);
       }
       throw new Error(`unexpected fetch: ${url}`);
-    }) as typeof fetch;
+    }) as typeof fetch);
 
     const r = await syncable.sync(ctx, null);
     expect(r.itemsUpserted).toBe(1);
@@ -652,7 +691,7 @@ describe("createOutlookSyncable", () => {
     // first step neutralises every source newline to a space, so if the text
     // arm were ever routed through it, "line one\nline two" would come back as
     // "line one line two" instead of unchanged.
-    globalThis.fetch = (async (input: FetchInput) => {
+    globalThis.fetch = withEmptyCalendar((async (input: FetchInput) => {
       const url = requestUrlString(input);
       if (url.includes("/messages/delta")) {
         return deltaResponse([
@@ -664,7 +703,7 @@ describe("createOutlookSyncable", () => {
         ]);
       }
       throw new Error(`unexpected fetch: ${url}`);
-    }) as typeof fetch;
+    }) as typeof fetch);
 
     await syncable.sync(ctx, null);
 
@@ -712,7 +751,7 @@ describe("createOutlookSyncable", () => {
     const { db, ctx } = await createOAuthConnectorTestSetup("microsoft", "outlook");
     const syncable = createOutlookSyncable({ ensureMicrosoftMcpRunning: async () => {} });
 
-    globalThis.fetch = (async (input: FetchInput) => {
+    globalThis.fetch = withEmptyCalendar((async (input: FetchInput) => {
       const url = requestUrlString(input);
       if (url.includes("/messages/delta")) {
         return deltaResponse([
@@ -725,7 +764,7 @@ describe("createOutlookSyncable", () => {
         ]);
       }
       throw new Error(`unexpected fetch: ${url}`);
-    }) as typeof fetch;
+    }) as typeof fetch);
 
     const r = await syncable.sync(ctx, null);
     expect(r.itemsUpserted).toBe(1);
@@ -763,7 +802,7 @@ describe("createOutlookSyncable", () => {
     const { db, ctx } = await createOAuthConnectorTestSetup("microsoft", "outlook");
     const syncable = createOutlookSyncable({ ensureMicrosoftMcpRunning: async () => {} });
 
-    globalThis.fetch = (async (input: FetchInput) => {
+    globalThis.fetch = withEmptyCalendar((async (input: FetchInput) => {
       const url = requestUrlString(input);
       if (url.includes("/messages/delta")) {
         return deltaResponse([
@@ -777,7 +816,7 @@ describe("createOutlookSyncable", () => {
         ]);
       }
       throw new Error(`unexpected fetch: ${url}`);
-    }) as typeof fetch;
+    }) as typeof fetch);
 
     await syncable.sync(ctx, null);
 
@@ -802,7 +841,7 @@ describe("createOutlookSyncable", () => {
     const { db, ctx } = await createOAuthConnectorTestSetup("microsoft", "outlook");
     const syncable = createOutlookSyncable({ ensureMicrosoftMcpRunning: async () => {} });
 
-    globalThis.fetch = (async (input: FetchInput) => {
+    globalThis.fetch = withEmptyCalendar((async (input: FetchInput) => {
       const url = requestUrlString(input);
       if (url.includes("/messages/delta")) {
         return deltaResponse([
@@ -817,7 +856,7 @@ describe("createOutlookSyncable", () => {
         ]);
       }
       throw new Error(`unexpected fetch: ${url}`);
-    }) as typeof fetch;
+    }) as typeof fetch);
 
     const r = await syncable.sync(ctx, null);
     expect(r.itemsUpserted).toBe(1);
@@ -832,14 +871,14 @@ describe("createOutlookSyncable", () => {
     const { db, ctx } = await createOAuthConnectorTestSetup("microsoft", "outlook");
     const syncable = createOutlookSyncable({ ensureMicrosoftMcpRunning: async () => {} });
 
-    globalThis.fetch = (async (input: FetchInput) => {
+    globalThis.fetch = withEmptyCalendar((async (input: FetchInput) => {
       const url = requestUrlString(input);
       if (url.includes("/messages/delta")) {
         // Pre-upgrade delta-link shape: no `body` field on the message at all.
         return deltaResponse([{ id: "nobody2", subject: "No body field" }]);
       }
       throw new Error(`unexpected fetch: ${url}`);
-    }) as typeof fetch;
+    }) as typeof fetch);
 
     const r = await syncable.sync(ctx, null);
     expect(r.itemsUpserted).toBe(1);
@@ -855,14 +894,14 @@ describe("createOutlookSyncable", () => {
     const syncable = createOutlookSyncable({ ensureMicrosoftMcpRunning: async () => {} });
 
     let seenUrl = "";
-    globalThis.fetch = (async (input: FetchInput) => {
+    globalThis.fetch = withEmptyCalendar((async (input: FetchInput) => {
       const url = requestUrlString(input);
       seenUrl = url;
       if (url.includes("/messages/delta")) {
         return deltaResponse([]);
       }
       throw new Error(`unexpected fetch: ${url}`);
-    }) as typeof fetch;
+    }) as typeof fetch);
 
     await syncable.sync(ctx, null);
 
@@ -875,14 +914,14 @@ describe("createOutlookSyncable", () => {
     const syncable = createOutlookSyncable({ ensureMicrosoftMcpRunning: async () => {} });
     const storedNextLink =
       "https://graph.microsoft.com/v1.0/me/messages/delta?$skiptoken=continuePage";
-    const cursor = encodeOutlookSyncCursor({ v: 1, nextUrl: storedNextLink });
+    const cursor = encodeOutlookSyncCursor({ v: 2, mail: { nextUrl: storedNextLink } });
 
     let seenUrl = "";
-    globalThis.fetch = (async (input: FetchInput) => {
+    globalThis.fetch = withEmptyCalendar((async (input: FetchInput) => {
       const url = requestUrlString(input);
       seenUrl = url;
       return deltaResponse([]);
-    }) as typeof fetch;
+    }) as typeof fetch);
 
     await syncable.sync(ctx, cursor);
 
@@ -900,14 +939,14 @@ describe("createOutlookSyncable", () => {
     ).toString("base64url")}`;
 
     let seenUrl = "";
-    globalThis.fetch = (async (input: FetchInput) => {
+    globalThis.fetch = withEmptyCalendar((async (input: FetchInput) => {
       const url = requestUrlString(input);
       seenUrl = url;
       if (url.includes("/messages/delta")) {
         return deltaResponse([]);
       }
       throw new Error(`unexpected fetch: ${url}`);
-    }) as typeof fetch;
+    }) as typeof fetch);
 
     await syncable.sync(ctx, oldPrefixCursor);
 
@@ -926,10 +965,10 @@ describe("createOutlookSyncable", () => {
     expect(decodeOutlookSyncCursor(outl2Cursor)).toBeUndefined();
 
     let seenUrl = "";
-    globalThis.fetch = (async (input: FetchInput) => {
+    globalThis.fetch = withEmptyCalendar((async (input: FetchInput) => {
       seenUrl = requestUrlString(input);
       return deltaResponse([]);
-    }) as typeof fetch;
+    }) as typeof fetch);
 
     await syncable.sync(ctx, outl2Cursor);
 
@@ -957,13 +996,13 @@ describe("createOutlookSyncable", () => {
     test("isRead true and false index is_read with meta_v; a missing or non-boolean isRead writes neither", async () => {
       const { db, ctx } = await createOAuthConnectorTestSetup("microsoft", "outlook");
       const syncable = createOutlookSyncable({ ensureMicrosoftMcpRunning: async () => {} });
-      globalThis.fetch = (async () =>
+      globalThis.fetch = withEmptyCalendar((async () =>
         deltaResponse([
           msg("r", { isRead: true }),
           msg("u", { isRead: false }),
           msg("none", {}),
           msg("odd", { isRead: "yes" }),
-        ])) as unknown as typeof fetch;
+        ])) as unknown as typeof fetch);
       await syncable.sync(ctx, null);
       expect(metaOf(db, "r")).toMatchObject({ is_read: true, meta_v: 1 });
       expect(metaOf(db, "u")).toMatchObject({ is_read: false, meta_v: 1 });
@@ -977,14 +1016,260 @@ describe("createOutlookSyncable", () => {
     test("a later delta page that re-reports a message with isRead flipped updates the row", async () => {
       const { db, ctx } = await createOAuthConnectorTestSetup("microsoft", "outlook");
       const syncable = createOutlookSyncable({ ensureMicrosoftMcpRunning: async () => {} });
-      globalThis.fetch = (async () =>
-        deltaResponse([msg("m", { isRead: false })])) as unknown as typeof fetch;
+      globalThis.fetch = withEmptyCalendar((async () =>
+        deltaResponse([msg("m", { isRead: false })])) as unknown as typeof fetch);
       await syncable.sync(ctx, null);
       expect(metaOf(db, "m")["is_read"]).toBe(false);
-      globalThis.fetch = (async () =>
-        deltaResponse([msg("m", { isRead: true })])) as unknown as typeof fetch;
+      globalThis.fetch = withEmptyCalendar((async () =>
+        deltaResponse([msg("m", { isRead: true })])) as unknown as typeof fetch);
       await syncable.sync(ctx, null);
       expect(metaOf(db, "m")["is_read"]).toBe(true);
     });
+  });
+});
+
+describe("Outlook sync cursor: outl3 is read as mail-only", () => {
+  const MAIL_LINK = "https://graph.microsoft.com/v1.0/me/messages/delta?$skiptoken=mid";
+  const outl = (prefix: string, payload: unknown): string =>
+    `${prefix}${Buffer.from(JSON.stringify(payload)).toString("base64url")}`;
+
+  test("an outl3 cursor decodes to a v2 cursor with the mail link and NO calendar half", () => {
+    expect(decodeOutlookSyncCursor(outl("nimbus-outl3:", { v: 1, nextUrl: MAIL_LINK }))).toEqual({
+      v: 2,
+      mail: { nextUrl: MAIL_LINK },
+    });
+    expect(decodeOutlookSyncCursor(outl("nimbus-outl3:", { v: 1, nextUrl: null }))).toEqual({
+      v: 2,
+      mail: { nextUrl: null },
+    });
+    expect(decodeOutlookSyncCursor(outl("nimbus-outl3:", { v: 1, nextUrl: 5 }))).toBeUndefined();
+  });
+
+  test("outl1, outl2 and junk decode to undefined (both streams start fresh)", () => {
+    for (const prefix of ["nimbus-outl1:", "nimbus-outl2:"]) {
+      expect(decodeOutlookSyncCursor(outl(prefix, { v: 1, nextUrl: MAIL_LINK }))).toBeUndefined();
+    }
+    expect(decodeOutlookSyncCursor("junk")).toBeUndefined();
+    expect(decodeOutlookSyncCursor("nimbus-outl4:%%%")).toBeUndefined();
+  });
+
+  test("an outl4 payload with v 1 or a malformed mail half is undefined", () => {
+    expect(
+      decodeOutlookSyncCursor(outl("nimbus-outl4:", { v: 1, mail: { nextUrl: null } })),
+    ).toBeUndefined();
+    expect(decodeOutlookSyncCursor(outl("nimbus-outl4:", { v: 2 }))).toBeUndefined();
+    expect(
+      decodeOutlookSyncCursor(outl("nimbus-outl4:", { v: 2, mail: { nextUrl: 7 } })),
+    ).toBeUndefined();
+    expect(decodeOutlookSyncCursor(outl("nimbus-outl4:", { v: 2, mail: "x" }))).toBeUndefined();
+  });
+
+  test("a malformed calendar half is dropped while the valid mail half is kept", () => {
+    const bad = [
+      { nextUrl: null, windowStart: "x" },
+      { nextUrl: null, windowStart: Number.NaN },
+      { nextUrl: 5, windowStart: 1 },
+      "nope",
+    ];
+    for (const calendar of bad) {
+      expect(
+        decodeOutlookSyncCursor(
+          outl("nimbus-outl4:", { v: 2, mail: { nextUrl: MAIL_LINK }, calendar }),
+        ),
+      ).toEqual({ v: 2, mail: { nextUrl: MAIL_LINK } });
+    }
+  });
+});
+
+describe("Outlook sync with the calendar stream", () => {
+  registerGlobalFetchRestore(afterEach);
+  const MAIL_LINK = "https://graph.microsoft.com/v1.0/me/messages/delta?$skiptoken=mid";
+  const MAIL_DELTA = "https://graph.microsoft.com/v1.0/me/messages/delta?$deltatoken=M";
+  const CAL_DELTA = "https://graph.microsoft.com/v1.0/me/calendarView/delta?$deltatoken=C";
+  const NOW = Date.UTC(2026, 10, 11, 12);
+  const outl3 = (): string =>
+    `nimbus-outl3:${Buffer.from(JSON.stringify({ v: 1, nextUrl: MAIL_LINK })).toString("base64url")}`;
+
+  function route(opts: {
+    mail?: (url: string) => Response;
+    calendar?: (url: string) => Response;
+  }): string[] {
+    const urls: string[] = [];
+    globalThis.fetch = (async (input: FetchInput) => {
+      const url = requestUrlString(input);
+      urls.push(url);
+      if (url.includes("/calendarView/")) {
+        return (
+          opts.calendar?.(url) ??
+          new Response(JSON.stringify({ value: [], "@odata.deltaLink": CAL_DELTA }))
+        );
+      }
+      return opts.mail?.(url) ?? deltaResponse([]);
+    }) as typeof fetch;
+    return urls;
+  }
+
+  const mailPage = (value: unknown[]) =>
+    new Response(JSON.stringify({ value, "@odata.deltaLink": MAIL_DELTA }));
+  const calPage = (value: unknown[]) =>
+    new Response(JSON.stringify({ value, "@odata.deltaLink": CAL_DELTA }));
+  const event = (id: string) => ({
+    id,
+    subject: "e",
+    start: { dateTime: "2026-11-11T13:00:00.0000000", timeZone: "UTC" },
+    end: { dateTime: "2026-11-11T14:00:00.0000000", timeZone: "UTC" },
+  });
+
+  test("one run asks for mail then calendar, sums both results and stores an outl4 cursor with both halves", async () => {
+    const { db, ctx } = await createOAuthConnectorTestSetup("microsoft", "outlook");
+    const syncable = createOutlookSyncable({
+      ensureMicrosoftMcpRunning: async () => {},
+      now: () => NOW,
+      zone: "UTC",
+    });
+    const urls = route({
+      mail: () => mailPage([{ id: "m1", subject: "Hi", bodyPreview: "b" }]),
+      calendar: () => calPage([event("e1")]),
+    });
+    const r = await syncable.sync(ctx, null);
+    expect(urls).toHaveLength(2);
+    expect(urls[0]).toContain("/me/messages/delta");
+    expect(urls[1]).toContain("/me/calendarView/delta");
+    expect(r.itemsUpserted).toBe(2);
+    expect(r.itemsDeleted).toBe(0);
+    expect(r.hasMore).toBe(false);
+    expect(r.bytesTransferred).toBeGreaterThan(100);
+    const dec = decodeOutlookSyncCursor(r.cursor ?? "");
+    expect(dec?.mail.nextUrl).toBe(MAIL_DELTA);
+    expect(dec?.calendar?.nextUrl).toBe(CAL_DELTA);
+    const types = db
+      .query("SELECT type, COUNT(*) AS n FROM item GROUP BY type ORDER BY type")
+      .all();
+    expect(types).toEqual([
+      { type: "email", n: 1 },
+      { type: "event", n: 1 },
+    ]);
+  });
+
+  test("an outl3 cursor continues the stored mail link (mail is NOT reset) and gains a calendar half", async () => {
+    const { ctx } = await createOAuthConnectorTestSetup("microsoft", "outlook");
+    const syncable = createOutlookSyncable({ ensureMicrosoftMcpRunning: async () => {} });
+    const urls = route({ mail: () => mailPage([]) });
+    const r = await syncable.sync(ctx, outl3());
+    expect(urls[0]).toBe(MAIL_LINK);
+    expect(r.cursor?.startsWith("nimbus-outl4:")).toBe(true);
+    const dec = decodeOutlookSyncCursor(r.cursor ?? "");
+    expect(dec?.mail.nextUrl).toBe(MAIL_DELTA);
+    expect(dec?.calendar?.nextUrl).toBe(CAL_DELTA);
+  });
+
+  test("hasMore is true when the mail stream has more, and when the calendar hits its page cap", async () => {
+    const { ctx } = await createOAuthConnectorTestSetup("microsoft", "outlook");
+    const syncable = createOutlookSyncable({
+      ensureMicrosoftMcpRunning: async () => {},
+      now: () => NOW,
+    });
+    route({
+      mail: () => new Response(JSON.stringify({ value: [], "@odata.nextLink": MAIL_LINK })),
+    });
+    const mailMore = await syncable.sync(ctx, null);
+    expect(mailMore.hasMore).toBe(true);
+    expect(decodeOutlookSyncCursor(mailMore.cursor ?? "")?.mail.nextUrl).toBe(MAIL_LINK);
+
+    route({
+      calendar: () =>
+        new Response(
+          JSON.stringify({
+            value: [],
+            "@odata.nextLink":
+              "https://graph.microsoft.com/v1.0/me/calendarView/delta?$skiptoken=1",
+          }),
+        ),
+    });
+    const calMore = await syncable.sync(ctx, null);
+    expect(calMore.hasMore).toBe(true);
+    expect(decodeOutlookSyncCursor(calMore.cursor ?? "")?.calendar?.draining).toBe(true);
+  });
+
+  test("a mail @removed id deletes the mail row only; the calendar row survives", async () => {
+    const { db, ctx } = await createOAuthConnectorTestSetup("microsoft", "outlook");
+    const syncable = createOutlookSyncable({
+      ensureMicrosoftMcpRunning: async () => {},
+      now: () => NOW,
+      zone: "UTC",
+    });
+    route({
+      mail: () => mailPage([{ id: "mail-1", subject: "x" }]),
+      calendar: () => calPage([event("evt-1")]),
+    });
+    await syncable.sync(ctx, null);
+    route({ mail: () => mailPage([{ id: "mail-1", "@removed": { reason: "deleted" } }]) });
+    const second = await syncable.sync(
+      ctx,
+      encodeOutlookSyncCursor({
+        v: 2,
+        mail: { nextUrl: MAIL_DELTA },
+        calendar: { nextUrl: CAL_DELTA, windowStart: 0, checkedAt: NOW },
+      }),
+    );
+    expect(second.itemsDeleted).toBe(1);
+    expect(
+      (db.query("SELECT type FROM item ORDER BY id").all() as { type: string }[]).map(
+        (r) => r.type,
+      ),
+    ).toEqual(["event"]);
+  });
+
+  test("a calendar failure leaves the mail rows and the mail cursor advance intact", async () => {
+    const { db, ctx } = await createOAuthConnectorTestSetup("microsoft", "outlook");
+    const syncable = createOutlookSyncable({ ensureMicrosoftMcpRunning: async () => {} });
+    route({
+      mail: () => mailPage([{ id: "m1", subject: "kept" }]),
+      calendar: () => new Response("boom", { status: 500 }),
+    });
+    const r = await syncable.sync(ctx, null);
+    expect(r.itemsUpserted).toBe(1);
+    expect(decodeOutlookSyncCursor(r.cursor ?? "")?.mail.nextUrl).toBe(MAIL_DELTA);
+    expect(decodeOutlookSyncCursor(r.cursor ?? "")?.calendar).toBeUndefined();
+    expect(db.query("SELECT COUNT(*) AS n FROM item WHERE type = 'email'").get()).toEqual({ n: 1 });
+  });
+
+  test("a mail error propagates exactly as before and the calendar is not asked", async () => {
+    const { ctx } = await createOAuthConnectorTestSetup("microsoft", "outlook");
+    const syncable = createOutlookSyncable({ ensureMicrosoftMcpRunning: async () => {} });
+    const urls = route({ mail: () => new Response("no", { status: 500 }) });
+    await expect(syncable.sync(ctx, null)).rejects.toThrow("Outlook sync failed: 500");
+    expect(urls.filter((u) => u.includes("calendarView"))).toHaveLength(0);
+  });
+
+  test("unresolved calendar zones reach the run log line", async () => {
+    const { ctx } = await createOAuthConnectorTestSetup("microsoft", "outlook");
+    const lines: Array<Record<string, unknown>> = [];
+    const logged: typeof ctx = {
+      ...ctx,
+      logger: {
+        ...ctx.logger,
+        info: (o: Record<string, unknown>) => {
+          lines.push(o);
+        },
+      } as unknown as typeof ctx.logger,
+    };
+    const syncable = createOutlookSyncable({
+      ensureMicrosoftMcpRunning: async () => {},
+      now: () => NOW,
+      zone: "UTC",
+    });
+    route({
+      calendar: () =>
+        calPage([
+          {
+            id: "w1",
+            start: { dateTime: "2026-11-11T13:00:00.0000000", timeZone: "Pacific Standard Time" },
+            end: { dateTime: "2026-11-11T14:00:00.0000000", timeZone: "Pacific Standard Time" },
+          },
+        ]),
+    });
+    await syncable.sync(logged, null);
+    expect(lines.some((l) => l["calendar_unresolved"] === 1)).toBe(true);
   });
 });

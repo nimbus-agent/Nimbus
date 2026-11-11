@@ -99,6 +99,11 @@ export const FIRST_PARTY_MANIFESTS: Record<string, ExtensionManifest> = {
     network: ["www.googleapis.com", "meet.googleapis.com", "oauth2.googleapis.com"],
     filesystem: { read: [], write: [] },
   }),
+  // Handed a ready access token by the gateway, so it names only the Calendar API host (no token host).
+  google_calendar: baseManifest("com.nimbus.google-calendar", {
+    network: ["www.googleapis.com"],
+    filesystem: { read: [], write: [] },
+  }),
 
   onedrive: baseManifest("com.nimbus.onedrive", {
     network: ["graph.microsoft.com", "login.microsoftonline.com"],

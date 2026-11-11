@@ -9,6 +9,7 @@ import {
   encodeMicrosoftGraphDeltaCursor,
   fetchMicrosoftGraphJson,
   type MicrosoftGraphDeltaCursorV1,
+  MicrosoftGraphHttpError,
   modifiedMsFromIso,
   nextCursorFromODataDeltaLinks,
   type ODataDeltaPage,
@@ -435,5 +436,63 @@ describe("fetchMicrosoftGraphJson", () => {
     );
 
     expect(capturedAuthHeader).toBe(`Bearer ${token}`);
+  });
+});
+
+describe("fetchMicrosoftGraphJson extra headers and the typed error", () => {
+  registerGlobalFetchRestore(afterEach);
+
+  test("sends extra headers, always sends the bearer token, and a caller Authorization never replaces it", async () => {
+    const { ctx } = await createOAuthConnectorTestSetup("microsoft");
+    let seen: Record<string, string> = {};
+    globalThis.fetch = (async (_input: string | URL | Request, init?: RequestInit) => {
+      seen = init?.headers as Record<string, string>;
+      return new Response("{}", { status: 200 });
+    }) as typeof fetch;
+    await fetchMicrosoftGraphJson(ctx, "real-token", null, "https://graph.example/x", "X", {
+      Prefer: 'odata.maxpagesize=50, outlook.timezone="UTC"',
+      authorization: "Bearer attacker",
+    });
+    expect(seen["Prefer"]).toBe('odata.maxpagesize=50, outlook.timezone="UTC"');
+    expect(seen["Authorization"]).toBe("Bearer real-token");
+    expect(Object.keys(seen).filter((k) => k.toLowerCase() === "authorization")).toHaveLength(1);
+  });
+
+  test("with no headers the request carries only Authorization", async () => {
+    const { ctx } = await createOAuthConnectorTestSetup("microsoft");
+    let seen: Record<string, string> = {};
+    globalThis.fetch = (async (_input: string | URL | Request, init?: RequestInit) => {
+      seen = init?.headers as Record<string, string>;
+      return new Response("{}", { status: 200 });
+    }) as typeof fetch;
+    await fetchMicrosoftGraphJson(ctx, "t", null, "https://graph.example/x", "X");
+    expect(seen).toEqual({ Authorization: "Bearer t" });
+  });
+
+  test("a non-OK response throws a MicrosoftGraphHttpError with the unchanged message and the status", async () => {
+    const { ctx } = await createOAuthConnectorTestSetup("microsoft");
+    globalThis.fetch = (async (_input: string | URL | Request) =>
+      new Response("gone", { status: 410 })) as typeof fetch;
+    const err = await fetchMicrosoftGraphJson(
+      ctx,
+      "t",
+      null,
+      "https://graph.example/x",
+      "Outlook",
+    ).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(MicrosoftGraphHttpError);
+    expect(err).toBeInstanceOf(Error);
+    expect((err as MicrosoftGraphHttpError).message).toBe("Outlook sync failed: 410");
+    expect((err as MicrosoftGraphHttpError).status).toBe(410);
+    expect((err as MicrosoftGraphHttpError).name).toBe("MicrosoftGraphHttpError");
+  });
+
+  test("invalid JSON keeps its plain Error message", async () => {
+    const { ctx } = await createOAuthConnectorTestSetup("microsoft");
+    globalThis.fetch = (async (_input: string | URL | Request) =>
+      new Response("<html>", { status: 200 })) as typeof fetch;
+    await expect(
+      fetchMicrosoftGraphJson(ctx, "t", null, "https://graph.example/x", "Outlook"),
+    ).rejects.toThrow("Outlook sync failed: invalid JSON");
   });
 });

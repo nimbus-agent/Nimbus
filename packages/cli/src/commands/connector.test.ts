@@ -1579,13 +1579,17 @@ describe("runConnector auth — per-service help branches", () => {
     clearFixture();
   });
 
-  it.each([["gmail"], ["google_photos"], ["google_meet"], ["outlook"], ["teams"]])(
-    "auth %s --help prints provider-specific OAuth help",
-    async (service) => {
-      await runConnector(["auth", service, "--help"]);
-      expect(out.stdout.length).toBeGreaterThan(0);
-    },
-  );
+  it.each([
+    ["gmail"],
+    ["google_photos"],
+    ["google_meet"],
+    ["google_calendar"],
+    ["outlook"],
+    ["teams"],
+  ])("auth %s --help prints provider-specific OAuth help", async (service) => {
+    await runConnector(["auth", service, "--help"]);
+    expect(out.stdout.length).toBeGreaterThan(0);
+  });
 
   it("normalizes hyphenated service names in --help (google-drive)", async () => {
     await runConnector(["auth", "google-drive", "--help"]);
