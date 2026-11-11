@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794434891271,
+  "lastUpdate": 1794436324757,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
-            "name": "nimbus-release-bot[bot]",
-            "username": "nimbus-release-bot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "9fc06bf2d4e14f6aa328f40670b0d9cfcb8ef872",
-          "message": "chore: release main (#1317)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>2.15.0</summary>\n\n##\n[2.15.0](https://github.com/nimbus-agent/Nimbus/compare/v2.14.0...v2.15.0)\n(2026-08-23)\n\n\n### Features\n\n* **connectors:** consent-gated standalone connectors, so writes cannot\nrun ungated off-gateway\n([#1318](https://github.com/nimbus-agent/Nimbus/issues/1318))\n([e4d948a](https://github.com/nimbus-agent/Nimbus/commit/e4d948aa3c03b4a22d603b0f816d3f98bf2c3fe6))\n\n\n### Bug Fixes\n\n* **test:** stop the Windows deploy.preflight hook timeout and clear the\nSonar backlog\n([#1316](https://github.com/nimbus-agent/Nimbus/issues/1316))\n([139aa40](https://github.com/nimbus-agent/Nimbus/commit/139aa40307d73083bfeb955d264858d1ad2e54c9))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
-          "timestamp": "2026-08-23T18:51:16Z",
-          "tree_id": "aada4fd0642fdb05a3229da39f090c8011e8e33c",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/9fc06bf2d4e14f6aa328f40670b0d9cfcb8ef872"
-        },
-        "date": 1787511766818,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 322.05440879999804,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 318.8825748999931,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 294.39336324999675,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "e2870a1a904112549a0752d9c22192ba0586e4ce",
+          "message": "feat(gateway): keep Slack read markers, index Slack DMs, and count unread threads for the morning briefing (#1973)\n\nPhase 10, morning briefing, slice **MB4**: Slack read markers and\nunread-thread counting (owner ruling OR-10-14), plus indexing of Slack\ndirect and group DMs (owner ruling **OR-10-15**).\n\n> **Visible change for existing Slack connections:** the Slack sync kept\nonly conversations with `is_member === true`, a field Slack's DM objects\ndon't carry, so DMs were never indexed. They now are (`is_im` /\n`is_mpim`), locally, with the read scopes the connection already has. No\nre-auth.\n\n## What changes\n\n- **Schema V92 `chat_read_marker`** (service, channel_id, channel_kind,\nlast_read_ts, captured_at), written only through the new service-scoped\nsync capability **`setChatReadMarkers(markers, { keepChannelIds? })`**\n(D24). The local-only and unbound contexts refuse it.\n- New static rule **`chat-read-marker-confined`**: only the store and\nthe V92 DDL write the table, and the store is in `RULE_ANCHORS`.\nSchema-qualified, `UPDATE OR`, quoted and multi-line forms are all\ncaught.\n- `connector remove slack` and `data delete` clear the service's\nmarkers.\n- **Marker pass**, at the end of each Slack history round:\n- It calls `conversations.info` for member conversations, round-robin\nthrough a cursor offset, sharing the existing `slack` limiter (20/min).\nIt polls `tryAcquire` and never queues inside the limiter.\n- The pass has a 30 s deadline, and each request a timeout. A partial\npass keeps the existing markers.\n  - The own user id comes from `auth.test` and is cached in the cursor.\n- **Channel list refresh:** the conversation list is now re-fetched each\nround. Before, the cursor never returned to listing, so a channel joined\nlater was never indexed, and a first list with zero channels left the\ncursor stuck. Markers are pruned only after a COMPLETE list\n(`listPartial` blocks it).\n- **Reader**:\n- `index/slack-unread.ts` `countUnreadSlackThreads` counts distinct\n`coalesce(thread_ts, ts)` among indexed `slack:message` rows newer than\nthe conversation's `last_read`, excluding your own messages.\n- `ts` comes from `external_id`, compared as text behind a `GLOB` guard,\nnever through a REAL cast.\n  - DMs and group DMs are listed first.\n- **MB5 seam:** `index/chat-unread-query.ts` `readUnreadChatThreads(db,\n{ nowMs, limit }): ChatUnreadResult`, the reader the morning briefing\ncalls.\n  - `platform/assemble.ts` is untouched; MB5 adds the one wiring line.\n\n## Stated bounds\n\n- `conversations.history` returns top-level and broadcast messages only,\nso a new plain reply in an old thread is invisible.\n- History depth is 14 days.\n- Markers converge at about 15 conversations per pass.\n- `last_read` shapes are checked against Slack's documentation only, not\na live workspace.\n- A connection that lacks an `*:read` scope gets `missing_scope` and no\nmarker for that conversation.\n- No new invariant. Static D24 is extended. No new egress class: the new\nrequests are sync-class through the existing credential.\n\n## Verification (local, Windows)\n\n- `preflight:fast` (37 gates), `typecheck` and `typecheck:tests` (0 new)\npass.\n- Scoped tests: 13,395 pass, 0 fail. The whole\n`security-invariants.test.ts` passes (528).\n- `audit:invariants`, `audit:status-drift`, `audit:lane-census --check`,\n`audit:boundaries` and `audit:any` pass.\n- `bun test packages/gateway/src`: 29965 pass, 0 fail. `bun test\npackages/gateway/test packages/cli`: only the 6 migration e2e tests that\nfail on `main` in that combined process.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JmSjrCFSTQTQnUa4j8F5b1\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Slack sync now indexes direct and group conversations alongside\nchannels and tracks read positions.\n* Added unread-thread results with message counts and conversation\ndetails for morning briefings.\n* Unread results are ordered with direct messages first and support a\nconfigurable limit.\n* **Bug Fixes**\n* Connector data deletion now also removes that service’s read markers\nwithout affecting other services.\n* **Documentation**\n* Updated migration, schema, architecture, roadmap, and changelog\ndocumentation for Slack read markers and unread threads.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-11T22:20:49Z",
+          "tree_id": "7b16516f8d877a40e66e39778a7084dc7cbba1ee",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/e2870a1a904112549a0752d9c22192ba0586e4ce"
+        },
+        "date": 1794436319558,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 286.1177213499959,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 286.3536537500055,
             "unit": "ms"
           }
         ]
