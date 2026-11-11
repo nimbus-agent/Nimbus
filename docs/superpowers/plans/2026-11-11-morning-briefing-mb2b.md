@@ -329,7 +329,8 @@ records, so `bun run typecheck` after adding the id to `CONNECTOR_SERVICE_IDS` I
      loop's `resolveGoogleOAuthVaultKey` already returns `null` for a missing own key, so the server is skipped.
    - `connectors/lazy-mesh/first-party-manifests.ts`: `google_calendar: baseManifest("com.nimbus.google-calendar", { network: ["www.googleapis.com"], filesystem: { read: [], write: [] } })`
      (id from the connector's own `nimbus.extension.json`; no `oauth2.googleapis.com`, deviation 9).
-   - CLI: `packages/cli/src/commands/connector.ts` `printConnectorAuthServiceHelp` case;
+   - CLI: `packages/cli/src/commands/connector.ts` `printConnectorAuthServiceHelp` case, and the general help line
+     `nimbus connector auth google_drive --help    (gmail, google_photos)` (~1432) gains `google_calendar`;
      `packages/cli/src/lib/connector-oauth-env-help.ts` pointer text "(also gmail, google_photos, google_meet, google_calendar)".
    - `scripts/diagnostics/test-google-oauth-refresh.ps1` (key list ~100, map ~108): add the key and mapping
      (a diagnostic script, not gated; keep it truthful).
