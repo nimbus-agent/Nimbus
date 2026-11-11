@@ -4180,6 +4180,30 @@ describe("D39 — the model's connector-write door is the only builder of write 
     ).toEqual([]);
   });
 
+  test("(e) FAILS on a rogue buildUnattendedWorkflowWriteExecutor; allows run-ask.ts and gateway-main.ts (SA4)", () => {
+    for (const rogue of [
+      "packages/gateway/src/ipc/rogue.ts",
+      "packages/gateway/src/automation/workflow-scheduler.ts",
+    ]) {
+      expect(
+        rules([file(rogue, "const ex = buildUnattendedWorkflowWriteExecutor(p);")]),
+        rogue,
+      ).toEqual(["connector-write-builders-confined"]);
+    }
+    expect(
+      rules([
+        file(
+          "packages/gateway/src/engine/run-ask.ts",
+          "export function buildUnattendedWorkflowWriteExecutor(p) { return 1; }",
+        ),
+        file(
+          "packages/gateway/src/gateway-main.ts",
+          "const ex = buildUnattendedWorkflowWriteExecutor(p);",
+        ),
+      ]),
+    ).toEqual([]);
+  });
+
   test("(c) does not apply to other files", () => {
     expect(
       rules([file("packages/gateway/src/engine/executor.ts", "connectors.dispatch(a);")]),
@@ -4263,9 +4287,9 @@ describe("D40 — a before-state read stays a guarded read on the door's executo
     ).toEqual(["before-state-runner-confined"]);
   });
 
-  test("(b) allows the runner inside buildWorkflowWriteExecutor too (SA2), and nowhere else in run-ask.ts", () => {
+  test("(b) allows the runner inside newWorkflowWriteExecutor too (SA2/SA4), and nowhere else in run-ask.ts", () => {
     const carriers =
-      'import { createBeforeStateRunner } from "./before-state.ts";\nfunction buildAskExecutor(p) {\n  return newTurnExecutor(p, p.delegation);\n}\nexport function buildModelWriteExecutor(p) {\n  return newTurnExecutor(p, undefined, createBeforeStateRunner());\n}\nexport function buildWorkflowWriteExecutor(p) {\n  return newTurnExecutor(p, undefined, createBeforeStateRunner());\n}\n';
+      'import { createBeforeStateRunner } from "./before-state.ts";\nfunction buildAskExecutor(p) {\n  return newTurnExecutor(p, p.delegation);\n}\nexport function buildModelWriteExecutor(p) {\n  return newTurnExecutor(p, undefined, createBeforeStateRunner());\n}\nfunction newWorkflowWriteExecutor(p) {\n  return newTurnExecutor(p, undefined, createBeforeStateRunner());\n}\n';
     expect(rules(replace(RUN_ASK, carriers))).toEqual([]);
     // A third function in run-ask.ts that builds a runner is still refused.
     expect(
@@ -5168,6 +5192,11 @@ describe("D44 — a standing rule approves only inside approvalPhase, for an exa
   const RPC = `${SRC}ipc/standing-rpc.ts`;
   const RUN_ASK = `${SRC}engine/run-ask.ts`;
   const OTHER = `${SRC}ipc/other.ts`;
+  const SCHEDULER = `${SRC}automation/workflow-scheduler.ts`;
+  const LEARNING = `${SRC}standing/approval-learning.ts`;
+  const SUGG_STORE = `${SRC}standing/standing-suggestion-store.ts`;
+  const V90 = `${SRC}index/standing-suggestion-v90-sql.ts`;
+  const RUNNER = `${SRC}automation/workflow-runner.ts`;
   const EXECUTOR_GOOD = [
     "class ToolExecutor {",
     "  private async resolveHitlApproval(action, opts, record, scope) {",
@@ -5179,10 +5208,16 @@ describe("D44 — a standing rule approves only inside approvalPhase, for an exa
     "    if (match !== undefined) {",
     '      return { kind: "standing_approved", ruleId: match.ruleId, fireId: match.fireId };',
     "    }",
+    "    if (this.unattended) {",
+    "      record.rejectReason = UNATTENDED_NO_RULE_REASON;",
+    '      return { kind: "rejected", reason: UNATTENDED_NO_RULE_REASON, answerSource: "none" };',
+    "    }",
     "    const delegated = await this.tryDelegatedApproval(action, confirm, record);",
     "    return delegated;",
     "  }",
+    "  constructor(extras) { this.unattended = extras.unattended === true; }",
     "}",
+    'export const UNATTENDED_NO_RULE_REASON = "no rule";',
     "",
   ].join("\n");
   const RUN_ASK_GOOD = [
@@ -5190,7 +5225,16 @@ describe("D44 — a standing rule approves only inside approvalPhase, for an exa
     "  return newTurnExecutor(p, undefined, { beforeState: runner });",
     "}",
     "export function buildWorkflowWriteExecutor(p) {",
-    "  return newTurnExecutor(p, undefined, { standingRules: createStandingRuleDeps(p) });",
+    "  return newWorkflowWriteExecutor(p, consentOf(p), false);",
+    "}",
+    "export function buildUnattendedWorkflowWriteExecutor(p) {",
+    "  return newWorkflowWriteExecutor(p, NEVER, true);",
+    "}",
+    "function newWorkflowWriteExecutor(p, consent, unattended) {",
+    "  return newExecutorOnChannel(p, consent, undefined, {",
+    "    standingRules: createStandingRuleDeps(p),",
+    "    unattended,",
+    "  });",
     "}",
     "",
   ].join("\n");
@@ -5203,15 +5247,16 @@ describe("D44 — a standing rule approves only inside approvalPhase, for an exa
     ),
     file(
       WRITE_STEP,
-      'const p = { kind: "owner_workflow" }; const q = WorkflowProvenance; const f = fieldSources;\n',
+      'const p = { kind: "owner_workflow" }; const q = WorkflowProvenance; const f = fieldSources; if (r.reason === UNATTENDED_NO_RULE_REASON) {}\n',
     ),
+    file(SCHEDULER, 'const run = { trigger: "schedule", workflowName: n };\n'),
     file(
       TYPES,
       'export type X = { readonly kind: "owner_workflow"; fieldSources: 1 } | { kind: "standing_approved" };\n',
     ),
     file(
       STORE,
-      'db.run("INSERT INTO standing_rule (id) VALUES (1)"); export function insertRule() {} export function claimFire() {}\n',
+      'db.run("INSERT INTO standing_rule (id) VALUES (1)"); export function insertRule() {} export function claimFire() {} export function hasLiveRuleFor() {}\n',
     ),
     file(
       V88,
@@ -5221,6 +5266,19 @@ describe("D44 — a standing rule approves only inside approvalPhase, for an exa
       RPC,
       "insertRule(db, r); resumeRule(db, id); pauseRule(db, id, n); revokeRule(db, id, n);\n",
     ),
+    file(
+      LEARNING,
+      'if (prov["kind"] === "owner_workflow") { applyStepRun(); openSuggestion(); markStaleFor(); hasLiveRuleFor(); }\n',
+    ),
+    file(
+      SUGG_STORE,
+      'db.run("INSERT INTO standing_suggestion (id) VALUES (1)"); db.run("DELETE FROM standing_streak"); export function applyStepRun() {} export function openSuggestion() {} export function markStaleFor() {}\n',
+    ),
+    file(
+      V90,
+      'const a = "CREATE TABLE IF NOT EXISTS standing_streak (id TEXT)"; const b = "CREATE TABLE IF NOT EXISTS standing_suggestion (id TEXT)";\n',
+    ),
+    file(RUNNER, "learnFromStepRun(db, run, cfg);\n"),
   ];
   const rules = (files: FileEntry[]): string[] => [
     ...new Set(checkStandingApprovals(files).map((v) => v.rule)),
@@ -5255,6 +5313,81 @@ describe("D44 — a standing rule approves only inside approvalPhase, for an exa
     );
     expect(rules(GOOD.map((f) => (f.relPath === STEP ? reader : f)))).toEqual([
       "standing-provenance-confined",
+    ]);
+  });
+
+  test("(f) the learning pass may read the owner_workflow literal but never construct it", () => {
+    const reader = file(LEARNING, 'const ok = prov["kind"] === "owner_workflow";\n');
+    expect(rules(GOOD.map((f) => (f.relPath === LEARNING ? reader : f)))).toEqual([]);
+    for (const body of [
+      'const p = { kind: "owner_workflow", runId: 1 };',
+      'const p = { "kind": "owner_workflow", runId: 1 };',
+      "const p = { 'kind' : 'owner_workflow' };",
+      'p.kind = "owner_workflow";',
+      'p["kind"] = "owner_workflow";',
+    ]) {
+      const builder = file(LEARNING, `${body}\n`);
+      expect(rules(GOOD.map((f) => (f.relPath === LEARNING ? builder : f))), body).toEqual([
+        "standing-provenance-confined",
+      ]);
+    }
+    const compare = file(
+      LEARNING,
+      'const ok = p.kind === "owner_workflow" || p["kind"] == "owner_workflow";\n',
+    );
+    expect(rules(GOOD.map((f) => (f.relPath === LEARNING ? compare : f)))).toEqual([]);
+    const shape = file(LEARNING, "const p: WorkflowProvenance = x; const q = p.fieldSources;\n");
+    expect(rules(GOOD.map((f) => (f.relPath === LEARNING ? shape : f)))).toEqual([
+      "standing-provenance-confined",
+    ]);
+  });
+
+  test("(f) FAILS when a learning table is referenced outside the suggestion store and its DDL", () => {
+    for (const body of [
+      'db.run("INSERT INTO standing_suggestion (id) VALUES (1)");',
+      'db.query("SELECT * FROM standing_streak");',
+      'db.run("UPDATE standing_streak SET streak = 9");',
+      'db.run("DELETE FROM standing_suggestion WHERE id = 1");',
+    ]) {
+      expect(rules([...GOOD, file(OTHER, body)]), body).toEqual(["standing-learning-confined"]);
+      expect(rules([...GOOD, file(LEARNING, body)]), body).toContain("standing-learning-confined");
+    }
+    expect(rules([...GOOD, file(OTHER, "// standing_streak standing_suggestion")])).toEqual([]);
+  });
+
+  test("(f) FAILS when the suggestion store or its DDL touches a rule table", () => {
+    const dirtyStore = file(SUGG_STORE, 'db.run("UPDATE standing_rule SET paused_at = 1");\n');
+    expect(rules(GOOD.map((f) => (f.relPath === SUGG_STORE ? dirtyStore : f)))).toEqual([
+      "standing-tables-confined",
+    ]);
+    const dirtyDdl = file(
+      V90,
+      'const s = "CREATE TABLE IF NOT EXISTS standing_rule_fire (id TEXT)";\n',
+    );
+    expect(rules(GOOD.map((f) => (f.relPath === V90 ? dirtyDdl : f)))).toEqual([
+      "standing-tables-confined",
+    ]);
+  });
+
+  test("(f) FAILS when the learning pass, a streak writer or the live-rule question is named elsewhere", () => {
+    for (const body of [
+      "learnFromStepRun(db, run, cfg);",
+      "applyStepRun(db, key, v, r, n);",
+      "openSuggestion(db, key, 5, n);",
+      "markStaleFor(db, id, sha, n);",
+      "hasLiveRuleFor(db, key, n);",
+    ]) {
+      expect(rules([...GOOD, file(OTHER, body)]), body).toEqual(["standing-learning-confined"]);
+    }
+    // The RPC handler and the scheduler do not get the pass.
+    expect(rules([...GOOD, file(RPC, "learnFromStepRun(db, run, cfg);")])).toEqual([
+      "standing-learning-confined",
+    ]);
+    expect(rules([...GOOD, file(RPC, "hasLiveRuleFor(db, key, n);")])).toEqual([
+      "standing-learning-confined",
+    ]);
+    expect(rules([...GOOD, file(SCHEDULER, "learnFromStepRun(db, run, cfg);")])).toEqual([
+      "standing-learning-confined",
     ]);
   });
 
@@ -5340,19 +5473,97 @@ describe("D44 — a standing rule approves only inside approvalPhase, for an exa
     ]);
   });
 
-  test("(e) FAILS when run-ask writes the dependency outside buildWorkflowWriteExecutor, or twice", () => {
+  test("(e) FAILS when run-ask writes the dependency outside newWorkflowWriteExecutor, or twice", () => {
     const door = RUN_ASK_GOOD.replace(
       "{ beforeState: runner }",
       "{ beforeState: runner, standingRules: createStandingRuleDeps(p) }",
     );
     expect(rules(swapRunAsk(door))).toEqual(["standing-rules-dep-confined"]);
     const twice = RUN_ASK_GOOD.replace(
-      "{ standingRules: createStandingRuleDeps(p) }",
-      "{ standingRules: createStandingRuleDeps(p), standingRules: other }",
+      "    standingRules: createStandingRuleDeps(p),",
+      "    standingRules: createStandingRuleDeps(p),\n    standingRules: other,",
     );
     expect(rules(swapRunAsk(twice))).toEqual(["standing-rules-dep-confined"]);
     expect(
       rules(swapRunAsk("export function buildWorkflowWriteExecutor(p) { return 1; }\n")),
-    ).toEqual(["standing-rules-dep-confined"]);
+    ).toContain("standing-rules-dep-confined");
+  });
+
+  test("(e) FAILS when newWorkflowWriteExecutor gains a third caller or loses one", () => {
+    const third = RUN_ASK_GOOD.replace(
+      "export function buildModelWriteExecutor(p) {",
+      "export function buildSneaky(p) {\n  return newWorkflowWriteExecutor(p, NEVER, false);\n}\nexport function buildModelWriteExecutor(p) {",
+    );
+    expect(rules(swapRunAsk(third))).toEqual(["standing-rules-dep-confined"]);
+    const twiceInOne = RUN_ASK_GOOD.replace(
+      "  return newWorkflowWriteExecutor(p, NEVER, true);",
+      "  newWorkflowWriteExecutor(p, NEVER, true);\n  return newWorkflowWriteExecutor(p, NEVER, true);",
+    );
+    expect(rules(swapRunAsk(twiceInOne))).toEqual(["standing-rules-dep-confined"]);
+    const swapped = RUN_ASK_GOOD.replace(
+      "  return newWorkflowWriteExecutor(p, consentOf(p), false);",
+      "  return newWorkflowWriteExecutor(p, NEVER, true);",
+    );
+    expect(rules(swapRunAsk(swapped))).toEqual(["standing-rules-dep-confined"]);
+  });
+
+  test("(d) FAILS when the unattended option is named by another file, or valued outside newWorkflowWriteExecutor", () => {
+    for (const body of [
+      "new ToolExecutor(a, b, c, d, e, f, g, { unattended: true });",
+      "const u = ex.unattended;",
+    ]) {
+      expect(rules([...GOOD, file(OTHER, body)]), body).toEqual(["standing-unattended-confined"]);
+    }
+    const outside = RUN_ASK_GOOD.replace(
+      "export function buildModelWriteExecutor(p) {",
+      "export function buildSneaky(p) {\n  return newTurnExecutor(p, undefined, { unattended: true });\n}\nexport function buildModelWriteExecutor(p) {",
+    );
+    expect(rules(swapRunAsk(outside))).toEqual(["standing-unattended-confined"]);
+    expect(rules([...GOOD, file(OTHER, "// unattended: true")])).toEqual([]);
+  });
+
+  test("(d) FAILS when the executor reads the option twice, outside approvalPhase, or after the delegate", () => {
+    const twice = EXECUTOR_GOOD.replace(
+      "    const delegated = await",
+      "    if (this.unattended) { log(); }\n    const delegated = await",
+    );
+    expect(rules(swapExecutor(twice))).toContain("standing-unattended-confined");
+    const elsewhere = `${EXECUTOR_GOOD}\nfunction other(self) { return this.unattended; }\n`;
+    expect(rules(swapExecutor(elsewhere))).toContain("standing-unattended-confined");
+    const late = EXECUTOR_GOOD.replace(
+      '    if (this.unattended) {\n      record.rejectReason = UNATTENDED_NO_RULE_REASON;\n      return { kind: "rejected", reason: UNATTENDED_NO_RULE_REASON, answerSource: "none" };\n    }\n    const delegated = await this.tryDelegatedApproval(action, confirm, record);',
+      '    const delegated = await this.tryDelegatedApproval(action, confirm, record);\n    if (this.unattended) {\n      record.rejectReason = UNATTENDED_NO_RULE_REASON;\n      return { kind: "rejected", reason: UNATTENDED_NO_RULE_REASON, answerSource: "none" };\n    }',
+    );
+    expect(rules(swapExecutor(late))).toContain("standing-unattended-confined");
+    const before = EXECUTOR_GOOD.replace(
+      "    const match = standingRuleStep(action, { deps: this.standingRules, rows: this.rows() });\n",
+      "    if (this.unattended) { return 1; }\n    const match = standingRuleStep(action, { deps: this.standingRules, rows: this.rows() });\n",
+    ).replace(
+      '    if (this.unattended) {\n      record.rejectReason = UNATTENDED_NO_RULE_REASON;\n      return { kind: "rejected", reason: UNATTENDED_NO_RULE_REASON, answerSource: "none" };\n    }\n',
+      "",
+    );
+    expect(rules(swapExecutor(before))).toContain("standing-unattended-confined");
+  });
+
+  test("(d) FAILS when the refusal text is returned outside approvalPhase or by another file", () => {
+    const stray = `${EXECUTOR_GOOD}\nfunction other() { return UNATTENDED_NO_RULE_REASON; }\n`;
+    expect(rules(swapExecutor(stray))).toContain("standing-unattended-confined");
+    expect(rules([...GOOD, file(OTHER, "return { reason: UNATTENDED_NO_RULE_REASON };")])).toEqual([
+      "standing-unattended-confined",
+    ]);
+  });
+
+  test("(d) FAILS when the schedule trigger is produced by any file but the scheduler", () => {
+    for (const body of [
+      'const run = { trigger: "schedule" };',
+      "const run = { trigger: 'schedule', x: 1 };",
+      'f({ trigger : "schedule" });',
+    ]) {
+      expect(rules([...GOOD, file(OTHER, body)]), body).toEqual(["standing-unattended-confined"]);
+    }
+    // Reading the literal (a comparison, a type, a set of triggers) is not producing it.
+    expect(
+      rules([...GOOD, file(OTHER, 'if (p.trigger === "schedule") {} type T = "schedule";')]),
+    ).toEqual([]);
   });
 });

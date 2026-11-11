@@ -96,6 +96,7 @@ import { SHARE_RECORDS_V41_SQL } from "../share-records-v41-sql.ts";
 import { SOURCE_CATCHUP_V74_SQL } from "../source-catchup-v74-sql.ts";
 import { tryLoadSqliteVec } from "../sqlite-vec-load.ts";
 import { STANDING_RULE_V88_SQL } from "../standing-rule-v88-sql.ts";
+import { STANDING_SUGGESTION_V90_SQL } from "../standing-suggestion-v90-sql.ts";
 import { SUB_TASK_RESULTS_V17_SQL } from "../sub-task-results-v17-sql.ts";
 import { V35_TEAM_VAULT_SQL } from "../team-vault-v35-sql.ts";
 import { TOOL_CALL_LOG_V29_SCHEMA_SQL } from "../tool-call-log-v29-sql.ts";
@@ -117,6 +118,7 @@ import { VEC_JOIN_INDEX_V62_SQL } from "../vec-join-index-v62-sql.ts";
 import { WATCHER_GRAPH_V22_SQL } from "../watcher-graph-v22-sql.ts";
 import { WATCHER_V8_MIGRATION_SQL } from "../watcher-v8-sql.ts";
 import { WORKFLOW_RUN_COLUMNS_V23_SQL } from "../workflow-run-columns-v23-sql.ts";
+import { WORKFLOW_SCHEDULE_V89_SQL } from "../workflow-schedule-v89-sql.ts";
 import { WORKFLOW_V9_MIGRATION_SQL } from "../workflow-v9-sql.ts";
 
 const MIGRATIONS_LEDGER_SQL = `
@@ -761,6 +763,18 @@ const INDEXED_SCHEMA_STEPS: readonly IndexedSchemaStep[] = [
     88,
     "standing approval rules and their fires (Phase 10 SA3)",
     STANDING_RULE_V88_SQL,
+  ),
+  simpleStep(
+    88,
+    89,
+    "workflow schedules and blocked runs (Phase 10 SA4)",
+    WORKFLOW_SCHEDULE_V89_SQL,
+  ),
+  simpleStep(
+    89,
+    90,
+    "approval learning streaks and suggestions (Phase 10 SA5)",
+    STANDING_SUGGESTION_V90_SQL,
   ),
 ];
 

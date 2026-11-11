@@ -2,6 +2,20 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [10.49.0](https://github.com/nimbus-agent/Nimbus/compare/v10.48.0...v10.49.0) (2026-11-11)
+
+
+### Features
+
+* **gateway:** Nimbus suggests a standing rule after you approve the same workflow step five runs in a row (Phase 10 SA5) ([#1967](https://github.com/nimbus-agent/Nimbus/issues/1967)) ([ee668ca](https://github.com/nimbus-agent/Nimbus/commit/ee668ca5d44afe91db741aa8b481723668253524))
+
+## [10.48.0](https://github.com/nimbus-agent/Nimbus/compare/v10.47.0...v10.48.0) (2026-11-11)
+
+
+### Features
+
+* **gateway:** scheduled workflows run unattended, and a write without a standing rule waits for you (Phase 10 SA4) ([#1964](https://github.com/nimbus-agent/Nimbus/issues/1964)) ([c9b2cbb](https://github.com/nimbus-agent/Nimbus/commit/c9b2cbb8527e31879f845cd3c2ed7c0f02476e0b))
+
 ## [10.47.0](https://github.com/nimbus-agent/Nimbus/compare/v10.46.0...v10.47.0) (2026-11-11)
 
 

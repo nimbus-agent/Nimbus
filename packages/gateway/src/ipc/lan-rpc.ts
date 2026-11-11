@@ -238,6 +238,10 @@ const FORBIDDEN_OVER_LAN = new Set([
   // resuming a rule is the local owner's approval, and a rule decides whether a write runs without
   // a prompt, so no paired peer may read, create, pause or revoke one (this set is a denylist).
   "standing",
+  // Phase 10 SA4: resuming a workflow run that is blocked on an approval re-runs its write step on
+  // the owner's socket, so no paired peer may name it, whatever its `writeAllowed` (not in
+  // WRITE_METHODS on purpose: a write grant must not be enough).
+  "workflow.resume",
   // NOTE: egress.prune is deliberately NOT forbidden here — like federation.purge above, it is
   // HITL-gated inside its own handler (handlePrune in egress-rpc.ts calls
   // ctx.requestPruneApproval(beforeTs) and returns { approved: false, prunedCount: 0 } on denial),
@@ -261,6 +265,7 @@ const WRITE_METHODS = new Set([
   "watcher.delete",
   "workflow.run",
   "workflow.save",
+  "workflow.unschedule",
   "workflow.delete",
   "extension.enable",
   "extension.remove",

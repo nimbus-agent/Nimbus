@@ -2,6 +2,7 @@ import type { Agent } from "@mastra/core/agent";
 import pino from "pino";
 
 import { runWorkflowExecution } from "./automation/workflow-runner.ts";
+import { WorkflowScheduler } from "./automation/workflow-scheduler.ts";
 import { createConnectorWriteDispatcher } from "./connectors/connector-write-dispatch.ts";
 import { createModelWriteToolSource } from "./connectors/connector-writes/model-write-source.ts";
 import { previewCredentialResolver } from "./connectors/connector-writes/preview-credential.ts";
@@ -15,11 +16,18 @@ import { makeEgressSink } from "./egress/egress-ledger.ts";
 import type { EmbeddingReadiness } from "./embedding/embedding-readiness.ts";
 import { createNimbusEngineAgent } from "./engine/agent.ts";
 import { agentRequestContext } from "./engine/agent-request-context.ts";
-import { buildWorkflowWriteExecutor, type RunAskParams, runAsk } from "./engine/run-ask.ts";
+import {
+  buildUnattendedWorkflowWriteExecutor,
+  buildWorkflowWriteExecutor,
+  type RunAskParams,
+  runAsk,
+} from "./engine/run-ask.ts";
 import { armGatewayLifecycleDiagnostics } from "./platform/exit-diagnostics.ts";
 import { removeGatewayStateFile, writeGatewayStateFile } from "./platform/gateway-state-file.ts";
 import { createPlatformServices } from "./platform/index.ts";
+import { showIgnoringFailure } from "./platform/notifications/notifications-runtime.ts";
 import type { SandboxRunner } from "./platform/sandbox/sandbox-runner.ts";
+import { buildLearningConfig } from "./standing/learning-config.ts";
 import { sweepToolgenCredentials } from "./toolgen/toolgen-credential-sweep.ts";
 import { removeAllToolScripts } from "./toolgen/toolgen-script-store.ts";
 import { GATEWAY_VERSION } from "./version.ts";
@@ -333,6 +341,7 @@ export async function main(): Promise<void> {
   // (`platform/assemble.ts`'s `bootChatopsAgentInvoker`), right after `ipcOpts.federationIdentity`
   // is populated, so nothing is left to do here.
 
+  const learningLogger = pino({ name: "standing-learning" });
   platform.ipc.setWorkflowRunHandler(async (ctx) => {
     // A `run` step genuinely REQUIRES an agent — unlike `runAsk`, it has no deterministic path
     // to fall back to. With no `[llm.remote.*]` vendor enabled there is no agent: the runner then
@@ -365,6 +374,16 @@ export async function main(): Promise<void> {
           }),
       // Derived by the IPC dispatcher from the connection's declared kind (never from params).
       ...(ctx.trigger === undefined ? {} : { trigger: ctx.trigger }),
+      // SA4: set only by `workflow.resume`, after the dispatcher validated the blocked run.
+      ...(ctx.resume === undefined ? {} : { resume: ctx.resume }),
+      // SA5: approval learning reads this run's audit rows after each write step. Off on a demo
+      // gateway, under the org lockoff, or when policy cannot be read; never changes a run.
+      learning: buildLearningConfig({
+        demo: platform.paths.demo === true,
+        configDir: platform.paths.configDir,
+        enforcedPolicy: platform.enforcedPolicy,
+        log: (fields, message) => learningLogger.info(fields, message),
+      }),
       workflowName: ctx.workflowName,
       triggeredBy: ctx.triggeredBy,
       dryRun: ctx.dryRun,
@@ -375,9 +394,43 @@ export async function main(): Promise<void> {
     });
   });
 
+  // SA4: scheduled workflows. A demo-rooted gateway never schedules (I41). The scheduler is handed a
+  // FACTORY for an unattended write executor and a notifier; it holds no client and no consent
+  // coordinator, so nothing it runs can ask a person anything (static D44(d)).
+  const workflowScheduler =
+    platform.paths.demo === true
+      ? undefined
+      : new WorkflowScheduler({
+          db: platform.localIndex.getDatabase(),
+          now: Date.now,
+          makeExecutor: () =>
+            buildUnattendedWorkflowWriteExecutor({
+              localIndex: platform.localIndex,
+              dispatcher,
+              egressSink: askEgressSink,
+              policyHitl: platform.policyHitl,
+              previewCredentialFor: previewCredentialResolver(
+                platform.connectorWriteDeps,
+                platform.connectorMesh,
+              ),
+              getTribalKbConfig: () => platform.tribalKbConfig(),
+              enforcedPolicy: platform.enforcedPolicy,
+            }),
+          notify: (title, body) => showIgnoringFailure(platform.notifications, title, body),
+          onError: (workflow, err) =>
+            process.stderr.write(
+              `[gateway] scheduled workflow ${workflow} failed: ${err instanceof Error ? err.message : String(err)}\n`,
+            ),
+        });
+
   const shutdown = async (signal: string): Promise<void> => {
     process.stdout.write(`[gateway] ${signal} — shutting down\n`);
     lifecycle.stop();
+    try {
+      await workflowScheduler?.retire();
+    } catch {
+      /* ignore */
+    }
     try {
       platform.disposeSidecars?.();
     } catch {
@@ -422,6 +475,9 @@ export async function main(): Promise<void> {
 
   process.stdout.write("[gateway] binding IPC\n");
   await platform.ipc.start();
+  // The index is ready and the socket is serving: scheduled workflows may now fire (one catch-up of
+  // a miss within the last hour, then every minute's tick).
+  workflowScheduler?.start();
   writeGatewayStateFile(platform.paths, {
     pid: process.pid,
     socketPath: platform.paths.socketPath,

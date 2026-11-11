@@ -1636,7 +1636,9 @@ Standing approval rules (Phase 10 SA3, invariant I55): approve a recurring workf
 
 ```bash
 nimbus approve add --workflow <name> --step <label|number> [--days 1-90] [--max 1-500] [--window "Mon-Fri 06:00-10:00 Europe/Berlin"]
+nimbus approve add --from-suggestion <id> [--days 1-90] [--max 1-500] [--window "Mon-Fri 06:00-10:00 Europe/Berlin"]
 nimbus approve list [--json]
+nimbus approve dismiss <suggestion-id> [--json]
 nimbus approve show <id> [--json]
 nimbus approve pause <id> [--json]
 nimbus approve resume <id>
@@ -1647,9 +1649,11 @@ nimbus approve revoke <id> [--json]
 
 While a rule is live, each write of that step that is built by that exact workflow, started by you, with the values the rule names, runs with no prompt: it is recorded with status `standing_approved` and the rule and fire ids in the audit log and the egress ledger. Anything else asks as before: a different or edited workflow (its hash changes), a model-proposed write, a write from an MCP client, ChatOps or a peer, a different value, an expired, paused, revoked or used-up rule, a time outside the window, a recipient or content the model-door refusals reject. A rule does not cover runs nobody is watching (scheduled runs arrive with the scheduler).
 
-`list` shows id, workflow, step, tool, uses against the ceiling, expiry, last-fired time and state (`live`, `paused`, `revoked`, `expired`, `exhausted`). `pause` and `revoke` narrow what runs unprompted, need no approval and are audited; `revoke` is final. `resume` widens again, so it asks you again. Every method is in the `standing` IPC namespace: forbidden over LAN, and the desktop may call `list`, `show`, `fires`, `pause` and `revoke` only.
+`list` shows id, workflow, step, tool, uses against the ceiling, expiry, last-fired time and state (`live`, `paused`, `revoked`, `expired`, `exhausted`). `pause` and `revoke` narrow what runs unprompted, need no approval and are audited; `revoke` is final. `resume` widens again, so it asks you again. Every method is in the `standing` IPC namespace: forbidden over LAN, and the desktop may call `list`, `show`, `fires`, `pause`, `revoke`, `suggestions` and `dismissSuggestion` only (never `create` or `resume`).
 
-**Exit codes:** `0` done, `1` the gateway refused (policy, not a person's answer, a bad request, a decline), `2` usage.
+**Suggestions (Phase 10 SA5).** When you have approved the same write step of the same workflow, unchanged, by hand at the prompt in `[standing] suggest_after` runs in a row (default 5), `nimbus approve list` adds a `Suggestions` section after the rules (id, workflow, step, how many runs in a row; `--json` adds a `suggestions` array). Only a run in which you were asked and approved every action of that step counts: a run answered with `--yes` or by a script, a run a standing rule already covered, a scheduled run and a run with nothing to ask change nothing, and a rejection by you resets the count to 0. A suggestion is only a note. `nimbus approve add --from-suggestion <id>` takes the workflow and step from it (naming them too is refused) and then asks you exactly as `add` does, with one more line at the top of the prompt, `Suggested after <n> approvals in a row`; it refuses `--yes` like `add`, and if the workflow was edited since it exits 1 with `ERR_SUGGESTION_STALE`. `nimbus approve dismiss <suggestion-id>` drops one, needs no approval and is audited; a dismissed suggestion does not return until the workflow's content changes. Set the threshold in `nimbus.toml`: `[standing] suggest_after = 5` (an integer 3 to 50, or `0` to turn learning off; a value outside that falls back to 5 with a warning). Learning is off under the `standing_approvals` org lockoff and on a demo install.
+
+**Exit codes:** `0` done, `1` the gateway refused (policy, not a person's answer, a bad request, a decline, a stale suggestion), `2` usage.
 
 ---
 
@@ -5490,6 +5494,8 @@ nimbus workflow save weekly-cleanup --file ./weekly-cleanup.yml --description "F
 
 `--description <text>` overrides the description parsed from the file.
 
+**Scheduling (Phase 10 SA4).** `--schedule "<cron>" [--tz <IANA zone>]` runs the workflow on a schedule, with no one at the terminal. The expression has the five standard fields (minute, hour, day of month, month, day of week; `*`, numbers, lists, ranges and steps; `@hourly`, `@daily`, `@weekly` and `@monthly`); names (`MON`, `JAN`), `L`, `W`, `#`, `?` and a seconds field are refused, and so is any schedule that can fire twice within **five minutes**. The zone defaults to this machine's and is stored when you save. The gateway accepts a schedule only from your CLI or desktop on the local socket (this command declares itself the CLI first); a workflow with a model (`run`) step cannot be scheduled. A save with no `--schedule` clears the old one, so does any edit from another kind of client, and any change to the steps changes the content hash a standing rule is bound to. A scheduled run asks nobody: a write that a live standing rule covers runs under the rule, and a write with no rule **stops the run** (see `nimbus workflow resume`). If the gateway was down at fire time, a miss of at most an hour runs once when it comes back; an older miss is skipped and recorded. `nimbus schedule list` shows what is scheduled.
+
 **Step kinds (Phase 10 SA2).** Each entry of `steps` is a `run` prompt (the default, `kind` optional) or one of two deterministic steps that involve no model:
 
 ```yaml
@@ -5522,6 +5528,40 @@ List saved workflow pipelines.
 
 ```bash
 nimbus workflow list
+```
+
+---
+
+### `nimbus workflow unschedule <name>`
+
+Clear a workflow's schedule (Phase 10 SA4). The workflow, its runs and its standing rules are untouched.
+
+```bash
+nimbus workflow unschedule weekly-cleanup
+```
+
+---
+
+### `nimbus workflow resume <runId> [--discard]`
+
+Continue a scheduled run that stopped at a write step no standing rule covered (Phase 10 SA4). The gateway told you when it stopped: one OS notification, "Workflow <name> is waiting for you: step <label> needs your approval", and `nimbus schedule list` prints this exact command. Resume runs from the blocked step **on your terminal with the normal prompt** (a standing rule you have since created may cover it); it re-runs the workflow's declared queries first, so it acts on what matches now, not on what matched when the run stopped. The blocked run is finished as `abandoned` and the continuation is a new run that records `resumedFrom`. `--discard` abandons the blocked run, runs nothing, and lets scheduling continue.
+
+The gateway refuses a resume when the run is not blocked, was recorded before schedules existed, or when the workflow was edited after it blocked (`ERR_WORKFLOW_CHANGED`: run it again instead); when the workflow is running right now (`ERR_WORKFLOW_BUSY`); and from any client that is not your CLI or desktop. While a workflow has a blocked run, its later scheduled fires are recorded as skipped ("waiting for approval") with no new run and no second notification. A run that blocks has already read the target's current state for its preview (the standing-rule check comes after that read, because a rule's guard can need it), so a blocked run makes one gated, ledgered read of the target and no write.
+
+```bash
+nimbus workflow resume 3f2a9c1e-... 
+nimbus workflow resume 3f2a9c1e-... --discard
+```
+
+---
+
+### `nimbus schedule list [--json]`
+
+Every scheduled workflow with its cron expression and zone, its next and last fire (in that zone), the status of its last run, and, for a workflow that is waiting on you, the step and the exact `nimbus workflow resume <runId>` to run. Read-only.
+
+```bash
+nimbus schedule list
+nimbus schedule list --json
 ```
 
 ---

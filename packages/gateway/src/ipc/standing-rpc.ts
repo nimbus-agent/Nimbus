@@ -2,18 +2,24 @@
 // `standing.*` — the owner's standing approval rules (Phase 10 SA3, I55, spec § 5.2).
 //
 //   standing.list | show | fires   reads (the desktop may call them: I7 allowlist);
+//   standing.suggestions           the approval-learning suggestions still open (a read, Phase 10 SA5);
 //   standing.pause | revoke        narrowing, no approval needed, each audited (desktop-callable);
+//   standing.dismissSuggestion     narrowing too (SA5): audited, no approval, desktop-callable;
 //   standing.create | resume       WIDENING: the connection must have declared kind `cli` (the local
 //                                  socket's owner CLI), the org policy must allow standing approvals,
 //                                  and the LOCAL owner approves the rule's exact text through an
 //                                  executor built with NO delegation. The approval counts only when
 //                                  the consent answer's source is `human`: `--yes` (`auto`), a script
 //                                  (`script`) and an old client (`unknown`) are refused.
+//                                  `create` also takes `{ fromSuggestion }` (SA5): the suggestion
+//                                  names the workflow and step, and everything after that is this same
+//                                  path, unchanged. A suggestion never creates, widens or approves.
 // The whole `standing` namespace is in `FORBIDDEN_OVER_LAN` (I5); ChatOps, MCP and HTTP have no route.
 //
 // The rule's scope is DERIVED here from the stored workflow (`standing-rule-derive.ts`); the caller
 // names only `{ workflow, step, days?, max?, window? }`. A bad request never reaches the prompt.
 import type { Database } from "bun:sqlite";
+import { parseWorkflowSteps, workflowStepsSha256 } from "../automation/workflow-steps.ts";
 import { NULL_EGRESS_SINK } from "../egress/egress-ledger.ts";
 import { type ExecutorPolicyDep, NO_POLICY_OVERLAY, ToolExecutor } from "../engine/executor.ts";
 import type {
@@ -41,6 +47,15 @@ import {
   windowLabel,
 } from "../standing/standing-rule-text.ts";
 import type { StandingRule } from "../standing/standing-rule-types.ts";
+import {
+  dismissSuggestion,
+  getSuggestion,
+  listSuggestions,
+  markAccepted,
+  markStale,
+  type StandingSuggestion,
+} from "../standing/standing-suggestion-store.ts";
+import { sha256HexEqualConstantTime } from "../util/timing-safe-compare.ts";
 import { dispatchByMethod, type RpcMissOrHit } from "./_lib/dispatch-by-method.ts";
 import type { ClientKind } from "./server/client-kind.ts";
 import { RpcMethodError } from "./server/rpc-error.ts";
@@ -143,9 +158,22 @@ function asRpcError(e: unknown): unknown {
   return e instanceof StandingRuleError ? ERR("ERR_STANDING_REFUSED", e.message) : e;
 }
 
+/** Which suggestion a create came from (SA5): its id and the streak it was made at. */
+type FromSuggestion = { readonly id: string; readonly streak: number };
+
+/** What `create` needs once the workflow and step are known, whoever named them. */
+type CreateRequest = {
+  readonly workflow: string;
+  readonly step: string | number;
+  readonly days: unknown;
+  readonly max: unknown;
+  readonly window: unknown;
+};
+
 async function createRule(ctx: StandingRpcCtx, params: unknown): Promise<Record<string, unknown>> {
   requireWidening(ctx);
   const p = recordOf(params);
+  if (p["fromSuggestion"] !== undefined) return createFromSuggestion(ctx, p);
   const workflow = p["workflow"];
   const step = p["step"];
   if (typeof workflow !== "string" || workflow.trim() === "") {
@@ -154,18 +182,34 @@ async function createRule(ctx: StandingRpcCtx, params: unknown): Promise<Record<
   if (typeof step !== "string" && typeof step !== "number") {
     throw ERR("ERR_STANDING_REFUSED", "step must be a step label or number");
   }
+  return createFromRequest(ctx, {
+    workflow: workflow.trim(),
+    step,
+    days: p["days"],
+    max: p["max"],
+    window: p["window"],
+  });
+}
+
+/** The one path every rule takes: derive from the stored workflow, ask the owner, store. */
+async function createFromRequest(
+  ctx: StandingRpcCtx,
+  req: CreateRequest,
+  from?: FromSuggestion,
+): Promise<Record<string, unknown>> {
   const now = (ctx.now ?? Date.now)();
   let derived: ReturnType<typeof deriveRule>;
   try {
     derived = deriveRule(
       ctx.db,
-      { workflow: workflow.trim(), step, days: p["days"], max: p["max"], window: p["window"] },
+      { workflow: req.workflow, step: req.step, days: req.days, max: req.max, window: req.window },
       ctx.frozenHitl,
       now,
     );
   } catch (e) {
     throw asRpcError(e);
   }
+  const lines = renderRuleText(derived.text, now);
   const approval = await ctx.askOwner({
     type: "standing.rule.create",
     payload: {
@@ -175,12 +219,154 @@ async function createRule(ctx: StandingRpcCtx, params: unknown): Promise<Record<
       toolId: derived.rule.toolId,
       expiresAt: derived.rule.expiresAt,
       maxActions: derived.rule.maxActions,
-      promptText: renderRuleText(derived.text, now).join("\n"),
+      ...(from === undefined ? {} : { suggestionId: from.id }),
+      promptText: (from === undefined
+        ? lines
+        : [`Suggested after ${String(from.streak)} approvals in a row`, "", ...lines]
+      ).join("\n"),
     },
   });
   if (!approval.approved) throw refusalOf(approval);
-  const rule = insertRule(ctx.db, { ...derived.rule, approvalAuditId: approval.auditId });
+  const newRule = { ...derived.rule, approvalAuditId: approval.auditId };
+  const rule =
+    from === undefined
+      ? insertRule(ctx.db, newRule)
+      : commitFromSuggestion(ctx, newRule, from, now);
   return viewOf(ctx.db, rule, now);
+}
+
+/**
+ * A rule made from a suggestion is stored only together with that suggestion's acceptance, in ONE
+ * transaction: if the suggestion stopped being open while the owner was being asked (another
+ * request accepted or dismissed it, or it went stale), the rule is not inserted and the request is
+ * refused, so one suggestion can never yield two rules.
+ */
+function commitFromSuggestion(
+  ctx: StandingRpcCtx,
+  newRule: Parameters<typeof insertRule>[1],
+  from: FromSuggestion,
+  now: number,
+): ReturnType<typeof insertRule> {
+  const commit = ctx.db.transaction((): ReturnType<typeof insertRule> | "stale" => {
+    // The workflow may have been edited while the owner was asked: a rule for the old hash would
+    // never fire, so the suggestion goes stale instead and no rule is made.
+    const live = currentWorkflowOf(ctx.db, newRule.workflowId);
+    if (live === undefined || !sha256HexEqualConstantTime(live.sha, newRule.workflowSha256)) {
+      markStale(ctx.db, from.id, now);
+      return "stale";
+    }
+    const rule = insertRule(ctx.db, newRule);
+    if (!markAccepted(ctx.db, from.id, rule.id, now)) {
+      throw ERR(
+        "ERR_SUGGESTION_NOT_OPEN",
+        "the suggestion was accepted, dismissed or became stale while you were asked; no rule was created",
+      );
+    }
+    return rule;
+  });
+  const out = commit();
+  if (out === "stale") {
+    throw ERR(
+      "ERR_SUGGESTION_STALE",
+      "the workflow changed while you were asked; no rule was created. Run it again to earn a new suggestion",
+    );
+  }
+  return out;
+}
+
+function suggestionIdOf(raw: unknown): string {
+  if (typeof raw !== "string" || !/^ss_[0-9a-f]{16}$/.test(raw)) {
+    throw ERR("ERR_STANDING_BAD_ID", "id must be a suggestion id such as ss_0123456789abcdef");
+  }
+  return raw;
+}
+
+type CurrentWorkflow = {
+  readonly name: string;
+  readonly steps: ReturnType<typeof parseWorkflowSteps>;
+  readonly sha: string;
+};
+
+/** The stored workflow a suggestion names, as it is now; `undefined` when it is gone or does not parse. */
+function currentWorkflowOf(db: Database, workflowId: string): CurrentWorkflow | undefined {
+  const row = db.query("SELECT name, steps_json FROM workflow WHERE id = ?").get(workflowId) as {
+    name: string;
+    steps_json: string;
+  } | null;
+  if (row === null) return undefined;
+  try {
+    const steps = parseWorkflowSteps(row.steps_json);
+    return { name: row.name, steps, sha: workflowStepsSha256(steps) };
+  } catch {
+    return undefined;
+  }
+}
+
+/** One open suggestion for the owner; `undefined` when its workflow changed or is gone (it is stale). */
+function suggestionView(db: Database, s: StandingSuggestion): Record<string, unknown> | undefined {
+  const wf = currentWorkflowOf(db, s.workflowId);
+  if (wf === undefined || !sha256HexEqualConstantTime(wf.sha, s.workflowSha256)) return undefined;
+  const step = wf.steps[s.stepIndex];
+  return {
+    id: s.id,
+    workflowId: s.workflowId,
+    workflowName: wf.name,
+    workflowSha256: s.workflowSha256,
+    stepIndex: s.stepIndex,
+    stepLabel: step?.label ?? `step-${String(s.stepIndex + 1)}`,
+    toolId: step?.kind === "write" ? step.tool : null,
+    streak: s.streak,
+    createdAt: s.createdAt,
+    status: s.status,
+  };
+}
+
+function requireSuggestion(db: Database, id: string): StandingSuggestion {
+  const s = getSuggestion(db, id);
+  if (s === undefined) throw ERR("ERR_STANDING_NOT_FOUND", "no such suggestion");
+  return s;
+}
+
+/** `create { fromSuggestion }`: the suggestion names the workflow and step; the rest is `createFromRequest`. */
+async function createFromSuggestion(
+  ctx: StandingRpcCtx,
+  p: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  if (p["workflow"] !== undefined || p["step"] !== undefined) {
+    throw ERR("ERR_STANDING_REFUSED", "name either a suggestion or a workflow and step, not both");
+  }
+  const s = requireSuggestion(ctx.db, suggestionIdOf(p["fromSuggestion"]));
+  if (s.status !== "open") {
+    throw ERR("ERR_STANDING_REFUSED", `that suggestion is ${s.status}, not open`);
+  }
+  const wf = currentWorkflowOf(ctx.db, s.workflowId);
+  if (wf === undefined || !sha256HexEqualConstantTime(wf.sha, s.workflowSha256)) {
+    markStale(ctx.db, s.id, (ctx.now ?? Date.now)());
+    throw ERR(
+      "ERR_SUGGESTION_STALE",
+      "the workflow changed since this was suggested; run it again to earn a new suggestion",
+    );
+  }
+  return createFromRequest(
+    ctx,
+    {
+      workflow: wf.name,
+      step: s.stepIndex + 1,
+      days: p["days"],
+      max: p["max"],
+      window: p["window"],
+    },
+    { id: s.id, streak: s.streak },
+  );
+}
+
+function dismissOne(ctx: StandingRpcCtx, params: unknown): Record<string, unknown> {
+  const s = requireSuggestion(ctx.db, suggestionIdOf(recordOf(params)["id"]));
+  const changed = dismissSuggestion(ctx.db, s.id, (ctx.now ?? Date.now)());
+  if (changed) {
+    ctx.recordNarrowing("standing.suggestion.dismiss", JSON.stringify({ suggestionId: s.id }));
+  }
+  return { id: s.id, changed };
 }
 
 async function resumeOne(ctx: StandingRpcCtx, params: unknown): Promise<Record<string, unknown>> {
@@ -283,6 +469,10 @@ export async function dispatchStandingRpc(
       const now = (c.now ?? Date.now)();
       return { rules: listRules(c.db).map((r) => viewOf(c.db, r, now)) };
     },
+    "standing.suggestions": (_p, c) => ({
+      suggestions: listSuggestions(c.db, "open").flatMap((s) => suggestionView(c.db, s) ?? []),
+    }),
+    "standing.dismissSuggestion": (p, c) => dismissOne(c, p),
     "standing.show": (p, c) => ({
       rule: viewOf(c.db, requireRule(c.db, idOf(p)), (c.now ?? Date.now)()),
     }),

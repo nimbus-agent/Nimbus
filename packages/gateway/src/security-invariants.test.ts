@@ -92,7 +92,9 @@ import { PREPARE_TOOL_IDS } from "./connectors/connector-writes/prepare-tools.ts
 import { buildConnectorWritePreview } from "./connectors/connector-writes/preview.ts";
 import {
   archiveAction as i55ArchiveAction,
+  freshDb as i55FreshDb,
   NOW as i55Now,
+  seedWorkflow as i55SeedWorkflow,
 } from "./connectors/connector-writes/standing-fixtures.test-helpers.ts";
 import {
   BREAKERS as I55_BREAKERS,
@@ -1892,9 +1894,9 @@ describe("I7 — Tauri ALLOWED_METHODS surface for T2 PR 3", () => {
     expect(rust).not.toContain("toolgen.");
   });
 
-  test("allowlist_exact_size assertion is 123", async () => {
+  test("allowlist_exact_size assertion is 126", async () => {
     const rust = await read("packages/ui/src-tauri/src/gateway_bridge.rs");
-    expect(rust).toMatch(/assert_eq!\s*\(\s*ALLOWED_METHODS\.len\(\),\s*123\s*\)/);
+    expect(rust).toMatch(/assert_eq!\s*\(\s*ALLOWED_METHODS\.len\(\),\s*126\s*\)/);
   });
 
   // Role packs Project 4: 111 + 7 - 2 = 116; Project 5 (onboarding): + pack.install, decisions.status
@@ -9613,7 +9615,7 @@ describe("I46 — a renderer can create an extension run grant only through migr
     }
     expect(rust).toContain('assert!(is_method_allowed("migration.list"));');
     expect(rust).toContain('assert!(is_method_allowed("migration.accept"));');
-    expect(rust).toMatch(/assert_eq!\s*\(\s*ALLOWED_METHODS\.len\(\),\s*123\s*\)/);
+    expect(rust).toMatch(/assert_eq!\s*\(\s*ALLOWED_METHODS\.len\(\),\s*126\s*\)/);
   });
 
   // ---- the positive control ------------------------------------------------------------------
@@ -12343,13 +12345,14 @@ describe("I53 — a first-party connector write reaches the model only through t
     expect(body).not.toContain("delegation");
   });
 
-  test("SA2: the workflow write step's executor is built with NO delegation and the before-state runner", async () => {
+  test("SA2/SA4: the workflow write step's executor is built with NO delegation and the before-state runner", async () => {
     const src = stripComments(await read("packages/gateway/src/engine/run-ask.ts"));
-    const at = src.indexOf("export function buildWorkflowWriteExecutor(");
+    // SA4: both workflow builders are one-line calls of the private maker, which holds the runner.
+    const at = src.indexOf("function newWorkflowWriteExecutor(");
     expect(at).toBeGreaterThan(-1);
     const body = src.slice(at, src.indexOf("\n}\n", at));
     expect(body).toMatch(
-      /newTurnExecutor\(\s*p,\s*undefined,\s*\{\s*beforeState:\s*createBeforeStateRunner\(/,
+      /newExecutorOnChannel\(\s*p,\s*consent,\s*undefined,\s*\{\s*beforeState:\s*createBeforeStateRunner\(/,
     );
     expect(body).not.toContain("delegation");
     expect(body).toMatch(
@@ -13737,9 +13740,10 @@ describe("I55 — a standing rule approves a write only inside approvalPhase, fo
       }
     }
     expect(sites.length).toBeGreaterThan(5);
-    // The one place the dependencies are given: run-ask's workflow executor, via newTurnExecutor.
+    // The one place the dependencies are given: run-ask's private workflow maker (SA4), which both the
+    // attended and the unattended builder call.
     const askSrc = stripComments(await read("packages/gateway/src/engine/run-ask.ts"));
-    const at = askSrc.indexOf("export function buildWorkflowWriteExecutor(");
+    const at = askSrc.indexOf("function newWorkflowWriteExecutor(");
     const body = askSrc.slice(at, askSrc.indexOf("\n}\n", at));
     expect(body).toMatch(/standingRules:\s*createStandingRuleDeps\(/);
     expect(askSrc.match(/standingRules\s*:/g) ?? []).toHaveLength(1);
@@ -13866,6 +13870,8 @@ describe("I55 — a standing rule approves a write only inside approvalPhase, fo
       "standing-step-order-pinned",
       "standing-outcome-confined",
       "standing-rules-dep-confined",
+      "standing-unattended-confined",
+      "standing-learning-confined",
     ]) {
       expect(audit).toContain(id);
     }
@@ -13883,5 +13889,218 @@ describe("I55 — a standing rule approves a write only inside approvalPhase, fo
     ]) {
       expect(RULE_ANCHORS).toContain(anchor);
     }
+  });
+});
+
+describe("I55 SA4 — a scheduled run is unattended: a rule or a block, never a prompt", () => {
+  test("no client kind can produce the trigger `schedule`: only the scheduler module writes it", async () => {
+    const { workflowTriggerOf } = await import("./ipc/server/inline-handlers.ts");
+    for (const kind of [
+      "cli",
+      "mcp",
+      "ui",
+      "http",
+      "chatops",
+      "fleet",
+      "push",
+      "unknown",
+    ] as const) {
+      expect(workflowTriggerOf(kind), kind).not.toBe("schedule");
+    }
+    const sched = stripComments(
+      await read("packages/gateway/src/automation/workflow-scheduler.ts"),
+    );
+    expect(sched.match(/trigger\s*:\s*"schedule"/g) ?? []).toHaveLength(1);
+    // The scheduler can ask nobody: it names no consent coordinator, no client id and no builder.
+    for (const forbidden of [
+      /consent/i,
+      /clientId/,
+      /buildUnattendedWorkflowWriteExecutor/,
+      /delegat/i,
+    ]) {
+      expect(sched, String(forbidden)).not.toMatch(forbidden);
+    }
+  });
+
+  test("the unattended builder takes no client and no consent coordinator, and uses a channel that denies", async () => {
+    const src = stripComments(await read("packages/gateway/src/engine/run-ask.ts"));
+    expect(src).toMatch(
+      /export type UnattendedWorkflowWriteExecutorParams = Omit<\s*WorkflowWriteExecutorParams,\s*"clientId" \| "consentCoordinator"\s*>/,
+    );
+    const at = src.indexOf("export function buildUnattendedWorkflowWriteExecutor(");
+    const body = src.slice(at, src.indexOf("\n}\n", at));
+    expect(body).toContain("NEVER_ASKED_CONSENT");
+    expect(body).not.toContain("bindConsentChannel");
+    const from = src.indexOf("const NEVER_ASKED_CONSENT");
+    const channel = src.slice(from, src.indexOf("\n};\n", from));
+    expect(channel).toContain("approved: false");
+  });
+
+  test("gateway-main builds the scheduler from a factory, behind the demo check, and retires it on shutdown", async () => {
+    const src = stripComments(await read("packages/gateway/src/gateway-main.ts"));
+    const at = src.indexOf("const workflowScheduler =");
+    expect(at).toBeGreaterThan(-1);
+    const body = src.slice(at, src.indexOf("\n        });\n", at));
+    expect(body).toMatch(/platform\.paths\.demo === true\s*\?\s*undefined/);
+    expect(body).toMatch(/makeExecutor:\s*\(\)\s*=>\s*buildUnattendedWorkflowWriteExecutor\(/);
+    expect(body).not.toContain("consentCoordinator");
+    expect(body).not.toContain("clientId");
+    expect(body).toMatch(/enforcedPolicy:\s*platform\.enforcedPolicy/);
+    expect(src).toContain("await workflowScheduler?.retire()");
+    // Started only after the socket is serving.
+    expect(src.indexOf("workflowScheduler?.start()")).toBeGreaterThan(
+      src.indexOf("await platform.ipc.start()"),
+    );
+  });
+
+  test("workflow.resume is local-only and beyond any peer's write grant; unscheduling is a write method", async () => {
+    const { checkLanMethodAllowed } = await import("./ipc/lan-rpc.ts");
+    const peer = { peerId: "p", writeAllowed: true };
+    expect(() => checkLanMethodAllowed("workflow.resume", peer)).toThrow(/not callable over LAN/);
+    expect(() =>
+      checkLanMethodAllowed("workflow.unschedule", { ...peer, writeAllowed: false }),
+    ).toThrow(/ERR_LAN_WRITE_FORBIDDEN/);
+    const rust = await read("packages/ui/src-tauri/src/gateway_bridge.rs");
+    expect(rust).toMatch(/^\s*"workflow\.scheduleList",\s*$/m);
+    expect(rust).not.toMatch(/^\s*"workflow\.resume",\s*$/m);
+    expect(rust).not.toMatch(/^\s*"workflow\.unschedule",\s*$/m);
+  });
+
+  test("a schedule is set only through workflow.save from a cli or ui connection (the kind comes from the server)", async () => {
+    const dispatch = await read("packages/gateway/src/ipc/server/dispatchers.ts");
+    expect(dispatch).toMatch(/clientKind:\s*ctx\.getClientKind\(clientId\)/);
+    const sched = stripComments(await read("packages/gateway/src/automation/workflow-schedule.ts"));
+    expect(sched).toMatch(/new Set<ClientKind>\(\["cli", "ui"\]\)/);
+  });
+});
+
+describe("I55 SA5 — approval learning only suggests: it never creates, widens or approves a rule", () => {
+  test("the learning pass and its store name no rule writer, no owner prompt and no executor", async () => {
+    for (const rel of [
+      "packages/gateway/src/standing/approval-learning.ts",
+      "packages/gateway/src/standing/standing-suggestion-store.ts",
+    ]) {
+      const src = stripComments(await read(rel));
+      for (const forbidden of [
+        /\binsertRule\b/,
+        /\bresumeRule\b/,
+        /\bclaimFire\b/,
+        /\bToolExecutor\b/,
+        /\baskOwner\b/,
+        /standing\.rule\.create/,
+        /\bstanding_rule\b/,
+      ]) {
+        expect(src, `${rel} ${String(forbidden)}`).not.toMatch(forbidden);
+      }
+    }
+  });
+
+  test("reaching the threshold with hand approvals leaves no rule; a --yes or scripted answer earns nothing", async () => {
+    const { appendAuditEntry } = await import("./db/audit-chain.ts");
+    const { learnFromStepRun } = await import("./standing/approval-learning.ts");
+    const { listSuggestions } = await import("./standing/standing-suggestion-store.ts");
+    const { listRules } = await import("./standing/standing-rule-store.ts");
+    const run = async (source: string): Promise<{ suggestions: number; rules: number }> => {
+      const db = new Database(":memory:");
+      runIndexedSchemaMigrations(db, CURRENT_SCHEMA_VERSION);
+      for (let i = 0; i < 5; i += 1) {
+        const r = {
+          runId: `r${String(i)}`,
+          workflowId: "wf",
+          workflowSha256: "a".repeat(64),
+          stepIndex: 1,
+          actionType: "gmail.thread.archive",
+          workflowName: "w",
+          stepLabel: "s",
+          trigger: "owner_cli" as const,
+          startedAt: 1,
+        };
+        appendAuditEntry(db, {
+          actionType: r.actionType,
+          hitlStatus: "approved",
+          actionJson: JSON.stringify({
+            action: {
+              type: r.actionType,
+              provenance: {
+                kind: "owner_workflow",
+                workflowId: r.workflowId,
+                workflowSha256: r.workflowSha256,
+                stepIndex: r.stepIndex,
+                runId: r.runId,
+              },
+            },
+            answerSource: source,
+          }),
+          timestamp: 2,
+        });
+        learnFromStepRun(db, r, {
+          enabled: () => true,
+          suggestAfter: () => 5,
+          currentSha: () => r.workflowSha256,
+        });
+      }
+      return { suggestions: listSuggestions(db, "open").length, rules: listRules(db).length };
+    };
+    expect(await run("human")).toEqual({ suggestions: 1, rules: 0 });
+    for (const source of ["auto", "script", "unknown", "delegate", "remote"]) {
+      expect(await run(source), source).toEqual({ suggestions: 0, rules: 0 });
+    }
+  });
+
+  test("accepting a suggestion is the same owner approval: a non-human answer or a decline creates no rule", async () => {
+    const { openSuggestion, getSuggestion } = await import(
+      "./standing/standing-suggestion-store.ts"
+    );
+    const { listRules } = await import("./standing/standing-rule-store.ts");
+    for (const reason of ["not_human", "declined"] as const) {
+      const db = i55FreshDb();
+      const wf = i55SeedWorkflow(db);
+      const s = openSuggestion(
+        db,
+        { workflowId: wf.id, workflowSha256: wf.sha, stepIndex: 1 },
+        5,
+        i55Now,
+      );
+      const ctx = {
+        db,
+        callerKind: "cli" as const,
+        policyAllows: () => true,
+        askOwner: async () => ({ approved: false as const, reason }),
+        recordNarrowing: () => {},
+        frozenHitl: (t: string) => HITL_REQUIRED.has(t),
+        now: () => i55Now,
+      };
+      await expect(
+        dispatchStandingRpc("standing.create", { fromSuggestion: s?.id }, ctx),
+      ).rejects.toBeInstanceOf(Error);
+      expect(listRules(db)).toHaveLength(0);
+      expect(getSuggestion(db, s?.id ?? "")?.status).toBe("open");
+    }
+  });
+
+  test("the renderer allowlist names suggestions and dismissSuggestion, and still not create", async () => {
+    const rust = await read("packages/ui/src-tauri/src/gateway_bridge.rs");
+    for (const m of ["suggestions", "dismissSuggestion"]) {
+      expect(rust).toMatch(new RegExp(`^\\s*"standing\\.${m}",\\s*$`, "m"));
+    }
+    expect(rust).not.toMatch(/^\s*"standing\.create",\s*$/m);
+  });
+
+  test("the runner reaches the pass only through the optional learning config; gateway-main builds it behind the demo flag", async () => {
+    const runner = stripComments(await read("packages/gateway/src/automation/workflow-runner.ts"));
+    expect(runner).toMatch(/p\.learning === undefined/);
+    const main = stripComments(await read("packages/gateway/src/gateway-main.ts"));
+    expect(main).toMatch(
+      /learning:\s*buildLearningConfig\(\{\s*demo:\s*platform\.paths\.demo === true/,
+    );
+    const cfg = stripComments(await read("packages/gateway/src/standing/learning-config.ts"));
+    expect(cfg).toMatch(/if \(src\.demo\) return false/);
+    expect(cfg).toContain("isStandingApprovalsEnabled(");
+  });
+
+  test("the two learning tables exist at V90 and the lockoff default is the SA3 accessor (absent = off)", async () => {
+    expect(CURRENT_SCHEMA_VERSION).toBeGreaterThanOrEqual(90);
+    const { buildLearningConfig } = await import("./standing/learning-config.ts");
+    expect(buildLearningConfig({ demo: false, configDir: "x" }).enabled()).toBe(false);
   });
 });
