@@ -81,10 +81,13 @@ export function gatewayZone(): string {
   return new Intl.DateTimeFormat().resolvedOptions().timeZone;
 }
 
-/** The wall clock of instant `ms` in `zone`, or `undefined` for an unknown zone or a non-finite instant. */
+/** The largest absolute instant an ECMAScript `Date` can hold (ms). */
+const MAX_DATE_MS = 8.64e15;
+
+/** The wall clock of instant `ms` in `zone`, or `undefined` for an unknown zone or an unrepresentable instant. */
 export function wallOfInstant(ms: number, zone: string): WallTime | undefined {
   const f = formatterFor(zone);
-  if (f === null || !Number.isFinite(ms)) return undefined;
+  if (f === null || !Number.isFinite(ms) || Math.abs(ms) > MAX_DATE_MS) return undefined;
   const parts: Record<string, number> = {};
   for (const p of f.formatToParts(new Date(ms))) {
     if (p.type !== "literal") parts[p.type] = Number.parseInt(p.value, 10);

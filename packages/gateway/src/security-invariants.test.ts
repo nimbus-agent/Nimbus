@@ -1981,7 +1981,7 @@ describe("I7 — Tauri ALLOWED_METHODS surface for T2 PR 3", () => {
   // composes a briefing and shows a notification on the owner's machine, so it stays CLI-only. By NAME,
   // since a one-for-one swap keeps the count.
   test("briefing: the four reads are renderer-callable, runNow never is", async () => {
-    const rust = await read("packages/ui/src-tauri/src/gateway_bridge.rs");
+    const rust = stripComments(await read("packages/ui/src-tauri/src/gateway_bridge.rs"));
     for (const m of ["get", "latest", "list", "status"]) {
       expect(rust).toMatch(new RegExp(`^\\s*"briefing\\.${m}",\\s*$`, "m"));
       expect(rust).toContain(`assert!(is_method_allowed("briefing.${m}"));`);
@@ -1995,7 +1995,7 @@ describe("I7 — Tauri ALLOWED_METHODS surface for T2 PR 3", () => {
   // the count at 107. pushedRetry starts an agent run on the owner's behalf; it stays CLI-only.
   // `oncall.now` (Phase 10 MB3) is the third read: a synchronous read of the local index, not long-running.
   test("oncall: the three reads (pushedGet, pushedList, now) are renderer-callable, pushedRetry never is", async () => {
-    const rust = await read("packages/ui/src-tauri/src/gateway_bridge.rs");
+    const rust = stripComments(await read("packages/ui/src-tauri/src/gateway_bridge.rs"));
     expect(rust).toMatch(/^\s*"oncall\.now",\s*$/m);
     expect(rust).toContain('assert!(is_method_allowed("oncall.now"));');
     expect(rust).toContain('assert!(!is_no_timeout_method("oncall.now"));');
@@ -2010,7 +2010,7 @@ describe("I7 — Tauri ALLOWED_METHODS surface for T2 PR 3", () => {
   // By NAME again: the desktop Captures page reads; accepting, rejecting, revoking and purging
   // stay in a terminal, and the MCP-client door (capture.*) is never the renderer's (I28).
   test("captures: the two reads are renderer-callable, no owner verb is", async () => {
-    const rust = await read("packages/ui/src-tauri/src/gateway_bridge.rs");
+    const rust = stripComments(await read("packages/ui/src-tauri/src/gateway_bridge.rs"));
     expect(rust).toMatch(/^\s*"captures\.get",\s*$/m);
     expect(rust).toMatch(/^\s*"captures\.list",\s*$/m);
     expect(rust).not.toMatch(/^\s*"captures\.(?:accept|reject|revoke|purge)",\s*$/m);

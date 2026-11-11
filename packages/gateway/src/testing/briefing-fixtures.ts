@@ -3,6 +3,7 @@ import type { ConnectorServiceId } from "../connectors/connector-catalog.ts";
 import { createStubVault, syncTestContext } from "../connectors/connector-sync-test-helpers.ts";
 import { mapGoogleCalendarEvent } from "../connectors/google-calendar-event-mapping.ts";
 import { mapOutlookCalendarEvent } from "../connectors/outlook-calendar-mapping.ts";
+import { dbRun } from "../db/write.ts";
 import { replaceWorkSnapshotRows } from "../index/work-snapshot-store.ts";
 
 /**
@@ -81,7 +82,8 @@ export function setSnapshot(
 }
 
 export function markSynced(db: Database, connectorId: string, lastSyncAt: number | null): void {
-  db.run(
+  dbRun(
+    db,
     "INSERT INTO sync_state (connector_id, last_sync_at) VALUES (?, ?) ON CONFLICT (connector_id) DO UPDATE SET last_sync_at = excluded.last_sync_at",
     [connectorId, lastSyncAt],
   );

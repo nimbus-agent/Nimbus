@@ -47,6 +47,14 @@ describe("wallToInstantMs", () => {
 });
 
 describe("wallOfInstant", () => {
+  test("an instant outside the ECMAScript Date range is undefined, not a RangeError", () => {
+    expect(wallOfInstant(1e20, "UTC")).toBeUndefined();
+    expect(wallOfInstant(-1e20, "UTC")).toBeUndefined();
+    expect(wallOfInstant(8.64e15 + 1, "UTC")).toBeUndefined();
+    expect(wallOfInstant(8.64e15, "UTC")).toBeDefined();
+    expect(wallOfInstant(-8.64e15, "UTC")).toBeDefined();
+  });
+
   test("Europe/London in summer and winter", () => {
     expect(wallOfInstant(Date.UTC(2026, 6, 1, 8), "Europe/London")).toEqual(w(2026, 7, 1, 9));
     expect(wallOfInstant(Date.UTC(2026, 0, 15, 9), "Europe/London")).toEqual(w(2026, 1, 15, 9));

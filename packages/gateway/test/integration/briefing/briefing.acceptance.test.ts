@@ -295,8 +295,8 @@ describe("the briefing, end to end", () => {
   });
 
   test("3. a deadline 23 h away with no activity: ten scans, exactly one toast and one notice", async () => {
-    markSynced(db, "github", now);
     now = z(2026, 11, 12, 9);
+    markSynced(db, "github", now);
     seedItem(db, {
       service: "github",
       type: "issue",
