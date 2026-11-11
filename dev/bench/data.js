@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794426333061,
+  "lastUpdate": 1794434202724,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "139aa40307d73083bfeb955d264858d1ad2e54c9",
-          "message": "fix(test): stop the Windows deploy.preflight hook timeout and clear the Sonar backlog (#1316)\n\n## The flake\n\n`E2E (in-process): deploy.preflight > returns a warn-verdict envelope on\nthe fixture` has been failing intermittently on `main`'s Windows leg —\nruns 32611067170 and 32638974730, the latter being the post-merge run\nfor #1315.\n\nIt is **not an assertion failure**. The log says so directly:\n\n```\n(fail) ... returns a warn-verdict envelope on the fixture [5393.55ms]\n  ^ a beforeEach/afterEach hook timed out for this test.\n```\n\n`beforeEach` created a temp-dir SQLite file and ran the full migration\nchain to V56 — **per test**. Measured locally:\n\n| storage | migration chain to V56 |\n|---|---|\n| temp-dir file | **145–161 ms** |\n| `:memory:` | **12–13 ms** |\n\nThe CI runner is ~13–18× slower at exactly that work, putting the hook\nnear ~3 s with nothing between it and Bun's 5 s hook budget. The sibling\ntest in the same describe was *passing* at 2970 ms — over half the\nbudget already, which is the shape of a flake rather than a pass.\n\n**Fix:** `:memory:`, matching every sibling scenario in that directory\n(`catchup`, `decisions`, `expert`, `glossary`, `impact` — this file was\nthe outlier). Nothing here needs a file: `dispatchPreflightRpc` takes\nthe handle, never a path. It also removes the `afterEach` that existed\nonly to survive Windows file locking (#972/#973), which was competing\nfor the same budget. Whole file: **547 ms → 157 ms**.\n\n## The Sonar backlog — all 23\n\nThe gate was already green (these sit outside the new-code period), so\nthis is cleanup rather than an unblock.\n\n**Three assertion-free tests (BLOCKER, S2699)** — the \"tests that cannot\nfail\" class:\n\n- `relationship-graph.metadata.test.ts` ×2. Both are genuine\ncompile-time guards where `@ts-expect-error` is the real assertion, but\nneither asserted anything at runtime. Rather than guess, I probed the\nactual behaviour: a co-owned type passed to the un-namespaced writer\n**is not refused** — the row lands with `service` NULL. So the added\nassertion documents *why* the compile-time guard must exist, instead of\nencoding a guess.\n- `sandbox-wrapper-spawn.test.ts` — a deliberate `throw` for a missing\nCI prerequisite. Now `expect.unreachable()` (already the repo idiom),\nwhich fails identically but is a real assertion. Red-proved: the loud\nnamed message still fires verbatim.\n\n**Nine cognitive-complexity refactors (S3776)** — all pure extraction,\nno behaviour change:\n\n| file | was |\n|---|---|\n| `main.c` `mode_spawn` | 54 → arg parsing + grant application extracted\n|\n| `diagnostics-rpc.ts` | 44 → param parse/validate + one shared negation\nresult shaper |\n| `query.ts` | 34 → help constant, flag validation, params, output |\n| `pr-file-fetch.ts` | 26 → the page walk, with its three flags now a\nreturn value |\n| `why.ts` | 25 → the two input arms + the lane decoder |\n| `markdown-sections.ts` | 25 → the two envelope scans |\n| `people.ts` | 23 → params, window line, JSON/text output |\n| `pr-file-mapping.ts` ×2 | 16 → status resolvers extracted |\n| `context-fairness.ts` | 16 → the service bucketing |\n\n**The rest:** two `return Promise.resolve(v)` in an already-`async`\nfunction, two repeated `Array#push()`, three nested ternaries, one\nparameterized test, one C multi-declaration.\n\n### One I did not \"fix\" as written\n\n`c:S923` — *Remove use of ellipsis notation* on `err(const wchar_t *fmt,\n...)` in the sandbox helper. Marked `NOSONAR` with a written\njustification rather than complied with, because complying makes the\ncode **worse**: this is the single audited `vfwprintf` wrapper for 26\ndiagnostic sites, each with its own format string and argument types.\nRemoving the ellipsis means 26 hand-managed stack buffers in\nsecurity-sensitive C — more attack surface, for a rule aimed at\nunchecked variadic APIs rather than a fixed-format logger. `NOSONAR`\nwith a reason is established practice in this repo. Flagging it\nexplicitly so the call is reviewable rather than buried.\n\n## Verification\n\n- **`bun test packages/gateway packages/cli packages/mcp-connectors\nscripts`** — the exact command CI runs: **20,068 pass, 148 skip, 0\nfail**, exit 0\n- `bun run preflight:fast` — 32/32, including `audit:invariants` (D23)\nand `audit:boundaries`\n- The C helper **rebuilds clean under `/W4 /WX`**, and the real sandbox\nspawn suite went from **5 skip → 5 pass** against the rebuilt binary, so\nconfined spawns actually executed through the refactored `mode_spawn`\nrather than being skipped\n- `preflight-deploy.e2e.test.ts` — 2 pass, before/after timings above\n\nThe one thing I could not verify locally is that each S3776 refactor\nlands under Sonar's threshold — that needs a `SONAR_TOKEN` I do not\nhave. Each was reduced by extracting whole blocks rather than shaved\ntoward 15, so there should be margin, but this PR's own Sonar run is the\ncheck.\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **Refactor**\n* Improved CLI handling for people lists and queries, including\nconsistent review-window and result formatting.\n* Simplified diagnostic, sandbox, envelope, lane-resolution, fairness,\nand pull-request file-processing workflows while preserving existing\nbehavior.\n* Centralized query negation responses and file-status mapping for more\nconsistent results.\n\n* **Tests**\n  * Expanded runtime coverage for relationship-graph writes.\n* Consolidated metadata scenarios and improved sandbox test failure\nreporting.\n* Updated deployment tests to use in-memory databases for more reliable\nexecution.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-08-23T14:22:03Z",
-          "tree_id": "a63412888efb8be09872d8a71c03ebec7541521c",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/139aa40307d73083bfeb955d264858d1ad2e54c9"
-        },
-        "date": 1787495514950,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 286.9100079499978,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 287.40946635,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 188.84947440000104,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "2e5003f6271661e675dedc5bafd64f8211337a67",
+          "message": "feat(gateway): index on-call shifts from PagerDuty and Jira Service Management and answer who is on call from the index (#1972)\n\nPhase 10, morning briefing, slice **MB3**: on-call shifts from PagerDuty\nand Jira Service Management Operations enter the local index, so \"who is\non call?\" is answered without a live API call at question time. This\nimplements owner ruling OR-10-13, and the Phase 10 row *On-call schedule\nawareness*.\n\n> **Rebased onto #1971 (MB2b):** this PR uses MB2b's `replaceItemSet`\n(its own copy was dropped) and extends that capability's per-service\ntype allowlist with `oncall_shift` for `pagerduty` and `jira`.\n\n## What changes\n\n- **Item type `oncall_shift`** with snapshot semantics. Only a COMPLETE\nfetch replaces the set (via `replaceItemSet`); a partial or capped fetch\ndeletes nothing, because it could omit the current shift. Each row\ncarries its own `fetched_at_ms`, so the data's age is shown honestly.\n- External ids use an `oncall:` prefix, because `item.external_id` is\nunique per service.\n- **PagerDuty**, inside the `pagerduty` syncable, at most every 15 min:\n- `GET /oncalls` from now to now+7 d, with users, escalation policies\nand schedules, capped at 10 pages.\n  - `GET /services` builds `service_ids` and `service_names`.\n- `is_me` comes from `GET /users/me`, falling back to the\n`pagerduty.from_email` Vault value.\n- **JSM Operations**, inside the `jira` syncable, at most every 15 min:\n- **Cloud id:** the Vault `jira.cloud_id`, else one `tenant_info` GET\nrestricted to `*.atlassian.net`, cached in the cursor and never written\nto the Vault.\n- **Requests:** schedules (cap 50), then each schedule's on-calls and\nnext on-calls.\n- **Credential host:** the Jira credential now also goes to ONE fixed\nhost, `api.atlassian.com`. The host is hard-coded, the cloud id is\nvalidated (`isAtlassianCloudId`), redirects are `manual`, and a source\ntest pins all three.\n- **`is_me`:** matched by the `/myself` accountId on the non-flat\nparticipants.\n- **Shift times:** JSM documents none for these endpoints, so its rows\ncarry `shift: current|next` and no times.\n- **IPC `oncall.now {service?}`** (read-only, local index):\n- LAN-refused through the existing `oncall` namespace denylist, with a\npin test.\n- Tauri `ALLOWED_METHODS` 126 → 127 (I7), with the Rust tests and TS\npins.\n  - In a demo gateway it serves the demo index (I41).\n- **`nimbus oncall now [--service <id|name>] [--json]`**, with a\nfour-tier service matcher ([ci.service] binding → PagerDuty service\nid/name → schedule/policy name) that reports which tier matched, and the\ndata's age.\n- **Agent tool `oncall_now`**: read-only and local, its output wrapped\nthrough `wrapToolForLlm` (I11). E-mail-like names are reduced to the\npart before `@`.\n- **Search:** each shift row's preview names its policy and services, so\n`nimbus ask` also finds the on-call person by search on every model\npath. The tool exists only where the Mastra agent does.\n- **The `nimbus oncall` incident brief** gains an \"On call now\" line for\nthe incident's PagerDuty service.\n- **Demo:** the demo corpus gains shifts.\n\n## Stated bounds\n\n- PagerDuty `is_me` needs a user-level token or a matching\n`pagerduty.from_email`. An account-level token answers `/users/me` with\n400.\n- JSM shifts have no service mapping and no times, and schedules are\ncapped at 50. A 401/403/404 backs off for 6 h.\n- Live PagerDuty and JSM Ops reply shapes, and whether every Atlassian\nplan accepts Basic auth on the Ops read endpoints, are not verified\nagainst live accounts.\n- No schema change. No new invariant; I7's count changes.\n\n## Verification (local, Windows)\n\n- `bun test packages/gateway/src`: 29875 pass, 0 fail.\n- `bun test packages/gateway/test packages/cli`: only the 6 migration\ne2e tests that fail on `main` in that combined process.\n- `cargo test` (packages/ui/src-tauri): 55 pass, including\n`allowlist_exact_size` at 127.\n- `preflight:fast` and `typecheck:tests` (0 new) pass.\n- `audit:invariants`, `audit:status-drift` and `audit:doc-refs` pass.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JmSjrCFSTQTQnUa4j8F5b1\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Added indexed on-call shift syncing from PagerDuty and Jira Service\nManagement, with refreshes at most every 15 minutes.\n* Added `nimbus oncall now` to check current and upcoming shifts, with\noptional service selection and JSON output.\n* Added on-call details to incident briefs and an agent tool for on-call\nquestions.\n  * Added on-call shifts to demo data.\n* **Bug Fixes**\n* On-call refresh failures no longer interrupt incident or issue\nsyncing. Stale data and unavailable results are identified in responses.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-11T21:47:14Z",
+          "tree_id": "bc76dddee36354e198c0b076f6d0c2e9da51e921",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/2e5003f6271661e675dedc5bafd64f8211337a67"
+        },
+        "date": 1794434197180,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 273.7143487499969,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 284.40245330000255,
             "unit": "ms"
           }
         ]
