@@ -5606,6 +5606,8 @@ describe("D24 - work_snapshot is written only by the capability's store (Phase 1
     ["INSERT", 'dbRun(db, "INSERT INTO work_snapshot (a) VALUES (1)")'],
     ["DELETE", 'dbRun(db, "DELETE FROM work_snapshot")'],
     ["UPDATE", 'dbRun(db, "UPDATE work_snapshot SET captured_at = 1")'],
+    ["UPDATE OR REPLACE", 'dbRun(db, "UPDATE OR REPLACE work_snapshot SET captured_at = 1")'],
+    ["UPDATE OR IGNORE", 'dbRun(db, "UPDATE OR IGNORE work_snapshot SET captured_at = 1")'],
     ["INSERT OR REPLACE", 'dbRun(db, "INSERT OR REPLACE INTO work_snapshot (a) VALUES (1)")'],
     ["REPLACE INTO", 'dbRun(db, "REPLACE INTO work_snapshot (a) VALUES (1)")'],
     ["DROP", 'dbRun(db, "DROP TABLE work_snapshot")'],
