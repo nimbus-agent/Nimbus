@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794434202724,
+  "lastUpdate": 1794434891271,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "e4d948aa3c03b4a22d603b0f816d3f98bf2c3fe6",
-          "message": "feat(connectors): consent-gated standalone connectors, so writes cannot run ungated off-gateway (#1318)\n\nMakes a Nimbus connector safe to run outside the gateway, so a curated\nset can\nbe published as standalone MCP servers without shipping ungated\ndestructive\ntools under the Nimbus name.\n\n## The problem\n\nA connector's write tools really mutate. `github_branch_delete` issues a\nreal\nDELETE. The string \"requires HITL repo.branch.delete\" in its description\nwas\nprose — enforcement lived entirely in `engine/executor.ts`, one process\naway.\nRun the same connector under Claude Desktop and that tool becomes\ndirectly\nmodel-callable with the user's PAT.\n\nThat is Non-Negotiable 2 — HITL is structural — ceasing to hold the\nmoment the\nexecutor is not in the picture.\n\n## The mechanism\n\nMode is derived from which entrypoint started the process, never from\nconfiguration:\n\n- Gateway: `run-bundled-connector.ts` sets gateway mode at the existing\nsingle\nchokepoint. Full tool surface, gated by `executor.ts` exactly as before.\n- Anything else defaults to standalone, where a write tool registers\nonly if\nthe client advertises the MCP elicitation capability, and each mutation\nneeds\n  an accepted elicitation plus a server-enforced scope match and budget.\n\nStandalone is the DEFAULT so the failure mode points the safe way: a\nlost\ngateway wire degrades to read-only rather than silently ungating.\n\nAlso included: a typed `kind:value` write-scope allow-list, a\nper-session\nmutation budget, pre-state capture for unrecoverable operations, a\nSHA-256\nhash-chained JSONL audit log, a cross-runtime spawn shim so connectors\nrun\nunder Node, and a `nimbus-mcp` launcher whose eligibility is derived\nfrom each\nconnector's own manifest rather than a hand-maintained list.\n\n## Scope\n\nPart 1 of 2. Builds the whole mechanism and migrates ONE connector,\n`github`.\nEvery other connector is untouched. 58 of 94 are standalone-eligible\ntoday: the\n57 declaring no mutating tools, plus `github`.\n\nPart 2 — the remaining 36 connectors, the 18 in-process connector test\nfiles,\nand wiring the declaration into I26 — is deliberately deferred until\nthis has\nbeen reviewed. Executing Part 1 surfaced six defects that the plan and\ntwo\nreview passes all missed, on one connector.\n\n## Verified\n\n- Whole-repo suite: 20,147 pass, 0 fail\n- `preflight:fast`: 30 of 30, including a new `audit:connector-consent`\ngate\n- Linux coverage floor: ok, 1,283 files, 0 violations\n- `test:connector-boot`: 94 connectors boot from the compiled binary\n- Gateway regression, compiled binary, client WITHOUT elicitation: all\nfive\n  github write tools present. The standalone gate does not leak into the\n  gateway.\n- Standalone through the launcher: 14 tools including 5 writes with\n  elicitation; 9 tools and no writes without.\n\nEvery new test was red-proved by reverting the fix, not by observing\ngreen.\n\n## Known bounds\n\n- Consent is rendered by the MCP client, so it is real consent on a\nweaker\n  trust base than the gateway's. The scope allow-list and budget hold\n  regardless of client behaviour; the prompt does not.\n- The I15 sandbox, the Vault and the I29 egress ledger are gateway\nproperties\n  and are not recreated. NOTICE says so.\n- Claude Desktop and Cursor elicitation support is UNMEASURED. Claude\nCode\n2.1.241 advertises it. Recorded as a launch gate before publishing to\nnpm.\n- `audit:connector-consent` rule 2 is advisory until Part 2 completes.\n\nDesign and plan:\n`docs/superpowers/specs/2026-08-23-standalone-connector-hardening-design.md`",
-          "timestamp": "2026-08-23T18:32:56Z",
-          "tree_id": "8a0ee35ce2fd796b72223b04cddcde9d5d01a715",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/e4d948aa3c03b4a22d603b0f816d3f98bf2c3fe6"
-        },
-        "date": 1787510447165,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 218.43707054999612,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 216.19972459999917,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 284.40245330000255,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
+            "name": "nimbus-release-bot[bot]",
+            "username": "nimbus-release-bot[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "5a79d38dce05bef38b0b2b83503c89879962728d",
+          "message": "chore: release main (#1974)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>10.51.0</summary>\n\n##\n[10.51.0](https://github.com/nimbus-agent/Nimbus/compare/v10.50.0...v10.51.0)\n(2026-11-11)\n\n\n### Features\n\n* **gateway:** index on-call shifts from PagerDuty and Jira Service\nManagement and answer who is on call from the index\n([#1972](https://github.com/nimbus-agent/Nimbus/issues/1972))\n([2e5003f](https://github.com/nimbus-agent/Nimbus/commit/2e5003f6271661e675dedc5bafd64f8211337a67))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
+          "timestamp": "2026-11-11T21:55:07Z",
+          "tree_id": "a82bea115aa06a8795a4161972589909f34b39bb",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/5a79d38dce05bef38b0b2b83503c89879962728d"
+        },
+        "date": 1794434886707,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 295.4146722000005,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 294.39336324999675,
             "unit": "ms"
           }
         ]
