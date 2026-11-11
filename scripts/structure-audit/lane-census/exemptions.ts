@@ -325,4 +325,84 @@ export const LANE_EXEMPTIONS: readonly LaneExemption[] = [
     reason:
       "Reads the mapped row's own end_ms (not an SQL read) to drop an event outside the sync window. Its writer is normalizedEventKeys in connectors/_lib/calendar-event-normalize.ts, called from outlook-calendar-mapping.ts: the census writer scan does not follow a spread across files.",
   },
+  {
+    file: "packages/gateway/src/agents/_lib/briefing-queries.ts",
+    key: "status",
+    category: "census-blind",
+    reads: 1,
+    reason:
+      "Google Calendar and Outlook write status through normalizedEventKeys in connectors/_lib/calendar-event-normalize.ts, called from google-calendar-event-mapping.ts and outlook-calendar-mapping.ts: the census writer scan does not follow a spread across files, so only iCloud's direct write is seen. selectCalendarDay (the morning briefing) reads it from all three.",
+  },
+  {
+    file: "packages/gateway/src/agents/_lib/briefing-queries.ts",
+    key: "self_response",
+    category: "census-blind",
+    reads: 1,
+    reason:
+      "Google Calendar and Outlook write self_response through normalizedEventKeys in connectors/_lib/calendar-event-normalize.ts, called from google-calendar-event-mapping.ts and outlook-calendar-mapping.ts: the census writer scan does not follow a spread across files, so only iCloud's direct write is seen. selectCalendarDay (the morning briefing) reads it from all three.",
+  },
+  {
+    file: "packages/gateway/src/agents/_lib/briefing-queries.ts",
+    key: "start_ms",
+    category: "census-blind",
+    reads: 1,
+    reason:
+      "Google Calendar and Outlook write start_ms through normalizedEventKeys in connectors/_lib/calendar-event-normalize.ts, called from google-calendar-event-mapping.ts and outlook-calendar-mapping.ts: the census writer scan does not follow a spread across files, so only iCloud's direct write is seen. selectCalendarDay (the morning briefing) reads it from all three.",
+  },
+  {
+    file: "packages/gateway/src/agents/_lib/briefing-queries.ts",
+    key: "end_ms",
+    category: "census-blind",
+    reads: 1,
+    reason:
+      "Google Calendar and Outlook write end_ms through normalizedEventKeys in connectors/_lib/calendar-event-normalize.ts, called from google-calendar-event-mapping.ts and outlook-calendar-mapping.ts: the census writer scan does not follow a spread across files, so only iCloud's direct write is seen. selectCalendarDay (the morning briefing) reads it from all three.",
+  },
+  {
+    file: "packages/gateway/src/agents/_lib/briefing-queries.ts",
+    key: "all_day",
+    category: "census-blind",
+    reads: 1,
+    reason:
+      "Google Calendar and Outlook write all_day through normalizedEventKeys in connectors/_lib/calendar-event-normalize.ts, called from google-calendar-event-mapping.ts and outlook-calendar-mapping.ts: the census writer scan does not follow a spread across files, so only iCloud's direct write is seen. selectCalendarDay (the morning briefing) reads it from all three.",
+  },
+  {
+    file: "packages/gateway/src/agents/_lib/briefing-queries.ts",
+    key: "attendee_count",
+    category: "census-blind",
+    reads: 1,
+    reason:
+      "Google Calendar and Outlook write attendee_count through normalizedEventKeys in connectors/_lib/calendar-event-normalize.ts, called from google-calendar-event-mapping.ts and outlook-calendar-mapping.ts: the census writer scan does not follow a spread across files, so only iCloud's direct write is seen. selectCalendarDay (the morning briefing) reads it from all three.",
+  },
+  {
+    file: "packages/gateway/src/agents/_lib/briefing-queries.ts",
+    key: "repo",
+    category: "by-design",
+    reads: 1,
+    reason:
+      "selectReviews shows a CI state for an authored PR only when the newest ci_run carries BOTH repo and branch; a ci_run from a service that writes neither (Jenkins) simply cannot be matched, and the briefing says so ('n PRs have no branch recorded' covers the PR side).",
+  },
+  {
+    file: "packages/gateway/src/agents/_lib/briefing-queries.ts",
+    key: "branch",
+    category: "by-design",
+    reads: 1,
+    reason:
+      "selectReviews shows a CI state for an authored PR only when the newest ci_run carries BOTH repo and branch; a ci_run from a service that writes neither (Jenkins) simply cannot be matched. A PR row with no branch is counted and disclosed.",
+  },
+  {
+    file: "packages/gateway/src/agents/_lib/briefing-queries.ts",
+    key: "due_at_ms",
+    category: "census-blind",
+    reads: 1,
+    reason:
+      "GitHub writes due_at_ms (a milestone due_on) through githubIssueDepthMetadata, spread into the issue metadata in github-sync.ts: the census writer scan does not follow that spread, so only Jira and Linear's direct writes are seen. ticketDueAt (the morning briefing) reads it for all three.",
+  },
+  {
+    file: "packages/gateway/src/agents/_lib/briefing-queries.ts",
+    key: "is_read",
+    category: "census-blind",
+    reads: 1,
+    reason:
+      "Outlook writes is_read inside a conditional spread (typeof m.isRead === 'boolean' ? { is_read, meta_v } : {}) in outlook-sync.ts upsertMessage, which the census writer scan does not see. selectUnreadMail counts rows without it as 'predate read tracking' and the briefing says so.",
+  },
 ];
