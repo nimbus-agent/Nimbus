@@ -180,6 +180,11 @@ pub const ALLOWED_METHODS: &[&str] = &[
     "share.list",
     "share.pubkey",
     "share.verify",
+    "standing.fires",
+    "standing.list",
+    "standing.pause",
+    "standing.revoke",
+    "standing.show",
     "team.auditMerged",
     "teamvault.list",
     "telemetry.getStatus",
@@ -820,6 +825,22 @@ mod tests {
     }
 
     #[test]
+    fn allowlist_standing_reads_and_narrowing_only() {
+        // Phase 10 SA3 (I55): the desktop lists, shows and reads the fires of a standing approval
+        // rule and may pause or revoke one (each only NARROWS what runs unprompted). Creating or
+        // resuming a rule widens it, and is the owner's CLI on the local socket alone (I7).
+        assert!(is_method_allowed("standing.list"));
+        assert!(is_method_allowed("standing.show"));
+        assert!(is_method_allowed("standing.fires"));
+        assert!(is_method_allowed("standing.pause"));
+        assert!(is_method_allowed("standing.revoke"));
+        assert!(!is_method_allowed("standing.create"));
+        assert!(!is_method_allowed("standing.resume"));
+        assert!(!is_no_timeout_method("standing.list"));
+        assert!(!is_no_timeout_method("standing.revoke"));
+    }
+
+    #[test]
     fn allowlist_connector_auth_not_start_auth() {
         // A one-for-one substitution, 105 → 105: `connector.startAuth` (the S4-F2 deprecated
         // alias, removed from the gateway on 2026-09-10) out, `connector.auth` (the real method,
@@ -962,7 +983,7 @@ mod tests {
 
     #[test]
     fn allowlist_exact_size() {
-        assert_eq!(ALLOWED_METHODS.len(), 118);
+        assert_eq!(ALLOWED_METHODS.len(), 123);
     }
 
     #[test]

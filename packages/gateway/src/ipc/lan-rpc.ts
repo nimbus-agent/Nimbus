@@ -234,6 +234,10 @@ const FORBIDDEN_OVER_LAN = new Set([
   // MCP capture sink (I28): agent notes and their owner review are local-only surfaces.
   "capture",
   "captures",
+  // Phase 10 SA3 (I55): standing approval rules. The WHOLE namespace is local-only: creating or
+  // resuming a rule is the local owner's approval, and a rule decides whether a write runs without
+  // a prompt, so no paired peer may read, create, pause or revoke one (this set is a denylist).
+  "standing",
   // NOTE: egress.prune is deliberately NOT forbidden here — like federation.purge above, it is
   // HITL-gated inside its own handler (handlePrune in egress-rpc.ts calls
   // ctx.requestPruneApproval(beforeTs) and returns { approved: false, prunedCount: 0 } on denial),
