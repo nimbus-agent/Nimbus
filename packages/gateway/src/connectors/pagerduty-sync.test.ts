@@ -68,10 +68,11 @@ function stubPagerdutyPages(pages: readonly PdPageResponse[]): { calls: string[]
   let i = 0;
   globalThis.fetch = (async (input: Parameters<typeof fetch>[0]) => {
     const url = urlFromFetchInput(input);
-    calls.push(url);
     if (!url.startsWith("https://api.pagerduty.com/incidents")) {
+      // The on-call refresh (MB3) also runs on a cursor-less sync; it fails soft on this throw.
       throw new Error(`unexpected fetch: ${url}`);
     }
+    calls.push(url);
     const page = pages[i];
     i += 1;
     if (page === undefined) {
@@ -100,7 +101,10 @@ function stubPagerdutyWithUsers(
     if (url.startsWith("https://api.pagerduty.com/incidents")) {
       return new Response(JSON.stringify({ incidents, more: false }), { status: 200 });
     }
-    if (url.startsWith("https://api.pagerduty.com/users/")) {
+    if (
+      url.startsWith("https://api.pagerduty.com/users/") &&
+      url !== "https://api.pagerduty.com/users/me"
+    ) {
       userCalls.push(url);
       const id = url.slice("https://api.pagerduty.com/users/".length);
       const u = users[id];
@@ -371,7 +375,7 @@ describeWithFetchRestore("pagerduty-sync", () => {
     const decodedJson = Buffer.from(cursor.slice("nimbus-pd1:".length), "base64url").toString(
       "utf8",
     );
-    expect(JSON.parse(decodedJson)).toEqual({ lastUpdated: updatedB });
+    expect(JSON.parse(decodedJson)).toMatchObject({ lastUpdated: updatedB });
   });
 
   test("does not throw on entirely malformed row", async () => {
@@ -387,7 +391,8 @@ describeWithFetchRestore("pagerduty-sync", () => {
     const EXPECTED_BACKFILL_DAYS = 30;
     let capturedUrl: string | undefined;
     globalThis.fetch = (async (input: Parameters<typeof fetch>[0]) => {
-      capturedUrl = urlFromFetchInput(input);
+      const seenUrl = urlFromFetchInput(input);
+      if (seenUrl.includes("/incidents")) capturedUrl = seenUrl;
       return new Response(JSON.stringify({ incidents: [] }), {
         status: 200,
         headers: { "Content-Type": "application/json" },
@@ -469,7 +474,7 @@ describeWithFetchRestore("pagerduty-sync", () => {
     expect(result.hasMore).toBe(false);
     const cursor = result.cursor as string;
     const decoded = Buffer.from(cursor.slice("nimbus-pd1:".length), "base64url").toString("utf8");
-    expect(JSON.parse(decoded)).toEqual({ lastUpdated: updatedC });
+    expect(JSON.parse(decoded)).toMatchObject({ lastUpdated: updatedC });
   });
 
   test("respects maxPagesPerSync cap and emits hasMore=true", async () => {
@@ -532,7 +537,7 @@ describeWithFetchRestore("pagerduty-sync", () => {
     expect(result.hasMore).toBe(true);
     const cursor = result.cursor as string;
     const decoded = Buffer.from(cursor.slice("nimbus-pd1:".length), "base64url").toString("utf8");
-    expect(JSON.parse(decoded)).toEqual({ lastUpdated: updatedB });
+    expect(JSON.parse(decoded)).toMatchObject({ lastUpdated: updatedB });
   });
 
   test("partial-failure preserves cursor progress from successful pages", async () => {
@@ -569,7 +574,7 @@ describeWithFetchRestore("pagerduty-sync", () => {
     expect(result.hasMore).toBe(false);
     const cursor = result.cursor as string;
     const decoded = Buffer.from(cursor.slice("nimbus-pd1:".length), "base64url").toString("utf8");
-    expect(JSON.parse(decoded)).toEqual({ lastUpdated: updatedPage1 });
+    expect(JSON.parse(decoded)).toMatchObject({ lastUpdated: updatedPage1 });
   });
 
   test("cursor floors at the backfill window start when every item is older than the window", async () => {
@@ -630,7 +635,8 @@ describeWithFetchRestore("pagerduty-sync", () => {
   test("decodeCursor: empty-string cursor is treated as null → uses 30-day floor", async () => {
     let capturedUrl: string | undefined;
     globalThis.fetch = (async (input: Parameters<typeof fetch>[0]) => {
-      capturedUrl = urlFromFetchInput(input);
+      const seenUrl = urlFromFetchInput(input);
+      if (seenUrl.includes("/incidents")) capturedUrl = seenUrl;
       return new Response(JSON.stringify({ incidents: [], more: false }), {
         status: 200,
         headers: { "Content-Type": "application/json" },
@@ -654,7 +660,8 @@ describeWithFetchRestore("pagerduty-sync", () => {
   test("decodeCursor: wrong-prefix cursor falls back to 30-day floor", async () => {
     let capturedUrl: string | undefined;
     globalThis.fetch = (async (input: Parameters<typeof fetch>[0]) => {
-      capturedUrl = urlFromFetchInput(input);
+      const seenUrl = urlFromFetchInput(input);
+      if (seenUrl.includes("/incidents")) capturedUrl = seenUrl;
       return new Response(JSON.stringify({ incidents: [], more: false }), {
         status: 200,
         headers: { "Content-Type": "application/json" },
@@ -683,7 +690,8 @@ describeWithFetchRestore("pagerduty-sync", () => {
 
     let capturedUrl: string | undefined;
     globalThis.fetch = (async (input: Parameters<typeof fetch>[0]) => {
-      capturedUrl = urlFromFetchInput(input);
+      const seenUrl = urlFromFetchInput(input);
+      if (seenUrl.includes("/incidents")) capturedUrl = seenUrl;
       return new Response(JSON.stringify({ incidents: [], more: false }), {
         status: 200,
         headers: { "Content-Type": "application/json" },
@@ -710,7 +718,8 @@ describeWithFetchRestore("pagerduty-sync", () => {
 
     let capturedUrl: string | undefined;
     globalThis.fetch = (async (input: Parameters<typeof fetch>[0]) => {
-      capturedUrl = urlFromFetchInput(input);
+      const seenUrl = urlFromFetchInput(input);
+      if (seenUrl.includes("/incidents")) capturedUrl = seenUrl;
       return new Response(JSON.stringify({ incidents: [], more: false }), {
         status: 200,
         headers: { "Content-Type": "application/json" },
@@ -739,7 +748,8 @@ describeWithFetchRestore("pagerduty-sync", () => {
 
     let capturedUrl: string | undefined;
     globalThis.fetch = (async (input: Parameters<typeof fetch>[0]) => {
-      capturedUrl = urlFromFetchInput(input);
+      const seenUrl = urlFromFetchInput(input);
+      if (seenUrl.includes("/incidents")) capturedUrl = seenUrl;
       return new Response(JSON.stringify({ incidents: [], more: false }), {
         status: 200,
         headers: { "Content-Type": "application/json" },
@@ -766,7 +776,8 @@ describeWithFetchRestore("pagerduty-sync", () => {
 
     let capturedUrl: string | undefined;
     globalThis.fetch = (async (input: Parameters<typeof fetch>[0]) => {
-      capturedUrl = urlFromFetchInput(input);
+      const seenUrl = urlFromFetchInput(input);
+      if (seenUrl.includes("/incidents")) capturedUrl = seenUrl;
       return new Response(JSON.stringify({ incidents: [], more: false }), {
         status: 200,
         headers: { "Content-Type": "application/json" },
@@ -823,7 +834,7 @@ describeWithFetchRestore("pagerduty-sync", () => {
     expect(result.hasMore).toBe(false);
     const cursor = result.cursor as string;
     const decoded = Buffer.from(cursor.slice("nimbus-pd1:".length), "base64url").toString("utf8");
-    expect(JSON.parse(decoded)).toEqual({ lastUpdated: updatedPage1 });
+    expect(JSON.parse(decoded)).toMatchObject({ lastUpdated: updatedPage1 });
   });
 
   test("response with incidents field missing returns null → early return", async () => {
@@ -1363,5 +1374,128 @@ describeWithFetchRestore("pagerduty-sync", () => {
     await syncable.sync(ctx, cursor);
 
     expect(new URL(calls[0] ?? "").searchParams.get("since")).toBe(cursorIso);
+  });
+});
+
+describeWithFetchRestore("pagerduty on-call refresh pacing (MB3)", () => {
+  const FAST = { pagerduty: { requestsPerMinute: 6000, burstSize: 100 } };
+
+  function pacingCtx(db: Database): ReturnType<typeof syncTestContext> {
+    return {
+      ...syncTestContext(db, createStubVault({ "pagerduty.api_token": "t" }), "pagerduty"),
+      rateLimiter: new ProviderRateLimiter(FAST),
+    };
+  }
+
+  function stubAll(): { paths: string[] } {
+    const paths: string[] = [];
+    globalThis.fetch = (async (input: Parameters<typeof fetch>[0]) => {
+      const u = new URL(urlFromFetchInput(input));
+      paths.push(u.pathname);
+      if (u.pathname === "/incidents")
+        return new Response(JSON.stringify({ incidents: [], more: false }));
+      if (u.pathname === "/oncalls")
+        return new Response(JSON.stringify({ oncalls: [], more: false }));
+      if (u.pathname === "/services")
+        return new Response(JSON.stringify({ services: [], more: false }));
+      return new Response("{}", { status: 400 });
+    }) as typeof fetch;
+    return { paths };
+  }
+
+  function ocAtOf(cursor: string | null): unknown {
+    const raw = (cursor ?? "").slice("nimbus-pd1:".length);
+    return (JSON.parse(Buffer.from(raw, "base64url").toString("utf8")) as { ocAt?: number }).ocAt;
+  }
+
+  test("a cursor-less sync runs the incident sync and the on-call step, and records ocAt", async () => {
+    const db = createMemoryIndexDb();
+    try {
+      const { paths } = stubAll();
+      const syncable = createPagerdutySyncable({ ensurePagerdutyMcpRunning: async () => {} });
+      const r = await syncable.sync(pacingCtx(db), null);
+      expect(paths).toEqual(["/incidents", "/users/me", "/oncalls", "/services"]);
+      expect(typeof ocAtOf(r.cursor)).toBe("number");
+      expect(r.itemsUpserted).toBe(0);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("a fresh ocAt makes no on-call request and the cursor keeps it; an old one refreshes", async () => {
+    const db = createMemoryIndexDb();
+    try {
+      const { paths } = stubAll();
+      const syncable = createPagerdutySyncable({ ensurePagerdutyMcpRunning: async () => {} });
+      const fresh = Date.now() - 60_000;
+      const cur = encodeNimbusJsonCursor("nimbus-pd1:", {
+        lastUpdated: isoHoursAgo(1),
+        ocAt: fresh,
+      });
+      const r = await syncable.sync(pacingCtx(db), cur);
+      expect(paths).toEqual(["/incidents"]);
+      expect(ocAtOf(r.cursor)).toBe(fresh);
+      paths.length = 0;
+      const old = encodeNimbusJsonCursor("nimbus-pd1:", {
+        lastUpdated: isoHoursAgo(1),
+        ocAt: Date.now() - 16 * 60_000,
+      });
+      await syncable.sync(pacingCtx(db), old);
+      expect(paths).toContain("/oncalls");
+      // An old cursor without ocAt decodes and refreshes at once.
+      paths.length = 0;
+      await syncable.sync(
+        pacingCtx(db),
+        encodeNimbusJsonCursor("nimbus-pd1:", { lastUpdated: isoHoursAgo(1) }),
+      );
+      expect(paths).toContain("/oncalls");
+    } finally {
+      db.close();
+    }
+  });
+
+  test("a failing incident list keeps the old ocAt and still advances an old one", async () => {
+    const db = createMemoryIndexDb();
+    try {
+      globalThis.fetch = (async (input: Parameters<typeof fetch>[0]) => {
+        const u = new URL(urlFromFetchInput(input));
+        if (u.pathname === "/incidents") return new Response("{}", { status: 500 });
+        return new Response("{}", { status: 400 });
+      }) as typeof fetch;
+      const syncable = createPagerdutySyncable({ ensurePagerdutyMcpRunning: async () => {} });
+      const fresh = Date.now() - 1000;
+      const r = await syncable.sync(
+        pacingCtx(db),
+        encodeNimbusJsonCursor("nimbus-pd1:", { lastUpdated: isoHoursAgo(1), ocAt: fresh }),
+      );
+      expect(ocAtOf(r.cursor)).toBe(fresh);
+      const r2 = await syncable.sync(
+        pacingCtx(db),
+        encodeNimbusJsonCursor("nimbus-pd1:", { lastUpdated: isoHoursAgo(1), ocAt: 5 }),
+      );
+      expect(ocAtOf(r2.cursor) as number).toBeGreaterThan(5);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("the on-call step failing never fails the incident sync", async () => {
+    const db = createMemoryIndexDb();
+    try {
+      const ctx = pacingCtx(db);
+      const boom = {
+        ...ctx,
+        replaceItemSet: () => {
+          throw new Error("boom");
+        },
+      };
+      stubAll();
+      const syncable = createPagerdutySyncable({ ensurePagerdutyMcpRunning: async () => {} });
+      const r = await syncable.sync(boom, null);
+      expect(r.itemsUpserted).toBe(0);
+      expect(typeof ocAtOf(r.cursor)).toBe("number");
+    } finally {
+      db.close();
+    }
   });
 });
