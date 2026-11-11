@@ -12,6 +12,7 @@ import {
 } from "../agent-runs/agent-chatops-invoke.ts";
 import { type AgentHttpInvoker, buildAgentHttpInvoker } from "../agent-runs/agent-http-invoke.ts";
 import { AgentRunController } from "../agent-runs/agent-run-store.ts";
+import { resolveSelfPerson } from "../agents/_lib/self-person.ts";
 import type { SynthesisRouter } from "../agents/_lib/synthesis-llm.ts";
 import { startAuditShipper } from "../audit/audit-shipper.ts";
 import { selectExtensionInstallPath } from "../automation/extension-store.ts";
@@ -19,6 +20,7 @@ import {
   evaluateWatchersAfterSync,
   evaluateWatchersStartupCatchUp,
 } from "../automation/watcher-engine.ts";
+import { createBriefingRuntime } from "../briefing/briefing-runtime.ts";
 import { createBriefIndexSearch } from "../briefs/brief-index-search.ts";
 import { createBriefLlm } from "../briefs/brief-llm-adapter.ts";
 import { buildRegistry } from "../briefs/brief-registry.ts";
@@ -96,6 +98,7 @@ import {
   loadNimbusToolGenerationFromConfigDir,
   loadNimbusTribalFromConfigDir,
   loadNimbusUpdaterFromConfigDir,
+  loadNimbusUserFromConfigDir,
   loadTomlSectionFromConfig,
   type NimbusChatopsToml,
   type NimbusComputerUseToml,
@@ -434,6 +437,7 @@ import {
 import {
   createNotificationsRuntime,
   showIgnoringFailure,
+  showWithOutcome,
 } from "./notifications/notifications-runtime.ts";
 import { ensureOwnerOnlyFile, tightenToOwnerOnly } from "./owner-only-mode.ts";
 import type { PlatformPaths } from "./paths.ts";
@@ -4685,6 +4689,29 @@ export async function assemblePlatformServices(
   // index, neither of which a LAN peer or the renderer needs.
   ipcOpts.fleetRpcCtx = fleetRpcCtxFor(fleetRuntime, hostActivity);
   ipcOpts.oncallPushRpcCtx = { runtime: oncallPush };
+  // Morning briefing (Phase 10 MB5): briefing.* (the four reads are renderer-callable, runNow is
+  // CLI-only; LAN-forbidden). The scheduler exists only off the demo root (I41); `gateway-main.ts` starts
+  // and retires it. The unread-chat reader (MB4) is wired here once `index/chat-unread-query.ts` exists.
+  const briefing = createBriefingRuntime({
+    db,
+    configDir: paths.configDir,
+    now: Date.now,
+    // The SAME identity source `agents.oncall` and the on-call push use.
+    resolveSelf: async () => {
+      const user = loadNimbusUserFromConfigDir(paths.configDir);
+      const r = await resolveSelfPerson(
+        db,
+        user.mePersonId === undefined ? {} : { override: user.mePersonId },
+      );
+      return r.personId;
+    },
+    emit: (p) => emitGatewayEvent("briefing.ready", { ...p }),
+    toast: (title, body) => showWithOutcome(notifications, title, body),
+    toastDelivers: () => notifications.delivers !== false,
+    demo: paths.demo === true,
+    logger: syncLogger,
+  });
+  ipcOpts.briefingRpcCtx = { runtime: briefing };
   // pre-S3 item E: notifications.status / notifications.test (CLI-only; LAN-forbidden, not Tauri).
   ipcOpts.notificationsRpcCtx = { runtime: notificationsRuntime };
   // MCP capture sink (I28): capture.* / captures.* (LAN-forbidden by namespace, not Tauri, no HTTP).
@@ -5113,6 +5140,7 @@ export async function assemblePlatformServices(
     askExplainRecorder,
     agentLatencyRecorder,
     oncallPush,
+    briefing,
     policyHitl,
     // A GETTER, not `policyGate.enforced()` evaluated here: a signed policy applied after boot
     // (`policyGate.applyVerified`) must reach the user-MCP model tool source (I42's

@@ -4,7 +4,14 @@ import { readGatewayState } from "../lib/gateway-process.ts";
 import { getCliPlatformPaths } from "../paths.ts";
 import { flagValue } from "./_agent-brief-cli.ts";
 
-export type TailCategory = "connector" | "watcher" | "sync" | "extension" | "hitl" | "oncall" | "briefing";
+export type TailCategory =
+  | "connector"
+  | "watcher"
+  | "sync"
+  | "extension"
+  | "hitl"
+  | "oncall"
+  | "briefing";
 
 const ALL_CATEGORIES: readonly TailCategory[] = [
   "connector",

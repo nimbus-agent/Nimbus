@@ -855,6 +855,26 @@ describe("I5 — LAN method allowlist is intrinsic to LanServer", () => {
     }
   });
 
+  test("I5: the briefing namespace is refused over LAN by a WHOLE-namespace `briefing` entry (MB5)", async () => {
+    const src = await read("packages/gateway/src/ipc/lan-rpc.ts");
+    // A later narrowing of the namespace entry to per-method entries must be a deliberate edit.
+    expect(src).toMatch(/^\s*"briefing",\s*$/m);
+    const { checkLanMethodAllowed } = await import("./ipc/lan-rpc.ts");
+    for (const m of [
+      "briefing.latest",
+      "briefing.list",
+      "briefing.get",
+      "briefing.status",
+      "briefing.runNow",
+    ]) {
+      for (const writeAllowed of [true, false]) {
+        expect(() => checkLanMethodAllowed(m, { peerId: "peer:x", writeAllowed })).toThrow(
+          /ERR_METHOD_NOT_ALLOWED/,
+        );
+      }
+    }
+  });
+
   test("I29/MB3: the JSM on-call step names its fixed host once and sends every request with redirect manual", async () => {
     const src = await read("packages/gateway/src/connectors/jsm-oncall.ts");
     const code = stripComments(src);
@@ -1927,9 +1947,9 @@ describe("I7 — Tauri ALLOWED_METHODS surface for T2 PR 3", () => {
     expect(rust).not.toContain("toolgen.");
   });
 
-  test("allowlist_exact_size assertion is 127", async () => {
+  test("allowlist_exact_size assertion is 131", async () => {
     const rust = await read("packages/ui/src-tauri/src/gateway_bridge.rs");
-    expect(rust).toMatch(/assert_eq!\s*\(\s*ALLOWED_METHODS\.len\(\),\s*127\s*\)/);
+    expect(rust).toMatch(/assert_eq!\s*\(\s*ALLOWED_METHODS\.len\(\),\s*131\s*\)/);
   });
 
   // Role packs Project 4: 111 + 7 - 2 = 116; Project 5 (onboarding): + pack.install, decisions.status
@@ -1955,6 +1975,20 @@ describe("I7 — Tauri ALLOWED_METHODS surface for T2 PR 3", () => {
     for (const m of ["catalog.list", "agents.oncall", "agents.standup", "agents.changelog"]) {
       expect(list).toContain(`"${m}"`);
     }
+  });
+
+  // Phase 10 MB5, 127 -> 131: briefing.get|latest|list|status are renderer-callable reads; briefing.runNow
+  // composes a briefing and shows a notification on the owner's machine, so it stays CLI-only. By NAME,
+  // since a one-for-one swap keeps the count.
+  test("briefing: the four reads are renderer-callable, runNow never is", async () => {
+    const rust = await read("packages/ui/src-tauri/src/gateway_bridge.rs");
+    for (const m of ["get", "latest", "list", "status"]) {
+      expect(rust).toMatch(new RegExp(`^\\s*"briefing\\.${m}",\\s*$`, "m"));
+      expect(rust).toContain(`assert!(is_method_allowed("briefing.${m}"));`);
+      expect(rust).toContain(`assert!(!is_no_timeout_method("briefing.${m}"));`);
+    }
+    expect(rust).not.toMatch(/^\s*"briefing\.runNow",\s*$/m);
+    expect(rust).toContain('assert!(!is_method_allowed("briefing.runNow"));');
   });
 
   // By NAME, as for every brief/verb pair: a one-for-one swap of pushedGet for pushedRetry keeps
@@ -9652,7 +9686,7 @@ describe("I46 — a renderer can create an extension run grant only through migr
     }
     expect(rust).toContain('assert!(is_method_allowed("migration.list"));');
     expect(rust).toContain('assert!(is_method_allowed("migration.accept"));');
-    expect(rust).toMatch(/assert_eq!\s*\(\s*ALLOWED_METHODS\.len\(\),\s*127\s*\)/);
+    expect(rust).toMatch(/assert_eq!\s*\(\s*ALLOWED_METHODS\.len\(\),\s*131\s*\)/);
   });
 
   // ---- the positive control ------------------------------------------------------------------

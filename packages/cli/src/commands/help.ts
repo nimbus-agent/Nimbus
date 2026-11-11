@@ -57,6 +57,7 @@ AGENTS — read-only briefs over the local index
   nimbus standup [--since 24h]       What YOU did — PRs, reviews, tickets, incidents, Slack
   nimbus oncall [--service <name>]   Your active incident, the deploy before it, and what shipped
   nimbus oncall now [--service <id>] Who is on call right now, from the index (PagerDuty, Jira Service Management)
+  nimbus briefing [now|list|status] [--json]  Your morning briefing, built from the local index (no model, nothing leaves the machine)
 
 AGENTS THAT NEED PAIRED PEERS — see TEAM below; these query the federation mesh
   nimbus conflicts <file>            Teammates with an open PR, ticket or branch on the same file

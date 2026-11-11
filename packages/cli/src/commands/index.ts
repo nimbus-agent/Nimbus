@@ -3,6 +3,7 @@ export { runApproveCmd } from "./approve.ts";
 export { runAsk } from "./ask.ts";
 export { runAudit } from "./audit.ts";
 export { runBench } from "./bench.ts";
+export { runBriefingCommand } from "./briefing.ts";
 export { runCapturesCmd } from "./captures.ts";
 export { runCatalog } from "./catalog.ts";
 export { runCatchupCli } from "./catchup.ts";

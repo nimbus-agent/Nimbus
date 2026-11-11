@@ -439,6 +439,11 @@ export async function main(): Promise<void> {
       /* ignore */
     }
     try {
+      await platform.briefing.scheduler?.retire();
+    } catch {
+      /* ignore */
+    }
+    try {
       platform.disposeSidecars?.();
     } catch {
       /* ignore */
@@ -485,6 +490,8 @@ export async function main(): Promise<void> {
   // The index is ready and the socket is serving: scheduled workflows may now fire (one catch-up of
   // a miss within the last hour, then every minute's tick).
   workflowScheduler?.start();
+  // The morning briefing and the deadline notices (Phase 10 MB5); `undefined` on the demo root (I41).
+  platform.briefing.scheduler?.start();
   writeGatewayStateFile(platform.paths, {
     pid: process.pid,
     socketPath: platform.paths.socketPath,
