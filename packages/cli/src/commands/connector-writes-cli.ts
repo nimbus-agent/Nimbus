@@ -258,6 +258,21 @@ function logK8sGrants(d: ConnectorWritesDeps, row: StatusRow): void {
   }
 }
 
+/** One service's `status` line, its not-offered writes and its iac or kubernetes grants. */
+function logStatusRow(d: ConnectorWritesDeps, row: StatusRow, width: number): void {
+  const name = row.service.padEnd(width);
+  d.log(
+    row.enabled
+      ? `${name}  enabled  wave ${String(row.maxWave)}  ${String(row.writes)} writes, ${String(row.offerable ?? 0)} offerable now${awaitingSuffix(row)}`
+      : `${name}  off`,
+  );
+  for (const n of row.notOffered ?? []) {
+    d.log(`  not offered: ${String(n.toolId)} (${String(n.reason)})`);
+  }
+  if (row.service === "iac") logIacGrants(d, row);
+  if (row.service === "kubernetes" && row.enabled) logK8sGrants(d, row);
+}
+
 async function runStatus(d: ConnectorWritesDeps, tail: string[]): Promise<void> {
   const json = tail.includes("--json");
   if (tail.length > (json ? 1 : 0)) {
@@ -273,19 +288,7 @@ async function runStatus(d: ConnectorWritesDeps, tail: string[]): Promise<void> 
     const r = isRecord(res) ? res : {};
     const rows = (Array.isArray(r["services"]) ? r["services"] : []) as StatusRow[];
     const width = rows.reduce((w, row) => Math.max(w, row.service.length), 0);
-    for (const row of rows) {
-      const name = row.service.padEnd(width);
-      d.log(
-        row.enabled
-          ? `${name}  enabled  wave ${String(row.maxWave)}  ${String(row.writes)} writes, ${String(row.offerable ?? 0)} offerable now${awaitingSuffix(row)}`
-          : `${name}  off`,
-      );
-      for (const n of row.notOffered ?? []) {
-        d.log(`  not offered: ${String(n.toolId)} (${String(n.reason)})`);
-      }
-      if (row.service === "iac") logIacGrants(d, row);
-      if (row.service === "kubernetes" && row.enabled) logK8sGrants(d, row);
-    }
+    for (const row of rows) logStatusRow(d, row, width);
     d.log(
       r["policyAllows"] === true
         ? "Policy: allows"

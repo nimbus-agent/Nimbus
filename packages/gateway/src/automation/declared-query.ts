@@ -63,7 +63,9 @@ function predicateSql(
       params: [path, p.notContains],
     };
   }
-  const equals = typeof p.equals === "boolean" ? (p.equals ? 1 : 0) : p.equals;
+  // SQLite's JSON booleans compare as 1 / 0.
+  let equals = p.equals;
+  if (typeof equals === "boolean") equals = equals ? 1 : 0;
   return {
     sql: "CASE WHEN json_valid(metadata) THEN json_extract(metadata, ?) = ? ELSE 0 END",
     params: [path, equals],

@@ -79,7 +79,7 @@ function messageSubject(message: unknown): string | undefined {
   if (headers === undefined) return undefined;
   for (const h of headers) {
     const name = stringAt(h, ["name"]);
-    if (name !== undefined && name.toLowerCase() === "subject") return stringAt(h, ["value"]);
+    if (name?.toLowerCase() === "subject") return stringAt(h, ["value"]);
   }
   return undefined;
 }

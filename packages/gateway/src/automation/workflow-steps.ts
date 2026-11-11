@@ -79,8 +79,8 @@ const MAX_JSON_DEPTH = 6;
 const MAX_DAYS = 36_500;
 
 /** A metadata key in a declared query: a bound JSON path component, never SQL. */
-export const METADATA_KEY_PATTERN = /^[A-Za-z][A-Za-z0-9_]{0,63}$/;
-const FIELD_KEY_PATTERN = /^[A-Za-z][A-Za-z0-9_]{0,63}$/;
+export const METADATA_KEY_PATTERN = /^[A-Za-z]\w{0,63}$/;
+const FIELD_KEY_PATTERN = /^[A-Za-z]\w{0,63}$/;
 const SERVICE_TYPE_PATTERN = /^[A-Za-z0-9_.:-]{1,64}$/;
 const FORBIDDEN_KEYS: ReadonlySet<string> = new Set(["__proto__", "constructor", "prototype"]);
 
@@ -125,17 +125,22 @@ function parseRunRow(rec: Record<string, unknown>): RunWorkflowStep | null {
   return step;
 }
 
+/** An `olderThanDays` / `newerThanDays` predicate: the only key, an integer day count. */
+function parseAgePredicate(raw: Record<string, unknown>, where: string): DeclaredPredicate {
+  const key = typeof raw["olderThanDays"] === "number" ? "olderThanDays" : "newerThanDays";
+  onlyKeys(raw, [key], where);
+  const days = raw[key];
+  if (typeof days !== "number" || !Number.isInteger(days) || days < 0 || days > MAX_DAYS) {
+    refuse(`${where}: ${key} must be an integer from 0 to ${String(MAX_DAYS)}`);
+  }
+  return key === "olderThanDays" ? { olderThanDays: days } : { newerThanDays: days };
+}
+
 function parsePredicate(raw: unknown, where: string): DeclaredPredicate {
   if (!isPlainRecord(raw)) refuse(`${where}: a predicate must be an object`);
   const keys = Object.keys(raw);
   if (typeof raw["olderThanDays"] === "number" || typeof raw["newerThanDays"] === "number") {
-    const key = typeof raw["olderThanDays"] === "number" ? "olderThanDays" : "newerThanDays";
-    onlyKeys(raw, [key], where);
-    const days = raw[key];
-    if (typeof days !== "number" || !Number.isInteger(days) || days < 0 || days > MAX_DAYS) {
-      refuse(`${where}: ${key} must be an integer from 0 to ${String(MAX_DAYS)}`);
-    }
-    return key === "olderThanDays" ? { olderThanDays: days } : { newerThanDays: days };
+    return parseAgePredicate(raw, where);
   }
   const opKeys = keys.filter((k) => k === "contains" || k === "notContains" || k === "equals");
   if (opKeys.length !== 1) {
@@ -409,14 +414,28 @@ export function workflowStepsSha256(steps: readonly WorkflowStep[]): string {
   return createHash("sha256").update(canonicalJson(steps)).digest("hex");
 }
 
+/**
+ * Code-unit order, NOT `localeCompare`: the workflow hash must be the same on every machine and in every
+ * locale, so the key order cannot depend on collation.
+ */
+function byCodeUnit(a: string, b: string): number {
+  if (a < b) return -1;
+  return a > b ? 1 : 0;
+}
+
+/** One `"key":value` member of a canonical object. */
+function canonicalMember(rec: Record<string, unknown>, k: string): string {
+  return `${JSON.stringify(k)}:${canonicalJson(rec[k])}`;
+}
+
 function canonicalJson(v: unknown): string {
   if (v === null || typeof v !== "object") return JSON.stringify(v) ?? "null";
   if (Array.isArray(v)) return `[${v.map(canonicalJson).join(",")}]`;
   const rec = v as Record<string, unknown>;
   const keys = Object.keys(rec)
     .filter((k) => rec[k] !== undefined)
-    .sort();
-  return `{${keys.map((k) => `${JSON.stringify(k)}:${canonicalJson(rec[k])}`).join(",")}}`;
+    .sort(byCodeUnit);
+  return `{${keys.map((k) => canonicalMember(rec, k)).join(",")}}`;
 }
 
 /** The labels a run's `paramsOverride` may not name: every write and query step, defaults included. */
