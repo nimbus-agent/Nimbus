@@ -96,6 +96,7 @@ import { SHARE_RECORDS_V41_SQL } from "../share-records-v41-sql.ts";
 import { SOURCE_CATCHUP_V74_SQL } from "../source-catchup-v74-sql.ts";
 import { tryLoadSqliteVec } from "../sqlite-vec-load.ts";
 import { STANDING_RULE_V88_SQL } from "../standing-rule-v88-sql.ts";
+import { STANDING_SUGGESTION_V90_SQL } from "../standing-suggestion-v90-sql.ts";
 import { SUB_TASK_RESULTS_V17_SQL } from "../sub-task-results-v17-sql.ts";
 import { V35_TEAM_VAULT_SQL } from "../team-vault-v35-sql.ts";
 import { TOOL_CALL_LOG_V29_SCHEMA_SQL } from "../tool-call-log-v29-sql.ts";
@@ -768,6 +769,12 @@ const INDEXED_SCHEMA_STEPS: readonly IndexedSchemaStep[] = [
     89,
     "workflow schedules and blocked runs (Phase 10 SA4)",
     WORKFLOW_SCHEDULE_V89_SQL,
+  ),
+  simpleStep(
+    89,
+    90,
+    "approval learning streaks and suggestions (Phase 10 SA5)",
+    STANDING_SUGGESTION_V90_SQL,
   ),
 ];
 
