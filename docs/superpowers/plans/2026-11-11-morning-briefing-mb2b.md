@@ -209,8 +209,8 @@ Modified: `packages/gateway/package.json`, `bun.lock`, `connectors/bundled-conne
 `connectors/microsoft-graph-sync-shared.ts` (+ test), `connectors/outlook-sync.ts` (+ test),
 `embedding/routing.test.ts`, `ipc/index-rebody-rpc.ts` (comment + test pin), `packages/cli/src/commands/connector.ts`
 (+ test), `packages/cli/src/lib/connector-oauth-env-help.ts`, comment-only count edits
-(`packages/registry-format/src/manifest.ts:408`, `scripts/gen-bundled-connector-registry.ts:110`,
-`scripts/coverage-floor/exclusions.ts:294`, `scripts/structure-audit/check-gateway-native-deps.ts:74`), and the docs
+(`packages/registry-format/src/manifest.ts:408`,
+`scripts/coverage-floor/exclusions.ts:294`), and the docs
 listed at the end.
 
 ## Tasks (test first; red-prove every guard by reverting the production line and watching the test fail)
