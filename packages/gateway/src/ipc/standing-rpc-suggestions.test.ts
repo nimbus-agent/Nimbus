@@ -138,14 +138,17 @@ describe("standing.dismissSuggestion", () => {
     const h = harness({ kind: "ui" });
     const id = suggest(h);
     const out = await call(h, "standing.dismissSuggestion", { id });
-    expect(out).toEqual({ id, changed: true });
+    expect<unknown>(out).toEqual({ id, changed: true });
     expect(h.asked).toHaveLength(0);
     expect(h.narrowings).toEqual([
       { type: "standing.suggestion.dismiss", json: JSON.stringify({ suggestionId: id }) },
     ]);
     expect(getSuggestion(h.db, id)?.status).toBe("dismissed");
     // A second dismissal changes nothing and is not audited again.
-    expect(await call(h, "standing.dismissSuggestion", { id })).toEqual({ id, changed: false });
+    expect<unknown>(await call(h, "standing.dismissSuggestion", { id })).toEqual({
+      id,
+      changed: false,
+    });
     expect(h.narrowings).toHaveLength(1);
   });
 

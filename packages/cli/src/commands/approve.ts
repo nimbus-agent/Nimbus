@@ -2,7 +2,10 @@
 // write ONCE, bound to the exact workflow, for a bounded time and a bounded number of actions.
 // `add` and `resume` WIDEN what runs unprompted, so they are the owner's, at a terminal, and
 // refuse `--yes` (like `nimbus captures accept`): the gateway also refuses an approval whose
-// source is not a person answering the prompt. `list`, `show`, `pause` and `revoke` never ask.
+// source is not a person answering the prompt. `list`, `show`, `pause`, `revoke` and `dismiss` never
+// ask. After you approve the same workflow write by hand several runs in a row, Nimbus suggests a
+// rule (Phase 10 SA5): `list` shows the suggestions, `add --from-suggestion` turns one into a rule
+// through the SAME approval prompt as any rule, and `dismiss` drops one. Nothing is automatic.
 import type { IPCClient } from "../ipc-client/index.ts";
 import { CliExit } from "../lib/cli-exit.ts";
 import { declareCliClientKind } from "../lib/declare-client-kind.ts";
@@ -13,7 +16,9 @@ import { stripControl } from "./captures-format.ts";
 
 export const APPROVE_USAGE =
   'usage: nimbus approve add --workflow <name> --step <label|number> [--days 1-90] [--max 1-500] [--window "Mon-Fri 06:00-10:00 Europe/Berlin"]\n' +
+  '       nimbus approve add --from-suggestion <id> [--days 1-90] [--max 1-500] [--window "Mon-Fri 06:00-10:00 Europe/Berlin"]\n' +
   "       nimbus approve list [--json]\n" +
+  "       nimbus approve dismiss <suggestion-id> [--json]\n" +
   "       nimbus approve show <id> [--json]\n" +
   "       nimbus approve pause <id> [--json]\n" +
   "       nimbus approve resume <id>\n" +
@@ -39,6 +44,14 @@ export type ApproveArgs =
       max?: number;
       window?: StandingWindowArg;
     }
+  | {
+      verb: "add";
+      fromSuggestion: string;
+      days?: number;
+      max?: number;
+      window?: StandingWindowArg;
+    }
+  | { verb: "dismiss"; id: string; json: boolean }
   | { verb: "list"; json: boolean }
   | { verb: "show" | "pause" | "revoke"; id: string; json: boolean }
   | { verb: "resume"; id: string };
@@ -67,6 +80,7 @@ function intFlag(v: string | undefined): number | undefined {
 
 /** `add`'s `--flag value` pairs; an unknown flag, a repeated one or a missing value refuses the parse. */
 type AddFlags = {
+  fromSuggestion?: string;
   workflow?: string;
   step?: string | number;
   days?: number;
@@ -77,6 +91,9 @@ type AddFlags = {
 /** Takes one `--flag value` pair into `acc`; false when the flag is unknown or its value is invalid. */
 function takeAddFlag(acc: AddFlags, k: string, v: string): boolean {
   switch (k) {
+    case "--from-suggestion":
+      acc.fromSuggestion = v;
+      return true;
     case "--workflow":
       acc.workflow = v;
       return true;
@@ -111,7 +128,13 @@ function parseAdd(flags: string[]): ApproveArgs | undefined {
     seen.add(k);
     if (!takeAddFlag(acc, k, v)) return undefined;
   }
-  const { workflow, step, ...out } = acc;
+  const { workflow, step, fromSuggestion, ...out } = acc;
+  if (fromSuggestion !== undefined) {
+    // A suggestion names the workflow and step itself; naming them too is ambiguous, so refused.
+    return workflow === undefined && step === undefined && /^ss_[0-9a-f]{16}$/.test(fromSuggestion)
+      ? { verb: "add", fromSuggestion, ...out }
+      : undefined;
+  }
   if (workflow === undefined || workflow === "" || step === undefined) return undefined;
   return { verb: "add", workflow, step, ...out };
 }
@@ -122,7 +145,7 @@ export function parseApproveArgs(argv: string[]): ApproveArgs | undefined {
   const verb = rest[0] ?? "list";
   if (verb === "add") return parseAdd(rest.slice(1));
   if (verb === "list") return rest.length <= 1 ? { verb, json } : undefined;
-  if (verb === "show" || verb === "pause" || verb === "revoke") {
+  if (verb === "show" || verb === "pause" || verb === "revoke" || verb === "dismiss") {
     const id = rest[1];
     return id === undefined || id.startsWith("--") || rest.length !== 2
       ? undefined
@@ -157,6 +180,18 @@ type RuleView = {
   lastFiredAt: number | null;
 };
 
+/** An open standing-rule suggestion, as `standing.suggestions` returns it. */
+type SuggestionView = {
+  id: string;
+  workflowName: string | null;
+  workflowId: string;
+  stepIndex: number;
+  stepLabel: string;
+  toolId: string | null;
+  streak: number;
+  createdAt: number;
+};
+
 function viewOf(raw: unknown): RuleView {
   if (typeof raw !== "object" || raw === null) {
     throw new Error("the gateway returned a malformed rule");
@@ -188,6 +223,26 @@ export function formatRuleTable(rules: readonly RuleView[]): string {
   return line(head) + rows.map(line).join("");
 }
 
+/** The `Suggestions` section of `list`; empty when there is nothing to suggest. */
+export function formatSuggestions(list: readonly SuggestionView[]): string {
+  if (list.length === 0) return "";
+  const rows = list.map((s) => [
+    s.id,
+    stripControl(s.workflowName ?? s.workflowId),
+    `${String(s.stepIndex + 1)} (${stripControl(s.stepLabel)})`,
+    String(s.streak),
+  ]);
+  const head = ["ID", "WORKFLOW", "STEP", "APPROVED IN A ROW"];
+  const width = head.map((h, i) => Math.max(h.length, ...rows.map((r) => (r[i] ?? "").length)));
+  const line = (cells: readonly string[]): string =>
+    `${cells.map((c, i) => c.padEnd(width[i] ?? 0)).join("  ")}\n`;
+  const intro =
+    "\nSuggestions (you approved these by hand, run after run; nothing changes until you add one):\n";
+  const how =
+    "Make a rule: nimbus approve add --from-suggestion <id>   Drop one: nimbus approve dismiss <id>\n";
+  return intro + line(head) + rows.map(line).join("") + how;
+}
+
 export function formatRuleDetail(r: RuleView): string {
   const scope = Object.entries(r.scope)
     .map(([f, e]) => `  ${stripControl(f)}: ${stripControl(JSON.stringify(e))}`)
@@ -209,38 +264,71 @@ function ruleOf(raw: unknown): RuleView {
   return viewOf(rec["rule"]);
 }
 
+type Client = Pick<IPCClient, "call">;
+
+async function runList(c: Client, a: { json: boolean }, sink: Sink): Promise<void> {
+  const rules = (await c.call<{ rules: unknown[] }>("standing.list", {})).rules;
+  const suggestions = (await c.call<{ suggestions: unknown[] }>("standing.suggestions", {}))
+    .suggestions;
+  if (a.json) {
+    sink.out(`${JSON.stringify({ rules, suggestions }, undefined, 2)}\n`);
+    return;
+  }
+  sink.out(formatRuleTable(rules.map(viewOf)) + formatSuggestions(suggestions as SuggestionView[]));
+}
+
+async function runDismiss(c: Client, a: { id: string; json: boolean }, sink: Sink): Promise<void> {
+  const out = await c.call<{ id: string; changed: boolean }>("standing.dismissSuggestion", {
+    id: a.id,
+  });
+  if (a.json) {
+    sink.out(`${JSON.stringify(out, undefined, 2)}\n`);
+    return;
+  }
+  sink.out(out.changed ? `Dismissed suggestion ${a.id}.\n` : `Suggestion ${a.id} was not open.\n`);
+}
+
+async function runRuleVerb(
+  c: Client,
+  a: Extract<ApproveArgs, { verb: "show" | "pause" | "revoke" | "resume" }>,
+  sink: Sink,
+): Promise<void> {
+  const out = await c.call<unknown>(`standing.${a.verb}`, { id: a.id });
+  if ("json" in a && a.json) {
+    sink.out(`${JSON.stringify(out, undefined, 2)}\n`);
+  } else if (a.verb === "show") {
+    sink.out(formatRuleDetail(ruleOf(out)));
+  } else {
+    const past = { pause: "Paused", revoke: "Revoked", resume: "Resumed" }[a.verb];
+    sink.out(`${past} rule ${a.id}.\n`);
+  }
+}
+
+async function runAdd(
+  c: Client,
+  a: Extract<ApproveArgs, { verb: "add" }>,
+  sink: Sink,
+): Promise<void> {
+  const { verb: _v, ...params } = a;
+  const out = await c.call<unknown>("standing.create", params);
+  sink.out(`Created standing rule ${ruleOf(out).id}.\n`);
+}
+
+function runVerb(c: Client, a: ApproveArgs, sink: Sink): Promise<void> {
+  if (a.verb === "list") return runList(c, a, sink);
+  if (a.verb === "dismiss") return runDismiss(c, a, sink);
+  if (a.verb === "add") return runAdd(c, a, sink);
+  return runRuleVerb(c, a, sink);
+}
+
 export async function runApproveWith(
-  c: Pick<IPCClient, "call">,
+  c: Client,
   a: ApproveArgs,
   sink: Sink,
   json = false,
 ): Promise<number> {
   try {
-    if (a.verb === "list") {
-      const raw = (await c.call<{ rules: unknown[] }>("standing.list", {})).rules;
-      sink.out(
-        a.json
-          ? `${JSON.stringify({ rules: raw }, undefined, 2)}\n`
-          : formatRuleTable(raw.map(viewOf)),
-      );
-      return 0;
-    }
-    if (a.verb === "add") {
-      const { verb: _v, ...params } = a;
-      const out = await c.call<unknown>("standing.create", params);
-      sink.out(`Created standing rule ${ruleOf(out).id}.\n`);
-      return 0;
-    }
-    const out = await c.call<unknown>(`standing.${a.verb}`, { id: a.id });
-    const asJson = "json" in a && a.json;
-    if (asJson) {
-      sink.out(`${JSON.stringify(out, undefined, 2)}\n`);
-    } else if (a.verb === "show") {
-      sink.out(formatRuleDetail(ruleOf(out)));
-    } else {
-      const past = { pause: "Paused", revoke: "Revoked", resume: "Resumed" }[a.verb];
-      sink.out(`${past} rule ${a.id}.\n`);
-    }
+    await runVerb(c, a, sink);
     return 0;
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
