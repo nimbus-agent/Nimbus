@@ -681,6 +681,15 @@ function ownerOutcome(answer: ApprovalAnswer, declinedReason: string): ApprovalO
     : { kind: "rejected", reason: declinedReason, answerSource: answer.answerSource };
 }
 
+/**
+ * What an UNATTENDED executor (a scheduled workflow run, Phase 10 SA4, static D44(d)) returns for a
+ * write no standing rule approved: nobody is there to ask, so nothing is dispatched. The workflow
+ * runner recognises this exact reason to block the run and notify the owner. Returned only in
+ * `approvalPhase`.
+ */
+export const UNATTENDED_NO_RULE_REASON =
+  "No standing approval covers this write and no one is present to approve it.";
+
 /** The default reason of a rejected gate: the owner (or a delegate) said no. */
 const USER_DECLINED_REASON = "User declined consent gate.";
 
@@ -990,6 +999,12 @@ function isDiscardOf(action: PlannedAction, target: DiscardTarget): boolean {
 export interface ToolExecutorExtras {
   readonly beforeState?: BeforeStateRunner | undefined;
   readonly standingRules?: StandingRuleDeps | undefined;
+  /**
+   * Phase 10 SA4 (static D44(d)): no one is present. After the standing-rule check finds no rule the
+   * executor refuses the write with {@link UNATTENDED_NO_RULE_REASON} instead of asking a delegate
+   * or the owner. Set only by `newWorkflowWriteExecutor` in `engine/run-ask.ts`.
+   */
+  readonly unattended?: boolean | undefined;
 }
 
 export class ToolExecutor {
@@ -1015,6 +1030,7 @@ export class ToolExecutor {
   ) {
     this.beforeState = extras.beforeState;
     this.standingRules = extras.standingRules;
+    this.unattended = extras.unattended === true;
   }
 
   /**
@@ -1029,6 +1045,9 @@ export class ToolExecutor {
    * (static D44(e)); an executor without them can never approve an action by a standing rule.
    */
   private readonly standingRules: StandingRuleDeps | undefined;
+
+  /** SA4, D44(d): true on the scheduler's executor only; see {@link ToolExecutorExtras.unattended}. */
+  private readonly unattended: boolean;
 
   /** The rows the gate looks a write up in. */
   private rows(): readonly ConnectorWriteRow[] {
@@ -1408,6 +1427,12 @@ export class ToolExecutor {
     if (match !== undefined) {
       record.standingRule = match;
       return { kind: "standing_approved", ruleId: match.ruleId, fireId: match.fireId };
+    }
+    // SA4, static D44(d): an unattended run never asks. No rule matched, so nothing is dispatched and
+    // neither a delegate nor the consent channel is consulted; the runner blocks the run and notifies.
+    if (this.unattended) {
+      record.rejectReason = UNATTENDED_NO_RULE_REASON;
+      return { kind: "rejected", reason: UNATTENDED_NO_RULE_REASON, answerSource: "none" };
     }
     const delegated = await this.tryDelegatedApproval(action, confirm, record);
     const delegateSource = this.delegation?.answerSource ?? "delegate";

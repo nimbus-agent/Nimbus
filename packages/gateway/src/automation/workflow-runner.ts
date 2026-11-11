@@ -24,6 +24,8 @@ import {
   workflowStepsSha256,
 } from "./workflow-steps.ts";
 import {
+  abandonWorkflowRunRow,
+  blockWorkflowRunRow,
   finishWorkflowRunRow,
   getWorkflowByName,
   insertWorkflowRunRow,
@@ -54,6 +56,8 @@ function emitRunCompletedAudit(params: {
   readonly dryRun: boolean;
   readonly paramsOverride?: Readonly<Record<string, Record<string, unknown>>>;
   readonly errorMsg?: string | null;
+  /** The run's derived trigger, so audit history tells a scheduled run from an owner-started one. */
+  readonly trigger?: WorkflowTrigger;
 }): void {
   const durationMs = Date.now() - params.startedAt;
   const details: Record<string, unknown> = {
@@ -63,6 +67,9 @@ function emitRunCompletedAudit(params: {
     durationMs,
     dryRun: params.dryRun,
   };
+  if (params.trigger !== undefined) {
+    details["trigger"] = params.trigger;
+  }
   if (params.paramsOverride !== undefined) {
     details["paramsOverride"] = params.paramsOverride;
   }
@@ -81,6 +88,29 @@ function emitRunCompletedAudit(params: {
 export function parseWorkflowStepsJson(stepsJson: string): WorkflowStep[] {
   return parseWorkflowSteps(stepsJson);
 }
+
+/** A run that stopped at a write step no standing rule covered and now waits for the owner (SA4). */
+export type BlockedRunInfo = {
+  readonly runId: string;
+  readonly workflowName: string;
+  readonly stepIndex: number;
+  readonly stepLabel: string;
+};
+
+/**
+ * Resumes a blocked run (SA4, `workflow.resume`): earlier write and run steps are skipped, earlier
+ * QUERY steps are re-run against the current index (a query's rows are not persisted), and the run
+ * continues from the blocked step. `expectedSha256` is the hash the blocked run executed; the runner
+ * refuses if the stored workflow no longer hashes to it.
+ */
+export type WorkflowResume = {
+  readonly runId: string;
+  readonly blockedStep: number;
+  readonly expectedSha256: string;
+};
+
+export const WORKFLOW_CHANGED_MESSAGE =
+  "ERR_WORKFLOW_CHANGED: the workflow was edited after this run was blocked; run it again instead";
 
 export type RunWorkflowExecutionParams = {
   db: Database;
@@ -106,12 +136,18 @@ export type RunWorkflowExecutionParams = {
    * execution or the LLM calls inside it.
    */
   readonly signal?: AbortSignal;
+  /** Called once when the run blocks on a write no standing rule covered (the scheduler notifies). */
+  readonly onBlocked?: (info: BlockedRunInfo) => void;
+  /** Set only by `workflow.resume`. */
+  readonly resume?: WorkflowResume;
 };
 
 export type RunWorkflowExecutionResult = {
   runId: string;
+  /** The blocked run this one resumed (SA4). */
+  resumedFrom?: string;
   /**
-   * The run's terminal status: "preview" | "done" | "error" | "cancelled".
+   * The run's terminal status: "preview" | "done" | "error" | "cancelled" | "blocked_on_approval".
    * Mirrors what finalizeRun wrote to workflow_run — an IPC caller cannot read
    * that table, so a cancelled run would otherwise be indistinguishable from a
    * short one that completed.
@@ -129,7 +165,8 @@ export type RunWorkflowExecutionResult = {
 
 type StepExecOutcome =
   | { kind: "ok"; label: string; reply: string; status?: string }
-  | { kind: "err"; label: string; message: string; halt: boolean };
+  | { kind: "err"; label: string; message: string; halt: boolean }
+  | { kind: "blocked"; label: string; message: string };
 
 /** What the steps of one run share: the outputs of `run` steps and the query results. */
 type RunState = {
@@ -258,6 +295,10 @@ async function executeWriteStep(
       finish("error", { error: out.message, dispatched: out.dispatched });
       return { kind: "err", label, message: out.message, halt };
     }
+    if (out.status === "blocked") {
+      finish("blocked", { message: out.message, dispatched: out.dispatched });
+      return { kind: "blocked", label, message: out.message };
+    }
     finish(out.status, { message: out.message, dispatched: out.dispatched });
     return { kind: "ok", label, reply: out.message, status: out.status };
   } catch (err) {
@@ -304,8 +345,50 @@ function finalizeRun(
     dryRun: p.dryRun,
     ...(p.paramsOverride !== undefined && { paramsOverride: p.paramsOverride }),
     ...(errorMsg !== null && { errorMsg }),
+    ...(p.trigger !== undefined && { trigger: p.trigger }),
   });
   pruneWorkflowRuns(p.db, wf.id, RUN_RETENTION_PER_WORKFLOW);
+}
+
+/**
+ * Stops the run at `stepIndex`: it is recorded `blocked_on_approval` (never pruned), audited, and the
+ * owner is told once. Nothing is dispatched for this or any later step. A notifier that throws
+ * cannot undo the block.
+ */
+function blockRun(
+  p: RunWorkflowExecutionParams,
+  wf: { id: string; name: string },
+  runId: string,
+  startedAt: number,
+  blocked: { stepIndex: number; label: string; message: string },
+): void {
+  blockWorkflowRunRow(p.db, runId, blocked.stepIndex, Date.now(), blocked.message);
+  emitRunCompletedAudit({
+    db: p.db,
+    runId,
+    workflowName: wf.name,
+    status: "blocked_on_approval",
+    startedAt,
+    dryRun: false,
+    errorMsg: blocked.message,
+    ...(p.trigger !== undefined && { trigger: p.trigger }),
+  });
+  pruneWorkflowRuns(p.db, wf.id, RUN_RETENTION_PER_WORKFLOW);
+  try {
+    p.onBlocked?.({
+      runId,
+      workflowName: wf.name,
+      stepIndex: blocked.stepIndex,
+      stepLabel: blocked.label,
+    });
+  } catch {
+    // The run is already blocked and recorded; a failed notification must not change that.
+  }
+}
+
+/** On a resumed run, an earlier write or run step is skipped; an earlier query step re-runs. */
+function skippedOnResume(p: RunWorkflowExecutionParams, step: WorkflowStep, i: number): boolean {
+  return p.resume !== undefined && i < p.resume.blockedStep && step.kind !== "query";
 }
 
 /** One step's dry-run entry: a prompt as before; a query or write shown as the declared form. */
@@ -403,8 +486,13 @@ export async function executeRealRunSteps(
       return { runId, status: "cancelled", dryRun: false, stepResults };
     }
     const step = steps[i];
-    if (step === undefined) continue;
+    if (step === undefined || skippedOnResume(p, step, i)) continue;
     const outcome = await executeWorkflowStep(p, runId, i, step, state);
+    if (outcome.kind === "blocked") {
+      stepResults.push({ label: outcome.label, status: "blocked", output: outcome.message });
+      blockRun(p, wf, runId, now, { stepIndex: i, label: outcome.label, message: outcome.message });
+      return { runId, status: "blocked_on_approval", dryRun: false, stepResults };
+    }
     if (outcome.kind === "ok") {
       stepResults.push({
         label: outcome.label,
@@ -461,6 +549,12 @@ export async function runWorkflowExecution(
     return executeDryRun(p, wf, steps, runId, now, paramsOverrideJson);
   }
 
+  const sha256 = workflowStepsSha256(steps);
+  // A resume is for the exact definition that blocked: the hash is re-checked here, after the
+  // dispatcher's own check, so an edit between the two cannot slip a changed workflow through.
+  if (p.resume !== undefined && p.resume.expectedSha256 !== sha256) {
+    throw new Error(WORKFLOW_CHANGED_MESSAGE);
+  }
   insertWorkflowRunRow(p.db, {
     id: runId,
     workflowId: wf.id,
@@ -468,10 +562,16 @@ export async function runWorkflowExecution(
     status: "running",
     startedAt: now,
     paramsOverrideJson,
+    trigger: p.trigger ?? null,
+    workflowSha256: sha256,
   });
+  // The resumed execution is a NEW run; the blocked one is finished as abandoned, once the new row
+  // exists (so a failure to start leaves the blocked run in place).
+  if (p.resume !== undefined) abandonWorkflowRunRow(p.db, p.resume.runId, now);
 
   try {
-    return await executeRealRunSteps(p, wf, steps, runId, now);
+    const out = await executeRealRunSteps(p, wf, steps, runId, now);
+    return p.resume === undefined ? out : { ...out, resumedFrom: p.resume.runId };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     finalizeRun(p, wf, runId, "error", now, msg);

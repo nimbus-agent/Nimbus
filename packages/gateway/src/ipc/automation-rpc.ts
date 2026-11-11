@@ -27,6 +27,7 @@ import {
 } from "../automation/watcher-store.ts";
 import { listWorkflowRuns } from "../automation/workflow-run-history.ts";
 import { resolveSaveSchedule, ScheduleSaveError } from "../automation/workflow-schedule.ts";
+import { listScheduleView } from "../automation/workflow-schedule-view.ts";
 import { stepsSaveRefusal } from "../automation/workflow-steps.ts";
 import {
   clearScheduleByName,
@@ -590,6 +591,11 @@ const AUTOMATION_HANDLERS: Readonly<Record<string, AutomationHandler>> = {
     const id = upsertWorkflowByName(ctx.db, name, description, stepsJson, now, schedule);
     return { kind: "hit", value: { id, scheduled: schedule !== null } };
   },
+
+  "workflow.scheduleList": (_rec, ctx) => ({
+    kind: "hit",
+    value: { schedules: listScheduleView(ctx.db) },
+  }),
 
   "workflow.unschedule": (rec, ctx) => {
     refuseSuppliedClientKind(rec, "workflow.unschedule");

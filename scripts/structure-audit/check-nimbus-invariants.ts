@@ -2227,6 +2227,12 @@ const D39_BUILDERS: ReadonlyArray<readonly [RegExp, readonly string[]]> = [
     ],
   ],
   [/\bbuildModelWriteExecutor\b/g, ["packages/gateway/src/engine/run-ask.ts"]],
+  // SA4: the scheduler's unattended executor is built by run-ask.ts and handed to the scheduler as a
+  // factory by the boot file; the scheduler module never names it.
+  [
+    /\bbuildUnattendedWorkflowWriteExecutor\b/g,
+    ["packages/gateway/src/engine/run-ask.ts", "packages/gateway/src/gateway-main.ts"],
+  ],
   // SA2: the workflow write executor is built by run-ask.ts and handed to the runner by the boot file.
   [
     /\bbuildWorkflowWriteExecutor\b/g,
@@ -2350,8 +2356,9 @@ export function checkModelWriteDoor(files: readonly FileEntry[]): Violation[] {
 //     type evades it, and what stops such an action is the gate refusal and the dispatcher guard;
 // (b) `createBeforeStateRunner` is named only by `engine/before-state.ts` (its definition) and
 //     `engine/run-ask.ts`, and inside run-ask.ts only on an import line or within the body of
-//     `buildModelWriteExecutor` or `buildWorkflowWriteExecutor` (SA2: the owner's own workflow
-//     write step is the second carrier; it offers nothing to the model), and it is never imported
+//     `buildModelWriteExecutor` or `newWorkflowWriteExecutor` (SA2: the owner's own workflow
+//     write step is the second carrier; it offers nothing to the model; SA4: the private function
+//     both workflow builders call, so the attended and the unattended executor share it), and it is never imported
 //     under an `as` alias (an alias would let
 //     run-ask.ts call it outside that body unseen); a runner handed around as a value (an object
 //     literal, a re-export under another name in another module) is outside a text scan;
@@ -2378,7 +2385,7 @@ const D40_GUARD_SITES: readonly string[] = [
 /** `[start, end)` of each permitted carrier's body (the door's and the workflow write step's). */
 function d40CarrierSpans(code: string): readonly (readonly [number, number])[] {
   const spans: (readonly [number, number])[] = [];
-  for (const name of ["buildModelWriteExecutor", "buildWorkflowWriteExecutor"]) {
+  for (const name of ["buildModelWriteExecutor", "newWorkflowWriteExecutor"]) {
     const at = code.search(new RegExp(`\\bfunction\\s+${name}\\s*\\(`));
     if (at === -1) continue;
     const end = code.indexOf("\n}\n", at);
@@ -3169,13 +3176,21 @@ function d43ExecutorPins(f: FileEntry, code: string, commentFree: string): Viola
 //     BEFORE `tryDelegatedApproval(`; the name `standingRuleStep` is used only by the executor and
 //     its own module; and the `kind: "standing_approved"` / `hitlStatus: "standing_approved"` literal
 //     is constructed only by the executor, the check and the type;
-// (d) RESERVED for the scheduler (SA4): the executor's `unattended: true` option. Nothing sets it
-//     yet, and the rule text tells the owner a schedule is not covered; SA4 adds the clause with
-//     the option;
-// (e) the executor dependency `standingRules` is handed over only by `buildWorkflowWriteExecutor`
-//     in `engine/run-ask.ts`: the identifier is named only by the executor, run-ask and the
-//     standing module that builds it, and run-ask writes `standingRules:` exactly once, inside that
-//     function. Every other executor therefore has none and can never approve by a rule.
+// (d) the UNATTENDED executor (Phase 10 SA4, scheduled runs): the property name `unattended` appears
+//     only in `engine/executor.ts` (the option's type, its field, and ONE read) and, as a value, only
+//     inside `newWorkflowWriteExecutor` in `engine/run-ask.ts`; the read is a single `this.unattended`
+//     test inside `approvalPhase`, AFTER `standingRuleStep(` and BEFORE `tryDelegatedApproval(`, so an
+//     unattended executor consults a rule and then refuses without asking anyone; the refusal text
+//     `UNATTENDED_NO_RULE_REASON` is returned only in `approvalPhase` (the workflow write step may
+//     compare it, to block the run); and the trigger literal `trigger: "schedule"` is produced only
+//     by `automation/workflow-scheduler.ts` (no IPC path can: `workflowTriggerOf` returns only
+//     `owner_cli` / `owner_ui`). `buildUnattendedWorkflowWriteExecutor` is confined by D39;
+// (e) the executor dependency `standingRules` is handed over only by the workflow write executors in
+//     `engine/run-ask.ts`: the identifier is named only by the executor, run-ask and the standing
+//     module that builds it, and run-ask writes `standingRules:` exactly once, inside the private
+//     `newWorkflowWriteExecutor`, which only `buildWorkflowWriteExecutor` and
+//     `buildUnattendedWorkflowWriteExecutor` call (once each). Every other executor therefore has
+//     none and can never approve by a rule.
 // Comments are stripped before matching (string literals are kept for the literal clauses); test
 // files, a test-support `*.test-helpers.ts` that no production file imports, and anything outside
 // packages/gateway/src/ are not scanned. STATED BOUND, as D33(c)/D41/D42: a dynamically composed
@@ -3191,6 +3206,7 @@ const D44_STORE = `${D44_SRC}standing/standing-rule-store.ts`;
 const D44_V88 = `${D44_SRC}index/standing-rule-v88-sql.ts`;
 const D44_RPC = `${D44_SRC}ipc/standing-rpc.ts`;
 const D44_RUN_ASK = `${D44_SRC}engine/run-ask.ts`;
+const D44_SCHEDULER = `${D44_SRC}automation/workflow-scheduler.ts`;
 const D44_TABLE_RES: readonly RegExp[] = ["standing_rule", "standing_rule_fire"].map((t) => {
   const re = sqlTableReferenceRe(t);
   return new RegExp(re.source, "gi");
@@ -3248,6 +3264,27 @@ const D44_NAME_RULES: ReadonlyArray<{
     rule: "standing-rules-dep-confined",
     re: /\bstandingRules\b/g,
     allowed: [D44_EXECUTOR, D44_RUN_ASK],
+    keepStrings: false,
+  },
+  // (d) the property name; run-ask's own use is narrowed to one function by `d44RunAskPins`.
+  {
+    rule: "standing-unattended-confined",
+    re: /\bunattended\b/g,
+    allowed: [D44_EXECUTOR, D44_RUN_ASK],
+    keepStrings: false,
+  },
+  // (d) the one producer of the trigger "schedule".
+  {
+    rule: "standing-unattended-confined",
+    re: /\btrigger\s*:\s*["']schedule["']/g,
+    allowed: [D44_SCHEDULER],
+    keepStrings: true,
+  },
+  // (d) the refusal text: the executor returns it, the write step compares it.
+  {
+    rule: "standing-unattended-confined",
+    re: /\bUNATTENDED_NO_RULE_REASON\b/g,
+    allowed: [D44_EXECUTOR, D44_WRITE_STEP],
     keepStrings: false,
   },
 ];
@@ -3310,26 +3347,101 @@ function d44ExecutorPins(f: FileEntry, code: string): Violation[] {
   if (renderAt === -1 || approveAt === -1 || !(renderAt < approveAt)) {
     fail("resolveHitlApproval must call renderConfirmPhase before approvalPhase");
   }
+  for (const v of d44UnattendedPins(f, code, approval, stepAt, delegateAt)) out.push(v);
   return out;
 }
 
-/** Clause (e): `standingRules:` is written once in run-ask, inside `buildWorkflowWriteExecutor`. */
-function d44RunAskPins(f: FileEntry, code: string): Violation[] {
+/**
+ * Clause (d), inside the executor: the `unattended` option is read once, in `approvalPhase`, after
+ * the standing-rule step and before any delegate, and the refusal text is returned only there.
+ */
+function d44UnattendedPins(
+  f: FileEntry,
+  code: string,
+  approval: string,
+  stepAt: number,
+  delegateAt: number,
+): Violation[] {
   const out: Violation[] = [];
   const fail = (what: string): void => {
-    out.push({ rule: "standing-rules-dep-confined", file: f.relPath, line: 1, snippet: what });
+    out.push({ rule: "standing-unattended-confined", file: f.relPath, line: 1, snippet: what });
   };
+  // A read is `this.unattended` not followed by an assignment.
+  const readRe = /\bthis\.unattended\b(?!\s*=[^=])/;
+  const reads = [...code.matchAll(new RegExp(readRe.source, "g"))];
+  const readAt = approval.search(readRe);
+  if (reads.length !== 1 || readAt === -1 || !(stepAt < readAt && readAt < delegateAt)) {
+    fail(
+      "this.unattended must be read exactly once, in approvalPhase, after standingRuleStep( and before tryDelegatedApproval(",
+    );
+  }
+  const reasonInApproval = [...approval.matchAll(/\bUNATTENDED_NO_RULE_REASON\b/g)].length;
+  const reasonAll = [...code.matchAll(/\bUNATTENDED_NO_RULE_REASON\b/g)].length;
+  const definitions = [...code.matchAll(/\bconst\s+UNATTENDED_NO_RULE_REASON\b/g)].length;
+  if (reasonInApproval === 0 || reasonAll - reasonInApproval !== definitions) {
+    fail("UNATTENDED_NO_RULE_REASON must be returned in approvalPhase and used nowhere else");
+  }
+  return out;
+}
+
+/**
+ * Clauses (d) and (e), in run-ask: `standingRules:` and the `unattended` value are written once,
+ * inside the private `newWorkflowWriteExecutor`, which only the two public builders call (once each).
+ */
+function d44RunAskPins(f: FileEntry, code: string): Violation[] {
+  const out: Violation[] = [];
+  const fail = (rule: string, what: string): void => {
+    out.push({ rule, file: f.relPath, line: 1, snippet: what });
+  };
+  const maker = d41Span(code, /\bfunction\s+newWorkflowWriteExecutor\s*\(/, "\n}\n");
+  const inSpan = (span: readonly [number, number] | undefined, at: number | undefined): boolean =>
+    span !== undefined && at !== undefined && at >= span[0] && at < span[1];
   const writes = [...code.matchAll(/\bstandingRules\s*:/g)];
-  const builder = d41Span(code, /\bexport\s+function\s+buildWorkflowWriteExecutor\s*\(/, "\n}\n");
-  const at = writes[0]?.index;
+  if (writes.length !== 1 || !inSpan(maker, writes[0]?.index)) {
+    fail(
+      "standing-rules-dep-confined",
+      "standingRules: must be written once, inside newWorkflowWriteExecutor",
+    );
+  }
+  for (const m of code.matchAll(/\bunattended\b/g)) {
+    if (!inSpan(maker, m.index)) {
+      fail(
+        "standing-unattended-confined",
+        "the unattended option may be named only inside newWorkflowWriteExecutor",
+      );
+      break;
+    }
+  }
+  const calls = [...code.matchAll(/(?<!function\s)\bnewWorkflowWriteExecutor\s*\(/g)];
+  const attended = d41Span(code, /\bexport\s+function\s+buildWorkflowWriteExecutor\s*\(/, "\n}\n");
+  const unattended = d41Span(
+    code,
+    /\bexport\s+function\s+buildUnattendedWorkflowWriteExecutor\s*\(/,
+    "\n}\n",
+  );
+  const within = (span: readonly [number, number] | undefined): number =>
+    calls.filter((c) => inSpan(span, c.index)).length;
+  // The attended builder passes `false` and the unattended one `true`, literally.
+  const passes = (span: readonly [number, number] | undefined, flag: string): boolean =>
+    calls.some((c) => {
+      if (!inSpan(span, c.index)) return false;
+      // The statement ends at its `;` (the arguments may nest calls and span lines).
+      const statementEnd = code.indexOf(";", c.index);
+      return new RegExp(String.raw`,\s*${flag}\s*,?\s*\)\s*$`).test(
+        code.slice(c.index, statementEnd),
+      );
+    });
   if (
-    writes.length !== 1 ||
-    at === undefined ||
-    builder === undefined ||
-    at < builder[0] ||
-    at >= builder[1]
+    calls.length !== 2 ||
+    within(attended) !== 1 ||
+    within(unattended) !== 1 ||
+    !passes(attended, "false") ||
+    !passes(unattended, "true")
   ) {
-    fail("standingRules: must be written once, inside buildWorkflowWriteExecutor");
+    fail(
+      "standing-rules-dep-confined",
+      "newWorkflowWriteExecutor must be called exactly once by each of buildWorkflowWriteExecutor and buildUnattendedWorkflowWriteExecutor, and by nothing else",
+    );
   }
   return out;
 }
@@ -4774,7 +4886,7 @@ async function run(): Promise<void> {
       "before-read-literal-confined":
         "(a) the .before.read action-type literal outside engine/before-state.ts and connectors/registry.ts",
       "before-state-runner-confined":
-        "(b) createBeforeStateRunner named outside engine/before-state.ts and run-ask.ts's buildModelWriteExecutor or buildWorkflowWriteExecutor",
+        "(b) createBeforeStateRunner named outside engine/before-state.ts and run-ask.ts's buildModelWriteExecutor or newWorkflowWriteExecutor",
       "before-read-guard-present":
         "(c) isBeforeReadActionType no longer called by engine/executor.ts or connectors/registry.ts",
     };
@@ -4853,7 +4965,9 @@ async function run(): Promise<void> {
       "standing-outcome-confined":
         "(c) a standing_approved outcome is constructed, or the check named, outside the executor and the check",
       "standing-rules-dep-confined":
-        "(e) the standing-rule dependencies are handed to an executor other than the workflow write executor",
+        "(e) the standing-rule dependencies are handed to an executor other than the workflow write executors",
+      "standing-unattended-confined":
+        "(d) the unattended executor option, its refusal text or the schedule trigger is used outside its confinement",
     };
     for (const e of v) {
       console.error(

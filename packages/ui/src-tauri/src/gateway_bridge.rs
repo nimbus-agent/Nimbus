@@ -208,6 +208,7 @@ pub const ALLOWED_METHODS: &[&str] = &[
     "workflow.listRuns",
     "workflow.run",
     "workflow.save",
+    "workflow.scheduleList",
 ];
 
 pub fn is_method_allowed(method: &str) -> bool {
@@ -983,7 +984,7 @@ mod tests {
 
     #[test]
     fn allowlist_exact_size() {
-        assert_eq!(ALLOWED_METHODS.len(), 123);
+        assert_eq!(ALLOWED_METHODS.len(), 124);
     }
 
     #[test]

@@ -54,7 +54,7 @@ import { type ClassifiedIntent, type ClassifierEgressPolicy, classifyIntent } fr
 import { runConversationalAgent } from "./run-conversational-agent.ts";
 import type { NotifyGasLimit, StepBudgetExhausted } from "./step-budget.ts";
 import { wrapToolOutput } from "./tool-output-envelope.ts";
-import type { ConnectorDispatcher, PlannedAction } from "./types.ts";
+import type { ConnectorDispatcher, ConsentChannel, PlannedAction } from "./types.ts";
 
 const runAskLog = pino({
   name: "run-ask",
@@ -586,7 +586,25 @@ function newTurnExecutor(
   delegation: ExecutorDelegationDep | undefined,
   extras: ToolExecutorExtras = {},
 ): ToolExecutor {
-  const consent = bindConsentChannel(p.consentCoordinator, p.clientId);
+  return newExecutorOnChannel(
+    p,
+    bindConsentChannel(p.consentCoordinator, p.clientId),
+    delegation,
+    extras,
+  );
+}
+
+/**
+ * The shared construction behind {@link newTurnExecutor} and the unattended workflow executor: the
+ * same dispatcher, egress sink, policy and preview credential, on the consent channel the caller
+ * names. Everything but the channel comes from the same arguments, so the two cannot drift.
+ */
+function newExecutorOnChannel(
+  p: Omit<ExecutorBuildParams, "clientId" | "consentCoordinator">,
+  consent: ConsentChannel,
+  delegation: ExecutorDelegationDep | undefined,
+  extras: ToolExecutorExtras,
+): ToolExecutor {
   // I29: every real connector dispatch routes through this executor, so it carries the egress sink
   // (append-before-dispatch). A connector tool call (read OR write) is an outbound event and is
   // ledgered; a query answered purely from the local index never reaches here, so it adds 0 rows.
@@ -641,7 +659,45 @@ export type WorkflowWriteExecutorParams = ExecutorBuildParams &
  * can never approve an action by a rule.
  */
 export function buildWorkflowWriteExecutor(p: WorkflowWriteExecutorParams): ToolExecutor {
-  return newTurnExecutor(p, undefined, {
+  return newWorkflowWriteExecutor(p, bindConsentChannel(p.consentCoordinator, p.clientId), false);
+}
+
+/** What a scheduled run needs: {@link WorkflowWriteExecutorParams} without a client to ask. */
+export type UnattendedWorkflowWriteExecutorParams = Omit<
+  WorkflowWriteExecutorParams,
+  "clientId" | "consentCoordinator"
+>;
+
+/**
+ * The scheduler's executor (Phase 10 SA4, static D44(d)): the workflow write executor with no one
+ * to ask. Its consent channel denies every request without asking anyone (defence in depth: the
+ * executor never reaches it, since an `unattended` executor refuses a write no standing rule covers
+ * before it would ask), it has no delegation, and it takes no client id and no consent coordinator.
+ * Called only from `gateway-main.ts`, which hands the scheduler a factory.
+ */
+export function buildUnattendedWorkflowWriteExecutor(
+  p: UnattendedWorkflowWriteExecutorParams,
+): ToolExecutor {
+  return newWorkflowWriteExecutor(p, NEVER_ASKED_CONSENT, true);
+}
+
+/** A consent channel that is never answered by a person: every request is denied, nobody is asked. */
+const NEVER_ASKED_CONSENT: ConsentChannel = {
+  requestApproval: () => Promise.resolve({ approved: false, answerSource: "none" }),
+};
+
+/**
+ * The ONE place a workflow write executor is made, and so the one `standingRules:` and the one
+ * `unattended:` value in this file (static D44(e) and D44(d)): the attended and the unattended
+ * builder are one-line calls of it, so they cannot drift on the before-state runner, the
+ * standing-rule dependencies or the policy.
+ */
+function newWorkflowWriteExecutor(
+  p: UnattendedWorkflowWriteExecutorParams,
+  consent: ConsentChannel,
+  unattended: boolean,
+): ToolExecutor {
+  return newExecutorOnChannel(p, consent, undefined, {
     beforeState: createBeforeStateRunner({
       readsEveryOrigin: true,
       ...(p.beforeStateRows === undefined ? {} : { rows: p.beforeStateRows }),
@@ -653,6 +709,7 @@ export function buildWorkflowWriteExecutor(p: WorkflowWriteExecutorParams): Tool
       getTribalKbConfig: p.getTribalKbConfig,
       ...(p.standingNow === undefined ? {} : { now: p.standingNow }),
     }),
+    unattended,
   });
 }
 

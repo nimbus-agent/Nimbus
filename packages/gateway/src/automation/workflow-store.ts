@@ -228,6 +228,22 @@ export function insertWorkflowRunRow(
   );
 }
 
+/**
+ * Finishes a blocked run as `abandoned` (resumed elsewhere, or discarded). Only a run that is still
+ * `blocked_on_approval` changes; anything else throws, so two resumes cannot both win.
+ */
+export function abandonWorkflowRunRow(db: Database, id: string, at: number): void {
+  const r = dbRun(
+    db,
+    `UPDATE workflow_run SET status = 'abandoned', finished_at = ?
+     WHERE id = ? AND status = 'blocked_on_approval'`,
+    [at, id],
+  );
+  if (r.changes !== 1) {
+    throw new Error("ERR_RUN_NOT_BLOCKED: the run is no longer waiting for approval");
+  }
+}
+
 /** Marks a run as stopped at a write step that no standing rule covered (V89). */
 export function blockWorkflowRunRow(
   db: Database,

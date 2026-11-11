@@ -1,7 +1,12 @@
 import { randomUUID } from "node:crypto";
-
+import {
+  blockedRunWorkflow,
+  prepareResume,
+  ResumeError,
+} from "../../automation/workflow-resume.ts";
+import { workflowRunLock } from "../../automation/workflow-run-lock.ts";
 import { nonRunStepLabels, parseWorkflowSteps } from "../../automation/workflow-steps.ts";
-import { getWorkflowByName } from "../../automation/workflow-store.ts";
+import { abandonWorkflowRunRow, getWorkflowByName } from "../../automation/workflow-store.ts";
 import { asRecord } from "../../connectors/unknown-record.ts";
 import {
   describeEmbeddingWarming,
@@ -303,6 +308,97 @@ function buildWorkflowRunContext(
   const trigger = workflowTriggerOf(kind);
   if (trigger !== undefined) ctx.trigger = trigger;
   return { ctx, sessionId, streamId };
+}
+
+/** The refusals of `workflow.resume`, as RPC errors a client can match on `data.code`. */
+const resumeError = (code: string, message: string): RpcMethodError =>
+  new RpcMethodError(-32001, `${code}: ${message}`, { code });
+
+/** The record `workflow.resume` takes: only `runId` and `discard`; nothing names its own origin. */
+function resumeParams(params: unknown): { runId: string; discard: boolean } {
+  const rec = asRecord(params);
+  for (const key of ["trigger", "provenance", "clientKind", "resume", "name"]) {
+    if (rec !== undefined && Object.hasOwn(rec, key)) {
+      throw new RpcMethodError(
+        -32602,
+        `workflow.resume: ${key} is derived by the gateway and may not be sent`,
+      );
+    }
+  }
+  const runId = rec?.["runId"];
+  if (typeof runId !== "string" || runId.trim() === "" || runId.length > 128) {
+    throw new RpcMethodError(-32602, "workflow.resume: runId must be a run id");
+  }
+  return { runId: runId.trim(), discard: rec?.["discard"] === true };
+}
+
+/**
+ * `workflow.resume { runId, discard? }` (Phase 10 SA4, plan task 7). Only the owner's CLI or desktop on
+ * the local socket (the same declared-kind rule as the trigger; every other kind, and a LAN peer
+ * whatever its `writeAllowed`, is refused). It takes the workflow's run lock, so it cannot overlap a
+ * scheduled fire or another resume. `discard` abandons the blocked run and runs nothing; otherwise
+ * the run continues from the blocked step on THIS connection's own executor, with a normal prompt
+ * and the owner's trigger (so a standing rule may still cover it, as on any owner-started run).
+ */
+export async function dispatchWorkflowResumeRpc(
+  ctx: ServerCtx,
+  clientId: string,
+  session: ClientSession,
+  params: unknown,
+): Promise<unknown> {
+  if (ctx.options.localIndex === undefined) {
+    throw new RpcMethodError(-32603, "Local index is not available");
+  }
+  const kind = ctx.getClientKind(clientId);
+  if (workflowTriggerOf(kind) === undefined) {
+    throw resumeError(
+      "ERR_RESUME_LOCAL_ONLY",
+      "a blocked run is resumed only from the owner's CLI or desktop on the local socket",
+    );
+  }
+  const { runId, discard } = resumeParams(params);
+  const db = ctx.options.localIndex.getDatabase();
+  const handler = ctx.getWorkflowRunHandler();
+  if (handler === undefined) {
+    throw new RpcMethodError(-32603, "Workflow runner is not configured");
+  }
+  try {
+    const target = discard ? blockedRunWorkflow(db, runId) : prepareResume(db, runId);
+    const locked = await workflowRunLock.withLock(target.workflowId, async () => {
+      if (discard) {
+        abandonWorkflowRunRow(db, runId, Date.now());
+        return { runId, status: "abandoned" };
+      }
+      const prepared = prepareResume(db, runId);
+      const { ctx: workflowCtx } = buildWorkflowRunContext(
+        clientId,
+        session,
+        { name: prepared.workflowName },
+        new AbortController().signal,
+        kind,
+      );
+      workflowCtx.resume = {
+        runId,
+        blockedStep: prepared.blockedStep,
+        expectedSha256: prepared.expectedSha256,
+      };
+      return handler(workflowCtx);
+    });
+    if (locked === undefined) {
+      throw resumeError(
+        "ERR_WORKFLOW_BUSY",
+        "the workflow is running right now; try again shortly",
+      );
+    }
+    return locked.value;
+  } catch (e) {
+    if (e instanceof ResumeError) throw resumeError(e.code, e.message.replace(`${e.code}: `, ""));
+    if (e instanceof Error && e.message.startsWith("ERR_")) {
+      const code = e.message.split(":")[0] ?? "ERR_RESUME";
+      throw resumeError(code, e.message.slice(code.length + 1).trim());
+    }
+    throw e;
+  }
 }
 
 export async function dispatchWorkflowRunRpc(

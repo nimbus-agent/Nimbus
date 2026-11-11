@@ -129,7 +129,7 @@ import {
   sessionRpcSkipped,
   trustRpcSkipped,
 } from "./context.ts";
-import { dispatchWorkflowRunRpc } from "./inline-handlers.ts";
+import { dispatchWorkflowResumeRpc, dispatchWorkflowRunRpc } from "./inline-handlers.ts";
 import type { CreateIpcServerOptions } from "./options.ts";
 import { RpcMethodError } from "./rpc-error.ts";
 
@@ -2238,6 +2238,10 @@ export async function tryDispatchAutomationRpc(
 ): Promise<unknown> {
   if (method === "workflow.run") {
     return dispatchWorkflowRunRpc(ctx, clientId, session, params);
+  }
+
+  if (method === "workflow.resume") {
+    return dispatchWorkflowResumeRpc(ctx, clientId, session, params);
   }
 
   if (method === "workflow.cancel") {
