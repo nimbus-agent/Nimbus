@@ -4165,6 +4165,20 @@ describe("D39 — the model's connector-write door is the only builder of write 
     ).toEqual([]);
   });
 
+  test("(e) FAILS on a rogue buildWorkflowWriteExecutor; allows run-ask.ts and gateway-main.ts (SA2)", () => {
+    expect(
+      rules([
+        file("packages/gateway/src/ipc/rogue.ts", "const ex = buildWorkflowWriteExecutor(p);"),
+      ]),
+    ).toEqual(["connector-write-builders-confined"]);
+    expect(
+      rules([
+        file("packages/gateway/src/engine/run-ask.ts", "const ex = buildWorkflowWriteExecutor(p);"),
+        file("packages/gateway/src/gateway-main.ts", "const ex = buildWorkflowWriteExecutor(p);"),
+      ]),
+    ).toEqual([]);
+  });
+
   test("(c) does not apply to other files", () => {
     expect(
       rules([file("packages/gateway/src/engine/executor.ts", "connectors.dispatch(a);")]),
@@ -4243,6 +4257,21 @@ describe("D40 — a before-state read stays a guarded read on the door's executo
         replace(
           RUN_ASK,
           'import { createBeforeStateRunner } from "./before-state.ts";\nfunction buildAskExecutor(p) {\n  return newTurnExecutor(p, p.delegation, createBeforeStateRunner());\n}\nexport function buildModelWriteExecutor(p) {\n  return newTurnExecutor(p, undefined, createBeforeStateRunner());\n}\n',
+        ),
+      ),
+    ).toEqual(["before-state-runner-confined"]);
+  });
+
+  test("(b) allows the runner inside buildWorkflowWriteExecutor too (SA2), and nowhere else in run-ask.ts", () => {
+    const carriers =
+      'import { createBeforeStateRunner } from "./before-state.ts";\nfunction buildAskExecutor(p) {\n  return newTurnExecutor(p, p.delegation);\n}\nexport function buildModelWriteExecutor(p) {\n  return newTurnExecutor(p, undefined, createBeforeStateRunner());\n}\nexport function buildWorkflowWriteExecutor(p) {\n  return newTurnExecutor(p, undefined, createBeforeStateRunner());\n}\n';
+    expect(rules(replace(RUN_ASK, carriers))).toEqual([]);
+    // A third function in run-ask.ts that builds a runner is still refused.
+    expect(
+      rules(
+        replace(
+          RUN_ASK,
+          `${carriers}export function buildSomethingElse(p) {\n  return newTurnExecutor(p, undefined, createBeforeStateRunner());\n}\n`,
         ),
       ),
     ).toEqual(["before-state-runner-confined"]);

@@ -78,12 +78,12 @@ describe("ACTION_PROPOSABILITY", () => {
       .sort();
     expect(got).toEqual(PROPOSABLE);
   });
-  test("counts, derived: 47 proposable, 135 denied, 8 of them not_yet_offered", () => {
+  test("counts, derived: 47 proposable, 136 denied, 9 of them not_yet_offered", () => {
     const all = Object.values(ACTION_PROPOSABILITY);
     expect(PROPOSABLE).toHaveLength(47);
     expect(all.filter((p) => p.kind === "proposable")).toHaveLength(47);
-    expect(all.filter((p) => p.kind === "denied")).toHaveLength(135);
-    expect(all.filter((p) => p.kind === "denied" && p.class === "not_yet_offered")).toHaveLength(8);
+    expect(all.filter((p) => p.kind === "denied")).toHaveLength(136);
+    expect(all.filter((p) => p.kind === "denied" && p.class === "not_yet_offered")).toHaveLength(9);
     expect(all).toHaveLength(HITL_REQUIRED.size);
   });
   test("§ 6.2 borderline types stay denied", () => {
@@ -100,7 +100,7 @@ describe("ACTION_PROPOSABILITY", () => {
   });
 });
 
-test("not_yet_offered is exactly the Jira transition plus the two VCS updates and the five flag and Jira alert writes (C1, C2), each a real connector-write row", () => {
+test("not_yet_offered is exactly the Jira transition plus the two VCS updates, the five flag and Jira alert writes (C1, C2) and the Gmail thread archive (SA2), each a real connector-write row", () => {
   const notYet = Object.entries(ACTION_PROPOSABILITY)
     .filter(([, p]) => p.kind === "denied" && p.class === "not_yet_offered")
     .map(([t]) => t)
@@ -120,6 +120,8 @@ test("not_yet_offered is exactly the Jira transition plus the two VCS updates an
       "flagsmith.feature.state.set",
       "jira.ops.alert.acknowledge",
       "jira.ops.alert.close",
+      // The Gmail thread archive (SA2): a thread id is opaque and the act door shows no before-state.
+      "gmail.thread.archive",
     ].sort((a, b) => a.localeCompare(b)),
   );
   // Unlike `unroutable`, each resolves: a row names its tool on its own server.

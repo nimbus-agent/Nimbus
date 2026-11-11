@@ -3660,7 +3660,7 @@ describe("I26 — every connector write row is confined to the local I2 path; fe
   });
 
   test("every connector write row is HITL-gated via its action type (local path)", () => {
-    expect(CONNECTOR_WRITE_ROWS).toHaveLength(124);
+    expect(CONNECTOR_WRITE_ROWS).toHaveLength(125);
     expect(CONNECTOR_WRITE_ROWS.filter((r) => !HITL_REQUIRED.has(r.actionType))).toEqual([]);
   });
 
@@ -4339,7 +4339,7 @@ describe("I29 — egress-ledger completeness over the executor chokepoint", () =
   });
 
   test("the coverage set is the whole table", () => {
-    expect(CONNECTOR_WRITE_ROWS).toHaveLength(124);
+    expect(CONNECTOR_WRITE_ROWS).toHaveLength(125);
     expect(writesUnderTest()).toHaveLength(CONNECTOR_WRITE_ROWS.length + 4);
   });
 
@@ -12315,6 +12315,34 @@ describe("I53 — a first-party connector write reaches the model only through t
     expect(body).not.toContain("delegation");
   });
 
+  test("SA2: the workflow write step's executor is built with NO delegation and the before-state runner", async () => {
+    const src = stripComments(await read("packages/gateway/src/engine/run-ask.ts"));
+    const at = src.indexOf("export function buildWorkflowWriteExecutor(");
+    expect(at).toBeGreaterThan(-1);
+    const body = src.slice(at, src.indexOf("\n}\n", at));
+    expect(body).toMatch(/newTurnExecutor\(\s*p,\s*undefined,\s*createBeforeStateRunner\(/);
+    expect(body).not.toContain("delegation");
+    expect(body).toMatch(
+      /guardContext:\s*\(\)\s*=>\s*\(\{\s*kb:\s*p\.getTribalKbConfig\(\)\s*\}\)/,
+    );
+    // It offers nothing to the model: the request-context field the door reads is never set here.
+    expect(body).not.toContain("connectorWriteExecutor");
+  });
+
+  test("SA2: gateway-main builds the workflow executor per run on the run's client and passes the dispatcher's trigger", async () => {
+    const src = stripComments(await read("packages/gateway/src/gateway-main.ts"));
+    const at = src.indexOf("platform.ipc.setWorkflowRunHandler(");
+    expect(at).toBeGreaterThan(-1);
+    const body = src.slice(at, src.indexOf("\n  });\n", at));
+    expect(body).toContain("buildWorkflowWriteExecutor({");
+    expect(body).toMatch(/clientId:\s*ctx\.clientId/);
+    expect(body).toMatch(/consentCoordinator:\s*platform\.ipc\.consent/);
+    // The trigger is the IPC dispatcher's (ctx.trigger), never read from params here.
+    expect(body).toMatch(/trigger:\s*ctx\.trigger/);
+    // A demo-rooted gateway builds none (I41).
+    expect(body).toMatch(/platform\.paths\.demo === true/);
+  });
+
   test("B3 (R11): the door's runner is built WITH the KB config accessor, which run-ask requires", async () => {
     const src = stripComments(await read("packages/gateway/src/engine/run-ask.ts"));
     const at = src.indexOf("export function buildModelWriteExecutor(");
@@ -12558,7 +12586,7 @@ describe("I53 — a first-party connector write reaches the model only through t
     expect(naming).toEqual(["engine/run-ask.ts"]);
   });
 
-  test("the production rows with a before reader are B1's seven comment rows, B2's nine issue writes, B3's five page writes, B4a's Drive create, B4b's Obsidian append (all wave 2), C1's eight wave-3 file, pull request and incident writes, C2's four wave-3 branch, pull request and merge request writes and C3's five wave-3 flag and alert writes, D1's 28 wave-4 rows (27 offered, plus the never-offered Bitbucket merge) and D3b's seven deploy and mobile-release rows and D3c's two Kubernetes rows", () => {
+  test("the production rows with a before reader are B1's seven comment rows, B2's nine issue writes, B3's five page writes, B4a's Drive create, B4b's Obsidian append (all wave 2), C1's eight wave-3 file, pull request and incident writes, C2's four wave-3 branch, pull request and merge request writes and C3's five wave-3 flag and alert writes, D1's 28 wave-4 rows (27 offered, plus the never-offered Bitbucket merge) and D3b's seven deploy and mobile-release rows and D3c's two Kubernetes rows and SA2's Gmail thread archive", () => {
     const withReader = CONNECTOR_WRITE_ROWS.filter((r) => r.before !== undefined);
     const D1_WAVE4 = [
       "apple_calendar_event_delete",
@@ -12635,6 +12663,7 @@ describe("I53 — a first-party connector write reaches the model only through t
       "gitlab_issue_state_set",
       "gitlab_mr_note_create",
       "gitlab_mr_update",
+      "gmail_thread_archive",
       "jira_comment_add",
       "jira_issue_transition",
       "jira_issue_update",

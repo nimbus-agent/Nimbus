@@ -1,3 +1,4 @@
+import { readGoogleOAuthScopesForGmailEnv } from "../auth/oauth-vault-tokens.ts";
 import { readConnectorSecret } from "../connectors/connector-vault.ts";
 import { nodeKubeFs } from "../connectors/connector-writes/kubeconfig-facts.ts";
 import type { LazyConnectorMesh } from "../connectors/lazy-mesh/index.ts";
@@ -53,6 +54,17 @@ export { ConnectorRpcError } from "./connector-rpc-shared.ts";
  * disclosing a clear that will never happen) — that whole suite injects its own
  * `readGcpKeyPath` stub and never exercises this line. See `connector-rpc.test.ts`.
  */
+/** `{ grantedScopes: { gmail } }` from the stored credential, or nothing when it cannot be read. */
+async function gmailGrantedScopes(
+  vault: NimbusVault,
+): Promise<{ grantedScopes: Record<string, string | undefined> } | Record<string, never>> {
+  try {
+    return { grantedScopes: { gmail: await readGoogleOAuthScopesForGmailEnv(vault) } };
+  } catch {
+    return {};
+  }
+}
+
 export function buildReadGcpKeyPath(vault: NimbusVault): () => Promise<string | null> {
   return () => readConnectorSecret(vault, "gcp", "credentials_json_path");
 }
@@ -184,8 +196,11 @@ export async function dispatchConnectorRpc(options: {
     ...(continuityTable === undefined ? {} : { continuityTable }),
   };
 
-  const modelWritesDeps = (): ModelWritesDeps => ({
+  const modelWritesDeps = async (): Promise<ModelWritesDeps> => ({
     db: localIndex.getDatabase(),
+    // SA2: which scopes the stored Gmail credential holds, so `status` and the enable prompt can
+    // say the archive row needs a re-authorisation. A failed read makes no claim.
+    ...(await gmailGrantedScopes(vault)),
     // D3a: the kubeconfig the Vault names, read through the real filesystem (kubectl never sees it).
     readKubeconfigPath: async () =>
       (await readConnectorSecret(vault, "kubernetes", "kubeconfig")) ?? undefined,
@@ -279,12 +294,15 @@ export async function dispatchConnectorRpc(options: {
     case "connector.writesEnable":
       return {
         kind: "hit",
-        value: await handleConnectorWritesEnable(rec, modelWritesDeps()),
+        value: await handleConnectorWritesEnable(rec, await modelWritesDeps()),
       };
     case "connector.writesDisable":
-      return { kind: "hit", value: await handleConnectorWritesDisable(rec, modelWritesDeps()) };
+      return {
+        kind: "hit",
+        value: await handleConnectorWritesDisable(rec, await modelWritesDeps()),
+      };
     case "connector.writesStatus":
-      return { kind: "hit", value: handleConnectorWritesStatus(modelWritesDeps()) };
+      return { kind: "hit", value: handleConnectorWritesStatus(await modelWritesDeps()) };
     default:
       return { kind: "miss" };
   }

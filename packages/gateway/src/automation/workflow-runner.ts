@@ -2,14 +2,27 @@ import type { Database } from "bun:sqlite";
 import { randomUUID } from "node:crypto";
 import type { Agent } from "@mastra/core/agent";
 import { redactAuditPayload } from "../audit/format-audit-payload.ts";
+import { connectorWriteRowByToolId } from "../connectors/connector-write-registry.ts";
 import { appendAuditEntry } from "../db/audit-chain.ts";
 import {
   type RunConversationalAgentParams,
   runConversationalAgent,
 } from "../engine/run-conversational-agent.ts";
+import type { WorkflowTrigger } from "../engine/types.ts";
 import { readIndexedUserVersion } from "../index/migrations/runner.ts";
+import { runDeclaredQuery } from "./declared-query.ts";
 import { previewHitlActionsForStepText } from "./workflow-hitl-preview.ts";
 import { pruneWorkflowRuns } from "./workflow-run-history.ts";
+import {
+  needsModel,
+  nonRunStepLabels,
+  parseWorkflowSteps,
+  type QueryWorkflowStep,
+  type RunWorkflowStep,
+  type WorkflowStep,
+  type WriteWorkflowStep,
+  workflowStepsSha256,
+} from "./workflow-steps.ts";
 import {
   finishWorkflowRunRow,
   getWorkflowByName,
@@ -17,6 +30,18 @@ import {
   insertWorkflowRunStepRow,
   updateWorkflowRunStepRow,
 } from "./workflow-store.ts";
+import {
+  runWriteStep,
+  type WorkflowWriteExecutor,
+  type WriteStepRun,
+} from "./workflow-write-step.ts";
+
+export type { WorkflowStep } from "./workflow-steps.ts";
+
+/** What a run with a `run` step and no enabled model vendor reports. */
+export const WORKFLOW_NEEDS_MODEL_MESSAGE =
+  "Workflows need a model: enable a vendor under [llm.remote.<vendor>] in nimbus.toml " +
+  "and store its <vendor>.api_key in the Vault.";
 
 const RUN_RETENTION_PER_WORKFLOW = 100;
 
@@ -52,59 +77,22 @@ function emitRunCompletedAudit(params: {
   });
 }
 
-export type WorkflowStep = {
-  label?: string;
-  run: string;
-  continueOnError?: boolean;
-};
-
-function parseOneWorkflowStepRow(row: unknown): WorkflowStep | null {
-  if (row === null || typeof row !== "object" || Array.isArray(row)) {
-    return null;
-  }
-  const rec = row as Record<string, unknown>;
-  const run = typeof rec["run"] === "string" ? rec["run"].trim() : "";
-  if (run === "") {
-    return null;
-  }
-  const label = typeof rec["label"] === "string" ? rec["label"].trim() : undefined;
-  const continueOnError = rec["continueOnError"] === true || rec["continue_on_error"] === true;
-  const step: WorkflowStep = { run };
-  if (label !== undefined && label !== "") {
-    step.label = label;
-  }
-  if (continueOnError) {
-    step.continueOnError = true;
-  }
-  return step;
-}
-
+/** Parses a workflow's `steps_json` (see `workflow-steps.ts`); kept under its old name. */
 export function parseWorkflowStepsJson(stepsJson: string): WorkflowStep[] {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(stepsJson) as unknown;
-  } catch {
-    throw new Error("workflow steps_json is not valid JSON");
-  }
-  if (!Array.isArray(parsed)) {
-    throw new TypeError("workflow steps must be a JSON array");
-  }
-  const out: WorkflowStep[] = [];
-  for (const row of parsed) {
-    const step = parseOneWorkflowStepRow(row);
-    if (step !== null) {
-      out.push(step);
-    }
-  }
-  if (out.length === 0) {
-    throw new Error("workflow has no executable steps (need objects with non-empty run string)");
-  }
-  return out;
+  return parseWorkflowSteps(stepsJson);
 }
 
 export type RunWorkflowExecutionParams = {
   db: Database;
-  agent: Agent;
+  /** Needed only by a `run` step; a workflow of query and write steps runs with none. */
+  agent?: Agent;
+  /** Runs a `write` step's actions (SA2); built only by `buildWorkflowWriteExecutor`. */
+  writeExecutor?: WorkflowWriteExecutor;
+  /**
+   * How the run started, derived by the IPC dispatcher from the client's declared kind. Absent
+   * means the write actions carry no provenance. Never read from `workflow.run` params.
+   */
+  trigger?: WorkflowTrigger;
   workflowName: string;
   triggeredBy: string;
   dryRun: boolean;
@@ -140,26 +128,33 @@ export type RunWorkflowExecutionResult = {
 };
 
 type StepExecOutcome =
-  | { kind: "ok"; label: string; reply: string }
+  | { kind: "ok"; label: string; reply: string; status?: string }
   | { kind: "err"; label: string; message: string; halt: boolean };
 
-async function executeWorkflowStep(
+/** What the steps of one run share: the outputs of `run` steps and the query results. */
+type RunState = {
+  readonly outputs: string[];
+  readonly queries: Map<string, { index: number; values: readonly string[] }>;
+  readonly workflowId: string;
+  readonly workflowSha256: string;
+};
+
+function stepLabelOf(step: WorkflowStep, stepIndex: number): string {
+  return step.label ?? `step-${String(stepIndex + 1)}`;
+}
+
+function errorOutcome(label: string, err: unknown, halt: boolean): StepExecOutcome {
+  return { kind: "err", label, message: err instanceof Error ? err.message : String(err), halt };
+}
+
+async function executeRunStep(
   p: RunWorkflowExecutionParams,
   runId: string,
   stepIndex: number,
-  step: WorkflowStep,
+  step: RunWorkflowStep,
   outputs: string[],
 ): Promise<StepExecOutcome> {
-  const label = step.label ?? `step-${String(stepIndex + 1)}`;
-  const stepStart = Date.now();
-  insertWorkflowRunStepRow(p.db, {
-    runId,
-    stepIndex,
-    label,
-    status: "running",
-    startedAt: stepStart,
-  });
-
+  const label = stepLabelOf(step, stepIndex);
   const prior =
     outputs.length > 0
       ? `Prior step outputs (summarize, do not repeat verbatim):\n${outputs.join("\n---\n")}\n\n`
@@ -171,6 +166,7 @@ async function executeWorkflowStep(
   }
 
   try {
+    if (p.agent === undefined) throw new Error(WORKFLOW_NEEDS_MODEL_MESSAGE);
     const runner = p.conversationalRunner ?? runConversationalAgent;
     const { reply } = await runner({
       agent: p.agent,
@@ -192,8 +188,102 @@ async function executeWorkflowStep(
       resultJson: JSON.stringify({ error: msg }),
       finishedAt: Date.now(),
     });
-    return { kind: "err", label, message: msg, halt: step.continueOnError !== true };
+    return errorOutcome(label, err, step.continueOnError !== true);
   }
+}
+
+function executeQueryStep(
+  p: RunWorkflowExecutionParams,
+  runId: string,
+  stepIndex: number,
+  step: QueryWorkflowStep,
+  state: RunState,
+): StepExecOutcome {
+  const label = stepLabelOf(step, stepIndex);
+  try {
+    const r = runDeclaredQuery(p.db, step.query);
+    state.queries.set(step.label, { index: stepIndex, values: r.values });
+    const reply = `selected ${String(r.values.length)}; dropped ${String(r.dropped)} (not an id)`;
+    updateWorkflowRunStepRow(p.db, runId, stepIndex, {
+      status: "done",
+      resultJson: JSON.stringify({ selected: r.values.length, dropped: r.dropped }),
+      finishedAt: Date.now(),
+    });
+    return { kind: "ok", label, reply };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    updateWorkflowRunStepRow(p.db, runId, stepIndex, {
+      status: "error",
+      resultJson: JSON.stringify({ error: msg }),
+      finishedAt: Date.now(),
+    });
+    // A query that cannot run leaves the writes that read it with nothing to act on: halt.
+    return errorOutcome(label, err, true);
+  }
+}
+
+async function executeWriteStep(
+  p: RunWorkflowExecutionParams,
+  runId: string,
+  stepIndex: number,
+  step: WriteWorkflowStep,
+  state: RunState,
+): Promise<StepExecOutcome> {
+  const label = stepLabelOf(step, stepIndex);
+  const halt = step.continueOnError !== true;
+  const finish = (status: string, detail: Record<string, unknown>): void => {
+    updateWorkflowRunStepRow(p.db, runId, stepIndex, {
+      status,
+      resultJson: JSON.stringify(detail),
+      finishedAt: Date.now(),
+    });
+  };
+  if (p.writeExecutor === undefined) {
+    const message = "this gateway cannot run write steps (no write executor)";
+    finish("error", { error: message });
+    return { kind: "err", label, message, halt };
+  }
+  const run: WriteStepRun = {
+    workflowId: state.workflowId,
+    workflowSha256: state.workflowSha256,
+    stepIndex,
+    runId,
+    trigger: p.trigger,
+    queries: state.queries,
+    signal: p.signal,
+  };
+  try {
+    const out = await runWriteStep(step, run, p.writeExecutor);
+    if (out.status === "error") {
+      finish("error", { error: out.message, dispatched: out.dispatched });
+      return { kind: "err", label, message: out.message, halt };
+    }
+    finish(out.status, { message: out.message, dispatched: out.dispatched });
+    return { kind: "ok", label, reply: out.message, status: out.status };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    finish("error", { error: msg });
+    return errorOutcome(label, err, halt);
+  }
+}
+
+async function executeWorkflowStep(
+  p: RunWorkflowExecutionParams,
+  runId: string,
+  stepIndex: number,
+  step: WorkflowStep,
+  state: RunState,
+): Promise<StepExecOutcome> {
+  insertWorkflowRunStepRow(p.db, {
+    runId,
+    stepIndex,
+    label: stepLabelOf(step, stepIndex),
+    status: "running",
+    startedAt: Date.now(),
+  });
+  if (step.kind === "run") return executeRunStep(p, runId, stepIndex, step, state.outputs);
+  if (step.kind === "query") return executeQueryStep(p, runId, stepIndex, step, state);
+  return executeWriteStep(p, runId, stepIndex, step, state);
 }
 
 function finalizeRun(
@@ -218,6 +308,32 @@ function finalizeRun(
   pruneWorkflowRuns(p.db, wf.id, RUN_RETENTION_PER_WORKFLOW);
 }
 
+/** One step's dry-run entry: a prompt as before; a query or write shown as the declared form. */
+function previewStep(
+  s: WorkflowStep,
+  i: number,
+): RunWorkflowExecutionResult["stepResults"][number] {
+  const label = stepLabelOf(s, i);
+  if (s.kind === "run") {
+    return {
+      label,
+      status: "preview",
+      output: s.run,
+      hitlActions: previewHitlActionsForStepText(s.run),
+    };
+  }
+  if (s.kind === "query") {
+    return { label, status: "preview", output: JSON.stringify(s.query), hitlActions: [] };
+  }
+  const row = connectorWriteRowByToolId(s.tool);
+  return {
+    label,
+    status: "preview",
+    output: `write ${s.tool} ${JSON.stringify(s.input)}`,
+    hitlActions: row === undefined ? [] : [row.actionType],
+  };
+}
+
 function executeDryRun(
   p: RunWorkflowExecutionParams,
   wf: { id: string; name: string },
@@ -240,12 +356,7 @@ function executeDryRun(
     runId,
     status: "preview",
     dryRun: true,
-    stepResults: steps.map((s, i) => ({
-      label: s.label ?? `step-${String(i + 1)}`,
-      status: "preview",
-      output: s.run,
-      hitlActions: previewHitlActionsForStepText(s.run),
-    })),
+    stepResults: steps.map((s, i) => previewStep(s, i)),
   };
 }
 
@@ -272,7 +383,12 @@ export async function executeRealRunSteps(
   runId: string,
   now: number,
 ): Promise<RunWorkflowExecutionResult> {
-  const outputs: string[] = [];
+  const state: RunState = {
+    outputs: [],
+    queries: new Map(),
+    workflowId: wf.id,
+    workflowSha256: workflowStepsSha256(steps),
+  };
   const stepResults: RunWorkflowExecutionResult["stepResults"] = [];
   // Checked once up front too: a zero-step workflow never enters the loop
   // below, so without this an already-aborted signal would be ignored and
@@ -288,9 +404,13 @@ export async function executeRealRunSteps(
     }
     const step = steps[i];
     if (step === undefined) continue;
-    const outcome = await executeWorkflowStep(p, runId, i, step, outputs);
+    const outcome = await executeWorkflowStep(p, runId, i, step, state);
     if (outcome.kind === "ok") {
-      stepResults.push({ label: outcome.label, status: "done", output: outcome.reply });
+      stepResults.push({
+        label: outcome.label,
+        status: outcome.status ?? "done",
+        output: outcome.reply,
+      });
       continue;
     }
     stepResults.push({ label: outcome.label, status: "error", error: outcome.message });
@@ -303,6 +423,20 @@ export async function executeRealRunSteps(
   return { runId, status: "done", dryRun: false, stepResults };
 }
 
+/** Only `run` steps take overrides: nothing outside the hashed definition may change a write or a query. */
+export function refuseOverridesOfNonRunSteps(
+  paramsOverride: RunWorkflowExecutionParams["paramsOverride"],
+  steps: readonly WorkflowStep[],
+): void {
+  if (paramsOverride === undefined) return;
+  const fixed = new Set(nonRunStepLabels(steps));
+  for (const key of Object.keys(paramsOverride)) {
+    if (fixed.has(key)) {
+      throw new Error(`paramsOverride may not name a write or query step ("${key}")`);
+    }
+  }
+}
+
 export async function runWorkflowExecution(
   p: RunWorkflowExecutionParams,
 ): Promise<RunWorkflowExecutionResult> {
@@ -313,7 +447,11 @@ export async function runWorkflowExecution(
   if (wf === null) {
     throw new Error(`Unknown workflow: ${p.workflowName}`);
   }
-  const steps = parseWorkflowStepsJson(wf.steps_json);
+  const steps = parseWorkflowSteps(wf.steps_json);
+  refuseOverridesOfNonRunSteps(p.paramsOverride, steps);
+  if (!p.dryRun && p.agent === undefined && needsModel(steps)) {
+    throw new Error(WORKFLOW_NEEDS_MODEL_MESSAGE);
+  }
   const runId = randomUUID();
   const now = Date.now();
   const paramsOverrideJson =

@@ -15,7 +15,7 @@ import { makeEgressSink } from "./egress/egress-ledger.ts";
 import type { EmbeddingReadiness } from "./embedding/embedding-readiness.ts";
 import { createNimbusEngineAgent } from "./engine/agent.ts";
 import { agentRequestContext } from "./engine/agent-request-context.ts";
-import { type RunAskParams, runAsk } from "./engine/run-ask.ts";
+import { buildWorkflowWriteExecutor, type RunAskParams, runAsk } from "./engine/run-ask.ts";
 import { armGatewayLifecycleDiagnostics } from "./platform/exit-diagnostics.ts";
 import { removeGatewayStateFile, writeGatewayStateFile } from "./platform/gateway-state-file.ts";
 import { createPlatformServices } from "./platform/index.ts";
@@ -334,19 +334,35 @@ export async function main(): Promise<void> {
   // is populated, so nothing is left to do here.
 
   platform.ipc.setWorkflowRunHandler(async (ctx) => {
-    // `runWorkflowExecution` genuinely REQUIRES an agent — unlike `runAsk`, it has no
-    // deterministic path to fall back to. With no `[llm.remote.*]` vendor enabled there is no
-    // agent, so refuse with a message that names the fix rather than dereferencing undefined.
+    // A `run` step genuinely REQUIRES an agent — unlike `runAsk`, it has no deterministic path
+    // to fall back to. With no `[llm.remote.*]` vendor enabled there is no agent: the runner then
+    // refuses a workflow that has a `run` step with a message that names the fix (a workflow of
+    // query and write steps needs no model, SA2).
     const workflowAgent = resolveEngineAgent(ctx.agent);
-    if (workflowAgent === undefined) {
-      throw new Error(
-        "Workflows need a model: enable a vendor under [llm.remote.<vendor>] in nimbus.toml " +
-          "and store its <vendor>.api_key in the Vault.",
-      );
-    }
     return runWorkflowExecution({
       db: platform.localIndex.getDatabase(),
-      agent: workflowAgent,
+      ...(workflowAgent === undefined ? {} : { agent: workflowAgent }),
+      // SA2: a write step asks the owner on the run's own client, through an executor with no
+      // delegation and the before-state runner; built per run so consent is bound to this client.
+      ...(platform.paths.demo === true
+        ? {}
+        : {
+            writeExecutor: buildWorkflowWriteExecutor({
+              clientId: ctx.clientId,
+              consentCoordinator: platform.ipc.consent,
+              localIndex: platform.localIndex,
+              dispatcher,
+              egressSink: askEgressSink,
+              policyHitl: platform.policyHitl,
+              previewCredentialFor: previewCredentialResolver(
+                platform.connectorWriteDeps,
+                platform.connectorMesh,
+              ),
+              getTribalKbConfig: () => platform.tribalKbConfig(),
+            }),
+          }),
+      // Derived by the IPC dispatcher from the connection's declared kind (never from params).
+      ...(ctx.trigger === undefined ? {} : { trigger: ctx.trigger }),
       workflowName: ctx.workflowName,
       triggeredBy: ctx.triggeredBy,
       dryRun: ctx.dryRun,

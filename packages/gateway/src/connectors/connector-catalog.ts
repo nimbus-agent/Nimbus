@@ -391,6 +391,11 @@ export function oauthProfileForService(serviceId: ConnectorServiceId): Connector
         defaultScopes: [
           "https://www.googleapis.com/auth/gmail.readonly",
           "https://www.googleapis.com/auth/gmail.compose",
+          // Phase 10 SA2: backs `gmail_thread_archive` (removes the INBOX label, nothing is
+          // deleted). Only a fresh `nimbus connector auth gmail` requests it: a refresh sends no
+          // `scope` field, so an existing connection keeps the scopes it was granted, and the
+          // connector hides the archive tool while the token lacks it.
+          "https://www.googleapis.com/auth/gmail.modify",
         ],
       };
     case "google_photos":

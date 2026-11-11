@@ -1,8 +1,36 @@
 import type { BoundWriteCapabilities } from "./bound-write-capabilities.ts";
 
+/** How a workflow run started, as the gateway derived it (never from params). */
+export type WorkflowTrigger = "owner_cli" | "owner_ui";
+
+/**
+ * Where an action came from when the owner's own saved workflow built it (Phase 10 SA2, spec § 5.1).
+ * Constructed ONLY in `automation/workflow-write-step.ts` (source-pinned), so no IPC, model, act
+ * door, ChatOps, LAN or HTTP path can supply one. Nothing reads it at the gate yet: the audit row
+ * records everything here except `fieldSources`, which the standing-rule check (SA3) will read.
+ */
+export type WorkflowProvenance = {
+  readonly kind: "owner_workflow";
+  readonly workflowId: string;
+  /** SHA-256 of the canonical JSON of the steps the run loaded. */
+  readonly workflowSha256: string;
+  readonly stepIndex: number;
+  readonly runId: string;
+  readonly trigger: WorkflowTrigger;
+  /** Per input field: a constant, or the declared query step (by index) and column it came from. */
+  readonly fieldSources: Readonly<
+    Record<string, "constant" | { readonly query: number; readonly column: string }>
+  >;
+};
+
 export type PlannedAction = {
   type: string;
   payload?: Record<string, unknown>;
+  /**
+   * Set only by the gateway's workflow write step, never from IPC, payload or a door. Top level
+   * only: a `payload.provenance` means nothing.
+   */
+  provenance?: WorkflowProvenance;
   /**
    * Set only by the gateway for an action the MODEL proposed. It only ever REMOVES delegation (a
    * delegate never approves it, I20) and adds a consent line; whether HITL is required stays

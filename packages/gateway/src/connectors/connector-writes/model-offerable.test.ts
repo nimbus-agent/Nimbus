@@ -46,7 +46,7 @@ describe("isModelOfferableRow (M1)", () => {
   test("a wave 2 or 3 row needs no confirm target", () => {
     expect(isModelOfferableRow(row({ wave: 3, preview: template }))).toBe(true);
   });
-  test("exactly the 108 rows are offerable: the 38 B1-B4b rows, the ten wave-3 refreshes and data-quality rows (C0) the eight wave-3 file, PR and incident rows (C1) the six wave-3 branch, pull request and merge request rows (C2), the five wave-3 flag and alert rows (C3) the 27 Wave 4 rows with a before-state (D1) the two bound multi-file commits (D1c) and the Terraform apply and CloudFormation deploy (D2) the seven deploy-trigger and mobile-release rows (D3b) the Kubernetes apply (D3a) the Kubernetes restart and scale (D3c)", () => {
+  test("exactly the 109 rows are offerable: the 38 B1-B4b rows, the ten wave-3 refreshes and data-quality rows (C0) the eight wave-3 file, PR and incident rows (C1) the six wave-3 branch, pull request and merge request rows (C2), the five wave-3 flag and alert rows (C3) the 27 Wave 4 rows with a before-state (D1) the two bound multi-file commits (D1c) and the Terraform apply and CloudFormation deploy (D2) the seven deploy-trigger and mobile-release rows (D3b) the Kubernetes apply (D3a) the Kubernetes restart and scale (D3c) the Gmail thread archive (SA2)", () => {
     expect(
       CONNECTOR_WRITE_ROWS.filter(isModelOfferableRow)
         .map((r) => r.toolId)
@@ -98,6 +98,7 @@ describe("isModelOfferableRow (M1)", () => {
         "gitlab_mr_note_create",
         "gitlab_mr_update",
         "gmail_draft_create",
+        "gmail_thread_archive",
         "jira_comment_add",
         "jira_issue_create",
         "jira_issue_transition",
@@ -164,7 +165,7 @@ describe("isModelOfferableRow (M1)", () => {
         "snowflake_tag_set",
       ].sort((a, b) => a.localeCompare(b)),
     );
-    expect(CONNECTOR_WRITE_ROWS.filter(isModelOfferableRow)).toHaveLength(108);
+    expect(CONNECTOR_WRITE_ROWS.filter(isModelOfferableRow)).toHaveLength(109);
     // Wave 4 needs a before reader: argocd's two rows are offered at wave 4 and not before.
     expect(offerableWritesEnabledBy("argocd", 4)).toHaveLength(2);
     expect(offerableWritesEnabledBy("argocd", 3)).toEqual([]);
@@ -176,7 +177,7 @@ describe("isModelOfferableRow (M1)", () => {
     expect(offerableWritesEnabledBy("linear", 2)).toHaveLength(3);
     expect(offerableWritesEnabledBy("notion", 2)).toHaveLength(4);
     expect(offerableWritesEnabledBy("confluence", 2)).toHaveLength(4);
-    expect(offerableWritesEnabledBy("gmail", 2)).toHaveLength(1);
+    expect(offerableWritesEnabledBy("gmail", 2)).toHaveLength(2);
     expect(offerableWritesEnabledBy("outlook", 2)).toHaveLength(2);
     expect(offerableWritesEnabledBy("apple", 2)).toHaveLength(2);
     expect(offerableWritesEnabledBy("google_drive", 2)).toHaveLength(1);

@@ -4,9 +4,12 @@
  * reader, it first runs that reader's READS (one, or two when the reader declares `also`), so the
  * prompt shows the target's current state beside the new values. Each read:
  *
- *  - runs only on the door's executor (`engine/run-ask.ts` `buildModelWriteExecutor` is the one
- *    place a runner is built, static rule D40(b)), only for an `origin: "model"` action, and only
- *    after the delegation check fell back to the owner's prompt;
+ *  - runs only on the executors that carry a runner (`engine/run-ask.ts` `buildModelWriteExecutor`
+ *    and, since Phase 10 SA2, `buildWorkflowWriteExecutor`: the only two places a runner is built,
+ *    static rule D40(b)), and only for an `origin: "model"` action, or for any action when the
+ *    runner was built with `readsEveryOrigin` (the workflow write step's, whose actions come from
+ *    the owner's own stored steps and carry no origin), and only after the delegation check fell
+ *    back to the owner's prompt;
  *  - is a `<service>.before.read` `PlannedAction` through the SAME executor's `gate()` and then
  *    its dispatcher, so it gets its own audit row and its own I29 egress row like any connector
  *    read. `gate()` refuses such a type that would require HITL without asking anyone, so a read
@@ -166,6 +169,13 @@ export interface BeforeStateRunnerOptions {
    * `read()` of a guarded row; absent, throwing or non-object: the guard gets `undefined`.
    */
   readonly guardContext?: () => BeforeGuardContext;
+  /**
+   * Read for an action of ANY origin, not only `origin: "model"`. Set only by
+   * `buildWorkflowWriteExecutor`: every action that executor runs is a workflow write step the
+   * owner is about to approve, and the guard and the current state matter there as much as on the
+   * model door. Absent (the door's runner): only a model-origin action is read.
+   */
+  readonly readsEveryOrigin?: boolean;
   readonly timeoutMs?: number;
   readonly timers?: {
     set(fn: () => void, ms: number): unknown;
@@ -431,7 +441,7 @@ export function createBeforeStateRunner(options: BeforeStateRunnerOptions = {}):
   return {
     rows,
     async read(action, ops, opts = {}) {
-      if (action.origin !== "model") return undefined;
+      if (action.origin !== "model" && options.readsEveryOrigin !== true) return undefined;
       const row = findConnectorWriteRow(action, rows);
       if (row === undefined) return undefined;
       const reader = row.before;

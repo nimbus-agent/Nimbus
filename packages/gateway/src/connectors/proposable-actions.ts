@@ -29,7 +29,7 @@ export type DeniedClass =
   | "unroutable"
   /**
    * A real, routable first-party connector write (a row in `connectors/connector-writes/`, in the
-   * I2 frozen set, D20-refused over federation) whose MCP proposal is withheld. Eight members, ONE
+   * I2 frozen set, D20-refused over federation) whose MCP proposal is withheld. Nine members, ONE
    * reason: the write's value is its before-state, and the act door runs no before-read (B0b), so
    * the owner would approve it without the state it changes. `jira.issue.transition` (owner ruling
    * OR-B2-4: a bare numeric transition id); the two VCS updates `github.pr.update` and
@@ -37,7 +37,9 @@ export type DeniedClass =
    * and the five writes of connectors 0.6.0 that C3 templated for the model door
    * (`launchdarkly.flag.{toggle,rollout.set}`, `flagsmith.feature.state.set`,
    * `jira.ops.alert.{acknowledge,close}`): a variation id or an alert id is opaque and a flag flip
-   * is its current state, so a queued production change could not be checked on the act door.
+   * is its current state, so a queued production change could not be checked on the act door;
+   * and `gmail.thread.archive` (Phase 10 SA2): a thread id is opaque and the owner would see
+   * neither the subject nor whether the thread is unread.
    * Revisit the whole class together if the act door ever gets a before-read.
    * Unlike `unroutable`, a tool DOES resolve: the refusal is a review decision, not a routing fact.
    */
@@ -284,6 +286,7 @@ export const ACTION_PROPOSABILITY: Readonly<Record<string, Proposability>> = Obj
       "flagsmith.feature.state.set",
       "jira.ops.alert.acknowledge",
       "jira.ops.alert.close",
+      "gmail.thread.archive",
     ]),
     ...denied("gateway_internal", [
       "data.delete",

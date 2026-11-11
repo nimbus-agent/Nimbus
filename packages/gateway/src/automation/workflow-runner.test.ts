@@ -101,7 +101,10 @@ describe("parseWorkflowStepsJson", () => {
     const steps = parseWorkflowStepsJson(
       JSON.stringify([{ run: "hello" }, { label: "b", run: "world", continueOnError: true }]),
     );
-    expect(steps).toEqual([{ run: "hello" }, { label: "b", run: "world", continueOnError: true }]);
+    expect(steps).toEqual([
+      { kind: "run", run: "hello" },
+      { kind: "run", label: "b", run: "world", continueOnError: true },
+    ]);
   });
 
   test("rejects empty array", () => {
@@ -120,12 +123,12 @@ describe("parseWorkflowStepsJson", () => {
     const steps = parseWorkflowStepsJson(
       JSON.stringify([{ run: "   ok  " }, { run: "" }, { label: "x" }, null, "nope"]),
     );
-    expect(steps).toEqual([{ run: "ok" }]);
+    expect(steps).toEqual([{ kind: "run", run: "ok" }]);
   });
 
   test("accepts continue_on_error alias", () => {
     const steps = parseWorkflowStepsJson(JSON.stringify([{ run: "a", continue_on_error: true }]));
-    expect(steps[0]?.continueOnError).toBe(true);
+    expect(steps[0]).toMatchObject({ continueOnError: true });
   });
 });
 

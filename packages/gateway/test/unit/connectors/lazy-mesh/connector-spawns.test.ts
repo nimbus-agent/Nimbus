@@ -185,6 +185,25 @@ mock.module("../../../../src/auth/workday-access-token.ts", () => ({
 }));
 
 mock.module("../../../../src/auth/oauth-vault-tokens.ts", () => ({
+  // Phase 10 SA2: Gmail's own key first, then the shared one, as the real reader does.
+  readGoogleOAuthScopesForGmailEnv: async (vault: {
+    get: (k: string) => Promise<string | null>;
+  }): Promise<string | undefined> => {
+    for (const key of ["google_gmail.oauth", "google.oauth"]) {
+      const raw = await vault.get(key);
+      if (raw === null || raw === "") continue;
+      try {
+        const scopes = (JSON.parse(raw) as { scopes?: unknown }).scopes;
+        const strings = Array.isArray(scopes)
+          ? scopes.filter((s): s is string => typeof s === "string" && s.trim() !== "")
+          : [];
+        return strings.length === 0 ? undefined : strings.join(" ");
+      } catch {
+        return undefined;
+      }
+    }
+    return undefined;
+  },
   readMicrosoftOAuthScopesForOutlookEnv: async (vault: {
     get: (k: string) => Promise<string | null>;
   }): Promise<string | undefined> => {
@@ -1171,6 +1190,29 @@ describe("ensureGoogleDriveMcp (Google bundle)", () => {
     for (const id of ["google_drive", "gmail", "google_photos", "google_meet"] as const) {
       expectNoProcessEnvLeak(servers[id]?.env ?? {});
     }
+  });
+
+  test("GOOGLE_OAUTH_SCOPES reaches the Gmail child only (SA2: gmail_thread_archive needs gmail.modify)", async () => {
+    const { ctx, vault } = makeCtx();
+    const scopes = ["https://www.googleapis.com/auth/gmail.modify"];
+    await vault.set("google_drive.oauth", '{"access_token":"d"}');
+    await vault.set("google_photos.oauth", '{"access_token":"p"}');
+    await vault.set("google_meet.oauth", '{"access_token":"m"}');
+    await vault.set("google_gmail.oauth", JSON.stringify({ access_token: "g", scopes }));
+    await ensureGoogleDriveMcp(ctx);
+    const servers = capturedClients[0]?.servers ?? {};
+    expect(servers["gmail"]?.env["GOOGLE_OAUTH_SCOPES"]).toBe(scopes.join(" "));
+    for (const id of ["google_drive", "google_photos", "google_meet"] as const) {
+      expect(Object.hasOwn(servers[id]?.env ?? {}, "GOOGLE_OAUTH_SCOPES"), id).toBe(false);
+    }
+  });
+
+  test("a Gmail credential that records no scopes passes none", async () => {
+    const { ctx, vault } = makeCtx();
+    await vault.set("google_gmail.oauth", '{"access_token":"g"}');
+    await ensureGoogleDriveMcp(ctx);
+    const servers = capturedClients[0]?.servers ?? {};
+    expect(Object.hasOwn(servers["gmail"]?.env ?? {}, "GOOGLE_OAUTH_SCOPES")).toBe(false);
   });
 
   test("already running → no double-spawn", async () => {

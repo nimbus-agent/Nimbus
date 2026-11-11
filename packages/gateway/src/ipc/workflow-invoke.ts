@@ -1,6 +1,8 @@
 // Type-only module: NO executable runtime logic. It is exact-path-excluded from the coverage floor
 // in scripts/coverage-floor/exclusions.ts (a type-only file emits no SF: lcov record). Adding runtime
 // logic here would silently bypass the floor — put runtime logic in a separate, covered module.
+import type { WorkflowTrigger } from "../engine/types.ts";
+
 export type WorkflowRunContext = {
   clientId: string;
   workflowName: string;
@@ -15,6 +17,11 @@ export type WorkflowRunContext = {
   streamId?: string;
   /** Aborted by workflow.cancel; honoured at the next step boundary. */
   signal?: AbortSignal;
+  /**
+   * How the run started, derived by the dispatcher from the connection's declared client kind
+   * (`cli` -> owner_cli, `ui` -> owner_ui); absent for any other kind. Never taken from params.
+   */
+  trigger?: WorkflowTrigger;
 };
 
 export type WorkflowRunHandler = (ctx: WorkflowRunContext) => Promise<{
