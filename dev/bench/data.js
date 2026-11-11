@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794398015090,
+  "lastUpdate": 1794421187211,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "25e2c3bdf8ba9b8718cf24994a31bffc36745899",
-          "message": "feat(exec): sandboxed code execution behind the I33 owner gate (S2 slice 1) (#1313)\n\nFirst delivery in Spine S2. `nimbus exec` runs code inside the three-OS\nsandbox from #1294, behind an approval prompt showing the **verbatim\nbody** — never a digest, because the human is the entire security\nboundary here. Invariant **I33**, static rule **D23**, no schema change.\n\n## The order inside the gate is the invariant\n\nEvery refusal decidable *without* the owner — the default-off\n`[code_execution]` kill-switch, the `[policy.capabilities.ai_v2]` org\nlockoff, runtime resolution from a registry rather than a caller argv,\nabsolute-path validation, the body-size bound — happens before the\nprompt, so a disabled capability never advertises its own existence by\nprompting. The sandbox posture is asserted before consent too, so the\nowner is never asked to approve something that could not have been\nconfined.\n\nThe body is passed **inline**, so no file exists to leak on a denial,\nrace the spawn, or be swapped between approval and execution. The\napproved bytes go straight to the interpreter.\n\n## \"No network\" includes loopback\n\nThe interesting target is not the internet but the Gateway's own IPC\nsocket and `127.0.0.1` HTTP API, with its `agents` / `resolve` scopes\nand the I13 write surface. That holds via three unrelated mechanisms —\nLinux `--unshare-net`, macOS `deny default` with no allow block\nemitted, Windows AppContainer without `internetClient` — which is the\nmost fragile way for a security property to be true, so it has a\nper-platform test asserting a script cannot reach the Gateway's own\nport.\n\nThe whole `exec` IPC namespace is LAN-forbidden, not merely `exec.run`:\nadmitting `exec.approvalRespond` would let a paired peer **approve**\ncode running on the owner's machine. `exec.*` is absent from the Tauri\nallowlist per I7.\n\n## Six defects only real-sandbox testing surfaced\n\nUnit tests could not have caught any of these. Four were invisible on\none platform or the other.\n\n1. The gate asked `isFullyActive()`, which on Linux reports a helper\n   used **solely** for per-host network filtering. This slice grants no\n   network, and `install-sandbox-deps.sh` installs bubblewrap but not\n   that helper — so the capability was unusable on every Linux machine\n   including CI, gated on a dependency it never uses. Now\n   `SandboxRunner.canConfine(policy)`, keeping per-platform reasoning in\n   the PAL.\n2. The connector-tuned seccomp filter omitted `ftruncate`, so\n   `fs.writeFileSync` and `Bun.write` were SIGSYS-killed with no stderr\n   — the sandbox permitting a write that then died silently. Isolated by\n   bisection, not added speculatively. **This widens a filter shared\n   with MCP connectors**; the 110 existing sandbox tests pass unchanged,\n   and `ftruncate` acts only on an already-open fd.\n3. The output cap counted UTF-16 code units against a byte budget, and\n   its truncation manufactured a U+FFFD that re-encoded **over** the cap\n   it had just enforced.\n4. The child inherited no environment, so on Windows `CreateProcessW`\n   failed with 203 before a line ran. Now uses `extensionProcessEnv`,\n   the same I1-governed allowlist every spawned MCP child uses.\n5. The policy never granted the interpreter's own directory. Linux hid\n   it; Windows AppContainer writes an ACE per path.\n6. Naming a file as bun's **entry point** dies under the AppContainer\n   with `CouldntReadCurrentDirectory`, even though the same sandbox lets\n   bun read, list and `import()` that very file. Ruled out by\n   measurement first: env completeness, 8.3 short names, and ancestor\n   traversal were each tested and eliminated.\n\n## Verified against real sandboxes\n\n| | Windows AppContainer | Linux bwrap |\n| --- | --- | --- |\n| Integration | 5/5 | 5/5 |\n| e2e | 5/5 | n/a |\n| Loopback blocked | yes | yes |\n\nPlus 325 unit / RPC / policy / CLI / invariant tests, and\n`preflight:fast` green.\n\n## Deliberately NOT shipped\n\nSo this is not read as more than it is: the agent-callable path — the\nLLM cannot trigger an execution, and that bound is what makes one human\napproval a sufficient boundary; `--allow-net`; `nimbus exec\n--interactive`; Deno and Python runtimes, though the registry exists;\nand remote sandbox adapters.\n\n`wrapToolOutput` I11 is correspondingly **not** exercised — nothing\nreaches the model — and `exec` appends no `egress_ledger` row, true by\nconstruction since no network is grantable rather than by an appender\nsomeone forgot.\n\nKnown bound: an inline body must fit 16,384 characters, refused with a\nnamed error before consent rather than truncated.\n\n## Reviewer notes\n\n- Item 2 above touches a **shared** security filter. That is the one\n  change worth a second opinion.\n- The sandbox integration suites go RED rather than skipping when their\n  platform dependency is missing, matching `sandbox-wrapper-spawn`. A\n  skip and a pass are indistinguishable in a CI summary.\n- Build the Windows helper locally with `bun run\n  build:sandbox-helper:win32` or those suites will skip and tell you\n  nothing.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n## Summary by CodeRabbit\n\n- **New Features**\n- Added opt-in `nimbus exec` for owner-approved, sandboxed code\nexecution.\n- Supports inline code and files, Bun runtime selection, filesystem\ngrants, output and time limits, and clear exit statuses.\n- Execution is audited, network access is denied, and remote LAN\nexecution is blocked.\n  - Added policy controls to disable capabilities.\n\n- **Bug Fixes**\n  - Improved platform-specific sandbox readiness and confinement checks.\n  - Fixed Linux compatibility for sandboxed filesystem operations.\n\n- **Documentation**\n- Added CLI guidance, architecture details, security invariants,\nchangelog, roadmap, and design documentation.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-08-23T08:12:29Z",
-          "tree_id": "5afb42294ea0158ae3c41136fe0790ee81cb4c72",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/25e2c3bdf8ba9b8718cf24994a31bffc36745899"
-        },
-        "date": 1787473435285,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 310.6635563500011,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 312.4963266500014,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 295.6861537000015,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "a93ee4e2503613e5fd931eb0b778e0abadf67765",
+          "message": "feat(gateway): index my open work, GitHub due dates, Outlook read state and iCloud event times for the morning briefing (#1969)\n\nPhase 10, morning briefing, slice **MB1**: the index learns what is open\nand *mine* now, plus due dates and read state. This is the substrate the\nbriefing (MB5) and deadline tracking read. There is no user-visible\ncommand yet; `nimbus ask` already benefits.\n\n## What changes\n\n- **Schema V91 `work_snapshot`** (service, relation, item_id,\ncaptured_at) and an `AFTER DELETE ON item` trigger.\n- **\"My open work\" snapshots**, asked of each provider *as the\nauthenticated user* rather than by matching names. No assignee was\nindexed before, and Jira hides e-mail addresses by default.\n- Jira: `assignee = currentUser() AND statusCategory != Done`, up to 3\npages of 100.\n- Linear: `viewer.assignedIssues`, excluding completed and canceled\nissues, up to 3 pages.\n- GitHub: three searches (`assignee:@me` issues, `review-requested:@me`\nPRs, `author:@me` PRs), one page of 100 each, sent only to the\ninstance's own origin (GHES-aware).\n- Each snapshot runs at most once per `[briefing]\nsnapshot_interval_minutes` (default 15, range 5–240). The last attempt\ntime is kept in each sync's cursor (`snapAt`).\n- A partial or failed fetch keeps the previous snapshot. A complete\nfetch that hits a cap replaces it with the capped set.\n- **The new sync capability `replaceWorkSnapshot(relation,\nexternalIds)`** is scoped to the calling syncable's own service (D24:\nsyncables never get a DB handle). Only jira, linear and github may use\nit. The local-only and unbound contexts refuse.\n- **New static rule `work-snapshot-confined`** (extends D24): only\n`index/work-snapshot-store.ts` and the V91 DDL write `work_snapshot`,\nand only the store and the capability may name the store's writer. Both\nfiles are added to `RULE_ANCHORS`.\n- **GitHub issues** gain `due_at_ms` (from `milestone.due_on`), the\nmilestone title and `meta_v` 1.\n- **Outlook mail** gains `is_read`. The delta cursor prefix moves\n`nimbus-outl2:` → `nimbus-outl3:`, so the mailbox is re-listed once with\nthe new `$select`. `outlook`/`email` joins `REBODY_META_TARGETS`.\n- **iCloud events** gain normalized `start_ms`, `end_ms`, `all_day`,\n`organizer_email`, `self_response` and `attendee_count`. TZID is\nresolved by a gateway-local re-parse of the same ICS, because the SDK\nparser drops TZID and PARTSTAT.\n\n## Deliberately not changed\n\n- No new invariant. D24 is extended.\n- GitHub issues and iCloud events are NOT rebody targets: the events\nfeed and the CalDAV window can never re-walk old rows, so they would\nstay pending forever (an existing test pins the GitHub case).\n- No new egress class. The new requests are sync-class fetches through\neach syncable's existing credential and ledgered run (I29).\n\n## Stated bounds\n\n- GitHub \"my work\" is capped at 100 per relation, Jira and Linear at\n300.\n- A GitHub search rate limit stops that pass's remaining searches; they\nare retried next interval.\n- A dynamically composed table name would evade the static text scan;\nthe capability's confinement is the real defense.\n\n## Docs\n\nCLAUDE.md and GEMINI.md, `docs/roadmap.md`, `docs/architecture.md`,\n`docs/README.md`, `docs/cli-reference.md` (the `[briefing]` key),\n`docs/CHANGELOG.md`, `docs/SECURITY-INVARIANTS.md` (D24) and\n`docs/schema-reference.md`.\n\n## Verification (local, Windows)\n\n- `bun run typecheck`, `typecheck:tests` (0 new) and `preflight:fast`\npass.\n- `bun test packages/gateway/src` and `bun test packages/gateway/test\npackages/cli` pass, except the 6 migration e2e tests that fail on `main`\nin that combined process.\n- `audit:invariants` and `audit:status-drift` pass.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JmSjrCFSTQTQnUa4j8F5b1\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Nimbus now indexes snapshots of open Jira, Linear, and GitHub work,\nrefreshing at a configurable interval (15 minutes by default; 5–240\nminutes supported).\n* Indexed details include issue due dates, GitHub milestone information,\nOutlook email read status, and iCloud event timing and attendee\nresponses.\n* `nimbus ask` can use indexed work and calendar data. Incomplete or\nfailed snapshot refreshes preserve existing snapshot data.\n* **Documentation**\n* Updated configuration and reference guides with details about indexed\ndata and refresh settings.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-11T18:08:32Z",
+          "tree_id": "28e56fbc3089e0ae76e0d6ed1537e41ce175ee8e",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/a93ee4e2503613e5fd931eb0b778e0abadf67765"
+        },
+        "date": 1794421182104,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 307.88790364999807,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 300.68571100000264,
             "unit": "ms"
           }
         ]
