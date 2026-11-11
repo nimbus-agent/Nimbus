@@ -1,13 +1,18 @@
 import type { BoundWriteCapabilities } from "./bound-write-capabilities.ts";
 
 /** How a workflow run started, as the gateway derived it (never from params). */
-export type WorkflowTrigger = "owner_cli" | "owner_ui";
+/**
+ * How a workflow run started, as the gateway derived it. `schedule` is reserved for the gateway's own
+ * scheduler (Phase 10 SA4): nothing produces it yet, so until then a standing rule fires only on
+ * an owner-started run.
+ */
+export type WorkflowTrigger = "schedule" | "owner_cli" | "owner_ui";
 
 /**
  * Where an action came from when the owner's own saved workflow built it (Phase 10 SA2, spec § 5.1).
  * Constructed ONLY in `automation/workflow-write-step.ts` (source-pinned), so no IPC, model, act
- * door, ChatOps, LAN or HTTP path can supply one. Nothing reads it at the gate yet: the audit row
- * records everything here except `fieldSources`, which the standing-rule check (SA3) will read.
+ * door, ChatOps, LAN or HTTP path can supply one. The audit row records everything here except
+ * `fieldSources`, which only the standing-rule check (`engine/standing-rule-step.ts`, I55) reads.
  */
 export type WorkflowProvenance = {
   readonly kind: "owner_workflow";

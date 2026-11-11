@@ -252,7 +252,7 @@ try {
     NO_POLICY_OVERLAY,
     () => "personal",
     // The door executor's shape, with a cap generous enough for a slow CI runner.
-    createBeforeStateRunner({ timeoutMs: 30_000, guardContext: () => ({ kb }) }),
+    { beforeState: createBeforeStateRunner({ timeoutMs: 30_000, guardContext: () => ({ kb }) }) },
   );
   for (const approved of [true, false]) {
     approve = approved;

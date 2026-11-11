@@ -5,7 +5,7 @@ import { join } from "node:path";
 
 import { clearFixture, FAKE_SOCKET_PATH, setFixture } from "../../test/helpers/cli-mocks.ts";
 import { captureOutput } from "../../test/helpers/cli-output.ts";
-import { createMockIpcClient } from "../../test/helpers/mock-ipc-client.ts";
+import { createDeclaringMockIpcClient } from "../../test/helpers/mock-ipc-client-declaring.ts";
 
 const mod = await import("./run-workflow.ts");
 const { runWorkflowFromFile, runWorkflowFromFileWithClient } = mod;
@@ -38,7 +38,7 @@ describe("runWorkflowFromFileWithClient", () => {
         steps: [{ kind: "noop" }],
       }),
     );
-    const ipc = createMockIpcClient([{ ok: true }, { runId: 1 }]);
+    const ipc = createDeclaringMockIpcClient([{ ok: true }, { runId: 1 }]);
     await runWorkflowFromFileWithClient(ipc.client, file, {
       dryRun: false,
       noTtv: false,
@@ -54,6 +54,23 @@ describe("runWorkflowFromFileWithClient", () => {
     });
   });
 
+  it("declares the connection as the owner's CLI as its first frame (SA3)", async () => {
+    const file = join(tmpDir, "wf.json");
+    writeFileSync(file, JSON.stringify({ name: "ship", steps: [{ kind: "noop" }] }));
+    const ipc = createDeclaringMockIpcClient([{ ok: true }, { runId: 3 }]);
+    await runWorkflowFromFileWithClient(ipc.client, file, {
+      dryRun: false,
+      noTtv: false,
+      agent: undefined,
+    });
+    expect(ipc.allCalls.map((c) => c.method)).toEqual([
+      "session.declareKind",
+      "workflow.save",
+      "workflow.run",
+    ]);
+    expect(ipc.allCalls[0]?.params).toEqual({ kind: "cli" });
+  });
+
   it("--dry-run flips stream:false + dryRun:true on the run call", async () => {
     const file = join(tmpDir, "wf.json");
     writeFileSync(
@@ -63,7 +80,7 @@ describe("runWorkflowFromFileWithClient", () => {
         steps: [{ kind: "noop" }],
       }),
     );
-    const ipc = createMockIpcClient([{ ok: true }, { runId: 2 }]);
+    const ipc = createDeclaringMockIpcClient([{ ok: true }, { runId: 2 }]);
     await runWorkflowFromFileWithClient(ipc.client, file, {
       dryRun: true,
       noTtv: false,
@@ -81,7 +98,7 @@ describe("runWorkflowFromFileWithClient", () => {
         steps: [{ kind: "noop" }],
       }),
     );
-    const ipc = createMockIpcClient([
+    const ipc = createDeclaringMockIpcClient([
       { ok: true }, // save
       { stepResults: [{ hitlActions: [] }] }, // preview
       { runId: 3 }, // run
@@ -105,7 +122,7 @@ describe("runWorkflowFromFileWithClient", () => {
         steps: [{ kind: "noop" }],
       }),
     );
-    const ipc = createMockIpcClient([
+    const ipc = createDeclaringMockIpcClient([
       { ok: true },
       { stepResults: [{ hitlActions: ["github.deploy"] }] },
     ]);
@@ -127,7 +144,7 @@ describe("runWorkflowFromFileWithClient", () => {
         steps: [{ kind: "noop" }],
       }),
     );
-    const ipc = createMockIpcClient([{ ok: true }, { runId: 4 }]);
+    const ipc = createDeclaringMockIpcClient([{ ok: true }, { runId: 4 }]);
     await runWorkflowFromFileWithClient(ipc.client, file, {
       dryRun: false,
       noTtv: false,
@@ -145,7 +162,7 @@ describe("runWorkflowFromFileWithClient", () => {
         steps: [{ kind: "noop" }],
       }),
     );
-    const ipc = createMockIpcClient([{ ok: true }, { runId: 5 }]);
+    const ipc = createDeclaringMockIpcClient([{ ok: true }, { runId: 5 }]);
     await runWorkflowFromFileWithClient(ipc.client, file, {
       dryRun: false,
       noTtv: false,
@@ -194,7 +211,7 @@ describe("runWorkflowFromFile (dispatcher)", () => {
         steps: [{ kind: "noop" }],
       }),
     );
-    const ipc = createMockIpcClient([{ ok: true }, { runId: 99 }]);
+    const ipc = createDeclaringMockIpcClient([{ ok: true }, { runId: 99 }]);
     setFixture({
       gatewayState: { socketPath: FAKE_SOCKET_PATH, pid: 42 },
       ipcClient: {
@@ -219,7 +236,7 @@ describe("runWorkflowFromFile (dispatcher)", () => {
         steps: [{ kind: "noop" }],
       }),
     );
-    const ipc = createMockIpcClient([{ ok: true }, { runId: 100 }]);
+    const ipc = createDeclaringMockIpcClient([{ ok: true }, { runId: 100 }]);
     setFixture({
       gatewayState: { socketPath: FAKE_SOCKET_PATH, pid: 42 },
       ipcClient: {
@@ -242,7 +259,7 @@ describe("runWorkflowFromFile (dispatcher)", () => {
         steps: [{ kind: "noop" }],
       }),
     );
-    const ipc = createMockIpcClient([
+    const ipc = createDeclaringMockIpcClient([
       { ok: true }, // save
       { stepResults: [] }, // preview (no hitl)
       { runId: 101 }, // run
@@ -272,7 +289,7 @@ describe("runWorkflowFromFile (dispatcher)", () => {
         steps: [{ kind: "noop" }],
       }),
     );
-    const ipc = createMockIpcClient([new Error("IPC save failed")]);
+    const ipc = createDeclaringMockIpcClient([new Error("IPC save failed")]);
     let disconnected = false;
     setFixture({
       gatewayState: { socketPath: FAKE_SOCKET_PATH, pid: 42 },
@@ -312,7 +329,7 @@ describe("runWorkflowFromFileWithClient — edge-case branches", () => {
       }),
     );
     // The preview returns an empty object (no stepResults field) — ?? [] should produce empty array
-    const ipc = createMockIpcClient([
+    const ipc = createDeclaringMockIpcClient([
       { ok: true }, // save
       {}, // preview: no stepResults key → ?? [] → no hitl → proceed
       { runId: 200 }, // run
@@ -336,7 +353,7 @@ describe("runWorkflowFromFileWithClient — edge-case branches", () => {
       }),
     );
     // Step has no hitlActions property — hitlActions?.length ?? 0 should be 0
-    const ipc = createMockIpcClient([
+    const ipc = createDeclaringMockIpcClient([
       { ok: true }, // save
       { stepResults: [{ name: "step-without-hitlActions" }] }, // no hitlActions key
       { runId: 201 }, // run
@@ -352,7 +369,7 @@ describe("runWorkflowFromFileWithClient — edge-case branches", () => {
   it("omits agent from payload when agent is undefined (not the empty-string path)", async () => {
     const file = join(tmpDir, "wf.json");
     writeFileSync(file, JSON.stringify({ name: "no-agent", steps: [{ kind: "noop" }] }));
-    const ipc = createMockIpcClient([{ ok: true }, { runId: 202 }]);
+    const ipc = createDeclaringMockIpcClient([{ ok: true }, { runId: 202 }]);
     await runWorkflowFromFileWithClient(ipc.client, file, {
       dryRun: false,
       noTtv: false,
@@ -365,7 +382,7 @@ describe("runWorkflowFromFileWithClient — edge-case branches", () => {
   it("omits agent from payload when agent is empty string", async () => {
     const file = join(tmpDir, "wf.json");
     writeFileSync(file, JSON.stringify({ name: "empty-agent", steps: [{ kind: "noop" }] }));
-    const ipc = createMockIpcClient([{ ok: true }, { runId: 203 }]);
+    const ipc = createDeclaringMockIpcClient([{ ok: true }, { runId: 203 }]);
     // agent="" is the guard inside buildWorkflowRunPayload: agent !== undefined && agent !== ""
     await runWorkflowFromFileWithClient(ipc.client, file, {
       dryRun: false,
@@ -379,7 +396,7 @@ describe("runWorkflowFromFileWithClient — edge-case branches", () => {
   it("logs stringified JSON result to stdout after run", async () => {
     const file = join(tmpDir, "wf.json");
     writeFileSync(file, JSON.stringify({ name: "log-check", steps: [{ kind: "noop" }] }));
-    const ipc = createMockIpcClient([{ ok: true }, { status: "completed", runId: 204 }]);
+    const ipc = createDeclaringMockIpcClient([{ ok: true }, { status: "completed", runId: 204 }]);
     await runWorkflowFromFileWithClient(ipc.client, file, {
       dryRun: false,
       noTtv: false,
@@ -393,7 +410,7 @@ describe("runWorkflowFromFileWithClient — edge-case branches", () => {
     const file = join(tmpDir, "wf.json");
     writeFileSync(file, JSON.stringify({ name: "dry-no-ttv", steps: [{ kind: "noop" }] }));
     // noTtv=true AND dryRun=true → the preview call is skipped (only 2 IPC calls)
-    const ipc = createMockIpcClient([{ ok: true }, { runId: 205 }]);
+    const ipc = createDeclaringMockIpcClient([{ ok: true }, { runId: 205 }]);
     await runWorkflowFromFileWithClient(ipc.client, file, {
       dryRun: true,
       noTtv: true,
@@ -410,7 +427,7 @@ describe("runWorkflowFromFileWithClient — edge-case branches", () => {
     writeFileSync(file, JSON.stringify({ name: "hitl-gated", steps: [{ kind: "noop" }] }));
     // save → preview (workflow.run, preview=true) returns a step WITH hitlActions, so the
     // HITL gate must throw and NEVER issue the real workflow.run.
-    const ipc = createMockIpcClient([
+    const ipc = createDeclaringMockIpcClient([
       { ok: true }, // workflow.save
       { stepResults: [{ name: "risky", hitlActions: ["data.export"] }] }, // preview: flagged
     ]);

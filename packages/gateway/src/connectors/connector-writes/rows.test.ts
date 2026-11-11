@@ -405,7 +405,7 @@ describe("connectors 0.6.0 writes (C1)", () => {
 });
 
 describe("the B4a rows on the act door (plan Task A4)", () => {
-  test("the calendar and Drive creates are templated and proposable; overall 47 proposable, 136 denied (9 not_yet_offered)", () => {
+  test("the calendar and Drive creates are templated and proposable; overall 47 proposable, 138 denied (9 not_yet_offered)", () => {
     for (const id of [
       "outlook_calendar_create",
       "apple_calendar_event_create",
@@ -419,7 +419,7 @@ describe("the B4a rows on the act door (plan Task A4)", () => {
     }
     const entries = Object.values(ACTION_PROPOSABILITY);
     expect(entries.filter((e) => e.kind === "proposable")).toHaveLength(47);
-    expect(entries.filter((e) => e.kind === "denied")).toHaveLength(136);
+    expect(entries.filter((e) => e.kind === "denied")).toHaveLength(138);
     expect(
       entries.filter((e) => e.kind === "denied" && e.class === "not_yet_offered"),
     ).toHaveLength(9);

@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 
 import type { IPCClient } from "../ipc-client/index.ts";
+import { declareCliClientKind } from "../lib/declare-client-kind.ts";
 import { hasFlag, shiftFlag } from "../lib/flag-parsing.ts";
 import { gatewayNotRunningMessage } from "../lib/gateway-not-running.ts";
 import { readGatewayState } from "../lib/gateway-process.ts";
@@ -52,6 +53,10 @@ export async function runWorkflowFromFileWithClient(
   const parsed = parseWorkflowFileContent(content, file);
 
   registerInteractiveCliIpcHandlers(client);
+
+  // First frame: this run is the owner's CLI, so its write steps carry the owner's provenance
+  // (best-effort; see `declareCliClientKind`).
+  await declareCliClientKind(client);
 
   const savePayload: Record<string, unknown> = {
     name: parsed.name,

@@ -387,9 +387,12 @@ function executorHarness(opts: {
     { append: (e) => void seen.egress.push(e) },
     opts.policy ?? NO_POLICY_OVERLAY,
     undefined,
-    opts.withRunner === false
-      ? undefined
-      : createBeforeStateRunner({ rows: opts.rows ?? [rowWith(READER)], ...opts.runner }),
+    {
+      beforeState:
+        opts.withRunner === false
+          ? undefined
+          : createBeforeStateRunner({ rows: opts.rows ?? [rowWith(READER)], ...opts.runner }),
+    },
   );
   return { exec, seen };
 }
@@ -470,7 +473,7 @@ describe("before-state through the door's ToolExecutor", () => {
       { append: () => {} },
       NO_POLICY_OVERLAY,
       undefined,
-      createBeforeStateRunner({ rows: [rowWith(READER)], timers: t.timers }),
+      { beforeState: createBeforeStateRunner({ rows: [rowWith(READER)], timers: t.timers }) },
     );
     const pending = exec.execute(WRITE);
     await Bun.sleep(0);

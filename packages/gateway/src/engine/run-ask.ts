@@ -17,6 +17,8 @@ import type { LlmRouter } from "../llm/router.ts";
 import type { LlmGenerateResult } from "../llm/types.ts";
 import type { SessionMemoryStore } from "../memory/session-memory-store.ts";
 import type { PlatformPaths } from "../platform/paths.ts";
+import type { EnforcedPolicy } from "../policy/policy-gate.ts";
+import { createStandingRuleDeps } from "../standing/standing-rule-capability.ts";
 import type { AgentLatencyRecorder } from "../telemetry/agent-latency.ts";
 import {
   agentRequestContext,
@@ -33,7 +35,7 @@ import type {
   LocalCandidate,
   PrimaryRetrieval,
 } from "./ask-explain-types.ts";
-import { type BeforeStateRunner, createBeforeStateRunner } from "./before-state.ts";
+import { createBeforeStateRunner } from "./before-state.ts";
 import { capPerService, stripInternalRankField } from "./context-fairness.ts";
 import type { ContextTruncation } from "./context-truncation-disclosure.ts";
 import {
@@ -42,6 +44,7 @@ import {
   type ExecutorPolicyDep,
   NO_POLICY_OVERLAY,
   ToolExecutor,
+  type ToolExecutorExtras,
 } from "./executor.ts";
 import { GatewayAgentUnavailableError } from "./gateway-agent-error.ts";
 import { indexCountFor, indexCountLine } from "./index-count-question.ts";
@@ -581,7 +584,7 @@ function buildAskExecutor(p: RunAskParams): ToolExecutor {
 function newTurnExecutor(
   p: ExecutorBuildParams,
   delegation: ExecutorDelegationDep | undefined,
-  beforeState?: BeforeStateRunner,
+  extras: ToolExecutorExtras = {},
 ): ToolExecutor {
   const consent = bindConsentChannel(p.consentCoordinator, p.clientId);
   // I29: every real connector dispatch routes through this executor, so it carries the egress sink
@@ -598,7 +601,7 @@ function newTurnExecutor(
     p.egressSink,
     p.policyHitl ?? NO_POLICY_OVERLAY,
     p.previewCredentialFor,
-    beforeState,
+    extras,
   );
 }
 
@@ -609,20 +612,23 @@ function newTurnExecutor(
  * runner (spec § 5.4, D40(b)), so only the door's prompt reads a write's current state.
  */
 export function buildModelWriteExecutor(p: RunAskParams): ToolExecutor {
-  return newTurnExecutor(
-    p,
-    undefined,
-    createBeforeStateRunner({
+  return newTurnExecutor(p, undefined, {
+    beforeState: createBeforeStateRunner({
       ...(p.beforeStateRows === undefined ? {} : { rows: p.beforeStateRows }),
       // B3 (R11): the KB-child guards read the tribal KB destinations, snapshotted per read.
       guardContext: () => ({ kb: p.getTribalKbConfig() }),
     }),
-  );
+  });
 }
 
 /** What a workflow run needs to build its write executor: the ask turn's shared executor arguments. */
 export type WorkflowWriteExecutorParams = ExecutorBuildParams &
-  Pick<RunAskParams, "beforeStateRows" | "getTribalKbConfig">;
+  Pick<RunAskParams, "beforeStateRows" | "getTribalKbConfig"> & {
+    /** The LIVE enforced policy (I22); absent = standing approvals are locked off (fail closed). */
+    readonly enforcedPolicy?: (() => EnforcedPolicy | undefined) | undefined;
+    /** Test seam: the I55 check's clock. */
+    readonly standingNow?: () => number;
+  };
 
 /**
  * The workflow write step's executor (Phase 10 SA2): {@link buildModelWriteExecutor}'s shape for
@@ -630,18 +636,24 @@ export type WorkflowWriteExecutorParams = ExecutorBuildParams &
  * owner approves a workflow write, I20), and the before-state runner, so a row's guard runs and the
  * owner sees the current state beside the new values. It is the second (and last) place a
  * before-state runner is built (static D40(b)). It offers nothing to the model: the actions come
- * from the owner's stored steps, never from model output.
+ * from the owner's stored steps, never from model output. It is also the ONLY executor given the
+ * standing-rule check's dependencies (I55, static D44(e)): every other executor has none and so
+ * can never approve an action by a rule.
  */
 export function buildWorkflowWriteExecutor(p: WorkflowWriteExecutorParams): ToolExecutor {
-  return newTurnExecutor(
-    p,
-    undefined,
-    createBeforeStateRunner({
+  return newTurnExecutor(p, undefined, {
+    beforeState: createBeforeStateRunner({
       readsEveryOrigin: true,
       ...(p.beforeStateRows === undefined ? {} : { rows: p.beforeStateRows }),
       guardContext: () => ({ kb: p.getTribalKbConfig() }),
     }),
-  );
+    standingRules: createStandingRuleDeps({
+      db: p.localIndex.getDatabase(),
+      enforcedPolicy: p.enforcedPolicy,
+      getTribalKbConfig: p.getTribalKbConfig,
+      ...(p.standingNow === undefined ? {} : { now: p.standingNow }),
+    }),
+  });
 }
 
 async function runActionsPlan(

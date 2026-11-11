@@ -304,6 +304,9 @@ export const ACTION_PROPOSABILITY: Readonly<Record<string, Proposability>> = Obj
       "registry.add",
       "pack.install",
       "connector.writes.enable",
+      // Phase 10 SA3 (I55): the two owner approvals behind a standing rule are never an MCP proposal.
+      "standing.rule.create",
+      "standing.rule.resume",
       "vault.set",
       "vault.delete",
       "teamvault.put",

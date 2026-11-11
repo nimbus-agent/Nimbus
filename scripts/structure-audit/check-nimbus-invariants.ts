@@ -3153,6 +3153,187 @@ function d43ExecutorPins(f: FileEntry, code: string, commentFree: string): Viola
   return out;
 }
 
+// ---- D44 (standing approvals, I55, Phase 10 SA3) -------------------------------------------------
+// A standing rule approves a write without a prompt, so five things must stay the only way in:
+// (a) the owner-workflow PROVENANCE is built only by `automation/workflow-write-step.ts`: the
+//     `kind: "owner_workflow"` literal is written there and in the type (`engine/types.ts`); the
+//     literal is READ (never constructed) only by `engine/standing-rule-step.ts`; the type and its
+//     `fieldSources` member are named only by those files and `engine/executor.ts` (the audit row's
+//     trimmed copy). No IPC method, door, payload, ChatOps, LAN or HTTP path can supply one;
+// (b) the `standing_rule` and `standing_rule_fire` tables are referenced only by
+//     `standing/standing-rule-store.ts` and their V88 DDL, and the store's writers (`insertRule`,
+//     `resumeRule`, `pauseRule`, `revokeRule`) only by the store and the `standing.*` RPC handler
+//     (`ipc/standing-rpc.ts`); the counter claim `claimFire` only by the store and the check;
+// (c) the order, pinned in `engine/executor.ts`: `resolveHitlApproval` calls `renderConfirmPhase`
+//     BEFORE `approvalPhase`; `standingRuleStep(` is called exactly once, inside `approvalPhase`,
+//     BEFORE `tryDelegatedApproval(`; the name `standingRuleStep` is used only by the executor and
+//     its own module; and the `kind: "standing_approved"` / `hitlStatus: "standing_approved"` literal
+//     is constructed only by the executor, the check and the type;
+// (d) RESERVED for the scheduler (SA4): the executor's `unattended: true` option. Nothing sets it
+//     yet, and the rule text tells the owner a schedule is not covered; SA4 adds the clause with
+//     the option;
+// (e) the executor dependency `standingRules` is handed over only by `buildWorkflowWriteExecutor`
+//     in `engine/run-ask.ts`: the identifier is named only by the executor, run-ask and the
+//     standing module that builds it, and run-ask writes `standingRules:` exactly once, inside that
+//     function. Every other executor therefore has none and can never approve by a rule.
+// Comments are stripped before matching (string literals are kept for the literal clauses); test
+// files, a test-support `*.test-helpers.ts` that no production file imports, and anything outside
+// packages/gateway/src/ are not scanned. STATED BOUND, as D33(c)/D41/D42: a dynamically composed
+// name evades a text scan, a second use inside an allow-listed file is exempt whole-file (the order
+// pins narrow that for the executor), and an alias is not followed. The order pins are TEXTUAL:
+// the behavioural tests in `security-invariants.test.ts` (I55) are authoritative.
+const D44_SRC = "packages/gateway/src/";
+const D44_EXECUTOR = `${D44_SRC}engine/executor.ts`;
+const D44_STEP = `${D44_SRC}engine/standing-rule-step.ts`;
+const D44_TYPES = `${D44_SRC}engine/types.ts`;
+const D44_WRITE_STEP = `${D44_SRC}automation/workflow-write-step.ts`;
+const D44_STORE = `${D44_SRC}standing/standing-rule-store.ts`;
+const D44_V88 = `${D44_SRC}index/standing-rule-v88-sql.ts`;
+const D44_RPC = `${D44_SRC}ipc/standing-rpc.ts`;
+const D44_RUN_ASK = `${D44_SRC}engine/run-ask.ts`;
+const D44_TABLE_RES: readonly RegExp[] = ["standing_rule", "standing_rule_fire"].map((t) => {
+  const re = sqlTableReferenceRe(t);
+  return new RegExp(re.source, "gi");
+});
+const D44_NAME_RULES: ReadonlyArray<{
+  readonly rule: string;
+  readonly re: RegExp;
+  readonly allowed: readonly string[];
+  /** Match against comment-stripped source with strings kept (a string spelling is a spelling). */
+  readonly keepStrings: boolean;
+}> = [
+  {
+    rule: "standing-provenance-confined",
+    re: /["']owner_workflow["']/g,
+    allowed: [D44_WRITE_STEP, D44_TYPES, D44_STEP],
+    keepStrings: true,
+  },
+  {
+    rule: "standing-provenance-confined",
+    re: /\bkind\s*:\s*["']owner_workflow["']/g,
+    allowed: [D44_WRITE_STEP, D44_TYPES],
+    keepStrings: true,
+  },
+  {
+    rule: "standing-provenance-confined",
+    re: /\bWorkflowProvenance\b|\bfieldSources\b/g,
+    allowed: [D44_WRITE_STEP, D44_TYPES, D44_STEP, D44_EXECUTOR],
+    keepStrings: false,
+  },
+  {
+    rule: "standing-tables-confined",
+    re: /\b(?:insertRule|resumeRule|pauseRule|revokeRule)\b/g,
+    allowed: [D44_STORE, D44_RPC],
+    keepStrings: false,
+  },
+  {
+    rule: "standing-tables-confined",
+    re: /\bclaimFire\b/g,
+    allowed: [D44_STORE, D44_STEP],
+    keepStrings: false,
+  },
+  {
+    rule: "standing-outcome-confined",
+    re: /\b(?:kind|hitlStatus)\s*:\s*["']standing_approved["']/g,
+    allowed: [D44_EXECUTOR, D44_STEP, D44_TYPES],
+    keepStrings: true,
+  },
+  {
+    rule: "standing-outcome-confined",
+    re: /\bstandingRuleStep\b/g,
+    allowed: [D44_EXECUTOR, D44_STEP],
+    keepStrings: false,
+  },
+  {
+    rule: "standing-rules-dep-confined",
+    re: /\bstandingRules\b/g,
+    allowed: [D44_EXECUTOR, D44_RUN_ASK],
+    keepStrings: false,
+  },
+];
+
+export function checkStandingApprovals(files: readonly FileEntry[]): Violation[] {
+  const out: Violation[] = [];
+  const add = (f: FileEntry, rule: string, src: string, index: number | undefined): void => {
+    const line = src.slice(0, index).split("\n").length;
+    out.push({
+      rule,
+      file: f.relPath,
+      line,
+      snippet: (f.contents.split("\n")[line - 1] ?? "").trim(),
+    });
+  };
+  for (const f of files) {
+    if (f.relPath.endsWith(".test.ts") || f.relPath.endsWith(".test-helpers.ts")) continue;
+    if (!f.relPath.startsWith(D44_SRC)) continue;
+    const commentFree = stripComments(f.contents);
+    const code = stripStringLiterals(commentFree);
+    if (f.relPath !== D44_STORE && f.relPath !== D44_V88) {
+      for (const re of D44_TABLE_RES) {
+        for (const m of commentFree.matchAll(re))
+          add(f, "standing-tables-confined", commentFree, m.index);
+      }
+    }
+    for (const r of D44_NAME_RULES) {
+      if (r.allowed.includes(f.relPath)) continue;
+      const src = r.keepStrings ? commentFree : code;
+      for (const m of src.matchAll(r.re)) add(f, r.rule, src, m.index);
+    }
+    if (f.relPath === D44_EXECUTOR) for (const v of d44ExecutorPins(f, code)) out.push(v);
+    if (f.relPath === D44_RUN_ASK) for (const v of d44RunAskPins(f, code)) out.push(v);
+  }
+  return out;
+}
+
+/** Clause (c): the order inside the executor. */
+function d44ExecutorPins(f: FileEntry, code: string): Violation[] {
+  const out: Violation[] = [];
+  const fail = (what: string): void => {
+    out.push({ rule: "standing-step-order-pinned", file: f.relPath, line: 1, snippet: what });
+  };
+  const span = (sig: RegExp): string => {
+    const s = d41Span(code, sig, "\n  }\n");
+    return s === undefined ? "" : code.slice(s[0], s[1]);
+  };
+  const calls = [...code.matchAll(/\bstandingRuleStep\s*\(/g)];
+  const approval = span(/\bprivate\s+async\s+approvalPhase\s*\(/);
+  const stepAt = approval.search(/\bstandingRuleStep\s*\(/);
+  const delegateAt = approval.search(/\bthis\.tryDelegatedApproval\s*\(/);
+  if (calls.length !== 1 || stepAt === -1 || delegateAt === -1 || !(stepAt < delegateAt)) {
+    fail(
+      "standingRuleStep( must be called exactly once, in approvalPhase, before tryDelegatedApproval(",
+    );
+  }
+  const resolve = span(/\bprivate\s+async\s+resolveHitlApproval\s*\(/);
+  const renderAt = resolve.indexOf("this.renderConfirmPhase(");
+  const approveAt = resolve.indexOf("this.approvalPhase(");
+  if (renderAt === -1 || approveAt === -1 || !(renderAt < approveAt)) {
+    fail("resolveHitlApproval must call renderConfirmPhase before approvalPhase");
+  }
+  return out;
+}
+
+/** Clause (e): `standingRules:` is written once in run-ask, inside `buildWorkflowWriteExecutor`. */
+function d44RunAskPins(f: FileEntry, code: string): Violation[] {
+  const out: Violation[] = [];
+  const fail = (what: string): void => {
+    out.push({ rule: "standing-rules-dep-confined", file: f.relPath, line: 1, snippet: what });
+  };
+  const writes = [...code.matchAll(/\bstandingRules\s*:/g)];
+  const builder = d41Span(code, /\bexport\s+function\s+buildWorkflowWriteExecutor\s*\(/, "\n}\n");
+  const at = writes[0]?.index;
+  if (
+    writes.length !== 1 ||
+    at === undefined ||
+    builder === undefined ||
+    at < builder[0] ||
+    at >= builder[1]
+  ) {
+    fail("standingRules: must be written once, inside buildWorkflowWriteExecutor");
+  }
+  return out;
+}
+
 // ---- D36 (role-pack layer writers, I47) ----------------------------------------------------------
 // A role-pack layer changes the owner's effective config, so I47 lets `packs/pack-install.ts` write
 // one only after the LOCAL owner approved `pack.install` over the pack's exact `defaults` text. The
@@ -4206,6 +4387,11 @@ export const RULE_ANCHORS: readonly string[] = [
   // anchored above.
   "packages/gateway/src/engine/prepare-step.ts",
   "packages/gateway/src/connectors/connector-writes/prepare-tools.ts",
+  // D44 — the check itself, the only store, and the one file that builds a provenance: each rule
+  // reads these by name, and a rule that cannot find them would report clean while checking nothing.
+  "packages/gateway/src/engine/standing-rule-step.ts",
+  "packages/gateway/src/standing/standing-rule-store.ts",
+  "packages/gateway/src/automation/workflow-write-step.ts",
 ];
 
 /** Fail loudly when the scanned set cannot support the rules about to run. */
@@ -4651,6 +4837,27 @@ async function run(): Promise<void> {
     for (const e of v) {
       console.error(
         `::error file=${e.file},line=${e.line}::D43 (${e.rule}) the gateway-internal discard of an unused change set is named or reachable outside the executor's discard step — a change set could be deleted without the owner's approval, or after a dispatch (I2 exception): ${e.snippet}`,
+      );
+    }
+    if (v.length > 0) exit = 1;
+  }
+  if (mode === "binary-only" || mode === "all") {
+    const v = checkStandingApprovals(files);
+    const D44_CLAUSE: Record<string, string> = {
+      "standing-provenance-confined":
+        "(a) an owner-workflow provenance is built, or its shape named, outside the workflow write step",
+      "standing-tables-confined":
+        "(b) a standing-rule table or one of its writers is reached outside the store",
+      "standing-step-order-pinned":
+        "(c) the standing-rule step is not called once in approvalPhase, after the confirm phase and before a delegate",
+      "standing-outcome-confined":
+        "(c) a standing_approved outcome is constructed, or the check named, outside the executor and the check",
+      "standing-rules-dep-confined":
+        "(e) the standing-rule dependencies are handed to an executor other than the workflow write executor",
+    };
+    for (const e of v) {
+      console.error(
+        `::error file=${e.file},line=${e.line}::D44 ${D44_CLAUSE[e.rule] ?? e.rule} — a write could run with no prompt that a live, owner-approved standing rule does not exactly cover (I55): ${e.snippet}`,
       );
     }
     if (v.length > 0) exit = 1;

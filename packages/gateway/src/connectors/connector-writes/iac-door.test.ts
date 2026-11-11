@@ -184,7 +184,7 @@ describe("D2 through the real model door", () => {
       makeEgressSink(db),
       NO_POLICY_OVERLAY,
       undefined,
-      createBeforeStateRunner(),
+      { beforeState: createBeforeStateRunner() },
     );
     const tools = await buildConnectorWriteAgentTools(
       src,

@@ -705,7 +705,7 @@ describe("B2: the Linear assignee guard through the production door executor (OR
       makeEgressSink(db),
       NO_POLICY_OVERLAY,
       undefined,
-      createBeforeStateRunner(),
+      { beforeState: createBeforeStateRunner() },
     );
     const egress = () =>
       (
@@ -798,7 +798,7 @@ describe("B3: the KB-child guard through the production door executor (OR-B3-3)"
       makeEgressSink(db),
       NO_POLICY_OVERLAY,
       undefined,
-      createBeforeStateRunner({ guardContext: () => ({ kb }) }),
+      { beforeState: createBeforeStateRunner({ guardContext: () => ({ kb }) }) },
     );
     const egress = () =>
       (
@@ -877,7 +877,7 @@ describe("B3r: remote content is refused on the real rows through the real door"
       makeEgressSink(db),
       NO_POLICY_OVERLAY,
       undefined,
-      createBeforeStateRunner({ guardContext: () => ({ kb: undefined }) }),
+      { beforeState: createBeforeStateRunner({ guardContext: () => ({ kb: undefined }) }) },
     );
     const egress = () =>
       (db.query("SELECT method FROM egress_ledger").all() as Array<{ method: string }>).map(

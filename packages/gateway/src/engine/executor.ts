@@ -57,6 +57,7 @@ import {
   runPrepareStep,
 } from "./prepare-step.ts";
 import { serviceOf } from "./service-of.ts";
+import { type StandingRuleDeps, standingRuleStep } from "./standing-rule-step.ts";
 import { extractToolInput } from "./tool-input.ts";
 import type {
   ActionResult,
@@ -268,6 +269,12 @@ const HITL_REQUIRED_BACKING = new Set<string>([
   // the `connector.writes.enable` handler, through the IPC executor. Never delegable (I20; see
   // tryDelegatedApproval).
   "connector.writes.enable",
+  // Phase 10 SA3 (I55): the two owner approvals behind a standing rule: creating one, and resuming a
+  // paused one (which widens again). Gate site: ipc/standing-rpc.ts, through an executor built with
+  // no delegation. Never delegable (I20; see tryDelegatedApproval), and refused unless the
+  // owner's own prompt answered (the handler checks `answerSource`).
+  "standing.rule.create",
+  "standing.rule.resume",
   "connector.addMcp",
   "data.export",
   "connector.reindex",
@@ -456,7 +463,7 @@ function otherDisplayPayload(action: PlannedAction): Record<string, unknown> | u
     // Only the extensions the owner is approving, plus the fixed fact that they run offline.
     return { extensions: action.payload["extensions"], network: "none" };
   }
-  if (action.type === "pack.install") {
+  if (action.type === "pack.install" || isStandingRuleActionType(action.type)) {
     // `promptText` is the prompt body itself (printed by formatConsentPrompt); repeating it as
     // structured details would show the owner the same text twice.
     const { promptText: _prompt, ...shown } = action.payload;
@@ -522,9 +529,10 @@ export function formatConsentPrompt(
   const lines = [`Action requires your approval`, ``, `Type: ${action.type}`];
   // One fixed line on every prompt shape below; the origin is gateway-set, never payload text.
   if (action.origin === "model") lines.push("Requested by: the model");
-  if (action.type === "pack.install" && typeof action.payload?.["promptText"] === "string") {
+  const promptText = promptTextOf(action);
+  if (promptText !== undefined) {
     // The pack prompt is a purpose-built, escaped rendering; a JSON Details line would only add noise.
-    lines.push("", action.payload["promptText"]);
+    lines.push("", promptText);
     return lines.join("\n");
   }
   const enableLines =
@@ -590,6 +598,18 @@ function evalPromptLines(action: PlannedAction): string[] | undefined {
   return out;
 }
 
+/** A pack install's or a standing-rule approval's prompt body: a purpose-built, escaped text. */
+function promptTextOf(action: PlannedAction): string | undefined {
+  if (action.type !== "pack.install" && !isStandingRuleActionType(action.type)) return undefined;
+  const text = action.payload?.["promptText"];
+  return typeof text === "string" ? text : undefined;
+}
+
+/** The two owner approvals behind a standing rule (I55). */
+export function isStandingRuleActionType(type: string): boolean {
+  return type === "standing.rule.create" || type === "standing.rule.resume";
+}
+
 function omitPromptText(payload: Record<string, unknown>): Record<string, unknown> {
   const { promptText: _prompt, ...rest } = payload;
   return rest;
@@ -607,7 +627,9 @@ function auditedAction(action: PlannedAction): PlannedAction {
   }
   if (action.payload === undefined) return action;
   // The prompt text can run to many lines of pack content; the row keeps the identifying fields.
-  if (action.type === "pack.install") return { ...action, payload: omitPromptText(action.payload) };
+  if (action.type === "pack.install" || isStandingRuleActionType(action.type)) {
+    return { ...action, payload: omitPromptText(action.payload) };
+  }
   // The rendered plan repeats `plan`, which the row keeps.
   if (hasPlanText(action)) return { ...action, payload: omitPlanText(action.payload) };
   // A multi-file write keeps its file count and size, never the file text (D1c); a CloudFormation
@@ -636,6 +658,15 @@ interface GateRecord {
   filesSha256?: string | undefined;
   /** Set only on the gateway's own discard of an unused change set (D2, static D43). */
   discard?: "unused_changeset";
+  /** Set only by an approval a standing rule gave (I55): the rule, the fire and the scope matched. */
+  standingRule?: StandingRuleAudit;
+}
+
+/** The audit row's and the egress row's link to a standing-rule fire (I55). */
+export interface StandingRuleAudit {
+  readonly ruleId: string;
+  readonly fireId: string;
+  readonly matchedScopeSha256: string;
 }
 
 /** A refusal a phase already recorded (reason in the record), with no prompt shown. */
@@ -748,6 +779,7 @@ function auditExtrasOf(record: GateRecord): AuditExtras {
     ...(record.diffSha256 === undefined ? {} : { diffSha256: record.diffSha256 }),
     ...(record.filesSha256 === undefined ? {} : { filesSha256: record.filesSha256 }),
     ...(record.discard === undefined ? {} : { discard: record.discard }),
+    ...(record.standingRule === undefined ? {} : { standingRule: record.standingRule }),
   };
 }
 
@@ -777,15 +809,18 @@ interface AuditExtras {
   diffSha256?: string;
   filesSha256?: string;
   discard?: "unused_changeset";
+  standingRule?: StandingRuleAudit;
 }
 
 /**
- * The audit row's JSON. A bound write's two digests come FIRST: the payload is capped, so a long
+ * The audit row's JSON. A standing rule's link and a bound write's two digests come FIRST: the payload is capped, so a long
  * action (a 5000-character commit message) must never push them out of the row.
  */
 function auditPayload(action: PlannedAction, extras: AuditExtras): string {
-  const { boundValuesSha256, diffSha256, filesSha256, ...rest } = extras;
+  const { boundValuesSha256, diffSha256, filesSha256, standingRule, ...rest } = extras;
   return redactAuditPayload({
+    // The link to the fire comes first, like the digests: the row's size cap cuts the payload's tail.
+    ...(standingRule === undefined ? {} : { standingRule }),
     ...(boundValuesSha256 === undefined ? {} : { boundValuesSha256 }),
     ...(diffSha256 === undefined ? {} : { diffSha256 }),
     ...(filesSha256 === undefined ? {} : { filesSha256 }),
@@ -951,6 +986,12 @@ function isDiscardOf(action: PlannedAction, target: DiscardTarget): boolean {
   );
 }
 
+/** The optional capabilities of a {@link ToolExecutor}: its 8th constructor parameter. */
+export interface ToolExecutorExtras {
+  readonly beforeState?: BeforeStateRunner | undefined;
+  readonly standingRules?: StandingRuleDeps | undefined;
+}
+
 export class ToolExecutor {
   constructor(
     private readonly consent: ConsentChannel,
@@ -962,17 +1003,32 @@ export class ToolExecutor {
     /** Names the credential kind in a connector write's preview; absent = not shown (M2). */
     private readonly previewCredentialFor?: PreviewCredentialResolver,
     /**
-     * Spec § 5.4: reads a write's current state for its preview. Passed ONLY by the model door's
-     * executor (`engine/run-ask.ts` `buildModelWriteExecutor`, D40(b)); absent everywhere else, so
-     * every other prompt is unchanged.
+     * The executor's optional capabilities, one options object (Phase 10 SA3): production never adds
+     * a ninth positional argument (D42(c)).
      */
-    private readonly beforeState?: BeforeStateRunner,
+    extras: ToolExecutorExtras = {},
     /**
      * A test seam, D42(c): production passes nothing, so the gate reads `CONNECTOR_WRITE_ROWS` and
      * `PREPARE_TOOL_IDS`. A synthetic bound row cannot exist in production, so the tests supply it.
      */
     private readonly writeTable?: WriteTable,
-  ) {}
+  ) {
+    this.beforeState = extras.beforeState;
+    this.standingRules = extras.standingRules;
+  }
+
+  /**
+   * Spec § 5.4: reads a write's current state for its preview. Passed ONLY by the model door's
+   * executor and the workflow write executor (`engine/run-ask.ts`, D40(b)); absent everywhere else,
+   * so every other prompt is unchanged.
+   */
+  private readonly beforeState: BeforeStateRunner | undefined;
+
+  /**
+   * I55: the standing-rule check's dependencies. Supplied ONLY by `buildWorkflowWriteExecutor`
+   * (static D44(e)); an executor without them can never approve an action by a standing rule.
+   */
+  private readonly standingRules: StandingRuleDeps | undefined;
 
   /** The rows the gate looks a write up in. */
   private rows(): readonly ConnectorWriteRow[] {
@@ -1059,6 +1115,7 @@ export class ToolExecutor {
       action.type === "registry.add" ||
       action.type === "pack.install" ||
       action.type === "connector.writes.enable" ||
+      isStandingRuleActionType(action.type) ||
       action.type.startsWith("extension.")
     ) {
       return "fallback";
@@ -1336,6 +1393,22 @@ export class ToolExecutor {
     confirm: Exclude<ConfirmPlan, { kind: "refuse" }>,
     record: GateRecord,
   ): Promise<ApprovalOutcome> {
+    // I55, static D44(c): the ONE call of the standing-rule check, after the confirm phase (the
+    // caller ran `renderConfirmPhase`) and before a delegate or the owner is asked. Only an
+    // executor given the check's dependencies (the workflow write executor) can reach a rule. A hit
+    // is recorded `standing_approved` by the caller, with the fire in the audit row and the ledger.
+    const match =
+      this.standingRules === undefined
+        ? undefined
+        : standingRuleStep(action, {
+            deps: this.standingRules,
+            rows: this.rows(),
+            frozenHitl: HITL_REQUIRED.has(action.type),
+          });
+    if (match !== undefined) {
+      record.standingRule = match;
+      return { kind: "standing_approved", ruleId: match.ruleId, fireId: match.fireId };
+    }
     const delegated = await this.tryDelegatedApproval(action, confirm, record);
     const delegateSource = this.delegation?.answerSource ?? "delegate";
     if (delegated === "approved") return { kind: "approved", answerSource: delegateSource };
@@ -1573,6 +1646,15 @@ export class ToolExecutor {
       buildEgressEntry({
         // The ledger's payload summary never holds the text of a commit's files either (D1c).
         action: withoutTemplateText(withoutFileText(action)),
+        // I55: a standing-approved action's ledger row names the fire, like its audit row.
+        ...(record.standingRule === undefined
+          ? {}
+          : {
+              standingFire: {
+                ruleId: record.standingRule.ruleId,
+                fireId: record.standingRule.fireId,
+              },
+            }),
         hitlStatus,
         resultStatus: hitlStatus === "rejected" ? "blocked" : "authorized",
         sessionId,

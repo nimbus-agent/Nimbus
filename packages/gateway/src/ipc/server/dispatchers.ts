@@ -12,7 +12,12 @@ import {
 import { createConnectorDispatcher, meshDispatcherClient } from "../../connectors/registry.ts";
 import { asRecord } from "../../connectors/unknown-record.ts";
 import { makeEgressSink, NULL_EGRESS_SINK } from "../../egress/egress-ledger.ts";
-import { bindConsentChannel, NO_POLICY_OVERLAY, ToolExecutor } from "../../engine/executor.ts";
+import {
+  bindConsentChannel,
+  HITL_REQUIRED,
+  NO_POLICY_OVERLAY,
+  ToolExecutor,
+} from "../../engine/executor.ts";
 import type { ConnectorDispatcher } from "../../engine/types.ts";
 import { resolveRuntimeById } from "../../exec/exec-runtimes.ts";
 import {
@@ -44,6 +49,7 @@ import { runMediaPass } from "../../multimodal/media-pass.ts";
 import { MULTIMODAL_CAPABILITY, type RemoteVlmVendor } from "../../multimodal/media-types.ts";
 import { loadMultimodalConfig, type MultimodalConfig } from "../../multimodal/multimodal-config.ts";
 import { activePackSuggestedConnectors, type PackOwnerGate } from "../../packs/pack-install.ts";
+import { isStandingApprovalsEnabled } from "../../standing/standing-rule-capability.ts";
 import { isConnectorConfigured } from "../../sync/connector-configured.ts";
 import type { NimbusVault } from "../../vault/nimbus-vault.ts";
 import { GATEWAY_VERSION } from "../../version.ts";
@@ -99,6 +105,7 @@ import { dispatchSecurityRpc, SecurityRpcError } from "../security-rpc.ts";
 import type { ClientSession } from "../session.ts";
 import { dispatchSessionRpc, SessionRpcError } from "../session-rpc.ts";
 import { dispatchShareRpc, ShareRpcError } from "../share-rpc.ts";
+import { createStandingOwnerAsk, dispatchStandingRpc } from "../standing-rpc.ts";
 import { dispatchTeamVaultRpc, TeamVaultRpcError } from "../teamvault-rpc.ts";
 import { dispatchToolgenRpc, ToolgenRpcError } from "../toolgen-rpc.ts";
 import { dispatchTourRpc, TourRpcError } from "../tour-rpc.ts";
@@ -1565,6 +1572,46 @@ export async function tryDispatchCaptureRpc(
 }
 
 /**
+ * `standing.*` (Phase 10 SA3, I55): the owner's standing approval rules. The whole namespace is in
+ * `FORBIDDEN_OVER_LAN` (I5); the Tauri allowlist (I7) names list / show / fires / pause / revoke
+ * only. The connection's kind is the CONNECTION's (`getClientKind`), never a param: `create` and
+ * `resume` answer only a `cli` connection, and ask the LOCAL owner through an executor built with
+ * no delegation, on THIS connection's consent channel.
+ */
+export async function tryDispatchStandingRpc(
+  ctx: ServerCtx,
+  method: string,
+  params: unknown,
+  clientId: string,
+): Promise<unknown> {
+  if (!method.startsWith("standing.")) return phase4RpcSkipped;
+  const localIndex = ctx.options.localIndex;
+  if (localIndex === undefined) return phase4RpcSkipped;
+  const db = localIndex.getDatabase();
+  const out = await dispatchStandingRpc(method, params, {
+    db,
+    callerKind: ctx.getClientKind(clientId),
+    // Fail closed: an absent policy accessor reads as locked off.
+    policyAllows: () => isStandingApprovalsEnabled(ctx.options.enforcedPolicy?.()),
+    askOwner: createStandingOwnerAsk({
+      consent: bindConsentChannel(ctx.consentImpl, clientId),
+      audit: localIndex,
+      db,
+      policyHitl: ctx.options.policyHitl,
+    }),
+    recordNarrowing: (actionType, actionJson) =>
+      localIndex.recordAudit({
+        actionType,
+        hitlStatus: "not_required",
+        actionJson,
+        timestamp: Date.now(),
+      }),
+    frozenHitl: (t) => HITL_REQUIRED.has(t),
+  });
+  return out.kind === "hit" ? out.value : phase4RpcSkipped;
+}
+
+/**
  * `migration.*` (connector-unbundling spec § 7.2/§ 7.3): every method is in `FORBIDDEN_OVER_LAN`
  * (I5); `migration.list` and `migration.accept` are on the Tauri allowlist (I46), `decline` and
  * `retry` are not. Only `migration.accept` asks the owner, through the SAME gate-only executor the
@@ -1902,6 +1949,7 @@ const PHASE4_PLATFORM_DISPATCHERS: ReadonlyArray<
   tryDispatchOncallPushRpc,
   tryDispatchNotificationsRpc,
   tryDispatchCaptureRpc,
+  tryDispatchStandingRpc,
   tryDispatchMigrationRpc,
   tryDispatchMediaRpc,
   tryDispatchEgressRpc,

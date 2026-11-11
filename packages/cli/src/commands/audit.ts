@@ -77,6 +77,49 @@ export async function runAuditVerify(client: IPCClient, full: boolean): Promise<
   }
 }
 
+type StandingFireView = {
+  fireId: string;
+  ruleId: string;
+  firedAt: number;
+  actionType: string;
+  matchedScopeSha256: string;
+  audit: { id: number; timestamp: number; rowHash: string } | null;
+};
+
+/**
+ * `nimbus audit standing [<rule>]` (Phase 10 SA3): the fires of one standing rule, or of all of
+ * them, each joined to the audit row that recorded it. A fire with no audit row is shown as such.
+ */
+export async function runAuditStanding(
+  client: Pick<IPCClient, "call">,
+  ruleId: string | undefined,
+  opts: { json?: boolean } = {},
+): Promise<void> {
+  const out = await client.call<{ fires: StandingFireView[] }>(
+    "standing.fires",
+    ruleId === undefined ? {} : { id: ruleId },
+  );
+  if (opts.json === true) {
+    console.log(JSON.stringify(out, null, 2));
+    return;
+  }
+  if (out.fires.length === 0) {
+    console.log("No standing-rule fires recorded.");
+    return;
+  }
+  console.log(
+    `${"Fired".padEnd(20)} ${"Rule".padEnd(20)} ${"Fire".padEnd(20)} ${"Action".padEnd(24)} Audit row`,
+  );
+  console.log("-".repeat(96));
+  for (const f of out.fires) {
+    const ts = new Date(f.firedAt).toISOString().replace("T", " ").slice(0, 19);
+    const audit = f.audit === null ? "NO AUDIT ROW" : `#${String(f.audit.id)}`;
+    console.log(
+      `${ts.padEnd(20)} ${f.ruleId.padEnd(20)} ${f.fireId.padEnd(20)} ${f.actionType.slice(0, 24).padEnd(24)} ${audit}`,
+    );
+  }
+}
+
 export async function runAuditExport(
   client: IPCClient,
   outPath: string,
@@ -103,6 +146,12 @@ export async function runAudit(args: string[]): Promise<void> {
     await withGatewayIpc((c) =>
       runAuditExport(c, outPath, (p, data) => Bun.write(p, data) as Promise<unknown>),
     );
+    return;
+  }
+  if (sub === "standing") {
+    const json = rest.includes("--json");
+    const id = rest.find((a) => !a.startsWith("--"));
+    await withGatewayIpc((c) => runAuditStanding(c, id, { json }));
     return;
   }
   const limit = parseAuditListLimit(args);

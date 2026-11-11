@@ -3,6 +3,7 @@ import { intro, outro } from "@clack/prompts";
 import {
   printHelp,
   runAdmin,
+  runApproveCmd,
   runAsk,
   runAudit,
   runBench,
@@ -122,6 +123,7 @@ const COMMAND_HANDLERS: Readonly<Record<string, CommandHandler>> = {
   test: runTest,
   ask: runAsk,
   explain: runExplainCmd,
+  approve: runApproveCmd,
   captures: runCapturesCmd,
   catalog: runCatalog,
   catchup: runCatchupCli,

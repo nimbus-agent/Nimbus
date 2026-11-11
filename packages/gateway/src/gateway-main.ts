@@ -359,6 +359,8 @@ export async function main(): Promise<void> {
                 platform.connectorMesh,
               ),
               getTribalKbConfig: () => platform.tribalKbConfig(),
+              // I55: the live org policy decides whether a standing rule may fire (absent = off).
+              enforcedPolicy: platform.enforcedPolicy,
             }),
           }),
       // Derived by the IPC dispatcher from the connection's declared kind (never from params).

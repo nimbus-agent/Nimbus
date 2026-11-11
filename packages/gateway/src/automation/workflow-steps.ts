@@ -418,7 +418,7 @@ export function workflowStepsSha256(steps: readonly WorkflowStep[]): string {
  * Code-unit order, NOT `localeCompare`: the workflow hash must be the same on every machine and in every
  * locale, so the key order cannot depend on collation.
  */
-function byCodeUnit(a: string, b: string): number {
+export function byCodeUnit(a: string, b: string): number {
   if (a < b) return -1;
   return a > b ? 1 : 0;
 }
@@ -428,7 +428,7 @@ function canonicalMember(rec: Record<string, unknown>, k: string): string {
   return `${JSON.stringify(k)}:${canonicalJson(rec[k])}`;
 }
 
-function canonicalJson(v: unknown): string {
+export function canonicalJson(v: unknown): string {
   if (v === null || typeof v !== "object") return JSON.stringify(v) ?? "null";
   if (Array.isArray(v)) return `[${v.map(canonicalJson).join(",")}]`;
   const rec = v as Record<string, unknown>;
