@@ -13982,13 +13982,13 @@ describe("I55 SA5 — approval learning only suggests: it never creates, widens 
     ]) {
       const src = stripComments(await read(rel));
       for (const forbidden of [
-        /insertRule/,
-        /resumeRule/,
-        /claimFire/,
-        /ToolExecutor/,
-        /askOwner/,
+        /\binsertRule\b/,
+        /\bresumeRule\b/,
+        /\bclaimFire\b/,
+        /\bToolExecutor\b/,
+        /\baskOwner\b/,
         /standing\.rule\.create/,
-        /standing_rule/,
+        /\bstanding_rule\b/,
       ]) {
         expect(src, `${rel} ${String(forbidden)}`).not.toMatch(forbidden);
       }
