@@ -11,6 +11,7 @@ import {
 } from "../../test/helpers/cli-mocks.ts";
 import { captureOutput } from "../../test/helpers/cli-output.ts";
 import { createMockIpcClient } from "../../test/helpers/mock-ipc-client.ts";
+import { createDeclaringMockIpcClient } from "../../test/helpers/mock-ipc-client-declaring.ts";
 
 import { INTERACTIVE_RPC_TIMEOUT_MS } from "../lib/rpc-timeouts.ts";
 
@@ -148,12 +149,12 @@ describe("runWorkflowRun", () => {
   });
 
   it("throws when name is missing", async () => {
-    const ipc = createMockIpcClient([]);
+    const ipc = createDeclaringMockIpcClient([]);
     await expect(runWorkflowRun(ipc.client, [])).rejects.toThrow("Usage: nimbus workflow run");
   });
 
   it("calls workflow.run with stream:true and dryRun:false by default", async () => {
-    const ipc = createMockIpcClient([{ ok: true }]);
+    const ipc = createDeclaringMockIpcClient([{ ok: true }]);
     await runWorkflowRun(ipc.client, ["deploy"]);
     expect(ipc.calls[0]).toEqual({
       method: "workflow.run",
@@ -161,21 +162,31 @@ describe("runWorkflowRun", () => {
     });
   });
 
+  it("declares the connection as the owner's CLI before workflow.run (SA3)", async () => {
+    const ipc = createDeclaringMockIpcClient([{ ok: true }]);
+    await runWorkflowRun(ipc.client, ["deploy"]);
+    expect(ipc.allCalls.map((c) => c.method)).toEqual(["session.declareKind", "workflow.run"]);
+    expect(ipc.allCalls[0]?.params).toEqual({ kind: "cli" });
+  });
+
   it("sets dryRun:true and stream:false under --dry-run", async () => {
-    const ipc = createMockIpcClient([{ ok: true }]);
+    const ipc = createDeclaringMockIpcClient([{ ok: true }]);
     await runWorkflowRun(ipc.client, ["deploy", "--dry-run"]);
     expect(ipc.calls[0]?.params).toMatchObject({ dryRun: true, stream: false });
   });
 
   it("includes the agent flag when --agent is set", async () => {
-    const ipc = createMockIpcClient([{ ok: true }]);
+    const ipc = createDeclaringMockIpcClient([{ ok: true }]);
     await runWorkflowRun(ipc.client, ["deploy", "--agent", "devops"]);
     const params = ipc.calls[0]?.params as Record<string, unknown>;
     expect(params["agent"]).toBe("devops");
   });
 
   it("--no-ttv issues a dry-run preview first; passes when no hitlActions are flagged", async () => {
-    const ipc = createMockIpcClient([{ stepResults: [{ hitlActions: [] }] }, { ok: true }]);
+    const ipc = createDeclaringMockIpcClient([
+      { stepResults: [{ hitlActions: [] }] },
+      { ok: true },
+    ]);
     await runWorkflowRun(ipc.client, ["deploy", "--no-ttv"]);
     expect(ipc.calls).toHaveLength(2);
     expect(ipc.calls[0]?.params).toMatchObject({ dryRun: true });
@@ -183,7 +194,9 @@ describe("runWorkflowRun", () => {
   });
 
   it("--no-ttv throws when preview shows HITL actions", async () => {
-    const ipc = createMockIpcClient([{ stepResults: [{ hitlActions: ["github.deploy"] }] }]);
+    const ipc = createDeclaringMockIpcClient([
+      { stepResults: [{ hitlActions: ["github.deploy"] }] },
+    ]);
     await expect(runWorkflowRun(ipc.client, ["deploy", "--no-ttv"])).rejects.toThrow(
       /human approval \(HITL\)/,
     );
@@ -192,7 +205,7 @@ describe("runWorkflowRun", () => {
   it("--no-ttv --agent previews AND runs under that agent", async () => {
     // The preview must be asked of the SAME agent the run will use: a preview under the default
     // agent could report no HITL step for a workflow the chosen agent would gate.
-    const ipc = createMockIpcClient([{ stepResults: [] }, { ok: true }]);
+    const ipc = createDeclaringMockIpcClient([{ stepResults: [] }, { ok: true }]);
     await runWorkflowRun(ipc.client, ["deploy", "--no-ttv", "--agent", "research"]);
     expect(ipc.calls).toEqual([
       {
@@ -207,13 +220,16 @@ describe("runWorkflowRun", () => {
   });
 
   it("--no-ttv treats a preview with no stepResults as nothing flagged, and runs", async () => {
-    const ipc = createMockIpcClient([{}, { ok: true }]);
+    const ipc = createDeclaringMockIpcClient([{}, { ok: true }]);
     await runWorkflowRun(ipc.client, ["deploy", "--no-ttv"]);
     expect(ipc.calls.map((c) => (c.params as { dryRun: boolean }).dryRun)).toEqual([true, false]);
   });
 
   it("--no-ttv treats a step that carries no hitlActions field as unflagged", async () => {
-    const ipc = createMockIpcClient([{ stepResults: [{}, { hitlActions: [] }] }, { ok: true }]);
+    const ipc = createDeclaringMockIpcClient([
+      { stepResults: [{}, { hitlActions: [] }] },
+      { ok: true },
+    ]);
     await runWorkflowRun(ipc.client, ["deploy", "--no-ttv"]);
     expect(ipc.calls.map((c) => (c.params as { dryRun: boolean }).dryRun)).toEqual([true, false]);
     expect(out.stdout).toContain('"ok": true');
@@ -309,7 +325,7 @@ describe("runWorkflowCli (dispatcher)", () => {
   // `interactive-ipc-handlers.ts` documents.
   it("registers a consent.request handler for 'run', so a HITL step can be approved", async () => {
     const handlers = new Map<string, (params: unknown) => void>();
-    const ipc = createMockIpcClient([{ ok: true }], handlers);
+    const ipc = createDeclaringMockIpcClient([{ ok: true }], handlers);
     setFixture({
       gatewayState: { socketPath: FAKE_SOCKET_PATH },
       ipcClient: {
@@ -334,7 +350,7 @@ describe("runWorkflowCli (dispatcher)", () => {
         resolve({ ok: true });
       };
     });
-    const ipc = createMockIpcClient([runPending, { ok: true }], handlers);
+    const ipc = createDeclaringMockIpcClient([runPending, { ok: true }], handlers);
     setFixture({
       gatewayState: { socketPath: FAKE_SOCKET_PATH },
       clackAnswer: true,
@@ -367,7 +383,7 @@ describe("runWorkflowCli (dispatcher)", () => {
   it("still streams agent chunks for 'run'", async () => {
     // The consent handler was added ALONGSIDE the chunk handler, not instead of it.
     const handlers = new Map<string, (params: unknown) => void>();
-    const ipc = createMockIpcClient([{ ok: true }], handlers);
+    const ipc = createDeclaringMockIpcClient([{ ok: true }], handlers);
     setFixture({
       gatewayState: { socketPath: FAKE_SOCKET_PATH },
       ipcClient: {
@@ -383,7 +399,7 @@ describe("runWorkflowCli (dispatcher)", () => {
 
   it("gives 'run' the interactive budget and leaves 'list' on the tight default", async () => {
     const runConstructions: RecordedClientConstruction[] = [];
-    const runIpc = createMockIpcClient([{ ok: true }]);
+    const runIpc = createDeclaringMockIpcClient([{ ok: true }]);
     setFixture({
       gatewayState: { socketPath: FAKE_SOCKET_PATH },
       clientConstructions: runConstructions,

@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 
 import type { IPCClient } from "../ipc-client/index.ts";
+import { declareCliClientKind } from "../lib/declare-client-kind.ts";
 import { hasFlag, shiftFlag } from "../lib/flag-parsing.ts";
 import { registerInteractiveCliIpcHandlers } from "../lib/interactive-ipc-handlers.ts";
 import { INTERACTIVE_RPC_TIMEOUT_MS } from "../lib/rpc-timeouts.ts";
@@ -72,6 +73,10 @@ export async function runWorkflowRun(client: IPCClient, rest: string[]): Promise
   // user a prompt. This is the same helper `nimbus run <file>` uses, so both entry
   // points now prompt identically and both honour NIMBUS_SCRIPT_CONSENT_SOURCE.
   registerInteractiveCliIpcHandlers(client);
+
+  // The run's write steps carry the owner's provenance only when the gateway knows this connection
+  // is the owner's CLI (Phase 10 SA2/SA3); best-effort, like `nimbus ask`.
+  await declareCliClientKind(client);
 
   if (noTtv && !dryRun) {
     const preview = await client.call("workflow.run", {
