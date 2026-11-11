@@ -29,6 +29,7 @@ function brief(over: Partial<OncallBrief> = {}): OncallBrief {
     },
     otherActiveIncidents: [],
     syncFreshness: { lastSyncMs: NOW - 5 * 60_000, ageMs: 5 * 60_000, reason: null },
+    onCallNow: null,
     binding: { nimbusServiceId: "checkout", pagerdutyServiceId: "PSERVICE1" },
     deployment: null,
     change: null,
@@ -369,5 +370,125 @@ describe("renderOncall — review fixes (CodeRabbit #1509)", () => {
     );
     expect(out).toContain("1 earlier incident on this service");
     expect(out).not.toContain("At least");
+  });
+});
+
+describe("renderOncall: the on-call line (MB3)", () => {
+  const shift = (over: Record<string, unknown> = {}) => ({
+    userName: "Alice Ng",
+    scheduleName: "Payments primary",
+    policyName: "Payments policy",
+    level: 1,
+    endMs: NOW + 3_600_000,
+    isMe: false,
+    source: "pagerduty" as const,
+    ...over,
+  });
+  const src = (over: Record<string, unknown> = {}) => ({
+    source: "pagerduty" as const,
+    oldestFetchedMs: NOW - 3 * 60_000,
+    stale: false,
+    ...over,
+  });
+  const now = (over: Record<string, unknown> = {}) => ({
+    status: "ok" as const,
+    asOfMs: NOW,
+    shifts: [shift()],
+    next: [],
+    sources: [src()],
+    ...over,
+  });
+  const line = (out: string): string =>
+    out.split("\n").find((l) => l.startsWith("- **On call now:**")) ?? "";
+
+  test("a current shift renders with its schedule, level, end and data age", () => {
+    const out = line(renderOncall(brief({ onCallNow: now() })));
+    expect(out).toContain("Alice Ng (Payments primary, level 1, until ");
+    expect(out).toContain("(PagerDuty data 3 min old)");
+  });
+
+  test("two shifts are both listed in order, and the owner is marked", () => {
+    const out = line(
+      renderOncall(
+        brief({
+          onCallNow: now({ shifts: [shift(), shift({ userName: "Bob", level: 2, isMe: true })] }),
+        }),
+      ),
+    );
+    expect(out.indexOf("Alice Ng")).toBeLessThan(out.indexOf("Bob"));
+    expect(out).toContain("Bob (Payments primary, level 2, until ");
+    expect(out).toContain("(you)");
+  });
+
+  test("a JSM shift has no time, and a stale or unknown-age source says the shift may have changed", () => {
+    const jsm = line(
+      renderOncall(
+        brief({
+          onCallNow: now({
+            shifts: [
+              shift({
+                source: "jsm",
+                endMs: null,
+                level: null,
+                scheduleName: null,
+                policyName: null,
+              }),
+            ],
+            sources: [src({ source: "jsm", oldestFetchedMs: NOW - 3 * 3_600_000, stale: true })],
+          }),
+        }),
+      ),
+    );
+    expect(jsm).toContain(
+      "Alice Ng (Jira Service Management data 3 h old; the shift may have changed)",
+    );
+    const unknown = line(
+      renderOncall(
+        brief({ onCallNow: now({ sources: [src({ oldestFetchedMs: null, stale: true })] }) }),
+      ),
+    );
+    expect(unknown).toContain("age unknown; the shift may have changed");
+    const noSources = line(renderOncall(brief({ onCallNow: now({ sources: [] }) })));
+    expect(noSources.endsWith(")")).toBe(true);
+    expect(noSources).not.toContain("data");
+  });
+
+  test("none_on_call, no_data, no_match and no service id are each explicit", () => {
+    const none = line(
+      renderOncall(
+        brief({
+          onCallNow: now({
+            status: "none_on_call",
+            shifts: [],
+            next: [shift({ userName: "Bob" })],
+          }),
+        }),
+      ),
+    );
+    expect(none).toContain("_nobody on call per the index (next: Bob (Payments primary");
+    expect(
+      line(renderOncall(brief({ onCallNow: now({ status: "none_on_call", shifts: [] }) }))),
+    ).toBe("- **On call now:** _nobody on call per the index_");
+    expect(
+      line(renderOncall(brief({ onCallNow: now({ status: "no_data", shifts: [] }) }))),
+    ).toContain("_no on-call data indexed_");
+    expect(
+      line(renderOncall(brief({ onCallNow: now({ status: "no_match", shifts: [] }) }))),
+    ).toContain("_no indexed schedule covers this service_");
+    expect(line(renderOncall(brief({ onCallNow: null })))).toContain("_unknown (no service id)_");
+  });
+
+  test("provider-supplied names cannot start a heading", () => {
+    const out = renderOncall(
+      brief({
+        onCallNow: now({
+          shifts: [shift({ userName: "Eve\n## Fake heading\n`x", scheduleName: "S\r\n# H" })],
+        }),
+      }),
+    );
+    expect(
+      out.split("\n").some((l) => l.startsWith("## Fake heading") || l.startsWith("# H")),
+    ).toBe(false);
+    expect(line(out)).toContain("Eve## Fake heading`x");
   });
 });

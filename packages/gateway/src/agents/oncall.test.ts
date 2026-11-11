@@ -1,6 +1,11 @@
 import type { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
-import { createMemoryIndexDb } from "../connectors/connector-sync-test-helpers.ts";
+import {
+  createMemoryIndexDb,
+  EMPTY_NIMBUS_VAULT,
+  syncTestContext,
+} from "../connectors/connector-sync-test-helpers.ts";
+import { upsertOncallShift } from "../connectors/oncall-shift-items.ts";
 import {
   DEFAULT_DEPLOY_WORKFLOW_PATTERN,
   DEFAULT_EXCLUDE_PR_LABELS,
@@ -398,5 +403,77 @@ describe("the selection MODE travels from the selector to the brief (CodeRabbit 
 
     expect(brief.selection).toBe("explicit");
     expect(brief.otherActiveIncidents).toEqual([]);
+  });
+});
+
+describe("buildOncallBrief: who is on call (MB3)", () => {
+  function seedShift(d: Database, over: Record<string, unknown> = {}): void {
+    upsertOncallShift(
+      syncTestContext(d, EMPTY_NIMBUS_VAULT, "pagerduty"),
+      {
+        source: "pagerduty",
+        userId: "U1",
+        userName: "Alice Ng",
+        userEmail: null,
+        policyId: "EP1",
+        policyName: "Payments policy",
+        level: 1,
+        scheduleId: "S1",
+        scheduleName: "Payments primary",
+        startMs: NOW - HOUR,
+        endMs: NOW + HOUR,
+        serviceIds: [PD_SVC],
+        serviceNames: ["checkout"],
+        serviceMapComplete: true,
+        isMe: false,
+        url: null,
+        ...over,
+      },
+      NOW - 3 * 60_000,
+    );
+  }
+
+  test("names the shift covering the incident's PagerDuty service id", () => {
+    const d = db();
+    seedShift(d);
+    seedShift(d, {
+      userId: "U2",
+      userName: "Other",
+      serviceIds: ["POTHER"],
+      scheduleName: "Other",
+    });
+    const b = build({ db: d });
+    expect(b.onCallNow?.status).toBe("ok");
+    expect(b.onCallNow?.shifts.map((s) => s.userName)).toEqual(["Alice Ng"]);
+    expect(b.gaps.some((g) => g.detail.includes("on-call schedule data"))).toBe(false);
+  });
+
+  test("no shift data adds a missing_connector gap; no service id adds none and is null", () => {
+    const b = build({});
+    expect(b.onCallNow?.status).toBe("no_data");
+    expect(
+      b.gaps.some((g) => g.category === "missing_connector" && g.detail.includes("on-call")),
+    ).toBe(true);
+    const noSvc = build({ incident: incident({ pagerdutyServiceId: null }) });
+    expect(noSvc.onCallNow).toBeNull();
+    expect(noSvc.gaps.some((g) => g.detail.includes("on-call schedule data"))).toBe(false);
+  });
+
+  test("shifts exist but none covers this service is no_match; upcoming shifts are capped at 3", () => {
+    const d = db();
+    seedShift(d, { serviceIds: ["POTHER"] });
+    expect(build({ db: d }).onCallNow?.status).toBe("no_match");
+    const d2 = db();
+    for (let i = 0; i < 5; i += 1) {
+      seedShift(d2, {
+        userId: `U${String(i)}`,
+        userName: `N${String(i)}`,
+        startMs: NOW + (i + 1) * HOUR,
+        endMs: NOW + (i + 2) * HOUR,
+      });
+    }
+    const b = build({ db: d2 });
+    expect(b.onCallNow?.status).toBe("none_on_call");
+    expect(b.onCallNow?.next).toHaveLength(3);
   });
 });

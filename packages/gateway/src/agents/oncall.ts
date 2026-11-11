@@ -1,6 +1,11 @@
 import type { Database } from "bun:sqlite";
 import type { GapNote } from "@nimbus-dev/sdk";
 
+import {
+  type OncallNowResult,
+  type OncallShiftView,
+  queryOncallNow,
+} from "../index/oncall-now-query.ts";
 import { distinctPrServiceColumns, type ServiceConfig } from "../metrics/dora-config.ts";
 import { emitBriefWithSynthesis } from "./_lib/emit-brief.ts";
 import {
@@ -18,6 +23,8 @@ import {
 import type {
   OncallBrief,
   OncallIncident,
+  OncallNowShift,
+  OncallOnCallNow,
   OncallOtherIncident,
   OncallSelection,
   OncallServiceBinding,
@@ -287,10 +294,42 @@ export type BuildOncallArgs = {
  * read fields of the deployment the lane above them found, so there is nothing to parallelise
  * even in principle.
  */
+const ONCALL_NEXT_CAP = 3;
+
+function toNowShift(s: OncallShiftView): OncallNowShift {
+  return {
+    userName: s.userName,
+    scheduleName: s.scheduleName,
+    policyName: s.policyName,
+    level: s.level,
+    endMs: s.endMs,
+    isMe: s.isMe,
+    source: s.source,
+  };
+}
+
+/** Reduces the reader's result to what the brief carries; null when there is no service id to look up. */
+function onCallNowFor(
+  db: Database,
+  nowMs: number,
+  pagerdutyServiceId: string | null,
+): OncallOnCallNow | null {
+  if (pagerdutyServiceId === null) return null;
+  const r: OncallNowResult = queryOncallNow(db, { nowMs, pagerdutyServiceId });
+  return {
+    status: r.status,
+    asOfMs: r.asOfMs,
+    shifts: r.shifts.map(toNowShift),
+    next: r.next.slice(0, ONCALL_NEXT_CAP).map(toNowShift),
+    sources: r.sources,
+  };
+}
+
 export function buildOncallBrief(args: BuildOncallArgs): OncallBrief {
   const w: Window = { fromMs: args.nowMs - args.chatLookbackMs, toMs: args.nowMs };
   const { binding, cfg } = resolveBinding(args.incident, args.serviceConfigs);
   const freshness = readPagerdutySyncFreshness(args.db, args.nowMs);
+  const onCallNow = onCallNowFor(args.db, args.nowMs, binding.pagerdutyServiceId);
 
   // Anchored on the incident's OPEN time, never on `now`: "the last deploy before the alert" is
   // the question, and anchoring on now would return a deploy that shipped DURING the incident —
@@ -345,6 +384,18 @@ export function buildOncallBrief(args: BuildOncallArgs): OncallBrief {
     }),
   ];
 
+  if (onCallNow?.status === "no_data") {
+    gaps.push({
+      category: "missing_connector",
+      detail:
+        "No on-call schedule data is indexed, so the brief cannot say who is on call for this " +
+        "service. PagerDuty schedules or Jira Service Management Operations have not synced.",
+      remediation:
+        "Connect PagerDuty (`nimbus connector auth pagerduty`) or Jira Service Management " +
+        "(`nimbus connector auth jira`), then let a sync run; the next brief reads the shifts.",
+    });
+  }
+
   if (anchorMs === null) {
     gaps.push({
       category: "missing_entity_type",
@@ -370,6 +421,7 @@ export function buildOncallBrief(args: BuildOncallArgs): OncallBrief {
     incident: args.incident,
     otherActiveIncidents: args.otherActiveIncidents,
     syncFreshness: freshness,
+    onCallNow,
     binding,
     deployment,
     change,

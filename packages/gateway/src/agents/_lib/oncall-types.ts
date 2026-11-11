@@ -220,6 +220,36 @@ export type OncallServiceBinding = {
   readonly pagerdutyServiceId: string | null;
 };
 
+/** One current or upcoming on-call shift covering the incident's service, as the index holds it. */
+export type OncallNowShift = {
+  readonly userName: string;
+  readonly scheduleName: string | null;
+  readonly policyName: string | null;
+  readonly level: number | null;
+  /** `null` for a Jira Service Management shift, which carries no times. */
+  readonly endMs: number | null;
+  readonly isMe: boolean;
+  readonly source: "pagerduty" | "jsm";
+};
+
+/**
+ * Who is on call for the incident's PagerDuty service, from the indexed `oncall_shift` rows (Phase 10
+ * MB3). Read at brief time, never fetched. `no_data` (no shift indexed at all) and `no_match` (shifts are
+ * indexed but none covers this service) are explicit: an empty list would read as "nobody is on call".
+ */
+export type OncallOnCallNow = {
+  readonly status: "ok" | "none_on_call" | "no_match" | "no_data";
+  readonly asOfMs: number;
+  readonly shifts: readonly OncallNowShift[];
+  /** The next shifts after now (at most 3), for `none_on_call`. */
+  readonly next: readonly OncallNowShift[];
+  readonly sources: ReadonlyArray<{
+    readonly source: "pagerduty" | "jsm";
+    readonly oldestFetchedMs: number | null;
+    readonly stale: boolean;
+  }>;
+};
+
 export type OncallBrief = {
   readonly kind: "oncall";
   readonly agentVersion: 1;
@@ -235,6 +265,8 @@ export type OncallBrief = {
   readonly incident: OncallIncident;
   readonly otherActiveIncidents: readonly OncallOtherIncident[];
   readonly syncFreshness: OncallSyncFreshness;
+  /** `null` when the incident carries no PagerDuty service id (nothing to look up). */
+  readonly onCallNow: OncallOnCallNow | null;
   readonly binding: OncallServiceBinding;
   readonly deployment: OncallDeployment | null;
   readonly change: OncallChange | null;
