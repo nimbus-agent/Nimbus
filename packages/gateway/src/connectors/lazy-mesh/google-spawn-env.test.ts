@@ -115,7 +115,11 @@ describe("google_calendar is own-key-only at the bundle", () => {
     const vault = await sharedGoogleVault(undefined);
     await vault.set(
       "google_calendar.oauth",
-      JSON.stringify({ accessToken: "cal", refreshToken: "ref", expiresAt: Date.now() + 3_600_000 }),
+      JSON.stringify({
+        accessToken: "cal",
+        refreshToken: "ref",
+        expiresAt: Date.now() + 3_600_000,
+      }),
     );
     await ensureGoogleDriveMcp(spawnCtx(vault));
     const s = servers();

@@ -41,7 +41,10 @@ describe("google_calendar is own-key-only (its own consent, never the shared key
 
   test("its own per-service key resolves", async () => {
     const vault = createMemoryVault();
-    await vault.set("google_calendar.oauth", '{"accessToken":"c","refreshToken":"r","expiresAt":9}');
+    await vault.set(
+      "google_calendar.oauth",
+      '{"accessToken":"c","refreshToken":"r","expiresAt":9}',
+    );
     expect(await resolveGoogleOAuthVaultKey(vault, "google_calendar")).toBe(
       "google_calendar.oauth",
     );

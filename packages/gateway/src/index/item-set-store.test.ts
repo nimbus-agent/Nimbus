@@ -2,12 +2,12 @@ import { describe, expect, test } from "bun:test";
 
 import { ensureGraphEntity } from "../graph/relationship-graph.ts";
 import { openMemoryIndexDatabase } from "../testing/bun-test-support.ts";
-import { upsertIndexedItem } from "./item-store.ts";
 import {
   REPLACE_ITEM_SET_MAX_KEEP,
   REPLACE_ITEM_SET_TYPES,
   replaceItemSetRows,
 } from "./item-set-store.ts";
+import { upsertIndexedItem } from "./item-store.ts";
 
 type Db = ReturnType<typeof openMemoryIndexDatabase>;
 
@@ -141,9 +141,7 @@ describe("replaceItemSetRows — endBeforeMs", () => {
       db.run("UPDATE item SET metadata = ? WHERE external_id = 'corrupt'", ["{not json"]);
       db.run("UPDATE item SET metadata = ? WHERE external_id = 'array'", ["[1,2]"]);
       db.run("UPDATE item SET metadata = NULL WHERE external_id = 'array'");
-      expect(replaceItemSetRows(db, "outlook", "event", ["kept-old"], { endBeforeMs: 50 })).toBe(
-        1,
-      );
+      expect(replaceItemSetRows(db, "outlook", "event", ["kept-old"], { endBeforeMs: 50 })).toBe(1);
       expect(ids(db, "outlook", "event")).toEqual(["array", "corrupt", "kept-old"]);
     });
   });
@@ -167,23 +165,31 @@ describe("replaceItemSetRows — the delete path is deleteItem's", () => {
         "INSERT INTO work_snapshot (service, relation, item_id, captured_at) VALUES ('jira','assigned','outlook:gone',1)",
       );
       expect(
-        (db.query("SELECT COUNT(*) AS n FROM item_fts WHERE item_fts MATCH 'gone'").get() as {
-          n: number;
-        }).n,
+        (
+          db.query("SELECT COUNT(*) AS n FROM item_fts WHERE item_fts MATCH 'gone'").get() as {
+            n: number;
+          }
+        ).n,
       ).toBeGreaterThan(0);
       replaceItemSetRows(db, "outlook", "event", ["stay"]);
       expect(
-        (db.query("SELECT COUNT(*) AS n FROM item_fts WHERE item_fts MATCH 'gone'").get() as {
-          n: number;
-        }).n,
+        (
+          db.query("SELECT COUNT(*) AS n FROM item_fts WHERE item_fts MATCH 'gone'").get() as {
+            n: number;
+          }
+        ).n,
       ).toBe(0);
+      expect((db.query("SELECT COUNT(*) AS n FROM work_snapshot").get() as { n: number }).n).toBe(
+        0,
+      );
       expect(
-        (db.query("SELECT COUNT(*) AS n FROM work_snapshot").get() as { n: number }).n,
-      ).toBe(0);
-      expect(
-        (db.query("SELECT COUNT(*) AS n FROM graph_entity WHERE external_id = 'outlook:gone'").get() as {
-          n: number;
-        }).n,
+        (
+          db
+            .query("SELECT COUNT(*) AS n FROM graph_entity WHERE external_id = 'outlook:gone'")
+            .get() as {
+            n: number;
+          }
+        ).n,
       ).toBe(0);
     });
   });

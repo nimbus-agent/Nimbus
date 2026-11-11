@@ -6,6 +6,7 @@ import { type FallbackPrCandidate, selectPrEnrichCandidates } from "../connector
 import { createServiceScopedVaultView } from "../connectors/service-scoped-vault-view.ts";
 import type { ResolveServiceId } from "../graph/graph-populator.ts";
 import { type ApiEndpointWrite, writeApiEndpointsForSpec } from "../index/api-endpoint-store.ts";
+import { type ReplaceItemSetOptions, replaceItemSetRows } from "../index/item-set-store.ts";
 import {
   type BodyRow,
   countIndexedItems,
@@ -18,7 +19,6 @@ import {
   selectItemMetadataJson,
   upsertIndexedItemForSync,
 } from "../index/item-store.ts";
-import { type ReplaceItemSetOptions, replaceItemSetRows } from "../index/item-set-store.ts";
 import { type ObsidianNoteWrite, writeObsidianVault } from "../index/obsidian-notes-store.ts";
 import {
   isWorkSnapshotService,
