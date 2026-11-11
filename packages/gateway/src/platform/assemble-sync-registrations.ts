@@ -175,6 +175,7 @@ export function registerConnectorMeshSyncables(
   syncScheduler.register(
     createLinearSyncable({
       ensureLinearMcpRunning: () => connectorMesh.ensureLinearRunning(),
+      ...snapshotInterval,
     }),
   );
   syncScheduler.register(

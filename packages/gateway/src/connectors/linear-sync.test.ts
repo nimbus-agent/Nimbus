@@ -12,6 +12,11 @@ import {
 } from "./connector-sync-test-helpers.ts";
 import { createLinearSyncable } from "./linear-sync.ts";
 
+/** A cursor whose snapshot was attempted just now: a sync makes only the incremental request(s). */
+function freshSnapCursor(since: string): string {
+  return `nimbus-lnr1:${Buffer.from(JSON.stringify({ since, snapAt: Date.now() }), "utf8").toString("base64url")}`;
+}
+
 /** Build a minimal valid single-page GraphQL response */
 function makeLinearResponse(
   nodes: unknown[],
@@ -630,7 +635,8 @@ describeWithFetchRestore("linear-sync", () => {
     const sync = createLinearSyncable({ ensureLinearMcpRunning: async () => {} });
     const r = await sync.sync(
       syncTestContext(db, createStubVault({ "linear.api_key": "key" }), "linear"),
-      null,
+      // a fresh snapshot attempt, so only the incremental pages are requested and counted here
+      freshSnapCursor("2026-01-01T00:00:00.000Z"),
     );
     expect(callCount).toBe(2);
     expect(r.itemsUpserted).toBe(2);
@@ -710,7 +716,10 @@ describeWithFetchRestore("linear-sync", () => {
     const sinceDateStr = "2026-04-15T08:00:00.000Z";
     const prefix = "nimbus-lnr1:";
     const validCursor =
-      prefix + Buffer.from(JSON.stringify({ since: sinceDateStr }), "utf8").toString("base64url");
+      prefix +
+      Buffer.from(JSON.stringify({ since: sinceDateStr, snapAt: Date.now() }), "utf8").toString(
+        "base64url",
+      );
 
     await sync.sync(
       syncTestContext(db, createStubVault({ "linear.api_key": "key" }), "linear"),

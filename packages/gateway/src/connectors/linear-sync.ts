@@ -1,6 +1,12 @@
 import type { PersonSyncHints } from "../people/person-types.ts";
 import { syncPassCursorSuccess } from "../sync/pass-cursor-sync-result.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
+import {
+  applySnapshot,
+  type SnapshotFetch,
+  snapshotDue,
+  snapshotIntervalMs,
+} from "./_lib/work-snapshot-run.ts";
 import { decodeNimbusJsonCursorObject, encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import { msFromIso, normalizeLinearStateType, TICKET_META_VERSION } from "./ticket-depth.ts";
 import { asRecord, stringField } from "./unknown-record.ts";
@@ -9,36 +15,41 @@ const SERVICE_ID = "linear";
 const CURSOR_PREFIX = "nimbus-lnr1:";
 const LINEAR_GQL = "https://api.linear.app/graphql";
 
+/** The issue fields BOTH queries select, so a snapshot member is mapped exactly like a synced one. */
+export const ISSUE_FIELDS = `
+  id
+  identifier
+  title
+  description
+  updatedAt
+  url
+  creator {
+    id
+    name
+    email
+  }
+  createdAt
+  completedAt
+  canceledAt
+  dueDate
+  state {
+    name
+    type
+  }
+  parent {
+    identifier
+  }
+  project {
+    id
+    name
+  }
+`;
+
 const SYNC_QUERY = `
 query LinearSync($first: Int!, $after: String, $gt: DateTimeOrDuration!) {
   issues(first: $first, after: $after, filter: { updatedAt: { gt: $gt } }, orderBy: updatedAt) {
     nodes {
-      id
-      identifier
-      title
-      description
-      updatedAt
-      url
-      creator {
-        id
-        name
-        email
-      }
-      createdAt
-      completedAt
-      canceledAt
-      dueDate
-      state {
-        name
-        type
-      }
-      parent {
-        identifier
-      }
-      project {
-        id
-        name
-      }
+      ${ISSUE_FIELDS}
     }
     pageInfo {
       hasNextPage
@@ -48,7 +59,26 @@ query LinearSync($first: Int!, $after: String, $gt: DateTimeOrDuration!) {
 }
 `;
 
-type LinearSyncCursorV1 = { since: string };
+/** The authenticated user's open Linear work, most recently touched first. */
+export const SNAPSHOT_QUERY = `
+query LinearOpenWork($after: String) {
+  viewer {
+    assignedIssues(first: 100, after: $after, filter: { state: { type: { nin: ["completed", "canceled"] } } }, orderBy: updatedAt) {
+      nodes {
+        ${ISSUE_FIELDS}
+      }
+      pageInfo {
+        hasNextPage
+        endCursor
+      }
+    }
+  }
+}
+`;
+const SNAPSHOT_MAX_PAGES = 3;
+
+/** `snapAt`: epoch ms of the last "my open work" snapshot ATTEMPT (success or failure). */
+type LinearSyncCursorV1 = { since: string; snapAt?: number };
 
 function encodeCursor(c: LinearSyncCursorV1): string {
   return encodeNimbusJsonCursor(CURSOR_PREFIX, c);
@@ -60,7 +90,11 @@ function decodeCursor(raw: string | null): LinearSyncCursorV1 | null {
     return null;
   }
   const since = rec["since"];
-  return typeof since === "string" && since !== "" ? { since } : null;
+  if (typeof since !== "string" || since === "") {
+    return null;
+  }
+  const snapAt = rec["snapAt"];
+  return { since, ...(typeof snapAt === "number" && Number.isFinite(snapAt) ? { snapAt } : {}) };
 }
 
 type SyncPage = {
@@ -71,7 +105,7 @@ type SyncPage = {
 };
 
 type GqlEnvelope = {
-  data?: SyncPage;
+  data?: unknown;
   errors?: ReadonlyArray<{ message: string }>;
 };
 
@@ -105,6 +139,13 @@ function linearRequireIssuesData(
   ctx: SyncContext,
   res: { ok: boolean; status: number; json: GqlEnvelope | null; text: string },
 ): SyncPage {
+  return linearRequireData(ctx, res) as SyncPage;
+}
+
+function linearRequireData(
+  ctx: SyncContext,
+  res: { ok: boolean; status: number; json: GqlEnvelope | null; text: string },
+): unknown {
   if (res.status === 429) {
     ctx.rateLimiter.penalise("linear", 60_000);
     throw new Error("Linear sync: rate limited");
@@ -262,8 +303,82 @@ function linearUpsertIssueNodes(
   return { count, maxUpdated };
 }
 
+type SnapshotConnection = {
+  nodes: ReadonlyArray<Record<string, unknown>>;
+  hasNextPage: boolean;
+  endCursor: string | null;
+};
+
+/** `data.viewer.assignedIssues`, or a thrown error (so the snapshot is kept) when the shape is off. */
+function parseSnapshotConnection(data: unknown): SnapshotConnection {
+  const viewer = asRecord(asRecord(data)?.["viewer"]);
+  const conn = asRecord(viewer?.["assignedIssues"]);
+  const nodes = conn?.["nodes"];
+  const pageInfo = asRecord(conn?.["pageInfo"]);
+  if (conn === undefined || !Array.isArray(nodes) || pageInfo === undefined) {
+    throw new Error("Linear snapshot: unexpected response shape");
+  }
+  const end = pageInfo["endCursor"];
+  return {
+    nodes: nodes as ReadonlyArray<Record<string, unknown>>,
+    hasNextPage: pageInfo["hasNextPage"] === true,
+    endCursor: typeof end === "string" && end !== "" ? end : null,
+  };
+}
+
+/**
+ * Pages "my open work" (at most 3 x 100) and indexes every member WITHOUT touching the incremental
+ * `since` mark. A failing request throws (a kept snapshot); more pages than the cap is `capped`.
+ */
+async function linearSnapshotAssigned(ctx: SyncContext, apiKey: string): Promise<SnapshotFetch> {
+  const identifiers: string[] = [];
+  let after: string | null = null;
+  for (let page = 0; page < SNAPSHOT_MAX_PAGES; page += 1) {
+    await ctx.rateLimiter.acquire("linear");
+    const res = await linearPost(
+      apiKey,
+      JSON.stringify({ query: SNAPSHOT_QUERY, variables: after === null ? {} : { after } }),
+    );
+    const conn = parseSnapshotConnection(linearRequireData(ctx, res));
+    ctx.writeBatch(() => {
+      linearUpsertIssueNodes(ctx, conn.nodes, "");
+    });
+    for (const node of conn.nodes) {
+      const row = asRecord(node);
+      const identifier = row === undefined ? undefined : stringField(row, "identifier");
+      if (identifier !== undefined && stringField(row ?? {}, "id") !== undefined) {
+        identifiers.push(identifier);
+      }
+    }
+    if (!conn.hasNextPage || conn.endCursor === null) {
+      return { kind: "complete", externalIds: identifiers, capped: false };
+    }
+    after = conn.endCursor;
+  }
+  return { kind: "complete", externalIds: identifiers, capped: true };
+}
+
+/** Runs the snapshot when due; returns the cursor's new `snapAt` (an ATTEMPT, so a failing provider retries once per interval). */
+async function linearSnapshotIfDue(
+  ctx: SyncContext,
+  apiKey: string,
+  prevSnapAt: number | undefined,
+  options: LinearSyncableOptions,
+): Promise<number | undefined> {
+  const now = Date.now();
+  if (
+    !snapshotDue(prevSnapAt ?? null, now, snapshotIntervalMs(options.snapshotIntervalMinutes?.()))
+  ) {
+    return prevSnapAt;
+  }
+  await applySnapshot(ctx, SERVICE_ID, "assigned", () => linearSnapshotAssigned(ctx, apiKey));
+  return now;
+}
+
 export type LinearSyncableOptions = {
   ensureLinearMcpRunning: () => Promise<void>;
+  /** `[briefing] snapshot_interval_minutes`, read per sync so an edit applies without a restart. */
+  snapshotIntervalMinutes?: () => number;
 };
 
 export function createLinearSyncable(options: LinearSyncableOptions): Syncable {
@@ -326,7 +441,11 @@ export function createLinearSyncable(options: LinearSyncableOptions): Syncable {
         break;
       }
 
-      const nextCursor = encodeCursor({ since: maxUpdated });
+      const snapAt = await linearSnapshotIfDue(ctx, apiKey, prev?.snapAt, options);
+      const nextCursor = encodeCursor({
+        since: maxUpdated,
+        ...(snapAt === undefined ? {} : { snapAt }),
+      });
 
       return syncPassCursorSuccess(t0, bytesTransferred, nextCursor, upserted);
     },
