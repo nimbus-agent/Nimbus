@@ -5615,6 +5615,12 @@ describe("D24 - work_snapshot is written only by the capability's store (Phase 1
     ["a quoted name", "dbRun(db, 'INSERT INTO \"work_snapshot\" (a) VALUES (1)')"],
     ["a bracketed name", "dbRun(db, 'INSERT INTO [work_snapshot] (a) VALUES (1)')"],
     ["a multi-line statement", "dbRun(db, `INSERT\n  INTO\n  work_snapshot (a) VALUES (1)`)"],
+    ["a schema-qualified DELETE", 'dbRun(db, "DELETE FROM main.work_snapshot")'],
+    ["a schema-qualified UPDATE", 'dbRun(db, "UPDATE main.work_snapshot SET captured_at = 1")'],
+    [
+      "a quoted schema-qualified INSERT",
+      'dbRun(db, \'INSERT INTO "main"."work_snapshot" (a) VALUES (1)\')',
+    ],
   ] as const) {
     test(`a syncable with ${name} is refused`, () => {
       expect(rules(withBad(`${SRC}connectors/evil-sync.ts`, `${sql};\n`))).toEqual([

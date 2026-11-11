@@ -9,7 +9,7 @@ import type { SyncContext } from "../../sync/types.ts";
  *
  * partial = a request failed, a page did not parse, a later page errored, or the provider said the
  * result is incomplete: the previous snapshot is kept. capped = every request succeeded and the
- * provider reports more than the cap: the capped set REPLACES the snapshot (most urgent first).
+ * provider reports more than the cap: the capped set REPLACES the snapshot (the provider's first pages in its own query order).
  */
 export const DEFAULT_SNAPSHOT_INTERVAL_MINUTES = 15;
 
