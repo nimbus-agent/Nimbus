@@ -12,6 +12,12 @@ export interface IcalEventExtras {
   readonly startTzid: string | undefined;
   readonly endTzid: string | undefined;
   readonly durationMs: number | undefined;
+  /**
+   * The same DURATION split the way RFC 5545 section 3.3.6 defines it: `days` (weeks x 7 + days) are
+   * NOMINAL (a calendar day in the event's zone, 23 or 25 hours across a DST change) and `ms` is the
+   * EXACT hour/minute/second part. `durationMs` flattens both to 24-hour days.
+   */
+  readonly durationParts: IcalDurationParts | undefined;
   /** Lower-cased attendee address -> a KNOWN PARTSTAT, lower-cased. An unknown value is ignored. */
   readonly partstatByAddress: ReadonlyMap<string, string>;
 }
@@ -56,15 +62,29 @@ function parseContentLine(line: string): ContentLine | undefined {
 
 const DURATION_RE = /^P(?:(\d+)W)?(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?)?$/;
 
-/** An RFC 5545 DURATION in ms; a negative or malformed value is `undefined`. */
-export function parseIcalDurationMs(raw: string): number | undefined {
+export interface IcalDurationParts {
+  /** Nominal calendar days (weeks x 7 + days). */
+  readonly days: number;
+  /** Exact milliseconds of the hour, minute and second part. */
+  readonly ms: number;
+}
+
+/** An RFC 5545 DURATION split into nominal days and exact ms; a negative or malformed value is `undefined`. */
+export function parseIcalDurationParts(raw: string): IcalDurationParts | undefined {
   const text = raw.trim().replace(/^\+/, "");
   const m = DURATION_RE.exec(text);
   if (m === null || text === "P" || text.endsWith("T")) return undefined;
   const [, w = "0", d = "0", h = "0", mi = "0", s = "0"] = m;
-  const seconds =
-    (Number(w) * 7 + Number(d)) * 86_400 + Number(h) * 3_600 + Number(mi) * 60 + Number(s);
-  return seconds * 1000;
+  return {
+    days: Number(w) * 7 + Number(d),
+    ms: (Number(h) * 3_600 + Number(mi) * 60 + Number(s)) * 1000,
+  };
+}
+
+/** An RFC 5545 DURATION in ms, every day counted as 24 hours; a negative or malformed value is `undefined`. */
+export function parseIcalDurationMs(raw: string): number | undefined {
+  const parts = parseIcalDurationParts(raw);
+  return parts === undefined ? undefined : parts.days * 86_400_000 + parts.ms;
 }
 
 type Draft = {
@@ -73,6 +93,7 @@ type Draft = {
   startTzid?: string | undefined;
   endTzid?: string | undefined;
   durationMs?: number | undefined;
+  durationParts?: IcalDurationParts | undefined;
   partstat: Map<string, string>;
 };
 
@@ -92,6 +113,7 @@ function applyLine(d: Draft, line: ContentLine): void {
       break;
     case "DURATION":
       d.durationMs = parseIcalDurationMs(line.value);
+      d.durationParts = parseIcalDurationParts(line.value);
       break;
     case "ATTENDEE": {
       const status = line.params.get("PARTSTAT")?.toLowerCase();
@@ -117,6 +139,7 @@ function finishDraft(out: Map<string, IcalEventExtras>, d: Draft): void {
     startTzid: d.startTzid,
     endTzid: d.endTzid,
     durationMs: d.durationMs,
+    durationParts: d.durationParts,
     partstatByAddress: d.partstat,
   });
 }

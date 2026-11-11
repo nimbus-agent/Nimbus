@@ -9,7 +9,7 @@
  * occurrences key on `<UID>:<RECURRENCE-ID>`.
  */
 import type { ParsedEvent } from "@nimbus-dev/sdk";
-import type { IcalEventExtras } from "./_lib/ical-event-extras.ts";
+import type { IcalDurationParts, IcalEventExtras } from "./_lib/ical-event-extras.ts";
 import { capPreview } from "./_lib/imap-client.ts";
 import { gatewayZone, type WallTime, wallToInstantMs } from "./_lib/zoned-time.ts";
 import type { MappedRow } from "./mapped-row.ts";
@@ -68,7 +68,13 @@ function parseICalDateMs(value: string | null | undefined): number | null {
 const ICAL_VALUE_RE = /^(\d{4})(\d{2})(\d{2})(?:T(\d{2})(\d{2})(\d{2})?(Z)?)?$/i;
 const DAY_MS = 86_400_000;
 
-type IcalInstant = { readonly ms: number; readonly dateOnly: boolean };
+type IcalInstant = {
+  readonly ms: number;
+  readonly dateOnly: boolean;
+  /** The wall time as written, and the zone it is a wall time in (`UTC` for a `Z` value). */
+  readonly wall: WallTime;
+  readonly zone: string;
+};
 
 /**
  * An iCalendar value as an instant. A trailing `Z` is UTC; a date-only value is midnight in `zone`
@@ -94,30 +100,39 @@ function instantOfIcalValue(
   const dateOnly = h === undefined;
   if (z !== undefined) {
     const ms = Date.UTC(wall.y, wall.mo - 1, wall.d, wall.h, wall.mi, wall.s);
-    return Number.isFinite(ms) ? { ms, dateOnly } : undefined;
+    return Number.isFinite(ms) ? { ms, dateOnly, wall, zone: "UTC" } : undefined;
   }
-  const ms =
-    (tzid === undefined || dateOnly ? undefined : wallToInstantMs(wall, tzid)) ??
-    wallToInstantMs(wall, zone);
-  return ms === undefined ? undefined : { ms, dateOnly };
+  const tzMs = tzid === undefined || dateOnly ? undefined : wallToInstantMs(wall, tzid);
+  if (tzMs !== undefined && tzid !== undefined) return { ms: tzMs, dateOnly, wall, zone: tzid };
+  const ms = wallToInstantMs(wall, zone);
+  return ms === undefined ? undefined : { ms, dateOnly, wall, zone };
 }
 
-/** The instant of the day after a date-only value, in `zone` (an all-day event with no DTEND). */
-function nextDayInstant(value: string, zone: string): number | undefined {
-  const m = ICAL_VALUE_RE.exec(value.trim());
-  if (m === null) return undefined;
-  const next = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])) + DAY_MS);
-  return wallToInstantMs(
+/**
+ * The end of an event with no DTEND (RFC 5545 section 3.6.1): `start` plus its DURATION, whose
+ * day/week part is NOMINAL (the same wall time `days` calendar days later in the event's zone, so a
+ * day across a DST change is 23 or 25 hours) and whose hour/minute/second part is exact and added
+ * afterwards. With no DURATION an all-day event lasts one day and a timed one ends when it starts.
+ */
+function endWithoutDtend(
+  start: IcalInstant,
+  allDay: boolean,
+  parts: IcalDurationParts | undefined,
+): number {
+  const days = parts?.days ?? (allDay ? 1 : 0);
+  const exactMs = parts?.ms ?? 0;
+  if (days === 0) return start.ms + exactMs;
+  const shifted = new Date(Date.UTC(start.wall.y, start.wall.mo - 1, start.wall.d + days));
+  const nominal = wallToInstantMs(
     {
-      y: next.getUTCFullYear(),
-      mo: next.getUTCMonth() + 1,
-      d: next.getUTCDate(),
-      h: 0,
-      mi: 0,
-      s: 0,
+      ...start.wall,
+      y: shifted.getUTCFullYear(),
+      mo: shifted.getUTCMonth() + 1,
+      d: shifted.getUTCDate(),
     },
-    zone,
+    start.zone,
   );
+  return (nominal ?? start.ms + days * DAY_MS) + exactMs;
 }
 
 /** `start_ms` / `end_ms`, or an empty object when DTSTART cannot be resolved. */
@@ -130,13 +145,7 @@ function eventTimes(
   if (start === undefined) return {};
   const end = instantOfIcalValue(ev.end, extras?.endTzid, zone);
   if (end !== undefined) return { start_ms: start.ms, end_ms: end.ms };
-  if (ev.allDay) {
-    return {
-      start_ms: start.ms,
-      end_ms: nextDayInstant(ev.start ?? "", zone) ?? start.ms + DAY_MS,
-    };
-  }
-  return { start_ms: start.ms, end_ms: start.ms + (extras?.durationMs ?? 0) };
+  return { start_ms: start.ms, end_ms: endWithoutDtend(start, ev.allDay, extras?.durationParts) };
 }
 
 /** The own-address PARTSTAT (`accepted`, `declined`, `tentative`, `needs-action`), else `null`. */

@@ -1,6 +1,10 @@
 import { describe, expect, test } from "bun:test";
 
-import { parseIcalDurationMs, parseIcalEventExtras } from "./ical-event-extras.ts";
+import {
+  parseIcalDurationMs,
+  parseIcalDurationParts,
+  parseIcalEventExtras,
+} from "./ical-event-extras.ts";
 
 const cal = (...vevents: string[]): string =>
   ["BEGIN:VCALENDAR", "VERSION:2.0", ...vevents, "END:VCALENDAR"].join("\r\n");
@@ -117,5 +121,14 @@ describe("parseIcalEventExtras", () => {
 
   test("an empty string is an empty map", () => {
     expect(parseIcalEventExtras("").size).toBe(0);
+  });
+});
+
+describe("parseIcalDurationParts", () => {
+  test("splits nominal days (weeks included) from the exact time part", () => {
+    expect(parseIcalDurationParts("P1W")).toEqual({ days: 7, ms: 0 });
+    expect(parseIcalDurationParts("P1DT2H30M")).toEqual({ days: 1, ms: 9_000_000 });
+    expect(parseIcalDurationParts("PT90M")).toEqual({ days: 0, ms: 5_400_000 });
+    expect(parseIcalDurationParts("-P1D")).toBeUndefined();
   });
 });

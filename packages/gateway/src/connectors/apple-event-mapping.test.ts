@@ -288,6 +288,40 @@ describe("mapAppleEventToItem - normalized keys", () => {
     expect(dur["end_ms"]).toBe(Date.UTC(2026, 10, 11, 11, 0));
   });
 
+  test("a date-only start honours DURATION: P3D ends three local days later, none is one day", () => {
+    const p3 = mapped(ics("DTSTART;VALUE=DATE:20261111", "DURATION:P3D"), { zone: "Europe/Paris" });
+    expect(p3["start_ms"]).toBe(Date.UTC(2026, 10, 10, 23));
+    expect(p3["end_ms"]).toBe(Date.UTC(2026, 10, 13, 23));
+    const none = mapped(ics("DTSTART;VALUE=DATE:20261111"), { zone: "Europe/Paris" });
+    expect(none["end_ms"]).toBe(Date.UTC(2026, 10, 11, 23));
+  });
+
+  test("an all-day P1W across the autumn change ends seven local days later", () => {
+    const m = mapped(ics("DTSTART;VALUE=DATE:20261025", "DURATION:P1W"), { zone: "Europe/Paris" });
+    // 2026-10-25 00:00 CEST (+2) to 2026-11-01 00:00 CET (+1)
+    expect(m["start_ms"]).toBe(Date.UTC(2026, 9, 24, 22));
+    expect(m["end_ms"]).toBe(Date.UTC(2026, 9, 31, 23));
+  });
+
+  test("a timed P1D is a nominal day: across spring-forward it ends at the same local time", () => {
+    const m = mapped(ics("DTSTART;TZID=America/New_York:20260307T120000", "DURATION:P1D"));
+    expect(m["start_ms"]).toBe(Date.UTC(2026, 2, 7, 17));
+    expect(m["end_ms"]).toBe(Date.UTC(2026, 2, 8, 16));
+  });
+
+  test("P1DT2H adds the nominal day, then exactly two hours", () => {
+    const m = mapped(ics("DTSTART;TZID=America/New_York:20260307T120000", "DURATION:P1DT2H"));
+    expect(m["end_ms"]).toBe(Date.UTC(2026, 2, 8, 18));
+  });
+
+  test("PT90M is exact and a P1W timed event is seven calendar days", () => {
+    const exact = mapped(ics("DTSTART;TZID=America/New_York:20260308T010000", "DURATION:PT90M"));
+    // 01:00 EST + 90 minutes crosses the 02:00 gap: 03:30 EDT
+    expect(exact["end_ms"]).toBe(Date.UTC(2026, 2, 8, 6) + 90 * 60_000);
+    const week = mapped(ics("DTSTART;TZID=America/New_York:20260307T120000", "DURATION:P1W"));
+    expect(week["end_ms"]).toBe(Date.UTC(2026, 2, 14, 16));
+  });
+
   test("self_response is null for an unlisted address, an unknown status or no selfEmail", () => {
     const raw = ics("DTSTART:20261111T093000Z", "ATTENDEE;PARTSTAT=TENTATIVE:mailto:me@icloud.com");
     expect(mapped(raw, { selfEmail: "someone@else.com" })["self_response"]).toBeNull();
