@@ -29,7 +29,11 @@ export function snapshotIntervalMs(minutes?: number): number {
 }
 
 /** Whether a snapshot attempt is due: never attempted, the clock moved back, or the interval elapsed. */
-export function snapshotDue(lastAttemptMs: number | null, nowMs: number, intervalMs: number): boolean {
+export function snapshotDue(
+  lastAttemptMs: number | null,
+  nowMs: number,
+  intervalMs: number,
+): boolean {
   if (lastAttemptMs === null) return true;
   if (lastAttemptMs > nowMs) return true;
   return nowMs - lastAttemptMs >= intervalMs;

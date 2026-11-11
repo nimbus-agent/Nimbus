@@ -977,10 +977,12 @@ describe("createOutlookSyncable", () => {
     test("a later delta page that re-reports a message with isRead flipped updates the row", async () => {
       const { db, ctx } = await createOAuthConnectorTestSetup("microsoft", "outlook");
       const syncable = createOutlookSyncable({ ensureMicrosoftMcpRunning: async () => {} });
-      globalThis.fetch = (async () => deltaResponse([msg("m", { isRead: false })])) as unknown as typeof fetch;
+      globalThis.fetch = (async () =>
+        deltaResponse([msg("m", { isRead: false })])) as unknown as typeof fetch;
       await syncable.sync(ctx, null);
       expect(metaOf(db, "m")["is_read"]).toBe(false);
-      globalThis.fetch = (async () => deltaResponse([msg("m", { isRead: true })])) as unknown as typeof fetch;
+      globalThis.fetch = (async () =>
+        deltaResponse([msg("m", { isRead: true })])) as unknown as typeof fetch;
       await syncable.sync(ctx, null);
       expect(metaOf(db, "m")["is_read"]).toBe(true);
     });

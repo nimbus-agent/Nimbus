@@ -7,7 +7,11 @@ import {
   type WorkSnapshotRelation,
 } from "./work-snapshot-store.ts";
 
-function seed(db: ReturnType<typeof openMemoryIndexDatabase>, service: string, ext: string): string {
+function seed(
+  db: ReturnType<typeof openMemoryIndexDatabase>,
+  service: string,
+  ext: string,
+): string {
   const id = `${service}:${ext}`;
   db.run(
     `INSERT INTO item (id, service, type, external_id, title, modified_at, synced_at)
@@ -41,7 +45,9 @@ describe("work snapshot store", () => {
       replaceWorkSnapshotRows(db, "jira", "assigned", ["J-1"], 1);
       replaceWorkSnapshotRows(db, "github", "assigned", ["o/r#2"], 2);
       expect(listWorkSnapshot(db, "github", "assigned")).toEqual([{ itemId: b, capturedAt: 2 }]);
-      expect(listWorkSnapshot(db, "github", "authored_open")).toEqual([{ itemId: a, capturedAt: 1 }]);
+      expect(listWorkSnapshot(db, "github", "authored_open")).toEqual([
+        { itemId: a, capturedAt: 1 },
+      ]);
       expect(listWorkSnapshot(db, "jira", "assigned")).toEqual([{ itemId: j, capturedAt: 1 }]);
     } finally {
       db.close();
@@ -52,7 +58,9 @@ describe("work snapshot store", () => {
     const db = openMemoryIndexDatabase();
     try {
       seed(db, "linear", "ENG-1");
-      expect(replaceWorkSnapshotRows(db, "linear", "assigned", ["ENG-1", "ENG-1"], 1).stored).toBe(1);
+      expect(replaceWorkSnapshotRows(db, "linear", "assigned", ["ENG-1", "ENG-1"], 1).stored).toBe(
+        1,
+      );
       expect(listWorkSnapshot(db, "linear", "assigned")).toHaveLength(1);
       expect(replaceWorkSnapshotRows(db, "linear", "assigned", [], 2)).toEqual({
         stored: 0,

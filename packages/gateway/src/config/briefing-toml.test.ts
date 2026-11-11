@@ -44,10 +44,12 @@ describe("[briefing] snapshot_interval_minutes", () => {
       "[briefing.deadlines]\nsnapshot_interval_minutes = 99\n[briefing]\nsnapshot_interval_minutes = 10\n",
       10,
     ],
-    ["unknown keys ignored", "[briefing]\nsend_at = \"07:30\"\nsnapshot_interval_minutes = 12\n", 12],
+    ["unknown keys ignored", '[briefing]\nsend_at = "07:30"\nsnapshot_interval_minutes = 12\n', 12],
   ])("reads %s", (_l, src, expected) => {
     const seen: string[] = [];
-    expect(parseNimbusTomlBriefing(src, (m) => seen.push(m)).snapshotIntervalMinutes).toBe(expected);
+    expect(parseNimbusTomlBriefing(src, (m) => seen.push(m)).snapshotIntervalMinutes).toBe(
+      expected,
+    );
     expect(seen).toEqual([]);
   });
 

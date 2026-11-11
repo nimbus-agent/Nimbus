@@ -44,7 +44,10 @@ export function replaceWorkSnapshotRows(
   const resolve = db.query("SELECT id FROM item WHERE service = ? AND external_id = ?");
   try {
     return db.transaction(() => {
-      dbRun(db, "DELETE FROM work_snapshot WHERE service = ? AND relation = ?", [service, relation]);
+      dbRun(db, "DELETE FROM work_snapshot WHERE service = ? AND relation = ?", [
+        service,
+        relation,
+      ]);
       let stored = 0;
       for (const ext of unique) {
         const row = resolve.get(service, ext) as { id: string } | null;

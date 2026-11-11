@@ -937,11 +937,9 @@ const D24_WS_DDL = `${D24_WS_SRC}index/work-snapshot-v91-sql.ts`;
 const D24_WS_CAPABILITY = `${D24_WS_SRC}sync/sync-capabilities.ts`;
 // A constructor over `String.raw`, as the handle pattern above (a script-authored literal once lost
 // its `\b`): the rule is red-proved against planted violations.
-const D24_WS_WRITE_RE = new RegExp(
-  String.raw`\b(?:INSERT\s+(?:OR\s+\w+\s+)?INTO|REPLACE\s+INTO|DELETE\s+FROM|UPDATE|DROP\s+TABLE|ALTER\s+TABLE)\s+["'\`\[]?work_snapshot\b`,
-  "gi",
-);
-const D24_WS_NAME_RE = new RegExp(String.raw`\breplaceWorkSnapshotRows\b`, "g");
+const D24_WS_WRITE_RE =
+  /\b(?:INSERT\s+(?:OR\s+\w+\s+)?INTO|REPLACE\s+INTO|DELETE\s+FROM|UPDATE|DROP\s+TABLE|ALTER\s+TABLE)\s+["'`[]?work_snapshot\b/gi;
+const D24_WS_NAME_RE = /\breplaceWorkSnapshotRows\b/g;
 
 export function checkWorkSnapshotConfinement(files: readonly FileEntry[]): Violation[] {
   const out: Violation[] = [];

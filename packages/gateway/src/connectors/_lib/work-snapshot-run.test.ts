@@ -3,9 +3,9 @@ import { describe, expect, test } from "bun:test";
 import type { SyncContext } from "../../sync/types.ts";
 import {
   applySnapshot,
+  type SnapshotFetch,
   snapshotDue,
   snapshotIntervalMs,
-  type SnapshotFetch,
 } from "./work-snapshot-run.ts";
 
 function fakeCtx(replace?: () => { stored: number; dropped: number }) {
