@@ -71,6 +71,8 @@ export interface DemoCorpus {
   readonly ciRuns: readonly DemoItem[];
   readonly deployments: readonly DemoDeployment[];
   readonly incidents: readonly DemoItem[];
+  /** On-call shifts (`oncall_shift` items), one per service: who is on call now, from the index. */
+  readonly oncallShifts: readonly DemoItem[];
   readonly messages: readonly DemoItem[];
   /** PagerDuty freshness: offset of `sync_state.last_sync_at` for connector `pagerduty`. */
   readonly pagerdutyLastSyncOffsetMs: number;

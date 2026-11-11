@@ -20,6 +20,7 @@ const allItems = [
   ...corpus.reviews,
   ...corpus.ciRuns,
   ...corpus.incidents,
+  ...corpus.oncallShifts,
   ...corpus.messages,
   // Written by `fireDemoPage`, not the seed — but held to the same hygiene rules.
   PAGING_INCIDENT,

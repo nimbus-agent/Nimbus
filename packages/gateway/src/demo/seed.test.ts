@@ -10,6 +10,7 @@ import { PR_META_VERSION } from "../connectors/pr-meta.ts";
 import { AnnotateError } from "../deployment/annotate.ts";
 import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
+import { queryOncallNow } from "../index/oncall-now-query.ts";
 import {
   assembleOncallPushRuntime as assembleRuntime,
   type OncallPushBootDeps,
@@ -234,7 +235,7 @@ describe("seedDemoCorpus", () => {
       expect(
         count(
           db,
-          "SELECT COUNT(*) AS n FROM item WHERE service = 'pagerduty' AND modified_at >= ?",
+          "SELECT COUNT(*) AS n FROM item WHERE service = 'pagerduty' AND type = 'incident' AND modified_at >= ?",
           [nowMs - DAY],
         ),
       ).toBe(0);
@@ -429,6 +430,25 @@ describe("seeded pr rows follow the canonical contract", () => {
       const m = JSON.parse(r.metadata) as Record<string, unknown>;
       expect(Number.isInteger(m["number"])).toBe(true);
       expect(m["meta_v"]).toBe(PR_META_VERSION);
+    }
+  });
+});
+
+describe("seedDemoCorpus on-call shifts (MB3)", () => {
+  test("seeds one oncall_shift per Acme service, and the payment-service one names Sam", async () => {
+    const { db, configDir, dataDir } = fresh();
+    const nowMs = 5 * DAY * 365;
+    await seedDemoCorpus(db, { configDir, dataDir, nowMs });
+    expect(count(db, "SELECT COUNT(*) AS n FROM item WHERE type = 'oncall_shift'")).toBe(3);
+    const r = queryOncallNow(db, { nowMs, term: "payment-service" });
+    expect(r.status).toBe("ok");
+    expect(r.shifts).toHaveLength(1);
+    expect(r.shifts[0]).toMatchObject({ userName: "Sam Rivera", isMe: true });
+    // The shifts cover the seed time whenever it is seeded, and the data is fresh.
+    expect(queryOncallNow(db, { nowMs: nowMs + 5 * 60 * MINUTE }).status).toBe("ok");
+    expect(r.sources[0]?.stale).toBe(false);
+    for (const t of ["checkout-web", "ledger-worker"]) {
+      expect(queryOncallNow(db, { nowMs, term: t }).status).toBe("ok");
     }
   });
 });
