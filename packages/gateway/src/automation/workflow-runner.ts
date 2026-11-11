@@ -10,6 +10,7 @@ import {
 } from "../engine/run-conversational-agent.ts";
 import type { WorkflowTrigger } from "../engine/types.ts";
 import { readIndexedUserVersion } from "../index/migrations/runner.ts";
+import { type LearningConfig, learnFromStepRun } from "../standing/approval-learning.ts";
 import { runDeclaredQuery } from "./declared-query.ts";
 import { previewHitlActionsForStepText } from "./workflow-hitl-preview.ts";
 import { pruneWorkflowRuns } from "./workflow-run-history.ts";
@@ -140,6 +141,13 @@ export type RunWorkflowExecutionParams = {
   readonly onBlocked?: (info: BlockedRunInfo) => void;
   /** Set only by `workflow.resume`. */
   readonly resume?: WorkflowResume;
+  /**
+   * Approval learning (Phase 10 SA5): after an owner-started run finishes a write step, the pass
+   * reads that run's audit rows and may record a standing-rule suggestion. Built by the gateway
+   * from the live policy, the config and the demo flag; absent means off, so no caller learns
+   * anything unless it says so. A throw is caught: learning never fails or changes a run.
+   */
+  readonly learning?: LearningConfig;
 };
 
 export type RunWorkflowExecutionResult = {
@@ -174,6 +182,8 @@ type RunState = {
   readonly queries: Map<string, { index: number; values: readonly string[] }>;
   readonly workflowId: string;
   readonly workflowSha256: string;
+  readonly workflowName: string;
+  readonly startedAt: number;
 };
 
 function stepLabelOf(step: WorkflowStep, stepIndex: number): string {
@@ -324,7 +334,46 @@ async function executeWorkflowStep(
   });
   if (step.kind === "run") return executeRunStep(p, runId, stepIndex, step, state.outputs);
   if (step.kind === "query") return executeQueryStep(p, runId, stepIndex, step, state);
-  return executeWriteStep(p, runId, stepIndex, step, state);
+  const outcome = await executeWriteStep(p, runId, stepIndex, step, state);
+  learnAfterWriteStep(p, runId, stepIndex, step, state);
+  return outcome;
+}
+
+/** Approval learning after a write step, whatever its status. It can never fail or change the run. */
+function learnAfterWriteStep(
+  p: RunWorkflowExecutionParams,
+  runId: string,
+  stepIndex: number,
+  step: WriteWorkflowStep,
+  state: RunState,
+): void {
+  const actionType = connectorWriteRowByToolId(step.tool)?.actionType;
+  if (p.learning === undefined || p.dryRun || actionType === undefined) return;
+  try {
+    learnFromStepRun(
+      p.db,
+      {
+        runId,
+        stepIndex,
+        workflowId: state.workflowId,
+        workflowSha256: state.workflowSha256,
+        workflowName: state.workflowName,
+        stepLabel: stepLabelOf(step, stepIndex),
+        actionType,
+        trigger: p.trigger,
+        startedAt: state.startedAt,
+      },
+      p.learning,
+    );
+  } catch (err) {
+    p.learning.log?.(
+      {
+        event: "standing.learning.failed",
+        error: err instanceof Error ? err.message : String(err),
+      },
+      "approval learning failed; the run is unaffected",
+    );
+  }
 }
 
 function finalizeRun(
@@ -471,6 +520,8 @@ export async function executeRealRunSteps(
     queries: new Map(),
     workflowId: wf.id,
     workflowSha256: workflowStepsSha256(steps),
+    workflowName: wf.name,
+    startedAt: now,
   };
   const stepResults: RunWorkflowExecutionResult["stepResults"] = [];
   // Checked once up front too: a zero-step workflow never enters the loop
