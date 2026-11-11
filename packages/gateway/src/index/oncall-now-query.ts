@@ -195,6 +195,22 @@ function compareViews(a: OncallShiftView, b: OncallShiftView): number {
   );
 }
 
+function compareUpcoming(a: OncallShiftView, b: OncallShiftView): number {
+  if (a.startMs !== b.startMs) {
+    if (a.startMs === null) return 1;
+    if (b.startMs === null) return -1;
+    return a.startMs - b.startMs;
+  }
+  return compareViews(a, b);
+}
+
+const MAP_GAP =
+  "The service map was incomplete for some shifts, so looking up by service may miss a schedule; try the schedule name.";
+
+function mapGaps(rows: readonly Row[]): string[] {
+  return rows.some((r) => !r.mapComplete) ? [MAP_GAP] : [];
+}
+
 function knownNames(rows: readonly Row[]): string[] {
   const names = new Set<string>();
   for (const r of rows) {
@@ -260,6 +276,7 @@ export function queryOncallNow(db: Database, opts: OncallNowOptions): OncallNowR
       ...empty(opts, "no_match"),
       known: knownNames(all),
       sources: sourceAges(all, opts.nowMs),
+      gaps: mapGaps(all),
     };
   }
   const now = opts.nowMs;
@@ -268,24 +285,20 @@ export function queryOncallNow(db: Database, opts: OncallNowOptions): OncallNowR
     .filter((r) => !isCurrent(r, now) && isUpcoming(r, now))
     .map((r) => r.view);
   const shifts = current.sort(compareViews).slice(0, ONCALL_NOW_MAX_CURRENT);
-  const next = upcoming.sort(compareViews).slice(0, ONCALL_NOW_MAX_UPCOMING);
-  const gaps: string[] = [];
-  if (match.rows.some((r) => !r.mapComplete)) {
-    gaps.push(
-      "The service map was incomplete for some shifts, so looking up by service may miss a schedule; try the schedule name.",
-    );
-  }
+  // Earliest start first (the cap must keep the NEXT shifts); untimed JSM rows follow the timed ones.
+  const next = upcoming.sort(compareUpcoming).slice(0, ONCALL_NOW_MAX_UPCOMING);
   return {
     status: shifts.length > 0 ? "ok" : "none_on_call",
     asOfMs: now,
     query: opts.term ?? null,
     resolvedVia:
       opts.term === undefined && opts.pagerdutyServiceId === undefined ? null : match.via,
-    youAreOnCall: shifts.some((s) => s.isMe),
+    // From the full current set: the 50-row display cap must not hide the user's own shift.
+    youAreOnCall: current.some((s) => s.isMe),
     sources: sourceAges(match.rows, now),
     shifts,
     next,
     known: [],
-    gaps,
+    gaps: mapGaps(match.rows),
   };
 }

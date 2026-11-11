@@ -325,6 +325,77 @@ describe("queryOncallNow metadata", () => {
     });
   });
 
+  test("no_match carries the incomplete-service-map gap (and the source ages)", () => {
+    withDb((db) => {
+      seed(db, [shift({ serviceMapComplete: false })]);
+      const r = queryOncallNow(db, { nowMs: NOW, term: "no-such-service-xyz" });
+      expect(r.status).toBe("no_match");
+      expect(r.gaps.join(" ")).toContain("service map");
+      expect(r.sources).toHaveLength(1);
+    });
+    withDb((db) => {
+      seed(db, [shift({ serviceMapComplete: true })]);
+      expect(queryOncallNow(db, { nowMs: NOW, term: "no-such-service-xyz" }).gaps).toEqual([]);
+    });
+  });
+
+  test("upcoming shifts are capped by start time, not by schedule name; untimed JSM rows come last", () => {
+    withDb((db) => {
+      const later = Array.from({ length: 50 }, (_, i) =>
+        shift({
+          userId: `a${String(i)}`,
+          userName: `Later ${String(i)}`,
+          scheduleName: "A schedule",
+          startMs: NOW + 3 * HOUR + i * 1000,
+          endMs: NOW + 5 * HOUR,
+        }),
+      );
+      seed(db, [
+        ...later,
+        shift({
+          userId: "z",
+          userName: "Earliest",
+          scheduleName: "Z schedule",
+          startMs: NOW + HOUR,
+          endMs: NOW + 2 * HOUR,
+        }),
+        shift({
+          source: "jsm",
+          userId: "j",
+          userName: "Untimed",
+          scheduleName: "A schedule",
+          startMs: null,
+          endMs: null,
+          // a JSM `next` row has no times and is classified by its shift key
+          shift: "next",
+        }),
+      ]);
+      const r = queryOncallNow(db, { nowMs: NOW });
+      expect(r.next).toHaveLength(50);
+      expect(r.next[0]?.userName).toBe("Earliest");
+      expect(r.next.some((s) => s.userName === "Untimed")).toBe(false);
+      expect(r.next.some((s) => s.userName === "Later 49")).toBe(false);
+    });
+  });
+
+  test("youAreOnCall is computed before the display cap", () => {
+    withDb((db) => {
+      const many = Array.from({ length: 60 }, (_, i) =>
+        shift({
+          userId: `u${String(i)}`,
+          userName: `User ${String(i).padStart(2, "0")}`,
+          scheduleName: "A sched",
+          isMe: i === 59,
+        }),
+      );
+      seed(db, many);
+      const r = queryOncallNow(db, { nowMs: NOW });
+      expect(r.shifts).toHaveLength(50);
+      expect(r.shifts.some((s) => s.isMe)).toBe(false);
+      expect(r.youAreOnCall).toBe(true);
+    });
+  });
+
   test("caps and deterministic ordering", () => {
     withDb((db) => {
       const many = Array.from({ length: 60 }, (_, i) =>
