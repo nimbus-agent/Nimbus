@@ -1,3239 +1,6478 @@
 # Nimbus Roadmap
 
+
+
 This document is the authoritative roadmap for Nimbus. [`README.md`](./README.md) carries a summary; this file contains acceptance criteria, inter-phase dependencies, and the reasoning behind sequencing decisions.
+
+
 
 > **Scope.** This file covers the **gateway** — what Nimbus can do — **and the order in which that capability reaches a human.** Both live here on purpose: which surface should exist next is a product question, and splitting it into a second sequencing document only produced two files claiming the same authority. Each surface's own detail lives in its repo's `ROADMAP.md`; the width of the client surface — which RPCs are exposed — is owned by [`nimbus-client/ROADMAP.md`](https://github.com/nimbus-agent/nimbus-client/blob/main/ROADMAP.md). How the ecosystem fits together is described at org level in [`ECOSYSTEM.md`](https://github.com/nimbus-agent/.github/blob/main/ECOSYSTEM.md).
 
+
+
 Phases are thematic, not calendar-bound. A phase begins when its dependencies are met and ends when its acceptance criteria pass — not at a quarter boundary. Phases may overlap when deliverables are independent.
+
+
 
 **Design docs named below are file names, not links.** Every delivered plan, spec and design review under `docs/superpowers/` was pruned from `HEAD` on 2026-09-11 once the work had shipped; the durable content lives in [`architecture.md`](./architecture.md), [`SECURITY-INVARIANTS.md`](./SECURITY-INVARIANTS.md) and [`cli-reference.md`](./cli-reference.md). The originals remain in git history — `git log --diff-filter=D -- docs/superpowers/` finds the prune commit, and `git show <sha>^:docs/superpowers/specs/<name>` reads one.
 
+
+
 > **Last updated:** 2026-11-10 — Phase 9.7 D3a is done: the model is offered the Kubernetes apply, restart and scale (108 writes in all), each only inside a (context, namespace) pair the owner approved with `nimbus connector writes enable kubernetes --grant <namespace>@<context>` and behind the manifest, the objects and the diff in full and a typed confirmation; schema V86 ([Phase 9.7](#phase-97--connector-write-enablement-the-acting-roster)). 2026-11-10 — Phase 9.7 D3b is done: the model is offered seven more Wave 4 writes (105 in all), the Vercel redeploy and promote, the Netlify build, the Bitrise and Codemagic builds, the TestFlight distribute and the Firebase App Distribution distribute, each behind a before-state read and a typed confirmation, with a Netlify production-branch guard, a TestFlight public-link guard and a Firebase groups-only rule on the model door ([Phase 9.7](#phase-97--connector-write-enablement-the-acting-roster)). 2026-11-08 — Phase 9.7 D2 is done: the model is offered the Terraform apply and the CloudFormation deploy (98 writes in all), each only inside a directory or cloud the owner approved with `nimbus connector writes enable iac` and behind the whole plan or template and a typed confirmation; schema V85, static rule D43 ([Phase 9.7](#phase-97--connector-write-enablement-the-acting-roster)). 2026-11-08 — Phase 9.7 D1c is done: the model is offered the two multi-file commits (96 writes in all), each behind the full diff the gateway renders itself and a typed confirmation ([Phase 9.7](#phase-97--connector-write-enablement-the-acting-roster)). 2026-11-07 — Phase 9.7 D1 is done: the model is offered 27 Wave 4 writes, each behind a before-state read and a typed confirmation ([Phase 9.7](#phase-97--connector-write-enablement-the-acting-roster)); the GitHub connector can connect one GitHub Enterprise Server instance ([Carried into S4](#carried-into-s4)). 2026-11-06 — **[Spine S4 — Autonomous Agent](#active) is the active slot** (opened by the owner 2026-11-04); its first work is [Phase 9.7](#phase-97--connector-write-enablement-the-acting-roster) Wave 1, where A1 (the one write-row table, #1883) is done A2 (the typed consent preview of a connector write) is done (✅ 2026-11-04), A3 (the per-write coverage proof) is done (✅ 2026-11-04), A4 (the owner's opt-in, `nimbus connector writes`, schema V83) is done (✅ 2026-11-04), A5a (plumbing for the model door, no model exposure) is done (✅ 2026-11-05), and A5b (the door itself, invariant I53, static D39) is done (✅ 2026-11-05), which completes Wave 1. Project B0a extended the listing map and the per-slot generation to each wave-2 service's own server, and Project B1 (2026-11-05) made the first 12 writes offerable: the message and comment posts, each behind the owner's typed preview; B2a (2026-11-05) let a before-state read twice and refuse a write before the prompt, B2 (2026-11-05) added the 13 issue writes, so the model was offered 25, B3 (2026-11-05) added the 9 draft and page writes (34), and B4a (2026-11-05) added the Outlook and iCloud calendar event creates and the Google Drive file create, so it is offered 37; B4p (2026-11-05) pinned connectors 0.5.0, so the Confluence knowledge-base guard reads the page's ancestors and refuses only pages under the KB parent (and every KB-space page whose ancestors the read cannot show); B4b (2026-11-05) added the Obsidian daily-note append, so it is offered 38 and no Wave-2 row is left untemplated, with the Obsidian sandbox's write grant on today's daily-note file alone (I15); B3r and B3w (2026-11-06) refuse remote content in drafts, pages, notes, files, sent mail, Teams HTML and forge Markdown, which completes Wave 2 (Project B), and the Waves 3-4 design round (owner rulings OR-W34-1..6) is done. C0 (2026-11-06; owner rulings OR-W34-1 and OR-W34-3) moved the ten templated warehouse refreshes and data-quality acknowledge/resolve rows (Tableau, Looker, Power BI, Monte Carlo, Bigeye) to wave 3, so the model is offered 48, and the merges, branch delete, tag create and calendar deletes to wave 4; the seven mail sends are never offered (`MODEL_NEVER_OFFERED_TOOL_IDS`). C1 (2026-11-06) pinned connectors 0.6.0: its 11 new writes (GitHub and GitLab branch, pull request and merge request creates and updates, the LaunchDarkly toggle and rollout, the Flagsmith feature state, the two Jira Service Management alert writes) are classified as wave 3 and (at C1) not offered, and the eight existing wave-3 file, pull request and incident writes (Drive move, rename and trash, the OneDrive move, the GitHub pull request close, PagerDuty acknowledge, resolve and escalate) got a typed preview and a before-state, so the model was offered 56. C2 (2026-11-06) templated the six VCS writes (branch, pull request and merge request create and update, with their current state, a base or target `RETARGETS` line and the GitLab draft-state line) behind broadcast-mention, forge-Markdown and GitLab quick-action refusals on both doors, and made the four creates MCP-proposable, so the model was offered 62 at C2 (47 proposable); C3 (2026-11-06) templated the last five wave-3 writes (the LaunchDarkly toggle and rollout, the Flagsmith feature-state set, the Jira Operations alert acknowledge and close) and stored the Jira cloud id, so the model is offered 67 (still 47 proposable: the five stay `not_yet_offered` on the act door). **[Spine S3 — Open Surface](#spine-s3) closed** (2026-10-11 → 2026-11-04) and its record moved under [Shipped](#shipped). Author onboarding (Phase 9.5 project 7) is complete in 4 PRs (#1878 funding and license, #1880 `nimbus extension clone`, #1881 the OpenAPI scaffold, and the **Authors** section of the docs site, <https://nimbus-agent.dev/authors/>), which completes all seven Phase 9.5 projects and so S3's exit condition. Every open Phase 9.5 row was re-homed in the same pass: buildable remainders to [Carried into S4](#carried-into-s4), the owner's non-buildable items to [Owner's open items](#owners-open-items). **[S4 — Autonomous Agent](#phase-7-sequencing-spine) opened later the same day** (owner's call). 2026-11-03 — the quality layer (Phase 9.5 project 6) is complete in 12 PRs, closed by the owner's ruling of 2026-11-03: the registry web page and the desktop marketplace tile move to their own open row, **Marketplace page and desktop tile**. 2026-10-30 — `nimbus eval` (Phase 9.5 project 5) is complete: PR 5 shipped `nimbus eval --installed`. The comparison with a registry's signed score needs a registry that publishes scores, and none does yet, so every evaluated row currently reads "no registry score". 2026-10-27 — the trust layer (Phase 9.5 project 3) is complete: PR 5 baked the Nimbus trust feed and a verified snapshot of it into the release. 2026-10-26 — **S3 status brought up to date.** Role packs (invariant **I47**, schema V74–V75)
+
 > shipped as five projects between 2026-10-22 and 2026-10-26 and are now recorded in the S3 row. The
+
 > [Phase 9.5](#phase-95--marketplace-registry) section now lists its seven projects, which the owner ruled
+
 > on 2026-10-18 must ALL ship before S3 closes: projects 1 (registry protocol and client) and 2 (publishing) are
+
 > done, along with the Readwise unbundling pilot (I46), and project 3, the trust layer, is done too (PR 1, PR 2a, PR 2b,
+
 > PR 3a and PR 3b of 5 merged 2026-10-26, PR 3c, PR 4a, PR 4b, PR 4c and PR 5 2026-10-27). The undefined phrase "extension maturity" in the S3 row is replaced by that exit
+
 > condition, and the owner's 2026-10-19 decisions (a static registry with a git pull-request write path and no
+
 > hosted service; ratings deferred; unbundle the first-party connectors over time) are now written into Phase 9.5.
+
 >
+
 > 2026-10-10 — **pre-S3 item E shipped: OS notifications are delivered on Windows, macOS and
+
 > Linux**, the last of the [pre-S3 close-out](#pre-s3-close-out)'s five items, so the close-out is complete and S3 is next.
+
 > Default on, full body by default (`[notifications] content = "title_only"` hides it), plus a fixed-text toast
+
 > while a HITL approval is pending; `nimbus notifications status|test`. Verified live on Windows 11; macOS and
+
 > Linux by tests only. Earlier the same day: **[Spine S2 — Local Compute Fleet](#spine-s2) closed**
+
 > (2026-08-21 → 2026-10-10) and its record moved under [Shipped](#shipped); the slot statements and the Phase 4,
+
 > 14 and 17 checkboxes that had fallen behind what shipped were brought up to date in the same pass.
+
 >
+
 > 2026-10-04 — **the on-call pushed brief shipped PR 3 of 3**, the desktop panel, completing
+
 > the three slices of Phase 17 Wave 2's *Pushed incident brief* row: default-off `[oncall.push]`, schema **V64**,
+
 > `nimbus oncall pushed`, a ChatOps headline (PR 2) and the desktop On-call page (PR 3) (detail in
+
 > [§ Phase 17](#phase-17--the-on-call-copilot)). 2026-09-19 → 2026-09-22 — `nimbus demo`,
+
 > `nimbus connector detect` and `nimbus wow` shipped, closing every row of
+
 > [First-Run & Time-to-Wow](#first-run--time-to-wow-near-term-initiative) except screenshot-worthy output.
+
 > 2026-09-17 — **fleet subject enumeration (PR 2b) has shipped**, closing the
+
 > Overnight Agent Fleets row: a `[[fleet.job]]` can now sweep `paths`/`services`/`symbols`/`terms`
+
 > across a bounded, rotating window instead of naming exactly one subject (schema **V63**); detail
+
 > in [§ Spine S2](#spine-s2) under Overnight sub-agent fleets. 2026-09-11 — **Spine S2 (Local Compute Fleet) has shipped all six of its capabilities**, and the delivered plans and specs under `docs/superpowers/` have been pruned from `HEAD` now that they are. Runtime tool generation closed out on 2026-09-10 at PR 3 of 3 (persistence — `nimbus tool save`, invariants **I39**/**I40**, static **D29**, schema **V61**), following the fleet change digest on 2026-09-08 (`nimbus fleet digest`). The durable design of all six now lives in [`architecture.md` § Spine S2 Subsystems](./architecture.md#spine-s2-subsystems) rather than in the specs — the invariant rationale stays in [`SECURITY-INVARIANTS.md`](./SECURITY-INVARIANTS.md) and the command surface in [`cli-reference.md`](./cli-reference.md). **Read the S2 row in [§ Spine S2](#spine-s2) for what did NOT ship** — agent-initiated tool proposal, `negotiate` as a fleet job, the computer-use `screen` lane, and per-OS idle measurement on Linux, where admission is power-only and every run row discloses it. (Fleet subject enumeration was also named here as unshipped; it shipped 2026-09-17 — see above.)
+
 >
+
 > **2026-09-07 — overnight sub-agent fleets shipped, PR 1 of 2.** (`nimbus fleet`, invariant **I38** + static **D28**, schema **V60**, default-off `[fleet]`). Standing, owner-configured agent jobs run on idle local hardware behind a new `HostActivity` PAL probe, and I38 pins an unattended run's synthesis to a LOCAL model unless `[fleet] allow_remote` and a per-run budget both cover the call. **Read the S2 row in [§ Spine S2](#spine-s2) for what did NOT ship** — subject enumeration, the change/threshold digest, `negotiate` (classified `deferred`, not eligible), and per-OS idle measurement on Linux, where admission is power-only and every run row discloses it. (Both subject enumeration and the digest have since shipped — PR 2a 2026-09-08, PR 2b 2026-09-17 — see [§ Spine S2](#spine-s2).) Also in that delivery: `[embedding] pause_on_battery` finally got the consumer it never had, which is a real behaviour change for laptop users and is documented for them in [`cli-reference.md`](./cli-reference.md#configuration-file).
+
 >
+
 > **2026-09-06 — the multimodal remote arm has been answered by a real vendor for the first time.** PR 4's three vendor request shapes were written from each vendor's documented image API and tested only against fakes, so every claim about them proved the shape this code SENDS and none proved that a vendor ACCEPTS it. One does now: an acceptance run on merged `main` at `580e8930`, against a real Gemini key held in the Vault and a real 390,842-byte Google Drive PNG, returned a caption with exactly ONE `model`-class ledger row (`destination: gemini`, `payload_summary` carrying the model name and the byte COUNT — never the prompt and never the bytes), a derived row recording `isLocal: false`, and the BLAKE3 chain verifying over 65 rows. The remote caption was also visibly better, which is the feature's whole premise: the local `qwen2.5vl:7b` called the artifact "a knife", while Gemini identified a long pole weapon with a curved blade and named the scarf joint, the owner's-mark band and the pledge tag. **It NARROWS the gap rather than closing it** — Anthropic and OpenAI are still fixture-only, as is every failure mode on all three, the Google Photos leg, OneDrive, and the TTY confirmation path, that last because the CLI correctly refused a piped `y`, so the grant was created through the LAN-forbidden `media.allowRemote` IPC method with approval obtained out of band. One defect surfaced and is filed rather than fixed: the grant preview prints `(size unknown)` for an artifact whose size the index holds, because Drive serialises `size` as a string and the CLI preview does not parse that form (**fixed 2026-09-17**, with a wider cause than recorded here: every media source previewed as `size unknown`, since `index.queryItems` surfaced none of their size keys — see `CHANGELOG.md`). Recorded as § 21 of `2026-09-02-s2-multimodal-io-design.md`. 2026-09-05 — **Multimodal I/O PR 4 of 4 shipped, closing that row at 4 of 4: a durable, revocable, per-artifact grant that lets ONE configured vendor describe a still image** (`nimbus media allow-remote`, `nimbus media grants list|revoke`, schema **V59** `media_grant`, new invariant **I37** + static rule **D27**, and the new `[multimodal] remote_vlm` key). Images are the only modality with a remote tier, by two INDEPENDENT mechanisms — `media-grant-store.ts`'s `createGrant` refuses to write an `av`-modality row, and `build-media-pass-deps.ts`'s `buildRemoteFor` resolves every non-image candidate to the local composite regardless of what the store holds — so audio and video still have no remote tier at any level and remote STT is refused by construction. No new egress coverage class: the existing `model`-class `wrapLedgeredVlm` (D22(g)) already covered a remote `describe`; PR 4 is the first time it wraps one that actually leaves the machine. PR 2 (2026-09-03) had added the local VLM seam — `image_understanding` rows plus a small number of uniformly sampled frame captions on video — and PR 3 (2026-09-04) the budgeted, I29-ledgered cloud byte-fetch for Google Photos/Drive/OneDrive; neither had carried an entry here. 2026-09-04 — **a quality sweep, not a capability: all 29 open SonarCloud findings ADDRESSED in code — reanalysis pending, so "addressed" and not "cleared" — the five largest duplication clusters collapsed to one definition each, and a stale-fact pass over this file's siblings.** No behaviour changed and no invariant moved. The part worth recording is the ONE case where the metric and the design disagreed: the three worst cognitive-complexity findings in the repo were the three functions implementing **I35** (`cu-gate.ts`'s `runAction` and `openSession`, `cu-classify.ts`'s `classifyBrowserAction`), whose branch count IS the ordered gate sequence. They were refactored rather than accepted on the board, but only in a shape that keeps that sequence readable as an ordered list at the call site — the two lane arms became top-level functions sharing ONE mutable audit record, so the "exactly one audit row per exit" `finally` stays single, and the approve-then-recheck-liveness pair both lanes need became one function, since two copies of that re-check is two places for it to go missing. `util/pass-scheduler.ts` is now the single debounce + single-flight machine behind all four post-sync extraction passes, whose four hand-written copies had already drifted in ways nobody decided. Stale facts corrected in `README.md` (the invariant count read 32/`I29`–`I33` against an actual 35/`I29`–`I36`; the S2 slot was described as having shipped nothing; the ChatOps bot was described as unable to run an agent, which it has been able to do since 2026-08-30) and in `architecture.md` + `schema-reference.md` (both pinned at V57 against an actual V58, and both still describing the terminal lane as driverless). 2026-09-02 — **Multimodal I/O PR 1 of 4 shipped: local audio/video transcription, indexed and searchable** (`nimbus media understand`, schema **V58** `media_pass_cursor`, DEFAULT OFF twice over). Detail in [§ Spine S2](#spine-s2), including what did NOT ship and why Phase 14 Core acceptance is therefore not met. 2026-09-01 — **the computer-use TERMINAL lane shipped: a sandboxed, line-oriented shell in which no byte reaches the child process before the owner has approved the whole command.** Slice 2 of 3. It reuses the browser lane's chokepoint entirely; what generalised is the gate's browser-shaped parts (`CuEnvelope` and `OpenSessionRequest` became unions on `lane`; `performActuation` stays the ONE primitive). The safety property is one sentence — bytes accumulate in a gateway-side buffer and nothing is written until a submit arrives, the whole line is shown, and the owner approves it — and a per-keystroke write path violates it EVEN IF every keystroke is individually classified, which was the design's first shape and a complete bypass. `classifyTerminalAction` takes exactly ONE parameter, so § 4.3.1's "no `observing` class at all" is enforced by ARITY. The buffer also refuses bidirectional overrides and zero-width characters (Trojan Source, CVE-2021-42574) because on this lane the consent prompt IS the boundary; homoglyphs are stated as the residual bound. **Unlike the browser it DOES spawn through `SandboxRunner`** — stdio carries no control channel — so `canConfine` is asserted over the policy that actually spawns and `ERR_CU_SANDBOX_DEGRADED` is reachable again. **It adds NO egress class:** `permissions.network` is `[]` by construction and a grant is REJECTED, proven per platform by an integration test with an unconfined positive control. Two recorded deviations: a pipe-backed shell rather than a PTY (no native module survives `bun build --compile`, and no tty means TUIs refuse to start on their own), and quiescence rather than an injected sentinel for command completion. `nimbus computer terminal`; DEFAULT OFF; no new config keys and no migration. The screen lane remains unimplemented. 2026-08-31 — **the computer-use browser lane can now drive a real browser, and the `browser` egress class went live with it.** The driver deferred a day earlier landed as **raw CDP over a WebSocket**, with no dependency at all (`computer-use/cu-lanes/`); `THIS_BINARY_COVERAGE.browser` rose `"none"` → `"per-run"` in the same commit as its production caller, per that file's own rule. Two defects surfaced the first time the observer ran against a live DOM and neither was reachable from a fixture: CDP reports `resourceType` in PascalCase where the policy union is lowercase — so the previous unguarded cast gated **every** type, the page's own document included — and `new URL("javascript:…").origin` is the STRING `"null"`, equal to a `data:` page's own origin. Both closed. The pre-consent `SandboxRunner.canConfine` assertion is **replaced**, not patched: it was asserted over a placeholder policy nothing launched with, whose `network: []` would have meant `--unshare-net` — no network, and no route to the browser's own CDP endpoint. The lane is confined instead by Chromium's OWN sandbox (a pre-consent assertion refuses `--no-sandbox` and its siblings over the EXACT argv that spawns), a Nimbus-owned `--user-data-dir`, the § 3.5.1 CDP request policy, and headless + downloads denied at the browser level — a **deviation from spec § 3.5**, recorded because no PAL runner can carry a CDP control channel on any of the three platforms. Static **D26** grew a third rule and a much wider second one. Detail: [§ Spine S2](#spine-s2). 2026-08-30 — **the local computer-use loop's gate shipped; nothing can drive it yet.** New invariant **I35** + static rule **D26**, schema **V57** (`cu_session`/`cu_action`), confine every computer-use actuation behind a live, owner-approved session envelope — the HITL class is derived structurally from the gateway-observed target, never the model's own description (I3 transplanted), and screenshot bytes are BLAKE3-digested and discarded, never written to disk. New IPC namespace `computer.*` (LAN-forbidden, absent from the Tauri allowlist) and CLI `nimbus computer browser|sessions|close`. The browser **driver does not exist**: `playwright-core` fails a `bun build --compile` gate and is re-planned against raw CDP over a WebSocket, so `cu-gate.ts` refuses every session before consent with `ERR_CU_NO_BROWSER`, `nimbus computer browser` is a passive listener with no production caller for `computer.act`, and the `browser` egress coverage class ships as `"none"`, not `per-run`, until a driver exists. Detail: [§ Spine S2](#spine-s2). Design: `2026-08-30-s2-computer-use-design.md`. **shipped the ChatOps agent intent, closing the messaging-surface direction recorded a day earlier — and corrected that record's `I17` claim.** `@nimbus agent <name> k=v …` in a bound Slack/Teams channel now dispatches one of eleven externally-permitted built-in agents through the existing `agents.*` namespace and posts its brief with no LLM required, closing the dependency inversion the previous entry described (a channel read needed a model; the agents that need none were the one output a channel could not reach). The record's claim that "the channel↔namespace binding and the `I17` grant/role/consent filter are load-bearing here" was wrong and is corrected, not softened: `I17` governs federated answering only and never sits on this path, and `namespaces` selects which peers a federated agent asks, not which local rows are visible — so there is no local content filter to apply. The open coverage question the previous entry left — whether a channel-served brief appends an `egress_ledger` row — was already answered by a preceding PR that gave every outbound ChatOps post its own `chatops` `I29` coverage class (`egress/chatops-egress.ts`); this feature adds no egress code of its own and simply rides that appender, so an agent brief posts exactly one row like any other ChatOps reply. Detail moved to [§ Track 2 → Client surfaces](#client-surfaces). 2026-08-29 — **recorded the agent-reach direction, and two rejections** (a direction record, not a re-sequencing — the build slot stays [S2 — Local Compute Fleet](#spine-s2), no phase moved, and nothing here is committed to a slot). The already-shipped ChatOps `@nimbus` bot is promoted to a first-class **client surface** that cannot presently reach an agent: `IntentRouter` (`packages/gateway/src/chatops/intent-router.ts`) classifies every inbound message into exactly two intents — `read` → `askEngine`, `write` → `runGatedWrite` — and there is no `agents.*` call anywhere under `chatops/`, so the fourteen built-in agents, the ones that render deterministically with **no LLM at all**, are the output a channel cannot get, while a channel read requires a model. Recorded in [§ Track 2 → Client surfaces](#client-surfaces) — which already owned surface build order — with the `egress_ledger` coverage question for a channel-served brief left explicitly open rather than assumed, since `I29`'s brief-egress `ClientKind` map covers `mcp` and `http` and a ChatOps origin is neither. A new [§ Rejected Directions](#rejected-directions) section records what was deliberately **not** taken, each with the condition that reopens it: **forking VS Code** (the four wants behind it each have a cheaper instrument, and the load-bearing "the extension API blocks us" premise is untested — build the `why`-lens hover and find out); **agent-authored code generation**, scoped precisely so two adjacent things are not swept up with it (connector writes stay planned in Phase 9.7, and owner-invoked `nimbus exec` already ships under `I33`; what is rejected is an LLM that authors and applies changes to the user's source, which would walk through the exact door `I33`'s own scope bound names as first to re-examine); and **default-on browser/shell automation**, the posture rather than the capability, since S2's computer-use row is the sanctioned form. That section also records that **five of the six** capabilities a survey of [OpenClaw](https://github.com/openclaw/openclaw) and Hermes Agent turned up were already roadmap rows in Phases 10 and 14 and in S2 — the single uncovered gap was not a capability but the messaging reach above. 2026-08-21 — **[S1 — Local Brain](#spine-s1) closed and [S2 — Local Compute Fleet](#spine-s2) opened.** S1 ran 2026-06-20 → 2026-08-20; it is now recorded under [Shipped](#shipped) with its bounds intact, and the parked "Nimbus as a local MCP *server*" row moved into that record as ✅ delivered (read-only, stdio, 21 tools, `@nimbus-dev/mcp` in the MCP Registry) — what remained of it, the owner-sink / write surface, began shipping under S3 as the capture sink (`I28`, 2026-10-12). Nothing has shipped in S2 yet. 2026-08-20 — landed since 2026-08-07, all under the then-active [S1 — Local Brain](#spine-s1) slot: the S1 agent set closed out with **`nimbus pre-mortem`** — the thirteenth built-in agent, schema **V53** plus a debounced theme-mining pass (2026-08-11) — and **`nimbus negotiate`**, the fourteenth, a cited contribution brief over six lanes (2026-08-12, #1166; Tauri `ALLOWED_METHODS` 105 → 106). Then the **Wave 6 answer-quality set**, three of whose four rows are now closed: **agent brief synthesis (A0)** (2026-08-16) — LLM-rewritten briefs behind `[agents] synthesis` (`"off"`/`"local"`/`"allow-remote"`), which raised the `model` egress class from `none` to `per-call` and introduced invariant **I31** (disclosure integrity), widened on 2026-08-18 so the anchor-phrase guard covers the whole interleaved disclosure set from one shared definition; **`nimbus ask --devil` (A1)** (2026-08-18), wired across BOTH dispatchers so it is not inert on the desktop and VS Code surfaces; **agent personas (A2)** (2026-08-18) — a `[persona]` `tone`/`voice` vocabulary, with `confidence_threshold` and `tool_caution` REJECTED rather than deferred; and **`nimbus stats`** (2026-08-19), the aggregation half of **W6-B**, shipped as disjoint buckets rather than the rolling window that row named. **First-class negation queries (W6-B) closed on 2026-08-20, completing Wave 6 — B.1 shipped `--not-touching`, `--no-downstream-incident`, `--not-reviewed` and `--explain` on `nimbus query` / `nimbus people list`, each refusing rather than answering from an unpopulated substrate; B.2 then put the same three predicates on the gateway engine (`nimbus ask` and the surfaces sharing its engine) and the MCP server, with exclusion counts guaranteed only on the engine surface — an external MCP client's model can drop them — and no coverage at all when `[llm].prefer_local = true`, since the local router has no tool-calling support.** Earlier, 2026-08-07 — landed since 2026-08-01, also under S1: the **full-body store** (**V48**, #1023), **real Notion + Confluence page bodies** (#1039), the **I29 completeness** pass — coverage vector, boot marker, required sink (#1038) — and **connector-depth enforcement + real Gmail/Outlook bodies** (**V49**, #1047), then **resolve-by-URL** — the derived, indexed `item.resolve_key` plus `GET /v1/items/resolve` behind the `resolve` token scope (**V52**). **Phase 6 (Team) COMPLETE** (all 9 slices; Slice 8 Share & Virality Waves 8a–8d shipped 2026-06-15 → 2026-06-18, #687), and the build order from here is the **[Phase 7+ Sequencing Spine](#phase-7-sequencing-spine)** overlay — the current slot is **[S1 — Local Brain](#spine-s1)**. Since then, merged to main: the web-clipper gateway surface (invariant **I30** — owner-paired one-time token minting; #718) with its `nimbus clip list` / `clip delete` / `clip pair` CLI (#760/#761), a per-route body cap so real articles fit the I13 write surface (#771/#773), and the **Chrome/Firefox MV3 browser extension** at its initial release `v0.1.0` (now `v0.2.0` — see [§ Track 2 → Client surfaces](#client-surfaces)) from the satellite repo `nimbus-agent/nimbus-web-clipper` (2026-07-19; store listings pending their one-time bootstrap); the `@nimbus-dev/sdk` and `@nimbus-dev/client` npm packages extracted to standalone public repos (both removed from the monorepo; client extraction #758); the egress-ledger & `nimbus prove` provable-locality primitive (#698 — invariant **I29** / static **D22** / schema **V44** `egress_ledger`), dedup waves a/c (#696/#697), connector pagination-SSRF + email header-injection hardening (#694), and launch & community readiness (root README + SECURITY policy, #690). Landed since 2026-07-19: the **research-briefs gateway surface** (2026-07-22), **`nimbus why`** — six-lane provenance briefs over the local relationship graph (2026-07-24, #820), and **zero-config onboarding** — `nimbus init`, with the LLM demoted to optional (2026-07-28, #887/#895). Latest release: see [`CLAUDE.md`](../CLAUDE.md), which release-please rewrites on every release — this document deliberately no longer carries the number, because a hand-maintained copy of it went ten releases stale here. Schema **V49** (connector-depth enforcement + real Gmail/Outlook bodies, #1047) has since shipped. 2026-08-01 — **recorded the contextual-surfaces direction** (a direction record, not a re-sequencing — the build slot stays [S1 — Local Brain](#spine-s1) and no phase moved): one gateway, N contextual surfaces, with the agents as the product and each surface as a context-aware way to reach them; the browser extension is reframed from **web clipper** to a **browser-side gateway client** (an ambient panel that resolves a Bitbucket PR or Jenkins build page to an already-indexed item and runs the existing agents against it), and the editor surface gets the same treatment. Recorded in [§ Track 2 → Client surfaces](#client-surfaces) — which already owned surface build order — rather than in [Phase 19 (Ambient Surfaces)](#phase-19--ambient-surfaces), whose scope is explicitly non-screen. Honest state carried with it: the clipper has ~0 users, its category is occupied, and #1005 + #1006 gate its current job. The two gateway surfaces the direction needs — a browser-reachable agent invocation route (#1063) and a resolve-by-URL read (schema **V52**) — have since both shipped. Design spec `2026-08-01-browser-gateway-client-design.md` is planned, not yet written. 2026-06-17 — **Phase 7+ re-sequenced into a three-track Sequencing Spine overlay** (time-to-value × moat; cheap moat primitives harvested forward, no renumber) — see [§ Phase 7+ Sequencing Spine](#phase-7-sequencing-spine) (#677). 2026-06-14 — **Phase 6 Slice 9 sub-project A (Mendeley connector, read-only) shipped** (#631; reuses the `reference` item type — no migration/HITL/invariant). 2026-06-13 — **Phase 6 Slice 7 (Wave 7a — Data Warehouse & BI connectors + cross-warehouse lineage, V40) shipped** (#595); the installer & distribution program (Homebrew/Scoop/winget + native `.msi`/`.pkg`/`.rpm` + hosted GPG-signed apt/yum repo) and the True Coverage per-file ≥80% floor also landed since the last update. 2026-06-04 — **renumbered the Marketplace Registry phase to Phase 9.5** and relocated it after Phase 9 (it previously sat as a `.5` between Phases 5 and 6; its hard blocker is Phase 9 Wave 5, the `nimbus eval` framework); **decomposed Phase 6 (Team) into 9 sequenced delivery slices** (Slice 1 = Federation Core); and **moved personal/family/friend federation out of Phase 6 into a new Phase 20 (Personal & Household Federation)** per guiding-principle #7. 2026-05-28 (second pass) — added **Phase 18 (Vertical Personas)** + **Phase 19 (Ambient Surfaces)** as new dedicated phases; extended **Phase 6** with personal CRM, family/couples/group mesh mode, `nimbus share`, and sovereign-mesh referral; extended **Phase 7** with the implicit-knowledge agent triad (`nimbus why` / `glossary` / `decisions`), `nimbus negotiate`, devil's-advocate mode, agent-persona configuration, and first-class negation + aggregation queries; extended **Phase 8** with the contextual dependency-update intelligence agent; extended **Phase 9** with **Wave 6 (Agent Honesty Surfaces)** — calibration audit, bias diagnostics, refusal log; extended **Phase 11** with the public dogfooding telemetry dashboard (vulnerability-as-marketing); extended **Phase 13.5** with the voice-only ambient stretch. 2026-05-28 (first pass) — added **Phase 9.5 (Marketplace Registry)**, **Phase 12.5 (Compliance Receipts)**, and **Phase 13.5 (Mobile Companion — iOS first)** as new dedicated phases; promoted **`nimbus eval` (author-facing eval framework + quality score)** into Phase 9 as a Phase 9.5 prerequisite; added **M8 — Time-Travel** as a north-star; added the **S — Standards (reference-impl-only)** cross-phase track anchored on the **Egress Attestation Format (EAF)** as RFC-001 with the verifier CLI. Rationale: a single adversarial stress-test pass over an "industry-standard" brainstorm killed standards-body LAIP/PAT/SCM plays, the vertical-starter-pack compliance plan, the multi-platform distribution scatter, and demoted personal fine-tune + cross-agent handoff to research bets; the surviving shape is the marketplace + compliance-as-receipts + mobile-on-call wedge and an in-place EAF reference impl. 2026-05-25 — added North-Star **M7 (Provable Locality)** (egress ledger threaded through Phase 8 + Phase 12), a **Concurrency & Scaling** documentation pass with a **B5 (high-priority) — WAL concurrency hardening** follow-up, a Phase 9 **model-weight integrity** item, and a proposed standing-approval **taint-barrier** invariant. 2026-05-24 — added **Phase 16 (The Platform Layer)** and **Phase 17 (The On-Call Copilot)**, plus a near-term **First-Run & Time-to-Wow** initiative (including `nimbus demo`), the cross-phase **North-Star Capabilities** (M1–M6 + connective tissue), and the **killer-demo** milestone. Phase 5 (The Extended Surface) is now ✅ complete (2026-06-04); Phase 6 (Team) was then the active phase — Slices 1 (Federation Core) and 3 (Identity/SSO/SCIM) shipped 2026-06-05. The full dated delivery log (every PR, with dates) lives in [`docs/CHANGELOG.md`](./CHANGELOG.md); this document carries the forward-looking acceptance criteria and per-phase Shipped summaries. Phase 5 core sequencing (locked in the T1 sequencing spec): T1 → T3 → Wave A → T4 → T6 → T2 → Wave B. The 2026-05-10 reorganisation inserted Phases 7 (Engineering Excellence), 8 (Security Engineering), and 9 (AI Engineering Loop) before the Autonomous Agent and added Phase 14 (Agent Evolution / AI v2) and Phase 15 (Cross-Organizational Federation) — see [§ How to Update This Document](#how-to-update-this-document).
 
+
+
 ---
+
+
 
 ## Contents
 
+
+
 - [Guiding Principles](#guiding-principles)
+
 - [Commercial Roadmap](#commercial-roadmap)
+
 - [Status Overview](#status-overview)
+
 - [Shipped](#shipped) — Phases 1, 2, 3, 3.5, 4, 5, 6, Spine slots [S1](#spine-s1), [S2](#spine-s2) and [S3](#spine-s3), and the [pre-S3 close-out](#pre-s3-close-out)
+
 - [Active](#active) — **S4 — Autonomous Agent** is the active slot (opened 2026-11-04); **[S3 — Open Surface](#spine-s3)** closed 2026-11-04 when the last of the seven Phase 9.5 projects (author onboarding) shipped. From Phase 6 onward the build order is the [Phase 7+ Sequencing Spine](#phase-7-sequencing-spine) overlay (S1 → S5), not the phase numbers
+
 - [Planned](#planned) — Phases 7 through 27 (including 9.5 Marketplace Registry, 12.5 Compliance Receipts, 13.5 Mobile Companion, 18 Vertical Personas, 19 Ambient Surfaces, 20 Personal & Household Federation, and the 21–27 Sovereign-Proof arc — 21 Trust Substrate, 22 Proof Layer, 23 Inert to Injection, 24 Agent Archaeology, 25 Confidential Mesh Compute, 26 Provable Governance, 27 The Agent Society), plus near-term & cross-phase initiatives (M1–M12 north-stars + S — Standards track)
+
 - [Rejected Directions](#rejected-directions) — considered and deliberately not taken, each with the condition that would reopen it
+
 - [How to Update This Document](#how-to-update-this-document)
 
+
+
 ---
+
+
 
 ## Guiding Principles
 
+
+
 Every roadmap decision is evaluated against the project's non-negotiables:
 
+
+
 1. **Local-first** — machine is the source of truth; cloud is a connector
+
 2. **HITL is structural** — consent gate is in the executor, not the prompt; cannot be bypassed or reasoned around
+
 3. **No plaintext credentials** — Vault only; never in logs, IPC, or config
+
 4. **MCP as connector standard** — the Engine never calls cloud APIs directly
+
 5. **Platform equality** — Windows, macOS, and Linux are equally supported in every phase
+
 6. **No feature creep across phases** — do not implement Phase N+1 features while Phase N is active
+
 7. **Built for professionals** — every feature is evaluated through the lens of an on-call engineer, platform engineer, or security practitioner running systems in production; consumer-oriented affordances are out of scope
+
+
 
 ## Commercial Roadmap
 
+
+
 Nimbus is open source (AGPL-3.0) for individual engineers. Commercial tiers fund continued development:
 
+
+
 | Tier | Phase | Key additions |
+
 |---|---|---|
+
 | **Open Source** | Now | Full single-user Gateway, all connectors, CLI, local LLM, VS Code extension |
+
 | **Team** | Phase 6 | Team Vault, shared index namespaces, LAN federation, multi-user HITL, SSO/OIDC |
+
 | **Enterprise** | Phase 12 | SCIM provisioning, audit log shipping (SIEM), Helm/Docker, compliance tooling, SLA support |
+
 | **Sovereign / Auditor** | Phase 21–22 + 12.5 | *Auditor-in-a-Box* read-only profile (HTTP write surface disabled via `I13`, no HITL-eligible actions, `I16`-signed) + per-answer **Verifiable-Negative** receipts an auditor or cyber/E&O insurer verifies offline with `eaf-verify` — a read-only *profile* of the Enterprise/12.5 substrate, not a parallel engineering line |
+
+
 
 Commercial license also available now for organizations that need to embed Nimbus in a product or require compliance guarantees before Phase 12 ships — contact the maintainers.
 
+
+
 **New buying centers (the Phase 21–26 consequence, not a parallel product line).** The proof layer unlocks constituencies the engineer-tool competitors structurally don't address: the **CISO / GRC auditor**, who installs the read-only *Auditor-in-a-Box* profile and runs `eaf-verify` against the fleet — receiving signed egress ledgers, never content, subject to the same `I17` per-peer grant/role/consent filter as any federated query — and the **cyber / E&O insurer**, for whom a signed, externally-anchorable record that no remote inference host was contacted measurably lowers modeled exfiltration loss (enabling a premium conversation; the actuarial-adoption leg is an outside-the-codebase bet, like the S — Standards track's adoption framing). **BYO-compute pricing:** flat-unlimited holds for `[llm].prefer_local` / BYO-provider-key deployments (≈ zero inference-relay marginal cost), with support/SLA tiers priced separately; a future Nimbus-hosted inference relay is explicitly out of the no-meter guarantee. Air-gapped / SCIF deployments reuse the existing Phase 12 air-gapped bundle + clean-room topology — commercial framing, not new engineering. (MSP white-label consoles and BYO-Index OEM are deliberately *not* pursued as wedges — they are me-too surfaces a cloud vendor can match, and the latter is already the existing "embed Nimbus in a product" commercial-license path.)
 
+
+
 ---
+
+
 
 ## Status Overview
 
+
+
 | Phase | Theme | Status |
+
 |---|---|---|
+
 | Phase 1 | Foundation | ✅ Complete |
+
 | Phase 2 | The Bridge | ✅ Complete |
+
 | Phase 3 | Intelligence | ✅ Complete |
+
 | Phase 3.5 | Observability & Developer Experience | ✅ Complete |
+
 | Phase 4 | Presence | ✅ Complete |
+
 | Phase 5 | The Extended Surface | ✅ Complete |
+
 | Phase 6 | Team | ✅ Complete |
+
 | Phase 7 | Engineering Excellence | Planned |
+
 | Phase 8 | Security Engineering | Planned |
+
 | Phase 9 | AI Engineering Loop | Planned |
+
 | Phase 9.5 | Marketplace Registry | ✅ Complete (2026-11-04) — all seven projects: project 1 (registry protocol and client, I44) ✅ 2026-10-18; project 2 (publishing) ✅ 2026-10-23; project 3 (trust layer, I48) ✅ 2026-10-27 in 5 PRs; project 4 (dependencies and starter packs) ✅ 2026-10-29 in 5 PRs; project 5 (`nimbus eval`, I49) ✅ 2026-10-30 in 5 PRs; project 6 (the quality layer, I51, I52) ✅ 2026-11-03 in 12 PRs; project 7 (author onboarding) ✅ 2026-11-04 in 4 PRs. The owner's non-buildable items and the open acceptance criteria are listed in [Owner's open items](#owners-open-items); the buildable remainders are in [Carried into S4](#carried-into-s4) |
+
 | Phase 10 | The Autonomous Agent | Planned |
+
 | Phase 11 | Sovereign Mesh | Planned |
+
 | Phase 12 | Enterprise | Planned |
+
 | Phase 12.5 | Compliance Receipts | Planned |
+
 | Phase 13 | Desktop Distribution | Planned |
+
 | Phase 13.5 | Mobile Companion | Planned |
+
 | Phase 14 | Agent Evolution / AI v2 | Planned |
+
 | Phase 15 | Cross-Organizational Federation | Planned |
+
 | Phase 16 | The Platform Layer | Planned |
+
 | Phase 17 | The On-Call Copilot | Planned |
+
 | Phase 18 | Vertical Personas | Planned |
+
 | Phase 19 | Ambient Surfaces | Planned |
+
 | Phase 20 | Personal & Household Federation | Planned |
+
 | Phase 21 | Sovereign Trust Substrate | Planned |
+
 | Phase 22 | The Proof Layer (Verifiable Negatives) | Planned |
+
 | Phase 23 | Inert to Injection (The Unexfiltratable Agent) | Planned |
+
 | Phase 24 | Agent Archaeology | Planned |
+
 | Phase 25 | Confidential Mesh Compute | Planned |
+
 | Phase 26 | Provable Governance | Planned |
+
 | Phase 27 | The Agent Society | Planned |
+
+
 
 **Current build slot:** [Spine S4 — Autonomous Agent](#active), opened by the owner on 2026-11-04 (its exit condition is under [Active](#active)). [Spine S3 — Open Surface](#spine-s3) is ✅ complete (2026-10-11 → 2026-11-04): it closed when the seventh [Phase 9.5](#phase-95--marketplace-registry) project, author onboarding, shipped its fourth PR on 2026-11-04. S4 — Autonomous Agent ([spine table](#phase-7-sequencing-spine), [carried-in items](#carried-into-s4)) opened the same day. Before S3, [Spine S2 — Local Compute Fleet](#spine-s2) closed 2026-10-10 (opened 2026-08-21), and the [pre-S3 close-out](#pre-s3-close-out) finished the same day with E, the OS notification backend. [Spine S1 — Local Brain](#spine-s1) is ✅ complete (2026-06-20 → 2026-08-20). Every phase from 7 onward keeps its number for cross-linking, but the real build order is the [Phase 7+ Sequencing Spine](#phase-7-sequencing-spine) overlay (S1 → S5) — so "Planned" above means "not yet built", not "next in line".
 
+
+
 ---
+
+
 
 ## Shipped
 
+
+
 ### Phase 1 — Foundation ✅
+
+
 
 **Goal:** Make the Gateway real and the security model provable.
 
+
+
 #### Delivered
 
+
+
 - [x] Bun workspace monorepo with root `package.json` and `bunfig.toml`
+
 - [x] CI: `pr-quality` job on PRs (Ubuntu); 3-platform matrix on push to `main`/`develop`
+
 - [x] Nimbus Gateway process — JSON-RPC 2.0 IPC over domain socket (macOS/Linux) / named pipe (Windows)
+
 - [x] Platform Abstraction Layer — `PlatformServices` interface + `win32`, `darwin`, `linux` implementations
+
 - [x] Secure Vault — Windows DPAPI, macOS Keychain, Linux libsecret; `NimbusVault` interface
+
 - [x] Local Filesystem MCP connector + SQLite metadata schema
+
 - [x] HITL executor — `HITL_REQUIRED` frozen set; consent gate is structural, not prompt-based; audit log written before action
+
 - [x] `nimbus` CLI: `start`, `stop`, `status`, `ask`, `search`, `vault`
+
 - [x] Unit + integration test suite; coverage gates: Engine ≥85%, Vault ≥90%
+
 - [x] `bun audit` + `trivy` + CodeQL security scanning in CI
+
+
 
 #### Acceptance Criteria (all met)
 
+
+
 - `nimbus ask "find all markdown files modified this week"` executes end-to-end on Windows, macOS, and Linux
+
 - Any destructive follow-up action triggers the HITL consent prompt before any tool call is dispatched
+
 - Gateway cold-start time is under 100ms on all three platforms
+
 - No credential value appears in IPC responses, logs, or stdout under any code path
 
+
+
 ---
+
+
 
 ### Phase 2 — The Bridge ✅
 
+
+
 **Goal:** Connect every surface a developer works across — cloud storage, email, source control, communication, project tracking, and knowledge management — and unify them in the local index.
 
+
+
 #### Delivered
+
+
 
 ##### First-party MCP connectors (all with delta sync + index population)
 
+
+
 - [x] **Google Drive** — file list, metadata, search; OAuth PKCE; `Changes` API delta; write (create/trash/move/rename) behind HITL
+
 - [x] **Gmail** — message list, thread read, label list, draft create/send; OAuth PKCE
+
 - [x] **Google Photos** — album list, media item metadata (not binary download); OAuth PKCE
+
 - [x] **OneDrive** — files, folders, delete/move behind HITL; Microsoft Graph `delta` endpoint
+
 - [x] **Outlook** — mail, calendar events, contacts; scope-gated tools (`tool-scope-policy.ts`); mail delta sync
+
 - [x] **Microsoft Teams** — chats, channels, messages; post message behind HITL
+
 - [x] **GitHub** — repos, PRs (open/closed/merged), issues, CI check runs; PAT auth
+
 - [x] **GitLab** — projects, merge requests, issues, pipelines; PAT auth; self-hosted `gitlab.api_base` support
+
 - [x] **Bitbucket** — repos, pull requests, pipelines; app-password auth
+
 - [x] **Slack** — channels, DMs, threads, search; OAuth user token; post message/DM behind HITL
+
 - [x] **Linear** — issues, projects, cycles, initiatives, members; API key; write behind HITL
+
 - [x] **Jira** — issues, sprints, boards, epics, comments; API token; write behind HITL
+
 - [x] **Notion** — pages, databases, database rows, comments; OAuth; write behind HITL
+
 - [x] **Confluence** — spaces, pages, blog posts, inline comments; API token; write behind HITL
+
 - [x] **Discord** (opt-in, off by default) — servers, channels, threads; bot token; read-only index
+
+
 
 ##### Infrastructure
 
+
+
 - [x] OAuth PKCE utility — `portRange` config, `--port`/`--scopes` CLI flags, no-secret desktop PKCE; token written to Vault only
+
 - [x] Per-provider rate limiter — token bucket per provider; `[sync.quotas]` config; `penalise()` on 429
+
 - [x] Delta sync scheduler — `maxConcurrentSyncs` semaphore, `hasMore` immediate re-queue, `retentionDays` weekly prune, `catchUpOnRestart` config
+
 - [x] Unified `item` schema (schema v5) — FTS5, `canonical_url` dedup with `duplicates` field, `pinned` column, `sync_state`, `sync_telemetry` tables
+
 - [x] `person` table (schema v5) — GitHub, GitLab, Slack, Linear, Jira, Notion, Bitbucket, Microsoft, Discord handles
+
 - [x] Cross-service people linker — Slack handle → GitHub login → Linear member → email resolves without a network call; `nimbus people` CLI + `people.*` IPC
+
 - [x] Formal migration runner — `_schema_migrations` ledger, numbered append-only migrations, single-transaction per step
+
 - [x] Lazy connector mesh — idle shutdown after 5 min; `registry.ensureRunning()` before dispatch; Google/Microsoft bundles
+
 - [x] `nimbus connector` CLI: `auth`, `list`, `sync`, `pause`, `resume`, `status`, `remove`, `set-interval`
+
 - [x] Engine context ranker + `searchLocalIndex`, `fetchMoreIndexResults`, `resolvePerson` agent tools
+
 - [x] E2E test scenarios: cross-service query, identity resolution, HITL write ops, MCP connector contract
+
 - [x] Security hardening: PKCE failure paths, OAuth vault scopes, audit payload safety, connector remove resilience
+
 - [x] Coverage gates met: Engine ≥85%, Vault ≥90%, Sync scheduler ≥80%, Rate limiter ≥85%, People graph ≥80%
+
 - [x] Linux headless installers (`.deb` + `.tar.gz`); Windows NSIS + macOS pkg sources
+
+
 
 #### Acceptance Criteria (all met)
 
+
+
 - `nimbus ask "find everything I've touched across Drive, GitHub, Slack, and Linear this sprint"` returns merged, ranked results in under 200ms from the local index
+
 - `nimbus ask "who is the most active reviewer on the payment-service repo and what are they working on in Linear?"` resolves the cross-service identity link without a network call
+
 - Revoking a connector's auth (`nimbus connector remove google`) deletes all associated Vault entries and index rows atomically; no orphaned credentials
+
 - All write operations through Slack, Linear, Jira, Notion, Confluence connectors trigger HITL before any outbound call
+
+
 
 #### Deferred from Phase 2 (by design)
 
+
+
 | Topic | Resolved in |
+
 |---|---|
+
 | Full document content extraction (PDF/DOCX body text in FTS5) | Phase 3 — embedding pipeline + Filesystem connector v2 |
+
 | Generic user-defined MCP connector (`nimbus connector add --mcp`) | Phase 3 — Extension Registry v1 (adds sandboxing + manifest verification) |
+
 | Vault credential portability between machines | Phase 4 — `nimbus data export/import` |
+
 | SQLite encryption at rest (SQLCipher) | ❌ **rejected 2026-09-15** — the `[db.encrypt]`/AES-256/Vault-key design below was never reachable: `bun:sqlite` cannot link SQLCipher on Windows or Linux. See [§ Rejected Directions](#sqlite-encryption-at-rest-sqlcipher--rejected-2026-09-15) |
+
 | Per-connector OAuth vault keys vs shared family key (`google.oauth`, `microsoft.oauth`) | Phase 3/4 consideration — shared key kept for simplicity; revisit if scope-collision UX proves painful |
 
+
+
 ---
+
+
 
 ### Phase 3 — Intelligence ✅
 
+
+
 **Goal:** Make Nimbus semantically aware and proactively useful. Extend into CI/CD, cloud infrastructure, observability MCPs, workflows, watchers, extensions, and specialized agents.
+
+
 
 **Status:** **Complete** on `main` (closed 2026-04). This section is the authoritative post-closure summary (the long-form Phase 3 plan doc was retired when the phase closed). **Phase 3.5** owns observability, conversational E2E harnesses, and remaining polish.
 
+
+
 #### Dependencies (met)
 
+
+
 - Phase 2 unified metadata index
+
 - Extension SDK + Registry v1 for safe third-party MCP / `nimbus connector add --mcp`
+
+
 
 #### Delivered
 
+
+
 ##### Semantic layer
 
+
+
 - [x] **Embedding pipeline** — Bun worker; `@xenova/transformers` local default; `sqlite-vec` (`vec_items_384`); OpenAI opt-in; provider/model switch + resumable backfill; `MINIMUM_MODEL_VERSION` in `embedding/model.ts`
+
 - [x] **Hybrid search** — BM25 + vector RRF; chunk dedupe / parent chunk context where implemented; `nimbus search --semantic`; quality gate: `packages/gateway/test/benchmark/search-quality.test.ts`
+
 - [x] **RAG session memory** — per-session embedded chunks; IPC `session.*`; hourly prune; isolation tests in `session-memory-store.test.ts`
+
+
 
 ##### Extension ecosystem
 
+
+
 - [x] **Extension Registry v1** — `nimbus.extension.json`; manifest **and** entry-point SHA-256 on startup; scaffold + install/list/enable/disable/remove; tarball / URL / local path; see `docs/contributors/extension-author-walkthrough.md`
+
 - [x] **Extension sandbox hardening** — full syscall/network isolation; **shipped in Phase 5 T2 as invariant I15** (per-OS sandbox runner under `packages/gateway/src/platform/sandbox/`, wired via `wrapServerSpec`)
+
 - [x] **Extension Marketplace** — **shipped in Phase 4** as the WS5-D Marketplace panel (list / install-from-directory / enable / disable / remove); see the Desktop Application section under Phase 4
+
+
 
 ##### CI/CD and infrastructure MCP connectors
 
+
+
 - [x] Jenkins, GitHub Actions, CircleCI, GitLab CI (pipelines/jobs + HITL)
+
 - [x] AWS, Azure, GCP (CLI-backed tools + sync + HITL mutations)
+
 - [x] **IaC** — Terraform / CloudFormation / Pulumi via MCP; sync heartbeat + **drift hints** (`nimbus status --drift`, `gateway.ping` `includeDrift`) — not full Terraform-state vs live reconciliation (later phase)
+
 - [x] Kubernetes, Datadog, Grafana, Sentry, PagerDuty, New Relic
+
+
 
 ##### Automation and graph
 
+
+
 - [x] **Workflows** — `workflow-runner` / store; `nimbus workflow`; script files `nimbus run`; dry-run / `--no-ttv` HITL safety
+
 - [x] **Watchers** — post-sync evaluation; rate limiting + cycle detection; cron gating; startup catch-up; unit coverage in `watcher-engine.test.ts` / `watcher-store.test.ts`
+
 - [x] **Relationship graph** — `graph_entity` / `graph_relation`; `traverseGraph`; indexed incident correlation substrate: `packages/gateway/test/e2e/scenarios/incident-correlation-indexed.e2e.test.ts`
+
 - [x] **Filesystem intelligence (v2 scope shipped)** — `[[filesystem.roots]]`, `code_symbol`, git/deps metadata; semantic recall via shared embedding + hybrid search. Deeper vision (blame UX, multi-manifest parsers, etc.) → later phases
+
+
 
 ##### Agents and CLI
 
+
+
 - [x] **DevOps** and **Research** agents — domain-tuned prompts and tool scoping in Gateway engine
+
 - [x] **Session CLI** — TTY REPL (`nimbus` no args); headless bundle defaults to bundled MiniLM (`scripts/package-headless-bundle.ts`)
+
+
 
 ##### Security and quality
 
+
+
 - [x] **Phase 3 HITL action ids** in `packages/gateway/src/engine/executor.ts` — exercised by `packages/gateway/test/e2e/scenarios/hitl-write-ops.test.ts`
+
 - [x] **Coverage gates** — embedding ≥80%, workflow ≥80%, watcher ≥80%, extensions ≥85% (see root `package.json` + `.github/workflows/_test-suite.yml`)
+
 - [x] **Three-platform CI** — push matrix in `.github/workflows/ci.yml`
+
+
 
 #### Intentionally incomplete (follow-ups)
 
+
+
 | Topic | Where it lands |
+
 |---|---|
+
 | Full IaC drift (Terraform state vs live resource diff) | Later phase; hints only in Phase 3 → re-homed to [S5](#carried-into-s5) (2026-10-10) |
+
 | Proactive anomaly **user** notify (beyond log stub) | Phase 3.5+ → re-homed to [S4](#carried-into-s4) (2026-10-10) |
+
 | Deterministic TTY E2E for `nimbus ask` / anaphoric session turns | Phase 3.5 |
+
 | Extension syscall sandbox | Phase 5 |
+
+
 
 #### Acceptance criteria (all met for Phase 3 closure)
 
+
+
 - **Indexed** cross-service incident correlation (PagerDuty, GitHub PR, Jenkins, Slack, AWS-style alert) via search + graph — `incident-correlation-indexed.e2e.test.ts`; conversational `nimbus ask` on same data = manual smoke
+
 - Contributor path documented — `docs/contributors/extension-author-walkthrough.md`
+
 - Watcher fires within a sync cycle; downtime catch-up on restart — covered by watcher engine/store tests and gateway E2E where applicable
+
 - `terraform plan` → HITL → `apply` — mock Terraform in `packages/mcp-connectors/iac/terraform-mock.integration.test.ts`
+
 - `bun audit --audit-level high` clean for Phase 3 packages; `sqlite-vec` on all CI OS runners
 
+
+
 ---
+
+
 
 ### Phase 3.5 — Observability & Developer Experience ✅
 
+
+
 **Goal:** Make Nimbus debuggable, composable, and trustworthy before the public `v0.1.0` release. Connectors, workflows, and the index are only as useful as your ability to see what they're doing, query them programmatically, and recover when things go wrong.
+
+
 
 **Sequencing rationale:** Phase 3 delivers a large surface area of connectors and agentic capability. Phase 3.5 ensures that surface area is observable, configurable, and robust before it ships publicly. **Phase 3.5 remains a release prerequisite** — Phase 4 does not begin until the consolidated acceptance criteria in this section are verified on Windows, macOS, and Linux.
 
+
+
 > **Status (2026-04-15):** Phase 3.5 is **✅ Complete**. All acceptance criteria have been verified on Windows, macOS, and Linux. `@nimbus-dev/client` is published to npm. The Starlight docs site is live. Phase 4 (Presence) was the next phase.
+
+
 
 #### Dependencies
 
+
+
 - Phase 3 connector mesh and watcher system (health model builds on them)
+
 - Phase 3 Extension Registry v1 (extension testing infrastructure builds on the SDK)
+
+
 
 #### Delivered on `main` (high level)
 
+
+
 **Self-observability**
 
+
+
 - [x] **`nimbus diag`** — snapshot over IPC; `--json`; `slow-queries` subcommand (`packages/cli/src/commands/diag.ts`, `packages/gateway/src/ipc/diagnostics-rpc.ts`)
+
 - [x] **Metrics in diagnostics / status** — `diag.snapshot` carries index metrics (including query latency percentiles); `nimbus status --verbose` prints per-service item counts, total items, **p95** query latency, and per-connector health lines (`packages/cli/src/commands/status.ts`)
+
 - [x] **Prometheus-compatible metrics endpoint** — localhost-only, off by default (`packages/gateway/src/ipc/metrics-server.ts`)
+
 - [x] **Slow query logging** — ring buffer + SQLite persistence; surfaced via `nimbus diag slow-queries` (`packages/gateway/src/db/latency-ring-buffer.ts`, related DB tables)
+
+
 
 **Connector health**
 
+
+
 - [x] **Explicit health states** — persisted in `sync_state` (`healthy`, `degraded`, `error`, `rate_limited`, `unauthenticated`, `paused`); surfaced in IPC and **`nimbus connector list`** (`packages/gateway/src/connectors/health.ts`, CLI table)
+
 - [x] **429 → `rate_limited`** — connectors throw `RateLimitError`; scheduler skips dispatch until retry window (`packages/gateway/src/sync/scheduler.ts`)
+
 - [x] **Health history** — SQLite history + **`nimbus connector history <name>`** (`packages/gateway/src/connectors/health.ts`, `packages/cli/src/commands/connector.ts`)
+
 - [x] **401/403 → `unauthenticated`** — typed `UnauthenticatedError` from connectors; scheduler calls `transitionHealth` on auth loss, persisting `sync_state.health_state` + `last_error` + a `connector_health_history` row (`packages/gateway/src/sync/scheduler.ts`); per-connector throws vary by connector implementation. The state is readable via `nimbus connector list`/`status`/`history` and `nimbus doctor`. **An OS notification is raised too** since 2026-10-10 (pre-S3 item E): the scheduler's `notify` callback reaches the real `NotificationService` (`platform/notifications/`), subject to `[notifications]` and its rate limit; before that it reached a no-op, which is why this row long said no notification was delivered
+
 - [x] **Agent caveat strings** — scoped `searchLocalIndex` / `fetchMoreIndexResults` attach **`connectorHealthCaveat`** when the `service` filter targets a non-healthy connector; unscoped `searchLocalIndex` may attach **`connectorHealthCaveats`** (capped list) for services present in the returned context window (`packages/gateway/src/engine/connector-health-caveat.ts`)
+
+
 
 **Data layer**
 
+
+
 - [x] **`nimbus query`** — structured filters, `--since` / `--until`, `--sql` read-only guard, `--json` / `--pretty` (`packages/cli/src/commands/query.ts`)
+
 - [x] **Read-only local HTTP API** — `nimbus serve`; `GET /v1/items`, `/v1/items/:id`, `/v1/people`, `/v1/people/:id`, `/v1/connectors`, `/v1/audit`, `/v1/health` (`packages/gateway/src/ipc/http-server.ts`); item list filters share SQL with IPC via `packages/gateway/src/index/item-list-query.ts`
+
 - [x] **`@nimbus-dev/client`** — typed IPC wrapper + `MockClient`; shipped from `packages/client/` with publish automation on tag `client-v*` (`.github/workflows/publish-client.yml`) until the 2026-07-16 extraction (#758) removed both from the monorepo. The package now ships from the standalone [nimbus-agent/nimbus-client](https://github.com/nimbus-agent/nimbus-client) repo and this repo consumes it from npm
+
 - [x] **Dual CJS + ESM publish shape** — `dist/index.js` (tsc ESM) + `dist/index.cjs` (bundled `require`); `exports` exposes both; first npm publish signed off at the `client-v0.1.0` tag (`client-v*` workflow + `NPM_TOKEN`)
+
+
 
 **Configuration**
 
+
+
 - [x] **`nimbus config`** — `get` / `set` / `list` / `validate` / `edit` (`packages/cli/src/commands/config.ts`); telemetry keys show file vs env where wired
+
 - [x] **`nimbus profile`** — create / list / switch / delete (`packages/cli/src/commands/profile.ts`); Gateway profile support (`packages/gateway/src/config/profiles.ts`)
+
 - [x] **`nimbus config list` env legend** — table lists `[telemetry]` keys with env sources; footer documents additional `NIMBUS_*` overrides (Gateway `config.ts` / `assemble.ts`)
+
+
 
 **Data integrity & recovery**
 
+
+
 - [x] **`nimbus db verify` / `repair` / snapshot / restore / prune / backups list** — CLI + gateway `packages/gateway/src/db/*`
+
 - [x] **Pre-migration backups + rollback tests** — backups under `<dataDir>/backups`; migration failure rollback covered in `packages/gateway/test/unit/db/migration-rollback.test.ts` (and FTS5 mismatch coverage in `verify.test.ts`)
+
+
 
 **Telemetry**
 
+
+
 - [x] **Opt-in pipeline** — `[telemetry]` TOML + env overrides, payload safety gate, `nimbus telemetry show` / `disable`, flush scheduler POST to configured endpoint (`packages/gateway/src/config/telemetry-toml.ts`, `packages/gateway/src/telemetry/*`, `packages/cli/src/commands/telemetry.ts`)
+
 - [x] **Telemetry catalog (aggregate-only)** — flush + `telemetry.preview` include `connector_error_rate`, `sync_duration_p50_ms` (7d window), `connector_health_transitions`, `extension_installs_by_id`, `cold_start_ms` (Gateway assembly), plus query latency percentiles and agent invocation latency (`agent_invocation_latency_p50_ms` / `_p95_ms`, instrumented 2026-10-10: wall-clock durations of `runAsk` calls and of socket/HTTP/ChatOps `agents.*` briefs, from dispatch to `briefReady`/`briefError`, over an in-memory 1440-sample window that a restart empties; `0` until a sample exists). These are two percentile numbers, not histogram buckets; fleet and on-call-push briefs are not timed
+
+
 
 **Documentation & extension testing**
 
+
+
 - [x] **Starlight docs package** — `packages/docs/`; `bun run docs:build`; Pagefind search at build time; **internal links validated** on production build (`starlight-links-validator@0.23.0`, Astro 6 per Starlight peer range)
+
 - [x] **`nimbus test` + `runContractTests`** — CLI runs manifest contract from `@nimbus-dev/sdk` before optional `bun test` (`packages/cli/src/commands/test.ts`; `runContractTests` shipped from `packages/sdk/src/contract-tests.ts` until the 2026-07-16 SDK extraction (#756) — it now comes from the published `@nimbus-dev/sdk` package, source in the standalone [nimbus-agent/nimbus-sdk](https://github.com/nimbus-agent/nimbus-sdk) repo)
+
 - [x] **Docs hub (Phase 3.5 scope)** — Starlight site with getting started, connectors overview, query/HTTP, telemetry, client, architecture overview, FAQ, unreleased banner on home; deep per-connector pages → Phase 5+ content cadence
+
 - [x] **Extension CI template (copy-paste)** — `docs/templates/nimbus-extension-ci.yml`; referenced from `docs/contributors/extension-author-walkthrough.md`
+
+
 
 **Onboarding**
 
+
+
 - [x] **`nimbus doctor`** — Bun minimum, Linux `secret-tool`, Gateway IPC + `config.validate`, `diag.snapshot` index total + per-connector health table; exit `0` / `1` / `2` for ok / warnings / hard failures (`packages/cli/src/commands/doctor.ts`)
+
 - [x] **First-run / empty index guidance** — `nimbus start` prints next-step hints once (TTY, skip with `--no-wizard`); `nimbus ask` exits early with no connectors; Gateway `runAsk` returns onboarding text when the index has zero items
+
+
 
 #### Acceptance (all criteria met)
 
+
+
 - [x] **`nimbus query` latency harness** — p95 < 500ms on 8k-row index; strict mode (`< 100ms`) gated by `NIMBUS_RUN_QUERY_BENCH=1`
+
 - [x] **`bun audit --audit-level high` clean** — workspace audit passes at HIGH threshold
+
 - [x] **`@nimbus-dev/client` published to npm** — `client-v*` tag + `NPM_TOKEN` workflow verified
+
 - [x] **Docs editorial sign-off** — Starlight hub live; “getting started in under 10 minutes” verified on all three platforms
 
+
+
 ---
+
+
 
 ### Phase 4 — Presence ✅
 
+
+
 **Goal:** Give Nimbus a face, a local AI backbone that requires no cloud API key, and the trust foundations needed for a public `v0.1.0` release.
 
+
+
 > **Release gate:** `v0.1.0` ships only the headless gateway + CLI binaries and the VS Code extension. The Tauri desktop UI release vehicle (signed installers, build-ui matrix, Gatekeeper / SmartScreen handling) was moved out of `v0.1.0` and into Phase 13 — see [§ Phase 13 → Desktop Release Vehicle](#desktop-release-vehicle). The desktop UI code itself is complete in this phase; what slipped is publishing it as a release artifact.
+
 >
+
 > The end-to-end manual smoke checklist for headless releases lives at [`docs/release/manual-smoke-headless.md`](./release/manual-smoke-headless.md) and covers TUI + VS Code only. The Tauri-only checklist for the future `desktop-v0.1.0` tag lives at [`docs/release/manual-smoke-desktop.md`](./release/manual-smoke-desktop.md).
+
+
 
 #### Dependencies
 
+
+
 - **Phase 3.5 complete** — all Phase 3.5 acceptance criteria must pass before Phase 4 begins; the docs site, onboarding, and data integrity work are release prerequisites
+
 - Phase 3 Extension Registry v1 (Marketplace panel depends on it)
+
 - Phase 3 Watcher system (Watcher management UI depends on it)
+
 - Phase 3 Workflow pipelines (pipeline editor depends on it)
+
 - Phase 3.5 `@nimbus-dev/client` (VS Code extension depends on it)
+
 - Phase 3.5 configuration profiles (Settings panel profile switcher depends on it)
+
 - Code signing certificates provisioned before release build step
+
+
 
 #### Desktop Application (Tauri 2.0)
 
+
+
 > **Code complete; release vehicle deferred to Phase 13.** Every WS5 item below is implemented and tested in-tree, but publishing signed Tauri installers as release artifacts moved out of the `v0.1.0` release gate and into Phase 13 — see [§ Phase 13 → Desktop Release Vehicle](#desktop-release-vehicle). The Tauri smoke checklist no longer gates `v0.1.0`; it gates the future `desktop-v0.1.0` tag.
 
+
+
 - [x] **App shell foundation (WS5-A)** — React 19 + Tailwind v4 + Radix + Zustand v5 + React Router v7 scaffolding; Rust Tauri 2.0 bridge with compile-time `ALLOWED_METHODS` allowlist (6 methods); system tray + `Ctrl/Cmd+Shift+N` Quick Query popup (frameless, 560×220, auto-close after stream); three-step onboarding wizard (Welcome → Connect → Syncing); first-run routing; macOS accessory mode; CI unit coverage gate (≥80% lines / ≥75% branches)
+
 - [x] **System tray enhancements (WS5-B)** — aggregate-health icon (green → amber → red); pending-HITL badge; "Connectors ▸" submenu populated from `set_connectors_menu`; click navigates to Dashboard and flashes the matching tile
+
 - [x] **Dashboard (WS5-B)** — `IndexMetricsStrip` (items · embeddings · p95 · size), `ConnectorGrid` with live `connector://health-changed` patches + empty state, `AuditFeed` (last 25); `useIpcQuery` polling hook pauses on hidden / disconnected
+
 - [x] **HITL consent dialogs (WS5-B)** — dedicated frameless 480×360 always-on-top popup at `#/hitl-popup`; `StructuredPreview` renders details XSS-safely; destructive-action deny-list suppresses Approve `autoFocus`; Rust `pending_hitl` inbox + `consent://request`/`consent://resolved` classifier; diff view for file/code changes and optional edit-before-approve deferred to a later sub-project → re-homed to [Phase 13 § Desktop Release Vehicle](#desktop-release-vehicle) (2026-10-10)
+
 - [x] **Settings Shell (WS5-C)** — Profiles, Telemetry, Connectors, Model, Audit, Updates, and Data panels (including Export/Import/Delete wizards); per-service OAuth vault keys; re-attaches to in-flight pulls
+
 - [x] **Extension Marketplace panel (WS5-D)** — list, install-from-directory, enable/disable, remove; v0.1.0 MVP
+
 - [x] **Watcher management UI (WS5-D)** — create, pause, delete; graph-aware condition builder; history-of-fires drawer
+
 - [x] **Workflow pipeline editor (WS5-D)** — step list editor, run, dry-run toggle, delete; run history drawer with audit deep-link + "Run with params…" override
+
+
 
 ##### WS5 Sub-project B acceptance
 
+
+
 - Dashboard (metrics + connectors + audit) renders within 2 s against a populated Gateway.
+
 - HITL popup opens within 1 s of `consent.request`; Approve / Reject → `consent.respond`.
+
 - Tray icon reflects aggregate health (green → amber → red) via `tray://state-changed` events.
+
 - Tray badge matches pending HITL count.
+
 - `ALLOWED_METHODS` grew by exactly four read-side methods; no `vault.*` or `db.*` writes.
+
 - `packages/ui` coverage ≥ 80 % lines / ≥ 75 % branches.
+
+
 
 #### Local LLM & Multi-Agent
 
+
+
 - [x] **Local LLM support** — Ollama integration (model discovery, pull, load, unload via Gateway IPC); llama.cpp fallback (GGUF model files, no Ollama required); per-task model routing (fast local model for classification; remote for multi-step reasoning; configurable); fully air-gapped operation when a local model is loaded
+
 - [x] **Multi-agent orchestration** — coordinator agent decomposes complex tasks into independent sub-tasks; sub-agents run in parallel in isolated tool scopes; all sub-agent write operations remain HITL-gated; coordinator cannot approve on behalf of the user *(loop guards: `NIMBUS_MAX_AGENT_DEPTH` / `[llm] max_agent_depth` default 3 and `NIMBUS_MAX_TOOL_CALLS_PER_SESSION` / `[llm] max_tool_calls_per_session` default 20 — env wins over TOML — raise a typed `AgentLimitError` (`ERR_AGENT_LIMIT_REACHED:`); `agent.gasLimitReached` is emitted, unicast, only for `nimbus ask` step-budget (`NIMBUS_ASK_MAX_STEPS`) exhaustion, which is also disclosed in the reply — 2026-10-10)*
+
+
 
 #### Built-in Agent Workflows
 
+
+
 First-party demonstrations of multi-agent orchestration. **Deferred to the v0.1.1 batch** — see the table later in this section. The Phase 4 multi-agent infrastructure ships without first-party agents; the agents themselves slip out of `v0.1.0` to keep the release scope tight.
+
+
 
 #### VS Code Extension
 
+
+
 - [x] **VS Code extension** — `@nimbus-dev/client`-based IPC client (Node.js/TypeScript, separate from the Bun Gateway); connects to the running Gateway over domain socket / named pipe using the existing JSON-RPC 2.0 protocol; no new Gateway APIs required
+
   - Commands palette: `Nimbus: Ask`, `Nimbus: Search`, `Nimbus: Run Workflow`
+
   - Inline HITL consent UI — approval/rejection as a VS Code notification with structured diff preview
+
   - Status bar item: Gateway health + active profile name
+
   - Compatible with VS Code-fork hosts: Cursor, Windsurf, VSCodium, Gitpod
+
   - Published to Open VSX Registry and VS Code Marketplace
+
   - Standalone repo [nimbus-agent/nimbus-vscode](https://github.com/nimbus-agent/nimbus-vscode); depends on the published `@nimbus-dev/client` only; never imports Gateway source
+
+
 
 #### Editor AI Context (MCP Native)
 
+
+
 - [x] **Native Cursor / Claude Code / Copilot context exposure** — expose the Nimbus local index as an MCP server endpoint that AI coding assistants can connect to directly. Cursor, Claude Code, and any MCP-compatible editor AI can then query the Nimbus index as a tool during code generation — giving the assistant access to incident history, deployment state, open PRs, and connector health without the user switching context. Implementation: the Gateway's existing JSON-RPC IPC surface is wrapped as an MCP stdio server via a thin adapter (`packages/cli/src/commands/mcp-server.ts`); read-only tools only (`searchIndex`, `getConnectorStatus`, `getRecentIncidents`, `getOpenPRs`); no write tools exposed; no HITL surface required. Configured via `nimbus mcp-server` CLI command which prints the MCP server config block the user pastes into their editor's `mcp.json`. This is not a new protocol — Nimbus is already MCP-native; this just inverts the client/server relationship for the local index. — **Delivered 2026-06-02** as `nimbus mcp-server` (CLI-owned read-only stdio adapter; tool renamed `getOpenPRs` → `getRecentPullRequests` since the index cannot pre-filter PR state; added `getRecentDeployments` + `getDoraMetrics`).
+
+
 
 #### Terminal Power Users
 
+
+
 - [x] **Rich TUI** (Ink-based) `v0.1.0` — builds on the Phase 3 Session CLI; pane layout: query input, result stream, connector health sidebar, active watcher list; keyboard navigation; SSH-safe; real-time inline HITL consent; `nimbus tui` command; also launchable from system tray
+
+
 
 #### Voice Interface
 
+
+
 > **Correction (2026-10-07): the code below was written but never wired.** No production code constructs a `VoiceService`, so every `voice.*` IPC method answers `Method not found` and there is no CLI or desktop entry point; the boxes record code that exists, not a capability a user can reach. Tracked in [`ecosystem-roadmap.md` § Track 0](./ecosystem-roadmap.md#track-0--shipped-but-dark). → wiring re-homed to [Phase 19 § Core — Voice-First Ambient Mode](#phase-19--ambient-surfaces) (2026-10-10).
 
+
+
 - [x] **Local STT** — `whisper-cli` subprocess called by the Gateway voice service; model: `whisper-base.en` (default) / user-selectable via config; audio never leaves the machine
+
 - [x] **Voice queries** — `voice.transcribe` + `voice.speak` IPC methods; TTS via `NativeTtsProvider` (`say` on macOS, PowerShell SAPI on Windows, `espeak-ng`/`spd-say` on Linux)
+
 - [x] **Wake word** (opt-in, disabled by default) — background loop in Gateway voice service; `voice.startWakeWord` / `voice.stopWakeWord` IPC
+
+
 
 #### Data Sovereignty
 
+
+
 - [x] **Full export** — `nimbus data export --output nimbus-backup.tar.gz`: SQLite snapshot, vault credential manifest (re-encrypted with user passphrase + BIP39 recovery seed), BLAKE3 integrity hashes in manifest; `--no-index` flag to omit SQLite snapshot
+
 - [x] **Full import** — `nimbus data import nimbus-backup.tar.gz`: verifies BLAKE3 hashes, decrypts manifest (passphrase or recovery seed), re-seals credentials into target machine's native Vault, restores index
+
 - [x] **GDPR deletion** — `nimbus data delete --service <name>`: preflight shows counts; `--dry-run` for preview; `--yes` to confirm; removes all `item` rows and Vault entries for a service; writes `data.delete` audit entry
+
 - [x] **Tamper-evident audit log** — each audit log row is BLAKE3-chained to the previous (V18 schema migration); `nimbus audit verify [--full] [--since <id>]` checks integrity incrementally or fully; `nimbus audit export --output <path>` exports chain
+
 - [x] **Data minimization / connector reindex** — `nimbus connector reindex <name> [--depth <metadata_only|summary|full>]`: prunes body/embeddings at `metadata_only`, writes `data.minimization.prune` audit entry
+
 - **[REJECTED 2026-09-15, was deferred to v0.1.1.]** SQLite encryption at rest (SQLCipher) — `Database.setCustomSQLite` is a no-op off macOS, so the library cannot be swapped on Windows or Linux. See [§ Rejected Directions](#sqlite-encryption-at-rest-sqlcipher--rejected-2026-09-15).
+
+
 
 #### Automation & Graph Enhancements
 
+
+
 These items resolve deferred decisions from Phase 3.
 
+
+
 - [x] **Graph-aware watcher conditions** — extend the watcher condition evaluator with `graph.*` condition types (`graph.has_relation`, `graph.path_exists`, `graph.neighbor_count`); uses `traverseGraph` from the Phase 3 relationship graph substrate; enables patterns like "alert when a PR author has no prior reviews" without per-watcher custom traversal code; new condition types are additive and backwards-compatible with existing Phase 3 watcher definitions
+
   - [x] A.1 — Graph-aware watcher conditions (Phase 4 S2): `owned_by` / `upstream_of` / `downstream_of` logical relations; `[automation].graph_conditions` flag; V22 migration.
+
 - **[Deferred to v0.1.1.]** Workflow branching and conditionals — see the v0.1.1 batch table. → re-homed to [S4](#carried-into-s4) (2026-10-10).
+
 - [x] **Per-connector OAuth vault keys** — per-service keys implemented: `google_drive.oauth`, `google_gmail.oauth`, `google_photos.oauth` for Google; `onedrive.oauth`, `outlook.oauth`, `teams.oauth` for Microsoft; `nimbus connector auth` writes per-service key on each PKCE flow; Microsoft keys back-filled from `microsoft.oauth` on Gateway startup; legacy shared keys kept as fallback for Google until each service re-auths; eliminates scope-collision between Google connectors
+
+
 
 #### Remote Access
 
+
+
 - [x] **Optional encrypted LAN remote access** — E2E encrypted (NaCl box via tweetnacl), no relay server; paired peers exchange X25519 public keys via a 120-bit base58 pairing code issued during a 5-minute window; read-only by default; write requires explicit `nimbus lan grant-write <peer-id>` on the host; `vault.*`, `updater.*`, `lan.*`, `profile.*` forbidden over LAN regardless of grant; disabled by default (`[lan] enabled = false`); mDNS host discovery deferred to a post-v0.1.0 point release
+
+
 
 #### Release Infrastructure
 
+
+
 - [x] **Linux GPG-signed binaries + `SHA256SUMS.asc`** — signing scripts + `release.yml` workflow live; `nimbus-verify.{sh,ps1}` helpers cross-check fingerprint; `release` GitHub Environment gates the publish job
+
 - [ ] **macOS Gatekeeper notarization + Windows Authenticode signing** — **explicitly deferred to a later point release (NOT `v0.1.1`)**, gated on a maintainer decision to fund recurring procurement (Apple Developer Program $99/yr + Windows EV cert ~$470–$840/yr). For `v0.1.0`, macOS and Windows binaries ship **unsigned**; the GPG-signed `SHA256SUMS.asc` is the canonical integrity boundary, and one-time bypass is documented in [`install-macos-unsigned.md`](./install-macos-unsigned.md) / [`install-windows-unsigned.md`](./install-windows-unsigned.md). See [`release/signing-keys.md` §"v0.1.0 signing cut-line"](./release/signing-keys.md#v010-signing-cut-line) for the full rationale.
+
 - [x] Auto-update — Ed25519-signed binary manifest (`latest.json`); `Updater` state machine verifies signature before install; `nimbus update --check` / `nimbus update`; Gateway emits `updater.updateAvailable` on startup
+
 - [x] Plugin API v1 — `@nimbus-dev/sdk` frozen at v1.0.0; `AuditLogger`, `HitlRequest`, `runContractTests` stable surface; `CHANGELOG.md` documents breaking-change policy
 
+
+
 #### Security audit follow-ups (B1)
+
+
 
 Items deferred from the Phase 4 internal security audit (B1, 2026-04-25; summary in [`docs/SECURITY.md`](./SECURITY.md#security-audits)). The High, Medium, and Low PRs (`#112`, `#113`, commit `806453a`) closed all 78 unique findings; these three remain open. S6-F1 (Updater production wiring) shipped in PR #312 — the `Updater` state machine is now instantiated in gateway startup, so `nimbus update --check` and the startup `updater.updateAvailable` notification run against a live state object. Full end-to-end auto-update awaits six follow-ups tracked separately (see below). The two Tauri-specific items (S4-F6, S4-F8) gate the future `desktop-v0.1.0` tag — see [§ Phase 13 → Desktop Release Vehicle](#desktop-release-vehicle).
 
+
+
 - [ ] **Tauri-native file picker for `data.import` (S4-F6)** — replace the renderer-supplied `path` string with a Rust-side native dialog so the gateway never trusts a caller-controlled filesystem path; folds into the same UI-rebuild PR as the existing `extension.install` path-validation work (S4-F5 / S7-F7). **Gates `desktop-v0.1.0`, not `v0.1.0`.**
+
 - [ ] **Profile-switch global broadcast refactor (S4-F8)** — Rust-side window-registry refactor so `profile.switched` events fan out through a registered subscriber list instead of walking the live Tauri window list on each notification; same UI-rebuild PR as S4-F6. **Gates `desktop-v0.1.0`, not `v0.1.0`.**
+
 - [x] **Updater production wiring (S6-F1)** (PR #312) — the `Updater` state machine is now instantiated in gateway startup via `packages/gateway/src/updater/factory.ts` and attached to the IPC server via `setUpdater`. `nimbus update --check` and `updater.checkNow` IPC now return live state instead of `ERR_UPDATER_NOT_CONFIGURED`; with `[updater].check_on_startup = true` (default), the gateway emits `updater.updateAvailable` on startup if a newer version is published at the configured manifest URL. Three of the six follow-ups below remain before end-to-end auto-update is usable in production — above all the two installers, without which `nimbus update` refuses to apply:
+
   - [x] Publish `latest.json` from `release.yml` so the default manifest URL resolves to a real envelope — the `update-manifest` job builds it with `scripts/build-update-manifest.ts` and uploads it to the GitHub Release on every non-prerelease tag
+
   - [ ] Linux `invokeInstaller` — POSIX binary swap + restart helper → re-homed to [Phase 13 § Desktop Release Vehicle](#desktop-release-vehicle) (2026-10-10)
+
   - [ ] macOS + Windows `invokeInstaller` — gated on signing certs (Phase 13 entry) → re-homed to [Phase 13 § Desktop Release Vehicle](#desktop-release-vehicle) (2026-10-10); Phase 13 had no such entry until then
+
   - [x] `recordUpdateEvent` audit-log integration (2026-10-10) — `platform/assemble.ts` wires `updater/update-audit.ts`'s `buildUpdateAuditRecorder`: one BLAKE3-chained `audit_log` row per `system.update.{start,verified,installed,failed}` phase, `hitl_status = not_required`, manifest URL userinfo-stripped; a failed `start` append aborts the apply before any download, later-phase failures are logged and the apply continues. **Same change made apply honest:** production supplies no `invokeInstaller`, yet `applyUpdate` used to download, record `installed`, broadcast `updater.restarting` and print "Gateway will restart" while installing nothing — it now REFUSES up front with `ERR_UPDATER_INSTALL_UNSUPPORTED` (no download, no event, no row) on every platform until the two installer rows above ship.
+
   - [x] `Updater.getStatus()` exposes the cached check (2026-10-10) — optional `lastCheck: { latestVersion, updateAvailable, notes?, checkedAt }`, set only by a SUCCESSFUL `checkNow` (a failed one keeps it); the desktop Updates panel seeds its check state from it on load
+
   - [ ] Track the gateway as a `release-please` component so `packages/gateway/package.json` + `packages/gateway/src/version.ts` (`GATEWAY_VERSION` constant) are auto-bumped on release. **Half done (corrected 2026-10-10):** `version.ts` is already bumped by release-please, as an `extra-files` entry on the root package (since #762, 2026-07-17); what remains is `packages/gateway/package.json`, still at `0.1.0`, or tracking the gateway as a separate component.
+
+
 
 ##### Polish items from B1 follow-up review
 
+
+
 Smaller, lower-risk follow-ups surfaced when the B1 plans were retired. None are gating for `v0.1.0` but each closes a paper-cut a future audit would flag.
 
+
+
 - [x] **URL-userinfo redaction fixtures** — shipped 2026-09-10. This row said the regex lived in `updater/updater.ts`; it lived in **two** files, byte-identical — `updater/updater.ts` (exported `redactUrlUserinfo`) and `updater/manifest-fetcher.ts` (module-private `redactUrlUserinfoInMessage`, used by `ManifestFetchError`) — so a fixture over one proved nothing about the other. Both now import one definition, `updater/redact-url-userinfo.ts` (a third module, because `updater.ts` imports `manifest-fetcher.ts` and circular imports are forbidden). Fixtures over git/svn/ssh/s3 URLs are in `updater.test.ts`, table-driven and asserting exact output. The damage a letters-only scheme class does is **not** uniform, which the fixtures record: `git+https://` and `svn+ssh://` still redact (the inner `https://`/`ssh://` matches on its own) and only mangle the path, while `s3://` — a scheme ending in a digit, with no inner match to fall back on — emits key and secret verbatim. That last case is the confidentiality argument for the broad class, and it was verified by narrowing the class and re-running before the fixtures were written. **The row's premise — "the regex broadening is already done" — turned out to be half true.** The scheme class was broad; the userinfo and authority classes were bounded at `{1,256}`, and both bounds failed OPEN: a userinfo longer than 256 characters (an ordinary bearer token or PAT) matched nothing and shipped the credential verbatim, and `https://user:secret@` with an empty authority did the same. Both are fixed here and both have fixtures, plus a time-bounded test proving the now-unbounded classes stay linear on a 200,000-character adversarial input — the classes are disjoint at the `@` boundary, so there is no backtracking ambiguity to exploit
+
 - [x] **`updatePersonHandles` transaction wrapping** — the per-field `dbRun` migration (S5-F5) traded one statement for many; the multi-field path in `people/person-store.ts` is wrapped in `db.transaction(() => …)`, so a crash mid-update cannot leave a partial row. (There is no `patchPerson` function; this item named it wrongly.)
+
 - [x] **Centralise timing-safe helpers** — extracted the `timingSafeEqual` hex helpers used independently by `updater/`, `extensions/verify-extensions.ts`, and `ipc/lan-pairing.ts` into `packages/gateway/src/util/timing-safe-compare.ts`; also added `constantTimeStringEqual` for bearer tokens (`ipc/http-auth.ts`) and extended the `I10` security-invariants test to assert all four call sites import from the canonical module (Phase 5 T6 PR 1)
+
 - [x] **Deprecate `connector.startAuth` alias** — the warning shipped in Phase 5; the removal did not, and this row said "remove the alias in Phase 5 once the desktop UI has migrated entirely to `connector.auth`" through the whole of Phases 5 and 6 with the alias still routing. Removed 2026-09-10: `packages/ui/src/pages/onboarding/Connect.tsx` (the last caller) now calls `connector.auth`, the `case` and its once-per-run stderr warning are gone from `ipc/connector-rpc.ts` (as is the `_resetStartAuthWarnFlagForTest` helper that existed only for the warning's test), and the Tauri allowlist entry was **swapped**, not just deleted — `connector.auth` was never on it, so migrating the caller without adding it would have made the renderer's only auth path fail -32601. `ALLOWED_METHODS` therefore stays at 105 with a changed enumeration, asserted by name in `allowlist_connector_auth_not_start_auth`
+
+
 
 #### v0.1.1 batch (deferred from v0.1.0)
 
+
+
 These items have no external blocker; they slip out of `v0.1.0` to keep the release scope tight, and ship in `v0.1.1` once the listed trigger is met.
 
+
+
 | Item | Trigger to ship |
+
 |---|---|
+
 | ~~**SQLite encryption at rest (SQLCipher, opt-in `[db.encrypt]`)**~~ ❌ **rejected 2026-09-15** — not buildable on this stack; `Database.setCustomSQLite` is a no-op on Windows and Linux, so SQLCipher cannot be linked on two of three platforms. Reasoning and the probe: [§ Rejected Directions](#sqlite-encryption-at-rest-sqlcipher--rejected-2026-09-15). | ~~engineering work only — no external dependency~~ — the trigger column was wrong: the blocker is the runtime, not effort |
+
 | **Workflow branching / conditionals (`if` / `else` / `switch`)** → re-homed to [S4](#carried-into-s4) (2026-10-10) | engineering work only |
+
 | ~~**Built-in `nimbus prep` (Meeting preparation agent)**~~ ❌ **rejected 2026-10-10** — `nimbus catchup` covers it. Reasoning: [§ Rejected Directions](#a-nimbus-prep-meeting-preparation-agent--rejected-2026-10-10). | ~~WS6 streaming surface (`engine.askStream`) battle-tested in the wild~~ |
+
 | **5 seed community extensions in the registry** | `registry.nimbus-agent.dev` host live |
+
 | **`nimbus oncall` (opinionated on-call brief, no query required)** ✅ **shipped 2026-09-13** — briefs ONE incident and what the index can say about the change around it: the last deployment before it opened, the pull request merged into that deployment, that deployment's CI run, chat naming the affected service in the window, and earlier incidents on the same service. With no flags it auto-selects the newest active incident assigned to the local owner; `--incident <item-id>` names one outright (a resolved one is accepted — the postmortem case) and `--service <name>` picks the newest active one on a configured service. `--since` windows the CHAT lane only. Read-only, no HITL. **Shape decided 2026-09-13: the SEVENTEENTH built-in agent** (`agents/oncall.ts` + `agents/oncall-queries.ts`, `agents.oncall`, `oncall.briefReady`), for `changelog`'s and `standup`'s reasons — the output is a brief, it wants `[agents] synthesis`, and it wants to be fleet-eligible, which a non-agent command cannot be. No migration (the 2026-10-02 pushed brief built on it later added schema V64 for its own tables; the agent itself did not), no new invariant, no new egress class, no new HITL action type. **The category list above was trimmed and one claim narrowed; that is the substance of this row — see the notes column.** | **The trigger column said "engineering work only — depends on the Phase 3 PagerDuty connector (already shipped)". True about the connector and half true about everything else.** **(1) TWO promised capabilities have no substrate at all,** verified against the connectors rather than the roadmap. *"…and how it was resolved"* is unanswerable: `pagerduty-sync.ts` writes `bodyPreview: status ?? ""`, so an incident's entire indexed body is its status string — there is no resolution note, remediation step or postmortem link anywhere in the index. `resolved_by_email` answers WHO and `modified_at` approximates WHEN; the narrative does not exist. *"commit diff summary"* is likewise absent: no connector indexes a patch, a changed-file list or a commit message body, so `additions`/`deletions`/`changed_files` — a diffstat — is the whole of what can be reported. Both are disclosed UNCONDITIONALLY in `## Gaps`, following `ownership`'s standing-disclaimer precedent, alongside a third: OpsGenie has no connector, so the row's "PagerDuty/OpsGenie" is PagerDuty-only and the brief says so rather than letting its silence read as "nobody is paged". **(2) "The triggering PR" overclaims and the heading was rewritten.** Nothing in the index links a deployment to an incident. What IS derivable is the deploy that most recently started before the incident opened, and the PR whose `merge_commit_sha` equals that deploy's `sha` — the join `metrics/dora.ts`'s `prLeadTime` already ships, reused rather than re-derived so the two cannot disagree. The section is therefore `## Last deployment before the alert` and `## Change in that deployment`, with a preamble disclosure stating that this is timing alone. `merge_commit_sha` is written by `github-sync.ts` ALONE, so the change lane is structurally empty on GitLab and Bitbucket — disclosed under the existing `github_only_merge_data` gap name rather than a new one. **(3) "The last time a SIMILAR alert fired" ships as same-SERVICE recurrence, not similarity.** The index holds no alert-rule id, no fingerprint and no dedup key, so any similarity would be string overlap dressed as a causal claim. Same-service recurrence is a fact, and it is the signal an on-call engineer can act on. **(4) `metadata.status` is sync-freshness-dependent, and here that decides WHICH INCIDENT the brief is about.** `metrics/dora.ts` already records the mechanism — "a resolved incident whose row has not been re-synced still reads `triggered`". For DORA that made a metric move with sync lag; here a stale sync puts the reader in front of an incident that closed an hour ago. `sync_state.last_sync_at` for `pagerduty` is read and its age printed in the preamble UNCONDITIONALLY, including when the sync is seconds old — a line seen only when something is wrong gives the reader no way to calibrate it. **(5) Selecting nothing REFUSES.** `ERR_ONCALL_NO_ACTIVE_INCIDENT` rather than six empty headings, which during an incident read as "you are clear". Two sibling refusals stay deliberately distinct — `ERR_ONCALL_IDENTITY_UNRESOLVED` and `ERR_ONCALL_INCIDENT_NOT_FOUND` — because "nobody is paging you" and "I cannot tell who you are" have opposite fixes. Identity reuses `resolveSelfPerson` UNCHANGED so `oncall`, `standup` and `catchup` cannot disagree about who "me" is. **(6) EXTERNALLY PERMITTED, but SHAPE-BOUNDED — the first agent to take this middle path.** `changelog` is excluded for sequencing and `standup` structurally; `oncall` is served over HTTP/MCP/ChatOps on `--incident`/`--service` while `requireOncallParams` REFUSES the zero-parameter owner-scoped form for an external caller, which would otherwise hand any `agents`-scope bearer token the OWNER's active incident and assignees. That is invariant `I36`'s shape — bound the SHAPE, not the method — and it required a purpose-built total `Record` over `ClientKind` rather than reusing `EGRESS_BEARING_CLIENT_KINDS`, which maps `chatops` to `null` and would have classified a shared-room caller as the local owner. **`unknown` is ALLOWED there and that is not a hole:** `session.declareKind` is called by exactly one client in this repo (the MCP adapter), so the plain CLI arrives as `unknown`; the three kinds that must be refused (`http`/`chatops`/`fleet`) are all DERIVED and can never be declared, so an external caller cannot reach `unknown` by staying quiet. **(7) The deploy/change/CI/chat lanes ALL scope through `ServiceConfig`,** so an incident whose PagerDuty service is unmapped leaves four sections structurally empty — disclosed as its own conditional gap naming the unmapped id and the `[metrics.dora.*]`/`[ci.service.*]` binding, rather than four quiet empties a reader would take for "nothing happened". `pre-mortem`'s mapped-services-only bound, arrived at independently. Superseded 2026-10-08 by the index lane contract: the oncall change-lane gap is now worded around `merge_commit_sha` (GitHub-only) and no longer borrows the `incomplete_merge_data` name, which belongs to missing merge TIMES. |
+
 | **`nimbus tail` (lightweight real-time terminal feed of Gateway operational state)** ✅ **shipped 2026-09-13** — not the full Ink TUI; a plain-text, line-by-line, follow-only stream (like `tail -f -n 0`: nothing before connection, no backfill, nothing persisted) over connector health transitions, watcher fires, sync completions, extension mutations and HITL requests/resolutions — **five** categories, not the four originally scoped (`extension` was added once the desktop's own extension-mutation gap became the same missing-emitter problem as connector health). `--filter <connector\|watcher\|sync\|extension\|hitl>` scopes output (comma-separated, repeatable; default all five, and an unrecognised future `kind` is never filtered out even under a narrow filter); `--json` emits raw `{method, params}` JSONL. Exits `0` on Ctrl+C, `1` if the gateway isn't running or the connection drops mid-stream. Deliberately excludes per-item sync progress — every event here is a `broadcastNotification` fan-out to every connected client, and per-item events at that fan-out would flood every open session, desktop window and other IPC client at once. **Naming note:** `nimbus watch` is already the watcher-CRUD command (`packages/cli/src/commands/watch.ts` → `watcher.list / pause / resume / delete`); the v0.1.1 verb for the gateway-operational stream is `nimbus tail` to avoid the clash. | **The trigger column said "no Gateway API changes required — subscribes to existing IPC notifications". Wrong on all four lanes it needed.** `connector.healthChanged` existed only as a desktop-side listener with no gateway emitter at all — `ConnectorGrid.tsx` had been reading a notification method nothing ever sent, so the panel never updated live; the emitter this row needed was new code, not a subscription, and it fires **after** `transitionHealth`'s db transaction commits, never inside it, so a rolled-back transition is never published as having happened. `consent.request` is **unicast** (`requestConsent` writes to exactly the one session that opened it via `getWriter(clientId)`), so a separate `nimbus tail` process could never observe a HITL prompt raised by another client — HITL observation needed a new, additive `gateway.event` broadcast (`hitl.requested` / `hitl.resolved`) alongside the existing unicast write, which is unaffected and still carries `prompt`/`details` exactly as before, to the one session actually answering. The broadcast itself carries `{requestId, actionType}`, never the rendered `prompt`: `prompt` is `formatConsentPrompt(action)`, which stringifies the redacted action payload straight into its text — recipients, channel names, file paths — and only secret-looking key names are masked, so broadcasting it would hand every connected session the argument values of an action nobody has approved yet. `actionType` says what KIND of action is pending without any of that. `watcher.fired` and `sync.completed` needed new structured-event emission at their existing fire/success hooks, not a subscription to something already emitted in that shape. And `extension.stateChanged` — added after the original four-category scope — needed its own new emitter across five mutation sites (`install`/`enable`/`disable`/`remove`/`update`), which is also where the malformed-`extension.update` case surfaced: a request naming no target `id` still emits, with `extensionId: ""`, rather than throwing. |
+
 | **`nimbus explain last` (X-ray of the most recent `nimbus ask`)** ✅ **shipped 2026-09-14** — every `runAsk` call (`nimbus ask` / `agent.invoke` / the ChatOps read path) now writes exactly one record, win or throw, to an in-memory ring of the last 10 asks; `nimbus explain last [--json]` reads the newest. Shows what reached the model's context, how each local-index candidate was ranked and grouped by contributing retrieval pass, what was cut and why (`cut: probe slice` / `cut: over cap` / `cut: service fairness`), which tool calls an agent-routed turn actually made, and which of the five routes (`empty_index` / `local_context` / `agent_tools` / `plan_dispatch` / `failed`) the turn took. Read-only, no HITL, CLI-only, LAN-forbidden — the record carries the owner's question verbatim. No migration, no new invariant, no new egress class, no new HITL action type. | **The trigger column said "engineering work only — the agent already tracks this metadata internally". True about the engineering; the three promised discard/comparison axes had no substrate at all, and the row's own wording was corrected rather than shipped as written.** *"Connector rate-limited"* is not a real discard reason: the `local_context` route queries only the local SQLite index and never calls a connector, so nothing on that path can be rate-limited by one. *"Below relevance threshold"* does not exist either — cuts are `probe slice` / `over cap` / `service fairness`, each a slice/cap/fairness decision over an already-ranked list, never a score-against-a-minimum judgment. *"Context window full"* is not tracked as its own reason and is not needed as one: the three real reasons above already account for every candidate that does not reach the model. *"Which connectors were queried vs. answered from cache"* misdescribes the index: the local index **is** the cache — there is no separate query-vs-cache distinction inside it to report. The real, shippable axis is **local index vs. live tool call**, and that is what the record shows: a `local_context` turn (or an `agent_tools` turn's own `searchLocalIndex` calls) reads the already-synced local index, and any other `agent_tools` tool call reaches out live. **Three deferrals, stated rather than silently dropped:** a durable `ask_explain` table — deferred because persisting this would write every question asked, with its full retrieval trace, into an index that is not encrypted at rest, and SQLite encryption (`[db.encrypt]`/SQLCipher) was rejected on 2026-09-15 (the first row of this table; this clause called it still-deferred until corrected 2026-10-10); `nimbus explain list` / `nimbus explain <n>` navigation beyond the newest of the 10 ring entries (the durable table and this navigation are open follow-ups as of 2026-10-10 — `nimbus explain` still accepts only `last`); and capture, inside an explain record, of the three first-class negation predicates (`--not-touching`/`--no-downstream-incident`/exclusion-count disclosure) and of `indexCountFor` guidance. **The E2E layer this row needed is the one unit tests cannot provide:** `ask.explainLast` is wired into `diagnostics-rpc.ts`'s inner dispatcher AND into `tryDispatchDiagnosticsRpc`'s outer method-routing match in `ipc/server/dispatchers.ts` — a handler present in the first without the second compiles clean and passes every unit test that calls the sub-dispatcher directly, and returns `Method not found` over a real socket; this repo has shipped exactly that defect before, so the closing test boots a real gateway subprocess and drives the routed method over a real Unix-socket/named-pipe connection, proving the routing entry rather than the handler alone. |
+
 | **`nimbus changelog` (Markdown changelog assembled from the local index)** ✅ **shipped 2026-09-11** — generates a human-readable changelog for a service or across all connected services by assembling what happened in the indexed data over a time window. Formatted as a Markdown document suitable for release notes, weekly engineering updates, or onboarding new team members. Flags: `--service <name>` to scope to one service, `--since <duration>` (default: `7d`), `--format <markdown\|slack\|plain>`. Zero new connectors required. Read-only, no HITL. **Shape decided 2026-09-11: the FIFTEENTH built-in agent** (`agents/changelog.ts`, `agents.changelog`, `changelog.briefReady`), not a plain CLI-plus-IPC command like `nimbus index health` — the output is a brief, it wants `[agents] synthesis` for prose release notes, and it wants to be fleet-eligible, which a non-agent command cannot be since fleet jobs invoke `agents.*` methods. No migration, no new invariant, no new egress class. **Six registration sites are compiler-forced** — `SynthInput`, `RESERVED_HEADINGS_BY_KIND`, `AGENTS_RPC_HANDLERS`, `FLEET_ELIGIBILITY`, `FLEET_DIGEST_EXTRACTORS` and `agents/_lib/brief-contract.ts`'s `requiredPhrases` are each total over their key type, so the build fails until every one is filled in. **The sixth was found during implementation, not planned up front:** `requiredPhrases` dispatches on `brief.kind` through an exhaustive, explicitly-listed set (`assertNeverBrief`) rather than a default arm — a missing `changelog` case there would have compiled to `[]` and left every one of this brief's interleaved I31 disclosures unguarded, silently. **What is NOT compiler-forced, and needed a manual fix:** `CLAUDE.md`, `GEMINI.md` and `docs/SECURITY-INVARIANTS.md` each stated that I31 covers "all **fourteen** brief kinds" — no gate catches a mirrored prose count going stale, so all three were hand-corrected to fifteen in the PR that closed this row (`GEMINI.md` mirrors `CLAUDE.md` by standing instruction and carries the identical I31 paragraph, so editing only one would have left the mirror asserting a count the code contradicted). | **The trigger column said "engineering work only — uses existing indexed data". Half true, the same way `nimbus index health`'s was.** THREE premises were re-derived against code before building. **(1)** `item.modified_at` is "last touched", NOT "when it happened" (`connectors/github-sync.ts` says so in a comment about stats going stale when "an event bumps `modified_at`"), so a PR merged in June that got a comment yesterday windows as yesterday — a changelog keyed on it reports what MOVED IN THE INDEX, not what HAPPENED. Every category therefore windows on its own event time: `metadata.merged_at` for PRs, `metadata.opened_at_ms` for incidents opened, `modified_at` for deployments and for incident RESOLUTION — the latter two being the same basis `metrics/dora.ts` already uses and ships, disclosed as a standing basis note rather than a per-entry "approximate" marker. Windows are HALF-OPEN `[since, now)`, matching `metrics/stats.ts`'s `prMerges`/`incidentsOpened` rather than `dora.ts`'s inclusive `>= AND <=`: the repo carries BOTH conventions and `stats.ts` already records the resulting boundary double-counting as a known limit, which for a command whose stated use is WEEKLY updates over adjacent windows would mean an event on the boundary appearing in two consecutive changelogs. **(2)** TWO of the five categories this row promised have NO substrate: there is no indexed item type for dependency updates or config changes (`dependencytrack` is a connector name, `dependency_missing` an error code), so they are disclosed unconditionally in `## Gaps` — following `ownership`'s standing-disclaimer precedent — rather than being silently absent. The row's category list above was trimmed to match. **(3)** The obvious optimisation — pre-filter on the indexed `modified_at` column, refine in TypeScript — is UNSOUND here: `index/item-store.ts` writes `modified_at = excluded.modified_at`, a wholesale replacement and not a `MAX()`, so monotonicity is a property of each upstream API rather than a local guarantee, and the failure mode is a merged PR silently missing with nothing saying it was dropped. Each lane filters on its event field directly, exactly as `dora.ts`'s `selectAttributionIncidents` already does, guarded by `json_valid` with the value re-checked in TypeScript. **(4) Added 2026-09-11 after an external design review caught two substrate errors the first pass got wrong.** The indexed item type for a pull request is **`pr`**, NOT `pull_request` — every connector writes `type: "pr"` (`github-sync.ts`, `bitbucket-sync.ts`) and `pull_request` appears in this repo only as a GitHub API payload key and webhook event name, so a query written on it returns ZERO rows silently. The first pass reached the wrong answer by counting grep hits for the string rather than checking what the connectors WRITE, which is the same class of error as the `raw_meta` citation in the `index health` row below. **And `metadata.merged_at` is written by `github-sync.ts` ALONE** — neither `gitlab-sync.ts` nor `bitbucket-sync.ts` populates it — so filtering on it silently drops every merged GitLab MR and Bitbucket PR. That is disclosed rather than papered over, reusing the gap name `metrics/stats.ts` already ships for exactly this substrate hole: `github_only_merge_data`. **Separately, `ipc/agent-param-kinds.ts` must NOT gain a `changelog` entry** — that file carries only the externally-permitted agents, since declaring params for an externally-excluded one would advertise a grammar nothing serves, and `audit:agent-param-kinds` asserts the correspondence. **Both open questions were settled during implementation, not left open.** The per-category entry cap is `CHANGELOG_CATEGORY_CAP = 50` (`agents/changelog.ts`): entry lists are capped at 50 while `counts` keeps the true pre-cap total per category, so `counts.mergedPrs - mergedPrs.length` (etc.) recovers exactly how many were truncated, and `truncatedCount` sums that across all four categories. An omitted `--service` means every service, mirroring `dora.ts`'s own definition rather than inventing a new one: deployments come from a successful `ci_run` whose title matches the deploy pattern (`DEFAULT_DEPLOY_WORKFLOW_PATTERN`, `^[Dd]eploy`, when no `[ci.service.<id>]` is configured) UNIONED with annotated deploys joined through `deployment_items` (`conclusion = 'success'`), and every lane scopes through `ServiceConfig` — repo URNs for PRs/CI runs, `pagerduty_service_id` for incidents, `deployment_items.nimbus_service_id` for annotated deploys — never `item.service`, which is the CONNECTOR id (`github`, `pagerduty`) and would match zero rows for a business service name. Superseded 2026-10-08 by the index lane contract: GitLab MR rows now carry `merged_at`, so a merged GitLab MR is listed; only a GitLab MR merged before the synced event window and every Bitbucket PR still lack it. |
+
 | **`nimbus standup` (personal standup update from indexed activity)** ✅ **shipped 2026-09-12** — assembles what the local owner did across all connected services in a window (default 24 h, configurable via `--since`): pull requests active and merged, reviews given, tickets opened, incidents responded to, Slack activity. Output is copy-pasteable Markdown. Scoped to the current user's identity as resolved by the people graph. `--format <markdown\|slack\|plain>` flag. Read-only, no HITL. Entirely local — nothing is posted anywhere without a separate explicit command. **Shape decided 2026-09-12: the SIXTEENTH built-in agent** (`agents/standup.ts` + `agents/standup-queries.ts`, `agents.standup`, `standup.briefReady`), for `changelog`'s reasons — the output is a brief, it wants `[agents] synthesis`, and it wants to be fleet-eligible, which a non-agent command cannot be. No migration, no new invariant, no new egress class, no new HITL action type. **The category list above was trimmed, and the two deletions are the substance of this row — see the notes column.** | **The trigger column said "engineering work only — uses existing people graph". Half true, the same way `changelog`'s and `index health`'s were.** **(1) TWO of the five promised categories have no substrate at all,** verified against the connectors rather than the roadmap. *Deployments triggered* is unattributable: `github-actions-sync.ts`, `circleci-sync.ts` and `jenkins-sync.ts` each write `authorId: null` on their `ci_run` rows, `deployment/annotate.ts` writes a literal `NULL` author for a deploy posted to `POST /v1/deployments`, and `graph/graph-populator.ts` emits no person→deployment edge — there is no query that could answer it. *Tickets moved or commented on* has nothing to read either: no connector indexes a ticket comment as an item type, and Jira/Linear are indexed with only a ticket's CURRENT `metadata.status` rather than its transitions; `assigned` edges exist for incidents and Sentry issues only, never Jira or Linear tickets, so assignment is not a fallback. Both are disclosed UNCONDITIONALLY in `## Gaps`, following `ownership`'s standing-disclaimer precedent, and the category list was trimmed to match. **(2) `item.modified_at` is "last touched", not "when it happened" — and at 24 h that bites harder than at `changelog`'s 7 d.** A PR opened in June that received one comment yesterday has `modified_at` = yesterday. But the answer here is THREE bases rather than `changelog`'s two, because two lanes read a column that nonetheless holds the real event instant: a `review` row is keyed `<repo>#<pr>#<reviewId>` and written once from its own `submitted_at`, and a `message` row is keyed `<channel>:<ts>` with `modified_at` = `round(ts*1000)`. Folding those in with `pr`/`incident` under one "index-timed" label would state a caveat that does not apply to them; folding them in with `merged_at` would claim an event field they do not have. `StandupTimeBasis` is therefore `event_field` / `event_column` / `last_touch`, and only the third is counted in the preamble's can-be-misplaced disclosure. **(3) "PRs opened" is NOT ANSWERABLE, and the heading says so.** `github-sync.ts`'s `extractPrMetadataForIndex` writes `number`, `repo`, `state`, `draft`, `merged`, `user`, `labels`, `mergeable`, `additions`, `deletions`, `changed_files`, `commits` and the two merge fields — there is no `created_at` anywhere in PR metadata. The lane ships as `## Pull requests active` on a `last_touch` basis, which for a standup is the more useful question anyway (a PR of mine that moved yesterday is what I am working on, whenever I opened it); merged PRs are excluded from it on BOTH merge signals, since `merged_at` is GitHub-only and `state`/`merged` are the only evidence on GitLab/Bitbucket. **(4) An unresolvable identity REFUSES rather than emitting an empty brief.** Every lane keys on the resolved person, so with no identity the brief is six empty sections — indistinguishable from a quiet day, and a false claim about the author's work in output whose whole purpose is to be pasted into a channel. `ERR_STANDUP_IDENTITY_UNRESOLVED` names the fix. Identity reuses `agents/_lib/self-person.ts`'s `resolveSelfPerson` UNCHANGED so `standup` and `catchup` can never disagree about who "me" is, and `[user] mePersonId` is read in `ipc/agents-rpc.ts` exactly as `handleCatchup` reads it. **(5) EIGHT registration sites are compiler-forced, not six.** `changelog`'s row named six; a sixteenth kind found two more. `agents/_lib/emit-brief.ts` kept a hand-maintained DUPLICATE of `SynthInput` as its `AnyBrief` constraint, so the new kind compiled at all six documented sites and then failed there with an error naming missing properties of `ChangelogBrief` — it now aliases `SynthInput`, so there is nothing left to register; and `newSessionId`'s parameter is a literal union of agent names. **(6) Two test tables that could not fail for a new kind were made total.** `reserved-sections.coverage.test.ts`'s `ALL_KINDS` was a hand-written array guarded by `toHaveLength(15)`, so a sixteenth kind left the list and its own assertion self-consistent and the kind simply ABSENT — every `omitReserved` assertion silently skipped it, which is the one guarantee that file exists to prove. It is now a `Record` total over `SynthInput["kind"]`, with a per-entry key check so a mis-filed fixture cannot satisfy it either; `disclosure-anchor-coverage.test.ts` had the same shape and gained standup arms. **(7) External exclusion is STRUCTURAL here, not sequencing.** `changelog` is excluded from HTTP/MCP/ChatOps while its shape settles; `standup` is excluded because it is owner-scoped by construction — `requireStandupParams` accepts no person parameter, so a bearer token cannot ask about itself and would receive the OWNER's day, which is `negotiate --person`'s dossier concern arriving with no parameter to pass. An external surface needs a way to establish who is asking first. Fleet-eligible, reasoned independently: `catchup` is already eligible on the same resolver, and a standup is about its own owner. **(8) No index on `item(author_id)`** — every lane rides `idx_item_type` then scans, exactly as `catchup` and `negotiate` already ship; adding one would be a migration, which was out of scope. Superseded 2026-10-08 by the index lane contract: GitLab MR rows now carry `merged_at`; `merged_at` is no longer GitHub-only. |
+
 | **`nimbus index health`** ✅ **shipped 2026-09-10** — index quality report: per-connector embedding coverage, stale connectors (with the reason distinguished: `threshold_exceeded` / `never_synced` / `no_sync_record`), item types with sparse metadata, and a 0-100 confidence score (`0.6 × coverage + 0.4 × freshness`, freshness weighted by ITEMS so empty fresh connectors cannot mask a stale one holding everything). An empty index reports **no score**, not zero. `nimbus doctor` warns below 60 via a separate `index.health` call — deliberately not a `diag.snapshot` field, which the desktop polls. New CLI-only IPC method `index.health` (not renderer-exposed: the desktop has no consumer and the Tauri allowlist is the audited surface). | **The trigger column said "index metrics already collected" and that was half true.** Staleness was collected; per-connector embedding coverage was NOT (`collectIndexMetrics` has one global figure with no `GROUP BY service`), and sparse-metadata analysis did not exist at all. The row also named `raw_meta` and "missing `modified_at`" — `raw_meta` is a column of the LEGACY `items` table and has never existed on the live `item` table (its equivalent is `metadata`), and `item.modified_at` is `NOT NULL`, so a MISSING value can never appear as `NULL`: `item-store.ts` writes `modifiedAt ?? createdAt ?? 0`, making the sentinel `0` the only form "missing" can take. A query written from the spec would have thrown at runtime; an integration test against the real migrated schema is what pins this. |
+
+
 
 #### Maintenance-initiative follow-ups (B-series)
 
+
+
 The B1 security audit completed in Phase 4. Three more initiatives are active or sequenced; each gets its own design spec when picked up.
 
+
+
 - [x] **B2 — Perf bench (Phase 1)** — S8/S9/S10 drivers implemented; reference-machine baseline established; wired into CI via `_perf.yml`.
+
 - [x] **B3 — Structure audit (Phases 1 & 2)** — Phase 1 tooling (`check-nimbus-invariants.ts`, `count-any-usage.ts`) implemented; Phase 2 ranking and findings documented in `docs/structure-audit/baseline.md`.
+
 - [x] **B4 — Bug-hunt audit** — ranked by user-facing impact / engineering cost. **2026-09-20: the
+
   audit ran and a report-only census landed; the gate followed on 2026-10-09 (below).** A table-aware static
+
   census (`bun run audit:lane-census`, `scripts/structure-audit/check-index-lane-coverage.ts`)
+
   diffs what production code reads from `item` (type literals, `json_extract` metadata keys,
+
   JS-side `meta["k"]` reads) against what every connector writes, and reproduces all four bugs the
+
   hand audit found: an unmatched `commit` read (`agents/expert.ts:371`; the real writer emits
+
   `git_commit`, and `graph-populator.ts`'s `commit` write lands in `graph_entity`, a different
+
   table), an unmatched `workflow_name` read (`preflight/preflight.ts:166`; writers emit
+
   `workflowName`), a partially-covered `branch` read (`preflight.ts:168`/`:175`; only the
+
   `circleci` `ci_run` writer emits it, `github_actions` writes `headBranch`), and an unmatched
+
   `opened_at_ms` read (`agents/premortem.ts:199`/`:205` only — the same key IS matched at
+
   `metrics/dora.ts`'s incident-scoped read, which is what proves the census scopes per-literal
+
   type rather than matching on key name alone). As shipped then, it always exited `0` and only wrote
+
   `docs/structure-audit/index-lane-census.json` — that closed the audit half of the row; the gate
+
   half was deferred until A3. **2026-10-09: the gate half shipped** - `bun run audit:lane-census --check`
+
   runs in `preflight:fast` and `_structure.yml`; every production SQL `item` read, and every SQL `json_extract`
+
   and bracket-indexed `meta[...]`/`metadata[...]` metadata read, must match a writer, carry a
+
   verified `// lane-census:` annotation, or be a counted exemption (29 at ship), and a stale or
+
   miscounted exemption fails. Stated bounds: reads through interpolated SQL fragments, a `jsonPath`
+
   parameter or string concatenation are not detected; neither are accessor-helper reads
+
   (`stringField(meta, "k")` and its siblings), dotted reads (`meta.k`) or other receiver names; a regex
+
   literal containing `//` or an unbalanced `(` can mis-span an annotation; and two writers the census
+
   cannot see are exempted as `census-blind`. **Not shipped:** teaching the writer-emission pass the
+
   conditional-spread and ternary-metadata shapes; teaching the read census accessor-helper and dotted
+
   reads; checking an annotation's `service=` against the statement's own SQL service literal;
+
   filesystem `git_commit` rebody beyond 40 commits (inherited from A1).
+
 - [x] **B5 (high-priority) — WAL concurrency hardening** — **DONE (2026-07-21, #426).** Finding confirmed first on a live 21 MB gateway DB: `PRAGMA journal_mode` returned `delete`. `applyWritablePragmas()` (`db/writable-pragmas.ts`) now sets `journal_mode = WAL` + `busy_timeout` at all three production writable open sites (main writer, embedding worker, `I13` HTTP write handle); `journal_mode` is a file-level property, so read-only handles inherit WAL without setting it. The shutdown `wal_checkpoint(TRUNCATE)` is no longer a no-op. Regression guard ships with it: runtime tests assert `wal` is actually adopted on a file-backed handle, plus a per-site assertion that each production open site still calls the helper (the first version of that guard matched the leftover import and had to be tightened to the call). Backups were checked and are WAL-safe — they use `VACUUM INTO`, not a file copy.
+
 - [x] **Third-party package upgrades** — npm + cargo crate upgrades **deferred from the toolchain refresh** (the refresh PR bumped runner OSes, Node, and Rust MSRV but left dependency upgrades for a focused follow-up). **Done (2026-10-04, #1597)** — npm packages, Tauri crates and action pins moved to their latest releases; see `CHANGELOG.md` (2026-10-03).
+
+
 
 #### Acceptance Criteria
 
+
+
 - `v0.1.0` macOS + Windows binaries install and run correctly after the documented unsigned-install bypass; Linux installers verify cleanly against `SHA256SUMS.asc`. (Native Gatekeeper / SmartScreen acceptance is the bar for the *post-v0.1.1 signing release*, not v0.1.0.)
+
 - `nimbus ask "summarize everything that happened across my projects this week"` runs fully locally via Ollama — no API key, no network call — in under 30 seconds on a mid-range laptop
+
 - Multi-agent orchestration: a task decomposed into 3 parallel sub-agents cannot bypass HITL on any write step — verified by automated test
+
 - `nimbus data export` → wipe index and Vault → `nimbus data import` restores full functionality on a fresh machine with all connectors re-authenticated
+
 - VS Code extension installs from Open VSX and connects to a running Gateway without any manual configuration
+
 - Cursor can query the Nimbus local index via MCP and surface the last deployment and open PRs for a service mentioned in a code comment — verified manually by connecting Cursor to a running `nimbus mcp-server` instance
+
 - ~~Voice query completes end-to-end (speech → Whisper.cpp transcription → Gateway → TTS playback) on all three platforms; audio never leaves the machine — verified by network inspection in CI~~ **Not met (corrected 2026-10-07).** Voice was never wired: no production code constructs a `VoiceService`, so no user can run a voice query. Phase 4 is complete without it. See the Voice Interface correction above and [`ecosystem-roadmap.md` § Track 0](./ecosystem-roadmap.md#track-0--shipped-but-dark).
+
+
 
 > Acceptance criteria for the **community-extension Marketplace seed**, `nimbus changelog`, `nimbus standup`, `nimbus oncall`, `nimbus explain last`, and `nimbus index health` moved to the v0.1.1 batch table above.
 
+
+
 ---
+
+
 
 ### Phase 5 — The Extended Surface ✅
 
+
+
 > **Status: ✅ Complete (2026-06-04).** All workstreams shipped — T1–T6, Wave A, Wave B, and Tiers 1–5. The remaining unchecked connectors are documented non-gating deferrals: **Pocket** (Mozilla shut it down — dead upstream, API disabled 2025-11-12), **Loom** / **Expensify** (no public token-auth read API), **Microsoft App Center** (retired by Microsoft 2025-03-31), **Chromatic** (no listable builds API), **LogRocket / FullStory / Datadog RUM** + **Web-vitals watcher** (Wave B stretch, "does not gate Phase 5 completion"). The `nimbus security scan` v2 and `tool_call_log` retention items closed the last buildable work (see [`docs/CHANGELOG.md`](./CHANGELOG.md)). The community-extension Marketplace acceptance criterion is tracked in **Phase 9.5** and does not gate Phase 5.
+
+
 
 **Goal:** Fill every connector gap so that wherever a knowledge worker or developer spends time, their data is in the index. Mature the extension ecosystem. Establish Nimbus as a first-class data layer for CI/CD pipelines and external tooling.
 
+
+
 #### Dependencies
 
+
+
 - Phase 3 Extension Registry v1 (new connectors should ship as community extensions where possible)
+
 - Phase 3.5 `@nimbus-dev/client` and local HTTP API (CI/CD data layer depends on them)
+
 - Phase 4 Plugin API v1 stable and documented
+
+
 
 #### New Connector Categories
 
+
+
 ##### Browser & Reading
 
+
+
 - [ ] **Pocket** — saved articles, reading lists, tags; read-only index. **Cancelled (2026-06-04):** Mozilla shut Pocket down — the service stopped accepting new signups on **2025-05-22**, the app went read-only and was retired on **2025-07-08**, and the **Pocket API was disabled on 2025-11-12** with all user data queued for permanent deletion. There is no upstream left to read and no successor read API, so a connector would be dead code. Revisit only if a successor with a clean token-auth read API emerges; not a gate. (<https://support.mozilla.org/en-US/kb/future-of-pocket>)
+
 - [x] **Raindrop** (2026-05-25, Phase 5 Tier 1; collections added 2026-07-29, issue #892) — TWO item types from two independent single-pass walks over the same token (a failure in one degrades that walk only). **(1) `raindrop:bookmark`** via `mapRaindropBookmarkToItem` (`GET /rest/v1/raindrops/0?perpage=50&page=N` — collection id `0` is the special "all raindrops" collection — reading the `{ result, items, count }` envelope, incrementing the 0-based `page` while `items` is non-empty AND a full page of `perpage=50`, `MAX_PAGES=20`); get-by-id is the SINGULAR `GET /rest/v1/raindrop/{id}`; `external_id` = `String(<numeric _id>)` (the row is skipped when `_id` is missing/non-numeric); metadata bookmark_id/title/link/excerpt/note/domain/type/tags/collection_id/created_at/updated_at/canonical_url (`tags` is the tag string array stored verbatim; the `cover` field is deliberately NOT stored); `canonical_url`/`url` = the bookmarked `link` (null when missing/empty); `modifiedAt` = lastUpdate ?? created ?? syncedAt; title = the bookmark `title`, else the `link`, else `Bookmark <id>`. **(2) `raindrop:collection`** via `mapRaindropCollectionToItem` — the record a bookmark's `collection_id` resolves against — drained from the TWO **unpaginated** endpoints `GET /rest/v1/collections` (root) and `GET /rest/v1/collections/childrens` (every nested collection), one request each (`maxPages: 1`), both returning the same `{ result, items }` envelope; get-by-id is the SINGULAR `GET /rest/v1/collection/{id}`; `external_id` = `collection/<numeric _id>` — **namespaced deliberately**: Raindrop numbers collections and raindrops in SEPARATE id spaces and the item primary key is `<service>:<external_id>` upserted `ON CONFLICT(id) DO UPDATE`, so a bare id would let collection 9001 and bookmark 9001 silently overwrite each other (bookmarks keep their bare id — re-prefixing would orphan every already-indexed row); metadata collection_id/title/count/public/view/color/sort/parent_id/created_at/updated_at/canonical_url (`metadata.collection_id` is the raw NUMBER so it joins a bookmark's `metadata.collection_id`; `parent_id` is `parent.$id`, null for a root collection; `cover` + `access`/`collaborators`/`user`/`expanded` deliberately NOT stored); `canonical_url`/`url` = **null** — the API returns no URL for a collection and constructing an app deep link would invent data the vendor did not send; `modifiedAt` = lastUpdate ?? created ?? syncedAt; title = the trimmed `title`, else `Collection <id>`; `bodyPreview` = the title (the Collection object has no description field). Shared: `Authorization: Bearer <token>` auth (a Raindrop.io test token or OAuth access token; never logged); vault key `raindrop.token` (required); fixed SaaS host `api.raindrop.io` (static sandbox network, no host override); `created` / `lastUpdate` are ISO-8601 parsed to epoch-ms via `parseIsoMs` (NOT verbatim, NOT epoch seconds); BOTH types stay on local MiniLM embeddings (NEITHER added to `PROSE_HEAVY_TYPES` — a bookmark is short and a collection is a name plus counts, avoiding surprise OpenAI spend); six read tools (`raindrop_list` / `raindrop_get` / `raindrop_search` / `raindrop_collections_list` / `raindrop_collection_get` / `raindrop_collections_search`); `hitlRequired: []`; **highlights + per-collection filtering of bookmarks still deferred**
+
 - [x] **Readwise** (2026-05-25, Phase 5 Tier 1; books added 2026-07-29, issue #891) — TWO item types from two independent single-pass walks over the same token, both reading the DRF `{ count, next, previous, results }` page envelope and incrementing `page` while `results` is non-empty AND `next` is non-null (`MAX_PAGES=20` each; a failure in one walk degrades that walk only). **(1) `readwise:highlight`** via `mapReadwiseHighlightToItem` (`GET /api/v2/highlights/?page_size=1000&page=N`); `external_id` = `String(<numeric highlight id>)`; metadata highlight_id/text/note/book_id/location/location_type/color/tags/source_url/highlighted_at/updated_at/canonical_url (`tags` reduced to the tag-name array; the highlight `text` is stored in full); `canonical_url`/`url` = the source article `url` for web highlights, null for book highlights (no per-highlight public URL); `modifiedAt` = updated ?? highlighted_at ?? syncedAt; title = first 80 chars of the trimmed text (`…` when truncated) with a `Highlight <id>` fallback. **(2) `readwise:book`** via `mapReadwiseBookToItem` (`GET /api/v2/books/?page_size=1000&page=N`) — the record a highlight's `book_id` resolves against; `external_id` = `book/<numeric id>` — **namespaced deliberately**: Readwise numbers books and highlights in SEPARATE sequences and the item primary key is `<service>:<external_id>` upserted `ON CONFLICT(id) DO UPDATE`, so a bare id would let book 9001 and highlight 9001 silently overwrite each other (highlights keep their bare id — re-prefixing would orphan every already-indexed row); metadata book_id/title/author/category/source/num_highlights/asin/tags/document_note/source_url/highlights_url/last_highlight_at/updated_at/canonical_url (`metadata.book_id` is the raw NUMBER so it joins a highlight's `metadata.book_id`; `cover_image_url` + the resurface-scheduler fields are deliberately NOT stored); `canonical_url`/`url` = `source_url`, falling back to the Readwise book-review page `highlights_url` for Kindle/ePub books with no public source URL; `modifiedAt` = updated ?? last_highlight_at ?? syncedAt; title = the trimmed `title`, else `author`, else `Book <id>`. Shared: `Authorization: Token <token>` auth (Django-REST-Framework token auth — the literal word "Token", NOT "Bearer"; never logged); vault key `readwise.token` (required); fixed SaaS host `readwise.io` (static sandbox network, no host override); all ISO-8601 timestamps parsed to epoch-ms via `parseIsoMs` (NOT verbatim, NOT epoch seconds); BOTH types stay on local MiniLM embeddings (NEITHER added to `PROSE_HEAVY_TYPES` — a highlight and a book record are both short, avoiding surprise OpenAI spend); six read tools (`readwise_list` / `readwise_get` / `readwise_search` / `readwise_books_list` / `readwise_book_get` / `readwise_books_search`); `hitlRequired: []`; **documents / daily-review still deferred; the Reader v3 API deferred** **Unbundled in the connector-unbundling pilot (PR 7): the gateway no longer bundles this connector, it ships as the signed extension `com.nimbus.readwise` from the official registry, and an existing user is moved with one prompt (`nimbus connector migrate`); the npm package `@nimbus-dev/connectors` still exports the server for standalone use.**
+
 - [x] **Obsidian vault connector** (2026-05-10, Phase 5 Wave A PR 2) — indexes local Markdown vaults with frontmatter metadata, backlinks, and daily notes; uses `[[filesystem.roots]]` as the discovery mechanism; `obsidian_note` item type; backlinks surfaced in the relationship graph (`backlinks` edge type, V26 migration adds `obsidian_notes` shadow table); append to daily note behind HITL (`obsidian.note.append`); no network call required — fully local. Hybrid surface: gateway-side syncable at `packages/gateway/src/connectors/obsidian-sync.ts` plus a thin MCP package at `packages/mcp-connectors/obsidian/` that hosts the HITL-gated `obsidian_append_to_daily_note` write tool. Vault id is derived from the absolute vault root path (`sha256(path).slice(0, 12)`); moving a vault re-issues all note ids — documented in `docs/architecture.md`.
+
 - [x] **Zotero** (2026-05-31, Phase 5 Tier 1) — `zotero:reference` items via `mapZoteroReferenceToItem` (`GET /<library>/items?format=json&limit=100&start=N&sort=dateModified&direction=desc` reading a **bare JSON array** of item objects — each `{ key, version, library, data: { itemType, title, creators, date, dateModified, dateAdded, tags, collections, DOI, url, abstractNote, ... } }` — incrementing the `start` offset by 100 while a full page of 100 comes back, stopping on a short/empty page, `MAX_PAGES=20`); get-by-id is `GET /<library>/items/{key}`; `external_id` = the Zotero item `key` (a stable string, NOT a UUID and NOT numeric — the row is skipped when `key` is missing/empty); items whose `data.itemType` is `attachment` or `note` are skipped (top-level bibliographic references only). **Two-identifier auth (the Stack Overflow shape):** the `Zotero-API-Key: <key>` header (the secret) + `Zotero-API-Version: 3` header, plus a **non-secret** `zotero.library` spec of the form `users/<id>` or `groups/<id>` URL-encoded into the request PATH (the sync handler and the lazy-mesh spawn both no-op unless BOTH keys are present); two required vault keys `zotero.api_key` (secret) + `zotero.library` (non-secret); fixed SaaS host `api.zotero.org` (static sandbox network, no host override). Metadata key/version/item_type/title/creators/date/date_modified/date_added/tags/collections/doi/url/abstract/publication_title (`creators` reduced to a formatted name-array tolerating both the `firstName`/`lastName` and single-field `name` shapes; `tags` reduced to the `tag`-name array; `collections` the collection-key string array; the abstract truncated to 500 chars); `dateModified` / `dateAdded` are ISO-8601 strings parsed to epoch-ms via a LOCAL `parseIsoMs` helper (NOT verbatim, NOT epoch seconds); `modifiedAt` = dateModified ?? dateAdded ?? syncedAt; title = the trimmed `data.title` (120-char `…` truncation) with a `<itemType> <key>` then `Reference <key>` fallback for title-less item types; `canonical_url`/`url` = the item's `data.url` (null when missing/empty); the `zotero:reference` type stays on local MiniLM embeddings (NOT added to `PROSE_HEAVY_TYPES` — abstracts are short and the batch default is to omit, avoiding surprise OpenAI spend for hybrid-mode users); three read tools (`zotero_list` / `zotero_get` / `zotero_search`); `hitlRequired: []`. **NOTE — incremental cursor deviation:** the Zotero Web API exposes a `Last-Modified-Version` response header + `?since=<version>` incremental cursor and a `Total-Results` header for exact pagination, but the shared `connectorFetch` helper returns only the parsed JSON body + byte count (it does not surface response headers); to stay faithful to the proven simple-REST template the connector uses the established single-forward-pass offset walk with empty-page / `MAX_PAGES` termination and a `{ pass }` cursor (mirroring Lever / Stack Overflow) rather than introducing a header-exposing fetch helper — `since`-based incremental sync is a documented follow-up. **v1 top-level bibliographic references only — attachments / notes / per-collection filtering deferred.**
+
+
 
 ##### API Surface Intelligence
 
+
+
 - [x] **OpenAPI / AsyncAPI spec indexer** (2026-05-10, Phase 5 Wave A PR 1) — gateway-side syncable at `packages/gateway/src/connectors/openapi-indexer-sync.ts` that crawls `[[filesystem.roots]]` for `openapi.{yaml,yml,json}`, `swagger.{yaml,yml,json}`, and `asyncapi.{yaml,yml,json}` files; parses each endpoint as an `api_endpoint` item with fields: `path`, `method`, `operation_id`, `tags`, `deprecated`, `service_name` (inferred from per-spec `nimbus.openapi.toml` override → enclosing directory → `info.title` slug → `service-<sha8>` fallback), `spec_file`, `spec_version`, `last_modified`. Mtime-based delta sync, sticky deletes for endpoints removed from re-parsed specs. Emits `api_endpoint → service` edges into the relationship graph so `nimbus impact` answers naturally include API-surface ramifications. V25 migration adds the `api_endpoint` shadow table; the unified `item` table holds the cross-cutting search row (`service = "openapi"`, `type = "api_endpoint"`). Discovery walker is depth-bounded (`[openapi].max_walk_depth`, default 8), respects `[openapi].ignore_globs`, skips a default-ignored dir set (`node_modules`, `.git`, `dist`, `build`, `target`, `.next`, `out`, `vendor`, `.cache`), and never follows symlinks. Spec-size gate (`[openapi].max_spec_bytes`, default 5 MiB); skipped specs surface in the connector's `getLastSyncStats()` for health snapshots. Indexing is fully local — no outbound call. Remote-repo spec discovery, external `$ref` resolution, and AsyncAPI 3.0 are deferred to a follow-up. Parser: `js-yaml` for synchronous parsing; `@readme/openapi-parser` (v6) reserved for future validation.
+
+
 
 ##### Email via IMAP/SMTP
 
+
+
 - [x] **Generic IMAP connector** (2026-06-02, Phase 5 Tier 4 — the EMAIL-class infra-prover) — `imap:email` items via `mapImapMessageToItem` from raw IMAP over `imapflow` (read tools `imap_list` / `imap_get` / `imap_search`) plus one HITL-gated SMTP send tool `imap_mail_send` over `nodemailer`. **HEADERS + a short capped plain-text PREVIEW + attachment METADATA ONLY** — the connector fetches the IMAP `ENVELOPE` (subject/from/to/cc/date/message-id) + `BODYSTRUCTURE` (attachment filename/size/mimetype) + a single truncated `text/plain` body part (capped ~2 KB at fetch + 2000 chars in the mapper); it **NEVER** requests `BODY[]` or an attachment part, so no attachment bytes or full body ever reach the index (the `ImapClient` interface has no surface to request them, and a mapper test asserts no `content`/`base64` field). `external_id` prefers the RFC `Message-Id`, falling back to `<mailbox>:<uidvalidity>:<uid>`; sync is a single most-recent-N forward pass (`MAX_MESSAGES=200`, cursor `{ pass }` / `nimbus-imap1:`), tolerant of transient IMAP outages (the injected fetcher returns `{ ok: false }` / a thrown fetcher is caught → cursor preserved, no scheduler crash). **Per-tenant creds** — nine vault keys `imap.host`/`port`/`username`/`password`/`mailbox` + `imap.smtp_host`/`smtp_port`/`smtp_username`/`smtp_password` (SMTP optional; send tool gated on them); lazy-mesh spawn `phase3AddImapMcp` rides the phase3 bundle gated on the IMAP read creds, injecting `IMAP_*` env. **Sandbox** — the IMAP/SMTP hosts are user-configured and on non-443 ports (IMAP 993, SMTP 465/587), so the static `permissions.network` is empty and the concrete `<host>:<port>` entries are added at spawn via `manifestWithExtraNetworkHosts` (the `host:port` permission syntax landed in Tier-4a sandbox prereq, commit `bc50d57a`), routed through `wrapServerSpec` (I15). **HITL send** — `imap_mail_send` clones the existing gmail/outlook send-tool shape; the gate keys on `action.type` `email.send` (already in `HITL_REQUIRED_BACKING`) via the planner path, so NO executor.ts / invariant change. `imap:email` IS prose → added to `PROSE_HEAVY_TYPES` (like `gmail:email` / `outlook:email`; MiniLM-only fallback when `openai.api_key` is absent). The real imapflow/nodemailer adapters (`_lib/imap-client.ts` + connector `server.ts`) are dependency-injected so all tests run without a socket; **v1 single mailbox, headers+preview+attachment-metadata only — folders / flags / threading / IDLE push and reply/forward write tools deferred.** First Tier-4 connector — sets the EMAIL-class template Fastmail (JMAP) + ProtonMail (Bridge) reuse
+
 - [x] **Fastmail MCP connector** (2026-06-02, Phase 5 Tier 4) — native **JMAP** (not IMAP): `fastmail:email` items via `mapFastmailEmailToItem` over pure HTTPS. The sync handler discovers the JMAP session (`GET /jmap/session` → `apiUrl` + the `urn:ietf:params:jmap:mail` primary account id), then issues ONE batched `POST` with `Email/query` (recent 200, `receivedAt` desc) + a back-referenced `Email/get` (`#ids`) requesting headers + `attachments` metadata + `fetchTextBodyValues` with **`maxBodyValueBytes: 2048`** — the server truncates the body value so a full body never crosses the wire. Read tools `fastmail_list` / `fastmail_get` / `fastmail_search` (the latter a JMAP `Email/query` `{ text }` filter) + HITL-gated `fastmail_mail_send` (JMAP `Identity/get` + `Mailbox/query` drafts → `Email/set` create + `EmailSubmission/set`). **HEADERS + capped PREVIEW + attachment METADATA ONLY** — only `attachments` `{name,size,type}` is read, the `blobId` download URL is NEVER dereferenced (a `viewEmail`/mapper test asserts no `blobId`/`content`/`base64` field reaches the index). `external_id` = RFC `Message-Id` else the stable JMAP email `id`; cursor `{ pass }` / `nimbus-fastmail1:`; transient-tolerant (a session/api HTTP or parse error preserves the cursor). **Auth** — a single secret `fastmail.api_token` (required) + optional non-secret `fastmail.base_url` override, so `CONNECTOR_VAULT_SECRET_KEYS.fastmail` is `["fastmail.api_token", "fastmail.base_url"]`; the connector reads only `FASTMAIL_API_TOKEN` / `FASTMAIL_BASE_URL` from env. **Sandbox** — JMAP is pure HTTPS/443 to the fixed `api.fastmail.com` (session/api/upload/download all under it), so the static `permissions.network` is a single 443 host (no per-tenant host, no port extension), routed through `wrapServerSpec` (I15); spawn `phase3AddFastmailMcp` rides the phase3 bundle gated on the token. `fastmail:email` IS prose → `PROSE_HEAVY_TYPES`. The real JMAP fetch adapter (`server.ts`) is coverage-exempt; the testable JMAP logic (session parse, address/preview/attachment reduction, request builders, response extraction, the `viewEmail` no-bytes view) lives in `jmap-core.ts` (100% covered). **v1 single account, headers+preview+attachment-metadata only — folders / threads / push and reply/forward deferred.** Reuses the EMAIL-class template from the Generic IMAP connector
+
 - [x] **ProtonMail MCP connector** (2026-06-02, Phase 5 Tier 4) — ProtonMail Bridge integration. ProtonMail is E2EE, so the local Bridge app decrypts mail on the user's machine and exposes a standard IMAP/SMTP interface on the loopback interface (127.0.0.1:1143 IMAP / :1025 SMTP) with Bridge-generated credentials. `protonmail:email` items via `mapProtonmailEmailToItem` — HEADERS + capped PREVIEW + attachment METADATA only, never attachment bytes / full body. The gateway sync **reuses the generalized `_lib/imap-client.ts` `fetchImapMessages`** (the `ImapConnectionConfig` gained optional `secure` / `tlsRejectUnauthorized` so Bridge can set `secure:false` + accept the loopback self-signed cert) and the `ImapMessageInput` shape; the connector MCP package mirrors the IMAP read tools + HITL-gated `protonmail_mail_send` over the Bridge SMTP relay. Read tools `protonmail_list` / `protonmail_get` / `protonmail_search`; cursor `{ pass }` / `nimbus-protonmail1:`; transient-tolerant (Bridge-not-running → cursor preserved). **Creds** — Bridge username/password (required) + optional host/port/mailbox + SMTP overrides, so `CONNECTOR_VAULT_SECRET_KEYS.protonmail` lists all nine; the connector reads only `PROTONMAIL_*` env. **Sandbox** — the loopback `127.0.0.1:1143` (+ `:1025` when SMTP is configured) host:port entries are added at spawn via `manifestWithExtraNetworkHosts`, `wrapServerSpec` (I15). HITL send gated by the existing `email.send` `action.type`. `protonmail:email` → `PROSE_HEAVY_TYPES`. (Send is included beyond the original read-only scope — Bridge relays outbound; per user decision.) **v1 single mailbox, headers+preview+attachment-metadata only.** Reuses the EMAIL-class template; the shared IMAP `mail-kit` extraction (dedup with the Generic IMAP connector's `bodystructure`/`mail-core`/tool-registration) is a documented follow-up
+
+
 
 ##### Meetings & Async Video
 
+
+
 - [x] **Zoom** (2026-05-29, Phase 5 Tier 1 PR-2 + PR-3) — scheduled meeting metadata (`zoom:meeting`) via `GET /v2/users/me/meetings?type=scheduled` AND cloud-recording AI transcripts (`zoom:transcript`, prose-heavy) via `GET /v2/users/me/recordings` (≤1-month-windowed walk + skip-if-exists on `<meeting_uuid>:<recording_file_id>` + Bearer-header download, never URL-token, never logged); 3-legged OAuth (PKCE + Basic-header secret) on the provider registry (PR-1); single-flight refresh token rotation; fixed sandbox hosts `api.zoom.us` + `zoom.us` (I15); `hitlRequired: []`
+
 - [x] **Google Meet** (2026-05-31, Phase 5 Tier 2) — past meeting conference records (`google_meet:meeting`) via the Google Meet REST API v2 `GET https://meet.googleapis.com/v2/conferenceRecords?pageSize=50` (paginating via `nextPageToken`; cursor `{ v:1, pageToken }`, the google_photos cursor shape); get-by-id `GET /v2/conferenceRecords/{id}`. **Extends the EXISTING `google` provider as a new google sub-service** (alongside google_drive / gmail / google_photos) — NOT a new `OAuthProvider`: reuses `getValidGoogleAccessToken(vault, "google_meet")`, the shared `google.oauth` / per-service `google_meet.oauth` vault keys, and the generic `connector.auth` OAuth surface (no `oauth-registry.ts` / `never`-switch / `config.ts` / Tauri `ALLOWED_METHODS` change). Scope `https://www.googleapis.com/auth/meetings.space.readonly` declared in `connector-catalog.ts`. Rides in the existing google bundle slot (`ensureGoogleDriveMcp` gains a `google_meet` spawn branch, `ServerSpec` via `wrapServerSpec` (I15)); static sandbox host `meet.googleapis.com`. `external_id` = the `name` id segment (`conferenceRecords/<id>` → `<id>`; row skipped when `name` is missing/empty). Conference records carry no human title → title derived as `Meeting <startTime ISO date>` (or `Meeting <id>` when startTime absent); `modifiedAt` = endTime ?? startTime ?? syncedAt (ISO-8601 via a local `parseIsoMs`); `url`/`canonical_url` null (records carry no productUrl; the pure mapper has no space meetingUri); metadata `{ name, space, startTime, endTime }`. The `google_meet:meeting` type stays on local MiniLM embeddings (NOT in `PROSE_HEAVY_TYPES` — sparse timestamps + ids). Three read tools (`google_meet_list` / `google_meet_get` / `google_meet_search`); `hitlRequired: []`. **Participant detail added 2026-07-29 (issue #893)** — enriches the EXISTING `google_meet:meeting` item rather than adding a `participant` item type: a participant has no title, body, URL or meaning outside its conference record, so N low-signal rows per meeting would only dilute search; the codebase precedent is `apple:event.attendees` / `imap:email.participants`, and there is no attendee/participant item type anywhere. One extra `GET /v2/conferenceRecords/{id}/participants?pageSize=100` per record (a SINGLE page — `totalSize` supplies the true head-count for anything clipped by `MAX_INDEXED_PARTICIPANTS=100`, ~8 KB inside the 64 KB metadata ceiling), under the SAME `meetings.space.readonly` scope already declared — **no scope change, no re-consent, no new OAuth provider**. metadata gains `participants` + `participantCount`, each participant reduced to `{ kind: "signed_in" | "anonymous" | "phone", id, displayName }` (`id` = the `users/{id}` directory id, People-API/Admin-SDK-interoperable, present only for signed-in users; a phone join keeps the partially-redacted number Google itself returns, since it is the only thing identifying a dial-in). **`earliestStartTime`/`latestEndTime` are deliberately NOT indexed** — they answer "how long did each person stay", which is attendance surveillance rather than "who was in the meeting"; the participant resource `name` is dropped too (opaque per-conference handle). Title now leads with who was there — `Meeting with <≤3 names> +N — <date>` — because `Meeting 2024-01-02` was effectively unsearchable; it falls back to the v1 shape whenever no participant carried a name, and bodyPreview carries the full stored roster so every attendee is searchable. A participants `403`/`404`/parse failure warns and indexes the record with an empty roster (never costs the cycle its conference records); `UnauthenticatedError` still propagates. A nameless record costs no participants request. Still NOT prose-heavy (participant names do not make a record paragraph-shaped). **Still deferred: auto-generated transcripts** — the most sensitive content a person owns; needs its own scope/consent design.
+
 - [x] **Google Calendar** (2026-11-11, Phase 10 MB2b) — `google_calendar:event` rows for the window one day back to 30 days ahead via the Calendar REST API (per-calendar `syncToken`, cap 20 calendars, re-anchored every 7 days), its OWN `calendar.readonly` consent (`nimbus connector auth google_calendar`) with an own-key-only token lookup, and the read-only `gcal_calendar_list`, `gcal_event_get` and `gcal_event_list` tools (connectors 0.13.0). Not yet: the briefing that reads these rows (MB5).
+
 - [ ] **Loom** — async video index: title, description, transcript, viewer stats; OAuth; read-only; `loom_video` item type. **Deferred to a Phase 5 follow-up (2026-05-31):** Loom exposes no public read REST API for listing/fetching a user's existing videos with a personal or OAuth token — its only official developer surface is the **recordSDK** (embed/record *new* videos into your own app, authenticated by signed-JWT key-pair, `dev.loom.com`). The only "list my videos" options are unofficial third-party scrapers (e.g. Apify) that operate on share/embed URLs without authentication, which are incompatible with Nimbus's MCP-as-connector + first-party-clean-API + Vault-credential posture (a read-only `list`/`get`/`search` template needs a sanctioned, token-authenticated read endpoint). A workspace/admin read API may exist behind Atlassian's enterprise/partner gating but is not generally obtainable. Revisit if Loom ships a public content API; the local-STT path (`Video input — local STT + frame captioning`, below) remains the fallback for indexing a Loom recording's transcript from its file. Not a Phase 5 gate.
+
+
 
 ##### Finance & Expenses
 
+
+
 - [ ] **Expensify** — expense reports, receipts, reimbursement status; read-only index; submit behind HITL. **Deferred to a Phase 5 follow-up (2026-05-31):** unlike every other Tier-1 connector, Expensify exposes no clean REST surface — its only programmatic API is the Integration Server (`requestJobDescription` JSON-over-form POST + a two-step async file-generate→download flow using freemarker export templates), which does not fit the read-only `list`/`get`/`search` template. Sequenced after the remaining tiers; not a Phase 5 gate.
+
 - [x] **Ramp** (2026-05-31, Phase 5 Tier 1) — `ramp:transaction` items via `mapRampTransactionToItem` (`GET https://api.ramp.com/developer/v1/transactions?page_size=100` reading the `.data` array of transaction objects — each `{ id, amount, currency_code, merchant_name, card_holder: { first_name, last_name, department_name }, state, sk_category_name, user_transaction_time, memo, ... }` — and following the `page.next` **cursor** (a full URL to the next page, or null/absent at the end) for a single forward pass per cycle, `MAX_PAGES=20`); get-by-id is `GET /developer/v1/transactions/{id}`; `external_id` = the transaction `id` (a stable Ramp-supplied string, NOT a generated UUID — the row is skipped when `id` is missing/empty). **OAuth2 client-credentials auth (a token exchange, NOT 3-legged user consent — the Superset login shape):** the connector exchanges its client id + client secret for a bearer token at `POST /developer/v1/token` (HTTP **Basic** auth, `Content-Type: application/x-www-form-urlencoded` body `grant_type=client_credentials&scope=transactions:read`) and caches it (per process in the MCP server; per sync cycle in the gateway syncable), then calls the data endpoints with `Authorization: Bearer`; on a mid-cycle `401` the gateway syncable re-exchanges once and retries the page (the sync handler and the lazy-mesh spawn `phase3AddRampMcp` both no-op unless BOTH credentials are present); two required **secret** vault keys `ramp.client_id` + `ramp.client_secret`; fixed SaaS host `api.ramp.com` (static sandbox network, no host override). Metadata id/amount/currency_code/merchant_name/card_holder_name/department/state/category/user_transaction_time/memo (the card holder reduced to a `first_name last_name` display name + the `department_name`; the memo truncated to 500 chars); `user_transaction_time` is an ISO-8601 string parsed to epoch-ms via a LOCAL `parseIsoMs` helper (NOT verbatim, NOT epoch seconds); `modifiedAt` = `user_transaction_time ?? syncedAt`; title synthesized as `<merchant_name> — <amount> <currency>` with a `Ramp transaction — <amount>` then bare `Ramp transaction` fallback; `url`/`canonical_url` are always null (the Ramp API surfaces no transaction permalink); **no full card numbers / PANs are surfaced** (Ramp's API does not return them and only the safe fields are mapped); the `ramp:transaction` type stays on local MiniLM embeddings (NOT added to `PROSE_HEAVY_TYPES` — sparse structured spend metadata); three read tools (`ramp_list` / `ramp_get` / `ramp_search`); `hitlRequired: []`. **v1 card transactions only — receipts / budgets / vendor spend rollups deferred.**
+
 - [x] **Mercury** (2026-05-25, Phase 5 Tier 1) — `mercury:account` items via `mapMercuryAccountToItem` (a single `GET /api/v1/accounts` reading the `{ accounts: [...] }` object envelope — no pagination, the full account list is returned in one call); `external_id` = the account `id`; metadata account_id/name/status/type/kind/account_number_last4/routing_number/available_balance/current_balance/legal_business_name/created_at/canonical_url; the full account number is NEVER stored — only the last 4 digits (`account_number_last4`); balances are USD major units (dollars, not cents) passed through verbatim; `Authorization: Bearer <api token>` auth (never logged); vault key `mercury.token` (required); fixed SaaS host `api.mercury.com` (static sandbox network, no host override); `createdAt` is ISO-8601 parsed to epoch-ms via `parseIsoMs` (NOT verbatim, NOT epoch seconds); `canonical_url`/`url` are null (Mercury accounts have no per-account public URL); three read tools (`mercury_list` / `mercury_get` / `mercury_search`); `hitlRequired: []`. **Transactions added 2026-07-29 (issue #890)** — `mercury:transaction` items via `mapMercuryTransactionToItem`, walked per indexed account from `GET /api/v1/account/{accountId}/transactions?limit=500&offset=N&order=desc` reading the `{ total, transactions: [...] }` envelope (offset pagination; a short page ends the walk; `MAX_TRANSACTION_PAGES_PER_ACCOUNT=4` bounds one account at 2 000 rows per cycle — Ramp's 20 × 100 ceiling — and a shared `MAX_TRANSACTION_PAGES=20` budget stops a many-account operator turning one cycle into hundreds of requests); `external_id` = the transaction `id` (row skipped when missing/empty); metadata transaction_id/account_id/amount/status/kind/counterparty_name/bank_description/mercury_category/note/external_memo/created_at/posted_at/canonical_url (`account_id` = the row's own `accountId`, falling back to the account the page was fetched under; `note` + `external_memo` truncated to 500 chars, Ramp's `MEMO_MAX`); **`details` is NEVER indexed — it carries the COUNTERPARTY's payment credentials (`electronicRoutingInfo` / `domesticWireRoutingInfo` / `internationalWireRoutingInfo` account + routing numbers, `address`, `debitCardInfo` / `creditCardInfo` card digits), the same line `account_number_last4` draws for the owner's own account; `attachments` (receipt names + links), `glAllocations`, `relatedTransactions`, `merchant`, `categoryData`, `currencyExchangeInfo`, `checkNumber`, `trackingNumber`, `feeId`, `requestId`, `counterpartyId`, `counterpartyNickname` are likewise omitted**; `createdAt` / `postedAt` are ISO-8601 parsed to epoch-ms via `parseIsoMs`, `modifiedAt` = posted ?? created ?? syncedAt; title `<counterparty_name> — <amount> USD` falling back to `bank_description` then `Mercury transaction — <amount> USD` then bare `Mercury transaction` (the USD suffix mirrors the account mapper — Mercury accounts are USD-denominated and the transaction payload carries no currency field); bodyPreview = note ?? external_memo ?? label ?? title; `url`/`canonical_url` = the `dashboardLink` permalink (unlike the account row, which has none); a transactions-page failure warns and stops THAT account's walk, leaving the already-indexed accounts committed; the `mercury:transaction` type stays on local MiniLM embeddings (NOT in `PROSE_HEAVY_TYPES`). **Still deferred: bills / statements; wire / ACH (HITL) writes deferred to Phase 6**
+
 - [x] **Stripe** (2026-05-25, Phase 5 Tier 1) — `stripe:invoice` items via `mapStripeInvoiceToItem` (`GET /v1/invoices?limit=100`, `starting_after` + `has_more` cursor walk, `MAX_PAGES=20`); `external_id` = the invoice `id` (e.g. `in_1A2b...`); metadata invoice_id/number/customer_id/customer_name/customer_email/status/amount_due/amount_paid/currency/subscription_id/hosted_invoice_url/invoice_pdf/created_at/due_date/period_start/period_end/canonical_url (canonical prefers `hosted_invoice_url`, else `invoice_pdf`, else null); `Authorization: Bearer <secret key>` auth (the `sk_live_`/`sk_test_` key is never logged); vault key `stripe.api_key` (required); fixed SaaS host `api.stripe.com` (static sandbox network, no host override); Stripe timestamps are epoch SECONDS converted to epoch-ms via `secondsToMs` (×1000, NOT `Date.parse`); amounts are integer minor units (cents); three read tools (`stripe_list` / `stripe_get` / `stripe_search`); `hitlRequired: []`; **v1 invoices only — payments / customers / disputes / subscription events deferred; `stripe.refund` (HITL) deferred to Phase 6**
+
+
 
 ##### CRM & Sales
 
+
+
 - [x] **HubSpot** (2026-05-31, Phase 5 Tier 2 — first Tier-2 OAuth infra-prover) — `hubspot:deal` items via `mapHubspotDealToItem` (`GET /crm/v3/objects/deals?limit=100&properties=dealname,amount,dealstage,pipeline,closedate,createdate,hs_lastmodifieddate`, reading the `{ results, paging?: { next?: { after } } }` envelope and following the `paging.next.after` opaque cursor until absent, `MAX_PAGES=20`); get-by-id is `GET /crm/v3/objects/deals/{dealId}?properties=…`; **6th `OAuthProvider` — proves the 3-legged OAuth authorization-code path the rest of Tier-2 (Salesforce / Google Meet / Loom / Figma / Miro / Canva) reuses**; widening the registry union forced the exhaustive 4-file `never`-switch bundle to co-land (`oauth-registry.ts` + `connector-rpc-handlers/auth.ts` `case "hubspot"` + `config.ts` `oauthHubspot*` + `oauth-env-help-messages.ts`); OAuth shape is authorization-code (NOT PKCE) with the client secret form-encoded in the token-exchange BODY (`secretPlacement: "body"`, distinct from Zoom's Basic-header), authorize `app.hubspot.com/oauth/authorize`, token `api.hubapi.com/oauth/v1/token`, scopes `crm.objects.deals.read` + `oauth`; tokens under the `hubspot.oauth` vault key refreshed by `getValidHubspotAccessToken` (single-flight registry lock); **no new Tauri `ALLOWED_METHODS` entry — reuses the generic `connector.auth` OAuth surface, like Zoom**; lazy-mesh spawn `ensureHubspotMcp` (Zoom dedicated-spawn pattern) gated on a valid `hubspot.oauth` token, `ServerSpec` wrapped via `wrapServerSpec` (I15); fixed SaaS host `api.hubapi.com`; `external_id` = the deal `id`; metadata dealname/amount/dealstage/pipeline/closedate/createdate/hs_lastmodifieddate (date properties parse BOTH ISO-8601 and epoch-ms encodings via a local `parseHubspotMs`); `modifiedAt` = hs_lastmodifieddate ?? envelope updatedAt ?? syncedAt; title = `dealname` (fallback `HubSpot deal <id>`); `url`/`canonical_url` null (deal permalinks need a portal id the API does not return — Ramp/Prefect posture); the `hubspot:deal` type stays on local MiniLM embeddings (NOT in `PROSE_HEAVY_TYPES` — sparse structured pipeline/spend metadata); three read tools (`hubspot_list` / `hubspot_get` / `hubspot_search`); `hitlRequired: []`; **v1 deals only — companies / contacts / tickets / activities / notes deferred; write behind HITL deferred to Phase 6**
+
 - [x] **Salesforce** (2026-05-31, Phase 5 Tier 2) — `salesforce:opportunity` items via `mapSalesforceOpportunityToItem` from the **SOQL query API** (`GET <instance_url>/services/data/v60.0/query?q=SELECT … FROM Opportunity ORDER BY LastModifiedDate DESC LIMIT 200`, following the `{ records, done, nextRecordsUrl?, totalSize }` envelope's `nextRecordsUrl` cursor until `done`, `MAX_PAGES=20`); get-by-id is `GET .../sobjects/Opportunity/<id>`; **10th `OAuthProvider`** — widening the registry union forced the exhaustive 4-file `never`-switch bundle to co-land (`oauth-registry.ts` + `connector-rpc-handlers/auth.ts` `case "salesforce"` + `config.ts` `oauthSalesforce*` + `oauth-env-help-messages.ts`); **per-tenant API host: the `instance_url` is discovered at OAuth time, so the shared OAuth token blob was additively extended (`StoredOAuthTokens`/`PKCEResult` gain optional `instanceUrl?: string`; `parseStoredOAuthTokens` captures it only when non-empty; `persistTokens` conditional-spreads it — the 9 other providers' payloads stay byte-identical)**; OAuth shape is authorization-code **WITH PKCE** + client secret form-encoded in the token-exchange BODY (`usesPkce: true`, `secretPlacement: "body"`), authorize + token both `login.salesforce.com/services/oauth2/{authorize,token}`, scopes `api` + `refresh_token`; a **custom `parseSalesforceTokenResponse` requires `instance_url`** (no silent fallback) and **synthesizes a 30-minute expiry because Salesforce omits `expires_in`** (so the 120 s-margin single-flight refresh renews each cycle via the refresh token); tokens + `instance_url` under the `salesforce.oauth` vault key, `getValidSalesforceAuth` returns `{ accessToken, instanceUrl }`; **no new Tauri `ALLOWED_METHODS` entry — reuses the generic `connector.auth` OAuth surface**; lazy-mesh spawn `ensureSalesforceMcp` combines HubSpot's OAuth-read guard with **Jenkins's per-tenant extra-host pattern** (the discovered instance host added at spawn via `manifestWithExtraNetworkHosts`, `ServerSpec` routed through `wrapServerSpec` directly, I15); the static manifest declares only `login.salesforce.com` (RFC-1123 host validation rejects `*.salesforce.com` wildcards); `external_id` = the SF `Id`; metadata name/stage/amount/closeDate/probability/type/isClosed/isWon/lastModifiedDate/createdDate (ISO-8601 dates via a local `parseIsoMs`); `modifiedAt` = LastModifiedDate ?? syncedAt; title = `Name` (fallback `Salesforce opportunity <id>`); `url`/`canonical_url` null (pure mapper does not take the instance host — HubSpot/Prefect posture); the `salesforce:opportunity` type stays on local MiniLM embeddings (NOT in `PROSE_HEAVY_TYPES` — sparse structured pipeline metadata); three read tools (`salesforce_list` / `salesforce_get` / `salesforce_search`); `hitlRequired: []`; **v1 Opportunities only — other sObjects (Lead / Contact / Account / Case), SOSL full-text, and write behind HITL deferred to Phase 6**
+
 - [x] **Pipedrive** (2026-05-25, Phase 5 Tier 1) — `pipedrive:deal` items via `mapPipedriveDealToItem` (`GET /v1/deals?api_token=<t>&limit=100&start=N`, reading the `{ success, data, additional_data: { pagination: { more_items_in_collection, next_start } } }` envelope — a null `data` is treated as empty — following the `next_start` offset while `more_items_in_collection` is true, `MAX_PAGES=20`); get-by-id is `GET /v1/deals/{id}`; `external_id` = `String(<deal id>)` (the row is skipped when `id` is missing/non-numeric — Pipedrive ids are numbers, mirroring Raindrop's `_id`); metadata deal_id/title/value/currency/status/stage_id/pipeline_id/person_id/person_name/org_id/org_name/owner_name/probability/label/expected_close_date/won_time/close_time/add_time/update_time/canonical_url (`person_id`/`org_id` can themselves be `{ value, name }` objects, extracted defensively via `asRecord`; the denormalized person/org/owner names fall back to the nested `.name`); **auth is via the API token IN THE QUERY STRING (`?api_token=<token>`) — there is NO Authorization header — so the request URL carries the secret; the connector + syncable never log a URL and never put a URL (or anything derived from it) into an Error/audit/log line: errors use the HTTP status + a token-free response-body slice only, and the failure-path warn logs just the status + the token-free `start` offset**; vault key `pipedrive.token` (required); fixed SaaS host `api.pipedrive.com` (static sandbox network, no host override); `add_time` / `update_time` (and `won_time` / `close_time`) are Pipedrive's non-ISO `"YYYY-MM-DD HH:MM:SS"` UTC strings converted to epoch-ms via a local helper (space→`T` + `Z` before `Date.parse`, NOT verbatim, NOT epoch seconds); `modifiedAt` = update_time ?? add_time ?? syncedAt; title = the deal `title`, else `Deal <id>`; bodyPreview = `<value> <currency> — <status>` when a value is present, else the status, else org_name/person_name, else the title; `canonical_url`/`url` = null (a deal deep link needs the company-specific domain, absent from the token-only base — deferred; the Mercury null-canonical pattern); the `pipedrive:deal` type stays on local MiniLM embeddings (NOT added to `PROSE_HEAVY_TYPES` — a deal is short, avoiding surprise OpenAI spend); three read tools (`pipedrive_list` / `pipedrive_get` / `pipedrive_search`); `hitlRequired: []`; **v1 deals only — persons / organizations / activities / notes deferred**
+
+
 
 ##### Support & Community
 
+
+
 - [x] **Zendesk** (2026-05-25, Phase 5 Tier 1) — `zendesk:ticket` items via `mapZendeskTicketToItem` (`GET /api/v2/tickets.json?page[size]=100`, cursor-based pagination reading the `{ tickets, meta: { has_more, after_cursor }, links }` envelope, following `meta.after_cursor` while `meta.has_more` is true AND the cursor is non-empty, `MAX_PAGES=20`); get-by-id is `GET /api/v2/tickets/{id}.json`; `external_id` = `String(<numeric ticket id>)` (the row is skipped when the id is missing/non-numeric — accepted as a numeric string or number, mirroring Raindrop's `_id` skip + Intercom's numeric-string accept); metadata ticket_id/subject/status/priority/type/requester_id/assignee_id/group_id/organization_id/tags/via_channel/created_at/updated_at/canonical_url (`tags` is the string array verbatim via `tagStrings`, tolerating non-strings; `via_channel` is the nested `via.channel` via defensive `asRecord`); `canonical_url`/`url` = the agent-UI deep link `<base>/agent/tickets/<id>` built from the configured base (trailing slash stripped; null only when the base is empty — the base URL is always known here, unlike Intercom, via the ArgoCD `ctx.baseUrl` mapper pattern). Unlike the fixed-host SaaS siblings in this batch, Zendesk is **per-tenant**: the user supplies the full base URL `https://<subdomain>.zendesk.com` via `zendesk.url`, and that host is added to the sandbox network list at spawn time by `phase3AddZendeskMcp` via `manifestWithExtraNetworkHosts` + `hostnameFromUrl` (the ArgoCD/Metabase/Grafana runtime-merge pattern — the static `nimbus.extension.json` + `first-party-manifests` network list is intentionally empty). HTTP **Basic** auth where the username is `<email>/token` and the password is the API token (`Authorization: Basic base64(<email>/token:<api_token>)`; never logged), from the three required vault keys `zendesk.url` / `zendesk.email` / `zendesk.api_token`; `created_at` / `updated_at` are ISO-8601 strings parsed to epoch-ms via `parseIsoMs` (NOT verbatim, NOT epoch seconds), `modifiedAt` = updated_at ?? created_at ?? syncedAt; title = the `subject` (trimmed) else `Ticket <id>`; bodyPreview = the plain-text `description` (Zendesk's description is already the first comment as plain text) else the status label else the title; the `zendesk:ticket` type stays on local MiniLM embeddings (NOT added to `PROSE_HEAVY_TYPES` — consistent with the batch default to omit, avoiding surprise OpenAI spend for hybrid-mode users; promotion is a documented follow-up); three read tools (`zendesk_list` / `zendesk_get` / `zendesk_search`); `hitlRequired: []`; **v1 tickets only — comments / users / organizations / Help Center articles + reply / solve / assign write tools deferred**
+
 - [x] **Intercom** (2026-05-25, Phase 5 Tier 1) — `intercom:conversation` items via `mapIntercomConversationToItem` (`GET /conversations?per_page=150` reading the `{ type: "conversation.list", conversations, pages, total_count }` envelope, following the cursor at `pages.next.starting_after` while it is a non-empty string, `MAX_PAGES=20`); get-by-id is the PLURAL `GET /conversations/{id}`; `external_id` = `String(<numeric conversation id>)` (the row is skipped when the id is missing/non-numeric — Intercom ids are numeric strings, accepted as a numeric string or number); metadata conversation_id/title/state/priority/open/read/source_type/source_author_name/source_author_email/source_subject/contact_ids/assignee_id/team_assignee_id/tags/created_at/updated_at/canonical_url (`contact_ids` from `contacts.contacts[].id`; `assignee_id` = `admin_assignee_id` else nested `assignee.id`; `tags` is the tag-NAME array from `tags.tags[].name`, tolerating non-object entries); `canonical_url`/`url` = null (the Intercom inbox deep link needs the workspace app id, which is absent from the conversation payload — deferred; the Mercury null-canonical pattern); `Authorization: Bearer <token>` auth (an Intercom Access Token; never logged) plus the `Intercom-Version: 2.11` + `Accept: application/json` request headers; vault key `intercom.token` (required); fixed SaaS host `api.intercom.io` (the US host — EU/AU regional hosts (api.eu.intercom.io / api.au.intercom.io) deferred; static sandbox network, no host override); `created_at` / `updated_at` are epoch SECONDS converted to epoch-ms via the Stripe `secondsToMs` helper (×1000; re-used, NOT redefined, NOT `parseIsoMs`, NOT verbatim); `modifiedAt` = updated_at ?? created_at ?? syncedAt; title = `source.subject` (trimmed) else `Conversation <id>`; bodyPreview = the HTML-stripped `source.body` (a simple tag-strip + whitespace collapse, no dependency) else the state label else the title; the `intercom:conversation` type stays on local MiniLM embeddings (NOT added to `PROSE_HEAVY_TYPES` — the conversation LIST endpoint only returns the first message and bodies are short, so the batch default to omit avoids surprise OpenAI spend for hybrid-mode users); three read tools (`intercom_list` / `intercom_get` / `intercom_search`); `hitlRequired: []`; **v1 conversations only — contacts / companies / tickets / admins-as-items + reply / close / assign write tools deferred**
+
 - [x] **Stack Overflow for Teams** (2026-05-25, Phase 5 Tier 1) — `stackoverflow:question` items via `mapStackOverflowQuestionToItem` (`GET /v3/teams/<team>/questions?page=N&pagesize=100&sort=creation&order=desc` reading the v3 `{ items, totalCount, pageSize, page, totalPages, sort, order }` envelope, 1-based page number, continuing while `page < totalPages` and `items` is non-empty, `MAX_PAGES=20`); get-by-id is `GET /v3/teams/<team>/questions/{id}` (a single question, NOT wrapped in `{ items }`); `external_id` = `String(<question id>)` (the row is skipped when `id` is missing/non-numeric — SO ids are numbers, mirroring Raindrop's `_id`); metadata question_id/title/tags/score/view_count/answer_count/is_answered/owner_id/owner_name/creation_date/last_activity_date/last_edit_date/canonical_url (the question body is HTML-stripped to plain text for the body preview; `tags` is reduced to the tag-NAME array, tolerating v3 tags as either `{ name }` objects or plain strings; owner_id/owner_name come from the nested `owner` object via defensive `asRecord`); Bearer auth (`Authorization: Bearer <token>` + `Accept: application/json`; never logged) using the TWO required vault keys `stackoverflow.token` (a Stack Overflow for Teams Personal Access Token) + `stackoverflow.team` (the team slug, URL-encoded into the request PATH — the syncable and the lazy-mesh spawn both no-op unless both keys are present); fixed SaaS host `api.stackoverflowteams.com` (static sandbox network, no host override); `creationDate` / `lastActivityDate` / `lastEditDate` are ISO-8601 strings parsed to epoch-ms via a LOCAL `parseIsoMs` helper (NOT verbatim, NOT epoch seconds); `modifiedAt` = lastActivityDate ?? lastEditDate ?? creationDate ?? syncedAt; title = the trimmed `title`, else `Question <id>`; bodyPreview = the HTML-stripped body, else `bodyMarkdown`, else a tag summary, else the title; `canonical_url`/`url` = the per-question `webUrl` (the v3 API provides a real per-question URL); the `stackoverflow:question` type stays on local MiniLM embeddings (NOT added to `PROSE_HEAVY_TYPES` — promotion is a documented follow-up candidate since Q&A bodies are genuinely prose); three read tools (`stackoverflow_list` / `stackoverflow_get` / `stackoverflow_search`); `hitlRequired: []`; **v1 questions only — answers / articles / tags-as-items / users-as-items deferred**
+
+
 
 ##### HR & Recruiting
 
+
+
 - [x] **Greenhouse** (2026-05-25, Phase 5 Tier 1) — `greenhouse:job` items via `mapGreenhouseJobToItem` (`GET /v1/jobs?per_page=100&page=N` reading a **bare JSON array** `[ ...jobs... ]` — NOT an envelope — incrementing `page` from 1 while the returned array is a full page of 100, stopping on a short/empty page, `MAX_PAGES=20`; Greenhouse also sends an RFC-5988 `Link` header with rel="next" but the walk uses the full-page-length heuristic like Netlify and does not parse it); get-by-id is `GET /v1/jobs/{id}`; `external_id` = `String(<job id>)` (the row is skipped when `id` is missing/non-numeric — Greenhouse ids are NUMBERS, so a numeric id is required, mirroring Raindrop's `_id`, NOT the Lever UUID-string accept); metadata job_id/name/status/requisition_id/confidential/department_names/office_names/office_locations/opened_at/closed_at/created_at/updated_at/canonical_url (`department_names` = `departments[].name`; `office_names` = `offices[].name`; `office_locations` = `offices[].location.name`, defensive nested access via `asRecord`); `canonical_url`/`url` = null (the Harvest API exposes no per-job public URL without a board token — deferred; the Mercury null-canonical pattern); HTTP **Basic** auth where the API key is the USERNAME and the password is EMPTY (`Authorization: Basic base64(<api_key>:)` — the trailing colon is the empty password; never logged); vault key `greenhouse.api_key` (required); fixed SaaS host `harvest.greenhouse.io` (static sandbox network, no host override); `created_at` / `updated_at` (and `opened_at` / `closed_at`) are ISO-8601 STRINGS parsed to epoch-ms via a LOCAL `parseIsoMs` helper (NOT verbatim, NOT epoch seconds); `modifiedAt` = updated_at ?? created_at ?? syncedAt; title = the trimmed job `name`, else `Job <id>`; bodyPreview = a summary joining the department names + office names/locations (e.g. "Engineering — San Francisco, CA"), else the `status`, else the title; the `greenhouse:job` type stays on local MiniLM embeddings (NOT added to `PROSE_HEAVY_TYPES` — jobs are short, avoiding surprise OpenAI spend); three read tools (`greenhouse_list` / `greenhouse_get` / `greenhouse_search`); `hitlRequired: []`; **v1 job openings only — candidates / applications deliberately deferred (candidate PII; out of scope for v1)**
+
 - [x] **Lever** (2026-05-25, Phase 5 Tier 1) — `lever:posting` items via `mapLeverPostingToItem` (`GET /v1/postings?limit=100` reading the `{ data, hasNext, next }` envelope, following the `next` offset cursor — passed as `&offset=<next>` — while `hasNext` is true AND `next` is a non-empty string, `MAX_PAGES=20`); get-by-id is `GET /v1/postings/{id}`; `external_id` = `String(<posting id>)` (the row is skipped when `id` is missing/empty — Lever ids are UUID STRINGS, so any non-empty string id is accepted, NOT required numeric, unlike Raindrop's `_id`); metadata posting_id/text/state/team/department/location/commitment/level/tags/hosted_url/apply_url/req_code/created_at/updated_at/canonical_url (the `categories.*` sub-fields are flattened to top-level team/department/location/commitment/level; `tags` is the tag string array stored verbatim; `req_code` = `reqCode` else first of `requisitionCodes`); `canonical_url`/`url` = `hostedUrl`, else `urls.show`, else `applyUrl`, else null (defensive nested access via `asRecord`); HTTP **Basic** auth where the API key is the USERNAME and the password is EMPTY (`Authorization: Basic base64(<api_key>:)` — the trailing colon is the empty password; never logged); vault key `lever.api_key` (required); fixed SaaS host `api.lever.co` (static sandbox network, no host override); `createdAt` / `updatedAt` are epoch MILLISECONDS passed through VERBATIM (NO `parseIsoMs`, NO ×1000 — like Vercel; `0`/missing → null); `modifiedAt` = updatedAt ?? createdAt ?? syncedAt; title = the trimmed posting `text`, else `Posting <id>`; bodyPreview = a category summary joining the present team/department/location/commitment/level (e.g. "Engineering — Product — Remote — Full-time — Senior"), else the `state`, else the title; the `lever:posting` type stays on local MiniLM embeddings (NOT added to `PROSE_HEAVY_TYPES` — postings are short, avoiding surprise OpenAI spend); three read tools (`lever_list` / `lever_get` / `lever_search`); `hitlRequired: []`; **v1 job postings only — opportunities / candidates deliberately deferred (candidate PII; out of scope for v1)**
+
+
 
 ##### Design & Creative
 
+
+
 - [x] **Figma** (2026-05-31, Phase 5 Tier 2) — `figma:file` items via `mapFigmaFileToItem` from a **two-level fetch** (`GET /v1/teams/<figma.team_id>/projects` → `{ name, projects: [{ id, name }] }`, then per project `GET /v1/projects/<id>/files` → `{ name, files: [{ key, name, thumbnail_url, last_modified }] }`, flattened across all projects with each file tagged by project name); neither endpoint paginates with a cursor, so a single forward pass per cycle bounded by `MAX_PROJECTS=200` / `MAX_FILES=2000`, cursor `{ pass }`; get-by-project is `GET /v1/projects/{projectId}/files`; **9th `OAuthProvider`** — widening the registry union forced the exhaustive 4-file `never`-switch bundle to co-land (`oauth-registry.ts` + `connector-rpc-handlers/auth.ts` `case "figma"` + `config.ts` `oauthFigma*` + `oauth-env-help-messages.ts`); OAuth shape mirrors Miro/HubSpot — authorization-code (NOT PKCE) with the client secret form-encoded in the token-exchange BODY (`secretPlacement: "body"`, distinct from Zoom/Canva's Basic-header), authorize `www.figma.com/oauth`, token `api.figma.com/v1/oauth/token`, scope `files:read`; tokens under the `figma.oauth` vault key refreshed by `getValidFigmaAccessToken` (single-flight registry lock); **second non-secret key (the `stackoverflow.team` pattern): `CONNECTOR_VAULT_SECRET_KEYS.figma = ["figma.oauth", "figma.team_id"]`, BOTH required for spawn (`ensureFigmaIfVaultCreds`) and sync, both injected at spawn (`FIGMA_TOKEN` + `FIGMA_TEAM_ID`)**; **no new Tauri `ALLOWED_METHODS` entry — reuses the generic `connector.auth` OAuth surface, like Miro/Canva/HubSpot/Zoom**; lazy-mesh spawn `ensureFigmaMcp` gated on a valid `figma.oauth` token AND `figma.team_id`, `ServerSpec` wrapped via `wrapServerSpec` (I15); fixed SaaS host `api.figma.com`; `external_id` = the file `key`; metadata name/project_name/thumbnail_url/last_modified (ISO-8601 `last_modified` via a local `parseIsoMs`); `modifiedAt` = last_modified ?? syncedAt; title = the file `name` (fallback `Figma file <key>`); `url`/`canonical_url` = `https://www.figma.com/file/<key>` (constructed from the stable key); the `figma:file` type stays on local MiniLM embeddings (NOT in `PROSE_HEAVY_TYPES` — short file-name labels, sparse structured metadata); a failing per-project files call is skipped (partial coverage beats none) and a 429/401/parse error on the team-projects call degrades gracefully (cursor preserved); three read tools (`figma_list` / `figma_get` / `figma_search`); `hitlRequired: []`; **v1 = a single configured team's files only — multi-team, frames / components, comments, version history, FigJam boards deferred; comment post behind HITL deferred to Phase 6**
+
 - [x] **Miro** (2026-05-31, Phase 5 Tier 2) — `miro:board` items via `mapMiroBoardToItem` (`GET /v2/boards?limit=50&cursor=<cursor>`, reading the `{ data, cursor?, total, size }` envelope and following the top-level `cursor` opaque cursor until absent, `MAX_PAGES=20`); get-by-id is `GET /v2/boards/{boardId}`; **7th `OAuthProvider`**; widening the registry union forced the exhaustive 4-file `never`-switch bundle to co-land (`oauth-registry.ts` + `connector-rpc-handlers/auth.ts` `case "miro"` + `config.ts` `oauthMiro*` + `oauth-env-help-messages.ts`); OAuth shape mirrors HubSpot — authorization-code (NOT PKCE) with the client secret form-encoded in the token-exchange BODY (`secretPlacement: "body"`, distinct from Zoom's Basic-header), authorize `miro.com/oauth/authorize`, token `api.miro.com/v1/oauth/token`, scope `boards:read`; tokens under the `miro.oauth` vault key refreshed by `getValidMiroAccessToken` (single-flight registry lock); **no new Tauri `ALLOWED_METHODS` entry — reuses the generic `connector.auth` OAuth surface, like HubSpot/Zoom**; lazy-mesh spawn `ensureMiroMcp` (HubSpot dedicated-spawn pattern) gated on a valid `miro.oauth` token, `ServerSpec` wrapped via `wrapServerSpec` (I15); fixed SaaS host `api.miro.com`; `external_id` = the board `id`; metadata name/description/owner_name/createdAt/modifiedAt/viewLink (ISO-8601 dates via a local `parseIsoMs`); `modifiedAt` = modifiedAt ?? createdAt ?? syncedAt; title = `name` (fallback `Miro board <id>`); `url`/`canonical_url` = the board `viewLink` (null when absent); the `miro:board` type stays on local MiniLM embeddings (NOT in `PROSE_HEAVY_TYPES` — sparse structured board metadata); three read tools (`miro_list` / `miro_get` / `miro_search`); `hitlRequired: []`; **v1 boards only — items (cards / sticky notes / shapes) / comments deferred; write behind HITL deferred to Phase 6**
+
 - [x] **Canva** (2026-05-31, Phase 5 Tier 2) — `canva:design` items via `mapCanvaDesignToItem` (`GET /rest/v1/designs?continuation=<token>`, reading the `{ items, continuation? }` envelope and following the top-level `continuation` opaque cursor query param until absent, `MAX_PAGES=20`); get-by-id is `GET /rest/v1/designs/{designId}`; **8th `OAuthProvider`** — widening the registry union forced the exhaustive 4-file `never`-switch bundle to co-land (`oauth-registry.ts` + `connector-rpc-handlers/auth.ts` `case "canva"` + `config.ts` `oauthCanva*` + `oauth-env-help-messages.ts`); **OAuth shape mirrors Zoom (PKCE + Basic-header secret), distinct from Miro/HubSpot's body-secret**: authorization-code WITH PKCE (`usesPkce: true`), client authenticated at the token endpoint via an HTTP Basic header `base64(client_id:client_secret)` alongside the PKCE `code_verifier` (`secretPlacement: "basic_header"`, `bodyFormat: "form"`, `clientSecret: "required"`), authorize `www.canva.com/api/oauth/authorize`, token `api.canva.com/rest/v1/oauth/token`, scope `design:meta:read`; no `postToken` plumbing change (Zoom already exercises basic_header + PKCE); tokens under the `canva.oauth` vault key refreshed by `getValidCanvaAccessToken` (single-flight registry lock); **no new Tauri `ALLOWED_METHODS` entry — reuses the generic `connector.auth` OAuth surface, like Miro/HubSpot/Zoom**; lazy-mesh spawn `ensureCanvaMcp` gated on a valid `canva.oauth` token, `ServerSpec` wrapped via `wrapServerSpec` (I15); fixed SaaS host `api.canva.com`; `external_id` = the design `id`; metadata title/created_at/updated_at/edit_url/view_url/thumbnail_url (timestamps are Unix epoch **seconds** → epoch-ms via local `parseCanvaTimestampMs`, tolerating ISO-8601 defensively); `modifiedAt` = updated_at ?? created_at ?? syncedAt; title = the design `title` (fallback `Canva design <id>`); `url`/`canonical_url` = the design `view_url` (else `edit_url`, else null); the `canva:design` type stays on local MiniLM embeddings (NOT in `PROSE_HEAVY_TYPES` — sparse structured design metadata); three read tools (`canva_list` / `canva_get` / `canva_search`); `hitlRequired: []`; **v1 designs only — folders and shared projects deferred**
+
+
 
 ##### Databases & Infrastructure
 
+
+
 - [x] **Local DB Schema Indexing** (2026-06-02, Phase 5 Tier 5 — local/no-network) — `localdb:saved_query` items via `mapLocalDbQueryToItem` from saved `.sql` files that local DB tools (DBeaver, DataGrip, pgAdmin) keep on disk. A **pure, bounded, path-traversal-guarded filesystem read** — NO database connection, NO query execution, NO binary spawn (mirrors the Great Expectations / Obsidian filesystem-connector pattern). The sync handler (`localdb-sync.ts`, cursor `{ pass }` / `nimbus-localdb1:`) recursively walks the configured scripts dir for `.sql` files (`MAX_FILES=2000`, per-file size cap ~2 MiB, depth cap; empty/oversized/unreadable files skipped) and upserts one item per file: the SQL TEXT (capped 2000 chars) as the body preview — so the query is embedded for semantic recall of "that one query I wrote last month" — plus lightweight metadata (relative path, referenced table/view names via a comment-stripping heuristic extractor, statement count, size). `external_id` = the relative path; `modifiedAt` = file mtime. **Config** — a single non-secret PATH `localdb.scripts_dir`, so `CONNECTOR_VAULT_SECRET_KEYS.localdb` is `["localdb.scripts_dir"]`; the spawn `phase3AddLocaldbMcp` extends the connector manifest's `filesystem.read` with that dir at spawn (the GX/Obsidian pattern), injects `LOCALDB_SCRIPTS_DIR`, `wrapServerSpec` (I15); the MCP server (`scanSavedQueries`/`getSavedQuery` over the env dir with an `assertWithinScriptsDir` path guard) exposes `localdb_list` / `localdb_get` / `localdb_search`. Reuses the existing `"filesystem"` rate-limiter provider (no new provider). `localdb:saved_query` stays on local MiniLM (NOT in `PROSE_HEAVY_TYPES` — SQL is structured, not prose paragraphs). `hitlRequired: []`. **v1 saved-query files only — live schema introspection / query-history DB files (pgAdmin sqlite) deferred.**
+
 - [x] **Vercel** (2026-05-25, Phase 5 Tier 1) — `vercel:deployment` items via `mapVercelDeploymentToItem` (`GET /v6/deployments?limit=100`, `pagination.next` epoch-ms `until` walk, `MAX_PAGES=20`); `external_id` = the deployment `uid`; metadata uid/name/state(readyState||state)/target/url/inspector_url/commit_sha/commit_message/commit_ref/pr_id/creator/created_at/canonical_url (canonical prefers `inspectorUrl`, else `https://<vercel.app host>`, else null); `Authorization: Bearer` auth; vault keys `vercel.token` (required) + `vercel.team_id` (optional — appended as `&teamId`); fixed SaaS host `api.vercel.com` (static sandbox network, no host override); `created` is epoch ms surfaced verbatim; three read tools (`vercel_list` / `vercel_get` / `vercel_search`); `hitlRequired: []`; **v1 deployments only — projects / domains / env vars / aliases / build logs deferred**
+
 - [x] **Netlify** (2026-05-25, Phase 5 Tier 1) — `netlify:site` items via `mapNetlifySiteToItem` (`GET /api/v1/sites?per_page=100&page=N`, page-paginated bare-array walk, `MAX_PAGES=20`, stop on a short/empty page); `external_id` = the site `id`; metadata site_id/name/url/admin_url/ssl_url/repo_url/repo_branch/deploy_state/deploy_id/deploy_branch/commit_ref/commit_url/deploy_url/account_name/created_at/updated_at/canonical_url (canonical prefers `admin_url`, else `ssl_url`, else `url`, else null; the embedded `published_deploy` supplies deploy status, preview URL, and commit ref — no N+1 per-site deploy walk); ISO-8601 timestamps parsed to epoch-ms (NOT passed through verbatim); `Authorization: Bearer` PAT auth; vault key `netlify.token` (required); fixed SaaS host `api.netlify.com` (static sandbox network, no host override); three read tools (`netlify_list` / `netlify_get` / `netlify_search`); `hitlRequired: []`; **v1 sites + embedded published-deploy status only — per-deploy history / forms / functions / env vars / DNS deferred**
+
+
 
 ##### Feature Flags
 
+
+
 - [x] **LaunchDarkly** (2026-05-24, Phase 5 Tier 1) — first-party MCP connector `nimbus-mcp-launchdarkly` + gateway-side syncable. Walks `GET /api/v2/projects → GET /api/v2/flags/{projectKey}` (offset-paged 100/page, 20 pages per project cap) and upserts feature flags as `launchdarkly:feature_flag` items via `mapLaunchDarklyFlagToItem`. Metadata exposed: `key`, `name`, `kind` (boolean/multivariate), `project_key`, `tags`, `temporary`, `archived`, `maintainer`, `maintainer_id`, `description`, `variation_count`, `environments`, `env_states` (per-env on/off), `created_at`, `updated_at`, `canonical_url` — critical for incident correlation ("was this flag enabled when the alert fired?"). API-token auth (raw `Authorization` header). Vault keys: `launchdarkly.token` (required API access token), `launchdarkly.base_url` (optional regional override → default `https://app.launchdarkly.com`; sandbox runtime-merge for regional/federal hosts inherits the same Task 14 follow-up as `sentry.url`), `launchdarkly.project_key` (optional single-project restriction). Three read-only MCP tools: `launchdarkly_list` / `launchdarkly_get` / `launchdarkly_search`. `hitlRequired: []` — `launchdarkly.flag.toggle` is a deferred Phase 8 follow-up.
+
 - [x] **Flagsmith** (2026-05-24, Phase 5 Tier 1) — first-party MCP connector `nimbus-mcp-flagsmith` + gateway-side syncable. Walks `GET /api/v1/projects/ → GET /api/v1/projects/{id}/features/` (DRF-paged 100/page, 20 pages per project cap) plus one `GET /api/v1/projects/{id}/tags/` call per project to resolve feature tag ids to labels, and upserts feature-flag definitions as `flagsmith:feature_flag` items via `mapFlagsmithFeatureToItem`. Metadata exposed: `name`, `type`, `default_enabled`, `initial_value`, `description`, `tags` (resolved labels), `is_archived`, `owner_count`, `project_id`, `project_name`, `created_at` (parsed from the ISO-8601 `created_date`), `canonical_url` (project page) — useful for incident correlation ("did this flag exist when the alert fired?"). Admin-API-token auth (`Authorization: Token <token>`). Vault keys: `flagsmith.token` (required), `flagsmith.api_base` (optional regional / self-hosted host root → default `https://api.flagsmith.com`; requests go to `${api_base}/api/v1/...`; sandbox runtime-merge for non-SaaS hosts inherits the same Task 14 follow-up as `sentry.url`). Three read-only MCP tools: `flagsmith_list` / `flagsmith_get` / `flagsmith_search`. `hitlRequired: []`. **v1 indexes flag definitions only — per-environment on/off state + segments are deferred.** `flagsmith.flag.toggle` is a deferred Phase 8 follow-up.
+
+
 
 ##### GitOps & Deployment
 
+
+
 - [x] **ArgoCD** (2026-05-25, Phase 5 Tier 1) — `argocd:application` items via `mapArgocdApplicationToItem`; metadata name/namespace/project/sync_status/health_status/repo_url/path/target_revision/dest_server/dest_namespace/revision/created_at/canonical_url; vault keys `argocd.url` + `argocd.token` (Bearer); single `GET /api/v1/applications` walk (no pagination); self-hosted host extended into the sandbox network list from `argocd.url` (Grafana pattern); three read tools (`argocd_list` / `argocd_get` / `argocd_search`); `hitlRequired: []`; applications-only — AppProjects + per-app sync history deferred; `argocd.app.sync` / `argocd.app.rollback` writes deferred to Phase 6 — see [§ Phase 6 → Deferred from Phase 5](#deferred-from-phase-5)
+
 - [x] **Flux** (2026-05-25, Phase 5 Tier 1) — `flux:resource` items via `mapFluxResourceToItem` across 9 CRD kinds (kustomization, helm_release, git/oci/helm_repository, bucket, image_repository/policy/update_automation); vault keys `flux.api_url` + `flux.token` (SA Bearer); `status.conditions` Ready health (ready_status/reason/message), suspend, last_applied/attempted_revision; three read tools (`flux_list` / `flux_get` / `flux_search`); `hitlRequired: []`; self-hosted host extended into the sandbox network list from `flux.api_url` (Grafana pattern); TLS note (needs CA-trusted endpoint — self-signed K8s certs rejected by Bun fetch in v1); `flux reconcile` / `flux suspend` writes deferred to Phase 6 — see [§ Phase 6 → Deferred from Phase 5](#deferred-from-phase-5)
+
+
 
 ##### Data Warehouses, Orchestration & BI (Personal-Auth)
 
+
+
 - [x] **Databricks** (2026-05-25, Phase 5 Tier 1) — `data_pipeline` items via `mapDatabricksJobToItem` (`/api/2.1/jobs/list` token-paged + `/api/2.1/jobs/runs/list` for latest-run enrichment); metadata job_id/name/creator_user_name/schedule_cron/format/created_at/latest_run_status/latest_run_started_at/latest_run_duration_ms/latest_run_cluster_id/latest_run_triggered_by/canonical_url; vault keys `databricks.host` + `databricks.token` (PAT); three read tools (`databricks_list` / `databricks_get` / `databricks_search`); `hitlRequired: []`; **v1 jobs only — clusters / SQL warehouses / notebooks deferred**; `job.trigger` / `job.cancel` / `cluster.restart` (HITL) deferred to Phase 6; per-workspace host extended into the sandbox from `databricks.host` (Grafana pattern) — see [§ Phase 6 → Deferred from Phase 5](#deferred-from-phase-5)
+
 - [x] **Metabase** (2026-05-25, Phase 5 Tier 1) — `metabase:dashboard` items via `mapMetabaseDashboardToItem` (`GET /api/dashboard` + `/api/collection` for collection-name resolution); metadata dashboard_id/name/description/collection_id/collection_name/creator_id/archived/card_count/created_at/updated_at/canonical_url; vault keys `metabase.url` + `metabase.api_key`; API-key auth via the `x-api-key` header (NOT `Authorization`); three read tools (`metabase_list` / `metabase_get` / `metabase_search`); `hitlRequired: []`; `metabase:card` items for saved questions via `mapMetabaseCardToItem` (`GET /api/card`, models and metrics skipped; external id `card/<id>`; local embedding and 512-character body; native SQL kept in metadata, never query results or `result_metadata`); card-to-dashboard graph edge not built; self-hosted host extended into the sandbox from `metabase.url` (Grafana pattern)
+
 - [x] **Superset** (2026-05-25, Phase 5 Tier 1) — `superset:dashboard` items via `mapSupersetDashboardToItem` (`POST /api/v1/security/login` → Bearer, `GET /api/v1/dashboard/` Rison-paged); metadata dashboard_id/title/slug/published/status/owner_count/changed_by/changed_at/canonical_url; vault keys `superset.url` + `superset.username` + `superset.password`; three read tools (`superset_list` / `superset_get` / `superset_search`); `hitlRequired: []`; **v1 dashboards only — charts/datasets/saved queries deferred**; self-hosted host extended into the sandbox from `superset.url` (Grafana pattern)
+
 - [x] **Apache Airflow (OSS) / Prefect / Dagster** (API token) (2026-05-31, Phase 5 Tier 1) — all three orchestrators delivered: Airflow (`airflow:dag`), Prefect (`prefect:deployment`), and Dagster (`dagster:job`), each a read-only per-tenant-host connector with three read tools and `hitlRequired: []`. v1 indexes the orchestration unit definitions only (DAGs / deployments / jobs); individual runs, tasks/task-groups, run statuses, and logs are deferred, and the `orchestration.run.trigger` / `orchestration.run.cancel` HITL write tools are deferred to Phase 6 — see [§ Phase 6 → Deferred from Phase 5](#deferred-from-phase-5). The `data_pipeline` umbrella item type from the original line item was realized as three service-specific types (one per orchestrator) rather than a single shared type.
+
   - [x] **Apache Airflow** (2026-05-31, Phase 5 Tier 1) — `airflow:dag` items via `mapAirflowDagToItem` (stable REST API v1 `GET /api/v1/dags?limit=100&offset=<n>`, body-based `total_entries` + offset walk, `MAX_PAGES=20`); metadata dag_id/is_paused/is_active/owners/description/schedule_interval/tags/fileloc/next_dagrun/last_parsed_time/canonical_url; vault keys `airflow.base_url` (non-secret) + `airflow.username` + `airflow.password` (secrets); HTTP Basic auth (gateway builds the header inline; MCP server reuses the shared `encodeBasicAuthHeader`); three read tools (`airflow_list` / `airflow_get` / `airflow_search`); `hitlRequired: []`; self-hosted host extended into the sandbox from `airflow.base_url` (Dependency-Track pattern); **v1 DAG definitions only — DAG runs / task instances / logs deferred**; `orchestration.run.trigger` / `orchestration.run.cancel` (HITL) deferred to Phase 6.
+
   - [x] **Prefect** (2026-05-31, Phase 5 Tier 1) — `prefect:deployment` items via `mapPrefectDeploymentToItem` (`POST <api_url>/deployments/filter` with body `{ limit: 100, offset, sort: "CREATED_DESC" }` — a POST-with-body filter returning a bare JSON array, offset walk, `MAX_PAGES=20`); metadata deployment_id/name/flow_id/description/tags/paused/work_pool_name/work_queue_name/schedule/status/created/updated/canonical_url; vault keys `prefect.api_url` (non-secret workspace API root — Cloud `.../accounts/<id>/workspaces/<id>`, Server `<host>:4200/api`) + `prefect.api_key` (secret); Bearer auth (gateway builds the header inline; MCP server omits it when keyless); `canonical_url`/`url` always null (no clean permalink — Ramp posture); three read tools (`prefect_list` / `prefect_get` / `prefect_search`); `hitlRequired: []`; per-tenant host extended into the sandbox from `prefect.api_url` (Dependency-Track pattern); **v1 deployments only — flow runs / task runs / logs deferred**; `orchestration.run.trigger` / `orchestration.run.cancel` (HITL) deferred to Phase 6.
+
   - [x] **Dagster** (2026-05-31, Phase 5 Tier 1) — `dagster:job` items via `mapDagsterJobToItem` (single **GraphQL** query `POST <base_url>/graphql` walking `repositoriesOrError → nodes[].pipelines[]`, flattening to jobs in one response — NOT cursor-paginated — with a defensive `MAX_JOBS=2000` cap; a top-level `errors` array → `parse_error` and a `PythonError` typename → empty list, both graceful degrade with cursor preserved, mirroring Wiz); metadata name/repository/location/description/is_job/tags/tag_keys/canonical_url; vault keys `dagster.base_url` (non-secret host root — Cloud `https://<org>.dagster.cloud/<deployment>`, OSS `http://<host>:3000`) + `dagster.api_token` (secret, sent as the `Dagster-Cloud-Api-Token` header; OSS users set any non-empty placeholder); **`external_id` = the stable `<location>:<repository>:<jobName>` triple — NOT the opaque base64 `id`**; `canonical_url`/`url` = `<base_url>/locations/<location>/jobs/<jobName>` (best-effort, null when location/base-url unavailable); three read tools (`dagster_list` / `dagster_get` / `dagster_search`); `hitlRequired: []`; per-tenant host extended into the sandbox from `dagster.base_url` (Dependency-Track pattern); **v1 jobs only — runs / assets / logs deferred**; `orchestration.run.trigger` / `orchestration.run.cancel` (HITL) deferred to Phase 6. **Last of the bundle — with Dagster delivered, the Airflow / Prefect / Dagster bundle row is now checked.**
+
 - [x] **Kibana / Elasticsearch** (2026-06-01, Phase 5 Tier 3 — no-row-data) — `elasticsearch:index` items via `mapElasticsearchIndexToItem` from the **Elasticsearch REST metadata endpoints** over `connectorFetch` (`GET /_cat/indices?format=json&bytes=b` for the index listing — page-capped `MAX_INDICES=500`, ES system/hidden `.`-prefixed indices skipped; per index `GET /<index>/_mapping` flattened to `fields: [{ name, type }]` with dotted nested paths, capped `MAX_INDEX_DETAIL=200`); single forward pass, cursor `{ pass }` (`nimbus-es1:`); metadata index/health/status/docsCount/storeSizeBytes/primaryShards/replicas/uuid/fields; `external_id` = the index name; `modifiedAt` = `syncedAt` (`_cat/indices` has no mtime); `url`/`canonical_url` null. **Own per-tenant creds (NOT cloud-cred-reuse, NOT CLI-shelling — the Dependency-Track REST shape)** — two own vault keys `elasticsearch.url` (non-secret cluster root) + `elasticsearch.api_key` (secret, `Authorization: ApiKey`), both required, so `CONNECTOR_VAULT_SECRET_KEYS.elasticsearch` is `["elasticsearch.url", "elasticsearch.api_key"]`; lazy-mesh spawn `phase3AddElasticsearchMcp` rides the phase3 bundle, the parsed host added to the sandbox at spawn via `hostnameFromUrl` + `manifestWithExtraNetworkHosts` (empty static `permissions.network`), routed through `wrapServerSpec` (I15). **STRICTLY NO ROW DATA** — forbidden endpoints (`_search`, `_doc`, `_mget`, `_sql`, `_async_search`, `_pit`, `_scroll`, anything returning `hits.hits._source`) NEVER called; index path segments `encodeURIComponent`-guarded; the **no-row-data contract test** calls `assertNoRowDataTools(ELASTICSEARCH_TOOL_NAMES, "elasticsearch")` (a future `elasticsearch_scan` / `elasticsearch_get_records` / `elasticsearch_query` tool fails CI; `elasticsearch_search` over index NAMES is allowed). Three read tools (`elasticsearch_list` / `elasticsearch_get` / `elasticsearch_search` — metadata only, search is over index names NOT documents); `hitlRequired: []`; **v1 index metadata only — saved searches / dashboards / Watcher alerts / document contents deferred (document contents out of scope for the no-row-data tier).**
+
 - [x] **AWS CloudWatch Logs** (2026-05-31, Phase 5 Tier 3 — no-row-data) — `cloudwatch:log_group` items via `mapCloudwatchLogGroupToItem` from the **AWS CLI's CloudWatch Logs metadata commands** (walk `aws logs describe-log-groups --limit 50` with `--next-token` pagination, page-capped `MAX_LOG_GROUPS=500`; per group a best-effort `aws logs describe-log-streams --order-by LastEventTime --descending --limit 50` peek for a stream COUNT + last-event timestamp — stream METADATA only); single forward pass, cursor `{ pass }`; metadata logGroupName/arn/retentionInDays/storedBytes/metricFilterCount/streamCount/lastEventTimestamp/creationTime; `external_id` = `arn ?? logGroupName`; `url`/`canonical_url` null. **Cloud-cred REUSE** — no new vault key: reuses the existing `aws.*` creds via the shared `_lib/aws-cli.ts` helper (injectable `runAwsCli`), so `CONNECTOR_VAULT_SECRET_KEYS.cloudwatch` is `[]`; lazy-mesh spawn `phase3AddCloudwatchMcp` rides the phase3 bundle gated on AWS creds, routed through `wrapServerSpec` (I15); static manifest mirrors the aws exec/filesystem shape + `sts.amazonaws.com` base, with the regional `logs.<region>.amazonaws.com` host added per-region at spawn. **STRICTLY NO ROW DATA** — forbidden commands (`get-log-events`, `filter-log-events`, `start-query`, `get-query-results`, `tail`, `start-live-tail`) NEVER called; the **no-row-data contract test** calls `assertNoRowDataTools(CLOUDWATCH_TOOL_NAMES, "cloudwatch")` (`ROW_DATA_TOOL_SEGMENTS` now also rejects `event`/`events`, so a future `cloudwatch_get_log_events` tool fails CI). Three read tools (`cloudwatch_list` / `cloudwatch_get` / `cloudwatch_search` — metadata only); `hitlRequired: []`; **v1 log-group metadata only — log-event contents / metric data points / alarms / dashboards deferred.**
+
 - [x] **GCP Cloud Logging** — the sibling of AWS CloudWatch Logs above (reuses `gcp.*` creds like BigQuery): routing-sink config metadata (`cloud_logging:sink`); `gcloud logging sinks list/describe`; **NEVER** `gcloud logging read` / `entries list` (log entries = row data); no-row-data contract test
+
 - [x] **BigQuery** (2026-05-31, Phase 5 Tier 3 — the no-row-data infra-prover) — `bigquery:table` items via `mapBigqueryTableToItem` from the **BigQuery REST metadata API** (walk `GET /bigquery/v2/projects/<project>/datasets?maxResults=100&pageToken=<token>` → per-dataset `GET .../datasets/<id>/tables` → enrich the first `MAX_TABLE_DETAIL=50` tables/dataset with `GET .../tables/<id>` for `schema.fields`; page-capped `MAX_DATASETS=100` / `MAX_TABLES_PER_DATASET=500`, single forward pass, cursor `{ pass }`); metadata project/datasetId/tableId/tableType (TABLE/VIEW/EXTERNAL/MATERIALIZED_VIEW)/schemaFields (name+type only)/numRows/numBytes/creationTime/lastModifiedTime; `external_id` = `<project>:<datasetId>.<tableId>`; `url`/`canonical_url` null. **Cloud-cred REUSE** — no new vault key: reuses the existing `gcp.credentials_json_path` + `gcp.project_id` and mints a token by shelling `gcloud auth print-access-token` (GOOGLE_APPLICATION_CREDENTIALS → ADC), so `CONNECTOR_VAULT_SECRET_KEYS.bigquery` is `[]`; lazy-mesh spawn `phase3AddBigqueryMcp` rides the phase3 bundle gated on `gcp.credentials_json_path` (BigQuery appears whenever GCP does), routed through `wrapServerSpec` (I15); static manifest mirrors the gcp exec/filesystem shape + network hosts `bigquery.googleapis.com` / `oauth2.googleapis.com` / `www.googleapis.com`. **STRICTLY NO ROW DATA** — forbidden endpoints (`/queries`, `jobs.query`/`getQueryResults`, `tabledata.list`) NEVER called; the **no-row-data contract test** calls `assertNoRowDataTools(BIGQUERY_TOOL_NAMES, "bigquery")` (added in a5a18267) so any future row-fetch tool fails CI — this is the executable backstop for the tier's "no row-fetch tools on the MCP surface" acceptance criterion. Three read tools (`bigquery_list` / `bigquery_get` / `bigquery_search` — metadata only); `hitlRequired: []`; token-mint is dependency-injected for tests; **v1 table metadata only — row data / query results / routines / models deferred (out of scope for the no-row-data tier).** First Tier-3 connector — sets the template the next six (Snowflake / Athena / CloudWatch Logs / etc.) reuse.
+
 - [x] **AWS Athena** (2026-05-31, Phase 5 Tier 3 — the AWS-side no-row-data infra-prover) — `athena:table` items via `mapAthenaTableToItem` from the **AWS CLI's Athena metadata commands** (walk `aws athena list-data-catalogs` → per-catalog `aws athena list-databases --catalog-name <c>` → per-database `aws athena list-table-metadata --catalog-name <c> --database-name <db>`; page-capped `MAX_CATALOGS=50` / `MAX_DATABASES_PER_CATALOG=200` / `MAX_TABLES_PER_DATABASE=500`, single forward pass, `NextToken` pagination, cursor `{ pass }`); metadata catalog/database/tableName/tableType/columns (name+type only)/partitionKeys/parameters/createTime/lastAccessTime; `external_id` = `<catalog>/<database>.<tableName>`; `url`/`canonical_url` null; timestamps parsed defensively (ISO or epoch-seconds). **Cloud-cred REUSE** — no new vault key: reuses the existing `aws.access_key_id` + `aws.secret_access_key` + `aws.default_region`/`aws.profile` via the shared `_lib/aws-cli.ts` helper (`awsCredentialsExtra` + `awsCliJson`, extracted from `aws-sync.ts`), so `CONNECTOR_VAULT_SECRET_KEYS.athena` is `[]`; lazy-mesh spawn `phase3AddAthenaMcp` rides the phase3 bundle gated on AWS creds (Athena appears whenever AWS does), routed through `wrapServerSpec` (I15); static manifest mirrors the aws exec/filesystem shape + `sts.amazonaws.com` base, with the regional `athena.<region>.amazonaws.com` host added per-region at spawn via `manifestWithExtraNetworkHosts` (the RFC-1123 validator rejects the wildcard, like Salesforce's per-tenant host). **STRICTLY NO ROW DATA** — forbidden commands (`start-query-execution`, `get-query-results`, `get-query-execution`, `list-query-executions`, `get-named-query`) NEVER called; the **no-row-data contract test** calls `assertNoRowDataTools(ATHENA_TOOL_NAMES, "athena")` so any future row-fetch tool fails CI. Three read tools (`athena_list` / `athena_get` / `athena_search` — metadata only); `hitlRequired: []`; the AWS-CLI runner is dependency-injected for tests; **v1 catalog/database/table metadata only — query execution / results / saved-query bodies deferred (out of scope for the no-row-data tier).** Proves the AWS-side cred-reuse template (the GCP-side was BigQuery); SageMaker + CloudWatch reuse the shared `_lib/aws-cli.ts` helper next.
+
 - [x] **dbt Cloud** (2026-05-25, Phase 5 Tier 1) — `dbt:job` items via `mapDbtJobToItem` from the Administrative API v2 (`/accounts/ → /accounts/{id}/jobs/`, offset-paged); metadata job_id/name/account_id/project_id/environment_id/dbt_version/state/schedule_cron/triggers/created_at/updated_at/most_recent_run_status/canonical_url; `Authorization: Token` auth; vault keys `dbt.token` + `dbt.api_base` + `dbt.account_id`; three read tools; `hitlRequired: []`; **v1 indexes jobs + run status only — model lineage (`data_model` upstream/downstream via the Discovery GraphQL API) deferred**; `dbt.job.trigger` HITL deferred to Phase 6
+
 - [x] **MLflow** (2026-05-25, Phase 5 Tier 1) — `ml_model` items via `mapMlflowModelToItem` (`GET /api/2.0/mlflow/registered-models/search`, token-paged on `next_page_token`, `MAX_PAGES=20`); metadata name/description/version_count/latest_version/latest_stage/latest_status/latest_run_id/created_at/updated_at/tags/canonical_url (latest version prefers the `Production`-stage entry, else the highest numeric version); `Authorization: Bearer` auth; vault keys `mlflow.host` + `mlflow.token` (no SaaS default); three read tools (`mlflow_list` / `mlflow_get` / `mlflow_search`); `hitlRequired: []`; **v1 registered models only — experiments / runs / metrics / params / artifacts deferred**; timestamps are epoch ms surfaced as-is; the `#/models/<name>` canonical URL is the UI fragment route (name URL-encoded); tracking-server host extended into the sandbox from `mlflow.host` (Grafana pattern); `ml.model.promote` / `ml.model.transition-stage` (HITL) writes deferred to Phase 6 — see [§ Phase 6 → Deferred from Phase 5](#deferred-from-phase-5)
+
 - [x] **SageMaker** (2026-06-01, Phase 5 Tier 3 — no-row-data; reuses existing AWS vault credentials from Phase 3 AWS connector) — `sagemaker:model` items via `mapSagemakerModelToItem` from the **AWS CLI's SageMaker metadata commands** (walk `aws sagemaker list-models` with `--next-token` pagination, page-capped `MAX_MODELS=500`, then a page-capped `MAX_DESCRIBE=50` per-model `aws sagemaker describe-model --model-name <name>` enrichment for `PrimaryContainer.Image` + `PrimaryContainer.ModelDataUrl` S3 pointer + `ExecutionRoleArn`; single forward pass, cursor `{ pass }` / `nimbus-sm1:`); metadata modelName/modelArn/containerImage/modelDataUrl (a pointer URI, not bytes)/executionRoleArn/creationTime; `external_id` = `ModelArn ?? ModelName`; title = `ModelName`; `url`/`canonical_url` null; `CreationTime` parsed defensively (ISO or epoch-seconds). **Cloud-cred REUSE** — no new vault key: reuses the existing `aws.*` creds via the shared `_lib/aws-cli.ts` helper (`awsCredentialsExtra` + `awsCliJson`), so `CONNECTOR_VAULT_SECRET_KEYS.sagemaker` is `[]`; lazy-mesh spawn `phase3AddSagemakerMcp` rides the phase3 bundle gated on AWS creds (SageMaker appears whenever AWS does), routed through `wrapServerSpec` (I15); static manifest mirrors the aws exec/filesystem shape + `sts.amazonaws.com` base, with the regional `api.sagemaker.<region>.amazonaws.com` host added per-region at spawn via `manifestWithExtraNetworkHosts`. **STRICTLY NO ROW DATA** — `aws sagemaker-runtime invoke-endpoint` (inference) and any training-data / model-artifact-bytes fetch NEVER called; the **no-row-data contract test** calls `assertNoRowDataTools(SAGEMAKER_TOOL_NAMES, "sagemaker")` so any future invoke/predict/records/query tool fails CI. **Security** — every tool-input CLI arg (model name) is `isSafeCliArg`/`cliArg`-guarded against argv flag-smuggling at both the MCP schema boundary and the sync handler's `describe-model` spawn (a `-`-prefixed `list-models` name is mapped but never passed to `describe-model`). Three read tools (`sagemaker_list` / `sagemaker_get` / `sagemaker_search` — metadata only); `hitlRequired: []`; the AWS-CLI runner is dependency-injected for tests; **v1 model-registry metadata only — training jobs, processing jobs, endpoints, experiments deferred.** Write tools (`ml.endpoint.update`, `ml.endpoint.delete`, `ml.job.stop`) deferred to Phase 6 — see [§ Phase 6 → Deferred from Phase 5](#deferred-from-phase-5)
+
 - [x] **Vertex AI** (2026-06-01, Phase 5 Tier 3 — no-row-data; reuses existing GCP credentials from Phase 3 GCP connector) — `vertex_ai:model` items via `mapVertexAiModelToItem` from the **gcloud CLI's Vertex AI metadata command** (`gcloud ai models list --region <region> --project <project> --format json` returns a JSON ARRAY of `[{ name, displayName, versionId, createTime, updateTime }]`; single forward pass, page-capped `MAX_MODELS=500`, cursor `{ pass }` / `nimbus-vertex1:`); metadata model resource name/displayName/versionId/region/createTime/updateTime; `external_id` = the model resource `name` (`projects/.../models/<id>`; fallback `<region>/<displayName>`); title = `displayName` (fallback the id segment of `name`); `url`/`canonical_url` null; RFC3339 timestamps via a LOCAL `parseIsoMs`. **Cloud-cred REUSE** — no new required vault key: reuses the existing `gcp.credentials_json_path` + `gcp.project_id` (so `CONNECTOR_VAULT_SECRET_KEYS.vertex_ai` is `[]`), shelling the native `gcloud ai` CLI directly (like Cloud Logging, no token-mint). **Regional** — reads an OPTIONAL non-secret `gcp.region` config key (added to the gcp connector's optional config; default `us-central1`), validated by an inline argv-flag-smuggle guard before use. **Security** — every tool-input CLI arg (region + model id) is `isSafeCliArg`/`cliArg`-guarded at the MCP schema boundary, and the resolved region is re-guarded before both the MCP spawn and the gateway sync spawn. Lazy-mesh spawn `phase3AddVertexAiMcp` rides the phase3 bundle gated on GCP creds (Vertex AI appears whenever GCP does, like BigQuery + Cloud Logging), injecting `GOOGLE_APPLICATION_CREDENTIALS` + `GOOGLE_CLOUD_PROJECT` + `VERTEX_AI_REGION`, routed through `wrapServerSpec` (I15); static manifest declares `aiplatform.googleapis.com` + `oauth2.googleapis.com` + `www.googleapis.com`, with the regional `<region>-aiplatform.googleapis.com` host added per-region at spawn via `manifestWithExtraNetworkHosts`. **STRICTLY NO ROW DATA** — `gcloud ai endpoints predict` / `explain` / `raw-predict` and any batch-prediction output read NEVER called; the **no-row-data contract test** calls `assertNoRowDataTools(VERTEX_AI_TOOL_NAMES, "vertex_ai")` so any future predict/records/query tool fails CI. Three read tools (`vertex_ai_list` / `vertex_ai_get` / `vertex_ai_search` — metadata only); `hitlRequired: []`; the gcloud runner is dependency-injected for tests; **v1 indexes the model registry only — experiments, custom training jobs, pipeline runs, and endpoints deferred.** Write tools (`ml.endpoint.update`, `ml.pipeline.cancel`) deferred to Phase 6 — see [§ Phase 6 → Deferred from Phase 5](#deferred-from-phase-5)
+
 - [x] **Great Expectations** — validation run results parsed from CI artefacts (no live creds required); `data_quality_test` item type indexed with suite name, batch id, expectation name, success/failure, observed value; read-only
+
 - [x] **Local data profiling** (Filesystem v2+) (2026-06-03, Phase 5 Tier 5 — local/no-network, no-row-data) — `dataprofile:data_model` items via `mapDataModelToItem` from local `.parquet` / `.csv` / `.jsonl`(`.ndjson`) / `.json` files in a configured dir: column names, column types, column count, row-count estimate, file size. **Explicitly never indexed:** cell values, row samples, first-N-row previews, header-row data values — a `data-profile-sync` test feeds files with PII cell values and asserts none reach the index. **Parquet** schema + row count come from the file FOOTER metadata via `hyparquet` (pure-JS, no row data crosses the wire); **CSV** column names from the header line (+ row estimate = line count − 1); **JSONL/JSON** field names + JS kinds from the top-level structure (keys/types only, never values). The sync handler (`data-profile-sync.ts`, cursor `{ pass }` / `nimbus-dataprofile1:`) walks the dir (`MAX_FILES=2000`, depth cap) with an injectable Parquet footer reader; `external_id` = relative path; reuses the `"filesystem"` rate-limiter. **Config** — a single non-secret PATH `dataprofile.dir`, so `CONNECTOR_VAULT_SECRET_KEYS.dataprofile` is `["dataprofile.dir"]`; spawn `phase3AddDataprofileMcp` extends `filesystem.read` with the dir at spawn (the GX/localdb pattern), injects `DATAPROFILE_DIR`, `wrapServerSpec` (I15); MCP tools `dataprofile_list` / `dataprofile_get` / `dataprofile_search`. **The no-row-data contract test** (`mcp-connectors/dataprofile/test/no-row-data.test.ts`) calls `assertNoRowDataTools(DATAPROFILE_TOOL_NAMES, "dataprofile")` so a future `dataprofile_sample` / `dataprofile_get_rows` tool fails CI. `dataprofile:data_model` stays on local MiniLM (structured, NOT `PROSE_HEAVY_TYPES`). `hitlRequired: []`. **Deviations from the original spec:** a dedicated `dataprofile` service (not `provider="filesystem"`, which already emits code/repo items) + a `dataprofile.dir` config key (not `[[filesystem.roots]]`), for consistency with the localdb/storybook per-connector pattern. **ORC deferred** — no maintained pure-JS ORC schema reader exists (`orc-tools`/`apache-orc`/`node-orc` all absent from npm); revisit when one ships.
+
+
 
 ##### Security & Vulnerability Tooling
 
+
+
 - [x] **Snyk** (2026-05-21, Phase 5 Wave A) — first-party MCP connector `nimbus-mcp-snyk` + gateway-side syncable; open source vulnerabilities, licence issues, container scan results, IaC misconfigs; API token; `vulnerability` item type indexed with severity, CVE ID, affected package, fix availability; enables CVE-to-repo-to-open-PR correlation queries from the local index
+
 - [x] **SonarQube / SonarCloud** (2026-05-22, Phase 5 Tier 2) — first-party MCP connector `nimbus-mcp-sonarqube` + gateway-side syncable. Walks `GET /api/components/search?qualifiers=TRK` → `GET /api/issues/search` (paged 100/page, capped 20 pages per project) and upserts open issues (status `OPEN`/`CONFIRMED`/`REOPENED`; types `BUG`/`VULNERABILITY`/`CODE_SMELL`) as `sonarqube:code_issue` items via `mapSonarIssueToItem`. Metadata exposed: `severity` (5-tier `BLOCKER`→`INFO`), `type`, `status`, `rule`, `component`, `project_key`, `file_path`, `line`, `tags`, `effort`, `debt`, `author`, `message`, `creation_date`, `update_date`, `canonical_url`, `organization`. Vault keys: `sonarqube.token` (required), `sonarqube.organization` (required for SonarCloud SaaS), `sonarqube.url` (optional override → default `https://sonarcloud.io`; sandbox runtime-merge for arbitrary self-hosted hostnames inherits the same Task 14 follow-up as `sentry.url`). Three read-only MCP tools: `sonarqube_list` / `sonarqube_get` / `sonarqube_search`. `hitlRequired: []` — `sonarqube.hotspot.review` + `sonarqube.issue.transition` are deferred Phase 8 follow-ups.
+
 - [x] **Semgrep** (2026-05-22, Phase 5 Tier 2) — first-party MCP connector `nimbus-mcp-semgrep` + gateway-side syncable. Walks `GET /api/v1/deployments → /api/v1/deployments/<slug>/findings` (paged 100/page, capped 20 pages per cycle) and upserts open findings as `semgrep:finding` items via `mapSemgrepFindingToItem`. Metadata exposed: `severity` (5-tier critical→info), `confidence` (high/medium/low), `rule_name`, `rule_message`, `categories`, `file_path`, `line`, `end_line`, `column`, `repository`, `repository_url`, `branch`, `triage_state` (untriaged/triaged/ignored/muted), `status` (open/fixed/removed/ignored), `created_at`, `relevant_since`, `line_of_code_url`. Vault keys: `semgrep.token` (required PAT), `semgrep.deployment_slug` (optional — auto-discovered from `/deployments` when unset). Three read-only MCP tools: `semgrep_list` / `semgrep_get` / `semgrep_search`. `hitlRequired: []` — `semgrep.finding.triage` (ignore/suppress/accept-risk) is a deferred Phase 8 follow-up.
+
 - [x] **Wiz** (2026-05-24, Phase 5 Tier 2) — first-party MCP connector `nimbus-mcp-wiz` + gateway-side syncable. Authenticates via OAuth `client_credentials` at `https://auth.app.wiz.io/oauth/token`, then walks the `issues(first, after, filterBy)` GraphQL query at `https://api.app.wiz.io/graphql` (paged 100/page, capped 20 pages per cycle) and upserts open issues (CSPM findings, misconfigurations, toxic combinations) as `wiz:issue` items via `mapWizIssueToItem`. Metadata exposed: `severity` (5-tier `CRITICAL`→`INFORMATIONAL`), `status` (`OPEN`/`IN_PROGRESS`/`RESOLVED`/`REJECTED`), `type`, `source_rule_id`, `source_rule_name`, `entity_id`, `entity_name`, `entity_type`, `project_ids`, `project_names`, `description`, `remediation`, `created_at`, `updated_at`, `resolved_at`, `canonical_url`. Vault keys: `wiz.client_id` + `wiz.client_secret` (required), `wiz.api_url` + `wiz.auth_url` (optional regional overrides → default to the US-east SaaS tenant; sandbox runtime-merge for arbitrary regional/self-hosted hostnames inherits the same Task 14 follow-up as `sentry.url`). Three read-only MCP tools: `wiz_list` / `wiz_get` / `wiz_search`. `hitlRequired: []` — `wiz.issue.resolve` + `wiz.issue.assign` are deferred Phase 8 follow-ups.
+
 - [x] **SBOM / supply chain tracking — Dependency-Track** (2026-05-31, Phase 5 Tier 1) — implemented as a first-party MCP connector `nimbus-mcp-dependencytrack` + gateway-side syncable for [OWASP Dependency-Track](https://dependencytrack.org/), the canonical open-source SBOM/supply-chain platform. Walks `GET /api/v1/project?pageSize=100&pageNumber=<n>&excludeInactive=false` (reading a **bare JSON array** of project objects, 1-based `pageNumber` forward walk while a full 100-row page comes back, stopping on a short/empty page, `MAX_PAGES=20`) and upserts each project as a `dependencytrack:project` item via `mapDependencyTrackProjectToItem`; get-by-id is `GET /api/v1/project/{uuid}`. `external_id` = the project `uuid` (a stable Dependency-Track-supplied string, NOT a generated UUID — row skipped when missing/empty). **Per-tenant-host auth (the Metabase/ArgoCD shape):** `X-Api-Key: <key>` header (secret) + a non-secret `dependencytrack.base_url` host root; the sync handler and the lazy-mesh spawn (`phase3AddDependencytrackMcp`) both no-op unless BOTH are present, and the parsed host is merged into the sandbox network allow-list at spawn time (`hostnameFromUrl` + `manifestWithExtraNetworkHosts`) so the static manifest `permissions.network` is empty. Two required vault keys `dependencytrack.base_url` (non-secret) + `dependencytrack.api_key` (secret). Metadata exposed: `uuid`, `name`, `version`, `classifier`, `active`, `last_bom_import` (kept verbatim as epoch-ms), `tags` (from each `{name}` entry), and the embedded `metrics` counts `critical` / `high` / `medium` / `low` / `vulnerabilities` / `components`, plus `canonical_url` (`<base_url>/projects/<uuid>` via `ctx.baseUrl`); `modifiedAt` = `last_bom_import ?? syncedAt`; title = `<name> <version>` (200-char `…` truncation) with a name-only fallback; the `dependencytrack:project` type stays on local MiniLM embeddings (NOT added to `PROSE_HEAVY_TYPES` — sparse structured metadata). Three read-only MCP tools: `dependencytrack_list` / `dependencytrack_get` / `dependencytrack_search`. `hitlRequired: []`. **NOTE — pagination deviation:** Dependency-Track returns an `X-Total-Count` header for exact pagination, but the shared `connectorFetch` helper surfaces only the parsed body + byte count (no response headers); the connector uses the proven page-number forward walk with short-page / `MAX_PAGES` termination and a `{ pass }` cursor rather than introducing a header-exposing fetch helper. v1 indexes projects only — individual findings / components deferred. (The CycloneDX/SPDX-from-CI-artefact ingestion path remains a possible future complement.)
+
 - [x] **`nimbus security scan`** (2026-05-21) — local secret and credential hygiene scan across indexed filesystem roots and repository content. Runs a Gitleaks-compatible pattern set against already-indexed file content (requires `[indexing.depth] = "full"` or `"summary"` for the relevant connector); never fetches new content for the scan — only what is already in the local index. Reports: files containing high-confidence secret patterns (API keys, tokens, private keys), which connector/service they belong to, and whether the file has been modified since the secret was introduced (via git metadata already indexed). Output: `nimbus security scan --json` for machine-readable results; plain text table by default. Write operations: none — purely read. HITL: not triggered. Fits naturally into the existing `nimbus doctor` / `nimbus diag` diagnostic family. New CLI command at `packages/cli/src/commands/security.ts`; pattern definitions at `packages/gateway/src/security/secret-patterns.ts`.
+
+
 
 #### Team Intelligence
 
+
+
 - [x] **T3 PR 1 — coordinator parallelism + `nimbus expert`** (2026-05-09) — `AgentCoordinator.executeAll` runs sub-agents in parallel; `expert.ts` ships as the first built-in agent. `nimbus expert <topic-or-file>` answers "who on my team has the most context on this?" by querying the relationship graph and indexed metadata: PR authorship via indexed code symbols, review participation patterns, Slack thread activity, and Linear/Jira ticket assignments. Returns a ranked list of people with a confidence score and the evidence behind each ranking (e.g. "authored 4 of the last 6 PRs touching this file, resolved 2 incidents tagged `payment-retry`"). Uses the existing people graph — no new connectors required. Read-only, no HITL. CLI: `nimbus expert <topic-or-file>`; IPC: `agents.expert`; notification: `agents.expert.briefReady`.
+
 - [x] **T3 PR 2 — `nimbus impact`** (2026-05-09) — second built-in agent: reverse-dependency blast radius. `nimbus impact <file-or-PR-url>` answers "if I change this, what breaks?" by running a reverse dependency query across the relationship graph: which services import the affected module (via indexed code symbols and `depends_on` graph edges), which pipelines would rebuild (via `pipeline_run` items linked to the repo), which dashboards pull from affected data models (via `upstream_refs` graph edges), and which on-call rotations own the affected services (via PagerDuty schedule index). Five parallel sub-agents. Returns a structured impact report with blast radius by category. Built entirely on the Phase 3 relationship graph substrate — no new connectors required. Read-only, no HITL. `--json` flag for CI integration. CLI: `nimbus impact <file-or-PR-url>`; IPC: `agents.impact`; notification: `agents.impact.briefReady`.
+
 - [x] **T3 PR 3 — `nimbus catchup`** (2026-05-10) — third built-in agent: personalized retrospective digest. `nimbus catchup --since <duration>` returns everything that happened across connected services while the user was away, prioritized by relevance to their recent work history. Unlike `nimbus changelog` (which is service-scoped and uniform), `nimbus catchup` is personalized — it weights activity by the user's historical involvement: services they own, repos they contribute to, incidents they've responded to, people they collaborate with frequently. Default window: `3d`. Output: structured Markdown with sections per service, prioritized by relevance score. Read-only, no HITL. Five parallel sub-agents (`s_owned_services`, `s_active_repos`, `s_responded_incidents`, `s_collaborators`, `s_window_items`) over the local index; three-tier self-person resolver (override → git email → OS username). CLI: `nimbus catchup [--since 3d] [--json] [--service <id>]`; IPC: `agents.catchup`; notification: `catchup.briefReady`. T3 epic complete.
+
+
 
 #### Nimbus as a CI/CD Data Layer
 
+
+
 The local HTTP API and `@nimbus-dev/client` (Phase 3.5) unlock Nimbus as a data source for CI pipelines and external tooling. This section makes that story explicit with first-class integration points.
 
+
+
 - [x] **Published OpenAPI spec** (2026-05-22, Phase 5 T4 PR 1 wrap-up) — machine-readable OpenAPI 3.1 schema covering all 11 routes (10 `GET` + the `POST /v1/deployments` write surface) at `packages/gateway/openapi/v1.yaml`; served as JSON at `GET /v1/openapi.json` (cached via `loadOpenApiJsonBytes`); locked by `bun run audit:openapi-drift` which compares `paths` against the canonical `HTTP_ROUTES` constant in `packages/gateway/src/ipc/http-routes.ts` and fails CI on any add/rename/method-flip drift; enables auto-completion, contract testing, and third-party tooling without bespoke client code.
+
 - [x] **Pre-deploy index check** (2026-05-13, Phase 5 T4 PR 3a) — `nimbus-agent/query-action` GitHub Action that queries the local Gateway's `GET /v1/preflight/deploy` endpoint for active P1 incidents on the target service, failing CI runs on the target branch, and open PRs with merge conflicts. `mode: warn` (default) annotates without blocking; `mode: block` exits 1 on findings; `allow-gateway-failure: true` is the escape hatch for infra noise. CLI counterpart `nimbus deploy preflight` for non-GitHub CI providers. Reuses the `[metrics.dora.<id>]` config plus a new `[ci.service.<id>]` alias.
+
 - [x] **Post-deploy annotation** (2026-05-14, Phase 5 T4 PR 3b) — `nimbus-agent/annotate-action` GitHub Action + `POST /v1/deployments` + `nimbus deploy annotate` CLI. Records a deploy as a first-class `deployment` item (V28 shadow table); DORA's `selectDeploys` prefers annotated rows and emits `gap: "mixed_source"` when both annotated and regex-matched `ci_run` rows fall in the same window. Bearer-auth via vault key `http_api.deployment_token`; 60 req/min sliding-window rate limit. New security invariant **I13** locks the HTTP write-route allowlist.
+
 - [x] **Pre-commit hook template** (2026-05-22, Phase 5 T4 PR 1 wrap-up) — `docs/templates/nimbus-pre-commit.sh` is a fail-open bash hook that queries the local index for active P1 incidents (last 24 h) and failing CI runs on the current branch (last 4 h). Warn-only by default; flip per-check to block via `NIMBUS_HOOK_BLOCK_ON_INCIDENT=1` / `NIMBUS_HOOK_BLOCK_ON_FAILING_CI=1`. Install + extend recipes in [`docs/cli/pre-commit.md`](./cli/pre-commit.md). The Linear/Jira "related tickets on staged files" check is documented as an opt-in extension pattern — issue state is not yet captured by the Linear/Jira sync layers, so a useful "open ticket" filter requires sync-layer changes outside this PR.
+
 - [x] **`nimbus query` in CI** (2026-05-21, Phase 5 T4 wrap-up) — documented pattern for using `nimbus query --json` inside CI pipelines (GitHub Actions, Jenkins, GitLab CI) to gate deployments, generate release notes from indexed PRs, or surface incident context in PR comments; requires Gateway running on a self-hosted runner or accessible over LAN. Five worked, copy-paste-ready examples in [`docs/cli/use-in-ci.md`](./cli/use-in-ci.md): GH-Actions P1 gate, GitLab CI gate + stale-PR warning, Jenkins (declarative + scripted), PR-comment incident context, release-notes generation grouped by repo.
+
 - [x] **DORA Metrics** (2026-05-12, Phase 5 T4 PR 2) — compute the four key DORA metrics directly from already-indexed data with no new connectors required: *deployment frequency* (GitHub/GitLab releases + CI deploy runs), *lead time for changes* (PR open → merge → deploy correlation), *change failure rate* (deploy events correlated with PagerDuty/Datadog incidents within a configurable window), *mean time to restore* (incident open → resolve timestamps); exposed via `nimbus metrics dora [--service <name>] [--since 30d]` and the local HTTP API; renders in the Tauri dashboard alongside connector health
+
 - [x] **PagerDuty connector enrichment** (2026-05-14, Phase 5 T4 wrap-up) — `pagerduty-sync.ts`
+
   now writes `metadata.opened_at_ms` (from `incident.created_at`),
+
   `metadata.pagerduty_service_id` (from `incident.service.id`), and
+
   `metadata.severity` (from strict `incident.priority?.name`) on every indexed
+
   `incident` row. DORA CFR/MTTR (PR 2) and Preflight active-P1 (PR 3a) now compute
+
   against real PagerDuty data; both surfaces previously returned `no_pagerduty_mapping` /
+
   zero findings in production. `initialSyncDepthDays` bumped 14 → 30 so a fresh install's
+
   first `nimbus metrics dora --since 30d` window is fully populated. No schema change, no
+
   migration — natural cursor re-sync overwrites pre-existing rows. Non-`"P1"` priority
+
   names (`"Critical"`, `"SEV-1"`) pass through verbatim; a future
+
   `[pagerduty].severity_strategy` config knob can map them to preflight's P1 filter if
+
   user demand emerges.
+
 - [x] **PagerDuty sync pagination** (2026-05-16, Phase 5 T4 wrap-up) — `pagerduty-sync.ts`
+
   now walks pages with `sort_by=updated_at:asc` and `limit=100`, honoring `parsed.more`
+
   and capping at `[pagerduty].max_pages_per_sync` (default 20, range 1..100). On cap-hit
+
   the syncable returns `hasMore: true` so the scheduler re-queues; partial-failure cursors
+
   preserve progress from pages already ingested. No new credentials.
+
 - [x] **`[pagerduty].severity_p1_aliases` config knob** (2026-05-16, Phase 5 T4 wrap-up) —
+
   preflight's `selectActiveP1Incidents` now matches `LOWER(severity) IN (?, ?, ...)` over
+
   the union of `"p1"` plus org-declared aliases (e.g. `"Critical"`, `"SEV-1"`). Aliases are
+
   lowercased + deduped at parse time. New `PreflightGap` variant
+
   `"pagerduty_urgency_without_priority"` fires when the strict filter yields zero matches
+
   but high-urgency-without-priority incidents exist on the configured services, so operators
+
   can self-diagnose silent-zero preflight results. Query-time evaluation — no re-index needed.
+
+
 
 #### Semantic Layer Enhancements
 
+
+
 These items resolve deferred decisions from Phase 3.
 
+
+
 - [x] **Multi-model embedding** (delivered via T6 PR 3, 2026-05-15 — see below) — add `vec_items_1536` virtual table for OpenAI `text-embedding-3-small` (and compatible) embeddings alongside the existing `vec_items_384` (`all-MiniLM-L6-v2`); `embedding_chunk.dims` and `embedding_chunk.model` are already recorded — schema is pre-positioned (Phase 3); per-item-type model routing: code symbols use local MiniLM by default; prose items use the configured model; `nimbus index reembed --model <id>` triggers selective backfill; multiple models can be active simultaneously with queries fan-out across matching vec tables and RRF-merged
+
 - [x] **T2 PR 1 — Sandbox PAL + 3-OS isolation** (2026-05-17, Phase 5 T2 PR 1) — enforce full syscall/network isolation for extension child processes: seccomp BPF filter + bwrap on Linux (as first shipped: nimbus-sandbox-helper with `cap_net_admin+ep` and per-host iptables, which no released package carried and which could not start; replaced 2026-10-31 by the local forwarder, I50), sandbox-exec SBPL profile on macOS, AppContainer + `internetClient` capability + orphan-reap on Windows; network access and filesystem read/write paths must be declared in `nimbus.extension.json` under `permissions.{network,filesystem}` and enforced at the kernel level; replaces the Phase 3 honour-system env restriction; extensions without `permissions.network` run fully offline; new security invariant **I15** wires `wrapServerSpec(...)` → `sandbox-wrapper.ts` → `runner.spawn(...)` as the single sandbox-execution boundary, enforced statically by `D10` in `check-nimbus-invariants.ts` and at runtime by `security-invariants.test.ts`; `runSandboxContractTests()` ships in `@nimbus-dev/sdk` for first- and third-party connector authors; pre-T2 extensions hard-disabled until reinstall. **Merged 2026-05-17.**
+
 - [x] **T2 PR 2 — Verified publisher (Ed25519-signed manifests)** (2026-05-18, PR #343, Phase 5 T2 PR 2) — extension manifests carry an optional `publisher: { id, key }` field + an embedded `signature` field; Ed25519 verification fires at install AND every Gateway startup before the extension is allowed to spawn; new structural security invariant **I16** wires `verifyManifestSignature(...)` at `extensions/install-from-local.ts` + `extensions/verify-extensions.ts` (signature pass added to `verifyExtensionsBestEffort`); hard-disable on failure via the new `SignatureDisabledRegistry` singleton (parallel to PR 1's `PreT2DisabledRegistry`); new CLI: `nimbus extension keygen`, `nimbus extension sign`, `nimbus extension sync`, `nimbus extension install --publisher-key`; tabular `nimbus extension list` with a Publisher column and dim-yellow `(unverified)` rendering on TTY when `NO_COLOR` is unset; publisher pubkeys cached at `extension.publisher_key.<id>` (D11 vault-key allow-list extended); IPC `extension.sync` is CLI-only — added to `FORBIDDEN_OVER_LAN` per `I5`, NOT in Tauri allowlist per `I7`; crypto primitives (`canonical-json`, `verify-signature`) moved into `@nimbus-dev/sdk` (MIT) so connector authors can sign manifests without an AGPL dep; gateway re-exports through thin shims at the old paths.
+
 - [x] **T2 PR 3 — Auto-update with per-bump HITL** (2026-05-20, PR #367, Phase 5 T2 PR 3) — in-process polling daemon (`ExtensionAutoUpdater`, default 24h via `[extensions].update_check_interval_hours` 1..168, 30–300s startup jitter, air-gap-aware) that calls the registry to detect newer versions of installed signed extensions and writes them into an in-memory `AutoUpdateCache` keyed by extension id (no DB persistence — recovered on next poll); two new HITL action types `extension.autoUpdate` (forward) and `extension.downgrade` (backward) added to `HITL_REQUIRED_BACKING`; two new IPC methods `extension.checkForUpdates` + `extension.update` are CLI/UI-only — added to `FORBIDDEN_OVER_LAN` per `I5` and alphabetically inserted into Tauri `ALLOWED_METHODS` (60 → 62) per `I7`; three new CLI verbs `nimbus extension update [<id>] [--check] [--to <version>] [--json]`, `nimbus extension downgrade <id> --to <version>`, and `extension.info` extended with `prevVersion` + `cachedUpdate`; two-version on-disk directory layout `<extRoot>/<id>/{active,_prev/<v>}` enables `nimbus extension downgrade` as a thin `fs.rename` swap; atomic upgrade swap with revert-on-failure (older `_prev/*` move aside to a holding dir, restore on swap failure); startup crash recovery in `verify-extensions.ts` promotes the most-recent `_prev/<v>/` when `active/` is missing and audits `extension.autoUpdate.crash_recovered`; tarball download enforces a 50 MiB content-length + body cap with `AbortSignal` plumbing; manifest schema gains optional `updateChannel: "stable" | "beta"` (default `"stable"`) and `changelog?: string` (≤ 4 KiB after NFC) — both absent on disk by default so pre-PR-3 signed manifests verify unchanged. No new structural invariant — composes on top of I2/I3/I4/I5/I7/I14/I16.
+
 - [x] **T2 PR 4 — Dependency resolution + V31 `extension_dependency`** (2026-05-21, PR #374, Phase 5 T2 PR 4) — manifest `dependsOn: Record<string, string>` (semver ranges) + custom backtracking solver in `extensions/dependency-graph.ts` (recursive DFS with per-frame `pinned` / `ranges` and an explicit `ancestors: Set` so diamond DAGs never false-positive as cycles), V31 `extension_dependency` table + `idx_extension_dependency_reverse` index, install path runs `resolveClosure` after signature verify and refuses with `DependencyConflictError` / `OfflineDependencyResolutionError` before any disk mutation, install closure unpacked leaf-first with per-session `createdDirs` cleanup on failure, `recordInstall` writes forward edges in one transaction, `extension.install_complete` audit row carries the full version map; remove path consults `reverseDeps` and refuses unless `--force`; auto-update daemon runs the solver per detected bump with `activeConstraints` covering every installed extension and surfaces a new `conflicts?: DependencyConflict[]` field on `AvailableUpdate`; startup integrity adds two new offline-safe passes — backfill `extension_dependency` rows from on-disk manifests, then completeness guard (iterates to fixed point, marks dependent extensions whose deps are missing or unsatisfied via new `MissingDependencyRegistry` singleton parallel to PR 1's `PreT2DisabledRegistry` and PR 2's `SignatureDisabledRegistry`; cascade-disables transitively); new CLI: `nimbus extension info --deps`, `nimbus extension list --tree` (NO_COLOR-aware, cycle-safe ASCII renderer), `nimbus extension remove --force` (the `extension.remove` IPC handler consults `reverseDeps` and refuses with `reverse_dep_blocked` unless `--force` is passed; there is no HITL gate on removal); `extension.info` IPC returns `forwardDeps` + `reverseDeps`; local-first `RegistryFetcher` ensures installed ids resolve from on-disk manifest without a network call. No new structural invariant — composes on `I9` (bound parameters for `extension_dependency` writes), `I14` (`dbRun` / `dbExec` for every write), `I16` (solver runs after signature verify on every closure node). `fast-check` property tests gate cycle / satisfiability correctness over random DAGs ≤ 12 nodes.
+
+
 
 #### T6 — B1 hardening + semantic layer prep
 
+
+
 Phase 5 Core item 5. Four sequential PRs in the order below. Each PR followed the T4-wrap-up cadence (brainstorm → spec → plan → execute → PR). Bridge work between T4 and T2 (sandbox + Marketplace v2).
 
+
+
 - [x] **T6 PR 1 — I10 timing-safe helper consolidation** (2026-05-14, PR #292) — migrated `ipc/lan-pairing.ts`'s local `timingSafeEqual` and `ipc/http-auth.ts`'s local `constantTimeStringEqual` into the canonical helper at `packages/gateway/src/util/timing-safe-compare.ts`; finishes the I10 consolidation that `extensions/verify-extensions.ts` and `updater/updater.ts` already follow. Updated `SECURITY-INVARIANTS.md` I10 row and `security-invariants.test.ts`. No migration.
+
 - [x] **T6 PR 2 — `tool_call_log` audit table (V29)** (2026-05-15) — closes "Structured tool-call result auditing (S8-F10)" below; complements the `<tool_output>` envelope (I11) by recording the envelope's contents at audit time via `writeToolCallLog` (best-effort — internal try/catch never breaks the LLM-facing path; envelopes >64 KiB are truncated with a `...[truncated, N bytes total]` marker). New `audit.toolCalls` IPC method (read-only) is IPC-only — NOT LAN-callable per `I5`, NOT in Tauri `ALLOWED_METHODS` per `I7`, NOT exposed via the read-only HTTP API. Composite (`calledAt`, `id`) cursor pagination handles same-millisecond rows deterministically; `sessionId=''` is the explicit NULL-session sentinel. Wired at both `wrapToolOutput` sites in `engine/agent.ts` (`wrapToolForLlm`) and `connectors/lazy-mesh/mesh.ts` (`listTools`); I11 enforcement test extended to assert both `wrapToolOutput` AND `writeToolCallLog` are present at each site. No new invariant — strengthens I11.
+
 - [x] **T6 PR 3 — `vec_items_1536` + per-type routing + reembed CLI (V30)** (2026-05-15) — closes "Multi-model embedding" above; per-`(service, type)` model routing with `text-embedding-3-small` for the 14 prose-heavy pairs in `embedding/routing.ts:PROSE_HEAVY_TYPES` (gated on `openai.api_key` in vault, default = MiniLM-only fallback when missing) and a `nimbus index reembed --model <id> [--item-type <key>] [--service <name>] [--limit N] [--batch-size N] [--dry-run] [--yes] [--json]` CLI for selective backfill. New `vec_items_1536` virtual table (V30) coexists with `vec_items_384`; query-side `vectorSearchChunksDual` merges KNN results across both. `index.reembed` / `index.reembedCancel` are CLI-only — added to `FORBIDDEN_OVER_LAN` per `I5`, NOT in Tauri allowlist per `I7`. `provider = "openai"` promoted to 1536-dim everywhere; new `provider = "hybrid"` selects the routing pipeline.
+
 - [x] **T6 PR 4 — Typed `dbRun` / `dbExec` migration (2026-05-16, 163 sites)** — closes "Typed `dbRun` / `dbExec` migration (S5-F4)" below; migrated 163 direct `db.run()` / `db.exec()` / `stmt.run()` call sites across every package to the centralised `dbRun` / `dbExec` / `dbStmtRun` wrappers in `db/write.ts`; new `D12` static-audit rule in `check-nimbus-invariants.ts` banning direct calls outside the `DB_RUN_EXEC_ALLOW_LIST`; new security invariant **I14** wired and enforced in `security-invariants.test.ts` + `SECURITY-INVARIANTS.md`; `db-run-census.json` baseline updated to 3 entries (the wrapper internals only).
+
+
 
 #### Security audit follow-ups (B1)
 
+
+
 Items deferred from the Phase 4 internal security audit (B1, 2026-04-25) that fit naturally with Phase 5's hardening pass.
 
+
+
 - [x] **Typed `dbRun` / `dbExec` migration (S5-F4)** (2026-05-16, Phase 5 T6 PR 4) — 163 sites migrated; `D12` static-audit rule + invariant `I14` enforce the wrapper at CI time
+
 - [x] **Structured tool-call result auditing (S8-F10)** (2026-05-15, Phase 5 T6 PR 2) — V29 `tool_call_log` table; `writeToolCallLog` wired at both `wrapToolOutput` sites; `audit.toolCalls` IPC read surface
+
 - [x] **`tool_call_log` retention policy** (2026-06-04, Phase 5) — `[audit].tool_call_log_retention_days` (default 90; `0` disables) parsed in `config/nimbus-toml.ts`; a daily `startToolCallLogRetention` job (prune once at startup, then every 24h; registered in `platform/assemble.ts` on the `sidecarStops` list) deletes `tool_call_log` rows older than the threshold and, when any were removed, appends a single `tool_call_log.pruned` entry to the chained `audit_log` with the deleted-row count. The chain is **append-only** — never rewritten or pruned — so the BLAKE3-chained `audit_log` proper is untouched. No migration (the table is V29; `called_at` is already indexed).
+
 - [x] **`nimbus security scan` v2** (2026-06-04, Phase 5) — all six enhancements shipped in one PR: (1) `[security.allowlist]` fingerprint mute-list (`sha256(service:external_id:pattern:redacted:sha256(context))`, fixed-literal-safe, no secret bytes); (2) `--fail-on-finding` CI exit code; (3) opt-in extended low-confidence pattern tier behind `[security].extended_patterns` / `--extended`; (4) `--service <name>` scope filter; (5) `security.scan` as a cancellable `LongRunningJobRegistry` job with `security.scanProgress`/`scanDone`/`scanError` (streaming iterator, `security.scanCancel`); (6) line-level git-blame via the V32 `git_blame_line` table populated at filesystem-sync time over indexed `code_symbol` excerpt ranges (`code_symbol` now stores `excerptStartLine`; scan-time attribution is a pure indexed lookup, no `git` subprocess). Backfills on the next `nimbus connector sync filesystem`.
+
+
 
 #### Extension Marketplace v2
 
+
+
 - [ ] Community ratings and reviews per extension → re-homed to [Phase 9.5 § Quality Layer](#phase-95--marketplace-registry) (2026-10-10), then to [S4](#carried-into-s4) (2026-11-04)
+
 - [x] Verified publisher badges (Ed25519-signed manifest from a registered publisher) (2026-05-18, PR #343, Phase 5 T2 PR 2) — *note 2026-10-27: this proved a manifest's SIGNATURE; the badge saying Nimbus verified the publisher is trust layer PR 3c (Phase 9.5 project 3)*
+
 - [x] Auto-update with changelog preview; user approves each version bump (2026-05-20, PR #367, Phase 5 T2 PR 3)
+
 - [x] Extension dependency resolution (one extension can depend on another) (2026-05-21, PR #374, Phase 5 T2 PR 4)
+
 - Extension monetization (paid extensions, license key enforcement, revenue sharing) deferred to Phase 6 — see [§ Phase 6 → Deferred from Phase 5](#deferred-from-phase-5)
+
+
 
 #### Wave B — Mobile & Frontend Engineering (stretch)
 
+
+
 Connector breadth for mobile and frontend engineering disciplines that didn't fit the original Phase 5 categories. Each is read-only in Phase 5. Mobile write tools (releasing a build, triggering a build) are re-homed to [Phase 9.7 § Wave 4](#phase-97--connector-write-enablement-the-acting-roster) (2026-10-10), and the Web-Vitals connectors and watcher to [S5](#carried-into-s5); until then this sentence sent them to Phase 8 or Phase 12, neither of which carried a row for them. Does not gate Phase 5 completion.
 
+
+
 - [x] **Bitrise** — mobile CI builds, workflows, releases, certificates state, app dashboards; read-only (2026-05-21, Phase 5 Wave B; `bitrise:app` + `bitrise:build` items via `/v0.1/me/apps` → `/v0.1/apps/<slug>/builds`; mandatory read-tool surface; vault key `bitrise.token`; `permissions.network = ["api.bitrise.io"]`)
+
 - [x] **Codemagic** (2026-06-03, Phase 5 Wave B) — Flutter/RN/native mobile CI; read-only. `codemagic:app` + `codemagic:build` items via `GET /apps` → `GET /builds?appId=<id>`; mandatory read-tool surface (`codemagic_list`/`codemagic_get`/`codemagic_search`); vault key `codemagic.token` (sent in the `x-auth-token` header); `permissions.network = ["api.codemagic.io"]`
+
 - [ ] **Microsoft App Center** (or successor where deprecated) — mobile build pipelines, distribution groups, crash analytics, in-app analytics; read-only. **Cancelled (2026-06-04, Wave B close-out):** Visual Studio App Center was **retired by Microsoft on 2025-03-31** — `api.appcenter.ms` no longer serves data (the residual Analytics & Diagnostics surface expires 2026-06-30), so a read connector would be dead code. No drop-in successor exposes the same token-auth read API. Wave B closed without it. Revisit only if a successor with a clean token-auth read API emerges; not a gate.
+
 - [x] **Firebase App Distribution** (read-only) — release observability; read-only. **Delivered (2026-06-03):** Cloned from the Codemagic/TestFlight pattern. Indexes each configured app's recent **releases** as `firebase:release` (gateway sync `firebase-sync.ts`, cursor `{ pass }` / `nimbus-firebase1:`, walks `GET /v1/projects/<projectNumber>/apps/<appId>/releases?pageSize=50` per configured app id; the project number is the 2nd colon-segment of the app id; pure mapper `mapFirebaseReleaseToItem` in `firebase-release-mapping.ts`). Release `external_id` = the App Distribution release resource `name` (`projects/N/apps/A/releases/R`), title `<displayVersion> (<buildVersion>)`, metadata `{ app_id, display_version, build_version, create_time, release_notes_text, firebase_console_uri, testing_uri, binary_download_uri }` — the `binary_download_uri` is **stored only, never fetched**. **Auth** — App Distribution's REST API is a Google Cloud API; a short-lived OAuth2 access token is minted from a Google **service-account key** via the RS256 **JWT-bearer grant** (`node:crypto`, scope `cloud-platform`, exchanged at `oauth2.googleapis.com/token`) — no `googleapis` dependency; the gateway sync and the MCP server share the signer via `@nimbus-dev/sdk` (`mintGoogleAccessToken`). Vault keys `firebase.service_account_json` + `firebase.app_ids` (comma-separated). MCP server (`mcp-connectors/firebase`) exposes read-only `firebase_list` / `firebase_get` / `firebase_search`, caching the minted token in-process. Rate-limiter provider `firebase` (40 rpm / burst 8). `permissions.network = ["firebaseappdistribution.googleapis.com", "oauth2.googleapis.com"]`. `firebase:release` stays on local MiniLM (NOT in `PROSE_HEAVY_TYPES`). `hitlRequired: []`. v1: read-only releases; write actions (distribute a build, manage tester groups) deferred.
+
 - [x] **TestFlight** (read-only via App Store Connect API) — build groups, tester sessions, feedback; read-only. **Delivered (2026-06-03):** Cloned from the Codemagic connector. Indexes App Store Connect **apps** + recent TestFlight **builds** as `testflight:app` / `testflight:build` (gateway sync `testflight-sync.ts`, cursor `nimbus-testflight1:`, walks `GET /v1/apps → GET /v1/builds?filter[app]=<id>&sort=-uploadedDate&limit=50`; pure mappers in `testflight-build-mapping.ts`; build metadata `{ app_id, version, processing_state, expired, uploaded_date, min_os_version, uses_non_exempt_encryption }`, canonical URL null). **Auth** — short-lived ES256 JWT minted from `testflight.issuer_id` + `testflight.key_id` + `testflight.private_key` (the `.p8` PEM) via `node:crypto` (`dsaEncoding: "ieee-p1363"`, `exp` <= 20 min, `aud: appstoreconnect-v1`); the gateway sync and the MCP server share the signer via `@nimbus-dev/sdk` (`signAppStoreConnectJwt`). MCP server (`mcp-connectors/testflight`) exposes read-only `testflight_list` / `testflight_get` / `testflight_search`. Rate-limiter provider `testflight` (50 rpm / burst 10). `hitlRequired: []`. v1: read-only apps + builds; write actions (expire build, tester groups, beta feedback) deferred.
+
 - [x] **Storybook** (2026-06-02, Phase 5 Tier 5 — local/no-network) — `storybook:story` items via `mapStorybookStoryToItem` from the local Storybook manifest (`index.json` v7+ or legacy `stories.json` v6) that `storybook build` writes to disk. A **pure filesystem read of one JSON manifest** — NO browser launched, NO dev-server connection, NO component code executed. The sync handler (`storybook-sync.ts`, cursor `{ pass }` / `nimbus-storybook1:`) reads `<dir>/index.json` (falling back to `<dir>/stories.json`) from the configured `storybook.dir`, and the pure `parseStorybookIndex` handles both the v7 `{ entries }` and v6 `{ stories }` shapes (with `kind`/`story` aliases). One item per story: `external_id` = the Storybook story id, title = `<componentTitle> / <storyName>`, metadata = component title, story name, import path, tags, entry type; `modifiedAt` = the manifest file mtime else syncedAt. **Config** — a single non-secret PATH `storybook.dir`, so `CONNECTOR_VAULT_SECRET_KEYS.storybook` is `["storybook.dir"]`; the spawn `phase3AddStorybookMcp` extends `filesystem.read` with that dir at spawn (the GX/localdb pattern), injects `STORYBOOK_DIR`, `wrapServerSpec` (I15); the MCP server (`loadStories` over the env dir) exposes `storybook_list` / `storybook_get` / `storybook_search`. Reuses the `"filesystem"` rate-limiter. `storybook:story` stays on local MiniLM (NOT in `PROSE_HEAVY_TYPES` — story metadata is structured). `hitlRequired: []`. Design-system component coverage feeds Phase 7 service-catalog `component` items. **v1 story-level metadata only — per-story args/parameters and MDX docs bodies deferred.**
+
 - [ ] **Chromatic** — visual-regression test results, baseline diffs, build approvals; read-only; `chromatic.build.approve` HITL. **Deferred (2026-06-03):** Chromatic's token-auth public GraphQL API (`index.chromatic.com/graphql`, `createAppToken` → bearer) exposes only `Project.lastBuild` (a single build) — there is **no paginated builds-list field** in the documented public schema. Enumerating a project's build history requires undocumented internal `app.*` roots or an OAuth-session JWT (not a stable headless token), the same posture that deferred Loom/Expensify. **Wave B closed (2026-06-04) without it** — re-confirmed the public schema still exposes only `Project.lastBuild`, so a build-history connector is not feasible from a headless token. Revisit if Chromatic publishes a listable builds API; not a gate.
+
 - [ ] **LogRocket / FullStory / Datadog RUM** — frontend session replays metadata (no replay-payload bodies indexed by default), error events, Web Vitals (LCP, FID, CLS, INP); read-only; opt-in to indexing PII-redacted metadata → re-homed to [S5](#carried-into-s5) (2026-10-10)
+
 - [ ] **Web-vitals watcher** — fires when LCP/FID/CLS p75 regresses past configurable threshold over a 24-h window for a tracked service; surfaces in morning briefing; ties into Phase 7 DORA dashboard → re-homed to [S5](#carried-into-s5) (2026-10-10)
+
+
 
 #### Acceptance Criteria
 
+
+
 - A user with a Fastmail account can run `nimbus connector auth fastmail` and have their inbox indexed within 5 minutes using the IMAP connector
+
 - A HubSpot deal update initiated by the agent triggers HITL before any outbound API call
+
 - The `nimbus-agent/query-action` GitHub Actions action successfully queries a running Gateway's HTTP API and blocks a deploy when an active P1 incident is detected for the target service
+
 - A repo containing `openapi.yaml` is indexed and `nimbus ask "which services have a POST /payments endpoint?"` returns the correct service name from the local index without a live API call
+
 - `nimbus security scan` detects a deliberately introduced test credential in a filesystem root configured at `summary` depth and reports the file path, pattern match type, and connector — verified in `packages/gateway/test/e2e/scenarios/security-scan.e2e.test.ts`
+
 - **(Tracked in Phase 9.5 — not a Phase 5 gate.)** A community extension published via the **Marketplace Registry** can be installed, enabled, and used without the author having access to Nimbus core source. This depends on the public registry host (`registry.nimbus-agent.dev`) and the seed/publish flow, which are the deliverables of **[Phase 9.5 (Marketplace Registry)](#phase-95--marketplace-registry)** (Planned), so it is tracked there and does not gate Phase 5 completion. Phase 5's own extension surface — install-from-directory, Ed25519-signed verified-publisher badges, changelog-previewed auto-update, and extension dependency resolution — is complete (see Extension Marketplace v2 above).
+
 - `nimbus ask "which repos have critical Snyk vulnerabilities with open PRs touching the affected packages?"` returns results from the local index without any live API call
+
 - `nimbus metrics dora --service payment-service --since 30d` returns all four DORA metrics computed from indexed GitHub and PagerDuty data
+
 - An ArgoCD application sync failure is indexed and correlatable with the triggering Git commit within one sync cycle
+
 - `nimbus ask "which dbt models feed the failing Tableau dashboard?"` returns a lineage chain once Phase 6 Tableau lands; intermediate Phase 5 variant works end-to-end against Metabase / Superset dashboards linked to dbt models
+
 - No raw row data or binary extract crosses the connector boundary for any warehouse or BI connector — verified by a contract test that asserts the absence of row-fetch tools on each connector's MCP surface
+
 - **Downstream Impact Analysis** — `nimbus ask "if I change the revenue calc in this PR, which Looker dashboards break?"` resolves via `traverseGraph` over `code_symbol` → `data_model` → `dashboard` relations in the Phase 3 relationship graph; returns affected dashboards in under 500 ms from the local index
+
 - Local data-file profiling indexes column names + types + row-count estimates from `.parquet`, `.csv`, `.jsonl`, and `.json` files under configured filesystem roots (**`.orc` deferred** — no maintained pure-JS ORC schema reader exists on npm; revisit when one ships); contract test asserts the connector surface exposes no row-sample or cell-read tool; manual audit confirms only file footers / header lines / line counts are read — never row contents
+
 - MLflow / SageMaker / Vertex AI experiments and models are indexed with framework, metric snapshots, and stage transitions (read-only in Phase 5; the `ml.model.promote` HITL write path lands in Phase 6 — see [§ Phase 6 → Deferred from Phase 5](#deferred-from-phase-5))
+
 - `nimbus expert src/billing/retry.ts` returns a ranked list of team members with evidence drawn from indexed PR authorship, review history, and incident involvement — answered from the local index without a live API call
+
 - `nimbus catchup --since 3d` returns a digest prioritized by the authenticated user's historical involvement, with higher-ranked items matching services and repos the user has recently contributed to — verified by seeding two connectors with different activity levels and confirming the more-relevant one ranks first
+
 - `nimbus impact src/billing/retry.ts` returns at minimum the set of services that depend on the file and the pipelines that would be affected, resolved from the local relationship graph without a live API call
 
+
+
 ---
+
+
 
 <a id="phase-6-team"></a>
 
+
+
 ### Phase 6 — Team ✅
+
+
 
 > **Status: ✅ Complete (2026-06-18).** Slices 1 (Federation Core) and 3 (Identity — SSO/OIDC + SCIM) shipped 2026-06-05; Slice 2 (Team Vault + Quorum HITL) and Slice 4 (Org Policy + Admin + Observability) shipped 2026-06-07; Slice 5 (ChatOps) shipped 2026-06-09; Slice 6 (Cross-colleague intelligence — 6a/6b/6c) shipped 2026-06-11 → 2026-06-12; Slice 7 (Data Warehouse & BI connectors — Waves 7a–7c) shipped 2026-06-13/14; Slice 8 (Share & Virality — Waves 8a–8d) shipped 2026-06-17/18; Slice 9 (deferred-from-Phase-5 items) shipped 2026-06-14 → 2026-07-19 — Wave A (Mendeley) 2026-06-14, Waves E/W1 + Workday 2026-06-21, the web clipper (gateway side) 2026-06-22 and its browser extension 2026-07-19 (see [`docs/CHANGELOG.md`](./CHANGELOG.md)). Three Slice-9 items remain explicitly deferred, not outstanding: SageMaker / Vertex AI writes (CLI-credential connectors — no discrete token; S5-demoted) and paid extensions (rides Phase 9.5 Marketplace v2). **The build order from here is the [Phase 7+ Sequencing Spine](#phase-7-sequencing-spine) overlay — [S1 — Local Brain](#spine-s1) ran 2026-06-20 → 2026-08-20 and [S2 — Local Compute Fleet](#spine-s2) followed, 2026-08-21 → 2026-10-10; the [pre-S3 close-out](#pre-s3-close-out) finished 2026-10-10, [S3 — Open Surface](#spine-s3) followed, 2026-10-11 → 2026-11-04; S4 — Autonomous Agent is next and has not started.**
 
+
+
 **Goal:** Make Nimbus a collaborative layer for engineering teams — shared intelligence without surrendering local sovereignty.
+
+
 
 > **Composes with Phase 7 (Engineering Excellence):** the federation primitives, Team Vault, ChatOps, admin console, and org-level policy engine in this phase are the multipliers for Phase 7's service catalog, DORA metrics, feature-flag, and shared knowledge graph features. Phase 6 ships independently of Phase 7 — but when both are present, the `@nimbus excellence` ChatOps shortcut, embedded DORA panels in the admin console, and federated synchronisation of the Phase 7 knowledge graph + automation library all light up.
 
+
+
 #### Delivery Slices
+
+
 
 Phase 6 bundles several independent subsystems; it ships as **9 sequenced delivery slices** (one consumer-oriented slice was moved out to the new Phase 20 — Personal & Household Federation). **Slice 1 — Federation Core** is the substrate every other slice depends on. Each slice gets its own spec → plan → implementation cycle.
 
+
+
 | # | Slice | Depends on |
+
 |---|-------|-----------|
+
 | 1 | **Federation Core** — E2EE peer pairing, mDNS discovery, consent-scoped federated query primitive, shared scoped namespaces, expertise routing, protocol-layer RBAC, audit integration, invariant I17 (✅ delivered 2026-06-05) | Phase 4 E2EE LAN + audit chain |
+
 | 2 | Team Vault + Multi-user/Quorum HITL (✅ delivered 2026-06-07, invariants I19/I20/I21) | 1 |
+
 | 3 | Identity — SSO/OIDC/SAML + SCIM (✅ OIDC device-code + SCIM trust-anchor delivered 2026-06-05, invariant I18; SAML deferred) | 1 |
+
 | 4 | Org Policy Engine + Admin Console + Observability (✅ delivered 2026-06-07, invariant I22) | 1 |
+
 | 5 | ChatOps (Slack/Teams bot, HITL-via-chat) (✅ delivered 2026-06-09, invariant I23) | 1, 2 |
+
 | 6 | Cross-colleague intelligence (ghost reviewers, conflict detection, cloud janitor, huddle, tribal-knowledge, blast-radius preflight) — **Slice 6a** (ghost / conflicts / huddle agents + V38 known-namespaces cache) ✅ 2026-06-11; **6b** (cloud janitor + blast-radius preflight, I24) ✅ 2026-06-12; **6c** (tribal-knowledge extraction, I25/V39) ✅ 2026-06-12 — Slice 6 COMPLETE | 1 |
+
 | 7 | Data Warehouse & BI connectors (Snowflake, Tableau, Looker, PowerBI, Monte Carlo, Bigeye) — **Wave 7a ✅ delivered 2026-06-13** (read-only connectors + V40 cross-warehouse lineage); **Wave 7b ✅ delivered 2026-06-14** (optional Team-Vault credentials via the I19 principal-polymorphic gate + unified paginated spawn transport; no new invariant/migration; deferred: live-API cursor verification, cross-gateway audit-identity-subject — the latter → re-homed to [Phase 12 § Identity & Governance](#phase-12--enterprise) (2026-10-10)); **Wave 7c ✅ delivered 2026-06-14** (HITL-gated warehouse/BI writes, invariant I26) | 2, 3 |
+
 | 8 | Share & Virality primitives (`nimbus share`, verify-share, referral, recipe, replay) — **✅ delivered 2026-06-17/18** (Waves 8a–8d; invariant I27 / static D21; V41 share_records, V42 recipe params, V43 share_inbox) | 1, Phase 4 signing |
+
 | 9 | Deferred Phase 5 items — **✅ complete** (except three explicitly-deferred items): Wave A (Mendeley) 2026-06-14; Workday + Wave E (Apple Mail / iCloud Calendar) + Wave W1 (ArgoCD / Flux / MLflow writes, I26) 2026-06-21; web clipper gateway side (I30) 2026-06-22 and its Chrome/Firefox MV3 extension 2026-07-19. **Still deferred:** SageMaker + Vertex AI writes (CLI-credential connectors, S5-demoted) and paid extensions (rides Phase 9.5) | mostly independent |
+
+
 
 Slices 2–8 may proceed in parallel once Slice 1 lands; Slice 7 waits on 2+3; Slice 9 is independent. Each slice maps to the feature subsections below as follows:
 
+
+
 - **Slice 1** ↔ "Federated Query Consent (foundational)" + the federation/namespace/discovery/conflict-detection parts of "Shared Infrastructure"
+
 - **Slice 2** ↔ "Shared Infrastructure" (Team Vault, Quorum HITL) + "Identity & Access" (Multi-user HITL)
+
 - **Slice 3** ↔ "Identity & Access" (SSO/OIDC/SAML, SCIM, role-based access control)
+
 - **Slice 4** ↔ "Shared Workflows & Policy" (org-level policy engine + enforcement) + "Admin & Observability"
+
 - **Slice 5** ↔ "ChatOps"
+
 - **Slice 6** ↔ "Shared Infrastructure" (ghost reviewers, cross-user conflict detection, cross-team cloud janitor) + "Shared Workflows & Policy" (huddle briefing, tribal-knowledge extraction, blast-radius preflight) — **Slice 6a** ✅ 2026-06-11: ghost / conflicts / huddle agents + V38 `federation_known_namespaces` cache; **6b** ✅ 2026-06-12: cloud janitor + blast-radius preflight (I24); **6c** ✅ 2026-06-12: tribal-knowledge extraction (repeated-question detection → owner-approved Notion/Confluence KB capture; I25/D19; V39 `tribal_clusters`). **Slice 6 COMPLETE.**
+
 - **Slice 7** ↔ "Data Warehouses & BI (SSO-gated)"
+
 - **Slice 8** ↔ "Share & Virality Primitives"
+
 - **Slice 9** ↔ "Deferred from Phase 5"
+
+
 
 **Slice 1 — Federation Core: ✅ delivered (2026-06-05).** The federation substrate ships: the V33 schema (`federation_namespaces` / `_filters` / `_grants` + `audit_log.federation_json`), the namespace store with per-peer RBAC grants, the session consent cache, the `DiscoveryProvider` (mDNS via `bonjour-service` + in-memory + manual fallback), mutual-approval peer pairing, content-free expertise ranking, and the **I17 query gate** — `answerFederatedQuery`, the only path that answers an inbound `federation.query`: grant + role + consent + declared-filter scoping, leak-proof `FederatedItem` shape (never `metadata`), every outcome audited into the Blake3 chain. Wired through the `federation.*` JSON-RPC dispatcher (LAN admits only `federation.query` / `federation.expertise`; the management methods are local/Tauri-only — I5), the `[federation]` config section, the `nimbus team` CLI, the Tauri renderer allowlist (5 local management methods; `federation.pair` stays CLI-only), invariant **I17** (runtime test + static **D13**), and an integration-tested acceptance suite.
 
+
+
 > **Over-the-wire seams delivered (2026-06-05):** the three previously-deferred Slice-1 seams are now wired — outbound LAN pair/query client (`ipc/lan-client.ts`), `LanServer` constructed and started at gateway boot (`federation/federation-server.ts` `buildFederationLanServer` + `platform/assemble.ts`, gated on `[federation].enabled`), and the owner-consent round-trip (`federation/consent-broker.ts` + `federation.consentRespond`). Two gateways can now exchange federated queries over the NaCl-box channel. The answering `peerId` is forced from the NaCl-authenticated session (I17/R1).
+
+
 
 **Slice 3 — Identity & Access (OIDC + SCIM): ✅ delivered (2026-06-05).** Enterprise identity on the Slice 1 substrate, gated by new structural invariant **I18**. The V34 schema (`identity_session` / `scim_user` / `identity_binding` / `oidc_jwks_cache` — no secret values in any column; tokens live only in the Vault), the `identity/` modules (OIDC discovery + device-code flow, a TTL'd fail-closed `JwksCache`, the **I18 canonical `IdTokenVerifier`** — the ONLY ID-token validation path: RS256 via Bun WebCrypto, `iss`/`aud`/`exp`/`nbf` checks, no new npm dependency — plus the pure synchronous `isOperatorValid()` the federation gate consults, an `IdentityStore`, and `identity-vault.ts` as the sole constructor of the `identity.oidc.*` / `identity.scim.bearer` Vault keys), and a trust-anchor SCIM 2.0 Users endpoint on the **I13** HTTP write surface (`scim-http-routes.ts` / `scim-service.ts` — the 3 `/scim/v2/Users` routes in `WRITE_ROUTE_ALLOWLIST`, every write through the `dispatchWriteRoute` pipeline with `identity.scim.bearer` auth + per-token rate-limit + `scim.provision_rejected` audit-on-rejection), with a SCIM **deprovision → federation-grant auto-revoke** tie-in. **Federation tie-in:** `answerFederatedQuery` consults `isOperatorValid()` before answering when identity is enabled, so a deprovisioned/expired operator session fails federation closed (raw `ask`/`search` are never affected — identity gates federation only). Wired through the `identity.*` / `scim.*` JSON-RPC dispatcher (forbidden over the LAN wire), the `[identity]` + `[scim]` config sections, the `nimbus identity` + `nimbus scim` CLI, the Tauri renderer allowlist (6 read/login methods; the credential-mutating `identity.bind`/`unbind` + `scim.setToken`/`deprovision` stay CLI-only — I7), and invariant **I18** (runtime test + static **D14**). **SAML deferred.**
 
+
+
 **Slice 2 — Team Vault + Multi-user/Quorum HITL: ✅ delivered (2026-06-07).** Team-scoped credentials and approvals on the Slice 1 substrate, gated by three new structural invariants **I19/I20/I21**. The V35 schema adds `team_vault_entries` / `team_vault_grants` (live-checked per-`(entry,peer,tool)` RBAC) + `hitl_delegations` — secret *bytes* never live in these tables (metadata + RBAC only; the bytes live in the OS Vault under the `teamvault.<entry>.<connectorKey>` keyspace). **Team Vault** (`teamvault/`): a `TeamVaultStore`, the **D15 keyspace home** `team-vault-keys.ts` (the ONLY composer of the `teamvault.` prefix), a tamper-evident `team-vault-audit.ts` (folds into the BLAKE3 chain), and the **I19** consumption path — `federation/invoke-gate.ts` `answerFederatedInvoke` (identity → live RBAC → quorum → run), which returns only `{ ok, result }`; the secret is read by a read-only vault overlay (`team-vault-view.ts`, never falls through to the operator's own key) and injected into an ephemeral team-credentialed connector (`team-tool-spawn.ts` — inherits `extensionProcessEnv` I1 + `wrapServerSpec` I15), then drained. **Fail-closed:** a missing team secret / OAuth-only-or-unknown service / missing grant aborts before any spawn — never falling through to the operator's local credential. **Quorum (I21):** a session-only `QuorumCoordinator` counts only DISTINCT authenticated peers (deny aborts, window timeout) behind a `[hitl.quorum."<action-type>"]` config table. **Delegated HITL (I20):** a scoped, time-boxed `DelegationStore` + `resolveDelegatedApproval` wired into the executor gate — an owner's HITL approval routes to a live, in-scope, identity-valid delegate (else falls back to the local owner prompt; the wire is never trusted). Wired through three answerable over-the-wire methods (`federation.invoke` / `federation.quorumRespond` / `federation.approvalRespond`, `peerId` forced from the NaCl-authenticated session) + asker-side `federation.askInvoke`, the local management dispatchers `teamvault.*` (`put`/`delete` HITL-gated, I2) + `hitl.*` (LAN-forbidden, I5), the `[hitl.quorum]` config loader, the `nimbus team vault|invoke|delegate` CLI, the Tauri renderer allowlist (5 renderer-safe methods; the secret/RCE-class methods stay renderer-FORBIDDEN — I7), and invariants **I19** (static **D15**) / **I20** / **I21** (each with a runtime test). **Integration acceptance:** a two-gateway invoke test (pair → grant → ok+leak-proof → RBAC → impersonation → revoke → no_grant → audit) and a quorum test (single approval stays locked; two distinct unlock).
+
+
 
 **Slice 4 — Org Policy + Admin + Observability + Team Audit + GDPR Purge: ✅ delivered (2026-06-07).** The org-governance layer ships: the `policy/` subsystem (`nimbus.policy.toml` schema+parser, Ed25519 sign/verify over canonical bytes, V36 `org_policy_state` + `policy_anchor_pin`, a `PolicyStore`, and the **I22 `PolicyGate`** that resolves a monotonic-stricter `EnforcedPolicy` — tighten-only, fail-closed to last-valid/baseline — driving connector-allowlist + retention-floor + quorum/HITL enforcement, peer distribution via `federation.policy` + pubkey pinning + `nimbus policy trust`, and an audit-log shipper `federation.auditExport`); GDPR purge (V37 `gdpr_purge_job` + `gdpr_purge_request` ledger, `team.purge` orchestration, HITL-gated `federation.purge` serve emitting signed deletion records, sync-cycle retry); the `status/` subsystem (`GatewayStatus` snapshot + Prometheus exposition at `GET /metrics`); and the dependency-free `packages/admin-console` served at `GET /admin/*`. Wired through `policy.*` / `team.purge` / `team.auditMerged` / `admin.status` IPC, the HTTP read routes + the `PUT /v1/admin/policy` write route (**I13**; `WRITE_ROUTE_ALLOWLIST` 4 → 5), the Tauri renderer allowlist (read-only `admin.status` / `policy.show` / `team.auditMerged`; privileged `policy.sign` / `trust` / `refetch` + `team.purge` stay CLI-only — I7), invariant **I22** (runtime test + static **D16**), and `CURRENT_SCHEMA_VERSION` → 37.
 
+
+
 **Slice 5 — ChatOps (Slack/Teams bot, HITL-via-chat): ✅ delivered (2026-06-09).** A bidirectional `@nimbus` bot on the Slice 1–4 substrate, gated by new structural invariant **I23** (static **D17**). **No new migration** — channel↔namespace bindings + resource→owner ownership live in the Slice 4 signed org policy (`[policy.chatops.channel."<id>"]` + `[policy.chatops.ownership]`, parsed in `policy/chatops-policy.ts`, carried through `EnforcedPolicy`); the identity-email cache is in-memory; the Teams JWT path reuses `oidc_jwks_cache`. **`chatops/` subsystem:** a transport-agnostic graph — `identity-mapper.ts` (platform-userId → email (TTL-cached) → SCIM identity, with a **live, local** authz re-check every message so a deprovision takes effect immediately), `command-parser.ts` (normalize → NL-read vs structured-`run` split → write grammar; unknown actions refused, never guessed), `owner`-routing via `chatops-request-context.ts` (AsyncLocalStorage) + `approval-presenter.ts` (owner-routed Approve/Reject card → the real **I20** `resolveDelegatedApproval`), `intent-router.ts` (read→engine, write→owner-gated executor, refusal audit), and the **I23** `reply-dispatcher.ts` — the SOLE operational (non-HITL) post path, whose destination is ONLY a server-derived `ReplyTarget` (originating channel or a policy `notify` channel), never caller-supplied; arbitrary-destination posting remains only via the HITL-gated `*.message.post` action types. **Transports:** Slack Socket Mode (adapter-owned WS via the connector `slack_socket_open` tool; envelope-ack, reconnect/backoff, bounded FIFO dedupe) + Teams webhook on the **I13** write surface (`POST /v1/messaging/teams/events`, `WRITE_ROUTE_ALLOWLIST` 5 → 6; auth = a Bot Framework JWT validated in-route, fail-closed). **Connectors:** `slack`/`teams` gain operational `*_chat_post` + `*_user_info` (+ `slack_socket_open`) tools using bot/app credentials (new Team-Vault keys `slack.bot_token`/`app_token`, `teams.bot_app_id`/`bot_app_password`); D17 confines the `*_chat_post` tool references to the dispatcher/transports + the connector definition sites. **Surfaces:** `chatops.*` IPC (`status`/`start`/`stop`/`test`, forbidden over the LAN wire), `nimbus chatops` CLI, and the read-only `chatops.status` on the Tauri allowlist (5→6 — 82 → 83; `start`/`stop`/`test` stay off the renderer surface, I7). Watcher alerts route to a namespace's notify channels via `makeChatopsWatcherNotify`. Invariant **I23** (runtime test + static **D17**); the triple lands together. *Follow-up: gateway-boot wiring (`chatopsRpcCtx` + `resolveTeamsEventsSurface` in `platform/assemble.ts`, incl. executor-gate + lazy-mesh connector invocation + Team-Vault bot-token injection) to make the built graph reachable in a running gateway; the slice's components are unit- + integration-tested in-process.*
+
+
 
 #### Dependencies
 
+
+
 - Phase 4 encrypted LAN remote access (E2EE channel foundation for Nimbus-to-Nimbus)
+
 - Phase 4 tamper-evident audit log (required for org-level compliance controls)
+
 - Phase 4 Plugin API v1 (team connectors can ship as extensions)
+
 - Phase 3.5 configuration profiles (team policy interacts with per-user profile config)
+
+
 
 #### Federated Query Consent (foundational)
 
+
+
 These two primitives are the **foundation** every cross-colleague feature stands on. Today the cross-colleague ideas — ghost reviewers, the cross-team cloud janitor, the Phase 7 federated agents, reviewer-tailored briefs — each implicitly assume "your agent can query a teammate's index." That assumption must be a *designed, audited, revocable* capability, not a free side effect, or federation becomes surveillance. Build these **before** anything that reads a peer's index.
 
+
+
 - [x] **Consent-scoped federated query primitive** — a first-class sharing-scope + per-query consent mechanism over the federation channel. Each peer declares which `item` types + services + namespaces are queryable by whom; every federated query carries a stated purpose; the answering Gateway records every inbound query in its local audit log and can require interactive consent (or a standing per-peer grant) before answering. Revocable per peer, per scope, at any time — revocation takes effect within one sync cycle. Every cross-colleague feature in Phases 6–10 routes through this primitive rather than reinventing access.
+
 - [x] **Privacy-preserving expertise routing** — the *safe* answer to "who knows about this code/system?". Instead of a peer exposing index *content*, each peer's Gateway locally scores its own relevance to the query and returns **only a rank** ("Alice: high, Bob: low") — never the underlying items. The asker learns who to talk to; the data never leaves the owner's machine. The privacy-preserving substrate for ghost reviewers and the Phase 7 federated agents.
+
+
 
 #### Shared Infrastructure
 
+
+
 - [x] **Nimbus-to-Nimbus federation** — two Gateways share a scoped index namespace over E2E-encrypted channel (NaCl box); no relay server; each side controls which `item` types and services it exposes; revocable per peer
+
 - [x] **Cross-user conflict detection** — use the federated index to detect "Work-in-Progress collisions" (e.g., Alice editing `auth.ts` while Bob is assigned to the related Jira ticket); notifies the user before starting changes ✅ (Slice 6a: 2026-06-11 — `agents.conflicts` / `nimbus conflicts`)
+
 - [x] **Team Vault** — shared credential store; one Gateway acts as trust anchor; role-based read/write access to named vault entries; credentials never leave the LAN ✅ (Slice 2: 2026-06-07)
+
 - [x] **Shared index namespaces** — user publishes a named namespace (e.g. `project:zurich`) as a filtered slice of their index; teammates subscribe over the federation channel; changes propagate on next sync cycle
+
 - [x] **LAN discovery** — Gateways advertise each other via mDNS; `nimbus team discover` lists available peers; pairing requires explicit mutual approval
+
 - [x] **"Ghost" reviewers** — when you open a complex file, your Gateway uses the consent-scoped federated query primitive (above) to surface ambient teammate context: *"Alice resolved a similar race condition here 3 months ago (PR #142) — pull her context or draft her a Slack message?"*. Strictly an opt-in pull; context is weighted by recency and whether the referenced code still exists (a fix against since-rewritten code is suppressed). Turns the team's past experience into an ambient, queryable graph without requiring exhaustive documentation. Built on the federated-consent + expertise-routing primitives. ✅ (Slice 6a: 2026-06-11 — `agents.ghost` / `nimbus ghost`)
+
 - [x] **Quorum HITL (the "two-man rule")** — extends Multi-user HITL: for the most destructive actions (e.g. `terraform destroy`, force-push to `main`, drop a production DB), the Team Vault requires *two* federated peers to approve within a bounded window before the credential unlocks. Enforced in the executor's HITL gate (`I2`), not the prompt — two-person control executed entirely over the local-first mesh with no central broker. The action-type → quorum-size mapping lives in the org-level policy engine. ✅ (Slice 2: 2026-06-07 — `QuorumCoordinator` counts only DISTINCT authenticated peers, invariant **I21**)
+
 - [x] **Cross-team cloud janitor** — a designated "janitor" agent queries the team mesh (via the consent primitive) to ask each peer's Gateway whether any local terminal, repo, or recent activity has touched a given cloud resource (e.g. AWS instance `i-12345`). If every peer reports no recent local context for ≥ N days, the janitor proposes a cleanup workflow through the team HITL queue. Bridges infrastructure state (the cloud) and *human* developer context (who's actually using what) — the gap that lets idle test databases and forgotten instances balloon cloud spend. ✅ (Slice 6b: 2026-06-12 — `agents.janitor` / `nimbus janitor`; a content-free `federation.probe` recency fan-out, and a peer that doesn't answer is never counted as idle)
+
+
 
 #### Identity & Access
 
+
+
 - [x] **SSO/OIDC/SAML** — enterprise identity provider integration; tokens stored in the Vault; Gateway validates ID token on every session *(Slice 3: OIDC device-code + SCIM trust-anchor delivered — RS256 ID-token validation via `identity/verifier.ts` (I18), Vault-only tokens, SAML deferred)*
+
 - [x] **SCIM user provisioning** — automated user lifecycle driven by IdP; deprovisioned users' shared namespaces revoked automatically *(Slice 3: OIDC device-code + SCIM trust-anchor delivered — bearer-authed SCIM 2.0 Users endpoint on the HTTP write surface; deprovision auto-revokes federation bindings)*
+
 - [x] **Role-based access control** — `owner`, `editor`, `viewer` roles per shared namespace; enforced at the federation protocol layer, not just the UI *(Slice 1: roles stored + enforced in the query gate; cross-org RBAC + SCIM-driven provisioning are Slice 3)*
+
 - [x] **Multi-user HITL** — workspace owner delegates HITL approval rights to a named team member for a specific workflow; delegate sees a pending approval queue; every delegation recorded in audit log ✅ (Slice 2: 2026-06-07 — scoped, time-boxed `DelegationStore` + `resolveDelegatedApproval` wired into the executor gate, invariant **I20**)
+
+
 
 #### Data Warehouses & BI (SSO-gated)
 
+
+
 Depends on Team Vault (above) so service-account / SSO credentials can be shared across a workspace without each user re-authenticating.
+
+
 
 All six shipped in **Slice 7**: the read-only connectors + the V40 cross-warehouse lineage graph in **Wave 7a** (2026-06-13), optional Team-Vault credentials in **Wave 7b** (2026-06-14), and the HITL-gated write tools in **Wave 7c** (2026-06-14, invariant **I26** / static **D20**). The no-row-data contract is enforced by a per-connector test.
 
+
+
 - [x] **Snowflake** (SSO / OAuth / Key-Pair) — databases, schemas, tables / views (column names + tags only), tasks, pipe status, recent query history metadata; `data_model` item type indexed with database, schema, table, column tags, row-count estimate, last-altered; `snowflake.tag.set` / `snowflake.comment.set` behind HITL; strictly no row data ✅ (Slice 7: 7a read 2026-06-13, 7c writes 2026-06-14)
+
 - [x] **Tableau Server / Cloud** — dashboards, reports, views, workbooks, authors, folders, extract refresh status; `dashboard` item type; read-only except `tableau.datasource.refresh` / `tableau.workbook.refresh` behind HITL; links Tableau views to upstream Snowflake tables via data-source metadata ✅ (Slice 7: 7a 2026-06-13, 7c 2026-06-14)
+
 - [x] **Looker** — dashboards, Looks, Explores, LookML models, content folders; `dashboard` + `data_model` item types; read-only; `looker.datagroup.trigger` / `looker.schedule.run_once` behind HITL; links Looker Views to the underlying dbt models in GitHub via LookML `sql_table_name` ✅ (Slice 7: 7a 2026-06-13, 7c 2026-06-14)
+
 - [x] **PowerBI** — workspaces, reports, dashboards, datasets (schema only), dataflows; `dashboard` item type; read-only except `powerbi.dataset.refresh` / `powerbi.dataflow.refresh` behind HITL ✅ (Slice 7: 7a 2026-06-13, 7c 2026-06-14)
+
 - [x] **Monte Carlo** (SSO) — data quality incidents, freshness alerts, schema change logs, monitored tables; `data_quality_test` item type indexed with monitor id, table, incident status, severity, first-seen-at; read-only; `montecarlo.incident.acknowledge` / `montecarlo.incident.resolve` behind HITL ✅ (Slice 7: 7a 2026-06-13, 7c 2026-06-14)
+
 - [x] **Bigeye** (SSO) — data quality metrics, SLA breaches, monitored schemas, anomaly records; `data_quality_test` item type; read-only; `bigeye.issue.acknowledge` / `bigeye.issue.resolve` behind HITL ✅ (Slice 7: 7a 2026-06-13, 7c 2026-06-14)
+
+
 
 #### Shared Workflows & Policy
 
+
+
 - [ ] **Team-owned workflow pipelines** — pipelines in a shared namespace; any team member can trigger; write steps require HITL from the triggering user; no credentials embedded in pipeline YAML. **Deferred out of Phase 6** (2026-06-18) — the federated-invoke (I19) + quorum (I21) + org-policy (I22) substrate it needs all shipped, but the shared-pipeline authoring surface itself belongs with the automation-template library, which the spine overlay puts in **S4** (see [Phase 7+ Sequencing Spine](#phase-7-sequencing-spine)). → listed in [S4's carried-in items](#carried-into-s4) (2026-10-10).
+
 - [x] **Team "Huddle" Briefing** — aggregate morning briefing summarizing team achievements across PRs, tickets, and incidents without manual status reporting ✅ (Slice 6a: 2026-06-11 — `agents.huddle` / `nimbus huddle`)
+
 - [x] **Tribal-knowledge extraction** — agent watches Slack / Teams for repeated questions ("how do I deploy X?") and proactively suggests saving the answer to a shared Notion / Confluence page or as a Phase 7 Wave 4 automation template; upstream pattern detector that feeds the automation library ✅ (Slice 6c: 2026-06-12 — `nimbus tribal`, V39 `tribal_clusters`, owner-HITL KB capture to a config-pinned destination, invariant **I25** / static **D19**)
+
 - [x] **Cross-team blast-radius pre-flight** — before merging a PR, the upstream service owner's agent sends a "preflight request" to the agents of downstream service owners; downstream agents simulate the change against their local integration tests / environments only after the downstream owner approves via their HITL queue (no auto-execution on the upstream owner's say-so); aggregated results return to the upstream PR; stops cascading failures across team boundaries without a centralised staging environment ✅ (Slice 6b: 2026-06-12 — `agents.preflight` / `nimbus preflight`, downstream owner's local HITL + local-config-only command resolution, invariant **I24** / static **D18**)
+
 - [x] **Org-level policy engine** — `nimbus.policy.toml` enforces: connector allowlists, `retentionDays` floor, HITL threshold overrides, audit log shipping destination; interacts with per-user profile config from Phase 3.5 *(Slice 4: signature-verified `nimbus.policy.toml` (Ed25519 over canonical bytes) → `PolicyGate` resolves a monotonic-stricter `EnforcedPolicy`; V36 `org_policy_state` + `policy_anchor_pin`; invariant **I22** / static **D16**)*
+
 - [x] **Policy enforcement at the Gateway** — policy loaded on startup; connectors not in the allowlist disabled before the mesh starts; violations logged to audit trail *(Slice 4: connector allowlist + retention floor + quorum/HITL resolver all read `EnforcedPolicy` (fail-closed to last-valid/baseline); distributed via `federation.policy` serve + pubkey pinning + `nimbus policy trust`, with an audit-log shipper)*
+
+
 
 #### ChatOps
 
+
+
 - [x] **Bidirectional Slack/Teams bot** — team members interact with the shared Nimbus Gateway via `@nimbus` in a channel; read queries (`@nimbus who's on call for payment-service?`) answered from the shared index; write commands (`@nimbus run deployment.rollback service=payment-service version=v1.4`) route to the HITL queue of the appropriate team member before executing — the bot never bypasses the consent gate
+
 - [x] **HITL via Slack/Teams** — pending HITL approvals surfaced as interactive Slack/Teams messages; approver clicks Approve/Reject in-channel; decision recorded in audit log with approver identity; deep link to the full approval context
+
 - [ ] **Notification routing** — watcher alerts and incident summaries optionally routed to a designated Slack/Teams channel; configurable per watcher rule and per team namespace. **Not delivered.** The `namespaceNotify` `ReplyTarget` and its dispatcher branch exist (`chatops/{types,reply-dispatcher}.ts`), but the only producer that would drive a watcher alert into them — `makeChatopsWatcherNotify` (`automation/watcher-engine.ts`) — has no production caller; every watcher-notify callsite in `platform/assemble.ts` passes `notifications.show` alone. Wiring it makes a today-silent path emit outbound, so it needs I23 (and plausibly I29) treatment, not an incidental hookup. → re-homed to [S4](#carried-into-s4) (2026-10-10)
+
 - [x] **Bot security model** — bot token stored in Team Vault; bot can only act on behalf of the requesting user's authorised scope; channel-to-namespace mapping enforced in policy; no bot command can exceed the requesting user's permission level
+
+
 
 #### Admin & Observability
 
+
+
 - [x] **Admin console** — web UI served locally by the Gateway: user list, namespace health, connector status across the team, audit log viewer, policy editor *(Slice 4: dependency-free static console — `packages/admin-console`, served bearer-gated at `GET /admin/*`; backed by `admin.status` (a `GatewayStatus` snapshot from the new `status/` subsystem) + `policy.show` + `team.auditMerged`)*
+
 - [x] **Team audit log** — federation events appended to each member's local audit log; owner can request a merged view *(Slice 4: `team.auditMerged` IPC + the `federation.auditExport` audit-log shipper)*
+
 - [x] **GDPR/compliance at org level** — `nimbus team purge --user <id>` removes a user's contributions from all shared namespaces; writes a signed deletion record *(Slice 4: `team.purge` orchestration over the V37 `gdpr_purge_job` + `gdpr_purge_request` ledger; HITL-gated `federation.purge` serve emits signed deletion records, with sync-cycle retry)*
+
+
 
 #### Share & Virality Primitives
 
+
+
 The project lacks viral primitives today. The federation channel + audit chain + signed-output infrastructure already shipped in Phase 4 / Phase 11 are exactly the substrates needed; this section is the user-facing surface.
 
+
+
 - [x] **`nimbus share <session-id> [--redact <patterns>] [--expires <duration>]`** — produces a **signed, redacted, content-addressed** transcript of a Nimbus session. Default redaction strips: vault key names, email addresses, internal hostnames, Slack handle prefixes, credit-card patterns, JWT-shaped strings, IP addresses; explicit `--redact` patterns add more. The transcript is signed with the Gateway's Vault-only share-signing Ed25519 keypair (`share.signing.privkey`) so anyone with the matching pubkey can verify the share was not doctored after publish. Output options: write to a local `.nimbus-share.json` file, upload to a configurable HTTP endpoint (default off — only enabled if the user explicitly configures one; no Nimbus-hosted relay), or publish through the sovereign mesh to a paired peer. Audit-logged on the local Gateway with the redaction-pattern set actually applied (so the user can later prove what was and wasn't shared). ✅ (Slice 8 Wave 8a: 2026-06-15 — `nimbus share create`, default+caller redaction, owner-approved preview via the `share.publish` HITL action, Ed25519-signed, V41 `share_records`; invariant **I27** / static **D21**)
+
 - [x] **Verify-share CLI primitive** — `nimbus verify-share <file-or-url>` checks the signature against the origin Gateway's published share-signing pubkey; the same `eaf-verify`-shaped binary primitive shipped in the S — Standards track. Lets a reviewer drop the binary in their CI to validate user-shared snippets before incorporating into a sales / community / academic write-up. ✅ (Slice 8 Wave 8a: 2026-06-15 — `nimbus verify-share <file|url>` checks the body signature against the origin gateway's pubkey)
+
 - [x] **Sovereign-mesh referral** — when paired peers share a brief via the federation channel, the receiving end sees an attribution chip on the brief ("forwarded from Asaf's Gateway, 3 hops away"); receivers without Nimbus see a one-line install prompt embedded in the encrypted envelope (only revealed after their *own* paired Gateway decrypts it on first install — no plaintext bootstrap). P2P viral primitive that's a strictly opt-in pull, not a push. ✅ (Slice 8 Wave 8d: 2026-06-18 — `nimbus share forward` / `share inbox` over the federation wire, immutable provenance hop-chain + attribution chip, deferred reveal on first pairing, V43 `share_inbox`; receiving is inert)
+
 - [x] **`nimbus share <session-id> --as-recipe`** — flag on the share command that strips the conversation entirely and emits only the **declarative workflow** the user followed (which connectors were queried, which graph traversals ran, which thresholds triggered) as a YAML "recipe" file that can be applied to any other Nimbus installation. Closes the `nimbus recipes` near-term initiative item by giving recipes a natural origin point — every successful session is a candidate recipe. ✅ (Slice 8 Wave 8b: 2026-06-17 — deterministic, LLM-free declarative tool-call DAG rebuilt from the session's logged tool calls, V42 `tool_call_log.params_json`)
+
 - [x] **Audit-replay of a received share** — `nimbus verify-share <file|url> --replay` reruns the shared session locally against the receiver's own indexed data and shows where the answers diverge. Sales-prop: "watch what Nimbus did on Asaf's data run on yours." Catches "this only works for Asaf because he has X connector" issues. ✅ (Slice 8 Wave 8c: 2026-06-17 — delivered as `nimbus verify-share <file|url> --replay`; deterministic, LLM-free, read-only enforced by a POSITIVE allowlist — a non-read tool is skipped, never executed)
+
+
 
 <a id="deferred-from-phase-5"></a>
 
+
+
 #### Deferred from Phase 5
+
+
 
 Items moved here from Phase 5 per the T1 sequencing spec. Read-only counterparts of split items remain in Phase 5.
 
+
+
 ##### Browser & Reading
 
+
+
 - [x] **Web clipper (gateway side)** ✅ delivered 2026-06-22 — the Chrome+Firefox MV3 extension (Plan B, separate) clips the readable article or a text selection into the local index as `nimbus:web_clip` items via `POST /v1/clips` (I13); the extension's on-demand "sidecar" overlay (Plan B) reads related local items via the gateway route `POST /v1/clips/related`; pairing-handshake auth (`nimbus clip pair`/`status`/`revoke`) mints a labeled Vault token behind new invariant **I30** (fail-closed pairing window). Clips surface in `nimbus search` alongside Drive files and emails. The `nimbus clip list` / `clip delete` management commands followed 2026-07-16, and a per-route body cap so real articles fit under the I13 write-surface limit on 2026-07-19
+
 - [x] **Web clipper (browser extension, Plan B)** ✅ delivered 2026-07-19 — the Chrome + Firefox **MV3** extension ships from its own repo [`nimbus-agent/nimbus-web-clipper`](https://github.com/nimbus-agent/nimbus-web-clipper) (MIT; mirrors the `nimbus-vscode` satellite repo), released as `v0.1.0`. Readable-article extraction (Mozilla Readability) or selection capture → `POST /v1/clips`; the on-demand Shadow-DOM "sidecar" panel → `POST /v1/clips/related`; owner-consented pairing by redeeming the `nimbus clip pair` 6-digit code at `POST /v1/clips/pair/confirm` (I30). Beyond the gateway contract it adds an offline retry queue, connection management (pairing status + unpair), and quick-clip context-menu / keyboard entry points. **Loopback-only by design** — `host_permissions` are `http://127.0.0.1/*` + `http://localhost/*`, no remote hosts, no telemetry. Tag-driven publishing to the Chrome Web Store + Firefox AMO is wired; **the live store listings await their one-time account bootstrap** (sideload / dev-load works today)
+
 - [x] **Mendeley** — index whitepapers, PDFs, and citations alongside technical docs; `reference` item type; read-only (✅ delivered 2026-06-14; reuses the `reference` item type, read-only)
+
+
 
 ##### Email & Calendar (macOS-only)
 
+
+
 - [x] **Apple Mail + iCloud Calendar** — ✅ **delivered 2026-06-21** (Slice 9 Wave E, connector `apple`; originally scoped as "macOS Calendar", delivered as iCloud Calendar over CalDAV — cross-platform). iCloud Mail via IMAP (`imap.mail.me.com:993`); iCloud Calendar via CalDAV (`caldav.icloud.com` → per-account `p##-caldav.icloud.com`); calendar events indexed as `apple:event` items, mail as `apple:email` items with a ≤2000-char preview (metadata-only — no bodies/attachment bytes); `apple_calendar_event_create` / `apple_calendar_event_delete` + `apple_mail_send` / `apple_mail_draft_create` behind the executor I2 HITL gate (forced `From`); two Vault keys (`apple.icloud_email` / `apple.icloud_app_password`). **macOS-only label relaxed → cross-platform** — the IMAP/CalDAV transport has no native macOS dependency, so the connector ships and is tested on Windows/macOS/Linux. See [`CHANGELOG`](./CHANGELOG.md#2026-06-21).
+
+
 
 ##### HR
 
+
+
 - [x] **Workday** — time off, headcount, org chart, job postings; read-only where API access allows. Lifted to Phase 6 because typical Workday tenancy is org-wide and pairs naturally with team identity / SSO already landing in this phase (✅ delivered 2026-06-21; read-only; REST workers/time-off/job-postings + RaaS reports; directory-safe PII allowlist; no migration/HITL/invariant)
+
+
 
 ##### GitOps (Write Tools)
 
+
+
 - [x] **ArgoCD writes** ✅ delivered 2026-06-21 (Slice 9 W1) — `argocd.app.sync`, `argocd.app.rollback` behind HITL (I2); personal + I19 team credentials; I26/D20 generalized to all connector writes (see [`docs/CHANGELOG.md`](./CHANGELOG.md))
+
 - [x] **Flux writes** ✅ delivered 2026-06-21 (Slice 9 W1) — `flux.kustomization.reconcile`, `flux.helmrelease.reconcile` behind HITL (I2); reconcile via the `reconcile.fluxcd.io/requestedAt` annotation PATCH (needs the SA's `patch` RBAC verb)
+
+
 
 ##### ML/AI (Write Tools)
 
+
+
 - [x] **MLflow writes** ✅ delivered 2026-06-21 (Slice 9 W1) — `mlflow.model.promote`, `mlflow.model.transition_stage` behind HITL (I2); `POST /api/2.0/mlflow/model-versions/transition-stage` (promote defaults `archive_existing_versions=true`)
+
 - [ ] **SageMaker writes** — `ml.endpoint.update`, `ml.endpoint.delete`, `ml.job.stop` behind HITL. **Remains deferred** — CLI-credential connector (reuses the shared AWS `_lib/aws-cli.ts` creds; no discrete token), so it does not fit the team-vault/discrete-token write model the Slice 9 W1 write path is built on; S5-demoted.
+
 - [ ] **Vertex AI writes** — `ml.endpoint.update`, `ml.pipeline.cancel` behind HITL. **Remains deferred** — CLI-credential connector (reuses the gcloud CLI / GCP creds; no discrete token), so it does not fit the team-vault/discrete-token write model the Slice 9 W1 write path is built on; S5-demoted.
+
+
 
 ##### Marketplace v2 Monetization
 
+
+
 - [ ] **Paid extensions** — license-key enforcement via local validation; revenue sharing to publisher; depends on Marketplace v2 ratings/reviews/verified-publisher work. Signed-manifest verification landed in Phase 5 T2 (2026-05-18, #343) and the Nimbus verified-publisher badge in trust layer PR 3c (2026-10-27); ratings and reviews did not, and are re-homed to [Phase 9.5](#phase-95--marketplace-registry) (corrected 2026-10-10), and from there to [S4](#carried-into-s4) with the owner's 2026-10-19 deferral (2026-11-04)
 
+
+
 #### Acceptance Criteria
+
+
 
 > **Status: ✅ all criteria satisfied (2026-06-18).** Slices 1–5 (2026-06-05 → 2026-06-09) cover the federation, identity, Team Vault/quorum, org-policy, and ChatOps criteria; Slice 6 (6a 2026-06-11, 6b/6c 2026-06-12) closed cross-colleague intelligence; Slice 7 (Waves 7a–7c, 2026-06-13/14) closed the cross-warehouse lineage criterion; Slice 8 (Waves 8a–8d, 2026-06-15 → 2026-06-18) closed Share & Virality. Slice 9's deferred-from-Phase-5 backlog continued past the phase close (through 2026-07-19) and carries no acceptance criterion of its own.
 
+
+
 - Two Nimbus instances on the same LAN establish a federated namespace in under 60 seconds with no external server involved ✅ (Slice 1)
+
 - A team member's HITL approval on a shared workflow is recorded in both the approver's and the workspace owner's local audit log ✅ (Slice 2)
+
 - Revoking a peer's federation access removes their read access within one sync cycle; no data retained on their machine after revocation ✅ (Slice 1)
+
 - An org policy disallowing the Slack connector prevents `nimbus connector auth slack` from succeeding on any member's machine while the policy is active ✅ (Slice 4)
+
 - A `@nimbus rollback` command issued in Slack routes to the on-call engineer's HITL queue and does not execute until they approve; the approval is recorded in the audit log with their identity ✅ (Slice 5)
+
 - Cross-warehouse lineage query `nimbus ask "why is the Q1 revenue Tableau dashboard stale?"` resolves the chain Tableau view → Looker view → dbt model → Snowflake table → Airflow DAG → failing PR from the local index in under 500 ms; no live warehouse or BI API call is made during the query ✅ (Slice 7 Wave 7a: 2026-06-13 — V40 lineage edges + `normalizeDataModelKey` convergence, served entirely from the local index)
+
 - A federated query for an item type outside the peer's declared sharing scope returns empty and is recorded as a rejected query in the answering Gateway's audit log; revoking a peer's scope stops further answers within one sync cycle ✅ (Slice 1)
+
 - A quorum-gated action (e.g. `terraform destroy`) does not unlock its Team Vault credential until two distinct federated peers approve within the configured window; a single approval leaves the credential locked and logs the partial approval ✅ (Slice 2)
+
 - Expertise routing returns a ranked peer list for "who knows `auth.ts`?" without transmitting any indexed item content from the answering peers — verified by asserting the federated response payload contains only ranks, not item bodies ✅ (Slice 1)
 
+
+
 ---
+
+
 
 <a id="spine-s1"></a>
 
+
+
 ### Spine S1 — Local Brain ✅
+
+
 
 > **Status: ✅ Complete (opened 2026-06-20, closed 2026-08-20).** Phase 6 closed 2026-06-18; S1 was the first slot of the [Phase 7+ Sequencing Spine](#phase-7-sequencing-spine) overlay (Track 1: **S1 → S5**), which replaced the phase numbers as the build order. The numbered sections under [Planned](#planned) remain the canonical *detail* for each item. S1 closed when **W6-B.2** — negation predicates on `nimbus ask` and the MCP server — landed on 2026-08-20 (#1281), completing Phase 7 Wave 6; **[S2 — Local Compute Fleet](#spine-s2)** followed, 2026-08-21 → 2026-10-10.
 
+
+
 **Goal (S1 — Local Brain):** the highest-stickiness, mostly-cheap increment that needs **no new connectors** — implicit-knowledge agents over the already-indexed graph, plus the provable-boundary primitives that anchor the moat early.
+
+
 
 **What S1 shipped, in one paragraph:** the always-on egress ledger and `nimbus prove` (invariant **I29** / static **D22** / schema **V44**), which pulled the provable-locality primitive forward from Phase 8; the fourteen built-in read-only agent briefs — `expert`, `impact`, `catchup`, `ghost`, `conflicts`, `huddle`, `janitor`, `preflight`, `why`, `glossary`, `decisions`, `ownership`, `pre-mortem`, `negotiate` — of which the last six were built in this slot; the research-briefs gateway surface; the full-body store (**V48**/**V49**) and the connector index-depth chokepoint that made those briefs answerable at all; zero-config onboarding (`nimbus init`, with the LLM demoted to optional); and the Wave 6 answer-quality set — brief synthesis (A0), devil's-advocate mode (A1), agent personas (A2), `nimbus stats`, and first-class negation queries (W6-B). Two honesty invariants were introduced along the way and are load-bearing for every brief: **I29** (nothing leaves unledgered) and **I31** (a synthesized brief never says less than the deterministic render promised). Schema moved **V44 → V55**.
 
+
+
 **Delivered**
 
+
+
 - [x] **Egress ledger + `nimbus prove`** ✅ 2026-06-20 (#698) — the always-on, append-only, BLAKE3-chained ledger of every authorized outbound action, appended from the executor chokepoint before `connectors.dispatch` (invariant **I29** / static **D22**; schema **V44** `egress_ledger`), with `nimbus prove` / `nimbus egress [verify|prune]`. Pulled forward from Phase 8 (M7) + Phase 7 Wave 6 per the spine overlay. Auditor-grade portable per-answer receipts stay in Phase 12.5 / Phase 22.
+
 - [x] **Research briefs (gateway surface)** ✅ 2026-07-22 — an owner-triggered multi-source research pass over the already-indexed graph: `POST /v1/briefs` opens a run, `POST /v1/briefs/{id}/sources` feeds captured articles into in-memory-only run state (source bodies never touch disk; a restart drops in-flight runs), `POST /v1/briefs/{id}/run` synthesizes a citation-validated report (quotes verified against the captured sources, typed `synthesis: {model, remote, disclosure?}` provenance), and `POST /v1/briefs/{id}/save` persists the finished report to the local index (`nimbus:research_brief`, joining `PROSE_HEAVY_TYPES`). Four new I13 write routes plus a bearer-gated `GET /v1/briefs/{id}` (`WRITE_ROUTE_ALLOWLIST` 8 → 12); the run-concurrency cap fails closed with `503 briefs_busy` (deliberately not `429` — no `Retry-After` that could be honored). `[briefs]` is default-off in `nimbus.toml`; `nimbus clip status` reports the enable-state so a paired user isn't surprised by a 404 on their first brief. No new invariant, no migration.
+
 - [x] **`nimbus why` — six-lane provenance briefs** ✅ 2026-07-24 (#820) — the first of the implicit-knowledge triad: a ninth built-in agent fans out six parallel sub-agents (authorship, pull request, ticket, discussion, driver, downstream) over the local relationship graph, with a synchronous sub-300ms `agents.whyPeek` companion and `nimbus index regraph`. Read-only end to end — no migration, no new invariant, no new HTTP write route; Tauri `ALLOWED_METHODS` 99 → 101 (I7).
+
 - [x] **Zero-config onboarding** ✅ 2026-07-28 (#887, fixed by #895) — `nimbus init` gets a first-time user from install to a populated index without editing `nimbus.toml`, and the LLM is demoted from a hard prerequisite to optional.
+
 - [x] **`nimbus glossary` — implicit-knowledge glossary** ✅ 2026-07-30 — the second of the triad: a tenth built-in read-only agent plus a debounced post-sync extraction pass that mines domain terminology from the already-indexed graph (deterministic candidate mining + local-LLM consolidation, capped at 25 calls/pass; a pure-SQL reconciliation sweep keeps statistics honest as sources change). Schema **V45** (`glossary_term`, `glossary_pass_state`); Tauri `ALLOWED_METHODS` 101 → 102 (I7). No new invariant. **Manual term authoring** ✅ 2026-08-01 — a `[glossary.terms]`/`[glossary.synonyms]` pre-pass upserts authored definitions (`definition_source='manual'`) with no model call, exempt from the sweep's demotion and veto but not its statistics refresh, sorted ahead of mined terms in every read path. Schema **V46**. Dated detail: [`docs/CHANGELOG.md`](./CHANGELOG.md).
+
 - [x] **`nimbus decisions` — implicit ADR extractor** ✅ 2026-08-02 — the third of the implicit-knowledge triad: an eleventh built-in read-only agent plus a debounced post-sync extraction pass (discover → extract → corroborate) that mines decision statements ("we decided X because Y, alternatives were Z") from Slack/Discord/Teams/Notion/Confluence/Obsidian/Linear/Jira/GitHub/GitLab threads, corroborates them against downstream PRs, commits and ADRs already in the relationship graph, and scores confidence deterministically (never via a model's self-report). Schema **V47** (`decision_record`, `decision_evidence`, `decision_pass_state`); Tauri `ALLOWED_METHODS` 102 → 103 (I7). No new invariant — read-only end to end, no `connectors.dispatch`, appends nothing to the egress ledger. Two limits are stated in every brief, not absorbed silently: at ship time item bodies were indexed to a blanket 512-character cap, so a decision stated later in a long document or thread was invisible to this pass; the full-body store (**V48**, shipped the same day — see below; plus the 2026-08-03 Notion/Confluence follow-up) lifted that cap to 16 KiB for the sources this agent actually mines that were migrated (Slack, Discord, Teams, Obsidian, Linear, Jira, `github:issue`, Notion, Confluence), so the blanket disclaimer is now a conditional per-brief count instead — `N of M source(s) considered ... indexed with a truncated body`, keyed on `body_complete = 0`, silent when nothing is truncated. GitLab and `github:pr` are still capped at 512 characters. And `migration`/`iac` evidence is specified in the schema but never emitted — no connector indexes changed-file paths — so the confidence ceiling is **0.86, not 1.0**. Dated detail: [`docs/CHANGELOG.md`](./CHANGELOG.md).
+
 - [x] **Full-body store — `item.body` (V48)** ✅ 2026-08-02 (#1023) — lifts the 512-character cap that bounded keyword search, `nimbus glossary` and `nimbus decisions` alike: a new `item.body` column holds up to 16 KiB for `PROSE_HEAVY_TYPES`, `item_fts` is repointed from `body_preview` to `body`, and `body_preview` becomes a derived 512-char prefix of `body`, never written independently. Embeddings, the relationship graph, and the federation query gate are deliberately untouched — all three keep reading `body_preview`, so embedding egress stays exactly flat. The plan named "twelve connectors"; verified against the tree at ship time it was **10 full body @ 16 KiB** (Slack, Teams, Discord, Linear, Jira, `github:issue`, Snyk, Obsidian, Zoom transcripts, `nimbus:web_clip`), **1 partial** (`nimbus:research_brief`, capped at 2,000 chars by `MAX_SUMMARY_CHARS` upstream of the store — a real gain from 512, but not full-body indexing), and **2 still inert at 512** (Bitbucket, which emits only `type: "pr"` while `PROSE_HEAVY_TYPES` lists the `bitbucket:issue` nothing emits; and `github:pr`, never added to `PROSE_HEAVY_TYPES`). A follow-up PR on 2026-08-03 migrated `notion:page` and `confluence:page` from `bodyPreview: ""` to a declared-full `body:`, bringing the count to **12 full body @ 16 KiB** (the same ten plus Notion pages and Confluence pages); the partial and inert counts are unchanged. A second follow-up on 2026-08-04 enforced depth at the sync chokepoint for every connector (schema **V49**; see the depth-enforcement + email-bodies entry below) and migrated `gmail:email` and `outlook:email` — both already in `PROSE_HEAVY_TYPES` — from `bodyPreview` to a declared-full `body:`, bringing the count to **14 full body @ 16 KiB**; the partial and inert counts are still unchanged. `nimbus index rebody` re-fetches bodies for already-indexed items by clearing a connector's sync watermark. No new security invariant. Schema **V48**. Dated detail: [`docs/CHANGELOG.md`](./CHANGELOG.md).
+
 - [x] **Ownership graph from already-indexed data** ✅ 2026-08-07 — service/code ownership, in two PRs. Built **differently from how this row originally described it**: not derived from the GitHub + PagerDuty index, but from git blame already captured by the Stage 2a blame indexer (`git_blame_line`) — dedicated IDP connectors (Backstage et al.) stay demoted to S5 as planned. PR A (derivation) added a debounced post-sync pass aggregating recency-weighted blame lines into `person --owns--> source_file | directory | service` graph edges (schema **V51**: `owns`/`contains`/`tracks_remote` relation types + `ownership_pass_state`). PR B (read surface) added the twelfth built-in agent (`agents.ownership`, `nimbus owners [<path>] [--service <name>] [--json] [--refresh]`, `ownership.refresh`, and the `findOwners` MCP tool); Tauri `ALLOWED_METHODS` 103 → 104 (I7). **This is authorship-derived ownership, not accountability** — there is no CODEOWNERS, reviewer, or on-call data in the index, and every brief states that plainly. No new invariant; schema unchanged by PR B. Dated detail: [`docs/CHANGELOG.md`](./CHANGELOG.md).
+
 - [x] **`nimbus pre-mortem` — comparable-history risk brief** ✅ 2026-08-11 — the thirteenth built-in agent, in two PRs (PR A: schema **V53** + a debounced theme-mining pass, 2026-08-09; PR B: the reader + cohort/risk/watcher logic). Built **narrower than this row originally described it**: it does **not** schedule watcher alerts unconditionally, and it composes with Phase 6 federation **not at all yet** — both were aspirational at design time. What actually ships: four sequential lanes (not parallel — each depends on the previous one's output) resolve a Jira epic to its affected services, build an IDF-weighted service-overlap cohort of comparable closed epics, compute five structural risks (cycle-time overrun, size overrun, review drag, incident coupling, abandonment), and read recurring blocker themes off the V53 pass. It then **proposes** — never arms — one PAUSED `incident_opened` watcher per affected service that resolves to a configured `[ci.service.<id>]` id (an unmapped repo gets none, and the brief names that), via the one narrowly-bounded exception to the read-only agent shape invariant (see the `nimbus-agent-patterns` skill). **No deploy-failure watcher is proposed**: the watcher engine now supports scoping one by affected service (`filter.affectedService`, matched against the incident/deployment graph entity's `metadata.affectedService`), so the earlier `item.service`-is-the-provider-slug reason no longer applies — what still does is that `deployment/annotate.ts`, the only writer of the `metadata.conclusion` a `deploy_failed` watcher matches, inserts its `item` row directly and creates no `deployment` graph entity, so such a watcher matches nothing until `nimbus index regraph` runs. Deploy-failure is a watcher CONDITION KIND, not one of the five risks — the fifth risk is abandonment, and no deploy-failure risk is computed. **Jira-only, and `parent_key`-derived cohort membership is team-managed-Jira-only** — no `linear:project` items are indexed at all, so "Jira + Linear" in this row's original title never described what could ship. Confidence tops out at **0.86**, matching `decisions`: no connector indexes ticket comments. (`glossary` has no confidence-ceiling concept — its own honesty disclosure is truncation counts and definition provenance, not a confidence score.) The deploy-failure watcher and non-Jira trackers → re-homed to [S4](#carried-into-s4) (2026-10-10). `agents.premortem` is excluded from both the HTTP (`POST /v1/agents/{agent}`) and MCP tool surfaces, matching `agents.preflight`, because it writes rows with no HITL gate; it **is** on the Tauri `ALLOWED_METHODS` list (104 → 105, I7) since the Tauri renderer sits behind the I7 XSS threat model, not "arbitrary network caller." `premortem.refresh` (the on-demand pass trigger) is LAN-forbidden and not Tauri-exposed, same as `glossary.refresh`/`decisions.refresh`/`ownership.refresh`. Dated detail: [`docs/CHANGELOG.md`](./CHANGELOG.md).
+
+
 
 - [x] **`nimbus negotiate` — contribution brief** ✅ 2026-08-12 — the fourteenth built-in agent, and the last of the S1 agent set pulled forward from Phase 7 Wave 5. Six lanes over the local index (PRs authored with partial size-stat coverage, PRs reviewed, tickets opened / closed by an authored PR, ownership, decisions authored, docs/notes/messages written); default 90d window, max **365d** — its own bound, wider than every sibling's shared 90-day cap, since an annual review needs a year of evidence. Purely read-only: no HITL, no connector call, no write of any kind. Built **narrower than the Phase 7 row described it** — see that row for the full accounting of the four evidence sources that do not exist. The governing property is an **honesty contract**: every lane field is `| null`, a lane that failed or never ran renders "could not be computed" and never `0`, and the brief states its own limits unconditionally — the window is "active in", not "created in" (`item` has no creation timestamp); the ownership section repeats `nimbus owners`' **authorship-derived, not accountability** label; incidents resolved / on-call shifts / deploys triggered are named as unavailable on every run; and an unresolvable `--person` (including a `git:<email>` blame alias, which is not a `person.id`) raises a gap saying the counts are structurally zero rather than measured, instead of rendering as a person who shipped nothing. Personal document sources (Obsidian, Notion) are excluded unless named in `[negotiate] personal_sources` — configuration IS the consent, following the `[glossary.terms]` precedent. `agents.negotiate` is excluded from **both** the HTTP (`POST /v1/agents/{agent}`) and MCP tool surfaces — not for side effects (it has none) but for its SUBJECT: with `--person`, an exposed version would let any bearer-token holder assemble a compensation-relevant dossier on any indexed person without the owner initiating it. It **is** Tauri-exposed (`ALLOWED_METHODS` at 105, I7), that renderer being a same-machine, owner-initiated surface. No new invariant; schema unchanged. Dated detail: [`docs/CHANGELOG.md`](./CHANGELOG.md).
 
+
+
 - [x] **Agent brief synthesis (A0)** ✅ 2026-08-16 — LLM-rewritten built-in briefs, gated by a new `[agents] synthesis` config (`"off" | "local" | "allow-remote"`, default `"local"`). Not itself a line item in the original Wave 6 answer-quality row below: design work for devil's-advocate mode (A1) and agent personas (A2) found that `agents/_lib/synthesize.ts`'s synthesis seam — present since 2026-05-09, predating every implicit-knowledge agent it now serves — had never actually run in production, because `AgentsRpcContext.llm` was optional and neither production dispatcher (`ipc/server/dispatchers.ts`, `agent-runs/agent-http-invoke.ts`) supplied it; every built-in brief took the deterministic path regardless of `[llm]` settings, confirmed live against a working Ollama config. A0 is the prerequisite A1/A2 both implicitly assumed answered, so it shipped first, on its own merits: `agents/_lib/synthesis-llm.ts` resolves a provider per-invocation (never cached, since Ollama can start/stop under a long-lived Gateway), refusing outright under `"local"` when no local provider answers so nothing egresses by construction, and appending one `model`-class egress-ledger row (raised from `none` to `per-call`; `docs/SECURITY-INVARIANTS.md` § I29) before any remote call under `"allow-remote"`. Whole-section disclosures — `## Gaps` for all fifteen brief kinds, plus `negotiate`'s `## Sources` and `## Evidence not available from the index` — are now structurally protected across every brief kind under a new invariant, **I31** (`docs/SECURITY-INVARIANTS.md`): they are constructed by the renderer and re-attached verbatim after synthesis rather than checked after the fact, so a rewrite cannot drop one by construction. That coverage is broader than it first looks: `decisions`'s and `premortem`'s 0.86 confidence ceiling and every `glossary`/`decisions`/`premortem` `body_complete = 0` truncation count are each a gap note (`gaps.push`), so they ride the same `## Gaps` section as everything else and are fully covered, not an exception to it. What remains genuinely INTERLEAVED — inside prose the model is meant to rewrite, so it cannot be held back as a whole section — is narrower: `negotiate`'s ownership list-truncation clause, its last-modified-not-created window clause, its two `unattributable` disambiguation lines, and `glossary`'s two definition-provenance lines. That set remains checked by the narrower `requiredPhrases` anchor-phrase guard (`brief-contract.ts`), which today covers only `negotiate`'s seven null-lane disclaimers (`_could not be computed_`) via separate string literals in `render.ts` and a matching `NOT_COMPUTED` copy in `brief-contract.ts` — not constants the two files share yet; widening the check to the rest of the interleaved set, and deriving its anchors from constants shared with the render sites, shipped as **I31 PR 2** on 2026-08-18 (see the Remaining-in-S1 entry above) — `agents/_lib/brief-disclosures.ts` is now the single definition both sides read, and the anchor check covers the whole interleaved set, the preamble window clause included. Rejection reasons (`timeout` / `contract_violation` / `provider_error` / `egress_append_failed` / `empty_result`) are carried on the `briefReady` notification's `synthesis` field, not only logged, so "why is my brief still deterministic?" is answerable without a debug build. **The `allow-remote` path was unreachable in production AS OF THIS ENTRY (2026-08-16), and became reachable on 2026-08-28 with slice 2b's four cloud vendors — see the S2 row below; the paragraph that follows records the state at the time A0 shipped:** at that date `packages/gateway/src/llm/` shipped only `OllamaProvider` and `LlamaCppProvider` — both local — and `platform/assemble.ts` registered exactly those two; no remote `LlmProvider` implementation existed anywhere in the tree, so the `model` egress class, though wired end-to-end and raised to `per-call`, appended zero rows in production. **That changed on 2026-08-28**: slice 2b registers four cloud adapters behind a default-off per-vendor opt-in, `recordSynthesisEgress` has since been superseded by `egress/model-egress.ts`'s `wrapLedgeredProvider`, and the class is now exercised. No migration, no Tauri allowlist change; the egress-ledger risk here rides I29/D22, and the brief-content risk described above is invariant I31, recorded 2026-08-17. Dated detail: [`docs/CHANGELOG.md`](./CHANGELOG.md).
+
+
 
 - [x] **Agent personas (A2)** ✅ 2026-08-18 — the last of the three Wave 6 answer-quality surfaces, after A0 (2026-08-16) and A1 (2026-08-18, Wave 6 section below). A `[persona]` section in `nimbus.toml` — `tone` (`neutral` default / `terse` / `formal` / `casual` / `verbose`) and `voice` (`neutral` default / `opinionated` / `collective`) — shapes `nimbus ask`, every built-in agent brief, and (because a `@nimbus` mention runs through the same `runAsk` pipeline) **ChatOps replies**, where an `opinionated`/`collective` voice is visible to the whole channel. **`confidence_threshold` and `tool_caution` are rejected, not deferred:** `tool_caution` was already prohibited on 2026-08-16 (Non-Negotiable #2 + I2's frozen `HITL_REQUIRED_BACKING` set forbid a config knob that changes what triggers a consent prompt); `confidence_threshold` is rejected on the same reasoning one layer up — a dial that lets the agent hedge less is a dial that makes it sound more certain than it is, against every S1 honesty surface built this month (I31, the 0.86 confidence ceilings on `decisions`/`pre-mortem`, `negotiate`'s "could not be computed" instead of `0`). One definition — `engine/persona.ts`'s `TONE_DIRECTIVES`/`VOICE_DIRECTIVES` — applied at two sites: `nimbus ask`'s single site above the router-vs-agent fork (composing outward around `--devil`, persona outermost so the devil directive is never diluted), and `agents/_lib/synthesize.ts` via the same `buildAgentSynthesisRunner` factory both the socket (`ipc/server/dispatchers.ts`) and HTTP (`agent-runs/agent-http-invoke.ts`) brief paths already share. **D6** — no directive may govern *whether* content appears, only *how* — is enforced by a test over the directive constants pinned against an omission-verb pattern; it is what keeps `terse` coherent alongside `--devil` and what keeps it from pushing against **I31**, which needed no new guard: reserved sections are re-attached verbatim and never shown to the model, and interleaved disclosures are anchor-checked, so a terse persona's only measurable cost is a higher discard rate back to the deterministic render — now self-describing via the resolved persona riding the `briefReady` notification's `synthesis` field alongside the existing rejection reason. Two adjacent bugs fixed in the same branch: `[agents] synthesis` was profile-blind (the deleted `loadNimbusAgentsFromConfigDir` hardcoded `nimbus.toml`) and now reads from the same profile-resolved path as `[persona]` — a **bidirectional** change, so a key set only in the base `nimbus.toml` no longer applies under a profile whose file has no `[agents]` section, matching `[llm]`/`[session]` whole-file semantics (superseded 2026-10-22: profiles now inherit from `nimbus.toml`); and `ProfileManager` — declared as an optional dependency but never constructed in production — is now wired in `platform/assemble.ts`, which is the first time the desktop app's Profiles settings page and its four already-allowlisted `profile.*` IPC methods have worked rather than thrown. **Switching a profile still requires a Gateway restart** (`NIMBUS_PROFILE` is fixed at spawn); the panel now says so, matching what the CLI already printed. No schema migration, no new IPC method, no new HTTP route, no new invariant, no Tauri allowlist change — `ALLOWED_METHODS` stays at 105. Dated detail: [`docs/CHANGELOG.md`](./CHANGELOG.md).
 
+
+
 - [x] **Answer-quality surfaces — negation in `nimbus ask` (W6-B.2), the row that closed S1** ✅ 2026-08-20 (Phase 7 Wave 6) — closes **W6-B**, the last open Wave 6 row (W6-B's aggregation half shipped 2026-08-19 as `nimbus stats`; its structured half, B.1, shipped earlier the same day). B.1 delivered three named predicates — `nimbus query --service <id> --type pr --not-touching '<glob>'`, `nimbus query --service <id> --type deployment --no-downstream-incident`, `nimbus people list --not-reviewed --since 7d` — plus `--explain`, each refusing (exit `1`, structured `missing_substrate` document) rather than answering from an unpopulated substrate, since for a negation a missing row *produces* a result instead of costing one. **B.2 puts the same three predicates on two model surfaces under matching names** — `findPrsNotTouching(pathGlob, service?, limit?)`, `findDeploymentsWithoutIncident(service?, limit?)`, `findPeopleWithoutReviews(sinceDays?, limit?)` — on the gateway engine (`engine/agent.ts`, reached by `nimbus ask` and, sharing its engine, the desktop app and VS Code extension) and the MCP server (`INDEX_TOOL_SPECS`, reached by any external MCP client; `TOOL_SPECS` moves 18 → 21). **The guarantee is unequal across the two surfaces, by design and stated precisely, not blurred:** refusals are structural on both (a refusing tool returns only the refusal, so there is nothing else to present instead), but exclusion counts are guaranteed only on the engine surface — a per-request `AsyncLocalStorage` disclosure store, drained and appended to the reply (and streamed, byte-identical, on the streaming dispatcher) at the one site both execution paths return through; an external MCP client's model can report the rows and silently drop "12 excluded", since no append hook reaches it and the `@nimbus-dev/mcp` launcher is a pure exec, not a proxy that could add one. **Two bounds are recorded rather than implied away.** The `AsyncLocalStorage` risk the design flagged — that Mastra's own tool-call scheduling might not carry the store — was tested against a real `@mastra/core` `Agent` during implementation and the sentinel arrived, so the append is a verified guarantee with a payload-embedded fallback, not a hope. And **the local-router path has no tools at all**: `[llm].prefer_local = true` sends a turn through `runViaLocalRouter`, whose router has no tool-calling support anywhere in `packages/gateway/src/llm/`, so on that path the three negation tools — and `searchLocalIndex` — are unreachable; a `prefer_local = true` user reaches these predicates only through the CLI (B.1) or an MCP client. A model can also still ignore the tool descriptions and answer a negation from ranked `searchLocalIndex` results with no disclosure attached, since steering is by description only and there is deliberately no negation-question detector (a false positive would attach a scary caveat to a correct answer) — a known open bound, not closed here. No schema migration, no new IPC method, no new HTTP route, no new invariant, `ALLOWED_METHODS` unchanged at 105, no `egress_ledger` row on either surface. Dated detail: [`docs/CHANGELOG.md`](./CHANGELOG.md).
+
 - [x] **I31 PR 2 — interleaved-disclosure phrase layer** ✅ 2026-08-18 — PR 1 (2026-08-17) closed whole-section disclosure integrity (`## Gaps` plus `negotiate`'s two reserved sections) structurally; this closes the interleaved half. Every disclosure sentence, its anchor and its presence predicate now have ONE definition in a new `agents/_lib/brief-disclosures.ts`, read by both the renderer (`.line`) and `brief-contract.ts`'s `requiredPhrases` (`.anchor`) — the seven null-lane `_could not be computed_` literals included, so the two independent copies that existed before cannot drift. The check widens from those seven to the whole interleaved set: `negotiate`'s ownership accountability + list-truncation clauses, its two `unattributable` lines, `glossary`'s two definition-provenance lines, and its last-modified-not-created window clause — which needed a second scope, since it lives in the PREAMBLE above the first `##` where `sectionBody` cannot reach (`markdown-sections.ts` gains `preambleBody`; scoped to the preamble, not the whole document, so a rewrite cannot satisfy it from an unrelated section). **A negotiate brief now always carries a non-empty requirement set** — before this, a fully-populated one had none, and a model could return a single line that was accepted verbatim. Two bounds stated rather than hidden: a phrase check proves a fragment survived, not that its sentence still means the same thing; and `glossary` requires a phrase only in `term` mode for `entries[0]`, exactly mirroring `renderGlossaryBody` (over-requiring would reject every list-mode synthesis). One design item from the spec was dropped on contact with the code: exact-match heading scoping for glossary terms, since term mode renders a single entry and the prefix collision it guarded against cannot arise. No schema change, no Tauri allowlist change, no new invariant — I31's own text, its enforcement test and the mirrored `CLAUDE.md`/`GEMINI.md` bullets are updated in place. See `2026-08-17-brief-honesty-contract-design.md` § Delivery.
+
+
 
 - [x] **Nimbus as a local MCP *server*** ✅ 2026-08-20 — carried in this slot as an early harvest from **S3 (Open Surface)**, and delivered rather than parked. The server ships in-repo (`packages/cli/src/commands/mcp-server.ts` + `packages/cli/src/mcp/`) over **stdio by default, with no network port**, exactly as the S3 row scoped it; the `@nimbus-dev/mcp` launcher was extracted to the satellite repo [nimbus-agent/nimbus-mcp](https://github.com/nimbus-agent/nimbus-mcp) (2026-08-20, #1280) and is listed in the official MCP Registry as `io.github.nimbus-agent/nimbus`, so `npx -y @nimbus-dev/mcp` reaches the local index from any MCP client. The tool surface is **21 read-only tools** — 9 index tools plus 12 agent tools — after W6-B.2 took `TOOL_SPECS` from 18 to 21. **What did NOT ship here, and was why `I28` stayed reserved until 2026-10-12:** the owner-sink / write surface. At this point the server was read-only, so no HTTP/SSE transport, no `LanServer` method check (**I5**), no constant-time pairing-token auth (**I10**) and no **I13** write gating were needed — none of the conditions the S3 row attached to a non-stdio transport were ever reached. Those re-scoped onto **S3**; `I28` was taken by the S3 capture sink's first slice on 2026-10-12 (a stdio-only write door behind an app-level gate, so none of those transport conditions applies yet). The design + Wave 1 plan on `dev/asafgolombek/phase7-mcp-gateway-server` (last commit 2026-06-18) is superseded by what shipped and should not be resumed as written.
 
+
+
 **Recently landed alongside the spine** (not S1 features — platform/distribution harvest): the web clipper's browser extension (satellite repo, 2026-07-19), the `@nimbus-dev/sdk` + `@nimbus-dev/client` npm extractions, the installer/distribution program, and the release-health + GitHub-App CI hardening. Dated detail: [`docs/CHANGELOG.md`](./CHANGELOG.md).
+
+
 
 **Closing the slot.** S1 had no acceptance-criteria block of its own — it is a spine slot, not a numbered phase, and each row above carries its own honesty accounting inline. It is closed on the plain reading of its contents cell in the [spine table](#phase-7-sequencing-spine): every item named there has shipped, and the one row still open on 2026-08-20 (W6-B) closed that day. Three bounds are carried forward rather than papered over, each recorded in the row that owns it: the `allow-remote` synthesis path is wired but **unreachable in production** (no remote `LlmProvider` exists in the tree, so the `model` egress class appends zero rows today); the local-router path (`[llm].prefer_local = true`) has **no tool-calling support at all**, so the negation predicates are unreachable there; and exclusion counts on a negation are guaranteed **only** on the gateway engine surface, never through an external MCP client.
 
+
+
 ---
+
+
 
 <a id="spine-s2"></a>
 
+
+
 ### Spine S2 — Local Compute Fleet ✅
+
+
 
 > **Status: ✅ Complete (opened 2026-08-21, closed 2026-10-10).** S2 opened on the closure of [S1 — Local Brain](#spine-s1) and was Track 1's second slot in the [Phase 7+ Sequencing Spine](#phase-7-sequencing-spine) overlay. Its canonical *detail* lives in [Phase 14 — Agent Evolution / AI v2](#phase-14--agent-evolution--ai-v2), which this slot drew from; the two **[NEW]** rows below originate in the overlay itself and in [Phase 27](#phase-27--the-agent-society). All six spine capabilities shipped — sandboxed code execution (2026-08-23) with the computer-use browser (2026-08-31) and terminal (2026-09-01) lanes, bring-your-own-frontier-model routing (2026-08-28), multimodal I/O (2026-09-02 → 2026-09-05), overnight sub-agent fleets (2026-09-07 → 2026-09-17) and runtime tool generation (2026-09-09 → 2026-09-15) — plus user MCP servers that actually run (2026-10-06/07, #1623, #1628); the v0.1.1 CLI batch and the on-call pushed brief shipped in the same window. **Deferred out of S2, not dropped:** the computer-use screen lane, a PowerShell terminal lane, diarization, Zoom recording frame captions and agent-initiated tool proposal → [Phase 14](#phase-14--agent-evolution--ai-v2); Bedrock/SigV4 and a local OpenAI-compatible runtime → [S5](#carried-into-s5); user-MCP write grants → [S4](#carried-into-s4); and model access to generated tools and to computer-use → [S4](#carried-into-s4), which needs owner-only turns plus a per-call owner HITL prompt on every model invocation of a generated tool (I42's shape — I39 bounds WHERE a tool may send, never WHAT) and, for computer-use, a per-turn session binding plus a desktop consent UX (today `gateway-main.ts` supplies neither `deps.toolgen` nor `deps.computerUse`). The record below is kept as written during the slot.
 
+
+
 **Goal (S2 — Local Compute Fleet):** turn the machine from a place the agent *reads* into a place the agent *works*. The moat argument is the one that put this slot second in the spine: local computer-use where screenshots never leave, and overnight fleets on compute the user has already paid for, are both high-time-to-value **and** structurally unfakeable by a metered cloud. S1 made the local index answerable; S2 makes local compute usable.
+
+
 
 **Why this order, restated:** S1's honesty primitives are a prerequisite, not a coincidence. Every row below either executes code or drives a UI, so `I2` (HITL in the executor, never the prompt), `I29` (nothing leaves unledgered) and the sandbox invariants `I1`/`I15` are the substrate this slot builds on. A capability added here that does not land on those is the failure mode to watch for.
 
+
+
 **Scope (from the spine table — all six capabilities shipped)**
 
+
+
 The count is re-derived, not carried forward. The spine table's S2 cell names **six
+
 capabilities**, and all six shipped: sandboxed code execution, the local computer-use loop (its
+
 browser and terminal lanes are recorded inside the code-execution row below rather than as a row
+
 of their own), runtime tool generation (closing at **PR 3 of 3**, persistence, 2026-09-10),
+
 multimodal I/O, overnight sub-agent fleets (closed by **PR 2b**, 2026-09-17), and
+
 bring-your-own-frontier-model routing. The checkbox list below also carries two rows that are not
+
 spine capabilities: *Zoom recording frame captions*, a recorded deferral belonging to the
+
 multimodal row, and *User MCP servers that actually run*, which shipped inside the slot
+
 (2026-10-06/07); neither is counted above.
+
+
 
 - [x] **Sandboxed code execution** — ✅ **shipped 2026-08-23** (`nimbus exec`, invariant **I33** + static **D23**, no schema change). The owner runs code inside the existing three-OS sandbox behind a HITL prompt showing the verbatim body; standing approvals remain unsupported. Delivered: the `exec/exec-gate.ts` chokepoint, a pluggable `ExecRuntime` registry, per-execution fs grants, wall-clock + output-cap kills, a `code.execute` audit row per outcome, `exec.run`/`exec.approvalRespond` over local IPC (whole namespace LAN-forbidden, absent from the Tauri allowlist), the default-off `[code_execution]` config, and the `[policy.capabilities.ai_v2]` org lockoff as a tighten-only disabled set serving every `ai_v2` capability (five at the time; six since `agent_fleet` landed 2026-09-07; seven since `user_mcp_model_access` landed 2026-10-09; eight since `mcp_capture` landed 2026-10-12; nine since `mcp_action` landed 2026-10-15 — the set is derived from `AI_V2_CAPABILITIES`, so this row does not need editing again when the next arrives).
 
+
+
   **The terminal lane landed 2026-09-01** — see the § Last updated header above for what it does and does not confine, including its two recorded deviations from spec § 3.5; it is not restated here. **PowerShell is a deliberate deferral rather than an oversight:** the shell registry ships `sh` and `cmd`, and adding `pwsh` is a larger job than a registry row — a four-location `$PROFILE` chain that must be suppressed the way `ENV`/`BASH_ENV` and `cmd /D` are, PSReadLine emitting ANSI and rewriting the input line, and object-formatted output whose column widths depend on host width, all of which interact badly with a lane that has no tty and reads plain bytes. It is additive when it lands: one registry entry plus its own env overlay, no gate change. → re-homed to [Phase 14 § Stretch — Computer Use](#phase-14--agent-evolution--ai-v2) (2026-10-10). **The driver landed 2026-08-31 as raw CDP over a WebSocket** (`computer-use/cu-lanes/`), with no dependency at all — `playwright-core` fails a `bun build --compile` gate (a statically-resolved `require` inside its bundled, unused WebDriver-BiDi transport, resolved eagerly by bun's bundler) and is not reintroduced in any form. `platform/assemble.ts` now supplies the four `CuGateDeps` driver seams, so `ERR_CU_NO_BROWSER` is no longer the terminus of every session on a machine with Chrome, Chromium or Edge installed. The `browser` egress coverage class rose from `"none"` to **`per-run`** in the same commit as its production caller, per `egress-coverage.ts`'s own rule.
+
+
 
   **Read the confinement claim narrowly — the browser does NOT spawn through `SandboxRunner`, and that is a deviation from the design spec's § 3.5 rather than an omission.** No PAL runner can carry a CDP control channel: a loopback debugging port needs `network-bind`, which macOS's `(deny default)` SBPL profile denies (it emits only `(remote …)` filters); the fd-pipe transport needs descriptors 3/4 forwarded, which the Windows AppContainer helper does not do; and Linux and Windows both additionally require `nimbus-sandbox-helper` for any network-bearing policy, a binary CI does not install. Making it work would mean widening the PAL profile for EVERY sandboxed connector, or passing Chromium `--no-sandbox` — disabling the renderer sandbox of the one process in this codebase that renders attacker-controlled content. The lane is confined instead by **Chromium's own multi-process sandbox** (a pre-consent assertion over the EXACT argv that spawns refuses `--no-sandbox` and its siblings), a **Nimbus-owned `--user-data-dir`** (an empty or relative profile directory is refused, because Chromium with no `--user-data-dir` runs against the owner's real profile), the **§ 3.5.1 CDP request policy**, and **headless + `Browser.setDownloadBehavior: deny`**. The former `browserLanePolicy` is gone: it was asserted against `canConfine` and never used to launch anything, and its `network: []` would have meant `--unshare-net` — no network at all, and no route to the browser's own CDP endpoint.
 
+
+
   **What still has NOT shipped.** The **terminal** lane shipped on 2026-09-01 as slice 2 — a sandboxed, line-oriented shell with no network at all and no egress class. The **screen** lane did not ship (slice 3), nor did its `opaque` egress marker or the `nimbus prove` indeterminacy verdict it requires (→ re-homed to [Phase 14](#phase-14--agent-evolution--ai-v2)'s *Screen capture + click* row, 2026-10-10). The capability remains **DEFAULT OFF with an EMPTY `allowed_lanes`** — `enabled = true` alone grants no lane, so a real user still hits `ERR_CU_DISABLED` then `ERR_CU_LANE_NOT_ALLOWED` before anything can run. Invariant **I11**'s screenshot bound is still **anticipated, not live**: bytes are hashed and discarded, the model receives only an outcome and a digest, and no vision-capable model is wired into the agent, so there is nothing on this path for an envelope to protect — the taint latch nonetheless taints by KIND rather than by content, in advance of a channel that does not exist yet. And § 3.5.1's own bound survives untouched: `script` and `image` subresources load from ANY origin (blocking either breaks the real web), so a `<script src>` or `<img src>` carrying a payload in its URL still exfiltrates — it is rowed by origin in the ledger, which makes it visible after the fact, not prevented. Detail: [Phase 14 § Stretch — Computer Use](#phase-14--agent-evolution--ai-v2).
+
 - [x] **Runtime tool generation** — **PR 3 of 3 shipped 2026-09-10: persistence, closing this row.**
+
   `nimbus tool save <tool-id>` promotes a live, owner-approved generated tool to one that survives a
+
   gateway restart. The owner's STANDING approval — a fact distinct from the ephemeral create-time
+
   one (I39) — is captured through a SEPARATE consent broker (`toolgen.saveApprovalRequest`, never
+
   the create-time `toolgen.approvalRequest`) over the verbatim body, then the § 4.5 canonical
+
   artifact is signed with a Vault-only Ed25519 seed (`toolgen.signing.privkey`/`.pubkey`, generated
+
   on first use) and written to `<configDir>/toolgen/saved/<toolId>/`. New invariant **I40** and
+
   static rule **D29(d)**: `toolgen-saved-store.ts`'s `readVerifiedSavedTool` is the ONE accessor for
+
   a saved artifact's ON-DISK bytes, and it re-verifies the live signature THREE times independently
+
   — at boot (`toolgen-boot-reconcile.ts`, a health-report pass that also sweeps `saved/` directories
+
   with no database row), when the registry loads saved tools into visibility
+
   (`loadSavedToolsIntoRegistry`), and again immediately before the tool actually runs
+
   (`spawnSavedTool` — which had no production caller when this PR shipped, and gained one in the
+
   2026-09-15 follow-up below: `assemble.ts` binds it as `ToolgenInvokeDeps.spawn`, reached by
+
   `toolgen.invoke` / `nimbus tool run`. `deps.toolgen` stays unwired either way, so the MODEL
+
   still cannot invoke a generated tool) — never trusting an earlier
+
   pass's result or the `disabled_reason` column, which is a cache. New schema **V61**
+
   (`generated_tool`): existence only, never content — the signed `artifact.json` plus its signature
+
   is what proves the persisted bytes are the exact ones approved. **What signing defends, and does
+
   not, stated plainly:** it defends the filesystem-write attacker (forging a signature needs the
+
   Vault-held seed, which never touches disk or the database), not the Vault-read attacker, who can
+
   forge one — a narrower, precise claim, not a restatement of `extensions/verify-extensions.ts`'s
+
   existing hash-based tamper detection, which already covers every extension including this one.
+
   **No saved tool's credential outlives it:** `sweepToolgenCredentials` deletes every per-host
+
   generated-tool Vault credential (never the signing keypair) on shutdown AND boot — total by
+
   design, since there is no "keep the saved ones" set to compute; a saved tool re-acquires what it
+
   needs via `nimbus tool credential set`. Revoke closes the third window through the SIBLING
+
   `deleteCredentialsForTool`, a per-tool prefix delete — the two now share one signing-prefix
+
   exclusion (`TOOLGEN_SIGNING_KEY_PREFIX`), and `toolgen.revoke` also refuses the reserved tool id
+
   `signing`, whose prefix IS that keypair's. **Revocation is the standing approval's withdrawal
+
   path** and drops all four halves — live child, registry saved entry, `generated_tool` row,
+
   `saved/<toolId>` directory — plus the ephemeral script and the Vault credentials, idempotently and
+
   identically for a saved-only, ephemeral-only or both-halves tool; the save prompt promises exactly
+
   this. **The `[tool_generation] enabled` kill switch and the org-policy lock-off reach the DURABLE
+
   half too** (`toolgen-capability.ts`): both boot passes skip when the capability is off and
+
   fail-closed when the policy accessor is absent, so no saved tool loads or is offered. The concrete
+
   manifest's
+
   `filesystem.read` (machine-derived, ephemeral paths) is deliberately dropped from what gets SIGNED
+
   (`toolgen-portable-manifest.ts`) and is rebuilt fresh from code on every load/spawn instead —
+
   proven end to end by an integration test that saves a tool in one gateway process, boots a SECOND,
+
   wholly independent one against the same disk state, and spawns it there, plus a regression test
+
   that a Bun-upgrade-shaped change to the runtime's required read paths between save and spawn does
+
   not break the saved tool (it would under the REJECTED "sign the concrete manifest" design named in
+
   the parent design spec's § 10, which this shipped design avoided precisely because a Bun upgrade
+
   or a moved config directory must not present as tampering).
 
+
+
   **Structurally offered, not model-reachable.** `toolgen-agent-tools.ts`'s `buildGeneratedTools` —
+
   the function that would put a generated (ephemeral or saved) tool in front of the conversational
+
   model — exists and is tested, but `engine/agent.ts`'s `NimbusEngineAgentDeps.toolgen` is optional
+
   and its one production caller, `gateway-main.ts`'s `createNimbusEngineAgent(...)` call, never
+
   supplies it. `nimbus tool create`/`save`/`list`/`revoke`/`credential set` therefore work end to
+
   end, and a saved tool survives a restart and is spawnable IN-PROCESS (`spawnSavedTool`, exercised
+
   end to end by this closing PR's own integration test across two independent gateway processes). At
+
   the time this PR shipped, no path invoked a generated tool at all — there was no `toolgen.invoke`
+
   IPC method and no CLI subcommand that called one. **That gap closed in a follow-up (2026-09-15):**
+
   `toolgen.invoke` (CLI-only, LAN-forbidden, like every other `toolgen.*` method) plus
+
   `nimbus tool run <tool-id> [--input <json>] [--json]` now invoke a SAVED tool for real, through a
+
   fresh confined spawn — see [`cli-reference.md` § `nimbus tool`](./cli-reference.md#nimbus-tool) for
+
   the full contract (at most one `tool.invoke` audit row per call, never two, carrying neither the input nor the
+
   result; presence-only input validation, not schema conformance). **What did NOT move with it:**
+
   `deps.toolgen` is STILL deliberately left unwired in `gateway-main.ts`, so the model itself still
+
   cannot invoke a generated tool — `nimbus tool run` is CLI/owner-only, the same scope bound
+
   `nimbus exec` holds under I33, and an ephemeral (created-but-not-saved) tool is still not invocable
+
   by any path. Wiring `deps.toolgen` remains a deliberate, undone decision, not an oversight: it
+
   would activate a dormant capability (model-authored code becoming model-invocable) and is left for
+
   a human to schedule. → re-homed to [S4](#carried-into-s4) with its preconditions (2026-10-10).
 
+
+
   **Agent-initiated proposal did not ship in this slice and is a named, reason-recorded deferral** —
+
   the same treatment the computer-use screen lane received (fleet's own subject-enumeration
+
   deferral was the same shape through 2026-09-16; it has since shipped — see the fleet row below),
+
   not a middle PR that quietly evaporated. Every capability that DID ship across PR 1–3 is
+
   OWNER-initiated (`nimbus tool create`, `nimbus tool save`); letting the MODEL itself propose a
+
   network-reaching tool mid-conversation (`allow_agent_initiated` + `allowed_hosts`, a mid-turn
+
   consent pause, an approval prompt disclosing the AGENT rather than the owner initiated it) is a
+
   materially larger trust boundary and deserves its own consent-UX design pass — doubly so while
+
   `deps.toolgen` above stays unwired, since an agent-proposed tool would otherwise have no
+
   model-facing caller to reach anyway. → re-homed to [Phase 14 § Stretch — Tool Generation](#phase-14--agent-evolution--ai-v2) (2026-10-10). See the parent design spec's § 10 for the corrected
+
   delivery-split record (that section originally numbered this PR 2; it shipped as neither PR 2 nor
+
   any other number in this slice). PR 3 design:
+
   `2026-09-10-s2-toolgen-persistence-design.md`.
 
+
+
   **PR 2 — drafting — shipped 2026-09-10, ahead of this closing PR.** `nimbus tool
+
   create` now actually drafts a tool body via a model instead of refusing —
+
   `ERR_TOOLGEN_DRAFT_NOT_IMPLEMENTED` is gone. The model returns a body AND an input schema in one
+
   structured reply; the schema is INSIDE the artifact the owner approves (covered by the artifact
+
   digest, baked into the emitted script, and driving the parameters the calling model sees), never
+
   beside it. A four-rung validation ladder — the reply is JSON, the schema fits the restricted
+
   input-schema subset, the body parses, the body carries no construct the sandbox would refuse —
+
   runs before the owner is ever prompted, with exactly ONE bounded redraft on the first failure.
+
   New config **`[tool_generation] drafting`** (`"off"` / `"local"` / `"allow-remote"`, DEFAULT
+
   `"local"`) mirrors `[agents] synthesis` (I31) and `[fleet] allow_remote` (I38): **a
+
   `[llm.remote.<vendor>]` key configured for `nimbus ask` grants drafting nothing on its own**, and
+
   `"allow-remote"` DEFERS to the owner's own `[llm] prefer_local` preference rather than forcing a
+
   remote draft. A remote draft sends the description and indexed endpoint paths, never a credential
+
   value. The prompt is grounded on `api_endpoint` items already indexed from OpenAPI specs under
+
   `[[filesystem.roots]]` — a local index READ, though the query embedding follows `[embedding]` and
+
   therefore reaches the embedding vendor (ledgered `model`-class) on a remote-embedder install;
+
   `drafting = "off"` and a routeless machine refuse before that search runs — and the approval
+
   prompt discloses when nothing matched. `nimbus tool create --credential <host>=<token>` now actually transmits and
+
   binds a BEARER credential per host at create time; `header`/`basic` bindings existed in the broker
+
   but were reachable from no user-facing path *as of PR 2*, and `nimbus tool credential set` was a
+
   refusal stub. **Both were superseded by PR 3 (above), which made `credential set` real and put all
+
   three binding schemes on a user-facing path** — read this paragraph as the PR 2 record, not as
+
   current state. No schema migration, no new invariant — PR 2 builds entirely on PR 1's
+
   I39 substrate. **The pre-consent confinement probe was rewritten in the same PR, and platform
+
   equality (non-negotiable #5) HOLDS.** The earlier probe made `nimbus tool create` refuse
+
   (`ERR_TOOLGEN_CONFINEMENT_FAILED`) before the owner was ever prompted on ALL THREE platforms, not
+
   only Windows: it spawned an `@nimbus-dev/sdk/testing` script as a bare file entry point, which
+
   cannot start under a restrictive manifest inside Windows AppContainer (the measured
+
   `CouldntReadCurrentDirectory` dead end), AND it read `/etc/passwd`, which `bwrap` `--ro-bind`s and
+
   the macOS profile grants — so a correctly confined child read it and the probe reported
+
   "unconfined" on Linux and macOS. Nothing ever ran the DEFAULT probe (the unit tests inject
+
   `spawnProbe`, the integration suite injected its own copy), which is why it was invisible.
+
   `toolgen-confinement.ts` now carries a nine-line, zero-import inline `-e` probe that tries to read
+
   a SENTINEL the gate wrote outside every manifest grant and proved readable from the parent first —
+
   parent can, child cannot, therefore confined — with ANY read failure counting, since the three
+
   platforms deny by three mechanisms (`ENOENT` from bwrap's `--tmpfs /tmp` masking, `EPERM` under
+
   macOS `(deny default)`, a missing ACE on Windows). `assertToolConfinement`'s `canConfine`-then-probe
+
   order and its exit-code contract are unchanged, and both test layers now drive the real probe.
+
   Verified on Windows against a real `nimbus-sandbox-helper.exe` and on Linux against real `bwrap`
+
   0.11.1, where the two toolgen integration cases failed before the change and pass after it; macOS
+
   is not verified on hardware and is the stated residual, though the sentinel shape is the one
+
   `test/integration/platform/sandbox/sandbox-wrapper-spawn.test.ts` already uses and passes with
+
   there. **Not shipped by PR 2** (both closed by PR 3 above, or recorded as a deferral there):
+
   agent-initiated tool proposal, and persistence via `nimbus tool save` — which had to resolve how
+
   I16's Ed25519 verification applies to a tool with no publisher, and did so with its own signing
+
   scheme (I40) rather than reusing `verify-extensions.ts`'s `publisher` path. PR 2 design:
+
   `2026-09-09-s2-toolgen-drafting-design.md`.
+
   **PR 1 detail follows.** ✅ **PR 1 of 3 shipped 2026-09-09: the SUBSTRATE.** Delivered: invariant
+
   **I39** + static rule **D29**, the tenth I29 coverage class `tool` at `per-call`, default-off
+
   `[tool_generation]`, the LAN-forbidden `toolgen.*` namespace (absent from the Tauri allowlist),
+
   `nimbus tool create|list|revoke|credential set`, and no schema migration (ephemeral = in-memory).
+
   The generated tool has `permissions.network: []` **by construction** — a raw `fetch()` in the
+
   generated body fails at the OS, proven with an unconfined positive control and a `STARTED`
+
   execution marker — and reaches the network only through `toolgen-broker.ts`, which enforces the
+
   owner-approved host list, refuses loopback/RFC1918/link-local/metadata on every resolved record,
+
   refuses redirects, strips tool-supplied auth headers, and ledgers before every request. **Two
+
   residuals stated in I39, not discovered later:** the destination check is check-then-connect
+
   rather than connect-to-checked (Bun's `fetch` exposes no pinning hook, so a rebind by whoever
+
   controls an approved host's DNS still works), and the allow-list bounds WHERE a tool may send,
+
   never WHAT. Design: `2026-09-09-s2-runtime-tool-generation-design.md`.
+
   Detail: [Phase 14 § Stretch — Tool Generation](#phase-14--agent-evolution--ai-v2).
+
 - [x] **Multimodal I/O** — **PR 4 of 4 shipped 2026-09-05: a per-artifact opt-in that lets a remote vision model describe a still image, closing this row at 4 of 4.** PR 1 (2026-09-02) was LOCAL AUDIO/VIDEO ONLY: `whisper-cli` transcription of local media, stored as `video_understanding` rows, gated by a per-root `media_index` switch. PR 2 (2026-09-03) added a `VlmProvider` seam — a local Ollama-served vision model — that captions still images as `image_understanding` rows and a small number of uniformly sampled video frames alongside the existing transcript. PR 3 (2026-09-04) added `multimodal/cloud-bytes.ts`: a budgeted, I29-ledgered fetch of a cloud-backed media artifact's bytes for the same three OAuth-backed services already indexed (Google Photos, Google Drive, OneDrive). **PR 4 adds the remote arm PR 3 left ungated:** `nimbus media allow-remote` writes a durable, revocable, artifact-scoped consent (schema **V59** `media_grant`) naming ONE configured vendor — `anthropic`, `openai` or `gemini`, via the new `[multimodal] remote_vlm` key — before a remote model may ever describe that artifact; `nimbus media grants list`/`revoke` enumerate and revoke. **Images only, by two independent mechanisms:** `media-grant-store.ts`'s `createGrant` refuses outright to write an `av`-modality grant row, and separately `build-media-pass-deps.ts`'s `buildRemoteFor` returns `undefined` for any non-`"image"` candidate regardless of what the store holds, so an audio/video artifact resolves to the all-local composite either way — **there is still no remote tier for audio or video, at any tier** (carried forward from § 12.7: a user with a frontier key and no usable local whisper still cannot transcribe; the pass refuses rather than reaching for the cloud). Absent a grant an image is captioned locally exactly as before PR 4; a grant WIDENS what may happen for that one artifact and never narrows the local capability it already had. The vendor's API key is REUSED from the existing `[llm.remote.<vendor>]` Vault entry rather than minting a second secret surface, but the CAPABILITY is not inherited — a key already given for `nimbus ask` does not itself grant permission to send this machine's photos anywhere; that permission is `allow-remote`'s alone, granted one artifact (or one bounded selector batch) at a time, always behind an enumerated dual-ended preview (every matching artifact by title, naming both the source service and the destination vendor) and a `[y/N]` confirmation, refusing outright rather than defaulting to "no" in non-interactive mode. A selector-form grant (`--service`/`--since`) **requires** `--limit` — there is no default, since an unbounded "grant everything" must never be expressible — and `--limit` is capped at 500, refused rather than silently clamped above that. New invariant **I37** (a media body reaches a non-local model only through this durable, artifact-scoped grant, fail-closed the same way `enforce_air_gap` is) and static rule **D27**: the non-local `VlmProvider` constructor (`createRemoteVlm`) is confined to one wiring site (`build-media-pass-deps.ts`) inside a `wrapLedgeredVlm(...)` argument list, and the `media_grant` table is confined to its store (the sole writer), one correlated read in `media-discovery.ts`, and its own migration DDL. **No new egress coverage class:** the existing `model`-class appender (`egress/vlm-egress.ts`'s `wrapLedgeredVlm`, D22(g)) already covered a remote `describe` call before PR 4 shipped a real one to wrap — PR 4 is simply the first time that appender decorates a request that actually leaves the machine, so the `model` class's "no named exclusions" claim, re-checked against PR 4 rather than assumed, survives unchanged. **PR 4's GEMINI adapter has now been exercised against a live vendor endpoint (2026-09-06, spec § 21); Anthropic and OpenAI have not.** The three vendor request shapes live in one factory (`multimodal/vlm/remote/remote-vlm-shared.ts`, rather than three files, so D27's constructor confinement stays one allow-list entry) and were written from each vendor's own documented image API. The acceptance run granted one 390,842-byte Google Drive PNG to `gemini` and got a real caption back, with exactly one `model`-class ledger row (`destination: gemini`, `payload_summary` carrying the model name and the byte count, never the prompt or the bytes) and the BLAKE3 chain verifying over 65 rows — so the shape this code sends is now known to be one Gemini accepts, not merely one the fakes agree with. **That narrows the gap rather than closing it:** the Anthropic and OpenAI request bodies and response shapes are still fixture-only, as is every FAILURE mode on all three (a 400 on a bad `media_type`, a 429, an auth refusal), and so is the TTY confirmation path — the run's grant was created through the LAN-forbidden `media.allowRemote` IPC method because the CLI correctly refuses a piped `y` in non-TTY mode. **Two DEFAULT-OFF switches remain the whole local control surface, unchanged by PR 4:** `[multimodal] enabled` and the per-root `media_index`, both `false` — PR 4 adds a THIRD gate (the per-artifact grant) on top of those two, not a replacement for either. **The Google Photos leg of PR 3's own cloud-fetch arm is still unverified against a real account**, and PR 4 inherits that gap rather than closing it: `google_photos` authenticates and syncs `healthy` but returns an empty library under the `photoslibrary.readonly` scope — Google's March 2025 restriction limits that scope to app-created media, and this install has uploaded nothing — so neither the Photos byte-fetch nor its `prefer_renditions`/rendition-suffix code path has ever been exercised against a real provider (spec § 20.2); only the Google Drive leg has (§ 20.1). Design: `2026-09-02-s2-multimodal-io-design.md` §§ 18–21. Detail: [Phase 14 § Core — Multimodal I/O](#phase-14--agent-evolution--ai-v2).
+
+
 
   **Delivered (PR 1):** `nimbus media understand [--service|--modality|--limit|--since]`, a budgeted, resumable pass (V58 `media_pass_cursor`) over media files under `[[filesystem.roots]]`, discovered behind a new per-root `media_index` toggle. Transcription is local `whisper-cli` over an `ffmpeg` transcode into one 0600 gateway-owned scratch WAV, deleted in a `finally` and swept at pass start for files a dead process left behind. Output is a derived `nimbus:video_understanding` item with a STABLE external id (the version lives in metadata, so a model upgrade replaces rather than accumulates) carrying `modelDerived: true` provenance. The pass discloses skips BY REASON, never a bare total. Reachability is pinned by a committed dispatcher test with a negative control.
 
+
+
   **Delivered (PR 2):** a `VlmProvider` seam (`multimodal/vlm/vlm-types.ts`) — deliberately NOT a widened `LlmProvider`, since `LlmGenerateOptions` is text-only and pushing image bytes through it would reach every text caller, the same fork that produced `wrapLedgeredMastraModel` as its own decorator rather than a widening. Its own I29 `model`-class appender, `egress/vlm-egress.ts`'s `wrapLedgeredVlm` (static rule **D22(g)**), ships ahead of any remote `VlmProvider` in production, mirroring PR 1's gate-before-the-thing-it-gates posture. The one real provider, `multimodal/vlm/ollama-vlm.ts`'s `createOllamaVlm`, probes `POST /api/show` for a `capabilities` array containing `"vision"` (with a `families`/`clip`/`mllama` fallback for legacy daemons) rather than guessing vision support from a model name. Still images caption through the existing `media-gate.ts` chokepoint as `nimbus:image_understanding` rows. Video artifacts gain `multimodal/frames/av-understander.ts`, a composite understander that transcribes first and then samples up to `max_frames` (default 8, density-capped at one frame per 2 seconds of video) keyframes via `multimodal/frames/frame-extract.ts` — one `ffmpeg -ss … -frames:v 1` spawn per frame, JPEG bytes read off stdout, nothing written to disk. `UNDERSTANDING_VERSION` bumped to 2, so a PR 1 video already transcribed re-runs and gains captions on its next pass. The GPU lease is taken **once per artifact, not per frame**, with a heartbeat well inside `GpuArbiter`'s 30 s idle bound — re-acquiring per frame would add a queue round-trip per frame and risk a half-captioned video nothing records as partial. A row with no speech AND no captions is not written at all: the gate throws, the pass records a retryable failure, rather than storing an artifact whose entire body is disclosure notes.
+
+
 
   **Delivered (PR 3):** `multimodal/cloud-bytes.ts`'s `fetchCloudBytes` fetches a cloud-backed candidate's bytes for the three OAuth-backed services the index already covers — Google Photos, Google Drive, OneDrive — never a byte read locally otherwise. Bounded by per-artifact and per-run byte budgets, enforced per chunk: the per-run budget (`[multimodal] fetch_budget_bytes`, default 2 GiB; `nimbus media understand --budget <size>` overrides it for one run, decimal `GB`/`MB`/`KB` vs. binary `GiB`/`MiB`/`KiB` — the two are NOT interchangeable, e.g. `4GB` = 4,000,000,000 bytes and `4GiB` = 4,294,967,296) and the per-artifact cap (a hardcoded 250 MiB `DEFAULT_MAX_MEDIA_BYTES`, detailed below) are both checked during the transfer as each chunk arrives, not just once via the `content-length` hint, so an overrun aborts the transfer rather than paying for the whole artifact first. The whole batch is priced up front too: a run whose known cost already exceeds the budget refuses before a single byte is fetched. `--renditions`/`[multimodal] prefer_renditions` (default `false`) asks Google Photos for a downsized copy rather than the original — Drive and OneDrive have no rendition concept and always serve the original regardless of the flag; `--originals` is the explicit opposite and the two CLI flags are mutually exclusive. `multimodal/cloud-url-resolver.ts` and `multimodal/cloud-bytes.ts` are the THIRD and FOURTH `sync`-class I29 appenders (invariant I29, `docs/SECURITY-INVARIANTS.md`), alongside `sync/scheduler.ts` and `sync/targeted-fetch.ts`, all four sharing `egress/sync-egress.ts`'s `recordSyncEgress` through one closure built in `multimodal/build-media-pass-deps.ts`. The resolver appends one row (`method='media.resolveByteUrl'`) before the CREDENTIALED round-trip that asks Photos/OneDrive where an artifact's bytes live — the Drive arm constructs its URL with no round-trip and appends nothing there — and the byte fetch appends one row PER FETCH ATTEMPT (`method='media.fetchBytes'`; a 429/503 retry appends again, not once for the whole loop) BEFORE the request. Both are fail-closed: an append failure aborts. So a Photos or OneDrive candidate produces TWO rows, one per real outbound request; collapsing them would have meant a candidate failing AT RESOLVE left no row for a credentialed request that had already gone out. A credential rides only on a URL the pass itself constructed, never a bare caller-supplied one. **The resumable cursor's skip/stop semantics are not uniform**, and that distinction matters for an operator reading a stuck run: a per-artifact SKIP (including a PERMANENT refusal — a candidate whose declared size alone exceeds the entire run budget, which reuses the `over_byte_cap` reason so `over_byte_cap` now covers two different bounds, the per-artifact byte cap (a hardcoded 250 MiB `DEFAULT_MAX_MEDIA_BYTES`, one value for both modalities — the `max_image_bytes`/`max_media_bytes` config keys the design proposed were never built, so this half has no knob at all) AND an unfittable-in-one-run cloud artifact) always ADVANCES the cursor, so a retry does not loop on it forever; a TRANSIENT budget stop (an artifact that merely didn't fit what THIS run had left, having already spent part of its budget on earlier candidates) leaves the cursor on the last COMPLETED item instead, so the stopping artifact is retried — not skipped — on the next run, once a fresh budget applies. Two 0600 gateway-owned scratch files, not one: the AV path now writes both the downloaded cloud artifact AND its `ffmpeg` transcode (the image path still writes nothing, on either arm), each removed in a `finally` and both swept at pass start for a dead process's leftovers.
 
+
+
   **Delivered (PR 4):** `nimbus media allow-remote <itemId>... --vendor <name>` (explicit form) or `nimbus media allow-remote --service <name> --limit N --vendor <name> [--since <days>]` (selector form, `--limit` mandatory and capped at 500) writes one `media_grant` row (schema **V59**) per `(artifact, "image", vendor)`, via `media-grant-store.ts`'s `createGrant` — the sole writer of that table. The pass consults an existing grant through `hasActiveGrant`; it never prompts itself (§ 18.4 — granting is a separate, deliberate act, and a batch that prompted once per artifact would produce one real decision followed by hundreds of reflexes, the same failure I33 guards against by showing the verbatim body rather than a digest). `build-media-pass-deps.ts`'s `buildRemoteFor` builds the one remote `VlmProvider` instance for the configured vendor (`multimodal/vlm/remote/remote-vlm-shared.ts`'s single factory, wrapped in `wrapLedgeredVlm`) and resolves it per candidate: an image with an active grant for the configured vendor gets it, everything else — including every AV candidate, unconditionally — falls through to the local composite. A grant does not retroactively touch an already-understood item by itself; `media-discovery.ts` re-offers a row whose existing understanding is LOCAL but which now carries an active grant for the configured vendor, so the granted artifact is re-described on the pass that follows the grant rather than waiting for an unrelated re-index. `nimbus media grants list` enumerates active grants (title, vendor, granted-at); `nimbus media grants revoke <itemId> [--vendor <name>]` always requires an item id — there is no "revoke everything" surface.
+
+
 
   **Two structural properties worth stating.** Both understanding types are in `LOCAL_ONLY_PROSE_TYPES`, so derived text is embedded LOCALLY even when a remote embedder is configured — otherwise a fully local pass would keep the audio and pixels on the machine while shipping everything extracted from them to OpenAI. And the whole `media` namespace is denied over LAN alongside `exec` and `computer`: the method reads local files and spawns subprocesses, so a paired peer must not be able to trigger it.
 
+
+
   **Bounds, stated rather than glossed.** No dedicated OCR engine ships — a VLM's text extraction on a dense screenshot is measurably worse than a purpose-built OCR pass. A sampled video is not a watched video: anything happening only between sampled frames is invisible, and no amount of transcript covers a silent visual change. A caption is a guess — `modelDerived: true` exists because it is a model's assertion, not an observation, and no confidence number is stored. Frame captions need BOTH a vision model AND a working `ffprobe` duration probe; a machine with either missing still gets a transcript-only `video_understanding` row, with the absence stated in the body rather than a silently thinner one. Cloud byte-fetch exists (PR 3, Google Photos/Drive/OneDrive) and, as of PR 4, a granted STILL IMAGE may be described by a remote vendor — but **there is still no remote model of any kind for audio or video**, at any tier: transcription refuses rather than reaching for the cloud when no local model is available, unchanged from PR 1, and a frontier key with no usable local whisper cannot transcribe at all (§ 12.7). That is deliberate, not an oversight — it keeps I37 scoped to images, avoids a second provider interface and decorator, and keeps the strongest version of the privacy claim true for the modality where recordings of real conversations live. Diarization does not ship — `whisper-cli` cannot do it, and Phase 14 lists it as a capability this slice deliberately scopes out rather than defers quietly (§ 12.2); → re-homed to [Phase 14 § Core — Multimodal I/O](#phase-14--agent-evolution--ai-v2) (2026-10-10). **One of PR 4's three remote vendor adapters has now been exercised against a live endpoint; the other two have not.** `multimodal/vlm/remote/remote-vlm-shared.ts`'s Anthropic/OpenAI/Gemini request shapes were written from each vendor's documented image API and unit-tested only against fakes — proof of the shape sent, not of vendor acceptance. The acceptance run of **2026-09-06** (spec § 21) closed that for **Gemini**: one 390,842-byte Google Drive PNG granted to `gemini`, a real caption returned, exactly ONE `model`-class row (`destination: gemini`, `payload_summary` carrying the model name and the byte count and neither the prompt nor the bytes), the derived row recording `isLocal: false`, and the BLAKE3 chain verifying over 65 rows. **Anthropic and OpenAI remain fixture-only**, as does every FAILURE mode on all three — a 400 on a bad `media_type`, a 429, an auth refusal — and so does the TTY confirmation path, since the CLI correctly refused a piped `y` and the run's grant was therefore made through the LAN-forbidden `media.allowRemote` IPC method with approval obtained out of band. Read § 18.9's bound as NARROWED, not closed. The run also surfaced one defect, filed rather than fixed there: the `allow-remote` preview printed `(size unknown)` for an artifact whose size the index holds — small, but it lands on the consent surface, which exists so an owner can see what they are approving. **Fixed 2026-09-17**, with a wider cause than first recorded: it was filed as Google Drive serialising `size` as a string, but `index.queryItems` surfaced no media source's size at all, so filesystem and OneDrive artifacts previewed the same way; the handler now fills `sizeBytes` from `mediaSourceBytes`, the same table the pass budgets with. **The Google Photos leg of the cloud arm remains unverified against a real account**, and PR 4 inherits rather than closes that gap: a real `google_photos` connection authenticates and syncs `healthy` but returns an EMPTY library under the `photoslibrary.readonly` scope (Google's March 2025 restriction limits that scope to app-created media, and nothing has been uploaded), so neither Photos byte-fetch nor its rendition-suffix code path has ever run against a real provider (spec § 20.2) — only the Google Drive leg has (§ 20.1). **Phase 14 Core acceptance is structurally satisfiable, but NOT verified end-to-end.** The pass can now produce a `video_understanding` row carrying both a non-empty transcript and at least one frame caption — the code path exists and is unit-tested against fakes — but no live recording has actually been run through it: the one test that talks to a real daemon, `test/integration/multimodal/vlm-live.test.ts`, is `describe.skipIf(!OPTED_IN)` (opt-in via `NIMBUS_TEST_VLM=1`, never run in CI or as part of this delivery) and exercises only `ollama-vlm.ts`'s `isAvailable`/`describe` calls directly against a daemon — not a full pass over a real video file. No observed `video_understanding` row backs this claim yet.
 
+
+
   **Org policy is now real, closing PR 1's gap.** `media.understand` reads the live `EnforcedPolicy.capabilitiesDisabled` accessor (`ctx.options.mediaRpcCtx.enforced`, invariant I22) on every call and refuses when it lists `multimodal_input` — a real `AI_V2_CAPABILITIES` member — and, unlike PR 1's hardcoded `false`, REFUSES fail-closed when that accessor itself is absent rather than defaulting to enabled. The local `[multimodal] enabled` kill switch and this org-policy lockoff are now both real. **PR 4 does not add a live HITL consent gate the way I33/I35 do** — there is no `ConsentBroker` round-trip on the understanding pass itself, by design (§ 18.4): the owner's decision is made once, up front, at `nimbus media allow-remote` time (an enumerated preview naming both ends of the transfer, plus a `[y/N]` confirmation), and the pass silently declines remote for every artifact not covered by an existing grant rather than prompting per artifact — a batch that prompted once per artifact would produce one real decision followed by hundreds of reflexes, not hundreds of decisions.
+
 - [ ] **Zoom recording frame captions** — **deferred (2026-09-04), reason recorded rather than a silent gap.** PR 3's cloud byte-fetch does not extend to Zoom cloud recordings, and not for lack of an OAuth-backed byte source: `connectors/zoom-sync.ts`'s `selectTranscriptFile` indexes only a meeting's `TRANSCRIPT` file (`zoom-sync.ts:169`) and skips every other recording file type, so no `video`/`audio` recording item exists in the index for a cloud-fetch pass to find a candidate against in the first place — Zoom already supplies its own transcript, so byte-fetching the underlying recording would buy nothing PR 3 needs (a transcript, which Zoom hands over directly) and would need its own indexing change before frame captions became reachable. What Zoom recordings COULD still gain is frame captions over the video itself — a different job than byte-fetch, needing a new `zoom-sync.ts` indexing path for the recording file plus a cloud-fetch route for it. Revisit alongside a future indexing pass over Zoom's recording files; not a PR 3/4 gate. → re-homed to [Phase 14 § Core — Multimodal I/O](#phase-14--agent-evolution--ai-v2) (2026-10-10).
+
 - [x] **[NEW] Overnight sub-agent fleets on zero-marginal local compute** — ✅ **PR 1 shipped 2026-09-07; PR 2a (the change digest) shipped 2026-09-08; PR 2b (subject enumeration) shipped 2026-09-17, closing this row.** The row's remaining "PR 2" was split on the dependency: enumeration without a digest produces more briefs than anyone reads, which is strictly worse than today, so the digest landed first. **PR 2a** is `nimbus fleet digest` — a local, deterministic Markdown report of what moved between each job's newest brief and its predecessor, compared on the deterministic `findings_json` and never on the synthesised markdown, with eleven per-agent extractors whose map is compiler-enforced total over the eligible set. No schema migration (V60 already carried every column), no new invariant, no new egress class, and **no model call at any point** — which is what keeps it outside I38 by construction. Design: `2026-09-07-fleet-change-digest-design.md`.
 
+
+
   **PR 2b — subject enumeration — shipped 2026-09-17.** A `[[fleet.job]]` can set `sweep = "paths" |
+
   "services" | "symbols" | "terms"` in place of naming exactly one subject, with a REQUIRED
+
   `max_subjects` (integer `1..500`, refused rather than clamped outside) and an optional
+
   `path_prefix` (case-sensitive plain prefix on the repo-relative POSIX path, accepted only for
+
   `paths`/`symbols`, refused when empty). The scheduler rotates through a bounded window of
+
   subjects each run on a per-job KEY cursor — the first key strictly greater than the last one
+
   processed, wrapping to the start — re-checking host admission before every subject, not only
+
   between jobs; each brief now carries a `subject_key` (schema **V63**: `fleet_brief` rebuilt with
+
   the new `NOT NULL` column, backfilled to `job_id`; `fleet_job_state` gains `sweep_kind` /
+
   `sweep_cursor` / `sweep_subjects_total` / `sweep_empty_reason`; `fleet_run` gains
+
   `subjects_in_scope` / `subjects_attempted` / `subjects_completed`, with a config-named job
+
   counting as ONE subject in all three). The enumerator map (`fleet/fleet-sweep-support.ts`'s
+
   `FLEET_SWEEP_SUPPORT`) is TOTAL over the fleet-eligible agents, the same compiler-enforced shape
+
   `FLEET_DIGEST_EXTRACTORS` uses: `paths` (`ownership`), `services` (`oncall`/`changelog`/
+
   `ownership`), `symbols` (`ghost`/`conflicts`), `terms` (`glossary`); `why` / `expert` / `impact` /
+
   `catchup` / `decisions` / `standup` / `huddle` / `janitor` stay not-enumerable, each with a
+
   recorded reason (`janitor`'s: the index holds no resource inventory, so a subject list would be
+
   invented rather than enumerated). **`paths` enumerates the ownership pass's OWN `graph_entity`
+
   nodes** (`source_file`/`directory`), never files/directories synthesized from `git_blame_line` —
+
   a review-found correction, since that would emit directories the pass never wrote a node for.
+
   **`ghost`/`conflicts` sweep `symbols`, not paths** — their `file` parameter takes an exact
+
   symbol-label match before a fuzzy basename `LIKE`, and a path sweep would hand every same-named
+
   file the identical fuzzy token — and **a symbol's label is not unique per symbol**, a second
+
   review-found correction to an earlier draft: the enumerator takes DISTINCT labels, collapsing a
+
   same-named function/type or a same-named file under two roots to ONE subject, which the agent's
+
   own exact-match lookup then resolves to one colliding entity. `nimbus fleet digest` groups every
+
   sweep job into one section — a coverage line, moved subjects in full, and unchanged /
+
   first-observation / not-summarizable / agent-changed counts — disclosing rather than preventing
+
   the case where a rotation longer than retention cannot report movement. `nimbus fleet list` /
+
   `fleet.list` gain a `sweep` field and `nimbus fleet briefs` / `fleet.briefs` gain `subjectKey` +
+
   `--subject <key>`; config-named jobs render byte-identically to before this PR. No new invariant,
+
   no new static rule, no new egress class, no new IPC method; I38's per-run budget reset is
+
   unchanged, and many subjects per run make budget exhaustion the normal case, which is why the
+
   per-brief `fleetRemoteWithheld` disclosure (#1462) is load-bearing here. `negotiate` stays
+
   `deferred`, now for the SETTLED reason enumeration itself created: no sweep enumerator returns
+
   person-shaped subjects, and turning "the owner built one dossier" into "the machine builds a
+
   dossier on every indexed person, nightly, unattended" has no consent surface today. **Bounds
+
   stated rather than solved:** coverage is eventual, not prioritised — a risky file waits its turn
+
   in the rotation; `paths` covers only what the ownership pass emitted; `services` covers configured
+
   services only; a subject deleted mid-rotation simply stops appearing and a renamed file is a new
+
   subject. Design: `2026-09-17-fleet-subject-enumeration-design.md`.
+
+
 
   **PR 1 detail follows.** ✅ **PR 1 of 2 shipped 2026-09-07** (`nimbus fleet`, invariant **I38** + static **D28**, schema **V60**, default-off `[fleet]`). Standing, scheduled local fleets that use idle hardware the user already owns, so the brief you want at 09:00 already exists. Harvested forward from [Phase 27 — The Agent Society](#phase-27--the-agent-society), which keeps the full standing-agent-organization vision. Design: `2026-09-06-s2-overnight-agent-fleets-design.md`.
 
+
+
   **Delivered (PR 1).** A new PAL capability, `HostActivity` (`platform/host-activity.ts` + three backends), reporting `{power, idleMs, source}` — `source` is `measured` or `power_only` and is persisted per run, so a probe never claims a check it did not perform. `fleet/fleet-admission.ts` admits on that probe: it blocks on `battery` and deliberately does **not** require `ac`, because a desktop, VM or server answers `unknown` and a `power === "ac"` predicate would make the feature silently inert on exactly the always-on hardware it targets. A sequential `FleetScheduler` (60 s tick, single-flight `inFlight` guard, per-job interval + exponential backoff, yields when admission flips — re-probed at JOB BOUNDARIES, not continuously, so a run stops before the next job rather than mid-brief; skipped before the first attempt and under `--force`) dispatches each job through `dispatchAgentsRpc` under a gateway-set `fleet` `ClientKind` and awaits the completion notification rather than the call. Durable storage in **V60** — `fleet_job_state` (what happened to a job; config stays the SSoT for what a job *is*), `fleet_run` (one self-describing row per run), `fleet_brief` (`ON DELETE CASCADE` from the run, retention-pruned, expiry filtered on read so retention is not a lie). A `FLEET_ELIGIBILITY` map TOTAL over the served `agents.*` methods — 11 eligible, `preflight`/`premortem` excluded for side effects, `whyPeek` for shape, `negotiate` deferred — so a sixteenth agent does not compile until someone classifies it; an exclusion `Set` would have failed open. The `[fleet]` + `[[fleet.job]]` config surface (**default off**, and refusing rather than defaulting a job the owner half-configured), the `fleet.*` IPC namespace (whole namespace LAN-forbidden; absent from the Tauri allowlist as shipped, and since 2026-10-25 only `fleet.briefs`/`fleet.show` are on it), five `nimbus fleet` subcommands with their own exit-code vocabulary, and `agent_fleet` as the **sixth** `[policy.capabilities.ai_v2]` lockoff name. Invariant **I38** pins an unattended run's synthesis local unless `[fleet] allow_remote` is true AND the run's PER-RUN budget covers it — enforced as a decorator over `SynthesisRouter` guarding both `resolveForSynthesis` and `generateMarkdown`, with locality DERIVED from `provider.isLocal` (I34), never a vendor id. Static **D28** confines the `fleet` `ClientKind` assignment shapes to three files. Also folded in: `[embedding] pause_on_battery` — a key that had parsed and defaulted to `true` since it was added while **nothing read it** — finally got its consumer, the same `HostActivity` probe (`embedding/backfill-gate.ts`); it now genuinely pauses embedding backfill on battery, which is a **behaviour change for laptop users** and is documented in [`cli-reference.md` § Configuration File](./cli-reference.md#configuration-file).
+
+
 
   **What did NOT ship, stated plainly rather than left to be discovered.** **Subject enumeration** — the owner names each job's subject in config; nothing sweeps every service, so bus-factor coverage across an org is still manual (closed by PR 2b, 2026-09-17 — see above). **The change/threshold digest** — briefs are the output, not inputs to a "what moved" summary; there is no digest surface at all (closed by PR 2a, 2026-09-08 — see above). Both were PR 2, designed-around rather than designed. **`negotiate` is classified `deferred`, not eligible** — no side effects and the shape fits, but `--person` makes it a dossier builder, and *scheduled* dossier-building on indexed people is a different proposition from an owner running it once; it was revisited with the sweep and SETTLED there (PR 2b, 2026-09-17): no sweep enumerator returns person-shaped subjects, so `negotiate` stays `deferred` for a stated reason rather than an open question. **Per-OS idle measurement on Linux does not exist** — `host-activity/linux.ts` reads `/sys/class/power_supply` for power and returns `idleMs: null` / `source: "power_only"`, because X11, Wayland and headless each answer differently and a server has no session to be idle from; admission there is **power-only**, disclosed on every run row rather than faked. The § 12 CI-runner probe expectations stay expectations until the cross-platform legs actually run — the tests assert the contract on whichever OS runs them rather than skipping, so a runner that behaves differently fails loudly instead of passing vacuously. And the **I38 composed-path bound recorded in the invariant row**: the two doors are proved at the wrapper and the invoker is proved to *use* the wrapper, but the composed path — invoker → wrapped router → refusal → brief — is not exercised end to end.
 
+
+
   **Several defects found during implementation were claims that were not true rather than ordinary bugs**, which is the reason this row's bounds are written as narrowly as they are. By class, with the commit that closed each: a migration that never ran because `CURRENT_SCHEMA_VERSION` was not bumped alongside it (`e1018441`); `fleet_run.remote_calls_made` recording 0 on every run because the invoker spent against a different budget instance from the one the row read (`79e1ddec`); `remote_call_budget` documented as per-run while behaving as per-process (`7e3b841f`); an I38 row and test block that claimed more coverage than they delivered (`b986c7dd`); and assertions that could not fail (`3b41ddbe`, `fce38074`, `4fa02aef`). Deliberately not stated as a commit tally: an earlier draft of this sentence counted the branch's `fix`/`test` commits, and the count was falsified by the very review round that was reading it.
+
 - [x] **[NEW] Bring-your-own-frontier-model routing with local fallback** ✅ **2026-08-28** — route a turn to the user's own frontier key when they supply one, falling back to local otherwise. Delivered in three slices. **Slice 1** (2026-08-27) made the router's unit a `(provider, model)` route rather than a closed provider-kind union. **Slice 2a** (#1357) landed the safety precondition BEFORE any vendor: `egress/model-egress.ts`'s `wrapLedgeredProvider` at `LlmRegistry.addRoute`, static rule **D22(e)**, invariant **I34**, and the `enforce_air_gap` Mastra-fallback fix. **Slice 2b** registers the four vendors themselves — Anthropic, OpenAI, Gemini, xAI — each behind a default-off `[llm.remote.<vendor>] enabled` opt-in whose key is read from the Vault and NEVER the environment, so a credential that merely exists cannot enable anything. `LlmRouter.generate` now continues its priority walk on a TRANSPORT-class failure only, which is what makes "with local fallback" true rather than claimed; an auth or request failure does not retry, since it would fail identically at the next vendor. The Mastra engine agent moved onto the same opt-in and is ledgered at the AI-SDK seam, and is not constructed at all when no vendor is enabled. **This is the row that makes the `model` egress class LIVE** — wired since 2a, exercised in production from here. **Slice 4** (`[llm.tasks]` per-task route pins + `nimbus llm use`) and the embeddings appender (`egress/embedding-egress.ts`'s `wrapLedgeredEmbedder`, static rule **D22(f)**) both shipped 2026-08-29 on the same branch — the embeddings appender closed I29's last `model`-class exclusion, so the class now carries no named exclusion. **Still open:** Bedrock/SigV4 (slice 3) and a local OpenAI-compatible runtime. → re-homed to [S5](#carried-into-s5) (2026-10-10).
+
 - [x] **User MCP servers that actually run** — **PR 1 of 2 shipped 2026-10-06** (invariant **I42**, schema **V65**, no new egress class). Delivered: a per-policy sandbox working directory for every sandboxed spawn (`<sandboxDir>/<leaf>`, outside data and config; a one-time Windows revoke of the stale data-directory ACEs), `nimbus connector add --mcp` with `--read`/`--net`/`--model` grants resolved and validated before the approval prompt, owner-approved `nimbus connector tools` / `connector call` (CLI-only, LAN-forbidden, audited and egress-ledgered), and `nimbus scaffold mcp` emitting a real tested server (`scaffold extension` is an alias). **Not shipped:** write grants (→ re-homed to [S4](#carried-into-s4), 2026-10-10); script-mode servers on Windows. **PR 2 of 2 shipped 2026-10-07 (§ F, model access):** `--model` now offers the server's tools to the engine agent in `nimbus ask`, named `<mcp_id>__<tool>`, for the local owner only (CLI/ui/undeclared; never ChatOps, HTTP, MCP-server, fleet, push or workflows), each call through the turn's own executor (I42 prompt, audit row, egress row, `<tool_output>` envelope). Stated bounds: the agent exists only with a remote `[llm.remote.*]` vendor enabled, so results reach that vendor (I29 `model` class); no tools on the local-router path; tool descriptions and schemas reached the model outside the I11 envelope until 2026-10-09, when descriptions were delimited in an escaped `<tool_description>` block and schemas rebuilt from a structural-keyword allowlist (enum/const values and property names still reach it verbatim); an org-policy lock-off (`[policy.capabilities.ai_v2] user_mcp_model_access = false`) followed on 2026-10-09, enforced at the tool source and fail-closed; an owner turn waits for tool listings; the call is spelled `mcp_x__echo` in `tool_call_log`/`explain last` and `mcp_x.echo` in audit/egress. Bounds recorded in `docs/sandbox.md` (Windows network is all-or-nothing; the same-id DACL race remains; no IPv6 `--net` literals).
+
+
 
 **Org-level lockoff belongs in this slot, not after it:** `nimbus.policy.toml`'s `[policy.capabilities.ai_v2]` block — eleven names, re-derived from `AI_V2_CAPABILITIES` in `packages/gateway/src/policy/types.ts` rather than restated from memory: `code_execution`, `computer_use`, `tool_generation`, `multimodal_input`, `local_finetuning`, `agent_fleet`, `user_mcp_model_access` (added 2026-10-09; it gates the model being offered user-MCP `--model` tools, I42), `mcp_capture` (added 2026-10-12; it gates agent-submitted notes arriving over MCP, I28; read per call), `mcp_action` (added 2026-10-15; it gates the I28 act door, agent-proposed connector actions; read per call), `connector_write_model_access` (added 2026-11-04; it gates the owner enabling model connector writes for a service, Phase 9.7 A4; read per call), `standing_approvals` (added 2026-11-11; it gates creating or resuming a standing approval rule and every rule firing, Phase 10 SA3, I55; read per call, off when the policy cannot be read) — is how a regulated org disables any of the above (most names read at gateway startup; `user_mcp_model_access` per turn), and it composes with the **I22** signed-policy gate that already ships. Detail: [Phase 14 § Org-Level Lockoff](#phase-14--agent-evolution--ai-v2).
 
+
+
 **Not in this slot:** local instruction fine-tuning and the tool-use trace dataset builder stay in [Phase 14](#phase-14--agent-evolution--ai-v2) as stretch rows — the spine table does not name them in S2. The MCP **server** work that was parked under S1 as an S3 early-harvest has shipped and is recorded above; the rest of S3 (the MCP capture sink, the extension runtime, role packs and the marketplace registry) is tracked in [§ S3 — Open Surface](#s3--open-surface).
 
+
+
 ---
+
+
 
 ### Pre-S3 close-out
 
+
+
 > **Status: ✅ complete (2026-10-10).** [S2 — Local Compute Fleet](#spine-s2) closed on 2026-10-10. Before S3 opens, the owner chose to close every S1, S2 and earlier leftover first rather than carry it into the next slot. All five items have landed: **A** — the index lane contract (#1632, #1634, #1635, 2026-10-08 → 2026-10-09); **D** — safety gaps (#1637, 2026-10-09); **C** — small wiring (#1639, #1640, #1641, 2026-10-10); and **B** — this record: S2 closed, the slot statements and checkboxes brought up to date, and the deferrals re-homed; and **E** — OS notifications (2026-10-10).
+
+
 
 **E — OS notifications ✅ (2026-10-10).** `platform/notifications/` raises real toasts on Windows (Windows PowerShell 5.1 + the WinRT `ToastNotificationManager`), macOS (`osascript`) and Linux (`notify-send`, else `gdbus`), replacing the `delivers: false` no-op every install ran before. Owner rulings: **on by default** (`[notifications] enabled = false` or `NIMBUS_NOTIFICATIONS=off` turns it off), the **full body by default** (`content = "title_only"` replaces every body with a fixed string, for lock screens), and a **consent hop** — a fixed-text toast naming only the KIND of a pending HITL approval, never its prompt or arguments. At most 5 toasts per rolling 60 s, then one summary toast. New CLI-only, LAN-forbidden `notifications.status` / `notifications.test` (`nimbus notifications status|test`), a `nimbus doctor` line; not on the Tauri allowlist. No migration, no new invariant, no egress class (the toast goes to the local OS only); a demo-rooted gateway never raises one (I41). **Verified live on Windows 11 only** — macOS and Linux are covered by unit tests and a darwin-only argv test on the macOS CI leg, not by a toast seen on real hardware. Detail: [`architecture.md` § OS notifications](./architecture.md#os-notifications), [`cli-reference.md`](./cli-reference.md#nimbus-notifications).
 
+
+
 **What came next:** S3 opened on 2026-10-11 and closed on 2026-11-04; its record follows, in [§ Spine S3 — Open Surface](#spine-s3).
+
+
 
 ---
 
+
+
 <a id="spine-s3"></a>
+
 <a id="s3--open-surface"></a>
+
+
 
 ### Spine S3 — Open Surface ✅
 
+
+
 > **Status: ✅ Complete (opened 2026-10-11, closed 2026-11-04).** S3 opened on the [pre-S3 close-out](#pre-s3-close-out) and was Track 1's third slot in the [Phase 7+ Sequencing Spine](#phase-7-sequencing-spine) overlay. **Exit condition (owner ruling, 2026-10-18): S3 closes when ALL of [Phase 9.5](#phase-95--marketplace-registry) has shipped, meaning its seven projects.** The seventh, author onboarding, shipped its fourth PR on 2026-11-04, so the slot closed that day. Rows in that phase that only the owner can complete (hosting, pricing, the grant program, the acceptance counts) were never part of the build; they are listed in [Owner's open items](#owners-open-items). S4 — Autonomous Agent opened the same day. The record below is kept as written during the slot, apart from the last row.
 
+
+
 | Part | Status |
+
 |---|---|
+
 | MCP capture sink (`I28`) | ✅ 3 of 3: agent-authored notes 2026-10-12, proposals 2026-10-14, the act door 2026-10-15; a read-only desktop Captures page 2026-10-16; `obsidian.note.append` proposable since 2026-10-25 |
+
 | Extension runtime (`I43`) | ✅ 4 of 4: install gate and tree digest 2026-10-11, run grants 2026-10-16, the sandboxed runtime 2026-10-17, `--model` access 2026-10-17 |
+
 | Role packs (`I47`) | ✅ 5 of 5, 2026-10-22 → 2026-10-26: foundations (the layered config reader, per-job fleet merging, agent visibility and the catalog), source mapping (`[sources] map`, schema V74–V75; Google Docs indexed with their text), the PM and DevOps packs with `nimbus pack list\|show\|install\|remove` behind the `pack.install` HITL prompt, the desktop pages, and onboarding (`nimbus init` and the desktop app ask what you do and install the matching pack). Not in the original S3 row; recorded here 2026-10-26. Detail: [`cli-reference.md` § `nimbus pack`](./cli-reference.md#nimbus-pack) and [`CHANGELOG.md`](./CHANGELOG.md) |
+
 | Marketplace registry (Phase 9.5) | ✅ all seven projects, 2026-10-18 → 2026-11-04: the registry protocol and client (`I44`) 2026-10-18, publishing 2026-10-23, the Readwise unbundling pilot (`I46`) 2026-10-21, the trust layer (`I48`) 2026-10-27 in 5 PRs, dependencies and starter packs 2026-10-29 in 5 PRs, `nimbus eval` (`I49`) 2026-10-30 in 5 PRs, the quality layer (`I51`, `I52`) 2026-11-03 in 12 PRs, and author onboarding 2026-11-04 in 4 PRs (#1878, #1880, #1881 and the docs site's Authors section). Full list: [§ Phase 9.5 → Projects](#phase-95--marketplace-registry) |
+
+
 
 **What S3 shipped, in order.** The extension install gate and tree digest opened the slot (2026-10-11), and the MCP capture sink followed: agent-authored notes (2026-10-12), inert proposals (2026-10-14) and the act door (2026-10-15), all through one fixed-order gate (**I28**). The extension runtime completed with run grants (2026-10-16), sandboxed execution from a verified per-spawn copy, and `--model` access (both 2026-10-17; **I43**). The registry client landed on 2026-10-18 (**I44**, signed static registries pinned by root key), with a DNS-rebinding guard on every loopback listener along the way (2026-10-19, **I45**), publishing by pull request (2026-10-23), and the Readwise unbundling pilot, whose one renderer-callable grant door is `migration.accept` (2026-10-20 → 2026-10-21, **I46**). Role packs shipped as five projects (2026-10-22 → 2026-10-26, **I47**). The trust layer made revoked or taken-down code refusable at install, update and spawn, with key rotation, the verified-publisher badge, maintainer blocks, reports, provenance and the baked trust feed (2026-10-26 → 2026-10-27, **I48**). Dependencies and starter packs followed (2026-10-28 → 2026-10-29), then `nimbus eval` with its sandboxed, gateway-free runner (2026-10-29 → 2026-10-30, **I49**). Declared hosts became enforced on Linux, where the sandbox helper is present, through a local forwarder (2026-10-31, **I50**). The quality layer added evidence lines, signed scores and a baseline, liveness checks whose evidence reaches the owner only as a `Checked` line (**I51**), network observation with `nimbus extension audit`, and owner-approved narrower network grants (2026-11-01 → 2026-11-03; **I51** 2026-11-02, **I52** 2026-11-03). Author onboarding closed the slot: funding and license, `nimbus extension clone`, the OpenAPI scaffold and the Authors section of the docs site (all 2026-11-04).
 
+
+
 **What stays open.** Nothing open is left only here. The buildable remainders of Phase 9.5 are in [Carried into S4](#carried-into-s4): the registry web page and the desktop marketplace tile (which absorb the manifest browser, the Sponsor button and desktop registry search and install), community ratings and reviews (deferred by the owner on 2026-10-19), registry install counts, and offline re-verification of build provenance. The owner's items are in [Owner's open items](#owners-open-items): live `registry.nimbus-agent.dev` hosting, Verified Publisher pricing and KYC, the grant program, the open Phase 9.5 acceptance criteria (30 extensions, 5 verified publishers, a live publish round trip, an exercised takedown), and the one-time setup the official registry's liveness jobs wait on. Two bounds carry forward unchanged and are recorded in the rows that own them: no live registry publishes scores, baselines or `liveness.json` yet, so owners see `no registry score`, `no baseline check published` and `no checks published`; and the model still cannot invoke a generated tool or a computer-use session (carried into S4 from S2).
 
+
+
 ---
+
+
 
 ## Active
 
+
+
 > **S4 — Autonomous Agent is the active slot (opened by the owner 2026-11-04).** [Spine S3 — Open Surface](#spine-s3) closed the same day and its record is under [Shipped](#shipped). S4 is the capstone of the [Phase 7+ Sequencing Spine](#phase-7-sequencing-spine); its carried-in items are in [Carried into S4](#carried-into-s4), and the owner's non-buildable items from Phase 9.5 in [Owner's open items](#owners-open-items).
+
 >
+
 > **Exit condition (owner ruling, 2026-11-04): S4 closes when ALL of the following have shipped:** [Phase 9.7](#phase-97--connector-write-enablement-the-acting-roster) (all four waves); all of Phase 10 (Core and Stretch); Phase 17 (On-Call Copilot); and these carried-in items: model access to generated tools and computer-use; the marketplace page and desktop tile; community ratings and reviews plus registry install counts (the owner lifts the 2026-10-19 deferral); and the workflow and watcher remainders (workflow branching, team-owned pipelines, anomaly and ChatOps watcher notifications, the pre-mortem deploy-failure watcher, user-MCP write grants). Standing approvals (Phase 10) may auto-fire Wave 2–3 writes only, inside the taint barrier, scope, expiry and ceiling; Wave 4 always prompts.
+
 >
+
 > **Progress.** Phase 9.7 Wave 1 ✅ complete 2026-11-05 (A1–A5b, Project A): A1 (one write table and a generated manifest, #1883) ✅ 2026-11-04; A2 (the typed consent preview) ✅ 2026-11-04; A3 (the per-write egress and federation coverage proof) ✅ 2026-11-04; A4 (the owner's opt-in: `nimbus connector writes enable|disable|status`, schema V83, off by default for every connector) ✅ 2026-11-04; A5a (plumbing for the model door: top-level `origin: "model"` never delegated, the preview names the credential kind, `listFirstPartyServerTools`, share replay refuses write ids, offerable counts) ✅ 2026-11-05; A5b (the model's connector-write door: a tool per enabled, offerable write on the local owner's `cli`/`ui` non-demo turn, every call an `origin: "model"` action through an executor built without delegation, re-checked per call; I53, static D39; `nimbus ask`/`repl` declare `cli`) ✅ 2026-11-05. At A5b no row was offerable (no row had a `before` reader, and only the 18 wave-4 warehouse/BI/GitOps/ML rows carried a preview); B1 below offers the first 12. **Project B (Waves 2–4)**: B0a, the Wave-2 framework (2026-11-05): every wave-2 service listed on its own mesh slot with its own generation, behind a per-service credential check that reads stored keys only (`connectors/lazy-mesh/service-credential.ts`); schema V84 `connector_write_enablement.approved_tool_ids`, so the model is offered only the writes the owner approved by name, and `status` shows `<n> awaiting approval` for a pre-V84 opt-in; the door refuses posts to a ChatOps channel or DM and writes to the tribal knowledge base (fail closed); the MCP act door shows the typed preview under its provenance header, the proposer in an unverified block. No row gains a template in B0a, so production still offers nothing. B0b, the before-state reader (spec § 5.4, 2026-11-05): a row may declare a `before` reader (one read tool of its connector, the input keys it depends on, a selector); on the door's executor only, the owner's prompt then shows the target's current state beside the new values, read as a `<service>.before.read` action through the same gate (audited and ledgered as a connector read, refused rather than prompted if a policy would gate it) that the dispatcher lets resolve only to a read of the same connector, capped at 5 s, at most 20 fields, and shown as `Before: unavailable (<reason>)` on any failure; its reply never reaches the model. A wave-4 row whose reader tool its server does not list is not offered; static rule D40. At B0b no row had a reader. B1, messaging and comments (2026-11-05): the 12 wave-2 rows that post a message or a comment (Slack post and DM, Teams channel and chat posts, a Discord post as the bot, a GitHub issue or pull-request comment, GitLab issue and merge-request notes, Jira, Linear, Notion and Confluence comments) carry typed preview templates, so they are the first writes the model is offered, each behind the owner's prompt; seven of them (the GitHub, GitLab, Jira, Linear, Notion and Confluence comments) read a before-state that names the target. An opt-in from before B1 offers none of them until the owner re-runs `enable`. Both the model door and the MCP act door refuse a post to a channel ChatOps listens on, a broadcast mention (Slack `<!here>`-style and user-group tokens, GitHub `@org/team`, GitLab `@all` and group paths, Teams `<at>` tags; Discord is neutralised by the connector, `allowed_mentions` users only) and a GitLab quick action (a note line starting with `/` and a letter; a coordinator ruling of 2026-11-05 the owner may override); the act door answers `ERR_CAPTURE_ACTION_REFUSED`, at submit and again at accept. The GitHub comment, both GitLab notes and the Discord post became MCP-proposable (at B1: 34 proposable, 126 denied, 10 of them `not_yet_offered`; since B2: 41, 119 and 3). B2a, the two-read before-state and its guard (2026-11-05, owner ruling OR-B2-1): a reader may take a second read of the same connector (`also`), each its own gated, ledgered `<service>.before.read` action, in order, under one 5 s budget, all or nothing, and its selection may read the declared input keys; and it may carry a guard that, when it applies, refuses the write inside the executor's gate before any prompt unless the reads succeeded and the guard allowed it (every failure refuses), returning the guard's fixed reason to the model. B2 (issues, 2026-11-05) is the first to use them. B2: the 13 issue writes (create on GitHub, GitLab, Jira and Linear; Jira and Linear update; the Jira transition; GitHub/GitLab labels add, assignees add and state set) get typed previews, so the model is offered 25 writes; nine get a before-state (labels, assignees and state, or status; GitHub says issue or pull request), and the Jira transition reads `jira_issue_transitions_list` then `jira_issue_get` to show From, Transition and To (owner ruling OR-B2-1). Labels and assignees are add-only, pinned against the installed connectors' requests. A GitLab scoped label (`key::value`, which replaces the label with the same key) is refused on both doors (OR-B2-2). A Linear `assigneeId` on update is allowed on the model door only while the read proves the issue unassigned (the B2a guard, fail closed) and is always refused on the MCP act door, which runs no read (OR-B2-3, `actDoorRefusal`). The broadcast-mention refusal covers issue titles and bodies/descriptions; the quick-action refusal covers a GitLab issue description but not a title (controller ruling R-QA). Seven issue writes became MCP-proposable (at B2: 41 proposable, 119 denied, 3 of them `not_yet_offered`); `jira.issue.transition` stays withheld because the act door shows no From or To (OR-B2-4). B3 (drafts and pages, 2026-11-05): the 9 remaining wave-2 draft and page rows (Gmail, iCloud and Outlook drafts; Notion page create, page update and block append; Confluence page create, update and append) get typed previews, so the model is offered 34 writes; a draft names every recipient on its own line (Bcc marked hidden) and sends nothing. Five page rows get a before-state: the Notion create the parent's title, the Notion update the current value of each named property, the Notion append the first five blocks (text block types only; `(no text)` when none), the Confluence update the version check and the start of the body, the Confluence append the end of the body (one `confluence_page_get`); every value capped at 1,000 characters (`excerptHead`/`excerptTail`). The KB-target refusal covers every page row on both doors (OR-B3-1). An update or append of a page whose parent is the KB destination is refused on the model door by a before-state guard that reads a frozen KB-config snapshot (OR-B3-3; for Confluence, since B4p and connectors 0.5.0, a page with the KB parent among its `ancestors`, and every page in the KB space when the read has no well-formed `ancestors`, by owner ruling fail closed), and on the MCP act door, which cannot read, the four update/append types are refused while a KB destination is configured there. The Outlook draft and the Confluence append became MCP-proposable (43 proposable, 117 denied, 1 `not_yet_offered`). Remote images and embeds were shown verbatim in B3 and are refused since B3r (OR-B3-2, 2026-11-06). B4a (calendar and Drive, 2026-11-05): the Outlook and iCloud calendar event creates and the Google Drive file create get typed previews, so the model is offered 37 writes. Each calendar preview names every attendee in full (no bound, owner ruling OR-B4-2) and shows the time zone; Outlook (Graph) emails the invitations when the event is created, iCloud may. The Drive create gets a before-state that reads the target folder (`gdrive_file_metadata`, or Drive's `root` alias when no folder is named: its name, whether it is a folder, whether it is shared, its owner, whether it is in the trash), so readers 21 -> 22; a create into a shared folder is allowed and the `Shared: yes` line is the warning (OR-B4-4), and the content is shown in full (OR-B4-3). Both doors refuse an Outlook event time with an offset or `Z` (the `timeZone` line is then the only zone), an iCloud time that is not `YYYYMMDDTHHMMSSZ` (iCloud events are UTC-only, OR-B4-6: no all-day or floating events from the model or MCP), and an iCloud title, description, location, calendar, id or attendee with a line break or control character (`DTSTART`, `DTEND` and `UID` are emitted verbatim, so such a value could add a hidden `ATTENDEE` line). Proposability is unchanged (43 / 117 / 1). No Google Calendar row: 0.4.0 has no Google Calendar connector or tool. B4p (connectors 0.5.0, 2026-11-05): the gateway pins `@nimbus-dev/connectors` 0.5.0, whose `confluence_page_get` expands `ancestors` (`Array<{ id: string | null; title: string | null }>`, top-level first), so the Confluence KB-child guard narrows from every page in the KB space to the KB parent itself and any page with it among its ancestors, in any space; in the KB space a read with no `ancestors`, a non-array, or an entry whose id is null or not a canonical page id still refuses (fail closed). No new write (the manifest stays 102 rows), and the act door is unchanged. B4b (Obsidian, 2026-11-05): `obsidian_append_to_daily_note` gets its typed preview (vault, date with the UTC-today default, the appended Markdown in full) and a before-state on the connector's new read `obsidian_daily_note_get` (vault, path, whether the note exists, its length and its end), so the model is offered 38 writes, readers 22 -> 23, and no Wave-2 row is left untemplated. B3r (remote content, 2026-11-06; owner rulings OR-B3-2 and OR-B3r-1..4): the model door and the MCP act door (at submit and at accept) refuse a draft, page, note or markup file whose body would load remote content when opened (an Outlook HTML draft, Confluence storage, Notion blocks and properties, the Obsidian append, and a Drive file whose type is HTML, XHTML, SVG or other markup or whose name ends in a markup extension, Markdown for `.md`), by a structural scan that never strips or rewrites; plain links stay allowed; counts unchanged (38 offerable, 43 proposable). B3w (2026-11-06; owner rulings OR-B3r-3 and OR-B3w-1..3) extends the same rule to eleven more rows, twenty in all: a sent Outlook HTML mail (`outlook_mail_send`, scanned on both doors but never offered to the model: it has no template, OR-B3w-1, so in practice the MCP act door), Teams HTML channel and chat posts (`teams_message_post`, `teams_message_post_chat`; a `<attachment>` card and a `cid:` image are refused too), and GitHub, GitLab and Linear Markdown (`github_issue_comment_create`, `github_issue_create`, `gitlab_issue_note_create`, `gitlab_mr_note_create`, `gitlab_issue_create`, `linear_comment_create`, `linear_issue_create`, `linear_issue_update`), where every Markdown image is refused, and so are a raw-HTML element that loads an external URL, a diagram fence holding a URL (or, in a PlantUML, Vega, D2, Structurizr or Kroki fence, a loader such as `%load_json`, whatever its arguments) and a GitLab `::include` naming a URL; code blocks are not exempt (an owner-accepted over-refusal, OR-B3w-3); a body counts as HTML unless its own `contentType` is absent or exactly `"text"`; counts unchanged (38 offerable, 43 proposable). The append needs the Obsidian connector's sandbox to WRITE: it now may write ONE FILE per vault found under `[[filesystem.roots]]`, today's daily note (UTC), which the gateway creates on the host refusing links, never `.obsidian`, `.git`, another note or a folder (the owner's ruling on the final review: a whole-vault grant could plant an Obsidian plugin), and only while the owner's `connector writes enable obsidian` approval includes the append (OR-B4-1); that prompt names each vault's note pattern and every vault or note it will not grant, and enable, disable and the date change restart the connector. On Windows an AppContainer ACE outlives its child, so each Obsidian spawn first revokes the profile's earlier write ACEs (a ledger under the config directory remembers them across restarts; a failed revoke refuses the spawn), and the helper now serialises every DACL rewrite behind one named mutex. OR-B4-5's writable `.obsidian` is superseded: no folder is writable on any OS. The Obsidian indexing walk no longer follows a link below a root. A real-sandbox test proves the confinement on each OS's own PR leg. **Project C: C0 ✅ 2026-11-06, C1 ✅ 2026-11-06, C2 ✅ 2026-11-06, C3 ✅ 2026-11-06 (Project C is closed).** C1 (connectors 0.6.0): 11 writes classified as wave 3 and `not_yet_offered` for MCP (113 rows, 171 HITL types, 43 proposable, 128 denied, 12 `not_yet_offered`; 5 of the 11 are recoverable upstream, 6 are not); the eight existing wave-3 rows (Drive move, rename and trash, OneDrive move, GitHub pull request close, PagerDuty acknowledge, resolve and escalate) templated with before-readers (offerable 48 to 56, templated 56 to 64, readers 23 to 31); `onedrive` and `pagerduty` added to the model door's listing map; PagerDuty writes need `pagerduty.from_email` (`nimbus connector auth pagerduty --token <token> --username <email>`). Spec corrections found on the way (OR-W34-7): Jira Service Management Operations alerts (`jira_ops_alert_*`) replace `opsgenie_*` and there is no incident-resolve write; the pull request key is `pullNumber`; `github_branch_create` takes an optional `expectedSha`; the flag tools carry their own scope kinds. The two Jira alert writes needed `jira.cloud_id` and its spawn env, which C3 added (the `api.atlassian.com` grant already existed). C2 (VCS writes) ✅ 2026-11-06: the six VCS writes are templated (offerable 56 to 62, templated 64 to 70, readers 31 to 35, 7 rows with a guard); the broadcast mention (title and body), forge-Markdown remote content (pull request body, merge request description) and GitLab quick actions (merge request description) are refused on both doors; the four creates are proposable (proposable 43 to 47, denied 128 to 124, `not_yet_offered` 12 to 8) and the two updates stay model-door-only; the update previews show the current state, `RETARGETS` for a changed base or target, and for GitLab `MARKS READY` or `MARKS AS DRAFT` (a display-only draft-prefix detector, not a refusal: a draft title is the safe state, and refusing it would not stop an edit that drops the prefix). Deferred, with the reason: binding the branch `expectedSha` waits for the Wave 4 framework that carries a previewed value into a call, and the act-door updates wait for an act-door before-state. C3 (flags and Jira alerts) ✅ 2026-11-06: the LaunchDarkly toggle and rollout, the Flagsmith feature-state set and the two Jira Operations alert writes are templated (offerable 62 to 67, templated 70 to 75, readers 35 to 40, guards 7 to 8); the environment comes first in each flag preview, a rollout preview lists every variation's percentage by name and a rollout that does not name every variation (or whose read failed) is refused before the prompt, and an alert preview says the action is asynchronous and that Nimbus does not confirm it took effect (the door hands the model the connector's reply byte for byte). `nimbus connector auth jira --cloud-id` stores `jira.cloud_id` (optional on `*.atlassian.net`, required for Data Center; a site change without a new id or `connector remove jira` clears it) and every successful Jira auth restarts the Jira child. LaunchDarkly and Flagsmith join the phase-3 listing adders. Deferred, with the reason: act-door proposability for the flags and the alerts waits for an act-door before-read (the act door shows no before-state, and variation ids and alert ids are opaque, so a queued production flip could not be checked); alert SYNC into the index is a later gateway PR (OR-W34-7 replaced the Opsgenie connector with JSM Operations, and nothing syncs alerts yet). **Project D (Wave 4)**: D0a ✅ 2026-11-06 (type-to-confirm on every door, owner rulings OR-W34-2, OR-W34-4, OR-W34-8): the 39 Wave 4 rows each declare a `confirm` target (`withConfirm`, a template over required, non-secret input keys, `<service>/<rendered>`, the last 8 characters for the three opaque-id deletes); the executor asks the owner to type it (`ConsentChannel.requestConfirmedApproval`, the `consent.request` `confirmText` and `consent.respond` `typed` fields, no new IPC method) and approves only on an exact, untrimmed, case-sensitive match; a model-door Wave 4 row is offered only with a `before` reader (or a `bound` prepare step, I54) AND a `confirm`; the CLI prompts for text, the desktop popup disables Approve until the text matches; `--yes` and `--script-consent-source` deny a Wave 4 request; ChatOps cannot collect text and refuses it with one fixed reply; a delegate's approval needs the same text (I20); I53 amended, static D41. A Windows `workingDirectory` (backslash) is typeable. **Deferred, with the reason:** `typed?` on `consent.respond` in the published `@nimbus-dev/client` types and in the VS Code extension are follow-up PRs in those repos; they do not block, because a client that never sends `typed` is denied for a Wave 4 write, which is the safe direction. D0b ✅ 2026-11-06 (the bound-write prepare step, I54, static D42; no migration, nothing user-visible: no row declares `bound` yet): a row may declare `bound: { prepare, binds }` (`withBound`); the gateway runs the row's `<service>.write.prepare` read through the executor's own gate and dispatcher (audited and I29-ledgered) after the before-state and BEFORE the confirm text and any approval, a delegate's included, shows the prepared facts in the preview, and injects the values it binds into the write's input itself; a caller-supplied bound field (payload root or `payload.input`) is refused before any read or prompt; the public `gate()` never binds; every prepare failure (throw, timeout, oversized reply, missing value, unlisted tool) refuses on every door with a fixed reason. `PREPARE_TOOL_IDS` was EMPTY in D0b and holds the two commit prepare tools since D1c (the iac and Kubernetes ones arrive with D2 and D3), and the plan-identity clause of I54 (the gateway's own hash of a file the applying child cannot modify) is wired by D2 with the Terraform row. D1 (the API-backed Wave 4 rows) needed only D0a; D1c and D2 needed D0b. D0c ✅ 2026-11-07 (typed confirmation over ChatOps; no migration, no new invariant, I20, I23, I29 and static D17 extended): ChatOps supplies `requestRemoteConfirmed`, so a Wave 4 write asked in Slack or Teams posts a confirm card and dispatches only on the resource owner's exact typed text. Slack: Confirm and Reject buttons, Confirm opens a modal through the new `slack_views_open` tool (a ledgered `chatops.confirmModal` row, refused over federation); Teams: an Adaptive Card with an `Input.Text`. A non-owner answer leaves the card live; a channel text `approve` never approves a confirm card (a fixed hint is posted); the typed text is never trimmed, normalised or compared outside the executor (D41); a non-string or over-512 value reaches the executor as an empty string and fails. Owner action: enable Interactivity and add the `views:write` bot scope to the Slack app. Needs the connectors release carrying `slack_views_open`, `slack_chat_post` `blocks` and `teams_chat_post` `attachments`; the pin bump is the PR's last commit. Not done: a confirm card has no timeout of its own (the plain card has none either); `nimbus-client` / VS Code `typed?` stays deferred. D1 ✅ 2026-11-07 (the first Wave 4 writes for the model; pins `@nimbus-dev/connectors` 0.8.0): 27 Wave 4 writes became model-offerable, each with a typed preview, a before-state reader and a confirm text, so the model is offered 94 (67 + 27); a Wave 4 row is offered only after `nimbus connector writes enable <service> --wave 4` and approval by name, and an earlier opt-in offers none. The Wave 4 model door FAILS CLOSED: if the target's current state cannot be read (unlisted reader, timeout, failed or policy-refused read, a selection that shows nothing, a failed second read), or the row has no reader or no preview, the write is refused before any prompt and the model gets `{ refused }`. 13 rows carry a before-state guard (5 new: GitLab merge `sha`, GitHub merge `sha` equal to the pull request head, Argo CD rollback id, GitHub tag `sha` prefix, CircleCI branch-and-tag refusal). The confirm text now constrains a field only by the literal text that follows it (slashed branches and image references typeable), `=` is allowed in values. Seven services joined the door's listing (Bitbucket, Jenkins, CircleCI, GitHub Actions, AWS, Azure, GCP). Counts at D1: 115 write rows (38 / 36 / 41 by wave), 98 templated, 68 with a before-state, 173 HITL types; 47 proposable, 126 denied, 8 `not_yet_offered` (unchanged: no Wave 4 row is proposable). No new invariant, no schema change. Deferrals are in the Wave 4 list below. D1c ✅ 2026-11-08 (the two multi-file commits; no connectors release): the model is offered 96 writes (D1's 94 plus `github_file_commit` and `gitlab_commit_create`, the first two bound rows). The gateway reads the branch head through `github_commit_prepare` / `gitlab_commit_prepare` (the plan's prepare step; the spec's `github_files_get` is a plain read the connector does not list as a prepare tool, so the spec text is corrected here), injects `expectedHeadSha`, never shows that field to the model, and renders the unified diff itself from the model's file text and the head's text, escaped injectively, in full or refused (20 files, 32 KiB new, 32 KiB old, 64 KiB diff). A commit shows new, modified and unchanged files only (the connector cannot delete, rename or change a mode); a commit that changes nothing is refused. On the model door a commit touching a CI, workflow, hook, dev container, `CODEOWNERS`, `.gitattributes` or `.gitmodules` path, or with credential-looking or bidirectional-control text, is refused before any prompt (owner ruling 1, 2026-11-08); the owner's own doors are not restricted. Federation refuses both prepare tools. The audit row adds `diffSha256` and `filesSha256`; neither the audit row nor the egress ledger holds file text. Counts at D1c: 115 rows, 100 templated, 68 with a before-state, 2 bound, 96 model-offerable, 173 HITL types; proposability unchanged. Not done, with reasons: commits stay denied on the MCP act door (`provenanceConsent` replaces the executor's prompt and would drop the diff; a bound row may not be proposable until it carries the executor's preview); ChatOps cannot approve a commit (no typed channel, and a chat card cannot show a 64 KiB diff in full); no default- or protected-branch refusal (owner ruling 3); a build file the path list omits still runs code. Cross-repo requests: `oldHasBom` on the prepare `oldContent`, the repository's default branch on the prepare reply, delete support. Live behaviour (non-fast-forward errors, branch protection, whether a commit-message mention notifies, a no-change commit) is not verified against live accounts. D2 ✅ 2026-11-08 (Project D, plan-bound infrastructure applies; pins `@nimbus-dev/connectors` 0.9.0; schema V85, `connector_write_iac_grant`; static D43 new, D42(b)/(h) extended; I2, I15, I50 and I54 text extended; no new invariant): the model is offered 98 writes, D1c's 96 plus `iac_terraform_apply` and `iac_cloudformation_deploy`. The owner approves directories, clouds, regions and extra hosts with `nimbus connector writes enable iac --wave 4 --workdir <dir> --cloud aws,azure,gcp [--region <r>] [--net <host>]` (`status` lists them, `disable iac` drops them). A bound IaC write runs five ordered phases: preflight (typed confirm renderable, channel able to collect it, directory and cloud approved, all before any child), prepare (the connector's plan or change-set tool, through the same gate), settle (the gateway moves and hashes the plan file itself and has `terraform show -json` render it in a child with no network and no credential; a change set is cross-checked against the caller's input), consent (the whole plan, or the whole template up to 50 KiB, led by the counts and closed by the plan hash; the owner types `iac/apply <dir>` or `iac/deploy <stack>`) and dispatch (the apply gets the settled path and hash). `iac_terraform_destroy` is owner-typed only and never offered (OR-D2-2); `iac_pulumi_up` is refused on every door; IAM capabilities are refused to the model; the MCP act door denies every iac row. The gateway alone discards a change set a refused or declined prepare left unused (audited, ledgered, no prompt, never after a dispatch; D43). Each call runs in its own child under one of four per-run profiles (`plan`, `show`, `apply`, `cfn`); on Linux those profiles answer `pidfd_send_signal` with ENOSYS (OR-D2-5), on Windows each run has its own AppContainer id with grants released on exit and revoked from a ledger; CI installs a SHA-pinned Terraform. Counts: 117 write rows (38 / 36 / 43 by wave), 103 templated, 68 with a before-state, 5 bound, 7 prepare ids, 175 HITL types, 98 model-offerable, 12 never offered; 47 proposable, 128 denied, 8 `not_yet_offered`. Not done, with reasons: **Pulumi** (saved update plans are experimental, so no plan an apply could be bound to); **provider and module download** (the connector has no `init` tool; the owner runs `terraform init`, and a missing provider fails the plan with a fixed reason); **a ChatOps card for a plan** (a card cannot show a 64 KiB plan, so a ChatOps channel is refused before any child; D0c covers text-only confirmations); **the plan on the MCP act door** (`provenanceConsent` replaces the executor's prompt and would drop it, so every iac row stays denied there); **Terraform destroy for the model** (irreversible, owner ruling OR-D2-2); **verified host lists** (the per-cloud hosts come from documented endpoints and are UNVERIFIED until a credentialed probe; a missing host fails closed on Linux and the owner adds it with `--net`); **macOS** (first exercised by the CI sandbox probe, ports only; with Windows, all or nothing, a malicious provider could reach any host with the credential, on port 443 on macOS and on any port where it is all or nothing, OR-D2-1); **the Windows dev-tree round-trip test** (skipped: a sandboxed Bun connector cannot start from a dev tree there, only the compiled gateway can); a Kubernetes apply stays D3. Cross-repo requests: an `iac_terraform_init` connector tool (then registry hosts could be granted to a separate profile), and a read of a stack's change sets so a gateway crash's leftover change set can be listed and discarded. **D3b** ✅ 2026-11-10 (Project D, the deploy triggers and mobile release; pins `@nimbus-dev/connectors` 0.10.0; no schema change, no new invariant): the model is offered seven more Wave 4 writes, 105 in all: `vercel_deployment_redeploy`, `vercel_deployment_promote`, `netlify_build_trigger`, `bitrise_build_trigger`, `codemagic_build_trigger`, `testflight_build_distribute` and `firebase_app_distribution_distribute`, each with a typed preview, a before-state read and the type-to-confirm text, and each offered only after `nimbus connector writes enable <service> --wave 4` and approval by name (an earlier opt-in offers none). Production deploys are offered (OR-D3-1). The model door refuses a Netlify build whose branch is the site's production branch or whose production branch cannot be read (a before-state guard; the model passes `production: true`, which types `netlify/publish production <site>`), a Netlify build with neither or both of branch and production, a Firebase distribute to tester emails (OR-D3-2, groups only) and a TestFlight distribute to a group whose public link is on, that is not one of the app's, or whose link state cannot be read (OR-D3-3; the preview always shows each target group's public-link state); the owner's own doors are not restricted. `bitrise_build_latest` and `codemagic_build_latest` are named by id in `EXTRA_READ_TOOL_IDS` because `_latest` is not a read verb. The MCP act door denies all seven (classes `deployment`, `pipeline` and the new `mobile_release`). Six services are newly listed for the door. Counts: 124 write rows (38 / 36 / 50 by wave), 110 templated, 75 with a before-state, 5 bound, 7 prepare ids, 182 HITL types, 105 model-offerable, 12 never offered; 47 proposable, 135 denied, 8 `not_yet_offered`. Stated bounds and not done, with reasons: **the TestFlight read-to-dispatch window** (a public link switched on between the guard's read and the dispatch is not caught until connectors 0.11.0 adds the dispatch-time check and `allowPublicLink`); **the superseded Vercel deployment** (a redeploy names no project, so the deployment a production redeploy replaces cannot be shown; the prompt says so); **unverified vendor shapes** (`vercel_get`, `netlify_get`, `firebase_get` return the vendors' JSON as is, and Codemagic's field names are unverified upstream; the selectors follow the documented shapes and fail closed or leave a value out); **an owner-door Netlify build** has no before-state, so it cannot warn that a branch is the production branch; **Kubernetes** is D3a, below. Cross-repo requests: read-verb names for the two `_latest` reads (so the id list can be retired), a Vercel redeploy that returns or accepts the project id, and the connectors 0.11.0 items above. **D3a** ✅ 2026-11-10 (Project D, Kubernetes; pins `@nimbus-dev/connectors` 0.11.0; schema V86; no new invariant or static rule number): the model is offered `k8s_manifest_apply`, `k8s_rollout_restart` and `k8s_deployment_scale` (108 writes in all). The apply is the SIXTH bound row (I54), bound to a plan hash (context, namespace and the exact manifest) and a diff hash the gateway computes itself after its own parse of the manifest agrees with the connector's scan and with `kubectl`'s object list; the connector's apply re-diffs right before applying and refuses a changed cluster (OR-D3-8); the diff is computed inside the connector, so no `diff` program is needed on any OS (OR-D3-9). The owner approves several (context, namespace) pairs (OR-D3-11, V86), each context pinned to its API server and credential form; the confirm text is derived from the gateway's parse (`kubernetes/apply <context>/<namespace> <Kind>/<name>`, or the count and a 12-hex plan-hash prefix for several objects). All nine kubernetes tools run in a fifth runner profile, `kube`: one API server, a gateway-built single-context kubeconfig, a scratch directory as the only writable path. Secrets are refused on every door (OR-D3-5); the model door refuses RBAC kinds and privileged or host-access pod settings (OR-D3-6). The restart and scale show the deployment's state (`k8s_deployment_get`) and type `kubernetes/restart <context>/<namespace>/<name>` / `kubernetes/scale <context>/<namespace>/<deployment> to <n>`. The MCP act door denies all three. Counts: 124 write rows (wave 2 x38, wave 3 x36, wave 4 x50), 113 templated, 77 with a before-state, 6 bound, 7 prepare ids, 182 HITL types, 108 model-offerable, 11 never offered; proposability: 47 proposable, 135 denied, 8 `not_yet_offered`. Stated bounds and not done, with reasons: **a real apply against a real cluster is UNVERIFIED** (the CI stub API server cannot exercise client-side validation; an optional `kind` run is documented, not gated); **Windows cannot reach a local API server** from the AppContainer (loopback isolation covers local-NIC addresses too), so Docker Desktop, kind and minikube clusters cannot take a sandboxed call there (OR-D3-12: the enable prompt warns; no loopback exemption); **exec-plugin clusters** (typical EKS, GKE, AKS) are unsupported (OR-D3-4); **the residual stale-diff window** is the milliseconds between the connector's re-read and the apply (server-side apply has no whole-manifest precondition); **`k8s_pod_delete` is never offered** to the model (destroy-class, OR-D2-2 spirit) and **`gcp_gke_workload_restart` stays un-offered** (its reader `gcp_gke_workload_get` is code-execution class, OR-D1-1); **Secrets** are refused rather than shown (a Secret's value cannot be shown without printing it, and the audit must not store it); **the act door has no plan** for a manifest, so it stays denied; a restart of anything but a deployment has no reader and is refused. Cross-repo requests still open: read-verb names for `bitrise_build_latest` and `codemagic_build_latest`, and a Vercel redeploy that returns or accepts the project id.
 
+
+
 ---
+
+
 
 ## Planned
 
+
+
 ### Phase 7+ Sequencing Spine
+
+
 
 > **Status: the live build order (overlay added 2026-06-17; in force since Phase 6 closed 2026-06-18).** **[S1 — Local Brain](#spine-s1) is ✅ complete (2026-06-20 → 2026-08-20)** and **[S2 — Local Compute Fleet](#spine-s2)** is ✅ complete (2026-08-21 → 2026-10-10); the [pre-S3 close-out](#pre-s3-close-out) that followed finished on 2026-10-10, and **[S3 — Open Surface](#spine-s3) is ✅ complete (2026-10-11 → 2026-11-04)**, closed when the last of the seven Phase 9.5 projects shipped. **S4 — Autonomous Agent is the active slot (opened 2026-11-04).** This section re-sequences everything from Phase 7 onward for **time-to-value × differentiation (moat)** without renumbering. Phase *numbers* below stay stable (the doc cross-links them everywhere); this overlay defines the real **build order** as three tracks and pulls the cheap moat primitives forward.
 
+
+
 **Why an overlay, not a renumber:** the deepest-moat work (Verifiable Negatives, the Unexfiltratable Agent, Provable Governance — things a cloud relay *structurally cannot* do) sat at Phases 22–26, behind ~14 phases of connector breadth, even though several of their *primitives* are cheap. The biggest 2026-model lever (computer-use, code execution, runtime tool-gen — Phase 14) sat mid-list. And one linear list conflated near-term product with a long-range research manifesto. The fix is to **harvest cheap primitives early** and split the list into three tracks.
+
+
 
 #### Track 1 — The Near-Term Spine (build order S1 → S5)
 
+
+
 Ordered for time-to-value × moat. Each increment cuts across today's phase numbers. `[↑P<N>]` = pulled forward · `[↓demote]` = pushed back · `[NEW]` = net-new idea.
 
+
+
 | Spine | Theme | Contents | Why here |
+
 |---|---|---|---|
+
 | **S1** ✅ | **Local Brain** — complete (2026-06-20 → 2026-08-20; [record](#spine-s1)) | `nimbus why`/`glossary`/`decisions`/`pre-mortem`/`negotiate` [↑P7 W5]; devil's-advocate, agent personas, first-class negation + aggregation queries [↑P7 W6]; ownership graph, shipped from git blame rather than the GitHub/PagerDuty index originally scoped here (IDP connectors still deferred [↓demote]) — ✅ **shipped 2026-08-07** (`agents.ownership`, `nimbus owners`, V51); `nimbus pre-mortem` — ✅ **shipped 2026-08-11** (`agents.premortem`, V53; paused-watcher proposals only, no deploy-failure watcher, mapped services only, Jira-only — see Delivered above for the full honesty accounting); `nimbus negotiate` — ✅ **shipped 2026-08-12** (`agents.negotiate`, no schema change; six read-only lanes under an honesty contract, HTTP/MCP-excluded on subject grounds — see Delivered above); **elevate the egress ledger (P8 M7 substrate) + `nimbus prove` (P7 W6) to an always-on S1 primitive** [↑P8 / P7 W6] — ✅ **shipped 2026-06-20** (I29/D22/V44) | Highest stickiness, mostly cheap, **no new connectors**; anchors the provable-boundary moat early and co-locates the ledger with its `prove` surface (removing the pre-existing P7-reads-P8 ordering oddity). P22's portable per-answer receipts sit on top later. |
+
 | **S2** ✅ | **Local Compute Fleet** — complete (2026-08-21 → 2026-10-10; [record](#spine-s2)) | Sandboxed code execution, local computer-use loop (HITL-gated, screenshots never leave), runtime tool generation, multimodal I/O [↑P14]; **[NEW] overnight sub-agent fleets on zero-marginal local compute** [↑P27]; **[NEW] bring-your-own-frontier-model routing with local fallback** | The biggest 2026-model lever; local computer-use + free local compute are both high-TTV *and* unfakeable by metered clouds |
+
 | **S3** ✅ | **Open Surface** — complete (2026-10-11 → 2026-11-04; [record](#spine-s3)) | ~~**[NEW] Nimbus as a local MCP *server*** — expose the private index as an MCP endpoint Claude Code / Cursor / other agents connect *to*. **Defaults to stdio transport (no network port)**~~ — ✅ **shipped early under S1 on 2026-08-20** (read-only, stdio, 21 tools, `@nimbus-dev/mcp` in the MCP Registry; see the [S1 record](#spine-s1)). **What remains in S3 (lean scope):** the MCP-server write surface shipped as a capture sink under invariant `I28` (3 of 3 complete) — **PR 1 shipped 2026-10-12** (`capture_note`, an opt-in `[mcp_sink]` tool that stores an agent-authored note in the local index behind a fixed-order gate; owner review via `nimbus captures` (list, show, revoke); stdio only, default off), **PR 2 shipped 2026-10-14** (`propose_decision`/`propose_term`/`propose_link`, inert until `nimbus captures accept`, schema V68, static D32(d)), and **PR 3 shipped 2026-10-15** (`propose_action`/`capture_status`: an agent proposes a connector action that runs only after the owner's TTY `nimbus captures accept` AND the executor's HITL prompt; `[mcp_sink] kinds` must list `action`, org-policy `mcp_action`, schema V69, static D32(e)–(g); a read-only desktop Captures page followed 2026-10-16, `captures.list`/`captures.get` on the Tauri allowlist, 107 → 109; `obsidian.note.append`, at first denied as unroutable, became proposable 2026-10-25 once the dispatcher's ownership rule named the mesh-only `obsidian` server). Any HTTP/SSE variant must still honor I6 loopback bind + I5 `LanServer` method checks + I10 constant-time pairing-token auth, and the write surface stays I13-gated. Plus the extension runtime (4 of 4 complete: install gate + tree digest 2026-10-11, run grants 2026-10-16, the sandboxed runtime 2026-10-17, `--model` access 2026-10-17); **role packs** (`I47`, 5 of 5 complete 2026-10-22 → 2026-10-26; not in this row when S3 opened, recorded 2026-10-26); and the marketplace registry [↑P9.5] — **all seven of its projects, which is S3's exit condition** (owner ruling 2026-10-18; the phrase "extension maturity" that stood here was never defined and is replaced by that list). All seven projects and the Readwise unbundling pilot are complete (2026-10-18 → 2026-11-04), which closed S3 on 2026-11-04; record in [§ Spine S3 — Open Surface](#spine-s3) | Ecosystem whitespace: makes Nimbus the private-context backend for the user's whole agent stack |
+
 | **S4** | **Autonomous Agent** | **[NEW] Connector Write-Enablement [P9.7]** — the HITL-gated write surface the act-loop consumes (rides `I26`/`I29`/`I2`; framework-first, then productivity → code → infra by blast radius); watch → learn → act loop, proactive SRE automation, `incident-brief` [≈P10]; fold in the On-Call Copilot (predict/mitigate/coordinate) [↑P17]; carried-in items: [list](#carried-into-s4) | Natural capstone of the spine; the interactive + standing halves of one loop — **inert without writes, so P9.7 is its foundation.** |
+
 | **S5** | **Engineering Excellence breadth** | DORA/metrics connectors, feature-flag connectors [↓P7 W2–3]; security tooling + agents [↓P8]; ML/AI tooling [↓P9]; the deferred IDP/ownership connectors from S1; carried-in items: [list](#carried-into-s5) | Commodity, API-fakeable → **not a moat**; community/marketplace-leaning, demoted behind the spine |
+
+
 
 <a id="carried-into-s4"></a>
 
+
+
 #### Carried into S4
+
+
 
 Open items from shipped phases and from S2, re-homed here on 2026-10-10, and from Phase 9.5 and S3, re-homed on 2026-11-04, so each has one live destination. Each source row keeps its text and points here.
 
+
+
 - [ ] **Model access to generated tools and to computer-use** (from the [S2 record](#spine-s2) and Phase 14's *Output capture and feed-back* row) — today `gateway-main.ts` supplies neither `deps.toolgen` nor `deps.computerUse` to the engine agent, so a generated tool runs only through `nimbus tool run` and a computer-use session only through `nimbus computer`, both CLI/owner-only. Preconditions before either is wired: for generated tools, owner-only turns plus a per-call owner HITL prompt on every model invocation (I42's shape), because I39 bounds WHERE a tool may send and never WHAT — without a per-call prompt, an injected instruction could have the model send private index data to an approved host; for computer-use, a per-turn session binding (the engine agent is built once at boot, a computer-use session is per request; user MCP's request-context pattern is the precedent) plus a desktop consent UX.
+
 - [ ] **User-MCP write grants** (from the S2 record's *User MCP servers that actually run* row) — `nimbus connector add --mcp` resolves `--read`/`--net`/`--model` grants only; every user MCP server's sandbox policy carries `filesystem.write: []` (`connectors/lazy-mesh/user-mcp.ts`).
+
 - [ ] **Anomaly user notifications** (from [Phase 3 § Intentionally incomplete](#intentionally-incomplete-follow-ups)) — `watcher/anomaly-detector.ts`'s `AnomalyDetectorStub` scores sync telemetry with a rolling z-score, and its `onNotify` in `platform/assemble.ts` only writes a log line; nothing reaches the user. The OS notification backend it was waiting on shipped 2026-10-10 ([pre-S3 item E](#pre-s3-close-out)); what remains is the detector itself (it is a stub) and routing its `onNotify` to that service with a threshold policy, so a noisy z-score does not become a stream of toasts. Overlaps [Phase 17 § Wave 1](#phase-17--the-on-call-copilot)'s *Anomaly → proactive heads-up*.
+
 - [ ] **ChatOps watcher notifications** (from [Phase 6 § ChatOps](#phase-6--team-)'s *Notification routing*) — `makeChatopsWatcherNotify` (`automation/watcher-engine.ts`) has no production caller. Wiring it makes a silent path emit outbound, so it needs I23 (and plausibly I29) treatment.
+
 - [ ] **Team-owned workflow pipelines** (from Phase 6 § Shared Workflows & Policy) — that row already said S4, but this slot's cell did not list it. The I19/I21/I22 substrate shipped; the shared-pipeline authoring surface did not.
+
 - [ ] **Workflow branching / conditionals** (from Phase 4 § Automation & Graph Enhancements and the [v0.1.1 batch](#v011-batch-deferred-from-v010)) — `automation/workflow-runner.ts` has no `if`/`else`/`switch` step.
+
 - [ ] **`nimbus pre-mortem` limits** (from the [S1 record](#spine-s1) and Phase 7 Wave 5) — no deploy-failure watcher is proposed, because `deployment/annotate.ts` writes its `item` row with no `deployment` graph entity, so a `deploy_failed` watcher matches nothing until `nimbus index regraph` runs; and the agent is Jira-only, because `linear-sync.ts` indexes Linear issues only, with no epic-shaped row.
 
+
+
 - [x] **GitHub Enterprise Server** (a carried-in item, ✅ 2026-11-07) — the optional Vault key `github.api_base` connects the GitHub connector and GitHub Actions to one self-hosted instance (`nimbus connector auth github --api-base <url>`; a `gh` login on that host is adoptable through `nimbus connector detect`, `--host`). Shipped: a strict validator (`connectors/github-api-base.ts`: https only, no credentials, query or fragment, path empty or `/api/v3`, no GHE.com, no IPv6 literal, no loopback, unspecified or link-local host; RFC 1918 allowed); the GitHub children spawned with `GITHUB_API_BASE_URL` and the instance host added to their sandbox network (additive, never a wildcard); the credential probe, sync, targeted fetch, PR files and Actions runs following the base with same-origin-only redirects; every follow-up loop (and CircleCI's GitHub repository list) pinned to the current instance's web origin; the fetch-host boundary claiming the instance and not github.com; Git remote parsing and the repo-context query knowing the host; `connector status` and the consent preview naming the instance; a re-auth restarting the GitHub child and clearing both sync cursors when the instance changes (it never deletes indexed items). A stored base that no longer validates fails closed. **Bounds, stated:** one instance at a time (an indexed item's id carries no host); GHE.com refused; a literal host check does not prevent DNS rebinding; the egress ledger records a call as `github` for either host; the Actions job-log tool can fail where the instance stores logs on a blob host the sandbox does not list; a team-vault entry may carry its OWN optional `github.api_base` (absent means github.com; a team entry cannot name github.com, the validator refuses it), the team PAT goes only to the host its own entry names (a present but invalid team base fails closed: no spawn, and the write is refused before any prompt; the `Instance:` line is a fresh Vault read at prompt time on both the model door and the MCP act door, a Vault change between approval and dispatch can differ, and the spawn re-validates but does not compare it with the prompted host), every PAT reader (sync, targeted fetch, Actions sync, the spawn) reads base, PAT, base again and makes no request if the base changed mid-read, and a team write's prompt names the TEAM entry's instance, never the owner's (`github.api_base` is optional for a team entry: `requiredSecretKeysFor` omits it from the I19 presence check); with a GHES configured, a github.com checkout and a GHES repository of the same owner/name share one `repo` entity (ownership edges only; no credential or host effect). **Deferred:** a second instance (a host-qualified item id and a second service id); GHE.com (a separate web host field); an `Instance:` line for GitLab, Jira and Confluence previews; GitLab self-hosted Git remote parsing.
+
 - [ ] **Marketplace page and desktop tile** (from [Phase 9.5 § Author Onboarding](#author-onboarding), opened 2026-11-03 when project 6 closed) — the registry web page and the desktop marketplace tile: a package's score, baseline, `Tested`, `History` and `Checked` lines and what the sandbox will do with its declared permissions, read from the registry's signed index, plus a Sponsor button for the author's declared `funding` links (the CLI side, `nimbus extension sponsor`, shipped 2026-11-04). It also carries three remainders re-homed with it on 2026-11-04: the **manifest browser at `nimbus-agent.dev/extensions`** (a static catalog with search and filters, from [§ Hosted Registry](#hosted-registry)); the desktop half of **Bring your own registry** (the desktop app cannot add a registry, search one or install from one: no `registry.*` method is on the Tauri allowlist); and the Phase 9.5 acceptance criterion that quality scores appear on every published extension's registry page and desktop tile.
+
 - [ ] **Community ratings and reviews** (from [Phase 9.5 § Quality Layer](#quality-layer), itself re-homed from Phase 5 § Extension Marketplace v2) — **deferred (owner decision, 2026-10-19):** the registry is static files with a git pull-request write path and no hosted service, so there are no accounts to hold ratings. Phase 6's *Paid extensions* row depends on it.
+
 - [ ] **Registry install counts** (from Phase 9.5's *`nimbus extension search` + `nimbus extension info`* row) — search and info shipped every other field that row named; a static registry has no server-side counter, so a count needs a mechanism that fits the no-hosted-service decision.
+
 - [ ] **Offline provenance re-verification** (from Phase 9.5's *Reproducible-build / source-provenance attestation* row) — the registry's sign job verifies a GitHub build-provenance attestation and records it in the signed index (trust layer PR 4c, 2026-10-27), so provenance is vouched for by the registry root; it is not re-verified offline against a baked trust store, and installed copies do not carry it.
+
+
 
 - [ ] **Org-wide dependency sweep (the LAST S4 item)** (owner ruling OR-S4-DEPS, 2026-11-11) — every nimbus-agent repo, npm and Cargo, moves to the latest version including majors; a major that cannot move is re-tested first and the reason it cannot is recorded in the repo that holds it. Order: `nimbus-sdk`, `nimbus-client` and `nimbus-mcp` first, then `nimbus-mcp-servers` (released, so the pin can follow), then this repository (the connectors pin), then `nimbus-vscode` and `nimbus-web-clipper`. One pull request per repository, with its full CI green before the next repository starts; follow [`CONTRIBUTING.md` § Updating Dependencies](./CONTRIBUTING.md#updating-dependencies); never a `!` or `BREAKING CHANGE:` (nothing here changes what a user has to do).
 
+
+
 <a id="owners-open-items"></a>
+
+
 
 #### Owner's open items
 
+
+
 Not buildable, and the owner's to complete: what remained of [Phase 9.5](#phase-95--marketplace-registry) when it and S3 closed on 2026-11-04. They were never part of S3's exit condition (owner ruling, 2026-10-18). Each source row keeps its text and points here.
 
+
+
 - [ ] **Live `registry.nimbus-agent.dev` hosting** (from [§ Hosted Registry](#hosted-registry)) — the public instance as static files; the format, the client and the pull-request publish path shipped (projects 1 and 2), and [`registry-hosting.md`](./registry-hosting.md) carries the owner steps.
+
 - [ ] **Verified Publisher tier: pricing and KYC** (from [§ Trust Layer](#trust-layer-verified-publishers)) — the badge and the trust feed that carries verified publishers shipped (trust layer PRs 3c and 5, 2026-10-27); the subscription, its price and the KYC and abuse-monitoring SLA did not.
+
 - [ ] **20-extension grant program** (from [§ Author Onboarding](#author-onboarding)) — marketing budget, not code.
+
 - [ ] **Curated starter packs in the official registry** (from [§ Private & Composable Registries](#private--composable-registries)) — the mechanism shipped (project 4 PR 4, 2026-10-29); publishing named packs such as a frontend or DevSecOps pack is a release of the official registry, which its protected signing environment approves.
+
 - [ ] **The official registry's liveness setup** (from [§ Quality Layer](#quality-layer)'s *Connector liveness checks* row) — both liveness jobs are skipped until the owner's one-time setup is done, so no live registry publishes `liveness.json` yet.
+
 - [ ] **The open Phase 9.5 acceptance criteria** (from [§ Phase 9.5 → Acceptance Criteria](#phase-95--marketplace-registry)) — `registry.nimbus-agent.dev` live with at least 30 extensions; `nimbus extension publish` round-tripping against that live registry; at least 5 Verified Publishers baked into a release; and the abuse-report and takedown flow exercised once against a deliberately misbehaving test extension within the agreed SLA. Each needs the hosting, the publishers or the moderation process above.
+
+
 
 <a id="carried-into-s5"></a>
 
+
+
 #### Carried into S5
 
+
+
 - [ ] **Full IaC drift** (from [Phase 3 § Intentionally incomplete](#intentionally-incomplete-follow-ups)) — Terraform state vs. live resource diff; Phase 3 ships hints only. Overlaps [Phase 10 § Stretch — Infrastructure-as-Agent](#phase-10--the-autonomous-agent)'s *Autonomous drift detection*.
+
 - [ ] **Frontend RUM connectors and the web-vitals watcher** (from [Phase 5 § Wave B](#wave-b--mobile--frontend-engineering-stretch)) — LogRocket / FullStory / Datadog RUM and the web-vitals regression watcher; no connector or watcher for either exists.
+
 - [ ] **Bedrock/SigV4 and a local OpenAI-compatible runtime** (from the S2 record's *Bring-your-own-frontier-model routing* row, "Still open") — `llm/` carries adapters for Anthropic, OpenAI, Gemini, xAI, Ollama and llama.cpp only. The OpenAI adapter hardcodes `isLocal = false` (I34), so pointing it at a loopback OpenAI-compatible server would be treated as remote by air-gap refusal and the I29 `model` appender; a local runtime needs its own adapter that derives locality from its base URL. The llama.cpp adapter calls llama-server's native `/completion`, not an OpenAI-compatible endpoint.
+
+
 
 **Shape:** S1–S3 are moat + 2026 levers (mostly cheap or model-driven); S4 is the capstone; S5 is fakeable commodity breadth that can lean on the community.
 
+
+
 **Phase 7 Wave 4 (capstone) splits across slots** (it is not a single unit): the private-context pieces — cross-team knowledge graph, automation-template library, pattern recognition, ADR auto-drafter, living-architecture map — ride with **S1/S4** (the learn-and-act substrate); `nimbus excellence` + the excellence dashboard *render* the S5 commodity metrics, so they land with **S5**; the team-policy library composes with the Phase 6 policy engine (Track 2).
+
+
 
 **Composes-with integrity:** because this is an overlay (numbers + prose unchanged), every existing "composes-with" cross-reference still resolves. Demotions only ever move a dependency *later relative to the spine*, never break a reference; the one promotion that touches cross-refs — the egress ledger — moves *earlier*, which only helps the P12.5 / P21 / P22 / P23 phases that build on it.
 
+
+
 #### Track 2 — Scale & Surface
+
+
 
 Productization/distribution; lands after the spine, much of it parallelizable, none of it research.
 
+
+
 - **Independent-slot** (not spine-gated): Desktop Distribution [P13] — depends only on already-shipped Phase 4; land when adoption needs it.
+
 - **Mobile Companion [P13.5]** — *not* freely independent: depends on Phase 11 (mesh addressing) + Phase 17's assembled-brief schema, so it slots after those.
+
 - **Commercial/scale band** (depend on Phase 6 federation): Enterprise [P12], Platform Layer / Team-OS [P16], Cross-Org Federation [P15].
+
 - **Compliance Receipts [P12.5]** — commercial-tier, but its prerequisites are Phase 8 (egress ledger) + Phase 9 + the EAF Standards track, **not** Phase 6 federation.
+
 - **Opportunistic expansion surfaces:** Sovereign Mesh / multi-device + physical [P11], Vertical Personas [P18], Ambient Surfaces [P19] (already flagged highest-risk), Personal & Household Federation [P20].
+
+
 
 ##### Client surfaces
 
+
+
 Where capability reaches a human. Each surface lives in its own repository and
+
 carries its own detail; **this table owns the order they are built in.** That
+
 sequencing used to live in `docs/ecosystem-roadmap.md`, which closed 2026-07-24
+
 and is now retired — how the pieces fit together is described at org level in
+
 [`ECOSYSTEM.md`](https://github.com/nimbus-agent/.github/blob/main/ECOSYSTEM.md).
+
+
 
 **One gateway, N contextual surfaces.** The agents are the product; a surface is only how you reach them without leaving where you already are. Every surface talks to the same Gateway over the same contract and runs the same built-in agents — no surface owns an agent, and no agent is reimplemented per surface. What differs is *context*: the surface already knows what you are looking at, so the query you would otherwise have typed arrives pre-scoped. Today the terminal is the only first-class surface and the editor and browser are treated as accessories; that is a historical accident of build order, not a design decision.
 
+
+
 - **Terminal** (`packages/cli`) — the complete surface and the reference implementation: every agent, every flag, scriptable and pipeable. It stays the place a capability lands first, because it is the cheapest place to prove the contract.
+
 - **Editor** ([`nimbus-vscode`](https://github.com/nimbus-agent/nimbus-vscode)) — the file, line or symbol under the cursor is the subject. `nimbus why` rendered as an inline lens is the shape (already specified in [Phase 7 Wave 5](#phase-7--engineering-excellence)); the hover UI is the open item in that repo's own roadmap.
+
 - **Browser** ([`nimbus-web-clipper`](https://github.com/nimbus-agent/nimbus-web-clipper)) — the page you are on is the subject. Today the repo is a *clipper* (capture a page into the index). The direction recorded below is that it becomes a **browser-side client for the gateway**, which is a different product from the one it ships.
+
 - **Messaging** (`packages/gateway/src/chatops/`) — the channel you are already talking in is the subject, and it is the only surface here that reaches a person who has not installed anything. The `@nimbus` Slack/Teams bot shipped in [Phase 6 Slice 5](#phase-6-team); it can now run an agent too — see the reframe recorded below.
+
+
 
 **Nimbus does not ship its own editor.** Forking VS Code — the Cursor shape — was considered and rejected on 2026-08-29; the editor surface stays an extension against the same gateway contract as every other row here. Reasoning and the conditions that would reopen it: [§ Rejected Directions](#rejected-directions).
 
+
+
 | Surface | State | Next |
+
 | --- | --- | --- |
+
 | [`nimbus-vscode`](https://github.com/nimbus-agent/nimbus-vscode) | ✅ shipping (v0.12.0) | Its own roadmap; the `why`-lens hover UI is the open item — the editor cut of the contextual-surfaces direction recorded below |
+
 | [`nimbus-web-clipper`](https://github.com/nimbus-agent/nimbus-web-clipper) | ✅ shipping (v0.2.0) | Its own roadmap, plus the clipper → **browser gateway client** reframe recorded below. The two defects that gated its *current* job are closed together (2026-08-11): #1006 (`web_clip` no longer routes to OpenAI — clips embed on-device via MiniLM-384 unconditionally, so the store listings' local-only claim holds) and #1005 (`wordCount` now describes the stored body, with `truncated` + `sourceWordCount` disclosing an over-cap clip). Storage depth no longer derives from embedding destination — `LONG_BODY_TYPES` is the union of `PROSE_HEAVY_TYPES` and the new `LOCAL_ONLY_PROSE_TYPES`, so neither fix can silently regress the other |
+
 | ChatOps messaging (`packages/gateway/src/chatops/`, in-repo) | ✅ shipping (Phase 6 Slice 5; agent intent shipped 2026-08-30) | **Agents on the channel** shipped — see the reframe recorded below. Unlike every other row, this surface is not a separate repo: the transport, identity mapping, HITL presenter and I23 reply dispatcher were already in this tree, and what was missing was an intent, not a client |
+
 | [`nimbus-statuspage`](https://github.com/nimbus-agent/nimbus-statuspage) | 🧱 scaffold | **First to build.** On-thesis — "on-call intelligence for DevOps/platform teams" is this surface rendered — and its whole data dependency (the DORA calculators, `incident`/`alert` items) already ships. Read-only, so it cannot violate an invariant. |
+
 | [`nimbus-postmortem`](https://github.com/nimbus-agent/nimbus-postmortem) | 🧱 scaffold | Second. Same on-call thesis and the same read-only shape, but needs incident-narrative assembly over the relationship graph that does not exist yet. |
+
 | [`nimbus-raycast`](https://github.com/nimbus-agent/nimbus-raycast) | 🧱 scaffold | Third. Pleasant but generic — a quick-ask surface differentiates least, and it is macOS-only. |
 
+
+
 🧱 = holds a vision README and a build prompt, no implementation. All three are
+
 public and MIT. None carries its own `ROADMAP.md` on purpose: an unbuilt repo
+
 with a vision, a build prompt *and* a roadmap is three documents answering one
+
 question, which is how several files came to claim the same authority before.
+
+
 
 **Browser gateway client (direction, not yet built).** On a Bitbucket pull request or a Jenkins build page, an ambient panel resolves the page to an already-indexed item and runs the agents that already exist against it — *why does this change exist*, *what breaks if it lands*, *who should review it* — with no context switch to a terminal. This is a direction record only: it claims no position in the build order above, and `nimbus-statuspage` remains first to build. The design spec `2026-08-01-browser-gateway-client-design.md` is **planned, not yet written** — this block is the current authority until it lands.
 
+
+
 Much of this is **wiring shipped capability to a new surface rather than new capability** — verified in the tree, not assumed:
 
+
+
 - Seventeen built-in agents already ship (`packages/gateway/src/agents/`: `catchup`, `changelog`, `conflicts`, `decisions`, `expert`, `ghost`, `glossary`, `huddle`, `impact`, `janitor`, `negotiate`, `oncall`, `ownership`, `preflight`, `premortem`, `standup`, `why`), plus the synchronous `agents.whyPeek` companion — not counted as a separate agent — and all seventeen are dispatched by the `agents.*` IPC namespace that already exists (`packages/gateway/src/ipc/agents-rpc.ts`). **IPC availability is not browser availability:** five of the seventeen are deliberately excluded from the HTTP agent surface a browser client would use — `agents.preflight` and `agents.premortem` for their side effects, `agents.negotiate` because `--person` makes it a dossier-builder for any bearer-token holder, `agents.standup` because it is owner-scoped by construction (a bearer token cannot ask about itself and would receive the gateway owner's day), and `agents.changelog` for a sequencing reason (its shape settling against one consumer, the CLI, before being committed across every external surface — not a side-effect or dossier concern like the other three). A browser surface reaches twelve, not seventeen — and `agents.oncall` only on its explicit `--incident`/`--service` shape, since `requireOncallParams` refuses the owner-scoped default to an external caller.
+
 - Bitbucket, Jenkins, Jira, GitHub and GitLab are all indexed connectors with sync handlers.
+
 - The *data* URL → item resolution needs is already captured: `connectors/bitbucket-sync.ts` indexes `type: "pr"` with a `canonicalUrl`, `connectors/jenkins-sync.ts` indexes `type: "ci_run"` the same way, and `canonical_url` is a real column on `item` (`index/unified-item-v3-sql.ts`).
+
+
 
 Both gateway surfaces this direction needs — named here as genuinely not built, and neither was a wiring job — now exist:
 
+
+
 - **Browser-reachable agent invocation:** shipped as `POST /v1/agents/{agent}` plus `GET /v1/agents/runs/{id}` and `GET /v1/agents`, behind the `agents` token scope (#1063).
+
 - **Resolve-by-URL read:** shipped as `GET /v1/items/resolve` behind the `resolve` token scope. `item.resolve_key` (schema **V52**) is a derived, indexed column (`canonicalizeUrl(canonical_url ?? url)`) that a bounded ladder — exact key, query-stripped, then trimmed path segments — matches against.
+
+
 
 Decisions already taken (recorded so they are not relitigated):
 
+
+
 - An **ambient panel that recognises where you are**, not a generic ask box — the recogniser is the product; a text box on a web page is not.
+
 - On a **resolve miss for a connectored service, trigger a targeted sync of that one item and then answer** — never fall back to reading the DOM. An answer assembled from page text is a different, weaker product wearing the same panel. Capture is not abolished by this: it survives as the explicitly-labelled last resort for surfaces no connector models at all (an internal wiki, a vendor console), which is what the extension's existing clip path becomes.
+
 - Progress / abort / completion travel by **polling plus `chrome.alarms`, not SSE** — an MV3 service worker is terminated when idle, so nothing may depend on a held-open connection.
+
 - The fetch-and-index route is **allowlisted explicitly as an `I13` write**, not reclassified as a read to slip past `WRITE_ROUTE_ALLOWLIST`.
+
 - **Page access and network access are separate axes.** The extension's *network destination* stays loopback-only — the gateway binds `127.0.0.1` by default (`I6`) and the extension talks to nothing else. Recognising which page you are on is a different permission: it needs to read the URL of pages that are *not* the gateway, which today's manifest cannot do (`activeTab` + `scripting` only). That is granted per origin at runtime via `optional_host_permissions`, never as a static broad host permission — the one genuinely new privacy cost of this direction, and it is opt-in.
+
 - **Open, and owed an answer by the design spec:** whether a targeted single-item sync appends to the `egress_ledger` (`I29`/`D22`). The ledger's chokepoint is the executor's `connectors.dispatch` path, so a connector sync's coverage is not automatic and must not be assumed. The browser surface reads the gateway's record rather than keeping a private one.
+
+
 
 Honest state, because a roadmap that omits it is misleading:
 
+
+
 - **The clipper has ~0 users.** AMO reports `average_daily_users: 0` two weeks after listing. This reframe is a response to that, not a victory lap on top of it.
+
 - **The clipper's category is occupied by better-resourced incumbents.** Obsidian Web Clipper has ~900k users at 4.8 stars and already ships local Ollama; Karakeep has ~28k stars under the same AGPL licence with OCR, PDFs, mobile and an MCP server. Nimbus does not win "clip a page into a box" by trying harder.
+
 - **The idea is not unique — execution is the difference.** SurfSense (~15.7k stars) already has a similar cross-corpus architecture with Gmail / Slack / Jira / Confluence / Linear / GitHub connectors and an MCP server. What is defensible is the *contextual recogniser over an already-indexed private graph*, not "browser extension plus agent".
+
 - **The two defects that gated the clipper's current job are closed (2026-08-11), and were closed together:** #1006 (`web_clip` routed to OpenAI embeddings when a key was set, contradicting the local-only claim in the store listings) and #1005 (bodies clamped to the cap while `wordCount` reported the submitted length). They could not be fixed independently — the body cap was derived from the embedding-routing set, so removing `nimbus:web_clip` from `PROSE_HEAVY_TYPES` to close #1006 would have cut the clip body cap back to 512 and re-opened #1005. The two questions now have separate sets in `embedding/routing.ts`: `PROSE_HEAVY_TYPES` (may embed remotely) and `LOCAL_ONLY_PROSE_TYPES` (prose-shaped, pinned on-device), which a test pins **disjoint** — absence from the former is the whole of the privacy enforcement, so a key in both would read as local while routing remotely. `body-caps.ts`'s `LONG_BODY_TYPES` is their **union**, not a third alternative, so a type added to either one gets the 16 KiB cap. An over-cap clip is still clamped at 16 KiB — what changed is that the clamp is now declared (`truncated` + `sourceWordCount`) instead of hidden behind a `wordCount` measured on discarded text. A new surface can now be built on an index whose losses are stated and whose contents stay local.
+
+
 
 Acceptance criteria (first slice — Bitbucket PR + Jenkins build recognisers, `why` + `impact`):
 
+
+
 - On a Bitbucket pull-request page the panel resolves the browser URL to the indexed `pr` item through `canonical_url` and names it (repository + PR number + title) with no query typed; on a Jenkins build page it resolves to the indexed `ci_run` item the same way. A page neither recogniser claims renders nothing at all — silence, not a guess.
+
 - From the resolved item the panel runs `agents.why` and `agents.impact` and renders the returned briefs in place. For the same item id the panel and `nimbus why` / `nimbus impact` return the same brief payload from the same `agents.*` call — asserted by a test on the IPC response, not by eyeballing two renderings; the extension may restyle a brief but may not re-derive one.
+
 - A resolve miss on a recognised, connectored page triggers a targeted sync of that single item and then answers. If the targeted sync cannot reach the connector, the panel states that the item is not indexed and offers nothing further. **No recognised surface is ever answered from page text** — the panel has no DOM-scraping path for any page a recogniser claims, verified by a source-scanning guard, not by convention. (The existing capture path stays reachable only for pages no recogniser claims, and what it produces is labelled a captured copy, not connector data.)
+
 - The fetch-and-index route appears in `WRITE_ROUTE_ALLOWLIST` with its own bearer-auth + per-token rate-limit entry (`I13`), and the `WRITE_ROUTE_ALLOWLIST` count assertion is updated in the same commit.
+
 - Killing the MV3 service worker mid-run and reopening the panel recovers the run's state; abort from the panel stops the run within one poll interval. No code path holds an SSE or WebSocket connection open.
+
 - Authentication is unchanged: the panel presents the existing `I30` owner-paired clip token. No new token path and no new pairing flow. Static `host_permissions` stay loopback-only (`http://127.0.0.1/*`, `http://localhost/*`); the per-origin page access recognition needs is requested at runtime through `optional_host_permissions` and revoking an origin silences the panel there.
+
+
 
 **Messaging surface — agents on the channel (shipped 2026-08-30).** The `@nimbus` bot shipped in Phase 6 Slice 5 answered questions but could not run an agent. `IntentRouter` (`packages/gateway/src/chatops/intent-router.ts`) now classifies every inbound message into **three** intents: `read`, which calls `askEngine(query, namespace)`; `write`, which calls `runGatedWrite(...)` behind the owner's HITL gate; and `agent`, parsed from an `agent <name> k=v …` line ahead of the `read` fallthrough (`agent`/`run` share a leading keyword with free text, so `@nimbus why is checkout slow?` still parses as `read`), which dispatches through the same `agents.*` namespace the CLI and the HTTP route already use — a brief is restyled per surface and never re-derived. Two consequences of the earlier gap, and how each landed:
 
+
+
 - **The surface's dependency profile was upside down.** A channel read goes through `ask`, which *requires* a configured LLM. The eleven agents reachable here render **deterministically with no LLM at all** — that is the property that made zero-config onboarding possible. `@nimbus agent why ref=src/auth.ts line=42` now posts a deterministic brief on a gateway where `@nimbus why is checkout slow?` in the same channel would refuse — the criterion that proves the inversion is actually fixed.
+
 - **The platform union is still `"slack" | "teams"`** (`chatops/types.ts`), a business-hours surface. Shipping the agent intent did not widen channel breadth — see the "Ten-plus messaging channels" row in the "Already covered — do not re-file" table near the end of this document.
+
+
 
 **Nothing about the agents themselves changed** — they stay read-only and HITL-free, so `approval-presenter.ts` is not on this path at all.
 
+
+
 Disclosures, stated plainly rather than softened (design spec §9 — `2026-08-29-chatops-agent-intent-design.md`):
 
+
+
 1. **A brief is not filtered by channel or namespace.** It is synthesized from the owner's whole local index — exactly as a `read` answer already is — and posted into a room whose members may include people with no Nimbus identity. There is no local filter to apply, not one that was skipped: **CORRECTION** — this block previously claimed "the channel↔namespace binding and the `I17` grant/role/consent filter are load-bearing here, not incidental." That was wrong. `I17` governs **federated** answering only (`federation/query-gate.ts`, gating queries arriving from paired peers); a brief synthesized from the local index and posted to a channel never passes through it and cannot be made to without moving I17 itself. `namespaces` is not a content filter either — only three of the eleven agents accept it (`ghost`, `conflicts`, `huddle`), and for them it selects **which peers to ask**, never which local rows are visible. That is a DIFFERENT set from the `federatedAgentBase` callers, which number **four**, not three: `janitor` also fans out to peers through `federatedAgentBase` but does not itself accept a `namespaces` parameter. There is therefore no local namespace filter to inherit, apply, or plumb through, for any of the four.
+
 2. **Every post is ledgered**, including the ones that predate this feature — the `chatops` `I29` coverage class (`egress/chatops-egress.ts`) covers every outbound ChatOps post, and a channel-served brief appends exactly one row (`method='chatops.agentBrief'`) from the post appender, not the invoker.
+
 3. **The permitted set is twelve, not eighteen.** `AGENTS_RPC_HANDLERS` carries eighteen entries (the seventeen built-in agents plus `whyPeek`, a companion sharing `why`'s dispatch, not an eighteenth agent), and `EXTERNAL_EXCLUDED_AGENT_METHODS` drops `agents.preflight`/`agents.premortem` for their side effects, `agents.negotiate` because `--person` makes it a dossier-builder for anyone who can read the channel, `agents.changelog` for a sequencing reason (its shape settling against one consumer before being committed across every external surface), `agents.standup` because it is owner-scoped by construction, and `whyPeek` as a companion. `agents.oncall` is PERMITTED but shape-bounded rather than excluded: `requireOncallParams` refuses its owner-scoped zero-parameter form for an external caller while serving `--incident`/`--service`, the same shape-level bound invariant `I36` applies to `agents.ghost`/`agents.conflicts`. ChatOps *inherits* this exclusion set from the already-shipped HTTP/MCP surfaces rather than re-deciding it — every reason is stronger in a shared room.
+
 4. **Unmapped users cannot invoke an agent.** `binding.unmapped === "public-read"` admits an unmapped user to `read` only; the agent intent does not inherit it. The cost, disclosed rather than papered over: in a `public-read` channel the same user gets an answer to `@nimbus why is checkout slow?` and a refusal for `@nimbus agent why ref=…`. That inconsistency is real. It is the correct one — the free-text path's permissiveness is the older decision, not the better one.
+
 5. **The agent intent is not rate-limited, unlike its HTTP sibling.** `POST /v1/agents/{agent}` is per-token rate-limited (`ipc/http-write-routes.ts`); the ChatOps agent intent carries no equivalent, and the Slack socket adapter dispatches each inbound frame with a fire-and-forget `void this.onFrame(...)` rather than serializing them, so nothing bounds how many concurrent agent runs one mapped chat user can start. The pre-existing `read` path was equally unbounded, so this is not a regression on its own — but the peer-amplification arm IS new: an unbounded run count now means unbounded federated fan-out onto other paired machines (for the four `federatedAgentBase` agents) and unbounded remote-LLM spend under `[agents].synthesis = "allow-remote"`, where before it meant only unbounded local `ask` calls. Not built here — a rate limiter is its own change.
+
+
 
 Worth stating even though it is not a new disclosure: four of the eleven chat-reachable agents — `ghost`/`conflicts`/`huddle`/`janitor` — are `federatedAgentBase` callers and fan out to paired peers carrying the **gateway owner's** federation identity, never the chat user's, and the peer sees no indication the request originated in a channel. (`federatedAgentBase` itself has FIVE call sites in `ipc/agents-rpc.ts`, not four — the fifth, `preflight`, is excluded from every external surface, so it never reaches chat; "four" is correct only when scoped to what chat can actually reach, never as an unqualified count of `federatedAgentBase`'s callers.) A mapped chat user therefore borrows the owner's federation identity for the duration of the call — allowed, and consistent with the already-shipped HTTP surface, where any `agents`-scoped bearer token does the same (design spec §13.2).
 
+
+
 Acceptance criteria (met):
 
+
+
 - `@nimbus agent why ref=<file> line=<n>` in a bound channel returns the same brief payload as `nimbus why <file>:<line>` for the same subject, from the same `agents.*` dispatch. The bot may restyle a brief; it may not re-derive one.
+
 - The intent resolves with **no LLM configured** — a deterministic brief posts to the channel on a gateway where `nimbus ask` would refuse.
+
 - An agent intent naming an agent outside the permitted set, or with malformed params, is refused through the existing `auditRefusal` path with a named reason, not silently ignored.
+
 - Every outbound ChatOps post — including a channel-served brief — appends exactly one `egress_ledger` row under the `chatops` `I29` coverage class.
+
 - An unbound channel stays silent (the existing fail-closed default in `IntentRouter.handle`), unwidened by the agent intent.
+
+
 
 #### Track 3 — Research Horizon
 
+
+
 The North-Star "M-number" manifesto. The full vision stays; each entry's cheap *primitive* is harvested into the spine when ready. **Principle: a research frontier whose primitives we mine early — not phases reached in a decade.**
 
+
+
 | Phase | Full form (stays Horizon) | Primitive → harvested |
+
 |---|---|---|
+
 | P22 — Proof Layer / Verifiable Negatives | Portable, offline-checkable **per-answer** EAF receipts | the always-on ledger + `nimbus prove` read-surface land early in **S1** (sourced from P8 / P7 W6, not P22 itself); only the per-answer receipts stay here |
+
 | P27 — The Agent Society | Standing safe agent-organization | overnight local sub-agent fleet → **S2 (done)** |
+
 | P23 — Inert to Injection (Unexfiltratable Agent) | Egress severed structurally on attacker-influenced turns + conformance bundle | candidate: egress-severing hook (pairs with S1 egress ledger) |
+
 | P21 — Sovereign Trust Substrate | — | candidate: extract when S1 boundary work matures |
+
 | P24 — Agent Archaeology / Causal Twin | Replay reasoning as-of any timestamp | candidate: signed derivation log (pairs with S1 ledger) |
+
 | P25 — Confidential Mesh Compute | Operator-free cross-org learning (M4) | gated on Cross-Org Federation [P15] |
+
 | P26 — Provable Governance | Policy compiled into the gate + boot attestation (M12) | candidate: compile a policy fragment into the `I2` gate |
 
+
+
 ---
+
+
 
 ### Phase 7 — Engineering Excellence
 
+
+
 **Goal:** Give engineers a local, queryable view of how their team operates — service ownership, DORA / SPACE health, feature-flag state, and a shared knowledge graph that turns one engineer's hard-won pattern into the team's reusable automation. **Single-user-first;** Phase 6 federation amplifies the value but is not a precondition.
+
+
 
 > **Composes with Phase 6 (Team):** Phase 7 ships fully on a solo machine, but every wave gets richer when Phase 6 federation is available. Wave 1's ownership graph merges federated peers' service catalogs into a single cross-team view; Wave 4's knowledge graph + automation library publish to Phase 6 shared namespaces; Wave 4's team policy library produces fragments the Phase 6 org-level policy engine consumes; the `nimbus excellence` agent can optionally aggregate DORA snapshots and stale-flag counts across federated peers (still LAN-bounded, no relay server).
 
+
+
 #### Dependencies
 
+
+
 - Phase 4 LLM router + multi-agent orchestration (the `nimbus excellence` agent is a built-in)
+
 - Phase 4 Plugin API v1 (long-tail vendors land as community extensions)
+
 - Phase 3 connector mesh + relationship graph (Phase 7 connectors stack on it)
+
 - Phase 3.5 telemetry counters (engineering-metrics dashboard reads aggregate metrics from same pipeline)
+
 - *Optional / enhancing only:* Phase 6 federation — see Composes-with note above
+
+
 
 #### Structure
 
+
+
 Four ordered waves. Waves 1 → 2 → 4 are sequential because Wave 2 references the `service` / `team` item types added in Wave 1, and Wave 4 (capstone) ties Waves 1–3 together. **Wave 3 has no dependency on Waves 1–2 and can land in parallel.**
+
+
 
 #### Wave 1 — Service Catalog & Ownership
 
+
+
 Adds `service`, `component`, `team`, `scorecard` item types and the ownership graph used by every later wave.
 
+
+
 - [ ] **Backstage** (open-source IDP) — index `Component` / `API` / `System` / `Resource` / `Group` entities; `service` / `component` / `team` item types; cross-link `service → repository (github)`, `service → on-call (pagerduty)`, `service → dashboard (datadog/grafana)`; read-only; `catalog.entity.update` HITL
+
 - [ ] **Cortex** — services, scorecards, on-call mappings, ownership; `service` + `scorecard` item types; read-only; `cortex.scorecard.acknowledge` HITL
+
 - [ ] **OpsLevel** — services, rubrics, checks, levels; `service` + `scorecard` item types; read-only; `opslevel.check.run` HITL
+
 - [ ] **Port** — entities, blueprints, scorecards, action runs; `service` + `component` item types; read-only; `port.action.run` HITL
+
 - [ ] **Ownership graph** — extends the Phase 3 relationship graph with `code_symbol → service → team` resolution; `nimbus ask "who owns this file?"` answered locally without a live API call
+
 - [ ] **`nimbus services list / show`** — CLI surface; supports `--owned-by`, `--scorecard-status`
+
+
 
 #### Wave 2 — DORA / Engineering Metrics
 
+
+
 Builds on Wave 1's `service` / `team` item types. Inherently aggregate-level so privacy posture is conservative — ingest only the user's own team metrics, never individual engineer PII beyond what the user already has access to in the source.
 
+
+
 - [ ] **LinearB** — DORA metrics, deploy frequency, cycle time, deploy events, team rosters; `dora_metric` + `engineering_metric_snapshot` item types; read-only
+
 - [ ] **Jellyfish** — engineering allocation, deliverable progress, team metrics; SSO-gated authentication; read-only
+
 - [ ] **Swarmia** — DORA dashboards, work-item flow, investment dimensions; read-only
+
 - [ ] **Sleuth** — deploy tracking, change failure rate, recovery time, lead time; `dora_metric` item type; read-only; `sleuth.incident.acknowledge` HITL
+
 - [ ] **Engineering metrics dashboard** — Tauri UI panel + TUI pane: 4-metric DORA grid (deploy frequency, lead time, MTTR, change failure rate) × 7-day / 30-day / 90-day windows; renders from local index without a live API call
+
 - [ ] **Continuous profiling & cost correlation** — connectors for Pyroscope and Datadog Profiler; profile flamegraphs index alongside the Wave 1 ownership graph so `nimbus ask "which recent PR caused the CPU spike in payment-service?"` resolves `service → repo → commit → flamegraph` from the local index without a live API call; `dora_metric` extended with profile-correlation rows
+
 - [ ] **Developer-experience (DevEx) metrics** — connectors for DX, Atlassian Team Health, Jellyfish DevEx surveys; new `/excellence/devex` Tauri route renders survey scores side-by-side with the DORA grid; data flows through the same telemetry pipeline; drilldowns into specific surveys / sentiment categories; balances delivery speed with developer-burnout signal
+
 - [ ] **SLO burn-rate forecaster** — connects to Datadog / Prometheus SLIs; runs a local regression on deploy frequency × change-failure rate × recent incident pattern × day-of-week seasonality to forecast whether the team will blow their error budget before month end; dashboard surfaces top-N feature contributions so the forecast is not a black box; no external ML infrastructure required
+
 - [ ] **Privacy contract test** — asserts no individual-engineer-keyed metric is indexed unless the user is explicitly admin/owner in the source system
+
+
 
 #### Wave 3 — Feature Flags & Experimentation
 
+
+
 Independent of Waves 1–2; can ship in parallel. Critical: write tools are production-impacting, so HITL gating is non-negotiable and the consent dialog must show before/after rollout %, environments affected, and segment scope.
 
+
+
 - [ ] **LaunchDarkly** — flags, environments, segments, rollout rules, kill switches; `feature_flag` + `experiment` item types; read-only by default; `flag.toggle`, `flag.rollout.update`, `flag.environment.override`, `flag.kill-switch.fire` all HITL
+
 - [ ] **Split.io** — splits, treatments, experiments, metric impacts; `feature_flag` + `experiment` item types; read-only; `split.killswitch.fire` HITL
+
 - [ ] **Flagsmith** (open source; self-hostable) — flags, environments, segments; `feature_flag` item type; read-only; `flag.toggle` HITL
+
 - [ ] **Unleash** (open source; self-hostable) — toggles, strategies, gradual rollouts; read-only; `toggle.update` HITL
+
 - [ ] **Statsig** — feature gates, dynamic configs, experiments; read-only; `gate.update`, `experiment.publish` HITL
+
 - [ ] **Stale flag watcher** — fires on flags at 100% rollout > N days (default 90); surfaces in the morning briefing
+
 - [ ] **`nimbus flags list / show`** — CLI surface; supports `--stale`, `--service`, `--environment`
+
+
 
 #### Wave 4 — Shared Knowledge Graph + Automation Library + `nimbus excellence`
 
+
+
 Capstone. Ties Waves 1–3 together; works on a solo machine, federation amplifies it.
 
+
+
 - [ ] **Cross-team dependency graph** — extends Phase 3 relationship graph with team boundaries; resolves "what other teams' services depend on mine?" without a live catalog API call
+
 - [ ] **Automation template library** — local store of reusable watcher + workflow templates ("CI failure → Slack thread → rerun once → if still failing, escalate"); user can publish a template to a named local library; templates are pure declarative TOML, no embedded credentials
+
 - [ ] **Pattern recognition** — agent identifies repeated incident-response patterns from indexed history; surfaces them as automation template candidates ("you've followed this same 3-step recovery 4 times — save as template?"); explicit user confirm required (no silent learning)
+
 - [ ] **Team policy library** — shared policy fragments (HITL thresholds, connector allowlists, retention floors) consumable by the Phase 6 policy engine when available; on a solo machine, used as user-level config presets
+
 - [ ] **ADR auto-drafter** — watcher fires on architectural shifts (lockfile diffs, migration file appearance, IaC resource-type changes); agent drafts an Architecture Decision Record from the diff + recent commit context; HITL-gated push to Notion / Confluence / `docs/adrs/`; keeps documentation alive without manual nagging
+
 - [ ] **`nimbus excellence` built-in agent** — read-only, parallel sub-agents over: service catalog, DORA metrics, feature flags, recent deploy/incident activity; emits `agents.excellence.briefReady` notification; CLI surface `nimbus excellence [--service <name> | --team <name>]` (mirrors `nimbus expert / impact / catchup` per `nimbus-agent-patterns`)
+
 - [ ] **Excellence dashboard** — Tauri page combining DORA grid + service-catalog browser + stale-flag list + automation template list
+
 - [ ] **Living architecture / legacy-code archeology** — point Nimbus at an undocumented codebase ("map this out") and it generates an interactive architecture model: Mermaid diagrams + a derived OpenAPI spec, correlated with live traffic patterns from the Datadog / observability connectors so the map reflects what actually runs, not just what's declared. A watcher keeps it **living** — when a route or resource changes, the agent drafts an HITL-gated commit updating the generated diagrams to match reality (composes with the ADR auto-drafter's draft-and-gate pattern above). Turns "inherit a 10-year-old monolith" from archaeology into a query.
+
+
 
 #### Wave 5 — Implicit Knowledge Surfaces
 
+
+
 A trio of read-only agents that turn the local index into the "shared brain" every engineering team thinks they have but doesn't. Each is buildable on the Phase 7 ownership graph + the Phase 3 relationship graph + the existing indexed connectors — no new connectors required, no new infrastructure. The leverage is exposing data that's *already* in the index but isn't yet queryable in a conversational shape. Single-user-first like the rest of Phase 7; Phase 6 federation makes each one richer.
 
+
+
 - [ ] **`nimbus why <file>:<line> | <symbol>`** — for any source location: emits a brief explaining who wrote it (PR author + commit SHA + date), why (linked PR description + reviewer thread + linked Linear/Jira ticket + the Slack thread referenced in the PR if any), what incident or feature drove it (incident-correlation via Phase 3 graph + Phase 5 deploy annotation), and which downstream services depend on it. Effectively `git blame + context + ownership + impact` in one query. Read-only; emits `agents.why.briefReady`. Ships with a corresponding VS Code lens (`nimbus-vscode` extension reads the brief inline above the line on hover). Cloud agents can't do this — they don't see the team's private Slack threads or Linear tickets.
+
 - [x] **`nimbus glossary [<term>]`** ✅ 2026-07-30 — extracts and indexes domain-specific terminology from Slack threads + Confluence/Notion pages + Linear/Jira ticket bodies + ADRs (Obsidian-indexed roots only) + commit messages (subject line only). [The Confluence/Notion half of that claim was false at ship time — both connectors wrote `bodyPreview: ""`, so there was no page body to mine; it became true on 2026-08-03 when `notion:page` and `confluence:page` were migrated to full-body indexing (see the full-body-store entry above).] `glossary_term` item type with fields: `term`, `definitions` (the cluster of phrasings the team has used), `first_seen_at`, `last_seen_at`, `top_sources` (the 5 most-cited threads/docs that define it), `synonyms`, `near-misses` (terms confusingly similar). `nimbus glossary` with no argument prints a sorted-by-frequency list; with a term prints the consolidated definition. Onboarding accelerator: a new engineer asks "what does CDR mean here?" and gets the team's actual usage, not Wikipedia's. Generated via a periodic agent over indexed content (cheap; uses the local LLM for the consolidation step when `[glossary].use_llm` is true (default) and one is available, no live API call — an unattended pass without an available LLM falls back to a verbatim-snippet definition, which a later pass automatically re-queues and upgrades once a local LLM becomes available). **Manual term authoring** ✅ 2026-08-01 closes the "no manual authoring or correction" gap named at design time: `[glossary.terms]`/`[glossary.synonyms]` in `nimbus.toml` let a human define or correct a term directly (`definition_source='manual'`, wins on collision, sorted first in every read path), exempt from the reconciliation sweep's demotion and veto but not its statistics refresh, and demoted (not deleted) when the config entry is removed. Schema **V46**.
+
 - [x] **`nimbus decisions [--since <duration>] [--service <name>]`** ✅ 2026-08-02 — implicit ADR extractor. Identifies decisions buried in Slack/Discord/Teams/Notion/Confluence/Obsidian/Linear/Jira/GitHub/GitLab threads using the pattern "we decided X because Y, alternatives were Z" + corroborates via downstream actions already in the relationship graph (the PR or commit that implemented the decision, an existing ADR). Output is a chronological list of decisions with confidence scores and evidence links. **Composes with M1 (Org's Living Memory)** — this is the read-side that makes M1 queryable. **Composes with the Wave 4 ADR auto-drafter** — when `nimbus decisions` finds a decision with no explicit ADR, it offers to draft one. **Known limits, stated in every brief:** the full-body store (V48, plus the 2026-08-03 Notion/Confluence follow-up) lifted the former blanket 512-character indexing cap to 16 KiB for the migrated sources this agent mines (Slack, Discord, Teams, Obsidian, Linear, Jira, `github:issue`, Notion, Confluence) — GitLab and `github:pr` remain capped at 512 — so recall is now reported per brief as a `body_complete = 0` truncated-source count against the window's total, not a standing disclaimer; `migration`/`iac` evidence is specified in the V47 schema but not yet derivable (no connector indexes changed-file paths), so the confidence ceiling is 0.86, not 1.0.
+
 - [x] **`nimbus negotiate [--since <duration>] [--person <id>] [--json]`** ✅ 2026-08-12 — shipped **narrower than this row's original scope, and with a different flag surface**, all deliberate. What this row asked for and does NOT exist in the index: **incidents resolved with attributed authorship** (no connector attributes an incident to a resolver), **deploys triggered without rollback** (no per-person deploy attribution), **on-call shifts** (no PagerDuty schedule data) — all three are named in every brief as permanently unavailable rather than rendered as an empty section — and **`--peer-benchmark`**, which would require the Phase 6 M4 federated comp-range surface that does not exist. `--cycle <quarter|year>` became `--since <duration>` (max 365d), matching every sibling agent's window flag. **1:1 themes are opt-in by configuration, not by prompt:** `[negotiate] personal_sources` in `nimbus.toml` names the personal-document services (Obsidian, Notion) that may be mined — configuration IS the consent, following the `[glossary.terms]` precedent, rather than an agent that asks mid-run; Confluence pages and chat messages are work artifacts and always in scope. What ships: six lanes over already-indexed evidence — PRs authored (with `statsCoverage` disclosing that size stats exist only where the enrichment pass has run), PRs reviewed split by state, tickets opened and closed by an authored PR, ownership, decisions authored, and docs/notes/messages written — rendered as Markdown (or `--json`). Read-only, and HITL genuinely does not apply: nothing leaves the machine. The governing property is an **honesty contract** — no lane may render an unmeasured number as `0`; every lane field is nullable and renders "could not be computed" instead, and the brief discloses that its window is last-modified-based, that ownership is authorship-derived rather than accountability, and that an unresolvable `--person` yields structural zeroes rather than a measurement. Excluded from the HTTP and MCP agent surfaces — uniquely, not for side effects but because `--person` makes it a dossier-assembly tool; Tauri-exposed (`ALLOWED_METHODS` at 105, I7). Emits `negotiate.briefReady`. Dated detail: [`docs/CHANGELOG.md`](./CHANGELOG.md).
+
 - [x] **`nimbus pre-mortem <epic-ref>`** ✅ 2026-08-11 — built **narrower than this row's original scope** in three ways, all deliberate: **Jira-only**, not "Jira / Linear" — no `linear:project` items are indexed at all, so there is no Linear epic-shaped row to analyze; **proposes, never schedules** — it writes a PAUSED `incident_opened` watcher per affected service that maps to a configured deployment-service id (plus its `premortem_watcher_proposal` tombstone) that the user must explicitly arm, rather than "proactively scheduling" a live alert; and **no cross-team mesh composition** — Phase 6 federation is not wired into this agent. What it does: resolves an epic to its affected services, builds an IDF-weighted service-overlap cohort of comparable closed epics from the local index, computes five structural risks (cycle-time overrun, size overrun, review drag, incident coupling, abandonment), and reads recurring blocker themes from the V53 background pass. **No deploy-failure watcher is proposed**: the watcher engine now supports scoping one by affected service (`filter.affectedService`, matched against the incident/deployment graph entity's `metadata.affectedService`), so the earlier `item.service`-is-the-provider-slug reason no longer applies — what still does is that `deployment/annotate.ts`, the only writer of the `metadata.conclusion` a `deploy_failed` watcher matches, inserts its `item` row directly and creates no `deployment` graph entity, so such a watcher matches nothing until `nimbus index regraph` runs. Deploy-failure is a watcher CONDITION KIND, not one of the five risks — the fifth risk is abandonment, and no deploy-failure risk is computed. `agents.premortem` is excluded from the HTTP and MCP surfaces (matching `agents.preflight`) because it writes local rows with no HITL gate, but is Tauri-exposed (I7) since that sits behind the renderer's own XSS threat model. Emits `premortem.briefReady`. The deploy-failure watcher and non-Jira trackers → re-homed to [S4](#carried-into-s4) (2026-10-10). Dated detail: [`docs/CHANGELOG.md`](./CHANGELOG.md).
+
 - [ ] **Implicit-knowledge dashboard** — Tauri page combining a recent-decisions feed, the team's glossary growth curve, and the top-N hottest "why" queries from VS Code lens activations. Surfaces the institutional-memory signal without forcing an explicit query.
+
+
 
 #### Wave 6 — Agent UX Upgrades
 
+
+
 Cross-cutting UX improvements that apply to every agent surface the project ships. Bundled into a Phase 7 wave because Phase 7 is the natural home for "how the agent presents itself" work — Phase 7 is where the engineering-excellence framing collides with the everyday query shape.
 
+
+
 - [x] **Devil's-advocate mode (A1)** ✅ 2026-08-18 — `nimbus ask --devil` makes the agent argue *against* the user's plan, surfacing risks, edge cases, and alternative interpretations. Confirmation-bias antidote. [The 2026-08-16 correction on this row — that the two independent prompt sites, `engine/agent.ts`'s three Mastra `instructions:` literals and `run-conversational-agent.ts`'s separate hardcoded `systemPrompt`, must be "updated together" — was **avoided rather than satisfied**: neither was touched. Both execution paths (`runViaLocalRouter`, `runViaAgent`) consume a prompt built by one function, `buildPromptText`, and `applyDevilAdvocate` prefixes the directive to what that function returns — one site, above the router-vs-agent fork, covering both paths by construction. `agents/_lib`-style single-definition discipline: the sentence lives once, in `engine/devil-advocate.ts`. **The real two-site risk lay one layer up and is where the roadmap did not look:** `agent.invoke` and `engine.askStream` are separate dispatchers resolving the same `getAgentInvokeHandler()`, and `engine.askStream` is the path the desktop UI and VS Code extension use — wiring only the former would have shipped a flag inert on every surface but the terminal. Both are wired and independently tested.] **Also delivered differently from this row's acceptance criterion:** that criterion asked for an integration test asserting the response "contains at least 3 distinct counter-arguments", which requires a live model and grades its prose — untestable in a suite that runs with no LLM configured, and flaky where one exists. Replaced with seam tests: the directive reaches the prompt on BOTH execution paths, is absent when the flag is off, survives the indexed-context and prior-turns transforms, and crosses BOTH dispatchers; plus `--devil` forcing the conversational route over a high-confidence action intent, since plan dispatch has no argument to make and the flag would otherwise be silently inert for a user-unpredictable subset of queries. A stated bound: a prompt-level directive carries less weight with most models than a system-level one, and the router path's `systemPrompt` is deliberately left alone so there is only one application site to keep correct. Dated detail: [`docs/CHANGELOG.md`](./CHANGELOG.md). Composes with the agent-honesty surfaces in Phase 9 Wave 6 — the calibration curve gets a separate column for devil's-advocate-mode confidence vs default-mode confidence so the user can see which mode the agent calibrates better in for their query class. When Phase 6 federation + the consent-scoped federated query primitive are present, `--devil` grounds its objections in the team's *real* history — past failed projects, production incidents, and post-mortems related to the proposed design ("this migration matches the one that took down prod in 2023") — rather than generic reasoning alone.
+
 - [x] **Agent personas (A2)** ✅ 2026-08-18 — ships **narrower than this row's original four-knob scope**, deliberately: `tone` (`neutral` default / `terse` / `formal` / `casual` / `verbose`) and `voice` (`neutral` default / `opinionated` / `collective`) ship; `confidence_threshold` and `tool_caution` do not, and are **rejected, not deferred**. [The 2026-08-16 correction on this row already flagged two problems, both resolved: **wrong shape** — `config/profiles.ts` implements profiles as whole-**file** swaps (`nimbus.<name>.toml` plus a `.nimbus-profile` marker), not a `[profile.<name>]` table, so `[persona]` ships as its own top-level section in the profile-resolved TOML rather than a nested `.persona` block; and **`tool_caution` prohibited as originally scoped** — Non-Negotiable #2 ("consent gate... cannot be bypassed or configured away") and I2's frozen `HITL_REQUIRED_BACKING` set forbid a config knob that loosens HITL, confirmed and unchanged.] **`confidence_threshold` is rejected on the same reasoning, found during this wave's own design pass:** turned down, it is a supported way to make Nimbus sound more certain than it is — the same category of mistake as loosening HITL, against every S1 honesty surface built this month (I31's disclosure integrity, the 0.86 confidence ceilings on `decisions` and `pre-mortem`, `negotiate`'s "could not be computed" instead of `0`). What ships: one persona vocabulary (`engine/persona.ts`), applied at `nimbus ask`'s single site above the router-vs-agent fork (composing outward around `--devil`, persona outermost) and at brief synthesis via the same `buildAgentSynthesisRunner` factory both production brief paths already share, resolved from the **profile-resolved** TOML (the active profile's file when it exists, else the base `nimbus.toml`; since 2026-10-22 the profile file overrides only the keys it sets) on every invocation and never cached, and reaching a third surface — ChatOps replies — through the shared `runAsk` pipeline. **D6** — no directive may govern *whether* content appears, only *how* — is enforced by a test over the directive constants, and is what keeps a terse persona from pushing against I31, which needed no new guard: its only measurable cost is a higher discard rate back to the deterministic render, now self-describing via the resolved persona riding the `briefReady` notification's `synthesis` field. Two adjacent bugs fixed alongside it: `[agents] synthesis` was profile-blind and is now read from the same profile-resolved path as `[persona]` (bidirectional — a base-file-only key no longer applies under an `[agents]`-less profile file, matching `[llm]`/`[session]`); and `ProfileManager` — declared but never constructed in production — is now wired in `platform/assemble.ts`, making the desktop Profiles settings page and its four already-allowlisted `profile.*` IPC methods work for the first time (switching a profile still requires a Gateway restart, stated in both the CLI and the panel). Switching profiles via `nimbus profile switch <name>` already existed; this wave makes the persona configurable per profile so "work Asaf" can be terse and "personal Asaf" can be verbose. Dated detail: [`docs/CHANGELOG.md`](./CHANGELOG.md).
+
 - [x] **First-class negation queries (W6-B)** ✅ 2026-08-20 — **structured half (B.1) 2026-08-20; model-surface exposure (B.2) 2026-08-20, closing this row.** Explicit support for negation predicates ("PRs that *don't* touch tests," "deploys with *no* downstream incident," "engineers who *haven't* reviewed code this week"). LLMs are notoriously bad at it. [Corrected 2026-08-16, checked against the tree for the A0 design spec: "the structured index already handles negation natively" is true only of raw SQL — `cli/src/commands/query.ts` accepts `--service`/`--type`/`--since`/`--limit` → `index.queryItems`, plus `--sql` → guarded `index.querySql`; there is no predicate language, so shipping `--negate` means inventing one, not surfacing something that already exists.] **B.1 answered that correction by not inventing a grammar:** three named flags — `--not-touching <glob>` (requires `--type pr`), `--no-downstream-incident` (requires `--type deployment`), and `--not-reviewed` on `nimbus people list` — with no parser, no precedence and no composition, each landing on the command whose row shape it already matches (two return items, one returns people). Delivered with the `--explain` flag this row named, which prints the COMPOSED SQL, its bound params and the substrate probe, and works on any `query`/`people list` call rather than only negation ones. **Three bounds are load-bearing, not garnish:** an empty substrate REFUSES (exit `1` + a `missing_substrate` document — human message to stderr, `--json` document to stdout, so a script can tell *refused* from *none matched*), since for a negation an unfetched row is indistinguishable from a genuinely clean one and the emptier the index the MORE rows come back; every predicate excludes unverifiable rows and PRINTS the count on every call (`--not-touching` separates never-fetched from truncated; the other two count rows with no `graph_entity` of the required type); and `--no-downstream-incident`'s correlation window is fixed at two hours by the populator at WRITE time, so no `--within` flag exists — offering one would advertise a control that cannot exist, as `graph_relation.created_at` is a write timestamp, not event time.
 
+
+
   **B.2 put the same three predicates on the gateway engine (`engine/agent.ts`, so `nimbus ask` and the desktop/VS Code surfaces sharing its engine) and the MCP server (`INDEX_TOOL_SPECS`, so any external MCP client), under matching names — `findPrsNotTouching(pathGlob, service?, limit?)`, `findDeploymentsWithoutIncident(service?, limit?)`, `findPeopleWithoutReviews(sinceDays?, limit?)`.** Type scope, validated by B.1's CLI guard, is now intrinsic instead: each tool hardcodes its own item type, so there is no parameter to get wrong. The delivered guarantee is deliberately **unequal across the two surfaces**: refusals are structural on both — a refusing tool returns only the refusal, with no rows alongside it — but exclusion counts are guaranteed only on the engine surface, where a per-request `AsyncLocalStorage` store collects each tool's disclosure sentence and `runConversationalAgent` drains and appends it to the reply (and, byte-identically, to the streamed chunks) at the one site both the local-router and Mastra-agent paths return through; an external MCP client's model can report the rows and quietly drop "N excluded", since no append hook reaches that path and the `@nimbus-dev/mcp` launcher execs the gateway's MCP server directly (`stdio: "inherit"`) rather than proxying the wire. The `AsyncLocalStorage`-survives-Mastra-scheduling risk the design flagged was retired by testing a real `@mastra/core` `Agent` rather than assumed, and every negation tool also embeds its disclosure sentence in its own returned payload as a fail-safe, so the guarantee degrades to "the model saw it" rather than to silence if the store is ever absent. **The local-router path has no tools at all** — `[llm].prefer_local = true` routes through `runViaLocalRouter`, whose `generate()` call has no tool-calling support anywhere under `packages/gateway/src/llm/` — so on that path the three negation tools, and `searchLocalIndex`, are unreachable; that user reaches the predicates only through B.1's CLI flags or an MCP client. **A model can still ignore the tool descriptions** and answer a negation from a ranked `searchLocalIndex` result with no disclosure attached, since steering is by description only — there is deliberately no negation-question detector, because classifying free-text as "a negation" is a guess that would attach a false-positive caveat to a correct answer — and this residual is a recorded open bound, not something B.2 closes. No schema migration, no new IPC method (both tools reuse `index.queryItems` / `people.list`), no new HTTP route, no new invariant, `ALLOWED_METHODS` unchanged at 105, no `egress_ledger` row on either surface (local SQLite reads only; MCP index tools have never been ledgered — only `AGENT_CLASSIFIED_TOOL_SPECS` briefs are). Dated detail: [`docs/CHANGELOG.md`](./CHANGELOG.md).
+
 - [x] **First-class aggregation-over-time queries (W6-B)** ✅ 2026-08-19 — `nimbus stats <metric> --service <id> [--window 90d] [--bucket 1w] [--json]`. Six metrics: four wrap the existing DORA calculators unchanged, called once per bucket (`deployment-frequency`, `lead-time`, `change-failure-rate`, `mttr`); two are new counters over real event timestamps (`pr-merges` on `metadata.merged_at`, `incidents-opened` on `metadata.opened_at_ms`). **Ships differently from this row in two ways, both deliberate.** "Rolling 7-day MTTR trend" describes a *rolling* window; this ships **disjoint** buckets instead — `--window 90d --bucket 1w` is 13 independent weeks, each computed over its own rows, simpler to reason about at the cost of a smoother series and fewer samples per point; rolling windows (`--rolling`) are a named follow-up. "PR merge throughput by week" implies all forges; `pr-merges` is **GitHub-only**, since only `connectors/github-sync.ts` writes the `merged_at` timestamp it buckets on — a service binding a non-GitHub repo gets a `github_only_merge_data` gap, one with no GitHub repos gets `no_repos` rather than a misleading zero. The two NEW counters bucket on a real event timestamp; the four wrapped ones do not, and that is an accepted cost rather than a property claimed: reusing the DORA calculators unchanged also reuses their `item.modified_at` windowing — effectively event time for the `ci_run`/`deployment` rows behind `deployment-frequency`, but genuine last-touch for the `pr` rows `lead-time` reads and the `incident` rows `change-failure-rate`/`mttr` read, with `mttr` also inheriting DORA's `synced_at` fallback for an incident missing `opened_at_ms`. Changing that means changing `dora.ts`'s own time predicate, which moves `nimbus metrics dora` too — a named follow-up, separately reviewed, not a side-effect of adding a bucketing layer. No NEW metric buckets on `modified_at`: the `item` table has no creation timestamp, only `modified_at`/`synced_at`, and bucketing on either would measure activity or sync schedule rather than when the thing happened — the same trap `negotiate` already documented, which is why no "count items by type" metric ships. A bucket with no data returns `value: null` with a named gap, never `0`; `mttr` being a median means `low_sample` fires on most weekly buckets in practice — including on buckets that DO carry a real median, so the CLI prints every gap on its own row and counts caveated buckets separately from empty ones in its summary line, rather than letting either read as breakage. Buckets walk backward from the request time and are not calendar-aligned, so the newest point is always complete but two runs on different days cover different absolute spans (`--align` is a named follow-up, alongside a real event timestamp for the four wrapped DORA metrics, `merged_at` for GitLab/Bitbucket, and a `pr-opened` metric blocked on connectors not yet capturing a PR creation timestamp). No schema migration, no new IPC-visible config, no new HTTP route, no new invariant, no Tauri allowlist change — `ALLOWED_METHODS` stays at 105; `metrics.stats` appends no `egress_ledger` row (local SQLite reads only, no connector dispatch, no remote model call). Dated detail: [`docs/CHANGELOG.md`](./CHANGELOG.md). Superseded 2026-10-08 by the index lane contract: `pr-merges` now counts GitLab MRs (which carry `merged_at`) and emits `incomplete_merge_data` for a GitLab or Bitbucket binding; the `github_only_merge_data` gap described above is no longer emitted, so a non-GitHub binding gets `incomplete_merge_data` instead.
+
 - [ ] **`nimbus principles` + `nimbus prove`** — `nimbus principles` prints the seven non-negotiables from `CLAUDE.md` and which invariants (`I1`–`I16`) are currently wired with their last passing test ID. `nimbus prove [<query>]` runs an interactive proof mode: shows the egress ledger before and after a query so the user watches in real time that zero outbound calls occurred. Pairs with the killer demo's transparency surface and the M7 egress-ledger primitive.
+
 - [ ] **"What's Nimbus doing right now?" tray item** — Tauri tray addition surfacing in-flight sync cycles, in-flight queries, pending HITL approvals, and the last-3 audit-log entries. Builds trust because users can *see* the agent isn't doing anything spooky in the background. One-day work; high every-user-every-day value.
+
+
 
 #### Stretch (does not gate phase completion)
 
+
+
 - [ ] **Long-tail vendors as community extensions** — Atlassian Compass, Roadie (managed Backstage), Configu, Hatica, Code Climate Velocity, GitClear; ship via Marketplace v2 per the "comprehensive then community" model
+
 - [ ] **Self-hosted preference path** — Flagsmith / Unleash / Backstage self-hosted variants documented as the recommended privacy-conservative defaults; matches Nimbus values
+
 - [ ] **Cross-vendor DORA harmonisation** — when two DORA connectors are connected (e.g. LinearB + Sleuth), the engine reconciles overlapping metrics with a configurable preference order; surfaces a "DORA confidence" indicator
+
+
 
 #### Acceptance Criteria
 
+
+
 - A connected Backstage instance with 50+ services indexes in under 60 seconds; `nimbus services list --owned-by my-team` returns the correct subset from the local index without a live API call
+
 - `nimbus ask "who owns src/billing/retry.ts?"` resolves the chain `code_symbol → repository → service → team` from the local relationship graph in under 200 ms
+
 - DORA dashboard renders 4-metric × 7-day / 30-day / 90-day grid for one indexed team without a live API call to LinearB / Jellyfish / Swarmia / Sleuth
+
 - Toggling a LaunchDarkly flag via `nimbus flag toggle <key>` requires HITL; the consent dialog shows before/after rollout %, environments affected, and segments scoped; rejection logs `hitl_status = 'rejected'` to the audit chain
+
 - A stale-flag watcher fires on a flag at 100% rollout for the configured threshold; surfaces in the morning briefing without a separate query
+
 - An automation template saved from a recognised incident pattern can be applied to a fresh incident matching the same pattern; user explicitly approves application
+
 - `nimbus excellence --team my-team` returns a Markdown brief with: top 3 services by recent change, 4-metric DORA snapshot, stale flag count, open-incident count — all from the local index, in under 15 s on a mid-range laptop
+
 - Privacy contract test passes: no individual-engineer-keyed metric is indexed unless source-system role grants the user access
+
 - Wave 5: `nimbus why packages/gateway/src/engine/executor.ts:42` returns a brief naming the PR author, the linked Linear ticket, the incident that drove the change (if any), and the downstream service consumers from the relationship graph, all from the local index in under 10 s on a mid-range laptop
+
 - Wave 5: `nimbus glossary <term>` returns the team's actual usage of the term across at least 3 source threads with first-seen / last-seen dates ✅ 2026-07-30, LLM consolidation wired into the scheduler-triggered pass ✅ 2026-07-31 (definitions are LLM-consolidated when `[glossary].use_llm` is true (default) and a local LLM is available; a `snippet`-sourced definition from an unattended pass with no LLM available is automatically upgraded on a later pass once one is)
+
 - Wave 5: a seeded thread stating "we decided to move billing to Postgres because the connection pool kept exhausting; we considered sharding" produces one `extracted` decision with statement, rationale and alternatives populated and at least one evidence link, all from the local index with no live API call ✅ 2026-08-02 (`nimbus decisions`)
+
 - Wave 5: an item from a migrated prose source (e.g. `slack:message`) with a keyword past character 512 is findable by that keyword after V48, where it was not before; `nimbus index rebody --dry-run` reports per-service pending-body counts and names the services it cannot improve ✅ 2026-08-02 (full-body store, V48)
+
 - Wave 5: ~~`nimbus negotiate` returns a Markdown brief with citation links covering at minimum: PRs merged + reviewed, incidents resolved, ADRs authored, on-call shifts — sourced only from data the user already has read access to in the source systems~~ **SUPERSEDED 2026-08-12 by the delivered criterion below.** This is the accounting the shipped entry points at: of the four named evidence sources, **two shipped** (PRs merged ✅, PRs reviewed ✅ — the latter only because the `review` item type landed first in #1159; ADRs authored ship as the broader `decisions authored` lane), and **two do not exist in the index at all** — *incidents resolved* (`pagerduty-sync.ts` writes `authorId: null`, so no incident is attributable to a person) and *on-call shifts* (the connector calls `/incidents` only, never the schedules API). *Deploys triggered*, added to the brief's unavailable list alongside them, is dead for a third reason: `DeploymentAnnotateInput` carries no actor field. All three are named as unavailable on every brief rather than rendered as zero. **Citation links DID ship** — each of the five item-backed lanes carries up to `NEGOTIATE_EVIDENCE_LIMIT` (5) evidence refs (title + `COALESCE(canonical_url, url)`), newest first, with truncation self-disclosed as "…and N more not listed"; ownership needs none, since it already enumerates the services and directories it counted. The remaining evidence types stay future scope, tracked as sub-projects C (incident attribution), D (on-call) and E (deploy actor).
+
 - Wave 6: `nimbus ask --devil "ship the migration tonight"` produces a response whose risk surface explicitly contradicts the question framing ✅ 2026-08-18 — **the verification clause of this criterion was NOT met and was deliberately replaced.** It asked for an integration test asserting the response "contains at least 3 distinct counter-arguments"; that grades model prose, needs a live model the test suite does not have, and would be flaky where one exists. What is asserted instead: the directive reaches the prompt on both execution paths and across both IPC dispatchers, is absent when the flag is off, survives the context/prior-turn transforms, and `--devil` forces the conversational route. The counter-argument COUNT is unverified by any automated test — a deliberate, recorded gap, not an oversight
+
 - Wave 6: switching `nimbus profile switch personal` then querying produces output with the persona-configured tone (terse vs verbose, etc.) — verified by an integration test that toggles persona mid-session and asserts the response shape changes ✅ 2026-08-18 — **this criterion asked for something impossible and something untestable, and was replaced rather than met.** Impossible: `NIMBUS_PROFILE` is fixed at Gateway process spawn, so toggling a persona mid-session cannot happen by construction. Untestable: grading "output with the persona-configured tone" grades model prose, needs a live LLM the test suite does not have, and would be flaky where one exists — the same trap A1's counter-argument-count criterion fell into. What is asserted instead: editing `[persona]` in the active profile's TOML changes the next response's prompt with no restart (per-invocation resolution); switching profiles still requires a restart, and the CLI and the desktop Profiles panel both say so; the persona directive reaches the prompt on both execution paths (`runViaLocalRouter`, `runViaAgent`) and across both IPC dispatchers (`agent.invoke`, `engine.askStream`); the default persona is byte-identical to today; persona composes with `--devil` in the documented order; a brief synthesized under `tone = "terse"` still carries every required anchor and reserved section; `[agents] synthesis` set in a profile TOML is honoured; and `profile.list` succeeds against an assembled gateway rather than throwing. Whether a terse persona's prose actually reads terser is unverified by any automated test — a deliberate, recorded gap, not an oversight, the same limitation A1 carries
+
 - Wave 6: ~~`nimbus query --negate "pr touches tests"` returns the correct PR set (compared against a known fixture); the `--explain` flag prints the SQL that ran~~ **SUPERSEDED 2026-08-20 by what B.1 shipped.** The `--explain` half was met as written. The `--negate` half was **deliberately not built**: `--negate "pr touches tests"` is a predicate GRAMMAR — a parser, a precedence design, an error-message surface and an injection boundary — and this row's own 2026-08-16 correction established that nothing of the sort already exists to surface. B.1 shipped three named flags instead (`--not-touching <glob>` and `--no-downstream-incident` on `nimbus query`, `--not-reviewed` on `nimbus people list`), one per example the W6-B row names, each carrying its own substrate refusal and exclusion accounting in the one place a reader looks. The delivered criterion is therefore: each predicate returns the correct set against a known fixture, **refuses** (exit `1`, `missing_substrate`) when its substrate is empty rather than answering, and prints its exclusion counts on every call — with `--explain` printing the composed SQL, its bound params and the substrate probe. Composition of two predicates in one query is out of scope by design, so no fixture exercises it.
+
 - Wave 6: `nimbus prove "find my PRs this week"` shows the egress ledger before and after the query confirming zero outbound calls; the tray item flashes the in-flight query for the duration of the response
+
 - Wave 4: pointing `nimbus` at an unfamiliar service produces a Mermaid architecture diagram + derived OpenAPI spec correlated with indexed Datadog traffic; a subsequent route change triggers an HITL-gated draft commit updating the diagram
+
 - Wave 5: `nimbus pre-mortem PROJ-123` returns a brief naming comparable historical epics from an IDF-weighted service-overlap cohort, five structural risks computed over that cohort, and the paused `incident_opened` watcher proposals it wrote for the epic's affected services (armed only by explicit user action) — all from the local index ✅ 2026-08-11
+
 - Wave 5: `nimbus negotiate --since 180d` returns a Markdown contribution brief over six lanes of already-indexed evidence, in which every unmeasured lane reads "could not be computed" rather than `0`, the window/ownership/absent-evidence limits are stated unconditionally, and an unresolvable `--person` is disclosed as a structural zero — all from the local index, with no connector opened ✅ 2026-08-12
 
+
+
 ---
+
+
 
 ### Phase 8 — Security Engineering
 
+
+
 > **Sequencing (2026-06-17 overlay):** Build-order slot **S5** (Track 1) — demoted commodity. The connector surface is API-fakeable, so it is *not* a moat; lands behind the spine, community/marketplace-leaning. The built-in security *agents* may pull forward opportunistically. See [§ Phase 7+ Sequencing Spine](#phase-7-sequencing-spine).
+
+
 
 **Goal:** Bring the security practitioner's tool surface into the local index and ship the four built-in security agents that turn that surface into actionable briefs. Read-first; every write tool gates on HITL with rich diff preview because security writes (acknowledging vulnerabilities, rotating secrets, suppressing findings) are decisions with downstream consequences.
 
+
+
 > **Composes with Phase 7 (Engineering Excellence):** Phase 7 scorecards consume security-posture metrics produced here (open-vuln count, secret-rotation overdue count); Phase 8 service-attribution joins back to the Phase 7 service catalog so a finding routes to its owner team without a live API call.
+
 >
+
 > **Composes with Phase 10 (The Autonomous Agent):** Phase 10's incident correlation engine queries security findings from the Phase 8 index. The two `nimbus incident*` agents are deliberately distinct — Phase 8's `nimbus incident` is security-shaped (attacker indicators, exposed endpoints, vuln CVEs, IR runbooks); Phase 10's `nimbus incident-brief` is operational (deploy → PR → commit → CI → Slack). When both ship, each brief includes a section sourced from the other domain.
+
+
 
 #### Dependencies
 
+
+
 - Phase 4 LLM router + multi-agent orchestration (built-in agents)
+
 - Phase 4 Plugin API v1 (long-tail vendors as community extensions)
+
 - Phase 3 connector mesh + relationship graph
+
 - Phase 7 service catalog (`service` / `team` item types — security findings attribute to services and route to owner teams)
+
 - Phase 3.5 telemetry counters
+
+
 
 #### Wave 1 — Code & Dependency Scanning
 
+
+
 - [x] **Snyk** (Code + Open Source + Container) — SAST, SCA vulns, container scan. Read-only read-tools landed early in Phase 5 (2026-05-21, T2/Wave-A connector Snyk) — `snyk:vulnerability` item type indexed via the gateway-side syncable at `packages/gateway/src/connectors/snyk-sync.ts` (walks `/v1/orgs` → `/v1/org/<id>/projects` → `/v1/org/<id>/project/<pid>/aggregated-issues`), with metadata `{ severity, cve_id, affected_package, affected_versions, fix_available, fix_version, project_url, project_id, org_id, type, disclosed_at, published_at }`; first-party MCP package at `packages/mcp-connectors/snyk/` hosts the three mandatory read tools (`snyk_list`, `snyk_get`, `snyk_search`); sandbox manifest pins `permissions.network` to `api.snyk.io`; `snyk:vulnerability` added to `PROSE_HEAVY_TYPES` (description field is paragraph-shaped). Write tool `snyk.issue.ignore` HITL deferred — when Phase 8 ships it, gate via `engine/executor.ts` `HITL_REQUIRED`.
+
 - [ ] **Semgrep** — SAST rules + custom packs; `semgrep.finding.suppress` HITL
+
 - [ ] **SonarQube** — code-quality + security hotspots; `sonar.hotspot.review` HITL
+
 - [ ] **GitGuardian** — secret findings, severity, validation; `gg.incident.resolve`, `gg.secret.invalidate` HITL
+
 - [ ] **TruffleHog** (open source, self-hostable) — secret findings; `trufflehog.finding.suppress` HITL
+
 - [ ] **Dependabot / Renovate state** — read-only; open dependency PRs, severity, age
+
 - [ ] **`nimbus security <repo|service>`** — built-in agent ranking open findings by severity × exploitability × age; emits `agents.security.briefReady`
+
+
 
 #### Wave 2 — Cloud & Container Security Posture
 
+
+
 - [ ] **Wiz** — CSPM findings, attack-path graph, identity over-permissions; `wiz.issue.assign`, `wiz.issue.resolve` HITL
+
 - [ ] **Prisma Cloud** — CSPM, CWPP, CIEM; `prisma.alert.acknowledge` HITL
+
 - [ ] **Trivy** (open source, offline) — container/image scan, IaC scan, license check; read-only
+
 - [ ] **Checkov** — IaC misconfig findings (Terraform, CloudFormation, Helm, Kubernetes manifests); `checkov.finding.suppress` HITL
+
 - [ ] **Sysdig / Falco** — runtime threat detections, policy violations; `sysdig.alert.silence` HITL
+
 - [ ] **`nimbus posture <cloud-account|cluster>`** — built-in agent ranking by exploitability × blast radius × asset criticality; emits `agents.posture.briefReady`
+
+
 
 #### Wave 3 — Incident Response & SOC
 
+
+
 - [ ] **FireHydrant** — incidents, runbooks, retros, severity, affected services; `firehydrant.incident.update`, `firehydrant.incident.resolve` HITL
+
 - [ ] **Rootly** — incidents, retro templates, action items; `rootly.incident.update` HITL
+
 - [ ] **Tines** (SOAR) — story runs, action history; `tines.story.run` HITL (running an automation is a write)
+
 - [ ] **Splunk Search** (read-only SIEM) — saved searches, recent results, alert configurations
+
 - [ ] **Microsoft Sentinel** (read-only) — incidents, analytic rules, recent alerts
+
 - [ ] **VirusTotal** — hash / IP / domain reputation, recent submissions; read-only
+
 - [ ] **`nimbus incident <alert-id|incident-id>`** — security-incident-shaped: attacker indicators (IPs, hashes, domains), affected services + owners, exposed endpoints, recent vulnerable deploys, IR runbook recommendations; emits `agents.security_incident.briefReady`. **Distinct** from Phase 10's `nimbus incident-brief` (operational shape).
+
+
 
 #### Wave 3.5 — Contextual Dependency Intelligence
 
+
+
 A focused wave dedicated to **a single agent that beats Dependabot/Renovate by being context-aware**. Dependabot's failure mode is well-known: it surfaces an upgrade as safe (semver-patch, no CVEs) when the user's own codebase or community-issue history would have flagged a regression. The local index makes Nimbus uniquely positioned to add that context.
 
+
+
 - [ ] **`nimbus deps update [<pkg>] [--service <name>] [--json]`** — agent that for every open Dependabot/Renovate PR (read-only — surfaced via the existing GitHub/GitLab connectors), assembles a brief with:
+
   - Which files in the user's own codebase import the affected symbols (via the existing `code_symbol` table from the Filesystem v2 intelligence)
+
   - Whether the affected files were touched in the last incident (via Phase 7 ownership graph + Phase 3 incident-correlation graph)
+
   - Open GitHub issues against the target version of the package (via a one-time live fetch through the GitHub MCP — *only* for the package's repo, never the user's; explicitly excluded from M7 egress ledger background-call quota because the call is user-initiated)
+
   - Snyk / Wiz / Semgrep findings on the target version (via the Wave 1–2 connectors)
+
   - Compatibility risk against the user's own integration tests indexed in the local index (last passing CI run on a similar bump)
+
   - One-paragraph "you would have caught this before merging" verdict at the top
+
 - [ ] **`deps-watch` watcher** — fires when a new Dependabot/Renovate PR opens AND `nimbus deps update` would have rated it >0.6 risk; surfaces in the morning briefing with the brief inline. Composes with Phase 7 Wave 1 ownership routing so the brief goes to the *team that owns the affected service*, not just the PR author.
+
 - [ ] **`nimbus deps audit-history [<pkg>]`** — for a package, surfaces the user's own historical experience: every past version installed, how long each was deployed, whether any incidents tagged it. Stops "is this a flaky package?" from being a guessing game.
+
 - [ ] **HITL stays at the merge boundary** — the agent never auto-merges; the deliverable is the brief, not the action. The user retains the merge button. Composes with the existing Phase 4 HITL gate.
+
+
 
 #### Wave 4 — Supply Chain & Identity
 
+
+
 - [ ] **Sigstore Rekor** — signed artifacts, transparency-log entries; read-only (Rekor is append-only globally)
+
 - [ ] **in-toto / SLSA provenance** — build provenance, attestation graph; read-only
+
 - [ ] **Okta logs** (System Log API) — sign-in events, MFA challenges, admin actions; `okta.user.suspend` HITL
+
 - [ ] **Azure AD audit** — sign-in events, conditional-access decisions, role assignments; read-only
+
 - [ ] **HashiCorp Vault audit log** — secret reads, role bindings, policy changes; read-only
+
 - [ ] **Doppler** — secret access events, environment configs; `doppler.secret.rotate` HITL
+
 - [ ] **Synthetic credential honeytokens** — Nimbus generates fake credentials in the local workspace (e.g., `.env.local`) and registers them with the watcher; outbound process env / log emissions are scanned for the tokens, and any hit triggers an immediate audit-log entry + HITL prompt; active intrusion detection at the workstation level
+
 - [ ] **Least-privilege auto-remediation** — agent watches AWS IAM and Okta usage (Wave 4 Okta logs ingestion provides the visibility) and drafts terraform / config PRs to revoke unused permissions after 30 days; HITL-gated merge; enforces least privilege without manual hunting
+
 - [ ] **`nimbus supply-chain <repo|artifact>`** — SBOM diff against last release, signed-vs-unsigned dependencies, attestation gaps, license-policy violations, transparency-log presence; emits `agents.supply_chain.briefReady`
+
 - [ ] **Egress ledger (`nimbus egress`)** — the local, signed record of every outbound host contacted by the gateway and each sandboxed connector, built on the `I15` per-host network allowlist + the BLAKE3 audit chain; `nimbus egress [--since <dur>] [--json] [--sign]` emits a verifiable report ("this agent contacted only these hosts"). The North-Star **M7 (Provable Locality)** capability; the auditor-grade, externally-anchored export lands in Phase 12.
+
+
 
 #### Wave 5 — Local Data-Handling & Credential Hygiene
 
+
+
 The workstation-side complement to the cloud-facing waves above: keep tainted data and live credentials from leaking off the machine, using Nimbus's local position rather than network-level controls developers hate.
 
+
+
 - [ ] **Taint-barrier data provenance** — Nimbus tags the provenance of indexed data; data originating from a production-database / PII connector carries a `tainted:prod-pii` marker. Enforcement is **local and context-aware, not a browser DLP proxy**: a Git pre-commit / pre-push hook (and the workflow executor) block committing tainted data to a repo, with an HITL override that is audit-logged. The realistic, shippable half of the original "block paste into ChatGPT" concept — the git/commit boundary is where Nimbus can actually enforce.
+
 - [ ] **Provenance-aware HITL escalation** — extends the executor's HITL gate (`I2`): when an action's inputs carry a `tainted:prod-pii` provenance marker, the gate auto-escalates the required tier (a normally-single-approval action demands quorum; a normally-silent action demands explicit consent). Wires data provenance straight into the existing structural consent gate instead of a separate enforcement path — the taint travels with the data into the approval decision.
+
 - [ ] **Just-in-time ephemeral credentials** — when a workflow needs a privileged credential (e.g. a prod-DB connection), Nimbus requests a short-lived JIT credential from the backing secret store (HashiCorp Vault dynamic secrets / cloud STS) and injects it via an **env-scoped child process** (`extensionProcessEnv()`, `I1`) for that operation only — never the local disk, never the clipboard, **not** raw process-memory injection — then the credential expires / is revoked when the operation ends. Achieves the "credential never persists" goal through the spawn-scoping Nimbus already enforces.
+
 - [ ] **`nimbus panic` — emergency revoke** — one command, the mesh kill switch: revoke all federated peer grants, rotate the LAN pairing keys, and disable the HTTP write surface in a single audited operation. Composes with the Phase 6 federation revoke path (per-peer revoke is the granular form; `panic` is the all-at-once form) and the `I13` write-surface toggle. For "my laptop may be compromised — sever everything now."
+
+
 
 #### Stretch (does not gate phase completion)
 
+
+
 - [ ] **Long-tail vendors as community extensions** — Lacework, Orca, Aqua, Anchore, Mend, FOSSA, Black Duck, Tracecat, Torq, Recorded Future, MISP
+
 - [ ] **`nimbus security --remediate <finding-id>`** — agent proposes a fix PR for highest-confidence findings (lockfile bump for SCA, secret-rotation flow for GitGuardian); HITL-gated; experimental
+
 - [ ] **STIX/TAXII threat-intel feed** — read-only ingestion of community threat-intel feeds into the `threat_indicator` table
+
+
 
 #### Acceptance Criteria
 
+
+
 - A connected Snyk org with 100+ open vulns indexes in under 60 s; `nimbus security my-service` returns the top-N ranked open findings from the local index without a live API call
+
 - `nimbus posture aws-prod` returns CSPM + IaC + runtime findings ranked by exploitability × blast radius from the local index in under 15 s
+
 - A FireHydrant incident closure via `nimbus` requires HITL with a structured before/after diff; rejection logs `hitl_status = 'rejected'`
+
 - `nimbus incident` (security-shaped) returns a Markdown brief with attacker indicators + affected services + recent deploys in under 15 s; verified distinct from Phase 10's `nimbus incident-brief` shape via e2e test
+
 - `nimbus supply-chain my-service` returns the SBOM diff + attestation gaps + license-policy violations in under 15 s, all from the local index
+
 - Sigstore Rekor entries are verified before the local index records `sbom_artifact.is_signed = true` (no trust-on-first-use)
+
 - Privacy contract: identity-event ingestion is read-only by default; the only write operations are HITL-gated `okta.user.suspend` and `doppler.secret.rotate`
+
 - Wave 3.5: `nimbus deps update` on a seeded open Dependabot PR assembles a brief naming the affected source files in the user's own codebase, the relevant open issues against the target version, the matching Snyk/Semgrep findings, and the historical incident correlation — all in under 15 s from the local index plus one user-initiated GitHub MCP call
+
 - Wave 3.5: the `deps-watch` watcher fires on a controlled test (a Dependabot PR for a known-regression version) and routes the brief to the affected service's owner team via the Phase 7 Wave 1 ownership graph; the agent never auto-merges
+
 - Wave 5: a commit containing data tagged `tainted:prod-pii` is blocked by the pre-commit hook; the override path requires explicit HITL and writes the override to the audit chain
+
 - Wave 5: an action whose inputs carry a `tainted:prod-pii` marker triggers a higher HITL tier than the same action on untainted inputs — verified by an e2e test asserting the escalated consent prompt fires
+
 - Wave 5: `nimbus panic` revokes every federated peer grant, rotates the LAN pairing key, and flips the write surface to disabled in one operation; a subsequent peer query and a subsequent HTTP write both fail, and the whole sequence appears in the audit log
 
+
+
 ---
+
+
 
 ### Phase 9 — AI Engineering Loop
 
+
+
 > **Sequencing (2026-06-17 overlay):** Build-order slot **S5** (Track 1) — demoted commodity (API-fakeable ML/AI connector breadth). The `nimbus model-health` / `rag-health` agents may pull forward; the connector ingestion lands behind the spine. See [§ Phase 7+ Sequencing Spine](#phase-7-sequencing-spine).
+
+
 
 **Goal:** Bring the tool surface that ML engineers and AI-product teams already use into the local index, and ship `nimbus model-health` + `nimbus rag-health` to surface actionable status without a live API call. Read-first for ingestion; HITL on the few write tools (`prompt.deploy`, `model.promote-stage`, `feature.publish`) because pushing a prompt or promoting a model is a production change.
 
+
+
 > **Composes with Phase 8 (Security Engineering):** supply-chain attestations from Phase 8 Wave 4 extend to model artifacts — a deployed model can be queried "does it have a signed SLSA provenance? what's its base-model dependency CVE state?"
+
 >
+
 > **Composes with Phase 10 (The Autonomous Agent):** Phase 10's incident correlation engine pulls AI-Eng Loop signals when an LLM-backed feature is in the affected scope. Phase 10's standing-approval engine can suppress noise from `nimbus model-health` after N consecutive identical decisions.
+
+
 
 #### Dependencies
 
+
+
 - Phase 4 LLM router + multi-agent orchestration
+
 - Phase 4 Plugin API v1
+
 - Phase 3 connector mesh + relationship graph
+
 - Phase 7 service catalog (AI features attribute to services and route to owner teams)
+
 - Phase 3.5 telemetry counters
+
+
 
 #### Wave 1 — LLM Observability & Evaluation
 
+
+
 - [ ] **Helicone** — LLM traces, latency p50/p95/p99, cost per request, error rate; read-only
+
 - [ ] **Langfuse** (open source, self-hostable) — traces, sessions, prompt versions, eval datasets; `langfuse.prompt.deploy` HITL
+
 - [ ] **LangSmith** — traces, datasets, eval-run results, prompt versions in LangSmith Hub; `langsmith.prompt.commit` HITL
+
 - [ ] **Braintrust** — eval runs, scorers, prompt versions, regressions; `braintrust.prompt.deploy` HITL
+
 - [ ] **Promptfoo** (open source CLI) — eval-run state from `promptfoo.yaml` runs in CI; read-only
+
 - [ ] **Prompt-regression watcher** — fires when an eval-suite pass-rate drops below threshold (configurable; default 95% of trailing 7-day mean)
+
 - [ ] **AI context minimizer** — periodic agent over Helicone / Langfuse / LangSmith trace ingestion; analyses prompt traces, identifies context segments the LLM didn't materially use, and surfaces removal suggestions; directly reduces token cost and latency on the user's own prompts
+
 - [ ] **Model-weight integrity** — optional digest pinning / signature verification of local GGUF weights, reusing the existing SHA-256 / Ed25519 machinery; `nimbus llm verify`; pin known-good digests in config. Two modes: **`warn`** (default — log drift, continue) and **`strict`** (fail-closed — refuse to load the model / run inference on a verification mismatch). Because a substituted model is a total compromise of the agent's reasoning, `strict` is the recommended posture for security-sensitive deployments and can be pinned fleet-wide via the Phase 16 team baseline / Phase 12 org policy. Closes the "Local model supply chain" residual risk in [`SECURITY.md`](./SECURITY.md); becomes a structural invariant (wiring + invariants-file row + enforcement test) only once wired.
+
+
 
 #### Wave 2 — ML Model Lifecycle
 
+
+
 Phase 5/6 already index model registry entries from MLflow / SageMaker / Vertex AI; Phase 9 adds the **operational** signals.
 
+
+
 - [ ] **Arize AI** — model monitors, drift signals, performance segments; `arize.monitor.acknowledge` HITL
+
 - [ ] **WhyLabs** (open core) — data profiles, drift detections, model performance; `whylabs.monitor.silence` HITL
+
 - [ ] **Feast** (open source) — feature views, online/offline freshness, materialisation status; `feast.feature.materialize` HITL
+
 - [ ] **Tecton** — feature pipelines, materialisation state, online-store health; `tecton.feature.publish` HITL
+
 - [ ] **Fiddler** — model performance, fairness/bias monitors, segment drilldowns; `fiddler.monitor.acknowledge` HITL
+
+
 
 #### Wave 3 — Vector Stores & RAG Infrastructure
 
+
+
 - [ ] **Pinecone** — indexes, namespace stats, vector count, recent upsert/delete events; read-only (Phase 9 write surface deferred)
+
 - [ ] **Weaviate** (open source, self-hostable) — classes/collections, object counts, schema versions, recent imports; read-only
+
 - [ ] **Qdrant** (open source, self-hostable) — collections, point counts, snapshot list; read-only
+
 - [ ] **Chroma** — collections, embedding-function versions, document counts; read-only
+
 - [ ] **Ragas / TruLens** (CLI integration) — RAG eval runs, faithfulness / answer-relevance / context-precision scores; read-only
+
 - [ ] **Embedding-drift watcher** — fires when a vector index's embedding-function version diverges from the model that originally embedded the indexed content; surfaces in morning briefing
+
+
 
 #### Wave 4 — AI Cost & Governance
 
+
+
 - [ ] **OpenAI usage export** — per-API-key, per-model spend, token counts, daily aggregates; read-only
+
 - [ ] **Anthropic usage export** — per-API-key spend, token counts, model breakdown; read-only
+
 - [ ] **AWS Bedrock spend** (via Cost Explorer) — per-model invocations, on-demand vs. provisioned spend; read-only
+
 - [ ] **Vertex AI spend** (via Cloud Billing export) — per-model spend, prediction unit counts; read-only
+
 - [ ] **Model-policy registry** (in-Nimbus) — declarative policy: which model class for which task class, redaction policy before send, data-residency mappings; `policy.update` HITL
+
 - [ ] **AI cost watcher** — fires when 24 h spend exceeds 7-day rolling average by configurable threshold (default 50%); surfaces in morning briefing
+
 - [ ] **Policy-violation watcher** — fires when an LLM call routes to a model class violating the active policy (e.g. PII data class to non-residency-compliant model); blocks via the existing LLM router air-gap mechanism
+
+
 
 #### Built-in Agents
 
+
+
 - [ ] **`nimbus model-health [<model-name>]`** — parallel sub-agents over LLM observability + eval + cost connectors; per-model brief with latency p50/p95/p99, eval-suite pass rate trajectory, cost burn vs. budget, recent prompt regressions, drift indicators; emits `agents.modelHealth.briefReady`
+
 - [ ] **`nimbus rag-health [<rag-app-name>]`** — parallel sub-agents over vector-store + RAG-eval + ingestion connectors; per-application brief with retrieval-quality scores, embedding-version drift, vector-store health, knowledge-base freshness, recent ingestion failures; emits `agents.ragHealth.briefReady`
+
+
 
 #### Wave 5 — Extension Eval Framework (Marketplace prerequisite)
 
+
+
 This wave delivers the **author-facing eval surface** that the Phase 9.5 Marketplace consumes as the quality column. Scoped narrowly to *extension authors*, not to end users — per-user calibration UIs are explicitly deferred until the post-Phase 9.5 install base supports statistically meaningful per-user sample sizes. The framing is **transparency, not comparison**: there are no "cloud equivalent cost" numbers (legally risky, gameable, and the providers reprice faster than we can chase). The framing is "here's what this extension scored against its own evals on a reproducible harness."
 
+
+
 - [x] **`nimbus eval` CLI + runner** — `nimbus eval --package <dir> [--suite <file>] | --extension <id> | --installed [--threshold <n>] [--json]`. Reads `evals/*.eval.json` from the extension's package root (suites of cases with a tool name, a fixed input and a deterministic rubric), runs each case against the extension's MCP tool surface with fixed inputs and the network off, inside the same sandbox the gateway uses at runtime (`I15`), and writes a deterministic integer score plus a per-rubric breakdown. `--package` runs gateway-free, where typing the command is the consent; `--extension` and `--installed` go through the gateway and ask the owner once per run. The format shipped in project 5's PR 1 (2026-10-29, `registry-format`); the runner and `nimbus eval --package` shipped in PR 2 (2026-10-29: the gateway's `__nimbus-eval` role, no network and no credentials, invariant I49 / static D38); `nimbus eval --extension <id>` shipped in PR 3 (2026-10-29: the gateway's `extension.eval`, verified before ONE never-delegable owner approval, re-verified after it, no run grant needed or granted). `nimbus eval --installed` shipped in PR 5 (2026-10-30, terminal-only: one approval for every enabled, non-starter-pack installed extension, at most 50 per run).
+
 - [ ] **Eval schema helper in `@nimbus-dev/sdk`** — the eval suite format lives in `registry-format` (shipped 2026-10-29), not in the SDK. An optional typed `defineEvalSuite` helper follows in `@nimbus-dev/sdk` 2.2.0 (the SDK is 2.1.0 today) and blocks nothing. Rubrics are deterministic only in v1 (exact match, JSON pattern match, set membership); LLM-as-judge rubrics are a later follow-up, gated on a regression study against the deterministic baseline.
+
 - [x] **Registry-side score computation** *(project 5 PR 4, 2026-10-30)* — the registry's CI computes the score in a secret-free job (extension code never runs in the job that holds the registry root key) and signs it into the index entry. The score is exact, not "within rounding": integer arithmetic, so the same package gives the same score and any difference is a mismatch. This closes the "authors ship evals that pass for them but not anyone else" attack vector, because the author never submits a number. Shipped as the registry action's `score` mode in a `score` job of the sign workflow (read-only token, no environment, no secrets; the pinned release's `nimbus-gateway-linux-x64`, checked against its `SHA256SUMS` line, runs each unsigned version's suites through the `__nimbus-eval` role under a 14-minute run budget) whose `scores.json` the `sign` job reads as untrusted input: a version with eval suites is signed only with a valid score bound to its own id, version and package digest, and is otherwise skipped until a later run. The check job scores a pull request's version the same way. See [`registry-hosting.md` § Eval scores](./registry-hosting.md#eval-scores). The capability and the workflows ship; no live registry has adopted the new workflows yet, `nimbus-mcp-servers` included, so no index carries a score today.
+
 - [x] **Quality score persistence** — the score and its per-rubric breakdown are stored as a registry-signed `quality` field on the version's index entry, not in the manifest: the party that measured the score signs it, and the author does not. The format shipped 2026-10-29 (PR 1). The gateway caches no index entries, so there is no table: since PR 4 (2026-10-30) `registry.search` and `registry.info` read the score from the freshly verified index (`quality: { score, cases, passed } | null`, and on `info` a capped `qualityInvalid` reason for a malformed one), and `nimbus extension search` / `info --registry` show it (`Quality` column; `quality N/100 (measured by <registry>)` or `not evaluated`). The desktop Marketplace tile is project 6's. A package installed from a local folder has no score. Until a registry adopts the scoring workflows, every version shows `not evaluated`.
+
 - [x] **Local quality regression test for end users** *(project 5 PR 5, 2026-10-30)* — `nimbus eval --installed` runs every installed extension's declared suite against the local environment. Useful for the user who wants to confirm an extension still scores what the marketplace claimed. Exit code 1 on a configurable regression threshold (`--threshold`, default 5: a regression is the registry's score minus the local score above it). The comparison is with the score the extension's source registry signed for the same version, so it needs a registry that publishes scores; none does today (the official registry in `nimbus-mcp-servers` publishes through its own script, and its one extension, Readwise, has no eval suites), so every evaluated row currently reads "no registry score" until one does. Integrating the result with the auto-update HITL prompt belongs to project 6's "Quality regression watcher" row, not here.
+
 - [ ] **Built-in agent eval suites and brief cost footer — split from project 5 on 2026-10-29** — a separate follow-up project. The first-party `expert`, `impact`, `catchup`, `oncall` and `standup` agents ship with eval suites of their own, and the CI gate runs them on every PR and refuses regressions beyond a threshold (default 5 points). Every brief output by those agents carries a transparency footer: `tokens: <local-count>, outbound: <count> calls, time: <wallclock-ms>`, with **no "cloud equivalent" numbers** (the framing is "here's what we used", not "here's what a different product would have charged"). `meeting-prep`, `model-health` and `rag-health` were dropped from the earlier list: `meeting-prep` was closed deliberately (its "Reopens if…" entry says the Wave 5 mention does not reopen it), and `model-health` and `rag-health` are unshipped Wave 4 rows above, so they have no agent to evaluate.
+
+
 
 #### Wave 6 — Agent Honesty Surfaces
 
+
+
 User-facing trust surfaces. "AI safety" as a product feature, not a marketing word. The framing is: every time the agent runs, the user accumulates evidence about *this specific Nimbus instance's behaviour on their data*. Phase 9 turns that evidence into legible surfaces. None of these are possible for cloud agents at the per-user level because cloud agents don't have an honest record of refusals + per-user calibration + per-user bias signals.
 
+
+
 - [ ] **Calibration audit (`nimbus audit calibration [--since <dur>]`)** — for every agent claim that carried a confidence score, the audit looks at whether the user subsequently corrected, retried, or rejected the result, and computes a personal calibration curve (claimed vs observed). Output: 2-D scatter plot (Tauri dashboard) + numeric Brier score + per-agent breakdown (`expert` calibrates better than `impact` on this user's data, say). Calibration curve is also exposed to the router so the router can demote agents whose confidence is over-stated for this user.
+
 - [ ] **Bias detection diagnostics** — analyzes the agent's output history for systematic skews on this user's queries. Catalog of detectors in v1: (a) reviewer-recommendation gender skew (compares the gender-detected suggested reviewer rate vs the team's actual rate), (b) recency-over-relevance skew (compares how often the agent's top result is the most-recent vs the actual highest-ranked by other signals), (c) seniority-attribution skew (does the agent attribute decisions to senior engineers when ownership graph shows otherwise), (d) service-coverage skew (the agent under-surfaces results from connectors with lower volume even when relevant). Output is a diagnostic per user — not a fix, just transparency. Cloud agents cannot offer this honestly because the diagnostic depends on the user's own ground-truth correction history.
+
 - [ ] **Refusal log** — every time the agent refuses to do something (insufficient context, low confidence, HITL not granted, missing connector, prompt-injection guard fired), the refusal is logged with reason code + the originating query + the would-be tool call. `nimbus audit refusals [--since <dur>]` surfaces the log. Lets the user contest a refusal ("the agent refused to give me X — why?") and feeds the bias detector. Many cloud agents *silently* refuse or substitute a generic answer; visible refusals are a Nimbus differentiator.
+
 - [ ] **`nimbus audit replay <session-id>` honesty extension** — extends the M3 replay format to include refusal events + confidence-score evolution across the session (where did the agent's confidence climb, where did it dip), so the replay is not just "what did the agent do" but "what did the agent *think it knew* and how did that evolve."
+
 - [ ] **Confidence-rebuilds-trust loop** — when the user corrects an answer (via the existing "wrong answer" one-keystroke feedback), the calibration curve updates, and the router uses the new calibration to lower the agent's claimed confidence on similar queries. The loop is **personal and local** — no aggregation, no fleet learning, no surveillance.
+
 - [ ] **`[ai_engineering.honesty]` config block** — opt-out toggle (default on) for the calibration tracking. Privacy-conservative default: honesty surfaces operate on data the user could already see in their own audit log; nothing new is collected; the surfaces are *views* of existing data.
+
+
 
 #### Stretch (does not gate phase completion)
 
+
+
 - [ ] **Long-tail vendors as community extensions** — Aporia, Phoenix Arize, OpenLLMetry, Pezzo, Hopsworks, Featureform, Dynamic.ai, Confident AI, DeepEval
+
 - [ ] **Eval-as-a-watcher** — `nimbus` runs Promptfoo evals locally on a configurable schedule against locally-indexed prompt versions; results feed `nimbus model-health`. Two use cases share the same primitive: (a) **zero-shot bring-your-own-model evaluator** — download a newly released open-source model and run the existing eval suite locally to see if it is better for the team's use case; (b) **prompt A/B testing** — route a prompt-diff through the same eval suite and compare pass rates before recommending the new version
+
 - [ ] **Local fine-tuning data curation** — agent identifies high-quality human artefacts (well-written incident post-mortems, effective PR reviews, polished design docs) from the local index and packages them into a JSONL dataset for Phase 14 style / voice fine-tuning; distinct from Phase 14's tool-use trace dataset builder (which targets agent traces); user approves the dataset before fine-tune kickoff
+
 - [ ] **Bring-your-own-model fine-tune trace** — when Phase 14 (AI v2) ships fine-tuning, Phase 9 indexes the resulting fine-tuned model's training-run telemetry as `ml_model` rows
+
+
 
 #### Acceptance Criteria
 
+
+
 - A connected Helicone account with 1M+ traces indexes recent traces (last 24 h) in under 60 s; `nimbus model-health gpt-4o-prod` returns latency p50/p95/p99 + cost burn from the local index in under 15 s with no live API call
+
 - A prompt-regression watcher fires on a connected Braintrust suite when pass-rate drops below threshold; surfaces in morning briefing
+
 - `nimbus rag-health my-rag-app` returns retrieval-quality scores from a connected Ragas eval-run history + vector-store stats from Pinecone in under 15 s, locally
+
 - An embedding-drift watcher detects a Pinecone index whose embedding-function version no longer matches the indexing-time model and surfaces a structured remediation suggestion (re-index)
+
 - AI cost watcher fires on a 50 % daily-spend spike against the 7-day rolling baseline; surfaces in morning briefing with per-key attribution
+
 - Policy-violation watcher blocks an LLM call routing to a non-policy model class (verified via LLM router integration test); decision recorded in audit log
+
 - Privacy contract: no LLM trace body content is exfiltrated; only per-trace metadata (latency, cost, model id, success/error) is indexed unless the user explicitly opts in via `[ai_engineering].index_trace_bodies = true`
+
 - Wave 5 reproducibility gate: `nimbus eval --extension <id>` against a sample first-party extension produces exactly the same integer score inside a fresh sandbox as the score the registry signed into that version's index entry at publish time — verified by an integration test that publishes a test extension, fetches it back, runs `nimbus eval`, and asserts equality. This is the property Phase 9.5's registry-side reproducibility check depends on.
+
 - Wave 5 built-in-agent CI gate: moved to the follow-up row "Built-in agent eval suites and brief cost footer" (split from project 5 on 2026-10-29), which covers the five agents that exist (`expert`, `impact`, `catchup`, `oncall`, `standup`); the CI gate refuses PRs that drop any agent's score by more than 5 points.
+
 - Wave 6: `nimbus audit calibration` against a seeded session history (100 user corrections across 5 agents) produces a per-agent Brier score and renders a 2-D calibration scatter in the Tauri dashboard
+
 - Wave 6: the bias-detector diagnostic against a controlled fixture (seeded reviewer-recommendation history with a known skew) correctly identifies the gender / recency / seniority / coverage axis the skew is on, with no false positive on a balanced fixture
+
 - Wave 6: `nimbus audit refusals` lists every refusal of the seeded session with reason code and originating query; contesting a refusal (`--contest <refusal-id>`) opens the would-be tool call for the user to inspect
 
+
+
 ---
+
+
 
 ### Phase 9.5 — Marketplace Registry
 
+
+
 > **Status: ✅ Complete (2026-11-04) — all seven projects shipped (2026-10-18 → 2026-11-04), which closed [S3](#spine-s3).** Every row below is either ticked with what shipped or points to where its open remainder now lives: [Carried into S4](#carried-into-s4) for buildable work, [Owner's open items](#owners-open-items) for the owner's. The phase stays here, under Planned, for its row detail and cross-links.
+
+
 
 **Goal:** Turn the connector + extension ecosystem into a discoverable, trustworthy, quality-scored economy without yet operating a payment processor. The v0.1.1 trigger "5 seed community extensions in the registry" is elevated to a full phase because the marketplace is the **ecosystem flywheel** that compounds every other piece of work — once authors are publishing, every new SaaS the world produces becomes a Nimbus connector within days. Payments wait until install base is large enough to support author rent (post-Phase 12); this phase ships the **registry, the quality layer, and the trust layer** only.
 
+
+
 > **Composes with Phase 9 (AI Engineering Loop):** quality scores in the marketplace listing are produced by the **`nimbus eval` framework** delivered in Phase 9 Wave 5 — see [§ Phase 9 → Wave 5](#phase-9--ai-engineering-loop). Wave 5 is a hard prerequisite delivered in the immediately preceding phase, so the marketplace UI consumes its quality scores from day one.
+
 >
+
 > **Composes with the S — Standards track:** registry-published extensions carry a Signed Connector Manifest produced by the same `I16` Ed25519 chain the Gateway already enforces at install + startup. The published manifest schema is the reference implementation for the SCM artifact in the [§ S — Standards (cross-phase)](#s--standards-cross-phase) track.
+
+
 
 #### Projects and scope decisions
 
+
+
 **The seven projects (owner ruling, 2026-10-18: ship ALL of Phase 9.5 to close [S3](#spine-s3); all seven shipped, and S3 closed 2026-11-04):**
 
+
+
 | # | Project | Status |
+
 |---|---|---|
+
 | 1 | Registry protocol and client | ✅ 2026-10-18 (invariant `I44`) |
+
 | 2 | Network publishing | ✅ 2026-10-23 (`nimbus extension publish`, a pull request against a registry repository) |
+
 | 3 | Trust layer: a built-in verified-publisher store, key rotation, a takedown ledger, provenance | ✅ 2026-10-27, in 5 PRs: formats, storage (V76) and equivocation refusal ✅ 2026-10-26; the trust store, feed ingestion and `nimbus trust status\|refresh` ✅ 2026-10-26; enforcement (I48) ✅ 2026-10-26; key rotation, gateway side and publisher statements through a registry ✅ 2026-10-26; the verified badge ✅ 2026-10-27; registry maintainer blocks and `nimbus extension report` ✅ 2026-10-27 (PR 4a); the trust feed's maintainer tooling (`nimbus trust maintain`, the registry action's `trust-check` / `trust-sign`) ✅ 2026-10-27 (PR 4b); provenance verified by the registry's CI ✅ 2026-10-27 (PR 4c); and the feed baked into the release (`nimbus-agent/nimbus-trust`), with the snapshot refresh script and its audit ✅ 2026-10-27 (PR 5) |
+
 | 4 | Dependencies and starter packs | ✅ 2026-10-29 — PR 1, the manifest format (2026-10-28): cross-registry `dependsOn`, `requires.connectors` and `kind: "starter-pack"` parse and publish; PR 2, registry resolution (2026-10-28): a registry install fetches each dependency from the registry it resolves to, in one approved plan (V78); PR 3, connector requirements (2026-10-29): `requires.connectors` is checked and shown in the install approval, `extension info` and `extension list` and `nimbus doctor`, and an attended install walks the owner through approving and connecting; PR 4, starter packs (2026-10-29): a `kind: "starter-pack"` package installs through the same one-approval plan (V79 `extension.kind`), is never approved to run (`pack` run state), and removing an extension offers the packages installed only for it (CLI, `--clean-deps`); PR 5, updates that add dependencies (2026-10-29): detection resolves an update's closure through its source registry, conflicts are shown and refused at apply, the update approval lists every added package, and a downgrade rewrites the edges and reports what it left behind |
+
 | 5 | `nimbus eval` ([Phase 9 Wave 5](#phase-9--ai-engineering-loop)), a prerequisite of project 6 | ✅ 2026-10-30 — PR 1, the format (2026-10-29): `evals/*.eval.json` suites, three deterministic rubrics, an integer score, `evals/` packaged, and an optional registry-signed `quality` on index entries; PR 2, the runtime (2026-10-29): `nimbus eval --package <dir>` runs a package's suites gateway-free in the sandbox through the gateway's `__nimbus-eval` role, with no network and no credentials (I49/D38); PR 3, the installed gate (2026-10-29): `nimbus eval --extension <id>` evaluates an INSTALLED extension through the gateway's `extension.eval`, behind ONE never-delegable owner approval (I49's second half; `extension.eval` joins the I2 frozen set); PR 4, registry scoring and display (2026-10-30): the registry action's secret-free `score` job runs unsigned versions' suites with the pinned release gateway and `sign` signs each valid score into the index as `quality`, and `nimbus extension search` / `info --registry` show it; no live registry has adopted the new workflows yet, `nimbus-mcp-servers` included, so no index carries a score today; PR 5 (2026-10-30): `nimbus eval --installed [--threshold <n>]` evaluates every enabled installed extension behind ONE approval and compares each local score with the one its source registry signed for the same version, exit 1 on a regression; with no live registry publishing scores, every evaluated row currently reads "no registry score" |
+
 | 6 | Quality layer: scores, permission transparency, `nimbus extension audit`, golden transcripts (ratings deferred, below) | ✅ 2026-11-03 in 12 PRs (PR 1, permission transparency, 2026-11-01; PR 2, the evidence lines and the score comparison, 2026-11-01; PR 3, the baseline check, `maintain add --scores` and `nimbus extension pack`, 2026-11-02; PR 4, the official registry's Readwise suite and keyless score job (nimbus-agent/nimbus-mcp-servers#62), 2026-11-02; PR 5a-1, the liveness format and client, 2026-11-02; PR 5a-2, the liveness producer, 2026-11-02; PR 5a-3, golden recording, 2026-11-02; PR 5b, the official registry's liveness workflow (nimbus-agent/nimbus-mcp-servers#63), 2026-11-03; PR 6b-1, network observation on Linux and extension audit, 2026-11-03; PR 6b-2, network observation on Windows and macOS, 2026-11-03; PR 6b-3, observation warnings, 2026-11-03; PR 7, narrower network grants, 2026-11-03) |
+
 | 7 | Author onboarding | ✅ 2026-11-04 in 4 PRs — PR 1, funding and license and `nimbus extension sponsor` (#1878); PR 2, `nimbus extension clone` (#1880); PR 3, `nimbus scaffold extension --from-openapi` (#1881); PR 4, the **Authors** section of the docs site (<https://nimbus-agent.dev/authors/>) and this close-out |
+
+
 
 Outside the seven: the **Readwise unbundling pilot** (`I46`, the baked `nimbus-official` registry; its row is below) was added by the unbundling decision and has shipped. **Not buildable, and the owner's to complete:** live `registry.nimbus-agent.dev` hosting, Verified Publisher pricing and KYC, the grant program, and the acceptance bar of 30 extensions from 5 verified publishers. Since 2026-11-04 they are listed, with the rest of the owner's open items, in [Owner's open items](#owners-open-items).
 
+
+
 **Registry architecture (owner decision, 2026-10-19): a static registry with a git pull-request write path, and no hosted registry service.** Publishing is a pull request against a registry repository; that repository's CI verifies signatures, re-runs the checks, and rebuilds and re-signs the index; reports are GitHub issues; a takedown is a commit, so the git log is the moderation ledger; liveness is scheduled CI. A hosted service was rejected for its operational burden, because a central server cuts against local-first, and because ratings need accounts. Costs accepted: **star ratings and reviews are deferred**, publishers need a GitHub account, and the index signing key lives in CI secrets behind a protected environment. Rows below that still describe a signed POST or hosted ratings are read in this shape.
+
+
 
 **Direction (owner decision, 2026-10-19): unbundle the first-party connectors over time.** The registry eventually replaces bundling for most of the 95 connectors, and the gateway ships a smaller core. Readwise is the pilot. The blockers for the rest: an installed extension receives no Vault credentials, cannot feed the index (per-connector sync and mapping live in the gateway, for bundled connectors only), and most connectors are not self-contained (they import shared code and npm dependencies, and their manifests point at an unbuilt entry file).
 
+
+
 #### Dependencies
 
+
+
 - Phase 3 Extension Registry v1 (manifest + sandbox + signing infra) — met on the execution side as of 2026-10-17 (extension runtime PR 3): an approved extension is verified and spawned sandboxed; see *Extensions actually run* below
+
 - Phase 4 Plugin API v1 frozen + `@nimbus-dev/sdk` v1.0.0 published
+
 - Phase 4 `I16` extension-signature verification (publisher Ed25519 chain)
+
 - Phase 9 Wave 5 — `nimbus eval` framework + quality-score persistence (gating the marketplace UI's quality column)
+
 - Phase 4 auto-update daemon (`extension.checkForUpdates` / `extension.update` IPC; CLI-only)
+
+
 
 #### Hosted Registry
 
+
+
 - [x] **Extensions actually run** *(prerequisite; added 2026-10-10; 4 of 4 shipped 2026-10-17)* — when added, install copied the package, hashed it, verified a publisher's Ed25519 signature (I16), recorded it and enabled it, and no code path spawned an installed extension's entry file. **Progress:** PR 1 (install gate and tree digest, 2026-10-11) and PR 2 (run grants, `nimbus extension approve`/`revoke`, 2026-10-16) shipped, and **PR 3 (2026-10-17, invariant I43)** makes an approved extension RUN: sandboxed, from a verified per-spawn copy of its install tree, invoked by the owner through `nimbus connector tools|call ext_<id>` behind the I42 prompt. **PR 4 (2026-10-17)** closes it: `nimbus extension approve <id> --model` offers the extension's tools to the model on I42's path, behind the shared `user_mcp_model_access` org-policy lock-off (no new capability name), and `nimbus doctor` warns about installed extensions left unapproved. This phase assumes a runtime throughout — *Connector liveness*, *`nimbus extension audit`* and the `nimbus extension clone` acceptance criterion all observe or spawn an installed extension — so an execution path (sandboxed through `I15`'s `wrapServerSpec()`, like every other MCP child) has to land first. Until it does, `nimbus connector add --mcp` is the way to run your own MCP server.
+
 - [x] **Registry protocol and client** *(Phase 9.5 project 1 of 7; PRs 1–4, closed 2026-10-18; invariant I44)* — a registry is a folder of signed static files (`index.json` signed by a per-registry root key, plus `extensions/<id>/<version>/{manifest.json,package.tgz}`), served from a local directory or over `https:` (plain `http:` only to loopback outside a production runtime: the compiled release binary, or NODE_ENV=production), so GitHub Pages, a bucket or an internal web server all work with no registry-side code. Maintainers build one offline (`nimbus registry maintain init|add|remove`); owners add it behind a `registry.add` HITL prompt that pins its root key (`nimbus registry add|list|refresh|remove`, schema V71), then `nimbus extension search`, `info --registry/--remote` and `install <id>` work across every added registry — an id in two registries is refused, never prioritised. Install verifies the pinned root key, a non-decreasing sequence, the index's manifest/package/entry hashes and the I16 signature with the index-named publisher key before the `extension.install` prompt. The auto-update daemon now detects updates only from an extension's own source registry (unchanged root fingerprint), and applying one re-verifies against that registry's current signed index before the swap, leaving the I43 run grant stale until re-approved. Every remote registry request is ledgered (I29 `registry` class) and refused under air-gap. Removed as dead: `nimbus extension sync`, the HTTP registry client and `NIMBUS_EXTENSIONS_REGISTRY_URL`. **Not shipped here** (later projects): network publishing, the hosted public registry, a general trust store and key rotation (the single baked official root, below, is not one), dependency resolution and packs, the quality layer and ratings, a catalog site, and registry search/install in the desktop app.
+
 - [x] **Readwise unbundling pilot** *(lands in the release that includes gateway PR 7; first extension served from the built-in official registry; no schema change beyond V73)* — the release bakes in one official registry (`nimbus-official`, `https://nimbus-agent.github.io/nimbus-mcp-servers/`, root fingerprint `6fb9beb2cf6bdc748c72c03b30b83a9a`) and a continuity table with one entry. Bundled Readwise is removed from the gateway (`UNBUNDLED_CONNECTOR_IDS`); it ships as the signed extension `com.nimbus.readwise`, which syncs into the same index ids with the same cursor. An existing user is asked once (`nimbus connector migrate accept`, or the desktop Marketplace page) and keeps their items and their token. Not shipped: more unbundled connectors, and `registry search`/`extension search` over the built-in registry.
+
 - [ ] **`registry.nimbus-agent.dev`** — public read-only HTTP registry serving signed extension manifests + tarball URLs + version metadata. **No user accounts on the registry itself.** Authors publish via a one-shot signed POST whose payload is verified against a public-key chain rooted in the publisher Ed25519 key — the same chain `I16` already enforces at install. Registry is stateless against authorship: the keys are the identity. Static-hosting-friendly (S3 / R2 / GCS + CDN); no relational database; manifest index materialized from the on-disk tarball tree on each publish. **Progress (2026-10-18):** the static registry FORMAT and the client that reads it shipped with project 1 (row above); the hosted public instance and the signed-POST publish path did not. **Superseded in part (2026-10-19, registry architecture decision above):** there will be no signed-POST endpoint; publishing is a pull request against the registry repository (project 2, shipped). What remains of this row is the owner's hosting of the public instance as static files. → re-homed to [Owner's open items](#owners-open-items) (2026-11-04).
+
 - [x] **Author publishing flow** *(project 2, closed 2026-10-23)* — `nimbus extension publish <dir> --registry-repo <owner/repo>` validates a signed extension and opens a pull request adding it to a GitHub-hosted registry repository, where the registry's CI checks and signs it; there is no upload endpoint and no returned registry URL. Refuses an existing `<id>@<version>` (including a build-metadata twin) and a changed publisher key (`I16` chain integrity; since trust layer PR 3b, 2026-10-26, a key reached by a `key.rotate` the index admitted is accepted, via `publish --statement`). The pre-publish `nimbus eval` score persisted into the manifest is deferred to Phase 9.5 project 5 (`nimbus eval`): the score needs the eval harness, which ships in that project. **Progress (2026-10-18):** offline publishing into a registry FOLDER exists (`nimbus registry maintain add`, which validates the package, refuses an existing `<id>@<version>` and re-signs the index); The network publish path is project 2. **Partly shipped (2026-10-18, project 2 PR B):** `nimbus extension publish <dir> --registry-repo <owner/repo>` validates the package with the shared `validatePublish` rules and opens a pull request that adds it to a GitHub-hosted registry repository (no gateway, no upload endpoint; `gh` owns GitHub auth), `nimbus scaffold extension` writes a publishable template, and `nimbus extension sign` fills `publisher.key`. **Shipped (2026-10-19, project 2 PR C):** the registry repository's own CI, a node24 action `packages/github-actions/registry-action` with `check` (a reviewer aid on every publish pull request) and `sign` (behind the `registry-signing` environment's required reviewers: re-validates every unsigned version, signs the index with the root key at `sequence + 1`, pushes `gh-pages`), written into a new registry by `nimbus registry maintain init <dir> --github`; owner steps in [`registry-hosting.md`](./registry-hosting.md). **Not shipped:** the pre-publish `nimbus eval` score and the registry-side reproducibility re-run; client-side refusal of an equal index `sequence` (so a force-push rollback of `gh-pages` is mitigated only by the owner protecting that branch; trust-layer project; **shipped 2026-10-26**, trust layer PR 1: a different index at an already-accepted sequence is refused as `ERR_REGISTRY_EQUIVOCATION`); forges other than GitHub; private registries (the check job fetches without credentials).
+
 - [x] **`nimbus extension search <query>` + `nimbus extension info <id>`** *(closed 2026-11-04 with Phase 9.5: every field below shipped except install count. Project 1, 2026-10-18: search, versions, publish dates, declared permissions and the key fingerprint; trust layer PR 3c, 2026-10-27: the verified-publisher status, a `Verified` column in search and a line in `info`; project 5 PR 4, 2026-10-30: the registry-signed quality score, a `Quality` column in search and a line in `info --registry/--remote`. Install count → re-homed to [S4](#carried-into-s4): a static registry has no server-side counter)* — CLI surfaces over the registry's manifest index. Output includes install count, quality score, last-published date, publisher verification status, declared `permissions`, and the cryptographic fingerprint of the signing key. **Partly shipped (2026-10-18, project 1):** `nimbus extension search <query>` (id, name and publisher across every added registry, tagged with the registry) and `nimbus extension info <id> --registry <name>|--remote` (versions, channels, publish dates, sizes, publisher id, publisher-key fingerprint, declared permissions). Not yet: install count and quality score (no registry-side counter; Phase 9 Wave 5). (The quality score has since shipped, 2026-10-30; see the note above.)
+
 - [ ] **Manifest browser at `nimbus-agent.dev/extensions`** — static-site catalog with search + filter by category / connector kind / quality threshold / verified-publisher only. Renders per-extension pages with the README, sandbox manifest, eval-suite summary, and the install command. No JavaScript on the read path; static HTML so it's archivable + auditable. → re-homed to [S4](#carried-into-s4), inside **Marketplace page and desktop tile** (2026-11-04).
+
+
 
 #### Private & Composable Registries
 
+
+
 - [x] **"Bring your own registry"** *(closed 2026-11-04 with Phase 9.5, in the shape project 1 shipped on 2026-10-18 and described below: `nimbus registry add <name> <url>` rather than `config set registry.url`, a pinned root key per registry, and the matching acceptance criterion met 2026-10-18. The desktop half → re-homed to [S4](#carried-into-s4) inside **Marketplace page and desktop tile**; sitting alongside a public registry waits on the owner's hosting, [Owner's open items](#owners-open-items))* — `nimbus config set registry.url https://internal.acme.corp/nimbus` points the CLI + Tauri UI at a private registry (queried instead of, or alongside, the public `registry.nimbus-agent.dev`). Each private registry carries its **own publisher trust root**: a per-registry baked pubkey set so an enterprise's internal extensions verify against the `I16` chain without trusting public keys. A static S3 / R2 / GCS bucket is a valid registry — no relational DB required. The on-ramp for enterprises whose internal connectors (bespoke deploy engines, internal HR systems) can never be published to the public internet; bridges the gap before the Phase 12 enterprise features. **Mostly shipped (2026-10-18, project 1), in a different shape:** `nimbus registry add <name> <url>` (not `config set registry.url`) adds any number of registries, searched together, each with its OWN pinned root key; publisher keys come from that registry's signed index and are checked against I16, so a private registry's extensions verify with no call to any public registry. What differs from this row: the trust root is one root key per registry plus the publisher keys its signed index names, not a baked per-registry pubkey set; there is no public registry to sit alongside yet; and the Tauri UI cannot add registries or install from them (CLI only).
+
 - [x] **Extension dependencies** — extensions declare dependencies on other extensions in `nimbus.extension.json` (e.g. `"dependencies": {"github-connector": ">=1.2.0"}`); `nimbus extension install` resolves and installs the tree. **Scoped conservatively for v1:** explicit trust — the solver picks the newest version that satisfies every declared range, but every transitive dependency is surfaced in the one install approval (registry, publisher, permissions) and nothing is pulled silently, because an unseen transitive dependency would expand the sandbox/signature trust surface past what the user chose. Lets a community "Code Review Agent" depend on the official GitHub connector instead of reinventing auth + indexing. *(Shipped 2026-10-29, project 4. PR 1 format (2026-10-28): the manifest can name a dependency's registry. PR 2 (2026-10-28): a registry install fetches its dependencies from the dependent's registry or a named added one, in one approved all-or-nothing plan (V78). PR 3 (2026-10-29): `requires.connectors` is reported with the command that fixes each one, and an attended install walks the owner through it. PR 4 (2026-10-29): starter packs install, an explicit install promotes a dependency-installed package, and removal offers the packages installed only for what was removed (CLI). PR 5 (2026-10-29): an update that adds dependencies resolves them at detection, shows every added package in its one approval, installs exactly that set at apply (all-or-nothing), and a downgrade rewrites the edges and names what it left behind.)*
+
 - [x] **Starter packs (curated collections)** *(shipped 2026-10-29, Phase 9.5 project 4 PR 4; the format in PR 1, 2026-10-28. A pack is a `kind: "starter-pack"` package whose members are its declared dependencies, published like any extension and installed by its id through the dependency resolver's one-approval plan; it has no code, so it is never approved to run. The `@nimbus/frontend-pack` command below is the row's original illustration, not a published pack: curated packs in the official registry → [Owner's open items](#owners-open-items))* — publish + install named bundles: `nimbus extension install @nimbus/frontend-pack` pulls Vercel + Figma + Sentry + a React-expert agent in one step. A pack is a thin meta-manifest listing member extensions; install reuses the dependency resolver above. Turns first-run from a scavenger hunt into a one-click persona setup (DevSecOps / Frontend / PM). *(Progress: PR 1 format (2026-10-28): a `kind: "starter-pack"` manifest parses and publishes, with its manifest as its entry; PR 4 (2026-10-29): this gateway installs one through the one-approval plan; it has no code, so it is never approved to run and its members are approved one by one.)*
+
+
 
 #### Quality Layer
 
+
+
 - [ ] **Community ratings and reviews per extension** *(re-homed from Phase 5 § Extension Marketplace v2, 2026-10-10)* — the one Marketplace v2 row Phase 5 did not ship; Phase 6's *Paid extensions* row names it as a dependency. Needs the hosted registry above to hold the ratings. **Deferred (owner decision, 2026-10-19):** with no hosted registry service there are no accounts to hold ratings, so this row is outside project 6. → re-homed to [S4](#carried-into-s4) with that deferral (2026-11-04).
+
 - [x] **Quality score surfaced in marketplace UI** *(closed 2026-11-03 by the owner's ruling, with project 6: the CLI and the install, update and desktop approvals show it; the registry web page and the desktop marketplace tile move to **Marketplace page and desktop tile**, below. PR 2, 2026-11-01: `nimbus extension info --registry/--remote`, the install approval and the desktop approvals now state a `Tested`, `History` and `Checked` line from the registry's signed index, each naming that registry; `Tested` counts the publisher's own tests as the registry signed them, and `Checked` reads `no checks published` until a registry publishes checks. PR 3, 2026-11-02: `nimbus registry maintain add --scores <scores.json>` lets a registry that publishes with `maintain add` sign a score and a baseline into a version entry, and the official registry adopts it in a later PR. **Not shipped:** the registry page, and a Tauri Marketplace tile.)* — both the CLI (`nimbus extension info`) and the Tauri Marketplace panel (already shipped in Phase 4 WS5-D) read the per-extension quality score persisted at publish time via Phase 9 Wave 5. Score is a numeric 0–100 plus a per-rubric breakdown (mandatory tool surface, HITL declaration correctness, item id format compliance, contract-test pass rate, eval-suite pass rate against the author's own evals).
+
 - [x] **Cross-author eval cross-check** *(closed 2026-11-03 by the owner's ruling, with project 6: shipped; the official registry publishes its first baseline with the next Readwise publish. Rewritten 2026-11-02 by the owner's rulings, project 6 PR 3: a baseline and a label, not a re-run of the author's contract tests. The sign job shipped 2026-10-23 re-validates the package rules and nothing more; the baseline below is the one check a registry adds to it, and no live registry publishes it yet.)* — a registry's score job starts the package's server, up to twice, under the eval sandbox (no network, no write, no credential: invariant I49, role `__nimbus-eval --baseline`), lists its tool definitions and checks each one structurally, then signs the result into the version entry's `baseline` (`{ scorer, passed, tools, failure? }`, `failure` one of `no-listing`, `listing-timeout`, `invalid-tool`). A client shows it as its own `Baseline:` line naming the registry that checked, apart from `Tested`. **What "valid" means:** a tool name of 1 to 128 characters with no whitespace or control character, and an `inputSchema` that is an object with `type: "object"`, `properties` absent or an object whose values are objects or booleans, and `required` absent or an array of strings. The schema is not compiled, and that is all a pass says: the server started and every tool the listing kept had a well-formed definition. It says nothing about what the tools do, and the baseline runs with no network, so it says nothing about the service the extension talks to. **It never blocks:** a failed baseline is displayed and signed into that version, and it never changes the score or refuses a publish. A starter pack never runs and has no baseline. **Stated limits:** Mastra drops a tool with an empty name before the check sees it. A tool with no `inputSchema` makes the whole listing fail, and so does the client's own parsing of a non-array `required` or a `type` other than `"object"`, so each of those reads as `no-listing`. A duplicate name is invisible: the client keeps only the last tool of that name, so the check sees only the tools the listing kept. A run where no child could start would record `no-listing` on a good package, so the job summary says to check the sandbox setup whenever a baseline reads `no-listing`. **When owners see it:** a baseline reaches owners only from the next version a registry signs with this release, and no live registry publishes one yet, so every owner sees `no baseline check published`. The official registry's adoption is a later PR. **Why the SDK contract tests are not re-run:** `runContractTests` mostly repeats validation the registry already does at publish, so a re-run would add little. The baseline checks what that validation cannot see: whether the server starts and lists well-formed tools.
+
 - [x] **Quality regression comparison** *(rewritten 2026-11-01 by the owner's rulings, project 6 PR 2; the row was a watcher)* — a score drop shows, and nothing is held back. When an installed registry extension has a pending update, `nimbus extension update` / `--check` carries, on each row, the installed and offered versions' signed scores compared (`quality 100 → 75 (-25)`, or why they were not compared), and the `extension.autoUpdate` approval carries the same text as `qualityChange`, in the terminal and the desktop app. Until a registry publishes scores, which no live registry does yet, every owner sees `quality not compared: neither version is scored`. **No threshold, no setting, and no hold:** the update daemon only ever detected updates and never applied one, so there was no automatic apply to stop, and a drop never blocks the owner's own approval. A downgrade shows no comparison. **Not shipped:** a per-rubric delta (the comparison is the two totals, and says when the case counts differ), and any registry page.
+
 - [x] **Permission transparency at install** *(closed 2026-11-03 by the owner's ruling, with project 6: the registry page moves to **Marketplace page and desktop tile**, below)* — surface what the sandbox will actually do with the permissions an extension declares (network hosts, filesystem read/write scope), not only what it declares. **Shipped 2026-11-01 (project 6, PR 1):** the `extension.install`, `extension.autoUpdate`, `extension.downgrade`, `extension.run` and `extension.migrate` approvals and `connector add --mcp` state network reach from the live sandbox posture (the named hosts only where the sandbox can limit the extension to them, otherwise a wider statement), and the install, update and downgrade approvals, `nimbus extension info` and `info --registry/--remote` add a predicted outcome for each declared path from the run approval's own check, flagging a whole drive, the filesystem root, or the home folder or a folder above it; the desktop shows both. A prediction can go stale and the run approval stays authoritative; remote `info` skips the own-files check. **Not shipped:** the registry page. **Dropped, by decision:** the Quality Score does not mark an extension down for over-requesting. `*` cannot be declared (a network entry must be an RFC 1123 hostname), and a permission, a broad write path included, is a fact stated on its own line, not a score input; a verdict on what an extension is "categorically" would claim more than the mechanism can back up.
+
 - [x] **`nimbus extension audit`** *(reworded 2026-11-03, project 6 PR 6b-1; shipped on all three OSes, PR 6b-3)* — shows, per installed extension, the network hosts it was seen to use against the ones it declared, as local observation by the `__nimbus-sandbox` wrapper. Network only, per OS, and nothing is fed into the score: what was observed is a fact on its own line. **Linux evidence shipped in PR 6b-1 (2026-11-03):** used declared hosts and refused lookups, only when the child ran behind the forwarder. **Windows and macOS evidence shipped in PR 6b-2 (2026-11-03):** the wrapper polls the extension's TCP connections every 250 ms (Windows: by AppContainer SID; macOS: by process tree) and reports `used` for an address a declared name resolved to, and `unmatched <ip>:<port>` for any other, never a name; short connections can be missed (measured catch rate and CPU in `docs/sandbox.md` § Observation). **Warnings shipped in PR 6b-3 (2026-11-03):** `nimbus doctor`, `nimbus extension list` and at most one OS notification per extension and version per 24 hours say when an extension was refused an undeclared name (Linux) or connected to an address not matched to a declared host (Windows and macOS); there is no off switch, and a warning changes no enforcement, grant or score. File access is stated by `extension info`, not observed. It states that these are at least the connections seen, that "not seen" does not mean not used, and that nothing leaves the machine.
+
 - [x] **Narrower grants** *(project 6 PR 7, 2026-11-03; spec §10.7; invariant I52)* — an owner can approve an extension with less network than its manifest declares, and `nimbus extension audit` offers such a narrowing from observed evidence; nothing is ever narrowed, or widened, without the owner's `extension.run` approval. **The approval:** `nimbus extension approve <id> --network <a,b|none>` (or `--network=<…>`; the flag given twice refuses) stores a network that is a subset of what the manifest declares, in manifest order, with the files unchanged, and the same rule (`checkStoredAgainstResolved`) is checked after the prompt and at every spawn; a stored row that adds, respells, reorders or repeats a host, or changes a path, refuses `ERR_EXTENSION_RUN_CHANGED`. A migration never narrows and a delegate never approves `extension.run`. **The offer:** only what the OS's sandbox enforces — on Linux the declared `host:port` entries no connection was seen to, on macOS every entry on a port no seen connection used (and only if a port goes), on Windows `no network at all` only for an extension never seen connecting — and only from a fixed evidence window (observed, the installed version, at least 5 runs over at least 7 days, nothing dropped, no run stopped); what the evidence keeps is intersected with what is approved, so an offer only ever narrows. `audit` shows a narrowed grant as `approved  <list> (narrowed from what it declares)`. **Updates:** an update's approval says when a narrowing will not carry over to the new version. **Not shipped:** narrowing file grants (never offered), and any narrowing that applies itself.
+
 - [x] **Connector liveness checks** — connectors rot when the upstream SaaS API changes. The design is a scheduled, credential-free check that each declared host answers, plus scheduled re-runs of each package's own test suites on the current Nimbus release, published as a signed `liveness.json` under a separate low-privilege key and shown to owners as a dated `Checked:` line. **Shipped 2026-11-02 (project 6, PR 5a-1):** the `liveness.json` format, the index's `livenessKey`, the client fetch and V80 floor, and the `Checked:` line (invariant I51). **Shipped 2026-11-02 (project 6, PR 5a-2):** the registry action's `liveness-check` (no secret: declared-host checks that send nothing, and a re-run of the suites and the baseline in the eval sandbox) and `liveness-sign` (only the liveness key; signs and commits only `liveness.json`) modes, `maintain init --github --liveness-key`, `maintain set-liveness-key`, and the weekly `registry-liveness.yml` workflow. **Shipped 2026-11-02 (project 6, PR 5a-3):** `nimbus eval --package <dir> --record <inputs.json>` writes a golden suite from the package's own replies, recorded twice offline under I49. **Shipped 2026-11-03 (project 6, PR 5b, nimbus-mcp-servers#63):** the official registry's weekly liveness workflow at v10.17.0, a one-off job in its protected environment that names the liveness key in the signed index (the root key stays in CI), and its publishing pins moved to v10.17.0, whose `maintain add` carries `livenessKey` through every later publish. Both liveness jobs are skipped until the owner's one-time setup is done, so no live registry publishes `liveness.json` yet → the one-time setup is listed in [Owner's open items](#owners-open-items) (2026-11-04). **Golden-transcript replay was rejected:** replaying a recording never touches the upstream service, so it cannot detect upstream drift, and a "works as of" badge built on it would be false.
+
+
 
 #### Trust Layer (Verified Publishers)
 
+
+
 - [ ] **Verified Publisher tier** — annual subscription ($X/yr; pricing decided when the tier opens, not on this commit) that funds the signing + verification operation. Subscribers get: (a) a checkmark next to their publisher name in CLI + marketplace, (b) their publisher key pre-shipped in the gateway's trust store so end users do not have to fetch it on first install, (c) KYC + abuse-monitoring SLA. Verification is on the **publisher**, not on individual extension quality. **Partly shipped:** the badge (trust layer PR 3c, 2026-10-27) and verified publishers carried in the baked trust feed (PR 5, 2026-10-27). The subscription, pricing and KYC → re-homed to [Owner's open items](#owners-open-items) (2026-11-04).
+
 - [x] **Pre-shipped trust store + first-install offline path, plus a signed trust feed** — *(reworded 2026-10-26 by the owner's trust-layer rulings; the original row ruled out any out-of-band update and left emergency revocation to Phase 12)* a leaked publisher key must stop updates within HOURS, so Nimbus publishes one signed static `trust.json` (revocations, takedowns, verified publishers) under a Nimbus trust root kept separate from the official registry's key, fetched hourly; each release bakes a snapshot of it for offline installs and as the floor. Revocation is issued by the publisher (with the revoked key itself), by Nimbus (everywhere) or by a registry maintainer (only for that registry's extensions); installed code signed by a revoked key or taken down stops running until the owner re-approves it. Revocations are permanent; an unreachable feed is disclosed, never enforced. **Progress (project 3, all 5 PRs, 2026-10-26 → 2026-10-27):** the signed trust-statement and trust-feed formats (`@nimbus-dev/registry-format`) and their storage (schema V76) landed, then the trust store: statements from the feed and from every pinned registry index are verified and stored, the feed is fetched on a timer (`[extensions] trust_check_interval_hours`), and `nimbus trust status|refresh` reports it. PR 2b enforces them (I48): revoked or taken-down code is refused at install, update and spawn until the owner re-approves. PR 3a follows key rotations on clients, PR 3b lets a publisher's rotations and revocations ride a registry, PR 3c shows the verified-publisher badge (R6), PR 4a lets registry maintainers block and users report, PR 4b ships the feed's maintainer tooling (`nimbus trust maintain`), and PR 4c records registry-verified build provenance. PR 5 bakes the feed (`https://nimbus-agent.github.io/nimbus-trust/`, root fingerprint `2a4f4e3d803f239da2cdd04fe41e6feb`) and a snapshot of it into the release, checked by `audit:trust-snapshot` (offline on PRs, against the live feed daily).
+
 - [x] **Publisher key rotation procedure** — *(shipped 2026-10-26: the gateway side in trust layer PR 3a — rotations are followed, revocations taint downstream keys, `--accept-publisher-key`; the publisher side in PR 3b — `nimbus extension key rotate|revoke` and `nimbus extension publish --statement` carry a rotation or revocation through a registry)* *(reworded 2026-10-26)* a publisher signs a `key.rotate` statement with the current key and updates signed by the new key apply with no extra prompt (the usual run re-approval of new code still applies). A rotation made from a key that is later revoked is not trusted (the revocation taints keys rotated to from it) until Nimbus vouches for the new key. Revocation itself rides the trust feed above, not a separate CRL. **Progress (project 3, all 5 PRs, 2026-10-26 → 2026-10-27):** the signed trust-statement and trust-feed formats (`@nimbus-dev/registry-format`) and their storage (schema V76) landed, then the trust store: statements from the feed and from every pinned registry index are verified and stored, the feed is fetched on a timer (`[extensions] trust_check_interval_hours`), and `nimbus trust status|refresh` reports it. PR 2b enforces them (I48): revoked or taken-down code is refused at install, update and spawn until the owner re-approves. PR 3a follows key rotations on clients, PR 3b lets a publisher's rotations and revocations ride a registry, PR 3c shows the verified-publisher badge (R6), PR 4a lets registry maintainers block and users report, PR 4b ships the feed's maintainer tooling (`nimbus trust maintain`), and PR 4c records registry-verified build provenance. PR 5 bakes the feed (`https://nimbus-agent.github.io/nimbus-trust/`, root fingerprint `2a4f4e3d803f239da2cdd04fe41e6feb`) and a snapshot of it into the release, checked by `audit:trust-snapshot` (offline on PRs, against the live feed daily).
+
 - [x] **Abuse reporting + takedown** — *(owner rulings 2026-10-26; **shipped 2026-10-27, trust layer PR 4a:** `nimbus extension report` and registry-maintainer revocations and takedowns (`registry maintain revoke-key|takedown`, signed by the registry root, through the sign job for a GitHub registry); Nimbus-issued takedowns ride the trust feed: its tooling shipped in PR 4b (`nimbus trust maintain takedown|revoke-key`), and PR 5 baked the feed into the release, so they reach every client)* `nimbus extension report <id>` opens a pre-filled GitHub issue on the extension's source registry repository in the user's browser, after confirming on a TTY; the pre-fill carries public metadata only (extension id, version, publisher id and key fingerprint, source registry, Nimbus version, OS family), never logs, paths or config, and the user writes the description there. A takedown is a signed statement from Nimbus (everywhere) or a registry maintainer (only for that registry's extensions): installs and updates of the taken-down extension are refused, and installed copies stop running until the owner re-approves them, the same as a key revocation. Takedowns ride the trust feed and the registry index, whose git history is the public moderation ledger.
+
 - [x] **Reproducible-build / source-provenance attestation** — *(closed 2026-11-04 with Phase 9.5 at the narrower scope below; offline re-verification against a baked trust store, and installed copies carrying provenance → re-homed to [S4](#carried-into-s4).)* *(**shipped 2026-10-27, trust layer PR 4c, narrower than this row:** the registry's sign job verifies a GitHub build-provenance attestation (`gh attestation verify`) for a version whose manifest declares `repository`, and records `provenance` — repository, commit, workflow, runner — in the signed index; clients show "Provenance verified by <registry>" for the newest version in `extension info` and in the registry install prompt, only when the publisher-signed manifest names the same repository. It is vouched for by the registry root, NOT re-verified offline against a baked trust store — that part of the row stays open — and installed copies do not carry it.)* the registry verifies that a published tarball was built from the claimed source commit (SLSA-style build provenance) and records the attestation alongside the `I16` Ed25519 signature. The signature proves *who* published; the attestation proves *what source* it was built from. Surfaced as a "provenance verified" badge; verifiable offline against the baked trust store like the signature chain itself.
+
+
 
 #### Author Onboarding
 
+
+
 - [x] **`nimbus scaffold extension --from-openapi <path|url>`** *(shipped 2026-11-04, Phase 9.5 project 7 PR 3 of 4)* — replaces the planned `nimbus connector init --from-openapi`: it scaffolds an extension (owner ruling R3), not a first-party connector, so there is no sync handler. It reads an OpenAPI 3.0 or 3.1 document (JSON or YAML, a file or an `https` URL) and writes one tool per operation, the network hosts from `servers`, the credentials the operations use, and the operation table as data in `src/operations.json`; `--max-operations <n>` raises the 200-operation cap. No eval suite is generated, because evals run with no network. AsyncAPI is dropped: it describes message channels, not request and response tools. The URL fetch is CLI-side, not in the egress ledger and with no air-gap check.
+
 - [ ] **20-extension grant program** — $1k/connector marketing spend to seed the registry with 20 community-authored extensions targeting categories the first-party set under-serves (e.g., niche vertical SaaS, regional SaaS, OSS tooling). Treated as marketing budget, not marketplace seed — authors keep the code AGPL or MIT under SDK terms; no Nimbus equity, no royalties. → re-homed to [Owner's open items](#owners-open-items) (2026-11-04).
+
 - [ ] **Marketplace page and desktop tile** *(later; a static page under option C)* *(opened 2026-11-03 when project 6 closed)* — the registry web page and the desktop marketplace tile that **Quality score surfaced in marketplace UI** and **Permission transparency at install** named and did not ship: a package's score, baseline, `Tested`, `History` and `Checked` lines and what the sandbox will do with its declared permissions, read from the registry's signed index, plus a Sponsor button for the author's declared `funding` links (the CLI side, `nimbus extension sponsor`, shipped 2026-11-04). → re-homed to [S4](#carried-into-s4) (2026-11-04).
+
 - [x] **Extension Author Hub** *(shipped 2026-11-04, Phase 9.5 project 7 PR 4 of 4)* — the **Authors** section of the docs site, <https://nimbus-agent.dev/authors/>, from scaffold to publish in seven pages: Overview, Start (`nimbus scaffold extension`, `--from-openapi`, `nimbus extension clone`), Build and test (including the `@nimbus-dev/sdk` contract check), Evals (`evals/*.eval.json`, `nimbus eval --package`, `--record`), Sign and publish (`keygen`, `sign`, `pack`, `publish`, key rotation), Funding and license, and Verified publishers (what the badge means and how a publisher is verified). Originally planned as a `nimbus-agent.dev/authors` page that would also carry a Verified Publisher application form and the grant-program details; neither exists to document (both are in [Owner's open items](#owners-open-items)), so the section carries neither.
+
 - [x] **Author sponsorship** *(shipped 2026-11-04, Phase 9.5 project 7 PR 1 of 4)* — the manifest takes an optional `funding` array (1 to 8 entries of an `https` `url` and an optional `label`) and an optional SPDX `license`; a malformed field is ignored at runtime and refused by `sign`, `publish` and the registry action's publish check. `nimbus extension info` prints `License:` and `Funding:`, and `nimbus extension sponsor <id> [--registry <name>] [--index <n>]` prints the links and, on a terminal, opens one in the system browser only after an explicit yes. Zero payment infra on Nimbus's side, no tax, refund, or routing liability. Not shipped: the "Sponsor Author" button on the registry page and the desktop tile; it moved to **Marketplace page and desktop tile**, above, and the desktop shows no funding yet. A registry on an older registry action can still sign a malformed field, which every gateway then ignores.
+
 - [x] **`nimbus extension clone <id>`** *(shipped 2026-11-04, Phase 9.5 project 7 PR 2 of 4)* — writes an editable copy of a published extension into a new directory (`--into`, default `./<name>`; `--version`, `--registry`, `--json`). The gateway fetches the package through the same verified chain as a registry install (`registry.cloneSource`: root key, sequence, index hashes, the index-named key's I16 signature, I48 blocks) with no publisher-key decision and no stored key, and the CLI unpacks it with the original `signature` and `publisher` removed and a `CLONED_FROM.md` recording where it came from. `--publisher <id>` rewrites the id and publisher so the author can `extension sign` it as themselves; without it the copy installs unsigned. A licence never refuses a clone: an absent, malformed or non-OSI licence warns (the OSI list is a curated 43-id subset). A package carries built `dist/`, not source, so the copy points at `repository` when the manifest declares one. The copy is not registered or installed by clone; it installs from its path and runs after `extension approve`.
+
+
 
 #### Acceptance Criteria
 
+
+
 - `registry.nimbus-agent.dev` is live and serves at least 30 distinct extensions (the 15 first-party Phase 5 connectors that migrate plus the 15 first-completed grant-program submissions) with valid signed manifests verifiable against the Phase 4 `I16` chain. — **Open; the owner's:** listed in [Owner's open items](#owners-open-items) (2026-11-04).
+
 - `nimbus extension publish` round-trips against the live registry: a new version of a test connector is published, becomes searchable, installs cleanly on a fresh gateway, and verifies the signature offline against the baked trust store. — **Open; the owner's:** listed in [Owner's open items](#owners-open-items) (2026-11-04).
+
 - At least 5 Verified Publishers (counted by distinct pubkeys, not extensions) are active and their keys are baked into the current gateway release's trust store; an installer of one of their extensions never sees a "publisher unknown" warning. — **Open; the owner's:** listed in [Owner's open items](#owners-open-items) (2026-11-04).
+
 - Phase 9 Wave 5 quality scores appear on every published extension's registry page and Tauri Marketplace tile; the score is reproducible by running `nimbus eval --extension <id>` locally and matches exactly. — **Open:** the registry page and the desktop tile are re-homed to [S4](#carried-into-s4) (**Marketplace page and desktop tile**), and the registry page also needs the owner's hosting.
+
 - A score drop shows in the update list and the update approval, on a controlled test: a v2.0.0 signed with a worse eval score than the installed v1.0.0 is listed with `quality 100 → 75 (-25)` and the same text is in the `extension.autoUpdate` approval (proved end to end in `registry-acceptance.e2e.test.ts`). It is never held back: there is no threshold and the daemon never applied updates. (Rewritten 2026-11-01 from a watcher that would block an automatic apply and show a per-rubric delta.) — **✅ Met 2026-11-01 (project 6, PR 2):** `packages/gateway/test/e2e/registry-acceptance.e2e.test.ts` publishes a v2.0.0 scored 3 of 4 over an installed v1.0.0 scored 4 of 4 and asserts `quality 100 → 75 (-25)` on the detected update and in the `extension.autoUpdate` approval text, which the test then approves and applies.
+
 - The abuse-reporting + takedown flow is exercised once against a deliberately-misbehaving test extension submitted by a maintainer; the takedown appears in the public moderation ledger within the agreed SLA. — **Open; the owner's:** the mechanism shipped (trust layer PR 4a, 2026-10-27); the exercise and the SLA are listed in [Owner's open items](#owners-open-items) (2026-11-04).
+
 - Installing an extension states, in both the CLI and Tauri install flow, what the sandbox here will do with its declared network hosts and what each declared path would do. — **✅ Met 2026-11-01 (project 6, PR 1):** this replaced the original over-request warning and least-privilege penalty, dropped by decision (see **Permission transparency at install**) because `*` cannot be declared.
+
 - `nimbus extension clone <id>` produces a copy that installs from its path (unsigned, or after `extension sign` with the author's key when `--publisher` was given) and runs after `extension approve`. — **✅ Met 2026-11-04 (project 7, PR 2):** proven end to end by `packages/gateway/test/e2e/registry-acceptance.e2e.test.ts` ("an author's clone of a published extension installs from its path and is approved to run"): against a real gateway and a local registry folder, `registry.cloneSource` stages the verified package of an extension never installed in that run with no prompt; the CLI's copy step (unpacked with the registry-format reader, `signature` and `publisher` stripped) installs from its path behind the `extension.install` approval, and `extension.approveRun` leaves it `ready`. Stated bounds: that test reproduces the copy step rather than calling the CLI (the gateway test tree may not import CLI source; the CLI command itself is covered by `packages/cli/src/commands/extension-clone.test.ts`), it covers the unsigned copy, not the `--publisher` + `extension sign` path, and it stops at a ready run grant without spawning the extension.
+
 - An extension installed from a configured private registry verifies its signature against that registry's own publisher trust root with no call to `registry.nimbus-agent.dev`. — **✅ Met 2026-10-18 (project 1):** proven end to end by `packages/gateway/test/e2e/registry-acceptance.e2e.test.ts` against a local registry folder (add, search, install, approve, update, tamper refused) with no outbound request at all.
 
+
+
 ---
+
+
 
 ### Phase 9.7 — Connector Write-Enablement (The Acting Roster)
 
+
+
 > **Sequencing (overlay):** **Track 1 — spine.** The write-substrate the autonomy arc assumes: Phase 10 (standing approvals / scheduled write-workflows), Phase 16 (team writes / runbook-as-agent), and Phase 17 (mitigation actions) all *consume* a broad write surface that no phase currently delivers. Numbered 9.7 (fractional insert — no renumber) so it lands immediately before Phase 10: build it before, or in lockstep with, the autonomy work that depends on it. See [§ Phase 7+ Sequencing Spine](#phase-7-sequencing-spine).
+
+
 
 **Goal:** Promote the connector roster from a read-only *index* into an *acting* agent. Today ~88 first-party connectors index data. 117 write tools across 39 connectors are classified in one write-row table (`connectors/connector-writes/`), four more are refused through their own gates' sets (two ChatOps posts, two KB appends), and all are HITL-gated; the model is offered 98 of them (each behind the owner's prompt), and dispatch through the credential-aware transport covers only 18. The write *machinery* already exists — the `I26` write-registry (`connector-write-registry.ts`), the `I29` egress ledger, and the executor HITL chokepoint (`I2`) — but is barely exercised. This phase systematically builds HITL-gated write tools across the existing roster on that machinery, ordered by blast radius, so every new write is **gated, previewed, ledgered, and peer-unreachable by construction.**
 
+
+
 **Status: ✅ closed 2026-11-10** (owner rulings OR-97-1 and OR-97-2). All four waves shipped: Wave 1 (A1–A5b), Wave 2 (B0a–B4b, B3r, B3w), Wave 3 (C0–C3) and Wave 4 (D0a–D3a). The model is offered 108 of the 124 write rows, each behind the owner's typed preview; the other 16 are never offered (`MODEL_NEVER_OFFERED_REASONS`, 11 at D3a plus the five of OR-97-1), each with a recorded reason; all but two stay on the owner's own doors: the Pulumi apply is refused on every door, and the change-set discard is reserved for the gateway's own cleanup. Two things did not close here: the standing-approval and taint integration, re-homed to Phase 10, and the acceptance criterion that depends on it.
+
+
 
 #### Dependencies
 
+
+
 - `I26` connector-write registry + the one write-row table `connectors/connector-writes/` (generalized in Wave 1 by A1)
+
 - `I29` egress ledger (every write appends one row before `connectors.dispatch`)
+
 - `I2` HITL frozen-set gate (every write action type is gated in the executor)
+
 - Phase 10 standing-approval **taint barrier** (attacker-influenceable tool output can never satisfy a standing rule) — co-designed; any write that auto-fires must respect it
+
 - Phase 3 connector mesh + each target connector's existing read-side sync
+
+
 
 #### Non-negotiable guardrails
 
+
+
 - Every write tool id is confined to the `I26` row table and the connector/transport sites — the `D20` static audit fails on any leak.
+
 - The federated peer invoke gate (`answerFederatedInvoke`) fail-closed rejects every write-classified tool id (`isWriteForbiddenToolId`): a peer can never trigger a connector write.
+
 - Every gated write appends exactly one `egress_ledger` row before dispatch; an append failure aborts the action (fail-closed; `I29`).
+
 - Infra/production writes (Wave 4) are preview-mandatory and excluded from standing-approval auto-fire by default.
+
+
 
 #### Structure — four waves, ordered by blast radius
 
+
+
 #### Wave 1 — Write-Authoring Framework *(prerequisite substrate)*
 
+
+
 - [x] **Generalized connector-write contract** — promoted the per-group `I26` registries into one write-row table plus a manifest generated from the installed connectors package, so a connector declares a write tool with one row in `connectors/connector-writes/`, its action type added by hand to `HITL_REQUIRED_BACKING` (engine/executor.ts) and classified in `ACTION_PROPOSABILITY` (connectors/proposable-actions.ts), then `bun run gen:connector-write-manifest`, instead of bespoke wiring at each coupling site (2026-11-04, Phase 9.7 PR A1).
+
 - [x] **HITL consent preview renderer** — typed preview of target and every input field; a before-state read arrives per write in Waves 2–4 (spec § 5.4). ✅ 2026-11-04 (Phase 9.7 PR A2): the approval prompt and the desktop popup show the write's target, a summary and every input field, so the owner approves the exact change, not just an action name. Templates exist on the 18 `transport: "write"` rows and, since Phase 9.7 PR B1, on the 12 wave-2 message and comment rows; a write with no template keeps its raw-details prompt. The before-state read is built (Phase 9.7 PR B0b, 2026-11-05: on the model door's prompt only, a row's `before` reader shows the target's current state beside the new values; static D40); since PR B1 seven comment rows have one (GitHub, GitLab issue and MR, Jira, Linear, Notion, Confluence).
+
 - [x] **Egress-ledger coverage proof** — a contract test asserts every registered write tool id appends an `egress_ledger` row on the gated path (extends `I29`). ✅ 2026-11-04 (Phase 9.7 PR A3): `security-invariants.test.ts` drives every row (88 at A3, 102 since PR B-X) plus the four gate-confined writes (the ChatOps posts and the KB appends, by their action types) through a real `ToolExecutor` and a real ledger and proves, per write, that the owner is asked exactly once, exactly one `authorized`/`approved` row exists before the dispatcher runs, a denial appends one `blocked` row and dispatches nothing, and a failed append dispatches nothing. The same suite proves a federated peer naming any of them (bare and `<server>_<tool>`) is refused with `no_grant`, audited `write_forbidden`, with the run never called even when the peer holds a grant for that exact id. The size assertion (88) makes an emptied table fail rather than pass vacuously.
+
 - [x] **Owner opt-in** — `nimbus connector writes enable <service> [--wave 2|3|4]` / `disable` / `status`, schema V83, off by default for every connector. ✅ 2026-11-04 (Phase 9.7 PR A4).
+
 - [x] **The model's write door** — on the local owner's non-demo `cli`/`ui` turn the model is offered one tool per enabled, offerable first-party write (`<service>__<toolId>`), each call an `origin: "model"` action through the turn's own executor, built without delegation, so the owner approves the typed preview (`Requested by: the model`), the egress row precedes dispatch and a denial returns a fixed result; enablement, policy and the server's generation are re-checked on every call. ✅ 2026-11-05 (Phase 9.7 PR A5b; invariant I53, static D39; `nimbus ask` and `nimbus repl` now declare `cli`). **Narrower than its name:** a row needs a typed preview and wave 3 or lower (or a `before` reader); since PR B1 (2026-11-05) exactly 12 rows qualified, the wave-2 message and comment posts (25 since PR B2, 34 since PR B3, 37 since PR B4a: the calendar and Drive creates), and a turn lists only those the owner approved by name. The 113 rows are wave 2 x38, wave 3 x36 and wave 4 x39 since PR C1 (wave 3 x25 at C0, x22 and wave 4 x42 before it; 88 and wave 2 x24 before PR B-X added connectors 0.4.0's 14 wave-2 rows); the 18 `write`-transport templated rows were all wave 4 with no `before` reader (since C0, ten of them are wave 3 and offerable; 8 remain wave 4). Project B0a (2026-11-05) extended the listing map to every wave-2 service on its own slot, each with its own generation and its own no-network credential check, so a wave-2 or wave-3 row becomes offerable once it gains a template (never one of the seven mail sends, which `MODEL_NEVER_OFFERED_TOOL_IDS` excludes whatever template they get, since PR C0); it also added the V84 approved set (re-consent), the ChatOps and knowledge-base refusals and the act-door typed preview.
+
 - [ ] **Standing-approval + taint integration** — write tools become eligible for Phase 10 standing rules only behind the taint barrier; an untrusted-tainted trigger falls back to HITL. → re-homed to [Phase 10 § Core — Standing Approvals & Scheduling](#phase-10--the-autonomous-agent) (owner ruling OR-97-2, 2026-11-10): the standing rules it plugs into are Phase 10 work, built there with the taint barrier as one invariant triple, so Phase 9.7 closes without it.
+
+
 
 #### Wave 2 — Productivity Writes *(low blast radius, reversible)*
 
+
+
 > **Tools classified (2026-11-05, Phase 9.7 PR B-X):** `@nimbus-dev/connectors` 0.4.0 ships the Wave-2 tools below that were missing (GitHub issue comment / labels / assignees / state; GitLab issue create, note, labels, assignees, state and MR note; Jira transition, with the read `jira_issue_transitions_list`; Outlook draft create; Discord post; Confluence page append). The gateway pins 0.4.0 and classifies all 14 as HITL-gated `mesh` rows, refused over federation and D20-confined, and the MCP act door denies them as `not_yet_offered`. At B-X no row had a preview template; the boxes below tick as B1–B4 add them. PR B1 (2026-11-05) templated the message and comment posts and made the GitHub comment, both GitLab notes and the Discord post proposable over MCP; PR B2 (2026-11-05) templated the issue writes and made the GitHub labels, assignees and state writes and the four GitLab issue writes proposable (the Jira transition stays `not_yet_offered`); PR B3 (2026-11-05) templated the drafts and pages and made the Outlook draft and the Confluence append proposable, so `jira.issue.transition` is the one `not_yet_offered` type left; PR B4a (2026-11-05) templated the calendar and Drive creates (already proposable since B0a; they now show the typed preview on the act door too). Outlook draft create needs `Mail.ReadWrite`, which only a fresh `nimbus connector auth outlook` requests (an existing connection keeps working without it; an enterprise tenant may require admin consent for that scope).
 
+
+
 - [x] **Drafting & comments** — Gmail/Outlook create-draft; GitHub/GitLab issue + PR comment; Jira/Linear comment. Comments shipped ✅ 2026-11-05 (Phase 9.7 PR B1: GitHub issue/PR conversation comment, GitLab issue and MR notes, Jira, Linear, Notion and Confluence comments, each with a before-state naming the target; GitLab quick actions refused; the GitHub, GitLab and Linear comments have their remote images refused since B3w, 2026-11-06); drafts ✅ 2026-11-05 (Phase 9.7 PR B3: Gmail, iCloud and Outlook drafts, each recipient on its own line with Bcc marked hidden, nothing sent; an Outlook HTML body is shown as text, and remote images are refused since B3r, 2026-11-06; an HTML Outlook send proposed over MCP is scanned the same way since B3w, and `outlook_mail_send` is never offered to the model, OR-B3w-1). A GitHub PR review or line comment and a Bitbucket PR comment have no write tool and are not included.
+
 - [x] **Item create + transition** — Jira/Linear issue create + status transition; GitHub/GitLab issue create + label/assign. ✅ 2026-11-05 (Phase 9.7 PR B2): issue create on GitHub, GitLab, Jira and Linear, Jira and Linear update, the Jira workflow transition, and GitHub/GitLab labels add, assignees add and state set are model-offerable behind the typed preview; the changes to an existing issue show its current state, the Jira transition from its current to its target status. Labels and assignees only add; a GitLab scoped label is refused; a Linear reassignment is allowed only while the issue is unassigned. Since B3w (2026-11-06) a GitHub, GitLab or Linear issue body or description that would load remote content (any Markdown image) is refused on both doors. **Bounds:** the transition's From/To is read just before the prompt and the issue can change before the write (the same race as every before-state); the MCP act door withholds `jira.issue.transition` (it has no before-read to show From/To), and refuses any Linear `assigneeId` for the same reason. A label or assignee remove, a GitHub/GitLab issue title or body edit, a Jira assignee and a Linear label have no write tool and are not included.
+
 - [x] **Knowledge writes** — Notion/Confluence page append (composes with the `I25` tribal-knowledge write-gate). ✅ 2026-11-05 (Phase 9.7 PR B3): Notion page create, page update and block append, Confluence page create, update and append, each behind the owner's typed preview; updates and appends show a capped current state (at most 1,000 characters per value, at most five Notion blocks); the KB-target refusal covers every page row on both doors, and an update or append of a page under the KB destination is refused (a before-state guard on the model door; on the act door the four types while a KB is configured). Since PR B4p (connectors 0.5.0, whose `confluence_page_get` returns `ancestors`), the Confluence guard refuses the KB parent and any page with it among its ancestors, in any space; in the KB space a read without well-formed `ancestors` still refuses (owner ruling: fail closed). Since PR B4b (2026-11-05) the Obsidian daily-note append is model-offerable too, behind its typed preview (the appended Markdown in full) and a before-state that shows the end of the note it writes; it can run only while the owner's Obsidian opt-in approved it, because that approval is also the Obsidian sandbox's write grant, on today's daily-note file alone (I15). Since PR B3r (2026-11-06) a page or note write that would load remote content (a Confluence `ri:url` image or a macro outside the inert allowlist, a Notion embed or external file, an Obsidian Markdown image or a mermaid fence holding a URL) is refused on both doors. **Bound:** the note can change between the read and the write, and with no date the two can straddle UTC midnight and name different notes.
+
 - [x] **Messaging** — Slack/Teams/Discord post (already HITL via the `*.message.post` action types; folded in for completeness). ✅ 2026-11-05 (Phase 9.7 PR B1): Slack channel post and DM, Teams channel and chat posts and a Discord post (as the bot; only user mentions notify, enforced by the connector and pinned by a gateway test) are model-offerable behind the typed preview; both doors refuse a ChatOps channel and a broadcast mention, and since B3w (2026-11-06) a Teams HTML post that would load remote content. Discord moved here from B4 (ruling R1).
+
 - [x] **Calendar** — Outlook and iCloud calendar event create. ✅ 2026-11-05 (Phase 9.7 PR B4a): each is model-offerable behind the typed preview, which names every attendee in full (Outlook's comma list verbatim, iCloud's list as JSON; no attendee bound) and shows the time zone (Outlook: the `timeZone` input, UTC when unset). Both doors refuse an Outlook time with its own offset or `Z`, an iCloud time that is not UTC `YYYYMMDDTHHMMSSZ` (so all-day and floating iCloud events cannot be created by the model or over MCP), and an iCloud text field or attendee with a line break or control character. Outlook emails the invitations when the event is created; whether iCloud sends them for the connector's PUT (no `ORGANIZER`) is not established, so its preview says "may". **Bounds:** no before-state (nothing exists yet); a distribution list cannot be told from a person; `outlook_calendar_create` is listed only when the Outlook connection holds `Calendars.ReadWrite`. **No Google Calendar row:** `@nimbus-dev/connectors` 0.4.0 has no Google Calendar connector or tool; adding one is a new connector tool.
+
 - [x] **Files** — Google Drive file create. ✅ 2026-11-05 (Phase 9.7 PR B4a): model-offerable behind the typed preview (content in full), with a before-state that reads the folder the file lands in (`gdrive_file_metadata`; Drive's `root` alias when no folder is named): its name, whether it is a folder, whether it is shared (`Shared: yes` warns that the file is visible to everyone the folder is shared with; the create is allowed), its first owner and whether it is in the trash. Both doors refuse a Drive create (and a calendar create) with an optional field set to `null`, which the preview would show as the unset default while the connector rejects it. **Bounds:** the folder can be re-shared between the read and the write; sharing is only by placement (the tool has no sharing parameter); a shared-drive folder is unreachable (the connector sends no `supportsAllDrives`); since B3r a markup file (HTML, XHTML, SVG; the type matched case-insensitively and without its parameters, or a markup file name) that would load remote content is refused on both doors.
+
 - [x] **Obsidian daily note** — append to the daily note, with the end of the note read locally through the sandbox and an owner-approved sandbox write grant inside the configured vaults (Phase 9.7 PR B4b; needs `@nimbus-dev/connectors` 0.5.0). ✅ 2026-11-05 (Phase 9.7 PR B4b): the append is model-offerable behind a before-state that shows the end of the note; approving it is what lets the Obsidian sandbox write, and only today's daily-note file in each vault (box ticked 2026-11-10 at the Phase 9.7 close; the row had shipped with it unticked).
+
+
 
 #### Wave 3 — Code & Change Writes *(medium blast radius)*
 
+
+
 **Status (2026-11-06, Phase 9.7 PR C1).** Connectors 0.6.0 ships the GitHub and GitLab branch create and pull/merge request create and update, the LaunchDarkly toggle and rollout set, the Flagsmith feature-state set and the two Jira Service Management alert writes; all eleven were classified and none offered at C1 (C2 templated the six VCS ones, C3 the rest). Of the existing wave-3 rows, the PagerDuty acknowledge, resolve and escalate are templated and offered (with a `From` e-mail, `nimbus connector auth pagerduty --token <token> --username <email>`), as are the Drive move, rename and trash, the OneDrive move and the GitHub pull request close. **Status (2026-11-06, Phase 9.7 PR C2).** C2 (2026-11-06) templated the six VCS writes (branch, pull request and merge request create and update, with their current state, a base or target `RETARGETS` line and the GitLab draft-state line) behind broadcast-mention, forge-Markdown and GitLab quick-action refusals on both doors, and made the four creates MCP-proposable, so the model was offered 62 at C2 (47 proposable); C3 (2026-11-06) templated the last five wave-3 writes (the LaunchDarkly toggle and rollout, the Flagsmith feature-state set, the Jira Operations alert acknowledge and close) and stored the Jira cloud id, so the model is offered 67 (still 47 proposable: the five stay `not_yet_offered` on the act door). The four creates are proposable over MCP; `github.pr.update` and `gitlab.mr.update` are model-door-only, because the connector overwrites the old text and the act door has no before-state to show it. The optional branch `expectedSha` is shown, not bound (no mechanism injects a previewed value into a call; the window between the read and the dispatch is a stated bound), and binding it and the act-door updates wait for the D framework and an act-door before-state. The VCS box below stayed open at C1 because the commit tool and its diff preview are Wave 4; D1c (2026-11-08) closed it. **Status (2026-11-06, Phase 9.7 PR C3).** C3 templated the LaunchDarkly toggle and rollout, the Flagsmith feature-state set and the Jira Operations alert acknowledge and close, so the incident and flag boxes below are ticked for what connectors 0.6.0 ships: the model is offered 67 (templated 75, readers 40, 8 guards), and all five stay model-door-only (`not_yet_offered`: the act door has no before-read, and a variation id or an alert id is opaque without one). The feature name is not in Flagsmith's read, so its preview shows the feature id and says so; the rollout guard refuses a flag with more than 15 variations (the preview could not list every variation and every fixed line within the 20-field cap).
 
+
+
 - [x] **VCS changes** — GitHub/GitLab branch create, commit, PR create/update; HITL preview shows the diff + target branch. Branch create and PR/MR create/update ✅ 2026-11-06 (C2: preview shows the target branch and a retarget; the commit tool and its diff are Wave 4); the two commit tools ✅ 2026-11-08 (D1c: the model is offered both behind the full diff the gateway renders and a typed confirmation; the owner's own doors skip only the model-door refusals (CI, workflow, hook and review-rule paths and credential-looking text) and keep every common input check: the caps, path safety and NFC, and the NUL and lone-surrogate refusals).
+
 - [x] **Incident ops** — PagerDuty acknowledge, resolve and escalate ✅ 2026-11-06 (C1), and Jira Service Management Operations alert acknowledge and close ✅ 2026-11-06 (C3; JSM replaces Opsgenie, owner ruling OR-W34-7; the alert preview says the action is asynchronous and unconfirmed). Not built: Opsgenie itself, and alert SYNC into the index (a later gateway PR).
+
 - [x] **Feature-flag writes** — flag toggle / rollout update; supplies the shared write-authoring path Phase 7 Wave 3's flag-write surface consumes (not duplicated). ✅ 2026-11-06 (C3): the LaunchDarkly toggle and percentage rollout and the Flagsmith feature-state set, environment first in every preview, a rollout listing every variation. Split.io and Unleash have no write tool.
+
+
 
 #### Wave 4 — Infra & Production Writes *(high blast radius — strictest gating)*
 
+
+
 - [x] **Type-to-confirm (D0a)** — ✅ 2026-11-06: see § Progress above; the Wave 4 rows below each need their `confirm` target and previews in D1 onward.
+
 - [x] **Typed confirmation over ChatOps (D0c)** — ✅ 2026-11-07: see § Progress above; a Slack modal and a Teams Adaptive Card `Input.Text` collect the Wave 4 confirm text from the resource owner; the Slack app needs Interactivity and the `views:write` bot scope.
+
 - [x] **Bound-write prepare step (D0b)** — ✅ 2026-11-06: see § Progress above; Terraform/IaC plan→apply and CloudFormation change sets (D2, ✅ 2026-11-08) and the Kubernetes apply (D3) declare `bound` rows against it.
+
 - [x] **D1 — first model-offered Wave 4 writes** — ✅ 2026-11-07: 27 writes are model-offerable (`github_pr_merge`, `github_branch_delete`, `github_tag_create`, `gitlab_mr_merge`, `gitlab_pipeline_cancel`, `gitlab_pipeline_retry`, `jenkins_build_trigger`, `jenkins_build_abort`, `gha_run_trigger`, `gha_run_cancel`, `circleci_pipeline_trigger`, `circleci_job_cancel`, `aws_lambda_invoke`, `aws_ec2_instance_start`, `aws_ec2_instance_stop`, `aws_ecs_service_update`, `argocd_app_sync`, `argocd_app_rollback`, `flux_kustomization_reconcile`, `flux_helmrelease_reconcile`, `mlflow_model_promote`, `mlflow_model_transition_stage`, `snowflake_tag_set`, `snowflake_comment_set`, `onedrive_item_delete`, `outlook_calendar_delete`, `apple_calendar_event_delete`), each with a before-state and a typed confirm text; the seven mail sends and `bitbucket_pr_merge` are never offered. **Not offered, with the reason:** `azure_app_service_restart`, `azure_aks_node_pool_scale` and `gcp_cloud_run_deploy` — owner ruling 2026-11-07: their `az` / `gcloud` reads are code-execution class (on Windows a model-supplied value could reach a `.cmd` wrapper's argv, and a before-read runs before approval), so they cannot back a before-read; revisit when a non-CLI read exists. The four Kubernetes and GKE rows (`k8s_deployment_scale`, `k8s_rollout_restart`, `k8s_pod_delete`, `gcp_gke_workload_restart`) wait for D3's sandbox grants. The two commit writes (`github_file_commit`, `gitlab_commit_create`) shipped at D1c, below. The iac rows shipped at D2, below. `bitbucket_pr_merge` has a preview and a before-state but stays un-offered: the Bitbucket merge exposes no head-commit precondition the connector can send. **Stated bounds:** a merge's preview-to-dispatch window for GitLab when the model sends no `sha` (GitHub's merge is pinned to the head the model sent and GitHub enforces it); the Lambda reader lists the first page and matches the exact name; the 5 s before-read cap may expire on a CLI cold start, which refuses the write; live reply shapes (GitHub, GitLab, Bitbucket, Jenkins, CircleCI, AWS, Argo CD, Flux, MLflow, Snowflake, Graph, iCloud) are fixtures of documented shapes, not verified against live accounts. **Connector follow-ups (cross-repo):** `aws_lambda_get`; non-CLI reads for the `az` / `gcloud` rows; Snowflake `TAG_REFERENCES` should select `tag_database` and `tag_schema` (until then the "Tag now" line reads "unknown" or "(not set)"); a Bitbucket merge head precondition; and (done at D1c) the two `*_prepare` tools joined `PREPARE_TOOL_IDS` and the federated refusal.
+
 - [x] **D2 — plan-bound infrastructure applies** — ✅ 2026-11-08: the model is offered `iac_terraform_apply` and `iac_cloudformation_deploy` (98 writes in all), each only for a directory or cloud approved with `nimbus connector writes enable iac --wave 4 --workdir <dir> --cloud <aws|azure|gcp>`, each behind the whole plan or template the gateway settled itself and the typed text `iac/apply <dir>` or `iac/deploy <stack>`; see § Progress above for the five phases, the profiles and the counts. Not done, with reasons: Pulumi (experimental plans), provider download (needs an `init` tool; the owner runs `terraform init`), a ChatOps card for a plan, the plan on the MCP act door (`provenanceConsent` drops it), Terraform destroy for the model (owner ruling), verified host lists (UNVERIFIED until a credentialed probe), the Windows dev-tree runner test (skipped). Review fixes (2026-11-08): a working directory with a `.git` entry anywhere beneath it is refused at `enable iac` and at every gate (owner ruling OR-D2-8); a plan child must have exited before its plan is settled; nested directories share one run lock; the Windows grant ledger keeps one entry per live profile; the runner has a stop hook and a boot record of live children; a change-set discard is refused unless it names a plain stack, a `nimbus-` change set and the run's region. Whole-branch review fixes (2026-11-08): the write dispatcher had dropped the bound-write capabilities, so every iac write was refused on all three doors (fixed, with a production-chain test and a census of dispatcher implementers); the model's write source now reads the V85 workdir grants (the Terraform apply was never offered); the dispatcher race outlasts the runner's budget so the runner's "may be partly changed" text reaches the caller; the enable prompt states per-host enforcement only where the Linux helper is found; and the settle step rescans for a `.git` the plan child planted (nothing is deleted; a refused or declined run can leave files the plan wrote). Cross-repo requests: `iac_terraform_init`; a read of a stack's change sets.
+
 - [x] **D3b — deploy triggers and mobile release** — ✅ 2026-11-10: the model is offered `vercel_deployment_redeploy`, `vercel_deployment_promote`, `netlify_build_trigger`, `bitrise_build_trigger`, `codemagic_build_trigger`, `testflight_build_distribute` and `firebase_app_distribution_distribute` (105 writes in all), behind a before-state and a typed confirmation, with the Netlify production-branch guard, the TestFlight public-link guard and the Firebase groups-only rule on the model door; see § Progress above for the counts and the stated bounds.
+
 - [x] **D3a — Kubernetes apply, restart and scale** — ✅ 2026-11-10: the model is offered `k8s_manifest_apply`, `k8s_rollout_restart` and `k8s_deployment_scale` (108 writes in all), each only inside a (context, namespace) pair approved with `nimbus connector writes enable kubernetes --wave 4 --grant <namespace>@<context>`; see § Progress above for the profile, the bound hashes, the counts, the stated bounds (a real apply is unverified; Windows cannot reach a local API server) and what is not done.
+
 - [x] **Orchestration & IaC** — Kubernetes apply ✅ 2026-11-10 (D3a, above); Terraform plan→apply and the CloudFormation deploy ✅ 2026-11-08 (D2, above); generalizes the existing ArgoCD/Flux GitOps writes.
+
 - [x] **Deploy triggers** — Vercel / Netlify deploy; CI pipeline trigger (Jenkins / CircleCI / Bitrise). Jenkins, GitHub Actions and CircleCI triggers ✅ 2026-11-07 (D1, model-offered behind a before-state and a typed confirm); Vercel, Netlify and Bitrise ✅ 2026-11-10 (D3b, the same); the Cloud Run deploy is not (its reader is a `gcloud` read, which is code-execution class). **Stated exclusion (owner ruling OR-97-1, 2026-11-10):** `gcp_cloud_run_deploy`, and with it `azure_app_service_restart`, `azure_aks_node_pool_scale` and `gcp_gke_workload_restart`, are never offered to the model, because a Wave 4 model write needs a before-state and their only readers are `az` and `gcloud` reads, which are code-execution class (OR-D1-1). The owner can still run all four on their own doors, behind the typed confirmation. Building REST before-readers with a Vault-held cloud token was considered and not taken.
+
 - [x] **Mobile release writes** *(re-homed from Phase 5 § Wave B, 2026-10-10)* — TestFlight / Firebase App Distribution build distribution to testers and Codemagic build trigger ✅ 2026-11-10 (D3b, connectors 0.10.0; model-offered behind a before-state and a typed confirm, Firebase groups only and TestFlight non-public groups only on the model door).
+
 - [x] **Data & ML writes** — generalizes the existing warehouse (`looker_*`) and ML (`mlflow`) write surface under the Wave 1 contract. MLflow promote and stage transition and the Snowflake tag and comment set ✅ 2026-11-07 (D1). The Tableau, Looker, Power BI, Monte Carlo and Bigeye refreshes and acknowledge/resolve writes ✅ 2026-11-06 (C0, wave 3), so every existing warehouse and ML write is under the Wave 1 contract.
+
+
 
 #### Acceptance Criteria
 
+
+
 - A representative write in each of Waves 2–4 executes only behind the `I2` HITL gate, renders a before/after preview, and appends exactly one `egress_ledger` row before dispatch.
+
 - The same write, requested by a federated peer via `answerFederatedInvoke`, is rejected fail-closed by `isWriteForbiddenToolId` — no dispatch, and a `write_forbidden` audit row; nothing leaves the machine, so no egress row is written (owner-listed call, spec § 5.5).
+
 - The `D20` static audit passes with every new write tool id confined to the `I26` SSoTs.
+
 - A Wave 4 (infra/production) write cannot be auto-fired by a standing rule without an explicit preview, and an untrusted-tainted trigger falls back to HITL. → re-homed to [Phase 10](#phase-10--the-autonomous-agent) with the standing-approval row (2026-11-10), and met there by Phase 10 SA3 (2026-11-11): a standing rule can approve only a wave 2 or 3, non-bound, non-typed-confirm write built by the owner's own workflow, so a Wave 4 write is never standing-approved, and any action not built by an owner-started workflow (a model turn, the MCP act door, ChatOps, LAN) prompts; both are proven one clause at a time by the I55 tests.
+
+
 
 Status of the first three criteria (2026-11-10): met. Every row is driven through a real executor and ledger in `security-invariants.test.ts` (asked once, one `egress_ledger` row before dispatch, nothing dispatched on a denial or a failed append), a federated peer naming any of them is refused `no_grant` and audited `write_forbidden`, and the D20 audit confines every write tool id. 77 of the 124 rows have a before-state reader, and a reader runs on the model door only (spec § 5.4), so a row the model is never offered (the Bitbucket merge, for one) shows no before-state on the owner's own doors; a create has no before-state to show at all.
 
+
+
 ---
+
+
 
 ### Phase 10 — The Autonomous Agent
 
+
+
 **Goal:** Transform Nimbus from a reactive tool into a proactive collaborator that watches, learns, and acts — always within the bounds of what you have authorised.
+
+
 
 **Scope note:** This phase contains items with very different risk and complexity profiles. Standing approvals, scheduled workflows, morning briefings, deadline tracking, and the incident correlation engine are low-risk, buildable directly on Phase 3 infrastructure, and form the **core** of this phase. LoRA fine-tuning and the Infrastructure-as-Agent SRE loop are research-adjacent and are marked **stretch** — they do not gate phase completion if the core items pass their acceptance criteria.
 
+
+
 #### Dependencies
 
+
+
 - Phase 3 Watcher system and RAG conversational memory
+
 - Phase 3 Proactive anomaly detection (watcher baseline learning) — **not yet built (corrected 2026-10-10):** only `watcher/anomaly-detector.ts`'s `AnomalyDetectorStub` exists, a rolling z-score over per-service sync duration and items-upserted that `platform/assemble.ts` logs through its `onNotify`; there is no baseline learning and no user notification
+
 - Phase 4 Local LLM support and multi-agent orchestration
+
 - Phase 4 Tamper-evident audit log (standing approvals are recorded and auditable)
+
+
 
 #### Core — Standing Approvals & Scheduling
 
+
+
 - [x] **Standing approval rules** — *(SA1 ✅ 2026-11-11, the groundwork: every approval records its `answerSource` (`human` / `auto` / `script` / `unknown` / `delegate` / `remote`, client-reported) in the audit row; the gate decides through an `ApprovalOutcome` that already has a `standing_approved` kind; schema V87 widened `audit_log` and `egress_ledger` `hitl_status` to a fourth value, `standing_approved`, which no code produces yet. SA2 ✅ 2026-11-11: a saved workflow can hold deterministic `query` and `write` steps (a declared query over the local index, a write of wave 2 or 3 whose inputs are constants or ids that query selected), each write action carries a gateway-set `provenance` and still asks the owner, and the Gmail thread archive (`gmail.thread.archive`, SA0 in nimbus-mcp-servers, connectors 0.12.0) is the first write a workflow can run on its own; SA3 ✅ 2026-11-11: standing rules (schema V88 `standing_rule` and `standing_rule_fire`; deviation from the spec: the scheduler's workflow columns are V89, with SA4). A rule names ONE write step of ONE workflow at one content hash, with the allowed value sources, an expiry of 1 to 90 days (default 30), an action ceiling of 1 to 500 (default 100) and an optional weekday and time-of-day window; creating or resuming one is the local owner's own approval at the prompt (`nimbus approve add`, never `--yes`, human answers only), and `standingRuleStep` (I55, static D44) approves a matching write inside `approvalPhase` with no prompt, recorded `standing_approved` with the rule and fire ids. Built: the rule, the gate, the CLI and the audit trail. NOT built: scheduled (unattended) runs and the block-and-notify path (SA4), approval learning (SA5), and the Dependabot and lint-fix pull-request use cases below, which need connector writes no workflow can run yet. A rule fires only on an owner-started run until SA4.)* (re-homed into this row from Phase 9.7 on 2026-11-10: the connector writes become eligible for standing rules only behind the taint barrier, an untrusted-tainted trigger falls back to HITL, and a Wave 4 write is never auto-fired without its preview and typed confirmation) users pre-authorise specific recurring write patterns; stored in SQLite with explicit scope, expiry, and item count ceiling; agent checks standing rules before prompting for HITL. Canonical use cases include autonomous drafting of dependency-update PRs (Dependabot / Renovate equivalents) and lint-fix PRs once the user has approved the same pattern N times in a row
+
 - [x] **Approval learning** — after N consecutive identical approvals (configurable; default: 5), Nimbus suggests a standing rule; user must explicitly confirm; suggestion is logged *(Phase 10 SA5 ✅ 2026-11-11, schema V90, static D44(f). Built: the unit is one RUN of one write step (owner ruling OR-10-9), counted from the audit log after the step, with no executor seam; a run counts when the owner was asked and approved every action of the step by hand (`answerSource: "human"` only, OR-10-4), a human rejection resets the streak, and `--yes`, scripts, delegates, remote answers, standing-approved actions and scheduled runs change nothing; at `[standing] suggest_after` (default 5, 3 to 50, 0 = off) a suggestion is recorded and logged; `nimbus approve list` shows it, `nimbus approve add --from-suggestion <id>` turns it into a rule through the same `standing.rule.create` owner approval as any rule, `nimbus approve dismiss <id>` drops it and a dismissed suggestion does not return until the workflow's content hash changes (OR-10-10). Not built: a desktop screen (IPC and the CLI only; the renderer allowlist gains `standing.suggestions` and `standing.dismissSuggestion`, 124 → 126). Stated bounds: `answerSource` is client-reported, so a modified client can earn a suggestion, never a rule; a step whose audit payload exceeds the 4 KiB audit cap never earns a suggestion. The acceptance test is `test/integration/standing/approval-learning.test.ts`.)*
+
 - [x] **Confidence Score for standing approvals** — standing rules require a confidence score based on contextual similarity (same service, time of day, user location) to prevent over-permissioning *(closed as superseded, owner ruling OR-10-5, 2026-11-10; Phase 10 SA3 2026-11-11: no fuzzy score is built. A rule matches EXACTLY (workflow content hash, step, tool, every value source and constant) and may carry a weekday and time-of-day window; there is no location signal because Nimbus has no trustworthy one, and "same service" is part of the exact match. A stated deviation from this row's wording.)*
+
 - [x] **Standing-approval taint barrier (proposed invariant)** — attacker-influenceable tool output (any connector / indexed / federated content) can never satisfy a standing rule, skill-pack auto-approve, or template auto-adopt; matched via a `trusted` / `untrusted` provenance tag riding the existing `I11` envelope, falling back to HITL on `untrusted` triggers. Ships *with* standing approvals as a full invariant triple (taking the next free invariant number when wired). Canonical statement in [`SECURITY.md`](./SECURITY.md); shared with Phase 16 (skill packs / federated Q&A) and Phase 17. *(Phase 10 SA3 ✅ 2026-11-11 as invariant I55 with static rule D44: the barrier is "owner-authored only", not a `trusted` / `untrusted` tag on the I11 envelope. Only an action built by a deterministic step of the owner's own workflow, whose values are constants or ids a gateway-run declared query selected, can match a rule; any model, MCP, ChatOps or peer action prompts. The declared-query selection residual is stated in I55.)*
+
 - [x] **Standing rule management** — `nimbus approve list`, `pause`, `revoke`; each rule shows match scope, expiry, action count, last-fired timestamp *(Phase 10 SA3 ✅ 2026-11-11: `nimbus approve add|list|show|pause|resume|revoke`; each rule shows its workflow and step, tool, uses against the ceiling, expiry, last-fired time and state; pause and revoke narrow and need no approval, resume asks the owner again, revoke is final. The desktop gets `standing.list|show|fires|pause|revoke` as IPC methods only; a management screen is a later PR.)*
+
 - [x] **Audit trail for standing approvals** — every action taken under a standing rule logged with rule ID, matched scope, and timestamp; `nimbus audit standing` shows per-rule history *(Phase 10 SA3 ✅ 2026-11-11: each action a rule approves is an audit row with status `standing_approved` and, inside its hashed JSON, the rule id, the fire id and the SHA-256 of the matched scope, plus an egress-ledger row with the same ids; `nimbus audit standing [<rule>]` lists the fires and joins each to its audit row, showing a fire with none as such.)*
+
 - [x] **Scheduled workflows** — watchers trigger workflow pipelines on `schedule` condition (cron syntax); read-only workflows run unattended; write workflows with standing-approved steps also run unattended; HITL-required steps without a standing rule block and notify *(Phase 10 SA4 ✅ 2026-11-11, schema V89, static D44(d). Built: `nimbus workflow save <name> --file <path> --schedule "<cron>" [--tz <zone>]` (five standard fields and four macros, at least five minutes apart, set only from the owner's CLI or desktop), `nimbus workflow unschedule`, a 60 s scheduler with one catch-up for a miss of at most an hour, an unattended write executor that runs a write only under a live standing rule, a run that stops at a write with no rule as `blocked_on_approval` with ONE OS notification, and `nimbus workflow resume <runId> [--discard]` on the owner's terminal. Not built, by design: model (`run`) steps in a scheduled workflow (owner ruling OR-10-8; unattended model use has its own invariant and budget, I38), schedules set from the desktop's UI controls (the method exists; a screen is a later PR), the watcher `schedule` condition (a schedule is a property of the workflow, not a watcher), and a catch-up of more than one missed fire. Stated bounds: a write that blocks has already had its before-state read (the standing-rule check runs after it, I55, because a rule's guard can need it), so a blocked run makes that one gated, ledgered READ of the target and dispatches no write; a skipped fire is recorded as a `skipped` run row (repeats coalesced), so it counts toward the per-workflow run history. The Phase 10 acceptance test is `test/integration/automation/standing-schedule.acceptance.test.ts`.)*
-- [ ] **Morning briefing** — built-in scheduled workflow: cross-service summary (open PRs, active incidents, overdue tickets, unread threads) delivered via notification system at a configured time *(Phase 10 MB1 ✅ 2026-11-11: the data half. The index now keeps a per-(service, relation) snapshot of your open work for Jira, Linear and GitHub (`work_snapshot`, schema V91; refreshed at most once per `[briefing] snapshot_interval_minutes`, default 15), GitHub issues carry `due_at_ms` and `milestone`, Outlook mail carries `is_read` (cursor `nimbus-outl3:`, so the mailbox re-lists once) and iCloud events carry `start_ms`, `end_ms`, `all_day`, `organizer_email`, `self_response` and `attendee_count`; nothing renders, schedules or notifies yet, which is MB5, and this row stays open until then. MB2b ✅ 2026-11-11 added the calendar half: Google Calendar (`nimbus connector auth google_calendar`, its own `calendar.readonly` consent and an own-key-only token lookup) and Outlook calendar events are indexed for the window now-1d to now+30d with the same normalized keys as iCloud (`start_ms`, `end_ms`, `all_day`, `status`, `self_response`, `organizer_email`, `attendee_count`), Outlook's cursor is now `nimbus-outl4:` (outl3 still read as mail-only) and the sync gains the `replaceItemSet` capability. Owner action: `calendar.readonly` is a Google SENSITIVE scope, so the Nimbus OAuth client's consent screen must list it and pass Google's verification before anyone but test users can grant it. The code forced these corrections to the spec: syncables have no config view, so the interval is an optional factory option fed from `[briefing]`; the last-attempt time lives in each sync's cursor as `snapAt`; GitHub issues and iCloud events are NOT `REBODY_META_TARGETS` (nothing could ever satisfy them; Outlook mail is); the SDK iCal parser drops TZID, DURATION and PARTSTAT, so a gateway-local helper re-reads the raw ICS; a partial fetch keeps the old snapshot but a capped one replaces it; static D24 gains `work-snapshot-confined`. MB3 must make its own `GET /myself` for the Jira Service Management `is_me` test: the Jira and GitHub snapshots resolve the user at the provider and make no such call.)*
+
+- [ ] **Morning briefing** — built-in scheduled workflow: cross-service summary (open PRs, active incidents, overdue tickets, unread threads) delivered via notification system at a configured time *(Phase 10 MB1 ✅ 2026-11-11: the data half. The index now keeps a per-(service, relation) snapshot of your open work for Jira, Linear and GitHub (`work_snapshot`, schema V91; refreshed at most once per `[briefing] snapshot_interval_minutes`, default 15), GitHub issues carry `due_at_ms` and `milestone`, Outlook mail carries `is_read` (cursor `nimbus-outl3:`, so the mailbox re-lists once) and iCloud events carry `start_ms`, `end_ms`, `all_day`, `organizer_email`, `self_response` and `attendee_count`; nothing renders, schedules or notifies yet, which is MB5, and this row stays open until then. MB2b ✅ 2026-11-11 added the calendar half: Google Calendar (`nimbus connector auth google_calendar`, its own `calendar.readonly` consent and an own-key-only token lookup) and Outlook calendar events are indexed for the window now-1d to now+30d with the same normalized keys as iCloud (`start_ms`, `end_ms`, `all_day`, `status`, `self_response`, `organizer_email`, `attendee_count`), Outlook's cursor is now `nimbus-outl4:` (outl3 still read as mail-only) and the sync gains the `replaceItemSet` capability. Owner action: `calendar.readonly` is a Google SENSITIVE scope, so the Nimbus OAuth client's consent screen must list it and pass Google's verification before anyone but test users can grant it. The code forced these corrections to the spec: syncables have no config view, so the interval is an optional factory option fed from `[briefing]`; the last-attempt time lives in each sync's cursor as `snapAt`; GitHub issues and iCloud events are NOT `REBODY_META_TARGETS` (nothing could ever satisfy them; Outlook mail is); the SDK iCal parser drops TZID, DURATION and PARTSTAT, so a gateway-local helper re-reads the raw ICS; a partial fetch keeps the old snapshot but a capped one replaces it; static D24 gains `work-snapshot-confined`. MB3 made its own `GET /myself` for the Jira Service Management `is_me` test (the snapshots resolve the user at the provider and make no such call).)*
+
 - [ ] **Privacy-preserving agent-to-agent scheduling** — one user's agent negotiates meeting times with another's over the Phase 6 federated channel; returns mutually available slots without leaking full calendar details
+
 - [ ] **Deadline tracking** — monitors items with due dates across Linear, Jira, GitHub, and Calendar; fires notification 24h before deadline when no recent activity is detected on the item *(Phase 10 MB1 ✅ 2026-11-11: the due dates are indexed, so this row's data exists for Jira, Linear and GitHub (`due_at_ms`, plus `milestone` on GitHub) and for iCloud events (`start_ms`); a missing `due_at_ms` means no due date is known. The monitor and the notification are Phase 10 MB5. MB2b ✅ 2026-11-11 adds the Calendar source: Google Calendar and Outlook events carry `start_ms` and `end_ms` like iCloud's.)*
+
 - [x] **`nimbus schedule list`** — shows all active scheduled workflows with next fire time and last run status *(Phase 10 SA4 ✅ 2026-11-11: `nimbus schedule list [--json]` over the new renderer-safe `workflow.scheduleList` (Tauri allowlist 123 → 124): expression, zone, next and last fire, last run status, and a blocked run's step with the exact `nimbus workflow resume <runId>`.)*
+
+
 
 #### Core — Incident Correlation Engine
 
+
+
 - [ ] **Automatic incident assembly** — when a monitoring alert fires, agent automatically queries the local index for: last deployment before the alert, associated PR, triggering commit, CI run result, Slack/Teams threads mentioning the affected service; assembles a structured incident summary without any user query. For **data-platform** alerts (PagerDuty events tagged `data`, Monte Carlo / Bigeye incidents, failing dbt test notifications) the same assembly also pulls: last Airflow / Dagster / Prefect DAG run logs, recent dbt test failures, recent warehouse schema changes (Snowflake / BigQuery `INFORMATION_SCHEMA` deltas), and the dbt-model-authoring PRs merged in the preceding 24 hours — delivered as a single "Data Incident Brief"
+
 - [ ] **Incident timeline** — structured Markdown timeline (alert → deploy → commit → PR → CI); exported via `nimbus incident show <alert-id>` or surfaced in the Tauri dashboard
+
 - [ ] **Proactive technical debt detection** — agent flags code symbols that haven't been touched in months but are frequently referenced in failing pipelines or incident logs
+
 - [ ] **Suggested remediation** — agent proposes a remediation action (rollback, restart, scale-up) based on indexed history of similar incidents; always HITL-gated before execution
+
 - [ ] **Post-mortem generation** — after incident resolution, agent drafts a structured post-mortem (timeline, root cause, contributing factors, action items) from the assembled incident record and HITL decision log; user reviews and edits before HITL-gated push to Notion or Confluence; template is configurable
-- [ ] **On-call schedule awareness** — indexes PagerDuty/OpsGenie on-call schedules; answers `nimbus ask "who's on call for payment-service right now?"` from the local index; feeds on-call context into the morning briefing and incident assembly so the agent can route notifications to the right engineer without an additional API call
+
+- [ ] **On-call schedule awareness** — indexes PagerDuty/OpsGenie on-call schedules; answers `nimbus ask "who's on call for payment-service right now?"` from the local index; feeds on-call context into the morning briefing and incident assembly so the agent can route notifications to the right engineer without an additional API call *(Phase 10 MB3 ✅ 2026-11-11: the data and the read half; this row stays open until MB5 feeds the morning briefing. The index holds `oncall_shift` items from PagerDuty and Jira Service Management Operations (OpsGenie is replaced by JSM Operations; there is no OpsGenie connector), refreshed at most every 15 minutes inside the existing syncs; `oncall.now`, `nimbus oncall now [--service <id|name>] [--json]`, the `oncall_now` agent tool and an `On call now` line in the incident brief answer with no live API call. Acceptance: `nimbus oncall now --service payment-service` names the on-call person from the index (verified, including with `fetch` disabled and against a real demo gateway); `nimbus ask "who's on call for payment-service right now?"` answers the same when the tool is offered (a remote model vendor is enabled) or ranked retrieval surfaces the row. The code forced these corrections to the spec: `oncall.now` was already LAN-forbidden by the whole `oncall` namespace entry and needs its own dispatcher; the fetch-host boundary does not govern scheduled syncs, so the new fixed Jira host `api.atlassian.com` is pinned in the step itself (`redirect: "manual"`, a validated cloud id) and by a source test; JSM `flat=true` returns e-mail addresses Jira hides and no reply carries shift times, so JSM rows come from participants by account id and have no times; the MB1 snapshot never called `/myself`, so MB3 makes its own; the Mastra agent exists only with a remote vendor and the local-router path has no tools; a PagerDuty service name with no `[ci.service.*]` binding matches through `service_names`; the refresh state lives in each cursor and the old decoders dropped unknown keys; a complete fetch replaces a source's shifts but a partial or capped one deletes nothing; shift external ids start `oncall:` (ids are unique per service across types); `replaceItemSet` is also refused to local-only syncables; the Tauri allowlist goes 126 -> 127. Stated bounds: live reply shapes are unverified; JSM shifts have no times or service mapping; PagerDuty `is_me` needs a user-level token or `pagerduty.from_email`; a stale source is reported, not hidden.)*
+
+
 
 #### Core — Agent Memory & Personalization
 
+
+
 - [ ] **Long-term episodic memory** — agent stores summarised observations from past sessions in a dedicated SQLite table; recalled at query time via semantic similarity
+
 - [ ] **Personalization layer** — agent adapts communication style and tool selection priority based on observed user preferences; preferences are explicit (configurable), not inferred silently
+
 - [ ] **Automated PR pre-review** — agent performs "lint-plus" review based on team's historical review patterns (e.g., "In this repo, we usually ask for Y when X is changed")
+
 - [ ] **Decision pattern recognition** — agent identifies repeated HITL decision patterns across history; surfaces them as standing rule candidates
+
 - [ ] **Point-in-time index queries** — ability to reconstruct the state of the indexed data at a specific historical timestamp using sync history and item `modified_at` metadata already stored in the index. Enables queries like `nimbus ask "what was the deployment state of payment-service at 14:32 last Tuesday?"` for post-incident analysis. Implementation: the query layer filters indexed items to their state at the requested timestamp using `modified_at` and sync cycle timestamps already recorded in `sync_state`; no new data collection required. Exposed via `--at <ISO8601-or-relative-time>` flag on `nimbus ask` and `nimbus query`. Read-only, no HITL.
+
+
 
 #### Core — LAN Hardening (deferred from Phase 4 B1 audit)
 
+
+
 - [ ] **LAN forward secrecy (S3-F8)** — replace the static X25519 pairing identity with per-session ephemeral DH so a future pairing-key compromise cannot decrypt past LAN sessions; multi-PR handshake redesign incompatible with the v0.1.0 LAN protocol — gated on a versioned LAN handshake bump; tracked from the Phase 4 internal security audit (B1, 2026-04-25)
+
+
 
 #### Stretch — Local Model Fine-Tuning
 
+
+
 *These items do not gate phase completion. They are explicitly aspirational.*
 
+
+
 - [ ] **LoRA adapter training** — train lightweight adapters on the user's own writing style (emails, Slack messages, Notion pages, PR descriptions) using local NPU/GPU; model: Llama 3 or Mistral base; no data leaves the machine
+
 - [ ] **Domain-specific recall** — fine-tuned adapter improves agent's ability to match user naming conventions and project context when drafting or classifying
+
 - [ ] **`nimbus model train --adapter writing-style`** — background fine-tuning job; `nimbus model status` shows progress; adapters versioned and rollback-safe
+
+
 
 #### Stretch — Infrastructure-as-Agent (SRE Loop)
 
+
+
 *These items do not gate phase completion. They are explicitly aspirational.*
 
+
+
 - [ ] **Autonomous drift detection** — agent continuously compares IaC declared state against indexed live cloud state; flags drift in the dashboard without waiting for a user query
+
 - [ ] **Remediation proposals** — agent drafts `terraform plan` or equivalent for detected drift; user reviews diff in HITL dialog; no cloud mutation without approval
+
 - [ ] **Cost anomaly detection** — monitors Cost Explorer / Azure Cost Management / GCP Billing daily spend; alerts when 24h spend exceeds 7-day rolling average by a configurable threshold; once Phase 6 BI connectors land, the same detection window covers Snowflake credit consumption and Databricks DBU usage
+
 - [ ] **Cloud cost "garbage collection"** — agent identifies orphaned cloud resources (unattached EBS volumes, empty staging environments, stale ALB target groups, orphaned snapshots) and queues them for deletion behind a single HITL click; distinct from cost anomaly detection (which surfaces *spend* spikes) — this finds *waste* that doesn't move the cost needle but is pure garbage; direct measurable savings with zero manual hunting
+
 - [ ] **Data FinOps attribution** (depends on Phase 6 warehouse connectors) — correlates Snowflake / BigQuery / Databricks query cost rows with the specific notebook, Airflow task, dbt run, or user that triggered them; joins warehouse `QUERY_HISTORY` (or equivalent) with orchestration run metadata in the local index; answers "show me the top 5 most expensive notebooks run yesterday and who ran them" without a single live warehouse API call; stretch — does not gate Phase 10 completion
+
 - [ ] **FinOps connectors** — third-party FinOps platforms feed the cost anomaly detector with cleaner per-team / per-tag attribution than raw cloud billing exports: **Vantage**, **CloudHealth (VMware Tanzu)**, **Spot.io / Flexera**, **Kubecost** (Kubernetes per-pod cost), **OpenCost** (open source CNCF project)
+
 - [ ] **Sustainability connectors** — carbon-footprint reporting feeds the SRE loop's "right-size to lower-carbon region" recommendations: **Cloud Carbon Footprint** (open source), **Climatiq**, **Watershed**, AWS / Azure / GCP carbon footprint exports
+
 - [ ] **Runbook automation** — common SRE runbooks registered as named HITL-gated actions; agent proposes the right runbook when an incident matches a known pattern
+
+
 
 #### Acceptance Criteria (core items only)
 
+
+
 - A standing approval rule for "archive read Gmail threads older than 60 days" executes its next scheduled run without any user prompt; every archived thread appears in the audit log under the rule ID
+
 - When a PagerDuty P1 fires, the incident summary (deploy, PR, commit, CI result, Slack thread) is assembled and available via `nimbus incident show` within 30 seconds of the alert being indexed — no user query required
+
 - A morning briefing workflow runs fully unattended; any write step without a standing rule sends a notification and blocks rather than executing silently
+
 - `nimbus ask "who's on call for payment-service right now?"` returns the correct engineer from the indexed PagerDuty schedule without a live API call
+
 - A post-mortem draft for a resolved incident is generated from the incident record and surfaced for review; the HITL-gated push to Notion succeeds only after the user explicitly approves
+
 - `nimbus ask "what PRs were open for payment-service at 09:00 yesterday?" --at yesterday-09:00` returns results consistent with the indexed sync history for that timestamp, verified by seeding the index with timestamped items and confirming the filter excludes items modified after the requested time
 
+
+
 ---
+
+
 
 ### Phase 11 — Sovereign Mesh
 
+
+
 **Goal:** Extend Nimbus beyond the single machine — across the user's own devices, between trusted people, and into the physical world — without any relay server or trusted third party.
+
+
 
 **Note on the Digital Executor:** The dead man's switch and Shamir's Secret Sharing items address a real use case: secure handover of credentials and cryptographic keys to trusted people upon death or extended incapacitation. They are included because they are a natural extension of the local sovereignty model — if Nimbus holds the keys to your digital life, it should have a principled way to hand them to the people you designate. They are not a novelty feature; they are the logical conclusion of the "no cloud, no intermediary" architecture applied to the hardest edge case.
 
+
+
 #### Dependencies
 
+
+
 - Phase 4 tamper-evident audit log and data export/import
+
 - Phase 6 federation protocol (Nimbus-to-Nimbus channel is the mesh primitive)
+
 - Phase 10 standing approvals (mobile HITL approvals are a standing-approval variant)
+
+
 
 #### Cross-Device Sync
 
+
+
 - [ ] **P2P index sync** — encrypted index sync between a user's own machines; BLAKE3-keyed protocol; vector-clock conflict resolution; no third party
+
 - [ ] **Selective sync** — user controls which `item` types and services sync to which device; configuration stored in the Vault per profile
+
 - [ ] **Sync conflict resolution UI** — diverged devices surface conflict in the dashboard with diff view; user resolves manually or accepts one side
+
 - [ ] **Geofenced context switching** — Phase 3.5 configuration profiles extended with a "trusted-network" gate; sensitive index namespaces auto-disable sync (and optionally lock the Vault) when the device connects to an untrusted / public Wi-Fi BSSID; configuration is local-only, no cloud involved
+
 - [ ] **Mesh backup sharding** — encrypted shards of the index + Vault are distributed across the user's trusted devices using erasure coding over the Phase 6 federation channel; recovery from any M-of-N shards; reuses the Digital Executor's Shamir cryptographic shape applied to live backup instead of inheritance; eliminates the need for cloud backup while preserving durability
+
+
 
 #### Mobile Companion
 
+
+
 - [ ] **iOS app** — connects to home Gateway over E2EE LAN or WireGuard tunnel; no cloud relay; natural language queries, HITL approval queue, watcher notifications, read-only connector status
+
 - [ ] **Android app** — same feature set as iOS
+
 - [ ] **Push notifications** — via local push (LAN) or WireGuard; no third-party push service required; opt-in to cloud push (APNs/FCM) for out-of-LAN reachability
+
 - [ ] **Biometric HITL** — use the Mobile Companion as the primary HITL gate; approvals cryptographically signed with a device key and authorized via FaceID/TouchID for a superior security/UX balance
+
 - [ ] **Mobile HITL signature** — approvals cryptographically signed with a device key stored in the phone's secure enclave
+
+
 
 #### Physical Sovereignty
 
+
+
 - [ ] **Hardware vault integration** — YubiKey and Ledger as a second factor; FIDO2/WebAuthn locally; unlock requires physical device presence
+
 - [ ] **Hardware audit-log signing** — support for Nitrokey or OpenPGP cards to cryptographically sign the BLAKE3 audit chain, making it physically tamper-proof
+
 - [ ] **Air-gapped secret management** — credentials for sensitive connectors stored exclusively on a hardware key; Gateway requests them via USB/NFC at sync time; never written to disk even temporarily
+
 - [ ] **Decentralized Identifiers (DIDs)** — self-sovereign DIDs for Nimbus-to-Nimbus authentication; DID document stored locally; no central registry required
+
+
 
 #### Digital Executor
 
+
+
 - [ ] **Dead man's switch** — configures cryptographic keys and documents to be handed over to named recipients if Gateway is inactive for a configurable period
+
 - [ ] **Threshold secret sharing** — executor payload split using Shamir's Secret Sharing across N trusted recipients; any M-of-N can reconstruct; no single recipient can access it alone. Extends to runtime privileged credentials (production secrets, root tokens) so no single engineer or compromised machine can unilaterally access critical credentials — same Shamir primitive applied to live credentials instead of inheritance payload
+
 - [ ] **Executor audit trail** — every check-in, near-trigger, and handover event logged in the tamper-evident audit chain; recipients receive a verifiable log alongside the payload
+
+
 
 #### Public Dogfooding Telemetry (vulnerability-as-marketing)
 
+
+
 A single primitive that turns the Phase 3.5 telemetry pipeline into a public-trust artifact. The Nimbus maintainers run their own Gateways with telemetry **deliberately enabled** and **deliberately published** to a public dashboard. The dashboard shows aggregate (no-content) metrics about the maintainers' day-to-day usage: how often HITL fires on them, how often the agent admits it doesn't know, p95 query latency, the cost-per-brief ratio. The marketing argument writes itself: "watch what running this thing actually looks like." The argument cuts deeper because Nimbus is the only product in the category that can honestly publish these numbers — cloud agents would have to release competitive performance data they're motivated to hide.
 
+
+
 - [ ] **Public dogfooding dashboard at `nimbus-agent.dev/dogfood`** — static site rendered from the same `[telemetry]` payload-safety-gated aggregate counters Phase 3.5 already collects; updated daily from the maintainers' own Gateways. Visible categories: HITL fire rate, refusal rate, average tokens-per-brief, p95 query latency, top-N most-used agents, ratio of corrections to confirmations. **No per-query content.** **No per-user PII.** The dashboard is renderable as static HTML so it's archivable + cryptographically verifiable.
+
 - [ ] **Telemetry publication primitive** — `nimbus telemetry publish --to <signed-endpoint>` extends the existing telemetry flush to optionally publish to a known-pubkey endpoint. The dashboard's endpoint is one such; users who want to run their own dashboard (a team's internal dogfood dashboard) point their telemetry at a different endpoint. Honesty primitive: any user can run the same dashboard against their own team.
+
 - [ ] **Verifiable provenance** — every published dashboard row carries a signature from the originating Gateway's release key. A skeptical reader can verify the dashboard is showing real data from real Gateways and not curated marketing. Composes with the S — Standards EAF verifier CLI shape (same primitive, different payload type).
+
 - [ ] **"What the agent doesn't know" feed** — a publicly-visible feed of the refusal log entries from the maintainers' own Gateways (aggregate, scrubbed of identifying content). Demonstrates the agent does refuse and on what categories of question. Counter-narrative to the "AI is overconfident" framing.
+
 - [ ] **Calibration leaderboard (consensual)** — the maintainers' own per-user calibration curves (from Phase 9 Wave 6) published as opt-in. "Here's how often Nimbus says it's 90% confident and is actually right." Shipping a calibration score publicly is a credibility move no cloud agent has made.
+
 - [ ] **Privacy contract — public-payload safety gate** — extends the existing `bun run test:coverage:telemetry` gate with a `--public-payload` mode that checks the *published* payload (subset of the existing telemetry payload) against an even stricter safety policy: no query strings, no item IDs, no item types beyond their category, no engineer handles. Failing the gate refuses publish.
+
+
 
 #### Stretch — Internationalisation (i18n / l10n)
 
+
+
 The mobile companion is the natural moment to introduce locale awareness; the same string-extraction effort serves the Tauri UI, CLI, and TUI. Does not gate phase completion.
 
+
+
 - [ ] **String-extraction pass** — extract all user-facing strings in the Tauri UI (`packages/ui/src/`), CLI (`packages/cli/src/`), and TUI (`packages/cli/src/tui/`) into resource bundles; English remains the source-of-truth locale
+
 - [ ] **Reference locales (3)** — ship Spanish (es), French (fr), and Japanese (ja) as the first three translated locales; community contributors handle additional locales via `packages/locales/<lang>/`
+
 - [ ] **Locale-aware formatting** — date / time / number formatting throughout the UI uses `Intl.*`; CLI respects `LC_TIME` / `LC_NUMERIC` envs
+
 - [ ] **Right-to-left support** — Tauri UI honours `dir="rtl"` for RTL locales; verified with Hebrew sample translation in QA
+
 - [ ] **Indexed-content character-set robustness** — the FTS5 tokeniser handles CJK + non-Latin scripts correctly; verified by an integration test that indexes a Japanese-language Notion page and queries it back
+
+
 
 #### Acceptance Criteria
 
+
+
 - Index syncs between two machines on the same LAN in under 60 seconds for a 50,000-item dataset; no data passes through any external server
+
 - A HITL approval made on the mobile app executes within 5 seconds on the home Gateway; action and approval signature appear in the local audit log
+
 - Removing a YubiKey while the Gateway is running causes credential access to fail gracefully; re-inserting resumes normal operation without re-auth
+
 - A Digital Executor payload reconstructed by M-of-N recipients is byte-identical to the original and its audit chain passes `nimbus audit verify`
+
 - Public dogfooding dashboard at `nimbus-agent.dev/dogfood` updates daily from at least three maintainer Gateways with verifiable Ed25519 provenance per row; the `--public-payload` payload-safety gate refuses publish on any payload containing a query string, item ID, or engineer handle
+
 - A non-maintainer user can run `nimbus telemetry publish --to <their-endpoint>` and stand up their own equivalent dashboard against their own team's Gateways without touching the maintainers' infrastructure
 
+
+
 ---
+
+
 
 ### Phase 12 — Enterprise
 
+
+
 **Goal:** Make Nimbus deployable and auditable at institutional scale. Tied to the commercial license tier — AGPL users retain all individual and team features; enterprise deployment, compliance tooling, and SLA support are commercial.
+
+
 
 **Dependency note:** The Phase 10 dependency is narrowed to **standing approvals only**. Docker, Helm, SAML SSO, audit log shipping, and SCIM provisioning do not require the autonomous agent or LoRA fine-tuning to be complete. The SRE loop stretch items are independent of enterprise deployment.
 
+
+
 #### Dependencies
 
+
+
 - Phase 6 Team (Enterprise builds on the team collaboration foundation)
+
 - Phase 4 tamper-evident audit log (required for compliance export)
+
 - Phase 10 standing approvals (required for unattended enterprise workflows)
+
 - Phase 3.5 telemetry infrastructure (audit log shipping uses the same batched-transmission pipeline)
+
+
 
 #### Deployment & Operations
 
+
+
 - [ ] **Docker image** — official `ghcr.io/nimbus/gateway` image; multi-arch (amd64/arm64); configurable via env vars and mounted `nimbus.toml`
+
 - [ ] **Helm chart** — `nimbus/gateway` Helm chart for Kubernetes; namespace isolation, persistent volume for SQLite, external Vault backend (HashiCorp Vault), RBAC, NetworkPolicy
+
 - [ ] **Air-gapped bundle** — single tarball with all binaries, local LLM model weights, and dependency assets; no outbound internet access required
+
 - [ ] **"Clean room" AI deployment mode** — named deployment topology where sensitive compliance / HR data is processed exclusively on an air-gapped node within the enterprise, never hitting the broader LAN or any cloud endpoint; builds on the air-gapped bundle + data residency controls but elevates the configuration to a first-class topology that auditors can certify; unblocks AI adoption for the highest-regulation data classifications
+
 - [ ] **High availability** — active/passive Gateway clustering; leader election via SQLite WAL + advisory lock; failover in under 30 seconds
+
 - [ ] **Managed update channel** — enterprise updates on a dedicated channel with 2-week delay vs. main; allows internal QA before rollout
+
 - [ ] **Remote vector store adapters** — pluggable `VectorStore` interface with Qdrant, Weaviate, and Pinecone backends; `sqlite-vec` remains the default (local-first principle); remote backend enabled only via explicit `[index.vector_store]` config block — never on by default; suitable for enterprise deployments with centralised vector infrastructure or index sizes exceeding local storage thresholds; resolves the Phase 3 deferral (remote stores were incompatible with local-first for individual users; self-hosted enterprise deployments clear the privacy boundary)
+
+
 
 #### Centralized Policy & Compliance
 
+
+
 - [ ] **Policy-as-code** — `nimbus.policy.toml` extended for enterprise: per-user role assignments, connector allowlists, data classification labels, mandatory audit log shipping, HITL threshold overrides per user group
+
 - [ ] **Data Loss Prevention (DLP) Gate** — pre-dispatch scanner that flags PII, secrets, or "Internal Only" content before it is sent to remote LLMs or exported
+
 - [ ] **Audit log shipping** — `audit_log` rows streamed (append-only, tamper-evident) to SIEM targets (Splunk, Elastic, Datadog Logs), S3/GCS/Azure Blob, or a mounted file path; fire-and-forget with local retention as fallback
+
 - [ ] **Compliance posture tooling** — `nimbus compliance check` reports: credential storage status, audit log integrity, plaintext credential scan result, connector scope minimization status; structured JSON output suitable for auditors
+
 - [ ] **Provable-locality export (M7)** — auditor-grade, Ed25519-signed export of the Phase 8 egress ledger + audit-chain head, scheduled and pushed to an external append-only sink (the same SIEM targets as audit log shipping) so the local chain is externally anchored; bounds the same-UID local-rewrite window. Completes the North-Star **M7 (Provable Locality)** capability.
+
 - [ ] **Legal Hold & Discovery** — compliance mode to "freeze" index state or export an immutable subset of the audit log for legal discovery
+
 - [ ] **Data residency controls** — per-connector restriction to a named geographic boundary; Gateway enforces at ingest; non-compliant items flagged and excluded from the index
+
 - [ ] **Formal security audit** — third-party penetration test of Gateway, IPC surface, Vault, and extension sandbox; published report; responsible disclosure programme and bug bounty
+
+
 
 #### GRC Platforms (Compliance Automation)
 
+
+
 Connectors for the GRC tools enterprises already use to evidence SOC 2 / ISO 27001 / HIPAA / PCI-DSS controls. Read-only ingestion of control state into the local index; the Phase 12 `nimbus compliance check` output is consumable by these platforms via standard auditor formats.
 
+
+
 - [ ] **Drata** — control state, evidence requests, framework mappings, monitoring tests; `compliance_control` + `evidence_request` item types; read-only; `drata.evidence.attach` HITL
+
 - [ ] **Vanta** — controls, monitors, employee onboarding/offboarding state, vendor reviews; `compliance_control` item type; read-only; `vanta.task.complete` HITL
+
 - [ ] **Secureframe** — control library, framework progress, evidence collection, vendor risk; read-only; `secureframe.evidence.upload` HITL
+
 - [ ] **Tugboat Logic / OneTrust GRC (read-only)** — controls, risks, audit logs; read-only
+
 - [ ] **Automated compliance-evidence attachments** — agent maps locally-indexed Jira tickets, PRs, deploy logs, and audit-log entries to specific auditor evidence requests in the connected GRC platform (Drata / Vanta / Secureframe); produces a one-click evidence package per request; turns audit preparation from a weeks-long manual task into an export
+
+
 
 #### Identity & Governance
 
+
+
 - [ ] **Enterprise SSO** — SAML 2.0 and OIDC; tokens in enterprise Vault, not browser cookies; session binding to machine identity
+
 - [ ] **SCIM 2.0 provisioning** — automated user lifecycle driven by IdP; deprovisioned users' Vault entries and shared namespaces revoked within one sync cycle
+
 - [ ] **Knowledge Isolation (Project Boundaries)** — strict index partitioning to ensure context from one client/project never bleeds into another
+
 - [ ] **Privileged access management** — named admin users can view (not export) any team member's connector health and audit log; cannot view index content or credentials
+
 - [ ] **Cross-gateway audit identity subject** *(re-homed from Phase 6 Slice 7 Wave 7b, 2026-10-10)* — record the operator's IdP subject on a federated invoke's audit row. `federation/invoke-gate.ts` already threads an optional `resolveIdentitySubject?` into all three invoke paths, and only tests supply it; no production caller does, so federated invoke audit rows carry no identity subject today.
+
+
 
 #### Admin Console (Enterprise)
 
+
+
 - [ ] **Org-wide dashboard** — Gateway health per member, index item counts by service, watcher fire rate, HITL queue depth, audit log freshness
+
 - [ ] **Policy editor** — GUI for `nimbus.policy.toml` with validation and diff preview before applying
+
 - [ ] **Credential rotation assistant** — identifies connectors with credentials older than a configurable threshold; guides admin through coordinated re-auth with minimal downtime
+
+
 
 #### SLA & Support
 
+
+
 - [ ] **Priority support tier** — dedicated CSM, 4h response SLA for P1 issues, private Slack channel
+
 - [ ] **Deployment assistance** — official runbooks for Docker/Kubernetes/air-gapped deployments; reference architecture for common enterprise stacks
+
 - [ ] **DPA and legal templates** — Data Processing Agreement, sub-processor list, GDPR Article 28 documentation for enterprise procurement
+
+
 
 #### Acceptance Criteria
 
+
+
 - The Helm chart deploys a functional Gateway cluster on Kubernetes with persistent storage and NetworkPolicy in under 15 minutes from a clean cluster
+
 - `nimbus compliance check` produces a machine-readable JSON report passing a reference auditor schema without manual intervention
+
 - Audit log shipping to a Splunk HEC endpoint is verified end-to-end in CI against a mock HEC target; no audit row is lost in a Gateway restart scenario
+
 - Deprovisioning a user via SCIM removes their shared namespace access within one sync cycle and writes a signed record to the org audit log
 
+
+
 ---
+
+
 
 ### Phase 12.5 — Compliance Receipts
 
+
+
 **Goal:** Give an individual engineer the artifacts they need to unblock their own organization's security review **without a sales motion.** This phase explicitly does not target procurement, audit firms, or sales — it targets the engineer who has Nimbus installed and now needs to satisfy their CISO before it can be used at work. The deliverable is *receipts* — a structured bundle of evidence that maps to a framework's controls — not third-party attestation, not a BAA, not a vertical starter pack. Cloud agents cannot produce this artifact for the user's specific deployment because they don't know what's installed locally; Nimbus can.
 
+
+
 > **Composes with Phase 8 (Security Engineering):** the audit chain + egress ledger + supply-chain attestations Phase 8 delivers are the raw evidence the bundle assembles. Phase 12.5 is the *assembler*, not the source.
+
 >
+
 > **Composes with the S — Standards track:** the egress-ledger section of every bundle is rendered in the EAF reference-impl format from the [§ S — Standards (cross-phase)](#s--standards-cross-phase) track. Bundles that include EAF can be independently verified by any third party with the EAF verifier CLI.
+
 >
+
 > **Composes with the M7 North-Star (Provable Locality):** M7 *is* the egress-ledger primitive; Phase 12.5 is the **product surface** that turns it into a self-service compliance artifact.
+
+
 
 #### Dependencies
 
+
+
 - Phase 4 tamper-evident BLAKE3-chained audit log
+
 - Phase 8 egress ledger + supply-chain attestations (M7 substrate)
+
 - Phase 9 model-weight integrity + model-policy registry (control evidence for AI-specific frameworks)
+
 - S — Standards track: EAF reference implementation + verifier CLI
+
+
 
 #### Compliance Bundle
 
+
+
 - [ ] **`nimbus compliance bundle --framework <name> [--output <path>]`** — produces a `.zip` containing:
+
   - **Cover memo** (Markdown + PDF render) explaining what this bundle is, what it isn't (not third-party attestation), and how to use it in a security review.
+
   - **Control mapping spreadsheet** (XLSX + CSV) — one row per control in the framework, listing: control ID, control name, evidence file path, evidence type (config / audit extract / signed log / configuration snapshot / N/A), and a one-sentence summary of *how* this Nimbus deployment satisfies the control. N/A rows are explicit about why the control doesn't apply.
+
   - **Audit-log extract** — the BLAKE3-chained audit log for the configured window (default last 90 days), exported in the existing `nimbus audit export` format with the chain-verification proof.
+
   - **Egress attestation** — the M7 egress ledger for the same window, rendered as a signed EAF artifact (reference-impl format).
+
   - **Configuration snapshot** — `nimbus.toml` (secret values redacted), connector list with health states, vault key inventory (key *names* only, not values), installed extensions with signed manifests + publisher fingerprints, sandbox manifests per connector (I15 evidence).
+
   - **Cryptographic attestation** — the bundle itself is signed with the gateway's release Ed25519 key. The included `verify.sh` script (POSIX) and `verify.ps1` (Windows) verify the bundle against the published gateway pubkey.
+
 - [ ] **Frameworks in v1** — `soc2` (CC6 + CC7), `iso27001` (Annex A controls), `gdpr` (Articles 5, 25, 30, 32), `eu-ai-act` (Article 13 transparency report), `hipaa` (technical safeguards only — administrative + physical safeguards explicitly out of scope), `nist-csf` (Identify + Protect + Detect functions).
+
 - [ ] **SOC2 pilot first** — ship `--framework soc2-pilot` as the first dogfood target. Pilots against the maintainer's own SOC2 controls; iterates against three independent security teams' feedback before opening the rest of the frameworks. The other frameworks are template work once the SOC2 evidence-collection plumbing is right.
+
 - [ ] **What's explicitly NOT in scope** — third-party attestation, BAA contracts, vertical starter packs (legal / healthcare / finance specific tooling), penetration test reports, formal risk assessments. These are sales-motion artifacts; Phase 12.5 is receipts only.
+
+
 
 #### Data Subject Request (GDPR Article 15 + Article 22)
 
+
+
 - [ ] **`nimbus dsr <subject-identifier> [--output <path>]`** — produces a per-subject artifact answering "what does this agent know about person X" + how to delete it.
+
   - **Subject identifier** — email, GitHub login, Slack handle, or any handle the people graph resolves; the command runs `resolvePerson` first and dumps the resolved identity graph as part of the artifact.
+
   - **Output bundle** — JSON + PDF render of: every indexed `item` referencing the subject (across all connectors), every `person` row + cross-service handles, every `audit_log` row mentioning the subject, every relationship-graph edge incident to the subject's nodes, and a per-row "source of record" pointer to the originating connector.
+
   - **Deletion plan** — second half of the artifact is a Markdown checklist of what `nimbus data delete --service <name> --subject <identifier>` would do per connector, with dry-run row counts. **Does not execute** without explicit `--execute` + HITL approval; the artifact alone is read-only.
+
 - [ ] **Article 22 (right to explanation) extension** — when a DSR is run for a subject who has been the target of an HITL-approved action by a Nimbus agent, the artifact additionally includes the M3 replay trace for that action (reasoning + evidence + decision path). Composes with the M3 North-Star.
+
+
 
 #### Doc & Sample Artifacts
 
+
+
 - [ ] **`docs/compliance/`** — one Markdown file per supported framework, explaining the control-to-evidence mapping in narrative form. Used by engineers prepping their security review to anticipate questions.
+
 - [ ] **Sample bundle per framework** — pre-rendered example bundle (with synthetic data) committed under `docs/compliance/samples/`. Lets a prospective adopter see the artifact shape before installing Nimbus.
+
 - [ ] **Reviewer's quickstart** — `docs/compliance/reviewer-quickstart.md`, a one-page guide for a security team reviewing a bundle: what the chain-verification proof means, what EAF guarantees vs doesn't guarantee, what's signed vs unsigned, how to cross-check against a fresh `nimbus diag` snapshot.
+
+
 
 #### Acceptance Criteria
 
+
+
 - `nimbus compliance bundle --framework soc2-pilot --output ./bundle.zip` produces a self-verifying zip whose `verify.sh` succeeds offline against the published gateway pubkey on a fresh machine with no Nimbus installed.
+
 - The SOC2 pilot bundle is reviewed by three independent engineers' security teams; each confirms the bundle unblocks (or would unblock, in a sandboxed review) Nimbus adoption inside their org without any further questions Nimbus could not have anticipated.
+
 - `nimbus dsr <test-subject>` against a seeded test corpus produces a JSON artifact whose contents round-trip cleanly through the matching `nimbus data delete --service ... --subject ... --dry-run` and report identical row counts (i.e., the DSR view is the same view the deletion plan would act on — no drift).
+
 - Every framework in v1 has at least one rendered sample bundle under `docs/compliance/samples/` and a narrative doc under `docs/compliance/`.
+
 - An end-to-end privacy contract: the bundle never contains a vault value or a credential body; only key names, manifest hashes, and signed manifest contents. Verified by a `bun run audit:compliance-payload-safety` gate analogous to the existing telemetry payload-safety gate.
 
+
+
 ---
+
+
 
 ### Phase 13 — Desktop Distribution
 
+
+
 > **Sequencing (2026-06-17 overlay):** **Track 2 — independent-slot.** Not spine-gated; land whenever adoption demand justifies the release-vehicle work. See [§ Phase 7+ Sequencing Spine](#phase-7-sequencing-spine).
+
+
 
 **Goal:** Publish the Tauri desktop UI as signed, OS-gatekeeper-clean release artifacts. The desktop UI itself was built in Phase 4 (WS5-A through WS5-D, all `[x]` in [§ Phase 4](#phase-4--presence-)); what slipped from `v0.1.0` was the release vehicle — signed installers, per-OS build matrix, Gatekeeper / SmartScreen handling, and the Tauri-specific security audit follow-ups. This phase delivers the `desktop-v0.1.0` tag, gated independently of the headless `v0.1.0` and `vscode-v0.1.0` tags.
 
+
+
 #### Dependencies
 
+
+
 - Phase 4 WS5 (Tauri UI code-complete in-tree)
+
 - Phase 4 WS4 (Updater state machine + Ed25519 signing plumbing)
+
 - Code signing certificate procurement (Apple Developer Program enrollment + Windows EV cert)
+
+
 
 <a id="desktop-release-vehicle"></a>
 
+
+
 #### Desktop Release Vehicle
+
+
 
 The Tauri desktop UI was code-complete in Phase 4 (WS5-A through WS5-D) but did not ship as a release artifact in `v0.1.0`. Phase 13 is the release vehicle: signed installers, a per-OS `build-ui` matrix in `release.yml`, and the Tauri-specific security audit follow-ups deferred from B1. The desktop tag is `desktop-v0.1.0`, gated independently of the headless `v0.1.0` and `vscode-v0.1.0` tags.
 
+
+
 - [ ] **`build-ui` release-pipeline job** — add a per-OS matrix (windows-latest, macos-13, macos-14, ubuntu-24.04) to `.github/workflows/release.yml` that runs `cd packages/ui && bunx tauri build` and uploads the `.msi` / `.dmg` / `.AppImage` / `.deb` artifacts; gated on the same `desktop-v[0-9]+.[0-9]+.[0-9]+` tag pattern, parallel to the existing headless gateway/CLI jobs
+
 - [ ] **macOS Gatekeeper notarization** — Apple Developer Program enrollment ($99/yr); `codesign` + `notarytool` + `stapler` integrated into the macOS leg of `build-ui`; produces a notarized `.dmg` that opens without user override
+
 - [ ] **Windows Authenticode signing** — EV code-signing certificate procurement (~$470–$840/yr); `signtool.exe` integrated into the Windows leg of `build-ui`; produces an `.msi` that passes SmartScreen reputation
+
 - [ ] **Linux desktop bundle GPG signatures** — extend the existing `sign-linux-gpg.sh` to cover the `.AppImage` and `.deb` Tauri bundles produced by `build-ui`
+
 - [ ] **Tauri-native file picker for `data.import` (S4-F6)** — see [§ Phase 4 → Security audit follow-ups (B1)](#security-audit-follow-ups-b1); the same UI-rebuild PR also handles the `extension.install` path-validation work (S4-F5 / S7-F7)
+
 - [ ] **Profile-switch global broadcast refactor (S4-F8)** — Rust-side window-registry refactor; folded into the S4-F6 UI-rebuild PR
+
 - [ ] **Linux `invokeInstaller`** *(re-homed from Phase 4 § Security audit follow-ups (B1), 2026-10-10)* — POSIX binary swap + restart helper. Production supplies no `invokeInstaller` on any platform (`updater/factory.ts`), so `nimbus update` refuses with `ERR_UPDATER_INSTALL_UNSUPPORTED` before downloading anything.
+
 - [ ] **macOS + Windows `invokeInstaller`** *(re-homed from the same B1 list, 2026-10-10)* — gated on the signing certificates above; that row's "(Phase 13 entry)" pointed here before an entry existed.
+
 - [ ] **HITL diff view + edit-before-approve** *(re-homed from Phase 4 § Desktop Application WS5-B, 2026-10-10)* — a diff view for file/code changes in the consent popup, and optional editing of the payload before approving. Overlaps [Phase 9.7 § Wave 1](#phase-97--connector-write-enablement-the-acting-roster)'s *HITL consent preview renderer*; build one renderer, not two.
+
 - [ ] **`desktop-v0.1.0` smoke pass** — every section in [`docs/release/manual-smoke-desktop.md`](./release/manual-smoke-desktop.md) green on Windows + both macOS arches + Ubuntu 24.04
+
 - [ ] **`nimbus desktop` CLI shim (optional)** — a thin `packages/cli/src/commands/desktop.ts` command that locates and launches the installed Tauri app, so users can launch the desktop UI from the same CLI surface they use for everything else
+
 - [ ] **Perf surfaces S3 (dashboard first paint) + S5 (HITL popup paint) — renderer instrumentation** — the two desktop perf-bench UX surfaces are stubbed (`renderer instrumentation pending (Tauri perf marks)` in `packages/gateway/src/perf/surfaces/bench-dashboard-first-paint.ts` + `bench-hitl-popup.ts`; both return `[]` → `samples_count=0 → skipped(stub)`, so they gate nothing today). Instrument the Tauri renderer to emit first-paint / popup-paint perf marks (Paint Timing API → a stdout/IPC marker the bench driver reads — mirrors the S4 TUI `[tui] first-frame` marker pattern), implement the two drivers, drop the stubs, and confirm/adjust their `gateClass` (both are provisionally `trend` in `slo-thresholds.ts`; reclassify per whether the implemented driver spawns a process). Thresholds are already pinned (S3 ≤1500 ms ref / ≤7500 ms GHA; S5 ≤200 ms ref / ≤1000 ms GHA). Closing these completes the S1–S11 perf surface set so the reference runner gates the full surface roster. (Deferred here from the perf-strategy workstream because faithful first-paint timing needs the launchable desktop UI this phase delivers.)
+
+
 
 #### Stretch — Channel Reach (does not gate phase completion)
 
+
+
 Native package-manager distribution; gated independently of the desktop tag, may ship as `headless-channel-v0.1.x` after `desktop-v0.1.0` is green.
 
+
+
 - [ ] **Homebrew formula** (macOS / Linux) — `brew install nimbus`; tap maintained alongside the release pipeline
+
 - [ ] **winget package** (Windows) — submitted to the Microsoft community repository; auto-updated on each `v*` tag
+
 - [ ] **Chocolatey package** (Windows) — community-channel package signed with the same Authenticode cert
+
 - [ ] **Snap** (Linux) — strict-confinement Snap published to the Snap Store
+
 - [ ] **Flatpak** (Linux) — published to Flathub; sandbox manifest covers Vault-via-libsecret access
+
 - [ ] **AUR** (Arch Linux) — community-maintained `nimbus-bin` and `nimbus-git` packages
+
 - [ ] **MacPorts** (macOS) — Portfile maintained alongside Homebrew
+
 - [ ] **Nix flake** — `nix run github:nimbus/nimbus#nimbus`; reproducible build outputs
+
+
 
 #### Acceptance Criteria
 
+
+
 - `desktop-v0.1.0` produces `.dmg` (notarized, both arches), `.msi` (Authenticode-signed), `.AppImage` and `.deb` (GPG-detached signatures) as release artifacts.
+
 - A user double-clicking the macOS `.dmg` and the Windows `.msi` from a clean OS install is not blocked by Gatekeeper or SmartScreen.
+
 - The smoke checklist in `manual-smoke-desktop.md` is ✅/⚠ on every row.
+
 - The Tauri auto-update path (Ed25519 signature verify + rollback) round-trips against a live update manifest from `desktop-v0.1.0` to a hypothetical `desktop-v0.1.1`.
 
+
+
 ---
+
+
 
 ### Phase 13.5 — Mobile Companion
 
+
+
 > **Sequencing (2026-06-17 overlay):** **Track 2.** Depends on Phase 11 (mesh addressing) + Phase 17's assembled-brief schema, so it slots after those — *not* freely independent (unlike Phase 13). See [§ Phase 7+ Sequencing Spine](#phase-7-sequencing-spine).
+
+
 
 **Goal:** Solve the on-call engineer's "the agent is on the laptop in my bag" problem by shipping a **passive viewer** mobile app that pairs to the user's own desktop gateway over the existing Phase 11 sovereign-mesh primitive. The mobile app **does not execute the agent locally** — it receives push notifications for HITL consent and assembled briefs, and forwards the user's approve/reject decision back through the mesh. iOS first; Android follows in a v0.2 of the same phase. Discipline: this phase is one platform, one persona (the user already running on-call from their own desktop), one job (receive + decide). Resist scope creep into "agent on phone."
 
+
+
 > **Composes with Phase 11 (Sovereign Mesh):** the laptop ↔ phone link is the existing NaCl-box pairing flow, extended with an opt-in push relay through APNs (Apple Push Notification service). Messages sent over the relay are *already encrypted* end-to-end by the mesh; APNs sees only an encrypted envelope.
+
 >
+
 > **Composes with Phase 17 (The On-Call Copilot):** Phase 17's predict/understand/mitigate/coordinate loop generates the briefs the mobile companion displays. The companion is the **mobile presentation layer** for the Phase 17 agent, not a re-implementation.
+
+
 
 #### Dependencies
 
+
+
 - Phase 4 encrypted LAN remote access (NaCl-box wire format, peer-pairing flow)
+
 - Phase 11 sovereign mesh (peer addressing across networks)
+
 - Phase 17 (or earlier) assembled-brief format — the schema the mobile app renders
+
 - Apple Developer Program enrollment (also a Phase 13 prerequisite)
+
+
 
 #### iOS (v0.1)
 
+
+
 - [ ] **`nimbus-companion` iOS app — passive viewer only** — SwiftUI app, minimum iOS 17. Three screens: (a) **Pairing**, a one-time setup that exchanges X25519 keys with a host gateway using the existing 120-bit base58 pairing code displayed on the host CLI / Tauri UI, (b) **Inbox**, a list of HITL consent requests + assembled briefs received from paired hosts, (c) **Brief Detail**, a read-view of a single brief or HITL request with Approve / Reject buttons. **No query input. No on-device agent. No local index.** Resist the temptation to add either.
+
 - [ ] **APNs push relay (encrypted envelope)** — the host gateway sends a NaCl-box-sealed envelope to APNs targeting the paired device token; APNs forwards the wakeup; the iOS app decrypts the envelope using the locally-stored shared key. APNs sees only the encrypted blob + device token; it cannot read brief contents or HITL action details. **APNs is a wakeup channel, not a data channel** — the device pulls the actual brief over the sovereign-mesh link after wake.
+
 - [ ] **HITL round-trip** — Approve / Reject in the iOS app builds an `agents.hitl.respond` payload, encrypts it with the same shared key, sends it back through the mesh (with APNs as the wakeup if the host is asleep). The host's existing HITL gate is the source of truth — the phone is a remote consent surface, not a separate authorization path.
+
 - [ ] **Multi-host pairing** — a single iOS app can be paired to multiple host gateways (the user's laptop + the user's desktop + a shared on-call machine). Inbox shows the source host on every row; Approve/Reject is per-message routed to the originating host.
+
 - [ ] **Offline behavior** — when the host is unreachable (laptop closed, no network), inbox displays the last-known cached briefs but Approve/Reject is disabled with a clear "host offline" indicator. No queueing — pending HITL gates the action; if the user wants the action they re-trigger from the desktop when reachable.
+
 - [ ] **App Store distribution** — submitted to the App Store under the same Apple Developer Program enrollment that funds Phase 13's macOS notarization. Open-source under AGPL alongside the rest of the gateway; the App Store binary is a distribution channel, not a closed fork.
+
 - [ ] **Privacy + tracking posture** — explicit "no analytics, no third-party SDKs" stance in the App Store privacy nutrition label. The only network calls are APNs (Apple) and the paired hosts (the user's own machines). Confirmed in app review.
+
+
 
 #### Companion-Aware Gateway Surface
 
+
+
 - [ ] **`nimbus companion pair` CLI** — generates the 120-bit base58 pairing code, displays it for the user to type into the iOS app, opens a 5-minute pairing window using the existing LAN pairing flow.
+
 - [ ] **`nimbus companion list-devices`** — shows paired devices with last-seen time and last-received-message time.
+
 - [ ] **`nimbus companion revoke-device <id>`** — removes a device's stored shared key; sends a final "you've been unpaired" message; the device's inbox stops receiving on next poll.
+
 - [ ] **HITL push routing config** — `[companion].push_categories = ["hitl", "incident", "agent-brief"]` per-category opt-in; e.g., a user can opt into HITL pushes but not into morning briefings.
+
 - [ ] **Tauri Companion settings panel** — list paired devices, revoke, regenerate pairing code, configure push categories.
+
+
 
 #### Stretch (does not gate phase completion)
 
+
+
 - [ ] **Android companion v0.2** — Kotlin / Jetpack Compose app, same surface shape, Firebase Cloud Messaging as the wakeup relay (envelope encryption identical to APNs; FCM sees only the encrypted blob).
+
 - [ ] **Voice approval on iOS** — Siri shortcut + voice intent: "Hey Siri, ask Nimbus to approve the deploy" round-trips an approval. Stretch because the Siri intent UX is a non-trivial design surface and the security review needs more work.
+
 - [ ] **Apple Watch companion** — receive + Approve / Reject from a watch face. Builds on top of the iOS app's pairing + key store. Stretch — watchOS adds a per-platform surface for marginal incremental value.
+
 - [ ] **Voice-only ambient mode** — a session mode optimized for hands-free use (walks, driving, cooking, the gym). Pulls the existing Phase 4 STT/TTS primitives onto the iOS app via the sovereign-mesh link: the user speaks a query on the phone, audio is streamed encrypted to the desktop Gateway where Whisper.cpp transcribes locally (audio never reaches Apple's servers), agent runs, TTS response is streamed back. Conversations stay continuous via a configurable wake-phrase ("Hey Nimbus") and silence-detection. Briefs are auto-shortened to "speakable" length (configurable; default 3 sentences for ambient-mode delivery). **Discipline:** no on-device STT/TTS in v0 — the mesh-to-Whisper round-trip is the privacy story; on-device falls back to the cloud sandbox iOS provides, which is the exact compromise this phase exists to avoid.
+
+
 
 #### Acceptance Criteria
 
+
+
 - A fresh iOS device pairs with a fresh gateway in under 60 seconds using the `nimbus companion pair` flow, exchanging X25519 keys via the existing pairing primitive with no third-party broker.
+
 - An HITL consent request fired on the laptop arrives as an iOS push within 5 seconds when both devices are online; the approve / reject decision arrives back at the laptop within 3 seconds of the user's tap; the host's HITL gate sees the decision as if the user had clicked Approve in the Tauri popup.
+
 - The APNs envelope never carries plaintext brief content or HITL action details — verified by inspecting the APNs payload in transit during an integration test against Apple's sandbox APNs environment.
+
 - The App Store privacy nutrition label correctly reports "no analytics, no third-party SDKs" and the App Store reviewer approves on first submission.
+
 - A revoked device's inbox stops receiving messages within 60 seconds; the host gateway logs the revocation in the audit chain.
+
 - An offline-host scenario degrades gracefully: the iOS app displays cached briefs read-only and disables Approve / Reject with a clear "host offline" message; no spurious approvals or queued-but-lost decisions.
 
+
+
 ---
+
+
 
 ### Phase 14 — Agent Evolution / AI v2
 
+
+
 > **Sequencing (2026-06-17 overlay):** **Pulled forward to slot S2** (Track 1) — the biggest 2026-model lever. Local computer-use (screenshots never leave the machine), sandboxed code execution, and runtime tool-gen are high-time-to-value *and* unfakeable moat. Joined in S2 by the [NEW] overnight local sub-agent fleet (from Phase 27) + BYO-frontier-model routing. See [§ Phase 7+ Sequencing Spine](#phase-7-sequencing-spine).
+
+
 
 **Goal:** Expand Nimbus's intrinsic agent capabilities along four dimensions — multimodal I/O, isolated code execution, computer use, and runtime tool generation. Highest risk-blast-radius phase; structured Core / Stretch so the phase remains shippable even if the most research-adjacent capabilities slip.
 
+
+
 > **Composes with Phase 10 (Autonomous Agent):** Phase 10's standing approvals are explicitly **not** extended to Phase 14 capabilities by default. The autonomous agent's incident correlation engine can however invoke Phase 14 capabilities under HITL when the user explicitly approves a multi-step remediation. Phase 14 capabilities can be disabled at the org level via Phase 12's policy-as-code.
+
+
 
 #### Dependencies
 
+
+
 - Phase 4 LLM router + multi-agent orchestration
+
 - Phase 4 Plugin API v1
+
 - Phase 10 standing approvals (Phase 14 explicitly **opts out**; the dependency confirms the gate exists, not that it extends)
+
 - Phase 12 Enterprise policy-as-code (org-level disable mechanism)
+
 - All prior platform phases stable — this phase inherits, never overrides
+
+
 
 #### Core — Multimodal I/O
 
+
+
 - [ ] **Image input — vision-model OCR + scene understanding** — indexed screenshots, design-file thumbnails, whiteboard photos passed to a local or remote VLM (Pixtral, Llama 3.2 Vision, Claude Sonnet / Opus, GPT-4o); structured caption + entity extraction stored as `image_understanding` rows. **Partly shipped in [S2](#spine-s2) (noted 2026-10-10):** captions ship — a local Ollama-served VLM since 2026-09-03 (multimodal PR 2) and a per-artifact granted remote describe (`anthropic`/`openai`/`gemini`, I37) since 2026-09-05 (PR 4); entity extraction and a dedicated OCR engine do not, so the row stays open
+
 - [ ] **Video input — local STT + frame captioning** — Loom / Vidyard / meeting recordings indexed via `whisper-cli` STT + periodic frame caption; `video_understanding` rows with transcript, frame captions, speaker diarization. **Partly shipped in [S2](#spine-s2) (noted 2026-10-10):** local `whisper-cli` transcripts (2026-09-02) plus a small number of uniformly sampled frame captions (2026-09-03) for files under `[[filesystem.roots]]` and Google Drive / OneDrive / Google Photos artifacts; speaker diarization does not ship (`whisper-cli` cannot do it), so the row stays open
+
 - [ ] **Audio input beyond Phase 4 voice** — long-form transcription with diarization, summary extraction, action-item identification
+
 - [ ] **Image output via local SD/Flux** — `nimbus diagram <description>` produces a draft diagram via locally-installed Stable Diffusion or Flux; HITL on save-to-file; opt-in
+
 - [ ] **Zoom recording frame captions** *(re-homed from the [S2 record](#spine-s2), 2026-10-10)* — `connectors/zoom-sync.ts` indexes only a meeting's `TRANSCRIPT` file, so no video/audio recording item exists for the media pass to caption; needs a new indexing path for the recording file plus a cloud-fetch route for it.
+
 - [ ] **Multimodal MCP tools** — `searchLocalIndexImages`, `summarizeVideo`, `extractActionItemsFromAudio`; wrapped via `wrapToolOutput` per invariant `I11`
+
+
 
 #### Core — Code Execution Sandbox
 
+
+
 - [ ] **Local sandbox runner** — Bun + Deno (`--no-net` by default) inside `bwrap` (Linux) / `sandbox-exec` (macOS) / AppContainer (Windows); per-execution capability flags (`--allow-net`, `--allow-fs <path>`, `--allow-env <var>`). Bun shipped 2026-08-23 (`nimbus exec`, I33); Deno not.
+
 - [ ] **Optional remote sandbox adapters** — pluggable adapters for E2B, Modal, Daytona, fly.io machines; enabled only via explicit `[code_execution.remote_sandbox]` config; `enforce_air_gap = true` blocks remote sandboxes regardless of config
+
 - [x] **HITL on every execution by default** — consent dialog shows code body, declared capability flags, expected runtime budget; **standing approvals explicitly NOT supported** in this phase. Shipped 2026-08-23 (`exec/exec-gate.ts`, I33): the owner approves the verbatim body, the resolved capability set and the wall-clock budget before anything spawns.
+
 - [ ] **Output capture and feed-back** — stdout/stderr/exit-code/runtime returned to the LLM via `wrapToolOutput`; binary outputs recorded in audit log. Not shipped as written (2026-10-10): `nimbus exec` is CLI/owner-only, so output returns to the owner and is digested in the `code.execute` audit row; feeding it to the LLM would be model access to execution — see the [S4 carry-in](#carried-into-s4) for model access to generated tools and computer-use.
+
 - [ ] **`nimbus exec --interactive`** — REPL mode where each agent-emitted code block individually requires Enter-to-approve
+
+
 
 #### Stretch — Computer Use (browser / terminal / screen)
 
+
+
 *Highest-risk capability. Per-action HITL by default; sandboxed runtimes; explicit per-session opt-in.* Design spec: `2026-08-30-s2-computer-use-design.md` — invariant **I35**, static **D26**, schema **V57**. **Status:** the browser lane's HITL gate, structural classifier, session envelope, taint latch, IPC and audit trail shipped 2026-08-30; the **raw-CDP driver** landed 2026-08-31, so the browser lane is reachable by a user who opts in — `[computer_use] enabled = true` **and** `allowed_lanes = ["browser"]`, both, and both default off — on a machine with Chrome, Chromium or Edge installed. The **`terminal` lane shipped 2026-09-01** (`nimbus computer terminal --cwd <dir>`, `allowed_lanes = ["terminal"]`): a sandboxed, line-oriented shell with no network at all, no egress class, and whole-line owner consent before any byte reaches it. It is line-oriented ONLY — `vi`, `less`, `top` and `fzf` do not work, the deliberate cost of § 4.3.1's buffering, and the absence of a tty is what enforces it — and a single approved line can still do arbitrary damage, because the gate proves the owner SAW the command and never that they understood it. **The `screen` lane remains unimplemented, and is deliberately last:** it has no structural classifier available, so its consent degrades to a human reading a screenshot and deciding whether a coordinate is safe — the weakest form of consent in the product — and it is the lane that costs `nimbus prove` its verdict for any window containing one of its actions. Sequencing put it last precisely so it could be dropped without unpicking anything. See [§ Spine S2](#spine-s2) for what the browser lane does and does not confine, including its recorded deviation from § 3.5; it is not restated here.
 
+
+
 - [x] **Browser automation** — screenshot-grounded; sandboxed Chromium profile with no shared cookies / no shared history. **Gate shipped 2026-08-30, raw-CDP driver 2026-08-31** — a user who opts in (`enabled = true` AND `allowed_lanes = ["browser"]`, both default off) on a machine with Chrome, Chromium or Edge can now open a session. Driven over raw CDP, not Playwright (see Status above).
+
 - [x] **Terminal automation** (2026-09-01) — a sandboxed, **line-oriented** shell: no byte reaches it before the owner approves the COMPLETE line, control characters and bidirectional/zero-width characters are refused rather than buffered, and the shell has no network at all including loopback. No access to the user's shell history or environment — `extensionProcessEnv()` plus a history- and rc-suppressing overlay, and `cmd /D` to suppress the AutoRun registry key. Ships as a **pipe-backed shell rather than a PTY**, a recorded deviation from spec § 3.5: a native PTY module would not survive `bun build --compile`, and the absence of a tty is what enforces the line-oriented bound at the OS level — `vi`, `less`, `top` and `fzf` refuse to start on their own. Full-screen TUIs therefore do not work, which is the deliberate cost of § 4.3.1's buffering.
+
 - [ ] **Screen capture + click** — desktop OS-level click + keystroke; sandboxed application target only (cannot drive Nimbus UI itself, cannot click outside target window). Not started.
+
 - [ ] **PowerShell terminal lane** *(re-homed from the [S2 record](#spine-s2), 2026-10-10)* — the terminal lane's shell registry ships `sh` and `cmd` only. Adding `pwsh` needs its four-location `$PROFILE` chain suppressed, PSReadLine's ANSI output and input-line rewriting handled, and host-width-dependent object formatting dealt with on a lane with no tty. Additive: one registry entry plus its own env overlay, no gate change.
+
 - [ ] **Action-stream audit** — every emitted action recorded with screenshot before/after for screen capture, DOM snapshot before/after for browser; supports post-incident replay. **Narrowed by design, not merely unshipped:** screenshot pixels are never written to disk on any lane (BLAKE3 digest only), so browser-lane replay is DOM-based (`cu_action.dom_before`/`dom_after`, V57) and the screen lane's replay — once it ships — will be a digest-and-coordinate stream rather than an image record.
+
+
 
 #### Stretch — Tool Generation & Fine-Tuning
 
+
+
 - [x] **Runtime tool generation** — agent writes its own MCP tool stub; runs `@nimbus-dev/sdk` contract test; if green, registers ephemerally for the session only; HITL per tool registration. **Shipped in a different shape (2026-09-09/10):** OWNER-initiated via `nimbus tool create`, where a model drafts the body and input schema and the owner approves the verbatim artifact (I39); there is no SDK contract-test step — a validation ladder and a pre-consent confinement probe run instead. Agent-initiated proposal did not ship and is a recorded deferral — see its own row below (2026-10-10).
+
 - [x] **Tool persistence** — `nimbus tool save <session-tool-id>` promotes ephemeral tool to a named installed extension after manual review; standard SHA-256-verified extension manifest path. **Shipped in a different shape (2026-09-10):** `nimbus tool save` persists a signed artifact verified by a Vault-key Ed25519 signature on every load and spawn (I40, schema V61), not an extension-manifest hash.
+
 - [ ] **Agent-initiated tool proposal** *(re-homed from the [S2 record](#spine-s2), 2026-10-10)* — the model proposes a network-reaching tool mid-conversation (`allow_agent_initiated` + `allowed_hosts`, a mid-turn consent pause, an approval prompt disclosing that the agent initiated it). Every toolgen capability that shipped is owner-initiated. Needs its own consent-UX design pass, and follows [S4](#carried-into-s4)'s model access to generated tools, without which a proposed tool has no model-facing caller.
+
 - [ ] **Local instruction fine-tuning** — full-precision instruction-tune of small models (3B–7B) on tool-use traces + writing samples; output as GGUF in local model directory
+
 - [ ] **Tool-use trace dataset builder** — `nimbus dataset build --from-audit --kind tool-use` produces JSONL ready for the fine-tuner; user reviews + edits before train start
+
 - [ ] **Adapter rollback safety** — every fine-tune output is rollback-safe; previous adapter retained until explicit promotion
+
+
 
 #### Org-Level Lockoff
 
+
+
 - [x] **Capability disable via Enterprise policy** — `nimbus.policy.toml` honours `[policy.capabilities.ai_v2]` block. **Seven** names, and the enumeration is derived from `AI_V2_CAPABILITIES` (`packages/gateway/src/policy/types.ts`), which is the SSoT — nothing audits this list, so re-derive it rather than bumping the count: `multimodal_input = false`, `code_execution = false`, `computer_use = false`, `tool_generation = false`, `local_finetuning = false`, `agent_fleet = false` (added 2026-09-07 with the overnight fleet), `user_mcp_model_access = false` (added 2026-10-09: no user MCP server registered with `--model` is offered to the engine agent — and, since 2026-10-17, no extension approved with `--model` either; enforced at the tool source, fail-closed when the policy accessor is absent; the owner's own `nimbus connector call`/`tools` is unaffected). Each false value disables the corresponding capability, read at gateway startup for most names; `user_mcp_model_access` is instead read on every turn, so it takes effect from the next turn (a turn already in flight keeps the tool list it built); required by regulated industries. An unrecognised name in that block is ignored rather than carried, so a typo cannot masquerade as a lockoff nobody enforces.
+
+
 
 #### Acceptance Criteria — Core (gates phase)
 
+
+
 - A 5-minute Loom recording indexed via local STT + frame captioning produces a `video_understanding` row with non-empty transcript and at least one frame caption; verified e2e on Windows + macOS + Linux
+
 - `nimbus ask "what did I demo in the recording from yesterday?"` returns a coherent answer derived from the `video_understanding` row alone
+
 - `nimbus exec` runs an agent-written 5-line Python script in the local sandbox with `--allow-fs /tmp` capability; HITL fires before execution; output captured; audit log records code body, capability grant, exit code, stdout/stderr digest
+
 - A code execution attempting to write outside `/tmp` fails closed; the agent is told the operation was denied
+
 - `enforce_air_gap = true` blocks the remote sandbox adapter even when configured; verified by integration test
+
 - Privacy contract: no image / video / audio body data leaves the machine without explicit user opt-in for that artifact
+
+
 
 #### Acceptance Criteria — Stretch (does not gate phase)
 
+
+
 - Browser automation completes a 3-step task (login → search → screenshot) against a sandboxed Chromium profile with HITL on every action; verified manually on Windows + macOS + Linux
+
 - An agent-generated MCP tool passes the contract test and registers ephemerally for the session; the tool is unavailable in a fresh session unless promoted via `nimbus tool save`
+
 - A local instruction fine-tune of a 3B model on a 1k-row tool-use dataset completes in under 30 minutes on a mid-range GPU; resulting GGUF appears in `llm.listModels`; rollback works without restart
+
 - Computer use, code execution, and tool generation share a single audit-log fingerprint format that lets `nimbus audit replay <session-id>` deterministically reconstruct what the agent did
 
+
+
 ---
+
+
 
 ### Phase 15 — Cross-Organizational Federation (The Global Mesh)
 
+
+
 **Goal:** Extend Nimbus's federation primitive across organisational boundaries — vendors, partner companies, contractors — without surrendering local sovereignty and without a central broker.
+
+
 
 > **Composes with Phase 6 (Team):** Phase 15 reuses Phase 6's NaCl-box federation channel and namespace primitive; the new contribution is a **lease envelope** that wraps a Phase 6 namespace with cryptographic time-bound + scope + revocation semantics. Phase 6 is intra-org; Phase 15 is the inter-org case.
 
+
+
 #### Dependencies
 
+
+
 - Phase 6 Nimbus-to-Nimbus federation (NaCl-box channel, scoped namespaces, RBAC enforcement at the federation protocol layer)
+
 - Phase 12 audit log shipping (enterprise leases must produce shippable audit trails per lease)
+
 - Phase 11 Decentralized Identifiers (DIDs are the natural identity primitive for cross-org peer authentication; not strictly required but recommended)
+
+
 
 #### Core — B2B Index Leasing
 
+
+
 - [ ] **Lease envelope protocol** — cryptographically signed wrapper around a Phase 6 namespace export that adds: scope (item types, services), expiry (wall-clock + max-age), revocation key, lessee identity (DID or X.509). Wire format extends the existing NaCl-box framing; reuses the federation channel.
+
 - [ ] **Lease issuance + signing** — `nimbus lease issue --namespace <name> --to <peer> --scope <filter> --expires <duration>`; issuer signs with their X25519 (or DID-backed) key; recipient verifies signature before the leased namespace becomes queryable on their machine.
+
 - [ ] **Lease revocation** — `nimbus lease revoke <lease-id>` flips a revocation bit broadcast over the same federation channel; lessee's Gateway purges leased rows from its local index on receipt; revocation is signed and audit-logged.
+
 - [ ] **Lease audit trail** — every issue, query, and revocation appended to the BLAKE3-chained audit log on both sides; in enterprise deployments, the audit ships via the Phase 12 audit-log shipping pipeline so legal can verify lease compliance independently.
+
 - [ ] **`nimbus lease list / show`** — local CLI surface; shows leases issued, leases received, expiry / revocation state.
+
+
 
 #### Acceptance Criteria
 
+
+
 - A lease issued from org A to a contractor at org B is queryable on the contractor's machine within one federation sync cycle; the lease envelope verifies against org A's published key before any leased row is written locally.
+
 - A revocation issued from org A purges all leased rows on org B's machine within one sync cycle; a subsequent query for any leased item returns empty; revocation appears in both audit logs with matching signatures.
+
 - A lease that expires (wall-clock past `expires_at`) is treated as revoked on both sides without an explicit revocation event; expiry is enforced locally without a central broker.
+
 - Privacy contract: a leased namespace is strictly a Phase 6 namespace-export; no data outside the lease scope is ever queryable by the lessee; verified by an integration test that issues a narrow lease and asserts the lessee's `index.query` calls outside scope return empty.
 
+
+
 ---
+
+
 
 ### Phase 16 — The Platform Layer
 
+
+
 **Goal:** Turn Nimbus from a personal agent each engineer configures individually into a **team operating system** a platform engineer curates **once** and rolls out to the whole team — connectors, automations, conventions, and golden paths reconciled to every Gateway, plus a lead's-eye view of team health no dashboard shows. No relay server, no surveillance, no surrender of local sovereignty.
+
+
 
 > **Composes-with Phase 6** (federation channel, Team Vault, org policy engine, shared namespaces) and **Phase 7** (service catalog, automation-template library, ownership graph). Phase 16 is the *distribution + curation* layer those phases lacked.
 
+
+
 #### Dependencies
 
+
+
 - Phase 6 federation + Team Vault + org policy engine + shared namespaces
+
 - Phase 7 service catalog + automation-template library + ownership graph
+
 - Phase 4 multi-agent + LLM router (the `onboard` / `risk` built-ins)
+
 - Phase 10 scheduled workflows (the ROI report + huddle); standing approvals (W4 templates)
+
 - Phase 3 relationship graph + tamper-evident audit log (the W3 lead-intelligence built-ins run on these alone — see the W3 note)
+
+
 
 #### Non-negotiable guardrails
 
+
+
 - Team config repo holds **references to vault keys, never secrets**; the Gateway scans the baseline on every apply/reconcile and refuses literal secrets (defense in depth beyond the team's CI).
+
 - The team baseline is **Ed25519-signed** (reuses the `I16` machinery); `nimbus apply`/reconcile verify against the team key (via the Phase 6 Team Vault trust anchor) before applying — a compromised git host cannot push malicious config to the fleet.
+
 - `nimbus apply` is HITL-gated with a preview. **Reconcile boundary:** unattended reconcile applies only enforcement policy + read-only config; anything adding a write-capable surface (write-action watcher, workflow, skill pack, standing-approval template) requires a preview even on reconcile.
+
 - **New invariant proposal — team skill packs cannot loosen HITL** (they may tighten, never remove an action from `HITL_REQUIRED` or auto-approve; rejected at load if they try). Lands as a full invariant triple when W2 is built.
+
 - Radar / ROI / fleet views are **aggregate, risk-framed, opt-in** — they name services/areas at risk and config/health state, never rank or surveil individuals.
+
 - **Offline is normal:** a Gateway runs fully on its last-applied baseline; a standing rule that expires offline fails safe to HITL, never locking the agent out.
+
+
 
 #### Wave 1 — Fleet Foundation *(distribution substrate)*
 
+
+
 - [ ] **`nimbus.team.toml` + team config repo** — declarative, version-controlled team baseline (connectors as vault-key references, sync intervals/depths, watchers, workflows, automation templates, dashboard presets, model-policy defaults, policy pointer).
+
 - [ ] **Signed team baseline** — `nimbus team sign`; verified on every apply/reconcile; unsigned/mis-signed refused.
+
 - [ ] **`nimbus apply` + reconciliation loop** — verify signature → diff → preview → HITL apply; idempotent; reconcile boundary (above) enforced.
+
 - [ ] **`nimbus team join <repo>`** — one-command onboarding: clone → apply config → auth only the connectors needing per-user identity (Team-Vault service accounts need none); creds land in the local/Team Vault, never the repo.
+
 - [ ] **`nimbus team leave`** — clean detach: stop reconcile, revoke federation grants, remove team-applied content; auditable.
+
 - [ ] **Layered precedence** — `team baseline → profile → user overrides`, org policy as a hard ceiling; `nimbus config explain <key>`.
+
 - [ ] **Secrets discipline (defense in depth)** — team CI contract test **and** Gateway-side payload scan refusing literal secrets.
+
 - [ ] **Team-server tier** — `nimbus serve --team`: always-on team Gateway (shared namespaces + Team Vault anchor + reconcile source) without enterprise Helm; the on-ramp to Phase 12.
+
 - [ ] **Overlay-mesh federation** — federation over a user-run WireGuard/Tailscale overlay, not just same-LAN mDNS; **no Nimbus relay**.
+
 - [ ] **Fleet health view** — `nimbus team fleet`: config version + reconcile/drift state + reachability across the team (no index content; aggregate; opt-in).
+
 - [ ] **Staged / canary config rollout** + **fleet rollback** (`nimbus team rollback <version>`, atomic over the whole baseline — skill packs/watchers/workflows/config pinned by version).
+
+
 
 #### Wave 2 — Paved Roads *(curated agent + golden paths)*
 
+
+
 - [ ] **Team skill packs** — versioned, team-authored packs shaping the agent's reasoning (incident response, PR-review standards, deploy checklist, house rules); distributed via the W1 repo.
+
 - [ ] **🔒 Skill-pack HITL invariant** — a pack can tighten but never loosen the HITL gate; rejected at load if it tries.
+
 - [ ] **Golden-path scaffolding** — `nimbus scaffold service <name>` (**HITL**): reads the team IDP + skill packs, generates the team-standard skeleton (repo layout, required checks, ownership + on-call, dashboard), files the catalog entry.
+
 - [ ] **New-hire onboarding agent** — `nimbus onboard <service|team>`: read-only brief (architecture, owners, recent incidents, golden path, who-to-ask); emits `agents.onboard.briefReady`.
+
 - [ ] **Convention-drift detector** — flags services diverging from the golden path; feeds W3.
+
 - [ ] **"Ask the team" federated Q&A** — `nimbus ask --team`: scope-permissioned fan-out across teammates' indexes with provenance. **Highest-risk item; ships experimental, opt-in, behind a dedicated security/privacy sub-spec** (query-text minimization, peer-side logging policy, cross-federation injection via `I11`, fan-out cap).
+
 - [ ] **Team-standard PR-review agent** — Phase 10 pre-review driven by the team skill-pack standards.
+
 - [ ] **Runbook-as-agent execution** — team-distributed runbooks, **HITL per step**.
+
 - [ ] **Skill-pack feedback loop** — engineers flag unhelpful packs; routes to the lead dashboard (W3).
+
+
 
 #### Wave 3 — The Lead's-Eye View *(team intelligence; can parallel W2)*
 
+
+
 > The bus-factor radar, toil heatmap (per-user mode), and onboarding agent run on a **single Gateway's already-indexed data** (Phase 3 graph + audit log) — the lightest deps in the phase; they could be pulled forward as standalone built-ins (even early), with federation only enriching them.
 
+
+
 - [ ] **Knowledge-risk / bus-factor radar** — `nimbus risk [--team|--service]`: single-points-of-knowledge, review bottlenecks (sole reviewer OOO — joins on-call/calendar + review history), undocumented-critical surfaces. **Names services at risk, never ranks individuals**; opt-in; privacy contract test.
+
 - [ ] **Team value/ROI report** — `nimbus team report [--since 7d]`: aggregate (incidents surfaced, time-to-context, HITL actions, stale flags caught, post-mortems drafted, onboarding briefs) — **no per-engineer attribution**.
+
 - [ ] **Toil heatmap** — mines the audit log for repeated action types / workflows / incident patterns → what to automate next; per-user mode (single index) + team-aggregate (counts of action types only, opt-in, raw logs never leave a machine); `nimbus toil flag` for explicit signals.
+
 - [ ] **Onboarding-readiness score per service** + **golden-path compliance scorecard** (feeds Phase 7 scorecards).
+
 - [ ] **Team huddle briefing** (formalizes Phase 6's stub) + **lead dashboard** (radar + ROI + toil + drift/compliance + skill-pack feedback queue).
+
+
 
 #### Wave 4 — Team Automation Governance
 
+
+
 - [ ] **Team standing-approval templates** — lead-curated, distributed via W1; a template **proposes**, each engineer must confirm adoption (never force-granted); inherits Phase 10 scope/expiry/ceiling/confidence constraints.
+
 - [ ] **"What changed in our Nimbus" digest** — auto-changelog when the team baseline changes.
+
+
 
 #### Acceptance Criteria
 
+
+
 - `nimbus team join <repo>` applies all team config in under 2 minutes (zero secrets from the repo); per-user OAuth/PAT is the only remaining step; a missing/invalid baseline signature is refused on every machine.
+
 - A baseline edit reconciles to a subscribed Gateway within one cycle after an approved preview; a policy-violating connector is refused fleet-wide; a canary rollout updates only the canary subset; `nimbus team rollback` reverts atomically.
+
 - A skill pack shapes agent behavior on every subscribed machine; a pack attempting to auto-approve a HITL action is rejected at load.
+
 - `nimbus risk --team` flags a bus-factor-1 service + a review bottleneck in <15s, naming services not individuals; `nimbus team report` produces an aggregate report with zero per-engineer attribution.
 
+
+
 ---
+
+
 
 ### Phase 17 — The On-Call Copilot
 
+
+
 **Goal:** The individual on-call engineer's real-time copilot — **predict → understand → mitigate → coordinate.** Distinct from Phase 10's *autonomous* SRE loop (standing automation) and Phase 8's *security* `nimbus incident` (attacker-shaped); this is interactive, HITL, incident-time. The roadmap already does reactive *assembly* well (Phase 10); Phase 17 adds the proactive, mitigation, coordination, and deep-first-response layers.
+
+
 
 > **Composes-with Phase 16** → **Team Incident Command**: the copilot pulls in who knows the code (bus-factor radar), who's on call (schedule), runs the team channel (scribe), and drives the team's runbooks (skill packs) — collaborative incident command with no war-room.
 
+
+
 #### Dependencies
 
+
+
 - Phase 10 incident correlation engine + post-mortem drafter + on-call schedule + anomaly baseline
+
 - Phase 4 multi-agent (deep parallel investigation) + LLM router
+
 - Phase 3 relationship graph (cascade root-cause) + tamper-evident audit log (replay)
+
 - Phase 11 mobile + push transport; Phase 5 PagerDuty/CI/deploy connectors; Phase 16 skill-pack runbooks + bus-factor radar
+
+
 
 #### Non-negotiable guardrails
 
+
+
 - Every mitigation is HITL with a **dry-run + blast-radius preview**; no auto-remediation (that's Phase 10 standing approvals, opt-in, separate).
+
 - **Reversibility is classified, never assumed** (reversible / irreversible / unknown), surfaced prominently; the copilot never claims "reversible" it can't prove.
+
 - **Accountable:** `nimbus audit replay <incident-id>` reconstructs what the copilot saw + did. **Engineer stays in command:** disengage to advisory-only at any point.
+
 - Local-first (logs/metrics/traces correlated locally; incident data never leaves). Detection ≠ action (radar/advisor surface, never act). Scribe drafts, never sends without consent.
+
+
 
 #### Wave 1 — Predict & Prevent
 
+
+
 - [ ] **Silent-degradation radar** — detects the *absence* of expected events + sub-threshold drift; baselines from explicit `nimbus.team.toml` declarations (primary) + learned patterns (secondary). Detection only.
+
 - [ ] **Deploy-risk advisor** — an enrichment of Phase 5 `deploy preflight` (system state × change velocity × on-call coverage × time-of-week → risk score + the why).
+
 - [ ] **Anomaly → proactive heads-up** — Phase 10 anomaly surfaced to the on-call engineer ("this looks about to page"), not a silent log.
+
+
 
 #### Wave 2 — Page → Instant Understanding
 
+
+
 - [x] **Pushed incident brief** — **SHIPPED (PR 1 to 3 of 3, 2026-10-02 / 2026-10-03 / 2026-10-04): the local half, the ChatOps headline and the desktop panel; approve-from-push remains.** `[oncall.push]` (default off) assembles the `nimbus oncall` brief once per active P1 incident assigned to you after a PagerDuty sync, stores it (schema V64), and emits an `oncall.briefPushed` gateway event; read via `nimbus oncall pushed`. The OS notification was attempted but dropped until 2026-10-10, when pre-S3 item E shipped real toasts: a push now raises one (at most 3, newest first, then one summary), recorded `skipped` when `[notifications]` is off or no backend is available; `nimbus tail --filter oncall` (the event) and `nimbus oncall pushed` remain the durable surfaces. No synthesis, no model. PR 2 posts a three-line escaped headline (at most 3, newest first, then one summary) to the notify channels of `[oncall.push] chatops_namespace`, ledgered as `chatops.pushedBrief`; headline only. PR 3 adds the desktop On-call page (the stored markdown verbatim as preformatted text, live updates, no retry button; `ALLOWED_METHODS` 105 → 107). **Not shipped:** cascade ranking, and approve-from-push below. Detail: [`architecture.md`](./architecture.md#on-call-pushed-brief-oncall-push-nimbus-oncall-pushed). Original row — assembled brief pushed to where the engineer is (terminal/Slack/mobile) the instant it fires. Approve-from-push was split into its own row below on 2026-10-10.
+
 - [ ] **Approve-from-push** — approve a reversible, high-confidence mitigation from the pushed brief via Phase 11 biometric/secure-enclave-signed HITL. Split out of *Pushed incident brief* on 2026-10-10; not started.
+
 - [ ] **Deep automated investigation** — multi-agent fan-out: correlates logs/metrics/traces, snapshots dashboards, diffs the deploy. **Cost discipline:** pushes query computation down to the backend, pulls only correlated results (no raw firehose).
+
 - [ ] **Cascade root-cause ranking** — ranks root vs. downstream via the dependency graph + timing when many alerts fire.
+
+
 
 #### Wave 3 — Mitigate with Confidence
 
+
+
 - [ ] **Confidence + evidence + dry-run remediation** — confidence score + cited evidence + blast-radius preview + reversibility classification; HITL.
+
 - [ ] **Live runbook driving** — executes the team's Phase 16 skill-pack runbook step-by-step, HITL per step.
+
 - [ ] **One-tap rollback** (blast-radius preview inline) + **undo the copilot's own action** (one keystroke where the action class supports it; audit-logged).
+
+
 
 #### Wave 4 — Coordinate & Close
 
+
+
 - [ ] **Live incident scribe + comms** — maintains the timeline, drafts stakeholder/status-page updates (**HITL to send**), keeps the channel current; tone/templates from Phase 16 skill packs.
+
 - [ ] **On-call handoff brief** — `nimbus oncall handoff`: shift events, open/smoldering items, watch-list.
+
 - [ ] **Auto post-mortem** — composes Phase 10's draft from the richer incident record; HITL-gated push.
+
+
 
 #### Acceptance Criteria
 
+
+
 - On a seeded multi-alert cascade, the pushed brief names the single root and marks the rest downstream in <15s, delivered without a query (measured mean-time-to-context).
+
 - For a seeded bad-deploy incident, the copilot proposes a rollback with confidence + cited evidence + dry-run blast radius + reversibility label; approving executes through the HITL gate (action + preview in the audit chain); `nimbus audit replay <id>` reconstructs the steps deterministically.
+
 - A mitigation that makes things worse can be undone in one keystroke (where reversible); irreversible actions are flagged before approval.
+
 - `nimbus oncall handoff` returns a shift brief in <15s, zero HITL.
 
+
+
 ---
+
+
 
 ### Phase 18 — Vertical Personas
 
+
+
 **Goal:** Lift Nimbus out of pure dev-tool framing by shipping a tight set of **persona-targeted built-in agents** that turn the existing indexed data into category-defining experiences for audiences with high willingness to pay and high evangelism potential. Each persona is built **only on already-indexed data** — no new connector categories required. The bet: Nimbus is uniquely positioned to serve narrow audiences cloud agents can't (because the data is private, regulated, or low-volume per-customer); each persona becomes a viral wedge into that audience. Discipline: this phase is **read-only built-in agents**, not new feature areas — every persona is a Markdown brief over data already in the index.
 
+
+
 > **Composes with Phase 5 connectors:** every persona's data sources are already-shipped Phase 5 connectors. Solo founder reads Stripe + Mercury + Intercom; OSS maintainer reads GitHub + Slack/Discord + Linear; indie creator reads Stripe + indexed analytics exports; academic reads Zotero + arXiv. **No new mandatory connectors gate this phase.**
+
 >
+
 > **Composes with Phase 9 (Agent Honesty Surfaces):** every persona agent is subject to the same calibration audit / bias diagnostic / refusal log primitives. Niche audience does not mean reduced rigor.
+
+
 
 #### Dependencies
 
+
+
 - Phase 4 multi-agent orchestration + LLM router + Plugin API v1
+
 - Phase 5 Tier-1 connectors landed (Stripe, Mercury, Intercom, Zendesk, Greenhouse, Lever — already shipped; remaining tiers in flight)
+
 - Phase 9 Wave 5 eval framework (each persona agent ships with `evals/*.yaml` and is gated by it)
+
 - Phase 9.5 marketplace registry (long-tail personas land as community extensions; first-party set bounded)
+
+
 
 #### Persona Briefs (read-only built-in agents)
 
+
+
 - [ ] **`nimbus founder` — solo-founder dashboard** — parallel sub-agents over Stripe (MRR / ARR / churn / top customers), Mercury (runway / burn rate / inflows), Intercom + Zendesk (top customer questions this week), Calendar (sales-call prep for the next 7 days), GitHub (this week's commits-to-features attribution). Output is a Markdown brief structured as: Money, People, Product, Calendar. Read-only; no HITL. **Composes with Stripe + Mercury connectors already shipped.** Daily watcher variant pushes the brief on the user's configured morning schedule. Cloud agents structurally can't do this — they don't have read access to Stripe + Mercury + Intercom + Calendar in one place under any reasonable enterprise contract.
+
 - [ ] **`nimbus maintainer` — open-source maintainer brief** — for OSS maintainers running Nimbus against their own project: parallel sub-agents over GitHub (new issues + pattern-match against historical bug clusters via the relationship graph, "this is a duplicate of #1234" detection, PR reviewer recommendations via the people graph, neglected PRs sorted by age × contributor seniority), Discord / Slack community channels (top-N questions asked but unanswered this week, sentiment trend), Linear (if the project uses it). Output is a Markdown brief structured as: Issues, PRs, Community, Contributors. Read-only; no HITL. **High-status audience** — OSS maintainers are advocates and influencers; this is a recruitment vector disguised as a feature.
+
 - [ ] **`nimbus creator` — indie-creator analytics agent** — for YouTubers / Patreon creators / Twitch streamers / newsletter-runners: pulls from a thin set of indexed connectors (YouTube Analytics export via the existing Filesystem v2 path, Patreon API, Twitch API, ConvertKit / Substack / Beehiiv export, Stripe for creator-economy revenue, Discord for community engagement). Output: per-week brief on what your audience asked for, which content matched, where churn fired, which platform's audience is most engaged. New first-party connectors here are minimal — most data lands via filesystem export from creator-platform CSVs. **Stretch:** dedicated YouTube + Patreon + Twitch MCP connectors land as community extensions per the Phase 9.5 marketplace pattern.
+
 - [ ] **`nimbus academic` — research mode** — for researchers / grad students / academics: parallel sub-agents over Zotero (citation graph traversal, "which papers cite paper X that I've already read"), arXiv exports / RSS feeds (new papers in user-configured topic categories matched against the user's bibliography), Readwise / Raindrop (the user's own highlights + saved articles), filesystem (LaTeX project tree → "which papers are cited but not yet read"). Output: a "literature review pulse" brief per topic + per-paper "context" briefs ("what does my existing reading say about this paper's claims"). Closes the "Mendeley/Zotero never had AI" gap. Read-only; no HITL.
+
 - [ ] **`nimbus taxes` — annual tax-prep agent** — once-a-year flagship feature. Assembles a CPA-ready bundle from Stripe + Mercury + Expensify (Phase 5 deferred) + Ramp (Phase 5 deferred) + Mercury (the connector already shipped surfaces transactions but not categorized — the agent does the categorization). Output: a `.zip` containing categorized expense tables (XLSX + CSV), 1099 / international-equivalent receipt index, charitable-contribution summary, business-vs-personal split, cover memo. Annual willingness-to-pay is enormous; sticky feature; cloud agents can't legally aggregate financial data across providers under most consumer banking T&Cs.
+
 - [ ] **`nimbus health` — personal health-data brief (stretch)** — opt-in, off by default. For users who import Apple Health / Garmin / Whoop / Strava data via filesystem export, the agent surfaces a weekly brief: sleep + recovery trends, training load, anomalies. **Strict privacy contract:** the data never leaves the machine; the connector is read-only; the data is excluded from any federated namespace by default; a contract test asserts no `health.*` item type can be exposed in a Phase 6 federation namespace. Cloud agents face HIPAA-like constraints that make this category radioactive for them.
+
+
 
 #### Persona-Configuration Surface
 
+
+
 - [ ] **`[persona.<name>]` config blocks** — each persona's morning-brief frequency, brief sections to include/exclude, alerting thresholds, and connector-source preferences live in TOML. Composes with the Phase 3.5 profile system and the Phase 7 Wave 6 agent-persona block — a `persona = "founder"` profile auto-enables `nimbus founder` daily and routes its output to the user's configured surface (Slack DM, mobile push, terminal).
+
 - [ ] **Persona discovery** — `nimbus persona list` shows available personas; `nimbus persona enable <name>` switches the active default; `nimbus persona configure <name>` opens the TOML block in the user's editor. Onboarding lift — the wow query for a solo founder is `nimbus founder`, not the generic `nimbus ask`.
+
+
 
 #### Acceptance Criteria
 
+
+
 - `nimbus founder` against a seeded test corpus (synthetic Stripe + Mercury + Intercom data) produces a Markdown brief covering MRR / runway / top-3 customer questions / next-7-days calendar in under 15 s on a mid-range laptop, with no live API call beyond what's already in the local index.
+
 - `nimbus maintainer` against a seeded OSS-project corpus correctly identifies a duplicate-issue cluster (verified against a labeled fixture) and recommends a reviewer via the people graph with citation links.
+
 - `nimbus academic` against a seeded Zotero corpus + a manually-imported arXiv paper produces a "context" brief naming the user's own previously-read papers that bear on the new paper's claims; brief includes per-claim evidence links.
+
 - `nimbus taxes --year 2026 --output ./taxes-2026.zip` produces a self-verifying ZIP whose `verify.sh` passes against the gateway's release pubkey; the bundle contains categorized expense tables totaling the same gross revenue as the underlying Stripe + Mercury raw data (verifiable by cross-sum).
+
 - Every persona ships with an `evals/*.yaml` suite consumed by the Phase 9 Wave 5 framework; the per-persona quality score is published in the marketplace listing.
+
 - Privacy contract: `nimbus health` data is excluded from federated namespace shapes by construction — verified by a contract test that issues a `health.*` namespace export and asserts it fails the namespace shape validator.
 
+
+
 ---
+
+
 
 ### Phase 19 — Ambient Surfaces
 
+
+
 **Goal:** Make Nimbus present-tense across non-screen surfaces — wearables, voice-first, head-mounted displays, and physical actuation — while keeping the **local-first, no-relay, HITL-gated** architecture intact. This is the highest-risk phase in the roadmap: small audiences, hardware constraints, platform sandboxes (visionOS, Home Assistant, etc.) that may shift under us. Structured Core / Stretch so the phase ships if any one ambient surface lands; the rest can slip.
 
+
+
 > **Composes with Phase 11 (Sovereign Mesh):** every ambient surface is a *paired peer* in the mesh — no new wire format. The XR companion, the voice-only deep mode, and the Home-Assistant integration all use the existing NaCl-box channel + the same biometric-HITL primitive Phase 13.5 ships.
+
 >
+
 > **Composes with Phase 13.5 (Mobile Companion):** the voice-only mode declared as a stretch in Phase 13.5 is **promoted to Core here** because the phone is the dominant ambient surface; XR is the secondary surface. Phase 13.5 keeps the iOS passive-viewer code; Phase 19 adds the always-listening + always-speaking layer on top.
+
 >
+
 > **Not the contextual client surfaces.** The editor and browser clients — including the browser gateway client's ambient panel — are *on-screen* surfaces over the already-shipped IPC/HTTP contract, and they are sequenced in [§ Track 2 → Client surfaces](#client-surfaces), not here. Phase 19 is deliberately scoped to the **non-screen** surfaces (voice, XR, physical actuation), whose risk profile is hardware and platform-sandbox risk rather than product risk. Nothing in Phase 19 gates the browser or editor client, and the word "ambient" is doing different work in each place.
+
+
 
 #### Dependencies
 
+
+
 - Phase 4 STT/TTS primitives + voice wake-word loop — **written but not wired** (corrected 2026-10-10, per Phase 4's 2026-10-07 correction): no production code constructs a `VoiceService`, so every `voice.*` method answers `Method not found`; see *Wire the Phase 4 voice primitives* below
+
 - Phase 11 sovereign mesh + biometric HITL + audit-log signing
+
 - Phase 13.5 mobile companion (the platform the voice layer rides on)
+
 - Apple Developer Program enrollment (also a Phase 13 + Phase 13.5 prerequisite); Meta Quest developer account (for the XR stretch)
+
+
 
 #### Core — Voice-First Ambient Mode
 
+
+
 The flagship ambient surface. Promoted from Phase 13.5 stretch to Phase 19 core because the on-call + commute + cooking + workout use cases are real and the existing STT/TTS infrastructure is most of the work. (Corrected 2026-10-10: that infrastructure exists as code but is unreachable until the first row below lands.)
+
+
 
 - [ ] **Wire the Phase 4 voice primitives** *(added 2026-10-10)* — construct a `VoiceService` in production and attach it to the IPC server (`CreateIpcServerOptions.voiceService` is never supplied), so the five `voice.*` methods stop answering `Method not found`, and give them a CLI or desktop entry point. Prerequisite for every row in this section.
 
+
+
 - [ ] **Always-listening mode (opt-in)** — extends the Phase 4 wake-word loop to run continuously on the mobile companion with the existing "Hey Nimbus" trigger. Audio buffer is **encrypted on the phone before mesh transit** (NaCl box keyed to the paired Gateway); the audio never reaches Apple / Google's servers. Whisper.cpp transcription runs on the paired Gateway. Idle audio (no wake-word match within the configurable rolling window) is discarded — never stored, never indexed.
+
 - [ ] **Conversational continuation** — successive queries in a 60-second window share session context without re-stating; silence-detection ends the session naturally. Configurable session timeout. HITL surface for any action shifts to the biometric primitive in Phase 11 — voice-only approve requires FaceID confirmation, not a voice "yes."
+
 - [ ] **Speakable brief format** — every brief output by the built-in agents gets a `--speakable` mode that returns a 1–3 sentence summary version optimized for TTS playback. Long form available on follow-up ("Nimbus, tell me more"). Read-only; no HITL.
+
 - [ ] **Ambient-mode privacy mode** — when paired Gateway detects mesh activity from the always-listening surface (any wake-word event), an in-band signal triggers the tray indicator + a brief audit-log entry. User can `nimbus voice mute` at any time on either side to suspend the loop; mute persists across sessions until explicitly resumed. Defensive privacy posture: there is no silent always-on; the loop's presence is always visible.
+
+
 
 #### Stretch — XR Companion
 
+
+
 - [ ] **visionOS companion** — Vision Pro passthrough sidebar that renders assembled briefs while the user is doing something else. Pairs with the desktop Gateway via the same mesh primitive as the iOS app. Briefs render as fixed panels in the user's environment; no agent execution on the headset; HITL prompts surface as native visionOS modals with biometric (Optic ID) approval. **Discipline:** read-only briefs in v0; no in-headset query input (the visionOS keyboard UX is genuinely poor and would push the design in the wrong direction). Stretch because the audience is tiny and visionOS APIs are still settling.
+
 - [ ] **Meta Quest companion** — same shape as visionOS, different SDK. Lower priority but socially-shared because the audience is younger. Stretch.
+
 - [ ] **Apple Watch passive viewer** — already a Phase 13.5 stretch; cross-referenced here.
+
+
 
 #### Stretch — Physical Actuation (Home Assistant integration)
 
+
+
 - [ ] **Home Assistant connector** — index a local Home Assistant deployment (rooms, devices, automations, sensors); read-only. New `home_device` / `home_automation` item types.
+
 - [ ] **Context-aware home actuation behind HITL** — `nimbus ask "dim the lights, I'm shipping a hotfix"` resolves to a Home Assistant scene change via the existing HITL gate. The phrase "context-aware home automation that knows your codebase context" sounds bizarre until you try it; the local-first model is exactly what enables it.
+
 - [ ] **Bridge-to-physical-actuator security model** — every physical actuation (lights, locks, thermostats) is classified by reversibility (light = reversible, lock = irreversible, thermostat = bounded-reversible) and gated accordingly. Locks default to never-HITL-auto (always require explicit user) per Phase 17's reversibility-is-classified-not-assumed rule.
+
+
 
 #### Stretch — Wearable Health Companions (read-only)
 
+
+
 - [ ] **Whoop / Oura / Garmin / Apple Health integration via filesystem export** — already covered as a stretch in Phase 18's `nimbus health`. Referenced here because the ambient-surface framing fits — the device is the source, the Gateway is the index. **Strict privacy contract:** as in Phase 18, never federated by default.
+
+
 
 #### Acceptance Criteria (track-level; not gated by any single sub-section)
 
+
+
 - Core voice-first mode round-trips a "Hey Nimbus, what's burning?" query end-to-end (wake-word detection on phone → mesh-encrypted audio transit → Whisper.cpp transcription on Gateway → agent execution → TTS playback on phone) in under 10 seconds on a mid-range laptop + iPhone 15 / Pixel 9; audio never leaves the user's devices, verified by network inspection.
+
 - The always-listening mode's mute toggle suspends the wake-word loop within 1 second on both ends; the audit log records every mute / unmute event.
+
 - An XR-companion brief renders in visionOS within 5 seconds of being pushed from the Gateway; HITL approval via Optic ID round-trips back to the Gateway within 3 seconds.
+
 - A Home Assistant scene change triggered via `nimbus ask` always gates on HITL with a structured before/after preview; locks never bypass HITL regardless of session-level standing approvals.
 
+
+
 ---
+
+
 
 ### Phase 20 — Personal & Household Federation
 
+
+
 **Goal:** Extend the Phase 6 federation primitive to consumer/household use cases that have **no cloud-vendor equivalent** — a personal CRM no third party ever sees, family/couples shared agents for joint logistics, and friend-group coordination — without compromising the local-first, no-relay, HITL-gated architecture.
+
+
 
 > **Relocated from Phase 6** per guiding-principle #7 (Nimbus is built for professionals; consumer-oriented affordances are out of scope for the professional phases). These modes build **for free** on the Phase 6 Slice 1 federation core — no new infrastructure, only narrower namespace shapes and a different audience. Sequenced this late deliberately: the professional team-federation surface (Phase 6) must prove out first. A *professional* form of the narrowest-export-shape privacy proof stays in Phase 6 Slice 1; the family-namespace variant lives here.
 
+
+
 #### Dependencies
 
+
+
 - Phase 6 Slice 1 — Federation Core (E2EE peer pairing, scoped namespaces, the consent-scoped federated query primitive, audit integration)
+
 - Phase 6 federation protocol-layer RBAC + the narrowest-export-shape privacy contract (professional form)
+
+
 
 #### Wave 0 — Personal Data Sources *(read-only ingestion; prerequisite for the federation modes below)*
 
+
+
 Phase 20 federates household data but assumes it is *already indexed* — yet nothing ingests it today. This wave builds the personal data-source connectors that *feed* the household federation. This is the data class where local-first is a genuine moat: no one pastes their bank login or health history into a cloud AI, but a machine-local index that never leaves the device is exactly the trust model that fits. All Wave 0 sources are read-only and default to **non-federatable**.
 
+
+
 - [ ] **Finance** — Plaid / SimpleFIN aggregator; read-only `account` + `transaction` item types; local-only, never exposed through a household namespace unless explicitly added to its shape.
+
 - [ ] **Health & wearables** — Apple Health export / Google Fit / Oura / Whoop; `health_metric` item type.
+
 - [ ] **Home** — Home Assistant; `home_device` + `home_event` item types.
+
 - [ ] **Media / memories** — Plex / Jellyfin / local photo library (`media_item`); composes with the existing `google_photos` connector.
+
 - [ ] **Wave-0 privacy default** — Wave 0 sources are non-federatable by default; a `health_metric` / `transaction` / `home_event` is exposable through a household namespace only when explicitly declared in that namespace shape. Extends the narrowest-export-shape contract (household variant) below.
+
+
 
 #### Wave 1 — Personal & Household Federation
 
+
+
 The federation primitive is intentionally general — once two Gateways can share a scoped namespace, the same mesh primitive serves use cases that cloud agents cannot legally or commercially handle.
 
+
+
 - [ ] **Personal CRM** — a `person` table extension + `interaction` item type that indexes a user's relational history from already-indexed connectors: email threads (Gmail / Outlook), calendar attendees, Slack DMs + tagged channels, LinkedIn export (manual import), GitHub mentions. New built-in agent `nimbus contacts` answers "tell me about the last time I talked to Sara before our call," "who at Acme did I meet at the conference last year," "draft a follow-up to the people I had coffee with this week." Read-only; data never leaves the machine.
+
 - [ ] **Family / couples mode** — a `family` namespace shape with two-to-six paired Gateways; shared item types limited to a conservative set (`event` from Calendar, structured `shopping_list` items, joint `expense` rows, custody/handover scheduling). HITL on every cross-device write. A contract test asserts no `email`, `pull_request`, `incident`, or work-item types are exposable through the family shape.
+
 - [ ] **Friend-group mode** — same federation primitive as family mode, scoped to long-tail use cases with no cohesive home today: D&D campaign trackers, fantasy-league rosters, "who's free this weekend" coordination without surrendering full calendar visibility, group-photo sharing without a cloud upload.
+
 - [ ] **Group-namespace policy fragments** — `[group.<name>].include_types = [...]` + `[group.<name>].exclude_services = [...]` enforced at the federation protocol layer; per-namespace HITL policy fragments live alongside `nimbus.policy.toml` so a family namespace can carry stricter rules than a work namespace on the same Gateway.
+
 - [ ] **Privacy contract — narrowest-export-shape proof (household variant)** — for every group/family namespace shape, the test asserts the federation protocol cannot expose any item type or `raw_meta` field not declared in the namespace shape. Verified by attempting a federated query for a non-included type and asserting empty result + audit log entry recording the rejected query.
+
+
 
 #### Acceptance Criteria
 
+
+
 - Two paired personal Gateways share a `family` namespace; a contract test asserts no `email`, `pull_request`, `incident`, or work-item type is exposable through the family shape.
+
 - `nimbus contacts` answers a relational-history query entirely from the local index with no outbound call.
+
 - A federated query for a non-included type against a group namespace returns an empty result plus an audit-log entry recording the rejected query.
 
+
+
 ---
+
+
 
 > **Phases 21–27 — the Sovereign-Proof arc.** Seven phases that promote the local-first thesis from a *property* into a *product*: a root of trust (21), then verifiable negatives (22), structural injection-inertness (23), counterfactual/provenance cognition (24), surveillance-free collective intelligence (25), provable governance (26), and accountable always-on autonomy (27). Sequenced so **21 ships first** — every downstream attestation roots its key, clock, and index there. The competitive thesis: cloud agents share one architecture (private data + untrusted content + a live egress vector in a multi-tenant process behind a vendor-controlled API), and that architecture makes each of these categories structurally impossible for them. None of these phases bump the *wired* invariant count (`I1`–`I21`) or North-Star count until their triples land; the new invariants (`I22`–`I24`) and pillars (`M9`–`M12`) are **planned**, recorded here and wired with their phase per the triple rule. **Suggested build order:** 21 (root of trust) → 23 (the taint cut — which also lands the per-connector provenance-tag mechanism Phases 10/24/27 all depend on) → 22, then 24/25/26/27; all seven are listed as planned, but the build is staged behind 21 + 23 rather than committed as one push.
 
+
+
 ### Phase 21 — Sovereign Trust Substrate
+
+
 
 > **Sequencing (2026-06-17 overlay):** **Track 3 — Research Horizon** (Phases 21–27). The North-Star "M-number" frontier; the full vision stays, but its cheap *primitives* are harvested into the spine early (egress ledger → S1; local sub-agent fleet → S2 — both done). Not a decade-out sequence: a frontier we mine. See [§ Phase 7+ Sequencing Spine](#phase-7-sequencing-spine).
 
+
+
 **Goal:** Ship the root of trust every downstream proof silently assumes. `M7`'s egress ledger, the EAF verifier, the Phase 12.5 bundle, and the Phase 22–26 attestation surfaces all sign with a gateway key and stamp a timestamp — yet nothing today says how an auditor anchors that key offline, what the timestamp is worth against a same-UID attacker who can rewind the clock, or whether the local index a claim reasons over was complete. This phase supplies the missing halves: key transparency, verifiable time, index freshness, and proof ergonomics. **It ships before Phases 22–27 — their attestations are only as trustworthy as the key, clock, and index underneath them.**
 
+
+
 > **Composes with `M7` + S — Standards/EAF + Phase 12:** Phase 21 makes `M7`'s "proof this agent touched only these hosts" rest on a key an auditor anchored out-of-band and a clock they can trust; EAF v0.2 gains a key-transparency-inclusion field and a time-anchor field. Phase 12's external append-only sink remains the single public-anchoring path (KT heads ride it).
+
 >
+
 > **Composes with Phase 6 / Phase 11:** the relay-free NaCl-box channel + out-of-band peer pairing are how a box identity reaches a peer today; the KT log gossips identities over that same channel so a third gateway / auditor / insurer verifies a peer's key without a fresh pairing ceremony. Endpoint/measured-boot integrity is delivered in Phase 11 (hardware-vault home), not here.
+
+
 
 #### Dependencies
 
+
+
 - Phase 4 BLAKE3 audit chain (the chain verifiable time folds into; `db/audit-chain.ts`)
+
 - Phase 6 federation NaCl-box gateway identity + out-of-band peer pairing (`federation/federation-identity.ts`, `federation/peer-pairing.ts`)
+
 - `I16` verify-every-boot pattern; `I12` Vault (rotation key material, never on disk in the clear)
+
 - S — Standards track: EAF v0.1 + `eaf-verify` (the verifier this phase extends)
+
+
 
 #### Non-negotiable guardrails
 
+
+
 - **No new trusted third party.** Key transparency is gossiped over the relay-free mesh; public-log anchoring is optional and additive (a witness, never a dependency). An air-gapped gateway still produces and verifies a complete attestation against its local mirror.
+
 - **Fail-closed on trust ambiguity.** An attestation whose issuer key is absent/revoked in the verifier's KT view fails verification (never "warns"); a claim that cannot establish index freshness is emitted with explicit `freshness: unknown`, never silently treated as fresh.
+
 - **Vault-only key material** (`I12`) — only public keys + signatures cross IPC / log / config boundaries.
+
+
 
 #### Wave 1 — Key Transparency (the root)
 
+
+
 - [ ] **Append-only key-transparency log (`kt_log`)** — a BLAKE3-chained, append-only log of `(subject, pubkey, valid_from, valid_to, supersedes)` for gateway + operator identities, via a generic `computeChainRowHash(prevHash, fields[])` factored out of the audit-chain writer (audit chain and `kt_log` both call it — the chain *pattern* is reused, not the fixed audit tuple). Proposes invariant **`I22`** (KT append-only + monotone head; triple when wired).
+
 - [ ] **Offline trust-anchor (`nimbus trust export/import-anchor`)** — the keystone: a signed, human-fingerprinted one-pager (pubkey + KT genesis + BIP39-style out-of-band phrase) that lets an auditor / insurer / peer establish trust in a gateway key over a side channel with **zero network round-trip**; thereafter every EAF artifact verifies offline. No cloud attestor can answer "how does an air-gapped auditor trust your key with no network at all" — they root in an online CA / OIDC handshake / transparency-log fetch.
+
 - [ ] **Gossiped mesh mirror + split-view detection** — KT heads + inclusion proofs propagate over the relay-free NaCl-box channel; a third gateway verifies a peer's current key + rotation lineage from its local mirror. Honest bound: split-view detection is **multi-peer-only**; a solo / air-gapped gateway gets monotone-head-only.
+
 - [ ] **Rotation + revocation with cryptographic continuity (`I23`)** — the outgoing key signs its successor; a revoked key invalidates exactly its signing window (`supersedes` lineage). Recovery when an outgoing key is lost falls back to the out-of-band re-pairing flow (the downgrade seam is stated, not hidden). Proposes invariant **`I23`** (revocation-with-continuity).
+
+
 
 #### Wave 2 — Verifiable Time
 
+
+
 - [ ] **Monotonic high-water-mark in the chain** — a Vault-persisted monotonic counter folded into each BLAKE3 link; `verifyAuditChain` rejects a non-advancing counter. The offline guarantee is stated precisely: it detects **chronological inversion relative to the last-written row**, not absolute wall-clock duration.
+
 - [ ] **Optional roughtime anchor** — opt-in, additive trusted-timestamp anchor (carved out of the `M7` background-call quota like the existing user-initiated fetches); offline installs degrade to monotonic-only with a clearly-labeled attestation. Lease / quorum / standing-approval expiry **fail-closed** when the system-clock↔counter delta crosses a safety threshold.
+
 - [ ] **`Date.now()` ban in security-decision paths** — a static lint (sibling to the structure-audit D-checks) forbidding wall-clock reads in a named allow-list (quorum / delegation / standing-approval / lease expiry). *(Verifiable time is shipped as substrate hardening + an EAF field, **not** a standalone invariant — `eaf-verify` already checks timestamp monotonicity and the Phase 15 lease design depends on a wall-clock `expires_at`, which this reconciles rather than forbids.)*
+
+
 
 #### Wave 3 — Freshness & Proof Ergonomics
 
+
+
 - [ ] **Index freshness & completeness attestation** — a per-connector `synced_fraction` / staleness / `known_gaps` signal (with a per-connector-class definition: paginated REST cursor vs `[[filesystem.roots]]` walk). Every downstream provenance / oracle / "lie-detector" claim cites it; a claim that can't establish it emits `freshness: unknown`. Proposes the freshness-contract invariant (single `attachFreshness()` seam + a static rule that no export path bypasses it).
+
 - [ ] **Index-at-rest tamper-evidence** — `nimbus index attest` produces a signed Merkle root over the index; `nimbus index verify` checks it; a mismatch sets the freshness contract to `tampered` (one detection, two outputs — single seam).
+
 - [ ] **Roll-up verification (`eaf-verify`)** — human-legible aggregate verdicts over many receipts so a non-cryptographer auditor can triage volume; receipt expiry / revocation is surfaced. *(Sampled audit deferred to whichever phase first emits proof volume.)*
+
+
 
 #### Acceptance Criteria
 
+
+
 - An auditor on an air-gapped machine imports a gateway's trust anchor over a side channel, then verifies an EAF artifact offline with `eaf-verify`, zero network round-trip; a tampered or revoked-key artifact fails closed.
+
 - A same-UID clock rewind followed by an audit append fails `nimbus audit verify` (the monotonic counter breaks the chain); the offline guarantee is documented as inversion-detection, not absolute-time.
+
 - `nimbus index attest` then a mutation of an index row sets the freshness contract to `tampered`; a claim built on a `tampered` / `unknown` connector is emitted with that contract, never as fresh.
+
 - A key rotation carries a continuity proof and a revocation invalidates exactly the post-revocation window (pre-revocation artifacts still verify), proven by an enforcement test.
 
+
+
 ---
+
+
 
 ### Phase 22 — The Proof Layer (Verifiable Negatives)
 
+
+
 > **Research Horizon — primitive harvested (2026-06-17 overlay):** the always-on egress ledger + `nimbus prove` read-surface land early in **Track 1 / S1** (sourced from Phase 8 + Phase 7 W6). What stays here: portable, offline-checkable **per-answer** EAF receipts. See [§ Phase 7+ Sequencing Spine](#phase-7-sequencing-spine).
+
+
 
 **Goal:** Promote EAF from a Phase 12.5 bundle artifact to a **per-answer live primitive** — portable, offline-checkable receipts that prove *what did not happen*. Anchors North-Star **`M9` (Verifiable Negatives)**. A relay vendor *is* the egress and *is* the data sink, so it can only assert non-egress / non-disclosure in a PDF; only a local-first, no-relay, `I15`-sandboxed, HITL-gated gateway can mint a credible negative.
 
+
+
 > **Composes with Phase 21 (every receipt roots its key + clock there — hard blocker), `M7` (the egress negative is `M7` presented), S — Standards/EAF (receipts are EAF payload types verified by the same `eaf-verify` binary — hard blocker), `I17` (the non-disclosure receipt), Phase 12.5 (the deletion plan becomes a signed proof).**
+
+
 
 #### Dependencies
 
+
+
 - **Phase 21 substrate (hard blocker)** + **EAF v0.1 + `eaf-verify` (hard blocker)**
+
 - `I17` query gate (non-disclosure receipt); the `I15` egress chokepoint (proof-of-silence)
+
+
 
 #### Wave 1 — Receipts on already-shipped primitives
 
+
+
 - [ ] **Notarized Non-Disclosure Receipt (headline)** — the answering peer hands the asker a portable, offline-verifiable proof that a federated query disclosed nothing beyond the declared `I17` shape. The one artifact a relay architecture *structurally cannot* produce (there is no relay that could have seen the bodies). **Bound to the query nonce / session** over the NaCl-box channel so it cannot be detached and replayed to vouch for a later leaky query.
+
 - [ ] **Counterfactual Consent Receipt** — proof of an irreversible action the agent was about to take but didn't, backed by the gate's `hitlStatus` (`I4`) + the frozen `action.type` + a declared blast radius. *(The `M3`-trace-enriched version is stretch — `M3`'s reasoning trace is unbuilt substrate.)*
+
+
 
 #### Wave 2 — Receipts needing new instrumentation
 
+
+
 - [ ] **Egress-event instrumentation (prerequisite, net-new work)** — instrument the `I15` sandbox to emit per-query host-connect events. Cross-platform reality: macOS enforces ports only, since SBPL cannot name a host, so per-host filtering there is a later project; per-host gating is degraded on Windows (AppContainer `internetClient` is all-or-nothing; per-host filtering would need WFP callout drivers — kernel-mode signing, Windows hardware program enrollment — deferred to a tracked follow-up; the native `nimbus-sandbox-helper.exe` spawn path itself, not FFI, is the shipped mechanism) and helper-dependent on Linux — so any receipt **fails closed to `indeterminate`** where the chokepoint cannot attribute.
+
 - [ ] **Proof-of-Silence receipt (`nimbus prove --receipt`)** — a **new subcommand in the existing `nimbus prove` namespace** (Phase 11 ships the interactive before/after egress display; this adds the durable signed artifact) emitting `outbound_egress_events: 0` (connect()-level, **not** packet-level), `local_rows_read: N`, verifiable offline. Emits `indeterminate` (never a green zero) on a degraded platform; the acceptance corpus pins a fully-gated platform. Proposes the invariant: the negative is computed only from the chokepoint, never connector self-report, in a leak-proof receipt shape.
+
 - [ ] **Provable Forgetting** — a signed deletion certificate proving a datum is gone **and** (citing the `M7` ledger for its lifetime) was never replicated; the non-replication leg emits `unprovable-before-T` if the datum predates ledger genesis or arrived via the non-`I15` filesystem path.
+
 - [ ] **Receipt metadata hygiene** — bucket counts (`rows read: 10–50`), add issuance jitter, and rate/granularity-bound the publishable set (mirrors `I17` returning ranks, not raw scores) so the receipt itself is not a side-channel.
+
+
 
 > **Cut / folded (per stress-test):** the Provable Air-Gap Beacon → an `M7`-export flag (`nimbus egress --beacon`), it is the empty-egress special case of the same scheduled export; the TEE-attested LLM-hop receipt → a stated non-goal ("we do not attest off-box hops; the canonical path is zero off-box hops via the router air-gap"), a hardware-vendor trust root contradicts the thesis. zk-EAF → a research note (one-fixture prototype at most).
 
+
+
 #### Acceptance Criteria
 
+
+
 - A federated query returns under the `I17` shape; the asker receives a Non-Disclosure receipt that `eaf-verify` validates offline against the answerer's Phase-21-anchored key; a replayed receipt from a prior query fails verification.
+
 - On a fully-gated platform, `nimbus prove --receipt` over a local-only query emits a signed `outbound_egress_events: 0` artifact verifiable offline; on a degraded platform the same query emits `indeterminate`, never a false zero.
+
 - A `nimbus dsr` deletion executed with `--execute` yields a deletion certificate whose non-replication leg reads `unprovable-before-T` for data older than the egress-ledger genesis.
 
+
+
 ---
+
+
 
 ### Phase 23 — Inert to Injection (The Unexfiltratable Agent)
 
+
+
 **Goal:** Make prompt-injection **structurally inert, not filtered** — a successful injection can make the agent reason wrong but cannot exfiltrate, because the local process severs egress capability the moment attacker-influenceable content enters a turn, and proves it with a buyer-rerunnable conformance bundle that needs zero vendor trust. Competitors' best documented defense is sanitizers / MCP-gateways with **measured 60–72% attack-success rates**.
+
+
 
 > **Composes with `M7` (the `I15` chokepoint), `I11` (the provenance seam — extended here), Phase 10 (the standing-approval taint-barrier proposal — *subsumed* by `I24` here, one invariant not two), Phase 8 (honeytokens + egress ledger), S — Standards/EAF (the attestation is an EAF payload). Distinct from `M7`, which proves *where* the agent went; this proves the agent *could not have leaked* while compromised.**
 
+
+
 #### Dependencies
+
+
 
 - `I11` wrapToolOutput envelope (extended here with a provenance tag); `I15` sandbox; Phase 4 multi-agent / `sub_task_results` plumbing; Phase 21 signing
 
+
+
 #### Non-negotiable guardrails
 
+
+
 - **Fail-closed on a degraded sandbox:** where the platform cannot prove the host-scoped cut, the network-bound action is **refused**, never silently allowed.
+
 - **Untagged provenance = untrusted** (fail-closed) — but only once the tag-production mechanism exists (owned here).
+
 - **Out of scope (stated honestly):** covert channels through an allowlisted-and-still-permitted host (DNS-name encoding, request timing) — `I24` cuts network-*write* capability, not every side channel.
+
+
 
 #### Wave 1 — The cut
 
+
+
 - [ ] **Provenance-tag production mechanism** — manifest-declared read-tool taint classes + an executor-side default, so a connector *declares* `trusted` / `untrusted` on the `I11` envelope (Phase 10 only *consumed* an undefined tag). Owned here so "fail-closed on untagged" is buildable without bricking every connector on day one.
+
 - [ ] **Capability-revocation-on-taint (proposes `I24`)** — a **turn-scoped capability state object** in `engine/executor.ts`: the instant a turn ingests `untrusted` content, the executor **refuses further network-tool dispatch for the rest of the turn** — a *dispatch-time* gate (cross-platform, lives in the engine today), not a live mutation of the OS-sandbox network allowlist. **Subsumes the Phase 10 standing-approval taint barrier.** The gate consults the provenance tag only, never the tool name / payload (mirrors `I3`). Static complement (next free D-descriptor) + enforcement test.
+
 - [ ] **Re-entry / re-clean path (own acceptance-gated sub-spec)** — when egress is severed mid-task, the re-clean gesture shows the write payload **verbatim + provenance-diffed against the untrusted source** (anti-laundering — a human approving a plausible ticket is exactly how injection launders), opening a fresh clean-provenance turn. The make-or-break UX; the canonical "read untrusted email → file ticket" workflow is the gating test.
+
+
 
 #### Wave 2 — The proof
 
+
+
 - [ ] **Signed per-response attestation** — a "this turn could not have exfiltrated" EAF payload (reuses the envelope / signing / verifier from `M7` + S — Standards; anchored outside the local chain per the same-UID caveat).
+
 - [ ] **Buyer-rerunnable adversarial conformance bundle (headline)** — a signed binary the customer runs against **their own** gateway, with their connectors + data: it first **attests the sandbox-enforcement tier honestly**, then drives an injection corpus and shows the egress cut fire where the platform can prove it. "We are not asking you to believe a benchmark." Guards the corpus against supply-chain poisoning and never red-teams a live API in a way that abuses the user's real account.
+
+
 
 > **Deferred out:** active honeytoken plant + scan → **Phase 8 W5** (Phase 8 already ships synthetic-credential honeytokens + the egress ledger; only the connector-quarantine state machine is net-new — land it there); the auditor-mode "behavior without data" appliance → a research bet (an unbounded information-flow problem).
 
+
+
 #### Acceptance Criteria
 
+
+
 - On a fully-gated platform, a turn that ingests an `untrusted`-tagged tool result cannot subsequently reach any allowlisted host (enforcement test); on a degraded platform the network action is refused, not silently passed.
+
 - The conformance bundle, run on a fresh independently-provisioned gateway, reports the sandbox-enforcement tier and demonstrates the cut where provable; a seeded canary-exfil payload is blocked and the connector quarantined with a signed incident record.
+
 - The "read untrusted email → file ticket" workflow completes through the re-clean path with the write payload shown verbatim + provenance-diffed; an untagged tool result is treated as `untrusted` (fail-closed).
 
+
+
 ---
+
+
 
 ### Phase 24 — Agent Archaeology
 
+
+
 **Goal:** Put the past and the present in one process — replay the agent's reasoning *as of* any timestamp, re-litigate the incident corpus against today's code, and bind every asserted fact to a signed, replayable derivation. Anchors **`M10` (Causal Twin)** + **`M11` (Provenance-Bound Cognition)**.
+
+
 
 > **Composes with `M8` (`item_history` state), `M5` (the static causal floor — the overlap is acknowledged, not re-minted), `M3` (the reasoning / evidence trace), `M1` (living memory), Phase 17 (the blast-radius engine), Phase 9 (calibration), Phase 12.5 (Article-22).**
 
+
+
 #### Dependencies
 
+
+
 - **`M8` `item_history` (hard prerequisite)** — the `--at` point-in-time recall must exist first (Phase 10 ships the flag; this phase standardizes on `--at` and keeps `--as-of` as a back-compat alias)
+
 - `M3` reasoning / evidence trace; Phase 3 dependency graph; Phase 21 signing (federated leaves)
+
+
 
 #### Wave 1 — Reasoning replay
 
+
+
 - [ ] **`nimbus ask --at <t>`** (alias `--as-of`) — replays the agent's **decision + evidence-leaf set** against the `item_history` view at `t`, with a "what I knew then vs now" split. **Determinism is scoped to the decision + retrieved rows + recorded tool I/O** — any LLM-re-invoking step is labeled `modeled, not replayed` (LLM output is not byte-deterministic; this also corrects the existing roadmap's unqualified "reconstructs deterministically"). A recorded model no longer loadable → `model-substituted, not faithful`. The replay executor is **egress-incapable**: a replay path that attempts a connector call aborts fail-closed at `gate()`.
+
+
 
 #### Wave 2 — The counterfactual court (anchor demo)
 
+
+
 - [ ] **Merge-time extinction ledger** — a standing watcher re-runs the historical incident corpus against today's code via the `M5` static simulator on every merge and posts mechanical verdicts: *"incident class X is now extinct — PR #4412 removed the null path; class Y would still page."* **Incremental** (re-litigates only classes whose causal path touches the merged diff; a corpus / time ceiling lives in `[archaeology]`). An `extinct` verdict carries **coverage / blind-spots** ("extinct within statically-reachable paths; N dynamic paths unanalyzed") — a false extinction is dangerous, so it bears an asymmetric honesty bar. Feeds `M2`'s "incidents prevented" with a real signal. Verdicts are `I11`-untrusted / advisory and can never satisfy a standing rule (the taint barrier already covers replay output).
+
+
 
 #### Wave 3 — Provenance-bound cognition (`M11`)
 
+
+
 - [ ] **Per-claim evidence DAG** — every asserted fact in an admissible artifact ships a content-addressed, replayable evidence DAG, **default-collapsed and lazily computed** (ordinary answers untaxed). Per-leaf signing is **federated-only** (intra-box leaves are covered by the BLAKE3 chain; cross-gateway leaves carry the originating gateway's `I16` signature). A claim with no retrieved leaf is emitted `ungrounded` and is **structurally barred from carrying a signature** (proposes the evidence-DAG invariant). Exported DAGs pass an `I17`-style leak-proof shape (ranks / hashes / declared shape, not bodies / raw row IDs unless grant-scoped).
+
 - [ ] **Erasure reconciliation** — the append-only DAG / memory vs GDPR erasure (Phase 12.5 Article-17) is reconciled via tombstone-with-proof / salted hashes / chain-segment rotation; evidence leaves eligible for admissible artifacts pin against the `M8` prune via `[archaeology].evidence_pin_retention_days`.
+
+
 
 > **Deferred out:** HITL-dialog enrichment / surprise-detection → **Phase 17** (keep only "render blast-radius inside `gate()` for all gated actions", reuse Phase 17's engine); the learned dynamics twin → a research flag (needs a metric / trace TSDB the item-shaped index lacks; gated on a go/no-go Brier-score floor); chained agent memory → **Phase 10** episodic-memory hardening; the legally-admissible decision record → a one-line cross-reference from Phase 12.5 Article-22 to the evidence-DAG invariant.
 
+
+
 #### Acceptance Criteria
 
+
+
 - `nimbus ask --at <t> "<incident question>"` reconstructs the decision + evidence-leaf set against the `item_history` view at `t`; LLM-re-invoking steps are labeled `modeled`; a replay that attempts a write aborts fail-closed.
+
 - A seeded merge that removes a null path flips the matching incident class to `extinct` with the citing PR and a stated coverage caveat; a distant change that silently revives a path does **not** produce a false `extinct`.
+
 - A `nimbus dsr` / Article-22 artifact carries a per-claim evidence DAG whose leaves verify offline; an `ungrounded` claim cannot be signed; an exported DAG carries no item body or raw row ID outside its declared shape.
 
+
+
 ---
+
+
 
 ### Phase 25 — Confidential Mesh Compute
 
+
+
 **Goal:** Cross-org learning where there is **no operator who could see member data** — because there is no operator. The substrate that finally realizes North-Star **`M4`**. A cloud benchmarker that can tell you "47 orgs had this" *is* the operator that saw 47 orgs' incidents; Nimbus answers over the relay-free mesh carrying only sketches and aggregates, never bodies.
+
+
 
 > **Composes with `M4` (its delivery home), `M2` (cross-org preventive ops), `I21` (DISTINCT-peer counting), `I17` (the leak-proof discipline — this is *stricter*, see below), Phase 15 (the cross-org lease envelope), Phase 21 (the eventual Sybil-resistance root), `M7` (each round attestable as relay-free).**
 
+
+
 #### Dependencies
 
+
+
 - Phase 6 federation (NaCl-box channel); `I20` / `I21` identity-valid + DISTINCT-peer quorum
+
 - Phase 21 key-transparency (the eventual Sybil root) — but the security-critical floor **also stands on the shipped `I18` + Phase 6 peer-pairing** so it does not hard-depend on a later phase
+
+
 
 #### Non-negotiable guardrails
 
+
+
 - **Opt-in at the team / org level via `nimbus.policy.toml`, off by default, never per-engineer** (per `M4`).
+
 - **Body-free by construction** — frames carry only fixed-width sketch / secret-share / PSI-token / DP-scalar shapes, with a **size + structure bound** (not just a "no body field" name-check, so a compressed body can't ride inside an opaque blob). Note this is **stricter than `I17`**, whose query gate deliberately shares a 280-char snippet under consent — *not* an extension of it.
+
+
 
 #### Wave 1 — Sketch tier (ships first; herd immunity)
 
+
+
 - [ ] **Federated incident-pattern Bloom/MinHash mesh** — `nimbus mesh seen <fingerprint>`: "has anyone seen this change-fingerprint / incident-signature?", carrying only sketches. **Surveillance-free herd immunity** (extends `M2`): "this fingerprint preceded outages at 47 *distinct* peers (real `I21` count), pattern only — never a single peer's incident." Honest threat model: MinHash leaks similarity by design, so the claim is bounded ("reveals no more than declared similarity to a probe a peer already holds; no literal path / identifier string") and a **probe-budget per asking peer** prevents sweeping the fingerprint space (the membership-oracle hole — and this is the tier that ships first).
+
 - [ ] **Body-free frame invariant** — every mesh-compute frame routes through one `federation/mesh-compute-gate.ts`; proposes the invariant + a static complement.
+
+
 
 #### Wave 2 — Secure aggregation (research deliverable)
 
+
+
 - [ ] **Additive-secret-sharing reference round** — a single protocol-level deliverable (small-N reference round + a published threat model) under **experimental-exit criteria, not phase-completion criteria**. DP budget is tracked at a **per-box global ceiling** (composition across overlapping cohorts, not per-cohort); the k-anonymity floor states its honest-but-curious assumption (it collapses under k-1 colluding members). *(PSI, the k-anon DORA benchmark CLI, and the DP model-routing commons are cut as me-too / lowest-confidence; MTTR-as-aggregate survives only as an example inside the DP item.)*
+
+
 
 #### Wave 3 — Trust floor
 
+
+
 - [ ] **Sybil-resistant admission + Byzantine-robust aggregation** — a contribution is admitted only from an attested identity (`I18` + peer-pairing now; a KT-inclusion proof once Phase 21 lands); rounds use robust estimators (trimmed mean / coordinate-wise median) + share-consistency checks bounding any single peer's influence; a deny / abort / malformed share fails the whole round (reuses `I21` fail-closed). Cross-peer round integrity rests on the per-box Phase 12 external-sink push (a same-UID peer can truncate its own view).
+
+
 
 #### Acceptance Criteria
 
+
+
 - A peer queries `nimbus mesh seen <fingerprint>` and learns a DISTINCT-peer match count with no item body, query string, or peer identity disclosed; a peer exceeding its probe budget is throttled; a frame carrying a body field is rejected at the federation boundary.
+
 - An injected poisoning peer cannot move a released aggregate beyond the proven influence bound and a single abort fails the round; a contribution from an unattested / Sybil key is dropped and audit-logged.
 
+
+
 ---
+
+
 
 ### Phase 26 — Provable Governance
 
+
+
 **Goal:** Turn governance from advisory middleware into **structural, attestable law** — policy compiled *into* the same gate that backs `I2`, with an offline-verifiable proof that the running gate-set equals the signed policy. Anchors **`M12` (Provable Governance)**. Cloud "guardrails" are server-side filters an admin configures away; the gate is the only place actions execute, so compiled policy is unbypassable and the boot attestation is checkable with no vendor trust.
+
+
 
 > **Composes with Phase 6 org-policy + Phase 12 policy-as-code (adds the enforcement attestation neither has), Phase 16 (generalizes + *subsumes* the skill-pack "cannot loosen HITL" rule — load-time → boot-attested), `I20` / `I21` (quorum), Phase 15 (leases), Phase 17 (rollback), Phase 21 (anchoring).**
 
+
+
 #### Non-negotiable guardrails
 
+
+
 - **Break-glass can suspend a policy-added class only — never an `I2` frozen-set member, never the irreversible boundary**; rate-ceilinged.
+
 - **Drift / attestation evidence anchored outside the local chain** (same-UID truncation), else it proves nothing against a post-RCE adversary.
+
+
 
 #### Wave 1 — Compiled gate + attestation
 
+
+
 - [ ] **Signed `nimbus.governance.toml` → compiled gate (proposes the policy-boot-attestation invariant)** — the signed policy compiles at boot into additional HITL classes / quorum thresholds / reversibility floors enforced by the same `gate()` as `I2` / `I3` / `I4`; the compiler is **loosening-incapable** (may only add to the effective set / raise thresholds; rejects any attempt to remove from the frozen `HITL_REQUIRED` set). Generalizes and subsumes the Phase 16 skill-pack rule (the load-time check becomes its fast-fail). A boot attestation binds `BLAKE3(compiled gate-set) == BLAKE3(signed policy)`, verifiable offline. On a single-user install with no signed external policy it attests against the baked-in frozen set (a tamper-evidence check, not an authority check).
+
 - [ ] **Dry-run simulator + break-glass** — `nimbus policy simulate` shows what a policy would block before it goes live (the gate is unbypassable, so a misconfigured policy could brick an on-call engineer); the mandatory break-glass escape suspends a single policy-added class for one incident, witnessed by quorum. (`nimbus policy explain` is folded into this UX, not a separate command — it duplicates Phase 16's `nimbus config explain`.)
+
 - [ ] **Drift Sentinel** — a low-frequency loop re-emits the boot attestation and fails the affected capability **closed** on any divergence between the running gate-set and the certified policy, writing a `governance_drift` entry (anchored externally).
+
+
 
 #### Wave 2 — Bounded autonomy primitives
 
+
+
 - [ ] **Witnessed quorum without a server** — true M-of-N threshold signatures over the action payload (extends `I20` / `I21` from counting to crypto proof; a trusted-dealer bootstrap ships, DKG is stretch); fail-closed on an under-threshold / duplicate-signer proof.
+
 - [ ] **Capability leases + egress-budgeted autonomy** — time-boxed, revocable, signed grants of what the agent may *do*, and a spendable network-calls envelope decremented **at the `I15` boundary** (extends `I15` / static D10, fail-closed mid-action, checked immediately before the connector call); reuses the Phase 10 standing-approval storage (one grant system, not two).
+
 - [ ] **Reversibility insurance** — pre-commit undo snapshots + a **provable** undo-coverage-% computed from per-connector inverse-op availability; writes with no inverse (`email.send`, `repo.push`, `pipeline.trigger`) are **0% = irreversible by construction** and never asserted reversible (per Phase 17's "never claim reversible it can't prove").
+
+
 
 #### Acceptance Criteria
 
+
+
 - An org ships a signed `nimbus.governance.toml`; on boot the gateway compiles it into the gate and emits an attestation an auditor verifies offline that the running gate-set == the policy hash; a policy attempting to remove a frozen-set member is rejected at compile.
+
 - An irreversible action gated by M-of-N quorum unlocks only when a valid threshold signature verifies; an under-threshold / duplicate-signer proof fails closed; break-glass cannot touch a frozen-set member.
+
 - An autonomous task's egress budget is decremented at the `I15` boundary and refuses the over-budget call fail-closed; a write with no connector inverse is classified irreversible (0% coverage).
 
+
+
 ---
+
+
 
 ### Phase 27 — The Agent Society
 
+
+
 > **Research Horizon — primitive harvested (2026-06-17 overlay):** the overnight local sub-agent **fleet** lands early in **Track 1 / S2**. What stays here: the full standing, safe agent-organization. See [§ Phase 7+ Sequencing Spine](#phase-7-sequencing-spine).
+
+
 
 **Goal:** Exploit zero-marginal, rate-limit-free local compute to run what metered clouds can't — a tireless tier-0 on-call Captain and a standing agent organization — **made safe only by the structural irreversible boundary + a do-no-harm host scheduler**. Embodies **`M3` (Accountable Autonomy)** (not a new North-Star). The killer demo, productized.
 
+
+
 > **Composes with Phase 26 (leases / egress budgets / reversibility floors — hard dependency), Phase 17 (the interactive copilot it escalates from), Phase 10 (standing approvals + the taint barrier), Phase 4 (multi-agent), Phase 11 (biometric irreversible-edge HITL), Phase 23 (`I24` taint barrier).**
+
+
 
 #### Non-negotiable guardrails
 
+
+
 - **The taint barrier is a hard dependency:** a Captain mitigation whose trigger derived from attacker-influenceable content (a poisoned log line) **falls back to HITL** — injected content can never drive an autonomous action, even a reversible one (`I24`). *(The single most important guardrail in this phase.)*
+
 - **Rotation-slot accountability:** the human on-call is always notified the Captain holds / held the slot; the Captain hands the slot back / escalates within a bounded timeout; no silent autonomous tenure.
+
 - **Do-no-harm to the host:** autonomy yields to the user's real work; an incident lease carries precedence over background society tasks.
+
+
 
 #### Wave 1 — The Captain
 
+
+
 - [ ] **Autonomous on-call Captain** — Phase 17's copilot **minus the human-in-the-loop on reversible actions**: it receives the page, runs the Phase 17 investigation (referenced, not recapitulated), performs pre-authorized reversible mitigations bounded by a Phase 26 capability lease + egress budget + bonded undo + reversibility floor, and pulls a human in via Phase 11 biometric HITL **only at the irreversible edge** with a confidence + cited-evidence brief. Safe only because the executor structurally forbids crossing the irreversible boundary.
+
+
 
 #### Wave 2 — The society + its economy
 
+
+
 - [ ] **Local compute economy (load-bearing prerequisite)** — one PAL-resident scheduler: probe host class (laptop / workstation / NPU) → select a capability tier → admit / defer per live battery / thermal / contention, with graceful degradation. "Free FLOPs" is real on an idle workstation and a thermal / UX disaster on a laptop on battery; this scheduler is what makes standing autonomy honest.
+
 - [ ] **Nimbus Guild** — a persistent local multi-agent org with roles + a tamper-evident minutes book (anchored externally); every Guild item inherits the `I11` / `I24` taint constraint and runs as a host-idle society task (including `M1` / Phase-10 memory consolidation — not a separate "dream loop").
+
+
 
 > **Deferred / cut:** on-device speculative-reasoning ensembles → stretch (unproven on local FLOPs; value hinges on a trustworthy verifier — the open problem); a nightly "dream" loop → folded into Phase 10 memory + the idle scheduler; energy-attested autonomy → cut (per-process joule telemetry isn't uniform across the win32 / darwin / linux PAL backends → fails platform equality by construction).
 
+
+
 #### Acceptance Criteria
 
+
+
 - On a seeded reversible bad-deploy incident, the Captain investigates, performs the pre-authorized reversible rollback within its lease + egress budget, and surfaces an irreversible follow-up step for biometric HITL only; `nimbus audit replay <incident-id>` reconstructs every step and the human on-call was notified the Captain held the slot.
+
 - A Captain mitigation whose trigger derived from `untrusted`-tagged incident content falls back to HITL (does not auto-act); an over-budget or lease-expired action aborts before the connector.
+
 - On a battery-constrained host the scheduler defers non-incident society tasks while an incident lease still runs (precedence stated); the Guild minutes book is anchored externally.
 
+
+
 ---
+
+
 
 ### North-Star Capabilities (cross-phase)
 
+
+
 Audience-agnostic "no other tool does this" pillars, each enabled **because** of local-first / no-relay / HITL / audit. They thread through several phases rather than living in one; M1 and M3 are each strong enough to anchor a late phase.
 
+
+
 - [ ] **M1 — The Org's Living Memory** — the org's permanent, queryable institutional memory (*"why did we choose Kafka in 2024?"*, *"we tried this migration before — why did it fail?"*). Extends Phase 7 ADR drafter + Phase 10 episodic/point-in-time + Phase 16 collective Q&A.
+
 - [ ] **M2 — Preventive Ops** — learns from *your own* incident history the patterns that precede outages and warns at change time; headline signal **incidents prevented** (a heuristic — pattern-match + engineer-acted-on-warning — not a provable counterfactual). Extends Phase 17 W1 + Phase 9 local fine-tune.
+
 - [ ] **M3 — Accountable Autonomy** — multi-step loops end-to-end, HITL only at irreversible steps, **every decision replayable** (`nimbus audit replay`). *(Substrate: faithful replay needs the agent's reasoning/evidence trace captured, not just actions + HITL status — an extension beyond `audit_log` + `tool_call_log`, designed with the replay feature.)* Extends Phase 10 + Phase 14.
+
 - [ ] **M4 — Surveillance-Free Collective Intelligence** — cross-team/cross-org benchmarking + shared incident-pattern learning via secure aggregation over the relay-free mesh, **with nobody's data leaving their machine. Opt-in at the team/org level via `nimbus.policy.toml`, off by default, never per-engineer.** Extends Phase 6/11/15; **delivered by Phase 25 (Confidential Mesh Compute)** — the sketch/secure-aggregation substrate + the Sybil-resistant, Byzantine-robust trust floor.
+
 - [ ] **M5 — Counterfactual / Time-Travel Ops** — v1 is *static/causal analysis* (config + code paths + dependency graph + indexed integration-test history); live simulation of stateful external systems is out of scope. Extends Phase 10 point-in-time + Phase 14.
+
 - [ ] **M6 — The Self-Extending Agent** — notices its own gaps (toil heatmap) and **drafts its own connector/automation**: read-only by default, contract-tested against the SDK, generated only against an authoritative published spec (never hallucinated), sandboxed (`I15`), HITL-installed + `I16`-signed; never auto-tests writes against a live API. Extends Phase 14 + Phase 16.
+
 - [ ] **M7 — Provable Locality** — a continuous, cryptographically-attestable **egress ledger**: every network host the gateway and each sandboxed connector contacted, exportable as an auditor-grade artifact (*"proof this agent touched only these hosts this quarter"*). Uncopyable **because** of local-first + no-relay + `I15` — the sandbox already enforces a per-host network allowlist per connector, so the ledger is a faithful record, not a self-report; a cloud competitor (which *is* the egress) structurally cannot produce one. Promotes the killer demo's "0 outbound network calls" from a demo flourish to a product. Extends Phase 8 (the ledger + `nimbus egress` + signed report) and Phase 12 (auditor-grade compliance export); built on `I15` + the BLAKE3 audit chain. The chain is tamper-*evident*, not tamper-*proof* (a same-UID attacker could truncate + regenerate it); the Phase 12 export is **scheduled and pushed to an external append-only sink**, and that cadence — not the local store — is what bounds the rewrite window.
+
 - [ ] **M8 — Time-Travel** — point-in-time queries over the structured `item` table: `nimbus ask --at "2026-04-15T14:00Z" "..."` (alias `--as-of`; `--at` is the shipped Phase 10 flag). The local index becomes an append-only audit-grade timeline of every change to every connected system the user touched. Scoped narrowly: **structured items only**, not vectors (vector-index snapshots blow up disk — 1M items × delta × 365 days is hundreds of GB before compression). 30-day default retention; configurable via `[index].timetravel_retention_days`. Use cases: incident retrospectives ("what did our deploy state look like 30 seconds before the alert fired?"), legal discovery, post-mortem reconstruction, "what did we know when we made this decision." Uncopyable **because** local-first plus the BLAKE3 chain — cloud agents discard intermediate states; only the user's own machine has the raw history. Extends Phase 10 point-in-time + the existing audit chain; relates to M5 (counterfactual) which uses M8 as substrate. Implementation: per-write snapshot row to a `item_history` shadow table with TTL-driven prune; vector recall stays current-state-only.
+
 - [ ] **M9 — Verifiable Negatives** — portable, offline-checkable receipts that prove *what did not happen*. The egress negative is **M7 presented as a negation**; the net-new surface is the **taint negative** ("no untrusted-tagged content crossed into a privileged action" — hard-depends on the Phase 23 provenance tag; **fail-closed/unprovable when the tag is absent, never vacuously true**) and the **residency negative** ("this subject's data never left the box"). Uncopyable **because** an architecture that *is* the network cannot sign "I didn't egress." Delivered by Phase 22 on the Phase 21 substrate; verified offline with `eaf-verify`. Same-UID caveat: a receipt is only as strong as the external-sink anchor cadence (per M7).
+
 - [ ] **M10 — Causal Twin / Counterfactual Cognition** — past and present in one process. The net-new atom is the **merge-time extinction ledger** (mechanically asserting an incident class extinct-or-surviving against today's code, with a stated coverage caveat), not a new simulator: the **floor** is M5's static causal analysis over M8 state with the M3 trace (the overlap is acknowledged, not re-minted); the **ceiling** is a learned per-customer dynamics twin (research, gated behind Phase 9 calibration so confidence is always shown). Determinism is scoped to the decision + evidence-leaf set; any LLM-re-invoking step is `modeled, not replayed`. Delivered by Phase 24.
+
 - [ ] **M11 — Provenance-Bound Cognition** — every asserted fact bound to a content-addressed, replayable evidence DAG; agent memory append-only + BLAKE3-chained; the agent emits `ungrounded` (and **refuses to sign**) rather than confabulating when a leaf can't be reconstructed. Per-leaf signing is **federated-only** (intra-box leaves are covered by the chain). Uncopyable **because** only the local machine holds per-leaf provenance back to the raw indexed source. Delivered by Phase 24; extends M3 + M1 + Phase 12.5 Article-22.
+
 - [ ] **M12 — Provable Governance** — policy compiled *into* the consent gate (not advisory middleware) with an offline-verifiable boot attestation that the running gate-set equals the signed policy hash. Uncopyable **because** the gate lives in the executor and a cloud agent *is* the runtime (its attestation would be self-attested). Sits beside M7: M7 proves *where bytes went*; M12 proves *what the gate would and wouldn't allow*. Delivered by Phase 26.
+
+
 
 **Connective tissue** (the substrates that make the above one product): the **proactive meta-agent** ("what should I look at right now?" — routes to the right brief by context across ~15 built-in agents); the **Impact Ledger** (one tamper-evident measurement spine feeding the team ROI report, the evaluator "look what it did this week," and M2); a **causal/temporal event spine** (under M1/M2/M5); a first-class **transparency surface** (always-visible "Local Only" egress indicator — M7 is its signed, exportable form — plus inspect/delete-everything + decision replay); and the **"when the agent is wrong" backbone** (calibrated confidence with the humility to say "I'm not sure," one-keystroke undo, wrong-recommendation feedback that lowers future confidence — shared with Phase 17's remediation).
 
+
+
 ---
+
+
 
 ### First-Run & Time-to-Wow (near-term initiative)
 
+
+
 Defeating the cold start — Nimbus's wow is proportional to how much it has indexed, but at minute one the index is empty. This **gates adoption, so the cheap pieces should ship early — not be deferred to a late phase.**
 
+
+
 - [x] **`nimbus demo` — seeded sandbox** — loads a realistic synthetic org so an evaluator experiences incident assembly / `impact` / `expert` / the bus-factor radar in 30 seconds, zero connect, zero wait (repurpose the perf-bench synthetic corpora; shift all timestamps relative to "now" so it always looks like today). Also the host for the killer demo. **Delivered across two PRs.** PR 1 (#1545, 2026-09-19) shipped the isolation half: the `<dataDir>/demo` root, invariant **I41** (config/data/log/vault/IPC-endpoint isolation, an in-memory `EphemeralVault`, the Windows AppContainer reap and env-selected sidecars switched off). PR 2 (2026-09-19) shipped the corpus, the seeding, and the tour: a fixed, fictional "Acme" org seeded through the same production write APIs a real connector sync would use (never hand-crafted rows), the CLI-only `demo.seed` IPC method (I41 clause 5), an inert demo gateway that makes no outbound call at boot or while running — sync scheduler constructed but never started and registered with no syncable, updater/telemetry/embedding-download/extension-auto-update all skipped (I41 clause 6) — and `nimbus demo`'s recreate → seed → restart → three-brief tour (`oncall` → `why` → `owners`) flow, with `--no-tour`, `nimbus demo stop`, and `nimbus demo reset`. **Wired to `nimbus wow` this PR (2026-09-22):** the tour now runs through the shared `runTour` and prints `[n/4]` headers, the `oncall` step ran `nimbus --demo oncall --incident pagerduty:PDEMO412` — **superseded 2026-10-02**: the demo now fires a page after its restart that runs the on-call push path, and the first step is `nimbus --demo oncall pushed`, and the run closes on the same `[4/4] Where your data is` locality panel `nimbus wow` prints — proof line `egress.proveWindow` over `[t0 = the moment seeding finished, t1 = the panel's own gateway clock]`, spanning the post-seed restart — so the Killer Demo's "0 outbound network calls" is now a PRODUCED fact on every run, not a claim. `demo.seed` returns `tour: TourStep[]` (built by `tourStepFor`, the same construction `tour.plan` uses) plus `t0`. A failed step, or a failed proof call, exits `1` only AFTER the panel and the closing block have printed. Detail: [`cli-reference.md` § Demo Sandbox](./cli-reference.md#demo-sandbox), [`architecture.md`](./architecture.md#platform-path-api), [`SECURITY-INVARIANTS.md` § I41](./SECURITY-INVARIANTS.md). **What did NOT ship** (spec § 8, `2026-09-18-nimbus-demo-design.md`): per-profile data roots (the generalisation this seam is shaped to support later, not built); a volume generator / `--size`; the Killer Demo's remediation / dry-run flow and `nimbus audit replay`; desktop (Tauri) demo mode; `nimbus demo --json` (the tour is for a human reading a terminal — every individual `--demo` command already honours `--json` on its own).
+
 - [x] **Detect-and-reuse existing local auth** — notice the user is already logged into `gh` / `aws` / `gcloud` / `kubectl` and offer to use those credentials — one keypress instead of N OAuth flows (uniquely possible because Nimbus is local). **Delivered across two PRs, both 2026-09-20.** PR 1 (#1554) shipped `gh` / `aws` / `kubectl` via `nimbus connector detect` + `nimbus init`. PR 2 (#1557) closes the gcloud gap PR 1's own note left open: a GCP connector can now authenticate as the owner's `gcloud auth login` session (`GcpAuth`, `connectors/_lib/gcp-auth.ts`) instead of a service-account key file, detected read-only via `gcloud config list --format json` and adopted through the same `connector.adoptLocalAuth` HITL action type the other three sources use. Detail: [`cli-reference.md` § `nimbus connector detect`](./cli-reference.md#nimbus-connector-detect), [`docs/CHANGELOG.md`](./CHANGELOG.md).
+
 - [x] **Zero-auth local-first wow** — `nimbus init` (already shipped) indexes ONE repository — the current directory — with no OAuth; a second, other repository still needs its own `[[filesystem.roots]]` edit (`~/code`-wide discovery was never built). Value arrives two ways: the printed `file:line` hint for `nimbus why`, and, on a TTY, the offered guided tour. Delivered by `nimbus init` (already shipped) + `nimbus wow` (#1565, 2026-09-21) + this PR (2026-09-22, the `init`/`demo` wiring).
+
 - [x] **"Prove it's local" demonstration** — shipped as the locality panel closing both `nimbus wow` and `nimbus demo`: which listeners are open right now (loopback / NOT-loopback per network listener — the local IPC socket carries none), the on-disk index, and `egress.proveWindow` over the tour window, rendered only through `formatProveResult` — never a bare `0`. **What did NOT ship** (spec § 7): an always-visible desktop "Local only" indicator or a desktop tour, a first-run inspect/delete surface beyond the existing commands, and a signed receipt inside the panel itself (`nimbus prove --sign` is named at the panel's foot instead, not run for you). **Stated bound:** the panel lists the gateway PROCESS's own listeners — a socket a gateway-spawned child process opens on its own (e.g. Chromium's DevTools port during a live `nimbus computer` browser session) is not in it.
+
 - [x] **`nimbus wow` guided tour** — deterministic per-kind selectors over the real index, no LLM, up to six built-in agents (2026-09-21, #1565). Wired in 2026-09-22 (this PR): `nimbus init` chains into it on a TTY after a successful index, and `nimbus demo` shares its runner and its closing panel. **What did NOT ship:** LLM-chosen step selection, tour steps for `preflight`/`premortem`/`negotiate`, tour history or completion telemetry, and `~/code`-wide multi-repo discovery.
+
 - [ ] **Screenshot-worthy output** + re-weight **signed installers / one-liner install** (Phase 13) for the adoption reason, not just enterprise.
 
+
+
 ---
+
+
 
 ### The Killer Demo (north-star milestone)
 
+
+
 **"The page that answered itself"** — runs on `nimbus demo`: a P1 fires → the assembled brief is already there (cause, the deploy 8 min ago, the PR, cascade root) → *"95% confidence, rollback dry-run affects payment-service only, reversible — approve?"* → resolved, mean-time-to-context 22s → post-mortem + status-page drafted → `nimbus audit replay` shows every decision and **"0 outbound network calls."** Tagline: *"Your systems just had an incident. Nimbus already handled the first 30 minutes — locally, and it can prove it."*
+
+
 
 This is **not a feature — it's a cross-phase milestone that proves the thesis**, and reverse-engineering it yields the minimal first slice to build: `nimbus demo` sandbox → Phase 17 W2 (pushed brief + deep investigation + cascade) → Phase 17 W3 (confidence/dry-run remediation) + the "when the agent is wrong" mechanism → `nimbus audit replay` + transparency surface (M3) → the Impact Ledger. *(The production version needs a minimal cut of the Phase 10 + Phase 4 substrate; the demo sandbox seeds it.)* **Declare "ship the killer demo" an explicit prioritization spine.** Alternate cuts: *"Ask your entire org anything"* (data-eng/lineage; M1) and *"Watch it run and never phone home"* (security buyer; M3/M4).
 
+
+
 ---
+
+
 
 <a id="s--standards-cross-phase"></a>
 
+
+
 ### S — Standards (cross-phase track, reference-impl only)
+
+
 
 A standing track that publishes the format specs Nimbus consumes anyway, as **reference implementations** other tools can read. Explicitly **not** an attempt to win an IETF / CNCF / NIST process — adversarial review of the "own a standard" framing made it clear that a small vendor cannot push a spec through a standards body without prior share, and that "if we publish it, they will come" is the standards graveyard. The track ships specs as a marketing artifact + a verifier CLI; whether they become de facto is determined downstream by adoption, not upstream by lobbying.
 
+
+
 Three of the four original standardization candidates (LAIP, PAT, SCM) are demoted to internal formats — referenced by name in the relevant phase but not standardized. The fourth, EAF, survives because it has an existing constituency (security teams reviewing the user's deployment, per Phase 12.5) that no other party currently serves.
+
+
 
 #### EAF — Egress Attestation Format (anchor)
 
+
+
 - [ ] **EAF v0.1 published** at `standards.nimbus-agent.dev/eaf/v0.1` (or the `nimbus-standards/` directory if `nimbus-agent.dev` doesn't yet host a standards subpath) — JSON Schema + narrative spec describing the egress-ledger record format, the BLAKE3 chain primitive, the signed-envelope envelope, and the verification semantics. License: Apache 2.0 so derivative implementations are unblocked.
+
 - [ ] **`eaf-verify` CLI** — small standalone Bun (or Go for portability) binary that takes an EAF artifact + the issuer's public key and verifies: (a) chain integrity, (b) issuer signature on the envelope, (c) timestamp monotonicity, (d) every claimed egress event has a complete record (no `null` host fields). Distributed as a single binary so a security reviewer can drop it into their CI without installing Nimbus.
+
 - [ ] **Reference fixtures** — committed under `docs/standards/eaf/fixtures/` — a golden valid artifact, a golden tampered artifact (chain break), a golden truncated artifact, a golden re-signed artifact (replayed envelope). Used as a conformance suite for any derivative implementation.
+
 - [ ] **EAF in Phase 12.5** — every compliance bundle's egress-ledger section is an EAF v0.1 artifact (already noted in Phase 12.5). The Phase 12.5 bundle's `verify.sh` invokes `eaf-verify` against the included egress section.
+
+
 
 #### Demoted formats (referenced internally, not standardized)
 
+
+
 - [ ] **LAIP (Local Agent Interop Protocol)** — internal wire format for Nimbus-to-Nimbus federation (Phase 6, Phase 11). To be documented as an internal spec — no such document exists yet. Not pursued as an external standard — bilateral protocol adoption requires industry incentive that doesn't exist.
+
 - [ ] **PAT (Portable Agent Trace)** — internal format for the M3 replay trace (reasoning + evidence + decision path). Documented as part of the M3 substrate work. The cross-agent handoff exporter (`nimbus export-session`) writes PAT; importers in Claude Code / Cursor are demoted from "phase deliverable" to "demo + courtesy bridge if a third party wants to consume it." No bet on bilateral adoption.
+
 - [ ] **SCM (Signed Connector Manifest)** — already implemented as the `I16` chain; the Phase 9.5 published manifest schema is its reference implementation. Documented as a section of the Phase 9.5 spec rather than a standalone RFC.
+
+
 
 #### Acceptance Criteria (track-level, not gated by a single phase)
 
+
+
 - EAF v0.1 + its verifier CLI + its conformance fixtures are published and reachable from `docs/standards/eaf/`.
+
 - Phase 12.5 bundles include EAF artifacts that the `eaf-verify` binary validates offline against the published Nimbus issuer pubkey.
+
 - At least one third party (an auditor, a security consultancy, or another local-first agent vendor) has run `eaf-verify` against a Nimbus-produced artifact and provided feedback — even rejecting feedback counts; the existence of an outside reader proves the artifact has crossed a credibility threshold.
+
 - The PAT and LAIP internal specs are documented enough that a future contributor can implement against them; SCM's reference implementation matches the Phase 9.5 manifest schema 1:1.
 
+
+
 ---
+
+
 
 ## Rejected Directions
 
+
+
 <a id="rejected-directions"></a>
 
+
+
 Directions that were seriously considered and deliberately not taken. They live here rather than in a
+
 commit message because the expensive failure mode is not making the wrong call once — it is making the
+
 same call again in six months without the reasoning. **Each entry names the condition that would
+
 reopen it**, because a verdict is only correct while its premises hold, and some of these premises are
+
 testable.
+
+
 
 ### Fork VS Code into a Nimbus editor (the Cursor shape) — rejected 2026-08-29
 
+
+
 **Proposed:** ship a Nimbus-branded editor built on a VS Code fork instead of the
+
 [`nimbus-vscode`](https://github.com/nimbus-agent/nimbus-vscode) extension.
+
+
 
 **Why not.** The fork was standing in for four separate wants, and none of them is best served by it:
 
+
+
 | Want | Cheaper instrument |
+
 | --- | --- |
+
 | Distribution / mindshare | The messaging surface above — the only surface that reaches someone who installed nothing — and `nimbus-statuspage`, which is already first in the build order |
+
 | UI control the extension API supposedly blocks | **Untested.** The `why`-lens hover is specified and unbuilt. Cursor forked in 2023, before chat participants, the Language Model API, LM tools and inline hints existed |
+
 | Code-writing capability | A different question entirely, rejected separately below |
+
 | Independence from Microsoft's marketplace | Already mitigated: the extension dual-publishes to Open VSX |
 
+
+
 Beyond the mismatch, the fork carries a standing cost that does not amortise: a permanent upstream
+
 rebase cadence, three-OS build + sign + notarize + a self-owned updater, an Open VSX-only extension
+
 story (the Microsoft Marketplace terms bar non-VS Code products, which is why every fork ships a
+
 degraded one), and a branding/telemetry scrub on every merge. Against a project this size, with S2
+
 open, that is the whole build capacity. **Cursor's moat was never the fork** — the fork was the entry
+
 fee for a race whose prize is model-plus-UX iteration speed, which is the axis Nimbus is worst
+
 positioned on and the private index gains nothing from.
 
+
+
 It also inverts this section's own thesis. "One gateway, N contextual surfaces; the agents are the
+
 product" and "we maintain an editor" are not compatible statements about where the value is.
 
+
+
 **Reopens if:** the `why`-lens hover is actually built and the extension host demonstrably blocks the
+
 ambient UX it needs — evidence from a built thing, not an assumption about the API surface. That is a
+
 cheap experiment and it should be run before this is raised again.
+
+
 
 ### SQLite encryption at rest (SQLCipher) — rejected 2026-09-15
 
+
+
 **Proposed:** opt-in `[db.encrypt]`, AES-256 via SQLCipher, key held in the OS Vault — so the local
+
 index is unreadable without the key. Carried as a Phase 4 decision, then deferred to the `v0.1.1`
+
 batch with the trigger "engineering work only — no external dependency".
 
+
+
 **Why not. The trigger column was wrong: the blocker is the runtime, not effort.** SQLCipher is a
+
 *fork* of SQLite — it changes the pager for page-level crypto — not a loadable extension, so
+
 `db.loadExtension()` cannot reach it. The only way in is replacing the linked library, and
+
 `bun:sqlite` exposes exactly one lever for that, `Database.setCustomSQLite(path)`, which **is a
+
 no-op on Windows and Linux**. Probed directly on 2026-09-15 with a discriminator that cannot give a
+
 false negative — point it at a nonexistent library, then open a database; a real call must fail
+
 somewhere:
 
+
+
 | Platform | Bun | `setCustomSQLite("/bogus")` | Then `new Database(":memory:")` | Verdict |
+
 | --- | --- | --- | --- | --- |
+
 | win32 | 1.3.14 | returns, no throw | opens, `sqlite_version() = 3.53.0` | no-op |
+
 | linux (docker `oven/bun:1.3`) | 1.3.14 | returns, no throw | opens, `sqlite_version() = 3.53.0` | no-op |
 
+
+
 macOS is the one platform where the lever is real — which is why `platform/sqlite-runtime.ts` uses
+
 it to bundle a full SQLite there. Shipping at-rest encryption on one platform of three fails
+
 non-negotiable #5. Linking SQLCipher into the compiled binary does not rescue it either: `bun:sqlite`
+
 in a dev run or under `bun test` still uses Bun's own build, so the DB layer would behave differently
+
 in development than in production.
 
+
+
 **The failure mode is silent, which raises the stakes on any future attempt.** On plain SQLite
+
 `PRAGMA key = '…'` does **not** error — it returns an empty result and is ignored. An implementation
+
 can therefore set the key, observe no error, report encryption enabled, and write plaintext. Anything
+
 built here must verify positively (`PRAGMA cipher_version` returning non-empty), never by the absence
+
 of an error.
+
+
 
 **Rejected substitutes, and why each is worse than nothing:**
 
+
+
 | Substitute | Why not |
+
 | --- | --- |
+
 | Encrypt the file on shutdown, decrypt on start | Nimbus is a continuously-syncing daemon, so "encrypted only while stopped" is close to "not encrypted" — while carrying the word *encryption* in the config key. A crash leaves plaintext. It invites precisely the belief it does not earn. |
+
 | Field-level encryption of `item.body` | Destroys FTS5 and vector search over the encrypted column, which is the index's entire purpose. |
+
 | Our own `bun:ffi` binding to SQLCipher | Rewrites the DB layer, every Worker realm and the sqlite-vec path; and sync FFI blocks the event loop. |
+
 | A page-encrypting custom VFS | Hand-rolled crypto in the storage path — the category of thing not to hand-roll. |
+
 | Reporting OS full-disk encryption status | A reasonable feature, but it encrypts nothing. Landing it under this row would let "SQLite encryption at rest" be ticked by something that provides no encryption. If wanted, it belongs in its own row, named for what it does. |
 
+
+
 **Reopens if:** `bun:sqlite` gains a real custom-library lever on Windows and Linux, or Bun ships
+
 SQLCipher support directly. Re-run the probe above before designing anything — the whole row rests
+
 on that one API's behaviour, and a doc claim is not a substitute for the two-line experiment.
+
+
 
 ### Agent-authored code generation — rejected 2026-08-29
 
+
+
 **Scope this precisely, because two adjacent things are *not* rejected:** connector write actions stay
+
 planned (Phase 9.7, HITL-gated, `I26`), and owner-invoked sandboxed execution already ships
+
 (`nimbus exec`, `I33`). What is rejected is the Cursor/Claude-Code shape — **an LLM that authors and
+
 applies changes to the user's source tree.**
+
+
 
 **Why not.**
 
+
+
 - **It competes on the weakest axis.** Code-generation quality is frontier-model quality plus harness
+
   tuning. Nimbus controls neither, and the private cross-service index — the one thing it does own —
+
   contributes almost nothing to that contest.
+
 - **It costs a load-bearing sentence.** "Fourteen agents, zero write capability, and `nimbus prove`
+
   reads zero" is much of what makes the Auditor-in-a-Box and insurer buying centers in
+
   [§ Commercial Roadmap](#commercial-roadmap) coherent. That sentence stops being true the moment an
+
   agent writes.
+
 - **It opens the door `I33` already flags as first to re-examine.** That invariant's scope bound says
+
   the LLM cannot invoke an execution, *"so no indexed untrusted text reaches the prompt; that is what
+
   makes one human approval a sufficient boundary."* A code-writing agent over an index full of Slack,
+
   Jira and email text **is** that agent-callable path: untrusted indexed text → agent → code that
+
   runs. Rejecting this is not conservatism; it is declining to walk through a door the invariant
+
   documentation already labelled.
+
 - **Wrong persona.** Guiding principle #7 scopes this product to engineers running systems in
+
   production. Generating code is not that person's bottleneck.
 
+
+
 **Reopens if:** an agent-callable execution path lands *with* a taint barrier — the same problem the
+
 proposed standing-approval taint barrier in
+
 [Phase 10](#phase-10--the-autonomous-agent) already has to solve. Even then the reopening is narrow:
+
 writes only where the index is the reason the change is right (an ownership graph, a decision record,
+
 a comparable incident), never general code generation.
+
+
 
 ### Default-on browser control and shell automation — rejected 2026-08-29
 
+
+
 The general-purpose local-agent projects in this category grant filesystem, shell and browser control
+
 by default. That is the posture, not the capability, being rejected: it is incompatible with
+
 non-negotiable #2 (HITL is structural), and it is the shape behind the exposed-instance incidents
+
 those projects have had.
 
+
+
 **Not affected:** the S2 computer-use row is the sanctioned form of the same capability — per-action
+
 HITL by default, explicit per-session opt-in, screenshots that never leave the machine. Take the
+
 reach of these projects; do not take their permissions model.
+
+
 
 ### A `nimbus prep` meeting-preparation agent — rejected 2026-10-10
 
+
+
 **Proposed:** a built-in `nimbus prep` agent that prepares the owner for a meeting, carried in the
+
 Phase 4 `v0.1.1` batch with the trigger "WS6 streaming surface (`engine.askStream`) battle-tested in
+
 the wild".
 
+
+
 **Why not.** `nimbus catchup` already covers the need: a read-only digest of what happened across
+
 connected services over a window, weighted by the owner's own involvement (owned services, active
+
 repos, incidents responded to, frequent collaborators), with `--since` and `--service` to narrow it.
+
 A second agent over the same substrate would be a second brief to keep honest under I31 and a second
+
 entry in every compiler-forced agent registration site, for a framing rather than a capability.
+
 `catchup` does not read calendar events, and that is the one thing a meeting-specific agent would
+
 add.
 
+
+
 **Reopens if:** owners need a brief anchored to a specific calendar event — its attendees and
+
 agenda — that `catchup`'s window-and-involvement weighting cannot give. That would be a new
+
 capability over calendar items, not this row revived. The `meeting-prep` name in Phase 9 Wave 5's
+
 eval-suite list predates this entry and does not by itself reopen it.
+
+
 
 ### Already covered — do not re-file
 
+
+
 A 2026-08-29 survey of [OpenClaw](https://github.com/openclaw/openclaw) and Hermes Agent found that
+
 most of what looked adoptable is already on this roadmap. Recorded so the survey is not repeated:
 
+
+
 | Capability observed elsewhere | Already lives at |
+
 | --- | --- |
+
 | Self-authored / runtime-generated skills | [S2 § Runtime tool generation](#spine-s2); [Phase 14 § Stretch — Tool Generation](#phase-14--agent-evolution--ai-v2) |
+
 | Persistent cross-session memory over a local store | [Phase 10 § Core — Agent Memory & Personalization](#phase-10--the-autonomous-agent) (long-term episodic memory) |
+
 | Proactive scheduled runs / a pushed morning digest | [Phase 10 § Core — Standing Approvals & Scheduling](#phase-10--the-autonomous-agent) (scheduled workflows, morning briefing) |
+
 | Trajectory export for fine-tuning / RL | [Phase 14 § Stretch](#phase-14--agent-evolution--ai-v2) (tool-use trace dataset builder); [Phase 10 § Stretch — Local Model Fine-Tuning](#phase-10--the-autonomous-agent) |
+
 | Any OpenAI-compatible endpoint; many providers | [S5 § Carried into S5](#carried-into-s5) — "a local OpenAI-compatible runtime", still open when [S2](#spine-s2) closed, re-homed there 2026-10-10 |
+
 | Ten-plus messaging channels | **Partially.** The agent intent shipped as the messaging surface in [§ Client surfaces](#client-surfaces) (2026-08-30); channel breadth beyond Slack/Teams is deliberately *not* committed |
 
+
+
 The one genuinely uncovered gap the survey found was not a capability at all — it was that the
+
 messaging surface which already shipped could not reach the agents. That gap is closed; see
+
 [§ Client surfaces](#client-surfaces).
+
+
 
 ---
 
+
+
 ## How to Update This Document
 
+
+
 - When a phase becomes active, update its status in the overview table and add a progress note (e.g. "~14 of 21 items complete").
+
 - Check off individual items (`[x]`) as they land on `main`; update the progress count in the phase status note.
+
 - When a phase completes, add a **Delivered** section (see Phases 1 and 2 for the format) and update the status table.
+
 - Do not add new items to an active phase without a corresponding issue and team discussion.
+
 - Planned phase items can be reprioritised between phases — open a discussion, then update this file and `CLAUDE.md` and `GEMINI.md` (AI assistant context files at the repo root that carry architecture and convention summaries for AI-assisted development) to match.
+
 - New phases can be added after the last planned phase; do not insert phases between active/complete phases.
+
 - Update the "Last updated" note at the top whenever significant waves of work land on `main`.
+
 - **When a direction is seriously considered and not taken, record it in [§ Rejected Directions](#rejected-directions) with the condition that would reopen it** — not just the verdict. A rejection whose reasoning is missing gets re-proposed; a rejection whose reopening condition is missing gets treated as permanent when it was contingent. Scope the entry narrowly enough that adjacent planned work is not read as rejected too.
+
