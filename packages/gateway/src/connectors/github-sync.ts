@@ -144,16 +144,14 @@ export function extractPrMetadataForIndex(
   const rawState = stringField(pr, "state");
   const user = asRecord(pr["user"]);
   const login = user === undefined ? undefined : stringField(user, "login");
+  // A Search API hit may omit `draft`; an absent flag is not "false" (`upsertPr` carries the stored
+  // value forward, and only then defaults to false). `undefined` is dropped on serialisation.
+  const draft = pr["draft"];
   const out: Record<string, unknown> = {
+    draft: typeof draft === "boolean" ? draft : undefined,
     user: login,
     labels: extractLabelNames(pr["labels"]),
   };
-  // A Search API hit may omit `draft`; an absent flag is not "false" (`upsertPr` carries the stored
-  // value forward, and only then defaults to false).
-  const draft = pr["draft"];
-  if (typeof draft === "boolean") {
-    out["draft"] = draft;
-  }
   const mergeable = pr["mergeable"];
   if (typeof mergeable === "boolean") {
     out["mergeable"] = mergeable;
@@ -302,7 +300,7 @@ const PR_CARRIED_CONTRACT_KEYS = ["opened_at_ms", "branch", "draft"] as const;
  * selector's two arms, not both. This could not be confirmed from GitHub's published docs and
  * needs verification against the live API before anyone treats it as fixed either way.
  */
-function mergeForwardPrStats(
+function carryForwardPrKeys(
   itemMetadata: SyncContext["itemMetadata"],
   meta: Record<string, unknown>,
   externalId: string,
@@ -340,6 +338,20 @@ function mergeForwardPrStats(
   return merged;
 }
 
+/**
+ * `carryForwardPrKeys`, then the one default: a PR whose `draft` flag is absent from the payload AND
+ * from the stored row (never indexed before) is not a draft. An absent flag never overwrites a stored
+ * `true`.
+ */
+function mergeForwardPrStats(
+  itemMetadata: SyncContext["itemMetadata"],
+  meta: Record<string, unknown>,
+  externalId: string,
+): Record<string, unknown> {
+  const carried = carryForwardPrKeys(itemMetadata, meta, externalId);
+  return carried["draft"] === undefined ? { ...carried, draft: false } : carried;
+}
+
 export function upsertPr(
   ctx: SyncContext,
   repoFull: string,
@@ -373,12 +385,11 @@ export function upsertPr(
   const user = asRecord(pr["user"]);
   const authorId = resolveGithubActorPersonId(ctx.resolvePerson, user);
   const externalId = githubPrExternalId(repoFull, num);
-  const merged = mergeForwardPrStats(
+  const meta = mergeForwardPrStats(
     ctx.itemMetadata,
     extractPrMetadataForIndex(repoFull, pr, now),
     externalId,
   );
-  const meta = merged["draft"] === undefined ? { ...merged, draft: false } : merged;
   ctx.upsertItem({
     service: SERVICE_ID,
     type: "pr",
