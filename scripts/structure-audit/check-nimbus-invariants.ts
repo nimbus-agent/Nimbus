@@ -2403,10 +2403,11 @@ function createToolCallRe(commentFree: string): RegExp {
 // and delivered through two local sinks (the `briefing.ready` gateway event and the OS toast), both injected.
 // Scope: every non-test file under `packages/gateway/src/briefing/` and every
 // `packages/gateway/src/agents/_lib/briefing*.ts`. In scope:
-//   - no import (static, dynamic, `require`, or a re-export) of `chatops/`, `egress/`, `federation/` or
+//   - no import (static, side-effect `import "x"`, dynamic, `require`, or a re-export) of `chatops/`, `egress/`, `federation/` or
 //     `share/`, even type-only; and none of `connectors/` unless it is a TYPE-only import;
-//   - no network primitive: `fetch(`, `globalThis.fetch(`, `Bun.fetch(`, `new WebSocket(`,
-//     `XMLHttpRequest`, and no import of `node:http`, `node:https`, `node:http2`, `node:net`, `node:tls`,
+//   - no network primitive: ANY reference to the global `fetch` (a call, an alias such as
+//     `const f = fetch`, `fetch.bind`; only a `.fetch` property of another object is allowed), any use of
+//     `globalThis`, `window` or `self`, `Bun.fetch`, `new WebSocket`, `XMLHttpRequest`, and no import of `node:http`, `node:https`, `node:http2`, `node:net`, `node:tls`,
 //     `node:dgram` or `undici`.
 // Stated bounds: a text scan of DIRECT imports. An indirect path through an allowed module (`llm/`,
 // `index/`) is not followed; `synthesize.ts`, which the briefing imports, is no network path because no
@@ -2419,7 +2420,15 @@ const D45_CONNECTORS_SEGMENT_RE = /(?:^|\/)connectors(?:\/|$)/;
 const D45_REQUIRE_RE = /\brequire\s*\(\s*["'`]([^"'`]+)["'`]\s*\)/g;
 const D45_NETWORK_MODULE_RE = /^(?:node:)?(?:http|https|http2|net|tls|dgram)$|^undici(?:\/|$)/;
 const D45_NETWORK_CALL_RE =
-  /(?<![.\w$])fetch\s*\(|\bglobalThis\s*\.\s*fetch\b|\bBun\s*\.\s*fetch\b|\bnew\s+WebSocket\b|\bXMLHttpRequest\b/g;
+  /\bBun\s*\.\s*fetch\b|\bnew\s+WebSocket\b|\bXMLHttpRequest\b/g;
+// Any mention of the global `fetch` at all, not only a call: `const f = fetch`, `(fetch)`, `fetch.bind(...)`
+// and a parameter default all alias it. A `.fetch` PROPERTY of some other object stays allowed (`db.fetch`).
+const D45_FETCH_REF_RE = /(?<![.\w$])fetch(?![\w$])/g;
+// The global objects a `fetch` can be reached through, by any spelling (`globalThis["fetch"]` has its name
+// in a string, which is blanked): the briefing needs none of them.
+const D45_GLOBAL_OBJECT_RE = /(?<![.\w$])(?:globalThis|window|self)(?![\w$])/g;
+// `import "x";` (no `from`): runs the module for its effects, so it is an import like any other.
+const D45_SIDE_EFFECT_IMPORT_RE = /(?:^|[;{}])[ \t]*import\s*["']([^"']+)["']/gm;
 
 function inBriefingScope(relPath: string): boolean {
   if (relPath.endsWith(".test.ts")) return false;
@@ -2450,8 +2459,13 @@ export function checkBriefingConfinement(files: readonly FileEntry[]): Violation
     }
     for (const m of commentFree.matchAll(D39_DYNAMIC_IMPORT_RE))
       specifier(m[1] ?? "", true, m.index);
+    for (const m of commentFree.matchAll(D45_SIDE_EFFECT_IMPORT_RE)) {
+      specifier(m[1] ?? "", true, m.index);
+    }
     for (const m of commentFree.matchAll(D45_REQUIRE_RE)) specifier(m[1] ?? "", true, m.index);
-    for (const m of code.matchAll(D45_NETWORK_CALL_RE)) push("briefing-no-network", code, m.index);
+    for (const re of [D45_NETWORK_CALL_RE, D45_FETCH_REF_RE, D45_GLOBAL_OBJECT_RE]) {
+      for (const m of code.matchAll(re)) push("briefing-no-network", code, m.index);
+    }
   }
   return out;
 }

@@ -5845,8 +5845,34 @@ describe("D45 - the morning briefing delivers locally only (OR-10-11)", () => {
     'import t from "node:tls";',
     'import d from "node:dgram";',
     'import { fetch } from "undici";',
+    'import "node:http";',
+    'import"node:https";',
+    "const outbound = fetch;",
+    'const outbound = fetch; outbound("https://x");',
+    'const f = globalThis["fetch"];',
+    "const g = (fetch);",
+    "const b = fetch.bind(globalThis);",
+    "const { fetch: f } = globalThis;",
+    "const w = window;",
+    "const s = self;",
+    "function fetch() {}",
   ])("a network primitive is flagged: %s", (body) => {
-    expect(rules(bad(RUNNER, body))).toEqual(["briefing-no-network"]);
+    expect(rules(bad(RUNNER, body))).toContain("briefing-no-network");
+  });
+
+  test.each([
+    'import "../chatops/x.ts";',
+    'import"../egress/x.ts";',
+    'import "../federation/x.ts";',
+    "import '../share/x.ts';",
+    'import "../connectors/x.ts";',
+    'a(); import "../chatops/x.ts";',
+  ])("a side-effect import of a forbidden path is flagged: %s", (body) => {
+    expect(rules(bad(RUNNER, body))).toEqual(["briefing-forbidden-import"]);
+  });
+
+  test("a side-effect import of an allowed path is not flagged", () => {
+    expect(rules(bad(RUNNER, 'import "../db/write.ts";'))).toEqual([]);
   });
 
   test("a file outside the scope, a test, a comment and a string are not scanned", () => {
