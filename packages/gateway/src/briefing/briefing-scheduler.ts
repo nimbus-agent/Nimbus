@@ -37,7 +37,9 @@ export type BriefingSchedulerDeps = {
 
 export class BriefingScheduler {
   private timer: unknown;
-  private inFlight: Promise<void> | undefined;
+  /** The briefing lane and the scan lane run independently: a briefing that hangs never blocks a scan. */
+  private briefingInFlight: Promise<void> | undefined;
+  private scanInFlight: Promise<void> | undefined;
   private retired = false;
   private firstTick = true;
   /** In-memory: slots at or before this never fire (see `planFire`). `null` while disabled. */
@@ -71,37 +73,50 @@ export class BriefingScheduler {
   async retire(): Promise<void> {
     this.retired = true;
     this.stop();
-    await this.inFlight?.catch(() => {});
+    await Promise.all([this.briefingInFlight?.catch(() => {}), this.scanInFlight?.catch(() => {})]);
   }
 
-  /** One pass. A pass that finds the previous one still running returns at once. */
+  /**
+   * One pass. The briefing and the deadline scan are separate lanes, each single-flight: a lane that is
+   * still running is skipped (and not waited for), so a briefing that waits past a ticket's due time
+   * cannot stop the scan that would have warned about it.
+   */
   tick(): Promise<void> {
     if (this.retired) return Promise.resolve();
-    if (this.inFlight !== undefined) return this.inFlight;
-    const run = this.runTick().finally(() => {
-      this.inFlight = undefined;
-    });
-    this.inFlight = run;
-    return run;
+    let cfg: NimbusBriefingToml;
+    try {
+      cfg = this.deps.loadConfig();
+    } catch (e) {
+      this.report(e);
+      return Promise.resolve();
+    }
+    const now = this.deps.now();
+    const lanes: Promise<void>[] = [];
+    if (this.briefingInFlight === undefined) {
+      const run = this.briefingPart(cfg, now).finally(() => {
+        this.briefingInFlight = undefined;
+      });
+      this.briefingInFlight = run;
+      lanes.push(run);
+    }
+    this.firstTick = false;
+    if (this.scanInFlight === undefined) {
+      const run = this.scanLane(cfg, now).finally(() => {
+        this.scanInFlight = undefined;
+      });
+      this.scanInFlight = run;
+      lanes.push(run);
+    }
+    return Promise.all(lanes).then(() => undefined);
   }
 
   private report(err: unknown): void {
     this.deps.onError?.(err);
   }
 
-  private async runTick(): Promise<void> {
-    let cfg: NimbusBriefingToml;
-    try {
-      cfg = this.deps.loadConfig();
-    } catch (e) {
-      this.report(e);
-      return;
-    }
-    const now = this.deps.now();
-    await this.briefingPart(cfg, now);
+  private async scanLane(cfg: NimbusBriefingToml, now: number): Promise<void> {
     await this.deadlinePart(cfg, now);
     this.pruneIfDue(cfg, now);
-    this.firstTick = false;
   }
 
   private async briefingPart(cfg: NimbusBriefingToml, now: number): Promise<void> {

@@ -218,6 +218,23 @@ describe("the deadline scan and pruning", () => {
     expect(scans).toBe(2);
   });
 
+  test("a briefing that never resolves does not block a due deadline scan", async () => {
+    cfg = parseNimbusTomlBriefing(`${ENABLED}[briefing.deadlines]
+enabled = true
+`);
+    now = z(2026, 11, 12, 8, 30);
+    const s = make({
+      fire: () => new Promise<void>(() => {}),
+    });
+    s.start();
+    s.stop();
+    await new Promise((r) => setTimeout(r, 5));
+    expect(scans).toBe(1);
+    now += DEADLINE_SCAN_EVERY_MS;
+    await s.tick();
+    expect(scans).toBe(2);
+  });
+
   test("off by default; a throwing scan is reported", async () => {
     await make().tick();
     expect(scans).toBe(0);
