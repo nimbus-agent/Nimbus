@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794436324757,
+  "lastUpdate": 1794437014096,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "e42d66be2728742a9f9224fe44e20d180458729a",
-          "message": "feat(http): read the egress ledger over HTTP, under its own scope (U1) (#1319)\n\n## Summary\n\nGives the browser a way to read the egress ledger it already writes to.\nFour bearer-authed HTTP reads — `GET /v1/egress`, `/v1/egress/head`,\n`/v1/egress/verify`, `/v1/egress/prove` — under a new `egress` scope,\nover the four `egress.*` primitives that already shipped as IPC verbs\nwith I29 (#698).\n\n**No new record, table, or appender.** The ledger already captures\neverything the web clipper causes: `sync/targeted-fetch.ts` appends one\nrow per targeted fetch before calling the connector, and agent\ninvocations over HTTP append one `source_type='http'` row each. What was\nmissing was a way to read any of it from a browser, which speaks HTTP\nand not IPC.\n\nFive commits, each TDD:\n\n- `feat(clips)` — `egress` joins `API_SCOPES`, and deliberately not\n`LEGACY_SCOPES`: it reads the record of everything this gateway sent on\nthe owner's behalf, so a token already in the wild must gain nothing.\nThe owner grants it in place with `nimbus clip scopes <label> --set\n<scopes>` — no re-pairing.\n- `feat(egress)` — `listEgress` gains opt-in `order: \"desc\"` and an\nexclusive `before` cursor. Ordered `id ASC` under a 1000-row cap, a wide\nwindow returned the *oldest* page and dropped the most recent rows.\n- `feat(http)` — the four routes, mounted beside `handleItemsResolve`.\n- `feat(http)` — `prove` gets its own rate-limit budget.\n- `docs(security)` — the I29 note.\n\n## Related Issue\n\nNo tracking issue. This is the gateway half of a cross-repo feature; the\nfull design lives with the consumer, in `nimbus-web-clipper` at\n`docs/superpowers/specs/2026-08-23-gateway-activity-ledger-design.md`,\nand the plan this PR executes is committed here at\n`docs/superpowers/plans/2026-08-23-egress-read-routes.md`.\n\nThe consumer's slices S1–S3 build against exactly these shapes and ship\nversion-gated — a gateway without these routes 404s and the extension\nsays so.\n\n## Type of Change\n\n- [x] New feature (non-breaking change that adds functionality)\n- [x] Documentation only (the I29 note; the rest is feature work)\n\n## Non-Negotiables Checklist\n\n- [x] `bun run typecheck` passes with zero errors\n- [x] Biome passes — **run as `bunx biome check packages scripts`**,\nbecause `bun run lint` reports \"0 files processed\" and exits 1 inside\n`.claude/worktrees/` (nested-root config). Clean across 3514 files.\n- [x] All existing tests pass — `20177 pass / 161 skip / 0 fail` across\n1569 files, against a `20157 pass` baseline on `origin/main`. The delta\nis exactly the 20 tests added here.\n- [x] New behaviour is covered by tests — 13 in\n`http-egress-routes.test.ts`, 7 in `egress-verify.test.ts`.\n- [x] No `any` types introduced\n- [x] No credentials, tokens, or secret values appear in logs, IPC\nmessages, config, or test fixtures — the test vault is an in-memory\n`Map` (the `clip-e2e.test.ts` pattern); no token is logged, and the\nprivate share seed never leaves `signWindowDigest`.\n- [x] Platform-specific code is behind the `PlatformServices`\nabstraction — N/A, no OS-dependent code.\n- [x] The HITL consent gate has not been weakened, bypassed, or made\nconfigurable — `egress.prune`, the ledger's one sanctioned mutation and\nan I2 frozen-set member, gains **no HTTP surface at all**. Only reads\nare exposed.\n- [x] `docs/README.md` untouched.\n\n## Coverage (if engine/ or vault/ was changed)\n\nNeither `engine/` nor `vault/` was modified — the coverage gates do not\napply.\n\n## Testing\n\nFull suite, typecheck, Biome and markdownlint all run in the worktree;\nnumbers above. The new HTTP suite boots a **real**\n`startReadOnlyHttpServer` on port 0 against a real SQLite DB at the\ncurrent schema version, and mints tokens through the **real** pairing\nflow, so the scope gate is exercised end to end rather than stubbed: one\ntoken with `[\"clip\",\"egress\"]` and one with `[\"clip\"]`, compared against\nthe same four routes.\n\nLedger rows in the fixture are appended with `appendEgressEntry`, never\nraw-`INSERT`ed — a raw insert leaves `row_hash` unchained and `GET\n/v1/egress/verify` would then fail for a reason unrelated to what is\nunder test.\n\n## Notes for Reviewers\n\nThree things I'd want a second pair of eyes on.\n\n**1. The ordering default is load-bearing, not a style choice.**\n`proveWindow` calls `listEgress`, and `digestEgressWindow` hashes\n`rows.map(r => r.rowHash).join(\"|\")` — the rows *in the order returned*.\nMaking `desc` the default would have changed the digest of every window\nand silently invalidated every receipt already issued. So `order` is\nopt-in, the ascending default is untouched, and there is a test pinning\n`proveWindow`'s row order whose comment says its failure means \"you\nchanged a signed artifact\", not \"update the expectation\".\n\n**2. Where the routes are mounted is a security decision.** They go in\nthe bearer-authed fetch handler beside `handleItemsResolve`, **not** in\n`dispatchReadOnlyDataGet` — that table's `/v1/items/*` entry is `{ kind:\n\"public\" }` with no bearer gate, so routing these through it would serve\nthe record of everything this gateway ever sent to any local process on\nthe machine. That is the trap `handleItemsResolve`'s own comment\ndocuments, one surface over. Absent the clips surface they 404 with a\nnamed `egress_disabled` cause rather than falling through, and there is\na test for it.\n\n**3. `prove` exposes `signWindowDigest` to a labelled clip token — the\ncontested piece.** The bound is narrow by construction, and I would\nrather it be argued than assumed:\n\n- The caller supplies only `since`/`until` integers, so the signed\nmessage is always the BLAKE3 digest of a payload the gateway builds —\nnever caller-chosen bytes.\n- The `nimbus-egress-window-v2` tag is inside that hashed payload, so a\ndigest produced under a different rule cannot collide with one produced\nunder this one.\n- Share files sign `canonicalizeBody(body)` — canonical JSON — so a\nsignature harvested here is not replayable as a share file.\n- What the two artifacts *do* share is identity: both verify under the\nshare keypair's public key, which `share.pubkey` already publishes. That\nfollows from the existing deliberate \"reused — no new Vault key\" choice,\nnot from this PR.\n\nIt is also the only one of the four doing asymmetric crypto per call, so\nit carries its own limiter instance at 10/min rather than a per-route\noverride on the write surface's 60/min — prove must not spend clip\ningest's budget, and a busy clipper must not make proving fail. Note the\nfingerprint is a constant, matching how `http-write-routes.ts` buckets\nits routes: this is a **per-route** budget, not per-token.\n\n**Deliberately out of scope:** caller attribution on targeted-fetch rows\n(`recordSyncEgress` still hardcodes `sourceId: null`) and outcome rows.\nBoth are real gaps for the consumer — the ledger currently cannot say\n*which* client asked for a fetch, nor how the fetch ended, since the row\nis appended before `fetchOne` and records authorization rather than\noutcome. They are sequenced as separate upstream work; the outcome row\nin particular adds a row class to an append-only chained ledger and\ntouches I29's counting and coverage argument, so it wants its own design\ndoc rather than riding along here.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-08-23T20:05:05Z",
-          "tree_id": "9a1d37c60aa158af5e8a72656ac21842a6b08d92",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/e42d66be2728742a9f9224fe44e20d180458729a"
-        },
-        "date": 1787516060197,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 283.0448488500013,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 288.05237045000393,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 286.3536537500055,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
+            "name": "nimbus-release-bot[bot]",
+            "username": "nimbus-release-bot[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "06ed94b5a71ff83716b215249fae927621f62205",
+          "message": "chore: release main (#1975)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>10.52.0</summary>\n\n##\n[10.52.0](https://github.com/nimbus-agent/Nimbus/compare/v10.51.0...v10.52.0)\n(2026-11-11)\n\n\n### Features\n\n* **gateway:** keep Slack read markers, index Slack DMs, and count\nunread threads for the morning briefing\n([#1973](https://github.com/nimbus-agent/Nimbus/issues/1973))\n([e2870a1](https://github.com/nimbus-agent/Nimbus/commit/e2870a1a904112549a0752d9c22192ba0586e4ce))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
+          "timestamp": "2026-11-11T22:29:39Z",
+          "tree_id": "8a63ccf87b2fae11921c856a91403e0530cd3546",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/06ed94b5a71ff83716b215249fae927621f62205"
+        },
+        "date": 1794437008354,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 290.7933703999981,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 292.24149919999616,
             "unit": "ms"
           }
         ]
