@@ -433,13 +433,14 @@ export async function main(): Promise<void> {
   const shutdown = async (signal: string): Promise<void> => {
     process.stdout.write(`[gateway] ${signal} — shutting down\n`);
     lifecycle.stop();
+    // The briefing scheduler first: a workflow still in flight must not leave its timer ticking.
     try {
-      await workflowScheduler?.retire();
+      await platform.briefing.scheduler?.retire();
     } catch {
       /* ignore */
     }
     try {
-      await platform.briefing.scheduler?.retire();
+      await workflowScheduler?.retire();
     } catch {
       /* ignore */
     }

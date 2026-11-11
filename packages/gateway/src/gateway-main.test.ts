@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
 
 import { agentRequestContext } from "./engine/agent-request-context.ts";
 import {
@@ -189,5 +190,16 @@ describe("drainToolgenOnShutdown", () => {
     ).rejects.toThrow("vault error");
     expect(revoked).toBe(true);
     expect(scriptsRemoved).toBe(true);
+  });
+});
+
+describe("shutdown order", () => {
+  test("the briefing scheduler is retired before the gateway waits on workflow retirement", () => {
+    const src = readFileSync(new URL("./gateway-main.ts", import.meta.url), "utf8");
+    const briefing = src.indexOf("platform.briefing.scheduler?.retire()");
+    const workflows = src.indexOf("workflowScheduler?.retire()");
+    expect(briefing).toBeGreaterThan(-1);
+    expect(workflows).toBeGreaterThan(-1);
+    expect(briefing).toBeLessThan(workflows);
   });
 });

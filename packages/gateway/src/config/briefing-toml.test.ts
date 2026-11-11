@@ -140,6 +140,9 @@ describe("[briefing] MB5 keys", () => {
     ["unknown section", '[briefing]\nsections = ["mail", "weather"]\n', "sections"],
     ["duplicate section", '[briefing]\nsections = ["mail", "mail"]\n', "sections"],
     ["sections not an array", '[briefing]\nsections = "calendar"\n', "sections"],
+    ["an empty entry", '[briefing]\nsections = ["calendar", "", "mail"]\n', "sections"],
+    ["an empty leading entry", '[briefing]\nsections = ["", "mail"]\n', "sections"],
+    ["a doubled comma", '[briefing]\nsections = ["calendar",, "mail"]\n', "sections"],
     ["multi-line array", '[briefing]\nsections = [\n"mail",\n]\n', "sections"],
     ["retention 0", "[briefing]\nretention_days = 0\n", "retention_days"],
     ["retention 366", "[briefing]\nretention_days = 366\n", "retention_days"],
@@ -161,6 +164,17 @@ describe("[briefing] MB5 keys", () => {
     expect(c.retentionDays === 9 || key === "retention_days").toBe(true);
     expect(c.schedule === DEFAULT_BRIEFING_CONFIG.schedule || key !== "schedule").toBe(true);
     expect(c.sections.length).toBeGreaterThan(0);
+  });
+
+  test("an empty entry rejects the whole key; a trailing comma is still fine", () => {
+    const seen: string[] = [];
+    const bad = parseNimbusTomlBriefing('[briefing]\nsections = ["calendar", "", "mail"]\n', (m) =>
+      seen.push(m),
+    );
+    expect(bad.sections).toEqual([...BRIEFING_SECTIONS]);
+    expect(seen).toHaveLength(1);
+    const ok = parseNimbusTomlBriefing('[briefing]\nsections = ["calendar", "mail",]\n');
+    expect(ok.sections).toEqual(["calendar", "mail"]);
   });
 
   test("a bad tz does not also condemn the schedule", () => {

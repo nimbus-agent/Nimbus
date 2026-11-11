@@ -122,6 +122,17 @@ function sectionsKey(raw: string, report: Report): readonly BriefingSection[] {
     // `parseStringArray` THROWS on a non-array value and on a multi-line array (this line parser
     // sees a bare `[`), so an unparseable value is a fallback, not a boot failure.
     values = parseStringArray(raw);
+    // `parseStringArray` silently drops empty entries; here an empty or doubled-comma entry is a
+    // malformed key, not a shorter list. One trailing comma is valid TOML and stays accepted.
+    const inner = raw.trim().slice(1, -1).trim();
+    if (inner !== "") {
+      const parts = inner.split(",");
+      if (parts.length > 1 && (parts[parts.length - 1] ?? "").trim() === "") parts.pop();
+      if (parts.some((p) => parseString(p) === "")) {
+        report("[briefing].sections holds an empty entry; using all");
+        return fallback;
+      }
+    }
   } catch {
     report(
       `[briefing].sections must be a one-line array of section names (got: ${raw}); using all`,
