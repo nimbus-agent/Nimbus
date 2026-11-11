@@ -44,7 +44,7 @@ export const ARCHIVE_STEPS = [
 export function freshDb(): Database {
   ensureFullSqlite();
   const db = new Database(":memory:");
-  runIndexedSchemaMigrations(db, 89);
+  runIndexedSchemaMigrations(db, 90);
   return db;
 }
 
