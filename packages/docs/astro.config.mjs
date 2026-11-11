@@ -40,6 +40,7 @@ export default defineConfig({
             { label: "HITL & safety", link: "/user-guide/hitl-and-safety/" },
             { label: "Watchers", link: "/user-guide/watchers/" },
             { label: "Workflows", link: "/user-guide/workflows/" },
+            { label: "Morning briefing", link: "/user-guide/morning-briefing/" },
             { label: "Built-in agents", link: "/user-guide/agents/" },
             { label: "Profiles", link: "/user-guide/profiles/" },
             { label: "VS Code extension", link: "/user-guide/vscode-extension/" },

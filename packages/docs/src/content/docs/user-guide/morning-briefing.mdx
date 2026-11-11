@@ -1,0 +1,79 @@
+---
+title: Morning briefing
+description: A once-a-day summary of your meetings, on-call, reviews, tickets and unread threads, built from your local index.
+---
+
+import { Aside } from "@astrojs/starlight/components";
+
+The morning briefing gathers what is waiting for you today into one page: your meetings, your on-call
+shifts, active incidents, review requests and your open pull requests, tickets that are overdue or due
+today, and unread mail and Slack threads. It is built from your **local index** only. Nothing is sent to
+any service and no AI model is involved: the text is assembled the same way every time.
+
+## Turn it on
+
+Add this to `nimbus.toml` (it is off by default):
+
+```toml
+[briefing]
+enabled = true
+schedule = "30 8 * * 1-5"   # weekdays at 08:30
+tz = "Europe/London"        # optional; defaults to this machine's zone
+```
+
+At the scheduled time Nimbus composes the briefing and shows a desktop notification. Read it any time
+with:
+
+```bash
+nimbus briefing          # the newest briefing
+nimbus briefing now      # compose one right now
+nimbus briefing list     # recent runs
+nimbus briefing status   # what is on, when it fires next, which sources are connected
+```
+
+## What the notification shows
+
+Only counts, for example `3 meetings · 2 reviews waiting · on call today`. It never shows a title, a
+sender, a repository, a channel or a time, so nothing private appears on a lock screen. The full text is
+in `nimbus briefing`.
+
+## Choosing sections
+
+`sections` is a one-line list; the order is the order shown:
+
+```toml
+[briefing]
+sections = ["calendar", "tickets", "mail"]
+```
+
+The choices are `calendar`, `oncall`, `incidents`, `reviews`, `tickets`, `mail` and `chat`. A section
+whose service is not connected says so under **Gaps** instead of looking empty, and **Data freshness**
+shows how old each source is.
+
+## Deadline notices
+
+```toml
+[briefing.deadlines]
+enabled = true
+lead_hours = 24
+quiet_hours = 24
+```
+
+Nimbus warns **once** about each open item assigned to you in Jira, Linear or GitHub that is due within
+`lead_hours` and has had no activity for `quiet_hours`: `1 open item due within 24 h with no recent
+activity`. It warns again only if the due date moves by an hour or more. This works with or without the
+briefing itself.
+
+<Aside type="note">
+If the gateway was not running at the scheduled time, Nimbus catches the briefing up when it starts within
+three hours; later than that the miss is recorded as skipped. Turning the briefing on fires nothing until
+the next scheduled time.
+</Aside>
+
+## Limits worth knowing
+
+- Outlook mail is counted per message, not per thread, and shows no sender.
+- Reviews cover GitHub only.
+- Slack unread counts need the read markers the Slack sync records, so they appear after a sync.
+- A shift that began and ended before the briefing was composed is not listed.
+- On a day when the clocks skip an hour, a schedule inside that hour has no run that day.

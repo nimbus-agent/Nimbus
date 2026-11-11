@@ -1336,6 +1336,33 @@ CREATE TABLE connector_write_enablement (
 
 **SQLite write boundary.** Every production write goes through `dbRun` / `dbExec` / `dbStmtRun` in `packages/gateway/src/db/write.ts` (invariant `I14`). The wrappers translate `SQLITE_FULL` into a typed `DiskFullError`; the static-audit gate `D12` (`bun run audit:invariants`) fails the build on any direct `db.run(` / `db.exec(` outside the wrapper.
 
+## V93 — morning briefing runs and deadline notices (Phase 10 MB5, 2026-11-12)
+
+Authoritative source: `packages/gateway/src/index/briefing-v93-sql.ts`. Written only by `briefing/briefing-store.ts`. `slot_at` and `error_msg` are additions to the spec's table; the start of a run is `fired_by`, never `trigger` (static D44(d)). `item` is not a foreign-key parent, so the trigger is the cascade. No backfill.
+
+```sql
+CREATE TABLE IF NOT EXISTS briefing_run (
+  id TEXT PRIMARY KEY,
+  fired_at INTEGER NOT NULL,
+  fired_by TEXT NOT NULL CHECK (fired_by IN ('schedule','manual')),
+  status TEXT NOT NULL CHECK (status IN ('ok','skipped','failed')),
+  headline TEXT NOT NULL,            -- the toast body: counts only
+  markdown TEXT, counts_json TEXT,
+  toast_outcome TEXT,                -- delivered|not_delivering|rate_limited|unavailable|failed|demo
+  slot_at INTEGER,                   -- the scheduled instant a schedule run or skip answers
+  error_msg TEXT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS briefing_run_slot ON briefing_run (slot_at) WHERE slot_at IS NOT NULL;
+CREATE INDEX IF NOT EXISTS briefing_run_fired ON briefing_run (fired_at DESC);
+CREATE TABLE IF NOT EXISTS deadline_notice (
+  item_id TEXT PRIMARY KEY,
+  due_at_ms INTEGER NOT NULL,        -- the RAW due value the notice was shown for
+  notified_at INTEGER NOT NULL
+);
+CREATE TRIGGER IF NOT EXISTS deadline_notice_item_delete AFTER DELETE ON item
+BEGIN DELETE FROM deadline_notice WHERE item_id = OLD.id; END;
+```
+
 ## V92 — Slack read markers (Phase 10 MB4, 2026-11-11)
 
 Authoritative source: `packages/gateway/src/index/chat-read-marker-v92-sql.ts`. Written only by `index/chat-read-marker-store.ts` through the `setChatReadMarkers` sync capability (static D24 rule `chat-read-marker-confined`); removed by `removeConnectorIndexData` and `nimbus data delete`. No trigger (rows are not keyed by `item`) and no backfill.

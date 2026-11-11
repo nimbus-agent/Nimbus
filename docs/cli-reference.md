@@ -1166,6 +1166,46 @@ nimbus oncall now --service payment-service --json
 
 **Bounds.** Reply shapes of the providers are not verified against live accounts. Jira Service Management shifts carry no start or end time and no service mapping (look them up by schedule name). PagerDuty `you` needs a user-level API token or `pagerduty.from_email` (`nimbus connector auth pagerduty --token <token> --username <email>`). `nimbus ask "who's on call for payment-service?"` uses the `oncall_now` tool only where the Mastra agent runs (with a remote model vendor); the local-router path has no tools, and there only ranked retrieval of the shift rows can surface the answer. The IPC method is `oncall.now` (LAN-forbidden, renderer-callable, served by a demo gateway); the `nimbus oncall` brief also carries an `On call now` line under `## Incident`.
 
+### `nimbus briefing`
+
+Your morning briefing, built from the local index. It makes **no provider call** and **uses no model**: the text is rendered deterministically, and nothing leaves the machine except a local notification.
+
+```bash
+nimbus briefing              # the newest successful briefing
+nimbus briefing now          # compose one now
+nimbus briefing list --limit 10
+nimbus briefing status
+nimbus briefing --json
+```
+
+| Subcommand | Description |
+|---|---|
+| *(none)* | Print the newest successful briefing with a `fired <time> - schedule\|manual` footer. Exit 1 with a hint when there is none yet. |
+| `now` | Compose a briefing now (a manual run; it also shows the notification, except on a demo gateway). `ERR_BRIEFING_BUSY` while another is being composed. |
+| `list [--limit <n>]` | One line per run, newest first (1 to 100, default 20): id, time, how it started, status, headline; a skipped run shows its reason. |
+| `status` | Whether it is on, the schedule and zone, the next fire, the last run, the deadline scan, each section's connected sources, and whether the notification will show. |
+| `--json` | The raw result on one line. |
+
+Text from the index (a title, a sender) is stripped of control characters before it reaches the terminal. `briefing.ready` is a gateway event: `nimbus tail --filter briefing` follows it.
+
+**Configuration** (`nimbus.toml`; a bad value falls back to that key's own default and `nimbus config explain` names it, nothing is clamped):
+
+| Key | Default | Range |
+|---|---|---|
+| `[briefing] enabled` | `false` | |
+| `[briefing] schedule` | `"30 8 * * 1-5"` | a five-field cron expression that cannot fire more often than hourly |
+| `[briefing] tz` | the machine's zone | an IANA zone |
+| `[briefing] sections` | all seven | a one-line array of `calendar`, `oncall`, `incidents`, `reviews`, `tickets`, `mail`, `chat`; the order is the order shown |
+| `[briefing] retention_days` | `30` | 1 to 365 |
+| `[briefing] snapshot_interval_minutes` | `15` | 5 to 240 |
+| `[briefing.deadlines] enabled` | `false` | independent of `[briefing] enabled` |
+| `[briefing.deadlines] lead_hours` | `24` | 1 to 168 |
+| `[briefing.deadlines] quiet_hours` | `24` | 1 to 336 |
+
+**The notification shows counts only** (`3 meetings · 2 reviews waiting · on call today`; `2 open items due within 24 h with no recent activity`): never a title, sender, repository, channel or time. A missed slot is caught up if the gateway starts within three hours of it, otherwise it is recorded as skipped; enabling the briefing fires nothing until the next slot; a wall time inside a spring-forward gap has no slot that day.
+
+**Bounds.** Outlook mail is counted per message (no thread key or sender is indexed); an empty work snapshot reads "not run yet", never "nothing assigned"; GitHub only for reviews; Slack unread needs the read markers the Slack sync records.
+
 ### `nimbus oncall pushed`
 
 Read the brief the gateway assembled **on its own** when a P1 page reached you — the on-call push. This is the read side of an unattended pass: with `[oncall.push] enabled = true` (default **off**), every PagerDuty sync checks for an ACTIVE (`triggered`/`acknowledged`) incident assigned to you, with a severity in `{"p1"} ∪ [pagerduty] severity_p1_aliases` (or the `[oncall.push] severities` list, which replaces that set), that opened at or after the moment push was enabled (minus five minutes). Each such incident gets **one** brief, assembled exactly as [`nimbus oncall --incident`](#nimbus-oncall) would assemble it, stored, announced by an `oncall.briefPushed` gateway event, and readable here. It also raises an OS notification ([`nimbus notifications`](#nimbus-notifications); real since 2026-10-10), recorded as `skipped` when OS notifications are off or unavailable on this gateway; `nimbus tail --filter oncall` (the event) and this command remain the durable delivery surfaces. When `chatops_namespace` names a namespace with policy `notify` channels and `[chatops]` is enabled, a three-line headline is also posted there (at most three per delivery, then one summary); `delivery.chatops` in `--json` shows the outcome.
@@ -4378,6 +4418,7 @@ nimbus doctor
 - Gateway IPC reachable
 - Configuration file validates
 - Index total item count (warns if zero — suggests connecting a service)
+- Morning briefing: silent when `[briefing]` and `[briefing.deadlines]` are both off; `[warn]` when it is enabled but a section has no connected source, or the last scheduled briefing failed; `[info]` when notifications will not show; `[ok]` with the next fire otherwise
 - On-call push: when `[oncall.push] enabled = true`, warns if your identity is unresolved (no incident could ever be selected); otherwise reports it enabled
 - Notifications: `[ok]` with the backend and `content` mode when OS notifications work; `[info]` when they are off by your choice (`[notifications] enabled = false`, `NIMBUS_NOTIFICATIONS=off`, a demo gateway) or the availability probe has not finished; `[warn]` with the reason when they should work and do not (an invalid `[notifications]` section, an unavailable backend, a platform with none). Silent against a gateway too old to serve `notifications.status`. See [`nimbus notifications`](#nimbus-notifications)
 - Extensions: `[warn]` naming installed extensions that have no run approval or an approval for older code (`nimbus extension approve <id>`); silent when there are none, when the gateway reports the extension runtime off, or on a gateway that predates run approvals. A gateway from before this release does not report whether the runtime is on, so with `[extensions] runtime = false` it can still warn. An extension that had model access is named again with `add --model to keep model access`. Separately, doctor gives one `[warn] Extensions: <id> needs <connector> — run: <fix>` line for each connector an installed extension requires that is not connected or never synced; these appear whether or not the extension runtime is on, and only a not-connected one makes doctor exit non-zero (a never-synced one is a warning, not unmet)

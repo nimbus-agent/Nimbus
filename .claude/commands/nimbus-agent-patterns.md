@@ -55,6 +55,8 @@ Three read-only agents that surface cross-colleague context by fanning the shipp
 
 **`conflicts`** (`packages/gateway/src/agents/conflicts.ts`) — IPC `agents.conflicts`, CLI `nimbus conflicts <file> [--namespace <n>] [--json]`, notification `conflicts.briefReady`. Warns of WIP collisions (open PR / assigned ticket / recent commit / open branch) before editing a file. Fans out `federation.query` per peer asking for recent activity on the file path; merges results sorted by recency.
 
+**The morning briefing is a `_lib` brief with NO `agents/` emitter file** (Phase 10 MB5): static D22(d) treats every `agents/<name>.ts` as a brief emitter that only `ipc/agents-rpc.ts` may import, and the briefing's scheduler lives in `briefing/`. Its types, queries, builder and renderer are `agents/_lib/briefing-*.ts` and it is called with no synthesis runner (OR-10-8).
+
 **`huddle`** (`packages/gateway/src/agents/huddle.ts`) — IPC `agents.huddle`, CLI `nimbus huddle [--since <ms>] [--namespace <n>] [--json]`, notification `huddle.briefReady`. Team-scoped morning briefing aggregating each teammate's recent PRs, tickets, and incidents from across paired peers. One `federation.query` fan-out per peer, one sub-agent per peer, results merged into a per-teammate section.
 
 **Shared fan-out helper:** `federation/peer-fanout.ts` — iterates `PeerRegistry`, calls `federation.query` / `federation.expertise` per peer with per-peer timeout + error isolation, and returns merged results. Consumed only by these three agents.
