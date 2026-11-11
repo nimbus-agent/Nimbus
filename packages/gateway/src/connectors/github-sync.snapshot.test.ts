@@ -189,7 +189,7 @@ describe("github my-open-work snapshot", () => {
       due_at_ms: Date.parse("2026-11-20T08:00:00Z"),
       milestone: "v2",
     });
-    expect(meta("o/r#issue-6").due_at_ms).toBeUndefined();
+    expect(meta("o/r#issue-6")["due_at_ms"]).toBeUndefined();
     expect(meta("o/r#9")).toMatchObject({ meta_v: 3 });
     const type = db.query("SELECT type FROM item WHERE external_id = 'o/r#9'").get();
     expect(type).toEqual({ type: "pr" });
