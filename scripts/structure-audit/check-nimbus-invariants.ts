@@ -2419,8 +2419,7 @@ const D45_FORBIDDEN_SEGMENT_RE = /(?:^|\/)(?:chatops|egress|federation|share)(?:
 const D45_CONNECTORS_SEGMENT_RE = /(?:^|\/)connectors(?:\/|$)/;
 const D45_REQUIRE_RE = /\brequire\s*\(\s*["'`]([^"'`]+)["'`]\s*\)/g;
 const D45_NETWORK_MODULE_RE = /^(?:node:)?(?:http|https|http2|net|tls|dgram)$|^undici(?:\/|$)/;
-const D45_NETWORK_CALL_RE =
-  /\bBun\s*\.\s*fetch\b|\bnew\s+WebSocket\b|\bXMLHttpRequest\b/g;
+const D45_NETWORK_CALL_RE = /\bBun\s*\.\s*fetch\b|\bnew\s+WebSocket\b|\bXMLHttpRequest\b/g;
 // Any mention of the global `fetch` at all, not only a call: `const f = fetch`, `(fetch)`, `fetch.bind(...)`
 // and a parameter default all alias it. A `.fetch` PROPERTY of some other object stays allowed (`db.fetch`).
 const D45_FETCH_REF_RE = /(?<![.\w$])fetch(?![\w$])/g;
