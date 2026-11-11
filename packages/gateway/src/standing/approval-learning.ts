@@ -25,6 +25,7 @@ import type { Database } from "bun:sqlite";
 
 import { parseWorkflowSteps, workflowStepsSha256 } from "../automation/workflow-steps.ts";
 import type { WorkflowTrigger } from "../engine/types.ts";
+import { sha256HexEqualConstantTime } from "../util/timing-safe-compare.ts";
 import { hasLiveRuleFor } from "./standing-rule-store.ts";
 import {
   applyStepRun,
@@ -104,7 +105,8 @@ function parseRow(row: AuditRow, run: LearningStepRun): ParsedRow {
     prov["runId"] === run.runId &&
     prov["stepIndex"] === run.stepIndex &&
     prov["workflowId"] === run.workflowId &&
-    prov["workflowSha256"] === run.workflowSha256;
+    typeof prov["workflowSha256"] === "string" &&
+    sha256HexEqualConstantTime(prov["workflowSha256"], run.workflowSha256);
   if (!mine) return { kind: "foreign" };
   return { kind: "ours", status: row.hitl_status, answerSource: root["answerSource"] };
 }
@@ -171,7 +173,9 @@ export function learnFromStepRun(
   // A run of content the workflow no longer has (it was edited while the run was going) changes no
   // learning state: it must not drop the CURRENT hash's streak, nor start one for obsolete content.
   const current = (cfg.currentSha ?? ((id: string) => currentWorkflowSha(db, id)))(run.workflowId);
-  if (current !== run.workflowSha256) return { kind: "superseded" };
+  if (current === undefined || !sha256HexEqualConstantTime(current, run.workflowSha256)) {
+    return { kind: "superseded" };
+  }
   const now = (cfg.now ?? Date.now)();
   // A hash change is a new key: the old hash's open suggestions go stale and its streaks are dropped.
   markStaleFor(db, run.workflowId, run.workflowSha256, now);

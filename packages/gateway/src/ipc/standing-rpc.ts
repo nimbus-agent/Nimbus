@@ -55,6 +55,7 @@ import {
   markStale,
   type StandingSuggestion,
 } from "../standing/standing-suggestion-store.ts";
+import { sha256HexEqualConstantTime } from "../util/timing-safe-compare.ts";
 import { dispatchByMethod, type RpcMissOrHit } from "./_lib/dispatch-by-method.ts";
 import type { ClientKind } from "./server/client-kind.ts";
 import { RpcMethodError } from "./server/rpc-error.ts";
@@ -249,7 +250,8 @@ function commitFromSuggestion(
   const commit = ctx.db.transaction((): ReturnType<typeof insertRule> | "stale" => {
     // The workflow may have been edited while the owner was asked: a rule for the old hash would
     // never fire, so the suggestion goes stale instead and no rule is made.
-    if (currentWorkflowOf(ctx.db, newRule.workflowId)?.sha !== newRule.workflowSha256) {
+    const live = currentWorkflowOf(ctx.db, newRule.workflowId);
+    if (live === undefined || !sha256HexEqualConstantTime(live.sha, newRule.workflowSha256)) {
       markStale(ctx.db, from.id, now);
       return "stale";
     }
@@ -303,7 +305,7 @@ function currentWorkflowOf(db: Database, workflowId: string): CurrentWorkflow | 
 /** One open suggestion for the owner; `undefined` when its workflow changed or is gone (it is stale). */
 function suggestionView(db: Database, s: StandingSuggestion): Record<string, unknown> | undefined {
   const wf = currentWorkflowOf(db, s.workflowId);
-  if (wf === undefined || wf.sha !== s.workflowSha256) return undefined;
+  if (wf === undefined || !sha256HexEqualConstantTime(wf.sha, s.workflowSha256)) return undefined;
   const step = wf.steps[s.stepIndex];
   return {
     id: s.id,
@@ -338,7 +340,7 @@ async function createFromSuggestion(
     throw ERR("ERR_STANDING_REFUSED", `that suggestion is ${s.status}, not open`);
   }
   const wf = currentWorkflowOf(ctx.db, s.workflowId);
-  if (wf === undefined || wf.sha !== s.workflowSha256) {
+  if (wf === undefined || !sha256HexEqualConstantTime(wf.sha, s.workflowSha256)) {
     markStale(ctx.db, s.id, (ctx.now ?? Date.now)());
     throw ERR(
       "ERR_SUGGESTION_STALE",
