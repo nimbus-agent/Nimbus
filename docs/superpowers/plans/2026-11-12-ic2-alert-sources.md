@@ -1,6 +1,6 @@
 # Plan — Incident engine IC2: alert sources and service bindings (JSM alerts, PagerDuty resolution time, bindings, graph routing)
 
-Status: DRAFT for Antigravity review (round 1 pending).
+Status: APPROVED by Antigravity (round 1, 2026-11-12).
 Spec: `docs/superpowers/specs/2026-11-12-incident-engine.md` (approved, Antigravity round 3): § 2 (OR-10-8, OR-10-17,
 OR-10-19), § 4 (the IC2 row), § 5.2 (IC2's design), § 7 (acceptance: tests driven by the real populators and
 syncables, no hand-seeded edges), § 8 (stated bounds), § 9 (review log: round 2 added the graph routing for
@@ -829,3 +829,7 @@ the attribution lines from the session. No `Release-As:` trailer.
 ## Review log
 
 (Round 1 pending.)
+
+## Review log
+
+Round 1 (Antigravity, 2026-11-12): APPROVED, no blocker or major. Minor citation fixes: the `architecture.md` statement that `deployment/annotate.ts` creates no deployment graph entity is near `:1590`, not `:938` (re-find it at Task 0); `parseMetadata` in `graph/regraph.ts` starts at `:48` (`:30-36` is the `_syncItem` seam). Note from IC1's review round (2026-11-12): a deletion now also writes `key -> NULL` history rows beside `__deleted`, so IC2's readers of `item_history` treat those as part of the deletion.
