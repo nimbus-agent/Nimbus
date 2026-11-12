@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794445575505,
+  "lastUpdate": 1794446255814,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "8611b5c72afab10338e93b438ecd27aeec3ec966",
-          "message": "feat(egress): a targeted fetch names the client that asked for it (U2a) (#1322)\n\n## Summary\n\nA targeted fetch now records **which client asked for it**.\n`recordSyncEgress` takes an optional caller label, and `POST\n/v1/items/fetch` supplies the one it already verified, so a `sync` row's\n`source_id` is the requesting client's label instead of always `null`.\n\nThe scheduler passes none — and that is the point. `sourceId: null` on a\n`sync` row now *means* **not caller-initiated**, rather than merely\n\"unknown\". A reader can separate a fetch someone asked for from a\nbackground sync nobody asked for without inferring it from `method`, and\nthe browser's Activity page (nimbus-agent/nimbus-web-clipper#70, merged)\ncan say *\"you asked for this\"* rather than *\"someone did\"*.\n\nFollows #1319, which gave the ledger its HTTP read surface. That surface\nis what made the gap visible: the Activity page has to render every\ntargeted fetch as *\"Not attributable\"* today, and raises a notice\ncounting them, because the gateway could not say who asked.\n\n## Related Issue\n\nNo tracking issue. This is U2a of the cross-repo design in the consumer\nrepo, `nimbus-web-clipper` at\n`docs/superpowers/specs/2026-08-23-gateway-activity-ledger-design.md`.\n\n## Type of Change\n\n- [x] New feature (non-breaking change that adds functionality)\n\n## Non-Negotiables Checklist\n\n- [x] `bun run typecheck` passes with zero errors\n- [x] Biome passes — clean across 3515 files\n- [x] All existing tests pass — `20200 pass / 161 skip / 0 fail` across\n1569 files\n- [x] New behaviour is covered by tests — four in `sync-egress.test.ts`\n(label carried, absent stays null, empty collapses to null, local-only\nstill appends nothing) and one in `targeted-fetch.test.ts` pinning the\nthreading end to end\n- [x] No `any` types introduced\n- [x] No credentials, tokens, or secret values in logs, IPC messages,\nconfig, or fixtures — the label is a device name, never the token\n- [x] Platform-specific code behind `PlatformServices` — N/A\n- [x] The HITL consent gate has not been weakened, bypassed, or made\nconfigurable — no gate is touched; the same rows are appended at the\nsame point, still fail-closed\n- [x] `docs/README.md` untouched\n\n## Coverage (if engine/ or vault/ was changed)\n\nNeither `engine/` nor `vault/` was modified.\n\n## Testing\n\nFull suite, typecheck and Biome above. The behavioural test is the\nload-bearing one — see the note below on why a type could not do that\njob.\n\n## Notes for Reviewers\n\n**The wiring carries a trap worth naming.** A closure taking only `url`\nstays **assignable** to the surface's `(url, callerLabel?)` type —\nTypeScript permits fewer parameters — so omitting the argument in\n`assemble.ts` typechecks cleanly and silently leaves every row\nunattributed. My first pass did exactly that and was green. There is now\na behavioural test asserting the label reaches the row and that its\nabsence leaves the row unattributed, because typecheck structurally\ncannot catch this.\n\n**The label is the only part of the row a caller influences**, and only\nthrough a token the gateway verified itself. `destination` remains the\nservice id `targetedFetch` derives internally from the URL's host, never\nanything the caller supplied. `requireFetchAuth`'s doc comment\npreviously said the verified principal was unused beyond the auth check;\nit now says what the label is used for.\n\n**An empty label collapses to `null` rather than being stored.** An\nempty string would read as \"attributed to a client whose label is blank\"\n— a claim the gateway cannot support. Absent is the honest value.\n\n**I29 is unaffected.** Same rows, same append point, same fail-closed\nbehaviour; only a previously-constant field now carries a value. The\n`I29` section of `docs/SECURITY-INVARIANTS.md` records the change and\nsays so explicitly.\n\n**Deliberately out of scope: item identity.** The design pairs this with\na `{service, type, id}` triple in `payload_summary`, and I stopped short\nof it rather than guess. The row is appended *before* `fetchOne`\n(fail-closed), so the item id the fetch returns is not yet known —\nidentity would have to come from parsing the URL, and each connector's\nparser is private and connector-shaped (`parseGithubPrUrl` returns\n`{owner, repo, num}`; only a boolean wrapper is exported). That means\nexporting a normalised parser from each of five connectors and feeding a\nredacted field — materially bigger, and it touches the no-raw-URL rule.\n\nThere may be a better home for it: the outcome row (U3) is written\n*after* the fetch, where the item id is simply known. Worth deciding\nbefore anyone builds five parsers.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-08-24T19:30:02+03:00",
-          "tree_id": "3cc0a7218dc8436b017c3b9eae23dcf0368bf3e5",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/8611b5c72afab10338e93b438ecd27aeec3ec966"
-        },
-        "date": 1787589685399,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 318.28218430000015,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 323.5892520499976,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 190.83345500000397,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
+            "name": "nimbus-release-bot[bot]",
+            "username": "nimbus-release-bot[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "9424303fbf97d802b65d42baeccd7f353cc4c009",
+          "message": "chore: release main (#1978)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>10.53.0</summary>\n\n##\n[10.53.0](https://github.com/nimbus-agent/Nimbus/compare/v10.52.0...v10.53.0)\n(2026-11-12)\n\n\n### Features\n\n* **gateway:** the morning briefing and 24-hour deadline notices, built\nfrom the local index and delivered locally\n([#1976](https://github.com/nimbus-agent/Nimbus/issues/1976))\n([c78b1dc](https://github.com/nimbus-agent/Nimbus/commit/c78b1dcaf21d1bd5a32d020854bd776f625eac4c))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
+          "timestamp": "2026-11-12T01:05:59Z",
+          "tree_id": "80001e1e124598dc94133cad83cf720db8b0a28d",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/9424303fbf97d802b65d42baeccd7f353cc4c009"
+        },
+        "date": 1794446250894,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 291.49721034999783,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 295.11338314999773,
             "unit": "ms"
           }
         ]
