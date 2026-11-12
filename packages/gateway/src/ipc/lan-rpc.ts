@@ -62,6 +62,10 @@ const FORBIDDEN_OVER_LAN = new Set([
   // owner's incident, assignees and deploy history, and `pushedRetry` runs an agent. `agents.oncall`
   // is a different namespace and is unaffected.
   "oncall",
+  // `briefing.*` (Phase 10 MB5) - the WHOLE namespace. The morning briefing restates the owner's pull
+  // requests, incidents, mail subjects, calendar and on-call: the whole index in prose. `briefing.runNow`
+  // also composes and shows a notification. A peer with a legitimate question has `federation.ask`.
+  "briefing",
   // S2 runtime tool generation — the WHOLE namespace, matching exec/computer/media/fleet.
   // `toolgen.create` is RCE-class by definition (it registers model-authored code that then runs),
   // and `toolgen.approvalRespond` is the LOCAL owner answering a registration prompt — admitting it

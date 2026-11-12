@@ -106,6 +106,10 @@ pub const ALLOWED_METHODS: &[&str] = &[
     "audit.getSummary",
     "audit.list",
     "audit.verify",
+    "briefing.get",
+    "briefing.latest",
+    "briefing.list",
+    "briefing.status",
     "captures.get",
     "captures.list",
     "catalog.list",
@@ -811,6 +815,22 @@ mod tests {
     }
 
     #[test]
+    fn allowlist_briefing_reads_only() {
+        // Phase 10 MB5: the desktop reads the morning briefing. briefing.runNow composes one and shows a
+        // notification on the owner's machine, so it stays CLI-only (I7); named on both sides because a
+        // one-for-one swap would keep allowlist_exact_size unchanged.
+        assert!(is_method_allowed("briefing.get"));
+        assert!(is_method_allowed("briefing.latest"));
+        assert!(is_method_allowed("briefing.list"));
+        assert!(is_method_allowed("briefing.status"));
+        assert!(!is_method_allowed("briefing.runNow"));
+        assert!(!is_no_timeout_method("briefing.get"));
+        assert!(!is_no_timeout_method("briefing.latest"));
+        assert!(!is_no_timeout_method("briefing.list"));
+        assert!(!is_no_timeout_method("briefing.status"));
+    }
+
+    #[test]
     fn allowlist_captures_reads_only() {
         // S3 capture sink follow-up: the desktop Captures page lists and shows captures. Every
         // owner verb (accept/reject/revoke/purge) stays CLI-only, and the MCP-client door
@@ -993,7 +1013,7 @@ mod tests {
 
     #[test]
     fn allowlist_exact_size() {
-        assert_eq!(ALLOWED_METHODS.len(), 127);
+        assert_eq!(ALLOWED_METHODS.len(), 131);
     }
 
     #[test]

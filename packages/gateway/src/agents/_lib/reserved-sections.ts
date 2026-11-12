@@ -1,4 +1,5 @@
 import type { SynthInput } from "./brief-kinds.ts";
+import { BRIEFING_FRESHNESS_HEADING, renderBriefingFreshness } from "./briefing-render.ts";
 import {
   GLOSSARY_TERMS_HEADING,
   renderGaps,
@@ -54,6 +55,7 @@ export const RESERVED_HEADINGS_BY_KIND: Readonly<Record<SynthInput["kind"], read
     changelog: [GAPS_HEADING],
     standup: [GAPS_HEADING],
     oncall: [GAPS_HEADING],
+    briefing: [GAPS_HEADING, BRIEFING_FRESHNESS_HEADING],
   });
 
 export function reservedHeadingsFor(brief: SynthInput): readonly string[] {
@@ -137,6 +139,10 @@ export function reservedBlocksFor(brief: SynthInput): readonly ReservedBlock[] {
   }
   const gaps = renderGaps(brief.gaps).trim();
   if (gaps !== "") blocks.push({ heading: GAPS_HEADING, markdown: gaps });
+  if (brief.kind === "briefing") {
+    const freshness = renderBriefingFreshness(brief.freshness);
+    if (freshness !== "") blocks.push({ heading: BRIEFING_FRESHNESS_HEADING, markdown: freshness });
+  }
   return blocks;
 }
 

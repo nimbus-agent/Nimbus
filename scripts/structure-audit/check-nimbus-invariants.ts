@@ -2398,6 +2398,77 @@ function createToolCallRe(commentFree: string): RegExp {
   return new RegExp(`(?<![.\\w$])(?:${alt})\\s*(?:<[^()]*>)?\\s*\\(|\\.\\s*createTool\\s*\\(`, "g");
 }
 
+// ---- D45 (the morning briefing delivers locally only, OR-10-11) ------------------------------------
+// Rule ids `briefing-forbidden-import` and `briefing-no-network`. The briefing is read from the local index
+// and delivered through two local sinks (the `briefing.ready` gateway event and the OS toast), both injected.
+// Scope: every non-test file under `packages/gateway/src/briefing/` and every
+// `packages/gateway/src/agents/_lib/briefing*.ts`. In scope:
+//   - no import (static, side-effect `import "x"`, dynamic, `require`, or a re-export) of `chatops/`, `egress/`, `federation/` or
+//     `share/`, even type-only; and none of `connectors/` unless it is a TYPE-only import;
+//   - no network primitive: ANY reference to the global `fetch` (a call, an alias such as
+//     `const f = fetch`, `fetch.bind`; only a `.fetch` property of another object is allowed), any use of
+//     `globalThis`, `window` or `self`, `Bun.fetch`, `new WebSocket`, `XMLHttpRequest`, and no import of `node:http`, `node:https`, `node:http2`, `node:net`, `node:tls`,
+//     `node:dgram` or `undici`.
+// Stated bounds: a text scan of DIRECT imports. An indirect path through an allowed module (`llm/`,
+// `index/`) is not followed; `synthesize.ts`, which the briefing imports, is no network path because no
+// runner is ever passed (a source pin in security-invariants.test.ts). Tied to no invariant: it makes
+// OR-10-11 structural rather than conventional.
+const D45_DIR = "packages/gateway/src/briefing/";
+const D45_LIB_RE = /^packages\/gateway\/src\/agents\/_lib\/briefing[\w.-]*\.ts$/;
+const D45_FORBIDDEN_SEGMENT_RE = /(?:^|\/)(?:chatops|egress|federation|share)(?:\/|$)/;
+const D45_CONNECTORS_SEGMENT_RE = /(?:^|\/)connectors(?:\/|$)/;
+const D45_REQUIRE_RE = /\brequire\s*\(\s*["'`]([^"'`]+)["'`]\s*\)/g;
+const D45_NETWORK_MODULE_RE = /^(?:node:)?(?:http|https|http2|net|tls|dgram)$|^undici(?:\/|$)/;
+const D45_NETWORK_CALL_RE = /\bBun\s*\.\s*fetch\b|\bnew\s+WebSocket\b|\bXMLHttpRequest\b/g;
+// Any mention of the global `fetch` at all, not only a call: `const f = fetch`, `(fetch)`, `fetch.bind(...)`
+// and a parameter default all alias it. A `.fetch` PROPERTY of some other object stays allowed (`db.fetch`).
+const D45_FETCH_REF_RE = /(?<![.\w$])fetch(?![\w$])/g;
+// The global objects a `fetch` can be reached through, by any spelling (`globalThis["fetch"]` has its name
+// in a string, which is blanked): the briefing needs none of them.
+const D45_GLOBAL_OBJECT_RE = /(?<![.\w$])(?:globalThis|window|self)(?![\w$])/g;
+// `import "x";` (no `from`): runs the module for its effects, so it is an import like any other.
+const D45_SIDE_EFFECT_IMPORT_RE = /(?:^|[;{}])[ \t]*import\s*["']([^"']+)["']/gm;
+
+function inBriefingScope(relPath: string): boolean {
+  if (relPath.endsWith(".test.ts")) return false;
+  return relPath.startsWith(D45_DIR) || D45_LIB_RE.test(relPath);
+}
+
+export function checkBriefingConfinement(files: readonly FileEntry[]): Violation[] {
+  const out: Violation[] = [];
+  for (const f of files) {
+    if (!inBriefingScope(f.relPath)) continue;
+    const commentFree = stripComments(f.contents);
+    const code = stripStringLiterals(commentFree);
+    const original = f.contents.split("\n");
+    const push = (rule: string, src: string, index: number | undefined): void => {
+      const line = src.slice(0, index).split("\n").length;
+      out.push({ rule, file: f.relPath, line, snippet: (original[line - 1] ?? "").trim() });
+    };
+    const specifier = (spec: string, valueImport: boolean, index: number | undefined): void => {
+      if (D45_FORBIDDEN_SEGMENT_RE.test(spec)) {
+        push("briefing-forbidden-import", commentFree, index);
+      } else if (D45_CONNECTORS_SEGMENT_RE.test(spec) && valueImport) {
+        push("briefing-forbidden-import", commentFree, index);
+      }
+      if (D45_NETWORK_MODULE_RE.test(spec)) push("briefing-no-network", commentFree, index);
+    };
+    for (const m of commentFree.matchAll(D39_STATIC_IMPORT_RE)) {
+      specifier(m[3] ?? "", clauseHasValue(m[1] !== undefined, m[2] ?? ""), m.index);
+    }
+    for (const m of commentFree.matchAll(D39_DYNAMIC_IMPORT_RE))
+      specifier(m[1] ?? "", true, m.index);
+    for (const m of commentFree.matchAll(D45_SIDE_EFFECT_IMPORT_RE)) {
+      specifier(m[1] ?? "", true, m.index);
+    }
+    for (const m of commentFree.matchAll(D45_REQUIRE_RE)) specifier(m[1] ?? "", true, m.index);
+    for (const re of [D45_NETWORK_CALL_RE, D45_FETCH_REF_RE, D45_GLOBAL_OBJECT_RE]) {
+      for (const m of code.matchAll(re)) push("briefing-no-network", code, m.index);
+    }
+  }
+  return out;
+}
+
 export function checkModelWriteDoor(files: readonly FileEntry[]): Violation[] {
   const out: Violation[] = [];
   for (const f of files) {
@@ -4526,6 +4597,8 @@ async function loadFiles(): Promise<FileEntry[]> {
  * scanned set, that rule is not enforcing anything, whatever it reports.
  */
 export const RULE_ANCHORS: readonly string[] = [
+  "packages/gateway/src/briefing/briefing-runner.ts", // D45 — the briefing delivers locally only
+  "packages/gateway/src/agents/_lib/briefing-build.ts", // D45
   "packages/gateway/src/engine/executor.ts", // D22 — connectors.dispatch chokepoint
   "packages/gateway/src/ipc/agents-rpc.ts", // D22(d) — agent emitter confinement
   "packages/gateway/src/db/write.ts", // D12 — bound-param SQL writes
@@ -4836,6 +4909,13 @@ async function run(): Promise<void> {
       );
     }
     if (handleViolations.length > 0) exit = 1;
+    const briefingViolations = checkBriefingConfinement(files);
+    for (const e of briefingViolations) {
+      console.error(
+        `::error file=${e.file},line=${e.line}::D45 the morning briefing reached outside its local sinks (rule ${e.rule}) — no ChatOps/egress/federation/share import, no connectors value import, no network primitive: ${e.snippet}`,
+      );
+    }
+    if (briefingViolations.length > 0) exit = 1;
     const snapshotViolations = checkWorkSnapshotConfinement(files);
     for (const e of snapshotViolations) {
       console.error(

@@ -3,6 +3,7 @@ import { personaDirective } from "../../engine/persona.ts";
 import { wrapToolOutput } from "../../engine/tool-output-envelope.ts";
 import { contractViolations } from "./brief-contract.ts";
 import { assertNeverBrief, type SynthInput } from "./brief-kinds.ts";
+import { renderBriefing } from "./briefing-render.ts";
 import {
   stripMetaPreamble,
   stripSections,
@@ -138,6 +139,8 @@ function deterministicRender(brief: SynthInput, opts?: RenderOpts): string {
       return renderStandup(brief, opts);
     case brief.kind === "oncall":
       return renderOncall(brief, opts);
+    case brief.kind === "briefing":
+      return renderBriefing(brief, opts);
     default:
       return assertNeverBrief(brief);
   }
@@ -174,6 +177,8 @@ const TOOL_NAME_BY_KIND: Readonly<Record<SynthInput["kind"], string>> = {
   changelog: "agents.changelog",
   standup: "agents.standup",
   oncall: "agents.oncall",
+  // Never sent anywhere: the briefing calls `synthesize` with no runner (OR-10-8), so no tool envelope exists.
+  briefing: "agents.briefing",
 };
 
 function toolNameFor(brief: SynthInput): string {

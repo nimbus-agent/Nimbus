@@ -38,6 +38,7 @@ import type { VoiceService } from "../../voice/service.ts";
 import type { StatusReaders } from "../admin-status-rpc.ts";
 import type { AgentInvokeHandler } from "../agent-invoke.ts";
 import type { AutomationRpcExtensionSyncHandle } from "../automation-rpc.ts";
+import type { BriefingRpcCtx } from "../briefing-rpc.ts";
 import type { CaptureRpcCtx } from "../capture-rpc.ts";
 import type { ChatopsRpcCtx } from "../chatops-rpc.ts";
 import type { ComputerRpcCtx } from "../computer-rpc.ts";
@@ -233,6 +234,10 @@ export type CreateIpcServerOptions = {
   // On-call pushed brief (2026-10-02). Backs the oncall.pushed* namespace; LAN-forbidden (I5), not
   // Tauri-exposed (I7).
   oncallPushRpcCtx?: OncallPushRpcCtx;
+  // Morning briefing (Phase 10 MB5). Backs the briefing.* namespace: the four reads are renderer-callable
+  // (I7), briefing.runNow is CLI-only; LAN-forbidden (I5). Present once assembled at boot, a demo gateway
+  // included (no scheduler there); the dispatcher skips when unset.
+  briefingRpcCtx?: BriefingRpcCtx;
   // OS notifications (pre-S3 item E). Backs notifications.status / notifications.test; CLI-only —
   // LAN-forbidden (I5) and not Tauri-exposed (I7). Present once assembled at boot (a demo or an
   // unsupported platform still reports its inactive status); the dispatcher skips when unset.

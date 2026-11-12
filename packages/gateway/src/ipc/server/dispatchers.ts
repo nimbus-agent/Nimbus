@@ -57,6 +57,7 @@ import { buildStatus } from "../admin-status-rpc.ts";
 import { AgentsRpcError, dispatchAgentsRpc } from "../agents-rpc.ts";
 import { AuditRpcError, dispatchAuditRpc } from "../audit-rpc.ts";
 import { AutomationRpcError, dispatchAutomationRpc } from "../automation-rpc.ts";
+import { BriefingRpcError, dispatchBriefingRpc } from "../briefing-rpc.ts";
 import { dispatchCaptureRpc } from "../capture-rpc.ts";
 import { CatalogRpcError, dispatchCatalogRpc } from "../catalog-rpc.ts";
 import { dispatchChatopsRpc } from "../chatops-rpc.ts";
@@ -1537,6 +1538,29 @@ export async function tryDispatchOncallNowRpc(
   return phase4RpcSkipped;
 }
 
+/**
+ * `briefing.*` (Phase 10 MB5) - the morning briefing. Answered whenever the runtime exists, which includes
+ * a demo gateway (its index is the synthetic corpus; `runNow` shows no toast there). The four reads are
+ * renderer-callable (I7), `briefing.runNow` is CLI-only; the namespace is LAN-forbidden (I5).
+ */
+export async function tryDispatchBriefingRpc(
+  ctx: ServerCtx,
+  method: string,
+  params: unknown,
+): Promise<unknown> {
+  if (!method.startsWith("briefing.")) return phase4RpcSkipped;
+  const rpc = ctx.options.briefingRpcCtx;
+  if (rpc === undefined) return phase4RpcSkipped;
+  try {
+    const out = await dispatchBriefingRpc(method, params, rpc);
+    if (out.kind === "hit") return out.value;
+  } catch (e) {
+    if (e instanceof BriefingRpcError) throw new RpcMethodError(e.rpcCode, e.message);
+    throw e;
+  }
+  return phase4RpcSkipped;
+}
+
 export async function tryDispatchOncallPushRpc(
   ctx: ServerCtx,
   method: string,
@@ -1974,6 +1998,7 @@ const PHASE4_PLATFORM_DISPATCHERS: ReadonlyArray<
   tryDispatchFleetRpc,
   tryDispatchOncallNowRpc,
   tryDispatchOncallPushRpc,
+  tryDispatchBriefingRpc,
   tryDispatchNotificationsRpc,
   tryDispatchCaptureRpc,
   tryDispatchStandingRpc,

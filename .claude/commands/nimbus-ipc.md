@@ -297,6 +297,8 @@ An approved extension runs as a lazy, sandboxed MCP stdio server (`mesh:ext:<ser
 | `agents.ghost` | request | Slice 6a — teammate file-expertise across paired peers (`federation.expertise` fan-out) |
 | `agents.conflicts` | request | Slice 6a — WIP collisions (open PR / ticket / branch / recent commit) before editing a file |
 | `agents.huddle` | request | Slice 6a — team-scoped morning briefing across paired peers |
+| `briefing.latest` / `list` / `get` / `status` | request | Phase 10 MB5 — the morning briefing runs the gateway stored. Renderer-callable (I7); the whole `briefing` namespace is LAN-forbidden (I5); served on a demo gateway. |
+| `briefing.runNow` | request | Composes a briefing now (CLI-only: not on the Tauri allowlist), `-32000 ERR_BRIEFING_BUSY` while one runs. |
 | `agents.janitor` | request | Slice 6b — idle cloud-resource verdict; a `--cleanup` proposal is HITL-gated at the executor (`I24`) |
 | `agents.preflight` | request | Slice 6b — blast-radius preflight over a peer namespace; each downstream owner approves behind their own gate (`I24`/`D18`) |
 | `agents.why` | request | S1 — six-lane provenance brief; one cached root-fenced local `git blame`, not a connector dispatch |

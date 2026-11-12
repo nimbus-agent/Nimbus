@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { SynthInput } from "./brief-kinds.ts";
+import type { BriefingBrief } from "./briefing-types.ts";
 import type { ChangelogBrief } from "./changelog-types.ts";
 import type { DecisionsBrief } from "./decisions-types.ts";
 import type {
@@ -432,6 +433,35 @@ const ONCALL: OncallBrief = {
   truncatedCount: 0,
 };
 
+const BRIEFING: BriefingBrief = {
+  kind: "briefing",
+  agentVersion: 1,
+  generatedAt: "1970-01-01T00:00:00.000Z",
+  latencyMs: 0,
+  gaps: [GAP],
+  tz: "UTC",
+  day: { startMs: 0, endMs: 86_400_000, dateKey: "1970-01-01", label: "Thursday 1970-01-01" },
+  sections: [
+    {
+      section: "calendar",
+      title: "Calendar",
+      rows: [],
+      notes: [],
+      emptyText: "No meetings today.",
+    },
+  ],
+  counts: {
+    meetings: 0,
+    onCallShifts: 0,
+    incidents: 0,
+    reviews: 0,
+    ticketsDue: 0,
+    unreadMail: 0,
+    unreadChat: 0,
+  },
+  freshness: [{ section: "Calendar", text: "FRESHNESS-SENTINEL" }],
+};
+
 /**
  * Every brief kind, keyed by its own `kind` literal.
  *
@@ -461,6 +491,7 @@ const BY_KIND: Readonly<Record<SynthInput["kind"], SynthInput>> = {
   negotiate: NEGOTIATE,
   changelog: CHANGELOG,
   standup: STANDUP,
+  briefing: BRIEFING,
 };
 
 const ALL_KINDS: readonly SynthInput[] = Object.values(BY_KIND);
@@ -492,6 +523,21 @@ describe("every renderer honours omitReserved", () => {
       expect(body).not.toBe(full);
     });
   }
+
+  test("briefing withholds `## Data freshness` under omitReserved and renders it otherwise", () => {
+    const briefing = ALL_KINDS.find((b) => b.kind === "briefing");
+    if (briefing === undefined) throw new Error("briefing fixture missing from ALL_KINDS");
+    const body = deterministicRenderForTest(briefing, { omitReserved: true });
+    expect(body).not.toContain("## Data freshness");
+    expect(body).not.toContain("FRESHNESS-SENTINEL");
+    const full = deterministicRenderForTest(briefing);
+    expect(full).toContain("## Data freshness");
+    expect(full).toContain("FRESHNESS-SENTINEL");
+    expect(reservedBlocksFor(briefing).map((b) => b.heading)).toEqual([
+      "## Gaps",
+      "## Data freshness",
+    ]);
+  });
 
   test("negotiate also withholds its two other reserved sections", () => {
     const negotiate = ALL_KINDS.find((b) => b.kind === "negotiate");

@@ -979,6 +979,20 @@ Additionally, all tool outputs are wrapped in `<tool_output>` tags (Invariant I1
 
 ---
 
+### Morning briefing (Phase 10 MB5)
+
+**Module map.** `briefing/` is orchestration: `briefing-store.ts` (the only writer of `briefing_run` and `deadline_notice`, V93), `briefing-schedule.ts` (`planFire`, pure), `briefing-scheduler.ts` (a 60 s `unref`d tick, the first at once, re-reading `[briefing]` every tick), `briefing-runner.ts` and `briefing-delivery.ts` (build, render, claim the slot, emit, toast), `deadline-scan.ts`, `briefing-toast.ts` (counts-only text), `briefing-due.ts`, `briefing-day.ts` and `briefing-runtime.ts` (single-flight, status). `agents/_lib/briefing-{types,queries,build,render}.ts` is the pure brief. Both sets are D45's scope. The wall-to-instant helpers live in `util/zoned-time.ts` (the old `connectors/_lib/zoned-time.ts` re-exports them).
+
+**Schedule semantics.** `cursor = max(baseline, lastSlotAt ?? baseline, now - 25 h)`; every cron slot after the cursor and not after now is due, only the LATEST is acted on: within three hours it runs, later it is recorded as a `skipped` row. The baseline is in memory (a restart uses the last stored slot; a fresh enable uses now), so enabling at 09:00 does not fire the 08:30 slot. DST is `cron.ts`'s: a wall time in a spring-forward gap has no slot that day; a repeated fall-back minute fires once. The partial UNIQUE index on `slot_at` makes a slot fire at most once even if two ticks race.
+
+**Delivery order and privacy.** Build, `synthesize(brief)` with NO runner (OR-10-8; the footer "built-in briefs do not use an LLM" is true), insert the run row, emit `briefing.ready` (a `gateway.event` kind: `runId`, `firedBy`, `headline`, `counts`), toast, store the outcome. The toast text is built from numbers only (`briefingToastText`, `deadlineToastText`); a property test pins its shape. On a demo root there is no scheduler, `runNow` emits and records `demo` and shows nothing. D45 confines the files to local sinks.
+
+**The brief.** The 18th `SynthInput` kind (`briefing`; reserved sections `## Gaps` and `## Data freshness`, both rebuilt from the brief, never scanned from Markdown). Reads parse `metadata` in TypeScript and drop (and count) rows that do not parse. The chat section takes an optional `readUnreadChat` (MB4's `readUnreadChatThreads`, wired in `platform/assemble.ts`); without one it is a `## Gaps` line.
+
+**IPC.** `briefing.latest|list|get|status` (renderer-callable) and `briefing.runNow` (CLI-only); LAN-forbidden by the `briefing` namespace entry; served on a demo gateway. `briefing.ready` is not a third notification method: the desktop already receives every notification, and nothing in the Rust bridge matches on it by name.
+
+**Table `briefing_run` and `deadline_notice` (V93).** See [schema-reference](./schema-reference.md#v93--morning-briefing-runs-and-deadline-notices-phase-10-mb5-2026-11-12).
+
 ## Subsystem 2: The MCP Connector Mesh
 
 All external communication — local filesystem or any cloud API — flows through an MCP server. The Engine acts as an MCP client; it never calls cloud APIs directly. This constraint is load-bearing: it makes every connector independently replaceable, every tool call auditable, and every new integration addable without touching the engine.

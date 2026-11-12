@@ -98,3 +98,21 @@ describe("oncall.briefPushed", () => {
     expect(Object.keys(p.payload).sort()).toEqual(["incidentId", "status"]);
   });
 });
+
+describe("briefing.ready", () => {
+  test("reaches a bound broadcast as gateway.event with that kind and only the payload given", () => {
+    const seen: Array<{ method: string; params: unknown }> = [];
+    setGatewayEventBroadcast((method, params) => seen.push({ method, params }));
+    emitGatewayEvent("briefing.ready", {
+      runId: "r1",
+      firedBy: "schedule",
+      headline: "3 meetings",
+      counts: { meetings: 3 },
+    });
+    expect(seen).toHaveLength(1);
+    expect(seen[0]?.method).toBe("gateway.event");
+    const p = seen[0]?.params as { kind: string; payload: Record<string, unknown> };
+    expect(p.kind).toBe("briefing.ready");
+    expect(Object.keys(p.payload).sort()).toEqual(["counts", "firedBy", "headline", "runId"]);
+  });
+});

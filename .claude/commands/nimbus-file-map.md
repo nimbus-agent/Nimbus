@@ -137,6 +137,7 @@ Everything else follows the standard triple. These break from it in a way worth 
 | `packages/gateway/src/ipc/index-reembed-rpc.ts` | `dispatchIndexReembedRpc` — `index.reembed` / `index.reembedCancel`; CLI-only |
 | `packages/gateway/src/index/item-store.ts` | **`upsertIndexedItemForSync` — the single depth chokepoint every connector's item write goes through** (see `nimbus-index-body-depth` skill) |
 | `packages/gateway/src/index/chat-read-marker-store.ts` | **The only writer of `chat_read_marker`** (V92, Phase 10 MB4): `setChatReadMarkerRows` behind the scoped `setChatReadMarkers` sync capability, `deleteChatReadMarkersForService` for the two removal paths; readers are `index/slack-unread.ts` (`countUnreadSlackThreads`) and the briefing seam `index/chat-unread-query.ts` (`readUnreadChatThreads`) |
+| `packages/gateway/src/briefing/` (`briefing-store.ts`, `briefing-scheduler.ts`, `briefing-runner.ts`, `deadline-scan.ts`, `briefing-runtime.ts`), `agents/_lib/briefing-{types,queries,build,render}.ts`, `ipc/briefing-rpc.ts` | The morning briefing (Phase 10 MB5): the scheduler and runner, the pure brief (the 18th brief kind), the deadline notices and `briefing.*` IPC. Confined to local sinks by static D45. |
 | `packages/gateway/src/index/work-snapshot-store.ts` | **The only writer of `work_snapshot`** (V91, Phase 10 MB1): `replaceWorkSnapshotRows` behind the scoped `replaceWorkSnapshot` sync capability (`sync/sync-capabilities.ts`), `listWorkSnapshot` for readers; the static D24 rule `work-snapshot-confined` pins it. The per-sync driver is `connectors/_lib/work-snapshot-run.ts`; the interval is `[briefing]` in `config/briefing-toml.ts` |
 | `packages/gateway/src/index/body-caps.ts` | `BODY_MAX_PROSE = 16_384` / 512 for everything else; surrogate-safe clamp |
 | `packages/gateway/src/index/body-store-v48-sql.ts` | V48 — `item.body` + `item.body_complete`; `item_fts` repointed off `body_preview` |
@@ -307,7 +308,7 @@ Everything else follows the standard triple. These break from it in a way worth 
 |---|---|
 | `scripts/structure-audit/lib.ts` | Shared B3 helpers — `REPO_ROOT`, `stripComments`, `countAnyInSource`, `iterateSourceFiles` |
 | `scripts/structure-audit/check-doc-references.ts` | Doc-ref drift audit (broken `[text](path)` and backtick path refs) over CLAUDE/GEMINI + all of `docs/` + the skills; `DOCS_EXCLUDED_PREFIXES` names the few docs that are out and why |
-| `scripts/structure-audit/check-nimbus-invariants.ts` | Static-time complement to `security-invariants.test.ts` (I1 + vault-key allowlist + static rules D10–D44 — derive the range from the file, it has read low three times) |
+| `scripts/structure-audit/check-nimbus-invariants.ts` | Static-time complement to `security-invariants.test.ts` (I1 + vault-key allowlist + static rules D10–D45 — derive the range from the file, it has read low three times) |
 | `scripts/structure-audit/check-openapi-drift.ts` | OpenAPI drift detector — `v1.yaml` vs `HTTP_ROUTES` |
 | `docs/structure-audit/baseline.md` | Phase 1 baseline reference; per-dimension state + Phase 2 thresholds |
 
