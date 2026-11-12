@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794513955450,
+  "lastUpdate": 1794514463351,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "49699333+dependabot[bot]@users.noreply.github.com",
-            "name": "dependabot[bot]",
-            "username": "dependabot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "1d5dd7cc166f53e9fc3dd67e451e680d19460683",
-          "message": "chore(deps): bump the all-minor-patch group across 1 directory with 13 updates (#1331)\n\nBumps the all-minor-patch group with 13 updates across the workspace.\n\n| package | from | to |\n| --- | --- | --- |\n| `@nimbus-dev/client` | 0.17.2 | 0.17.3 |\n| `@nimbus-dev/sdk` | 1.16.0 | 1.19.0 |\n| `astro` | 7.2.2 | 7.2.4 |\n| `@biomejs/biome` | 2.5.8 | 2.5.10 |\n| `@types/bun` | 1.3.14 | 1.4.0 |\n| `jscpd` | 5.0.15 | 5.0.16 |\n| `@mastra/core` | 1.59.0 | 1.61.0 |\n| `@mastra/mcp` | 1.16.0 | 1.17.1 |\n\n## Two root `overrides` pins moved with it\n\nDependabot edits `dependencies`; it has no notion of root `overrides`,\nand the\noverride outranks every declared range. So this bump moved the gateway\nmanifest\nto `^1.61.0` and `^1.17.1` while the pins still held 1.59.0 and 1.16.0 —\nthe\nmanifest would have moved and the installed version would not.\n\n`audit:override-drift` exists for exactly that case and is why this PR\nwas red.\nBoth pins now match, and the gateway resolves 1.61.0 and 1.17.1 for\nreal.\n\n## Why the upstream release notes are gone\n\nThis body becomes the squash commit body. The generated notes carried a\ncode\nsample whose opening bracket and its closing pair land on different\nlines once\nGitHub hard-wraps the body at 72 columns, and release-please cannot\nparse that.\nA commit it cannot parse is dropped from the changelog silently, and the\ntag is\nimmutable afterwards. `check-pr-message-parses.ts` caught it here\ninstead.\n\n---------\n\nSigned-off-by: dependabot[bot] <support@github.com>\nCo-authored-by: dependabot[bot] <49699333+dependabot[bot]@users.noreply.github.com>\nCo-authored-by: AsafGolombek <asafgolombek@gmail.com>",
-          "timestamp": "2026-08-25T15:47:30Z",
-          "tree_id": "3d6f0a67623cccd25a01125d8ddec781dd6dbc33",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/1d5dd7cc166f53e9fc3dd67e451e680d19460683"
-        },
-        "date": 1787673391006,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 256.1532257000013,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 253.98129075000543,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 234.02273295000123,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "c87bd34f35f25b289329f1065e505510581425fe",
+          "message": "feat(gateway): LAN sessions use Noise IK with per-session ephemeral keys and a downgrade ratchet (forward secrecy FS1) (#1984)\n\nLAN forward secrecy, slice **FS1**, for the roadmap row *LAN forward\nsecrecy (S3-F8)* (Phase 10 core, LAN hardening). Every LAN session\nbetween paired Nimbus gateways now runs a Noise IK handshake with a\nfresh ephemeral key per session. A recording of past traffic can no\nlonger be decrypted with the long-term pairing key alone, and a recorded\nrequest can no longer be replayed. Owner rulings OR-FS-1 to OR-FS-6\n(2026-11-12).\n\n## What changes\n\n- **`ipc/lan-noise.ts`** implements Noise_IK_25519_AESGCM_SHA256,\nwritten in the repo from the Noise spec with Bun's `node:crypto`\n(X25519, HKDF, AES-256-GCM). There is no new dependency (OR-FS-4).\n- It is checked against two published vector sets, vendored with\nprovenance: cacophony (Unlicense) and snow (Apache-2.0 OR MIT). Both\nmatch.\n- Rekey, which the published vectors do not cover, is checked against an\nindependent `createCipheriv` reference.\n  - All-zero DH outputs are refused.\n- **`ipc/lan-session.ts`** provides records, the per-direction\nCipherState, the nonce limit (fail closed) and a rekey every 1,024\nrecords in each direction (OR-FS-3).\n- **The long-term identity is reused.** The existing X25519 key\n(`federation.identity_secret`) authenticates both ends, so existing\npairings carry over and nobody re-pairs (OR-FS-2).\n- **Downgrade ratchet, schema V95.** `lan_peers.proto_version`, written\nby `markLanPeerProto`, never lowers. A peer that has spoken v2 is never\noffered or accepted on v1 again, by either the initiator or the\nresponder.\n- **`[lan] min_protocol`** defaults to 1 for a time-boxed compatibility\nwindow. FS3 flips it to 2 after two minor releases (OR-FS-1). `nimbus\nlan status` warns while any peer is on v1.\n- **The v1 wire is moved verbatim to `ipc/lan-legacy.ts`.** The 84\nlegacy-wire tests pass unchanged. A v1 `pair` for a key already at\nprotocol 2 is refused before the code is consumed.\n- **Hardening that comes with it:** a 10 s handshake deadline on both\npaths, and failed first records are counted as failures.\n- **Invariant I56** keeps the static-DH box path\n(`sealBoxFrame`/`openBoxFrame`) confined to `lan-crypto.ts` and\n`lan-legacy.ts`, so no new code can send v1 frames. **Static rule D47**\nenforces it. Both follow the triple rule (wiring, docs, test).\n- **Every LAN consumer goes through the new link:** federated query\n(I17), invoke (I19), delegated approvals (I20), quorum (I21), team vault\nand share forward.\n\n## Acceptance (FS-A1 to FS-A4)\n\n- **FS-A1:** a recorded session cannot be decrypted with both long-term\nkeys, with a positive control that decrypts with the ephemerals.\n- **FS-A2:** a replayed request gets no reply and no handler call, and a\nreplayed reply fails its AEAD.\n- **FS-A3:** a ratcheted peer cannot be downgraded.\n- **FS-A4:** the deadline and the failure counters.\n\nThese test changes were red-proved: removing the failed-record counter,\ninverting the ratchet, clearing the timer on open, and planting a\n`sealBoxFrame` import (D47) each make a test fail.\n\n## Stated bounds\n\n- During the compatibility window a peer that has never spoken v2 can\nstill be reached on v1, which has no forward secrecy and no replay\ndefence. The warning and FS3 close that.\n- The pairing code is about 114 bits, below the Noise § 14 256-bit PSK\nguideline. This was accepted by OR-FS-6; offline guessing is infeasible\nat that size. Encrypted pairing (XXpsk0) is FS2, so until then\n`min_protocol = 2` also refuses a new pairing (documented).\n- A live compromise of a running gateway is not protected.\n- This was exercised on loopback only.\n\n## Found along the way (recorded, not built here)\n\n`isKnownPeer` hardcodes `writeAllowed: false` (`federation-server.ts`),\nso `nimbus lan grant-write` has no effect on the federation LAN server.\nThis is recorded in the spec's \"findings outside this row\".\n\n## Docs\n\n- Updated: CLAUDE.md and GEMINI.md (I1–I56, D10–D47, schema V95),\nroadmap, architecture, docs/README, cli-reference (`[lan] min_protocol`,\n`nimbus lan status`), CHANGELOG, SECURITY-INVARIANTS.md (I56, D47),\nschema-reference (V95), `.github/SECURITY.md`, `.coderabbit.yaml`, and\nthe skills.\n- `federation-server.test.ts` now migrates to the current schema instead\nof V33. At V33 the ratchet write failed, so those tests had silently\nstayed on v1.\n\n## Verification (local, Windows)\n\n- Targeted suites:\n- `ipc/lan-*`, federation, config and the federation/LAN integration\ntests: 1452 pass.\n  - `index/` plus `structure-audit`: 2481 pass.\n- The I5, I6, I17 and I56 blocks of `security-invariants.test.ts`: 31\npass.\n  - 0 failures.\n- `typecheck`, `typecheck:tests` and `preflight:fast` pass.\n- I did not run the whole-tree suites locally, because another agent was\nrunning them on the same machine and concurrent sandbox runs interfere.\nCI runs every tree on Ubuntu, macOS and Windows, and the coverage floor\nis CI-Linux-authoritative.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JmSjrCFSTQTQnUa4j8F5b1\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Upgraded gateways now use encrypted LAN sessions with fresh session\nkeys, replay rejection, and periodic key rotation.\n* Older LAN connections remain supported by default. Set `min_protocol =\n2` to refuse them; this also prevents new pairings for now.\n* Peers that complete an upgraded session are recorded as protocol v2\nand cannot fall back to the older connection method.\n  * LAN session handshakes now have a 10-second deadline.\n* **Documentation**\n* Updated LAN security, configuration, migration, and compatibility\nguidance.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-12T20:00:13Z",
+          "tree_id": "4c4442df40f0f2bf929709bdaa337bc9740ef917",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/c87bd34f35f25b289329f1065e505510581425fe"
+        },
+        "date": 1794514458247,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 219.1234115500045,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 222.70468379999437,
             "unit": "ms"
           }
         ]
