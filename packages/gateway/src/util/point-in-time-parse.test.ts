@@ -151,3 +151,21 @@ describe("parseAtParam", () => {
     expect(parseAtParam("2026-11-11T09:00Z", NOW)).toBe(Date.UTC(2026, 10, 11, 9));
   });
 });
+
+describe("parseAtTime - fractional seconds (the gateway prints instants as ...:00.000Z)", () => {
+  test("an offset form keeps 1 to 3 fractional digits as milliseconds", () => {
+    const base = Date.UTC(2026, 10, 11, 9, 0, 0);
+    expect(at("2026-11-11T09:00:00.000Z")).toBe(base);
+    expect(at("2026-11-11T09:00:00.5Z")).toBe(base + 500);
+    expect(at("2026-11-11T09:00:00.05Z")).toBe(base + 50);
+    expect(at("2026-11-11T09:00:00.123+02:00")).toBe(base - 2 * 3_600_000 + 123);
+  });
+
+  test("a local form keeps them too", () => {
+    expect(at("2026-11-11T09:00:00.250", NY)).toBe(Date.UTC(2026, 10, 11, 14, 0, 0, 250));
+  });
+
+  test("more than three digits is not a time I can read", () => {
+    expect(() => at("2026-11-11T09:00:00.1234Z")).toThrow(AtTimeError);
+  });
+});

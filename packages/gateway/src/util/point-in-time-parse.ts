@@ -36,8 +36,15 @@ const UNIT_MS: Readonly<Record<Unit, number>> = {
 
 const RELATIVE_RE = /^-(\d{1,9})\s*([smhdw])$/i;
 const KEYWORD_RE = /^(today|yesterday)-(\d{2}):(\d{2})$/i;
-const OFFSET_RE = /^(\d{4})-(\d{2})-(\d{2})[Tt ](\d{2}):(\d{2})(?::(\d{2}))?(Z|z|[+-]\d{2}:\d{2})$/;
-const LOCAL_RE = /^(\d{4})-(\d{2})-(\d{2})(?:[Tt ](\d{2}):(\d{2})(?::(\d{2}))?)?$/;
+// Optional fractional seconds (1-3 digits): the gateway itself prints instants as `...:00.000Z`.
+const OFFSET_RE =
+  /^(\d{4})-(\d{2})-(\d{2})[Tt ](\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,3}))?)?(Z|z|[+-]\d{2}:\d{2})$/;
+const LOCAL_RE = /^(\d{4})-(\d{2})-(\d{2})(?:[Tt ](\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,3}))?)?)?$/;
+
+/** `.5` is 500 ms, `.05` is 50 ms, `.123` is 123 ms; absent is 0. */
+function millis(fraction: string | undefined): number {
+  return fraction === undefined ? 0 : Number(fraction.padEnd(3, "0"));
+}
 
 function fail(detail: string): never {
   throw new AtTimeError(`${detail} ${ACCEPTED}`);
@@ -94,8 +101,8 @@ function parseWithOffset(raw: string): number | undefined {
   const m = OFFSET_RE.exec(raw);
   if (m === null) return undefined;
   const wall = wallOf(num(m[1]), num(m[2]), num(m[3]), num(m[4]), num(m[5]), num(m[6]));
-  const utc = Date.UTC(wall.y, wall.mo - 1, wall.d, wall.h, wall.mi, wall.s);
-  const off = m[7] as string;
+  const utc = Date.UTC(wall.y, wall.mo - 1, wall.d, wall.h, wall.mi, wall.s) + millis(m[7]);
+  const off = m[8] as string;
   if (off.toUpperCase() === "Z") return utc;
   const sign = off.startsWith("-") ? -1 : 1;
   const hh = num(off.slice(1, 3));
@@ -108,7 +115,7 @@ function parseLocal(raw: string, zone: string): number | undefined {
   const m = LOCAL_RE.exec(raw);
   if (m === null) return undefined;
   const wall = wallOf(num(m[1]), num(m[2]), num(m[3]), num(m[4]), num(m[5]), num(m[6]));
-  return inZone(wall, zone);
+  return inZone(wall, zone) + millis(m[7]);
 }
 
 /** `raw` as an instant (epoch ms). Throws {@link AtTimeError} with a fixed, form-naming message. */
