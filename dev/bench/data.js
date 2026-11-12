@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794499238113,
+  "lastUpdate": 1794511075890,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
-            "name": "nimbus-release-bot[bot]",
-            "username": "nimbus-release-bot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "38adbaa2d457b7232b4b14f6df8d4351e61dd3f5",
-          "message": "chore: release main (#1329)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>2.18.1</summary>\n\n##\n[2.18.1](https://github.com/nimbus-agent/Nimbus/compare/v2.18.0...v2.18.1)\n(2026-08-25)\n\n\n### Bug Fixes\n\n* **quality:** clear 9 Sonar issues, two of them real security bugs\n([#1327](https://github.com/nimbus-agent/Nimbus/issues/1327))\n([6d828c5](https://github.com/nimbus-agent/Nimbus/commit/6d828c5c273e5c01d8d2ac44281ce7ef2753284b))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
-          "timestamp": "2026-08-25T17:57:59+03:00",
-          "tree_id": "6a1d847bfde3ad7ae08b7c02e2c59a2ce2965004",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/38adbaa2d457b7232b4b14f6df8d4351e61dd3f5"
-        },
-        "date": 1787670577529,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 333.11119414999956,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 329.8668851999999,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 202.04634260000057,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "79a9d81c2faa7b974164fc1cad5a2c27a5ba489e",
+          "message": "docs: record the trust-layer direction — agent door next in S4, team server and cost pack on the spine (#1987)\n\n## What this records\n\nOn 2026-11-12 the owner reviewed every roadmap in the organisation and\nmade eight rulings. This pull request writes them into the documents\nthat own them. It is documentation only: no code, no migration, no new\ninvariant, HITL type or egress class.\n\n**Nimbus leads as the trust layer between AI agents and engineering\nsystems.** Private context in, approved actions out, and a record of\nevery action Nimbus dispatched. On-call, cost and developer work become\npacks on that core.\n\n## The owner's rulings\n\n- **OR-ECO-1** The goal is widely used open source; adoption comes\nbefore money.\n- **OR-ECO-2** Within three months the owner posts and replies in\npublic, talks to five to ten early users, and pays for signing\ncertificates and registry hosting.\n- **OR-ECO-3** A team server: an always-on, self-hosted server a whole\nteam shares. Still no Nimbus-operated cloud.\n- **OR-ECO-4** Lead with the trust layer for agents, in place of on-call\nintelligence.\n- **OR-ECO-5** No cuts: shown four bundles of phases and rows that could\nbe removed, the owner removed none.\n- **OR-ECO-6** Five repositories that held only a vision and a build\nprompt are retired.\n- **OR-ECO-7** Everything open: no feature tiers.\n- **OR-ECO-8** The agent door is the next project inside S4; S4's exit\ncondition grows by one.\n\n## What changed\n\n`docs/roadmap.md`\n- A new **Direction** section: what Nimbus is for, who it will serve and\nwhat each audience has today, the five parts with each one's state\nbeside it, the order, and the two honest bounds.\n- **Spine re-cut.** S4 gains the agent door as its next project. S5 is\nthe Team Server, S6 the Cost Pack. The slot that was S5, Engineering\nExcellence breadth, is S7 with its contents unchanged. The old\n`carried-into-s5` anchor is kept beside the new one.\n- **Three appended phases**, all unticked: Phase 28 The Agent Door,\nPhase 29 The Team Server, Phase 30 The Cost Pack. Each names the\nexisting rows it builds on; those rows keep their text and gain a\npointer.\n- **Open Source** replaces the commercial tier table. The old\n`commercial-roadmap` anchor is kept. Phase 12's goal sentence no longer\nties the phase to a licence tier.\n- A **Reach** track for the owner's launch work, with targets stated as\naspirations.\n- Principle 7's lens names developers and FinOps practitioners beside\non-call, platform and security.\n- Two entries in Rejected Directions, each with its reopening condition:\na quick-ask launcher surface and a public recipe gallery.\n- **Corrections.** The client-surface table carries the editor's and the\nbrowser client's released versions; the browser gateway client is\nrecorded as shipped in its own repository; the three scaffold rows stay,\nmarked retired, each saying where its work went. Five Phase 7 and 8\nconnector rows now say, in place, what shipped in Phase 5 and what\nremains.\n\nOther files\n- `CLAUDE.md` and `GEMINI.md`, identically: the spine, S4's added item,\nand the direction in one sentence.\n- `docs/README.md`: the roadmap summary; the Pricing section, which\nbecomes a statement that there are no feature tiers; and one row of the\nEcosystem table, which listed a retired scaffold as a live extension.\n- `docs/launch-messaging.md`: the copy for the new lead, **held** until\nthe agent door ships, and two more honesty guardrails.\n- `docs/architecture.md` and the `nimbus-architecture` skill: one phrase\neach, the spine's range.\n- `docs/infrastructure-roadmap.md` and `docs/ecosystem-roadmap.md`: the\nlandscape file at that path is not the sequencing document that was\nretired, and has no authority over sequencing; two pointers to Phases 28\nand 29.\n- `docs/CHANGELOG.md`: one dated entry.\n\n## What did not change\n\n- **No planned phase or row was removed, ticked or split.** A\nbefore-and-after count of unticked rows per section shows every section\nat or above its earlier count, and the client-surface table has the same\nsix rows.\n- **What Nimbus publicly claims to be.** Everything in `docs/README.md`\nabove the roadmap summary is byte-identical. The headline, the docs site\nand the repository description change in the release that ships the\nagent door, not before.\n- The Verified Publisher row and its pricing item are untouched: the\nowner did not rule on that fee.\n- Licence fields, non-negotiables and invariants.\n- `docs/cli-reference.md`: no command changed. `docs/audiences.md`: it\ndescribes who Nimbus serves today. The docs-site content tree: a search\nfound no tier, pricing or spine text.\n\n## Verification\n\nUnticked rows in `docs/roadmap.md`, counted per section on the base\ncommit and on this branch:\n\n```text\nnew section: ## Direction (open=0)\nnew section: ### Phase 28 — The Agent Door (open=9)\nnew section: ### Phase 29 — The Team Server (open=8)\nnew section: ### Phase 30 — The Cost Pack (open=6)\nnew section: ### Reach (the owner's track) (open=7)\nnew section: ### A quick-ask launcher surface (the Raycast shape) — not taken 2026-11-12 (open=0)\nnew section: ### A public recipe gallery — not taken 2026-11-12 (open=0)\nED-b: PASS\ntotal open before: 439  after: 471\nclient-surfaces-rows=6 before and after\n```\n\nThe 32 added rows are the 30 in the new sections plus the status-page\ndraft row in Phase 17 and the landscape-reconciliation row under Carried\ninto S7. The one renamed second-level heading, Commercial Roadmap to\nOpen Source, was matched by a fixed table.\n\nGates run locally: `preflight:fast`, `audit:doc-refs`,\n`audit:status-drift`, `audit:links`.\n\nThe design behind this was checked by a fresh builder review and\napproved by the Antigravity reviewer in its third round; the\nimplementation plan was approved in a fourth. A fresh reviewer then read\nthe whole branch: it found nothing that had to be fixed and six points\nworth fixing, all applied in the last commit. In the documents, retired\nmeans the owner ruled the product will not be built as its own\nrepository; archiving the five repositories is a separate step.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JmSjrFKyPDdZkezWFQzqTs\n\n---------\n\nCo-authored-by: Claude Fable 5.2 <noreply@anthropic.com>",
+          "timestamp": "2026-11-12T19:06:27Z",
+          "tree_id": "faf2c6c8d8b7636435d5b5387958437b16b8c11f",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/79a9d81c2faa7b974164fc1cad5a2c27a5ba489e"
+        },
+        "date": 1794511071154,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 325.0085227999956,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 326.66202270000286,
             "unit": "ms"
           }
         ]
