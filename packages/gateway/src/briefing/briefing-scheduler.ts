@@ -18,6 +18,9 @@ export const DEADLINE_SCAN_EVERY_MS = 15 * 60_000;
 export const PRUNE_EVERY_MS = 3_600_000;
 const DAY_MS = 86_400_000;
 
+/** How long `retire()` waits for a running briefing or deadline scan before shutdown moves on. */
+export const BRIEFING_RETIRE_DRAIN_MS = 10_000;
+
 export type BriefingSchedulerDeps = {
   readonly store: BriefingStore;
   readonly now: () => number;
@@ -70,10 +73,28 @@ export class BriefingScheduler {
     this.timer = undefined;
   }
 
-  async retire(): Promise<void> {
+  /**
+   * Stops the timer at once, then waits for the lanes still running, for at most `drainMs`: a run that
+   * never settles (a hung read) must not hold gateway shutdown open forever. Returns whether every lane
+   * drained. A lane still running after the bound is abandoned; it only reads the index and writes its
+   * own run row, and the process exits after shutdown regardless.
+   */
+  async retire(drainMs: number = BRIEFING_RETIRE_DRAIN_MS): Promise<boolean> {
     this.retired = true;
     this.stop();
-    await Promise.all([this.briefingInFlight?.catch(() => {}), this.scanInFlight?.catch(() => {})]);
+    const drained = Promise.all([
+      this.briefingInFlight?.catch(() => {}),
+      this.scanInFlight?.catch(() => {}),
+    ]).then(() => true);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const bound = new Promise<boolean>((resolve) => {
+      timer = setTimeout(() => resolve(false), drainMs);
+    });
+    try {
+      return await Promise.race([drained, bound]);
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   /**

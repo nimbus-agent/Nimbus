@@ -235,6 +235,28 @@ enabled = true
     expect(scans).toBe(2);
   });
 
+  test("retire is bounded: a briefing that never settles cannot hold shutdown open", async () => {
+    let fired = 0;
+    const s = make({
+      fire: () => {
+        fired += 1;
+        return new Promise<void>(() => {});
+      },
+    });
+    s.start(); // 08:00: sets the baseline
+    s.stop();
+    await new Promise((r) => setTimeout(r, 5));
+    now = z(2026, 11, 12, 8, 30);
+    void s.tick(); // the 08:30 slot fires and never settles
+    await new Promise((r) => setTimeout(r, 5));
+    expect(fired).toBe(1);
+    const started = Date.now();
+    expect(await s.retire(20)).toBe(false);
+    expect(Date.now() - started).toBeLessThan(2_000);
+    // A scheduler with nothing in flight drains at once.
+    expect(await make().retire(20)).toBe(true);
+  });
+
   test("off by default; a throwing scan is reported", async () => {
     await make().tick();
     expect(scans).toBe(0);

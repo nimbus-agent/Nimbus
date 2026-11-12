@@ -238,7 +238,16 @@ describe("the scheduler it builds", () => {
     });
     release();
     await started;
-    await Promise.allSettled([second, tick]);
+    const settled = await Promise.allSettled([second, tick]);
+    // Both must actually have run: a rejected second run or a tick that skipped the slot would leave
+    // maxActive at 1 without exercising the overlap.
+    expect(settled.map((s) => s.status)).toEqual(["fulfilled", "fulfilled"]);
+    expect(calls).toBe(3);
+    expect(
+      rt
+        .list(10)
+        .some((r) => r.firedBy === "schedule" && r.slotAt === Date.UTC(2026, 10, 12, 8, 30)),
+    ).toBe(true);
     expect(maxActive).toBe(1);
   });
 });

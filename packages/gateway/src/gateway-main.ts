@@ -433,17 +433,12 @@ export async function main(): Promise<void> {
   const shutdown = async (signal: string): Promise<void> => {
     process.stdout.write(`[gateway] ${signal} — shutting down\n`);
     lifecycle.stop();
-    // The briefing scheduler first: a workflow still in flight must not leave its timer ticking.
-    try {
-      await platform.briefing.scheduler?.retire();
-    } catch {
-      /* ignore */
-    }
-    try {
-      await workflowScheduler?.retire();
-    } catch {
-      /* ignore */
-    }
+    // Start BOTH retirements before awaiting either: each clears its own timer synchronously, so a
+    // briefing still draining cannot leave the workflow interval ticking (and vice versa). The briefing
+    // drain is bounded (`BRIEFING_RETIRE_DRAIN_MS`).
+    const briefingRetired = platform.briefing.scheduler?.retire().catch(() => {});
+    const workflowsRetired = workflowScheduler?.retire().catch(() => {});
+    await Promise.all([briefingRetired, workflowsRetired]);
     try {
       platform.disposeSidecars?.();
     } catch {
