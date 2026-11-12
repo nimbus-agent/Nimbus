@@ -331,4 +331,4 @@ Rejected: none. Two of the review's phrasings were stronger than the files: F1 s
 "leaves the test green" (true of main, false of the plan, which was simply stale), and F7 is labelled a
 dependency-alignment defect when it is cosmetic.
 
-Round 2 (Antigravity, 2026-11-12): APPROVED. Three more prose counts for T10: `docs/configuration.md:137` ("the other 90" becomes 91, given the four connectors that need extra libraries); the sandbox-test counts in `CLAUDE.md:79` and `docs/architecture.md:175` (79 becomes 80, since Vantage adds `test/sandbox.test.ts`); and the comment at `standalone/src/launcher.ts:53` (95 becomes 96). Re-derive each from main at T0, as for every other count.
+Round 2 (Antigravity, 2026-11-12): APPROVED. Three more prose counts for T10: `docs/configuration.md:137` ("the other 90" becomes 92: 96 connectors less the four that need extra libraries); the sandbox-test counts in `CLAUDE.md:79` and `docs/architecture.md:175` (79 becomes 80, since Vantage adds `test/sandbox.test.ts`); and the comment at `standalone/src/launcher.ts:53` (95 becomes 96). Re-derive each from main at T0, as for every other count.
