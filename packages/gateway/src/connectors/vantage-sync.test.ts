@@ -372,3 +372,78 @@ describe("review fixes", () => {
     expect(JSON.stringify(warnings)).toContain('"mixedCurrencyBuckets":1');
   });
 });
+
+describe("review fixes, round 2", () => {
+  test("three syncs: a scope change starts its own named set, so a new series is admitted afterwards", async () => {
+    const { db, ctx, entries } = setup({ "vantage.group_by": "service" });
+    fakeSession({
+      costs: [...costRows(["A"], 2, 9), ...costRows(["B"], 2, 8)],
+      recommendations: [],
+    });
+    await createVantageSyncable({ maxSeries: () => 2 }).sync(ctx, null);
+    entries["vantage.workspace_token"] = "wrkspc_2";
+    fakeSession({ costs: costRows(["C"], 2, 7), recommendations: [] });
+    const second = await createVantageSyncable({ maxSeries: () => 2 }).sync(ctx, null);
+    fakeSession({
+      costs: [...costRows(["C"], 1, 7), ...costRows(["D"], 1, 6)],
+      recommendations: [],
+    });
+    await createVantageSyncable({ maxSeries: () => 2 }).sync(ctx, second.cursor);
+    const named = (
+      db
+        .query(
+          "SELECT DISTINCT json_extract(metadata,'$.dimensionValue') AS v FROM item WHERE json_extract(metadata,'$.scopeId') = 'ws_wrkspc_2'",
+        )
+        .all() as { v: string }[]
+    )
+      .map((r) => r.v)
+      .sort();
+    expect(named).toEqual(["C", "D"]);
+  });
+
+  test("two workspaces never share an item id or a series key", async () => {
+    const rows = costRows(["EC2"], 2, 5);
+    fakeSession({ costs: rows, recommendations: [] });
+    const a = setup({ "vantage.group_by": "service", "vantage.workspace_token": "w1" });
+    await createVantageSyncable().sync(a.ctx, null);
+    const b = setup({ "vantage.group_by": "service", "vantage.workspace_token": "w2" });
+    await createVantageSyncable().sync(b.ctx, null);
+    const keys = (db: Database) =>
+      (
+        db
+          .query("SELECT external_id, json_extract(metadata,'$.seriesKey') AS k FROM item")
+          .all() as {
+          external_id: string;
+          k: string;
+        }[]
+      ).map((r) => [r.external_id, r.k]);
+    const ka = keys(a.db);
+    const kb = keys(b.db);
+    expect(ka.length).toBeGreaterThan(0);
+    expect(ka.some(([id]) => kb.some(([id2]) => id === id2))).toBe(false);
+    expect(ka.some(([, k]) => kb.some(([, k2]) => k === k2))).toBe(false);
+  });
+
+  test("a series-day that becomes mixed-currency loses its earlier row", async () => {
+    const { db, ctx } = setup({ "vantage.group_by": "service" });
+    fakeSession({
+      costs: [{ accrued_at: day(-6), amount: "1", currency: "USD", service: "EC2" }],
+      recommendations: [],
+    });
+    const first = await createVantageSyncable().sync(ctx, null);
+    expect(db.query("SELECT COUNT(*) AS n FROM item WHERE type='cost_allocation'").get()).toEqual({
+      n: 1,
+    });
+    fakeSession({
+      costs: [
+        { accrued_at: day(-6), amount: "1", currency: "USD", service: "EC2" },
+        { accrued_at: day(-6), amount: "2", currency: "EUR", service: "EC2" },
+      ],
+      recommendations: [],
+    });
+    await createVantageSyncable().sync(ctx, first.cursor);
+    expect(db.query("SELECT COUNT(*) AS n FROM item WHERE type='cost_allocation'").get()).toEqual({
+      n: 0,
+    });
+  });
+});

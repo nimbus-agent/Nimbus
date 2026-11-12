@@ -20,6 +20,8 @@ import {
 export interface RollupOptions {
   readonly service: CostServiceId;
   readonly scopeId: string;
+  /** The report/workspace and grouping the named set is counted under; defaults to `scopeId`. */
+  readonly seriesScope?: string;
   readonly maxSeries: number;
   /** The distinct `seriesHash` values already indexed for the service (empty on a first sync). */
   readonly existingSeriesHashes: ReadonlySet<string>;
@@ -99,6 +101,7 @@ function rowFor(
   const metadata: CostAllocationMetadata = {
     seriesKey: seriesKeyOf(opts.service, opts.scopeId, identity.kind, identity.key, identity.value),
     seriesHash: identity.hash,
+    scopeSeries: scopeSeriesOf(opts.seriesScope ?? opts.scopeId, identity.hash),
     scopeId: opts.scopeId,
     dimensionKind: identity.kind,
     dimensionKey: identity.key,
@@ -123,8 +126,15 @@ function rowFor(
   };
 }
 
+/** The metadata value that ties a series hash to the configuration it was indexed under. */
+export function scopeSeriesOf(seriesScope: string, hash: string): string {
+  return `${seriesScope}~${hash}`;
+}
+
 export interface RollupResult {
   readonly rows: RolledCostRow[];
+  /** The item ids of the series-days refused for mixed currencies (an earlier row for them is stale). */
+  readonly mixedCurrencyIds: string[];
   /** Series-days whose points carry more than one currency; no row is written for them. */
   readonly mixedCurrencyBuckets: number;
 }
@@ -161,7 +171,7 @@ export function rollUpCostPointsDetailed(
     series.set(hash, entry);
   }
   const rows: RolledCostRow[] = [];
-  let mixedCurrencyBuckets = 0;
+  const mixedCurrencyIds: string[] = [];
   for (const [hash, { first, days }] of series) {
     const identity =
       hash === otherHash
@@ -181,12 +191,12 @@ export function rollUpCostPointsDetailed(
           };
     for (const [dayMs, bucket] of days) {
       if (new Set(bucket.points.map((p) => p.currency)).size > 1) {
-        mixedCurrencyBuckets += 1;
+        mixedCurrencyIds.push(costRowExternalId(opts.scopeId, hash, dayMs));
         continue;
       }
       rows.push(rowFor(bucket, dayMs, opts, identity));
     }
   }
   rows.sort((a, b) => a.dayMs - b.dayMs || (a.externalId < b.externalId ? -1 : 1));
-  return { rows, mixedCurrencyBuckets };
+  return { rows, mixedCurrencyBuckets: mixedCurrencyIds.length, mixedCurrencyIds };
 }

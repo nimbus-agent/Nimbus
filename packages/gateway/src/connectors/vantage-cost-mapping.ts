@@ -171,6 +171,7 @@ export function costAllocationItem(rolled: RolledCostRow, syncedAt: number): Van
     metadata: {
       seriesKey: m.seriesKey,
       seriesHash: m.seriesHash,
+      scopeSeries: m.scopeSeries,
       scopeId: m.scopeId,
       dimensionKind: m.dimensionKind,
       dimensionKey: m.dimensionKey,

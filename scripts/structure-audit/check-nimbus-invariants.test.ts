@@ -6071,6 +6071,7 @@ describe("D48 - FinOps cost code cannot leave the machine (spec § 6, OR-10-8)",
     'import type { X } from "../engine/x.ts";',
     'import "../connectors/x.ts";',
     "const m = await import(`../llm/x.ts`);",
+    "const m = await import(`../llm/$types.ts`);",
   ])("a forbidden import is flagged: %s", (body) => {
     expect(rules(bad(SERIES, body))).toEqual(["finops-forbidden-import"]);
   });
@@ -6088,6 +6089,11 @@ describe("D48 - FinOps cost code cannot leave the machine (spec § 6, OR-10-8)",
     "const m = await import(`node:https`);",
   ])("a network primitive is flagged: %s", (body) => {
     expect(rules(bad(SERIES, body))).toContain("finops-no-network");
+  });
+
+  test("an import( written inside a string is not an import", () => {
+    expect(rules(bad(SERIES, 'const example = "import(`node:https`)";'))).toEqual([]);
+    expect(rules(bad(SERIES, "const t = 'import(`../llm/x.ts`)';"))).toEqual([]);
   });
 
   test("a file outside finops/, a test, a comment and a string are not scanned", () => {

@@ -12,7 +12,7 @@
     "totalAbsence": 21,
     "partialCoverage": 37,
     "ambiguousReadCount": 10,
-    "parameterizedReads": 24,
+    "parameterizedReads": 25,
     "nonItemReads": 7,
     "unscopedReads": 10,
     "annotationErrors": 0
@@ -870,7 +870,7 @@
       "kind": "metadata-key",
       "value": "bodyFetch",
       "file": "packages/gateway/src/index/item-store.ts",
-      "line": 327
+      "line": 374
     },
     {
       "table": "graph_relation",
@@ -1220,42 +1220,42 @@
       "kind": "type",
       "value": "cost_allocation",
       "file": "packages/gateway/src/finops/cost-series.ts",
-      "line": 74
+      "line": 69
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "periodStartMs",
       "file": "packages/gateway/src/finops/cost-series.ts",
-      "line": 69
+      "line": 64
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "amount",
       "file": "packages/gateway/src/finops/cost-series.ts",
-      "line": 70
+      "line": 65
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "finalized",
       "file": "packages/gateway/src/finops/cost-series.ts",
-      "line": 71
+      "line": 66
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "seriesKey",
       "file": "packages/gateway/src/finops/cost-series.ts",
-      "line": 75
+      "line": 70
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "periodStartMs",
       "file": "packages/gateway/src/finops/cost-series.ts",
-      "line": 76
+      "line": 71
     },
     {
       "table": "graph_entity",
@@ -4695,6 +4695,7 @@
       "metadataKeys": [
         "seriesKey",
         "seriesHash",
+        "scopeSeries",
         "scopeId",
         "dimensionKind",
         "dimensionKey",
@@ -4713,7 +4714,7 @@
         "rowCount"
       ],
       "file": "packages/gateway/src/connectors/vantage-cost-mapping.ts",
-      "line": 154
+      "line": 162
     },
     {
       "service": "vantage",
@@ -4731,7 +4732,7 @@
         "documentationUrl"
       ],
       "file": "packages/gateway/src/connectors/vantage-cost-mapping.ts",
-      "line": 220
+      "line": 229
     },
     {
       "service": "vercel",
@@ -5318,7 +5319,7 @@
       "kind": "metadata-key",
       "value": "bodyFetch",
       "file": "packages/gateway/src/index/item-store.ts",
-      "line": 327,
+      "line": 374,
       "matchState": "partial",
       "partialCoverage": [
         "google_drive"
@@ -5703,16 +5704,20 @@
       "line": 77
     },
     {
+      "file": "packages/gateway/src/index/item-history-at.ts",
+      "line": 38
+    },
+    {
       "file": "packages/gateway/src/index/item-set-store.ts",
-      "line": 90
+      "line": 92
     },
     {
       "file": "packages/gateway/src/index/item-store.ts",
-      "line": 347
+      "line": 394
     },
     {
       "file": "packages/gateway/src/index/local-index.ts",
-      "line": 799
+      "line": 869
     },
     {
       "file": "packages/gateway/src/index/oncall-now-query.ts",

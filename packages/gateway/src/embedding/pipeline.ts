@@ -102,9 +102,9 @@ export class SqliteEmbeddingPipeline implements EmbeddingPipeline {
   }
 
   async embedItem(item: IndexedItem): Promise<void> {
-    // A remote embedder never receives a local-only type (embedding-exclusions.ts); the backfill
-    // SELECTs exclude it too, so skipping here cannot loop.
-    if (!this.embedder.isLocal && isEmbeddingExcludedType(item.type, true)) {
+    // An excluded type is never embedded, and a remote embedder never receives a local-only one
+    // (embedding-exclusions.ts); the backfill SELECTs exclude them too, so skipping here cannot loop.
+    if (isEmbeddingExcludedType(item.type, !this.embedder.isLocal)) {
       return;
     }
     const fullText = itemTextForEmbedding(item);

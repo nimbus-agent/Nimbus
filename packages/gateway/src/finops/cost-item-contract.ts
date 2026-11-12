@@ -43,6 +43,11 @@ export type CostDimensionKind =
 export interface CostAllocationMetadata {
   readonly seriesKey: string;
   readonly seriesHash: string;
+  /**
+   * `<series scope>~<seriesHash>`: the series scope is the report or workspace plus the grouping, so
+   * the named set is counted per configuration (a changed configuration does not fill the cap).
+   */
+  readonly scopeSeries: string;
   readonly scopeId: string;
   readonly dimensionKind: CostDimensionKind;
   readonly dimensionKey: string | null;

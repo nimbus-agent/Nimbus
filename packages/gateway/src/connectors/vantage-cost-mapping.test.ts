@@ -178,6 +178,7 @@ describe("costAllocationItem", () => {
       metadata: {
         seriesKey: point?.seriesKey ?? "",
         seriesHash: point?.seriesHash ?? "",
+        scopeSeries: "default~x",
         scopeId: "default",
         dimensionKind: "service" as const,
         dimensionKey: null,
@@ -219,6 +220,7 @@ describe("costAllocationItem", () => {
         metadata: {
           seriesKey: "k",
           seriesHash: "h",
+          scopeSeries: "default~h",
           scopeId: "default",
           dimensionKind: "other",
           dimensionKey: null,

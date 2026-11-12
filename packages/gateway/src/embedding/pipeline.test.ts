@@ -970,3 +970,24 @@ describe.skipIf(!VEC_AVAILABLE)(
     });
   },
 );
+
+describe.skipIf(!VEC_AVAILABLE)(
+  "SqliteEmbeddingPipeline - a local pipeline still skips an excluded type",
+  () => {
+    test("embedItem on a cost_allocation row writes no chunk even with a local embedder", async () => {
+      const db = new Database(":memory:");
+      LocalIndex.ensureSchema(db);
+      const pipeline = new SqliteEmbeddingPipeline({ db, embedder: mockEmbedder(384, "loc") });
+      await pipeline.embedItem({
+        id: "vantage:c1",
+        service: "vantage",
+        type: "cost_allocation",
+        title: "EC2 2026-11-01 10 USD",
+        body_preview: "EC2 2026-11-01 10 USD",
+      });
+      expect((db.query("SELECT COUNT(*) AS n FROM embedding_chunk").get() as { n: number }).n).toBe(
+        0,
+      );
+    });
+  },
+);

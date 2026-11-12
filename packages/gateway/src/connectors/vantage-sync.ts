@@ -1,7 +1,7 @@
 import { DEFAULT_FINOPS_CONFIG } from "../config/finops-toml.ts";
 import { FIRST_WINDOW_DAYS } from "../finops/cost-item-contract.ts";
-import { rollUpCostPointsDetailed } from "../finops/cost-rollup.ts";
-import type { Syncable } from "../sync/types.ts";
+import { rollUpCostPointsDetailed, scopeSeriesOf } from "../finops/cost-rollup.ts";
+import type { Syncable, SyncContext } from "../sync/types.ts";
 import { createFinopsSyncable } from "./finops-sync-transport.ts";
 import {
   costAllocationItem,
@@ -29,6 +29,19 @@ interface Prepared {
   readonly workspace: string;
 }
 
+/** The series hashes already indexed under `seriesScope` (see `CostAllocationMetadata.scopeSeries`). */
+function currentSeriesHashes(ctx: SyncContext, seriesScope: string): string[] {
+  const prefix = scopeSeriesOf(seriesScope, "");
+  return ctx
+    .listIndexedMetadataValues(SERVICE_ID, "scopeSeries")
+    .filter((v) => v.startsWith(prefix) && v.length === prefix.length + 16)
+    .map((v) => v.slice(prefix.length));
+}
+
+function seriesScopeOf(p: Prepared): string {
+  return `${p.scopeId}|${p.workspace}|${p.groupBy.join(",")}`;
+}
+
 /** The grouping the connector sends when neither a saved report nor `vantage.group_by` names one. */
 const DEFAULT_GROUP_BY: readonly string[] = ["provider", "service", "account_id"];
 
@@ -52,7 +65,7 @@ export function createVantageSyncable(options: VantageSyncableOptions = {}): Syn
     initialSyncDepthDays: FIRST_WINDOW_DAYS,
     cursorPrefix: "nimbus-vantage1:",
     cursorRowType: "cost_allocation",
-    cursorScope: (p) => `${p.scopeId}|${p.workspace}|${p.groupBy.join(",")}`,
+    cursorScope: (p) => seriesScopeOf(p),
     async configure(ctx) {
       const groupBy = parseGroupBy(await ctx.getSecret("group_by"));
       if (groupBy.some((name) => name.startsWith("tag:"))) {
@@ -67,7 +80,12 @@ export function createVantageSyncable(options: VantageSyncableOptions = {}): Syn
       // With a saved report the report's own groupings apply and the mapper orders by name; without
       // one the connector's documented default grouping applies, in this order.
       const effective = groupBy.length === 0 && scope === "" ? DEFAULT_GROUP_BY : groupBy;
-      return { scopeId: scope === "" ? "default" : scope, groupBy: effective, workspace };
+      // A saved report belongs to one workspace; without one the workspace token names the scope, so
+      // two workspaces never share a series key or an item id.
+      let scopeId = "default";
+      if (scope !== "") scopeId = scope;
+      else if (workspace !== "") scopeId = `ws_${workspace}`;
+      return { scopeId, groupBy: effective, workspace };
     },
     drains: (window) => [
       {
@@ -94,13 +112,19 @@ export function createVantageSyncable(options: VantageSyncableOptions = {}): Syn
           "vantage cost rows skipped (no usable day or amount)",
         );
       }
-      const { rows: rolled, mixedCurrencyBuckets } = rollUpCostPointsDetailed(points, {
+      const {
+        rows: rolled,
+        mixedCurrencyBuckets,
+        mixedCurrencyIds,
+      } = rollUpCostPointsDetailed(points, {
         service: SERVICE_ID,
         scopeId: prepared.scopeId,
         maxSeries: options.maxSeries?.() ?? DEFAULT_FINOPS_CONFIG.maxSeries,
-        // A changed configuration (fresh) does not inherit the old configuration's named set.
+        seriesScope: seriesScopeOf(prepared),
+        // Only the series indexed under THIS configuration count against the cap: a changed report,
+        // workspace or grouping starts a named set of its own.
         existingSeriesHashes: new Set(
-          fresh ? [] : ctx.listIndexedMetadataValues(SERVICE_ID, "seriesHash"),
+          fresh ? [] : currentSeriesHashes(ctx, seriesScopeOf(prepared)),
         ),
         syncedAt,
       });
@@ -123,6 +147,10 @@ export function createVantageSyncable(options: VantageSyncableOptions = {}): Syn
       ctx.writeBatch(() => {
         for (const row of rows) {
           ctx.upsertItem(row);
+        }
+        // A series-day that is now mixed-currency must not keep its earlier, single-currency total.
+        for (const id of mixedCurrencyIds) {
+          ctx.deleteItem(SERVICE_ID, id);
         }
         // The recommendation drain has no window: it is the whole active set, so a row Vantage no
         // longer lists is stale and goes.
