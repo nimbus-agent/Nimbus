@@ -362,9 +362,11 @@ incidents, who is on call and the DORA scorecard, generated from the index. The 
 row is added.
 
 The three scaffold rows in the § Client surfaces table (`nimbus-statuspage`, `nimbus-postmortem`,
-`nimbus-raycast`) stay where they are. Each row's State becomes "archived (OR-ECO-6, with the
-date)" and its Next cell says where the work went: the *Status page draft* row, the two post-mortem
-rows, or "not planned". The "first to build / second / third" ordering sentence above the table is
+`nimbus-raycast`) stay where they are. Each row's State becomes "retired (OR-ECO-6, 2026-11-12)"
+and its Next cell says where the work went: the *Status page draft* row, the two post-mortem
+rows, or "not planned". Documents say "retired", which is true from the owner's ruling, and never
+"archived", because the archive calls run later (ED11); only the note inside each scaffold
+repository says it is archived. The "first to build / second / third" ordering sentence above the table is
 corrected to match. Because a quick-ask launcher surface and a public recipe gallery are now
 directions not taken, § Rejected Directions gains two short entries, each with the condition that
 reopens it, as § How to Update This Document requires: the launcher reopens when users of a
@@ -492,7 +494,7 @@ notes as pull requests, and runs the archive calls only after asking the owner o
 
 | Slice | Repository | Contents |
 |---|---|---|
-| ED1 | `Nimbus` | § 5.1 to § 5.8 in `docs/roadmap.md`; `CLAUDE.md` and `GEMINI.md`; in `docs/README.md` only § Where the Project Is (the spine rows and the stale "recorded direction" paragraph) and § Pricing (§ 5.7), nothing above them (ED-g); `docs/launch-messaging.md` (§ 5.11); `docs/infrastructure-roadmap.md` and `docs/ecosystem-roadmap.md` (D-ECO-7: two corrected sentences, two pointers). `docs/architecture.md` and `docs/cli-reference.md` are unchanged, and the pull request says why (no behaviour or command changed). This spec is deleted from the branch before the pull request opens. |
+| ED1 | `Nimbus` | § 5.1 to § 5.8 in `docs/roadmap.md`; `CLAUDE.md` and `GEMINI.md`; in `docs/README.md` only § Where the Project Is (the spine rows and the stale "recorded direction" paragraph) and § Pricing (§ 5.7), nothing above them (ED-g); `docs/launch-messaging.md` (§ 5.11); `docs/infrastructure-roadmap.md` and `docs/ecosystem-roadmap.md` (D-ECO-7: two corrected sentences, two pointers); the one phrase "(S1 → S5)" in `docs/architecture.md` and in the `nimbus-architecture` skill; a dated entry in `docs/CHANGELOG.md` and in the roadmap's "Last updated" note. `docs/cli-reference.md` is unchanged, and the pull request says why (no command changed); a search of the docs-site content tree found no tier, pricing or spine text. This spec is deleted from the branch before the pull request opens. |
 | ED2 | `.github` | `ECOSYSTEM.md`, profile README |
 | ED3 | `awesome-nimbus` | § 5.8 |
 | ED4 | `nimbus-security` | D-ECO-8 |
