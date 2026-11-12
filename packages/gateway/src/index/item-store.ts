@@ -164,6 +164,8 @@ export function upsertIndexedItem(
   if (historyBefore === undefined) {
     writeItem();
   } else {
+    // One transaction (a savepoint when a caller's is open): a crash or a failing history insert cannot
+    // leave a changed item without its change row.
     db.transaction(() => {
       writeItem();
       recordItemUpsertHistory(db, historyBefore, {

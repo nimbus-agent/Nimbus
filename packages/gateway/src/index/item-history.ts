@@ -36,7 +36,11 @@ export type ItemHistoryNext = {
   readonly syncedAt: number;
 };
 
-/** `undefined` (and NO query) when the pair is untracked. */
+/**
+ * `undefined` (and NO query) when the pair is untracked. The read uses a prepared statement that is finalized
+ * at once, not the `db.query` cache: a cached statement here kept the database file locked after `close()`
+ * (EBUSY on removing a temp index) when it ran inside a snapshot sync's transaction.
+ */
 export function readItemHistoryBefore(
   db: Database,
   id: string,
@@ -45,9 +49,13 @@ export function readItemHistoryBefore(
 ): ItemHistoryBefore | undefined {
   const spec = specFor(service, type);
   if (spec === undefined) return undefined;
-  const row = db.query("SELECT metadata FROM item WHERE id = ?").get(id) as {
-    metadata: string | null;
-  } | null;
+  const stmt = db.prepare("SELECT metadata FROM item WHERE id = ?");
+  let row: { metadata: string | null } | null;
+  try {
+    row = stmt.get(id) as { metadata: string | null } | null;
+  } finally {
+    stmt.finalize();
+  }
   if (row === null) return { spec, existed: false };
   return { spec, existed: true, metadata: row.metadata };
 }
