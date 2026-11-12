@@ -38,4 +38,33 @@ lockout_seconds = 5
   test("DEFAULT_NIMBUS_LAN_TOML bind is loopback, not all-interfaces", () => {
     expect(DEFAULT_NIMBUS_LAN_TOML.bind).toBe("127.0.0.1");
   });
+
+  describe("[lan] min_protocol (LAN forward secrecy, OR-FS-1)", () => {
+    test("defaults to 1: the old wire is accepted during the compatibility window", () => {
+      expect(DEFAULT_NIMBUS_LAN_TOML.minProtocol).toBe(1);
+      expect(parseNimbusLanToml("[lan]\nenabled = true\n").minProtocol).toBe(1);
+    });
+
+    test("1 and 2 are accepted", () => {
+      expect(parseNimbusLanToml("[lan]\nmin_protocol = 2\n").minProtocol).toBe(2);
+      expect(parseNimbusLanToml("[lan]\nmin_protocol = 1\n").minProtocol).toBe(1);
+    });
+
+    test("any other value is ignored, never clamped: the default holds", () => {
+      for (const bad of ["3", "0", "-1", '"two"', "1.5", "", "true", "22"]) {
+        expect(parseNimbusLanToml(`[lan]\nmin_protocol = ${bad}\n`).minProtocol).toBe(1);
+      }
+    });
+
+    test("there is no environment override", () => {
+      const prev = process.env["NIMBUS_LAN_MIN_PROTOCOL"];
+      process.env["NIMBUS_LAN_MIN_PROTOCOL"] = "2";
+      try {
+        expect(parseNimbusLanToml("").minProtocol).toBe(1);
+      } finally {
+        if (prev === undefined) delete process.env["NIMBUS_LAN_MIN_PROTOCOL"];
+        else process.env["NIMBUS_LAN_MIN_PROTOCOL"] = prev;
+      }
+    });
+  });
 });

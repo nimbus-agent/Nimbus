@@ -885,6 +885,12 @@ export type NimbusLanToml = {
   pairingWindowSeconds: number;
   maxFailedAttempts: number;
   lockoutSeconds: number;
+  /**
+   * The lowest LAN wire protocol this gateway accepts and uses (LAN forward secrecy). `1` is the old
+   * static-box wire, accepted for a peer that has not completed a v2 session; `2` refuses it for
+   * every peer. Default 1 until the compatibility window closes (OR-FS-1).
+   */
+  minProtocol: 1 | 2;
 };
 
 export const DEFAULT_NIMBUS_LAN_TOML: NimbusLanToml = {
@@ -894,6 +900,7 @@ export const DEFAULT_NIMBUS_LAN_TOML: NimbusLanToml = {
   pairingWindowSeconds: 300,
   maxFailedAttempts: 3,
   lockoutSeconds: 60,
+  minProtocol: 1,
 };
 
 function applyNimbusLanKey(out: Partial<NimbusLanToml>, key: string, valRaw: string): void {
@@ -924,6 +931,11 @@ function applyNimbusLanKey(out: Partial<NimbusLanToml>, key: string, valRaw: str
     case "lockout_seconds": {
       const n = parseIntDec(valRaw);
       if (n !== undefined && n >= 0) out.lockoutSeconds = n;
+      break;
+    }
+    case "min_protocol": {
+      const n = parseIntDec(valRaw);
+      if (n === 1 || n === 2) out.minProtocol = n;
       break;
     }
     default:
