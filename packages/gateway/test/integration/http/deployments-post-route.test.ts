@@ -114,9 +114,9 @@ describe("POST /v1/deployments (integration)", () => {
     expect(res.status).toBe(200);
     const ro = new Database(dbPath, { readonly: true });
     try {
-      const row = ro
-        .query("SELECT metadata FROM graph_entity WHERE type = 'deployment'")
-        .get() as { metadata: string } | null;
+      const row = ro.query("SELECT metadata FROM graph_entity WHERE type = 'deployment'").get() as {
+        metadata: string;
+      } | null;
       expect(row).not.toBeNull();
       expect(JSON.parse(row?.metadata ?? "{}")).toMatchObject({
         affectedService: "payment-service",

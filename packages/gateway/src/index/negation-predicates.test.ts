@@ -291,6 +291,35 @@ describe("buildNoDownstreamIncidentSql", () => {
     db.close();
   });
 
+  // Phase 10 IC2: correlates_with now also points at error issues and data-quality tests. Those do not
+  // page anyone, so a deployment followed only by one of them still has no downstream INCIDENT.
+  test("a deployment correlated only to an error issue or a data-quality test is still returned", () => {
+    for (const [i, type] of ["error_issue", "data_quality_test"].entries()) {
+      const db = makeDb();
+      const id = `dq${String(i)}`;
+      insertItem(db, id, "deployment");
+      const dep = insertGraphEntity(db, "deployment", id, id);
+      insertGraphRelation(
+        db,
+        dep,
+        insertGraphEntity(db, type, `x-${id}`, "x"),
+        "correlates_with",
+        0,
+      );
+      expect(runIds(db, buildNoDownstreamIncidentSql())).toEqual([id]);
+      db.close();
+    }
+  });
+
+  test("a deployment correlated to an alert is excluded", () => {
+    const db = makeDb();
+    insertItem(db, "da", "deployment");
+    const dep = insertGraphEntity(db, "deployment", "da", "da");
+    insertGraphRelation(db, dep, insertGraphEntity(db, "alert", "al", "al"), "correlates_with", 0);
+    expect(runIds(db, buildNoDownstreamIncidentSql())).toEqual([]);
+    db.close();
+  });
+
   test("a deployment whose only outgoing edge is a different relation type is still returned", () => {
     const db = makeDb();
     seedDeploymentWithUnrelatedEdge(db, "d4");

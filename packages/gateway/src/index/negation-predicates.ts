@@ -199,7 +199,9 @@ export function buildNotTouchingSql(pathGlob: string): {
 }
 
 /**
- * Deployments with no outgoing `correlates_with` edge.
+ * Deployments with no outgoing `correlates_with` edge to an `incident` or an `alert` (what pages someone).
+ * Since Phase 10 IC2 the edge also points at error issues and data-quality tests, which are not a
+ * "downstream incident"; counting them would stop listing a deploy followed only by a noisy error group.
  *
  * The bridge is required: `syncTimelineEventGraph` (`graph/graph-populator.ts:854`) upserts the
  * deployment's graph entity as `{ type: "deployment", externalId: row.id }`, so the item's id is
@@ -221,7 +223,9 @@ export function buildNoDownstreamIncidentSql(): {
            WHERE i.type = 'deployment'
              AND NOT EXISTS (
                    SELECT 1 FROM graph_relation r
+                    JOIN graph_entity t ON t.id = r.to_id
                     WHERE r.from_id = e.id AND r.type = 'correlates_with'
+                      AND t.type IN ('incident', 'alert')
                  )
            ORDER BY i.id`,
     vals: [],
