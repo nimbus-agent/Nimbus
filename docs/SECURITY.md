@@ -171,12 +171,12 @@ The opt-in read-only HTTP API (`nimbus serve`) gained a narrow write surface in 
 
 #### LAN remote access — trust model
 
-When `nimbus lan enable` is on, the LAN server accepts length-framed TCP connections protected by NaCl box (X25519 ECDH + XSalsa20-Poly1305). The trust establishment model is **explicit pairing**, not transparent discovery:
+When `nimbus lan enable` is on, the LAN server accepts length-framed TCP connections. Between two upgraded gateways they carry a Noise `IK` session (X25519, AES-256-GCM, SHA-256) with an ephemeral key from both sides; a peer that has not upgraded is still served over the older NaCl box wire (X25519 ECDH + XSalsa20-Poly1305) while `[lan] min_protocol = 1`. The trust establishment model is **explicit pairing**, not transparent discovery:
 
 - Pairing opens a **5-minute window**, gated by a 120-bit base58 pairing code (`randomBytes(15)` → 20 chars). The code is single-use and constant-time-compared. After the window closes, only previously-paired peers can connect.
 - Per-IP rate limiter (`lan-rate-limit.ts`) tracks failed pairing attempts in a sliding window; lockout is automatic after the configured threshold. The limiter is in-memory only — restarting the gateway clears lockouts. Plan a one-time grace if you cycle the gateway during an active attack.
 - A peer's identity is its X25519 public key, persisted in `lan_peers` after successful pairing. **There is no out-of-band binding to the host's identity** beyond the pairing code; a network attacker between peer and gateway during pairing could substitute their own keypair. Mitigation: transmit the pairing code out-of-band (read it aloud, send via SMS, etc.) — never in the same network channel that's being paired.
-- The X25519 keypairs are **long-term per host** with no per-session ephemeral DH layer. There is no forward secrecy: a future compromise of the host's secret key allows decryption of all past LAN sessions captured on the wire. Closing this gap is on the Phase 10 roadmap.
+- The X25519 keypairs are **long-term per host** and now only AUTHENTICATE (Phase 10 FS1, 2026-11-12). Between two upgraded gateways the session keys come from a Noise `IK` exchange that also uses an ephemeral key from each side (invariant I56), so a later compromise of a host's secret key does not decrypt a session recorded after the upgrade, and a recorded request cannot be replayed (the replayed record fails to open and is counted as a failed attempt). **Residual:** sessions recorded over the older wire (before the upgrade, and with a peer that has not yet completed one new-style session during the compatibility window) stay decryptable by whoever holds a static key; during the window anyone who can drop packets can force such a peer back to the older wire; and pairing still uses the older plaintext frames until the next slice. `[lan] min_protocol = 2` refuses the older wire for every peer; a peer that completed one new-style session is never spoken to over the older wire again.
 
 **Attacker capabilities:**
 
@@ -190,7 +190,7 @@ When `nimbus lan enable` is on, the LAN server accepts length-framed TCP connect
 
 **Acknowledged residual risks:**
 
-- No forward secrecy across sessions (Phase 10 redesign).
+- Forward secrecy holds only between upgraded peers and only for sessions run after the upgrade (see above); the pairing exchange itself is not yet forward-secret or code-protected on the wire (next slice).
 - Cross-network pairing relies on out-of-band code transmission.
 - The host identity is implicit (host pubkey is announced post-handshake) — peer-side host pinning is the user's responsibility for now.
 

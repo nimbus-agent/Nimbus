@@ -3600,6 +3600,7 @@ endpoint = "https://telemetry.nimbus-agent.dev/v1/collect"
 [lan]
 # enabled = false
 # port = 7475
+# min_protocol = 1   # 2 refuses the old (non-forward-secret) wire for every peer
 
 [automation]
 # graph_conditions = true
@@ -6249,7 +6250,13 @@ Two further limits apply to replay, both reported rather than silent: only tools
 
 Encrypted, relay-free remote access between machines on the same network. Disabled by default (`[lan] enabled = false` in `nimbus.toml`). Enable via `nimbus config set lan.enabled true`.
 
-All traffic is E2E encrypted with NaCl box (X25519 DH + XSalsa20-Poly1305). A set of exfiltration- and management-class methods is forbidden over LAN regardless of peer grants (`FORBIDDEN_OVER_LAN` in `packages/gateway/src/ipc/lan-rpc.ts`, invariant I5) — forbidden namespaces include (but are not limited to) `vault.*`, `updater.*`, `lan.*`, `profile.*`, `audit.*`, `data.*`, `security.*`, `chatops.*`, `tribal.*`, `team.*`, `teamvault.*`, `hitl.*`, `identity.*`, and `scim.*`, plus the full-method forbids `connector.addMcp`, the `extension.*` management methods, `index.reembed` / `index.reembedCancel`, the federation management/asker methods (`federation.discover` / `pair` / `peers` / `namespace.*` / `consentRespond` / `ask*`), and the share owner-action chokepoints `share.create` / `share.prune` / `share.approvalRespond` (the I27 outbound-publish gate). The read-only share methods (`share.verify` / `list` / `get` / `pubkey`) and the answering methods `federation.query` / `federation.expertise` / `federation.invoke` (gated by I17 / I19) stay admitted.
+Traffic between two upgraded gateways is E2E encrypted in a Noise `IK` session (X25519, AES-256-GCM, SHA-256) with an ephemeral key from both sides, so a later theft of either pairing key does not open a recorded session and a recorded request cannot be replayed (invariant I56). A peer that has not upgraded is still served over the old NaCl-box wire (X25519 DH + XSalsa20-Poly1305, no forward secrecy) while `[lan] min_protocol = 1`; pairing itself still uses the old frames until the next slice.
+
+**`[lan] min_protocol`** (`1` or `2`, default `1`; any other value is ignored; no environment override). `2` refuses the old wire for EVERY peer: a legacy `hello` or `pair` is closed with no reply and counted as a failed attempt, and this gateway never falls back to the old wire when it calls a peer. Because pairing still uses the old frames, set `2` only after your peers are paired (the next slice moves pairing to the new exchange). Independently of this setting, a peer that has completed ONE new-style session with this gateway is recorded (`lan_peers.proto_version = 2`, visible in `lan.listPeers`; the human-facing line comes with the next slice) and is never again talked to or answered over the old wire; there is no way to lower it short of removing and re-pairing the peer. Rolling back to an older gateway after that makes the peer unreachable until it is re-paired.
+
+A gateway that cannot open a peer's first message, or does not know the sender, closes without a reply (no oracle); the caller then reports "no reply: the peer may have been re-paired or reset; run nimbus team pair again". A connection that does not finish its handshake within 10 seconds is closed.
+
+Legacy note: the old wire is E2E encrypted with NaCl box (X25519 DH + XSalsa20-Poly1305). A set of exfiltration- and management-class methods is forbidden over LAN regardless of peer grants (`FORBIDDEN_OVER_LAN` in `packages/gateway/src/ipc/lan-rpc.ts`, invariant I5) — forbidden namespaces include (but are not limited to) `vault.*`, `updater.*`, `lan.*`, `profile.*`, `audit.*`, `data.*`, `security.*`, `chatops.*`, `tribal.*`, `team.*`, `teamvault.*`, `hitl.*`, `identity.*`, and `scim.*`, plus the full-method forbids `connector.addMcp`, the `extension.*` management methods, `index.reembed` / `index.reembedCancel`, the federation management/asker methods (`federation.discover` / `pair` / `peers` / `namespace.*` / `consentRespond` / `ask*`), and the share owner-action chokepoints `share.create` / `share.prune` / `share.approvalRespond` (the I27 outbound-publish gate). The read-only share methods (`share.verify` / `list` / `get` / `pubkey`) and the answering methods `federation.query` / `federation.expertise` / `federation.invoke` (gated by I17 / I19) stay admitted.
 
 ### `nimbus lan status`
 

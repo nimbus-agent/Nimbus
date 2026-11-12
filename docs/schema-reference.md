@@ -1336,6 +1336,17 @@ CREATE TABLE connector_write_enablement (
 
 **SQLite write boundary.** Every production write goes through `dbRun` / `dbExec` / `dbStmtRun` in `packages/gateway/src/db/write.ts` (invariant `I14`). The wrappers translate `SQLITE_FULL` into a typed `DiskFullError`; the static-audit gate `D12` (`bun run audit:invariants`) fails the build on any direct `db.run(` / `db.exec(` outside the wrapper.
 
+## V95 — `lan_peers.proto_version` (Phase 10 FS1, 2026-11-12)
+
+Authoritative source: `packages/gateway/src/index/lan-peer-proto-v95-sql.ts`. **V94 belongs to the incident engine (IC1).** The FS1 branch carries an empty V94 placeholder step so the step chain stays contiguous; it is deleted when the incident engine's V94 is in the base. The ALTER is guarded by a column probe (a step must be re-runnable). Written only by `LocalIndex.markLanPeerProto` (after a v2 handshake completed with that peer) and read by `isKnownPeer` and `lanLinkFor`; never lowered (`MAX`), and `addLanPeer`'s upsert does not touch it.
+
+```sql
+ALTER TABLE lan_peers ADD COLUMN proto_version INTEGER NOT NULL DEFAULT 1 CHECK (proto_version IN (1, 2));
+-- 1 = the old static-box wire; 2 = a Noise IK session completed with this peer (the downgrade ratchet, I56)
+```
+
+Every row that exists at the migration was made over the old wire and starts at 1.
+
 ## V93 — morning briefing runs and deadline notices (Phase 10 MB5, 2026-11-12)
 
 Authoritative source: `packages/gateway/src/index/briefing-v93-sql.ts`. Written only by `briefing/briefing-store.ts`. `slot_at` and `error_msg` are additions to the spec's table; the start of a run is `fired_by`, never `trigger` (static D44(d)). `item` is not a foreign-key parent, so the trigger is the cascade. No backfill.
