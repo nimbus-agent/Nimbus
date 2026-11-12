@@ -1,10 +1,11 @@
 # Phase 10 + Phase 17 — The incident engine and the on-call copilot
 
-Status: DRAFT for Antigravity review (round 2; round 1 changes listed in § 9). Owner rulings below are binding; do not reopen them.
+Status: DRAFT for Antigravity review (round 3; earlier rounds' changes listed in § 9). Owner rulings below are binding; do not reopen them.
 Date: 2026-11-12. Slot: S4. Roadmap: `docs/roadmap.md` § Phase 10 → *Core — Incident Correlation
 Engine* (rows **Automatic incident assembly**, **Incident timeline**, **Proactive technical debt
 detection**, **Suggested remediation**, **Post-mortem generation**; **On-call schedule awareness**
-shipped in MB3/MB5) and the Phase 10 acceptance criterion on `--at`; and § Phase 17 — *The On-Call
+shipped in MB3/MB5); *Core — Agent Memory & Personalization* row **Point-in-time index queries**
+and the Phase 10 acceptance criterion on `--at`; and § Phase 17 — *The On-Call
 Copilot*, all four waves. Phase 17's own row *Pushed incident brief* shipped 2026-10-04 (V64,
 `oncall-push/`); this project generalises it rather than replacing it.
 
@@ -112,7 +113,7 @@ Decided by me (not owner questions; recorded so review can challenge them):
 
 | Slice | Content |
 | --- | --- |
-| IC1 | `item_history` (V94): sync-time state-change rows for allowlisted keys of incident, alert, error-issue, data-quality, PR and ticket items, written in the `upsertIndexedItemForSync` chokepoint; `--at <time>` on `nimbus ask` and `nimbus search` |
+| IC1 | `item_history` (V94): sync-time state-change rows for allowlisted keys of incident, alert, error-issue, data-quality, PR and ticket items, written in the `upsertIndexedItem` chokepoint; `--at <time>` on `nimbus ask`, `nimbus query` and `nimbus search` |
 | IC2 | Alert sources and bindings: JSM Operations alert sync (`jira` service, type `alert`); PD `resolved_at_ms`; service bindings for JSM, Sentry, Monte Carlo and Bigeye; `[ci.service.X] depends_on`; the `correlates_with` populator anchored on the open time; deployment → commit and deployment → CI-run graph edges |
 | IC3 | Assembly: V95 `incident_record` (+ versions), the generalised trigger (every OR-10-17 source), the lanes, `nimbus incident list|show`, `incident.*` IPC, the `incident.assembled` event, the pushed brief re-based on records; static D46 and invariant I56 (a) |
 | IC4 | Timeline, cascade ranking, the incident id on audit rows, `nimbus incident timeline`, `nimbus audit replay <incident-id>` |
@@ -157,8 +158,12 @@ daily maintenance tick in batches of 5,000 rows, never inside a sync pass.
 past state says when its earliest history row is later than the time asked for ("history starts
 2026-11-14 08:00; state before then is the first observed state").
 
-**`--at <time>`** on `nimbus ask` and `nimbus search` (absolute ISO, or `yesterday-09:00`,
-`today-HH:MM`, `-2h` in the gateway's zone). Retrieval keeps an item only if it existed at T (its
+**`--at <time>`** on `nimbus ask` and `nimbus query` (the roadmap row's two commands), and also on
+`nimbus search` (absolute ISO, or `yesterday-09:00`, `today-HH:MM`, `-2h` in the gateway's zone).
+The row says "no new data collection required"; that is a stated deviation: `modified_at` and
+`sync_state` keep only the latest state, so reconstructing an earlier one needs `item_history`
+(OR-10-19). For `nimbus query`, `--at` composes with its structured filters, and `--sql` refuses
+`--at` (raw SQL reads current tables; the owner can query `item_history` directly). Retrieval keeps an item only if it existed at T (its
 `__created` row, or its provider creation time, is at or before T, and no `__deleted` row precedes T)
 and shows each tracked key's value as reconstructed at T. An item whose tracked state at T cannot be
 reconstructed (it changed after T and the change predates history) is excluded and counted in the
@@ -189,6 +194,16 @@ earlier one. The answer states that bodies and titles are as of now.
   `metadata.opened_at_ms` (via `json_extract`, guarded against malformed JSON) and fall back to
   `modified_at` only when that is absent; a one-shot re-graph of incidents runs once after the
   migration.
+- **Graph routing for the new sources.** Today `correlates_with` is emitted only by
+  `syncTimelineEventGraph`, which takes `entityType: "incident" | "deployment"` and is reached only
+  from `GRAPH_SYNC_BY_TYPE.incident` and `.deployment`; `GRAPH_SYNC_BY_TYPE` has no `alert` entry,
+  and `error_issue` and `data_quality_test` go to `syncErrorIssueGraph` and
+  `syncDataQualityTestGraph`, which never correlate. IC2 widens `syncTimelineEventGraph`'s
+  `entityType` to the four trigger kinds (`incident`, `alert`, `error_issue`, `data_quality_test`
+  as the incident side; deployments stay the other side), registers `alert` in `GRAPH_SYNC_BY_TYPE`,
+  and has the error-issue and data-quality handlers ALSO call `syncTimelineEventGraph` after their
+  existing edges, each anchored by `occurredAtForItem` as above. Counterpart queries match a trigger
+  of any of the four kinds against deployments of the same resolved service.
 - **Deploy edges.** The populator adds `deployment --deployed--> git_commit` (deployed sha) and
   `deployment --built_by--> ci_run` (`ci_run_external_id`) so the graph reaches commit and CI. The
   existing hand-seeded `incident-correlation-indexed.e2e.test.ts` is replaced by one driven by the
@@ -285,7 +300,9 @@ output (pinned by a test).
 - reversible: `launchdarkly_flag_toggle` (inverse: toggle to the before-state value),
   `flagsmith_feature_state_set` (before-state), `aws_ec2_instance_stop` / `aws_ec2_instance_start`
   (each other), `aws_ecs_service_update` (the before-state task definition and desired count),
-  `argocd_app_rollback` (rollback to the before-state revision id).
+  `argocd_app_rollback` (rollback to an earlier entry of the application's history: the row's `id`
+  is an Argo CD `status.history[].id`, not a git revision, so the inverse is a rollback to the
+  history id that was current in the before-state).
 - irreversible: `pd_incident_resolve`, `jira_ops_alert_close`, `argocd_app_sync`, the merges, the
   deletes, `aws_lambda_invoke`, the pipeline triggers.
 - unknown: every other row (the default).
@@ -295,8 +312,8 @@ A static check refuses a `reversible` declaration whose inverse row does not exi
 
 **Proposals.** For a record, the engine lists remediation kinds that the evidence supports:
 
-- Roll back the correlated deploy: Argo CD rollback to the previous synced revision of the bound
-  application, or ECS service update to the previous task definition, when the record's deploy lane
+- Roll back the correlated deploy: Argo CD rollback of the bound application to the history entry
+  (`status.history[].id`, read by the row's before reader) that precedes the one the deploy created, or ECS service update to the previous task definition, when the record's deploy lane
   found the deploy and the service is bound to that application or service
   (`[ci.service.X] argocd_apps`, `ecs_services`, new binding keys).
 - Revert a flag changed in the window (LaunchDarkly, Flagsmith) when a flag change of a bound
@@ -521,3 +538,9 @@ headings are named. Not applied, with reasons: migration numbers (the draft alre
 an IPC client cannot collect typed text (the CLI and desktop already do, D0a, and remediate is
 CLI/ChatOps-only anyway); the quoted "identified as the root cause in the timeline" sentence is not in
 the spec, whose targets already come only from bindings and typed ids (§ 6).
+
+Round 2 (Antigravity, 2026-11-12), applied: graph routing for alert, error-issue and data-quality
+triggers (the anchor change alone would not have produced `correlates_with` edges for them); the Argo
+CD rollback target is a history id, not a git revision; the *Point-in-time index queries* row is
+claimed, with `--at` on `nimbus ask` and `nimbus query` as the row says (and `nimbus search`), and the
+row's "no new data collection" is a stated deviation.
