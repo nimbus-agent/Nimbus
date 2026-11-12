@@ -59,7 +59,9 @@ function rec(cursor: string | null): Record<string, unknown> {
   return decodeNimbusJsonCursorObject(cursor, PREFIX) ?? {};
 }
 
-const ops = (urls: string[]): string[] => urls.filter((u) => u.includes("/jsm/ops/"));
+// The shift pass's requests only: the alert pass (Phase 10 IC2) has its own pacing and its own tests.
+const ops = (urls: string[]): string[] =>
+  urls.filter((u) => u.includes("/jsm/ops/") && !u.includes("/alerts"));
 
 describeWithFetchRestore("jira on-call refresh pacing (MB3)", () => {
   const syncable = () => createJiraSyncable({ ensureJiraMcpRunning: async () => {} });

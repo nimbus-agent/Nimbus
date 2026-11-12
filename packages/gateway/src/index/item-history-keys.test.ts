@@ -10,6 +10,7 @@ import {
 } from "../connectors/connector-sync-test-helpers.ts";
 import { extractPrMetadataForIndex, processEvent } from "../connectors/github-sync.ts";
 import { createJiraSyncable } from "../connectors/jira-sync.ts";
+import { mapJsmAlertToItem } from "../connectors/jsm-alert-mapping.ts";
 import { createLinearSyncable } from "../connectors/linear-sync.ts";
 import { mapMonteCarloIncidentToItem } from "../connectors/monte-carlo-dq-mapping.ts";
 import { encodeNimbusJsonCursor } from "../connectors/nimbus-json-cursor.ts";
@@ -192,6 +193,19 @@ const WRITERS: Record<string, () => Promise<Meta>> = {
     );
     return storedMetadata(db, "linear");
   },
+  "jira:alert": async () =>
+    (mapJsmAlertToItem(
+      {
+        id: "al-1",
+        status: "closed",
+        priority: "P1",
+        acknowledged: true,
+        createdAt: "2026-11-11T08:00:00Z",
+        updatedAt: "2026-11-11T09:00:00Z",
+        report: { ackTime: 60_000, closeTime: 600_000 },
+      },
+      { syncedAt: 1 },
+    )?.metadata ?? {}) as Meta,
   "sentry:error_issue": async () => {
     const m = mapSentryIssueToItem(
       {

@@ -44,6 +44,11 @@ const PD_SOURCE_AT: readonly HistorySourceAt[] = Object.freeze([
   Object.freeze({ key: "status", newValue: "triggered", metadataKey: "status_changed_at_ms" }),
 ]);
 
+const JSM_ALERT_SOURCE_AT: readonly HistorySourceAt[] = Object.freeze([
+  Object.freeze({ key: "status", newValue: "closed", metadataKey: "closed_at_ms" }),
+  Object.freeze({ key: "acknowledged", newValue: "true", metadataKey: "acknowledged_at_ms" }),
+]);
+
 function spec(s: {
   keys: readonly HistoryKey[];
   born: HistoryBorn | null;
@@ -80,6 +85,22 @@ export const ITEM_HISTORY_SPECS: ReadonlyMap<string, ItemHistorySpec> = new Map(
       tracks: true,
       // `resolved_at_ms` is deliberately NOT a tracked key: a rewrite at the IC2 upgrade would log a change.
       sourceAt: PD_SOURCE_AT,
+    }),
+  ],
+  [
+    // JSM Operations alert (IC2). `updatedAt` moves with every acknowledgement, close and note, so
+    // `modified_at` is the provider's change clock. `closed_at_ms` / `acknowledged_at_ms` are derived from
+    // the alert's report durations and exist only when the reply carried them.
+    "jira:alert",
+    spec({
+      keys: [
+        { key: "status", always: true },
+        { key: "priority", always: true },
+        { key: "acknowledged", always: true },
+      ],
+      born: { key: "opened_at_ms", kind: "ms" },
+      tracks: true,
+      sourceAt: JSM_ALERT_SOURCE_AT,
     }),
   ],
   [

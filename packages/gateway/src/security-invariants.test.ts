@@ -888,6 +888,19 @@ describe("I5 — LAN method allowlist is intrinsic to LanServer", () => {
     expect(code).toContain("isAtlassianCloudId(");
   });
 
+  test("I29/IC2: the JSM alert pass has no fetch, no https literal and no redirect of its own and reuses the on-call request function", async () => {
+    for (const file of ["jsm-alerts.ts", "jsm-alert-mapping.ts"]) {
+      const code = stripComments(await read(`packages/gateway/src/connectors/${file}`));
+      expect(code, file).not.toMatch(/\bfetch\(/);
+      expect(code, file).not.toContain("https://");
+      expect(code, file).not.toMatch(/redirect\s*:/);
+    }
+    const alerts = stripComments(await read("packages/gateway/src/connectors/jsm-alerts.ts"));
+    expect(alerts).toMatch(
+      /import\s*\{[^}]*\bjsmGet\b[^}]*\bresolveCloudId\b[^}]*\}\s*from\s*"\.\/jsm-oncall\.ts"/s,
+    );
+  });
+
   test("FORBIDDEN_OVER_LAN blocks extension.checkForUpdates + extension.update (T2 PR 3)", async () => {
     const src = await read("packages/gateway/src/ipc/lan-rpc.ts");
     expect(src).toMatch(/"extension\.checkForUpdates"/);
