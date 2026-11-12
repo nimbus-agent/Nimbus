@@ -1,6 +1,6 @@
 # Phase 10 — LAN forward secrecy (S3-F8)
 
-Status: DRAFT for Antigravity review (round 2). Owner rulings OR-FS-1 to OR-FS-5 (§ 2, 2026-11-12) are binding; do not reopen them. One round-2 owner question (Q6, § 13) is pending; the spec follows my recommended option and marks every dependent place "pending Q6".
+Status: DRAFT for Antigravity review (round 2). Owner rulings OR-FS-1 to OR-FS-6 (§ 2, 2026-11-12) are binding; do not reopen them.
 Date: 2026-11-12. Slot: S4. Roadmap: `docs/roadmap.md` § Phase 10 → *Core — LAN Hardening (deferred
 from Phase 4 B1 audit)*, row **LAN forward secrecy (S3-F8)**. The finding is recorded in
 `docs/SECURITY.md` (the B1 audit row, line 80, and the "LAN remote access — trust model" section,
@@ -48,6 +48,9 @@ Owner rulings, 2026-11-12 (binding; they settle the five questions § 12 listed)
   new dependency.
 - **OR-FS-5 Pairing changes in this project**: Noise XXpsk0 in slice FS2, the pairing code as the
   PSK; the code never travels on the wire.
+- **OR-FS-6 (2026-11-12) Accept the ~114-bit pairing code.** Keep the 20-character base58 code and
+  `XXpsk0`; the docs state the code's security level (about 114 bits, below Noise § 14's 256-bit
+  PSK guideline; offline guessing is infeasible at that size). No longer code and no PAKE.
 
 Decided by me (not owner questions; recorded so review can challenge them):
 
@@ -391,7 +394,7 @@ about what is remembered, not what is announced (§ 6).
 - **Weak pairing UX**: the code's confidentiality still depends on the owner passing it out of band.
   XXpsk0 removes the on-wire exposure, not a shoulder-surfed code.
 - **Pairing offline guessing** is bounded by the code's ~114 bits, not by anything the protocol adds
-  (§ 7.1); below Noise § 14's 256 bits (pending Q6).
+  (§ 7.1); below Noise § 14's 256 bits (accepted, OR-FS-6).
 - **Denial of service**: a flood of message 1 costs the responder two X25519 operations before the
   failure is known; the per-IP limiter (`lan-rate-limit.ts`) and the 10 s deadline apply, as today
   (and, unlike today, an idle socket no longer holds a connection forever).
@@ -449,7 +452,7 @@ The four fixes the review and coordinator asked about:
   the pairing UX (a confirm step on both sides) and drops the code as an authenticator. Against
   OR-FS-5. Raised as Q6.
 
-Conclusion, pending Q6: keep `XXpsk0` and the 20-character code; treat the code's ~114 bits as the
+Conclusion (OR-FS-6): keep `XXpsk0` and the 20-character code; treat the code's ~114 bits as the
 security level of PAIRING (the transport uses fresh DH only; sessions after pairing never use the
 code); state the deviation from Noise § 14; validate the format so no caller can weaken it (D-FS-16);
 keep a shorter code or any interactive step out of scope.
@@ -581,7 +584,7 @@ residual risks); `docs/SECURITY-INVARIANTS.md`; the `nimbus-federation-identity`
 - The pairing code's min-entropy is about 114 bits (the generator cuts the last base58 digit,
   `lan-pairing.ts:8`; § 7.1), mixed into a PSK that Noise § 14 wants at 256. A passive recording of
   a pairing's message 1 allows an offline guess at 2^114 work; a code obtained by the attacker
-  defeats pairing. Pending Q6.
+  defeats pairing. Accepted by OR-FS-6.
 - No clock is used, so there is no wall-clock replay window; replay is defeated structurally by the
   responder's ephemeral.
 - Interop with other Noise implementations is not a goal; the prologue and the framing are
@@ -604,24 +607,10 @@ residual risks); `docs/SECURITY-INVARIANTS.md`; the `nimbus-federation-identity`
 All five were answered by the owner on 2026-11-12 with the recommended option; see § 2
 (OR-FS-1 to OR-FS-5).
 
-## 13. Open owner questions (round 2)
+## 13. Owner questions, round 2 (resolved)
 
-**Q6. The pairing code is about 114 bits, below Noise's 256-bit PSK rule.** (Finding 1 of round 1,
-re-derived in § 7.1.) Nothing in the code or the protocol can be tightened further without changing
-what the owner does or what we depend on, so this is a limitation to accept or a UX to change:
-- (a) Accept: keep the 20-character code and `XXpsk0`; state the ~114-bit level in the docs and
-  § 10; validate the format (D-FS-16). No UX change, no dependency.
-- (b) Lengthen the code to 44 base58 characters (about 256 bits, matching Noise § 14). The owner
-  reads or pastes 44 characters instead of 20; pairing UX changes (against OR-FS-5's "flow does
-  not change").
-- (c) Add a balanced PAKE (SPAKE2, RFC 9382, or CPace once it is an RFC) so the code could be SHORT
-  and safe. A new dependency (a group library) or a hand-written PAKE, a longer design (a new
-  slice), and a pairing UX change if the code shrinks.
-
-Recommendation: (a). A 114-bit secret shown on the owner's own screen is far beyond any offline
-guessing budget; Noise's 256 is a conservative general rule for application-supplied keys; (b) and
-(c) buy margin nobody can use at the cost of the UX the owner just ruled on. Pending: if the owner
-picks (b) or (c), D-FS-6, D-FS-15/16, § 5.3 and § 7.1 change; nothing else does.
+Q6 (the pairing code's entropy) was answered by the owner on 2026-11-12 with the recommended
+option; see OR-FS-6 in § 2.
 
 ## 14. Review log
 
