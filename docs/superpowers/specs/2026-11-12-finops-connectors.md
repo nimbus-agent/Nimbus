@@ -232,13 +232,13 @@ tests build rows through the real mapper: a fixture must come from the writer, n
 
 | Slice | Repo | Content | Gate |
 | --- | --- | --- | --- |
-| FO1 | nimbus-mcp-servers | `connectors/vantage`: `vantage_cost_list`, `vantage_recommendation_list`, `vantage_cost_get`, `vantage_search` (read-only, on `createJsonGetter` from `shared/env-json-api.ts`); manifest `network: ["api.vantage.sh"]`; the pinned connector count in `scripts/connector-gates.test.ts` (94 today) raised to 95; `exports` entry; README; fixtures | merge, then release-please publishes the next minor of `@nimbus-dev/connectors`; FO2's pin bump cannot precede it (`audit:connector-version-skew`) |
+| FO1 | nimbus-mcp-servers | `connectors/vantage`: `vantage_cost_list`, `vantage_recommendation_list`, `vantage_cost_get`, `vantage_search` (read-only, on `createJsonGetter` from `shared/env-json-api.ts`); manifest `network: ["api.vantage.sh"]`; the pinned connector count in `scripts/connector-gates.test.ts` (94 today) raised to 96; `exports` entry; README; fixtures | merge, then release-please publishes the next minor of `@nimbus-dev/connectors`; FO2's pin bump cannot precede it (`audit:connector-version-skew`) |
 | FO2 | Nimbus | Contract module and series reader; Vantage mapper and syncable on a `sinceMs` transport; the registration sites (§ 5.3); retention pass; embedding exclusion (D-FO-10); pin bump; docs; index-lane census | FO1 published |
-| FO3 | nimbus-mcp-servers | `connectors/kubecost`, `connectors/opencost` and `shared/allocation-kit.ts`: `*_allocation_list`, `*_allocation_get`, `*_search`, read-only; `network: []` (the URL host is added by the gateway); count pin raised by 2 (to 97) | release |
+| FO3 | nimbus-mcp-servers | `connectors/kubecost`, `connectors/opencost` and `shared/allocation-kit.ts`: `*_allocation_list`, `*_allocation_get`, `*_search`, read-only; `network: []` (the URL host is added by the gateway); count pin raised by 2 (to 98) | release |
 | FO4 | Nimbus | Kubecost/OpenCost mappers and syncables; URL-and-optional-secret spawn helper (§ 5.4); `nimbus connector auth kubecost --url ... [--token ...]`; Windows loopback probe; pin bump | FO3 published |
-| FO5a | nimbus-mcp-servers | CloudHealth connector (OR-FO-1), built from documentation, UNVERIFIED items marked; count pin to 98 | merge, then release publishes |
+| FO5a | nimbus-mcp-servers | CloudHealth connector (OR-FO-1), built from documentation, UNVERIFIED items marked; count pin to 99 | merge, then release publishes |
 | FO5b | Nimbus | CloudHealth mapper, syncable, registration sites, pin bump | FO5a published; FO2 |
-| FO6a | nimbus-mcp-servers | Flexera One / Spot connector, starting with an endpoint-verification step that stops the slice if no cost endpoint can be documented; count pin to 99 | merge, then release publishes |
+| FO6a | nimbus-mcp-servers | Flexera One / Spot connector, starting with an endpoint-verification step that stops the slice if no cost endpoint can be documented; count pin to 100 | merge, then release publishes |
 | FO6b | Nimbus | Flexera mapper, syncable, registration sites, pin bump | FO6a published; FO2 |
 
 A slice never spans both repos: the connectors PR merges and its release publishes first, then the
@@ -465,3 +465,5 @@ Rejected or corrected:
   connectors take it to 99 through FO1 (95), FO3 (97), FO5a (98), FO6a (99).
 
 Round 2 (Antigravity, 2026-11-12): APPROVED. Three minor notes carried to the FO plans: (1) pick the `ConnectorCategory` for the five connectors in `catalog/connector-catalog-meta.ts` (an existing `cloud` or `finance`, or a new member); (2) if FO4's Windows loopback probe fails, the docs tell Windows owners to store a non-loopback or ingress URL; (3) Kubecost Aggregator `offset`/`limit` paging stays UNVERIFIED, with window-bounded retrieval capped by the 500-series limit as the fallback.
+
+Correction (2026-11-12, FO1 plan round 1): the connectors repo main (0.13.0) already pins 95 connectors (google-calendar landed after the spec was drafted), so the five new connectors take the pin to 100: FO1 96, FO3 98, FO5a 99, FO6a 100. The round-1 note above that says "the pin is 94 today" is superseded.
