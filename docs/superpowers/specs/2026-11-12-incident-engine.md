@@ -115,10 +115,10 @@ Decided by me (not owner questions; recorded so review can challenge them):
 | --- | --- |
 | IC1 | `item_history` (V94): sync-time state-change rows for allowlisted keys of incident, alert, error-issue, data-quality, PR and ticket items, written in the `upsertIndexedItem` chokepoint; `--at <time>` on `nimbus ask`, `nimbus query` and `nimbus search` |
 | IC2 | Alert sources and bindings: JSM Operations alert sync (`jira` service, type `alert`); PD `resolved_at_ms`; service bindings for JSM, Sentry, Monte Carlo and Bigeye; `[ci.service.X] depends_on`; the `correlates_with` populator anchored on the open time; deployment → commit and deployment → CI-run graph edges |
-| IC3 | Assembly: V95 `incident_record` (+ versions), the generalised trigger (every OR-10-17 source), the lanes, `nimbus incident list|show`, `incident.*` IPC, the `incident.assembled` event, the pushed brief re-based on records; static D46 and invariant I56 (a) |
+| IC3 | Assembly: V95 `incident_record` (+ versions), the generalised trigger (every OR-10-17 source), the lanes, `nimbus incident list|show`, `incident.*` IPC, the `incident.assembled` event, the pushed brief re-based on records; static D46 and invariant I57 (a) |
 | IC4 | Timeline, cascade ranking, the incident id on audit rows, `nimbus incident timeline`, `nimbus audit replay <incident-id>` |
-| IC5 | Remediation: the `reversibility` row field, proposals with confidence, evidence, blast radius and dry-run, `nimbus incident remediate|undo|advisory`, approve-from-push; I56 (b) |
-| IC6 | Runbooks: owner-authored runbook files, `nimbus incident runbook`; I56 (c) |
+| IC5 | Remediation: the `reversibility` row field, proposals with confidence, evidence, blast radius and dry-run, `nimbus incident remediate|undo|advisory`, approve-from-push; I57 (b) |
+| IC6 | Runbooks: owner-authored runbook files, `nimbus incident runbook`; I57 (c) |
 | IC7 | Post-mortem draft, configurable template and HITL push; technical-debt detection (`nimbus incident debt`) |
 | IC8 | Predict: the expectation radar, the persisted anomaly baseline (replacing `AnomalyDetectorStub`, V96) and its local notifications, the deploy-risk advisor in `deploy preflight` |
 | IC9 | Coordinate: `nimbus incident investigate`, `nimbus incident update` (stakeholder drafts, HITL send), `nimbus oncall handoff` |
@@ -262,7 +262,7 @@ other OR-10-17 sources.
 LAN-refused namespace (root `"incident"`); CLI `nimbus incident list [--open] [--service]`, `nimbus incident show <id>
 [--json]` (id = record id, trigger item id or provider id).
 
-**Confinement (static D46(a), invariant I56(a)).** `incident/**` assembly, cascade, radar, baseline
+**Confinement (static D46(a), invariant I57(a)).** `incident/**` assembly, cascade, radar, baseline
 and handoff code import nothing from egress, chatops posting, connectors (type-only allowed),
 federation or share and call no `fetch` (the D45 shape). A runtime pin: a full pass appends zero
 egress rows.
@@ -368,7 +368,7 @@ resource owner only; D0c's typed-confirm modal for Wave 4 rows, the existing app
 otherwise). Both call the same proposal path; the push never approves anything by itself. The
 desktop shows the proposal and the exact CLI command, and does not start it (§ 6, Renderer).
 
-**Invariant I56 (b).** An engine-proposed action reaches dispatch only through `execute()` as a local
+**Invariant I57 (b).** An engine-proposed action reaches dispatch only through `execute()` as a local
 owner action: never delegated (I20 falls back to the local owner), never satisfied by a standing rule
 (I55), never offered to the model (I53 unchanged), refused in advisory mode, and its prompt names the
 proposer and the reversibility label. Wiring: `incident/remediation.ts`; static D46(c) pins that only
@@ -382,7 +382,7 @@ regex) and ordered steps: `check` (text the owner marks done), `read` (a read to
 gated and ledgered as reads are), `action` (a write tool id with parameters). Parameters may
 interpolate only TYPED record fields: the service id, bound application or service names from config,
 provider ids, the deploy's sha and the open time. Free text from a provider (titles, descriptions,
-tags, chat) can never be interpolated, so an alert cannot write a parameter (I56 (c)). A runbook cannot
+tags, chat) can never be interpolated, so an alert cannot write a parameter (I57 (c)). A runbook cannot
 set any approval behaviour; each action step is an `execute()` call exactly as § 5.5 (advisory mode,
 typed confirm, proposer line `Proposed by: runbook <name>, step N`).
 
@@ -477,14 +477,14 @@ both start and approve one.
 
 - **Unattended paths are inert.** Assembly, cascade, radar, baseline and handoff read the index and
   write only their own tables; D46(a) forbids network, egress, posting, connectors and federation
-  imports there, and a runtime pin counts zero egress rows (I56 (a)).
+  imports there, and a runtime pin counts zero egress rows (I57 (a)).
 - **No new way to act.** Every action this project can cause is an existing connector write row,
   dispatched by `execute()` as a local owner action behind the consent gate (I2), never delegated
   (I20), never by a standing rule (I55), never by the model (I53 unchanged), with the typed confirm
-  where Wave 4 requires it (D41). Advisory mode removes even that (I56 (b)).
+  where Wave 4 requires it (D41). Advisory mode removes even that (I57 (b)).
 - **Attacker-influenced text.** Alert titles, chat messages and Sentry text are provider content.
   They are shown, escaped, in briefs; they never choose a proposal's target (targets come from
-  config bindings and typed ids), never interpolate a runbook parameter (I56 (c)), and are wrapped
+  config bindings and typed ids), never interpolate a runbook parameter (I57 (c)), and are wrapped
   with `wrapToolOutput` when a synthesis step sees them (I11).
 - **Toasts carry counts only** (as MB5): no title, service or channel name reaches a lock screen.
 - **History stores state, not content.** `item_history` records allowlisted state keys only, capped.
@@ -507,7 +507,7 @@ bytes); the undo of a reversible action and the refusal of an irreversible one; 
 denied (nothing written) and approved (one page create dispatched); the handoff in < 15 s. Plus:
 per-row reversibility tests (inverse built from a recorded before-state); the runbook loader's
 refusals (untyped interpolation, unknown tool, schema mismatch); advisory mode refusing before any
-prompt; D46 fixtures; I56 rows in `security-invariants.test.ts`; LAN refusal.
+prompt; D46 fixtures; I57 rows in `security-invariants.test.ts`; LAN refusal.
 
 ## 8. Stated bounds
 
@@ -544,3 +544,5 @@ triggers (the anchor change alone would not have produced `correlates_with` edge
 CD rollback target is a history id, not a git revision; the *Point-in-time index queries* row is
 claimed, with `--at` on `nimbus ask` and `nimbus query` as the row says (and `nimbus search`), and the
 row's "no new data collection" is a stated deviation.
+
+Numbering note (2026-11-12): the LAN forward-secrecy slice FS1 took invariant I56 first, so this spec's engine invariant is I57 (and its static rule stays D46, sub-rules (a) and (c) still to come in IC3 and IC5). If merge order changes again, IC3 takes the next free number.
