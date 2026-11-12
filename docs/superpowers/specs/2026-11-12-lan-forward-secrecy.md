@@ -1,6 +1,6 @@
 # Phase 10 — LAN forward secrecy (S3-F8)
 
-Status: DRAFT for Antigravity review (round 2). Owner rulings OR-FS-1 to OR-FS-6 (§ 2, 2026-11-12) are binding; do not reopen them.
+Status: APPROVED by Antigravity (round 2, 2026-11-12). Owner rulings OR-FS-1 to OR-FS-6 (§ 2) are binding; do not reopen them.
 Date: 2026-11-12. Slot: S4. Roadmap: `docs/roadmap.md` § Phase 10 → *Core — LAN Hardening (deferred
 from Phase 4 B1 audit)*, row **LAN forward secrecy (S3-F8)**. The finding is recorded in
 `docs/SECURITY.md` (the B1 audit row, line 80, and the "LAN remote access — trust model" section,
@@ -651,3 +651,4 @@ Rejected (parts of findings):
   limiter blocks: true and intended (a wrong guess must not burn the owner's window); failure is
   counted at message 1.
 
+Round 2 (Antigravity, 2026-11-12): APPROVED. Three minor notes carried to the FS plans: (1) `sendFederatedOverWire` (`ipc/lan-client.ts`) takes the peer's recorded `protoVersion` so the initiator never sends or falls back to v1 for a ratcheted peer; (2) `PeerPairing.initiatePair` passes `protoVersion: 2` explicitly to `addLanPeer`, so the initiator's row ratchets with the responder's; (3) in the IK responder steps, decrypting message 1 rejects only malformed frames (anyone can build a valid message 1 under their own static key), and the `isKnownPeer` check on the decrypted `rs` is what rejects an unknown sender.
