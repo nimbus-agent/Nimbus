@@ -298,6 +298,12 @@ export const FIRST_PARTY_MANIFESTS: Record<string, ExtensionManifest> = {
     filesystem: { read: [], write: [] },
   }),
 
+  // Phase 10 FinOps FO1 (connectors 0.14.0). Bundled and sandboxed here; its gateway sync,
+  // catalog entry and Vault keys arrive with FO2.
+  vantage: baseManifest("com.nimbus.vantage", {
+    network: ["api.vantage.sh"],
+    filesystem: { read: [], write: [] },
+  }),
   dbt: baseManifest("com.nimbus.dbt", {
     network: ["cloud.getdbt.com"],
     filesystem: { read: [], write: [] },
