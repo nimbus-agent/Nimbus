@@ -104,6 +104,29 @@ describe("POST /v1/deployments (integration)", () => {
     expect(body.external_id.length).toBeGreaterThan(0);
   });
 
+  test("a valid POST leaves a deployment graph entity bound to its service (IC2)", async () => {
+    handle = startServer();
+    const res = await fetch(urlFor(handle), {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify(VALID_BODY),
+    });
+    expect(res.status).toBe(200);
+    const ro = new Database(dbPath, { readonly: true });
+    try {
+      const row = ro
+        .query("SELECT metadata FROM graph_entity WHERE type = 'deployment'")
+        .get() as { metadata: string } | null;
+      expect(row).not.toBeNull();
+      expect(JSON.parse(row?.metadata ?? "{}")).toMatchObject({
+        affectedService: "payment-service",
+        occurredAt: VALID_BODY.started_at_ms,
+      });
+    } finally {
+      ro.close();
+    }
+  });
+
   test("200 is_new=false on retry of the same payload", async () => {
     handle = startServer();
     const first = await fetch(urlFor(handle), {

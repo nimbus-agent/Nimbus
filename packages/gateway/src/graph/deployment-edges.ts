@@ -61,8 +61,11 @@ function metaString(meta: Record<string, unknown>, key: string): string | undefi
 /** The deployed sha, lower-cased, when the deployment carries a usable one. */
 export function deployedSha(meta: Record<string, unknown>): string | undefined {
   // lane-census: scope=deployment
-  const raw = metaString(meta, "sha") ?? metaString(meta, "commit_sha");
-  const sha = raw?.toLowerCase();
+  const annotated = meta["sha"];
+  // lane-census: scope=deployment service=vercel
+  const vercel = meta["commit_sha"];
+  const raw = typeof annotated === "string" && annotated !== "" ? annotated : vercel;
+  const sha = typeof raw === "string" ? raw.toLowerCase() : undefined;
   return sha !== undefined && SHA_PATTERN.test(sha) ? sha : undefined;
 }
 

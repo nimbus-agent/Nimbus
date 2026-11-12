@@ -464,7 +464,7 @@ function syncCiRunGraph(db: Database, row: IndexedItemGraphInput, now: number): 
     metadata: {},
   });
   clearRelationsTouchingEntity(db, runEntityId);
-  // lane-census: scope=ci_run
+  // lane-census: scope=ci_run service=circleci,github_actions,gitlab
   relinkDeploymentsForCiRun(db, row.metadata["head_sha"], now);
 }
 
