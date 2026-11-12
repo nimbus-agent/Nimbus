@@ -182,7 +182,7 @@ export interface InitiatorOptions {
   /** The responder's static public key, from the pinned peer row. */
   rs: Uint8Array;
   /** Test-only pass-through to the Noise engine; production callers never set it. */
-  generateEphemeral?: () => BoxKeypair;
+  generateEphemeral?: (() => BoxKeypair) | undefined;
 }
 
 export interface InitiatorHandshake {
@@ -215,7 +215,7 @@ export function createInitiatorHandshake(opts: InitiatorOptions): InitiatorHands
 export interface ResponderOptions {
   s: BoxKeypair;
   /** Test-only pass-through to the Noise engine; production callers never set it. */
-  generateEphemeral?: () => BoxKeypair;
+  generateEphemeral?: (() => BoxKeypair) | undefined;
 }
 
 export interface ResponderHandshake {

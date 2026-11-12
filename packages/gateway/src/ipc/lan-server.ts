@@ -2,35 +2,22 @@ import type { Socket, TCPSocketListener } from "bun";
 import { isLoopbackHost } from "../llm/base-url-locality.ts";
 import { registerListener } from "../locality/listener-registry.ts";
 import type { BoxKeypair } from "./lan-crypto.ts";
-import { openBoxFrame, sealBoxFrame } from "./lan-crypto.ts";
-import { checkLanMethodAllowed, LanError } from "./lan-rpc.ts";
+import { legacyHandleEncrypted, legacyHandleHandshake } from "./lan-legacy.ts";
+import {
+  type LanPeerMatch,
+  MAX_ENCRYPTED_FRAME,
+  MAX_HANDSHAKE_FRAME,
+  MAX_PENDING_BYTES,
+  type PairingService,
+  type RateLimiterService,
+} from "./lan-wire.ts";
 import {
   createQueuedSocketWriter,
   type QueuedSocketWriter,
 } from "./server/queued-socket-writer.ts";
 
-export const MAX_HANDSHAKE_FRAME = 4_096;
-export const MAX_ENCRYPTED_FRAME = 4 * 1024 * 1024;
-export const MAX_PENDING_BYTES = MAX_ENCRYPTED_FRAME + 65_536;
-
-export interface PairingService {
-  isOpen(): boolean;
-  consume(code: string): boolean;
-  open(code: string): void;
-  close(): void;
-  getExpiresAt(): number | undefined;
-}
-
-export interface RateLimiterService {
-  checkAllowed(ip: string): boolean;
-  recordFailure(ip: string): void;
-  recordSuccess(ip: string): void;
-}
-
-export interface LanPeerMatch {
-  peerId: string;
-  writeAllowed: boolean;
-}
+export type { LanPeerMatch, PairingService, RateLimiterService };
+export { MAX_ENCRYPTED_FRAME, MAX_HANDSHAKE_FRAME, MAX_PENDING_BYTES };
 
 export interface LanServerOptions {
   bind: string;
@@ -172,148 +159,10 @@ export class LanServer {
   }
 
   private handleHandshake(socket: Socket<SessionState>, payload: Uint8Array): void {
-    let msg: { kind?: string; client_pubkey?: string; pairing_code?: string };
-    try {
-      msg = JSON.parse(new TextDecoder().decode(payload)) as {
-        kind?: string;
-        client_pubkey?: string;
-        pairing_code?: string;
-      };
-    } catch {
-      socket.data.writer.end();
-      return;
-    }
-    if (msg.kind !== "pair" && msg.kind !== "hello") {
-      socket.data.writer.end();
-      return;
-    }
-    if (typeof msg.client_pubkey !== "string") {
-      socket.data.writer.end();
-      return;
-    }
-    const clientPubkey = new Uint8Array(Buffer.from(msg.client_pubkey, "base64"));
-    if (clientPubkey.length !== 32) {
-      socket.data.writer.end();
-      return;
-    }
-
-    const ip = socket.data.peerIp;
-    if (!this.opts.rateLimit.checkAllowed(ip)) {
-      this.writeFrame(
-        socket,
-        JSON.stringify({ kind: msg.kind === "hello" ? "hello_err" : "pair_err" }),
-      );
-      socket.data.writer.end();
-      return;
-    }
-
-    if (msg.kind === "pair") {
-      if (typeof msg.pairing_code !== "string" || !this.opts.pairing.isOpen()) {
-        this.opts.rateLimit.recordFailure(ip);
-        this.writeFrame(socket, JSON.stringify({ kind: "pair_err" }));
-        socket.data.writer.end();
-        return;
-      }
-      const ok = this.opts.pairing.consume(msg.pairing_code);
-      if (!ok) {
-        this.opts.rateLimit.recordFailure(ip);
-        this.writeFrame(socket, JSON.stringify({ kind: "pair_err" }));
-        socket.data.writer.end();
-        return;
-      }
-      const peerId = this.opts.registerPeer(clientPubkey, ip);
-      socket.data.peerPubkey = clientPubkey;
-      socket.data.peerMatch = { peerId, writeAllowed: false };
-      this.opts.rateLimit.recordSuccess(ip);
-      this.writeFrame(
-        socket,
-        JSON.stringify({
-          kind: "pair_ok",
-          host_pubkey: Buffer.from(this.opts.hostKeypair.publicKey).toString("base64"),
-          peer_id: peerId,
-        }),
-      );
-      return;
-    }
-
-    const match = this.opts.isKnownPeer(clientPubkey);
-    if (!match) {
-      this.opts.rateLimit.recordFailure(ip);
-      this.writeFrame(socket, JSON.stringify({ kind: "hello_err" }));
-      socket.data.writer.end();
-      return;
-    }
-    socket.data.peerPubkey = clientPubkey;
-    socket.data.peerMatch = match;
-    this.writeFrame(
-      socket,
-      JSON.stringify({
-        kind: "hello_ok",
-        host_pubkey: Buffer.from(this.opts.hostKeypair.publicKey).toString("base64"),
-      }),
-    );
+    legacyHandleHandshake(socket.data, this.opts, payload);
   }
 
-  private async handleEncryptedMessage(
-    socket: Socket<SessionState>,
-    frame: Uint8Array,
-  ): Promise<void> {
-    if (!socket.data.peerPubkey || !socket.data.peerMatch) {
-      socket.data.writer.end();
-      return;
-    }
-    let plain: Uint8Array;
-    try {
-      plain = openBoxFrame(frame, socket.data.peerPubkey, this.opts.hostKeypair.secretKey);
-    } catch {
-      socket.data.writer.end();
-      return;
-    }
-    let msg: { id?: string | number; method?: string; params?: unknown };
-    try {
-      msg = JSON.parse(new TextDecoder().decode(plain)) as {
-        id?: string | number;
-        method?: string;
-        params?: unknown;
-      };
-    } catch {
-      socket.data.writer.end();
-      return;
-    }
-    if (typeof msg.method !== "string") {
-      socket.data.writer.end();
-      return;
-    }
-    let result: unknown;
-    let error: { code: string; message: string } | undefined;
-    try {
-      checkLanMethodAllowed(msg.method, socket.data.peerMatch);
-      result = await this.opts.onMessage(msg.method, msg.params, socket.data.peerMatch);
-    } catch (err) {
-      if (err instanceof LanError) {
-        error = { code: `ERR_${String(err.rpcCode)}`, message: err.message };
-      } else {
-        const e = err as { code?: string; message?: string };
-        error = { code: e.code ?? "ERR_INTERNAL", message: e.message ?? String(err) };
-      }
-    }
-    const response = error ? { id: msg.id, error } : { id: msg.id, result };
-    const replyFrame = sealBoxFrame(
-      new TextEncoder().encode(JSON.stringify(response)),
-      socket.data.peerPubkey,
-      this.opts.hostKeypair.secretKey,
-    );
-    this.writeFrameRaw(socket, replyFrame);
-  }
-
-  private writeFrame(socket: Socket<SessionState>, text: string): void {
-    this.writeFrameRaw(socket, new TextEncoder().encode(text));
-  }
-
-  private writeFrameRaw(socket: Socket<SessionState>, payload: Uint8Array): void {
-    const header = new Uint8Array(4);
-    new DataView(header.buffer).setUint32(0, payload.length, false);
-    socket.data.writer.writeBytes(header);
-    socket.data.writer.writeBytes(payload);
+  private handleEncryptedMessage(socket: Socket<SessionState>, frame: Uint8Array): Promise<void> {
+    return legacyHandleEncrypted(socket.data, this.opts, frame);
   }
 }

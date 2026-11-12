@@ -299,7 +299,7 @@ export interface HandshakeOptions {
   /** The peer's static public key when the pattern pre-shares it (the IK initiator). */
   rs?: Uint8Array;
   /** Injected so test vectors can pin the ephemeral; production code never passes it. */
-  generateEphemeral?: () => BoxKeypair;
+  generateEphemeral?: (() => BoxKeypair) | undefined;
 }
 
 function concat(chunks: Uint8Array[]): Uint8Array {

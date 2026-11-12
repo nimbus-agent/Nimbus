@@ -1,95 +1,18 @@
 import type { Socket } from "bun";
 import type { BoxKeypair } from "./lan-crypto.ts";
-import { openBoxFrame, sealBoxFrame } from "./lan-crypto.ts";
-import { MAX_ENCRYPTED_FRAME, MAX_HANDSHAKE_FRAME } from "./lan-server.ts";
+import { sendFederatedLegacy } from "./lan-legacy.ts";
 import {
-  createQueuedSocketWriter,
-  type QueuedSocketWriter,
-} from "./server/queued-socket-writer.ts";
+  buildFrame,
+  DEFAULT_TIMEOUT_MS,
+  flushWriter,
+  MAX_HANDSHAKE_FRAME,
+  makeFrameReader,
+  makeSettler,
+  replyKindForMessage,
+  writeFrame,
+} from "./lan-wire.ts";
 
-export { MAX_HANDSHAKE_FRAME } from "./lan-server.ts";
-
-const DEFAULT_TIMEOUT_MS = 5000;
-
-/** Every `kind` a Nimbus responder sends is a short lowercase protocol token. */
-const PROTOCOL_KIND = /^[a-z_]{1,32}$/;
-
-/**
- * A handshake reply's `kind`, for an error message. The reply arrives BEFORE the responder's key is
- * checked, so anyone answering at the peer's address controls this text, and the message reaches
- * brief `## Gaps` and CLI output. Only a protocol token is echoed; anything else reads `unknown`.
- */
-export function replyKindForMessage(kind: unknown): string {
-  return typeof kind === "string" && PROTOCOL_KIND.test(kind) ? kind : "unknown";
-}
-
-interface FrameReader {
-  push(chunk: Uint8Array): void;
-  next(): Uint8Array | undefined;
-}
-
-/** Buffers a 4-byte-length-prefixed stream and yields one frame body at a time.
- * Rejects any advertised frame length exceeding maxFrameBytes before buffering. */
-export function makeFrameReader(maxFrameBytes: number): FrameReader {
-  let buf = new Uint8Array(0);
-  return {
-    push(chunk) {
-      const merged = new Uint8Array(buf.length + chunk.length);
-      merged.set(buf, 0);
-      merged.set(chunk, buf.length);
-      buf = merged;
-    },
-    next() {
-      if (buf.length < 4) return undefined;
-      const view = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
-      const len = view.getUint32(0, false);
-      if (len > maxFrameBytes) throw new Error("lan-client: oversized frame");
-      if (buf.length < 4 + len) return undefined;
-      const body = buf.slice(4, 4 + len);
-      buf = buf.slice(4 + len);
-      return body;
-    },
-  };
-}
-
-export function buildFrame(payload: Uint8Array): Uint8Array {
-  const header = new Uint8Array(4);
-  new DataView(header.buffer).setUint32(0, payload.length, false);
-  const out = new Uint8Array(4 + payload.length);
-  out.set(header, 0);
-  out.set(payload, 4);
-  return out;
-}
-
-/**
- * One-shot settle guard shared by the single-frame and two-frame exchanges: starts the timeout
- * timer and returns a `finish(body?, err?)` that resolves/rejects exactly once (clearing the timer),
- * mapping a missing body to `closedMsg` and a timeout to `timeoutMsg`.
- *
- * Every caller settles BEFORE `socket.end()`, on the error paths as on the success path: Bun fires
- * `close()` synchronously inside `end()`, and `close()` calls `finish(undefined)` — so ending first
- * would replace the specific error (a bad hello, a pinned-key mismatch) with `closedMsg`.
- */
-function makeSettler(
-  resolve: (body: Uint8Array) => void,
-  reject: (err: Error) => void,
-  timeoutMs: number,
-  timeoutMsg: string,
-  closedMsg: string,
-): (body: Uint8Array | undefined, err?: Error) => void {
-  let settled = false;
-  let timer: ReturnType<typeof setTimeout>;
-  const finish = (body: Uint8Array | undefined, err?: Error): void => {
-    if (settled) return;
-    settled = true;
-    clearTimeout(timer);
-    if (err) reject(err);
-    else if (body) resolve(body);
-    else reject(new Error(closedMsg));
-  };
-  timer = setTimeout(() => finish(undefined, new Error(timeoutMsg)), timeoutMs);
-  return finish;
-}
+export { buildFrame, MAX_HANDSHAKE_FRAME, makeFrameReader, replyKindForMessage, writeFrame };
 
 /** Connect, send one request frame, resolve with the first reply frame body (or reject on timeout/close).
  * maxFrameBytes bounds the advertised length before buffering; use MAX_HANDSHAKE_FRAME for pairing,
@@ -154,160 +77,10 @@ export function exchangeOneFrame(
 }
 
 /**
- * One queued writer per outbound socket. Bun's raw `write()` sends only what the kernel accepts
- * right now and drops the rest, so a request frame larger than the free send buffer (an encrypted
- * federation RPC can be up to MAX_ENCRYPTED_FRAME) would reach the peer truncated and never parse.
+ * Temporary alias: the v1 client body now lives in `lan-legacy.ts` as `sendFederatedLegacy` with its
+ * original signature. Task 8 replaces this with the negotiating front.
  */
-const writers = new WeakMap<Socket<undefined>, QueuedSocketWriter>();
-
-function writerFor(socket: Socket<undefined>): QueuedSocketWriter {
-  let w = writers.get(socket);
-  if (w === undefined) {
-    w = createQueuedSocketWriter(socket);
-    writers.set(socket, w);
-  }
-  return w;
-}
-
-/** Call from a socket's `drain` handler. */
-function flushWriter(socket: Socket<undefined>): void {
-  writers.get(socket)?.flush();
-}
-
-export function writeFrame(socket: Socket<undefined>, payload: Uint8Array): void {
-  writerFor(socket).writeBytes(buildFrame(payload));
-}
-
-/** Two-frame exchange: send req frame A (hello), read reply A, send req frame B (from reply A), read reply B. */
-function exchangeHelloThenRpc(
-  host: string,
-  port: number,
-  hello: Uint8Array,
-  buildRpc: (helloReply: { host_pubkey?: string; kind?: string }) => Uint8Array,
-  timeoutMs = DEFAULT_TIMEOUT_MS,
-): Promise<Uint8Array> {
-  return new Promise<Uint8Array>((resolve, reject) => {
-    const reader = makeFrameReader(MAX_ENCRYPTED_FRAME);
-    let phase: "hello" | "rpc" = "hello";
-    const finish = makeSettler(
-      resolve,
-      reject,
-      timeoutMs,
-      "lan-client: rpc timeout",
-      "lan-client: connection closed mid-exchange",
-    );
-    Bun.connect<undefined>({
-      hostname: host,
-      port,
-      socket: {
-        open(socket) {
-          writeFrame(socket, hello);
-        },
-        data(socket, chunk) {
-          reader.push(chunk);
-          let body: Uint8Array | undefined;
-          try {
-            body = reader.next();
-          } catch (e) {
-            finish(undefined, e instanceof Error ? e : new Error(String(e)));
-            socket.end();
-            return;
-          }
-          if (body === undefined) return;
-          if (phase === "hello") {
-            let reply: { host_pubkey?: string; kind?: string };
-            try {
-              reply = JSON.parse(new TextDecoder().decode(body)) as typeof reply;
-            } catch {
-              finish(undefined, new Error("lan-client: bad hello reply"));
-              socket.end();
-              return;
-            }
-            if (reply.kind !== "hello_ok") {
-              finish(
-                undefined,
-                new Error(`lan-client: hello rejected (${replyKindForMessage(reply.kind)})`),
-              );
-              socket.end();
-              return;
-            }
-            phase = "rpc";
-            try {
-              writeFrame(socket, buildRpc(reply));
-            } catch (e) {
-              finish(undefined, e instanceof Error ? e : new Error(String(e)));
-              socket.end();
-            }
-            return;
-          }
-          // phase === "rpc": resolve before socket.end() — Bun fires close() synchronously
-          // inside socket.end(), so settling first prevents the close handler
-          // from winning the race with an "undefined body" rejection.
-          finish(body);
-          socket.end();
-        },
-        drain(socket) {
-          flushWriter(socket);
-        },
-        close() {
-          finish(undefined);
-        },
-        error(_s, e) {
-          finish(undefined, e instanceof Error ? e : new Error(String(e)));
-        },
-      },
-    }).catch((e: unknown) => finish(undefined, e instanceof Error ? e : new Error(String(e))));
-  });
-}
-
-/** Send one authenticated, encrypted federation RPC to a paired peer and return its result. */
-export async function sendFederatedOverWire(
-  host: string,
-  port: number,
-  selfKp: BoxKeypair,
-  peerPubkey: Uint8Array,
-  method: string,
-  params: unknown,
-  timeoutMs = DEFAULT_TIMEOUT_MS,
-): Promise<unknown> {
-  const hello = new TextEncoder().encode(
-    JSON.stringify({
-      kind: "hello",
-      client_pubkey: Buffer.from(selfKp.publicKey).toString("base64"),
-    }),
-  );
-  const replyFrame = await exchangeHelloThenRpc(
-    host,
-    port,
-    hello,
-    (reply) => {
-      const hostPub = new Uint8Array(Buffer.from(reply.host_pubkey ?? "", "base64"));
-      if (hostPub.length !== 32) {
-        throw new Error("lan-client: responder sent invalid pubkey length");
-      }
-      if (Buffer.compare(Buffer.from(hostPub), Buffer.from(peerPubkey)) !== 0) {
-        throw new Error("lan-client: responder pubkey does not match pinned peer key");
-      }
-      return sealBoxFrame(
-        new TextEncoder().encode(JSON.stringify({ id: 1, method, params })),
-        peerPubkey,
-        selfKp.secretKey,
-      );
-    },
-    timeoutMs,
-  );
-  const plain = openBoxFrame(replyFrame, peerPubkey, selfKp.secretKey);
-  const resp = JSON.parse(new TextDecoder().decode(plain)) as {
-    result?: unknown;
-    error?: { code?: string; message?: string };
-  };
-  if (resp.error !== undefined) {
-    throw new Error(
-      `lan-client: peer error ${resp.error.code ?? ""} ${resp.error.message ?? ""}`.trim(),
-    );
-  }
-  return resp.result;
-}
+export const sendFederatedOverWire = sendFederatedLegacy;
 
 /** The production outbound pair handshake (PeerPairing DI default). Returns the responder's box pubkey. */
 export async function outboundPairHandshake(
