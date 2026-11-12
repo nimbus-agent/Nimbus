@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794437014096,
+  "lastUpdate": 1794443369288,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "072b1fa9682c682bfb11fe56ce8498ff32ec56f0",
-          "message": "feat(connectors): per-connector write action types across all 94 connectors (#1321)\n\nCompletes the rollout Part 1 began. All 94 connectors are now standalone\neligible, and every connector mutation is declared rather than inferred.\n\n## What changed\n\nPart 1 built the consent mechanism and proved it on one connector. This\nmigrates the remaining 36, adds the per-connector action types they\ndeclare,\nextends the I26 predicate to cover them, and turns the advisory mutation\nrule\ninto a blocking gate.\n\nPer-connector action types are the substantive design decision, and they\nare\nadditive — the generic types stay, because removing one would silently\nungate\nanything still emitting it. `serviceOf` takes the prefix before the\nfirst dot\nand feeds two invariants: it is I29's egress-ledger `destination`, where\nthe\nold shared email.send recorded \"email\" — not a place data can go — and\nit is\nI20's delegation scope, where \"gmail but not outlook\" was inexpressible.\nThe\nmail wave is where that mattered most: six connectors send mail.\n\n## Scope model\n\nEach connector declares the scope kinds it accepts, and mutations\noutside the\nconfigured allow-list refuse without prompting. The kinds reflect real\nblast\nradius: repo for git hosts, job for jenkins, namespace for kubernetes,\nrecipient for mail — so a scope can permit mailing one address and\nnothing\nelse, and the model cannot widen it.\n\n## Corrections to Part 1's framing\n\nPart 1 implied this rollout closes a gateway HITL gap. It does not, and\nthe\nplan now says so. Measured: no non-warehouse write tool id appears\nanywhere in\npackages/gateway/src, and only 18 of 110 frozen action types map to a\ndispatchable connector tool. The value here is standalone eligibility.\n\ngithub's five declarations moved from the generic repo.* to github.*,\nrevising\nnaming that shipped in v2.15.0.\n\n## Three things found by red-proving\n\nThe hardened check was a substring match on \"registerWriteTool\", which\nthe\nregistrar's own declaration satisfies — a connector kept passing the\ngate\nafter every write registration had been reverted. It now requires a\nregistration call, or the registrar handed to a shared kit.\nstandaloneEligibility\nwas aligned on the same rule; the two had silently disagreed.\n\nThe HTTP-verb signal was removed from the blocking rule on evidence.\nWith\neverything migrated it still produced 32 findings and essentially all\nwere\nfalse: pure-filtering files, transport helpers, the seven read-only\nconnectors\nthat POST for GraphQL or auth, and the standalone launcher's own bin.ts.\nThe\nrule was per-file while migration is per-connector.\n\nstandaloneEligibility read only server.ts, so four connectors that\nregister in\ntools.ts were refused despite being hardened.\n\n## Static confinements that caught real mistakes\n\nD17 blocked slack_chat_post and teams_chat_post from the write-id set,\nbecause\nI23 derives their destination server-side. D19 does the same for the two\nkb_append tools, which I25 pins to a config destination. All four are\nstill\ngated in-connector; only the gateway-side set omits them.\n\n## Verified\n\n- Whole-repo suite: 20,171 pass, 0 fail\n- preflight:fast: 30 of 30\n- All 94 connectors boot from the compiled binary\n- Gateway regression across 12 connectors from every wave: every write\ntool\nstill served to a client declaring NO elicitation, while standalone\noffers\n  none. The gate does not leak into the gateway.\n- audit:connector-consent is blocking and red-proved: reverting one\n  connector's registrations exits 1.\n- discord's manifest corrected — it declared write and delete while\nexposing\n  four reads and no mutating verb anywhere.\n\nPlan:\n`docs/superpowers/plans/2026-08-23-standalone-connector-hardening-part2.md`",
-          "timestamp": "2026-08-23T20:39:23Z",
-          "tree_id": "3638ef038c47fbf095b3dc749d85b6fb7bf87582",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/072b1fa9682c682bfb11fe56ce8498ff32ec56f0"
-        },
-        "date": 1787518037716,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 216.68035530000014,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 221.93839039999946,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 292.24149919999616,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "53cb8dfcda9e6bdc5ec73f329180be96b03ec7c2",
+          "message": "test(gateway): inject the Google token functions instead of mock.module (fixes a --no-isolate leak) (#1977)\n\nFixes a cross-file test leak on the Linux `Unit + Coverage` leg. That\nleg runs `--parallel --no-isolate`, so a `mock.module` in one file is\nvisible to other files on the same worker.\n\nTwo test files mocked `auth/google-access-token.ts` process-wide. When\nthey shared a worker with an unrelated test, that test got their fakes:\n- `google-spawn-env.test.ts` received\n`fake-google-google_calendar-access-token` (on #1976);\n- `service-credential.test.ts` saw gmail as unconfigured (earlier).\n\n## Change\n\n- **Production:** `ensureGoogleDriveMcp(ctx, googleToken =\nREAL_GOOGLE_TOKEN_DEPS)` takes the two token functions as an optional\ndependency (exported type `GoogleTokenDeps`). The default is the real\nimplementation, and production call sites are unchanged.\n- **`connector-spawns.test.ts`:** passes a `FAKE_GOOGLE_TOKEN` instead\nof `mock.module`, with assertions unchanged.\n- Its `mock.module` of `auth/oauth-vault-tokens.ts` was incomplete (no\n`getValidVaultOAuthAccessToken`). It only worked while the Google mock\nhid the real module, so it is removed too. The real readers pass the\nsame assertions.\n- **`google-drive-sync.test.ts`:** `createGoogleDriveSyncable` never\nimported the token module (it uses `ctx.accessToken()`), so the test now\noverrides `accessToken` on its sync context.\n\nNo behaviour change.\n\n## Not changed (same pattern, recorded for a later pass)\n\n- `connector-spawns.test.ts` still mocks `@mastra/mcp` and about 15\nother `src/auth/*-access-token.ts` modules (Microsoft, Slack, Workday,\nZoom, Notion…). Converting them touches every `ensure*Mcp` spawner.\n- `slack-sync.test.ts` and `chat-body-full.test.ts` mock\n`auth/slack-access-token.ts`.\n\n## Verification (local, Windows)\n\n- `typecheck`, `typecheck:tests` (0 new) and `preflight:fast` pass.\n- The touched suites pass: 2865 pass, 0 fail.\n- The leak reproduction, `bun test --parallel --no-isolate\npackages/gateway/test/unit/connectors\npackages/gateway/src/connectors/lazy-mesh`, passes 2688/0 three times in\na row.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JmSjrCFSTQTQnUa4j8F5b1\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-12T00:19:39Z",
+          "tree_id": "917c44870f6cd0bbb6aaabf05faa04d9b6c9123f",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/53cb8dfcda9e6bdc5ec73f329180be96b03ec7c2"
+        },
+        "date": 1794443364264,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 275.6385146999979,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 278.83167879999854,
             "unit": "ms"
           }
         ]
