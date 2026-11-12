@@ -2,6 +2,14 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [10.55.0](https://github.com/nimbus-agent/Nimbus/compare/v10.54.0...v10.55.0) (2026-11-12)
+
+
+### Features
+
+* **gateway:** JSM, Sentry, Monte Carlo and Bigeye alerts correlate with deploys; real PagerDuty resolve times (incident engine IC2) ([#1988](https://github.com/nimbus-agent/Nimbus/issues/1988)) ([509d8e8](https://github.com/nimbus-agent/Nimbus/commit/509d8e8c0b693b3d5cc7a4d64a93a67592b0d727))
+* **gateway:** LAN sessions use Noise IK with per-session ephemeral keys and a downgrade ratchet (forward secrecy FS1) ([#1984](https://github.com/nimbus-agent/Nimbus/issues/1984)) ([c87bd34](https://github.com/nimbus-agent/Nimbus/commit/c87bd34f35f25b289329f1065e505510581425fe))
+
 ## [10.54.0](https://github.com/nimbus-agent/Nimbus/compare/v10.53.0...v10.54.0) (2026-11-12)
 
 
