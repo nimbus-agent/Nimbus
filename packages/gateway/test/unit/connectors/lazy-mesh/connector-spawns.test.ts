@@ -6,6 +6,9 @@
 // block at the end drives the real one, offline, from an unexpired stored token. A
 // `mock.module` of zoom-access-token.ts anywhere would make that block order-dependent.
 //
+// NOTE: the Google token functions are now injected (`FAKE_GOOGLE_TOKEN`), not `mock.module`d,
+// so the Google half of this history no longer applies; the other mocks below still do.
+//
 // Do NOT add a sibling real-resolver test (e.g. a src-tree connector-spawns.test.ts
 // that drives ensure*Mcp through the REAL getValid*AccessToken). `mock.module` is
 // process-global, so this file's mocks (and slack-sync.test.ts's slack mock) leak
@@ -32,6 +35,7 @@ import { join } from "node:path";
 import { GOOGLE_OAUTH_PARSE_ERRORS } from "../../../../src/auth/google-oauth-parse-errors.ts";
 import { Config } from "../../../../src/config.ts";
 import { getConnectorHealth } from "../../../../src/connectors/health.ts";
+import type { GoogleTokenDeps } from "../../../../src/connectors/lazy-mesh/connector-spawns.ts";
 import {
   type DailyNoteFs,
   type DailyNoteGrantDeps,
@@ -96,26 +100,8 @@ mock.module("@mastra/mcp", () => ({
  */
 const googleTokenFailure = new Map<string, unknown>();
 
-mock.module("../../../../src/auth/google-access-token.ts", () => ({
-  anyGoogleOAuthVaultPresent: async (vault: {
-    get: (k: string) => Promise<string | null>;
-  }): Promise<boolean> => {
-    for (const k of [
-      "google_drive.oauth",
-      "google_gmail.oauth",
-      "google_photos.oauth",
-      "google_meet.oauth",
-      "google_calendar.oauth",
-    ]) {
-      const v = await vault.get(k);
-      if (v !== null && v !== "") return true;
-    }
-    return false;
-  },
-  resolveGoogleOAuthVaultKey: async (
-    vault: { get: (k: string) => Promise<string | null> },
-    id: string,
-  ) => {
+const FAKE_GOOGLE_TOKEN: GoogleTokenDeps = {
+  resolveGoogleOAuthVaultKey: async (vault, id) => {
     const perService: Record<string, string> = {
       google_drive: "google_drive.oauth",
       gmail: "google_gmail.oauth",
@@ -128,12 +114,12 @@ mock.module("../../../../src/auth/google-access-token.ts", () => ({
     const v = await vault.get(k);
     return v !== null && v !== "" ? k : null;
   },
-  getValidGoogleAccessToken: async (_vault: unknown, id: string): Promise<string> => {
+  getValidGoogleAccessToken: async (_vault, id): Promise<string> => {
     const injected = googleTokenFailure.get(id);
     if (injected !== undefined) throw injected;
     return `fake-google-${id}-access-token`;
   },
-}));
+};
 
 mock.module("../../../../src/auth/microsoft-access-token.ts", () => ({
   getValidMicrosoftAccessToken: async (): Promise<string> => "fake-microsoft-access-token",
@@ -183,45 +169,6 @@ mock.module("../../../../src/auth/workday-access-token.ts", () => ({
     if (authBehaviour.workday === "throw") throw new Error("test-injected-failure");
     if (authBehaviour.workday === "empty") return "";
     return "fake-workday-access-token";
-  },
-}));
-
-mock.module("../../../../src/auth/oauth-vault-tokens.ts", () => ({
-  // Phase 10 SA2: Gmail's own key first, then the shared one, as the real reader does.
-  readGoogleOAuthScopesForGmailEnv: async (vault: {
-    get: (k: string) => Promise<string | null>;
-  }): Promise<string | undefined> => {
-    for (const key of ["google_gmail.oauth", "google.oauth"]) {
-      const raw = await vault.get(key);
-      if (raw === null || raw === "") continue;
-      try {
-        const scopes = (JSON.parse(raw) as { scopes?: unknown }).scopes;
-        const strings = Array.isArray(scopes)
-          ? scopes.filter((s): s is string => typeof s === "string" && s.trim() !== "")
-          : [];
-        return strings.length === 0 ? undefined : strings.join(" ");
-      } catch {
-        return undefined;
-      }
-    }
-    return undefined;
-  },
-  readMicrosoftOAuthScopesForOutlookEnv: async (vault: {
-    get: (k: string) => Promise<string | null>;
-  }): Promise<string | undefined> => {
-    const raw = await vault.get("microsoft.oauth");
-    if (raw === null || raw === "") return undefined;
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(raw);
-    } catch {
-      return undefined;
-    }
-    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return undefined;
-    const scopes = (parsed as Record<string, unknown>)["scopes"];
-    if (!Array.isArray(scopes)) return undefined;
-    const strings = scopes.filter((s): s is string => typeof s === "string" && s.trim() !== "");
-    return strings.length === 0 ? undefined : strings.join(" ");
   },
 }));
 
@@ -1147,14 +1094,14 @@ describe("ensureMendeleyMcp", () => {
 describe("ensureGoogleDriveMcp (Google bundle)", () => {
   test("no Google OAuth keys → no spawn", async () => {
     const { ctx, calls } = makeCtx();
-    await ensureGoogleDriveMcp(ctx);
+    await ensureGoogleDriveMcp(ctx, FAKE_GOOGLE_TOKEN);
     expect(calls.setLazyClient).toHaveLength(0);
   });
 
   test("google_drive.oauth only → only drive server spawned", async () => {
     const { ctx, vault } = makeCtx();
     await vault.set("google_drive.oauth", '{"access_token":"x"}');
-    await ensureGoogleDriveMcp(ctx);
+    await ensureGoogleDriveMcp(ctx, FAKE_GOOGLE_TOKEN);
     const servers = capturedClients[0]?.servers ?? {};
     expect(Object.keys(servers).sort((a, b) => a.localeCompare(b))).toEqual(["google_drive"]);
     expect(servers["google_drive"]?.env["GOOGLE_OAUTH_ACCESS_TOKEN"]).toBe(
@@ -1170,7 +1117,7 @@ describe("ensureGoogleDriveMcp (Google bundle)", () => {
     await vault.set("google_photos.oauth", '{"access_token":"p"}');
     await vault.set("google_meet.oauth", '{"access_token":"m"}');
     await vault.set("google_calendar.oauth", '{"access_token":"c"}');
-    await ensureGoogleDriveMcp(ctx);
+    await ensureGoogleDriveMcp(ctx, FAKE_GOOGLE_TOKEN);
     const servers = capturedClients[0]?.servers ?? {};
     expect(Object.keys(servers).sort((a, b) => a.localeCompare(b))).toEqual([
       "gmail",
@@ -1213,7 +1160,7 @@ describe("ensureGoogleDriveMcp (Google bundle)", () => {
     await vault.set("google_photos.oauth", '{"access_token":"p"}');
     await vault.set("google_meet.oauth", '{"access_token":"m"}');
     await vault.set("google_gmail.oauth", JSON.stringify({ access_token: "g", scopes }));
-    await ensureGoogleDriveMcp(ctx);
+    await ensureGoogleDriveMcp(ctx, FAKE_GOOGLE_TOKEN);
     const servers = capturedClients[0]?.servers ?? {};
     expect(servers["gmail"]?.env["GOOGLE_OAUTH_SCOPES"]).toBe(scopes.join(" "));
     for (const id of ["google_drive", "google_photos", "google_meet"] as const) {
@@ -1224,7 +1171,7 @@ describe("ensureGoogleDriveMcp (Google bundle)", () => {
   test("a Gmail credential that records no scopes passes none", async () => {
     const { ctx, vault } = makeCtx();
     await vault.set("google_gmail.oauth", '{"access_token":"g"}');
-    await ensureGoogleDriveMcp(ctx);
+    await ensureGoogleDriveMcp(ctx, FAKE_GOOGLE_TOKEN);
     const servers = capturedClients[0]?.servers ?? {};
     expect(Object.hasOwn(servers["gmail"]?.env ?? {}, "GOOGLE_OAUTH_SCOPES")).toBe(false);
   });
@@ -1232,7 +1179,7 @@ describe("ensureGoogleDriveMcp (Google bundle)", () => {
   test("already running → no double-spawn", async () => {
     const { ctx, vault } = makeCtx({ existingClient: true });
     await vault.set("google_drive.oauth", '{"access_token":"x"}');
-    await ensureGoogleDriveMcp(ctx);
+    await ensureGoogleDriveMcp(ctx, FAKE_GOOGLE_TOKEN);
     expect(capturedClients).toHaveLength(0);
   });
 });
@@ -1268,7 +1215,7 @@ describe("ensureGoogleDriveMcp — a dead credential is isolated to its own serv
     await vault.set("google_gmail.oauth", '{"access_token":"g"}');
     googleTokenFailure.set("google_drive", parseFailure());
 
-    const registered = await ensureGoogleDriveMcp(ctx);
+    const registered = await ensureGoogleDriveMcp(ctx, FAKE_GOOGLE_TOKEN);
 
     expect(registered).toEqual(["gmail"]);
   });
@@ -1283,7 +1230,7 @@ describe("ensureGoogleDriveMcp — a dead credential is isolated to its own serv
     googleTokenFailure.set("google_drive", parseFailure());
     googleTokenFailure.set("google_photos", parseFailure());
 
-    const registered = await ensureGoogleDriveMcp(ctx);
+    const registered = await ensureGoogleDriveMcp(ctx, FAKE_GOOGLE_TOKEN);
 
     expect(registered).toEqual(["gmail"]);
   });
@@ -1298,7 +1245,7 @@ describe("ensureGoogleDriveMcp — a dead credential is isolated to its own serv
     await vault.set("google_gmail.oauth", '{"access_token":"g"}');
     googleTokenFailure.set("google_drive", parseFailure());
 
-    await ensureGoogleDriveMcp(ctx);
+    await ensureGoogleDriveMcp(ctx, FAKE_GOOGLE_TOKEN);
 
     const drive = getConnectorHealth(db, "google_drive");
     expect(drive.state).toBe("error");
@@ -1321,7 +1268,7 @@ describe("ensureGoogleDriveMcp — a dead credential is isolated to its own serv
       new Error("Token exchange failed (invalid_grant: Bad Request)"),
     );
 
-    await ensureGoogleDriveMcp(ctx);
+    await ensureGoogleDriveMcp(ctx, FAKE_GOOGLE_TOKEN);
 
     const lastError = getConnectorHealth(db, "google_drive").lastError ?? "";
     expect(lastError).toContain("would not exchange");
@@ -1336,7 +1283,7 @@ describe("ensureGoogleDriveMcp — a dead credential is isolated to its own serv
     await vault.set("google_drive.oauth", '{"access_token":"d"}');
     googleTokenFailure.set("google_drive", GOOGLE_OAUTH_PARSE_ERRORS.invalidJson);
 
-    const registered = await ensureGoogleDriveMcp(ctx);
+    const registered = await ensureGoogleDriveMcp(ctx, FAKE_GOOGLE_TOKEN);
 
     expect(registered).toEqual([]);
     const lastError = getConnectorHealth(db, "google_drive").lastError ?? "";
@@ -1350,7 +1297,7 @@ describe("ensureGoogleDriveMcp — a dead credential is isolated to its own serv
     await vault.set("google_gmail.oauth", '{"access_token":"g"}');
     googleTokenFailure.set("google_drive", parseFailure());
 
-    await ensureGoogleDriveMcp(ctx);
+    await ensureGoogleDriveMcp(ctx, FAKE_GOOGLE_TOKEN);
 
     expect(warnings.some((w) => w.bindings["serviceId"] === "google_drive")).toBe(true);
   });
@@ -1364,7 +1311,7 @@ describe("ensureGoogleDriveMcp — a dead credential is isolated to its own serv
     googleTokenFailure.set("google_drive", parseFailure());
     googleTokenFailure.set("gmail", parseFailure());
 
-    await ensureGoogleDriveMcp(ctx);
+    await ensureGoogleDriveMcp(ctx, FAKE_GOOGLE_TOKEN);
 
     expect(calls.setLazyClient).toHaveLength(0);
     expect(capturedClients).toHaveLength(0);
@@ -1379,7 +1326,7 @@ describe("ensureGoogleDriveMcp — a dead credential is isolated to its own serv
     await vault.set("google_drive.oauth", '{"access_token":"d"}');
     googleTokenFailure.set("google_drive", parseFailure());
 
-    await ensureGoogleDriveMcp(ctx);
+    await ensureGoogleDriveMcp(ctx, FAKE_GOOGLE_TOKEN);
 
     const logged = JSON.stringify(warnings);
     expect(logged).toContain("nimbus connector auth");
