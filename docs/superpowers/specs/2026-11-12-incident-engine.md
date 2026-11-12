@@ -1,6 +1,6 @@
 # Phase 10 + Phase 17 — The incident engine and the on-call copilot
 
-Status: DRAFT for Antigravity review (round 1). Owner rulings below are binding; do not reopen them.
+Status: DRAFT for Antigravity review (round 2; round 1 changes listed in § 9). Owner rulings below are binding; do not reopen them.
 Date: 2026-11-12. Slot: S4. Roadmap: `docs/roadmap.md` § Phase 10 → *Core — Incident Correlation
 Engine* (rows **Automatic incident assembly**, **Incident timeline**, **Proactive technical debt
 detection**, **Suggested remediation**, **Post-mortem generation**; **On-call schedule awareness**
@@ -121,7 +121,7 @@ Decided by me (not owner questions; recorded so review can challenge them):
 | IC7 | Post-mortem draft, configurable template and HITL push; technical-debt detection (`nimbus incident debt`) |
 | IC8 | Predict: the expectation radar, the persisted anomaly baseline (replacing `AnomalyDetectorStub`, V96) and its local notifications, the deploy-risk advisor in `deploy preflight` |
 | IC9 | Coordinate: `nimbus incident investigate`, `nimbus incident update` (stakeholder drafts, HITL send), `nimbus oncall handoff` |
-| IC10 | Desktop: an Incidents page (records, timeline, proposals, approve) over the read methods; `ALLOWED_METHODS` |
+| IC10 | Desktop: a read-only Incidents page (records, timeline, cascade, proposals, findings) over five read methods; `ALLOWED_METHODS` |
 
 No connectors release is needed: `jira_ops_alert_list` and `jira_ops_alert_get` ship in
 `@nimbus-dev/connectors` 0.13.0 (the pin), and the investigation reads use existing list/search tools.
@@ -140,12 +140,18 @@ A row means: at a sync that observed it at `observed_at_ms`, key `key` of the it
 one (PD `last_status_change_at`, a PR's `merged_at`), else null. Two pseudo-keys record existence:
 `__created` (first indexed) and `__deleted` (removed through `deleteItem`).
 
-**Writer.** Only `index/item-history.ts` writes the table, called from `upsertIndexedItemForSync`
-and the `deleteItem` path, inside their transactions (one chokepoint; static D46(b) pins it). It
+**Writer.** Only `index/item-history.ts` writes the table, called from `upsertIndexedItem` in
+`index/item-store.ts` (the real SQL chokepoint for every item write: `upsertIndexedItemForSync`,
+clips, saved briefs, glossary projection and Nimbus items all reach it) and from the item delete path,
+inside the same statement sequence (static D46(b) pins that no other file writes `item_history`).
+Deployments live in `deployment_items`, not `item`; they need no history (their rows are immutable
+events with their own timestamps). It
 compares the stored metadata with the new metadata for an allowlist per `(service, type)`
 (`ITEM_HISTORY_KEYS`): status, state, severity, priority, urgency, assignee keys, merged, draft,
 resolution and due date. Bodies, titles and free text are never recorded. Values are capped at 256
-characters. Retention: `[index] history_retention_days` (default 180), pruned at boot and daily.
+characters. The table has NO foreign key to `item` (a delete must not erase the history that says
+the item existed). Retention: `[index] history_retention_days` (default 180), pruned at boot and by a
+daily maintenance tick in batches of 5,000 rows, never inside a sync pass.
 
 **Honesty.** History starts at V94; nothing earlier is recovered. Every reader that reconstructs a
 past state says when its earliest history row is later than the time asked for ("history starts
@@ -173,9 +179,16 @@ earlier one. The answer states that bodies and titles are as of now.
   binds when any tag matches), `sentry_projects` (project slugs), `data_models` (globs over
   `normalizeDataModelKey` keys, binding Monte Carlo and Bigeye incidents through their monitored
   models) and `depends_on` (other service ids, for the cascade). Unknown keys stay an error.
-- **Correlation anchor fix.** `syncTimelineEventGraph` anchors an incident on `opened_at_ms` (falling
-  back to `modified_at` only when absent) instead of PD's `updated_at`; a one-shot re-graph of
-  incidents runs once after the migration.
+  `buildServiceIdentityResolver` (`platform/assemble.ts`) and its graph use gain the matching rules for
+  `jira:alert`, `sentry:error_issue`, `montecarlo`/`bigeye` `data_quality_test`, so a bound alert of
+  any OR-10-17 source resolves to its Nimbus service and gets `correlates_with` edges; an unbound one
+  still correlates with nothing (and its record says so).
+- **Correlation anchor fix.** The incident timestamp the populator passes to `syncTimelineEventGraph`
+  comes from `occurredAtForItem` in `graph/graph-populator.ts`, which reads `item.modified_at` (PD's
+  `updated_at`). For incident, alert, error-issue and data-quality items it will read
+  `metadata.opened_at_ms` (via `json_extract`, guarded against malformed JSON) and fall back to
+  `modified_at` only when that is absent; a one-shot re-graph of incidents runs once after the
+  migration.
 - **Deploy edges.** The populator adds `deployment --deployed--> git_commit` (deployed sha) and
   `deployment --built_by--> ci_run` (`ci_run_external_id`) so the graph reaches commit and CI. The
   existing hand-seeded `incident-correlation-indexed.e2e.test.ts` is replaced by one driven by the
@@ -217,7 +230,12 @@ assembled_at_ms, record_sha256, record_json)` so replay can show what was known 
 
 **Render.** A deterministic brief through `synthesize()` with no runner (I31): Summary, Service,
 Change, CI, Chat, Prior incidents, On call, Concurrent, and the reserved `## Gaps` and
-`## Data freshness`.
+`## Data freshness`. New brief kinds join `SynthInput["kind"]` and `RESERVED_HEADINGS_BY_KIND`
+(`agents/_lib/reserved-sections.ts`): `incident` (IC3), `incident_postmortem` (IC7; Timeline and
+Decision log reserved), `incident_investigation` and `incident_update` (IC9; the per-backend tables
+reserved) and `oncall_handoff` (IC9). Each reserved heading's deterministic block comes from
+`reservedBlocksFor()`, and the plan records whether `chatops/brief-truncate.ts` must classify any of
+them in `SYNTHESIS_RESERVED_HEADINGS`.
 
 **Delivery.** The `incident.assembled` event (`{recordId, version, status}`, no title). The existing
 `[oncall.push]` pipeline is re-based on records: a record that meets the push filter is pushed
@@ -226,7 +244,7 @@ remains default off and PagerDuty-assigned by default; `[oncall.push] sources` w
 other OR-10-17 sources.
 
 **Surfaces.** IPC `incident.list`, `incident.get`, `incident.assemble` (on demand, owner kinds only);
-LAN-refused namespace; CLI `nimbus incident list [--open] [--service]`, `nimbus incident show <id>
+LAN-refused namespace (root `"incident"`); CLI `nimbus incident list [--open] [--service]`, `nimbus incident show <id>
 [--json]` (id = record id, trigger item id or provider id).
 
 **Confinement (static D46(a), invariant I56(a)).** `incident/**` assembly, cascade, radar, baseline
@@ -292,17 +310,32 @@ Each proposal shows: the action and target, **confidence** (a deterministic scor
 deploy inside the window, deploy to the bound environment, same-service prior success, recency; the
 weights and the arithmetic are printed), the **evidence** (item ids and rules), the **blast radius**
 (the row's before-state of the target, the bound services that depend on it through `depends_on`, the
-environment), a **dry run** where the connector offers one (Argo CD rollback and sync expose a dry-run
-flag in their reads, verified in the plan; otherwise the line says *no dry run available*), and the
+environment), a **dry run** line: none of the rows in the initial catalogue has a connector dry run today
+(`argocd_get` takes only the application name and neither Argo CD write exposes a dry-run flag), so
+every proposal at IC5 says *no dry run available; the preview shows the target's current state*, and
+a row gains a dry run only when its connector does; and the
 **reversibility** label in the first line. An irreversible proposal says so before anything else.
 Proposals not available here (a D3 row, an owner-refused row) are listed with their reason.
 
-**Execution.** `nimbus incident remediate <id> [--pick N]` (and the desktop, IC10) asks the gateway's
-`incident.remediate`, which builds the action from the proposal AS STORED (never from caller fields
-other than the pick) and runs `execute()` as a local owner action with the incident link. The consent
+**Proposal lifecycle.** Proposals are stored in V95 `incident_proposal(id, record_id, record_version,
+kind, tool_id, input_json, evidence_json, confidence, reversibility, status, created_at_ms,
+expires_at_ms, action_id)`, written only by `incident/remediation.ts`. Status moves `proposed` to
+`executing` to `executed`, `failed` or `denied`, or from `proposed` to `expired` (TTL 2 h) or
+`superseded` (a new record version re-derived a different proposal set). Every transition is one
+`UPDATE ... WHERE id = ? AND status = ?`; a second concurrent `remediate` of the same proposal finds
+zero rows changed and is refused with `ERR_PROPOSAL_BUSY`.
+
+**Execution.** `nimbus incident remediate <id> [--pick N]` asks the gateway's `incident.remediate`
+(CLI and ChatOps only, § 6), which claims the proposal (`proposed` to `executing`), builds the action
+from the proposal AS STORED (never from caller fields other than the pick) and runs `execute()` as a
+local owner action with the incident link. The row's before-state reader runs inside that same
+execution, immediately before the prompt (as it does for every write with a reader), so the preview
+shows the target as it is now. The consent
 prompt is the row's normal typed preview plus two lines: `Proposed by: the incident engine` and the
-reversibility label. A Wave 4 row still needs its typed confirm text. The proposal is re-derived
-before execute; if the evidence changed, it is refused with `ERR_PROPOSAL_STALE`.
+reversibility label. A Wave 4 row still needs its typed confirm text (the CLI and ChatOps collect it, D0a/D0c). Before
+claiming, the proposal is re-derived from the current record; if it differs, or the record has a newer
+version whose proposals no longer include it, it is refused with `ERR_PROPOSAL_STALE` and marked
+`superseded`.
 
 **Undo.** `nimbus incident undo <action-id>` builds the declared inverse of an executed reversible
 action from the before-state recorded with it and runs it through `execute()` the same way. Unknown or
@@ -312,10 +345,11 @@ irreversible actions are refused with their label. This is the "one keystroke" (
 While on, `incident.remediate`, `incident.undo` and runbook action steps are refused before any
 prompt; proposals are still shown.
 
-**Approve-from-push (OR-10-16).** A pushed record carries its top proposal's id. The desktop panel's
-Approve button, `nimbus oncall pushed <id> --remediate` and the ChatOps card (D0c's typed-confirm
-modal for Wave 4 rows, the existing approve flow otherwise) call the same `incident.remediate`; the
-push never approves anything by itself.
+**Approve-from-push (OR-10-16).** A pushed record carries its top proposal's id. Two doors can act
+on it: `nimbus oncall pushed <id> --remediate` and the ChatOps headline's Remediate action (the
+resource owner only; D0c's typed-confirm modal for Wave 4 rows, the existing approve flow
+otherwise). Both call the same proposal path; the push never approves anything by itself. The
+desktop shows the proposal and the exact CLI command, and does not start it (§ 6, Renderer).
 
 **Invariant I56 (b).** An engine-proposed action reaches dispatch only through `execute()` as a local
 owner action: never delegated (I20 falls back to the local owner), never satisfied by a standing rule
@@ -414,12 +448,13 @@ pending proposals and runbook steps, and who is on call next. Under 15 s on the 
 
 ### 5.10 IC10 — desktop
 
-An Incidents page: the record list, a record's brief, timeline and cascade, its proposals with the
-Approve button (which calls `incident.remediate` and so the normal consent dialog), the advisory
-switch, findings. `ALLOWED_METHODS` gains the reads (`incident.list`, `incident.get`,
-`incident.timeline`, `incident.proposals`, `incident.findings`) and `incident.remediate` and
-`incident.undo` only if the I7 review finds them non-RCE-class (they reach only the consent gate);
-the plan decides and records it.
+An Incidents page, read-only: the record list, a record's brief, timeline and cascade, its proposals
+(each with its evidence, labels and the exact `nimbus incident remediate` command to copy), the
+advisory state and findings. `ALLOWED_METHODS` gains the five reads only (`incident.list`,
+`incident.get`, `incident.timeline`, `incident.proposals`, `incident.findings`). Starting a
+remediation, an undo, a runbook step or changing advisory mode is never renderer-callable (§ 6): the
+renderer can answer consent prompts, so letting it start an action would let a compromised renderer
+both start and approve one.
 
 ## 6. Security analysis
 
@@ -438,7 +473,12 @@ the plan decides and records it.
 - **History stores state, not content.** `item_history` records allowlisted state keys only, capped.
 - **Replay integrity.** Replay reads the audit chain and verifies it; it cannot be fed rows from
   outside the database.
-- **LAN.** The `incident.*` namespace is added to the LAN refusal (the LAN check is a denylist).
+- **LAN.** The exact namespace root `"incident"` is added to `FORBIDDEN_OVER_LAN` in
+  `ipc/lan-rpc.ts` (the check compares the part before the first dot; the LAN check is a denylist),
+  and `audit.replay` is covered by the existing `audit` root (verified in the plan).
+- **Renderer.** The desktop renderer can already answer consent prompts (`consent.respond` is in
+  `ALLOWED_METHODS`), so it must not also be able to START an engine action: `incident.remediate`,
+  `incident.undo`, `incident.runbookStep` and `incident.advisorySet` are never renderer-callable (I7).
 
 ## 7. Testing and acceptance
 
@@ -467,3 +507,17 @@ prompt; D46 fixtures; I56 rows in `security-invariants.test.ts`; LAN refusal.
   are recorded as upgrades to the OR-10-16 substitutes.
 - Live reply shapes for JSM alerts and the investigation backends are verified against documented
   shapes only.
+
+## 9. Review log
+
+Round 1 (Antigravity, 2026-11-12), applied: the renderer never starts an engine action, since it can
+answer consent prompts (remediate, undo, runbook step and advisory set are CLI and ChatOps only; the
+desktop page is read-only); the LAN refusal names the exact root `"incident"`; `item_history` is
+written in `upsertIndexedItem`, the real chokepoint, with no foreign key and batched daily pruning;
+no initial row has a dry run, and proposals say so; the populator's `occurredAtForItem` is where the
+open-time anchor changes; the service resolver gains the new bindings; proposals have a stored
+lifecycle with atomic transitions, a TTL and supersession; the new brief kinds and their reserved
+headings are named. Not applied, with reasons: migration numbers (the draft already used V94 to V96);
+an IPC client cannot collect typed text (the CLI and desktop already do, D0a, and remediate is
+CLI/ChatOps-only anyway); the quoted "identified as the root cause in the timeline" sentence is not in
+the spec, whose targets already come only from bindings and typed ids (§ 6).
