@@ -2491,7 +2491,7 @@ export function checkBriefingConfinement(files: readonly FileEntry[]): Violation
   });
 }
 
-// ---- D48 (FinOps cost data is read and pruned by code that cannot leave the machine, OR-FO-3) ------
+// ---- D48 (FinOps cost data is read and pruned by code that cannot leave the machine, spec § 6, OR-10-8) ------
 // Rule ids `finops-forbidden-import` and `finops-no-network`. `packages/gateway/src/finops/` holds the
 // pure side of the cost connectors (the row contract, the series rollup, the `readCostSeries` reader and
 // the retention pass): it runs unattended, so it must be incapable of an outbound request, a connector

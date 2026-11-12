@@ -5913,7 +5913,7 @@ describe("D45 - the morning briefing delivers locally only (OR-10-11)", () => {
   });
 });
 
-describe("D48 - FinOps cost code cannot leave the machine (OR-FO-3)", () => {
+describe("D48 - FinOps cost code cannot leave the machine (spec § 6, OR-10-8)", () => {
   const file = (relPath: string, contents: string): FileEntry => ({ relPath, contents });
   const SRC = "packages/gateway/src/";
   const SERIES = `${SRC}finops/cost-series.ts`;

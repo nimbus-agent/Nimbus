@@ -2127,7 +2127,7 @@ Reverse-lookup table for inline comments migrated from source files during the 2
 
 **Enforcement.** `check-nimbus-invariants.test.ts` (D45: a good fixture set, one single-violation swap per forbidden import form and per network primitive, out-of-scope and test files, a real-repository scan that visits both halves of the scope) and the zero-egress, no-indexed-string-in-a-toast and OR-10-8 tests in `security-invariants.test.ts` and `test/integration/briefing/briefing.acceptance.test.ts`.
 
-## D48 — FinOps cost data is read and pruned by code that cannot leave the machine (Phase 10 FO2, OR-FO-3; tied to no invariant)
+## D48 — FinOps cost data is read and pruned by code that cannot leave the machine (Phase 10 FO2, spec § 6 and OR-10-8; tied to no invariant)
 
 **Statement.** (`scripts/structure-audit/check-nimbus-invariants.ts` `checkFinopsConfinement`, rule ids `finops-forbidden-import` and `finops-no-network`; the scan is the same `checkConfinement` D45 uses.) Every non-test file under `packages/gateway/src/finops/` imports no `chatops/`, `egress/`, `federation/`, `share/`, `llm/`, `engine/` or `agents/` module (even type-only), imports `connectors/` only as a TYPE, imports none of `node:http`, `node:https`, `node:http2`, `node:net`, `node:tls`, `node:dgram` or `undici`, and contains no reference to the global `fetch`, no `globalThis`, `window` or `self`, no `Bun.fetch`, no `new WebSocket` and no `XMLHttpRequest`. Comments and string literals are blanked first.
 
