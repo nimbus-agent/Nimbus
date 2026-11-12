@@ -2,8 +2,11 @@ import type { Agent } from "@mastra/core/agent";
 import pino from "pino";
 import type { NimbusPersonaToml } from "../config/persona.ts";
 import { Config } from "../config.ts";
+import type { PointInTimeFacts } from "../index/item-history-at.ts";
+import { pointInTimeDisclosure } from "../index/item-history-at.ts";
 import type { LlmRouter } from "../llm/router.ts";
 import type { LlmGenerateResult } from "../llm/types.ts";
+import { drainPointInTimeFacts } from "./agent-request-context.ts";
 import { type ContextTruncation, contextTruncationLine } from "./context-truncation-disclosure.ts";
 import { applyDevilAdvocate } from "./devil-advocate.ts";
 import { agentErrorFromCaughtError } from "./gateway-agent-error.ts";
@@ -13,6 +16,7 @@ import {
   NEGATION_TOOLS_UNAVAILABLE_LINE,
 } from "./negation-shaped-question.ts";
 import { applyPersona } from "./persona.ts";
+import { combinePointInTimeFacts, pointInTimeInstruction } from "./point-in-time.ts";
 import { sanitizeExternalError } from "./sanitize-external-error.ts";
 import {
   detectStepBudgetExhaustion,
@@ -63,7 +67,25 @@ export type RunConversationalAgentParams = {
    * which still get the deterministic disclosure line in the reply.
    */
   notifyGasLimit?: NotifyGasLimit;
+  /**
+   * A point-in-time turn (`nimbus ask --at`, Phase 10 IC1). The model is told the instant (in the prompt both
+   * execution paths share), and the honesty block (as-of line, history start, Gaps) is appended by
+   * `appendDeterministicDisclosures` from the facts the turn's searches recorded - never asked of the model.
+   * `searched` is the facts already known before the model ran (the local-router context's own search);
+   * the agent's `searchLocalIndex` calls add theirs to the request store.
+   */
+  pointInTime?: {
+    readonly atMs: number;
+    readonly zone: string;
+    readonly searched: readonly PointInTimeFacts[];
+    readonly fallbackHistoryStartMs: number | null;
+  };
 };
+
+/** The instant the model answers for, ahead of the question; identity on an ordinary turn. */
+function withPointInTimeInstruction(prompt: string, atMs: number | undefined): string {
+  return atMs === undefined ? prompt : `${pointInTimeInstruction(atMs)}\n\n${prompt}`;
+}
 
 function isTextDeltaChunk(chunk: unknown): chunk is {
   type: "text-delta";
@@ -343,6 +365,16 @@ function appendDeterministicDisclosures<
   // the model, which answered "how many PRs are in the index?" with 3, then 2.2, against a true
   // 173 — it was describing the handful of retrieved items, not the index.
   if (p.indexCountLine !== undefined) lines.push(p.indexCountLine);
+  // Phase 10 IC1: the as-of block, from the facts the turn's searches recorded. Constructed here so the
+  // router and agent paths cannot disclose differently, and never asked of the model.
+  if (p.pointInTime !== undefined) {
+    const facts = combinePointInTimeFacts(
+      p.pointInTime.atMs,
+      [...p.pointInTime.searched, ...drainPointInTimeFacts()],
+      p.pointInTime.fallbackHistoryStartMs,
+    );
+    lines.push(...pointInTimeDisclosure({ ...facts, zone: p.pointInTime.zone }));
+  }
   // C2: the step budget stopped the agent while it still wanted tools, so the text above may be
   // missing what those calls would have fetched. Constructed here, never asked of the model.
   if (res.stepBudgetExhausted !== undefined) {
@@ -397,7 +429,10 @@ export async function runConversationalAgent(
   // cheapest emphasis available. Both are identity functions when inactive, so a default
   // gateway's prompt is unchanged.
   const promptWithContext = applyPersona(
-    applyDevilAdvocate(buildPromptText(trimmed, p.localContext), p.devil),
+    applyDevilAdvocate(
+      withPointInTimeInstruction(buildPromptText(trimmed, p.localContext), p.pointInTime?.atMs),
+      p.devil,
+    ),
     p.persona,
   );
   const promptArg = buildPromptArg(promptWithContext, p.priorTurns ?? []);
@@ -414,6 +449,7 @@ export async function runConversationalAgent(
     // NEXT turn to drain and misattribute to its own reply. Discard rather than append: the
     // turn that recorded it never produced an answer to qualify.
     drainNegationDisclosures();
+    drainPointInTimeFacts();
     const typed = agentErrorFromCaughtError(e, undefined, {
       enforceAirGap: p.llmRouter?.enforcesAirGap() === true,
     });

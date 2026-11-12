@@ -1336,6 +1336,27 @@ CREATE TABLE connector_write_enablement (
 
 **SQLite write boundary.** Every production write goes through `dbRun` / `dbExec` / `dbStmtRun` in `packages/gateway/src/db/write.ts` (invariant `I14`). The wrappers translate `SQLITE_FULL` into a typed `DiskFullError`; the static-audit gate `D12` (`bun run audit:invariants`) fails the build on any direct `db.run(` / `db.exec(` outside the wrapper.
 
+## V94 — item history (Phase 10 IC1, 2026-11-12)
+
+Authoritative source: `packages/gateway/src/index/item-history-v94-sql.ts`. Written only by `index/item-history.ts` (static D46(b)), inside `upsertIndexedItem` and `deleteItemByPrimaryKey`; deleted by `deleteItemHistoryForService` (an owner erasure) and by the daily batched prune. No foreign key and no trigger, by design: deleting an item must not erase the history that says it existed. No backfill: nothing earlier is recoverable. `observed_at_ms` is the sync's clock (`syncedAt`), not the provider's; `source_at_ms` is the provider's own time for the change when the item already carries one (a PR's `merged_at`). The third index serves the prune, which has no leading equality.
+
+```sql
+CREATE TABLE IF NOT EXISTS item_history (
+  id INTEGER PRIMARY KEY,
+  item_id TEXT NOT NULL,
+  service TEXT NOT NULL,
+  type TEXT NOT NULL,
+  key TEXT NOT NULL,             -- a tracked metadata key, or the pseudo-keys __created / __deleted
+  old_value TEXT,                -- normalised, capped at 256 code points
+  new_value TEXT,
+  observed_at_ms INTEGER NOT NULL,
+  source_at_ms INTEGER
+);
+CREATE INDEX IF NOT EXISTS item_history_item ON item_history (item_id, observed_at_ms);
+CREATE INDEX IF NOT EXISTS item_history_type ON item_history (service, type, observed_at_ms);
+CREATE INDEX IF NOT EXISTS item_history_observed ON item_history (observed_at_ms);
+```
+
 ## V93 — morning briefing runs and deadline notices (Phase 10 MB5, 2026-11-12)
 
 Authoritative source: `packages/gateway/src/index/briefing-v93-sql.ts`. Written only by `briefing/briefing-store.ts`. `slot_at` and `error_msg` are additions to the spec's table; the start of a run is `fired_by`, never `trigger` (static D44(d)). `item` is not a foreign-key parent, so the trigger is the cascade. No backfill.

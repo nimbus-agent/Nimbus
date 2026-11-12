@@ -1,11 +1,14 @@
 import { dbRun } from "../db/write.ts";
 import { deleteChatReadMarkersForService } from "../index/chat-read-marker-store.ts";
+import { deleteItemHistoryForService } from "../index/item-history.ts";
 import type { LocalIndex } from "../index/local-index.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
 
 export type DataDeletePreflight = {
   service: string;
   itemsToDelete: number;
+  /** `item_history` rows of the service (Phase 10 IC1): they can outlive their deleted items, so count separately. */
+  itemHistoryRowsToDelete: number;
   vecRowsToDelete: number;
   syncTokensToDelete: number;
   vaultEntriesToDelete: number;
@@ -48,6 +51,11 @@ async function buildPreflight(input: RunDataDeleteInput): Promise<DataDeletePref
       .query(`SELECT COUNT(*) AS c FROM item WHERE service = ?`)
       .get(input.service) as { c: number }
   ).c;
+  const historyRows = (
+    input.index.rawDb
+      .query(`SELECT COUNT(*) AS c FROM item_history WHERE service = ?`)
+      .get(input.service) as { c: number }
+  ).c;
   const vecRows = vecRowsForService(input.index, input.service);
   const syncTokens = (
     input.index.rawDb
@@ -58,6 +66,7 @@ async function buildPreflight(input: RunDataDeleteInput): Promise<DataDeletePref
   return {
     service: input.service,
     itemsToDelete: items,
+    itemHistoryRowsToDelete: historyRows,
     vecRowsToDelete: vecRows,
     syncTokensToDelete: syncTokens,
     vaultEntriesToDelete: vaultKeys.length,
@@ -86,6 +95,8 @@ export async function runDataDelete(input: RunDataDeleteInput): Promise<RunDataD
 
   input.index.rawDb.transaction(() => {
     dbRun(input.index.rawDb, `DELETE FROM item WHERE service = ?`, [input.service]);
+    // An owner erasure: the service's item-history change log goes with it (Phase 10 IC1).
+    deleteItemHistoryForService(input.index.rawDb, input.service);
     deleteChatReadMarkersForService(input.index.rawDb, input.service);
     dbRun(
       input.index.rawDb,

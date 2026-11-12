@@ -104,6 +104,8 @@ export interface NegationGapsLike {
   readonly excludedNoCoverage?: number;
   readonly excludedTruncated?: number;
   readonly excludedNoGraphEntity?: number;
+  /** `--at` (Phase 10 IC1): rows whose state at that time cannot be placed. */
+  readonly excludedUnplaceable?: number;
 }
 
 export function formatGapLine(gaps: NegationGapsLike): string {
@@ -128,6 +130,11 @@ export function formatGapLine(gaps: NegationGapsLike): string {
   if (typeof gaps.excludedNoGraphEntity === "number") {
     parts.push(
       `${String(gaps.excludedNoGraphEntity)} excluded (no graph entity of the required type)`,
+    );
+  }
+  if (typeof gaps.excludedUnplaceable === "number") {
+    parts.push(
+      `${String(gaps.excludedUnplaceable)} excluded (state at that time cannot be placed)`,
     );
   }
   return `Gaps: ${parts.join("; ")}`;

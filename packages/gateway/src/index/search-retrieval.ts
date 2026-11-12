@@ -11,6 +11,7 @@
  */
 
 import type { DualVectorsOutcome } from "../embedding/embedding-readiness.ts";
+import type { PointInTimeFacts } from "./item-history-at.ts";
 import type { RankedIndexItem } from "./ranked-item.ts";
 
 /**
@@ -58,6 +59,8 @@ export type SearchRetrieval = {
 export type SearchRankedResult = {
   readonly items: RankedIndexItem[];
   readonly retrieval: SearchRetrieval;
+  /** Present only on a point-in-time (`atMs`) search: the facts the disclosure is built from. */
+  readonly pointInTime?: PointInTimeFacts;
 };
 
 /**

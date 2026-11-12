@@ -67,6 +67,7 @@ import {
   type NimbusFleetLoad,
   type NimbusFleetToml,
 } from "../config/fleet-toml.ts";
+import { loadNimbusIndexFromConfigDir } from "../config/index-toml.ts";
 import { getLayeredConfig, initLayeredConfig } from "../config/layered-config.ts";
 import { loadNimbusMcpSinkFromConfigDir } from "../config/mcp-sink-toml.ts";
 import {
@@ -255,6 +256,7 @@ import { buildIdentityBoot } from "../identity/identity-boot.ts";
 import { buildTeamsBotJwtValidator } from "../identity/teams-bot-jwt.ts";
 import { isOperatorValid } from "../identity/verifier.ts";
 import { readUnreadChatThreads } from "../index/chat-unread-query.ts";
+import { startItemHistoryRetention } from "../index/item-history-retention.ts";
 import {
   LocalIndex,
   type LocalIndexOptions,
@@ -3976,6 +3978,13 @@ export async function assemblePlatformServices(
     ),
   });
   sidecarStops.push(() => toolCallLogRetention.stop());
+
+  // Item history retention (Phase 10 IC1): `[index] history_retention_days`, read through the closure on
+  // every tick so an edit applies without a restart. One batched prune per 24 h, never inside a sync.
+  const itemHistoryRetention = startItemHistoryRetention(db, {
+    retentionDays: () => loadNimbusIndexFromConfigDir(paths.configDir).historyRetentionDays,
+  });
+  sidecarStops.push(() => itemHistoryRetention.stop());
 
   // GDPR purge-retry (Task 25): each cycle, retry the pending `federation.purge`
   // requests durable in the gdpr_purge ledger; when all of a job's requests are

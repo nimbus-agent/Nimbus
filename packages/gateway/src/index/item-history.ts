@@ -1,0 +1,212 @@
+import type { Database } from "bun:sqlite";
+
+import { dbRun } from "../db/write.ts";
+import {
+  type ItemHistorySpec,
+  normalizeHistoryValue,
+  sourceAtFor,
+  specFor,
+} from "./item-history-keys.ts";
+
+/**
+ * The ONLY module with a write verb on `item_history` (Phase 10 IC1, schema V94, static D46(b)).
+ *
+ * Callers: `upsertIndexedItem` (read-before, then record), `deleteItemByPrimaryKey` (`__deleted`),
+ * `deleteAllItemsForService` / `runDataDelete` (an owner erasure removes the service's rows) and the
+ * retention tick (batched prune). Nothing here imports `item-store.ts`; it imports this module.
+ *
+ * Cost bound: an untracked `(service, type)` pays one `Map.get` and no statement; a tracked upsert pays one
+ * primary-key read, at most two `JSON.parse` and at most one INSERT per tracked key.
+ */
+
+export const CREATED_KEY = "__created";
+export const DELETED_KEY = "__deleted";
+
+/** What `readItemHistoryBefore` saw: the spec of the tracked pair and the row as it stood before the write. */
+export type ItemHistoryBefore =
+  | { readonly spec: ItemHistorySpec; readonly existed: false }
+  | { readonly spec: ItemHistorySpec; readonly existed: true; readonly metadata: string | null };
+
+export type ItemHistoryNext = {
+  readonly id: string;
+  readonly service: string;
+  readonly type: string;
+  /** The metadata JSON exactly as it is about to be stored. */
+  readonly metadata: string;
+  readonly syncedAt: number;
+};
+
+/**
+ * `undefined` (and NO query) when the pair is untracked. The read uses a prepared statement that is finalized
+ * at once, not the `db.query` cache: a cached statement here kept the database file locked after `close()`
+ * (EBUSY on removing a temp index) when it ran inside a snapshot sync's transaction.
+ */
+export function readItemHistoryBefore(
+  db: Database,
+  id: string,
+  service: string,
+  type: string,
+): ItemHistoryBefore | undefined {
+  const spec = specFor(service, type);
+  if (spec === undefined) return undefined;
+  const stmt = db.prepare("SELECT metadata FROM item WHERE id = ?");
+  let row: { metadata: string | null } | null;
+  try {
+    row = stmt.get(id) as { metadata: string | null } | null;
+  } finally {
+    stmt.finalize();
+  }
+  if (row === null) return { spec, existed: false };
+  return { spec, existed: true, metadata: row.metadata };
+}
+
+function parseMetadata(text: string | null): Record<string, unknown> | undefined {
+  if (text === null) return undefined;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return undefined;
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return undefined;
+  return parsed as Record<string, unknown>;
+}
+
+function insertRow(
+  db: Database,
+  r: {
+    itemId: string;
+    service: string;
+    type: string;
+    key: string;
+    oldValue: string | null;
+    newValue: string | null;
+    observedAtMs: number;
+    sourceAtMs: number | null;
+  },
+): void {
+  dbRun(
+    db,
+    `INSERT INTO item_history
+       (item_id, service, type, key, old_value, new_value, observed_at_ms, source_at_ms)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    [r.itemId, r.service, r.type, r.key, r.oldValue, r.newValue, r.observedAtMs, r.sourceAtMs],
+  );
+}
+
+/**
+ * Records what an upsert changed. No prior row writes one `__created` row and no per-key rows (a first
+ * observation is a baseline, not a change). An unchanged metadata string writes nothing and parses nothing.
+ * A key absent from the new metadata is recorded as a change to null when the old row carried a value.
+ */
+export function recordItemUpsertHistory(
+  db: Database,
+  before: ItemHistoryBefore,
+  next: ItemHistoryNext,
+): void {
+  const base = { itemId: next.id, service: next.service, type: next.type };
+  if (!before.existed) {
+    insertRow(db, {
+      ...base,
+      key: CREATED_KEY,
+      oldValue: null,
+      newValue: null,
+      observedAtMs: next.syncedAt,
+      sourceAtMs: null,
+    });
+    return;
+  }
+  if (before.metadata === next.metadata) return;
+  // A row we cannot read is "no information", never a throw into a sync.
+  const oldMeta = parseMetadata(before.metadata);
+  if (oldMeta === undefined) return;
+  const newMeta = JSON.parse(next.metadata) as Record<string, unknown>;
+  for (const k of before.spec.keys) {
+    // A key the new write omits is a change to null when the old row carried a value: without the row, the
+    // earlier value would be unrecoverable at an instant before this write.
+    const newValue = normalizeHistoryValue(newMeta[k.key]) ?? null;
+    const oldValue = normalizeHistoryValue(oldMeta[k.key]) ?? null;
+    if (oldValue === newValue) continue;
+    insertRow(db, {
+      ...base,
+      key: k.key,
+      oldValue,
+      newValue,
+      observedAtMs: next.syncedAt,
+      sourceAtMs: sourceAtFor(before.spec, k.key, newValue, newMeta),
+    });
+  }
+}
+
+/**
+ * One `__deleted` row for a tracked item about to be deleted upstream; nothing for an untracked pair. When the
+ * item's stored metadata is readable, each tracked key it carried also gets a `key: value -> NULL` row at the
+ * same instant: if the same id is recreated, those rows are the earliest change after any instant inside the
+ * earlier lifetime, so that lifetime's last state is still reconstructable instead of reading the new item's.
+ */
+export function recordItemDeleteHistory(
+  db: Database,
+  item: {
+    readonly id: string;
+    readonly service: string;
+    readonly type: string;
+    readonly metadata?: string | null;
+  },
+  nowMs: number,
+): void {
+  const spec = specFor(item.service, item.type);
+  if (spec === undefined) return;
+  const base = { itemId: item.id, service: item.service, type: item.type, observedAtMs: nowMs };
+  insertRow(db, {
+    ...base,
+    key: DELETED_KEY,
+    oldValue: null,
+    newValue: null,
+    sourceAtMs: null,
+  });
+  const meta = parseMetadata(item.metadata ?? null);
+  if (meta === undefined) return;
+  for (const k of spec.keys) {
+    const oldValue = normalizeHistoryValue(meta[k.key]);
+    if (oldValue === undefined) continue;
+    insertRow(db, { ...base, key: k.key, oldValue, newValue: null, sourceAtMs: null });
+  }
+}
+
+/** An owner erasure (`connector remove`, `nimbus data delete`): the service's change log goes with it. */
+export function deleteItemHistoryForService(db: Database, service: string): void {
+  dbRun(db, "DELETE FROM item_history WHERE service = ?", [service]);
+}
+
+export type ItemHistoryPruneResult = {
+  readonly deleted: number;
+  readonly batches: number;
+  /** True when the run stopped at `maxBatches` with the last batch full (more rows may remain). */
+  readonly more: boolean;
+};
+
+/**
+ * Deletes rows with `observed_at_ms < cutoffMs` in batches of `batchSize`, at most `maxBatches` of them.
+ * Each batch is ONE statement served by `item_history_observed`.
+ */
+export function pruneItemHistory(
+  db: Database,
+  opts: { readonly cutoffMs: number; readonly batchSize: number; readonly maxBatches: number },
+): ItemHistoryPruneResult {
+  let deleted = 0;
+  let batches = 0;
+  let lastFull = false;
+  while (batches < opts.maxBatches) {
+    const r = dbRun(
+      db,
+      `DELETE FROM item_history WHERE id IN (
+         SELECT id FROM item_history WHERE observed_at_ms < ? ORDER BY observed_at_ms LIMIT ?)`,
+      [opts.cutoffMs, opts.batchSize],
+    );
+    batches += 1;
+    deleted += r.changes;
+    lastFull = r.changes === opts.batchSize;
+    if (!lastFull) break;
+  }
+  return { deleted, batches, more: lastFull };
+}

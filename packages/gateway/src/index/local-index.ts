@@ -42,6 +42,14 @@ import {
 import { statusLastError } from "../sync/status-last-error.ts";
 import type { SyncStatus } from "../sync/types.ts";
 import { deleteChatReadMarkersForService } from "./chat-read-marker-store.ts";
+import {
+  type AtClause,
+  annotateStateAt,
+  buildAtClause,
+  buildAtGapClause,
+  earliestHistoryMs,
+  type PointInTimeFacts,
+} from "./item-history-at.ts";
 import { buildItemListSql, type ItemListQueryParams } from "./item-list-query.ts";
 import {
   deleteAllItemsForService,
@@ -97,6 +105,11 @@ export type IndexSearchQuery = {
   itemType?: string;
   name?: string;
   limit?: number;
+  /**
+   * Point-in-time instant (`--at`, Phase 10 IC1): answer as the index stood then. The admit clause
+   * (`buildAtClause`) is built once per call and applied inside every arm's statement, before ranking.
+   */
+  atMs?: number;
 };
 
 type AuditLogRow = {
@@ -166,6 +179,10 @@ function applyItemMetadataColumn(item: NimbusItem, metadata: string): void {
   } catch {
     /* leave rawMeta unset */
   }
+}
+
+function pointInTimeField(facts: PointInTimeFacts | undefined): { pointInTime?: PointInTimeFacts } {
+  return facts === undefined ? {} : { pointInTime: facts };
 }
 
 function rowToItem(row: ItemRow): NimbusItem {
@@ -287,7 +304,7 @@ export interface LanPeerRow {
   last_seen_at: string | null;
 }
 
-export const CURRENT_SCHEMA_VERSION = 93;
+export const CURRENT_SCHEMA_VERSION = 94;
 
 // `role_pack_card_dismissed`: the desktop's "Try a role pack" card, set once when an upgraded user
 // dismisses it so it never returns (role packs P5).
@@ -571,7 +588,10 @@ export class LocalIndex {
     }
   }
 
-  private static searchFiltersAndParams(query: IndexSearchQuery): {
+  private static searchFiltersAndParams(
+    query: IndexSearchQuery,
+    at?: AtClause,
+  ): {
     filters: string[];
     params: Array<string | number>;
     whereExtra: string;
@@ -586,6 +606,10 @@ export class LocalIndex {
     if (query.itemType !== undefined && query.itemType !== "") {
       filters.push("i.type = ?");
       params.push(query.itemType);
+    }
+    if (at !== undefined) {
+      filters.push(at.sql);
+      params.push(...at.params);
     }
 
     const whereExtra = filters.length > 0 ? `AND ${filters.join(" AND ")}` : "";
@@ -640,7 +664,8 @@ export class LocalIndex {
         return [];
       }
 
-      const { filters, params, whereExtra } = LocalIndex.searchFiltersAndParams(query);
+      const at = query.atMs === undefined ? undefined : buildAtClause(this.db, query.atMs, "i");
+      const { filters, params, whereExtra } = LocalIndex.searchFiltersAndParams(query, at);
 
       let rows: ItemRow[];
       let normBm25: number[];
@@ -684,7 +709,8 @@ export class LocalIndex {
       const out = dedupeRankedByCanonicalUrl(scored);
 
       const limit = Math.min(500, Math.max(1, query.limit ?? 50));
-      return out.slice(0, limit);
+      const page = out.slice(0, limit);
+      return query.atMs === undefined ? page : annotateStateAt(this.db, page, query.atMs);
     } finally {
       const kind: QueryLatencyKind = useFts ? "fts" : "sql";
       const hint = useFts
@@ -692,6 +718,40 @@ export class LocalIndex {
         : `browse:${query.service ?? "*"}:${query.itemType ?? "*"}`;
       this.emitQueryLatency(kind, performance.now() - t0, hint);
     }
+  }
+
+  /**
+   * The facts a point-in-time (`atMs`) answer discloses: the instant, the earliest history row for the
+   * in-scope service (or any), and how many KEYWORD matches (same `MATCH`, same service and type filter)
+   * could not be placed at that time. Vector-only candidates the clause drops are not counted: a stated
+   * bound. Undefined when the query has no `atMs`.
+   */
+  pointInTimeFacts(query: IndexSearchQuery): PointInTimeFacts | undefined {
+    const atMs = query.atMs;
+    if (atMs === undefined) return undefined;
+    const services =
+      query.service === undefined || query.service === "" ? undefined : [query.service];
+    const historyStartMs = earliestHistoryMs(this.db, services);
+    const gap = buildAtGapClause(this.db, atMs, "i");
+    const { whereExtra, params } = LocalIndex.searchFiltersAndParams(query, gap);
+    const nameQ = query.name?.trim() ?? "";
+    let row: { n: number };
+    if (nameQ === "") {
+      const where = whereExtra.replace(/^AND /, "WHERE ");
+      row = this.db.query(`SELECT count(*) AS n FROM item i ${where}`).get(...params) as {
+        n: number;
+      };
+    } else {
+      const fts = ftsTitleMatchQuery(nameQ);
+      if (fts === "") return { atMs, historyStartMs, gapCount: 0 };
+      row = this.db
+        .query(
+          `SELECT count(*) AS n FROM item i INNER JOIN item_fts ON i.rowid = item_fts.rowid
+           WHERE item_fts MATCH ? ${whereExtra}`,
+        )
+        .get(fts, ...params) as { n: number };
+    }
+    return { atMs, historyStartMs, gapCount: row.n };
   }
 
   /**
@@ -728,6 +788,9 @@ export class LocalIndex {
         }
         if (query.itemType !== undefined && query.itemType !== "") {
           hybridOpts.itemType = query.itemType;
+        }
+        if (query.atMs !== undefined) {
+          hybridOpts.at = buildAtClause(this.db, query.atMs, "i");
         }
         if (dual.vec384 !== null) {
           hybridOpts.queryEmbedding = dual.vec384;
@@ -767,7 +830,11 @@ export class LocalIndex {
           }
           return ranked;
         });
-        return { items, retrieval };
+        return {
+          items: query.atMs === undefined ? items : annotateStateAt(this.db, items, query.atMs),
+          retrieval,
+          ...pointInTimeField(this.pointInTimeFacts(query)),
+        };
       } finally {
         this.emitQueryLatency("hybrid", performance.now() - t0, nameQ.slice(0, 200) || null);
       }
@@ -779,6 +846,7 @@ export class LocalIndex {
         unrankedReasonFor({ nameQ, semanticOn, hasRuntime: ss !== undefined }),
         ss?.activeBackfillPass() ?? null,
       ),
+      ...pointInTimeField(this.pointInTimeFacts(query)),
     };
   }
 
@@ -787,19 +855,23 @@ export class LocalIndex {
     indexedType: string,
     offset: number,
     limit: number,
+    atMs?: number,
   ): NimbusItem[] {
     const t0 = performance.now();
     const lim = Math.min(100, Math.max(1, Math.floor(limit)));
     const off = Math.max(0, Math.floor(offset));
+    const at = atMs === undefined ? undefined : buildAtClause(this.db, atMs, "item");
     try {
       const rows = this.db
         .query(
           `SELECT id, service, type, external_id, title, body_preview, url, canonical_url,
                   modified_at, author_id, metadata, synced_at, pinned
-           FROM item WHERE service = ? AND type = ? ORDER BY modified_at DESC LIMIT ? OFFSET ?`,
+           FROM item WHERE service = ? AND type = ?${at === undefined ? "" : ` AND ${at.sql}`}
+           ORDER BY modified_at DESC LIMIT ? OFFSET ?`,
         )
-        .all(service, indexedType, lim, off) as ItemRow[];
-      return rows.map(rowToItem);
+        .all(service, indexedType, ...(at?.params ?? []), lim, off) as ItemRow[];
+      const items = rows.map(rowToItem);
+      return atMs === undefined ? items : annotateStateAt(this.db, items, atMs);
     } finally {
       this.emitQueryLatency("sql", performance.now() - t0, `fetchMore:${service}/${indexedType}`);
     }
