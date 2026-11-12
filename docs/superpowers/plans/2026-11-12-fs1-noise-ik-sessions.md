@@ -1,5 +1,7 @@
 # Plan — LAN forward secrecy FS1: Noise IK sessions, the downgrade ratchet and `[lan] min_protocol`
 
+Status: APPROVED by Antigravity (round 1, 2026-11-12).
+
 Status: DRAFT for Antigravity review (round 1).
 Spec: `docs/superpowers/specs/2026-11-12-lan-forward-secrecy.md` (approved, round 2; owner rulings
 OR-FS-1 to OR-FS-6): § 1 (FS-A1 to FS-A5), § 2 (D-FS-1 to D-FS-17), § 4 (the FS1 row), § 5.3 (IK), § 5.6,
@@ -635,3 +637,7 @@ the old wire). End with the attribution lines from the session. No `Release-As:`
 ## Review log
 
 (none yet)
+
+## Review log
+
+Round 1 (Antigravity, 2026-11-12): APPROVED, no blocker or major. Minor citation fixes for the implementer: `sendFederatedOverWire` has the production call sites the plan enumerates (re-count with `git grep -n "sendFederatedOverWire(" -- packages/gateway/src ":!*.test.ts"` at Task 0; the "12" in the summary may be 10); `FederationLanConfig` is at `federation/federation-server.ts:14-20`, not `:37-43`; the `lan-client.ts` ternaries are at `:121,138,149,152`.
