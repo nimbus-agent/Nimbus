@@ -7,8 +7,13 @@ import {
   MAX_RECORD_FRAME,
   REKEY_EVERY_RECORDS,
 } from "./lan-session.ts";
-import { connectRaw, connectV2, readV2Reply, sendV2Request } from "./lan-v2.test-helpers.ts";
 import type { LanPeerMatch } from "./lan-wire.ts";
+import {
+  connectRaw,
+  connectV2,
+  readV2Reply,
+  sendV2Request,
+} from "./testing/lan-v2.test-helpers.ts";
 
 interface Harness {
   server: LanServer;

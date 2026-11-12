@@ -2469,6 +2469,50 @@ export function checkBriefingConfinement(files: readonly FileEntry[]): Violation
   return out;
 }
 
+// ---- D47 (the v1 static-box LAN path, I56) -------------------------------------------------------
+// Rule id `lan-box-path-confined`. The LAN's v1 wire seals every frame under the STATIC `nacl.box`
+// secret of the two identity keys, which has no forward secrecy. Since LAN FS1 that path is reachable
+// only through `ipc/lan-legacy.ts` (which refuses a peer already at protocol 2 and everything under
+// `[lan] min_protocol = 2`); the primitives live in `ipc/lan-crypto.ts`. In every other non-test file of
+// `packages/gateway/src/`, the identifiers `sealBoxFrame` and `openBoxFrame` (a call, an import,
+// aliased or not) and a `nacl.box(` / `nacl.box.open(` call are violations, so a new federation module
+// cannot seal a record under the static key and skip the Noise session. `nacl.box.keyPair` is not a
+// seal and stays free (identity key creation). Comments and string literals are stripped first;
+// `*.test.ts` and `*.test-helpers.ts` are not scanned.
+// STATED BOUNDS (as D33(c)): a dynamically composed call evades a text scan, a second use INSIDE
+// `lan-legacy.ts` or `lan-crypto.ts` is exempt whole-file, and a `box` imported by name from the
+// library and called bare is not matched. After slice FS3 the legacy file is deleted and the
+// allowance with it.
+const D47_IDENT_RE = /\b(?:sealBoxFrame|openBoxFrame)\b/g;
+const D47_NACL_BOX_RE = /\b(?:nacl|tweetnacl)\s*\.\s*box\s*(?:\.\s*open\s*)?\(/g;
+const D47_ALLOWED: readonly string[] = [
+  "packages/gateway/src/ipc/lan-crypto.ts",
+  "packages/gateway/src/ipc/lan-legacy.ts",
+];
+
+export function checkLanBoxPathConfinement(files: readonly FileEntry[]): Violation[] {
+  const out: Violation[] = [];
+  for (const f of files) {
+    if (/\.test(?:-helpers)?\.ts$/.test(f.relPath)) continue;
+    if (!f.relPath.startsWith("packages/gateway/src/")) continue;
+    if (D47_ALLOWED.includes(f.relPath)) continue;
+    const code = stripStringLiterals(stripComments(f.contents));
+    const original = f.contents.split("\n");
+    for (const re of [D47_IDENT_RE, D47_NACL_BOX_RE]) {
+      for (const hit of code.matchAll(re)) {
+        const line = code.slice(0, hit.index).split("\n").length;
+        out.push({
+          rule: "lan-box-path-confined",
+          file: f.relPath,
+          line,
+          snippet: (original[line - 1] ?? "").trim(),
+        });
+      }
+    }
+  }
+  return out;
+}
+
 export function checkModelWriteDoor(files: readonly FileEntry[]): Violation[] {
   const out: Violation[] = [];
   for (const f of files) {
@@ -4599,6 +4643,7 @@ async function loadFiles(): Promise<FileEntry[]> {
 export const RULE_ANCHORS: readonly string[] = [
   "packages/gateway/src/briefing/briefing-runner.ts", // D45 — the briefing delivers locally only
   "packages/gateway/src/agents/_lib/briefing-build.ts", // D45
+  "packages/gateway/src/ipc/lan-legacy.ts", // D47 — the only home of the v1 static-box LAN path
   "packages/gateway/src/engine/executor.ts", // D22 — connectors.dispatch chokepoint
   "packages/gateway/src/ipc/agents-rpc.ts", // D22(d) — agent emitter confinement
   "packages/gateway/src/db/write.ts", // D12 — bound-param SQL writes
@@ -4916,6 +4961,13 @@ async function run(): Promise<void> {
       );
     }
     if (briefingViolations.length > 0) exit = 1;
+    const boxViolations = checkLanBoxPathConfinement(files);
+    for (const e of boxViolations) {
+      console.error(
+        `::error file=${e.file},line=${e.line}::D47 the LAN static-box seal (sealBoxFrame/openBoxFrame/nacl.box) used outside ipc/lan-legacy.ts and ipc/lan-crypto.ts — a record could be sealed under the static identity key, with no forward secrecy (I56): ${e.snippet}`,
+      );
+    }
+    if (boxViolations.length > 0) exit = 1;
     const snapshotViolations = checkWorkSnapshotConfinement(files);
     for (const e of snapshotViolations) {
       console.error(

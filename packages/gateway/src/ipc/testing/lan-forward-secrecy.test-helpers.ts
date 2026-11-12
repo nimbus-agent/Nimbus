@@ -6,17 +6,17 @@
 import { Database } from "bun:sqlite";
 import { createDecipheriv, createHmac } from "node:crypto";
 import nacl from "tweetnacl";
-import { buildFederationLanServer } from "../federation/federation-server.ts";
-import { lanLinkFor } from "../federation/lan-link.ts";
-import { type LanPeerRow, LocalIndex } from "../index/local-index.ts";
-import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
-import { sendFederatedOverWire } from "./lan-client.ts";
-import { type BoxKeypair, generateBoxKeypair, openBoxFrame } from "./lan-crypto.ts";
-import { x25519PublicKey } from "./lan-noise.ts";
-import { LanServer } from "./lan-server.ts";
-import { createInitiatorHandshake } from "./lan-session.ts";
+import { buildFederationLanServer } from "../../federation/federation-server.ts";
+import { lanLinkFor } from "../../federation/lan-link.ts";
+import { type LanPeerRow, LocalIndex } from "../../index/local-index.ts";
+import { runIndexedSchemaMigrations } from "../../index/migrations/runner.ts";
+import { sendFederatedOverWire } from "../lan-client.ts";
+import { type BoxKeypair, generateBoxKeypair, openBoxFrame } from "../lan-crypto.ts";
+import { x25519PublicKey } from "../lan-noise.ts";
+import { LanServer } from "../lan-server.ts";
+import { createInitiatorHandshake } from "../lan-session.ts";
+import { makeFrameReader } from "../lan-wire.ts";
 import { connectRaw, readV2Reply, sendV2Request } from "./lan-v2.test-helpers.ts";
-import { makeFrameReader } from "./lan-wire.ts";
 
 export interface RecordedConnection {
   /** Whole frame bodies, client to server, in order. */

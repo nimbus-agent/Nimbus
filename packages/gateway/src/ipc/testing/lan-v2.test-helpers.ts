@@ -2,16 +2,16 @@
  * Test-only: a raw TCP client for the LAN wire that can speak v2 byte by byte, so a test can record,
  * replay, truncate or tamper with any frame. Production clients go through `lan-client.ts`.
  */
-import type { BoxKeypair } from "./lan-crypto.ts";
+import type { BoxKeypair } from "../lan-crypto.ts";
 import {
   type LegacyServerContext,
   type LegacySession,
   legacyHandleEncrypted,
   legacyHandleHandshake,
-} from "./lan-legacy.ts";
-import { createInitiatorHandshake, type InitiatorOptions, type Session } from "./lan-session.ts";
-import { buildFrame, makeFrameReader } from "./lan-wire.ts";
-import { createQueuedSocketWriter } from "./server/queued-socket-writer.ts";
+} from "../lan-legacy.ts";
+import { createInitiatorHandshake, type InitiatorOptions, type Session } from "../lan-session.ts";
+import { buildFrame, makeFrameReader } from "../lan-wire.ts";
+import { createQueuedSocketWriter } from "../server/queued-socket-writer.ts";
 
 export interface RawConn {
   /** Every byte received so far, in order (the transcript of the server direction). */

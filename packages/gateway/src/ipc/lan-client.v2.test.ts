@@ -5,7 +5,11 @@ import type { LegacyServerContext } from "./lan-legacy.ts";
 import { NOISE_OPEN_FAILED } from "./lan-noise.ts";
 import { LanServer } from "./lan-server.ts";
 import { openResponderHandshake } from "./lan-session.ts";
-import { type StubServer, startLegacyOnlyServer, startStub } from "./lan-v2.test-helpers.ts";
+import {
+  type StubServer,
+  startLegacyOnlyServer,
+  startStub,
+} from "./testing/lan-v2.test-helpers.ts";
 
 const cleanups: Array<() => void | Promise<void>> = [];
 afterEach(async () => {

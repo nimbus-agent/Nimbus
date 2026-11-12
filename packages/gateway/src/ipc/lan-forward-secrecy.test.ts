@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { sendFederatedOverWire } from "./lan-client.ts";
 import { generateBoxKeypair } from "./lan-crypto.ts";
+import { sendFederatedLegacy } from "./lan-legacy.ts";
+import { NOISE_OPEN_FAILED } from "./lan-noise.ts";
 import {
   attackerEeCandidates,
   attackLegacyBox,
@@ -12,10 +14,8 @@ import {
   SECRET_REQUEST,
   startServer,
   transcriptContains,
-} from "./lan-forward-secrecy.test-helpers.ts";
-import { sendFederatedLegacy } from "./lan-legacy.ts";
-import { NOISE_OPEN_FAILED } from "./lan-noise.ts";
-import { startLegacyOnlyServer, startStub } from "./lan-v2.test-helpers.ts";
+} from "./testing/lan-forward-secrecy.test-helpers.ts";
+import { startLegacyOnlyServer, startStub } from "./testing/lan-v2.test-helpers.ts";
 
 const stops: Array<() => void | Promise<void>> = [];
 afterEach(async () => {
