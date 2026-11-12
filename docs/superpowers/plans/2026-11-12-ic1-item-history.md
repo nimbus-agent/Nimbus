@@ -1,5 +1,7 @@
 # Plan — Incident engine IC1: `item_history` (V94) and `--at`
 
+
+Status: APPROVED by Antigravity (round 2, 2026-11-12).
 Spec: `docs/superpowers/specs/2026-11-12-incident-engine.md` (approved, Antigravity round 3): § 2 (OR-10-8,
 OR-10-19), § 4 (the IC1 row), § 5.1 (IC1's design), § 7 (acceptance), § 8 (stated bounds), § 9 (review log:
 the writer is in `upsertIndexedItem`, no foreign key, batched pruning, `--at` on three commands).
