@@ -1,6 +1,6 @@
 # Phase 10 — LAN forward secrecy (S3-F8)
 
-Status: DRAFT for review. Not yet approved; see § Open owner questions.
+Status: DRAFT for Antigravity review (round 1). Owner rulings (§ 2, 2026-11-12) are binding; do not reopen them.
 Date: 2026-11-12. Slot: S4. Roadmap: `docs/roadmap.md` § Phase 10 → *Core — LAN Hardening (deferred
 from Phase 4 B1 audit)*, row **LAN forward secrecy (S3-F8)**. The finding is recorded in
 `docs/SECURITY.md` (the B1 audit row, line 80, and the "LAN remote access — trust model" section,
@@ -33,7 +33,19 @@ Acceptance criteria this project must meet:
 
 ## 2. Owner rulings
 
-None yet. Five questions are open (§ 12); each has a stated default so that review can proceed.
+Owner rulings, 2026-11-12 (binding; they settle the five questions § 12 listed):
+
+- **OR-FS-1 Time-boxed compatibility window.** v2 is preferred; v1 is still accepted from a peer
+  that has not ratcheted, `[lan] min_protocol` defaults to 1, `nimbus lan status` warns while any
+  peer is on v1, and FS3 flips the default to 2 after two minor releases.
+- **OR-FS-2 No re-pair.** Existing pairing keys carry over; the first v2 session upgrades the peer
+  row. `nimbus lan rotate-identity` is recorded as a follow-up roadmap row, not built here.
+- **OR-FS-3 Rekey every 1,024 records**, in both directions.
+- **OR-FS-4 Noise is implemented in-repo** (`ipc/lan-noise.ts`, from the Noise spec and Bun's
+  `node:crypto` X25519, HKDF and AES-256-GCM), checked against the published Noise test vectors; no
+  new dependency.
+- **OR-FS-5 Pairing changes in this project**: Noise XXpsk0 in slice FS2, the pairing code as the
+  PSK; the code never travels on the wire.
 
 Decided by me (not owner questions; recorded so review can challenge them):
 
@@ -445,49 +457,7 @@ residual risks); `docs/SECURITY-INVARIANTS.md`; the `nimbus-federation-identity`
 - The `pair` path registers the peer immediately on code consumption, so the "mutual approval" in
   `PeerPairing.approveInboundPair` is not on the production path for a host that opened a window.
 
-## 12. Open owner questions
+## 12. Owner questions (resolved)
 
-**Q1. Compat window for old peers.**
-- (a) Hard cutover: v2 only; an old peer is refused the release this ships.
-- (b) A time-boxed window: v2 preferred, v1 accepted for peers not yet ratcheted, `min_protocol`
-  defaulting to 1, flipped to 2 after two minor releases (FS3); `nimbus lan status` warns while any
-  peer is on v1.
-- (c) A permanent opt-in `[lan] allow_legacy`.
-Recommendation: (b). A federation is two or more gateways that cannot always upgrade the same day,
-and a hard cutover strands a team mid-incident; but v1 has no forward secrecy and no replay defence,
-so the window must end on a stated release, not "someday".
-
-**Q2. Must existing pairings re-pair?**
-- (a) No: the static keys carry over; the first v2 session upgrades the row.
-- (b) Yes: every peer re-pairs, so every pairing key is fresh.
-- (c) No, plus an optional owner command `nimbus lan rotate-identity` (new static key, every peer
-  must re-pair) for an owner who suspects the key is already exposed.
-Recommendation: (c) as a follow-up row; the project itself ships (a). Re-pairing everyone does not
-protect past v1 recordings from a key that was already stolen, and it costs every team a morning.
-
-**Q3. Rekey interval.**
-- (a) Every 1,024 records, both directions (the draft).
-- (b) Every 65,536 records (about 4 GiB at the cap).
-- (c) No rekey; a session is one RPC.
-Recommendation: (a). It is invisible at today's four-record sessions and bounds what one leaked
-session key opens in the long-lived sessions a streaming caller may add later.
-
-**Q4. Noise implementation.**
-- (a) Write the state machine in `ipc/lan-noise.ts` from the spec and node primitives, checked
-  against the published Noise test vectors (about 300 lines; no dependency).
-- (b) Adopt a maintained Noise library (candidates not evaluated here: they must support
-  AESGCM/SHA256 or we change the suite, and Bun's missing ChaCha20-Poly1305 rules out any library
-  that calls it through `node:crypto`).
-- (c) Both: the library for production, the in-repo code only as the test oracle.
-Recommendation: (a). The repo's crypto dependencies are deliberately few (`tweetnacl`,
-`@noble/hashes`); a Noise state machine is a short, fully specified protocol with vectors, and a new
-transport dependency would join the supply chain of the one component an attacker on the LAN can
-reach. If review would rather not own it, (b) is a contained swap behind `lan-noise.ts`.
-
-**Q5. Does pairing change in this project?**
-- (a) Yes: XXpsk0 in slice FS2 (the draft).
-- (b) No: keep the plaintext `pair`/`pair_ok` frames and ship FS1 only; the code stays on the wire.
-- (c) Yes, but as its own roadmap row after this one.
-Recommendation: (a). The row's goal is a better LAN trust story, the code reads the same to the
-user, and the XX handshake is the natural way to introduce two keys; it adds one slice, not a
-redesign.
+All five were answered by the owner on 2026-11-12 with the recommended option; see § 2
+(OR-FS-1 to OR-FS-5).
