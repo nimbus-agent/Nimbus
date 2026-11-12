@@ -6,10 +6,10 @@
   ],
   "sqlLiteralScopeNote": "A raw scan of packages/gateway/src/**/*.ts (minus *.test.ts) with extractSqlLiterals finds 483 SQL-shaped literals. This artifact's file set additionally excludes *-sql.ts files (an existing, repo-wide iterateSourceFiles() convention, not specific to this gate), which drops exactly 4 literals in 4 files: index/entity-metadata-v54-sql.ts, index/fleet-subjects-v63-sql.ts, index/glossary-manual-v46-sql.ts, index/unified-item-v3-sql.ts. Three are schema DDL (their only SQL-shaped text is an internal FTS-sync SELECT inside a CREATE TRIGGER body); the fourth is a one-time graph_entity migration UPDATE, already out of scope by table. None is a live read predicate reachable at runtime, so this fully explains the 483-vs-479 gap with zero effect on reads/writes/unmatchedItemReads below.",
   "counts": {
-    "reads": 437,
-    "writes": 132,
-    "unmatchedItemReads": 58,
-    "totalAbsence": 21,
+    "reads": 451,
+    "writes": 133,
+    "unmatchedItemReads": 59,
+    "totalAbsence": 22,
     "partialCoverage": 37,
     "ambiguousReadCount": 10,
     "parameterizedReads": 25,
@@ -548,196 +548,238 @@
       "kind": "type",
       "value": "ci_run",
       "file": "packages/gateway/src/metrics/dora.ts",
-      "line": 116
+      "line": 119
     },
     {
       "table": "item",
       "kind": "type",
       "value": "deployment",
       "file": "packages/gateway/src/metrics/dora.ts",
-      "line": 151
+      "line": 154
     },
     {
       "table": "item",
       "kind": "type",
       "value": "pr",
       "file": "packages/gateway/src/metrics/dora.ts",
-      "line": 329
+      "line": 332
     },
     {
       "table": "item",
       "kind": "type",
       "value": "incident",
       "file": "packages/gateway/src/metrics/dora.ts",
-      "line": 397
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "pagerduty_service_id",
-      "file": "packages/gateway/src/metrics/dora.ts",
-      "line": 398
-    },
-    {
-      "table": "item",
-      "kind": "type",
-      "value": "incident",
-      "file": "packages/gateway/src/metrics/dora.ts",
-      "line": 474
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "opened_at_ms",
-      "file": "packages/gateway/src/metrics/dora.ts",
-      "line": 471
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "pagerduty_service_id",
-      "file": "packages/gateway/src/metrics/dora.ts",
-      "line": 476
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "opened_at_ms",
-      "file": "packages/gateway/src/metrics/dora.ts",
-      "line": 477
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "opened_at_ms",
-      "file": "packages/gateway/src/metrics/dora.ts",
-      "line": 478
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "repo",
-      "file": "packages/gateway/src/metrics/dora.ts",
-      "line": 81
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "project",
-      "file": "packages/gateway/src/metrics/dora.ts",
-      "line": 84
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "repo",
-      "file": "packages/gateway/src/metrics/dora.ts",
-      "line": 84
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "jobName",
-      "file": "packages/gateway/src/metrics/dora.ts",
-      "line": 87
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "conclusion",
-      "file": "packages/gateway/src/metrics/dora.ts",
-      "line": 125
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "head_sha",
-      "file": "packages/gateway/src/metrics/dora.ts",
-      "line": 236
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "headSha",
-      "file": "packages/gateway/src/metrics/dora.ts",
-      "line": 238
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "meta_v",
-      "file": "packages/gateway/src/metrics/dora.ts",
-      "line": 239
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "merged",
-      "file": "packages/gateway/src/metrics/dora.ts",
-      "line": 276
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "labels",
-      "file": "packages/gateway/src/metrics/dora.ts",
-      "line": 279
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "merged_at",
-      "file": "packages/gateway/src/metrics/dora.ts",
-      "line": 280
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "labels",
-      "file": "packages/gateway/src/metrics/dora.ts",
-      "line": 285
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "merge_commit_sha",
-      "file": "packages/gateway/src/metrics/dora.ts",
-      "line": 290
+      "line": 413
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "status",
       "file": "packages/gateway/src/metrics/dora.ts",
-      "line": 406
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "opened_at_ms",
-      "file": "packages/gateway/src/metrics/dora.ts",
-      "line": 407
+      "line": 415
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "pagerduty_service_id",
       "file": "packages/gateway/src/metrics/dora.ts",
-      "line": 409
+      "line": 416
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "resolved_at_ms",
+      "file": "packages/gateway/src/metrics/dora.ts",
+      "line": 419
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "resolved_at_ms",
+      "file": "packages/gateway/src/metrics/dora.ts",
+      "line": 420
+    },
+    {
+      "table": "item",
+      "kind": "type",
+      "value": "incident",
+      "file": "packages/gateway/src/metrics/dora.ts",
+      "line": 503
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "opened_at_ms",
+      "file": "packages/gateway/src/metrics/dora.ts",
+      "line": 500
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "pagerduty_service_id",
+      "file": "packages/gateway/src/metrics/dora.ts",
+      "line": 505
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "opened_at_ms",
+      "file": "packages/gateway/src/metrics/dora.ts",
+      "line": 506
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "opened_at_ms",
+      "file": "packages/gateway/src/metrics/dora.ts",
+      "line": 507
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "repo",
+      "file": "packages/gateway/src/metrics/dora.ts",
+      "line": 84
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "project",
+      "file": "packages/gateway/src/metrics/dora.ts",
+      "line": 87
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "repo",
+      "file": "packages/gateway/src/metrics/dora.ts",
+      "line": 87
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "jobName",
+      "file": "packages/gateway/src/metrics/dora.ts",
+      "line": 90
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "conclusion",
+      "file": "packages/gateway/src/metrics/dora.ts",
+      "line": 128
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "head_sha",
+      "file": "packages/gateway/src/metrics/dora.ts",
+      "line": 239
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "headSha",
+      "file": "packages/gateway/src/metrics/dora.ts",
+      "line": 241
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "meta_v",
+      "file": "packages/gateway/src/metrics/dora.ts",
+      "line": 242
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "merged",
+      "file": "packages/gateway/src/metrics/dora.ts",
+      "line": 279
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "labels",
+      "file": "packages/gateway/src/metrics/dora.ts",
+      "line": 282
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "merged_at",
+      "file": "packages/gateway/src/metrics/dora.ts",
+      "line": 283
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "labels",
+      "file": "packages/gateway/src/metrics/dora.ts",
+      "line": 288
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "merge_commit_sha",
+      "file": "packages/gateway/src/metrics/dora.ts",
+      "line": 293
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "resolved_at_ms",
+      "file": "packages/gateway/src/metrics/dora.ts",
+      "line": 431
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "opened_at_ms",
+      "file": "packages/gateway/src/metrics/dora.ts",
+      "line": 436
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "pagerduty_service_id",
+      "file": "packages/gateway/src/metrics/dora.ts",
+      "line": 438
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "repo",
       "file": "packages/gateway/src/metrics/service-identity.ts",
-      "line": 71
+      "line": 77
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "repo",
       "file": "packages/gateway/src/metrics/service-identity.ts",
-      "line": 75
+      "line": 81
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "tags",
+      "file": "packages/gateway/src/metrics/service-identity.ts",
+      "line": 306
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "project",
+      "file": "packages/gateway/src/metrics/service-identity.ts",
+      "line": 318
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "monitoredDataModelKeys",
+      "file": "packages/gateway/src/metrics/service-identity.ts",
+      "line": 328
     },
     {
       "table": "item",
@@ -912,70 +954,84 @@
       "kind": "type",
       "value": "deployment",
       "file": "packages/gateway/src/index/negation-predicates.ts",
-      "line": 220
+      "line": 222
     },
     {
       "table": "item",
       "kind": "type",
       "value": "deployment",
       "file": "packages/gateway/src/index/negation-predicates.ts",
-      "line": 221
+      "line": 223
     },
     {
       "table": "graph_relation",
       "kind": "type",
       "value": "correlates_with",
       "file": "packages/gateway/src/index/negation-predicates.ts",
-      "line": 224
+      "line": 227
+    },
+    {
+      "table": "graph_entity",
+      "kind": "type",
+      "value": "incident",
+      "file": "packages/gateway/src/index/negation-predicates.ts",
+      "line": 228
+    },
+    {
+      "table": "graph_entity",
+      "kind": "type",
+      "value": "alert",
+      "file": "packages/gateway/src/index/negation-predicates.ts",
+      "line": 228
     },
     {
       "table": "graph_entity",
       "kind": "type",
       "value": "person",
       "file": "packages/gateway/src/index/negation-predicates.ts",
-      "line": 256
+      "line": 260
     },
     {
       "table": "graph_relation",
       "kind": "type",
       "value": "reviewed",
       "file": "packages/gateway/src/index/negation-predicates.ts",
-      "line": 260
+      "line": 264
     },
     {
       "table": "graph_entity",
       "kind": "type",
       "value": "deployment",
       "file": "packages/gateway/src/index/negation-predicates.ts",
-      "line": 332
+      "line": 336
     },
     {
       "table": "item",
       "kind": "type",
       "value": "deployment",
       "file": "packages/gateway/src/index/negation-predicates.ts",
-      "line": 333
+      "line": 337
     },
     {
       "table": "graph_entity",
       "kind": "type",
       "value": "person",
       "file": "packages/gateway/src/index/negation-predicates.ts",
-      "line": 381
+      "line": 385
     },
     {
       "table": "item",
       "kind": "type",
       "value": "pr",
       "file": "packages/gateway/src/index/negation-predicates.ts",
-      "line": 405
+      "line": 409
     },
     {
       "table": "item",
       "kind": "type",
       "value": "pr",
       "file": "packages/gateway/src/index/negation-predicates.ts",
-      "line": 413
+      "line": 417
     },
     {
       "table": "item",
@@ -1057,9 +1113,37 @@
     {
       "table": "graph_entity",
       "kind": "type",
-      "value": "issue",
-      "file": "packages/gateway/src/graph/graph-populator.ts",
-      "line": 231
+      "value": "commit",
+      "file": "packages/gateway/src/graph/deployment-edges.ts",
+      "line": 80
+    },
+    {
+      "table": "item",
+      "kind": "type",
+      "value": "ci_run",
+      "file": "packages/gateway/src/graph/deployment-edges.ts",
+      "line": 97
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "head_sha",
+      "file": "packages/gateway/src/graph/deployment-edges.ts",
+      "line": 101
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "sha",
+      "file": "packages/gateway/src/graph/deployment-edges.ts",
+      "line": 64
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "commit_sha",
+      "file": "packages/gateway/src/graph/deployment-edges.ts",
+      "line": 66
     },
     {
       "table": "graph_entity",
@@ -1073,105 +1157,119 @@
       "kind": "type",
       "value": "issue",
       "file": "packages/gateway/src/graph/graph-populator.ts",
-      "line": 281
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "number",
-      "file": "packages/gateway/src/graph/graph-populator.ts",
-      "line": 283
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "repo",
-      "file": "packages/gateway/src/graph/graph-populator.ts",
-      "line": 284
+      "line": 243
     },
     {
       "table": "graph_entity",
       "kind": "type",
       "value": "issue",
       "file": "packages/gateway/src/graph/graph-populator.ts",
-      "line": 305
+      "line": 287
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "number",
+      "file": "packages/gateway/src/graph/graph-populator.ts",
+      "line": 289
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "repo",
+      "file": "packages/gateway/src/graph/graph-populator.ts",
+      "line": 290
+    },
+    {
+      "table": "graph_entity",
+      "kind": "type",
+      "value": "issue",
+      "file": "packages/gateway/src/graph/graph-populator.ts",
+      "line": 311
     },
     {
       "table": "graph_entity",
       "kind": "type",
       "value": "obsidian_note",
       "file": "packages/gateway/src/graph/graph-populator.ts",
-      "line": 504
+      "line": 532
     },
     {
       "table": "graph_entity",
       "kind": "type",
       "value": "commit",
       "file": "packages/gateway/src/graph/graph-populator.ts",
-      "line": 583
+      "line": 611
     },
     {
       "table": "graph_entity",
       "kind": "metadata-key",
       "value": "occurredAt",
       "file": "packages/gateway/src/graph/graph-populator.ts",
-      "line": 734
+      "line": 790
     },
     {
       "table": "graph_entity",
       "kind": "metadata-key",
       "value": "affectedService",
       "file": "packages/gateway/src/graph/graph-populator.ts",
-      "line": 737
+      "line": 793
     },
     {
       "table": "graph_entity",
       "kind": "metadata-key",
       "value": "occurredAt",
       "file": "packages/gateway/src/graph/graph-populator.ts",
-      "line": 738
+      "line": 794
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "merged",
       "file": "packages/gateway/src/graph/graph-populator.ts",
-      "line": 342
+      "line": 348
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "pr_number",
       "file": "packages/gateway/src/graph/graph-populator.ts",
-      "line": 380
+      "line": 388
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "head_sha",
+      "file": "packages/gateway/src/graph/graph-populator.ts",
+      "line": 468
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "resolved_wikilink_ids",
       "file": "packages/gateway/src/graph/graph-populator.ts",
-      "line": 497
+      "line": 525
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "resolved_by_email",
       "file": "packages/gateway/src/graph/graph-populator.ts",
-      "line": 831
+      "line": 887
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "assignedTo",
       "file": "packages/gateway/src/graph/graph-populator.ts",
-      "line": 928
+      "line": 1011
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "project",
       "file": "packages/gateway/src/graph/graph-populator.ts",
-      "line": 947
+      "line": 1035
     },
     {
       "table": "item",
@@ -1472,21 +1570,21 @@
       "kind": "type",
       "value": "pr",
       "file": "packages/gateway/src/agents/changelog-queries.ts",
-      "line": 321
+      "line": 340
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "state",
       "file": "packages/gateway/src/agents/changelog-queries.ts",
-      "line": 326
+      "line": 345
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "merged_at",
       "file": "packages/gateway/src/agents/changelog-queries.ts",
-      "line": 327
+      "line": 346
     },
     {
       "table": "graph_entity",
@@ -2788,7 +2886,7 @@
       "kind": "metadata-key",
       "value": "status",
       "file": "packages/gateway/src/agents/_lib/changelog-event-time.ts",
-      "line": 51
+      "line": 50
     },
     {
       "table": "graph_entity",
@@ -3891,7 +3989,28 @@
         "parent_key"
       ],
       "file": "packages/gateway/src/connectors/jira-sync.ts",
-      "line": 485
+      "line": 526
+    },
+    {
+      "service": "jira",
+      "itemType": "alert",
+      "metadataKeys": [
+        "alert_id",
+        "status",
+        "priority",
+        "acknowledged",
+        "tags",
+        "owner_team",
+        "meta_v",
+        "opened_at_ms",
+        "updated_at_ms",
+        "closed_at_ms",
+        "acknowledged_at_ms",
+        "entity",
+        "source"
+      ],
+      "file": "packages/gateway/src/connectors/jsm-alert-mapping.ts",
+      "line": 140
     },
     {
       "service": "kubernetes",
@@ -4299,12 +4418,14 @@
         "unattributed_actors",
         "meta_v",
         "opened_at_ms",
+        "status_changed_at_ms",
+        "resolved_at_ms",
         "pagerduty_service_id",
         "severity",
         "urgency"
       ],
       "file": "packages/gateway/src/connectors/pagerduty-sync.ts",
-      "line": 110
+      "line": 120
     },
     {
       "service": "pipedrive",
@@ -5187,7 +5308,7 @@
       "kind": "metadata-key",
       "value": "project",
       "file": "packages/gateway/src/metrics/dora.ts",
-      "line": 84,
+      "line": 87,
       "matchState": "partial",
       "partialCoverage": [
         "gitlab"
@@ -5198,7 +5319,7 @@
       "kind": "metadata-key",
       "value": "head_sha",
       "file": "packages/gateway/src/metrics/dora.ts",
-      "line": 236,
+      "line": 239,
       "matchState": "partial",
       "partialCoverage": [
         "circleci",
@@ -5211,7 +5332,7 @@
       "kind": "metadata-key",
       "value": "headSha",
       "file": "packages/gateway/src/metrics/dora.ts",
-      "line": 238,
+      "line": 241,
       "matchState": "partial",
       "partialCoverage": [
         "github_actions"
@@ -5222,7 +5343,7 @@
       "kind": "metadata-key",
       "value": "labels",
       "file": "packages/gateway/src/metrics/dora.ts",
-      "line": 279,
+      "line": 282,
       "matchState": "partial",
       "partialCoverage": [
         "github"
@@ -5233,7 +5354,7 @@
       "kind": "metadata-key",
       "value": "merged_at",
       "file": "packages/gateway/src/metrics/dora.ts",
-      "line": 280,
+      "line": 283,
       "matchState": "partial",
       "partialCoverage": [
         "github",
@@ -5245,7 +5366,7 @@
       "kind": "metadata-key",
       "value": "labels",
       "file": "packages/gateway/src/metrics/dora.ts",
-      "line": 285,
+      "line": 288,
       "matchState": "partial",
       "partialCoverage": [
         "github"
@@ -5256,7 +5377,7 @@
       "kind": "metadata-key",
       "value": "merge_commit_sha",
       "file": "packages/gateway/src/metrics/dora.ts",
-      "line": 290,
+      "line": 293,
       "matchState": "partial",
       "partialCoverage": [
         "github"
@@ -5267,7 +5388,7 @@
       "kind": "metadata-key",
       "value": "repo",
       "file": "packages/gateway/src/metrics/service-identity.ts",
-      "line": 71,
+      "line": 77,
       "matchState": "partial",
       "partialCoverage": [
         "bitbucket",
@@ -5281,7 +5402,7 @@
       "kind": "metadata-key",
       "value": "repo",
       "file": "packages/gateway/src/metrics/service-identity.ts",
-      "line": 75,
+      "line": 81,
       "matchState": "partial",
       "partialCoverage": [
         "bitbucket",
@@ -5339,6 +5460,14 @@
         "github_actions",
         "gitlab"
       ]
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "sha",
+      "file": "packages/gateway/src/graph/deployment-edges.ts",
+      "line": 64,
+      "matchState": "unmatched"
     },
     {
       "table": "item",
@@ -5433,7 +5562,7 @@
       "kind": "metadata-key",
       "value": "merged_at",
       "file": "packages/gateway/src/agents/changelog-queries.ts",
-      "line": 327,
+      "line": 346,
       "matchState": "partial",
       "partialCoverage": [
         "gitlab"
@@ -5717,7 +5846,7 @@
     },
     {
       "file": "packages/gateway/src/index/local-index.ts",
-      "line": 869
+      "line": 871
     },
     {
       "file": "packages/gateway/src/index/oncall-now-query.ts",
@@ -5725,7 +5854,7 @@
     },
     {
       "file": "packages/gateway/src/graph/graph-populator.ts",
-      "line": 736
+      "line": 1112
     },
     {
       "file": "packages/gateway/src/graph/relationship-graph.ts",
@@ -5846,14 +5975,14 @@
       "kind": "metadata-key",
       "value": "number",
       "file": "packages/gateway/src/graph/graph-populator.ts",
-      "line": 283
+      "line": 289
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "repo",
       "file": "packages/gateway/src/graph/graph-populator.ts",
-      "line": 284
+      "line": 290
     },
     {
       "table": "item",

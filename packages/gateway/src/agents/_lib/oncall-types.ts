@@ -167,14 +167,13 @@ export type OncallPriorIncident = {
   readonly url: string | null;
   readonly openedAtMs: number | null;
   /**
-   * `item.modified_at` for a row whose status reads `resolved`, which is the closest thing the
-   * index holds to a resolution time and is NOT one.
-   *
-   * `metrics/dora.ts`'s `selectResolvedIncidents` bounds MTTR on the same column for the same
-   * absence of a better field. It is a `last_touch` value: any re-sync that touches the row moves
-   * it. `null` when the incident does not read resolved.
+   * The incident's `metadata.resolved_at_ms` (PagerDuty's own time of the last status change, recorded
+   * since Phase 10 IC2). `null` when the incident is still open, AND for a row that reads resolved but
+   * was written before the key existed: `closed` tells those two apart.
    */
   readonly resolvedAtMs: number | null;
+  /** Whether the status reads resolved (or any non-active state), whether or not a time was recorded. */
+  readonly closed: boolean;
   readonly resolvedByEmail: string | null;
 };
 

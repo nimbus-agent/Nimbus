@@ -268,6 +268,8 @@ export interface WriteRouteContext {
   readonly rateLimiter: HttpWriteRateLimiter;
   readonly nowMs: () => number;
   readonly deployEnvironments?: readonly string[];
+  /** Graphs a CI-annotated deployment after it is stored (IC2); optional and fail-soft. */
+  readonly graphDeployment?: (itemId: string) => void;
   readonly knownServices: () => readonly string[];
   readonly scim?: ScimWriteSurface;
   readonly policy?: PolicyWriteSurface;
@@ -819,6 +821,7 @@ async function runDeploymentRoute(
       ...(ctx.deployEnvironments === undefined
         ? {}
         : { deployEnvironments: ctx.deployEnvironments }),
+      ...(ctx.graphDeployment === undefined ? {} : { graphDeployment: ctx.graphDeployment }),
     });
     if (out.kind === "hit") {
       return jsonResponse(out.value, 200, rateLimitHeaders(limit));

@@ -29,7 +29,7 @@ async function spinUpHost(port: number): Promise<TestHost> {
     isKnownPeer: (pubkey) => {
       for (const [id, p] of peers) {
         if (Buffer.compare(Buffer.from(p.pubkey), Buffer.from(pubkey)) === 0) {
-          return { peerId: id, writeAllowed: p.writeAllowed };
+          return { peerId: id, writeAllowed: p.writeAllowed, protoVersion: 1 };
         }
       }
       return null;

@@ -283,15 +283,34 @@ export function selectIncidentsOpened(db: Database, w: Window): ChangelogRow[] {
   }).rows;
 }
 
+/**
+ * Resolved incidents. A row carrying `resolved_at_ms` (PagerDuty's own time of the last status change,
+ * recorded since Phase 10 IC2) is windowed on THAT time and labelled `event`. A resolved row written
+ * before the key existed keeps the old `modified_at` window and is labelled `index`: for a LIST, a
+ * labelled legacy row is better than a missing one (an MTTR statistic drops it instead, with a gap).
+ * The two selections are disjoint by construction, so no row is listed twice.
+ */
 export function selectIncidentsResolved(db: Database, w: Window): ChangelogRow[] {
   const sc = incidentScopeClause(w.scope);
-  return selectByModifiedAt(db, w, {
+  const resolved =
+    " AND json_valid(i.metadata) AND json_extract(i.metadata, '$.status') = 'resolved'";
+  const withTime = selectByEventField(db, w, {
+    type: "incident",
+    jsonPath: "$.resolved_at_ms",
+    category: "incident_resolved",
+    extraSql: resolved + sc.sql,
+    extraParams: sc.params,
+  }).rows;
+  const legacy = selectByModifiedAt(db, w, {
     type: "incident",
     category: "incident_resolved",
     extraSql:
-      " AND json_valid(i.metadata) AND json_extract(i.metadata, '$.status') = 'resolved'" + sc.sql,
+      resolved +
+      " AND COALESCE(json_type(i.metadata, '$.resolved_at_ms'), '') NOT IN ('integer', 'real')" +
+      sc.sql,
     extraParams: sc.params,
   }).rows;
+  return [...withTime, ...legacy].sort(byRecencyThenId);
 }
 
 /**

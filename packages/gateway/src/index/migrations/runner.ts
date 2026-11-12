@@ -66,8 +66,10 @@ import { GRAPH_RELATION_TYPES_V12_SQL } from "../graph-relation-types-v12-sql.ts
 import { GRAPH_V7_MIGRATION_SQL } from "../graph-v7-sql.ts";
 import { rebuildHitlStatusTables } from "../hitl-status-v87-sql.ts";
 import { V34_IDENTITY_SQL } from "../identity-v34-sql.ts";
+import { INCIDENT_ALERT_SOURCES_V96_SQL } from "../incident-alert-sources-v96-sql.ts";
 import { ITEM_HISTORY_V94_SQL } from "../item-history-v94-sql.ts";
 import { KNOWN_NAMESPACES_V38_SQL } from "../known-namespaces-v38-sql.ts";
+import { LAN_PEER_PROTO_V95_SQL } from "../lan-peer-proto-v95-sql.ts";
 import { LAN_PEERS_V19_SQL } from "../lan-peers-v19-sql.ts";
 import { LLM_CONTEXT_WINDOW_V16_ALTER_SQL, LLM_MODELS_V16_SQL } from "../llm-models-v16-sql.ts";
 import { LLM_TASK_DEFAULTS_V20_SQL } from "../llm-task-defaults-v20-sql.ts";
@@ -213,6 +215,26 @@ function simpleStep(
     toVersion,
     apply: (db, now) => applySchemaStep(db, toVersion, description, sql, now),
   };
+}
+
+function lanPeersHasColumn(db: Database, columnName: string): boolean {
+  const rows = db.query("PRAGMA table_info(lan_peers)").all() as Array<{ name: string }>;
+  return rows.some((r) => r.name === columnName);
+}
+
+/**
+ * V95 - `lan_peers.proto_version`. SQLite has no `ADD COLUMN IF NOT EXISTS`, and a step must be
+ * re-runnable (the migration suites rewind `user_version` and run every step again), so the `ALTER`
+ * is guarded by a column probe, as V4 does for `person.linked`.
+ */
+function migrateIndexedV94ToV95(db: Database, now: number): void {
+  db.transaction(() => {
+    if (!lanPeersHasColumn(db, "proto_version")) {
+      dbExec(db, LAN_PEER_PROTO_V95_SQL.trim());
+    }
+    dbExec(db, "PRAGMA user_version = 95");
+    recordMigration(db, 95, "lan peer protocol version (Phase 10 FS1)", now);
+  })();
 }
 
 function migrateIndexedV3ToV4(db: Database, now: number): void {
@@ -784,6 +806,13 @@ const INDEXED_SCHEMA_STEPS: readonly IndexedSchemaStep[] = [
   simpleStep(91, 92, "slack read markers (Phase 10 MB4)", CHAT_READ_MARKER_V92_SQL),
   simpleStep(92, 93, "morning briefing runs and deadline notices (Phase 10 MB5)", BRIEFING_V93_SQL),
   simpleStep(93, 94, "item history, sync-time state changes (Phase 10 IC1)", ITEM_HISTORY_V94_SQL),
+  { fromVersion: 94, toVersion: 95, apply: migrateIndexedV94ToV95 },
+  simpleStep(
+    95,
+    96,
+    "incident alert sources: deploy edge types, deployment sha index, one-shot regraph marker (Phase 10 IC2)",
+    INCIDENT_ALERT_SOURCES_V96_SQL,
+  ),
 ];
 
 /**

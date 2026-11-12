@@ -237,6 +237,7 @@ import {
   type LocalOperatorInvokeCtx,
   type LocalOperatorListCtx,
 } from "../federation/invoke-gate.ts";
+import { lanLinkFor } from "../federation/lan-link.ts";
 import { NamespaceStore } from "../federation/namespace-store.ts";
 import { preflightConsent } from "../federation/preflight-consent-broker.ts";
 import { appendPreflightAudit, defaultRunCommand } from "../federation/preflight-gate.ts";
@@ -252,6 +253,7 @@ import type { ConsolidatorLlm } from "../glossary/glossary-consolidate.ts";
 import { rebuildGlossary, runGlossaryPass } from "../glossary/glossary-extract.ts";
 import { createGlossaryLlm } from "../glossary/glossary-llm-adapter.ts";
 import { createGlossaryRefresher, type GlossaryRefresher } from "../glossary/glossary-refresh.ts";
+import { runPendingRegraph } from "../graph/regraph-once.ts";
 import { buildIdentityBoot } from "../identity/identity-boot.ts";
 import { buildTeamsBotJwtValidator } from "../identity/teams-bot-jwt.ts";
 import { isOperatorValid } from "../identity/verifier.ts";
@@ -1370,13 +1372,19 @@ async function bootFederationIntoIpcOpts(
     share: ShareFile,
     peer: { host: string; port: number; pubkey: string },
   ): Promise<void> => {
+    const pubkey = new Uint8Array(Buffer.from(peer.pubkey, "base64"));
+    // The row is read fresh: the link policy needs the peer's CURRENT recorded protocol (the ratchet).
+    const row = localIndex.getLanPeerByPubkey(pubkey);
+    if (row === undefined) throw new Error("share forward: recipient is no longer a paired peer");
     await sendFederatedOverWire(
       peer.host,
       peer.port,
       identity,
-      new Uint8Array(Buffer.from(peer.pubkey, "base64")),
+      pubkey,
       "federation.shareReceive",
       { share },
+      undefined,
+      lanLinkFor(row, localIndex),
     );
   };
   // peerId/pubkey → reachable ForwardPeer (paired only, host+port must be present).
@@ -1452,6 +1460,8 @@ async function bootFederationIntoIpcOpts(
   ipcOpts.federationIdentity = identity;
 
   const lanCfg = loadNimbusLanFromConfigDir(paths.configDir);
+  // The client side of the LAN wire reads `[lan] min_protocol` from the index (see lanLinkFor).
+  localIndex.setLanMinProtocol(lanCfg.minProtocol);
   // Team Vault (Slice 2): the anchor's invoke backing. quorumFor resolves the authoritative quorum
   // rule via EnforcedPolicy (Task 9) — max(local [hitl.quorum] baseline, org policy); ungoverned it
   // returns the local baseline verbatim, governed it tightens. runTool resolves the team secret
@@ -1514,6 +1524,7 @@ async function bootFederationIntoIpcOpts(
       pairingWindowSeconds: lanCfg.pairingWindowSeconds,
       maxFailedAttempts: lanCfg.maxFailedAttempts,
       lockoutSeconds: lanCfg.lockoutSeconds,
+      minProtocol: lanCfg.minProtocol,
     },
     // I18 — the operator-validity guard for answers served OVER THE WIRE.
     //
@@ -3692,6 +3703,33 @@ function bindChatopsLocalConsent(
     );
 }
 
+/**
+ * The one-shot re-graph after the V96 upgrade (Phase 10 IC2): deployments, incidents, error issues and
+ * data-quality tests get their corrected anchors and edges. Fire-and-forget with a caught rejection; a
+ * shutdown mid-run simply leaves the marker for the next boot. The resolver comes from the STRICT config
+ * loader (a malformed config keeps the marker rather than re-grafting without it); `graph/` cannot import
+ * the loader, so the builder is supplied here.
+ */
+function startPendingRegraph(
+  db: Database,
+  configDir: string,
+  logger: Logger,
+  sidecarStops: Array<() => void>,
+): void {
+  let stopped = false;
+  sidecarStops.push(() => {
+    stopped = true;
+  });
+  const buildResolver = (): ReturnType<typeof buildServiceIdentityResolver> =>
+    buildServiceIdentityResolver(loadNimbusServiceConfigsFromConfigDir(configDir));
+  queueMicrotask(() => {
+    if (stopped) return;
+    runPendingRegraph(db, { buildResolver, logger }).catch((err: unknown) => {
+      logger.warn({ err }, "regraph (IC2) failed; marker kept");
+    });
+  });
+}
+
 export async function assemblePlatformServices(
   paths: PlatformPaths,
   customVault?: NimbusVault,
@@ -3934,6 +3972,8 @@ export async function assemblePlatformServices(
         "configs claim the same key; picked the first by config order",
     );
   });
+
+  startPendingRegraph(db, paths.configDir, syncLogger, sidecarStops);
 
   // Capabilities are NOT bound here, deliberately. This context is built ONCE and shared by every
   // service, so a `getSecret` bound at this point would carry whichever service id happened to be

@@ -62,7 +62,7 @@ async function startServer(): Promise<{
       return {};
     },
     // Every client is a known peer, so a hello always succeeds.
-    isKnownPeer: () => ({ peerId: "edge-peer", writeAllowed: false }),
+    isKnownPeer: () => ({ peerId: "edge-peer", writeAllowed: false, protoVersion: 1 }),
     registerPeer: () => "edge-peer",
     rateLimit: {
       checkAllowed: () => true,
@@ -273,7 +273,7 @@ describe("LanServer — guards below the socket protocol", () => {
     return s;
   }
 
-  const PEER: LanPeerMatch = { peerId: "guard-peer", writeAllowed: false };
+  const PEER: LanPeerMatch = { peerId: "guard-peer", writeAllowed: false, protoVersion: 1 };
 
   function unstartedServer() {
     const hostKeypair = generateBoxKeypair();

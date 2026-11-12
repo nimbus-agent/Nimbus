@@ -36,6 +36,7 @@ import {
   checkGeneratedManifestConfinement,
   checkIacDiscard,
   checkItemHistoryConfinement,
+  checkLanBoxPathConfinement,
   checkListenerRegistryConfinement,
   checkMediaGrantStoreConfinement,
   checkMigrationConfinement,
@@ -6114,5 +6115,83 @@ describe("D48 - FinOps cost code cannot leave the machine (spec § 6, OR-10-8)",
       files.some((f) => f.relPath.startsWith(`${SRC}finops/`) && !f.relPath.endsWith(".test.ts")),
     ).toBe(true);
     expect(assertScanIsMeaningful(files)).toEqual([]);
+  });
+});
+
+describe("D47 - the v1 static-box LAN path is reachable only through ipc/lan-legacy.ts (I56)", () => {
+  const file = (relPath: string, contents: string): FileEntry => ({ relPath, contents });
+  const SRC = "packages/gateway/src/";
+
+  test("the two allowed files pass, whatever they contain", () => {
+    expect(
+      checkLanBoxPathConfinement([
+        file(
+          `${SRC}ipc/lan-crypto.ts`,
+          "export function sealBoxFrame() { return nacl.box(a, b, c, d); }",
+        ),
+        file(
+          `${SRC}ipc/lan-legacy.ts`,
+          'import { openBoxFrame, sealBoxFrame } from "./lan-crypto.ts";\nsealBoxFrame(a, b, c);',
+        ),
+      ]),
+    ).toEqual([]);
+  });
+
+  test("FAILS on an import of the seal from a federation module, and reports the line", () => {
+    const v = checkLanBoxPathConfinement([
+      file(
+        `${SRC}federation/federation-server.ts`,
+        'import { sealBoxFrame } from "../ipc/lan-crypto.ts";\nconst x = 1;',
+      ),
+    ]);
+    expect(v).toHaveLength(1);
+    expect(v[0]?.rule).toBe("lan-box-path-confined");
+    expect(v[0]?.line).toBe(1);
+  });
+
+  test("FAILS on openBoxFrame in the server or client, and on an aliased import call", () => {
+    expect(
+      checkLanBoxPathConfinement([file(`${SRC}ipc/lan-server.ts`, "openBoxFrame(f, p, s);")]),
+    ).toHaveLength(1);
+    const aliased = checkLanBoxPathConfinement([
+      file(
+        `${SRC}ipc/lan-client.ts`,
+        'import { sealBoxFrame as seal } from "./lan-crypto.ts";\nseal(a, b, c);',
+      ),
+    ]);
+    expect(aliased).toHaveLength(1);
+    expect(aliased[0]?.line).toBe(1);
+  });
+
+  test("FAILS on a direct nacl.box or nacl.box.open call", () => {
+    expect(
+      checkLanBoxPathConfinement([
+        file(`${SRC}federation/x.ts`, "const c = nacl.box(m, n, pk, sk);"),
+        file(`${SRC}federation/y.ts`, "const p = nacl . box . open (c, n, pk, sk);"),
+        file(`${SRC}federation/z.ts`, "const p = tweetnacl.box(m, n, pk, sk);"),
+      ]),
+    ).toHaveLength(3);
+  });
+
+  test("does not match key creation, a comment, a string, a look-alike, a test file or a non-gateway file", () => {
+    expect(
+      checkLanBoxPathConfinement([
+        file(
+          `${SRC}ipc/lan-keys.ts`,
+          "const kp = nacl.box.keyPair();\nnacl.box.keyPair.fromSecretKey(s);",
+        ),
+        file(
+          `${SRC}x.ts`,
+          '// sealBoxFrame(a)\n/* nacl.box(m) */\nconst s = "openBoxFrame";\nconst sealBoxFrames = 1;',
+        ),
+        file(`${SRC}ipc/lan-x.test.ts`, "sealBoxFrame(a); nacl.box(m);"),
+        file(`${SRC}ipc/lan-x.test-helpers.ts`, "openBoxFrame(a);"),
+        file("scripts/z.ts", "sealBoxFrame(a);"),
+      ]),
+    ).toEqual([]);
+  });
+
+  test("lan-legacy.ts is a rule anchor, so a scan that lost it is not meaningful", () => {
+    expect(RULE_ANCHORS).toContain("packages/gateway/src/ipc/lan-legacy.ts");
   });
 });

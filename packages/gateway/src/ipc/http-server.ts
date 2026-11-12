@@ -11,6 +11,7 @@ import { loadNimbusServiceConfigsFromConfigDir } from "../config/nimbus-toml.ts"
 import { getAllConnectorHealth } from "../connectors/health.ts";
 import { applyWritablePragmas } from "../db/writable-pragmas.ts";
 import { dbRun } from "../db/write.ts";
+import { graphAnnotatedDeployment } from "../deployment/graph-annotated.ts";
 import { digestEgressWindow, signWindowDigest } from "../egress/egress-sign.ts";
 import {
   countEgressRows,
@@ -33,7 +34,10 @@ import {
   parseDoraRepoUrn,
   type ServiceConfig,
 } from "../metrics/dora-config.ts";
-import { resolveServicesByRepoUrn } from "../metrics/service-identity.ts";
+import {
+  buildServiceIdentityResolver,
+  resolveServicesByRepoUrn,
+} from "../metrics/service-identity.ts";
 import { ensureFullSqlite } from "../platform/sqlite-runtime.ts";
 import { ftsMatchQuery } from "../search/hybrid-internal.ts";
 import { formatPrometheus } from "../status/prometheus-format.ts";
@@ -1358,6 +1362,26 @@ async function resolveMessagingSurface(opts: ReadOnlyHttpServerOptions) {
     : await opts.resolveTeamsEventsSurface();
 }
 
+/**
+ * Graphs a CI-annotated deployment (IC2). The resolver is built lazily per call from the owner's config so
+ * an edit is picked up; a malformed or absent config degrades to no resolver (the entity is still written,
+ * with a null service, and `nimbus index regraph` repairs it).
+ */
+function buildGraphDeploymentSeam(
+  writeDb: Database,
+  opts: ReadOnlyHttpServerOptions,
+): (itemId: string) => void {
+  return (itemId) => {
+    let resolver: ReturnType<typeof buildServiceIdentityResolver> | undefined;
+    try {
+      resolver = buildServiceIdentityResolver(loadServiceConfigs(opts));
+    } catch {
+      resolver = undefined;
+    }
+    graphAnnotatedDeployment(writeDb, itemId, resolver);
+  };
+}
+
 // Assembles the full I13 dispatcher dependency set. Each write seam (deployment token, SCIM,
 // policy, messaging) is resolved independently — a gateway can enable any surface alone.
 async function resolveWriteRouteDeps(
@@ -1378,6 +1402,7 @@ async function resolveWriteRouteDeps(
     rateLimiter,
     nowMs: opts.nowMs ?? ((): number => Date.now()),
     knownServices: resolveKnownServices(opts),
+    graphDeployment: buildGraphDeploymentSeam(writeDb, opts),
     ...(scim === undefined ? {} : { scim }),
     ...(policy === undefined ? {} : { policy }),
     ...(messaging === undefined ? {} : { messaging }),

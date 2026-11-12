@@ -33,9 +33,8 @@ function eventField(key: string): Extractor {
 }
 
 /**
- * `modified_at` is the event time for these two, and that is not a degradation this design
- * chose: `metrics/dora.ts` uses exactly the same basis and ships it, noting that for a
- * resolved incident `modified_at` is effectively resolution time.
+ * `modified_at` is the event time for a deployment, which has no event field of its own. (A resolved
+ * incident uses `resolved_at_ms` and falls back to `modified_at` only for a row written before IC2.)
  */
 const fromIndex: Extractor = (_meta, modifiedAt) => ({ atMs: modifiedAt, source: "index" });
 
@@ -47,8 +46,13 @@ const fromIndex: Extractor = (_meta, modifiedAt) => ({ atMs: modifiedAt, source:
  * function whose unit test cannot fail in the direction that matters.
  */
 // lane-census: scope=incident service=pagerduty
-const incidentResolved: Extractor = (meta, modifiedAt) =>
-  meta["status"] === "resolved" ? { atMs: modifiedAt, source: "index" } : null;
+const incidentResolved: Extractor = (meta, modifiedAt) => {
+  if (meta["status"] !== "resolved") return null;
+  // The provider's own resolution time when the row has it (Phase 10 IC2); else the legacy last-touch
+  // clock, labelled `index`.
+  const at = numberField(meta, "resolved_at_ms");
+  return at === null ? { atMs: modifiedAt, source: "index" } : { atMs: at, source: "event" };
+};
 
 const EVENT_TIME = {
   // Absence is a FILTER, not a fallback: a PR row carries merged_at only once merged,

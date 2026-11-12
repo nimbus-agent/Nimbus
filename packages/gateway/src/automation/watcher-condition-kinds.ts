@@ -53,17 +53,19 @@ export function supportsAffectedServiceFilter(kind: WatcherConditionKind): boole
 }
 
 export const WATCHER_CONDITION_KINDS = [
-  // Preserved as-is. NOTE: no connector indexes `item.type = 'alert'` today, so this condition
-  // cannot currently fire. That is the pre-existing state, recorded rather than silently fixed.
-  // `affectedServiceEntityType: null` — `graph-populator.ts` has no dispatch branch for
-  // `type = 'alert'` at all (`syncGraphFromIndexedItem` returns without writing anything), so
-  // there is no entity carrying an `affectedService` to match. A service-scoped alert watcher
-  // would need a populator change first; until then the filter is rejected rather than accepted
-  // and silently matched against nothing.
+  // Phase 10 IC2: the JSM Operations alert pass indexes `jira:alert` items, so this condition can now
+  // fire. A closed alert is a re-index of an alert that already fired (its `modified_at` moves on every
+  // acknowledgement, close and note), so it is excluded; a row whose metadata is absent or not valid JSON
+  // (an alert from a connector that records no status) still matches. `CASE` fixes the evaluation order:
+  // `json_extract` raises on malformed JSON, and AND does not guarantee short-circuit.
+  // `affectedServiceEntityType` stays null for review: `graph-populator.ts` now writes an `alert` entity
+  // carrying `affectedService`, but accepting `filter.affectedService` here would make this kind
+  // service-scopable, which is a product decision rather than a side effect of IC2.
   {
     conditionType: "alert_fired",
     itemType: "alert",
-    extraSql: "",
+    extraSql:
+      "AND CASE WHEN json_valid(metadata) THEN COALESCE(json_extract(metadata, '$.status'), '') != 'closed' ELSE 1 END",
     affectedServiceEntityType: null,
   },
   // PagerDuty indexes `type: "incident"` (connectors/pagerduty-sync.ts), writing the incident's

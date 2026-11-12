@@ -302,9 +302,11 @@ export interface LanPeerRow {
   write_allowed: number;
   paired_at: string;
   last_seen_at: string | null;
+  /** 1 = the old static-box wire, 2 = a Noise IK session completed once (V95; the downgrade ratchet). */
+  proto_version: number;
 }
 
-export const CURRENT_SCHEMA_VERSION = 94;
+export const CURRENT_SCHEMA_VERSION = 96;
 
 // `role_pack_card_dismissed`: the desktop's "Try a role pack" card, set once when an upgraded user
 // dismisses it so it never returns (role packs P5).
@@ -1024,6 +1026,34 @@ export class LocalIndex {
         params.displayName ?? null,
         new Date().toISOString(),
       ],
+    );
+  }
+
+  private lanMinProtocolValue: 1 | 2 = 1;
+
+  /**
+   * `[lan] min_protocol` as the CLIENT side of the LAN wire reads it. Every outbound federation call
+   * already holds the index (it reads the peer row and writes the ratchet), so the floor lives next
+   * to them rather than being threaded through every agent, HTTP and ChatOps context. Set once at
+   * boot by `platform/assemble.ts`; defaults to 1 (OR-FS-1).
+   */
+  public setLanMinProtocol(version: 1 | 2): void {
+    this.lanMinProtocolValue = version;
+  }
+
+  public lanMinProtocol(): 1 | 2 {
+    return this.lanMinProtocolValue;
+  }
+
+  /**
+   * The downgrade ratchet's ONLY writer (FS-A3): raises a peer's recorded protocol, never lowers it.
+   * Called after a v2 handshake completed with that peer. An unknown pubkey is a no-op.
+   */
+  public markLanPeerProto(pubkey: Uint8Array, version: 1 | 2): void {
+    dbRun(
+      this.db,
+      `UPDATE lan_peers SET proto_version = MAX(proto_version, ?) WHERE peer_pubkey = ?`,
+      [version, Buffer.from(pubkey)],
     );
   }
 

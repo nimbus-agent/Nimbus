@@ -25,7 +25,8 @@ export const JSM_STEP_BUDGET_MS = 60_000;
 export const JSM_UNAVAILABLE_BACKOFF_MS = 6 * 3_600_000;
 const REQUEST_TIMEOUT_MS = 30_000;
 const RATE_LIMIT_PENALTY_MS = 60_000;
-const SAFE_ID = /^[A-Za-z0-9_-]{1,128}$/;
+/** Exported for the alert pass (`jsm-alerts.ts`), which validates an alert id before it enters a path. */
+export const SAFE_ID = /^[A-Za-z0-9_-]{1,128}$/;
 const SAFE_ACCOUNT_ID = /^[A-Za-z0-9:_.-]{1,128}$/;
 
 export interface JsmCreds {
@@ -47,10 +48,10 @@ export interface JsmRun {
   fields: JsmCursorFields;
 }
 
-type Get = { ok: true; text: string } | { ok: false; status: number };
+export type Get = { ok: true; text: string } | { ok: false; status: number };
 
 /** Milliseconds left of the step budget; <= 0 means expired. Unbounded before the budget starts. */
-type Remaining = () => number;
+export type Remaining = () => number;
 const UNBOUNDED: Remaining = () => Number.POSITIVE_INFINITY;
 const LIMITER_POLL_MS = 200;
 
@@ -70,7 +71,11 @@ async function acquireWithin(ctx: SyncContext, remaining: Remaining): Promise<bo
   }
 }
 
-async function jsmGet(
+/**
+ * The one request function of the Operations API (host pin, `redirect: "manual"`, Vault credential, rate
+ * limiter). Exported so the alert pass reuses it instead of adding a `fetch(` of its own.
+ */
+export async function jsmGet(
   ctx: SyncContext,
   creds: JsmCreds,
   url: string,
@@ -130,9 +135,10 @@ function isAtlassianNetSite(baseUrl: string): boolean {
   }
 }
 
-type CloudId = { cid: string; cidSite: string } | { stop: "unavailable" | "none" };
+export type CloudId = { cid: string; cidSite: string } | { stop: "unavailable" | "none" };
 
-async function resolveCloudId(
+/** The cloud id gating both Operations passes: stored, else cached in the cursor, else `tenant_info`. */
+export async function resolveCloudId(
   ctx: SyncContext,
   creds: JsmCreds,
   fields: JsmCursorFields,

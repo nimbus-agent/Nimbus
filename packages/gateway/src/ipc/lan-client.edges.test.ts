@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import type { Socket, TCPSocketListener } from "bun";
-import { exchangeOneFrame, sendFederatedOverWire, writeFrame } from "./lan-client.ts";
+import { exchangeOneFrame, writeFrame } from "./lan-client.ts";
 import { generateBoxKeypair } from "./lan-crypto.ts";
+import { sendFederatedLegacy } from "./lan-legacy.ts";
 import { MAX_HANDSHAKE_FRAME } from "./lan-server.ts";
 
 /**
@@ -105,7 +106,7 @@ describe("exchangeOneFrame", () => {
   });
 });
 
-describe("sendFederatedOverWire — the hello reply", () => {
+describe("sendFederatedLegacy — the hello reply", () => {
   test("a hello reply that is not JSON ends the exchange instead of reaching the RPC phase", async () => {
     let frames = 0;
     const port = listen((socket, ordinal) => {
@@ -115,7 +116,7 @@ describe("sendFederatedOverWire — the hello reply", () => {
     });
     const kp = generateBoxKeypair();
     const peer = generateBoxKeypair();
-    const err: unknown = await sendFederatedOverWire(
+    const err: unknown = await sendFederatedLegacy(
       "127.0.0.1",
       port,
       kp,

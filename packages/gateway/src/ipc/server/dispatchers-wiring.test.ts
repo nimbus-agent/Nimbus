@@ -51,7 +51,9 @@ import { ConsentCoordinatorImpl } from "../consent.ts";
 import type { EgressRpcCtx } from "../egress-rpc.ts";
 import { createStreamRegistry } from "../engine-ask-stream.ts";
 import { makeFrameReader } from "../lan-client.ts";
+import { generateBoxKeypair } from "../lan-crypto.ts";
 import { PairingWindow } from "../lan-pairing.ts";
+import { presentedStaticKey } from "../testing/lan-v2.test-helpers.ts";
 import type { TribalRpcCtx } from "../tribal-rpc.ts";
 import type { ServerCtx } from "./context.ts";
 import {
@@ -318,16 +320,17 @@ describe("federation — the closures tryDispatchFederationRpc builds from local
 // ---------------------------------------------------------------------------
 
 describe("agents.* — the federation identity is the one a peer fan-out presents", () => {
-  // `selfIdentity` is consumed only on the wire to a paired peer: its public key is the
-  // `client_pubkey` of the `hello` frame, its secret key seals the request that would follow.
+  // `selfIdentity` is consumed only on the wire to a paired peer: its public key is the static key
+  // the Noise IK first message carries (encrypted to the responder), its secret key authenticates it.
   // Nothing else in a brief depends on it, so a brief alone cannot show the identity arrived —
   // `agents-rpc.ts` silently falls back to an all-zero keypair. A stand-in peer on loopback
-  // records the key it is greeted with, then hangs up, so the wire call ends at once as a
+  // holding the static key the asker pins decrypts the key it is greeted with, then hangs up, so the wire call ends at once as a
   // per-peer gap rather than waiting out the client's timeout.
-  const PEER_PUBKEY = new Uint8Array(32).fill(9);
+  const PEER = generateBoxKeypair();
+  const PEER_PUBKEY = PEER.publicKey;
   const ZERO_KEY_B64 = Buffer.from(new Uint8Array(32)).toString("base64");
 
-  /** A loopback listener that records each greeting's `client_pubkey` and closes the connection. */
+  /** A loopback v2 responder that records the static key each greeting presented and closes the connection. */
   function fakePeer(): { readonly port: number; readonly helloKeys: string[] } {
     const helloKeys: string[] = [];
     // One frame reader PER connection, so two greetings could never splice into one frame.
@@ -342,8 +345,9 @@ describe("agents.* — the federation identity is the one a peer fan-out present
           socket.data.reader.push(chunk);
           const frame = socket.data.reader.next();
           if (frame === undefined) return;
-          const hello = JSON.parse(new TextDecoder().decode(frame)) as { client_pubkey?: unknown };
-          helloKeys.push(String(hello.client_pubkey));
+          const presented = presentedStaticKey(frame, PEER);
+          // The v1 retry a peer at protocol 1 gets after this peer hangs up is not a v2 frame: not a greeting.
+          if (presented !== undefined) helloKeys.push(Buffer.from(presented).toString("base64"));
           socket.end();
         },
       },

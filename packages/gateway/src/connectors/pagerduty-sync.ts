@@ -14,7 +14,10 @@ import { runPagerdutyOncall } from "./pagerduty-oncall.ts";
 import { asRecord, stringField } from "./unknown-record.ts";
 
 const SERVICE_ID = "pagerduty";
-const CURSOR_PREFIX = "nimbus-pd1:";
+// `nimbus-pd2:` (IC2): the old prefix decodes to null, so the next sync is a cold start over the 30-day
+// floor and rewrites every recent incident with `resolved_at_ms` (a bumped meta version alone would not,
+// the cursor only moves forward).
+const CURSOR_PREFIX = "nimbus-pd2:";
 
 /** `ocAt`: epoch ms of the last on-call refresh ATTEMPT (success or failure). */
 type PdCursorV1 = { lastUpdated: string; ocAt?: number };
@@ -88,6 +91,13 @@ function buildPagerdutyMetadata(
     meta_v: PAGERDUTY_INCIDENT_META_VERSION,
   };
   if (Number.isFinite(openedAtMs)) metadata["opened_at_ms"] = openedAtMs;
+  // PagerDuty's own time of the last status change; for a resolved incident it IS the resolution time.
+  const changedAt = stringField(row, "last_status_change_at");
+  const changedAtMs = changedAt === undefined ? Number.NaN : Date.parse(changedAt);
+  if (Number.isFinite(changedAtMs)) {
+    metadata["status_changed_at_ms"] = changedAtMs;
+    if (status === "resolved") metadata["resolved_at_ms"] = changedAtMs;
+  }
   if (serviceId !== undefined && serviceId !== "") metadata["pagerduty_service_id"] = serviceId;
   if (severity !== undefined && severity !== "") metadata["severity"] = severity;
   if (urgency !== undefined && urgency !== "") metadata["urgency"] = urgency;

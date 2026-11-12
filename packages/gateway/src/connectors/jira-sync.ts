@@ -26,6 +26,12 @@ import {
 } from "./atlassian-api-sync-helpers.ts";
 import { readConnectorSecret } from "./connector-vault.ts";
 import { fetchOneMissForResponse } from "./fetch-miss-reason.ts";
+import {
+  JSM_ALERT_MAX_OPEN_IDS,
+  JSM_ALERT_REFRESH_INTERVAL_MS,
+  type JsmAlertCursorFields,
+  runJsmAlerts,
+} from "./jsm-alerts.ts";
 import { type JsmCursorFields, runJsmOncall } from "./jsm-oncall.ts";
 import { decodeNimbusJsonCursorObject, encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import { ONCALL_REFRESH_INTERVAL_MS } from "./oncall-shift-items.ts";
@@ -37,9 +43,11 @@ const CURSOR_PREFIX = "nimbus-jra1:";
 /**
  * `snapAt`: epoch ms of the last "my open work" snapshot ATTEMPT (success or failure). The on-call keys
  * (`ocAt`, `ocUntil`, `cid`, `cidSite`, see `jsm-oncall.ts`) are the JSM Operations refresh's pacing and
- * cached cloud id.
+ * cached cloud id. The alert keys (`alAt`, `alUntil`, `alOpen`, see `jsm-alerts.ts`) are the alert pass's pacing
+ * (last ATTEMPT, backoff) and the ids seen open at its last complete pass.
  */
-type JiraSyncCursorV1 = { v: 1; floorJql: string | null; snapAt?: number } & JsmCursorFields;
+type JiraSyncCursorV1 = { v: 1; floorJql: string | null; snapAt?: number } & JsmCursorFields &
+  JsmAlertCursorFields;
 
 function encodeCursor(c: JiraSyncCursorV1): string {
   return encodeNimbusJsonCursor(CURSOR_PREFIX, c);
@@ -63,6 +71,7 @@ function decodeCursor(raw: string | null): JiraSyncCursorV1 | null {
     floorJql: typeof fj === "string" ? fj : null,
     ...(typeof snapAt === "number" && Number.isFinite(snapAt) ? { snapAt } : {}),
     ...decodeOncallFields(rec),
+    ...decodeAlertFields(rec),
   };
 }
 
@@ -79,6 +88,38 @@ function decodeOncallFields(rec: Record<string, unknown>): JsmCursorFields {
     ...(ocAt === undefined ? {} : { ocAt }),
     ...(ocUntil === undefined ? {} : { ocUntil }),
     ...(typeof cid === "string" && typeof cidSite === "string" ? { cid, cidSite } : {}),
+  };
+}
+
+function decodeAlertFields(rec: Record<string, unknown>): JsmAlertCursorFields {
+  const alAt = finiteNumber(rec["alAt"]);
+  const alUntil = finiteNumber(rec["alUntil"]);
+  const open = rec["alOpen"];
+  const alOpen = Array.isArray(open)
+    ? open.filter((x): x is string => typeof x === "string").slice(0, JSM_ALERT_MAX_OPEN_IDS)
+    : undefined;
+  return {
+    ...(alAt === undefined ? {} : { alAt }),
+    ...(alUntil === undefined ? {} : { alUntil }),
+    ...(alOpen === undefined ? {} : { alOpen }),
+  };
+}
+
+/** Only the on-call keys of a cursor-shaped object: the cursor rewrite must never inherit its other keys. */
+function pickOncallFields(f: JsmCursorFields): JsmCursorFields {
+  return {
+    ...(f.ocAt === undefined ? {} : { ocAt: f.ocAt }),
+    ...(f.ocUntil === undefined ? {} : { ocUntil: f.ocUntil }),
+    ...(f.cid === undefined || f.cidSite === undefined ? {} : { cid: f.cid, cidSite: f.cidSite }),
+  };
+}
+
+/** Only the alert keys of a cursor-shaped object. */
+function pickAlertFields(f: JsmAlertCursorFields): JsmAlertCursorFields {
+  return {
+    ...(f.alAt === undefined ? {} : { alAt: f.alAt }),
+    ...(f.alUntil === undefined ? {} : { alUntil: f.alUntil }),
+    ...(f.alOpen === undefined ? {} : { alOpen: f.alOpen }),
   };
 }
 
@@ -798,14 +839,41 @@ async function jiraOncallIfDue(
   const now = Date.now();
   // A backoff further out than the 6 h we ever set is a corrupted cursor value and is ignored.
   if (prev.ocUntil !== undefined && prev.ocUntil > now && prev.ocUntil - now <= 6 * 3_600_000) {
-    return prev;
+    return pickOncallFields(prev);
   }
-  if (!snapshotDue(prev.ocAt ?? null, now, ONCALL_REFRESH_INTERVAL_MS)) return prev;
+  if (!snapshotDue(prev.ocAt ?? null, now, ONCALL_REFRESH_INTERVAL_MS)) {
+    return pickOncallFields(prev);
+  }
   try {
     return (await runJsmOncall(ctx, creds, prev, now)).fields;
   } catch (err) {
     ctx.logger.warn({ serviceId: SERVICE_ID, err }, "jsm oncall refresh failed");
-    return { ...prev, ocAt: now };
+    return { ...pickOncallFields(prev), ocAt: now };
+  }
+}
+
+/**
+ * Runs the JSM Operations ALERT pass when due and returns the cursor's alert fields (and `cid`/`cidSite` when
+ * this pass resolved them). Due = never attempted (or the clock moved back) or 5 minutes since the last
+ * ATTEMPT, and not inside an `alUntil` backoff. `prev` carries the cloud id the shift pass just resolved in
+ * this same run. Never throws: the issue sync that already ran must not fail because this step did.
+ */
+async function jiraAlertsIfDue(
+  ctx: SyncContext,
+  creds: JiraVaultCreds,
+  prev: JsmCursorFields & JsmAlertCursorFields,
+): Promise<JsmCursorFields & JsmAlertCursorFields> {
+  const now = Date.now();
+  const own = pickAlertFields(prev);
+  if (prev.alUntil !== undefined && prev.alUntil > now && prev.alUntil - now <= 6 * 3_600_000) {
+    return own;
+  }
+  if (!snapshotDue(prev.alAt ?? null, now, JSM_ALERT_REFRESH_INTERVAL_MS)) return own;
+  try {
+    return (await runJsmAlerts(ctx, creds, prev, now)).fields;
+  } catch (err) {
+    ctx.logger.warn({ serviceId: SERVICE_ID, err }, "jsm alerts refresh failed");
+    return { ...own, alAt: now };
   }
 }
 
@@ -877,11 +945,14 @@ export function createJiraSyncable(options: JiraSyncableOptions): Syncable {
           : isoToJqlExclusiveFloor(maxUpdatedIso.value);
       const snapAt = await jiraSnapshotIfDue(ctx, creds, prev?.snapAt, syncTime, options);
       const oncall = await jiraOncallIfDue(ctx, creds, prev ?? {});
+      // The alert pass reuses a cloud id the shift pass resolved in this run, and owns only its own keys.
+      const alerts = await jiraAlertsIfDue(ctx, creds, { ...prev, ...oncall });
       const nextCursor = encodeCursor({
         v: 1,
         floorJql: nextFloor,
         ...(snapAt === undefined ? {} : { snapAt }),
         ...oncall,
+        ...alerts,
       });
 
       return syncPassCursorSuccess(t0, bytesTransferred, nextCursor, upserted);

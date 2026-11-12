@@ -17,6 +17,8 @@ export interface FederationLanConfig {
   readonly pairingWindowSeconds: number;
   readonly maxFailedAttempts: number;
   readonly lockoutSeconds: number;
+  /** `[lan] min_protocol` (LAN forward secrecy): 2 refuses the old wire for every peer. Default 1. */
+  readonly minProtocol?: 1 | 2;
 }
 
 export interface BuildFederationLanServerDeps {
@@ -102,10 +104,20 @@ export function buildFederationLanServer(deps: BuildFederationLanServerDeps): Fe
     hostKeypair: deps.identity,
     pairing: pairingServiceFor(pairingWindow),
     rateLimit,
+    minProtocol: deps.lan.minProtocol ?? 1,
     isKnownPeer: (pubkey) => {
       const row = deps.index.getLanPeerByPubkey(pubkey);
-      return row === undefined ? null : { peerId: row.peer_id, writeAllowed: false };
+      return row === undefined
+        ? null
+        : {
+            peerId: row.peer_id,
+            writeAllowed: false,
+            protoVersion: row.proto_version === 2 ? 2 : 1,
+          };
     },
+    // The downgrade ratchet (I56), responder side: a peer that completed a v2 session is never
+    // talked to over the old wire again.
+    onPeerNegotiated: (pubkey) => deps.index.markLanPeerProto(pubkey, 2),
     registerPeer: (pubkey, ip) => {
       const peerId = peerIdFor(pubkey);
       deps.index.addLanPeer({ peerId, peerPubkey: pubkey, direction: "inbound", hostIp: ip });

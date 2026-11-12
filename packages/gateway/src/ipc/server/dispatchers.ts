@@ -11,6 +11,7 @@ import {
 } from "../../config/nimbus-toml.ts";
 import { createConnectorDispatcher, meshDispatcherClient } from "../../connectors/registry.ts";
 import { asRecord } from "../../connectors/unknown-record.ts";
+import { graphAnnotatedDeployment } from "../../deployment/graph-annotated.ts";
 import { makeEgressSink, NULL_EGRESS_SINK } from "../../egress/egress-ledger.ts";
 import {
   bindConsentChannel,
@@ -592,8 +593,10 @@ export async function tryDispatchDeploymentRpc(
     return deploymentRpcSkipped;
   }
   try {
+    const db = ctx.options.localIndex.getDatabase();
     const out = await dispatchDeploymentRpc(method, params, {
-      db: ctx.options.localIndex.getDatabase(),
+      db,
+      graphDeployment: (itemId) => graphAnnotatedDeployment(db, itemId),
     });
     if (out.kind === "hit") return out.value;
   } catch (e) {

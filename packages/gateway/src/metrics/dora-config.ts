@@ -14,7 +14,26 @@ export type ServiceConfig = {
   readonly excludePrLabels: readonly string[];
   readonly deployEnvironments: readonly string[];
   readonly severityP1Aliases: readonly string[];
+  /** JSM Operations alert tags bound to this service (case-insensitive match, Phase 10 IC2). */
+  readonly jsmAlertTags: readonly string[];
+  /** Sentry project slugs bound to this service (exact match). */
+  readonly sentryProjects: readonly string[];
+  /** Warehouse data-model globs bound to this service (`*` only, lower-cased). */
+  readonly dataModels: readonly string[];
+  /** Service ids this service directly depends on (IC4's cascade reads it; IC2 only stores it). */
+  readonly dependsOn: readonly string[];
 };
+
+/** The four incident-engine binding fields, empty, for a literal to spread. */
+export const NO_INCIDENT_BINDINGS: Pick<
+  ServiceConfig,
+  "jsmAlertTags" | "sentryProjects" | "dataModels" | "dependsOn"
+> = Object.freeze({
+  jsmAlertTags: [],
+  sentryProjects: [],
+  dataModels: [],
+  dependsOn: [],
+});
 
 export const DEFAULT_DEPLOY_WORKFLOW_PATTERN = "^[Dd]eploy";
 export const DEFAULT_INCIDENT_WINDOW_MINUTES = 60;
