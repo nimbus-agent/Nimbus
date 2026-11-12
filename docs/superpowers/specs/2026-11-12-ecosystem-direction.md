@@ -15,7 +15,10 @@ Today those decisions exist only in a conversation. This project writes them dow
 authoritative, fixes the facts that had drifted while nobody was reading across repositories, and
 leaves every planned phase in place.
 
-What the sweep found, in the numbers that motivated the decisions (verified 2026-11-12; they decay):
+What the sweep found, in the numbers that motivated the decisions. Each was read on 2026-11-12 from
+the GitHub API (commit, release, star and pull-request counts; release tags and dates) or from the
+tree at `8d02d375d` (everything else). They decay, and none of them is copied into a shipped
+document:
 
 - The main repository took 257 commits in the previous 30 days and has cut 269 releases. The
   organisation has 8 stars in total. The main repository has had seven pull requests from outside
@@ -36,16 +39,18 @@ Acceptance criteria for this project (all are checks on documents and repository
 
 - **(ED-a)** `docs/roadmap.md` carries a Direction section; the spine table shows S4 with the agent
   door, then S5 Team Server, S6 Cost Pack and S7 Engineering Excellence breadth; three new phase
-  sections exist (9.8, 28, 29), each with rows and acceptance criteria; the commercial tier table is
+  sections exist (28, 29, 30), each with rows and acceptance criteria; the commercial tier table is
   gone and no sentence says a Nimbus capability is commercial-only; § Client surfaces matches the
-  satellites' released state. **Allowed exception:** the *Verified Publisher tier* row and the
-  owner's open item about its pricing (a fee for a verification service, D-ECO-6) are left as they
-  are and do not fail this criterion; neither does the sentence about paid support or the one about
-  a commercial licence.
-- **(ED-b)** No planned row disappears. A script counts unticked rows per phase section before and
-  after; every section from Phase 7 to Phase 27 has a count greater than or equal to its count
-  before, except where a row was re-homed, and each re-homed row keeps its text and points at its
-  new home (the roadmap's existing convention).
+  satellites' released state. **Allowed exception:** the *Verified Publisher tier* row (in Phase
+  9.5 § Trust Layer) and the owner's open item about its pricing (in § Owner's open items) are a
+  fee for a verification service (D-ECO-6); they are left as they are and do not fail this
+  criterion. Neither does the sentence about paid support or the one about a commercial licence.
+- **(ED-b)** No planned row disappears. Nothing in this project removes, ticks or splits a row, and
+  a row another phase builds on stays where it is, still unticked, with a pointer added
+  (D-ECO-4). So the check has no exception: a script counts unticked rows (`- [ ]`) per section of
+  `docs/roadmap.md` before and after, and every section's count after is greater than or equal to
+  its count before. It also counts the rows of the § Client surfaces table, which must be equal
+  before and after (the scaffold rows stay, with their state changed, § 5.6).
 - **(ED-c)** `CLAUDE.md` and `GEMINI.md` agree with the roadmap on the S4 exit condition and the
   spine. `bun run preflight:fast`, `audit:doc-refs`, `audit:status-drift` and `audit:links` are green.
 - **(ED-d)** `ECOSYSTEM.md`, the organisation profile, `awesome-nimbus` and `nimbus-security` state
@@ -54,14 +59,17 @@ Acceptance criteria for this project (all are checks on documents and repository
 - **(ED-e)** Each satellite roadmap states its part of the direction, and `nimbus-mcp-servers` has a
   `ROADMAP.md`.
 - **(ED-f)** The five scaffold repositories are archived, each with a README note naming the
-  roadmap row that replaced it, and no live document links to one as a live project. "Live
+  roadmap row that replaced it or stating that it is not planned, and no live document links to
+  one as a live project. "Live
   document" means a tracked text file (`*.md`, `*.mdx`, and the description fields of
   `package.json` and `server.json`) on the default branch of a repository in the organisation that
   is not archived, public or private. Changelogs are excluded (they are a dated record), as is git
   history. Listings outside GitHub (stores, the MCP Registry, curated lists owned by others) are
   out of scope here and belong to § Reach.
-- **(ED-g)** `docs/README.md`'s headline, the docs-site hero, the GitHub repository description and
-  the store listings are unchanged by this project (see D-ECO-1).
+- **(ED-g)** What Nimbus publicly claims to be does not change in this project (D-ECO-1). Checked
+  as: everything in `docs/README.md` above its § Where the Project Is heading is byte-identical
+  before and after; below it, only § Where the Project Is and § Pricing change; and the docs-site
+  hero, the GitHub repository description, the topics and the store listings are not touched.
 
 ## 2. Owner rulings
 
@@ -100,15 +108,18 @@ server with the Ops pack comes next, then the Cost pack. Recorded as D-ECO-3.
   v1. `docs/launch-messaging.md` gains the new copy now, under a heading that says it is not yet to
   be advertised. This follows the file's own guardrail ("never describe an unbuilt surface as
   shipped").
-- **D-ECO-2 Numbering.** The agent door is **Phase 9.8**, directly after Phase 9.7, because it
-  completes what 9.7 started; fractional phases have precedent (9.5, 9.7, 12.5, 13.5). The team
-  server is **Phase 28** and the Cost pack is **Phase 29**, appended after Phase 27 as § How to
-  Update This Document requires.
+- **D-ECO-2 Numbering.** The agent door is **Phase 28**, the team server **Phase 29** and the Cost
+  pack **Phase 30**, all appended after Phase 27, as § How to Update This Document requires ("New
+  phases can be added after the last planned phase; do not insert phases between active/complete
+  phases"). The first draft numbered the agent door 9.8 to sit beside Phase 9.7; that would have
+  inserted a phase between a complete one (9.7) and an active one (10), which the rule forbids.
+  Phase 9.7's section gains one pointer line to Phase 28 instead. The phase number says nothing
+  about build order: the spine does (D-ECO-3).
 - **D-ECO-3 Spine.** S4 keeps its theme and gains the agent door. **S5 becomes the Team Server**
   (with the Ops pack riding on it), **S6 the Cost Pack**, and the present S5, Engineering Excellence
   breadth, becomes **S7** with its contents unchanged. "Carried into S5" is renamed "Carried into
   S7" and every pointer to it follows.
-- **D-ECO-4 Rows are pulled by reference, never moved.** Phase 28 and Phase 29 name the existing
+- **D-ECO-4 Rows are pulled by reference, never moved.** Phase 29 and Phase 30 name the existing
   rows they build on (Phase 12 deployment rows, Phase 16 Wave 1, Phase 10 Stretch FinOps rows,
   Phase 9 Wave 4). Each source row keeps its text and gains a pointer. New rows are marked `[NEW]`.
 - **D-ECO-5 Principle 7 names all three audiences.** "Built for professionals" stays. Its lens
@@ -116,14 +127,17 @@ server with the Ops pack comes next, then the Cost pack. Recorded as D-ECO-3.
   build and run production systems: developers, DevOps, SRE and platform engineers, FinOps
   practitioners and security practitioners. The sentence that consumer-oriented affordances are out
   of scope is unchanged; Phases 18 to 20 keep their present late position.
-- **D-ECO-6 What "everything open" touches, exactly.** The § Commercial Roadmap table and its
-  pricing paragraph are replaced by a short § Open Source section. Phase 12's goal sentence stops
-  saying deployment and compliance tooling are commercial. Paid support and an SLA remain as a
-  service the maintainers may offer, and the sentence that a commercial licence is available to
-  organisations that cannot use the AGPL stays, because that is a licence fact and not a feature
-  tier. The **Verified Publisher tier** row and the owner's open item about its pricing are left
-  untouched: they describe a fee for a verification service, the owner did not rule on it, and
-  changing it is the owner's call.
+- **D-ECO-6 What "everything open" touches, exactly.** In `docs/roadmap.md`, the § Commercial
+  Roadmap table and its pricing paragraph are replaced by a short § Open Source section, and Phase
+  12's goal sentence stops saying deployment and compliance tooling are commercial. In
+  `docs/README.md`, the § Pricing tier table (Open Source, Team, Enterprise) is replaced by the same
+  statement. Paid support and an SLA remain as a service the maintainers may offer, and the
+  sentence that a commercial licence is available to organisations that cannot use the AGPL stays,
+  because that is a licence fact and not a feature tier; its clause about buying Team or Enterprise
+  features early goes. The **Verified Publisher tier** row and the owner's open item about its
+  pricing are not in § Commercial Roadmap: they live in Phase 9.5 § Trust Layer and in § Owner's
+  open items, and § 5.7 does not touch either. They describe a fee for a verification service, the
+  owner did not rule on it, and changing it is the owner's call.
 - **D-ECO-7 `docs/ecosystem-roadmap.md` stays, and the sentences about it are corrected.**
   `docs/roadmap.md` and `docs/infrastructure-roadmap.md` both say it closed on 2026-07-24 and is
   retired, yet a file of that name is on `main`, first drafted 2026-08-02, whose own header calls
@@ -132,7 +146,7 @@ server with the Ops pack comes next, then the Cost pack. Recorded as D-ECO-3.
   cross-cutting decisions), and deciding where each belongs is a project of its own. What changes:
   the two "retired" sentences say what the file now is (a landscape record, with no authority over
   sequencing); two pointers are added inside it, from cluster 10 ("Nimbus beyond one laptop") to
-  Phase 28 and from cluster 6 ("Approval you can act on away from the terminal") to Phase 9.8; and
+  Phase 29 and from cluster 6 ("Approval you can act on away from the terminal") to Phase 28; and
   one open row, *Reconcile or retire the ecosystem landscape*, is added under "Carried into S7".
 - **D-ECO-8 `nimbus-security` stops copying the catalogue.** It keeps the disclosure policy and a
   short description of the model, and links to the gateway's `docs/SECURITY-INVARIANTS.md` for the
@@ -171,25 +185,31 @@ server with the Ops pack comes next, then the Cost pack. Recorded as D-ECO-3.
 About sixty lines. It says, in this order:
 
 1. **What Nimbus is for.** Nimbus is the trust layer between AI agents and engineering systems. An
-   agent, Nimbus's own or any other, gets private context from the local index and acts only
-   through a gate where the owner sees a typed preview and approves it; every action it dispatches
-   is recorded in a hash-chained ledger the owner can check. It runs on one engineer's machine or
-   on a server a team owns.
+   agent, Nimbus's own or any other, can get private context from the local index, and every write
+   it sends through Nimbus is held at a gate where the owner sees a typed preview and approves it;
+   every action Nimbus dispatches is recorded in a hash-chained ledger the owner can check. Nimbus
+   runs on one engineer's machine today; running it on a server a team owns is planned.
 2. **Why this lead.** Nimbus does not control model quality and should not compete on it. What it
    has that others do not is the index, the gate, the ledger and the sandbox. The agents people
    use every day are coding agents and chat bots; making those safer and better informed is worth
    more than a better built-in agent.
-3. **Who it serves.** Developers (their coding agent gets context and a safe way to act), DevOps,
-   SRE and platform teams (a team server that holds the production credentials, answers in chat and
-   takes approvals there), FinOps practitioners (cost joined to the deploy, the pull request and
-   the owner).
-4. **The shape.** Five named parts, each mapped to what exists:
+3. **Who it will serve, and what each has today.** Developers: planned, their coding agent gets
+   context and a safe way to act; today it gets the read tools and a limited write door.
+   DevOps, SRE and platform teams: planned, a team server that holds the production credentials,
+   answers in chat and takes approvals there; today, a personal gateway with a chat bot.
+   FinOps practitioners: planned, cost joined to the deploy, the pull request and the owner;
+   today, the first cost connector.
+4. **The shape.** Five named parts, each with its state stated beside it:
    - *Core*: index, consent gate, egress ledger, sandbox. Shipped.
-   - *Doors*: terminal, the agent door (MCP), chat, editor, browser, desktop. The agent door is
-     partly shipped (21 read tools; a write door for 47 action types).
-   - *Packs*: Ops, Cost, Developer. The role-pack mechanism is shipped; Ops is in flight.
-   - *Shapes*: a personal gateway (shipped) and a team server (planned).
+   - *Doors*: terminal (shipped), chat on Slack and Teams (shipped), editor (shipped), browser
+     (shipped), desktop (built, not yet released), and the agent door (partly shipped: the read
+     tools, and a write door for a subset of action types; parity is planned, Phase 28).
+   - *Packs*: the role-pack mechanism is shipped with DevOps and PM packs. Ops is in flight. Cost
+     and Developer are planned.
+   - *Shapes*: a personal gateway (shipped) and a team server (planned, Phase 29).
    - *Ecosystem*: registry, SDKs, connectors. Mechanisms shipped; the public registry is not live.
+   The counts in this list (how many read tools, how many action types) are derived from code when
+   the section is written, never copied from this spec.
 5. **Order.** A three-line now / next / later that points at the spine table and § Reach.
 6. **Honest bounds.** The gate guards what passes through it. An agent that holds its own
    credentials can act outside it. The ledger records dispatched actions, not raw traffic.
@@ -201,19 +221,19 @@ gets no new derived claim from this section.
 
 | Spine | Theme | Contents | Change |
 |---|---|---|---|
-| S4 (active) | Autonomous Agent | As ruled 2026-11-04, plus Phase 9.8 (agent door), built next | exit condition gains one item (OR-ECO-8) |
-| S5 | Team Server | Phase 28; the Ops pack's always-on half | new (OR-ECO-3, D-ECO-3) |
-| S6 | Cost Pack | Phase 29 | new (D-ECO-3) |
+| S4 (active) | Autonomous Agent | As ruled 2026-11-04, plus Phase 28 (agent door), built next | exit condition gains one item (OR-ECO-8) |
+| S5 | Team Server | Phase 29; the Ops pack's always-on half | new (OR-ECO-3, D-ECO-3) |
+| S6 | Cost Pack | Phase 30 | new (D-ECO-3) |
 | S7 | Engineering Excellence breadth | exactly the present S5 | renumbered |
 
-The S4 exit-condition paragraph under § Active gains: "Phase 9.8 (the agent door), built before the
+The S4 exit-condition paragraph under § Active gains: "Phase 28 (the agent door), built before the
 remaining S4 rows (owner ruling OR-ECO-8, 2026-11-12)". Work already in flight under S4 (the
 incident engine, the FinOps connectors, LAN forward secrecy) is not interrupted; the agent door is
 the next project to *start*.
 
 § Reach (5.6) runs beside the spine. It is the owner's track and is not a spine slot.
 
-### 5.3 Phase 9.8 — The Agent Door (rows this project adds)
+### 5.3 Phase 28 — The Agent Door (rows this project adds)
 
 **Goal.** Any MCP client reaches the same guarded writes as Nimbus's own model, under the same
 rules, with one approval step.
@@ -244,7 +264,7 @@ Rows (all `[ ]`, all `[NEW]` unless noted):
 - **Bounds stated in the product.** The README, the security page and each kit say what the door
   does not guard.
 
-Acceptance criteria (for Phase 9.8, to be met by its own spec):
+Acceptance criteria (for Phase 28, to be met by its own spec):
 
 - With a write enabled and approved, an MCP client proposes it and the owner is shown the same
   preview the model door renders for the same input, asserted on the rendered text.
@@ -255,13 +275,13 @@ Acceptance criteria (for Phase 9.8, to be met by its own spec):
 - At least two kits are verified against the real agent, and the result is published as a matrix.
 - The invariants it touches are amended under the triple rule (wiring, docs, test in one commit).
 
-What the Phase 9.8 spec must decide (not decided here): how the act door's executor gains the
+What the Phase 28 spec must decide (not decided here): how the act door's executor gains the
 before-state, guard and bound-prepare steps it lacks today; which surface answers first (terminal,
 desktop, chat) and what the desktop app needs on the Tauri allowlist (I7); whether the door stays
 default-off and what the opt-in is; where the kits live; what re-approval a changed tool definition
 needs. Invariants in play: I2, I3, I20, I28, I29, I42, I53, I54.
 
-### 5.4 Phase 28 — The Team Server (rows this project adds)
+### 5.4 Phase 29 — The Team Server (rows this project adds)
 
 **Goal.** A Nimbus that a team runs on its own server: always on, no desktop session, production
 credentials held in one place, questions and approvals in the team's chat.
@@ -290,7 +310,7 @@ New rows (`[NEW]`):
 - **Service artifacts.** Container image, Helm chart, compose file and service unit, published with
   each release and exercised by an install smoke test.
 
-Acceptance criteria (for Phase 28):
+Acceptance criteria (for Phase 29):
 
 - On a fresh Linux host with no keyring and no display, the documented container start reaches a
   first answered chat question within 15 minutes, and CI exercises that path on each release.
@@ -299,11 +319,11 @@ Acceptance criteria (for Phase 28):
 - An agent on a laptop that holds no production credential completes a guarded write through the
   server after an approval in chat, and the server's ledger records it.
 
-What the Phase 28 spec must decide: the network posture (I5, I6, I13 and I45 all assume loopback
+What the Phase 29 spec must decide: the network posture (I5, I6, I13 and I45 all assume loopback
 today), identity for remote callers, the sealed backend's key handling, and what the server refuses
 to index. Standing constraint carried from the ecosystem roadmap: no approval behind a browser page.
 
-### 5.5 Phase 29 — The Cost Pack (rows this project adds)
+### 5.5 Phase 30 — The Cost Pack (rows this project adds)
 
 **Goal.** A FinOps practitioner or a platform engineer can ask why spend moved and get the deploy,
 the pull request and the owner, from data that stays on their machine or their team's server.
@@ -318,14 +338,14 @@ New rows (`[NEW]`):
   FinOps connectors spec names this a non-goal and assigns it to the detector row.)
 - **The cost-to-change join.** A cost series bound to a service, so a spike can be set beside the
   deploys, pull requests, flag changes and owners around it. The binding convention is an owner
-  decision that the FinOps connectors spec left open; the Phase 29 spec asks it.
+  decision that the FinOps connectors spec left open; the Phase 30 spec asks it.
 - **`nimbus cost` briefs.** Summary, why, owners and waste, deterministic, with no model required.
 - **Cost in the approval.** The infrastructure apply preview shows the plan's cost change.
 - **A FinOps role pack** in the official registry.
 - **Cost in the demo.** The seeded demo organisation gains cost data, so the join can be shown with
   no credentials.
 
-Acceptance criteria (for Phase 29):
+Acceptance criteria (for Phase 30):
 
 - On the demo corpus, the why brief names the deploy, the pull request and the owning service for
   a seeded spike, with no network call.
@@ -339,11 +359,21 @@ Acceptance criteria (for Phase 29):
 *Status page draft* (`[NEW]`, from the archived `nimbus-statuspage`): a static page of current
 incidents, who is on call and the DORA scorecard, generated from the index. The archived
 `nimbus-postmortem` maps to the existing *Post-mortem generation* and *Auto post-mortem* rows; no
-row is added. § Client surfaces drops the three scaffold rows and says where each went.
+row is added.
+
+The three scaffold rows in the § Client surfaces table (`nimbus-statuspage`, `nimbus-postmortem`,
+`nimbus-raycast`) stay where they are. Each row's State becomes "archived (OR-ECO-6, with the
+date)" and its Next cell says where the work went: the *Status page draft* row, the two post-mortem
+rows, or "not planned". The "first to build / second / third" ordering sentence above the table is
+corrected to match. Because a quick-ask launcher surface and a public recipe gallery are now
+directions not taken, § Rejected Directions gains two short entries, each with the condition that
+reopens it, as § How to Update This Document requires: the launcher reopens when users of a
+launcher ask for one and a maintainer for it exists; the gallery reopens when recipes written by
+people other than the owner exist to list.
 
 **Developer pack.** The existing brief agents reached through the agent door, Phase 10's
 *Automated PR pre-review* row, and the editor extension's `why` lens. One `[NEW]` row under Phase
-9.8: a Developer role pack.
+28: a Developer role pack.
 
 **§ Reach (new section, beside § First-Run & Time-to-Wow).** The owner's track (OR-ECO-2). Rows:
 
@@ -366,8 +396,17 @@ row is added. § Client surfaces drops the three scaffold rows and says where ea
   describe them; the sentences about tiers and pricing go.
 - Phase 12's goal sentence loses "Tied to the commercial license tier" and the clause that
   enterprise deployment and compliance tooling are commercial. Its rows are unchanged.
+- Phase 16 Wave 1's *Team-server tier* row is not tier language in this sense ("tier" there is a
+  deployment size, and its text makes no commercial claim); it keeps its text and gains the
+  pointer to Phase 29.
+- The *Verified Publisher tier* row (Phase 9.5 § Trust Layer) and its owner's open item are not
+  touched (D-ECO-6).
 - § Contents and § Status Overview follow.
-- `docs/README.md`, `CLAUDE.md` and `GEMINI.md` are searched for tier language and corrected.
+- `docs/README.md` § Pricing: the three-row tier table is replaced by the § Open Source statement;
+  the MIT sentence about the SDK stays; the commercial-licence sentence stays without its clause
+  about Team or Enterprise features. This section is far below the first screen (ED-g).
+- `CLAUDE.md` and `GEMINI.md` are searched for tier language; a search on 2026-11-12 found none
+  beyond the phase name "Team", which is a phase and not a tier.
 - Licence fields are not touched (non-negotiable 6).
 
 ### 5.8 Truth pass (facts to correct, each derived at merge time, never copied from this file)
@@ -392,9 +431,10 @@ row is added. § Client surfaces drops the three scaffold rows and says where ea
 - **`nimbus-sdk`**: the truth-pass ticks above.
 - **`create-nimbus-connector`**: a row for re-targeting to the `nimbus-mcp-servers` layout, and the
   scaffolder-overlap row (D-ECO-12).
-- **`nimbus-mcp-servers`**: a new `ROADMAP.md` with MCP revision 2026-07-28, the cost connectors
-  (pointing at the FinOps connectors spec's slices), per-connector READMEs, and a re-measured
-  client-support matrix.
+- **`nimbus-mcp-servers`**: a new `ROADMAP.md` whose rows are MCP revision 2026-07-28, the cost
+  connectors (pointing at the FinOps connectors spec's slices), filling in the per-connector
+  READMEs, and re-measuring the client-support matrix. This slice writes the roadmap rows; it does
+  not write the READMEs or run the measurement.
 - **`.github`**: `ECOSYSTEM.md` and the profile README, including the planning table (no separate
   ecosystem roadmap) and the archived repositories.
 - **`awesome-nimbus`**, **`nimbus-security`**: as in § 5.8.
@@ -418,7 +458,7 @@ organisation shows publicly.
 
 Added as a new section at the end of the file, under the heading **"Direction copy — HELD until
 agent door v1 ships"**, with one sentence above it: nothing below may appear in a README headline,
-a listing, a post or the docs-site hero before the release that ships Phase 9.8, and until then
+a listing, a post or the docs-site hero before the release that ships Phase 28, and until then
 `nimbus why` stays "the one thing". The existing sections of the file are not changed. The copy,
 in the file's existing plain tone:
 
@@ -433,7 +473,7 @@ in the file's existing plain tone:
 > behind a typed preview and your approval. *Prove*: a hash-chained record of every action the
 > agent dispatched.
 
-Claims the held copy may make, and no others: what Phase 9.8's acceptance criteria prove. The
+Claims the held copy may make, and no others: what Phase 28's acceptance criteria prove. The
 file's existing honesty guardrails apply to it unchanged, and two lines are added to them: the gate
 guards what passes through it, and an agent that holds its own credentials can act outside it. No
 market fact, competitor name or incident is cited anywhere in the file (§ 8).
@@ -448,16 +488,16 @@ and its slice is handed to the owner as a ready diff. Pull requests are opened w
 rule of 2026-11-05). ED11 needs admin rights on each repository; the builder prepares the README
 notes as pull requests, and runs the archive calls only after asking the owner once more (§ 5.10).
 
-### 5.13 Slices (one pull request each, in order)
+### 5.13 Slices (in order; ED1 to ED10 are one pull request each)
 
 | Slice | Repository | Contents |
 |---|---|---|
-| ED1 | `Nimbus` | § 5.1 to § 5.8 in `docs/roadmap.md`; `CLAUDE.md` and `GEMINI.md`; `docs/README.md`'s roadmap summary only; `docs/launch-messaging.md` (§ 5.11); `docs/infrastructure-roadmap.md` and `docs/ecosystem-roadmap.md` (D-ECO-7: two corrected sentences, two pointers). `docs/architecture.md` and `docs/cli-reference.md` are unchanged, and the pull request says why (no behaviour or command changed). This spec is deleted from the branch before the pull request opens. |
+| ED1 | `Nimbus` | § 5.1 to § 5.8 in `docs/roadmap.md`; `CLAUDE.md` and `GEMINI.md`; in `docs/README.md` only § Where the Project Is (the spine rows and the stale "recorded direction" paragraph) and § Pricing (§ 5.7), nothing above them (ED-g); `docs/launch-messaging.md` (§ 5.11); `docs/infrastructure-roadmap.md` and `docs/ecosystem-roadmap.md` (D-ECO-7: two corrected sentences, two pointers). `docs/architecture.md` and `docs/cli-reference.md` are unchanged, and the pull request says why (no behaviour or command changed). This spec is deleted from the branch before the pull request opens. |
 | ED2 | `.github` | `ECOSYSTEM.md`, profile README |
 | ED3 | `awesome-nimbus` | § 5.8 |
 | ED4 | `nimbus-security` | D-ECO-8 |
 | ED5 to ED10 | `nimbus-client`, `nimbus-vscode`, `nimbus-web-clipper`, `nimbus-sdk`, `create-nimbus-connector`, `nimbus-mcp-servers` | § 5.9 |
-| ED11 | organisation | § 5.10 |
+| ED11 | the five scaffold repositories | § 5.10. Not one pull request: five small README pull requests (one per repository), then, after the owner confirms, five archive calls through the GitHub API. |
 
 ED1 merges first because the others cite it. ED2 to ED10 are independent. ED11 is last.
 
@@ -475,19 +515,23 @@ ED1 merges first because the others cite it. ED2 to ED10 are independent. ED11 i
   stay private.
 - **Later specs carry the real analysis.** § 5.3 and § 5.4 name the invariants the agent door and
   the team server will have to amend. The team server is the first design that puts a Nimbus
-  listener beyond loopback on purpose; that is stated here so no reader takes Phase 28's rows as
+  listener beyond loopback on purpose; that is stated here so no reader takes Phase 29's rows as
   approval of a network posture.
 
 ## 7. Testing and acceptance
 
-- A before-and-after count of unticked rows per phase section (ED-b), committed as a script under
-  `scripts/` only if an existing audit cannot express it; otherwise run once and its output quoted
-  in the pull request.
+- ED-b: a before-and-after count of unticked rows (`- [ ]`) per section of `docs/roadmap.md`, and of
+  the rows of the § Client surfaces table. Every section's count after is greater than or equal to
+  before; the table's row count is equal. Run once on the base commit and once on the branch; both
+  outputs are quoted in the pull request. It is committed as a script only if it is worth keeping
+  as a gate, which the plan decides.
 - `bun run preflight:fast`, `audit:doc-refs`, `audit:status-drift`, `audit:links` on ED1.
 - Each satellite's own CI on its slice.
-- After ED11, a search of every live document in the organisation for the five repository names
-  finds only the notes that say they are archived.
-- ED-g is checked by diff: `docs/README.md`'s first screen is byte-identical before and after.
+- After ED11, a search of every live document (as ED-f defines it) for the five repository names
+  finds only the notes and table cells that say they are archived.
+- ED-g is checked by diff: every line of `docs/README.md` above its § Where the Project Is heading
+  is byte-identical before and after, and the only hunks below it are inside § Where the Project Is
+  and § Pricing.
 
 ## 8. Stated bounds
 
@@ -536,3 +580,40 @@ Applied:
 
 Round 1 (2026-11-12): no review. The run hit its 15-minute print limit with no output; the bundle
 (26 files, 536 KB) was too large. Rerun on a lean bundle (19 files, 204 KB).
+
+Round 1b (2026-11-12): CHANGES REQUIRED, twelve findings (six binding). Every file reference
+pointed inside the bundle. Each finding was checked against the spec and the tree before acting.
+
+Applied:
+- F1 (binding; dropping the three scaffold rows from § Client surfaces contradicts OR-ECO-5 and
+  D-ECO-4): correct. § 5.6 now keeps the rows with their state changed, and adds the two § Rejected
+  Directions entries the roadmap's own rule requires for a direction not taken.
+- F3 (binding; ED-b's "except where a row was re-homed" is untestable and skips § Client
+  surfaces): correct. ED-b and § 7 now have no exception and count the table's rows too.
+- F4 (binding; § 5.1 said an agent "acts only through a gate", which the same section's bounds
+  contradict): correct. The sentence now covers only writes sent through Nimbus.
+- F5 (binding; doors and packs listed without a state): correct in substance. Every door and pack
+  now carries its state. The reviewer's suggested label for chat ("planned") was wrong: the Slack
+  and Teams bot shipped in Phase 6, so chat is marked shipped and desktop "built, not yet released".
+- F6 (binding; § 5.7, ED1 and ED-g disagreed about `docs/README.md`): correct, and reading the file
+  to fix it found a § Pricing tier table the first draft had missed. ED-g, § 5.7 and ED1 now name
+  the two sections that change and say nothing above them does.
+- F7, F8, F9 (advisory): ED11 is five README pull requests and then five archive calls; ED10
+  writes roadmap rows, not READMEs; ED-f allows a note that says "not planned".
+- F12 (advisory; Phase 9.8 breaks the append rule): correct, and stronger than advisory, because
+  9.7 is complete and 10 is active. The agent door is now Phase 28, the team server 29 and the
+  Cost pack 30 (D-ECO-2).
+
+Corrected rather than applied:
+- F2 (binding; the Verified Publisher row has no home once § Commercial Roadmap goes): the premise
+  is wrong, because that row is not in § Commercial Roadmap (it is in Phase 9.5 § Trust Layer, and
+  its open item in § Owner's open items). The confusion was the spec's fault, so D-ECO-6, ED-a and
+  § 5.7 now say where both live and that neither is touched.
+- F10 (advisory; clean Phase 16's *Team-server tier* row of tier language): the row was read in
+  full. "Tier" there is a deployment size and the text makes no commercial claim, so it keeps its
+  text and gains only the pointer; § 5.7 says so.
+
+Noted:
+- F11 (advisory; the counts in § 1 cannot be checked from the bundle): expected, since they come
+  from the GitHub API and the tree. § 1 now says where each was read and that none is copied into
+  a shipped document.
