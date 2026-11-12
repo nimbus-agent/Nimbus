@@ -1776,7 +1776,7 @@ Phase 6 (Team) is ✅ complete (2026-06-18); its subsystems live under `packages
 
 ## Spine S2 Subsystems — Local Compute Fleet
 
-From Phase 7 onward the build order is the **Sequencing Spine overlay (S1 → S5)**, not the phase
+From Phase 7 onward the build order is the **Sequencing Spine overlay (S1 → S7)**, not the phase
 numbers — see [`roadmap.md`](./roadmap.md). S1 (Local Brain) made the local index answerable and
 shipped the egress ledger, the fourteen read-only agents and the answer-quality set; those live in
 the sections above. **S2 (Local Compute Fleet)** makes local compute *usable*: six capabilities
