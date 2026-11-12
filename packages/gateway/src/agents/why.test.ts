@@ -12,6 +12,7 @@ import { upsertGraphEntity, upsertGraphRelation } from "../graph/relationship-gr
 import { upsertIndexedItem } from "../index/item-store.ts";
 import { LocalIndex } from "../index/local-index.ts";
 import type { ServiceConfig } from "../metrics/dora-config.ts";
+import { NO_INCIDENT_BINDINGS } from "../metrics/dora-config.ts";
 import { buildServiceIdentityResolver } from "../metrics/service-identity.ts";
 import { upsertBlameLines } from "../security/blame-store.ts";
 import type { SyncContext } from "../sync/types.ts";
@@ -529,6 +530,7 @@ describe("runWhy", () => {
     excludePrLabels: [],
     deployEnvironments: ["prod"],
     severityP1Aliases: ["P1"],
+    ...NO_INCIDENT_BINDINGS,
   };
 
   function ctxWithResolver(db: Database, configs: Map<string, ServiceConfig>): SyncContext {

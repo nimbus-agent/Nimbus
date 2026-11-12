@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import type { ServiceConfig } from "./dora-config.ts";
+import { NO_INCIDENT_BINDINGS } from "./dora-config.ts";
 import { buildServiceIdentityResolver, resolveServicesByRepoUrn } from "./service-identity.ts";
 
 function baseConfig(overrides?: Partial<ServiceConfig>): ServiceConfig {
@@ -12,6 +13,7 @@ function baseConfig(overrides?: Partial<ServiceConfig>): ServiceConfig {
     excludePrLabels: ["revert"],
     deployEnvironments: ["prod"],
     severityP1Aliases: ["P1"],
+    ...NO_INCIDENT_BINDINGS,
     ...overrides,
   };
 }

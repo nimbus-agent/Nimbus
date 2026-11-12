@@ -6,6 +6,7 @@ import { createMemoryIndexDb } from "../../src/connectors/connector-sync-test-he
 import { extractPrMetadataForIndex } from "../../src/connectors/github-sync.ts";
 import {
   DEFAULT_DEPLOY_WORKFLOW_PATTERN,
+  NO_INCIDENT_BINDINGS,
   type ServiceConfig,
 } from "../../src/metrics/dora-config.ts";
 
@@ -50,6 +51,7 @@ function serviceConfig(repos: ServiceConfig["repos"]): ServiceConfig {
     excludePrLabels: [],
     deployEnvironments: ["prod"],
     severityP1Aliases: [],
+    ...NO_INCIDENT_BINDINGS,
   };
 }
 

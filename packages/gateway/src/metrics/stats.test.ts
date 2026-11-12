@@ -4,6 +4,7 @@ import { gitlabMrMetadata } from "../connectors/_lib/gitlab/events.ts";
 import { extractPrMetadataForIndex } from "../connectors/github-sync.ts";
 import { mttr } from "./dora.ts";
 import type { ServiceConfig } from "./dora-config.ts";
+import { NO_INCIDENT_BINDINGS } from "./dora-config.ts";
 import { computeStatsSeries, STATS_METRIC_IDS } from "./stats.ts";
 
 const DAY = 86_400_000;
@@ -98,6 +99,7 @@ function cfg(repos: ServiceConfig["repos"]): ServiceConfig {
     excludePrLabels: [],
     deployEnvironments: ["prod"],
     severityP1Aliases: [],
+    ...NO_INCIDENT_BINDINGS,
   };
 }
 

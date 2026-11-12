@@ -15,6 +15,7 @@ import {
   mttr,
 } from "../../../src/metrics/dora.ts";
 import type { ServiceConfig } from "../../../src/metrics/dora-config.ts";
+import { NO_INCIDENT_BINDINGS } from "../../../src/metrics/dora-config.ts";
 import { openSeededDbFile } from "../../helpers/migrated-db-seed.ts";
 
 type SeedCiOpts = {
@@ -146,6 +147,7 @@ function cfg(overrides: Partial<ServiceConfig> = {}): ServiceConfig {
     excludePrLabels: ["revert"],
     deployEnvironments: ["prod"],
     severityP1Aliases: [],
+    ...NO_INCIDENT_BINDINGS,
     ...overrides,
   };
 }
