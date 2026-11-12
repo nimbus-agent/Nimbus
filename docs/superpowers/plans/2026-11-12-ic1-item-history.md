@@ -20,8 +20,8 @@ IC1, and the later slices it touches are named.
 1. **There is no `[index]` config section or reader (brief item 4: "the config reader for `[index]`").**
    `git grep -n "\[index\]"` over `packages/` finds nothing; `SECTION_LOADERS`
    (`config/config-explain.ts:80`) has no `index` id. Correction: a new `config/index-toml.ts` modeled on
-   `config/briefing-toml.ts` (its `intInRange` at `:94`, `parseNimbusTomlBriefing` at `:268`, the
-   `sectionFallbackSink` loader at `:318`), registered in `SECTION_LOADERS` (`config-explain.test.ts` fails until
+   `config/briefing-toml.ts` (its `intInRange` at `:94`, `parseNimbusTomlBriefing` at `:262`, the
+   `loadNimbusBriefingFromConfigDir` loader at `:292`), registered in `SECTION_LOADERS` (`config-explain.test.ts` fails until
    it is). A value outside `7..3650` or not an integer falls back to 180 with a recorded section fallback; it is
    never clamped. `0` is NOT "disabled" (unlike `[audit] tool_call_log_retention_days`): an unbounded history
    table is not a mode this project offers.
@@ -257,7 +257,7 @@ skip the classifier, require `canUseConversation` (else the existing no-LLM erro
 
 **`nimbus query --at`.** `index.queryItems` (`ipc/diagnostics-rpc.ts:499` `parseQueryItemsParams`, `:626`
 `rpcIndexQueryItems`) gains `at` (string). Refused with `-32602`: `at` with `notTouching`/`noDownstreamIncident`
-(do not compose), with `sinceMs`/`untilMs`. `index.querySql` (`:671`) refuses a present `at`. The result gains
+(do not compose), with `sinceMs`/`untilMs`. `index.querySql` (`rpcIndexQuerySql`, `diagnostics-rpc.ts:685`) refuses a present `at`. The result gains
 `asOf` (instant, zone, history start or null) and a third `QueryItemsGaps` member
 `{ excludedUnplaceable: number }`; the CLI (`cli/src/commands/query.ts`, `QueryItemsGaps` and `printQueryResult`)
 prints the disclosure through the existing `formatGapLine` path. `nimbus query --sql ... --at ...` is refused in
@@ -752,6 +752,10 @@ flag plumbing is covered by the command unit tests of Task 11/12.
   deviations in short.
 - `docs/SECURITY-INVARIANTS.md`: a `## D46` section after D45 (Statement, Why, Stated bounds, Enforcement), the
   header "Current ceiling" line "static rules D10–D45" becomes "D10–D46".
+- The three `CEILING_RANGE_SURFACES` that `audit:status-drift` (`scripts/structure-audit/check-status-drift.ts`)
+  holds to `D10–D<max>`: CLAUDE.md (and GEMINI.md, its mirror), `.claude/commands/nimbus-commands.md` (`:185`,
+  "static invariant complement D10–D45") and `.claude/commands/nimbus-file-map.md` (`:311`) all move to
+  `D10–D46`; run `bun run audit:status-drift` after the edit.
 - `docs/schema-reference.md`: the V94 `CREATE TABLE` and indexes with a dated header comment (model: the V93 entry
   at `:1339`).
 - `.claude/commands/nimbus-db-migrations.md` (the "Newest" line, `:34`), `.claude/commands/nimbus-file-map.md`
@@ -846,3 +850,9 @@ Title (conventional commit, no `!`; nothing here requires a user to act):
 Description: the data added, the 14 deviations (short), the stated bounds, the verification output, and the
 dependencies: IC2 registers the alert type and PagerDuty resolution key; IC3 and later read the table. End with
 the attribution lines from the session. No `Release-As:` trailer.
+
+## Review log
+
+Round 1 (Antigravity, 2026-11-12), applied: three stale line citations corrected (`briefing-toml.ts:262` and
+`:292`, `diagnostics-rpc.ts:685`); the docs task names all three `CEILING_RANGE_SURFACES` that
+`audit:status-drift` holds to the static-rule ceiling.
