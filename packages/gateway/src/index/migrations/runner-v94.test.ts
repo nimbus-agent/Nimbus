@@ -67,7 +67,9 @@ describe("V94 migration - item history", () => {
       runIndexedSchemaMigrations(db, CURRENT_SCHEMA_VERSION);
       expect(db.query("PRAGMA foreign_key_list(item_history)").all()).toEqual([]);
       const triggers = db
-        .query("SELECT name FROM sqlite_master WHERE type = 'trigger' AND tbl_name = 'item_history'")
+        .query(
+          "SELECT name FROM sqlite_master WHERE type = 'trigger' AND tbl_name = 'item_history'",
+        )
         .all();
       expect(triggers).toEqual([]);
       db.run(

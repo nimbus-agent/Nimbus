@@ -1,3 +1,5 @@
+import type { AtClause } from "../index/item-history-at.ts";
+
 export type HybridIndexedItem = {
   id: string;
   service: string;
@@ -29,6 +31,8 @@ export type HybridSearchOptions = {
   queryEmbedding1536?: Float32Array;
   embeddingModel1536?: string;
   contextChunks?: number;
+  /** Point-in-time admit clause over alias `i` (`--at`): applied to BOTH arms before ranking. */
+  at?: AtClause;
 };
 
 export type HybridSearchResult = {

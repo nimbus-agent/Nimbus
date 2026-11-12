@@ -26,7 +26,7 @@ import { itemPrimaryKey } from "./item-key.ts";
  * untracked item types are admitted only when `modified_at <= T` and otherwise counted as gaps.
  */
 
-export type AtClause = { readonly sql: string; readonly params: readonly unknown[] };
+export type AtClause = { readonly sql: string; readonly params: ReadonlyArray<string | number> };
 export type AtClass = "in" | "gap";
 
 const ALIASES: ReadonlySet<string> = new Set(["i", "item"]);
@@ -61,10 +61,13 @@ export function earliestHistoryMs(db: Database, services?: readonly string[]): n
   return wanted.length === 0 ? null : Math.min(...wanted);
 }
 
-type Binder = { readonly params: unknown[]; readonly p: (v: unknown) => string };
+type Binder = {
+  readonly params: Array<string | number>;
+  readonly p: (v: string | number) => string;
+};
 
 function binder(): Binder {
-  const params: unknown[] = [];
+  const params: Array<string | number> = [];
   return {
     params,
     p: (v) => {

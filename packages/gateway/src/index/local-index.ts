@@ -42,6 +42,7 @@ import {
 import { statusLastError } from "../sync/status-last-error.ts";
 import type { SyncStatus } from "../sync/types.ts";
 import { deleteChatReadMarkersForService } from "./chat-read-marker-store.ts";
+import { type AtClause, annotateStateAt, buildAtClause } from "./item-history-at.ts";
 import { buildItemListSql, type ItemListQueryParams } from "./item-list-query.ts";
 import {
   deleteAllItemsForService,
@@ -97,6 +98,11 @@ export type IndexSearchQuery = {
   itemType?: string;
   name?: string;
   limit?: number;
+  /**
+   * Point-in-time instant (`--at`, Phase 10 IC1): answer as the index stood then. The admit clause
+   * (`buildAtClause`) is built once per call and applied inside every arm's statement, before ranking.
+   */
+  atMs?: number;
 };
 
 type AuditLogRow = {
@@ -571,7 +577,10 @@ export class LocalIndex {
     }
   }
 
-  private static searchFiltersAndParams(query: IndexSearchQuery): {
+  private static searchFiltersAndParams(
+    query: IndexSearchQuery,
+    at?: AtClause,
+  ): {
     filters: string[];
     params: Array<string | number>;
     whereExtra: string;
@@ -586,6 +595,10 @@ export class LocalIndex {
     if (query.itemType !== undefined && query.itemType !== "") {
       filters.push("i.type = ?");
       params.push(query.itemType);
+    }
+    if (at !== undefined) {
+      filters.push(at.sql);
+      params.push(...at.params);
     }
 
     const whereExtra = filters.length > 0 ? `AND ${filters.join(" AND ")}` : "";
@@ -640,7 +653,8 @@ export class LocalIndex {
         return [];
       }
 
-      const { filters, params, whereExtra } = LocalIndex.searchFiltersAndParams(query);
+      const at = query.atMs === undefined ? undefined : buildAtClause(this.db, query.atMs, "i");
+      const { filters, params, whereExtra } = LocalIndex.searchFiltersAndParams(query, at);
 
       let rows: ItemRow[];
       let normBm25: number[];
@@ -684,7 +698,8 @@ export class LocalIndex {
       const out = dedupeRankedByCanonicalUrl(scored);
 
       const limit = Math.min(500, Math.max(1, query.limit ?? 50));
-      return out.slice(0, limit);
+      const page = out.slice(0, limit);
+      return query.atMs === undefined ? page : annotateStateAt(this.db, page, query.atMs);
     } finally {
       const kind: QueryLatencyKind = useFts ? "fts" : "sql";
       const hint = useFts
@@ -729,6 +744,9 @@ export class LocalIndex {
         if (query.itemType !== undefined && query.itemType !== "") {
           hybridOpts.itemType = query.itemType;
         }
+        if (query.atMs !== undefined) {
+          hybridOpts.at = buildAtClause(this.db, query.atMs, "i");
+        }
         if (dual.vec384 !== null) {
           hybridOpts.queryEmbedding = dual.vec384;
         }
@@ -767,7 +785,10 @@ export class LocalIndex {
           }
           return ranked;
         });
-        return { items, retrieval };
+        return {
+          items: query.atMs === undefined ? items : annotateStateAt(this.db, items, query.atMs),
+          retrieval,
+        };
       } finally {
         this.emitQueryLatency("hybrid", performance.now() - t0, nameQ.slice(0, 200) || null);
       }
@@ -787,19 +808,23 @@ export class LocalIndex {
     indexedType: string,
     offset: number,
     limit: number,
+    atMs?: number,
   ): NimbusItem[] {
     const t0 = performance.now();
     const lim = Math.min(100, Math.max(1, Math.floor(limit)));
     const off = Math.max(0, Math.floor(offset));
+    const at = atMs === undefined ? undefined : buildAtClause(this.db, atMs, "item");
     try {
       const rows = this.db
         .query(
           `SELECT id, service, type, external_id, title, body_preview, url, canonical_url,
                   modified_at, author_id, metadata, synced_at, pinned
-           FROM item WHERE service = ? AND type = ? ORDER BY modified_at DESC LIMIT ? OFFSET ?`,
+           FROM item WHERE service = ? AND type = ?${at === undefined ? "" : ` AND ${at.sql}`}
+           ORDER BY modified_at DESC LIMIT ? OFFSET ?`,
         )
-        .all(service, indexedType, lim, off) as ItemRow[];
-      return rows.map(rowToItem);
+        .all(service, indexedType, ...(at?.params ?? []), lim, off) as ItemRow[];
+      const items = rows.map(rowToItem);
+      return atMs === undefined ? items : annotateStateAt(this.db, items, atMs);
     } finally {
       this.emitQueryLatency("sql", performance.now() - t0, `fetchMore:${service}/${indexedType}`);
     }
