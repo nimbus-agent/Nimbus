@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794446255814,
+  "lastUpdate": 1794480798277,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "bdc6abf2bc44ad53933191f35537fdf1ea56c737",
-          "message": "fix(docs): correct the standalone connector install path, and measure client support (#1323)\n\n## What this is\n\nOff-gateway consent rests entirely on the MCP `elicitation` capability.\nWhether real clients\nimplement it had never been checked — so Part 1 and Part 2 shipped a\nsecurity story whose central\nassumption was untested. It is tested now.\n\n## The measurement\n\n| Client | `elicitation` | A standalone connector gives you |\n| --- | --- | --- |\n| Claude Code | yes, form + URL mode | reads and writes |\n| Cursor | yes, since v1.5 | reads and writes |\n| **Claude Desktop** | **no** | **reads only** |\n\nMeasured against the `github` connector through the standalone launcher:\na client that supports\nelicitation is served **14 tools**; Claude Desktop was served **9**,\nwith `github_pr_merge`,\n`github_branch_delete`, `github_issue_create`, `github_pr_close` and\n`github_tag_create` correctly\nabsent. Claude Desktop's own log agrees — `Connected to nimbus-github [9\ntools]`.\n\nThat is the fail-closed design observed end to end in a third-party\nclient for the first time. The\ngate did exactly what it was built to do in a client we had never tested\nagainst.\n\nIt is now a support table in the `nimbus-mcp` README, because \"the write\ntools are missing\" is\notherwise a guaranteed bug report rather than the correct behaviour it\nactually is.\n\n## A count that had gone stale\n\nThe README still claimed **\"58 of 94 eligible ... plus `github`\"**. Part\n2 migrated everything, so\nthe real figure is **94 of 94** — 58 declare no mutating tools, 36 had\ntheir writes routed through\nthe consent kit. The doc understated the migration by 36 connectors.\n\nA drift test now derives all three numbers from the connector manifests,\nso the sentence cannot rot\nagain. It is red-proved: perturbing the README count fails it. The first\nversion of that test\nfailed on a hard-wrap falling mid-phrase, which is why it collapses\nwhitespace before matching.\n\nThe plan and spec also cite 58; those are dated design records that were\naccurate when written, so\nthey are left as history.\n\n## CHANGELOG\n\nNeither Part 1 nor Part 2 had an entry, despite shipping in `v2.15.0`\nand `v2.16.0`. That file\nclaims to be the single source for the delivery log, so both are\nrecorded here.\n\n## Not included\n\nClaude Desktop appears to proxy local MCP tools through a device bridge\nat\n`bridge.claudeusercontent.com`. If tool payloads cross it, that matters\nfor a local-first product.\nThe bridge connection and an authenticated device registration are\nverified; that MCP tool\narguments and results transit it is **not**, so no claim about it\nappears in any doc here.\n\n## Verification\n\n- `bun test packages/mcp-connectors/standalone` — 25 pass, 0 fail\n- `bun run preflight:fast` — PASSED\n- drift test red-proved by perturbing the count\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n- **Documentation**\n- Updated standalone connector setup instructions with the\ncheckout-based Bun launcher and new command name.\n- Clarified package naming, configuration, connector eligibility, and\nclient capability requirements.\n  - Documented read-only behavior when write approvals are unavailable.\n  - Corrected connector migration and GitHub tool counts.\n\n- **Chores**\n  - Renamed the standalone connector package and marked it private.\n- Added validation to keep documented connector totals aligned with\nrepository manifests.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->",
-          "timestamp": "2026-08-24T17:16:49Z",
-          "tree_id": "f6343e9a86d0b2bbdff2c774a08ddeac355447d0",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/bdc6abf2bc44ad53933191f35537fdf1ea56c737"
-        },
-        "date": 1787592472141,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 310.51077994999866,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 314.545744649988,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 295.11338314999773,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "1ee9cee621d574cc0c770dd28b524652ff2e9a03",
+          "message": "docs: Google Calendar needs the owner's own OAuth client, not Google verification (#1979)\n\nCorrects the Google Calendar OAuth claim that MB2b and MB5 recorded as\nan owner action.\n\nThe old text said \"the Nimbus OAuth client\" must pass Google's\nverification of `calendar.readonly` before anyone but test users can\ngrant it. Nimbus ships no shared Google OAuth client:\n`NIMBUS_OAUTH_GOOGLE_CLIENT_ID` defaults to empty\n(`packages/gateway/src/config.ts`), so every owner supplies their own\nDesktop client. An unverified client works for its own owner, in one of\ntwo ways:\n\n- **Testing:** the owner is a listed test user, and Google expires the\nrefresh tokens after 7 days.\n- **Published to In production without being submitted:** Google shows\nits unverified-app warning once, and the client is capped at 100 users.\n\nVerification matters only for a client shared with many users.\n\n## What changes\n\n- `docs/CHANGELOG.md`: the MB5 stated bound and the MB2b owner-action\nsentence.\n- `docs/roadmap.md`: the MB1 owner-action sentence.\n- `packages/docs/.../connectors/google-calendar.mdx`: the old sentence\nwas wrong on the facts, since an unverified client is not limited to\ntest users. It now gives the setup and both options.\n\nDocs only, no code change. CLAUDE.md/GEMINI.md, `architecture.md`,\n`docs/README` and `cli-reference.md` do not restate the claim, so they\nare unchanged.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JmSjrCFSTQTQnUa4j8F5b1\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **Documentation**\n* Clarified that Google Calendar connections use an owner-provided OAuth\nclient; Nimbus does not provide a shared client.\n* Explained that a client used only by its owner does not require Google\nverification, while one offered to the public requires verification\nregardless of user count.\n* Documented the options for unverified clients: Testing mode expires\nrefresh tokens after seven days and requires weekly reauthorization;\nunverified Production mode displays a warning and is limited to 100\nusers.\n  * Updated related briefing and roadmap guidance.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-12T12:45:04+02:00",
+          "tree_id": "aeae29216ea8ebf07737b669fb276cd00c85c7be",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/1ee9cee621d574cc0c770dd28b524652ff2e9a03"
+        },
+        "date": 1794480794089,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 220.43657730000012,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 222.52894414999864,
             "unit": "ms"
           }
         ]
