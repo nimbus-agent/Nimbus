@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794443369288,
+  "lastUpdate": 1794445575505,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
-            "name": "nimbus-release-bot[bot]",
-            "username": "nimbus-release-bot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "9534e0529eaa3a7a0b8b159e82e1dae8701faf10",
-          "message": "chore: release main (#1320)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>2.16.0</summary>\n\n##\n[2.16.0](https://github.com/nimbus-agent/Nimbus/compare/v2.15.0...v2.16.0)\n(2026-08-23)\n\n\n### Features\n\n* **connectors:** per-connector write action types across all 94\nconnectors ([#1321](https://github.com/nimbus-agent/Nimbus/issues/1321))\n([072b1fa](https://github.com/nimbus-agent/Nimbus/commit/072b1fa9682c682bfb11fe56ce8498ff32ec56f0))\n* **http:** read the egress ledger over HTTP, under its own scope (U1)\n([#1319](https://github.com/nimbus-agent/Nimbus/issues/1319))\n([e42d66b](https://github.com/nimbus-agent/Nimbus/commit/e42d66be2728742a9f9224fe44e20d180458729a))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
-          "timestamp": "2026-08-24T07:09:28+03:00",
-          "tree_id": "3b3345849e9202cd750341bb1e20ea695af84669",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/9534e0529eaa3a7a0b8b159e82e1dae8701faf10"
-        },
-        "date": 1787545255120,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 326.8421539999963,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 326.8997724499965,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 278.83167879999854,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "c78b1dcaf21d1bd5a32d020854bd776f625eac4c",
+          "message": "feat(gateway): the morning briefing and 24-hour deadline notices, built from the local index and delivered locally (#1976)\n\nPhase 10, morning briefing, slice **MB5**, the last one. It adds the\nmorning briefing itself and the 24-hour deadline notices, closing the\nroadmap rows *Morning briefing* and *Deadline tracking*. MB1–MB4 built\nthe data it reads. Both parts are built from the local index only, with\n**no model** (OR-10-8), and are delivered **locally only** (OR-10-11).\n\n## What changes\n\n- **`[briefing]` config:**\n- `enabled` (off by default), `schedule` (cron, at least 1 h apart),\n`tz`, `sections`, `retention_days`, and MB1's\n`snapshot_interval_minutes`.\n  - `[briefing.deadlines]`: `enabled`, `lead_hours`, `quiet_hours`.\n  - Per-key fallback, never a clamp.\n- **Scheduler:**\n- A 60 s unref'd tick. `planFire` sets a baseline on restart and when\nthe briefing is first enabled, and allows one catch-up within 3 h of a\nmissed slot.\n- DST follows `automation/cron.ts`: a time inside a spring-forward gap\ndoes not fire that day.\n  - Slot idempotence comes from a partial UNIQUE `slot_at`.\n- It is started after the IPC server, retired first on shutdown, and\nnever started in demo (I41).\n- **The brief** is an 18th brief kind, rendered by `synthesize()` with\nno runner.\n- Sections: calendar (Google, Outlook, iCloud), on call (yours),\nincidents, reviews and your open PRs, tickets overdue or due today,\nunread mail (Gmail `UNREAD`, Outlook `is_read`), and unread chat (MB4's\n`readUnreadChatThreads`, now wired in `assemble.ts`).\n  - Reserved `## Gaps` and `## Data freshness`, guarded by I31.\n- Jira and Linear due dates are dates, so they are placed at the end of\nthat day in the briefing's zone, not read as UTC midnight.\n- **Deadline notices:**\n- Every 15 min: open items in your `assigned` snapshot that are due\nwithin `lead_hours` and have had no activity for `quiet_hours`.\n- One counts-only toast per scan. The notice row is written before the\ntoast.\n- An item is noticed again only when its due date moves by 1 h or more.\nOld notices are pruned.\n- **Schema V93:** `briefing_run` (`fired_by`, see below) and\n`deadline_notice`, written only by `briefing-store.ts`.\n- **Delivery:** the `briefing.ready` gateway event, then the OS toast\nthrough the new `showWithOutcome`, whose result is recorded.\n- **Toast text is built from numbers only**\n(`briefingToastText(counts)`, `deadlineToastText(n, leadHours)`), so no\ntitle, sender, channel or schedule name can reach a lock screen. A\nproperty test seeds random strings and asserts none reach a toast or the\nevent.\n- **IPC `briefing.*`:**\n- `latest`, `list`, `get`, `status`, `runNow`. The whole namespace is\nLAN-refused.\n- Tauri `ALLOWED_METHODS` 127 → 131 (the four reads), and `runNow` is\nCLI-only.\n  - Served on a demo gateway with no toast.\n- **CLI:** `nimbus briefing [now|list|status] [--json]`, plus a `nimbus\ndoctor` line.\n- **Static rule D45 (`briefing-confined`):** `briefing/**` and\n`agents/_lib/briefing*.ts` import nothing from chatops, egress,\nconnectors (type-only allowed), federation or share, and call no\n`fetch`.\n- A runtime pin in the acceptance test: a run appends zero\n`egress_ledger` rows and makes no `fetch` call.\n- **`fired_by`, not `trigger`:** static D44(d) reserves `trigger:\n\"schedule\"` for the workflow scheduler. A briefing run is not a workflow\nrun, so it records `fired_by`, and D44 is NOT widened. A fixture pins\nthe separation.\n\n## Stated bounds\n\n- A schedule inside a DST gap skips that day.\n- Outlook mail has no thread key or sender in the index, so it is\ncounted per message and shown without a sender.\n- An empty snapshot writes no rows, so \"never refreshed\" and \"nothing\nassigned\" look alike, and the wording avoids claiming the second.\n- Calendar events appear in the briefing but are not deadline sources.\n- `audit:dead-code` (advisory, not gated, already red on `main`) lists\n25 more unused exports here, mostly bound constants used only by tests.\n- No new invariant; static D45 is new and I7's count changes.\n\n## Verification (local, Windows)\n\n- `bun test packages/gateway/src`: 30327 pass, 0 fail.\n- `bun test packages/gateway/test packages/cli`: only the 6 migration\ne2e tests that fail on `main` in that combined process.\n- `bun test scripts`: only the 5 local `install.ps1`/gpg tests, which\nthis branch does not touch.\n- `preflight:fast` (typecheck, typecheck:tests, biome, markdown,\n`audit:invariants`, `audit:status-drift`, `audit:lane-census`,\n`audit:readme-cli`, `audit:cross-platform`) passes.\n- `cargo test` (packages/ui/src-tauri) passes 56 tests.\n- The coverage floor is CI-Linux-authoritative and runs first in this\nPR's CI.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JmSjrCFSTQTQnUa4j8F5b1\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Added a configurable morning briefing with scheduled and on-demand\nruns, selectable sections, run history, and status reporting. Briefings\nuse locally indexed information and do not require an AI model.\n* Added optional deadline notices for qualifying assigned items, with\nprivacy-preserving, count-only notifications.\n* Added `nimbus briefing` commands to view, run, list, and check\nbriefing status. Briefing events can also be viewed in CLI activity\noutput.\n* **Documentation**\n* Added a morning briefing user guide and updated CLI, configuration,\narchitecture, and feature documentation.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-12T00:58:32Z",
+          "tree_id": "75426df7125671e3a912dfae8e6032b4e64b5861",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/c78b1dcaf21d1bd5a32d020854bd776f625eac4c"
+        },
+        "date": 1794445570626,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 191.91573919999973,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 190.83345500000397,
             "unit": "ms"
           }
         ]
