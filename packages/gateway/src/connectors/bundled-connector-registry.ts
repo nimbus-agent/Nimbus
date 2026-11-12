@@ -2,7 +2,7 @@
 // Re-run: bun run gen:connector-registry
 //
 // Every first-party connector entrypoint, as a lazy dynamic import. The imports are static enough
-// for the bundler to retain all 93 in the compiled gateway binary, and lazy enough that
+// for the bundler to retain all 94 in the compiled gateway binary, and lazy enough that
 // only the requested connector is ever evaluated.
 
 export const BUNDLED_CONNECTORS: Readonly<Record<string, () => Promise<unknown>>> = {
@@ -40,6 +40,7 @@ export const BUNDLED_CONNECTORS: Readonly<Record<string, () => Promise<unknown>>
   "github-actions": () => import("@nimbus-dev/connectors/github-actions"),
   gitlab: () => import("@nimbus-dev/connectors/gitlab"),
   gmail: () => import("@nimbus-dev/connectors/gmail"),
+  "google-calendar": () => import("@nimbus-dev/connectors/google-calendar"),
   "google-drive": () => import("@nimbus-dev/connectors/google-drive"),
   "google-meet": () => import("@nimbus-dev/connectors/google-meet"),
   "google-photos": () => import("@nimbus-dev/connectors/google-photos"),

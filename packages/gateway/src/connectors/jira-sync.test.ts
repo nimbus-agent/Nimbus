@@ -90,6 +90,19 @@ function singlePageIssueFetch(issue: Record<string, unknown>): typeof fetch {
   }) as unknown as typeof fetch;
 }
 
+/**
+ * A cursor whose snapshot was attempted just now, so a sync makes ONLY the incremental request(s):
+ * the paging tests below count requests and must not see the "my open work" snapshot's.
+ */
+function snapshotFreshCursor(): string {
+  return encodeNimbusJsonCursor("nimbus-jra1:", {
+    v: 1,
+    floorJql: null,
+    snapAt: Date.now(),
+    ocAt: Date.now(),
+  });
+}
+
 describeWithFetchRestore("jira-sync", () => {
   testConnectorSyncNoop(
     "no-op when credentials missing",
@@ -199,7 +212,7 @@ describeWithFetchRestore("jira-sync", () => {
     ): Promise<Response> => {
       const body =
         init?.body !== undefined && typeof init.body === "string" ? JSON.parse(init.body) : {};
-      capturedJql = typeof body.jql === "string" ? body.jql : "";
+      capturedJql ||= typeof body.jql === "string" ? body.jql : ""; // the incremental request is the first
       return new Response(JSON.stringify({ issues: [], startAt: 0, maxResults: 50, total: 0 }), {
         status: 200,
       });
@@ -220,7 +233,7 @@ describeWithFetchRestore("jira-sync", () => {
     ): Promise<Response> => {
       const body =
         init?.body !== undefined && typeof init.body === "string" ? JSON.parse(init.body) : {};
-      capturedJql = typeof body.jql === "string" ? body.jql : "";
+      capturedJql ||= typeof body.jql === "string" ? body.jql : ""; // the incremental request is the first
       return new Response(JSON.stringify({ issues: [], startAt: 0, maxResults: 50, total: 0 }), {
         status: 200,
       });
@@ -270,7 +283,7 @@ describeWithFetchRestore("jira-sync", () => {
     ): Promise<Response> => {
       const body =
         init?.body !== undefined && typeof init.body === "string" ? JSON.parse(init.body) : {};
-      capturedJql = typeof body.jql === "string" ? body.jql : "";
+      capturedJql ||= typeof body.jql === "string" ? body.jql : ""; // the incremental request is the first
       return new Response(JSON.stringify({ issues: [], startAt: 0, maxResults: 50, total: 0 }), {
         status: 200,
       });
@@ -290,7 +303,7 @@ describeWithFetchRestore("jira-sync", () => {
     ): Promise<Response> => {
       const body =
         init?.body !== undefined && typeof init.body === "string" ? JSON.parse(init.body) : {};
-      capturedJql = typeof body.jql === "string" ? body.jql : "";
+      capturedJql ||= typeof body.jql === "string" ? body.jql : ""; // the incremental request is the first
       return new Response(JSON.stringify({ issues: [], startAt: 0, maxResults: 50, total: 0 }), {
         status: 200,
       });
@@ -598,7 +611,7 @@ describeWithFetchRestore("jira-sync", () => {
     }) as typeof fetch;
 
     const sync = createJiraSyncable({ ensureJiraMcpRunning: async () => {} });
-    const r = await sync.sync(ctx, null);
+    const r = await sync.sync(ctx, snapshotFreshCursor());
     expect(callCount).toBe(2);
     expect(r.itemsUpserted).toBe(51);
     expectServiceItemCount(db, "jira", 51);
@@ -616,7 +629,7 @@ describeWithFetchRestore("jira-sync", () => {
     }) as unknown as typeof fetch;
 
     const sync = createJiraSyncable({ ensureJiraMcpRunning: async () => {} });
-    const r = await sync.sync(ctx, null);
+    const r = await sync.sync(ctx, snapshotFreshCursor());
     expect(callCount).toBe(1);
     expect(r.itemsUpserted).toBe(0);
   });
@@ -643,7 +656,7 @@ describeWithFetchRestore("jira-sync", () => {
     }) as unknown as typeof fetch;
 
     const sync = createJiraSyncable({ ensureJiraMcpRunning: async () => {} });
-    const r = await sync.sync(ctx, null);
+    const r = await sync.sync(ctx, snapshotFreshCursor());
     expect(callCount).toBe(1);
     expect(r.itemsUpserted).toBe(3);
   });
@@ -764,7 +777,7 @@ describeWithFetchRestore("jira-sync", () => {
     }) as typeof fetch;
 
     const sync = createJiraSyncable({ ensureJiraMcpRunning: async () => {} });
-    const r = await sync.sync(ctx, null);
+    const r = await sync.sync(ctx, snapshotFreshCursor());
     expect(callCount).toBe(1);
     expect(r.itemsUpserted).toBe(50);
   });

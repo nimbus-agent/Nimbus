@@ -17,6 +17,7 @@ const GOOGLE_SERVICE_VAULT_KEYS: Partial<Record<ConnectorServiceId, string>> = {
   gmail: "google_gmail.oauth",
   google_photos: "google_photos.oauth",
   google_meet: "google_meet.oauth",
+  google_calendar: "google_calendar.oauth",
 };
 
 export const ALL_GOOGLE_OAUTH_VAULT_KEYS: readonly string[] = [
@@ -25,6 +26,7 @@ export const ALL_GOOGLE_OAUTH_VAULT_KEYS: readonly string[] = [
   "google_gmail.oauth",
   "google_photos.oauth",
   "google_meet.oauth",
+  "google_calendar.oauth",
 ];
 
 const MICROSOFT_SERVICE_VAULT_KEYS: Partial<Record<ConnectorServiceId, string>> = {

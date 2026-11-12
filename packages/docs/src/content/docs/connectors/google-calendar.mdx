@@ -1,0 +1,30 @@
+---
+title: Google Calendar
+description: Index your Google Calendar events for the next 30 days. Read-only, with its own consent.
+---
+
+The Google Calendar connector indexes your events into the local SQLite index and exposes read tools for calendars and events. Read-only: there are no write tools.
+
+## What's indexed
+
+- **Service id:** `google_calendar`
+- **Item type:** `event`
+- **Window:** one day back to 30 days ahead, kept current every five minutes; the window is re-anchored every seven days, so the far edge is at least 23 days ahead between re-anchors.
+- **Calendars:** every calendar you have selected in Google Calendar that you can read in full, at most 20 (your primary calendar first). A calendar you unselect loses its events from the index.
+- **Per event:** title, a short description preview, location, start and end times (all-day events run from midnight to midnight in this machine's time zone), whether you accepted, the organizer's address and the number of attendees. Attendee addresses are not stored. Recurring events appear as their individual instances.
+
+## Authenticate
+
+```bash
+nimbus connector auth google_calendar
+```
+
+This is its own consent: it asks only for `https://www.googleapis.com/auth/calendar.readonly`. Connecting Gmail, Drive or Photos does not give Nimbus access to your calendar, and Google Calendar sync stays off until you run this command. Because `calendar.readonly` is a Google sensitive scope, an OAuth client that Google has not verified can grant it only to its listed test users.
+
+## Read tools (no HITL)
+
+| Tool | Purpose |
+|---|---|
+| `gcal_calendar_list` | List the calendars you can see. |
+| `gcal_event_get` | Get a single event by id. |
+| `gcal_event_list` | List events in a time window. |

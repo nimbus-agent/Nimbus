@@ -99,6 +99,7 @@ describe("manifestForFirstParty", () => {
       "gmail",
       "google_photos",
       "google_meet",
+      "google_calendar",
       "onedrive",
       "outlook",
       "teams",
@@ -668,5 +669,13 @@ describe("C3: the Operations alert and flag writes need no new network host (I15
       expect(wildcards(m.permissions.network), id).toEqual([]);
       expect(m.firstPartyWildcardHosts ?? [], id).toEqual([]);
     }
+  });
+});
+
+describe("google_calendar manifest", () => {
+  test("names only the Calendar API host (the connector is handed a ready token)", () => {
+    const m = manifestForFirstParty("google_calendar");
+    expect(m.id).toBe("com.nimbus.google-calendar");
+    expect(m.permissions.network).toEqual(["www.googleapis.com"]);
   });
 });

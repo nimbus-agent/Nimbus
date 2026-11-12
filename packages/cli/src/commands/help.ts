@@ -56,6 +56,7 @@ AGENTS — read-only briefs over the local index
   nimbus changelog [--since 7d]      Merged PRs, deployments and incidents in one window, per service
   nimbus standup [--since 24h]       What YOU did — PRs, reviews, tickets, incidents, Slack
   nimbus oncall [--service <name>]   Your active incident, the deploy before it, and what shipped
+  nimbus oncall now [--service <id>] Who is on call right now, from the index (PagerDuty, Jira Service Management)
 
 AGENTS THAT NEED PAIRED PEERS — see TEAM below; these query the federation mesh
   nimbus conflicts <file>            Teammates with an open PR, ticket or branch on the same file

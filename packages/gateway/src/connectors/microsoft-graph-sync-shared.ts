@@ -77,22 +77,45 @@ export function nextCursorFromODataDeltaLinks(
   return { stored: null, hasMore: false };
 }
 
+/**
+ * A non-OK Graph response. The message is the same `<label> sync failed: <status>` text every caller
+ * already matched on; the numeric status lets a caller tell a 410 (delta token expired) from a 403.
+ */
+export class MicrosoftGraphHttpError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
+    super(message);
+    this.name = "MicrosoftGraphHttpError";
+  }
+}
+
 export async function fetchMicrosoftGraphJson(
   ctx: SyncContext,
   token: string,
   nextUrl: string | null,
   initialUrl: string,
   errorLabel: string,
+  /** Extra request headers (e.g. `Prefer`); `Authorization` is always the bearer token. */
+  headers?: Readonly<Record<string, string>>,
 ): Promise<{ json: unknown; bytes: number }> {
   await ctx.rateLimiter.acquire("microsoft");
   const url = nextUrl !== null && nextUrl !== "" ? nextUrl : initialUrl;
-  const res = await fetch(url, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
+  // A plain object (not `Headers`): callers and tests read `init.headers["Authorization"]` directly.
+  const merged: Record<string, string> = {};
+  for (const [k, v] of Object.entries(headers ?? {})) {
+    if (k.toLowerCase() !== "authorization") merged[k] = v;
+  }
+  merged["Authorization"] = `Bearer ${token}`;
+  const res = await fetch(url, { headers: merged });
   const text = await res.text();
   const bytes = Buffer.byteLength(text, "utf8");
   if (!res.ok) {
-    throw new Error(`${errorLabel} sync failed: ${String(res.status)}`);
+    throw new MicrosoftGraphHttpError(
+      `${errorLabel} sync failed: ${String(res.status)}`,
+      res.status,
+    );
   }
   let json: unknown;
   try {

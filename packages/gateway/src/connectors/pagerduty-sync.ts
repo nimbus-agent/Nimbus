@@ -1,19 +1,23 @@
 import { syncPassCursorSuccess } from "../sync/pass-cursor-sync-result.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
+import { snapshotDue } from "./_lib/work-snapshot-run.ts";
 import { usableActorEmail } from "./actor-email.ts";
 import { decodeNimbusJsonCursorObject, encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
+import { ONCALL_REFRESH_INTERVAL_MS } from "./oncall-shift-items.ts";
 import {
   extractPagerdutyActors,
   PAGERDUTY_INCIDENT_META_VERSION,
   pagerdutyEmailMapFromIncidents,
   pagerdutyUnresolvedActorIds,
 } from "./pagerduty-attribution.ts";
+import { runPagerdutyOncall } from "./pagerduty-oncall.ts";
 import { asRecord, stringField } from "./unknown-record.ts";
 
 const SERVICE_ID = "pagerduty";
 const CURSOR_PREFIX = "nimbus-pd1:";
 
-type PdCursorV1 = { lastUpdated: string };
+/** `ocAt`: epoch ms of the last on-call refresh ATTEMPT (success or failure). */
+type PdCursorV1 = { lastUpdated: string; ocAt?: number };
 
 function encodeCursor(c: PdCursorV1): string {
   return encodeNimbusJsonCursor(CURSOR_PREFIX, c);
@@ -28,7 +32,11 @@ function decodeCursor(raw: string | null): PdCursorV1 | null {
   if (typeof lu !== "string" || lu === "") {
     return null;
   }
-  return { lastUpdated: lu };
+  const ocAt = rec["ocAt"];
+  return {
+    lastUpdated: lu,
+    ...(typeof ocAt === "number" && Number.isFinite(ocAt) ? { ocAt } : {}),
+  };
 }
 
 function parsePagerdutyListResponse(text: string): { incidents: unknown[]; more: boolean } | null {
@@ -250,19 +258,147 @@ function partialSyncResult(
   itemsUpserted: number,
   bytesTransferred: number,
   t0: number,
+  ocAt: number | undefined,
 ): SyncResult {
   return syncPassCursorSuccess(
     t0,
     bytesTransferred,
-    encodeCursor({ lastUpdated: maxUpdated }),
+    encodeCursor({ lastUpdated: maxUpdated, ...(ocAt === undefined ? {} : { ocAt }) }),
     itemsUpserted,
   );
+}
+
+/**
+ * Runs the on-call refresh when due and returns the cursor's `ocAt` (an ATTEMPT, so a failing provider
+ * retries once per interval). Never throws: the incident sync that already ran must not fail because
+ * this step did.
+ */
+async function pagerdutyOncallIfDue(
+  ctx: SyncContext,
+  token: string,
+  prevOcAt: number | undefined,
+): Promise<number | undefined> {
+  const now = Date.now();
+  if (!snapshotDue(prevOcAt ?? null, now, ONCALL_REFRESH_INTERVAL_MS)) return prevOcAt;
+  try {
+    await runPagerdutyOncall(ctx, token, now);
+  } catch (err) {
+    ctx.logger.warn({ serviceId: SERVICE_ID, err }, "pagerduty oncall refresh failed");
+  }
+  return now;
+}
+
+/** Re-encodes a finished result's cursor with the new `ocAt`; a result with no decodable cursor is left alone. */
+function withOncallAt(result: SyncResult, ocAt: number | undefined): SyncResult {
+  const c = decodeCursor(result.cursor);
+  if (c === null || ocAt === undefined) return result;
+  return { ...result, cursor: encodeCursor({ ...c, ocAt }) };
 }
 
 export function createPagerdutySyncable(options: PagerdutySyncableOptions): Syncable {
   const initialSyncDepthDays = 30;
   const maxPagesPerSync = Math.max(1, Math.min(100, options.maxPagesPerSync ?? 20));
   const PAGE_SIZE = 100;
+  const syncIncidents = async (
+    ctx: SyncContext,
+    token: string,
+    prev: PdCursorV1 | null,
+    t0: number,
+  ): Promise<SyncResult> => {
+    const now = Date.now();
+    // Honors `SyncContext.historyFloorMs` (opt-in, see `sync/types.ts`) on a COLD
+    // START only; an established cursor is more recent by construction and wins.
+    // Opted in because an attribution substrate is exactly the case the mechanism
+    // was built for — assembling a contribution brief needs more than 30 days of
+    // history, once, without permanently widening every routine sync.
+    const coldFloorMs =
+      ctx.historyFloorMs !== undefined && Number.isFinite(ctx.historyFloorMs)
+        ? ctx.historyFloorMs
+        : now - initialSyncDepthDays * 86_400_000;
+    const since = prev?.lastUpdated ?? new Date(coldFloorMs).toISOString();
+
+    let pagesFetched = 0;
+    let totalUpserted = 0;
+    let maxUpdated = since;
+    let totalBytesTransferred = 0;
+    let pdHasMore = false;
+    // Run-scoped, so a repeated actor is harvested once per SYNC, not per page.
+    const emailById = new Map<string, string>();
+    // Run-scoped, so a repeated actor costs one lookup per SYNC, not per page.
+    const attemptedUserIds = new Set<string>();
+
+    while (pagesFetched < maxPagesPerSync) {
+      await ctx.rateLimiter.acquire("pagerduty");
+      const u = new URL("https://api.pagerduty.com/incidents");
+      u.searchParams.set("limit", String(PAGE_SIZE));
+      u.searchParams.set("sort_by", "updated_at:asc");
+      u.searchParams.set("since", since);
+      u.searchParams.set("offset", String(pagesFetched * PAGE_SIZE));
+      // Expanded actors carry `email`, which is what makes assignee
+      // attribution cost ZERO extra requests. `acknowledgers` is requested
+      // even though no acknowledger edge is emitted: it is an identity
+      // source for `last_status_change_by`, which arrives as a bare
+      // reference (spec § 3.2). `append`, not `set` — `set` would replace
+      // the previous value and only the last would survive.
+      u.searchParams.append("include[]", "assignees");
+      u.searchParams.append("include[]", "acknowledgers");
+      u.searchParams.append("include[]", "users");
+      const res = await fetch(u.toString(), {
+        headers: {
+          Accept: "application/vnd.pagerduty+json;version=2",
+          Authorization: `Token token=${token.trim()}`,
+        },
+      });
+      const text = await res.text();
+      totalBytesTransferred += text.length;
+      if (!res.ok) {
+        ctx.logger.warn(
+          { serviceId: SERVICE_ID, status: res.status, page: pagesFetched },
+          "pagerduty sync: list failed",
+        );
+        return partialSyncResult(maxUpdated, totalUpserted, totalBytesTransferred, t0, prev?.ocAt);
+      }
+      const parsed = parsePagerdutyListResponse(text);
+      if (parsed === null) {
+        return partialSyncResult(maxUpdated, totalUpserted, totalBytesTransferred, t0, prev?.ocAt);
+      }
+      const pageEmails = pagerdutyEmailMapFromIncidents(parsed.incidents);
+      mergeNewEmails(emailById, pageEmails);
+      totalBytesTransferred += await resolveMissingActorEmails(
+        ctx,
+        token,
+        pagerdutyUnresolvedActorIds(parsed.incidents, emailById),
+        emailById,
+        attemptedUserIds,
+      );
+
+      const { upserted, maxUpdated: pageMax } = syncPagerdutyIncidentItems(
+        ctx,
+        parsed.incidents,
+        maxUpdated,
+        now,
+        emailById,
+      );
+      totalUpserted += upserted;
+      maxUpdated = pageMax;
+      pagesFetched += 1;
+      pdHasMore = parsed.more;
+      if (!pdHasMore) break;
+    }
+
+    return {
+      cursor: encodeCursor({
+        lastUpdated: maxUpdated,
+        ...(prev?.ocAt === undefined ? {} : { ocAt: prev.ocAt }),
+      }),
+      itemsUpserted: totalUpserted,
+      itemsDeleted: 0,
+      hasMore: pagesFetched >= maxPagesPerSync && pdHasMore,
+      durationMs: Math.round(performance.now() - t0),
+      bytesTransferred: totalBytesTransferred,
+    };
+  };
+
   return {
     serviceId: SERVICE_ID,
     defaultIntervalMs: 120 * 1000,
@@ -275,95 +411,8 @@ export function createPagerdutySyncable(options: PagerdutySyncableOptions): Sync
         return syncNoopResult(cursor, t0);
       }
       const prev = decodeCursor(cursor);
-      const now = Date.now();
-      // Honors `SyncContext.historyFloorMs` (opt-in, see `sync/types.ts`) on a COLD
-      // START only; an established cursor is more recent by construction and wins.
-      // Opted in because an attribution substrate is exactly the case the mechanism
-      // was built for — assembling a contribution brief needs more than 30 days of
-      // history, once, without permanently widening every routine sync.
-      const coldFloorMs =
-        ctx.historyFloorMs !== undefined && Number.isFinite(ctx.historyFloorMs)
-          ? ctx.historyFloorMs
-          : now - initialSyncDepthDays * 86_400_000;
-      const since = prev?.lastUpdated ?? new Date(coldFloorMs).toISOString();
-
-      let pagesFetched = 0;
-      let totalUpserted = 0;
-      let maxUpdated = since;
-      let totalBytesTransferred = 0;
-      let pdHasMore = false;
-      // Run-scoped, so a repeated actor is harvested once per SYNC, not per page.
-      const emailById = new Map<string, string>();
-      // Run-scoped, so a repeated actor costs one lookup per SYNC, not per page.
-      const attemptedUserIds = new Set<string>();
-
-      while (pagesFetched < maxPagesPerSync) {
-        await ctx.rateLimiter.acquire("pagerduty");
-        const u = new URL("https://api.pagerduty.com/incidents");
-        u.searchParams.set("limit", String(PAGE_SIZE));
-        u.searchParams.set("sort_by", "updated_at:asc");
-        u.searchParams.set("since", since);
-        u.searchParams.set("offset", String(pagesFetched * PAGE_SIZE));
-        // Expanded actors carry `email`, which is what makes assignee
-        // attribution cost ZERO extra requests. `acknowledgers` is requested
-        // even though no acknowledger edge is emitted: it is an identity
-        // source for `last_status_change_by`, which arrives as a bare
-        // reference (spec § 3.2). `append`, not `set` — `set` would replace
-        // the previous value and only the last would survive.
-        u.searchParams.append("include[]", "assignees");
-        u.searchParams.append("include[]", "acknowledgers");
-        u.searchParams.append("include[]", "users");
-        const res = await fetch(u.toString(), {
-          headers: {
-            Accept: "application/vnd.pagerduty+json;version=2",
-            Authorization: `Token token=${token.trim()}`,
-          },
-        });
-        const text = await res.text();
-        totalBytesTransferred += text.length;
-        if (!res.ok) {
-          ctx.logger.warn(
-            { serviceId: SERVICE_ID, status: res.status, page: pagesFetched },
-            "pagerduty sync: list failed",
-          );
-          return partialSyncResult(maxUpdated, totalUpserted, totalBytesTransferred, t0);
-        }
-        const parsed = parsePagerdutyListResponse(text);
-        if (parsed === null) {
-          return partialSyncResult(maxUpdated, totalUpserted, totalBytesTransferred, t0);
-        }
-        const pageEmails = pagerdutyEmailMapFromIncidents(parsed.incidents);
-        mergeNewEmails(emailById, pageEmails);
-        totalBytesTransferred += await resolveMissingActorEmails(
-          ctx,
-          token,
-          pagerdutyUnresolvedActorIds(parsed.incidents, emailById),
-          emailById,
-          attemptedUserIds,
-        );
-
-        const { upserted, maxUpdated: pageMax } = syncPagerdutyIncidentItems(
-          ctx,
-          parsed.incidents,
-          maxUpdated,
-          now,
-          emailById,
-        );
-        totalUpserted += upserted;
-        maxUpdated = pageMax;
-        pagesFetched += 1;
-        pdHasMore = parsed.more;
-        if (!pdHasMore) break;
-      }
-
-      return {
-        cursor: encodeCursor({ lastUpdated: maxUpdated }),
-        itemsUpserted: totalUpserted,
-        itemsDeleted: 0,
-        hasMore: pagesFetched >= maxPagesPerSync && pdHasMore,
-        durationMs: Math.round(performance.now() - t0),
-        bytesTransferred: totalBytesTransferred,
-      };
+      const result = await syncIncidents(ctx, token, prev, t0);
+      return withOncallAt(result, await pagerdutyOncallIfDue(ctx, token, prev?.ocAt));
     },
   };
 }

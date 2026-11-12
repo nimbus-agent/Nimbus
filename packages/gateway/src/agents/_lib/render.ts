@@ -53,6 +53,8 @@ import type {
   OncallBrief,
   OncallChange,
   OncallIncident,
+  OncallNowShift,
+  OncallOnCallNow,
   OncallPriorIncident,
 } from "./oncall-types.ts";
 import type { OwnershipBrief, OwnershipTargetView } from "./ownership-types.ts";
@@ -1408,6 +1410,7 @@ function renderOncallIncidentSection(brief: OncallBrief): string {
         : i.assigneeEmails.map((e) => stripLineStructureChars(e)).join(", ")
     }`,
     `- **Service:** ${oncallServiceLabel(brief)}`,
+    `- **On call now:** ${renderOncallNow(brief)}`,
   ];
 
   // Named rather than only counted, so the reader can act on a runner-up without looking it up.
@@ -1456,6 +1459,50 @@ function oncallRunnerUpLabel(selection: OncallBrief["selection"]): string {
  * has to paste into `nimbus.toml` to fix the four empty sections below, and `## Gaps` names the
  * remedy but cannot name the id without duplicating this lookup.
  */
+const SOURCE_LABELS = { pagerduty: "PagerDuty", jsm: "Jira Service Management" } as const;
+
+function renderNowShift(s: OncallNowShift): string {
+  const parts: string[] = [];
+  const where = s.scheduleName ?? s.policyName;
+  if (where !== null) parts.push(hardenedTitleLink(where, null));
+  if (s.level !== null) parts.push(`level ${String(s.level)}`);
+  if (s.endMs !== null) parts.push(`until ${isoMinuteUtc(s.endMs)}`);
+  const detail = parts.length === 0 ? "" : ` (${parts.join(", ")})`;
+  return `${hardenedTitleLink(s.userName, null)}${detail}${s.isMe ? " (you)" : ""}`;
+}
+
+function renderNowAges(n: OncallOnCallNow): string {
+  const out = n.sources.map((src) => {
+    const label = SOURCE_LABELS[src.source];
+    if (src.oldestFetchedMs === null)
+      return `${label} data age unknown; the shift may have changed`;
+    const minutes = Math.max(0, Math.round((n.asOfMs - src.oldestFetchedMs) / 60_000));
+    const age = minutes >= 120 ? `${String(Math.round(minutes / 60))} h` : `${String(minutes)} min`;
+    return `${label} data ${age} old${src.stale ? "; the shift may have changed" : ""}`;
+  });
+  return out.length === 0 ? "" : ` (${out.join("; ")})`;
+}
+
+/** The completeness warnings the query attached (an incomplete service map), shown with the result. */
+function renderNowGaps(n: OncallOnCallNow): string {
+  return n.gaps.length === 0 ? "" : ` ${n.gaps.map(stripLineStructureChars).join(" ")}`;
+}
+
+/** The on-call line of `## Incident`: explicit about every case, so an empty list never reads as "nobody". */
+function renderOncallNow(brief: OncallBrief): string {
+  const n = brief.onCallNow;
+  if (n === null) return "_unknown (no service id)_";
+  if (n.status === "no_data") return "_no on-call data indexed_";
+  if (n.status === "no_match") {
+    return `_no indexed schedule covers this service${renderNowAges(n)}_${renderNowGaps(n)}`;
+  }
+  if (n.status === "none_on_call") {
+    const next = n.next.length === 0 ? "" : ` (next: ${n.next.map(renderNowShift).join("; ")})`;
+    return `_nobody on call per the index${next}${renderNowAges(n)}_${renderNowGaps(n)}`;
+  }
+  return `${n.shifts.map(renderNowShift).join("; ")}${renderNowAges(n)}${renderNowGaps(n)}`;
+}
+
 function oncallServiceLabel(brief: OncallBrief): string {
   if (brief.binding.nimbusServiceId !== null) {
     return stripLineStructureChars(brief.binding.nimbusServiceId);

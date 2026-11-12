@@ -94,6 +94,7 @@ describe("ConnectorSecretKeyOf — type pins", () => {
     assertEq<ConnectorSecretKeyOf<"gmail">, never>(true);
     assertEq<ConnectorSecretKeyOf<"google_photos">, never>(true);
     assertEq<ConnectorSecretKeyOf<"google_meet">, never>(true);
+    assertEq<ConnectorSecretKeyOf<"google_calendar">, never>(true);
     assertEq<ConnectorSecretKeyOf<"onedrive">, never>(true);
     assertEq<ConnectorSecretKeyOf<"outlook">, never>(true);
     assertEq<ConnectorSecretKeyOf<"teams">, "bot_app_id" | "bot_app_password">(true);
@@ -366,6 +367,7 @@ describe("clearOAuthVaultIfProviderUnused", () => {
     await vault.set("google_drive.oauth", "drive");
     await vault.set("google_gmail.oauth", "gmail");
     await vault.set("google_photos.oauth", "photos");
+    await vault.set("google_calendar.oauth", "calendar");
 
     const cleared = await clearOAuthVaultIfProviderUnused(vault, db, "google_drive");
 
@@ -373,6 +375,8 @@ describe("clearOAuthVaultIfProviderUnused", () => {
     expect(cleared).toContain("google_drive.oauth");
     expect(cleared).toContain("google_gmail.oauth");
     expect(cleared).toContain("google_photos.oauth");
+    expect(cleared).toContain("google_calendar.oauth");
+    expect(await vault.get("google_calendar.oauth")).toBeNull();
     expect(await vault.get("google.oauth")).toBeNull();
     expect(await vault.get("google_drive.oauth")).toBeNull();
     expect(await vault.get("google_gmail.oauth")).toBeNull();

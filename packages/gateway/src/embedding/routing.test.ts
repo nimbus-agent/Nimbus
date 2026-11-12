@@ -102,6 +102,12 @@ describe("embedding/routing", () => {
     expect(isProseHeavy("google_meet", "meeting")).toBe(false);
   });
 
+  test("calendar events (google_calendar, outlook, apple) are not prose-heavy", () => {
+    // A title, a time and a short preview: not paragraph prose, so no per-event OpenAI bill.
+    expect(isProseHeavy("google_calendar", "event")).toBe(false);
+    expect(isProseHeavy("outlook", "event")).toBe(false);
+  });
+
   test("workday item types are not prose-heavy (384-dim default)", () => {
     for (const t of ["worker", "time_off", "job_posting", "report"]) {
       expect(isProseHeavy("workday", t)).toBe(false);

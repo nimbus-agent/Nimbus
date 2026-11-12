@@ -276,6 +276,15 @@ describe("oauthProfileForService — remaining supported OAuth providers", () =>
     );
   });
 
+  test("google_calendar has its OWN consent: only calendar.readonly", () => {
+    const profile = oauthProfileForService("google_calendar");
+    expect(profile.provider).toBe("google");
+    expect(profile.defaultScopes).toEqual(["https://www.googleapis.com/auth/calendar.readonly"]);
+    expect(normalizeConnectorServiceId("google-calendar")).toBe("google_calendar");
+    expect(GOOGLE_CONNECTOR_SERVICES.has("google_calendar")).toBe(true);
+    expect(defaultSyncIntervalMsForService("google_calendar")).toBe(5 * 60 * 1000);
+  });
+
   test("returns zoom provider profile with meeting and recording scopes", () => {
     const profile = oauthProfileForService("zoom");
     expect(profile.provider).toBe("zoom");

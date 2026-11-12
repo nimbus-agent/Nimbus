@@ -1,20 +1,19 @@
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
 const tokenState: { throwNext: boolean; value: string } = {
   throwNext: false,
   value: "google-drive-stub-token",
 };
-mock.module("../../../src/auth/google-access-token.ts", () => ({
-  getValidGoogleAccessToken: async (): Promise<string> => {
-    if (tokenState.throwNext) {
-      throw new Error("refresh failed");
-    }
-    return tokenState.value;
-  },
-}));
+const tokenAccessor = async (): Promise<string> => {
+  if (tokenState.throwNext) {
+    throw new Error("refresh failed");
+  }
+  return tokenState.value;
+};
 
 import { createGoogleDriveSyncable } from "../../../src/connectors/google-drive-sync.ts";
 import { itemPrimaryKey } from "../../../src/index/item-store.ts";
+import type { SyncContext } from "../../../src/sync/types.ts";
 import {
   type ConnectorSyncFixture,
   createConnectorSyncFixture,
@@ -38,6 +37,11 @@ function encodeCursor(payload: unknown): string {
 
 let fixture: ConnectorSyncFixture;
 
+/** The sync context with its access-token getter injected (no process-wide module mock). */
+function driveCtx(): SyncContext {
+  return { ...fixture.createSyncContext("google_drive"), accessToken: tokenAccessor };
+}
+
 beforeEach(() => {
   fixture = createConnectorSyncFixture();
   fixture.fetchMock.install();
@@ -53,9 +57,7 @@ describe("google-drive-sync — credential short-circuits", () => {
   test("token getter throws → sync() rejects, no fetches", async () => {
     tokenState.throwNext = true;
     const syncable = createGoogleDriveSyncable(ENSURE_MCP);
-    await expect(syncable.sync(fixture.createSyncContext("google_drive"), null)).rejects.toThrow(
-      /refresh failed/,
-    );
+    await expect(syncable.sync(driveCtx(), null)).rejects.toThrow(/refresh failed/);
     expect(fixture.fetchMock.calls).toHaveLength(0);
   });
 
@@ -64,7 +66,7 @@ describe("google-drive-sync — credential short-circuits", () => {
     fixture.fetchMock.respond("GET", START_TOKEN_RE, { startPageToken: "t0" });
     fixture.fetchMock.respond("GET", FILES_LIST_RE, { files: [] });
     const syncable = createGoogleDriveSyncable(ENSURE_MCP);
-    await syncable.sync(fixture.createSyncContext("google_drive"), null);
+    await syncable.sync(driveCtx(), null);
     expect(fixture.fetchMock.calls).toHaveLength(2);
     expect(fixture.fetchMock.calls[0]?.headers["authorization"]).toBe("Bearer");
   });
@@ -82,10 +84,7 @@ function stageNullCursorFlowEmpty(): void {
 describe("google-drive-sync — cursor decode", () => {
   test("null cursor → initial flow: fetches startPageToken + files.list, transitions to drain", async () => {
     stageNullCursorFlowEmpty();
-    const res = await createGoogleDriveSyncable(ENSURE_MCP).sync(
-      fixture.createSyncContext("google_drive"),
-      null,
-    );
+    const res = await createGoogleDriveSyncable(ENSURE_MCP).sync(driveCtx(), null);
     expect(res.hasMore).toBe(true);
     expect(res.cursor).not.toBeNull();
     const decoded = JSON.parse(
@@ -96,10 +95,7 @@ describe("google-drive-sync — cursor decode", () => {
 
   test("empty string cursor → same as null cursor (initial flow)", async () => {
     stageNullCursorFlowEmpty();
-    const res = await createGoogleDriveSyncable(ENSURE_MCP).sync(
-      fixture.createSyncContext("google_drive"),
-      "",
-    );
+    const res = await createGoogleDriveSyncable(ENSURE_MCP).sync(driveCtx(), "");
     expect(res.hasMore).toBe(true);
     expect(fixture.fetchMock.calls).toHaveLength(2);
     expect(fixture.fetchMock.calls[0]?.url).toMatch(START_TOKEN_RE);
@@ -108,10 +104,7 @@ describe("google-drive-sync — cursor decode", () => {
 
   test("wrong-prefix cursor → legacy migration path (treated as literal page token)", async () => {
     stageLegacyFlowEmpty();
-    const res = await createGoogleDriveSyncable(ENSURE_MCP).sync(
-      fixture.createSyncContext("google_drive"),
-      "legacyOpaqueToken",
-    );
+    const res = await createGoogleDriveSyncable(ENSURE_MCP).sync(driveCtx(), "legacyOpaqueToken");
     expect(res.hasMore).toBe(true);
     const filesCalls = fixture.fetchMock.calls.filter((c) => c.url.startsWith(FILES_LIST_PREFIX));
     expect(filesCalls).toHaveLength(1);
@@ -120,27 +113,21 @@ describe("google-drive-sync — cursor decode", () => {
 
   test("non-base64 prefixed cursor → throws 'corrupt cursor'", async () => {
     await expect(
-      createGoogleDriveSyncable(ENSURE_MCP).sync(
-        fixture.createSyncContext("google_drive"),
-        `${CURSOR_PREFIX}!!!not-base64!!!`,
-      ),
+      createGoogleDriveSyncable(ENSURE_MCP).sync(driveCtx(), `${CURSOR_PREFIX}!!!not-base64!!!`),
     ).rejects.toThrow(/corrupt cursor/);
     expect(fixture.fetchMock.calls).toHaveLength(0);
   });
 
   test("prefixed cursor decoding to array → throws 'corrupt cursor'", async () => {
     await expect(
-      createGoogleDriveSyncable(ENSURE_MCP).sync(
-        fixture.createSyncContext("google_drive"),
-        encodeCursor([1, 2, 3]),
-      ),
+      createGoogleDriveSyncable(ENSURE_MCP).sync(driveCtx(), encodeCursor([1, 2, 3])),
     ).rejects.toThrow(/corrupt cursor/);
   });
 
   test("init_list cursor with missing t0 → throws 'corrupt cursor'", async () => {
     await expect(
       createGoogleDriveSyncable(ENSURE_MCP).sync(
-        fixture.createSyncContext("google_drive"),
+        driveCtx(),
         encodeCursor({ v: 1, phase: "init_list", listToken: "abc" }),
       ),
     ).rejects.toThrow(/corrupt cursor/);
@@ -149,7 +136,7 @@ describe("google-drive-sync — cursor decode", () => {
   test("drain cursor with missing changePage → throws 'corrupt cursor'", async () => {
     await expect(
       createGoogleDriveSyncable(ENSURE_MCP).sync(
-        fixture.createSyncContext("google_drive"),
+        driveCtx(),
         encodeCursor({ v: 1, phase: "drain" }),
       ),
     ).rejects.toThrow(/corrupt cursor/);
@@ -158,7 +145,7 @@ describe("google-drive-sync — cursor decode", () => {
   test("delta cursor with missing pageToken → throws 'corrupt cursor'", async () => {
     await expect(
       createGoogleDriveSyncable(ENSURE_MCP).sync(
-        fixture.createSyncContext("google_drive"),
+        driveCtx(),
         encodeCursor({ v: 1, phase: "delta" }),
       ),
     ).rejects.toThrow(/corrupt cursor/);
@@ -167,7 +154,7 @@ describe("google-drive-sync — cursor decode", () => {
   test("prefixed cursor with unknown phase → throws 'corrupt cursor'", async () => {
     await expect(
       createGoogleDriveSyncable(ENSURE_MCP).sync(
-        fixture.createSyncContext("google_drive"),
+        driveCtx(),
         encodeCursor({ v: 1, phase: "other", t0: "x" }),
       ),
     ).rejects.toThrow(/corrupt cursor/);
@@ -178,10 +165,7 @@ describe("google-drive-sync — HTTP request paths", () => {
   test("sends Authorization: Bearer <token> header on startPageToken", async () => {
     fixture.fetchMock.respond("GET", START_TOKEN_RE, { startPageToken: "t0" });
     fixture.fetchMock.respond("GET", FILES_LIST_RE, { files: [] });
-    await createGoogleDriveSyncable(ENSURE_MCP).sync(
-      fixture.createSyncContext("google_drive"),
-      null,
-    );
+    await createGoogleDriveSyncable(ENSURE_MCP).sync(driveCtx(), null);
     const startCall = fixture.fetchMock.calls.find((c) => c.url.startsWith(START_TOKEN_PREFIX));
     expect(startCall).toBeDefined();
     expect(startCall?.headers["authorization"]).toBe("Bearer google-drive-stub-token");
@@ -190,10 +174,7 @@ describe("google-drive-sync — HTTP request paths", () => {
   test("sends Bearer header on files.list and includes q + pageSize=100 + fields", async () => {
     fixture.fetchMock.respond("GET", START_TOKEN_RE, { startPageToken: "t0" });
     fixture.fetchMock.respond("GET", FILES_LIST_RE, { files: [] });
-    await createGoogleDriveSyncable(ENSURE_MCP).sync(
-      fixture.createSyncContext("google_drive"),
-      null,
-    );
+    await createGoogleDriveSyncable(ENSURE_MCP).sync(driveCtx(), null);
     const filesCall = fixture.fetchMock.calls.find((c) => c.url.startsWith(FILES_LIST_PREFIX));
     expect(filesCall).toBeDefined();
     expect(filesCall?.headers["authorization"]).toBe("Bearer google-drive-stub-token");
@@ -211,10 +192,7 @@ describe("google-drive-sync — HTTP request paths", () => {
       newStartPageToken: "next-delta",
     });
     const drainCursor = encodeCursor({ v: 1, phase: "drain", changePage: "tokABC" });
-    await createGoogleDriveSyncable(ENSURE_MCP).sync(
-      fixture.createSyncContext("google_drive"),
-      drainCursor,
-    );
+    await createGoogleDriveSyncable(ENSURE_MCP).sync(driveCtx(), drainCursor);
     const changesCall = fixture.fetchMock.calls.find((c) => c.url.startsWith(CHANGES_LIST_PREFIX));
     expect(changesCall).toBeDefined();
     expect(changesCall?.headers["authorization"]).toBe("Bearer google-drive-stub-token");
@@ -233,9 +211,9 @@ describe("google-drive-sync — HTTP request paths", () => {
       { error: { code: 400, message: "Bad request foo" } },
       { status: 400 },
     );
-    await expect(
-      createGoogleDriveSyncable(ENSURE_MCP).sync(fixture.createSyncContext("google_drive"), null),
-    ).rejects.toThrow(/Bad request foo/);
+    await expect(createGoogleDriveSyncable(ENSURE_MCP).sync(driveCtx(), null)).rejects.toThrow(
+      /Bad request foo/,
+    );
   });
 });
 
@@ -248,10 +226,7 @@ describe("google-drive-sync — indexing skip paths", () => {
         { id: "kept-1", name: "kept.txt", mimeType: "text/plain" }, // valid
       ],
     });
-    await createGoogleDriveSyncable(ENSURE_MCP).sync(
-      fixture.createSyncContext("google_drive"),
-      null,
-    );
+    await createGoogleDriveSyncable(ENSURE_MCP).sync(driveCtx(), null);
     const rows = fixture.db
       .query<{ external_id: string }, []>(
         "SELECT external_id FROM item WHERE service = 'google_drive'",
@@ -269,10 +244,7 @@ describe("google-drive-sync — indexing skip paths", () => {
         { id: "kept-2", name: "kept.txt", mimeType: "text/plain" }, // valid
       ],
     });
-    await createGoogleDriveSyncable(ENSURE_MCP).sync(
-      fixture.createSyncContext("google_drive"),
-      null,
-    );
+    await createGoogleDriveSyncable(ENSURE_MCP).sync(driveCtx(), null);
     const rows = fixture.db
       .query<{ external_id: string }, []>(
         "SELECT external_id FROM item WHERE service = 'google_drive'",
@@ -293,10 +265,7 @@ describe("google-drive-sync — indexing skip paths", () => {
       newStartPageToken: "next-delta",
     });
     const cur = encodeCursor({ v: 1, phase: "drain", changePage: "tokABC" });
-    const res = await createGoogleDriveSyncable(ENSURE_MCP).sync(
-      fixture.createSyncContext("google_drive"),
-      cur,
-    );
+    const res = await createGoogleDriveSyncable(ENSURE_MCP).sync(driveCtx(), cur);
     expect(res.itemsDeleted).toBe(1);
     const row = fixture.db
       .query("SELECT id FROM item WHERE id = ?")
@@ -310,10 +279,7 @@ describe("google-drive-sync — indexing skip paths", () => {
       newStartPageToken: "next-delta",
     });
     const cur = encodeCursor({ v: 1, phase: "drain", changePage: "tokABC" });
-    const res = await createGoogleDriveSyncable(ENSURE_MCP).sync(
-      fixture.createSyncContext("google_drive"),
-      cur,
-    );
+    const res = await createGoogleDriveSyncable(ENSURE_MCP).sync(driveCtx(), cur);
     expect(res.itemsDeleted).toBe(0);
   });
 });
@@ -322,10 +288,7 @@ describe("google-drive-sync — phase machine: init_list", () => {
   test("init_list cursor with listToken refetches files.list, no startPageToken call", async () => {
     fixture.fetchMock.respond("GET", FILES_LIST_RE, { files: [] });
     const cur = encodeCursor({ v: 1, phase: "init_list", t0: "tokA", listToken: "page2" });
-    const res = await createGoogleDriveSyncable(ENSURE_MCP).sync(
-      fixture.createSyncContext("google_drive"),
-      cur,
-    );
+    const res = await createGoogleDriveSyncable(ENSURE_MCP).sync(driveCtx(), cur);
     expect(res.hasMore).toBe(true);
     expect(
       fixture.fetchMock.calls.filter((c) => c.url.startsWith(START_TOKEN_PREFIX)),
@@ -341,10 +304,7 @@ describe("google-drive-sync — phase machine: init_list", () => {
       nextPageToken: "page3",
     });
     const cur = encodeCursor({ v: 1, phase: "init_list", t0: "tokA", listToken: "page2" });
-    const res = await createGoogleDriveSyncable(ENSURE_MCP).sync(
-      fixture.createSyncContext("google_drive"),
-      cur,
-    );
+    const res = await createGoogleDriveSyncable(ENSURE_MCP).sync(driveCtx(), cur);
     expect(res.hasMore).toBe(true);
     expect(res.cursor).not.toBeNull();
     if (res.cursor === null) {
@@ -367,10 +327,7 @@ describe("google-drive-sync — phase machine: init_list", () => {
       ],
     });
     const cur = encodeCursor({ v: 1, phase: "init_list", t0: "tokFinal", listToken: "lastPage" });
-    const res = await createGoogleDriveSyncable(ENSURE_MCP).sync(
-      fixture.createSyncContext("google_drive"),
-      cur,
-    );
+    const res = await createGoogleDriveSyncable(ENSURE_MCP).sync(driveCtx(), cur);
     expect(res.hasMore).toBe(true);
     if (res.cursor === null) {
       throw new Error("cursor null");
@@ -395,10 +352,7 @@ describe("google-drive-sync — phase machine: drain", () => {
       nextPageToken: "drain-page-2",
     });
     const cur = encodeCursor({ v: 1, phase: "drain", changePage: "tokABC" });
-    const res = await createGoogleDriveSyncable(ENSURE_MCP).sync(
-      fixture.createSyncContext("google_drive"),
-      cur,
-    );
+    const res = await createGoogleDriveSyncable(ENSURE_MCP).sync(driveCtx(), cur);
     expect(res.hasMore).toBe(true);
     if (res.cursor === null) {
       throw new Error("cursor null");
@@ -423,10 +377,7 @@ describe("google-drive-sync — phase machine: drain", () => {
       newStartPageToken: "next-delta",
     });
     const cur = encodeCursor({ v: 1, phase: "drain", changePage: "tokABC" });
-    const res = await createGoogleDriveSyncable(ENSURE_MCP).sync(
-      fixture.createSyncContext("google_drive"),
-      cur,
-    );
+    const res = await createGoogleDriveSyncable(ENSURE_MCP).sync(driveCtx(), cur);
     expect(res.hasMore).toBe(false);
     if (res.cursor === null) {
       throw new Error("cursor null");
@@ -446,9 +397,9 @@ describe("google-drive-sync — phase machine: drain", () => {
   test("drain page with neither nextPageToken nor newStartPageToken → throws", async () => {
     fixture.fetchMock.respond("GET", CHANGES_LIST_RE, { changes: [] });
     const cur = encodeCursor({ v: 1, phase: "drain", changePage: "tokABC" });
-    await expect(
-      createGoogleDriveSyncable(ENSURE_MCP).sync(fixture.createSyncContext("google_drive"), cur),
-    ).rejects.toThrow(/missing newStartPageToken after drain/);
+    await expect(createGoogleDriveSyncable(ENSURE_MCP).sync(driveCtx(), cur)).rejects.toThrow(
+      /missing newStartPageToken after drain/,
+    );
   });
 });
 
@@ -459,10 +410,7 @@ describe("google-drive-sync — phase machine: delta", () => {
       nextPageToken: "delta-page-2",
     });
     const cur = encodeCursor({ v: 1, phase: "delta", pageToken: "d1", docs: RELIST_DONE });
-    const res = await createGoogleDriveSyncable(ENSURE_MCP).sync(
-      fixture.createSyncContext("google_drive"),
-      cur,
-    );
+    const res = await createGoogleDriveSyncable(ENSURE_MCP).sync(driveCtx(), cur);
     expect(res.hasMore).toBe(true);
     if (res.cursor === null) {
       throw new Error("cursor null");
@@ -481,9 +429,9 @@ describe("google-drive-sync — phase machine: delta", () => {
 
   test("DELTA_PAGE_LIMIT exceeded (deltaPage >= 10_000) → throws to prevent infinite loop", async () => {
     const cur = encodeCursor({ v: 1, phase: "delta", pageToken: "x", deltaPage: 10_000 });
-    await expect(
-      createGoogleDriveSyncable(ENSURE_MCP).sync(fixture.createSyncContext("google_drive"), cur),
-    ).rejects.toThrow(/exceeded page limit/);
+    await expect(createGoogleDriveSyncable(ENSURE_MCP).sync(driveCtx(), cur)).rejects.toThrow(
+      /exceeded page limit/,
+    );
     expect(fixture.fetchMock.calls).toHaveLength(0);
   });
 });
@@ -495,7 +443,7 @@ describe("google-drive-sync — cursor decode extra branches (L79, L109)", () =>
     // L79: listToken !== null && typeof listToken !== "string" → return undefined → corrupt cursor
     await expect(
       createGoogleDriveSyncable(ENSURE_MCP).sync(
-        fixture.createSyncContext("google_drive"),
+        driveCtx(),
         encodeCursor({ v: 1, phase: "init_list", t0: "abc", listToken: 42 }),
       ),
     ).rejects.toThrow(/corrupt cursor/);
@@ -505,7 +453,7 @@ describe("google-drive-sync — cursor decode extra branches (L79, L109)", () =>
     // L109: r["v"] !== 1 → return undefined → corrupt cursor
     await expect(
       createGoogleDriveSyncable(ENSURE_MCP).sync(
-        fixture.createSyncContext("google_drive"),
+        driveCtx(),
         encodeCursor({ v: 2, phase: "init_list", t0: "abc", listToken: null }),
       ),
     ).rejects.toThrow(/corrupt cursor/);
@@ -515,10 +463,7 @@ describe("google-drive-sync — cursor decode extra branches (L79, L109)", () =>
     // L459: v1.listToken ?? undefined → listToken is null → undefined passed to listFilesPage (no pageToken param)
     fixture.fetchMock.respond("GET", FILES_LIST_RE, { files: [] });
     const cur = encodeCursor({ v: 1, phase: "init_list", t0: "tokA", listToken: null });
-    const res = await createGoogleDriveSyncable(ENSURE_MCP).sync(
-      fixture.createSyncContext("google_drive"),
-      cur,
-    );
+    const res = await createGoogleDriveSyncable(ENSURE_MCP).sync(driveCtx(), cur);
     expect(res.hasMore).toBe(true);
     const filesCalls = fixture.fetchMock.calls.filter((c) => c.url.startsWith(FILES_LIST_PREFIX));
     expect(filesCalls).toHaveLength(1);
@@ -533,10 +478,7 @@ describe("google-drive-sync — owner/email resolution branches (L133-L149)", ()
     fixture.fetchMock.respond("GET", FILES_LIST_RE, {
       files: [{ id: "f1", name: "file.txt", owners: [] }],
     });
-    await createGoogleDriveSyncable(ENSURE_MCP).sync(
-      fixture.createSyncContext("google_drive"),
-      null,
-    );
+    await createGoogleDriveSyncable(ENSURE_MCP).sync(driveCtx(), null);
     const row = fixture.db
       .query<{ author_id: unknown }, []>(
         "SELECT author_id FROM item WHERE service = 'google_drive' AND external_id = 'f1'",
@@ -552,10 +494,7 @@ describe("google-drive-sync — owner/email resolution branches (L133-L149)", ()
     fixture.fetchMock.respond("GET", FILES_LIST_RE, {
       files: [{ id: "f2", name: "file.txt", owners: [{ displayName: "Alice" }] }],
     });
-    await createGoogleDriveSyncable(ENSURE_MCP).sync(
-      fixture.createSyncContext("google_drive"),
-      null,
-    );
+    await createGoogleDriveSyncable(ENSURE_MCP).sync(driveCtx(), null);
     const row = fixture.db
       .query<{ author_id: unknown }, []>(
         "SELECT author_id FROM item WHERE service = 'google_drive' AND external_id = 'f2'",
@@ -571,10 +510,7 @@ describe("google-drive-sync — owner/email resolution branches (L133-L149)", ()
     fixture.fetchMock.respond("GET", FILES_LIST_RE, {
       files: [{ id: "f3", name: "file.txt", owners: [{ emailAddress: "", displayName: "Bob" }] }],
     });
-    await createGoogleDriveSyncable(ENSURE_MCP).sync(
-      fixture.createSyncContext("google_drive"),
-      null,
-    );
+    await createGoogleDriveSyncable(ENSURE_MCP).sync(driveCtx(), null);
     const row = fixture.db
       .query<{ author_id: unknown }, []>(
         "SELECT author_id FROM item WHERE service = 'google_drive' AND external_id = 'f3'",
@@ -590,10 +526,7 @@ describe("google-drive-sync — owner/email resolution branches (L133-L149)", ()
     fixture.fetchMock.respond("GET", FILES_LIST_RE, {
       files: [{ id: "f4", name: "file.txt", owners: [{ emailAddress: "owner@example.com" }] }],
     });
-    await createGoogleDriveSyncable(ENSURE_MCP).sync(
-      fixture.createSyncContext("google_drive"),
-      null,
-    );
+    await createGoogleDriveSyncable(ENSURE_MCP).sync(driveCtx(), null);
     const row = fixture.db
       .query<{ author_id: unknown }, []>(
         "SELECT author_id FROM item WHERE service = 'google_drive' AND external_id = 'f4'",
@@ -614,10 +547,7 @@ describe("google-drive-sync — owner/email resolution branches (L133-L149)", ()
         },
       ],
     });
-    await createGoogleDriveSyncable(ENSURE_MCP).sync(
-      fixture.createSyncContext("google_drive"),
-      null,
-    );
+    await createGoogleDriveSyncable(ENSURE_MCP).sync(driveCtx(), null);
     const row = fixture.db
       .query<{ author_id: unknown }, []>(
         "SELECT author_id FROM item WHERE service = 'google_drive' AND external_id = 'f5'",
@@ -641,10 +571,7 @@ describe("google-drive-sync — upsertDriveFile field branches (L159, L163, L165
       newStartPageToken: "next-tok",
     });
     const cur = encodeCursor({ v: 1, phase: "drain", changePage: "tokX" });
-    const res = await createGoogleDriveSyncable(ENSURE_MCP).sync(
-      fixture.createSyncContext("google_drive"),
-      cur,
-    );
+    const res = await createGoogleDriveSyncable(ENSURE_MCP).sync(driveCtx(), cur);
     expect(res.itemsDeleted).toBe(1);
     const row = fixture.db
       .query("SELECT id FROM item WHERE id = ?")
@@ -659,10 +586,7 @@ describe("google-drive-sync — upsertDriveFile field branches (L159, L163, L165
       newStartPageToken: "next-tok",
     });
     const cur = encodeCursor({ v: 1, phase: "drain", changePage: "tokY" });
-    const res = await createGoogleDriveSyncable(ENSURE_MCP).sync(
-      fixture.createSyncContext("google_drive"),
-      cur,
-    );
+    const res = await createGoogleDriveSyncable(ENSURE_MCP).sync(driveCtx(), cur);
     expect(res.itemsDeleted).toBe(0);
     expect(res.itemsUpserted).toBe(0);
   });
@@ -674,10 +598,7 @@ describe("google-drive-sync — upsertDriveFile field branches (L159, L163, L165
       newStartPageToken: "next-tok",
     });
     const cur = encodeCursor({ v: 1, phase: "drain", changePage: "tokZ" });
-    const res = await createGoogleDriveSyncable(ENSURE_MCP).sync(
-      fixture.createSyncContext("google_drive"),
-      cur,
-    );
+    const res = await createGoogleDriveSyncable(ENSURE_MCP).sync(driveCtx(), cur);
     expect(res.itemsUpserted).toBe(0);
     expect(res.itemsDeleted).toBe(0);
   });
@@ -689,10 +610,7 @@ describe("google-drive-sync — upsertDriveFile field branches (L159, L163, L165
       newStartPageToken: "next-tok",
     });
     const cur = encodeCursor({ v: 1, phase: "drain", changePage: "tokW" });
-    const res = await createGoogleDriveSyncable(ENSURE_MCP).sync(
-      fixture.createSyncContext("google_drive"),
-      cur,
-    );
+    const res = await createGoogleDriveSyncable(ENSURE_MCP).sync(driveCtx(), cur);
     expect(res.itemsUpserted).toBe(0);
     expect(res.itemsDeleted).toBe(0);
   });
@@ -708,10 +626,7 @@ describe("google-drive-sync — upsertDriveFile field branches (L159, L163, L165
         { id: "live-init", name: "live.txt" },
       ],
     });
-    const res = await createGoogleDriveSyncable(ENSURE_MCP).sync(
-      fixture.createSyncContext("google_drive"),
-      null,
-    );
+    const res = await createGoogleDriveSyncable(ENSURE_MCP).sync(driveCtx(), null);
     // trashed file skipped → only live-init upserted
     expect(res.itemsUpserted).toBe(1);
     const row = fixture.db
@@ -728,10 +643,7 @@ describe("google-drive-sync — upsertDriveFile field branches (L159, L163, L165
     fixture.fetchMock.respond("GET", FILES_LIST_RE, {
       files: [{ id: "no-mime", name: "file-no-mime.txt" }],
     });
-    await createGoogleDriveSyncable(ENSURE_MCP).sync(
-      fixture.createSyncContext("google_drive"),
-      null,
-    );
+    await createGoogleDriveSyncable(ENSURE_MCP).sync(driveCtx(), null);
     const row = fixture.db
       .query<{ type: string }, []>(
         "SELECT type FROM item WHERE service = 'google_drive' AND external_id = 'no-mime'",
@@ -747,10 +659,7 @@ describe("google-drive-sync — upsertDriveFile field branches (L159, L163, L165
       files: [{ id: "no-modtime", name: "no-modtime.txt" }],
     });
     const before = Date.now();
-    await createGoogleDriveSyncable(ENSURE_MCP).sync(
-      fixture.createSyncContext("google_drive"),
-      null,
-    );
+    await createGoogleDriveSyncable(ENSURE_MCP).sync(driveCtx(), null);
     const after = Date.now();
     const row = fixture.db
       .query<{ modified_at: number }, []>(
@@ -769,10 +678,7 @@ describe("google-drive-sync — upsertDriveFile field branches (L159, L163, L165
       files: [{ id: "bad-date", name: "bad-date.txt", modifiedTime: "not-a-date" }],
     });
     const before = Date.now();
-    await createGoogleDriveSyncable(ENSURE_MCP).sync(
-      fixture.createSyncContext("google_drive"),
-      null,
-    );
+    await createGoogleDriveSyncable(ENSURE_MCP).sync(driveCtx(), null);
     const after = Date.now();
     const row = fixture.db
       .query<{ modified_at: number }, []>(
@@ -791,10 +697,7 @@ describe("google-drive-sync — upsertDriveFile field branches (L159, L163, L165
     fixture.fetchMock.respond("GET", FILES_LIST_RE, {
       files: [{ id: "with-desc", name: "file.txt", description: desc }],
     });
-    await createGoogleDriveSyncable(ENSURE_MCP).sync(
-      fixture.createSyncContext("google_drive"),
-      null,
-    );
+    await createGoogleDriveSyncable(ENSURE_MCP).sync(driveCtx(), null);
     const row = fixture.db
       .query<{ body_preview: string }, []>(
         "SELECT body_preview FROM item WHERE service = 'google_drive' AND external_id = 'with-desc'",
@@ -810,10 +713,7 @@ describe("google-drive-sync — upsertDriveFile field branches (L159, L163, L165
     fixture.fetchMock.respond("GET", FILES_LIST_RE, {
       files: [{ id: "long-desc", name: "file.txt", description: longDesc }],
     });
-    await createGoogleDriveSyncable(ENSURE_MCP).sync(
-      fixture.createSyncContext("google_drive"),
-      null,
-    );
+    await createGoogleDriveSyncable(ENSURE_MCP).sync(driveCtx(), null);
     const row = fixture.db
       .query<{ body_preview: string }, []>(
         "SELECT body_preview FROM item WHERE service = 'google_drive' AND external_id = 'long-desc'",
@@ -833,10 +733,7 @@ describe("google-drive-sync — upsertDriveFile field branches (L159, L163, L165
         },
       ],
     });
-    await createGoogleDriveSyncable(ENSURE_MCP).sync(
-      fixture.createSyncContext("google_drive"),
-      null,
-    );
+    await createGoogleDriveSyncable(ENSURE_MCP).sync(driveCtx(), null);
     const row = fixture.db
       .query<{ url: string }, []>(
         "SELECT url FROM item WHERE service = 'google_drive' AND external_id = 'with-link'",
@@ -850,16 +747,16 @@ describe("google-drive-sync — getStartPageToken missing token (L247)", () => {
   test("startPageToken response missing token field → throws (L247)", async () => {
     // L247: typeof t !== "string" || t === "" → throw "missing startPageToken"
     fixture.fetchMock.respond("GET", START_TOKEN_RE, {});
-    await expect(
-      createGoogleDriveSyncable(ENSURE_MCP).sync(fixture.createSyncContext("google_drive"), null),
-    ).rejects.toThrow(/missing startPageToken/);
+    await expect(createGoogleDriveSyncable(ENSURE_MCP).sync(driveCtx(), null)).rejects.toThrow(
+      /missing startPageToken/,
+    );
   });
 
   test("startPageToken response has empty string token → throws (L247 t === '')", async () => {
     fixture.fetchMock.respond("GET", START_TOKEN_RE, { startPageToken: "" });
-    await expect(
-      createGoogleDriveSyncable(ENSURE_MCP).sync(fixture.createSyncContext("google_drive"), null),
-    ).rejects.toThrow(/missing startPageToken/);
+    await expect(createGoogleDriveSyncable(ENSURE_MCP).sync(driveCtx(), null)).rejects.toThrow(
+      /missing startPageToken/,
+    );
   });
 });
 
@@ -872,10 +769,7 @@ describe("google-drive-sync — runDrivePhaseDelta page branches", () => {
       nextPageToken: "more-changes",
     });
     const cur = encodeCursor({ v: 1, phase: "delta", pageToken: "tok1", deltaPage: 0 });
-    const res = await createGoogleDriveSyncable(ENSURE_MCP).sync(
-      fixture.createSyncContext("google_drive"),
-      cur,
-    );
+    const res = await createGoogleDriveSyncable(ENSURE_MCP).sync(driveCtx(), cur);
     expect(res.hasMore).toBe(true);
     if (res.cursor === null) {
       throw new Error("cursor null");
@@ -895,10 +789,7 @@ describe("google-drive-sync — runDrivePhaseDelta page branches", () => {
       newStartPageToken: "final-tok",
     });
     const cur = encodeCursor({ v: 1, phase: "delta", pageToken: "tok2", docs: RELIST_DONE });
-    const res = await createGoogleDriveSyncable(ENSURE_MCP).sync(
-      fixture.createSyncContext("google_drive"),
-      cur,
-    );
+    const res = await createGoogleDriveSyncable(ENSURE_MCP).sync(driveCtx(), cur);
     expect(res.hasMore).toBe(false);
     if (res.cursor === null) {
       throw new Error("cursor null");
@@ -917,8 +808,8 @@ describe("google-drive-sync — runDrivePhaseDelta page branches", () => {
   test("delta page missing newStartPageToken → throws (delta missingNewTokenMessage)", async () => {
     fixture.fetchMock.respond("GET", CHANGES_LIST_RE, { changes: [] });
     const cur = encodeCursor({ v: 1, phase: "delta", pageToken: "tok3" });
-    await expect(
-      createGoogleDriveSyncable(ENSURE_MCP).sync(fixture.createSyncContext("google_drive"), cur),
-    ).rejects.toThrow(/missing newStartPageToken/);
+    await expect(createGoogleDriveSyncable(ENSURE_MCP).sync(driveCtx(), cur)).rejects.toThrow(
+      /missing newStartPageToken/,
+    );
   });
 });

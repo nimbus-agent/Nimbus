@@ -16,8 +16,19 @@ import {
   syncNoopResult,
   UnauthenticatedError,
 } from "../sync/types.ts";
+import {
+  applySnapshot,
+  type SnapshotFetch,
+  snapshotDue,
+  snapshotIntervalMs,
+} from "./_lib/work-snapshot-run.ts";
 import { fetchOneMissForResponse } from "./fetch-miss-reason.ts";
 import { readGithubCredentialPair, type ValidGithubBase } from "./github-api-base.ts";
+import {
+  githubIssueDepthMetadata,
+  githubIssueExternalId,
+  repoFullFromRepositoryUrl,
+} from "./github-issue-meta.ts";
 import { decodeNimbusJsonCursorObject, encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import { buildPrMetadata, canonicalEpochMs, normalizeGithubPrState } from "./pr-meta.ts";
 import { fetchSameOriginOnly } from "./same-origin-fetch.ts";
@@ -133,8 +144,11 @@ export function extractPrMetadataForIndex(
   const rawState = stringField(pr, "state");
   const user = asRecord(pr["user"]);
   const login = user === undefined ? undefined : stringField(user, "login");
+  // A Search API hit may omit `draft`; an absent flag is not "false" (`upsertPr` carries the stored
+  // value forward, and only then defaults to false). `undefined` is dropped on serialisation.
+  const draft = pr["draft"];
   const out: Record<string, unknown> = {
-    draft: pr["draft"] === true,
+    draft: typeof draft === "boolean" ? draft : undefined,
     user: login,
     labels: extractLabelNames(pr["labels"]),
   };
@@ -171,7 +185,8 @@ function eventsUrlFor(restRoot: string, login: string): string {
   return `${restRoot}/users/${encodeURIComponent(login)}/events?per_page=${String(GITHUB_EVENTS_PAGE_SIZE)}`;
 }
 
-type GithubSyncCursorV1 = { etag: string | null; login: string | null };
+/** `snapAt`: epoch ms of the last "my open work" snapshot ATTEMPT (success or failure), or null. */
+type GithubSyncCursorV1 = { etag: string | null; login: string | null; snapAt: number | null };
 
 function encodeCursor(c: GithubSyncCursorV1): string {
   return encodeNimbusJsonCursor(CURSOR_PREFIX, c);
@@ -184,9 +199,11 @@ function decodeCursor(raw: string | null): GithubSyncCursorV1 | null {
   }
   const etag = rec["etag"];
   const login = rec["login"];
+  const snapAt = rec["snapAt"];
   return {
     etag: typeof etag === "string" ? etag : null,
     login: typeof login === "string" && login !== "" ? login : null,
+    snapAt: typeof snapAt === "number" && Number.isFinite(snapAt) ? snapAt : null,
   };
 }
 
@@ -248,7 +265,7 @@ function githubPrExternalId(repoFull: string, num: number): string {
 const PR_STAT_KEYS = ["additions", "deletions", "changed_files", "commits"] as const;
 
 /** Contract keys an events-feed payload can lack; carried from the stored row like the stats. */
-const PR_CARRIED_CONTRACT_KEYS = ["opened_at_ms", "branch"] as const;
+const PR_CARRIED_CONTRACT_KEYS = ["opened_at_ms", "branch", "draft"] as const;
 
 /**
  * I-2: `extractPrMetadataForIndex` only sets the four size-stat keys, and `opened_at_ms` (which
@@ -283,7 +300,7 @@ const PR_CARRIED_CONTRACT_KEYS = ["opened_at_ms", "branch"] as const;
  * selector's two arms, not both. This could not be confirmed from GitHub's published docs and
  * needs verification against the live API before anyone treats it as fixed either way.
  */
-function mergeForwardPrStats(
+function carryForwardPrKeys(
   itemMetadata: SyncContext["itemMetadata"],
   meta: Record<string, unknown>,
   externalId: string,
@@ -319,6 +336,20 @@ function mergeForwardPrStats(
     }
   }
   return merged;
+}
+
+/**
+ * `carryForwardPrKeys`, then the one default: a PR whose `draft` flag is absent from the payload AND
+ * from the stored row (never indexed before) is not a draft. An absent flag never overwrites a stored
+ * `true`.
+ */
+function mergeForwardPrStats(
+  itemMetadata: SyncContext["itemMetadata"],
+  meta: Record<string, unknown>,
+  externalId: string,
+): Record<string, unknown> {
+  const carried = carryForwardPrKeys(itemMetadata, meta, externalId);
+  return carried["draft"] === undefined ? { ...carried, draft: false } : carried;
 }
 
 export function upsertPr(
@@ -452,8 +483,10 @@ function upsertFromIssue(
     repo: repoFull,
     state: stringField(issue, "state"),
     user: login,
+    // meta_v, due_at_ms and milestone (Phase 10 MB1): the due-date depth, same key as Jira and Linear.
+    ...githubIssueDepthMetadata(issue),
   };
-  const externalId = `${repoFull}#issue-${String(num)}`;
+  const externalId = githubIssueExternalId(repoFull, num);
   ctx.upsertItem({
     service: SERVICE_ID,
     type: "issue",
@@ -880,12 +913,140 @@ async function fetchAuthenticatedLogin(
   return login;
 }
 
+/** The three "my open work" relations and their GitHub search qualifiers. */
+const GITHUB_SNAPSHOT_SEARCHES = [
+  { relation: "assigned", q: "is:open is:issue assignee:@me" },
+  { relation: "review_requested", q: "is:open is:pr review-requested:@me" },
+  { relation: "authored_open", q: "is:open is:pr author:@me" },
+] as const;
+const GITHUB_SNAPSHOT_PAGE_SIZE = 100;
+
+/**
+ * One search (one page of 100, newest-updated first). Upserts every hit by kind (a `pull_request` key
+ * means PR) and returns the external ids. `incomplete_results`, a non-200 or a bad body is partial (a
+ * thrown error, so the previous snapshot is kept); more hits than the page is capped, not partial. A
+ * hit whose repository cannot be parsed is skipped and counted.
+ */
+async function githubSnapshotSearch(
+  ctx: SyncContext,
+  pat: string,
+  base: GithubBase,
+  q: string,
+  signal: AbortSignal,
+): Promise<SnapshotFetch> {
+  await ctx.rateLimiter.acquire("github");
+  const url = `${base.restRoot}/search/issues?q=${encodeURIComponent(q)}&per_page=${String(GITHUB_SNAPSHOT_PAGE_SIZE)}&sort=updated&order=desc`;
+  const res = await fetchSameOriginOnly(url, {
+    headers: buildGithubEventHeaders(pat, null),
+    signal,
+  });
+  const text = await res.text();
+  if (res.status === 401) {
+    throw new UnauthenticatedError("GitHub search: unauthorized (401)");
+  }
+  throwGithubRateLimitErrorIfApplicable(ctx, res, "search");
+  if (!res.ok) {
+    throw new Error(`GitHub search ${String(res.status)}: ${text.slice(0, 200)}`);
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text) as unknown;
+  } catch {
+    throw new TypeError("GitHub search: invalid JSON");
+  }
+  const rec = asRecord(parsed);
+  const items = rec?.["items"];
+  if (rec === undefined || !Array.isArray(items)) {
+    throw new TypeError("GitHub search: missing items array");
+  }
+  if (rec["incomplete_results"] === true) {
+    throw new Error("GitHub search: incomplete_results");
+  }
+  const total = numberField(rec, "total_count");
+  const ids: string[] = [];
+  let skipped = 0;
+  const now = Date.now();
+  ctx.writeBatch(() => {
+    for (const raw of items) {
+      const id = githubSnapshotUpsertHit(ctx, asRecord(raw), now);
+      if (id === undefined) skipped += 1;
+      else ids.push(id);
+    }
+  });
+  if (skipped > 0) {
+    ctx.logger.warn({ service: SERVICE_ID, skipped }, "github snapshot skipped unparseable hits");
+  }
+  return {
+    kind: "complete",
+    externalIds: ids,
+    capped: total !== undefined && total > items.length,
+    ...(total === undefined ? {} : { total }),
+  };
+}
+
+/** Upserts one search hit as an issue or a PR; returns its external id, or `undefined` to skip it. */
+function githubSnapshotUpsertHit(
+  ctx: SyncContext,
+  hit: Record<string, unknown> | undefined,
+  now: number,
+): string | undefined {
+  if (hit === undefined) return undefined;
+  const repoUrl = stringField(hit, "repository_url");
+  const repoFull = repoUrl === undefined ? undefined : repoFullFromRepositoryUrl(repoUrl);
+  const num = numberField(hit, "number");
+  if (repoFull === undefined || num === undefined) return undefined;
+  if (hit["pull_request"] !== undefined) {
+    upsertPr(ctx, repoFull, hit, now);
+    return githubPrExternalId(repoFull, num);
+  }
+  upsertFromIssue(ctx, repoFull, hit, now);
+  return githubIssueExternalId(repoFull, num);
+}
+
+/**
+ * Runs the three snapshot searches when due and returns the cursor's new `snapAt` (an ATTEMPT, so a
+ * failing provider is retried once per interval). Each relation is independent; a rate limit stops
+ * the remaining searches rather than waiting out the penalty inside the sync.
+ */
+async function runGithubSnapshots(
+  ctx: SyncContext,
+  pat: string,
+  base: GithubBase,
+  prevSnapAt: number | null,
+  intervalMs: number,
+  timeoutMs?: number,
+): Promise<number | null> {
+  const now = Date.now();
+  if (!snapshotDue(prevSnapAt, now, intervalMs)) return prevSnapAt;
+  let limited = false;
+  for (const { relation, q } of GITHUB_SNAPSHOT_SEARCHES) {
+    if (limited) break;
+    await applySnapshot(
+      ctx,
+      SERVICE_ID,
+      relation,
+      async (signal) => {
+        try {
+          return await githubSnapshotSearch(ctx, pat, base, q, signal);
+        } catch (err) {
+          if (err instanceof RateLimitError) limited = true;
+          throw err;
+        }
+      },
+      timeoutMs,
+    );
+  }
+  return now;
+}
+
 async function syncGithubUserEvents(
   ctx: SyncContext,
   cursor: string | null,
   pat: string,
   t0: number,
   base: GithubBase,
+  snapIntervalMs: number,
+  snapTimeoutMs?: number,
 ): Promise<SyncResult> {
   const prev = decodeCursor(cursor);
   let login = prev?.login ?? null;
@@ -910,7 +1071,20 @@ async function syncGithubUserEvents(
     // otherwise byte-identical to before this fix.
     await runPrDetailEnrichmentBestEffort(ctx, pat, Date.now(), base);
     await runPrFilePassBestEffort(ctx, pat, Date.now(), base);
-    return syncPassCursorSuccess(t0, bytesTransferred, encodeCursor({ etag, login }), 0);
+    const snapAt304 = await runGithubSnapshots(
+      ctx,
+      pat,
+      base,
+      prev?.snapAt ?? null,
+      snapIntervalMs,
+      snapTimeoutMs,
+    );
+    return syncPassCursorSuccess(
+      t0,
+      bytesTransferred,
+      encodeCursor({ etag, login, snapAt: snapAt304 }),
+      0,
+    );
   }
 
   if (res.status === 401) {
@@ -950,8 +1124,16 @@ async function syncGithubUserEvents(
   await runPrDetailEnrichmentBestEffort(ctx, pat, now, base);
   await runPrFilePassBestEffort(ctx, pat, now, base);
 
+  const snapAt = await runGithubSnapshots(
+    ctx,
+    pat,
+    base,
+    prev?.snapAt ?? null,
+    snapIntervalMs,
+    snapTimeoutMs,
+  );
   const newEtag = res.headers.get("etag");
-  const nextCursor = encodeCursor({ etag: newEtag, login });
+  const nextCursor = encodeCursor({ etag: newEtag, login, snapAt });
 
   return syncPassCursorSuccess(t0, bytesTransferred, nextCursor, upserted);
 }
@@ -1081,6 +1263,10 @@ async function fetchOnePullRequest(ctx: SyncContext, url: string): Promise<Fetch
 
 export type GithubSyncableOptions = {
   ensureGithubMcpRunning: () => Promise<void>;
+  /** `[briefing] snapshot_interval_minutes`, read per sync so an edit applies without a restart. */
+  snapshotIntervalMinutes?: () => number;
+  /** Deadline of one snapshot attempt; absent is `SNAPSHOT_FETCH_TIMEOUT_MS` (tests inject a short one). */
+  snapshotTimeoutMs?: number;
 };
 
 export function createGithubSyncable(options: GithubSyncableOptions): Syncable {
@@ -1096,7 +1282,15 @@ export function createGithubSyncable(options: GithubSyncableOptions): Syncable {
         return syncNoopResult(cursor, t0);
       }
 
-      return syncGithubUserEvents(ctx, cursor, pair.pat, t0, pair.base);
+      return syncGithubUserEvents(
+        ctx,
+        cursor,
+        pair.pat,
+        t0,
+        pair.base,
+        snapshotIntervalMs(options.snapshotIntervalMinutes?.()),
+        options.snapshotTimeoutMs,
+      );
     },
     fetchOne: fetchOnePullRequest,
   };

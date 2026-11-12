@@ -19,6 +19,7 @@ import {
   V68_EXPECTED_EVIDENCE_SQL,
 } from "../capture-native-v68-sql.ts";
 import { CAPTURE_V67_SQL } from "../capture-v67-sql.ts";
+import { CHAT_READ_MARKER_V92_SQL } from "../chat-read-marker-v92-sql.ts";
 import { COMPUTER_USE_V57_SQL } from "../computer-use-v57-sql.ts";
 import { CONNECTOR_CONFIGURED_V56_SQL } from "../connector-configured-v56-sql.ts";
 import { CONNECTOR_DEPTH_V21_SQL } from "../connector-depth-v21-sql.ts";
@@ -117,6 +118,7 @@ import {
 import { VEC_JOIN_INDEX_V62_SQL } from "../vec-join-index-v62-sql.ts";
 import { WATCHER_GRAPH_V22_SQL } from "../watcher-graph-v22-sql.ts";
 import { WATCHER_V8_MIGRATION_SQL } from "../watcher-v8-sql.ts";
+import { WORK_SNAPSHOT_V91_SQL } from "../work-snapshot-v91-sql.ts";
 import { WORKFLOW_RUN_COLUMNS_V23_SQL } from "../workflow-run-columns-v23-sql.ts";
 import { WORKFLOW_SCHEDULE_V89_SQL } from "../workflow-schedule-v89-sql.ts";
 import { WORKFLOW_V9_MIGRATION_SQL } from "../workflow-v9-sql.ts";
@@ -776,6 +778,8 @@ const INDEXED_SCHEMA_STEPS: readonly IndexedSchemaStep[] = [
     "approval learning streaks and suggestions (Phase 10 SA5)",
     STANDING_SUGGESTION_V90_SQL,
   ),
+  simpleStep(90, 91, "my open work snapshots (Phase 10 MB1)", WORK_SNAPSHOT_V91_SQL),
+  simpleStep(91, 92, "slack read markers (Phase 10 MB4)", CHAT_READ_MARKER_V92_SQL),
 ];
 
 /**

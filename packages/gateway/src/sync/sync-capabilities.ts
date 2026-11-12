@@ -7,6 +7,13 @@ import { createServiceScopedVaultView } from "../connectors/service-scoped-vault
 import type { ResolveServiceId } from "../graph/graph-populator.ts";
 import { type ApiEndpointWrite, writeApiEndpointsForSpec } from "../index/api-endpoint-store.ts";
 import {
+  type ChatReadMarkerInput,
+  type ChatReadMarkerSetOptions,
+  isChatReadMarkerService,
+  setChatReadMarkerRows,
+} from "../index/chat-read-marker-store.ts";
+import { type ReplaceItemSetOptions, replaceItemSetRows } from "../index/item-set-store.ts";
+import {
   type BodyRow,
   countIndexedItems,
   deleteItemByServiceExternal,
@@ -19,6 +26,11 @@ import {
   upsertIndexedItemForSync,
 } from "../index/item-store.ts";
 import { type ObsidianNoteWrite, writeObsidianVault } from "../index/obsidian-notes-store.ts";
+import {
+  isWorkSnapshotService,
+  replaceWorkSnapshotRows,
+  type WorkSnapshotRelation,
+} from "../index/work-snapshot-store.ts";
 import { resolvePersonForSync } from "../people/linker.ts";
 import type { PersonSyncHints } from "../people/person-types.ts";
 import { recordPrChangedFiles } from "../prfiles/pr-changed-file-store.ts";
@@ -170,6 +182,39 @@ export interface SyncCapabilities<S extends ConnectorServiceId = ConnectorServic
    * them. Nesting is allowed and joins the outer batch.
    */
   writeBatch<T>(fn: () => T): T;
+  /**
+   * Replaces THIS service's snapshot of one relation of "my open work" (V91, Phase 10 MB1). Scoped to
+   * the bound service: the service is never a parameter, an external id resolves only among this
+   * service's items, and only `jira`, `linear` and `github` may call it. One transaction; an id with no
+   * indexed item is dropped and counted.
+   */
+  replaceWorkSnapshot(
+    relation: WorkSnapshotRelation,
+    externalIds: readonly string[],
+  ): { stored: number; dropped: number };
+  /**
+   * Stores THIS service's Slack read markers (V92, Phase 10 MB4): the owner's `last_read` per
+   * channel, DM and group DM. Scoped to the bound service: the service is never a parameter and only
+   * `slack` may call it. One transaction; an invalid marker is skipped and counted. With
+   * `opts.keepChannelIds` the service's markers for any other channel are deleted in the same
+   * transaction (absent prunes nothing, `[]` prunes all).
+   */
+  setChatReadMarkers(
+    markers: readonly ChatReadMarkerInput[],
+    opts?: ChatReadMarkerSetOptions,
+  ): { stored: number; skipped: number; pruned: number };
+  /**
+   * Deletes THIS service's rows of `type` that are not in `keepExternalIds` (Phase 10 MB2b; see
+   * `index/item-set-store.ts`). Scoped to the bound service: the service is never a parameter, only
+   * the types `REPLACE_ITEM_SET_TYPES` lists for it may be named, and `opts` can only NARROW the set
+   * of candidate rows (`externalIdPrefix`, `endBeforeMs`). One transaction, through the delete path
+   * `deleteItem` uses. Returns the deleted count.
+   */
+  replaceItemSet(
+    type: string,
+    keepExternalIds: readonly string[],
+    opts?: ReplaceItemSetOptions,
+  ): number;
 }
 
 /**
@@ -278,6 +323,20 @@ export function buildSyncCapabilities<S extends ConnectorServiceId>(
     pruneBlameForFile: (repoRoot, filePath) => {
       pruneBlameForFile(deps.db, repoRoot, filePath);
     },
+    replaceWorkSnapshot: (relation, externalIds) => {
+      if (!isWorkSnapshotService(serviceId)) {
+        throw new Error(`replaceWorkSnapshot is not available to "${serviceId}".`);
+      }
+      return replaceWorkSnapshotRows(deps.db, serviceId, relation, externalIds, Date.now());
+    },
+    replaceItemSet: (type, keepExternalIds, opts) =>
+      replaceItemSetRows(deps.db, serviceId, type, keepExternalIds, opts),
+    setChatReadMarkers: (markers, opts) => {
+      if (!isChatReadMarkerService(serviceId)) {
+        throw new Error(`setChatReadMarkers is not available to "${serviceId}".`);
+      }
+      return setChatReadMarkerRows(deps.db, serviceId, markers, opts, Date.now());
+    },
   };
 }
 
@@ -318,6 +377,10 @@ export function buildLocalOnlySyncCapabilities(
     getSecret: () => noCredentials("getSecret"),
     getSharedSecret: () => noCredentials("getSharedSecret"),
     accessToken: () => noCredentials("accessToken"),
+    // The db members above are bound to "github"; a local-only syncable must not inherit its snapshot.
+    replaceWorkSnapshot: () => noCredentials("replaceWorkSnapshot"),
+    replaceItemSet: () => noCredentials("replaceItemSet"),
+    setChatReadMarkers: () => noCredentials("setChatReadMarkers"),
   };
 }
 
@@ -348,6 +411,9 @@ export function unboundSyncCapabilities(): SyncCapabilities {
     recordPrChangedFiles: () => refuse("recordPrChangedFiles"),
     upsertBlameLines: () => refuse("upsertBlameLines"),
     pruneBlameForFile: () => refuse("pruneBlameForFile"),
+    replaceWorkSnapshot: () => refuse("replaceWorkSnapshot"),
+    replaceItemSet: () => refuse("replaceItemSet"),
+    setChatReadMarkers: () => refuse("setChatReadMarkers"),
     upsertItem: () => refuse("upsertItem"),
     resolvePerson: () => refuse("resolvePerson"),
     writeBatch: () => refuse("writeBatch"),

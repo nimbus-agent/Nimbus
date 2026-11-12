@@ -334,8 +334,8 @@ describe("events sync — /user, cursor and page edges", () => {
   });
 
   test.each([
-    ["a null etag", { etag: null, login: "octo" }],
-    ["a non-string etag", { etag: 42, login: "octo" }],
+    ["a null etag", { etag: null, login: "octo", snapAt: Date.now() }],
+    ["a non-string etag", { etag: 42, login: "octo", snapAt: Date.now() }],
   ])("a cached login with %s skips /user and sends no If-None-Match", async (_label, payload) => {
     mock.respond("GET", EVENTS_URL, [], { headers: { etag: '"e2"' } });
     const db = createMemoryIndexDb();
@@ -347,6 +347,7 @@ describe("events sync — /user, cursor and page edges", () => {
     expect(decodeNimbusJsonCursorPayload(r.cursor ?? "", CURSOR_PREFIX)).toEqual({
       etag: '"e2"',
       login: "octo",
+      snapAt: (payload as { snapAt: number }).snapAt,
     });
     db.close();
   });
@@ -392,7 +393,8 @@ describe("events sync — the two best-effort passes", () => {
     mock.restore();
   });
 
-  const cachedLogin = (): string => cursorWith({ etag: null, login: "octo" });
+  // A fresh snapshot attempt, so these tests see only the events and best-effort pass requests.
+  const cachedLogin = (): string => cursorWith({ etag: null, login: "octo", snapAt: Date.now() });
 
   test("a rate limit during PR detail enrichment is not swallowed: it ends the sync", async () => {
     const db = createMemoryIndexDb();

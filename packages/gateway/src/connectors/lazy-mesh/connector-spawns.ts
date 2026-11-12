@@ -8,9 +8,8 @@ import {
   getValidGoogleAccessToken,
   resolveGoogleOAuthVaultKey,
 } from "../../auth/google-access-token.ts";
-// Deliberately NOT re-exported through `google-access-token.ts`: that module is `mock.module`d
-// process-globally by two test files, and reading the classifier's SSoT out of a mocked module
-// makes the classification depend on which factory ran last.
+// Deliberately NOT re-exported through `google-access-token.ts`: keep the classifier's SSoT
+// import independent of the token functions, which tests replace through `GoogleTokenDeps`.
 import { GOOGLE_OAUTH_PARSE_ERRORS } from "../../auth/google-oauth-parse-errors.ts";
 import { getValidHubspotAccessToken } from "../../auth/hubspot-access-token.ts";
 import { getValidMendeleyAccessToken } from "../../auth/mendeley-access-token.ts";
@@ -108,6 +107,7 @@ const GOOGLE_BUNDLE_SPAWNS: Readonly<Record<GoogleConnectorOAuthServiceId, strin
   gmail: "gmail",
   google_photos: "google-photos",
   google_meet: "google-meet",
+  google_calendar: "google-calendar",
 };
 
 const GOOGLE_BUNDLE_IDS = Object.keys(GOOGLE_BUNDLE_SPAWNS) as GoogleConnectorOAuthServiceId[];
@@ -160,6 +160,20 @@ function recordGoogleCredentialFailure(
 }
 
 /**
+ * The Google token functions the bundle spawn calls. Injectable so a test supplies fakes without
+ * `mock.module` (which leaks across files under `--no-isolate`); production uses the real ones.
+ */
+export type GoogleTokenDeps = {
+  readonly resolveGoogleOAuthVaultKey: typeof resolveGoogleOAuthVaultKey;
+  readonly getValidGoogleAccessToken: typeof getValidGoogleAccessToken;
+};
+
+const REAL_GOOGLE_TOKEN_DEPS: GoogleTokenDeps = {
+  resolveGoogleOAuthVaultKey,
+  getValidGoogleAccessToken,
+};
+
+/**
  * Starts Google Drive / Gmail / Google Photos MCP subprocesses for which a vault
  * audit-ignore-next-line D11-vault-key (JSDoc reference, not vault-key construction)
  * token exists (per-service keys or legacy `google.oauth`). Each server gets its own access token.
@@ -170,7 +184,10 @@ function recordGoogleCredentialFailure(
  * the moment another file in the same run `mock.module`d `@mastra/mcp` away. An observation that
  * depends on a third-party internal is one someone else's mock can silently delete.
  */
-export async function ensureGoogleDriveMcp(ctx: MeshSpawnContext): Promise<readonly string[]> {
+export async function ensureGoogleDriveMcp(
+  ctx: MeshSpawnContext,
+  googleToken: GoogleTokenDeps = REAL_GOOGLE_TOKEN_DEPS,
+): Promise<readonly string[]> {
   const slotKey = LAZY_MESH.googleBundle;
   ctx.clearLazyIdle(slotKey);
   if (ctx.getLazyClient(slotKey) !== undefined) {
@@ -184,13 +201,13 @@ export async function ensureGoogleDriveMcp(ctx: MeshSpawnContext): Promise<reado
   // bundle order. `Promise.all` would start every refresh and record those failures in completion
   // order.
   for (const id of GOOGLE_BUNDLE_IDS) {
-    const resolved = await resolveGoogleOAuthVaultKey(ctx.vault, id); // NOSONAR S9382: a throwing Vault read aborts the bundle before any later service's token refresh starts
+    const resolved = await googleToken.resolveGoogleOAuthVaultKey(ctx.vault, id); // NOSONAR S9382: a throwing Vault read aborts the bundle before any later service's token refresh starts
     if (resolved === null) {
       continue;
     }
     let token: string;
     try {
-      token = await getValidGoogleAccessToken(ctx.vault, id); // NOSONAR S9382: a failed refresh records this service's warning and health transition (history row + connector.healthChanged) in bundle order, not completion order
+      token = await googleToken.getValidGoogleAccessToken(ctx.vault, id); // NOSONAR S9382: a failed refresh records this service's warning and health transition (history row + connector.healthChanged) in bundle order, not completion order
     } catch (err) {
       // A present-but-unusable credential is treated exactly like an absent one: skip this
       // service, keep the others. Unguarded, this `await` aborted the whole bundle — and

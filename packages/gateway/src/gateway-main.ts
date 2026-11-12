@@ -1,8 +1,8 @@
 import type { Agent } from "@mastra/core/agent";
 import pino from "pino";
-
 import { runWorkflowExecution } from "./automation/workflow-runner.ts";
 import { WorkflowScheduler } from "./automation/workflow-scheduler.ts";
+import { loadServiceConfigsOrEmpty } from "./config/service-configs.ts";
 import { createConnectorWriteDispatcher } from "./connectors/connector-write-dispatch.ts";
 import { createModelWriteToolSource } from "./connectors/connector-writes/model-write-source.ts";
 import { previewCredentialResolver } from "./connectors/connector-writes/preview-credential.ts";
@@ -173,6 +173,7 @@ export async function main(): Promise<void> {
   const askEgressSink = makeEgressSink(platform.localIndex.getDatabase());
   const userMcpLogger = pino({ name: "user-mcp-agent-tools" });
   const connectorWriteLogger = pino({ name: "connector-write-agent-tools" });
+  const oncallNowLogger = pino({ name: "oncall-now-tool" });
   // NO ENABLED VENDOR MEANS NO REMOTE INFERENCE ANYWHERE, including the default `nimbus ask`.
   // The agent is not merely refused, it is NOT CONSTRUCTED: `@mastra/core` resolves a vendor key
   // from the ENVIRONMENT on its own the moment an agent exists, so a constructed-but-refusing
@@ -187,6 +188,12 @@ export async function main(): Promise<void> {
           auditDb: platform.localIndex.getDatabase(),
           egressDb: platform.localIndex.getDatabase(),
           vendor: platform.agentVendor,
+          // `oncall_now` resolves a service name through the `[ci.service.*]` bindings; read per call and
+          // degrading to none, so a config edit applies on the next turn and a bad block never aborts one.
+          oncallServiceConfigs: () =>
+            loadServiceConfigsOrEmpty(platform.paths.configDir, (m) =>
+              oncallNowLogger.warn({ tool: "oncall_now" }, m),
+            ),
           ...(platform.sessionMemoryStore === undefined
             ? {}
             : { sessionMemoryStore: platform.sessionMemoryStore }),

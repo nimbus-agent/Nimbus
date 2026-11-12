@@ -22,6 +22,7 @@ import {
   computeCalWindow,
   loadCalConfig,
 } from "./_lib/apple-caldav-fetch.ts";
+import { parseIcalEventExtras } from "./_lib/ical-event-extras.ts";
 import { runImapLikeSync } from "./_lib/imap-sync-core.ts";
 import { mapAppleEventToItem } from "./apple-event-mapping.ts";
 import { mapImapLikeMessageToItem } from "./imap-email-mapping.ts";
@@ -128,12 +129,24 @@ async function runCalendarPass(
   const perCalendarCounts = new Map<string, number>();
   for (const { calendar, ics } of outcome.events) {
     const events = parseICalendar(ics);
+    // What the SDK parser drops (TZID, DURATION, PARTSTAT), re-read from the SAME raw ICS.
+    const extras = parseIcalEventExtras(ics);
     let calCount = perCalendarCounts.get(calendar) ?? 0;
     for (const ev of events) {
       if (calCount >= config.maxInstancesPerCalendar) {
         break;
       }
-      const row = mapAppleEventToItem(ev, { calendar, syncedAt });
+      const key =
+        ev.recurrenceId !== null && ev.recurrenceId !== ""
+          ? `${ev.uid.trim()}:${ev.recurrenceId}`
+          : ev.uid.trim();
+      const evExtras = extras.get(key);
+      const row = mapAppleEventToItem(ev, {
+        calendar,
+        syncedAt,
+        selfEmail: config.email,
+        ...(evExtras === undefined ? {} : { extras: evExtras }),
+      });
       if (row !== null) {
         ctx.upsertItem(row);
         upserted += 1;

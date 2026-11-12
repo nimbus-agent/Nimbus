@@ -421,6 +421,7 @@ const ONCALL: OncallBrief = {
   },
   otherActiveIncidents: [],
   syncFreshness: { lastSyncMs: -60_000, ageMs: 60_000, reason: null },
+  onCallNow: null,
   binding: { nimbusServiceId: "checkout", pagerdutyServiceId: "PSERVICE1" },
   deployment: null,
   change: null,

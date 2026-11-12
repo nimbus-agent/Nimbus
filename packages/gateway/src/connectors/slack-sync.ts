@@ -1,109 +1,14 @@
 import { syncPassCursorSuccess } from "../sync/pass-cursor-sync-result.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
-import { decodeNimbusJsonCursorObject, encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
+import { decodeSlackCursor, encodeSlackCursor, type SlackSyncCursorV1 } from "./slack-cursor.ts";
+import { refreshSlackReadMarkers } from "./slack-read-markers.ts";
+import { slackWebApi } from "./slack-web-api.ts";
 import { shortIndexedMessageTitleFromPreview } from "./sync-message-preview-title.ts";
 import { asRecord } from "./unknown-record.ts";
 
 const SERVICE_ID = "slack";
-const CURSOR_PREFIX = "nimbus-slk1:";
-
-type SlackSyncCursorV1 = {
-  phase: "list" | "history";
-  floorTs: string;
-  ids: string[];
-  nextIdx: number;
-  hw: Record<string, string | null>;
-  listCursor: string | null;
-  histCursor: string | null;
-  teamSubdomain: string | null;
-};
-
-function encodeCursor(c: SlackSyncCursorV1): string {
-  return encodeNimbusJsonCursor(CURSOR_PREFIX, c);
-}
-
-function slackDecodeHighWater(hw: unknown): Record<string, string | null> {
-  const hwOut: Record<string, string | null> = {};
-  if (hw === null || typeof hw !== "object" || Array.isArray(hw)) {
-    return hwOut;
-  }
-  for (const [k, v] of Object.entries(hw as Record<string, unknown>)) {
-    hwOut[k] = typeof v === "string" ? v : null;
-  }
-  return hwOut;
-}
-
-function slackStringIdArrayOk(ids: unknown): ids is string[] {
-  return Array.isArray(ids) && ids.every((x) => typeof x === "string");
-}
-
-function decodeCursor(raw: string | null): SlackSyncCursorV1 | null {
-  const rec = decodeNimbusJsonCursorObject(raw, CURSOR_PREFIX);
-  if (rec === null) {
-    return null;
-  }
-  const phase = rec["phase"];
-  const floorTs = rec["floorTs"];
-  const ids = rec["ids"];
-  const nextIdx = rec["nextIdx"];
-  const hw = rec["hw"];
-  if (phase !== "list" && phase !== "history") {
-    return null;
-  }
-  if (typeof floorTs !== "string" || floorTs === "") {
-    return null;
-  }
-  if (!slackStringIdArrayOk(ids)) {
-    return null;
-  }
-  if (typeof nextIdx !== "number" || !Number.isInteger(nextIdx) || nextIdx < 0) {
-    return null;
-  }
-  const listCursor = rec["listCursor"];
-  const histCursor = rec["histCursor"];
-  const teamSubdomain = rec["teamSubdomain"];
-  return {
-    phase,
-    floorTs,
-    ids,
-    nextIdx,
-    hw: slackDecodeHighWater(hw),
-    listCursor: typeof listCursor === "string" ? listCursor : null,
-    histCursor: typeof histCursor === "string" ? histCursor : null,
-    teamSubdomain: typeof teamSubdomain === "string" ? teamSubdomain : null,
-  };
-}
-
 function slackTsFromMs(ms: number): string {
   return (ms / 1000).toFixed(6);
-}
-
-async function slackWebApi(
-  token: string,
-  method: string,
-  body: Record<string, unknown>,
-): Promise<{ ok: boolean; json: Record<string, unknown>; text: string }> {
-  const res = await fetch(`https://slack.com/api/${method}`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json; charset=utf-8",
-    },
-    body: JSON.stringify(body),
-  });
-  const text = await res.text();
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(text) as unknown;
-  } catch {
-    return { ok: false, json: {}, text };
-  }
-  const json =
-    parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)
-      ? (parsed as Record<string, unknown>)
-      : {};
-  const okField = json["ok"];
-  return { ok: okField === true && res.ok, json, text };
 }
 
 function permalink(teamSub: string | null, channel: string, ts: string): string | null {
@@ -139,23 +44,33 @@ async function slackTryFillTeamSubdomain(
   }
 }
 
-function slackCollectMemberChannelIds(existing: string[], chans: unknown): string[] {
+/**
+ * The conversations the sync indexes: the ones the token's user is a member of, plus every direct and
+ * group DM (`is_im` / `is_mpim`; `conversations.list` returns a DM object without `is_member`, and
+ * it is the owner's by construction - owner ruling OR-10-15). `complete` is false when the page had no
+ * `channels` array or an entry with no usable id, so the caller never treats the list as whole.
+ */
+function slackCollectMemberChannelIds(
+  existing: string[],
+  chans: unknown,
+): { ids: string[]; complete: boolean } {
   const nextIds = [...existing];
   if (!Array.isArray(chans)) {
-    return nextIds;
+    return { ids: nextIds, complete: false };
   }
+  let complete = true;
   for (const c of chans) {
     const cr = asRecord(c);
-    if (cr === undefined) {
+    const id = cr?.["id"];
+    if (cr === undefined || typeof id !== "string" || id === "") {
+      complete = false;
       continue;
     }
-    const id = cr["id"];
-    const member = cr["is_member"];
-    if (typeof id === "string" && id !== "" && member === true) {
+    if (cr["is_member"] === true || cr["is_im"] === true || cr["is_mpim"] === true) {
       nextIds.push(id);
     }
   }
-  return nextIds;
+  return { ids: nextIds, complete };
 }
 
 async function slackAdvanceListPhase(
@@ -184,7 +99,9 @@ async function slackAdvanceListPhase(
     }
     throw new Error(`Slack conversations.list: ${res.text.slice(0, 200)}`);
   }
-  const nextIds = slackCollectMemberChannelIds(state.ids, res.json["channels"]);
+  const collected = slackCollectMemberChannelIds(state.ids, res.json["channels"]);
+  const nextIds = collected.ids;
+  const listPartial = state.listPartial || !collected.complete;
   const meta = asRecord(res.json["response_metadata"]);
   const nextList =
     meta !== undefined && typeof meta["next_cursor"] === "string" ? meta["next_cursor"] : "";
@@ -192,7 +109,7 @@ async function slackAdvanceListPhase(
     return {
       kind: "return",
       result: {
-        cursor: encodeCursor({ ...state, ids: nextIds, listCursor: nextList }),
+        cursor: encodeSlackCursor({ ...state, ids: nextIds, listCursor: nextList, listPartial }),
         itemsUpserted: 0,
         itemsDeleted: 0,
         hasMore: true,
@@ -209,6 +126,7 @@ async function slackAdvanceListPhase(
     listCursor: null,
     nextIdx: 0,
     histCursor: null,
+    listPartial,
   };
   return {
     kind: "done_list",
@@ -312,6 +230,48 @@ function slackUpsertHistoryBatch(
   return { itemsUpserted: count, maxTs };
 }
 
+/**
+ * The end of a history round (the last channel's walk is finished): refresh the owner's read markers for
+ * the channels just walked (best effort, never fails the sync), then send the cursor back to the LIST
+ * phase so the next sync re-lists the conversations - a channel joined or left since is picked up, and
+ * the next marker pass prunes by a fresh list. `hw`, `floorTs` and `teamSubdomain` carry over.
+ */
+async function slackFinishRound(
+  ctx: SyncContext,
+  token: string,
+  state: SlackSyncCursorV1,
+  t0: number,
+  itemsUpserted: number,
+  bytesTransferred: number,
+): Promise<SyncResult> {
+  const pass = await refreshSlackReadMarkers(ctx, {
+    token,
+    ids: state.ids,
+    mkIdx: state.mkIdx,
+    selfUserId: state.selfUserId,
+    listComplete: !state.listPartial,
+  });
+  const next: SlackSyncCursorV1 = {
+    ...state,
+    phase: "list",
+    ids: [],
+    nextIdx: 0,
+    listCursor: null,
+    histCursor: null,
+    listPartial: false,
+    selfUserId: pass.selfUserId,
+    mkIdx: pass.mkIdx,
+  };
+  return {
+    cursor: encodeSlackCursor(next),
+    itemsUpserted,
+    itemsDeleted: 0,
+    hasMore: false,
+    durationMs: Math.round(performance.now() - t0),
+    bytesTransferred,
+  };
+}
+
 async function slackRunHistoryPhase(
   ctx: SyncContext,
   token: string,
@@ -322,7 +282,7 @@ async function slackRunHistoryPhase(
 ): Promise<SyncResult> {
   const ch = state.ids[state.nextIdx % state.ids.length] ?? "";
   if (ch === "") {
-    return syncPassCursorSuccess(t0, bytesTransferred, encodeCursor(state), itemsUpserted);
+    return syncPassCursorSuccess(t0, bytesTransferred, encodeSlackCursor(state), itemsUpserted);
   }
   const histBody = slackHistoryRequestBody(state, ch);
   const hres = await slackWebApi(token, "conversations.history", histBody);
@@ -341,7 +301,7 @@ async function slackRunHistoryPhase(
     meta !== undefined && typeof meta["next_cursor"] === "string" ? meta["next_cursor"] : "";
   if (nextHist !== "") {
     return {
-      cursor: encodeCursor({ ...state, hw: nextHw, histCursor: nextHist }),
+      cursor: encodeSlackCursor({ ...state, hw: nextHw, histCursor: nextHist }),
       itemsUpserted: up.itemsUpserted,
       itemsDeleted: 0,
       hasMore: true,
@@ -355,12 +315,14 @@ async function slackRunHistoryPhase(
     histCursor: null,
     nextIdx: state.nextIdx + 1,
   };
-  const hasMore = nextState.nextIdx < nextState.ids.length;
+  if (nextState.nextIdx >= nextState.ids.length) {
+    return slackFinishRound(ctx, token, nextState, t0, up.itemsUpserted, bt);
+  }
   return {
-    cursor: encodeCursor(nextState),
+    cursor: encodeSlackCursor(nextState),
     itemsUpserted: up.itemsUpserted,
     itemsDeleted: 0,
-    hasMore,
+    hasMore: true,
     durationMs: Math.round(performance.now() - t0),
     bytesTransferred: bt,
   };
@@ -394,7 +356,7 @@ export function createSlackSyncable(options: SlackSyncableOptions): Syncable {
       const floorTs = slackTsFromMs(Date.now() - depthMs);
 
       let state =
-        decodeCursor(cursor) ??
+        decodeSlackCursor(cursor) ??
         ({
           phase: "list",
           floorTs,
@@ -404,6 +366,9 @@ export function createSlackSyncable(options: SlackSyncableOptions): Syncable {
           listCursor: null,
           histCursor: null,
           teamSubdomain: null,
+          selfUserId: null,
+          mkIdx: 0,
+          listPartial: false,
         } satisfies SlackSyncCursorV1);
 
       if (state.floorTs === "" || Number.isNaN(Number(state.floorTs))) {
@@ -429,7 +394,15 @@ export function createSlackSyncable(options: SlackSyncableOptions): Syncable {
       }
 
       if (state.phase === "history" && state.ids.length === 0) {
-        return syncPassCursorSuccess(t0, bytesTransferred, encodeCursor(state), 0);
+        // Nothing to walk (an empty list, or a cursor stuck there by an older version): back to the
+        // list phase, so the next sync re-lists instead of idling on an empty history forever.
+        const relist: SlackSyncCursorV1 = {
+          ...state,
+          phase: "list",
+          nextIdx: 0,
+          listPartial: false,
+        };
+        return syncPassCursorSuccess(t0, bytesTransferred, encodeSlackCursor(relist), 0);
       }
 
       if (state.phase === "history") {
@@ -437,7 +410,7 @@ export function createSlackSyncable(options: SlackSyncableOptions): Syncable {
       }
 
       return {
-        cursor: encodeCursor(state),
+        cursor: encodeSlackCursor(state),
         itemsUpserted,
         itemsDeleted: 0,
         hasMore,

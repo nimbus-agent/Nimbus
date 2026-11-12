@@ -2,6 +2,12 @@ import { createHash } from "node:crypto";
 
 import type { TourStepKind } from "../../agents/_lib/tour-types.ts";
 import { buildCiRunMetadata } from "../../connectors/ci-run-meta.ts";
+import {
+  type OncallShiftInput,
+  oncallShiftBodyPreview,
+  oncallShiftMetadata,
+  oncallShiftTitle,
+} from "../../connectors/oncall-shift-items.ts";
 import { PAGERDUTY_INCIDENT_META_VERSION } from "../../connectors/pagerduty-attribution.ts";
 import { buildPrMetadata } from "../../connectors/pr-meta.ts";
 import {
@@ -351,6 +357,53 @@ const incident = (
   }),
 });
 
+/**
+ * One on-call shift per service, written with the REAL writer's title, preview and metadata builders so
+ * the demo cannot drift from a refreshed index. Each shift covers the seed time whenever it is seeded
+ * (start 2 h before, end 6 h after, both offsets). The title carries no "until" part: it is built once,
+ * with no clock, so the corpus source stays free of absolute times.
+ */
+const oncallShift = (
+  svc: DemoService,
+  userKey: string,
+  userName: string,
+  isMe: boolean,
+): DemoItem => {
+  const shift = (at: (offsetMs: number) => number, withEnd: boolean): OncallShiftInput => ({
+    source: "pagerduty",
+    userId: `PUSER-${userKey}`,
+    userName,
+    userEmail: emailOf(userKey),
+    policyId: `PEP-${svc.id}`,
+    policyName: `${svc.id} escalation`,
+    level: 1,
+    scheduleId: `PSCH-${svc.id}`,
+    scheduleName: `${svc.id} primary`,
+    startMs: at(-2 * HOUR),
+    endMs: withEnd ? at(6 * HOUR) : null,
+    serviceIds: [svc.pagerdutyServiceId],
+    serviceNames: [svc.id],
+    serviceMapComplete: true,
+    isMe,
+    url: null,
+  });
+  return {
+    service: "pagerduty",
+    type: "oncall_shift",
+    externalId: `oncall:pd:PEP-${svc.id}:1:PSCH-${svc.id}:PUSER-${userKey}:demo`,
+    title: oncallShiftTitle(shift((o) => o, false)),
+    body: oncallShiftBodyPreview(shift((o) => o, false)),
+    offsetMs: -2 * MINUTE,
+    metadata: (at) => ({ ...oncallShiftMetadata(shift(at, true), at(-2 * MINUTE)) }),
+  };
+};
+
+const ONCALL_SHIFTS: readonly DemoItem[] = [
+  oncallShift(SERVICES[0] as DemoService, "sam", "Sam Rivera", true),
+  oncallShift(SERVICES[1] as DemoService, "priya", "Priya Nair", false),
+  oncallShift(SERVICES[2] as DemoService, "omar", "Omar Haddad", false),
+];
+
 function emailOf(key: string): string {
   const p = PEOPLE.find((x) => x.key === key);
   if (p === undefined) throw new Error(`acme corpus: unknown person ${key}`);
@@ -689,6 +742,7 @@ export function buildAcmeCorpus(): DemoCorpus {
     ciRuns: bg.ciRuns,
     deployments: [...bg.deployments, STORY_DEPLOY],
     incidents: [...bg.incidents, ...STORY_INCIDENTS],
+    oncallShifts: ONCALL_SHIFTS,
     messages: KNOWLEDGE_MESSAGES,
     pagerdutyLastSyncOffsetMs: -2 * MINUTE,
   };

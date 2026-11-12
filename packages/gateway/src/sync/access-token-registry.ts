@@ -43,6 +43,7 @@ const RESOLVERS: Partial<Record<ConnectorServiceId, (vault: NimbusVault) => Prom
   gmail: (v) => getValidGoogleAccessToken(v, "gmail"),
   google_drive: (v) => getValidGoogleAccessToken(v, "google_drive"),
   google_meet: (v) => getValidGoogleAccessToken(v, "google_meet"),
+  google_calendar: (v) => getValidGoogleAccessToken(v, "google_calendar"),
   google_photos: (v) => getValidGoogleAccessToken(v, "google_photos"),
   hubspot: (v) => getValidHubspotAccessToken(v),
   mendeley: (v) => getValidMendeleyAccessToken(v),

@@ -521,6 +521,7 @@ function oncallBrief(over: Partial<OncallBrief> = {}): OncallBrief {
     },
     otherActiveIncidents: [],
     syncFreshness: { lastSyncMs: now, ageMs: 0, reason: null },
+    onCallNow: null,
     binding: { nimbusServiceId: null, pagerdutyServiceId: null },
     deployment: null,
     change: null,

@@ -164,6 +164,7 @@ pub const ALLOWED_METHODS: &[&str] = &[
     "llm.unloadModel",
     "migration.accept",
     "migration.list",
+    "oncall.now",
     "oncall.pushedGet",
     "oncall.pushedList",
     "pack.install",
@@ -800,9 +801,11 @@ mod tests {
         // Phase 17 W2 PR 3: the desktop panel reads pushed briefs. pushedRetry spawns an agent run
         // on the owner's behalf and stays CLI-only (I7); named on both sides because a one-for-one
         // swap would keep allowlist_exact_size unchanged.
+        assert!(is_method_allowed("oncall.now"));
         assert!(is_method_allowed("oncall.pushedList"));
         assert!(is_method_allowed("oncall.pushedGet"));
         assert!(!is_method_allowed("oncall.pushedRetry"));
+        assert!(!is_no_timeout_method("oncall.now"));
         assert!(!is_no_timeout_method("oncall.pushedList"));
         assert!(!is_no_timeout_method("oncall.pushedGet"));
     }
@@ -990,7 +993,7 @@ mod tests {
 
     #[test]
     fn allowlist_exact_size() {
-        assert_eq!(ALLOWED_METHODS.len(), 126);
+        assert_eq!(ALLOWED_METHODS.len(), 127);
     }
 
     #[test]

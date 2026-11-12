@@ -105,22 +105,23 @@ async function isTeamEntryConfigured(
   return hasAnyNonBlankKey(createTeamVaultView(vault, entry), keys);
 }
 
-/** `google_drive`/`gmail`/`google_photos`/`google_meet` each resolve via the same OAuth lookup their `sync()` uses. */
+/** `google_drive`/`gmail`/`google_photos`/`google_meet`/`google_calendar` each resolve via the same OAuth lookup their `sync()` uses. */
 function googleOAuthConfigured(
-  serviceId: "google_drive" | "gmail" | "google_photos" | "google_meet",
+  serviceId: "google_drive" | "gmail" | "google_photos" | "google_meet" | "google_calendar",
 ): (vault: NimbusVault) => Promise<boolean> {
   return async (vault) => (await resolveGoogleOAuthVaultKey(vault, serviceId)) !== null;
 }
 
 /**
- * Configured-checks for the 13 registered, non-local-only syncables whose OWN
+ * Configured-checks for the 14 registered, non-local-only syncables whose OWN
  * `CONNECTOR_VAULT_SECRET_KEYS` entry is an empty array — so the generic "any manifest key
  * present" loop below has nothing to check — but whose `sync()` nonetheless reads a REAL vault
  * signal before doing any outbound work. Each entry here reuses (never reimplements) exactly the
  * predicate that service's own `sync()` gates on:
  *
- *  - `google_drive`/`gmail`/`google_photos`/`google_meet`: `resolveGoogleOAuthVaultKey` — the
- *    same per-service-then-shared `google.oauth` lookup `getValidGoogleAccessToken` uses.
+ *  - `google_drive`/`gmail`/`google_photos`/`google_meet`/`google_calendar`:
+ *    `resolveGoogleOAuthVaultKey` — the same per-service-then-shared `google.oauth` lookup
+ *    `getValidGoogleAccessToken` uses (Calendar's is per-service ONLY, `GOOGLE_OWN_KEY_ONLY_SERVICES`).
  *  - `onedrive`/`outlook`: both read the single fixed `microsoft.oauth` vault key
  *    (`getValidMicrosoftAccessToken` → `microsoftOAuthAccessFromConfig()`) — there is no
  *    per-service Microsoft resolver analogous to Google's, so this checks that literal key.
@@ -139,7 +140,7 @@ function googleOAuthConfigured(
  *    half, a Teams owner signed in through Microsoft read as unconfigured.
  *
  * Executed failure this closes (I29 Critical, follow-up to the manifest-key gate below): every one
- * of these 13 has an EMPTY manifest key list, so before this map existed the function below fell
+ * of these 14 has an EMPTY manifest key list, so before this map existed the function below fell
  * through to "no signal, no gate" and returned `true` unconditionally — `sync/scheduler.ts`'s
  * `runJob` then ledgered an "authorized" `sync` egress row for every run even though each
  * connector's own `sync()` made ZERO outbound network calls. Proven against a real
@@ -153,6 +154,7 @@ const DERIVED_CONFIGURED_CHECKS: Readonly<
   gmail: googleOAuthConfigured("gmail"),
   google_photos: googleOAuthConfigured("google_photos"),
   google_meet: googleOAuthConfigured("google_meet"),
+  google_calendar: googleOAuthConfigured("google_calendar"),
   onedrive: hasMicrosoftOAuthVaultKey,
   outlook: hasMicrosoftOAuthVaultKey,
   teams: isTeamsConfigured,

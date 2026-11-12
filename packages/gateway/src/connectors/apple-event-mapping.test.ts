@@ -12,8 +12,9 @@
  *  - Long summary → clamped at 256 chars
  */
 import { describe, expect, test } from "bun:test";
-import type { ParsedEvent } from "@nimbus-dev/sdk";
-import { mapAppleEventToItem } from "./apple-event-mapping.ts";
+import { type ParsedEvent, parseICalendar } from "@nimbus-dev/sdk";
+import { parseIcalEventExtras } from "./_lib/ical-event-extras.ts";
+import { EVENT_META_VERSION, mapAppleEventToItem } from "./apple-event-mapping.ts";
 
 // ─── Fixtures ────────────────────────────────────────────────────────────────
 
@@ -198,5 +199,159 @@ describe("mapAppleEventToItem — DTSTAMP / DTSTART parsing", () => {
   test("falls all the way through to syncedAt when both values are unparseable", () => {
     const row = mapAppleEventToItem(makeEvent({ dtstamp: "garbage", start: "also-garbage" }), CTX);
     expect(row?.modifiedAt).toBe(CTX.syncedAt);
+  });
+});
+
+// ─── Normalized keys (Phase 10 MB1): the REAL parse + extras + mapper ────────
+
+describe("mapAppleEventToItem - normalized keys", () => {
+  const ics = (...lines: string[]): string =>
+    ["BEGIN:VCALENDAR", "BEGIN:VEVENT", "UID:n1", ...lines, "END:VEVENT", "END:VCALENDAR"].join(
+      "\r\n",
+    );
+  const mapped = (
+    raw: string,
+    ctx: { selfEmail?: string; zone?: string } = {},
+  ): Record<string, unknown> => {
+    const [ev] = parseICalendar(raw);
+    if (ev === undefined) throw new Error("no event");
+    const extras = parseIcalEventExtras(raw).get(ev.uid);
+    const row = mapAppleEventToItem(ev, {
+      ...CTX,
+      ...(extras === undefined ? {} : { extras }),
+      zone: ctx.zone ?? "UTC",
+      ...(ctx.selfEmail === undefined ? {} : { selfEmail: ctx.selfEmail }),
+    });
+    return row?.metadata ?? {};
+  };
+
+  test("a UTC timed event writes every normalized key and the version", () => {
+    const m = mapped(
+      ics(
+        "DTSTART:20261111T093000Z",
+        "DTEND:20261111T103000Z",
+        "ORGANIZER;CN=Boss:mailto:Boss@iCloud.com",
+        "ATTENDEE;PARTSTAT=ACCEPTED:mailto:me@icloud.com",
+        "ATTENDEE;PARTSTAT=DECLINED:mailto:other@icloud.com",
+      ),
+      { selfEmail: "Me@iCloud.com" },
+    );
+    expect(m["start_ms"]).toBe(Date.UTC(2026, 10, 11, 9, 30));
+    expect(m["end_ms"]).toBe(Date.UTC(2026, 10, 11, 10, 30));
+    expect(m["all_day"]).toBe(false);
+    expect(m["organizer_email"]).toBe("boss@icloud.com");
+    expect(m["attendee_count"]).toBe(2);
+    expect(m["self_response"]).toBe("accepted");
+    expect(m["meta_v"]).toBe(EVENT_META_VERSION);
+    // the raw keys are unchanged
+    expect(m["start"]).toBe("20261111T093000Z");
+    expect(m["allDay"]).toBe(false);
+    expect(m["organizer"]).toBe("Boss@iCloud.com");
+  });
+
+  test("a TZID event converts through its zone, not the gateway zone", () => {
+    const m = mapped(
+      ics(
+        "DTSTART;TZID=America/New_York:20261111T093000",
+        "DTEND;TZID=America/New_York:20261111T103000",
+      ),
+      { zone: "Asia/Tokyo" },
+    );
+    expect(m["start_ms"]).toBe(Date.UTC(2026, 10, 11, 14, 30));
+    expect(m["end_ms"]).toBe(Date.UTC(2026, 10, 11, 15, 30));
+  });
+
+  test("a floating event uses the injected zone", () => {
+    const m = mapped(ics("DTSTART:20261111T093000", "DTEND:20261111T103000"), {
+      zone: "Europe/London",
+    });
+    expect(m["start_ms"]).toBe(Date.UTC(2026, 10, 11, 9, 30));
+    const summer = mapped(ics("DTSTART:20260701T093000"), { zone: "Europe/London" });
+    expect(summer["start_ms"]).toBe(Date.UTC(2026, 6, 1, 8, 30));
+  });
+
+  test("an all-day event spans midnight to midnight in the zone, with or without DTEND", () => {
+    const withEnd = mapped(ics("DTSTART;VALUE=DATE:20261111", "DTEND;VALUE=DATE:20261113"), {
+      zone: "Europe/Paris",
+    });
+    expect(withEnd["all_day"]).toBe(true);
+    expect(withEnd["start_ms"]).toBe(Date.UTC(2026, 10, 10, 23));
+    expect(withEnd["end_ms"]).toBe(Date.UTC(2026, 10, 12, 23));
+    const noEnd = mapped(ics("DTSTART;VALUE=DATE:20261111"), { zone: "Europe/Paris" });
+    expect(noEnd["end_ms"]).toBe(Date.UTC(2026, 10, 11, 23));
+  });
+
+  test("a timed event with neither DTEND nor DURATION ends when it starts; DURATION adds", () => {
+    const none = mapped(ics("DTSTART:20261111T093000Z"));
+    expect(none["end_ms"]).toBe(none["start_ms"]);
+    const dur = mapped(ics("DTSTART:20261111T093000Z", "DURATION:PT1H30M"));
+    expect(dur["end_ms"]).toBe(Date.UTC(2026, 10, 11, 11, 0));
+  });
+
+  test("a date-only start honours DURATION: P3D ends three local days later, none is one day", () => {
+    const p3 = mapped(ics("DTSTART;VALUE=DATE:20261111", "DURATION:P3D"), { zone: "Europe/Paris" });
+    expect(p3["start_ms"]).toBe(Date.UTC(2026, 10, 10, 23));
+    expect(p3["end_ms"]).toBe(Date.UTC(2026, 10, 13, 23));
+    const none = mapped(ics("DTSTART;VALUE=DATE:20261111"), { zone: "Europe/Paris" });
+    expect(none["end_ms"]).toBe(Date.UTC(2026, 10, 11, 23));
+  });
+
+  test("an all-day P1W across the autumn change ends seven local days later", () => {
+    const m = mapped(ics("DTSTART;VALUE=DATE:20261025", "DURATION:P1W"), { zone: "Europe/Paris" });
+    // 2026-10-25 00:00 CEST (+2) to 2026-11-01 00:00 CET (+1)
+    expect(m["start_ms"]).toBe(Date.UTC(2026, 9, 24, 22));
+    expect(m["end_ms"]).toBe(Date.UTC(2026, 9, 31, 23));
+  });
+
+  test("a timed P1D is a nominal day: across spring-forward it ends at the same local time", () => {
+    const m = mapped(ics("DTSTART;TZID=America/New_York:20260307T120000", "DURATION:P1D"));
+    expect(m["start_ms"]).toBe(Date.UTC(2026, 2, 7, 17));
+    expect(m["end_ms"]).toBe(Date.UTC(2026, 2, 8, 16));
+  });
+
+  test("P1DT2H adds the nominal day, then exactly two hours", () => {
+    const m = mapped(ics("DTSTART;TZID=America/New_York:20260307T120000", "DURATION:P1DT2H"));
+    expect(m["end_ms"]).toBe(Date.UTC(2026, 2, 8, 18));
+  });
+
+  test("PT90M is exact and a P1W timed event is seven calendar days", () => {
+    const exact = mapped(ics("DTSTART;TZID=America/New_York:20260308T010000", "DURATION:PT90M"));
+    // 01:00 EST + 90 minutes crosses the 02:00 gap: 03:30 EDT
+    expect(exact["end_ms"]).toBe(Date.UTC(2026, 2, 8, 6) + 90 * 60_000);
+    const week = mapped(ics("DTSTART;TZID=America/New_York:20260307T120000", "DURATION:P1W"));
+    expect(week["end_ms"]).toBe(Date.UTC(2026, 2, 14, 16));
+  });
+
+  test("self_response is null for an unlisted address, an unknown status or no selfEmail", () => {
+    const raw = ics("DTSTART:20261111T093000Z", "ATTENDEE;PARTSTAT=TENTATIVE:mailto:me@icloud.com");
+    expect(mapped(raw, { selfEmail: "someone@else.com" })["self_response"]).toBeNull();
+    expect(mapped(raw)["self_response"]).toBeNull();
+    expect(mapped(raw, { selfEmail: "ME@icloud.com" })["self_response"]).toBe("tentative");
+    const odd = ics("DTSTART:20261111T093000Z", "ATTENDEE;PARTSTAT=BOGUS:mailto:me@icloud.com");
+    expect(mapped(odd, { selfEmail: "me@icloud.com" })["self_response"]).toBeNull();
+  });
+
+  test("an unparseable DTSTART leaves start_ms and end_ms out", () => {
+    const m = mapped(ics("DTSTART:garbage", "DTEND:20261111T103000Z"));
+    expect("start_ms" in m).toBe(false);
+    expect("end_ms" in m).toBe(false);
+    expect(m["meta_v"]).toBe(EVENT_META_VERSION);
+  });
+
+  test("no organizer omits organizer_email; an unknown TZID falls back to the zone", () => {
+    const m = mapped(ics("DTSTART;TZID=Not/AZone:20261111T093000"), { zone: "UTC" });
+    expect("organizer_email" in m).toBe(false);
+    expect(m["start_ms"]).toBe(Date.UTC(2026, 10, 11, 9, 30));
+  });
+
+  test("an unparseable DTEND is treated as absent", () => {
+    const m = mapped(ics("DTSTART:20261111T093000Z", "DTEND:garbage", "DURATION:PT1H"));
+    expect(m["end_ms"]).toBe(Date.UTC(2026, 10, 11, 10, 30));
+  });
+
+  test("with no zone given the mapper falls back to the gateway zone", () => {
+    const [ev] = parseICalendar(ics("DTSTART:20261111T093000"));
+    const row = ev === undefined ? null : mapAppleEventToItem(ev, CTX);
+    expect(typeof row?.metadata["start_ms"]).toBe("number");
   });
 });

@@ -293,4 +293,36 @@ export const LANE_EXEMPTIONS: readonly LaneExemption[] = [
     reason:
       "Only GitHub writes mergeable_state; selectMergeConflicts counts open PRs whose mergeable_state IS NULL and reports the unknown_mergeable_state gap.",
   },
+  {
+    file: "packages/gateway/src/connectors/google-calendar-sync.ts",
+    key: "start_ms",
+    category: "census-blind",
+    reads: 1,
+    reason:
+      "Reads the mapped row's own start_ms (not an SQL read) to drop an event outside the sync window. Its writer is normalizedEventKeys in connectors/_lib/calendar-event-normalize.ts, called from google-calendar-event-mapping.ts: the census writer scan does not follow a spread across files.",
+  },
+  {
+    file: "packages/gateway/src/connectors/google-calendar-sync.ts",
+    key: "end_ms",
+    category: "census-blind",
+    reads: 1,
+    reason:
+      "Reads the mapped row's own end_ms (not an SQL read) to drop an event outside the sync window. Its writer is normalizedEventKeys in connectors/_lib/calendar-event-normalize.ts, called from google-calendar-event-mapping.ts: the census writer scan does not follow a spread across files.",
+  },
+  {
+    file: "packages/gateway/src/connectors/outlook-calendar-step.ts",
+    key: "start_ms",
+    category: "census-blind",
+    reads: 1,
+    reason:
+      "Reads the mapped row's own start_ms (not an SQL read) to drop an event outside the sync window. Its writer is normalizedEventKeys in connectors/_lib/calendar-event-normalize.ts, called from outlook-calendar-mapping.ts: the census writer scan does not follow a spread across files.",
+  },
+  {
+    file: "packages/gateway/src/connectors/outlook-calendar-step.ts",
+    key: "end_ms",
+    category: "census-blind",
+    reads: 1,
+    reason:
+      "Reads the mapped row's own end_ms (not an SQL read) to drop an event outside the sync window. Its writer is normalizedEventKeys in connectors/_lib/calendar-event-normalize.ts, called from outlook-calendar-mapping.ts: the census writer scan does not follow a spread across files.",
+  },
 ];

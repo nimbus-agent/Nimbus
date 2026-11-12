@@ -2,6 +2,28 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [10.52.0](https://github.com/nimbus-agent/Nimbus/compare/v10.51.0...v10.52.0) (2026-11-11)
+
+
+### Features
+
+* **gateway:** keep Slack read markers, index Slack DMs, and count unread threads for the morning briefing ([#1973](https://github.com/nimbus-agent/Nimbus/issues/1973)) ([e2870a1](https://github.com/nimbus-agent/Nimbus/commit/e2870a1a904112549a0752d9c22192ba0586e4ce))
+
+## [10.51.0](https://github.com/nimbus-agent/Nimbus/compare/v10.50.0...v10.51.0) (2026-11-11)
+
+
+### Features
+
+* **gateway:** index on-call shifts from PagerDuty and Jira Service Management and answer who is on call from the index ([#1972](https://github.com/nimbus-agent/Nimbus/issues/1972)) ([2e5003f](https://github.com/nimbus-agent/Nimbus/commit/2e5003f6271661e675dedc5bafd64f8211337a67))
+
+## [10.50.0](https://github.com/nimbus-agent/Nimbus/compare/v10.49.0...v10.50.0) (2026-11-11)
+
+
+### Features
+
+* **gateway:** index my open work, GitHub due dates, Outlook read state and iCloud event times for the morning briefing ([#1969](https://github.com/nimbus-agent/Nimbus/issues/1969)) ([a93ee4e](https://github.com/nimbus-agent/Nimbus/commit/a93ee4e2503613e5fd931eb0b778e0abadf67765))
+* **gateway:** sync Google Calendar and Outlook calendar events into the local index ([#1971](https://github.com/nimbus-agent/Nimbus/issues/1971)) ([675dee0](https://github.com/nimbus-agent/Nimbus/commit/675dee0252e2b7cd98c5e34a98de297eb9d60222))
+
 ## [10.49.0](https://github.com/nimbus-agent/Nimbus/compare/v10.48.0...v10.49.0) (2026-11-11)
 
 

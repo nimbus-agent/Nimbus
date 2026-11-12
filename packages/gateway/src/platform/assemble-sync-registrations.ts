@@ -35,6 +35,7 @@ import { createGithubActionsSyncable } from "../connectors/github-actions-sync.t
 import { createGithubSyncable } from "../connectors/github-sync.ts";
 import { createGitlabSyncable } from "../connectors/gitlab-sync.ts";
 import { createGmailSyncable } from "../connectors/gmail-sync.ts";
+import { createGoogleCalendarSyncable } from "../connectors/google-calendar-sync.ts";
 import { createGoogleDriveSyncable } from "../connectors/google-drive-sync.ts";
 import { createGoogleMeetSyncable } from "../connectors/google-meet-sync.ts";
 import { createGooglePhotosSyncable } from "../connectors/google-photos-sync.ts";
@@ -99,6 +100,8 @@ import type { SyncScheduler } from "../sync/scheduler.ts";
 export type ConnectorMeshSyncableOptions = {
   pagerdutyMaxPagesPerSync: number;
   workdayConfig: NimbusWorkdayToml;
+  /** `[briefing] snapshot_interval_minutes`, read per sync (Phase 10 MB1); absent means 15. */
+  briefingSnapshotIntervalMinutes?: () => number;
 };
 
 export function registerConnectorMeshSyncables(
@@ -106,6 +109,10 @@ export function registerConnectorMeshSyncables(
   connectorMesh: LazyConnectorMesh,
   options: ConnectorMeshSyncableOptions,
 ): void {
+  const snapshotInterval =
+    options.briefingSnapshotIntervalMinutes === undefined
+      ? {}
+      : { snapshotIntervalMinutes: options.briefingSnapshotIntervalMinutes };
   syncScheduler.register(
     createGoogleDriveSyncable({
       ensureGoogleDriveRunning: () => connectorMesh.ensureGoogleDriveRunning(),
@@ -126,6 +133,9 @@ export function registerConnectorMeshSyncables(
       ensureGoogleMcpRunning: () => connectorMesh.ensureGoogleDriveRunning(),
     }),
   );
+  // No mesh option: Calendar calls the REST API with its own token, so a 5-minute cadence never
+  // keeps the Google MCP bundle spawned for a user who has only Calendar.
+  syncScheduler.register(createGoogleCalendarSyncable());
   syncScheduler.register(
     createOneDriveSyncable({
       ensureMicrosoftMcpRunning: () => connectorMesh.ensureMicrosoftBundleRunning(),
@@ -139,6 +149,7 @@ export function registerConnectorMeshSyncables(
   syncScheduler.register(
     createGithubSyncable({
       ensureGithubMcpRunning: () => connectorMesh.ensureGithubRunning(),
+      ...snapshotInterval,
     }),
   );
   syncScheduler.register(
@@ -169,11 +180,13 @@ export function registerConnectorMeshSyncables(
   syncScheduler.register(
     createLinearSyncable({
       ensureLinearMcpRunning: () => connectorMesh.ensureLinearRunning(),
+      ...snapshotInterval,
     }),
   );
   syncScheduler.register(
     createJiraSyncable({
       ensureJiraMcpRunning: () => connectorMesh.ensureJiraRunning(),
+      ...snapshotInterval,
     }),
   );
   syncScheduler.register(

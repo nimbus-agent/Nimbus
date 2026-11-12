@@ -14,6 +14,7 @@ import { ProviderRateLimiter } from "../sync/rate-limiter.ts";
 import { SyncScheduler } from "../sync/scheduler.ts";
 import { unboundSyncCapabilities } from "../sync/sync-capabilities.ts";
 import { createMemoryVault } from "../testing/bun-test-support.ts";
+import { listChatReadMarkers, setChatReadMarkerRows } from "./chat-read-marker-store.ts";
 import { upsertIndexedItem } from "./item-store.ts";
 import type { SemanticSearchDeps } from "./local-index.ts";
 import { isAllowedMetaKey, LocalIndex } from "./local-index.ts";
@@ -2141,6 +2142,18 @@ describe("LocalIndex.removeConnectorIndexData", () => {
     expect(count).toBe(2);
     expect(idx.persistedConnectorStatuses("dropbox")).toEqual([]);
     expect(idx.search({ service: "dropbox" })).toEqual([]);
+  });
+
+  test("removes the service's Slack read markers and no other service's", () => {
+    const idx = makeIndex();
+    const marker = { channelId: "C1", channelKind: "im", lastReadTs: "1700000000.000001" } as const;
+    setChatReadMarkerRows(idx.rawDb, "slack", [marker], undefined, 1);
+    idx.rawDb.run(
+      "INSERT INTO chat_read_marker (service, channel_id, channel_kind, last_read_ts, captured_at) VALUES ('other', 'C1', 'im', '1700000000.000001', 1)",
+    );
+    idx.removeConnectorIndexData("slack");
+    expect(listChatReadMarkers(idx.rawDb, "slack")).toEqual([]);
+    expect(listChatReadMarkers(idx.rawDb, "other")).toHaveLength(1);
   });
 
   test("returns 0 when connector has no items", () => {

@@ -75,8 +75,11 @@ describe("the capability set exposes no raw handle", () => {
       "prFileCandidates",
       "pruneBlameForFile",
       "recordPrChangedFiles",
+      "replaceItemSet",
+      "replaceWorkSnapshot",
       "resolvePerson",
       "scopedVaultView",
+      "setChatReadMarkers",
       "upsertBlameLines",
       "upsertItem",
       "writeApiEndpointsForSpec",
@@ -395,6 +398,10 @@ describe("unbound and local-only capability sets", () => {
     for (const name of ["getSecret", "getSharedSecret", "accessToken"]) {
       expect(() => asAny[name]?.()).toThrow(/local-only syncable/);
     }
+    // The db members are built bound to "github"; a snapshot write must not inherit that.
+    expect(() => c.replaceWorkSnapshot("assigned", [])).toThrow(/local-only syncable/);
+    expect(() => c.replaceItemSet("event", [])).toThrow(/local-only syncable/);
+    expect(() => c.setChatReadMarkers([])).toThrow(/local-only syncable/);
     // ...but it still writes to the index, which is its whole job.
     c.upsertItem({
       service: "obsidian",
@@ -407,5 +414,120 @@ describe("unbound and local-only capability sets", () => {
       syncedAt: 1,
     });
     expect(d.db.query("SELECT COUNT(*) AS n FROM item").get()).toEqual({ n: 1 });
+  });
+});
+
+describe("replaceWorkSnapshot is scoped to the calling service", () => {
+  function seed(db: Database, service: string, ext: string): void {
+    db.run(
+      `INSERT INTO item (id, service, type, external_id, title, modified_at, synced_at)
+       VALUES (?, ?, 'issue', ?, 't', 1, 1)`,
+      [`${service}:${ext}`, service, ext],
+    );
+  }
+  function snap(db: Database): Array<{ service: string; item_id: string }> {
+    return db
+      .query("SELECT service, item_id FROM work_snapshot ORDER BY service, item_id")
+      .all() as Array<{ service: string; item_id: string }>;
+  }
+
+  test("replaces only the bound service's rows and cannot resolve another service's id", () => {
+    const d = deps({});
+    seed(d.db, "jira", "K-1");
+    seed(d.db, "github", "o/r#1");
+    seed(d.db, "linear", "L-1");
+    buildSyncCapabilities(d, "github").replaceWorkSnapshot("assigned", ["o/r#1"]);
+    buildSyncCapabilities(d, "linear").replaceWorkSnapshot("assigned", ["L-1"]);
+    const res = buildSyncCapabilities(d, "jira").replaceWorkSnapshot("assigned", ["K-1", "o/r#1"]);
+    expect(res).toEqual({ stored: 1, dropped: 1 });
+    expect(snap(d.db)).toEqual([
+      { service: "github", item_id: "github:o/r#1" },
+      { service: "jira", item_id: "jira:K-1" },
+      { service: "linear", item_id: "linear:L-1" },
+    ]);
+  });
+
+  test("a service outside jira, linear and github is refused, naming the service", () => {
+    const caps = buildSyncCapabilities(deps({}), "slack");
+    expect(() => caps.replaceWorkSnapshot("assigned", [])).toThrow(/slack/);
+  });
+});
+
+describe("setChatReadMarkers is scoped to the calling service", () => {
+  const marker = { channelId: "C1", channelKind: "im", lastReadTs: "1700000000.000001" } as const;
+  function rows(db: Database): Array<{ service: string; channel_id: string }> {
+    return db
+      .query("SELECT service, channel_id FROM chat_read_marker ORDER BY service, channel_id")
+      .all() as Array<{ service: string; channel_id: string }>;
+  }
+
+  test("writes service = slack rows and never touches another service's marker, even when pruning", () => {
+    const d = deps({});
+    d.db.run(
+      "INSERT INTO chat_read_marker (service, channel_id, channel_kind, last_read_ts, captured_at) VALUES ('other', 'C1', 'im', '1700000000.000009', 1)",
+    );
+    const caps = buildSyncCapabilities(d, "slack");
+    expect(caps.setChatReadMarkers([marker], { keepChannelIds: ["C1"] })).toEqual({
+      stored: 1,
+      skipped: 0,
+      pruned: 0,
+    });
+    expect(caps.setChatReadMarkers([], { keepChannelIds: [] }).pruned).toBe(1);
+    expect(rows(d.db)).toEqual([{ service: "other", channel_id: "C1" }]);
+  });
+
+  test("a caller-supplied service field is ignored (the service is never a parameter)", () => {
+    const d = deps({});
+    const forged = { ...marker, service: "other" } as unknown as typeof marker;
+    buildSyncCapabilities(d, "slack").setChatReadMarkers([forged]);
+    expect(rows(d.db)).toEqual([{ service: "slack", channel_id: "C1" }]);
+  });
+
+  test("any service other than slack is refused, naming it", () => {
+    const caps = buildSyncCapabilities(deps({}), "jira");
+    expect(() => caps.setChatReadMarkers([marker])).toThrow(/jira/);
+  });
+});
+
+describe("replaceItemSet is scoped to the calling service", () => {
+  function seedEvent(db: Database, service: string, type: string, ext: string): void {
+    db.run(
+      `INSERT INTO item (id, service, type, external_id, title, modified_at, synced_at)
+       VALUES (?, ?, ?, ?, 't', 1, 1)`,
+      [`${service}:${ext}`, service, type, ext],
+    );
+  }
+  function remaining(db: Database): string[] {
+    return (db.query("SELECT id FROM item ORDER BY id").all() as { id: string }[]).map((r) => r.id);
+  }
+
+  test("an outlook capability deletes only outlook event rows", () => {
+    const d = deps({});
+    seedEvent(d.db, "outlook", "event", "e1");
+    seedEvent(d.db, "outlook", "email", "m1");
+    seedEvent(d.db, "google_calendar", "event", "e1");
+    expect(buildSyncCapabilities(d, "outlook").replaceItemSet("event", [])).toBe(1);
+    expect(remaining(d.db)).toEqual(["google_calendar:e1", "outlook:m1"]);
+  });
+
+  test("a google_calendar capability deletes only google_calendar event rows (and honours a prefix)", () => {
+    const d = deps({});
+    seedEvent(d.db, "google_calendar", "event", "c1|1");
+    seedEvent(d.db, "google_calendar", "event", "c2|1");
+    seedEvent(d.db, "outlook", "event", "c1|1");
+    const caps = buildSyncCapabilities(d, "google_calendar");
+    expect(caps.replaceItemSet("event", [], { externalIdPrefix: "c1|" })).toBe(1);
+    expect(remaining(d.db)).toEqual(["google_calendar:c2|1", "outlook:c1|1"]);
+  });
+
+  test("a service without an allowlist entry is refused, naming it; outlook cannot name email", () => {
+    for (const svc of ["slack", "jira", "github"] as const) {
+      expect(() => buildSyncCapabilities(deps({}), svc).replaceItemSet("event", [])).toThrow(
+        new RegExp(svc),
+      );
+    }
+    expect(() => buildSyncCapabilities(deps({}), "outlook").replaceItemSet("email", [])).toThrow(
+      /email/,
+    );
   });
 });

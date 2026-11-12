@@ -407,6 +407,7 @@ describe("user MCP spread", () => {
       "findPrsNotTouching",
       "getAuditLog",
       "listConnectors",
+      "oncall_now",
       "resolvePerson",
       "searchLocalIndex",
       "traverseGraph",

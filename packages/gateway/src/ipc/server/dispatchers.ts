@@ -91,6 +91,7 @@ import { dispatchMediaRpc } from "../media-rpc.ts";
 import { dispatchMetricsRpc, MetricsRpcError } from "../metrics-rpc.ts";
 import { dispatchMigrationRpc } from "../migration-rpc.ts";
 import { dispatchNotificationsRpc } from "../notifications-rpc.ts";
+import { dispatchOncallNowRpc, OncallNowRpcError } from "../oncall-now-rpc.ts";
 import { dispatchOncallPushRpc, OncallPushRpcError } from "../oncall-push-rpc.ts";
 import { dispatchOwnershipRpc } from "../ownership-rpc.ts";
 import { buildPackDeps, dispatchPackRpc } from "../pack-rpc.ts";
@@ -1511,6 +1512,31 @@ export async function tryDispatchFleetRpc(
   return phase4RpcSkipped;
 }
 
+/**
+ * `oncall.now` (Phase 10 MB3) — who is on call, from the local index only. Separate from the push
+ * dispatcher because that one needs the push runtime and this needs only the index and the config dir
+ * (both on `ServerCtx.options`, so it also answers in a demo gateway, whose index is the synthetic
+ * corpus). LAN-forbidden by the `oncall` namespace entry (I5); renderer-callable (I7).
+ */
+export async function tryDispatchOncallNowRpc(
+  ctx: ServerCtx,
+  method: string,
+  params: unknown,
+): Promise<unknown> {
+  if (method !== "oncall.now" || ctx.options.localIndex === undefined) return phase4RpcSkipped;
+  try {
+    const out = await dispatchOncallNowRpc(method, params, {
+      db: ctx.options.localIndex.getDatabase(),
+      ...(ctx.options.configDir === undefined ? {} : { configDir: ctx.options.configDir }),
+    });
+    if (out.kind === "hit") return out.value;
+  } catch (e) {
+    if (e instanceof OncallNowRpcError) throw new RpcMethodError(e.rpcCode, e.message);
+    throw e;
+  }
+  return phase4RpcSkipped;
+}
+
 export async function tryDispatchOncallPushRpc(
   ctx: ServerCtx,
   method: string,
@@ -1946,6 +1972,7 @@ const PHASE4_PLATFORM_DISPATCHERS: ReadonlyArray<
   tryDispatchToolgenRpc,
   tryDispatchComputerRpc,
   tryDispatchFleetRpc,
+  tryDispatchOncallNowRpc,
   tryDispatchOncallPushRpc,
   tryDispatchNotificationsRpc,
   tryDispatchCaptureRpc,

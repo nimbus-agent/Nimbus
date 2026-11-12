@@ -2,6 +2,7 @@ import type { BriefTextFormat } from "../format/slack-markdown.ts";
 import { fetchAgentBrief } from "../lib/agent-cli-dispatcher.ts";
 import { parseDurationToMs } from "../lib/parse-duration.ts";
 import { scanBriefCommandFlags, writeBriefOutput } from "./_agent-brief-cli.ts";
+import { ONCALL_NOW_USAGE, runOncallNow } from "./oncall-now.ts";
 import { ONCALL_PUSHED_USAGE, runOncallPushed } from "./oncall-pushed.ts";
 
 /**
@@ -80,6 +81,8 @@ const USAGE =
   "in nimbus.toml. Refuses rather than printing an empty brief when nothing is assigned —\n" +
   "an empty on-call brief reads as `you are clear`, which is the one wrong answer that looks right.\n" +
   "\n" +
+  ONCALL_NOW_USAGE +
+  "\n" +
   ONCALL_PUSHED_USAGE;
 
 export function parseOncallArgs(args: string[]): OncallCliArgs {
@@ -148,6 +151,10 @@ export async function runOncallCommand(
   args: string[],
   deps: OncallCommandDeps = defaultOncallDeps,
 ): Promise<void> {
+  if (args[0] === "now") {
+    await runOncallNow(args.slice(1));
+    return;
+  }
   if (args[0] === "pushed") {
     await runOncallPushed(args.slice(1));
     return;

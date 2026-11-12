@@ -1106,6 +1106,7 @@ nimbus oncall
 nimbus oncall --service checkout
 nimbus oncall --incident "pagerduty:PXXXXX"
 nimbus oncall --since 3d --format slack
+nimbus oncall now --service payment-service
 ```
 
 **Options:**
@@ -1143,6 +1144,27 @@ nimbus oncall --since 3d --format slack
 **Read-only:** never triggers HITL, never makes a live connector API call. Reachable over the local HTTP API, as an MCP tool and from ChatOps — but **only on its explicit shapes**. The zero-parameter owner-scoped form is refused for an external caller, because it resolves the *gateway owner's* identity: a bearer token cannot ask about itself and would receive the owner's active incident, assignees included. That is the concern that keeps `agents.standup` off every external surface entirely; the difference here is that `oncall` has an answerable external shape, so the bound sits on the **shape** rather than the method — the same split invariant `I36` applies to `agents.ghost` / `agents.conflicts`. Eligible for `nimbus fleet`, where a job names its service and the prior-incident lane is the half a nightly digest watches move.
 
 ---
+
+### `nimbus oncall now`
+
+Who is on call right now, from the on-call shifts the index holds (PagerDuty and Jira Service Management Operations). It makes **no provider call**: the shifts are refreshed at most every 15 minutes by the existing `pagerduty` and `jira` syncs, so every answer carries the age of its data.
+
+```bash
+nimbus oncall now
+nimbus oncall now --service payment-service
+nimbus oncall now --service payment-service --json
+```
+
+| Flag | Description |
+|---|---|
+| `--service <id\|name>` | A Nimbus service id (resolved through its `[ci.service.<id>]` PagerDuty services), a PagerDuty service id or name, or a schedule or escalation-policy name. Tried in that order; the output says which matched. Omit it for every indexed shift. |
+| `--json` | Print the result object (`status`, `asOfMs`, `query`, `resolvedVia`, `youAreOnCall`, `sources`, `shifts`, `next`, `known`, `gaps`) on one line, with the same exit codes. |
+
+**Statuses and exit codes.** `ok` (exit 0): who is on call, with level, end time when known and a trailing `<- you` marker when it is you. `none_on_call` (exit 0): the data exists and matched but no shift covers now, with the next shifts; an answer. `no_match` (exit 1): nothing matches the term, and the known schedule, policy and service names are listed on stderr. `no_data` (exit 1): no on-call data is indexed, and the gap names what to connect. An empty list is never printed as "nobody".
+
+**Data age.** One line per source (`PagerDuty data 3 min old`), and `WARNING: older than 1 h; the shift may have changed` when a source's oldest row is stale or has no recorded age.
+
+**Bounds.** Reply shapes of the providers are not verified against live accounts. Jira Service Management shifts carry no start or end time and no service mapping (look them up by schedule name). PagerDuty `you` needs a user-level API token or `pagerduty.from_email` (`nimbus connector auth pagerduty --token <token> --username <email>`). `nimbus ask "who's on call for payment-service?"` uses the `oncall_now` tool only where the Mastra agent runs (with a remote model vendor); the local-router path has no tools, and there only ranked retrieval of the shift rows can surface the answer. The IPC method is `oncall.now` (LAN-forbidden, renderer-callable, served by a demo gateway); the `nimbus oncall` brief also carries an `On call now` line under `## Incident`.
 
 ### `nimbus oncall pushed`
 
@@ -1652,6 +1674,10 @@ While a rule is live, each write of that step that is built by that exact workfl
 `list` shows id, workflow, step, tool, uses against the ceiling, expiry, last-fired time and state (`live`, `paused`, `revoked`, `expired`, `exhausted`). `pause` and `revoke` narrow what runs unprompted, need no approval and are audited; `revoke` is final. `resume` widens again, so it asks you again. Every method is in the `standing` IPC namespace: forbidden over LAN, and the desktop may call `list`, `show`, `fires`, `pause`, `revoke`, `suggestions` and `dismissSuggestion` only (never `create` or `resume`).
 
 **Suggestions (Phase 10 SA5).** When you have approved the same write step of the same workflow, unchanged, by hand at the prompt in `[standing] suggest_after` runs in a row (default 5), `nimbus approve list` adds a `Suggestions` section after the rules (id, workflow, step, how many runs in a row; `--json` adds a `suggestions` array). Only a run in which you were asked and approved every action of that step counts: a run answered with `--yes` or by a script, a run a standing rule already covered, a scheduled run and a run with nothing to ask change nothing, and a rejection by you resets the count to 0. A suggestion is only a note. `nimbus approve add --from-suggestion <id>` takes the workflow and step from it (naming them too is refused) and then asks you exactly as `add` does, with one more line at the top of the prompt, `Suggested after <n> approvals in a row`; it refuses `--yes` like `add`, and if the workflow was edited since it exits 1 with `ERR_SUGGESTION_STALE`. `nimbus approve dismiss <suggestion-id>` drops one, needs no approval and is audited; a dismissed suggestion does not return until the workflow's content changes. Set the threshold in `nimbus.toml`: `[standing] suggest_after = 5` (an integer 3 to 50, or `0` to turn learning off; a value outside that falls back to 5 with a warning). Learning is off under the `standing_approvals` org lockoff and on a demo install.
+
+**Briefing data (Phase 10 MB1).** MB1 adds no command or flag. It adds one `nimbus.toml` key, `[briefing] snapshot_interval_minutes = 15` (an integer 5 to 240; a value outside that falls back to 15 and `nimbus config explain briefing.snapshot_interval_minutes` shows the fallback): how often the Jira, Linear and GitHub syncs may refresh their snapshot of your open work. `nimbus index rebody` clears the sync cursor of each service it re-syncs (`--service`, or every service that has recoverable rows, by body or by metadata version), so a Jira, Linear or GitHub snapshot is refreshed by a rebody run only when that service is part of the run; a service with nothing recoverable is left alone and keeps its interval. The briefing command and its other keys arrive with MB5.
+
+**Calendar sync (Phase 10 MB2b).** MB2b adds no other command or flag. `nimbus connector auth google_calendar` runs its own Google consent for `https://www.googleapis.com/auth/calendar.readonly` (so connecting Gmail or Drive never grants calendar access, and `nimbus connector auth google_calendar --help` prints the Google OAuth setup); once connected, the sync keeps each selected Google calendar (at most 20) for the window one day back to 30 days ahead, and the existing `outlook` connection keeps the same window of your mailbox calendar (a connection made before Outlook asked for `Calendars.Read` needs `nimbus connector auth outlook` again). `nimbus connector remove google_calendar` removes its credential like any connector.
 
 **Exit codes:** `0` done, `1` the gateway refused (policy, not a person's answer, a bad request, a decline, a stale suggestion), `2` usage.
 
@@ -2869,6 +2895,7 @@ The canonical per-connector credential keys live in `CONNECTOR_VAULT_SECRET_KEYS
 nimbus connector auth google_drive
 nimbus connector auth gmail
 nimbus connector auth google_photos
+nimbus connector auth google_calendar   # its own consent: calendar.readonly only
 nimbus connector auth onedrive
 nimbus connector auth outlook
 nimbus connector auth teams
