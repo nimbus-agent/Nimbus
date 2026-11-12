@@ -3,6 +3,7 @@ import type { KnownNamespaceStore } from "../index/known-namespace-store.ts";
 import type { LanPeerRow, LocalIndex } from "../index/local-index.ts";
 import { sendFederatedOverWire } from "../ipc/lan-client.ts";
 import type { BoxKeypair } from "../ipc/lan-crypto.ts";
+import { lanLinkFor } from "./lan-link.ts";
 import type { ExpertiseRank, FederatedItem } from "./types.ts";
 
 const FANOUT_CONCURRENCY = 5;
@@ -100,6 +101,8 @@ export async function fanOutQuery(
           row.peer_pubkey,
           "federation.query",
           body,
+          undefined,
+          lanLinkFor(row, deps.index),
         )) as { kind?: string; response?: { items?: readonly FederatedItem[] }; error?: string };
         if (result.kind === "error") {
           if (result.error === "no_grant") deps.store.prune(row.peer_id, req.namespace);
@@ -143,6 +146,8 @@ export async function fanOutExpertise(
           row.peer_pubkey,
           "federation.expertise",
           { query: req.query, purpose: req.purpose },
+          undefined,
+          lanLinkFor(row, deps.index),
         )) as { kind?: string; rank?: ExpertiseRank };
         // Defensive: treat a gated/error envelope as rank "none" (consistent with fanOutQuery).
         if ((result as { kind?: string }).kind === "error") {
@@ -183,6 +188,8 @@ export async function fanOutProbe(
           row.peer_pubkey,
           "federation.probe",
           { resourceRef: req.resourceRef, purpose: req.purpose },
+          undefined,
+          lanLinkFor(row, deps.index),
         )) as { touched?: boolean; lastSeenDaysAgo?: number };
         return {
           ok: {
@@ -229,6 +236,8 @@ export async function fanOutPreflight(
             changedSurface: [...req.changedSurface],
             purpose: req.purpose,
           },
+          undefined,
+          lanLinkFor(row, deps.index),
         )) as { kind?: string; passed?: boolean; summary?: string; error?: string };
         if (r.kind === "ok") {
           return {

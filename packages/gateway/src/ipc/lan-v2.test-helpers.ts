@@ -3,6 +3,12 @@
  * replay, truncate or tamper with any frame. Production clients go through `lan-client.ts`.
  */
 import type { BoxKeypair } from "./lan-crypto.ts";
+import {
+  type LegacyServerContext,
+  type LegacySession,
+  legacyHandleEncrypted,
+  legacyHandleHandshake,
+} from "./lan-legacy.ts";
 import { createInitiatorHandshake, type InitiatorOptions, type Session } from "./lan-session.ts";
 import { buildFrame, makeFrameReader } from "./lan-wire.ts";
 import { createQueuedSocketWriter } from "./server/queued-socket-writer.ts";
@@ -140,4 +146,91 @@ export async function readV2Reply(
     const message = x.session.openRecord(record);
     if (message !== undefined) return JSON.parse(new TextDecoder().decode(message));
   }
+}
+
+export interface StubServer {
+  port: number;
+  /** Connections accepted so far. */
+  connections(): number;
+  stop(): void;
+}
+
+/** A hand-rolled TCP server for failure-mode tests: `onFrame` sees every whole frame body. */
+export function startStub(
+  onFrame: (
+    frame: Uint8Array,
+    socket: { write(b: Uint8Array): void; end(): void },
+    n: number,
+  ) => void,
+): StubServer {
+  let n = 0;
+  const server = Bun.listen<{ reader: ReturnType<typeof makeFrameReader>; n: number }>({
+    hostname: "127.0.0.1",
+    port: 0,
+    socket: {
+      open(socket) {
+        n += 1;
+        socket.data = { reader: makeFrameReader(8 * 1024 * 1024), n };
+      },
+      data(socket, chunk) {
+        socket.data.reader.push(chunk);
+        for (let f = socket.data.reader.next(); f !== undefined; f = socket.data.reader.next()) {
+          // A stub handler written for the first frame may choke on the records that follow it.
+          try {
+            onFrame(
+              f,
+              {
+                write: (b) => {
+                  socket.write(buildFrame(b));
+                },
+                end: () => {
+                  socket.end();
+                },
+              },
+              socket.data.n,
+            );
+          } catch {
+            /* ignore */
+          }
+        }
+      },
+    },
+  });
+  return { port: server.port, connections: () => n, stop: () => server.stop(true) };
+}
+
+/** An OLD server: only the v1 handlers, so a v2 first frame is non-JSON and closes without a reply. */
+export function startLegacyOnlyServer(ctx: LegacyServerContext): StubServer {
+  interface State extends LegacySession {
+    reader: ReturnType<typeof makeFrameReader>;
+    n: number;
+  }
+  let n = 0;
+  const server = Bun.listen<State>({
+    hostname: "127.0.0.1",
+    port: 0,
+    socket: {
+      open(socket) {
+        n += 1;
+        socket.data = {
+          peerIp: socket.remoteAddress,
+          writer: createQueuedSocketWriter(socket),
+          reader: makeFrameReader(8 * 1024 * 1024),
+          n,
+        };
+      },
+      drain(socket) {
+        socket.data.writer.flush();
+      },
+      async data(socket, chunk) {
+        socket.data.reader.push(chunk);
+        for (let f = socket.data.reader.next(); f !== undefined; f = socket.data.reader.next()) {
+          if (socket.data.writer.isEnding()) return;
+          if (socket.data.peerPubkey) await legacyHandleEncrypted(socket.data, ctx, f);
+          else legacyHandleHandshake(socket.data, ctx, f);
+        }
+      },
+    },
+  });
+  return { port: server.port, connections: () => n, stop: () => server.stop(true) };
 }

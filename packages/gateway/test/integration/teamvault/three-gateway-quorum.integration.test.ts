@@ -85,12 +85,21 @@ test("a single approval stays locked; two distinct approvals unlock the team too
     new Promise<string>((resolve) => quorumCoordinator.setBroadcast((rid) => resolve(rid)));
 
   const invoke = () =>
-    sendFederatedOverWire("127.0.0.1", bPort, askerKp, bIdentity.publicKey, "federation.invoke", {
-      entry: "prod-aws",
-      toolId: "iac.terraform.destroy",
-      purpose: "teardown",
-      args: {},
-    }) as Promise<WireInvokeResult>;
+    sendFederatedOverWire(
+      "127.0.0.1",
+      bPort,
+      askerKp,
+      bIdentity.publicKey,
+      "federation.invoke",
+      {
+        entry: "prod-aws",
+        toolId: "iac.terraform.destroy",
+        purpose: "teardown",
+        args: {},
+      },
+      undefined,
+      { known: 1, minProtocol: 1 },
+    ) as Promise<WireInvokeResult>;
 
   try {
     const code = generatePairingCode();

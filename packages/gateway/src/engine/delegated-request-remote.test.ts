@@ -15,10 +15,15 @@ function fakeStore(delegate: string | undefined): Pick<DelegationStore, "activeD
   } as Pick<DelegationStore, "activeDelegateePeer">;
 }
 
-function fakeIndex(peers: Partial<LanPeerRow>[]): Pick<LocalIndex, "listLanPeers"> {
+function fakeIndex(
+  peers: Partial<LanPeerRow>[],
+): Pick<LocalIndex, "listLanPeers" | "lanMinProtocol" | "markLanPeerProto"> {
   return {
     listLanPeers: () => peers as LanPeerRow[],
-  } as Pick<LocalIndex, "listLanPeers">;
+    // The outbound link policy (lanLinkFor) reads the floor and writes the ratchet through the index.
+    lanMinProtocol: () => 1,
+    markLanPeerProto: () => {},
+  } as Pick<LocalIndex, "listLanPeers" | "lanMinProtocol" | "markLanPeerProto">;
 }
 
 const selfIdentity: BoxKeypair = {

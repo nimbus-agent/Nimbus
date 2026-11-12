@@ -957,6 +957,22 @@ export class LocalIndex {
     );
   }
 
+  private lanMinProtocolValue: 1 | 2 = 1;
+
+  /**
+   * `[lan] min_protocol` as the CLIENT side of the LAN wire reads it. Every outbound federation call
+   * already holds the index (it reads the peer row and writes the ratchet), so the floor lives next
+   * to them rather than being threaded through every agent, HTTP and ChatOps context. Set once at
+   * boot by `platform/assemble.ts`; defaults to 1 (OR-FS-1).
+   */
+  public setLanMinProtocol(version: 1 | 2): void {
+    this.lanMinProtocolValue = version;
+  }
+
+  public lanMinProtocol(): 1 | 2 {
+    return this.lanMinProtocolValue;
+  }
+
   /**
    * The downgrade ratchet's ONLY writer (FS-A3): raises a peer's recorded protocol, never lowers it.
    * Called after a v2 handshake completed with that peer. An unknown pubkey is a no-op.
