@@ -221,11 +221,17 @@ Everything else follows the standard triple. These break from it in a way worth 
 | `packages/gateway/src/ipc/openapi-loader.ts` | `loadOpenApiJsonBytes` — cached YAML→JSON for `GET /v1/openapi.json` |
 | `packages/gateway/openapi/v1.yaml` | OpenAPI 3.1 schema; serves `/v1/metrics/dora`, `/v1/preflight/deploy`, `POST /v1/deployments` |
 | `packages/gateway/src/ipc/metrics-server.ts` | Prometheus endpoint (`localhost`, off by default) |
-| `packages/gateway/src/ipc/lan-crypto.ts` | NaCl box keypair, `sealBoxFrame` / `openBoxFrame` |
+| `packages/gateway/src/ipc/lan-crypto.ts` | NaCl box keypair, `sealBoxFrame` / `openBoxFrame` (legacy v1 primitives only, static D47) |
+| `packages/gateway/src/ipc/lan-noise.ts` | Noise Protocol Framework from `node:crypto`: IK, AES-256-GCM, SHA-256, X25519 (invariant `I56`) |
+| `packages/gateway/src/ipc/lan-session.ts` | v2 first frame, the IK drivers, records, chunking, rekey every 1,024 records |
+| `packages/gateway/src/ipc/lan-legacy.ts` | The v1 static-box wire (handlers + client) and `legacyAllowedFor`, the one downgrade check |
+| `packages/gateway/src/ipc/lan-wire.ts` | Frame caps, service interfaces and framing helpers shared by both wires |
+| `packages/gateway/src/federation/lan-link.ts` | `lanLinkFor` — the per-peer outbound link policy (ratchet + `min_protocol`) |
+| `packages/gateway/src/ipc/testing/` | Test-only LAN scenarios (raw v2 client, recording proxy, the FS-A1 attacker); skipped by the structure audit |
 | `packages/gateway/src/ipc/lan-pairing.ts` | `PairingWindow` — single-use base58 code, 5-min expiry |
 | `packages/gateway/src/ipc/lan-rate-limit.ts` | `LanRateLimiter` — per-IP sliding window |
 | `packages/gateway/src/ipc/lan-rpc.ts` | `LanError`, `checkLanMethodAllowed` — invariant `I5` |
-| `packages/gateway/src/ipc/lan-server.ts` | `LanServer` — `Bun.listen` TCP; length-framed NaCl-box RPC |
+| `packages/gateway/src/ipc/lan-server.ts` | `LanServer` — `Bun.listen` TCP; length-framed RPC over a Noise IK session (v2) or the legacy NaCl-box wire (v1), by first byte |
 
 ## Updater
 
@@ -310,7 +316,7 @@ Everything else follows the standard triple. These break from it in a way worth 
 |---|---|
 | `scripts/structure-audit/lib.ts` | Shared B3 helpers — `REPO_ROOT`, `stripComments`, `countAnyInSource`, `iterateSourceFiles` |
 | `scripts/structure-audit/check-doc-references.ts` | Doc-ref drift audit (broken `[text](path)` and backtick path refs) over CLAUDE/GEMINI + all of `docs/` + the skills; `DOCS_EXCLUDED_PREFIXES` names the few docs that are out and why |
-| `scripts/structure-audit/check-nimbus-invariants.ts` | Static-time complement to `security-invariants.test.ts` (I1 + vault-key allowlist + static rules D10–D46 — derive the range from the file, it has read low three times) |
+| `scripts/structure-audit/check-nimbus-invariants.ts` | Static-time complement to `security-invariants.test.ts` (I1 + vault-key allowlist + static rules D10–D47 — derive the range from the file, it has read low three times) |
 | `scripts/structure-audit/check-openapi-drift.ts` | OpenAPI drift detector — `v1.yaml` vs `HTTP_ROUTES` |
 | `docs/structure-audit/baseline.md` | Phase 1 baseline reference; per-dimension state + Phase 2 thresholds |
 
@@ -386,7 +392,7 @@ Everything else follows the standard triple. These break from it in a way worth 
 |---|---|
 | `docs/architecture.md` | Full subsystem design — read before modifying any subsystem |
 | `docs/roadmap.md` | Phases, acceptance criteria, delivered summary |
-| `docs/SECURITY-INVARIANTS.md` | I1–I55 rationale + anti-patterns + audit cross-references |
+| `docs/SECURITY-INVARIANTS.md` | I1–I56 rationale + anti-patterns + audit cross-references |
 | `docs/release/manual-smoke-headless.md` | Reusable manual smoke checklist; per-platform results matrix |
 | `docs/cli/use-in-ci.md` | CI integration examples (GitHub Actions, GitLab, Jenkins) using `nimbus query --json` |
 | `docs/templates/nimbus-pre-commit.sh` | Bash pre-commit template — `nimbus diag` reachability + incident/CI gates |

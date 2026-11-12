@@ -236,6 +236,7 @@ import {
   type LocalOperatorInvokeCtx,
   type LocalOperatorListCtx,
 } from "../federation/invoke-gate.ts";
+import { lanLinkFor } from "../federation/lan-link.ts";
 import { NamespaceStore } from "../federation/namespace-store.ts";
 import { preflightConsent } from "../federation/preflight-consent-broker.ts";
 import { appendPreflightAudit, defaultRunCommand } from "../federation/preflight-gate.ts";
@@ -1364,13 +1365,19 @@ async function bootFederationIntoIpcOpts(
     share: ShareFile,
     peer: { host: string; port: number; pubkey: string },
   ): Promise<void> => {
+    const pubkey = new Uint8Array(Buffer.from(peer.pubkey, "base64"));
+    // The row is read fresh: the link policy needs the peer's CURRENT recorded protocol (the ratchet).
+    const row = localIndex.getLanPeerByPubkey(pubkey);
+    if (row === undefined) throw new Error("share forward: recipient is no longer a paired peer");
     await sendFederatedOverWire(
       peer.host,
       peer.port,
       identity,
-      new Uint8Array(Buffer.from(peer.pubkey, "base64")),
+      pubkey,
       "federation.shareReceive",
       { share },
+      undefined,
+      lanLinkFor(row, localIndex),
     );
   };
   // peerId/pubkey → reachable ForwardPeer (paired only, host+port must be present).
@@ -1446,6 +1453,8 @@ async function bootFederationIntoIpcOpts(
   ipcOpts.federationIdentity = identity;
 
   const lanCfg = loadNimbusLanFromConfigDir(paths.configDir);
+  // The client side of the LAN wire reads `[lan] min_protocol` from the index (see lanLinkFor).
+  localIndex.setLanMinProtocol(lanCfg.minProtocol);
   // Team Vault (Slice 2): the anchor's invoke backing. quorumFor resolves the authoritative quorum
   // rule via EnforcedPolicy (Task 9) — max(local [hitl.quorum] baseline, org policy); ungoverned it
   // returns the local baseline verbatim, governed it tightens. runTool resolves the team secret
@@ -1508,6 +1517,7 @@ async function bootFederationIntoIpcOpts(
       pairingWindowSeconds: lanCfg.pairingWindowSeconds,
       maxFailedAttempts: lanCfg.maxFailedAttempts,
       lockoutSeconds: lanCfg.lockoutSeconds,
+      minProtocol: lanCfg.minProtocol,
     },
     // I18 — the operator-validity guard for answers served OVER THE WIRE.
     //

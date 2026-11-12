@@ -1,3 +1,4 @@
+import { lanLinkFor } from "../federation/lan-link.ts";
 import type { LocalIndex } from "../index/local-index.ts";
 import { sendFederatedOverWire } from "../ipc/lan-client.ts";
 import type { BoxKeypair } from "../ipc/lan-crypto.ts";
@@ -41,6 +42,8 @@ export function buildDelegatedRequestRemote(
         row.peer_pubkey,
         "federation.requestApproval",
         { actionType },
+        undefined,
+        lanLinkFor(row, deps.index),
       )) as { approved?: unknown } | null;
       const approved = res?.approved;
       return typeof approved === "boolean"

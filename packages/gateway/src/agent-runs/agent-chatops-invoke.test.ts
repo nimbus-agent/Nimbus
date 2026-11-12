@@ -6,7 +6,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { SynthesisRouter } from "../agents/_lib/synthesis-llm.ts";
 import { LocalIndex } from "../index/local-index.ts";
-import type { BoxKeypair } from "../ipc/lan-crypto.ts";
+import { type BoxKeypair, generateBoxKeypair } from "../ipc/lan-crypto.ts";
+import { openResponderHandshake } from "../ipc/lan-session.ts";
+import { makeFrameReader } from "../ipc/lan-wire.ts";
 import {
   buildChatopsAgentInvoker,
   CHATOPS_AGENT_TIMEOUT_MS,
@@ -79,24 +81,32 @@ function startSilentPeer(): { readonly hostPort: number; readonly stop: () => vo
 }
 
 /**
- * Like `startSilentPeer`, but records every byte it receives instead of discarding it — the
- * `hello` frame (`lan-client.ts`'s `sendFederatedOverWire`) carries the caller's identity as
- * cleartext base64 (`client_pubkey`) ahead of any encryption, precisely so the responder can
- * compute the shared box key, so the raw bytes are enough to prove WHICH identity a federated
- * fan-out presented on the wire (spec §13.2) without faking any crypto seam.
+ * Like `startSilentPeer`, but a real (silent) v2 RESPONDER: it holds the static key the asker pins and
+ * opens the first frame of the Noise IK handshake, which carries the asker's static public key
+ * encrypted to the responder (the v1 `hello` carried it in cleartext, which the v2 wire no longer
+ * does). The decrypted key proves WHICH identity a federated fan-out presented (spec §13.2)
+ * without faking any crypto seam.
  */
-function startCapturingPeer(): {
+function startCapturingPeer(responder: BoxKeypair): {
   readonly hostPort: number;
   readonly stop: () => void;
-  readonly received: () => Buffer;
+  readonly presented: () => Uint8Array[];
 } {
-  const chunks: Buffer[] = [];
+  const keys: Uint8Array[] = [];
+  const reader = makeFrameReader(1 << 20);
   const server = Bun.listen({
     hostname: "127.0.0.1",
     port: 0,
     socket: {
       data(_socket, chunk) {
-        chunks.push(Buffer.from(chunk));
+        reader.push(chunk);
+        const frame = reader.next();
+        if (frame === undefined) return;
+        try {
+          keys.push(openResponderHandshake(frame, { s: responder }).remoteStatic);
+        } catch {
+          /* not a v2 first frame: nothing presented */
+        }
       },
       open() {},
       close() {},
@@ -106,16 +116,20 @@ function startCapturingPeer(): {
   return {
     hostPort: server.port,
     stop: () => server.stop(true),
-    received: () => Buffer.concat(chunks),
+    presented: () => keys,
   };
 }
 
 /** Seeds one LAN peer pointed at `hostPort`, so a federated agent's fan-out has somewhere to dial. */
-function seedSilentPeer(db: Database, hostPort: number): LocalIndex {
+function seedSilentPeer(
+  db: Database,
+  hostPort: number,
+  peerPubkey: Uint8Array = new Uint8Array(32).fill(7),
+): LocalIndex {
   const index = new LocalIndex(db);
   index.addLanPeer({
     peerId: "peer:silent",
-    peerPubkey: new Uint8Array(32).fill(7),
+    peerPubkey,
     direction: "outbound",
     hostIp: "127.0.0.1",
     hostPort,
@@ -205,15 +219,14 @@ describe("buildChatopsAgentInvoker", () => {
     // peer can ever see is the one bound into `deps.selfIdentity` at construction time — i.e. the
     // gateway owner's, fixed once at boot, regardless of which mapped chat user typed the command.
     // This proves it end-to-end rather than by reading the plumbing: a real (if silent) peer
-    // records the cleartext `client_pubkey` the wire actually carried.
-    const peer = startCapturingPeer();
+    // decrypts the asker static key the handshake actually carried.
+    const responder = generateBoxKeypair();
+    const peer = startCapturingPeer(responder);
     try {
       const db = freshDb();
-      const index = seedSilentPeer(db, peer.hostPort);
-      const ownerIdentity: BoxKeypair = {
-        publicKey: new Uint8Array(32).fill(9),
-        secretKey: new Uint8Array(32).fill(3),
-      };
+      const index = seedSilentPeer(db, peer.hostPort, responder.publicKey);
+      // A consistent pair: the Noise handshake authenticates with it, so a mismatched one would not open.
+      const ownerIdentity: BoxKeypair = generateBoxKeypair();
       const invoke = buildChatopsAgentInvoker({
         db,
         index,
@@ -222,8 +235,8 @@ describe("buildChatopsAgentInvoker", () => {
         timeoutMs: 200,
       });
       await invoke("huddle", { namespaces: ["ns1"] });
-      const expectedPubkeyB64 = Buffer.from(ownerIdentity.publicKey).toString("base64");
-      expect(peer.received().toString("latin1")).toContain(expectedPubkeyB64);
+      const seen = peer.presented().map((k) => Buffer.from(k).toString("hex"));
+      expect(seen).toContain(Buffer.from(ownerIdentity.publicKey).toString("hex"));
     } finally {
       peer.stop();
     }

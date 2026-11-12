@@ -1338,7 +1338,7 @@ CREATE TABLE connector_write_enablement (
 
 ## V96 — alert sources, deploy edge types and the one-shot regraph marker (Phase 10 IC2, 2026-11-12)
 
-Authoritative source: `packages/gateway/src/index/incident-alert-sources-v96-sql.ts`. V95 is a no-op placeholder step reserved for LAN forward secrecy (FS1); it is removed when FS1 lands its real step.
+Authoritative source: `packages/gateway/src/index/incident-alert-sources-v96-sql.ts`. V95 is LAN forward secrecy's `lan_peers.proto_version` (FS1); V96 chains after it.
 
 ```sql
 INSERT OR IGNORE INTO graph_relation_type (name, directed) VALUES ('deployed', 1), ('built_by', 1);
@@ -1347,6 +1347,17 @@ INSERT OR IGNORE INTO _meta (key, value) VALUES ('regraph_pending_ic2', '1');
 ```
 
 The marker is raw SQL on purpose (`ALLOWED_META_KEYS` guards the IPC-reachable accessors); `graph/regraph-once.ts` reads it at boot, re-grafts deployments, incidents, error issues and data-quality tests, and deletes it.
+
+## V95 — `lan_peers.proto_version` (Phase 10 FS1, 2026-11-12)
+
+Authoritative source: `packages/gateway/src/index/lan-peer-proto-v95-sql.ts`. V94 is the incident engine's item history; V95 chains after it. The ALTER is guarded by a column probe (a step must be re-runnable). Written only by `LocalIndex.markLanPeerProto` (after a v2 handshake completed with that peer) and read by `isKnownPeer` and `lanLinkFor`; never lowered (`MAX`), and `addLanPeer`'s upsert does not touch it.
+
+```sql
+ALTER TABLE lan_peers ADD COLUMN proto_version INTEGER NOT NULL DEFAULT 1 CHECK (proto_version IN (1, 2));
+-- 1 = the old static-box wire; 2 = a Noise IK session completed with this peer (the downgrade ratchet, I56)
+```
+
+Every row that exists at the migration was made over the old wire and starts at 1.
 
 ## V94 — item history (Phase 10 IC1, 2026-11-12)
 

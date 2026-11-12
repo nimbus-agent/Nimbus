@@ -68,7 +68,7 @@ async function askerWithPeer(answers: Record<string, Answer>): Promise<{
       if (answer === undefined) throw new Error(`unexpected method ${method}`);
       return answer(params);
     },
-    isKnownPeer: () => ({ peerId: "asker", writeAllowed: false }),
+    isKnownPeer: () => ({ peerId: "asker", writeAllowed: false, protoVersion: 1 }),
     registerPeer: () => "asker",
     rateLimit: { checkAllowed: () => true, recordFailure: () => {}, recordSuccess: () => {} },
     pairing: {
