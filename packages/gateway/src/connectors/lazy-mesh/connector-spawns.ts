@@ -257,15 +257,20 @@ export async function ensureGoogleDriveMcp(
 /**
  * audit-ignore-next-line D11-vault-key (JSDoc reference, not vault-key construction)
  * Starts OneDrive + Outlook + Teams MCP subprocesses when `microsoft.oauth` is present (shared token).
+ * `getMicrosoftToken` is injectable so a test supplies a fake without `mock.module` (which leaks
+ * across files under `--no-isolate`); production uses the real resolver.
  */
-export async function ensureMicrosoftBundleMcp(ctx: MeshSpawnContext): Promise<void> {
+export async function ensureMicrosoftBundleMcp(
+  ctx: MeshSpawnContext,
+  getMicrosoftToken: typeof getValidMicrosoftAccessToken = getValidMicrosoftAccessToken,
+): Promise<void> {
   const slotKey = LAZY_MESH.microsoftBundle;
   ctx.clearLazyIdle(slotKey);
   if (ctx.getLazyClient(slotKey) !== undefined) {
     ctx.scheduleLazyDisconnect(slotKey);
     return;
   }
-  const token = await getValidMicrosoftAccessToken(ctx.vault);
+  const token = await getMicrosoftToken(ctx.vault);
   const outlookScopes = await readMicrosoftOAuthScopesForOutlookEnv(ctx.vault);
   const outlookEnv = extensionProcessEnv({
     MICROSOFT_OAUTH_ACCESS_TOKEN: token,

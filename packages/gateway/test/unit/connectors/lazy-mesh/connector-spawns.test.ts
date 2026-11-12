@@ -6,8 +6,9 @@
 // block at the end drives the real one, offline, from an unexpired stored token. A
 // `mock.module` of zoom-access-token.ts anywhere would make that block order-dependent.
 //
-// NOTE: the Google token functions are now injected (`FAKE_GOOGLE_TOKEN`), not `mock.module`d,
-// so the Google half of this history no longer applies; the other mocks below still do.
+// NOTE: the Google and Microsoft token functions are now injected (`FAKE_GOOGLE_TOKEN`,
+// `FAKE_MICROSOFT_TOKEN`), not `mock.module`d, so the Google half of this history no longer
+// applies; the other mocks below still do.
 //
 // Do NOT add a sibling real-resolver test (e.g. a src-tree connector-spawns.test.ts
 // that drives ensure*Mcp through the REAL getValid*AccessToken). `mock.module` is
@@ -121,9 +122,9 @@ const FAKE_GOOGLE_TOKEN: GoogleTokenDeps = {
   },
 };
 
-mock.module("../../../../src/auth/microsoft-access-token.ts", () => ({
-  getValidMicrosoftAccessToken: async (): Promise<string> => "fake-microsoft-access-token",
-}));
+// Injected into ensureMicrosoftBundleMcp, not `mock.module`d (that leaked into
+// chatops-bot-spawn.test.ts's default Graph-token resolver under `--no-isolate`).
+const FAKE_MICROSOFT_TOKEN = async (): Promise<string> => "fake-microsoft-access-token";
 
 // Workday requires tenant host + tenant in Config (read at module-init from env).
 // Set them before connector-spawns.ts is imported so Config captures the values.
@@ -1340,7 +1341,7 @@ describe("ensureMicrosoftBundleMcp", () => {
   test("no Outlook scopes → onedrive/outlook/teams spawned with shared token and no scopes env", async () => {
     const { ctx, vault } = makeCtx();
     await vault.set("microsoft.oauth", '{"access_token":"x"}');
-    await ensureMicrosoftBundleMcp(ctx);
+    await ensureMicrosoftBundleMcp(ctx, FAKE_MICROSOFT_TOKEN);
     const servers = capturedClients[0]?.servers ?? {};
     for (const id of ["onedrive", "outlook", "teams"] as const) {
       expect(servers[id]?.env["MICROSOFT_OAUTH_ACCESS_TOKEN"]).toBe("fake-microsoft-access-token");
@@ -1352,7 +1353,7 @@ describe("ensureMicrosoftBundleMcp", () => {
   test("onedrive spawns under its own key, so only it carries *.sharepoint.com", async () => {
     const { ctx, vault } = makeCtx();
     await vault.set("microsoft.oauth", '{"access_token":"x"}');
-    await ensureMicrosoftBundleMcp(ctx);
+    await ensureMicrosoftBundleMcp(ctx, FAKE_MICROSOFT_TOKEN);
     const servers = capturedClients[0]?.servers ?? {};
     const wild = (id: string): unknown =>
       (
@@ -1371,7 +1372,7 @@ describe("ensureMicrosoftBundleMcp", () => {
       "microsoft.oauth",
       JSON.stringify({ access_token: "x", scopes: ["Mail.Read", "Mail.Send"] }),
     );
-    await ensureMicrosoftBundleMcp(ctx);
+    await ensureMicrosoftBundleMcp(ctx, FAKE_MICROSOFT_TOKEN);
     const servers = capturedClients[0]?.servers ?? {};
     expect(servers["outlook"]?.env["MICROSOFT_OAUTH_SCOPES"]).toBe("Mail.Read Mail.Send");
     expect(servers["onedrive"]?.env).not.toHaveProperty("MICROSOFT_OAUTH_SCOPES");
@@ -1380,7 +1381,7 @@ describe("ensureMicrosoftBundleMcp", () => {
 
   test("already running → no double-spawn", async () => {
     const { ctx } = makeCtx({ existingClient: true });
-    await ensureMicrosoftBundleMcp(ctx);
+    await ensureMicrosoftBundleMcp(ctx, FAKE_MICROSOFT_TOKEN);
     expect(capturedClients).toHaveLength(0);
   });
 });
