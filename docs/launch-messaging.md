@@ -34,6 +34,8 @@ Every post, listing and landing page leads with this and nothing else. The conne
 - The egress ledger records the agent's **dispatched actions** (the `I29` executor chokepoint) — **not** raw network traffic. Never say *"everything that left your machine"* or *"every byte."* It is not a firewall / host DLP and does not see the OS, other local processes, or an unsandboxed third-party MCP server.
 - Never describe the `why` hover UI, or any unbuilt surface, as shipped.
 - Egress = "authorized actions the agent took," never "raw-syscall / whole-machine capture."
+- The approval gate guards **what passes through it**. Never say Nimbus controls everything an agent does.
+- An agent that holds its own credentials can act outside Nimbus. Say so whenever the agent door is described.
 
 ## Pre-empt: the telemetry question
 
@@ -51,3 +53,25 @@ State the position first, in these words:
 
 Do **not** say "Nimbus has no telemetry" — the collector exists, and being
 caught in an absolute that is technically false costs more than the nuance.
+
+## Direction copy — HELD until agent door v1 ships
+
+Nothing below may appear in a README headline, a listing, a post or the docs-site hero
+before the release that ships Phase 28 (the agent door) in [`roadmap.md`](./roadmap.md#phase-28--the-agent-door).
+Until then `nimbus why` stays "the one thing" above. The direction itself is recorded in
+[`roadmap.md` § Direction](./roadmap.md#direction) (2026-11-12).
+
+> **One-liner.** The trust layer between AI agents and your engineering systems: private context
+> in, approved actions out, and a record of both that you can check.
+>
+> **The one thing.** Let your coding agent act on your real systems. Before anything changes,
+> Nimbus shows you exactly what will change and waits for you. Afterwards, `nimbus prove` shows
+> what it dispatched.
+>
+> **Three pillars.** *Know*: a private index of your tools, on your machine. *Act*: every write
+> behind a typed preview and your approval. *Prove*: a hash-chained record of every action the
+> agent dispatched.
+
+The held copy may claim only what Phase 28's acceptance criteria prove on the day it is used.
+The honesty guardrails above apply to it unchanged. No market fact, competitor name or incident
+is cited anywhere in this file.

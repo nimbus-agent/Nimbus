@@ -188,5 +188,5 @@ At the top of each `README.md`, a note: this repository is retired (owner decisi
 - [ ] **Step 5: The organisation-wide search (ED-f)**
 
 In each clone of a non-archived repository, after `git pull` on its default branch:
-`git grep -n -E 'nimbus-(connector-registry|recipes|raycast|statuspage|postmortem)' -- '*.md' '*.mdx' 'package.json' '**/package.json' 'server.json' ':!**/CHANGELOG.md'`
+`git grep -n -E 'nimbus-(connector-registry|recipes|raycast|statuspage|postmortem)' -- '*.md' '*.mdx' 'package.json' '**/package.json' 'server.json' '**/server.json' ':!**/CHANGELOG.md'`
 and the same five names through the code-search API with no extension filter (`gh api "search/code?q=org:nimbus-agent+<name>"`), to catch a repository that was not cloned. Expected: every hit is a "retired" note, a § Rejected Directions entry, or the § Client surfaces rows that say retired. Anything else is fixed in a follow-up pull request to that repository.
