@@ -239,6 +239,10 @@ Read the phase headings of the browser client's own roadmap (`gh api repos/nimbu
 
 Editor and browser rows: the released version from Step 1. Browser row's Next cell: the gateway-client direction is shipped in that repository (name the phases), and what is next is in its own roadmap. The three scaffold rows stay; State becomes `retired (OR-ECO-6, 2026-11-12)`; Next says where the work went (*Status page draft*, Phase 17; the two post-mortem rows; "not planned — see § Rejected Directions"). The paragraph under the table that explains 🧱 is reworded to past tense.
 
+Every statement of the old build order goes with it (spec § 5.6). There are three, and each is corrected: the words "First to build", "Second" and "Third" in the three scaffold rows' Next cells (replaced by where the work went); the sentence above the table that says the table "owns the order they are built in" (it now owns the state of each surface, and the order is the spine's); and the sentence in the browser-client block that says "`nimbus-statuspage` remains first to build" (removed with that block's rewrite in Step 3). Also the *Browser* bullet above the table, which says the repository "is a clipper today", is brought up to date.
+
+Verify: `grep -n -E 'First to build|remains first to build|\| 🧱 scaffold' docs/roadmap.md` → Expected: no output.
+
 - [ ] **Step 3: The "Browser gateway client (direction, not yet built)" block**
 
 Retitle it "Browser gateway client (shipped in `nimbus-web-clipper`)". Keep the decisions list and the honest-state list (they are still true and still useful); change the opening paragraph and the acceptance-criteria heading to say the first slice and what followed shipped, with the satellite roadmap as the authority. Delete nothing.
@@ -308,8 +312,28 @@ Run: `git grep -n -i -E 'commercial tier|enterprise tier|team tier' -- CLAUDE.md
 
 - [ ] **Step 1: The row counter**
 
-Run: `bash count-rows.sh docs/roadmap.md > after.txt; join -t$'\t' <(sort before.txt) <(sort after.txt)` and compare per section.
-Expected: every section present before is present after with `open` greater than or equal to before; new sections (Direction, Open Source, Reach, Phase 28, 29, 30, the two rejected directions) appear only in `after.txt`; `client-surfaces-rows=6` in both. A section whose heading text changed (Commercial Roadmap, the spine sub-headings) is matched by hand and named in the pull request.
+Run: `bash count-rows.sh docs/roadmap.md > after.txt`, then the comparison below. It applies ED-b's fixed rename table to the *before* headings, fails on any section that was there before and is not there after, and fails on any section whose count fell:
+
+```bash
+awk -F'\t' '
+function key(h) { if (h == "## Commercial Roadmap") return "## Open Source"; return h }
+NR == FNR { if ($1 ~ /^client-surfaces-rows=/) { cs_before = $1; next } before[key($1)] = substr($2, 6) + 0; next }
+$1 ~ /^client-surfaces-rows=/ { cs_after = $1; next }
+{ after[$1] = substr($2, 6) + 0 }
+END {
+  bad = 0
+  for (h in before) {
+    if (!(h in after)) { printf "MISSING AFTER: %s (was open=%d)\n", h, before[h]; bad = 1 }
+    else if (after[h] < before[h]) { printf "FELL: %s %d -> %d\n", h, before[h], after[h]; bad = 1 }
+  }
+  if (cs_before != cs_after) { printf "CLIENT SURFACES: %s -> %s\n", cs_before, cs_after; bad = 1 }
+  for (h in after) if (!(h in before)) printf "new section: %s (open=%d)\n", h, after[h]
+  print (bad ? "ED-b: FAIL" : "ED-b: PASS")
+  exit bad
+}' before.txt after.txt
+```
+
+Expected: last line `ED-b: PASS`, exit 0; the "new section" lines are exactly Direction, Reach, Phase 28, Phase 29, Phase 30 and the two rejected directions. ("Carried into S5" is a fourth-level heading inside § Phase 7+ Sequencing Spine, so the counter never keys on it; its rows are counted in that section before and after.) Both files and this output go in the pull request.
 
 - [ ] **Step 2: Gates**
 

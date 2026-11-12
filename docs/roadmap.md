@@ -3200,6 +3200,22 @@ Defeating the cold start — Nimbus's wow is proportional to how much it has ind
 
 ---
 
+### Reach (the owner's track)
+
+Beside the spine, not a slot in it. Nimbus has shipped far more than it has been shown to anyone, and the items below are the ones no amount of code could finish. On 2026-11-12 the owner took them on, to be done within three months (owner ruling OR-ECO-2, [§ Direction](#direction)).
+
+- [ ] **Signing certificates bought** [NEW] — an Apple Developer Program membership and a Windows code-signing certificate. The signed desktop release below waits on this.
+- [ ] **The signed desktop release and a working auto-update** — [Phase 13](#phase-13--desktop-distribution)'s rows (*`build-ui` release-pipeline job*, *macOS Gatekeeper notarization*, *Windows Authenticode signing*, the two *`invokeInstaller`* rows and the *`desktop-v0.1.0` smoke pass*), which stay where they are. The desktop app is also the approval surface [Phase 28](#phase-28--the-agent-door) wants.
+- [ ] **`registry.nimbus-agent.dev` live, with the official packs** — the existing [owner's open items](#owners-open-items) for hosting, the liveness setup and the curated starter packs, which stay where they are.
+- [ ] **A private alpha** [NEW] — five to ten engineers, each watched through a first run; what goes wrong is filed as issues; each is asked again after two weeks.
+- [ ] **The positioning switch** [NEW] — the README headline, the docs site, the repository description, the store listings and the MCP Registry description change in the release that ships the agent door, not before. The copy is held in [`launch-messaging.md`](./launch-messaging.md).
+- [ ] **The public launch** [NEW] — the owner's post and the owner's replies, with the agent door shown on the demo data.
+- [ ] **Listings** [NEW] — each agent's plugin directory, the MCP Registry entry and the curated lists.
+
+**What "reached" would look like, 90 days after the public launch.** Aspirations, written down so they can be missed: ten alpha users of whom five still use it after two weeks; 500 stars; 25 issues or discussions opened by people other than the owner; five merged pull requests from outside; three third-party packages in the registry.
+
+---
+
 ### The Killer Demo (north-star milestone)
 
 **"The page that answered itself"** — runs on `nimbus demo`: a P1 fires → the assembled brief is already there (cause, the deploy 8 min ago, the PR, cascade root) → *"95% confidence, rollback dry-run affects payment-service only, reversible — approve?"* → resolved, mean-time-to-context 22s → post-mortem + status-page drafted → `nimbus audit replay` shows every decision and **"0 outbound network calls."** Tagline: *"Your systems just had an incident. Nimbus already handled the first 30 minutes — locally, and it can prove it."*
@@ -3382,6 +3398,32 @@ add.
 agenda — that `catchup`'s window-and-involvement weighting cannot give. That would be a new
 capability over calendar items, not this row revived. The `meeting-prep` name in Phase 9 Wave 5's
 eval-suite list predates this entry and does not by itself reopen it.
+
+### A quick-ask launcher surface (the Raycast shape) — not taken 2026-11-12
+
+**Proposed:** a Raycast extension as a hotkey surface for asking Nimbus a question and searching
+the index. It had a scaffold repository, `nimbus-raycast`, and was third in the client-surface
+build order.
+
+**Why not.** It is the surface that differentiates least: a box that takes a question is what every
+assistant already offers, and [§ Client surfaces](#client-surfaces) had already recorded that the
+recogniser, not a text box, is the product. It is macOS-only. And under [§ Direction](#direction)
+the door that matters next is the one other agents use. The scaffold repository was retired by
+owner ruling OR-ECO-6 (2026-11-12).
+
+**Reopens if:** people who use a launcher ask for one, and someone other than the owner will
+maintain it.
+
+### A public recipe gallery — not taken 2026-11-12
+
+**Proposed:** `nimbus-recipes`, a community hub and static gallery of signed, shareable recipes,
+with its own submission checks.
+
+**Why not.** A gallery needs recipes written by people other than the owner, and none exist yet.
+Recipes stay what they already are in the gateway: a share kind that can be created, verified and
+replayed. The scaffold repository was retired by owner ruling OR-ECO-6 (2026-11-12).
+
+**Reopens if:** recipes written by other people exist to list.
 
 ### Already covered — do not re-file
 

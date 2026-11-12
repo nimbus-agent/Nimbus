@@ -1,6 +1,6 @@
 # Ecosystem direction — Nimbus as the trust layer for agents (roadmap, positioning and org changes)
 
-Status: DRAFT, awaiting the builder check and Antigravity review. Owner rulings (§ 2) are binding; do not reopen them.
+Status: APPROVED by Antigravity (round 3, 2026-11-12), after a builder check. Owner rulings (§ 2) are binding; do not reopen them.
 
 This is a documentation and organisation project. It builds no product capability. It records the
 owner's direction decisions of 2026-11-12 in the documents that own them, across every repository in
@@ -372,8 +372,11 @@ The three scaffold rows in the § Client surfaces table (`nimbus-statuspage`, `n
 and its Next cell says where the work went: the *Status page draft* row, the two post-mortem
 rows, or "not planned". Documents say "retired", which is true from the owner's ruling, and never
 "archived", because the archive calls run later (ED11); only the note inside each scaffold
-repository says it is archived. The "first to build / second / third" ordering sentence above the table is
-corrected to match. Because a quick-ask launcher surface and a public recipe gallery are now
+repository says it is archived, and that note merges in the same operation as the archive call.
+Every statement of the old build order is corrected to match: the words "First to build",
+"Second" and "Third" in those three cells, the sentence above the table that says it owns the
+build order, and the sentence in the browser-client block that says `nimbus-statuspage` remains
+first to build. Because a quick-ask launcher surface and a public recipe gallery are now
 directions not taken, § Rejected Directions gains two short entries, each with the condition that
 reopens it, as § How to Update This Document requires: the launcher reopens when users of a
 launcher ask for one and a maintainer for it exists; the gallery reopens when recipes written by
@@ -640,3 +643,11 @@ Applied:
   to "Open Source". Both are in the table.
 - F15 (advisory; "today, the first cost connector" reads as shipped): applied. The connector
   package is bundled but its gateway side is still in flight, so the sentence now says so.
+
+Round 3 (2026-11-12): **SPEC APPROVED** (F13, F14 and F15 resolved; no new binding problem). The
+same round reviewed the two plans and required four changes, all applied to the plans: the ED1
+plan now corrects every statement of the old client-surface build order and compares the row
+counts with a script that fails on a missing or fallen section; the satellites plan merges each
+scaffold's README note in the same operation as its archive call, after the owner confirms, and
+searches every live document type. The first of those also sharpened § 5.6 above, which had named
+one "ordering sentence" where there are three.

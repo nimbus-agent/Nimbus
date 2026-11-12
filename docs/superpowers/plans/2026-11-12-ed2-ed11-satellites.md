@@ -171,20 +171,22 @@ One line in `README.md` and in `docs/index.md` pointing at `ROADMAP.md`; `ECOSYS
 
 At the top of each `README.md`, a note: this repository is retired (owner decision, 2026-11-12) and archived; what it was meant to be, in one sentence; where the work went, as a link to the roadmap row (`nimbus-statuspage` → the *Status page draft* row in Phase 17; `nimbus-postmortem` → Phase 10's *Post-mortem generation* row; `nimbus-connector-registry` → Phase 9.5, which shipped the registry differently) or that it is not planned (`nimbus-raycast`, `nimbus-recipes`, each linking its § Rejected Directions entry). `NEW-SESSION-PROMPT.md` gains one first line saying the prompt is historical.
 
-- [ ] **Step 2: Merge each when green**
+- [ ] **Step 2: Leave each pull request open and green.** Do not merge: the note says "archived", which is false until the archive call runs. Merge and archive happen together in Task 10.
 
 ---
 
-### Task 10: ED11, part two — archive, after the owner confirms
+### Task 10: ED11, part two — merge and archive together, after the owner confirms
 
-- [ ] **Step 1: Ask the owner once more** (§ 5.10), naming the five repositories and that archiving is reversible.
+- [ ] **Step 1: Ask the owner once more** (§ 5.10), naming the five repositories and that archiving is reversible. On anything but a yes, the five pull requests stay open and unmerged, and the report says so.
 
-- [ ] **Step 2: Only on a yes**, per repository: `gh api -X PATCH repos/nimbus-agent/<repo> -f archived=true`
+- [ ] **Step 2: Only on a yes, one repository at a time**, as one operation: check the guard of Step 3; merge that repository's README pull request (`gh pr merge <n> -R nimbus-agent/<repo> --squash`); confirm the note is on the default branch; then at once `gh api -X PATCH repos/nimbus-agent/<repo> -f archived=true`. If the archive call fails, say so immediately and stop; the note is then wrong on that one repository until the call is retried.
 
-- [ ] **Step 3: Guard** — before each call: `gh pr list -R nimbus-agent/<repo> --state open --json number --jq length` is `0` and the note of Task 9 is on the default branch.
+- [ ] **Step 3: Guard** — before each repository: its README pull request's checks are green, and `gh pr list -R nimbus-agent/<repo> --state open --json number --jq length` is `1` (only that pull request).
 
 - [ ] **Step 4: Verify** — `gh repo list nimbus-agent --limit 100 --json name,isArchived --jq '.[] | select(.isArchived) | .name'` lists exactly the five.
 
 - [ ] **Step 5: The organisation-wide search (ED-f)**
 
-For each non-archived repository, on its default branch: `gh api "search/code?q=org:nimbus-agent+<name>+in:file+extension:md"` for each of the five names, plus a local `git grep` in the clones. Expected: every hit is a "retired" note, a dated changelog entry, or the § Rejected Directions entries. Anything else is fixed in a follow-up pull request to that repository.
+In each clone of a non-archived repository, after `git pull` on its default branch:
+`git grep -n -E 'nimbus-(connector-registry|recipes|raycast|statuspage|postmortem)' -- '*.md' '*.mdx' 'package.json' '**/package.json' 'server.json' ':!**/CHANGELOG.md'`
+and the same five names through the code-search API with no extension filter (`gh api "search/code?q=org:nimbus-agent+<name>"`), to catch a repository that was not cloned. Expected: every hit is a "retired" note, a § Rejected Directions entry, or the § Client surfaces rows that say retired. Anything else is fixed in a follow-up pull request to that repository.
