@@ -1,6 +1,6 @@
 # Phase 10 + Phase 17 — The incident engine and the on-call copilot
 
-Status: DRAFT for Antigravity review (round 3; earlier rounds' changes listed in § 9). Owner rulings below are binding; do not reopen them.
+Status: APPROVED by Antigravity (round 3, 2026-11-12). Owner rulings below are binding; do not reopen them.
 Date: 2026-11-12. Slot: S4. Roadmap: `docs/roadmap.md` § Phase 10 → *Core — Incident Correlation
 Engine* (rows **Automatic incident assembly**, **Incident timeline**, **Proactive technical debt
 detection**, **Suggested remediation**, **Post-mortem generation**; **On-call schedule awareness**
