@@ -1,6 +1,6 @@
 # Phase 10 stretch — FinOps connectors (Vantage, CloudHealth, Spot.io / Flexera, Kubecost, OpenCost)
 
-Status: DRAFT for Antigravity review (round 1). Owner rulings (§ 2, 2026-11-12) are binding; do not reopen them.
+Status: DRAFT for Antigravity review (round 2). Owner rulings (§ 2, 2026-11-12) are binding; do not reopen them.
 
 ## 1. Goal
 
@@ -76,18 +76,26 @@ Decided by me (recorded so review can challenge them):
 - **D-FO-8 Non-secret configuration follows the Vault-key convention.** Report tokens, group-by and
   zone strings are stored as Vault keys beside the secret (as `sentry.org_slug`, `jira.cloud_id`), so
   `CONNECTOR_VAULT_SECRET_KEYS` stays the single registry the redaction and static vault-key audits
-  read. They are not secrets and are not claimed to be.
+  read. They are not secrets and are not claimed to be. Every non-mandatory key is ALSO listed in
+  `OPTIONAL_SECRET_KEYS` (same file, `Partial<Record<ConnectorServiceId, readonly string[]>>`, today
+  only `github.api_base`), because `requiredSecretKeysFor` is "all keys minus the optional ones" and
+  the configured check requires every remaining key: an unlisted optional key would make
+  `vantage.api_token` alone read as unconfigured. The required key is the credential (Vantage
+  `api_token`; Kubecost/OpenCost `url`; CloudHealth `api_key`); the rest are optional.
 - **D-FO-9 Volume is bounded by construction.** Per source: at most `max_series` series (default 500,
   `[finops] max_series`), chosen by trailing 30-day amount; the remainder is one `__other__` series per
   day. Worst case 500 x 45 = 22,500 rows on first sync, then 500 rows per day. A retention pass deletes
   `cost_allocation` rows older than `[finops] retain_days` (default 400) through the existing delete
   chokepoint (`deleteItemByServiceExternal` in `index/item-store.ts`), after a successful sync only.
 - **D-FO-10 Cost rows are not embedded.** A numeric daily row has no prose; embedding thousands of them
-  wastes the embedder and pollutes search. The slice that adds the types must find where the embedding
-  pipeline chooses items (`embedding/routing.ts`, `RoutingEmbeddingPipeline`; the enqueue site was not
-  located while writing this spec, UNVERIFIED) and exclude `cost_allocation`. If that needs a code
-  change outside the connector files, it is part of FO2. `cost_recommendation` rows are short prose and
-  are embedded with the local model.
+  wastes the embedder and pollutes search. Two sites choose items, and FO2 changes both: (1)
+  `upsertIndexedItemForSync` in `index/item-store.ts` calls `ctx.scheduleItemEmbedding?.(id)` for every
+  row, so it skips the call when `row.type === "cost_allocation"`; (2) `SqliteEmbeddingPipeline.backfillAll`
+  in `embedding/pipeline.ts` selects every `item` with no `embedding_chunk` (a COUNT query and a batch
+  SELECT), so both gain `AND i.type <> 'cost_allocation'`; the routed backfill (`backfillForRoutingKeys`)
+  filters by `service:type` keys and needs the same exclusion. A test writes a cost row, runs the
+  backfill and asserts no chunk exists. `cost_recommendation` rows are short prose and are embedded
+  with the local model.
 - **D-FO-11 No new IPC, CLI command, schema table or invariant.** Credentials go through the existing
   `nimbus connector auth <id>`; reads go through `nimbus query|search|ask`. The only new gateway module
   that reads cost rows is a pure helper (`finops/cost-series.ts`, § 5.1) for the future detector. If
@@ -224,12 +232,18 @@ tests build rows through the real mapper: a fixture must come from the writer, n
 
 | Slice | Repo | Content | Gate |
 | --- | --- | --- | --- |
-| FO1 | nimbus-mcp-servers | `connectors/vantage`: `vantage_cost_list`, `vantage_recommendation_list`, `vantage_cost_get`, `vantage_search` (read-only, on `createJsonGetter` from `shared/env-json-api.ts`); manifest `network: ["api.vantage.sh"]`; the pinned connector count in `scripts/connector-gates.test.ts` raised; `exports` entry; README; fixtures | merge, then release-please publishes the next minor of `@nimbus-dev/connectors`; FO2's pin bump cannot precede it (`audit:connector-version-skew`) |
+| FO1 | nimbus-mcp-servers | `connectors/vantage`: `vantage_cost_list`, `vantage_recommendation_list`, `vantage_cost_get`, `vantage_search` (read-only, on `createJsonGetter` from `shared/env-json-api.ts`); manifest `network: ["api.vantage.sh"]`; the pinned connector count in `scripts/connector-gates.test.ts` (94 today) raised to 95; `exports` entry; README; fixtures | merge, then release-please publishes the next minor of `@nimbus-dev/connectors`; FO2's pin bump cannot precede it (`audit:connector-version-skew`) |
 | FO2 | Nimbus | Contract module and series reader; Vantage mapper and syncable on a `sinceMs` transport; the registration sites (§ 5.3); retention pass; embedding exclusion (D-FO-10); pin bump; docs; index-lane census | FO1 published |
-| FO3 | nimbus-mcp-servers | `connectors/kubecost`, `connectors/opencost` and `shared/allocation-kit.ts`: `*_allocation_list`, `*_allocation_get`, `*_search`, read-only; `network: []` (the URL host is added by the gateway); count pin raised by 2 | release |
+| FO3 | nimbus-mcp-servers | `connectors/kubecost`, `connectors/opencost` and `shared/allocation-kit.ts`: `*_allocation_list`, `*_allocation_get`, `*_search`, read-only; `network: []` (the URL host is added by the gateway); count pin raised by 2 (to 97) | release |
 | FO4 | Nimbus | Kubecost/OpenCost mappers and syncables; URL-and-optional-secret spawn helper (§ 5.4); `nimbus connector auth kubecost --url ... [--token ...]`; Windows loopback probe; pin bump | FO3 published |
-| FO5 | both | CloudHealth (OR-FO-1): two PRs, built from documentation, UNVERIFIED items marked | FO2 |
-| FO6 | both | Flexera One / Spot (OR-FO-1): two PRs, an endpoint-verification step first | FO2 |
+| FO5a | nimbus-mcp-servers | CloudHealth connector (OR-FO-1), built from documentation, UNVERIFIED items marked; count pin to 98 | merge, then release publishes |
+| FO5b | Nimbus | CloudHealth mapper, syncable, registration sites, pin bump | FO5a published; FO2 |
+| FO6a | nimbus-mcp-servers | Flexera One / Spot connector, starting with an endpoint-verification step that stops the slice if no cost endpoint can be documented; count pin to 99 | merge, then release publishes |
+| FO6b | Nimbus | Flexera mapper, syncable, registration sites, pin bump | FO6a published; FO2 |
+
+A slice never spans both repos: the connectors PR merges and its release publishes first, then the
+gateway PR bumps the pin (`audit:connector-version-skew` fails a pin to an unpublished version). FO1 to
+FO4 already alternate this way; FO5 and FO6 are written as pairs for the same reason.
 
 Each slice updates the five core docs and CHANGELOG. No schema migration in any slice: the `item` table
 already holds an arbitrary `type` and JSON `metadata`, and no relation type is added. If a slice finds
@@ -261,8 +275,14 @@ unchanged), no owner-configured entry. Spawned through `wrapServerSpec` (I15, st
 scripts`); a checklist, not a guarantee, and the slice re-derives it:
 `connectors/connector-catalog.ts` (id, interval `HOUR6`, auth hint), `catalog/connector-catalog-meta.ts`,
 `connectors/connector-secrets-manifest.ts`, `connectors/lazy-mesh/first-party-manifests.ts`,
-`connectors/lazy-mesh/mesh.ts` plus a `phase3AddVantageMcp` (in the data-BI file's pattern),
-`platform/assemble-sync-registrations.ts`, `sync/rate-limiter.ts` (the `Provider` union),
+`connectors/lazy-mesh/mesh.ts` (the listing-adder map) plus a new `phase3AddVantageMcp` in a new
+`connectors/lazy-mesh/phase3-finops.ts` (the data-BI file's pattern), imported and called from
+`connectors/lazy-mesh/phase3-config.ts` (`buildPhase3Servers`, where an adder actually runs),
+`platform/assemble-sync-registrations.ts`, `sync/rate-limiter.ts` (the `Provider` union AND
+`DEFAULT_QUOTAS: Record<Provider, ProviderQuota>`, which needs an entry per added provider: Vantage's
+documented 1,000/hour is about 16/minute, so `requestsPerMinute: 16, burstSize: 2`; the Kubecost,
+OpenCost, CloudHealth and Flexera values are our own conservative choices, 30/minute, burst 2, since no
+limit is documented),
 `connectors/bundled-connector-registry.ts` (generated by `scripts/gen-bundled-connector-registry.ts`),
 `docs/structure-audit/index-lane-census.json`, `docs/cli-reference.md`, `docs/architecture.md`.
 `config/nimbus-toml-connectors.ts` is not touched (D-FO-7). No `connector-writes/*` file is touched.
@@ -303,7 +323,10 @@ reach loopback only for the owner's own `localhost` or literal on its declared p
 policy is all-or-nothing and loopback reach from an AppContainer is UNVERIFIED (Q2). The auth command
 refuses a URL whose host is loopback and whose port is the gateway's own HTTP or LAN port, so a typo
 cannot point the connector at the gateway's write surface (I13); that is a check on a value the owner
-typed, not a security boundary.
+typed, not a security boundary. The same check runs in the spawn adder (`phase3AddKubecostMcp`), not
+only in the auth command, so a URL stored by another route or a changed port fails closed: no spawn,
+no network entry. Tests: a stored `http://localhost:<gateway http port>` and a LAN-port URL are each
+refused at auth and at spawn, and a different loopback port is accepted.
 
 **Sync.** Cadence 6 h; first sync 45 days, then `watermark - 3 days`. A 45-day, 1-day-step, namespace
 aggregate at the default 1-minute Prometheus `resolution` [O1] can be heavy for a large cluster; the
@@ -380,7 +403,7 @@ A plan only, because the facts are thin.
   owner-configured `localhost:<port>` entry and a stored URL that yields no entry failing closed with a
   warning and no spawn. The Windows loopback probe (FO4) is a real AppContainer test; per project
   convention it is self-validating (it proves its own positive control) rather than a platform skip
-  that hides a silent gap.
+  that hides a silent gap. A unit test also pins the gateway-port refusal described in § 5.4.
 - **Audits.** `audit:connector-hosts`, `audit:connector-version-skew`, `audit:tool-names`, the
   index-lane census (`docs/structure-audit/index-lane-census.json`, regenerated; it is known to miss
   accessor-helper reads, so the series reader uses the `json_extract` form it can see),
@@ -410,9 +433,33 @@ A plan only, because the facts are thin.
 - The Vantage rate limit is account-wide and shared with the owner's other tooling.
 - CloudHealth, Flexera One and Spot endpoints, regions and limits are mostly UNVERIFIED; FO5 and FO6
   may not begin without a person who can read the vendor's reference or call the API.
-- Where the embedding pipeline selects items was not located (D-FO-10); FO2 must confirm the exclusion
-  works before any cost row is written.
+- The embedding exclusion (D-FO-10) is a type name in two places; a future item type of the same kind
+  must be added to both.
 
 ## 9. Review log
 
-Not yet reviewed.
+### Round 1 (Antigravity, 2026-11-12)
+
+Seven findings, each checked against the spec and the code before acting.
+
+Applied:
+- F1 (optional keys): `OPTIONAL_SECRET_KEYS` exists and `requiredSecretKeysFor` subtracts it; D-FO-8
+  now requires every non-mandatory key to be listed there. The reviewer's quoted code (a `Set`, a
+  different function body) is not what the file contains; the mechanism is real.
+- F2 (embedding): `scheduleItemEmbedding` in `upsertIndexedItemForSync` and the `backfillAll` queries
+  in `embedding/pipeline.ts` are real; D-FO-10 names both sites and the UNVERIFIED note is gone. The
+  reviewer's `input.type` is `row.type` in the code.
+- F3 (slices): FO5 and FO6 are now FO5a/FO5b and FO6a/FO6b, connectors first, then the pin.
+- F4 (registration): `phase3-config.ts` `buildPhase3Servers` and a new `phase3-finops.ts` are listed.
+- F5 (loopback): the gateway-port refusal is also enforced at spawn, with tests at both places.
+- F6 (quotas): `DEFAULT_QUOTAS` entries are listed, with the derivation of each value.
+- F7 (gate count): the pinned count is stated per slice.
+
+Rejected or corrected:
+- F3's quoted slice rows and the quoted CLAUDE.md sentence about `BUNDLED_CONNECTORS` and an explicit
+  version do not exist in the spec or in CLAUDE.md; also FO5 is CloudHealth, not Vantage/Kubecost/OpenCost.
+- F5's quoted `manifestWithExtraNetworkHosts(manifest, extraHosts)` body and `allowedHosts` field are
+  not the real code (it takes a service id, hosts and `ownerConfigured`, and other connectors'
+  manifests are untouched); the cross-connector-expansion concern it implies does not arise.
+- F7's counts (97 and 99 for "3 and 2" connectors) are wrong: the pin is 94 today, and the five new
+  connectors take it to 99 through FO1 (95), FO3 (97), FO5a (98), FO6a (99).
