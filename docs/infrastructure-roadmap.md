@@ -14,7 +14,10 @@ PR review, and cross-repo coordination.
 > (There were three. `ecosystem-roadmap.md` closed 2026-07-24 and was retired;
 > its sequencing role folded into `roadmap.md`, and its description of how the
 > ecosystem fits together moved to org level as
-> [`ECOSYSTEM.md`](https://github.com/nimbus-agent/.github/blob/main/ECOSYSTEM.md).)
+> [`ECOSYSTEM.md`](https://github.com/nimbus-agent/.github/blob/main/ECOSYSTEM.md).
+> The file now at [`ecosystem-roadmap.md`](./ecosystem-roadmap.md) is a later
+> landscape record, drafted 2026-08-02; it is not that document and has no
+> authority over sequencing.)
 
 ---
 
