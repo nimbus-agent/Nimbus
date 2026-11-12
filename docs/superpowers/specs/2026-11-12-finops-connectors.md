@@ -1,10 +1,6 @@
 # Phase 10 stretch — FinOps connectors (Vantage, CloudHealth, Spot.io / Flexera, Kubecost, OpenCost)
 
-Status: DRAFT for review (2026-11-12). Not approved. The "Open owner questions" section (§ 3) is
-unanswered; the slice plan in § 5 is written so that the recommended answers hold and says what
-changes under the others.
-Date: 2026-11-12. Slot: S4. Roadmap: `docs/roadmap.md` § Phase 10 → *Stretch — Infrastructure-as-Agent
-(SRE Loop)*, row **FinOps connectors**. The row is a stretch item and does not gate Phase 10.
+Status: DRAFT for Antigravity review (round 1). Owner rulings (§ 2, 2026-11-12) are binding; do not reopen them.
 
 ## 1. Goal
 
@@ -30,7 +26,21 @@ Proposed acceptance criterion (the row has none; this is the one this project mu
   runs unattended. Syncs, the retention pass and the series reader are deterministic and import no
   model code. A model may read the indexed rows only in an owner-run `nimbus ask`, through the normal
   `wrapToolOutput` path (I11); nothing here adds an LLM call.
-- No other ruling applies yet. Scope, bundling and write questions are in § 3.
+- **OR-FO-1 (2026-11-12) All five products are in scope**: Vantage, Kubecost, OpenCost, CloudHealth
+  and Flexera One / Spot (one vendor since the 2025 acquisition). FO5 (CloudHealth) and FO6
+  (Flexera / Spot) are built from vendor documentation; every endpoint, field and auth detail that
+  could not be read from a primary source stays marked UNVERIFIED in the code, the docs and the
+  connector's README, and the connector's status reads "documented shape, not verified against a
+  live account" until an owner with an account confirms it. FO6 starts with an endpoint-verification
+  step and stops (recording what is missing) if no cost endpoint can be documented at all.
+- **OR-FO-2 (2026-11-12) Owner-stored URL for in-cluster Kubecost and OpenCost.** The owner stores
+  `http://localhost:<port>` (their own `kubectl port-forward`) or an `https://` ingress URL; Nimbus
+  never starts a forward or spawns `kubectl`. The URL host becomes an owner-configured sandbox entry;
+  FO4 includes the Windows loopback probe.
+- **OR-FO-3 (2026-11-12) Sustainability connectors are a separate project.** The cost contract keeps
+  its reserved `unit` key so a carbon series fits later.
+- **OR-FO-4 (2026-11-12) No writes.** Costs, allocations and recommendations are indexed only.
+- **OR-FO-5 (2026-11-12) Retention 400 days, at most 500 series per connector.**
 
 Decided by me (recorded so review can challenge them):
 
@@ -88,53 +98,10 @@ Decided by me (recorded so review can challenge them):
   documented default groupings. The owner's saved report in the vendor console, not Nimbus, defines
   the attribution (team, tag, cost category).
 
-## 3. Open owner questions
+## 3. Owner questions (resolved)
 
-**Q1. Which of the five products are in scope?** Verification cost differs sharply (§ 5.0 table).
-Vantage, Kubecost and OpenCost have public, fetchable API docs. CloudHealth's reference was fetchable
-but its rate limits, regions and any recommendation endpoint were not. Flexera One's API reference
-(developer.flexera.com) returned 404 or 403 on every cost page I tried; only its auth page and
-community posts were readable, so its cost endpoints are UNVERIFIED. Spot.io is now Flexera (the
-acquisition closed 2025-03-03), so the row "Spot.io / Flexera" is one company, and Spot's cost
-endpoints were not found at all.
-- (a) **Ship Vantage, Kubecost, OpenCost (FO1-FO4); defer CloudHealth and Flexera/Spot until someone
-  with an account can verify endpoints.** Recommended.
-- (b) Ship all five; the CloudHealth and Flexera slices are built against documentation only and
-  marked unverified-live, as the iac host lists were.
-- (c) Vantage only; Kubecost and OpenCost wait for a cluster story.
-
-**Q2. How does a laptop gateway reach in-cluster Kubecost and OpenCost?** Both are cluster services;
-the docs' own access method is `kubectl port-forward` (Kubecost on 9090, OpenCost on 9003).
-- (a) **The owner stores a URL: `http://localhost:<port>` from their own port-forward, or an
-  `https://` ingress URL.** Nimbus does not start the forward. The URL's host becomes an
-  owner-configured sandbox entry (the Grafana / dbt pattern). Recommended: it adds no kubectl child,
-  no kubeconfig access and no new invariant. Cost: the forward must be running at sync time, and a
-  stopped forward is a `last_error`, not a failure of anything else. A Windows AppContainer may not be
-  able to reach loopback at all (UNVERIFIED; the Windows policy is all-or-nothing `internetClient`);
-  FO4 includes a probe, and the fallback on Windows is an ingress URL.
-- (b) Nimbus starts and owns a `kubectl port-forward` child per configured cluster. Reliable, but a
-  new code-execution-class spawn (kubectl reads the kubeconfig), against the line the owner drew for
-  the `az` / `gcloud` before-reads on 2026-11-07.
-- (c) Ingress only; refuse loopback and plain `http://`. Safest, but excludes the documented default
-  access path, and neither product documents authentication (UNVERIFIED), so an exposed ingress is the
-  owner's own exposure.
-
-**Q3. Bundle the Sustainability connectors (the next roadmap row: Cloud Carbon Footprint, Climatiq,
-Watershed, cloud carbon exports)?**
-- (a) **No; a separate project.** Recommended. The contract in § 5.1 reserves a `unit` key so a carbon
-  series fits `cost_allocation`'s shape later, but none of those APIs was researched here.
-- (b) Add the row to this spec as a follow-up slice after FO4.
-
-**Q4. Is any write wanted (apply a Spot / Vantage recommendation, create a Vantage budget)?**
-- (a) **No (D-FO-1).** Recommended; recommendations are indexed so the owner or a later remediation row
-  can see them.
-- (b) One narrow write per vendor, chosen after a design round (each needs its own typed preview and
-  before-state; none of the vendor write APIs was researched).
-
-**Q5. Retention and series cap defaults.** `retain_days` 400 and `max_series` 500 (D-FO-9) are my
-numbers. (a) As written. (b) 800 days for year-over-year baselines at roughly twice the index growth.
-(c) No retention and a documented growth bound. Recommended: (a); the detector's baseline needs weeks,
-not years.
+All five were answered by the owner on 2026-11-12; see § 2 (OR-FO-1 to OR-FO-5). Q1 took the
+all-five option rather than the recommended subset.
 
 ## 4. Non-goals
 
@@ -261,8 +228,8 @@ tests build rows through the real mapper: a fixture must come from the writer, n
 | FO2 | Nimbus | Contract module and series reader; Vantage mapper and syncable on a `sinceMs` transport; the registration sites (§ 5.3); retention pass; embedding exclusion (D-FO-10); pin bump; docs; index-lane census | FO1 published |
 | FO3 | nimbus-mcp-servers | `connectors/kubecost`, `connectors/opencost` and `shared/allocation-kit.ts`: `*_allocation_list`, `*_allocation_get`, `*_search`, read-only; `network: []` (the URL host is added by the gateway); count pin raised by 2 | release |
 | FO4 | Nimbus | Kubecost/OpenCost mappers and syncables; URL-and-optional-secret spawn helper (§ 5.4); `nimbus connector auth kubecost --url ... [--token ...]`; Windows loopback probe; pin bump | FO3 published |
-| FO5 | both | CloudHealth, only if Q1 says so: two PRs | Q1 |
-| FO6 | both | Flexera One / Spot, only if Q1 says so: two PRs, endpoints verified first | Q1 |
+| FO5 | both | CloudHealth (OR-FO-1): two PRs, built from documentation, UNVERIFIED items marked | FO2 |
+| FO6 | both | Flexera One / Spot (OR-FO-1): two PRs, an endpoint-verification step first | FO2 |
 
 Each slice updates the five core docs and CHANGELOG. No schema migration in any slice: the `item` table
 already holds an arbitrary `type` and JSON `metadata`, and no relation type is added. If a slice finds
@@ -343,7 +310,7 @@ aggregate at the default 1-minute Prometheus `resolution` [O1] can be heavy for 
 incremental window keeps steady-state load to 3-4 days per sync, and the first sync is the exception. A
 first-sync timeout is reported and retried next cycle with a halved window (FO4 test).
 
-### 5.5 FO5 / FO6 — CloudHealth, Flexera One / Spot (conditional on Q1)
+### 5.5 FO5 / FO6 — CloudHealth, Flexera One / Spot (in scope, OR-FO-1)
 
 A plan only, because the facts are thin.
 
