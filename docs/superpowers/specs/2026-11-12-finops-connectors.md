@@ -1,6 +1,6 @@
 # Phase 10 stretch — FinOps connectors (Vantage, CloudHealth, Spot.io / Flexera, Kubecost, OpenCost)
 
-Status: DRAFT for Antigravity review (round 2). Owner rulings (§ 2, 2026-11-12) are binding; do not reopen them.
+Status: APPROVED by Antigravity (round 2, 2026-11-12). Owner rulings (§ 2) are binding; do not reopen them.
 
 ## 1. Goal
 
@@ -463,3 +463,5 @@ Rejected or corrected:
   manifests are untouched); the cross-connector-expansion concern it implies does not arise.
 - F7's counts (97 and 99 for "3 and 2" connectors) are wrong: the pin is 94 today, and the five new
   connectors take it to 99 through FO1 (95), FO3 (97), FO5a (98), FO6a (99).
+
+Round 2 (Antigravity, 2026-11-12): APPROVED. Three minor notes carried to the FO plans: (1) pick the `ConnectorCategory` for the five connectors in `catalog/connector-catalog-meta.ts` (an existing `cloud` or `finance`, or a new member); (2) if FO4's Windows loopback probe fails, the docs tell Windows owners to store a non-loopback or ingress URL; (3) Kubecost Aggregator `offset`/`limit` paging stays UNVERIFIED, with window-bounded retrieval capped by the 500-series limit as the fallback.
