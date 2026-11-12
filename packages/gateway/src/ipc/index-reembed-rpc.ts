@@ -2,6 +2,7 @@ import type { Database } from "bun:sqlite";
 import { join } from "node:path";
 import type { Logger } from "pino";
 import { wrapLedgeredEmbedder } from "../egress/embedding-egress.ts";
+import { notEmbeddingExcludedSql } from "../embedding/embedding-exclusions.ts";
 import { createLocalEmbedder } from "../embedding/model.ts";
 import { createOpenAIEmbedder } from "../embedding/openai-embedder.ts";
 import { resolveOpenAIEmbeddingKey } from "../embedding/openai-key.ts";
@@ -116,7 +117,7 @@ export function buildCandidateSql(p: ReembedParams): {
              FROM item i WHERE NOT EXISTS (
                SELECT 1 FROM embedding_chunk c
                WHERE c.item_id = i.id AND c.model = ?
-             )`;
+             ) AND ${notEmbeddingExcludedSql("i")}`;
   if (p.service !== undefined) {
     sql += ` AND i.service = ?`;
     params.push(p.service);

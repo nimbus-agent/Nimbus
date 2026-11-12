@@ -184,3 +184,14 @@ describe("the Readwise item types", () => {
     expect(isProseHeavy("readwise", "book")).toBe(false);
   });
 });
+
+describe("the FinOps item types stay off PROSE_HEAVY_TYPES", () => {
+  test("neither vantage type may reach the remote embedder unattended", () => {
+    // PROSE_HEAVY_TYPES routes an item to the OpenAI embedder whenever a key is set. A cost row and
+    // a recommendation (accounts, services, savings) is cost data that must not leave the machine.
+    expect(PROSE_HEAVY_TYPES.has(routingKey("vantage", "cost_recommendation"))).toBe(false);
+    expect(PROSE_HEAVY_TYPES.has(routingKey("vantage", "cost_allocation"))).toBe(false);
+    expect(isProseHeavy("vantage", "cost_recommendation")).toBe(false);
+    expect(isProseHeavy("vantage", "cost_allocation")).toBe(false);
+  });
+});

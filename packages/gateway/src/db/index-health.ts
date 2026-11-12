@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import { notEmbeddingExcludedSql } from "../embedding/embedding-exclusions.ts";
 
 /**
  * Index quality report behind `nimbus index health` — why query results are weak, before the user
@@ -103,6 +104,7 @@ function readPerService(db: Database): ItemRow[] {
               SUM(CASE WHEN e.item_id IS NULL THEN 0 ELSE 1 END) AS embedded
        FROM item i
        LEFT JOIN (SELECT DISTINCT item_id FROM embedding_chunk) e ON e.item_id = i.id
+       WHERE ${notEmbeddingExcludedSql("i")}
        GROUP BY i.service`,
     )
     .all() as Array<{ service: string; items: number; embedded: number }> | undefined;
@@ -145,6 +147,7 @@ function classifyStaleness(
 }
 
 function readSparseTypes(db: Database): SparseTypeHealth[] {
+  // FinOps cost rows (finops/cost-item-contract.ts) carry no URL by design; they are not a sparse type.
   // `metadata = ''` counts alongside NULL: a connector that wrote an empty string supplied no
   // metadata either, and the user cannot act on the difference.
   const rows = db
@@ -158,6 +161,7 @@ function readSparseTypes(db: Database): SparseTypeHealth[] {
                          OR modified_at = 0
                          OR metadata IS NULL OR metadata = '' THEN 1 ELSE 0 END)  AS sparse_items
        FROM item
+       WHERE type NOT IN ('cost_allocation', 'cost_recommendation')
        GROUP BY type`,
     )
     .all() as

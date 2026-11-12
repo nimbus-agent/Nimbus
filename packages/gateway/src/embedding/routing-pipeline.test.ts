@@ -282,3 +282,46 @@ describe("RoutingEmbeddingPipeline", () => {
     },
   );
 });
+
+describe("RoutingEmbeddingPipeline - FinOps cost data never reaches the remote embedder", () => {
+  // PRIVACY (spec D-FO-10, section 6). A recommendation names accounts, services and savings: cost
+  // data. With an OpenAI embedder configured, a prose-heavy item would be sent to it unattended; a
+  // vantage:cost_recommendation must not be. Red-prove by adding the key to PROSE_HEAVY_TYPES.
+  function countingEmbedder(model: string, dims: number, isLocal: boolean) {
+    const calls = { n: 0 };
+    const embedder: Embedder = {
+      model,
+      dims,
+      isLocal,
+      async embed(texts) {
+        calls.n += 1;
+        return texts.map(() => new Float32Array(dims));
+      },
+    };
+    return { embedder, calls };
+  }
+
+  test.skipIf(!VEC_AVAILABLE)(
+    "a vantage:cost_recommendation is embedded locally and the OpenAI-keyed embedder gets zero calls",
+    async () => {
+      const db = freshDb();
+      insertItem(db, "rec_1", "vantage", "cost_recommendation");
+      const localStub = countingEmbedder("Xenova/all-MiniLM-L6-v2", 384, true);
+      const remoteStub = countingEmbedder("openai:text-embedding-3-small", 1536, false);
+      const router = new RoutingEmbeddingPipeline(
+        db,
+        new SqliteEmbeddingPipeline({ db, embedder: localStub.embedder }),
+        new SqliteEmbeddingPipeline({ db, embedder: remoteStub.embedder }),
+      );
+      await router.embedItem({
+        id: "vantage:rec_1",
+        service: "vantage",
+        type: "cost_recommendation",
+        title: "Rightsize an over-provisioned EC2 instance in account 123456789012",
+        body_preview: "Rightsize an over-provisioned EC2 instance in account 123456789012",
+      });
+      expect(remoteStub.calls.n).toBe(0);
+      expect(localStub.calls.n).toBe(1);
+    },
+  );
+});

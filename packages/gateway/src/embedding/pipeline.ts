@@ -4,6 +4,7 @@ import type { Logger } from "pino";
 import { dbRun, dbStmtRun } from "../db/write.ts";
 import type { BackfillGate } from "./backfill-gate.ts";
 import { type ChunkOptions, chunkText, itemTextForEmbedding } from "./chunker.ts";
+import { notEmbeddingExcludedSql } from "./embedding-exclusions.ts";
 import { SUPPORTED_EMBEDDING_DIMS } from "./routing.ts";
 import type { Embedder, EmbeddingPipeline, IndexedItem } from "./types.ts";
 
@@ -201,7 +202,7 @@ export class SqliteEmbeddingPipeline implements EmbeddingPipeline {
         `SELECT COUNT(*) AS c FROM item i WHERE NOT EXISTS (
            SELECT 1 FROM embedding_chunk c
            WHERE c.item_id = i.id AND c.model = ?
-         )`,
+         ) AND ${notEmbeddingExcludedSql("i")}`,
       )
       .get(model) as { c: number };
     const total = totalRow.c;
@@ -222,7 +223,7 @@ export class SqliteEmbeddingPipeline implements EmbeddingPipeline {
            FROM item i WHERE NOT EXISTS (
              SELECT 1 FROM embedding_chunk c
              WHERE c.item_id = i.id AND c.model = ?
-           )
+           ) AND ${notEmbeddingExcludedSql("i")}
            ORDER BY i.modified_at DESC
            LIMIT ?`,
         )
@@ -256,7 +257,7 @@ export class SqliteEmbeddingPipeline implements EmbeddingPipeline {
         `SELECT COUNT(*) AS c FROM item i WHERE NOT EXISTS (
            SELECT 1 FROM embedding_chunk c
            WHERE c.item_id = i.id AND c.model = ?
-         ) ${filter}`,
+         ) AND ${notEmbeddingExcludedSql("i")} ${filter}`,
       )
       .get(model, ...keys) as { c: number };
     const total = totalRow.c;
@@ -275,7 +276,7 @@ export class SqliteEmbeddingPipeline implements EmbeddingPipeline {
            FROM item i WHERE NOT EXISTS (
              SELECT 1 FROM embedding_chunk c
              WHERE c.item_id = i.id AND c.model = ?
-           ) ${filter}
+           ) AND ${notEmbeddingExcludedSql("i")} ${filter}
            ORDER BY i.modified_at DESC
            LIMIT ?`,
         )

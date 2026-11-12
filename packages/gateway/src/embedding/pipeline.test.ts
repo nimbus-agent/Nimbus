@@ -820,3 +820,94 @@ describe.skipIf(!VEC_AVAILABLE)("SqliteEmbeddingPipeline — dim awareness", () 
     expect(embedded).toBe(ITEMS);
   });
 });
+
+describe.skipIf(!VEC_AVAILABLE)(
+  "SqliteEmbeddingPipeline - excluded types (FinOps cost rows)",
+  () => {
+    function seeded(): Database {
+      const db = new Database(":memory:");
+      LocalIndex.ensureSchema(db);
+      const now = Date.now();
+      for (const i of [1, 2, 3]) {
+        upsertIndexedItem(db, {
+          service: "vantage",
+          type: "cost_allocation",
+          externalId: `c${String(i)}`,
+          title: `cost ${String(i)}`,
+          modifiedAt: now,
+          syncedAt: now,
+        });
+      }
+      for (const i of [1, 2]) {
+        upsertIndexedItem(db, {
+          service: "slack",
+          type: "message",
+          externalId: `m${String(i)}`,
+          title: `mail ${String(i)}`,
+          modifiedAt: now,
+          syncedAt: now,
+        });
+      }
+      return db;
+    }
+
+    function embeddedIds(db: Database): string[] {
+      return (
+        db.query("SELECT DISTINCT item_id FROM embedding_chunk ORDER BY item_id").all() as {
+          item_id: string;
+        }[]
+      ).map((r) => r.item_id);
+    }
+
+    // A 5-second guard: before the exclusion sat in the SELECT, backfillAll re-selected an item
+    // that wrote no chunk forever.
+    const guarded = <T>(work: Promise<T>): Promise<T> =>
+      Promise.race([
+        work,
+        new Promise<never>((_, rej) =>
+          setTimeout(() => rej(new Error("backfill did not terminate")), 5000),
+        ),
+      ]);
+
+    test("backfillAll embeds exactly the 2 non-cost rows, terminates and reports total 2", async () => {
+      const db = seeded();
+      const pipeline = new SqliteEmbeddingPipeline({
+        db,
+        embedder: mockEmbedder(384, "excl"),
+        backfillBatchSize: 1,
+      });
+      let last: [number, number] = [0, 0];
+      await guarded(
+        pipeline.backfillAll((done, total) => {
+          last = [done, total];
+        }),
+      );
+      expect(last).toEqual([2, 2]);
+      expect(embeddedIds(db)).toEqual(["slack:m1", "slack:m2"]);
+    });
+
+    test("backfillForRoutingKeys with an in scope and a notIn scope never embeds a cost row", async () => {
+      const dbIn = seeded();
+      await guarded(
+        new SqliteEmbeddingPipeline({
+          db: dbIn,
+          embedder: mockEmbedder(384, "excl"),
+        }).backfillForRoutingKeys({ in: ["vantage:cost_allocation", "slack:message"] }),
+      );
+      expect(embeddedIds(dbIn)).toEqual(["slack:m1", "slack:m2"]);
+
+      const dbNotIn = seeded();
+      let last: [number, number] = [0, 0];
+      await guarded(
+        new SqliteEmbeddingPipeline({
+          db: dbNotIn,
+          embedder: mockEmbedder(384, "excl"),
+        }).backfillForRoutingKeys({ notIn: ["github:pr"] }, (done, total) => {
+          last = [done, total];
+        }),
+      );
+      expect(last).toEqual([2, 2]);
+      expect(embeddedIds(dbNotIn)).toEqual(["slack:m1", "slack:m2"]);
+    });
+  },
+);
