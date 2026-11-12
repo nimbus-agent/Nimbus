@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794480798277,
+  "lastUpdate": 1794482454687,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
-            "name": "nimbus-release-bot[bot]",
-            "username": "nimbus-release-bot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "671aca067fa6ab26e82a810caf4830eca97dcc0a",
-          "message": "chore: release main (#1324)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>2.17.0</summary>\n\n##\n[2.17.0](https://github.com/nimbus-agent/Nimbus/compare/v2.16.0...v2.17.0)\n(2026-08-24)\n\n\n### Features\n\n* **egress:** a targeted fetch names the client that asked for it (U2a)\n([#1322](https://github.com/nimbus-agent/Nimbus/issues/1322))\n([8611b5c](https://github.com/nimbus-agent/Nimbus/commit/8611b5c72afab10338e93b438ecd27aeec3ec966))\n\n\n### Bug Fixes\n\n* **docs:** correct the standalone connector install path, and measure\nclient support\n([#1323](https://github.com/nimbus-agent/Nimbus/issues/1323))\n([bdc6abf](https://github.com/nimbus-agent/Nimbus/commit/bdc6abf2bc44ad53933191f35537fdf1ea56c737))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
-          "timestamp": "2026-08-24T17:34:13Z",
-          "tree_id": "a2c121434a9b10d28dcede377eda471ec4e502a5",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/671aca067fa6ab26e82a810caf4830eca97dcc0a"
-        },
-        "date": 1787593543502,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 311.82960875000316,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 318.9242422999938,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 222.52894414999864,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "6fa8612d2e78d9058166c789d1fdc998afea0ced",
+          "message": "test(gateway): inject the Microsoft token resolver instead of mock.module (fixes a --no-isolate leak) (#1980)\n\nFixes the Linux `Unit + Coverage` flake seen on #1979:\n`chatopsTeamsBotServers > injects TEAMS_BOT_APP_ID +\nTEAMS_BOT_APP_PASSWORD into a sandbox-wrapped teams spec` received\n`\"fake-microsoft-access-token\"` as `MICROSOFT_OAUTH_ACCESS_TOKEN`.\n\n## The leak\n\n`test/unit/connectors/lazy-mesh/connector-spawns.test.ts` replaced\n`auth/microsoft-access-token.ts` through `mock.module`. The Linux leg\nruns `--parallel --no-isolate`, so a worker that ran that file and then\n`chatops-bot-spawn.test.ts` handed the fake to the Teams spawn's default\nGraph-token resolver. This is the same class #1977 fixed for Google.\n\n## What changes\n\n- `ensureMicrosoftBundleMcp(ctx, getMicrosoftToken =\ngetValidMicrosoftAccessToken)` takes the resolver as an optional,\ninjectable second argument. Production callers pass nothing, so\nbehaviour is unchanged.\n- `connector-spawns.test.ts` drops the Microsoft `mock.module` and\npasses `FAKE_MICROSOFT_TOKEN` to its four calls.\n- The Teams test passes an explicit `graphTokenResolver` that throws,\nwhich is what an absent `microsoft.oauth` does. A resolver mocked in any\nother file can no longer reach it.\n\n## Verification\n\n- `bun test packages/gateway/src/connectors\npackages/gateway/test/unit/connectors`: 10812 pass, 0 fail.\n- Both files together under `--no-isolate`, in both orders: green.\n- `preflight:fast` passes.\n- The leak itself does not reproduce on Windows, with either file order.\nThe fix does not depend on a reproduction: the test now names its own\nresolver.\n\nThe core docs (CLAUDE.md, GEMINI.md, roadmap, architecture, docs/README,\ncli-reference) are unchanged, because this is a test seam with no\nbehaviour change. The other `auth/*-access-token` `mock.module`s in\n`connector-spawns.test.ts` (Slack, Notion, Mendeley, Workday, HubSpot,\nMiro, Canva, Figma, Salesforce) and `@mastra/mcp` remain. They are the\nrecorded follow-up.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JmSjrCFSTQTQnUa4j8F5b1\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **Tests**\n* Updated connector test coverage to explicitly verify Microsoft token\nhandling and ensure generated Teams bot configurations do not include an\nOAuth access token when the required credential is unavailable.\n* Updated Google and Microsoft token tests to use explicit token\nresolution, making their expected behavior consistent and less dependent\non shared test setup.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-12T11:09:36Z",
+          "tree_id": "75a22ed3229d064fca42ecf8fb10f07816fda427",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/6fa8612d2e78d9058166c789d1fdc998afea0ced"
+        },
+        "date": 1794482449872,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 299.8705934500038,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 297.3881696500037,
             "unit": "ms"
           }
         ]
