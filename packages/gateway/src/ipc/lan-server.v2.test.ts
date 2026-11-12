@@ -341,9 +341,13 @@ describe("LanServer - requests on one connection are answered one at a time, in 
     });
     const x = await connectV2(h.port, h.client, h.host.publicKey);
     sendV2Request(x, { id: 1, method: "federation.ping", params: { id: 1 } });
-    await new Promise((r) => setTimeout(r, 60));
+    // Wait until request 1 is actually inside the handler (polled, not a fixed delay) ...
+    for (let i = 0; i < 200 && !order.includes("start 1"); i++)
+      await new Promise((r) => setTimeout(r, 10));
+    expect(order).toEqual(["start 1"]);
     sendV2Request(x, { id: 2, method: "federation.ping", params: { id: 2 } });
-    await new Promise((r) => setTimeout(r, 120));
+    // ... then give request 2 ample time to cross loopback and be read while request 1 is still held.
+    await new Promise((r) => setTimeout(r, 400));
     expect(order).toEqual(["start 1"]); // request 2 is buffered, not dispatched
     release();
     expect((await readV2Reply(x)).id).toBe(1);
