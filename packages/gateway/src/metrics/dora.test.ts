@@ -13,6 +13,7 @@ import {
   mttr,
 } from "./dora.ts";
 import type { ServiceConfig } from "./dora-config.ts";
+import { NO_INCIDENT_BINDINGS } from "./dora-config.ts";
 
 // ---------------------------------------------------------------------------
 // Minimal schema — only the tables referenced by dora.ts
@@ -73,6 +74,7 @@ function baseConfig(overrides?: Partial<ServiceConfig>): ServiceConfig {
     excludePrLabels: ["revert"],
     deployEnvironments: ["prod"],
     severityP1Aliases: ["P1"],
+    ...NO_INCIDENT_BINDINGS,
     ...overrides,
   };
 }
@@ -187,6 +189,7 @@ function insertIncident(
       status: "resolved",
       pagerduty_service_id: pdServiceId,
       opened_at_ms: openedAtMs ?? modifiedAt - 600_000, // 10 min TTR
+      resolved_at_ms: modifiedAt,
     },
     synced ?? modifiedAt,
   );
@@ -1259,6 +1262,75 @@ describe("mttr", () => {
   // unresolved incident has no duration to contribute and counting one would report a recovery
   // that has not happened. Nothing pinned this until the two selectors were split, which is
   // exactly when it became possible to break by accident.
+  // IC2: the resolution time is `resolved_at_ms`, never the last touch. A note added days after the
+  // fix moves `modified_at`; the measured duration must not move with it.
+  test("measures from resolved_at_ms, not from modified_at (a later touch does not change MTTR)", () => {
+    const cfg = baseConfig();
+    const openedAt = NOW - 10 * ONE_DAY;
+    for (let i = 0; i < 3; i++) {
+      insertItem(db, "pagerduty", "incident", "Incident", NOW - ONE_DAY, {
+        status: "resolved",
+        pagerduty_service_id: "pd-svc-1",
+        opened_at_ms: openedAt,
+        resolved_at_ms: openedAt + 3_600_000,
+      });
+    }
+    const result = mttr(db, cfg, NOW, SINCE);
+    expect(result.value).toBe(3600);
+    expect(result.gap).toBeNull();
+  });
+
+  test("the window bounds apply to resolved_at_ms: resolved before the window is out even when touched inside it", () => {
+    const cfg = baseConfig();
+    insertItem(db, "pagerduty", "incident", "Old", NOW - ONE_DAY, {
+      status: "resolved",
+      pagerduty_service_id: "pd-svc-1",
+      opened_at_ms: NOW - 50 * ONE_DAY,
+      resolved_at_ms: NOW - 49 * ONE_DAY,
+    });
+    const result = mttr(db, cfg, NOW, SINCE);
+    expect(result.sample).toBe(0);
+    expect(result.gap).toBe("low_sample");
+  });
+
+  test("a resolved row without resolved_at_ms is excluded and the gap says so", () => {
+    const cfg = baseConfig();
+    const openedAt = NOW - 10 * ONE_DAY;
+    for (let i = 0; i < 3; i++) {
+      insertIncident(db, "pd-svc-1", openedAt + 3_600_000, openedAt);
+    }
+    insertItem(db, "pagerduty", "incident", "Legacy", NOW - 2 * ONE_DAY, {
+      status: "resolved",
+      pagerduty_service_id: "pd-svc-1",
+      opened_at_ms: NOW - 3 * ONE_DAY,
+    });
+    const result = mttr(db, cfg, NOW, SINCE);
+    expect(result.sample).toBe(3);
+    expect(result.value).toBe(3600);
+    expect(result.gap).toBe("incomplete_resolution_data");
+  });
+
+  test("with only legacy rows the value is null and the gap is incomplete_resolution_data", () => {
+    const cfg = baseConfig();
+    insertItem(db, "pagerduty", "incident", "Legacy", NOW - 2 * ONE_DAY, {
+      status: "resolved",
+      pagerduty_service_id: "pd-svc-1",
+      resolved_at_ms: "not a number",
+    });
+    const result = mttr(db, cfg, NOW, SINCE);
+    expect(result.value).toBeNull();
+    expect(result.gap).toBe("incomplete_resolution_data");
+  });
+
+  test("malformed metadata JSON does not raise", () => {
+    const cfg = baseConfig();
+    db.run(
+      "INSERT INTO item (id, service, type, external_id, title, modified_at, metadata, synced_at) VALUES ('bad', 'pagerduty', 'incident', 'bad', 'x', ?, '{not json', ?)",
+      [NOW - ONE_DAY, NOW - ONE_DAY],
+    );
+    expect(mttr(db, cfg, NOW, SINCE).sample).toBe(0);
+  });
+
   test("ignores a still-burning incident, unlike changeFailureRate", () => {
     const cfg = baseConfig({ pagerdutyServices: ["pd-svc-1"] });
     insertItem(db, "pagerduty", "incident", "Still burning", NOW - ONE_DAY, {

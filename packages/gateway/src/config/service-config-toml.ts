@@ -26,6 +26,10 @@ const SERVICE_CONFIG_KNOWN_KEYS: ReadonlySet<string> = new Set([
   "incident_window_minutes",
   "exclude_pr_labels",
   "deploy_environments",
+  "jsm_alert_tags",
+  "sentry_projects",
+  "data_models",
+  "depends_on",
 ]);
 
 function materializeDeployWorkflowPattern(
@@ -88,6 +92,86 @@ function materializeDeployEnvironments(
   return deployEnvironments;
 }
 
+const MAX_BINDING_ENTRIES = 50;
+const MAX_JSM_TAG_CHARS = 128;
+const MAX_DATA_MODEL_GLOB_CHARS = 200;
+const SENTRY_SLUG_PATTERN = /^[a-z0-9][a-z0-9_-]{0,99}$/;
+const WHITESPACE_PATTERN = /\s/;
+
+/**
+ * One binding list (`jsm_alert_tags`, `sentry_projects`, `data_models`, `depends_on`): an array of
+ * non-empty trimmed strings, at most `MAX_BINDING_ENTRIES`, each entry checked by `checkEntry` (which
+ * returns the stored form or throws a message). Absent means `[]`.
+ */
+function materializeBindingList(
+  kv: Record<string, string>,
+  key: string,
+  label: string,
+  checkEntry: (entry: string) => string,
+): string[] {
+  const raw = kv[key];
+  if (raw === undefined) return [];
+  const entries = parseStringArray(raw).map((e) => e.trim());
+  if (entries.length > MAX_BINDING_ENTRIES) {
+    throw new Error(`${label}.${key} has more than ${String(MAX_BINDING_ENTRIES)} entries`);
+  }
+  return entries.map((entry) => {
+    if (entry === "") throw new Error(`${label}.${key} has an empty entry`);
+    return checkEntry(entry);
+  });
+}
+
+/**
+ * The four incident-engine binding keys (Phase 10 IC2). They bind other systems' items to this service:
+ * `jsm_alert_tags` (JSM Operations alert tags), `sentry_projects` (Sentry project slugs), `data_models`
+ * (warehouse model globs, `*` only) and `depends_on` (a direct list of service ids this one depends on;
+ * IC4's cascade reads it, IC2 only stores it). A dangling `depends_on` target is not an error here: the two
+ * tables are merged later, and the merge warns.
+ */
+function materializeBindings(
+  kv: Record<string, string>,
+  blockLabel: string,
+  serviceId: string,
+): Pick<ServiceConfig, "jsmAlertTags" | "sentryProjects" | "dataModels" | "dependsOn"> {
+  const label = `[${blockLabel}.${serviceId}]`;
+  return {
+    jsmAlertTags: materializeBindingList(kv, "jsm_alert_tags", label, (tag) => {
+      if (tag.length > MAX_JSM_TAG_CHARS) {
+        throw new Error(
+          `${label}.jsm_alert_tags entry is longer than ${String(MAX_JSM_TAG_CHARS)} characters`,
+        );
+      }
+      return tag;
+    }),
+    sentryProjects: materializeBindingList(kv, "sentry_projects", label, (slug) => {
+      if (!SENTRY_SLUG_PATTERN.test(slug)) {
+        throw new Error(
+          `${label}.sentry_projects entry '${slug}' is not a Sentry project slug: ` +
+            `must match ${String(SENTRY_SLUG_PATTERN)}`,
+        );
+      }
+      return slug;
+    }),
+    dataModels: materializeBindingList(kv, "data_models", label, (glob) => {
+      if (glob.length > MAX_DATA_MODEL_GLOB_CHARS || WHITESPACE_PATTERN.test(glob)) {
+        throw new Error(
+          `${label}.data_models entry '${glob}' must be at most ` +
+            `${String(MAX_DATA_MODEL_GLOB_CHARS)} characters with no whitespace`,
+        );
+      }
+      if (!glob.split("").some((c) => c !== "*")) {
+        throw new Error(`${label}.data_models entry '${glob}' must contain a non-'*' character`);
+      }
+      return glob.toLowerCase();
+    }),
+    dependsOn: materializeBindingList(kv, "depends_on", label, (dep) => {
+      if (dep === serviceId)
+        throw new Error(`${label}.depends_on must not name the service itself`);
+      return dep;
+    }),
+  };
+}
+
 function materializeOneServiceConfig(
   serviceId: string,
   kv: Record<string, string>,
@@ -110,6 +194,7 @@ function materializeOneServiceConfig(
         : parseStringArray(kv["exclude_pr_labels"]),
     deployEnvironments: materializeDeployEnvironments(kv, blockLabel, serviceId),
     severityP1Aliases: [], // attached by loadNimbusServiceConfigsFromConfigDir
+    ...materializeBindings(kv, blockLabel, serviceId),
   };
 }
 

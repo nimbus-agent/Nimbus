@@ -1,6 +1,7 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import type { ServiceConfig } from "../metrics/dora-config.ts";
+import { NO_INCIDENT_BINDINGS } from "../metrics/dora-config.ts";
 import { dispatchMetricsRpc, type MetricsRpcContext } from "./metrics-rpc.ts";
 
 const NOW = 1_700_000_000_000;
@@ -32,6 +33,7 @@ function checkoutWebConfig(): ServiceConfig {
     excludePrLabels: [],
     deployEnvironments: ["prod"],
     severityP1Aliases: [],
+    ...NO_INCIDENT_BINDINGS,
   };
 }
 

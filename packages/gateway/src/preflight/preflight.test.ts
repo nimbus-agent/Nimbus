@@ -5,6 +5,7 @@ import { circleciPipelineMetadata } from "../connectors/circleci-sync.ts";
 import { githubActionsRunMetadata } from "../connectors/github-actions-sync.ts";
 import { jenkinsBuildMetadata } from "../connectors/jenkins-sync.ts";
 import type { ServiceConfig } from "../metrics/dora-config.ts";
+import { NO_INCIDENT_BINDINGS } from "../metrics/dora-config.ts";
 import { computeDeployPreflight } from "./preflight.ts";
 
 // ---------------------------------------------------------------------------
@@ -129,6 +130,7 @@ function baseConfig(overrides?: Partial<ServiceConfig>): ServiceConfig {
     excludePrLabels: ["revert"],
     deployEnvironments: ["prod"],
     severityP1Aliases: [],
+    ...NO_INCIDENT_BINDINGS,
     ...overrides,
   };
 }

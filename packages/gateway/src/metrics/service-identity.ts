@@ -1,3 +1,4 @@
+import { matchesDataModelGlob } from "./data-model-glob.ts";
 import type { ParsedDoraRepoUrn, ServiceConfig } from "./dora-config.ts";
 
 /**
@@ -38,7 +39,12 @@ export type ServiceIdentityResolver = (item: ServiceIdentityItem) => ServiceIden
  * the resolver still picks deterministically (first by config-map iteration
  * order, same as before), this only makes the ambiguity observable. */
 export type AmbiguousBindingWarning = {
-  readonly bindingKind: "pagerduty_service_id" | "repo_urn";
+  readonly bindingKind:
+    | "pagerduty_service_id"
+    | "repo_urn"
+    | "jsm_alert_tag"
+    | "sentry_project"
+    | "data_model_glob";
   readonly key: string;
   readonly chosenServiceId: string;
   readonly candidateServiceIds: readonly string[];
@@ -238,6 +244,146 @@ function reportAmbiguityIfBound(
 }
 
 /**
+ * Phase 10 IC2: items bound by the incident-engine binding keys instead of a repo or a PagerDuty id.
+ * Each rule is keyed on `(service, type)` so a stray `tags` or `project` key on an unrelated item (a Prefect
+ * deployment carries `tags`) never binds, and `unknown` is the answer when nothing claims the item (the
+ * graph populator then falls back to `metadata.service`, which these items do not carry).
+ */
+type IncidentBindingIndex = {
+  /** lower-cased alert tag -> claimant configs, in config order (each config once). */
+  readonly tags: ReadonlyMap<string, readonly ServiceConfig[]>;
+  readonly projects: ReadonlyMap<string, readonly ServiceConfig[]>;
+  readonly configs: readonly ServiceConfig[];
+};
+
+function indexClaimants(
+  configs: readonly ServiceConfig[],
+  keysFor: (cfg: ServiceConfig) => readonly string[],
+): Map<string, ServiceConfig[]> {
+  const out = new Map<string, ServiceConfig[]>();
+  for (const cfg of configs) {
+    for (const key of new Set(keysFor(cfg))) {
+      const claimants = out.get(key);
+      if (claimants === undefined) out.set(key, [cfg]);
+      else claimants.push(cfg);
+    }
+  }
+  return out;
+}
+
+function buildIncidentBindingIndex(
+  configs: ReadonlyMap<string, ServiceConfig>,
+): IncidentBindingIndex {
+  const all = [...configs.values()];
+  return {
+    tags: indexClaimants(all, (cfg) => cfg.jsmAlertTags.map((t) => t.trim().toLowerCase())),
+    projects: indexClaimants(all, (cfg) => cfg.sentryProjects),
+    configs: all,
+  };
+}
+
+function stringList(v: unknown): string[] {
+  return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
+}
+
+/** The claimants of an item through the binding keys, or null when the item is not of a bound kind. */
+type BindingClaim =
+  | {
+      readonly kind: "exact";
+      readonly bindingKind: AmbiguousBindingWarning["bindingKind"];
+      readonly key: string;
+      readonly claimants: readonly ServiceConfig[];
+    }
+  | {
+      readonly kind: "glob";
+      readonly claimants: readonly ServiceConfig[];
+      readonly keys: readonly string[];
+    }
+  | null;
+
+// lane-census: scope=alert service=jira
+function alertTagClaim(index: IncidentBindingIndex, item: ServiceIdentityItem): BindingClaim {
+  for (const tag of stringList(item.metadata["tags"])) {
+    const key = tag.trim().toLowerCase();
+    const claimants = index.tags.get(key);
+    if (claimants !== undefined) {
+      return { kind: "exact", bindingKind: "jsm_alert_tag", key, claimants };
+    }
+  }
+  return null;
+}
+
+// lane-census: scope=error_issue service=sentry
+function sentryProjectClaim(index: IncidentBindingIndex, item: ServiceIdentityItem): BindingClaim {
+  const raw = item.metadata["project"];
+  const project = typeof raw === "string" ? raw : undefined;
+  const claimants = project === undefined ? undefined : index.projects.get(project);
+  return project === undefined || claimants === undefined
+    ? null
+    : { kind: "exact", bindingKind: "sentry_project", key: project, claimants };
+}
+
+// lane-census: scope=data_quality_test service=montecarlo,bigeye
+function dataModelClaim(index: IncidentBindingIndex, item: ServiceIdentityItem): BindingClaim {
+  const keys = stringList(item.metadata["monitoredDataModelKeys"]);
+  const claimants = index.configs.filter((cfg) =>
+    keys.some((k) => cfg.dataModels.some((g) => matchesDataModelGlob(g, k))),
+  );
+  return claimants.length === 0 ? null : { kind: "glob", claimants, keys };
+}
+
+function incidentBindingClaim(
+  index: IncidentBindingIndex,
+  item: ServiceIdentityItem,
+): BindingClaim {
+  if (item.service === "jira" && item.type === "alert") return alertTagClaim(index, item);
+  if (item.service === "sentry" && item.type === "error_issue") {
+    return sentryProjectClaim(index, item);
+  }
+  const isDataQuality = item.service === "montecarlo" || item.service === "bigeye";
+  return isDataQuality && item.type === "data_quality_test" ? dataModelClaim(index, item) : null;
+}
+
+/**
+ * Reports the ambiguity of a binding-key claim at most once per key for the resolver's lifetime. Tags and
+ * slugs are exact keys, so their ambiguity is the claimant count; a glob overlap cannot be precomputed, so
+ * it is judged per matched model key as items arrive.
+ */
+function reportBindingAmbiguity(
+  claim: NonNullable<BindingClaim>,
+  index: IncidentBindingIndex,
+  warned: Set<string>,
+  onAmbiguousBinding: AmbiguousBindingWarner | undefined,
+): void {
+  if (onAmbiguousBinding === undefined) return;
+  const report = (
+    bindingKind: AmbiguousBindingWarning["bindingKind"],
+    key: string,
+    claimants: readonly ServiceConfig[],
+  ): void => {
+    const id = `${bindingKind}:${key}`;
+    if (claimants.length < 2 || warned.has(id)) return;
+    warned.add(id);
+    onAmbiguousBinding({
+      bindingKind,
+      key,
+      chosenServiceId: (claimants[0] as ServiceConfig).serviceId,
+      candidateServiceIds: claimants.map((c) => c.serviceId),
+    });
+  };
+  if (claim.kind === "exact") {
+    report(claim.bindingKind, claim.key, claim.claimants);
+    return;
+  }
+  for (const key of claim.keys) {
+    const matching = index.configs.filter((cfg) =>
+      cfg.dataModels.some((g) => matchesDataModelGlob(g, key)),
+    );
+    report("data_model_glob", key, matching);
+  }
+}
+
+/**
  * Builds a `SyncContext.resolveServiceId` resolver from the
  * `[metrics.dora.<id>]` / `[ci.service.<id>]` service-identity bindings
  * (`loadNimbusServiceConfigsFromConfigDir`, `config/nimbus-toml.ts`).
@@ -249,6 +395,9 @@ function reportAmbiguityIfBound(
  *      whose `pagerdutyServices` contains it.
  *   3. `metadata.repo` — matched against the
  *      `ServiceConfig` whose `repos` contains a matching URN.
+ *   4. (Phase 10 IC2) the incident-engine binding keys, keyed on `(service, type)`: a `jira:alert`'s
+ *      `tags` against `jsmAlertTags`, a `sentry:error_issue`'s `project` against `sentryProjects`, and a
+ *      Monte Carlo or Bigeye `data_quality_test`'s `monitoredDataModelKeys` against `dataModels` globs.
  *
  * A `deployment`-typed item additionally passes `deploymentBindingResolution`
  * against whichever `ServiceConfig` matched (I-1/F2) — a non-prod (or,
@@ -281,6 +430,9 @@ export function buildServiceIdentityResolver(
   const repoUrnAmbiguity = indexAmbiguousBindings(configs, "repo_urn", (cfg) =>
     cfg.repos.map((urn) => `${urn.provider}:${urn.providerId}`),
   );
+
+  const bindingIndex = buildIncidentBindingIndex(configs);
+  const warnedBindings = new Set<string>();
 
   return (item) => {
     const nimbusServiceId = stringField(item.metadata, "nimbus_service_id");
@@ -317,6 +469,14 @@ export function buildServiceIdentityResolver(
       const urnKey = matchingRepoUrnKey(item.metadata, winner);
       reportAmbiguityIfBound(repoUrnAmbiguity.get(urnKey), resolution, onAmbiguousBinding);
       return resolution;
+    }
+
+    // 4. (IC2) the incident-engine binding keys, keyed on (service, type); only reached when nothing above
+    // claimed the item, so no existing resolution changes.
+    const claim = incidentBindingClaim(bindingIndex, item);
+    if (claim !== null) {
+      reportBindingAmbiguity(claim, bindingIndex, warnedBindings, onAmbiguousBinding);
+      return { kind: "bound", serviceId: (claim.claimants[0] as ServiceConfig).serviceId };
     }
 
     return { kind: "unknown" };

@@ -80,6 +80,7 @@ function insertIncident(
     assignees?: string[];
     resolvedBy?: string | null;
     modifiedAt?: number;
+    resolvedAtMs?: number;
   },
 ): void {
   insertItem(d, {
@@ -94,7 +95,8 @@ function insertIncident(
       assignee_emails: row.assignees ?? [],
       resolved_by_email: row.resolvedBy ?? null,
       unattributed_actors: [],
-      meta_v: 1,
+      meta_v: 2,
+      ...(row.resolvedAtMs === undefined ? {} : { resolved_at_ms: row.resolvedAtMs }),
       opened_at_ms: row.openedAtMs ?? NOW - 2 * HOUR,
       pagerduty_service_id: row.pdService ?? PD_SVC,
       ...(row.severity === undefined ? {} : { severity: row.severity }),
@@ -464,11 +466,27 @@ describe("selectPriorIncidents", () => {
       openedAtMs: NOW - 10 * DAY,
       status: "resolved",
       resolvedBy: "ada@example.com",
-      modifiedAt: NOW - 9 * DAY,
+      // The last touch is days after the real resolution: the key, not the touch, is the time.
+      modifiedAt: NOW - 2 * DAY,
+      resolvedAtMs: NOW - 9 * DAY,
     });
     const got = selectPriorIncidents(d, PD_SVC, NOW, "inc-now", 10)[0];
     expect(got?.resolvedByEmail).toBe("ada@example.com");
     expect(got?.resolvedAtMs).toBe(NOW - 9 * DAY);
+    expect(got?.closed).toBe(true);
+  });
+
+  test("a resolved row without resolved_at_ms is closed with no time, never the last touch", () => {
+    const d = db();
+    insertIncident(d, {
+      id: "inc-legacy",
+      openedAtMs: NOW - 10 * DAY,
+      status: "resolved",
+      modifiedAt: NOW - 2 * DAY,
+    });
+    const got = selectPriorIncidents(d, PD_SVC, NOW, "inc-now", 10)[0];
+    expect(got?.resolvedAtMs).toBeNull();
+    expect(got?.closed).toBe(true);
   });
 
   test("an unresolved prior incident has no resolution time", () => {
@@ -476,6 +494,7 @@ describe("selectPriorIncidents", () => {
     insertIncident(d, { id: "inc-prev", openedAtMs: NOW - 10 * DAY, status: "triggered" });
     const got = selectPriorIncidents(d, PD_SVC, NOW, "inc-now", 10)[0];
     expect(got?.resolvedAtMs).toBeNull();
+    expect(got?.closed).toBe(false);
   });
 
   test("honours the limit and returns newest first", () => {

@@ -66,6 +66,7 @@ import { GRAPH_RELATION_TYPES_V12_SQL } from "../graph-relation-types-v12-sql.ts
 import { GRAPH_V7_MIGRATION_SQL } from "../graph-v7-sql.ts";
 import { rebuildHitlStatusTables } from "../hitl-status-v87-sql.ts";
 import { V34_IDENTITY_SQL } from "../identity-v34-sql.ts";
+import { INCIDENT_ALERT_SOURCES_V96_SQL } from "../incident-alert-sources-v96-sql.ts";
 import { ITEM_HISTORY_V94_SQL } from "../item-history-v94-sql.ts";
 import { KNOWN_NAMESPACES_V38_SQL } from "../known-namespaces-v38-sql.ts";
 import { LAN_PEER_PROTO_V95_SQL } from "../lan-peer-proto-v95-sql.ts";
@@ -806,6 +807,12 @@ const INDEXED_SCHEMA_STEPS: readonly IndexedSchemaStep[] = [
   simpleStep(92, 93, "morning briefing runs and deadline notices (Phase 10 MB5)", BRIEFING_V93_SQL),
   simpleStep(93, 94, "item history, sync-time state changes (Phase 10 IC1)", ITEM_HISTORY_V94_SQL),
   { fromVersion: 94, toVersion: 95, apply: migrateIndexedV94ToV95 },
+  simpleStep(
+    95,
+    96,
+    "incident alert sources: deploy edge types, deployment sha index, one-shot regraph marker (Phase 10 IC2)",
+    INCIDENT_ALERT_SOURCES_V96_SQL,
+  ),
 ];
 
 /**

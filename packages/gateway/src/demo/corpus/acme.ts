@@ -336,6 +336,8 @@ const incident = (
   assigneeKey: string,
   pagerdutyServiceId: string,
   resolvedByKey?: string,
+  /** A resolved incident carries the resolution time the real writer records (`resolved_at_ms`). */
+  resolvedAfterMs?: number,
 ): DemoItem => ({
   service: "pagerduty",
   type: "incident",
@@ -352,6 +354,9 @@ const incident = (
     pagerduty_service_id: pagerdutyServiceId,
     assignee_emails: [emailOf(assigneeKey)],
     ...(resolvedByKey === undefined ? {} : { resolved_by_email: emailOf(resolvedByKey) }),
+    ...(status === "resolved" && resolvedAfterMs !== undefined
+      ? { resolved_at_ms: at(offsetMs + resolvedAfterMs) }
+      : {}),
     unattributed_actors: [],
     meta_v: PAGERDUTY_INCIDENT_META_VERSION,
   }),
@@ -433,6 +438,7 @@ const STORY_INCIDENTS: readonly DemoItem[] = [
     "lee",
     "PPAYDEMO",
     "lee",
+    95 * MINUTE,
   ),
 ];
 
@@ -618,6 +624,7 @@ function background(): {
             "omar",
             svc.pagerdutyServiceId,
             "omar",
+            50 * MINUTE,
           ),
         );
       }

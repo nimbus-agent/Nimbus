@@ -251,6 +251,7 @@ import type { ConsolidatorLlm } from "../glossary/glossary-consolidate.ts";
 import { rebuildGlossary, runGlossaryPass } from "../glossary/glossary-extract.ts";
 import { createGlossaryLlm } from "../glossary/glossary-llm-adapter.ts";
 import { createGlossaryRefresher, type GlossaryRefresher } from "../glossary/glossary-refresh.ts";
+import { runPendingRegraph } from "../graph/regraph-once.ts";
 import { buildIdentityBoot } from "../identity/identity-boot.ts";
 import { buildTeamsBotJwtValidator } from "../identity/teams-bot-jwt.ts";
 import { isOperatorValid } from "../identity/verifier.ts";
@@ -3695,6 +3696,33 @@ function bindChatopsLocalConsent(
     );
 }
 
+/**
+ * The one-shot re-graph after the V96 upgrade (Phase 10 IC2): deployments, incidents, error issues and
+ * data-quality tests get their corrected anchors and edges. Fire-and-forget with a caught rejection; a
+ * shutdown mid-run simply leaves the marker for the next boot. The resolver comes from the STRICT config
+ * loader (a malformed config keeps the marker rather than re-grafting without it); `graph/` cannot import
+ * the loader, so the builder is supplied here.
+ */
+function startPendingRegraph(
+  db: Database,
+  configDir: string,
+  logger: Logger,
+  sidecarStops: Array<() => void>,
+): void {
+  let stopped = false;
+  sidecarStops.push(() => {
+    stopped = true;
+  });
+  const buildResolver = (): ReturnType<typeof buildServiceIdentityResolver> =>
+    buildServiceIdentityResolver(loadNimbusServiceConfigsFromConfigDir(configDir));
+  queueMicrotask(() => {
+    if (stopped) return;
+    runPendingRegraph(db, { buildResolver, logger }).catch((err: unknown) => {
+      logger.warn({ err }, "regraph (IC2) failed; marker kept");
+    });
+  });
+}
+
 export async function assemblePlatformServices(
   paths: PlatformPaths,
   customVault?: NimbusVault,
@@ -3937,6 +3965,8 @@ export async function assemblePlatformServices(
         "configs claim the same key; picked the first by config order",
     );
   });
+
+  startPendingRegraph(db, paths.configDir, syncLogger, sidecarStops);
 
   // Capabilities are NOT bound here, deliberately. This context is built ONCE and shared by every
   // service, so a `getSecret` bound at this point would carry whichever service id happened to be

@@ -205,6 +205,7 @@ describe("renderOncall", () => {
             url: null,
             openedAtMs: NOW - 10 * DAY,
             resolvedAtMs: NOW - 9 * DAY,
+            closed: true,
             resolvedByEmail: "ada@example.com",
           },
         ],
@@ -214,6 +215,27 @@ describe("renderOncall", () => {
     expect(out).toContain("closed");
     expect(out).toContain("ada@example.com");
     expect(out).toContain("1 earlier incident on this service");
+  });
+
+  test("a closed prior incident with no recorded resolution time reads `closed, time not recorded`", () => {
+    const out = renderOncall(
+      brief({
+        priorIncidents: [
+          {
+            id: "pagerduty:inc-0",
+            title: "Earlier",
+            url: null,
+            openedAtMs: NOW - 10 * DAY,
+            resolvedAtMs: null,
+            closed: true,
+            resolvedByEmail: null,
+          },
+        ],
+        counts: { messages: 0, priorIncidents: 1 },
+      }),
+    );
+    expect(out).toContain("closed, time not recorded");
+    expect(out).not.toContain("still open");
   });
 
   test("an unresolved prior incident reads `still open`, not a fabricated close time", () => {
@@ -226,6 +248,7 @@ describe("renderOncall", () => {
             url: null,
             openedAtMs: NOW - 10 * DAY,
             resolvedAtMs: null,
+            closed: false,
             resolvedByEmail: null,
           },
         ],
@@ -343,6 +366,7 @@ describe("renderOncall — review fixes (CodeRabbit #1509)", () => {
       url: null,
       openedAtMs: NOW - (i + 3) * DAY,
       resolvedAtMs: null,
+      closed: false,
       resolvedByEmail: null,
     }));
     const out = renderOncall(
@@ -362,6 +386,7 @@ describe("renderOncall — review fixes (CodeRabbit #1509)", () => {
         url: null,
         openedAtMs: NOW - 10 * DAY,
         resolvedAtMs: null,
+        closed: false,
         resolvedByEmail: null,
       },
     ];

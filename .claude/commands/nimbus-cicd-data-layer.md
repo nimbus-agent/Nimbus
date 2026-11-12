@@ -68,7 +68,14 @@ deploy_workflow_pattern = "^Deploy"
 incident_window_minutes = 60
 exclude_pr_labels = ["dependabot", "docs"]
 deploy_environments = ["production"]
+# Phase 10 IC2 (all optional): bind other systems' items to this service
+jsm_alert_tags = ["payments"]
+sentry_projects = ["payments-api"]
+data_models = ["analytics.payments.*"]
+depends_on = ["ledger"]
 ```
+
+`ServiceConfig` carries these as `jsmAlertTags`, `sentryProjects`, `dataModels` and `dependsOn` (spread `NO_INCIDENT_BINDINGS` in a literal); `buildServiceIdentityResolver` binds a `jira:alert`, a Sentry error issue and a Monte Carlo or Bigeye test through them as a fourth step after the existing three.
 
 The provider prefix (`github:`, `gitlab:`, `bitbucket:`, `jenkins:`, `circleci:`) maps to a `service` column value via `providerToServiceColumn` in `dora-config.ts`. Adding a new provider means adding both the type alias entry and the column-map entry.
 

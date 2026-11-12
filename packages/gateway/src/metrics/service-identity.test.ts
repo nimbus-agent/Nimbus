@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import type { ServiceConfig } from "./dora-config.ts";
+import { NO_INCIDENT_BINDINGS } from "./dora-config.ts";
 import { buildServiceIdentityResolver, resolveServicesByRepoUrn } from "./service-identity.ts";
 
 function baseConfig(overrides?: Partial<ServiceConfig>): ServiceConfig {
@@ -12,6 +13,7 @@ function baseConfig(overrides?: Partial<ServiceConfig>): ServiceConfig {
     excludePrLabels: ["revert"],
     deployEnvironments: ["prod"],
     severityP1Aliases: ["P1"],
+    ...NO_INCIDENT_BINDINGS,
     ...overrides,
   };
 }
@@ -447,6 +449,209 @@ describe("buildServiceIdentityResolver", () => {
         }),
       ).toEqual({ kind: "unknown" });
     });
+  });
+});
+
+describe("incident-engine bindings (Phase 10 IC2)", () => {
+  const payments = baseConfig({
+    serviceId: "payments",
+    jsmAlertTags: ["Payments", "prod-db"],
+    sentryProjects: ["payments-api"],
+    dataModels: ["analytics.payments.*", "*.orders"],
+  });
+
+  it("a jira:alert binds through any tag, case-insensitively and trimmed", () => {
+    const resolve = buildServiceIdentityResolver(configs(payments));
+    for (const tag of ["payments", "PAYMENTS", " Prod-DB "]) {
+      expect(
+        resolve({ service: "jira", type: "alert", metadata: { tags: ["other", tag] } }),
+      ).toEqual({ kind: "bound", serviceId: "payments" });
+    }
+  });
+
+  it("a jira:alert whose only tag is unclaimed, or with no tags, resolves unknown", () => {
+    const resolve = buildServiceIdentityResolver(configs(payments));
+    expect(resolve({ service: "jira", type: "alert", metadata: { tags: ["billing"] } })).toEqual({
+      kind: "unknown",
+    });
+    expect(resolve({ service: "jira", type: "alert", metadata: { tags: "payments" } })).toEqual({
+      kind: "unknown",
+    });
+    expect(resolve({ service: "jira", type: "alert", metadata: {} })).toEqual({ kind: "unknown" });
+    expect(resolve({ service: "jira", type: "alert", metadata: { tags: [5, null] } })).toEqual({
+      kind: "unknown",
+    });
+  });
+
+  it("a sentry:error_issue binds by project slug (exact)", () => {
+    const resolve = buildServiceIdentityResolver(configs(payments));
+    expect(
+      resolve({ service: "sentry", type: "error_issue", metadata: { project: "payments-api" } }),
+    ).toEqual({ kind: "bound", serviceId: "payments" });
+    expect(
+      resolve({ service: "sentry", type: "error_issue", metadata: { project: "Payments-API" } }),
+    ).toEqual({ kind: "unknown" });
+    expect(
+      resolve({ service: "sentry", type: "error_issue", metadata: { project: null } }),
+    ).toEqual({ kind: "unknown" });
+  });
+
+  it("a Monte Carlo and a Bigeye data_quality_test bind through monitoredDataModelKeys against a glob", () => {
+    const resolve = buildServiceIdentityResolver(configs(payments));
+    for (const service of ["montecarlo", "bigeye"]) {
+      expect(
+        resolve({
+          service,
+          type: "data_quality_test",
+          metadata: { monitoredDataModelKeys: ["warehouse.other.t", "analytics.payments.refunds"] },
+        }),
+      ).toEqual({ kind: "bound", serviceId: "payments" });
+      expect(
+        resolve({
+          service,
+          type: "data_quality_test",
+          metadata: { monitoredDataModelKeys: ["x.y.orders"] },
+        }),
+      ).toEqual({ kind: "bound", serviceId: "payments" });
+      expect(
+        resolve({
+          service,
+          type: "data_quality_test",
+          metadata: { monitoredDataModelKeys: ["warehouse.other.t"] },
+        }),
+      ).toEqual({ kind: "unknown" });
+      expect(
+        resolve({ service, type: "data_quality_test", metadata: { monitoredDataModelKeys: [] } }),
+      ).toEqual({
+        kind: "unknown",
+      });
+      expect(resolve({ service, type: "data_quality_test", metadata: {} })).toEqual({
+        kind: "unknown",
+      });
+    }
+  });
+
+  it("an item of any other (service, type) carrying tags or project is NOT bound", () => {
+    const resolve = buildServiceIdentityResolver(configs(payments));
+    expect(
+      resolve({ service: "prefect", type: "deployment", metadata: { tags: ["payments"] } }),
+    ).toEqual({ kind: "unknown" });
+    expect(
+      resolve({ service: "github", type: "pr", metadata: { project: "payments-api" } }),
+    ).toEqual({ kind: "unknown" });
+    expect(
+      resolve({
+        service: "snowflake",
+        type: "data_quality_test",
+        metadata: { monitoredDataModelKeys: ["analytics.payments.t"] },
+      }),
+    ).toEqual({ kind: "unknown" });
+  });
+
+  it("the existing resolution wins first: a pagerduty id still binds before any binding key", () => {
+    const resolve = buildServiceIdentityResolver(
+      configs(payments, baseConfig({ serviceId: "other", repos: [], pagerdutyServices: ["PX"] })),
+    );
+    expect(
+      resolve({
+        service: "jira",
+        type: "alert",
+        metadata: { pagerduty_service_id: "PX", tags: ["payments"] },
+      }),
+    ).toEqual({ kind: "bound", serviceId: "other" });
+  });
+
+  it("two configs claiming one tag resolve to the first and warn once", () => {
+    const warnings: unknown[] = [];
+    const resolve = buildServiceIdentityResolver(
+      configs(
+        payments,
+        baseConfig({
+          serviceId: "billing",
+          repos: [],
+          pagerdutyServices: [],
+          jsmAlertTags: ["PAYMENTS"],
+        }),
+      ),
+      (w) => warnings.push(w),
+    );
+    const alert = { service: "jira", type: "alert", metadata: { tags: ["payments"] } };
+    expect(resolve(alert)).toEqual({ kind: "bound", serviceId: "payments" });
+    expect(resolve(alert)).toEqual({ kind: "bound", serviceId: "payments" });
+    expect(warnings).toEqual([
+      {
+        bindingKind: "jsm_alert_tag",
+        key: "payments",
+        chosenServiceId: "payments",
+        candidateServiceIds: ["payments", "billing"],
+      },
+    ]);
+  });
+
+  it("two configs claiming one Sentry slug resolve to the first and warn once", () => {
+    const warnings: unknown[] = [];
+    const resolve = buildServiceIdentityResolver(
+      configs(
+        payments,
+        baseConfig({
+          serviceId: "billing",
+          repos: [],
+          pagerdutyServices: [],
+          sentryProjects: ["payments-api"],
+        }),
+      ),
+      (w) => warnings.push(w),
+    );
+    const issue = { service: "sentry", type: "error_issue", metadata: { project: "payments-api" } };
+    resolve(issue);
+    resolve(issue);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toMatchObject({
+      bindingKind: "sentry_project",
+      chosenServiceId: "payments",
+    });
+  });
+
+  it("a glob overlap warns once per matched model key per resolver lifetime", () => {
+    const warnings: unknown[] = [];
+    const resolve = buildServiceIdentityResolver(
+      configs(
+        payments,
+        baseConfig({
+          serviceId: "billing",
+          repos: [],
+          pagerdutyServices: [],
+          dataModels: ["analytics.*"],
+        }),
+      ),
+      (w) => warnings.push(w),
+    );
+    const test = (key: string) => ({
+      service: "montecarlo",
+      type: "data_quality_test",
+      metadata: { monitoredDataModelKeys: [key] },
+    });
+    expect(resolve(test("analytics.payments.t"))).toEqual({ kind: "bound", serviceId: "payments" });
+    resolve(test("analytics.payments.t"));
+    resolve(test("analytics.sales.t")); // only billing's glob matches: no overlap
+    resolve(test("x.y.orders")); // only payments' glob matches
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toMatchObject({
+      bindingKind: "data_model_glob",
+      key: "analytics.payments.t",
+      chosenServiceId: "payments",
+      candidateServiceIds: ["payments", "billing"],
+    });
+  });
+
+  it("a duplicated claim of one tag by the SAME config is not ambiguous", () => {
+    const warnings: unknown[] = [];
+    const resolve = buildServiceIdentityResolver(
+      configs(baseConfig({ serviceId: "payments", jsmAlertTags: ["a", "A"] })),
+      (w) => warnings.push(w),
+    );
+    resolve({ service: "jira", type: "alert", metadata: { tags: ["a"] } });
+    expect(warnings).toEqual([]);
   });
 });
 

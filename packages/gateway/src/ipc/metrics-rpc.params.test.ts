@@ -2,6 +2,7 @@ import { Database } from "bun:sqlite";
 import { afterAll, describe, expect, test } from "bun:test";
 import { LocalIndex } from "../index/local-index.ts";
 import type { ServiceConfig } from "../metrics/dora-config.ts";
+import { NO_INCIDENT_BINDINGS } from "../metrics/dora-config.ts";
 import { dispatchMetricsRpc, type MetricsRpcContext, MetricsRpcError } from "./metrics-rpc.ts";
 
 /**
@@ -25,6 +26,7 @@ function config(serviceId: string): ServiceConfig {
     excludePrLabels: [],
     deployEnvironments: ["prod"],
     severityP1Aliases: [],
+    ...NO_INCIDENT_BINDINGS,
   };
 }
 

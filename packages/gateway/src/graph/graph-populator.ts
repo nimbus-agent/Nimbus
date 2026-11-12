@@ -3,9 +3,15 @@ import type { Database } from "bun:sqlite";
 import { usableActorEmail } from "../connectors/actor-email.ts";
 import { asRecord } from "../connectors/unknown-record.ts";
 import { dbRun } from "../db/write.ts";
+import { specFor } from "../index/item-history-keys.ts";
 import { itemPrimaryKey } from "../index/item-key.ts";
 import { readIndexedUserVersion } from "../index/migrations/runner.ts";
 import { resolvePersonForSync } from "../people/linker.ts";
+import {
+  linkDeploymentToChange,
+  relinkDeploymentsForCiRun,
+  relinkDeploymentsForCommit,
+} from "./deployment-edges.ts";
 import { extractCommitShas, extractIssueRefs, type IssueRefs } from "./graph-refs.ts";
 import {
   CAPTURED_RELATION_TYPES,
@@ -350,6 +356,8 @@ function syncPrGraph(db: Database, row: IndexedItemGraphInput, now: number): voi
       metadata: { sha: mergeSha },
     });
     upsertGraphRelation(db, prEntityId, commitEntityId, "merged_as", now);
+    // A deployment that shipped this commit may have synced first: re-link it (IC2).
+    relinkDeploymentsForCommit(db, mergeSha, now);
   }
 
   clearOutgoingRelationsOfType(db, prEntityId, "resolves");
@@ -438,6 +446,26 @@ function syncGitCommitGraph(db: Database, row: IndexedItemGraphInput, now: numbe
   clearRelationsTouchingEntity(db, commitEntityId);
   const wsId = upsertWorkspaceEntityFor(db, repoRoot);
   if (wsId !== undefined) upsertGraphRelation(db, commitEntityId, wsId, "in_repo", now);
+  // The clear above dropped any incoming `deployed` edge: re-emit it (IC2).
+  relinkDeploymentsForCommit(db, sha, now);
+}
+
+/**
+ * A CI run is an entity so a deployment can point at what built it (`built_by`, IC2). The run's own sync
+ * clears the edges that touch it and re-links the deployments whose sha is a prefix of its head sha. One
+ * entity upsert and one indexed select per `ci_run` item written.
+ */
+function syncCiRunGraph(db: Database, row: IndexedItemGraphInput, now: number): void {
+  const runEntityId = upsertGraphEntity(db, {
+    type: "ci_run",
+    externalId: row.id,
+    label: row.title,
+    service: row.service,
+    metadata: {},
+  });
+  clearRelationsTouchingEntity(db, runEntityId);
+  // lane-census: scope=ci_run service=circleci,github_actions,gitlab
+  relinkDeploymentsForCiRun(db, row.metadata["head_sha"], now);
 }
 
 function syncDependencyGraph(db: Database, row: IndexedItemGraphInput, now: number): void {
@@ -671,12 +699,23 @@ function syncDashboardGraph(db: Database, row: IndexedItemGraphInput, now: numbe
   }
 }
 
-function syncDataQualityTestGraph(db: Database, row: IndexedItemGraphInput, now: number): void {
+function syncDataQualityTestGraph(
+  db: Database,
+  row: IndexedItemGraphInput,
+  now: number,
+  resolveServiceId: ResolveServiceId | undefined,
+): void {
+  // The anchor and the service are computed FIRST and written into the metadata this function already
+  // upserts: a second entity upsert (what `syncTimelineEventGraph` does) would clear the `monitors` edges
+  // written below.
+  const occurredAt = occurredAtForTrigger(db, row, "data_quality_test");
+  const affectedService = resolveAffectedService(row, resolveServiceId);
   const dqId = upsertGraphEntity(db, {
     type: "data_quality_test",
     externalId: row.id,
     label: row.title,
     service: row.service,
+    metadata: { occurredAt, affectedService: affectedService ?? null },
   });
   clearRelationsTouchingEntity(db, dqId);
   for (const table of stringArrayField(row.metadata, "monitoredDataModelKeys")) {
@@ -690,10 +729,25 @@ function syncDataQualityTestGraph(db: Database, row: IndexedItemGraphInput, now:
     });
     upsertGraphRelation(db, dqId, modelId, "monitors", now);
   }
+  correlateTrigger(db, dqId, occurredAt, affectedService, now);
 }
 
 /** An incident this long after a deploy of the same service is treated as related. */
 export const CORRELATION_WINDOW_MS = 2 * 60 * 60 * 1000;
+
+/**
+ * The kinds of graph entity that anchor on an OPEN time and correlate with a deployment of the same service
+ * (Phase 10 IC2): what pages someone (`incident`, `alert`) and what signals trouble without paging
+ * (`error_issue`, `data_quality_test`). A deployment is the other end of every `correlates_with` edge.
+ */
+type TriggerKind = "incident" | "alert" | "error_issue" | "data_quality_test";
+type TimelineKind = TriggerKind | "deployment";
+const TRIGGER_KINDS: readonly TriggerKind[] = Object.freeze([
+  "incident",
+  "alert",
+  "error_issue",
+  "data_quality_test",
+]);
 
 type TimelineRow = { id: string; occurred_at: number };
 
@@ -702,7 +756,7 @@ type TimelineRow = { id: string; occurred_at: number };
  * window (`CORRELATION_WINDOW_MS`) is itself the only cap: it already bounds
  * the result to genuine activity, so a row cap on top of it is not a safety
  * net. Both call sites clear their entire owned direction before re-emitting
- * (see `syncTimelineEventGraph`'s clear/emit pair), so this query's result
+ * (see `correlateTrigger` and `syncDeploymentCorrelations`), so this query's result
  * MUST be the complete in-window set — a truncated re-emit after a full clear
  * silently destroys edges the other side legitimately created. If a service
  * genuinely produces 200 incidents within two hours of a deploy, 200 edges is
@@ -712,33 +766,35 @@ type TimelineRow = { id: string; occurred_at: number };
  * Results are still ordered NEAREST-FIRST, purely for determinism now that
  * there is no cap for the ordering to protect. The direction of "nearest"
  * differs per side, which is why it is a parameter rather than a constant. A
- * deployment looks FORWARD (`[D, D+W]`), so nearest is the earliest incident
- * — `ASC`. An incident looks BACKWARD (`[I-W, I]`), so nearest is the latest
+ * deployment looks FORWARD (`[D, D+W]`), so nearest is the earliest trigger
+ * — `ASC`. A trigger looks BACKWARD (`[T-W, T]`), so nearest is the latest
  * deployment — `DESC`.
  *
  * The `id` tie-break makes the ordering deterministic when two entities share
  * a timestamp; SQLite is stable in practice but does not guarantee it.
+ * `counterpartTypes` are bound parameters, never interpolated.
  */
 function timelineCounterparts(
   db: Database,
-  counterpartType: "incident" | "deployment",
+  counterpartTypes: readonly TimelineKind[],
   affectedService: string,
   windowFrom: number,
   windowTo: number,
   nearestFirst: "ASC" | "DESC",
 ): TimelineRow[] {
   const order = nearestFirst === "ASC" ? "ASC" : "DESC";
+  const placeholders = counterpartTypes.map(() => "?").join(", ");
   return db
     .query(
       `SELECT id,
               CAST(json_extract(metadata, '$.occurredAt') AS INTEGER) AS occurred_at
          FROM graph_entity
-        WHERE type = ?
+        WHERE type IN (${placeholders})
           AND json_extract(metadata, '$.affectedService') = ?
           AND CAST(json_extract(metadata, '$.occurredAt') AS INTEGER) BETWEEN ? AND ?
         ORDER BY occurred_at ${order}, id ASC`,
     )
-    .all(counterpartType, affectedService, windowFrom, windowTo) as TimelineRow[];
+    .all(...counterpartTypes, affectedService, windowFrom, windowTo) as TimelineRow[];
 }
 
 /**
@@ -832,15 +888,78 @@ function syncIncidentPersonEdges(
 }
 
 /**
- * Incidents and deployments are timeline anchors: the graph needs them as
- * entities so a change can be correlated with what it responded to or
- * caused. `occurredAt` is the item's `modified_at`, which every connector
- * sets to the event time.
+ * The shared step of every trigger kind: retire the incoming `correlates_with` edges, then (given a service
+ * and an open time) re-emit `deployment --correlates_with--> trigger` for each deployment of the same
+ * service in `[occurredAt - W, occurredAt]`, nearest first.
+ *
+ * The clear comes BEFORE the no-service bail-out. A trigger that previously had a service (and so had
+ * edges pointing at it) and is re-synced without one would otherwise return early and leave the graph
+ * asserting "this deploy caused that" while the trigger no longer claims any service. The pair is
+ * load-bearing because `clearRelationsTouchingEntity` skips `correlates_with` entirely: each side owns one
+ * direction (a deployment its outgoing edges, a trigger its incoming ones), and only that entity's own sync
+ * knows its current window and service. A null service or open time correlates with nothing.
+ *
+ * This is deliberately NOT `syncTimelineEventGraph`: that function upserts the entity and clears every
+ * non-cross-item edge, which would destroy the `monitors` and `belongs_to` edges the error-issue and
+ * data-quality handlers have just written.
+ */
+function correlateTrigger(
+  db: Database,
+  entityId: string,
+  occurredAt: number | null,
+  affectedService: string | undefined,
+  now: number,
+): void {
+  clearIncomingRelationsOfType(db, entityId, "correlates_with");
+  if (affectedService === undefined || occurredAt === null) return;
+  // An edge is always directed deployment -> trigger, and a trigger syncing after its deploy must create it.
+  for (const dep of timelineCounterparts(
+    db,
+    ["deployment"],
+    affectedService,
+    occurredAt - CORRELATION_WINDOW_MS,
+    occurredAt,
+    "DESC", // backward window: nearest deploy is the latest before the trigger
+  )) {
+    upsertGraphRelation(db, dep.id, entityId, "correlates_with", now);
+  }
+}
+
+/** The deployment side of the same edges: its outgoing `correlates_with`, re-emitted forward. */
+function syncDeploymentCorrelations(
+  db: Database,
+  entityId: string,
+  occurredAt: number,
+  affectedService: string | undefined,
+  now: number,
+): void {
+  clearOutgoingRelationsOfType(db, entityId, "correlates_with");
+  if (affectedService === undefined) return;
+  for (const trigger of timelineCounterparts(
+    db,
+    TRIGGER_KINDS,
+    affectedService,
+    occurredAt,
+    occurredAt + CORRELATION_WINDOW_MS,
+    "ASC", // forward window: nearest trigger is the earliest after the deploy
+  )) {
+    upsertGraphRelation(db, entityId, trigger.id, "correlates_with", now);
+  }
+}
+
+/**
+ * Incidents, alerts and deployments are timeline anchors: the graph needs them as entities so a change can
+ * be correlated with what it responded to or caused. `occurredAt` is the source's real OPEN time for a
+ * trigger (see `occurredAtForTrigger`) and `modified_at` for a deployment (which every deployment writer
+ * sets to the start time).
+ *
+ * In order: resolve the service, upsert the entity, clear its non-cross-item edges, then the kind's own
+ * steps (person edges for an incident only; the correlation for all).
  */
 function syncTimelineEventGraph(
   db: Database,
   row: IndexedItemGraphInput,
-  entityType: "incident" | "deployment",
+  entityType: "incident" | "alert" | "deployment",
   occurredAt: number,
   now: number,
   resolveServiceId: ResolveServiceId | undefined,
@@ -855,58 +974,22 @@ function syncTimelineEventGraph(
   });
   clearRelationsTouchingEntity(db, entityId);
 
-  // Retire first, unconditionally. These clears MUST precede the
-  // `affectedService === undefined` bail-out: an entity that previously had a
-  // service (and so emitted edges) and is re-synced without one would otherwise
-  // return before retiring them, leaving the graph asserting "this deploy caused
-  // that incident" while the deploy itself no longer claims any service.
-  //
-  // The pair is load-bearing because `clearRelationsTouchingEntity` skips
-  // `correlates_with` entirely. Each side owns one direction: a deployment owns
-  // its outgoing edges, an incident its incoming ones, and only that entity's
-  // own sync knows its current window and service.
   if (entityType === "deployment") {
-    clearOutgoingRelationsOfType(db, entityId, "correlates_with");
-  } else {
-    clearIncomingRelationsOfType(db, entityId, "correlates_with");
+    syncDeploymentCorrelations(db, entityId, occurredAt, affectedService, now);
+    linkDeploymentToChange(
+      db,
+      { id: row.id, service: row.service, metadata: row.metadata },
+      entityId,
+      now,
+    );
+    return;
   }
-
-  // BEFORE the affectedService bail-out: that bail is about deploy<->incident
-  // correlation, which needs a service. Attribution does not, and an incident
-  // with no bound service is still someone's work.
+  // BEFORE the correlation's no-service bail-out: that bail is about deploy<->trigger correlation, which
+  // needs a service. Attribution does not, and an incident with no bound service is still someone's work.
   if (entityType === "incident") {
     syncIncidentPersonEdges(db, row, entityId, now);
   }
-
-  // A null service correlates with nothing. Bail out only AFTER the clears.
-  if (affectedService === undefined) return;
-
-  if (entityType === "deployment") {
-    for (const inc of timelineCounterparts(
-      db,
-      "incident",
-      affectedService,
-      occurredAt,
-      occurredAt + CORRELATION_WINDOW_MS,
-      "ASC", // forward window: nearest incident is the earliest after the deploy
-    )) {
-      upsertGraphRelation(db, entityId, inc.id, "correlates_with", now);
-    }
-    return;
-  }
-
-  // An incident syncing after its deploy must still create the edge, and the
-  // edge is always directed deployment -> incident.
-  for (const dep of timelineCounterparts(
-    db,
-    "deployment",
-    affectedService,
-    occurredAt - CORRELATION_WINDOW_MS,
-    occurredAt,
-    "DESC", // backward window: nearest deploy is the latest before the incident
-  )) {
-    upsertGraphRelation(db, dep.id, entityId, "correlates_with", now);
-  }
+  correlateTrigger(db, entityId, occurredAt, affectedService, now);
 }
 
 /**
@@ -942,17 +1025,26 @@ function sentryAssigneeEmail(metadata: Record<string, unknown>): unknown {
  * emitted below, and must stay re-emitted after the clear on every future change
  * to this function.
  */
-function syncErrorIssueGraph(db: Database, row: IndexedItemGraphInput, now: number): void {
+function syncErrorIssueGraph(
+  db: Database,
+  row: IndexedItemGraphInput,
+  now: number,
+  resolveServiceId: ResolveServiceId | undefined,
+): void {
   // lane-census: scope=error_issue
   const projectRaw = row.metadata["project"];
   const project = typeof projectRaw === "string" && projectRaw !== "" ? projectRaw : undefined;
+  // The anchor and the service are computed FIRST and written into the one entity upsert: see
+  // `syncDataQualityTestGraph` for why this must not go through `syncTimelineEventGraph`.
+  const occurredAt = occurredAtForTrigger(db, row, "error_issue");
+  const affectedService = resolveAffectedService(row, resolveServiceId);
 
   const entityId = upsertGraphEntity(db, {
     type: "error_issue",
     externalId: row.id,
     label: row.title,
     service: row.service,
-    metadata: { project: project ?? null },
+    metadata: { project: project ?? null, occurredAt, affectedService: affectedService ?? null },
   });
   clearRelationsTouchingEntity(db, entityId);
 
@@ -972,33 +1064,100 @@ function syncErrorIssueGraph(db: Database, row: IndexedItemGraphInput, now: numb
     });
     upsertGraphRelation(db, entityId, serviceId, "belongs_to", now);
   }
+  correlateTrigger(db, entityId, occurredAt, affectedService, now);
 }
 
 /**
- * Read the item's event time back from the row written immediately before this
- * populator call. `upsertIndexedItem` inserts and then calls the populator
- * synchronously on the same handle, so the row is always present on the
- * production path.
- *
- * A missing row therefore means the caller reached the populator without
- * writing the item — a programming error, and the only way to get here is a
- * direct `syncGraphFromIndexedItem` call that skipped the insert (an idiom six
- * sibling test files already use for other item types). Throw rather than
- * default: the correlation task correlates deployments to incidents on this
- * timestamp, so a fabricated `Date.now()` would yield a confidently WRONG
- * correlation instead of an obvious failure.
+ * The item's `modified_at`, read back from the row written immediately before this populator call.
+ * `upsertIndexedItem` inserts and then calls the populator synchronously on the same handle, so the row is
+ * always present on the production path. `null` means the caller reached the populator without writing the
+ * item (a direct `syncGraphFromIndexedItem` call that skipped the insert, an idiom sibling test files use).
  */
-function occurredAtForItem(db: Database, itemId: string): number {
+function modifiedAtOfItem(db: Database, itemId: string): number | null {
   const row = db.query("SELECT modified_at FROM item WHERE id = ?").get(itemId) as {
     modified_at: number;
   } | null;
-  if (row === null) {
+  return row === null ? null : row.modified_at;
+}
+
+/**
+ * `item.modified_at` for a kind whose correlation needs a real timestamp. Throws rather than defaults: the
+ * correlation joins on this value, so a fabricated `Date.now()` would yield a confidently WRONG edge
+ * instead of an obvious failure.
+ */
+function requireModifiedAt(db: Database, itemId: string): number {
+  const at = modifiedAtOfItem(db, itemId);
+  if (at === null) {
     throw new Error(
       `occurredAtForItem: no item row for "${itemId}" — the populator was called without ` +
         "writing the item first; the timeline entity would carry a fabricated timestamp.",
     );
   }
-  return row.modified_at;
+  return at;
+}
+
+/** The source's own open time, from IC1's `born` definition for this (service, type), or null. */
+function bornFromMetadata(row: IndexedItemGraphInput): number | null {
+  const born = specFor(row.service, row.type)?.born;
+  if (born === undefined || born === null) return null;
+  const v = row.metadata[born.key];
+  if (born.kind === "ms") return typeof v === "number" && Number.isFinite(v) ? v : null;
+  const ms = typeof v === "string" ? Date.parse(v) : Number.NaN;
+  return Number.isFinite(ms) ? ms : null;
+}
+
+/** An anchor this entity already carries: once set it is stable, which a source with no open time needs. */
+function existingAnchor(db: Database, type: TriggerKind, externalId: string): number | null {
+  const row = db
+    .query("SELECT metadata FROM graph_entity WHERE type = ? AND external_id = ?")
+    .get(type, externalId) as { metadata: string | null } | null;
+  if (row?.metadata === null || row === null) return null;
+  try {
+    const at = (JSON.parse(row.metadata) as { occurredAt?: unknown }).occurredAt;
+    return typeof at === "number" && Number.isFinite(at) ? at : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The open time a trigger anchors on (Phase 10 IC2): the source's real open time (`born`, read from the
+ * in-memory metadata, so a malformed stored row never reaches a `json_extract`); else, for a source IC1
+ * tracks with no open time (Bigeye, whose `modified_at` moves on every sync), the entity's existing anchor;
+ * else `modified_at`. `null`
+ * only when there is no item row to read (see `modifiedAtOfItem`).
+ */
+function anchorForTrigger(
+  db: Database,
+  row: IndexedItemGraphInput,
+  kind: TriggerKind,
+): number | null {
+  const spec = specFor(row.service, row.type);
+  // A source IC1 tracks with NO open time (Bigeye) keeps the first anchor it was given: its `modified_at`
+  // is the sync time and moves on every sync. Every other source falls back to `modified_at` directly.
+  const stable = spec !== undefined && spec.born === null ? existingAnchor(db, kind, row.id) : null;
+  return bornFromMetadata(row) ?? stable ?? modifiedAtOfItem(db, row.id);
+}
+
+/** A trigger the correlation cannot do without (it pages someone): no anchor is an error. */
+function requireAnchorForTrigger(
+  db: Database,
+  row: IndexedItemGraphInput,
+  kind: "incident" | "alert",
+): number {
+  return anchorForTrigger(db, row, kind) ?? requireModifiedAt(db, row.id);
+}
+
+/**
+ * A quiet trigger (an error group, a data-quality test): with no anchor at all the entity is still written,
+ * with a null `occurredAt`, and simply correlates with nothing.
+ */
+function occurredAtForTrigger(
+  db: Database,
+  row: IndexedItemGraphInput,
+  kind: "error_issue" | "data_quality_test",
+): number | null {
+  return anchorForTrigger(db, row, kind);
 }
 
 /**
@@ -1009,8 +1168,9 @@ function occurredAtForItem(db: Database, itemId: string): number {
  * was the same shape, so there was nothing to understand fifteen times. A lookup also
  * makes the set of handled types readable at a glance and makes adding one a single row.
  *
- * The two timeline types share `syncTimelineEventGraph`, differing only in the kind they
- * record and in needing the item's occurrence time.
+ * The three timeline types (incident, alert, deployment) share `syncTimelineEventGraph`, differing only
+ * in the kind they record and in needing the item's occurrence time; the error-issue and data-quality
+ * handlers share only `correlateTrigger`.
  */
 const GRAPH_SYNC_BY_TYPE: Readonly<
   Record<
@@ -1034,14 +1194,26 @@ const GRAPH_SYNC_BY_TYPE: Readonly<
   obsidian_note: (db, row, now) => syncObsidianNoteGraph(db, row, now),
   data_model: (db, row, now) => syncDataModelGraph(db, row, now),
   dashboard: (db, row, now) => syncDashboardGraph(db, row, now),
-  data_quality_test: (db, row, now) => syncDataQualityTestGraph(db, row, now),
-  error_issue: (db, row, now) => syncErrorIssueGraph(db, row, now),
+  data_quality_test: (db, row, now, resolveServiceId) =>
+    syncDataQualityTestGraph(db, row, now, resolveServiceId),
+  ci_run: (db, row, now) => syncCiRunGraph(db, row, now),
+  error_issue: (db, row, now, resolveServiceId) =>
+    syncErrorIssueGraph(db, row, now, resolveServiceId),
   incident: (db, row, now, resolveServiceId) =>
     syncTimelineEventGraph(
       db,
       row,
       "incident",
-      occurredAtForItem(db, row.id),
+      requireAnchorForTrigger(db, row, "incident"),
+      now,
+      resolveServiceId,
+    ),
+  alert: (db, row, now, resolveServiceId) =>
+    syncTimelineEventGraph(
+      db,
+      row,
+      "alert",
+      requireAnchorForTrigger(db, row, "alert"),
       now,
       resolveServiceId,
     ),
@@ -1050,7 +1222,7 @@ const GRAPH_SYNC_BY_TYPE: Readonly<
       db,
       row,
       "deployment",
-      occurredAtForItem(db, row.id),
+      requireModifiedAt(db, row.id),
       now,
       resolveServiceId,
     ),

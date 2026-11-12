@@ -15,6 +15,7 @@ import {
   mttr,
 } from "../../../src/metrics/dora.ts";
 import type { ServiceConfig } from "../../../src/metrics/dora-config.ts";
+import { NO_INCIDENT_BINDINGS } from "../../../src/metrics/dora-config.ts";
 import { openSeededDbFile } from "../../helpers/migrated-db-seed.ts";
 
 type SeedCiOpts = {
@@ -126,6 +127,7 @@ function seedIncident(db: Database, id: string, opts: SeedIncidentOpts): void {
     status: opts.status,
     pagerduty_service_id: opts.pagerdutyServiceId,
     opened_at_ms: opts.openedAt,
+    ...(opts.status === "resolved" ? { resolved_at_ms: opts.resolvedAt } : {}),
   };
   db.run(
     `INSERT INTO item (id, service, type, external_id, title, body_preview, url, canonical_url,
@@ -145,6 +147,7 @@ function cfg(overrides: Partial<ServiceConfig> = {}): ServiceConfig {
     excludePrLabels: ["revert"],
     deployEnvironments: ["prod"],
     severityP1Aliases: [],
+    ...NO_INCIDENT_BINDINGS,
     ...overrides,
   };
 }
@@ -585,7 +588,7 @@ describe("DORA metrics calculators", () => {
           "pagerduty:inc_no_service",
           "inc_no_service",
           t0 + 60_000,
-          JSON.stringify({ status: "resolved", opened_at_ms: t0 }),
+          JSON.stringify({ status: "resolved", opened_at_ms: t0, resolved_at_ms: t0 + 60_000 }),
           t0 + 60_000,
         ],
       );

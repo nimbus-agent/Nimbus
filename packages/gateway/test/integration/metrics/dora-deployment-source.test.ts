@@ -7,6 +7,7 @@ import { githubActionsRunMetadata } from "../../../src/connectors/github-actions
 import { CURRENT_SCHEMA_VERSION } from "../../../src/index/local-index.ts";
 import { deploymentFrequency } from "../../../src/metrics/dora.ts";
 import type { ServiceConfig } from "../../../src/metrics/dora-config.ts";
+import { NO_INCIDENT_BINDINGS } from "../../../src/metrics/dora-config.ts";
 import { seedPaymentServiceFixture } from "../../fixtures/deployments/payment-service/seed.ts";
 import { openSeededDbFile } from "../../helpers/migrated-db-seed.ts";
 
@@ -20,6 +21,7 @@ function cfg(): ServiceConfig {
     excludePrLabels: [],
     deployEnvironments: ["prod"],
     severityP1Aliases: [],
+    ...NO_INCIDENT_BINDINGS,
   };
 }
 

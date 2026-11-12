@@ -17,6 +17,13 @@ export interface DeploymentRpcContext {
   readonly db: Database;
   readonly nowMs?: () => number;
   readonly deployEnvironments?: readonly string[];
+  /**
+   * Graphs the annotated deployment (Phase 10 IC2): `annotateDeployment` never reaches the graph populator,
+   * so without this no `deployment` entity exists until `nimbus index regraph`. Called with the stored item
+   * id after the annotate transaction has committed; a throw is swallowed, because the annotation is the CI
+   * caller's contract and the response must not change if the graph write fails.
+   */
+  readonly graphDeployment?: (itemId: string) => void;
 }
 
 function requireParams(params: unknown): DeploymentAnnotateInput {
@@ -40,6 +47,11 @@ function annotateDeploymentRpc(
     const opts: AnnotateOptions =
       ctx.deployEnvironments === undefined ? {} : { deployEnvironments: ctx.deployEnvironments };
     const value = annotateDeployment(ctx.db, input, nowMs, opts);
+    try {
+      ctx.graphDeployment?.(`deployment:${value.external_id}`);
+    } catch {
+      // Fails soft by design; `nimbus index regraph` repairs a missed entity.
+    }
     return { kind: "hit", value };
   } catch (e) {
     if (e instanceof AnnotateError) {

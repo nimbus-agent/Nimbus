@@ -100,6 +100,7 @@ function snapshotFreshCursor(): string {
     floorJql: null,
     snapAt: Date.now(),
     ocAt: Date.now(),
+    alAt: Date.now(),
   });
 }
 
