@@ -2920,6 +2920,17 @@ Use this for scripts and headless environments; `nimbus tui` is the richer alter
 
 ## Connectors
 
+### `[finops]` (Phase 10 FO2)
+
+Limits for the FinOps cost data the Vantage sync indexes (`nimbus config explain finops.max_series`). A bad value falls back to that key's own default and `nimbus config explain` names it; nothing is clamped.
+
+| Key | Default | Range |
+|---|---|---|
+| `[finops] max_series` | `500` | 1 to 5000: how many named series are indexed; the rest of each day is summed into one `__other__` row |
+| `[finops] retain_days` | `400` | 30 to 3650: `cost_allocation` rows older than this are deleted by a daily pass; recommendations are not pruned by age |
+
+The data comes from `vantage.api_token` (set with `nimbus vault set vantage.api_token`; every 6 hours the sync reads 45 days on the first run, then from three days before the last success). `vantage.group_by` is a comma-separated grouping (default `provider,service,account_id`); a `tag:` entry is refused because where Vantage returns a tag value is undocumented. `nimbus connector auth vantage` prints the keys.
+
 ### `nimbus connector auth <service>`
 
 Authenticate a service and store credentials in the OS keystore. Never stores credentials to disk or logs.
@@ -3009,6 +3020,7 @@ nimbus connector auth zoom           # OAuth 3-legged PKCE — opens browser
 | `superset` | `superset.url`, `superset.username`, `superset.password` |
 | `databricks` | `databricks.host`, `databricks.token` |
 | `mlflow` | `mlflow.host`, `mlflow.token` |
+| `vantage` | `vantage.api_token` (required; a Read-scope token is enough), `vantage.cost_report_token`, `vantage.workspace_token`, `vantage.group_by` (optional; see `[finops]`) |
 | `vercel` | `vercel.token`, `vercel.team_id` |
 | `netlify` | `netlify.token` |
 | `stripe` | `stripe.api_key` |
