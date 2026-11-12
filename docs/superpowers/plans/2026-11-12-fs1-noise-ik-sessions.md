@@ -66,7 +66,7 @@ of the merge, never earlier:
    `lan-server.test.ts:166,341,677,719,758`, `lan-server-handshake.test.ts`, `test/integration/lan/lan-rpc.test.ts:29`
    and the `null` ones). Spec § 6 makes `protoVersion` REQUIRED so a forgotten value is a type error and not a
    fail-open `1`. Cost: Task 7 step 1 edits them; no behaviour changes.
-4. **The share-forward path has no `LanPeerRow`.** `assemble.ts:1370-1383` builds `{ host, port, pubkey }`
+4. **The share-forward path has no `LanPeerRow`.** `assemble.ts:1374-1381` builds `{ host, port, pubkey }`
    (`ForwardPeer`, `share/share-forward.ts:6`) from a row and drops the rest; `deliverShareToPeer`
    (`assemble.ts:1364`) then calls the client with no row. The link policy needs the row's `proto_version`.
    Correction: `ForwardPeer` gains `protoVersion`, and `lookupForwardPeer` fills it.
@@ -283,9 +283,10 @@ Files: `index/lan-peer-proto-v9x-sql.ts` (new), `index/migrations/runner.ts`, `i
      `maxRegisteredIndexedSchemaVersion()` and is `>= V9x`;
    - the column's `PRAGMA table_info` entry (type, notnull, dflt_value `1`);
    - re-running the step is idempotent: SQLite has no `ADD COLUMN IF NOT EXISTS`, so the step is written the
-     way the existing additive steps are (see how `runner.ts` guards its `ALTER TABLE ... ADD COLUMN` steps, e.g.
-     the V48/V49 `item.body` steps and `nimbus-db-migrations`'s additive-column pattern; copy that guard, do not
-     invent one).
+     way the existing additive column steps are: read `index/body-store-v48-sql.ts`,
+     `index/connector-depth-v21-sql.ts` and `index/connector-configured-v56-sql.ts` for the DDL, and the
+     `personTableHasColumn`-style probe at `index/migrations/runner.ts:135-140` for how a step skips a column that
+     already exists; copy that guard, do not invent one.
    - `LocalIndex.markLanPeerProto(pubkey, 2)` raises 1 to 2, a later `markLanPeerProto(pubkey, 1)` leaves 2
      (monotonic), an unknown pubkey is a no-op, and `getLanPeerByPubkey` returns `proto_version`.
    Expected RED.
@@ -410,7 +411,7 @@ Files: `ipc/lan-client.ts`, `federation/lan-link.ts` (new) + test, `ipc/federati
    (`requireAskTarget` returns the row); `federation/peer-fanout.ts:96,139,179,220` (`row`);
    `engine/delegated-request-remote.ts:37` (`row` at `:30`); `platform/assemble.ts:1364` (`deliverShareToPeer`
    receives `ForwardPeer`, which gains `protoVersion` at `share/share-forward.ts:6` and is filled at
-   `assemble.ts:1370-1383`) -- there the `onNegotiated` writes through `localIndex`. The deps types that carry
+   `assemble.ts:1374-1381`) -- there the `onNegotiated` writes through `localIndex`. The deps types that carry
    `sendOverWire` (`peer-fanout.ts:15`, `agents/_lib/fanout-deps.ts:13`, the agents, `agents-rpc.ts:80`,
    `federation-rpc.ts:64`, `delegated-request-remote.ts:12`) are `typeof sendFederatedOverWire` and pick the
    new parameter up with no edit; fakes with fewer parameters stay assignable. The LAN config for `minProtocol`
