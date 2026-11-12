@@ -174,6 +174,7 @@ describe("the arguments match the connector's real zod bounds", () => {
     const ctx = {
       credentialFor: () => ({ credential: "personal" }),
       getSecret: async () => null,
+      countItems: () => 0,
       scopedVaultView: () => ({}),
       sandboxCwd: "x",
       listIndexedMetadataValues: () => [],

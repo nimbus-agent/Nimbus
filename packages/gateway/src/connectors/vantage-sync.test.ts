@@ -287,4 +287,15 @@ describe("createVantageSyncable", () => {
     expect(JSON.stringify(warnings)).toContain('"dropped":2');
     expect(JSON.stringify(warnings)).not.toContain("SECRET-AMOUNT");
   });
+
+  test("a cursor that outlived its rows is ignored: with no cost row indexed the first window is read again", async () => {
+    const seen = fakeSession({ costs: costRows(["EC2"], 3), recommendations: [] });
+    const { db, ctx } = setup();
+    const first = await createVantageSyncable().sync(ctx, null);
+    db.run("DELETE FROM item WHERE service = 'vantage'");
+    seen.length = 0;
+    await createVantageSyncable().sync(ctx, first.cursor);
+    const cost = seen.find((s) => s.toolId === "vantage_cost_list");
+    expect(Date.now() - (cost?.args["sinceMs"] as number)).toBeGreaterThan(44 * DAY_MS);
+  });
 });

@@ -35,6 +35,13 @@ export interface FinopsSyncSpec<P, K extends string> {
   readonly initialSyncDepthDays: number;
   /** Cursor prefix, e.g. `nimbus-vantage1:`; the payload is `{ lastOkMs }`. */
   readonly cursorPrefix: string;
+  /**
+   * The item type whose presence makes the cursor trustworthy. The scheduler keeps the cursor in
+   * `scheduler_state`, which neither `nimbus data delete` nor `connector remove` clears, so a cursor
+   * can outlive the rows it describes: with no row of this type indexed the cursor is ignored and
+   * the first window (45 days) is read again.
+   */
+  readonly cursorRowType: string;
   /** Read the owner's options and refuse a configuration that cannot sync, before any spawn. */
   readonly prepare: (ctx: SyncContext) => Promise<P>;
   /** The paged reads for this window, run in order inside ONE connector session. */
@@ -125,7 +132,11 @@ export function createFinopsSyncable<P, K extends string>(spec: FinopsSyncSpec<P
         );
       }
       const prepared = await spec.prepare(ctx);
-      const window = windowFor(lastOkMsFromCursor(cursor, spec.cursorPrefix), Date.now());
+      const lastOkMs =
+        ctx.countItems(spec.serviceId, spec.cursorRowType) === 0
+          ? null
+          : lastOkMsFromCursor(cursor, spec.cursorPrefix);
+      const window = windowFor(lastOkMs, Date.now());
       const run = sessionRunnerOverride ?? withConnectorSession;
       const drained = await run(
         {

@@ -47,6 +47,7 @@ export function createVantageSyncable(options: VantageSyncableOptions = {}): Syn
     defaultIntervalMs: HOUR6,
     initialSyncDepthDays: FIRST_WINDOW_DAYS,
     cursorPrefix: "nimbus-vantage1:",
+    cursorRowType: "cost_allocation",
     async prepare(ctx) {
       const groupBy = parseGroupBy(await ctx.getSecret("group_by"));
       if (groupBy.some((name) => name.startsWith("tag:"))) {
