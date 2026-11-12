@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite";
 import { escapeIdentifier } from "../db/write.ts";
 import { SUPPORTED_EMBEDDING_DIMS } from "../embedding/routing.ts";
+import type { AtClause } from "../index/item-history-at.ts";
 
 export type VectorChunkHit = {
   itemId: string;
@@ -23,6 +24,11 @@ export type VectorSearchChunkOptions = {
    * The KNN already bounds candidates to the top-`limit`; this filters within that set.
    */
   metadataChannelIn?: readonly string[];
+  /**
+   * Point-in-time admit clause over alias `i` (`--at`, Phase 10 IC1), appended as the LAST conjunct. The
+   * KNN top-k is fixed before it applies (a stated recall bound; callers ask for the maximum k).
+   */
+  at?: AtClause;
 };
 
 /**
@@ -104,6 +110,10 @@ export function buildVectorChunkQuery(options: VectorSearchChunkOptions): {
     const placeholders = options.metadataChannelIn.map(() => "?").join(", ");
     sql += ` AND json_extract(i.metadata, '$.channel') IN (${placeholders})`;
     for (const ch of options.metadataChannelIn) params.push(ch);
+  }
+  if (options.at !== undefined) {
+    sql += ` AND ${options.at.sql}`;
+    params.push(...options.at.params);
   }
   // The `, ec.vec_rowid ASC` tiebreak is NOT decoration and NOT a behaviour change — it is what
   // keeps "results identical" literally true. `ORDER BY knn.distance` alone leaves rows with an

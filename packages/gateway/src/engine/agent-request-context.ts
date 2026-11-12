@@ -2,6 +2,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 
 import { redactAuditPayload } from "../audit/format-audit-payload.ts";
 import { MAX_PARAMS_JSON_BYTES } from "../db/tool-call-log.ts";
+import type { PointInTimeFacts } from "../index/item-history-at.ts";
 import type { CollectedToolCall } from "./ask-explain-types.ts";
 import type { ToolExecutor } from "./executor.ts";
 
@@ -40,6 +41,18 @@ export type AgentRequestContext = {
    * call is refused.
    */
   connectorWriteExecutor?: ToolExecutor;
+  /**
+   * The instant a point-in-time turn (`nimbus ask --at`, Phase 10 IC1) answers for. Present ONLY on such
+   * a turn: `toolsFor` then offers the three time-aware tools and nothing else, and the index tools pass
+   * the instant to the index. Set by the IPC entry and again by `runAsk`, so the store always agrees with
+   * the turn's params.
+   */
+  pointInTimeMs?: number;
+  /**
+   * The facts of every point-in-time search this turn ran (one per `searchLocalIndex` call), drained by
+   * the deterministic disclosure after the model has finished. Created lazily, like `explainToolCalls`.
+   */
+  pointInTimeFacts?: PointInTimeFacts[];
 };
 
 export const agentRequestContext = new AsyncLocalStorage<AgentRequestContext>();
@@ -56,6 +69,29 @@ export function getAgentRequestUserMcpExecutor(): ToolExecutor | undefined {
 /** This turn's connector-write door executor, or `undefined` outside an owner `cli`/`ui` turn. */
 export function getAgentRequestConnectorWriteExecutor(): ToolExecutor | undefined {
   return agentRequestContext.getStore()?.connectorWriteExecutor;
+}
+
+/** This turn's point-in-time instant, or `undefined` outside a turn / for an ordinary turn. */
+export function getAgentRequestPointInTimeMs(): number | undefined {
+  return agentRequestContext.getStore()?.pointInTimeMs;
+}
+
+/** Records one point-in-time search's facts on the turn's store (a no-op outside a turn). */
+export function recordPointInTimeFacts(facts: PointInTimeFacts): void {
+  const store = agentRequestContext.getStore();
+  if (store === undefined) return;
+  const list = store.pointInTimeFacts ?? [];
+  list.push(facts);
+  store.pointInTimeFacts = list;
+}
+
+/** The facts recorded this turn, drained (the disclosure is built once, after the model finished). */
+export function drainPointInTimeFacts(): PointInTimeFacts[] {
+  const store = agentRequestContext.getStore();
+  if (store === undefined) return [];
+  const list = store.pointInTimeFacts ?? [];
+  delete store.pointInTimeFacts;
+  return list;
 }
 
 /**

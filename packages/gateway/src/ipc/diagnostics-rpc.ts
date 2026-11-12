@@ -21,6 +21,13 @@ import { formatVerifyResult, verifyIndex } from "../db/verify.ts";
 import type { EmbeddingReadiness } from "../embedding/embedding-readiness.ts";
 import type { AskExplainRecorder } from "../engine/ask-explain-recorder.ts";
 import { preT2DisabledCount, signatureDisabledRegistry } from "../extensions/hard-disable.ts";
+import {
+  annotateStateAt,
+  buildAtClause,
+  buildAtGapClause,
+  earliestHistoryMs,
+  pointInTimeDisclosure,
+} from "../index/item-history-at.ts";
 import { buildItemListSql } from "../index/item-list-query.ts";
 import type { IndexedItem, LocalIndex } from "../index/local-index.ts";
 import { LocalIndex as LocalIndexClass } from "../index/local-index.ts";
@@ -41,6 +48,8 @@ import { ensureFullSqlite } from "../platform/sqlite-runtime.ts";
 import { describeSourceMapping, resolveSourceMapping } from "../sources/source-mapping.ts";
 import type { AgentLatencyRecorder } from "../telemetry/agent-latency.ts";
 import { buildTelemetryPreview } from "../telemetry/collector.ts";
+import { type AtTimeError, parseAtParam } from "../util/point-in-time-parse.ts";
+import { gatewayZone } from "../util/zoned-time.ts";
 import type { ConsentCoordinator } from "./consent.ts";
 
 export class DiagnosticsRpcError extends Error {
@@ -483,6 +492,8 @@ interface QueryItemsRequest {
   readonly notTouching: string | undefined;
   readonly noDownstreamIncident: boolean;
   readonly explain: boolean;
+  /** `--at` (Phase 10 IC1): the parsed instant, or undefined when the request is not point-in-time. */
+  readonly atMs: number | undefined;
 }
 
 /** A finite number floored to an int, or `undefined` for anything else. */
@@ -493,6 +504,39 @@ function optFiniteInt(v: unknown): number | undefined {
 /** The string members of an array param; `[]` for a non-array. */
 function stringArrayParam(v: unknown): string[] {
   return Array.isArray(v) ? (v as unknown[]).filter((x): x is string => typeof x === "string") : [];
+}
+
+/**
+ * `at` of `index.queryItems`. A present but unusable value is refused (never ignored), and `at` does not
+ * compose with the negation predicates (they answer from the current graph) or with `sinceMs`/`untilMs`
+ * (`modified_at` after T means something else): refusing is the only honest answer.
+ */
+function parseQueryAt(
+  raw: unknown,
+  other: {
+    /** True when the REQUEST carried `sinceMs` or `untilMs`, whatever its type: a malformed one is still a window. */
+    readonly hasTimeWindow: boolean;
+    readonly notTouching: string | undefined;
+    readonly noDownstreamIncident: boolean;
+  },
+): number | undefined {
+  let atMs: number | undefined;
+  try {
+    atMs = parseAtParam(raw, Date.now(), gatewayZone());
+  } catch (e) {
+    throw new DiagnosticsRpcError(-32602, (e as AtTimeError).message);
+  }
+  if (atMs === undefined) return undefined;
+  if (other.notTouching !== undefined || other.noDownstreamIncident) {
+    throw new DiagnosticsRpcError(
+      -32602,
+      "at does not compose with notTouching or noDownstreamIncident (they answer from the current graph)",
+    );
+  }
+  if (other.hasTimeWindow) {
+    throw new DiagnosticsRpcError(-32602, "at does not compose with sinceMs or untilMs");
+  }
+  return atMs;
 }
 
 /**
@@ -556,8 +600,24 @@ function parseQueryItemsParams(params: unknown): QueryItemsRequest {
     );
   }
   const explain = rec?.["explain"] === true;
+  // Raw presence, not the normalised values: `optFiniteInt` turns a string `sinceMs` into `undefined`, which
+  // would let `{ at, sinceMs: "1" }` through as an at-only query. `null` counts as absent (JSON-RPC habit).
+  const hasTimeWindow =
+    (rec?.["sinceMs"] !== undefined && rec["sinceMs"] !== null) ||
+    (rec?.["untilMs"] !== undefined && rec["untilMs"] !== null);
+  const atMs = parseQueryAt(rec?.["at"], { hasTimeWindow, notTouching, noDownstreamIncident });
 
-  return { sinceMs, untilMs, limit, services, types, notTouching, noDownstreamIncident, explain };
+  return {
+    sinceMs,
+    untilMs,
+    limit,
+    services,
+    types,
+    notTouching,
+    noDownstreamIncident,
+    explain,
+    atMs,
+  };
 }
 
 /**
@@ -623,9 +683,65 @@ function timeWindow(
   };
 }
 
+/**
+ * `index.queryItems` with `at`: the admit clause is part of the statement, so a later item can never be
+ * returned. Items carry `asOf`; `gaps.excludedUnplaceable` is the EXACT count of rows (same service and type
+ * filter) the clause classifies as unplaceable; `asOf.disclosure` is the shared deterministic block.
+ */
+function pointInTimeQueryItems(
+  ctx: DiagnosticsRpcContext,
+  req: { atMs: number; limit: number; services: string[]; types: string[]; explain: boolean },
+): DiagnosticsRpcOutcome {
+  const db = requireDb(ctx);
+  const { atMs, limit, services, types } = req;
+  const query = { services, types, limit, at: buildAtClause(db, atMs, "item") };
+  const rows = requireLocalIndex(ctx).listItems(query);
+  const items = annotateStateAt(db, rows.map(withMediaSourceSize), atMs);
+  // limit -1 is "no limit" in SQLite: the count covers every unplaceable row, not one page.
+  const gapSql = buildItemListSql({
+    services,
+    types,
+    limit: -1,
+    at: buildAtGapClause(db, atMs, "item"),
+  });
+  const count = db.query(`SELECT count(*) AS n FROM (${gapSql.sql})`).get(...gapSql.vals) as {
+    n: number;
+  };
+  const zone = gatewayZone();
+  const historyStartMs = earliestHistoryMs(db, services.length > 0 ? services : undefined);
+  const value: Record<string, unknown> = {
+    items,
+    meta: { limit, total: items.length },
+    gaps: { excludedUnplaceable: count.n },
+    asOf: {
+      atMs,
+      zone,
+      historyStartMs,
+      disclosure: pointInTimeDisclosure({ atMs, zone, historyStartMs, gapCount: count.n }),
+    },
+  };
+  if (req.explain) {
+    const built = buildItemListSql(query);
+    value["explain"] = { sql: built.sql, params: built.vals } satisfies QueryExplain;
+  }
+  return { kind: "hit", value };
+}
+
 function rpcIndexQueryItems(params: unknown, ctx: DiagnosticsRpcContext): DiagnosticsRpcOutcome {
-  const { sinceMs, untilMs, limit, services, types, notTouching, noDownstreamIncident, explain } =
-    parseQueryItemsParams(params);
+  const {
+    sinceMs,
+    untilMs,
+    limit,
+    services,
+    types,
+    notTouching,
+    noDownstreamIncident,
+    explain,
+    atMs,
+  } = parseQueryItemsParams(params);
+  if (atMs !== undefined) {
+    return pointInTimeQueryItems(ctx, { atMs, limit, services, types, explain });
+  }
 
   const baseParams = {
     services,
@@ -687,6 +803,13 @@ async function rpcIndexQuerySql(
   ctx: DiagnosticsRpcContext,
 ): Promise<DiagnosticsRpcOutcome> {
   const rec = asRecord(params);
+  // `--sql` reads the current database; a time-travel answer from arbitrary SQL cannot be honest.
+  if (rec?.["at"] !== undefined && rec["at"] !== null) {
+    throw new DiagnosticsRpcError(
+      -32602,
+      "index.querySql does not support at (it reads the current index)",
+    );
+  }
   const sql = typeof rec?.["sql"] === "string" ? rec["sql"] : "";
   try {
     const dbPath = join(ctx.dataDir, "nimbus.db");

@@ -14,6 +14,8 @@
 export type SearchRankedResponse = {
   readonly items: unknown[];
   readonly notes: string[];
+  /** Present only when the gateway answered a point-in-time (`at`) request; absent from an older gateway. */
+  readonly asOf?: Record<string, unknown>;
 };
 
 export function parseSearchRankedResponse(raw: unknown): SearchRankedResponse {
@@ -28,5 +30,9 @@ export function parseSearchRankedResponse(raw: unknown): SearchRankedResponse {
   const notes = Array.isArray(rec["notes"])
     ? rec["notes"].filter((n): n is string => typeof n === "string" && n !== "")
     : [];
+  const asOf = rec["asOf"];
+  if (typeof asOf === "object" && asOf !== null && !Array.isArray(asOf)) {
+    return { items, notes, asOf: asOf as Record<string, unknown> };
+  }
   return { items, notes };
 }

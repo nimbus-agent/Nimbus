@@ -405,6 +405,13 @@ nimbus ask "What caused the payment-service alert — what deployed recently?"
 nimbus ask "Summarise everything that happened across my projects this week"
 ```
 
+**Point-in-time mode (`--at <time>`, Phase 10 IC1):** answers as the index stood at that time, for post-incident questions such as "what PRs were open for payment-service at 09:00 yesterday?". Accepted forms: `2026-11-11T09:00Z` (with a zone or offset), `2026-11-11T09:00` and `2026-11-11` (in the gateway's time zone), `yesterday-09:00`, `today-14:30` and `-2h` (units `s`, `m`, `h`, `d`, `w`). An instant in the future, before 2000 or unreadable is refused. Existence and the tracked state keys (status, state, severity, urgency, assignee, merged, draft, due date) are reconstructed from item history, which begins at the upgrade; **titles and bodies are as of now**, and the answer ends with a deterministic block that says so, names where history starts when it begins after T, and counts the items it could not place (`## Gaps`) and therefore does not show. The turn uses only the index: it is answered conversationally (never as a planned action), may not read live connectors or the graph, and is never offered a write. A point-in-time ask is not streamed. A gateway that predates `--at` makes the command print an error and exit 1, and its reply is neither shown nor stored in a `--session`, because its answer is from current data. A time-travel turn neither reads nor writes session history, and the command withholds `resolvePerson` (the people graph has no time axis).
+
+```bash
+nimbus ask --at yesterday-09:00 "what PRs were open for payment-service?"
+nimbus ask --at 2026-11-11T09:00 "who was assigned the checkout incident?"
+```
+
 **Devil's-advocate mode (`--devil`):** argues *against* the plan or assumption in your question
 instead of helping to carry it out — the risks it runs, the edge cases it ignores, the alternative
 reading of the evidence. A confirmation-bias antidote for a decision you have already half made.
@@ -451,8 +458,9 @@ nimbus search "flaky test" --keyword-only            # BM25 only, no vector rank
 | `--semantic` | *(default)* Vector/semantic ranking — already on, so passing this changes nothing |
 | `--no-semantic`, `--keyword-only` | Turn semantic ranking off; keyword (BM25) results only |
 | `--limit <n>`, `-n` | Maximum results (1–500, default: 20) |
+| `--at <time>` | Answer as the index stood at that time (Phase 10 IC1; forms as for `nimbus ask --at`: `2026-11-11T09:00Z`, `2026-11-11T09:00`, `yesterday-09:00`, `-2h`). Existence and the tracked state keys are reconstructed from item history; titles and bodies are as of now. Each result carries an `asOf` block; the disclosure (as-of line, where history starts, the count of items it could not place) is printed on stderr as `note:` lines. Refuses a gateway that ignores it (exit 1). Piped without `--pretty`, stdout is the JSON array and the `Gaps:` lines go to stderr. |
 
-> **No other flags are accepted.** `nimbus search` throws `Unknown flag: <arg>` on any argument starting with `-` that is not in the table above — including `--help`, `--json`, `--since` and `--state`. (It is not alone: `nimbus glossary`, `nimbus update`, `nimbus deploy annotate` and `nimbus tribal capture` reject unknown flags too. Most other commands ignore them.) Time, state and assignee filtering are not available here; use [`nimbus query`](#nimbus-query) for `--since`, or raw SQL via `nimbus query --sql`.
+> **No other flags are accepted** (time filtering beyond `--at` is unavailable: there is no `--since`). `nimbus search` throws `Unknown flag: <arg>` on any argument starting with `-` that is not in the table above — including `--help`, `--json`, `--since` and `--state`. (It is not alone: `nimbus glossary`, `nimbus update`, `nimbus deploy annotate` and `nimbus tribal capture` reject unknown flags too. Most other commands ignore them.) Time, state and assignee filtering are not available here; use [`nimbus query`](#nimbus-query) for `--since`, or raw SQL via `nimbus query --sql`.
 >
 > If the embedding model is still warming up, a semantic search falls back to keyword-only for that call and prints a note on stderr.
 >
@@ -491,8 +499,11 @@ nimbus query --service pagerduty --type alert --since 1d --json | jq '.[] | .tit
 | `--not-touching <glob>` | **Negation.** PRs with no indexed changed-file path matching the glob. Requires `--type pr`. |
 | `--no-downstream-incident` | **Negation.** Deployments with no correlated downstream incident. Requires `--type deployment`. |
 | `--explain` | Print the SQL that ran, its bound parameters, and the substrate probe |
+| `--at <time>` | Answer as the index stood at that time (Phase 10 IC1; forms as for `nimbus ask --at`). Combines with `--service` and `--type`; **refuses** `--sql`, `--since`, `--not-touching` and `--no-downstream-incident` before any request (they read the current index or graph). Prints the disclosure on stderr and a `Gaps:` line counting the rows whose state at that time cannot be placed. |
 
 `--service` is required unless `--sql` is used.
+
+**Point in time (`--at`).** `nimbus query --service github --type pr --at yesterday-09:00` returns the rows that existed then, each with an `asOf` block (`state` holds the tracked keys as of that time; `basis` is `history` when a key changed afterwards, `current` otherwise). Titles and bodies are as of now. The `Gaps:` line (stderr when the rows are printed as a piped JSON array) counts the matching rows the index cannot place at that time (their state changed after it and the change predates item history, or their birth is unknown): they are excluded, never shown. History begins when the gateway was upgraded to schema V94 and is kept for `[index] history_retention_days` (default 180).
 
 #### Negation predicates
 
@@ -1201,6 +1212,7 @@ Text from the index (a title, a sender) is stripped of control characters before
 | `[briefing.deadlines] enabled` | `false` | independent of `[briefing] enabled` |
 | `[briefing.deadlines] lead_hours` | `24` | 1 to 168 |
 | `[briefing.deadlines] quiet_hours` | `24` | 1 to 336 |
+| `[index] history_retention_days` | `180` | 7 to 3650, an integer; how long item-history rows (the change log behind `--at`) are kept, pruned daily in batches. There is no `0` (an unbounded history table is not a mode); a value outside the range falls back to 180 and `nimbus config explain index.history_retention_days` says so |
 
 **The notification shows counts only** (`3 meetings · 2 reviews waiting · on call today`; `2 open items due within 24 h with no recent activity`): never a title, sender, repository, channel or time. A missed slot is caught up if the gateway starts within three hours of it, otherwise it is recorded as skipped; enabling the briefing fires nothing until the next slot; a wall time inside a spring-forward gap has no slot that day.
 
@@ -6055,7 +6067,7 @@ nimbus data delete --service slack --yes         # Execute — required for non-
 | Flag | Description |
 |---|---|
 | `--service <name>` | Connector to purge (`github`, `slack`, `google_drive`, …) |
-| `--dry-run` | Print the preflight (item count, vault entry count) and exit |
+| `--dry-run` | Print the preflight (item count, item-history row count, vault entry count) and exit |
 | `--yes` | Required to execute the deletion (the CLI is non-interactive) |
 
 The preflight is always printed — even with `--yes` — so the deletion blast radius is recorded in the audit log before the destructive write.

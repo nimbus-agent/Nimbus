@@ -2144,6 +2144,21 @@ describe("LocalIndex.removeConnectorIndexData", () => {
     expect(idx.search({ service: "dropbox" })).toEqual([]);
   });
 
+  test("removes the service's item_history rows (Phase 10 IC1) and no other service's", () => {
+    const idx = makeIndex();
+    for (const service of ["dropbox", "jira"]) {
+      idx.rawDb.run(
+        `INSERT INTO item_history (item_id, service, type, key, observed_at_ms)
+         VALUES (?, ?, 'x', '__created', 1)`,
+        [`${service}:1`, service],
+      );
+    }
+    idx.removeConnectorIndexData("dropbox");
+    expect(idx.rawDb.query("SELECT service FROM item_history").all()).toEqual([
+      { service: "jira" },
+    ]);
+  });
+
   test("removes the service's Slack read markers and no other service's", () => {
     const idx = makeIndex();
     const marker = { channelId: "C1", channelKind: "im", lastReadTs: "1700000000.000001" } as const;

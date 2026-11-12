@@ -2,6 +2,7 @@
 // in scripts/coverage-floor/exclusions.ts (a type-only file emits no SF: lcov record). Adding runtime
 // logic here would silently bypass the floor — put runtime logic in a separate, covered module.
 import type { NimbusItem } from "@nimbus-dev/sdk";
+import type { AsOfState } from "./item-history-at.ts";
 
 export type RankedIndexItem = NimbusItem & {
   score: number;
@@ -28,4 +29,6 @@ export type RankedIndexItem = NimbusItem & {
   recencyComponent?: number;
   servicePriorityComponent?: number;
   scoringFormula?: "hybrid_rrf" | "fts_rank";
+  /** Present only on a point-in-time (`--at`) answer: the tracked state keys as of that instant. */
+  asOf?: AsOfState;
 };

@@ -1338,7 +1338,7 @@ CREATE TABLE connector_write_enablement (
 
 ## V95 — `lan_peers.proto_version` (Phase 10 FS1, 2026-11-12)
 
-Authoritative source: `packages/gateway/src/index/lan-peer-proto-v95-sql.ts`. **V94 belongs to the incident engine (IC1).** The FS1 branch carries an empty V94 placeholder step so the step chain stays contiguous; it is deleted when the incident engine's V94 is in the base. The ALTER is guarded by a column probe (a step must be re-runnable). Written only by `LocalIndex.markLanPeerProto` (after a v2 handshake completed with that peer) and read by `isKnownPeer` and `lanLinkFor`; never lowered (`MAX`), and `addLanPeer`'s upsert does not touch it.
+Authoritative source: `packages/gateway/src/index/lan-peer-proto-v95-sql.ts`. V94 is the incident engine's item history; V95 chains after it. The ALTER is guarded by a column probe (a step must be re-runnable). Written only by `LocalIndex.markLanPeerProto` (after a v2 handshake completed with that peer) and read by `isKnownPeer` and `lanLinkFor`; never lowered (`MAX`), and `addLanPeer`'s upsert does not touch it.
 
 ```sql
 ALTER TABLE lan_peers ADD COLUMN proto_version INTEGER NOT NULL DEFAULT 1 CHECK (proto_version IN (1, 2));
@@ -1346,6 +1346,27 @@ ALTER TABLE lan_peers ADD COLUMN proto_version INTEGER NOT NULL DEFAULT 1 CHECK 
 ```
 
 Every row that exists at the migration was made over the old wire and starts at 1.
+
+## V94 — item history (Phase 10 IC1, 2026-11-12)
+
+Authoritative source: `packages/gateway/src/index/item-history-v94-sql.ts`. Written only by `index/item-history.ts` (static D46(b)), inside `upsertIndexedItem` and `deleteItemByPrimaryKey`; deleted by `deleteItemHistoryForService` (an owner erasure) and by the daily batched prune. No foreign key and no trigger, by design: deleting an item must not erase the history that says it existed. No backfill: nothing earlier is recoverable. `observed_at_ms` is the sync's clock (`syncedAt`), not the provider's; `source_at_ms` is the provider's own time for the change when the item already carries one (a PR's `merged_at`). The third index serves the prune, which has no leading equality.
+
+```sql
+CREATE TABLE IF NOT EXISTS item_history (
+  id INTEGER PRIMARY KEY,
+  item_id TEXT NOT NULL,
+  service TEXT NOT NULL,
+  type TEXT NOT NULL,
+  key TEXT NOT NULL,             -- a tracked metadata key, or the pseudo-keys __created / __deleted
+  old_value TEXT,                -- normalised, capped at 256 code points
+  new_value TEXT,
+  observed_at_ms INTEGER NOT NULL,
+  source_at_ms INTEGER
+);
+CREATE INDEX IF NOT EXISTS item_history_item ON item_history (item_id, observed_at_ms);
+CREATE INDEX IF NOT EXISTS item_history_type ON item_history (service, type, observed_at_ms);
+CREATE INDEX IF NOT EXISTS item_history_observed ON item_history (observed_at_ms);
+```
 
 ## V93 — morning briefing runs and deadline notices (Phase 10 MB5, 2026-11-12)
 

@@ -21,7 +21,7 @@ describe("V95 migration - lan_peers.proto_version (Phase 10 FS1)", () => {
   test("a V93 database with a peer row gains proto_version = 1 and the constant agrees", () => {
     const db = new Database(":memory:");
     try {
-      runIndexedSchemaMigrations(db, 93); // V94 is a placeholder step, see runner.ts
+      runIndexedSchemaMigrations(db, 93);
       expect(columnInfo(db).map((c) => c.name)).not.toContain("proto_version");
       db.run(
         `INSERT INTO lan_peers (peer_id, peer_pubkey, direction, write_allowed, paired_at)

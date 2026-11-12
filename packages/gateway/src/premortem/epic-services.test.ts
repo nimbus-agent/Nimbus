@@ -1,6 +1,7 @@
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
 import { deterministicGraphEntityId, upsertGraphEntity } from "../graph/relationship-graph.ts";
+import { ITEM_HISTORY_V94_SQL } from "../index/item-history-v94-sql.ts";
 import { itemPrimaryKey } from "../index/item-key.ts";
 import { upsertIndexedItem } from "../index/item-store.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
@@ -9,6 +10,8 @@ import { affectedServicesForEpic, affectedServicesForEpics } from "./epic-servic
 function freshDb(): Database {
   const db = new Database(":memory:");
   runIndexedSchemaMigrations(db, 53);
+  // This schema stops at V53, but `upsertIndexedItem` records history for a tracked pair (jira:issue).
+  for (const stmt of ITEM_HISTORY_V94_SQL) db.run(stmt);
   return db;
 }
 

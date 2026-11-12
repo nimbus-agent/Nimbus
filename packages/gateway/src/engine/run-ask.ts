@@ -8,6 +8,12 @@ import type {
   TribalKbConfig,
 } from "../connectors/connector-writes/types.ts";
 import type { EgressSink } from "../egress/egress-ledger.ts";
+import {
+  type AsOfState,
+  earliestHistoryMs,
+  type PointInTimeFacts,
+  pointInTimeDisclosure,
+} from "../index/item-history-at.ts";
 import { escapeLikeLiteral } from "../index/item-store.ts";
 import type { LocalIndex } from "../index/local-index.ts";
 import type { RankedIndexItem } from "../index/ranked-item.ts";
@@ -20,6 +26,7 @@ import type { PlatformPaths } from "../platform/paths.ts";
 import type { EnforcedPolicy } from "../policy/policy-gate.ts";
 import { createStandingRuleDeps } from "../standing/standing-rule-capability.ts";
 import type { AgentLatencyRecorder } from "../telemetry/agent-latency.ts";
+import { gatewayZone } from "../util/zoned-time.ts";
 import {
   agentRequestContext,
   getAgentRequestSessionId,
@@ -61,6 +68,12 @@ const runAskLog = pino({
   level: process.env["NIMBUS_LOG_LEVEL"] ?? "info",
 });
 
+/**
+ * What `runAsk` returns. `asOfMs` is set only on a point-in-time turn that was honoured: the echo is how a
+ * client tells a gateway that answered as of the instant from an older one that ignored `at`.
+ */
+export type RunAskResult = { reply: string; modelMeta?: LlmGenerateResult; asOfMs?: number };
+
 /** The arguments every turn executor is built from; `RunAskParams` carries them all. */
 export type ExecutorBuildParams = Pick<
   RunAskParams,
@@ -99,6 +112,13 @@ export type RunAskParams = {
    * through to `runConversationalAgent`. See `engine/devil-advocate.ts`.
    */
   devil?: boolean;
+  /**
+   * `nimbus ask --at`: answer as the index stood at this instant (Phase 10 IC1). Forces the conversational
+   * route (the classifier and plan dispatch are skipped, as `--devil` does), withdraws every live read and
+   * write from the turn, and appends the deterministic as-of block. Parsed and bounds-checked at the IPC
+   * entry (`dispatchAgentInvoke`); never read from the model.
+   */
+  pointInTimeMs?: number;
   sessionMemoryStore?: SessionMemoryStore;
   classify?: (input: string) => Promise<ClassifiedIntent>;
   // Owner-side delegated HITL (Slice 2, I20). When present, the executor gate routes a HITL action's
@@ -237,15 +257,32 @@ function formatResultSummary(results: unknown[]): string {
 function emptyIndexGuidanceIfNeeded(
   p: RunAskParams,
   indexed: number | undefined,
-): { reply: string } | undefined {
+): RunAskResult | undefined {
   if (p.input.trim() === "" || indexed !== 0) {
     return undefined;
   }
   const guidance = emptyIndexGuidance(isDemo(p));
-  if (p.stream) {
-    p.sendChunk(`${guidance}\n`);
+  const atMs = p.pointInTimeMs;
+  if (atMs === undefined) {
+    if (p.stream) {
+      p.sendChunk(`${guidance}\n`);
+    }
+    return { reply: guidance };
   }
-  return { reply: guidance };
+  // A point-in-time turn is answered as one even when `item` is empty: the client needs the `asOfMs` echo, and
+  // the deterministic block says what the empty table cannot (history may outlive its deleted items).
+  const db =
+    typeof p.localIndex.getDatabase === "function" ? p.localIndex.getDatabase() : undefined;
+  const block = pointInTimeDisclosure({
+    atMs,
+    zone: gatewayZone(),
+    historyStartMs: db === undefined ? null : earliestHistoryMs(db),
+    gapCount: 0,
+  }).join("\n");
+  if (p.stream) {
+    p.sendChunk(`${guidance}\n${block}\n`);
+  }
+  return { reply: `${guidance}\n${block}`, asOfMs: atMs };
 }
 
 async function classifyIntentForAsk(
@@ -327,6 +364,25 @@ type ExplainPartial = {
  * caller can never carry an earlier turn's executor into a non-owner one. No store (a bare call
  * outside any `agentRequestContext.run`) means nothing to offer through.
  */
+/** Records this turn's instant on the request store (cleared otherwise), so `toolsFor` reads the same fact. */
+function markPointInTimeTurn(atMs: number | undefined): void {
+  const store = agentRequestContext.getStore();
+  if (store === undefined) return;
+  if (atMs === undefined) {
+    delete store.pointInTimeMs;
+  } else {
+    store.pointInTimeMs = atMs;
+  }
+}
+
+/** A time-travel turn carries no user-MCP or connector-write executor, whatever a reused store held. */
+function withdrawOfferedExecutors(): void {
+  const store = agentRequestContext.getStore();
+  if (store === undefined) return;
+  delete store.userMcpExecutor;
+  delete store.connectorWriteExecutor;
+}
+
 function offerUserMcpExecutorIfOwner(p: RunAskParams): void {
   const store = agentRequestContext.getStore();
   if (store === undefined) return;
@@ -363,21 +419,34 @@ function offerConnectorWriteExecutorIfOwner(p: RunAskParams): void {
 async function answerConversationally(
   p: RunAskParams,
   partial: ExplainPartial,
-): Promise<{ reply: string; modelMeta?: LlmGenerateResult }> {
-  offerUserMcpExecutorIfOwner(p);
-  offerConnectorWriteExecutorIfOwner(p);
+): Promise<RunAskResult> {
+  const atMs = p.pointInTimeMs;
+  markPointInTimeTurn(atMs);
+  if (atMs === undefined) {
+    offerUserMcpExecutorIfOwner(p);
+    offerConnectorWriteExecutorIfOwner(p);
+  } else {
+    // A time-travel turn is never offered a write or a live read (plan deviation 14).
+    withdrawOfferedExecutors();
+  }
   const sessionId = getAgentRequestSessionId();
-  const priorTurns = await loadRecentConversationHistory(p.sessionMemoryStore, sessionId);
+  // A time-travel turn neither reads nor writes session history: an earlier reply may describe events after T
+  // (evidence for the wrong instant), and this reply is about T, not about the session's present.
+  const priorTurns =
+    atMs === undefined ? await loadRecentConversationHistory(p.sessionMemoryStore, sessionId) : [];
   partial.stage = "retrieval";
+  const searchedFacts: PointInTimeFacts[] = [];
   const localContext = shouldBuildLocalContext(p)
-    ? await buildLocalIndexedContext(p.localIndex, p.input)
+    ? await buildLocalIndexedContext(p.localIndex, p.input, atMs, searchedFacts)
     : undefined;
 
   // Same guard as `countIndexedItems`: `localIndex.getDatabase` is optional on the interface, and
   // a test stub without it must not take the whole turn down over a disclosure line.
   const countDb =
     typeof p.localIndex.getDatabase === "function" ? p.localIndex.getDatabase() : undefined;
-  const count = countDb === undefined ? undefined : indexCountFor(countDb, p.input);
+  // The "N indexed" line is a CURRENT count: omitted on a point-in-time turn.
+  const count =
+    countDb === undefined || atMs !== undefined ? undefined : indexCountFor(countDb, p.input);
   const countLine = count === undefined ? undefined : indexCountLine(count);
 
   partial.stage = "model";
@@ -393,6 +462,16 @@ async function answerConversationally(
       : { localContext: localContext.text, localContextTruncation: localContext.truncation }),
     ...(countLine === undefined ? {} : { indexCountLine: countLine }),
     ...(p.devil === true ? { devil: true } : {}),
+    ...(atMs === undefined
+      ? {}
+      : {
+          pointInTime: {
+            atMs,
+            zone: gatewayZone(),
+            searched: searchedFacts,
+            fallbackHistoryStartMs: countDb === undefined ? null : earliestHistoryMs(countDb),
+          },
+        }),
     // Resolved here rather than at gateway boot so an edit to the active profile's toml is
     // picked up with no restart (D3). No logger: the boot-time resolution in
     // `platform/assemble.ts` owns the warning — warning on every turn would be noise.
@@ -415,11 +494,15 @@ async function answerConversationally(
   }
   partial.route = conversationalExplainRoute(result.toolless, localContext);
 
-  await persistConversationTurn(p.sessionMemoryStore, sessionId, p.input, result.reply);
+  if (atMs === undefined) {
+    await persistConversationTurn(p.sessionMemoryStore, sessionId, p.input, result.reply);
+  }
 
   return {
     reply: result.reply,
     ...(result.modelMeta === undefined ? {} : { modelMeta: result.modelMeta }),
+    // Echoed so a client can tell a gateway that honoured `at` from an older one that ignored it.
+    ...(atMs === undefined ? {} : { asOfMs: atMs }),
   };
 }
 
@@ -806,6 +889,8 @@ type LocalContextItem = {
   title: string;
   preview?: string;
   url?: string;
+  /** Present only on a point-in-time turn: the tracked state keys at that instant. */
+  asOf?: AsOfState;
 };
 
 function cleanContextText(text: string): string {
@@ -867,6 +952,7 @@ function formatContextItem(
       ? {}
       : { preview: clipContextText(preview, LOCAL_CONTEXT_PREVIEW_MAX_CHARS) }),
     ...(url === "" ? {} : { url }),
+    ...(item.asOf === undefined ? {} : { asOf: item.asOf }),
   };
 }
 
@@ -932,9 +1018,16 @@ interface LocalIndexedContext {
   };
 }
 
+/**
+ * `searched` (point-in-time turns): receives the facts of EVERY keyword search the build ran (primary, quoted,
+ * fallback), pushed as each ran, so they survive a build that returns no context and a context whose items came
+ * from a supplementary search.
+ */
 async function buildLocalIndexedContext(
   localIndex: LocalIndex,
   input: string,
+  atMs?: number,
+  searched?: PointInTimeFacts[],
 ): Promise<LocalIndexedContext | undefined> {
   const query = input.trim();
   if (query === "") {
@@ -978,19 +1071,35 @@ async function buildLocalIndexedContext(
     // Probe wide, serve narrow. `primary.length` is the only honest source for "how many
     // match" — every other search below is itself capped, so counting `byId` would just
     // re-measure the truncation instead of the substrate.
+    // Every search below carries the instant when there is one: a time-travel context must never mix in
+    // a row the index did not hold then.
+    const at = atMs === undefined ? {} : { atMs };
     const primarySearch = await localIndex.searchRankedAsync(
-      { name: searchTerms, limit: LOCAL_CONTEXT_TOTAL_PROBE_LIMIT },
+      { name: searchTerms, limit: LOCAL_CONTEXT_TOTAL_PROBE_LIMIT, ...at },
       { semantic: true, contextChunks: 2 },
     );
     const primary = primarySearch.items;
+    if (primarySearch.pointInTime !== undefined) searched?.push(primarySearch.pointInTime);
+    // The supplementary searches' gap facts: `searchRanked` returns items only.
+    const noteFacts = (name: string, limit: number): void => {
+      if (atMs === undefined || searched === undefined) return;
+      const facts = localIndex.pointInTimeFacts({ name, limit, atMs });
+      if (facts !== undefined) searched.push(facts);
+    };
     addRankedResults(primary.slice(0, resolveLocalContextItemLimit()), { kind: "primary-hybrid" });
     for (const quotedQuery of extractQuotedSearchQueries(query)) {
+      noteFacts(quotedQuery, resolveLocalContextItemLimit());
       addRankedResults(
-        localIndex.searchRanked({ name: quotedQuery, limit: resolveLocalContextItemLimit() }),
+        localIndex.searchRanked({
+          name: quotedQuery,
+          limit: resolveLocalContextItemLimit(),
+          ...at,
+        }),
         { kind: "quoted", query: quotedQuery },
       );
     }
-    for (const repoSlug of extractGithubRepoSlugs(query)) {
+    // The repo-slug pass reads the CURRENT issue and PR list with raw SQL: skipped on a point-in-time turn.
+    for (const repoSlug of atMs === undefined ? extractGithubRepoSlugs(query) : []) {
       addContextItems(githubIssueContextItemsForRepo(localIndex, repoSlug), {
         kind: "repo-slug",
         slug: repoSlug,
@@ -1004,12 +1113,13 @@ async function buildLocalIndexedContext(
       // its body. Retry with the single most distinctive term: the same question with the
       // strictest part relaxed, not a different one.
       for (const term of fallbackSearchTerms(searchTerms)) {
+        noteFacts(term, LOCAL_CONTEXT_TOTAL_PROBE_LIMIT);
         // The PROBE limit, not the context limit: `capPerService` below can only balance the pool
         // it is handed, and fetching eight rows from a service holding 11,979 of them returns
         // eight rows from that service. Widening here is what gives the cap something to choose
         // between; the slice back to eight still happens after it.
         addRankedResults(
-          localIndex.searchRanked({ name: term, limit: LOCAL_CONTEXT_TOTAL_PROBE_LIMIT }),
+          localIndex.searchRanked({ name: term, limit: LOCAL_CONTEXT_TOTAL_PROBE_LIMIT, ...at }),
           {
             kind: "fallback-term",
             term,
@@ -1345,10 +1455,14 @@ function buildExplainRecord(
   }
 }
 
-async function runAskInner(
-  p: RunAskParams,
-  partial: ExplainPartial,
-): Promise<{ reply: string; modelMeta?: LlmGenerateResult }> {
+/** Why this turn skips the classifier and answers conversationally, or `undefined` when it does not. */
+function forcedConversationalReason(p: RunAskParams): string | undefined {
+  if (p.devil === true) return "devil mode bypasses the classifier";
+  if (p.pointInTimeMs !== undefined) return "point-in-time mode bypasses the classifier";
+  return undefined;
+}
+
+async function runAskInner(p: RunAskParams, partial: ExplainPartial): Promise<RunAskResult> {
   const indexed = countIndexedItems(p.localIndex);
   const empty = emptyIndexGuidanceIfNeeded(p, indexed);
   if (empty !== undefined) {
@@ -1357,13 +1471,18 @@ async function runAskInner(
     return empty;
   }
 
+  // Two modes force the conversational route, through ONE helper so they cannot drift (the same lesson
+  // as `answerConversationally`): devil's advocate (prose) and a point-in-time question (`--at`, which
+  // must never reach plan dispatch or a live connector read).
+  //
   // Devil's-advocate mode answers in prose, so it routes conversationally REGARDLESS of intent.
   // Plan dispatch has no argument to make — it executes a plan — so without this the flag would
   // silently do nothing for every query the classifier reads as an action, i.e. for a subset the
   // user cannot predict. The classifier is skipped entirely rather than called and ignored: its
   // verdict cannot change the route here, and it costs an LLM round-trip.
-  if (p.devil === true) {
-    partial.classifier = { called: false, reason: "devil mode bypasses the classifier" };
+  const forcedReason = forcedConversationalReason(p);
+  if (forcedReason !== undefined) {
+    partial.classifier = { called: false, reason: forcedReason };
     if (!canUseConversation(p)) {
       // Forcing the route must not fabricate a path: with no agent and no local router there is
       // nothing to converse with, and the existing no-LLM error is the honest answer.
@@ -1478,9 +1597,7 @@ function recordLatencySafely(p: RunAskParams, startedAt: number): void {
   }
 }
 
-export async function runAsk(
-  p: RunAskParams,
-): Promise<{ reply: string; modelMeta?: LlmGenerateResult }> {
+export async function runAsk(p: RunAskParams): Promise<RunAskResult> {
   const startedAt = Date.now();
   const partial: ExplainPartial = { stage: "classification" };
   try {

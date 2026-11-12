@@ -34,6 +34,7 @@ import {
   checkForwardShareConfinement,
   checkGeneratedManifestConfinement,
   checkIacDiscard,
+  checkItemHistoryConfinement,
   checkLanBoxPathConfinement,
   checkListenerRegistryConfinement,
   checkMediaGrantStoreConfinement,
@@ -5775,6 +5776,117 @@ describe("D24 - chat_read_marker is written only by its store (Phase 10 MB4)", (
       files.push({ relPath: f.relPath, contents: f.contents });
     }
     expect(checkChatReadMarkerConfinement(files)).toEqual([]);
+    expect(assertScanIsMeaningful(files)).toEqual([]);
+  });
+});
+
+describe("D46(b) - item_history is written only by its module (Phase 10 IC1)", () => {
+  const file = (relPath: string, contents: string): FileEntry => ({ relPath, contents });
+  const SRC = "packages/gateway/src/";
+  const STORE = `${SRC}index/item-history.ts`;
+  const DDL = `${SRC}index/item-history-v94-sql.ts`;
+  const ITEM_STORE = `${SRC}index/item-store.ts`;
+  const RETENTION = `${SRC}index/item-history-retention.ts`;
+  const DATA_DELETE = `${SRC}commands/data-delete.ts`;
+  const GOOD: FileEntry[] = [
+    file(
+      STORE,
+      'export function recordItemUpsertHistory() { dbRun(db, "INSERT INTO item_history (a) VALUES (1)"); dbRun(db, "DELETE FROM item_history WHERE service = ?"); }\nexport function recordItemDeleteHistory() {}\nexport function deleteItemHistoryForService() {}\nexport function pruneItemHistory() {}\n',
+    ),
+    file(DDL, 'export const X = ["CREATE TABLE IF NOT EXISTS item_history (a)"];\n'),
+    file(
+      ITEM_STORE,
+      "recordItemUpsertHistory(db, b, n);\nrecordItemDeleteHistory(db, r, 1);\ndeleteItemHistoryForService(db, s);\n",
+    ),
+    file(DATA_DELETE, "deleteItemHistoryForService(db, service);\n"),
+    file(RETENTION, "const r = pruneItemHistory(db, o);\n"),
+    file(
+      `${SRC}agents/_lib/x.ts`,
+      'const q = "SELECT h.key FROM item_history h"; // INSERT INTO item_history\n',
+    ),
+    file(
+      `${SRC}connectors/pagerduty-sync.test.ts`,
+      'db.run("INSERT INTO item_history VALUES (1)"); recordItemUpsertHistory(); pruneItemHistory();\n',
+    ),
+  ];
+  const rules = (files: FileEntry[]): string[] =>
+    checkItemHistoryConfinement(files).map((v) => v.rule);
+  const withBad = (path: string, contents: string): FileEntry[] => [...GOOD, file(path, contents)];
+
+  test("the good set is clean", () => {
+    expect(checkItemHistoryConfinement(GOOD)).toEqual([]);
+  });
+
+  for (const [name, sql] of [
+    ["INSERT", 'dbRun(db, "INSERT INTO item_history (a) VALUES (1)")'],
+    ["DELETE", 'dbRun(db, "DELETE FROM item_history")'],
+    ["UPDATE", 'dbRun(db, "UPDATE item_history SET key = 1")'],
+    ["INSERT OR REPLACE", 'dbRun(db, "INSERT OR REPLACE INTO item_history (a) VALUES (1)")'],
+    ["REPLACE INTO", 'dbRun(db, "REPLACE INTO item_history (a) VALUES (1)")'],
+    ["DROP", 'dbRun(db, "DROP TABLE item_history")'],
+    ["DROP IF EXISTS", 'dbRun(db, "DROP TABLE IF EXISTS item_history")'],
+    ["a multi-line DROP IF EXISTS", "dbExec(db, `DROP TABLE\n  IF  EXISTS\n  main.item_history`)"],
+    ["ALTER", 'dbRun(db, "ALTER TABLE item_history ADD COLUMN x")'],
+    ["a quoted name", "dbRun(db, 'INSERT INTO \"item_history\" (a) VALUES (1)')"],
+    ["a bracketed name", "dbRun(db, 'INSERT INTO [item_history] (a) VALUES (1)')"],
+    ["a multi-line statement", "dbRun(db, `INSERT\n  INTO\n  item_history (a) VALUES (1)`)"],
+    ["a schema-qualified DELETE", 'dbRun(db, "DELETE FROM main.item_history")'],
+  ] as const) {
+    test(`a syncable with ${name} is refused`, () => {
+      expect(rules(withBad(`${SRC}connectors/evil-sync.ts`, `${sql};\n`))).toEqual([
+        "item-history-confined",
+      ]);
+    });
+  }
+
+  test("an RPC file deleting from the table is refused", () => {
+    expect(rules(withBad(`${SRC}ipc/x-rpc.ts`, 'db.run("DELETE FROM item_history");\n'))).toEqual([
+      "item-history-confined",
+    ]);
+  });
+
+  test("a syncable naming a record function is refused", () => {
+    expect(
+      rules(withBad(`${SRC}connectors/evil-sync.ts`, "recordItemUpsertHistory(db, b, n);\n")),
+    ).toEqual(["item-history-confined"]);
+    expect(
+      rules(withBad(`${SRC}connectors/evil-sync.ts`, "recordItemDeleteHistory(db, r, 1);\n")),
+    ).toEqual(["item-history-confined"]);
+  });
+
+  test("naming the erasure outside the item store and data-delete is refused", () => {
+    for (const path of [`${SRC}connectors/evil-sync.ts`, `${SRC}index/local-index.ts`, RETENTION]) {
+      const files = [...GOOD.filter((f) => f.relPath !== path)];
+      files.push(file(path, "deleteItemHistoryForService(db, 'slack');\n"));
+      expect(rules(files), path).toEqual(["item-history-confined"]);
+    }
+  });
+
+  test("naming the prune outside the retention module is refused", () => {
+    for (const path of [`${SRC}connectors/evil-sync.ts`, ITEM_STORE]) {
+      const files = [...GOOD.filter((f) => f.relPath !== path)];
+      files.push(file(path, "pruneItemHistory(db, o);\n"));
+      expect(rules(files), path).toEqual(["item-history-confined"]);
+    }
+  });
+
+  test("a comment and a read are not violations", () => {
+    expect(
+      rules(
+        withBad(
+          `${SRC}connectors/ok-sync.ts`,
+          '// INSERT INTO item_history\nconst q = "SELECT * FROM item_history";\n',
+        ),
+      ),
+    ).toEqual([]);
+  });
+
+  test("the real repository satisfies the rule and every anchor is scanned", async () => {
+    const files: FileEntry[] = [];
+    for await (const f of iterateSourceFiles()) {
+      files.push({ relPath: f.relPath, contents: f.contents });
+    }
+    expect(checkItemHistoryConfinement(files)).toEqual([]);
     expect(assertScanIsMeaningful(files)).toEqual([]);
   });
 });

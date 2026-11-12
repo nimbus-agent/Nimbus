@@ -120,11 +120,21 @@ async function runDataDeleteCli(args: string[]): Promise<void> {
     { yes, ...(scriptConsentSource === undefined ? {} : { scriptConsentSource }) },
     async (client) => {
       const pre = await client.call<{
-        preflight: { itemsToDelete: number; vaultEntriesToDelete: number };
+        preflight: {
+          itemsToDelete: number;
+          itemHistoryRowsToDelete?: number;
+          vaultEntriesToDelete: number;
+        };
         deleted: boolean;
       }>("data.delete", { service, dryRun: true });
       console.log(`Service: ${service}`);
       console.log(`  Items to delete: ${String(pre.preflight.itemsToDelete)}`);
+      // Item history can outlive its items, so it is counted on its own (older gateways omit it).
+      if (typeof pre.preflight.itemHistoryRowsToDelete === "number") {
+        console.log(
+          `  Item history rows to delete: ${String(pre.preflight.itemHistoryRowsToDelete)}`,
+        );
+      }
       console.log(`  Vault entries to delete: ${String(pre.preflight.vaultEntriesToDelete)}`);
       if (dryRun) return;
       assertDestructiveDeleteAllowed({ yes, scriptConsentSource });
