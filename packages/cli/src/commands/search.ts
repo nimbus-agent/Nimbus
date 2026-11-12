@@ -9,6 +9,7 @@ type SearchFlags = {
   semantic: boolean;
   service?: string;
   itemType?: string;
+  at?: string;
   positional: string[];
 };
 
@@ -49,6 +50,16 @@ function consumeSearchArg(args: string[], i: number, f: SearchFlags): number {
     }
     return i + 1;
   }
+  if (a === "--at") {
+    // A valued flag that must never silently vanish: dropping it would answer from CURRENT data a
+    // question that asked for an earlier time.
+    const v = args[i + 1];
+    if (v === undefined || v.trim() === "" || v.startsWith("--")) {
+      throw new Error("--at needs a time (e.g. 2026-11-11T09:00, yesterday-09:00, -2h)");
+    }
+    f.at = v;
+    return i + 2;
+  }
   if (a.startsWith("-")) {
     throw new Error(`Unknown flag: ${a}`);
   }
@@ -62,6 +73,7 @@ function parseSearchArgs(args: string[]): {
   semantic: boolean;
   service?: string;
   itemType?: string;
+  at?: string;
 } {
   const f: SearchFlags = { limit: 20, semantic: true, positional: [] };
   let i = 0;
@@ -75,6 +87,7 @@ function parseSearchArgs(args: string[]): {
     semantic: boolean;
     service?: string;
     itemType?: string;
+    at?: string;
   } = { query, limit: f.limit, semantic: f.semantic };
   if (f.service !== undefined) {
     out.service = f.service;
@@ -82,14 +95,17 @@ function parseSearchArgs(args: string[]): {
   if (f.itemType !== undefined) {
     out.itemType = f.itemType;
   }
+  if (f.at !== undefined) {
+    out.at = f.at;
+  }
   return out;
 }
 
 export async function runSearch(args: string[]): Promise<void> {
-  const { query, limit, semantic, service, itemType } = parseSearchArgs(args);
+  const { query, limit, semantic, service, itemType, at } = parseSearchArgs(args);
   if (query === "") {
     throw new Error(
-      "Usage: nimbus search <query> [--limit N] [--semantic|--no-semantic] [--service S] [--type T]",
+      "Usage: nimbus search <query> [--limit N] [--semantic|--no-semantic] [--service S] [--type T] [--at <time>]",
     );
   }
   const paths = getCliPlatformPaths();
@@ -117,9 +133,18 @@ export async function runSearch(args: string[]): Promise<void> {
     if (itemType !== undefined) {
       params["itemType"] = itemType;
     }
-    const { items, notes } = parseSearchRankedResponse(
+    if (at !== undefined) {
+      params["at"] = at;
+    }
+    const { items, notes, asOf } = parseSearchRankedResponse(
       await searchWithWarmingFallback(client, params, semantic),
     );
+    // An older gateway ignores `at` and would answer from CURRENT data: refuse rather than print it.
+    if (at !== undefined && asOf === undefined) {
+      console.error("this gateway does not support --at; upgrade it (nothing was searched)");
+      process.exitCode = 1;
+      return;
+    }
     // stderr, never stdout: stdout stays the plain JSON array a script pipes into `jq`.
     for (const note of notes) {
       console.error(`note: ${note}`);

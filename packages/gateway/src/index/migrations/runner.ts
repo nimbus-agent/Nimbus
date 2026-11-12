@@ -66,6 +66,7 @@ import { GRAPH_RELATION_TYPES_V12_SQL } from "../graph-relation-types-v12-sql.ts
 import { GRAPH_V7_MIGRATION_SQL } from "../graph-v7-sql.ts";
 import { rebuildHitlStatusTables } from "../hitl-status-v87-sql.ts";
 import { V34_IDENTITY_SQL } from "../identity-v34-sql.ts";
+import { ITEM_HISTORY_V94_SQL } from "../item-history-v94-sql.ts";
 import { KNOWN_NAMESPACES_V38_SQL } from "../known-namespaces-v38-sql.ts";
 import { LAN_PEERS_V19_SQL } from "../lan-peers-v19-sql.ts";
 import { LLM_CONTEXT_WINDOW_V16_ALTER_SQL, LLM_MODELS_V16_SQL } from "../llm-models-v16-sql.ts";
@@ -782,6 +783,7 @@ const INDEXED_SCHEMA_STEPS: readonly IndexedSchemaStep[] = [
   simpleStep(90, 91, "my open work snapshots (Phase 10 MB1)", WORK_SNAPSHOT_V91_SQL),
   simpleStep(91, 92, "slack read markers (Phase 10 MB4)", CHAT_READ_MARKER_V92_SQL),
   simpleStep(92, 93, "morning briefing runs and deadline notices (Phase 10 MB5)", BRIEFING_V93_SQL),
+  simpleStep(93, 94, "item history, sync-time state changes (Phase 10 IC1)", ITEM_HISTORY_V94_SQL),
 ];
 
 /**

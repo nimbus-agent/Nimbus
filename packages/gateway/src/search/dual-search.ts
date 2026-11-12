@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import type { AtClause } from "../index/item-history-at.ts";
 import { type VectorChunkHit, vectorSearchChunks } from "./vec-store.ts";
 
 export type DualSearchOptions = {
@@ -10,6 +11,8 @@ export type DualSearchOptions = {
   service?: string;
   itemType?: string;
   since?: number;
+  /** Point-in-time admit clause over alias `i` (`--at`). */
+  at?: AtClause;
 };
 
 function searchOneTable(
@@ -26,6 +29,7 @@ function searchOneTable(
     ...(opts.service === undefined ? {} : { service: opts.service }),
     ...(opts.itemType === undefined ? {} : { itemType: opts.itemType }),
     ...(opts.since === undefined ? {} : { since: opts.since }),
+    ...(opts.at === undefined ? {} : { at: opts.at }),
   });
 }
 

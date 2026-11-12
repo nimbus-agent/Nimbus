@@ -1018,6 +1018,63 @@ export function checkChatReadMarkerConfinement(files: readonly FileEntry[]): Vio
   return out;
 }
 
+// D46(b) (Phase 10 IC1, incident-engine spec § 5.1): `item_history` is written only by its module.
+// Rule `item-history-confined`. A WRITE verb on `item_history` may appear only in `index/item-history.ts`
+// (and the V94 DDL file); `recordItemUpsertHistory` / `recordItemDeleteHistory` are named only there and in
+// `index/item-store.ts` (`upsertIndexedItem`, `deleteItemByPrimaryKey`); `deleteItemHistoryForService` only
+// there, in `index/item-store.ts` (`deleteAllItemsForService`, which `LocalIndex.removeConnectorIndexData`
+// calls) and in `commands/data-delete.ts` (an owner erasure); `pruneItemHistory` only there and in
+// `index/item-history-retention.ts`. Reads are unrestricted (the reconstruction and the incident assembly
+// read the table). D46 has only sub-rule (b) after IC1: (a) and (c) are reserved by the incident-engine
+// spec for IC3 and IC5.
+//
+// Stated bounds: a text scan, so a dynamically composed table name evades it (as D33(b) says). The retention
+// module's batch DELETE lives in `item-history.ts`, which it only calls. `iterateGlob` skips every `-sql.ts`
+// file, so the real scan never visits the DDL file; it stays in the allow-list only so a synthetic file set
+// can carry it.
+const D46_SRC = "packages/gateway/src/";
+const D46_STORE = `${D46_SRC}index/item-history.ts`;
+const D46_DDL = `${D46_SRC}index/item-history-v94-sql.ts`;
+const D46_ITEM_STORE = `${D46_SRC}index/item-store.ts`;
+const D46_RETENTION = `${D46_SRC}index/item-history-retention.ts`;
+const D46_ERASERS: readonly string[] = [D46_ITEM_STORE, `${D46_SRC}commands/data-delete.ts`];
+const D46_WRITE_RE =
+  /\b(?:INSERT\s+(?:OR\s+\w+\s+)?INTO|REPLACE\s+INTO|DELETE\s+FROM|UPDATE(?:\s+OR\s+\w+)?|DROP\s+TABLE(?:\s+IF\s+EXISTS)?|ALTER\s+TABLE)\s+(?:["'`[]?\w+["'`\]]?\s*\.\s*)?["'`[]?item_history\b/gi;
+const D46_RECORD_RE = /\brecordItem(?:Upsert|Delete)History\b/g;
+const D46_ERASE_RE = /\bdeleteItemHistoryForService\b/g;
+const D46_PRUNE_RE = /\bpruneItemHistory\b/g;
+
+export function checkItemHistoryConfinement(files: readonly FileEntry[]): Violation[] {
+  const out: Violation[] = [];
+  const add = (f: FileEntry, src: string, index: number | undefined): void => {
+    const line = src.slice(0, index).split("\n").length;
+    out.push({
+      rule: "item-history-confined",
+      file: f.relPath,
+      line,
+      snippet: (f.contents.split("\n")[line - 1] ?? "").trim(),
+    });
+  };
+  for (const f of files) {
+    if (f.relPath.endsWith(".test.ts") || f.relPath.endsWith(".test-helpers.ts")) continue;
+    if (!f.relPath.startsWith(D46_SRC)) continue;
+    const commentFree = stripComments(f.contents);
+    if (f.relPath !== D46_STORE && f.relPath !== D46_DDL) {
+      for (const m of commentFree.matchAll(D46_WRITE_RE)) add(f, commentFree, m.index);
+    }
+    if (f.relPath !== D46_STORE && f.relPath !== D46_ITEM_STORE) {
+      for (const m of commentFree.matchAll(D46_RECORD_RE)) add(f, commentFree, m.index);
+    }
+    if (f.relPath !== D46_STORE && !D46_ERASERS.includes(f.relPath)) {
+      for (const m of commentFree.matchAll(D46_ERASE_RE)) add(f, commentFree, m.index);
+    }
+    if (f.relPath !== D46_STORE && f.relPath !== D46_RETENTION) {
+      for (const m of commentFree.matchAll(D46_PRUNE_RE)) add(f, commentFree, m.index);
+    }
+  }
+  return out;
+}
+
 // D25: a CONNECTOR SYNCABLE may not call `Bun.spawn` — it must go through
 // `platform/spawn-capture.ts`, which spawns with `windowsHide`.
 //
@@ -4729,6 +4786,11 @@ export const RULE_ANCHORS: readonly string[] = [
   // of the scan would leave the rule passing over nothing (sync-capabilities.ts is anchored above).
   "packages/gateway/src/index/chat-read-marker-store.ts",
   "packages/gateway/src/sync/sync-capabilities.ts",
+  // D46(b) (item-history-confined, Phase 10 IC1) — the only writer, its one caller and the retention
+  // module; any of them moving out of the scan would leave the rule passing over nothing.
+  "packages/gateway/src/index/item-history.ts",
+  "packages/gateway/src/index/item-store.ts",
+  "packages/gateway/src/index/item-history-retention.ts",
 ];
 
 /** Fail loudly when the scanned set cannot support the rules about to run. */
@@ -4930,6 +4992,13 @@ async function run(): Promise<void> {
       );
     }
     if (markerViolations.length > 0) exit = 1;
+    const historyViolations = checkItemHistoryConfinement(files);
+    for (const e of historyViolations) {
+      console.error(
+        `::error file=${e.file},line=${e.line}::D46(b) item_history written outside its module (rule item-history-confined) — index/item-history.ts is the only writer: ${e.snippet}`,
+      );
+    }
+    if (historyViolations.length > 0) exit = 1;
     const spawnViolations = checkConnectorSpawnIsHidden(files);
     for (const e of spawnViolations) {
       console.error(

@@ -164,7 +164,7 @@ describe("runData delete", () => {
   it("dry-run path prints preflight counts and does NOT call delete a second time", async () => {
     const ipc = createMockIpcClient([
       {
-        preflight: { itemsToDelete: 42, vaultEntriesToDelete: 3 },
+        preflight: { itemsToDelete: 42, itemHistoryRowsToDelete: 7, vaultEntriesToDelete: 3 },
         deleted: false,
       },
     ]);
@@ -180,6 +180,7 @@ describe("runData delete", () => {
     });
     expect(out.stdout).toContain("Service: github");
     expect(out.stdout).toContain("Items to delete: 42");
+    expect(out.stdout).toContain("Item history rows to delete: 7");
     expect(out.stdout).toContain("Vault entries to delete: 3");
   });
 
