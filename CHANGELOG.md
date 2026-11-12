@@ -2,6 +2,13 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [10.54.0](https://github.com/nimbus-agent/Nimbus/compare/v10.53.0...v10.54.0) (2026-11-12)
+
+
+### Features
+
+* **gateway:** item history (V94) and --at on ask, query and search (incident engine IC1) ([#1981](https://github.com/nimbus-agent/Nimbus/issues/1981)) ([7016aa8](https://github.com/nimbus-agent/Nimbus/commit/7016aa8d0f7a4509940d655c40f3ad449e6aec3c))
+
 ## [10.53.0](https://github.com/nimbus-agent/Nimbus/compare/v10.52.0...v10.53.0) (2026-11-12)
 
 
