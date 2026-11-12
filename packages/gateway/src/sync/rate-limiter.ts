@@ -60,6 +60,7 @@ export type Provider =
   | "prefect"
   | "dagster"
   | "ramp"
+  | "vantage"
   | "zoom"
   | "hubspot"
   | "miro"
@@ -152,6 +153,8 @@ export const DEFAULT_QUOTAS: Record<Provider, ProviderQuota> = {
   prefect: { requestsPerMinute: 60, burstSize: 10 },
   dagster: { requestsPerMinute: 60, burstSize: 10 },
   ramp: { requestsPerMinute: 60, burstSize: 10 },
+  // Vantage documents 1,000 requests per hour (about 16 per minute), shared with the owner's own automation.
+  vantage: { requestsPerMinute: 16, burstSize: 2 },
   zoom: { requestsPerMinute: 60, burstSize: 10 },
   hubspot: { requestsPerMinute: 100, burstSize: 10 },
   miro: { requestsPerMinute: 60, burstSize: 10 },

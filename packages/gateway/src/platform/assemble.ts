@@ -56,6 +56,7 @@ import {
 import { startCuSnapshotRetention } from "../computer-use/cu-snapshot-retention.ts";
 import { loadNimbusBriefingFromConfigDir } from "../config/briefing-toml.ts";
 import { loadNimbusFilesystemRootsFromConfigDir } from "../config/filesystem-toml.ts";
+import { loadNimbusFinopsFromConfigDir } from "../config/finops-toml.ts";
 import {
   DEFAULT_FLEET_CONFIG,
   type FleetDisabledJob,
@@ -238,6 +239,7 @@ import {
 import { NamespaceStore } from "../federation/namespace-store.ts";
 import { preflightConsent } from "../federation/preflight-consent-broker.ts";
 import { appendPreflightAudit, defaultRunCommand } from "../federation/preflight-gate.ts";
+import { startFinopsRetention } from "../finops/cost-retention.ts";
 import { buildFleetInvoker } from "../fleet/fleet-invoker.ts";
 import { checkFleetJob } from "../fleet/fleet-job-check.ts";
 import { FLEET_CAPABILITY, FleetScheduler } from "../fleet/fleet-scheduler.ts";
@@ -1105,6 +1107,7 @@ async function createSchedulerWithMesh(opts: SchedulerWithMeshOpts): Promise<{
       workdayConfig: workdayCfg,
       briefingSnapshotIntervalMinutes: () =>
         loadNimbusBriefingFromConfigDir(paths.configDir).snapshotIntervalMinutes,
+      finopsMaxSeries: () => loadNimbusFinopsFromConfigDir(paths.configDir).maxSeries,
     });
     registerUserMcpSyncablesFromDatabase(db, policyFilteredRegistrar, connectorMesh);
     syncScheduler.start();
@@ -4625,6 +4628,14 @@ export async function assemblePlatformServices(
     retentionDays: computerUseCfg.snapshotRetentionDays,
   });
   sidecarStops.push(() => cuSnapshotRetention.stop());
+
+  // FinOps cost-row retention (Phase 10 FO2, OR-FO-5): the same daily sidecar shape, driven by
+  // `[finops] retain_days` (400). Deletes `cost_allocation` rows past the window through the item
+  // store's delete chokepoint; recommendations are not pruned by age. Static rule D48.
+  const finopsRetention = startFinopsRetention(db, {
+    retainDays: loadNimbusFinopsFromConfigDir(paths.configDir).retainDays,
+  });
+  sidecarStops.push(() => finopsRetention.stop());
 
   const shareHttpSink = loadNimbusShareHttpSink(paths.configDir);
   ipcOpts.shareRpcCtx = {

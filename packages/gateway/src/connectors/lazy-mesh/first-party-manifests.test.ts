@@ -162,6 +162,7 @@ describe("manifestForFirstParty", () => {
       "powerbi",
       "montecarlo",
       "bigeye",
+      "vantage",
     ];
     for (const id of expected) {
       expect(FIRST_PARTY_MANIFESTS[id]).toBeDefined();
@@ -677,5 +678,15 @@ describe("google_calendar manifest", () => {
     const m = manifestForFirstParty("google_calendar");
     expect(m.id).toBe("com.nimbus.google-calendar");
     expect(m.permissions.network).toEqual(["www.googleapis.com"]);
+  });
+});
+
+describe("vantage manifest (Phase 10 FO2)", () => {
+  test("one fixed vendor host, no wildcard, no owner-configured entry, no filesystem", () => {
+    const m = manifestForFirstParty("vantage");
+    expect(m.permissions.network).toEqual(["api.vantage.sh"]);
+    expect(m.permissions.filesystem).toEqual({ read: [], write: [] });
+    expect(m.firstPartyWildcardHosts ?? []).toEqual([]);
+    expect(m.ownerConfiguredNetwork ?? []).toEqual([]);
   });
 });
