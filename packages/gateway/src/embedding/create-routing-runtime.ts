@@ -10,6 +10,7 @@ import type { PlatformPaths } from "../platform/paths.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
 import type { BackfillGate } from "./backfill-gate.ts";
 import { createBackfillPassTracker } from "./backfill-pass-tracker.ts";
+import { isEmbeddingExcludedType } from "./embedding-exclusions.ts";
 import {
   type EmbeddingReadiness,
   isEmbeddingTimeoutError,
@@ -143,7 +144,8 @@ export async function tryCreateRoutingEmbeddingRuntime(
         const row = db
           .query(`SELECT id, service, type, title, body_preview FROM item WHERE id = ?`)
           .get(itemId) as IndexedItem | null | undefined;
-        if (row === null || row === undefined) {
+        // embedding/embedding-exclusions.ts: an excluded type is never embedded.
+        if (row === null || row === undefined || isEmbeddingExcludedType(row.type)) {
           return;
         }
         await pipeline.embedItem(row);

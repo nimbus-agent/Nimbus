@@ -2,6 +2,7 @@ import type { Database } from "bun:sqlite";
 import type { NimbusItem } from "@nimbus-dev/sdk";
 
 import { dbRun } from "../db/write.ts";
+import { isEmbeddingExcludedType } from "../embedding/embedding-exclusions.ts";
 import { type ResolveServiceId, syncGraphFromIndexedItem } from "../graph/graph-populator.ts";
 import { deleteGraphEntitiesForItemKeys } from "../graph/relationship-graph.ts";
 import type { SyncContext } from "../sync/types.ts";
@@ -248,6 +249,10 @@ export interface UpsertSyncDeps {
 
 export function upsertIndexedItemForSync(ctx: UpsertSyncDeps, row: BodyRow): void {
   upsertIndexedItem(ctx.db, applyDepth(ctx.depth, row), ctx.resolveServiceId);
+  // A type in EMBEDDING_EXCLUDED_TYPES (embedding/embedding-exclusions.ts) is never scheduled.
+  if (isEmbeddingExcludedType(row.type)) {
+    return;
+  }
   const id = itemPrimaryKey(row.service, row.externalId);
   ctx.scheduleItemEmbedding?.(id);
 }

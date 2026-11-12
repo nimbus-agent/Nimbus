@@ -109,6 +109,33 @@ test("metadata survives every index depth", () => {
   db.close();
 });
 
+test("upsertIndexedItemForSync schedules an embedding for a pr row and never for a cost_allocation row", () => {
+  const db = freshIndexedDb();
+  const scheduled: string[] = [];
+  const deps = {
+    db,
+    depth: "full" as const,
+    scheduleItemEmbedding: (id: string) => scheduled.push(id),
+  };
+  const base = { title: "t", bodyPreview: "b", modifiedAt: 1, syncedAt: 1 };
+  upsertIndexedItemForSync(deps, { ...base, service: "github", type: "pr", externalId: "1" });
+  upsertIndexedItemForSync(deps, {
+    ...base,
+    service: "vantage",
+    type: "cost_allocation",
+    externalId: "default:abc:2026-11-01",
+  });
+  upsertIndexedItemForSync(deps, {
+    ...base,
+    service: "vantage",
+    type: "cost_recommendation",
+    externalId: "rec_1",
+  });
+  expect(scheduled).toEqual(["github:1", "vantage:rec_1"]);
+  expect((db.query("SELECT COUNT(*) AS n FROM item").get() as { n: number }).n).toBe(3);
+  db.close();
+});
+
 // ── Item history (Phase 10 IC1, schema V94) ─────────────────────────────────────────────────────
 
 import { describe } from "bun:test";

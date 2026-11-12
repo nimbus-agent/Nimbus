@@ -742,3 +742,31 @@ describe("createLazyEmbeddingRuntime — warm-up that cannot progress", () => {
     }
   });
 });
+
+describe.skipIf(!VEC_AVAILABLE)("createLazyEmbeddingRuntime - excluded types", () => {
+  test("scheduleItemEmbedding on a cost_allocation row never calls the embedder", async () => {
+    const h = makeHarness({ migrateTo: 30 });
+    try {
+      insertItem(h.db, "unit:cost-1", "cost_allocation");
+      insertItem(h.db, "unit:doc-1", "doc");
+      let embedCalls = 0;
+      const base = fakeEmbedder("local:test", 384, true);
+      const counting: Embedder = {
+        ...base,
+        embed: (texts, opts) => {
+          embedCalls += 1;
+          return base.embed(texts, opts);
+        },
+      };
+      const runtime = createLazyEmbeddingRuntime(h.db, h.dataDir, silentLogger, h.toml, counting);
+      runtime.scheduleItemEmbedding("unit:cost-1");
+      await new Promise((r) => setTimeout(r, 100));
+      expect(embedCalls).toBe(0);
+      runtime.scheduleItemEmbedding("unit:doc-1");
+      await new Promise((r) => setTimeout(r, 100));
+      expect(embedCalls).toBeGreaterThan(0);
+    } finally {
+      h.cleanup();
+    }
+  });
+});

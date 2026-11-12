@@ -682,3 +682,25 @@ describe("tryCreateRoutingEmbeddingRuntime — non-Error thrown in init", () => 
     }
   });
 });
+
+describe.skipIf(!VEC_AVAILABLE)("createRoutingEmbeddingRuntime - excluded types", () => {
+  test("scheduleItemEmbedding never embeds a cost_allocation row", async () => {
+    const h = makeHarness({ migrateTo: 30, setApiKey: true });
+    try {
+      const now = Date.now();
+      h.db.run(
+        `INSERT INTO item (id, service, type, external_id, title, body_preview, modified_at, synced_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        ["vantage:c1", "vantage", "cost_allocation", "c1", "EC2 2026-11-01 10 USD", "x", now, now],
+      );
+      const factory = await importFactory();
+      const runtime = await factory(h.db, h.paths, silentLogger, h.toml, h.vault);
+      runtime?.scheduleItemEmbedding("vantage:c1");
+      await new Promise((r) => setTimeout(r, 80));
+      const chunks = h.db.query("SELECT COUNT(*) AS c FROM embedding_chunk").get() as { c: number };
+      expect(chunks.c).toBe(0);
+    } finally {
+      h.cleanup();
+    }
+  });
+});

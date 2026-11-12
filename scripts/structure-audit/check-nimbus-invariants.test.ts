@@ -29,6 +29,7 @@ import {
   checkEmbeddingConstructorConfinement,
   checkEvalConfinement,
   checkExtensionRoleConfinement,
+  checkFinopsConfinement,
   checkFlatUpsertGraphEntityCoOwnedTypes,
   checkFleetClientKindConfinement,
   checkForwardShareConfinement,
@@ -6022,6 +6023,98 @@ describe("D45 - the morning briefing delivers locally only (OR-10-11)", () => {
       file(`${SRC}briefing/x.ts`, 'const r = { trigger: "schedule" };\n'),
     ]);
     expect(no.map((v) => v.rule)).toContain("standing-unattended-confined");
+  });
+});
+
+describe("D48 - FinOps cost code cannot leave the machine (spec § 6, OR-10-8)", () => {
+  const file = (relPath: string, contents: string): FileEntry => ({ relPath, contents });
+  const SRC = "packages/gateway/src/";
+  const SERIES = `${SRC}finops/cost-series.ts`;
+  const RETENTION = `${SRC}finops/cost-retention.ts`;
+  const GOOD: FileEntry[] = [
+    file(
+      SERIES,
+      [
+        'import type { Database } from "bun:sqlite";',
+        'import { DAY_MS } from "./cost-item-contract.ts";',
+        'import type { X } from "../connectors/mapped-row.ts";',
+        'import { createHash } from "node:crypto";',
+        "",
+      ].join("\n"),
+    ),
+    file(RETENTION, 'import { deleteItemByPrimaryKey } from "../index/item-store.ts";\n'),
+    file(`${SRC}finops/cost-series.test.ts`, 'import { x } from "../chatops/x.ts";\nfetch("u");\n'),
+    file(
+      `${SRC}finops/comment.ts`,
+      '// import { x } from "../chatops/x.ts"; fetch("u")\nconst s = "fetch(";\ndb.fetch(1);\n',
+    ),
+  ];
+  const rules = (files: FileEntry[]): string[] => checkFinopsConfinement(files).map((v) => v.rule);
+  const bad = (path: string, contents: string): FileEntry[] => [...GOOD, file(path, contents)];
+
+  test("the control passes", () => {
+    expect(checkFinopsConfinement(GOOD)).toEqual([]);
+  });
+
+  test.each([
+    'import { x } from "../chatops/x.ts";',
+    'import { x } from "../egress/x.ts";',
+    'import { x } from "../federation/x.ts";',
+    'import { x } from "../share/x.ts";',
+    'import { x } from "../llm/x.ts";',
+    'import { x } from "../engine/x.ts";',
+    'import { x } from "../agents/x.ts";',
+    'import { x } from "../connectors/x.ts";',
+    'import { type A, b } from "../connectors/x.ts";',
+    'const m = await import("../llm/x.ts");',
+    'const m = require("../egress/x.ts");',
+    'export { x } from "../connectors/x.ts";',
+    'import type { X } from "../engine/x.ts";',
+    'import "../connectors/x.ts";',
+    "const m = await import(`../llm/x.ts`);",
+    "const m = await import(`../llm/$types.ts`);",
+  ])("a forbidden import is flagged: %s", (body) => {
+    expect(rules(bad(SERIES, body))).toEqual(["finops-forbidden-import"]);
+  });
+
+  test.each([
+    'fetch("https://x");',
+    'globalThis.fetch("https://x");',
+    'Bun.fetch("https://x");',
+    'const w = new WebSocket("wss://x");',
+    'import { get } from "node:http";',
+    'import n from "node:net";',
+    'import { fetch } from "undici";',
+    "const outbound = fetch;",
+    "const w = window;",
+    "const m = await import(`node:https`);",
+  ])("a network primitive is flagged: %s", (body) => {
+    expect(rules(bad(SERIES, body))).toContain("finops-no-network");
+  });
+
+  test("an import( written inside a string is not an import", () => {
+    expect(rules(bad(SERIES, 'const example = "import(`node:https`)";'))).toEqual([]);
+    expect(rules(bad(SERIES, "const t = 'import(`../llm/x.ts`)';"))).toEqual([]);
+  });
+
+  test("a file outside finops/, a test, a comment and a string are not scanned", () => {
+    expect(
+      rules(
+        bad(`${SRC}connectors/vantage-sync.ts`, 'import { x } from "../engine/x.ts"; fetch("u");'),
+      ),
+    ).toEqual([]);
+    expect(rules(bad(`${SRC}finops/x.test.ts`, 'fetch("u");'))).toEqual([]);
+  });
+
+  test("the real repository satisfies the rule and the checker visits finops/", async () => {
+    const files: FileEntry[] = [];
+    for await (const f of iterateSourceFiles())
+      files.push({ relPath: f.relPath, contents: f.contents });
+    expect(checkFinopsConfinement(files)).toEqual([]);
+    expect(
+      files.some((f) => f.relPath.startsWith(`${SRC}finops/`) && !f.relPath.endsWith(".test.ts")),
+    ).toBe(true);
+    expect(assertScanIsMeaningful(files)).toEqual([]);
   });
 });
 

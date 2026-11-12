@@ -239,6 +239,7 @@ describe("replaceItemSetRows — refusals", () => {
       outlook: ["event"],
       pagerduty: ["oncall_shift"],
       jira: ["oncall_shift"],
+      vantage: ["cost_recommendation"],
     });
   });
 });

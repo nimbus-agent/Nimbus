@@ -394,7 +394,7 @@ describe("buildCandidateSql", () => {
   test("no optional fields produces base sql only", () => {
     const { sql, params } = buildCandidateSql({ model: "local" });
     expect(sql).not.toContain("AND i.service");
-    expect(sql).not.toContain("AND i.type");
+    expect(sql).not.toContain("AND i.type = ?");
     expect(sql).not.toContain("LIMIT");
     expect(params).toEqual(["local"]);
   });
@@ -685,5 +685,46 @@ describe("handleReembedCancel edge cases", () => {
     await expect(
       dispatchIndexReembedRpc("index.reembedCancel", { jobId: 42 }, ctx),
     ).rejects.toBeInstanceOf(IndexReembedRpcError);
+  });
+});
+
+describe("buildCandidateSql - excluded types (FinOps cost rows)", () => {
+  function candidates(params: Parameters<typeof buildCandidateSql>[0]): string[] {
+    const { db } = freshCtx();
+    const now = Date.now();
+    for (const [service, type, ext] of [
+      ["vantage", "cost_allocation", "c1"],
+      ["vantage", "cost_recommendation", "r1"],
+      ["slack", "message", "m1"],
+    ] as const) {
+      upsertIndexedItem(db, {
+        service,
+        type,
+        externalId: ext,
+        title: ext,
+        modifiedAt: now,
+        syncedAt: now,
+      });
+    }
+    const { sql, params: bound } = buildCandidateSql(params);
+    const rows = db.query(sql).all(...bound) as { id: string }[];
+    db.close();
+    return rows.map((r) => r.id).sort();
+  }
+
+  test("never selects a cost_allocation row, with and without filters", () => {
+    expect(candidates({ model: "local" })).toEqual(["slack:m1", "vantage:r1"]);
+    expect(candidates({ model: "local", service: "vantage" })).toEqual(["vantage:r1"]);
+    expect(candidates({ model: "local", itemType: "vantage:cost_allocation" })).toEqual([]);
+    expect(candidates({ model: "local", itemType: "cost_allocation" })).toEqual([]);
+  });
+});
+
+describe("buildCandidateSql - a remote model never gets cost_recommendation", () => {
+  test("openai: excludes it, local does not", () => {
+    expect(buildCandidateSql({ model: "openai:text-embedding-3-small" }).sql).toContain(
+      "NOT IN ('cost_allocation', 'cost_recommendation')",
+    );
+    expect(buildCandidateSql({ model: "local" }).sql).not.toContain("'cost_recommendation'");
   });
 });

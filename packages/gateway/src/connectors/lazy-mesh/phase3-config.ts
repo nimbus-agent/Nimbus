@@ -48,6 +48,7 @@ import {
   phase3AddTestflightMcp,
   phase3AddVercelMcp,
 } from "./phase3-delivery.ts";
+import { phase3AddVantageMcp } from "./phase3-finops.ts";
 import {
   phase3AddDatadogMcp,
   phase3AddElasticsearchMcp,
@@ -138,6 +139,7 @@ export {
   phase3AddSupersetMcp,
   phase3AddTableauMcp,
   phase3AddTestflightMcp,
+  phase3AddVantageMcp,
   phase3AddVercelMcp,
   phase3AddVertexAiMcp,
   phase3AddWizMcp,
@@ -212,5 +214,6 @@ export async function buildPhase3Servers(
   await phase3AddGreatExpectationsMcp(vault, servers, sandboxCwd);
   await phase3AddMonteCarloMcp(vault, servers, sandboxCwd);
   await phase3AddBigeyeMcp(vault, servers, sandboxCwd);
+  await phase3AddVantageMcp(vault, servers, sandboxCwd);
   return servers;
 }

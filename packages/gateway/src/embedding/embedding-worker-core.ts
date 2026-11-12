@@ -1,3 +1,4 @@
+import { isEmbeddingExcludedType } from "./embedding-exclusions.ts";
 import type { IndexedItem } from "./types.ts";
 
 export type InitMsg = {
@@ -188,7 +189,8 @@ export class EmbeddingWorkerCore {
           const row = conn
             .query("SELECT id, service, type, title, body_preview FROM item WHERE id = ?")
             .get(itemId) as IndexedItem | null | undefined;
-          if (row === null || row === undefined) {
+          // embedding/embedding-exclusions.ts: an excluded type is never embedded.
+          if (row === null || row === undefined || isEmbeddingExcludedType(row.type)) {
             return;
           }
           await pipeline.embedItem(row);

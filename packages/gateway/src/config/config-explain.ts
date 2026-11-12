@@ -9,6 +9,7 @@ import type { ProfileSource } from "./active-profile.ts";
 import { loadNimbusBriefingFromConfigDir } from "./briefing-toml.ts";
 import { CONFIG_ENV_OVERRIDES, isPolicyConstrainedPath } from "./config-env-overrides.ts";
 import { loadNimbusFilesystemRootsFromConfigDir } from "./filesystem-toml.ts";
+import { loadNimbusFinopsFromConfigDir } from "./finops-toml.ts";
 import {
   type FleetJobChecker,
   loadNimbusFleetFromConfigDir,
@@ -94,6 +95,7 @@ export const SECTION_LOADERS: Readonly<Record<string, (configDir: string) => unk
   embedding: loadNimbusEmbeddingFromConfigDir,
   extensions: loadNimbusExtensionsFromConfigDir,
   federation: loadNimbusFederationFromConfigDir,
+  finops: loadNimbusFinopsFromConfigDir,
   "federation.preflight": loadNimbusPreflightFromConfigDir,
   "filesystem.roots": loadNimbusFilesystemRootsFromConfigDir,
   fleet: loadNimbusFleetFromConfigDir,
