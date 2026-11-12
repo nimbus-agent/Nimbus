@@ -1101,13 +1101,17 @@ async function createSchedulerWithMesh(opts: SchedulerWithMeshOpts): Promise<{
       syncScheduler.register(connector, intervalOverrideMs);
     },
   };
+  // Read per sync. Bound here, outside the `if` below, because security-invariants.test.ts pins how
+  // far `syncScheduler.start()` may sit from the guard that wraps it.
+  const briefingSnapshotIntervalMinutes = (): number =>
+    loadNimbusBriefingFromConfigDir(paths.configDir).snapshotIntervalMinutes;
+  const finopsMaxSeries = (): number => loadNimbusFinopsFromConfigDir(paths.configDir).maxSeries;
   if (syncEnabled) {
     registerConnectorMeshSyncables(policyFilteredRegistrar, connectorMesh, {
       pagerdutyMaxPagesPerSync: pagerdutyCfg.maxPagesPerSync,
       workdayConfig: workdayCfg,
-      briefingSnapshotIntervalMinutes: () =>
-        loadNimbusBriefingFromConfigDir(paths.configDir).snapshotIntervalMinutes,
-      finopsMaxSeries: () => loadNimbusFinopsFromConfigDir(paths.configDir).maxSeries,
+      briefingSnapshotIntervalMinutes,
+      finopsMaxSeries,
     });
     registerUserMcpSyncablesFromDatabase(db, policyFilteredRegistrar, connectorMesh);
     syncScheduler.start();
