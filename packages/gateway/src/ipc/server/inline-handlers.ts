@@ -21,8 +21,11 @@ import {
 import { GatewayAgentUnavailableError } from "../../engine/gateway-agent-error.ts";
 import { GAS_LIMIT_REACHED_NOTIFICATION, type GasLimitEvent } from "../../engine/step-budget.ts";
 import { driftHintsFromIndex } from "../../index/drift-hints.ts";
+import { pointInTimeDisclosure } from "../../index/item-history-at.ts";
 import type { IndexSearchQuery } from "../../index/local-index.ts";
 import { describeRetrieval } from "../../index/search-retrieval.ts";
+import { type AtTimeError, parseAtParam } from "../../util/point-in-time-parse.ts";
+import { gatewayZone } from "../../util/zoned-time.ts";
 import type { AgentInvokeContext } from "../agent-invoke.ts";
 import { type AgentInvokeContextLike, createAskStreamHandler } from "../engine-ask-stream.ts";
 import type { ClientSession } from "../session.ts";
@@ -478,6 +481,14 @@ export function rpcGatewayPing(ctx: ServerCtx, params: unknown): unknown {
   return { ...base, drift: { lines } };
 }
 
+function parseSearchAt(raw: unknown): number | undefined {
+  try {
+    return parseAtParam(raw, Date.now(), gatewayZone());
+  } catch (e) {
+    throw new RpcMethodError(-32602, `index.searchRanked: ${(e as AtTimeError).message}`);
+  }
+}
+
 export async function rpcIndexSearchRanked(ctx: ServerCtx, params: unknown): Promise<unknown> {
   if (ctx.options.localIndex === undefined) {
     throw new RpcMethodError(-32603, "Local index is not available");
@@ -514,6 +525,15 @@ export async function rpcIndexSearchRanked(ctx: ServerCtx, params: unknown): Pro
   }
 
   const query: IndexSearchQuery = { limit };
+  // `at` (Phase 10 IC1): a PRESENT but unusable value is refused, and an undisclosed historical answer is
+  // the failure this feature exists to prevent, so `at` requires the envelope that carries the disclosure.
+  const atMs = parseSearchAt(rec["at"]);
+  if (atMs !== undefined) {
+    if (rec["envelope"] !== true) {
+      throw new RpcMethodError(-32602, "index.searchRanked: at requires envelope: true");
+    }
+    query.atMs = atMs;
+  }
   if (name !== "") {
     query.name = name;
   }
@@ -533,10 +553,22 @@ export async function rpcIndexSearchRanked(ctx: ServerCtx, params: unknown): Pro
   // client keeps a second copy of the notes. A caller that does not ask still receives undisclosed
   // partial results — the stated residual (docs/architecture.md, search retrieval disclosure).
   if (rec["envelope"] === true) {
+    const notes = describeRetrieval(result.retrieval);
+    if (result.pointInTime === undefined) {
+      return { items: result.items, retrieval: result.retrieval, notes };
+    }
+    const zone = gatewayZone();
+    const disclosure = pointInTimeDisclosure({ ...result.pointInTime, zone });
     return {
       items: result.items,
       retrieval: result.retrieval,
-      notes: describeRetrieval(result.retrieval),
+      notes: [...notes, ...disclosure],
+      asOf: {
+        atMs: result.pointInTime.atMs,
+        zone,
+        historyStartMs: result.pointInTime.historyStartMs,
+        gapCount: result.pointInTime.gapCount,
+      },
     };
   }
   return result.items;

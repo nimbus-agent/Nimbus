@@ -49,6 +49,14 @@ const QUERY_HELP = `nimbus query — structured index reads (Gateway IPC)
 Usage:
   nimbus query --service <id> [--type <t>] [--since 7d] [--limit N] [--json | --pretty]
   nimbus query --sql "SELECT ..." [--json | --pretty]   (read-only guard)
+  nimbus query --service <id> [--type <t>] --at <time>  (the index as it stood then)
+
+--at <time> answers as the index stood at that time: 2026-11-11T09:00Z, 2026-11-11T09:00 (gateway
+time zone), 2026-11-11, yesterday-09:00, today-14:30 or -2h. Existence and the tracked state keys
+(status, state, severity, assignee, merged, draft, due date) come from item history, which begins at
+the upgrade; titles and bodies are as of now. Rows whose state at that time cannot be placed are
+counted on the "Gaps:" line, never shown. --at refuses --sql, --since, --not-touching and
+--no-downstream-incident.
 
 Negation predicates (each requires its --type; an empty substrate refuses with exit 1):
   nimbus query --service <id> --type pr         --not-touching '<glob>'
@@ -123,6 +131,7 @@ function validateNegationFlags(f: {
 interface QueryItemsParams {
   services: string[];
   types?: string[];
+  at?: string;
   sinceMs?: number;
   limit: number;
   notTouching?: string;
@@ -139,6 +148,7 @@ function buildQueryParams(f: {
   notTouchingRaw: string | undefined;
   noDownstreamIncident: boolean;
   explainRequested: boolean;
+  at: string | undefined;
 }): QueryItemsParams {
   const params: QueryItemsParams = {
     services: [f.service],
@@ -159,6 +169,9 @@ function buildQueryParams(f: {
   if (f.explainRequested) {
     params.explain = true;
   }
+  if (f.at !== undefined) {
+    params.at = f.at;
+  }
   return params;
 }
 
@@ -171,8 +184,12 @@ export async function runQuery(args: string[]): Promise<void> {
   const sql = takeFlag(args, "--sql");
   const wantJson = args.includes("--json");
   const pretty = args.includes("--pretty");
+  const at = parseAtFlag(args);
 
   if (sql !== undefined) {
+    if (at !== undefined) {
+      throw new Error("--at cannot be combined with --sql (arbitrary SQL reads the current index)");
+    }
     const r = await withGatewayIpc((c) =>
       c.call<{ rows: Record<string, unknown>[]; meta: { count: number } }>("index.querySql", {
         sql,
@@ -196,6 +213,14 @@ export async function runQuery(args: string[]): Promise<void> {
   const limit = limitRaw === undefined ? Number.NaN : Number.parseInt(limitRaw, 10);
 
   validateNegationFlags({ type, notTouchingRequested, notTouchingRaw, noDownstreamIncident });
+  if (
+    at !== undefined &&
+    (sinceRaw !== undefined || notTouchingRequested || noDownstreamIncident)
+  ) {
+    throw new Error(
+      "--at cannot be combined with --since, --not-touching or --no-downstream-incident",
+    );
+  }
 
   const sinceMs =
     sinceRaw === undefined ? undefined : Date.now() - parseSinceDurationToMs(sinceRaw);
@@ -208,6 +233,7 @@ export async function runQuery(args: string[]): Promise<void> {
     notTouchingRaw,
     noDownstreamIncident,
     explainRequested,
+    at,
   });
 
   const r = await withGatewayIpc((c) => c.call<QueryItemsResult>("index.queryItems", params));
@@ -218,7 +244,30 @@ export async function runQuery(args: string[]): Promise<void> {
     return;
   }
 
+  // An older gateway ignores `at` and would answer from CURRENT data: refuse rather than print it.
+  if (at !== undefined && r.asOf === undefined) {
+    console.error("this gateway does not support --at; upgrade it (nothing was queried)");
+    process.exitCode = 1;
+    return;
+  }
+
   printQueryResult(r, { wantJson, pretty, noDownstreamIncident });
+}
+
+/**
+ * `--at <time>`: a present flag must never become an omitted filter (that would answer from current data a
+ * question that asked for an earlier time), so a missing, blank or option-looking value is refused here,
+ * before any IPC call. The gateway parses the time itself, in its own zone.
+ */
+function parseAtFlag(args: string[]): string | undefined {
+  if (!args.includes("--at")) {
+    return undefined;
+  }
+  const raw = takeFlag(args, "--at");
+  if (raw === undefined || raw.trim() === "" || raw.startsWith("--")) {
+    throw new Error("--at needs a time (e.g. 2026-11-11T09:00, yesterday-09:00, -2h)");
+  }
+  return raw;
 }
 
 function printQueryResult(
@@ -238,6 +287,12 @@ function printQueryResult(
   printRows(r.items, o.wantJson, o.pretty);
   if (o.wantJson) {
     return;
+  }
+  if (r.asOf !== undefined) {
+    // stderr, like `nimbus search`: stdout stays the rows; the gaps line below carries the count.
+    for (const line of pointInTimeLines(r.asOf.disclosure)) {
+      console.error(line);
+    }
   }
   if (r.gaps !== undefined) {
     console.log(formatGapLine(r.gaps));
@@ -261,13 +316,29 @@ type QueryItemsGaps =
       readonly excludedNoCoverage: number;
       readonly excludedTruncated: number;
     }
-  | { readonly excludedNoGraphEntity: number };
+  | { readonly excludedNoGraphEntity: number }
+  | { readonly excludedUnplaceable: number };
+
+/** The gateway's point-in-time disclosure: the instant, the zone, where history starts, the lines. */
+type QueryItemsAsOf = {
+  readonly atMs: number;
+  readonly zone: string;
+  readonly historyStartMs: number | null;
+  readonly disclosure: readonly string[];
+};
+
+/** The disclosure lines before `## Gaps`: the gaps themselves print on the existing `Gaps:` line. */
+function pointInTimeLines(disclosure: readonly string[]): string[] {
+  const end = disclosure.indexOf("## Gaps");
+  return end < 0 ? [...disclosure] : disclosure.slice(0, end);
+}
 
 type QueryItemsSuccess = {
   readonly items: Array<Record<string, unknown>>;
   readonly meta: { readonly limit: number; readonly total: number };
   readonly gaps?: QueryItemsGaps;
   readonly explain?: NegationExplain;
+  readonly asOf?: QueryItemsAsOf;
 };
 
 type QueryItemsResult = QueryItemsSuccess | MissingSubstrateRefusal;

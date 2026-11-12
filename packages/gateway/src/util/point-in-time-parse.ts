@@ -125,3 +125,18 @@ export function parseAtTime(raw: string, nowMs: number, zone: string = gatewayZo
   if (ms < EARLIEST_MS) fail("That time is before 2000-01-01.");
   return ms;
 }
+
+/**
+ * The `at` param of an IPC request: `undefined` (and `null`) means "no point-in-time", anything else must be
+ * a non-empty string that {@link parseAtTime} accepts. A PRESENT but unusable value is refused, never
+ * ignored: ignoring it would answer from current data a question that asked for an earlier time.
+ */
+export function parseAtParam(
+  raw: unknown,
+  nowMs: number,
+  zone: string = gatewayZone(),
+): number | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  if (typeof raw !== "string") fail("at must be a time string.");
+  return parseAtTime(raw, nowMs, zone);
+}

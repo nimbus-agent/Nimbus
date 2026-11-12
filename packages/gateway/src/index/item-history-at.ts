@@ -249,6 +249,13 @@ export function annotateStateAt<T extends AnnotatableItem>(
   });
 }
 
+/** What a point-in-time retrieval knows for its disclosure: the instant, where history starts, the gap count. */
+export type PointInTimeFacts = {
+  readonly atMs: number;
+  readonly historyStartMs: number | null;
+  readonly gapCount: number;
+};
+
 export type PointInTimeDisclosureInput = {
   readonly atMs: number;
   readonly zone: string;

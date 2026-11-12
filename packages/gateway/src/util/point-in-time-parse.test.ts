@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { AtTimeError, parseAtTime } from "./point-in-time-parse.ts";
+import { AtTimeError, parseAtParam, parseAtTime } from "./point-in-time-parse.ts";
 
 const NOW = Date.UTC(2026, 10, 12, 10, 0, 0); // 2026-11-12T10:00:00Z
 const LONDON = "Europe/London";
@@ -128,5 +128,26 @@ describe("parseAtTime - refusals name the accepted forms", () => {
 
   test("the default zone is the gateway's own", () => {
     expect(parseAtTime("2026-11-11T09:00Z", NOW)).toBe(Date.UTC(2026, 10, 11, 9));
+  });
+});
+
+describe("parseAtParam", () => {
+  test("absent and null mean no point-in-time", () => {
+    expect(parseAtParam(undefined, NOW, LONDON)).toBeUndefined();
+    expect(parseAtParam(null, NOW, LONDON)).toBeUndefined();
+  });
+
+  test("a usable string is parsed", () => {
+    expect(parseAtParam("-1h", NOW, LONDON)).toBe(NOW - 3_600_000);
+  });
+
+  test("a present but unusable value is refused, never ignored", () => {
+    expect(() => parseAtParam(5, NOW, LONDON)).toThrow(AtTimeError);
+    expect(() => parseAtParam("", NOW, LONDON)).toThrow(AtTimeError);
+    expect(() => parseAtParam({}, NOW, LONDON)).toThrow(/time string/);
+  });
+
+  test("the default zone is the gateway's own", () => {
+    expect(parseAtParam("2026-11-11T09:00Z", NOW)).toBe(Date.UTC(2026, 10, 11, 9));
   });
 });

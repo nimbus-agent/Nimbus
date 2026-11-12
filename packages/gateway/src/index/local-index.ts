@@ -42,7 +42,14 @@ import {
 import { statusLastError } from "../sync/status-last-error.ts";
 import type { SyncStatus } from "../sync/types.ts";
 import { deleteChatReadMarkersForService } from "./chat-read-marker-store.ts";
-import { type AtClause, annotateStateAt, buildAtClause } from "./item-history-at.ts";
+import {
+  type AtClause,
+  annotateStateAt,
+  buildAtClause,
+  buildAtGapClause,
+  earliestHistoryMs,
+  type PointInTimeFacts,
+} from "./item-history-at.ts";
 import { buildItemListSql, type ItemListQueryParams } from "./item-list-query.ts";
 import {
   deleteAllItemsForService,
@@ -172,6 +179,10 @@ function applyItemMetadataColumn(item: NimbusItem, metadata: string): void {
   } catch {
     /* leave rawMeta unset */
   }
+}
+
+function pointInTimeField(facts: PointInTimeFacts | undefined): { pointInTime?: PointInTimeFacts } {
+  return facts === undefined ? {} : { pointInTime: facts };
 }
 
 function rowToItem(row: ItemRow): NimbusItem {
@@ -710,6 +721,40 @@ export class LocalIndex {
   }
 
   /**
+   * The facts a point-in-time (`atMs`) answer discloses: the instant, the earliest history row for the
+   * in-scope service (or any), and how many KEYWORD matches (same `MATCH`, same service and type filter)
+   * could not be placed at that time. Vector-only candidates the clause drops are not counted: a stated
+   * bound. Undefined when the query has no `atMs`.
+   */
+  pointInTimeFacts(query: IndexSearchQuery): PointInTimeFacts | undefined {
+    const atMs = query.atMs;
+    if (atMs === undefined) return undefined;
+    const services =
+      query.service === undefined || query.service === "" ? undefined : [query.service];
+    const historyStartMs = earliestHistoryMs(this.db, services);
+    const gap = buildAtGapClause(this.db, atMs, "i");
+    const { whereExtra, params } = LocalIndex.searchFiltersAndParams(query, gap);
+    const nameQ = query.name?.trim() ?? "";
+    let row: { n: number };
+    if (nameQ === "") {
+      const where = whereExtra.replace(/^AND /, "WHERE ");
+      row = this.db.query(`SELECT count(*) AS n FROM item i ${where}`).get(...params) as {
+        n: number;
+      };
+    } else {
+      const fts = ftsTitleMatchQuery(nameQ);
+      if (fts === "") return { atMs, historyStartMs, gapCount: 0 };
+      row = this.db
+        .query(
+          `SELECT count(*) AS n FROM item i INNER JOIN item_fts ON i.rowid = item_fts.rowid
+           WHERE item_fts MATCH ? ${whereExtra}`,
+        )
+        .get(fts, ...params) as { n: number };
+    }
+    return { atMs, historyStartMs, gapCount: row.n };
+  }
+
+  /**
    * Ranked search plus the disclosure of what it actually did ({@link SearchRetrieval}). The
    * disclosure is built HERE, the one site that knows both whether the vector half came back and
    * whether a background embedding pass is running, and travels with the items so no caller can
@@ -788,6 +833,7 @@ export class LocalIndex {
         return {
           items: query.atMs === undefined ? items : annotateStateAt(this.db, items, query.atMs),
           retrieval,
+          ...pointInTimeField(this.pointInTimeFacts(query)),
         };
       } finally {
         this.emitQueryLatency("hybrid", performance.now() - t0, nameQ.slice(0, 200) || null);
@@ -800,6 +846,7 @@ export class LocalIndex {
         unrankedReasonFor({ nameQ, semanticOn, hasRuntime: ss !== undefined }),
         ss?.activeBackfillPass() ?? null,
       ),
+      ...pointInTimeField(this.pointInTimeFacts(query)),
     };
   }
 
