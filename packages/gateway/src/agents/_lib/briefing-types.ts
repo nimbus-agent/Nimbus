@@ -2,11 +2,7 @@ import type { Database } from "bun:sqlite";
 import type { GapNote } from "@nimbus-dev/sdk";
 
 import type { BriefingSection } from "../../config/briefing-toml.ts";
-import type {
-  ChatUnreadReader,
-  ChatUnreadResult,
-  ChatUnreadThread,
-} from "../../index/chat-unread-query.ts";
+import type { ChatUnreadReader } from "../../index/chat-unread-query.ts";
 import type { OncallServiceBinding } from "../../index/oncall-now-query.ts";
 
 /**
@@ -72,9 +68,10 @@ export type BriefingBrief = {
   readonly freshness: readonly FreshnessRow[];
 };
 
+export type { ChatUnreadResult, ChatUnreadThread } from "../../index/chat-unread-query.ts";
 // ---- the MB4 seam: unread Slack threads ---------------------------------------------------------
 // MB4 owns these types and `readUnreadChatThreads`; the one wiring line is in `platform/assemble.ts`.
-export type { ChatUnreadReader, ChatUnreadResult, ChatUnreadThread };
+export type { ChatUnreadReader };
 
 export type BriefingDeps = {
   readonly readUnreadChat?: ChatUnreadReader;

@@ -125,10 +125,8 @@ export class BriefingScheduler {
       return;
     }
     try {
-      if (this.baseline === null) {
-        // A restart catches up the last missed slot; a first-ever start or a fresh enable invents no history.
-        this.baseline = this.firstTick ? (this.deps.store.lastSlotAt() ?? now) : now;
-      }
+      // A restart catches up the last missed slot; a first-ever start or a fresh enable invents no history.
+      this.baseline ??= this.firstTick ? (this.deps.store.lastSlotAt() ?? now) : now;
       const plan = planFire({
         schedule: cfg.schedule,
         tz: effectiveBriefingZone(cfg),

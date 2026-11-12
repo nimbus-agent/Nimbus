@@ -290,9 +290,9 @@ export function queryOncallNow(db: Database, opts: OncallNowOptions): OncallNowR
     opts.ownFirst === true
       ? (a: OncallShiftView, b: OncallShiftView) => Number(b.isMe) - Number(a.isMe) || cmpFn(a, b)
       : cmpFn;
-  const shifts = current.sort(own(compareViews)).slice(0, ONCALL_NOW_MAX_CURRENT);
+  const shifts = current.toSorted(own(compareViews)).slice(0, ONCALL_NOW_MAX_CURRENT);
   // Earliest start first (the cap must keep the NEXT shifts); untimed JSM rows follow the timed ones.
-  const next = upcoming.sort(own(compareUpcoming)).slice(0, ONCALL_NOW_MAX_UPCOMING);
+  const next = upcoming.toSorted(own(compareUpcoming)).slice(0, ONCALL_NOW_MAX_UPCOMING);
   return {
     status: shifts.length > 0 ? "ok" : "none_on_call",
     asOfMs: now,

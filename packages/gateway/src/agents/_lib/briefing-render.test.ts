@@ -28,7 +28,7 @@ function brief(over: Partial<BriefingBrief> = {}): BriefingBrief {
           [
             { t: "link", title: "Safe", url: "https://example.com/a(b)" },
             { t: "text", text: " - from " },
-            { t: "plain", text: `${"x".repeat(100)}‮[a](http://evil)\n\`` },
+            { t: "plain", text: `${"x".repeat(100)}\u202e[a](http://evil)\n\`` },
           ],
         ],
         notes: ["and 3 more"],
@@ -72,7 +72,7 @@ describe("renderBriefing", () => {
     // the closing bracket is escaped, so the link cannot be closed early
     expect(md).not.toMatch(/(?<!\\)\]\(http:\/\/evil\.example\)/);
     expect(md).toContain("Standup\\](http://evil.example)");
-    expect(md).not.toContain("‮");
+    expect(md).not.toContain("\u202e");
     expect(md).toContain("[Safe](https://example.com/a%28b%29)");
     const sender = md.split("\n").find((l) => l.includes("[Safe]")) ?? "";
     // 80 characters kept, an ellipsis, no raw backtick or newline, brackets escaped

@@ -128,8 +128,8 @@ describe("payload validation", () => {
   });
 
   test("list accepts no params and the bounds 1 and 100", async () => {
-    await call("briefing.list");
-    await call("briefing.list", { limit: 1 });
-    await call("briefing.list", { limit: 100 });
+    for (const params of [undefined, { limit: 1 }, { limit: 100 }]) {
+      expect(await call("briefing.list", params)).toMatchObject({ kind: "hit" });
+    }
   });
 });

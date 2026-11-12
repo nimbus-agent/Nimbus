@@ -290,7 +290,7 @@ describe("the briefing, end to end", () => {
     const rt = runtime(LONDON);
     const run = await rt.runNow();
     expect(run.markdown).toContain("Unread Slack threads are not available yet");
-    expect((run.markdown?.match(/^## /gm) ?? []).length).toBe(9); // 7 sections + Gaps + Data freshness
+    expect(run.markdown?.match(/^## /gm) ?? []).toHaveLength(9); // 7 sections + Gaps + Data freshness
     expect(run.markdown).toContain("NB_Standup");
   });
 

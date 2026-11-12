@@ -109,22 +109,18 @@ function unconnectedSections(s: BriefingStatusLike): string[] {
 
 export function statusLines(s: BriefingStatusLike): string[] {
   const out: string[] = [];
-  out.push(`Briefing: ${s.enabled ? "on" : "off"}${s.demo ? " (demo)" : ""}`);
-  out.push(`Schedule: ${clean(s.schedule)} (${clean(s.tz)})`);
+  const d = s.deadlines;
   out.push(
+    `Briefing: ${s.enabled ? "on" : "off"}${s.demo ? " (demo)" : ""}`,
+    `Schedule: ${clean(s.schedule)} (${clean(s.tz)})`,
     s.nextFireMs === null
       ? "Next: none"
       : `Next: ${localTime(s.nextFireMs, s.tz)} (${clean(s.tz)})`,
-  );
-  out.push(`Sections: ${s.sections.map(clean).join(", ")}`);
-  out.push(`Keeps runs for ${String(s.retentionDays)} days`);
-  out.push(
+    `Sections: ${s.sections.map(clean).join(", ")}`,
+    `Keeps runs for ${String(s.retentionDays)} days`,
     s.lastRun === null
       ? "Last run: none"
       : `Last run: ${localTime(s.lastRun.firedAt, s.tz)} ${clean(s.lastRun.firedBy)} ${clean(s.lastRun.status)}`,
-  );
-  const d = s.deadlines;
-  out.push(
     d.enabled
       ? `Deadline notices: on (within ${String(d.leadHours)} h, quiet for ${String(d.quietHours)} h)`
       : "Deadline notices: off",

@@ -127,7 +127,7 @@ function sectionsKey(raw: string, report: Report): readonly BriefingSection[] {
     const inner = raw.trim().slice(1, -1).trim();
     if (inner !== "") {
       const parts = inner.split(",");
-      if (parts.length > 1 && (parts[parts.length - 1] ?? "").trim() === "") parts.pop();
+      if (parts.length > 1 && (parts.at(-1) ?? "").trim() === "") parts.pop();
       if (parts.some((p) => parseString(p) === "")) {
         report("[briefing].sections holds an empty entry; using all");
         return fallback;
@@ -238,6 +238,26 @@ function applyDeadlinesKey(
   }
 }
 
+function tableOfHeader(header: string): "main" | "deadlines" | null {
+  if (header === "[briefing]") return "main";
+  if (header === "[briefing.deadlines]") return "deadlines";
+  return null;
+}
+
+/** The schedule is validated against the EFFECTIVE zone, so a bad `tz` does not also condemn it. */
+function validateScheduleDraft(draft: Draft, report: Report): void {
+  const refusal = scheduleRefusal(
+    draft.schedule,
+    effectiveBriefingZone(draft),
+    BRIEFING_MIN_INTERVAL_MINUTES,
+  );
+  if (refusal === undefined) return;
+  report(
+    `[briefing].schedule "${draft.schedule}" is not usable (${refusal}); using "${DEFAULT_BRIEFING_CONFIG.schedule}"`,
+  );
+  draft.schedule = DEFAULT_BRIEFING_CONFIG.schedule;
+}
+
 /** Parse `[briefing]` and `[briefing.deadlines]`. A bad value reports through `onFallback`. */
 export function parseNimbusTomlBriefing(
   source: string,
@@ -251,9 +271,7 @@ export function parseNimbusTomlBriefing(
     const trimmed = stripComment(line).trim();
     if (trimmed === "") continue;
     if (isTableHeader(trimmed)) {
-      if (trimmed === "[briefing]") table = "main";
-      else if (trimmed === "[briefing.deadlines]") table = "deadlines";
-      else table = null;
+      table = tableOfHeader(trimmed);
       continue;
     }
     if (table === null) continue;
@@ -262,18 +280,7 @@ export function parseNimbusTomlBriefing(
     if (table === "main") applyMainKey(draft, kv.key, kv.valRaw, report);
     else applyDeadlinesKey(deadlines, kv.key, kv.valRaw, report);
   }
-  // The schedule is validated against the EFFECTIVE zone, so a bad `tz` does not also condemn it.
-  const refusal = scheduleRefusal(
-    draft.schedule,
-    effectiveBriefingZone(draft),
-    BRIEFING_MIN_INTERVAL_MINUTES,
-  );
-  if (refusal !== undefined) {
-    report(
-      `[briefing].schedule "${draft.schedule}" is not usable (${refusal}); using "${DEFAULT_BRIEFING_CONFIG.schedule}"`,
-    );
-    draft.schedule = DEFAULT_BRIEFING_CONFIG.schedule;
-  }
+  validateScheduleDraft(draft, report);
   return Object.freeze({
     ...draft,
     sections: Object.freeze([...draft.sections]),

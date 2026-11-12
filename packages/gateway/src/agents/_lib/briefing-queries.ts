@@ -431,8 +431,8 @@ export function selectTickets(
     (due === "overdue" ? overdue : today).push(entry);
   }
   return {
-    overdue: overdue.sort(byDueThenId),
-    today: today.sort(byDueThenId),
+    overdue: overdue.toSorted(byDueThenId),
+    today: today.toSorted(byDueThenId),
     otherOpen,
     unreadable,
     snapshots: TICKET_SERVICES.map((service) => ({

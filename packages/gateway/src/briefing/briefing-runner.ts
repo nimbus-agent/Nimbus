@@ -88,9 +88,9 @@ export async function runBriefing(
       });
       prune(deps, nowMs);
       return { id, status: "failed", headline: FAILED_HEADLINE };
-    } catch (inner) {
-      if (inner instanceof SlotTakenError) return null;
-      throw inner;
+    } catch (error_) {
+      if (error_ instanceof SlotTakenError) return null;
+      throw error_;
     }
   }
   const text = briefingToastText(composed.brief.counts);

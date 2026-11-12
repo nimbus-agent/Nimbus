@@ -339,5 +339,10 @@ describe("lifecycle", () => {
     await s.tick();
     s.stop();
     await s.retire();
+    // stopped and retired: a later start() never restarts the timer or scans again
+    const before = scans;
+    s.start();
+    await s.tick();
+    expect(scans).toBe(before);
   });
 });

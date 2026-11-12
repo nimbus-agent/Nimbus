@@ -147,6 +147,17 @@ export function createBriefingRuntime(deps: BriefingRuntimeDeps): BriefingRuntim
     return run;
   };
 
+  /**
+   * Resolves once no run is in flight. It re-checks after every wait (by recursing): another run may
+   * have started in the gap before this callback resumed.
+   */
+  const waitUntilIdle = async (): Promise<void> => {
+    const running = inFlight;
+    if (running === undefined) return;
+    await running.catch(() => {});
+    await waitUntilIdle();
+  };
+
   const runNow = async (): Promise<BriefingRunView> => {
     if (inFlight !== undefined) throw new BriefingBusyError();
     const result = await doFire({ firedBy: "manual", toast: !deps.demo });
@@ -162,9 +173,8 @@ export function createBriefingRuntime(deps: BriefingRuntimeDeps): BriefingRuntim
         now: deps.now,
         loadConfig,
         fire: async (req) => {
-          // A scheduled slot waits for a run in flight rather than racing it. It re-checks after every
-          // wait: another run may have started in the gap before this callback resumed.
-          while (inFlight !== undefined) await inFlight.catch(() => {});
+          // A scheduled slot waits for a run in flight rather than racing it.
+          await waitUntilIdle();
           return await doFire(req);
         },
         scan: async (cfg) => {
