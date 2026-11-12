@@ -18,7 +18,8 @@ leaves every planned phase in place.
 What the sweep found, in the numbers that motivated the decisions (verified 2026-11-12; they decay):
 
 - The main repository took 257 commits in the previous 30 days and has cut 269 releases. The
-  organisation has 8 stars in total and three outside pull requests, all in November 2026.
+  organisation has 8 stars in total. The main repository has had seven pull requests from outside
+  authors since June 2026, three of them in November.
 - The client surfaces had not released for five to eight weeks (`nimbus-vscode` v0.23.0 on
   2026-10-04, `nimbus-web-clipper` v0.11.0 on 2026-10-08, `nimbus-client` v0.18.0 on 2026-09-18)
   while the gateway shipped all of S3 and most of S4. `docs/roadmap.md` § Client surfaces still
@@ -26,8 +27,9 @@ What the sweep found, in the numbers that motivated the decisions (verified 2026
 - The model door offers 108 connector writes behind a typed preview. An outside MCP client can
   propose 47 action types, through `nimbus captures accept` and then the executor's prompt, and is
   shown no before-state (`connectors/proposable-actions.ts`, `mcp-sink/capture-act.ts`).
-- No container, Helm chart or service unit exists in the repository, and the Vault has no backend
-  that works without a logged-in session keyring (`packages/gateway/src/vault/`).
+- No container, Helm chart or service unit exists in the repository. On Linux the Vault needs a
+  session keyring (libsecret), so a container or a headless host has no working backend
+  (`packages/gateway/src/vault/` holds `win32`, `darwin`, `linux` and the demo-only `ephemeral`).
 - The owner uses Nimbus occasionally. Nobody else relies on it.
 
 Acceptance criteria for this project (all are checks on documents and repository state):
@@ -35,8 +37,11 @@ Acceptance criteria for this project (all are checks on documents and repository
 - **(ED-a)** `docs/roadmap.md` carries a Direction section; the spine table shows S4 with the agent
   door, then S5 Team Server, S6 Cost Pack and S7 Engineering Excellence breadth; three new phase
   sections exist (9.8, 28, 29), each with rows and acceptance criteria; the commercial tier table is
-  gone and no sentence says a capability is commercial-only; § Client surfaces matches the
-  satellites' released state.
+  gone and no sentence says a Nimbus capability is commercial-only; § Client surfaces matches the
+  satellites' released state. **Allowed exception:** the *Verified Publisher tier* row and the
+  owner's open item about its pricing (a fee for a verification service, D-ECO-6) are left as they
+  are and do not fail this criterion; neither does the sentence about paid support or the one about
+  a commercial licence.
 - **(ED-b)** No planned row disappears. A script counts unticked rows per phase section before and
   after; every section from Phase 7 to Phase 27 has a count greater than or equal to its count
   before, except where a row was re-homed, and each re-homed row keeps its text and points at its
@@ -49,7 +54,12 @@ Acceptance criteria for this project (all are checks on documents and repository
 - **(ED-e)** Each satellite roadmap states its part of the direction, and `nimbus-mcp-servers` has a
   `ROADMAP.md`.
 - **(ED-f)** The five scaffold repositories are archived, each with a README note naming the
-  roadmap row that replaced it, and no live document links to one as a live project.
+  roadmap row that replaced it, and no live document links to one as a live project. "Live
+  document" means a tracked text file (`*.md`, `*.mdx`, and the description fields of
+  `package.json` and `server.json`) on the default branch of a repository in the organisation that
+  is not archived, public or private. Changelogs are excluded (they are a dated record), as is git
+  history. Listings outside GitHub (stores, the MCP Registry, curated lists owned by others) are
+  out of scope here and belong to § Reach.
 - **(ED-g)** `docs/README.md`'s headline, the docs-site hero, the GitHub repository description and
   the store listings are unchanged by this project (see D-ECO-1).
 
@@ -114,11 +124,16 @@ server with the Ops pack comes next, then the Cost pack. Recorded as D-ECO-3.
   tier. The **Verified Publisher tier** row and the owner's open item about its pricing are left
   untouched: they describe a fee for a verification service, the owner did not rule on it, and
   changing it is the owner's call.
-- **D-ECO-7 `docs/ecosystem-roadmap.md` is retired for real.** `docs/roadmap.md` and
-  `docs/infrastructure-roadmap.md` both say it closed on 2026-07-24, yet a file of that name, dated
-  2026-08-02, is on `main`. Each of its eleven clusters is checked against the tree; a cluster that
-  is still open becomes a roadmap row or a pointer on an existing row (cluster 10, "Nimbus beyond
-  one laptop", goes to Phase 28); then the file is deleted so one document owns sequencing.
+- **D-ECO-7 `docs/ecosystem-roadmap.md` stays, and the sentences about it are corrected.**
+  `docs/roadmap.md` and `docs/infrastructure-roadmap.md` both say it closed on 2026-07-24 and is
+  retired, yet a file of that name is on `main`, first drafted 2026-08-02, whose own header calls
+  it a landscape and not a commitment. This project does not delete it and does not reconcile its
+  eleven clusters: it holds design constraints that are still live (its non-goals and its
+  cross-cutting decisions), and deciding where each belongs is a project of its own. What changes:
+  the two "retired" sentences say what the file now is (a landscape record, with no authority over
+  sequencing); two pointers are added inside it, from cluster 10 ("Nimbus beyond one laptop") to
+  Phase 28 and from cluster 6 ("Approval you can act on away from the terminal") to Phase 9.8; and
+  one open row, *Reconcile or retire the ecosystem landscape*, is added under "Carried into S7".
 - **D-ECO-8 `nimbus-security` stops copying the catalogue.** It keeps the disclosure policy and a
   short description of the model, and links to the gateway's `docs/SECURITY-INVARIANTS.md` for the
   list. A hand-copied catalogue is what went stale (it says I1 to I30 and schema V44).
@@ -252,8 +267,9 @@ needs. Invariants in play: I2, I3, I20, I28, I29, I42, I53, I54.
 credentials held in one place, questions and approvals in the team's chat.
 
 Pulled by reference (rows keep their text where they are, D-ECO-4): Phase 12's *Docker image*,
-*Helm chart* and *Air-gapped bundle*; Phase 16 Wave 1's `nimbus serve --team`, signed team baseline
-and `team join`; ecosystem-roadmap cluster 10.
+*Helm chart* and *Air-gapped bundle*; Phase 16 Wave 1's *Team-server tier* (`nimbus serve --team`,
+which already plans an always-on team Gateway), *Signed team baseline* and
+*`nimbus team join <repo>`*; ecosystem-roadmap cluster 10.
 
 New rows (`[NEW]`):
 
@@ -359,8 +375,8 @@ row is added. § Client surfaces drops the three scaffold rows and says where ea
 | Where | Says | Source of truth |
 |---|---|---|
 | `docs/roadmap.md` § Client surfaces | editor v0.12.0; browser v0.2.0 and "not yet built" | each satellite's latest release and its own `ROADMAP.md` |
-| `docs/roadmap.md` Phase 7 and 8 | LaunchDarkly, Flagsmith, Semgrep, SonarQube, Wiz unticked | Phase 5 ticks the read side; each row is reworded to say what remains (the write tool) |
-| `docs/roadmap.md`, `docs/infrastructure-roadmap.md` | `ecosystem-roadmap.md` retired 2026-07-24 | D-ECO-7 |
+| `docs/roadmap.md` Phase 7 and 8 | LaunchDarkly, Flagsmith, Semgrep, SonarQube, Wiz unticked | Phase 5 ticks the read side. Each row is reworded **in place** to say the read side shipped (with its Phase 5 date) and what remains; it stays one unticked row. No row is split, ticked or removed, so ED-b's count is unchanged |
+| `docs/roadmap.md`, `docs/infrastructure-roadmap.md` | `ecosystem-roadmap.md` closed 2026-07-24 and retired | D-ECO-7 |
 | `nimbus-security` | I1 to I30, schema V44 | D-ECO-8 |
 | `awesome-nimbus` | monorepo paths for the SDK, client, extension and connectors; I1 to I27; Raycast as a working tool | the repositories that hold them |
 | `ECOSYSTEM.md`, profile README | "~80 services"; omit `nimbus-mcp`, `nimbus-trust`; SDK as "TypeScript types" | `bundled-connector-registry.ts`; the repository list; the SDK's three bindings |
@@ -398,11 +414,45 @@ organisation shows publicly.
 - `nimbus-raycast`: not planned.
 - `nimbus-statuspage`, `nimbus-postmortem`: § 5.6.
 
-### 5.11 Slices (one pull request each, in order)
+### 5.11 The held copy for `docs/launch-messaging.md` (D-ECO-1)
+
+Added as a new section at the end of the file, under the heading **"Direction copy — HELD until
+agent door v1 ships"**, with one sentence above it: nothing below may appear in a README headline,
+a listing, a post or the docs-site hero before the release that ships Phase 9.8, and until then
+`nimbus why` stays "the one thing". The existing sections of the file are not changed. The copy,
+in the file's existing plain tone:
+
+> **One-liner.** The trust layer between AI agents and your engineering systems: private context
+> in, approved actions out, and a record of both that you can check.
+>
+> **The one thing.** Let your coding agent act on your real systems. Before anything changes,
+> Nimbus shows you exactly what will change and waits for you. Afterwards, `nimbus prove` shows
+> what it dispatched.
+>
+> **Three pillars.** *Know*: a private index of your tools, on your machine. *Act*: every write
+> behind a typed preview and your approval. *Prove*: a hash-chained record of every action the
+> agent dispatched.
+
+Claims the held copy may make, and no others: what Phase 9.8's acceptance criteria prove. The
+file's existing honesty guardrails apply to it unchanged, and two lines are added to them: the gate
+guards what passes through it, and an agent that holds its own credentials can act outside it. No
+market fact, competitor name or incident is cited anywhere in the file (§ 8).
+
+### 5.12 Who does what, and with which access
+
+The builder works with the owner's `gh` credentials. The first step of the plan checks, per
+repository, that those credentials can push a branch and open a pull request
+(`gh api repos/nimbus-agent/<repo> --jq .permissions`); a repository where they cannot is reported
+and its slice is handed to the owner as a ready diff. Pull requests are opened without asking
+(the owner's standing rule) and merged when their required checks are green (the owner's standing
+rule of 2026-11-05). ED11 needs admin rights on each repository; the builder prepares the README
+notes as pull requests, and runs the archive calls only after asking the owner once more (§ 5.10).
+
+### 5.13 Slices (one pull request each, in order)
 
 | Slice | Repository | Contents |
 |---|---|---|
-| ED1 | `Nimbus` | § 5.1 to § 5.8 in `docs/roadmap.md`; `CLAUDE.md` and `GEMINI.md`; `docs/README.md`'s roadmap summary only; `docs/launch-messaging.md` (held copy); `docs/infrastructure-roadmap.md` (the ecosystem-roadmap sentence); delete `docs/ecosystem-roadmap.md`. `docs/architecture.md` and `docs/cli-reference.md` are unchanged, and the pull request says why (no behaviour or command changed). This spec is deleted from the branch before the pull request opens. |
+| ED1 | `Nimbus` | § 5.1 to § 5.8 in `docs/roadmap.md`; `CLAUDE.md` and `GEMINI.md`; `docs/README.md`'s roadmap summary only; `docs/launch-messaging.md` (§ 5.11); `docs/infrastructure-roadmap.md` and `docs/ecosystem-roadmap.md` (D-ECO-7: two corrected sentences, two pointers). `docs/architecture.md` and `docs/cli-reference.md` are unchanged, and the pull request says why (no behaviour or command changed). This spec is deleted from the branch before the pull request opens. |
 | ED2 | `.github` | `ECOSYSTEM.md`, profile README |
 | ED3 | `awesome-nimbus` | § 5.8 |
 | ED4 | `nimbus-security` | D-ECO-8 |
@@ -453,4 +503,36 @@ ED1 merges first because the others cite it. ED2 to ED10 are independent. ED11 i
 
 ## 9. Review log
 
-(empty)
+### Author's own re-check (2026-11-12)
+
+Three claims in the first draft were wrong or too broad and were corrected before any review:
+"three outside pull requests" (seven since June 2026, three of them in November, from the GitHub
+search API); "the Vault has no backend that works without a session keyring" (true of Linux, which
+is the case that matters for a server; not checked for Windows, so the sentence now names Linux);
+and Phase 16's team-server row was cited loosely (it is *Team-server tier*, `nimbus serve --team`).
+
+### Builder check (fresh subagent, 2026-11-12)
+
+Five questions, each checked against the spec and the tree. All were for the author; none needed
+the owner.
+
+Applied:
+- Q1 (does "no sentence says a capability is commercial-only" cover the Verified Publisher row?):
+  ED-a now names that row, the paid-support sentence and the commercial-licence sentence as allowed
+  exceptions.
+- Q2 (what is a "live document", and who can push, merge and archive?): ED-f defines it; § 5.12 says
+  who does what. Access was then checked: the owner's `gh` credentials have push and admin on all
+  fifteen repositories this project touches.
+- Q3 (who writes the held launch copy, and what may it claim?): the copy is written out in § 5.11
+  with the claims it may make.
+- Q4 (which ecosystem-roadmap clusters are "still open", and where does each go?): the question
+  showed the original D-ECO-7 (reconcile eleven clusters, then delete the file) was a project of its
+  own hidden inside this one. D-ECO-7 now keeps the file, corrects the two sentences, adds two
+  pointers and one open row.
+- Q5 (may a Phase 7 or 8 row be split when it is reworded?): § 5.8 says reword in place; no row is
+  split, ticked or removed.
+
+### Antigravity
+
+Round 1 (2026-11-12): no review. The run hit its 15-minute print limit with no output; the bundle
+(26 files, 536 KB) was too large. Rerun on a lean bundle (19 files, 204 KB).
