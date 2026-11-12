@@ -144,7 +144,7 @@ describe("recordItemUpsertHistory", () => {
     }
   });
 
-  test("an absent non-always key records nothing; an absent always key records old -> NULL", () => {
+  test("an absent key records old -> NULL when the old row carried a value, nothing when it did not", () => {
     const db = openMemoryIndexDatabase();
     try {
       seedItem(
@@ -155,9 +155,10 @@ describe("recordItemUpsertHistory", () => {
         '{"status":"Open","status_category":"todo","due_at_ms":5}',
       );
       record(db, next({ id: "j", service: "jira", type: "issue", metadata: '{"status":"Open"}' }));
-      // due_at_ms omitted: silent. status_category is always written: its absence is a change.
+      // Both omitted keys carried a value before, so the earlier value must stay reconstructable.
       expect(rows(db).map((r) => [r.key, r.old_value, r.new_value])).toEqual([
         ["status_category", "todo", null],
+        ["due_at_ms", "5", null],
       ]);
     } finally {
       db.close();
@@ -273,6 +274,40 @@ describe("recordItemDeleteHistory", () => {
       expect(rows(db).map((r) => [r.item_id, r.key, r.observed_at_ms])).toEqual([
         ["a", "__deleted", 99],
       ]);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("the last tracked values go with the deletion as key -> NULL rows, so an earlier state survives a recreation", () => {
+    const db = openMemoryIndexDatabase();
+    try {
+      recordItemDeleteHistory(
+        db,
+        {
+          id: "a",
+          service: "github",
+          type: "pr",
+          metadata: '{"state":"open","title":"T","draft":false}',
+        },
+        99,
+      );
+      expect(rows(db).map((r) => [r.key, r.old_value, r.new_value])).toEqual([
+        ["__deleted", null, null],
+        ["state", "open", null],
+        ["draft", "false", null],
+      ]);
+      // Unreadable or absent metadata: just the marker.
+      recordItemDeleteHistory(
+        db,
+        { id: "b", service: "github", type: "pr", metadata: "{nope" },
+        100,
+      );
+      expect(
+        rows(db)
+          .filter((r) => r.item_id === "b")
+          .map((r) => r.key),
+      ).toEqual(["__deleted"]);
     } finally {
       db.close();
     }

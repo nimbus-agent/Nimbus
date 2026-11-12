@@ -23,7 +23,6 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-
 import {
   createStubVault,
   syncTestContext,
@@ -33,6 +32,7 @@ import { syncPagerdutyIncidentItems } from "../../../src/connectors/pagerduty-sy
 import { createNimbusEngineAgent } from "../../../src/engine/agent.ts";
 import { agentRequestContext } from "../../../src/engine/agent-request-context.ts";
 import { buildLocalIndexedContextForTest } from "../../../src/engine/run-ask.ts";
+import type { PointInTimeFacts } from "../../../src/index/item-history-at.ts";
 import { buildAtClause, earliestHistoryMs } from "../../../src/index/item-history-at.ts";
 import { runItemHistoryPrune } from "../../../src/index/item-history-retention.ts";
 import { LocalIndex } from "../../../src/index/local-index.ts";
@@ -349,12 +349,13 @@ describe("every entry point returns the same admitted set", () => {
   });
 
   test("the nimbus ask local-router context", async () => {
-    const ctx = await buildLocalIndexedContextForTest(idx, "payment-service", T);
+    const searched: PointInTimeFacts[] = [];
+    const ctx = await buildLocalIndexedContextForTest(idx, "payment-service", T, searched);
     const ids = [...(ctx?.text ?? "").matchAll(/"sourceId":"github:([^"]+)"/g)].map(
       (m) => m[1] ?? "",
     );
     expect(sorted(ids.filter((i) => i.startsWith(REPO)))).toEqual(sorted(EXPECTED_ADMITTED));
-    expect(ctx?.pointInTime?.gapCount).toBe(1);
+    expect(searched[0]?.gapCount).toBe(1);
   });
 
   test("the agent's searchLocalIndex tool", async () => {

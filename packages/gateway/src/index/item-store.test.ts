@@ -138,6 +138,11 @@ function historyKeys(db: Database): string[] {
   );
 }
 
+/** The existence markers only: a deletion also writes `key -> NULL` rows for the tracked values it carried. */
+function lifecycleKeys(db: Database): string[] {
+  return historyKeys(db).filter((k) => k.startsWith("__"));
+}
+
 describe("item history writer wiring", () => {
   test("a tracked pair writes __created, then the change row", () => {
     const db = freshIndexedDb();
@@ -224,8 +229,47 @@ describe("item history writer wiring", () => {
     deleteItemByPrimaryKey(db, "missing:id");
     expect(historyKeys(db)).toEqual(["__created"]);
     deleteItemByPrimaryKey(db, "github:o/r#1", 77);
-    const last = db.query("SELECT key, observed_at_ms FROM item_history ORDER BY id DESC").get();
+    const last = db
+      .query("SELECT key, observed_at_ms FROM item_history WHERE key = '__deleted'")
+      .get();
     expect(last).toEqual({ key: "__deleted", observed_at_ms: 77 });
+    expect(
+      db.query("SELECT key, old_value, new_value FROM item_history WHERE key = 'state'").get(),
+    ).toEqual({ key: "state", old_value: "open", new_value: null });
+    db.close();
+  });
+
+  test("a failing item delete leaves no __deleted row and keeps the graph entity (one transaction)", () => {
+    const db = freshIndexedDb();
+    upsertIndexedItem(db, prRow("open", 10));
+    db.run(
+      "INSERT OR IGNORE INTO graph_entity (id, type, external_id, label, service) VALUES ('g1','pr','github:o/r#1','l','github')",
+    );
+    db.run(
+      "CREATE TRIGGER no_item_delete BEFORE DELETE ON item BEGIN SELECT RAISE(ABORT, 'no'); END",
+    );
+    expect(() => deleteItemByPrimaryKey(db, "github:o/r#1", 77)).toThrow();
+    expect(historyKeys(db)).toEqual(["__created"]);
+    expect(
+      db.query("SELECT count(*) AS n FROM graph_entity WHERE external_id = 'github:o/r#1'").get(),
+    ).toEqual({ n: 1 });
+    db.close();
+  });
+
+  test("a failing history erasure rolls back the whole service erasure, graph entities included", () => {
+    const db = freshIndexedDb();
+    upsertIndexedItem(db, prRow("open", 10));
+    db.run(
+      "INSERT OR IGNORE INTO graph_entity (id, type, external_id, label, service) VALUES ('g1','pr','github:o/r#1','l','github')",
+    );
+    db.run(
+      "CREATE TRIGGER no_hist_delete BEFORE DELETE ON item_history BEGIN SELECT RAISE(ABORT, 'no'); END",
+    );
+    expect(() => deleteAllItemsForService(db, "github")).toThrow();
+    expect(db.query("SELECT count(*) AS n FROM item").get()).toEqual({ n: 1 });
+    expect(
+      db.query("SELECT count(*) AS n FROM graph_entity WHERE external_id = 'github:o/r#1'").get(),
+    ).toEqual({ n: 1 });
     db.close();
   });
 
@@ -233,7 +277,7 @@ describe("item history writer wiring", () => {
     const db = freshIndexedDb();
     upsertIndexedItem(db, prRow("open", 10));
     deleteItemByServiceExternal(db, "github", "o/r#1");
-    expect(historyKeys(db)).toEqual(["__created", "__deleted"]);
+    expect(lifecycleKeys(db)).toEqual(["__created", "__deleted"]);
     db.close();
   });
 
@@ -276,7 +320,7 @@ describe("item history writer wiring", () => {
     upsertIndexedItem(db, prRow("open", 10));
     deleteItemByPrimaryKey(db, "github:o/r#1", 20);
     upsertIndexedItem(db, prRow("open", 30));
-    expect(historyKeys(db)).toEqual(["__created", "__deleted", "__created"]);
+    expect(lifecycleKeys(db)).toEqual(["__created", "__deleted", "__created"]);
     db.close();
   });
 });

@@ -56,7 +56,7 @@ describe("runAsk --at", () => {
     const invoke = calls.find((c) => c.method === "agent.invoke");
     expect(invoke?.params).toMatchObject({
       input: "which PRs were open",
-      stream: true,
+      stream: false,
       at: "yesterday-09:00",
     });
     expect(stderrChunks.join("")).toBe("");
@@ -90,12 +90,28 @@ describe("runAsk --at", () => {
     expect(calls).toEqual([]);
   });
 
-  it("a result with no asOfMs warns on stderr and sets a non-zero exit code", async () => {
-    fixture({ reply: "old answer" });
-    await runAsk(["hello", "--at", "-2h"]);
+  it("a result with no asOfMs fails: stderr says why, the reply is NOT printed and no session turn is stored", async () => {
+    const calls = fixture({ reply: "old answer" });
+    await runAsk(["hello", "--at", "-2h", "--session", "s1"]);
     expect(stderrChunks.join("")).toContain("this gateway does not support --at");
     expect(stderrChunks.join("")).toContain("CURRENT data");
+    expect(stdoutChunks.join("")).not.toContain("old answer");
+    expect(calls.some((c) => c.method === "session.append")).toBe(false);
     expect(process.exitCode).toBe(1);
+  });
+
+  it("a point-in-time reply that carries the echo is printed and stored", async () => {
+    const calls = fixture({ reply: "historical answer", asOfMs: 5 });
+    await runAsk(["hello", "--at", "-2h", "--session", "s1"]);
+    expect(stdoutChunks.join("")).toContain("historical answer");
+    expect(calls.filter((c) => c.method === "session.append").length).toBeGreaterThan(0);
+    expect(process.exitCode).toBe(0);
+  });
+
+  it("an ordinary ask still streams", async () => {
+    const calls = fixture({ reply: "" });
+    await runAsk(["hello"]);
+    expect(calls.find((c) => c.method === "agent.invoke")?.params).toMatchObject({ stream: true });
   });
 
   it("the usage line names --at", async () => {

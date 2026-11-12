@@ -5823,6 +5823,8 @@ describe("D46(b) - item_history is written only by its module (Phase 10 IC1)", (
     ["INSERT OR REPLACE", 'dbRun(db, "INSERT OR REPLACE INTO item_history (a) VALUES (1)")'],
     ["REPLACE INTO", 'dbRun(db, "REPLACE INTO item_history (a) VALUES (1)")'],
     ["DROP", 'dbRun(db, "DROP TABLE item_history")'],
+    ["DROP IF EXISTS", 'dbRun(db, "DROP TABLE IF EXISTS item_history")'],
+    ["a multi-line DROP IF EXISTS", "dbExec(db, `DROP TABLE\n  IF  EXISTS\n  main.item_history`)"],
     ["ALTER", 'dbRun(db, "ALTER TABLE item_history ADD COLUMN x")'],
     ["a quoted name", "dbRun(db, 'INSERT INTO \"item_history\" (a) VALUES (1)')"],
     ["a bracketed name", "dbRun(db, 'INSERT INTO [item_history] (a) VALUES (1)')"],

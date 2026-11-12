@@ -58,6 +58,9 @@ export type StartItemHistoryRetentionOptions = {
   readonly retentionDays: () => number;
   readonly nowMs?: () => number;
   readonly yieldToEventLoop?: () => Promise<void>;
+  /** Test seams: the per-batch row count and the per-pass batch cap. */
+  readonly batchSize?: number;
+  readonly maxBatches?: number;
   /** Repeating timer factory; injected in tests. */
   readonly setTimer?: (fn: () => void, ms: number) => ItemHistoryRetentionTimer;
 };
@@ -89,15 +92,25 @@ export function startItemHistoryRetention(
   const yieldToEventLoop = opts.yieldToEventLoop ?? defaultYield;
   const setTimer = opts.setTimer ?? defaultSetTimer;
   let inFlight: Promise<void> | undefined;
+  let stopped = false;
   const tick = (): void => {
     if (inFlight !== undefined) return;
     inFlight = (async () => {
       try {
-        await runItemHistoryPrune(db, {
-          retentionDays: opts.retentionDays(),
-          nowMs: clock(),
-          yieldToEventLoop,
-        });
+        // A pass is bounded; a backlog larger than one pass is drained by further passes right away
+        // (yielding between them), not left for the next day's tick.
+        let more = true;
+        while (more && !stopped) {
+          const run = await runItemHistoryPrune(db, {
+            retentionDays: opts.retentionDays(),
+            nowMs: clock(),
+            yieldToEventLoop,
+            ...(opts.batchSize === undefined ? {} : { batchSize: opts.batchSize }),
+            ...(opts.maxBatches === undefined ? {} : { maxBatches: opts.maxBatches }),
+          });
+          more = run.more;
+          if (more) await yieldToEventLoop();
+        }
       } catch {
         // Best-effort maintenance: never crash the gateway.
       }
@@ -107,5 +120,11 @@ export function startItemHistoryRetention(
   };
   tick();
   const timer = setTimer(tick, ITEM_HISTORY_PRUNE_INTERVAL_MS);
-  return { stop: () => timer.clear(), idle: async () => inFlight };
+  return {
+    stop: () => {
+      stopped = true;
+      timer.clear();
+    },
+    idle: async () => inFlight,
+  };
 }

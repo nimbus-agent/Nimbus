@@ -160,6 +160,54 @@ describe("startItemHistoryRetention", () => {
     }
   });
 
+  test("a pass that stops at maxBatches with rows left is followed at once by another, until done", async () => {
+    const db = openMemoryIndexDatabase();
+    try {
+      fill(db, 25, 1);
+      const t = fakeTimer();
+      let yields = 0;
+      const h = startItemHistoryRetention(db, {
+        retentionDays: () => 7,
+        nowMs: () => 100 * DAY,
+        yieldToEventLoop: async () => {
+          yields += 1;
+        },
+        batchSize: 5,
+        maxBatches: 2,
+        setTimer: t.setTimer,
+      });
+      await h.idle();
+      expect(count(db)).toBe(0);
+      expect(yields).toBeGreaterThan(0);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("stop() ends a backlog drain between passes", async () => {
+    const db = openMemoryIndexDatabase();
+    try {
+      fill(db, 25, 1);
+      const t = fakeTimer();
+      let handle: ReturnType<typeof startItemHistoryRetention> | undefined;
+      handle = startItemHistoryRetention(db, {
+        retentionDays: () => 7,
+        nowMs: () => 100 * DAY,
+        yieldToEventLoop: async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+          handle?.stop();
+        },
+        batchSize: 5,
+        maxBatches: 2,
+        setTimer: t.setTimer,
+      });
+      await handle.idle();
+      expect(count(db)).toBe(15);
+    } finally {
+      db.close();
+    }
+  });
+
   test("the retention is read through the closure on EVERY tick", async () => {
     const db = openMemoryIndexDatabase();
     try {

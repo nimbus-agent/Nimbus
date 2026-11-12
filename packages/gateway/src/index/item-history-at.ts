@@ -270,7 +270,9 @@ export function pointInTimeDisclosure(input: PointInTimeDisclosureInput): string
     `As of ${new Date(input.atMs).toISOString()} (${input.zone}). State keys come from item history; titles and bodies are as of now.`,
   ];
   if (input.historyStartMs === null) {
-    lines.push("Item history is empty; only items unchanged since that time are shown.");
+    lines.push(
+      "Item history is empty for at least part of this scope; there, only items unchanged since that time are shown.",
+    );
   } else if (input.historyStartMs > input.atMs) {
     lines.push(
       `History starts ${new Date(input.historyStartMs).toISOString()}; state before then is the first observed state.`,
@@ -282,6 +284,8 @@ export function pointInTimeDisclosure(input: PointInTimeDisclosureInput): string
     n === 1
       ? "1 item could not be placed at that time (its state changed after it and the change predates item history, or its birth is unknown); it is not shown."
       : `${String(n)} items could not be placed at that time (their state changed after it and the change predates item history, or their birth is unknown); they are not shown.`,
+    // The reader sees only items that still exist: a deleted item has no `item` row to filter or count.
+    "Items deleted from the index since that time are not shown and are not counted.",
   );
   return lines;
 }

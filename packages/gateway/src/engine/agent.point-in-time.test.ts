@@ -84,7 +84,7 @@ describe("toolsFor on a point-in-time turn", () => {
     for (const name of decided) expect(all).toContain(name);
   });
 
-  test("exactly the three time-aware tools are offered, even with every other source present", async () => {
+  test("exactly the two time-aware tools are offered, even with every other source present", async () => {
     const listing: LazyMeshToolMap = { mcp_x_echo: { execute: async () => "RAN" } };
     const userMcp: UserMcpAgentToolSource = {
       listModelAccessibleIds: () => ["mcp_x"],

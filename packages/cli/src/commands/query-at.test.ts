@@ -62,6 +62,14 @@ describe("runQuery --at", () => {
     expect(process.exitCode).toBe(0);
   });
 
+  it("piped without --pretty: stdout is exactly the JSON array, the Gaps lines go to stderr", async () => {
+    setupMock([AT_RESPONSE]);
+    await runQuery(["--service", "github", "--type", "pr", "--at", "-2h"]);
+    expect(Array.isArray(JSON.parse(out.stdout))).toBe(true);
+    expect(out.stdout).not.toContain("Gaps:");
+    expect(out.stderr).toContain("Gaps: 2 excluded (state at that time cannot be placed)");
+  });
+
   it("--json keeps the whole document, asOf included, on stdout", async () => {
     setupMock([AT_RESPONSE]);
     await runQuery(["--service", "github", "--at", "-2h", "--json"]);

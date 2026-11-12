@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Agent } from "@mastra/core/agent";
 import { NULL_EGRESS_SINK } from "../egress/egress-ledger.ts";
+import type { PointInTimeFacts } from "../index/item-history-at.ts";
 import { upsertIndexedItem } from "../index/item-store.ts";
 import { LocalIndex } from "../index/local-index.ts";
 import type { ConsentCoordinator } from "../ipc/consent.ts";
@@ -102,16 +103,62 @@ function params(localIndex: LocalIndex, over: Record<string, unknown> = {}) {
 describe("buildLocalIndexedContext with a point in time", () => {
   test("every item is as of T, carries asOf, and the facts ride along", async () => {
     const idx = seed();
-    const ctx = await buildLocalIndexedContextForTest(idx, "payment-service", AT);
+    const searched: PointInTimeFacts[] = [];
+    const ctx = await buildLocalIndexedContextForTest(idx, "payment-service", AT, searched);
     expect(ctx?.text).toContain("payment-service retry fix");
     expect(ctx?.text).not.toContain("payment-service rewrite");
     expect(ctx?.text).toContain('"asOf"');
-    expect(ctx?.pointInTime?.atMs).toBe(AT);
-    expect(ctx?.pointInTime?.historyStartMs).toBe(BASE);
-    const now = await buildLocalIndexedContextForTest(idx, "payment-service");
+    expect(searched[0]?.atMs).toBe(AT);
+    expect(searched[0]?.historyStartMs).toBe(BASE);
+    const nowSearched: PointInTimeFacts[] = [];
+    const now = await buildLocalIndexedContextForTest(
+      idx,
+      "payment-service",
+      undefined,
+      nowSearched,
+    );
     expect(now?.text).toContain("payment-service rewrite");
     expect(now?.text).not.toContain('"asOf"');
-    expect(now?.pointInTime).toBeUndefined();
+    expect(nowSearched).toEqual([]);
+    idx.close();
+  });
+
+  /** An untracked-type item modified after T: its state at T cannot be placed, so it is a GAP, never shown. */
+  function addGap(idx: LocalIndex, title: string): void {
+    idx.rawDb.run(
+      `INSERT INTO item (id, service, type, external_id, title, modified_at, synced_at, metadata)
+       VALUES ('slack:gap1', 'slack', 'message', 'gap1', ?, ?, 1, '{}')`,
+      [title, BASE + 5000],
+    );
+  }
+
+  test("a keyword match that is only a gap still reports its facts, though no context is built", async () => {
+    const idx = seed();
+    addGap(idx, "zzgapword only");
+    const searched: PointInTimeFacts[] = [];
+    const ctx = await buildLocalIndexedContextForTest(idx, "zzgapword", AT, searched);
+    expect(ctx).toBeUndefined();
+    expect(searched.map((f) => f.gapCount)).toEqual([1]);
+    idx.close();
+  });
+
+  test("a fallback or quoted search that supplied the answer contributes its gap count", async () => {
+    const idx = seed();
+    addGap(idx, "zzgapword payment-service");
+    const quoted: PointInTimeFacts[] = [];
+    await buildLocalIndexedContextForTest(idx, 'is "zzgapword payment-service" there', AT, quoted);
+    // The primary search and the quoted search each saw the gap.
+    expect(quoted.length).toBeGreaterThanOrEqual(2);
+    expect(Math.max(...quoted.map((f) => f.gapCount))).toBe(1);
+    const fallback: PointInTimeFacts[] = [];
+    const ctx = await buildLocalIndexedContextForTest(
+      idx,
+      "payment-service zzgapword nonexistentterm",
+      AT,
+      fallback,
+    );
+    expect(ctx?.text ?? "").toContain("payment-service retry fix");
+    expect(Math.max(...fallback.map((f) => f.gapCount))).toBe(1);
     idx.close();
   });
 
@@ -241,6 +288,55 @@ describe("runAsk with pointInTimeMs", () => {
     await expect(runAsk(params(idx, { pointInTimeMs: AT }))).rejects.toBeInstanceOf(
       GatewayAgentUnavailableError,
     );
+    idx.close();
+  });
+
+  test("a time-travel turn neither reads nor writes session history; an ordinary turn still does", async () => {
+    const idx = seed();
+    const reads: string[] = [];
+    const appends: string[] = [];
+    const sessionMemoryStore = {
+      getRecentTurns: async (id: string) => {
+        reads.push(id);
+        return [{ role: "assistant", text: "EARLIER-REPLY" }];
+      },
+      append: async (t: { text: string }) => {
+        appends.push(t.text);
+      },
+    } as unknown as NonNullable<Parameters<typeof runAsk>[0]["sessionMemoryStore"]>;
+    const prompts: string[] = [];
+    await agentRequestContext.run({ sessionId: "s1" }, async () => {
+      await runAsk(
+        params(idx, { llmRouter: fakeRouter(prompts), pointInTimeMs: AT, sessionMemoryStore }),
+      );
+    });
+    expect(reads).toEqual([]);
+    expect(appends).toEqual([]);
+    expect(prompts.join(" ")).not.toContain("EARLIER-REPLY");
+    await agentRequestContext.run({ sessionId: "s1" }, async () => {
+      await runAsk(params(idx, { llmRouter: fakeRouter(prompts), sessionMemoryStore }));
+    });
+    expect(reads).toEqual(["s1"]);
+    expect(appends.length).toBeGreaterThan(0);
+    idx.close();
+  });
+
+  test("an empty item table still answers a point-in-time turn: the echo and the block", async () => {
+    const db = new Database(":memory:");
+    LocalIndex.ensureSchema(db);
+    const idx = new LocalIndex(db);
+    const chunks: string[] = [];
+    const out = await runAsk(
+      params(idx, { pointInTimeMs: AT, stream: true, sendChunk: (t: string) => chunks.push(t) }),
+    );
+    expect(out.asOfMs).toBe(AT);
+    expect(out.reply).toContain("No data indexed yet");
+    expect(out.reply).toContain("As of 2026-01-01T00:00:01.000Z");
+    expect(out.reply).toContain("Item history is empty");
+    expect(chunks.join("")).toContain("As of 2026-01-01T00:00:01.000Z");
+    const ordinary = await runAsk(params(idx));
+    expect(ordinary.asOfMs).toBeUndefined();
+    expect(ordinary.reply).not.toContain("As of ");
     idx.close();
   });
 

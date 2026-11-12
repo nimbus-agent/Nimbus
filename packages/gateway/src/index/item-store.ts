@@ -293,17 +293,24 @@ export function deleteItemByPrimaryKey(
   primaryKey: string,
   nowMs: number = Date.now(),
 ): void {
-  const row = db.query("SELECT id, service, type FROM item WHERE id = ?").get(primaryKey) as {
+  const row = db
+    .query("SELECT id, service, type, metadata FROM item WHERE id = ?")
+    .get(primaryKey) as {
     id: string;
     service: string;
     type: string;
+    metadata: string | null;
   } | null;
-  if (row !== null) {
-    deleteGraphEntitiesForItemKeys(db, [row.id]);
-    // An upstream deletion of a tracked item is part of its history (Phase 10 IC1).
-    recordItemDeleteHistory(db, row, nowMs);
-  }
-  dbRun(db, "DELETE FROM item WHERE id = ?", [primaryKey]);
+  // One transaction (a savepoint inside a sync's): a failed item delete must not leave a committed `__deleted`
+  // row, or the graph entities of an item that still exists.
+  db.transaction(() => {
+    if (row !== null) {
+      deleteGraphEntitiesForItemKeys(db, [row.id]);
+      // An upstream deletion of a tracked item is part of its history (Phase 10 IC1).
+      recordItemDeleteHistory(db, row, nowMs);
+    }
+    dbRun(db, "DELETE FROM item WHERE id = ?", [primaryKey]);
+  })();
 }
 
 export function deleteItemByServiceExternal(
@@ -316,14 +323,15 @@ export function deleteItemByServiceExternal(
 
 export function deleteAllItemsForService(db: Database, service: string): void {
   const keys = db.query("SELECT id FROM item WHERE service = ?").all(service) as { id: string }[];
-  if (keys.length > 0) {
-    deleteGraphEntitiesForItemKeys(
-      db,
-      keys.map((k) => k.id),
-    );
-  }
   // An owner erasure, not an upstream deletion: the service's change log goes with it (no __deleted rows).
+  // The graph entities go in the same transaction, so a failure leaves the items and their entities together.
   db.transaction(() => {
+    if (keys.length > 0) {
+      deleteGraphEntitiesForItemKeys(
+        db,
+        keys.map((k) => k.id),
+      );
+    }
     dbRun(db, "DELETE FROM item WHERE service = ?", [service]);
     deleteItemHistoryForService(db, service);
   })();

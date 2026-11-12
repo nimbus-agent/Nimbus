@@ -246,6 +246,7 @@ describe("data delete", () => {
         connector_id TEXT PRIMARY KEY
       )
     `);
+    rawDb.run("CREATE TABLE item_history (service TEXT NOT NULL)");
     const bareIndex = { rawDb } as unknown as LocalIndex;
     const bareVault = memVault();
 
@@ -317,6 +318,10 @@ describe("data delete - item history (Phase 10 IC1)", () => {
         [`${service}:1`, service],
       );
     }
+    const dry = await runDataDelete({ service: "github", dryRun: true, vault, index: idx });
+    // The dry run counts the history rows, even though no item of the service remains to be counted.
+    expect(dry.preflight.itemsToDelete).toBe(0);
+    expect(dry.preflight.itemHistoryRowsToDelete).toBe(1);
     await runDataDelete({ service: "github", dryRun: false, vault, index: idx });
     expect(idx.rawDb.query("SELECT service FROM item_history").all()).toEqual([
       { service: "jira" },

@@ -23,13 +23,25 @@ describe("combinePointInTimeFacts", () => {
         5,
         [
           { atMs: 5, historyStartMs: 10, gapCount: 2 },
-          { atMs: 5, historyStartMs: 30, gapCount: 1 },
-          { atMs: 5, historyStartMs: null, gapCount: 7 },
+          { atMs: 5, historyStartMs: 30, gapCount: 7 },
           { atMs: 5, historyStartMs: 20, gapCount: 0 },
         ],
         1,
       ),
     ).toEqual({ atMs: 5, historyStartMs: 30, gapCount: 7 });
+  });
+
+  test("one search with no history at all makes the whole turn read as partly uncovered", () => {
+    expect(
+      combinePointInTimeFacts(
+        5,
+        [
+          { atMs: 5, historyStartMs: null, gapCount: 1 },
+          { atMs: 5, historyStartMs: 20, gapCount: 0 },
+        ],
+        1,
+      ),
+    ).toEqual({ atMs: 5, historyStartMs: null, gapCount: 1 });
   });
 
   test("when every search had empty history the start stays null", () => {
@@ -50,5 +62,7 @@ describe("point-in-time tool lists and instruction", () => {
     const s = pointInTimeInstruction(Date.UTC(2026, 10, 11, 9));
     expect(s).toContain("2026-11-11T09:00:00.000Z");
     expect(s).toContain("titles and bodies are as of now");
+    // The local router has no tools: the context it is given must be an allowed source.
+    expect(s).toContain("indexed context given in this message");
   });
 });

@@ -514,8 +514,8 @@ function stringArrayParam(v: unknown): string[] {
 function parseQueryAt(
   raw: unknown,
   other: {
-    readonly sinceMs: number | undefined;
-    readonly untilMs: number | undefined;
+    /** True when the REQUEST carried `sinceMs` or `untilMs`, whatever its type: a malformed one is still a window. */
+    readonly hasTimeWindow: boolean;
     readonly notTouching: string | undefined;
     readonly noDownstreamIncident: boolean;
   },
@@ -533,7 +533,7 @@ function parseQueryAt(
       "at does not compose with notTouching or noDownstreamIncident (they answer from the current graph)",
     );
   }
-  if (other.sinceMs !== undefined || other.untilMs !== undefined) {
+  if (other.hasTimeWindow) {
     throw new DiagnosticsRpcError(-32602, "at does not compose with sinceMs or untilMs");
   }
   return atMs;
@@ -600,7 +600,12 @@ function parseQueryItemsParams(params: unknown): QueryItemsRequest {
     );
   }
   const explain = rec?.["explain"] === true;
-  const atMs = parseQueryAt(rec?.["at"], { sinceMs, untilMs, notTouching, noDownstreamIncident });
+  // Raw presence, not the normalised values: `optFiniteInt` turns a string `sinceMs` into `undefined`, which
+  // would let `{ at, sinceMs: "1" }` through as an at-only query. `null` counts as absent (JSON-RPC habit).
+  const hasTimeWindow =
+    (rec?.["sinceMs"] !== undefined && rec["sinceMs"] !== null) ||
+    (rec?.["untilMs"] !== undefined && rec["untilMs"] !== null);
+  const atMs = parseQueryAt(rec?.["at"], { hasTimeWindow, notTouching, noDownstreamIncident });
 
   return {
     sinceMs,

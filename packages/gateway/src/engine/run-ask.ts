@@ -12,6 +12,7 @@ import {
   type AsOfState,
   earliestHistoryMs,
   type PointInTimeFacts,
+  pointInTimeDisclosure,
 } from "../index/item-history-at.ts";
 import { escapeLikeLiteral } from "../index/item-store.ts";
 import type { LocalIndex } from "../index/local-index.ts";
@@ -256,15 +257,32 @@ function formatResultSummary(results: unknown[]): string {
 function emptyIndexGuidanceIfNeeded(
   p: RunAskParams,
   indexed: number | undefined,
-): { reply: string } | undefined {
+): RunAskResult | undefined {
   if (p.input.trim() === "" || indexed !== 0) {
     return undefined;
   }
   const guidance = emptyIndexGuidance(isDemo(p));
-  if (p.stream) {
-    p.sendChunk(`${guidance}\n`);
+  const atMs = p.pointInTimeMs;
+  if (atMs === undefined) {
+    if (p.stream) {
+      p.sendChunk(`${guidance}\n`);
+    }
+    return { reply: guidance };
   }
-  return { reply: guidance };
+  // A point-in-time turn is answered as one even when `item` is empty: the client needs the `asOfMs` echo, and
+  // the deterministic block says what the empty table cannot (history may outlive its deleted items).
+  const db =
+    typeof p.localIndex.getDatabase === "function" ? p.localIndex.getDatabase() : undefined;
+  const block = pointInTimeDisclosure({
+    atMs,
+    zone: gatewayZone(),
+    historyStartMs: db === undefined ? null : earliestHistoryMs(db),
+    gapCount: 0,
+  }).join("\n");
+  if (p.stream) {
+    p.sendChunk(`${guidance}\n${block}\n`);
+  }
+  return { reply: `${guidance}\n${block}`, asOfMs: atMs };
 }
 
 async function classifyIntentForAsk(
@@ -412,10 +430,14 @@ async function answerConversationally(
     withdrawOfferedExecutors();
   }
   const sessionId = getAgentRequestSessionId();
-  const priorTurns = await loadRecentConversationHistory(p.sessionMemoryStore, sessionId);
+  // A time-travel turn neither reads nor writes session history: an earlier reply may describe events after T
+  // (evidence for the wrong instant), and this reply is about T, not about the session's present.
+  const priorTurns =
+    atMs === undefined ? await loadRecentConversationHistory(p.sessionMemoryStore, sessionId) : [];
   partial.stage = "retrieval";
+  const searchedFacts: PointInTimeFacts[] = [];
   const localContext = shouldBuildLocalContext(p)
-    ? await buildLocalIndexedContext(p.localIndex, p.input, atMs)
+    ? await buildLocalIndexedContext(p.localIndex, p.input, atMs, searchedFacts)
     : undefined;
 
   // Same guard as `countIndexedItems`: `localIndex.getDatabase` is optional on the interface, and
@@ -446,7 +468,7 @@ async function answerConversationally(
           pointInTime: {
             atMs,
             zone: gatewayZone(),
-            searched: localContext?.pointInTime === undefined ? [] : [localContext.pointInTime],
+            searched: searchedFacts,
             fallbackHistoryStartMs: countDb === undefined ? null : earliestHistoryMs(countDb),
           },
         }),
@@ -472,7 +494,9 @@ async function answerConversationally(
   }
   partial.route = conversationalExplainRoute(result.toolless, localContext);
 
-  await persistConversationTurn(p.sessionMemoryStore, sessionId, p.input, result.reply);
+  if (atMs === undefined) {
+    await persistConversationTurn(p.sessionMemoryStore, sessionId, p.input, result.reply);
+  }
 
   return {
     reply: result.reply,
@@ -992,14 +1016,18 @@ interface LocalIndexedContext {
     readonly pool: LocalCandidate[];
     readonly discardedTail: DiscardedTailEntry[];
   };
-  /** Point-in-time turns only: the primary search's facts, for the deterministic as-of block. */
-  readonly pointInTime?: PointInTimeFacts;
 }
 
+/**
+ * `searched` (point-in-time turns): receives the facts of EVERY keyword search the build ran (primary, quoted,
+ * fallback), pushed as each ran, so they survive a build that returns no context and a context whose items came
+ * from a supplementary search.
+ */
 async function buildLocalIndexedContext(
   localIndex: LocalIndex,
   input: string,
   atMs?: number,
+  searched?: PointInTimeFacts[],
 ): Promise<LocalIndexedContext | undefined> {
   const query = input.trim();
   if (query === "") {
@@ -1051,8 +1079,16 @@ async function buildLocalIndexedContext(
       { semantic: true, contextChunks: 2 },
     );
     const primary = primarySearch.items;
+    if (primarySearch.pointInTime !== undefined) searched?.push(primarySearch.pointInTime);
+    // The supplementary searches' gap facts: `searchRanked` returns items only.
+    const noteFacts = (name: string, limit: number): void => {
+      if (atMs === undefined || searched === undefined) return;
+      const facts = localIndex.pointInTimeFacts({ name, limit, atMs });
+      if (facts !== undefined) searched.push(facts);
+    };
     addRankedResults(primary.slice(0, resolveLocalContextItemLimit()), { kind: "primary-hybrid" });
     for (const quotedQuery of extractQuotedSearchQueries(query)) {
+      noteFacts(quotedQuery, resolveLocalContextItemLimit());
       addRankedResults(
         localIndex.searchRanked({
           name: quotedQuery,
@@ -1077,6 +1113,7 @@ async function buildLocalIndexedContext(
       // its body. Retry with the single most distinctive term: the same question with the
       // strictest part relaxed, not a different one.
       for (const term of fallbackSearchTerms(searchTerms)) {
+        noteFacts(term, LOCAL_CONTEXT_TOTAL_PROBE_LIMIT);
         // The PROBE limit, not the context limit: `capPerService` below can only balance the pool
         // it is handed, and fetching eight rows from a service holding 11,979 of them returns
         // eight rows from that service. Widening here is what gives the cap something to choose
@@ -1152,9 +1189,6 @@ async function buildLocalIndexedContext(
         pool,
         discardedTail,
       },
-      ...(primarySearch.pointInTime === undefined
-        ? {}
-        : { pointInTime: primarySearch.pointInTime }),
     };
   } catch (e) {
     runAskLog.warn({ err: e }, "failed to build local indexed context for local LLM");

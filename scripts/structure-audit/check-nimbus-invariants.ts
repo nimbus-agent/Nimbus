@@ -1039,7 +1039,7 @@ const D46_ITEM_STORE = `${D46_SRC}index/item-store.ts`;
 const D46_RETENTION = `${D46_SRC}index/item-history-retention.ts`;
 const D46_ERASERS: readonly string[] = [D46_ITEM_STORE, `${D46_SRC}commands/data-delete.ts`];
 const D46_WRITE_RE =
-  /\b(?:INSERT\s+(?:OR\s+\w+\s+)?INTO|REPLACE\s+INTO|DELETE\s+FROM|UPDATE(?:\s+OR\s+\w+)?|DROP\s+TABLE|ALTER\s+TABLE)\s+(?:["'`[]?\w+["'`\]]?\s*\.\s*)?["'`[]?item_history\b/gi;
+  /\b(?:INSERT\s+(?:OR\s+\w+\s+)?INTO|REPLACE\s+INTO|DELETE\s+FROM|UPDATE(?:\s+OR\s+\w+)?|DROP\s+TABLE(?:\s+IF\s+EXISTS)?|ALTER\s+TABLE)\s+(?:["'`[]?\w+["'`\]]?\s*\.\s*)?["'`[]?item_history\b/gi;
 const D46_RECORD_RE = /\brecordItem(?:Upsert|Delete)History\b/g;
 const D46_ERASE_RE = /\bdeleteItemHistoryForService\b/g;
 const D46_PRUNE_RE = /\bpruneItemHistory\b/g;

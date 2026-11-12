@@ -108,6 +108,8 @@ describe("index.queryItems - at (Phase 10 IC1)", () => {
     ["noDownstreamIncident", { at: "-1h", noDownstreamIncident: true }],
     ["sinceMs", { at: "-1h", sinceMs: 1 }],
     ["untilMs", { at: "-1h", untilMs: 1 }],
+    ["a malformed sinceMs", { at: "-1h", sinceMs: "1" }],
+    ["a malformed untilMs", { at: "-1h", untilMs: "1" }],
   ])("%s is refused with -32602", (_label, params) =>
     withCtx(async (ctx) => {
       await expect(

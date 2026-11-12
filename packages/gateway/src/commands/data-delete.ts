@@ -7,6 +7,8 @@ import type { NimbusVault } from "../vault/nimbus-vault.ts";
 export type DataDeletePreflight = {
   service: string;
   itemsToDelete: number;
+  /** `item_history` rows of the service (Phase 10 IC1): they can outlive their deleted items, so count separately. */
+  itemHistoryRowsToDelete: number;
   vecRowsToDelete: number;
   syncTokensToDelete: number;
   vaultEntriesToDelete: number;
@@ -49,6 +51,11 @@ async function buildPreflight(input: RunDataDeleteInput): Promise<DataDeletePref
       .query(`SELECT COUNT(*) AS c FROM item WHERE service = ?`)
       .get(input.service) as { c: number }
   ).c;
+  const historyRows = (
+    input.index.rawDb
+      .query(`SELECT COUNT(*) AS c FROM item_history WHERE service = ?`)
+      .get(input.service) as { c: number }
+  ).c;
   const vecRows = vecRowsForService(input.index, input.service);
   const syncTokens = (
     input.index.rawDb
@@ -59,6 +66,7 @@ async function buildPreflight(input: RunDataDeleteInput): Promise<DataDeletePref
   return {
     service: input.service,
     itemsToDelete: items,
+    itemHistoryRowsToDelete: historyRows,
     vecRowsToDelete: vecRows,
     syncTokensToDelete: syncTokens,
     vaultEntriesToDelete: vaultKeys.length,

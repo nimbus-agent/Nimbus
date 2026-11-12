@@ -295,8 +295,12 @@ function printQueryResult(
     }
   }
   if (r.gaps !== undefined) {
-    console.log(formatGapLine(r.gaps));
-    console.log(formatBatchCaveat(r.meta));
+    // A point-in-time query piped without --pretty printed its rows as a JSON array: the disclosure lines
+    // then go to stderr so stdout stays valid JSON for `jq`.
+    const rowsAreJson = o.pretty === false && process.stdout.isTTY !== true;
+    const say = r.asOf !== undefined && rowsAreJson ? console.error : console.log;
+    say(formatGapLine(r.gaps));
+    say(formatBatchCaveat(r.meta));
   }
   if (o.noDownstreamIncident) {
     console.log(

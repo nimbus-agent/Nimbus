@@ -115,7 +115,9 @@ async function reportIfNoConnectors(client: IPCClient): Promise<boolean> {
 function buildInvokeParams(query: string, parsed: AskArgs): Record<string, unknown> {
   const invokeParams: Record<string, unknown> = {
     input: query,
-    stream: true,
+    // A point-in-time ask is not streamed: an older gateway ignores `at`, and its reply must be withheld
+    // (nothing printed, no session turn) once the missing `asOfMs` echo shows it, which streaming cannot do.
+    stream: parsed.at === undefined,
   };
   if (parsed.sessionId !== undefined) {
     invokeParams["sessionId"] = parsed.sessionId;
@@ -217,13 +219,14 @@ export async function runAsk(args: string[]): Promise<void> {
       reportNoLlmGuidanceOrRethrow(e);
       return;
     }
-    // An older gateway ignores `at` and answers from CURRENT data: say so and fail, rather than let the
-    // answer pass for a historical one.
+    // An older gateway ignores `at` and answers from CURRENT data: say so and fail, and neither print the
+    // reply nor record it in the session, rather than let it pass for a historical one.
     if (parsed.at !== undefined && typeof result.asOfMs !== "number") {
       process.stderr.write(
-        "warning: this gateway does not support --at; the answer above is from CURRENT data, not the time you asked for\n",
+        "error: this gateway does not support --at; its answer is from CURRENT data, not the time you asked for, so it is not shown\n",
       );
       process.exitCode = 1;
+      return;
     }
     if (
       invokeParams["stream"] !== true &&

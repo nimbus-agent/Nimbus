@@ -360,6 +360,42 @@ describe("annotateStateAt", () => {
     }
   });
 
+  test("an item deleted and recreated with another state still shows its earlier state before the deletion", () => {
+    const db = openMemoryIndexDatabase();
+    try {
+      put(db, {
+        service: "github",
+        type: "pr",
+        ext: "r",
+        at: 200,
+        meta: { state: "open", merged: false, draft: false, opened_at_ms: 1 },
+      });
+      deleteItemByPrimaryKey(db, "github:r", 1200);
+      put(db, {
+        service: "github",
+        type: "pr",
+        ext: "r",
+        at: 1500,
+        meta: { state: "closed", merged: false, draft: false, opened_at_ms: 1 },
+      });
+      const items: Itm[] = [
+        {
+          id: "r",
+          service: "github",
+          itemType: "pr",
+          rawMeta: { state: "closed", merged: false, draft: false },
+        },
+      ];
+      const [before] = annotateStateAt(db, items, 1000);
+      expect(before?.asOf.state["state"]).toBe("open");
+      // After the recreation the current value stands.
+      const [after] = annotateStateAt(db, items, 1600);
+      expect(after?.asOf.state["state"]).toBe("closed");
+    } finally {
+      db.close();
+    }
+  });
+
   test("current basis for an unchanged item; only tracked keys; an untracked item has none", () => {
     const db = openMemoryIndexDatabase();
     try {
@@ -416,6 +452,7 @@ describe("pointInTimeDisclosure", () => {
       "As of 2026-11-11T09:00:00.000Z (Europe/London). State keys come from item history; titles and bodies are as of now.",
       "## Gaps",
       "2 items could not be placed at that time (their state changed after it and the change predates item history, or their birth is unknown); they are not shown.",
+      "Items deleted from the index since that time are not shown and are not counted.",
     ]);
   });
 
@@ -433,7 +470,9 @@ describe("pointInTimeDisclosure", () => {
 
   test("empty history, singular gap", () => {
     const lines = pointInTimeDisclosure({ ...base, historyStartMs: null, gapCount: 1 });
-    expect(lines[1]).toBe("Item history is empty; only items unchanged since that time are shown.");
+    expect(lines[1]).toBe(
+      "Item history is empty for at least part of this scope; there, only items unchanged since that time are shown.",
+    );
     expect(lines[2]).toBe("## Gaps");
     expect(lines[3]).toContain("1 item could not be placed");
     expect(lines[3]).toContain("it is not shown");

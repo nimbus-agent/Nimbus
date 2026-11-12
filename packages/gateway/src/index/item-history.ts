@@ -97,7 +97,7 @@ function insertRow(
 /**
  * Records what an upsert changed. No prior row writes one `__created` row and no per-key rows (a first
  * observation is a baseline, not a change). An unchanged metadata string writes nothing and parses nothing.
- * A key absent from the new metadata records nothing unless the spec says the mapper writes it `always`.
+ * A key absent from the new metadata is recorded as a change to null when the old row carried a value.
  */
 export function recordItemUpsertHistory(
   db: Database,
@@ -122,9 +122,9 @@ export function recordItemUpsertHistory(
   if (oldMeta === undefined) return;
   const newMeta = JSON.parse(next.metadata) as Record<string, unknown>;
   for (const k of before.spec.keys) {
-    const nv = normalizeHistoryValue(newMeta[k.key]);
-    if (nv === undefined && k.always !== true) continue;
-    const newValue = nv ?? null;
+    // A key the new write omits is a change to null when the old row carried a value: without the row, the
+    // earlier value would be unrecoverable at an instant before this write.
+    const newValue = normalizeHistoryValue(newMeta[k.key]) ?? null;
     const oldValue = normalizeHistoryValue(oldMeta[k.key]) ?? null;
     if (oldValue === newValue) continue;
     insertRow(db, {
@@ -138,23 +138,39 @@ export function recordItemUpsertHistory(
   }
 }
 
-/** One `__deleted` row for a tracked item about to be deleted upstream; nothing for an untracked pair. */
+/**
+ * One `__deleted` row for a tracked item about to be deleted upstream; nothing for an untracked pair. When the
+ * item's stored metadata is readable, each tracked key it carried also gets a `key: value -> NULL` row at the
+ * same instant: if the same id is recreated, those rows are the earliest change after any instant inside the
+ * earlier lifetime, so that lifetime's last state is still reconstructable instead of reading the new item's.
+ */
 export function recordItemDeleteHistory(
   db: Database,
-  item: { readonly id: string; readonly service: string; readonly type: string },
+  item: {
+    readonly id: string;
+    readonly service: string;
+    readonly type: string;
+    readonly metadata?: string | null;
+  },
   nowMs: number,
 ): void {
-  if (specFor(item.service, item.type) === undefined) return;
+  const spec = specFor(item.service, item.type);
+  if (spec === undefined) return;
+  const base = { itemId: item.id, service: item.service, type: item.type, observedAtMs: nowMs };
   insertRow(db, {
-    itemId: item.id,
-    service: item.service,
-    type: item.type,
+    ...base,
     key: DELETED_KEY,
     oldValue: null,
     newValue: null,
-    observedAtMs: nowMs,
     sourceAtMs: null,
   });
+  const meta = parseMetadata(item.metadata ?? null);
+  if (meta === undefined) return;
+  for (const k of spec.keys) {
+    const oldValue = normalizeHistoryValue(meta[k.key]);
+    if (oldValue === undefined) continue;
+    insertRow(db, { ...base, key: k.key, oldValue, newValue: null, sourceAtMs: null });
+  }
 }
 
 /** An owner erasure (`connector remove`, `nimbus data delete`): the service's change log goes with it. */
