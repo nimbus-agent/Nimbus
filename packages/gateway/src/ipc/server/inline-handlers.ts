@@ -136,6 +136,14 @@ function sendGasLimitReached(
   });
 }
 
+function parseAgentInvokeAt(raw: unknown): number | undefined {
+  try {
+    return parseAtParam(raw, Date.now(), gatewayZone());
+  } catch (e) {
+    throw new RpcMethodError(-32602, `agent.invoke: ${(e as AtTimeError).message}`);
+  }
+}
+
 export async function dispatchAgentInvoke(
   ctx: ServerCtx,
   session: ClientSession,
@@ -156,6 +164,8 @@ export async function dispatchAgentInvoke(
   // `=== true`, matching `stream` above: a truthy non-boolean from a hand-rolled client must
   // not silently switch the answer's whole posture.
   const devil = rec?.["devil"] === true;
+  // `--at`: refused BEFORE the agent runs when present but unusable or in the future. Never ignored.
+  const pointInTimeMs = parseAgentInvokeAt(rec?.["at"]);
   const streamId = parseOptionalString(rec, "streamId");
   const clientKind = ctx.getClientKind(clientId);
   const offerUserMcpTools = USER_MCP_OFFER_BY_KIND[clientKind];
@@ -171,6 +181,9 @@ export async function dispatchAgentInvoke(
     const requestStore: AgentRequestContext = {};
     if (sessionId !== undefined) {
       requestStore.sessionId = sessionId;
+    }
+    if (pointInTimeMs !== undefined) {
+      requestStore.pointInTimeMs = pointInTimeMs;
     }
     return await agentRequestContext.run(requestStore, async () => {
       const payload: AgentInvokeContext = {
@@ -194,6 +207,9 @@ export async function dispatchAgentInvoke(
       }
       if (devil) {
         payload.devil = true;
+      }
+      if (pointInTimeMs !== undefined) {
+        payload.pointInTimeMs = pointInTimeMs;
       }
       return handler(payload);
     });

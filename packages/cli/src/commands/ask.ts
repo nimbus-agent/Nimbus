@@ -11,6 +11,7 @@ type AskArgs = {
   sessionId?: string;
   agent?: string;
   devil?: boolean;
+  at?: string;
 };
 
 function parseAskArgs(args: string[]): AskArgs {
@@ -18,8 +19,20 @@ function parseAskArgs(args: string[]): AskArgs {
   let sessionId: string | undefined;
   let agent: string | undefined;
   let devil = false;
+  let at: string | undefined;
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
+    // A valued flag that must never silently vanish or leak into the question: dropping it would answer
+    // from CURRENT data a question that asked for an earlier time.
+    if (a === "--at") {
+      const v = args[i + 1];
+      if (v === undefined || v.trim() === "" || v.startsWith("--")) {
+        throw new Error("--at needs a time (e.g. 2026-11-11T09:00, yesterday-09:00, -2h)");
+      }
+      at = v;
+      i += 1;
+      continue;
+    }
     if (a === "--session" && args[i + 1] !== undefined) {
       sessionId = args[i + 1];
       i += 1;
@@ -49,6 +62,9 @@ function parseAskArgs(args: string[]): AskArgs {
   }
   if (devil) {
     out.devil = true;
+  }
+  if (at !== undefined) {
+    out.at = at;
   }
   return out;
 }
@@ -110,6 +126,9 @@ function buildInvokeParams(query: string, parsed: AskArgs): Record<string, unkno
   if (parsed.devil === true) {
     invokeParams["devil"] = true;
   }
+  if (parsed.at !== undefined) {
+    invokeParams["at"] = parsed.at;
+  }
   return invokeParams;
 }
 
@@ -160,7 +179,7 @@ export async function runAsk(args: string[]): Promise<void> {
   const query = parsed.rest.join(" ").trim();
   if (query.length === 0) {
     throw new Error(
-      'Usage: nimbus ask [--session <uuid>] [--agent <name>] [--devil] "<natural language query>"',
+      'Usage: nimbus ask [--session <uuid>] [--agent <name>] [--devil] [--at <time>] "<natural language query>"',
     );
   }
 
@@ -191,12 +210,20 @@ export async function runAsk(args: string[]): Promise<void> {
     }
 
     const invokeParams = buildInvokeParams(query, parsed);
-    let result: { reply: string };
+    let result: { reply: string; asOfMs?: number };
     try {
-      result = await client.call<{ reply: string }>("agent.invoke", invokeParams);
+      result = await client.call<{ reply: string; asOfMs?: number }>("agent.invoke", invokeParams);
     } catch (e) {
       reportNoLlmGuidanceOrRethrow(e);
       return;
+    }
+    // An older gateway ignores `at` and answers from CURRENT data: say so and fail, rather than let the
+    // answer pass for a historical one.
+    if (parsed.at !== undefined && typeof result.asOfMs !== "number") {
+      process.stderr.write(
+        "warning: this gateway does not support --at; the answer above is from CURRENT data, not the time you asked for\n",
+      );
+      process.exitCode = 1;
     }
     if (
       invokeParams["stream"] !== true &&

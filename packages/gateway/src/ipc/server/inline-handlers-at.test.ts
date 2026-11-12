@@ -1,13 +1,14 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
-
+import { agentRequestContext } from "../../engine/agent-request-context.ts";
 import { upsertIndexedItem } from "../../index/item-store.ts";
 import { LocalIndex } from "../../index/local-index.ts";
 import { createMockVault } from "../../vault/mock.ts";
 import { ConsentCoordinatorImpl } from "../consent.ts";
 import { createStreamRegistry } from "../engine-ask-stream.ts";
+import type { ClientSession } from "../session.ts";
 import type { ServerCtx } from "./context.ts";
-import { rpcIndexSearchRanked } from "./inline-handlers.ts";
+import { dispatchAgentInvoke, rpcIndexSearchRanked } from "./inline-handlers.ts";
 
 function makeIndex(): LocalIndex {
   const db = new Database(":memory:");
@@ -133,5 +134,66 @@ describe("rpcIndexSearchRanked - at (Phase 10 IC1)", () => {
     >;
     expect(Object.keys(r).sort()).toEqual(["items", "notes", "retrieval"]);
     expect(Array.isArray(await rpcIndexSearchRanked(ctx, { name: "alpha" }))).toBe(true);
+  });
+});
+
+describe("dispatchAgentInvoke - at (Phase 10 IC1)", () => {
+  const session = { writeNotification: () => {} } as unknown as ClientSession;
+
+  function ctxWithHandler(handler: (p: unknown) => Promise<{ reply: string }>): ServerCtx {
+    const ctx = makeCtx(makeIndex());
+    return { ...ctx, getAgentInvokeHandler: () => handler as never };
+  }
+
+  test("a usable at puts pointInTimeMs on the payload and the request store", async () => {
+    let payload: Record<string, unknown> | undefined;
+    let storeAt: number | undefined;
+    const ctx = ctxWithHandler(async (p) => {
+      payload = p as Record<string, unknown>;
+      storeAt = agentRequestContext.getStore()?.pointInTimeMs;
+      return { reply: "ok" };
+    });
+    await dispatchAgentInvoke(ctx, session, "c1", { input: "q", at: AT });
+    expect(payload?.["pointInTimeMs"]).toBe(BASE + 1000);
+    expect(storeAt).toBe(BASE + 1000);
+  });
+
+  test("no at leaves the payload and the store without the key", async () => {
+    let payload: Record<string, unknown> | undefined;
+    let store: object | undefined;
+    const ctx = ctxWithHandler(async (p) => {
+      payload = p as Record<string, unknown>;
+      store = agentRequestContext.getStore();
+      return { reply: "ok" };
+    });
+    await dispatchAgentInvoke(ctx, session, "c1", { input: "q" });
+    expect(Object.hasOwn(payload ?? {}, "pointInTimeMs")).toBe(false);
+    expect(Object.hasOwn(store ?? {}, "pointInTimeMs")).toBe(false);
+    await dispatchAgentInvoke(ctx, session, "c1", { input: "q", at: null });
+    expect(Object.hasOwn(payload ?? {}, "pointInTimeMs")).toBe(false);
+  });
+
+  test("a bad, non-string or future at is refused with -32602 BEFORE the agent runs", async () => {
+    let ran = false;
+    const ctx = ctxWithHandler(async () => {
+      ran = true;
+      return { reply: "ok" };
+    });
+    for (const at of ["last tuesday", "", 5, "2999-01-01T00:00Z"]) {
+      await expect(
+        dispatchAgentInvoke(ctx, session, "c1", { input: "q", at }),
+      ).rejects.toMatchObject({
+        rpcCode: -32602,
+      });
+    }
+    expect(ran).toBe(false);
+  });
+
+  test("the handler's asOfMs echo reaches the caller", async () => {
+    const ctx = ctxWithHandler(async () => ({ reply: "ok", asOfMs: BASE + 1000 }) as never);
+    const r = (await dispatchAgentInvoke(ctx, session, "c1", { input: "q", at: AT })) as {
+      asOfMs: number;
+    };
+    expect(r.asOfMs).toBe(BASE + 1000);
   });
 });
