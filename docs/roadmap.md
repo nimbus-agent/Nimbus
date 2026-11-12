@@ -3283,7 +3283,7 @@ testable.
 
 | Want | Cheaper instrument |
 | --- | --- |
-| Distribution / mindshare | The messaging surface above — the only surface that reaches someone who installed nothing — and `nimbus-statuspage`, which is already first in the build order |
+| Distribution / mindshare | The messaging surface above — the only surface that reaches someone who installed nothing — and `nimbus-statuspage`, which was first in the build order when this was written (it was retired on 2026-11-12; its work is the *Status page draft* row of [Phase 17](#phase-17--the-on-call-copilot)) |
 | UI control the extension API supposedly blocks | **Untested.** The `why`-lens hover is specified and unbuilt. Cursor forked in 2023, before chat participants, the Language Model API, LM tools and inline hints existed |
 | Code-writing capability | A different question entirely, rejected separately below |
 | Independence from Microsoft's marketplace | Already mitigated: the extension dual-publishes to Open VSX |
