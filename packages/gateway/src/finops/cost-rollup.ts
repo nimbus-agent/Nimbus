@@ -123,11 +123,30 @@ function rowFor(
   };
 }
 
+export interface RollupResult {
+  readonly rows: RolledCostRow[];
+  /** Series-days whose points carry more than one currency; no row is written for them. */
+  readonly mixedCurrencyBuckets: number;
+}
+
 /** The rows to index: one per named series per UTC day, plus one `__other__` row per day. */
 export function rollUpCostPoints(
   points: readonly CostPoint[],
   opts: RollupOptions,
 ): RolledCostRow[] {
+  return rollUpCostPointsDetailed(points, opts).rows;
+}
+
+/**
+ * {@link rollUpCostPoints} with the count of series-days it refused to sum. Adding amounts in two
+ * currencies gives a number that is in neither, so such a bucket writes no row (a row stored with
+ * `currency: null` would read as a valid total). The series identity carries no currency, so the
+ * alternative of one row per currency would change the approved id contract.
+ */
+export function rollUpCostPointsDetailed(
+  points: readonly CostPoint[],
+  opts: RollupOptions,
+): RollupResult {
   const otherHash = seriesHashOf("other", null, OTHER_VALUE);
   const named = namedSet(points, opts, otherHash);
   // series hash -> its first point and its day buckets; folded points go under the other hash.
@@ -142,6 +161,7 @@ export function rollUpCostPoints(
     series.set(hash, entry);
   }
   const rows: RolledCostRow[] = [];
+  let mixedCurrencyBuckets = 0;
   for (const [hash, { first, days }] of series) {
     const identity =
       hash === otherHash
@@ -160,8 +180,13 @@ export function rollUpCostPoints(
             groupings: first.groupings,
           };
     for (const [dayMs, bucket] of days) {
+      if (new Set(bucket.points.map((p) => p.currency)).size > 1) {
+        mixedCurrencyBuckets += 1;
+        continue;
+      }
       rows.push(rowFor(bucket, dayMs, opts, identity));
     }
   }
-  return rows.sort((a, b) => a.dayMs - b.dayMs || (a.externalId < b.externalId ? -1 : 1));
+  rows.sort((a, b) => a.dayMs - b.dayMs || (a.externalId < b.externalId ? -1 : 1));
+  return { rows, mixedCurrencyBuckets };
 }

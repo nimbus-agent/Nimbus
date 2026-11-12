@@ -14,7 +14,7 @@ import { asRecord, stringField } from "./unknown-record.ts";
 const SERVICE = "vantage";
 const TITLE_MAX = 200;
 const VALUE_MAX = 200;
-const NUMERIC = /^[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?$/;
+const NUMERIC_CHARS = /^[-+.\deE]+$/;
 
 /**
  * Fields of a vendor cost row that are measurements or dates, never dimensions. Anything else that
@@ -54,7 +54,9 @@ function numberOrNumericString(v: unknown): number | null {
   if (typeof v === "number") {
     return Number.isFinite(v) ? v : null;
   }
-  if (typeof v === "string" && NUMERIC.test(v.trim())) {
+  if (typeof v === "string" && NUMERIC_CHARS.test(v.trim())) {
+    // Number() parses sign, decimal point and exponent; the charset check keeps hex, binary,
+    // "Infinity" and other spellings out.
     const n = Number(v.trim());
     return Number.isFinite(n) ? n : null;
   }
@@ -82,6 +84,12 @@ function boundedValue(v: string): string {
   return `${v.slice(0, VALUE_MAX - 7)}…${suffix}`;
 }
 
+/** Code-unit order: deterministic on every machine, unlike a locale compare. */
+function compareNames(a: string, b: string): number {
+  if (a < b) return -1;
+  return a > b ? 1 : 0;
+}
+
 function dimensionNames(row: Record<string, unknown>, groupBy: readonly string[]): string[] {
   const present = (name: string): boolean => {
     const v = row[name];
@@ -90,7 +98,7 @@ function dimensionNames(row: Record<string, unknown>, groupBy: readonly string[]
   const ordered = groupBy.filter((name, i) => present(name) && groupBy.indexOf(name) === i);
   const rest = Object.keys(row)
     .filter((name) => present(name) && !ordered.includes(name))
-    .sort();
+    .sort(compareNames);
   return [...ordered, ...rest];
 }
 

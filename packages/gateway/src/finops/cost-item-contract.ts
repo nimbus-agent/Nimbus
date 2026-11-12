@@ -89,7 +89,7 @@ const SCOPE_MAX = 40;
 const CLEAN_SCOPE = /^[A-Za-z0-9_-]+$/;
 
 function escapePart(part: string): string {
-  return part.replaceAll("\\", "\\\\").replaceAll("|", "\\|");
+  return part.replace(/[\\|]/g, String.raw`\$&`);
 }
 
 function sha256Hex(text: string): string {

@@ -10,7 +10,7 @@ import {
   type ConnectorToolSession,
   withConnectorSession,
 } from "../teamvault/connector-session.ts";
-import { parseMcpListPage } from "./connector-list-page.ts";
+import { extractMcpToolText } from "./_lib/mcp-tool-result.ts";
 import { decodeNimbusJsonCursorObject, encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 
 /** Hard backstop against a cursor that never ends. */
@@ -46,13 +46,22 @@ export interface FinopsSyncSpec<P, K extends string> {
   readonly configure: (ctx: SyncContext) => Promise<P>;
   /** The paged reads for this window, run in order inside ONE connector session. */
   readonly drains: (window: FinopsWindow, prepared: P) => readonly FinopsDrainCall<K>[];
-  /** Map and write everything drained, in one batch; returns the number of rows written. */
+  /**
+   * Identifies the owner's read configuration (report, workspace, grouping). A cursor written under
+   * another scope is ignored: the new configuration reads the first window again.
+   */
+  readonly cursorScope: (prepared: P) => string;
+  /**
+   * Map and write everything drained, in one batch. `fresh` is true when no trusted cursor exists
+   * (first sync, rows gone, or the configuration changed): the indexed series are then not carried over.
+   */
   readonly index: (
     ctx: SyncContext,
     drained: Readonly<Record<K, readonly unknown[]>>,
     syncedAt: number,
     prepared: P,
-  ) => number;
+    fresh: boolean,
+  ) => { written: number; deleted: number };
 }
 
 type SessionRunner = <T>(
@@ -65,6 +74,28 @@ let sessionRunnerOverride: SessionRunner | undefined;
 /** TEST-ONLY DI seam (avoids spawning a real subprocess). Pass `undefined` to restore. */
 export function __setFinopsSessionRunnerForTest(fn: SessionRunner | undefined): void {
   sessionRunnerOverride = fn;
+}
+
+const PAGE_MAX_BYTES = 64 * 1024 * 1024;
+
+/**
+ * One page, strictly: `items` must be an array and `nextCursor` a string or null. The shared
+ * `parseMcpListPage` defaults a missing field, which would make a malformed reply look like the
+ * last page and let an earlier, partial read be indexed as complete.
+ */
+function parseStrictPage(
+  result: unknown,
+  toolId: string,
+): { items: unknown[]; nextCursor: string | null } {
+  const parsed: unknown = JSON.parse(extractMcpToolText(result, PAGE_MAX_BYTES));
+  const rec =
+    parsed !== null && typeof parsed === "object" ? (parsed as Record<string, unknown>) : {};
+  const items = rec["items"];
+  const next = rec["nextCursor"];
+  if (!Array.isArray(items) || (next !== null && typeof next !== "string")) {
+    throw new Error(`${toolId}: a page without items and nextCursor; refusing a partial read`);
+  }
+  return { items, nextCursor: next };
 }
 
 /**
@@ -82,7 +113,7 @@ export async function drainWithArgs(
   let cursor: string | null = null;
   for (let page = 0; page < MAX_PAGES; page += 1) {
     const res = await session.call(toolId, { ...args, cursor });
-    const { items: pageItems, nextCursor } = parseMcpListPage(res);
+    const { items: pageItems, nextCursor } = parseStrictPage(res, toolId);
     items.push(...pageItems);
     if (nextCursor === null) {
       return items;
@@ -96,8 +127,15 @@ export async function drainWithArgs(
 }
 
 /** `lastOkMs` from a cursor of this prefix, or null when there is none to read. */
-export function lastOkMsFromCursor(cursor: string | null, prefix: string): number | null {
+export function lastOkMsFromCursor(
+  cursor: string | null,
+  prefix: string,
+  scope?: string,
+): number | null {
   const payload = decodeNimbusJsonCursorObject(cursor, prefix);
+  if (scope !== undefined && payload?.["scope"] !== scope) {
+    return null;
+  }
   const v = payload?.["lastOkMs"];
   return typeof v === "number" && Number.isFinite(v) && v > 0 ? v : null;
 }
@@ -135,7 +173,7 @@ export function createFinopsSyncable<P, K extends string>(spec: FinopsSyncSpec<P
       const lastOkMs =
         ctx.countItems(spec.serviceId, spec.cursorRowType) === 0
           ? null
-          : lastOkMsFromCursor(cursor, spec.cursorPrefix);
+          : lastOkMsFromCursor(cursor, spec.cursorPrefix, spec.cursorScope(prepared));
       const window = windowFor(lastOkMs, Date.now());
       const run = sessionRunnerOverride ?? withConnectorSession;
       const drained = await run(
@@ -153,11 +191,14 @@ export function createFinopsSyncable<P, K extends string>(spec: FinopsSyncSpec<P
         },
       );
       const syncedAt = Date.now();
-      const upserted = spec.index(ctx, drained, syncedAt, prepared);
+      const { written, deleted } = spec.index(ctx, drained, syncedAt, prepared, lastOkMs === null);
       return {
-        cursor: encodeNimbusJsonCursor(spec.cursorPrefix, { lastOkMs: syncedAt }),
-        itemsUpserted: upserted,
-        itemsDeleted: 0,
+        cursor: encodeNimbusJsonCursor(spec.cursorPrefix, {
+          lastOkMs: syncedAt,
+          scope: spec.cursorScope(prepared),
+        }),
+        itemsUpserted: written,
+        itemsDeleted: deleted,
         hasMore: false,
         durationMs: Math.round(performance.now() - t0),
       };

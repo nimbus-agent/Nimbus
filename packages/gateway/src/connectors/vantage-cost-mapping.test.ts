@@ -239,7 +239,7 @@ describe("costAllocationItem", () => {
       },
       Date.UTC(2024, 0, 1),
     );
-    expect(item.title.length).toBe(200);
+    expect(item.title).toHaveLength(200);
     const short = costAllocationItem(
       {
         externalId: "d:h:2023-06-05",

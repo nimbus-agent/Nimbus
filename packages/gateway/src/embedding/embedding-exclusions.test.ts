@@ -18,3 +18,14 @@ describe("embedding exclusions", () => {
     expect(notEmbeddingExcludedSql("i")).toBe("i.type NOT IN ('cost_allocation')");
   });
 });
+
+describe("local-only types", () => {
+  test("cost_recommendation is excluded only for a remote embedder", () => {
+    expect(isEmbeddingExcludedType("cost_recommendation")).toBe(false);
+    expect(isEmbeddingExcludedType("cost_recommendation", true)).toBe(true);
+    expect(isEmbeddingExcludedType("email", true)).toBe(false);
+    expect(notEmbeddingExcludedSql("i", true)).toBe(
+      "i.type NOT IN ('cost_allocation', 'cost_recommendation')",
+    );
+  });
+});

@@ -75,14 +75,15 @@ function fakeSession(
   return seen;
 }
 
-function setup(vaultEntries: Record<string, string> = {}): { db: Database; ctx: SyncContext } {
+function setup(vaultEntries: Record<string, string> = {}): {
+  db: Database;
+  ctx: SyncContext;
+  entries: Record<string, string>;
+} {
   const db = createMemoryIndexDb();
-  const ctx = syncTestContext(
-    db,
-    createStubVault({ "vantage.api_token": TOKEN, ...vaultEntries }),
-    "vantage",
-  );
-  return { db, ctx };
+  const entries: Record<string, string> = { "vantage.api_token": TOKEN, ...vaultEntries };
+  const ctx = syncTestContext(db, createStubVault(entries), "vantage");
+  return { db, ctx, entries };
 }
 
 const rowsOf = (db: Database) =>
@@ -142,7 +143,7 @@ describe("createVantageSyncable", () => {
     const before = rowsOf(db);
     await createVantageSyncable().sync(ctx, null);
     expect(rowsOf(db)).toEqual(before);
-    expect(before.length).toBe(21);
+    expect(before).toHaveLength(21);
   });
 
   test("a day inside the restate window is provisional and an old day is final", async () => {
@@ -297,5 +298,77 @@ describe("createVantageSyncable", () => {
     await createVantageSyncable().sync(ctx, first.cursor);
     const cost = seen.find((s) => s.toolId === "vantage_cost_list");
     expect(Date.now() - (cost?.args["sinceMs"] as number)).toBeGreaterThan(44 * DAY_MS);
+  });
+});
+
+describe("review fixes", () => {
+  test("with group_by unset and no saved report the documented default grouping orders the series", async () => {
+    fakeSession({
+      costs: [
+        {
+          accrued_at: day(-5),
+          amount: "3",
+          currency: "USD",
+          provider: "aws",
+          service: "EC2",
+          account_id: "a1",
+        },
+      ],
+      recommendations: [],
+    });
+    const { db, ctx } = setup();
+    await createVantageSyncable().sync(ctx, null);
+    const row = db.query("SELECT metadata FROM item WHERE type='cost_allocation'").get() as {
+      metadata: string;
+    };
+    const meta = JSON.parse(row.metadata);
+    expect(meta.groupings).toEqual(["provider", "service", "account_id"]);
+    expect(meta.dimensionKind).toBe("provider");
+  });
+
+  test("a recommendation Vantage no longer lists is deleted and counted", async () => {
+    fakeSession({ costs: [], recommendations: [REC, { ...REC, token: "rec_2" }] });
+    const { db, ctx } = setup();
+    const first = await createVantageSyncable().sync(ctx, null);
+    expect(first.itemsDeleted).toBe(0);
+    fakeSession({ costs: [], recommendations: [REC] });
+    const second = await createVantageSyncable().sync(ctx, first.cursor);
+    expect(second.itemsDeleted).toBe(1);
+    const ids = db.query("SELECT external_id FROM item WHERE type='cost_recommendation'").all();
+    expect(ids).toEqual([{ external_id: "rec_example_1" }]);
+  });
+
+  test("changing group_by reads the first window again and does not inherit the old named set", async () => {
+    const seen = fakeSession({ costs: costRows(["a", "b"], 3, 5), recommendations: [] });
+    const { ctx, entries } = setup({ "vantage.group_by": "service" });
+    const first = await createVantageSyncable({ maxSeries: () => 2 }).sync(ctx, null);
+    seen.length = 0;
+    // Same cursor, other grouping: the old rows must not fill the new configuration's slots.
+    entries["vantage.group_by"] = "service,currency";
+    await createVantageSyncable({ maxSeries: () => 2 }).sync(ctx, first.cursor);
+    const cost = seen.find((s) => s.toolId === "vantage_cost_list");
+    expect(Date.now() - (cost?.args["sinceMs"] as number)).toBeGreaterThan(44 * DAY_MS);
+  });
+
+  test("a series-day in two currencies writes no row and is counted in a warning", async () => {
+    fakeSession({
+      costs: [
+        { accrued_at: day(-6), amount: "1", currency: "USD", service: "EC2" },
+        { accrued_at: day(-6), amount: "2", currency: "EUR", service: "EC2" },
+        { accrued_at: day(-7), amount: "4", currency: "USD", service: "EC2" },
+      ],
+      recommendations: [],
+    });
+    const { db, ctx } = setup({ "vantage.group_by": "service" });
+    const warnings: unknown[] = [];
+    const logging: SyncContext = {
+      ...ctx,
+      logger: { warn: (...a: unknown[]) => warnings.push(a) } as unknown as SyncContext["logger"],
+    };
+    await createVantageSyncable().sync(logging, null);
+    expect(db.query("SELECT COUNT(*) AS n FROM item WHERE type='cost_allocation'").get()).toEqual({
+      n: 1,
+    });
+    expect(JSON.stringify(warnings)).toContain('"mixedCurrencyBuckets":1');
   });
 });

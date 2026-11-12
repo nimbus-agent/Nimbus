@@ -22,18 +22,23 @@ export async function phase3AddVantageMcp(
   if (token === "") {
     return;
   }
-  const optional: Record<string, string> = {};
   const options = [
     ["VANTAGE_COST_REPORT_TOKEN", "cost_report_token"],
     ["VANTAGE_WORKSPACE_TOKEN", "workspace_token"],
     ["VANTAGE_GROUP_BY", "group_by"],
   ] as const;
-  for (const [envName, key] of options) {
-    const value = (await readConnectorSecret(vault, "vantage", key))?.trim() ?? "";
+  const values = await Promise.all(
+    options.map(
+      async ([, key]) => (await readConnectorSecret(vault, "vantage", key))?.trim() ?? "",
+    ),
+  );
+  const optional: Record<string, string> = {};
+  options.forEach(([envName], i) => {
+    const value = values[i] ?? "";
     if (value !== "") {
       optional[envName] = value;
     }
-  }
+  });
   servers["vantage"] = wrapServerSpec(
     {
       ...connectorSpawn("vantage"),

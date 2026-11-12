@@ -2486,6 +2486,9 @@ const D45_GLOBAL_OBJECT_RE = /(?<![.\w$])(?:globalThis|window|self)(?![\w$])/g;
 // `import "x";` (no `from`): runs the module for its effects, so it is an import like any other.
 const D45_SIDE_EFFECT_IMPORT_RE = /(?:^|[;{}])[ \t]*import\s*["']([^"']+)["']/gm;
 
+// `import(`...`)` with a template literal that has no `${}`: a literal specifier like any other.
+const CONFINEMENT_TEMPLATE_IMPORT_RE = /\bimport\s*\(\s*`([^`$]*)`\s*\)/g;
+
 /** What one confinement rule (D45, D48) scans and which rule ids it reports. */
 interface ConfinementSpec {
   readonly inScope: (relPath: string) => boolean;
@@ -2528,6 +2531,9 @@ function checkConfinement(files: readonly FileEntry[], spec: ConfinementSpec): V
     }
     for (const m of commentFree.matchAll(D39_DYNAMIC_IMPORT_RE))
       specifier(m[1] ?? "", true, m.index);
+    for (const m of commentFree.matchAll(CONFINEMENT_TEMPLATE_IMPORT_RE)) {
+      specifier(m[1] ?? "", true, m.index);
+    }
     for (const m of commentFree.matchAll(D45_SIDE_EFFECT_IMPORT_RE)) {
       specifier(m[1] ?? "", true, m.index);
     }

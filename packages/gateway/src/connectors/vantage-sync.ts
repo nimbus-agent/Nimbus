@@ -1,6 +1,6 @@
 import { DEFAULT_FINOPS_CONFIG } from "../config/finops-toml.ts";
 import { FIRST_WINDOW_DAYS } from "../finops/cost-item-contract.ts";
-import { rollUpCostPoints } from "../finops/cost-rollup.ts";
+import { rollUpCostPointsDetailed } from "../finops/cost-rollup.ts";
 import type { Syncable } from "../sync/types.ts";
 import { createFinopsSyncable } from "./finops-sync-transport.ts";
 import {
@@ -26,7 +26,11 @@ export interface VantageSyncableOptions {
 interface Prepared {
   readonly scopeId: string;
   readonly groupBy: readonly string[];
+  readonly workspace: string;
 }
+
+/** The grouping the connector sends when neither a saved report nor `vantage.group_by` names one. */
+const DEFAULT_GROUP_BY: readonly string[] = ["provider", "service", "account_id"];
 
 function parseGroupBy(raw: string | null): string[] {
   return (raw ?? "")
@@ -48,6 +52,7 @@ export function createVantageSyncable(options: VantageSyncableOptions = {}): Syn
     initialSyncDepthDays: FIRST_WINDOW_DAYS,
     cursorPrefix: "nimbus-vantage1:",
     cursorRowType: "cost_allocation",
+    cursorScope: (p) => `${p.scopeId}|${p.workspace}|${p.groupBy.join(",")}`,
     async configure(ctx) {
       const groupBy = parseGroupBy(await ctx.getSecret("group_by"));
       if (groupBy.some((name) => name.startsWith("tag:"))) {
@@ -58,7 +63,11 @@ export function createVantageSyncable(options: VantageSyncableOptions = {}): Syn
         );
       }
       const scope = (await ctx.getSecret("cost_report_token"))?.trim() ?? "";
-      return { scopeId: scope === "" ? "default" : scope, groupBy };
+      const workspace = (await ctx.getSecret("workspace_token"))?.trim() ?? "";
+      // With a saved report the report's own groupings apply and the mapper orders by name; without
+      // one the connector's documented default grouping applies, in this order.
+      const effective = groupBy.length === 0 && scope === "" ? DEFAULT_GROUP_BY : groupBy;
+      return { scopeId: scope === "" ? "default" : scope, groupBy: effective, workspace };
     },
     drains: (window) => [
       {
@@ -72,7 +81,7 @@ export function createVantageSyncable(options: VantageSyncableOptions = {}): Syn
         args: { limit: VANTAGE_RECOMMENDATION_PAGE_LIMIT },
       },
     ],
-    index(ctx, drained, syncedAt, prepared) {
+    index(ctx, drained, syncedAt, prepared, fresh) {
       const costRows = drained.costs;
       const points = costRows.flatMap((raw) => {
         const point = mapVantageCostRow(raw, prepared);
@@ -85,13 +94,22 @@ export function createVantageSyncable(options: VantageSyncableOptions = {}): Syn
           "vantage cost rows skipped (no usable day or amount)",
         );
       }
-      const rolled = rollUpCostPoints(points, {
+      const { rows: rolled, mixedCurrencyBuckets } = rollUpCostPointsDetailed(points, {
         service: SERVICE_ID,
         scopeId: prepared.scopeId,
         maxSeries: options.maxSeries?.() ?? DEFAULT_FINOPS_CONFIG.maxSeries,
-        existingSeriesHashes: new Set(ctx.listIndexedMetadataValues(SERVICE_ID, "seriesHash")),
+        // A changed configuration (fresh) does not inherit the old configuration's named set.
+        existingSeriesHashes: new Set(
+          fresh ? [] : ctx.listIndexedMetadataValues(SERVICE_ID, "seriesHash"),
+        ),
         syncedAt,
       });
+      if (mixedCurrencyBuckets > 0) {
+        ctx.logger.warn(
+          { serviceId: SERVICE_ID, mixedCurrencyBuckets },
+          "vantage series-days in more than one currency were not indexed",
+        );
+      }
       const rows = [
         ...rolled.map((r) => costAllocationItem(r, syncedAt)),
         ...drained.recommendations.flatMap((raw) => {
@@ -100,12 +118,20 @@ export function createVantageSyncable(options: VantageSyncableOptions = {}): Syn
         }),
       ];
       // ONE transaction for the whole sync: the cost rows and the recommendations land together.
+      const recommendations = rows.filter((r) => r.type === "cost_recommendation");
+      let deleted = 0;
       ctx.writeBatch(() => {
         for (const row of rows) {
           ctx.upsertItem(row);
         }
+        // The recommendation drain has no window: it is the whole active set, so a row Vantage no
+        // longer lists is stale and goes.
+        deleted = ctx.replaceItemSet(
+          "cost_recommendation",
+          recommendations.map((r) => r.externalId),
+        );
       });
-      return rows.length;
+      return { written: rows.length, deleted };
     },
   });
 }

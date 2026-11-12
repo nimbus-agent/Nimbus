@@ -117,7 +117,7 @@ export function buildCandidateSql(p: ReembedParams): {
              FROM item i WHERE NOT EXISTS (
                SELECT 1 FROM embedding_chunk c
                WHERE c.item_id = i.id AND c.model = ?
-             ) AND ${notEmbeddingExcludedSql("i")}`;
+             ) AND ${notEmbeddingExcludedSql("i", p.model.startsWith("openai:"))}`;
   if (p.service !== undefined) {
     sql += ` AND i.service = ?`;
     params.push(p.service);

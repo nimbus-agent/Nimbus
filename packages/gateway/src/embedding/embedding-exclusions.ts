@@ -18,12 +18,24 @@
  */
 export const EMBEDDING_EXCLUDED_TYPES: readonly string[] = ["cost_allocation"];
 
-export function isEmbeddingExcludedType(type: string): boolean {
-  return EMBEDDING_EXCLUDED_TYPES.includes(type);
+/**
+ * Types that may be embedded ONLY by a local embedder. A pipeline built on a remote embedder (for
+ * example `[embedding] provider = "openai"`, or a re-embed with an `openai:` model) must skip them:
+ * `PROSE_HEAVY_TYPES` only governs the hybrid router, not a single-embedder pipeline.
+ */
+export const LOCAL_ONLY_EMBEDDING_TYPES: readonly string[] = ["cost_recommendation"];
+
+/** `remote` is true when the embedder that would receive the row is not local (invariant I34). */
+export function isEmbeddingExcludedType(type: string, remote = false): boolean {
+  return (
+    EMBEDDING_EXCLUDED_TYPES.includes(type) || (remote && LOCAL_ONLY_EMBEDDING_TYPES.includes(type))
+  );
 }
 
 /** A SQL fragment for `alias.type`; the types are constants, never caller input. */
-export function notEmbeddingExcludedSql(alias: string): string {
-  const list = EMBEDDING_EXCLUDED_TYPES.map((t) => `'${t}'`).join(", ");
-  return `${alias}.type NOT IN (${list})`;
+export function notEmbeddingExcludedSql(alias: string, remote = false): string {
+  const types = remote
+    ? [...EMBEDDING_EXCLUDED_TYPES, ...LOCAL_ONLY_EMBEDDING_TYPES]
+    : EMBEDDING_EXCLUDED_TYPES;
+  return `${alias}.type NOT IN (${types.map((t) => `'${t}'`).join(", ")})`;
 }

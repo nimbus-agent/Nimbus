@@ -175,6 +175,7 @@ describe("the arguments match the connector's real zod bounds", () => {
       credentialFor: () => ({ credential: "personal" }),
       getSecret: async () => null,
       countItems: () => 0,
+      replaceItemSet: () => 0,
       scopedVaultView: () => ({}),
       sandboxCwd: "x",
       listIndexedMetadataValues: () => [],
@@ -191,5 +192,29 @@ describe("the arguments match the connector's real zod bounds", () => {
     expect(Object.keys(rec?.args as object).sort()).toEqual(["cursor", "limit"]);
     expect(rec?.args).toMatchObject({ limit: VANTAGE_RECOMMENDATION_PAGE_LIMIT });
     expect(recommendationSchema.safeParse({ limit: VANTAGE_COST_PAGE_LIMIT }).success).toBe(false);
+  });
+});
+
+describe("strict pages and cursor scope", () => {
+  test("a page without items or nextCursor is refused, not read as the last page", async () => {
+    const bare = { content: [{ type: "text", text: JSON.stringify({ other: 1 }) }] };
+    await expect(drainWithArgs({ call: async () => bare }, "t", {})).rejects.toThrow(
+      "refusing a partial read",
+    );
+    const badNext = {
+      content: [{ type: "text", text: JSON.stringify({ items: [], nextCursor: 5 }) }],
+    };
+    await expect(drainWithArgs({ call: async () => badNext }, "t", {})).rejects.toThrow(
+      "refusing a partial read",
+    );
+  });
+
+  test("a cursor written under another scope is ignored", () => {
+    const c = encodeNimbusJsonCursor("p1:", { lastOkMs: 123456, scope: "a" });
+    expect(lastOkMsFromCursor(c, "p1:", "a")).toBe(123456);
+    expect(lastOkMsFromCursor(c, "p1:", "b")).toBeNull();
+    expect(
+      lastOkMsFromCursor(encodeNimbusJsonCursor("p1:", { lastOkMs: 5 }), "p1:", "a"),
+    ).toBeNull();
   });
 });

@@ -911,3 +911,62 @@ describe.skipIf(!VEC_AVAILABLE)(
     });
   },
 );
+
+describe.skipIf(!VEC_AVAILABLE)(
+  "SqliteEmbeddingPipeline - a remote embedder never gets a local-only type",
+  () => {
+    function remoteEmbedder(calls: { n: number }): Embedder {
+      return {
+        model: "openai:text-embedding-3-small",
+        dims: 384,
+        isLocal: false,
+        async embed(texts: string[]) {
+          calls.n += texts.length;
+          return texts.map(() => new Float32Array(384).fill(0.01));
+        },
+      };
+    }
+
+    function seed(db: Database): void {
+      const now = Date.now();
+      for (const [service, type, ext] of [
+        ["vantage", "cost_recommendation", "r1"],
+        ["slack", "message", "m1"],
+      ] as const) {
+        upsertIndexedItem(db, {
+          service,
+          type,
+          externalId: ext,
+          title: ext,
+          modifiedAt: now,
+          syncedAt: now,
+        });
+      }
+    }
+
+    test("embedItem, backfillAll and backfillForRoutingKeys skip cost_recommendation and still terminate", async () => {
+      const db = new Database(":memory:");
+      LocalIndex.ensureSchema(db);
+      seed(db);
+      const calls = { n: 0 };
+      const pipeline = new SqliteEmbeddingPipeline({ db, embedder: remoteEmbedder(calls) });
+      await pipeline.embedItem({
+        id: "vantage:r1",
+        service: "vantage",
+        type: "cost_recommendation",
+        title: "r1",
+        body_preview: "r1",
+      });
+      expect(calls.n).toBe(0);
+      await Promise.race([
+        pipeline.backfillAll(),
+        new Promise((_, rej) => setTimeout(() => rej(new Error("did not terminate")), 5000)),
+      ]);
+      await pipeline.backfillForRoutingKeys({ notIn: ["github:pr"] });
+      const ids = (
+        db.query("SELECT DISTINCT item_id FROM embedding_chunk").all() as { item_id: string }[]
+      ).map((r) => r.item_id);
+      expect(ids).toEqual(["slack:m1"]);
+    });
+  },
+);

@@ -4,7 +4,7 @@ import type { Logger } from "pino";
 import { dbRun, dbStmtRun } from "../db/write.ts";
 import type { BackfillGate } from "./backfill-gate.ts";
 import { type ChunkOptions, chunkText, itemTextForEmbedding } from "./chunker.ts";
-import { notEmbeddingExcludedSql } from "./embedding-exclusions.ts";
+import { isEmbeddingExcludedType, notEmbeddingExcludedSql } from "./embedding-exclusions.ts";
 import { SUPPORTED_EMBEDDING_DIMS } from "./routing.ts";
 import type { Embedder, EmbeddingPipeline, IndexedItem } from "./types.ts";
 
@@ -102,6 +102,11 @@ export class SqliteEmbeddingPipeline implements EmbeddingPipeline {
   }
 
   async embedItem(item: IndexedItem): Promise<void> {
+    // A remote embedder never receives a local-only type (embedding-exclusions.ts); the backfill
+    // SELECTs exclude it too, so skipping here cannot loop.
+    if (!this.embedder.isLocal && isEmbeddingExcludedType(item.type, true)) {
+      return;
+    }
     const fullText = itemTextForEmbedding(item);
     const pieces = chunkText(fullText, this.chunkOptions);
     if (pieces.length === 0) {
@@ -202,7 +207,7 @@ export class SqliteEmbeddingPipeline implements EmbeddingPipeline {
         `SELECT COUNT(*) AS c FROM item i WHERE NOT EXISTS (
            SELECT 1 FROM embedding_chunk c
            WHERE c.item_id = i.id AND c.model = ?
-         ) AND ${notEmbeddingExcludedSql("i")}`,
+         ) AND ${notEmbeddingExcludedSql("i", !this.embedder.isLocal)}`,
       )
       .get(model) as { c: number };
     const total = totalRow.c;
@@ -223,7 +228,7 @@ export class SqliteEmbeddingPipeline implements EmbeddingPipeline {
            FROM item i WHERE NOT EXISTS (
              SELECT 1 FROM embedding_chunk c
              WHERE c.item_id = i.id AND c.model = ?
-           ) AND ${notEmbeddingExcludedSql("i")}
+           ) AND ${notEmbeddingExcludedSql("i", !this.embedder.isLocal)}
            ORDER BY i.modified_at DESC
            LIMIT ?`,
         )
@@ -257,7 +262,7 @@ export class SqliteEmbeddingPipeline implements EmbeddingPipeline {
         `SELECT COUNT(*) AS c FROM item i WHERE NOT EXISTS (
            SELECT 1 FROM embedding_chunk c
            WHERE c.item_id = i.id AND c.model = ?
-         ) AND ${notEmbeddingExcludedSql("i")} ${filter}`,
+         ) AND ${notEmbeddingExcludedSql("i", !this.embedder.isLocal)} ${filter}`,
       )
       .get(model, ...keys) as { c: number };
     const total = totalRow.c;
@@ -276,7 +281,7 @@ export class SqliteEmbeddingPipeline implements EmbeddingPipeline {
            FROM item i WHERE NOT EXISTS (
              SELECT 1 FROM embedding_chunk c
              WHERE c.item_id = i.id AND c.model = ?
-           ) AND ${notEmbeddingExcludedSql("i")} ${filter}
+           ) AND ${notEmbeddingExcludedSql("i", !this.embedder.isLocal)} ${filter}
            ORDER BY i.modified_at DESC
            LIMIT ?`,
         )

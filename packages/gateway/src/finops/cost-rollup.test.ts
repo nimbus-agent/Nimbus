@@ -6,7 +6,7 @@ import {
   seriesHashOf,
   seriesKeyOf,
 } from "./cost-item-contract.ts";
-import { rollUpCostPoints } from "./cost-rollup.ts";
+import { rollUpCostPoints, rollUpCostPointsDetailed } from "./cost-rollup.ts";
 
 const DAY0 = Date.UTC(2026, 9, 1);
 const SYNCED = Date.UTC(2026, 10, 12);
@@ -123,7 +123,7 @@ describe("rollUpCostPoints", () => {
     const one = rollUpCostPoints(many, opts(1));
     expect(one).toHaveLength(2);
     const five = rollUpCostPoints(many, opts(500));
-    expect(names(five).length).toBe(501);
+    expect(names(five)).toHaveLength(501);
     const otherRow = five.find((r) => r.metadata.dimensionValue === OTHER_VALUE);
     expect(otherRow?.metadata.rowCount).toBe(100);
   });
@@ -153,19 +153,29 @@ describe("rollUpCostPoints", () => {
     expect(row?.metadata.granularity).toBe("day");
   });
 
-  test("a folded set with mixed currencies or providers carries null for them", () => {
+  test("a folded set with mixed providers carries null for them and keeps the one currency", () => {
     const rows = rollUpCostPoints(
       [
         point("A", 0, 100),
-        point("B", 0, 1, { currency: "USD", provider: "aws" }),
-        point("C", 0, 1, { currency: "EUR", provider: "gcp" }),
+        point("B", 0, 1, { provider: "aws", cloudService: "x" }),
+        point("C", 0, 1, { provider: "gcp", cloudService: "y" }),
       ],
       opts(1),
     );
     const other = rows.find((r) => r.metadata.dimensionValue === OTHER_VALUE);
-    expect(other?.metadata.currency).toBeNull();
+    expect(other?.metadata.currency).toBe("USD");
     expect(other?.metadata.provider).toBeNull();
     expect(other?.metadata.cloudService).toBeNull();
+  });
+
+  test("a series-day in two currencies is not summed: no row, and it is counted", () => {
+    const out = rollUpCostPointsDetailed(
+      [point("A", 0, 1), point("A", 0, 2, { currency: "EUR" }), point("A", 1, 4)],
+      opts(5),
+    );
+    expect(out.mixedCurrencyBuckets).toBe(1);
+    expect(out.rows).toHaveLength(1);
+    expect(out.rows[0]?.metadata.amount).toBe(4);
   });
 
   test("an empty input yields no rows", () => {

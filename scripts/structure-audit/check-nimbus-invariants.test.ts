@@ -6070,6 +6070,7 @@ describe("D48 - FinOps cost code cannot leave the machine (spec § 6, OR-10-8)",
     'export { x } from "../connectors/x.ts";',
     'import type { X } from "../engine/x.ts";',
     'import "../connectors/x.ts";',
+    "const m = await import(`../llm/x.ts`);",
   ])("a forbidden import is flagged: %s", (body) => {
     expect(rules(bad(SERIES, body))).toEqual(["finops-forbidden-import"]);
   });
@@ -6084,6 +6085,7 @@ describe("D48 - FinOps cost code cannot leave the machine (spec § 6, OR-10-8)",
     'import { fetch } from "undici";',
     "const outbound = fetch;",
     "const w = window;",
+    "const m = await import(`node:https`);",
   ])("a network primitive is flagged: %s", (body) => {
     expect(rules(bad(SERIES, body))).toContain("finops-no-network");
   });
