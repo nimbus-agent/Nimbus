@@ -273,6 +273,7 @@ describe("normalizeHistoryValue", () => {
     expect(normalizeHistoryValue(["a@x", "b@x"])).toBe("a@x,b@x");
     expect(normalizeHistoryValue([])).toBe("");
     expect(normalizeHistoryValue([2, 10])).toBe("10,2");
+    expect(normalizeHistoryValue(["a", "a"])).toBe("a,a");
   });
 
   test("an array holding a non-scalar is NULL", () => {

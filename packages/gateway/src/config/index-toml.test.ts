@@ -65,6 +65,13 @@ describe("[index] history_retention_days", () => {
     expect(seen[0]).toContain("7..3650");
   });
 
+  test("a line in [index] that is not key = value is ignored", () => {
+    expect(
+      parseNimbusTomlIndex("[index]\nnot a pair\nhistory_retention_days = 12\n")
+        .historyRetentionDays,
+    ).toBe(12);
+  });
+
   test("an out-of-range value works without a fallback sink", () => {
     expect(parseNimbusTomlIndex("[index]\nhistory_retention_days = 1\n").historyRetentionDays).toBe(
       180,
