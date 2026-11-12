@@ -1,5 +1,7 @@
 # FO1 — Vantage connector (nimbus-mcp-servers) — implementation plan
 
+Status: APPROVED by Antigravity (round 2, 2026-11-12).
+
 Status: DRAFT plan for review. Spec: `docs/superpowers/specs/2026-11-12-finops-connectors.md` (APPROVED,
 round 2), slice FO1 (§ 5.2, § 5.3 "Tools", "Vault keys", "Sandbox"). Plans never land on main: strip this
 file before any implementation PR.
@@ -328,3 +330,5 @@ Applied (each re-derived from the files, not from the review):
 Rejected: none. Two of the review's phrasings were stronger than the files: F1 says changing nothing
 "leaves the test green" (true of main, false of the plan, which was simply stale), and F7 is labelled a
 dependency-alignment defect when it is cosmetic.
+
+Round 2 (Antigravity, 2026-11-12): APPROVED. Three more prose counts for T10: `docs/configuration.md:137` ("the other 90" becomes 91, given the four connectors that need extra libraries); the sandbox-test counts in `CLAUDE.md:79` and `docs/architecture.md:175` (79 becomes 80, since Vantage adds `test/sandbox.test.ts`); and the comment at `standalone/src/launcher.ts:53` (95 becomes 96). Re-derive each from main at T0, as for every other count.
