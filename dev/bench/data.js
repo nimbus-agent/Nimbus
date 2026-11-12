@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794514850321,
+  "lastUpdate": 1794516776214,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "23233d5b4ccecfcf92ab481d2e93a9315d5527f7",
-          "message": "feat(sync): connectors reach credentials and the index only through scoped capabilities (#1333)\n\n## What this does\n\n`SyncContext` — what every connector's `sync()` receives — no longer\ncarries a `vault` or a `db`\nhandle. It carries a scoped capability set instead.\n\nBefore this, any of ~90 connectors could read **any other connector's\ncredentials** and write **any\ntable**. `jira-sync.ts` could call `ctx.vault.get(\"slack.token\")` and\nnothing would notice. Now\n`getSecret(\"api_token\")` resolves `jira.api_token` and cannot name\nanother service's key.\n\n**83 vault users → 0. 20 raw-db users → 0.**\n\nThat is a real tightening of non-negotiable #3, and it arrived as the\nfirst step of the connector\nextraction rather than as a security project. It stands alone: it is\nworth having whether or not the\nextraction ever happens.\n\nPlan: `docs/superpowers/plans/2026-08-24-sync-context-narrowing.md`\n(Plan 1 of 2).\nDesign:\n`docs/superpowers/specs/2026-08-24-connector-extraction-design.md`.\n\n## How it is built\n\n- **Bound per service, in one place.** `sync/scheduler.ts`\n`contextForService` is the only builder;\nboth `runJob` and `syncContextFor` route through it so they cannot\ndrift. `assemble.ts`'s shared\ncontext deliberately does NOT bind — it is built once for every service,\nso a `getSecret` bound\n  there would be scoped to the wrong connector for all but one.\n- **Unbound capabilities THROW.** An optional capability turns a missed\nbinding into a silent\n`undefined`: the syncable reads no secret, writes no item, and reports\nsuccess. Fail-loud beats\n  fail-open for the only route to a credential.\n- **Cross-service reads are granted, not inferred.** Four connectors\nlegitimately share a credential\nfamily — BigQuery/Cloud Logging/Vertex AI on one `gcp.*` account, GitHub\nActions on `github.pat`,\nplus the AWS trio. `getSharedSecret(family, key)` checks a named grant\nmap and throws otherwise,\n  so a new cross-service read is a deliberate edit.\n- **Compile-time key checking is preserved**, not widened to `string`:\n`SyncCapabilities` is generic\nover `ConnectorServiceId` and keys are `ConnectorSecretKeyOf<S>`. It\ncaught two of my own errors\nduring the work — Linear's key is `api_key`, GCP's are\n`credentials_json_path`/`project_id`/`region`.\n- **Static rule D24** forbids `ctx.vault` / `ctx.db` in a syncable,\ndocumented in\n`SECURITY-INVARIANTS.md` and listed in `CLAUDE.md` + `GEMINI.md`, with\nsix enforcement tests.\n\n## Three things worth reading the diff for\n\n**The static rule did not work when first written.** Its regex began\nwith a literal BACKSPACE byte\ninstead of a `\\b` escape — a script authored the line — so it matched\nnothing and the audit passed\nsilently. Red-proving it is the only reason that surfaced. Once working\nit immediately found a real\nremaining `ctx.vault` in `connector-write-transport.ts` **and** its own\nscope error, flagging\n`lazy-mesh`, which holds a vault by design.\n\n**One site the type system could not catch.** `zoom-sync.test.ts` builds\nits context with\n`as unknown as`, so a missing capability surfaced only at runtime.\nEverything else in a 300-file\nchange was compiler-enforced; the cast was the single hole.\n\n**A two-sources-of-truth bug this introduced, and how it was caught.**\nThe capability closes over\n`depth`, so `{ ...ctx, depth: \"metadata_only\" }` yields a context whose\nfield and whose `upsertItem`\ndisagree — and the field loses. An obsidian test does exactly that and\ncaught full note bodies being\nindexed into a `metadata_only` vault. Production cannot hit it, since\n`contextForService` sets both\nfrom one variable, but the trap was real: `syncTestContext` now takes\n`depth` and `resolveServiceId`\nas parameters, and `SyncCapabilityDeps` says why overriding them\nafterwards does not work.\n\n## Recorded, not resolved\n\nThe design spec said that if `SyncContext` needed more than roughly a\ndozen members, the sync layer\nis more entangled with the gateway than the import census suggested, and\nthe **thin** repo boundary\nbecomes the right one for the extraction. It has **19**, and six serve\nonly one or two connectors.\n\nThat does not change this PR. It is evidence to weigh when the\nextraction's fat-vs-thin boundary is\nrevisited, and it is in the commit messages rather than buried here.\n\n## Verification\n\n- Full suite incl. `scripts`: **13,946 tests, 0 fail**\n- `bun run preflight:fast`: PASSED\n- `audit:invariants` green, and D24 red-proved by reintroducing\n`ctx.vault`\n- Up to date with `main` (merged `6d828c5c`), lockfile clean under\n`--frozen-lockfile`",
-          "timestamp": "2026-08-25T16:57:38Z",
-          "tree_id": "a6f53a626a5d9fc9a08ca607e5a3015b1c8db931",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/23233d5b4ccecfcf92ab481d2e93a9315d5527f7"
-        },
-        "date": 1787677754063,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 322.9388955999988,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 325.2456801999986,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 197.33305774999752,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "165fa435345eff0dcc59d419d08bad43b6cf9bdd",
+          "message": "feat(gateway): Vantage cloud costs and recommendations are indexed, local-only (FinOps FO2) (#1985)\n\nFinOps slice **FO2**, the gateway side of the Vantage connector. It\nsyncs and indexes Vantage cost allocations and recommendations from the\nread-only connector bundled in #1982 (`@nimbus-dev/connectors` 0.14.0,\nnimbus-mcp-servers#85). It is the first of five FinOps products under\nthe roadmap row *FinOps connectors* (Phase 10 stretch). The other four\nare Kubecost, OpenCost, CloudHealth and Flexera/Spot, so the row stays\nopen. Owner rulings OR-FO-1 to OR-FO-5 (2026-11-12) apply: read-only,\n400-day retention, at most 500 series per connector.\n\n## What changes\n\n- **`finops/`**:\n- The cost item contract, which the later Cost anomaly detector will\nread.\n  - A rollup.\n  - `readCostSeries`.\n- A daily retention sidecar that deletes rows older than 400 days\nthrough `deleteItemByPrimaryKey`. A syncable cannot query rows, so\nretention cannot run inside the sync.\n  - A `[finops]` config section with per-key fallback.\n- **Vantage sync** (`createVantageSyncable`), on a FinOps transport:\n  - Costs are drained with `{sinceMs, untilMs, limit: 5000, cursor}`.\n- Recommendations are drained with `{limit: 1000, cursor}`, matching the\nconnector's schema.\n- The cursor `{lastOkMs}` lives in the sync state. It is ignored when no\n`cost_allocation` row is indexed, so a removed and re-authenticated\nVantage re-reads its whole window and not just three days.\n- **The series cap** is a stable named set\n(`listIndexedMetadataValues`), not a 30-day ranking, so incremental\nsyncs never tear a series.\n- **Registration sites**:\n- `CONNECTOR_VAULT_SECRET_KEYS` and `OPTIONAL_SECRET_KEYS`. Without that\nentry, a lone `vantage.group_by` would count as configured and ledger a\nsync egress row on every run.\n  - `phase3-config.ts` plus a new `phase3-finops.ts` adder.\n  - `DEFAULT_QUOTAS`: Vantage gets 16/min, its documented 1,000/h.\n  - The catalog, under category `cloud`.\n- **`tag:` groupings in `vantage.group_by` are refused** with a fixed\nmessage. Where the tag value appears in a cost row is not documented.\n\n## Privacy: cost data stays on this machine\n\n- Cost and recommendation rows are excluded from embedding at all 10\nsites that select or re-read rows for the embedder. The plan named 7;\nthree row re-readers were also missing: `lazy-scheduler`,\n`create-routing-runtime` and `embedding-worker-core`.\n- Neither type is in `PROSE_HEAVY_TYPES`, so none can reach the remote\nOpenAI embedder.\n- A test with an OpenAI-keyed stub asserts zero remote calls.\n- This was red-proved by reverting the `OPTIONAL_SECRET_KEYS` entry and\nby adding the key to `PROSE_HEAVY_TYPES`.\n- **Static rule D48** confines the FinOps code: no model, egress,\nchatops, federation or share imports, and no `fetch`. It shares a\nrefactored `checkConfinement` with D45; the D45 tests are unchanged and\npass.\n\n## Stated bounds\n\n- Live Vantage reply shapes are verified against Vantage's published\nOpenAPI file and docs only.\n- Cost rows appear in keyword search through the full-text index.\nExcluding them would need a migration.\n- No migration: the series reader reads 22,500 rows in 16 ms from the\nexisting `item` table.\n\n## Docs and generated files\n\n- Updated: CLAUDE.md and GEMINI.md (0.14.0: 96 exported, 95 bundled;\nD10–D48), the roadmap (the row stays open, with a dated note),\narchitecture (\"FinOps cost items\"), docs/README, cli-reference\n(`[finops]` and the `vantage.*` Vault keys), CHANGELOG,\nSECURITY-INVARIANTS.md (D48), and the nimbus-commands and\nnimbus-file-map skills.\n- The index-lane census was stale on `main` and is regenerated here, so\nthis PR has a large generated diff.\n\n## Verification (local, Windows)\n\n- `bun test packages/gateway/src`: 30452 pass, 1 fail. The failure was\nan I41 distance pin in `assemble.ts`; it is fixed, and that block passes\n7/7.\n- `bun test packages/gateway/test packages/cli`: only the 6 migration\nand Readwise e2e tests that fail on `main` in that combined run, plus\none statement-finalization scan hit, now fixed.\n- `bun test scripts`: only the 5 local install.ps1/gpg tests.\n- After the merge of `main` (IC1): 2946 targeted tests pass with 0\nfailures. `typecheck` and `preflight:fast` pass.\n- The coverage floor is CI-Linux-authoritative.\n\nFS1 (#1984) adds D47 in parallel. Whichever of #1984 and this PR merges\nsecond reconciles the static-rule ceiling.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JmSjrCFSTQTQnUa4j8F5b1\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Added Vantage integration for syncing cloud cost data and active\ncost-saving recommendations every six hours.\n* Cost data is grouped into configurable series, with excess series\ncombined into an “Other” group. Daily cost history can be retained for\n30–3,650 days; the default is 400 days.\n* Cost allocations are not embedded. Recommendations use local\nembedding, not remote embedding.\n* **Documentation**\n* Updated setup guidance, configuration options, and release history for\nVantage and FinOps reporting.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-12T20:41:54Z",
+          "tree_id": "3e1f0be70c36cbb37fb0b81276e2e520cbb19992",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/165fa435345eff0dcc59d419d08bad43b6cf9bdd"
+        },
+        "date": 1794516771685,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 305.8279457999997,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 314.05868095000477,
             "unit": "ms"
           }
         ]
