@@ -1,0 +1,451 @@
+# Phase 10 stretch — FinOps connectors (Vantage, CloudHealth, Spot.io / Flexera, Kubecost, OpenCost)
+
+Status: DRAFT for review (2026-11-12). Not approved. The "Open owner questions" section (§ 3) is
+unanswered; the slice plan in § 5 is written so that the recommended answers hold and says what
+changes under the others.
+Date: 2026-11-12. Slot: S4. Roadmap: `docs/roadmap.md` § Phase 10 → *Stretch — Infrastructure-as-Agent
+(SRE Loop)*, row **FinOps connectors**. The row is a stretch item and does not gate Phase 10.
+
+## 1. Goal
+
+Index cost and cost-attribution data from third-party FinOps platforms into the local index, read-only,
+with a stable item and metadata contract, so that a later detector (the roadmap row *Cost anomaly
+detection*, not built) can read a per-team / per-tag / per-namespace daily cost series from SQLite
+without a network call. The platforms exist to give cleaner attribution than raw cloud billing
+exports (the roadmap's words): a team tag rolled up across accounts, a Kubernetes namespace or
+controller priced per day, a saved cost report an engineer already curated.
+
+Proposed acceptance criterion (the row has none; this is the one this project must meet):
+
+- (FO) *With a Vantage API token configured, one sync cycle indexes daily cost rows for the last 45
+  days grouped by the owner's chosen dimension, plus the active recommendations, and `nimbus query`
+  over `cost_allocation` returns a gap-free daily series per `seriesKey` with provisional days marked.
+  With a Kubecost or OpenCost URL configured, the same holds per namespace. A second sync with no
+  upstream change upserts the same ids and changes no row. The token appears in no log line, IPC reply
+  or egress row. A pinned test shows the series reader makes no network call and writes no row.*
+
+## 2. Owner rulings
+
+- **OR-10-8 (carried, from the incident-engine spec of 2026-11-12).** No model step in anything that
+  runs unattended. Syncs, the retention pass and the series reader are deterministic and import no
+  model code. A model may read the indexed rows only in an owner-run `nimbus ask`, through the normal
+  `wrapToolOutput` path (I11); nothing here adds an LLM call.
+- No other ruling applies yet. Scope, bundling and write questions are in § 3.
+
+Decided by me (recorded so review can challenge them):
+
+- **D-FO-1 Read-only; no cost write row.** Every connector here has `hitlRequired: []`, registers no
+  write tool and uses only GET requests (the one Flexera query that takes POST is pinned in § 7).
+  Applying a recommendation (Spot, Vantage) would be a connector write row behind HITL, with a typed
+  preview and a before-state; none is proposed. See Q4.
+- **D-FO-2 Two new item types, one metadata contract.** `cost_allocation` (one row per series per UTC
+  day) and `cost_recommendation` (one row per vendor recommendation). Neither is added to
+  `ITEM_LINKED_ENTITY_TYPES` (`graph/relationship-graph.ts`): they are not graph entities in this
+  project. Linking a namespace or a tag to a `[ci.service.X]` binding is later work (§ 4).
+- **D-FO-3 Ids.** The item id is `"<service>:<native_id>"` with service one of `vantage`,
+  `cloudhealth`, `flexera`, `kubecost`, `opencost`. For a cost row, `native_id` is
+  `<scopeId>:<seriesHash>:<YYYY-MM-DD>` where `seriesHash` is the first 16 hex of SHA-256 over the
+  canonical `dimensionKind|dimensionKey|dimensionValue` tuple, so ids are bounded in length and stable
+  across syncs. A recommendation's id is the vendor token.
+- **D-FO-4 Vendors are separate connectors.** Five ids, not one "finops" connector: auth, hosts, API
+  shapes and failure modes share nothing but the output contract. Kubecost and OpenCost are separate
+  ids (different path prefix, default port and docs) sharing one code kit in the connectors repo.
+- **D-FO-5 Incremental by index watermark, not a stored cursor.** A cost series is restated by the
+  vendor for recent days. The gateway's sync reads the highest finalized `periodStartMs` it already
+  holds for the service from the index, and asks the connector for `[watermark - 3 days, today]`
+  (first sync: 45 days). Ids are stable, so a re-read day is an idempotent upsert. This needs a small
+  gateway transport variant that passes `sinceMs` to the list tool (the shared warehouse transport
+  `createWarehouseListSyncable` passes only `cursor` and `limit`); it reuses `parseMcpListPage`. The
+  3-day restatement window and the 45-day first window are this project's own conservative defaults,
+  not vendor-documented numbers.
+- **D-FO-6 Provisional days.** A row whose `periodEndMs` is inside the restatement window carries
+  `finalized: false`. The detector must not baseline on provisional days. This is our convention; no
+  vendor states when a day is final (UNVERIFIED for all five).
+- **D-FO-7 Personal credentials only in v1.** These connectors are not added to
+  `TEAM_CREDENTIAL_SYNC_CONNECTORS` (I19 team-vault sync). A team FinOps credential is a later slice.
+- **D-FO-8 Non-secret configuration follows the Vault-key convention.** Report tokens, group-by and
+  zone strings are stored as Vault keys beside the secret (as `sentry.org_slug`, `jira.cloud_id`), so
+  `CONNECTOR_VAULT_SECRET_KEYS` stays the single registry the redaction and static vault-key audits
+  read. They are not secrets and are not claimed to be.
+- **D-FO-9 Volume is bounded by construction.** Per source: at most `max_series` series (default 500,
+  `[finops] max_series`), chosen by trailing 30-day amount; the remainder is one `__other__` series per
+  day. Worst case 500 x 45 = 22,500 rows on first sync, then 500 rows per day. A retention pass deletes
+  `cost_allocation` rows older than `[finops] retain_days` (default 400) through the existing delete
+  chokepoint (`deleteItemByServiceExternal` in `index/item-store.ts`), after a successful sync only.
+- **D-FO-10 Cost rows are not embedded.** A numeric daily row has no prose; embedding thousands of them
+  wastes the embedder and pollutes search. The slice that adds the types must find where the embedding
+  pipeline chooses items (`embedding/routing.ts`, `RoutingEmbeddingPipeline`; the enqueue site was not
+  located while writing this spec, UNVERIFIED) and exclude `cost_allocation`. If that needs a code
+  change outside the connector files, it is part of FO2. `cost_recommendation` rows are short prose and
+  are embedded with the local model.
+- **D-FO-11 No new IPC, CLI command, schema table or invariant.** Credentials go through the existing
+  `nimbus connector auth <id>`; reads go through `nimbus query|search|ask`. The only new gateway module
+  that reads cost rows is a pure helper (`finops/cost-series.ts`, § 5.1) for the future detector. If
+  review wants a new invariant, it is "I5x" with a static rule "D4x" pinning the confinement in § 6;
+  this spec does not claim one.
+- **D-FO-12 The vendor's saved view defines the attribution; Nimbus does not.** With a Vantage cost
+  report token the connector reads that report's saved groupings; without one it falls back to the
+  documented default groupings. The owner's saved report in the vendor console, not Nimbus, defines
+  the attribution (team, tag, cost category).
+
+## 3. Open owner questions
+
+**Q1. Which of the five products are in scope?** Verification cost differs sharply (§ 5.0 table).
+Vantage, Kubecost and OpenCost have public, fetchable API docs. CloudHealth's reference was fetchable
+but its rate limits, regions and any recommendation endpoint were not. Flexera One's API reference
+(developer.flexera.com) returned 404 or 403 on every cost page I tried; only its auth page and
+community posts were readable, so its cost endpoints are UNVERIFIED. Spot.io is now Flexera (the
+acquisition closed 2025-03-03), so the row "Spot.io / Flexera" is one company, and Spot's cost
+endpoints were not found at all.
+- (a) **Ship Vantage, Kubecost, OpenCost (FO1-FO4); defer CloudHealth and Flexera/Spot until someone
+  with an account can verify endpoints.** Recommended.
+- (b) Ship all five; the CloudHealth and Flexera slices are built against documentation only and
+  marked unverified-live, as the iac host lists were.
+- (c) Vantage only; Kubecost and OpenCost wait for a cluster story.
+
+**Q2. How does a laptop gateway reach in-cluster Kubecost and OpenCost?** Both are cluster services;
+the docs' own access method is `kubectl port-forward` (Kubecost on 9090, OpenCost on 9003).
+- (a) **The owner stores a URL: `http://localhost:<port>` from their own port-forward, or an
+  `https://` ingress URL.** Nimbus does not start the forward. The URL's host becomes an
+  owner-configured sandbox entry (the Grafana / dbt pattern). Recommended: it adds no kubectl child,
+  no kubeconfig access and no new invariant. Cost: the forward must be running at sync time, and a
+  stopped forward is a `last_error`, not a failure of anything else. A Windows AppContainer may not be
+  able to reach loopback at all (UNVERIFIED; the Windows policy is all-or-nothing `internetClient`);
+  FO4 includes a probe, and the fallback on Windows is an ingress URL.
+- (b) Nimbus starts and owns a `kubectl port-forward` child per configured cluster. Reliable, but a
+  new code-execution-class spawn (kubectl reads the kubeconfig), against the line the owner drew for
+  the `az` / `gcloud` before-reads on 2026-11-07.
+- (c) Ingress only; refuse loopback and plain `http://`. Safest, but excludes the documented default
+  access path, and neither product documents authentication (UNVERIFIED), so an exposed ingress is the
+  owner's own exposure.
+
+**Q3. Bundle the Sustainability connectors (the next roadmap row: Cloud Carbon Footprint, Climatiq,
+Watershed, cloud carbon exports)?**
+- (a) **No; a separate project.** Recommended. The contract in § 5.1 reserves a `unit` key so a carbon
+  series fits `cost_allocation`'s shape later, but none of those APIs was researched here.
+- (b) Add the row to this spec as a follow-up slice after FO4.
+
+**Q4. Is any write wanted (apply a Spot / Vantage recommendation, create a Vantage budget)?**
+- (a) **No (D-FO-1).** Recommended; recommendations are indexed so the owner or a later remediation row
+  can see them.
+- (b) One narrow write per vendor, chosen after a design round (each needs its own typed preview and
+  before-state; none of the vendor write APIs was researched).
+
+**Q5. Retention and series cap defaults.** `retain_days` 400 and `max_series` 500 (D-FO-9) are my
+numbers. (a) As written. (b) 800 days for year-over-year baselines at roughly twice the index growth.
+(c) No retention and a documented growth bound. Recommended: (a); the detector's baseline needs weeks,
+not years.
+
+## 4. Non-goals
+
+- **The cost anomaly detector.** The roadmap row *Cost anomaly detection* is not built and this project
+  does not design it. The incident-engine spec (`2026-11-12-incident-engine.md`, slice IC8) replaces
+  `watcher/anomaly-detector.ts` with a persisted rolling baseline over hourly buckets; the future cost
+  detector should reuse that baseline and read this contract. Nothing here writes a baseline, a
+  finding, a notification or a threshold, and nothing reserves schema or invariant numbers.
+- **Raw cloud billing connectors** (AWS Cost Explorer, Azure Cost Management, GCP Billing). None exists
+  in `@nimbus-dev/connectors`: the `aws` connector registers only Lambda and ECS tools (read from
+  `connectors/aws/src`), and a search of the `azure`, `gcp`, `ramp`, `snowflake`, `databricks` and
+  `bigquery` sources for cost tools found none. They belong to the detector row.
+- **Data FinOps attribution** (warehouse query cost). The `snowflake` and `databricks` connectors index
+  no credit, DBU or query-history data (a search of both `src` trees for credit, metering and
+  query_history found nothing), so the roadmap sentence that the same detection window will cover
+  Snowflake credits and Databricks DBUs has no source today. Separate row, separate project.
+- **Cloud cost garbage collection**, **Sustainability connectors**, **Runbook automation**: other rows.
+- **Vendor anomaly feeds and budgets** (Vantage `anomaly_alerts`, `budgets`; Kubecost alerts). Their
+  response fields were not verified. Later work.
+- **Cost writes** (Q4) and **team-vault credentials** (D-FO-7).
+- **A UI page, a `nimbus finops` command, `ask` templates.** The rows are queryable; presentation is
+  later.
+- **Joining cost to services or incidents** (graph edges from namespace, tag or account to a service).
+  Later; it needs a binding convention the owner has not set.
+- No LLM in any unattended path (OR-10-8).
+
+## 5. Design
+
+### 5.0 What was verified, per product
+
+Primary sources only; each cell cites where it came from. `UNVERIFIED` means a primary source was not
+reachable or did not say.
+
+| | Vantage | Kubecost | OpenCost | CloudHealth | Flexera One / Spot |
+| --- | --- | --- | --- | --- | --- |
+| Host | `https://api.vantage.sh/v2` [V1] | owner's URL [K1] | owner's URL [O1] | `https://chapi.cloudhealthtech.com` [C1]; regional hosts UNVERIFIED | `https://api.flexera.com` (NAM); EU/APAC API hosts UNVERIFIED; token hosts `login.flexera.com`, `.eu`, `.au` [F1]; Spot host `api.spotinst.io` per a third-party catalog only [S1] |
+| Auth | `Authorization: Bearer`, service or personal token, Read/Write scopes chosen at creation [V2] | none documented [K1] | none documented [O1] | `Authorization: Bearer <api_key>` or `api_key` query param; key from My Profile; a new key invalidates the old [C1] | OAuth: refresh-token grant or service-account `client_credentials` at `/oidc/token`; 1 h access token; 50 req/min per refresh token [F1] |
+| Cost endpoint | `GET /costs` (`cost_report_token` or VQL `filter`, `start_date`, `end_date`, `groupings`, `date_bin`, `limit` max 5000, `page`) [V3] | `GET /model/allocation` (`window`, `aggregate`, `accumulate`, `step`, `idle`, `shareIdle`) [K1] | `GET /allocation` (`window` required, `aggregate`, `step`, `resolution`, `includeIdle`) [O1] | `GET /olap_reports/cost/history` with `dimensions[]`, `measures[]`, `interval`, `filters[]`; perspectives at `/v1/perspective_schemas` [C1] | `POST /bill-analysis/orgs/{orgId}/costs/select`, community posts only [F2]; UNVERIFIED |
+| Recommendations | `GET /recommendations` (`potential_savings`, `provider`, `status`, `min_savings`, `limit` max 1000) [V4] | not researched | not researched | UNVERIFIED | UNVERIFIED |
+| Pagination | `page` + `limit`, `links.next` [V3][V4] | none (window-bounded); Aggregator variant `offset`/`limit` [K1] | none documented | `page`, `per_page` default 30, max 100 [C1] | UNVERIFIED |
+| Rate limit | 1,000 req/h account-wide; Cost Report endpoints 5 req / 5 s; `429`; `x-rate-limit-{limit,remaining,reset}` [V5] | none documented | none documented | `429` on "post rate limit" only; GET limits UNVERIFIED [C1] | 50 req/min per refresh token (auth only) [F1] |
+| Self-hosted | no | yes, in-cluster; `kubectl port-forward deployment/kubecost-cost-analyzer -n kubecost 9090`; querying the cost-model container directly (e.g. 9003) drops the `/model` prefix [K1] | yes; `kubectl -n opencost port-forward deployment/opencost 9003`; default URL `localhost:9003`; a service or ingress may expose it [O1] | no | no |
+| Volume | per grouping x day; 5,000 rows per page | per aggregate x day | per aggregate x day | OLAP report rows | UNVERIFIED |
+
+Facts worth stating plainly:
+
+- Kubecost's documentation has moved: `docs.kubecost.com` 301-redirects to `apptio.com`, which
+  301-redirects to `ibm.com/docs`. The allocation API text I could read was the IBM-hosted Kubecost
+  1.x page (`SSW0JQG_1.x`); the 2.x page returned 404. Field names below are 1.x and must be re-checked
+  against the installed version at FO3.
+- Kubecost's allocation reply (1.x): `data` holds allocation objects with `name`, `properties`
+  (`cluster`, `namespace`, `controller`, `controllerKind`, `pod`, `labels`, ...), `window`, `start`,
+  `end`, `minutes`, `cpuCost`, `ramCost`, `gpuCost`, `pvCost`, `networkCost`, `loadBalancerCost`,
+  `sharedCost`, `externalCost`, `totalCost`, `totalEfficiency`, with special names `__idle__`,
+  `__unallocated__`, `__unmounted__` [K1]. `accumulate=false` returns daily sets. OpenCost's allocation
+  reply is expected to match (OpenCost is the upstream of Kubecost's cost model) but I did not read it:
+  UNVERIFIED.
+- OpenCost is a CNCF Incubating project (accepted 2022-06-17, promoted 2024-10-25) [O2]. Its
+  /allocation amounts are on-demand list pricing [O1]: an estimate, not the invoice. The index labels
+  them `costKind: "list_estimate"` so the detector never mixes them with billed cost.
+- The Vantage OpenAPI file lists `oauth2` with a `read` scope on each operation, and the docs page
+  shows a Bearer header. I could not read the file's securitySchemes block (the file is 567 KB and the
+  fetch was truncated), so the Bearer form is taken from the docs page [V2].
+
+Sources:
+- [V1] https://api.vantage.sh/v2/oas_v3.json (servers)
+- [V2] https://docs.vantage.sh/api/authentication
+- [V3] https://api.vantage.sh/v2/oas_v3.json (`GET /costs` and the list endpoints)
+- [V4] https://docs.vantage.sh/api/recommendations/get-all-recommendations
+- [V5] https://docs.vantage.sh/api/rate_limiting
+- [K1] https://www.ibm.com/docs/en/SSW0JQG_1.x/apis/apis-overview/api-allocation.html (reached through the docs.kubecost.com redirect chain)
+- [O1] https://opencost.io/docs/integrations/api
+- [O2] https://www.cncf.io/blog/2024/10/31/opencost-advances-to-the-cncf-incubator/
+- [C1] https://apidocs.cloudhealthtech.com/
+- [F1] https://developer.flexera.com/docs/page/authentication
+- [F2] https://community.flexera.com/t5/Flexera-One-Forum/Bill-Analysis-API-Question/m-p/141307 (a community post, not a reference)
+- [S1] https://apis.io/apis/spot-by-netapp/spot-by-netapp-create-an-api-token-api/ (a third-party catalog)
+- Flexera acquires Spot: https://flexera.com/about-us/press-center/flexera-to-acquire-finops-business-from-netapp-to-strengthen-portfolio
+
+### 5.1 The contract (both repos agree on it; the gateway owns it)
+
+Defined once in the gateway as a pure module (`packages/gateway/src/connectors/finops/cost-item-contract.ts`)
+and mirrored by a fixture in each connector's tests. Mappers live in the gateway: the connector returns
+vendor-shaped rows and the gateway maps them, as for Monte Carlo and Ramp.
+
+**`cost_allocation`** (`service` in `vantage|cloudhealth|flexera|kubecost|opencost`):
+
+| Key | Meaning |
+| --- | --- |
+| `seriesKey` | `<service>\|<scopeId>\|<dimensionKind>\|<dimensionKey>\|<dimensionValue>`; groups the daily rows of one series |
+| `scopeId` | Vantage cost-report token or `default`; Kubecost/OpenCost cluster name or `default`; CloudHealth perspective id |
+| `dimensionKind` | one of `tag`, `account`, `service`, `provider`, `cost_category`, `namespace`, `controller`, `cluster`, `perspective`, `other` |
+| `dimensionKey` | the tag key or label name, else null |
+| `dimensionValue` | the value; `__other__` for the max-series remainder; `__idle__`, `__unallocated__`, `__unmounted__` pass through for Kubernetes |
+| `periodStartMs`, `periodEndMs` | the UTC day, epoch ms; `granularity` is always `"day"` in v1 |
+| `amount`, `currency` | major units as a JSON number; the ISO 4217 code exactly as the vendor states it, else null (Kubernetes replies: UNVERIFIED whether they carry one) |
+| `costKind` | `billed`, `amortized`, `list_estimate` (Kubecost, OpenCost) or `unknown` |
+| `unit` | `"currency"` in v1; reserved for a carbon series (Q3) |
+| `finalized` | boolean, D-FO-6 |
+| `provider`, `cloudService` | when the vendor gives them, else null |
+| `cpuCost`, `ramCost`, `gpuCost`, `pvCost`, `networkCost`, `sharedCost`, `idleCost` | Kubernetes only; numbers or null |
+
+`title` is `"<dimensionValue> <YYYY-MM-DD> <amount> <currency>"`, `bodyPreview` the same, `url` null,
+`modifiedAt` the period end capped at the sync time. Depth is `metadata_only`: no body.
+
+**`cost_recommendation`**: `recommendationType`, `category`, `provider`, `cloudService`,
+`providerAccountId`, `estimatedMonthlySavings` (number), `currency`, `resourcesAffected` (number),
+`createdAtMs`, `documentationUrl`. Vantage only in v1; the fields are the ones listed in [V4]. `status`
+is a query filter there, not a response field, so the connector requests `status=active`; a
+recommendation that later archives is not re-upserted and its row is left in place (§ 8, no
+upstream-deletion reconcile).
+
+**The reader the detector will use** is `finops/cost-series.ts`:
+`readCostSeries(db, { seriesKey, fromMs, toMs, finalizedOnly })` returns
+`{ points: { dayMs, amount, finalized }[], gaps: number[] }` using `item` rows and `json_extract` paths
+only. It makes no network call, imports no connector, egress or model code, and writes nothing. Its
+tests build rows through the real mapper: a fixture must come from the writer, not be hand-built.
+
+### 5.2 Slices (one PR each, in order)
+
+| Slice | Repo | Content | Gate |
+| --- | --- | --- | --- |
+| FO1 | nimbus-mcp-servers | `connectors/vantage`: `vantage_cost_list`, `vantage_recommendation_list`, `vantage_cost_get`, `vantage_search` (read-only, on `createJsonGetter` from `shared/env-json-api.ts`); manifest `network: ["api.vantage.sh"]`; the pinned connector count in `scripts/connector-gates.test.ts` raised; `exports` entry; README; fixtures | merge, then release-please publishes the next minor of `@nimbus-dev/connectors`; FO2's pin bump cannot precede it (`audit:connector-version-skew`) |
+| FO2 | Nimbus | Contract module and series reader; Vantage mapper and syncable on a `sinceMs` transport; the registration sites (§ 5.3); retention pass; embedding exclusion (D-FO-10); pin bump; docs; index-lane census | FO1 published |
+| FO3 | nimbus-mcp-servers | `connectors/kubecost`, `connectors/opencost` and `shared/allocation-kit.ts`: `*_allocation_list`, `*_allocation_get`, `*_search`, read-only; `network: []` (the URL host is added by the gateway); count pin raised by 2 | release |
+| FO4 | Nimbus | Kubecost/OpenCost mappers and syncables; URL-and-optional-secret spawn helper (§ 5.4); `nimbus connector auth kubecost --url ... [--token ...]`; Windows loopback probe; pin bump | FO3 published |
+| FO5 | both | CloudHealth, only if Q1 says so: two PRs | Q1 |
+| FO6 | both | Flexera One / Spot, only if Q1 says so: two PRs, endpoints verified first | Q1 |
+
+Each slice updates the five core docs and CHANGELOG. No schema migration in any slice: the `item` table
+already holds an arbitrary `type` and JSON `metadata`, and no relation type is added. If a slice finds
+it needs one, it takes "V9x (next free at merge)"; V94-V96 belong to the incident engine.
+
+### 5.3 FO1 / FO2 — Vantage
+
+**Tools** (connector). `vantage_cost_list` takes `{ sinceMs, cursor, limit }` and returns
+`{ items, nextCursor }`, the shape every list tool returns (`parseMcpListPage`). It issues `GET /costs`
+with `start_date` from `sinceMs`, `end_date` today, `date_bin=day`, and `groupings` from
+`VANTAGE_GROUP_BY` (default: the saved report's groupings when a report token is set, else
+`provider,service,account_id`, the documented default [V3]); `limit=5000`, following `links.next`. It
+paces `/costs` at no more than one request per 1.2 s (the documented cap for Cost Report endpoints is 5
+per 5 s [V5]; whether `/costs` is counted as one is UNVERIFIED) and stops on the first `429`, with an
+error naming the `x-rate-limit-reset` time. `vantage_recommendation_list` has the same shape over
+`GET /recommendations?status=active&limit=1000`.
+
+**Vault keys** (`CONNECTOR_VAULT_SECRET_KEYS`): `vantage.api_token` (secret; the owner should create a
+Read-only token; Nimbus cannot check a token's scope, § 8), `vantage.cost_report_token`,
+`vantage.workspace_token` (Vantage requires it when a token spans workspaces [V3]), `vantage.group_by`.
+Spawn env: `VANTAGE_API_TOKEN` and the three options, via `extensionProcessEnv` (I1).
+
+**Sandbox.** `FIRST_PARTY_MANIFESTS.vantage = baseManifest("com.nimbus.vantage", { network:
+["api.vantage.sh"], filesystem: { read: [], write: [] } })`. A fixed vendor host: no wildcard (I50
+unchanged), no owner-configured entry. Spawned through `wrapServerSpec` (I15, static D10);
+`audit:connector-hosts` must pass with no `connector-host-gaps.json` entry.
+
+**Gateway registration sites.** Derived from where Monte Carlo appears (a grep of `packages docs
+scripts`); a checklist, not a guarantee, and the slice re-derives it:
+`connectors/connector-catalog.ts` (id, interval `HOUR6`, auth hint), `catalog/connector-catalog-meta.ts`,
+`connectors/connector-secrets-manifest.ts`, `connectors/lazy-mesh/first-party-manifests.ts`,
+`connectors/lazy-mesh/mesh.ts` plus a `phase3AddVantageMcp` (in the data-BI file's pattern),
+`platform/assemble-sync-registrations.ts`, `sync/rate-limiter.ts` (the `Provider` union),
+`connectors/bundled-connector-registry.ts` (generated by `scripts/gen-bundled-connector-registry.ts`),
+`docs/structure-audit/index-lane-census.json`, `docs/cli-reference.md`, `docs/architecture.md`.
+`config/nimbus-toml-connectors.ts` is not touched (D-FO-7). No `connector-writes/*` file is touched.
+
+**Sync.** Cadence 6 h (`HOUR6` exists in `connector-catalog.ts`; cost data is daily, and the budget is
+1,000 requests/hour shared with the owner's other automation). Per sync at the D-FO-9 worst case:
+5 `/costs` pages plus 1 recommendations page. The transport drains before it writes, so a failed drain
+indexes nothing. `initialSyncDepthDays` is 45.
+
+### 5.4 FO3 / FO4 — Kubecost and OpenCost
+
+**Tools.** `kubecost_allocation_list` / `opencost_allocation_list` take `{ sinceMs, aggregate, limit,
+cursor }` and call `GET <base>/model/allocation` (Kubecost) or `GET <base>/allocation` (OpenCost) with
+`window=<start>,<end>`, `aggregate=namespace` by default (owner key `*.aggregate`: `namespace`,
+`controller`, `cluster`, `label:<name>`), `accumulate=false`, `step=1d`, `idle=true`. `window` is the
+only required parameter [O1]. The `/model` prefix is dropped when the owner's URL points at the
+cost-model container directly [K1], so a `*.path_prefix` key defaults to `/model` for Kubecost and to
+empty for OpenCost. Each returned allocation set is one day; the connector flattens sets into rows.
+Kubecost's Aggregator variant accepts `offset`/`limit` [K1]; the connector uses them only if the first
+reply shows them (UNVERIFIED), else it returns everything with `nextCursor: null`, capped at
+`max_series` before it returns.
+
+**Credentials and URL.** Kubecost: `kubecost.url` (required), `kubecost.token` (optional). OpenCost:
+`opencost.url`, `opencost.token`. Both: `*.aggregate`, `*.path_prefix`, `*.cluster_name` (used as
+`scopeId`). Neither product documents authentication, so a token is sent as `Authorization: Bearer`
+only when present; whether any real ingress honors it is UNVERIFIED.
+
+**Sandbox and reachability (Q2 (a)).** Static network `[]`. `phase3AddKubecostMcp` reads `kubecost.url`,
+calls `storedUrlHosts` (`http://localhost:9090` becomes the entry `localhost:9090`; an
+`https://cost.example.com` URL becomes `cost.example.com`) and
+`manifestWithExtraNetworkHosts(..., { ownerConfigured })`, exactly as Grafana and dbt do. The existing
+`addUrlAndSecretMcp` returns without spawning when the URL or the credential is empty; Kubecost's token
+is optional, so FO4 adds a URL-and-optional-secret sibling helper instead of weakening that one. A
+stored URL that yields no entry (an IPv6 literal, a hostless value) leaves the connector with no
+network and a warning, by service and never by value. On Linux the forwarder lets an owner-trust entry
+reach loopback only for the owner's own `localhost` or literal on its declared port
+(`platform/sandbox/net-address-rules.ts`, I50); on macOS the profile is ports only; on Windows the
+policy is all-or-nothing and loopback reach from an AppContainer is UNVERIFIED (Q2). The auth command
+refuses a URL whose host is loopback and whose port is the gateway's own HTTP or LAN port, so a typo
+cannot point the connector at the gateway's write surface (I13); that is a check on a value the owner
+typed, not a security boundary.
+
+**Sync.** Cadence 6 h; first sync 45 days, then `watermark - 3 days`. A 45-day, 1-day-step, namespace
+aggregate at the default 1-minute Prometheus `resolution` [O1] can be heavy for a large cluster; the
+incremental window keeps steady-state load to 3-4 days per sync, and the first sync is the exception. A
+first-sync timeout is reported and retried next cycle with a halved window (FO4 test).
+
+### 5.5 FO5 / FO6 — CloudHealth, Flexera One / Spot (conditional on Q1)
+
+A plan only, because the facts are thin.
+
+- **CloudHealth.** Key `cloudhealth.api_key`, optional `cloudhealth.org_id` (many endpoints take
+  `org_id`; omitted means the default org [C1]). Host `chapi.cloudhealthtech.com` fixed; a regional
+  host, if one exists, is UNVERIFIED and would become an owner-configured entry. Data from
+  `GET /olap_reports/cost/history` with `dimensions[]` set to a perspective and a daily `interval`
+  (parameter semantics UNVERIFIED), mapped to `dimensionKind: "perspective"`. Row limits, OLAP response
+  shape and GET rate limits are UNVERIFIED. The `api_key` query-parameter form is never used: a key in
+  a URL lands in logs. Bearer header only.
+- **Flexera One / Spot.** Keys `flexera.org_id`, `flexera.zone` (`NAM|EU|APAC`), and either
+  `flexera.refresh_token` or `flexera.client_id` + `flexera.client_secret` (a service account). The
+  connector exchanges at the zone's `/oidc/token` host [F1] and keeps the one-hour access token in
+  memory only. `api.flexera.com` and `login.flexera.com` are documented for NAM; the EU and APAC API
+  hosts are UNVERIFIED and must be confirmed before the zone key is offered. The cost call is
+  `POST /bill-analysis/orgs/{orgId}/costs/select` per community posts [F2], UNVERIFIED; it reads
+  despite the verb, and the connector's tests pin that it POSTs only to `/costs/select`. Spot-specific
+  APIs (Ocean, Eco) are not designed: no primary source for their cost endpoints was found.
+
+## 6. Security analysis
+
+- **Credentials.** Tokens live only in the Vault (non-negotiable 3), reach the connector as spawn env
+  through `extensionProcessEnv` (I1), and are listed in `CONNECTOR_VAULT_SECRET_KEYS` so redaction and
+  the static vault-key audit cover them. A Vantage token with Write scope is not refused (Nimbus cannot
+  read a token's scope); the connector has no code path that sends a non-GET to Vantage, a pinned test
+  asserts every handler's HTTP verb, and the README tells the owner to create a Read-only token.
+- **Sandbox hosts.** Vantage and CloudHealth: one fixed host each, no wildcard. Flexera: documented
+  token and API hosts. Kubecost/OpenCost: `network: []` plus the owner's own URL host, labelled
+  `ownerConfiguredNetwork` so the consent surface shows it is the owner's. As for GitHub Enterprise
+  Server, a literal host check does not stop DNS rebinding, and an RFC 1918 or loopback target is
+  allowed on purpose, because that is what an in-cluster cost service is.
+- **Egress (I29).** Scheduled syncs are ledgered by the existing `sync` class; nothing new is added or
+  excused. The retention pass and the series reader make no outbound call, and a runtime pin counts
+  zero egress rows around them.
+- **Untrusted content.** Names, labels, tags and report titles are vendor- or cluster-supplied text (a
+  Kubernetes label is attacker-influenceable by anyone with write access to a namespace). They go into
+  `title` and metadata as data; they are escaped by `wrapToolOutput` whenever a model reads them (I11),
+  and never interpolated into a command, URL or SQL (I9: bound parameters). A label or tag value is
+  capped at 256 characters; a longer one is truncated with an ellipsis and a short hash suffix so two
+  truncations do not collide.
+- **No action surface.** No write row, no HITL type, no model tool: I2, I26 and I53 are untouched. The
+  federation gate (I26) has nothing new to refuse because the connectors register no write or prepare
+  tool.
+- **Unattended means inert (OR-10-8).** Syncs, retention and the reader import no model code. The
+  static rule that would pin this is "D4x"; this spec proposes it and does not number it.
+- **Data sensitivity.** Spend by team and namespace is commercially sensitive. It is indexed locally
+  (non-negotiable 1) and no unattended path sends it to a non-local model. An owner-run `ask` that
+  reads it sends it to the model the owner configured, as with any indexed item; there is no per-type
+  redaction here (stated bound).
+- **Rate limits as availability.** Vantage's 1,000 requests/hour is account-wide [V5]. A 6-hour sync
+  uses about six requests per run, but a runaway loop could starve the owner's other automation, so
+  the connector stops on the first `429` and does not retry within the run.
+
+## 7. Testing and acceptance
+
+- **Connector tests (nimbus-mcp-servers).** The contract test; a verb pin per handler (GET only for
+  Vantage, Kubecost, OpenCost and CloudHealth; Flexera pins `/costs/select` as the only POST);
+  fixture replies built from the documented shapes; pagination (`links.next` loop, a 5,000-row page,
+  the `max_series` cap and `__other__`); `429` handling with `x-rate-limit-reset`; a token never
+  appears in a thrown error.
+- **Gateway tests (Nimbus).** Mapper tests per vendor over fixtures taken from the real connector's
+  output, not hand-built; an end-to-end test over real SQLite with fake MCP replies (no mock at the DB
+  layer) for the § 1 criterion: a first sync (45 days), then a second that re-reads the restatement
+  window and changes no row; provisional flags; `max_series` and `__other__`; retention deletes only
+  rows past `retain_days`; the series reader reports gaps explicitly; zero egress rows around it.
+  `first-party-manifests.test.ts` and `phase3-config.test.ts` rows for the new hosts, including the
+  owner-configured `localhost:<port>` entry and a stored URL that yields no entry failing closed with a
+  warning and no spawn. The Windows loopback probe (FO4) is a real AppContainer test; per project
+  convention it is self-validating (it proves its own positive control) rather than a platform skip
+  that hides a silent gap.
+- **Audits.** `audit:connector-hosts`, `audit:connector-version-skew`, `audit:tool-names`, the
+  index-lane census (`docs/structure-audit/index-lane-census.json`, regenerated; it is known to miss
+  accessor-helper reads, so the series reader uses the `json_extract` form it can see),
+  `audit:coverage-floor` per new gateway file (85% line, 80% branch), `typecheck:tests`.
+- **Live verification.** No test touches a real vendor account. Live reply shapes for all five are
+  verified against documentation only; the first credentialed run is the owner's.
+
+## 8. Stated bounds
+
+- Reply shapes, restatement behaviour and the meaning of `amount` (billed or amortized, with or without
+  credits, tax and refunds) are as documented, not observed. Vantage `settings[...]` controls credits,
+  refunds, discounts, tax and amortization [V3]; v1 sends none and leaves them at the saved report's
+  values, so `costKind` is `unknown` unless the owner's report is known to be billed.
+- `finalized` is our convention (D-FO-6), not a vendor guarantee.
+- Kubecost and OpenCost figures are on-demand list estimates [O1], not invoices. Kubecost field names
+  are the 1.x names (§ 5.0).
+- No upstream-deletion reconcile: an archived vendor recommendation, or a cost report removed upstream,
+  leaves its rows until retention clears them. Every existing connector has this bound.
+- The max-series cap hides the long tail inside `__other__`; per-series detection on a tail member is
+  not possible from the index.
+- Loopback reach from a Windows AppContainer is UNVERIFIED (Q2). The owner must keep a port-forward
+  running; Nimbus reports the failure and does not loop on retries.
+- Neither Kubecost nor OpenCost documents authentication. An unauthenticated ingress exposes cost data
+  to the network, which is the owner's exposure. Nimbus sends a Bearer token if given and cannot tell
+  whether the ingress honors it.
+- Spend is commercially sensitive and is not redacted in an owner-run `ask`.
+- The Vantage rate limit is account-wide and shared with the owner's other tooling.
+- CloudHealth, Flexera One and Spot endpoints, regions and limits are mostly UNVERIFIED; FO5 and FO6
+  may not begin without a person who can read the vendor's reference or call the API.
+- Where the embedding pipeline selects items was not located (D-FO-10); FO2 must confirm the exclusion
+  works before any cost row is written.
+
+## 9. Review log
+
+Not yet reviewed.
