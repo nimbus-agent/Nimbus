@@ -47,14 +47,34 @@ for (const { header, parse } of BLOCKS) {
     });
 
     const bad: [string, string, RegExp][] = [
-      ["an empty (whitespace) entry", 'jsm_alert_tags = ["ok", "   "]', /jsm_alert_tags has an empty entry/],
-      ["a too-long jsm tag", `jsm_alert_tags = ["${"x".repeat(129)}"]`, /jsm_alert_tags entry is longer/],
-      ["a Sentry slug with a capital", 'sentry_projects = ["Payments"]', /sentry_projects entry 'Payments'/],
+      [
+        "an empty (whitespace) entry",
+        'jsm_alert_tags = ["ok", "   "]',
+        /jsm_alert_tags has an empty entry/,
+      ],
+      [
+        "a too-long jsm tag",
+        `jsm_alert_tags = ["${"x".repeat(129)}"]`,
+        /jsm_alert_tags entry is longer/,
+      ],
+      [
+        "a Sentry slug with a capital",
+        'sentry_projects = ["Payments"]',
+        /sentry_projects entry 'Payments'/,
+      ],
       ["a Sentry slug with a space", 'sentry_projects = ["pay ments"]', /sentry_projects entry/],
       ["a glob that is only stars", 'data_models = ["***"]', /must contain a non-'\*' character/],
       ["a glob with whitespace", 'data_models = ["a b"]', /no whitespace/],
-      ["a glob over 200 characters", `data_models = ["${"a".repeat(201)}"]`, /at most 200 characters/],
-      ["depends_on naming the service itself", 'depends_on = ["payments"]', /must not name the service itself/],
+      [
+        "a glob over 200 characters",
+        `data_models = ["${"a".repeat(201)}"]`,
+        /at most 200 characters/,
+      ],
+      [
+        "depends_on naming the service itself",
+        'depends_on = ["payments"]',
+        /must not name the service itself/,
+      ],
       [
         "more than 50 entries",
         `depends_on = [${Array.from({ length: 51 }, (_, i) => `"s${String(i)}"`).join(", ")}]`,
@@ -119,7 +139,9 @@ describe("the merged loader", () => {
   });
 
   test("a configured target does not warn", () => {
-    load(`${table("ci.service", 'depends_on = ["ledger"]')}\n${table("metrics.dora", "", "ledger")}`);
+    load(
+      `${table("ci.service", 'depends_on = ["ledger"]')}\n${table("metrics.dora", "", "ledger")}`,
+    );
     expect(stderr.filter((l) => l.includes("depends_on"))).toEqual([]);
   });
 
