@@ -14040,7 +14040,10 @@ describe("I55 SA4 — a scheduled run is unattended: a rule or a block, never a 
     expect(body).not.toContain("consentCoordinator");
     expect(body).not.toContain("clientId");
     expect(body).toMatch(/enforcedPolicy:\s*platform\.enforcedPolicy/);
-    expect(src).toContain("await workflowScheduler?.retire()");
+    // Retired on shutdown and its drain AWAITED (started together with the briefing scheduler's, MB5,
+    // so neither timer keeps ticking while the other drains).
+    expect(src).toMatch(/const workflowsRetired = workflowScheduler\?\.retire\(\)/);
+    expect(src).toMatch(/await Promise\.all\(\[briefingRetired, workflowsRetired\]\)/);
     // Started only after the socket is serving.
     expect(src.indexOf("workflowScheduler?.start()")).toBeGreaterThan(
       src.indexOf("await platform.ipc.start()"),
