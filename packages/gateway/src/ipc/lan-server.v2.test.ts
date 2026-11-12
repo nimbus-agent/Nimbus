@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { type BoxKeypair, generateBoxKeypair } from "./lan-crypto.ts";
+import { type BoxKeypair, generateBoxKeypair, sealBoxFrame } from "./lan-crypto.ts";
 import { LanServer, type LanServerOptions } from "./lan-server.ts";
 import {
   createInitiatorHandshake,
@@ -36,6 +36,8 @@ afterEach(async () => {
 async function start(
   over: Partial<LanServerOptions> & {
     protoVersion?: 1 | 2;
+    /** A mutable protocol record: flipping `box.v` changes what isKnownPeer returns from then on. */
+    protoBox?: { v: 1 | 2 };
     allowed?: boolean;
     known?: boolean;
     pairingOpen?: boolean;
@@ -49,7 +51,7 @@ async function start(
   const negotiated: Uint8Array[] = [];
   const lookups: Uint8Array[] = [];
   const consumed: string[] = [];
-  const { protoVersion, allowed, known, pairingOpen, reply, ...opts } = over;
+  const { protoVersion, protoBox, allowed, known, pairingOpen, reply, ...opts } = over;
   const server = new LanServer({
     bind: "127.0.0.1",
     port: 0,
@@ -62,7 +64,11 @@ async function start(
       lookups.push(pubkey);
       if (known === false) return null;
       return Buffer.compare(Buffer.from(pubkey), Buffer.from(client.publicKey)) === 0
-        ? { peerId: "peer:test", writeAllowed: false, protoVersion: protoVersion ?? 1 }
+        ? {
+            peerId: "peer:test",
+            writeAllowed: false,
+            protoVersion: protoBox?.v ?? protoVersion ?? 1,
+          }
         : null;
     },
     onPeerNegotiated: (pubkey) => {
@@ -286,6 +292,86 @@ describe("LanServer v2 - the method denylist still runs before onMessage", () =>
     sendV2Request(b, { id: 1 });
     expect(await b.conn.closed()).toBe(true);
     expect(h.messages).toHaveLength(0);
+  });
+});
+
+describe("LanServer - a malformed but authenticated request cannot take the gateway down", () => {
+  test("JSON null, a number, a string and an array end a v2 session; the server keeps serving", async () => {
+    const h = await start();
+    for (const text of ["null", "3", '"str"', "[]", "true"]) {
+      const x = await connectV2(h.port, h.client, h.host.publicKey);
+      for (const r of x.session.sealMessage(new TextEncoder().encode(text))) x.conn.writeFrame(r);
+      expect(await x.conn.closed()).toBe(true);
+    }
+    expect(h.messages).toHaveLength(0);
+    const ok = await connectV2(h.port, h.client, h.host.publicKey);
+    sendV2Request(ok, { id: 1, method: "federation.ping" });
+    expect((await readV2Reply(ok)).id).toBe(1);
+    ok.conn.close();
+  });
+
+  test("the same on the legacy path: an encrypted `null` request closes the session", async () => {
+    const h = await start();
+    const conn = await connectRaw(h.port);
+    conn.writeFrame(legacyFrame({ kind: "hello", client_pubkey: b64(h.client.publicKey) }));
+    await conn.nextFrame();
+    conn.writeFrame(
+      sealBoxFrame(new TextEncoder().encode("null"), h.host.publicKey, h.client.secretKey),
+    );
+    expect(await conn.closed()).toBe(true);
+    expect(h.messages).toHaveLength(0);
+  });
+});
+
+describe("LanServer - requests on one connection are answered one at a time, in order", () => {
+  test("a second request in a later chunk does not start until the first finished", async () => {
+    let release: () => void = () => {};
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    const order: string[] = [];
+    const h = await start({
+      onMessage: async (_m, params) => {
+        const id = (params as { id: number }).id;
+        order.push(`start ${String(id)}`);
+        if (id === 1) await gate;
+        order.push(`end ${String(id)}`);
+        return { id };
+      },
+    });
+    const x = await connectV2(h.port, h.client, h.host.publicKey);
+    sendV2Request(x, { id: 1, method: "federation.ping", params: { id: 1 } });
+    await new Promise((r) => setTimeout(r, 60));
+    sendV2Request(x, { id: 2, method: "federation.ping", params: { id: 2 } });
+    await new Promise((r) => setTimeout(r, 120));
+    expect(order).toEqual(["start 1"]); // request 2 is buffered, not dispatched
+    release();
+    expect((await readV2Reply(x)).id).toBe(1);
+    expect((await readV2Reply(x)).id).toBe(2);
+    expect(order).toEqual(["start 1", "end 1", "start 2", "end 2"]);
+    x.conn.close();
+  });
+});
+
+describe("LanServer - an open v1 connection is rechecked against the ratchet", () => {
+  test("a v1 session opened while the peer was at 1 is closed once the peer reaches 2", async () => {
+    const box = { v: 1 as 1 | 2 };
+    const h = await start({ protoBox: box });
+    const conn = await connectRaw(h.port);
+    conn.writeFrame(legacyFrame({ kind: "hello", client_pubkey: b64(h.client.publicKey) }));
+    expect(JSON.parse(new TextDecoder().decode(await conn.nextFrame())).kind).toBe("hello_ok");
+    const req = (id: number) =>
+      sealBoxFrame(
+        new TextEncoder().encode(JSON.stringify({ id, method: "federation.ping" })),
+        h.host.publicKey,
+        h.client.secretKey,
+      );
+    conn.writeFrame(req(1));
+    expect(await conn.nextFrame()).toBeDefined(); // still served at protocol 1
+    box.v = 2; // the peer completes a v2 session on another connection
+    conn.writeFrame(req(2));
+    expect(await conn.closed()).toBe(true);
+    expect(h.messages).toHaveLength(1);
   });
 });
 

@@ -47,6 +47,26 @@ describe("lanLinkFor", () => {
     });
   });
 
+  test("known reads the LIVE record: a ratchet written after the link was built still counts", () => {
+    withIndex((index) => {
+      const row = index.getLanPeerByPubkey(PUBKEY) as NonNullable<
+        ReturnType<typeof index.getLanPeerByPubkey>
+      >;
+      const link = lanLinkFor(row, index); // built while the row said 1
+      expect(link.known).toBe(1);
+      index.markLanPeerProto(PUBKEY, 2); // another exchange ratchets the peer
+      expect(link.known).toBe(2);
+    });
+  });
+
+  test("a peer whose row vanished keeps the version the link was built with", () => {
+    withIndex((index) => {
+      const row = { peer_pubkey: new Uint8Array(32).fill(8), proto_version: 2 };
+      expect(lanLinkFor(row, index).known).toBe(2);
+      expect(lanLinkFor({ ...row, proto_version: 1 }, index).known).toBe(1);
+    });
+  });
+
   test("an out-of-range recorded version reads as 1", () => {
     withIndex((index) => {
       const link = lanLinkFor({ peer_pubkey: PUBKEY, proto_version: 7 }, index);

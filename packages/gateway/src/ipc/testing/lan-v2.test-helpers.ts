@@ -159,6 +159,8 @@ export interface StubServer {
   port: number;
   /** Connections accepted so far. */
   connections(): number;
+  /** Connections the CLIENT has closed so far. */
+  closedByClient(): number;
   stop(): void;
 }
 
@@ -171,6 +173,7 @@ export function startStub(
   ) => void,
 ): StubServer {
   let n = 0;
+  let closed = 0;
   const server = Bun.listen<{ reader: ReturnType<typeof makeFrameReader>; n: number }>({
     hostname: "127.0.0.1",
     port: 0,
@@ -178,6 +181,9 @@ export function startStub(
       open(socket) {
         n += 1;
         socket.data = { reader: makeFrameReader(8 * 1024 * 1024), n };
+      },
+      close() {
+        closed += 1;
       },
       data(socket, chunk) {
         socket.data.reader.push(chunk);
@@ -203,7 +209,12 @@ export function startStub(
       },
     },
   });
-  return { port: server.port, connections: () => n, stop: () => server.stop(true) };
+  return {
+    port: server.port,
+    connections: () => n,
+    closedByClient: () => closed,
+    stop: () => server.stop(true),
+  };
 }
 
 /** An OLD server: only the v1 handlers, so a v2 first frame is non-JSON and closes without a reply. */
@@ -239,7 +250,12 @@ export function startLegacyOnlyServer(ctx: LegacyServerContext): StubServer {
       },
     },
   });
-  return { port: server.port, connections: () => n, stop: () => server.stop(true) };
+  return {
+    port: server.port,
+    connections: () => n,
+    closedByClient: () => 0,
+    stop: () => server.stop(true),
+  };
 }
 
 /**

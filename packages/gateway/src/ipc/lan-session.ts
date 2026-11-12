@@ -34,6 +34,9 @@ export const MAX_RECORD_CHUNK = MAX_NOISE_MESSAGE - 16 - 1;
 /** The largest ciphertext of one record (what a frame may declare). */
 export const MAX_RECORD_FRAME = MAX_NOISE_MESSAGE;
 
+/** The most records a maximal message can need; more than this in one message is a flood of tiny records. */
+export const MAX_RECORDS_PER_MESSAGE = Math.ceil(MAX_LOGICAL_MESSAGE / MAX_RECORD_CHUNK);
+
 const FLAG_MORE = 0x00;
 const FLAG_FINAL = 0x01;
 const PATTERN_BYTE_IK = 0x01;
@@ -132,7 +135,16 @@ export class Session {
       throw new Error(SESSION_PROTOCOL_ERROR);
     }
     const chunk = plain.subarray(1);
-    if (this.pendingBytes + chunk.length > MAX_LOGICAL_MESSAGE) {
+    // A continuation record carries data: an empty one adds a retained view and no bytes, so a stream
+    // of them would pass the byte cap forever. The record count is bounded as well as the bytes.
+    if (flag === FLAG_MORE && chunk.length === 0) {
+      this.dead = true;
+      throw new Error(SESSION_PROTOCOL_ERROR);
+    }
+    if (
+      this.pendingBytes + chunk.length > MAX_LOGICAL_MESSAGE ||
+      this.pending.length >= MAX_RECORDS_PER_MESSAGE
+    ) {
       this.dead = true;
       throw new Error(SESSION_TOO_LARGE);
     }

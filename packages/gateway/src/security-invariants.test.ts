@@ -14268,15 +14268,22 @@ describe("I56 — a LAN session's records are encrypted only under ephemeral-DH 
   test("wiring: the legacy handshake calls legacyAllowedFor before it replies, and the server uses lan-session for v2", async () => {
     const legacy = stripComments(await read("packages/gateway/src/ipc/lan-legacy.ts"));
     const helloReply = legacy.indexOf('kind: "hello_ok"');
-    const lastCheck = legacy.lastIndexOf("legacyAllowedFor(");
-    expect(lastCheck).toBeGreaterThan(-1);
-    expect(lastCheck).toBeLessThan(helloReply);
+    const helloCheck = legacy.indexOf("legacyAllowedFor(match.protoVersion");
+    expect(helloCheck).toBeGreaterThan(-1);
+    expect(helloCheck).toBeLessThan(helloReply);
+    // ... and again for EVERY request on an open v1 connection, before the frame is opened.
+    const perRequest = legacy.indexOf("legacyAllowedFor(ctx.isKnownPeer(session.peerPubkey)");
+    expect(perRequest).toBeGreaterThan(helloReply);
+    expect(perRequest).toBeLessThan(legacy.indexOf("openBoxFrame(frame"));
     const server = stripComments(await read("packages/gateway/src/ipc/lan-server.ts"));
     expect(server).toContain("openResponderHandshake(");
     // checkLanMethodAllowed still runs before onMessage on the v2 path.
-    expect(server.indexOf("checkLanMethodAllowed(method, peer)")).toBeLessThan(
-      server.indexOf("this.opts.onMessage(method, params, peer)"),
-    );
+    const gateAt = server.indexOf("checkLanMethodAllowed(method, peer)");
+    const dispatchAt = server.indexOf("this.opts.onMessage(method, params, peer)");
+    // Both must exist: a removed check would make indexOf -1, which is "before" everything.
+    expect(gateAt).toBeGreaterThan(-1);
+    expect(dispatchAt).toBeGreaterThan(-1);
+    expect(gateAt).toBeLessThan(dispatchAt);
     const client = stripComments(await read("packages/gateway/src/ipc/lan-client.ts"));
     expect(client).toContain("createInitiatorHandshake(");
   });

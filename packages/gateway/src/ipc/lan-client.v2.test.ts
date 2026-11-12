@@ -237,6 +237,34 @@ describe("sendFederatedOverWire - the v2 front", () => {
     expect(silent.connections()).toBe(3); // 1 earlier + the v2 attempt + one legacy retry
   });
 
+  test("on timeout the client closes its socket instead of leaving it open", async () => {
+    const p = peers();
+    const slow = stub((frame, socket) => {
+      socket.write(openResponderHandshake(frame, { s: p.host }).accept().message2);
+    });
+    await expect(call(p, slow.port, { known: 2, minProtocol: 1 }, "m", 150)).rejects.toThrow(
+      "lan-client: rpc timeout",
+    );
+    await new Promise((r) => setTimeout(r, 150));
+    expect(slow.closedByClient()).toBe(1);
+  });
+
+  test("a message 2 that arrives after the timeout does not make the client send its request", async () => {
+    const p = peers();
+    const frames: number[] = [];
+    const late = stub((frame, socket) => {
+      frames.push(frame.length);
+      if (frames.length > 1) return; // anything after the first frame is the request: must not come
+      const accepted = openResponderHandshake(frame, { s: p.host }).accept();
+      setTimeout(() => socket.write(accepted.message2), 300);
+    });
+    await expect(call(p, late.port, { known: 2, minProtocol: 1 }, "m", 100)).rejects.toThrow(
+      "lan-client: handshake timeout",
+    );
+    await new Promise((r) => setTimeout(r, 500));
+    expect(frames).toHaveLength(1);
+  });
+
   test("a peer that answers the handshake and then never replies: rpc timeout, no fallback", async () => {
     const p = peers();
     const slow = stub((frame, socket) => {

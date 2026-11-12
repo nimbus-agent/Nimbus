@@ -178,6 +178,12 @@ export async function legacyHandleEncrypted(
     session.writer.end();
     return;
   }
+  // I56: this connection was admitted at its handshake, but the peer may have completed a v2 session
+  // since (on another connection). The record is read again for every request.
+  if (!legacyAllowedFor(ctx.isKnownPeer(session.peerPubkey)?.protoVersion, ctx.minProtocol)) {
+    session.writer.end();
+    return;
+  }
   let plain: Uint8Array;
   try {
     plain = openBoxFrame(frame, session.peerPubkey, ctx.hostKeypair.secretKey);
@@ -196,7 +202,8 @@ export async function legacyHandleEncrypted(
     session.writer.end();
     return;
   }
-  if (typeof msg.method !== "string") {
+  // `JSON.parse("null")` is null: reading `.method` of it would throw outside the try.
+  if (typeof msg !== "object" || msg === null || typeof msg.method !== "string") {
     session.writer.end();
     return;
   }

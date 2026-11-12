@@ -117,10 +117,13 @@ function exchangeV2(
     const reader = makeFrameReader(MAX_RECORD_FRAME);
     let session: ReturnType<typeof handshake.finish> | undefined;
     let settled = false;
+    let conn: Socket<undefined> | undefined;
     const finish = (body: Uint8Array | undefined, err?: Error): void => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      // Every terminal outcome closes the socket, so a peer that never answers cannot hold it open.
+      conn?.end();
       if (err) reject(err);
       else resolve(body as Uint8Array);
     };
@@ -153,9 +156,16 @@ function exchangeV2(
       port,
       socket: {
         open(socket) {
+          conn = socket;
+          // A connection that opens after the call already settled (a timeout) is closed unused.
+          if (settled) {
+            socket.end();
+            return;
+          }
           writeFrame(socket, handshake.firstFrameBody);
         },
         data(socket, chunk) {
+          if (settled) return;
           reader.push(chunk);
           try {
             for (let frame = reader.next(); frame !== undefined; frame = reader.next()) {

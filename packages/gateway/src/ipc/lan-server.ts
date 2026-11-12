@@ -65,6 +65,8 @@ interface SessionState {
   peerMatch?: LanPeerMatch;
   /** The v2 transport once message 2 was sent. */
   v2?: Session;
+  /** True while this socket's drain task is running (see `handleChunk`). */
+  draining?: boolean;
   /** D-FS-11: closes a socket that never finishes its handshake. */
   handshakeTimer?: ReturnType<typeof setTimeout> | undefined;
   peerIp: string;
@@ -148,7 +150,19 @@ export class LanServer {
     // on to pair, say hello or dispatch.
     if (socket.data.writer.isEnding()) return;
     if (!this.appendChunk(socket, chunk)) return;
+    // ONE drain task per socket: a later chunk only appends bytes (above, capped) and the running task
+    // picks them up, so request B is never dispatched while request A (a consent wait) is in flight,
+    // and replies keep the order of requests.
+    if (socket.data.draining === true) return;
+    socket.data.draining = true;
+    try {
+      await this.drainFrames(socket);
+    } finally {
+      socket.data.draining = false;
+    }
+  }
 
+  private async drainFrames(socket: Socket<SessionState>): Promise<void> {
     while (socket.data.buffer.length >= 4) {
       // Re-checked every pass: the previous frame (or an await inside it) may have ended the session.
       if (socket.data.writer.isEnding()) return;
@@ -331,14 +345,16 @@ export class LanServer {
       return;
     }
     if (message === undefined) return;
-    let request: { id?: string | number; method?: string; params?: unknown };
+    let parsed: unknown;
     try {
-      request = JSON.parse(new TextDecoder().decode(message)) as typeof request;
+      parsed = JSON.parse(new TextDecoder().decode(message));
     } catch {
       socket.data.writer.end();
       return;
     }
-    if (typeof request.method !== "string") {
+    // `null` and every other non-object parse fine and must not reach a field read.
+    const request = parsed as { id?: string | number; method?: unknown; params?: unknown } | null;
+    if (typeof request !== "object" || request === null || typeof request.method !== "string") {
       socket.data.writer.end();
       return;
     }

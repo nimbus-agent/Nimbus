@@ -15,10 +15,15 @@ export interface LanLinkRow {
  */
 export function lanLinkFor(
   row: LanLinkRow,
-  index: Pick<LocalIndex, "lanMinProtocol" | "markLanPeerProto">,
+  index: Pick<LocalIndex, "lanMinProtocol" | "markLanPeerProto" | "getLanPeerByPubkey">,
 ): LanLink {
   return {
-    known: row.proto_version === 2 ? 2 : 1,
+    // Read when the fallback decision is made, not when the link is built: another exchange may have
+    // ratcheted the peer in between. It never goes down (the version the link was built with counts too).
+    get known(): 1 | 2 {
+      const live = index.getLanPeerByPubkey(row.peer_pubkey)?.proto_version;
+      return row.proto_version === 2 || live === 2 ? 2 : 1;
+    },
     minProtocol: index.lanMinProtocol(),
     onNegotiated: (version) => index.markLanPeerProto(row.peer_pubkey, version),
   };

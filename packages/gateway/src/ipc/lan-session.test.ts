@@ -172,6 +172,28 @@ describe("records", () => {
     };
   }
 
+  test("an empty continuation record is refused, so empty views cannot pile up", () => {
+    const key = new Uint8Array(32).fill(4);
+    const bad = rawRecord(key, new Uint8Array([0x00]));
+    expect(() => bad.session.openRecord(bad.record)).toThrow(SESSION_PROTOCOL_ERROR);
+  });
+
+  test("more records than a maximal message can need are refused", () => {
+    const key = new Uint8Array(32).fill(4);
+    const send = new CipherState(key);
+    const session = new Session(new CipherState(undefined), new CipherState(key));
+    const max = Math.ceil(MAX_LOGICAL_MESSAGE / MAX_RECORD_CHUNK);
+    for (let i = 0; i < max; i++) {
+      // one-byte continuation records: far below the byte cap, far above the record count
+      expect(
+        session.openRecord(send.encryptWithAd(new Uint8Array(0), new Uint8Array([0, 1]))),
+      ).toBeUndefined();
+    }
+    expect(() =>
+      session.openRecord(send.encryptWithAd(new Uint8Array(0), new Uint8Array([0, 1]))),
+    ).toThrow(SESSION_TOO_LARGE);
+  });
+
   test("a flag other than 0 or 1, and an empty record, end the session with a fixed error", () => {
     const key = new Uint8Array(32).fill(4);
     const bad = rawRecord(key, new Uint8Array([0x02, 1, 2]));
