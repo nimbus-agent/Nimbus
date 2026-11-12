@@ -9,7 +9,14 @@ import {
   legacyHandleEncrypted,
   legacyHandleHandshake,
 } from "../lan-legacy.ts";
-import { createInitiatorHandshake, type InitiatorOptions, type Session } from "../lan-session.ts";
+import { HandshakeState, PATTERN_IK } from "../lan-noise.ts";
+import {
+  createInitiatorHandshake,
+  decodeFirstFrame,
+  type InitiatorOptions,
+  SESSION_PROLOGUE,
+  type Session,
+} from "../lan-session.ts";
 import { buildFrame, makeFrameReader } from "../lan-wire.ts";
 import { createQueuedSocketWriter } from "../server/queued-socket-writer.ts";
 
@@ -233,4 +240,34 @@ export function startLegacyOnlyServer(ctx: LegacyServerContext): StubServer {
     },
   });
   return { port: server.port, connections: () => n, stop: () => server.stop(true) };
+}
+
+/**
+ * The static public key an initiator presented in a v2 first frame, read by a test responder that
+ * holds `responder`'s static key. It reads the key even when the handshake cannot COMPLETE (an
+ * initiator whose identity is not a consistent key pair, or the all-zero fallback identity, fails the
+ * `ss` step after the key was decrypted): that is exactly what an identity-presentation test needs.
+ */
+export function presentedStaticKey(
+  firstFrameBody: Uint8Array,
+  responder: BoxKeypair,
+): Uint8Array | undefined {
+  const message1 = decodeFirstFrame(firstFrameBody);
+  if (message1 === undefined) return undefined;
+  const hs = new HandshakeState({
+    pattern: PATTERN_IK,
+    initiator: false,
+    prologue: SESSION_PROLOGUE,
+    s: responder,
+  });
+  try {
+    hs.readMessage(message1);
+  } catch {
+    /* a failed tail step still leaves the decrypted static key behind */
+  }
+  try {
+    return hs.remoteStatic();
+  } catch {
+    return undefined;
+  }
 }

@@ -42,7 +42,7 @@ const MAGIC = [0x4e, 0x4c] as const;
 const FIRST_FRAME_HEADER_LENGTH = 4;
 
 /** D-FS-7: the only label of ours is the prologue; everything else is Noise's own schedule. */
-const PROLOGUE = new Uint8Array([
+export const SESSION_PROLOGUE = new Uint8Array([
   ...new TextEncoder().encode("nimbus-lan/2"),
   VERSION,
   PATTERN_BYTE_IK,
@@ -196,7 +196,7 @@ export function createInitiatorHandshake(opts: InitiatorOptions): InitiatorHands
   const hs = new HandshakeState({
     pattern: PATTERN_IK,
     initiator: true,
-    prologue: PROLOGUE,
+    prologue: SESSION_PROLOGUE,
     s: opts.s,
     rs: opts.rs,
     generateEphemeral: opts.generateEphemeral,
@@ -239,7 +239,7 @@ export function openResponderHandshake(
   const hs = new HandshakeState({
     pattern: PATTERN_IK,
     initiator: false,
-    prologue: PROLOGUE,
+    prologue: SESSION_PROLOGUE,
     s: opts.s,
     generateEphemeral: opts.generateEphemeral,
   });
