@@ -113,7 +113,7 @@ describe("Vantage acceptance (spec section 1)", () => {
       expect(Date.now() - (cost?.args["sinceMs"] as number)).toBeGreaterThan(44 * DAY_MS);
       const today = startOfUtcDay(Date.now());
       const series = readCostSeries(h.db, {
-        seriesKey: seriesKeyOf("vantage", "default", "service", null, "EC2"),
+        seriesKey: seriesKeyOf("vantage", "default||service", "service", null, "EC2"),
         fromMs: today - 45 * DAY_MS,
         toMs: today,
       });
@@ -270,7 +270,7 @@ describe("Vantage acceptance (spec section 1)", () => {
       const afterSync = ledgerCount();
       const today = startOfUtcDay(Date.now());
       readCostSeries(h.db, {
-        seriesKey: seriesKeyOf("vantage", "default", "service", null, "EC2"),
+        seriesKey: seriesKeyOf("vantage", "default||service", "service", null, "EC2"),
         fromMs: today - 8 * DAY_MS,
         toMs: today,
       });

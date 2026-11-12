@@ -99,7 +99,7 @@ export function createVantageSyncable(options: VantageSyncableOptions = {}): Syn
         args: { limit: VANTAGE_RECOMMENDATION_PAGE_LIMIT },
       },
     ],
-    index(ctx, drained, syncedAt, prepared, fresh) {
+    index(ctx, drained, syncedAt, prepared) {
       const costRows = drained.costs;
       const points = costRows.flatMap((raw) => {
         const point = mapVantageCostRow(raw, prepared);
@@ -123,9 +123,8 @@ export function createVantageSyncable(options: VantageSyncableOptions = {}): Syn
         seriesScope: seriesScopeOf(prepared),
         // Only the series indexed under THIS configuration count against the cap: a changed report,
         // workspace or grouping starts a named set of its own.
-        existingSeriesHashes: new Set(
-          fresh ? [] : currentSeriesHashes(ctx, seriesScopeOf(prepared)),
-        ),
+        // Returning to an earlier configuration finds its named set again.
+        existingSeriesHashes: new Set(currentSeriesHashes(ctx, seriesScopeOf(prepared))),
         syncedAt,
       });
       if (mixedCurrencyBuckets > 0) {

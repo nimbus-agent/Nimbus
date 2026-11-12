@@ -267,7 +267,13 @@ describe("createVantageSyncable", () => {
     const ids = db.query("SELECT external_id FROM item WHERE type='cost_allocation'").all() as {
       external_id: string;
     }[];
-    expect(ids.every((r) => r.external_id.startsWith("rprt_abc123:"))).toBe(true);
+    expect(ids.every((r) => /^[0-9a-f]{12}:/.test(r.external_id))).toBe(true);
+    const scopes = db
+      .query(
+        "SELECT DISTINCT json_extract(metadata,'$.scopeId') AS s FROM item WHERE type='cost_allocation'",
+      )
+      .all();
+    expect(scopes).toEqual([{ s: "rprt_abc123" }]);
   });
 
   test("dropped cost rows are counted in a warning that carries no row content", async () => {
@@ -445,5 +451,52 @@ describe("review fixes, round 2", () => {
     expect(db.query("SELECT COUNT(*) AS n FROM item WHERE type='cost_allocation'").get()).toEqual({
       n: 0,
     });
+  });
+});
+
+describe("review fixes, round 3", () => {
+  test("two groupings of one report never write the same day-row", async () => {
+    const { db, ctx, entries } = setup({ "vantage.group_by": "service" });
+    fakeSession({ costs: costRows(["EC2"], 2, 5), recommendations: [] });
+    await createVantageSyncable().sync(ctx, null);
+    entries["vantage.group_by"] = "service,provider";
+    fakeSession({
+      costs: [
+        { accrued_at: day(-2), amount: "7", currency: "USD", service: "EC2", provider: "aws" },
+      ],
+      recommendations: [],
+    });
+    await createVantageSyncable().sync(ctx, null);
+    const rows = db.query("SELECT COUNT(*) AS n FROM item WHERE type='cost_allocation'").get() as {
+      n: number;
+    };
+    expect(rows.n).toBe(3);
+  });
+
+  test("returning to an earlier configuration finds its named set again", async () => {
+    const { db, ctx, entries } = setup({ "vantage.group_by": "service" });
+    const run = (cursor: string | null) =>
+      createVantageSyncable({ maxSeries: () => 1 }).sync(ctx, cursor);
+    fakeSession({
+      costs: [...costRows(["A"], 2, 9), ...costRows(["B"], 2, 8)],
+      recommendations: [],
+    });
+    await run(null);
+    entries["vantage.group_by"] = "service,currency";
+    fakeSession({ costs: costRows(["C"], 1, 1), recommendations: [] });
+    const other = await run(null);
+    entries["vantage.group_by"] = "service";
+    // Back on the first configuration: B is bigger today, but A was named first and stays named.
+    fakeSession({
+      costs: [...costRows(["A"], 1, 1), ...costRows(["B"], 1, 99)],
+      recommendations: [],
+    });
+    await run(other.cursor);
+    const latest = db
+      .query(
+        "SELECT json_extract(metadata,'$.dimensionValue') AS v FROM item WHERE json_extract(metadata,'$.scopeSeries') LIKE 'default||service~%' AND json_extract(metadata,'$.periodStartMs') = (SELECT MAX(json_extract(metadata,'$.periodStartMs')) FROM item WHERE type='cost_allocation')",
+      )
+      .all() as { v: string }[];
+    expect(latest.map((r) => r.v).sort()).toEqual(["A", "__other__"]);
   });
 });

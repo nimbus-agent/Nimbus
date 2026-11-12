@@ -51,16 +51,12 @@ export interface FinopsSyncSpec<P, K extends string> {
    * another scope is ignored: the new configuration reads the first window again.
    */
   readonly cursorScope: (prepared: P) => string;
-  /**
-   * Map and write everything drained, in one batch. `fresh` is true when no trusted cursor exists
-   * (first sync, rows gone, or the configuration changed): the indexed series are then not carried over.
-   */
+  /** Map and write everything drained, in one batch. */
   readonly index: (
     ctx: SyncContext,
     drained: Readonly<Record<K, readonly unknown[]>>,
     syncedAt: number,
     prepared: P,
-    fresh: boolean,
   ) => { written: number; deleted: number };
 }
 
@@ -191,7 +187,7 @@ export function createFinopsSyncable<P, K extends string>(spec: FinopsSyncSpec<P
         },
       );
       const syncedAt = Date.now();
-      const { written, deleted } = spec.index(ctx, drained, syncedAt, prepared, lastOkMs === null);
+      const { written, deleted } = spec.index(ctx, drained, syncedAt, prepared);
       return {
         cursor: encodeNimbusJsonCursor(spec.cursorPrefix, {
           lastOkMs: syncedAt,

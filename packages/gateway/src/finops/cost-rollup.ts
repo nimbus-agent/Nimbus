@@ -99,7 +99,13 @@ function rowFor(
 ): RolledCostRow {
   const periodEndMs = dayMs + DAY_MS;
   const metadata: CostAllocationMetadata = {
-    seriesKey: seriesKeyOf(opts.service, opts.scopeId, identity.kind, identity.key, identity.value),
+    seriesKey: seriesKeyOf(
+      opts.service,
+      idScope(opts),
+      identity.kind,
+      identity.key,
+      identity.value,
+    ),
     seriesHash: identity.hash,
     scopeSeries: scopeSeriesOf(opts.seriesScope ?? opts.scopeId, identity.hash),
     scopeId: opts.scopeId,
@@ -120,10 +126,19 @@ function rowFor(
     rowCount: bucket.sum.count,
   };
   return {
-    externalId: costRowExternalId(opts.scopeId, identity.hash, dayMs),
+    externalId: costRowExternalId(idScope(opts), identity.hash, dayMs),
     dayMs,
     metadata,
   };
+}
+
+/**
+ * The scope part of a row's identity (its `seriesKey` and item id): the report or workspace AND the
+ * grouping, so two groupings of one report never write the same day-row (the `__other__` row and a
+ * series with the same kind and value would otherwise collide).
+ */
+function idScope(opts: RollupOptions): string {
+  return opts.seriesScope ?? opts.scopeId;
 }
 
 /** The metadata value that ties a series hash to the configuration it was indexed under. */
@@ -191,7 +206,7 @@ export function rollUpCostPointsDetailed(
           };
     for (const [dayMs, bucket] of days) {
       if (new Set(bucket.points.map((p) => p.currency)).size > 1) {
-        mixedCurrencyIds.push(costRowExternalId(opts.scopeId, hash, dayMs));
+        mixedCurrencyIds.push(costRowExternalId(idScope(opts), hash, dayMs));
         continue;
       }
       rows.push(rowFor(bucket, dayMs, opts, identity));
