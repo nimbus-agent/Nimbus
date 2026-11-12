@@ -8,12 +8,13 @@ there). Nothing in the Nimbus gateway changes in FO1.
 
 ## 0. What the planner read, and what it could not
 
-Every file and line below was read from `origin/main` of the connectors repo **as the local clone knows
-it**: `39525a9` (2026-11-11, `package.json` version 0.11.0), which is 19 commits behind the remote. The
-gateway already pins `@nimbus-dev/connectors ^0.13.0`
-(`packages/gateway/package.json:21`), so the real `main` is at least at 0.13.0. Line numbers may have
-moved by a few; every citation names a symbol so it can be re-found. Task 0 re-derives the facts that
-can drift (connector count, version, pinned numbers).
+Every file and line below was read from `origin/main` of the connectors repo at `0e3609c`
+(`package.json` and `.release-please-manifest.json` both 0.13.0), re-read after review round 1. An earlier
+draft of this plan was written against a clone 19 commits behind (0.11.0, 94 connectors) and had every
+count one too low; those are corrected here. Line numbers may drift by a few; every citation names a
+symbol so it can be re-found. T0 re-derives the facts that can drift again. The spec's slice table counts
+from 94 (FO1 to 95, FO3 to 97, FO5a to 98, FO6a to 99); on current main the real sequence is
+FO1 to 96, FO3 to 98, FO5a to 99, FO6a to 100, and the spec should say so when it is next touched.
 
 Layout facts used (all `origin/main`):
 
@@ -59,7 +60,7 @@ Layout facts used (all `origin/main`):
 | Read-only: `hitlRequired: []`, no write tool, GET only, verb pinned by a test (D-FO-1, § 6, § 7) | T2 step 3 (manifest), T9 |
 | Manifest `network: ["api.vantage.sh"]`, no wildcard, no extra host (§ 5.3 "Sandbox") | T2 step 3, T9 case 4 |
 | Token never in a thrown error or output (§ 6, § 7) | T9 case 3 |
-| Pinned connector count raised (94 to 95), `exports` entry (§ 5.2) | T1, T2 |
+| Pinned connector count raised (95 to 96), `exports` entry (§ 5.2) | T1, T2 |
 | README with credentials and read-only token advice (§ 5.3, § 6) | T10 |
 | Fixtures from documented shapes, not a live account (§ 7) | T3 |
 | Release publishes the next minor; FO2's pin waits (§ 5.2 gate) | T12 |
@@ -80,7 +81,7 @@ tests and surfaced in the README.
 | R6 | Whether a Bearer token alone satisfies the file's `oauth2` security scheme (the schemes block was not readable in the 567 KB file) | T3: read `components.securitySchemes`; the auth page (`docs.vantage.sh/api/authentication`) shows `Authorization: Bearer`; if the file contradicts it, stop and report to the spec owner |
 | R7 | `GET /cost_reports/{token}` response shape (used by `vantage_cost_get`) | T3: read the schema; the tool returns the raw body, so only the path is pinned |
 | R8 | The `recommendations` response envelope key (`recommendations` per the docs page) and `links` | T3 plus T5 fixture from the documented field list in spec § 5.0 [V4] |
-| R9 | Pre-existing connector-repo drift: the local clone is 19 commits behind and the live count, version and `NN` of the latest release differ | T0 |
+| R9 | Drift between planning and implementation: counts, version and pinned strings were re-derived at `0e3609c` (0.13.0, 95 connectors) and can move again | T0 |
 
 ## 3. Tasks
 
@@ -93,19 +94,20 @@ Use the Write/Edit tools for any file containing a backslash (`CLAUDE.md` "Traps
    `git rev-parse --abbrev-ref HEAD`.
 2. `bun install --frozen-lockfile` then `bun run check` (lint, typecheck, the four audits, `bun test`). It
    must be green before any change; if it is not, stop.
-3. Re-derive: `ls connectors | wc -l` (expected 94), the number in `scripts/connector-gates.test.ts`
-   (`expect(connectorDirs(ROOT)).toHaveLength(94)`, line 44 at `39525a9`), `package.json` version, the
+3. Re-derive: `ls connectors | wc -l` (expected 95), the number in `scripts/connector-gates.test.ts`
+   (`expect(connectorDirs(ROOT)).toHaveLength(95)`, line 44 at `0e3609c`), `package.json` version, the
    newest `connectors-v*` tag (`git tag --list 'connectors-v*' --sort=-v:refname | head -1`), and the
    `minNimbusVersion` of the newest sibling manifest (copy it, do not guess). Write the numbers in the PR
-   body. If the count is not 94, every "94/95" below shifts by the same amount.
+   body. If the count is not 95, every "95/96" below shifts by the same amount.
 
 ### T1 Raise the pinned count first (red)
 
-1. Edit `scripts/connector-gates.test.ts` (the `actually sees this repo's 94 connectors` test, lines
-   43-44): the title and `toHaveLength` become 95.
-2. `bun test scripts/connector-gates.test.ts` fails (94 found). This is the intended red.
-3. Edit `docs/standalone-launcher.md:28`: the sentence becomes `all 95 are eligible` and `50 declare no
-   mutating tools` (the new connector declares none; the 45 hardened stay 45). A test
+1. Edit `scripts/connector-gates.test.ts` (the `actually sees this repo's 95 connectors` test, lines
+   43-44): the title and `toHaveLength` become 96.
+2. `bun test scripts/connector-gates.test.ts` fails (95 found). This is the intended red.
+3. Edit `docs/standalone-launcher.md:28`: the sentence (today `all 95 are eligible` and `50 declare no
+   mutating tools`) becomes `all 96 are eligible` and `51 declare no mutating tools` (the new connector
+   declares none; the 45 hardened stay 45). A test
    (`standalone/src/launcher.test.ts`, "the launcher doc states the measured total and split", about
    lines 468-485) recomputes `total`, `noWrites` and `hardened` from the tree and asserts the doc says
    `all ${total} are eligible`, `${noWrites} declare no mutating tools` and `other ${hardened} have had
@@ -114,7 +116,8 @@ Use the Write/Edit tools for any file containing a backslash (`CLAUDE.md` "Traps
 ### T2 Scaffold (all connector-level gates go from red to green together)
 
 1. Create `connectors/vantage/package.json`: copy `connectors/dbt/package.json` with `name:
-   "nimbus-mcp-vantage"`, `private: true` (asserted by a test), the same three dependencies.
+   "nimbus-mcp-vantage"`, `private: true` (asserted by a test), the same three dependencies, except `@nimbus-dev/sdk` is `^2.1.0` to match the root manifest (the per-connector
+   file is metadata only, nothing installs from it, and `dbt` still says `^2.0.0`).
 2. Create `connectors/vantage/tsconfig.json`: copy `connectors/dbt/tsconfig.json` verbatim.
 3. Create `connectors/vantage/nimbus.extension.json`: `id: "com.nimbus.vantage"`, `displayName: "Vantage"`,
    `version: "0.1.0"`, `entrypoint: "dist/server.js"`, `runtime: "bun"`, `permissions: { network:
@@ -128,8 +131,12 @@ Use the Write/Edit tools for any file containing a backslash (`CLAUDE.md` "Traps
 6. Add `"./vantage": "./connectors/vantage/src/server.ts"` to the root `package.json` `exports` between
    `./testflight` and `./vercel` (alphabetical; `scripts/exports-map.test.ts` fails without it).
 7. Copy `connectors/dbt/test/sandbox.test.ts` unchanged to `connectors/vantage/test/sandbox.test.ts`.
-8. `bun test scripts/connector-gates.test.ts scripts/exports-map.test.ts scripts/connector-boot.test.ts`
-   now pass for the count and the boot (the boot lists tools: the empty list matches).
+8. `bun test scripts/connector-gates.test.ts scripts/exports-map.test.ts standalone/src/launcher.test.ts`
+   now pass (count, exports map, the launcher doc numbers). `scripts/connector-boot.test.ts` is NOT
+   expected to pass yet: it asserts `served.length` is greater than 0 (`scripts/connector-boot.test.ts`,
+   the `expect(served.length).toBeGreaterThan(0)` line) and an empty surface fails it. It goes green at
+   T4, when `vantage_cost_list` is registered. T2 is therefore not independently green; the PR is
+   squash-merged, so only the final state matters.
 
 ### T3 Close R1-R3, R5-R8 and write the fixtures
 
@@ -220,7 +227,9 @@ prefers `vantage_recommendation_get`, only the path and fixture change.
    (e) the error does not contain the token.
 2. Implement: a `fetch` wrapper passed to `createJsonGetter` (`JsonApiConfig.fetch`,
    `shared/env-json-api.ts:125`, type `JsonFetch`) that, on `res.status === 429`, reads the header and
-   throws; the pacer is a closure over `lastCostAt`.
+   throws; the pacer is a closure over `lastCostAt`. The pacing test is exact: `new URL(url).pathname === "/v2/costs"`
+   (never `includes("cost")`, which would also pace `/cost_reports/...`; case (b) above pins it, and a
+   `/cost_reports/abc` request in the same test must show no sleep).
 3. Green, commit.
 
 ### T9 Read-only and sandbox pins (tests that can fail)
@@ -249,9 +258,10 @@ prefers `vantage_recommendation_get`, only the path and fixture change.
    `VANTAGE_WORKSPACE_TOKEN`, `VANTAGE_GROUP_BY` optional); advice to create a Read-only Vantage token
    (Nimbus cannot check scope, spec § 8); the four tools; the rate limits (1,000 requests per hour, Cost
    Report endpoints 5 per 5 s) and the assumption R4; the documented-fixture caveat.
-2. Update the connector count in prose: `CLAUDE.md:5,88`, `CONTRIBUTING.md:3,103`, `README.md:6`,
-   `docs/adding-a-connector.md:27`, `docs/architecture.md:14,166` (and the "One package, not 94" heading
-   area at `:34`, `:37` only where it states the current count), `docs/configuration.md:139`. Leave
+2. Update the connector count in prose: `CLAUDE.md:5,88`, `CONTRIBUTING.md:3,103`, `README.md:6,119`,
+   `docs/adding-a-connector.md:27,141,159` (the last two say "the other 94", which becomes 95), `docs/architecture.md:14,166` (and the "One package, not 95" heading
+   at `:34` and the `:37` sentence), `docs/configuration.md:139,140` ("all 95 connectors" and "the other 94"). All of these are 95 today and
+   become 96 (and 95 for "the other"). Leave
    historical sentences (`standalone/src/launcher.test.ts:457`, the `strip-comments.ts` measurement) alone.
    `scripts/doc-links.test.ts` guards links; run it.
 3. Do NOT edit `CHANGELOG.md` (release-please owns it).
@@ -261,7 +271,7 @@ prefers `vantage_recommendation_get`, only the path and fixture change.
 1. `bun run sync:tool-names` then `bun run audit:tool-names` (the `VANTAGE_TOOL_NAMES` export must equal
    the four registered names, order as the script writes it).
 2. `bun run check` (lint with `--error-on-warnings`, `tsc -p tsconfig.json` over `src/` only (tests are
-   not type-checked), the three audits, `bun test`). Fix everything it names. Confirm
+   not type-checked), the four audits, `bun test`). Fix everything it names. Confirm
    `scripts/connector-tool-contract.test.ts` actually discovered `vantage` (it must not be in a skip map;
    add nothing to `NOT_HTTP`, `KEYLESS` or `ARG_OVERRIDES` unless a named property fails for a stated
    reason).
@@ -277,16 +287,44 @@ prefers `vantage_recommendation_get`, only the path and fixture change.
    and the risk table (§ 2) in the body. No `!`: nothing a user must change (see the gateway repo's
    guidance on `!`). A `feat` cuts a minor under `bump-minor-pre-major: true`.
 2. Wait for CI (Ubuntu, macOS, Windows) to be green. Merge when green.
-3. release-please opens `chore(main): release connectors 0.N.0 (#NN)` on the push to `main`. Merge it
+3. release-please opens `chore(main): release connectors 0.14.0 (#NN)` on the push to `main` (the manifest is 0.13.0 and a `feat` is a minor;
+   confirm the number in the release PR title). Merge it
    when green; `release.yml`'s `publish` job runs only if a release was created.
 4. Confirm the publish: `npm view @nimbus-dev/connectors version` equals the new minor and the tarball
    contains `connectors/vantage/` (the repo's `scripts/package-contents.test.ts` guards the file list).
 5. **FO2 waits for this.** The gateway PR may bump `@nimbus-dev/connectors` only after step 4, because
    `audit:connector-version-skew` fails a pin to an unpublished version. Hand the exact version and the
-   four tool names to FO2.
+   four tool names to FO2 (expected `^0.14.0`).
 
 ## 4. Order and commits
 
 T0, T1 (red), T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12. One commit per task from T4 on; T1+T2 may
 share one. Run `git rev-parse --abbrev-ref HEAD` before every commit (a concurrent session once moved HEAD
 off a branch).
+
+## 5. Review log
+
+### Round 1 (Antigravity, 2026-11-12), checked against `origin/main` `0e3609c`
+
+Applied (each re-derived from the files, not from the review):
+- F1: `scripts/connector-gates.test.ts:43-44` already says 95 on main (95 directories under
+  `connectors/`). The plan was written against a stale clone. T0, T1 and the coverage table now go 95 to
+  96. The spec's own 94-based sequence is noted in § 0.
+- F2: `docs/standalone-launcher.md:28` already says "all 95 ... 50 ... 45"; the test strings are at
+  `standalone/src/launcher.test.ts:487-489`. T1 step 3 now sets 96 and 51 (hardened stays 45). T10 lists
+  the extra prose spots (`README.md:119`, `docs/adding-a-connector.md:141,159`,
+  `docs/configuration.md:140`) and the "One package, not 95" heading, all re-read from main.
+- F3: `scripts/connector-boot.test.ts:153` asserts `served.length > 0`. T2 step 8 no longer expects it to
+  pass; it goes green at T4. The launcher test replaces it in the T2 check.
+- F4: `bun run check` runs four audits (`package.json:145`). T11 said "three"; fixed.
+- F5: T8 now pins the pacer to `new URL(url).pathname === "/v2/costs"` with a `/cost_reports` case in the
+  same test. (Valid as a guard against a sloppy substring match; the plan did not itself prescribe one.)
+- F6: the next release is expected to be 0.14.0 (manifest 0.13.0, `bump-minor-pre-major: true`); T12 says
+  so and tells the implementer to confirm it in the release PR title.
+- F7: accepted as an alignment choice (`^2.1.0` as in the root `package.json:29`), but noted as metadata
+  only: `dbt` and `google-calendar` still say `^2.0.0`, and the only script mentioning the SDK is the
+  dependency allow-list (`scripts/check-connector-deps.ts:16`), which does not compare versions.
+
+Rejected: none. Two of the review's phrasings were stronger than the files: F1 says changing nothing
+"leaves the test green" (true of main, false of the plan, which was simply stale), and F7 is labelled a
+dependency-alignment defect when it is cosmetic.
