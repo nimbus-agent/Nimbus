@@ -7,9 +7,11 @@ import type { NotificationService } from "../types.ts";
 import {
   createNotificationsRuntime,
   type NotificationsRuntimeLogger,
+  showWithOutcome,
   TEST_NOTIFICATION_BODY,
   TEST_NOTIFICATION_TITLE,
 } from "./notifications-runtime.ts";
+import { NotificationRateLimitedError, NotificationUnavailableError } from "./os-notifications.ts";
 import { type NotificationBackend, NotificationSendError } from "./types.ts";
 
 const dirs: string[] = [];
@@ -273,5 +275,51 @@ describe("createNotificationsRuntime — active", () => {
         createBackend: () => fakeBackend().backend,
       }),
     ).not.toThrow();
+  });
+});
+
+describe("showWithOutcome", () => {
+  test("delivers === false reports not_delivering and never asks the service", async () => {
+    let calls = 0;
+    const svc = {
+      delivers: false,
+      show: async () => {
+        calls += 1;
+      },
+    };
+    expect(await showWithOutcome(svc, "t", "b")).toBe("not_delivering");
+    expect(calls).toBe(0);
+  });
+
+  test("a resolved show is delivered (delivers absent counts as true)", async () => {
+    const seen: string[] = [];
+    const svc = {
+      show: async (t: string, b: string) => {
+        seen.push(t, b);
+      },
+    };
+    expect(await showWithOutcome(svc, "T", "B")).toBe("delivered");
+    expect(seen).toEqual(["T", "B"]);
+  });
+
+  test.each([
+    ["rate limited", () => new NotificationRateLimitedError("slow down"), "rate_limited"],
+    ["unavailable", () => new NotificationUnavailableError("no backend"), "unavailable"],
+    ["another error", () => new Error("boom"), "failed"],
+  ] as const)("a rejection (%s) maps to its outcome and never rejects", async (_l, make, want) => {
+    const svc = {
+      delivers: true,
+      show: () => Promise.reject(make()),
+    };
+    expect(await showWithOutcome(svc, "t", "b")).toBe(want);
+  });
+
+  test("a synchronous throw is failed", async () => {
+    const svc = {
+      show: (): Promise<void> => {
+        throw new Error("sync");
+      },
+    };
+    expect(await showWithOutcome(svc, "t", "b")).toBe("failed");
   });
 });

@@ -1,3 +1,4 @@
+import type { BriefingBrief } from "./briefing-types.ts";
 import type { ChangelogBrief } from "./changelog-types.ts";
 import type { DecisionsBrief } from "./decisions-types.ts";
 import type {
@@ -35,7 +36,8 @@ export type SynthInput =
   | NegotiateBrief
   | ChangelogBrief
   | StandupBrief
-  | OncallBrief;
+  | OncallBrief
+  | BriefingBrief;
 
 /**
  * Turns a missing dispatch arm into a COMPILE error.

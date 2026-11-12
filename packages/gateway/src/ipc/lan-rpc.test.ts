@@ -119,6 +119,28 @@ describe("checkLanMethodAllowed", () => {
     },
   );
 
+  test.each([
+    "briefing.latest",
+    "briefing.list",
+    "briefing.get",
+    "briefing.status",
+    "briefing.runNow",
+  ])("%s is not callable over LAN regardless of grant-write", (method) => {
+    for (const writeAllowed of [true, false]) {
+      expect(() => checkLanMethodAllowed(method, { peerId: "p", writeAllowed })).toThrow(
+        /not callable over LAN/,
+      );
+    }
+  });
+
+  test("negative control: agents.briefing is NOT refused by the `briefing` namespace entry", () => {
+    for (const writeAllowed of [true, false]) {
+      expect(() =>
+        checkLanMethodAllowed("agents.briefing", { peerId: "p", writeAllowed }),
+      ).not.toThrow();
+    }
+  });
+
   test.each(["oncall.pushedList", "oncall.pushedGet", "oncall.pushedRetry", "oncall.now"])(
     "%s is not callable over LAN regardless of grant-write",
     (method) => {

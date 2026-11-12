@@ -41,8 +41,9 @@ describe("RESERVED_HEADINGS_BY_KIND", () => {
     ]);
   });
 
-  test("covers exactly the seventeen brief kinds", () => {
+  test("covers exactly the eighteen brief kinds", () => {
     expect(Object.keys(RESERVED_HEADINGS_BY_KIND).sort()).toEqual([
+      "briefing",
       "catchup",
       "changelog",
       "conflict",

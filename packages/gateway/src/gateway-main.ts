@@ -433,11 +433,12 @@ export async function main(): Promise<void> {
   const shutdown = async (signal: string): Promise<void> => {
     process.stdout.write(`[gateway] ${signal} — shutting down\n`);
     lifecycle.stop();
-    try {
-      await workflowScheduler?.retire();
-    } catch {
-      /* ignore */
-    }
+    // Start BOTH retirements before awaiting either: each clears its own timer synchronously, so a
+    // briefing still draining cannot leave the workflow interval ticking (and vice versa). The briefing
+    // drain is bounded (`BRIEFING_RETIRE_DRAIN_MS`).
+    const briefingRetired = platform.briefing.scheduler?.retire().catch(() => {});
+    const workflowsRetired = workflowScheduler?.retire().catch(() => {});
+    await Promise.all([briefingRetired, workflowsRetired]);
     try {
       platform.disposeSidecars?.();
     } catch {
@@ -485,6 +486,8 @@ export async function main(): Promise<void> {
   // The index is ready and the socket is serving: scheduled workflows may now fire (one catch-up of
   // a miss within the last hour, then every minute's tick).
   workflowScheduler?.start();
+  // The morning briefing and the deadline notices (Phase 10 MB5); `undefined` on the demo root (I41).
+  platform.briefing.scheduler?.start();
   writeGatewayStateFile(platform.paths, {
     pid: process.pid,
     socketPath: platform.paths.socketPath,

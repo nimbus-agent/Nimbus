@@ -102,6 +102,8 @@ beforeAll(async () => {
         store: { listWithIncident: t, newest: t, get: t },
       },
     } as never,
+    // `briefing.get|latest|list|status` reach the runtime; any stub throwing proves the arm resolved.
+    briefingRpcCtx: { runtime: { latest: t, list: t, get: t, status: t } } as never,
     // `fleet.briefs`/`fleet.show` reach the brief store; either stub throwing proves the fleet arm
     // resolved the name. `pack.list` reaches the pack-layer store's `read`.
     fleetRpcCtx: { store: { listBriefs: t, getBrief: t }, now: t } as never,

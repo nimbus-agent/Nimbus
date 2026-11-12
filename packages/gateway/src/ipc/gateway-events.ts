@@ -17,7 +17,8 @@ export type GatewayEventKind =
   | "extension.stateChanged"
   | "hitl.requested"
   | "hitl.resolved"
-  | "oncall.briefPushed";
+  | "oncall.briefPushed"
+  | "briefing.ready";
 
 export interface GatewayEventNotification<P = Record<string, unknown>> {
   readonly kind: GatewayEventKind;
@@ -88,6 +89,21 @@ export interface HitlRequestedPayload {
 export interface OncallBriefPushedPayload {
   readonly incidentId: string;
   readonly status: "ok" | "failed";
+}
+
+/**
+ * `briefing.ready` - a morning briefing was composed (Phase 10 MB5). Counts and the headline only (the
+ * headline is the toast body: numbers and fixed words), never a title, sender or any indexed text. A
+ * `gateway.event` kind like `oncall.briefPushed`, not a third notification method: the desktop already
+ * receives every notification, and nothing in the Rust bridge needs to match on it by name.
+ * `firedBy` is how the run started (`schedule` | `manual`), deliberately not `trigger`: static D44(d)
+ * reserves `trigger: "schedule"` to the workflow scheduler.
+ */
+export interface BriefingReadyPayload {
+  readonly runId: string;
+  readonly firedBy: "schedule" | "manual";
+  readonly headline: string;
+  readonly counts: Readonly<Record<string, number>>;
 }
 
 export interface HitlResolvedPayload {

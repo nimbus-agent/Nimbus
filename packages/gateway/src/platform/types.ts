@@ -1,3 +1,4 @@
+import type { BriefingRuntime } from "../briefing/briefing-runtime.ts";
 import type { ChatopsBoot } from "../chatops/chatops-boot.ts";
 import type { ConnectorWriteContext } from "../connectors/connector-write-transport.ts";
 import type { TribalKbConfig } from "../connectors/connector-writes/model-write-refusals.ts";
@@ -128,5 +129,10 @@ export interface PlatformServices {
    * was settled (`chatopsSinkState()`); the IPC surface reaches it through `oncallPushRpcCtx`.
    */
   oncallPush: OncallPushRuntime;
+  /**
+   * The morning briefing runtime (Phase 10 MB5). `scheduler` is `undefined` on a demo-rooted gateway (I41);
+   * `gateway-main.ts` starts it after the IPC server and retires it first on shutdown.
+   */
+  briefing: BriefingRuntime;
   disposeSidecars?: () => void;
 }

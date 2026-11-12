@@ -165,6 +165,13 @@ describe("scheduleRefusal: the five-minute minimum", () => {
     expect(scheduleRefusal("59,0 23,0 * * *", "UTC")).toMatch(/every 5 minutes/);
   });
 
+  test("a caller-chosen minimum interval (the briefing asks for an hour)", () => {
+    expect(scheduleRefusal("0,30 * * * *", "UTC", 60)).toMatch(/every 60 minutes/);
+    expect(scheduleRefusal("30 8 * * 1-5", "UTC", 60)).toBeUndefined();
+    expect(scheduleRefusal("*/5 * * * *", "UTC")).toBeUndefined();
+    expect(scheduleRefusal("*/4 * * * *", "UTC")).toMatch(/every 5 minutes/);
+  });
+
   test("refuses a malformed expression, a bad zone and one that never fires", () => {
     expect(scheduleRefusal("nope", "UTC")).toMatch(/five fields/);
     expect(scheduleRefusal("0 0 * * *", "Mars/Olympus")).toMatch(/not a time zone/);

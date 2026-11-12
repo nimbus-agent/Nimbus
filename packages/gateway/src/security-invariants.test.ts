@@ -855,6 +855,26 @@ describe("I5 — LAN method allowlist is intrinsic to LanServer", () => {
     }
   });
 
+  test("I5: the briefing namespace is refused over LAN by a WHOLE-namespace `briefing` entry (MB5)", async () => {
+    const src = await read("packages/gateway/src/ipc/lan-rpc.ts");
+    // A later narrowing of the namespace entry to per-method entries must be a deliberate edit.
+    expect(src).toMatch(/^\s*"briefing",\s*$/m);
+    const { checkLanMethodAllowed } = await import("./ipc/lan-rpc.ts");
+    for (const m of [
+      "briefing.latest",
+      "briefing.list",
+      "briefing.get",
+      "briefing.status",
+      "briefing.runNow",
+    ]) {
+      for (const writeAllowed of [true, false]) {
+        expect(() => checkLanMethodAllowed(m, { peerId: "peer:x", writeAllowed })).toThrow(
+          /ERR_METHOD_NOT_ALLOWED/,
+        );
+      }
+    }
+  });
+
   test("I29/MB3: the JSM on-call step names its fixed host once and sends every request with redirect manual", async () => {
     const src = await read("packages/gateway/src/connectors/jsm-oncall.ts");
     const code = stripComments(src);
@@ -1927,9 +1947,9 @@ describe("I7 — Tauri ALLOWED_METHODS surface for T2 PR 3", () => {
     expect(rust).not.toContain("toolgen.");
   });
 
-  test("allowlist_exact_size assertion is 127", async () => {
+  test("allowlist_exact_size assertion is 131", async () => {
     const rust = await read("packages/ui/src-tauri/src/gateway_bridge.rs");
-    expect(rust).toMatch(/assert_eq!\s*\(\s*ALLOWED_METHODS\.len\(\),\s*127\s*\)/);
+    expect(rust).toMatch(/assert_eq!\s*\(\s*ALLOWED_METHODS\.len\(\),\s*131\s*\)/);
   });
 
   // Role packs Project 4: 111 + 7 - 2 = 116; Project 5 (onboarding): + pack.install, decisions.status
@@ -1957,11 +1977,25 @@ describe("I7 — Tauri ALLOWED_METHODS surface for T2 PR 3", () => {
     }
   });
 
+  // Phase 10 MB5, 127 -> 131: briefing.get|latest|list|status are renderer-callable reads; briefing.runNow
+  // composes a briefing and shows a notification on the owner's machine, so it stays CLI-only. By NAME,
+  // since a one-for-one swap keeps the count.
+  test("briefing: the four reads are renderer-callable, runNow never is", async () => {
+    const rust = stripComments(await read("packages/ui/src-tauri/src/gateway_bridge.rs"));
+    for (const m of ["get", "latest", "list", "status"]) {
+      expect(rust).toMatch(new RegExp(`^\\s*"briefing\\.${m}",\\s*$`, "m"));
+      expect(rust).toContain(`assert!(is_method_allowed("briefing.${m}"));`);
+      expect(rust).toContain(`assert!(!is_no_timeout_method("briefing.${m}"));`);
+    }
+    expect(rust).not.toMatch(/^\s*"briefing\.runNow",\s*$/m);
+    expect(rust).toContain('assert!(!is_method_allowed("briefing.runNow"));');
+  });
+
   // By NAME, as for every brief/verb pair: a one-for-one swap of pushedGet for pushedRetry keeps
   // the count at 107. pushedRetry starts an agent run on the owner's behalf; it stays CLI-only.
   // `oncall.now` (Phase 10 MB3) is the third read: a synchronous read of the local index, not long-running.
   test("oncall: the three reads (pushedGet, pushedList, now) are renderer-callable, pushedRetry never is", async () => {
-    const rust = await read("packages/ui/src-tauri/src/gateway_bridge.rs");
+    const rust = stripComments(await read("packages/ui/src-tauri/src/gateway_bridge.rs"));
     expect(rust).toMatch(/^\s*"oncall\.now",\s*$/m);
     expect(rust).toContain('assert!(is_method_allowed("oncall.now"));');
     expect(rust).toContain('assert!(!is_no_timeout_method("oncall.now"));');
@@ -1976,7 +2010,7 @@ describe("I7 — Tauri ALLOWED_METHODS surface for T2 PR 3", () => {
   // By NAME again: the desktop Captures page reads; accepting, rejecting, revoking and purging
   // stay in a terminal, and the MCP-client door (capture.*) is never the renderer's (I28).
   test("captures: the two reads are renderer-callable, no owner verb is", async () => {
-    const rust = await read("packages/ui/src-tauri/src/gateway_bridge.rs");
+    const rust = stripComments(await read("packages/ui/src-tauri/src/gateway_bridge.rs"));
     expect(rust).toMatch(/^\s*"captures\.get",\s*$/m);
     expect(rust).toMatch(/^\s*"captures\.list",\s*$/m);
     expect(rust).not.toMatch(/^\s*"captures\.(?:accept|reject|revoke|purge)",\s*$/m);
@@ -5258,6 +5292,29 @@ describe("I31 — disclosure integrity: a synthesized brief never says less than
     };
     const out = await synthesize(brief, { runner });
     expect(out.markdown).toContain("I31-DISCLOSURE-SENTINEL");
+  });
+
+  test("OR-10-8: the morning briefing never consults a model - no synthesis runner anywhere in its files", async () => {
+    const files = [
+      ...(await readDirFiles("packages/gateway/src/briefing")),
+      ...(await readDirFiles("packages/gateway/src/agents/_lib")).filter((f) =>
+        /(?:^|\/)briefing[\w.-]*\.ts$/.test(f.rel),
+      ),
+    ];
+    // The directory walk finds the real files: a pin that visits nothing proves nothing.
+    expect(files.some((f) => f.rel.includes("briefing-runner"))).toBe(true);
+    expect(files.some((f) => f.rel.includes("briefing-build"))).toBe(true);
+    for (const f of files) {
+      const code = stripComments(f.contents);
+      expect(code, f.rel).not.toMatch(
+        /\bSynthesisRunner\b|\bresolveForSynthesis\b|\bcreateLlm\w*\b|synthesis-llm|\brunner\s*:/,
+      );
+    }
+    // `synthesize` is called with exactly one argument.
+    const runner = files.find((f) => f.rel.endsWith("briefing-runner.ts"))?.contents ?? "";
+    const calls = [...stripComments(runner).matchAll(/\bsynthesize\s*\(([^)]*)\)/g)];
+    expect(calls.length).toBeGreaterThan(0);
+    for (const c of calls) expect(c[1]?.trim()).toMatch(/^[\w.]+$/);
   });
 
   test("I31: the reserved registry is total over the brief union", async () => {
@@ -9652,7 +9709,7 @@ describe("I46 — a renderer can create an extension run grant only through migr
     }
     expect(rust).toContain('assert!(is_method_allowed("migration.list"));');
     expect(rust).toContain('assert!(is_method_allowed("migration.accept"));');
-    expect(rust).toMatch(/assert_eq!\s*\(\s*ALLOWED_METHODS\.len\(\),\s*127\s*\)/);
+    expect(rust).toMatch(/assert_eq!\s*\(\s*ALLOWED_METHODS\.len\(\),\s*131\s*\)/);
   });
 
   // ---- the positive control ------------------------------------------------------------------
@@ -13983,7 +14040,10 @@ describe("I55 SA4 — a scheduled run is unattended: a rule or a block, never a 
     expect(body).not.toContain("consentCoordinator");
     expect(body).not.toContain("clientId");
     expect(body).toMatch(/enforcedPolicy:\s*platform\.enforcedPolicy/);
-    expect(src).toContain("await workflowScheduler?.retire()");
+    // Retired on shutdown and its drain AWAITED (started together with the briefing scheduler's, MB5,
+    // so neither timer keeps ticking while the other drains).
+    expect(src).toMatch(/const workflowsRetired = workflowScheduler\?\.retire\(\)/);
+    expect(src).toMatch(/await Promise\.all\(\[briefingRetired, workflowsRetired\]\)/);
     // Started only after the socket is serving.
     expect(src.indexOf("workflowScheduler?.start()")).toBeGreaterThan(
       src.indexOf("await platform.ipc.start()"),

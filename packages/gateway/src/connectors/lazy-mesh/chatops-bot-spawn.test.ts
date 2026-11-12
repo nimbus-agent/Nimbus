@@ -76,6 +76,12 @@ describe("chatopsTeamsBotServers (I1/I15 bot-credential spawn spec)", () => {
     const servers = await chatopsTeamsBotServers(
       fakeVault({ "teams.bot_app_id": "app-1", "teams.bot_app_password": "pw-1" }),
       "/cwd",
+      {
+        // Explicit, so a resolver another file mocked cannot leak in: no microsoft.oauth → throws.
+        graphTokenResolver: async () => {
+          throw new Error("no microsoft.oauth");
+        },
+      },
     );
     const spec = servers?.["teams"];
     expect(spec).toBeDefined();

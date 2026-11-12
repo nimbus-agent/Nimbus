@@ -47,7 +47,7 @@ const PAGERDUTY_SERVICE = "pagerduty";
  * otherwise make every closed incident read active, which is the failure that fills this brief
  * with noise until nobody runs it.
  */
-function isActiveStatus(status: string | null): boolean {
+export function isActiveIncidentStatus(status: string | null): boolean {
   // `null?.toLowerCase()` is `undefined`, which is not "resolved": a missing status reads ACTIVE.
   return status?.toLowerCase() !== "resolved";
 }
@@ -138,7 +138,7 @@ export function selectActiveAssignedIncidents(db: Database, personId: string): O
 
   return raw
     .map(toIncident)
-    .filter((i): i is OncallIncident => i !== null && isActiveStatus(i.status))
+    .filter((i): i is OncallIncident => i !== null && isActiveIncidentStatus(i.status))
     .sort(byOpenedThenId);
 }
 
@@ -173,6 +173,25 @@ export function selectNewestIncident(db: Database): OncallIncident | null {
 }
 
 /**
+ * Every active PagerDuty incident in the index, newest first (the morning briefing lists the ones
+ * not assigned to the owner after their own).
+ */
+export function selectAllActiveIncidents(db: Database): OncallIncident[] {
+  const raw = db
+    .query(
+      `SELECT ${INCIDENT_COLUMNS}
+         FROM item i
+        WHERE i.service = '${PAGERDUTY_SERVICE}'
+          AND i.type = 'incident'`,
+    )
+    .all() as RawItemRow[];
+  return raw
+    .map(toIncident)
+    .filter((i): i is OncallIncident => i !== null && isActiveIncidentStatus(i.status))
+    .sort(byOpenedThenId);
+}
+
+/**
  * Active incidents on any of the given PagerDuty services, newest first.
  *
  * Backs the `--service` path, which is also the only shape an EXTERNAL caller may use — see
@@ -203,7 +222,7 @@ export function selectActiveIncidentsForPagerdutyServices(
 
   return raw
     .map(toIncident)
-    .filter((i): i is OncallIncident => i !== null && isActiveStatus(i.status))
+    .filter((i): i is OncallIncident => i !== null && isActiveIncidentStatus(i.status))
     .sort(byOpenedThenId);
 }
 
@@ -495,7 +514,7 @@ export function selectPriorIncidents(
       // `modified_at` ONLY for a row that reads resolved, and it is not a resolution time — see
       // `OncallPriorIncident.resolvedAtMs`. `metrics/dora.ts`'s MTTR bounds on the same column
       // for the same absence of a better field.
-      resolvedAtMs: isActiveStatus(status) ? null : r.modified_at,
+      resolvedAtMs: isActiveIncidentStatus(status) ? null : r.modified_at,
       resolvedByEmail: nonEmptyStringField(meta, "resolved_by_email"),
     });
   }

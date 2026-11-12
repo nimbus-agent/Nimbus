@@ -6,7 +6,15 @@ import { parseTailArgs, renderEvent, runTailCommand, type TailCommandDeps } from
 describe("parseTailArgs", () => {
   test("defaults to every category and human output", () => {
     const a = parseTailArgs([]);
-    expect(a.categories).toEqual(["connector", "watcher", "sync", "extension", "hitl", "oncall"]);
+    expect(a.categories).toEqual([
+      "connector",
+      "watcher",
+      "sync",
+      "extension",
+      "hitl",
+      "oncall",
+      "briefing",
+    ]);
     expect(a.json).toBe(false);
   });
 
@@ -56,7 +64,15 @@ describe("parseTailArgs", () => {
   test("--json sets the json flag without changing the default categories", () => {
     const a = parseTailArgs(["--json"]);
     expect(a.json).toBe(true);
-    expect(a.categories).toEqual(["connector", "watcher", "sync", "extension", "hitl", "oncall"]);
+    expect(a.categories).toEqual([
+      "connector",
+      "watcher",
+      "sync",
+      "extension",
+      "hitl",
+      "oncall",
+      "briefing",
+    ]);
   });
 
   test("an unknown --flag fails fast naming it", () => {
@@ -435,6 +451,48 @@ describe("runTailCommand lifecycle", () => {
       "[oncall] brief ready for pagerduty:A — nimbus oncall pushed pagerduty:A",
     );
     expect(h.out[1]).toContain("[oncall] brief FAILED for pagerduty:B");
+    process.emit("SIGINT");
+    await done;
+  });
+
+  test("--filter briefing renders briefing.ready; a future briefing.* kind is still shown", async () => {
+    const h = harness();
+    const done = runTailCommand(["--filter", "briefing"], h.deps);
+    await nextMacrotask();
+    h.handlers["gateway.event"]?.({
+      kind: "briefing.ready",
+      ts: 1_789_300_000_000,
+      payload: {
+        runId: "r1",
+        firedBy: "schedule",
+        headline: "3 meetings\nsecond line",
+        counts: {},
+      },
+    });
+    h.handlers["gateway.event"]?.({
+      kind: "briefing.ready",
+      ts: 1_789_300_000_000,
+      payload: { runId: "r2" },
+    });
+    h.handlers["gateway.event"]?.({ kind: "briefing.futureThing", ts: 1, payload: { a: 1 } });
+    expect(h.out).toHaveLength(3);
+    expect(h.out[0]).toContain("[briefing] 3 meetings second line - nimbus briefing");
+    expect(h.out[1]).toContain("[unknown: briefing.ready]");
+    expect(h.out[2]).toContain("[unknown: briefing.futureThing]");
+    process.emit("SIGINT");
+    await done;
+  });
+
+  test("briefing.ready is suppressed under --filter sync", async () => {
+    const h = harness();
+    const done = runTailCommand(["--filter", "sync"], h.deps);
+    await nextMacrotask();
+    h.handlers["gateway.event"]?.({
+      kind: "briefing.ready",
+      ts: 1,
+      payload: { headline: "x" },
+    });
+    expect(h.out).toHaveLength(0);
     process.emit("SIGINT");
     await done;
   });

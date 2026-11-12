@@ -2,6 +2,13 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [10.53.0](https://github.com/nimbus-agent/Nimbus/compare/v10.52.0...v10.53.0) (2026-11-12)
+
+
+### Features
+
+* **gateway:** the morning briefing and 24-hour deadline notices, built from the local index and delivered locally ([#1976](https://github.com/nimbus-agent/Nimbus/issues/1976)) ([c78b1dc](https://github.com/nimbus-agent/Nimbus/commit/c78b1dcaf21d1bd5a32d020854bd776f625eac4c))
+
 ## [10.52.0](https://github.com/nimbus-agent/Nimbus/compare/v10.51.0...v10.52.0) (2026-11-11)
 
 

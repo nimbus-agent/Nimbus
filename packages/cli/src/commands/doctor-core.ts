@@ -5,6 +5,7 @@ import { nimbusCommand } from "../lib/demo-hint.ts";
 import { gatewayStartCommand } from "../lib/gateway-not-running.ts";
 import { stripControlChars } from "../lib/strip-control-chars.ts";
 import type { CliPlatformPaths } from "../paths.ts";
+import { type BriefingStatusLike, doctorBriefingLines } from "./briefing-format.ts";
 import { doctorCapturesLines, parseStatus } from "./captures-format.ts";
 import {
   createDoctorBwrapDeps,
@@ -824,6 +825,34 @@ export async function doctorPrintCaptures(client: Pick<IPCClient, "call">): Prom
 }
 
 /**
+ * Morning briefing (Phase 10 MB5): silent when `[briefing]` and `[briefing.deadlines]` are both off,
+ * `[warn]` for an enabled section with no connected source or a failed scheduled run, `[info]` when
+ * notifications will not show, `[ok]` otherwise with the next fire. Quiet on an older gateway (-32601);
+ * any other failure is a `[warn]` (a skipped check must not read as healthy).
+ */
+export async function doctorPrintBriefing(client: Pick<IPCClient, "call">): Promise<number> {
+  let raw: unknown;
+  try {
+    raw = await client.call<unknown>("briefing.status", {});
+  } catch (e) {
+    if (isMethodNotFound(e)) return 0;
+    console.log(
+      `[warn] Morning briefing: status check failed (${e instanceof Error ? e.message : String(e)}).`,
+    );
+    return 1;
+  }
+  try {
+    if (raw === null || typeof raw !== "object") throw new TypeError("unexpected status reply");
+    const { lines, exit } = doctorBriefingLines(raw as BriefingStatusLike);
+    for (const l of lines) console.log(l);
+    return exit;
+  } catch (e) {
+    console.log(`[warn] Morning briefing: ${e instanceof Error ? e.message : String(e)}`);
+    return 1;
+  }
+}
+
+/**
  * Installed extensions without a current run approval: one `[warn]` (exit 1) naming them, silent
  * when there are none or the extension runtime is off. Quiet on an older gateway (-32601); any other
  * failure is a `[warn]`.
@@ -1167,6 +1196,7 @@ async function doctorRunGatewayRpcs(
   exit = Math.max(exit, doctorPrintOncallPush(push, newest));
   exit = Math.max(exit, await doctorPrintNotifications(client));
   exit = Math.max(exit, await doctorPrintCaptures(client));
+  exit = Math.max(exit, await doctorPrintBriefing(client));
   exit = Math.max(exit, await doctorPrintExtensions(client));
   exit = Math.max(exit, await doctorPrintExtensionObservation(client));
   exit = Math.max(exit, await doctorPrintRegistries(client));
