@@ -43,7 +43,7 @@ export interface FinopsSyncSpec<P, K extends string> {
    */
   readonly cursorRowType: string;
   /** Read the owner's options and refuse a configuration that cannot sync, before any spawn. */
-  readonly prepare: (ctx: SyncContext) => Promise<P>;
+  readonly configure: (ctx: SyncContext) => Promise<P>;
   /** The paged reads for this window, run in order inside ONE connector session. */
   readonly drains: (window: FinopsWindow, prepared: P) => readonly FinopsDrainCall<K>[];
   /** Map and write everything drained, in one batch; returns the number of rows written. */
@@ -131,7 +131,7 @@ export function createFinopsSyncable<P, K extends string>(spec: FinopsSyncSpec<P
             "a cost connector reads with the owner's own token",
         );
       }
-      const prepared = await spec.prepare(ctx);
+      const prepared = await spec.configure(ctx);
       const lastOkMs =
         ctx.countItems(spec.serviceId, spec.cursorRowType) === 0
           ? null

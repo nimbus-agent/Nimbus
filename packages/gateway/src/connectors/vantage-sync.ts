@@ -48,7 +48,7 @@ export function createVantageSyncable(options: VantageSyncableOptions = {}): Syn
     initialSyncDepthDays: FIRST_WINDOW_DAYS,
     cursorPrefix: "nimbus-vantage1:",
     cursorRowType: "cost_allocation",
-    async prepare(ctx) {
+    async configure(ctx) {
       const groupBy = parseGroupBy(await ctx.getSecret("group_by"));
       if (groupBy.some((name) => name.startsWith("tag:"))) {
         // Where Vantage returns the value of a tag grouping is not documented (spec R2): refuse
