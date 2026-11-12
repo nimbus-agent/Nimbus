@@ -1354,7 +1354,7 @@ Ordered for time-to-value × moat. Each increment cuts across today's phase numb
 Open items from shipped phases and from S2, re-homed here on 2026-10-10, and from Phase 9.5 and S3, re-homed on 2026-11-04, so each has one live destination. Each source row keeps its text and points here.
 
 - [ ] **Model access to generated tools and to computer-use** (from the [S2 record](#spine-s2) and Phase 14's *Output capture and feed-back* row) — today `gateway-main.ts` supplies neither `deps.toolgen` nor `deps.computerUse` to the engine agent, so a generated tool runs only through `nimbus tool run` and a computer-use session only through `nimbus computer`, both CLI/owner-only. Preconditions before either is wired: for generated tools, owner-only turns plus a per-call owner HITL prompt on every model invocation (I42's shape), because I39 bounds WHERE a tool may send and never WHAT — without a per-call prompt, an injected instruction could have the model send private index data to an approved host; for computer-use, a per-turn session binding (the engine agent is built once at boot, a computer-use session is per request; user MCP's request-context pattern is the precedent) plus a desktop consent UX.
-- [ ] **User-MCP write grants** (from the S2 record's *User MCP servers that actually run* row) — `nimbus connector add --mcp` resolves `--read`/`--net`/`--model` grants only; every user MCP server's sandbox policy carries `filesystem.write: []` (`connectors/lazy-mesh/user-mcp.ts`).
+- [ ] **User-MCP write grants** (from the S2 record's *User MCP servers that actually run* row) — `nimbus connector add --mcp` resolves `--read`/`--net`/`--model` grants only; every user MCP server's sandbox policy carries `filesystem.write: []` (`connectors/lazy-mesh/user-mcp.ts`). *(Also a row of [Phase 28](#phase-28--the-agent-door), 2026-11-12.)*
 - [ ] **Anomaly user notifications** (from [Phase 3 § Intentionally incomplete](#intentionally-incomplete-follow-ups)) — `watcher/anomaly-detector.ts`'s `AnomalyDetectorStub` scores sync telemetry with a rolling z-score, and its `onNotify` in `platform/assemble.ts` only writes a log line; nothing reaches the user. The OS notification backend it was waiting on shipped 2026-10-10 ([pre-S3 item E](#pre-s3-close-out)); what remains is the detector itself (it is a stub) and routing its `onNotify` to that service with a threshold policy, so a noisy z-score does not become a stream of toasts. Overlaps [Phase 17 § Wave 1](#phase-17--the-on-call-copilot)'s *Anomaly → proactive heads-up*.
 - [ ] **ChatOps watcher notifications** (from [Phase 6 § ChatOps](#phase-6--team-)'s *Notification routing*) — `makeChatopsWatcherNotify` (`automation/watcher-engine.ts`) has no production caller. Wiring it makes a silent path emit outbound, so it needs I23 (and plausibly I29) treatment.
 - [ ] **Team-owned workflow pipelines** (from Phase 6 § Shared Workflows & Policy) — that row already said S4, but this slot's cell did not list it. The I19/I21/I22 substrate shipped; the shared-pipeline authoring surface did not.
@@ -1566,9 +1566,9 @@ Builds on Wave 1's `service` / `team` item types. Inherently aggregate-level so 
 
 Independent of Waves 1–2; can ship in parallel. Critical: write tools are production-impacting, so HITL gating is non-negotiable and the consent dialog must show before/after rollout %, environments affected, and segment scope.
 
-- [ ] **LaunchDarkly** — flags, environments, segments, rollout rules, kill switches; `feature_flag` + `experiment` item types; read-only by default; `flag.toggle`, `flag.rollout.update`, `flag.environment.override`, `flag.kill-switch.fire` all HITL
+- [ ] **LaunchDarkly** — flags, environments, segments, rollout rules, kill switches; `feature_flag` + `experiment` item types; read-only by default; `flag.toggle`, `flag.rollout.update`, `flag.environment.override`, `flag.kill-switch.fire` all HITL — **read side (flags) shipped in [Phase 5](#phase-5--the-extended-surface-) on 2026-05-24, and the toggle and percentage-rollout writes in [Phase 9.7](#phase-97--connector-write-enablement-the-acting-roster) Wave 3; what remains here, to be confirmed against the connector when this row is picked up: segments, the `experiment` item type, the environment override and the kill switch.**
 - [ ] **Split.io** — splits, treatments, experiments, metric impacts; `feature_flag` + `experiment` item types; read-only; `split.killswitch.fire` HITL
-- [ ] **Flagsmith** (open source; self-hostable) — flags, environments, segments; `feature_flag` item type; read-only; `flag.toggle` HITL
+- [ ] **Flagsmith** (open source; self-hostable) — flags, environments, segments; `feature_flag` item type; read-only; `flag.toggle` HITL — **read side (features) shipped in [Phase 5](#phase-5--the-extended-surface-) on 2026-05-24, and the feature-state write in [Phase 9.7](#phase-97--connector-write-enablement-the-acting-roster) Wave 3; what remains here, to be confirmed when this row is picked up: environments and segments as indexed items.**
 - [ ] **Unleash** (open source; self-hostable) — toggles, strategies, gradual rollouts; read-only; `toggle.update` HITL
 - [ ] **Statsig** — feature gates, dynamic configs, experiments; read-only; `gate.update`, `experiment.publish` HITL
 - [ ] **Stale flag watcher** — fires on flags at 100% rollout > N days (default 90); surfaces in the morning briefing
@@ -1663,8 +1663,8 @@ Cross-cutting UX improvements that apply to every agent surface the project ship
 #### Wave 1 — Code & Dependency Scanning
 
 - [x] **Snyk** (Code + Open Source + Container) — SAST, SCA vulns, container scan. Read-only read-tools landed early in Phase 5 (2026-05-21, T2/Wave-A connector Snyk) — `snyk:vulnerability` item type indexed via the gateway-side syncable at `packages/gateway/src/connectors/snyk-sync.ts` (walks `/v1/orgs` → `/v1/org/<id>/projects` → `/v1/org/<id>/project/<pid>/aggregated-issues`), with metadata `{ severity, cve_id, affected_package, affected_versions, fix_available, fix_version, project_url, project_id, org_id, type, disclosed_at, published_at }`; first-party MCP package at `packages/mcp-connectors/snyk/` hosts the three mandatory read tools (`snyk_list`, `snyk_get`, `snyk_search`); sandbox manifest pins `permissions.network` to `api.snyk.io`; `snyk:vulnerability` added to `PROSE_HEAVY_TYPES` (description field is paragraph-shaped). Write tool `snyk.issue.ignore` HITL deferred — when Phase 8 ships it, gate via `engine/executor.ts` `HITL_REQUIRED`.
-- [ ] **Semgrep** — SAST rules + custom packs; `semgrep.finding.suppress` HITL
-- [ ] **SonarQube** — code-quality + security hotspots; `sonar.hotspot.review` HITL
+- [ ] **Semgrep** — SAST rules + custom packs; `semgrep.finding.suppress` HITL — **read side (open findings) shipped in [Phase 5](#phase-5--the-extended-surface-) on 2026-05-22; what remains here: custom rule packs and the suppress write.**
+- [ ] **SonarQube** — code-quality + security hotspots; `sonar.hotspot.review` HITL — **read side (open issues) shipped in [Phase 5](#phase-5--the-extended-surface-) on 2026-05-22; what remains here, to be confirmed when this row is picked up: security hotspots and the review write.**
 - [ ] **GitGuardian** — secret findings, severity, validation; `gg.incident.resolve`, `gg.secret.invalidate` HITL
 - [ ] **TruffleHog** (open source, self-hostable) — secret findings; `trufflehog.finding.suppress` HITL
 - [ ] **Dependabot / Renovate state** — read-only; open dependency PRs, severity, age
@@ -1672,7 +1672,7 @@ Cross-cutting UX improvements that apply to every agent surface the project ship
 
 #### Wave 2 — Cloud & Container Security Posture
 
-- [ ] **Wiz** — CSPM findings, attack-path graph, identity over-permissions; `wiz.issue.assign`, `wiz.issue.resolve` HITL
+- [ ] **Wiz** — CSPM findings, attack-path graph, identity over-permissions; `wiz.issue.assign`, `wiz.issue.resolve` HITL — **read side (issues) shipped in [Phase 5](#phase-5--the-extended-surface-) on 2026-05-24; what remains here: the attack-path graph, identity over-permissions and the two writes.**
 - [ ] **Prisma Cloud** — CSPM, CWPP, CIEM; `prisma.alert.acknowledge` HITL
 - [ ] **Trivy** (open source, offline) — container/image scan, IaC scan, license check; read-only
 - [ ] **Checkov** — IaC misconfig findings (Terraform, CloudFormation, Helm, Kubernetes manifests); `checkov.finding.suppress` HITL
@@ -1799,12 +1799,12 @@ Phase 5/6 already index model registry entries from MLflow / SageMaker / Vertex 
 
 #### Wave 4 — AI Cost & Governance
 
-- [ ] **OpenAI usage export** — per-API-key, per-model spend, token counts, daily aggregates; read-only
-- [ ] **Anthropic usage export** — per-API-key spend, token counts, model breakdown; read-only
-- [ ] **AWS Bedrock spend** (via Cost Explorer) — per-model invocations, on-demand vs. provisioned spend; read-only
-- [ ] **Vertex AI spend** (via Cloud Billing export) — per-model spend, prediction unit counts; read-only
+- [ ] **OpenAI usage export** — per-API-key, per-model spend, token counts, daily aggregates; read-only *(Built on by [Phase 30](#phase-30--the-cost-pack).)*
+- [ ] **Anthropic usage export** — per-API-key spend, token counts, model breakdown; read-only *(Built on by [Phase 30](#phase-30--the-cost-pack).)*
+- [ ] **AWS Bedrock spend** (via Cost Explorer) — per-model invocations, on-demand vs. provisioned spend; read-only *(Built on by [Phase 30](#phase-30--the-cost-pack).)*
+- [ ] **Vertex AI spend** (via Cloud Billing export) — per-model spend, prediction unit counts; read-only *(Built on by [Phase 30](#phase-30--the-cost-pack).)*
 - [ ] **Model-policy registry** (in-Nimbus) — declarative policy: which model class for which task class, redaction policy before send, data-residency mappings; `policy.update` HITL
-- [ ] **AI cost watcher** — fires when 24 h spend exceeds 7-day rolling average by configurable threshold (default 50%); surfaces in morning briefing
+- [ ] **AI cost watcher** — fires when 24 h spend exceeds 7-day rolling average by configurable threshold (default 50%); surfaces in morning briefing *(Built on by [Phase 30](#phase-30--the-cost-pack).)*
 - [ ] **Policy-violation watcher** — fires when an LLM call routes to a model class violating the active policy (e.g. PII data class to non-residency-compliant model); blocks via the existing LLM router air-gap mechanism
 
 #### Built-in Agents
@@ -1960,7 +1960,7 @@ Outside the seven: the **Readwise unbundling pilot** (`I46`, the baked `nimbus-o
 
 **Goal:** Promote the connector roster from a read-only *index* into an *acting* agent. Today ~88 first-party connectors index data. 117 write tools across 39 connectors are classified in one write-row table (`connectors/connector-writes/`), four more are refused through their own gates' sets (two ChatOps posts, two KB appends), and all are HITL-gated; the model is offered 98 of them (each behind the owner's prompt), and dispatch through the credential-aware transport covers only 18. The write *machinery* already exists — the `I26` write-registry (`connector-write-registry.ts`), the `I29` egress ledger, and the executor HITL chokepoint (`I2`) — but is barely exercised. This phase systematically builds HITL-gated write tools across the existing roster on that machinery, ordered by blast radius, so every new write is **gated, previewed, ledgered, and peer-unreachable by construction.**
 
-**Status: ✅ closed 2026-11-10** (owner rulings OR-97-1 and OR-97-2). All four waves shipped: Wave 1 (A1–A5b), Wave 2 (B0a–B4b, B3r, B3w), Wave 3 (C0–C3) and Wave 4 (D0a–D3a). The model is offered 108 of the 124 write rows, each behind the owner's typed preview; the other 16 are never offered (`MODEL_NEVER_OFFERED_REASONS`, 11 at D3a plus the five of OR-97-1), each with a recorded reason; all but two stay on the owner's own doors: the Pulumi apply is refused on every door, and the change-set discard is reserved for the gateway's own cleanup. Two things did not close here: the standing-approval and taint integration, re-homed to Phase 10, and the acceptance criterion that depends on it.
+**Status: ✅ closed 2026-11-10** (owner rulings OR-97-1 and OR-97-2). All four waves shipped: Wave 1 (A1–A5b), Wave 2 (B0a–B4b, B3r, B3w), Wave 3 (C0–C3) and Wave 4 (D0a–D3a). The model is offered 108 of the 124 write rows, each behind the owner's typed preview; the other 16 are never offered (`MODEL_NEVER_OFFERED_REASONS`, 11 at D3a plus the five of OR-97-1), each with a recorded reason; all but two stay on the owner's own doors: the Pulumi apply is refused on every door, and the change-set discard is reserved for the gateway's own cleanup. Two things did not close here: the standing-approval and taint integration, re-homed to Phase 10, and the acceptance criterion that depends on it. **Continued by [Phase 28](#phase-28--the-agent-door)** (2026-11-12): this phase opened the roster to Nimbus's own model; opening it to outside agents under the same rules is that phase.
 
 #### Dependencies
 
@@ -2073,7 +2073,7 @@ Status of the first three criteria (2026-11-10): met. Every row is driven throug
 
 - [ ] **Long-term episodic memory** — agent stores summarised observations from past sessions in a dedicated SQLite table; recalled at query time via semantic similarity
 - [ ] **Personalization layer** — agent adapts communication style and tool selection priority based on observed user preferences; preferences are explicit (configurable), not inferred silently
-- [ ] **Automated PR pre-review** — agent performs "lint-plus" review based on team's historical review patterns (e.g., "In this repo, we usually ask for Y when X is changed")
+- [ ] **Automated PR pre-review** — agent performs "lint-plus" review based on team's historical review patterns (e.g., "In this repo, we usually ask for Y when X is changed") *(Part of the Developer pack, [Phase 28](#phase-28--the-agent-door).)*
 - [ ] **Decision pattern recognition** — agent identifies repeated HITL decision patterns across history; surfaces them as standing rule candidates
 - [x] **Point-in-time index queries** — ability to reconstruct the state of the indexed data at a specific historical timestamp using sync history and item `modified_at` metadata already stored in the index. Enables queries like `nimbus ask "what was the deployment state of payment-service at 14:32 last Tuesday?"` for post-incident analysis. Implementation: the query layer filters indexed items to their state at the requested timestamp using `modified_at` and sync cycle timestamps already recorded in `sync_state`; no new data collection required. Exposed via `--at <ISO8601-or-relative-time>` flag on `nimbus ask` and `nimbus query`. Read-only, no HITL. *(Phase 10 IC1 ✅ 2026-11-12, the first slice of the incident engine. Deviations from this row, recorded: "no new data collection required" was false, because `sync_state` and `modified_at` cannot say what an item's state was, so IC1 adds the `item_history` table (schema V94: allowlisted state-key changes written inside `upsertIndexedItem`, `[index] history_retention_days` default 180, pruned daily in batches); `--at` is also on `nimbus search`, and `nimbus query --sql`, `--since` and the negation flags refuse it; titles and bodies stay as of now and the answer says so; an item whose state at T cannot be reconstructed is counted in a `## Gaps` line and never shown; `nimbus ask --at` forces the conversational route and gives the agent only the three time-aware tools; observation time is the sync's, not the provider's. Acceptance: `packages/gateway/test/integration/index/point-in-time.acceptance.test.ts`. Stated bounds in [`architecture.md` § Item history and point-in-time queries](./architecture.md#item-history-and-point-in-time-queries-phase-10-ic1). The incident-engine rows IC2 to IC10 stay open.)*
 
@@ -2095,10 +2095,10 @@ Status of the first three criteria (2026-11-10): met. Every row is driven throug
 
 - [ ] **Autonomous drift detection** — agent continuously compares IaC declared state against indexed live cloud state; flags drift in the dashboard without waiting for a user query
 - [ ] **Remediation proposals** — agent drafts `terraform plan` or equivalent for detected drift; user reviews diff in HITL dialog; no cloud mutation without approval
-- [ ] **Cost anomaly detection** — monitors Cost Explorer / Azure Cost Management / GCP Billing daily spend; alerts when 24h spend exceeds 7-day rolling average by a configurable threshold; once Phase 6 BI connectors land, the same detection window covers Snowflake credit consumption and Databricks DBU usage
-- [ ] **Cloud cost "garbage collection"** — agent identifies orphaned cloud resources (unattached EBS volumes, empty staging environments, stale ALB target groups, orphaned snapshots) and queues them for deletion behind a single HITL click; distinct from cost anomaly detection (which surfaces *spend* spikes) — this finds *waste* that doesn't move the cost needle but is pure garbage; direct measurable savings with zero manual hunting
-- [ ] **Data FinOps attribution** (depends on Phase 6 warehouse connectors) — correlates Snowflake / BigQuery / Databricks query cost rows with the specific notebook, Airflow task, dbt run, or user that triggered them; joins warehouse `QUERY_HISTORY` (or equivalent) with orchestration run metadata in the local index; answers "show me the top 5 most expensive notebooks run yesterday and who ran them" without a single live warehouse API call; stretch — does not gate Phase 10 completion
-- [ ] **FinOps connectors** — third-party FinOps platforms feed the cost anomaly detector with cleaner per-team / per-tag attribution than raw cloud billing exports: **Vantage**, **CloudHealth (VMware Tanzu)**, **Spot.io / Flexera**, **Kubecost** (Kubernetes per-pod cost), **OpenCost** (open source CNCF project)
+- [ ] **Cost anomaly detection** — monitors Cost Explorer / Azure Cost Management / GCP Billing daily spend; alerts when 24h spend exceeds 7-day rolling average by a configurable threshold; once Phase 6 BI connectors land, the same detection window covers Snowflake credit consumption and Databricks DBU usage *(Built on by [Phase 30](#phase-30--the-cost-pack).)*
+- [ ] **Cloud cost "garbage collection"** — agent identifies orphaned cloud resources (unattached EBS volumes, empty staging environments, stale ALB target groups, orphaned snapshots) and queues them for deletion behind a single HITL click; distinct from cost anomaly detection (which surfaces *spend* spikes) — this finds *waste* that doesn't move the cost needle but is pure garbage; direct measurable savings with zero manual hunting *(Built on by [Phase 30](#phase-30--the-cost-pack).)*
+- [ ] **Data FinOps attribution** (depends on Phase 6 warehouse connectors) — correlates Snowflake / BigQuery / Databricks query cost rows with the specific notebook, Airflow task, dbt run, or user that triggered them; joins warehouse `QUERY_HISTORY` (or equivalent) with orchestration run metadata in the local index; answers "show me the top 5 most expensive notebooks run yesterday and who ran them" without a single live warehouse API call; stretch — does not gate Phase 10 completion *(Built on by [Phase 30](#phase-30--the-cost-pack).)*
+- [ ] **FinOps connectors** — third-party FinOps platforms feed the cost anomaly detector with cleaner per-team / per-tag attribution than raw cloud billing exports: **Vantage**, **CloudHealth (VMware Tanzu)**, **Spot.io / Flexera**, **Kubecost** (Kubernetes per-pod cost), **OpenCost** (open source CNCF project) *(Built on by [Phase 30](#phase-30--the-cost-pack).)*
 - [ ] **Sustainability connectors** — carbon-footprint reporting feeds the SRE loop's "right-size to lower-carbon region" recommendations: **Cloud Carbon Footprint** (open source), **Climatiq**, **Watershed**, AWS / Azure / GCP carbon footprint exports
 - [ ] **Runbook automation** — common SRE runbooks registered as named HITL-gated actions; agent proposes the right runbook when an incident matches a known pattern
 
@@ -2201,9 +2201,9 @@ The mobile companion is the natural moment to introduce locale awareness; the sa
 
 #### Deployment & Operations
 
-- [ ] **Docker image** — official `ghcr.io/nimbus/gateway` image; multi-arch (amd64/arm64); configurable via env vars and mounted `nimbus.toml`
-- [ ] **Helm chart** — `nimbus/gateway` Helm chart for Kubernetes; namespace isolation, persistent volume for SQLite, external Vault backend (HashiCorp Vault), RBAC, NetworkPolicy
-- [ ] **Air-gapped bundle** — single tarball with all binaries, local LLM model weights, and dependency assets; no outbound internet access required
+- [ ] **Docker image** — official `ghcr.io/nimbus/gateway` image; multi-arch (amd64/arm64); configurable via env vars and mounted `nimbus.toml` *(Built on by [Phase 29](#phase-29--the-team-server).)*
+- [ ] **Helm chart** — `nimbus/gateway` Helm chart for Kubernetes; namespace isolation, persistent volume for SQLite, external Vault backend (HashiCorp Vault), RBAC, NetworkPolicy *(Built on by [Phase 29](#phase-29--the-team-server).)*
+- [ ] **Air-gapped bundle** — single tarball with all binaries, local LLM model weights, and dependency assets; no outbound internet access required *(Built on by [Phase 29](#phase-29--the-team-server).)*
 - [ ] **"Clean room" AI deployment mode** — named deployment topology where sensitive compliance / HR data is processed exclusively on an air-gapped node within the enterprise, never hitting the broader LAN or any cloud endpoint; builds on the air-gapped bundle + data residency controls but elevates the configuration to a first-class topology that auditors can certify; unblocks AI adoption for the highest-regulation data classifications
 - [ ] **High availability** — active/passive Gateway clustering; leader election via SQLite WAL + advisory lock; failover in under 30 seconds
 - [ ] **Managed update channel** — enterprise updates on a dedicated channel with 2-week delay vs. main; allows internal QA before rollout
@@ -2548,13 +2548,13 @@ Native package-manager distribution; gated independently of the desktop tag, may
 #### Wave 1 — Fleet Foundation *(distribution substrate)*
 
 - [ ] **`nimbus.team.toml` + team config repo** — declarative, version-controlled team baseline (connectors as vault-key references, sync intervals/depths, watchers, workflows, automation templates, dashboard presets, model-policy defaults, policy pointer).
-- [ ] **Signed team baseline** — `nimbus team sign`; verified on every apply/reconcile; unsigned/mis-signed refused.
+- [ ] **Signed team baseline** — `nimbus team sign`; verified on every apply/reconcile; unsigned/mis-signed refused. *(Built on by [Phase 29](#phase-29--the-team-server).)*
 - [ ] **`nimbus apply` + reconciliation loop** — verify signature → diff → preview → HITL apply; idempotent; reconcile boundary (above) enforced.
-- [ ] **`nimbus team join <repo>`** — one-command onboarding: clone → apply config → auth only the connectors needing per-user identity (Team-Vault service accounts need none); creds land in the local/Team Vault, never the repo.
+- [ ] **`nimbus team join <repo>`** — one-command onboarding: clone → apply config → auth only the connectors needing per-user identity (Team-Vault service accounts need none); creds land in the local/Team Vault, never the repo. *(Built on by [Phase 29](#phase-29--the-team-server).)*
 - [ ] **`nimbus team leave`** — clean detach: stop reconcile, revoke federation grants, remove team-applied content; auditable.
 - [ ] **Layered precedence** — `team baseline → profile → user overrides`, org policy as a hard ceiling; `nimbus config explain <key>`.
 - [ ] **Secrets discipline (defense in depth)** — team CI contract test **and** Gateway-side payload scan refusing literal secrets.
-- [ ] **Team-server tier** — `nimbus serve --team`: always-on team Gateway (shared namespaces + Team Vault anchor + reconcile source) without enterprise Helm; the on-ramp to Phase 12.
+- [ ] **Team-server tier** — `nimbus serve --team`: always-on team Gateway (shared namespaces + Team Vault anchor + reconcile source) without enterprise Helm; the on-ramp to Phase 12. *(Given spine slot S5 and its missing rows by [Phase 29](#phase-29--the-team-server), 2026-11-12.)*
 - [ ] **Overlay-mesh federation** — federation over a user-run WireGuard/Tailscale overlay, not just same-LAN mDNS; **no Nimbus relay**.
 - [ ] **Fleet health view** — `nimbus team fleet`: config version + reconcile/drift state + reachability across the team (no index content; aggregate; opt-in).
 - [ ] **Staged / canary config rollout** + **fleet rollback** (`nimbus team rollback <version>`, atomic over the whole baseline — skill packs/watchers/workflows/config pinned by version).
@@ -2639,6 +2639,7 @@ Native package-manager distribution; gated independently of the desktop tag, may
 - [ ] **Live incident scribe + comms** — maintains the timeline, drafts stakeholder/status-page updates (**HITL to send**), keeps the channel current; tone/templates from Phase 16 skill packs.
 - [ ] **On-call handoff brief** — `nimbus oncall handoff`: shift events, open/smoldering items, watch-list.
 - [ ] **Auto post-mortem** — composes Phase 10's draft from the richer incident record; HITL-gated push.
+- [ ] **Status page draft** [NEW] (added 2026-11-12) — a static page of current incidents, who is on call and the DORA scorecard, generated from the index; publishing it is the owner's act. From the retired `nimbus-statuspage` scaffold (owner ruling OR-ECO-6).
 
 #### Acceptance Criteria
 
@@ -3037,6 +3038,131 @@ The federation primitive is intentionally general — once two Gateways can shar
 - On a seeded reversible bad-deploy incident, the Captain investigates, performs the pre-authorized reversible rollback within its lease + egress budget, and surfaces an irreversible follow-up step for biometric HITL only; `nimbus audit replay <incident-id>` reconstructs every step and the human on-call was notified the Captain held the slot.
 - A Captain mitigation whose trigger derived from `untrusted`-tagged incident content falls back to HITL (does not auto-act); an over-budget or lease-expired action aborts before the connector.
 - On a battery-constrained host the scheduler defers non-incident society tasks while an incident lease still runs (precedence stated); the Guild minutes book is anchored externally.
+
+---
+
+### Phase 28 — The Agent Door
+
+> **Sequencing (2026-11-12):** **Track 1 — spine, slot S4**, and the next project to start (owner ruling OR-ECO-8). Numbered 28 because new phases are appended after the last planned phase; in substance it completes [Phase 9.7](#phase-97--connector-write-enablement-the-acting-roster). **Nothing in this section is built.** What it starts from is: the MCP server's read tools ([S1](#spine-s1)) and the act door of the MCP capture sink ([S3](#spine-s3)).
+
+**Goal:** Any MCP client, whether a coding agent, a chat bot or another tool, reaches the same guarded writes as Nimbus's own model, under the same rules, with one approval step. Phase 9.7 opened the write roster to Nimbus's own model. An outside agent reaches only a subset of it through the act door, by way of a separate accept command, and is shown no before-state. This phase closes that gap, because the agents engineers use every day are not Nimbus's own ([§ Direction](#direction)).
+
+#### Dependencies
+
+- Phase 9.7 — the write-row table, typed previews, before-state readers, typed confirmation and bound writes (shipped)
+- S3 — the MCP capture sink and its act door, invariant `I28` (shipped)
+- The pending-approval queue and the notification consent hop (shipped)
+- [Reach](#reach-the-owners-track) — the signed desktop release, before the desktop app can be an approval surface
+
+#### Non-negotiable guardrails
+
+- Every rule of the model door holds on the agent door: the service enabled to that wave, the row approved by name, the door refusals, the never-offered list, a Wave 4 write refused when its before-state cannot be read, typed confirmation, and no delegate (`I20`, `I53`, `I54`).
+- The proposer is a model the owner does not control. It is shown in an unverified block, and nothing it supplies selects the tool that runs (`I3`, `I28`).
+- A row the door cannot present in full is refused with a named reason, never shown in part.
+- The door guards what passes through it, and the product says so: an agent that holds its own credentials can act outside it.
+
+#### Rows
+
+- [ ] **Write parity with the model door** [NEW] — every connector write the model door offers is proposable by an MCP client, under the same eligibility, the same refusals and the same never-offered list.
+- [ ] **The same prompt** [NEW] — the approval shows the typed preview, the before-state, the bound diff or plan, and takes the typed confirmation for a Wave 4 row, exactly as the model door does, with the proposer in an unverified block.
+- [ ] **One approval step** [NEW] — a proposal is approved or denied in one owner action on a trusted local surface, without a separate accept command first; the queue of waiting proposals is listable.
+- [ ] **Agent kits** [NEW] — one command installs the Nimbus MCP server into a named agent (Claude Code, Codex, Cursor and VS Code first), writes that agent's own rules steering destructive commands to the door where the agent supports such rules, and a status command verifies the install. Each kit states what the agent can still do outside the door.
+- [ ] **MCP revision 2026-07-28** [NEW] — the server adapter serves the stateless revision of the protocol and keeps serving older clients; the standalone connectors' consent path, which uses elicitation, gets its successor in `nimbus-mcp-servers`. What the revision changes is to be read from the published specification when this row is designed, not from this sentence.
+- [ ] **User MCP servers through the door** [NEW] — an owner-registered MCP server's tools reach outside agents through Nimbus, sandboxed and approved per call (`I42`). Includes the carried-in [*User-MCP write grants*](#carried-into-s4) row.
+- [ ] **Proof for agent actions** [NEW] — `nimbus prove` and the audit views report agent-door actions by proposer and outcome.
+- [ ] **Bounds stated in the product** [NEW] — the README, the security page and each kit say what the door does not guard.
+- [ ] **A Developer role pack** [NEW] — in the official registry: the brief agents a developer's coding agent reaches through the door, as one pack.
+
+#### What its spec must decide
+
+How the act door's executor gains the before-state, guard and bound-prepare steps it lacks today; which surface answers first (terminal, desktop, chat) and what the desktop app would need on the Tauri allowlist (`I7`); whether the door stays off by default and what the opt-in is; where the kits live; and what re-approval a changed tool definition needs. Invariants in play: `I2`, `I3`, `I20`, `I28`, `I29`, `I42`, `I53`, `I54`.
+
+#### Acceptance Criteria
+
+- With a write enabled and approved, an MCP client proposes it and the owner is shown the same preview the model door renders for the same input, asserted on the rendered text.
+- A Wave 4 proposal is denied without the exact confirm text, on every approval surface.
+- From proposal to dispatch takes one owner action.
+- The whole path works with no model configured in Nimbus.
+- Every dispatch has one egress row and one audit row that name the door and the proposer.
+- At least two kits are verified against the real agent, and the result is published as a matrix.
+- The invariants it touches are amended under the triple rule (wiring, documentation and test in one commit).
+
+---
+
+### Phase 29 — The Team Server
+
+> **Sequencing (2026-11-12):** **Track 1 — spine, slot S5** (owner ruling OR-ECO-3). **Nothing in this section is built.** A team server was already a planned row (Phase 16 Wave 1's *Team-server tier*); this phase gives it a slot and the rows it was missing.
+
+**Goal:** A Nimbus that a team runs on its own server: always on, with no desktop session, holding the production credentials in one place, answering questions and taking approvals in the team's chat. There is still no Nimbus-operated cloud. It is the shape teams adopt in, and it is what lets an engineer's agent act on production without that engineer, or that agent, holding a production credential.
+
+#### Builds on (rows stay where they are)
+
+- [Phase 12](#phase-12--enterprise) — *Docker image*, *Helm chart*, *Air-gapped bundle*
+- [Phase 16](#phase-16--the-platform-layer) Wave 1 — *Team-server tier* (`nimbus serve --team`), *Signed team baseline*, *`nimbus team join <repo>`*
+- [`ecosystem-roadmap.md`](./ecosystem-roadmap.md) cluster 10, "Nimbus beyond one laptop"
+- Phase 6 — federation, the Team Vault, SSO and SCIM, signed org policy, the Slack and Teams bot with typed-confirmation cards (shipped)
+
+#### Non-negotiable guardrails
+
+- **No approval behind a browser page.** A bearer-token approval page turns script injection into approve-anything; approvals stay in chat cards, the desktop app and the terminal (carried from the ecosystem landscape's non-goals).
+- **No plaintext credentials.** The sealed backend below is selected only by explicit configuration and never as a fallback (non-negotiable 3).
+- **Loopback stays the default.** A listener beyond loopback exists only in the server shape, by explicit configuration, and this section is not approval of any network posture: `I5`, `I6`, `I13` and `I45` all assume loopback today, and the phase's spec has to amend them under the triple rule.
+
+#### Rows
+
+- [ ] **A sealed Vault backend** [NEW] — works with no session keyring, which a container or a headless Linux host does not have. The key comes from the platform's secret store; the server starts locked until it has it.
+- [ ] **Team credentials and a team profile** [NEW] — service accounts and bot tokens; personal connectors (mail, calendar, personal drives) are off on a server unless the operator turns one on.
+- [ ] **Always-on intake** [NEW] — alert and deploy webhooks arrive at the server and produce pushed briefs in chat (builds on the incident engine's alert sources, Phases 10 and 17).
+- [ ] **Approvals in chat under policy** [NEW] — the shipped typed-confirmation cards, plus a rule for who may approve what.
+- [ ] **A remote agent door** [NEW] — team members' agents reach the server's [agent door](#phase-28--the-agent-door) over the network, each as an identified user; the credential never leaves the server.
+- [ ] **A pull-request check** [NEW] — the shipped GitHub Actions against the team server.
+- [ ] **Laptop and server together** [NEW] — a personal gateway treats the team server as a federation peer; personal data stays on the laptop.
+- [ ] **Service artifacts** [NEW] — container image, Helm chart, compose file and service unit, published with each release and exercised by an install smoke test.
+
+#### What its spec must decide
+
+The network posture and the invariants it amends; identity for remote callers; the sealed backend's key handling; and what a server refuses to index.
+
+#### Acceptance Criteria
+
+- On a fresh Linux host with no keyring and no display, the documented container start reaches a first answered chat question within 15 minutes, and CI exercises that path on each release.
+- No credential is readable at rest without the unseal key, proven by a test; a restart without the key leaves the server locked.
+- An agent on a laptop that holds no production credential completes a guarded write through the server after an approval in chat, and the server's ledger records it.
+
+---
+
+### Phase 30 — The Cost Pack
+
+> **Sequencing (2026-11-12):** **Track 1 — spine, slot S6.** **Nothing in this section is built**; the connectors it builds on are in flight under S4.
+
+**Goal:** A FinOps practitioner or a platform engineer can ask why spend moved and get the deploy, the pull request and the owner, from data that stays on their machine or on their team's server. Nimbus already holds the other side of that join (deploys, pull requests, ownership); this phase brings cost to it.
+
+#### Builds on (rows stay where they are)
+
+- [Phase 10](#phase-10--the-autonomous-agent) Stretch — *FinOps connectors* (in flight), *Cost anomaly detection*, *Cloud cost "garbage collection"*, *Data FinOps attribution*
+- [Phase 9](#phase-9--ai-engineering-loop) Wave 4 — *OpenAI usage export*, *Anthropic usage export*, *AWS Bedrock spend*, *Vertex AI spend*, *AI cost watcher*
+- The role-pack mechanism (`I47`), the ownership graph and the deployment records (shipped)
+
+#### Non-negotiable guardrails
+
+- Cost data is read-only in the index. Acting on it (a clean-up, a right-sizing) is a connector write row behind the gate, like any other write.
+- No model step in anything that runs unattended (owner ruling OR-10-8); the briefs are deterministic.
+- Cost data does not leave: a cost brief adds no egress row.
+
+#### Rows
+
+- [ ] **Raw cloud billing intake** [NEW] — FOCUS-format exports and the three clouds' billing data, beside the third-party platforms the FinOps connectors already cover.
+- [ ] **The cost-to-change join** [NEW] — a cost series bound to a service, so a spike can be set beside the deploys, pull requests, flag changes and owners around it. The binding convention between a cost series and a service is an owner decision this phase's spec will ask.
+- [ ] **`nimbus cost` briefs** [NEW] — summary, why, owners and waste, with no model required.
+- [ ] **Cost in the approval** [NEW] — the infrastructure apply preview shows the plan's cost change.
+- [ ] **A FinOps role pack** [NEW] — in the official registry.
+- [ ] **Cost in the demo** [NEW] — the seeded demo organisation gains cost data, so the join can be shown with no credentials.
+
+#### Acceptance Criteria
+
+- On the demo corpus, the why brief names the deploy, the pull request and the owning service for a seeded spike, with no network call.
+- On a real billing export and a synced code host, the same.
+- The cost briefs add no egress row.
 
 ---
 
