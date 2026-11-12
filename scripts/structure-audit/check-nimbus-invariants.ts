@@ -2429,15 +2429,28 @@ const D45_GLOBAL_OBJECT_RE = /(?<![.\w$])(?:globalThis|window|self)(?![\w$])/g;
 // `import "x";` (no `from`): runs the module for its effects, so it is an import like any other.
 const D45_SIDE_EFFECT_IMPORT_RE = /(?:^|[;{}])[ \t]*import\s*["']([^"']+)["']/gm;
 
+/** What one confinement rule (D45, D48) scans and which rule ids it reports. */
+interface ConfinementSpec {
+  readonly inScope: (relPath: string) => boolean;
+  readonly forbiddenSegmentRe: RegExp;
+  readonly forbiddenImportRule: string;
+  readonly noNetworkRule: string;
+}
+
 function inBriefingScope(relPath: string): boolean {
   if (relPath.endsWith(".test.ts")) return false;
   return relPath.startsWith(D45_DIR) || D45_LIB_RE.test(relPath);
 }
 
-export function checkBriefingConfinement(files: readonly FileEntry[]): Violation[] {
+/**
+ * The shared scan of D45 and D48: in every in-scope file, no import (static, side-effect, dynamic,
+ * `require`, re-export) of a forbidden path segment, none of `connectors/` unless type-only, and no
+ * network primitive. Comments and string literals are blanked first.
+ */
+function checkConfinement(files: readonly FileEntry[], spec: ConfinementSpec): Violation[] {
   const out: Violation[] = [];
   for (const f of files) {
-    if (!inBriefingScope(f.relPath)) continue;
+    if (!spec.inScope(f.relPath)) continue;
     const commentFree = stripComments(f.contents);
     const code = stripStringLiterals(commentFree);
     const original = f.contents.split("\n");
@@ -2445,13 +2458,13 @@ export function checkBriefingConfinement(files: readonly FileEntry[]): Violation
       const line = src.slice(0, index).split("\n").length;
       out.push({ rule, file: f.relPath, line, snippet: (original[line - 1] ?? "").trim() });
     };
-    const specifier = (spec: string, valueImport: boolean, index: number | undefined): void => {
-      if (D45_FORBIDDEN_SEGMENT_RE.test(spec)) {
-        push("briefing-forbidden-import", commentFree, index);
-      } else if (D45_CONNECTORS_SEGMENT_RE.test(spec) && valueImport) {
-        push("briefing-forbidden-import", commentFree, index);
+    const specifier = (target: string, valueImport: boolean, index: number | undefined): void => {
+      if (spec.forbiddenSegmentRe.test(target)) {
+        push(spec.forbiddenImportRule, commentFree, index);
+      } else if (D45_CONNECTORS_SEGMENT_RE.test(target) && valueImport) {
+        push(spec.forbiddenImportRule, commentFree, index);
       }
-      if (D45_NETWORK_MODULE_RE.test(spec)) push("briefing-no-network", commentFree, index);
+      if (D45_NETWORK_MODULE_RE.test(target)) push(spec.noNetworkRule, commentFree, index);
     };
     for (const m of commentFree.matchAll(D39_STATIC_IMPORT_RE)) {
       specifier(m[3] ?? "", clauseHasValue(m[1] !== undefined, m[2] ?? ""), m.index);
@@ -2463,10 +2476,47 @@ export function checkBriefingConfinement(files: readonly FileEntry[]): Violation
     }
     for (const m of commentFree.matchAll(D45_REQUIRE_RE)) specifier(m[1] ?? "", true, m.index);
     for (const re of [D45_NETWORK_CALL_RE, D45_FETCH_REF_RE, D45_GLOBAL_OBJECT_RE]) {
-      for (const m of code.matchAll(re)) push("briefing-no-network", code, m.index);
+      for (const m of code.matchAll(re)) push(spec.noNetworkRule, code, m.index);
     }
   }
   return out;
+}
+
+export function checkBriefingConfinement(files: readonly FileEntry[]): Violation[] {
+  return checkConfinement(files, {
+    inScope: inBriefingScope,
+    forbiddenSegmentRe: D45_FORBIDDEN_SEGMENT_RE,
+    forbiddenImportRule: "briefing-forbidden-import",
+    noNetworkRule: "briefing-no-network",
+  });
+}
+
+// ---- D48 (FinOps cost data is read and pruned by code that cannot leave the machine, OR-FO-3) ------
+// Rule ids `finops-forbidden-import` and `finops-no-network`. `packages/gateway/src/finops/` holds the
+// pure side of the cost connectors (the row contract, the series rollup, the `readCostSeries` reader and
+// the retention pass): it runs unattended, so it must be incapable of an outbound request, a connector
+// call or a model call. Scope: every non-test file under `packages/gateway/src/finops/`. In scope:
+//   - no import (static, side-effect, dynamic, `require`, re-export) of `chatops/`, `egress/`,
+//     `federation/`, `share/`, `llm/`, `engine/` or `agents/`, even type-only; none of `connectors/`
+//     unless it is a TYPE-only import;
+//   - no network primitive: ANY reference to the global `fetch`, any use of `globalThis`, `window` or
+//     `self`, `Bun.fetch`, `new WebSocket`, `XMLHttpRequest`, and no import of `node:http`,
+//     `node:https`, `node:http2`, `node:net`, `node:tls`, `node:dgram` or `undici`.
+// Stated bounds: a text scan of DIRECT imports; an indirect path through an allowed module (`index/`,
+// `db/`) is not followed. The mapper and the syncable live in `connectors/` and are out of scope: they
+// reach the vendor only through the sandboxed connector session. Tied to no invariant (spec D-FO-11): it
+// makes "unattended means inert" structural rather than conventional.
+const D48_DIR = "packages/gateway/src/finops/";
+const D48_FORBIDDEN_SEGMENT_RE =
+  /(?:^|\/)(?:chatops|egress|federation|share|llm|engine|agents)(?:\/|$)/;
+
+export function checkFinopsConfinement(files: readonly FileEntry[]): Violation[] {
+  return checkConfinement(files, {
+    inScope: (relPath) => !relPath.endsWith(".test.ts") && relPath.startsWith(D48_DIR),
+    forbiddenSegmentRe: D48_FORBIDDEN_SEGMENT_RE,
+    forbiddenImportRule: "finops-forbidden-import",
+    noNetworkRule: "finops-no-network",
+  });
 }
 
 export function checkModelWriteDoor(files: readonly FileEntry[]): Violation[] {
@@ -4599,6 +4649,7 @@ async function loadFiles(): Promise<FileEntry[]> {
 export const RULE_ANCHORS: readonly string[] = [
   "packages/gateway/src/briefing/briefing-runner.ts", // D45 — the briefing delivers locally only
   "packages/gateway/src/agents/_lib/briefing-build.ts", // D45
+  "packages/gateway/src/finops/cost-series.ts", // D48 — FinOps cost code is inert
   "packages/gateway/src/engine/executor.ts", // D22 — connectors.dispatch chokepoint
   "packages/gateway/src/ipc/agents-rpc.ts", // D22(d) — agent emitter confinement
   "packages/gateway/src/db/write.ts", // D12 — bound-param SQL writes
@@ -4916,6 +4967,13 @@ async function run(): Promise<void> {
       );
     }
     if (briefingViolations.length > 0) exit = 1;
+    const finopsViolations = checkFinopsConfinement(files);
+    for (const e of finopsViolations) {
+      console.error(
+        `::error file=${e.file},line=${e.line}::D48 FinOps cost code reached outside the machine (rule ${e.rule}) — no ChatOps/egress/federation/share/llm/engine/agents import, no connectors value import, no network primitive: ${e.snippet}`,
+      );
+    }
+    if (finopsViolations.length > 0) exit = 1;
     const snapshotViolations = checkWorkSnapshotConfinement(files);
     for (const e of snapshotViolations) {
       console.error(

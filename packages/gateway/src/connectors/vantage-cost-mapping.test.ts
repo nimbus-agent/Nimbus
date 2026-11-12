@@ -7,6 +7,8 @@
 // Every fixture below is documentation-shaped, never a live recording and never a real token.
 import { describe, expect, test } from "bun:test";
 import {
+  COST_ALLOCATION_TYPE,
+  COST_RECOMMENDATION_TYPE,
   type CostAllocationMetadata,
   DAY_MS,
   seriesHashOf,
@@ -197,6 +199,8 @@ describe("costAllocationItem", () => {
     const item = costAllocationItem(rolled, syncedAt);
     expect(item.service).toBe("vantage");
     expect(item.type).toBe("cost_allocation");
+    expect(item.type).toBe(COST_ALLOCATION_TYPE);
+    expect(Object.keys(item.metadata).sort()).toEqual(Object.keys(rolled.metadata).sort());
     expect(item.externalId).toBe(rolled.externalId);
     expect(item.title).toBe("AmazonSNS 2023-06-05 100 USD");
     expect(item.bodyPreview).toBe(item.title);
@@ -272,6 +276,7 @@ describe("mapVantageRecommendationToItem", () => {
     const item = mapVantageRecommendationToItem(REC, { syncedAt });
     expect(item?.service).toBe("vantage");
     expect(item?.type).toBe("cost_recommendation");
+    expect(item?.type).toBe(COST_RECOMMENDATION_TYPE);
     expect(item?.externalId).toBe("rec_example_1");
     expect(item?.title).toBe("Rightsize an over-provisioned EC2 instance");
     expect(item?.url).toBeNull();

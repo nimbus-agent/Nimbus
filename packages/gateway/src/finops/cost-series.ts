@@ -4,12 +4,7 @@
 // detector reads cost data only through this function. It reads `item` rows through the
 // `json_extract` form the index-lane census can see.
 import type { Database } from "bun:sqlite";
-import {
-  COST_ALLOCATION_TYPE,
-  DAY_MS,
-  isCostServiceId,
-  startOfUtcDay,
-} from "./cost-item-contract.ts";
+import { DAY_MS, isCostServiceId, startOfUtcDay } from "./cost-item-contract.ts";
 
 export interface CostSeriesQuery {
   readonly seriesKey: string;
@@ -51,6 +46,7 @@ function gapsBetween(points: readonly CostSeriesPoint[]): number[] {
   return gaps;
 }
 
+// The type is a literal (it is COST_ALLOCATION_TYPE) so the index-lane census can scope the reads.
 /**
  * The daily series of one `seriesKey` between `fromMs` and `toMs` (UTC days, both inclusive). The
  * service is the key's first part and must be one of the five cost services; any other key reads
@@ -70,12 +66,12 @@ export function readCostSeries(db: Database, query: CostSeriesQuery): CostSeries
               json_extract(metadata, '$.finalized') AS finalized
          FROM item
         WHERE service = ?
-          AND type = ?
+          AND type = 'cost_allocation'
           AND json_extract(metadata, '$.seriesKey') = ?
           AND json_extract(metadata, '$.periodStartMs') BETWEEN ? AND ?
         ORDER BY day ASC`,
     )
-    .all(service, COST_ALLOCATION_TYPE, query.seriesKey, from, to) as Row[];
+    .all(service, query.seriesKey, from, to) as Row[];
   const points = rows
     .map((r) => ({ dayMs: r.day, amount: r.amount, finalized: r.finalized === 1 }))
     .filter((p) => query.finalizedOnly !== true || p.finalized);

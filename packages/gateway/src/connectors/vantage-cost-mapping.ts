@@ -1,7 +1,5 @@
 import { createHash } from "node:crypto";
 import {
-  COST_ALLOCATION_TYPE,
-  COST_RECOMMENDATION_TYPE,
   type CostDimensionKind,
   type CostPoint,
   type RolledCostRow,
@@ -151,16 +149,37 @@ export function costAllocationItem(rolled: RolledCostRow, syncedAt: number): Van
   const m = rolled.metadata;
   const money = m.currency === null ? String(m.amount) : `${String(m.amount)} ${m.currency}`;
   const title = `${m.dimensionValue} ${utcDateString(rolled.dayMs)} ${money}`.slice(0, TITLE_MAX);
+  // Literal service, type and metadata keys on purpose: the index-lane census reads them as the
+  // writer's emissions (docs/structure-audit/index-lane-census.json), and a spread would hide them.
   return {
-    service: SERVICE,
-    type: COST_ALLOCATION_TYPE,
+    service: "vantage",
+    type: "cost_allocation",
     externalId: rolled.externalId,
     title,
     bodyPreview: title,
     url: null,
     canonicalUrl: null,
     modifiedAt: Math.min(m.periodEndMs, syncedAt),
-    metadata: { ...m },
+    metadata: {
+      seriesKey: m.seriesKey,
+      seriesHash: m.seriesHash,
+      scopeId: m.scopeId,
+      dimensionKind: m.dimensionKind,
+      dimensionKey: m.dimensionKey,
+      dimensionValue: m.dimensionValue,
+      groupings: m.groupings,
+      periodStartMs: m.periodStartMs,
+      periodEndMs: m.periodEndMs,
+      granularity: m.granularity,
+      amount: m.amount,
+      currency: m.currency,
+      costKind: m.costKind,
+      unit: m.unit,
+      finalized: m.finalized,
+      provider: m.provider,
+      cloudService: m.cloudService,
+      rowCount: m.rowCount,
+    },
     syncedAt,
   };
 }
@@ -199,8 +218,8 @@ export function mapVantageRecommendationToItem(
   const createdAtMs = isoMsOrNull(row["created_at"]);
   const resources = row["resources_affected_count"];
   return {
-    service: SERVICE,
-    type: COST_RECOMMENDATION_TYPE,
+    service: "vantage",
+    type: "cost_recommendation",
     externalId: token,
     title,
     bodyPreview: title,

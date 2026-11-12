@@ -6,7 +6,7 @@
 // graph cleanup stays on one path. `cost_recommendation` rows are not pruned by age.
 import type { Database } from "bun:sqlite";
 import { deleteItemByPrimaryKey } from "../index/item-store.ts";
-import { COST_ALLOCATION_TYPE, COST_SERVICE_IDS, DAY_MS } from "./cost-item-contract.ts";
+import { COST_SERVICE_IDS, DAY_MS } from "./cost-item-contract.ts";
 
 export const COST_PRUNE_INTERVAL_MS = DAY_MS;
 const BATCH = 1000;
@@ -31,13 +31,13 @@ export function pruneCostRows(db: Database, opts: PruneCostRowsOptions): number 
   const marks = COST_SERVICE_IDS.map(() => "?").join(", ");
   const select = db.query(
     `SELECT id FROM item
-      WHERE type = ? AND service IN (${marks})
+      WHERE type = 'cost_allocation' AND service IN (${marks})
         AND json_extract(metadata, '$.periodEndMs') < ?
       LIMIT ?`,
   );
   let total = 0;
   for (;;) {
-    const rows = select.all(COST_ALLOCATION_TYPE, ...COST_SERVICE_IDS, cutoff, batch) as {
+    const rows = select.all(...COST_SERVICE_IDS, cutoff, batch) as {
       id: string;
     }[];
     if (rows.length === 0) {
