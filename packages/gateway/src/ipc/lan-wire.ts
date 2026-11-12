@@ -33,6 +33,11 @@ export interface RateLimiterService {
 export interface LanPeerMatch {
   peerId: string;
   writeAllowed: boolean;
+  /**
+   * The protocol this peer has completed with us: 2 once a Noise session did (the downgrade ratchet,
+   * invariant I56), else 1. REQUIRED, never optional: an absent value read as 1 would fail open.
+   */
+  protoVersion: 1 | 2;
 }
 
 /** Every `kind` a Nimbus responder sends is a short lowercase protocol token. */

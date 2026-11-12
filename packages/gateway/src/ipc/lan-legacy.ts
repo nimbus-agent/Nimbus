@@ -43,10 +43,27 @@ export interface LegacyServerContext {
   registerPeer: (pubkey: Uint8Array, peerIp: string) => string;
   rateLimit: RateLimiterService;
   pairing: PairingService;
+  /** `[lan] min_protocol`: 2 refuses the whole v1 wire. */
+  minProtocol: 1 | 2;
+}
+
+/**
+ * Invariant I56, the ONE downgrade check (D-FS-13): may a v1 first frame (`pair` or `hello`) proceed
+ * for a peer whose recorded protocol is `recorded` (`undefined` when its key is not known)?
+ * Never under `min_protocol = 2`, and never for a peer that has completed a v2 session.
+ */
+export function legacyAllowedFor(recorded: 1 | 2 | undefined, minProtocol: 1 | 2): boolean {
+  return minProtocol === 1 && recorded !== 2;
 }
 
 function writeText(session: LegacySession, text: string): void {
   writeFramedBytes(session.writer, new TextEncoder().encode(text));
+}
+
+/** A refused v1 first frame: closed with no reply, counted. */
+function refuseLegacy(session: LegacySession, ctx: LegacyServerContext, ip: string): void {
+  ctx.rateLimit.recordFailure(ip);
+  session.writer.end();
 }
 
 export function legacyHandleHandshake(
@@ -86,11 +103,26 @@ export function legacyHandleHandshake(
     return;
   }
 
+  // I56: the downgrade check. A refused v1 first frame gets NO reply (a reply would tell a downgrader
+  // which side said no) and is a counted failure. Under min_protocol = 2 it is refused here, before
+  // anything about the sender is looked up; a peer already at protocol 2 is refused where its record
+  // is read (the hello below, the pair after the window check).
+  if (!legacyAllowedFor(undefined, ctx.minProtocol)) {
+    refuseLegacy(session, ctx, ip);
+    return;
+  }
+
   if (msg.kind === "pair") {
     if (typeof msg.pairing_code !== "string" || !ctx.pairing.isOpen()) {
       ctx.rateLimit.recordFailure(ip);
       writeText(session, JSON.stringify({ kind: "pair_err" }));
       session.writer.end();
+      return;
+    }
+    // A v1 pair for a key already at protocol 2 would replace its stored address and direction using
+    // the plaintext code (a downgrade of pairing): refused before the code is consumed.
+    if (!legacyAllowedFor(ctx.isKnownPeer(clientPubkey)?.protoVersion, ctx.minProtocol)) {
+      refuseLegacy(session, ctx, ip);
       return;
     }
     const ok = ctx.pairing.consume(msg.pairing_code);
@@ -102,7 +134,7 @@ export function legacyHandleHandshake(
     }
     const peerId = ctx.registerPeer(clientPubkey, ip);
     session.peerPubkey = clientPubkey;
-    session.peerMatch = { peerId, writeAllowed: false };
+    session.peerMatch = { peerId, writeAllowed: false, protoVersion: 1 };
     ctx.rateLimit.recordSuccess(ip);
     writeText(
       session,
@@ -120,6 +152,10 @@ export function legacyHandleHandshake(
     ctx.rateLimit.recordFailure(ip);
     writeText(session, JSON.stringify({ kind: "hello_err" }));
     session.writer.end();
+    return;
+  }
+  if (!legacyAllowedFor(match.protoVersion, ctx.minProtocol)) {
+    refuseLegacy(session, ctx, ip);
     return;
   }
   session.peerPubkey = clientPubkey;

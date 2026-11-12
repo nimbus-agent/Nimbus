@@ -438,7 +438,7 @@ test("sendFederatedOverWire performs hello + encrypted RPC against a known peer"
     rateLimit: new LanRateLimiter({ maxFailures: 3, windowMs: 2000, lockoutMs: 2000 }),
     isKnownPeer: (pub) =>
       Buffer.compare(Buffer.from(pub), Buffer.from(selfKp.publicKey)) === 0
-        ? { peerId: "peer-known", writeAllowed: false }
+        ? { peerId: "peer-known", writeAllowed: false, protoVersion: 1 }
         : null,
     registerPeer: () => "peer-known",
     onMessage: async (method, params, peer) => ({ method, params, peerId: peer.peerId }),
