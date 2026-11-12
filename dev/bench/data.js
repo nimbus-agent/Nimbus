@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794495999449,
+  "lastUpdate": 1794498418485,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
-            "name": "nimbus-release-bot[bot]",
-            "username": "nimbus-release-bot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "c3b4379ad890a9d0d9a0ff82ca57b5ffc6b5045a",
-          "message": "chore: release main (#1326)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>2.18.0</summary>\n\n##\n[2.18.0](https://github.com/nimbus-agent/Nimbus/compare/v2.17.0...v2.18.0)\n(2026-08-24)\n\n\n### Features\n\n* **egress:** record how a targeted fetch ended (U3a)\n([#1325](https://github.com/nimbus-agent/Nimbus/issues/1325))\n([68db7d6](https://github.com/nimbus-agent/Nimbus/commit/68db7d63555782b7bb4f8c547c06e561fc8d75dd))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
-          "timestamp": "2026-08-24T18:02:02Z",
-          "tree_id": "6e11ba04fe3f251d646077b7984c25025942fd85",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/c3b4379ad890a9d0d9a0ff82ca57b5ffc6b5045a"
-        },
-        "date": 1787595213208,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 311.27351540000274,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 311.0546440999984,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 306.03376114999776,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "7016aa8d0f7a4509940d655c40f3ad449e6aec3c",
+          "message": "feat(gateway): item history (V94) and --at on ask, query and search (incident engine IC1) (#1981)\n\nThis is Phase 10, incident engine slice **IC1**, the first of ten\n(IC1–IC10). It adds `item_history`, a sync-time record of how indexed\nitems change state, and `--at <time>` on `nimbus ask`, `nimbus query`\nand `nimbus search`, so each can answer as the index stood at an earlier\ntime. It closes the roadmap row *Point-in-time index queries* and its\nPhase 10 acceptance criterion. Later slices use the same history for the\nincident timeline, the post-mortem and the handoff brief. Owner ruling\nOR-10-19.\n\n## What changes\n\n- **Schema V94 `item_history`**:\n- **What a row records:** one row per change of an allowlisted state\nkey, with old value, new value, observed time and the provider's own\ntime when there is one.\n- **Tracked keys:** status, state, severity, priority, assignee, merged,\ndraft, resolution and due date, for incidents, PRs, tickets, Sentry\nissues and data-quality items. The allowlist was derived from what each\nmapper actually writes.\n  - **Existence markers:** the pseudo-keys `__created` and `__deleted`.\n- **What it never records:** bodies, titles and free text. Values are\ncapped at 256 characters.\n- **No foreign key to `item`:** a delete must not erase the history that\nsays the item existed. Connector removal and `nimbus data delete` erase\nthat service's history.\n- **The writer** is `index/item-history.ts`. It is called from\n`upsertIndexedItem`, the real SQL chokepoint, and from the delete path.\nA tracked write reads the stored row once and adds at most a handful of\nrows inside a savepoint. An untracked write costs one map lookup.\n- **Retention** is set by `[index] history_retention_days`, default 180\n(range 7–3650). The new `[index]` section has per-key fallback. Pruning\nruns at boot and on a daily tick in batches of 5,000, never inside a\nsync.\n- **Static rule D46(b):** only `index/item-history.ts` writes\n`item_history`. The two erasure callers are named. Sub-rules (a) and (c)\nare reserved for IC3 and IC5.\n- **`--at <time>`** accepts ISO, `yesterday-HH:MM`, `today-HH:MM` or\n`-2h`, in the gateway's zone, DST-safe.\n- An item is kept only if it existed at T. Its tracked state is\nreconstructed as at T.\n- An item whose state at T cannot be reconstructed is excluded and\ncounted in `## Gaps`.\n- Each answer says when history starts, and that bodies and titles are\nas of now.\n- The filter runs in SQL before ranking on the keyword arm. Vector\nsearch takes its top k before filtering, so under `--at` it reads 500\ncandidates. That recall bound is stated.\n  - `--at` refuses `--since`, the negation flags and `query --sql`.\n  - `ask --at` uses only the index tools.\n- The CLI refuses a reply without the `asOf` echo, so an older gateway\ncannot silently answer from current data.\n\n## Stated bounds\n\n- History starts at V94; earlier states are not reconstructed, and\nreaders say so.\n- The `ask` gap count and the \"history starts\" line are lower bounds.\n- Vector recall under `--at` is bounded by the 500-candidate read.\n\n## Docs\n\n- CLAUDE.md and GEMINI.md, roadmap, architecture (new section),\ndocs/README, cli-reference (ask, search, query and the config row),\nCHANGELOG.\n- SECURITY-INVARIANTS.md: D46; the ceiling is now D10–D46.\n- schema-reference.md: V94.\n- The nimbus-commands, nimbus-file-map and nimbus-db-migrations skills.\n- The roadmap also ticks two rows that had already shipped:\n  - *On-call schedule awareness*: closed by MB5.\n- *Standing-approval + taint integration*: re-homed to and delivered by\nSA3–SA5.\n- No new invariant.\n\n## Verification (local, Windows)\n\n- `bun test packages/gateway/src`: 30542 pass, 1 fail. The failure is\n`trust-store.test.ts`, a 5 s timeout under load from a concurrent run;\nthe file passes 17/17 alone.\n- `bun test packages/gateway/test packages/cli`: only the 6 migration\nand Readwise e2e tests that fail on `main` in that combined process.\n- `bun test scripts`: only the 5 local `install.ps1`/gpg tests.\n- `typecheck`, `typecheck:tests` and `preflight:fast` pass.\npreflight:fast includes `audit:invariants`, `audit:status-drift` and\n`audit:doc-refs`.\n- The acceptance test is\n`test/integration/index/point-in-time.acceptance.test.ts`, over real\nSQLite. All history goes through the real writer.\n- The coverage floor is CI-Linux-authoritative.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JmSjrCFSTQTQnUa4j8F5b1\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Added point-in-time options for `nimbus ask`, `query`, and `search`,\nallowing supported results to reflect a selected past time.\n* The gateway records changes to supported item state and uses that\nhistory to reconstruct historical results. Responses disclose history\ncoverage and items that could not be placed in time.\n* Item history is retained for a configurable period, defaulting to 180\ndays, and is removed when a connector’s data is deleted.\n* **Documentation**\n* Updated CLI, configuration, schema, and architecture guides with\npoint-in-time behavior, supported options, and limitations.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-12T15:35:53Z",
+          "tree_id": "d354a45a8a45c5d5b25aaaac97c9039e5a56c008",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/7016aa8d0f7a4509940d655c40f3ad449e6aec3c"
+        },
+        "date": 1794498413584,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 295.52744645000166,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 298.7457585,
             "unit": "ms"
           }
         ]
