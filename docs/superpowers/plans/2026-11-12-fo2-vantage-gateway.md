@@ -1,6 +1,6 @@
 # Plan — FinOps FO2: the Vantage gateway side (contract, mapper, syncable, retention, embedding exclusion, pin bump)
 
-Status: DRAFT plan for Antigravity review (round 1).
+Status: DRAFT plan for Antigravity review (round 2).
 Spec: `docs/superpowers/specs/2026-11-12-finops-connectors.md` (APPROVED, round 2): § 2 (OR-FO-1..5, D-FO-1..12),
 § 5.1 (the contract), § 5.2 (the FO2 row), § 5.3 (Vantage, gateway half), § 6, § 7, § 8.
 Companion: `docs/superpowers/plans/2026-11-12-fo1-vantage-connector.md` (the connectors half, implemented as
@@ -55,8 +55,8 @@ gaps; a daily pass deletes cost rows past `[finops] retain_days` (400).
    The same list is the I19 team presence check (`teamvault/team-tool-invoke.ts:62`), unused here (D-FO-7).
 6. **`audit:connector-version-skew` does not fail a pin that is ahead of the registry** (its header comment in
    `scripts/structure-audit/check-connector-version-skew.ts`: "Ahead-of-registry is `ok`"). The real gate is
-   `bun install`: it cannot resolve `^0.14.0` until the npm publish, and `bun.lock` (lines 88 and 618 pin 0.13.0)
-   must change with `packages/gateway/package.json:21`. FO2's catalog id, registry line and tests therefore wait for
+   `bun install`: it cannot resolve `^0.14.0` until the npm publish, and `bun.lock` must change with
+   `packages/gateway/package.json:21` (run `bun install`; never hand-edit the lockfile). FO2's catalog id, registry line and tests therefore wait for
    the publish (ordering below).
 7. **A new transport, not an edit of `createWarehouseListSyncable`.** The warehouse transport
    (`connectors/warehouse-sync-transport.ts:73`) drains with fixed `{ cursor, limit }` arguments
@@ -81,11 +81,17 @@ gaps; a daily pass deletes cost rows past `[finops] retain_days` (400).
     about 22,500 on first sync, then 500 per day, bounded by retention) behind the `(service, type, ...)` index; measured
     in Task 3. If that proves slow, a follow-up migration takes "V9x (next free at merge)" (IC1 holds V94, FS1 V95);
     FO2 does not.
-12. **No CLI or IPC change.** `nimbus connector auth <service>` prints the exact Vault keys for a connector with no
+12. **Retention is a daily sidecar through `deleteItemByPrimaryKey`, not a step of the sync.** Spec D-FO-9 says retention
+    runs "through the existing delete chokepoint (`deleteItemByServiceExternal`) after a successful sync only". A
+    `SyncContext` cannot list or query rows (deviation 2), so retention cannot run inside `sync()`; it follows
+    `startCuSnapshotRetention` (`computer-use/cu-snapshot-retention.ts`) with its own `db`, and deletes through
+    `deleteItemByPrimaryKey` (`item-store.ts:263`, the function `deleteItemByServiceExternal` itself calls). Effect: rows
+    are pruned within 24 h of aging out, independent of whether a sync succeeded that day.
+13. **No CLI or IPC change.** `nimbus connector auth <service>` prints the exact Vault keys for a connector with no
     auth flow (`packages/cli/src/commands/connector.ts`, the note beginning "Most other token / API-key connectors");
     Vantage joins them through the catalog auth hint. Credentials are stored with `nimbus vault set vantage.api_token`.
 
-Spec claims verified correct: `scheduleItemEmbedding` is optional on `UpsertSyncDeps` (`item-store.ts:218`); deletion
+Spec claims verified correct (the numbering above is 1 to 13): `scheduleItemEmbedding` is optional on `UpsertSyncDeps` (`item-store.ts:218`); deletion
 goes through `deleteItemByPrimaryKey` (`:263`) / `deleteItemByServiceExternal` (`:274`); the config pattern for a
 section is `loadTomlSectionFromConfig` (`config/nimbus-toml.ts:74`) with `SECTION_LOADERS` (`config/config-explain.ts:80`);
 the session transport is `withConnectorSession` (`teamvault/connector-session.ts`) with `__setSessionSpawnerForTest`
@@ -136,7 +142,9 @@ field at all is a single series with `dimensionKind: "other"`, value `total`.
 `initialSyncDepthDays` 45. `sync(ctx, cursor)`: (1) `credentialFor("vantage")` pinned to `team` throws an actionable
 error naming D-FO-7; (2) read `lastOkMs` from the cursor; (3) one `withConnectorSession` (one spawn per cycle, the D9
 primitive): drain `vantage_cost_list` with `{ sinceMs, untilMs: now, limit: 5000 }` following `nextCursor` to the end,
-then `vantage_recommendation_list` the same way; ALL drains finish before any write, so a failed or rate-limited drain
+then `vantage_recommendation_list` with `{ limit: 1000, cursor }` ONLY (its schema is `cursorListInputSchema(1000)`,
+`connectors/vantage/src/tools.ts` on the connectors `main` at the 0.14.0 release: a `limit` above 1000 fails Zod validation and would
+abort the whole sync; it takes no `sinceMs`/`untilMs`), following `nextCursor` to the end; ALL drains finish before any write, so a failed or rate-limited drain
 indexes nothing and leaves the cursor unchanged; (4) map, roll up to the named set (deviation 3), upsert in one
 `ctx.writeBatch`; (5) return `{ cursor: lastOkMs = syncedAt, hasMore: false }`. Item depth is `metadata_only`
 (`bodyPreview` = the title; nothing else is stored).
@@ -250,15 +258,24 @@ OR-10-8 and spec § 6 "unattended means inert" structural. No invariant is claim
    (return before `embedItem`), `pipeline.ts:201`, `:222`, `:256`, `:275` (AND the fragment), `index-reembed-rpc.ts:109`
    and `db/index-health.ts:101`. A comment at each site names the file, so a future excluded type is added in one
    place. Green; then revert each production edit once and watch its test fail (record in the PR).
-3. `embedding/routing.ts` `PROSE_HEAVY_TYPES` gets `vantage:cost_recommendation` (short prose; the local model, the
-   MiniLM fallback applies when no OpenAI key). Test in `routing.test.ts`.
+3. Recommendations stay on the LOCAL embedder, by NOT adding them to `PROSE_HEAVY_TYPES` (`embedding/routing.ts`):
+   `RoutingEmbeddingPipeline.embedItem` (`embedding/routing-pipeline.ts:16`) sends a prose-heavy item to the OpenAI embedder
+   whenever `openai.api_key` is set, and a recommendation names accounts and services, which is cost data that must not
+   leave the machine unattended (spec D-FO-10, § 6). A type absent from `PROSE_HEAVY_TYPES` is always MiniLM-384.
+   `LOCAL_ONLY_PROSE_TYPES` is not used either: it is the explicit pin for paragraph-shaped types that also get the 16 KiB
+   body store (`nimbus:web_clip`, captures), and a recommendation is short. Tests: `embedding/routing.test.ts` asserts
+   `isProseHeavy("vantage","cost_recommendation")` and `isProseHeavy("vantage","cost_allocation")` are false (the file's
+   existing exact-membership pin, "PROSE_HEAVY_TYPES exact membership (23 entries)", also fails if either is ever added);
+   `embedding/routing-pipeline.test.ts` builds a `RoutingEmbeddingPipeline` with an OpenAI-configured stub embedder and a
+   local stub, embeds a `vantage:cost_recommendation` item, and asserts the OpenAI stub received NO call and the local one
+   exactly one (red-prove by temporarily adding the key to the set).
 
 ### Task 7 - GATE: the connector release, then the pin, the catalog id and the generated registry
 
 Do not start this task before `npm view @nimbus-dev/connectors version` prints 0.14.0 (or the release FO1 produced).
 Steps 2 and 3 are one commit: the catalog id without the registry line fails `audit:connector-registry-drift`, and
 the registry line without the installed package fails `gen:connector-registry`.
-1. Edit `packages/gateway/package.json:21` to `^0.14.0`; `bun install` updates `bun.lock` (lines 88 and 618).
+1. Edit `packages/gateway/package.json:21` to `^0.14.0`; run `bun install` (it rewrites `bun.lock`; commit the result).
 2. Add `"vantage"` to `CONNECTOR_SERVICE_IDS` (`connectors/connector-catalog.ts:3`, next
    to `"ramp"`), `vantage: HOUR6` to `CONNECTOR_SYNC_INTERVAL_MS` (`:137`), and the auth hint
    `vantage: "uses a Vantage API token (Read scope is enough)"` beside `dbt` (`:322`).
@@ -302,7 +319,11 @@ the registry line without the installed package fails `gen:connector-registry`.
 ### Task 9 - The transport and the Vantage syncable
 
 1. Tests `connectors/finops-sync-transport.test.ts` (DI: an injected drain, as `__setPersonalDrainForTest` does for the
-   warehouse transport; no subprocess): the drain passes `{ sinceMs, untilMs, limit: 5000, cursor }`, follows
+   warehouse transport; no subprocess): the cost drain passes `{ sinceMs, untilMs, limit: 5000, cursor }` and the recommendation drain passes exactly
+   `{ limit: 1000, cursor }` (a test feeds the transport the REAL zod bounds: it builds the two schemas from the connectors
+   package's own `connectors/vantage/src/tools.ts` registrar through the harness-style recorder, or, if the package's `src` is
+   not importable under the gateway's rules, from a copy of the two `z.object` shapes pinned by a source-text assertion, and
+   asserts both calls `safeParse` successfully and that `limit: 5000` on the recommendation tool does NOT); the drain follows
    `nextCursor` until null, and a mid-way throw rejects the whole drain; a `credentialFor` pin of `team` throws the
    D-FO-7 error before any spawn; `defaultIntervalMs` and `initialSyncDepthDays` are the declared ones.
 2. Tests `connectors/vantage-sync.test.ts` (real SQLite, fake drain returning the FO1 fixture rows): first sync with a
@@ -399,13 +420,14 @@ the registry line without the installed package fails `gen:connector-registry`.
 | Mapper owned by the gateway; connector rows untouched (§ 5.1) | Task 2 steps 1, 3 |
 | Pure reader `readCostSeries`, no network, no writes, built from the real mapper (§ 5.1) | Task 3 steps 1-2; Task 10 |
 | Vantage syncable on a `sinceMs` transport, 6 h, 45-day first window (§ 5.2, D-FO-5, § 5.3 Sync) | Task 9; deviation 2, 7 |
+| Per-tool drain arguments match the connector's real zod bounds (`limit` 5000 costs, 1000 recommendations) | Task 9 step 1 |
 | Re-read window of 3 days, idempotent upserts (D-FO-5, D-FO-6) | Task 9 step 2; Task 12 step 2 |
 | Drain before write, a failed or 429 drain indexes nothing (§ 5.3) | Task 9 steps 1-2 |
 | Personal credentials only (D-FO-7) | Task 9 step 1 |
 | Max 500 series, `__other__` (D-FO-9, OR-FO-5) | Task 2 step 2; Task 4; Task 8 step 6; deviation 3 |
 | Retention 400 days via the delete chokepoint (D-FO-9, OR-FO-5) | Task 5 |
 | Cost rows not embedded; both named sites and the rest (D-FO-10) | Task 6; deviation 4 |
-| `cost_recommendation` embedded locally (D-FO-10) | Task 6 step 3 |
+| `cost_recommendation` stays on the local embedder, never the remote one (D-FO-10, § 6) | Task 6 step 3 (not in `PROSE_HEAVY_TYPES`; pipeline test with an OpenAI-keyed stub) |
 | Vault keys incl. `OPTIONAL_SECRET_KEYS` (D-FO-8, § 5.3) | Task 8 step 2; deviation 5 |
 | Fixed host `api.vantage.sh`, no wildcard, `wrapServerSpec`, I1/I15/D10 (§ 5.3 Sandbox) | Task 8 steps 4-5 |
 | Registration sites: catalog, meta, secrets, manifests, `phase3-config.ts` + `phase3-finops.ts`, mesh, quotas, assemble (§ 5.3) | Task 7 steps 2-3; Task 8 steps 1-6 |
@@ -454,10 +476,24 @@ Title (conventional commit, no `!`; nothing here requires a user to act):
 
 `feat(gateway): index Vantage cost allocation and recommendations with a daily series reader, retention, and cost rows kept out of embeddings`
 
-Description: the data added, the 12 deviations (short), the stated bounds, the verification output, the measured
+Description: the data added, the 13 deviations (short), the stated bounds, the verification output, the measured
 reader and named-set timings, and the dependency on `@nimbus-dev/connectors` 0.14.0. End with the attribution lines
 from the session. No `Release-As:` trailer.
 
 ## Review log
 
-Not yet reviewed.
+### Round 1 (Antigravity, 2026-11-12)
+
+Both major findings and all three minor ones checked and valid; applied:
+- Major 1 (privacy): `PROSE_HEAVY_TYPES` routes to the remote OpenAI embedder when a key is set
+  (`routing-pipeline.ts:16`), and `routing.test.ts` pins its exact membership, so Task 6 step 3 was wrong (and would have
+  failed that test). Recommendations now stay on the local embedder by absence from the set; `LOCAL_ONLY_PROSE_TYPES`
+  is not used because it also grants the 16 KiB body store. A pipeline test with an OpenAI-keyed stub proves no
+  remote call. The spec-coverage row is updated.
+- Major 2: `vantage_recommendation_list` is `cursorListInputSchema(1000)` (confirmed on the connectors `main`
+  after #85 and the 0.14.0 release commit `091ab72`); the drain now sends `{ limit: 1000, cursor }`, the cost drain
+  keeps `{ sinceMs, untilMs, limit: 5000, cursor }`, and Task 9 tests both against the real bounds.
+- Minor: retention model recorded as deviation 12; bun.lock line numbers removed ("run `bun install`"); coverage rows
+  updated.
+Rejected: none. The review's quotes of `routing.ts`/`routing.test.ts` were accurate; one nuance recorded above is that
+adding to `LOCAL_ONLY_PROSE_TYPES` (its suggested alternative) is unnecessary and changes a body cap.
