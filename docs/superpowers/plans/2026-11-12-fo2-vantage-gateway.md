@@ -1,6 +1,6 @@
 # Plan — FinOps FO2: the Vantage gateway side (contract, mapper, syncable, retention, embedding exclusion, pin bump)
 
-Status: DRAFT plan for Antigravity review (round 2).
+Status: APPROVED by Antigravity (round 2, 2026-11-12).
 Spec: `docs/superpowers/specs/2026-11-12-finops-connectors.md` (APPROVED, round 2): § 2 (OR-FO-1..5, D-FO-1..12),
 § 5.1 (the contract), § 5.2 (the FO2 row), § 5.3 (Vantage, gateway half), § 6, § 7, § 8.
 Companion: `docs/superpowers/plans/2026-11-12-fo1-vantage-connector.md` (the connectors half, implemented as
@@ -497,3 +497,7 @@ Both major findings and all three minor ones checked and valid; applied:
   updated.
 Rejected: none. The review's quotes of `routing.ts`/`routing.test.ts` were accurate; one nuance recorded above is that
 adding to `LOCAL_ONLY_PROSE_TYPES` (its suggested alternative) is unnecessary and changes a body cap.
+
+Round 2 (Antigravity, 2026-11-12): APPROVED. Minor notes: re-check the `connector-catalog.ts` line for the catalog entry at Task 7; Task 0 may confirm the OpenAPI facts offline from FO1's committed fixtures; check the `~90 cloud services` overview count with `audit:status-drift` at Task 14.
+
+**Already done on main by #1982** (2026-11-12, needed because `audit:connector-version-skew` failed every gateway PR once 0.14.0 published): the `^0.14.0` pin and `bun.lock`, the regenerated `bundled-connector-registry.ts` (95 bundled), and the `vantage` first-party manifest (`api.vantage.sh`). The implementer skips those steps of the gated pin task and verifies them on the merged main instead.
