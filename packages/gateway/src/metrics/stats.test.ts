@@ -80,6 +80,7 @@ function insertIncident(
 ): void {
   const meta: Record<string, unknown> = { pagerduty_service_id: pdService, status };
   if (openedAtMs !== null) meta["opened_at_ms"] = openedAtMs;
+  if (status === "resolved") meta["resolved_at_ms"] = modifiedAt;
   db.run(
     `INSERT INTO item (id, service, type, external_id, title, modified_at, metadata, synced_at)
      VALUES (?, 'pagerduty', 'incident', ?, 'x', ?, ?, ?)`,

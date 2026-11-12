@@ -414,6 +414,52 @@ describe("changelog queries against the real migrated schema", () => {
     expect(rows[0]?.timeSource).toBe("index");
   });
 
+  test("a resolved incident with resolved_at_ms is listed at that time as an event; a legacy row at modified_at as index", () => {
+    const db = createMemoryIndexDb();
+    insertItem(db, {
+      id: "pagerduty:new",
+      service: "pagerduty",
+      type: "incident",
+      title: "New",
+      modifiedAt: NOW - DAY,
+      meta: { status: "resolved", resolved_at_ms: NOW - 3 * DAY },
+    });
+    insertItem(db, {
+      id: "pagerduty:legacy",
+      service: "pagerduty",
+      type: "incident",
+      title: "Legacy",
+      modifiedAt: NOW - 2 * DAY,
+      meta: { status: "resolved" },
+    });
+    const rows = selectIncidentsResolved(db, W);
+    expect(rows.map((r) => [r.id, r.timeSource, r.atMs])).toEqual([
+      ["pagerduty:legacy", "index", NOW - 2 * DAY],
+      ["pagerduty:new", "event", NOW - 3 * DAY],
+    ]);
+  });
+
+  test("the window applies to resolved_at_ms: a touch inside the window does not admit an older resolution", () => {
+    const db = createMemoryIndexDb();
+    insertItem(db, {
+      id: "pagerduty:old",
+      service: "pagerduty",
+      type: "incident",
+      title: "Resolved long ago, touched yesterday",
+      modifiedAt: NOW - DAY,
+      meta: { status: "resolved", resolved_at_ms: NOW - 30 * DAY },
+    });
+    insertItem(db, {
+      id: "pagerduty:late",
+      service: "pagerduty",
+      type: "incident",
+      title: "Touched long ago, resolved yesterday",
+      modifiedAt: NOW - 30 * DAY,
+      meta: { status: "resolved", resolved_at_ms: NOW - DAY },
+    });
+    expect(selectIncidentsResolved(db, W).map((r) => r.id)).toEqual(["pagerduty:late"]);
+  });
+
   test("selectIncidentsResolved scopes to the configured pagerduty_service_id", () => {
     const db = createMemoryIndexDb();
     const cfg = serviceConfig(); // pagerdutyServices: ["PD123"]

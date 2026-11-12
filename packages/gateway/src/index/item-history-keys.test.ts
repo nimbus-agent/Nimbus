@@ -51,6 +51,7 @@ const WRITERS: Record<string, () => Promise<Meta>> = {
           status: "resolved",
           created_at: "2026-11-11T08:00:00Z",
           updated_at: "2026-11-11T09:00:00Z",
+          last_status_change_at: "2026-11-11T08:45:00Z",
           urgency: "high",
           priority: { name: "P1" },
           service: { id: "SVC" },
@@ -249,6 +250,22 @@ describe("ITEM_HISTORY_SPECS - derived from the real writers", () => {
       expect(new Set(keys).size).toBe(keys.length);
       expect(Object.isFrozen(s)).toBe(true);
     }
+  });
+});
+
+describe("sourceAtFor - PagerDuty (Phase 10 IC2)", () => {
+  const pd = ITEM_HISTORY_SPECS.get("pagerduty:incident");
+  const meta = { resolved_at_ms: 111, status_changed_at_ms: 222 };
+  test("a change to resolved takes the resolution time, to acknowledged or triggered the change time", () => {
+    if (pd === undefined) throw new Error("no spec");
+    expect(sourceAtFor(pd, "status", "resolved", meta)).toBe(111);
+    expect(sourceAtFor(pd, "status", "acknowledged", meta)).toBe(222);
+    expect(sourceAtFor(pd, "status", "triggered", meta)).toBe(222);
+    expect(sourceAtFor(pd, "status", "resolved", {})).toBeNull();
+  });
+  test("resolved_at_ms is not a tracked key (a rewrite at the upgrade would log a spurious change)", () => {
+    if (pd === undefined) throw new Error("no spec");
+    expect(historyKeysOf(pd)).not.toContain("resolved_at_ms");
   });
 });
 

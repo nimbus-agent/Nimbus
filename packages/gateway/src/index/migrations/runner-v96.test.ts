@@ -25,7 +25,9 @@ describe("V96 migration - alert sources, deploy edge types, regraph marker (Phas
       expect(db.query("SELECT value FROM _meta WHERE key = 'regraph_pending_ic2'").get()).toEqual({
         value: "1",
       });
-      expect(db.query("PRAGMA user_version").get()).toEqual({ user_version: CURRENT_SCHEMA_VERSION });
+      expect(db.query("PRAGMA user_version").get()).toEqual({
+        user_version: CURRENT_SCHEMA_VERSION,
+      });
       expect(CURRENT_SCHEMA_VERSION).toBe(maxRegisteredIndexedSchemaVersion());
       expect(CURRENT_SCHEMA_VERSION).toBeGreaterThanOrEqual(96);
     } finally {

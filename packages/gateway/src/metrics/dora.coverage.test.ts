@@ -225,6 +225,7 @@ describe("mttr — the opened timestamp", () => {
       metadata: {
         status: "resolved",
         pagerduty_service_id: "PD-PAY",
+        resolved_at_ms: NOW - HOUR,
         ...(openedAtMs === undefined ? {} : { opened_at_ms: openedAtMs }),
       },
     });

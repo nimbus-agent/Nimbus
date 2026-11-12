@@ -1632,7 +1632,9 @@ function renderOncallPriorSection(brief: OncallBrief): string {
 
 /** Whether a prior incident is still open, or when it closed and — when recorded — by whom. */
 function priorIncidentClosure(p: OncallPriorIncident): string {
-  if (p.resolvedAtMs === null) return "still open";
+  if (p.resolvedAtMs === null) {
+    return p.closed ? "closed, time not recorded" : "still open";
+  }
   const by = p.resolvedByEmail === null ? "" : ` by ${stripLineStructureChars(p.resolvedByEmail)}`;
   return `closed ${isoMinuteUtc(p.resolvedAtMs)}${by}`;
 }

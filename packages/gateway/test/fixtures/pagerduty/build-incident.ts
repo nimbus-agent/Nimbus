@@ -17,6 +17,10 @@ export function buildPagerdutyIncident(seed: PagerdutyIncidentSeed): Record<stri
     updated_at: seed.updatedAt ?? seed.createdAt,
     status: seed.status,
   };
+  // PagerDuty stamps the time of the last status change; for a resolved incident that is its resolution.
+  if (seed.status === "resolved") {
+    row.last_status_change_at = seed.updatedAt ?? seed.createdAt;
+  }
   if (seed.htmlUrl !== undefined) {
     row.html_url = seed.htmlUrl;
   }

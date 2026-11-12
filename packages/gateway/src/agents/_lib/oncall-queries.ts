@@ -511,10 +511,13 @@ export function selectPriorIncidents(
       title: r.title,
       url: r.url,
       openedAtMs,
-      // `modified_at` ONLY for a row that reads resolved, and it is not a resolution time — see
-      // `OncallPriorIncident.resolvedAtMs`. `metrics/dora.ts`'s MTTR bounds on the same column
-      // for the same absence of a better field.
-      resolvedAtMs: isActiveIncidentStatus(status) ? null : r.modified_at,
+      // The resolution time is `resolved_at_ms` (PagerDuty's own `last_status_change_at`, recorded
+      // since IC2), never `modified_at`, which any re-sync or note moves. A row that reads resolved but
+      // carries no such key is `closed` with a null time: the render says "time not recorded".
+      resolvedAtMs: isActiveIncidentStatus(status)
+        ? null
+        : finiteNumberField(meta, "resolved_at_ms"),
+      closed: !isActiveIncidentStatus(status),
       resolvedByEmail: nonEmptyStringField(meta, "resolved_by_email"),
     });
   }

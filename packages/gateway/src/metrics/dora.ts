@@ -17,6 +17,9 @@ export type DoraGap =
   // A merged PR whose forge recorded no merge time (Bitbucket never does), so its lead time cannot
   // be measured. Distinct from "no PRs": the PR exists and is dropped from the sample.
   | "incomplete_merge_data"
+  // A resolved PagerDuty incident whose row carries no `resolved_at_ms` (written before the connector
+  // recorded it and not yet re-synced), so its repair time cannot be measured. Dropped from the MTTR sample.
+  | "incomplete_resolution_data"
   // `excludePrLabels` is set but a MEASURED pull request (one that contributed a lead time) carries
   // no labels array, so the filter could not apply to it. In practice only GitHub rows stored
   // before labels were indexed: GitLab/Bitbucket PRs never reach a lead time today.
@@ -380,37 +383,63 @@ type ResolvedIncident = {
   pdService: string;
 };
 
+/** The resolved incidents with a resolution time, and how many resolved rows had to be left out. */
+type ResolvedSample = { incidents: ResolvedIncident[]; withoutResolutionTime: number };
+
+/**
+ * MTTR's sample: PagerDuty incidents that are RESOLVED and carry `resolved_at_ms` (the provider's own
+ * `last_status_change_at`, recorded since IC2), windowed on THAT time. `modified_at` is the last touch,
+ * which a note or a re-assignment moves after the fact, so it is not a resolution time and is never read
+ * as one. A resolved row WITHOUT the key (written before IC2 and not yet re-synced) has no resolution
+ * time: it is dropped from the sample and counted, so the caller can say so
+ * (`incomplete_resolution_data`). Its window membership is judged by `modified_at`, the only clock it
+ * has, so the count is of rows that plausibly belong to the window.
+ */
 // lane-census: scope=incident service=pagerduty
 function selectResolvedIncidents(
   db: Database,
   cfg: ServiceConfig,
   nowMs: number,
   sinceMs: number,
-): ResolvedIncident[] {
-  if (cfg.pagerdutyServices.length === 0) return [];
+): ResolvedSample {
+  if (cfg.pagerdutyServices.length === 0) return { incidents: [], withoutResolutionTime: 0 };
   const placeholders = cfg.pagerdutyServices.map(() => "?").join(",");
+  const lo = nowMs - sinceMs;
   const rows = db
     .query(
       `SELECT i.id, i.modified_at, i.metadata, i.synced_at
        FROM item i
        WHERE i.service = 'pagerduty'
          AND i.type = 'incident'
+         AND json_valid(i.metadata)
+         AND json_extract(i.metadata, '$.status') = 'resolved'
          AND json_extract(i.metadata, '$.pagerduty_service_id') IN (${placeholders})
-         AND i.modified_at >= ?
-         AND i.modified_at <= ?`,
+         AND (
+           (json_type(i.metadata, '$.resolved_at_ms') IN ('integer', 'real')
+             AND json_extract(i.metadata, '$.resolved_at_ms') >= ?
+             AND json_extract(i.metadata, '$.resolved_at_ms') <= ?)
+           OR (COALESCE(json_type(i.metadata, '$.resolved_at_ms'), '') NOT IN ('integer', 'real')
+             AND i.modified_at >= ?
+             AND i.modified_at <= ?)
+         )`,
     )
-    .all(...cfg.pagerdutyServices, nowMs - sinceMs, nowMs) as IncidentRow[];
-  const out: ResolvedIncident[] = [];
+    .all(...cfg.pagerdutyServices, lo, nowMs, lo, nowMs) as IncidentRow[];
+  const incidents: ResolvedIncident[] = [];
+  let withoutResolutionTime = 0;
   for (const r of rows) {
-    const meta = r.metadata ? (JSON.parse(r.metadata) as Record<string, unknown>) : null;
-    if (meta?.["status"] !== "resolved") continue;
+    const meta = JSON.parse(r.metadata ?? "{}") as Record<string, unknown>;
+    const resolvedRaw = meta["resolved_at_ms"];
+    if (typeof resolvedRaw !== "number") {
+      withoutResolutionTime += 1;
+      continue;
+    }
     const openedRaw = meta["opened_at_ms"];
     const opened = typeof openedRaw === "number" ? openedRaw : r.synced_at;
     const pdRaw = meta["pagerduty_service_id"];
     const pdService = typeof pdRaw === "string" ? pdRaw : "";
-    out.push({ opened, resolved: r.modified_at, pdService });
+    incidents.push({ opened, resolved: resolvedRaw, pdService });
   }
-  return out;
+  return { incidents, withoutResolutionTime };
 }
 
 type AttributionIncident = {
@@ -530,15 +559,23 @@ export function mttr(
   if (cfg.pagerdutyServices.length === 0) {
     return { value: null, unit: "seconds_median", sample: 0, gap: "no_pagerduty_mapping" };
   }
-  const incidents = selectResolvedIncidents(db, cfg, nowMs, sinceMs);
+  const { incidents, withoutResolutionTime } = selectResolvedIncidents(db, cfg, nowMs, sinceMs);
+  // A resolved incident with no recorded resolution time was dropped from the sample: say so rather than
+  // reporting a median over fewer incidents as if it were complete.
+  const droppedGap: DoraGap = withoutResolutionTime > 0 ? "incomplete_resolution_data" : null;
   if (incidents.length === 0) {
-    return { value: null, unit: "seconds_median", sample: 0, gap: "low_sample" };
+    return { value: null, unit: "seconds_median", sample: 0, gap: droppedGap ?? "low_sample" };
   }
   const durations = incidents.map((i) => Math.max(0, Math.floor((i.resolved - i.opened) / 1000)));
   durations.sort((a, b) => a - b);
   const median = medianOfSorted(durations);
   const lowSampleGap: DoraGap = durations.length < LOW_SAMPLE_THRESHOLD ? "low_sample" : null;
-  return { value: median, unit: "seconds_median", sample: durations.length, gap: lowSampleGap };
+  return {
+    value: median,
+    unit: "seconds_median",
+    sample: durations.length,
+    gap: droppedGap ?? lowSampleGap,
+  };
 }
 
 export function computeDoraMetrics(
