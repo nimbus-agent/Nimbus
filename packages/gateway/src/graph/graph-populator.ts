@@ -7,6 +7,11 @@ import { specFor } from "../index/item-history-keys.ts";
 import { itemPrimaryKey } from "../index/item-key.ts";
 import { readIndexedUserVersion } from "../index/migrations/runner.ts";
 import { resolvePersonForSync } from "../people/linker.ts";
+import {
+  linkDeploymentToChange,
+  relinkDeploymentsForCiRun,
+  relinkDeploymentsForCommit,
+} from "./deployment-edges.ts";
 import { extractCommitShas, extractIssueRefs, type IssueRefs } from "./graph-refs.ts";
 import {
   CAPTURED_RELATION_TYPES,
@@ -351,6 +356,8 @@ function syncPrGraph(db: Database, row: IndexedItemGraphInput, now: number): voi
       metadata: { sha: mergeSha },
     });
     upsertGraphRelation(db, prEntityId, commitEntityId, "merged_as", now);
+    // A deployment that shipped this commit may have synced first: re-link it (IC2).
+    relinkDeploymentsForCommit(db, mergeSha, now);
   }
 
   clearOutgoingRelationsOfType(db, prEntityId, "resolves");
@@ -439,6 +446,26 @@ function syncGitCommitGraph(db: Database, row: IndexedItemGraphInput, now: numbe
   clearRelationsTouchingEntity(db, commitEntityId);
   const wsId = upsertWorkspaceEntityFor(db, repoRoot);
   if (wsId !== undefined) upsertGraphRelation(db, commitEntityId, wsId, "in_repo", now);
+  // The clear above dropped any incoming `deployed` edge: re-emit it (IC2).
+  relinkDeploymentsForCommit(db, sha, now);
+}
+
+/**
+ * A CI run is an entity so a deployment can point at what built it (`built_by`, IC2). The run's own sync
+ * clears the edges that touch it and re-links the deployments whose sha is a prefix of its head sha. One
+ * entity upsert and one indexed select per `ci_run` item written.
+ */
+function syncCiRunGraph(db: Database, row: IndexedItemGraphInput, now: number): void {
+  const runEntityId = upsertGraphEntity(db, {
+    type: "ci_run",
+    externalId: row.id,
+    label: row.title,
+    service: row.service,
+    metadata: {},
+  });
+  clearRelationsTouchingEntity(db, runEntityId);
+  // lane-census: scope=ci_run
+  relinkDeploymentsForCiRun(db, row.metadata["head_sha"], now);
 }
 
 function syncDependencyGraph(db: Database, row: IndexedItemGraphInput, now: number): void {
@@ -949,6 +976,12 @@ function syncTimelineEventGraph(
 
   if (entityType === "deployment") {
     syncDeploymentCorrelations(db, entityId, occurredAt, affectedService, now);
+    linkDeploymentToChange(
+      db,
+      { id: row.id, service: row.service, metadata: row.metadata },
+      entityId,
+      now,
+    );
     return;
   }
   // BEFORE the correlation's no-service bail-out: that bail is about deploy<->trigger correlation, which
@@ -1163,6 +1196,7 @@ const GRAPH_SYNC_BY_TYPE: Readonly<
   dashboard: (db, row, now) => syncDashboardGraph(db, row, now),
   data_quality_test: (db, row, now, resolveServiceId) =>
     syncDataQualityTestGraph(db, row, now, resolveServiceId),
+  ci_run: (db, row, now) => syncCiRunGraph(db, row, now),
   error_issue: (db, row, now, resolveServiceId) =>
     syncErrorIssueGraph(db, row, now, resolveServiceId),
   incident: (db, row, now, resolveServiceId) =>

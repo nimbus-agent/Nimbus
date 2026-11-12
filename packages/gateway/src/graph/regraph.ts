@@ -95,9 +95,10 @@ function totalChanges(db: Database): number {
  *
  * `graphed` is derived from the connection's cumulative `total_changes()`
  * rather than from `isItemLinkedGraphType` alone, because that predicate is
- * broader than `syncGraphFromIndexedItem`'s actual dispatch — e.g.
- * `ci_run`/`alert` satisfy it but have no dispatch branch, so nothing is
- * ever written for them. Measuring the row-change counter directly
+ * broader than `syncGraphFromIndexedItem`'s actual dispatch (before Phase 10
+ * IC2, `ci_run` and `alert` satisfied it with no dispatch branch, so nothing
+ * was ever written for them; a populator that writes nothing for a row still
+ * must not be counted). Measuring the row-change counter directly
  * can't drift out of sync with the populator the way a second hand-maintained
  * type list would.
  */
