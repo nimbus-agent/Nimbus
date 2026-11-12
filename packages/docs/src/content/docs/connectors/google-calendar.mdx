@@ -19,7 +19,7 @@ The Google Calendar connector indexes your events into the local SQLite index an
 nimbus connector auth google_calendar
 ```
 
-This is its own consent: it asks only for `https://www.googleapis.com/auth/calendar.readonly`. Connecting Gmail, Drive or Photos does not give Nimbus access to your calendar, and Google Calendar sync stays off until you run this command. Because `calendar.readonly` is a Google sensitive scope, an OAuth client that Google has not verified can grant it only to its listed test users.
+This is its own consent: it asks only for `https://www.googleapis.com/auth/calendar.readonly`. Connecting Gmail, Drive or Photos does not give Nimbus access to your calendar, and Google Calendar sync stays off until you run this command. You use your own Google OAuth client (`NIMBUS_OAUTH_GOOGLE_CLIENT_ID`, a Desktop app client; `nimbus connector auth google_calendar --help` prints the setup), and its consent screen must list `calendar.readonly` with the Google Calendar API enabled. `calendar.readonly` is a Google sensitive-scope permission, but you do not need Google's verification for your own client: leave it in Testing with your account as a test user (Google then expires its refresh tokens after 7 days, so you re-run this command weekly), or publish it to In production without submitting it and accept Google's "unverified app" warning once (an unverified client is limited to 100 users). Google requires verification for a client offered to the public, whatever its user count, but not for one only you use.
 
 ## Read tools (no HITL)
 
