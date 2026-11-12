@@ -108,3 +108,175 @@ test("metadata survives every index depth", () => {
   }
   db.close();
 });
+
+// ── Item history (Phase 10 IC1, schema V94) ─────────────────────────────────────────────────────
+
+import { describe } from "bun:test";
+import { replaceItemSetRows } from "./item-set-store.ts";
+import {
+  deleteAllItemsForService,
+  deleteItemByPrimaryKey,
+  deleteItemByServiceExternal,
+  upsertNimbusItemIntoItemTable,
+} from "./item-store.ts";
+
+function prRow(state: string, syncedAt: number, extra: Record<string, unknown> = {}) {
+  return {
+    service: "github",
+    type: "pr",
+    externalId: "o/r#1",
+    title: "t",
+    modifiedAt: syncedAt,
+    syncedAt,
+    metadata: { state, merged: state === "merged", ...extra },
+  };
+}
+
+function historyKeys(db: Database): string[] {
+  return (db.query("SELECT key FROM item_history ORDER BY id").all() as { key: string }[]).map(
+    (r) => r.key,
+  );
+}
+
+describe("item history writer wiring", () => {
+  test("a tracked pair writes __created, then the change row", () => {
+    const db = freshIndexedDb();
+    upsertIndexedItem(db, prRow("open", 10));
+    expect(historyKeys(db)).toEqual(["__created"]);
+    upsertIndexedItem(db, prRow("closed", 20));
+    expect(historyKeys(db)).toEqual(["__created", "state"]);
+    db.close();
+  });
+
+  test("the item and its change row are one unit: a failing history insert rolls the item back", () => {
+    const db = freshIndexedDb();
+    upsertIndexedItem(db, prRow("open", 10));
+    db.run(
+      `CREATE TRIGGER boom BEFORE INSERT ON item_history
+       BEGIN SELECT RAISE(ABORT, 'history down'); END`,
+    );
+    expect(() => upsertIndexedItem(db, prRow("closed", 20))).toThrow();
+    const row = db.query("SELECT metadata, synced_at FROM item WHERE id='github:o/r#1'").get() as {
+      metadata: string;
+      synced_at: number;
+    };
+    expect(JSON.parse(row.metadata).state).toBe("open");
+    expect(row.synced_at).toBe(10);
+    db.close();
+  });
+
+  test("an untracked pair writes no history and runs no extra statement", () => {
+    const db = freshIndexedDb();
+    upsertIndexedItem(db, {
+      service: "slack",
+      type: "message",
+      externalId: "m1",
+      title: "t",
+      modifiedAt: 1,
+      syncedAt: 1,
+      metadata: { state: "a" },
+    });
+    upsertIndexedItem(db, {
+      service: "slack",
+      type: "message",
+      externalId: "m1",
+      title: "t",
+      modifiedAt: 2,
+      syncedAt: 2,
+      metadata: { state: "b" },
+    });
+    expect(historyKeys(db)).toEqual([]);
+    db.close();
+  });
+
+  test("upsertIndexedItemForSync and upsertNimbusItemIntoItemTable reach the writer", () => {
+    const db = freshIndexedDb();
+    upsertIndexedItemForSync({ db, depth: "full" }, { ...prRow("open", 10), bodyPreview: "b" });
+    expect(historyKeys(db)).toEqual(["__created"]);
+    upsertNimbusItemIntoItemTable(
+      db,
+      {
+        id: "github:o/r#2",
+        service: "github",
+        itemType: "pr",
+        name: "n",
+        modifiedAt: 5,
+        rawMeta: { state: "open" },
+      } as unknown as Parameters<typeof upsertNimbusItemIntoItemTable>[1],
+      5,
+    );
+    expect(historyKeys(db)).toEqual(["__created", "__created"]);
+    db.close();
+  });
+
+  test("deleteItemByPrimaryKey writes __deleted for a tracked item, nothing for others", () => {
+    const db = freshIndexedDb();
+    upsertIndexedItem(db, prRow("open", 10));
+    upsertIndexedItem(db, {
+      service: "slack",
+      type: "message",
+      externalId: "m1",
+      title: "t",
+      modifiedAt: 1,
+      syncedAt: 1,
+    });
+    deleteItemByPrimaryKey(db, "slack:m1");
+    deleteItemByPrimaryKey(db, "missing:id");
+    expect(historyKeys(db)).toEqual(["__created"]);
+    deleteItemByPrimaryKey(db, "github:o/r#1", 77);
+    const last = db.query("SELECT key, observed_at_ms FROM item_history ORDER BY id DESC").get();
+    expect(last).toEqual({ key: "__deleted", observed_at_ms: 77 });
+    db.close();
+  });
+
+  test("deleteItemByServiceExternal inherits the __deleted row", () => {
+    const db = freshIndexedDb();
+    upsertIndexedItem(db, prRow("open", 10));
+    deleteItemByServiceExternal(db, "github", "o/r#1");
+    expect(historyKeys(db)).toEqual(["__created", "__deleted"]);
+    db.close();
+  });
+
+  test("replaceItemSetRows reaches the delete path; its swept types are untracked, so no rows", () => {
+    // No type replaceItemSetRows may sweep is in the tracked set today; if one is added, the sweep
+    // writes __deleted through deleteItemByPrimaryKey with no further change.
+    const db = freshIndexedDb();
+    upsertIndexedItem(db, {
+      service: "pagerduty",
+      type: "oncall_shift",
+      externalId: "s1",
+      title: "t",
+      modifiedAt: 1,
+      syncedAt: 1,
+    });
+    expect(replaceItemSetRows(db, "pagerduty", "oncall_shift", [])).toBe(1);
+    expect(historyKeys(db)).toEqual([]);
+    db.close();
+  });
+
+  test("deleteAllItemsForService is an erasure: the service's history goes, no __deleted rows", () => {
+    const db = freshIndexedDb();
+    upsertIndexedItem(db, prRow("open", 10));
+    upsertIndexedItem(db, {
+      service: "jira",
+      type: "issue",
+      externalId: "J-1",
+      title: "t",
+      modifiedAt: 1,
+      syncedAt: 1,
+      metadata: { status: "Open" },
+    });
+    deleteAllItemsForService(db, "github");
+    expect(db.query("SELECT service FROM item_history").all()).toEqual([{ service: "jira" }]);
+    db.close();
+  });
+
+  test("a re-created item yields __created, __deleted, __created", () => {
+    const db = freshIndexedDb();
+    upsertIndexedItem(db, prRow("open", 10));
+    deleteItemByPrimaryKey(db, "github:o/r#1", 20);
+    upsertIndexedItem(db, prRow("open", 30));
+    expect(historyKeys(db)).toEqual(["__created", "__deleted", "__created"]);
+    db.close();
+  });
+});

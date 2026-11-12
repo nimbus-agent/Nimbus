@@ -305,3 +305,21 @@ describe("data delete", () => {
     expect(result.preflight.vecRowsToDelete).toBe(0);
   });
 });
+
+describe("data delete - item history (Phase 10 IC1)", () => {
+  test("deletion removes the service's item_history rows and no other service's", async () => {
+    const vault = memVault();
+    const idx = newIndex();
+    for (const service of ["github", "jira"]) {
+      idx.rawDb.run(
+        `INSERT INTO item_history (item_id, service, type, key, observed_at_ms)
+         VALUES (?, ?, 'x', '__created', 1)`,
+        [`${service}:1`, service],
+      );
+    }
+    await runDataDelete({ service: "github", dryRun: false, vault, index: idx });
+    expect(idx.rawDb.query("SELECT service FROM item_history").all()).toEqual([
+      { service: "jira" },
+    ]);
+  });
+});
