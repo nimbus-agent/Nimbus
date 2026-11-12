@@ -49,8 +49,12 @@ Acceptance criteria for this project (all are checks on documents and repository
   a row another phase builds on stays where it is, still unticked, with a pointer added
   (D-ECO-4). So the check has no exception: a script counts unticked rows (`- [ ]`) per section of
   `docs/roadmap.md` before and after, and every section's count after is greater than or equal to
-  its count before. It also counts the rows of the § Client surfaces table, which must be equal
-  before and after (the scaffold rows stay, with their state changed, § 5.6).
+  its count before. Sections are matched by heading, and a heading this project renames is matched
+  to its new name by a fixed table, so a rename cannot read as a loss: "Commercial Roadmap" to
+  "Open Source", and the "Carried into S5" list (whose heading sits below the `###` level the
+  script splits on, inside § Phase 7+ Sequencing Spine) to "Carried into S7". The script also
+  counts the rows of the § Client surfaces table, which must be equal before and after (the
+  scaffold rows stay, with their state changed, § 5.6).
 - **(ED-c)** `CLAUDE.md` and `GEMINI.md` agree with the roadmap on the S4 exit condition and the
   spine. `bun run preflight:fast`, `audit:doc-refs`, `audit:status-drift` and `audit:links` are green.
 - **(ED-d)** `ECOSYSTEM.md`, the organisation profile, `awesome-nimbus` and `nimbus-security` state
@@ -198,7 +202,7 @@ About sixty lines. It says, in this order:
    DevOps, SRE and platform teams: planned, a team server that holds the production credentials,
    answers in chat and takes approvals there; today, a personal gateway with a chat bot.
    FinOps practitioners: planned, cost joined to the deploy, the pull request and the owner;
-   today, the first cost connector.
+   today, the first cost connectors are in flight under S4.
 4. **The shape.** Five named parts, each with its state stated beside it:
    - *Core*: index, consent gate, egress ledger, sandbox. Shipped.
    - *Doors*: terminal (shipped), chat on Slack and Teams (shipped), editor (shipped), browser
@@ -263,6 +267,8 @@ Rows (all `[ ]`, all `[NEW]` unless noted):
   proposer and outcome.
 - **Bounds stated in the product.** The README, the security page and each kit say what the door
   does not guard.
+- **A Developer role pack.** In the official registry: the brief agents a developer's coding agent
+  reaches through the door, as one pack (§ 5.6).
 
 Acceptance criteria (for Phase 28, to be met by its own spec):
 
@@ -524,7 +530,8 @@ ED1 merges first because the others cite it. ED2 to ED10 are independent. ED11 i
 
 - ED-b: a before-and-after count of unticked rows (`- [ ]`) per section of `docs/roadmap.md`, and of
   the rows of the § Client surfaces table. Every section's count after is greater than or equal to
-  before; the table's row count is equal. Run once on the base commit and once on the branch; both
+  before, with the two renamed headings matched by ED-b's fixed table; the table's row count is
+  equal. Run once on the base commit and once on the branch; both
   outputs are quoted in the pull request. It is committed as a script only if it is worth keeping
   as a gate, which the plan decides.
 - `bun run preflight:fast`, `audit:doc-refs`, `audit:status-drift`, `audit:links` on ED1.
@@ -619,3 +626,17 @@ Noted:
 - F11 (advisory; the counts in § 1 cannot be checked from the bundle): expected, since they come
   from the GitHub API and the tree. § 1 now says where each was read and that none is copied into
   a shipped document.
+
+Round 2 (2026-11-12): CHANGES REQUIRED. All twelve round 1b findings RESOLVED, with the three
+author corrections (F2, F5, F10) accepted. Three new items, each checked before acting.
+
+Applied:
+- F13 (binding; § 5.6 promises a Developer role pack row under Phase 28 that § 5.3's row list
+  omitted): correct. The row is now the ninth in § 5.3.
+- F14 (binding; ED-b's count fails on a renamed heading): correct in substance. ED-b and § 7 now
+  carry the fixed rename table. One detail differs from the finding: "Carried into S5" is a
+  fourth-level heading inside § Phase 7+ Sequencing Spine, so a script that splits on `##` and
+  `###` never sees it as a section; the rename that such a script does see is "Commercial Roadmap"
+  to "Open Source". Both are in the table.
+- F15 (advisory; "today, the first cost connector" reads as shipped): applied. The connector
+  package is bundled but its gateway side is still in flight, so the sentence now says so.

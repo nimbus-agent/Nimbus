@@ -66,22 +66,63 @@ Every roadmap decision is evaluated against the project's non-negotiables:
 4. **MCP as connector standard** — the Engine never calls cloud APIs directly
 5. **Platform equality** — Windows, macOS, and Linux are equally supported in every phase
 6. **No feature creep across phases** — do not implement Phase N+1 features while Phase N is active
-7. **Built for professionals** — every feature is evaluated through the lens of an on-call engineer, platform engineer, or security practitioner running systems in production; consumer-oriented affordances are out of scope
+7. **Built for professionals** — every feature is evaluated through the lens of an engineer who builds or runs production systems: a developer, a DevOps, SRE or platform engineer, a FinOps practitioner, or a security practitioner; consumer-oriented affordances are out of scope
 
-## Commercial Roadmap
+## Direction
 
-Nimbus is open source (AGPL-3.0) for individual engineers. Commercial tiers fund continued development:
+> **Recorded 2026-11-12** (owner rulings OR-ECO-1 to OR-ECO-8, listed at the end of this section). It says what Nimbus leads with, who it serves and in what order. It removes nothing: every planned phase and row stays, and the build order is still the [Sequencing Spine](#phase-7-sequencing-spine). Where it describes something that is not built, it says "planned".
 
-| Tier | Phase | Key additions |
+**What Nimbus is for.** Nimbus is the trust layer between AI agents and engineering systems. An agent, Nimbus's own or any other, can get private context from the local index, and every write it sends through Nimbus is held at a gate where the owner sees a typed preview and approves it. Every action Nimbus dispatches is recorded in a hash-chained ledger the owner can check. Nimbus runs on one engineer's machine today; running it on a server a team owns is planned ([Phase 29](#phase-29--the-team-server)).
+
+**Why this lead.** Nimbus does not control model quality and does not compete on it. What it has is the index, the consent gate, the egress ledger and the sandbox. The agents engineers use every day are coding agents and chat bots; making those safer and better informed is worth more than a better built-in agent. On-call, cost and developer work are packs on that core, not separate products.
+
+**Who it will serve, and what each has today.**
+
+| Audience | Planned | Today |
 |---|---|---|
-| **Open Source** | Now | Full single-user Gateway, all connectors, CLI, local LLM, VS Code extension |
-| **Team** | Phase 6 | Team Vault, shared index namespaces, LAN federation, multi-user HITL, SSO/OIDC |
-| **Enterprise** | Phase 12 | SCIM provisioning, audit log shipping (SIEM), Helm/Docker, compliance tooling, SLA support |
-| **Sovereign / Auditor** | Phase 21–22 + 12.5 | *Auditor-in-a-Box* read-only profile (HTTP write surface disabled via `I13`, no HITL-eligible actions, `I16`-signed) + per-answer **Verifiable-Negative** receipts an auditor or cyber/E&O insurer verifies offline with `eaf-verify` — a read-only *profile* of the Enterprise/12.5 substrate, not a parallel engineering line |
+| Developers | Their coding agent gets the organisation's context and a safe way to act ([Phase 28](#phase-28--the-agent-door)) | The MCP server's read tools, and a write door for a subset of action types |
+| DevOps, SRE and platform teams | A team server that holds the production credentials, answers in chat and takes approvals there ([Phase 29](#phase-29--the-team-server)) | A personal gateway, the Slack and Teams bot, and the on-call work in flight under S4 |
+| FinOps practitioners | Spend joined to the deploy, the pull request and the owner ([Phase 30](#phase-30--the-cost-pack)) | The first cost connectors, in flight under S4 |
 
-Commercial license also available now for organizations that need to embed Nimbus in a product or require compliance guarantees before Phase 12 ships — contact the maintainers.
+**The shape.** Five parts, each with its state beside it:
 
-**New buying centers (the Phase 21–26 consequence, not a parallel product line).** The proof layer unlocks constituencies the engineer-tool competitors structurally don't address: the **CISO / GRC auditor**, who installs the read-only *Auditor-in-a-Box* profile and runs `eaf-verify` against the fleet — receiving signed egress ledgers, never content, subject to the same `I17` per-peer grant/role/consent filter as any federated query — and the **cyber / E&O insurer**, for whom a signed, externally-anchorable record that no remote inference host was contacted measurably lowers modeled exfiltration loss (enabling a premium conversation; the actuarial-adoption leg is an outside-the-codebase bet, like the S — Standards track's adoption framing). **BYO-compute pricing:** flat-unlimited holds for `[llm].prefer_local` / BYO-provider-key deployments (≈ zero inference-relay marginal cost), with support/SLA tiers priced separately; a future Nimbus-hosted inference relay is explicitly out of the no-meter guarantee. Air-gapped / SCIF deployments reuse the existing Phase 12 air-gapped bundle + clean-room topology — commercial framing, not new engineering. (MSP white-label consoles and BYO-Index OEM are deliberately *not* pursued as wedges — they are me-too surfaces a cloud vendor can match, and the latter is already the existing "embed Nimbus in a product" commercial-license path.)
+- **Core** — the index, the consent gate, the egress ledger and the sandbox. Shipped.
+- **Doors** — how a person or an agent reaches the core: the terminal (shipped), chat on Slack and Teams (shipped), the editor extension (shipped), the browser extension (shipped), the desktop app (built, not yet released), and the agent door, which is the MCP server (partly shipped: the read tools, and a write door for a subset of action types; parity with Nimbus's own model is planned, Phase 28).
+- **Packs** — what a role gets on top. The role-pack mechanism is shipped with DevOps and PM packs. The Ops work is in flight (Phases 10 and 17). Cost and Developer packs are planned.
+- **Shapes** — a personal gateway (shipped) and a team server (planned, Phase 29).
+- **Ecosystem** — the registry, the SDKs and the connectors. The mechanisms are shipped; the public registry is not live yet ([Owner's open items](#owners-open-items)).
+
+**Order.**
+
+1. **Now** — finish S4, with the agent door as its next project, and the owner's [Reach](#reach-the-owners-track) track beside it.
+2. **Next** — the team server (S5).
+3. **Later** — the Cost Pack (S6), then Engineering Excellence breadth (S7). The opportunistic and research phases keep their places in Tracks 2 and 3.
+
+**What does not change yet.** The README headline, the docs site, the repository description and every listing keep describing what ships today. They change in the release that ships the agent door; the copy for that day is held in [`launch-messaging.md`](./launch-messaging.md).
+
+**Honest bounds.** The gate guards what passes through it: an agent that holds its own credentials can act outside Nimbus. The ledger records the actions Nimbus dispatches, not raw network traffic. Nothing in this section removes either bound.
+
+**The owner's rulings of 2026-11-12.**
+
+- **OR-ECO-1** — the goal is widely used open source; adoption comes before money.
+- **OR-ECO-2** — within three months the owner posts and replies in public, talks to five to ten early users, and pays for code-signing certificates and registry hosting ([Reach](#reach-the-owners-track)).
+- **OR-ECO-3** — a team server: an always-on, self-hosted server a whole team shares. There is still no Nimbus-operated cloud.
+- **OR-ECO-4** — Nimbus leads as the trust layer for agents, in place of "on-call intelligence".
+- **OR-ECO-5** — no cuts: shown four bundles of phases and rows that could be removed, the owner removed none.
+- **OR-ECO-6** — five repositories that held only a vision and a build prompt are retired; status-page and post-mortem drafts become gateway commands ([§ Client surfaces](#client-surfaces)).
+- **OR-ECO-7** — everything open: no feature tiers ([§ Open Source](#open-source)).
+- **OR-ECO-8** — the agent door is the next project inside S4; S4's exit condition grows by one.
+
+<a id="commercial-roadmap"></a>
+
+## Open Source
+
+Everything Nimbus does ships in the open core: the gateway and the CLI under AGPL-3.0, the SDK and the client under MIT. There are no feature tiers (owner ruling OR-ECO-7, 2026-11-12). The team features of Phase 6, the team server, SSO and SCIM, policy and audit export are all open. Until that date this section was a commercial tier table.
+
+- **Support and sponsorship.** The project accepts sponsorship, and the maintainers may offer paid support and an SLA as a service. Neither buys a feature.
+- **Licence.** A commercial licence is available to organisations that cannot use the AGPL, for example to embed Nimbus in a product — contact the maintainers.
+
+**Audiences the proof phases serve (the Phase 21–26 consequence, not a parallel product line).** The proof layer serves constituencies the engineer-tool competitors structurally don't address: the **CISO / GRC auditor**, who installs the read-only *Auditor-in-a-Box* profile (HTTP write surface disabled via `I13`, no HITL-eligible actions, `I16`-signed) and runs `eaf-verify` against the fleet — receiving signed egress ledgers, never content, subject to the same `I17` per-peer grant/role/consent filter as any federated query — and the **cyber / E&O insurer**, for whom a signed, externally-anchorable record that no remote inference host was contacted measurably lowers modeled exfiltration loss (the actuarial-adoption leg is an outside-the-codebase bet, like the S — Standards track's adoption framing). The profile is a read-only *profile* of the Phase 12 and 12.5 substrate, not a parallel engineering line. Nimbus meters nothing: inference runs on the owner's own hardware or under the owner's own provider key. Air-gapped / SCIF deployments reuse the existing Phase 12 air-gapped bundle + clean-room topology. (MSP white-label consoles and BYO-Index OEM are deliberately *not* pursued as wedges — they are me-too surfaces a cloud vendor can match.)
 
 ---
 
@@ -1365,7 +1406,7 @@ Productization/distribution; lands after the spine, much of it parallelizable, n
 - **Independent-slot** (not spine-gated): Desktop Distribution [P13] — depends only on already-shipped Phase 4; land when adoption needs it.
 - **Mobile Companion [P13.5]** — *not* freely independent: depends on Phase 11 (mesh addressing) + Phase 17's assembled-brief schema, so it slots after those.
 - **Scale band** (depend on Phase 6 federation): Enterprise [P12], Platform Layer / Team-OS [P16], Cross-Org Federation [P15]. Phase 12's deployment rows and Phase 16 Wave 1's team-server rows are pulled into spine slot S5 by [Phase 29](#phase-29--the-team-server) (2026-11-12); the rest of the band is unchanged.
-- **Compliance Receipts [P12.5]** — commercial-tier, but its prerequisites are Phase 8 (egress ledger) + Phase 9 + the EAF Standards track, **not** Phase 6 federation.
+- **Compliance Receipts [P12.5]** — sits beside the scale band, but its prerequisites are Phase 8 (egress ledger) + Phase 9 + the EAF Standards track, **not** Phase 6 federation. (Open like everything else; until 2026-11-12 this bullet called it commercial-tier.)
 - **Opportunistic expansion surfaces:** Sovereign Mesh / multi-device + physical [P11], Vertical Personas [P18], Ambient Surfaces [P19] (already flagged highest-risk), Personal & Household Federation [P20].
 
 ##### Client surfaces
@@ -2147,7 +2188,7 @@ The mobile companion is the natural moment to introduce locale awareness; the sa
 
 ### Phase 12 — Enterprise
 
-**Goal:** Make Nimbus deployable and auditable at institutional scale. Tied to the commercial license tier — AGPL users retain all individual and team features; enterprise deployment, compliance tooling, and SLA support are commercial.
+**Goal:** Make Nimbus deployable and auditable at institutional scale. Everything in this phase ships in the open core (owner ruling OR-ECO-7, 2026-11-12; until then this sentence tied the phase to a commercial licence tier). Paid support and an SLA are a service the maintainers may offer, not a feature.
 
 **Dependency note:** The Phase 10 dependency is narrowed to **standing approvals only**. Docker, Helm, SAML SSO, audit log shipping, and SCIM provisioning do not require the autonomous agent or LoRA fine-tuning to be complete. The SRE loop stretch items are independent of enterprise deployment.
 
@@ -3168,8 +3209,8 @@ applies changes to the user's source tree.**
   tuning. Nimbus controls neither, and the private cross-service index — the one thing it does own —
   contributes almost nothing to that contest.
 - **It costs a load-bearing sentence.** "Fourteen agents, zero write capability, and `nimbus prove`
-  reads zero" is much of what makes the Auditor-in-a-Box and insurer buying centers in
-  [§ Commercial Roadmap](#commercial-roadmap) coherent. That sentence stops being true the moment an
+  reads zero" is much of what makes the Auditor-in-a-Box and insurer audiences in
+  [§ Open Source](#open-source) coherent. That sentence stops being true the moment an
   agent writes.
 - **It opens the door `I33` already flags as first to re-examine.** That invariant's scope bound says
   the LLM cannot invoke an execution, *"so no indexed untrusted text reaches the prompt; that is what

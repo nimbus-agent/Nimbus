@@ -172,7 +172,7 @@ Run: `grep -c 'Verified Publisher tier' docs/roadmap.md` → Expected: the same 
 
 - [ ] **Step 1: `### Phase 28 — The Agent Door`**
 
-Structure as the neighbouring phases: a Sequencing blockquote (Track 1, S4, next item, OR-ECO-8), **Goal**, **Composes with**, the rows, **What its spec must decide**, **Acceptance Criteria**. Rows are the eight of spec § 5.3 plus the *Developer role pack* row of § 5.6, each `- [ ] **<name>** [NEW] — <one or two sentences from § 5.3>`. Acceptance criteria are the seven of § 5.3, verbatim in meaning. "What its spec must decide" and the invariants in play are copied from § 5.3's last paragraph.
+Structure as the neighbouring phases: a Sequencing blockquote (Track 1, S4, next item, OR-ECO-8), **Goal**, **Composes with**, the rows, **What its spec must decide**, **Acceptance Criteria**. Rows are the nine of spec § 5.3 (the ninth is the *Developer role pack*, § 5.6), each `- [ ] **<name>** [NEW] — <one or two sentences from § 5.3>`. Acceptance criteria are the seven of § 5.3, verbatim in meaning. "What its spec must decide" and the invariants in play are copied from § 5.3's last paragraph.
 
 - [ ] **Step 2: `### Phase 29 — The Team Server`**
 
