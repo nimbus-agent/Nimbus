@@ -7,6 +7,7 @@ import { githubActionsRunMetadata } from "../../../../src/connectors/github-acti
 import { extractPrMetadataForIndex } from "../../../../src/connectors/github-sync.ts";
 import { syncPagerdutyIncidentItems } from "../../../../src/connectors/pagerduty-sync.ts";
 import type { ServiceConfig } from "../../../../src/metrics/dora-config.ts";
+import { NO_INCIDENT_BINDINGS } from "../../../../src/metrics/dora-config.ts";
 import { buildPagerdutyIncident } from "../../pagerduty/build-incident.ts";
 
 export const PREFLIGHT_FIXTURE_NOW_MS = 1_715_000_000_000;
@@ -239,6 +240,7 @@ export async function seedPaymentServicePreflightFixture(
     excludePrLabels: ["revert"],
     deployEnvironments: ["prod"],
     severityP1Aliases: [],
+    ...NO_INCIDENT_BINDINGS,
   };
   return { config };
 }

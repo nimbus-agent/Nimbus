@@ -10,6 +10,7 @@ import {
   DEFAULT_DEPLOY_WORKFLOW_PATTERN,
   DEFAULT_EXCLUDE_PR_LABELS,
   DEFAULT_INCIDENT_WINDOW_MINUTES,
+  NO_INCIDENT_BINDINGS,
   type ServiceConfig,
 } from "../metrics/dora-config.ts";
 import type { OncallIncident } from "./_lib/oncall-types.ts";
@@ -42,6 +43,7 @@ function cfg(over: Partial<ServiceConfig> = {}): ServiceConfig {
     excludePrLabels: [...DEFAULT_EXCLUDE_PR_LABELS],
     deployEnvironments: ["prod"],
     severityP1Aliases: [],
+    ...NO_INCIDENT_BINDINGS,
     ...over,
   };
 }

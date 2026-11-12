@@ -3016,6 +3016,16 @@ export function loadNimbusServiceConfigsFromConfigDir(
     }
     merged.set(id, { ...cfg, severityP1Aliases: aliases });
   }
+  // `depends_on` is a direct edge list across the two tables, so a dangling target can only be seen here.
+  // A warning, never an error: the target may simply not be configured yet (IC4's cascade skips it).
+  for (const [id, cfg] of merged.entries()) {
+    for (const dep of cfg.dependsOn) {
+      if (!merged.has(dep)) {
+        process.stderr.write(`[${id}] depends_on names service '${dep}', which is not configured; ignored.
+`);
+      }
+    }
+  }
   return merged;
 }
 

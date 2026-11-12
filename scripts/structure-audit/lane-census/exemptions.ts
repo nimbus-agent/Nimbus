@@ -260,6 +260,15 @@ export const LANE_EXEMPTIONS: readonly LaneExemption[] = [
     reason:
       "Prefect deployment definitions and PagerDuty incidents never carry a repo, so repoMetadataMatchesUrn never binds them by repo: buildServiceIdentityResolver tries nimbus_service_id and pagerduty_service_id first (an incident binds on pagerduty_service_id) and otherwise returns unknown, which graph/graph-populator.ts resolveAffectedService resolves from metadata.service.",
   },
+  // ── graph/ ───────────────────────────────────────────────────────────────────────────────
+  {
+    file: "packages/gateway/src/graph/deployment-edges.ts",
+    key: "sha",
+    category: "census-blind",
+    reads: 1,
+    reason:
+      "deployedSha reads the deployed sha of a CI-annotated deployment, which annotateDeployment in deployment/annotate.ts writes through a JSON.stringify of a metadata literal followed by a raw SQL INSERT (not a ctx.upsertItem or upsertIndexedItem call), a shape the census writer scan does not follow. Absent or malformed means no deployed edge.",
+  },
   // ── preflight/ ───────────────────────────────────────────────────────────────────────────
   {
     file: "packages/gateway/src/preflight/preflight.ts",

@@ -424,6 +424,7 @@ components:
               low_sample,
               approximate_lead_time,
               incomplete_merge_data,
+              incomplete_resolution_data,
               pr_labels_unavailable,
               mixed_source,
               ci_not_evaluable,
@@ -473,6 +474,7 @@ components:
               ci_not_evaluable,
               github_only_merge_data,
               incomplete_merge_data,
+              incomplete_resolution_data,
               pr_labels_unavailable,
               incidents_missing_opened_at,
             ]

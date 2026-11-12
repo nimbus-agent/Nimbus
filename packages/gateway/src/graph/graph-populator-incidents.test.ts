@@ -7,6 +7,7 @@ import { mapVercelDeploymentToItem } from "../connectors/vercel-deployment-mappi
 import { upsertIndexedItem } from "../index/item-store.ts";
 import { LocalIndex } from "../index/local-index.ts";
 import type { ServiceConfig } from "../metrics/dora-config.ts";
+import { NO_INCIDENT_BINDINGS } from "../metrics/dora-config.ts";
 import { buildServiceIdentityResolver } from "../metrics/service-identity.ts";
 import type { SyncContext } from "../sync/types.ts";
 import { syncGraphFromIndexedItem } from "./graph-populator.ts";
@@ -480,6 +481,7 @@ const CHECKOUT_SERVICE_CONFIG: ServiceConfig = {
   excludePrLabels: [],
   deployEnvironments: ["prod"],
   severityP1Aliases: ["P1"],
+  ...NO_INCIDENT_BINDINGS,
 };
 
 function ctxWithResolver(db: Database, configs: Map<string, ServiceConfig>): SyncContext {

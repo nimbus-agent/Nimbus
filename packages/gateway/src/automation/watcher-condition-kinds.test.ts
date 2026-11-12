@@ -21,8 +21,12 @@ describe("watcher-condition-kinds", () => {
     expect(watcherConditionKind("deploy_failed")?.itemType).toBe("deployment");
   });
 
-  test("alert_fired carries no extra predicate", () => {
-    expect(watcherConditionKind("alert_fired")?.extraSql).toBe("");
+  test("alert_fired excludes a closed alert and tolerates metadata that is absent or not JSON", () => {
+    const sql = watcherConditionKind("alert_fired")?.extraSql ?? "";
+    expect(sql).toContain("'closed'");
+    // CASE, not AND: json_extract raises on malformed JSON and AND does not guarantee short-circuit.
+    expect(sql).toContain("CASE WHEN json_valid(metadata)");
+    expect(sql).toContain("ELSE 1");
   });
 
   test("incident_opened narrows to a triggered incident, and it is json_valid-guarded", () => {
@@ -42,9 +46,9 @@ describe("watcher-condition-kinds", () => {
   });
 
   test("only the timeline-entity kinds support a filter.affectedService", () => {
-    // `graph-populator.ts`'s `syncTimelineEventGraph` writes `metadata.affectedService` for
-    // exactly these two entity types. `alert` has no populator branch at all, so accepting the
-    // filter there would store a watcher that can never fire.
+    // `graph-populator.ts`'s `syncTimelineEventGraph` writes `metadata.affectedService` for these two
+    // entity types. `alert` now has an entity that carries it too (IC2), but scoping alert watchers by
+    // service is left for review, so the filter is still rejected there.
     expect(watcherConditionKind("incident_opened")?.affectedServiceEntityType).toBe("incident");
     expect(watcherConditionKind("deploy_failed")?.affectedServiceEntityType).toBe("deployment");
     expect(watcherConditionKind("alert_fired")?.affectedServiceEntityType).toBeNull();

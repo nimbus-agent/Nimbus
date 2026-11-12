@@ -32,6 +32,8 @@ type IncidentMetadata = {
   resolved_by_email?: string | null;
   unattributed_actors?: number;
   meta_v?: number;
+  resolved_at_ms?: number;
+  status_changed_at_ms?: number;
 };
 
 function readIncidentMetadata(db: Database, externalId: string): IncidentMetadata {
@@ -371,8 +373,8 @@ describeWithFetchRestore("pagerduty-sync", () => {
     expect(result.itemsUpserted).toBe(2);
     expect(result.cursor).not.toBeNull();
     const cursor = result.cursor as string;
-    expect(cursor.startsWith("nimbus-pd1:")).toBe(true);
-    const decodedJson = Buffer.from(cursor.slice("nimbus-pd1:".length), "base64url").toString(
+    expect(cursor.startsWith("nimbus-pd2:")).toBe(true);
+    const decodedJson = Buffer.from(cursor.slice("nimbus-pd2:".length), "base64url").toString(
       "utf8",
     );
     expect(JSON.parse(decodedJson)).toMatchObject({ lastUpdated: updatedB });
@@ -473,7 +475,7 @@ describeWithFetchRestore("pagerduty-sync", () => {
     expect(result.itemsUpserted).toBe(3);
     expect(result.hasMore).toBe(false);
     const cursor = result.cursor as string;
-    const decoded = Buffer.from(cursor.slice("nimbus-pd1:".length), "base64url").toString("utf8");
+    const decoded = Buffer.from(cursor.slice("nimbus-pd2:".length), "base64url").toString("utf8");
     expect(JSON.parse(decoded)).toMatchObject({ lastUpdated: updatedC });
   });
 
@@ -536,7 +538,7 @@ describeWithFetchRestore("pagerduty-sync", () => {
     expect(result.itemsUpserted).toBe(2);
     expect(result.hasMore).toBe(true);
     const cursor = result.cursor as string;
-    const decoded = Buffer.from(cursor.slice("nimbus-pd1:".length), "base64url").toString("utf8");
+    const decoded = Buffer.from(cursor.slice("nimbus-pd2:".length), "base64url").toString("utf8");
     expect(JSON.parse(decoded)).toMatchObject({ lastUpdated: updatedB });
   });
 
@@ -573,7 +575,7 @@ describeWithFetchRestore("pagerduty-sync", () => {
     expect(result.itemsUpserted).toBe(1);
     expect(result.hasMore).toBe(false);
     const cursor = result.cursor as string;
-    const decoded = Buffer.from(cursor.slice("nimbus-pd1:".length), "base64url").toString("utf8");
+    const decoded = Buffer.from(cursor.slice("nimbus-pd2:".length), "base64url").toString("utf8");
     expect(JSON.parse(decoded)).toMatchObject({ lastUpdated: updatedPage1 });
   });
 
@@ -593,7 +595,7 @@ describeWithFetchRestore("pagerduty-sync", () => {
     const after = Date.now();
     expect(result.itemsUpserted).toBe(1);
     const cursor = result.cursor as string;
-    const decoded = Buffer.from(cursor.slice("nimbus-pd1:".length), "base64url").toString("utf8");
+    const decoded = Buffer.from(cursor.slice("nimbus-pd2:".length), "base64url").toString("utf8");
     const lastUpdated = (JSON.parse(decoded) as { lastUpdated: string }).lastUpdated;
     const lastUpdatedMs = Date.parse(lastUpdated);
     const BACKFILL_DAYS = 30;
@@ -686,7 +688,7 @@ describeWithFetchRestore("pagerduty-sync", () => {
   test("decodeCursor: cursor whose payload is a JSON array falls back to 30-day floor", async () => {
     // encode an array payload with the correct prefix
     const arrayPayload = Buffer.from(JSON.stringify([1, 2, 3]), "utf8").toString("base64url");
-    const badCursor = `nimbus-pd1:${arrayPayload}`;
+    const badCursor = `nimbus-pd2:${arrayPayload}`;
 
     let capturedUrl: string | undefined;
     globalThis.fetch = (async (input: Parameters<typeof fetch>[0]) => {
@@ -714,7 +716,7 @@ describeWithFetchRestore("pagerduty-sync", () => {
 
   test("decodeCursor: cursor whose payload is null falls back to 30-day floor", async () => {
     const nullPayload = Buffer.from(JSON.stringify(null), "utf8").toString("base64url");
-    const badCursor = `nimbus-pd1:${nullPayload}`;
+    const badCursor = `nimbus-pd2:${nullPayload}`;
 
     let capturedUrl: string | undefined;
     globalThis.fetch = (async (input: Parameters<typeof fetch>[0]) => {
@@ -744,7 +746,7 @@ describeWithFetchRestore("pagerduty-sync", () => {
     const numericLu = Buffer.from(JSON.stringify({ lastUpdated: 12345 }), "utf8").toString(
       "base64url",
     );
-    const badCursor = `nimbus-pd1:${numericLu}`;
+    const badCursor = `nimbus-pd2:${numericLu}`;
 
     let capturedUrl: string | undefined;
     globalThis.fetch = (async (input: Parameters<typeof fetch>[0]) => {
@@ -772,7 +774,7 @@ describeWithFetchRestore("pagerduty-sync", () => {
 
   test("decodeCursor: cursor whose payload has empty-string lastUpdated falls back to 30-day floor", async () => {
     const emptyLu = Buffer.from(JSON.stringify({ lastUpdated: "" }), "utf8").toString("base64url");
-    const badCursor = `nimbus-pd1:${emptyLu}`;
+    const badCursor = `nimbus-pd2:${emptyLu}`;
 
     let capturedUrl: string | undefined;
     globalThis.fetch = (async (input: Parameters<typeof fetch>[0]) => {
@@ -833,7 +835,7 @@ describeWithFetchRestore("pagerduty-sync", () => {
     expect(result.itemsUpserted).toBe(1);
     expect(result.hasMore).toBe(false);
     const cursor = result.cursor as string;
-    const decoded = Buffer.from(cursor.slice("nimbus-pd1:".length), "base64url").toString("utf8");
+    const decoded = Buffer.from(cursor.slice("nimbus-pd2:".length), "base64url").toString("utf8");
     expect(JSON.parse(decoded)).toMatchObject({ lastUpdated: updatedPage1 });
   });
 
@@ -1149,7 +1151,7 @@ describeWithFetchRestore("pagerduty-sync", () => {
     expect(meta.assignee_emails).toEqual(["jane@example.com"]);
     expect(meta.resolved_by_email).toBe("jane@example.com");
     expect(meta.unattributed_actors).toBe(0);
-    expect(meta.meta_v).toBe(1);
+    expect(meta.meta_v).toBe(2);
   });
 
   // `?? null` rather than a conditional key, so "nobody resolved this" is
@@ -1370,7 +1372,7 @@ describeWithFetchRestore("pagerduty-sync", () => {
       historyFloorMs: Date.now() - 200 * 86_400_000,
     };
     const syncable = createPagerdutySyncable({ ensurePagerdutyMcpRunning: async () => {} });
-    const cursor = encodeNimbusJsonCursor("nimbus-pd1:", { lastUpdated: cursorIso });
+    const cursor = encodeNimbusJsonCursor("nimbus-pd2:", { lastUpdated: cursorIso });
     await syncable.sync(ctx, cursor);
 
     expect(new URL(calls[0] ?? "").searchParams.get("since")).toBe(cursorIso);
@@ -1404,7 +1406,7 @@ describeWithFetchRestore("pagerduty on-call refresh pacing (MB3)", () => {
   }
 
   function ocAtOf(cursor: string | null): unknown {
-    const raw = (cursor ?? "").slice("nimbus-pd1:".length);
+    const raw = (cursor ?? "").slice("nimbus-pd2:".length);
     return (JSON.parse(Buffer.from(raw, "base64url").toString("utf8")) as { ocAt?: number }).ocAt;
   }
 
@@ -1428,7 +1430,7 @@ describeWithFetchRestore("pagerduty on-call refresh pacing (MB3)", () => {
       const { paths } = stubAll();
       const syncable = createPagerdutySyncable({ ensurePagerdutyMcpRunning: async () => {} });
       const fresh = Date.now() - 60_000;
-      const cur = encodeNimbusJsonCursor("nimbus-pd1:", {
+      const cur = encodeNimbusJsonCursor("nimbus-pd2:", {
         lastUpdated: isoHoursAgo(1),
         ocAt: fresh,
       });
@@ -1436,7 +1438,7 @@ describeWithFetchRestore("pagerduty on-call refresh pacing (MB3)", () => {
       expect(paths).toEqual(["/incidents"]);
       expect(ocAtOf(r.cursor)).toBe(fresh);
       paths.length = 0;
-      const old = encodeNimbusJsonCursor("nimbus-pd1:", {
+      const old = encodeNimbusJsonCursor("nimbus-pd2:", {
         lastUpdated: isoHoursAgo(1),
         ocAt: Date.now() - 16 * 60_000,
       });
@@ -1446,7 +1448,7 @@ describeWithFetchRestore("pagerduty on-call refresh pacing (MB3)", () => {
       paths.length = 0;
       await syncable.sync(
         pacingCtx(db),
-        encodeNimbusJsonCursor("nimbus-pd1:", { lastUpdated: isoHoursAgo(1) }),
+        encodeNimbusJsonCursor("nimbus-pd2:", { lastUpdated: isoHoursAgo(1) }),
       );
       expect(paths).toContain("/oncalls");
     } finally {
@@ -1466,12 +1468,12 @@ describeWithFetchRestore("pagerduty on-call refresh pacing (MB3)", () => {
       const fresh = Date.now() - 1000;
       const r = await syncable.sync(
         pacingCtx(db),
-        encodeNimbusJsonCursor("nimbus-pd1:", { lastUpdated: isoHoursAgo(1), ocAt: fresh }),
+        encodeNimbusJsonCursor("nimbus-pd2:", { lastUpdated: isoHoursAgo(1), ocAt: fresh }),
       );
       expect(ocAtOf(r.cursor)).toBe(fresh);
       const r2 = await syncable.sync(
         pacingCtx(db),
-        encodeNimbusJsonCursor("nimbus-pd1:", { lastUpdated: isoHoursAgo(1), ocAt: 5 }),
+        encodeNimbusJsonCursor("nimbus-pd2:", { lastUpdated: isoHoursAgo(1), ocAt: 5 }),
       );
       expect(ocAtOf(r2.cursor) as number).toBeGreaterThan(5);
     } finally {
@@ -1494,6 +1496,84 @@ describeWithFetchRestore("pagerduty on-call refresh pacing (MB3)", () => {
       const r = await syncable.sync(boom, null);
       expect(r.itemsUpserted).toBe(0);
       expect(typeof ocAtOf(r.cursor)).toBe("number");
+    } finally {
+      db.close();
+    }
+  });
+});
+
+describeWithFetchRestore("PagerDuty resolution time (Phase 10 IC2)", () => {
+  function pdRow(id: string, status: string, extra: Record<string, unknown>): unknown {
+    return {
+      id,
+      title: `Incident ${id}`,
+      status,
+      updated_at: isoHoursAgo(1),
+      created_at: isoHoursAgo(3),
+      ...extra,
+    };
+  }
+
+  test("a resolved incident records resolved_at_ms and status_changed_at_ms from last_status_change_at", async () => {
+    const changed = isoHoursAgo(2);
+    const db = await runOneSync([pdRow("R1", "resolved", { last_status_change_at: changed })]);
+    try {
+      const meta = readIncidentMetadata(db, "R1");
+      expect(meta.resolved_at_ms).toBe(Date.parse(changed));
+      expect(meta.status_changed_at_ms).toBe(Date.parse(changed));
+      expect(meta.meta_v).toBe(2);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("an acknowledged incident records only status_changed_at_ms", async () => {
+    const changed = isoHoursAgo(2);
+    const db = await runOneSync([pdRow("A1", "acknowledged", { last_status_change_at: changed })]);
+    try {
+      const meta = readIncidentMetadata(db, "A1");
+      expect(meta.status_changed_at_ms).toBe(Date.parse(changed));
+      expect(Object.hasOwn(meta, "resolved_at_ms")).toBe(false);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("a resolved incident without last_status_change_at, or with an unparseable one, writes neither key", async () => {
+    const db = await runOneSync([
+      pdRow("N1", "resolved", {}),
+      pdRow("N2", "resolved", { last_status_change_at: "not a date" }),
+    ]);
+    try {
+      for (const id of ["N1", "N2"]) {
+        const meta = readIncidentMetadata(db, id);
+        expect(Object.hasOwn(meta, "resolved_at_ms")).toBe(false);
+        expect(Object.hasOwn(meta, "status_changed_at_ms")).toBe(false);
+      }
+    } finally {
+      db.close();
+    }
+  });
+
+  test("a stored nimbus-pd1: cursor is a cold start over the floor; a nimbus-pd2: cursor round-trips", async () => {
+    const urls: string[] = [];
+    globalThis.fetch = (async (input: Parameters<typeof fetch>[0]) => {
+      const url = urlFromFetchInput(input);
+      urls.push(url);
+      return new Response(JSON.stringify({ incidents: [], more: false }), { status: 200 });
+    }) as typeof fetch;
+    const db = createMemoryIndexDb();
+    try {
+      const syncable = createPagerdutySyncable({ ensurePagerdutyMcpRunning: async () => {} });
+      const ctx = (): ReturnType<typeof syncTestContext> =>
+        syncTestContext(db, createStubVault({ "pagerduty.api_token": "t" }), "pagerduty");
+      const recent = isoHoursAgo(1);
+      await syncable.sync(ctx(), encodeNimbusJsonCursor("nimbus-pd1:", { lastUpdated: recent }));
+      const coldSince = new URL(urls[0] ?? "").searchParams.get("since") ?? "";
+      expect(Date.parse(coldSince)).toBeLessThan(Date.now() - 20 * 86_400_000);
+      urls.length = 0;
+      await syncable.sync(ctx(), encodeNimbusJsonCursor("nimbus-pd2:", { lastUpdated: recent }));
+      expect(new URL(urls[0] ?? "").searchParams.get("since")).toBe(recent);
     } finally {
       db.close();
     }

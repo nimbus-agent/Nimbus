@@ -4,6 +4,7 @@ import { expect, test } from "bun:test";
 import { upsertIndexedItem } from "../index/item-store.ts";
 import { LocalIndex } from "../index/local-index.ts";
 import type { ServiceConfig } from "../metrics/dora-config.ts";
+import { NO_INCIDENT_BINDINGS } from "../metrics/dora-config.ts";
 import { buildServiceIdentityResolver } from "../metrics/service-identity.ts";
 import { syncGraphFromIndexedItem } from "./graph-populator.ts";
 import { type RegraphResult, regraphAllItems } from "./regraph.ts";
@@ -458,7 +459,7 @@ test("D2: a throwing row is skipped, not fatal — the rest of the backfill stil
   expect(graphedIssues).toBe(2);
 });
 
-test("D3: graphed does not count item types with no populator dispatch branch (ci_run, alert)", () => {
+test("D3: graphed counts only rows whose sync actually wrote something", () => {
   const db = freshDb();
   const now = Date.now();
   insertRawItem(db, {
@@ -470,14 +471,6 @@ test("D3: graphed does not count item types with no populator dispatch branch (c
     at: now,
   });
   insertRawItem(db, {
-    service: "pagerduty",
-    type: "alert",
-    externalId: "alert-1",
-    title: "High CPU",
-    body: "",
-    at: now,
-  });
-  insertRawItem(db, {
     service: "github",
     type: "issue",
     externalId: "acme/app#9",
@@ -485,21 +478,21 @@ test("D3: graphed does not count item types with no populator dispatch branch (c
     body: "",
     at: now,
   });
+  // Both types satisfy `isItemLinkedGraphType`. A sync that writes nothing for a row (here a seam that
+  // only handles issues, standing in for any type the populator has no branch for) must not be counted:
+  // `graphed` is the connection's row-change counter, not a second hand-maintained type list.
+  const issuesOnly: typeof syncGraphFromIndexedItem = (d, row, resolver) => {
+    if (row.type === "issue") syncGraphFromIndexedItem(d, row, resolver);
+  };
 
-  const result = regraphAllItems(db);
+  const result = regraphAllItems(db, { _syncItem: issuesOnly });
 
-  expect(result.scanned).toBe(3);
-  // ci_run and alert both satisfy `isItemLinkedGraphType`, but
-  // `syncGraphFromIndexedItem` has no dispatch branch for either — no graph
-  // work happens, so they must not be counted as graphed.
+  expect(result.scanned).toBe(2);
   expect(result.graphed).toBe(1);
-
-  const relatedGraphEntities = (
-    db.query("SELECT COUNT(*) AS n FROM graph_entity WHERE type IN ('ci_run', 'alert')").get() as {
-      n: number;
-    }
+  const ciRunEntities = (
+    db.query("SELECT COUNT(*) AS n FROM graph_entity WHERE type = 'ci_run'").get() as { n: number }
   ).n;
-  expect(relatedGraphEntities).toBe(0);
+  expect(ciRunEntities).toBe(0);
 });
 
 // ---------------------------------------------------------------------------
@@ -518,6 +511,7 @@ const CHECKOUT_SERVICE_CONFIG: ServiceConfig = {
   excludePrLabels: [],
   deployEnvironments: ["prod"],
   severityP1Aliases: ["P1"],
+  ...NO_INCIDENT_BINDINGS,
 };
 
 function correlationEdgeCount(db: Database): number {

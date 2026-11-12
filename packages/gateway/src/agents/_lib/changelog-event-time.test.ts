@@ -36,7 +36,17 @@ describe("eventTimeFor", () => {
     expect(eventTimeFor("incident_opened", {}, 1_800_000_000_000)).toBeNull();
   });
 
-  test("incident resolution reports modified_at, flagged as index-derived", () => {
+  test("a resolved incident with resolved_at_ms reports that time as an event", () => {
+    expect(
+      eventTimeFor(
+        "incident_resolved",
+        { status: "resolved", resolved_at_ms: 1_700_000_000_000 },
+        1_800_000_000_000,
+      ),
+    ).toEqual({ atMs: 1_700_000_000_000, source: "event" });
+  });
+
+  test("a legacy resolved incident (no resolved_at_ms) reports modified_at, flagged as index-derived", () => {
     expect(eventTimeFor("incident_resolved", { status: "resolved" }, 1_800_000_000_000)).toEqual({
       atMs: 1_800_000_000_000,
       source: "index",

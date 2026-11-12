@@ -265,6 +265,35 @@ describe("watcher-engine", () => {
     expect(fired[0]?.firedAt).toBe(evalAt);
   });
 
+  // Phase 10 IC2: `jira:alert` makes alert_fired live. A closed alert is a re-index of one that already
+  // fired, so it must not fire again; an open one must.
+  test("alert_fired fires for a new open jira:alert and not for a closed one", () => {
+    const db = makeDb();
+    const t0 = 4_100_000_000_000;
+    insertAlertFiredWatcher(db, "jsm", JSON.stringify({ filter: { service: "jira" } }), t0);
+    const insert = (id: string, status: string, at = t0 + 1000): void =>
+      upsertIndexedItem(db, {
+        service: "jira",
+        type: "alert",
+        externalId: id,
+        title: id,
+        modifiedAt: at,
+        syncedAt: at,
+        metadata: { status },
+      });
+    insert("closed-one", "closed");
+    let calls = 0;
+    evaluateWatchersAfterSync(db, "jira", t0 + 2000, () => {
+      calls += 1;
+    });
+    expect(calls).toBe(0);
+    insert("open-one", "open", t0 + 2500);
+    evaluateWatchersAfterSync(db, "jira", t0 + 3000, () => {
+      calls += 1;
+    });
+    expect(calls).toBe(1);
+  });
+
   test("null filter in condition_json does not notify", () => {
     const db = makeDb();
     const t0 = 3_900_000_000_000;

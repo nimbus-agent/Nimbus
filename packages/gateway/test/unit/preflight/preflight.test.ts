@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { githubActionsRunMetadata } from "../../../src/connectors/github-actions-sync.ts";
 import type { ServiceConfig } from "../../../src/metrics/dora-config.ts";
+import { NO_INCIDENT_BINDINGS } from "../../../src/metrics/dora-config.ts";
 import { computeDeployPreflight } from "../../../src/preflight/preflight.ts";
 import { openSeededDbFile } from "../../helpers/migrated-db-seed.ts";
 
@@ -138,6 +139,7 @@ function cfg(overrides: Partial<ServiceConfig> = {}): ServiceConfig {
     excludePrLabels: ["revert"],
     deployEnvironments: ["prod"],
     severityP1Aliases: [],
+    ...NO_INCIDENT_BINDINGS,
     ...overrides,
   };
 }

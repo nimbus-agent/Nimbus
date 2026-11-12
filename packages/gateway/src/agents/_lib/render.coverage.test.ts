@@ -631,6 +631,7 @@ describe("renderOncall", () => {
             url: null,
             openedAtMs: null,
             resolvedAtMs: T0,
+            closed: true,
             resolvedByEmail: null,
           },
         ],

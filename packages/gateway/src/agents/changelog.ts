@@ -6,6 +6,7 @@ import {
   DEFAULT_DEPLOY_WORKFLOW_PATTERN,
   DEFAULT_EXCLUDE_PR_LABELS,
   DEFAULT_INCIDENT_WINDOW_MINUTES,
+  NO_INCIDENT_BINDINGS,
   type ServiceConfig,
 } from "../metrics/dora-config.ts";
 import type { ChangelogBrief } from "./_lib/changelog-types.ts";
@@ -278,5 +279,6 @@ function emptyServiceConfig(serviceId: string): ServiceConfig {
     excludePrLabels: [...DEFAULT_EXCLUDE_PR_LABELS],
     deployEnvironments: [...DEFAULT_DEPLOY_ENVIRONMENTS],
     severityP1Aliases: [],
+    ...NO_INCIDENT_BINDINGS,
   };
 }
