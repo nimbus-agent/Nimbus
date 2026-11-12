@@ -1,5 +1,5 @@
 /**
- * LAN v2 sessions (invariant I57): the records of a federation RPC are encrypted only under keys
+ * LAN v2 sessions (invariant I56): the records of a federation RPC are encrypted only under keys
  * derived by `lan-noise.ts` from a `Noise_IK_25519_AESGCM_SHA256` exchange in which BOTH sides
  * contribute an ephemeral DH key. The static identity key authenticates (through `es` and `ss`,
  * `ee` and `se`); it never encrypts a record.

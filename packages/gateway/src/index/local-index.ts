@@ -285,9 +285,11 @@ export interface LanPeerRow {
   write_allowed: number;
   paired_at: string;
   last_seen_at: string | null;
+  /** 1 = the old static-box wire, 2 = a Noise IK session completed once (V95; the downgrade ratchet). */
+  proto_version: number;
 }
 
-export const CURRENT_SCHEMA_VERSION = 93;
+export const CURRENT_SCHEMA_VERSION = 95;
 
 // `role_pack_card_dismissed`: the desktop's "Try a role pack" card, set once when an upgraded user
 // dismisses it so it never returns (role packs P5).
@@ -952,6 +954,18 @@ export class LocalIndex {
         params.displayName ?? null,
         new Date().toISOString(),
       ],
+    );
+  }
+
+  /**
+   * The downgrade ratchet's ONLY writer (FS-A3): raises a peer's recorded protocol, never lowers it.
+   * Called after a v2 handshake completed with that peer. An unknown pubkey is a no-op.
+   */
+  public markLanPeerProto(pubkey: Uint8Array, version: 1 | 2): void {
+    dbRun(
+      this.db,
+      `UPDATE lan_peers SET proto_version = MAX(proto_version, ?) WHERE peer_pubkey = ?`,
+      [version, Buffer.from(pubkey)],
     );
   }
 

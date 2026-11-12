@@ -67,6 +67,7 @@ import { GRAPH_V7_MIGRATION_SQL } from "../graph-v7-sql.ts";
 import { rebuildHitlStatusTables } from "../hitl-status-v87-sql.ts";
 import { V34_IDENTITY_SQL } from "../identity-v34-sql.ts";
 import { KNOWN_NAMESPACES_V38_SQL } from "../known-namespaces-v38-sql.ts";
+import { LAN_PEER_PROTO_V95_SQL } from "../lan-peer-proto-v95-sql.ts";
 import { LAN_PEERS_V19_SQL } from "../lan-peers-v19-sql.ts";
 import { LLM_CONTEXT_WINDOW_V16_ALTER_SQL, LLM_MODELS_V16_SQL } from "../llm-models-v16-sql.ts";
 import { LLM_TASK_DEFAULTS_V20_SQL } from "../llm-task-defaults-v20-sql.ts";
@@ -212,6 +213,26 @@ function simpleStep(
     toVersion,
     apply: (db, now) => applySchemaStep(db, toVersion, description, sql, now),
   };
+}
+
+function lanPeersHasColumn(db: Database, columnName: string): boolean {
+  const rows = db.query("PRAGMA table_info(lan_peers)").all() as Array<{ name: string }>;
+  return rows.some((r) => r.name === columnName);
+}
+
+/**
+ * V95 - `lan_peers.proto_version`. SQLite has no `ADD COLUMN IF NOT EXISTS`, and a step must be
+ * re-runnable (the migration suites rewind `user_version` and run every step again), so the `ALTER`
+ * is guarded by a column probe, as V4 does for `person.linked`.
+ */
+function migrateIndexedV94ToV95(db: Database, now: number): void {
+  db.transaction(() => {
+    if (!lanPeersHasColumn(db, "proto_version")) {
+      dbExec(db, LAN_PEER_PROTO_V95_SQL.trim());
+    }
+    dbExec(db, "PRAGMA user_version = 95");
+    recordMigration(db, 95, "lan peer protocol version (Phase 10 FS1)", now);
+  })();
 }
 
 function migrateIndexedV3ToV4(db: Database, now: number): void {
@@ -782,6 +803,11 @@ const INDEXED_SCHEMA_STEPS: readonly IndexedSchemaStep[] = [
   simpleStep(90, 91, "my open work snapshots (Phase 10 MB1)", WORK_SNAPSHOT_V91_SQL),
   simpleStep(91, 92, "slack read markers (Phase 10 MB4)", CHAT_READ_MARKER_V92_SQL),
   simpleStep(92, 93, "morning briefing runs and deadline notices (Phase 10 MB5)", BRIEFING_V93_SQL),
+  // V94 is the incident engine's (IC1, in flight). This branch carries an EMPTY placeholder so the step
+  // chain stays contiguous (the fresh-build tests walk 1..CURRENT_SCHEMA_VERSION). DELETE the placeholder
+  // line when IC1 is in the base (its real V94 replaces it); if FS1 merges first, IC1 renumbers to V96.
+  simpleStep(93, 94, "reserved for the incident engine IC1 (placeholder, no DDL)", []),
+  { fromVersion: 94, toVersion: 95, apply: migrateIndexedV94ToV95 },
 ];
 
 /**
