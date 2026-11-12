@@ -415,7 +415,7 @@ Nimbus uses phases, not calendar dates. A phase completes when its acceptance cr
 | S1 | Local Brain — egress ledger, implicit knowledge, the built-in agent set | ✅ Complete |
 | S2 | Local Compute Fleet — sandboxed code execution, local computer-use, agent fleets | ✅ Complete (2026-10-10) |
 | S3 | Open Surface — the MCP capture sink, the extension runtime, role packs, the extension registry | ✅ Complete (2026-11-04) |
-| S4 | Autonomous Agent — connector write-enablement first (Phase 9.7), then standing approvals, then the On-Call Copilot | In progress (opened 2026-11-04) |
+| S4 | Autonomous Agent — connector write-enablement first (Phase 9.7), then standing approvals, then the On-Call Copilot; the agent door (Phase 28, planned) is its next project | In progress (opened 2026-11-04) |
 | S5 | Team Server — an always-on Nimbus a team runs on its own server; see the roadmap | Planned |
 | S6 | Cost Pack — spend joined to the deploy, the pull request and the owner; see the roadmap | Planned |
 | S7 | Engineering Excellence breadth — see the roadmap | Planned |
@@ -948,8 +948,9 @@ Nimbus is a gateway plus a set of surfaces that talk to it. All of these are sep
 | [create-nimbus-connector](https://github.com/nimbus-agent/create-nimbus-connector) | Scaffolding generator for a new connector |
 | [nimbus-vscode](https://github.com/nimbus-agent/nimbus-vscode) | VS Code / Open VSX extension |
 | [nimbus-web-clipper](https://github.com/nimbus-agent/nimbus-web-clipper) | **Nimbus Companion** — the Chrome + Firefox MV3 browser extension (formerly "Nimbus Web Clipper"; the repo slug is unchanged); the gateway-side surface stays in this repo |
-| [nimbus-raycast](https://github.com/nimbus-agent/nimbus-raycast) | Raycast extension — quick-ask over the local gateway |
 | [awesome-nimbus](https://github.com/nimbus-agent/awesome-nimbus) | Curated connectors, recipes, extensions and resources |
+
+Three repositories that held only a vision and a build prompt (`nimbus-raycast`, `nimbus-statuspage` and `nimbus-postmortem`) were retired on 2026-11-12 without being built; [`roadmap.md` § Client surfaces](./roadmap.md#client-surfaces) says where each one's work went.
 
 The SDK and client are **MIT**, not AGPL — building on Nimbus does not pull the core's license into your project.
 

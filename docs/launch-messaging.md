@@ -62,16 +62,18 @@ Until then `nimbus why` stays "the one thing" above. The direction itself is rec
 [`roadmap.md` § Direction](./roadmap.md#direction) (2026-11-12).
 
 > **One-liner.** The trust layer between AI agents and your engineering systems: private context
-> in, approved actions out, and a record of both that you can check.
+> in, approved actions out, and a record of every action Nimbus dispatched that you can check.
 >
 > **The one thing.** Let your coding agent act on your real systems. Before anything changes,
-> Nimbus shows you exactly what will change and waits for you. Afterwards, `nimbus prove` shows
+> Nimbus shows you what will change and waits for you. Afterwards, `nimbus prove` shows
 > what it dispatched.
 >
 > **Three pillars.** *Know*: a private index of your tools, on your machine. *Act*: every write
-> behind a typed preview and your approval. *Prove*: a hash-chained record of every action the
-> agent dispatched.
+> behind a typed preview and your approval. *Prove*: a hash-chained record of every action
+> Nimbus dispatched.
 
 The held copy may claim only what Phase 28's acceptance criteria prove on the day it is used.
-The honesty guardrails above apply to it unchanged. No market fact, competitor name or incident
+The honesty guardrails above apply to it unchanged: in particular, the preview shows what Nimbus
+was asked to do and what it read of the current state, and the record covers what Nimbus
+dispatched, not what an agent did outside it. No market fact, competitor name or incident
 is cited anywhere in this file.
