@@ -28,6 +28,12 @@ export type RegraphOptions = {
    */
   resolveServiceId?: ResolveServiceId;
   /**
+   * Only these item types, in `REGRAPH_TYPE_ORDER` order, and NO remainder slice (Phase 10 IC2: the
+   * one-shot repair after the upgrade re-grafts just the types whose anchors and edges changed). Absent
+   * means every item, as before.
+   */
+  types?: readonly string[];
+  /**
    * @internal test seam: override the sync function so a test can force a
    * deterministic per-item failure without touching graph-populator.ts or
    * mocking the DB layer. Production callers must never set this.
@@ -224,9 +230,16 @@ export function regraphAllItems(db: Database, opts?: RegraphOptions): RegraphRes
   };
   const counters = { scanned: 0, graphed: 0, skipped: 0 };
 
+  const only = opts?.types;
   for (const type of REGRAPH_TYPE_ORDER) {
+    if (only !== undefined && !only.includes(type)) continue;
     regraphSlice(db, "type = ?", [type], cfg, counters);
   }
+  // A requested type outside the ordered list gets its own slice, after the ordered ones.
+  for (const type of only ?? []) {
+    if (!REGRAPH_TYPE_ORDER.includes(type)) regraphSlice(db, "type = ?", [type], cfg, counters);
+  }
+  if (only !== undefined) return counters;
 
   // Everything else: graph-participating types with no ordering constraint,
   // plus non-participating types, which are counted as scanned but not
