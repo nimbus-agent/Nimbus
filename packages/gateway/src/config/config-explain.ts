@@ -14,6 +14,7 @@ import {
   loadNimbusFleetFromConfigDir,
   resolveFleetJobs,
 } from "./fleet-toml.ts";
+import { loadNimbusIndexFromConfigDir } from "./index-toml.ts";
 import {
   type ConfigSnapshot,
   fallbackMessage,
@@ -100,6 +101,7 @@ export const SECTION_LOADERS: Readonly<Record<string, (configDir: string) => unk
   "glossary.terms": loadGlossaryManualFromConfigDir,
   "hitl.quorum": loadNimbusQuorumFromConfigDir,
   identity: loadNimbusIdentityFromConfigDir,
+  index: loadNimbusIndexFromConfigDir,
   lan: loadNimbusLanFromConfigDir,
   llm: loadNimbusLlmFromConfigDir,
   mcp_sink: loadNimbusMcpSinkFromConfigDir,
