@@ -23,6 +23,7 @@ import {
   checkConfirmComparison,
   checkConnectorSpawnIsHidden,
   checkConnectorWriteConfinement,
+  checkDoorApprovalConfinement,
   checkDriverImportConfinement,
   checkEgressChokepointConfinement,
   checkEmbeddingAppenderConfinement,
@@ -2275,6 +2276,20 @@ describe("D32(a) — the capture table is named only by its store and its DDL", 
         file(sql, "CREATE TABLE IF NOT EXISTS capture ("),
       ]),
     ).toEqual([]);
+  });
+
+  test("allows the V97 rebuild SQL, and the same SQL anywhere else is a violation", () => {
+    const rebuild = "DROP TABLE capture; ALTER TABLE capture_v97 RENAME TO capture";
+    expect(
+      checkCaptureTableConfinement([
+        file("packages/gateway/src/index/agent-door-v97-sql.ts", rebuild),
+      ]),
+    ).toEqual([]);
+    expect(
+      checkCaptureTableConfinement([
+        file("packages/gateway/src/connectors/connector-writes/agent-door.ts", rebuild),
+      ]),
+    ).toHaveLength(1);
   });
 
   test.each([
@@ -6313,5 +6328,60 @@ describe("D47 - the v1 static-box LAN path is reachable only through ipc/lan-leg
 
   test("lan-legacy.ts is a rule anchor, so a scan that lost it is not meaningful", () => {
     expect(RULE_ANCHORS).toContain("packages/gateway/src/ipc/lan-legacy.ts");
+  });
+});
+
+describe("D49(b) - the connector_write_door_approval table is named only by its store and its DDL", () => {
+  const file = (relPath: string, contents: string): FileEntry => ({ relPath, contents });
+  const SRC = "packages/gateway/src/";
+  const STORE = `${SRC}connectors/connector-writes/door-approval-store.ts`;
+  const DDL = `${SRC}index/agent-door-v97-sql.ts`;
+  const GOOD: FileEntry[] = [
+    file(STORE, "SELECT * FROM connector_write_door_approval WHERE door = ?"),
+    file(DDL, "CREATE TABLE IF NOT EXISTS connector_write_door_approval ("),
+  ];
+  const rules = (files: FileEntry[]): string[] =>
+    checkDoorApprovalConfinement(files).map((v) => v.rule);
+
+  test("the store and the DDL file are clean", () => {
+    expect(checkDoorApprovalConfinement(GOOD)).toEqual([]);
+  });
+
+  test.each([
+    ["FROM", "SELECT 1 FROM connector_write_door_approval"],
+    ["INTO", "INSERT INTO connector_write_door_approval (a) VALUES (1)"],
+    ["UPDATE", "UPDATE connector_write_door_approval SET suspended_at = NULL"],
+    ["JOIN", "SELECT 1 FROM x JOIN connector_write_door_approval d ON d.service = x.s"],
+    ["a quoted name", 'SELECT 1 FROM "connector_write_door_approval"'],
+    ["a schema-qualified name", "DELETE FROM main.connector_write_door_approval"],
+  ])("%s is refused from any other file", (_n, sql) => {
+    for (const path of [
+      `${SRC}ipc/connector-rpc-handlers/agent-writes.ts`,
+      `${SRC}mcp-sink/capture-store.ts`,
+      `${SRC}connectors/connector-writes/agent-door.ts`,
+      `${SRC}brand-new.ts`,
+    ]) {
+      expect(rules([...GOOD, file(path, sql)]), path).toEqual(["door-approval-confined"]);
+    }
+  });
+
+  test("a comment naming the table, a test file and a look-alike are clean", () => {
+    expect(
+      rules([
+        ...GOOD,
+        file(`${SRC}x.ts`, "// FROM connector_write_door_approval\nconst a = 1;"),
+        file(`${SRC}x.test.ts`, "FROM connector_write_door_approval"),
+        file(`${SRC}y.ts`, "SELECT 1 FROM connector_write_door_approval_log"),
+      ]),
+    ).toEqual([]);
+  });
+
+  test("the real repository satisfies the rule and every anchor is scanned", async () => {
+    const files: FileEntry[] = [];
+    for await (const f of iterateSourceFiles()) {
+      files.push({ relPath: f.relPath, contents: f.contents });
+    }
+    expect(checkDoorApprovalConfinement(files)).toEqual([]);
+    expect(assertScanIsMeaningful(files)).toEqual([]);
   });
 });

@@ -57,7 +57,7 @@ export type ActionAcceptResult = {
   readonly errorCode?: ActionErrorCode;
   /**
    * Why the executor refused (a rejected arm only). It travels back on the OWNER's reply and is never
-   * stored: V69 allows no `error_code` on a `rejected` row, so `finalizeAction` takes no reason.
+   * stored: since V97 a `rejected` row may carry an `error_code`, but none is written until AD3a-2.
    */
   readonly reason?: string;
 };

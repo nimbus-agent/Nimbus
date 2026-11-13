@@ -2,6 +2,7 @@
 // `connector.writesEnable|writesDisable|writesStatus`: the owner's opt-in for model connector writes.
 import type { Database } from "bun:sqlite";
 
+import { removeDoorApprovals } from "../../connectors/connector-writes/door-approval-store.ts";
 import {
   getModelWriteEnablement,
   listModelWriteEnablement,
@@ -58,6 +59,8 @@ import {
 import type { EnforcedPolicy } from "../../policy/policy-gate.ts";
 import { codeUnitCompare } from "../../util/code-unit-compare.ts";
 import { ConnectorRpcError } from "../connector-rpc-shared.ts";
+import type { ClientKind } from "../server/client-kind.ts";
+import { type AgentEnableReply, handleAgentWritesEnable, parseWriteDoor } from "./agent-writes.ts";
 
 export interface ModelWritesDeps {
   readonly db: Database;
@@ -103,6 +106,14 @@ export interface ModelWritesDeps {
    * when the credential lacks it. A service absent here makes no claim.
    */
   readonly grantedScopes?: Readonly<Record<string, string | undefined>>;
+  /** Phase 28 AD3a-1 (agent door only): the connector's raw tool listing, as the model door reads it. */
+  readonly listServerTools?: (
+    service: string,
+  ) => Promise<Readonly<Record<string, unknown>> | undefined>;
+  /** The connection's declared kind (`ctx.getClientKind`), never a param; absent reads as `unknown`. */
+  readonly clientKind?: ClientKind;
+  /** True once the human-only consent wrapper turned a non-human approval into a decline. */
+  readonly agentAnswerWasNonHuman?: () => boolean;
   readonly obsidianWriteScope?: () => {
     readonly roots: readonly string[];
     /** Per vault, its daily-note file pattern (`<vault>/<daily folder>/<format>.md`). */
@@ -372,7 +383,14 @@ function obsidianScopeFor(
 export async function handleConnectorWritesEnable(
   rec: Record<string, unknown> | undefined,
   deps: ModelWritesDeps,
-): Promise<{ service: string; maxWave: ConnectorWriteWave; writes: number }> {
+): Promise<{ service: string; maxWave: ConnectorWriteWave; writes: number } | AgentEnableReply> {
+  if (parseWriteDoor(rec?.["door"]) === "agent") return handleAgentWritesEnable(rec, deps);
+  if (rec?.["approve"] !== undefined) {
+    throw new ConnectorRpcError(
+      -32602,
+      "ERR_CONNECTOR_WRITES_BAD_APPROVE: --approve belongs to --door agent",
+    );
+  }
   if (deps.toolExecutor === undefined) {
     throw new ConnectorRpcError(-32603, "connector.writesEnable requires a toolExecutor");
   }
@@ -445,8 +463,13 @@ export async function handleConnectorWritesDisable(
   rec: Record<string, unknown> | undefined,
   deps: ModelWritesDeps,
 ): Promise<{ removed: boolean }> {
+  const door = parseWriteDoor(rec?.["door"]);
   const service = parseServiceForDisable(rec?.["service"]);
+  // The agent door's list alone: the shared wave and the model's approvals are left as they are.
+  if (door === "agent") return { removed: removeDoorApprovals(deps.db, service, "agent") > 0 };
   let removed = removeModelWriteEnablement(deps.db, service);
+  // Disabling a service withdraws the agent door's approvals of it too (narrowing needs no approval).
+  if (removeDoorApprovals(deps.db, service) > 0) removed = true;
   // Disabling `iac` drops the approved directories and clouds too (narrowing needs no approval).
   if (service === IAC_SERVICE && removeIacGrants(deps.db)) removed = true;
   // Disabling `kubernetes` drops the approved contexts and namespaces too.

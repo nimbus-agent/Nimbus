@@ -2531,6 +2531,8 @@ describe("I20 — a delegated approval is honored only from a live, identity-val
       "extension.eval",
       "pack.install",
       "connector.writes.enable",
+      // Phase 28 AD3a-1: the same type with the agent door's payload is never delegated either (I3).
+      "connector.writes.enable#agent",
     ]) {
       let prompts = 0;
       let remote = 0;
@@ -2557,7 +2559,11 @@ describe("I20 — a delegated approval is honored only from a live, identity-val
         NULL_EGRESS_SINK,
         NO_POLICY_OVERLAY,
       );
-      const res = await exec.execute({ type, payload: {} });
+      const [realType = type] = type.split("#");
+      const payload = type.endsWith("#agent")
+        ? { door: "agent", service: "github", maxWave: 3, writes: [] }
+        : {};
+      const res = await exec.execute({ type: realType, payload });
       expect(res.status, type).toBe("rejected");
       expect(remote, type).toBe(0);
       expect(prompts, type).toBe(1);
@@ -4289,14 +4295,18 @@ describe("I28 — MCP content enters only through the capture gate, in a fixed o
     expect(src).not.toMatch(/from\s+["'][^"']*\/llm\//);
   });
 
-  test("AD2: the human-only wrapper lives in ipc/consent.ts and is used only by approvals-rpc.ts; capture-rpc.ts has neither it nor delegation", async () => {
+  test("AD2: the human-only wrapper lives in ipc/consent.ts and is used only by approvals-rpc.ts and the dispatcher's agent-door enable; capture-rpc.ts has neither it nor delegation", async () => {
     const consent = await read("packages/gateway/src/ipc/consent.ts");
     expect(consent).toMatch(/export function humanOnlyConsent\(/);
     expect(consent).toContain('answer.answerSource !== "human"');
     const users = (await grepRepo(/\bhumanOnlyConsent\b/)).filter(
       (p) => !p.endsWith("/ipc/consent.ts"),
     );
-    expect(users).toEqual(["packages/gateway/src/ipc/approvals-rpc.ts"]);
+    // AD3a-1 widened this to a second user: the agent-door enable in the dispatcher.
+    expect(users.sort()).toEqual([
+      "packages/gateway/src/ipc/approvals-rpc.ts",
+      "packages/gateway/src/ipc/server/dispatchers.ts",
+    ]);
     const rpc = stripComments(await read("packages/gateway/src/ipc/capture-rpc.ts"));
     expect(rpc).not.toContain("humanOnlyConsent");
     expect(rpc).not.toContain("delegation");
@@ -4326,6 +4336,107 @@ describe("I28 — MCP content enters only through the capture gate, in a fixed o
         .map(([k]) => k)
         .sort((a, b) => a.localeCompare(b)),
     ).toEqual(["cli", "ui"]);
+  });
+});
+
+describe("Phase 28 AD3a-1 - the agent door's approval list (recorded, not yet enforced)", () => {
+  test("AD3a-1: the dispatcher wraps the consent in humanOnlyConsent for the agent enable alone, before the executor is built", async () => {
+    const src = stripStringLiterals(
+      stripComments(await read("packages/gateway/src/ipc/server/dispatchers.ts")),
+    );
+    const rawSrc = stripComments(await read("packages/gateway/src/ipc/server/dispatchers.ts"));
+    const fn = rawSrc.slice(rawSrc.indexOf("export async function tryDispatchConnectorRpc("));
+    const body = fn.slice(0, fn.indexOf("\nexport "));
+    const iCond = body.indexOf('method === "connector.writesEnable"');
+    const iDoor = body.indexOf('"door"] === "agent"');
+    const iWrap = body.indexOf("humanOnlyConsent(");
+    const iExec = body.indexOf("new ToolExecutor(");
+    expect(iCond).toBeGreaterThan(-1);
+    expect(iDoor).toBeGreaterThan(iCond);
+    expect(iWrap).toBeGreaterThan(iDoor);
+    expect(iExec).toBeGreaterThan(iWrap);
+    // the connection's kind is the connection's, never a param
+    expect(body).toMatch(/clientKind:\s*ctx\.getClientKind\(clientId\)/);
+    expect(src).toContain("humanOnlyConsent");
+  });
+
+  test("AD3a-1: handleAgentWritesEnable checks the caller, then lists once, then asks the owner, then writes in one transaction", async () => {
+    const src = stripComments(
+      await read("packages/gateway/src/ipc/connector-rpc-handlers/agent-writes.ts"),
+    );
+    const start = src.indexOf("export async function handleAgentWritesEnable(");
+    const body = src.slice(start, src.indexOf("\n}\n", start));
+    const order = [
+      "requireAgentEnableCaller(",
+      "parseWave(",
+      "requireEligibleService(",
+      "refuseScopeParams(",
+      "requireAgentPolicy(",
+      "deps.listServerTools",
+      "agentApprovableRows(",
+      "requireOwnerApproval(",
+      "deps.db.transaction(",
+      "raiseWriteEnablementWave(",
+      "replaceDoorApprovals(",
+    ].map((m) => body.indexOf(m));
+    for (const i of order) expect(i).toBeGreaterThan(-1);
+    expect([...order].sort((a, b) => a - b)).toEqual(order);
+    expect(body.match(/deps\.listServerTools/g)).toHaveLength(1);
+    // the gate is reached only inside requireOwnerApproval, and is the type the frozen set holds
+    expect(src).toContain('executor.gate({ type: "connector.writes.enable", payload })');
+  });
+
+  test("AD3a-1: the approval table is named only by its store and its DDL file in production source", async () => {
+    const files = await grepRepo(/connector_write_door_approval/);
+    expect(files).toEqual([
+      "packages/gateway/src/connectors/connector-writes/door-approval-store.ts",
+      "packages/gateway/src/index/agent-door-v97-sql.ts",
+    ]);
+  });
+
+  test("AD3a-1: no connector.writes* method is renderer-callable, and the three stay off the LAN", async () => {
+    const rust = await read("packages/ui/src-tauri/src/gateway_bridge.rs");
+    const listed = rust
+      .split("\n")
+      .filter((l) => !/^\s*\/\//.test(l) && !/assert!|fn |#\[/.test(l))
+      .filter((l) => l.includes('"connector.writes'));
+    expect(listed).toEqual([]);
+    // Behaviour, not text: enable and disable also sit in WRITE_METHODS, so a source match would pass
+    // after one left FORBIDDEN_OVER_LAN. A peer WITH write permission must still be refused outright.
+    const { checkLanMethodAllowed, LanError } = await import("./ipc/lan-rpc.ts");
+    for (const m of [
+      "connector.writesEnable",
+      "connector.writesDisable",
+      "connector.writesStatus",
+    ]) {
+      const call = () => checkLanMethodAllowed(m, { peerId: "peer:x", writeAllowed: true });
+      expect(call, m).toThrow(LanError);
+      expect(call, m).toThrow(/ERR_METHOD_NOT_ALLOWED/);
+    }
+  });
+
+  test("AD3a-1: what an outside agent can propose is still decided by ACTION_PROPOSABILITY alone; the capture gate does not read the approval list", async () => {
+    for (const rel of [
+      "packages/gateway/src/mcp-sink/capture-gate.ts",
+      "packages/gateway/src/mcp-sink/capture-act.ts",
+      "packages/gateway/src/connectors/proposable-actions.ts",
+    ]) {
+      const src = stripComments(await read(rel));
+      expect(src, rel).not.toMatch(/door-approval-store|listDoorApprovals|getDoorApproval/);
+    }
+  });
+
+  test("AD3a-1: the not-enforced notice exists exactly once and the three surfaces import it", async () => {
+    const files = await grepRepo(/This list is recorded now and takes effect in a later release/);
+    expect(files).toEqual([
+      "packages/gateway/src/connectors/connector-writes/agent-door-notice.ts",
+    ]);
+    for (const rel of [
+      "packages/gateway/src/connectors/connector-writes/enable-prompt.ts",
+      "packages/gateway/src/ipc/connector-rpc-handlers/agent-writes.ts",
+    ]) {
+      expect(await read(rel), rel).toContain("AGENT_DOOR_NOT_ENFORCED_NOTICE");
+    }
   });
 });
 

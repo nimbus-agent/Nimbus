@@ -239,6 +239,11 @@ describe("acceptAction — outcomes", () => {
     );
     expect(row().state).toBe("rejected");
   });
+  test("a rejected action stores NO error_code until AD3a-2 (V97 allows one; nothing writes it yet)", async () => {
+    await acceptAction(deps, OWNER, row(), act({ status: "rejected", reason: "no" }));
+    expect(row().state).toBe("rejected");
+    expect(row().errorCode).toBeNull();
+  });
   test("throw → failed with a classified code, never the message", async () => {
     const out = await acceptAction(
       deps,

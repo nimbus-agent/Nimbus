@@ -67,18 +67,28 @@ function policyAllows(deps: ModelWriteSourceDeps): boolean {
 }
 
 /**
- * The ONE predicate the listing and the per-call recheck share: `row` belongs to the enabled
- * service, its wave is at or below the opt-in's, it is offerable now, AND the owner approved its
- * tool id by name (V84 re-consent). A pre-V84 opt-in has an empty approved set: nothing offered.
+ * The three conditions every door shares (spec § 7.3, OR-AD-2): `row` belongs to the enabled
+ * service, its wave is at or below the shared wave, and it is offerable now. The model's predicate
+ * adds the model's approved set (V84); the agent door's adds its own (V97), so neither door's
+ * approval is a condition of the other's.
  */
-function offeredUnder(e: ModelWriteEnablement | undefined, row: ConnectorWriteRow): boolean {
+export function enabledAndOfferable(
+  e: Pick<ModelWriteEnablement, "service" | "maxWave"> | undefined,
+  row: ConnectorWriteRow,
+): boolean {
   if (e === undefined) return false;
   return (
-    serviceOf(row.actionType) === e.service &&
-    row.wave <= e.maxWave &&
-    isModelOfferableRow(row) &&
-    e.approvedToolIds.has(row.toolId)
+    serviceOf(row.actionType) === e.service && row.wave <= e.maxWave && isModelOfferableRow(row)
   );
+}
+
+/**
+ * The ONE predicate the listing and the per-call recheck share: the shared conditions
+ * ({@link enabledAndOfferable}) AND the owner approved its tool id by name (V84 re-consent). A
+ * pre-V84 opt-in has an empty approved set: nothing offered.
+ */
+function offeredUnder(e: ModelWriteEnablement | undefined, row: ConnectorWriteRow): boolean {
+  return e !== undefined && enabledAndOfferable(e, row) && e.approvedToolIds.has(row.toolId);
 }
 
 /** The approved working directories, or none (fail closed on a throw). */
@@ -109,9 +119,21 @@ function k8sPairsOf(
  * (context, namespace) pair.
  */
 function directoryAvailable(deps: ModelWriteSourceDeps, row: ConnectorWriteRow): boolean {
-  // Every Kubernetes row (the apply, the restart, the scale) needs an approved pair to name.
-  if (serviceOf(row.actionType) === "kubernetes") return k8sPairsOf(deps).length > 0;
-  return row.bound?.prepare.settle !== "iac-terraform" || workdirsOf(deps).length > 0;
+  return scopeAvailable(row, workdirsOf(deps).length > 0, k8sPairsOf(deps).length > 0);
+}
+
+/**
+ * The directory rule on plain facts, shared with the agent door: every Kubernetes row (the apply,
+ * the restart, the scale) needs an approved pair to name, and the Terraform apply needs an approved
+ * directory; any other row needs neither.
+ */
+export function scopeAvailable(
+  row: ConnectorWriteRow,
+  hasWorkdir: boolean,
+  hasK8sPair: boolean,
+): boolean {
+  if (serviceOf(row.actionType) === "kubernetes") return hasK8sPair;
+  return row.bound?.prepare.settle !== "iac-terraform" || hasWorkdir;
 }
 
 export function createModelWriteToolSource(deps: ModelWriteSourceDeps): ConnectorWriteToolSource {

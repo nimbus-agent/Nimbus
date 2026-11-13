@@ -2075,6 +2075,8 @@ const D32_CAPTURE_TABLE_ALLOWED: readonly string[] = [
   "packages/gateway/src/mcp-sink/capture-store.ts",
   "packages/gateway/src/index/capture-v67-sql.ts",
   "packages/gateway/src/index/capture-action-v69-sql.ts",
+  // V97 rebuilds `capture` (the `legacy` flag, the relaxed error-code CHECK); DDL only.
+  "packages/gateway/src/index/agent-door-v97-sql.ts",
 ];
 
 function checkTableConfinement(
@@ -2104,6 +2106,28 @@ export function checkCaptureTableConfinement(files: readonly FileEntry[]): Viola
     D32_CAPTURE_TABLE_RE,
     D32_CAPTURE_TABLE_ALLOWED,
     "capture-table-confined",
+  );
+}
+
+// ---- D49 (the agent door's eligibility; sub-rule (b) lands with its table in AD3a-1) --------------
+// (b) `connector_write_door_approval` (V97) is named only by its store and its DDL: a row is the
+//     record of an owner's `connector.writes.enable --door agent` approval and the definition hash it
+//     was approved at, so no other code may write one, clear a suspension or read around it. Same shape
+//     and the same stated bound as D32(a): a dynamically composed identifier evades a text scan, and
+//     capability confinement (only the store holds queries against the table) is the real defense.
+//     D49's other clauses arrive with AD3a-2 and invariant I58.
+const D49_DOOR_APPROVAL_TABLE_RE = sqlTableReferenceRe("connector_write_door_approval");
+const D49_DOOR_APPROVAL_TABLE_ALLOWED: readonly string[] = [
+  "packages/gateway/src/connectors/connector-writes/door-approval-store.ts",
+  "packages/gateway/src/index/agent-door-v97-sql.ts",
+];
+
+export function checkDoorApprovalConfinement(files: readonly FileEntry[]): Violation[] {
+  return checkTableConfinement(
+    files,
+    D49_DOOR_APPROVAL_TABLE_RE,
+    D49_DOOR_APPROVAL_TABLE_ALLOWED,
+    "door-approval-confined",
   );
 }
 
@@ -4904,6 +4928,9 @@ export const RULE_ANCHORS: readonly string[] = [
   "packages/gateway/src/index/item-history.ts",
   "packages/gateway/src/index/item-store.ts",
   "packages/gateway/src/index/item-history-retention.ts",
+  // D49(b) (door-approval-confined, Phase 28 AD3a-1) — the only store of the per-door approval table;
+  // it moving out of the scan would leave the rule passing over nothing.
+  "packages/gateway/src/connectors/connector-writes/door-approval-store.ts",
 ];
 
 /** Fail loudly when the scanned set cannot support the rules about to run. */
@@ -5126,6 +5153,13 @@ async function run(): Promise<void> {
       );
     }
     if (historyViolations.length > 0) exit = 1;
+    const doorApprovalViolations = checkDoorApprovalConfinement(files);
+    for (const e of doorApprovalViolations) {
+      console.error(
+        `::error file=${e.file},line=${e.line}::D49(b) connector_write_door_approval named outside its store (rule door-approval-confined) — connectors/connector-writes/door-approval-store.ts is the only module that reads or writes it: ${e.snippet}`,
+      );
+    }
+    if (doorApprovalViolations.length > 0) exit = 1;
     const spawnViolations = checkConnectorSpawnIsHidden(files);
     for (const e of spawnViolations) {
       console.error(

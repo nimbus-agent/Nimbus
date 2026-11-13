@@ -8,6 +8,12 @@ import { vacuumAndGzip } from "../../db/vacuum-gzip.ts";
 import { readJournalMode } from "../../db/writable-pragmas.ts";
 import { dbExec, dbRun, dbStmtRun } from "../../db/write.ts";
 import { canonicalizeUrl } from "../../util/url-canonical.ts";
+import {
+  CAPTURE_DOOR_V97_COUNT_SQL,
+  CAPTURE_DOOR_V97_PROBE_SQL,
+  CAPTURE_REBUILD_V97_SQL,
+  CONNECTOR_WRITE_DOOR_APPROVAL_V97_SQL,
+} from "../agent-door-v97-sql.ts";
 import { API_ENDPOINT_V25_SCHEMA_SQL } from "../api-endpoint-v25-sql.ts";
 import { AUDIT_CHAIN_V18_SCHEMA_SQL } from "../audit-chain-v18-sql.ts";
 import { AUDIT_SESSION_V24_SCHEMA_SQL } from "../audit-session-v24-sql.ts";
@@ -234,6 +240,43 @@ function migrateIndexedV94ToV95(db: Database, now: number): void {
     }
     dbExec(db, "PRAGMA user_version = 95");
     recordMigration(db, 95, "lan peer protocol version (Phase 10 FS1)", now);
+  })();
+}
+
+/**
+ * V96→V97: the per-door approval table, then the `capture` rebuild (a `legacy` flag and a CHECK that
+ * lets a `rejected` action carry an error code). Counts the rows across the copy, so a lossy rebuild
+ * aborts the whole step (the V69 precedent). Re-runnable: the suites rewind `user_version`, so the
+ * rebuild is skipped when `legacy` already exists. Exported with an injectable statement list so a
+ * test can plant a lossy copy; the caller owns the transaction.
+ */
+export function rebuildCaptureForV97(
+  db: Database,
+  statements: readonly string[] = CAPTURE_REBUILD_V97_SQL,
+): void {
+  const cols = db.query(CAPTURE_DOOR_V97_PROBE_SQL).all() as Array<{ name: string }>;
+  if (cols.some((c) => c.name === "legacy")) return;
+  const before = (db.query(CAPTURE_DOOR_V97_COUNT_SQL).get() as { n: number }).n;
+  for (const sql of statements) dbExec(db, sql);
+  const after = (db.query(CAPTURE_DOOR_V97_COUNT_SQL).get() as { n: number }).n;
+  if (after !== before) {
+    throw new Error(
+      `V97: capture rebuild copied ${String(after)} rows, expected ${String(before)}`,
+    );
+  }
+}
+
+function migrateIndexedV96ToV97(db: Database, now: number): void {
+  db.transaction(() => {
+    for (const sql of CONNECTOR_WRITE_DOOR_APPROVAL_V97_SQL) dbExec(db, sql);
+    rebuildCaptureForV97(db);
+    dbExec(db, "PRAGMA user_version = 97");
+    recordMigration(
+      db,
+      97,
+      "agent door: per-door approval list, capture.legacy, error code on a rejected action (Phase 28 AD3a-1)",
+      now,
+    );
   })();
 }
 
@@ -813,6 +856,7 @@ const INDEXED_SCHEMA_STEPS: readonly IndexedSchemaStep[] = [
     "incident alert sources: deploy edge types, deployment sha index, one-shot regraph marker (Phase 10 IC2)",
     INCIDENT_ALERT_SOURCES_V96_SQL,
   ),
+  { fromVersion: 96, toVersion: 97, apply: migrateIndexedV96ToV97 },
 ];
 
 /**

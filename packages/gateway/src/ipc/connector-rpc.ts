@@ -14,6 +14,7 @@ import type { EnforcedPolicy } from "../policy/policy-gate.ts";
 import { isConnectorConfigured } from "../sync/connector-configured.ts";
 import type { SyncScheduler } from "../sync/scheduler.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
+import { handleAgentWritesStatus } from "./connector-rpc-handlers/agent-writes.ts";
 import type {
   ConnectorRpcHandlerContext,
   ConnectorRpcHit,
@@ -42,6 +43,7 @@ import {
   withConfiguredInstance,
 } from "./connector-rpc-handlers/index.ts";
 import { asRecord, ConnectorRpcError } from "./connector-rpc-shared.ts";
+import type { ClientKind } from "./server/client-kind.ts";
 
 export { ConnectorRpcError } from "./connector-rpc-shared.ts";
 
@@ -160,6 +162,13 @@ export async function dispatchConnectorRpc(options: {
   getEnforcedPolicy: () => Pick<EnforcedPolicy, "capabilitiesDisabled"> | undefined;
   /** Test seam for the enablement timestamp (production: `Date.now`). */
   now?: () => number;
+  /**
+   * Phase 28 AD3a-1: the connection's declared kind (`ctx.getClientKind(clientId)`), never a param.
+   * Absent reads as `unknown`, which cannot approve connector writes for outside agents.
+   */
+  clientKind?: ClientKind;
+  /** True once the dispatcher's human-only consent wrapper turned an approval into a decline. */
+  agentAnswerWasNonHuman?: () => boolean;
 }): Promise<{ kind: "hit"; value: unknown } | { kind: "miss" }> {
   const {
     method,
@@ -179,6 +188,8 @@ export async function dispatchConnectorRpc(options: {
     continuityTable,
     getEnforcedPolicy,
     now,
+    clientKind,
+    agentAnswerWasNonHuman,
   } = options;
   const rec = asRecord(params);
   const ctx = {
@@ -208,6 +219,12 @@ export async function dispatchConnectorRpc(options: {
     toolExecutor,
     getEnforcedPolicy,
     now: now ?? Date.now,
+    // Phase 28 AD3a-1: what the agent-door enable and status need (the listing may start a connector).
+    ...(clientKind === undefined ? {} : { clientKind }),
+    ...(agentAnswerWasNonHuman === undefined ? {} : { agentAnswerWasNonHuman }),
+    ...(connectorMesh === undefined
+      ? {}
+      : { listServerTools: (service: string) => connectorMesh.listFirstPartyServerTools(service) }),
     // The enable prompt's host line is read from the sandbox's live posture (D2 review 4).
     ...(sandboxRunner === undefined ? {} : { sandboxRunner }),
     // The Obsidian opt-in is also the trigger of its sandbox write grant (I15, B4b).
@@ -301,8 +318,14 @@ export async function dispatchConnectorRpc(options: {
         kind: "hit",
         value: await handleConnectorWritesDisable(rec, await modelWritesDeps()),
       };
-    case "connector.writesStatus":
-      return { kind: "hit", value: handleConnectorWritesStatus(await modelWritesDeps()) };
+    case "connector.writesStatus": {
+      const deps = await modelWritesDeps();
+      // The model part is exactly what it was; the agent door's list is a member of its own.
+      return {
+        kind: "hit",
+        value: { ...handleConnectorWritesStatus(deps), agent: await handleAgentWritesStatus(deps) },
+      };
+    }
     default:
       return { kind: "miss" };
   }
