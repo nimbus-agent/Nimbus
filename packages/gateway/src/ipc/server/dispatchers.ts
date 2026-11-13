@@ -56,6 +56,7 @@ import type { NimbusVault } from "../../vault/nimbus-vault.ts";
 import { GATEWAY_VERSION } from "../../version.ts";
 import { buildStatus } from "../admin-status-rpc.ts";
 import { AgentsRpcError, dispatchAgentsRpc } from "../agents-rpc.ts";
+import { dispatchApprovalsRpc } from "../approvals-rpc.ts";
 import { AuditRpcError, dispatchAuditRpc } from "../audit-rpc.ts";
 import { AutomationRpcError, dispatchAutomationRpc } from "../automation-rpc.ts";
 import { BriefingRpcError, dispatchBriefingRpc } from "../briefing-rpc.ts";
@@ -1625,6 +1626,30 @@ export async function tryDispatchCaptureRpc(
 }
 
 /**
+ * `approvals.*` (Phase 28 AD2): the owner's queue of agent proposals and the one-step approval.
+ * LAN-forbidden (I5), not on the Tauri allowlist (I7). The connection's kind is the CONNECTION's
+ * (`getClientKind`), never a param; only a connection that declared `cli` or `ui` is served.
+ */
+export async function tryDispatchApprovalsRpc(
+  ctx: ServerCtx,
+  method: string,
+  params: unknown,
+  clientId: string,
+): Promise<unknown> {
+  if (!method.startsWith("approvals.")) return phase4RpcSkipped;
+  const rpc = ctx.options.captureRpcCtx;
+  if (rpc === undefined) return phase4RpcSkipped;
+  const out = await dispatchApprovalsRpc(
+    method,
+    params,
+    rpc,
+    { clientId, kind: ctx.getClientKind(clientId) },
+    ctx.consentImpl,
+  );
+  return out.kind === "hit" ? out.value : phase4RpcSkipped;
+}
+
+/**
  * `standing.*` (Phase 10 SA3, I55): the owner's standing approval rules. The whole namespace is in
  * `FORBIDDEN_OVER_LAN` (I5); the Tauri allowlist (I7) names list / show / fires / pause / revoke
  * only. The connection's kind is the CONNECTION's (`getClientKind`), never a param: `create` and
@@ -2004,6 +2029,7 @@ const PHASE4_PLATFORM_DISPATCHERS: ReadonlyArray<
   tryDispatchBriefingRpc,
   tryDispatchNotificationsRpc,
   tryDispatchCaptureRpc,
+  tryDispatchApprovalsRpc,
   tryDispatchStandingRpc,
   tryDispatchMigrationRpc,
   tryDispatchMediaRpc,

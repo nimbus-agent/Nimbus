@@ -19,3 +19,21 @@ export const CAPTURE_ROLE_BY_KIND: Readonly<Record<ClientKind, CaptureRole>> = {
   fleet: "refuse",
   push: "refuse",
 };
+
+/**
+ * Which connection kinds may use `approvals.*` (agent door AD2, D-AD-16). TOTAL over `ClientKind`,
+ * like the table above: a new kind is a compile error. Narrower than `owner` on purpose: an
+ * undeclared `unknown` connection still reaches `captures.*` (so a script or an older client keeps
+ * working) but cannot approve, because the approval path asks a person and only a `cli` or `ui`
+ * connection says it has one. The kind is the connection's own claim (spec § 12), not proof.
+ */
+export const APPROVER_BY_KIND: Readonly<Record<ClientKind, boolean>> = {
+  mcp: false,
+  cli: true,
+  ui: true,
+  unknown: false,
+  http: false,
+  chatops: false,
+  fleet: false,
+  push: false,
+};

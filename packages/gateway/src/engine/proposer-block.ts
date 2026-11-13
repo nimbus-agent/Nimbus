@@ -36,6 +36,11 @@ const visibleLine = (s: string): string =>
     String.raw`\u000a`,
   );
 
+/** One agent-supplied string as ONE escaped line: the escaping the approval prompt applies to a label. */
+export function escapeUnverifiedLine(s: string): string {
+  return visibleLine(s);
+}
+
 /** The two lines that name the proposer, always labelled UNVERIFIED. */
 export function formatProposerBlock(p: AgentProposer): string[] {
   const from = p.labelSource === "kit" ? "kit config" : "declared client name";

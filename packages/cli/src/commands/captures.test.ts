@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import {
   actionAcceptTtyRefusal,
   parseAcceptResult,
@@ -625,7 +627,7 @@ describe("captures accept — act door", () => {
     ["no kind field", { payload: {} }],
     ["a non-string kind", { kind: 7 }],
   ])(
-    "a captures.get with %s refuses a non-TTY accept before captures.accept",
+    "a captures.get with %s refuses a non-TTY accept before approvals.approve",
     async (_n, detail) => {
       const calls: string[] = [];
       const err: string[] = [];
@@ -647,7 +649,7 @@ describe("captures accept — act door", () => {
     },
   );
 
-  test("--json TTY refusal prints {error} on stdout and never calls captures.accept", async () => {
+  test("--json TTY refusal prints {error} on stdout and never calls approvals.approve", async () => {
     const calls: string[] = [];
     const out: string[] = [];
     const err: string[] = [];
@@ -682,7 +684,7 @@ describe("captures accept — act door", () => {
     const c = {
       call: (m: string) =>
         Promise.resolve(
-          m === "captures.accept" ? { id: "cap_1", state: "failed", errorCode } : ACTION,
+          m === "approvals.approve" ? { id: "cap_1", state: "failed", errorCode } : ACTION,
         ),
     };
     await runCapturesWith(
@@ -712,7 +714,7 @@ describe("captures accept — act door", () => {
     ],
   ])("result %p → exit %d, says %p", async (raw, exit, text) => {
     const out: string[] = [];
-    const c = { call: (m: string) => Promise.resolve(m === "captures.accept" ? raw : ACTION) };
+    const c = { call: (m: string) => Promise.resolve(m === "approvals.approve" ? raw : ACTION) };
     const code = await runCapturesWith(
       c as never,
       { verb: "accept", id: "cap_1", json: false },
@@ -728,7 +730,7 @@ describe("captures accept — act door", () => {
     const c = {
       call: (m: string) =>
         Promise.resolve(
-          m === "captures.accept"
+          m === "approvals.approve"
             ? { id: "cap_1", state: "executed", outcomeRef: "https://x/1" }
             : ACTION,
         ),
@@ -747,7 +749,7 @@ describe("captures accept — act door", () => {
     const c = {
       call: (m: string) =>
         Promise.resolve(
-          m === "captures.accept"
+          m === "approvals.approve"
             ? { id: "cap_1", state: "failed", errorCode: "ERR_ACTION_DISPATCH" }
             : ACTION,
         ),
@@ -768,7 +770,7 @@ describe("captures accept — act door", () => {
     const c = {
       call: (m: string) =>
         Promise.resolve(
-          m === "captures.accept"
+          m === "approvals.approve"
             ? { id: "cap_1", state: "failed", errorCode: "ERR_ACTION_TOOL_NOT_FOUND" }
             : ACTION,
         ),
@@ -785,7 +787,7 @@ describe("captures accept — act door", () => {
   test("--json prints the raw action result with the same exit code", async () => {
     const out: string[] = [];
     const raw = { id: "cap_1", state: "rejected" };
-    const c = { call: (m: string) => Promise.resolve(m === "captures.accept" ? raw : ACTION) };
+    const c = { call: (m: string) => Promise.resolve(m === "approvals.approve" ? raw : ACTION) };
     const code = await runCapturesWith(
       c as never,
       { verb: "accept", id: "cap_1", json: true },
@@ -801,7 +803,7 @@ describe("captures accept — act door", () => {
     ["redirected stdout", { stdin: true, stdout: false }],
     ["no tty info (default)", undefined],
   ])(
-    "action accept with %s refuses BEFORE captures.accept is called (Review Focus 4)",
+    "action accept with %s refuses BEFORE approvals.approve is called (Review Focus 4)",
     async (_n, tty) => {
       const calls: string[] = [];
       const err: string[] = [];
@@ -823,7 +825,7 @@ describe("captures accept — act door", () => {
     },
   );
 
-  test("a failed captures.get fails the accept closed: no captures.accept call", async () => {
+  test("a failed captures.get fails the accept closed: no approvals.approve call", async () => {
     const calls: string[] = [];
     const c = {
       call: (m: string) => {
@@ -911,7 +913,7 @@ describe("captures accept — act door", () => {
       const err: string[] = [];
       const c = {
         call: (m: string) =>
-          m === "captures.accept" ? Promise.reject(new Error(msg)) : Promise.resolve(ACTION),
+          m === "approvals.approve" ? Promise.reject(new Error(msg)) : Promise.resolve(ACTION),
       };
       expect(
         await runCapturesWith(
@@ -924,6 +926,96 @@ describe("captures accept — act door", () => {
       expect(err.join("")).toBe(`${msg}\n`);
     },
   );
+
+  test("an action accept is an alias of approvals.approve: the TTY guard first, then declareKind, then approve", async () => {
+    const calls: Array<[string, unknown]> = [];
+    const c = {
+      call: (m: string, p?: unknown) => {
+        calls.push([m, p]);
+        if (m === "captures.get") return Promise.resolve(ACTION);
+        if (m === "approvals.approve") return Promise.resolve({ id: "cap_1", state: "executed" });
+        return Promise.resolve({});
+      },
+    };
+    const code = await runCapturesWith(
+      c as never,
+      { verb: "accept", id: "cap_1", json: false },
+      { out: () => {}, err: () => {} },
+      TTY,
+    );
+    expect(code).toBe(0);
+    expect(calls).toEqual([
+      ["captures.get", { id: "cap_1" }],
+      ["session.declareKind", { kind: "cli" }],
+      ["approvals.approve", { id: "cap_1" }],
+    ]);
+  });
+
+  test("a rejected approval prints the gateway's reason through the alias", async () => {
+    const out: string[] = [];
+    const c = {
+      call: (m: string) =>
+        Promise.resolve(
+          m === "approvals.approve"
+            ? { id: "cap_1", state: "rejected", reason: "the page is under the KB parent" }
+            : ACTION,
+        ),
+    };
+    const code = await runCapturesWith(
+      c as never,
+      { verb: "accept", id: "cap_1", json: false },
+      { out: (s) => out.push(s), err: () => {} },
+      TTY,
+    );
+    expect(code).toBe(1);
+    expect(out.join("")).toBe("[rejected] not executed: the page is under the KB parent\n");
+  });
+
+  test("a decision accept never calls approvals.approve or declares a kind", async () => {
+    const calls: string[] = [];
+    const c = {
+      call: (m: string) => {
+        calls.push(m);
+        return Promise.resolve(
+          m === "captures.get"
+            ? { kind: "decision", payload: {} }
+            : { id: "cap_1", state: "accepted", nativeRef: "capture:cap_1" },
+        );
+      },
+    };
+    await runCapturesWith(
+      c as never,
+      { verb: "accept", id: "cap_1", json: false },
+      { out: () => {}, err: () => {} },
+    );
+    expect(calls).toEqual(["captures.get", "captures.accept"]);
+  });
+
+  test("accept --all --kind action still refuses and makes no call", async () => {
+    const calls: string[] = [];
+    const err: string[] = [];
+    const c = {
+      call: (m: string) => {
+        calls.push(m);
+        return Promise.resolve({});
+      },
+    };
+    expect(
+      await runCapturesWith(
+        c as never,
+        { verb: "acceptAll", kind: "action", json: false },
+        { out: () => {}, err: (s) => err.push(s) },
+        TTY,
+      ),
+    ).toBe(1);
+    expect(calls).toEqual([]);
+    expect(err.join("")).toContain("nimbus captures accept <id>");
+  });
+
+  test("the accept verb connects with the human consent choice", () => {
+    const src = readFileSync(join(import.meta.dir, "captures.ts"), "utf8");
+    expect(src).toContain('consent: { kind: "human" }');
+  });
 
   test("doctor: action pending line", () => {
     const { lines } = doctorCapturesLines({
@@ -939,7 +1031,7 @@ describe("captures accept — act door", () => {
       actionExpiringWithinHour: 1,
     });
     expect(lines).toContain(
-      "[info] MCP capture sink: 3 agent-proposed actions awaiting review (1 expire within 1h) — nimbus captures",
+      "[info] MCP capture sink: 3 agent-proposed actions awaiting review (1 expire within 1h) — nimbus approvals",
     );
   });
 
@@ -958,7 +1050,7 @@ describe("captures accept — act door", () => {
     });
     expect(exit).toBe(1);
     expect(lines).toContain(
-      "[warn] MCP capture sink: action queue full (10/10): new action proposals are being refused — nimbus captures",
+      "[warn] MCP capture sink: action queue full (10/10): new action proposals are being refused — nimbus approvals",
     );
     expect(lines.some((l) => l.includes("awaiting review"))).toBe(false);
   });

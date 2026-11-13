@@ -3077,7 +3077,11 @@ yields no capture tool rather than a guessed one.
 | `captures.accept` | owner | write a proposal's native row (decision, term or link) |
 | `captures.reject` | owner | discard a proposal; needs no capability |
 | `captures.purge` | owner | delete a finished action row (`executed`/`failed`/`rejected`/`expired`) and its stored input; needs no capability; the action is not undone |
-| `capture.state` | `mcp` kind only | kind, state, `expiresAt`, `outcomeRef`, `errorCode` for ONE capture id (PR 3) |
+| `capture.state` | `mcp` kind only | kind, state, `expiresAt`, `outcomeRef`, `errorCode` for ONE capture id the asking connection submitted (any other id is `ERR_CAPTURE_NOT_FOUND`, as an absent one) |
+| `capture.mine` | `mcp` kind only | the asking connection's own captures, newest first, at most 50: id, kind, state, times, `outcomeRef`, `errorCode`; never a payload (Phase 28 AD2) |
+| `approvals.list` / `approvals.get` | `cli` or `ui` connection | the owner's queue of waiting action proposals (escaped, oldest first) and one proposal's verbatim input (Phase 28 AD2; not renderer-exposed) |
+| `approvals.approve` | `cli` or `ui` connection | approve one proposal in one step through `acceptCapture`: the executor's prompt reaches this connection, `human` answers only (Phase 28 AD2) |
+| `approvals.decline` | `cli` or `ui` connection | reject a waiting action proposal |
 
 **Config.** `[mcp_sink]`: `enabled` (false), `kinds`, `max_per_hour` (30, 1..1000),
 `max_pending` (100, 1..10000); PR 3 added `action_ttl_hours` and `action_max_pending` (see the act door). Out-of-range values and unknown kinds refuse at load, naming the key
@@ -3085,10 +3089,10 @@ and value; nothing is clamped.
 
 **Static D32** has seven clauses; the first three arrived with PR 1, (d) with PR 2 and (e)–(g) with PR 3 (each described below): (a) the `capture` table identifier only in `capture-store.ts` and
 the V67 SQL module; (b) `submitCapture`/`acceptCapture`/`rejectCapture`/`revokeCapture` named only in
-`ipc/capture-rpc.ts` and `capture-gate.ts`; (c) `capture-gate.ts` value-imported (or re-exported, or
-dynamically imported) by no gateway module except `ipc/capture-rpc.ts`.
+`ipc/capture-rpc.ts`, `ipc/approvals-rpc.ts` (Phase 28 AD2) and `capture-gate.ts`; (c) `capture-gate.ts` value-imported (or re-exported, or
+dynamically imported) by no gateway module except those two RPC modules.
 
-**Not shipped, and recorded as such.** The desktop has a Captures page (2026-10-16) but it is read-only: it lists and shows captures, and accepting, rejecting, revoking and purging happen only in a terminal. Opening it runs the same action-expiry sweep `captures.list` always runs, so an overdue proposed action can turn `expired` (with its `capture.action.expire` audit row) just as it does under `nimbus captures list`. Batch accept (`nimbus captures accept --all`, 2026-10-16) is a CLI loop over `captures.list` and `captures.accept` with no gateway method of its own; it takes decisions, terms and links only, never an action. `data.delete --service nimbus` removes
+**Not shipped, and recorded as such.** The desktop has a Captures page (2026-10-16) but it is read-only: it lists and shows captures, and accepting, rejecting, revoking and purging happen only in a terminal (an action proposal is approved there with `nimbus approvals <id>`). Opening it runs the same action-expiry sweep `captures.list` always runs, so an overdue proposed action can turn `expired` (with its `capture.action.expire` audit row) just as it does under `nimbus captures list`. Batch accept (`nimbus captures accept --all`, 2026-10-16) is a CLI loop over `captures.list` and `captures.accept` with no gateway method of its own; it takes decisions, terms and links only, never an action. `data.delete --service nimbus` removes
 capture items but does not clear `capture` rows. The attempt limit is in-memory. A live note is searchable
 unreviewed, by design.
 
@@ -3150,22 +3154,26 @@ allowlist; no HTTP route). `captures.list` takes an optional `limit`.
 Schema `V69`, static `D32(e)–(g)`, org-policy name `mcp_action` (the NINTH `[policy.capabilities.ai_v2]` lockoff),
 no new invariant number (it extends `I28`). An MCP client can PROPOSE a connector action through `propose_action`
 and poll its outcome through `capture_status`. The agent never causes anything to be sent: the proposal waits, inert,
-until the owner runs `nimbus captures accept <id>` AND approves the executor's own HITL prompt.
+until the owner approves it with `nimbus approvals <id>` (since Phase 28 AD2; `nimbus captures accept <id>` on an action is a CLI alias of it) AND answers the executor's own HITL prompt.
 
 ```text
 MCP client --stdio--> nimbus mcp-server (packages/cli/src/mcp/capture-tools.ts)
                         propose_action --IPC capture.submit--> capture-gate.submitCapture()  (I28 submit order)
                         capture_status --IPC capture.state---> capture-gate.captureStateFor()
 
-owner CLI: nimbus captures accept <id>  --IPC captures.accept (batch timeout; TTY required by a
-           CLI-side guard, not the gateway: a raw local-owner socket client can accept and answer
-           its own consent prompt, within the local-owner trust model)
+owner CLI: nimbus approvals <id>  --IPC approvals.approve (batch timeout; consent choice "human";
+           a TTY is required by a CLI-side guard BEFORE any RPC, not by the gateway: a raw local-owner
+           socket client can still use captures.accept and answer its own consent prompt, within the
+           local-owner trust model). `nimbus captures accept <id>` on an action calls the same method.
    v
-ipc/capture-rpc.ts injects ActDeps.execute(actionType, input, provenance):
+ipc/approvals-rpc.ts: a connection that declared cli or ui only; consent = humanOnlyConsent(the
+           owner's own channel); then the gate's acceptCapture (the function captures.accept also uses)
+   v
+ipc/capture-rpc.ts buildActDeps builds ActDeps.execute(actionType, input, provenance):
      toolId  = the routing table's tool for that type              (connectors/proposable-actions.ts)
-     consent = the ACCEPTING client's channel, prompt = provenance + verbatim input
-     new ToolExecutor(consent, audit, dispatcher, no delegate, egress sink, policy HITL overlay)
-        .execute({ type: actionType, payload: { mcpToolId: toolId, input } })
+     consent = the APPROVING client's channel (approvals.approve: human answers only)
+     buildAgentWriteExecutor(...)  (engine/run-ask.ts: no delegate, the before-state runner)
+        .execute({ type, origin: "agent", proposer, payload: { mcpToolId: toolId, input } })
    v
 capture-gate.acceptCapture() -- kind "action" --> capture-act.acceptAction()  (async, fixed order)
 ```
@@ -3181,6 +3189,8 @@ transaction leaves `executing`; the boot reconcile marks it `failed` with `ERR_A
 `proposed`. A lazily-expired action refuses with `ERR_CAPTURE_STATE`, a due-but-unswept one with `ERR_CAPTURE_EXPIRED`.
 The configured-ness check reuses `isConnectorConfigured`, which treats a multi-key service as configured once ANY key
 is set, so an accept can pass it and still fail at dispatch (`ERR_ACTION_DISPATCH`).
+
+**The owner's approval path (Phase 28 AD2).** `nimbus approvals` lists the waiting action proposals (`approvals.list`: id, the agent's declared label marked UNVERIFIED, type, wave, whether a typed confirmation applies, age, expiry and a one-line summary, each string escaped once by the gateway with the label escaping of the approval prompt). `nimbus approvals show <id>` prints what the agent sent (`approvals.get`: the verbatim input, invisible characters shown as escapes), and `nimbus approvals <id>` approves in ONE owner action (`approvals.approve`). The handler runs in order, each step a named function in `ipc/approvals-rpc.ts`: the connection declared `cli` or `ui` (`APPROVER_BY_KIND`); the row is an action the owner may read; the act door's deps are built around THIS connection's consent channel wrapped by `humanOnlyConsent`; the gate's `acceptCapture` runs (capability, owner role, state, expiry, classification, configured-ness, destination, compare-and-set claim, then the executor); the reply is shaped. So the executor's own prompt, the target's current state and, for a Wave 4 write, the typed confirmation reach the approving terminal, and an answer whose `answerSource` is not `human` (`--yes`, a script, an old client) becomes a decline before the executor records it. A refusal inside the executor finalizes the row `rejected` with no stored code (V69 allows none on that state) and its reason goes to the owner's reply only; letting the agent tell a decline from a refusal needs the table rebuild planned for AD3a. `approvals.decline` rejects a waiting proposal and needs no capability, so a disabled sink can still be drained. The methods are in the LAN denylist, are not renderer-callable and have no HTTP route. A queued proposal raises a count-only toast ("N agent proposals waiting": a number and fixed text). `--decline-all-from <label>` is a CLI loop over list and decline. Wave 4 typed confirmation is proved on a synthetic row, because no Wave 4 type is proposable before AD3a.
 
 **Why a gateway-owned routing table (the reason `PROPOSABLE_WRITE_TOOLS` exists).** The first draft built
 `{type, payload:{input}}` and assumed the dispatcher would find the tool from `action.type`. It would not:
@@ -3223,10 +3233,10 @@ variation selectors and the TAG characters; `"` and `\` in the one-line client l
 cannot close its quotes and fake the text after it. Bound: homoglyphs are not caught. The same table (`mcp-sink/invisible-text.ts`) is STRIPPED at
 write time from stored note, decision, term and link text, and an action type is structure: anything outside
 `[A-Za-z0-9_.-]` is refused at submit, a user-MCP tool segment outside `[A-Za-z0-9_-]{1,64}` classifies `unknown`, and
-the prompt's Type line is escaped as well. `nimbus captures accept` on an action requires a TTY (the prompt needs a
-human) and refuses otherwise, also when `captures.get` names no kind. That is a CLI-side guard, not a gateway one: a
-raw local-owner socket client can accept and answer its own consent prompt, which is within the local-owner trust
-model.
+the prompt's Type line is escaped as well. `nimbus approvals <id>` (and `nimbus captures accept` on an action, its
+alias) requires a TTY (the prompt needs a human) and refuses otherwise, before any RPC; the alias also refuses when
+`captures.get` names no kind. That is a CLI-side guard, not a gateway one: a raw local-owner socket client can
+accept and answer its own consent prompt, which is within the local-owner trust model.
 
 **Retention.** Every finished action row (`rejected`, `expired`, `executed` or `failed`) is pruned 90 days after its
 decision (`FINISHED_RETENTION_MS`), at boot and on each reject, together with rejected proposals; a `proposed` or
@@ -3248,10 +3258,10 @@ before the connector runs (I29), so a window with no accepted action has no row.
 1..100). Reads (`listCaptures`, `getCapture`, `captureStateFor`, `captureStatus`) first expire due actions and audit
 each, so the state they report is the stored state; the boot sweep expires and fails interrupted actions. `expired`
 and `rejected` actions are pruned on the existing rejected-retention clock; `executed` and `failed` rows are KEPT
-(the history of what agents caused). `capture.state` answers for ANY capture id to any `mcp`-kind client, not only
-the submitter's (ids are random); it returns state, expiry, `outcomeRef` and error code, never the payload.
+(the history of what agents caused). `capture.state` answers only for ids the asking connection submitted (since Phase 28 AD2; another connection's id is
+`ERR_CAPTURE_NOT_FOUND`, as an absent one, and ids carry 128 random bits); it returns state, expiry, `outcomeRef` and error code, never the payload.
 
-**Static D32(e)–(g).** (e) `acceptAction` is defined only in `capture-act.ts` and called only from `capture-gate.ts`;
+**Static D32(e)–(g).** (e) `acceptAction` is defined only in `capture-act.ts` and called only from `capture-gate.ts` (one call, in `acceptCapture`, which exactly the two RPC modules reach);
 (f) no non-test file under `packages/gateway/src/mcp-sink/` imports `engine/executor.ts` or anything under
 `connectors/`, type-only imports included, so execution, classification and configured-ness reach the sink only as
 injected functions built in `ipc/capture-rpc.ts` and `platform/assemble.ts`; (g) the `mcpToolId` literal

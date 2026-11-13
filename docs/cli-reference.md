@@ -1691,17 +1691,19 @@ ticket, send an email, and so on); it is registered only when `[mcp_sink] kinds`
 not turned `mcp_action` off. `input` is the tool's arguments as a JSON object, `summary` is the agent's one-line
 reason (shown to the owner marked unverified). The tool's description lists the action types proposable on THIS
 machine. NOTHING is sent when it is called: the reply says the action has NOT run, that the
-owner must accept it with `nimbus captures accept <id>` and approve the prompt, and to poll `capture_status`. Types that are not proposable
+owner must approve it with `nimbus approvals <id>` at the prompt, and to poll `capture_status`. Types that are not proposable
 (file, VCS, pipeline, cloud, IaC, Kubernetes, deployment, incident and data-platform writes, the confined ChatOps
 posts and the tribal KB) are refused, as are user-MCP tools of a
 server not registered `--model`. `capture_status { id }` reads the state of a capture by id (`proposed`, `executed`,
 `failed`, `rejected`, `expired`, `accepted`, `live`, `revoked`) and, for an executed action, a short `https:` link when
-the service returned one; never the payload. It is offered whenever any kind is enabled. It answers for any capture id
-an `mcp` client presents, not only its own; ids are random.
+the service returned one; never the payload. It is offered whenever any kind is enabled. Since Phase 28 AD2 it answers
+only for captures submitted on the same gateway connection (any other id reads as not found, as an absent one does), so
+a restarted MCP server or a reconnect cannot read its earlier ids; capture ids carry 128 random bits and one connection
+holds at most 3 proposed actions.
 
 `agents.preflight` is deliberately **not** exposed: it is the `I24` federated action path,
 and triggers sandboxed execution on peers behind the owner's HITL gate. The only write
-surface is the capture tools above. A connector action can be PROPOSED (`propose_action`) but never run by the agent: it runs only after the owner accepts it with `nimbus captures accept` and approves the executor's HITL prompt.
+surface is the capture tools above. A connector action can be PROPOSED (`propose_action`) but never run by the agent: it runs only after the owner approves it with `nimbus approvals <id>` and answers the executor's HITL prompt.
 
 Briefs served over MCP are recorded in the egress ledger (`I29`) — the adapter declares
 `kind: "mcp"` on connect, so `nimbus prove` accounts for them.
@@ -1737,6 +1739,26 @@ While a rule is live, each write of that step that is built by that exact workfl
 
 ---
 
+### `nimbus approvals`
+
+The owner's queue of connector actions that outside MCP agents proposed (`propose_action`), and the one-step approval of one (Phase 28 AD2). These are owner commands: the gateway serves them only to a connection that declared `cli` or `ui`, so an editor agent, an undeclared client, HTTP and ChatOps are refused (`ERR_CAPTURE_FORBIDDEN_CLIENT`). Nothing here needs a model.
+
+```bash
+nimbus approvals [list] [--json]
+nimbus approvals show <id> [--json]
+nimbus approvals <id>
+nimbus approvals <id> --decline [--json]
+nimbus approvals --decline-all-from <label> [--json]
+```
+
+`list` shows, oldest first, each waiting proposal: id, the agent's declared label marked `unverified`, action type, wave (`type-to-confirm` where the write needs a typed confirmation), age, time to expiry and the agent's one-line summary. Every agent-supplied string is escaped by the gateway and stripped of control characters again by the CLI. `show <id>` prints what the agent SENT (the verbatim input, invisible characters as escapes); the typed preview and the target's current state appear only when you approve. `<id>` approves in ONE step: the gateway runs the proposal on this terminal's own connection, so the executor's approval prompt (the typed preview, the target's current state, `Requested by: an outside agent (unverified)` and the UNVERIFIED proposer block) is asked here, and for a Wave 4 write you type the confirmation text exactly. It prints one line, the same as `captures accept` on an action: `[ok] executed <type> (<link>)`, `[rejected] not executed: <reason>` (the reason is the gateway's, for example a before-state guard; a plain decline prints `you declined the approval`), or `[failed] <code>`; exit 0 only for `executed`.
+
+Only a person can approve. `<id>` requires an interactive terminal on both stdin and stdout and checks it before it sends anything (without one it prints `nimbus approvals <id> requires an interactive terminal (TTY)` and exits 1 with no request made). `--yes`, `-y` and `--script-consent-source` are usage errors (exit 2) and `NIMBUS_SCRIPT_CONSENT_SOURCE` is ignored here; the gateway also turns any answer that did not come from a person (`--yes`, a script, an old client that reports no source) into a decline. The TTY check is the CLI's own guard, not the gateway's; the gateway cannot see a terminal. `approve` has no `--json` form because the prompt owns stdout. `--decline` rejects one proposal and `--decline-all-from <label>` rejects every waiting proposal whose declared label equals `<label>` (a CLI loop over list and decline; a proposal that arrives mid-run is not declined; none matching exits 0 and says so; any failed decline exits 1). A decline needs no terminal.
+
+A proposal's agent can poll only its own captures (`capture_status`), at most 3 proposed actions wait per agent connection, and a queued proposal raises a count-only toast ("N agent proposals waiting"). `nimbus captures accept <id>` on an action is an alias of `nimbus approvals <id>`. Exit codes: `0` done, `1` refused, declined or failed, `2` usage.
+
+---
+
 ### `nimbus captures`
 
 Review what MCP clients have written into your index. These are owner commands: they refuse the
@@ -1752,7 +1774,7 @@ nimbus captures revoke <id> [--json]
 nimbus captures purge <id> [--json]
 ```
 
-`accept` of a proposed ACTION (Phase 28 AD1) shows the executor's own approval prompt, the same one the model door shows: the typed preview, the target's current state where the row reads one (a ledgered read of the same connector, up to 5 seconds), `Requested by: an outside agent (unverified)`, and, last, the proposing client's name and the agent's summary, both labelled UNVERIFIED. It no longer shows the old "Agent-proposed action" header. Which actions can be proposed has not changed. `list` shows id, kind, state, title, client label and age; `--limit` caps the rows (1 to 200). `show` prints one capture in full, and for an accepted capture a native-status line: the decision, term or link it wrote is `owned` by the capture, `superseded` (something else took it over) or gone (`absent`). `accept` turns a `proposed` decision, term or link into a real decision record, glossary term or `captured_*` graph edge, labelled agent-authored; it refuses with `ERR_CAPTURE_SUPERSEDED` or `ERR_CAPTURE_LINK_UNRESOLVED` when the target has changed since the proposal. `reject` discards a proposal: it flips the capture state and appends a `capture.reject` audit row, but creates no native row and no indexed item; it works even when an org policy has switched the sink off. An accepted term is found by `nimbus query` through its capture item, and `nimbus query` tags capture cards "agent-authored". `revoke` also removes an accepted capture's decision, term or link, but only if the capture still owns it; `revoke`
+For an agent-proposed ACTION use [`nimbus approvals`](#nimbus-approvals): `captures accept <id>` on an action is a CLI alias that calls `approvals.approve`, so it is human-only too (`NIMBUS_SCRIPT_CONSENT_SOURCE` is ignored: the prompt is answered by you), while `accept` on a decision, term or link is unchanged. `accept` of a proposed ACTION (Phase 28 AD1) shows the executor's own approval prompt, the same one the model door shows: the typed preview, the target's current state where the row reads one (a ledgered read of the same connector, up to 5 seconds), `Requested by: an outside agent (unverified)`, and, last, the proposing client's name and the agent's summary, both labelled UNVERIFIED. It no longer shows the old "Agent-proposed action" header. Which actions can be proposed has not changed. `list` shows id, kind, state, title, client label and age; `--limit` caps the rows (1 to 200). `show` prints one capture in full, and for an accepted capture a native-status line: the decision, term or link it wrote is `owned` by the capture, `superseded` (something else took it over) or gone (`absent`). `accept` turns a `proposed` decision, term or link into a real decision record, glossary term or `captured_*` graph edge, labelled agent-authored; it refuses with `ERR_CAPTURE_SUPERSEDED` or `ERR_CAPTURE_LINK_UNRESOLVED` when the target has changed since the proposal. `reject` discards a proposal: it flips the capture state and appends a `capture.reject` audit row, but creates no native row and no indexed item; it works even when an org policy has switched the sink off. An accepted term is found by `nimbus query` through its capture item, and `nimbus query` tags capture cards "agent-authored". `revoke` also removes an accepted capture's decision, term or link, but only if the capture still owns it; `revoke`
 deletes the note's item and embeddings and clears the record's payload (the row stays, as the
 history of what was captured and when); it is idempotent, so a second revoke reports success and
 writes no second audit row. **Accepting in a batch.** `nimbus captures accept --all` accepts every `proposed` decision, term and link (or one
@@ -1767,10 +1789,10 @@ stdout carries one `{accepted, total, more, results}` object and the listing and
 **Accepting an action.** `nimbus captures accept <id>` on a `kind: action` capture REQUIRES an interactive terminal
 (the executor's HITL prompt needs a human); without one it prints `nimbus captures accept requires an interactive
 terminal (TTY) to approve an agent-proposed action.` and exits 1: it calls `captures.get` to learn the capture's kind,
-but never `captures.accept`. A `captures.get` that names no kind is refused the same way without a TTY. The check is
+but never `approvals.approve` or `captures.accept`. With a terminal it declares the `cli` kind and calls `approvals.approve` (the same path as `nimbus approvals <id>`). A `captures.get` that names no kind is refused the same way without a TTY. The check is
 the CLI's own guard, not the gateway's: a raw local-owner socket client can accept and answer its own consent prompt,
 which is within the local-owner trust model. On a TTY it asks you to
-approve the verbatim input (agent-written strings with invisible characters shown escaped) and then prints one line:
+approve the executor's own prompt (the typed preview where the write has one, otherwise the verbatim input, with agent-written strings and invisible characters shown escaped) and then prints one line:
 
 | Outcome | Line | Exit |
 | --- | --- | --- |
@@ -1795,7 +1817,7 @@ and every non-action kind (use `revoke`). It needs no TTY and works with the sin
 `capture.purge` audit row naming the capture, action type and prior state, never the payload. It cannot remove the
 executor's own redacted audit row for the action, and an agent asking `capture_status` about a purged id is told it
 does not exist.
-`nimbus captures list` shows an action's remaining time, and `nimbus doctor` reports how many actions await review (and how many expire within an hour) and warns when the action queue is full. `--json` prints the raw gateway result.
+`nimbus captures list` shows an action's remaining time, and `nimbus doctor` reports how many actions await review (and how many expire within an hour, pointing at `nimbus approvals`) and warns when the action queue is full. `--json` prints the raw gateway result.
 
 Titles, bodies and client labels are agent-supplied: control
 characters are stripped before printing. `nimbus doctor` prints a capture-sink line when the sink is on.

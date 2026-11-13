@@ -346,6 +346,7 @@ Everything else follows the standard triple. These break from it in a way worth 
 | `packages/gateway/src/chatops/reply-dispatcher.ts` | Operational ChatOps posts — invariant `I23`/`D17` server-derived `ReplyTarget` |
 | `packages/gateway/src/engine/quorum/quorum-coordinator.ts` | Quorum HITL — invariant `I21` (DISTINCT authed peers, deny aborts) |
 | `packages/gateway/src/tribal/tribal-write-gate.ts` | Tribal-knowledge KB capture — invariant `I25`/`D19` config-pinned destination |
+| `packages/gateway/src/ipc/approvals-rpc.ts` (+ `humanOnlyConsent` in `ipc/consent.ts`, CLI `packages/cli/src/commands/approvals.ts`) | The owner's queue of MCP-agent action proposals and the one-step human-only approval — `approvals.list|get|approve|decline`, reaches the act door only through `acceptCapture` (I28, static D32(b)/(c) two RPC modules) |
 | `packages/gateway/src/share/share-gate.ts` | `createShare` — invariant `I27`/`D21` sole outbound-share chokepoint (see `nimbus-share-virality` skill) |
 | `packages/gateway/src/egress/egress-ledger.ts` | `appendEgressEntry` + `EgressSink` — invariant `I29`/`D22` egress-ledger append before `connectors.dispatch` (see `nimbus-egress` skill) |
 | `packages/gateway/src/egress/{egress-record,egress-verify,egress-prune,egress-sign}.ts` | Entry builder (`serviceOf` destination) / BLAKE3-chain verify (timing-safe, I10) / HITL-gated prune tombstone / Vault-reused receipt sign |

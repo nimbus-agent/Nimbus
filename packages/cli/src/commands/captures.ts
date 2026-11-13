@@ -2,17 +2,23 @@ import { createInterface } from "node:readline/promises";
 
 import type { IPCClient } from "../ipc-client/index.ts";
 import { CliExit } from "../lib/cli-exit.ts";
+import { declareCliClientKind } from "../lib/declare-client-kind.ts";
 import { BATCH_RPC_TIMEOUT_MS } from "../lib/rpc-timeouts.ts";
 import { withGatewayIpc } from "../lib/with-gateway-ipc.ts";
 import { getCliPlatformPaths } from "../paths.ts";
 import {
+  acceptLine,
   type CaptureSummaryView,
   formatCaptureDetail,
   formatCaptureTable,
+  kindNoun,
+  parseAcceptResult,
   parseDetail,
   parseList,
   stripControl,
 } from "./captures-format.ts";
+
+export { parseAcceptResult };
 
 export const CAPTURES_USAGE =
   "usage: nimbus captures [list] [--state live|proposed|accepted|rejected|revoked|executing|executed|failed|expired] [--kind note|decision|term|link|action] [--limit 1-200] [--json]\n" +
@@ -96,11 +102,6 @@ export function parseCapturesArgs(argv: string[]): CapturesArgs | undefined {
   return parseListFlags(verb === "list" ? rest.slice(1) : rest, json);
 }
 
-function kindNoun(nativeRef: string): string {
-  if (nativeRef.startsWith("capture:")) return "decision";
-  return nativeRef.includes("|") ? "link" : "glossary term";
-}
-
 function confirmation(verb: "revoke" | "reject" | "purge", id: string): string {
   if (verb === "purge") {
     return `Purged ${id}: the stored proposal and its input are deleted; the action it ran is not undone.\n`;
@@ -129,76 +130,6 @@ export function actionAcceptTtyRefusal(kind: string | undefined, tty: Tty): stri
     return "nimbus captures accept requires an interactive terminal (TTY): the gateway did not say what kind of capture this is, so it may be an agent-proposed action.";
   }
   return undefined;
-}
-
-export type AcceptView =
-  | { state: "accepted"; nativeRef: string }
-  | { state: "executed"; outcomeRef?: string }
-  | { state: "rejected" }
-  | { state: "failed"; errorCode: string };
-
-/**
- * Failures KNOWN to have happened before any request reached the service (the tool did not
- * resolve). Every other failure code, including one this CLI has never heard of, may have reached
- * it, and says so.
- */
-const NOT_DISPATCHED = new Set(["ERR_ACTION_TOOL_NOT_FOUND"]);
-
-/** A success line needs a real result; anything else is a gateway contract break. */
-export function parseAcceptResult(raw: unknown): AcceptView {
-  const r = (typeof raw === "object" && raw !== null ? raw : {}) as Record<string, unknown>;
-  const nativeRef = r["nativeRef"];
-  if (r["state"] === "accepted" && typeof nativeRef === "string" && nativeRef !== "") {
-    return { state: "accepted", nativeRef };
-  }
-  if (r["state"] === "executed") {
-    const outcomeRef = r["outcomeRef"];
-    return typeof outcomeRef === "string"
-      ? { state: "executed", outcomeRef }
-      : { state: "executed" };
-  }
-  if (r["state"] === "rejected") return { state: "rejected" };
-  const errorCode = r["errorCode"];
-  if (r["state"] === "failed" && typeof errorCode === "string") {
-    return { state: "failed", errorCode };
-  }
-  throw new Error(
-    "captures.accept returned a malformed result; the capture was not confirmed accepted",
-  );
-}
-
-function acceptLine(
-  id: string,
-  v: AcceptView,
-  actionType: string | undefined,
-): { line: string; exit: number } {
-  const type = actionType === undefined ? "the action" : stripControl(actionType);
-  switch (v.state) {
-    case "accepted": {
-      const nativeRef = stripControl(v.nativeRef);
-      return {
-        line: `Accepted ${id}: it now counts as a ${kindNoun(nativeRef)} (${nativeRef}) and is labelled agent-authored.\n`,
-        exit: 0,
-      };
-    }
-    case "executed": {
-      const ref = v.outcomeRef === undefined ? "" : stripControl(v.outcomeRef);
-      return { line: `[ok] executed ${type} (${ref || "no outcome reference"})\n`, exit: 0 };
-    }
-    case "rejected":
-      return { line: "[rejected] not executed — you declined the approval\n", exit: 1 };
-    case "failed": {
-      const code = stripControl(v.errorCode);
-      const service =
-        actionType === undefined ? "the service" : (stripControl(actionType).split(".")[0] ?? "");
-      return {
-        line: NOT_DISPATCHED.has(v.errorCode)
-          ? `[failed] ${code}\n`
-          : `[failed] ${code} — the action may or may not have reached ${service || "the service"}\n`,
-        exit: 1,
-      };
-    }
-  }
 }
 
 /** `kind` and, for an action, its `payload.actionType` — read from ONE `captures.get`. */
@@ -232,7 +163,16 @@ async function runAccept(
     else sink.err(`${refusal}\n`);
     return 1;
   }
-  const raw = await c.call<unknown>("captures.accept", { id: a.id });
+  // An action is approved by `approvals.approve`: the same gate function, run on THIS connection
+  // with a human-only consent channel (agent door AD2). A decision, term or link is not an action
+  // and needs no prompt, so it keeps `captures.accept`.
+  let raw: unknown;
+  if (target.kind === "action") {
+    await declareCliClientKind(c);
+    raw = await c.call<unknown>("approvals.approve", { id: a.id });
+  } else {
+    raw = await c.call<unknown>("captures.accept", { id: a.id });
+  }
   const { line, exit } = acceptLine(a.id, parseAcceptResult(raw), target.actionType);
   sink.out(a.json ? `${JSON.stringify(raw, undefined, 2)}\n` : line);
   return exit;
@@ -471,7 +411,10 @@ export async function runCapturesCmd(argv: string[]): Promise<void> {
         (q) => askOnTerminal(q, a.json),
       ),
     paths,
-    a.verb === "accept" ? { requestTimeoutMs: BATCH_RPC_TIMEOUT_MS } : {},
+    // An action accept is a human approval: the human choice ignores NIMBUS_SCRIPT_CONSENT_SOURCE.
+    a.verb === "accept"
+      ? { consent: { kind: "human" }, requestTimeoutMs: BATCH_RPC_TIMEOUT_MS }
+      : {},
   );
   if (code !== 0) throw new CliExit(code);
 }

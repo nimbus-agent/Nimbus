@@ -55,6 +55,11 @@ export type ActionAcceptResult = {
   readonly state: "executed" | "rejected" | "failed";
   readonly outcomeRef?: string;
   readonly errorCode?: ActionErrorCode;
+  /**
+   * Why the executor refused (a rejected arm only). It travels back on the OWNER's reply and is never
+   * stored: V69 allows no `error_code` on a `rejected` row, so `finalizeAction` takes no reason.
+   */
+  readonly reason?: string;
 };
 
 const OUTCOME_FIELDS = ["url", "html_url", "webUrl", "permalink"] as const;
@@ -239,7 +244,10 @@ export async function acceptAction(
           ? { id: row.id, state: "executed" }
           : { id: row.id, state: "executed", outcomeRef };
     } else {
-      result = { id: row.id, state: "rejected" };
+      result =
+        out.reason === undefined
+          ? { id: row.id, state: "rejected" }
+          : { id: row.id, state: "rejected", reason: out.reason };
     }
   } catch (e) {
     result = { id: row.id, state: "failed", errorCode: classifyActionError(e) };

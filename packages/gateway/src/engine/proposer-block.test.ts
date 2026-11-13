@@ -1,6 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { sanitisePreviewText } from "../connectors/connector-writes/sanitise.ts";
-import { agentVerbatimInputLines, formatProposerBlock, proposerDetails } from "./proposer-block.ts";
+import {
+  agentVerbatimInputLines,
+  escapeUnverifiedLine,
+  formatProposerBlock,
+  proposerDetails,
+} from "./proposer-block.ts";
 import type { AgentProposer } from "./types.ts";
 
 const RLO = String.fromCodePoint(0x202e);
@@ -82,6 +87,17 @@ describe("formatProposerBlock (the unverified trailing block)", () => {
       expect(l).not.toContain(ch);
       expect(l).toContain(esc);
     }
+  });
+});
+
+describe("escapeUnverifiedLine (the owner's queue view uses the prompt's escaping)", () => {
+  test("escapes a quote, backslash, LF, bidi, zero-width and an astral character like the block does", () => {
+    const raw = `q"b${String.fromCharCode(92)}${String.fromCharCode(10)}x${RLO}${String.fromCodePoint(0x200b)}${String.fromCodePoint(0xe0069)}`;
+    const out = escapeUnverifiedLine(raw);
+    expect(out).toBe(String.raw`q\"b\\\u000ax\u202e\u200b\u{e0069}`);
+    expect(out).not.toContain(String.fromCharCode(10));
+    // The very same string the proposer block shows for a label.
+    expect(formatProposerBlock(prop({ label: raw }))[0]).toContain(`label "${out}"`);
   });
 });
 

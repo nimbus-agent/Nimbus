@@ -410,6 +410,7 @@ describe.skipIf(!sandboxAvailable)("a scaffolded user MCP over a real gateway", 
     client.close();
     // An open named-pipe handle on Windows can hold the event loop and race the rmSync below.
     agent.close();
+    for (const c of opened) c.close();
     proc?.kill();
     await proc?.exited.catch(() => {});
     restoreHelper();
@@ -601,6 +602,201 @@ describe.skipIf(!sandboxAvailable)("a scaffolded user MCP over a real gateway", 
       // SA1: the test's owner client reports no answer source, so the row records `unknown`.
       answerSource: "unknown",
     });
+  }, 60_000);
+
+  // --- Agent door AD2: the owner's queue and the one-step approval, over the real wire ---
+
+  /** Owner connections opened by the tests below; closed in `afterAll`. */
+  const opened: TestIpcClient[] = [];
+
+  /**
+   * A connection that declares `kind` and answers every `consent.request` with `answerSource`
+   * (`undefined` = an answer that reports no source, like the older owner client above).
+   */
+  async function openConnection(
+    kind: "cli" | "mcp",
+    answerSource: "human" | undefined,
+  ): Promise<{ c: TestIpcClient; prompts: string[] }> {
+    const c = new TestIpcClient();
+    opened.push(c);
+    await c.connect(paths.socketPath);
+    expect(await c.call<{ kind: string }>("session.declareKind", { kind })).toEqual({ kind });
+    const seen: string[] = [];
+    c.onNotification("consent.request", (params) => {
+      seen.push(String(params["prompt"] ?? ""));
+      void c.call("consent.respond", {
+        requestId: params["requestId"],
+        approved: true,
+        ...(answerSource === undefined ? {} : { answerSource }),
+      });
+    });
+    return { c, prompts: seen };
+  }
+
+  async function propose(text: string, label: string): Promise<string> {
+    const sub = await agent.call<{ id: string }>("capture.submit", {
+      kind: "action",
+      payload: { actionType: "mcp_echo_srv.echo", input: { text }, summary: "say it" },
+      clientLabel: label,
+    });
+    return sub.id;
+  }
+
+  /** Settled with `.then` (see the "cannot accept its own proposal" test): the code in the refusal. */
+  async function refusal(p: Promise<unknown>): Promise<string> {
+    const e = await p.then(
+      (v) => new Error(`resolved: ${JSON.stringify(v)}`),
+      (err: unknown) => err,
+    );
+    expect(e).toBeInstanceOf(Error);
+    expect((e as Error).message).not.toContain("resolved:");
+    return (e as Error).message;
+  }
+
+  test("approvals: list, get and approve from a declared cli connection that answers as a human", async () => {
+    const id = await propose("via-approvals", "e2e-queue-agent");
+    const owner = await openConnection("cli", "human");
+    const before = prompts.length;
+
+    const list = await owner.c.call<{ proposals: Array<Record<string, unknown>> }>(
+      "approvals.list",
+      {},
+    );
+    const mine = list.proposals.find((p) => p["id"] === id);
+    expect(mine).toMatchObject({
+      actionType: "mcp_echo_srv.echo",
+      label: "e2e-queue-agent",
+      labelSource: "declared",
+      wave: null,
+      typedConfirm: false,
+    });
+
+    const got = await owner.c.call<{ inputLines: string[]; note: string }>("approvals.get", { id });
+    expect(got.inputLines.join("\n")).toContain('"text": "via-approvals"');
+    expect(got.note).toContain("appear when you approve");
+
+    const out = await owner.c.call<{ id: string; state: string }>("approvals.approve", { id });
+    expect(out).toMatchObject({ id, state: "executed" });
+    // The prompt went to THIS connection, not to the older owner client.
+    expect(owner.prompts).toHaveLength(1);
+    expect(owner.prompts[0]).toContain("Requested by: an outside agent (unverified)");
+    expect(owner.prompts[0]).toContain('"text": "via-approvals"');
+    expect(prompts.length).toBe(before);
+
+    const audit = await client.call<Array<{ actionType: string; actionJson: string }>>(
+      "audit.list",
+      { limit: 30 },
+    );
+    const row = audit.find(
+      (r) => r.actionType === "mcp_echo_srv.echo" && r.actionJson.includes("via-approvals"),
+    );
+    expect(row).toBeDefined();
+    expect((JSON.parse(row?.actionJson ?? "{}") as { answerSource?: string }).answerSource).toBe(
+      "human",
+    );
+    expect(await agent.call("capture.state", { id })).toMatchObject({ state: "executed" });
+  }, 60_000);
+
+  test("approvals: an answer that reports no source is turned into a decline, and nothing runs", async () => {
+    const id = await propose("must-not-run", "e2e-queue-agent");
+    const owner = await openConnection("cli", undefined);
+    const out = await owner.c.call<{ state: string; reason?: string }>("approvals.approve", {
+      id,
+    });
+    expect(out.state).toBe("rejected");
+    expect(out.reason).toContain("did not come from a person");
+    expect(await agent.call("capture.state", { id })).toMatchObject({ state: "rejected" });
+    const audit = await client.call<
+      Array<{ actionType: string; hitlStatus: string; actionJson: string }>
+    >("audit.list", { limit: 30 });
+    const echo = audit.filter(
+      (r) => r.actionType === "mcp_echo_srv.echo" && r.actionJson.includes("must-not-run"),
+    );
+    // The executor recorded the gateway's decline, never an approval.
+    expect(echo.length).toBeGreaterThan(0);
+    expect(echo.every((r) => r.hitlStatus === "rejected")).toBe(true);
+  }, 60_000);
+
+  test("approvals: the older owner client (undeclared) and a second mcp connection are refused; capture.state is the submitter's only", async () => {
+    const id = await propose("private", "e2e-queue-agent");
+    expect(await refusal(client.call("approvals.list", {}))).toMatch(
+      /ERR_CAPTURE_FORBIDDEN_CLIENT/,
+    );
+    expect(await refusal(client.call("approvals.approve", { id }))).toMatch(
+      /ERR_CAPTURE_FORBIDDEN_CLIENT/,
+    );
+    const other = await openConnection("mcp", undefined);
+    expect(await refusal(other.c.call("approvals.list", {}))).toMatch(
+      /ERR_CAPTURE_FORBIDDEN_CLIENT/,
+    );
+    // A third connection cannot read another connection's capture: the same answer as an absent id.
+    expect(await refusal(other.c.call("capture.state", { id }))).toMatch(/ERR_CAPTURE_NOT_FOUND/);
+    expect(await other.c.call<{ captures: unknown[] }>("capture.mine", {})).toEqual({
+      captures: [],
+    });
+    expect(await agent.call("capture.state", { id })).toMatchObject({ state: "proposed" });
+    // The owner (cli) can decline it.
+    const owner = await openConnection("cli", "human");
+    expect(await owner.c.call<{ id: string; state: string }>("approvals.decline", { id })).toEqual({
+      id,
+      state: "rejected",
+    });
+  }, 60_000);
+
+  test("nimbus approvals <id> with no terminal exits 1 and sends nothing to the gateway", async () => {
+    const id = await propose("no-tty", "e2e-queue-agent");
+    // Point the CLI at THIS gateway through a throwaway data dir that holds only its state file.
+    const home = mkdtempSync(join(tmpdir(), "nimbus-approvals-cli-"));
+    try {
+      const dirs = {
+        APPDATA: join(home, "r"),
+        LOCALAPPDATA: join(home, "l"),
+        HOME: join(home, "h"),
+        USERPROFILE: join(home, "h"),
+        XDG_CONFIG_HOME: join(home, "c"),
+        XDG_DATA_HOME: join(home, "d"),
+        XDG_RUNTIME_DIR: join(home, "u"),
+        TMPDIR: join(home, "t"),
+        TEMP: join(home, "t"),
+        TMP: join(home, "t"),
+      };
+      for (const d of new Set(Object.values(dirs))) mkdirSync(d, { recursive: true });
+      const dataDir =
+        process.platform === "win32"
+          ? join(dirs.LOCALAPPDATA, "Nimbus", "data")
+          : process.platform === "darwin"
+            ? join(dirs.HOME, "Library", "Application Support", "Nimbus")
+            : join(dirs.XDG_DATA_HOME, "nimbus");
+      mkdirSync(dataDir, { recursive: true });
+      writeFileSync(
+        join(dataDir, "gateway.json"),
+        JSON.stringify({ pid: proc?.pid ?? 0, socketPath: paths.socketPath }),
+        "utf8",
+      );
+      const env: Record<string, string> = { ...(process.env as Record<string, string>), ...dirs };
+      for (const k of [
+        "NIMBUS_DEMO",
+        "NIMBUS_CONFIG_DIR",
+        "NIMBUS_GATEWAY_SOCKET",
+        "NIMBUS_PROFILE",
+      ])
+        delete env[k];
+      const p = Bun.spawn(["bun", CLI_ENTRY, "approvals", id], {
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "pipe",
+        env,
+      });
+      const [stderr, code] = await Promise.all([new Response(p.stderr).text(), p.exited]);
+      expect(code).toBe(1);
+      expect(stderr).toContain("requires an interactive terminal");
+      // No approve reached the gateway: the proposal still waits.
+      expect(await agent.call("capture.state", { id })).toMatchObject({ state: "proposed" });
+      const owner = await openConnection("cli", "human");
+      await owner.c.call("approvals.decline", { id });
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
   }, 60_000);
 
   test("act door: the agent cannot accept its own proposal", async () => {

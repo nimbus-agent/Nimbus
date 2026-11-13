@@ -62,6 +62,10 @@ const HOUR_MS = 3_600_000;
 const ATTEMPT_MULTIPLIER = 4;
 const LIST_LIMIT_DEFAULT = 50;
 const LIST_LIMIT_MAX = 200;
+/** Agent door AD2: how many unexpired proposed actions ONE connection may hold (never above `actionMaxPending`). */
+const PER_CONNECTION_ACTIONS = 3;
+const MINE_LIMIT = 50;
+const PROPOSALS_LIMIT = 200;
 
 export interface CaptureGateDeps {
   readonly db: Database;
@@ -89,6 +93,11 @@ export interface CaptureGateDeps {
     actionType: string,
     input: Readonly<Record<string, unknown>>,
   ): string | undefined;
+  /**
+   * Called once after an ACTION proposal is queued, with the number now waiting. A number and
+   * nothing else, so no request-derived string can reach the owner's toast. A throw is swallowed.
+   */
+  onActionProposed?(pending: number): void;
 }
 
 export interface CaptureCaller {
@@ -131,6 +140,27 @@ export interface CaptureStatus {
   readonly actionTtlHours: number;
   readonly actionExpiringWithinHour: number;
   readonly disabledReason?: string;
+}
+
+/** One of the caller's own captures (`capture.mine`): ids and states only, never a payload. */
+export interface CaptureMineView {
+  readonly id: string;
+  readonly kind: CaptureKind;
+  readonly state: CaptureState;
+  readonly createdAt: number;
+  readonly expiresAt?: number;
+  readonly outcomeRef?: string;
+  readonly errorCode?: string;
+}
+
+/** A waiting action proposal as the gate stores it; the RPC layer escapes the strings (once). */
+export interface ActionProposalRow {
+  readonly id: string;
+  readonly actionType: string;
+  readonly summary: string;
+  readonly clientLabel: string | null;
+  readonly createdAt: number;
+  readonly expiresAt: number;
 }
 
 export interface CaptureStateView {
@@ -352,6 +382,18 @@ function requireConfigured(
   }
 }
 
+/** Step 8b's refusal: this connection already holds its share of the action queue (AD2). */
+function refuseConnectionFull(ctx: SubmitContext, held: number): never {
+  refuseAudited(
+    ctx.deps,
+    ctx.caller,
+    ctx.kind,
+    ctx.clientLabel,
+    "ERR_CAPTURE_QUEUE_FULL",
+    `this connection already has ${String(held)} proposed actions waiting for the owner`,
+  );
+}
+
 /** Step 8's refusal: the action queue or the native-proposal queue is full. */
 function refuseQueueFull(ctx: SubmitContext, v: ValidatedCapture, cap: CaptureCapability): never {
   refuseAudited(
@@ -438,9 +480,27 @@ export async function submitCapture(
       ? deps.store.countPendingActions(now) >= cap.config.actionMaxPending
       : v.kind !== "note" && deps.store.countPendingNative() >= cap.config.maxPending;
   if (queueFull) refuseQueueFull(ctx, v, cap);
+  // 8b. Per-connection cap — one connection cannot take the whole action queue (agent door AD2).
+  if (v.kind === "action") {
+    const perConnection = Math.min(PER_CONNECTION_ACTIONS, cap.config.actionMaxPending);
+    if (deps.store.countPendingActionsBySession(caller.clientId, now) >= perConnection) {
+      refuseConnectionFull(ctx, perConnection);
+    }
+  }
 
   // 9 + 10. One transaction: capture row, item (notes only), audit.
-  return writeSubmittedCapture(ctx, v, cap, now);
+  const written = writeSubmittedCapture(ctx, v, cap, now);
+  if (v.kind === "action") notifyActionProposed(deps, now);
+  return written;
+}
+
+/** The count-only hook: after commit, and a failing toast never fails a submit. */
+function notifyActionProposed(deps: CaptureGateDeps, now: number): void {
+  try {
+    deps.onActionProposed?.(deps.store.countPendingActions(now));
+  } catch {
+    // a missed notification loses nothing: `nimbus approvals` and `nimbus doctor` show the queue
+  }
 }
 
 /**
@@ -851,7 +911,11 @@ export function captureStateFor(
   const id = requireId(idRaw);
   expireDueActionsAudited(deps, deps.now(), caller.clientId);
   const row = deps.store.get(id);
-  if (row === undefined) throw new CaptureError("ERR_CAPTURE_NOT_FOUND", `no capture ${id}`);
+  // Agent door AD2 (D-AD-11): a row another connection submitted answers exactly like an absent id,
+  // so the answer is no oracle for another agent's ids.
+  if (row === undefined || row.sessionId !== caller.clientId) {
+    throw new CaptureError("ERR_CAPTURE_NOT_FOUND", `no capture ${id}`);
+  }
   return {
     kind: row.kind,
     state: row.state,
@@ -859,6 +923,76 @@ export function captureStateFor(
     ...(row.outcomeRef === null ? {} : { outcomeRef: row.outcomeRef }),
     ...(row.errorCode === null ? {} : { errorCode: row.errorCode }),
   };
+}
+
+/** `capture.mine`: the asking connection's own captures, newest first. State only, never a payload. */
+export function captureMine(
+  deps: CaptureGateDeps,
+  caller: CaptureCaller,
+): { captures: CaptureMineView[] } {
+  if (CAPTURE_ROLE_BY_KIND[caller.kind] !== "submit") {
+    throw new CaptureError(
+      "ERR_CAPTURE_FORBIDDEN_CLIENT",
+      "capture.mine is for MCP clients; the owner uses captures.list",
+    );
+  }
+  expireDueActionsAudited(deps, deps.now(), caller.clientId);
+  const captures = deps.store.listBySession(caller.clientId, MINE_LIMIT).map(
+    (row): CaptureMineView => ({
+      id: row.id,
+      kind: row.kind,
+      state: row.state,
+      createdAt: row.createdAt,
+      ...(row.expiresAt === null ? {} : { expiresAt: row.expiresAt }),
+      ...(row.outcomeRef === null ? {} : { outcomeRef: row.outcomeRef }),
+      ...(row.errorCode === null ? {} : { errorCode: row.errorCode }),
+    }),
+  );
+  return { captures };
+}
+
+/**
+ * The owner's queue of waiting action proposals, oldest first (`approvals.list`). Raw strings: the
+ * RPC layer escapes them once. A row whose payload does not parse is skipped, never thrown.
+ */
+export function listActionProposals(
+  deps: CaptureGateDeps,
+  caller: CaptureCaller,
+): { proposals: ActionProposalRow[] } {
+  requireOwner(caller);
+  expireDueActionsAudited(deps, deps.now(), caller.clientId);
+  const rows = deps.store.list({
+    state: "proposed",
+    kind: "action",
+    order: "asc",
+    limit: PROPOSALS_LIMIT,
+  });
+  const proposals: ActionProposalRow[] = [];
+  for (const row of rows) {
+    const p = parseActionPayload(row);
+    if (p === undefined || row.expiresAt === null) continue;
+    proposals.push({
+      id: row.id,
+      actionType: p.actionType,
+      summary: p.summary,
+      clientLabel: row.clientLabel,
+      createdAt: row.createdAt,
+      expiresAt: row.expiresAt,
+    });
+  }
+  return { proposals };
+}
+
+function parseActionPayload(row: CaptureRow): ActionPayload | undefined {
+  if (row.payloadJson === null) return undefined;
+  try {
+    const p = JSON.parse(row.payloadJson) as Partial<ActionPayload>;
+    return typeof p.actionType === "string" && typeof p.summary === "string"
+      ? (p as ActionPayload)
+      : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 export async function captureStatus(deps: CaptureGateDeps): Promise<CaptureStatus> {
