@@ -213,13 +213,16 @@ export function selectConsentHandler(client: IPCClient, opts: SelectConsentHandl
  * How a `withGatewayIpc` connection answers `consent.request` — the complete vocabulary.
  *
  * The point of a closed union here is that it has no member meaning "nobody answers". Every
- * consent behaviour in the CLI is one of these three, and a caller can pick the wrong one but
+ * consent behaviour in the CLI is one of these four, and a caller can pick the wrong one but
  * cannot pick none, which is the failure this replaced: a free `onConnect` callback could
  * register nothing at all and the omission was invisible until a gated call hung for 30s.
  *
  *  - `prompt` — ask the operator on this terminal. The default, and what an interactive
  *    `nimbus vault set` wants. Honours `NIMBUS_SCRIPT_CONSENT_SOURCE` so a scripted run does
  *    not need every command to thread a flag through.
+ *  - `human` — ask the operator on this terminal and ONLY there: `NIMBUS_SCRIPT_CONSENT_SOURCE`
+ *    is ignored, so the answer is always `answerSource: "human"` (or a decline). For an approval
+ *    that must be given by a person, such as `nimbus approvals <id>` (agent door AD2).
  *  - `auto` — the caller ALREADY obtained this approval from the operator, so answering again
  *    would ask the same question twice; `sourceLabel` names where it came from and is echoed
  *    on stderr so the transcript still shows an auto-approval happened.
@@ -227,6 +230,7 @@ export function selectConsentHandler(client: IPCClient, opts: SelectConsentHandl
  */
 export type ConsentChoice =
   | { readonly kind: "prompt" }
+  | { readonly kind: "human" }
   | { readonly kind: "auto"; readonly sourceLabel?: string }
   | { readonly kind: "flags"; readonly yes: boolean; readonly scriptConsentSource?: string };
 
@@ -240,8 +244,16 @@ export type ConsentChoice =
  * no handler does not degrade, it hangs until its own request timeout and then reports a timeout
  * rather than a missing approval.
  */
-export function registerConsentFor(client: IPCClient, choice: ConsentChoice): void {
+export function registerConsentFor(
+  client: IPCClient,
+  choice: ConsentChoice,
+  // Test seam for the two interactive prompts; production passes nothing (clack's own).
+  prompts: { confirm?: ConfirmFn; text?: TextFn } = {},
+): void {
   switch (choice.kind) {
+    case "human":
+      registerConsentPromptHandler(client, prompts.confirm, prompts.text);
+      return;
     case "auto":
       registerAutoApproveConsentHandler(client, choice.sourceLabel);
       return;

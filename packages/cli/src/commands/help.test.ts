@@ -28,6 +28,12 @@ describe("printHelp", () => {
     expect(out.stdout).toMatch(/Usage:/);
   });
 
+  it("documents nimbus approvals beside captures and points actions at it", () => {
+    printHelp();
+    expect(out.stdout).toContain("nimbus approvals [list|show <id>|<id>");
+    expect(out.stdout).toContain("--decline-all-from");
+  });
+
   it("documents core lifecycle commands", () => {
     printHelp();
     expect(out.stdout).toContain("nimbus start");

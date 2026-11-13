@@ -374,6 +374,15 @@ describe("act door tools", () => {
     ]);
     expect(out?.content[0]?.text).toContain("has NOT run");
     expect(out?.content[0]?.text).toContain("1970-01-01T00:00:00.000Z");
+    // The owner approves an action in one step with `nimbus approvals <id>` (agent door AD2).
+    expect(out?.content[0]?.text).toContain("`nimbus approvals cap_1`");
+    expect(out?.content[0]?.text).not.toContain("captures accept");
+  });
+
+  test("the propose_action description names nimbus approvals, not captures accept", () => {
+    const spec = CAPTURE_TOOL_SPECS.find((s) => s.name === "propose_action");
+    expect(spec?.description).toContain("`nimbus approvals <id>`");
+    expect(spec?.description).not.toContain("captures accept");
   });
 
   test("propose_action without an expiresAt names the TTL rather than inventing a time", async () => {

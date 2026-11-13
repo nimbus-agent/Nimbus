@@ -22,6 +22,10 @@ const PURGEABLE: ReadonlySet<string> = new Set(["executed", "failed", "rejected"
 export function terminalCommands(
   c: Pick<CaptureSummary | CaptureDetail, "id" | "kind" | "state">,
 ): string[] {
+  if (c.state === "proposed" && c.kind === "action") {
+    // An agent-proposed action is approved in one step by `nimbus approvals` (agent door AD2).
+    return [`nimbus approvals ${c.id}`, `nimbus approvals ${c.id} --decline`];
+  }
   if (c.state === "proposed") {
     return [`nimbus captures accept ${c.id}`, `nimbus captures reject ${c.id}`];
   }

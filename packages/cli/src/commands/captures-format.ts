@@ -176,7 +176,7 @@ export function parseStatus(v: unknown): CaptureStatusView {
   return out;
 }
 
-function ago(ms: number, now: number): string {
+export function ago(ms: number, now: number): string {
   const s = Math.max(0, Math.round((now - ms) / 1000));
   if (s < 60) return `${String(s)}s ago`;
   if (s < 3600) return `${String(Math.round(s / 60))}m ago`;
@@ -185,7 +185,7 @@ function ago(ms: number, now: number): string {
 }
 
 /** Mirrors `ago` for a time still ahead; a past expiry (not yet swept) reads as `0s`. */
-function until(ms: number, now: number): string {
+export function until(ms: number, now: number): string {
   const s = Math.max(0, Math.round((ms - now) / 1000));
   if (s < 60) return `${String(s)}s`;
   if (s < 3600) return `${String(Math.round(s / 60))}m`;
@@ -200,7 +200,7 @@ function stateCell(r: CaptureSummaryView, now: number): string {
   return r.state;
 }
 
-function cell(s: string, w: number): string {
+export function cell(s: string, w: number): string {
   const t = s.length > w ? `${s.slice(0, w - 1)}…` : s;
   return t.padEnd(w);
 }
@@ -301,12 +301,12 @@ export function doctorCapturesLines(s: CaptureStatusView): { lines: string[]; ex
     // gateway's defaulted 0 from reading as "full".
     if (s.actionMaxPending > 0 && s.actionPending >= s.actionMaxPending) {
       lines.push(
-        `[warn] MCP capture sink: action queue full (${String(s.actionPending)}/${String(s.actionMaxPending)}): new action proposals are being refused — nimbus captures`,
+        `[warn] MCP capture sink: action queue full (${String(s.actionPending)}/${String(s.actionMaxPending)}): new action proposals are being refused — nimbus approvals`,
       );
       exit = 1;
     } else if (s.actionPending > 0) {
       lines.push(
-        `[info] MCP capture sink: ${String(s.actionPending)} agent-proposed actions awaiting review (${String(s.actionExpiringWithinHour)} expire within 1h) — nimbus captures`,
+        `[info] MCP capture sink: ${String(s.actionPending)} agent-proposed actions awaiting review (${String(s.actionExpiringWithinHour)} expire within 1h) — nimbus approvals`,
       );
     }
   }
@@ -323,4 +323,94 @@ export function doctorCapturesLines(s: CaptureStatusView): { lines: string[]; ex
     );
   }
   return { lines, exit };
+}
+
+export function kindNoun(nativeRef: string): string {
+  if (nativeRef.startsWith("capture:")) return "decision";
+  return nativeRef.includes("|") ? "link" : "glossary term";
+}
+
+export type AcceptView =
+  | { state: "accepted"; nativeRef: string }
+  | { state: "executed"; outcomeRef?: string }
+  | { state: "rejected"; reason?: string }
+  | { state: "failed"; errorCode: string };
+
+/**
+ * Failures KNOWN to have happened before any request reached the service (the tool did not
+ * resolve). Every other failure code, including one this CLI has never heard of, may have reached
+ * it, and says so.
+ */
+const NOT_DISPATCHED = new Set(["ERR_ACTION_TOOL_NOT_FOUND"]);
+
+/**
+ * A success line needs a real result; anything else is a gateway contract break. Shared by
+ * `nimbus captures accept` and `nimbus approvals <id>`: `approvals.approve` replies in the same
+ * shape and adds an optional `reason` to a `rejected` result.
+ */
+export function parseAcceptResult(raw: unknown): AcceptView {
+  const r = (typeof raw === "object" && raw !== null ? raw : {}) as Record<string, unknown>;
+  const nativeRef = r["nativeRef"];
+  if (r["state"] === "accepted" && typeof nativeRef === "string" && nativeRef !== "") {
+    return { state: "accepted", nativeRef };
+  }
+  if (r["state"] === "executed") {
+    const outcomeRef = r["outcomeRef"];
+    return typeof outcomeRef === "string"
+      ? { state: "executed", outcomeRef }
+      : { state: "executed" };
+  }
+  if (r["state"] === "rejected") {
+    const reason = r["reason"];
+    return typeof reason === "string" && reason !== ""
+      ? { state: "rejected", reason }
+      : { state: "rejected" };
+  }
+  const errorCode = r["errorCode"];
+  if (r["state"] === "failed" && typeof errorCode === "string") {
+    return { state: "failed", errorCode };
+  }
+  throw new Error(
+    "captures.accept returned a malformed result; the capture was not confirmed accepted",
+  );
+}
+
+export function acceptLine(
+  id: string,
+  v: AcceptView,
+  actionType: string | undefined,
+): { line: string; exit: number } {
+  const type = actionType === undefined ? "the action" : stripControl(actionType);
+  switch (v.state) {
+    case "accepted": {
+      const nativeRef = stripControl(v.nativeRef);
+      return {
+        line: `Accepted ${id}: it now counts as a ${kindNoun(nativeRef)} (${nativeRef}) and is labelled agent-authored.\n`,
+        exit: 0,
+      };
+    }
+    case "executed": {
+      const ref = v.outcomeRef === undefined ? "" : stripControl(v.outcomeRef);
+      return { line: `[ok] executed ${type} (${ref || "no outcome reference"})\n`, exit: 0 };
+    }
+    case "rejected":
+      return {
+        line:
+          v.reason === undefined
+            ? "[rejected] not executed — you declined the approval\n"
+            : `[rejected] not executed: ${stripControl(v.reason)}\n`,
+        exit: 1,
+      };
+    case "failed": {
+      const code = stripControl(v.errorCode);
+      const service =
+        actionType === undefined ? "the service" : (stripControl(actionType).split(".")[0] ?? "");
+      return {
+        line: NOT_DISPATCHED.has(v.errorCode)
+          ? `[failed] ${code}\n`
+          : `[failed] ${code} — the action may or may not have reached ${service || "the service"}\n`,
+        exit: 1,
+      };
+    }
+  }
 }

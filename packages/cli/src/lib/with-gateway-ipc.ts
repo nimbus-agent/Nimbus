@@ -41,7 +41,7 @@ export interface WithGatewayIpcOptions {
    * 30s. A closed vocabulary cannot express "no consent handler", so the failure is gone
    * rather than guarded — there is no longer a wrong value to pass.
    *
-   * Every consent behaviour in the tree is one of these three. If a fourth is ever needed,
+   * Every consent behaviour in the tree is one of these four. If a fifth is ever needed,
    * it is added here as a variant, which is a deliberate reviewable act; the thing that must
    * not be possible is silently ending up with none. Registration happens between `connect()`
    * and `fn` because a notification can arrive on the same socket chunk as the response to

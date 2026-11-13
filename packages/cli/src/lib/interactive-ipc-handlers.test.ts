@@ -8,6 +8,7 @@ import {
   CONFIRM_TEXT_DENIED_LINE,
   registerAgentChunkStdout,
   registerAutoApproveConsentHandler,
+  registerConsentFor,
   registerConsentPromptHandler,
   registerInteractiveCliIpcHandlers,
   registerScriptConsentHandler,
@@ -890,5 +891,49 @@ describe("a plan-bound write prompt on the typed-confirm path (D2)", () => {
         params: { requestId: "p1", approved: true, typed: CONFIRM, answerSource: "human" },
       },
     ]);
+  });
+});
+
+describe("registerConsentFor { kind: human } (agent door AD2)", () => {
+  const ENV_KEY = "NIMBUS_SCRIPT_CONSENT_SOURCE";
+  let prevEnv: string | undefined;
+  let tmpDir: string;
+
+  beforeEach(() => {
+    prevEnv = process.env[ENV_KEY];
+    tmpDir = mkdtempSync(join(tmpdir(), "iicih-human-"));
+  });
+
+  afterEach(() => {
+    if (prevEnv === undefined) delete process.env[ENV_KEY];
+    else process.env[ENV_KEY] = prevEnv;
+  });
+
+  test("ignores NIMBUS_SCRIPT_CONSENT_SOURCE: the prompt answers with answerSource human", async () => {
+    const source = join(tmpDir, "approve-all.jsonl");
+    writeFileSync(source, '{"approved":true}\n', "utf8");
+    process.env[ENV_KEY] = source;
+    const { client, fire, calls } = makeMultiClient();
+    // The scripted source would approve with answerSource "script"; a human choice never reads it.
+    registerConsentFor(client, { kind: "human" }, { confirm: async () => false });
+    await fire("consent.request", { requestId: "r-h", prompt: "Allow?" });
+    expect(calls).toEqual([
+      {
+        method: "consent.respond",
+        params: { requestId: "r-h", approved: false, answerSource: "human" },
+      },
+    ]);
+  });
+
+  test("a missing script file does not make a human registration throw", () => {
+    process.env[ENV_KEY] = join(tmpDir, "no-such-file.jsonl");
+    const { client } = makeFakeClient();
+    expect(() => registerConsentFor(client, { kind: "human" })).not.toThrow();
+  });
+
+  test("prompt still honours the script source (a missing file throws at registration)", () => {
+    process.env[ENV_KEY] = join(tmpDir, "no-such-file.jsonl");
+    const { client } = makeFakeClient();
+    expect(() => registerConsentFor(client, { kind: "prompt" })).toThrow(/not found/);
   });
 });

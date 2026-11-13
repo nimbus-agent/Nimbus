@@ -212,8 +212,8 @@ export const CAPTURE_TOOL_SPECS: readonly CaptureToolSpec[] = [
     description:
       "Propose a connector action (post a message, create or update a ticket, send an email, …) for the " +
       "user to approve. NOTHING is sent when you call this: the proposal waits on the user's machine " +
-      "until the owner runs `nimbus captures accept <id>` and approves the exact input shown. It expires " +
-      "if not accepted in time. Poll its outcome with capture_status. input is the tool's arguments as " +
+      "until the owner runs `nimbus approvals <id>` and approves the exact input shown at the prompt. It expires " +
+      "if not approved in time. Poll its outcome with capture_status. input is the tool's arguments as " +
       "a JSON object. Proposable action types on this machine: ",
     schema: {
       actionType: z.string(),
@@ -236,7 +236,7 @@ export const CAPTURE_TOOL_SPECS: readonly CaptureToolSpec[] = [
           content: [
             {
               type: "text",
-              text: `Proposed action ${id} — expires ${when}. It has NOT run: the owner must accept it with \`nimbus captures accept ${id}\` and approve the prompt. Poll capture_status with this id. Do not tell the user it was sent.`,
+              text: `Proposed action ${id} — expires ${when}. It has NOT run: the owner must approve it with \`nimbus approvals ${id}\` at the prompt. Poll capture_status with this id. Do not tell the user it was sent.`,
             },
           ],
         };

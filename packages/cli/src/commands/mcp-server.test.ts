@@ -101,6 +101,7 @@ describe("formatHelp", () => {
     expect(help).toContain("capture_note");
     expect(help).toContain("[mcp_sink]");
     expect(help).toContain("nimbus captures");
+    expect(help).toContain("nimbus approvals <id>");
   });
 
   it("wraps the tool list so no line runs past the terminal width", () => {
