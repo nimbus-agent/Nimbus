@@ -1,6 +1,6 @@
 # Plan — Agent door AD1: the door executor (`origin: "agent"`, the proposer, `provenanceConsent` deleted)
 
-Status: DRAFT for review (2026-11-13).
+Status: APPROVED by Antigravity (round 1, 2026-11-13).
 Spec: `docs/superpowers/specs/2026-11-13-agent-door.md` (approved, Antigravity round 2): § 2 (OR-AD-1..9), § 4 (D-AD-1, D-AD-2,
 D-AD-7, D-AD-8), § 6 (the AD1 row), § 7.2, § 9 (invariant amendments), § 10 (AD1 tests).
 Roadmap rows: Phase 28 *The same prompt* and the groundwork of *Write parity with the model door* (`docs/roadmap.md` § Phase 28).
@@ -408,3 +408,4 @@ attribution lines from the session. No `Release-As:` trailer.
 
 ## Review log
 
+Round 1 (Antigravity, 2026-11-13): APPROVED, no blocker or major. Minor notes for the implementer: the desktop vitest step (Task 11 step 7) runs only where `packages/ui` is installed; add a comment at `buildAgentWriteExecutor` in `run-ask.ts` naming the census test that slices that file by function order; assert the projected `captureId` matches `/^cap_[A-Za-z0-9_-]+$/` in the agent-origin test.
