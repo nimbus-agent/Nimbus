@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794558465420,
+  "lastUpdate": 1794559146343,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
-            "name": "nimbus-release-bot[bot]",
-            "username": "nimbus-release-bot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "ab912be9643730a00010ca3ad673eefdf7c80863",
-          "message": "chore: release main (#1339)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>2.19.1</summary>\n\n##\n[2.19.1](https://github.com/nimbus-agent/Nimbus/compare/v2.19.0...v2.19.1)\n(2026-08-25)\n\n\n### Bug Fixes\n\n* **jenkins:** build headers with Headers so a hostile crumb cannot\nreach a prototype\n([#1336](https://github.com/nimbus-agent/Nimbus/issues/1336))\n([8edb94f](https://github.com/nimbus-agent/Nimbus/commit/8edb94f6d178cd7479ffc4ec71e59e6fbe5a4d6a))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>\nCo-authored-by: Asaf <asafgolombek@gmail.com>",
-          "timestamp": "2026-08-25T21:02:57+03:00",
-          "tree_id": "bb0996b81ca6d3b3e484dc26e5dc3bbd483a4bb8",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/ab912be9643730a00010ca3ad673eefdf7c80863"
-        },
-        "date": 1787681669143,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 321.62988720000067,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 323.27001089998885,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 247.13773369999655,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "6e9a1c920dfa68b08ec91d82b4ce470a8903d839",
+          "message": "feat(gateway): the MCP act door runs proposals as agent-origin actions on the executor's own prompt (agent door AD1) (#1993)\n\nThis is the agent door, slice **AD1**, the door executor. It is the\nfirst slice of the S4 agent-door project (owner ruling OR-ECO-8; design\nrulings OR-AD-1 to OR-AD-9, 2026-11-13).\n\nAn action an outside agent proposes through the MCP act door\n(`propose_action`) now runs as an `origin: \"agent\"` action on the\nexecutor's own consent prompt. Until now the door replaced that prompt\nwith its own text (`provenanceConsent`). This slice does not change what\nan agent can propose: the same 47 types, with tests that pin them.\n\n## What changes\n\n- **The `agent` origin.** `PlannedAction.origin` can be `\"model\"` or\n`\"agent\"`. An agent action carries a `proposer` that the gateway sets:\nthe door, the capture id, and the client's label.\n`engine/outside-origin.ts` is the only place that reads `origin`.\n- **The owner sees the executor's prompt.** It shows `Requested by: an\noutside agent (unverified)`, the typed preview, the before-state of the\ntarget where the row has a reader, and a closing UNVERIFIED block that\nholds the agent's label and summary. The block is rendered by\n`engine/proposer-block.ts`, and it escapes at least everything\n`sanitisePreviewText` does.\n- **Agent actions get the model's treatment.** They are never delegated,\nnever matched by a standing rule, and keep the typed confirmation. A\nWave 4 action is refused unless its before-state could be read.\n- **One door executor.** `newDoorExecutor` (`engine/run-ask.ts`) builds\nboth the model door and the new `buildAgentWriteExecutor`. Neither takes\na delegation input. `ipc/capture-rpc.ts` `buildActDeps` now uses it.\n- **Removed.** `provenanceConsent`, `actConsentDisplay`,\n`formatActionConsent` and `formatActionProvenanceLines` are deleted.\n- **Audit.** The audit row holds only `{door, captureId}` from the\nproposer. It never holds the agent's label or summary.\n\n## Static rules and invariants (triple rule)\n\n- **D39(e):** `buildAgentWriteExecutor` may be named only in\n`run-ask.ts` and `capture-rpc.ts`.\n- **D40(b):** the permitted runner carrier is `newDoorExecutor` or\n`newWorkflowWriteExecutor`.\n- **D41(a):** the `provenanceConsent` exception is removed.\n- **Invariant texts:** I20, I28, I29, I42 and the I55 negative controls\nnow name the agent origin, and the I53 anti-patterns are updated. The\nnew rule fixtures fail against the old checker.\n- **No change:** no new invariant, no new rule number, no migration. The\nschema stays V96.\n\n## Not in this slice\n\n- **AD2 onward.** Per-door by-name approvals, `nimbus approvals`,\ntool-definition hashing, the SDK's dual-era MCP layer, kits and the\ndeprecation steps come in later slices.\n\n## Docs\n\n- **Core docs:** CLAUDE.md and GEMINI.md, roadmap, architecture,\ndocs/README, cli-reference, CHANGELOG.\n- **Other:** SECURITY-INVARIANTS.md and the mcp-sink skill.\n\n## Verification (local, Windows)\n\n- **`bun test packages/gateway/src`:** 31037 pass. One known trust-store\ntimeout under load fails; that file alone passes 115/0.\n- **`bun test packages/gateway/test packages/cli`:**\n  - Fails only on the 6 known migration and Readwise e2e tests.\n- Also fails one `work-snapshot` EBUSY test, which fails 3 of 3 times on\nan `origin/main` worktree too.\n- **`bun test scripts`:** fails only the 5 local install.ps1/gpg tests.\n- **Static checks:** `typecheck`, `typecheck:tests` (0 new) and\n`preflight:fast` pass.\n- **Coverage floor:** CI-Linux-authoritative.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JmSjrCFSTQTQnUa4j8F5b1\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Accepted MCP-proposed actions now use the same approval experience as\nmodel-proposed actions, including a typed preview, readable target state\nwhen available, and clearly marked unverified proposer details.\n* Agent-proposed actions are recorded with their origin and\ngateway-generated proposer information.\n\n* **Security**\n* Agent-proposed actions receive local approval rather than delegation\nor standing-rule approval. Relevant before-state checks run before\nprompting.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-13T08:23:04Z",
+          "tree_id": "0053b015a4db7a1849f07cd6b24b45b820fa8844",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/6e9a1c920dfa68b08ec91d82b4ce470a8903d839"
+        },
+        "date": 1794559141082,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 281.70211704999855,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 290.084352750003,
             "unit": "ms"
           }
         ]
