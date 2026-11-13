@@ -112,9 +112,10 @@ describe("describeActions: the gate order", () => {
     const out = await describeActions(h.deps, MCP, undefined);
     expect(out).toEqual({ actions: [entry("github.issue.create")], truncated: false });
     expect(h.calls).toEqual([undefined]);
+    expect((await describeActions(h.deps, MCP, null)).truncated).toBe(false);
     const again = await describeActions(h.deps, MCP, {});
     expect(again.truncated).toBe(false);
-    expect(h.calls).toEqual([undefined, undefined]);
+    expect(h.calls).toEqual([undefined, undefined, undefined]);
   });
 
   test("a cli, ui, unknown, http, chatops, fleet and push caller is refused before the describer runs", async () => {

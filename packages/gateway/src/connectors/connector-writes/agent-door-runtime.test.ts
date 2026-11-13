@@ -975,6 +975,46 @@ describe("describe (AD3a-2b)", () => {
     expect(suspendAudits()).toBe(0);
   });
 
+  test("an approval suspended while the configured check awaits is suspended, with no listing", async () => {
+    const row = allow("github_issue_create");
+    const mutating = (mutate: () => void) =>
+      door({
+        isServiceConfigured: async () => {
+          mutate();
+          return true;
+        },
+      });
+    const suspended = await mutating(() =>
+      markDoorToolSuspended(db, "agent", "github", row.toolId, approvedHashOf(row), null, 4),
+    ).describe(["github.issue.create"]);
+    expect(suspended).toEqual([
+      {
+        actionType: "github.issue.create",
+        state: "suspended",
+        reason: DEFINITION_REFUSALS.suspended,
+      },
+    ]);
+    expect(listCalls).toEqual([]);
+  });
+
+  test("an approval removed between the verdict and the listing is unavailable as not approved", async () => {
+    allow("github_issue_create");
+    configured.add("github");
+    const d = door({
+      isServiceConfigured: async () => {
+        removeDoorApprovals(db, "github", "agent");
+        return true;
+      },
+    });
+    // The verdict was read before the configured check awaited: it said approved, and the row is now gone.
+    const out = await d.describe(["github.issue.create"]);
+    expect(out[0]).toEqual({
+      actionType: "github.issue.create",
+      state: "unavailable",
+      reason: DEFINITION_REFUSALS.notApproved,
+    });
+  });
+
   test("a legacy type returns its deprecation line and causes no listing", async () => {
     const out = await door().describe(["slack.message.post"]);
     expect(out).toEqual([
