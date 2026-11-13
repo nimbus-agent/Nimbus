@@ -173,10 +173,11 @@ describe("proposal tools", () => {
     });
   });
 
-  test("capture_status does not claim to be bound to the submitter (the gateway answers by id)", () => {
+  test("capture_status says the gateway answers only for captures submitted on this connection", () => {
     const d = find("capture_status")?.description ?? "";
-    expect(d).not.toMatch(/you submitted/i);
-    expect(d).toContain("ANY capture id to any MCP client that holds it");
+    expect(d).toContain("answers only for captures submitted on this connection");
+    expect(d).not.toContain("ANY capture id");
+    expect(d).not.toContain("does not check who submitted it");
   });
 
   test("propose_decision sends the full payload with decidedAt as ms", async () => {
@@ -373,6 +374,38 @@ describe("act door tools", () => {
     ]);
     expect(out?.content[0]?.text).toContain("has NOT run");
     expect(out?.content[0]?.text).toContain("1970-01-01T00:00:00.000Z");
+    // The owner approves an action in one step with `nimbus approvals <id>` (agent door AD2).
+    expect(out?.content[0]?.text).toContain("`nimbus approvals cap_1`");
+    expect(out?.content[0]?.text).not.toContain("captures accept");
+  });
+
+  test("the propose_action description names nimbus approvals, not captures accept", () => {
+    const spec = CAPTURE_TOOL_SPECS.find((s) => s.name === "propose_action");
+    expect(spec?.description).toContain("`nimbus approvals <id>`");
+    expect(spec?.description).not.toContain("captures accept");
+  });
+
+  test("the propose_action description says what the door accepts now, with no send-an-email example (AD3a-2a)", async () => {
+    const t = await captureToolsFor(
+      depsWithStatus({
+        enabled: true,
+        kinds: ["action"],
+        actionEnabled: true,
+        proposableActionTypes: ["github.pr.merge", "slack.message.post"],
+      }),
+    );
+    const d = t.find((x) => x.name === "propose_action")?.description ?? "";
+    expect(d).not.toContain("send an email");
+    expect(d).toContain("accepts now");
+    expect(d).toContain("approved for outside agents");
+    expect(d).toContain("Deprecated");
+    expect(d).toContain("only a fixed code");
+    expect(d).toEndWith("github.pr.merge, slack.message.post.");
+  });
+
+  test("capture_status says a rejected action may carry a code (AD3a-2a)", () => {
+    const spec = CAPTURE_TOOL_SPECS.find((s) => s.name === "capture_status");
+    expect(spec?.description).toContain("errorCode");
   });
 
   test("propose_action without an expiresAt names the TTL rather than inventing a time", async () => {
@@ -397,5 +430,34 @@ describe("act door tools", () => {
       state: "executed",
       outcomeRef: "https://x",
     });
+  });
+});
+
+describe("propose_action deprecation line (AD3a-2a)", () => {
+  test("a legacy reply's deprecation is printed after the NOT-run sentence, control characters stripped", async () => {
+    const esc = String.fromCodePoint(0x1b);
+    const d = depsRecording([], {
+      "capture.submit": {
+        id: "cap_9",
+        state: "proposed",
+        expiresAt: 0,
+        legacy: true,
+        deprecation: `Deprecated: x${esc}[2J accepted for now`,
+      },
+    });
+    const spec = CAPTURE_TOOL_SPECS.find((s) => s.name === "propose_action");
+    const out = await spec?.run(d, { actionType: "a.b", input: {}, summary: "s" }, () => undefined);
+    const text = out?.content[0]?.text ?? "";
+    expect(text.indexOf("Deprecated: x")).toBeGreaterThan(text.indexOf("has NOT run"));
+    expect(text).not.toContain(esc);
+  });
+
+  test("an approved proposal's result is unchanged", async () => {
+    const d = depsRecording([], {
+      "capture.submit": { id: "cap_9", state: "proposed", expiresAt: 0 },
+    });
+    const spec = CAPTURE_TOOL_SPECS.find((s) => s.name === "propose_action");
+    const out = await spec?.run(d, { actionType: "a.b", input: {}, summary: "s" }, () => undefined);
+    expect(out?.content[0]?.text).not.toContain("Deprecated");
   });
 });

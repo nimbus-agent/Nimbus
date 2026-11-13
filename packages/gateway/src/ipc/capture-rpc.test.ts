@@ -39,12 +39,12 @@ import {
   buildActDeps,
   type CaptureActWiring,
   type CaptureRpcCtx,
-  createActionDestinationRefusal,
   dispatchCaptureRpc,
 } from "./capture-rpc.ts";
 import { type ConsentCoordinator, ConsentCoordinatorImpl } from "./consent.ts";
 import { createStreamRegistry } from "./engine-ask-stream.ts";
 import { checkLanMethodAllowed, LanError } from "./lan-rpc.ts";
+import { createActionDestinationRefusal } from "./legacy-refusal.test-helpers.ts";
 import type { ClientKind } from "./server/client-kind.ts";
 import { phase4RpcSkipped, type ServerCtx } from "./server/context.ts";
 import { tryDispatchPhase4Rpc } from "./server/dispatchers.ts";
@@ -305,6 +305,7 @@ describe("LAN", () => {
     "captures.revoke",
     "captures.accept",
     "captures.purge",
+    "capture.mine",
   ])("%s is not callable over LAN (namespace denial covers future methods)", (method) => {
     expect(() => checkLanMethodAllowed(method, { peerId: "p", writeAllowed: true })).toThrow(
       LanError,
@@ -395,13 +396,14 @@ describe("buildActDeps (act door)", () => {
     const { act } = wiring(d, false);
     expect(await act.execute("slack.message.post", { text: "hi" }, PROV)).toEqual({
       status: "rejected",
+      reason: "User declined consent gate.",
     });
     expect(d).toEqual([]);
   });
   test("a first-party type with no routing row throws Tool not found (never dispatches by type)", async () => {
     const d: PlannedAction[] = [];
     const { act, prompts } = wiring(d, true);
-    await expect(act.execute("github.pr.merge", {}, PROV)).rejects.toThrow("Tool not found");
+    await expect(act.execute("github.repo.delete", {}, PROV)).rejects.toThrow("Tool not found");
     expect(d).toEqual([]);
     expect(prompts).toEqual([]);
   });
@@ -603,7 +605,11 @@ describe("buildActDeps: the typed preview for a templated proposable row (F5)", 
         },
       );
       const out = await h.act.execute("github.issue.comment.create", INPUT, PROV);
-      expect(out).toEqual({ status: "rejected" });
+      expect(out).toEqual({
+        status: "rejected",
+        reason: "the credential the write would use could not be verified",
+        code: "ERR_ACTION_CREDENTIAL_UNVERIFIED",
+      });
       expect(h.prompts).toEqual([]);
       expect(h.dispatched).toEqual([]);
     });
@@ -653,6 +659,21 @@ test("capture.state routes; captures.accept passes ActDeps when wiring + consent
   expect(st).toEqual({ kind: "hit", value: { kind: "note", state: "live" } });
 });
 
+test("capture.mine lists only the asking connection's captures, with no payload", async () => {
+  const a = { clientId: "a", kind: "mcp" as const };
+  const b = { clientId: "b", kind: "mcp" as const };
+  await dispatchCaptureRpc("capture.submit", NOTE, ctx, a);
+  await dispatchCaptureRpc("capture.submit", NOTE, ctx, b);
+  const mine = await dispatchCaptureRpc("capture.mine", {}, ctx, a);
+  expect(mine).toEqual({
+    kind: "hit",
+    value: { captures: [{ id: "cap_1", kind: "note", state: "live", createdAt: 1_000 }] },
+  });
+  await expect(
+    dispatchCaptureRpc("capture.mine", {}, ctx, { clientId: "o", kind: "cli" }),
+  ).rejects.toMatchObject({ rpcData: { code: "ERR_CAPTURE_FORBIDDEN_CLIENT" } });
+});
+
 describe("captures.accept on an action (act door wiring)", () => {
   function actionCtx(dispatched: PlannedAction[]): CaptureRpcCtx {
     const gate: CaptureGateDeps = {
@@ -665,7 +686,7 @@ describe("captures.accept on an action (act door wiring)", () => {
           },
           { capabilitiesDisabled: new Set() },
         ),
-      classifyAction: () => ({ kind: "proposable" }),
+      classifyAction: () => ({ kind: "proposable", userMcp: true }),
       isServiceConfigured: () => Promise.resolve(true),
     };
     gate.store.insert({
@@ -683,6 +704,7 @@ describe("captures.accept on an action (act door wiring)", () => {
       sessionId: "s",
       createdAt: 500,
       expiresAt: 2_000,
+      agentDoorLegacy: false,
     });
     return {
       gate,
@@ -773,6 +795,16 @@ const REAL_CLASSIFY = {
   userMcpModelAccessAllowed: () => false,
 };
 
+/**
+ * The legacy classifier as a gate verdict. The gate refuses a basis-less verdict unless it carries
+ * the runtime's `userMcp` marker, so these tests (which exercise the destination refusals, not the
+ * door) add it exactly as `createAgentDoor` does for a user-MCP type.
+ */
+function classifyViaLegacyTable(t: string) {
+  const v = classifyActionType(t, REAL_CLASSIFY);
+  return v.kind === "proposable" ? { ...v, userMcp: true as const } : v;
+}
+
 function boundPolicy(channels: readonly string[]): EnforcedPolicy {
   return {
     capabilitiesDisabled: new Set<string>(),
@@ -836,7 +868,6 @@ describe("B1 act door: every proposable B1 type shows its typed preview (Task 4)
 });
 
 describe("B1 act door: the destination refusal, real messagingDestinationRefusal (Task 4b, OR1/OR2)", () => {
-  const MCP = { clientId: "m", kind: "mcp" as const };
   const OWNER = { clientId: "o", kind: "cli" as const };
   let policy: EnforcedPolicy | undefined;
 
@@ -851,7 +882,7 @@ describe("B1 act door: the destination refusal, real messagingDestinationRefusal
           },
           { capabilitiesDisabled: new Set() },
         ),
-      classifyAction: (t) => classifyActionType(t, REAL_CLASSIFY),
+      classifyAction: classifyViaLegacyTable,
       isServiceConfigured: () => Promise.resolve(true),
       actionDestinationRefusal: createActionDestinationRefusal(
         () => policy,
@@ -880,9 +911,11 @@ describe("B1 act door: the destination refusal, real messagingDestinationRefusal
       "capture.submit",
       { kind: "action", payload: { actionType, input, summary: "why" } },
       c,
-      MCP,
+      // One connection per submission: the per-connection cap (AD2) is not what these tests probe.
+      { clientId: `mcp-${String(++submitSeq)}`, kind: "mcp" },
     );
   }
+  let submitSeq = 0;
 
   async function refusedCode(p: Promise<unknown>): Promise<unknown> {
     try {
@@ -1064,6 +1097,7 @@ describe("B1 act door: the destination refusal, real messagingDestinationRefusal
       sessionId: "s",
       createdAt: now,
       expiresAt: now + 3_600_000,
+      agentDoorLegacy: false,
     });
     const consent = {
       requestConsent: () => Promise.resolve({ approved: true, answerSource: "human" as const }),
@@ -1359,7 +1393,7 @@ describe("B2 act door: actDoorRefusal at submit and at accept (OR-B2-2, OR-B2-3)
           },
           { capabilitiesDisabled: new Set() },
         ),
-      classifyAction: (t) => classifyActionType(t, REAL_CLASSIFY),
+      classifyAction: classifyViaLegacyTable,
       isServiceConfigured: () => Promise.resolve(true),
       actionDestinationRefusal: refusal,
     };
@@ -1540,7 +1574,7 @@ describe("B3 act door: the KB-target and KB-child refusals at submit and at acce
           },
           { capabilitiesDisabled: new Set() },
         ),
-      classifyAction: (t) => classifyActionType(t, REAL_CLASSIFY),
+      classifyAction: classifyViaLegacyTable,
       isServiceConfigured: () => Promise.resolve(true),
       actionDestinationRefusal: createActionDestinationRefusal(
         () => boundPolicy([]),
@@ -1753,7 +1787,7 @@ describe("B3r act door: remote content is refused at submit and at accept", () =
           },
           { capabilitiesDisabled: new Set() },
         ),
-      classifyAction: (t) => classifyActionType(t, REAL_CLASSIFY),
+      classifyAction: classifyViaLegacyTable,
       isServiceConfigured: () => Promise.resolve(true),
       actionDestinationRefusal: refusal,
     };

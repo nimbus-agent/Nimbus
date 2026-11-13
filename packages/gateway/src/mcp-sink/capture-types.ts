@@ -46,7 +46,8 @@ export type CaptureErrorCode =
   | "ERR_CAPTURE_ACTION_NOT_PROPOSABLE"
   | "ERR_CAPTURE_ACTION_REFUSED"
   | "ERR_CAPTURE_CONNECTOR_UNCONFIGURED"
-  | "ERR_CAPTURE_EXPIRED";
+  | "ERR_CAPTURE_EXPIRED"
+  | "ERR_AGENT_TOOL_SUSPENDED";
 
 export class CaptureError extends Error {
   constructor(
@@ -80,6 +81,11 @@ export interface CaptureRow {
   readonly expiresAt: number | null;
   readonly outcomeRef: string | null;
   readonly errorCode: string | null;
+  /**
+   * Agent door (AD3a-2a): true on an action proposal queued under the deprecation window, i.e. one
+   * the earlier act door accepted that the owner's per-door list would not (V97 `legacy`).
+   */
+  readonly agentDoorLegacy: boolean;
 }
 
 export const LINK_RELATIONS = [
@@ -131,6 +137,20 @@ export const ACTION_ERROR_CODES = [
 ] as const;
 export type ActionErrorCode = (typeof ACTION_ERROR_CODES)[number];
 
+/**
+ * Stored on a `rejected` action row (V97 allows a code there): why the executor refused, as a fixed
+ * code, never the reason text (which may name the owner's data). A plain decline, a mistyped
+ * confirmation and a non-human answer store no code. Each fits the V97 `length(error_code) <= 64`.
+ */
+export const ACTION_REJECT_CODES = [
+  "ERR_AGENT_TOOL_SUSPENDED",
+  "ERR_ACTION_GUARD_REFUSED",
+  "ERR_ACTION_BEFORE_STATE_UNREADABLE",
+  "ERR_ACTION_PREPARE_REFUSED",
+  "ERR_ACTION_CREDENTIAL_UNVERIFIED",
+] as const;
+export type ActionRejectCode = (typeof ACTION_REJECT_CODES)[number];
+
 export interface ActionPayload {
   readonly actionType: string;
   readonly input: Readonly<Record<string, unknown>>;
@@ -142,11 +162,52 @@ export interface ActionPayload {
  * `connectors/` (D32(f)), so `connectors/proposable-actions.ts`'s richer type is assigned to this.
  */
 export type ActionVerdict =
-  | { readonly kind: "proposable" }
+  | {
+      readonly kind: "proposable";
+      readonly basis?: ActionBasis;
+      /**
+       * Set by the door runtime for a user-MCP type, the only proposable type that carries no basis.
+       * The gate accepts a basis-less verdict ONLY with this marker (fail closed, AD3a-2a).
+       */
+      readonly userMcp?: true;
+      /**
+       * Set by the door runtime for an `approved` verdict whose row is a bound row (a commit, an
+       * apply): only such a proposal may exceed the ordinary payload cap, up to the validator's
+       * structural bound.
+       */
+      readonly boundInput?: true;
+    }
+  /**
+   * An approved tool whose listed definition changed (AD3a-2a, D-AD-9): refused with
+   * `ERR_AGENT_TOOL_SUSPENDED` until the owner approves it again by name. Never a legacy case.
+   */
+  | { readonly kind: "suspended" }
   | { readonly kind: "denied"; readonly class: string }
   | { readonly kind: "unknown" };
 
+/**
+ * Why a proposable action is proposable. ABSENT (the user-MCP path, and today's production
+ * classifier) means no per-door rule applies and the gate behaves exactly as before AD3a-2a.
+ * `approved`: the owner approved the tool for agents by name and every other condition holds.
+ * `legacy_unapproved` / `legacy_mail_send`: accepted for now only because the earlier act door
+ * accepted it (the deprecation window, OR-AD-9); stored `legacy = 1`, counted and warned about.
+ */
+export type ActionBasis = "approved" | "legacy_unapproved" | "legacy_mail_send";
+
+/** The fixed class of a proposable verdict that names neither a basis nor a user-MCP type. */
+export const NO_BASIS_CLASS = "agent_no_basis";
+
+/** True for the two deprecation-window bases. */
+export function isLegacyBasis(basis: ActionBasis | undefined): boolean {
+  return basis === "legacy_unapproved" || basis === "legacy_mail_send";
+}
+
 export interface ActionProvenance {
+  /**
+   * The basis the approval-time verdict gave (AD3a-2a): what the act wiring routes and vetoes by.
+   * Absent for a user-MCP type and for a classifier that gives none.
+   */
+  readonly basis?: ActionBasis;
   readonly captureId: string;
   readonly clientLabel: string | null;
   readonly createdAt: number;
@@ -156,10 +217,21 @@ export interface ActionProvenance {
 
 export type ActExecuteOutcome =
   | { readonly status: "ok"; readonly result: unknown }
-  | { readonly status: "rejected" };
+  | {
+      readonly status: "rejected";
+      readonly reason?: string;
+      /** A fixed code for a refusal the agent may be told about; absent for a plain decline. */
+      readonly code?: ActionRejectCode;
+    };
 
 /** Built per accept by `ipc/capture-rpc.ts` (spec § 8): the only path from the sink to a connector. */
 export interface ActDeps {
+  /**
+   * True when the executor's answer can only come from a person at a terminal or the desktop (the
+   * consent wrapper turns every other answer into a decline). An `approved`-basis action is accepted
+   * only when this is true (AD3a-2a, R-6): the raw `captures.accept` RPC never sets it.
+   */
+  readonly humanOnly?: boolean;
   execute(
     actionType: string,
     input: Readonly<Record<string, unknown>>,

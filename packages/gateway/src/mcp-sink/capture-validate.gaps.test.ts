@@ -102,8 +102,8 @@ describe("term, link and action payloads", () => {
     expect(why("action", "text")).toContain("payload must be an object");
   });
 
-  test("a payload over 64 KiB is refused after the rebuild", () => {
-    const big = { actionType: "a.b", input: { blob: "x".repeat(70_000) }, summary: "s" };
-    expect(why("action", big)).toContain("payload exceeds 65536 bytes");
+  test("an action payload over 320 KiB is refused after the rebuild (the action cap, AD3a-2a)", () => {
+    const big = { actionType: "a.b", input: { blob: "x".repeat(330_000) }, summary: "s" };
+    expect(why("action", big)).toContain("payload exceeds 327680 bytes");
   });
 });

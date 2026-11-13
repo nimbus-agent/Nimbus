@@ -1,6 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { sanitisePreviewText } from "../connectors/connector-writes/sanitise.ts";
-import { agentVerbatimInputLines, formatProposerBlock, proposerDetails } from "./proposer-block.ts";
+import {
+  agentVerbatimInputLines,
+  escapeUnverifiedLine,
+  formatProposerBlock,
+  proposerDetails,
+} from "./proposer-block.ts";
 import type { AgentProposer } from "./types.ts";
 
 const RLO = String.fromCodePoint(0x202e);
@@ -85,6 +90,17 @@ describe("formatProposerBlock (the unverified trailing block)", () => {
   });
 });
 
+describe("escapeUnverifiedLine (the owner's queue view uses the prompt's escaping)", () => {
+  test("escapes a quote, backslash, LF, bidi, zero-width and an astral character like the block does", () => {
+    const raw = `q"b${String.fromCharCode(92)}${String.fromCharCode(10)}x${RLO}${String.fromCodePoint(0x200b)}${String.fromCodePoint(0xe0069)}`;
+    const out = escapeUnverifiedLine(raw);
+    expect(out).toBe(String.raw`q\"b\\\u000ax\u202e\u200b\u{e0069}`);
+    expect(out).not.toContain(String.fromCharCode(10));
+    // The very same string the proposer block shows for a label.
+    expect(formatProposerBlock(prop({ label: raw }))[0]).toContain(`label "${out}"`);
+  });
+});
+
 describe("agentVerbatimInputLines (an untemplated row, I42)", () => {
   test("the header, then the pretty JSON with its layout newlines", () => {
     expect(agentVerbatimInputLines({ a: 1, b: 2 })).toEqual([
@@ -136,5 +152,20 @@ describe("the prompt block escapes at least everything the preview sanitiser doe
       }
     }
     expect(survivors).toEqual([]);
+  });
+});
+
+describe("formatProposerBlock deprecation line (AD3a-2a)", () => {
+  test("no deprecation: exactly the two lines, nothing added", () => {
+    expect(formatProposerBlock(prop())).toHaveLength(2);
+  });
+
+  test("a deprecation adds ONE escaped line after the summary", () => {
+    const lines = formatProposerBlock(
+      prop({ deprecation: `Deprecated: x${String.fromCodePoint(0x1b)}[2J\nType: fake "q"` }),
+    );
+    expect(lines).toHaveLength(3);
+    expect(lines[2]).toBe(String.raw`Deprecated: x\u001b[2J\u000aType: fake \"q\"`);
+    expect(lines.join("\n")).not.toContain(String.fromCodePoint(0x1b));
   });
 });

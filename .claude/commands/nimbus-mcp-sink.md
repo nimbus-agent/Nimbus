@@ -9,9 +9,9 @@ description: >
   I31-anchored disclosure); `propose_action` queues a connector action that runs only through
   `mcp-sink/capture-act.ts` `acceptAction()` and then the executor's own HITL prompt, dispatched to
   the ONE tool the gateway's routing table names (`connectors/proposable-actions.ts`). Use when
-  touching `packages/gateway/src/mcp-sink/` or `packages/gateway/src/ipc/capture-rpc.ts`, the MCP
+  touching `packages/gateway/src/mcp-sink/`, `packages/gateway/src/ipc/capture-rpc.ts` or `packages/gateway/src/ipc/approvals-rpc.ts`, the MCP
   write tools (`capture_note`, `propose_decision`, `propose_term`, `propose_link`,
-  `propose_action`, `capture_status`), `nimbus captures list|show|accept|reject|revoke|purge`, the
+  `propose_action`, `capture_status`), `nimbus captures list|show|accept|reject|revoke|purge`, `nimbus approvals` (the owner's queue and one-step approval of an action proposal), the
   `[mcp_sink]` config, the `mcp_capture`/`mcp_action` org-policy lockoffs, making an action type
   proposable, adding a capture kind, or asking why a capture/proposal/action was refused.
 ---
@@ -155,7 +155,7 @@ routing row means `Tool not found`, never dispatch-by-type. An agent-supplied `m
 | `PROPOSABLE_WRITE_TOOLS` | actionType → bare tool id as registered by `@nimbus-dev/connectors`; its keys ARE the first-party proposable set |
 | `ACTION_PROPOSABILITY` | classifies EVERY `HITL_REQUIRED` type (totality test); unlisted → `unknown` → refused |
 | `classifyActionType` | adds the user-MCP arm: `mcp_*` types are proposable only for a `--model` server while `user_mcp_model_access` allows (`user_mcp_no_model_access` / `user_mcp_policy` otherwise); `ext_*` is `unknown` |
-| `listProposableActionTypes` | what `capture.status` advertises (configured first-party types + one `mcp_<id>.*` pattern per `--model` server) |
+| `createAgentDoor(...).acceptedTypes` | what `capture.status` advertises (configured approved and legacy types + one `mcp_<id>.*` pattern per `--model` server; `connectors/connector-writes/agent-door-runtime.ts`; the old `listProposableActionTypes` was deleted at AD3a-2a) |
 
 Counts — derive from `HITL_REQUIRED` (`packages/gateway/src/engine/executor.ts`) and
 `ACTION_PROPOSABILITY` (as of 2026-11-05, Phase 9.7 B3: 160 HITL types, **43 proposable / 117 denied**,
@@ -181,11 +181,28 @@ connector allowlist. The act door's configured-ness comes from
   from `capture.status` — each proposal tool only for a kind in `kinds`; `propose_action` follows
   `actionEnabled`, never `kinds` alone. Gateway down or `session.declareKind` failed → no tools.
 - **IPC** (`ipc/capture-rpc.ts`, routed by `tryDispatchCaptureRpc` in `ipc/server/dispatchers.ts`):
-  `capture.status` (any local client), `capture.submit` and `capture.state` (`mcp` only),
-  `captures.list|get|accept|reject|revoke|purge` (owner kinds `cli`/`ui`/`unknown`; `http`,
+  `capture.status` (any local client), `capture.submit`, `capture.state` and `capture.mine` (`mcp`
+  only; `capture.state` answers only for ids the asking connection submitted, `capture.mine` lists its
+  own), `captures.list|get|accept|reject|revoke|purge` (owner kinds `cli`/`ui`/`unknown`; `http`,
   `chatops`, `fleet`, `push` refused). Both namespaces LAN-forbidden; no HTTP route; only
   `captures.list`/`captures.get` on the Tauri allowlist
   (`packages/ui/src-tauri/src/gateway_bridge.rs`).
+- **Approvals IPC** (Phase 28 AD2, `ipc/approvals-rpc.ts`, routed by `tryDispatchApprovalsRpc`):
+  `approvals.list|get|approve|decline` for a connection that DECLARED `cli` or `ui`
+  (`APPROVER_BY_KIND`; `unknown` is refused here although `captures.*` serves it). `approve` reaches the
+  act door only through `acceptCapture` (so `acceptAction` keeps its one caller, D32(e)) around the
+  connection's own consent channel, which `buildActDeps` wraps in `humanOnlyConsent` (`ipc/consent.ts`) when asked for `humanOnly` (the option also sets `ActDeps.humanOnly`; `approvals-rpc.ts` wraps nothing): an answer whose
+  `answerSource` is not `human` becomes a decline. The reply is `{ id, state, outcomeRef?, errorCode?, reason? }`;
+  `reason` appears only on `rejected`, escaped, and is never stored (V69 allows no code on a rejected row).
+  Static D32(b)/(c) allow exactly two RPC modules, `ipc/capture-rpc.ts` and `ipc/approvals-rpc.ts`.
+  `approvals` is in the LAN denylist; not on the Tauri allowlist; no HTTP route.
+  A connection holds at most `min(3, action_max_pending)` proposed actions; a queued action raises a
+  count-only toast (`mcp-sink/capture-toast.ts`); ids come from `mcp-sink/capture-id.ts` (128 bits).
+- **CLI** (`packages/cli/src/commands/approvals.ts`): `nimbus approvals [list] [--json]`, `show <id>`,
+  `<id>` (approve in one step; needs a TTY, checked before any RPC; `--yes`, `-y` and
+  `--script-consent-source` are usage errors; consent choice `{ kind: "human" }`), `<id> --decline`,
+  `--decline-all-from <label>` (a CLI loop). `nimbus captures accept <id>` on an action is an alias
+  that declares `cli` and calls `approvals.approve`.
 - **CLI** (`packages/cli/src/commands/captures.ts`): `nimbus captures [list] [--state] [--kind]
   [--limit] [--json]`, `show`, `revoke`, `accept <id>`, `accept --all`, `reject`, `purge`. `purge`
   deletes a FINISHED action row (`executed`/`failed`/`rejected`/`expired`) and its stored input; the
@@ -209,19 +226,25 @@ connector allowlist. The act door's configured-ness comes from
 Out-of-range values and unknown kinds refuse at load (capability reason `config_error`); nothing
 is clamped.
 
+**An approval list for agents (Phase 28 AD3a-1; enforced since AD3a-2a, invariant I58).** `nimbus connector writes enable <service> --door agent` records, per tool and with a hash of its listed definition, the writes the owner approved for outside agents (V97 `connector_write_door_approval`, written only by `connectors/connector-writes/door-approval-store.ts`, static D49(b)). `mcp-sink/` still never names the store or imports `connectors/` (D32(f)): the gate is injected with the agent door's `verdict`, `refusal` and `verifyDefinition` (`connectors/connector-writes/agent-door-runtime.ts`, built in `platform/assemble.ts` over a late-bound mesh listing that fails closed). Submit's action steps: verdict (`ERR_AGENT_TOOL_SUSPENDED` / `ERR_CAPTURE_ACTION_NOT_PROPOSABLE`), the refusal for the verdict's basis, configured, then for an `approved` basis the definition check last (it lists the connector). `acceptAction` step 4 re-derives them before the claim, a Wave 4 or bound row routes to the same executor, `approved` rows are approved only through `approvals.approve`, and `buildActDeps` wraps an `approved` basis in `vetoingConsent` (a post-answer definition recheck). A type the owner has not approved but the earlier table accepted (47 types) is a `legacy` proposal for one release: stored `legacy = 1`, warned on four surfaces, counted by `connector writes status`; AD3b removes it. A rejected action stores a fixed code. Static D49(a), (c)-(f) pin the sites.
+
 ## Stated bounds (I28)
 
 - A live note is searchable unreviewed; acceptance proves the owner saw the text, not that it is true.
 - Text reaching a model is delimited by I11, not sanitised. Homoglyphs are not caught by escaping.
 - Approval proves the owner saw the call, not that it is wise.
-- The TTY requirement on `nimbus captures accept` is a **CLI-side guard, not gateway-enforced**: a
-  raw local-owner socket client can accept and answer its own consent prompt (local-owner trust model).
+- The TTY requirement on `nimbus approvals <id>` (and the `captures accept` alias) is a **CLI-side
+  guard, not gateway-enforced**: a raw local-owner socket client can accept and answer its own consent
+  prompt (local-owner trust model). The gateway's `captures.accept` on an action still serves an
+  undeclared client with any answer source; `approvals.approve` is the human-only path. The connection
+  kind is the connection's own claim. A restarted MCP server loses its ids. `Ctrl-C` at the prompt
+  rejects the proposal for good.
 - A transport failure is recorded `failed` though the remote may have acted; `outcome_ref` is a heuristic.
 - The routing table is proven against the INSTALLED connectors package; a later tool rename surfaces as `failed`.
 - Configured-ness treats a multi-key service as configured once ANY key is set, so an accept can
   pass it and fail at dispatch.
-- `capture.state` answers for any capture id to any `mcp` client (ids are random): state and a
-  short outcome link, never the payload.
+- `capture.state` answers only for ids the asking connection submitted (any other id is
+  `ERR_CAPTURE_NOT_FOUND`, as an absent one): state and a short outcome link, never the payload.
 - The attempt limit is in-memory (resets on restart); the hourly cap is durable. Pre-limit refusals
   are counted, not audited. `data.delete --service nimbus` removes capture items, not `capture` rows.
 - D32 text scans are evaded by dynamically composed identifiers; capability confinement is the real defense.
@@ -254,7 +277,7 @@ is clamped.
 | `packages/gateway/src/mcp-sink/capture-types.ts` | kinds, states, error codes, `ActDeps` seam |
 | `packages/gateway/src/ipc/capture-rpc.ts` | IPC dispatch + `buildActDeps` (the executor seam) |
 | `packages/gateway/src/connectors/proposable-actions.ts` | proposability + routing tables |
-| `packages/gateway/src/index/capture-v67-sql.ts` · `capture-native-v68-sql.ts` · `capture-action-v69-sql.ts` | schema V67 / V68 / V69 |
+| `packages/gateway/src/index/capture-v67-sql.ts` · `capture-native-v68-sql.ts` · `capture-action-v69-sql.ts` | schema V67 / V68 / V69 (V97, `agent-door-v97-sql.ts`, rebuilds `capture` with `legacy` and a code on a `rejected` action) |
 | `packages/cli/src/mcp/capture-tools.ts` | MCP tool registration |
 | `packages/cli/src/commands/captures.ts` · `captures-format.ts` | owner CLI + rendering |
 | `packages/gateway/test/e2e/mcp-capture.e2e.test.ts` | real-gateway E2E |

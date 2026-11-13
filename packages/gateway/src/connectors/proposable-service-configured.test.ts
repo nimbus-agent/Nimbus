@@ -1,7 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
-import { listProposableActionTypes } from "./proposable-actions.ts";
 import { createProposableServiceConfigured } from "./proposable-service-configured.ts";
 
 function vaultWith(entries: Readonly<Record<string, string>>): NimbusVault {
@@ -57,20 +56,5 @@ describe("createProposableServiceConfigured", () => {
     expect(await check("mcp_echo")).toBe(true);
     expect(await check("mcp_other")).toBe(false);
     expect(seen).toEqual(["mcp_echo", "mcp_other"]);
-  });
-
-  test("capture.status advertises obsidian.note.append only when obsidian can spawn", async () => {
-    const list = (canSpawn: boolean) =>
-      listProposableActionTypes({
-        modelAccessServices: () => new Set<string>(),
-        userMcpModelAccessAllowed: () => false,
-        isServiceConfigured: createProposableServiceConfigured({
-          vault: vaultWith({}),
-          isUserMcpRegistered: () => false,
-          meshOnly: { obsidian: () => canSpawn },
-        }),
-      });
-    expect(await list(true)).toContain("obsidian.note.append");
-    expect(await list(false)).not.toContain("obsidian.note.append");
   });
 });

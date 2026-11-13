@@ -1,8 +1,9 @@
 // packages/gateway/src/standing/standing-rule-text.ts
 // Limits, the weekday/time-of-day window and the exact text the owner approves (Phase 10 SA3,
 // OR-10-5 / OR-10-6, spec § 5.2). Pure: no I/O, no clock of its own (callers pass `now`).
-import { byCodeUnit } from "../automation/workflow-steps.ts";
+
 import { sanitisePreviewText } from "../connectors/connector-writes/preview.ts";
+import { byCodeUnit } from "../util/canonical-json.ts";
 import type { ScopeEntry, StandingScope, StandingWindow } from "./standing-rule-types.ts";
 import {
   DAY_MS,

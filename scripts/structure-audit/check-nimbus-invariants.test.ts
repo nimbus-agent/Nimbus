@@ -6,7 +6,11 @@ import {
   assertScanIsMeaningful,
   checkActDoorConfinement,
   checkActuationConfinement,
+  checkAgentDoorCheckOrder,
+  checkAgentDoorLegacyFlag,
+  checkAgentDoorLegacyTable,
   checkAgentEmitterImportConfinement,
+  checkAgentOriginWriter,
   checkAgentProvenanceWriters,
   checkBeforeStateRead,
   checkBoundCapabilities,
@@ -23,6 +27,7 @@ import {
   checkConfirmComparison,
   checkConnectorSpawnIsHidden,
   checkConnectorWriteConfinement,
+  checkDoorApprovalConfinement,
   checkDriverImportConfinement,
   checkEgressChokepointConfinement,
   checkEmbeddingAppenderConfinement,
@@ -41,6 +46,7 @@ import {
   checkMediaGrantStoreConfinement,
   checkMigrationConfinement,
   checkModelWriteDoor,
+  checkOriginComparison,
   checkPackLayerWriters,
   checkPushClientKindConfinement,
   checkRegistryAppenderConfinement,
@@ -68,6 +74,7 @@ import {
   PLATFORM_VAULT_KEYS,
   RULE_ANCHORS,
   VAULT_KEY_ALLOW_LIST,
+  type Violation,
 } from "./check-nimbus-invariants.ts";
 import { iterateSourceFiles, REPO_ROOT, stripComments } from "./lib.ts";
 
@@ -2277,6 +2284,20 @@ describe("D32(a) — the capture table is named only by its store and its DDL", 
     ).toEqual([]);
   });
 
+  test("allows the V97 rebuild SQL, and the same SQL anywhere else is a violation", () => {
+    const rebuild = "DROP TABLE capture; ALTER TABLE capture_v97 RENAME TO capture";
+    expect(
+      checkCaptureTableConfinement([
+        file("packages/gateway/src/index/agent-door-v97-sql.ts", rebuild),
+      ]),
+    ).toEqual([]);
+    expect(
+      checkCaptureTableConfinement([
+        file("packages/gateway/src/connectors/connector-writes/agent-door.ts", rebuild),
+      ]),
+    ).toHaveLength(1);
+  });
+
   test.each([
     ["a read", "SELECT 1 FROM capture"],
     ["a write", "INSERT INTO capture (id) VALUES (?)"],
@@ -2424,6 +2445,14 @@ describe("D32(e)(f)(g) — the act door", () => {
     expect(v[0]?.rule).toBe("act-door-accept-action");
   });
 
+  test("(e) AD2: acceptAction named in ipc/approvals-rpc.ts is still a violation (it reaches the door through acceptCapture)", () => {
+    const v = checkActDoorConfinement([
+      file("packages/gateway/src/ipc/approvals-rpc.ts", "acceptAction(d, c, r, a)"),
+    ]);
+    expect(v).toHaveLength(1);
+    expect(v[0]?.rule).toBe("act-door-accept-action");
+  });
+
   test("(e) importing a DIFFERENT symbol from capture-act.ts is not a violation", () => {
     expect(
       checkActDoorConfinement([
@@ -2518,9 +2547,50 @@ describe("D32(e)(f)(g) — the act door", () => {
   });
 });
 
-describe("D32(c) — capture-gate.ts is value-imported only by ipc/capture-rpc.ts", () => {
+describe("D32(c) — capture-gate.ts is value-imported only by the two RPC modules", () => {
   const file = (relPath: string, contents: string): FileEntry => ({ relPath, contents });
   const rpc = "packages/gateway/src/ipc/capture-rpc.ts";
+  const approvals = "packages/gateway/src/ipc/approvals-rpc.ts";
+
+  test("AD2: approvals-rpc.ts may value-import the gate", () => {
+    expect(
+      checkCaptureGateImporters([
+        file(approvals, 'import { acceptCapture } from "../mcp-sink/capture-gate.ts";'),
+      ]),
+    ).toEqual([]);
+  });
+
+  test("AD2: a bare ipc/approvals-rpc.ts entry would not exempt the file (full repo-relative paths only)", () => {
+    expect(
+      checkCaptureGateImporters([
+        file(
+          "ipc/approvals-rpc.ts",
+          'import { acceptCapture } from "../mcp-sink/capture-gate.ts";',
+        ),
+      ]),
+    ).toEqual([]); // outside packages/gateway/src/: not scanned at all
+    expect(
+      checkCaptureGateImporters([
+        file(
+          "packages/gateway/src/ipc/x-approvals-rpc.ts",
+          'import { acceptCapture } from "../mcp-sink/capture-gate.ts";',
+        ),
+      ]),
+    ).toHaveLength(1);
+  });
+
+  test("AD2: approvals-rpc.ts importing the executor is not a D32(c)/(f) matter (outside mcp-sink/)", () => {
+    expect(
+      checkCaptureGateImporters([
+        file(approvals, 'import { ToolExecutor } from "../engine/executor.ts";'),
+      ]),
+    ).toEqual([]);
+    expect(
+      checkActDoorConfinement([
+        file(approvals, 'import { ToolExecutor } from "../engine/executor.ts";'),
+      ]),
+    ).toEqual([]);
+  });
 
   test("allows the rpc value import and type imports anywhere", () => {
     expect(
@@ -2555,10 +2625,14 @@ describe("D32(c) — capture-gate.ts is value-imported only by ipc/capture-rpc.t
       "a value import after a semicolon-free side-effect import",
       'import "./polyfill"\nimport { a } from "../mcp-sink/capture-gate.ts"',
     ],
-  ])("FAILS on %s outside capture-rpc.ts", (_n, src) => {
+  ])("FAILS on %s outside the two RPC modules", (_n, src) => {
     expect(
       checkCaptureGateImporters([file("packages/gateway/src/platform/assemble.ts", src)]),
     ).toHaveLength(1);
+    expect(
+      checkCaptureGateImporters([file("packages/gateway/src/ipc/x-rpc.ts", src)]),
+    ).toHaveLength(1);
+    expect(checkCaptureGateImporters([file(approvals, src)])).toEqual([]);
   });
 
   test("ignores a mention in a comment and unrelated modules", () => {
@@ -2573,8 +2647,40 @@ describe("D32(c) — capture-gate.ts is value-imported only by ipc/capture-rpc.t
   });
 });
 
-describe("D32(b) — gate entry points are called only from ipc/capture-rpc.ts", () => {
+describe("D32(b) — gate entry points are called only from the two RPC modules", () => {
   const file = (relPath: string, contents: string): FileEntry => ({ relPath, contents });
+  const approvals = "packages/gateway/src/ipc/approvals-rpc.ts";
+
+  test("AD2: approvals-rpc.ts may name all five", () => {
+    expect(
+      checkCaptureGateCallers([
+        file(
+          approvals,
+          "submitCapture(a); acceptCapture(a); rejectCapture(a); revokeCapture(a); purgeCapture(a);",
+        ),
+      ]),
+    ).toEqual([]);
+  });
+
+  test.each(["submitCapture", "acceptCapture", "rejectCapture", "revokeCapture", "purgeCapture"])(
+    "AD2: %s named in a THIRD module (a new ipc/x-rpc.ts) fails",
+    (fn) => {
+      expect(
+        checkCaptureGateCallers([file("packages/gateway/src/ipc/x-rpc.ts", `${fn}(a, b, c)`)]),
+      ).toHaveLength(1);
+    },
+  );
+
+  test("AD2: an aliased import (acceptCapture as ac) in a third module fails", () => {
+    expect(
+      checkCaptureGateCallers([
+        file(
+          "packages/gateway/src/ipc/x-rpc.ts",
+          'import { acceptCapture as ac } from "../mcp-sink/capture-gate.ts";',
+        ),
+      ]),
+    ).toHaveLength(1);
+  });
 
   test("allows the rpc dispatcher and the gate's own definitions", () => {
     expect(
@@ -6228,5 +6334,399 @@ describe("D47 - the v1 static-box LAN path is reachable only through ipc/lan-leg
 
   test("lan-legacy.ts is a rule anchor, so a scan that lost it is not meaningful", () => {
     expect(RULE_ANCHORS).toContain("packages/gateway/src/ipc/lan-legacy.ts");
+  });
+});
+
+describe("D49(b) - the connector_write_door_approval table is named only by its store and its DDL", () => {
+  const file = (relPath: string, contents: string): FileEntry => ({ relPath, contents });
+  const SRC = "packages/gateway/src/";
+  const STORE = `${SRC}connectors/connector-writes/door-approval-store.ts`;
+  const DDL = `${SRC}index/agent-door-v97-sql.ts`;
+  const GOOD: FileEntry[] = [
+    file(STORE, "SELECT * FROM connector_write_door_approval WHERE door = ?"),
+    file(DDL, "CREATE TABLE IF NOT EXISTS connector_write_door_approval ("),
+  ];
+  const rules = (files: FileEntry[]): string[] =>
+    checkDoorApprovalConfinement(files).map((v) => v.rule);
+
+  test("the store and the DDL file are clean", () => {
+    expect(checkDoorApprovalConfinement(GOOD)).toEqual([]);
+  });
+
+  test.each([
+    ["FROM", "SELECT 1 FROM connector_write_door_approval"],
+    ["INTO", "INSERT INTO connector_write_door_approval (a) VALUES (1)"],
+    ["UPDATE", "UPDATE connector_write_door_approval SET suspended_at = NULL"],
+    ["JOIN", "SELECT 1 FROM x JOIN connector_write_door_approval d ON d.service = x.s"],
+    ["a quoted name", 'SELECT 1 FROM "connector_write_door_approval"'],
+    ["a schema-qualified name", "DELETE FROM main.connector_write_door_approval"],
+  ])("%s is refused from any other file", (_n, sql) => {
+    for (const path of [
+      `${SRC}ipc/connector-rpc-handlers/agent-writes.ts`,
+      `${SRC}mcp-sink/capture-store.ts`,
+      `${SRC}connectors/connector-writes/agent-door.ts`,
+      `${SRC}brand-new.ts`,
+    ]) {
+      expect(rules([...GOOD, file(path, sql)]), path).toEqual(["door-approval-confined"]);
+    }
+  });
+
+  test("a comment naming the table, a test file and a look-alike are clean", () => {
+    expect(
+      rules([
+        ...GOOD,
+        file(`${SRC}x.ts`, "// FROM connector_write_door_approval\nconst a = 1;"),
+        file(`${SRC}x.test.ts`, "FROM connector_write_door_approval"),
+        file(`${SRC}y.ts`, "SELECT 1 FROM connector_write_door_approval_log"),
+      ]),
+    ).toEqual([]);
+  });
+
+  test("the real repository satisfies the rule and every anchor is scanned", async () => {
+    const files: FileEntry[] = [];
+    for await (const f of iterateSourceFiles()) {
+      files.push({ relPath: f.relPath, contents: f.contents });
+    }
+    expect(checkDoorApprovalConfinement(files)).toEqual([]);
+    expect(assertScanIsMeaningful(files)).toEqual([]);
+  });
+});
+
+describe("D49(a), (c)-(f) - the agent door's enforcement sites (Phase 28 AD3a-2a, I58)", () => {
+  const file = (relPath: string, contents: string): FileEntry => ({ relPath, contents });
+  const SRC = "packages/gateway/src/";
+  const RPC = `${SRC}ipc/capture-rpc.ts`;
+  const ACT = `${SRC}mcp-sink/capture-act.ts`;
+  const GATE = `${SRC}mcp-sink/capture-gate.ts`;
+  const RUNTIME = `${SRC}connectors/connector-writes/agent-door-runtime.ts`;
+  const ASSEMBLE = `${SRC}platform/assemble.ts`;
+
+  const CHANNEL = `      const channel =
+        provenance.basis === "approved"
+          ? vetoingConsent(coordinator, recheck, onVeto)
+          : coordinator;
+`;
+  const EXECUTOR = `      const executor = buildAgentWriteExecutor({ clientId, consentCoordinator: channel, audit: w.audit });
+`;
+  const goodRpc = (
+    middle: string,
+  ): string => `export function buildActDeps(w, coordinator, clientId) {
+  return {
+    async execute(actionType, input, provenance) {
+${middle}      const action = { type: actionType, origin: "agent", proposer: agentProposerOf(provenance) };
+      return executor.execute(action);
+    },
+  };
+}`;
+  const GOOD_RPC = goodRpc(CHANNEL + EXECUTOR);
+  const AFTER_VERDICT = "  await requireDefinitionAtApproval(deps, stored.actionType, basis);\n";
+  const CLAIM = "  const won = deps.store.claimAction(row.id, claimAt);\n";
+  const goodAct = (middle: string): string => `function requireVerdictAtApproval(deps, actionType) {
+  const verdict = deps.classifyAction?.(actionType);
+  return verdict;
+}
+async function requireDefinitionAtApproval(deps, actionType, basis) {
+  await deps.verifyActionDefinition?.(actionType);
+}
+export async function acceptAction(deps, caller, row, act) {
+  const basis = requireVerdictAtApproval(deps, stored.actionType);
+${middle}  return won;
+}`;
+  const GOOD_ACT = goodAct(AFTER_VERDICT + CLAIM);
+  const goodGate = (
+    middle: string,
+  ): string => `async function requireDefinitionVerified(ctx, v, basis) {
+  await ctx.deps.verifyActionDefinition?.(v.payload.actionType);
+}
+export async function submitCapture(deps, caller, input): Promise<{ id: string }> {
+  const basis = deps.classifyAction?.(v.payload.actionType);
+${middle}}`;
+  const DEFINITION = "  await requireDefinitionVerified(ctx, v, basis);\n";
+  const WRITE = "  const written = writeSubmittedCapture(ctx, v, cap, now, basis);\n";
+  const GOOD_GATE = goodGate(`${DEFINITION}${WRITE}  return written;\n`);
+  const GOOD: FileEntry[] = [
+    file(RPC, GOOD_RPC),
+    file(ACT, GOOD_ACT),
+    file(GATE, GOOD_GATE),
+    file(RUNTIME, "const x = ACTION_PROPOSABILITY; export function createAgentDoor() {}"),
+    file(`${SRC}connectors/proposable-actions.ts`, "export const ACTION_PROPOSABILITY = {};"),
+    file(ASSEMBLE, "const d = createAgentDoor({});"),
+    file(`${SRC}engine/outside-origin.ts`, 'return action.origin === "agent";'),
+    file(`${SRC}engine/types.ts`, "proposer?: AgentProposer;"),
+    file(`${SRC}mcp-sink/capture-store.ts`, "agentDoorLegacy; legacyActionTypesSince(1);"),
+    file(`${SRC}ipc/connector-rpc-handlers/agent-writes.ts`, "store.legacyActionTypesSince(1);"),
+  ];
+  const rules = (fn: (f: FileEntry[]) => Violation[], files: FileEntry[]): string[] =>
+    fn(files).map((v) => v.rule);
+  const swap = (path: string, contents: string): FileEntry[] =>
+    GOOD.map((f) => (f.relPath === path ? file(path, contents) : f));
+  const add = (path: string, contents: string): FileEntry[] => [...GOOD, file(path, contents)];
+
+  test("the good set is clean under every clause", () => {
+    for (const fn of [
+      checkAgentDoorLegacyTable,
+      checkAgentOriginWriter,
+      checkOriginComparison,
+      checkAgentDoorCheckOrder,
+      checkAgentDoorLegacyFlag,
+    ]) {
+      expect(fn(GOOD)).toEqual([]);
+    }
+  });
+
+  test.each([
+    [`${SRC}ipc/approvals-rpc.ts`, "const v = classifyActionType(t, ctx);"],
+    [`${SRC}ipc/approvals-rpc.ts`, "const v = ACTION_PROPOSABILITY[t];"],
+    [`${SRC}ipc/other.ts`, "const tool = proposableWriteTool(t);"],
+    [`${SRC}mcp-sink/capture-gate.ts`, "const t = PROPOSABLE_WRITE_TOOLS;"],
+    [`${SRC}platform/other.ts`, "import { classifyActionType as c } from './x';"],
+  ])("(a) the legacy table named in %s is refused", (path, code) => {
+    expect(rules(checkAgentDoorLegacyTable, add(path, code))).toEqual([
+      "agent-door-legacy-table-consulted-once",
+    ]);
+  });
+
+  test("(a) createAgentDoor in a third file is refused", () => {
+    expect(
+      rules(checkAgentDoorLegacyTable, add(`${SRC}ipc/other.ts`, "createAgentDoor(d);")),
+    ).toEqual(["agent-door-built-once"]);
+  });
+
+  test("(a) comments, test files and test helpers stay clean", () => {
+    expect(
+      checkAgentDoorLegacyTable([
+        ...GOOD,
+        file(`${SRC}x.ts`, "// classifyActionType createAgentDoor\nconst a = 1;"),
+        file(`${SRC}x.test.ts`, "classifyActionType(t)"),
+        file(`${SRC}ipc/y.test-helpers.ts`, "proposableWriteTool(t)"),
+      ]),
+    ).toEqual([]);
+  });
+
+  test.each([
+    [`${SRC}ipc/approvals-rpc.ts`, 'const a = { type, origin: "agent" };'],
+    [`${SRC}mcp-sink/capture-act.ts`, "const a = { proposer: { door: 1 } };"],
+    [`${SRC}ipc/approvals-rpc.ts`, "const a = { proposer: p };"],
+  ])("(c) %s writing the agent origin or a proposer is refused", (path, code) => {
+    expect(rules(checkAgentOriginWriter, add(path, code))).toEqual(["agent-origin-written-once"]);
+  });
+
+  test("(c) a comment naming them stays clean", () => {
+    expect(
+      checkAgentOriginWriter(add(`${SRC}x.ts`, '// origin: "agent", proposer: p\nconst a = 1;')),
+    ).toEqual([]);
+  });
+
+  test.each([
+    'if (action.origin === "agent") return;',
+    "if (a.origin !== 'model') return;",
+    'if ("agent" === action.origin) return;',
+  ])("(d) %s outside outside-origin.ts is refused", (code) => {
+    expect(rules(checkOriginComparison, add(`${SRC}connectors/registry.ts`, code))).toEqual([
+      "origin-compared-once",
+    ]);
+  });
+
+  test("(d) a comparison that is not an origin literal stays clean", () => {
+    expect(
+      checkOriginComparison(add(`${SRC}x.ts`, 'if (typeof g.origin === "string") return;')),
+    ).toEqual([]);
+  });
+
+  test("(e) the executor built BEFORE the vetoing channel is refused", () => {
+    expect(
+      rules(checkAgentDoorCheckOrder, swap(RPC, goodRpc(EXECUTOR + CHANNEL))).length,
+    ).toBeGreaterThan(0);
+  });
+
+  test("(e) an executor handed the plain coordinator is refused", () => {
+    expect(
+      rules(
+        checkAgentDoorCheckOrder,
+        swap(
+          RPC,
+          goodRpc(
+            CHANNEL +
+              EXECUTOR.replace("consentCoordinator: channel", "consentCoordinator: coordinator"),
+          ),
+        ),
+      ),
+    ).toEqual(["agent-door-check-order"]);
+  });
+
+  test("(e) a channel not built with vetoingConsent is refused", () => {
+    expect(
+      rules(
+        checkAgentDoorCheckOrder,
+        swap(RPC, goodRpc(CHANNEL.replace("vetoingConsent(", "wrapConsent(") + EXECUTOR)),
+      ),
+    ).toEqual(["agent-door-check-order"]);
+  });
+
+  test("(e) a vetoingConsent( call that is not the channel's initializer is refused", () => {
+    expect(
+      rules(
+        checkAgentDoorCheckOrder,
+        swap(
+          RPC,
+          goodRpc(
+            "      const channel = coordinator;\n      vetoingConsent(coordinator, recheck, onVeto);\n" +
+              EXECUTOR,
+          ),
+        ),
+      ),
+    ).toEqual(["agent-door-check-order"]);
+  });
+
+  test("(e) a vetoing wrapper inside a conditional initializer is clean", () => {
+    expect(
+      rules(
+        checkAgentDoorCheckOrder,
+        swap(
+          RPC,
+          goodRpc(
+            `      const channel =
+        provenance.basis === 1 && door !== undefined
+          ? vetoingConsent(coordinator, async () => { return 1; }, (r) => { v = r; })
+          : coordinator;
+` + EXECUTOR,
+          ),
+        ),
+      ),
+    ).toEqual([]);
+  });
+
+  test("(e) a definition helper that keeps a reference to the injected check but drops the call is refused", () => {
+    expect(
+      rules(
+        checkAgentDoorCheckOrder,
+        swap(
+          ACT,
+          GOOD_ACT.replace(
+            "await deps.verifyActionDefinition?.(actionType);",
+            `const verify = deps.verifyActionDefinition;
+  return verify;`,
+          ),
+        ),
+      ),
+    ).toEqual(["agent-door-check-order"]);
+    expect(
+      rules(
+        checkAgentDoorCheckOrder,
+        swap(
+          GATE,
+          GOOD_GATE.replace(
+            "await ctx.deps.verifyActionDefinition?.(v.payload.actionType);",
+            `const verify = ctx.deps.verifyActionDefinition;
+  return verify;`,
+          ),
+        ),
+      ),
+    ).toEqual(["agent-door-check-order"]);
+  });
+
+  test("(e) an aliased call of the injected check is clean", () => {
+    expect(
+      rules(
+        checkAgentDoorCheckOrder,
+        swap(
+          GATE,
+          GOOD_GATE.replace(
+            "await ctx.deps.verifyActionDefinition?.(v.payload.actionType);",
+            `const verify = ctx.deps.verifyActionDefinition;
+  await verify?.(v.payload.actionType);`,
+          ),
+        ),
+      ),
+    ).toEqual([]);
+  });
+
+  test("(e) claimAction before the definition step at approval is refused", () => {
+    expect(rules(checkAgentDoorCheckOrder, swap(ACT, goodAct(CLAIM + AFTER_VERDICT)))).toEqual([
+      "agent-door-check-order",
+    ]);
+  });
+
+  test("(e) a missing definition step at approval is refused", () => {
+    expect(rules(checkAgentDoorCheckOrder, swap(ACT, goodAct(CLAIM)))).toEqual([
+      "agent-door-check-order",
+    ]);
+  });
+
+  test("(e) a verdict step that no longer reads the injected verdict is refused", () => {
+    expect(
+      rules(
+        checkAgentDoorCheckOrder,
+        swap(ACT, GOOD_ACT.replace("deps.classifyAction?.(actionType)", "undefined")),
+      ),
+    ).toEqual(["agent-door-check-order"]);
+  });
+
+  test("(e) a definition helper that no longer reads the injected check is refused", () => {
+    expect(
+      rules(
+        checkAgentDoorCheckOrder,
+        swap(ACT, GOOD_ACT.replace("deps.verifyActionDefinition?.(actionType)", "true")),
+      ),
+    ).toEqual(["agent-door-check-order"]);
+    expect(
+      rules(
+        checkAgentDoorCheckOrder,
+        swap(GATE, GOOD_GATE.replace("ctx.deps.verifyActionDefinition?.(", "ctx.other?.(")),
+      ),
+    ).toEqual(["agent-door-check-order"]);
+  });
+
+  test("(e) at submit, the write before the definition step is refused", () => {
+    expect(
+      rules(
+        checkAgentDoorCheckOrder,
+        swap(GATE, goodGate(`${WRITE}${DEFINITION}  return written;\n`)),
+      ),
+    ).toEqual(["agent-door-check-order"]);
+  });
+
+  test("(e) at submit, no verdict before the write is refused", () => {
+    expect(
+      rules(
+        checkAgentDoorCheckOrder,
+        swap(GATE, GOOD_GATE.replace("deps.classifyAction?.(v.payload.actionType)", "undefined")),
+      ),
+    ).toEqual(["agent-door-check-order"]);
+  });
+
+  test("(e) a missing site or file fails closed", () => {
+    expect(checkAgentDoorCheckOrder(GOOD.filter((f) => f.relPath !== GATE))).toHaveLength(1);
+    expect(rules(checkAgentDoorCheckOrder, swap(GATE, "export const x = 1;"))).toEqual([
+      "agent-door-check-order",
+    ]);
+  });
+
+  test("(f) the legacy flag or its count in another file is refused", () => {
+    expect(
+      rules(
+        checkAgentDoorLegacyFlag,
+        add(`${SRC}engine/executor.ts`, "const f = row.agentDoorLegacy;"),
+      ),
+    ).toEqual(["agent-door-legacy-flag-confined"]);
+    expect(
+      rules(
+        checkAgentDoorLegacyFlag,
+        add(`${SRC}ipc/capture-rpc.ts`, "store.legacyActionTypesSince(1);"),
+      ),
+    ).toEqual(["agent-door-legacy-flag-confined"]);
+  });
+
+  test("the real repository satisfies every clause", async () => {
+    const files: FileEntry[] = [];
+    for await (const f of iterateSourceFiles()) {
+      files.push({ relPath: f.relPath, contents: f.contents });
+    }
+    expect(checkAgentDoorLegacyTable(files)).toEqual([]);
+    expect(checkAgentOriginWriter(files)).toEqual([]);
+    expect(checkOriginComparison(files)).toEqual([]);
+    expect(checkAgentDoorCheckOrder(files)).toEqual([]);
+    expect(checkAgentDoorLegacyFlag(files)).toEqual([]);
+    expect(assertScanIsMeaningful(files)).toEqual([]);
   });
 });

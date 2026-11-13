@@ -23,8 +23,6 @@
 // Nothing here writes anything but the fire (through the store's `claimFire`, which is also the
 // ceiling). Every dependency is injected, so a test drives each clause alone.
 import type { Database } from "bun:sqlite";
-
-import { canonicalJson } from "../automation/workflow-steps.ts";
 import { MODEL_NEVER_OFFERED_TOOL_IDS } from "../connectors/connector-writes/model-offerable.ts";
 import { rowNamedByToolId } from "../connectors/connector-writes/preview.ts";
 import type { ConnectorWriteRow } from "../connectors/connector-writes/types.ts";
@@ -36,6 +34,7 @@ import {
 } from "../standing/standing-rule-store.ts";
 import { isInsideWindow } from "../standing/standing-rule-text.ts";
 import type { StandingRule } from "../standing/standing-rule-types.ts";
+import { canonicalJson } from "../util/canonical-json.ts";
 import type { PlannedAction, WorkflowProvenance } from "./types.ts";
 
 /** What the executor hands the check (`ToolExecutorExtras.standingRules`). Only the workflow write executor has it. */

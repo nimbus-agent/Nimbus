@@ -65,7 +65,9 @@ export const AI_V2_CAPABILITIES = [
   "mcp_capture",
   /**
    * The MCP act door (I28, S3 PR 3): an agent PROPOSING a connector action for the owner to accept.
-   * Locked off, `propose_action` is not offered, submit refuses and accept refuses.
+   * Locked off, `propose_action` is not offered, submit refuses and accept refuses. A write the owner
+   * approved for agents by name (Phase 28 AD3a-2a, I58) also needs `connector_write_model_access`; a
+   * legacy proposal of the deprecation window needs this capability alone.
    */
   "mcp_action",
   /**

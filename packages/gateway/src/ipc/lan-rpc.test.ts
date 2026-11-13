@@ -158,6 +158,11 @@ describe("checkLanMethodAllowed", () => {
     "captures.list",
     "captures.get",
     "captures.revoke",
+    "capture.mine",
+    "approvals.list",
+    "approvals.get",
+    "approvals.approve",
+    "approvals.decline",
   ])("%s is not callable over LAN regardless of grant-write", (method) => {
     for (const writeAllowed of [true, false]) {
       expect(() => checkLanMethodAllowed(method, { peerId: "p", writeAllowed })).toThrow(

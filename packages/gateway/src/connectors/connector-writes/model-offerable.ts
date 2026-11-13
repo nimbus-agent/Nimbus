@@ -15,13 +15,13 @@ const CLI_READ_ONLY =
  * offerable without a new ruling. All five stay reachable on the owner's own doors.
  */
 export const MODEL_NEVER_OFFERED_REASONS: Readonly<Record<string, string>> = Object.freeze({
-  gmail_message_send: "mail sends are never offered to the model (OR-W34-1)",
-  gmail_draft_send: "mail sends are never offered to the model (OR-W34-1)",
-  fastmail_mail_send: "mail sends are never offered to the model (OR-W34-1)",
-  imap_mail_send: "mail sends are never offered to the model (OR-W34-1)",
-  protonmail_mail_send: "mail sends are never offered to the model (OR-W34-1)",
-  apple_mail_send: "mail sends are never offered to the model (OR-W34-1)",
-  outlook_mail_send: "mail sends are never offered to the model (OR-B3w-1)",
+  gmail_message_send: "mail sends are never offered to agents or the model (OR-W34-1)",
+  gmail_draft_send: "mail sends are never offered to agents or the model (OR-W34-1)",
+  fastmail_mail_send: "mail sends are never offered to agents or the model (OR-W34-1)",
+  imap_mail_send: "mail sends are never offered to agents or the model (OR-W34-1)",
+  protonmail_mail_send: "mail sends are never offered to agents or the model (OR-W34-1)",
+  apple_mail_send: "mail sends are never offered to agents or the model (OR-W34-1)",
+  outlook_mail_send: "mail sends are never offered to agents or the model (OR-B3w-1)",
   bitbucket_pr_merge:
     "the Bitbucket merge exposes no head-commit precondition the connector can send, so a merge cannot be tied to the commit the owner reviewed (D1 round-1 fix 8)",
   iac_terraform_destroy:

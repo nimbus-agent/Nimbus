@@ -610,6 +610,18 @@ mod tests {
         assert!(is_method_allowed("connector.setConfig"));
     }
 
+    // The owner's opt-in for connector writes, for the model and (since Phase 28 AD3a-1) for outside
+    // agents, is a terminal act: approving it hands a tool to something that holds no human
+    // judgement, so a compromised renderer must not be able to ask for it, drop it or read it.
+    #[test]
+    fn allowlist_connector_writes_never_renderer() {
+        // The names are built, not written whole: a source guard in security-invariants.test.ts
+        // forbids the quoted literals anywhere in this file, so the allowlist cannot grow them unseen.
+        for m in ["writesEnable", "writesDisable", "writesStatus"] {
+            assert!(!is_method_allowed(&format!("connector.{m}")));
+        }
+    }
+
     #[test]
     fn allowlist_ws5c_profile_crud() {
         assert!(is_method_allowed("profile.list"));
@@ -848,6 +860,18 @@ mod tests {
         assert!(!is_method_allowed("capture.state"));
         assert!(!is_no_timeout_method("captures.list"));
         assert!(!is_no_timeout_method("captures.get"));
+    }
+
+    #[test]
+    fn allowlist_approvals_never_renderer() {
+        // Phase 28 AD2 (I7, I28): the owner's queue and one-step approval are CLI-only; approving
+        // asks a person at a terminal. Neither the four approvals methods nor capture.mine (the
+        // MCP client's own list) is ever the renderer's. One assert per name, as above.
+        assert!(!is_method_allowed("approvals.list"));
+        assert!(!is_method_allowed("approvals.get"));
+        assert!(!is_method_allowed("approvals.approve"));
+        assert!(!is_method_allowed("approvals.decline"));
+        assert!(!is_method_allowed("capture.mine"));
     }
 
     #[test]

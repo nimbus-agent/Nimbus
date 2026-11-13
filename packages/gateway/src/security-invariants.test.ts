@@ -1182,6 +1182,21 @@ describe("I10 — Constant-time compare helpers live in util/timing-safe-compare
     );
   });
 
+  test("connectors/connector-writes/agent-door-definition.ts compares definition hashes with constantTimeStringEqual, never === or !==", async () => {
+    const src = await read(
+      "packages/gateway/src/connectors/connector-writes/agent-door-definition.ts",
+    );
+    expect(src).toMatch(
+      /import\s*\{[^}]*constantTimeStringEqual[^}]*\}\s*from\s*["']\.\.\/\.\.\/util\/timing-safe-compare(?:\.ts)?["']/,
+    );
+    // The CALL, at both comparison sites (the re-read approval and the listed hash), not the bare name.
+    const calls =
+      stripComments(src).match(/constantTimeStringEqual\([^)]*\.definitionSha256[^)]*\)/g) ?? [];
+    expect(calls.length).toBe(2);
+    expect(src).not.toMatch(/[!=]==\s*\w+(?:\.\w+)*\.definitionSha256/);
+    expect(src).not.toMatch(/\.definitionSha256\s*[!=]==/);
+  });
+
   test("ipc/lan-pairing.ts does NOT define a local timingSafeEqual or constantTimeStringEqual", async () => {
     const src = await read("packages/gateway/src/ipc/lan-pairing.ts");
     expect(src).not.toMatch(/function\s+timingSafeEqual\s*\(/);
@@ -2531,6 +2546,8 @@ describe("I20 — a delegated approval is honored only from a live, identity-val
       "extension.eval",
       "pack.install",
       "connector.writes.enable",
+      // Phase 28 AD3a-1: the same type with the agent door's payload is never delegated either (I3).
+      "connector.writes.enable#agent",
     ]) {
       let prompts = 0;
       let remote = 0;
@@ -2557,7 +2574,11 @@ describe("I20 — a delegated approval is honored only from a live, identity-val
         NULL_EGRESS_SINK,
         NO_POLICY_OVERLAY,
       );
-      const res = await exec.execute({ type, payload: {} });
+      const [realType = type] = type.split("#");
+      const payload = type.endsWith("#agent")
+        ? { door: "agent", service: "github", maxWave: 3, writes: [] }
+        : {};
+      const res = await exec.execute({ type: realType, payload });
       expect(res.status, type).toBe("rejected");
       expect(remote, type).toBe(0);
       expect(prompts, type).toBe(1);
@@ -3979,8 +4000,10 @@ describe("I28 — MCP content enters only through the capture gate, in a fixed o
       "cap.kinds.includes(",
       "validateCapturePayload(kindRaw",
       "deps.classifyAction?.(",
-      "requireDestinationAllowed(ctx, v)",
+      "requireDestinationAllowed(ctx, v, basis)",
       "deps.isServiceConfigured?.(",
+      // AD3a-2a: the definition check lists the connector, so it is LAST of the action checks.
+      "requireDefinitionVerified(ctx, v, basis)",
       "missingItem(",
       "resolveLinkEndpoints(",
       "deps.store.countCreatedSince(",
@@ -4020,6 +4043,15 @@ describe("I28 — MCP content enters only through the capture gate, in a fixed o
     // (2026-10-16) reaches captures.list/get; no owner verb and no MCP-client method ever does.
     const entries = [...tauri.matchAll(/^\s*"(captures?\.[A-Za-z]+)",\s*$/gm)].map((m) => m[1]);
     expect(entries).toEqual(["captures.get", "captures.list"]);
+  });
+
+  test("AD2: approvals is LAN-forbidden by namespace and is on no Tauri allowlist entry line", async () => {
+    const lan = await read("packages/gateway/src/ipc/lan-rpc.ts");
+    expect(lan).toMatch(/"capture",\s*"captures",[\s\S]*?"approvals"/);
+    const tauri = await read("packages/ui/src-tauri/src/gateway_bridge.rs");
+    // Entry lines only: the Rust negative test asserts these names without a trailing comma line.
+    expect([...tauri.matchAll(/^\s*"(approvals\.[A-Za-z]+|capture\.mine)",\s*$/gm)]).toEqual([]);
+    expect(tauri).toContain("fn allowlist_approvals_never_renderer()");
   });
 
   test("capture items are never extraction input", async () => {
@@ -4132,9 +4164,14 @@ describe("I28 — MCP content enters only through the capture gate, in a fixed o
       "CAPTURE_ROLE_BY_KIND[caller.kind]",
       'row.state !== "proposed"',
       "deps.now() >= expiresAt",
-      "deps.classifyAction?.(",
-      "deps.isServiceConfigured?.(",
-      "actionDestinationVerdict(deps, stored.actionType, stored.input)",
+      // AD3a-2a: step 4 is named steps, each a function above `acceptAction` that reads the live
+      // verdict, the connector, the refusal for the approval-time basis, the human-only rule and
+      // the definition; all of them precede the claim.
+      "requireVerdictAtApproval(deps, stored.actionType)",
+      "requireConfiguredAtApproval(deps, stored.actionType)",
+      "actionDestinationVerdict(deps, stored.actionType, stored.input, basis)",
+      "act.humanOnly",
+      "requireDefinitionAtApproval(deps, stored.actionType, basis)",
       "deps.store.claimAction(",
       "act.execute(",
       "deps.store.finalizeAction(",
@@ -4148,12 +4185,12 @@ describe("I28 — MCP content enters only through the capture gate, in a fixed o
     const gate = stripComments(await read("packages/gateway/src/mcp-sink/capture-gate.ts"));
     const req = gate.slice(gate.indexOf("function requireDestinationAllowed("));
     expect(req.slice(0, req.indexOf("\n}\n"))).toContain(
-      "actionDestinationVerdict(ctx.deps, v.payload.actionType, v.payload.input)",
+      "actionDestinationVerdict(ctx.deps, v.payload.actionType, v.payload.input, basis)",
     );
     const act = stripComments(await read("packages/gateway/src/mcp-sink/capture-act.ts"));
     const verdict = act.slice(act.indexOf("export function actionDestinationVerdict("));
     expect(verdict.slice(0, verdict.indexOf("\n}\n"))).toContain(
-      "return deps.actionDestinationRefusal(actionType, input);",
+      "return deps.actionDestinationRefusal(actionType, input, basis);",
     );
     // D32(f): the sink names no ChatOps or connectors module; the check is injected.
     for (const f of ["capture-gate.ts", "capture-act.ts", "capture-types.ts"]) {
@@ -4161,18 +4198,22 @@ describe("I28 — MCP content enters only through the capture gate, in a fixed o
       expect(src.toLowerCase().includes("chatops"), f).toBe(false);
       expect(src.includes("messagingDestinationRefusal"), f).toBe(false);
     }
+    // AD3a-2a: the helper left ipc/capture-rpc.ts; the legacy basis's refusal is the agent door
+    // runtime's (D49(a)), and the KB destinations reach the ONE act-door function, read per call
+    // (B3, OR-B3-1).
     const rpc = stripComments(await read("packages/gateway/src/ipc/capture-rpc.ts"));
-    expect(rpc).toMatch(
-      /import \{\s*actDoorRefusal,[^}]*\} from "\.\.\/connectors\/connector-writes\/model-write-refusals\.ts";/,
+    expect(rpc).not.toContain("createActionDestinationRefusal");
+    expect(rpc).not.toContain("actDoorRefusal");
+    const runtime = stripComments(
+      await read("packages/gateway/src/connectors/connector-writes/agent-door-runtime.ts"),
     );
-    const helper = rpc.slice(rpc.indexOf("export function createActionDestinationRefusal("));
-    const helperBody = helper.slice(0, helper.indexOf("\n}\n"));
-    // B3 (OR-B3-1): the KB destinations reach the ONE act-door function, read per call.
+    const helper = runtime.slice(runtime.indexOf("const legacyRefusal = ("));
+    const helperBody = helper.slice(0, helper.indexOf("\n  };\n"));
     expect(helperBody).toContain(
       "return actDoorRefusal(tool, input, { chatops, kb, kbUnreadable });",
     );
     expect(helperBody).toMatch(
-      /try \{\s*kb = tribalKbConfig\(\);\s*\} catch \{\s*kbUnreadable = true;/,
+      /try \{\s*kb = deps\.tribalKbConfig\(\);\s*\} catch \{\s*kbUnreadable = true;/,
     );
     // ONE function on that path, in order: messaging, the Linear rule, the KB target, the KB child.
     const refusals = stripComments(
@@ -4199,8 +4240,9 @@ describe("I28 — MCP content enters only through the capture gate, in a fixed o
 
   test("B3 (OR-B3-1, review fix 2): assemble wires the act door with TWO accessors, the KB one the same as platform.tribalKbConfig, loaded before the capture gate", async () => {
     const assemble = stripComments(await read("packages/gateway/src/platform/assemble.ts"));
+    expect(assemble).toContain("actionDestinationRefusal: agentDoor.refusal,");
     expect(assemble).toMatch(
-      /actionDestinationRefusal: createActionDestinationRefusal\(\s*\(\) => policyGate\.enforced\(\),\s*\(\) => tribalKbConfigOf\(tribalCfg\),\s*\)/,
+      /enforcedPolicy: \(\) => policyGate\.enforced\(\),\s*listServerTools:/,
     );
     expect(assemble).toMatch(/tribalKbConfig: \(\) => tribalKbConfigOf\(tribalCfg\),/);
     const load = assemble.indexOf(
@@ -4229,15 +4271,18 @@ describe("I28 — MCP content enters only through the capture gate, in a fixed o
   test("act door: the dispatched payload's mcpToolId is the routing table's value; no delegate; policy overlay passed", async () => {
     const src = stripComments(await read("packages/gateway/src/ipc/capture-rpc.ts"));
     expect(src).toMatch(
-      /const toolId = proposableWriteTool\(actionType\) \?\? userMcpToolKeyForActionType\(actionType\)/,
+      /const toolId = row\?\.toolId \?\? userMcpToolKeyForActionType\(actionType\);/,
     );
+    // AD3a-2a: routed by the write row (every row), never by the 47-type table; what may reach
+    // this point is decided by the gate's verdict at submit and approval.
+    expect(src).toMatch(/const row = agentDoorRow\(actionType\);/);
     expect(src).toMatch(/payload: \{ mcpToolId: toolId, input \}/);
     // Phase 28 AD1: the executor is the shared door maker's (no delegation input exists), and the
     // action is an `origin: "agent"` one carrying the gateway-set proposer. The old wrapper is gone.
     expect(src).toContain("buildAgentWriteExecutor({");
     expect(src).toContain("policyHitl: w.policyHitl,");
     expect(src).toContain('origin: "agent",');
-    expect(src).toContain("proposer: agentProposerOf(provenance),");
+    expect(src).toContain("proposer: agentProposerOf(provenance, actionType),");
     expect(src).not.toContain("new ToolExecutor(");
     expect(src).not.toContain("provenanceConsent");
     expect(src).not.toContain("delegation");
@@ -4251,6 +4296,631 @@ describe("I28 — MCP content enters only through the capture gate, in a fixed o
       undefined,
     );
     expect(c.actionEnabled).toBe(false);
+  });
+
+  // ---- Phase 28 AD2: the owner's queue and one-step approval (`approvals.*`) ----------------------
+
+  test("AD2: approvals-rpc.ts checks the connection kind, reaches the gate only via acceptCapture, never acceptAction, and imports nothing from llm/", async () => {
+    const src = stripStringLiterals(
+      stripComments(await read("packages/gateway/src/ipc/approvals-rpc.ts")),
+    );
+    const approve = src.slice(src.indexOf("async function approve("));
+    // requireApprover is the first call of every handler, before the gate is touched.
+    for (const m of ["approvals.list", "approvals.get", "approvals.approve", "approvals.decline"]) {
+      expect(await read("packages/gateway/src/ipc/approvals-rpc.ts")).toContain(`"${m}"`);
+    }
+    expect(src.match(/requireApprover\(c\.caller\);/g)).toHaveLength(4);
+    // approve: the kind check (getCapture via requireActionRow) precedes acceptCapture, which
+    // precedes the reply; the human-only option (buildActDeps wraps the consent itself) is asked
+    // for before acceptCapture runs, and approvals-rpc.ts never wraps a consent on its own.
+    const iRow = approve.indexOf("requireActionRow(");
+    const iWrap = approve.indexOf("humanOnly:");
+    expect(src).not.toContain("humanOnlyConsent");
+    const iAccept = approve.indexOf("acceptCapture(");
+    const iReply = approve.indexOf("NON_HUMAN_REASON");
+    expect(iRow).toBeGreaterThan(-1);
+    expect(iRow).toBeLessThan(iWrap);
+    expect(iWrap).toBeLessThan(iAccept);
+    expect(iAccept).toBeLessThan(iReply);
+    expect(src).not.toMatch(/\bacceptAction\b/);
+    expect(src).not.toMatch(/\bToolExecutor\b|\bbuildAgentWriteExecutor\b/);
+    expect(src).not.toMatch(/from\s+["'][^"']*\/llm\//);
+  });
+
+  test("AD2: the human-only wrapper lives in ipc/consent.ts and is used only by capture-rpc.ts (buildActDeps, which also sets the flag) and the dispatcher's agent-door enable; capture-rpc.ts has no delegation", async () => {
+    const consent = await read("packages/gateway/src/ipc/consent.ts");
+    expect(consent).toMatch(/export function humanOnlyConsent\(/);
+    expect(consent).toContain('answer.answerSource !== "human"');
+    const users = (await grepRepo(/\bhumanOnlyConsent\b/)).filter(
+      (p) => !p.endsWith("/ipc/consent.ts"),
+    );
+    // AD3a-1 added the agent-door enable in the dispatcher; AD3a-2a moved the act door's use into
+    // buildActDeps, so the flag and the wrapper it vouches for have ONE producer.
+    expect(users.sort()).toEqual([
+      "packages/gateway/src/ipc/capture-rpc.ts",
+      "packages/gateway/src/ipc/server/dispatchers.ts",
+    ]);
+    const rpc = stripComments(await read("packages/gateway/src/ipc/capture-rpc.ts"));
+    expect(rpc).not.toContain("delegation");
+  });
+
+  test("AD3a-2a: `humanOnly: true` is written in production only inside buildActDeps, in the same expression that wraps the consent in humanOnlyConsent", async () => {
+    const files = await readDirFiles("packages/gateway/src");
+    const writers = files
+      .filter(
+        (f) =>
+          !/\.test(-helpers)?\.ts$/.test(f.rel) &&
+          /\bhumanOnly:\s*true/.test(stripComments(f.contents)),
+      )
+      .map((f) => f.rel);
+    expect(writers).toEqual(["ipc/capture-rpc.ts"]);
+    const rpc = stripComments(await read("packages/gateway/src/ipc/capture-rpc.ts"));
+    const body = rpc.slice(rpc.indexOf("export function buildActDeps("));
+    const iWrap = body.indexOf("humanOnlyConsent(");
+    const iFlag = body.search(/humanOnly:\s*true/);
+    const iExecute = body.indexOf("async execute(");
+    expect(iWrap).toBeGreaterThan(-1);
+    expect(iFlag).toBeGreaterThan(iWrap);
+    expect(iFlag).toBeLessThan(iExecute);
+    // The flag is written once, and the wrapper is applied to the coordinator before the vetoing one.
+    expect(body.match(/humanOnly:\s*true/g)).toHaveLength(1);
+    expect(body.indexOf("vetoingConsent(")).toBeGreaterThan(iWrap);
+  });
+
+  test("AD2: buildActDeps is the only place under ipc/ that builds the act door's executor", async () => {
+    const files = await readDirFiles("packages/gateway/src/ipc");
+    const builders = files
+      .filter((f) => /\bbuildAgentWriteExecutor\(/.test(stripComments(f.contents)))
+      .map((f) => f.rel);
+    expect(builders).toEqual(["capture-rpc.ts"]);
+    const count = (
+      stripComments(await read("packages/gateway/src/ipc/capture-rpc.ts")).match(
+        /\bbuildAgentWriteExecutor\(/g,
+      ) ?? []
+    ).length;
+    expect(count).toBe(1);
+  });
+
+  test("AD2: capture.state answers only its submitter, and APPROVER_BY_KIND is cli and ui", async () => {
+    const gate = stripComments(await read("packages/gateway/src/mcp-sink/capture-gate.ts"));
+    expect(gate).toContain("row.sessionId !== caller.clientId");
+    const { APPROVER_BY_KIND } = await import("./mcp-sink/capture-client-policy.ts");
+    expect(
+      Object.entries(APPROVER_BY_KIND)
+        .filter(([, v]) => v)
+        .map(([k]) => k)
+        .sort((a, b) => a.localeCompare(b)),
+    ).toEqual(["cli", "ui"]);
+  });
+});
+
+describe("Phase 28 AD3a-1 - the agent door's approval list (the owner's enable, status and store)", () => {
+  test("AD3a-1: the dispatcher wraps the consent in humanOnlyConsent for the agent enable alone, before the executor is built", async () => {
+    const src = stripStringLiterals(
+      stripComments(await read("packages/gateway/src/ipc/server/dispatchers.ts")),
+    );
+    const rawSrc = stripComments(await read("packages/gateway/src/ipc/server/dispatchers.ts"));
+    const fn = rawSrc.slice(rawSrc.indexOf("export async function tryDispatchConnectorRpc("));
+    const body = fn.slice(0, fn.indexOf("\nexport "));
+    const iCond = body.indexOf('method === "connector.writesEnable"');
+    const iDoor = body.indexOf('"door"] === "agent"');
+    const iWrap = body.indexOf("humanOnlyConsent(");
+    const iExec = body.indexOf("new ToolExecutor(");
+    expect(iCond).toBeGreaterThan(-1);
+    expect(iDoor).toBeGreaterThan(iCond);
+    expect(iWrap).toBeGreaterThan(iDoor);
+    expect(iExec).toBeGreaterThan(iWrap);
+    // the connection's kind is the connection's, never a param
+    expect(body).toMatch(/clientKind:\s*ctx\.getClientKind\(clientId\)/);
+    expect(src).toContain("humanOnlyConsent");
+  });
+
+  test("AD3a-1: handleAgentWritesEnable checks the caller, then lists once, then asks the owner, then writes in one transaction", async () => {
+    const src = stripComments(
+      await read("packages/gateway/src/ipc/connector-rpc-handlers/agent-writes.ts"),
+    );
+    const start = src.indexOf("export async function handleAgentWritesEnable(");
+    const body = src.slice(start, src.indexOf("\n}\n", start));
+    const order = [
+      "requireAgentEnableCaller(",
+      "parseWave(",
+      "requireEligibleService(",
+      "refuseScopeParams(",
+      "requireAgentPolicy(",
+      "deps.listServerTools",
+      "agentApprovableRows(",
+      "requireOwnerApproval(",
+      "deps.db.transaction(",
+      "raiseWriteEnablementWave(",
+      "replaceDoorApprovals(",
+    ].map((m) => body.indexOf(m));
+    for (const i of order) expect(i).toBeGreaterThan(-1);
+    expect([...order].sort((a, b) => a - b)).toEqual(order);
+    expect(body.match(/deps\.listServerTools/g)).toHaveLength(1);
+    // the gate is reached only inside requireOwnerApproval, and is the type the frozen set holds
+    expect(src).toContain('executor.gate({ type: "connector.writes.enable", payload })');
+  });
+
+  test("AD3a-1: the approval table is named only by its store and its DDL file in production source", async () => {
+    const files = await grepRepo(/connector_write_door_approval/);
+    expect(files).toEqual([
+      "packages/gateway/src/connectors/connector-writes/door-approval-store.ts",
+      "packages/gateway/src/index/agent-door-v97-sql.ts",
+    ]);
+  });
+
+  test("AD3a-1: no connector.writes* method is renderer-callable, and the three stay off the LAN", async () => {
+    const rust = await read("packages/ui/src-tauri/src/gateway_bridge.rs");
+    const listed = rust
+      .split("\n")
+      .filter((l) => !/^\s*\/\//.test(l) && !/assert!|fn |#\[/.test(l))
+      .filter((l) => l.includes('"connector.writes'));
+    expect(listed).toEqual([]);
+    // Behaviour, not text: enable and disable also sit in WRITE_METHODS, so a source match would pass
+    // after one left FORBIDDEN_OVER_LAN. A peer WITH write permission must still be refused outright.
+    const { checkLanMethodAllowed, LanError } = await import("./ipc/lan-rpc.ts");
+    for (const m of [
+      "connector.writesEnable",
+      "connector.writesDisable",
+      "connector.writesStatus",
+    ]) {
+      const call = () => checkLanMethodAllowed(m, { peerId: "peer:x", writeAllowed: true });
+      expect(call, m).toThrow(LanError);
+      expect(call, m).toThrow(/ERR_METHOD_NOT_ALLOWED/);
+    }
+  });
+
+  test("AD3a-2a: the capture gate and the act path never name the approval store; the list reaches them only by injection (D32(f))", async () => {
+    for (const rel of [
+      "packages/gateway/src/mcp-sink/capture-gate.ts",
+      "packages/gateway/src/mcp-sink/capture-act.ts",
+      "packages/gateway/src/mcp-sink/capture-types.ts",
+      "packages/gateway/src/mcp-sink/capture-store.ts",
+      "packages/gateway/src/connectors/proposable-actions.ts",
+    ]) {
+      const src = stripComments(await read(rel));
+      expect(src, rel).not.toMatch(/door-approval-store|listDoorApprovals|getDoorApproval/);
+    }
+    // `mcp-sink/` imports nothing from `connectors/`: the verdict, the refusal and the definition
+    // check are injected functions.
+    for (const rel of [
+      "packages/gateway/src/mcp-sink/capture-gate.ts",
+      "packages/gateway/src/mcp-sink/capture-act.ts",
+      "packages/gateway/src/mcp-sink/capture-types.ts",
+    ]) {
+      expect(stripComments(await read(rel)), rel).not.toMatch(/from "\.\.\/connectors\//);
+    }
+  });
+});
+
+describe("I58 - an outside agent proposes only what the owner approved for agents by name, re-derived at submit, at approval and after the owner's answer", () => {
+  const OWNER = { clientId: "c-cli", kind: "cli" as const };
+  const AGENT = { clientId: "c-mcp", kind: "mcp" as const };
+  const HEAD = "0123456789abcdef0123456789abcdef01234567";
+
+  /** A real door over a migrated in-memory database, with a mutable fake mesh listing. */
+  async function i58Harness() {
+    const { openMigratedMemoryDb } = await import("./index/migrated-db-template.ts");
+    const { createAgentDoor } = await import("./connectors/connector-writes/agent-door-runtime.ts");
+    const { definitionSha256 } = await import("./connectors/connector-writes/definition-hash.ts");
+    const { upsertDoorApprovals } = await import(
+      "./connectors/connector-writes/door-approval-store.ts"
+    );
+    const { raiseWriteEnablementWave } = await import(
+      "./connectors/connector-writes/enablement-store.ts"
+    );
+    const { previewTemplateKeys } = await import("./connectors/connector-writes/types.ts");
+    const { mcpClientToolKey } = await import("./connectors/lazy-mesh/tool-map.ts");
+    const { toStandardSchema } = await import("@mastra/core/schema");
+    const { DEFAULT_MCP_SINK_CONFIG } = await import("./config/mcp-sink-toml.ts");
+    const { resolveCaptureCapability } = await import("./mcp-sink/capture-capability.ts");
+    const { CaptureAttemptLimiter, CaptureRefusalCounter } = await import(
+      "./mcp-sink/capture-rate-limit.ts"
+    );
+    const { CaptureStore } = await import("./mcp-sink/capture-store.ts");
+    const db = openMigratedMemoryDb();
+    const state = {
+      disabled: new Set<string>(),
+      description: (t: string) => `d ${t}`,
+      mesh: "bound" as "bound" | "unbound",
+      clock: 1_000,
+      seq: 0,
+    };
+    const enforced = () =>
+      ({
+        capabilitiesDisabled: state.disabled,
+        chatops: { channels: new Map(), ownership: new Map() },
+      }) as never;
+    const listing = (service: string): Record<string, unknown> => {
+      const out: Record<string, unknown> = {};
+      for (const r of CONNECTOR_WRITE_ROWS) {
+        if (r.actionType.split(".")[0] !== service) continue;
+        const keys = r.preview === undefined ? [] : [...previewTemplateKeys(r.preview)];
+        const schema = (ks: readonly string[]) =>
+          toStandardSchema({
+            type: "object",
+            properties: Object.fromEntries(ks.map((k) => [k, { type: "string" }])),
+          } as Parameters<typeof toStandardSchema>[0]);
+        out[mcpClientToolKey(service, r.toolId)] = {
+          description: state.description(r.toolId),
+          inputSchema: schema(keys),
+        };
+        for (const t of [r.before?.tool, r.before?.also?.tool]) {
+          if (t !== undefined) {
+            out[mcpClientToolKey(service, t)] ??= { description: "read", inputSchema: schema([]) };
+          }
+        }
+      }
+      return out;
+    };
+    const door = createAgentDoor({
+      db,
+      enforcedPolicy: enforced,
+      listServerTools: async (s) => (state.mesh === "bound" ? listing(s) : undefined),
+      tribalKbConfig: () => undefined,
+      classifyContext: {
+        userMcpModelAccessAllowed: () => false,
+        modelAccessServices: () => new Set<string>(),
+      },
+      isServiceConfigured: async () => true,
+      now: () => state.clock,
+    });
+    const store = new CaptureStore(db);
+    const gate = {
+      db,
+      store,
+      capability: () =>
+        resolveCaptureCapability(
+          {
+            ok: true,
+            config: { ...DEFAULT_MCP_SINK_CONFIG, enabled: true, kinds: ["note", "action"] },
+          },
+          enforced(),
+        ),
+      limiter: new CaptureAttemptLimiter(),
+      refusals: new CaptureRefusalCounter(),
+      newId: () => `cap_${String(++state.seq)}`,
+      now: () => state.clock,
+      classifyAction: door.verdict,
+      isServiceConfigured: async () => true,
+      actionDestinationRefusal: door.refusal,
+      verifyActionDefinition: door.verifyDefinition,
+    };
+    const approve = (service: string, wave: 2 | 3 | 4, toolIds: readonly string[]) => {
+      raiseWriteEnablementWave(db, service, wave, state.clock);
+      const l = listing(service);
+      upsertDoorApprovals(
+        db,
+        "agent",
+        service,
+        toolIds.map((toolId) => ({
+          toolId,
+          definitionSha256: definitionSha256(
+            toolId,
+            l[mcpClientToolKey(service, toolId)],
+          ) as string,
+        })),
+        state.clock,
+      );
+    };
+    return { db, state, door, gate, store, approve, listing };
+  }
+
+  const submitAction = async (
+    h: Awaited<ReturnType<typeof i58Harness>>,
+    actionType: string,
+    input: Record<string, unknown>,
+  ) => {
+    const { submitCapture } = await import("./mcp-sink/capture-gate.ts");
+    return submitCapture(h.gate as never, AGENT, {
+      kind: "action",
+      payload: { actionType, input, summary: "why" },
+    });
+  };
+  const codeOf = async (p: Promise<unknown>): Promise<string | undefined> => {
+    try {
+      await p;
+    } catch (e) {
+      return (e as { code?: string }).code;
+    }
+    return undefined;
+  };
+  const MERGE = { owner: "o", repo: "r", pullNumber: 1, sha: HEAD };
+
+  test("the wiring: assemble builds the agent door over the live policy, injects its verdict, refusal, definition check and accepted types into the capture gate and its definition check into the act wiring, and binds the mesh listing after the mesh exists", async () => {
+    const a = stripComments(await read("packages/gateway/src/platform/assemble.ts"));
+    for (const needle of [
+      "const agentDoor = createAgentDoor({",
+      "classifyAction: agentDoor.verdict,",
+      "actionDestinationRefusal: agentDoor.refusal,",
+      "verifyActionDefinition: agentDoor.verifyDefinition,",
+      "listProposableActionTypes: agentDoor.acceptedTypes,",
+      "verifyDefinition: agentDoor.verifyDefinition,",
+      "listServerTools: async (service) => agentDoorMesh.current?.listFirstPartyServerTools(service),",
+      "agentDoorMesh.current = connectorMesh;",
+    ]) {
+      expect(a, needle).toContain(needle);
+    }
+    // The listing holder starts unbound (fail closed) and is built before the gate that uses it.
+    expect(a).toMatch(/agentDoorMesh:[^=]*= \{\s*current: undefined,\s*\};/);
+    const holder = a.indexOf("const agentDoorMesh");
+    const door = a.indexOf("const agentDoor = createAgentDoor({");
+    const gate = a.indexOf("const captureGate: CaptureGateDeps = {");
+    const mesh = a.indexOf("} = await createSchedulerWithMesh({");
+    const bind = a.indexOf("agentDoorMesh.current = connectorMesh;");
+    expect(holder).toBeGreaterThan(0);
+    expect(door).toBeGreaterThan(holder);
+    expect(gate).toBeGreaterThan(door);
+    expect(mesh).toBeGreaterThan(gate);
+    expect(bind).toBeGreaterThan(mesh);
+    // The earlier table is not consulted from here any more (static D49(a)).
+    expect(a).not.toMatch(
+      /classifyActionType|listProposableActionTypes\(|createActionDestinationRefusal/,
+    );
+  });
+
+  test("the order of the three check points on the real files (static D49(e))", async () => {
+    const at = (s: string, ...needles: string[]) => {
+      const idx = needles.map((n) => s.indexOf(n));
+      expect(
+        idx.every((i) => i >= 0),
+        needles.join(" < "),
+      ).toBe(true);
+      expect([...idx].sort((x, y) => x - y)).toEqual(idx);
+    };
+    const gate = stripComments(await read("packages/gateway/src/mcp-sink/capture-gate.ts"));
+    const submit = gate.slice(gate.indexOf("export async function submitCapture("));
+    at(
+      submit,
+      "deps.classifyAction?.(v.payload.actionType)",
+      "requireDestinationAllowed(ctx, v, basis)",
+      "await requireDefinitionVerified(ctx, v, basis)",
+      "writeSubmittedCapture(ctx, v, cap, now, basis)",
+    );
+    const act = stripComments(await read("packages/gateway/src/mcp-sink/capture-act.ts"));
+    const accept = act.slice(act.indexOf("export async function acceptAction("));
+    at(
+      accept,
+      "requireVerdictAtApproval(deps, stored.actionType)",
+      "actionDestinationVerdict(deps, stored.actionType, stored.input, basis)",
+      "await requireDefinitionAtApproval(deps, stored.actionType, basis)",
+      "deps.store.claimAction(",
+    );
+    const rpc = stripComments(await read("packages/gateway/src/ipc/capture-rpc.ts"));
+    const build = rpc.slice(rpc.indexOf("export function buildActDeps("));
+    at(build, "const channel =", "vetoingConsent(", "buildAgentWriteExecutor({");
+    expect(build).toMatch(/consentCoordinator: channel,/);
+    // The veto is for the `approved` basis only: a legacy basis has no approval to compare against.
+    expect(build).toMatch(
+      /provenance\.basis === "approved" && door !== undefined\s*\? vetoingConsent\(/,
+    );
+    // Its one user is the act deps (the wrapper lives in ipc/consent.ts for static D41(a)).
+    const users = (await grepRepo(/\bvetoingConsent\b/)).filter(
+      (p) => !p.endsWith("/ipc/consent.ts"),
+    );
+    expect(users).toEqual(["packages/gateway/src/ipc/capture-rpc.ts"]);
+  });
+
+  test("the legacy table is consulted by the door runtime alone, and the old not-enforced notice exists in no file", async () => {
+    const table =
+      /\b(?:ACTION_PROPOSABILITY|classifyActionType|proposableWriteTool|PROPOSABLE_WRITE_TOOLS)\b/;
+    const files: string[] = [];
+    for (const rel of await grepRepo(table)) {
+      if (rel.endsWith(".test-helpers.ts")) continue;
+      if (table.test(stripComments(await read(rel)))) files.push(rel);
+    }
+    expect(files).toEqual([
+      "packages/gateway/src/connectors/connector-writes/agent-door-runtime.ts",
+      "packages/gateway/src/connectors/proposable-actions.ts",
+    ]);
+    expect(
+      await grepRepo(/AGENT_DOOR_NOT_ENFORCED_NOTICE|takes effect in a later release/),
+    ).toEqual([]);
+  });
+
+  test("an approved Wave 4 type is accepted at submit; one the owner did not approve, and a bound one, are not", async () => {
+    const h = await i58Harness();
+    try {
+      expect(await codeOf(submitAction(h, "github.pr.merge", MERGE))).toBe(
+        "ERR_CAPTURE_ACTION_NOT_PROPOSABLE",
+      );
+      expect(await codeOf(submitAction(h, "github.file.commit", {}))).toBe(
+        "ERR_CAPTURE_ACTION_NOT_PROPOSABLE",
+      );
+      h.approve("github", 4, ["github_pr_merge"]);
+      const out = await submitAction(h, "github.pr.merge", MERGE);
+      expect(out.state).toBe("proposed");
+      expect(out.legacy).toBeUndefined();
+      // The sibling Wave 4 tool the owner did not name is still refused.
+      expect(await codeOf(submitAction(h, "github.branch.delete", {}))).toBe(
+        "ERR_CAPTURE_ACTION_NOT_PROPOSABLE",
+      );
+    } finally {
+      h.db.close();
+    }
+  });
+
+  test("the listing holder fails closed: before the mesh is bound no approved proposal is accepted and nothing is marked", async () => {
+    const h = await i58Harness();
+    try {
+      h.approve("github", 4, ["github_pr_merge"]);
+      h.state.mesh = "unbound";
+      expect(await codeOf(submitAction(h, "github.pr.merge", MERGE))).toBe(
+        "ERR_CAPTURE_ACTION_NOT_PROPOSABLE",
+      );
+      const { getDoorApproval } = await import(
+        "./connectors/connector-writes/door-approval-store.ts"
+      );
+      expect(getDoorApproval(h.db, "agent", "github", "github_pr_merge")?.suspendedAt).toBeNull();
+      h.state.mesh = "bound";
+      expect((await submitAction(h, "github.pr.merge", MERGE)).state).toBe("proposed");
+    } finally {
+      h.db.close();
+    }
+  });
+
+  test("a changed definition suspends the tool at submit and at approval", async () => {
+    const { acceptCapture } = await import("./mcp-sink/capture-gate.ts");
+    const h = await i58Harness();
+    try {
+      h.approve("github", 4, ["github_pr_merge"]);
+      const queued = await submitAction(h, "github.pr.merge", MERGE);
+      let executed = 0;
+      const act = {
+        humanOnly: true,
+        execute: async () => {
+          executed++;
+          return { status: "ok" as const, result: {} };
+        },
+      };
+      h.state.description = (t) => (t === "github_pr_merge" ? "changed" : `d ${t}`);
+      // At approval: refused, the row stays proposed, nothing executes.
+      expect(
+        await codeOf(Promise.resolve(acceptCapture(h.gate as never, OWNER, queued.id, act))),
+      ).toBe("ERR_AGENT_TOOL_SUSPENDED");
+      expect(h.store.get(queued.id)?.state).toBe("proposed");
+      expect(executed).toBe(0);
+      // At submit: the same code, and the tool stays suspended after the text changes back.
+      h.state.description = (t) => `d ${t}`;
+      expect(await codeOf(submitAction(h, "github.pr.merge", MERGE))).toBe(
+        "ERR_AGENT_TOOL_SUSPENDED",
+      );
+    } finally {
+      h.db.close();
+    }
+  });
+
+  test("a definition changed after the owner answered is vetoed before the executor records the answer: rejected, blocked, nothing dispatched, tool marked", async () => {
+    const { buildActDeps } = await import("./ipc/capture-rpc.ts");
+    const { makeEgressSink } = await import("./egress/egress-ledger.ts");
+    const { appendAuditEntry } = await import("./db/audit-chain.ts");
+    const { NO_POLICY_OVERLAY } = await import("./engine/executor.ts");
+    const { isBeforeReadActionType } = await import("./engine/before-state.ts");
+    const { getDoorApproval } = await import(
+      "./connectors/connector-writes/door-approval-store.ts"
+    );
+    const h = await i58Harness();
+    try {
+      h.approve("github", 4, ["github_pr_merge"]);
+      const dispatched: Array<{ type: string }> = [];
+      const coordinator = {
+        requestConsent: async () => {
+          h.state.description = (t) => (t === "github_pr_merge" ? "changed under you" : `d ${t}`);
+          return { approved: true, answerSource: "human" as const };
+        },
+        requestConfirmedConsent: async (_c: string, req: { confirmText: string }) => {
+          h.state.description = (t) => (t === "github_pr_merge" ? "changed under you" : `d ${t}`);
+          return { approved: true, typed: req.confirmText, answerSource: "human" as const };
+        },
+      } as never;
+      const act = buildActDeps(
+        {
+          dispatcher: {
+            dispatch: (a: { type: string }) => {
+              dispatched.push(a);
+              return Promise.resolve(
+                isBeforeReadActionType(a.type)
+                  ? {
+                      title: "t",
+                      state: "open",
+                      head: { ref: "f", sha: HEAD },
+                      base: { ref: "main" },
+                    }
+                  : { url: "x" },
+              );
+            },
+          } as never,
+          egressSink: makeEgressSink(h.db),
+          audit: { recordAudit: (e) => appendAuditEntry(h.db, e) },
+          policyHitl: NO_POLICY_OVERLAY,
+          getTribalKbConfig: () => undefined,
+          agentDoor: {
+            listServerTools: async (s) => h.listing(s),
+            verifyDefinition: h.door.verifyDefinition,
+          },
+        },
+        coordinator,
+        "c-cli",
+        { humanOnly: { onNonHuman: () => {} } },
+      );
+      const out = await act.execute("github.pr.merge", MERGE, {
+        basis: "approved",
+        captureId: "cap_1",
+        clientLabel: "agent",
+        createdAt: 0,
+        expiresAt: 60_000,
+        summary: "why",
+      });
+      expect(out).toMatchObject({ status: "rejected", code: "ERR_AGENT_TOOL_SUSPENDED" });
+      expect(dispatched.filter((a) => !isBeforeReadActionType(a.type))).toEqual([]);
+      const audit = h.db
+        .query("SELECT hitl_status FROM audit_log WHERE action_type = 'github.pr.merge'")
+        .all() as Array<{ hitl_status: string }>;
+      expect(audit).toEqual([{ hitl_status: "rejected" }]);
+      const ledger = h.db
+        .query("SELECT result_status FROM egress_ledger WHERE method = 'github.pr.merge'")
+        .all() as Array<{ result_status: string }>;
+      expect(ledger.map((r) => r.result_status)).toEqual(["blocked"]);
+      expect(
+        getDoorApproval(h.db, "agent", "github", "github_pr_merge")?.suspendedAt,
+      ).not.toBeNull();
+    } finally {
+      h.db.close();
+    }
+  });
+
+  test("either lockoff refuses an approved type; the legacy window needs mcp_action alone", async () => {
+    const h = await i58Harness();
+    try {
+      h.approve("github", 4, ["github_pr_merge"]);
+      expect(h.door.verdict("github.pr.merge")).toEqual({ kind: "proposable", basis: "approved" });
+      h.state.disabled = new Set(["connector_write_model_access"]);
+      expect(h.door.verdict("github.pr.merge").kind).toBe("denied");
+      expect(h.door.verdict("github.issue.create")).toEqual({
+        kind: "proposable",
+        basis: "legacy_unapproved",
+      });
+      h.state.disabled = new Set(["mcp_action"]);
+      expect(h.door.verdict("github.pr.merge").kind).toBe("denied");
+    } finally {
+      h.db.close();
+    }
+  });
+
+  test("the legacy exception: one of the 47 types with no approval is accepted, flagged and counted; no type outside the 47 ever is", async () => {
+    const { PROPOSABLE_WRITE_TOOLS } = await import("./connectors/proposable-actions.ts");
+    const h = await i58Harness();
+    try {
+      const legacy = Object.keys(PROPOSABLE_WRITE_TOOLS);
+      expect(legacy).toHaveLength(47);
+      for (const t of legacy) {
+        const v = h.door.verdict(t);
+        expect(v.kind, t).toBe("proposable");
+        expect(String((v as { basis?: string }).basis), t).toMatch(/^legacy_/);
+      }
+      const out = await submitAction(h, "github.issue.create", { title: "plain", body: "plain" });
+      expect(out.legacy).toBe(true);
+      expect(h.store.legacyActionTypesSince(0).total).toBe(1);
+      for (const r of CONNECTOR_WRITE_ROWS) {
+        if (legacy.includes(r.actionType)) continue;
+        expect(h.door.verdict(r.actionType).kind, r.actionType).not.toBe("proposable");
+      }
+    } finally {
+      h.db.close();
+    }
+  });
+
+  test("a legacy basis keeps the earlier refusals", async () => {
+    const h = await i58Harness();
+    try {
+      const err = await submitAction(h, "slack.message.post", {
+        channel: "C0123456789",
+        text: "<!channel> hi",
+      }).catch((e: unknown) => e as { code?: string; message?: string });
+      expect((err as { code?: string }).code).toBe("ERR_CAPTURE_ACTION_REFUSED");
+    } finally {
+      h.db.close();
+    }
   });
 });
 
@@ -13194,7 +13864,7 @@ describe("I53 / I54 - D1c: a commit the model proposes is refused for a CI, hook
     );
   });
 
-  test("no bound row is proposable on the MCP act door (the classification table, until AD3: a bound proposal needs an approval surface that shows its diff or plan)", () => {
+  test("no bound row is a legacy case: the baseline table denies them, and an agent reaches one only on I58's approved basis (the owner approved it by name; the executor's prompt shows its diff or plan)", () => {
     for (const r of CONNECTOR_WRITE_ROWS.filter((row) => row.bound !== undefined)) {
       expect(ACTION_PROPOSABILITY[r.actionType]?.kind, r.actionType).toBe("denied");
     }

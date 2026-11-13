@@ -1,5 +1,6 @@
 export const COMMAND_NAMES = [
   "admin",
+  "approvals",
   "approve",
   "ask",
   "audit",

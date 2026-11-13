@@ -221,6 +221,9 @@ function serviceScopeLines(
 export function enableWritesPromptLines(
   payload: Record<string, unknown> | undefined,
 ): string[] | undefined {
+  // The agent door has its own validated shape (Phase 28 AD3a-1).
+  if (payload?.["door"] === "agent") return agentEnablePromptLines(payload);
+  if (payload?.["door"] !== undefined) return undefined;
   const service = payload?.["service"];
   const maxWave = payload?.["maxWave"];
   const writes = payload?.["writes"];
@@ -259,5 +262,160 @@ export function enableWritesPromptLines(
   if (scope === undefined) return undefined;
   if (scope !== null) lines.push("", ...scope);
   lines.push("", "Each call will still ask you before it runs.");
+  return lines;
+}
+
+/** The state of one row in the agent door's prompt (Phase 28 AD3a-1). */
+const AGENT_STATE_TEXT: Readonly<Record<string, string>> = {
+  already_approved: "already approved",
+  will_be_approved: "will be approved",
+  reapproved_changed: "re-approved (definition changed)",
+};
+
+const SHA12 = /^[0-9a-f]{12}$/;
+
+interface AgentWriteLine {
+  readonly toolId: string;
+  readonly actionType: string;
+  readonly wave: number;
+  readonly typedConfirm: boolean;
+  readonly bound: boolean;
+  readonly state: string;
+  readonly sha12?: string;
+  readonly reason?: string;
+}
+
+/** One validated row of the agent door's payload, or `undefined` when any field is missing or odd. */
+function agentWriteLine(w: unknown): AgentWriteLine | undefined {
+  if (typeof w !== "object" || w === null) return undefined;
+  const r = w as Record<string, unknown>;
+  if (
+    typeof r["toolId"] !== "string" ||
+    typeof r["actionType"] !== "string" ||
+    typeof r["wave"] !== "number" ||
+    typeof r["typedConfirm"] !== "boolean" ||
+    typeof r["bound"] !== "boolean" ||
+    typeof r["state"] !== "string"
+  ) {
+    return undefined;
+  }
+  const base = {
+    toolId: r["toolId"],
+    actionType: r["actionType"],
+    wave: r["wave"],
+    typedConfirm: r["typedConfirm"],
+    bound: r["bound"],
+    state: r["state"],
+  };
+  if (r["state"] === "not_approvable") {
+    // A row that cannot be approved carries its reason and no hash.
+    return typeof r["reason"] === "string" && r["sha12"] === undefined
+      ? { ...base, reason: r["reason"] }
+      : undefined;
+  }
+  if (!Object.hasOwn(AGENT_STATE_TEXT, r["state"]) || r["reason"] !== undefined) return undefined;
+  return typeof r["sha12"] === "string" && SHA12.test(r["sha12"])
+    ? { ...base, sha12: r["sha12"] }
+    : undefined;
+}
+
+function agentLineText(w: AgentWriteLine): string {
+  const flags = [w.typedConfirm ? "typed confirmation" : "", w.bound ? "bound" : ""].filter(
+    (f) => f !== "",
+  );
+  const head = `  ${sanitisePreviewText(w.toolId)}  ${sanitisePreviewText(w.actionType)}  wave ${w.wave}`;
+  const flagText = flags.length === 0 ? "" : `  ${flags.join(", ")}`;
+  if (w.state === "not_approvable") {
+    return `${head}${flagText}  not approvable (${sanitisePreviewText(w.reason ?? "")})`;
+  }
+  return `${head}${flagText}  ${AGENT_STATE_TEXT[w.state]}  ${w.sha12}`;
+}
+
+const REMOVE_WHY = ["above_wave", "not_approvable", "gone"] as const;
+
+interface RemovalLine {
+  readonly toolId: string;
+  readonly wave: number;
+  readonly why: (typeof REMOVE_WHY)[number];
+  readonly reason?: string;
+}
+
+/** One validated `removes` entry, or `undefined` when any field is missing or odd. */
+function removalLine(w: unknown): RemovalLine | undefined {
+  if (typeof w !== "object" || w === null) return undefined;
+  const r = w as Record<string, unknown>;
+  if (typeof r["toolId"] !== "string" || typeof r["wave"] !== "number") return undefined;
+  const why = REMOVE_WHY.find((x) => x === r["why"]);
+  if (why === undefined) return undefined;
+  // A row that is no longer approvable carries the reason it gave; the others carry none.
+  if (why === "not_approvable") {
+    return typeof r["reason"] === "string"
+      ? { toolId: r["toolId"], wave: r["wave"], why, reason: r["reason"] }
+      : undefined;
+  }
+  return r["reason"] === undefined ? { toolId: r["toolId"], wave: r["wave"], why } : undefined;
+}
+
+function removalText(l: RemovalLine): string {
+  const head = `  will be removed: ${sanitisePreviewText(l.toolId)}  wave ${l.wave}`;
+  if (l.why === "above_wave") return `${head}  (above this wave)`;
+  if (l.why === "gone") return `${head}  (no longer a write of this service)`;
+  return `${head}  (not approvable: ${sanitisePreviewText(l.reason ?? "")})`;
+}
+
+/** The sentence that says the shared wave changes, or `undefined` when it does not. */
+function sharedWaveLine(
+  service: string,
+  maxWave: number,
+  from: unknown,
+): string | undefined | null {
+  if (from === undefined) return undefined;
+  if (from === null) {
+    return `This enables the shared wave for ${sanitisePreviewText(service)} at ${maxWave}; the model is offered nothing until you approve it by name.`;
+  }
+  if (typeof from !== "number") return null;
+  return `This raises the shared wave for ${sanitisePreviewText(service)} from ${from} to ${maxWave}; the model is offered nothing new until you approve it by name.`;
+}
+
+/**
+ * The consent text of an agent-door enable: exactly the rows the owner can approve for outside
+ * agents, with wave, typed-confirmation and bound flags and the first twelve hex characters of each
+ * definition hash. `undefined` when the payload is malformed.
+ */
+function agentEnablePromptLines(payload: Record<string, unknown>): string[] | undefined {
+  const service = payload["service"];
+  const maxWave = payload["maxWave"];
+  const writes = payload["writes"];
+  if (typeof service !== "string" || typeof maxWave !== "number" || !Array.isArray(writes)) {
+    return undefined;
+  }
+  const raised = sharedWaveLine(service, maxWave, payload["raisesSharedWaveFrom"]);
+  if (raised === null) return undefined;
+  const lines = [
+    `Service: ${sanitisePreviewText(service)}`,
+    `Up to wave: ${maxWave}`,
+    "Door: outside agents (MCP)",
+  ];
+  if (raised !== undefined) lines.push(raised);
+  for (const w of writes as unknown[]) {
+    const line = agentWriteLine(w);
+    if (line === undefined) return undefined;
+    lines.push(agentLineText(line));
+  }
+  // Approvals this (replacing) enable would delete; absent for an enable that only adds.
+  const removes = payload["removes"];
+  if (removes !== undefined) {
+    if (!Array.isArray(removes)) return undefined;
+    for (const w of removes as unknown[]) {
+      const line = removalLine(w);
+      if (line === undefined) return undefined;
+      lines.push(removalText(line));
+    }
+  }
+  lines.push(
+    "",
+    "Each proposal still asks you, at `nimbus approvals`.",
+    "An agent holding its own credentials can act without Nimbus.",
+  );
   return lines;
 }

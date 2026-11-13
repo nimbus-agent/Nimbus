@@ -31,6 +31,7 @@ import {
 } from "./capture-store.ts";
 import {
   type ActDeps,
+  type ActionBasis,
   type ActionPayload,
   type ActionVerdict,
   CaptureError,
@@ -40,10 +41,13 @@ import {
   type CaptureState,
   isCaptureKind,
   isCaptureState,
+  isLegacyBasis,
   type NativeValidatedCapture,
+  NO_BASIS_CLASS,
   type ValidatedCapture,
 } from "./capture-types.ts";
 import {
+  PAYLOAD_MAX_BYTES,
   referencedItemIds,
   sanitizeClientLabel,
   validateCapturePayload,
@@ -62,6 +66,10 @@ const HOUR_MS = 3_600_000;
 const ATTEMPT_MULTIPLIER = 4;
 const LIST_LIMIT_DEFAULT = 50;
 const LIST_LIMIT_MAX = 200;
+/** Agent door AD2: how many unexpired proposed actions ONE connection may hold (never above `actionMaxPending`). */
+const PER_CONNECTION_ACTIONS = 3;
+const MINE_LIMIT = 50;
+const PROPOSALS_LIMIT = 200;
 
 export interface CaptureGateDeps {
   readonly db: Database;
@@ -88,8 +96,31 @@ export interface CaptureGateDeps {
   actionDestinationRefusal(
     actionType: string,
     input: Readonly<Record<string, unknown>>,
+    basis: ActionBasis | undefined,
   ): string | undefined;
+  /**
+   * The agent door's definition check (AD3a-2a, D-3): lists the action's connector ONCE and compares
+   * the approved tool's definition with the owner's approved hash. Called for an `approved` basis
+   * ONLY, and LAST (step 5c), so every other refusal is free of connector I/O. Absent: every
+   * `approved` proposal is refused (fail closed). Injected (this module imports nothing from
+   * `connectors/`, D32(f)).
+   */
+  verifyActionDefinition?(actionType: string): Promise<ActionDefinitionCheck>;
+  /**
+   * Called once after an ACTION proposal is queued, with the number now waiting. A number and
+   * nothing else, so no request-derived string can reach the owner's toast. A throw is swallowed.
+   */
+  onActionProposed?(pending: number): void;
 }
+
+/** The answer of {@link CaptureGateDeps.verifyActionDefinition}. */
+export type ActionDefinitionCheck =
+  | { readonly ok: true }
+  | {
+      readonly ok: false;
+      readonly code: "ERR_AGENT_TOOL_SUSPENDED" | "ERR_CAPTURE_ACTION_NOT_PROPOSABLE";
+      readonly detail: string;
+    };
 
 export interface CaptureCaller {
   readonly clientId: string;
@@ -131,6 +162,29 @@ export interface CaptureStatus {
   readonly actionTtlHours: number;
   readonly actionExpiringWithinHour: number;
   readonly disabledReason?: string;
+}
+
+/** One of the caller's own captures (`capture.mine`): ids and states only, never a payload. */
+export interface CaptureMineView {
+  readonly id: string;
+  readonly kind: CaptureKind;
+  readonly state: CaptureState;
+  readonly createdAt: number;
+  readonly expiresAt?: number;
+  readonly outcomeRef?: string;
+  readonly errorCode?: string;
+}
+
+/** A waiting action proposal as the gate stores it; the RPC layer escapes the strings (once). */
+export interface ActionProposalRow {
+  readonly id: string;
+  readonly actionType: string;
+  readonly summary: string;
+  readonly clientLabel: string | null;
+  readonly createdAt: number;
+  readonly expiresAt: number;
+  /** Queued under the deprecation window (V97 `legacy`): the earlier act door accepted it. */
+  readonly agentDoorLegacy: boolean;
 }
 
 export interface CaptureStateView {
@@ -300,28 +354,82 @@ function auditedStep<T>(ctx: SubmitContext, step: () => T): T {
   }
 }
 
-/** Step 5a's refusal: the action type is not proposable now. */
-function requireProposable(
-  ctx: SubmitContext,
-  v: ActionCapture,
-  classified: ActionVerdict | undefined,
-): void {
-  const verdict = classified ?? { kind: "unknown" as const };
-  if (verdict.kind !== "proposable") {
+/**
+ * Step 5a's size rule: the validator accepts an action up to its structural bound, and only a
+ * proposal whose verdict marks a bound row may keep more than the ordinary cap. Runs before the
+ * destination, the configured and the definition checks, so an oversized proposal costs no I/O.
+ */
+function requireActionSize(ctx: SubmitContext, v: ActionCapture, boundInput: boolean): void {
+  if (boundInput) return;
+  if (Buffer.byteLength(JSON.stringify(v.payload), "utf8") > PAYLOAD_MAX_BYTES) {
     refuseAudited(
       ctx.deps,
       ctx.caller,
       "action",
       ctx.clientLabel,
-      "ERR_CAPTURE_ACTION_NOT_PROPOSABLE",
-      `${v.payload.actionType} cannot be proposed (${verdict.kind === "denied" ? verdict.class : "unknown action type"})`,
+      "ERR_CAPTURE_INVALID",
+      `payload exceeds ${String(PAYLOAD_MAX_BYTES)} bytes`,
     );
   }
 }
 
-/** Step 5a's second refusal: the destination is one the model may never post to. */
-function requireDestinationAllowed(ctx: SubmitContext, v: ActionCapture): void {
-  const reason = actionDestinationVerdict(ctx.deps, v.payload.actionType, v.payload.input);
+/** The fixed detail of a suspended tool at submit; it echoes nothing stored or listed. */
+const SUSPENDED_AT_SUBMIT =
+  "was approved for agents but its definition changed; it stays refused until the owner approves it again by name";
+
+/**
+ * Step 5a: the action type is proposable now, and on what basis. A `suspended` verdict is its own
+ * audited refusal (`ERR_AGENT_TOOL_SUSPENDED`); denied and unknown are `NOT_PROPOSABLE`. A
+ * proposable verdict with no basis is accepted only when the runtime marked it `userMcp` (fail
+ * closed: a basis-less verdict is otherwise lax everywhere after it). Returns the verdict's basis
+ * (absent for a user-MCP type) and whether its row may carry a payload over the ordinary cap.
+ */
+function requireProposable(
+  ctx: SubmitContext,
+  v: ActionCapture,
+  classified: ActionVerdict | undefined,
+): { readonly basis: ActionBasis | undefined; readonly boundInput: boolean } {
+  const verdict = classified ?? { kind: "unknown" as const };
+  if (verdict.kind === "proposable") {
+    if (verdict.basis === undefined && verdict.userMcp !== true) {
+      refuseAudited(
+        ctx.deps,
+        ctx.caller,
+        "action",
+        ctx.clientLabel,
+        "ERR_CAPTURE_ACTION_NOT_PROPOSABLE",
+        `${v.payload.actionType} cannot be proposed (${NO_BASIS_CLASS})`,
+      );
+    }
+    return { basis: verdict.basis, boundInput: verdict.boundInput === true };
+  }
+  if (verdict.kind === "suspended") {
+    refuseAudited(
+      ctx.deps,
+      ctx.caller,
+      "action",
+      ctx.clientLabel,
+      "ERR_AGENT_TOOL_SUSPENDED",
+      `${v.payload.actionType} ${SUSPENDED_AT_SUBMIT}`,
+    );
+  }
+  refuseAudited(
+    ctx.deps,
+    ctx.caller,
+    "action",
+    ctx.clientLabel,
+    "ERR_CAPTURE_ACTION_NOT_PROPOSABLE",
+    `${v.payload.actionType} cannot be proposed (${verdict.kind === "denied" ? verdict.class : "unknown action type"})`,
+  );
+}
+
+/** Step 5a's second refusal: the destination is one the proposal's basis may never post to. */
+function requireDestinationAllowed(
+  ctx: SubmitContext,
+  v: ActionCapture,
+  basis: ActionBasis | undefined,
+): void {
+  const reason = actionDestinationVerdict(ctx.deps, v.payload.actionType, v.payload.input, basis);
   if (reason !== undefined) {
     refuseAudited(
       ctx.deps,
@@ -352,6 +460,59 @@ function requireConfigured(
   }
 }
 
+/** The fixed detail when the definition check cannot run or throws. */
+const DEFINITION_UNCHECKED = "its definition could not be checked now";
+
+/**
+ * Step 5c, for an `approved` basis only and LAST of the action checks: the connector is listed once
+ * and the approved tool's definition compared with the owner's. An absent check, a throw and a
+ * failed answer all refuse; nothing is queued.
+ */
+async function requireDefinitionVerified(
+  ctx: SubmitContext,
+  v: ActionCapture,
+  basis: ActionBasis | undefined,
+): Promise<void> {
+  if (basis !== "approved") return;
+  const type = v.payload.actionType;
+  let outcome: ActionDefinitionCheck;
+  try {
+    outcome = (await ctx.deps.verifyActionDefinition?.(type)) ?? {
+      ok: false,
+      code: "ERR_CAPTURE_ACTION_NOT_PROPOSABLE",
+      detail: DEFINITION_UNCHECKED,
+    };
+  } catch {
+    outcome = {
+      ok: false,
+      code: "ERR_CAPTURE_ACTION_NOT_PROPOSABLE",
+      detail: DEFINITION_UNCHECKED,
+    };
+  }
+  if (!outcome.ok) {
+    refuseAudited(
+      ctx.deps,
+      ctx.caller,
+      "action",
+      ctx.clientLabel,
+      outcome.code,
+      `${type}: ${outcome.detail}`,
+    );
+  }
+}
+
+/** Step 8b's refusal: this connection already holds its share of the action queue (AD2). */
+function refuseConnectionFull(ctx: SubmitContext, held: number): never {
+  refuseAudited(
+    ctx.deps,
+    ctx.caller,
+    ctx.kind,
+    ctx.clientLabel,
+    "ERR_CAPTURE_QUEUE_FULL",
+    `this connection already has ${String(held)} proposed actions waiting for the owner`,
+  );
+}
+
 /** Step 8's refusal: the action queue or the native-proposal queue is full. */
 function refuseQueueFull(ctx: SubmitContext, v: ValidatedCapture, cap: CaptureCapability): never {
   refuseAudited(
@@ -366,11 +527,19 @@ function refuseQueueFull(ctx: SubmitContext, v: ValidatedCapture, cap: CaptureCa
   );
 }
 
+/** What `submitCapture` returns; `legacy` only on a proposal accepted under the deprecation window. */
+export type SubmitResult = {
+  id: string;
+  state: CaptureState;
+  expiresAt?: number;
+  legacy?: true;
+};
+
 export async function submitCapture(
   deps: CaptureGateDeps,
   caller: CaptureCaller,
   input: unknown,
-): Promise<{ id: string; state: CaptureState; expiresAt?: number }> {
+): Promise<SubmitResult> {
   // 1. Capability (config + live org policy, fail-closed).
   const cap = deps.capability();
   requireSubmitCapability(deps, cap, input);
@@ -397,12 +566,19 @@ export async function submitCapture(
   const ctx: SubmitContext = { deps, caller, kind: kindRaw, clientLabel };
   // 5. Whitelist rebuild, per kind.
   const v = auditedStep(ctx, () => validateCapturePayload(kindRaw, params["payload"], now));
-  // 5a + 5b. An action must be proposable now and its connector configured. Everything after this
-  //    await stays synchronous through the write, so a concurrent submit cannot slip past the caps.
+  // 5a + 5b + 5c. An action must be proposable now (and on what basis), its destination allowed for
+  //    that basis, its connector configured, and, for an owner-approved tool, its listed definition
+  //    unchanged. The definition check lists the connector, so it is LAST: every other refusal above
+  //    it is free of connector I/O. Everything after these awaits stays synchronous through the
+  //    write, so a concurrent submit cannot slip past the caps.
+  let basis: ActionBasis | undefined;
   if (v.kind === "action") {
-    requireProposable(ctx, v, deps.classifyAction?.(v.payload.actionType));
-    requireDestinationAllowed(ctx, v);
+    const proposed = requireProposable(ctx, v, deps.classifyAction?.(v.payload.actionType));
+    basis = proposed.basis;
+    requireActionSize(ctx, v, proposed.boundInput);
+    requireDestinationAllowed(ctx, v, basis);
     requireConfigured(ctx, v, await deps.isServiceConfigured?.(serviceOf(v.payload.actionType)));
+    await requireDefinitionVerified(ctx, v, basis);
   }
   // 6. Referenced items exist (a capture item only while live/accepted); a link's endpoints must
   //    also be graph-linkable NOW, so a proposal that can never be accepted is not queued.
@@ -438,9 +614,27 @@ export async function submitCapture(
       ? deps.store.countPendingActions(now) >= cap.config.actionMaxPending
       : v.kind !== "note" && deps.store.countPendingNative() >= cap.config.maxPending;
   if (queueFull) refuseQueueFull(ctx, v, cap);
+  // 8b. Per-connection cap — one connection cannot take the whole action queue (agent door AD2).
+  if (v.kind === "action") {
+    const perConnection = Math.min(PER_CONNECTION_ACTIONS, cap.config.actionMaxPending);
+    if (deps.store.countPendingActionsBySession(caller.clientId, now) >= perConnection) {
+      refuseConnectionFull(ctx, perConnection);
+    }
+  }
 
   // 9 + 10. One transaction: capture row, item (notes only), audit.
-  return writeSubmittedCapture(ctx, v, cap, now);
+  const written = writeSubmittedCapture(ctx, v, cap, now, basis);
+  if (v.kind === "action") notifyActionProposed(deps, now);
+  return written;
+}
+
+/** The count-only hook: after commit, and a failing toast never fails a submit. */
+function notifyActionProposed(deps: CaptureGateDeps, now: number): void {
+  try {
+    deps.onActionProposed?.(deps.store.countPendingActions(now));
+  } catch {
+    // a missed notification loses nothing: `nimbus approvals` and `nimbus doctor` show the queue
+  }
 }
 
 /**
@@ -452,7 +646,8 @@ function writeSubmittedCapture(
   v: ValidatedCapture,
   cap: CaptureCapability,
   now: number,
-): { id: string; state: CaptureState; expiresAt?: number } {
+  basis: ActionBasis | undefined,
+): SubmitResult {
   const { deps, caller, kind, clientLabel } = ctx;
   const proposal = v.kind !== "note";
   const id = deps.newId();
@@ -461,6 +656,8 @@ function writeSubmittedCapture(
   const payloadBytes = Buffer.byteLength(payloadJson, "utf8");
   const state: CaptureState = proposal ? "proposed" : "live";
   const expiresAt = v.kind === "action" ? now + cap.config.actionTtlHours * HOUR_MS : null;
+  // The deprecation window (OR-AD-9): stored, counted and warned about; never set on a note.
+  const legacy = v.kind === "action" && isLegacyBasis(basis);
   deps.db.transaction(() => {
     deps.store.insert({
       id,
@@ -473,6 +670,7 @@ function writeSubmittedCapture(
       sessionId: caller.clientId,
       createdAt: now,
       expiresAt,
+      agentDoorLegacy: legacy,
     });
     if (v.kind === "note") {
       const payload = v.payload;
@@ -501,6 +699,7 @@ function writeSubmittedCapture(
         captureId: id,
         kind,
         ...(v.kind === "action" ? { actionType: v.payload.actionType } : {}),
+        ...(v.kind === "action" && basis !== undefined ? { basis } : {}),
         payloadBytes,
         clientLabel,
         outcome: proposal ? "proposed" : "captured",
@@ -510,7 +709,8 @@ function writeSubmittedCapture(
     });
   })();
   if (itemId !== null) deps.scheduleEmbedding?.(itemId);
-  return expiresAt === null ? { id, state } : { id, state, expiresAt };
+  if (expiresAt === null) return { id, state };
+  return legacy ? { id, state, expiresAt, legacy: true } : { id, state, expiresAt };
 }
 
 // ---- revoke (spec § 5.3) -------------------------------------------------------------------------
@@ -851,7 +1051,11 @@ export function captureStateFor(
   const id = requireId(idRaw);
   expireDueActionsAudited(deps, deps.now(), caller.clientId);
   const row = deps.store.get(id);
-  if (row === undefined) throw new CaptureError("ERR_CAPTURE_NOT_FOUND", `no capture ${id}`);
+  // Agent door AD2 (D-AD-11): a row another connection submitted answers exactly like an absent id,
+  // so the answer is no oracle for another agent's ids.
+  if (row === undefined || row.sessionId !== caller.clientId) {
+    throw new CaptureError("ERR_CAPTURE_NOT_FOUND", `no capture ${id}`);
+  }
   return {
     kind: row.kind,
     state: row.state,
@@ -859,6 +1063,77 @@ export function captureStateFor(
     ...(row.outcomeRef === null ? {} : { outcomeRef: row.outcomeRef }),
     ...(row.errorCode === null ? {} : { errorCode: row.errorCode }),
   };
+}
+
+/** `capture.mine`: the asking connection's own captures, newest first. State only, never a payload. */
+export function captureMine(
+  deps: CaptureGateDeps,
+  caller: CaptureCaller,
+): { captures: CaptureMineView[] } {
+  if (CAPTURE_ROLE_BY_KIND[caller.kind] !== "submit") {
+    throw new CaptureError(
+      "ERR_CAPTURE_FORBIDDEN_CLIENT",
+      "capture.mine is for MCP clients; the owner uses captures.list",
+    );
+  }
+  expireDueActionsAudited(deps, deps.now(), caller.clientId);
+  const captures = deps.store.listBySession(caller.clientId, MINE_LIMIT).map(
+    (row): CaptureMineView => ({
+      id: row.id,
+      kind: row.kind,
+      state: row.state,
+      createdAt: row.createdAt,
+      ...(row.expiresAt === null ? {} : { expiresAt: row.expiresAt }),
+      ...(row.outcomeRef === null ? {} : { outcomeRef: row.outcomeRef }),
+      ...(row.errorCode === null ? {} : { errorCode: row.errorCode }),
+    }),
+  );
+  return { captures };
+}
+
+/**
+ * The owner's queue of waiting action proposals, oldest first (`approvals.list`). Raw strings: the
+ * RPC layer escapes them once. A row whose payload does not parse is skipped, never thrown.
+ */
+export function listActionProposals(
+  deps: CaptureGateDeps,
+  caller: CaptureCaller,
+): { proposals: ActionProposalRow[] } {
+  requireOwner(caller);
+  expireDueActionsAudited(deps, deps.now(), caller.clientId);
+  const rows = deps.store.list({
+    state: "proposed",
+    kind: "action",
+    order: "asc",
+    limit: PROPOSALS_LIMIT,
+  });
+  const proposals: ActionProposalRow[] = [];
+  for (const row of rows) {
+    const p = parseActionPayload(row);
+    if (p === undefined || row.expiresAt === null) continue;
+    proposals.push({
+      id: row.id,
+      actionType: p.actionType,
+      summary: p.summary,
+      clientLabel: row.clientLabel,
+      createdAt: row.createdAt,
+      expiresAt: row.expiresAt,
+      agentDoorLegacy: row.agentDoorLegacy,
+    });
+  }
+  return { proposals };
+}
+
+function parseActionPayload(row: CaptureRow): ActionPayload | undefined {
+  if (row.payloadJson === null) return undefined;
+  try {
+    const p = JSON.parse(row.payloadJson) as Partial<ActionPayload>;
+    return typeof p.actionType === "string" && typeof p.summary === "string"
+      ? (p as ActionPayload)
+      : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 export async function captureStatus(deps: CaptureGateDeps): Promise<CaptureStatus> {

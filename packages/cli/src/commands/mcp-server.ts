@@ -75,8 +75,9 @@ Every tool above is read-only. Write tools are added only when the Gateway's
 capture_note stores an agent-authored note in the LOCAL index, and
 propose_decision, propose_term and propose_link queue proposals that count only
 once you accept them. propose_action queues a connector action that runs only
-after you accept it AND approve the prompt; capture_status reads a capture's
-state. You review all of it with \`nimbus captures\`. The Gateway must be
+after you approve it with \`nimbus approvals <id>\` and answer the prompt;
+capture_status reads the state of a capture this connection submitted. You
+review the rest with \`nimbus captures\`. The Gateway must be
 running (start it with: ${gatewayStartCommand(demo)}).
 
 On a Gateway too old to support session.declareKind, the ${String(agentToolCount)} agent tools are

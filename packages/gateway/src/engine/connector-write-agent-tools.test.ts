@@ -7,9 +7,11 @@ import {
   synthBound,
 } from "../connectors/connector-writes/bound-fixtures.test-helpers.ts";
 import { CONNECTOR_WRITE_ROWS } from "../connectors/connector-writes/index.ts";
+import { isModelOfferableRow } from "../connectors/connector-writes/model-offerable.ts";
 import {
   type ConnectorWritePreviewTemplate,
   type ConnectorWriteRow,
+  previewTemplateKeys,
   row,
   textField,
   withBefore,
@@ -17,6 +19,7 @@ import {
   withConfirm,
   withPreview,
 } from "../connectors/connector-writes/types.ts";
+import { mcpClientToolKey } from "../connectors/lazy-mesh/tool-map.ts";
 import { WAVE4_BEFORE_REFUSAL } from "./before-state.ts";
 import {
   buildConnectorWriteAgentTools,
@@ -29,6 +32,7 @@ import {
   DESTINATION_REFUSAL,
   templateKeysInSchema,
 } from "./connector-write-agent-tools.ts";
+import { serviceOf } from "./service-of.ts";
 import type { ActionResult, PlannedAction } from "./types.ts";
 
 // ---------- fixtures ----------
@@ -1068,5 +1072,74 @@ describe("a bound row's prepare tool at offer time", () => {
     });
     const tools = await buildConnectorWriteAgentTools(src, () => undefined, wrapSpy().wrap, NONE);
     expect(keys(tools)).toEqual([SYNC_NAME]);
+  });
+});
+
+// AD3a-2a task 2: the "reader unlisted" and "prepare tool unlisted" helpers moved to
+// `connectors/connector-writes/listed-support.ts` and are shared with the agent door. The model
+// door's offered set over the REAL write table, with and without the readers and prepare tools in
+// each listing, must be exactly what it was before the move (digest taken on the pre-move code).
+const SNAP_FULL_COUNT = 109;
+const SNAP_FULL_DIGEST = "586f6c628eb991bb9229edca82ad3f825f1d48a3becac4b13ec04de14d5924f3";
+const SNAP_BARE_COUNT = 68;
+const SNAP_BARE_DIGEST = "a597429c036e86f16ce5a8660421b0082e9839495f55a03fe575400bf60df60c";
+describe("the model door's offered set over the real table (listing-helper extraction snapshot)", () => {
+  async function offered(withSupportTools: boolean): Promise<string[]> {
+    const offerable = CONNECTOR_WRITE_ROWS.filter(isModelOfferableRow);
+    const supportTools = new Set<string>();
+    for (const r of CONNECTOR_WRITE_ROWS) {
+      for (const t of [
+        r.before?.tool,
+        r.before?.also?.tool,
+        r.bound?.prepare.tool,
+        r.bound?.prepare.settleTool,
+      ]) {
+        if (t !== undefined) supportTools.add(`${serviceOf(r.actionType)}\u0000${t}`);
+      }
+    }
+    const byService = new Map<string, Record<string, unknown>>();
+    const listingFor = (service: string): Record<string, unknown> => {
+      let l = byService.get(service);
+      if (l === undefined) {
+        l = {};
+        byService.set(service, l);
+      }
+      return l;
+    };
+    for (const r of offerable) {
+      const service = serviceOf(r.actionType);
+      const props: Record<string, unknown> = {};
+      for (const k of previewTemplateKeys(r.preview as ConnectorWritePreviewTemplate)) {
+        props[k] = { type: "string" };
+      }
+      listingFor(service)[mcpClientToolKey(service, r.toolId)] = entry("d", schema(props));
+    }
+    if (withSupportTools) {
+      for (const k of supportTools) {
+        const [service, tool] = k.split("\u0000") as [string, string];
+        const l = listingFor(service);
+        const key = mcpClientToolKey(service, tool);
+        if (!Object.hasOwn(l, key)) l[key] = entry("support", schema({}));
+      }
+    }
+    const src = fakeSource(offerable, Object.fromEntries(byService));
+    const tools = await buildConnectorWriteAgentTools(
+      src,
+      () => undefined,
+      (_s, _t, def) => def,
+      new Set(),
+    );
+    return Object.keys(tools).sort((a, b) => a.localeCompare(b));
+  }
+  const digest = (names: readonly string[]): string =>
+    new Bun.CryptoHasher("sha256").update(names.join("\n")).digest("hex");
+
+  test("with every reader and prepare tool listed", async () => {
+    const names = await offered(true);
+    expect([names.length, digest(names)]).toEqual([SNAP_FULL_COUNT, SNAP_FULL_DIGEST]);
+  });
+  test("with none of them listed (Wave 4 rows drop, the rest stay)", async () => {
+    const names = await offered(false);
+    expect([names.length, digest(names)]).toEqual([SNAP_BARE_COUNT, SNAP_BARE_DIGEST]);
   });
 });

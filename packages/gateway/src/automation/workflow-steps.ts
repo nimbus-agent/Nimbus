@@ -16,6 +16,7 @@
 import { createHash } from "node:crypto";
 import { connectorWriteRowByToolId } from "../connectors/connector-write-registry.ts";
 import { MODEL_NEVER_OFFERED_TOOL_IDS } from "../connectors/connector-writes/model-offerable.ts";
+import { canonicalJson } from "../util/canonical-json.ts";
 
 export type JsonValue =
   | string
@@ -412,30 +413,6 @@ export function parseWorkflowSteps(stepsJson: string): WorkflowStep[] {
 /** The SHA-256 of the canonical JSON of the steps a run loaded (keys sorted, no whitespace). */
 export function workflowStepsSha256(steps: readonly WorkflowStep[]): string {
   return createHash("sha256").update(canonicalJson(steps)).digest("hex");
-}
-
-/**
- * Code-unit order, NOT `localeCompare`: the workflow hash must be the same on every machine and in every
- * locale, so the key order cannot depend on collation.
- */
-export function byCodeUnit(a: string, b: string): number {
-  if (a < b) return -1;
-  return a > b ? 1 : 0;
-}
-
-/** One `"key":value` member of a canonical object. */
-function canonicalMember(rec: Record<string, unknown>, k: string): string {
-  return `${JSON.stringify(k)}:${canonicalJson(rec[k])}`;
-}
-
-export function canonicalJson(v: unknown): string {
-  if (v === null || typeof v !== "object") return JSON.stringify(v) ?? "null";
-  if (Array.isArray(v)) return `[${v.map(canonicalJson).join(",")}]`;
-  const rec = v as Record<string, unknown>;
-  const keys = Object.keys(rec)
-    .filter((k) => rec[k] !== undefined)
-    .sort(byCodeUnit);
-  return `{${keys.map((k) => canonicalMember(rec, k)).join(",")}}`;
 }
 
 /** The labels a run's `paramsOverride` may not name: every write and query step, defaults included. */

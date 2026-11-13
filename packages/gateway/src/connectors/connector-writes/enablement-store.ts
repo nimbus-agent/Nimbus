@@ -84,6 +84,26 @@ export function setModelWriteEnablement(
   );
 }
 
+/**
+ * The agent door's writer of the SHARED wave (OR-AD-2): insert a row with an EMPTY model approved
+ * set, or raise `max_wave` (never lower it); it touches nothing else, so the model is offered nothing
+ * new (V84 approves by name). A later model-door `enable` still replaces the row whole.
+ */
+export function raiseWriteEnablementWave(
+  db: Database,
+  service: string,
+  maxWave: ConnectorWriteWave,
+  now: number,
+): void {
+  dbRun(
+    db,
+    `INSERT INTO connector_write_enablement (service, max_wave, enabled_at, approved_tool_ids)
+     VALUES (?, ?, ?, '[]')
+     ON CONFLICT(service) DO UPDATE SET max_wave = MAX(max_wave, excluded.max_wave)`,
+    [service, maxWave, now],
+  );
+}
+
 /** Remove a service's opt-in. True when a row existed. */
 export function removeModelWriteEnablement(db: Database, service: string): boolean {
   return (

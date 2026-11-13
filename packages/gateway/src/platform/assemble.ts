@@ -132,6 +132,7 @@ import {
 } from "../connectors/connector-vault.ts";
 import { createConnectorWriteDispatcher } from "../connectors/connector-write-dispatch.ts";
 import type { ConnectorWriteContext } from "../connectors/connector-write-transport.ts";
+import { createAgentDoor } from "../connectors/connector-writes/agent-door-runtime.ts";
 import { isObsidianWriteGrantApproved } from "../connectors/connector-writes/enablement-store.ts";
 import { getIacGrants } from "../connectors/connector-writes/iac-grants.ts";
 import { getK8sGrants } from "../connectors/connector-writes/k8s-grants.ts";
@@ -157,7 +158,6 @@ import {
   parseOpenapiToml,
 } from "../connectors/openapi-indexer-config.ts";
 import { createOpenapiIndexerSyncable } from "../connectors/openapi-indexer-sync.ts";
-import { classifyActionType, listProposableActionTypes } from "../connectors/proposable-actions.ts";
 import { createProposableServiceConfigured } from "../connectors/proposable-service-configured.ts";
 import { isUserMcpModelAccessEnabled } from "../connectors/user-mcp-model-capability.ts";
 import {
@@ -271,7 +271,6 @@ import {
   mergeRoots,
 } from "../index/registered-roots-store.ts";
 import type { StatusReaders } from "../ipc/admin-status-rpc.ts";
-import { createActionDestinationRefusal } from "../ipc/capture-rpc.ts";
 import { resumePendingRemovals } from "../ipc/connector-rpc-handlers/index.ts";
 import type { EgressRpcCtx } from "../ipc/egress-rpc.ts";
 import type { FleetRpcCtx } from "../ipc/fleet-rpc.ts";
@@ -304,8 +303,10 @@ import { XaiProvider } from "../llm/xai-provider.ts";
 import { reconcileActionsAtBoot } from "../mcp-sink/capture-act.ts";
 import { resolveCaptureCapability } from "../mcp-sink/capture-capability.ts";
 import type { CaptureGateDeps } from "../mcp-sink/capture-gate.ts";
+import { newCaptureId } from "../mcp-sink/capture-id.ts";
 import { CaptureAttemptLimiter, CaptureRefusalCounter } from "../mcp-sink/capture-rate-limit.ts";
 import { CaptureStore, FINISHED_RETENTION_MS } from "../mcp-sink/capture-store.ts";
+import { proposalsWaitingToast } from "../mcp-sink/capture-toast.ts";
 import { SessionMemoryStore } from "../memory/session-memory-store.ts";
 import { buildServiceIdentityResolver } from "../metrics/service-identity.ts";
 import { assembleOncallPushRuntime, type OncallPushRuntime } from "../oncall-push/push-runtime.ts";
@@ -3930,24 +3931,45 @@ export async function assemblePlatformServices(
   // value `platform.tribalKbConfig` returns below. A pure config read; nothing between here and its
   // other uses writes the `[tribal]` section.
   const tribalCfg = loadNimbusTribalFromConfigDir(paths.configDir);
+  // The agent door (invariant I58): what an outside agent may propose is decided per door, by the
+  // owner's approval by name, and re-derived at submit, at approval and after the owner's answer.
+  // It is built BEFORE the mesh exists, so the listing it hashes is late-bound (the
+  // `identityBootRefHolder` pattern): until the mesh is bound there is NO listing and no `approved`
+  // proposal is accepted (fail closed); a legacy one needs none.
+  const agentDoorMesh: {
+    current: Pick<LazyConnectorMesh, "listFirstPartyServerTools"> | undefined;
+  } = {
+    current: undefined,
+  };
+  const agentDoor = createAgentDoor({
+    db,
+    enforcedPolicy: () => policyGate.enforced(),
+    listServerTools: async (service) => agentDoorMesh.current?.listFirstPartyServerTools(service),
+    tribalKbConfig: () => tribalKbConfigOf(tribalCfg),
+    classifyContext: actClassifyCtx,
+    isServiceConfigured,
+    now: () => Date.now(),
+  });
   const captureGate: CaptureGateDeps = {
     db,
     store: captureStore,
     capability: () => resolveCaptureCapability(mcpSinkLoad, policyGate.enforced()),
     limiter: new CaptureAttemptLimiter(),
     refusals: new CaptureRefusalCounter(),
-    newId: () => `cap_${randomUUID()}`,
+    newId: newCaptureId,
     now: () => Date.now(),
-    classifyAction: (t) => classifyActionType(t, actClassifyCtx),
+    // Agent door AD2: a count-only toast (a number and fixed text, never a request-derived string).
+    onActionProposed: (pending) => {
+      const t = proposalsWaitingToast(pending);
+      void showIgnoringFailure(notifications, t.title, t.body);
+    },
+    classifyAction: agentDoor.verdict,
     isServiceConfigured,
-    listProposableActionTypes: () =>
-      listProposableActionTypes({ ...actClassifyCtx, isServiceConfigured }),
-    // OR1/OR2: the model door's messaging check, on the act door too, over the LIVE policy; and
-    // (B3, OR-B3-1/OR-B3-3) the KB refusals, from the same accessor as `platform.tribalKbConfig`.
-    actionDestinationRefusal: createActionDestinationRefusal(
-      () => policyGate.enforced(),
-      () => tribalKbConfigOf(tribalCfg),
-    ),
+    listProposableActionTypes: agentDoor.acceptedTypes,
+    // The refusal follows the verdict's basis: the model door's check for an approved type, the
+    // earlier act door's for a legacy one (both over the LIVE policy and the `[tribal]` KB config).
+    actionDestinationRefusal: agentDoor.refusal,
+    verifyActionDefinition: agentDoor.verifyDefinition,
     ...(scheduleItemEmbedding === undefined
       ? {}
       : { scheduleEmbedding: (id: string) => scheduleItemEmbedding(id) }),
@@ -4109,6 +4131,7 @@ export async function assemblePlatformServices(
   // `if (x !== undefined) push(...)` was a third of this function's
   // cognitive-complexity score (Sonar S3776, 17 against a limit of 15) for no
   // structural benefit.
+  agentDoorMesh.current = connectorMesh;
   pushStops(sidecarStops, [
     glossaryRefresher,
     decisionsRefresher,
@@ -4800,6 +4823,10 @@ export async function assemblePlatformServices(
       // Phase 28 AD1: the before-state guards read the tribal KB destinations, from the same
       // accessor as `platform.tribalKbConfig` (the model door's) and the act door's destination refusal.
       getTribalKbConfig: () => tribalKbConfigOf(tribalCfg),
+      agentDoor: {
+        listServerTools: (service) => connectorMesh.listFirstPartyServerTools(service),
+        verifyDefinition: agentDoor.verifyDefinition,
+      },
     },
   };
 

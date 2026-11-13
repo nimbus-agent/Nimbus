@@ -10,9 +10,8 @@
 //   - `claimFire`   only `engine/standing-rule-step.ts`, the last step of the I55 check.
 import type { Database } from "bun:sqlite";
 import { createHash, randomBytes } from "node:crypto";
-
-import { canonicalJson } from "../automation/workflow-steps.ts";
 import { dbRun } from "../db/write.ts";
+import { canonicalJson } from "../util/canonical-json.ts";
 import type {
   NewStandingRule,
   StandingFire,

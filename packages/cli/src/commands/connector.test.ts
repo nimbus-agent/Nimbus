@@ -2364,5 +2364,7 @@ describe("runConnector writes", () => {
     expect(out.stdout).toContain("nimbus connector writes enable <service> [--wave 2|3|4]");
     expect(out.stdout).toContain("nimbus connector writes disable <service>");
     expect(out.stdout).toContain("nimbus connector writes status [--json]");
+    expect(out.stdout).toContain("nimbus connector writes enable <service> --door agent");
+    expect(out.stdout).toContain("nimbus connector writes disable <service> [--door agent]");
   });
 });

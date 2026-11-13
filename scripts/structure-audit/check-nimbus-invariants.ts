@@ -2075,6 +2075,8 @@ const D32_CAPTURE_TABLE_ALLOWED: readonly string[] = [
   "packages/gateway/src/mcp-sink/capture-store.ts",
   "packages/gateway/src/index/capture-v67-sql.ts",
   "packages/gateway/src/index/capture-action-v69-sql.ts",
+  // V97 rebuilds `capture` (the `legacy` flag, the relaxed error-code CHECK); DDL only.
+  "packages/gateway/src/index/agent-door-v97-sql.ts",
 ];
 
 function checkTableConfinement(
@@ -2105,6 +2107,371 @@ export function checkCaptureTableConfinement(files: readonly FileEntry[]): Viola
     D32_CAPTURE_TABLE_ALLOWED,
     "capture-table-confined",
   );
+}
+
+// ---- D49 (the agent door's eligibility; sub-rule (b) lands with its table in AD3a-1) --------------
+// (b) `connector_write_door_approval` (V97) is named only by its store and its DDL: a row is the
+//     record of an owner's `connector.writes.enable --door agent` approval and the definition hash it
+//     was approved at, so no other code may write one, clear a suspension or read around it. Same shape
+//     and the same stated bound as D32(a): a dynamically composed identifier evades a text scan, and
+//     capability confinement (only the store holds queries against the table) is the real defense.
+//     D49's remaining clauses (a), (c)-(f) follow below.
+const D49_DOOR_APPROVAL_TABLE_RE = sqlTableReferenceRe("connector_write_door_approval");
+const D49_DOOR_APPROVAL_TABLE_ALLOWED: readonly string[] = [
+  "packages/gateway/src/connectors/connector-writes/door-approval-store.ts",
+  "packages/gateway/src/index/agent-door-v97-sql.ts",
+];
+
+export function checkDoorApprovalConfinement(files: readonly FileEntry[]): Violation[] {
+  return checkTableConfinement(
+    files,
+    D49_DOOR_APPROVAL_TABLE_RE,
+    D49_DOOR_APPROVAL_TABLE_ALLOWED,
+    "door-approval-confined",
+  );
+}
+
+// ---- D49 (a), (c), (d), (e), (f): the agent door's enforcement (Phase 28 AD3a-2a, invariant I58) ---
+// (a) The legacy proposability table is consulted in ONE place. `ACTION_PROPOSABILITY`,
+//     `classifyActionType`, `proposableWriteTool` and `PROPOSABLE_WRITE_TOOLS` are named in
+//     production source only in `connectors/proposable-actions.ts` (their definition) and
+//     `connectors/connector-writes/agent-door-runtime.ts` (the one consumer, which applies them only
+//     to a type the owner has not approved by name); and `createAgentDoor` only in its module and
+//     `platform/assemble.ts`, so a second door built over other facts cannot appear.
+// (c) `origin: "agent"` is written only by `ipc/capture-rpc.ts` `buildActDeps`, the one place that
+//     holds the accepting session's consent channel; a `proposer:` property only there and in the
+//     two files that declare or project it (`engine/types.ts`, and `engine/executor.ts`'s audit
+//     projection, which copies two fields out and sets no origin).
+// (d) An action's `origin` is compared with a literal ("agent" or "model") only in
+//     `engine/outside-origin.ts`; every other site asks `isOutsideOrigin` / `isAgentOrigin`.
+// (e) The order of the three check points, read from the real sites (each an ordered list of named
+//     steps): in `buildActDeps` the consent channel is built with `vetoingConsent(...)` and is the
+//     executor's consent argument; in `acceptAction` the verdict step and the definition step both
+//     come before `claimAction(`; in `submitCapture` the verdict and the definition step both come
+//     before `writeSubmittedCapture(`; and each helper reads the injected dependency it is named for.
+// (f) The `capture.legacy` flag (`agentDoorLegacy`) is named only by the sink's types, store and gate
+//     and the owner's approvals listing; its count (`legacyActionTypesSince`) only by the store and
+//     the status handler. AD3b removes this clause with the flag.
+// Same stated bound as D32(a): a dynamically composed identifier evades a text scan; the behavioural
+// tests under I58 are authoritative. Test files (and `.test-helpers.ts`) are not scanned.
+const D49_SRC = "packages/gateway/src/";
+const D49_LEGACY_TABLE_RE =
+  /\b(?:ACTION_PROPOSABILITY|classifyActionType|proposableWriteTool|PROPOSABLE_WRITE_TOOLS)\b/g;
+const D49_LEGACY_TABLE_ALLOWED: readonly string[] = [
+  `${D49_SRC}connectors/proposable-actions.ts`,
+  `${D49_SRC}connectors/connector-writes/agent-door-runtime.ts`,
+];
+const D49_BUILD_DOOR_RE = /\bcreateAgentDoor\b/g;
+const D49_BUILD_DOOR_ALLOWED: readonly string[] = [
+  `${D49_SRC}connectors/connector-writes/agent-door-runtime.ts`,
+  `${D49_SRC}platform/assemble.ts`,
+];
+const D49_AGENT_ORIGIN_RE = /\borigin\s*:\s*["']agent["']/g;
+const D49_AGENT_ORIGIN_ALLOWED: readonly string[] = [`${D49_SRC}ipc/capture-rpc.ts`];
+const D49_PROPOSER_PROP_RE = /\bproposer\s*\??\s*:/g;
+const D49_PROPOSER_PROP_ALLOWED: readonly string[] = [
+  `${D49_SRC}ipc/capture-rpc.ts`,
+  `${D49_SRC}engine/types.ts`,
+  `${D49_SRC}engine/executor.ts`,
+];
+const D49_ORIGIN_COMPARE_RE =
+  /\borigin\s*[!=]==?\s*["'](?:agent|model)["']|["'](?:agent|model)["']\s*[!=]==?\s*[\w.?]*\borigin\b/g;
+const D49_ORIGIN_COMPARE_ALLOWED: readonly string[] = [`${D49_SRC}engine/outside-origin.ts`];
+const D49_LEGACY_FLAG_RE = /\bagentDoorLegacy\b/g;
+const D49_LEGACY_FLAG_ALLOWED: readonly string[] = [
+  `${D49_SRC}mcp-sink/capture-types.ts`,
+  `${D49_SRC}mcp-sink/capture-store.ts`,
+  `${D49_SRC}mcp-sink/capture-gate.ts`,
+  `${D49_SRC}ipc/approvals-rpc.ts`,
+];
+const D49_LEGACY_COUNT_RE = /\blegacyActionTypesSince\b/g;
+const D49_LEGACY_COUNT_ALLOWED: readonly string[] = [
+  `${D49_SRC}mcp-sink/capture-store.ts`,
+  `${D49_SRC}ipc/connector-rpc-handlers/agent-writes.ts`,
+];
+
+/** Production files under packages/gateway/src (no test file, no test helper), unless allowed. */
+function d49ScanNames(
+  files: readonly FileEntry[],
+  re: RegExp,
+  allowed: readonly string[],
+  rule: string,
+  keepStrings: boolean,
+): Violation[] {
+  const out: Violation[] = [];
+  for (const f of files) {
+    if (f.relPath.endsWith(".test.ts") || f.relPath.endsWith(".test-helpers.ts")) continue;
+    if (!f.relPath.startsWith(D49_SRC) || allowed.includes(f.relPath)) continue;
+    const commentFree = stripComments(f.contents);
+    const code = keepStrings ? commentFree : stripStringLiterals(commentFree);
+    const original = f.contents.split("\n");
+    for (const m of code.matchAll(new RegExp(re.source, "g"))) {
+      const line = lineOfOffset(code, m.index);
+      out.push({ rule, file: f.relPath, line, snippet: (original[line - 1] ?? "").trim() });
+    }
+  }
+  return out;
+}
+
+export function checkAgentDoorLegacyTable(files: readonly FileEntry[]): Violation[] {
+  return [
+    ...d49ScanNames(
+      files,
+      D49_LEGACY_TABLE_RE,
+      D49_LEGACY_TABLE_ALLOWED,
+      "agent-door-legacy-table-consulted-once",
+      false,
+    ),
+    ...d49ScanNames(
+      files,
+      D49_BUILD_DOOR_RE,
+      D49_BUILD_DOOR_ALLOWED,
+      "agent-door-built-once",
+      false,
+    ),
+  ];
+}
+
+export function checkAgentOriginWriter(files: readonly FileEntry[]): Violation[] {
+  return [
+    ...d49ScanNames(
+      files,
+      D49_AGENT_ORIGIN_RE,
+      D49_AGENT_ORIGIN_ALLOWED,
+      "agent-origin-written-once",
+      true,
+    ),
+    ...d49ScanNames(
+      files,
+      D49_PROPOSER_PROP_RE,
+      D49_PROPOSER_PROP_ALLOWED,
+      "agent-origin-written-once",
+      false,
+    ),
+  ];
+}
+
+export function checkOriginComparison(files: readonly FileEntry[]): Violation[] {
+  return d49ScanNames(
+    files,
+    D49_ORIGIN_COMPARE_RE,
+    D49_ORIGIN_COMPARE_ALLOWED,
+    "origin-compared-once",
+    true,
+  );
+}
+
+export function checkAgentDoorLegacyFlag(files: readonly FileEntry[]): Violation[] {
+  return [
+    ...d49ScanNames(
+      files,
+      D49_LEGACY_FLAG_RE,
+      D49_LEGACY_FLAG_ALLOWED,
+      "agent-door-legacy-flag-confined",
+      false,
+    ),
+    ...d49ScanNames(
+      files,
+      D49_LEGACY_COUNT_RE,
+      D49_LEGACY_COUNT_ALLOWED,
+      "agent-door-legacy-flag-confined",
+      false,
+    ),
+  ];
+}
+
+/**
+ * The span `[start, end)` of the body of `function <name>(...) {...}` in `code` (strings and
+ * comments already blanked, so a brace inside either cannot desync the depth), or `undefined`. Angle
+ * brackets of the return type are skipped so an object type in it is not taken for the body.
+ */
+function d49FunctionBody(code: string, name: string): { start: number; end: number } | undefined {
+  const decl = new RegExp(String.raw`\bfunction\s+${name}\s*[(<]`).exec(code);
+  if (decl === null) return undefined;
+  let i = code.indexOf("(", decl.index);
+  let depth = 0;
+  for (; i < code.length; i++) {
+    if (code[i] === "(") depth++;
+    else if (code[i] === ")" && --depth === 0) break;
+  }
+  let angle = 0;
+  let start = -1;
+  for (i += 1; i < code.length; i++) {
+    const c = code[i];
+    if (c === "<") angle++;
+    else if (c === ">" && code[i - 1] !== "=") angle = Math.max(0, angle - 1);
+    else if (c === "{" && angle === 0) {
+      start = i;
+      break;
+    }
+  }
+  if (start < 0) return undefined;
+  depth = 0;
+  for (i = start; i < code.length; i++) {
+    if (code[i] === "{") depth++;
+    else if (code[i] === "}" && --depth === 0) return { start, end: i + 1 };
+  }
+  return undefined;
+}
+
+/** The offsets of the `(` and the matching `)` of the first `call` (which ends in `(`) in `code`. */
+function d49CallArgs(code: string, call: string): { open: number; close: number } | undefined {
+  const at = code.indexOf(call);
+  if (at < 0) return undefined;
+  const open = at + call.length - 1;
+  let depth = 0;
+  for (let i = open; i < code.length; i++) {
+    if (code[i] === "(") depth++;
+    else if (code[i] === ")" && --depth === 0) return { open, close: i };
+  }
+  return undefined;
+}
+
+const D49_RULE_ORDER = "agent-door-check-order";
+
+/**
+ * True when `body` INVOKES `dep` (`dep(` or `dep?.(`), directly or through a local alias of it
+ * (`const verify = dep;` then `verify(` or `verify?.(`). A bare reference is not a call.
+ */
+function d49CallsDep(body: string, dep: string): boolean {
+  const call = String.raw`\s*(?:\?\.)?\(`;
+  if (new RegExp(escapeRegex(dep) + call).test(body)) return true;
+  const alias = new RegExp(
+    String.raw`(?:const|let)\s+([\w$]+)\s*=\s*${escapeRegex(dep)}\s*[;\n]`,
+    "g",
+  );
+  for (const m of body.matchAll(alias)) {
+    const name = m[1];
+    if (
+      name !== undefined &&
+      new RegExp(String.raw`(?<![\w$.])` + escapeRegex(name) + call).test(body)
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/** One ordered site: every `before` marker is in `fn`'s body and precedes `after`; helpers read their dep. */
+function d49OrderSite(
+  file: FileEntry | undefined,
+  path: string,
+  fn: string,
+  before: readonly string[],
+  after: string,
+  helpers: ReadonlyArray<readonly [string, string]>,
+): Violation[] {
+  const out: Violation[] = [];
+  const miss = (why: string): Violation => ({
+    rule: D49_RULE_ORDER,
+    file: path,
+    line: 1,
+    snippet: why,
+  });
+  if (file === undefined) return [miss(`${path} is not scanned`)];
+  const code = stripStringLiterals(stripComments(file.contents));
+  const span = d49FunctionBody(code, fn);
+  if (span === undefined) return [miss(`function ${fn} not found`)];
+  const body = code.slice(span.start, span.end);
+  const iAfter = body.indexOf(after);
+  if (iAfter < 0) out.push(miss(`${fn} no longer calls ${after}`));
+  for (const marker of before) {
+    const i = body.indexOf(marker);
+    const where = {
+      rule: D49_RULE_ORDER,
+      file: path,
+      line: lineOfOffset(code, span.start + Math.max(i, 0)),
+    };
+    if (i < 0) out.push({ ...where, snippet: `${fn} no longer calls ${marker}` });
+    else if (iAfter >= 0 && i > iAfter) {
+      out.push({ ...where, snippet: `${marker} must come before ${after} in ${fn}` });
+    }
+  }
+  for (const [helper, dep] of helpers) {
+    const hs = d49FunctionBody(code, helper);
+    if (hs === undefined || !d49CallsDep(code.slice(hs.start, hs.end), dep)) {
+      out.push(miss(`${helper} must call ${dep}`));
+    }
+  }
+  return out;
+}
+
+/** `buildActDeps`: the consent channel is `vetoingConsent(...)` and the executor's consent argument. */
+function d49VetoSite(file: FileEntry | undefined, path: string): Violation[] {
+  if (file === undefined) {
+    return [{ rule: D49_RULE_ORDER, file: path, line: 1, snippet: `${path} is not scanned` }];
+  }
+  const code = stripStringLiterals(stripComments(file.contents));
+  const span = d49FunctionBody(code, "buildActDeps");
+  const at = (snippet: string): Violation => ({
+    rule: D49_RULE_ORDER,
+    file: path,
+    line: lineOfOffset(code, span?.start ?? 0),
+    snippet,
+  });
+  if (span === undefined) return [at("function buildActDeps not found")];
+  const body = code.slice(span.start, span.end);
+  const builder = d49CallArgs(body, "buildAgentWriteExecutor(");
+  if (builder === undefined) return [at("buildActDeps no longer calls buildAgentWriteExecutor(")];
+  // The variable the executor receives as its consent argument ...
+  const arg = /consentCoordinator\s*:\s*([\w$]+)/.exec(body.slice(builder.open, builder.close));
+  if (arg?.[1] === undefined) return [at("the executor must be given a consentCoordinator")];
+  // ... must be declared before the executor is built, and `vetoingConsent(` must sit INSIDE its
+  // initializer expression (a bare call elsewhere wraps nothing).
+  const decl = new RegExp(String.raw`(?:const|let)\s+${escapeRegex(arg[1])}\s*=`).exec(body);
+  if (decl === null || decl.index > builder.open) {
+    return [
+      at(
+        "the executor's consentCoordinator must be a channel built before it, with vetoingConsent(",
+      ),
+    ];
+  }
+  const init = d49Initializer(body, decl.index + decl[0].length);
+  if (!body.slice(init.start, init.end).includes("vetoingConsent(")) {
+    return [at("the executor's consentCoordinator must be initialised with vetoingConsent(")];
+  }
+  return [];
+}
+
+/** The span of the expression that starts at `from`: up to the first `;` at bracket depth 0. */
+function d49Initializer(code: string, from: number): { start: number; end: number } {
+  let depth = 0;
+  for (let i = from; i < code.length; i++) {
+    const c = code[i];
+    if (c === "(" || c === "[" || c === "{") depth++;
+    else if (c === ")" || c === "]" || c === "}") depth--;
+    else if (c === ";" && depth === 0) return { start: from, end: i };
+  }
+  return { start: from, end: code.length };
+}
+
+export function checkAgentDoorCheckOrder(files: readonly FileEntry[]): Violation[] {
+  const byPath = new Map(files.map((f) => [f.relPath, f]));
+  const rpc = `${D49_SRC}ipc/capture-rpc.ts`;
+  const act = `${D49_SRC}mcp-sink/capture-act.ts`;
+  const gate = `${D49_SRC}mcp-sink/capture-gate.ts`;
+  return [
+    ...d49VetoSite(byPath.get(rpc), rpc),
+    ...d49OrderSite(
+      byPath.get(act),
+      act,
+      "acceptAction",
+      ["requireVerdictAtApproval(", "requireDefinitionAtApproval("],
+      "claimAction(",
+      [
+        ["requireVerdictAtApproval", "deps.classifyAction"],
+        ["requireDefinitionAtApproval", "deps.verifyActionDefinition"],
+      ],
+    ),
+    ...d49OrderSite(
+      byPath.get(gate),
+      gate,
+      "submitCapture",
+      ["deps.classifyAction", "requireDefinitionVerified("],
+      "writeSubmittedCapture(",
+      [["requireDefinitionVerified", "ctx.deps.verifyActionDefinition"]],
+    ),
+  ];
 }
 
 // ---- D33 (extension runtime) ---------------------------------------------------------------------
@@ -4000,14 +4367,23 @@ export function checkConfigReaderConfinement(files: readonly FileEntry[]): Viola
   return out;
 }
 
-// (b) The five gate entry points are CALLED only from ipc/capture-rpc.ts and DEFINED only in
-//     capture-gate.ts. Any other mention — a call or an import (aliased or not) — is a violation, so
-//     a second door cannot be opened by importing the function under another name.
+// (b) The five gate entry points are CALLED only from the two RPC modules, ipc/capture-rpc.ts and
+//     (agent door AD2) ipc/approvals-rpc.ts, and DEFINED only in capture-gate.ts. Any other mention
+//     — a call or an import (aliased or not) — is a violation, so a second door cannot be opened by
+//     importing the function under another name. Entries are FULL repo-relative paths: the check
+//     is `includes(f.relPath)`, so a bare `ipc/approvals-rpc.ts` would exempt nothing. A second
+//     caller INSIDE an allow-listed module is exempt whole-file; the behavioural test that
+//     `approvals.approve` calls `acceptCapture` after `getCapture` is authoritative.
 const D32_GATE_FN_RE =
   /\b(?:submitCapture|acceptCapture|rejectCapture|revokeCapture|purgeCapture)\b/g;
 const D32_GATE_ALLOWED: readonly string[] = [
   "packages/gateway/src/ipc/capture-rpc.ts",
+  "packages/gateway/src/ipc/approvals-rpc.ts",
   "packages/gateway/src/mcp-sink/capture-gate.ts",
+];
+const D32_GATE_IMPORTERS_ALLOWED: readonly string[] = [
+  "packages/gateway/src/ipc/capture-rpc.ts",
+  "packages/gateway/src/ipc/approvals-rpc.ts",
 ];
 
 export function checkCaptureGateCallers(files: readonly FileEntry[]): Violation[] {
@@ -4031,7 +4407,7 @@ export function checkCaptureGateCallers(files: readonly FileEntry[]): Violation[
   return out;
 }
 
-// (c) No module outside ipc/capture-rpc.ts may VALUE-import (or re-export, or dynamically import)
+// (c) No module outside the two RPC modules (ipc/capture-rpc.ts, ipc/approvals-rpc.ts) may VALUE-import (or re-export, or dynamically import)
 //     capture-gate.ts. (b) is an identifier scan, which a barrel `export * from ".../capture-gate.ts"`
 //     or a namespace import called through a computed key evades; this closes it at the module edge.
 //     `import type` / `export type` carry no runtime reference and are allowed anywhere. The span
@@ -4047,7 +4423,7 @@ export function checkCaptureGateImporters(files: readonly FileEntry[]): Violatio
   for (const f of files) {
     if (f.relPath.endsWith(".test.ts")) continue;
     if (!f.relPath.startsWith("packages/gateway/src/")) continue;
-    if (f.relPath === "packages/gateway/src/ipc/capture-rpc.ts") continue;
+    if (D32_GATE_IMPORTERS_ALLOWED.includes(f.relPath)) continue;
     const code = stripComments(f.contents);
     const original = f.contents.split("\n");
     for (const m of code.matchAll(D32_GATE_MODULE_RE)) {
@@ -4895,6 +5271,20 @@ export const RULE_ANCHORS: readonly string[] = [
   "packages/gateway/src/index/item-history.ts",
   "packages/gateway/src/index/item-store.ts",
   "packages/gateway/src/index/item-history-retention.ts",
+  // D49(b) (door-approval-confined, Phase 28 AD3a-1) — the only store of the per-door approval table;
+  // it moving out of the scan would leave the rule passing over nothing.
+  "packages/gateway/src/connectors/connector-writes/door-approval-store.ts",
+  // D49(a), (c)-(f) (Phase 28 AD3a-2a) -- every site the clauses read by name; any of them moving out
+  // of the scan would leave a clause passing over nothing (ipc/capture-rpc.ts is anchored above).
+  "packages/gateway/src/connectors/proposable-actions.ts",
+  "packages/gateway/src/connectors/connector-writes/agent-door-runtime.ts",
+  "packages/gateway/src/engine/outside-origin.ts",
+  "packages/gateway/src/mcp-sink/capture-gate.ts",
+  "packages/gateway/src/mcp-sink/capture-act.ts",
+  "packages/gateway/src/mcp-sink/capture-store.ts",
+  "packages/gateway/src/mcp-sink/capture-types.ts",
+  "packages/gateway/src/ipc/approvals-rpc.ts",
+  "packages/gateway/src/ipc/connector-rpc-handlers/agent-writes.ts",
 ];
 
 /** Fail loudly when the scanned set cannot support the rules about to run. */
@@ -5117,6 +5507,48 @@ async function run(): Promise<void> {
       );
     }
     if (historyViolations.length > 0) exit = 1;
+    const doorApprovalViolations = checkDoorApprovalConfinement(files);
+    for (const e of doorApprovalViolations) {
+      console.error(
+        `::error file=${e.file},line=${e.line}::D49(b) connector_write_door_approval named outside its store (rule door-approval-confined) — connectors/connector-writes/door-approval-store.ts is the only module that reads or writes it: ${e.snippet}`,
+      );
+    }
+    if (doorApprovalViolations.length > 0) exit = 1;
+    const doorTableViolations = checkAgentDoorLegacyTable(files);
+    for (const e of doorTableViolations) {
+      console.error(
+        `::error file=${e.file},line=${e.line}::D49(a) the legacy proposability table or the agent door's constructor named outside its sites (rule ${e.rule}) — only connectors/proposable-actions.ts and connector-writes/agent-door-runtime.ts consult the table, and createAgentDoor is built only in platform/assemble.ts: ${e.snippet}`,
+      );
+    }
+    if (doorTableViolations.length > 0) exit = 1;
+    const agentOriginViolations = checkAgentOriginWriter(files);
+    for (const e of agentOriginViolations) {
+      console.error(
+        `::error file=${e.file},line=${e.line}::D49(c) origin: "agent" or a proposer property written outside ipc/capture-rpc.ts buildActDeps (rule agent-origin-written-once): ${e.snippet}`,
+      );
+    }
+    if (agentOriginViolations.length > 0) exit = 1;
+    const originCompareViolations = checkOriginComparison(files);
+    for (const e of originCompareViolations) {
+      console.error(
+        `::error file=${e.file},line=${e.line}::D49(d) an action's origin compared with a literal outside engine/outside-origin.ts (rule origin-compared-once) — call isOutsideOrigin or isAgentOrigin: ${e.snippet}`,
+      );
+    }
+    if (originCompareViolations.length > 0) exit = 1;
+    const checkOrderViolations = checkAgentDoorCheckOrder(files);
+    for (const e of checkOrderViolations) {
+      console.error(
+        `::error file=${e.file},line=${e.line}::D49(e) the agent door's three check points are out of order or missing (rule agent-door-check-order) — the verdict and the definition check precede the write at submit and the claim at approval, and the vetoing consent is the executor's: ${e.snippet}`,
+      );
+    }
+    if (checkOrderViolations.length > 0) exit = 1;
+    const legacyFlagViolations = checkAgentDoorLegacyFlag(files);
+    for (const e of legacyFlagViolations) {
+      console.error(
+        `::error file=${e.file},line=${e.line}::D49(f) the capture legacy flag or its count named outside its sites (rule agent-door-legacy-flag-confined): ${e.snippet}`,
+      );
+    }
+    if (legacyFlagViolations.length > 0) exit = 1;
     const spawnViolations = checkConnectorSpawnIsHidden(files);
     for (const e of spawnViolations) {
       console.error(
@@ -5456,13 +5888,13 @@ async function run(): Promise<void> {
     const b = checkCaptureGateCallers(files);
     for (const e of b) {
       console.error(
-        `::error file=${e.file},line=${e.line}::D32(b) a capture gate entry point named outside ipc/capture-rpc.ts — I28 regression: ${e.snippet}`,
+        `::error file=${e.file},line=${e.line}::D32(b) a capture gate entry point named outside ipc/capture-rpc.ts and ipc/approvals-rpc.ts — I28 regression: ${e.snippet}`,
       );
     }
     const c = checkCaptureGateImporters(files);
     for (const e of c) {
       console.error(
-        `::error file=${e.file},line=${e.line}::D32(c) capture-gate.ts value-imported outside ipc/capture-rpc.ts — I28 regression: ${e.snippet}`,
+        `::error file=${e.file},line=${e.line}::D32(c) capture-gate.ts value-imported outside ipc/capture-rpc.ts and ipc/approvals-rpc.ts — I28 regression: ${e.snippet}`,
       );
     }
     const d = checkAgentProvenanceWriters(files);

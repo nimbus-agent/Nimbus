@@ -56,6 +56,7 @@ import type { NimbusVault } from "../../vault/nimbus-vault.ts";
 import { GATEWAY_VERSION } from "../../version.ts";
 import { buildStatus } from "../admin-status-rpc.ts";
 import { AgentsRpcError, dispatchAgentsRpc } from "../agents-rpc.ts";
+import { dispatchApprovalsRpc } from "../approvals-rpc.ts";
 import { AuditRpcError, dispatchAuditRpc } from "../audit-rpc.ts";
 import { AutomationRpcError, dispatchAutomationRpc } from "../automation-rpc.ts";
 import { BriefingRpcError, dispatchBriefingRpc } from "../briefing-rpc.ts";
@@ -65,6 +66,7 @@ import { dispatchChatopsRpc } from "../chatops-rpc.ts";
 import { dispatchClipRpc } from "../clip-rpc.ts";
 import { ComputerRpcError, dispatchComputerRpc } from "../computer-rpc.ts";
 import { ConnectorRpcError, dispatchConnectorRpc } from "../connector-rpc.ts";
+import { humanOnlyConsent } from "../consent.ts";
 import { DataRpcError, dispatchDataRpc } from "../data-rpc.ts";
 import {
   DecisionsRpcError,
@@ -1625,6 +1627,30 @@ export async function tryDispatchCaptureRpc(
 }
 
 /**
+ * `approvals.*` (Phase 28 AD2): the owner's queue of agent proposals and the one-step approval.
+ * LAN-forbidden (I5), not on the Tauri allowlist (I7). The connection's kind is the CONNECTION's
+ * (`getClientKind`), never a param; only a connection that declared `cli` or `ui` is served.
+ */
+export async function tryDispatchApprovalsRpc(
+  ctx: ServerCtx,
+  method: string,
+  params: unknown,
+  clientId: string,
+): Promise<unknown> {
+  if (!method.startsWith("approvals.")) return phase4RpcSkipped;
+  const rpc = ctx.options.captureRpcCtx;
+  if (rpc === undefined) return phase4RpcSkipped;
+  const out = await dispatchApprovalsRpc(
+    method,
+    params,
+    rpc,
+    { clientId, kind: ctx.getClientKind(clientId) },
+    ctx.consentImpl,
+  );
+  return out.kind === "hit" ? out.value : phase4RpcSkipped;
+}
+
+/**
  * `standing.*` (Phase 10 SA3, I55): the owner's standing approval rules. The whole namespace is in
  * `FORBIDDEN_OVER_LAN` (I5); the Tauri allowlist (I7) names list / show / fires / pause / revoke
  * only. The connection's kind is the CONNECTION's (`getClientKind`), never a param: `create` and
@@ -2004,6 +2030,7 @@ const PHASE4_PLATFORM_DISPATCHERS: ReadonlyArray<
   tryDispatchBriefingRpc,
   tryDispatchNotificationsRpc,
   tryDispatchCaptureRpc,
+  tryDispatchApprovalsRpc,
   tryDispatchStandingRpc,
   tryDispatchMigrationRpc,
   tryDispatchMediaRpc,
@@ -2355,9 +2382,20 @@ export async function tryDispatchConnectorRpc(
         return Promise.reject(new Error("IPC-native gate does not dispatch to MCP"));
       },
     };
+    // Phase 28 AD3a-1: approving connector writes for OUTSIDE AGENTS takes a person. Only that
+    // enable gets the human-only channel (`--yes`, a script, a delegate, a remote or an old client
+    // answer becomes a decline); the model door's enable keeps the consent it always had.
+    let agentAnswerNonHuman = false;
+    const agentEnable =
+      method === "connector.writesEnable" && asRecord(params)?.["door"] === "agent";
+    const gateConsent = agentEnable
+      ? humanOnlyConsent(ctx.consentImpl, () => {
+          agentAnswerNonHuman = true;
+        })
+      : ctx.consentImpl;
     // I29: gate-only executor — local mutation, no connector dispatch, so no egress to ledger.
     const toolExecutor = new ToolExecutor(
-      bindConsentChannel(ctx.consentImpl, clientId),
+      bindConsentChannel(gateConsent, clientId),
       ctx.options.localIndex,
       stubDispatcher,
       undefined,
@@ -2393,6 +2431,8 @@ export async function tryDispatchConnectorRpc(
       notify: (m, p) => ctx.broadcastNotification(m, p),
       getEnforcedPolicy: () => ctx.options.enforcedPolicy?.(),
       toolExecutor,
+      clientKind: ctx.getClientKind(clientId),
+      agentAnswerWasNonHuman: () => agentAnswerNonHuman,
       ...(userMcpExecutor === undefined ? {} : { userMcpExecutor }),
       ...(ctx.options.continuityTable === undefined
         ? {}

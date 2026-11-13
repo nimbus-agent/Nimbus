@@ -1,19 +1,34 @@
 import type { IPCClient } from "../ipc-client/index.ts";
+import { declareCliClientKind } from "../lib/declare-client-kind.ts";
 import { INTERACTIVE_RPC_TIMEOUT_MS } from "../lib/rpc-timeouts.ts";
 import { withGatewayIpc } from "../lib/with-gateway-ipc.ts";
+import { stripControl } from "./captures-format.ts";
+
+/** What a call needs beyond the method: the agent door's approval is a person's alone. */
+export interface ConnectorWritesCallOptions {
+  /** Declare this connection as the owner's CLI first and answer consent only as a person. */
+  readonly agentDoor?: boolean;
+  /** Declare this connection as the owner's CLI first (the gateway reads the kind off the connection). */
+  readonly declareCli?: boolean;
+}
 
 /** Injectable seams: the RPC call and the two output streams. */
 export interface ConnectorWritesDeps {
-  readonly call: (method: string, params?: Record<string, unknown>) => Promise<unknown>;
+  readonly call: (
+    method: string,
+    params?: Record<string, unknown>,
+    opts?: ConnectorWritesCallOptions,
+  ) => Promise<unknown>;
   readonly log: (line: string) => void;
   readonly error: (line: string) => void;
 }
 
 const ENABLE_USAGE =
   "Usage: nimbus connector writes enable <service> [--wave 2|3|4]\n" +
+  "       nimbus connector writes enable <service> --door agent [--wave 2|3|4] [--approve <tool-id|prefix*> ...]\n" +
   "       nimbus connector writes enable iac --wave 4 [--workdir <dir> ...] [--cloud aws,azure,gcp] [--region <r> ...] [--net <host> ...]\n" +
   "       nimbus connector writes enable kubernetes --wave 4 --grant <namespace>@<context> [--grant ...]";
-const DISABLE_USAGE = "Usage: nimbus connector writes disable <service>";
+const DISABLE_USAGE = "Usage: nimbus connector writes disable <service> [--door agent]";
 const STATUS_USAGE = "Usage: nimbus connector writes status [--json]";
 const WRITES_USAGE = `${ENABLE_USAGE}\n${DISABLE_USAGE}\n${STATUS_USAGE}`;
 
@@ -28,7 +43,36 @@ const REFUSALS: ReadonlyArray<readonly [code: string, message: string]> = [
     "ERR_CONNECTOR_WRITES_POLICY",
     "Refused: your organisation's policy forbids model connector writes (connector_write_model_access).",
   ],
+  [
+    "did not come from a person",
+    "Not enabled: only a person at a terminal can approve this; --yes, scripts and delegates cannot.",
+  ],
   ["ERR_CONNECTOR_WRITES_DECLINED", "Not enabled: the approval was declined."],
+  [
+    "ERR_CONNECTOR_WRITES_AGENT_CLIENT",
+    "Refused: approving writes for outside agents needs a terminal or desktop connection.",
+  ],
+  [
+    "ERR_CONNECTOR_WRITES_AGENT_SCOPE",
+    "Refused: --door agent takes no directory, cloud or namespace; it uses the ones you approved for the model.",
+  ],
+  [
+    "ERR_CONNECTOR_WRITES_AGENT_UNLISTED",
+    "Refused: that connector is not configured or lists no tools; connect it first.",
+  ],
+  [
+    "ERR_CONNECTOR_WRITES_AGENT_NO_MATCH",
+    "Refused: no approvable write matches --approve. Run without it to see what can be approved.",
+  ],
+  [
+    "ERR_CONNECTOR_WRITES_AGENT_NOTHING",
+    "Refused: nothing of this service can be approved for outside agents now.",
+  ],
+  ["ERR_CONNECTOR_WRITES_BAD_DOOR", "Refused: --door must be agent or model."],
+  [
+    "ERR_CONNECTOR_WRITES_BAD_APPROVE",
+    "Refused: --approve takes a tool id or a prefix ending in one *, and belongs to --door agent.",
+  ],
   [
     "ERR_CONNECTOR_WRITES_IAC_UNAVAILABLE",
     "Refused: this gateway cannot check directories, so no Terraform directory can be approved.",
@@ -39,16 +83,34 @@ const REFUSALS: ReadonlyArray<readonly [code: string, message: string]> = [
   ],
 ];
 
+/**
+ * The real RPC call. `enable` raises an owner approval, and the 30 s default would end the call
+ * while the owner is still reading it. The agent door's approval is a person's alone: the
+ * connection declares `cli` first (the gateway reads the kind off the connection) and answers
+ * consent as a person, ignoring NIMBUS_SCRIPT_CONSENT_SOURCE. `withIpc` is a test seam.
+ */
+export function makeConnectorWritesCall(
+  withIpc: typeof withGatewayIpc = withGatewayIpc,
+): ConnectorWritesDeps["call"] {
+  return (method, params, opts) =>
+    withIpc(
+      async (c: IPCClient) => {
+        if (opts?.agentDoor === true || opts?.declareCli === true) await declareCliClientKind(c);
+        return c.call<unknown>(method, params);
+      },
+      undefined,
+      {
+        ...(method === "connector.writesEnable"
+          ? { requestTimeoutMs: INTERACTIVE_RPC_TIMEOUT_MS }
+          : {}),
+        ...(opts?.agentDoor === true ? { consent: { kind: "human" as const } } : {}),
+      },
+    );
+}
+
 function defaultDeps(): ConnectorWritesDeps {
   return {
-    // The default consent is the interactive prompt; `enable` raises an owner approval, and the
-    // 30 s default would end the call while the owner is still reading it.
-    call: (method, params) =>
-      withGatewayIpc(
-        (c: IPCClient) => c.call<unknown>(method, params),
-        undefined,
-        method === "connector.writesEnable" ? { requestTimeoutMs: INTERACTIVE_RPC_TIMEOUT_MS } : {},
-      ),
+    call: makeConnectorWritesCall(),
     log: (l) => console.log(l),
     error: (l) => console.error(l),
   };
@@ -59,8 +121,17 @@ function usage(d: ConnectorWritesDeps, text: string): void {
   process.exitCode = 2;
 }
 
-function reportError(d: ConnectorWritesDeps, e: unknown): void {
+/** The agent door refuses on either lockoff (it needs both capabilities), so its line names both. */
+const AGENT_POLICY_REFUSAL =
+  "Refused: your organisation's policy forbids connector writes for outside agents (connector_write_model_access or mcp_action).";
+
+function reportError(d: ConnectorWritesDeps, e: unknown, agentDoor = false): void {
   const message = e instanceof Error ? e.message : String(e);
+  if (agentDoor && message.includes("ERR_CONNECTOR_WRITES_POLICY")) {
+    d.error(AGENT_POLICY_REFUSAL);
+    process.exitCode = 2;
+    return;
+  }
   const refusal = REFUSALS.find(([code]) => message.includes(code));
   if (refusal !== undefined) {
     d.error(refusal[1]);
@@ -115,11 +186,27 @@ interface EnableFlags {
   wave: 2 | 3 | 4 | undefined;
   iac: IacScope;
   grants: K8sGrantArg[];
+  /** `--door agent`: the owner's approval list for outside agents. */
+  door: "model" | "agent" | undefined;
+  approve: string[];
 }
 
 /** Whether `a` is one of the `enable` flags that take a value. */
 function isEnableValueFlag(a: string): boolean {
-  return a === "--wave" || a === "--grant" || Object.hasOwn(IAC_FLAGS, a);
+  return (
+    a === "--wave" ||
+    a === "--grant" ||
+    a === "--door" ||
+    a === "--approve" ||
+    Object.hasOwn(IAC_FLAGS, a)
+  );
+}
+
+/** `--door agent|model`, given at most once; false for anything else. */
+function takeDoor(flags: { door: "model" | "agent" | undefined }, v: string | undefined): boolean {
+  if ((v !== "agent" && v !== "model") || flags.door !== undefined) return false;
+  flags.door = v;
+  return true;
 }
 
 /** Takes one `enable` flag's value into `flags`; false when the value is missing or malformed. */
@@ -127,6 +214,12 @@ function takeEnableFlag(flags: EnableFlags, a: string, v: string | undefined): b
   if (a === "--wave") {
     if (v !== "2" && v !== "3" && v !== "4") return false;
     flags.wave = Number(v) as 2 | 3 | 4;
+    return true;
+  }
+  if (a === "--door") return takeDoor(flags, v);
+  if (a === "--approve") {
+    if (v === undefined || v === "") return false;
+    flags.approve.push(v);
     return true;
   }
   if (a === "--grant") {
@@ -143,12 +236,16 @@ function parseEnableArgs(tail: string[]): Parsed<{
   wave: 2 | 3 | 4 | undefined;
   iac: IacScope;
   grants: K8sGrantArg[];
+  agent: boolean;
+  approve: string[];
 }> {
   let service: string | undefined;
   const flags: EnableFlags = {
     wave: undefined,
     iac: { workdirs: [], clouds: [], regions: [], net: [] },
     grants: [],
+    door: undefined,
+    approve: [],
   };
   for (let i = 0; i < tail.length; i++) {
     const a = tail[i] as string;
@@ -160,13 +257,21 @@ function parseEnableArgs(tail: string[]): Parsed<{
       service = a;
     }
   }
-  const { wave, iac, grants } = flags;
+  const { wave, iac, grants, approve } = flags;
+  const agent = flags.door === "agent";
   const hasIac = Object.values(iac).some((l) => l.length > 0);
+  if (service === undefined) return { ok: false };
+  // `--approve` belongs to the agent door; the agent door reads the model's scope and takes none.
+  if (approve.length > 0 && !agent) return { ok: false };
+  if (agent) {
+    if (hasIac || grants.length > 0) return { ok: false };
+    return { ok: true, value: { service, wave, iac, grants, agent, approve } };
+  }
   // The scope flags belong to `iac` alone: any other service would silently ignore them.
-  if (service === undefined || (hasIac && service !== "iac")) return { ok: false };
+  if (hasIac && service !== "iac") return { ok: false };
   // `--grant` belongs to `kubernetes` alone, and `kubernetes` needs at least one.
   if (grants.length > 0 !== (service === "kubernetes")) return { ok: false };
-  return { ok: true, value: { service, wave, iac, grants } };
+  return { ok: true, value: { service, wave, iac, grants, agent, approve } };
 }
 
 async function runEnable(d: ConnectorWritesDeps, tail: string[]): Promise<void> {
@@ -175,7 +280,11 @@ async function runEnable(d: ConnectorWritesDeps, tail: string[]): Promise<void> 
     usage(d, ENABLE_USAGE);
     return;
   }
-  const { service, wave, iac, grants } = parsed.value;
+  const { service, wave, iac, grants, agent, approve } = parsed.value;
+  if (agent) {
+    await runAgentEnable(d, service, wave, approve);
+    return;
+  }
   try {
     const res = await d.call("connector.writesEnable", {
       service,
@@ -192,21 +301,81 @@ async function runEnable(d: ConnectorWritesDeps, tail: string[]): Promise<void> 
   }
 }
 
-async function runDisable(d: ConnectorWritesDeps, tail: string[]): Promise<void> {
+/** `enable <service> --door agent`: the person-only approval; prints what was recorded. */
+async function runAgentEnable(
+  d: ConnectorWritesDeps,
+  service: string,
+  wave: 2 | 3 | 4 | undefined,
+  approve: string[],
+): Promise<void> {
+  try {
+    const res = await d.call(
+      "connector.writesEnable",
+      {
+        service,
+        door: "agent",
+        ...(wave === undefined ? {} : { wave }),
+        ...(approve.length === 0 ? {} : { approve }),
+      },
+      { agentDoor: true },
+    );
+    const r = isRecord(res) ? res : {};
+    const writes = (Array.isArray(r["writes"]) ? r["writes"] : []) as Array<{
+      toolId?: unknown;
+      sha12?: unknown;
+    }>;
+    d.log(
+      `Approved: ${String(r["approved"])} writes approved for outside agents on ${service} (shared wave ${String(r["maxWave"])}).`,
+    );
+    for (const w of writes)
+      d.log(`  ${stripControl(String(w.toolId))}  ${stripControl(String(w.sha12))}`);
+  } catch (e) {
+    reportError(d, e, true);
+  }
+}
+
+/** `disable <service> [--door agent]`. */
+function parseDisableArgs(tail: string[]): Parsed<{ service: string; agent: boolean }> {
   const service = tail[0];
-  if (service === undefined || service.startsWith("-") || tail.length > 1) {
+  if (service === undefined || service.startsWith("-")) return { ok: false };
+  const rest = tail.slice(1);
+  if (rest.length === 0) return { ok: true, value: { service, agent: false } };
+  const flags: { door: "model" | "agent" | undefined } = { door: undefined };
+  // Only `--door agent` is a door here: a model disable has no door, and `--door model` would send a
+  // plain (full) disable that also removes the agent list.
+  if (rest.length !== 2 || rest[0] !== "--door" || rest[1] !== "agent" || !takeDoor(flags, rest[1]))
+    return { ok: false };
+  return { ok: true, value: { service, agent: true } };
+}
+
+async function runDisable(d: ConnectorWritesDeps, tail: string[]): Promise<void> {
+  const parsed = parseDisableArgs(tail);
+  if (!parsed.ok) {
     usage(d, DISABLE_USAGE);
     return;
   }
+  const { service, agent } = parsed.value;
   try {
-    const res = await d.call("connector.writesDisable", { service });
+    const res = await d.call(
+      "connector.writesDisable",
+      agent ? { service, door: "agent" } : { service },
+    );
+    const removed = isRecord(res) && res["removed"] === true;
+    if (agent) {
+      d.log(
+        removed
+          ? `Agent writes disabled for ${service}.`
+          : `Agent writes were not enabled for ${service}.`,
+      );
+      return;
+    }
     d.log(
-      isRecord(res) && res["removed"] === true
+      removed
         ? `Model writes disabled for ${service}.`
         : `Model writes were not enabled for ${service}.`,
     );
   } catch (e) {
-    reportError(d, e);
+    reportError(d, e, agent);
   }
 }
 
@@ -258,19 +427,127 @@ function logK8sGrants(d: ConnectorWritesDeps, row: StatusRow): void {
   }
 }
 
-/** One service's `status` line, its not-offered writes and its iac or kubernetes grants. */
-function logStatusRow(d: ConnectorWritesDeps, row: StatusRow, width: number): void {
+interface AgentSuspended {
+  toolId?: unknown;
+  approvedAt?: unknown;
+  approvedSha12?: unknown;
+  nowSha12?: unknown;
+  reason?: unknown;
+}
+
+interface AgentServiceStatus {
+  service: string;
+  approved?: unknown;
+  suspended?: AgentSuspended[];
+  notListed?: unknown;
+  unverified?: unknown;
+}
+
+interface AgentStatus {
+  policyAllows?: boolean;
+  hint?: unknown;
+  checked?: unknown;
+  lockedOff?: unknown;
+  legacy?: unknown;
+  services?: AgentServiceStatus[];
+}
+
+function dayOf(ms: unknown): string {
+  return typeof ms === "number" && Number.isFinite(ms)
+    ? new Date(ms).toISOString().slice(0, 10)
+    : "an unknown date";
+}
+
+/** One suspended tool: what changed since the approval, with both hash prefixes when there are two. */
+function suspendedLine(t: AgentSuspended): string {
+  const id = stripControl(String(t.toolId));
+  const approved = stripControl(String(t.approvedSha12));
+  const day = dayOf(t.approvedAt);
+  if (typeof t.nowSha12 === "string") {
+    return `  suspended: ${id} definition changed since approved ${day} (approved ${approved}, now ${stripControl(t.nowSha12)})`;
+  }
+  const why = typeof t.reason === "string" ? stripControl(t.reason) : "no longer listed";
+  return `  suspended: ${id} ${why} since approved ${day} (approved ${approved})`;
+}
+
+/** The agent door's lines under a service's model line: the count, then each suspended tool. */
+function logAgentRow(d: ConnectorWritesDeps, a: AgentServiceStatus | undefined): void {
+  if (a === undefined) return;
+  const unverified =
+    typeof a.unverified === "string" ? ` (unverified: ${stripControl(a.unverified)})` : "";
+  d.log(`  agents: ${String(a.approved)} approved${unverified}`);
+  for (const t of a.suspended ?? []) d.log(suspendedLine(t));
+  if (Array.isArray(a.notListed) && a.notListed.length > 0) {
+    d.log(`  not listed now: ${a.notListed.map((t) => stripControl(String(t))).join(", ")}`);
+  }
+}
+
+/**
+ * The model section's line. A service that is enabled (its wave is shared with the agent door) but
+ * has nothing offerable to the model says so, instead of `enabled ... 0 offerable now`. The reply
+ * carries only the count of approved writes that also pass the scope check, so the wording claims
+ * no more than that (approvals can exist while it is zero); the line is unchanged otherwise.
+ */
+function modelLine(row: StatusRow, width: number): string {
   const name = row.service.padEnd(width);
-  d.log(
-    row.enabled
-      ? `${name}  enabled  wave ${String(row.maxWave)}  ${String(row.writes)} writes, ${String(row.offerable ?? 0)} offerable now${awaitingSuffix(row)}`
-      : `${name}  off`,
-  );
+  if (!row.enabled) return `${name}  off`;
+  const wave = String(row.maxWave);
+  const writes = String(row.writes);
+  const offerable = row.offerable ?? 0;
+  if (offerable === 0) {
+    return `${name}  shared wave ${wave}  ${writes} writes, 0 offerable to the model now${awaitingSuffix(row)}`;
+  }
+  return `${name}  enabled  wave ${wave}  ${writes} writes, ${String(offerable)} offerable now${awaitingSuffix(row)}`;
+}
+
+/** One service's `status` line, its not-offered writes and its iac or kubernetes grants. */
+function logStatusRow(
+  d: ConnectorWritesDeps,
+  row: StatusRow,
+  width: number,
+  agent?: AgentServiceStatus,
+): void {
+  d.log(modelLine(row, width));
   for (const n of row.notOffered ?? []) {
     d.log(`  not offered: ${String(n.toolId)} (${String(n.reason)})`);
   }
   if (row.service === "iac") logIacGrants(d, row);
   if (row.service === "kubernetes" && row.enabled) logK8sGrants(d, row);
+  logAgentRow(d, agent);
+}
+
+/** The agent door's one-time hint and its deprecation count; nothing for an older gateway. */
+function logAgentTail(d: ConnectorWritesDeps, agent: AgentStatus | undefined): void {
+  if (agent === undefined) return;
+  if (typeof agent.hint === "string") d.log(stripControl(agent.hint));
+  logLegacy(d, agent.legacy);
+}
+
+/** The deprecation count: how many proposals the earlier rule accepted that a later release refuses. */
+function logLegacy(d: ConnectorWritesDeps, legacy: unknown): void {
+  if (!isRecord(legacy) || typeof legacy["total"] !== "number" || legacy["total"] === 0) return;
+  const byType = isRecord(legacy["byType"]) ? legacy["byType"] : {};
+  const parts = Object.entries(byType)
+    .filter(([, n]) => typeof n === "number")
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([t, n]) => `${stripControl(t)} x${String(n)}`);
+  d.log(
+    `legacy: ${String(legacy["total"])} proposals in the last 30 days would be refused (${parts.join(", ")})`,
+  );
+  d.log(
+    "To keep the other types working run: nimbus connector writes enable <service> --door agent (mail sends cannot be approved; drafts stay allowed)",
+  );
+}
+
+/** The agent policy line: allows, or which capability the organisation turned off (OR-AD-15). */
+function agentPolicyLine(agent: AgentStatus): string {
+  if (agent.policyAllows === true) return "Agent policy: allows";
+  const off = Array.isArray(agent.lockedOff)
+    ? agent.lockedOff.map((c) => stripControl(String(c)))
+    : [];
+  return off.length === 0
+    ? "Agent policy: forbids (connector_write_model_access or mcp_action)"
+    : `Agent policy: forbids (your organisation turned off ${off.join(" and ")})`;
 }
 
 async function runStatus(d: ConnectorWritesDeps, tail: string[]): Promise<void> {
@@ -280,7 +557,9 @@ async function runStatus(d: ConnectorWritesDeps, tail: string[]): Promise<void> 
     return;
   }
   try {
-    const res = await d.call("connector.writesStatus", {});
+    // Declares cli first: the gateway runs the live check (and the sticky mark) only for a cli or ui
+    // connection, and replies with the stored view to any other kind.
+    const res = await d.call("connector.writesStatus", {}, { declareCli: true });
     if (json) {
       d.log(JSON.stringify(res, null, 2));
       return;
@@ -288,12 +567,21 @@ async function runStatus(d: ConnectorWritesDeps, tail: string[]): Promise<void> 
     const r = isRecord(res) ? res : {};
     const rows = (Array.isArray(r["services"]) ? r["services"] : []) as StatusRow[];
     const width = rows.reduce((w, row) => Math.max(w, row.service.length), 0);
-    for (const row of rows) logStatusRow(d, row, width);
+    const agent = isRecord(r["agent"]) ? (r["agent"] as AgentStatus) : undefined;
+    const agentByService = new Map((agent?.services ?? []).map((s) => [s.service, s]));
+    for (const row of rows) logStatusRow(d, row, width, agentByService.get(row.service));
+    logAgentTail(d, agent);
     d.log(
       r["policyAllows"] === true
         ? "Policy: allows"
         : "Policy: forbids (connector_write_model_access)",
     );
+    if (agent !== undefined) {
+      d.log(agentPolicyLine(agent));
+      if (agent.checked === false) {
+        d.log("Agent tools were not re-checked against their connectors (not a cli connection).");
+      }
+    }
   } catch (e) {
     reportError(d, e);
   }

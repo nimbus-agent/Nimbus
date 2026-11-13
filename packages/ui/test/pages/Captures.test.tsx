@@ -193,6 +193,20 @@ describe("Captures page", () => {
     expect(commands()).toBe("nimbus captures accept cap_p\nnimbus captures reject cap_p");
   });
 
+  it("a proposed ACTION prints nimbus approvals <id> and its decline form (agent door AD2)", () => {
+    only(
+      detail({
+        id: "cap_a",
+        kind: "action",
+        state: "proposed",
+        decidedAt: null,
+        expiresAt: NOW + 60_000,
+      }),
+    );
+    ui("/captures?id=cap_a");
+    expect(commands()).toBe("nimbus approvals cap_a\nnimbus approvals cap_a --decline");
+  });
+
   it("a live capture prints revoke", () => {
     only(detail({ id: "cap_l", kind: "note", state: "live", decidedAt: null, nativeStatus: null }));
     ui("/captures?id=cap_l");

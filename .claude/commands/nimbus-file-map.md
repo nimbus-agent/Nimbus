@@ -319,7 +319,7 @@ Everything else follows the standard triple. These break from it in a way worth 
 |---|---|
 | `scripts/structure-audit/lib.ts` | Shared B3 helpers — `REPO_ROOT`, `stripComments`, `countAnyInSource`, `iterateSourceFiles` |
 | `scripts/structure-audit/check-doc-references.ts` | Doc-ref drift audit (broken `[text](path)` and backtick path refs) over CLAUDE/GEMINI + all of `docs/` + the skills; `DOCS_EXCLUDED_PREFIXES` names the few docs that are out and why |
-| `scripts/structure-audit/check-nimbus-invariants.ts` | Static-time complement to `security-invariants.test.ts` (I1 + vault-key allowlist + static rules D10–D48 — derive the range from the file, it has read low three times) |
+| `scripts/structure-audit/check-nimbus-invariants.ts` | Static-time complement to `security-invariants.test.ts` (I1 + vault-key allowlist + static rules D10–D49 — derive the range from the file, it has read low three times) |
 | `scripts/structure-audit/check-openapi-drift.ts` | OpenAPI drift detector — `v1.yaml` vs `HTTP_ROUTES` |
 | `docs/structure-audit/baseline.md` | Phase 1 baseline reference; per-dimension state + Phase 2 thresholds |
 
@@ -346,6 +346,8 @@ Everything else follows the standard triple. These break from it in a way worth 
 | `packages/gateway/src/chatops/reply-dispatcher.ts` | Operational ChatOps posts — invariant `I23`/`D17` server-derived `ReplyTarget` |
 | `packages/gateway/src/engine/quorum/quorum-coordinator.ts` | Quorum HITL — invariant `I21` (DISTINCT authed peers, deny aborts) |
 | `packages/gateway/src/tribal/tribal-write-gate.ts` | Tribal-knowledge KB capture — invariant `I25`/`D19` config-pinned destination |
+| `packages/gateway/src/ipc/approvals-rpc.ts` (+ `humanOnlyConsent` in `ipc/consent.ts`, CLI `packages/cli/src/commands/approvals.ts`) | The owner's queue of MCP-agent action proposals and the one-step human-only approval — `approvals.list|get|approve|decline`, reaches the act door only through `acceptCapture` (I28, static D32(b)/(c) two RPC modules) |
+| `packages/gateway/src/connectors/connector-writes/{door-approval-store,definition-hash,agent-door}.ts` (+ `ipc/connector-rpc-handlers/agent-writes.ts`, CLI `connector writes ... --door agent`) | The owner's approval list for outside agents (Phase 28 AD3a-1, V97; enforced since AD3a-2a, I58): the only module that names `connector_write_door_approval` (static D49(b)), the SHA-256 of a listed tool definition, the routing and approvable-rows facts, the `agentOffered` predicate, and the enable and status handler. `agent-door-runtime.ts` is the door the capture gate and the act wiring are injected with (`verdict`, `refusal`, `verifyDefinition`, `acceptedTypes`), `agent-door-definition.ts` the one place a changed definition is marked and audited, `agent-door-legacy.ts` the deprecation window's fixed texts, `listed-support.ts` the listing helpers both doors share, and `engine/door-rejection.ts` the fixed codes of a rejected action |
 | `packages/gateway/src/share/share-gate.ts` | `createShare` — invariant `I27`/`D21` sole outbound-share chokepoint (see `nimbus-share-virality` skill) |
 | `packages/gateway/src/egress/egress-ledger.ts` | `appendEgressEntry` + `EgressSink` — invariant `I29`/`D22` egress-ledger append before `connectors.dispatch` (see `nimbus-egress` skill) |
 | `packages/gateway/src/egress/{egress-record,egress-verify,egress-prune,egress-sign}.ts` | Entry builder (`serviceOf` destination) / BLAKE3-chain verify (timing-safe, I10) / HITL-gated prune tombstone / Vault-reused receipt sign |
@@ -395,7 +397,7 @@ Everything else follows the standard triple. These break from it in a way worth 
 |---|---|
 | `docs/architecture.md` | Full subsystem design — read before modifying any subsystem |
 | `docs/roadmap.md` | Phases, acceptance criteria, delivered summary |
-| `docs/SECURITY-INVARIANTS.md` | I1–I56 rationale + anti-patterns + audit cross-references |
+| `docs/SECURITY-INVARIANTS.md` | I1–I58 rationale + anti-patterns + audit cross-references |
 | `docs/release/manual-smoke-headless.md` | Reusable manual smoke checklist; per-platform results matrix |
 | `docs/cli/use-in-ci.md` | CI integration examples (GitHub Actions, GitLab, Jenkins) using `nimbus query --json` |
 | `docs/templates/nimbus-pre-commit.sh` | Bash pre-commit template — `nimbus diag` reachability + incident/CI gates |

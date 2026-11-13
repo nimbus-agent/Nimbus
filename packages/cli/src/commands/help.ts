@@ -166,7 +166,11 @@ CONFIG & DIAGNOSTICS
   nimbus captures [list|show|accept|reject|revoke|purge <id>] [--json]   Review what MCP clients
                               captured or proposed ([mcp_sink] in nimbus.toml); accept --all takes
                               every proposed decision/term/link after one prompt; purge deletes a
-                              finished action's stored input
+                              finished action's stored input; an action is approved with approvals
+  nimbus approvals [list|show <id>|<id>|<id> --decline|--decline-all-from <label>] [--json]
+                              Agent-proposed connector actions: list what waits, read what the agent
+                              sent, and approve one in a single step at this terminal (a person
+                              only: no --yes, no scripted consent)
 
 Environment (optional):
   NIMBUS_GATEWAY_EXECUTABLE   Path to nimbus-gateway binary (overrides auto-detection)

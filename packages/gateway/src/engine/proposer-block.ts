@@ -36,12 +36,22 @@ const visibleLine = (s: string): string =>
     String.raw`\u000a`,
   );
 
-/** The two lines that name the proposer, always labelled UNVERIFIED. */
+/** One agent-supplied string as ONE escaped line: the escaping the approval prompt applies to a label. */
+export function escapeUnverifiedLine(s: string): string {
+  return visibleLine(s);
+}
+
+/**
+ * The lines that name the proposer, always labelled UNVERIFIED: who and when, the agent's summary,
+ * and (AD3a-2a, only for a proposal accepted under the deprecation window) the gateway's own fixed
+ * deprecation text, escaped like the others so it stays one line.
+ */
 export function formatProposerBlock(p: AgentProposer): string[] {
   const from = p.labelSource === "kit" ? "kit config" : "declared client name";
   return [
     `Proposed by an outside agent (UNVERIFIED label "${visibleLine(p.label ?? "unlabelled")}", from ${from}) at ${new Date(p.createdAt).toISOString()}, expires ${new Date(p.expiresAt).toISOString()}`,
     `Agent's summary (UNVERIFIED): ${visibleLine(p.summary)}`,
+    ...(p.deprecation === undefined ? [] : [visibleLine(p.deprecation)]),
   ];
 }
 

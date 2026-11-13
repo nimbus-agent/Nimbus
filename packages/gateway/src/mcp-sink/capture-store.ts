@@ -64,6 +64,7 @@ type RawRow = {
   expires_at: number | null;
   outcome_ref: string | null;
   error_code: string | null;
+  legacy: number;
 };
 
 function toRow(r: RawRow): CaptureRow {
@@ -85,6 +86,7 @@ function toRow(r: RawRow): CaptureRow {
     expiresAt: r.expires_at,
     outcomeRef: r.outcome_ref,
     errorCode: r.error_code,
+    agentDoorLegacy: r.legacy === 1,
   };
 }
 
@@ -99,8 +101,8 @@ export class CaptureStore {
   insert(row: NewCaptureRow): void {
     dbRun(
       this.db,
-      `INSERT INTO capture (id, kind, state, item_id, payload_json, payload_bytes, client_label, session_id, created_at, expires_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO capture (id, kind, state, item_id, payload_json, payload_bytes, client_label, session_id, created_at, expires_at, legacy)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         row.id,
         row.kind,
@@ -112,6 +114,7 @@ export class CaptureStore {
         row.sessionId,
         row.createdAt,
         row.expiresAt,
+        row.agentDoorLegacy ? 1 : 0,
       ],
     );
   }
@@ -160,6 +163,32 @@ export class CaptureStore {
       .query("SELECT COUNT(*) AS n FROM capture WHERE created_at > ?")
       .get(sinceMs) as { n: number };
     return r.n;
+  }
+
+  /**
+   * The deprecation window's count (agent door AD3a-2a): action proposals queued as legacy after
+   * `sinceMs`, by action type. A payload that does not parse is skipped, not thrown (`json_extract`
+   * would raise in SQL). A pruned or purged row leaves the count; that bound is stated.
+   */
+  legacyActionTypesSince(sinceMs: number): {
+    readonly total: number;
+    readonly byType: Readonly<Record<string, number>>;
+  } {
+    const rows = this.db
+      .query(
+        `SELECT payload_json FROM capture
+          WHERE kind = 'action' AND legacy = 1 AND created_at > ? ORDER BY created_at, id`,
+      )
+      .all(sinceMs) as Array<{ payload_json: string | null }>;
+    const byType: Record<string, number> = {};
+    let total = 0;
+    for (const r of rows) {
+      const t = actionTypeOfPayload(r.payload_json);
+      if (t === null) continue;
+      byType[t] = (byType[t] ?? 0) + 1;
+      total++;
+    }
+    return { total, byType };
   }
 
   stateOfItem(itemId: string): CaptureState | undefined {
@@ -228,6 +257,25 @@ export class CaptureStore {
         )
         .get(nowMs, byMs) as { n: number }
     ).n;
+  }
+
+  /** Unexpired proposed actions one connection (`session_id`) holds: the per-connection cap. */
+  countPendingActionsBySession(sessionId: string, nowMs: number): number {
+    return (
+      this.db
+        .query(
+          "SELECT COUNT(*) AS n FROM capture WHERE kind = 'action' AND state = 'proposed' AND session_id = ? AND expires_at > ?",
+        )
+        .get(sessionId, nowMs) as { n: number }
+    ).n;
+  }
+
+  /** One connection's own captures, newest first (`capture.mine`). */
+  listBySession(sessionId: string, limit: number): CaptureRow[] {
+    const rows = this.db
+      .query("SELECT * FROM capture WHERE session_id = ? ORDER BY created_at DESC, id DESC LIMIT ?")
+      .all(sessionId, limit) as RawRow[];
+    return rows.map(toRow);
   }
 
   /** Proposed decision/term/link rows — the queue `max_pending` bounds (spec § 7 step 8). */
