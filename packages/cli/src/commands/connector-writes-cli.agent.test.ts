@@ -154,6 +154,25 @@ describe("connector writes enable --door agent", () => {
     });
   }
 
+  it("names both lockoffs when the agent door is refused by policy, and only the model one on the model door", async () => {
+    const agent = harness(new Error("ERR_CONNECTOR_WRITES_POLICY: org policy"));
+    await runConnectorWrites(["enable", "github", "--door", "agent"], agent.deps);
+    expect(agent.errors).toHaveLength(1);
+    expect(agent.errors[0]).toContain("connector_write_model_access or mcp_action");
+    expect(process.exitCode).toBe(2);
+    process.exitCode = 0;
+    const agentOff = harness(new Error("ERR_CONNECTOR_WRITES_POLICY: org policy"));
+    await runConnectorWrites(["disable", "github", "--door", "agent"], agentOff.deps);
+    expect(agentOff.errors[0]).toContain("connector_write_model_access or mcp_action");
+    process.exitCode = 0;
+    const model = harness(new Error("ERR_CONNECTOR_WRITES_POLICY: org policy"));
+    await runConnectorWrites(["enable", "github"], model.deps);
+    expect(model.errors).toHaveLength(1);
+    expect(model.errors[0]).toContain("(connector_write_model_access)");
+    expect(model.errors[0]).not.toContain("mcp_action");
+    expect(process.exitCode).toBe(2);
+  });
+
   it("says a non-person answer cannot approve", async () => {
     const h = harness(
       new Error(
@@ -189,6 +208,7 @@ describe("connector writes disable --door agent", () => {
     for (const args of [
       ["disable", "github", "--door"],
       ["disable", "github", "--door", "robot"],
+      ["disable", "github", "--door", "model"],
     ]) {
       const b = harness({});
       await runConnectorWrites(args, b.deps);

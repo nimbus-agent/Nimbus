@@ -119,8 +119,17 @@ function usage(d: ConnectorWritesDeps, text: string): void {
   process.exitCode = 2;
 }
 
-function reportError(d: ConnectorWritesDeps, e: unknown): void {
+/** The agent door refuses on either lockoff (it needs both capabilities), so its line names both. */
+const AGENT_POLICY_REFUSAL =
+  "Refused: your organisation's policy forbids connector writes for outside agents (connector_write_model_access or mcp_action).";
+
+function reportError(d: ConnectorWritesDeps, e: unknown, agentDoor = false): void {
   const message = e instanceof Error ? e.message : String(e);
+  if (agentDoor && message.includes("ERR_CONNECTOR_WRITES_POLICY")) {
+    d.error(AGENT_POLICY_REFUSAL);
+    process.exitCode = 2;
+    return;
+  }
   const refusal = REFUSALS.find(([code]) => message.includes(code));
   if (refusal !== undefined) {
     d.error(refusal[1]);
@@ -320,7 +329,7 @@ async function runAgentEnable(
       d.log(`  ${stripControl(String(w.toolId))}  ${stripControl(String(w.sha12))}`);
     if (typeof r["notice"] === "string") d.log(stripControl(r["notice"]));
   } catch (e) {
-    reportError(d, e);
+    reportError(d, e, true);
   }
 }
 
@@ -331,8 +340,11 @@ function parseDisableArgs(tail: string[]): Parsed<{ service: string; agent: bool
   const rest = tail.slice(1);
   if (rest.length === 0) return { ok: true, value: { service, agent: false } };
   const flags: { door: "model" | "agent" | undefined } = { door: undefined };
-  if (rest.length !== 2 || rest[0] !== "--door" || !takeDoor(flags, rest[1])) return { ok: false };
-  return { ok: true, value: { service, agent: flags.door === "agent" } };
+  // Only `--door agent` is a door here: a model disable has no door, and `--door model` would send a
+  // plain (full) disable that also removes the agent list.
+  if (rest.length !== 2 || rest[0] !== "--door" || rest[1] !== "agent" || !takeDoor(flags, rest[1]))
+    return { ok: false };
+  return { ok: true, value: { service, agent: true } };
 }
 
 async function runDisable(d: ConnectorWritesDeps, tail: string[]): Promise<void> {
@@ -362,7 +374,7 @@ async function runDisable(d: ConnectorWritesDeps, tail: string[]): Promise<void>
         : `Model writes were not enabled for ${service}.`,
     );
   } catch (e) {
-    reportError(d, e);
+    reportError(d, e, agent);
   }
 }
 

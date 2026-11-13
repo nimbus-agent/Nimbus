@@ -18,6 +18,7 @@ import { definitionSha256 } from "../../connectors/connector-writes/definition-h
 import {
   type DoorApproval,
   type DoorApprovalEntry,
+  getDoorApproval,
   listDoorApprovals,
   markDoorToolSuspended,
   replaceDoorApprovals,
@@ -368,11 +369,17 @@ function observe(
   return sha === a.definitionSha256 ? undefined : { sha };
 }
 
+/**
+ * Mark the approval the listing was compared against, and write its one audit row, in ONE transaction:
+ * either both commit or neither does (a failed append leaves the tool unmarked, so a later status
+ * observes it again). `undefined` when the approval changed underneath (re-approved with another
+ * hash or removed), which is not a suspension.
+ */
 function recordSuspension(
   deps: AgentWritesDeps,
   a: DoorApproval,
   seen: { sha: string | null; reason?: string },
-): AgentSuspendedTool {
+): AgentSuspendedTool | undefined {
   const now = deps.now();
   const entry: AgentSuspendedTool = {
     toolId: a.toolId,
@@ -382,7 +389,20 @@ function recordSuspension(
     ...(seen.reason === undefined ? {} : { reason: seen.reason }),
   };
   // The first observation wins: a repeat marks nothing and writes no second audit row.
-  if (markDoorToolSuspended(deps.db, "agent", a.service, a.toolId, seen.sha, now)) {
+  const marked = deps.db.transaction(() => {
+    if (
+      !markDoorToolSuspended(
+        deps.db,
+        "agent",
+        a.service,
+        a.toolId,
+        a.definitionSha256,
+        seen.sha,
+        now,
+      )
+    ) {
+      return false;
+    }
     appendAuditEntry(deps.db, {
       actionType: "connector.writes.agent.suspend",
       hitlStatus: "not_required",
@@ -394,8 +414,17 @@ function recordSuspension(
       }),
       timestamp: now,
     });
-  }
-  return entry;
+    return true;
+  })();
+  if (marked) return entry;
+  // Not marked by this call: another observer suspended the same approval (report it from the stored
+  // columns), or the owner re-approved or removed it since the snapshot (nothing to report).
+  const current = getDoorApproval(deps.db, "agent", a.service, a.toolId);
+  return current !== undefined &&
+    current.suspendedAt !== null &&
+    current.definitionSha256 === a.definitionSha256
+    ? suspendedFromRow(current)
+    : undefined;
 }
 
 async function statusOfService(
@@ -404,19 +433,27 @@ async function statusOfService(
   approvals: readonly DoorApproval[],
 ): Promise<AgentStatusService> {
   // Sequential on purpose: a listing may start the connector (the model door's reason, too).
-  const listed = await deps.listServerTools?.(service);
+  // A listing that fails is the same as one that is not there: unverified, nothing marked.
+  const listed = await deps.listServerTools?.(service).catch(() => undefined);
   const suspended: AgentSuspendedTool[] = [];
+  let unchanged = 0;
   for (const a of approvals) {
     if (a.suspendedAt !== null) {
       suspended.push(suspendedFromRow(a));
       continue;
     }
     const seen = listed === undefined ? undefined : observe(a, listed);
-    if (seen !== undefined) suspended.push(recordSuspension(deps, a, seen));
+    if (seen === undefined) {
+      unchanged++;
+      continue;
+    }
+    const entry = recordSuspension(deps, a, seen);
+    if (entry === undefined) unchanged++;
+    else suspended.push(entry);
   }
   return {
     service,
-    approved: approvals.length - suspended.length,
+    approved: unchanged,
     suspended,
     ...(listed === undefined ? { unverified: "its tools could not be listed" } : {}),
   };

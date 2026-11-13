@@ -151,14 +151,16 @@ export function removeDoorApprovals(db: Database, service: string, door?: WriteD
 
 /**
  * Mark an approval suspended: ONE conditional UPDATE, so the first observation wins and a repeat is a
- * no-op. `observedSha` is `null` for a tool that is no longer listed or whose schema cannot be read.
- * True when this call set the mark.
+ * no-op. `approvedSha` is the approved hash the observation was compared against: a row re-approved
+ * since (another hash) is not touched. `observedSha` is `null` for a tool that is no longer listed or
+ * whose schema cannot be read. True when this call set the mark.
  */
 export function markDoorToolSuspended(
   db: Database,
   door: WriteDoor,
   service: string,
   toolId: string,
+  approvedSha: string,
   observedSha: string | null,
   now: number,
 ): boolean {
@@ -166,8 +168,9 @@ export function markDoorToolSuspended(
     dbRun(
       db,
       `UPDATE connector_write_door_approval SET suspended_at = ?, suspended_sha256 = ?
-       WHERE door = ? AND service = ? AND tool_id = ? AND suspended_at IS NULL`,
-      [now, observedSha, door, service, toolId],
+       WHERE door = ? AND service = ? AND tool_id = ? AND definition_sha256 = ?
+         AND suspended_at IS NULL`,
+      [now, observedSha, door, service, toolId, approvedSha],
     ).changes === 1
   );
 }

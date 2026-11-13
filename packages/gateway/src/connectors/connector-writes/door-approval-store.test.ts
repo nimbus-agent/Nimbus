@@ -57,7 +57,7 @@ describe("door approval store", () => {
       ],
       10,
     );
-    expect(markDoorToolSuspended(db, "agent", "github", "a", H3, 15)).toBe(true);
+    expect(markDoorToolSuspended(db, "agent", "github", "a", H1, H3, 15)).toBe(true);
     upsertDoorApprovals(db, "agent", "github", [{ toolId: "a", definitionSha256: H2 }], 30);
     expect(getDoorApproval(db, "agent", "github", "a")).toMatchObject({
       approvedAt: 30,
@@ -70,8 +70,8 @@ describe("door approval store", () => {
 
   test("markDoorToolSuspended is true once; a second observation with another hash is a no-op and the first hash stays", () => {
     replaceDoorApprovals(db, "agent", "github", [{ toolId: "a", definitionSha256: H1 }], 10);
-    expect(markDoorToolSuspended(db, "agent", "github", "a", H2, 11)).toBe(true);
-    expect(markDoorToolSuspended(db, "agent", "github", "a", H3, 12)).toBe(false);
+    expect(markDoorToolSuspended(db, "agent", "github", "a", H1, H2, 11)).toBe(true);
+    expect(markDoorToolSuspended(db, "agent", "github", "a", H1, H3, 12)).toBe(false);
     expect(getDoorApproval(db, "agent", "github", "a")).toMatchObject({
       suspendedAt: 11,
       suspendedSha256: H2,
@@ -80,15 +80,26 @@ describe("door approval store", () => {
 
   test("a null observed hash marks the row with a NULL suspended_sha256", () => {
     replaceDoorApprovals(db, "agent", "github", [{ toolId: "a", definitionSha256: H1 }], 10);
-    expect(markDoorToolSuspended(db, "agent", "github", "a", null, 11)).toBe(true);
+    expect(markDoorToolSuspended(db, "agent", "github", "a", H1, null, 11)).toBe(true);
     expect(getDoorApproval(db, "agent", "github", "a")).toMatchObject({
       suspendedAt: 11,
       suspendedSha256: null,
     });
   });
 
+  test("a row re-approved with another hash is not marked by an observation of the old one", () => {
+    replaceDoorApprovals(db, "agent", "github", [{ toolId: "a", definitionSha256: H1 }], 10);
+    upsertDoorApprovals(db, "agent", "github", [{ toolId: "a", definitionSha256: H2 }], 20);
+    expect(markDoorToolSuspended(db, "agent", "github", "a", H1, H3, 21)).toBe(false);
+    expect(getDoorApproval(db, "agent", "github", "a")).toMatchObject({
+      definitionSha256: H2,
+      suspendedAt: null,
+      suspendedSha256: null,
+    });
+  });
+
   test("marking a tool that has no approval changes nothing", () => {
-    expect(markDoorToolSuspended(db, "agent", "github", "ghost", H2, 11)).toBe(false);
+    expect(markDoorToolSuspended(db, "agent", "github", "ghost", H1, H2, 11)).toBe(false);
     expect(listDoorApprovals(db, "agent")).toEqual([]);
   });
 

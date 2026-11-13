@@ -4401,13 +4401,17 @@ describe("Phase 28 AD3a-1 - the agent door's approval list (recorded, not yet en
       .filter((l) => !/^\s*\/\//.test(l) && !/assert!|fn |#\[/.test(l))
       .filter((l) => l.includes('"connector.writes'));
     expect(listed).toEqual([]);
-    const lan = await read("packages/gateway/src/ipc/lan-rpc.ts");
+    // Behaviour, not text: enable and disable also sit in WRITE_METHODS, so a source match would pass
+    // after one left FORBIDDEN_OVER_LAN. A peer WITH write permission must still be refused outright.
+    const { checkLanMethodAllowed, LanError } = await import("./ipc/lan-rpc.ts");
     for (const m of [
       "connector.writesEnable",
       "connector.writesDisable",
       "connector.writesStatus",
     ]) {
-      expect(lan).toContain(`"${m}"`);
+      const call = () => checkLanMethodAllowed(m, { peerId: "peer:x", writeAllowed: true });
+      expect(call, m).toThrow(LanError);
+      expect(call, m).toThrow(/ERR_METHOD_NOT_ALLOWED/);
     }
   });
 

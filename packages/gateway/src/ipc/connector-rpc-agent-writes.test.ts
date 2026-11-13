@@ -161,6 +161,12 @@ async function refusal(p: Promise<unknown>): Promise<string> {
   throw new Error("expected a refusal");
 }
 
+function approvedShaOf(toolId: string): string {
+  const row = listDoorApprovals(db, "agent", "github").find((x) => x.toolId === toolId);
+  if (row === undefined) throw new Error(`no approval for ${toolId}`);
+  return row.definitionSha256;
+}
+
 function auditCount(): number {
   return (db.query("SELECT COUNT(*) AS n FROM audit_log").get() as { n: number }).n;
 }
@@ -577,7 +583,9 @@ describe("agent enable: what is written", () => {
     const r = rig();
     await handleConnectorWritesEnable({ ...AGENT, service: "github", wave: 3 }, r.deps);
     const id = "github_issue_create";
-    expect(markDoorToolSuspended(db, "agent", "github", id, "a".repeat(64), 5)).toBe(true);
+    expect(
+      markDoorToolSuspended(db, "agent", "github", id, approvedShaOf(id), "a".repeat(64), 5),
+    ).toBe(true);
     r.listing = listingOf("github", (t) => (t === id ? "changed" : `desc ${t}`));
     await handleConnectorWritesEnable(
       { ...AGENT, service: "github", wave: 3, approve: [id] },
@@ -888,6 +896,86 @@ describe("agent status", () => {
     expect(auditCount()).toBe(base);
   });
 
+  test("a tool re-approved while the listing is awaited is not marked suspended from the old snapshot", async () => {
+    const r = await approved();
+    const id = "github_issue_create";
+    const base = auditCount();
+    // The listing the old approval disagrees with; the owner re-approves against it during the await.
+    const changed = listingOf("github", (t) => (t === id ? "changed by one byte!" : `desc ${t}`));
+    const newSha = definitionSha256(id, changed[mcpClientToolKey("github", id)]) as string;
+    r.deps = {
+      ...r.deps,
+      listServerTools: async () => {
+        upsertDoorApprovals(
+          db,
+          "agent",
+          "github",
+          [{ toolId: id, definitionSha256: newSha }],
+          2_000,
+        );
+        return changed;
+      },
+    };
+    const s = await handleAgentWritesStatus(r.deps);
+    const row = listDoorApprovals(db, "agent", "github").find((x) => x.toolId === id);
+    expect(row?.definitionSha256).toBe(newSha);
+    expect(row?.suspendedAt).toBeNull();
+    expect(s.services[0]?.suspended.map((x) => x.toolId)).not.toContain(id);
+    expect(auditCount()).toBe(base);
+  });
+
+  test("a failing audit append leaves the tool unsuspended, and a later status marks it and writes the row", async () => {
+    const r = await approved();
+    const id = "github_issue_create";
+    r.listing = listingOf("github", (t) => (t === id ? "changed by one byte!" : `desc ${t}`));
+    const base = auditCount();
+    db.run(
+      "CREATE TRIGGER audit_boom BEFORE INSERT ON audit_log WHEN NEW.action_type = 'connector.writes.agent.suspend' BEGIN SELECT RAISE(ABORT, 'boom'); END",
+    );
+    await expect(handleAgentWritesStatus(r.deps)).rejects.toThrow();
+    const row = () => listDoorApprovals(db, "agent", "github").find((x) => x.toolId === id);
+    expect(row()?.suspendedAt).toBeNull();
+    expect(auditCount()).toBe(base);
+    db.run("DROP TRIGGER audit_boom");
+    const s = await handleAgentWritesStatus(r.deps);
+    expect(row()?.suspendedAt).not.toBeNull();
+    expect(s.services[0]?.suspended.map((x) => x.toolId)).toEqual([id]);
+    expect(auditCount()).toBe(base + 1);
+  });
+
+  test("a listing that rejects makes that service unverified and the next service is still checked", async () => {
+    const r = await approved();
+    await handleConnectorWritesEnable(
+      { ...AGENT, service: "slack", wave: 3 },
+      {
+        ...r.deps,
+        listServerTools: async () => listingOf("slack"),
+      },
+    );
+    const slackId = listDoorApprovals(db, "agent", "slack")[0]?.toolId as string;
+    const base = auditCount();
+    const listed: string[] = [];
+    r.deps = {
+      ...r.deps,
+      listServerTools: async (service: string) => {
+        listed.push(service);
+        if (service === "github") throw new Error("connector down");
+        return listingOf("slack", (t) => (t === slackId ? "changed by one byte!" : `desc ${t}`));
+      },
+    };
+    const s = await handleAgentWritesStatus(r.deps);
+    expect(listed).toEqual(["github", "slack"]);
+    const gh = s.services.find((x) => x.service === "github");
+    expect(gh?.unverified).toBe("its tools could not be listed");
+    expect(gh?.suspended).toEqual([]);
+    expect(listDoorApprovals(db, "agent", "github").every((x) => x.suspendedAt === null)).toBe(
+      true,
+    );
+    const sl = s.services.find((x) => x.service === "slack");
+    expect(sl?.suspended.map((x) => x.toolId)).toEqual([slackId]);
+    expect(auditCount()).toBe(base + 1);
+  });
+
   test("every reply carries the notice and the policy; services and policyAllows of the model part are untouched", async () => {
     const r = await approved();
     const s = await handleAgentWritesStatus(r.deps);
@@ -902,7 +990,15 @@ describe("agent status", () => {
   test("a marked tool is reported from the stored columns without a second observation", async () => {
     const r = await approved();
     dbRun(db, "UPDATE connector_write_enablement SET max_wave = max_wave WHERE 0", []);
-    markDoorToolSuspended(db, "agent", "github", "github_issue_create", "c".repeat(64), 50);
+    markDoorToolSuspended(
+      db,
+      "agent",
+      "github",
+      "github_issue_create",
+      approvedShaOf("github_issue_create"),
+      "c".repeat(64),
+      50,
+    );
     const base = auditCount();
     const s = await handleAgentWritesStatus(r.deps);
     expect(s.services[0]?.suspended[0]?.nowSha12).toBe("c".repeat(12));
