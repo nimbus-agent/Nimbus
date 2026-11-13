@@ -4050,7 +4050,7 @@ describe("I28 — MCP content enters only through the capture gate, in a fixed o
     expect(lan).toMatch(/"capture",\s*"captures",[\s\S]*?"approvals"/);
     const tauri = await read("packages/ui/src-tauri/src/gateway_bridge.rs");
     // Entry lines only: the Rust negative test asserts these names without a trailing comma line.
-    expect([...tauri.matchAll(/^\s*"(approvals\.[A-Za-z]+|capture\.mine)",\s*$/gm)]).toEqual([]);
+    expect([...tauri.matchAll(/^\s*"(approvals\.[A-Za-z]+|capture\.mine|capture\.describe)",\s*$/gm)]).toEqual([]);
     expect(tauri).toContain("fn allowlist_approvals_never_renderer()");
   });
 
@@ -4636,6 +4636,7 @@ describe("I58 - an outside agent proposes only what the owner approved for agent
       "verifyActionDefinition: agentDoor.verifyDefinition,",
       "listProposableActionTypes: agentDoor.acceptedTypes,",
       "verifyDefinition: agentDoor.verifyDefinition,",
+      "actions: agentDoor.describe",
       "listServerTools: async (service) => agentDoorMesh.current?.listFirstPartyServerTools(service),",
       "agentDoorMesh.current = connectorMesh;",
     ]) {

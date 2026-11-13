@@ -1,6 +1,9 @@
 import { agentDoorRow } from "../connectors/connector-writes/agent-door.ts";
 import { legacyNoticeFor } from "../connectors/connector-writes/agent-door-legacy.ts";
-import type { DefinitionVerification } from "../connectors/connector-writes/agent-door-runtime.ts";
+import type {
+  AgentDoor,
+  DefinitionVerification,
+} from "../connectors/connector-writes/agent-door-runtime.ts";
 import { CONNECTOR_WRITE_ROWS } from "../connectors/connector-writes/index.ts";
 import {
   beforeReaderMissing,
@@ -40,6 +43,8 @@ import {
   revokeCapture,
   submitCapture,
 } from "../mcp-sink/capture-gate.ts";
+import { describeActions } from "../mcp-sink/capture-describe.ts";
+import type { CaptureAttemptLimiter } from "../mcp-sink/capture-rate-limit.ts";
 import { actionTypeOfPayload } from "../mcp-sink/capture-store.ts";
 import {
   type ActDeps,
@@ -62,6 +67,15 @@ export interface CaptureRpcCtx {
   readonly gate: CaptureGateDeps;
   /** Absent → the act door cannot execute: an action accept refuses ERR_CAPTURE_DISABLED. */
   readonly act?: CaptureActWiring;
+  /**
+   * `capture.describe` (AD3a-2b): the describer (`createAgentDoor(...).describe`) and the limiter
+   * that bounds describe attempts on a window of their own. Absent → the method refuses
+   * ERR_CAPTURE_DISABLED. Built once in platform/assemble.ts.
+   */
+  readonly describe?: {
+    readonly limiter: CaptureAttemptLimiter;
+    readonly actions: AgentDoor["describe"];
+  };
 }
 
 /**
@@ -334,6 +348,17 @@ export async function dispatchCaptureRpc(
         "capture.status": (_p, c) => captureStatus(c.gate),
         "capture.state": (p, c) => captureStateFor(c.gate, c.caller, idParam(p)),
         "capture.mine": (_p, c) => captureMine(c.gate, c.caller),
+        "capture.describe": (p, c) =>
+          describeActions(
+            {
+              capability: () => c.gate.capability(),
+              refusals: c.gate.refusals,
+              now: () => c.gate.now(),
+              ...(ctx.describe === undefined ? {} : { describer: ctx.describe }),
+            },
+            c.caller,
+            p,
+          ),
         "capture.submit": (p, c) => submitWithNotice(c.gate, c.caller, p),
         "captures.list": (p, c) => listCaptures(c.gate, c.caller, p),
         "captures.get": (p, c) => getCapture(c.gate, c.caller, idParam(p)),
