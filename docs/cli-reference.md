@@ -1792,7 +1792,7 @@ terminal (TTY) to approve an agent-proposed action.` and exits 1: it calls `capt
 but never `approvals.approve` or `captures.accept`. With a terminal it declares the `cli` kind and calls `approvals.approve` (the same path as `nimbus approvals <id>`). A `captures.get` that names no kind is refused the same way without a TTY. The check is
 the CLI's own guard, not the gateway's: a raw local-owner socket client can accept and answer its own consent prompt,
 which is within the local-owner trust model. On a TTY it asks you to
-approve the verbatim input (agent-written strings with invisible characters shown escaped) and then prints one line:
+approve the executor's own prompt (the typed preview where the write has one, otherwise the verbatim input, with agent-written strings and invisible characters shown escaped) and then prints one line:
 
 | Outcome | Line | Exit |
 | --- | --- | --- |
