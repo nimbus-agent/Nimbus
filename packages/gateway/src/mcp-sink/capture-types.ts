@@ -46,7 +46,8 @@ export type CaptureErrorCode =
   | "ERR_CAPTURE_ACTION_NOT_PROPOSABLE"
   | "ERR_CAPTURE_ACTION_REFUSED"
   | "ERR_CAPTURE_CONNECTOR_UNCONFIGURED"
-  | "ERR_CAPTURE_EXPIRED";
+  | "ERR_CAPTURE_EXPIRED"
+  | "ERR_AGENT_TOOL_SUSPENDED";
 
 export class CaptureError extends Error {
   constructor(
@@ -80,6 +81,11 @@ export interface CaptureRow {
   readonly expiresAt: number | null;
   readonly outcomeRef: string | null;
   readonly errorCode: string | null;
+  /**
+   * Agent door (AD3a-2a): true on an action proposal queued under the deprecation window, i.e. one
+   * the earlier act door accepted that the owner's per-door list would not (V97 `legacy`).
+   */
+  readonly agentDoorLegacy: boolean;
 }
 
 export const LINK_RELATIONS = [
@@ -130,6 +136,20 @@ export const ACTION_ERROR_CODES = [
   "ERR_ACTION_INTERRUPTED",
 ] as const;
 export type ActionErrorCode = (typeof ACTION_ERROR_CODES)[number];
+
+/**
+ * Stored on a `rejected` action row (V97 allows a code there): why the executor refused, as a fixed
+ * code, never the reason text (which may name the owner's data). A plain decline, a mistyped
+ * confirmation and a non-human answer store no code. Each fits the V97 `length(error_code) <= 64`.
+ */
+export const ACTION_REJECT_CODES = [
+  "ERR_AGENT_TOOL_SUSPENDED",
+  "ERR_ACTION_GUARD_REFUSED",
+  "ERR_ACTION_BEFORE_STATE_UNREADABLE",
+  "ERR_ACTION_PREPARE_REFUSED",
+  "ERR_ACTION_CREDENTIAL_UNVERIFIED",
+] as const;
+export type ActionRejectCode = (typeof ACTION_REJECT_CODES)[number];
 
 export interface ActionPayload {
   readonly actionType: string;

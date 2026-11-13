@@ -703,6 +703,7 @@ describe("captures.accept on an action (act door wiring)", () => {
       sessionId: "s",
       createdAt: 500,
       expiresAt: 2_000,
+      agentDoorLegacy: false,
     });
     return {
       gate,
@@ -1085,6 +1086,7 @@ describe("B1 act door: the destination refusal, real messagingDestinationRefusal
       sessionId: "s",
       createdAt: now,
       expiresAt: now + 3_600_000,
+      agentDoorLegacy: false,
     });
     const consent = {
       requestConsent: () => Promise.resolve({ approved: true, answerSource: "human" as const }),

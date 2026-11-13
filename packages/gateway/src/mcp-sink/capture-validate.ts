@@ -25,6 +25,14 @@ export const CLIENT_LABEL_MAX = 100;
  * says such a body TRUNCATES — the total cap must not refuse it.
  */
 export const PAYLOAD_MAX_BYTES = 65_536;
+/**
+ * The cap for `kind: action` ONLY (agent door AD3a-2a): the bound rows cap their own input (a commit
+ * at 96 KiB of UTF-16 code units, which is at most 288 KiB of UTF-8, CloudFormation and Kubernetes at
+ * 64 KiB), so a legal commit must fit the queue. 320 KiB covers that plus the envelope and the
+ * 300-character summary; the row's own cap still applies in the executor. Never used for a note,
+ * decision, term or link.
+ */
+export const ACTION_PAYLOAD_MAX_BYTES = 327_680;
 
 // Agent text lands in `item.title`/`item.body`, which other surfaces (`nimbus query`, briefs, the
 // desktop) render without knowing it came from an agent. An ESC there would let a client restyle or
@@ -167,9 +175,9 @@ function proseList(raw: unknown, field: string, maxCount: number, maxLen: number
   return out;
 }
 
-function capped<T>(payload: T): T {
-  if (Buffer.byteLength(JSON.stringify(payload), "utf8") > PAYLOAD_MAX_BYTES) {
-    invalid(`payload exceeds ${String(PAYLOAD_MAX_BYTES)} bytes`);
+function capped<T>(payload: T, max: number = PAYLOAD_MAX_BYTES): T {
+  if (Buffer.byteLength(JSON.stringify(payload), "utf8") > max) {
+    invalid(`payload exceeds ${String(max)} bytes`);
   }
   return payload;
 }
@@ -269,11 +277,14 @@ export function validateActionPayload(raw: unknown): ActionPayload {
   if (Object.hasOwn(o, "mcpToolId") || Object.hasOwn(input, "mcpToolId")) {
     invalid("an action proposal may not carry mcpToolId: the gateway chooses the tool");
   }
-  return capped<ActionPayload>({
-    actionType: t,
-    input: input as Record<string, unknown>,
-    summary: line(o["summary"], "summary", ACTION_SUMMARY_MAX, true) ?? "",
-  });
+  return capped<ActionPayload>(
+    {
+      actionType: t,
+      input: input as Record<string, unknown>,
+      summary: line(o["summary"], "summary", ACTION_SUMMARY_MAX, true) ?? "",
+    },
+    ACTION_PAYLOAD_MAX_BYTES,
+  );
 }
 
 /** Whitelist-rebuild a payload of any kind (spec § 4.2). Prose truncates; structure refuses. */

@@ -479,9 +479,9 @@ describe("action payload (PR 3)", () => {
       validateCapturePayload("action", { actionType: ok.actionType, input: {} }, 0),
     ).toThrow();
   });
-  test("the 64 KiB total cap refuses", () => {
+  test("the 320 KiB action cap refuses", () => {
     expect(() =>
-      validateCapturePayload("action", { ...ok, input: { text: "x".repeat(70_000) } }, 0),
+      validateCapturePayload("action", { ...ok, input: { text: "x".repeat(330_000) } }, 0),
     ).toThrow(/exceeds/);
   });
   test("input values are NOT stripped: what is approved is what is sent", () => {
@@ -491,5 +491,52 @@ describe("action payload (PR 3)", () => {
   });
   test("referencedItemIds is empty for an action", () => {
     expect(referencedItemIds(validateCapturePayload("action", ok, 0))).toEqual([]);
+  });
+});
+
+describe("the action payload cap (AD3a-2a)", () => {
+  // A payload of EXACTLY `bytes` UTF-8 bytes of JSON: pad the one free-text `input` string.
+  function actionOfBytes(bytes: number): unknown {
+    const base = { actionType: "github.file.commit", input: { text: "" }, summary: "s" };
+    const empty = Buffer.byteLength(JSON.stringify(base), "utf8");
+    return { ...base, input: { text: "a".repeat(bytes - empty) } };
+  }
+  test("an action of 65,537 bytes is accepted and one of 327,680 too; 327,681 is refused", () => {
+    expect(validateCapturePayload("action", actionOfBytes(65_537), 0).kind).toBe("action");
+    expect(validateCapturePayload("action", actionOfBytes(327_680), 0).kind).toBe("action");
+    expect(code(() => validateCapturePayload("action", actionOfBytes(327_681), 0))).toBe(
+      "ERR_CAPTURE_INVALID",
+    );
+  });
+  test("an action of 65,536 bytes still passes (the old boundary is not lowered)", () => {
+    expect(validateCapturePayload("action", actionOfBytes(65_536), 0).kind).toBe("action");
+  });
+  test("a note is still capped at 65,536 bytes", () => {
+    const refs = Array.from({ length: 10 }, (_, i) => `${String(i)}${"語".repeat(511)}`);
+    const tags = Array.from({ length: 10 }, (_, i) => `${String(i)}${"語".repeat(49)}`);
+    expect(
+      code(() =>
+        validateCapturePayload(
+          "note",
+          { title: "語".repeat(200), body: "語".repeat(BODY_MAX_PROSE), tags, relatesTo: refs },
+          0,
+        ),
+      ),
+    ).toBe("ERR_CAPTURE_INVALID");
+  });
+  test("a 96 KiB-character commit input and a 51,200-byte template survive validation", () => {
+    const files = [{ path: "a.txt", content: "x".repeat(96 * 1024) }];
+    const v = validateCapturePayload(
+      "action",
+      { actionType: "github.file.commit", input: { files }, summary: "s" },
+      0,
+    );
+    expect(v.kind).toBe("action");
+    const t = validateCapturePayload(
+      "action",
+      { actionType: "iac.cloudformation.deploy", input: { template: "t".repeat(51_200) }, summary: "s" },
+      0,
+    );
+    expect(t.kind).toBe("action");
   });
 });

@@ -64,6 +64,7 @@ beforeEach(() => {
     sessionId: "s",
     createdAt: 500,
     expiresAt: 2_000,
+    agentDoorLegacy: false,
   });
 });
 afterEach(() => db.close());
@@ -327,6 +328,7 @@ describe("reconcileActionsAtBoot (Review Focus 5)", () => {
       sessionId: "s",
       createdAt: 1,
       expiresAt: 10,
+      agentDoorLegacy: false,
     });
     expect(reconcileActionsAtBoot(deps, 1_500)).toEqual({ expired: 1, interrupted: 1 });
     expect(row()).toMatchObject({ state: "failed", errorCode: "ERR_ACTION_INTERRUPTED" });

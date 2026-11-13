@@ -533,6 +533,7 @@ function writeSubmittedCapture(
       sessionId: caller.clientId,
       createdAt: now,
       expiresAt,
+      agentDoorLegacy: false,
     });
     if (v.kind === "note") {
       const payload = v.payload;

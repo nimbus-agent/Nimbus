@@ -145,6 +145,7 @@ describe("captureMine", () => {
         sessionId: MCP.clientId,
         createdAt: clock + i,
         expiresAt: null,
+        agentDoorLegacy: false,
       });
     }
     expect(captureMine(deps, MCP).captures).toHaveLength(50);
@@ -268,6 +269,7 @@ describe("listActionProposals", () => {
       sessionId: "x",
       createdAt: clock,
       expiresAt: clock + HOUR,
+      agentDoorLegacy: false,
     });
     expect(listActionProposals(deps, OWNER).proposals).toHaveLength(1);
   });

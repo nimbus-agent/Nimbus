@@ -108,6 +108,7 @@ function insertAction(
     sessionId: "agent-conn",
     createdAt: 500,
     expiresAt: 500 + HOUR,
+    agentDoorLegacy: false,
   });
 }
 
@@ -286,6 +287,7 @@ describe("approvals.list and approvals.get", () => {
       sessionId: "s",
       createdAt: 1,
       expiresAt: null,
+      agentDoorLegacy: false,
     });
     for (const m of ["approvals.get", "approvals.approve", "approvals.decline"]) {
       expect((await rpcError(call(m, { id: "cap_d" }, OWNER, new FakeConsent()))).code).toBe(
