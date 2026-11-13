@@ -87,7 +87,7 @@ export interface CaptureActWiring {
 export function createActionDestinationRefusal(
   enforcedPolicy: () => EnforcedPolicy | undefined,
   tribalKbConfig: () => TribalKbConfig | undefined,
-): CaptureGateDeps["actionDestinationRefusal"] {
+): (actionType: string, input: Readonly<Record<string, unknown>>) => string | undefined {
   return (actionType, input) => {
     const tool = proposableWriteTool(actionType);
     if (tool === undefined) return undefined;

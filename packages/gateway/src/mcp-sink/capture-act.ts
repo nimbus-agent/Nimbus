@@ -5,6 +5,7 @@ import { CAPTURE_ROLE_BY_KIND } from "./capture-client-policy.ts";
 import type { CaptureCaller, CaptureGateDeps } from "./capture-gate.ts";
 import {
   type ActDeps,
+  type ActionBasis,
   type ActionErrorCode,
   type ActionPayload,
   type ActionProvenance,
@@ -42,9 +43,10 @@ export function actionDestinationVerdict(
   deps: Pick<CaptureGateDeps, "actionDestinationRefusal">,
   actionType: string,
   input: Readonly<Record<string, unknown>>,
+  basis: ActionBasis | undefined,
 ): string | undefined {
   try {
-    return deps.actionDestinationRefusal(actionType, input);
+    return deps.actionDestinationRefusal(actionType, input, basis);
   } catch {
     return ACTION_DESTINATION_UNCHECKED;
   }
@@ -202,7 +204,7 @@ export async function acceptAction(
   }
   // 4b. The destination again (OR1/OR2): a ChatOps binding or the policy may have changed since
   //     submit. Synchronous from here to the claim. A refusal leaves the row proposed.
-  const refused = actionDestinationVerdict(deps, stored.actionType, stored.input);
+  const refused = actionDestinationVerdict(deps, stored.actionType, stored.input, undefined);
   if (refused !== undefined) {
     throw new CaptureError("ERR_CAPTURE_ACTION_REFUSED", refused);
   }
