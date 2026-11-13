@@ -270,7 +270,11 @@ beforeEach(() => {
     });
   });
   const d = door();
-  rpcCtx = { gate: gateDeps(d), act: actWiring(d) };
+  rpcCtx = {
+    gate: gateDeps(d),
+    act: actWiring(d),
+    describe: { limiter: new CaptureAttemptLimiter(), actions: d.describe },
+  };
 });
 afterEach(() => db.close());
 
@@ -279,7 +283,11 @@ function serverCtx(): ServerCtx {
     listenPath: "",
     vault: createMockVault(),
     version: "test",
-    captureRpcCtx: { gate: rpcCtx.gate, ...(rpcCtx.act === undefined ? {} : { act: rpcCtx.act }) },
+    captureRpcCtx: {
+      gate: rpcCtx.gate,
+      ...(rpcCtx.act === undefined ? {} : { act: rpcCtx.act }),
+      ...(rpcCtx.describe === undefined ? {} : { describe: rpcCtx.describe }),
+    },
   };
   return {
     options,
@@ -822,5 +830,75 @@ describe("the approval path", () => {
         type,
       ).toBe(true);
     }
+  });
+});
+
+describe("capture.describe, end to end (AD3a-2b)", () => {
+  interface Described {
+    readonly actions: ReadonlyArray<{
+      readonly actionType: string;
+      readonly state: string;
+      readonly description?: string;
+      readonly inputSchema?: { readonly properties?: Record<string, unknown> };
+      readonly reason?: string;
+    }>;
+    readonly truncated: boolean;
+  }
+  const describeTypes = (types?: string[]): Promise<Described> =>
+    rpc(AGENT, "capture.describe", types === undefined ? {} : { actionTypes: types }) as Promise<Described>;
+
+  test("an approved agent describes github.pr.merge, builds an input from the returned schema, submits it and sees it queued", async () => {
+    approveForAgents("github", 4, ["github_pr_merge"]);
+    const summary = await describeTypes();
+    expect(listCalls).toEqual([]);
+    expect(summary.actions.find((a) => a.actionType === "github.pr.merge")).toMatchObject({
+      state: "approved",
+      wave: 4,
+      typedConfirm: true,
+    });
+    const detail = await describeTypes(["github.pr.merge"]);
+    const entry = detail.actions[0];
+    expect(entry?.state).toBe("approved");
+    expect(entry?.description).toContain("<tool_description");
+    const props = Object.keys(entry?.inputSchema?.properties ?? {});
+    expect(props.length).toBeGreaterThan(0);
+    // Build an input from the schema alone: the key names it returned, a plain value each, the
+    // head the owner will later see as the pull request head.
+    const input = Object.fromEntries(props.map((k) => [k, k === "sha" ? HEAD : "plain"]));
+    const queued = await submit("github.pr.merge", input);
+    expect(queued.state).toBe("proposed");
+    expect(queued).not.toHaveProperty("legacy");
+  });
+
+  test("the reply never carries a hash, a reason from the owner side or a listing key", async () => {
+    approveForAgents("github", 4, ["github_pr_merge"]);
+    const row = getDoorApproval(db, "agent", "github", "github_pr_merge");
+    const text = JSON.stringify(await describeTypes(["github.pr.merge", "slack.message.post"]));
+    expect(text).not.toContain((row?.definitionSha256 ?? "x").slice(0, 12));
+    expect(text).not.toMatch(/[0-9a-f]{20,}/);
+    expect(text).not.toContain(mcpClientToolKey("github", "github_pr_merge"));
+  });
+
+  test("a changed listing is suspended by describe, which records one audit row, and the submit then refuses", async () => {
+    approveForAgents("github", 4, ["github_pr_merge"]);
+    describeTool = (t) => (t === "github_pr_merge" ? "changed under you" : `d ${t}`);
+    const out = await describeTypes(["github.pr.merge"]);
+    expect(out.actions[0]).toMatchObject({ state: "suspended" });
+    expect(out.actions[0]).not.toHaveProperty("description");
+    expect(out.actions[0]).not.toHaveProperty("inputSchema");
+    expect(suspendAuditCount()).toBe(1);
+    expect(
+      await code(submit("github.pr.merge", { owner: "o", repo: "r", pullNumber: 1, sha: HEAD })),
+    ).toBe(SUSPENDED);
+    expect(suspendAuditCount()).toBe(1);
+  });
+
+  test("only an mcp connection may describe, and a legacy type is reported with no listing", async () => {
+    for (const client of [OWNER, OWNER_UI, UNDECLARED]) {
+      expect(await code(rpc(client, "capture.describe", {}))).toBe("ERR_CAPTURE_FORBIDDEN_CLIENT");
+    }
+    const out = await describeTypes(["slack.message.post"]);
+    expect(out.actions[0]).toMatchObject({ state: "legacy" });
+    expect(listCalls).toEqual([]);
   });
 });
