@@ -135,7 +135,18 @@ import {
 } from "./engine/executor.ts";
 import { serviceOf } from "./engine/service-of.ts";
 import { extractToolInput } from "./engine/tool-input.ts";
-import type { PlannedAction } from "./engine/types.ts";
+import type { AgentProposer, PlannedAction } from "./engine/types.ts";
+
+const AGENT_PROPOSER: AgentProposer = {
+  door: "agent",
+  captureId: "cap_inv",
+  label: null,
+  labelSource: "declared",
+  summary: "s",
+  createdAt: 0,
+  expiresAt: 1,
+};
+
 import { buildUserMcpAgentTools } from "./engine/user-mcp-agent-tools.ts";
 import type { ContinuityEntry } from "./extensions/continuity/continuity-table.ts";
 import type { ReachRunner } from "./extensions/extension-reach.ts";
@@ -2552,12 +2563,13 @@ describe("I20 — a delegated approval is honored only from a live, identity-val
       expect(prompts, type).toBe(1);
     }
   });
-  test('I20: an origin "model" action is never delegated; a payload.origin has no effect', async () => {
+  test('I20: an origin "model" or "agent" action is never delegated; a payload.origin has no effect', async () => {
     const { NO_POLICY_OVERLAY, ToolExecutor } = await import("./engine/executor.ts");
     const run = async (action: {
       type: string;
       payload: Record<string, unknown>;
-      origin?: "model";
+      origin?: "model" | "agent";
+      proposer?: AgentProposer;
     }) => {
       let prompts = 0;
       let remote = 0;
@@ -2585,6 +2597,13 @@ describe("I20 — a delegated approval is honored only from a live, identity-val
       return { prompts, remote };
     };
     expect(await run({ type: "email.send", payload: {}, origin: "model" })).toEqual({
+      prompts: 1,
+      remote: 0,
+    });
+    // Phase 28 AD1: the agent origin falls back exactly like the model's.
+    expect(
+      await run({ type: "email.send", payload: {}, origin: "agent", proposer: AGENT_PROPOSER }),
+    ).toEqual({
       prompts: 1,
       remote: 0,
     });
@@ -4213,9 +4232,15 @@ describe("I28 — MCP content enters only through the capture gate, in a fixed o
       /const toolId = proposableWriteTool\(actionType\) \?\? userMcpToolKeyForActionType\(actionType\)/,
     );
     expect(src).toMatch(/payload: \{ mcpToolId: toolId, input \}/);
-    expect(src).toMatch(
-      /new ToolExecutor\(\s*consent,\s*w\.audit,\s*w\.dispatcher,\s*undefined,\s*w\.egressSink,\s*w\.policyHitl,?\s*\)/,
-    );
+    // Phase 28 AD1: the executor is the shared door maker's (no delegation input exists), and the
+    // action is an `origin: "agent"` one carrying the gateway-set proposer. The old wrapper is gone.
+    expect(src).toContain("buildAgentWriteExecutor({");
+    expect(src).toContain("policyHitl: w.policyHitl,");
+    expect(src).toContain('origin: "agent",');
+    expect(src).toContain("proposer: agentProposerOf(provenance),");
+    expect(src).not.toContain("new ToolExecutor(");
+    expect(src).not.toContain("provenanceConsent");
+    expect(src).not.toContain("delegation");
   });
 
   test("act door: an absent policy accessor disables actions (fail-closed)", async () => {
@@ -12451,16 +12476,28 @@ describe("I53 — a first-party connector write reaches the model only through t
 
   test("the door's executor is built with NO delegation (the first layer)", async () => {
     const src = stripComments(await read("packages/gateway/src/engine/run-ask.ts"));
-    const at = src.indexOf("export function buildModelWriteExecutor(");
+    // Phase 28 AD1: the model door and the MCP act door are one-line calls of ONE private maker,
+    // `newDoorExecutor`, which holds the (absent) delegation and the runner.
+    const at = src.indexOf("function newDoorExecutor(");
     expect(at).toBeGreaterThan(-1);
     const body = src.slice(at, src.indexOf("\n}\n", at));
-    // Delegation is argument 2 (`undefined`); argument 3 is the extras object (Phase 10 SA3), whose
-    // `beforeState` is the runner (spec § 5.4) and which carries no standing-rule dependencies.
+    // Delegation is argument 3 (`undefined`); argument 4 is the extras object (Phase 10 SA3), whose
+    // `beforeState` is the runner (spec § 5.4), built WITHOUT `readsEveryOrigin`, and which carries
+    // no standing-rule dependencies.
     expect(body).toMatch(
-      /newTurnExecutor\(\s*p,\s*undefined,\s*\{\s*beforeState:\s*createBeforeStateRunner\(/,
+      /newExecutorOnChannel\(\s*p,\s*consent,\s*undefined,\s*\{\s*beforeState:\s*createBeforeStateRunner\(/,
     );
     expect(body).not.toContain("standingRules");
     expect(body).not.toContain("delegation");
+    expect(body).not.toContain("readsEveryOrigin");
+    for (const builder of ["buildModelWriteExecutor", "buildAgentWriteExecutor"]) {
+      const bAt = src.indexOf(`export function ${builder}(`);
+      expect(bAt, builder).toBeGreaterThan(-1);
+      const bBody = src.slice(bAt, src.indexOf("\n}\n", bAt));
+      expect(bBody, builder).toContain("newDoorExecutor(");
+      expect(bBody, builder).not.toContain("standingRules");
+      expect(bBody, builder).not.toContain("delegation");
+    }
   });
 
   test("SA2/SA4: the workflow write step's executor is built with NO delegation and the before-state runner", async () => {
@@ -12496,12 +12533,13 @@ describe("I53 — a first-party connector write reaches the model only through t
 
   test("B3 (R11): the door's runner is built WITH the KB config accessor, which run-ask requires", async () => {
     const src = stripComments(await read("packages/gateway/src/engine/run-ask.ts"));
-    const at = src.indexOf("export function buildModelWriteExecutor(");
+    // Phase 28 AD1: the runner is built in the door maker, shared by the model door and the act door.
+    const at = src.indexOf("function newDoorExecutor(");
     const body = src.slice(at, src.indexOf("\n}\n", at));
     // The CALL's argument text, not the bare name: `guardContext` must be a property of the
     // object passed to `createBeforeStateRunner(`, fed by the run-ask parameter.
     const call = body.slice(body.indexOf("createBeforeStateRunner("));
-    const arg = call.slice(0, call.indexOf("\n    }),"));
+    const arg = call.slice(0, call.indexOf("\n      }),"));
     expect(arg).toMatch(/guardContext:\s*\(\)\s*=>\s*\(\{\s*kb:\s*p\.getTribalKbConfig\(\)\s*\}\)/);
     // A required parameter: a construction site that forgets it fails typecheck.
     expect(src).toMatch(/\n {2}getTribalKbConfig: \(\) => TribalKbConfig \| undefined;\n/);
@@ -12728,13 +12766,17 @@ describe("I53 — a first-party connector write reaches the model only through t
     }
   });
 
-  test("the beforeStateRows test seam is named by no non-test gateway file but run-ask.ts", async () => {
+  test("the beforeStateRows test seam is named by no non-test gateway file but run-ask.ts and the act door's builder call", async () => {
     const files = await readDirFiles("packages/gateway/src");
     const naming = files
       .filter((f) => !f.rel.endsWith(".test.ts"))
       .filter((f) => /\bbeforeStateRows\b/.test(stripComments(f.contents)))
       .map((f) => f.rel.split("\\").join("/"));
-    expect(naming).toEqual(["engine/run-ask.ts"]);
+    // Phase 28 AD1: `ipc/capture-rpc.ts` passes the act door's wiring field through to
+    // `buildAgentWriteExecutor`. PRODUCTION never sets it: the wiring site, `platform/assemble.ts`,
+    // does not name it, so the rows are always the write table.
+    expect([...naming].sort()).toEqual(["engine/run-ask.ts", "ipc/capture-rpc.ts"]);
+    expect(naming).not.toContain("platform/assemble.ts");
   });
 
   test("the production rows with a before reader are B1's seven comment rows, B2's nine issue writes, B3's five page writes, B4a's Drive create, B4b's Obsidian append (all wave 2), C1's eight wave-3 file, pull request and incident writes, C2's four wave-3 branch, pull request and merge request writes and C3's five wave-3 flag and alert writes, D1's 28 wave-4 rows (27 offered, plus the never-offered Bitbucket merge) and D3b's seven deploy and mobile-release rows and D3c's two Kubernetes rows and SA2's Gmail thread archive", () => {
@@ -13152,7 +13194,7 @@ describe("I53 / I54 - D1c: a commit the model proposes is refused for a CI, hook
     );
   });
 
-  test("no bound row is proposable on the MCP act door (provenanceConsent shows no diff)", () => {
+  test("no bound row is proposable on the MCP act door (the classification table, until AD3: a bound proposal needs an approval surface that shows its diff or plan)", () => {
     for (const r of CONNECTOR_WRITE_ROWS.filter((row) => row.bound !== undefined)) {
       expect(ACTION_PROPOSABILITY[r.actionType]?.kind, r.actionType).toBe("denied");
     }
@@ -14345,5 +14387,32 @@ describe("I56 — a LAN session's records are encrypted only under ephemeral-DH 
   test("the protocol column and the config key exist, and the floor defaults to the compatibility window", () => {
     expect(CURRENT_SCHEMA_VERSION).toBeGreaterThanOrEqual(95);
     expect(DEFAULT_NIMBUS_LAN_TOML.minProtocol).toBe(1);
+  });
+});
+
+describe("AD1 — the agent origin is read through one helper, and the two outside origins cannot drift", () => {
+  test("no production gateway file compares an action's origin to a string literal, except the helper and the standing-rule check", async () => {
+    const files = await readDirFiles("packages/gateway/src");
+    const allowed = new Set(["engine/outside-origin.ts"]);
+    const hits = files
+      .filter((f) => !allowed.has(f.rel))
+      .filter((f) => /\.origin\s*[!=]==?\s*["'](model|agent)["']/.test(f.contents))
+      .map((f) => f.rel);
+    expect(hits).toEqual([]);
+    // The helper itself is where the two literals live, and the standing-rule check refuses any origin.
+    const helper = await read("packages/gateway/src/engine/outside-origin.ts");
+    expect(helper).toContain('return action.origin === "model";');
+    expect(helper).toContain('return action.origin === "agent";');
+    expect(helper).toContain("return isModelOrigin(action) || isAgentOrigin(action);");
+    const standing = await read("packages/gateway/src/engine/standing-rule-step.ts");
+    expect(standing).toContain("if (action.origin !== undefined) return undefined;");
+  });
+
+  test("the delegation fallback, the before-state runner and the Wave 4 guard all consult isOutsideOrigin", async () => {
+    const exec = await read("packages/gateway/src/engine/executor.ts");
+    expect(exec).toContain('if (isOutsideOrigin(action)) return "fallback";');
+    const bs = await read("packages/gateway/src/engine/before-state.ts");
+    expect(bs).toContain("if (isOutsideOrigin(action) && rows.some(");
+    expect(bs).toContain("!isOutsideOrigin(action) && options.readsEveryOrigin !== true");
   });
 });

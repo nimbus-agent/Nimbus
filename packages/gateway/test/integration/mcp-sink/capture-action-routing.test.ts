@@ -56,6 +56,7 @@ function makeAct(
       egressSink: makeEgressSink(db),
       audit: { recordAudit: (e) => appendAuditEntry(db, e) },
       policyHitl: NO_POLICY_OVERLAY,
+      getTribalKbConfig: () => undefined,
     },
     approve,
     "c-cli",

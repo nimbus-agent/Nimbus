@@ -2,6 +2,27 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [10.57.0](https://github.com/nimbus-agent/Nimbus/compare/v10.56.1...v10.57.0) (2026-11-13)
+
+
+### Features
+
+* **gateway:** the MCP act door runs proposals as agent-origin actions on the executor's own prompt (agent door AD1) ([#1993](https://github.com/nimbus-agent/Nimbus/issues/1993)) ([6e9a1c9](https://github.com/nimbus-agent/Nimbus/commit/6e9a1c920dfa68b08ec91d82b4ce470a8903d839))
+
+## [10.56.1](https://github.com/nimbus-agent/Nimbus/compare/v10.56.0...v10.56.1) (2026-11-13)
+
+
+### Bug Fixes
+
+* **deps:** move hono to 4.13.17 and @hono/node-server to 2.1.6 / 1.19.18 for eight new advisories ([#1994](https://github.com/nimbus-agent/Nimbus/issues/1994)) ([ba90a94](https://github.com/nimbus-agent/Nimbus/commit/ba90a94b9ba97e44098e6842113d8246e896faa2))
+
+## [10.56.0](https://github.com/nimbus-agent/Nimbus/compare/v10.55.0...v10.56.0) (2026-11-12)
+
+
+### Features
+
+* **gateway:** Vantage cloud costs and recommendations are indexed, local-only (FinOps FO2) ([#1985](https://github.com/nimbus-agent/Nimbus/issues/1985)) ([165fa43](https://github.com/nimbus-agent/Nimbus/commit/165fa435345eff0dcc59d419d08bad43b6cf9bdd))
+
 ## [10.55.0](https://github.com/nimbus-agent/Nimbus/compare/v10.54.0...v10.55.0) (2026-11-12)
 
 

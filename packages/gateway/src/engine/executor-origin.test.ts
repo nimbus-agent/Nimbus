@@ -10,9 +10,18 @@ import {
   NO_POLICY_OVERLAY,
   ToolExecutor,
 } from "./executor.ts";
-import type { PlannedAction } from "./types.ts";
+import type { AgentProposer, PlannedAction } from "./types.ts";
 
 const LINE = "Requested by: the model";
+const PROPOSER: AgentProposer = {
+  door: "agent",
+  captureId: "cap_abc123",
+  label: "client",
+  labelSource: "declared",
+  summary: "a summary",
+  createdAt: 1_700_000_000_000,
+  expiresAt: 1_700_086_400_000,
+};
 
 describe("formatConsentPrompt — origin model", () => {
   test("a generic Details prompt carries the line after Type", () => {
@@ -90,7 +99,7 @@ describe("formatConsentPrompt — a GitHub write on a GitHub Enterprise Server",
 });
 
 describe("executor — origin model", () => {
-  function make(origin: boolean) {
+  function make(origin: boolean | "agent") {
     let remote = 0;
     let prompts = 0;
     const audits: string[] = [];
@@ -114,9 +123,12 @@ describe("executor — origin model", () => {
       NULL_EGRESS_SINK,
       NO_POLICY_OVERLAY,
     );
-    const action: PlannedAction = origin
-      ? { type: "email.send", payload: {}, origin: "model" }
-      : { type: "email.send", payload: { origin: "model" } };
+    const action: PlannedAction =
+      origin === "agent"
+        ? { type: "email.send", payload: {}, origin: "agent", proposer: PROPOSER }
+        : origin
+          ? { type: "email.send", payload: {}, origin: "model" }
+          : { type: "email.send", payload: { origin: "model" } };
     return { exec, action, counts: () => ({ remote, prompts }), audits };
   }
   test("an in-scope delegate is not consulted: the local owner is prompted", async () => {
@@ -124,6 +136,12 @@ describe("executor — origin model", () => {
     expect((await h.exec.execute(h.action)).status).toBe("ok");
     expect(h.counts()).toEqual({ remote: 0, prompts: 1 });
     expect(h.audits[0]).toContain('"origin":"model"');
+  });
+  test("I20: an agent-origin action never reaches the delegate either; the local owner is prompted", async () => {
+    const h = make("agent");
+    expect((await h.exec.execute(h.action)).status).toBe("ok");
+    expect(h.counts()).toEqual({ remote: 0, prompts: 1 });
+    expect(h.audits[0]).toContain('"origin":"agent"');
   });
   test("a forged payload.origin changes nothing: the delegate still answers", async () => {
     const h = make(false);

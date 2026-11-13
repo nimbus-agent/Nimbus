@@ -6,7 +6,7 @@
  *
  *  - runs only on the executors that carry a runner (`engine/run-ask.ts` `buildModelWriteExecutor`
  *    and, since Phase 10 SA2, `buildWorkflowWriteExecutor`: the only two places a runner is built,
- *    static rule D40(b)), and only for an `origin: "model"` action, or for any action when the
+ *    static rule D40(b)), and only for an `origin: "model"` or `"agent"` action (`isOutsideOrigin`), or for any action when the
  *    runner was built with `readsEveryOrigin` (the workflow write step's, whose actions come from
  *    the owner's own stored steps and carry no origin), and only after the delegation check fell
  *    back to the owner's prompt;
@@ -67,6 +67,7 @@ import {
   pickBeforeReaderArgs,
 } from "../connectors/connector-writes/types.ts";
 import { mcpClientToolKey } from "../connectors/lazy-mesh/tool-map.ts";
+import { isOutsideOrigin } from "./outside-origin.ts";
 import { serviceOf } from "./service-of.ts";
 import { extractToolInput } from "./tool-input.ts";
 import type { ActionResult, PlannedAction } from "./types.ts";
@@ -133,7 +134,7 @@ export class BeforeStateRefusedError extends Error {
 }
 
 /**
- * D1: an `origin: "model"` action of a Wave 4 type whose typed preview could not be built has no
+ * D1: an `origin: "model"` or `"agent"` action of a Wave 4 type whose typed preview could not be built has no
  * before-state to show, so it is refused like any other unread Wave 4 target, before any prompt,
  * with {@link WAVE4_BEFORE_REFUSAL}. The row is found from `action.type` alone (I3). Called by
  * `ToolExecutor` only when its preview is absent; any other action passes through.
@@ -142,7 +143,7 @@ export function throwIfWave4WithoutPreview(
   action: PlannedAction,
   rows: readonly ConnectorWriteRow[],
 ): void {
-  if (action.origin === "model" && rows.some((r) => r.wave === 4 && r.actionType === action.type)) {
+  if (isOutsideOrigin(action) && rows.some((r) => r.wave === 4 && r.actionType === action.type)) {
     throw new BeforeStateRefusedError(WAVE4_BEFORE_REFUSAL);
   }
 }
@@ -170,10 +171,10 @@ export interface BeforeStateRunnerOptions {
    */
   readonly guardContext?: () => BeforeGuardContext;
   /**
-   * Read for an action of ANY origin, not only `origin: "model"`. Set only by
+   * Read for an action of ANY origin, not only an outside one (`model` or `agent`). Set only by
    * `buildWorkflowWriteExecutor`: every action that executor runs is a workflow write step the
    * owner is about to approve, and the guard and the current state matter there as much as on the
-   * model door. Absent (the door's runner): only a model-origin action is read.
+   * model door. Absent (the door runner): only a model- or agent-origin action is read.
    */
   readonly readsEveryOrigin?: boolean;
   readonly timeoutMs?: number;
@@ -441,7 +442,7 @@ export function createBeforeStateRunner(options: BeforeStateRunnerOptions = {}):
   return {
     rows,
     async read(action, ops, opts = {}) {
-      if (action.origin !== "model" && options.readsEveryOrigin !== true) return undefined;
+      if (!isOutsideOrigin(action) && options.readsEveryOrigin !== true) return undefined;
       const row = findConnectorWriteRow(action, rows);
       if (row === undefined) return undefined;
       const reader = row.before;

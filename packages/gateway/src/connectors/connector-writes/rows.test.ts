@@ -180,8 +180,8 @@ describe("connector write preview templates", () => {
     ).toEqual([]);
   });
   // The A2 tripwire that stood here ("no proposable row has a template yet") is retired: the act
-  // door now shows the typed preview under the provenance header (ipc/capture-rpc.ts
-  // `actConsentDisplay`, proven in capture-rpc.test.ts with a synthetic templated proposable row).
+  // door now shows the typed preview in the executor's own prompt (Phase 28 AD1: the door maker
+  // builds it, as for the model; proven in capture-rpc.test.ts with a synthetic templated proposable row).
 });
 
 /** The 14 writes `@nimbus-dev/connectors` 0.4.0 added (Phase 9.7 B-X), spelled out. */

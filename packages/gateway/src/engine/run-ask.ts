@@ -61,7 +61,7 @@ import { type ClassifiedIntent, type ClassifierEgressPolicy, classifyIntent } fr
 import { runConversationalAgent } from "./run-conversational-agent.ts";
 import type { NotifyGasLimit, StepBudgetExhausted } from "./step-budget.ts";
 import { wrapToolOutput } from "./tool-output-envelope.ts";
-import type { ConnectorDispatcher, ConsentChannel, PlannedAction } from "./types.ts";
+import type { AuditSink, ConnectorDispatcher, ConsentChannel, PlannedAction } from "./types.ts";
 
 const runAskLog = pino({
   name: "run-ask",
@@ -674,6 +674,7 @@ function newTurnExecutor(
     bindConsentChannel(p.consentCoordinator, p.clientId),
     delegation,
     extras,
+    p.localIndex,
   );
 }
 
@@ -683,10 +684,11 @@ function newTurnExecutor(
  * names. Everything but the channel comes from the same arguments, so the two cannot drift.
  */
 function newExecutorOnChannel(
-  p: Omit<ExecutorBuildParams, "clientId" | "consentCoordinator">,
+  p: Omit<ExecutorBuildParams, "clientId" | "consentCoordinator" | "localIndex">,
   consent: ConsentChannel,
   delegation: ExecutorDelegationDep | undefined,
   extras: ToolExecutorExtras,
+  audit: AuditSink,
 ): ToolExecutor {
   // I29: every real connector dispatch routes through this executor, so it carries the egress sink
   // (append-before-dispatch). A connector tool call (read OR write) is an outbound event and is
@@ -696,7 +698,7 @@ function newExecutorOnChannel(
   // that fallback is gone, so a caller can no longer get a no-op sink without saying so.
   return new ToolExecutor(
     consent,
-    p.localIndex,
+    audit,
     p.dispatcher,
     delegation,
     p.egressSink,
@@ -709,17 +711,70 @@ function newExecutorOnChannel(
 /**
  * The connector-write door's executor: {@link buildAskExecutor}'s shape with NO delegation (I20),
  * so a model-requested write is only ever approved by the local owner — the first of two layers;
- * the second is the `origin: "model"` every door action carries. It alone carries the before-state
- * runner (spec § 5.4, D40(b)), so only the door's prompt reads a write's current state.
+ * the second is the `origin: "model"` every door action carries. With the MCP act door's
+ * ({@link buildAgentWriteExecutor}) and the workflow write executor's it is one of the only
+ * executors that carry the before-state runner (spec § 5.4, D40(b)), so only a door's prompt reads
+ * a write's current state. It is a one-line call of the shared door maker.
  */
-export function buildModelWriteExecutor(p: RunAskParams): ToolExecutor {
-  return newTurnExecutor(p, undefined, {
-    beforeState: createBeforeStateRunner({
-      ...(p.beforeStateRows === undefined ? {} : { rows: p.beforeStateRows }),
-      // B3 (R11): the KB-child guards read the tribal KB destinations, snapshotted per read.
-      guardContext: () => ({ kb: p.getTribalKbConfig() }),
-    }),
-  });
+export function buildModelWriteExecutor(p: ModelWriteExecutorParams): ToolExecutor {
+  return newDoorExecutor(p, bindConsentChannel(p.consentCoordinator, p.clientId), p.localIndex);
+}
+
+/** What the model door builds its executor from: the turn's shared arguments. */
+export type ModelWriteExecutorParams = Omit<ExecutorBuildParams, "localIndex"> &
+  Pick<RunAskParams, "beforeStateRows" | "getTribalKbConfig"> & {
+    /** The audit sink (production: the turn's `LocalIndex`). */
+    readonly localIndex: AuditSink;
+  };
+
+/**
+ * What the MCP act door (Phase 28 AD1) builds its executor from, per accept: the ACCEPTING
+ * session's client and consent coordinator, the wiring's dispatcher, egress sink, audit sink and
+ * policy, and the KB accessor the guards read. `getTribalKbConfig` is REQUIRED: an absent KB config
+ * would let the KB-child guards pass (fail open).
+ */
+export type AgentWriteExecutorParams = Omit<ExecutorBuildParams, "localIndex"> &
+  Pick<RunAskParams, "beforeStateRows" | "getTribalKbConfig"> & {
+    readonly audit: AuditSink;
+  };
+
+/**
+ * The MCP act door's executor (static D39(e)): the SAME door maker as {@link buildModelWriteExecutor}
+ * (no delegation, the before-state runner), so the two doors cannot drift. The action it runs
+ * carries `origin: "agent"` and the gateway-set proposer (`ipc/capture-rpc.ts`).
+ *
+ * The census in `security-invariants.test.ts` (I55, "the model door and the ask turn have no
+ * standing rules") slices this file by function ORDER, from `buildModelWriteExecutor` to
+ * `buildWorkflowWriteExecutor`: keep both where they are, with these builders between them.
+ */
+export function buildAgentWriteExecutor(p: AgentWriteExecutorParams): ToolExecutor {
+  return newDoorExecutor(p, bindConsentChannel(p.consentCoordinator, p.clientId), p.audit);
+}
+
+/**
+ * The ONE place a connector-write door executor is made (static D40(b)): no delegation (I20) and
+ * the before-state runner, with NO `readsEveryOrigin` (it reads for an outside origin only) and NO
+ * standing-rule dependencies (I55). The model door and the MCP act door are one-line calls of it.
+ */
+function newDoorExecutor(
+  p: Omit<ExecutorBuildParams, "clientId" | "consentCoordinator" | "localIndex"> &
+    Pick<RunAskParams, "beforeStateRows" | "getTribalKbConfig">,
+  consent: ConsentChannel,
+  audit: AuditSink,
+): ToolExecutor {
+  return newExecutorOnChannel(
+    p,
+    consent,
+    undefined,
+    {
+      beforeState: createBeforeStateRunner({
+        ...(p.beforeStateRows === undefined ? {} : { rows: p.beforeStateRows }),
+        // B3 (R11): the KB-child guards read the tribal KB destinations, snapshotted per read.
+        guardContext: () => ({ kb: p.getTribalKbConfig() }),
+      }),
+    },
+    audit,
+  );
 }
 
 /** What a workflow run needs to build its write executor: the ask turn's shared executor arguments. */
@@ -736,7 +791,7 @@ export type WorkflowWriteExecutorParams = ExecutorBuildParams &
  * the owner's OWN saved workflow. Consent is bound to the run's client, no delegation (only the
  * owner approves a workflow write, I20), and the before-state runner, so a row's guard runs and the
  * owner sees the current state beside the new values. It is the second (and last) place a
- * before-state runner is built (static D40(b)). It offers nothing to the model: the actions come
+ * before-state runner is built (static D40(b): the door maker's is the other). It offers nothing to the model: the actions come
  * from the owner's stored steps, never from model output. It is also the ONLY executor given the
  * standing-rule check's dependencies (I55, static D44(e)): every other executor has none and so
  * can never approve an action by a rule.
@@ -780,20 +835,26 @@ function newWorkflowWriteExecutor(
   consent: ConsentChannel,
   unattended: boolean,
 ): ToolExecutor {
-  return newExecutorOnChannel(p, consent, undefined, {
-    beforeState: createBeforeStateRunner({
-      readsEveryOrigin: true,
-      ...(p.beforeStateRows === undefined ? {} : { rows: p.beforeStateRows }),
-      guardContext: () => ({ kb: p.getTribalKbConfig() }),
-    }),
-    standingRules: createStandingRuleDeps({
-      db: p.localIndex.getDatabase(),
-      enforcedPolicy: p.enforcedPolicy,
-      getTribalKbConfig: p.getTribalKbConfig,
-      ...(p.standingNow === undefined ? {} : { now: p.standingNow }),
-    }),
-    unattended,
-  });
+  return newExecutorOnChannel(
+    p,
+    consent,
+    undefined,
+    {
+      beforeState: createBeforeStateRunner({
+        readsEveryOrigin: true,
+        ...(p.beforeStateRows === undefined ? {} : { rows: p.beforeStateRows }),
+        guardContext: () => ({ kb: p.getTribalKbConfig() }),
+      }),
+      standingRules: createStandingRuleDeps({
+        db: p.localIndex.getDatabase(),
+        enforcedPolicy: p.enforcedPolicy,
+        getTribalKbConfig: p.getTribalKbConfig,
+        ...(p.standingNow === undefined ? {} : { now: p.standingNow }),
+      }),
+      unattended,
+    },
+    p.localIndex,
+  );
 }
 
 async function runActionsPlan(

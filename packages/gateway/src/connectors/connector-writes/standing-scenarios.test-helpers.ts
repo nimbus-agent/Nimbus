@@ -189,6 +189,24 @@ export const BREAKERS: readonly Breaker[] = [
     },
   },
   {
+    name: "origin is agent",
+    apply: (s) => {
+      s.action = {
+        ...s.action,
+        origin: "agent",
+        proposer: {
+          door: "agent",
+          captureId: "cap_breaker",
+          label: null,
+          labelSource: "declared",
+          summary: "s",
+          createdAt: 0,
+          expiresAt: 1,
+        },
+      };
+    },
+  },
+  {
     name: "a wave 4 row",
     apply: (s) =>
       aimAtRow(
