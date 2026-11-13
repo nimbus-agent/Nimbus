@@ -244,9 +244,7 @@ export class CaptureStore {
   /** One connection's own captures, newest first (`capture.mine`). */
   listBySession(sessionId: string, limit: number): CaptureRow[] {
     const rows = this.db
-      .query(
-        "SELECT * FROM capture WHERE session_id = ? ORDER BY created_at DESC, id DESC LIMIT ?",
-      )
+      .query("SELECT * FROM capture WHERE session_id = ? ORDER BY created_at DESC, id DESC LIMIT ?")
       .all(sessionId, limit) as RawRow[];
     return rows.map(toRow);
   }

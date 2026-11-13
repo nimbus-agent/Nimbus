@@ -4022,6 +4022,15 @@ describe("I28 — MCP content enters only through the capture gate, in a fixed o
     expect(entries).toEqual(["captures.get", "captures.list"]);
   });
 
+  test("AD2: approvals is LAN-forbidden by namespace and is on no Tauri allowlist entry line", async () => {
+    const lan = await read("packages/gateway/src/ipc/lan-rpc.ts");
+    expect(lan).toMatch(/"capture",\s*"captures",[\s\S]*?"approvals"/);
+    const tauri = await read("packages/ui/src-tauri/src/gateway_bridge.rs");
+    // Entry lines only: the Rust negative test asserts these names without a trailing comma line.
+    expect([...tauri.matchAll(/^\s*"(approvals\.[A-Za-z]+|capture\.mine)",\s*$/gm)]).toEqual([]);
+    expect(tauri).toContain("fn allowlist_approvals_never_renderer()");
+  });
+
   test("capture items are never extraction input", async () => {
     const { DECISION_SOURCE_TYPES } = await import("./decisions/decision-source-types.ts");
     const { GLOSSARY_SOURCE_TYPES } = await import("./glossary/glossary-source-types.ts");

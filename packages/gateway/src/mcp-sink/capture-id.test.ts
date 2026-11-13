@@ -1,6 +1,6 @@
+import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { expect, test } from "bun:test";
 import { newCaptureId } from "./capture-id.ts";
 
 test("newCaptureId is cap_ plus 32 hex digits (128 random bits)", () => {

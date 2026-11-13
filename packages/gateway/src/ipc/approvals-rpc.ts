@@ -12,10 +12,10 @@ import {
 import { type ActionPayload, CaptureError } from "../mcp-sink/capture-types.ts";
 import { dispatchByMethod, type RpcMissOrHit } from "./_lib/dispatch-by-method.ts";
 import {
+  actWriteRows,
   buildActDeps,
   type CaptureActWiring,
   type CaptureRpcCtx,
-  actWriteRows,
   captureErrorToRpc,
   idParam,
 } from "./capture-rpc.ts";
@@ -70,10 +70,7 @@ interface ProposalView {
 /** The wave and typed-confirm flag of the real write row for an action type; a user-MCP type has none. */
 function rowFacts(actionType: string, w: CaptureActWiring | undefined): ProposalView {
   const toolId = proposableWriteTool(actionType);
-  const found =
-    toolId === undefined
-      ? undefined
-      : rowNamedByToolId(toolId, actWriteRows(w));
+  const found = toolId === undefined ? undefined : rowNamedByToolId(toolId, actWriteRows(w));
   return found === undefined
     ? { wave: null, typedConfirm: false }
     : { wave: found.wave, typedConfirm: found.confirm !== undefined };

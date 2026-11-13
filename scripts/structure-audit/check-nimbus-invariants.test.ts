@@ -2542,7 +2542,10 @@ describe("D32(c) — capture-gate.ts is value-imported only by the two RPC modul
   test("AD2: a bare ipc/approvals-rpc.ts entry would not exempt the file (full repo-relative paths only)", () => {
     expect(
       checkCaptureGateImporters([
-        file("ipc/approvals-rpc.ts", 'import { acceptCapture } from "../mcp-sink/capture-gate.ts";'),
+        file(
+          "ipc/approvals-rpc.ts",
+          'import { acceptCapture } from "../mcp-sink/capture-gate.ts";',
+        ),
       ]),
     ).toEqual([]); // outside packages/gateway/src/: not scanned at all
     expect(

@@ -15,6 +15,7 @@ import { APPROVER_BY_KIND } from "../mcp-sink/capture-client-policy.ts";
 import type { CaptureGateDeps } from "../mcp-sink/capture-gate.ts";
 import { CaptureAttemptLimiter, CaptureRefusalCounter } from "../mcp-sink/capture-rate-limit.ts";
 import { CaptureStore } from "../mcp-sink/capture-store.ts";
+import { createMockVault } from "../vault/mock.ts";
 import {
   APPROVALS_METHODS,
   dispatchApprovalsRpc,
@@ -24,7 +25,12 @@ import {
 import type { CaptureRpcCtx } from "./capture-rpc.ts";
 import type { ConsentCoordinator } from "./consent.ts";
 import { ConsentCoordinatorImpl } from "./consent.ts";
+import { createStreamRegistry } from "./engine-ask-stream.ts";
+import { checkLanMethodAllowed, LanError } from "./lan-rpc.ts";
 import type { ClientKind } from "./server/client-kind.ts";
+import { phase4RpcSkipped, type ServerCtx } from "./server/context.ts";
+import { tryDispatchPhase4Rpc } from "./server/dispatchers.ts";
+import type { CreateIpcServerOptions } from "./server/options.ts";
 
 const KINDS: readonly ClientKind[] = [
   "cli",
@@ -485,4 +491,88 @@ describe("the method table", () => {
       kind: "miss",
     });
   });
+});
+
+function serverCtx(
+  overrides: Partial<CreateIpcServerOptions>,
+  kinds: Record<string, ClientKind>,
+): ServerCtx {
+  return {
+    options: { listenPath: "", vault: createMockVault(), version: "test", ...overrides },
+    consentImpl: new ConsentCoordinatorImpl(() => undefined),
+    startedAtMs: Date.now(),
+    streamRegistry: createStreamRegistry(),
+    broadcastNotification: () => {},
+    getAgentInvokeHandler: () => undefined,
+    getWorkflowRunHandler: () => undefined,
+    getClientKind: (id: string) => kinds[id] ?? "unknown",
+  } as unknown as ServerCtx;
+}
+
+describe("routing through tryDispatchPhase4Rpc (the entry server.ts calls)", () => {
+  test.each([...APPROVALS_METHODS])(
+    "%s reaches the handler with the CONNECTION's kind, never a param",
+    async (method) => {
+      insertAction("cap_a");
+      const s = serverCtx({ captureRpcCtx: ctx }, { o: "cli", u: "unknown", m: "mcp" });
+      // An undeclared connection claiming cli in the params is still refused.
+      for (const id of ["u", "m"]) {
+        await expect(
+          tryDispatchPhase4Rpc(s, method, { id: "cap_a", clientKind: "cli", kind: "cli" }, id),
+        ).rejects.toMatchObject({ rpcData: { code: "ERR_CAPTURE_FORBIDDEN_CLIENT" } });
+      }
+      // A declared cli connection reaches the handler (list, get and decline answer; approve is
+      // refused DISABLED only because this server context has no consent channel wired to a client).
+      if (method === "approvals.list") {
+        expect(await tryDispatchPhase4Rpc(s, method, {}, "o")).toMatchObject({
+          proposals: [{ id: "cap_a" }],
+        });
+      } else if (method === "approvals.get") {
+        expect(await tryDispatchPhase4Rpc(s, method, { id: "cap_a" }, "o")).toMatchObject({
+          id: "cap_a",
+        });
+      } else if (method === "approvals.decline") {
+        expect(await tryDispatchPhase4Rpc(s, method, { id: "cap_a" }, "o")).toEqual({
+          id: "cap_a",
+          state: "rejected",
+        });
+      } else {
+        // The route hands approve the server's own coordinator: no client writer, so the executor's
+        // prompt cannot be delivered and the proposal is not executed.
+        const out = (await tryDispatchPhase4Rpc(s, method, { id: "cap_a" }, "o")) as {
+          state: string;
+        };
+        expect(out.state).not.toBe("executed");
+        expect(writesOf()).toEqual([]);
+      }
+    },
+  );
+
+  test("skipped when captureRpcCtx is unset; an unknown approvals method falls through", async () => {
+    const none = serverCtx({}, { o: "cli" });
+    expect(await tryDispatchPhase4Rpc(none, "approvals.list", {}, "o")).toBe(phase4RpcSkipped);
+    const s = serverCtx({ captureRpcCtx: ctx }, { o: "cli" });
+    expect(await tryDispatchPhase4Rpc(s, "approvals.nonesuch", {}, "o")).toBe(phase4RpcSkipped);
+  });
+
+  test("capture.mine routes with the connection's kind", async () => {
+    const s = serverCtx({ captureRpcCtx: ctx }, { m: "mcp", o: "cli" });
+    expect(await tryDispatchPhase4Rpc(s, "capture.mine", {}, "m")).toEqual({ captures: [] });
+    await expect(tryDispatchPhase4Rpc(s, "capture.mine", {}, "o")).rejects.toMatchObject({
+      rpcData: { code: "ERR_CAPTURE_FORBIDDEN_CLIENT" },
+    });
+  });
+});
+
+describe("LAN: the denylist trap", () => {
+  test.each([...APPROVALS_METHODS, "capture.mine"])(
+    "%s is not callable over LAN, even with writes granted",
+    (method) => {
+      for (const writeAllowed of [true, false]) {
+        expect(() => checkLanMethodAllowed(method, { peerId: "p", writeAllowed })).toThrow(
+          LanError,
+        );
+      }
+    },
+  );
 });

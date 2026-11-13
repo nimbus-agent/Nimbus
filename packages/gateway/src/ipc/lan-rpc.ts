@@ -239,6 +239,9 @@ const FORBIDDEN_OVER_LAN = new Set([
   // MCP capture sink (I28): agent notes and their owner review are local-only surfaces.
   "capture",
   "captures",
+  // Phase 28 AD2: the owner's queue of agent proposals and the one-step approval. This set is a
+  // DENYLIST, so a new namespace is LAN-reachable by default; approving is the local owner's act.
+  "approvals",
   // Phase 10 SA3 (I55): standing approval rules. The WHOLE namespace is local-only: creating or
   // resuming a rule is the local owner's approval, and a rule decides whether a write runs without
   // a prompt, so no paired peer may read, create, pause or revoke one (this set is a denylist).

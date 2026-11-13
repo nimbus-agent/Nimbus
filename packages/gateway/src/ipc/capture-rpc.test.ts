@@ -305,6 +305,7 @@ describe("LAN", () => {
     "captures.revoke",
     "captures.accept",
     "captures.purge",
+    "capture.mine",
   ])("%s is not callable over LAN (namespace denial covers future methods)", (method) => {
     expect(() => checkLanMethodAllowed(method, { peerId: "p", writeAllowed: true })).toThrow(
       LanError,
@@ -655,6 +656,21 @@ test("capture.state routes; captures.accept passes ActDeps when wiring + consent
   const id = (sub as { kind: "hit"; value: { id: string } }).value.id;
   const st = await dispatchCaptureRpc("capture.state", { id }, ctx, { clientId: "a", kind: "mcp" });
   expect(st).toEqual({ kind: "hit", value: { kind: "note", state: "live" } });
+});
+
+test("capture.mine lists only the asking connection's captures, with no payload", async () => {
+  const a = { clientId: "a", kind: "mcp" as const };
+  const b = { clientId: "b", kind: "mcp" as const };
+  await dispatchCaptureRpc("capture.submit", NOTE, ctx, a);
+  await dispatchCaptureRpc("capture.submit", NOTE, ctx, b);
+  const mine = await dispatchCaptureRpc("capture.mine", {}, ctx, a);
+  expect(mine).toEqual({
+    kind: "hit",
+    value: { captures: [{ id: "cap_1", kind: "note", state: "live", createdAt: 1_000 }] },
+  });
+  await expect(
+    dispatchCaptureRpc("capture.mine", {}, ctx, { clientId: "o", kind: "cli" }),
+  ).rejects.toMatchObject({ rpcData: { code: "ERR_CAPTURE_FORBIDDEN_CLIENT" } });
 });
 
 describe("captures.accept on an action (act door wiring)", () => {
