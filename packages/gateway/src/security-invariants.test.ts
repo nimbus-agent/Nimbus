@@ -4252,6 +4252,72 @@ describe("I28 — MCP content enters only through the capture gate, in a fixed o
     );
     expect(c.actionEnabled).toBe(false);
   });
+
+  // ---- Phase 28 AD2: the owner's queue and one-step approval (`approvals.*`) ----------------------
+
+  test("AD2: approvals-rpc.ts checks the connection kind, reaches the gate only via acceptCapture, never acceptAction, and imports nothing from llm/", async () => {
+    const src = stripStringLiterals(
+      stripComments(await read("packages/gateway/src/ipc/approvals-rpc.ts")),
+    );
+    const approve = src.slice(src.indexOf("async function approve("));
+    // requireApprover is the first call of every handler, before the gate is touched.
+    for (const m of ["approvals.list", "approvals.get", "approvals.approve", "approvals.decline"]) {
+      expect(await read("packages/gateway/src/ipc/approvals-rpc.ts")).toContain(`"${m}"`);
+    }
+    expect(src.match(/requireApprover\(c\.caller\);/g)).toHaveLength(4);
+    // approve: the kind check (getCapture via requireActionRow) precedes acceptCapture, which
+    // precedes the reply; the human-only wrapper is built before acceptCapture runs.
+    const iRow = approve.indexOf("requireActionRow(");
+    const iWrap = approve.indexOf("humanOnlyConsent(");
+    const iAccept = approve.indexOf("acceptCapture(");
+    const iReply = approve.indexOf("NON_HUMAN_REASON");
+    expect(iRow).toBeGreaterThan(-1);
+    expect(iRow).toBeLessThan(iWrap);
+    expect(iWrap).toBeLessThan(iAccept);
+    expect(iAccept).toBeLessThan(iReply);
+    expect(src).not.toMatch(/\bacceptAction\b/);
+    expect(src).not.toMatch(/\bToolExecutor\b|\bbuildAgentWriteExecutor\b/);
+    expect(src).not.toMatch(/from\s+["'][^"']*\/llm\//);
+  });
+
+  test("AD2: the human-only wrapper lives in ipc/consent.ts and is used only by approvals-rpc.ts; capture-rpc.ts has neither it nor delegation", async () => {
+    const consent = await read("packages/gateway/src/ipc/consent.ts");
+    expect(consent).toMatch(/export function humanOnlyConsent\(/);
+    expect(consent).toContain('answer.answerSource !== "human"');
+    const users = (await grepRepo(/\bhumanOnlyConsent\b/)).filter(
+      (p) => !p.endsWith("/ipc/consent.ts"),
+    );
+    expect(users).toEqual(["packages/gateway/src/ipc/approvals-rpc.ts"]);
+    const rpc = stripComments(await read("packages/gateway/src/ipc/capture-rpc.ts"));
+    expect(rpc).not.toContain("humanOnlyConsent");
+    expect(rpc).not.toContain("delegation");
+  });
+
+  test("AD2: buildActDeps is the only place under ipc/ that builds the act door's executor", async () => {
+    const files = await readDirFiles("packages/gateway/src/ipc");
+    const builders = files
+      .filter((f) => /\bbuildAgentWriteExecutor\(/.test(stripComments(f.contents)))
+      .map((f) => f.rel);
+    expect(builders).toEqual(["capture-rpc.ts"]);
+    const count = (
+      stripComments(await read("packages/gateway/src/ipc/capture-rpc.ts")).match(
+        /\bbuildAgentWriteExecutor\(/g,
+      ) ?? []
+    ).length;
+    expect(count).toBe(1);
+  });
+
+  test("AD2: capture.state answers only its submitter, and APPROVER_BY_KIND is cli and ui", async () => {
+    const gate = stripComments(await read("packages/gateway/src/mcp-sink/capture-gate.ts"));
+    expect(gate).toContain("row.sessionId !== caller.clientId");
+    const { APPROVER_BY_KIND } = await import("./mcp-sink/capture-client-policy.ts");
+    expect(
+      Object.entries(APPROVER_BY_KIND)
+        .filter(([, v]) => v)
+        .map(([k]) => k)
+        .sort((a, b) => a.localeCompare(b)),
+    ).toEqual(["cli", "ui"]);
+  });
 });
 
 describe("I29 — egress-ledger completeness over the executor chokepoint", () => {

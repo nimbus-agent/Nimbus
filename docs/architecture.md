@@ -3077,7 +3077,11 @@ yields no capture tool rather than a guessed one.
 | `captures.accept` | owner | write a proposal's native row (decision, term or link) |
 | `captures.reject` | owner | discard a proposal; needs no capability |
 | `captures.purge` | owner | delete a finished action row (`executed`/`failed`/`rejected`/`expired`) and its stored input; needs no capability; the action is not undone |
-| `capture.state` | `mcp` kind only | kind, state, `expiresAt`, `outcomeRef`, `errorCode` for ONE capture id (PR 3) |
+| `capture.state` | `mcp` kind only | kind, state, `expiresAt`, `outcomeRef`, `errorCode` for ONE capture id the asking connection submitted (any other id is `ERR_CAPTURE_NOT_FOUND`, as an absent one) |
+| `capture.mine` | `mcp` kind only | the asking connection's own captures, newest first, at most 50: id, kind, state, times, `outcomeRef`, `errorCode`; never a payload (Phase 28 AD2) |
+| `approvals.list` / `approvals.get` | `cli` or `ui` connection | the owner's queue of waiting action proposals (escaped, oldest first) and one proposal's verbatim input (Phase 28 AD2; not renderer-exposed) |
+| `approvals.approve` | `cli` or `ui` connection | approve one proposal in one step through `acceptCapture`: the executor's prompt reaches this connection, `human` answers only (Phase 28 AD2) |
+| `approvals.decline` | `cli` or `ui` connection | reject a waiting action proposal |
 
 **Config.** `[mcp_sink]`: `enabled` (false), `kinds`, `max_per_hour` (30, 1..1000),
 `max_pending` (100, 1..10000); PR 3 added `action_ttl_hours` and `action_max_pending` (see the act door). Out-of-range values and unknown kinds refuse at load, naming the key
@@ -3085,8 +3089,8 @@ and value; nothing is clamped.
 
 **Static D32** has seven clauses; the first three arrived with PR 1, (d) with PR 2 and (e)–(g) with PR 3 (each described below): (a) the `capture` table identifier only in `capture-store.ts` and
 the V67 SQL module; (b) `submitCapture`/`acceptCapture`/`rejectCapture`/`revokeCapture` named only in
-`ipc/capture-rpc.ts` and `capture-gate.ts`; (c) `capture-gate.ts` value-imported (or re-exported, or
-dynamically imported) by no gateway module except `ipc/capture-rpc.ts`.
+`ipc/capture-rpc.ts`, `ipc/approvals-rpc.ts` (Phase 28 AD2) and `capture-gate.ts`; (c) `capture-gate.ts` value-imported (or re-exported, or
+dynamically imported) by no gateway module except those two RPC modules.
 
 **Not shipped, and recorded as such.** The desktop has a Captures page (2026-10-16) but it is read-only: it lists and shows captures, and accepting, rejecting, revoking and purging happen only in a terminal. Opening it runs the same action-expiry sweep `captures.list` always runs, so an overdue proposed action can turn `expired` (with its `capture.action.expire` audit row) just as it does under `nimbus captures list`. Batch accept (`nimbus captures accept --all`, 2026-10-16) is a CLI loop over `captures.list` and `captures.accept` with no gateway method of its own; it takes decisions, terms and links only, never an action. `data.delete --service nimbus` removes
 capture items but does not clear `capture` rows. The attempt limit is in-memory. A live note is searchable
@@ -3248,10 +3252,10 @@ before the connector runs (I29), so a window with no accepted action has no row.
 1..100). Reads (`listCaptures`, `getCapture`, `captureStateFor`, `captureStatus`) first expire due actions and audit
 each, so the state they report is the stored state; the boot sweep expires and fails interrupted actions. `expired`
 and `rejected` actions are pruned on the existing rejected-retention clock; `executed` and `failed` rows are KEPT
-(the history of what agents caused). `capture.state` answers for ANY capture id to any `mcp`-kind client, not only
-the submitter's (ids are random); it returns state, expiry, `outcomeRef` and error code, never the payload.
+(the history of what agents caused). `capture.state` answers only for ids the asking connection submitted (since Phase 28 AD2; another connection's id is
+`ERR_CAPTURE_NOT_FOUND`, as an absent one, and ids carry 128 random bits); it returns state, expiry, `outcomeRef` and error code, never the payload.
 
-**Static D32(e)–(g).** (e) `acceptAction` is defined only in `capture-act.ts` and called only from `capture-gate.ts`;
+**Static D32(e)–(g).** (e) `acceptAction` is defined only in `capture-act.ts` and called only from `capture-gate.ts` (one call, in `acceptCapture`, which exactly the two RPC modules reach);
 (f) no non-test file under `packages/gateway/src/mcp-sink/` imports `engine/executor.ts` or anything under
 `connectors/`, type-only imports included, so execution, classification and configured-ness reach the sink only as
 injected functions built in `ipc/capture-rpc.ts` and `platform/assemble.ts`; (g) the `mcpToolId` literal

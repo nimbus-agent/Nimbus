@@ -43,6 +43,38 @@ export interface ConsentCoordinator {
   pendingCount(): number;
 }
 
+/**
+ * A consent channel on which only a person can approve. An approval whose `answerSource` is not
+ * `human` (`auto` is `--yes`, `script`, `unknown`, `delegate`, `remote`, `none`) becomes a decline
+ * BEFORE the executor records it, on both the plain and the typed-confirmation request, and
+ * `onNonHuman` is told so the owner's reply can say why.
+ */
+export function humanOnlyConsent(
+  inner: ConsentCoordinator,
+  onNonHuman: () => void,
+): ConsentCoordinator {
+  return {
+    async requestConsent(clientId, params) {
+      const answer = await inner.requestConsent(clientId, params);
+      if (answer.approved && answer.answerSource !== "human") {
+        onNonHuman();
+        return { approved: false, answerSource: answer.answerSource };
+      }
+      return answer;
+    },
+    async requestConfirmedConsent(clientId, params) {
+      const answer = await inner.requestConfirmedConsent(clientId, params);
+      if (answer.approved && answer.answerSource !== "human") {
+        onNonHuman();
+        return { approved: false, typed: "", answerSource: answer.answerSource };
+      }
+      return answer;
+    },
+    rejectAllPending: (message, reason) => inner.rejectAllPending(message, reason),
+    pendingCount: () => inner.pendingCount(),
+  };
+}
+
 /** The longest `typed` answer `consent.respond` accepts; a confirm text is at most 200 characters. */
 export const CONSENT_TYPED_MAX_LENGTH = 512;
 

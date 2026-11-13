@@ -1,3 +1,4 @@
+import { CONNECTOR_WRITE_ROWS } from "../connectors/connector-writes/index.ts";
 import {
   actDoorRefusal,
   type TribalKbConfig,
@@ -17,6 +18,7 @@ import {
   acceptCapture,
   type CaptureCaller,
   type CaptureGateDeps,
+  captureMine,
   captureStateFor,
   captureStatus,
   getCapture,
@@ -105,6 +107,14 @@ export function createActionDestinationRefusal(
   };
 }
 
+/**
+ * The write rows the act door previews and runs from: the wiring's rows (a test seam) or the write
+ * table. The one place outside `run-ask.ts` that names that seam, so its reach stays pinned.
+ */
+export function actWriteRows(w: CaptureActWiring | undefined): readonly ConnectorWriteRow[] {
+  return w?.beforeStateRows ?? CONNECTOR_WRITE_ROWS;
+}
+
 /** The fixed text when the write's credential instance cannot be established (echoes no stored value). */
 const CREDENTIAL_UNVERIFIED_REASON = "the credential the write would use could not be verified";
 
@@ -185,7 +195,7 @@ export function buildActDeps(
 
 type Ctx = { readonly gate: CaptureGateDeps; readonly caller: CaptureCaller };
 
-function idParam(params: unknown): unknown {
+export function idParam(params: unknown): unknown {
   return typeof params === "object" && params !== null
     ? (params as Record<string, unknown>)["id"]
     : undefined;
@@ -206,6 +216,7 @@ export async function dispatchCaptureRpc(
       {
         "capture.status": (_p, c) => captureStatus(c.gate),
         "capture.state": (p, c) => captureStateFor(c.gate, c.caller, idParam(p)),
+        "capture.mine": (_p, c) => captureMine(c.gate, c.caller),
         "capture.submit": (p, c) => submitCapture(c.gate, c.caller, p),
         "captures.list": (p, c) => listCaptures(c.gate, c.caller, p),
         "captures.get": (p, c) => getCapture(c.gate, c.caller, idParam(p)),
@@ -225,7 +236,12 @@ export async function dispatchCaptureRpc(
       },
     );
   } catch (e) {
-    if (e instanceof CaptureError) throw new RpcMethodError(-32001, e.message, { code: e.code });
-    throw e;
+    return captureErrorToRpc(e);
   }
+}
+
+/** A `CaptureError` becomes the JSON-RPC error both capture namespaces answer with; anything else rethrows. */
+export function captureErrorToRpc(e: unknown): never {
+  if (e instanceof CaptureError) throw new RpcMethodError(-32001, e.message, { code: e.code });
+  throw e;
 }

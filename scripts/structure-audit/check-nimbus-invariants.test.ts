@@ -2424,6 +2424,14 @@ describe("D32(e)(f)(g) — the act door", () => {
     expect(v[0]?.rule).toBe("act-door-accept-action");
   });
 
+  test("(e) AD2: acceptAction named in ipc/approvals-rpc.ts is still a violation (it reaches the door through acceptCapture)", () => {
+    const v = checkActDoorConfinement([
+      file("packages/gateway/src/ipc/approvals-rpc.ts", "acceptAction(d, c, r, a)"),
+    ]);
+    expect(v).toHaveLength(1);
+    expect(v[0]?.rule).toBe("act-door-accept-action");
+  });
+
   test("(e) importing a DIFFERENT symbol from capture-act.ts is not a violation", () => {
     expect(
       checkActDoorConfinement([
@@ -2518,9 +2526,47 @@ describe("D32(e)(f)(g) — the act door", () => {
   });
 });
 
-describe("D32(c) — capture-gate.ts is value-imported only by ipc/capture-rpc.ts", () => {
+describe("D32(c) — capture-gate.ts is value-imported only by the two RPC modules", () => {
   const file = (relPath: string, contents: string): FileEntry => ({ relPath, contents });
   const rpc = "packages/gateway/src/ipc/capture-rpc.ts";
+  const approvals = "packages/gateway/src/ipc/approvals-rpc.ts";
+
+  test("AD2: approvals-rpc.ts may value-import the gate", () => {
+    expect(
+      checkCaptureGateImporters([
+        file(approvals, 'import { acceptCapture } from "../mcp-sink/capture-gate.ts";'),
+      ]),
+    ).toEqual([]);
+  });
+
+  test("AD2: a bare ipc/approvals-rpc.ts entry would not exempt the file (full repo-relative paths only)", () => {
+    expect(
+      checkCaptureGateImporters([
+        file("ipc/approvals-rpc.ts", 'import { acceptCapture } from "../mcp-sink/capture-gate.ts";'),
+      ]),
+    ).toEqual([]); // outside packages/gateway/src/: not scanned at all
+    expect(
+      checkCaptureGateImporters([
+        file(
+          "packages/gateway/src/ipc/x-approvals-rpc.ts",
+          'import { acceptCapture } from "../mcp-sink/capture-gate.ts";',
+        ),
+      ]),
+    ).toHaveLength(1);
+  });
+
+  test("AD2: approvals-rpc.ts importing the executor is not a D32(c)/(f) matter (outside mcp-sink/)", () => {
+    expect(
+      checkCaptureGateImporters([
+        file(approvals, 'import { ToolExecutor } from "../engine/executor.ts";'),
+      ]),
+    ).toEqual([]);
+    expect(
+      checkActDoorConfinement([
+        file(approvals, 'import { ToolExecutor } from "../engine/executor.ts";'),
+      ]),
+    ).toEqual([]);
+  });
 
   test("allows the rpc value import and type imports anywhere", () => {
     expect(
@@ -2555,10 +2601,14 @@ describe("D32(c) — capture-gate.ts is value-imported only by ipc/capture-rpc.t
       "a value import after a semicolon-free side-effect import",
       'import "./polyfill"\nimport { a } from "../mcp-sink/capture-gate.ts"',
     ],
-  ])("FAILS on %s outside capture-rpc.ts", (_n, src) => {
+  ])("FAILS on %s outside the two RPC modules", (_n, src) => {
     expect(
       checkCaptureGateImporters([file("packages/gateway/src/platform/assemble.ts", src)]),
     ).toHaveLength(1);
+    expect(
+      checkCaptureGateImporters([file("packages/gateway/src/ipc/x-rpc.ts", src)]),
+    ).toHaveLength(1);
+    expect(checkCaptureGateImporters([file(approvals, src)])).toEqual([]);
   });
 
   test("ignores a mention in a comment and unrelated modules", () => {
@@ -2573,8 +2623,40 @@ describe("D32(c) — capture-gate.ts is value-imported only by ipc/capture-rpc.t
   });
 });
 
-describe("D32(b) — gate entry points are called only from ipc/capture-rpc.ts", () => {
+describe("D32(b) — gate entry points are called only from the two RPC modules", () => {
   const file = (relPath: string, contents: string): FileEntry => ({ relPath, contents });
+  const approvals = "packages/gateway/src/ipc/approvals-rpc.ts";
+
+  test("AD2: approvals-rpc.ts may name all five", () => {
+    expect(
+      checkCaptureGateCallers([
+        file(
+          approvals,
+          "submitCapture(a); acceptCapture(a); rejectCapture(a); revokeCapture(a); purgeCapture(a);",
+        ),
+      ]),
+    ).toEqual([]);
+  });
+
+  test.each(["submitCapture", "acceptCapture", "rejectCapture", "revokeCapture", "purgeCapture"])(
+    "AD2: %s named in a THIRD module (a new ipc/x-rpc.ts) fails",
+    (fn) => {
+      expect(
+        checkCaptureGateCallers([file("packages/gateway/src/ipc/x-rpc.ts", `${fn}(a, b, c)`)]),
+      ).toHaveLength(1);
+    },
+  );
+
+  test("AD2: an aliased import (acceptCapture as ac) in a third module fails", () => {
+    expect(
+      checkCaptureGateCallers([
+        file(
+          "packages/gateway/src/ipc/x-rpc.ts",
+          'import { acceptCapture as ac } from "../mcp-sink/capture-gate.ts";',
+        ),
+      ]),
+    ).toHaveLength(1);
+  });
 
   test("allows the rpc dispatcher and the gate's own definitions", () => {
     expect(

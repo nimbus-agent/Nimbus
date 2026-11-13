@@ -4000,14 +4000,23 @@ export function checkConfigReaderConfinement(files: readonly FileEntry[]): Viola
   return out;
 }
 
-// (b) The five gate entry points are CALLED only from ipc/capture-rpc.ts and DEFINED only in
-//     capture-gate.ts. Any other mention — a call or an import (aliased or not) — is a violation, so
-//     a second door cannot be opened by importing the function under another name.
+// (b) The five gate entry points are CALLED only from the two RPC modules, ipc/capture-rpc.ts and
+//     (agent door AD2) ipc/approvals-rpc.ts, and DEFINED only in capture-gate.ts. Any other mention
+//     — a call or an import (aliased or not) — is a violation, so a second door cannot be opened by
+//     importing the function under another name. Entries are FULL repo-relative paths: the check
+//     is `includes(f.relPath)`, so a bare `ipc/approvals-rpc.ts` would exempt nothing. A second
+//     caller INSIDE an allow-listed module is exempt whole-file; the behavioural test that
+//     `approvals.approve` calls `acceptCapture` after `getCapture` is authoritative.
 const D32_GATE_FN_RE =
   /\b(?:submitCapture|acceptCapture|rejectCapture|revokeCapture|purgeCapture)\b/g;
 const D32_GATE_ALLOWED: readonly string[] = [
   "packages/gateway/src/ipc/capture-rpc.ts",
+  "packages/gateway/src/ipc/approvals-rpc.ts",
   "packages/gateway/src/mcp-sink/capture-gate.ts",
+];
+const D32_GATE_IMPORTERS_ALLOWED: readonly string[] = [
+  "packages/gateway/src/ipc/capture-rpc.ts",
+  "packages/gateway/src/ipc/approvals-rpc.ts",
 ];
 
 export function checkCaptureGateCallers(files: readonly FileEntry[]): Violation[] {
@@ -4031,7 +4040,7 @@ export function checkCaptureGateCallers(files: readonly FileEntry[]): Violation[
   return out;
 }
 
-// (c) No module outside ipc/capture-rpc.ts may VALUE-import (or re-export, or dynamically import)
+// (c) No module outside the two RPC modules (ipc/capture-rpc.ts, ipc/approvals-rpc.ts) may VALUE-import (or re-export, or dynamically import)
 //     capture-gate.ts. (b) is an identifier scan, which a barrel `export * from ".../capture-gate.ts"`
 //     or a namespace import called through a computed key evades; this closes it at the module edge.
 //     `import type` / `export type` carry no runtime reference and are allowed anywhere. The span
@@ -4047,7 +4056,7 @@ export function checkCaptureGateImporters(files: readonly FileEntry[]): Violatio
   for (const f of files) {
     if (f.relPath.endsWith(".test.ts")) continue;
     if (!f.relPath.startsWith("packages/gateway/src/")) continue;
-    if (f.relPath === "packages/gateway/src/ipc/capture-rpc.ts") continue;
+    if (D32_GATE_IMPORTERS_ALLOWED.includes(f.relPath)) continue;
     const code = stripComments(f.contents);
     const original = f.contents.split("\n");
     for (const m of code.matchAll(D32_GATE_MODULE_RE)) {
@@ -5456,13 +5465,13 @@ async function run(): Promise<void> {
     const b = checkCaptureGateCallers(files);
     for (const e of b) {
       console.error(
-        `::error file=${e.file},line=${e.line}::D32(b) a capture gate entry point named outside ipc/capture-rpc.ts — I28 regression: ${e.snippet}`,
+        `::error file=${e.file},line=${e.line}::D32(b) a capture gate entry point named outside ipc/capture-rpc.ts and ipc/approvals-rpc.ts — I28 regression: ${e.snippet}`,
       );
     }
     const c = checkCaptureGateImporters(files);
     for (const e of c) {
       console.error(
-        `::error file=${e.file},line=${e.line}::D32(c) capture-gate.ts value-imported outside ipc/capture-rpc.ts — I28 regression: ${e.snippet}`,
+        `::error file=${e.file},line=${e.line}::D32(c) capture-gate.ts value-imported outside ipc/capture-rpc.ts and ipc/approvals-rpc.ts — I28 regression: ${e.snippet}`,
       );
     }
     const d = checkAgentProvenanceWriters(files);
