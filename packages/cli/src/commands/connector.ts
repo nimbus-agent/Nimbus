@@ -1423,7 +1423,9 @@ Usage:
   nimbus connector migrate decline <id>              Keep it off; items are kept
   nimbus connector migrate retry [--json]            Prepare failed and declined migrations again
   nimbus connector writes enable <service> [--wave 2|3|4]   Let the model propose this service's writes (asks you; each call still asks)
-  nimbus connector writes disable <service>
+  nimbus connector writes enable <service> --door agent [--wave 2|3|4] [--approve <tool-id|prefix*>]
+                                                Approve writes for outside agents (a person at a terminal only; recorded, not yet enforced)
+  nimbus connector writes disable <service> [--door agent]
   nimbus connector writes status [--json]
   nimbus connector remove <service> [--yes]         Irreversible; prompts unless --yes
 
