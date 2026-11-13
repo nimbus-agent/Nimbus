@@ -162,9 +162,28 @@ export interface ActionPayload {
  * `connectors/` (D32(f)), so `connectors/proposable-actions.ts`'s richer type is assigned to this.
  */
 export type ActionVerdict =
-  | { readonly kind: "proposable" }
+  | { readonly kind: "proposable"; readonly basis?: ActionBasis }
+  /**
+   * An approved tool whose listed definition changed (AD3a-2a, D-AD-9): refused with
+   * `ERR_AGENT_TOOL_SUSPENDED` until the owner approves it again by name. Never a legacy case.
+   */
+  | { readonly kind: "suspended" }
   | { readonly kind: "denied"; readonly class: string }
   | { readonly kind: "unknown" };
+
+/**
+ * Why a proposable action is proposable. ABSENT (the user-MCP path, and today's production
+ * classifier) means no per-door rule applies and the gate behaves exactly as before AD3a-2a.
+ * `approved`: the owner approved the tool for agents by name and every other condition holds.
+ * `legacy_unapproved` / `legacy_mail_send`: accepted for now only because the earlier act door
+ * accepted it (the deprecation window, OR-AD-9); stored `legacy = 1`, counted and warned about.
+ */
+export type ActionBasis = "approved" | "legacy_unapproved" | "legacy_mail_send";
+
+/** True for the two deprecation-window bases. */
+export function isLegacyBasis(basis: ActionBasis | undefined): boolean {
+  return basis === "legacy_unapproved" || basis === "legacy_mail_send";
+}
 
 export interface ActionProvenance {
   readonly captureId: string;
