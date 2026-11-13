@@ -272,13 +272,18 @@ export function buildActDeps(
       }
       const options = await executeOptionsFor(door, rowNamed(row, w));
       let vetoed: string | undefined;
+      let vetoCode: ActionRejectCode | undefined;
       const channel =
         provenance.basis === "approved" && door !== undefined
           ? vetoingConsent(
               coordinator,
               async () => {
                 const v = await door.verifyDefinition(actionType);
-                return v.ok ? undefined : v.detail;
+                if (v.ok) return undefined;
+                // Only the recheck's own suspension code is stored: a tool merely missing from the
+                // listing is refused without a mark and without a code (OR-AD-14).
+                vetoCode = v.code === VETO_CODE ? VETO_CODE : undefined;
+                return v.detail;
               },
               (reason) => {
                 vetoed = reason;
@@ -318,7 +323,11 @@ export function buildActDeps(
       // records why. Escaped HERE, once, so both captures.accept and approvals.approve return a
       // one-line, control-free reason (a guard's text can quote agent-supplied values).
       if (vetoed !== undefined) {
-        return { status: "rejected", reason: escapeUnverifiedLine(vetoed), code: VETO_CODE };
+        return {
+          status: "rejected",
+          reason: escapeUnverifiedLine(vetoed),
+          ...(vetoCode === undefined ? {} : { code: vetoCode }),
+        };
       }
       const code = classifyDoorRejection(rowNamed(row, w), out.reason);
       return {

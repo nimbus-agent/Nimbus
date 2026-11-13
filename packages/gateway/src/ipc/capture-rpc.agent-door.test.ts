@@ -233,9 +233,29 @@ describe("the consent-side veto (approved basis only)", () => {
       },
     });
     const out = await h.act.execute("github.issue.create", { title: "t" }, PROV("approved"));
-    expect(out).toMatchObject({ status: "rejected", code: "ERR_AGENT_TOOL_SUSPENDED" });
+    expect(out.status).toBe("rejected");
     expect(JSON.stringify(out)).not.toContain("\\n");
     expect((out as { reason?: string }).reason).not.toContain("\n");
+  });
+
+  test("a veto because the tool is merely missing from the listing stores NO code (OR-AD-14: missing is not a suspension)", async () => {
+    approveGithubIssueCreate();
+    let listed = true;
+    const key = mcpClientToolKey("github", "github_issue_create");
+    const listing = () => (listed ? { [key]: entryFor("github_issue_create", "d") } : {});
+    const door = realDoor(listing);
+    const h = harness({
+      door: { listServerTools: async () => listing(), verifyDefinition: door.verifyDefinition },
+      answer: () => {
+        listed = false;
+      },
+    });
+    const out = await h.act.execute("github.issue.create", { title: "t" }, PROV("approved"));
+    expect(out.status).toBe("rejected");
+    expect((out as { code?: string }).code).toBeUndefined();
+    expect((out as { reason?: string }).reason).toBeDefined();
+    expect(writesOf(h.dispatched)).toEqual([]);
+    expect(getDoorApproval(db, "agent", "github", "github_issue_create")?.suspendedAt).toBeNull();
   });
 });
 
