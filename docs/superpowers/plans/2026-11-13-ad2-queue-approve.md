@@ -1,6 +1,6 @@
 # Plan — Agent door AD2: the owner's queue and one-step approval (`nimbus approvals`)
 
-Status: DRAFT — awaiting Antigravity review.
+Status: APPROVED (Antigravity round 2, 2026-11-13). AD1 (#1993) merged as `6e9a1c920`, so AD2 branches from `main`, not from `dev/asaf/p28-ad1`; Task 0 step 1's stacked-PR wording no longer applies.
 Spec: `docs/superpowers/specs/2026-11-13-agent-door.md` (approved, Antigravity round 2): § 2 (OR-AD-1, OR-AD-6), § 4 (D-AD-3, D-AD-4,
 D-AD-8, D-AD-11, D-AD-12, D-AD-16), § 6 (the AD2 row), § 7.2, § 9 (the "agent calls owner-only IPC", "polling another agent's ids" and
 "flooding" rows), § 10 (AD2 bullet, acceptance A1-A4), § 11 (non-breaking), § 12 (the IPC `kind` bound).
@@ -437,3 +437,4 @@ its base is `dev/asaf/p28-ad1`. End with the attribution lines from the session.
 ## Review log
 
 - Antigravity round 1 (2026-11-13): CHANGES REQUIRED, 6 findings. Applied: F1 (object spread into `showIgnoringFailure`: pass `t.title, t.body`), F2 (D32 allow-list entries are full `packages/gateway/src/...` paths), F3 in part (`captures/format.ts` exists on the AD1 branch, the review bundle omitted it; it has no test of its own, the test is `test/pages/Captures.test.tsx`). F4, F5: the reviewer agrees with corrections 1 and 5. F6: already the plan's position (the integration file is the always-on proof).
+- Antigravity round 2 (2026-11-13): APPROVED, no findings. Its summary restated several round 1 items and code quotes inaccurately, so the plan's key code claims were re-checked by hand on `main` at `6e9a1c920` (V69 CHECK at `:40`, `PAYLOAD_MAX_BYTES = 65_536`, `newId` at `assemble.ts:3939`, `buildActDeps` signature, the four `ConsentCoordinator` members, `D32_GATE_ALLOWED` at `:4008`/`:4018`/`:4050`, the LAN list at `:240-241`, `tryDispatchCaptureRpc` at `:1607`/`:2006`, schema 96): all hold.
