@@ -228,7 +228,12 @@ async function runDeclineAll(
 ): Promise<number> {
   const rows = parseProposals(await c.call<unknown>("approvals.list", {}));
   const escaped = escapeLabelArg(a.label);
-  const hits = rows.filter((r) => r.label !== null && (r.label === a.label || r.label === escaped));
+  // ONE canonical form per run: the argument is the declared label as typed, so its escaped form is
+  // the wire form. Only when that matches nothing is the argument read as the label AS PRINTED (the
+  // way to name a label with an invisible character). Never both: two differently-labelled agents
+  // are never declined by one argument.
+  const typed = rows.filter((r) => r.label === escaped);
+  const hits = typed.length > 0 ? typed : rows.filter((r) => r.label === a.label);
   const say = (s: string): void => (a.json ? sink.err(s) : sink.out(s));
   const results: DeclineResult[] = [];
   for (const r of hits) {

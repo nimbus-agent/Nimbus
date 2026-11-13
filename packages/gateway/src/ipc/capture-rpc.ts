@@ -11,6 +11,7 @@ import { proposableWriteTool } from "../connectors/proposable-actions.ts";
 import { userMcpToolKeyForActionType } from "../connectors/user-mcp-store.ts";
 import type { EgressSink } from "../egress/egress-ledger.ts";
 import type { ExecutorPolicyDep } from "../engine/executor.ts";
+import { escapeUnverifiedLine } from "../engine/proposer-block.ts";
 import { buildAgentWriteExecutor } from "../engine/run-ask.ts";
 import { serviceOf } from "../engine/service-of.ts";
 import type { AgentProposer, AuditSink, ConnectorDispatcher } from "../engine/types.ts";
@@ -188,7 +189,12 @@ export function buildActDeps(
       });
       return out.status === "ok"
         ? { status: "ok", result: out.result }
-        : { status: "rejected", reason: out.reason };
+        : // Escaped HERE, once, so both captures.accept and approvals.approve return a one-line,
+          // control-free reason (a guard's text can quote agent-supplied values).
+          {
+            status: "rejected",
+            ...(out.reason === undefined ? {} : { reason: escapeUnverifiedLine(out.reason) }),
+          };
     },
   };
 }

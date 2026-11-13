@@ -416,6 +416,56 @@ describe("approvals --decline-all-from", () => {
     expect(o.out.join("")).toContain("Declined 1 proposal ");
   });
 
+  test("one argument never declines two differently-labelled agents: the typed form wins", async () => {
+    // Declared labels `a"b` (wire `a\"b`) and `a\"b` (wire `a\\\"b`). The argument `a\"b` equals the
+    // first one's wire form AND is the second one's declared label: only the declared match is declined.
+    const bs = String.fromCodePoint(92);
+    const wireOfQuote = `a${bs}"b`;
+    const wireOfBackslashQuote = `a${bs}${bs}${bs}"b`;
+    const f = fake((m) => {
+      if (m === "approvals.list") {
+        return {
+          proposals: [
+            { ...ROW, id: "cap_q", label: wireOfQuote },
+            { ...ROW, id: "cap_bq", label: wireOfBackslashQuote },
+          ],
+        };
+      }
+      return { state: "rejected" };
+    });
+    const o = sink();
+    await runApprovalsWith(
+      f.client,
+      { verb: "declineAll", label: wireOfQuote, json: false },
+      o.s,
+      NO_TTY,
+      1,
+    );
+    expect(f.calls.filter(([m]) => m === "approvals.decline")).toEqual([
+      ["approvals.decline", { id: "cap_bq" }],
+    ]);
+  });
+
+  test("a label pasted as printed matches when no declared label equals it", async () => {
+    const bs = String.fromCodePoint(92);
+    const printed = `bot${bs}u202e`;
+    const f = fake((m) => {
+      if (m === "approvals.list") return { proposals: [{ ...ROW, id: "cap_p", label: printed }] };
+      return { state: "rejected" };
+    });
+    const o = sink();
+    await runApprovalsWith(
+      f.client,
+      { verb: "declineAll", label: printed, json: false },
+      o.s,
+      NO_TTY,
+      1,
+    );
+    expect(f.calls.filter(([m]) => m === "approvals.decline")).toEqual([
+      ["approvals.decline", { id: "cap_p" }],
+    ]);
+  });
+
   test("no match: nothing declined, says so, exit 0", async () => {
     const f = declineFake();
     const o = sink();

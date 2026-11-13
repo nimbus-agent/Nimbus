@@ -156,11 +156,8 @@ async function approve(
     throw new CaptureError("ERR_CAPTURE_STATE", `capture ${detail.id} is not an action`);
   }
   // 5. The owner's reply. The reason is the owner's alone (never stored, never in capture.state).
-  const reason = nonHuman
-    ? NON_HUMAN_REASON
-    : out.reason === undefined
-      ? undefined
-      : escapeUnverifiedLine(out.reason);
+  // (buildActDeps already escaped the executor's reason, for this path and captures.accept alike.)
+  const reason = nonHuman ? NON_HUMAN_REASON : out.reason;
   return {
     id: out.id,
     state: out.state,
