@@ -4251,8 +4251,11 @@ describe("I28 — MCP content enters only through the capture gate, in a fixed o
   test("act door: the dispatched payload's mcpToolId is the routing table's value; no delegate; policy overlay passed", async () => {
     const src = stripComments(await read("packages/gateway/src/ipc/capture-rpc.ts"));
     expect(src).toMatch(
-      /const toolId = proposableWriteTool\(actionType\) \?\? userMcpToolKeyForActionType\(actionType\)/,
+      /const toolId = row\?\.toolId \?\? userMcpToolKeyForActionType\(actionType\)/,
     );
+    // AD3a-2a: routed by the write row (every row), never by the 47-type table; what may reach
+    // this point is decided by the gate's verdict at submit and approval.
+    expect(src).toMatch(/const row = agentDoorRow\(actionType\);/);
     expect(src).toMatch(/payload: \{ mcpToolId: toolId, input \}/);
     // Phase 28 AD1: the executor is the shared door maker's (no delegation input exists), and the
     // action is an `origin: "agent"` one carrying the gateway-set proposer. The old wrapper is gone.

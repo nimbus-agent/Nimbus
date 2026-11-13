@@ -75,6 +75,53 @@ export function humanOnlyConsent(
   };
 }
 
+/** The fixed reason when the post-answer re-check itself failed (it echoes nothing from the failure). */
+export const RECHECK_FAILED_REASON = "the write could not be re-checked after your answer";
+
+/**
+ * AD3a-2a (plan D-5, review R-1): a consent channel that re-checks an owner-approved agent write
+ * AFTER the owner answered and BEFORE the executor records the answer. An approval whose re-check
+ * returns a reason (or throws: fail closed) becomes a decline on both the plain and the typed
+ * request, and `onVeto` is told why. This is as late as the dispatcher's own check: the executor
+ * runs no `await` between this wrapper's return and `connectors.dispatch`, so a veto audits
+ * `rejected`, ledgers `blocked` and dispatches nothing (and a bound write's change set is
+ * discarded by the executor's own decline path). A declined answer never runs the re-check. Lives
+ * here because static D41(a) confines the typed-answer method's name to this file and the executor.
+ */
+export function vetoingConsent(
+  inner: ConsentCoordinator,
+  recheck: () => Promise<string | undefined>,
+  onVeto: (reason: string) => void,
+): ConsentCoordinator {
+  const vetoReason = async (): Promise<string | undefined> => {
+    try {
+      return await recheck();
+    } catch {
+      return RECHECK_FAILED_REASON;
+    }
+  };
+  return {
+    async requestConsent(clientId, params) {
+      const answer = await inner.requestConsent(clientId, params);
+      if (!answer.approved) return answer;
+      const reason = await vetoReason();
+      if (reason === undefined) return answer;
+      onVeto(reason);
+      return { approved: false, answerSource: answer.answerSource };
+    },
+    async requestConfirmedConsent(clientId, params) {
+      const answer = await inner.requestConfirmedConsent(clientId, params);
+      if (!answer.approved) return answer;
+      const reason = await vetoReason();
+      if (reason === undefined) return answer;
+      onVeto(reason);
+      return { approved: false, typed: "", answerSource: answer.answerSource };
+    },
+    rejectAllPending: (message, reason) => inner.rejectAllPending(message, reason),
+    pendingCount: () => inner.pendingCount(),
+  };
+}
+
 /** The longest `typed` answer `consent.respond` accepts; a confirm text is at most 200 characters. */
 export const CONSENT_TYPED_MAX_LENGTH = 512;
 

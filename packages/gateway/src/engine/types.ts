@@ -67,6 +67,11 @@ export type AgentProposer = {
   summary: string;
   createdAt: number;
   expiresAt: number;
+  /**
+   * The gateway's own fixed deprecation text (AD3a-2a), set only when the proposal was accepted
+   * under the deprecation window; never the agent's words. Shown as a third line of the block.
+   */
+  deprecation?: string;
 };
 
 export type ActionResult =

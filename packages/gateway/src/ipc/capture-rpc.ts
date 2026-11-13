@@ -1,8 +1,16 @@
+import { agentDoorRow } from "../connectors/connector-writes/agent-door.ts";
+import type { DefinitionVerification } from "../connectors/connector-writes/agent-door-runtime.ts";
 import { CONNECTOR_WRITE_ROWS } from "../connectors/connector-writes/index.ts";
+import {
+  beforeReaderMissing,
+  prepareToolMissing,
+  type ServerToolListing,
+} from "../connectors/connector-writes/listed-support.ts";
 import {
   actDoorRefusal,
   type TribalKbConfig,
 } from "../connectors/connector-writes/model-write-refusals.ts";
+import { rowNamedByToolId } from "../connectors/connector-writes/preview.ts";
 import type {
   ConnectorWriteRow,
   PreviewCredentialResolver,
@@ -10,11 +18,17 @@ import type {
 import { proposableWriteTool } from "../connectors/proposable-actions.ts";
 import { userMcpToolKeyForActionType } from "../connectors/user-mcp-store.ts";
 import type { EgressSink } from "../egress/egress-ledger.ts";
-import type { ExecutorPolicyDep } from "../engine/executor.ts";
+import { classifyDoorRejection } from "../engine/door-rejection.ts";
+import type { ExecuteOptions, ExecutorPolicyDep } from "../engine/executor.ts";
 import { escapeUnverifiedLine } from "../engine/proposer-block.ts";
 import { buildAgentWriteExecutor } from "../engine/run-ask.ts";
 import { serviceOf } from "../engine/service-of.ts";
-import type { AgentProposer, AuditSink, ConnectorDispatcher } from "../engine/types.ts";
+import type {
+  AgentProposer,
+  AuditSink,
+  ConnectorDispatcher,
+  PlannedAction,
+} from "../engine/types.ts";
 import {
   acceptCapture,
   type CaptureCaller,
@@ -29,10 +43,15 @@ import {
   revokeCapture,
   submitCapture,
 } from "../mcp-sink/capture-gate.ts";
-import { type ActDeps, type ActionProvenance, CaptureError } from "../mcp-sink/capture-types.ts";
+import {
+  type ActDeps,
+  type ActionProvenance,
+  type ActionRejectCode,
+  CaptureError,
+} from "../mcp-sink/capture-types.ts";
 import type { EnforcedPolicy } from "../policy/policy-gate.ts";
 import { dispatchByMethod, type RpcMissOrHit } from "./_lib/dispatch-by-method.ts";
-import type { ConsentCoordinator } from "./consent.ts";
+import { type ConsentCoordinator, vetoingConsent } from "./consent.ts";
 import { RpcMethodError } from "./server/rpc-error.ts";
 
 /**
@@ -66,6 +85,21 @@ export interface CaptureActWiring {
    * the KB-child guards pass). The same accessor the model door gets.
    */
   readonly getTribalKbConfig: () => TribalKbConfig | undefined;
+  /**
+   * The agent door's runtime half (AD3a-2a): absent, the act wiring behaves exactly as before the
+   * owner's per-door list existed (no listing, no veto). Present, an `approved` proposal is
+   * re-checked after the owner's answer, and a row's before-state reader and prepare tool are
+   * checked against the live listing. Batch C supplies it when the capture gate gets the verdict.
+   */
+  readonly agentDoor?: AgentDoorActWiring;
+}
+
+/** What `buildActDeps` needs from the agent door's runtime (`createAgentDoor`, bound to the mesh). */
+export interface AgentDoorActWiring {
+  /** One first-party server's raw listing, or `undefined` when it cannot be listed now. */
+  readonly listServerTools: (service: string) => Promise<ServerToolListing | undefined>;
+  /** The door's definition check (`createAgentDoor(...).verifyDefinition`); marks a suspension itself. */
+  readonly verifyDefinition: (actionType: string) => Promise<DefinitionVerification>;
 }
 
 /**
@@ -132,27 +166,91 @@ function agentProposerOf(p: ActionProvenance): AgentProposer {
   };
 }
 
+/** The wire code for a veto: the closed set has one code for "the tool's approval no longer holds". */
+const VETO_CODE: ActionRejectCode = "ERR_AGENT_TOOL_SUSPENDED";
+
+/**
+ * What the live listing says about a row's support tools, as the model door computes it: the
+ * row's `before` reader (first or `also` tool) and its bound prepare tool. A row with neither
+ * needs no listing. A listing that cannot be had counts as "unlisted" for whatever the row needs
+ * (fail closed: a Wave 4 write is then refused before any prompt, a lower wave shows
+ * `before: unavailable`, a bound write is refused).
+ */
+async function executeOptionsFor(
+  door: AgentDoorActWiring | undefined,
+  row: ConnectorWriteRow | undefined,
+): Promise<ExecuteOptions | undefined> {
+  if (door === undefined || row === undefined) return undefined;
+  if (row.before === undefined && row.bound === undefined) return undefined;
+  const service = serviceOf(row.actionType);
+  const listing = await door.listServerTools(service).catch(() => undefined);
+  const beforeReaderUnlisted =
+    row.before !== undefined &&
+    (listing === undefined || beforeReaderMissing(row, service, listing));
+  const prepareToolUnlisted =
+    row.bound !== undefined && (listing === undefined || prepareToolMissing(row, service, listing));
+  if (!beforeReaderUnlisted && !prepareToolUnlisted) return undefined;
+  return {
+    ...(beforeReaderUnlisted ? { beforeReaderUnlisted: true } : {}),
+    ...(prepareToolUnlisted ? { prepareToolUnlisted: true } : {}),
+  };
+}
+
+/** The row as the executor sees it: the same tool in the wiring's rows (a test seam), else the row. */
+function rowNamed(
+  row: ConnectorWriteRow | undefined,
+  w: CaptureActWiring,
+): ConnectorWriteRow | undefined {
+  return row === undefined ? undefined : rowNamedByToolId(row.toolId, actWriteRows(w));
+}
+
+/** The fixed owner-side text of an `approved` proposal run without the door's runtime wired. */
+const NO_DOOR_RUNTIME_REASON = "the agent door is not available; nothing was run";
+
 /**
  * The act door's executor seam (I28 + I2/I29/I22/I42): one fresh door executor per accept
  * (`buildAgentWriteExecutor`, static D39(e)), bound to the ACCEPTING session's consent channel,
  * with NO delegate (the local owner answers) and the proposal run as an `origin: "agent"` action.
+ *
+ * AD3a-2a: the tool is routed by `agentDoorRow` (every write row, not the 47-type table), so a
+ * Wave 4 or bound row reaches the SAME executor with its typed confirmation, before-state and
+ * prepare step. What may reach this function is decided by the gate's verdict at submit and
+ * approval, never by routing. An `approved`-basis proposal runs on a consent channel that
+ * re-checks the tool's definition after the owner's answer (`vetoingConsent`); a legacy basis has
+ * no approval to compare against and is never vetoed.
  */
 export function buildActDeps(
   w: CaptureActWiring,
   coordinator: ConsentCoordinator,
   clientId: string,
+  opts: { readonly humanOnly?: boolean } = {},
 ): ActDeps {
   return {
+    ...(opts.humanOnly === true ? { humanOnly: true } : {}),
     async execute(actionType, input, provenance) {
-      // The tool is ALWAYS gateway-chosen: the routing table for a first-party type, the canonical
+      // The tool is ALWAYS gateway-chosen: the write row for a first-party type, the canonical
       // `<serviceId>_<tool>` key for a user-MCP type (the exact pair `connector.userMcpCall` builds,
       // and the only key the dispatcher's I42 pairing accepts for that type). The second lookup
       // returns undefined for anything that is not an `mcp_*` type.
-      const toolId = proposableWriteTool(actionType) ?? userMcpToolKeyForActionType(actionType);
+      // Routed by the PRODUCTION write table (the `beforeStateRows` seam only changes what the
+      // preview and the before-state are built from). A verdict with no basis is the earlier
+      // gate's: only the 47 proposable types route then, so routing alone admits nothing new.
+      const row = agentDoorRow(actionType);
+      const legacyOnly =
+        row !== undefined &&
+        provenance.basis === undefined &&
+        proposableWriteTool(actionType) === undefined;
+      const toolId = legacyOnly
+        ? undefined
+        : (row?.toolId ?? userMcpToolKeyForActionType(actionType));
       if (toolId === undefined) {
         // Never dispatch a first-party write by its type (spec § 6.3): no routing row, no call.
         // This exact message is what classifyActionError maps to ERR_ACTION_TOOL_NOT_FOUND.
         throw new Error("Tool not found");
+      }
+      const door = w.agentDoor;
+      if (provenance.basis === "approved" && door === undefined) {
+        return { status: "rejected", reason: NO_DOOR_RUNTIME_REASON };
       }
       // The prompt must name the instance the write WILL run against, read fresh from the Vault
       // the write uses (as the executor does on every other door). A credential whose instance
@@ -161,8 +259,27 @@ export function buildActDeps(
       try {
         await w.previewCredentialFor?.refresh?.(serviceOf(actionType));
       } catch {
-        return { status: "rejected", reason: CREDENTIAL_UNVERIFIED_REASON };
+        return {
+          status: "rejected",
+          reason: CREDENTIAL_UNVERIFIED_REASON,
+          code: "ERR_ACTION_CREDENTIAL_UNVERIFIED",
+        };
       }
+      const options = await executeOptionsFor(door, rowNamed(row, w));
+      let vetoed: string | undefined;
+      const channel =
+        provenance.basis === "approved" && door !== undefined
+          ? vetoingConsent(
+              coordinator,
+              async () => {
+                const v = await door.verifyDefinition(actionType);
+                return v.ok ? undefined : v.detail;
+              },
+              (reason) => {
+                vetoed = reason;
+              },
+            )
+          : coordinator;
       // Phase 28 AD1: the SAME door maker as the model door (no delegate, no standing rule, the
       // before-state runner), so the executor's own prompt (the typed preview with the target's
       // current state) is what the owner sees. The LOCAL owner who ran `captures accept` answers.
@@ -170,7 +287,7 @@ export function buildActDeps(
       // the tool is the routing table's, never the proposer's (I3).
       const executor = buildAgentWriteExecutor({
         clientId,
-        consentCoordinator: coordinator,
+        consentCoordinator: channel,
         audit: w.audit,
         dispatcher: w.dispatcher,
         egressSink: w.egressSink,
@@ -181,20 +298,29 @@ export function buildActDeps(
           : { previewCredentialFor: w.previewCredentialFor }),
         ...(w.beforeStateRows === undefined ? {} : { beforeStateRows: w.beforeStateRows }),
       });
-      const out = await executor.execute({
+      const action: PlannedAction = {
         type: actionType,
         origin: "agent",
         proposer: agentProposerOf(provenance),
         payload: { mcpToolId: toolId, input },
-      });
-      return out.status === "ok"
-        ? { status: "ok", result: out.result }
-        : // Escaped HERE, once, so both captures.accept and approvals.approve return a one-line,
-          // control-free reason (a guard's text can quote agent-supplied values).
-          {
-            status: "rejected",
-            ...(out.reason === undefined ? {} : { reason: escapeUnverifiedLine(out.reason) }),
-          };
+      };
+      const out =
+        options === undefined
+          ? await executor.execute(action)
+          : await executor.execute(action, options);
+      if (out.status === "ok") return { status: "ok", result: out.result };
+      // A veto is the owner's answer overruled: the executor recorded a decline, the capture
+      // records why. Escaped HERE, once, so both captures.accept and approvals.approve return a
+      // one-line, control-free reason (a guard's text can quote agent-supplied values).
+      if (vetoed !== undefined) {
+        return { status: "rejected", reason: escapeUnverifiedLine(vetoed), code: VETO_CODE };
+      }
+      const code = classifyDoorRejection(rowNamed(row, w), out.reason);
+      return {
+        status: "rejected",
+        ...(out.reason === undefined ? {} : { reason: escapeUnverifiedLine(out.reason) }),
+        ...(code === undefined ? {} : { code }),
+      };
     },
   };
 }

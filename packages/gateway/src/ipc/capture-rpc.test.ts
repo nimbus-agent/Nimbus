@@ -608,6 +608,7 @@ describe("buildActDeps: the typed preview for a templated proposable row (F5)", 
       expect(out).toEqual({
         status: "rejected",
         reason: "the credential the write would use could not be verified",
+        code: "ERR_ACTION_CREDENTIAL_UNVERIFIED",
       });
       expect(h.prompts).toEqual([]);
       expect(h.dispatched).toEqual([]);

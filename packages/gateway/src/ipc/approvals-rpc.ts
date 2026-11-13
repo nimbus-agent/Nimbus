@@ -1,5 +1,5 @@
+import { agentDoorRow } from "../connectors/connector-writes/agent-door.ts";
 import { rowNamedByToolId } from "../connectors/connector-writes/preview.ts";
-import { proposableWriteTool } from "../connectors/proposable-actions.ts";
 import { agentVerbatimInputLines, escapeUnverifiedLine } from "../engine/proposer-block.ts";
 import { APPROVER_BY_KIND } from "../mcp-sink/capture-client-policy.ts";
 import {
@@ -69,8 +69,8 @@ interface ProposalView {
 
 /** The wave and typed-confirm flag of the real write row for an action type; a user-MCP type has none. */
 function rowFacts(actionType: string, w: CaptureActWiring | undefined): ProposalView {
-  const toolId = proposableWriteTool(actionType);
-  const found = toolId === undefined ? undefined : rowNamedByToolId(toolId, actWriteRows(w));
+  const routed = agentDoorRow(actionType);
+  const found = routed === undefined ? undefined : rowNamedByToolId(routed.toolId, actWriteRows(w));
   return found === undefined
     ? { wave: null, typedConfirm: false }
     : { wave: found.wave, typedConfirm: found.confirm !== undefined };
@@ -147,6 +147,7 @@ async function approve(
             nonHuman = true;
           }),
           caller.clientId,
+          { humanOnly: true },
         )
       : undefined;
   // 4. The gate's own accept: capability, owner role, state, expiry, classify, configured,

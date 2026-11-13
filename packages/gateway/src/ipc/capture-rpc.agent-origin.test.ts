@@ -271,6 +271,7 @@ describe("the act door now reads the target's current state (the model door's ru
     expect(out).toEqual({
       status: "rejected",
       reason: "the model cannot change a page in the Nimbus knowledge base; use the capture flow",
+      code: "ERR_ACTION_GUARD_REFUSED",
     });
     expect(h.prompts).toEqual([]);
     expect(h.dispatched.map((a) => a.type)).toEqual(["notion.before.read"]);
@@ -301,6 +302,7 @@ describe("the act door now reads the target's current state (the model door's ru
     expect(out).toEqual({
       status: "rejected",
       reason: "the model cannot change a page in the Nimbus knowledge base; use the capture flow",
+      code: "ERR_ACTION_GUARD_REFUSED",
     });
     expect(h.prompts).toEqual([]);
     expect(h.dispatched.some((a) => a.type === "notion.page.update")).toBe(false);

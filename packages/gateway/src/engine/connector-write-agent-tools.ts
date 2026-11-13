@@ -46,20 +46,8 @@
  * the structural allowlist.
  */
 import { createTool } from "@mastra/core/tools";
-import {
-  COMMIT_INPUT_REFUSALS,
-  COMMIT_LIMITS,
-} from "../connectors/connector-writes/commit-limits.ts";
+import { COMMIT_LIMITS } from "../connectors/connector-writes/commit-limits.ts";
 import { COMMIT_WRITE_TOOL_IDS } from "../connectors/connector-writes/commit-paths.ts";
-import {
-  IAC_INPUT_REFUSALS,
-  IAC_PREFLIGHT_REFUSALS,
-} from "../connectors/connector-writes/iac-limits.ts";
-import {
-  K8S_INPUT_REFUSALS,
-  K8S_MODEL_REFUSALS,
-  K8S_PREFLIGHT_REFUSALS,
-} from "../connectors/connector-writes/k8s-limits.ts";
 import {
   beforeReaderMissing,
   prepareToolMissing,
@@ -69,15 +57,8 @@ import { isModelOfferableRow } from "../connectors/connector-writes/model-offera
 import { isPlainObject, sanitisePreviewText } from "../connectors/connector-writes/preview.ts";
 import type { ConnectorWriteRow } from "../connectors/connector-writes/types.ts";
 import { mcpClientToolKey } from "../connectors/lazy-mesh/tool-map.ts";
-import { WAVE4_BEFORE_REFUSAL } from "./before-state.ts";
-import {
-  CONFIRM_UNSUPPORTED_REASON,
-  type ExecuteOptions,
-  PREFLIGHT_FAILED_REASON,
-  PREFLIGHT_NO_CONFIRM_REASON,
-  type ToolExecutor,
-} from "./executor.ts";
-import { PREPARE_REFUSALS } from "./prepare-step.ts";
+import { classifyDoorRejection } from "./door-rejection.ts";
+import type { ExecuteOptions, ToolExecutor } from "./executor.ts";
 import { serviceOf } from "./service-of.ts";
 import { wrapToolDescription } from "./tool-output-envelope.ts";
 import type { ActionResult, PlannedAction } from "./types.ts";
@@ -129,20 +110,6 @@ const NON_OBJECT_INPUT_REFUSAL = "input must be an object";
 export const DESTINATION_REFUSAL = "this connector write was refused";
 
 const MODEL_TOOL_NAME_PATTERN = /^[A-Za-z0-9_-]+$/;
-
-/** The fixed texts a bound write can be refused with before any prompt (never an error message). */
-const FIXED_BOUND_REFUSALS: ReadonlySet<string | undefined> = new Set<string | undefined>([
-  ...Object.values(PREPARE_REFUSALS),
-  ...Object.values(COMMIT_INPUT_REFUSALS),
-  ...Object.values(IAC_INPUT_REFUSALS),
-  ...Object.values(IAC_PREFLIGHT_REFUSALS),
-  ...Object.values(K8S_INPUT_REFUSALS),
-  ...Object.values(K8S_PREFLIGHT_REFUSALS),
-  ...Object.values(K8S_MODEL_REFUSALS),
-  PREFLIGHT_NO_CONFIRM_REASON,
-  PREFLIGHT_FAILED_REASON,
-  CONFIRM_UNSUPPORTED_REASON,
-]);
 
 /**
  * A bound row's description is the gateway's OWN text, never the connector's: the connector's
@@ -378,8 +345,6 @@ function buildDoorTool(
         }
       : undefined;
   const listedDescription = typeof entry["description"] === "string" ? entry["description"] : "";
-  // The only rejection reason passed back verbatim: this row's guard's fixed text, if it has one.
-  const guardReason = row.before?.guard?.reason;
   return createTool({
     id: name,
     description: describeFor(
@@ -425,17 +390,11 @@ function buildDoorTool(
         return errorResult(err);
       }
       if (result.status === "ok") return result.result;
-      // A guard refusal (B2a) is the row's own fixed reason; any other denial never carries the
-      // reason or the payload back to the model.
-      if (result.reason === guardReason) return { refused: guardReason };
-      // D1: a Wave 4 write whose current state could not be read was refused before any prompt, so
-      // it is not "declined" by the owner: the same fixed text the executor recorded.
-      if (row.wave === 4 && result.reason === WAVE4_BEFORE_REFUSAL) {
-        return { refused: WAVE4_BEFORE_REFUSAL };
-      }
-      // D1c: a bound write the prepare step refused (a size cap, a bad path, an unreadable
-      // head...) never reached the owner either; the reason is one of its fixed texts.
-      if (row.bound !== undefined && FIXED_BOUND_REFUSALS.has(result.reason)) {
+      // A refusal made before any prompt (a before-state guard, B2a; a Wave 4 write whose current
+      // state could not be read, D1; a bound write the prepare step refused, D1c) is one of the
+      // gateway's FIXED texts and is passed back as such (the classifier is shared with the MCP act
+      // door); any other denial never carries the reason or the payload back to the model.
+      if (classifyDoorRejection(row, result.reason) !== undefined) {
         return { refused: result.reason };
       }
       return { declined: DECLINED_RESULT_TEXT };
