@@ -60,12 +60,12 @@ import {
   K8S_MODEL_REFUSALS,
   K8S_PREFLIGHT_REFUSALS,
 } from "../connectors/connector-writes/k8s-limits.ts";
-import { isModelOfferableRow } from "../connectors/connector-writes/model-offerable.ts";
 import {
   beforeReaderMissing,
   prepareToolMissing,
   templateKeysInSchema,
 } from "../connectors/connector-writes/listed-support.ts";
+import { isModelOfferableRow } from "../connectors/connector-writes/model-offerable.ts";
 import { isPlainObject, sanitisePreviewText } from "../connectors/connector-writes/preview.ts";
 import type { ConnectorWriteRow } from "../connectors/connector-writes/types.ts";
 import { mcpClientToolKey } from "../connectors/lazy-mesh/tool-map.ts";

@@ -446,7 +446,11 @@ async function requireDefinitionVerified(
       detail: DEFINITION_UNCHECKED,
     };
   } catch {
-    outcome = { ok: false, code: "ERR_CAPTURE_ACTION_NOT_PROPOSABLE", detail: DEFINITION_UNCHECKED };
+    outcome = {
+      ok: false,
+      code: "ERR_CAPTURE_ACTION_NOT_PROPOSABLE",
+      detail: DEFINITION_UNCHECKED,
+    };
   }
   if (!outcome.ok) {
     refuseAudited(

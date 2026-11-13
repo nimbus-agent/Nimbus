@@ -534,7 +534,11 @@ describe("the action payload cap (AD3a-2a)", () => {
     expect(v.kind).toBe("action");
     const t = validateCapturePayload(
       "action",
-      { actionType: "iac.cloudformation.deploy", input: { template: "t".repeat(51_200) }, summary: "s" },
+      {
+        actionType: "iac.cloudformation.deploy",
+        input: { template: "t".repeat(51_200) },
+        summary: "s",
+      },
       0,
     );
     expect(t.kind).toBe("action");

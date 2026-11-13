@@ -107,9 +107,9 @@ describe("definitionSha256", () => {
     expect(definitionSha256("t", entry(undefined, BASE_SCHEMA))).not.toBe(
       definitionSha256("t", entry("", BASE_SCHEMA)),
     );
-    expect(definitionSha256("t", { inputSchema: toStandardSchema(BASE_SCHEMA as JsonSchemaInput) })).toBe(
-      definitionSha256("t", entry(undefined, BASE_SCHEMA)),
-    );
+    expect(
+      definitionSha256("t", { inputSchema: toStandardSchema(BASE_SCHEMA as JsonSchemaInput) }),
+    ).toBe(definitionSha256("t", entry(undefined, BASE_SCHEMA)));
   });
 
   test.each([
@@ -117,9 +117,12 @@ describe("definitionSha256", () => {
     ["a number", 42],
     ["an object", { a: 1 }],
     ["an array", ["d"]],
-  ])("a PRESENT description that is %s makes the definition unreadable (R-3)", (_n, description) => {
-    expect(definitionSha256("t", entry(description, BASE_SCHEMA))).toBeUndefined();
-  });
+  ])(
+    "a PRESENT description that is %s makes the definition unreadable (R-3)",
+    (_n, description) => {
+      expect(definitionSha256("t", entry(description, BASE_SCHEMA))).toBeUndefined();
+    },
+  );
 
   test("an NFC and an NFD spelling of one description hash differently", () => {
     const nfc = `caf${String.fromCodePoint(0xe9)}`;

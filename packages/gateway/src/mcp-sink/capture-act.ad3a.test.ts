@@ -134,7 +134,10 @@ function acceptAudits(): number {
 }
 
 describe("step 4: each refusal leaves the row proposed, claims nothing and writes no accept row", () => {
-  async function expectRefused(code: CaptureErrorCode, a: ActDeps = act({ status: "ok", result: {} })) {
+  async function expectRefused(
+    code: CaptureErrorCode,
+    a: ActDeps = act({ status: "ok", result: {} }),
+  ) {
     const err = await codeOf(acceptAction(deps, OWNER, row(), a));
     expect(err.code).toBe(code);
     expect(row().state).toBe("proposed");

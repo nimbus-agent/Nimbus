@@ -40,11 +40,7 @@ export function listedEntryDeclaresPreviewKeys(row: ConnectorWriteRow, entry: un
   return isPlainObject(schema) && templateKeysInSchema(row, schema);
 }
 
-function listedAsObject(
-  service: string,
-  tool: string,
-  listing: ServerToolListing,
-): boolean {
+function listedAsObject(service: string, tool: string, listing: ServerToolListing): boolean {
   const key = mcpClientToolKey(service, tool);
   return Object.hasOwn(listing, key) && isPlainObject(listing[key]);
 }

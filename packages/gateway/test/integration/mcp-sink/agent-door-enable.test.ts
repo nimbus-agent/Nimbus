@@ -300,10 +300,7 @@ describe("an upgrade from V96", () => {
       old.run(
         `INSERT INTO capture (id, kind, state, item_id, payload_json, payload_bytes, client_label, session_id, created_at, expires_at)
          VALUES (?, 'action', 'proposed', NULL, ?, 60, 'claude-code', 's1', 1, 9999999)`,
-        [
-          "cap_old",
-          JSON.stringify({ actionType: "github.issue.create", input: {}, summary: "s" }),
-        ],
+        ["cap_old", JSON.stringify({ actionType: "github.issue.create", input: {}, summary: "s" })],
       );
       const offer = (d: Database) =>
         createModelWriteToolSource({

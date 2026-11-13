@@ -21,12 +21,12 @@ import {
 } from "../connectors/connector-writes/enablement-store.ts";
 import { setIacGrants } from "../connectors/connector-writes/iac-grants.ts";
 import { CONNECTOR_WRITE_ROWS } from "../connectors/connector-writes/index.ts";
+import { setK8sGrants } from "../connectors/connector-writes/k8s-grants.ts";
+import { createModelWriteToolSource } from "../connectors/connector-writes/model-write-source.ts";
 import {
   type ConnectorWriteRow,
   previewTemplateKeys,
 } from "../connectors/connector-writes/types.ts";
-import { setK8sGrants } from "../connectors/connector-writes/k8s-grants.ts";
-import { createModelWriteToolSource } from "../connectors/connector-writes/model-write-source.ts";
 import { mcpClientToolKey } from "../connectors/lazy-mesh/tool-map.ts";
 import { dbRun } from "../db/write.ts";
 import { NULL_EGRESS_SINK } from "../egress/egress-ledger.ts";

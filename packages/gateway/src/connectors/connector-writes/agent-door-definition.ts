@@ -153,6 +153,7 @@ export function checkAgentToolDefinition(
   if (sha !== approval.definitionSha256) {
     return { kind: "changed", suspension: recordDoorSuspension(deps, approval, { sha }) };
   }
-  if (row !== undefined && !listedEntryDeclaresPreviewKeys(row, listed[key])) return { kind: "drifted" };
+  if (row !== undefined && !listedEntryDeclaresPreviewKeys(row, listed[key]))
+    return { kind: "drifted" };
   return { kind: "ok" };
 }

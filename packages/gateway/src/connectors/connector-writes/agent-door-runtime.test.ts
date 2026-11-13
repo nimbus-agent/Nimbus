@@ -18,6 +18,7 @@ import {
   createAgentDoor,
   DEFINITION_REFUSALS,
 } from "./agent-door-runtime.ts";
+import { COMMIT_PATH_REFUSAL } from "./commit-paths.ts";
 import { definitionSha256 } from "./definition-hash.ts";
 import {
   getDoorApproval,
@@ -44,7 +45,6 @@ import {
   LINEAR_ASSIGNEE_REFUSAL,
   type TribalKbConfig,
 } from "./model-write-refusals.ts";
-import { COMMIT_PATH_REFUSAL } from "./commit-paths.ts";
 import { type ConnectorWriteRow, previewTemplateKeys } from "./types.ts";
 
 type JsonSchemaInput = Parameters<typeof toStandardSchema>[0];

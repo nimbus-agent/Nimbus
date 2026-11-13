@@ -53,9 +53,9 @@ describe("beforeReaderMissing", () => {
   test("a listed entry that is not an object counts as missing", () => {
     const r = ROW("github_pr_merge");
     const tool = r.before?.tool as string;
-    expect(
-      beforeReaderMissing(r, "github", { [mcpClientToolKey("github", tool)]: "nope" }),
-    ).toBe(true);
+    expect(beforeReaderMissing(r, "github", { [mcpClientToolKey("github", tool)]: "nope" })).toBe(
+      true,
+    );
   });
 });
 

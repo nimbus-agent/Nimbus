@@ -1088,7 +1088,12 @@ describe("the model door's offered set over the real table (listing-helper extra
     const offerable = CONNECTOR_WRITE_ROWS.filter(isModelOfferableRow);
     const supportTools = new Set<string>();
     for (const r of CONNECTOR_WRITE_ROWS) {
-      for (const t of [r.before?.tool, r.before?.also?.tool, r.bound?.prepare.tool, r.bound?.prepare.settleTool]) {
+      for (const t of [
+        r.before?.tool,
+        r.before?.also?.tool,
+        r.bound?.prepare.tool,
+        r.bound?.prepare.settleTool,
+      ]) {
         if (t !== undefined) supportTools.add(`${serviceOf(r.actionType)}\u0000${t}`);
       }
     }
