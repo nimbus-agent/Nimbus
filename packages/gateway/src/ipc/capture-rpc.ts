@@ -29,6 +29,7 @@ import type {
   ConnectorDispatcher,
   PlannedAction,
 } from "../engine/types.ts";
+import { describeActions } from "../mcp-sink/capture-describe.ts";
 import {
   acceptCapture,
   type CaptureCaller,
@@ -43,7 +44,6 @@ import {
   revokeCapture,
   submitCapture,
 } from "../mcp-sink/capture-gate.ts";
-import { describeActions } from "../mcp-sink/capture-describe.ts";
 import type { CaptureAttemptLimiter } from "../mcp-sink/capture-rate-limit.ts";
 import { actionTypeOfPayload } from "../mcp-sink/capture-store.ts";
 import {

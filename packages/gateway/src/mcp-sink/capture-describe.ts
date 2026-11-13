@@ -17,9 +17,9 @@
 // listing key, no credential or server address and nothing about another connection: those never
 // reach this module, which only caps and forwards what the describer returns.
 import { serviceOf } from "../engine/service-of.ts";
-import type { ClientKind } from "../ipc/server/client-kind.ts";
 import type { CaptureCapability } from "./capture-capability.ts";
 import { CAPTURE_ROLE_BY_KIND } from "./capture-client-policy.ts";
+import type { CaptureCaller } from "./capture-gate.ts";
 import type { CaptureAttemptLimiter, CaptureRefusalCounter } from "./capture-rate-limit.ts";
 import {
   type ActionDescription,
@@ -138,7 +138,7 @@ function capReply(actions: readonly ActionDescription[]): DescribeReply {
 
 export async function describeActions(
   deps: CaptureDescribeDeps,
-  caller: { readonly kind: ClientKind },
+  caller: CaptureCaller,
   params: unknown,
 ): Promise<DescribeReply> {
   // 1. Capability (config + live org policy, fail-closed).

@@ -845,7 +845,11 @@ describe("capture.describe, end to end (AD3a-2b)", () => {
     readonly truncated: boolean;
   }
   const describeTypes = (types?: string[]): Promise<Described> =>
-    rpc(AGENT, "capture.describe", types === undefined ? {} : { actionTypes: types }) as Promise<Described>;
+    rpc(
+      AGENT,
+      "capture.describe",
+      types === undefined ? {} : { actionTypes: types },
+    ) as Promise<Described>;
 
   test("an approved agent describes github.pr.merge, builds an input from the returned schema, submits it and sees it queued", async () => {
     approveForAgents("github", 4, ["github_pr_merge"]);

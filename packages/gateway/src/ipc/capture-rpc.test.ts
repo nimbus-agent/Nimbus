@@ -30,9 +30,9 @@ import type { AgentProposer, ConnectorDispatcher, PlannedAction } from "../engin
 import { openMigratedMemoryDb } from "../index/migrated-db-template.ts";
 import { resolveCaptureCapability } from "../mcp-sink/capture-capability.ts";
 import type { CaptureGateDeps } from "../mcp-sink/capture-gate.ts";
-import type { ActionDescription } from "../mcp-sink/capture-types.ts";
 import { CaptureAttemptLimiter, CaptureRefusalCounter } from "../mcp-sink/capture-rate-limit.ts";
 import { CaptureStore } from "../mcp-sink/capture-store.ts";
+import type { ActionDescription } from "../mcp-sink/capture-types.ts";
 import { PAYLOAD_MAX_BYTES } from "../mcp-sink/capture-validate.ts";
 import type { EnforcedPolicy } from "../policy/policy-gate.ts";
 import { createMockVault } from "../vault/mock.ts";
@@ -729,10 +729,15 @@ describe("capture.describe (AD3a-2b)", () => {
 
   test("refuses ERR_CAPTURE_DISABLED when the context has no describer", async () => {
     await expect(
-      dispatchCaptureRpc("capture.describe", {}, { gate: actionGate() }, {
-        clientId: "a",
-        kind: "mcp",
-      }),
+      dispatchCaptureRpc(
+        "capture.describe",
+        {},
+        { gate: actionGate() },
+        {
+          clientId: "a",
+          kind: "mcp",
+        },
+      ),
     ).rejects.toMatchObject({ rpcData: { code: "ERR_CAPTURE_DISABLED" } });
   });
 

@@ -3,8 +3,8 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { toStandardSchema } from "@mastra/core/schema";
 
 import { serviceOf } from "../../engine/service-of.ts";
-import type { ActionDescription } from "../../mcp-sink/capture-types.ts";
 import { runIndexedSchemaMigrations } from "../../index/migrations/runner.ts";
+import type { ActionDescription } from "../../mcp-sink/capture-types.ts";
 import type { ChatopsPolicy } from "../../policy/types.ts";
 import { mcpClientToolKey } from "../lazy-mesh/tool-map.ts";
 import {

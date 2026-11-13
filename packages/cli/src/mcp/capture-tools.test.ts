@@ -157,7 +157,9 @@ describe("proposal tools", () => {
   });
 
   test("every write spec has all four annotations false; capture_status is read-only", () => {
-    for (const s of CAPTURE_TOOL_SPECS.filter((x) => x.kind !== "status" && x.kind !== "describe")) {
+    for (const s of CAPTURE_TOOL_SPECS.filter(
+      (x) => x.kind !== "status" && x.kind !== "describe",
+    )) {
       expect(s.annotations).toEqual({
         readOnlyHint: false,
         destructiveHint: false,
@@ -353,7 +355,9 @@ describe("act door tools", () => {
       }),
     );
     expect(t.map((x) => x.name)).toEqual(["propose_action", "describe_actions", "capture_status"]);
-    expect(t.find((x) => x.name === "propose_action")?.description).not.toContain("(none configured)");
+    expect(t.find((x) => x.name === "propose_action")?.description).not.toContain(
+      "(none configured)",
+    );
   });
 
   test("sink off: no tools at all", async () => {

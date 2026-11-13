@@ -27,13 +27,13 @@ import type {
   ActionVerdict,
 } from "../../mcp-sink/capture-types.ts";
 import type { EnforcedPolicy } from "../../policy/policy-gate.ts";
+import { mcpClientToolKey } from "../lazy-mesh/tool-map.ts";
 import {
   type ClassifyContext,
   classifyActionType,
   PROPOSABLE_WRITE_TOOLS,
   proposableWriteTool,
 } from "../proposable-actions.ts";
-import { mcpClientToolKey } from "../lazy-mesh/tool-map.ts";
 import { USER_MCP_SERVICE_ID_PATTERN } from "../user-mcp-store.ts";
 import {
   AGENT_DOOR_MAIL_SEND_TOOL_IDS,
@@ -461,10 +461,7 @@ export function createAgentDoor(deps: AgentDoorDeps): AgentDoor {
     readonly listings: Map<string, Readonly<Record<string, unknown>> | undefined>;
   }
 
-  const describeApproved = async (
-    type: string,
-    call: DescribeCall,
-  ): Promise<ActionDescription> => {
+  const describeApproved = async (type: string, call: DescribeCall): Promise<ActionDescription> => {
     const row = agentDoorRow(type, rows);
     const service = serviceOf(type);
     const approval =

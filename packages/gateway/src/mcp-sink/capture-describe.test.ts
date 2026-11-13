@@ -16,7 +16,7 @@ import type { ActionDescription } from "./capture-types.ts";
 const MCP = { clientId: "c-mcp", kind: "mcp" as ClientKind };
 const NOW = 1_790_000_000_000;
 
-function entry(actionType: string, extra = ""): ActionDescription {
+function entry(actionType: string, extra = ""): Extract<ActionDescription, { state: "approved" }> {
   return {
     actionType,
     state: "approved",

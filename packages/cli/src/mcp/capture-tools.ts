@@ -281,7 +281,9 @@ export const CAPTURE_TOOL_SPECS: readonly CaptureToolSpec[] = [
         content: [
           {
             type: "text",
-            text: JSON.stringify(await c.call<unknown>("capture.describe", pick(args, ["actionTypes"]))),
+            text: JSON.stringify(
+              await c.call<unknown>("capture.describe", pick(args, ["actionTypes"])),
+            ),
           },
         ],
       })),
