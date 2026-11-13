@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794559970843,
+  "lastUpdate": 1794565768840,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "829db8c1499ac131f0f998084d94beefc0cdb046",
-          "message": "fix(init): --no-sync no longer ends by naming two commands that cannot work (#1341)\n\nFound by running the documented first run on a clean Windows sandbox\nagainst the\nreleased `v2.18.1` binary, with `APPDATA` / `LOCALAPPDATA` /\n`NIMBUS_CONFIG_DIR` and the\npipe name all redirected so nothing touched the real data dir.\n\n## The first-run defect\n\n`nimbus init --no-sync` exits 0 and prints:\n\n```\nNext:\n  nimbus connector sync filesystem\n  nimbus why <file>:<line>\n```\n\nBoth of those then fail:\n\n```\nGateway is not running. Start with: nimbus start\n```\n\n`--no-sync` returns `config-only` without ever starting a gateway, and\nthe guidance never\nsays so. A first run that succeeds and then names two commands that both\nexit 1 is worse\nthan one that ends silently.\n\n`nextStepLines` served two callers in genuinely different states — one\nhad just indexed\nthrough a live gateway, the other deliberately started nothing — and\ngave both the same\nlist. It now takes a **required** `gatewayRunning`, so a third caller is\na compile error\nrather than a silent wrong answer. Both directions are tested: `nimbus\nstart` is named\nwhen the gateway is down, and **not** named when it is up, so the fix\ncannot be satisfied\nby always printing it.\n\n**The documented path was never broken.** Plain `nimbus init` starts the\ngateway and\nindexes, and `nimbus why` then renders a real `## Authorship` section.\nThat was verified\nin the same sandbox and is Gate 1's Windows row, which had never been\nrun.\n\n## The hero demo is pulled\n\nSame session, chasing the same command sequence, turned up something\nlarger. The README's\nanimated demo was rendered from a **fake-gateway** recording whose brief\nwas hand-written\nrather than captured:\n\n```\n| Lane | Evidence |\n| Commit | a1b2c3d — harden token check |\n| Pull request | #214 — Reject empty bearer tokens |\n| Ticket | AUTH-88 — Empty token accepted on /session |\n| Incident | INC-31 — auth bypass reported by on-call |\n```\n\n`Lane | Evidence` appears in **exactly one file in this repository** —\nits own fixture —\nand nowhere in production source. The real `nimbus why` emits `# Why`\nthen `## Authorship`\nthen `## Gaps`. So the front page showed a format the product has never\nproduced, citing a\nPR, ticket and incident that do not exist, and omitting the `## Gaps`\ndisclosures the real\nbrief carries. The recorded command sequence is the failing one above.\n\nThe second demo, `incident-response`, is the same shape — `##\nInvestigation` with a p95\nthat rose 120ms to 380ms — and `## Investigation` is likewise in no\nproduction file. It\nwas never embedded anywhere.\n\nSo: the `<picture>` block is removed, and so is the `Watch the 15-second\ncast` link, which\npointed at the same recording on asciinema.org. **That upload is still\nlive and returns\nHTTP 200** — removing the link does not unpublish it, and it needs\ndeleting from the\naccount that owns it.\n\nNothing is deleted from the repo. The harness is working, tested\ninfrastructure that\nbecomes correct as soon as it is fed real captures; the defect is that\nthe fixtures were\nwritten rather than recorded. Both demo scripts,\n`docs/assets/README.md`, and the README\nitself now carry the reason and the bar for restoring: **rebuild from\noutput captured\nagainst a real gateway.**\n\n## The gate caught the coupling\n\n`record-casts --check` went red the moment the `init` output changed,\nbecause the cast\nrecords that command — which is the gate working. The snapshot is\nupdated and now shows\nthe corrected guidance. `incident-response.cast` was reverted after\nre-recording rewrote\nonly its event timings, leaving the text byte-identical: pure churn that\nwould have made\nthis diff look like it touched an unrelated demo.\n\n## Verified\n\n- `bun run typecheck:no-docs` — exit 0\n- `bun run lint` — exit 0\n- `bun run record-casts` (check mode) — exit 0\n- `bun run preflight:fast` — PASSED\n- whole suite — see the run recorded in the PR checks\n\n## Not done\n\n- The asciinema.org upload cannot be removed from here; it needs the\nowning account.\n- The fixtures are marked, not rebuilt. A truthful demo needs a capture\nfrom a repo with\nGitHub, a ticket tracker and an incident tool actually synced — which\nonly a real\n  install can produce.\n- No CI gate yet compares a recording against real output. That is the\nthing that would\nstop this recurring, and it belongs with the rebuild rather than with\nthis fix.\n\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)",
-          "timestamp": "2026-08-25T23:55:50+03:00",
-          "tree_id": "3465f80d376859ab7353a7f4e1d794cd85f00c94",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/829db8c1499ac131f0f998084d94beefc0cdb046"
-        },
-        "date": 1787692062991,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 323.7162721500023,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 324.75663180000413,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 286.61889064999815,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "64910e657e93aee2878ff9e82f36fe46159ee65e",
+          "message": "feat(gateway): add nimbus approvals, so the owner lists proposals from MCP agents and approves one in a single step at the terminal (#1997)\n\nAgent door AD2 (Phase 28): the owner's queue of proposals from MCP\nagents, and approval in one step at the terminal. Builds on AD1 (#1993).\n\n## What changes\n\n1. **Four owner methods**, `approvals.list`, `approvals.get`,\n`approvals.approve` and `approvals.decline`, in a new\n`ipc/approvals-rpc.ts`. They serve only a connection that declared `cli`\nor `ui`; an undeclared connection is refused here, though `captures.*`\nstill serves it. The namespace is LAN-forbidden, is not on the Tauri\nallowlist and has no HTTP route.\n2. **`approvals.approve` is human-only.** It reaches the act door\nthrough `acceptCapture` (never `acceptAction` directly) with a consent\nchannel that turns an approval whose `answerSource` is not `human` into\na decline before the executor records it, for plain and typed-confirm\nconsent alike.\n3. **`nimbus approvals`**: list, `show <id>`, `<id>` to approve, `<id>\n--decline`, `--decline-all-from <label>`. Approving needs a TTY on stdin\nand stdout, checked before any RPC; `--yes` and\n`--script-consent-source` are usage errors. The wire for an approve is\n`session.declareKind` then `approvals.approve`, so the owner takes one\naction and sees the executor's own prompt.\n4. **`capture.state` answers only for ids the asking connection\nsubmitted**; any other id reads exactly like an absent one. New\n`capture.mine` lists the caller's own captures. Capture ids carry 128\nrandom bits.\n5. **A per-connection cap**: at most the smaller of 3 and\n`action_max_pending` proposed actions per connection.\n6. **A count-only toast** when a proposal is queued. It carries a number\nand fixed text, never request text.\n7. **A rejected approval tells the owner why** on the reply only; the\nreason is not stored.\n8. **Texts**: MCP tool results and descriptions, CLI help, the desktop\nCaptures command hint and the docs name `nimbus approvals <id>` for\nactions. `nimbus captures accept <actionId>` is now a CLI alias of it.\n\n## What does not change\n\nReach is the same: the 47 proposable types, `acceptAction`'s steps, no\ndelegation, no standing rule. No migration (schema stays V96), no new\ninvariant, no new static rule number, no HITL type, no egress class.\nStatic D32 clauses b and c now allow two RPC modules, with fixtures; the\nI28 text is amended in `CLAUDE.md`, `GEMINI.md` and\n`docs/SECURITY-INVARIANTS.md`.\n\n## Behaviour a scripted owner will notice\n\n`nimbus captures accept <id>` on an action now goes through\n`approvals.approve` with the human consent choice, so\n`NIMBUS_SCRIPT_CONSENT_SOURCE` is ignored there and a person must\nanswer.\n\n## Deviations from the plan\n\n- `humanOnlyConsent` lives in `ipc/consent.ts`, because static D41\nclause a lets the typed-answer method be named only there and in the\nexecutor. A pin keeps `approvals-rpc.ts` its only user.\n- A refused approval is stored as `rejected` with no error code: the V69\nCHECK allows a code only on a `failed` action. Relaxing it belongs to\nAD3a's migration.\n- Typed confirmation on this path is proved with a synthetic Wave 4 row,\nsince no Wave 4 type is proposable until AD3a.\n\n## Stated bounds\n\n- The gateway's `captures.accept` on an action still serves an\nundeclared client with any answer source, as before; the spec keeps\n`captures.*` untouched. Only `approvals.approve` is human-only at the\ngateway.\n- The client kind is the connection's own claim on the local socket.\n- The TTY check is a CLI-side guard.\n- The per-connection cap counts by connection, so a reconnecting agent\ngets a fresh allowance; the global `action_max_pending` still bounds the\nqueue.\n- A reconnecting MCP adapter loses its own ids; the owner still sees the\nrow.\n- Ctrl-C at the prompt rejects the proposal for good.\n\n## Verification\n\nRun locally on Windows, one at a time:\n\n- `bun run typecheck`, `typecheck:tests` with 0 new errors, and `bun run\npreflight:fast`: passed.\n- Scoped gateway tests for `mcp-sink`, `capture-rpc`, `approvals-rpc`\nand `lan-rpc`: 840 pass, 0 fail.\n- `security-invariants.test.ts`, whole file: 550 pass.\n`check-nimbus-invariants.test.ts`: 647 pass. `audit:invariants`,\n`audit:status-drift`, `audit:doc-refs`: clean.\n- `test/integration/mcp-sink`: 41 pass. `user-mcp.e2e.test.ts` against a\nreal gateway with the sandbox helper built: 18 pass, 1 skip.\n- UI vitest for Captures: 21 pass. `cargo test allowlist_`: 39 pass.\n- `bun test packages/cli --parallel`: 11 failures, all the ink and\nyoga-layout import error in `src/tui`, which fails the same way on a\nclean `main` on this machine with local Bun 1.3.14. CI is the authority\nthere.\n- Not run locally: the whole-repo suites and the Linux coverage floor.\n\nRed-proofs, each by reverting the production line and watching the named\ntest fail: the `capture.state` ownership check, the human-only wrapper,\nthe per-connection check, the D32 allow-list lines, `approvals` in the\nLAN denylist, and the CLI TTY check.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Added `nimbus approvals` to list, inspect, approve, and decline\nproposed connector actions. You can also decline all waiting proposals\nfrom a label.\n* Proposed actions can be approved in one step through the normal\nconfirmation prompt. `nimbus captures accept` remains an alias for\napproval.\n  * Added notifications when proposals are waiting.\n\n* **Access and Safety**\n* Approval requires an interactive terminal and human confirmation;\nscripted consent cannot approve actions.\n* Capture status is visible only to the connection that submitted it.\nEach connection can have up to three pending action proposals.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Sonnet 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-13T10:23:06Z",
+          "tree_id": "c74384a0d70c0093a3fdcf384805cf3173d7862b",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/64910e657e93aee2878ff9e82f36fe46159ee65e"
+        },
+        "date": 1794565764946,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 167.21467345000093,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 168.5017457500002,
             "unit": "ms"
           }
         ]
