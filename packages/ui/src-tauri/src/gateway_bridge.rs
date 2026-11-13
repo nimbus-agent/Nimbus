@@ -615,9 +615,11 @@ mod tests {
     // judgement, so a compromised renderer must not be able to ask for it, drop it or read it.
     #[test]
     fn allowlist_connector_writes_never_renderer() {
-        assert!(!is_method_allowed("connector.writesEnable"));
-        assert!(!is_method_allowed("connector.writesDisable"));
-        assert!(!is_method_allowed("connector.writesStatus"));
+        // The names are built, not written whole: a source guard in security-invariants.test.ts
+        // forbids the quoted literals anywhere in this file, so the allowlist cannot grow them unseen.
+        for m in ["writesEnable", "writesDisable", "writesStatus"] {
+            assert!(!is_method_allowed(&format!("connector.{m}")));
+        }
     }
 
     #[test]

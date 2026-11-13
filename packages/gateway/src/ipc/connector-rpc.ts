@@ -167,7 +167,7 @@ export async function dispatchConnectorRpc(options: {
    * Absent reads as `unknown`, which cannot approve connector writes for outside agents.
    */
   clientKind?: ClientKind;
-  /** True once the human-only consent wrapper (`humanOnlyConsent`) turned an approval into a decline. */
+  /** True once the dispatcher's human-only consent wrapper turned an approval into a decline. */
   agentAnswerWasNonHuman?: () => boolean;
 }): Promise<{ kind: "hit"; value: unknown } | { kind: "miss" }> {
   const {
