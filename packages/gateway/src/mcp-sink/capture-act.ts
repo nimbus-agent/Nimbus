@@ -11,7 +11,6 @@ import {
   CaptureError,
   type CaptureRow,
 } from "./capture-types.ts";
-import { FORMAT_INVISIBLE_RANGES, rangesRegExp } from "./invisible-text.ts";
 
 /**
  * Invariant I28's act door (spec 2026-10-15 § 8). The ONE place a proposed connector action leaves
@@ -60,19 +59,6 @@ export type ActionAcceptResult = {
 
 const OUTCOME_FIELDS = ["url", "html_url", "webUrl", "permalink"] as const;
 const OUTCOME_MAX = 512;
-// Shown VISIBLY in the prompt, never rendered: the input is sent verbatim and cannot be stripped
-// (Review Focus 1). C0 controls except LF (the provenance lines never pass through JSON.stringify,
-// and the pretty-printed JSON's own layout newlines must survive), plus the shared format/invisible
-// table in `invisible-text.ts` — the same set `capture-validate.ts` strips at write time.
-const INVISIBLE_RE = rangesRegExp([[0x0000, 0x0009], [0x000b, 0x001f], ...FORMAT_INVISIBLE_RANGES]);
-
-/** BMP as `\uXXXX`; astral as `\u{XXXXX}` (a 4-digit form would misrepresent the code point). */
-function escapeCodePoint(c: string): string {
-  const cp = c.codePointAt(0) ?? 0;
-  return cp > 0xffff
-    ? String.raw`\u{${cp.toString(16)}}`
-    : String.raw`\u${cp.toString(16).padStart(4, "0")}`;
-}
 
 function audit(
   deps: Pick<ActGateDeps, "db">,
@@ -150,43 +136,6 @@ export function outcomeRefOf(result: unknown): string | undefined {
     if (typeof v === "string" && v.length <= OUTCOME_MAX && v.startsWith("https:")) return v;
   }
   return undefined;
-}
-
-const visible = (s: string): string => s.replace(INVISIBLE_RE, escapeCodePoint);
-
-// A one-line field must not start a new prompt line either: LF is escaped here too. `\` and `"`
-// are escaped FIRST (before `visible` adds its own backslashes), so a quoted label cannot close
-// its quotes and fake the provenance text that follows it.
-const visibleLine = (s: string): string =>
-  visible(s.replaceAll("\\", String.raw`\\`).replaceAll('"', String.raw`\"`)).replaceAll(
-    "\n",
-    String.raw`\u000a`,
-  );
-
-/**
- * The provenance header of an act-door prompt: who proposed the action, when, and the agent's
- * UNVERIFIED summary. Shared by the verbatim prompt below and the typed-preview prompt
- * (`ipc/capture-rpc.ts`), so the two can never disagree about who asked.
- */
-export function formatActionProvenanceLines(p: ActionProvenance): string[] {
-  return [
-    "Agent-proposed action — requires your approval",
-    `Proposed by MCP client "${visibleLine(p.clientLabel ?? "unlabelled")}" at ${new Date(p.createdAt).toISOString()}, expires ${new Date(p.expiresAt).toISOString()}`,
-    `Agent's summary (unverified): ${visibleLine(p.summary)}`,
-  ];
-}
-
-export function formatActionConsent(
-  p: ActionProvenance,
-  actionType: string,
-  input: Readonly<Record<string, unknown>>,
-): string {
-  return [
-    ...formatActionProvenanceLines(p),
-    `Type: ${visibleLine(actionType)}`,
-    "Input (verbatim, exactly what will be sent):",
-    visible(JSON.stringify(input, null, 2)),
-  ].join("\n");
 }
 
 function parseStored(row: CaptureRow): ActionPayload {

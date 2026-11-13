@@ -4797,6 +4797,9 @@ export async function assemblePlatformServices(
       policyHitl,
       // The typed preview's `Credential:` line reads the same pin the write itself uses (as runAsk).
       previewCredentialFor: previewCredentialResolver(connectorWriteDeps, connectorMesh),
+      // Phase 28 AD1: the before-state guards read the tribal KB destinations, from the same
+      // accessor as `platform.tribalKbConfig` (the model door's) and the act door's destination refusal.
+      getTribalKbConfig: () => tribalKbConfigOf(tribalCfg),
     },
   };
 

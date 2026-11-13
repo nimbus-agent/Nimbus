@@ -9,7 +9,7 @@
 //
 //   1. `policyStep`      the org policy has not locked standing approvals off (absent = off);
 //   2. `provenanceStep`  a gateway-set owner-workflow provenance, a trigger the gateway derived
-//                        (schedule, owner_cli, owner_ui), and no `origin: "model"`;
+//                        (schedule, owner_cli, owner_ui), and no `origin` at all (neither "model" nor "agent");
 //   3. `eligibleRowsStep` the action TYPE names only wave 2 or 3 connector writes that are not
 //                        bound, typed-confirm, refused or never-offered, and is HITL by the frozen set;
 //   4. `toolStep`        the payload's `mcpToolId` names one of that type's own tools, and nothing
@@ -90,7 +90,7 @@ function policyStep(deps: StandingRuleDeps): boolean {
   }
 }
 
-/** Step 2. The provenance is gateway-set (top level only); a model action never matches. */
+/** Step 2. The provenance is gateway-set (top level only); an outside-origin action ("model" or "agent") never matches. */
 function provenanceStep(action: PlannedAction): WorkflowProvenance | undefined {
   const p = action.provenance;
   if (p?.kind !== "owner_workflow") return undefined;

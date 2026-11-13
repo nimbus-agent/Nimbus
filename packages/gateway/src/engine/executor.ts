@@ -45,6 +45,7 @@ import {
 import type { BoundWriteCapabilities, SettleContext } from "./bound-write-capabilities.ts";
 import { type RemoteApprovalOutcome, resolveDelegatedApproval } from "./delegated-approval.ts";
 import type { DelegationReader } from "./delegation-store.ts";
+import { isAgentOrigin, isModelOrigin, isOutsideOrigin } from "./outside-origin.ts";
 import {
   boundInputRefusal,
   injectBoundFields,
@@ -56,11 +57,13 @@ import {
   prepareLeftover,
   runPrepareStep,
 } from "./prepare-step.ts";
+import { agentVerbatimInputLines, formatProposerBlock, proposerDetails } from "./proposer-block.ts";
 import { serviceOf } from "./service-of.ts";
 import { type StandingRuleDeps, standingRuleStep } from "./standing-rule-step.ts";
 import { extractToolInput } from "./tool-input.ts";
 import type {
   ActionResult,
+  AgentProposer,
   AnswerSource,
   ApprovalAnswer,
   ApprovalOutcome,
@@ -399,7 +402,8 @@ export function redactPayloadForConsentDisplay(value: unknown): unknown {
  * global regex is deliberately left as is for every other action type.
  *
  * An `origin: "model"` action (top level only, gateway-set) is shown with `requestedBy: "model"`,
- * so the desktop says who asked as the CLI's `Requested by` line does. It is added AFTER the
+ * so the desktop says who asked as the CLI's `Requested by` line does; an `origin: "agent"` one
+ * carries its UNVERIFIED proposer under `proposedBy` instead (Phase 28 AD1). It is added AFTER the
  * payload is wrapped, so the gateway's value wins over any payload key of that name and the
  * addition can never make a payload pose as a preview. `preview` is one the caller already built
  * for this action (the gate builds it once, for both display functions).
@@ -418,13 +422,33 @@ export function consentDisplayPayload(
     // (the prompt and these lines), not three times.
     const typed: ConnectorWritePreview =
       built.plan === undefined ? built : { ...built, plan: structuredPlan(built.plan) };
-    if (action.origin !== "model") return typed as unknown as Record<string, unknown>;
-    const withOrigin: ConnectorWritePreview = { ...typed, requestedBy: "model" };
-    return withOrigin as unknown as Record<string, unknown>;
+    return { ...(typed as unknown as Record<string, unknown>), ...originDisplay(action) };
+  }
+  if (isAgentOrigin(action)) {
+    // An outside agent's untemplated write is shown UNREDACTED, as the prompt shows it (the owner
+    // approves the exact input that will be sent; the consent channel is the local owner's only).
+    return {
+      ...neverPosesAsPreview(action.payload),
+      ...originDisplay(action),
+    };
   }
   const shown = shownPayload(action);
-  if (action.origin !== "model") return shown;
+  if (!isModelOrigin(action)) return shown;
   return { ...shown, requestedBy: "model" };
+}
+
+/**
+ * What the gateway adds to the display payload for an outside origin, AFTER the payload is wrapped
+ * so its value wins over any payload key of that name: `requestedBy: "model"` for the model door,
+ * `proposedBy` (the UNVERIFIED proposer, the desktop's contract) for an agent. Nothing for
+ * anything else, and nothing for an agent action that carries no proposer.
+ */
+function originDisplay(action: PlannedAction): Record<string, unknown> {
+  if (isModelOrigin(action)) return { requestedBy: "model" };
+  if (isAgentOrigin(action) && action.proposer !== undefined) {
+    return { proposedBy: proposerDetails(action.proposer) };
+  }
+  return {};
 }
 
 /** A plan without its joined `text` (see {@link consentDisplayPayload}). */
@@ -526,9 +550,23 @@ export function formatConsentPrompt(
   credentialFor?: PreviewCredentialResolver,
   preview?: ConnectorWritePreview,
 ): string {
+  const body = formatConsentPromptBody(action, credentialFor, preview);
+  if (!isAgentOrigin(action)) return body;
+  // Phase 28 AD1: the proposer is an UNVERIFIED block AFTER every prompt shape, never inside the
+  // gateway-built preview. An agent action without one is a bug: refuse to build an unlabelled prompt.
+  if (action.proposer === undefined) throw new Error("an agent-origin action carries no proposer");
+  return [body, "", ...formatProposerBlock(action.proposer)].join("\n");
+}
+
+function formatConsentPromptBody(
+  action: PlannedAction,
+  credentialFor?: PreviewCredentialResolver,
+  preview?: ConnectorWritePreview,
+): string {
   const lines = [`Action requires your approval`, ``, `Type: ${action.type}`];
   // One fixed line on every prompt shape below; the origin is gateway-set, never payload text.
-  if (action.origin === "model") lines.push("Requested by: the model");
+  if (isModelOrigin(action)) lines.push("Requested by: the model");
+  if (isAgentOrigin(action)) lines.push("Requested by: an outside agent (unverified)");
   const promptText = promptTextOf(action);
   if (promptText !== undefined) {
     // The pack prompt is a purpose-built, escaped rendering; a JSON Details line would only add noise.
@@ -552,6 +590,12 @@ export function formatConsentPrompt(
   if (typed !== undefined) {
     // Purpose-built, escaped rendering; a JSON Details line would repeat it (and show it raw).
     lines.push("", ...renderConnectorWritePreviewLines(typed));
+    return lines.join("\n");
+  }
+  if (isAgentOrigin(action)) {
+    // I42: the owner approves the exact input that will be sent, invisible characters shown as
+    // escapes; a one-line JSON `Details` would hide them in a long line.
+    lines.push("", ...agentVerbatimInputLines(extractToolInput(action)));
     return lines.join("\n");
   }
   if (action.payload !== undefined && Object.keys(action.payload).length > 0) {
@@ -615,14 +659,31 @@ function omitPromptText(payload: Record<string, unknown>): Record<string, unknow
   return rest;
 }
 
+/** An action as the audit row records it: the proposer is projected to the door and the capture. */
+type AuditedAction = Omit<PlannedAction, "proposer"> & {
+  proposer?: Pick<AgentProposer, "door" | "captureId">;
+};
+
+/**
+ * Phase 28 AD1: an agent proposal's row names the door and the capture; the agent's own label and
+ * summary stay out of the chain. The projection comes BEFORE the payload, which the row's size cap
+ * may cut.
+ */
+function auditedAction(action: PlannedAction): AuditedAction {
+  if (action.proposer === undefined) return auditedBody(action);
+  const { proposer, ...rest } = action;
+  const { type, ...others } = auditedBody(rest);
+  return { type, proposer: { door: proposer.door, captureId: proposer.captureId }, ...others };
+}
+
 /** The payload the audit row records: the identifying fields, without a rendered prompt body. */
-function auditedAction(action: PlannedAction): PlannedAction {
+function auditedBody(action: PlannedAction): PlannedAction {
   if (action.provenance !== undefined) {
     // SA2: the row names the workflow run; the field sources (for the standing-rule check) stay out.
     // The history comes BEFORE the payload, which the row's size cap may cut.
     const { fieldSources: _sources, ...history } = action.provenance;
     const { provenance: _own, ...rest } = action;
-    const { type, ...others } = auditedAction(rest);
+    const { type, ...others } = auditedBody(rest);
     return { type, provenance: history as WorkflowProvenance, ...others };
   }
   if (action.payload === undefined) return action;
@@ -1125,8 +1186,8 @@ export class ToolExecutor {
   ): Promise<"approved" | "rejected" | "fallback"> {
     // I42: a delegate never approves a user-MCP call — the LOCAL owner always answers it.
     if (this.delegation === undefined || isUserMcpActionType(action.type)) return "fallback";
-    // I20: a delegate never approves an action the MODEL proposed (top-level `origin` only).
-    if (action.origin === "model") return "fallback";
+    // I20: a delegate never approves an action an outside party proposed (`origin` "model" or "agent", top level only).
+    if (isOutsideOrigin(action)) return "fallback";
     // I20: a delegate never approves a trust root (`registry.add`), local code (`extension.*`) or a
     // pack install (`pack.install`, which writes the owner's config); only the local owner can.
     // Structural, not left to the gate's `delegation: undefined`.

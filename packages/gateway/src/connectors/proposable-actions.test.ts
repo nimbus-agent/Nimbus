@@ -285,10 +285,10 @@ test("D1: every Wave 4 row stays denied on the act door, in the class it had (no
 });
 
 describe("a bound row is never proposable on the MCP act door (D1c, spec 15.5)", () => {
-  // `provenanceConsent` (ipc/capture-rpc.ts) REPLACES the executor's prompt and details with the
-  // act door's own display, built from the input alone: no before-state, no prepared facts, no diff.
-  // A proposable bound row would therefore be approved WITHOUT the diff and without the prepared
-  // head. Making one proposable needs provenanceConsent to carry the executor's preview first.
+  // Phase 28 AD1: the act door now runs on the door executor, so its prompt is the executor's own.
+  // The classification below is unchanged (AD3 revisits it): a bound row's preflight, prepare and
+  // settle phases need an approval surface that can show a diff or a plan and collect the typed
+  // confirmation, which the two-step `captures accept` flow does not yet offer on every channel.
   const bound = CONNECTOR_WRITE_ROWS.filter((r) => r.bound !== undefined);
 
   test("the bound rows are exactly the two commits, the three plan-bound iac writes and the Kubernetes apply (D3a)", () => {

@@ -37,11 +37,36 @@ export type PlannedAction = {
    */
   provenance?: WorkflowProvenance;
   /**
-   * Set only by the gateway for an action the MODEL proposed. It only ever REMOVES delegation (a
-   * delegate never approves it, I20) and adds a consent line; whether HITL is required stays
-   * decided by `type` alone (I3). Top level only: a `payload.origin` means nothing.
+   * Set only by the gateway for an action an outside party proposed: `"model"` (the conversational
+   * model, I53) or `"agent"` (an MCP client through the act door, I28). It only ever REMOVES
+   * delegation (a delegate never approves it, I20) and standing rules (I55), enables the
+   * before-state runner and adds a consent line; whether HITL is required stays decided by `type`
+   * alone (I3). Top level only: a `payload.origin` means nothing. Read it only through
+   * `isOutsideOrigin` (`engine/outside-origin.ts`).
    */
-  origin?: "model";
+  origin?: "model" | "agent";
+  /**
+   * Set only by the gateway beside `origin: "agent"`, from the stored capture row (never from IPC, a
+   * payload or a door; top level only, the `provenance` pattern). DISPLAY data for the owner's
+   * prompt, in an UNVERIFIED block after the verified preview: it never selects the tool, the
+   * credential or the confirm text (I3), and nothing in it reaches the connector call.
+   */
+  proposer?: AgentProposer;
+};
+
+/** An outside agent's proposal as the owner's prompt shows it (Phase 28 AD1). Every field is UNVERIFIED. */
+export type AgentProposer = {
+  door: "agent";
+  /** The capture row the proposal waits in (`cap_...`). */
+  captureId: string;
+  /** The client's declared name, or null. */
+  label: string | null;
+  /** Where the label came from: the connection's own claim, or the owner-written kit config. */
+  labelSource: "declared" | "kit";
+  /** The agent's own one-line summary of what it wants. */
+  summary: string;
+  createdAt: number;
+  expiresAt: number;
 };
 
 export type ActionResult =

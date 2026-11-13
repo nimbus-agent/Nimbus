@@ -566,9 +566,10 @@ describe.skipIf(!sandboxAvailable)("a scaffolded user MCP over a real gateway", 
     const out = await client.call<{ state: string }>("captures.accept", { id: sub.id });
     expect(out.state).toBe("executed");
     const shown = prompts.slice(before).join("\n");
-    expect(shown).toContain("Agent-proposed action");
+    // Phase 28 AD1: the executor's own prompt, the verbatim input, then the UNVERIFIED proposer block.
+    expect(shown).toContain("Requested by: an outside agent (unverified)");
     expect(shown).toContain('"text": "from-the-agent"');
-    expect(shown).toContain('Proposed by MCP client "e2e-agent"');
+    expect(shown).toContain('UNVERIFIED label "e2e-agent"');
     const added = (await ledgerRowsFor("mcp_echo_srv")).filter(
       (r) => r.method === "mcp_echo_srv.echo" && !ledgerBefore.some((b) => b.id === r.id),
     );
@@ -584,9 +585,17 @@ describe.skipIf(!sandboxAvailable)("a scaffolded user MCP over a real gateway", 
       (r) => r.actionType === "mcp_echo_srv.echo" && r.actionJson.includes("from-the-agent"),
     );
     expect(dispatched?.hitlStatus).toBe("approved");
-    expect(JSON.parse(dispatched?.actionJson ?? "{}")).toEqual({
+    const raw: unknown = JSON.parse(dispatched?.actionJson ?? "{}");
+    const row = raw as { action: { proposer?: { captureId?: string } } };
+    // Phase 28 AD1: the dispatch runs as an `origin: "agent"` action; the row names the door and the
+    // capture, never the agent's label or summary.
+    expect(row.action.proposer?.captureId).toMatch(/^cap_[A-Za-z0-9_-]+$/);
+    expect(JSON.stringify(row)).not.toContain("e2e-agent");
+    expect(raw).toEqual({
       action: {
         type: "mcp_echo_srv.echo",
+        proposer: { door: "agent", captureId: row.action.proposer?.captureId },
+        origin: "agent",
         payload: { mcpToolId: "mcp_echo_srv_echo", input: { text: "from-the-agent" } },
       },
       // SA1: the test's owner client reports no answer source, so the row records `unknown`.

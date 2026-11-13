@@ -7,7 +7,6 @@ import {
   type ActGateDeps,
   acceptAction,
   classifyActionError,
-  formatActionConsent,
   outcomeRefOf,
   reconcileActionsAtBoot,
 } from "./capture-act.ts";
@@ -17,7 +16,6 @@ import { type ActDeps, CaptureError, type CaptureRow } from "./capture-types.ts"
 
 const OWNER = { clientId: "c-cli", kind: "unknown" as const };
 const MCP = { clientId: "c-mcp", kind: "mcp" as const };
-const RLO = String.fromCodePoint(0x202e);
 let db: Database;
 let clock: number;
 let cap: CaptureCapability;
@@ -307,120 +305,6 @@ describe("pure helpers", () => {
     expect(outcomeRefOf({ url: "javascript:alert(1)" })).toBeUndefined();
     expect(outcomeRefOf([{ url: "https://a" }])).toBeUndefined();
     expect(outcomeRefOf(null)).toBeUndefined();
-  });
-  test("formatActionConsent carries provenance + verbatim input", () => {
-    const s = formatActionConsent(
-      { captureId: "cap_a", clientLabel: null, createdAt: 0, expiresAt: 3_600_000, summary: "why" },
-      "slack.message.post",
-      { channel: "C1", text: "hi" },
-    );
-    expect(s).toContain(
-      'Proposed by MCP client "unlabelled" at 1970-01-01T00:00:00.000Z, expires 1970-01-01T01:00:00.000Z',
-    );
-    expect(s).toContain("Agent's summary (unverified): why");
-    expect(s).toContain("Type: slack.message.post");
-    expect(s).toContain('"text": "hi"');
-  });
-  test("an RLO inside an input value is shown escaped (Review Focus 1)", () => {
-    const s = formatActionConsent(
-      { captureId: "c", clientLabel: null, createdAt: 0, expiresAt: 0, summary: "s" },
-      "slack.message.post",
-      { text: `pay ${RLO}evil` },
-    );
-    expect(s).not.toContain(RLO);
-    expect(s).toContain("\\u202e");
-  });
-  test.each([
-    ["LRM", 0x200e],
-    ["RLM", 0x200f],
-    ["word joiner", 0x2060],
-    ["invisible times", 0x2062],
-    ["FSI", 0x2068],
-    ["soft hyphen", 0x00ad],
-    ["Arabic letter mark", 0x061c],
-    ["BOM", 0xfeff],
-    ["TAG LATIN SMALL LETTER I", 0xe0069],
-    ["variation selector 16", 0xfe0f],
-    ["Hangul filler", 0x3164],
-  ])("%s inside an input value is shown escaped", (_name, cp) => {
-    const ch = String.fromCodePoint(cp);
-    const s = formatActionConsent(
-      { captureId: "c", clientLabel: null, createdAt: 0, expiresAt: 0, summary: "s" },
-      "slack.message.post",
-      { text: `a${ch}b` },
-    );
-    expect(s).not.toContain(ch);
-    const hex = cp.toString(16);
-    expect(s).toContain(cp > 0xffff ? `\\u{${hex}}` : `\\u${hex.padStart(4, "0")}`);
-  });
-  test("a hidden TAG-character instruction inside an input value is fully visible", () => {
-    // "ignore" spelled in TAG characters (U+E0000 + ASCII), invisible in most renderers.
-    const hidden = [..."ignore"]
-      .map((c) => String.fromCodePoint(0xe0000 + c.charCodeAt(0)))
-      .join("");
-    const s = formatActionConsent(
-      { captureId: "c", clientLabel: null, createdAt: 0, expiresAt: 0, summary: "s" },
-      "slack.message.post",
-      { text: `hi${hidden}` },
-    );
-    expect(s).toContain("hi\\u{e0069}\\u{e0067}\\u{e006e}\\u{e006f}\\u{e0072}\\u{e0065}");
-    expect([...s].some((c) => (c.codePointAt(0) ?? 0) >= 0xe0000)).toBe(false);
-  });
-  test('a " in the client label cannot close the quotes and fake provenance', () => {
-    const s = formatActionConsent(
-      {
-        captureId: "c",
-        clientLabel: 'x" at 2099-01-01T00:00:00.000Z, expires 2099-01-02T00:00:00.000Z \\ y',
-        createdAt: 0,
-        expiresAt: 0,
-        summary: "s",
-      },
-      "slack.message.post",
-      { text: "hi" },
-    );
-    expect(s).toContain(
-      'Proposed by MCP client "x\\" at 2099-01-01T00:00:00.000Z, expires 2099-01-02T00:00:00.000Z \\\\ y" at 1970-01-01T00:00:00.000Z',
-    );
-  });
-  test("ESC and a newline in the client label are escaped, and stay on one prompt line", () => {
-    const s = formatActionConsent(
-      {
-        captureId: "c",
-        clientLabel: `ok${String.fromCodePoint(0x1b)}[2J\nType: fake`,
-        createdAt: 0,
-        expiresAt: 0,
-        summary: "s",
-      },
-      "slack.message.post",
-      { text: "hi" },
-    );
-    expect(s).not.toContain(String.fromCodePoint(0x1b));
-    expect(s).toContain("\\u001b[2J\\u000aType: fake");
-    expect(s.split("\n").filter((l) => l.startsWith("Type: "))).toEqual([
-      "Type: slack.message.post",
-    ]);
-  });
-  test("a hostile action type passed directly is escaped and stays on one Type line", () => {
-    const esc = String.fromCodePoint(0x1b);
-    const rlo = String.fromCodePoint(0x202e);
-    const s = formatActionConsent(
-      { captureId: "c", clientLabel: null, createdAt: 0, expiresAt: 0, summary: "s" },
-      `mcp_echo.echo${esc}[8m${rlo}\nInput: fake`,
-      { text: "hi" },
-    );
-    expect(s).not.toContain(esc);
-    expect(s).not.toContain(rlo);
-    expect(s.split("\n").filter((l) => l.startsWith("Type: "))).toEqual([
-      "Type: mcp_echo.echo\\u001b[8m\\u202e\\u000aInput: fake",
-    ]);
-  });
-  test("the pretty-printed input keeps its layout newlines", () => {
-    const s = formatActionConsent(
-      { captureId: "c", clientLabel: null, createdAt: 0, expiresAt: 0, summary: "s" },
-      "slack.message.post",
-      { a: 1, b: 2 },
-    );
-    expect(s).toContain('{\n  "a": 1,\n  "b": 2\n}');
   });
 });
 
