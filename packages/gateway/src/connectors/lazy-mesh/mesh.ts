@@ -115,6 +115,7 @@ import {
   phase3AddSnowflakeMcp,
   phase3AddTableauMcp,
   phase3AddTestflightMcp,
+  phase3AddVantageMcp,
   phase3AddVercelMcp,
 } from "./phase3-config.ts";
 import { isServiceCredentialConfigured } from "./service-credential.ts";
@@ -147,6 +148,7 @@ const PHASE3_LISTING_ADDERS: Readonly<Record<string, Phase3ServerAdder>> = {
   powerbi: phase3AddPowerBiMcp,
   montecarlo: phase3AddMonteCarloMcp,
   bigeye: phase3AddBigeyeMcp,
+  vantage: phase3AddVantageMcp,
   argocd: phase3AddArgocdMcp,
   flux: phase3AddFluxMcp,
   launchdarkly: phase3AddLaunchdarklyMcp,

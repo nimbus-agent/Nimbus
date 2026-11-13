@@ -1,3 +1,5 @@
+import type { AtClause } from "./item-history-at.ts";
+
 export type ItemListQueryParams = {
   readonly services?: readonly string[];
   readonly types?: readonly string[];
@@ -32,6 +34,12 @@ export type ItemListQueryParams = {
    * clauses, which this type does not prevent, but no current caller does).
    */
   readonly idInSql?: { readonly sql: string; readonly vals: readonly (string | number)[] };
+  /**
+   * Point-in-time admit clause (`--at`, Phase 10 IC1): built by `buildAtClause(db, atMs, "item")` (this
+   * query's `FROM item` is unaliased, so the clause names the table). AND-ed as the LAST conjunct; its
+   * bound parameters follow every other filter's and precede `LIMIT`. Federation never sets it.
+   */
+  readonly at?: AtClause;
 };
 
 export function buildItemListSql(params: ItemListQueryParams): {
@@ -75,6 +83,10 @@ export function buildItemListSql(params: ItemListQueryParams): {
   if (params.untilMs !== undefined) {
     filters.push("modified_at <= ?");
     vals.push(params.untilMs);
+  }
+  if (params.at !== undefined) {
+    filters.push(params.at.sql);
+    vals.push(...params.at.params);
   }
   const where = filters.length > 0 ? `WHERE ${filters.join(" AND ")}` : "";
   const sql = `SELECT id, service, type, external_id, title, body_preview, url, canonical_url,

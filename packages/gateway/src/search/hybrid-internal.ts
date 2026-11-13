@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import type { AtClause } from "../index/item-history-at.ts";
 
 import { vectorSearchChunksDual } from "./dual-search.ts";
 import type { HybridIndexedItem, HybridSearchOptions, HybridSearchResult } from "./hybrid-types.ts";
@@ -86,6 +87,10 @@ export function loadBm25Hits(
     whereExtra += " AND i.modified_at >= ?";
     params.push(opts.since);
   }
+  if (opts.at !== undefined) {
+    whereExtra += ` AND ${opts.at.sql}`;
+    params.push(...opts.at.params);
+  }
   const cap = Math.min(500, limit * 15);
   const sql = `
       SELECT i.id AS id, i.service AS service, i.type AS type, i.external_id AS external_id,
@@ -107,6 +112,16 @@ export function loadBm25Hits(
     }
   }
   return bm25Hits;
+}
+
+/**
+ * How many nearest chunks the vector arm asks for. Under `--at` the KNN top-k is fixed BEFORE the temporal
+ * clause applies (vec0 cannot filter inside `MATCH`), so a later item could occupy a slot and starve an
+ * admitted one: ask for the maximum k (500). The residual recall bound is stated in the docs: a query whose
+ * nearest 500 chunks are all newer than T gets no vector hits (the keyword arm is exact).
+ */
+export function vectorCandidateLimit(limit: number, pointInTime: boolean): number {
+  return pointInTime ? 500 : Math.min(500, limit * 25);
 }
 
 export function runVectorSearch(
@@ -134,7 +149,8 @@ export function runVectorSearch(
     service?: string;
     itemType?: string;
     since?: number;
-  } = { limit: Math.min(500, limit * 25) };
+    at?: AtClause;
+  } = { limit: vectorCandidateLimit(limit, opts.at !== undefined) };
   if (opts.queryEmbedding !== undefined) {
     dualOpts.queryEmbedding384 = opts.queryEmbedding;
     dualOpts.model384 = opts.embeddingModel;
@@ -146,6 +162,7 @@ export function runVectorSearch(
   if (serviceFilter !== undefined) dualOpts.service = serviceFilter;
   if (opts.itemType !== undefined && opts.itemType !== "") dualOpts.itemType = opts.itemType;
   if (opts.since !== undefined && opts.since > 0) dualOpts.since = opts.since;
+  if (opts.at !== undefined) dualOpts.at = opts.at;
   return vectorSearchChunksDual(db, dualOpts);
 }
 

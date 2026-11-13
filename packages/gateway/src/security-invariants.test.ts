@@ -33,6 +33,7 @@ import {
   checkEmbeddingConstructorConfinement,
   checkEvalConfinement,
   checkIacDiscard,
+  checkLanBoxPathConfinement,
   checkModelWriteDoor,
   checkStandingApprovals,
   checkWrapServerSpecInvariant,
@@ -57,6 +58,7 @@ import {
   initLayeredConfig,
   resetLayeredConfigsForTests,
 } from "./config/layered-config.ts";
+import { DEFAULT_NIMBUS_LAN_TOML } from "./config/nimbus-toml.ts";
 import { CONNECTOR_SERVICE_IDS } from "./connectors/connector-catalog.ts";
 import { createConnectorWriteDispatcher } from "./connectors/connector-write-dispatch.ts";
 import {
@@ -166,6 +168,7 @@ import { ConsentCoordinatorImpl } from "./ipc/consent.ts";
 import { createStreamRegistry } from "./ipc/engine-ask-stream.ts";
 import { HttpWriteRateLimiter } from "./ipc/http-rate-limit.ts";
 import { dispatchIndexReembedRpc } from "./ipc/index-reembed-rpc.ts";
+import { legacyAllowedFor } from "./ipc/lan-legacy.ts";
 import { dispatchMigrationRpc } from "./ipc/migration-rpc.ts";
 import { ClientKindStore } from "./ipc/server/client-kind.ts";
 import { phase4RpcSkipped, type ServerCtx } from "./ipc/server/context.ts";
@@ -173,6 +176,14 @@ import { demoRefusal } from "./ipc/server/demo-gate.ts";
 import { tryDispatchDemoRpc } from "./ipc/server/dispatchers.ts";
 import { RpcMethodError } from "./ipc/server/rpc-error.ts";
 import { createStandingOwnerAsk, dispatchStandingRpc } from "./ipc/standing-rpc.ts";
+import {
+  attackerEeCandidates,
+  attackLegacyBox,
+  attackTransport,
+  ratchetScenario,
+  recordSession,
+  replayRecordedRequest,
+} from "./ipc/testing/lan-forward-secrecy.test-helpers.ts";
 import { AnthropicProvider } from "./llm/anthropic-provider.ts";
 import { GeminiProvider } from "./llm/gemini-provider.ts";
 import { LlamaCppProvider } from "./llm/llamacpp-provider.ts";
@@ -886,6 +897,19 @@ describe("I5 — LAN method allowlist is intrinsic to LanServer", () => {
     expect(call).toContain('redirect: "manual"');
     // The cloud id is validated before it enters a path.
     expect(code).toContain("isAtlassianCloudId(");
+  });
+
+  test("I29/IC2: the JSM alert pass has no fetch, no https literal and no redirect of its own and reuses the on-call request function", async () => {
+    for (const file of ["jsm-alerts.ts", "jsm-alert-mapping.ts"]) {
+      const code = stripComments(await read(`packages/gateway/src/connectors/${file}`));
+      expect(code, file).not.toMatch(/\bfetch\(/);
+      expect(code, file).not.toContain("https://");
+      expect(code, file).not.toMatch(/redirect\s*:/);
+    }
+    const alerts = stripComments(await read("packages/gateway/src/connectors/jsm-alerts.ts"));
+    expect(alerts).toMatch(
+      /import\s*\{[^}]*\bjsmGet\b[^}]*\bresolveCloudId\b[^}]*\}\s*from\s*"\.\/jsm-oncall\.ts"/s,
+    );
   });
 
   test("FORBIDDEN_OVER_LAN blocks extension.checkForUpdates + extension.update (T2 PR 3)", async () => {
@@ -14199,5 +14223,127 @@ describe("I55 SA5 — approval learning only suggests: it never creates, widens 
     expect(CURRENT_SCHEMA_VERSION).toBeGreaterThanOrEqual(90);
     const { buildLearningConfig } = await import("./standing/learning-config.ts");
     expect(buildLearningConfig({ demo: false, configDir: "x" }).enabled()).toBe(false);
+  });
+});
+
+describe("I56 — a LAN session's records are encrypted only under ephemeral-DH Noise keys; the v1 box path is gated", () => {
+  test("FS-A1: given BOTH static secrets and the whole transcript, no record opens; the positive control opens", async () => {
+    const real = await recordSession(false);
+    try {
+      const opened = attackTransport(real.conn, {
+        initiator: real.initiator,
+        responder: real.responder,
+        eeCandidates: attackerEeCandidates(real),
+      });
+      expect(opened).toBe(0);
+      expect(attackLegacyBox(real.conn, real.initiator, real.responder)).toBe(0);
+    } finally {
+      await real.stop();
+    }
+    const control = await recordSession(true);
+    try {
+      const opened = attackTransport(control.conn, {
+        initiator: control.initiator,
+        responder: control.responder,
+        eeCandidates: [control.controlEe as Uint8Array],
+      });
+      // If the attacker routine were broken, the zero above would prove nothing; this is the guard.
+      expect(opened).toBeGreaterThanOrEqual(2);
+    } finally {
+      await control.stop();
+    }
+  });
+
+  test("FS-A2: a replayed message 1 and recorded request never execute, and the failure is counted", async () => {
+    const out = await replayRecordedRequest();
+    expect(out.messageTwoDiffers).toBe(true);
+    expect(out.executedAfter).toBe(out.executedBefore);
+    expect(out.bytesAfterMessage2).toBe(0);
+    expect(out.closed).toBe(true);
+    expect(out.failures).toBe(1);
+  });
+
+  test("FS-A3: one v2 session ratchets the peer, and a legacy hello for it then gets no hello_ok", async () => {
+    const out = await ratchetScenario();
+    expect(out.hostRowBefore).toBe(1);
+    expect(out.hostRowAfter).toBe(2);
+    expect(out.askerRowAfter).toBe(2);
+    expect(out.legacyHelloClosed).toBe(true);
+    expect(out.legacyHelloBytes).toBe(0);
+  });
+
+  test("the downgrade check is ONE function: never for a peer at 2, never under min_protocol 2", () => {
+    expect(legacyAllowedFor(2, 1)).toBe(false);
+    expect(legacyAllowedFor(undefined, 2)).toBe(false);
+    expect(legacyAllowedFor(1, 1)).toBe(true);
+  });
+
+  test("wiring: the legacy handshake calls legacyAllowedFor before it replies, and the server uses lan-session for v2", async () => {
+    const legacy = stripComments(await read("packages/gateway/src/ipc/lan-legacy.ts"));
+    const helloReply = legacy.indexOf('kind: "hello_ok"');
+    const helloCheck = legacy.indexOf("legacyAllowedFor(match.protoVersion");
+    expect(helloCheck).toBeGreaterThan(-1);
+    expect(helloCheck).toBeLessThan(helloReply);
+    // ... and again for EVERY request on an open v1 connection, before the frame is opened.
+    const perRequest = legacy.indexOf("legacyAllowedFor(ctx.isKnownPeer(session.peerPubkey)");
+    expect(perRequest).toBeGreaterThan(helloReply);
+    expect(perRequest).toBeLessThan(legacy.indexOf("openBoxFrame(frame"));
+    const server = stripComments(await read("packages/gateway/src/ipc/lan-server.ts"));
+    expect(server).toContain("openResponderHandshake(");
+    // checkLanMethodAllowed still runs before onMessage on the v2 path.
+    const gateAt = server.indexOf("checkLanMethodAllowed(method, peer)");
+    const dispatchAt = server.indexOf("this.opts.onMessage(method, params, peer)");
+    // Both must exist: a removed check would make indexOf -1, which is "before" everything.
+    expect(gateAt).toBeGreaterThan(-1);
+    expect(dispatchAt).toBeGreaterThan(-1);
+    expect(gateAt).toBeLessThan(dispatchAt);
+    const client = stripComments(await read("packages/gateway/src/ipc/lan-client.ts"));
+    expect(client).toContain("createInitiatorHandshake(");
+  });
+
+  test("source pins: neither host file seals with the static key, and production never injects an ephemeral", async () => {
+    for (const rel of ["lan-server.ts", "lan-client.ts", "lan-session.ts", "lan-noise.ts"]) {
+      const src = stripComments(await read(`packages/gateway/src/ipc/${rel}`));
+      expect(src).not.toMatch(/\b(?:sealBoxFrame|openBoxFrame)\b/);
+      expect(src).not.toMatch(/\bnacl\s*\.\s*box\s*(?:\.\s*open\s*)?\(/);
+    }
+    for (const rel of ["lan-server.ts", "lan-client.ts"]) {
+      const src = stripComments(await read(`packages/gateway/src/ipc/${rel}`));
+      expect(src).not.toContain("generateEphemeral");
+    }
+    // lan-session.ts only FORWARDS the optional test hook; it never supplies a value of its own.
+    const session = stripComments(await read("packages/gateway/src/ipc/lan-session.ts"));
+    const uses = session.match(/generateEphemeral[^\n]*/g) ?? [];
+    for (const u of uses) {
+      expect(u).toMatch(
+        /generateEphemeral\??: \(\(\) => BoxKeypair\) \| undefined|generateEphemeral: opts\.generateEphemeral/,
+      );
+    }
+    const federation = await readDirFiles("packages/gateway/src/federation");
+    for (const f of federation) expect(f.contents).not.toMatch(/\b(?:sealBoxFrame|openBoxFrame)\b/);
+  });
+
+  test("D47: the static rule is wired, anchored, and the real tree passes it", async () => {
+    const audit = await read("scripts/structure-audit/check-nimbus-invariants.ts");
+    const runAt = audit.indexOf("async function run(");
+    expect(audit.slice(runAt)).toContain("checkLanBoxPathConfinement(files)");
+    expect(RULE_ANCHORS).toContain("packages/gateway/src/ipc/lan-legacy.ts");
+    const files = (await readDirFiles("packages/gateway/src")).map((f) => ({
+      relPath: `packages/gateway/src/${f.rel}`,
+      contents: f.contents,
+    }));
+    expect(checkLanBoxPathConfinement(files)).toEqual([]);
+    const rogue = {
+      relPath: "packages/gateway/src/federation/rogue.ts",
+      contents: 'import { sealBoxFrame } from "../ipc/lan-crypto.ts";\nsealBoxFrame(a, b, c);',
+    };
+    expect(checkLanBoxPathConfinement([...files, rogue]).map((v) => v.rule)).toContain(
+      "lan-box-path-confined",
+    );
+  });
+
+  test("the protocol column and the config key exist, and the floor defaults to the compatibility window", () => {
+    expect(CURRENT_SCHEMA_VERSION).toBeGreaterThanOrEqual(95);
+    expect(DEFAULT_NIMBUS_LAN_TOML.minProtocol).toBe(1);
   });
 });

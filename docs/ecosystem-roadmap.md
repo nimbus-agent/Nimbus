@@ -3,6 +3,12 @@
 **Status:** landscape, not a commitment · first drafted 2026-08-02 · extended 2026-08-02 with
 verified defects, the eleven clusters, and the sequencing rules
 
+> **This file has no authority over sequencing** (noted 2026-11-12). The build order is the spine
+> in [`roadmap.md`](./roadmap.md#phase-7-sequencing-spine), and the direction taken on 2026-11-12
+> is recorded in [`roadmap.md` § Direction](./roadmap.md#direction). Several clusters below have
+> shipped since this was written; a row under *Carried into S7* there tracks reconciling or
+> retiring this file. Until then, read each cluster against the tree before relying on it.
+
 This is the fourth roadmap surface, and the only one that looks *outward*:
 
 - [`roadmap.md`](./roadmap.md) — what the product does, phase by phase.
@@ -486,6 +492,10 @@ and a signed macOS bundle, which would make the approval channel Linux-only.
 **Size:** L. **Depends on:** nothing structurally; the publish half depends on code-signing
 procurement.
 
+**Now also (2026-11-12):** [`roadmap.md` Phase 28](./roadmap.md#phase-28--the-agent-door) plans the
+one-step approval for proposals from outside agents, and its Reach track carries the signed
+desktop release this cluster's last part waits on.
+
 ### 7 — Profiles as a real data root, and the demo corpus that proves it
 
 *A second, throwaway Nimbus on the same machine — simultaneously the isolation boundary consultants
@@ -554,6 +564,10 @@ merged answer being the minimum of the per-machine answers.
 
 **Size:** XL. **Depends on:** clusters 7, 2 and 9. Write the cross-chain design down long before
 building it, or cluster 9's receipt envelope will be shaped wrong.
+
+**Now also (2026-11-12):** [`roadmap.md` Phase 29](./roadmap.md#phase-29--the-team-server) gives the
+server half of this cluster a spine slot (S5) and names the rows it was missing. The machine-link
+and cross-chain `prove` half stays here until the landscape is reconciled.
 
 ### 11 — Meetings as first-class
 

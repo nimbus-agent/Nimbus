@@ -13,6 +13,8 @@ export const REPLACE_ITEM_SET_TYPES: Readonly<Record<string, readonly string[]>>
   // Phase 10 MB3: on-call shift snapshots (PagerDuty /oncalls; JSM Operations inside the jira sync).
   pagerduty: ["oncall_shift"],
   jira: ["oncall_shift"],
+  // Phase 10 FO2: the drained active-recommendation set is the whole set (no time window).
+  vantage: ["cost_recommendation"],
 };
 
 /** A bug guard far above any run's keep set (Google: 20 calendars x 10 pages x 250 events). */

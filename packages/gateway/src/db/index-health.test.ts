@@ -382,3 +382,24 @@ describe("collectIndexHealth — staleness compares the UNROUNDED age", () => {
     );
   });
 });
+
+describe("collectIndexHealth - excluded types (FinOps cost rows)", () => {
+  test("cost_allocation rows are not counted as items or as un-embedded", () => {
+    for (let i = 0; i < 5; i += 1) addItem(db, { service: "vantage", type: "cost_allocation" });
+    addItem(db, { service: "vantage", type: "cost_recommendation", embedded: true });
+    const h = collectIndexHealth(db, { nowMs: NOW });
+    expect(h.totalItems).toBe(1);
+    const vantage = h.connectors.find((s) => s.service === "vantage");
+    expect(vantage?.items).toBe(1);
+    expect(vantage?.embeddedItems).toBe(1);
+  });
+
+  test("cost rows have no URL by design and never read as a sparse type", () => {
+    for (let i = 0; i < 3; i += 1) {
+      addItem(db, { service: "vantage", type: "cost_allocation", url: null });
+    }
+    addItem(db, { service: "vantage", type: "cost_recommendation", url: null });
+    const h = collectIndexHealth(db, { nowMs: NOW });
+    expect(h.sparseTypes).toEqual([]);
+  });
+});

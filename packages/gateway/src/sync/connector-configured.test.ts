@@ -368,3 +368,24 @@ describe("isConnectorConfigured — a team-pinned warehouse connector", () => {
     ).toBe(false);
   });
 });
+
+describe("vantage is configured by its token alone", () => {
+  // Without the OPTIONAL_SECRET_KEYS entry a lone `vantage.group_by` would make the connector
+  // "configured": the scheduler would append a `sync` egress row per run for a sync that makes no
+  // request (the documented I29 bound on isConnectorConfigured).
+  test("a lone group_by, cost report or workspace token is NOT configured", async () => {
+    for (const key of [
+      "vantage.group_by",
+      "vantage.cost_report_token",
+      "vantage.workspace_token",
+    ]) {
+      expect(await isConnectorConfigured(fakeVault({ [key]: "x" }), "vantage")).toBe(false);
+    }
+  });
+
+  test("the api token configures it", async () => {
+    expect(await isConnectorConfigured(fakeVault({ "vantage.api_token": "t" }), "vantage")).toBe(
+      true,
+    );
+  });
+});

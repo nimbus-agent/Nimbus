@@ -67,6 +67,7 @@ export const CONNECTOR_SERVICE_IDS = [
   "prefect",
   "dagster",
   "ramp",
+  "vantage",
   "zoom",
   "hubspot",
   "miro",
@@ -204,6 +205,7 @@ const CONNECTOR_SYNC_INTERVAL_MS: { readonly [K in ConnectorServiceId]: number }
   prefect: MIN10,
   dagster: MIN10,
   ramp: MIN10,
+  vantage: HOUR6,
   zoom: MIN10,
   hubspot: MIN10,
   miro: MIN10,
@@ -342,6 +344,7 @@ const OAUTH_UNSUPPORTED_DETAILS: Partial<Record<ConnectorServiceId, string>> = {
   prefect: "uses a Prefect API key (Bearer) + workspace API URL",
   dagster: "uses a Dagster Cloud API token + host base URL",
   ramp: "uses OAuth2 client-credentials — client id + client secret",
+  vantage: "uses a Vantage API token (Read scope is enough)",
   bigquery:
     "reuses the existing GCP service-account JSON key path + project id — no separate BigQuery credential",
   athena:

@@ -820,3 +820,174 @@ describe.skipIf(!VEC_AVAILABLE)("SqliteEmbeddingPipeline — dim awareness", () 
     expect(embedded).toBe(ITEMS);
   });
 });
+
+describe.skipIf(!VEC_AVAILABLE)(
+  "SqliteEmbeddingPipeline - excluded types (FinOps cost rows)",
+  () => {
+    function seeded(): Database {
+      const db = new Database(":memory:");
+      LocalIndex.ensureSchema(db);
+      const now = Date.now();
+      for (const i of [1, 2, 3]) {
+        upsertIndexedItem(db, {
+          service: "vantage",
+          type: "cost_allocation",
+          externalId: `c${String(i)}`,
+          title: `cost ${String(i)}`,
+          modifiedAt: now,
+          syncedAt: now,
+        });
+      }
+      for (const i of [1, 2]) {
+        upsertIndexedItem(db, {
+          service: "slack",
+          type: "message",
+          externalId: `m${String(i)}`,
+          title: `mail ${String(i)}`,
+          modifiedAt: now,
+          syncedAt: now,
+        });
+      }
+      return db;
+    }
+
+    function embeddedIds(db: Database): string[] {
+      return (
+        db.query("SELECT DISTINCT item_id FROM embedding_chunk ORDER BY item_id").all() as {
+          item_id: string;
+        }[]
+      ).map((r) => r.item_id);
+    }
+
+    // A 5-second guard: before the exclusion sat in the SELECT, backfillAll re-selected an item
+    // that wrote no chunk forever.
+    const guarded = <T>(work: Promise<T>): Promise<T> =>
+      Promise.race([
+        work,
+        new Promise<never>((_, rej) =>
+          setTimeout(() => rej(new Error("backfill did not terminate")), 5000),
+        ),
+      ]);
+
+    test("backfillAll embeds exactly the 2 non-cost rows, terminates and reports total 2", async () => {
+      const db = seeded();
+      const pipeline = new SqliteEmbeddingPipeline({
+        db,
+        embedder: mockEmbedder(384, "excl"),
+        backfillBatchSize: 1,
+      });
+      let last: [number, number] = [0, 0];
+      await guarded(
+        pipeline.backfillAll((done, total) => {
+          last = [done, total];
+        }),
+      );
+      expect(last).toEqual([2, 2]);
+      expect(embeddedIds(db)).toEqual(["slack:m1", "slack:m2"]);
+    });
+
+    test("backfillForRoutingKeys with an in scope and a notIn scope never embeds a cost row", async () => {
+      const dbIn = seeded();
+      await guarded(
+        new SqliteEmbeddingPipeline({
+          db: dbIn,
+          embedder: mockEmbedder(384, "excl"),
+        }).backfillForRoutingKeys({ in: ["vantage:cost_allocation", "slack:message"] }),
+      );
+      expect(embeddedIds(dbIn)).toEqual(["slack:m1", "slack:m2"]);
+
+      const dbNotIn = seeded();
+      let last: [number, number] = [0, 0];
+      await guarded(
+        new SqliteEmbeddingPipeline({
+          db: dbNotIn,
+          embedder: mockEmbedder(384, "excl"),
+        }).backfillForRoutingKeys({ notIn: ["github:pr"] }, (done, total) => {
+          last = [done, total];
+        }),
+      );
+      expect(last).toEqual([2, 2]);
+      expect(embeddedIds(dbNotIn)).toEqual(["slack:m1", "slack:m2"]);
+    });
+  },
+);
+
+describe.skipIf(!VEC_AVAILABLE)(
+  "SqliteEmbeddingPipeline - a remote embedder never gets a local-only type",
+  () => {
+    function remoteEmbedder(calls: { n: number }): Embedder {
+      return {
+        model: "openai:text-embedding-3-small",
+        dims: 384,
+        isLocal: false,
+        async embed(texts: string[]) {
+          calls.n += texts.length;
+          return texts.map(() => new Float32Array(384).fill(0.01));
+        },
+      };
+    }
+
+    function seed(db: Database): void {
+      const now = Date.now();
+      for (const [service, type, ext] of [
+        ["vantage", "cost_recommendation", "r1"],
+        ["slack", "message", "m1"],
+      ] as const) {
+        upsertIndexedItem(db, {
+          service,
+          type,
+          externalId: ext,
+          title: ext,
+          modifiedAt: now,
+          syncedAt: now,
+        });
+      }
+    }
+
+    test("embedItem, backfillAll and backfillForRoutingKeys skip cost_recommendation and still terminate", async () => {
+      const db = new Database(":memory:");
+      LocalIndex.ensureSchema(db);
+      seed(db);
+      const calls = { n: 0 };
+      const pipeline = new SqliteEmbeddingPipeline({ db, embedder: remoteEmbedder(calls) });
+      await pipeline.embedItem({
+        id: "vantage:r1",
+        service: "vantage",
+        type: "cost_recommendation",
+        title: "r1",
+        body_preview: "r1",
+      });
+      expect(calls.n).toBe(0);
+      await Promise.race([
+        pipeline.backfillAll(),
+        new Promise((_, rej) => setTimeout(() => rej(new Error("did not terminate")), 5000)),
+      ]);
+      await pipeline.backfillForRoutingKeys({ notIn: ["github:pr"] });
+      const ids = (
+        db.query("SELECT DISTINCT item_id FROM embedding_chunk").all() as { item_id: string }[]
+      ).map((r) => r.item_id);
+      expect(ids).toEqual(["slack:m1"]);
+    });
+  },
+);
+
+describe.skipIf(!VEC_AVAILABLE)(
+  "SqliteEmbeddingPipeline - a local pipeline still skips an excluded type",
+  () => {
+    test("embedItem on a cost_allocation row writes no chunk even with a local embedder", async () => {
+      const db = new Database(":memory:");
+      LocalIndex.ensureSchema(db);
+      const pipeline = new SqliteEmbeddingPipeline({ db, embedder: mockEmbedder(384, "loc") });
+      await pipeline.embedItem({
+        id: "vantage:c1",
+        service: "vantage",
+        type: "cost_allocation",
+        title: "EC2 2026-11-01 10 USD",
+        body_preview: "EC2 2026-11-01 10 USD",
+      });
+      expect((db.query("SELECT COUNT(*) AS n FROM embedding_chunk").get() as { n: number }).n).toBe(
+        0,
+      );
+    });
+  },
+);

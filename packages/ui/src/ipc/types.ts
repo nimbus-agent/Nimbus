@@ -323,6 +323,7 @@ export interface DataImportResult {
 export interface DataDeletePreflight {
   readonly service: string;
   readonly itemsToDelete: number;
+  readonly itemHistoryRowsToDelete?: number;
   readonly vecRowsToDelete: number;
   readonly syncTokensToDelete: number;
   readonly vaultEntriesToDelete: number;

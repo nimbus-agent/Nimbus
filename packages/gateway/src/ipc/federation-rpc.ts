@@ -12,6 +12,7 @@ import { SessionConsentCache } from "../federation/consent-cache.ts";
 import type { DiscoveryProvider } from "../federation/discovery.ts";
 import { scoreExpertise } from "../federation/expertise.ts";
 import { answerFederatedInvoke } from "../federation/invoke-gate.ts";
+import { lanLinkFor } from "../federation/lan-link.ts";
 import { NamespaceStore } from "../federation/namespace-store.ts";
 import type { PeerPairing } from "../federation/peer-pairing.ts";
 import { preflightConsent } from "../federation/preflight-consent-broker.ts";
@@ -179,7 +180,7 @@ function makePrompter(ctx: FederationRpcContext): ConsentPrompter {
 function requireAskTarget(
   ctx: FederationRpcContext,
   rec: Record<string, unknown>,
-): { row: LanPeerRow; selfIdentity: BoxKeypair } {
+): { row: LanPeerRow; selfIdentity: BoxKeypair; index: LocalIndex } {
   if (ctx.index === undefined || ctx.selfIdentity === undefined) {
     throw new FederationRpcError(
       -32603,
@@ -194,7 +195,7 @@ function requireAskTarget(
   if (row.host_ip === null || row.host_port === null) {
     throw new FederationRpcError(-32602, `ERR_UNKNOWN_PEER: ${peerId} has no host address`);
   }
-  return { row, selfIdentity: ctx.selfIdentity };
+  return { row, selfIdentity: ctx.selfIdentity, index: ctx.index };
 }
 
 export async function dispatchFederationRpc(
@@ -316,19 +317,22 @@ export async function dispatchFederationRpc(
       if (ctx.index !== undefined && ctx.selfIdentity !== undefined) {
         const selfIdentity = ctx.selfIdentity;
         const exportParams = { namespace, purpose, sinceMs };
-        const fetchSlice = (host: string, port: number, pubkey: Uint8Array): Promise<unknown> =>
+        const index = ctx.index;
+        const fetchSlice = (host: string, port: number, row: LanPeerRow): Promise<unknown> =>
           sendFederatedOverWire(
             host,
             port,
             selfIdentity,
-            pubkey,
+            row.peer_pubkey,
             "federation.auditExport",
             exportParams,
+            undefined,
+            lanLinkFor(row, index),
           );
         for (const row of ctx.index.listLanPeers()) {
           if (row.host_ip === null || row.host_port === null) continue;
           try {
-            const result = await fetchSlice(row.host_ip, row.host_port, row.peer_pubkey); // NOSONAR S9382: one peer at a time on purpose - the paired-peer count is unbounded, and federation fan-out is otherwise capped (FANOUT_CONCURRENCY, federation/peer-fanout.ts)
+            const result = await fetchSlice(row.host_ip, row.host_port, row); // NOSONAR S9382: one peer at a time on purpose - the paired-peer count is unbounded, and federation fan-out is otherwise capped (FANOUT_CONCURRENCY, federation/peer-fanout.ts)
             const entries = extractAuditEntries(result);
             if (entries !== undefined) {
               streams.push({ peerId: row.peer_id, entries });
@@ -412,7 +416,7 @@ export async function dispatchFederationRpc(
     // Asker-side: look up the paired peer and send the federated query OVER THE WIRE.
     "federation.ask": async (p) => {
       const rec = asRecord(p);
-      const { row, selfIdentity } = requireAskTarget(ctx, rec);
+      const { row, selfIdentity, index } = requireAskTarget(ctx, rec);
       const namespace = requireString(rec, "namespace");
       const body: Record<string, unknown> = {
         namespace,
@@ -429,6 +433,8 @@ export async function dispatchFederationRpc(
         row.peer_pubkey,
         "federation.query",
         body,
+        undefined,
+        lanLinkFor(row, index),
       );
       // Asker-side cache (V38): record the namespace only when the peer actually answered.
       if ((result as { kind?: string }).kind === "ok") {
@@ -439,7 +445,7 @@ export async function dispatchFederationRpc(
     // Asker-side: send the content-free expertise probe OVER THE WIRE.
     "federation.askExpertise": async (p) => {
       const rec = asRecord(p);
-      const { row, selfIdentity } = requireAskTarget(ctx, rec);
+      const { row, selfIdentity, index } = requireAskTarget(ctx, rec);
       return sendFederatedOverWire(
         row.host_ip as string,
         row.host_port as number,
@@ -447,13 +453,15 @@ export async function dispatchFederationRpc(
         row.peer_pubkey,
         "federation.expertise",
         { query: requireString(rec, "query"), purpose: requireString(rec, "purpose") },
+        undefined,
+        lanLinkFor(row, index),
       );
     },
     // Asker-side: ask the trust anchor (a paired peer) to run a team-vault tool OVER THE WIRE. The
     // anchor answers via federation.invoke (I19). Local-only entrypoint (forbidden over LAN, I5).
     "federation.askInvoke": async (p) => {
       const rec = asRecord(p);
-      const { row, selfIdentity } = requireAskTarget(ctx, rec);
+      const { row, selfIdentity, index } = requireAskTarget(ctx, rec);
       return sendFederatedOverWire(
         row.host_ip as string,
         row.host_port as number,
@@ -466,6 +474,8 @@ export async function dispatchFederationRpc(
           purpose: requireString(rec, "purpose"),
           args: rec["args"],
         },
+        undefined,
+        lanLinkFor(row, index),
       );
     },
     // Anchor-side: a teammate asks the trust anchor to run a named team-vault tool. The secret is

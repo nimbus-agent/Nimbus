@@ -7,8 +7,9 @@ import { asRecord, stringField } from "./unknown-record.ts";
  * why this lives in a pure module: the IPC layer must not import a sync module.
  *
  * 1 — assignee/resolver attribution (Spec B).
+ * 2 — `resolved_at_ms` / `status_changed_at_ms` from `last_status_change_at` (Phase 10 IC2).
  */
-export const PAGERDUTY_INCIDENT_META_VERSION = 1;
+export const PAGERDUTY_INCIDENT_META_VERSION = 2;
 
 /**
  * A PagerDuty actor reference that is a SERVICE rather than a person — an

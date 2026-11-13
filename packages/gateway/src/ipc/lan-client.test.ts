@@ -7,9 +7,9 @@ import {
   makeFrameReader,
   outboundPairHandshake,
   replyKindForMessage,
-  sendFederatedOverWire,
 } from "./lan-client.ts";
 import { generateBoxKeypair, sealBoxFrame } from "./lan-crypto.ts";
+import { sendFederatedLegacy } from "./lan-legacy.ts";
 import { generatePairingCode, PairingWindow } from "./lan-pairing.ts";
 import { LanRateLimiter } from "./lan-rate-limit.ts";
 import { LanServer } from "./lan-server.ts";
@@ -421,7 +421,7 @@ describe("replyKindForMessage", () => {
   });
 });
 
-test("sendFederatedOverWire performs hello + encrypted RPC against a known peer", async () => {
+test("sendFederatedLegacy performs hello + encrypted RPC against a known peer", async () => {
   const hostKp = generateBoxKeypair();
   const selfKp = generateBoxKeypair();
   server = new LanServer({
@@ -438,14 +438,14 @@ test("sendFederatedOverWire performs hello + encrypted RPC against a known peer"
     rateLimit: new LanRateLimiter({ maxFailures: 3, windowMs: 2000, lockoutMs: 2000 }),
     isKnownPeer: (pub) =>
       Buffer.compare(Buffer.from(pub), Buffer.from(selfKp.publicKey)) === 0
-        ? { peerId: "peer-known", writeAllowed: false }
+        ? { peerId: "peer-known", writeAllowed: false, protoVersion: 1 }
         : null,
     registerPeer: () => "peer-known",
     onMessage: async (method, params, peer) => ({ method, params, peerId: peer.peerId }),
   });
   await server.start();
   const port = server.listenAddr()?.port as number;
-  const res = (await sendFederatedOverWire(
+  const res = (await sendFederatedLegacy(
     "127.0.0.1",
     port,
     selfKp,
@@ -458,7 +458,7 @@ test("sendFederatedOverWire performs hello + encrypted RPC against a known peer"
 });
 
 // ---------------------------------------------------------------------------
-// exchangeHelloThenRpc branches — driven through sendFederatedOverWire via
+// exchangeHelloThenRpc branches — driven through sendFederatedLegacy via
 // stateful raw servers that respond AFTER the client sends its hello frame.
 // ---------------------------------------------------------------------------
 
@@ -519,7 +519,7 @@ function startHelloRpcServer(opts: {
   });
 }
 
-describe("exchangeHelloThenRpc (via sendFederatedOverWire)", () => {
+describe("exchangeHelloThenRpc (via sendFederatedLegacy)", () => {
   // BRDA line=138 block=15 branch=1: finish(undefined) → "connection closed mid-exchange"
   // Server closes immediately on connect without sending any reply.
   test("rejects with 'connection closed mid-exchange' when server closes without replying", async () => {
@@ -529,15 +529,7 @@ describe("exchangeHelloThenRpc (via sendFederatedOverWire)", () => {
     const selfKp = generateBoxKeypair();
     const hostKp = generateBoxKeypair();
     await expect(
-      sendFederatedOverWire(
-        "127.0.0.1",
-        port,
-        selfKp,
-        hostKp.publicKey,
-        "federation.query",
-        {},
-        500,
-      ),
+      sendFederatedLegacy("127.0.0.1", port, selfKp, hostKp.publicKey, "federation.query", {}, 500),
     ).rejects.toThrow("lan-client: connection closed mid-exchange");
   });
 
@@ -558,15 +550,7 @@ describe("exchangeHelloThenRpc (via sendFederatedOverWire)", () => {
     const selfKp = generateBoxKeypair();
     const hostKp = generateBoxKeypair();
     await expect(
-      sendFederatedOverWire(
-        "127.0.0.1",
-        port,
-        selfKp,
-        hostKp.publicKey,
-        "federation.query",
-        {},
-        500,
-      ),
+      sendFederatedLegacy("127.0.0.1", port, selfKp, hostKp.publicKey, "federation.query", {}, 500),
     ).rejects.toThrow("lan-client: oversized frame");
   });
 
@@ -584,15 +568,7 @@ describe("exchangeHelloThenRpc (via sendFederatedOverWire)", () => {
     const selfKp = generateBoxKeypair();
     const hostKp = generateBoxKeypair();
     await expect(
-      sendFederatedOverWire(
-        "127.0.0.1",
-        port,
-        selfKp,
-        hostKp.publicKey,
-        "federation.query",
-        {},
-        150,
-      ),
+      sendFederatedLegacy("127.0.0.1", port, selfKp, hostKp.publicKey, "federation.query", {}, 150),
     ).rejects.toThrow("lan-client: rpc timeout");
   });
 
@@ -609,15 +585,7 @@ describe("exchangeHelloThenRpc (via sendFederatedOverWire)", () => {
     const selfKp = generateBoxKeypair();
     const hostKp = generateBoxKeypair();
     await expect(
-      sendFederatedOverWire(
-        "127.0.0.1",
-        port,
-        selfKp,
-        hostKp.publicKey,
-        "federation.query",
-        {},
-        500,
-      ),
+      sendFederatedLegacy("127.0.0.1", port, selfKp, hostKp.publicKey, "federation.query", {}, 500),
     ).rejects.toThrow("lan-client: hello rejected (hello_err)");
   });
 
@@ -632,15 +600,7 @@ describe("exchangeHelloThenRpc (via sendFederatedOverWire)", () => {
     const selfKp = generateBoxKeypair();
     const hostKp = generateBoxKeypair();
     await expect(
-      sendFederatedOverWire(
-        "127.0.0.1",
-        port,
-        selfKp,
-        hostKp.publicKey,
-        "federation.query",
-        {},
-        500,
-      ),
+      sendFederatedLegacy("127.0.0.1", port, selfKp, hostKp.publicKey, "federation.query", {}, 500),
     ).rejects.toThrow("lan-client: hello rejected (unknown)");
   });
 
@@ -656,7 +616,7 @@ describe("exchangeHelloThenRpc (via sendFederatedOverWire)", () => {
     });
     const selfKp = generateBoxKeypair();
     const hostKp = generateBoxKeypair();
-    const err = await sendFederatedOverWire(
+    const err = await sendFederatedLegacy(
       "127.0.0.1",
       port,
       selfKp,
@@ -687,15 +647,7 @@ describe("exchangeHelloThenRpc (via sendFederatedOverWire)", () => {
     const selfKp = generateBoxKeypair();
     const hostKp = generateBoxKeypair();
     await expect(
-      sendFederatedOverWire(
-        "127.0.0.1",
-        port,
-        selfKp,
-        hostKp.publicKey,
-        "federation.query",
-        {},
-        500,
-      ),
+      sendFederatedLegacy("127.0.0.1", port, selfKp, hostKp.publicKey, "federation.query", {}, 500),
     ).rejects.toThrow("lan-client: responder sent invalid pubkey length");
     expect(rpcFrames).toBe(0);
   });
@@ -709,7 +661,7 @@ describe("exchangeHelloThenRpc (via sendFederatedOverWire)", () => {
     });
     const selfKp = generateBoxKeypair();
     const hostKp = generateBoxKeypair();
-    const err: unknown = await sendFederatedOverWire(
+    const err: unknown = await sendFederatedLegacy(
       "127.0.0.1",
       port,
       selfKp,
@@ -729,10 +681,10 @@ describe("exchangeHelloThenRpc (via sendFederatedOverWire)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// sendFederatedOverWire — uncovered branches in the buildRpc callback
+// sendFederatedLegacy — uncovered branches in the buildRpc callback
 // ---------------------------------------------------------------------------
 
-describe("sendFederatedOverWire — buildRpc guard branches", () => {
+describe("sendFederatedLegacy — buildRpc guard branches", () => {
   // BRDA line=223 block=25 branch=1: reply.host_pubkey ?? "" — host_pubkey absent.
   // Empty base64 decodes to 0 bytes → hostPub.length !== 32 triggers the guard inside
   // buildRpc, and that guard's error is what the caller sees.
@@ -746,15 +698,7 @@ describe("sendFederatedOverWire — buildRpc guard branches", () => {
     const selfKp = generateBoxKeypair();
     const hostKp = generateBoxKeypair();
     await expect(
-      sendFederatedOverWire(
-        "127.0.0.1",
-        port,
-        selfKp,
-        hostKp.publicKey,
-        "federation.query",
-        {},
-        500,
-      ),
+      sendFederatedLegacy("127.0.0.1", port, selfKp, hostKp.publicKey, "federation.query", {}, 500),
     ).rejects.toThrow("lan-client: responder sent invalid pubkey length");
   });
 
@@ -777,15 +721,7 @@ describe("sendFederatedOverWire — buildRpc guard branches", () => {
     const selfKp = generateBoxKeypair();
     const hostKp = generateBoxKeypair();
     await expect(
-      sendFederatedOverWire(
-        "127.0.0.1",
-        port,
-        selfKp,
-        hostKp.publicKey,
-        "federation.query",
-        {},
-        500,
-      ),
+      sendFederatedLegacy("127.0.0.1", port, selfKp, hostKp.publicKey, "federation.query", {}, 500),
     ).rejects.toThrow("lan-client: responder pubkey does not match pinned peer key");
     expect(rpcFrames).toBe(0);
   });
@@ -828,7 +764,7 @@ describe("sendFederatedOverWire — buildRpc guard branches", () => {
       },
     });
 
-    const err: unknown = await sendFederatedOverWire(
+    const err: unknown = await sendFederatedLegacy(
       "127.0.0.1",
       port,
       selfKp,
@@ -899,7 +835,7 @@ describe("outboundPairHandshake — guard branches", () => {
 //     Bun.connect only ever rejects with Error instances.
 //
 // D4. line=123 block=12 branch=0 — exchangeHelloThenRpc default timeoutMs arm.
-//     This internal (non-exported) function is only called from sendFederatedOverWire
+//     This internal (non-exported) function is only called from sendFederatedLegacy
 //     which ALWAYS passes timeoutMs explicitly (line 236), so the default is never
 //     taken through the public API.
 //
@@ -907,7 +843,7 @@ describe("outboundPairHandshake — guard branches", () => {
 //     Same reasoning as D1: makeFrameReader only throws Error instances.
 //
 // D6. line=181 block=21 branch=1 — buildRpc throws a non-Error.
-//     sendFederatedOverWire's buildRpc only throws `new Error(...)` (lines 225, 228).
+//     sendFederatedLegacy's buildRpc only throws `new Error(...)` (lines 225, 228).
 //
 // D7. line=195 block=22 branch=1 — exchangeHelloThenRpc error handler non-Error.
 //     Same as D2.

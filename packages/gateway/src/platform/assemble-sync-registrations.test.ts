@@ -46,3 +46,13 @@ describe("TEAM_CREDENTIAL_SYNC_CONNECTORS", () => {
     }
   });
 });
+
+describe("Vantage registration (Phase 10 FO2)", () => {
+  test("is registered once, on its own transport (not the warehouse one), at 6 hours", () => {
+    const vantage = registeredSyncables().filter((s) => s.serviceId === "vantage");
+    expect(vantage).toHaveLength(1);
+    expect(isWarehouseListSyncable(vantage[0] as Syncable)).toBe(false);
+    expect(vantage[0]?.defaultIntervalMs).toBe(6 * 60 * 60 * 1000);
+    expect(TEAM_CREDENTIAL_SYNC_CONNECTORS as readonly string[]).not.toContain("vantage");
+  });
+});

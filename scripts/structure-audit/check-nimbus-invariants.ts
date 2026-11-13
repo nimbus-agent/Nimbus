@@ -1018,6 +1018,63 @@ export function checkChatReadMarkerConfinement(files: readonly FileEntry[]): Vio
   return out;
 }
 
+// D46(b) (Phase 10 IC1, incident-engine spec § 5.1): `item_history` is written only by its module.
+// Rule `item-history-confined`. A WRITE verb on `item_history` may appear only in `index/item-history.ts`
+// (and the V94 DDL file); `recordItemUpsertHistory` / `recordItemDeleteHistory` are named only there and in
+// `index/item-store.ts` (`upsertIndexedItem`, `deleteItemByPrimaryKey`); `deleteItemHistoryForService` only
+// there, in `index/item-store.ts` (`deleteAllItemsForService`, which `LocalIndex.removeConnectorIndexData`
+// calls) and in `commands/data-delete.ts` (an owner erasure); `pruneItemHistory` only there and in
+// `index/item-history-retention.ts`. Reads are unrestricted (the reconstruction and the incident assembly
+// read the table). D46 has only sub-rule (b) after IC1: (a) and (c) are reserved by the incident-engine
+// spec for IC3 and IC5.
+//
+// Stated bounds: a text scan, so a dynamically composed table name evades it (as D33(b) says). The retention
+// module's batch DELETE lives in `item-history.ts`, which it only calls. `iterateGlob` skips every `-sql.ts`
+// file, so the real scan never visits the DDL file; it stays in the allow-list only so a synthetic file set
+// can carry it.
+const D46_SRC = "packages/gateway/src/";
+const D46_STORE = `${D46_SRC}index/item-history.ts`;
+const D46_DDL = `${D46_SRC}index/item-history-v94-sql.ts`;
+const D46_ITEM_STORE = `${D46_SRC}index/item-store.ts`;
+const D46_RETENTION = `${D46_SRC}index/item-history-retention.ts`;
+const D46_ERASERS: readonly string[] = [D46_ITEM_STORE, `${D46_SRC}commands/data-delete.ts`];
+const D46_WRITE_RE =
+  /\b(?:INSERT\s+(?:OR\s+\w+\s+)?INTO|REPLACE\s+INTO|DELETE\s+FROM|UPDATE(?:\s+OR\s+\w+)?|DROP\s+TABLE(?:\s+IF\s+EXISTS)?|ALTER\s+TABLE)\s+(?:["'`[]?\w+["'`\]]?\s*\.\s*)?["'`[]?item_history\b/gi;
+const D46_RECORD_RE = /\brecordItem(?:Upsert|Delete)History\b/g;
+const D46_ERASE_RE = /\bdeleteItemHistoryForService\b/g;
+const D46_PRUNE_RE = /\bpruneItemHistory\b/g;
+
+export function checkItemHistoryConfinement(files: readonly FileEntry[]): Violation[] {
+  const out: Violation[] = [];
+  const add = (f: FileEntry, src: string, index: number | undefined): void => {
+    const line = src.slice(0, index).split("\n").length;
+    out.push({
+      rule: "item-history-confined",
+      file: f.relPath,
+      line,
+      snippet: (f.contents.split("\n")[line - 1] ?? "").trim(),
+    });
+  };
+  for (const f of files) {
+    if (f.relPath.endsWith(".test.ts") || f.relPath.endsWith(".test-helpers.ts")) continue;
+    if (!f.relPath.startsWith(D46_SRC)) continue;
+    const commentFree = stripComments(f.contents);
+    if (f.relPath !== D46_STORE && f.relPath !== D46_DDL) {
+      for (const m of commentFree.matchAll(D46_WRITE_RE)) add(f, commentFree, m.index);
+    }
+    if (f.relPath !== D46_STORE && f.relPath !== D46_ITEM_STORE) {
+      for (const m of commentFree.matchAll(D46_RECORD_RE)) add(f, commentFree, m.index);
+    }
+    if (f.relPath !== D46_STORE && !D46_ERASERS.includes(f.relPath)) {
+      for (const m of commentFree.matchAll(D46_ERASE_RE)) add(f, commentFree, m.index);
+    }
+    if (f.relPath !== D46_STORE && f.relPath !== D46_RETENTION) {
+      for (const m of commentFree.matchAll(D46_PRUNE_RE)) add(f, commentFree, m.index);
+    }
+  }
+  return out;
+}
+
 // D25: a CONNECTOR SYNCABLE may not call `Bun.spawn` — it must go through
 // `platform/spawn-capture.ts`, which spawns with `windowsHide`.
 //
@@ -2429,15 +2486,31 @@ const D45_GLOBAL_OBJECT_RE = /(?<![.\w$])(?:globalThis|window|self)(?![\w$])/g;
 // `import "x";` (no `from`): runs the module for its effects, so it is an import like any other.
 const D45_SIDE_EFFECT_IMPORT_RE = /(?:^|[;{}])[ \t]*import\s*["']([^"']+)["']/gm;
 
+// `import(`...`)` with a template literal that has no `${}`: a literal specifier like any other.
+const CONFINEMENT_TEMPLATE_IMPORT_RE = /\bimport\s*\(\s*`((?:[^`$]|\$(?!\{))*)`\s*\)/g;
+
+/** What one confinement rule (D45, D48) scans and which rule ids it reports. */
+interface ConfinementSpec {
+  readonly inScope: (relPath: string) => boolean;
+  readonly forbiddenSegmentRe: RegExp;
+  readonly forbiddenImportRule: string;
+  readonly noNetworkRule: string;
+}
+
 function inBriefingScope(relPath: string): boolean {
   if (relPath.endsWith(".test.ts")) return false;
   return relPath.startsWith(D45_DIR) || D45_LIB_RE.test(relPath);
 }
 
-export function checkBriefingConfinement(files: readonly FileEntry[]): Violation[] {
+/**
+ * The shared scan of D45 and D48: in every in-scope file, no import (static, side-effect, dynamic,
+ * `require`, re-export) of a forbidden path segment, none of `connectors/` unless type-only, and no
+ * network primitive. Comments and string literals are blanked first.
+ */
+function checkConfinement(files: readonly FileEntry[], spec: ConfinementSpec): Violation[] {
   const out: Violation[] = [];
   for (const f of files) {
-    if (!inBriefingScope(f.relPath)) continue;
+    if (!spec.inScope(f.relPath)) continue;
     const commentFree = stripComments(f.contents);
     const code = stripStringLiterals(commentFree);
     const original = f.contents.split("\n");
@@ -2445,25 +2518,110 @@ export function checkBriefingConfinement(files: readonly FileEntry[]): Violation
       const line = src.slice(0, index).split("\n").length;
       out.push({ rule, file: f.relPath, line, snippet: (original[line - 1] ?? "").trim() });
     };
-    const specifier = (spec: string, valueImport: boolean, index: number | undefined): void => {
-      if (D45_FORBIDDEN_SEGMENT_RE.test(spec)) {
-        push("briefing-forbidden-import", commentFree, index);
-      } else if (D45_CONNECTORS_SEGMENT_RE.test(spec) && valueImport) {
-        push("briefing-forbidden-import", commentFree, index);
+    const specifier = (target: string, valueImport: boolean, index: number | undefined): void => {
+      if (spec.forbiddenSegmentRe.test(target)) {
+        push(spec.forbiddenImportRule, commentFree, index);
+      } else if (D45_CONNECTORS_SEGMENT_RE.test(target) && valueImport) {
+        push(spec.forbiddenImportRule, commentFree, index);
       }
-      if (D45_NETWORK_MODULE_RE.test(spec)) push("briefing-no-network", commentFree, index);
+      if (D45_NETWORK_MODULE_RE.test(target)) push(spec.noNetworkRule, commentFree, index);
     };
     for (const m of commentFree.matchAll(D39_STATIC_IMPORT_RE)) {
       specifier(m[3] ?? "", clauseHasValue(m[1] !== undefined, m[2] ?? ""), m.index);
     }
     for (const m of commentFree.matchAll(D39_DYNAMIC_IMPORT_RE))
       specifier(m[1] ?? "", true, m.index);
+    for (const m of commentFree.matchAll(CONFINEMENT_TEMPLATE_IMPORT_RE)) {
+      // `code` has string bodies blanked, so an `import(` that is only text inside a string is not there.
+      if (code.startsWith("import", m.index)) specifier(m[1] ?? "", true, m.index);
+    }
     for (const m of commentFree.matchAll(D45_SIDE_EFFECT_IMPORT_RE)) {
       specifier(m[1] ?? "", true, m.index);
     }
     for (const m of commentFree.matchAll(D45_REQUIRE_RE)) specifier(m[1] ?? "", true, m.index);
     for (const re of [D45_NETWORK_CALL_RE, D45_FETCH_REF_RE, D45_GLOBAL_OBJECT_RE]) {
-      for (const m of code.matchAll(re)) push("briefing-no-network", code, m.index);
+      for (const m of code.matchAll(re)) push(spec.noNetworkRule, code, m.index);
+    }
+  }
+  return out;
+}
+
+export function checkBriefingConfinement(files: readonly FileEntry[]): Violation[] {
+  return checkConfinement(files, {
+    inScope: inBriefingScope,
+    forbiddenSegmentRe: D45_FORBIDDEN_SEGMENT_RE,
+    forbiddenImportRule: "briefing-forbidden-import",
+    noNetworkRule: "briefing-no-network",
+  });
+}
+
+// ---- D48 (FinOps cost data is read and pruned by code that cannot leave the machine, spec § 6, OR-10-8) ------
+// Rule ids `finops-forbidden-import` and `finops-no-network`. `packages/gateway/src/finops/` holds the
+// pure side of the cost connectors (the row contract, the series rollup, the `readCostSeries` reader and
+// the retention pass): it runs unattended, so it must be incapable of an outbound request, a connector
+// call or a model call. Scope: every non-test file under `packages/gateway/src/finops/`. In scope:
+//   - no import (static, side-effect, dynamic, `require`, re-export) of `chatops/`, `egress/`,
+//     `federation/`, `share/`, `llm/`, `engine/` or `agents/`, even type-only; none of `connectors/`
+//     unless it is a TYPE-only import;
+//   - no network primitive: ANY reference to the global `fetch`, any use of `globalThis`, `window` or
+//     `self`, `Bun.fetch`, `new WebSocket`, `XMLHttpRequest`, and no import of `node:http`,
+//     `node:https`, `node:http2`, `node:net`, `node:tls`, `node:dgram` or `undici`.
+// Stated bounds: a text scan of DIRECT imports; an indirect path through an allowed module (`index/`,
+// `db/`) is not followed. The mapper and the syncable live in `connectors/` and are out of scope: they
+// reach the vendor only through the sandboxed connector session. Tied to no invariant (spec D-FO-11): it
+// makes "unattended means inert" structural rather than conventional.
+const D48_DIR = "packages/gateway/src/finops/";
+const D48_FORBIDDEN_SEGMENT_RE =
+  /(?:^|\/)(?:chatops|egress|federation|share|llm|engine|agents)(?:\/|$)/;
+
+export function checkFinopsConfinement(files: readonly FileEntry[]): Violation[] {
+  return checkConfinement(files, {
+    inScope: (relPath) => !relPath.endsWith(".test.ts") && relPath.startsWith(D48_DIR),
+    forbiddenSegmentRe: D48_FORBIDDEN_SEGMENT_RE,
+    forbiddenImportRule: "finops-forbidden-import",
+    noNetworkRule: "finops-no-network",
+  });
+}
+
+// ---- D47 (the v1 static-box LAN path, I56) -------------------------------------------------------
+// Rule id `lan-box-path-confined`. The LAN's v1 wire seals every frame under the STATIC `nacl.box`
+// secret of the two identity keys, which has no forward secrecy. Since LAN FS1 that path is reachable
+// only through `ipc/lan-legacy.ts` (which refuses a peer already at protocol 2 and everything under
+// `[lan] min_protocol = 2`); the primitives live in `ipc/lan-crypto.ts`. In every other non-test file of
+// `packages/gateway/src/`, the identifiers `sealBoxFrame` and `openBoxFrame` (a call, an import,
+// aliased or not) and a `nacl.box(` / `nacl.box.open(` call are violations, so a new federation module
+// cannot seal a record under the static key and skip the Noise session. `nacl.box.keyPair` is not a
+// seal and stays free (identity key creation). Comments and string literals are stripped first;
+// `*.test.ts` and `*.test-helpers.ts` are not scanned.
+// STATED BOUNDS (as D33(c)): a dynamically composed call evades a text scan, a second use INSIDE
+// `lan-legacy.ts` or `lan-crypto.ts` is exempt whole-file, and a `box` imported by name from the
+// library and called bare is not matched. After slice FS3 the legacy file is deleted and the
+// allowance with it.
+const D47_IDENT_RE = /\b(?:sealBoxFrame|openBoxFrame)\b/g;
+const D47_NACL_BOX_RE = /\b(?:nacl|tweetnacl)\s*\.\s*box\s*(?:\.\s*open\s*)?\(/g;
+const D47_ALLOWED: readonly string[] = [
+  "packages/gateway/src/ipc/lan-crypto.ts",
+  "packages/gateway/src/ipc/lan-legacy.ts",
+];
+
+export function checkLanBoxPathConfinement(files: readonly FileEntry[]): Violation[] {
+  const out: Violation[] = [];
+  for (const f of files) {
+    if (/\.test(?:-helpers)?\.ts$/.test(f.relPath)) continue;
+    if (!f.relPath.startsWith("packages/gateway/src/")) continue;
+    if (D47_ALLOWED.includes(f.relPath)) continue;
+    const code = stripStringLiterals(stripComments(f.contents));
+    const original = f.contents.split("\n");
+    for (const re of [D47_IDENT_RE, D47_NACL_BOX_RE]) {
+      for (const hit of code.matchAll(re)) {
+        const line = code.slice(0, hit.index).split("\n").length;
+        out.push({
+          rule: "lan-box-path-confined",
+          file: f.relPath,
+          line,
+          snippet: (original[line - 1] ?? "").trim(),
+        });
+      }
     }
   }
   return out;
@@ -4599,6 +4757,8 @@ async function loadFiles(): Promise<FileEntry[]> {
 export const RULE_ANCHORS: readonly string[] = [
   "packages/gateway/src/briefing/briefing-runner.ts", // D45 — the briefing delivers locally only
   "packages/gateway/src/agents/_lib/briefing-build.ts", // D45
+  "packages/gateway/src/finops/cost-series.ts", // D48 — FinOps cost code is inert
+  "packages/gateway/src/ipc/lan-legacy.ts", // D47 — the only home of the v1 static-box LAN path
   "packages/gateway/src/engine/executor.ts", // D22 — connectors.dispatch chokepoint
   "packages/gateway/src/ipc/agents-rpc.ts", // D22(d) — agent emitter confinement
   "packages/gateway/src/db/write.ts", // D12 — bound-param SQL writes
@@ -4729,6 +4889,11 @@ export const RULE_ANCHORS: readonly string[] = [
   // of the scan would leave the rule passing over nothing (sync-capabilities.ts is anchored above).
   "packages/gateway/src/index/chat-read-marker-store.ts",
   "packages/gateway/src/sync/sync-capabilities.ts",
+  // D46(b) (item-history-confined, Phase 10 IC1) — the only writer, its one caller and the retention
+  // module; any of them moving out of the scan would leave the rule passing over nothing.
+  "packages/gateway/src/index/item-history.ts",
+  "packages/gateway/src/index/item-store.ts",
+  "packages/gateway/src/index/item-history-retention.ts",
 ];
 
 /** Fail loudly when the scanned set cannot support the rules about to run. */
@@ -4916,6 +5081,20 @@ async function run(): Promise<void> {
       );
     }
     if (briefingViolations.length > 0) exit = 1;
+    const finopsViolations = checkFinopsConfinement(files);
+    for (const e of finopsViolations) {
+      console.error(
+        `::error file=${e.file},line=${e.line}::D48 FinOps cost code reached outside the machine (rule ${e.rule}) — no ChatOps/egress/federation/share/llm/engine/agents import, no connectors value import, no network primitive: ${e.snippet}`,
+      );
+    }
+    if (finopsViolations.length > 0) exit = 1;
+    const boxViolations = checkLanBoxPathConfinement(files);
+    for (const e of boxViolations) {
+      console.error(
+        `::error file=${e.file},line=${e.line}::D47 the LAN static-box seal (sealBoxFrame/openBoxFrame/nacl.box) used outside ipc/lan-legacy.ts and ipc/lan-crypto.ts — a record could be sealed under the static identity key, with no forward secrecy (I56): ${e.snippet}`,
+      );
+    }
+    if (boxViolations.length > 0) exit = 1;
     const snapshotViolations = checkWorkSnapshotConfinement(files);
     for (const e of snapshotViolations) {
       console.error(
@@ -4930,6 +5109,13 @@ async function run(): Promise<void> {
       );
     }
     if (markerViolations.length > 0) exit = 1;
+    const historyViolations = checkItemHistoryConfinement(files);
+    for (const e of historyViolations) {
+      console.error(
+        `::error file=${e.file},line=${e.line}::D46(b) item_history written outside its module (rule item-history-confined) — index/item-history.ts is the only writer: ${e.snippet}`,
+      );
+    }
+    if (historyViolations.length > 0) exit = 1;
     const spawnViolations = checkConnectorSpawnIsHidden(files);
     for (const e of spawnViolations) {
       console.error(

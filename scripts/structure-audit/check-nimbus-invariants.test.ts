@@ -29,11 +29,14 @@ import {
   checkEmbeddingConstructorConfinement,
   checkEvalConfinement,
   checkExtensionRoleConfinement,
+  checkFinopsConfinement,
   checkFlatUpsertGraphEntityCoOwnedTypes,
   checkFleetClientKindConfinement,
   checkForwardShareConfinement,
   checkGeneratedManifestConfinement,
   checkIacDiscard,
+  checkItemHistoryConfinement,
+  checkLanBoxPathConfinement,
   checkListenerRegistryConfinement,
   checkMediaGrantStoreConfinement,
   checkMigrationConfinement,
@@ -5778,6 +5781,117 @@ describe("D24 - chat_read_marker is written only by its store (Phase 10 MB4)", (
   });
 });
 
+describe("D46(b) - item_history is written only by its module (Phase 10 IC1)", () => {
+  const file = (relPath: string, contents: string): FileEntry => ({ relPath, contents });
+  const SRC = "packages/gateway/src/";
+  const STORE = `${SRC}index/item-history.ts`;
+  const DDL = `${SRC}index/item-history-v94-sql.ts`;
+  const ITEM_STORE = `${SRC}index/item-store.ts`;
+  const RETENTION = `${SRC}index/item-history-retention.ts`;
+  const DATA_DELETE = `${SRC}commands/data-delete.ts`;
+  const GOOD: FileEntry[] = [
+    file(
+      STORE,
+      'export function recordItemUpsertHistory() { dbRun(db, "INSERT INTO item_history (a) VALUES (1)"); dbRun(db, "DELETE FROM item_history WHERE service = ?"); }\nexport function recordItemDeleteHistory() {}\nexport function deleteItemHistoryForService() {}\nexport function pruneItemHistory() {}\n',
+    ),
+    file(DDL, 'export const X = ["CREATE TABLE IF NOT EXISTS item_history (a)"];\n'),
+    file(
+      ITEM_STORE,
+      "recordItemUpsertHistory(db, b, n);\nrecordItemDeleteHistory(db, r, 1);\ndeleteItemHistoryForService(db, s);\n",
+    ),
+    file(DATA_DELETE, "deleteItemHistoryForService(db, service);\n"),
+    file(RETENTION, "const r = pruneItemHistory(db, o);\n"),
+    file(
+      `${SRC}agents/_lib/x.ts`,
+      'const q = "SELECT h.key FROM item_history h"; // INSERT INTO item_history\n',
+    ),
+    file(
+      `${SRC}connectors/pagerduty-sync.test.ts`,
+      'db.run("INSERT INTO item_history VALUES (1)"); recordItemUpsertHistory(); pruneItemHistory();\n',
+    ),
+  ];
+  const rules = (files: FileEntry[]): string[] =>
+    checkItemHistoryConfinement(files).map((v) => v.rule);
+  const withBad = (path: string, contents: string): FileEntry[] => [...GOOD, file(path, contents)];
+
+  test("the good set is clean", () => {
+    expect(checkItemHistoryConfinement(GOOD)).toEqual([]);
+  });
+
+  for (const [name, sql] of [
+    ["INSERT", 'dbRun(db, "INSERT INTO item_history (a) VALUES (1)")'],
+    ["DELETE", 'dbRun(db, "DELETE FROM item_history")'],
+    ["UPDATE", 'dbRun(db, "UPDATE item_history SET key = 1")'],
+    ["INSERT OR REPLACE", 'dbRun(db, "INSERT OR REPLACE INTO item_history (a) VALUES (1)")'],
+    ["REPLACE INTO", 'dbRun(db, "REPLACE INTO item_history (a) VALUES (1)")'],
+    ["DROP", 'dbRun(db, "DROP TABLE item_history")'],
+    ["DROP IF EXISTS", 'dbRun(db, "DROP TABLE IF EXISTS item_history")'],
+    ["a multi-line DROP IF EXISTS", "dbExec(db, `DROP TABLE\n  IF  EXISTS\n  main.item_history`)"],
+    ["ALTER", 'dbRun(db, "ALTER TABLE item_history ADD COLUMN x")'],
+    ["a quoted name", "dbRun(db, 'INSERT INTO \"item_history\" (a) VALUES (1)')"],
+    ["a bracketed name", "dbRun(db, 'INSERT INTO [item_history] (a) VALUES (1)')"],
+    ["a multi-line statement", "dbRun(db, `INSERT\n  INTO\n  item_history (a) VALUES (1)`)"],
+    ["a schema-qualified DELETE", 'dbRun(db, "DELETE FROM main.item_history")'],
+  ] as const) {
+    test(`a syncable with ${name} is refused`, () => {
+      expect(rules(withBad(`${SRC}connectors/evil-sync.ts`, `${sql};\n`))).toEqual([
+        "item-history-confined",
+      ]);
+    });
+  }
+
+  test("an RPC file deleting from the table is refused", () => {
+    expect(rules(withBad(`${SRC}ipc/x-rpc.ts`, 'db.run("DELETE FROM item_history");\n'))).toEqual([
+      "item-history-confined",
+    ]);
+  });
+
+  test("a syncable naming a record function is refused", () => {
+    expect(
+      rules(withBad(`${SRC}connectors/evil-sync.ts`, "recordItemUpsertHistory(db, b, n);\n")),
+    ).toEqual(["item-history-confined"]);
+    expect(
+      rules(withBad(`${SRC}connectors/evil-sync.ts`, "recordItemDeleteHistory(db, r, 1);\n")),
+    ).toEqual(["item-history-confined"]);
+  });
+
+  test("naming the erasure outside the item store and data-delete is refused", () => {
+    for (const path of [`${SRC}connectors/evil-sync.ts`, `${SRC}index/local-index.ts`, RETENTION]) {
+      const files = [...GOOD.filter((f) => f.relPath !== path)];
+      files.push(file(path, "deleteItemHistoryForService(db, 'slack');\n"));
+      expect(rules(files), path).toEqual(["item-history-confined"]);
+    }
+  });
+
+  test("naming the prune outside the retention module is refused", () => {
+    for (const path of [`${SRC}connectors/evil-sync.ts`, ITEM_STORE]) {
+      const files = [...GOOD.filter((f) => f.relPath !== path)];
+      files.push(file(path, "pruneItemHistory(db, o);\n"));
+      expect(rules(files), path).toEqual(["item-history-confined"]);
+    }
+  });
+
+  test("a comment and a read are not violations", () => {
+    expect(
+      rules(
+        withBad(
+          `${SRC}connectors/ok-sync.ts`,
+          '// INSERT INTO item_history\nconst q = "SELECT * FROM item_history";\n',
+        ),
+      ),
+    ).toEqual([]);
+  });
+
+  test("the real repository satisfies the rule and every anchor is scanned", async () => {
+    const files: FileEntry[] = [];
+    for await (const f of iterateSourceFiles()) {
+      files.push({ relPath: f.relPath, contents: f.contents });
+    }
+    expect(checkItemHistoryConfinement(files)).toEqual([]);
+    expect(assertScanIsMeaningful(files)).toEqual([]);
+  });
+});
+
 describe("D45 - the morning briefing delivers locally only (OR-10-11)", () => {
   const file = (relPath: string, contents: string): FileEntry => ({ relPath, contents });
   const SRC = "packages/gateway/src/";
@@ -5909,5 +6023,175 @@ describe("D45 - the morning briefing delivers locally only (OR-10-11)", () => {
       file(`${SRC}briefing/x.ts`, 'const r = { trigger: "schedule" };\n'),
     ]);
     expect(no.map((v) => v.rule)).toContain("standing-unattended-confined");
+  });
+});
+
+describe("D48 - FinOps cost code cannot leave the machine (spec § 6, OR-10-8)", () => {
+  const file = (relPath: string, contents: string): FileEntry => ({ relPath, contents });
+  const SRC = "packages/gateway/src/";
+  const SERIES = `${SRC}finops/cost-series.ts`;
+  const RETENTION = `${SRC}finops/cost-retention.ts`;
+  const GOOD: FileEntry[] = [
+    file(
+      SERIES,
+      [
+        'import type { Database } from "bun:sqlite";',
+        'import { DAY_MS } from "./cost-item-contract.ts";',
+        'import type { X } from "../connectors/mapped-row.ts";',
+        'import { createHash } from "node:crypto";',
+        "",
+      ].join("\n"),
+    ),
+    file(RETENTION, 'import { deleteItemByPrimaryKey } from "../index/item-store.ts";\n'),
+    file(`${SRC}finops/cost-series.test.ts`, 'import { x } from "../chatops/x.ts";\nfetch("u");\n'),
+    file(
+      `${SRC}finops/comment.ts`,
+      '// import { x } from "../chatops/x.ts"; fetch("u")\nconst s = "fetch(";\ndb.fetch(1);\n',
+    ),
+  ];
+  const rules = (files: FileEntry[]): string[] => checkFinopsConfinement(files).map((v) => v.rule);
+  const bad = (path: string, contents: string): FileEntry[] => [...GOOD, file(path, contents)];
+
+  test("the control passes", () => {
+    expect(checkFinopsConfinement(GOOD)).toEqual([]);
+  });
+
+  test.each([
+    'import { x } from "../chatops/x.ts";',
+    'import { x } from "../egress/x.ts";',
+    'import { x } from "../federation/x.ts";',
+    'import { x } from "../share/x.ts";',
+    'import { x } from "../llm/x.ts";',
+    'import { x } from "../engine/x.ts";',
+    'import { x } from "../agents/x.ts";',
+    'import { x } from "../connectors/x.ts";',
+    'import { type A, b } from "../connectors/x.ts";',
+    'const m = await import("../llm/x.ts");',
+    'const m = require("../egress/x.ts");',
+    'export { x } from "../connectors/x.ts";',
+    'import type { X } from "../engine/x.ts";',
+    'import "../connectors/x.ts";',
+    "const m = await import(`../llm/x.ts`);",
+    "const m = await import(`../llm/$types.ts`);",
+  ])("a forbidden import is flagged: %s", (body) => {
+    expect(rules(bad(SERIES, body))).toEqual(["finops-forbidden-import"]);
+  });
+
+  test.each([
+    'fetch("https://x");',
+    'globalThis.fetch("https://x");',
+    'Bun.fetch("https://x");',
+    'const w = new WebSocket("wss://x");',
+    'import { get } from "node:http";',
+    'import n from "node:net";',
+    'import { fetch } from "undici";',
+    "const outbound = fetch;",
+    "const w = window;",
+    "const m = await import(`node:https`);",
+  ])("a network primitive is flagged: %s", (body) => {
+    expect(rules(bad(SERIES, body))).toContain("finops-no-network");
+  });
+
+  test("an import( written inside a string is not an import", () => {
+    expect(rules(bad(SERIES, 'const example = "import(`node:https`)";'))).toEqual([]);
+    expect(rules(bad(SERIES, "const t = 'import(`../llm/x.ts`)';"))).toEqual([]);
+  });
+
+  test("a file outside finops/, a test, a comment and a string are not scanned", () => {
+    expect(
+      rules(
+        bad(`${SRC}connectors/vantage-sync.ts`, 'import { x } from "../engine/x.ts"; fetch("u");'),
+      ),
+    ).toEqual([]);
+    expect(rules(bad(`${SRC}finops/x.test.ts`, 'fetch("u");'))).toEqual([]);
+  });
+
+  test("the real repository satisfies the rule and the checker visits finops/", async () => {
+    const files: FileEntry[] = [];
+    for await (const f of iterateSourceFiles())
+      files.push({ relPath: f.relPath, contents: f.contents });
+    expect(checkFinopsConfinement(files)).toEqual([]);
+    expect(
+      files.some((f) => f.relPath.startsWith(`${SRC}finops/`) && !f.relPath.endsWith(".test.ts")),
+    ).toBe(true);
+    expect(assertScanIsMeaningful(files)).toEqual([]);
+  });
+});
+
+describe("D47 - the v1 static-box LAN path is reachable only through ipc/lan-legacy.ts (I56)", () => {
+  const file = (relPath: string, contents: string): FileEntry => ({ relPath, contents });
+  const SRC = "packages/gateway/src/";
+
+  test("the two allowed files pass, whatever they contain", () => {
+    expect(
+      checkLanBoxPathConfinement([
+        file(
+          `${SRC}ipc/lan-crypto.ts`,
+          "export function sealBoxFrame() { return nacl.box(a, b, c, d); }",
+        ),
+        file(
+          `${SRC}ipc/lan-legacy.ts`,
+          'import { openBoxFrame, sealBoxFrame } from "./lan-crypto.ts";\nsealBoxFrame(a, b, c);',
+        ),
+      ]),
+    ).toEqual([]);
+  });
+
+  test("FAILS on an import of the seal from a federation module, and reports the line", () => {
+    const v = checkLanBoxPathConfinement([
+      file(
+        `${SRC}federation/federation-server.ts`,
+        'import { sealBoxFrame } from "../ipc/lan-crypto.ts";\nconst x = 1;',
+      ),
+    ]);
+    expect(v).toHaveLength(1);
+    expect(v[0]?.rule).toBe("lan-box-path-confined");
+    expect(v[0]?.line).toBe(1);
+  });
+
+  test("FAILS on openBoxFrame in the server or client, and on an aliased import call", () => {
+    expect(
+      checkLanBoxPathConfinement([file(`${SRC}ipc/lan-server.ts`, "openBoxFrame(f, p, s);")]),
+    ).toHaveLength(1);
+    const aliased = checkLanBoxPathConfinement([
+      file(
+        `${SRC}ipc/lan-client.ts`,
+        'import { sealBoxFrame as seal } from "./lan-crypto.ts";\nseal(a, b, c);',
+      ),
+    ]);
+    expect(aliased).toHaveLength(1);
+    expect(aliased[0]?.line).toBe(1);
+  });
+
+  test("FAILS on a direct nacl.box or nacl.box.open call", () => {
+    expect(
+      checkLanBoxPathConfinement([
+        file(`${SRC}federation/x.ts`, "const c = nacl.box(m, n, pk, sk);"),
+        file(`${SRC}federation/y.ts`, "const p = nacl . box . open (c, n, pk, sk);"),
+        file(`${SRC}federation/z.ts`, "const p = tweetnacl.box(m, n, pk, sk);"),
+      ]),
+    ).toHaveLength(3);
+  });
+
+  test("does not match key creation, a comment, a string, a look-alike, a test file or a non-gateway file", () => {
+    expect(
+      checkLanBoxPathConfinement([
+        file(
+          `${SRC}ipc/lan-keys.ts`,
+          "const kp = nacl.box.keyPair();\nnacl.box.keyPair.fromSecretKey(s);",
+        ),
+        file(
+          `${SRC}x.ts`,
+          '// sealBoxFrame(a)\n/* nacl.box(m) */\nconst s = "openBoxFrame";\nconst sealBoxFrames = 1;',
+        ),
+        file(`${SRC}ipc/lan-x.test.ts`, "sealBoxFrame(a); nacl.box(m);"),
+        file(`${SRC}ipc/lan-x.test-helpers.ts`, "openBoxFrame(a);"),
+        file("scripts/z.ts", "sealBoxFrame(a);"),
+      ]),
+    ).toEqual([]);
+  });
+
+  test("lan-legacy.ts is a rule anchor, so a scan that lost it is not meaningful", () => {
+    expect(RULE_ANCHORS).toContain("packages/gateway/src/ipc/lan-legacy.ts");
   });
 });

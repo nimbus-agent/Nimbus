@@ -377,6 +377,36 @@ describe("EmbeddingWorkerCore", () => {
     });
   });
 
+  it("embed_item skips a cost_allocation row (FinOps exclusion) and still embeds its neighbour", async () => {
+    const db = makeDb();
+    for (const [id, type] of [
+      ["c1", "cost_allocation"],
+      ["d1", "doc"],
+    ] as const) {
+      db.run("INSERT INTO item (id, service, type, title, body_preview) VALUES (?, ?, ?, ?, ?)", [
+        id,
+        "vantage",
+        type,
+        "T",
+        "B",
+      ]);
+    }
+    const embedded: string[] = [];
+    const setup: EmbeddingWorkerSetup = async () => ({
+      db,
+      pipeline: makePipeline({
+        embedItem: async (item) => {
+          embedded.push(item.id);
+        },
+      }),
+    });
+    const { core } = await initReadyCore(setup);
+    core.handleMessage({ type: "embed_item", itemId: "c1" });
+    core.handleMessage({ type: "embed_item", itemId: "d1" });
+    await core.idle();
+    expect(embedded).toEqual(["d1"]);
+  });
+
   it("embed_item queue keeps draining after a failed task (queue not wedged, no unhandled rejection)", async () => {
     const db = makeDb();
     db.run("INSERT INTO item (id, service, type, title, body_preview) VALUES (?, ?, ?, ?, ?)", [

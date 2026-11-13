@@ -7,6 +7,7 @@ import { readIndexedUserVersion } from "../index/migrations/runner.ts";
 import { ensureSqliteVecForConnection } from "../index/sqlite-vec-load.ts";
 import type { BackfillGate } from "./backfill-gate.ts";
 import { createBackfillPassTracker } from "./backfill-pass-tracker.ts";
+import { isEmbeddingExcludedType } from "./embedding-exclusions.ts";
 import {
   type EmbeddingModelDownload,
   type EmbeddingReadiness,
@@ -176,7 +177,8 @@ export function createLazyEmbeddingRuntime(
         const row = db
           .query(`SELECT id, service, type, title, body_preview FROM item WHERE id = ?`)
           .get(itemId) as IndexedItem | null | undefined;
-        if (row === null || row === undefined) {
+        // embedding/embedding-exclusions.ts: an excluded type is never embedded.
+        if (row === null || row === undefined || isEmbeddingExcludedType(row.type)) {
           return;
         }
         await p.embedItem(row);

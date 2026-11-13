@@ -13,6 +13,7 @@ import { upsertIndexedItem } from "../index/item-store.ts";
 import { LocalIndex } from "../index/local-index.ts";
 import { leadTimeForChanges, mttr, repoLikeMatchesUrn } from "./dora.ts";
 import type { ParsedDoraRepoUrn, ServiceConfig } from "./dora-config.ts";
+import { NO_INCIDENT_BINDINGS } from "./dora-config.ts";
 
 const NOW = 1_760_000_000_000;
 const HOUR = 3_600_000;
@@ -27,6 +28,7 @@ const cfg: ServiceConfig = {
   excludePrLabels: ["revert"],
   deployEnvironments: ["prod"],
   severityP1Aliases: ["P1"],
+  ...NO_INCIDENT_BINDINGS,
 };
 
 function openDb(): Database {
@@ -225,6 +227,7 @@ describe("mttr — the opened timestamp", () => {
       metadata: {
         status: "resolved",
         pagerduty_service_id: "PD-PAY",
+        resolved_at_ms: NOW - HOUR,
         ...(openedAtMs === undefined ? {} : { opened_at_ms: openedAtMs }),
       },
     });

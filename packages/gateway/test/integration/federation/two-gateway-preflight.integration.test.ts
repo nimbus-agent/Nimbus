@@ -98,6 +98,8 @@ test("payoff: upstream sends a preflight to a downstream owner over the wire —
         bIdentity.publicKey,
         "federation.preflight",
         body,
+        undefined,
+        { known: 1, minProtocol: 1 },
       ) as Promise<WirePreflight>;
 
     // 1. granted + approved → pass; the caller's injected `command` is ignored (only B's runs).

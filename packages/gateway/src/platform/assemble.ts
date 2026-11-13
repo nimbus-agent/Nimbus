@@ -56,6 +56,7 @@ import {
 import { startCuSnapshotRetention } from "../computer-use/cu-snapshot-retention.ts";
 import { loadNimbusBriefingFromConfigDir } from "../config/briefing-toml.ts";
 import { loadNimbusFilesystemRootsFromConfigDir } from "../config/filesystem-toml.ts";
+import { loadNimbusFinopsFromConfigDir } from "../config/finops-toml.ts";
 import {
   DEFAULT_FLEET_CONFIG,
   type FleetDisabledJob,
@@ -66,6 +67,7 @@ import {
   type NimbusFleetLoad,
   type NimbusFleetToml,
 } from "../config/fleet-toml.ts";
+import { loadNimbusIndexFromConfigDir } from "../config/index-toml.ts";
 import { getLayeredConfig, initLayeredConfig } from "../config/layered-config.ts";
 import { loadNimbusMcpSinkFromConfigDir } from "../config/mcp-sink-toml.ts";
 import {
@@ -235,9 +237,11 @@ import {
   type LocalOperatorInvokeCtx,
   type LocalOperatorListCtx,
 } from "../federation/invoke-gate.ts";
+import { lanLinkFor } from "../federation/lan-link.ts";
 import { NamespaceStore } from "../federation/namespace-store.ts";
 import { preflightConsent } from "../federation/preflight-consent-broker.ts";
 import { appendPreflightAudit, defaultRunCommand } from "../federation/preflight-gate.ts";
+import { startFinopsRetention } from "../finops/cost-retention.ts";
 import { buildFleetInvoker } from "../fleet/fleet-invoker.ts";
 import { checkFleetJob } from "../fleet/fleet-job-check.ts";
 import { FLEET_CAPABILITY, FleetScheduler } from "../fleet/fleet-scheduler.ts";
@@ -249,10 +253,12 @@ import type { ConsolidatorLlm } from "../glossary/glossary-consolidate.ts";
 import { rebuildGlossary, runGlossaryPass } from "../glossary/glossary-extract.ts";
 import { createGlossaryLlm } from "../glossary/glossary-llm-adapter.ts";
 import { createGlossaryRefresher, type GlossaryRefresher } from "../glossary/glossary-refresh.ts";
+import { runPendingRegraph } from "../graph/regraph-once.ts";
 import { buildIdentityBoot } from "../identity/identity-boot.ts";
 import { buildTeamsBotJwtValidator } from "../identity/teams-bot-jwt.ts";
 import { isOperatorValid } from "../identity/verifier.ts";
 import { readUnreadChatThreads } from "../index/chat-unread-query.ts";
+import { startItemHistoryRetention } from "../index/item-history-retention.ts";
 import {
   LocalIndex,
   type LocalIndexOptions,
@@ -1099,12 +1105,17 @@ async function createSchedulerWithMesh(opts: SchedulerWithMeshOpts): Promise<{
       syncScheduler.register(connector, intervalOverrideMs);
     },
   };
+  // Read per sync. Bound here, outside the `if` below, because security-invariants.test.ts pins how
+  // far `syncScheduler.start()` may sit from the guard that wraps it.
+  const briefingSnapshotIntervalMinutes = (): number =>
+    loadNimbusBriefingFromConfigDir(paths.configDir).snapshotIntervalMinutes;
+  const finopsMaxSeries = (): number => loadNimbusFinopsFromConfigDir(paths.configDir).maxSeries;
   if (syncEnabled) {
     registerConnectorMeshSyncables(policyFilteredRegistrar, connectorMesh, {
       pagerdutyMaxPagesPerSync: pagerdutyCfg.maxPagesPerSync,
       workdayConfig: workdayCfg,
-      briefingSnapshotIntervalMinutes: () =>
-        loadNimbusBriefingFromConfigDir(paths.configDir).snapshotIntervalMinutes,
+      briefingSnapshotIntervalMinutes,
+      finopsMaxSeries,
     });
     registerUserMcpSyncablesFromDatabase(db, policyFilteredRegistrar, connectorMesh);
     syncScheduler.start();
@@ -1361,13 +1372,19 @@ async function bootFederationIntoIpcOpts(
     share: ShareFile,
     peer: { host: string; port: number; pubkey: string },
   ): Promise<void> => {
+    const pubkey = new Uint8Array(Buffer.from(peer.pubkey, "base64"));
+    // The row is read fresh: the link policy needs the peer's CURRENT recorded protocol (the ratchet).
+    const row = localIndex.getLanPeerByPubkey(pubkey);
+    if (row === undefined) throw new Error("share forward: recipient is no longer a paired peer");
     await sendFederatedOverWire(
       peer.host,
       peer.port,
       identity,
-      new Uint8Array(Buffer.from(peer.pubkey, "base64")),
+      pubkey,
       "federation.shareReceive",
       { share },
+      undefined,
+      lanLinkFor(row, localIndex),
     );
   };
   // peerId/pubkey → reachable ForwardPeer (paired only, host+port must be present).
@@ -1443,6 +1460,8 @@ async function bootFederationIntoIpcOpts(
   ipcOpts.federationIdentity = identity;
 
   const lanCfg = loadNimbusLanFromConfigDir(paths.configDir);
+  // The client side of the LAN wire reads `[lan] min_protocol` from the index (see lanLinkFor).
+  localIndex.setLanMinProtocol(lanCfg.minProtocol);
   // Team Vault (Slice 2): the anchor's invoke backing. quorumFor resolves the authoritative quorum
   // rule via EnforcedPolicy (Task 9) — max(local [hitl.quorum] baseline, org policy); ungoverned it
   // returns the local baseline verbatim, governed it tightens. runTool resolves the team secret
@@ -1505,6 +1524,7 @@ async function bootFederationIntoIpcOpts(
       pairingWindowSeconds: lanCfg.pairingWindowSeconds,
       maxFailedAttempts: lanCfg.maxFailedAttempts,
       lockoutSeconds: lanCfg.lockoutSeconds,
+      minProtocol: lanCfg.minProtocol,
     },
     // I18 — the operator-validity guard for answers served OVER THE WIRE.
     //
@@ -3683,6 +3703,33 @@ function bindChatopsLocalConsent(
     );
 }
 
+/**
+ * The one-shot re-graph after the V96 upgrade (Phase 10 IC2): deployments, incidents, error issues and
+ * data-quality tests get their corrected anchors and edges. Fire-and-forget with a caught rejection; a
+ * shutdown mid-run simply leaves the marker for the next boot. The resolver comes from the STRICT config
+ * loader (a malformed config keeps the marker rather than re-grafting without it); `graph/` cannot import
+ * the loader, so the builder is supplied here.
+ */
+function startPendingRegraph(
+  db: Database,
+  configDir: string,
+  logger: Logger,
+  sidecarStops: Array<() => void>,
+): void {
+  let stopped = false;
+  sidecarStops.push(() => {
+    stopped = true;
+  });
+  const buildResolver = (): ReturnType<typeof buildServiceIdentityResolver> =>
+    buildServiceIdentityResolver(loadNimbusServiceConfigsFromConfigDir(configDir));
+  queueMicrotask(() => {
+    if (stopped) return;
+    runPendingRegraph(db, { buildResolver, logger }).catch((err: unknown) => {
+      logger.warn({ err }, "regraph (IC2) failed; marker kept");
+    });
+  });
+}
+
 export async function assemblePlatformServices(
   paths: PlatformPaths,
   customVault?: NimbusVault,
@@ -3926,6 +3973,8 @@ export async function assemblePlatformServices(
     );
   });
 
+  startPendingRegraph(db, paths.configDir, syncLogger, sidecarStops);
+
   // Capabilities are NOT bound here, deliberately. This context is built ONCE and shared by every
   // service, so a `getSecret` bound at this point would carry whichever service id happened to be
   // chosen and be scoped to the wrong connector for all but one of them. They bind per service in
@@ -3969,6 +4018,13 @@ export async function assemblePlatformServices(
     ),
   });
   sidecarStops.push(() => toolCallLogRetention.stop());
+
+  // Item history retention (Phase 10 IC1): `[index] history_retention_days`, read through the closure on
+  // every tick so an edit applies without a restart. One batched prune per 24 h, never inside a sync.
+  const itemHistoryRetention = startItemHistoryRetention(db, {
+    retentionDays: () => loadNimbusIndexFromConfigDir(paths.configDir).historyRetentionDays,
+  });
+  sidecarStops.push(() => itemHistoryRetention.stop());
 
   // GDPR purge-retry (Task 25): each cycle, retry the pending `federation.purge`
   // requests durable in the gdpr_purge ledger; when all of a job's requests are
@@ -4625,6 +4681,14 @@ export async function assemblePlatformServices(
     retentionDays: computerUseCfg.snapshotRetentionDays,
   });
   sidecarStops.push(() => cuSnapshotRetention.stop());
+
+  // FinOps cost-row retention (Phase 10 FO2, OR-FO-5): the same daily sidecar shape, driven by
+  // `[finops] retain_days` (400). Deletes `cost_allocation` rows past the window through the item
+  // store's delete chokepoint; recommendations are not pruned by age. Static rule D48.
+  const finopsRetention = startFinopsRetention(db, {
+    retainDays: loadNimbusFinopsFromConfigDir(paths.configDir).retainDays,
+  });
+  sidecarStops.push(() => finopsRetention.stop());
 
   const shareHttpSink = loadNimbusShareHttpSink(paths.configDir);
   ipcOpts.shareRpcCtx = {

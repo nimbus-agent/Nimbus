@@ -24,9 +24,11 @@ import { buildGeneratedTools } from "../toolgen/toolgen-agent-tools.ts";
 import type { ToolgenRegistry } from "../toolgen/toolgen-registry.ts";
 import {
   getAgentRequestConnectorWriteExecutor,
+  getAgentRequestPointInTimeMs,
   getAgentRequestSessionId,
   getAgentRequestUserMcpExecutor,
   recordExplainToolCall,
+  recordPointInTimeFacts,
 } from "./agent-request-context.ts";
 import type { CollectedToolCall } from "./ask-explain-types.ts";
 import {
@@ -40,6 +42,7 @@ import {
 import { buildContextWindow } from "./context-ranker.ts";
 import { createNegationTools } from "./negation-tools.ts";
 import { createOncallNowTool } from "./oncall-now-tool.ts";
+import { POINT_IN_TIME_TOOL_IDS } from "./point-in-time.ts";
 import { wrapToolOutput } from "./tool-output-envelope.ts";
 import { buildUserMcpAgentTools, type UserMcpAgentToolSource } from "./user-mcp-agent-tools.ts";
 
@@ -308,14 +311,28 @@ export function createNimbusEngineAgent(deps: NimbusEngineAgentDeps): {
       if (itemType !== undefined) {
         query.itemType = itemType;
       }
-      const { items: ranked, retrieval } = await deps.localIndex.searchRankedAsync(query, {
+      // Point-in-time turn (`nimbus ask --at`): the instant is read from the request store, never from the
+      // model's arguments, so the model cannot lift it. Connector health is a CURRENT fact and is omitted.
+      const atMs = getAgentRequestPointInTimeMs();
+      if (atMs !== undefined) {
+        query.atMs = atMs;
+      }
+      const {
+        items: ranked,
+        retrieval,
+        pointInTime,
+      } = await deps.localIndex.searchRankedAsync(query, {
         searchServicePriority: searchPriority,
         semantic,
         contextChunks,
       });
+      if (pointInTime !== undefined) {
+        recordPointInTimeFacts(pointInTime);
+      }
       const window = buildContextWindow(ranked, contextWindowItems);
       const db = deps.localIndex.getDatabase();
-      const healthExtras = buildSearchLocalIndexHealthExtras(db, window, serviceForQuery);
+      const healthExtras =
+        atMs === undefined ? buildSearchLocalIndexHealthExtras(db, window, serviceForQuery) : {};
       return {
         totalMatches: window.totalMatches,
         itemsInWindow: window.items.length,
@@ -355,12 +372,13 @@ export function createNimbusEngineAgent(deps: NimbusEngineAgentDeps): {
         if (service === "" || indexedType === "") {
           return { error: "service and indexedType are required strings" };
         }
-        const items = deps.localIndex.fetchMoreItems(service, indexedType, offset, limit);
+        const atMs = getAgentRequestPointInTimeMs();
+        const items = deps.localIndex.fetchMoreItems(service, indexedType, offset, limit, atMs);
         const db = deps.localIndex.getDatabase();
-        const healthCaveat = formatConnectorHealthCaveatForIndexSearch(
-          service,
-          getConnectorHealth(db, service),
-        );
+        const healthCaveat =
+          atMs === undefined
+            ? formatConnectorHealthCaveatForIndexSearch(service, getConnectorHealth(db, service))
+            : undefined;
         return {
           count: items.length,
           items,
@@ -659,6 +677,13 @@ export function createNimbusEngineAgent(deps: NimbusEngineAgentDeps): {
   });
 
   const toolsFor = async (): Promise<ToolsInput> => {
+    // A point-in-time turn is offered exactly the time-aware tools and nothing else: no graph, negation,
+    // on-call, session, generated, user-MCP, computer-use or connector-write tool (plan deviation 14).
+    if (getAgentRequestPointInTimeMs() !== undefined) {
+      return Object.fromEntries(
+        POINT_IN_TIME_TOOL_IDS.map((id) => [id, baseTools[id as keyof typeof baseTools]]),
+      ) as ToolsInput;
+    }
     const offered: ToolsInput = await otherToolsFor();
     if (
       deps.connectorWrites === undefined ||

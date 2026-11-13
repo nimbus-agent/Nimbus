@@ -88,6 +88,7 @@ import { createSupersetSyncable } from "../connectors/superset-sync.ts";
 import { createTableauSyncable } from "../connectors/tableau-sync.ts";
 import { createTeamsSyncable } from "../connectors/teams-sync.ts";
 import { createTestflightSyncable } from "../connectors/testflight-sync.ts";
+import { createVantageSyncable } from "../connectors/vantage-sync.ts";
 import { createVercelSyncable } from "../connectors/vercel-sync.ts";
 import { createVertexAiSyncable } from "../connectors/vertex-ai-sync.ts";
 import { createWizSyncable } from "../connectors/wiz-sync.ts";
@@ -102,6 +103,8 @@ export type ConnectorMeshSyncableOptions = {
   workdayConfig: NimbusWorkdayToml;
   /** `[briefing] snapshot_interval_minutes`, read per sync (Phase 10 MB1); absent means 15. */
   briefingSnapshotIntervalMinutes?: () => number;
+  /** `[finops] max_series`, read per sync (Phase 10 FO2); absent means 500. */
+  finopsMaxSeries?: () => number;
 };
 
 export function registerConnectorMeshSyncables(
@@ -561,4 +564,9 @@ export function registerConnectorMeshSyncables(
   );
   syncScheduler.register(createMonteCarloSyncable());
   syncScheduler.register(createBigeyeSyncable());
+  syncScheduler.register(
+    createVantageSyncable(
+      options.finopsMaxSeries === undefined ? {} : { maxSeries: options.finopsMaxSeries },
+    ),
+  );
 }

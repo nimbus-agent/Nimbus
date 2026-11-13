@@ -163,7 +163,7 @@ describe("LanServer gate (G4)", () => {
         onMessageCalls.push(method);
         return {};
       },
-      isKnownPeer: () => ({ peerId: "test-peer", writeAllowed: false }),
+      isKnownPeer: () => ({ peerId: "test-peer", writeAllowed: false, protoVersion: 1 }),
       rateLimit: { checkAllowed: () => true, recordFailure: () => {}, recordSuccess: () => {} },
       pairing: {
         isOpen: () => false,
@@ -338,7 +338,7 @@ describe("LanServer oversized frame post-handshake", () => {
       port: 0,
       hostKeypair,
       onMessage: async () => ({}),
-      isKnownPeer: () => ({ peerId: "post-hs-peer", writeAllowed: false }),
+      isKnownPeer: () => ({ peerId: "post-hs-peer", writeAllowed: false, protoVersion: 1 }),
       rateLimit: {
         checkAllowed: () => true,
         recordFailure: (ip) => recordedFailures.push(ip),
@@ -674,7 +674,7 @@ describe("LanServer.handleEncryptedMessage — method and error branches", () =>
       port: 0,
       hostKeypair,
       onMessage: async (method) => onMsg(method),
-      isKnownPeer: () => ({ peerId: "enc-peer", writeAllowed: true }),
+      isKnownPeer: () => ({ peerId: "enc-peer", writeAllowed: true, protoVersion: 1 }),
       rateLimit: { checkAllowed: () => true, recordFailure: () => {}, recordSuccess: () => {} },
       pairing: {
         isOpen: () => false,
@@ -716,7 +716,7 @@ describe("LanServer.handleEncryptedMessage — method and error branches", () =>
       onMessage: async () => {
         throw err;
       },
-      isKnownPeer: () => ({ peerId: "enc-peer2", writeAllowed: true }),
+      isKnownPeer: () => ({ peerId: "enc-peer2", writeAllowed: true, protoVersion: 1 }),
       rateLimit: { checkAllowed: () => true, recordFailure: () => {}, recordSuccess: () => {} },
       pairing: {
         isOpen: () => false,
@@ -755,7 +755,7 @@ describe("LanServer.handleEncryptedMessage — method and error branches", () =>
         // throw a plain object: no .code, no .message
         throw {} as never;
       },
-      isKnownPeer: () => ({ peerId: "enc-peer3", writeAllowed: true }),
+      isKnownPeer: () => ({ peerId: "enc-peer3", writeAllowed: true, protoVersion: 1 }),
       rateLimit: { checkAllowed: () => true, recordFailure: () => {}, recordSuccess: () => {} },
       pairing: {
         isOpen: () => false,

@@ -405,6 +405,13 @@ nimbus ask "What caused the payment-service alert — what deployed recently?"
 nimbus ask "Summarise everything that happened across my projects this week"
 ```
 
+**Point-in-time mode (`--at <time>`, Phase 10 IC1):** answers as the index stood at that time, for post-incident questions such as "what PRs were open for payment-service at 09:00 yesterday?". Accepted forms: `2026-11-11T09:00Z` (with a zone or offset), `2026-11-11T09:00` and `2026-11-11` (in the gateway's time zone), `yesterday-09:00`, `today-14:30` and `-2h` (units `s`, `m`, `h`, `d`, `w`). An instant in the future, before 2000 or unreadable is refused. Existence and the tracked state keys (status, state, severity, urgency, assignee, merged, draft, due date) are reconstructed from item history, which begins at the upgrade; **titles and bodies are as of now**, and the answer ends with a deterministic block that says so, names where history starts when it begins after T, and counts the items it could not place (`## Gaps`) and therefore does not show. The turn uses only the index: it is answered conversationally (never as a planned action), may not read live connectors or the graph, and is never offered a write. A point-in-time ask is not streamed. A gateway that predates `--at` makes the command print an error and exit 1, and its reply is neither shown nor stored in a `--session`, because its answer is from current data. A time-travel turn neither reads nor writes session history, and the command withholds `resolvePerson` (the people graph has no time axis).
+
+```bash
+nimbus ask --at yesterday-09:00 "what PRs were open for payment-service?"
+nimbus ask --at 2026-11-11T09:00 "who was assigned the checkout incident?"
+```
+
 **Devil's-advocate mode (`--devil`):** argues *against* the plan or assumption in your question
 instead of helping to carry it out — the risks it runs, the edge cases it ignores, the alternative
 reading of the evidence. A confirmation-bias antidote for a decision you have already half made.
@@ -451,8 +458,9 @@ nimbus search "flaky test" --keyword-only            # BM25 only, no vector rank
 | `--semantic` | *(default)* Vector/semantic ranking — already on, so passing this changes nothing |
 | `--no-semantic`, `--keyword-only` | Turn semantic ranking off; keyword (BM25) results only |
 | `--limit <n>`, `-n` | Maximum results (1–500, default: 20) |
+| `--at <time>` | Answer as the index stood at that time (Phase 10 IC1; forms as for `nimbus ask --at`: `2026-11-11T09:00Z`, `2026-11-11T09:00`, `yesterday-09:00`, `-2h`). Existence and the tracked state keys are reconstructed from item history; titles and bodies are as of now. Each result carries an `asOf` block; the disclosure (as-of line, where history starts, the count of items it could not place) is printed on stderr as `note:` lines. Refuses a gateway that ignores it (exit 1). Piped without `--pretty`, stdout is the JSON array and the `Gaps:` lines go to stderr. |
 
-> **No other flags are accepted.** `nimbus search` throws `Unknown flag: <arg>` on any argument starting with `-` that is not in the table above — including `--help`, `--json`, `--since` and `--state`. (It is not alone: `nimbus glossary`, `nimbus update`, `nimbus deploy annotate` and `nimbus tribal capture` reject unknown flags too. Most other commands ignore them.) Time, state and assignee filtering are not available here; use [`nimbus query`](#nimbus-query) for `--since`, or raw SQL via `nimbus query --sql`.
+> **No other flags are accepted** (time filtering beyond `--at` is unavailable: there is no `--since`). `nimbus search` throws `Unknown flag: <arg>` on any argument starting with `-` that is not in the table above — including `--help`, `--json`, `--since` and `--state`. (It is not alone: `nimbus glossary`, `nimbus update`, `nimbus deploy annotate` and `nimbus tribal capture` reject unknown flags too. Most other commands ignore them.) Time, state and assignee filtering are not available here; use [`nimbus query`](#nimbus-query) for `--since`, or raw SQL via `nimbus query --sql`.
 >
 > If the embedding model is still warming up, a semantic search falls back to keyword-only for that call and prints a note on stderr.
 >
@@ -491,8 +499,11 @@ nimbus query --service pagerduty --type alert --since 1d --json | jq '.[] | .tit
 | `--not-touching <glob>` | **Negation.** PRs with no indexed changed-file path matching the glob. Requires `--type pr`. |
 | `--no-downstream-incident` | **Negation.** Deployments with no correlated downstream incident. Requires `--type deployment`. |
 | `--explain` | Print the SQL that ran, its bound parameters, and the substrate probe |
+| `--at <time>` | Answer as the index stood at that time (Phase 10 IC1; forms as for `nimbus ask --at`). Combines with `--service` and `--type`; **refuses** `--sql`, `--since`, `--not-touching` and `--no-downstream-incident` before any request (they read the current index or graph). Prints the disclosure on stderr and a `Gaps:` line counting the rows whose state at that time cannot be placed. |
 
 `--service` is required unless `--sql` is used.
+
+**Point in time (`--at`).** `nimbus query --service github --type pr --at yesterday-09:00` returns the rows that existed then, each with an `asOf` block (`state` holds the tracked keys as of that time; `basis` is `history` when a key changed afterwards, `current` otherwise). Titles and bodies are as of now. The `Gaps:` line (stderr when the rows are printed as a piped JSON array) counts the matching rows the index cannot place at that time (their state changed after it and the change predates item history, or their birth is unknown): they are excluded, never shown. History begins when the gateway was upgraded to schema V94 and is kept for `[index] history_retention_days` (default 180).
 
 #### Negation predicates
 
@@ -924,7 +935,7 @@ Like `nimbus owners`/`nimbus glossary`, `nimbus pre-mortem` **hard-rejects** an 
 
 **A proposal is scoped by affected service, not by connector.** The watcher condition carries `filter.affectedService` — the `[metrics.dora.<id>]` / `[ci.service.<id>]` id the repo resolves to — which the watcher engine matches against the incident's `graph_entity.metadata.affectedService`. The older `filter.service` axis matches the `item.service` **column**, which for an incident is always the connector id (`pagerduty`), so it can only ever scope a watcher to a whole connector. **A repo with no configured service mapping gets no watcher at all**, and the brief says so by name: falling back to the repo path would write a watcher that silently matches nothing once armed. Add a `[ci.service.<id>]` block whose `repos` names the repository, then re-run.
 
-**No deploy-failure watcher is proposed.** Deploy failure is a watcher condition kind, not one of the five risks — the fifth risk is abandonment, and no deploy-failure risk is computed. The engine can now scope such a watcher the same way, so the earlier reason (`item.service` being the annotate provider slug) no longer holds; what does is that `deployment/annotate.ts` — the only writer of the `metadata.conclusion` a `deploy_failed` watcher matches — inserts its `item` row directly and creates no `deployment` graph entity, so such a watcher would match nothing until `nimbus index regraph` runs.
+**No deploy-failure watcher is proposed.** Deploy failure is a watcher condition kind, not one of the five risks — the fifth risk is abandonment, and no deploy-failure risk is computed. The engine can now scope such a watcher the same way, so the earlier reason (`item.service` being the annotate provider slug) no longer holds; what does is that `deployment/annotate.ts` — the only writer of the `metadata.conclusion` a `deploy_failed` watcher matches — inserts its `item` row directly; since Phase 10 IC2 the HTTP route and RPC graph the stored row right after the annotation (fail-soft), so the `deployment` entity now exists without `nimbus index regraph`.
 
 **Review drag is measured only for pull requests carrying both an *opened* and a *merged* timestamp:** GitHub and GitLab can record both; Bitbucket never records a merge time, and a repo with no indexed pull request has neither. Where it cannot be measured the review-drag risk reports a gap that names the forge behind it, rather than a fabricated `0`. When review drag IS measured but some pull requests lacked a timestamp — linked to the cohort, or merged in the same repos over the repo-wide baseline window — those are left out of both medians and the summary names the forges concerned and why.
 
@@ -1139,6 +1150,8 @@ nimbus oncall now --service payment-service
 
 **A conditional gap names the missing merge commit:** a deployment is matched to its change by merge commit, and only the GitHub connector records one, so on GitLab and Bitbucket the change section is always empty. The brief says so as a `missing_connector` gap, and states the limit plainly: there is no remedy on GitLab or Bitbucket today, and on GitHub the thing to check is that the pull request which merged the commit is indexed.
 
+**Service bindings (Phase 10 IC2).** `[ci.service.<id>]` and `[metrics.dora.<id>]` also accept `jsm_alert_tags` (JSM Operations alert tags, matched case-insensitively), `sentry_projects` (Sentry project slugs), `data_models` (warehouse model globs, `*` only, e.g. `analytics.payments.*`) and `depends_on` (service ids this one depends on; stored for the cascade, a missing target only warns). At most 50 entries each; an invalid entry is an error naming `[block.id].key`. `repos` is still required. `nimbus metrics dora` reports `incomplete_resolution_data` on MTTR when resolved PagerDuty incidents have no recorded resolution time (rows written before IC2 until they re-sync), and `nimbus changelog` lists a resolved incident at its recorded resolution time (`event`) or, for an older row, at its last-touch time (`index`).
+
 **A fourth gap is conditional and worth fixing when you see it:** an incident whose PagerDuty service maps to no configured Nimbus service leaves the deployment, change, CI and chat sections structurally empty. The brief names the unmapped PagerDuty id and points at the `[metrics.dora.<service>]` / `[ci.service.<service>]` binding — the same one `nimbus metrics dora` already uses.
 
 **Read-only:** never triggers HITL, never makes a live connector API call. Reachable over the local HTTP API, as an MCP tool and from ChatOps — but **only on its explicit shapes**. The zero-parameter owner-scoped form is refused for an external caller, because it resolves the *gateway owner's* identity: a bearer token cannot ask about itself and would receive the owner's active incident, assignees included. That is the concern that keeps `agents.standup` off every external surface entirely; the difference here is that `oncall` has an answerable external shape, so the bound sits on the **shape** rather than the method — the same split invariant `I36` applies to `agents.ghost` / `agents.conflicts`. Eligible for `nimbus fleet`, where a job names its service and the prior-incident lane is the half a nightly digest watches move.
@@ -1201,6 +1214,7 @@ Text from the index (a title, a sender) is stripped of control characters before
 | `[briefing.deadlines] enabled` | `false` | independent of `[briefing] enabled` |
 | `[briefing.deadlines] lead_hours` | `24` | 1 to 168 |
 | `[briefing.deadlines] quiet_hours` | `24` | 1 to 336 |
+| `[index] history_retention_days` | `180` | 7 to 3650, an integer; how long item-history rows (the change log behind `--at`) are kept, pruned daily in batches. There is no `0` (an unbounded history table is not a mode); a value outside the range falls back to 180 and `nimbus config explain index.history_retention_days` says so |
 
 **The notification shows counts only** (`3 meetings · 2 reviews waiting · on call today`; `2 open items due within 24 h with no recent activity`): never a title, sender, repository, channel or time. A missed slot is caught up if the gateway starts within three hours of it, otherwise it is recorded as skipped; enabling the briefing fires nothing until the next slot; a wall time inside a spring-forward gap has no slot that day.
 
@@ -2920,6 +2934,17 @@ Use this for scripts and headless environments; `nimbus tui` is the richer alter
 
 ## Connectors
 
+### `[finops]` (Phase 10 FO2)
+
+Limits for the FinOps cost data the Vantage sync indexes (`nimbus config explain finops.max_series`). A bad value falls back to that key's own default and `nimbus config explain` names it; nothing is clamped.
+
+| Key | Default | Range |
+|---|---|---|
+| `[finops] max_series` | `500` | 1 to 5000: how many named series are indexed; the rest of each day is summed into one `__other__` row |
+| `[finops] retain_days` | `400` | 30 to 3650: `cost_allocation` rows older than this are deleted by a daily pass; recommendations are not pruned by age |
+
+The data comes from `vantage.api_token` (set with `nimbus vault set vantage.api_token`; every 6 hours the sync reads 45 days on the first run, then from three days before the last success). `vantage.group_by` is a comma-separated grouping (default `provider,service,account_id`); a `tag:` entry is refused because where Vantage returns a tag value is undocumented. `nimbus connector auth vantage` prints the keys.
+
 ### `nimbus connector auth <service>`
 
 Authenticate a service and store credentials in the OS keystore. Never stores credentials to disk or logs.
@@ -3009,6 +3034,7 @@ nimbus connector auth zoom           # OAuth 3-legged PKCE — opens browser
 | `superset` | `superset.url`, `superset.username`, `superset.password` |
 | `databricks` | `databricks.host`, `databricks.token` |
 | `mlflow` | `mlflow.host`, `mlflow.token` |
+| `vantage` | `vantage.api_token` (required; a Read-scope token is enough), `vantage.cost_report_token`, `vantage.workspace_token`, `vantage.group_by` (optional; see `[finops]`) |
 | `vercel` | `vercel.token`, `vercel.team_id` |
 | `netlify` | `netlify.token` |
 | `stripe` | `stripe.api_key` |
@@ -3600,6 +3626,7 @@ endpoint = "https://telemetry.nimbus-agent.dev/v1/collect"
 [lan]
 # enabled = false
 # port = 7475
+# min_protocol = 1   # 2 refuses the old (non-forward-secret) wire for every peer
 
 [automation]
 # graph_conditions = true
@@ -4785,6 +4812,8 @@ There is deliberately **no `--only-truncated` flag**. A sync fetches by page and
 ---
 
 ### `nimbus index regraph`
+
+**After the Phase 10 IC2 upgrade** the gateway runs a one-shot re-graph of deployments, incidents, error issues and data-quality tests at its first boot (a marker the V96 migration leaves; an unreadable `nimbus.toml` keeps the marker). Run this command yourself after editing the service bindings below: the resolver is built at boot.
 
 Re-run the graph populator over every indexed item via `index.regraph`. Needed because a populator change only reaches existing rows when they next re-sync, and historical items may never re-sync. Threads the same service-identity resolver the live sync path uses, so `correlates_with` edges between resolver-bound deployments/incidents survive the backfill instead of being cleared. Idempotent — safe to re-run.
 
@@ -6054,7 +6083,7 @@ nimbus data delete --service slack --yes         # Execute — required for non-
 | Flag | Description |
 |---|---|
 | `--service <name>` | Connector to purge (`github`, `slack`, `google_drive`, …) |
-| `--dry-run` | Print the preflight (item count, vault entry count) and exit |
+| `--dry-run` | Print the preflight (item count, item-history row count, vault entry count) and exit |
 | `--yes` | Required to execute the deletion (the CLI is non-interactive) |
 
 The preflight is always printed — even with `--yes` — so the deletion blast radius is recorded in the audit log before the destructive write.
@@ -6249,7 +6278,13 @@ Two further limits apply to replay, both reported rather than silent: only tools
 
 Encrypted, relay-free remote access between machines on the same network. Disabled by default (`[lan] enabled = false` in `nimbus.toml`). Enable via `nimbus config set lan.enabled true`.
 
-All traffic is E2E encrypted with NaCl box (X25519 DH + XSalsa20-Poly1305). A set of exfiltration- and management-class methods is forbidden over LAN regardless of peer grants (`FORBIDDEN_OVER_LAN` in `packages/gateway/src/ipc/lan-rpc.ts`, invariant I5) — forbidden namespaces include (but are not limited to) `vault.*`, `updater.*`, `lan.*`, `profile.*`, `audit.*`, `data.*`, `security.*`, `chatops.*`, `tribal.*`, `team.*`, `teamvault.*`, `hitl.*`, `identity.*`, and `scim.*`, plus the full-method forbids `connector.addMcp`, the `extension.*` management methods, `index.reembed` / `index.reembedCancel`, the federation management/asker methods (`federation.discover` / `pair` / `peers` / `namespace.*` / `consentRespond` / `ask*`), and the share owner-action chokepoints `share.create` / `share.prune` / `share.approvalRespond` (the I27 outbound-publish gate). The read-only share methods (`share.verify` / `list` / `get` / `pubkey`) and the answering methods `federation.query` / `federation.expertise` / `federation.invoke` (gated by I17 / I19) stay admitted.
+Traffic between two upgraded gateways is E2E encrypted in a Noise `IK` session (X25519, AES-256-GCM, SHA-256) with an ephemeral key from both sides, so a later theft of either pairing key does not open a recorded session and a recorded request cannot be replayed (invariant I56). With the default `min_protocol = 1`, those guarantees hold only for sessions that actually run the new handshake: an attacker who can interrupt the first new-style attempt between two peers that have not yet completed one can force that session onto the old wire, which has neither forward secrecy nor replay protection (`min_protocol = 2` refuses it; once a peer has completed one new-style session it can no longer be forced back). A peer that has not upgraded is still served over the old NaCl-box wire (X25519 DH + XSalsa20-Poly1305, no forward secrecy) while `[lan] min_protocol = 1`; pairing itself still uses the old frames until the next slice.
+
+**`[lan] min_protocol`** (`1` or `2`, default `1`; any other value is ignored; no environment override). `2` refuses the old wire for EVERY peer: a legacy `hello` or `pair` is closed with no reply and counted as a failed attempt, and this gateway never falls back to the old wire when it calls a peer. Because pairing still uses the old frames, set `2` only after your peers are paired (the next slice moves pairing to the new exchange). Independently of this setting, a peer that has completed ONE new-style session with this gateway is recorded (`lan_peers.proto_version = 2`, visible in `lan.listPeers`; the human-facing line comes with the next slice) and is never again talked to or answered over the old wire; there is no way to lower it short of removing and re-pairing the peer. Rolling back to an older gateway after that makes the peer unreachable until it is re-paired.
+
+A gateway that cannot open a peer's first message, or does not know the sender, closes without a reply (no oracle); the caller then reports "no reply: the peer may have been re-paired or reset; run nimbus team pair again". A connection that does not finish its handshake within 10 seconds is closed.
+
+Legacy note: the old wire is E2E encrypted with NaCl box (X25519 DH + XSalsa20-Poly1305). A set of exfiltration- and management-class methods is forbidden over LAN regardless of peer grants (`FORBIDDEN_OVER_LAN` in `packages/gateway/src/ipc/lan-rpc.ts`, invariant I5) — forbidden namespaces include (but are not limited to) `vault.*`, `updater.*`, `lan.*`, `profile.*`, `audit.*`, `data.*`, `security.*`, `chatops.*`, `tribal.*`, `team.*`, `teamvault.*`, `hitl.*`, `identity.*`, and `scim.*`, plus the full-method forbids `connector.addMcp`, the `extension.*` management methods, `index.reembed` / `index.reembedCancel`, the federation management/asker methods (`federation.discover` / `pair` / `peers` / `namespace.*` / `consentRespond` / `ask*`), and the share owner-action chokepoints `share.create` / `share.prune` / `share.approvalRespond` (the I27 outbound-publish gate). The read-only share methods (`share.verify` / `list` / `get` / `pubkey`) and the answering methods `federation.query` / `federation.expertise` / `federation.invoke` (gated by I17 / I19) stay admitted.
 
 ### `nimbus lan status`
 

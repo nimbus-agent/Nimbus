@@ -4,6 +4,7 @@ import { CONNECTOR_SERVICE_IDS } from "./connector-catalog.ts";
 import {
   CONNECTOR_VAULT_SECRET_KEYS,
   clearConnectorVaultSecretKeys,
+  requiredSecretKeysFor,
   TEAM_SECRET_ANYOF_GROUPS,
 } from "./connector-secrets-manifest.ts";
 
@@ -64,4 +65,37 @@ test("jira declares its three credentials and the optional cloud id (so connecto
     "jira.base_url",
     "jira.cloud_id",
   ]);
+});
+
+describe("vantage (Phase 10 FO2)", () => {
+  test("declares the token and the three options, but only the token is required", () => {
+    expect(CONNECTOR_VAULT_SECRET_KEYS.vantage).toEqual([
+      "vantage.api_token",
+      "vantage.cost_report_token",
+      "vantage.workspace_token",
+      "vantage.group_by",
+    ]);
+    expect(requiredSecretKeysFor("vantage")).toEqual(["vantage.api_token"]);
+  });
+
+  test("connector.remove clears all four keys", async () => {
+    const deleted: string[] = [];
+    const vault: NimbusVault = {
+      get: mock(async () => null),
+      set: mock(async () => {
+        /* noop */
+      }),
+      delete: mock(async (k: string) => {
+        deleted.push(k);
+      }),
+      listKeys: mock(async () => []),
+    };
+    await clearConnectorVaultSecretKeys(vault, "vantage");
+    expect(deleted).toEqual([
+      "vantage.api_token",
+      "vantage.cost_report_token",
+      "vantage.workspace_token",
+      "vantage.group_by",
+    ]);
+  });
 });

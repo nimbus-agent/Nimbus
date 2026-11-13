@@ -137,7 +137,10 @@ Everything else follows the standard triple. These break from it in a way worth 
 | `packages/gateway/src/ipc/index-reembed-rpc.ts` | `dispatchIndexReembedRpc` — `index.reembed` / `index.reembedCancel`; CLI-only |
 | `packages/gateway/src/index/item-store.ts` | **`upsertIndexedItemForSync` — the single depth chokepoint every connector's item write goes through** (see `nimbus-index-body-depth` skill) |
 | `packages/gateway/src/index/chat-read-marker-store.ts` | **The only writer of `chat_read_marker`** (V92, Phase 10 MB4): `setChatReadMarkerRows` behind the scoped `setChatReadMarkers` sync capability, `deleteChatReadMarkersForService` for the two removal paths; readers are `index/slack-unread.ts` (`countUnreadSlackThreads`) and the briefing seam `index/chat-unread-query.ts` (`readUnreadChatThreads`) |
+| `packages/gateway/src/finops/` (`cost-item-contract.ts`, `cost-rollup.ts`, `cost-series.ts`, `cost-retention.ts`), `connectors/{finops-sync-transport,vantage-sync,vantage-cost-mapping}.ts`, `embedding/embedding-exclusions.ts`, `config/finops-toml.ts` | FinOps cost data (Phase 10 FO2): the `cost_allocation` row contract, the stable named-series rollup, the pure `readCostSeries` reader, the 400-day retention pass, the Vantage syncable and the types that are never embedded. `finops/` is confined by static D48. |
 | `packages/gateway/src/briefing/` (`briefing-store.ts`, `briefing-scheduler.ts`, `briefing-runner.ts`, `deadline-scan.ts`, `briefing-runtime.ts`), `agents/_lib/briefing-{types,queries,build,render}.ts`, `ipc/briefing-rpc.ts` | The morning briefing (Phase 10 MB5): the scheduler and runner, the pure brief (the 18th brief kind), the deadline notices and `briefing.*` IPC. Confined to local sinks by static D45. |
+| `packages/gateway/src/connectors/jsm-alerts.ts` (+ `jsm-alert-mapping.ts`), `packages/gateway/src/graph/deployment-edges.ts`, `packages/gateway/src/graph/regraph-once.ts`, `packages/gateway/src/deployment/graph-annotated.ts` | JSM Operations alert pass, deployed/built_by edges, the one-shot IC2 re-graph, graphing an annotated deployment (Phase 10 IC2) |
+| `packages/gateway/src/index/item-history.ts` (+ `item-history-keys.ts`, `item-history-at.ts`, `item-history-retention.ts`, `item-history-v94-sql.ts`), `util/point-in-time-parse.ts`, `engine/point-in-time.ts`, `config/index-toml.ts` | **Item history and `--at`** (Phase 10 IC1, V94): `item-history.ts` is the ONLY writer of `item_history` (static D46(b)), called from `upsertIndexedItem` and `deleteItemByPrimaryKey` in `index/item-store.ts`; `item-history-keys.ts` is the tracked set derived from the connector writers; `item-history-at.ts` is the read-only reconstruction (the in/out/gap SQL clause, `annotateStateAt`, the disclosure); `item-history-retention.ts` is the daily batched prune; `util/point-in-time-parse.ts` parses `--at`; `engine/point-in-time.ts` holds the `ask --at` tool lists; `config/index-toml.ts` reads `[index] history_retention_days` |
 | `packages/gateway/src/index/work-snapshot-store.ts` | **The only writer of `work_snapshot`** (V91, Phase 10 MB1): `replaceWorkSnapshotRows` behind the scoped `replaceWorkSnapshot` sync capability (`sync/sync-capabilities.ts`), `listWorkSnapshot` for readers; the static D24 rule `work-snapshot-confined` pins it. The per-sync driver is `connectors/_lib/work-snapshot-run.ts`; the interval is `[briefing]` in `config/briefing-toml.ts` |
 | `packages/gateway/src/index/body-caps.ts` | `BODY_MAX_PROSE = 16_384` / 512 for everything else; surrogate-safe clamp |
 | `packages/gateway/src/index/body-store-v48-sql.ts` | V48 — `item.body` + `item.body_complete`; `item_fts` repointed off `body_preview` |
@@ -219,11 +222,17 @@ Everything else follows the standard triple. These break from it in a way worth 
 | `packages/gateway/src/ipc/openapi-loader.ts` | `loadOpenApiJsonBytes` — cached YAML→JSON for `GET /v1/openapi.json` |
 | `packages/gateway/openapi/v1.yaml` | OpenAPI 3.1 schema; serves `/v1/metrics/dora`, `/v1/preflight/deploy`, `POST /v1/deployments` |
 | `packages/gateway/src/ipc/metrics-server.ts` | Prometheus endpoint (`localhost`, off by default) |
-| `packages/gateway/src/ipc/lan-crypto.ts` | NaCl box keypair, `sealBoxFrame` / `openBoxFrame` |
+| `packages/gateway/src/ipc/lan-crypto.ts` | NaCl box keypair, `sealBoxFrame` / `openBoxFrame` (legacy v1 primitives only, static D47) |
+| `packages/gateway/src/ipc/lan-noise.ts` | Noise Protocol Framework from `node:crypto`: IK, AES-256-GCM, SHA-256, X25519 (invariant `I56`) |
+| `packages/gateway/src/ipc/lan-session.ts` | v2 first frame, the IK drivers, records, chunking, rekey every 1,024 records |
+| `packages/gateway/src/ipc/lan-legacy.ts` | The v1 static-box wire (handlers + client) and `legacyAllowedFor`, the one downgrade check |
+| `packages/gateway/src/ipc/lan-wire.ts` | Frame caps, service interfaces and framing helpers shared by both wires |
+| `packages/gateway/src/federation/lan-link.ts` | `lanLinkFor` — the per-peer outbound link policy (ratchet + `min_protocol`) |
+| `packages/gateway/src/ipc/testing/` | Test-only LAN scenarios (raw v2 client, recording proxy, the FS-A1 attacker); skipped by the structure audit |
 | `packages/gateway/src/ipc/lan-pairing.ts` | `PairingWindow` — single-use base58 code, 5-min expiry |
 | `packages/gateway/src/ipc/lan-rate-limit.ts` | `LanRateLimiter` — per-IP sliding window |
 | `packages/gateway/src/ipc/lan-rpc.ts` | `LanError`, `checkLanMethodAllowed` — invariant `I5` |
-| `packages/gateway/src/ipc/lan-server.ts` | `LanServer` — `Bun.listen` TCP; length-framed NaCl-box RPC |
+| `packages/gateway/src/ipc/lan-server.ts` | `LanServer` — `Bun.listen` TCP; length-framed RPC over a Noise IK session (v2) or the legacy NaCl-box wire (v1), by first byte |
 
 ## Updater
 
@@ -308,7 +317,7 @@ Everything else follows the standard triple. These break from it in a way worth 
 |---|---|
 | `scripts/structure-audit/lib.ts` | Shared B3 helpers — `REPO_ROOT`, `stripComments`, `countAnyInSource`, `iterateSourceFiles` |
 | `scripts/structure-audit/check-doc-references.ts` | Doc-ref drift audit (broken `[text](path)` and backtick path refs) over CLAUDE/GEMINI + all of `docs/` + the skills; `DOCS_EXCLUDED_PREFIXES` names the few docs that are out and why |
-| `scripts/structure-audit/check-nimbus-invariants.ts` | Static-time complement to `security-invariants.test.ts` (I1 + vault-key allowlist + static rules D10–D45 — derive the range from the file, it has read low three times) |
+| `scripts/structure-audit/check-nimbus-invariants.ts` | Static-time complement to `security-invariants.test.ts` (I1 + vault-key allowlist + static rules D10–D48 — derive the range from the file, it has read low three times) |
 | `scripts/structure-audit/check-openapi-drift.ts` | OpenAPI drift detector — `v1.yaml` vs `HTTP_ROUTES` |
 | `docs/structure-audit/baseline.md` | Phase 1 baseline reference; per-dimension state + Phase 2 thresholds |
 
@@ -384,7 +393,7 @@ Everything else follows the standard triple. These break from it in a way worth 
 |---|---|
 | `docs/architecture.md` | Full subsystem design — read before modifying any subsystem |
 | `docs/roadmap.md` | Phases, acceptance criteria, delivered summary |
-| `docs/SECURITY-INVARIANTS.md` | I1–I55 rationale + anti-patterns + audit cross-references |
+| `docs/SECURITY-INVARIANTS.md` | I1–I56 rationale + anti-patterns + audit cross-references |
 | `docs/release/manual-smoke-headless.md` | Reusable manual smoke checklist; per-platform results matrix |
 | `docs/cli/use-in-ci.md` | CI integration examples (GitHub Actions, GitLab, Jenkins) using `nimbus query --json` |
 | `docs/templates/nimbus-pre-commit.sh` | Bash pre-commit template — `nimbus diag` reachability + incident/CI gates |

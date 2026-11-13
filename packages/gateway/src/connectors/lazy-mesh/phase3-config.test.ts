@@ -64,6 +64,7 @@ import {
   phase3AddSupersetMcp,
   phase3AddTableauMcp,
   phase3AddTestflightMcp,
+  phase3AddVantageMcp,
   phase3AddVercelMcp,
   phase3AddVertexAiMcp,
   phase3AddWizMcp,
@@ -3418,4 +3419,69 @@ describe("a spawn carries the wildcard hosts of the manifest key it spawns under
       expect(policy.permissions.network.some((h) => h.includes("*"))).toBe(false);
     });
   }
+});
+
+describe("phase3AddVantageMcp", () => {
+  test("no-op without vantage.api_token", async () => {
+    const vault = createMockVault();
+    await vault.set("vantage.group_by", "service");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddVantageMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["vantage"]).toBeUndefined();
+  });
+
+  test("no-op when vantage.api_token is whitespace-only", async () => {
+    const vault = createMockVault();
+    await vault.set("vantage.api_token", "   ");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddVantageMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["vantage"]).toBeUndefined();
+  });
+
+  test("spawns sandboxed with VANTAGE_API_TOKEN and api.vantage.sh, and no option env when none is stored", async () => {
+    const vault = createMockVault();
+    await vault.set("vantage.api_token", "vantage-test-token");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddVantageMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["vantage"];
+    expect(spec).toBeDefined();
+    if (spec === undefined) return;
+    expectSandboxed(spec, "api.vantage.sh");
+    expect(spec.env?.["VANTAGE_API_TOKEN"]).toBe("vantage-test-token");
+    expect(spec.env?.["VANTAGE_COST_REPORT_TOKEN"]).toBeUndefined();
+    expect(spec.env?.["VANTAGE_WORKSPACE_TOKEN"]).toBeUndefined();
+    expect(spec.env?.["VANTAGE_GROUP_BY"]).toBeUndefined();
+    expect(readSandboxPolicy(spec).permissions.network).toEqual(["api.vantage.sh"]);
+  });
+
+  test("the optional env vars appear only when stored", async () => {
+    const vault = createMockVault();
+    await vault.set("vantage.api_token", "vantage-test-token");
+    await vault.set("vantage.cost_report_token", "rprt_abc");
+    await vault.set("vantage.workspace_token", "  ");
+    await vault.set("vantage.group_by", "provider,service");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddVantageMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["vantage"];
+    expect(spec?.env?.["VANTAGE_COST_REPORT_TOKEN"]).toBe("rprt_abc");
+    expect(spec?.env?.["VANTAGE_WORKSPACE_TOKEN"]).toBeUndefined();
+    expect(spec?.env?.["VANTAGE_GROUP_BY"]).toBe("provider,service");
+  });
+
+  test("the token never appears in the sandbox policy that rides in the spec", async () => {
+    const vault = createMockVault();
+    await vault.set("vantage.api_token", "vantage-secret-in-policy");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddVantageMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["vantage"]?.env?.["NIMBUS_SANDBOX_POLICY_JSON"]).not.toContain(
+      "vantage-secret-in-policy",
+    );
+  });
+
+  test("buildPhase3Servers registers it", async () => {
+    const vault = createMockVault();
+    await vault.set("vantage.api_token", "t");
+    const servers = await buildPhase3Servers(vault, SANDBOX_CWD);
+    expect(servers["vantage"]).toBeDefined();
+  });
 });

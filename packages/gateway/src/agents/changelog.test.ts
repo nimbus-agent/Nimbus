@@ -5,7 +5,11 @@ import { bitbucketPrMetadata } from "../connectors/bitbucket-sync.ts";
 import { createMemoryIndexDb } from "../connectors/connector-sync-test-helpers.ts";
 import { githubActionsRunMetadata } from "../connectors/github-actions-sync.ts";
 import { extractPrMetadataForIndex } from "../connectors/github-sync.ts";
-import { DEFAULT_DEPLOY_WORKFLOW_PATTERN, type ServiceConfig } from "../metrics/dora-config.ts";
+import {
+  DEFAULT_DEPLOY_WORKFLOW_PATTERN,
+  NO_INCIDENT_BINDINGS,
+  type ServiceConfig,
+} from "../metrics/dora-config.ts";
 import { buildChangelogBrief, CHANGELOG_CATEGORY_CAP, emitChangelogBrief } from "./changelog.ts";
 import type { ChangelogScope } from "./changelog-queries.ts";
 
@@ -33,6 +37,7 @@ function serviceConfig(overrides: Partial<ServiceConfig> = {}): ServiceConfig {
     excludePrLabels: [],
     deployEnvironments: ["prod"],
     severityP1Aliases: [],
+    ...NO_INCIDENT_BINDINGS,
     ...overrides,
   };
 }

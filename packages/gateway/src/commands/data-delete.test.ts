@@ -246,6 +246,7 @@ describe("data delete", () => {
         connector_id TEXT PRIMARY KEY
       )
     `);
+    rawDb.run("CREATE TABLE item_history (service TEXT NOT NULL)");
     const bareIndex = { rawDb } as unknown as LocalIndex;
     const bareVault = memVault();
 
@@ -303,5 +304,27 @@ describe("data delete", () => {
     });
     expect(result.preflight.itemsToDelete).toBe(3);
     expect(result.preflight.vecRowsToDelete).toBe(0);
+  });
+});
+
+describe("data delete - item history (Phase 10 IC1)", () => {
+  test("deletion removes the service's item_history rows and no other service's", async () => {
+    const vault = memVault();
+    const idx = newIndex();
+    for (const service of ["github", "jira"]) {
+      idx.rawDb.run(
+        `INSERT INTO item_history (item_id, service, type, key, observed_at_ms)
+         VALUES (?, ?, 'x', '__created', 1)`,
+        [`${service}:1`, service],
+      );
+    }
+    const dry = await runDataDelete({ service: "github", dryRun: true, vault, index: idx });
+    // The dry run counts the history rows, even though no item of the service remains to be counted.
+    expect(dry.preflight.itemsToDelete).toBe(0);
+    expect(dry.preflight.itemHistoryRowsToDelete).toBe(1);
+    await runDataDelete({ service: "github", dryRun: false, vault, index: idx });
+    expect(idx.rawDb.query("SELECT service FROM item_history").all()).toEqual([
+      { service: "jira" },
+    ]);
   });
 });

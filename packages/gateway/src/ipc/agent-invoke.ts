@@ -18,6 +18,12 @@ export type AgentInvokeContext = {
    */
   devil?: boolean;
   /**
+   * `nimbus ask --at` (Phase 10 IC1): the instant, parsed and bounds-checked by `dispatchAgentInvoke`
+   * (`-32602` for a bad or future value). The turn answers as the index stood then, with no live read and
+   * no write. Absent on `engine.askStream`, which does not read `at` (a stated bound).
+   */
+  pointInTimeMs?: number;
+  /**
    * Whether this turn may be offered the owner-registered user-MCP tools (`connector add --mcp
    * --model`, I42). Decided ONCE at the IPC entry from the live session's server-held
    * `ClientKind` (`USER_MCP_OFFER_BY_KIND` in `ipc/server/inline-handlers.ts`) — never from a
@@ -42,6 +48,8 @@ export type AgentInvokeContext = {
 export type AgentInvokeResult = {
   reply: string;
   modelMeta?: LlmGenerateResult;
+  /** Echo of the honoured `at` instant; absent when the request had none (and from an older gateway). */
+  asOfMs?: number;
 };
 
 export type AgentInvokeHandler = (ctx: AgentInvokeContext) => Promise<AgentInvokeResult>;

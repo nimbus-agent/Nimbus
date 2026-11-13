@@ -2,12 +2,19 @@ import type { Database } from "bun:sqlite";
 import type { NimbusItem } from "@nimbus-dev/sdk";
 
 import { dbRun } from "../db/write.ts";
+import { isEmbeddingExcludedType } from "../embedding/embedding-exclusions.ts";
 import { type ResolveServiceId, syncGraphFromIndexedItem } from "../graph/graph-populator.ts";
 import { deleteGraphEntitiesForItemKeys } from "../graph/relationship-graph.ts";
 import type { SyncContext } from "../sync/types.ts";
 import { canonicalizeUrl } from "../util/url-canonical.ts";
 import { BODY_MAX_DEFAULT, BODY_PREVIEW_MAX, bodyCapForItemType, clampBody } from "./body-caps.ts";
 import { RAW_META_MAX_BYTES } from "./constants.ts";
+import {
+  deleteItemHistoryForService,
+  readItemHistoryBefore,
+  recordItemDeleteHistory,
+  recordItemUpsertHistory,
+} from "./item-history.ts";
 import { itemPrimaryKey } from "./item-key.ts";
 
 export { itemPrimaryKey } from "./item-key.ts";
@@ -108,9 +115,14 @@ export function upsertIndexedItem(
   // for a stored key because the READ side parse-checks before it canonicalizes.
   const resolveSource = row.canonicalUrl ?? row.url ?? null;
   const resolveKey = resolveSource === null ? null : canonicalizeUrl(resolveSource);
-  dbRun(
-    db,
-    `INSERT INTO item (
+  // Item history (Phase 10 IC1): a tracked (service, type) pair records the CHANGES to its state keys in
+  // the same savepoint as the upsert, so a crash cannot leave a changed item without its change row. An
+  // untracked pair takes the existing path with no extra statement.
+  const historyBefore = readItemHistoryBefore(db, id, row.service, row.type);
+  const writeItem = (): void => {
+    dbRun(
+      db,
+      `INSERT INTO item (
       id, service, type, external_id, title, body, body_preview, body_complete,
       url, canonical_url, resolve_key, modified_at, author_id, metadata, synced_at, pinned
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -130,25 +142,42 @@ export function upsertIndexedItem(
       metadata = excluded.metadata,
       synced_at = excluded.synced_at,
       pinned = excluded.pinned`,
-    [
-      id,
-      row.service,
-      row.type,
-      row.externalId,
-      row.title,
-      body,
-      preview,
-      bodyComplete,
-      row.url ?? null,
-      row.canonicalUrl ?? null,
-      resolveKey,
-      row.modifiedAt,
-      row.authorId ?? null,
-      meta,
-      row.syncedAt,
-      row.pinned === true ? 1 : 0,
-    ],
-  );
+      [
+        id,
+        row.service,
+        row.type,
+        row.externalId,
+        row.title,
+        body,
+        preview,
+        bodyComplete,
+        row.url ?? null,
+        row.canonicalUrl ?? null,
+        resolveKey,
+        row.modifiedAt,
+        row.authorId ?? null,
+        meta,
+        row.syncedAt,
+        row.pinned === true ? 1 : 0,
+      ],
+    );
+  };
+  if (historyBefore === undefined) {
+    writeItem();
+  } else {
+    // One transaction (a savepoint when a caller's is open): a crash or a failing history insert cannot
+    // leave a changed item without its change row.
+    db.transaction(() => {
+      writeItem();
+      recordItemUpsertHistory(db, historyBefore, {
+        id,
+        service: row.service,
+        type: row.type,
+        metadata: meta,
+        syncedAt: row.syncedAt,
+      });
+    })();
+  }
   syncGraphFromIndexedItem(
     db,
     {
@@ -220,6 +249,10 @@ export interface UpsertSyncDeps {
 
 export function upsertIndexedItemForSync(ctx: UpsertSyncDeps, row: BodyRow): void {
   upsertIndexedItem(ctx.db, applyDepth(ctx.depth, row), ctx.resolveServiceId);
+  // A type in EMBEDDING_EXCLUDED_TYPES (embedding/embedding-exclusions.ts) is never scheduled.
+  if (isEmbeddingExcludedType(row.type)) {
+    return;
+  }
   const id = itemPrimaryKey(row.service, row.externalId);
   ctx.scheduleItemEmbedding?.(id);
 }
@@ -260,15 +293,29 @@ export function upsertNimbusItemIntoItemTable(
   }
 }
 
-export function deleteItemByPrimaryKey(db: Database, primaryKey: string): void {
-  const row = db.query("SELECT id FROM item WHERE id = ?").get(primaryKey) as
-    | { id: string }
-    | null
-    | undefined;
-  if (row?.id !== undefined) {
-    deleteGraphEntitiesForItemKeys(db, [row.id]);
-  }
-  dbRun(db, "DELETE FROM item WHERE id = ?", [primaryKey]);
+export function deleteItemByPrimaryKey(
+  db: Database,
+  primaryKey: string,
+  nowMs: number = Date.now(),
+): void {
+  const row = db
+    .query("SELECT id, service, type, metadata FROM item WHERE id = ?")
+    .get(primaryKey) as {
+    id: string;
+    service: string;
+    type: string;
+    metadata: string | null;
+  } | null;
+  // One transaction (a savepoint inside a sync's): a failed item delete must not leave a committed `__deleted`
+  // row, or the graph entities of an item that still exists.
+  db.transaction(() => {
+    if (row !== null) {
+      deleteGraphEntitiesForItemKeys(db, [row.id]);
+      // An upstream deletion of a tracked item is part of its history (Phase 10 IC1).
+      recordItemDeleteHistory(db, row, nowMs);
+    }
+    dbRun(db, "DELETE FROM item WHERE id = ?", [primaryKey]);
+  })();
 }
 
 export function deleteItemByServiceExternal(
@@ -281,13 +328,18 @@ export function deleteItemByServiceExternal(
 
 export function deleteAllItemsForService(db: Database, service: string): void {
   const keys = db.query("SELECT id FROM item WHERE service = ?").all(service) as { id: string }[];
-  if (keys.length > 0) {
-    deleteGraphEntitiesForItemKeys(
-      db,
-      keys.map((k) => k.id),
-    );
-  }
-  dbRun(db, "DELETE FROM item WHERE service = ?", [service]);
+  // An owner erasure, not an upstream deletion: the service's change log goes with it (no __deleted rows).
+  // The graph entities go in the same transaction, so a failure leaves the items and their entities together.
+  db.transaction(() => {
+    if (keys.length > 0) {
+      deleteGraphEntitiesForItemKeys(
+        db,
+        keys.map((k) => k.id),
+      );
+    }
+    dbRun(db, "DELETE FROM item WHERE service = ?", [service]);
+    deleteItemHistoryForService(db, service);
+  })();
 }
 
 export type ItemBodyFetchState = {

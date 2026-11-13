@@ -1336,6 +1336,50 @@ CREATE TABLE connector_write_enablement (
 
 **SQLite write boundary.** Every production write goes through `dbRun` / `dbExec` / `dbStmtRun` in `packages/gateway/src/db/write.ts` (invariant `I14`). The wrappers translate `SQLITE_FULL` into a typed `DiskFullError`; the static-audit gate `D12` (`bun run audit:invariants`) fails the build on any direct `db.run(` / `db.exec(` outside the wrapper.
 
+## V96 — alert sources, deploy edge types and the one-shot regraph marker (Phase 10 IC2, 2026-11-12)
+
+Authoritative source: `packages/gateway/src/index/incident-alert-sources-v96-sql.ts`. V95 is LAN forward secrecy's `lan_peers.proto_version` (FS1); V96 chains after it.
+
+```sql
+INSERT OR IGNORE INTO graph_relation_type (name, directed) VALUES ('deployed', 1), ('built_by', 1);
+CREATE INDEX IF NOT EXISTS idx_deployment_items_sha ON deployment_items (sha);
+INSERT OR IGNORE INTO _meta (key, value) VALUES ('regraph_pending_ic2', '1');
+```
+
+The marker is raw SQL on purpose (`ALLOWED_META_KEYS` guards the IPC-reachable accessors); `graph/regraph-once.ts` reads it at boot, re-grafts deployments, incidents, error issues and data-quality tests, and deletes it.
+
+## V95 — `lan_peers.proto_version` (Phase 10 FS1, 2026-11-12)
+
+Authoritative source: `packages/gateway/src/index/lan-peer-proto-v95-sql.ts`. V94 is the incident engine's item history; V95 chains after it. The ALTER is guarded by a column probe (a step must be re-runnable). Written only by `LocalIndex.markLanPeerProto` (after a v2 handshake completed with that peer) and read by `isKnownPeer` and `lanLinkFor`; never lowered (`MAX`), and `addLanPeer`'s upsert does not touch it.
+
+```sql
+ALTER TABLE lan_peers ADD COLUMN proto_version INTEGER NOT NULL DEFAULT 1 CHECK (proto_version IN (1, 2));
+-- 1 = the old static-box wire; 2 = a Noise IK session completed with this peer (the downgrade ratchet, I56)
+```
+
+Every row that exists at the migration was made over the old wire and starts at 1.
+
+## V94 — item history (Phase 10 IC1, 2026-11-12)
+
+Authoritative source: `packages/gateway/src/index/item-history-v94-sql.ts`. Written only by `index/item-history.ts` (static D46(b)), inside `upsertIndexedItem` and `deleteItemByPrimaryKey`; deleted by `deleteItemHistoryForService` (an owner erasure) and by the daily batched prune. No foreign key and no trigger, by design: deleting an item must not erase the history that says it existed. No backfill: nothing earlier is recoverable. `observed_at_ms` is the sync's clock (`syncedAt`), not the provider's; `source_at_ms` is the provider's own time for the change when the item already carries one (a PR's `merged_at`). The third index serves the prune, which has no leading equality.
+
+```sql
+CREATE TABLE IF NOT EXISTS item_history (
+  id INTEGER PRIMARY KEY,
+  item_id TEXT NOT NULL,
+  service TEXT NOT NULL,
+  type TEXT NOT NULL,
+  key TEXT NOT NULL,             -- a tracked metadata key, or the pseudo-keys __created / __deleted
+  old_value TEXT,                -- normalised, capped at 256 code points
+  new_value TEXT,
+  observed_at_ms INTEGER NOT NULL,
+  source_at_ms INTEGER
+);
+CREATE INDEX IF NOT EXISTS item_history_item ON item_history (item_id, observed_at_ms);
+CREATE INDEX IF NOT EXISTS item_history_type ON item_history (service, type, observed_at_ms);
+CREATE INDEX IF NOT EXISTS item_history_observed ON item_history (observed_at_ms);
+```
+
 ## V93 — morning briefing runs and deadline notices (Phase 10 MB5, 2026-11-12)
 
 Authoritative source: `packages/gateway/src/index/briefing-v93-sql.ts`. Written only by `briefing/briefing-store.ts`. `slot_at` and `error_msg` are additions to the spec's table; the start of a run is `fired_by`, never `trigger` (static D44(d)). `item` is not a foreign-key parent, so the trigger is the cascade. No backfill.

@@ -198,6 +198,8 @@ test("payoff: two gateways over a real NaCl-box socket — discover → pair →
       bIdentity.publicKey,
       "federation.query",
       { namespace: NS, purpose: "review" },
+      undefined,
+      { known: 1, minProtocol: 1 },
     )) as WireQueryResult;
     expect(res.kind).toBe("ok");
     if (res.kind !== "ok") throw new Error(`expected ok, got ${JSON.stringify(res)}`);
@@ -229,6 +231,8 @@ test("payoff: two gateways over a real NaCl-box socket — discover → pair →
       bIdentity.publicKey,
       "federation.query",
       { namespace: NS, purpose: "snoop", types: ["email"] },
+      undefined,
+      { known: 1, minProtocol: 1 },
     )) as WireQueryResult;
     expect(undeclared.kind).toBe("ok");
     if (undeclared.kind !== "ok") throw new Error("expected ok");
@@ -251,6 +255,8 @@ test("payoff: two gateways over a real NaCl-box socket — discover → pair →
       bIdentity.publicKey,
       "federation.query",
       { namespace: NS, purpose: "review" },
+      undefined,
+      { known: 1, minProtocol: 1 },
     )) as WireQueryResult;
     expect(afterRevoke.kind).toBe("error");
     if (afterRevoke.kind !== "error") throw new Error("expected error");
@@ -277,6 +283,8 @@ test("payoff: two gateways over a real NaCl-box socket — discover → pair →
       bIdentity.publicKey,
       "federation.expertise",
       { query: "auth", purpose: "who-knows" },
+      undefined,
+      { known: 1, minProtocol: 1 },
     );
     expect(Object.keys(exp as object)).toEqual(["rank"]);
     const expSerialized = JSON.stringify(exp);
@@ -303,6 +311,8 @@ test("payoff: two gateways over a real NaCl-box socket — discover → pair →
       bIdentity.publicKey,
       "federation.query",
       { namespace: NS, purpose: "review" },
+      undefined,
+      { known: 1, minProtocol: 1 },
     )) as WireQueryResult;
     expect(timedOut.kind).toBe("error");
     if (timedOut.kind !== "error") throw new Error("expected error");
@@ -326,6 +336,8 @@ test("payoff: two gateways over a real NaCl-box socket — discover → pair →
       bIdentity.publicKey,
       "federation.query",
       { namespace: NS, purpose: "review", peerId: "peer:imposter" },
+      undefined,
+      { known: 1, minProtocol: 1 },
     )) as WireQueryResult;
     expect(spoofed.kind).toBe("ok");
     if (spoofed.kind !== "ok") throw new Error("expected ok — body peerId must be ignored");

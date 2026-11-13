@@ -81,6 +81,12 @@ export const CONNECTOR_VAULT_SECRET_KEYS = {
   prefect: ["prefect.api_url", "prefect.api_key"],
   dagster: ["dagster.base_url", "dagster.api_token"],
   ramp: ["ramp.client_id", "ramp.client_secret"],
+  vantage: [
+    "vantage.api_token",
+    "vantage.cost_report_token",
+    "vantage.workspace_token",
+    "vantage.group_by",
+  ],
   zoom: ["zoom.oauth"],
   hubspot: ["hubspot.oauth"],
   miro: ["miro.oauth"],
@@ -241,6 +247,8 @@ export const TEAM_SECRET_ANYOF_GROUPS: Partial<
  */
 export const OPTIONAL_SECRET_KEYS: Partial<Record<ConnectorServiceId, readonly string[]>> = {
   github: ["github.api_base"],
+  // Only the token makes Vantage "configured"; the report, workspace and grouping keys select what to read.
+  vantage: ["vantage.cost_report_token", "vantage.workspace_token", "vantage.group_by"],
 };
 
 /** The manifest keys a credential for `service` must hold: the full list minus the optional keys. */

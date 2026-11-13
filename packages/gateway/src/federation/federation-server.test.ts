@@ -2,11 +2,12 @@ import { Database } from "bun:sqlite";
 import { afterEach, expect, test } from "bun:test";
 import { bytesToHex } from "@noble/hashes/utils.js";
 import type { PreflightCommandConfig } from "../config/nimbus-toml.ts";
-import { LocalIndex } from "../index/local-index.ts";
+import { type LanPeerRow, LocalIndex } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import { dispatchFederationRpc, type FederationRpcContext } from "../ipc/federation-rpc.ts";
 import { outboundPairHandshake, sendFederatedOverWire } from "../ipc/lan-client.ts";
 import { generateBoxKeypair } from "../ipc/lan-crypto.ts";
+import { sendFederatedLegacy } from "../ipc/lan-legacy.ts";
 import { generatePairingCode, PairingWindow } from "../ipc/lan-pairing.ts";
 import { type DeletionRecord, verifyDeletionRecord } from "../policy/deletion-record.ts";
 import { encodeBase64 } from "../util/base64.ts";
@@ -19,6 +20,7 @@ import {
   EMPTY_PEER_PAIRING,
   pairingServiceFor,
 } from "./federation-server.ts";
+import { lanLinkFor } from "./lan-link.ts";
 import { PeerPairing } from "./peer-pairing.ts";
 
 let stop: (() => Promise<void>) | undefined;
@@ -30,7 +32,7 @@ afterEach(async () => {
 
 test("buildFederationLanServer registers an inbound peer on a valid pair handshake", async () => {
   const db = new Database(":memory:");
-  runIndexedSchemaMigrations(db, 33);
+  runIndexedSchemaMigrations(db, LocalIndex.SCHEMA_VERSION); // current: the v2 ratchet needs lan_peers.proto_version
   const index = new LocalIndex(db);
   db.run(`INSERT INTO item (id,service,type,external_id,title,body_preview,modified_at,synced_at,metadata)
           VALUES ('github:pr1','github','pull_request','pr1','Fix','b',10,1,'{}')`);
@@ -73,7 +75,7 @@ test("buildFederationLanServer registers an inbound peer on a valid pair handsha
 
 test("onMessage forces the authenticated peerId (body peerId cannot impersonate)", async () => {
   const db = new Database(":memory:");
-  runIndexedSchemaMigrations(db, 33);
+  runIndexedSchemaMigrations(db, LocalIndex.SCHEMA_VERSION); // current: the v2 ratchet needs lan_peers.proto_version
   const index = new LocalIndex(db);
   db.run(`INSERT INTO item (id,service,type,external_id,title,body_preview,modified_at,synced_at,metadata)
           VALUES ('github:pr1','github','pull_request','pr1','Fix','b',10,1,'{}')`);
@@ -134,6 +136,8 @@ test("onMessage forces the authenticated peerId (body peerId cannot impersonate)
     identity.publicKey,
     "federation.query",
     { namespace: "ns-imp", purpose: "test", peerId: "peer:bogus" },
+    undefined,
+    { known: 1, minProtocol: 1 },
   );
 
   // If the answerer had honoured the body peerId, there would be no grant for "peer:bogus"
@@ -147,7 +151,7 @@ test("onMessage forces the authenticated peerId (body peerId cannot impersonate)
 
 test("onMessage throws on an unhandled federation method (-32601 miss)", async () => {
   const db = new Database(":memory:");
-  runIndexedSchemaMigrations(db, 33);
+  runIndexedSchemaMigrations(db, LocalIndex.SCHEMA_VERSION); // current: the v2 ratchet needs lan_peers.proto_version
   const index = new LocalIndex(db);
 
   const identity = generateBoxKeypair();
@@ -186,6 +190,8 @@ test("onMessage throws on an unhandled federation method (-32601 miss)", async (
       identity.publicKey,
       "federation.bogusMethod",
       {},
+      undefined,
+      { known: 1, minProtocol: 1 },
     );
   } catch {
     threw = true;
@@ -198,7 +204,7 @@ test("onMessage throws on an unhandled federation method (-32601 miss)", async (
 
 test("buildFederationLanServer threads purgeSign + deletePurgeContributions into the dispatch ctx", async () => {
   const db = new Database(":memory:");
-  runIndexedSchemaMigrations(db, 33);
+  runIndexedSchemaMigrations(db, LocalIndex.SCHEMA_VERSION); // current: the v2 ratchet needs lan_peers.proto_version
   const index = new LocalIndex(db);
 
   // Auto-approve the local-operator consent prompt the answerer raises on federation.purge.
@@ -250,6 +256,8 @@ test("buildFederationLanServer threads purgeSign + deletePurgeContributions into
     identity.publicKey,
     "federation.purge",
     { externalId: "user-99" },
+    undefined,
+    { known: 1, minProtocol: 1 },
   )) as { kind: string; record: DeletionRecord; sig: string };
 
   expect(res.kind).toBe("ok");
@@ -309,7 +317,7 @@ async function setupServer(
 
 test("onMessage uses body={} fallback when params is null (non-object arm)", async () => {
   const db = new Database(":memory:");
-  runIndexedSchemaMigrations(db, 33);
+  runIndexedSchemaMigrations(db, LocalIndex.SCHEMA_VERSION); // current: the v2 ratchet needs lan_peers.proto_version
   const index = new LocalIndex(db);
 
   const { port, identity, askerKp, cleanup } = await setupServer(db, index);
@@ -330,6 +338,8 @@ test("onMessage uses body={} fallback when params is null (non-object arm)", asy
       identity.publicKey,
       "federation.expertise",
       null, // null params → body = {} → forced = {peerId} only → requireString(rec,"query") fails
+      undefined,
+      { known: 1, minProtocol: 1 },
     );
   } catch {
     threw = true;
@@ -345,7 +355,7 @@ test("onMessage uses body={} fallback when params is null (non-object arm)", asy
 
 test("buildFederationLanServer threads explicit discovery + pairing into ctx (??-left arm)", async () => {
   const db = new Database(":memory:");
-  runIndexedSchemaMigrations(db, 33);
+  runIndexedSchemaMigrations(db, LocalIndex.SCHEMA_VERSION); // current: the v2 ratchet needs lan_peers.proto_version
   const index = new LocalIndex(db);
 
   const discovery = new InMemoryDiscoveryProvider([]);
@@ -369,6 +379,8 @@ test("buildFederationLanServer threads explicit discovery + pairing into ctx (??
     identity.publicKey,
     "federation.expertise",
     { query: "deploy docs", purpose: "coverage-test" },
+    undefined,
+    { known: 1, minProtocol: 1 },
   )) as { rank: string };
 
   // At least one item matched → rank is not "none"
@@ -381,7 +393,7 @@ test("buildFederationLanServer threads explicit discovery + pairing into ctx (??
 
 test("buildFederationLanServer threads teamVault + identityGuard + delegateApproval into ctx", async () => {
   const db = new Database(":memory:");
-  runIndexedSchemaMigrations(db, 33);
+  runIndexedSchemaMigrations(db, LocalIndex.SCHEMA_VERSION); // current: the v2 ratchet needs lan_peers.proto_version
   const index = new LocalIndex(db);
 
   const teamVault: Parameters<typeof buildFederationLanServer>[0]["teamVault"] = {
@@ -414,6 +426,8 @@ test("buildFederationLanServer threads teamVault + identityGuard + delegateAppro
     identity.publicKey,
     "federation.expertise",
     { query: "test query", purpose: "coverage" },
+    undefined,
+    { known: 1, minProtocol: 1 },
   )) as { rank: string };
 
   expect(["none", "low", "medium", "high"].includes(res.rank)).toBe(true);
@@ -424,7 +438,7 @@ test("buildFederationLanServer threads teamVault + identityGuard + delegateAppro
 
 test("buildFederationLanServer threads preflight into ctx (preflight set arm)", async () => {
   const db = new Database(":memory:");
-  runIndexedSchemaMigrations(db, 33);
+  runIndexedSchemaMigrations(db, LocalIndex.SCHEMA_VERSION); // current: the v2 ratchet needs lan_peers.proto_version
   const index = new LocalIndex(db);
 
   const preflight: Parameters<typeof buildFederationLanServer>[0]["preflight"] = {
@@ -452,6 +466,8 @@ test("buildFederationLanServer threads preflight into ctx (preflight set arm)", 
     identity.publicKey,
     "federation.expertise",
     { query: "preflight test", purpose: "coverage" },
+    undefined,
+    { known: 1, minProtocol: 1 },
   )) as { rank: string };
 
   expect(["none", "low", "medium", "high"].includes(res.rank)).toBe(true);
@@ -491,4 +507,149 @@ test("EMPTY_DISCOVERY and EMPTY_PEER_PAIRING are inert empty providers", async (
   // exercised directly here.
   expect(await EMPTY_DISCOVERY.list()).toEqual([]);
   expect(EMPTY_PEER_PAIRING.listPeers()).toEqual([]);
+});
+
+// --- LAN forward secrecy (FS1): the ratchet and [lan] min_protocol, end to end -------------------
+
+/** The message a promise rejects with ("" if it resolves). Used instead of `.rejects`: on Bun 1.3.14 / Windows
+ *  `await expect(<socket-closed rejection>).rejects.toThrow()` crashed the runtime in this file. */
+async function errorOf(promise: Promise<unknown>): Promise<string> {
+  try {
+    await promise;
+    return "";
+  } catch (e) {
+    return (e as Error).message;
+  }
+}
+
+function startFederation(minProtocol?: 1 | 2) {
+  const db = new Database(":memory:");
+  runIndexedSchemaMigrations(db, LocalIndex.SCHEMA_VERSION);
+  const index = new LocalIndex(db);
+  const identity = generateBoxKeypair();
+  const built = buildFederationLanServer({
+    db,
+    index,
+    identity,
+    lan: {
+      bind: "127.0.0.1",
+      port: 0,
+      pairingWindowSeconds: 60,
+      maxFailedAttempts: 5,
+      lockoutSeconds: 60,
+      ...(minProtocol === undefined ? {} : { minProtocol }),
+    },
+    consentTimeoutMs: 1000,
+    notify: () => {},
+  });
+  return { db, index, identity, built };
+}
+
+/** The asker's own index, holding one outbound row for the host it talks to. */
+function askerSide(hostPubkey: Uint8Array, port: number) {
+  const db = new Database(":memory:");
+  runIndexedSchemaMigrations(db, LocalIndex.SCHEMA_VERSION);
+  const index = new LocalIndex(db);
+  index.addLanPeer({
+    peerId: "peer:host",
+    peerPubkey: hostPubkey,
+    direction: "outbound",
+    hostIp: "127.0.0.1",
+    hostPort: port,
+  });
+  const row = () => index.getLanPeerByPubkey(hostPubkey) as LanPeerRow;
+  return { index, row };
+}
+
+test("a v2 session ratchets both rows to 2, and the old wire is then refused for that peer", async () => {
+  const h = startFederation();
+  await h.built.lanServer.start();
+  stop = () => h.built.lanServer.stop();
+  const port = h.built.lanServer.listenAddr()?.port as number;
+  const code = generatePairingCode();
+  h.built.pairingWindow.open(code);
+  const askerKp = generateBoxKeypair();
+  await outboundPairHandshake("127.0.0.1", port, code, askerKp);
+  // A peer made by the legacy pair starts at protocol 1 on the host.
+  expect(h.index.getLanPeerByPubkey(askerKp.publicKey)?.proto_version).toBe(1);
+
+  const asker = askerSide(h.identity.publicKey, port);
+  const res = (await sendFederatedOverWire(
+    "127.0.0.1",
+    port,
+    askerKp,
+    h.identity.publicKey,
+    "federation.query",
+    { namespace: "none", purpose: "test" },
+    undefined,
+    lanLinkFor(asker.row(), asker.index),
+  )) as { kind: string };
+  expect(res.kind).toBe("error");
+  expect(h.index.getLanPeerByPubkey(askerKp.publicKey)?.proto_version).toBe(2); // responder
+  expect(asker.row().proto_version).toBe(2); // initiator
+
+  // Both sides now refuse the old wire for each other.
+  expect(
+    await errorOf(
+      sendFederatedLegacy("127.0.0.1", port, askerKp, h.identity.publicKey, "federation.query", {}),
+    ),
+  ).toBe("lan-client: connection closed mid-exchange");
+  // ... and the ratcheted client does not even try it against an old server.
+  expect(lanLinkFor(asker.row(), asker.index).known).toBe(2);
+});
+
+test("min_protocol = 2 refuses the old wire for every peer, end to end; v2 still works", async () => {
+  const h = startFederation(2);
+  await h.built.lanServer.start();
+  stop = () => h.built.lanServer.stop();
+  const port = h.built.lanServer.listenAddr()?.port as number;
+  const askerKp = generateBoxKeypair();
+  h.index.addLanPeer({
+    peerId: "peer:asker",
+    peerPubkey: askerKp.publicKey,
+    direction: "inbound",
+  });
+  expect(
+    await errorOf(
+      sendFederatedLegacy("127.0.0.1", port, askerKp, h.identity.publicKey, "federation.query", {}),
+    ),
+  ).toBe("lan-client: connection closed mid-exchange");
+  // A legacy pair is refused too (pairing is still on the old frames until the next slice).
+  const code = generatePairingCode();
+  h.built.pairingWindow.open(code);
+  expect(
+    await errorOf(outboundPairHandshake("127.0.0.1", port, code, generateBoxKeypair())),
+  ).not.toBe("");
+
+  const asker = askerSide(h.identity.publicKey, port);
+  const res = (await sendFederatedOverWire(
+    "127.0.0.1",
+    port,
+    askerKp,
+    h.identity.publicKey,
+    "federation.query",
+    { namespace: "none", purpose: "test" },
+    undefined,
+    lanLinkFor(asker.row(), asker.index),
+  )) as { kind: string };
+  expect(res.kind).toBe("error");
+});
+
+test("the default min_protocol is 1: a legacy hello from a fresh peer is served", async () => {
+  const h = startFederation();
+  await h.built.lanServer.start();
+  stop = () => h.built.lanServer.stop();
+  const port = h.built.lanServer.listenAddr()?.port as number;
+  const askerKp = generateBoxKeypair();
+  h.index.addLanPeer({ peerId: "peer:asker", peerPubkey: askerKp.publicKey, direction: "inbound" });
+  const res = (await sendFederatedLegacy(
+    "127.0.0.1",
+    port,
+    askerKp,
+    h.identity.publicKey,
+    "federation.query",
+    { namespace: "none", purpose: "test" },
+  )) as { kind: string };
+  expect(res.kind).toBe("error");
+  expect(h.index.getLanPeerByPubkey(askerKp.publicKey)?.proto_version).toBe(1);
 });
