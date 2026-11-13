@@ -66,6 +66,7 @@ import { dispatchChatopsRpc } from "../chatops-rpc.ts";
 import { dispatchClipRpc } from "../clip-rpc.ts";
 import { ComputerRpcError, dispatchComputerRpc } from "../computer-rpc.ts";
 import { ConnectorRpcError, dispatchConnectorRpc } from "../connector-rpc.ts";
+import { humanOnlyConsent } from "../consent.ts";
 import { DataRpcError, dispatchDataRpc } from "../data-rpc.ts";
 import {
   DecisionsRpcError,
@@ -2381,9 +2382,20 @@ export async function tryDispatchConnectorRpc(
         return Promise.reject(new Error("IPC-native gate does not dispatch to MCP"));
       },
     };
+    // Phase 28 AD3a-1: approving connector writes for OUTSIDE AGENTS takes a person. Only that
+    // enable gets the human-only channel (`--yes`, a script, a delegate, a remote or an old client
+    // answer becomes a decline); the model door's enable keeps the consent it always had.
+    let agentAnswerNonHuman = false;
+    const agentEnable =
+      method === "connector.writesEnable" && asRecord(params)?.["door"] === "agent";
+    const gateConsent = agentEnable
+      ? humanOnlyConsent(ctx.consentImpl, () => {
+          agentAnswerNonHuman = true;
+        })
+      : ctx.consentImpl;
     // I29: gate-only executor — local mutation, no connector dispatch, so no egress to ledger.
     const toolExecutor = new ToolExecutor(
-      bindConsentChannel(ctx.consentImpl, clientId),
+      bindConsentChannel(gateConsent, clientId),
       ctx.options.localIndex,
       stubDispatcher,
       undefined,
@@ -2419,6 +2431,8 @@ export async function tryDispatchConnectorRpc(
       notify: (m, p) => ctx.broadcastNotification(m, p),
       getEnforcedPolicy: () => ctx.options.enforcedPolicy?.(),
       toolExecutor,
+      clientKind: ctx.getClientKind(clientId),
+      agentAnswerWasNonHuman: () => agentAnswerNonHuman,
       ...(userMcpExecutor === undefined ? {} : { userMcpExecutor }),
       ...(ctx.options.continuityTable === undefined
         ? {}

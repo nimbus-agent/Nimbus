@@ -4289,14 +4289,18 @@ describe("I28 — MCP content enters only through the capture gate, in a fixed o
     expect(src).not.toMatch(/from\s+["'][^"']*\/llm\//);
   });
 
-  test("AD2: the human-only wrapper lives in ipc/consent.ts and is used only by approvals-rpc.ts; capture-rpc.ts has neither it nor delegation", async () => {
+  test("AD2: the human-only wrapper lives in ipc/consent.ts and is used only by approvals-rpc.ts and the dispatcher's agent-door enable; capture-rpc.ts has neither it nor delegation", async () => {
     const consent = await read("packages/gateway/src/ipc/consent.ts");
     expect(consent).toMatch(/export function humanOnlyConsent\(/);
     expect(consent).toContain('answer.answerSource !== "human"');
     const users = (await grepRepo(/\bhumanOnlyConsent\b/)).filter(
       (p) => !p.endsWith("/ipc/consent.ts"),
     );
-    expect(users).toEqual(["packages/gateway/src/ipc/approvals-rpc.ts"]);
+    // AD3a-1 widened this to a second user: the agent-door enable in the dispatcher.
+    expect(users.sort()).toEqual([
+      "packages/gateway/src/ipc/approvals-rpc.ts",
+      "packages/gateway/src/ipc/server/dispatchers.ts",
+    ]);
     const rpc = stripComments(await read("packages/gateway/src/ipc/capture-rpc.ts"));
     expect(rpc).not.toContain("humanOnlyConsent");
     expect(rpc).not.toContain("delegation");

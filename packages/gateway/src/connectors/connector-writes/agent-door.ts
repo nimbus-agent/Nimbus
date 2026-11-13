@@ -19,6 +19,8 @@ import { scopeAvailable } from "./model-write-source.ts";
 import { scopeGatedReason } from "./scope-gated.ts";
 import type { ConnectorWriteRow, ConnectorWriteWave } from "./types.ts";
 
+export { AGENT_DOOR_NOT_ENFORCED_NOTICE } from "./agent-door-notice.ts";
+
 /**
  * An action type is not a row: `slack.message.post` names both `slack_message_post` and
  * `slack_message_post_dm`. For a type with several rows an agent reaches the one named here (the same
