@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { toStandardSchema } from "@mastra/core/schema";
 
 import { serviceOf } from "../../engine/service-of.ts";
+import type { ActionDescription } from "../../mcp-sink/capture-types.ts";
 import { runIndexedSchemaMigrations } from "../../index/migrations/runner.ts";
 import type { ChatopsPolicy } from "../../policy/types.ts";
 import { mcpClientToolKey } from "../lazy-mesh/tool-map.ts";
@@ -12,6 +13,7 @@ import {
   PROPOSABLE_WRITE_TOOLS,
 } from "../proposable-actions.ts";
 import { AGENT_DOOR_MAIL_SEND_TOOL_IDS } from "./agent-door.ts";
+import { legacyNoticeFor } from "./agent-door-legacy.ts";
 import {
   type AgentDoor,
   type AgentDoorDeps,
@@ -793,5 +795,296 @@ describe("verdict: the remaining denial classes and the scope facts", () => {
       kind: "denied",
       class: "agent_no_scope",
     });
+  });
+});
+
+describe("describe (AD3a-2b)", () => {
+  const suspendAudits = (): number =>
+    (
+      db
+        .query(
+          "SELECT COUNT(*) AS n FROM audit_log WHERE action_type = 'connector.writes.agent.suspend'",
+        )
+        .get() as { n: number }
+    ).n;
+
+  const byType = (rows: readonly ActionDescription[], type: string): ActionDescription => {
+    const hit = rows.find((r) => r.actionType === type);
+    if (hit === undefined) throw new Error(`no entry for ${type}`);
+    return hit;
+  };
+
+  test("the summary lists what acceptedTypes lists plus the suspended types, with the wave, the typed-confirmation flag and the bound flag, and lists nothing", async () => {
+    allow("github_pr_merge");
+    allow("github_issue_create");
+    const closeRow = allow("github_pr_close");
+    markDoorToolSuspended(
+      db,
+      "agent",
+      "github",
+      closeRow.toolId,
+      approvedHashOf(closeRow),
+      null,
+      4,
+    );
+    const d = door();
+    const rows = await d.describe(undefined);
+    const accepted = await d.acceptedTypes();
+    expect(listCalls).toEqual([]);
+    const types = rows.map((r) => r.actionType);
+    for (const t of accepted) expect(types, t).toContain(t);
+    expect(types).toContain("github.pr.close");
+    expect(types).toEqual(types.toSorted((a, b) => a.localeCompare(b)));
+    expect(byType(rows, "github.pr.merge")).toEqual({
+      actionType: "github.pr.merge",
+      state: "approved",
+      wave: 4,
+      typedConfirm: true,
+      bound: false,
+    });
+    expect(byType(rows, "github.issue.create")).toMatchObject({
+      state: "approved",
+      wave: 2,
+      typedConfirm: false,
+    });
+    expect(byType(rows, "github.pr.close")).toEqual({
+      actionType: "github.pr.close",
+      state: "suspended",
+      reason: DEFINITION_REFUSALS.suspended,
+    });
+    expect(byType(rows, "slack.message.post")).toEqual({
+      actionType: "slack.message.post",
+      state: "legacy",
+      deprecation: legacyNoticeFor("slack.message.post"),
+    });
+    expect(byType(rows, "mcp_x.*")).toMatchObject({ state: "undescribed" });
+    // No summary entry carries a description or a schema.
+    expect(JSON.stringify(rows)).not.toContain("inputSchema");
+    expect(JSON.stringify(rows)).not.toContain("description");
+  });
+
+  test("a bound row is flagged bound in the summary", async () => {
+    raiseWriteEnablementWave(db, "github", 4, 1);
+    allow("github_file_commit");
+    expect(byType(await door().describe(undefined), "github.file.commit")).toMatchObject({
+      state: "approved",
+      bound: true,
+      typedConfirm: true,
+    });
+  });
+
+  test("a detailed call returns description and schema for an approved type that passes verifyDefinition in the same call, listing its service once", async () => {
+    allow("github_pr_merge");
+    allow("github_issue_create");
+    listings["github"] = fullListing("github");
+    const d = door();
+    const out = await d.describe(["github.pr.merge", "github.issue.create"]);
+    expect(listCalls).toEqual(["github"]);
+    expect(out.map((r) => r.state)).toEqual(["approved", "approved"]);
+    for (const r of out) {
+      if (r.state !== "approved") throw new Error("unreachable");
+      expect(typeof r.description).toBe("string");
+      expect(r.inputSchema?.["type"]).toBe("object");
+      expect(await d.verifyDefinition(r.actionType)).toEqual({ ok: true });
+    }
+  });
+
+  test("a changed definition is suspended with no description, no schema and no hash material; the first observer records one audit row", async () => {
+    allow("github_pr_merge");
+    listings["github"] = fullListing("github", "changed by one byte");
+    const out = await door().describe(["github.pr.merge"]);
+    expect(out).toEqual([
+      {
+        actionType: "github.pr.merge",
+        state: "suspended",
+        reason: DEFINITION_REFUSALS.suspended,
+      },
+    ]);
+    expect(JSON.stringify(out)).not.toMatch(/[0-9a-f]{12,}/);
+    expect(getDoorApproval(db, "agent", "github", "github_pr_merge")?.suspendedAt).toBe(1_000);
+    expect(suspendAudits()).toBe(1);
+    // A second call finds it already suspended: no second row, no listing.
+    listCalls.length = 0;
+    expect(await door().describe(["github.pr.merge"])).toEqual(out);
+    expect(listCalls).toEqual([]);
+    expect(suspendAudits()).toBe(1);
+  });
+
+  test("a missing tool, a drifted schema, an unlisted connector and a missing Wave 4 reader are unavailable with the fixed text and mark nothing", async () => {
+    const merge = allow("github_pr_merge");
+    allow("github_issue_create");
+    const d = door();
+    // missing
+    const missing = fullListing("github");
+    Reflect.deleteProperty(missing, mcpClientToolKey("github", "github_issue_create"));
+    listings["github"] = missing;
+    expect(await d.describe(["github.issue.create"])).toEqual([
+      {
+        actionType: "github.issue.create",
+        state: "unavailable",
+        reason: DEFINITION_REFUSALS.notListed,
+      },
+    ]);
+    // unlisted
+    listings["github"] = undefined;
+    expect(await d.describe(["github.issue.create"])).toEqual([
+      {
+        actionType: "github.issue.create",
+        state: "unavailable",
+        reason: DEFINITION_REFUSALS.unlisted,
+      },
+    ]);
+    // missing Wave 4 reader
+    const noReader = fullListing("github");
+    Reflect.deleteProperty(noReader, mcpClientToolKey("github", merge.before?.tool as string));
+    listings["github"] = noReader;
+    expect(await d.describe(["github.pr.merge"])).toEqual([
+      {
+        actionType: "github.pr.merge",
+        state: "unavailable",
+        reason: DEFINITION_REFUSALS.support,
+      },
+    ]);
+    // drifted
+    const bare = {
+      description: "d",
+      inputSchema: toStandardSchema({ type: "object", properties: {} } as JsonSchemaInput),
+    };
+    const issue = ROW("github_issue_create");
+    upsertDoorApprovals(
+      db,
+      "agent",
+      "github",
+      [{ toolId: issue.toolId, definitionSha256: definitionSha256(issue.toolId, bare) as string }],
+      2,
+    );
+    listings["github"] = {
+      ...fullListing("github"),
+      [mcpClientToolKey("github", issue.toolId)]: bare,
+    };
+    expect(await d.describe(["github.issue.create"])).toEqual([
+      {
+        actionType: "github.issue.create",
+        state: "unavailable",
+        reason: DEFINITION_REFUSALS.drifted,
+      },
+    ]);
+    for (const toolId of ["github_pr_merge", "github_issue_create"]) {
+      expect(getDoorApproval(db, "agent", "github", toolId)?.suspendedAt).toBeNull();
+    }
+    expect(suspendAudits()).toBe(0);
+  });
+
+  test("a legacy type returns its deprecation line and causes no listing", async () => {
+    const out = await door().describe(["slack.message.post"]);
+    expect(out).toEqual([
+      {
+        actionType: "slack.message.post",
+        state: "legacy",
+        deprecation: legacyNoticeFor("slack.message.post"),
+      },
+    ]);
+    expect(listCalls).toEqual([]);
+  });
+
+  test("a user-MCP type is undescribed and starts nothing", async () => {
+    const out = await door().describe(["mcp_x.do_it"]);
+    expect(out).toHaveLength(1);
+    expect(out[0]).toMatchObject({ actionType: "mcp_x.do_it", state: "undescribed" });
+    expect(listCalls).toEqual([]);
+  });
+
+  test("an unknown type is not_proposable, an unconfigured service is unavailable, and neither lists", async () => {
+    allow("github_issue_create");
+    configured.delete("github");
+    const out = await door().describe(["nonsense.type", "github.issue.create"]);
+    expect(out[0]).toEqual({
+      actionType: "nonsense.type",
+      state: "not_proposable",
+      reason: "cannot be proposed (unknown action type)",
+    });
+    expect(out[1]).toEqual({
+      actionType: "github.issue.create",
+      state: "unavailable",
+      reason: "github is not configured on this machine",
+    });
+    expect(listCalls).toEqual([]);
+  });
+
+  test("a type the owner has not approved names its denied class", async () => {
+    const out = await door().describe(["github.pr.merge"]);
+    expect(out).toEqual([
+      {
+        actionType: "github.pr.merge",
+        state: "not_proposable",
+        reason: "cannot be proposed (agent_not_enabled)",
+      },
+    ]);
+  });
+
+  test("a bound field is absent from the described schema even when the listing declares it", async () => {
+    raiseWriteEnablementWave(db, "github", 4, 1);
+    const row = ROW("github_file_commit");
+    const keys = [...previewTemplateKeys(row.preview as never)];
+    const entry = {
+      description: "commits",
+      inputSchema: toStandardSchema({
+        type: "object",
+        properties: {
+          ...Object.fromEntries(keys.map((k) => [k, { type: "string" }])),
+          expectedHeadSha: { type: "string" },
+          repo: { type: "string" },
+        },
+        required: ["expectedHeadSha", "repo"],
+      } as JsonSchemaInput),
+    };
+    upsertDoorApprovals(
+      db,
+      "agent",
+      "github",
+      [{ toolId: row.toolId, definitionSha256: definitionSha256(row.toolId, entry) as string }],
+      1,
+    );
+    listings["github"] = {
+      ...fullListing("github"),
+      [mcpClientToolKey("github", row.toolId)]: entry,
+    };
+    const [out] = await door().describe(["github.file.commit"]);
+    if (out?.state !== "approved") throw new Error(JSON.stringify(out));
+    expect(Object.keys(out.inputSchema?.["properties"] as object)).not.toContain("expectedHeadSha");
+    expect(Object.keys(out.inputSchema?.["properties"] as object)).toContain("repo");
+    expect(out.inputSchema?.["required"]).toEqual(["repo"]);
+    expect(out.description).not.toContain("expectedHeadSha");
+  });
+
+  test("the Terraform directories and the Kubernetes pairs are named, a server address never is", async () => {
+    raiseWriteEnablementWave(db, "iac", 4, 1);
+    setIacGrants(db, { workdirs: ["/srv/infra/prod"], clouds: [], regions: [], net: [] }, 1);
+    allow("iac_terraform_apply");
+    listings["iac"] = fullListing("iac");
+    const [out] = await door().describe(["iac.terraform.apply"]);
+    if (out?.state !== "approved") throw new Error(JSON.stringify(out));
+    expect(out.description).toContain("/srv/infra/prod");
+
+    raiseWriteEnablementWave(db, "kubernetes", 4, 1);
+    setK8sGrants(
+      db,
+      [
+        {
+          context: "prod-ctx",
+          namespace: "payments",
+          server: "10.9.8.7:6443",
+          credentialForm: "token",
+        },
+      ],
+      1,
+    );
+    configured.add("kubernetes");
+    allow("k8s_rollout_restart");
+    listings["kubernetes"] = fullListing("kubernetes");
+    const [k] = await door().describe(["kubernetes.rollout.restart"]);
+    if (k?.state !== "approved") throw new Error(JSON.stringify(k));
+    expect(k.description).toContain("prod-ctx/payments");
+    expect(JSON.stringify(k)).not.toContain("10.9.8.7");
   });
 });

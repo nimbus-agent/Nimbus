@@ -21,7 +21,11 @@
 import type { Database } from "bun:sqlite";
 
 import { serviceOf } from "../../engine/service-of.ts";
-import type { ActionBasis, ActionVerdict } from "../../mcp-sink/capture-types.ts";
+import type {
+  ActionBasis,
+  ActionDescription,
+  ActionVerdict,
+} from "../../mcp-sink/capture-types.ts";
 import type { EnforcedPolicy } from "../../policy/policy-gate.ts";
 import {
   type ClassifyContext,
@@ -29,6 +33,7 @@ import {
   PROPOSABLE_WRITE_TOOLS,
   proposableWriteTool,
 } from "../proposable-actions.ts";
+import { mcpClientToolKey } from "../lazy-mesh/tool-map.ts";
 import { USER_MCP_SERVICE_ID_PATTERN } from "../user-mcp-store.ts";
 import {
   AGENT_DOOR_MAIL_SEND_TOOL_IDS,
@@ -38,6 +43,8 @@ import {
   agentOffered,
 } from "./agent-door.ts";
 import { checkAgentToolDefinition } from "./agent-door-definition.ts";
+import { type DescribeScope, describeApprovedWrite } from "./agent-door-describe.ts";
+import { legacyNoticeFor } from "./agent-door-legacy.ts";
 import { getDoorApproval } from "./door-approval-store.ts";
 import {
   getModelWriteEnablement,
@@ -106,6 +113,13 @@ export interface AgentDoor {
   verifyDefinition(actionType: string): Promise<DefinitionVerification>;
   /** The types `capture.status` advertises now: approved and legacy, configured, sorted. */
   acceptedTypes(): Promise<readonly string[]>;
+  /**
+   * What `capture.describe` returns (AD3a-2b). `undefined`: the summary, from database and Vault
+   * reads only, never a listing. Named types: one entry each, in order; an approved type is listed
+   * (its service once per call) and described only after the SAME post-listing check
+   * `verifyDefinition` runs, so a described type has passed, in this call, what a submit checks.
+   */
+  describe(actionTypes: readonly string[] | undefined): Promise<readonly ActionDescription[]>;
 }
 
 /** The fixed texts of a refused definition check; none echoes a stored or listed value. */
@@ -119,6 +133,10 @@ export const DEFINITION_REFUSALS = Object.freeze({
   support: "the connector does not list what this write needs to show the owner its current state",
   notApproved: "this write is not approved for agents",
 });
+
+/** The fixed text of a type `capture.describe` does not describe (OR-AD-17). */
+export const DESCRIBE_USER_MCP_REASON =
+  "tools of servers you registered are not described here yet; read them from that server";
 
 /** The class of a `denied` verdict, one fixed string per condition (R-9: it says which one failed). */
 export const AGENT_DENIED_CLASSES = Object.freeze({
@@ -306,6 +324,17 @@ export function createAgentDoor(deps: AgentDoorDeps): AgentDoor {
     // One listing for the service, and the LAST thing a submit does (every other refusal is free of
     // connector I/O). A listing that fails marks nothing.
     const listed = await deps.listServerTools(service).catch(() => undefined);
+    return verifyListed(row, service, listed);
+  };
+
+  // The post-listing half of the definition check, shared by a submit (`verifyDefinition`) and a
+  // describe: one function, so a described type has passed exactly what a submit checks. It has NO
+  // await inside, so the re-read of the approval and the comparison cannot be separated.
+  const verifyListed = (
+    row: ConnectorWriteRow,
+    service: string,
+    listed: Readonly<Record<string, unknown>> | undefined,
+  ): DefinitionVerification => {
     if (listed === undefined) {
       return refused("ERR_CAPTURE_ACTION_NOT_PROPOSABLE", DEFINITION_REFUSALS.unlisted);
     }
@@ -333,7 +362,7 @@ export function createAgentDoor(deps: AgentDoorDeps): AgentDoor {
       case "ok":
         break;
     }
-    // Spec § 5.4 and I54: a Wave 4 write needs its current-state reader (and a bound write its
+    // Spec 5.4 and I54: a Wave 4 write needs its current-state reader (and a bound write its
     // prepare tool) in the listing, as the model door requires before it offers the row.
     if (
       row.wave === 4 &&
@@ -344,29 +373,174 @@ export function createAgentDoor(deps: AgentDoorDeps): AgentDoor {
     return { ok: true };
   };
 
-  const acceptedTypes = async (): Promise<readonly string[]> => {
+  /**
+   * Every first-party type of a configured service whose verdict is `proposable` or `suspended`,
+   * sorted. Sequential on purpose: a configured-ness check is a Vault read (a `secret-tool` spawn
+   * on Linux).
+   */
+  const configuredTypes = async (): Promise<
+    readonly { readonly type: string; readonly verdict: ActionVerdict }[]
+  > => {
     const types = new Set<string>([
       ...rows.map((r) => r.actionType),
       ...Object.keys(PROPOSABLE_WRITE_TOOLS),
     ]);
-    const out: string[] = [];
+    const out: { type: string; verdict: ActionVerdict }[] = [];
     const configured = new Map<string, boolean>();
-    // Sequential on purpose: a configured-ness check is a Vault read (a `secret-tool` spawn on Linux).
     for (const type of [...types].sort((a, b) => a.localeCompare(b))) {
-      if (verdict(type).kind !== "proposable") continue;
+      const v = verdict(type);
+      if (v.kind !== "proposable" && v.kind !== "suspended") continue;
       const service = serviceOf(type);
       if (!configured.has(service)) {
         configured.set(service, await deps.isServiceConfigured(service)); // NOSONAR S9382: each check is a Vault read
       }
-      if (configured.get(service) === true) out.push(type);
+      if (configured.get(service) === true) out.push({ type, verdict: v });
     }
-    if (deps.classifyContext.userMcpModelAccessAllowed()) {
-      for (const id of deps.classifyContext.modelAccessServices()) out.push(`${id}.*`);
-    }
+    return out;
+  };
+
+  const userMcpPatterns = (): readonly string[] =>
+    deps.classifyContext.userMcpModelAccessAllowed()
+      ? [...deps.classifyContext.modelAccessServices()].map((id) => `${id}.*`)
+      : [];
+
+  const acceptedTypes = async (): Promise<readonly string[]> => {
+    const out = (await configuredTypes())
+      .filter((t) => t.verdict.kind === "proposable")
+      .map((t) => t.type);
+    out.push(...userMcpPatterns());
     return out.toSorted((a, b) => a.localeCompare(b)).slice(0, ACCEPTED_TYPES_MAX);
   };
 
-  return { verdict, refusal, verifyDefinition, acceptedTypes };
+  // ---- describe (AD3a-2b) ------------------------------------------------------------------------
+
+  /** The approved Terraform directories and Kubernetes pairs, each read at the call; none on a throw. */
+  const describeScope = (): DescribeScope => ({
+    workdirs: safeList(() => getIacGrants(deps.db).workdirs),
+    k8sPairs: safeList(() => getK8sGrants(deps.db)),
+  });
+
+  /** The summary line of an approved row: its wave, whether the owner types a confirmation, whether it is bound. */
+  const approvedSummary = (
+    type: string,
+    row: ConnectorWriteRow,
+  ): Extract<ActionDescription, { state: "approved" }> => ({
+    actionType: type,
+    state: "approved",
+    wave: row.wave,
+    typedConfirm: row.confirm !== undefined,
+    bound: row.bound !== undefined,
+  });
+
+  /** A suspended or legacy type, or an approved one in the summary (no description, no schema). */
+  const summaryEntry = (type: string, v: ActionVerdict): ActionDescription => {
+    if (v.kind === "suspended") {
+      return { actionType: type, state: "suspended", reason: DEFINITION_REFUSALS.suspended };
+    }
+    const row =
+      v.kind === "proposable" && v.basis === "approved" ? agentDoorRow(type, rows) : undefined;
+    return row === undefined
+      ? { actionType: type, state: "legacy", deprecation: legacyNoticeFor(type) }
+      : approvedSummary(type, row);
+  };
+
+  /** The summary: database and Vault reads only, never a listing. */
+  const describeSummary = async (): Promise<readonly ActionDescription[]> => {
+    const entries = (await configuredTypes()).map((t) => summaryEntry(t.type, t.verdict));
+    for (const pattern of userMcpPatterns()) {
+      entries.push({ actionType: pattern, state: "undescribed", reason: DESCRIBE_USER_MCP_REASON });
+    }
+    return entries
+      .toSorted((a, b) => a.actionType.localeCompare(b.actionType))
+      .slice(0, ACCEPTED_TYPES_MAX);
+  };
+
+  /** What one call has already learned: a service's configured-ness and its one listing. */
+  interface DescribeCall {
+    readonly configured: Map<string, boolean>;
+    readonly listings: Map<string, Readonly<Record<string, unknown>> | undefined>;
+  }
+
+  const describeApproved = async (
+    type: string,
+    call: DescribeCall,
+  ): Promise<ActionDescription> => {
+    const row = agentDoorRow(type, rows);
+    const service = serviceOf(type);
+    const approval =
+      row === undefined ? undefined : getDoorApproval(deps.db, "agent", service, row.toolId);
+    if (row === undefined || approval === undefined) {
+      return { actionType: type, state: "unavailable", reason: DEFINITION_REFUSALS.notApproved };
+    }
+    if (approval.suspendedAt !== null) {
+      return { actionType: type, state: "suspended", reason: DEFINITION_REFUSALS.suspended };
+    }
+    if (!call.listings.has(service)) {
+      call.listings.set(service, await deps.listServerTools(service).catch(() => undefined)); // NOSONAR S9382: one listing per service
+    }
+    const listed = call.listings.get(service);
+    const verified = verifyListed(row, service, listed);
+    if (!verified.ok) {
+      return {
+        actionType: type,
+        state: verified.code === "ERR_AGENT_TOOL_SUSPENDED" ? "suspended" : "unavailable",
+        reason: verified.detail,
+      };
+    }
+    const entry = listed?.[mcpClientToolKey(service, row.toolId)];
+    return { ...approvedSummary(type, row), ...describeApprovedWrite(row, entry, describeScope()) };
+  };
+
+  const describeOne = async (type: string, call: DescribeCall): Promise<ActionDescription> => {
+    // 1. A user-registered server's tool: not described until AD5 (OR-AD-17); nothing is started.
+    if (isUserMcpType(type)) {
+      return { actionType: type, state: "undescribed", reason: DESCRIBE_USER_MCP_REASON };
+    }
+    // 2. The verdict, from database reads only.
+    const v = verdict(type);
+    if (v.kind === "suspended") return summaryEntry(type, v);
+    if (v.kind !== "proposable") {
+      const why = v.kind === "denied" ? v.class : "unknown action type";
+      return { actionType: type, state: "not_proposable", reason: `cannot be proposed (${why})` };
+    }
+    // 3. The service is configured on this machine (the submit path's step 5b).
+    const service = serviceOf(type);
+    if (!call.configured.has(service)) {
+      call.configured.set(service, await deps.isServiceConfigured(service)); // NOSONAR S9382: a Vault read per service
+    }
+    if (call.configured.get(service) !== true) {
+      return {
+        actionType: type,
+        state: "unavailable",
+        reason: `${service} is not configured on this machine`,
+      };
+    }
+    // 4. The deprecation window: the fixed line, never a schema and never a listing (OR-AD-18).
+    if (v.basis !== "approved") return summaryEntry(type, v);
+    // 5. An approved type: listed once per service and judged by the submit path's own check.
+    return describeApproved(type, call);
+  };
+
+  const describe = async (
+    actionTypes: readonly string[] | undefined,
+  ): Promise<readonly ActionDescription[]> => {
+    if (actionTypes === undefined) return describeSummary();
+    const call: DescribeCall = { configured: new Map(), listings: new Map() };
+    const out: ActionDescription[] = [];
+    // Sequential, in request order: one listing per service, and a stable reply order.
+    for (const type of new Set(actionTypes)) out.push(await describeOne(type, call)); // NOSONAR S9382
+    return out;
+  };
+
+  return { verdict, refusal, verifyDefinition, acceptedTypes, describe };
+}
+
+function safeList<T>(read: () => readonly T[]): readonly T[] {
+  try {
+    return read();
+  } catch {
+    return [];
+  }
 }
 
 function safeCount(read: () => number): number {
