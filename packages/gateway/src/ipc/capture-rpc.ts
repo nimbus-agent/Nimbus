@@ -1,4 +1,5 @@
 import { agentDoorRow } from "../connectors/connector-writes/agent-door.ts";
+import { legacyNoticeFor } from "../connectors/connector-writes/agent-door-legacy.ts";
 import type { DefinitionVerification } from "../connectors/connector-writes/agent-door-runtime.ts";
 import { CONNECTOR_WRITE_ROWS } from "../connectors/connector-writes/index.ts";
 import {
@@ -43,11 +44,13 @@ import {
   revokeCapture,
   submitCapture,
 } from "../mcp-sink/capture-gate.ts";
+import { actionTypeOfPayload } from "../mcp-sink/capture-store.ts";
 import {
   type ActDeps,
   type ActionProvenance,
   type ActionRejectCode,
   CaptureError,
+  isLegacyBasis,
 } from "../mcp-sink/capture-types.ts";
 import type { EnforcedPolicy } from "../policy/policy-gate.ts";
 import { dispatchByMethod, type RpcMissOrHit } from "./_lib/dispatch-by-method.ts";
@@ -154,7 +157,7 @@ export function actWriteRows(w: CaptureActWiring | undefined): readonly Connecto
 const CREDENTIAL_UNVERIFIED_REASON = "the credential the write would use could not be verified";
 
 /** The stored row's provenance as the executor's gateway-set proposer (all of it UNVERIFIED). */
-function agentProposerOf(p: ActionProvenance): AgentProposer {
+function agentProposerOf(p: ActionProvenance, actionType: string): AgentProposer {
   return {
     door: "agent",
     captureId: p.captureId,
@@ -163,6 +166,8 @@ function agentProposerOf(p: ActionProvenance): AgentProposer {
     summary: p.summary,
     createdAt: p.createdAt,
     expiresAt: p.expiresAt,
+    // The prompt's line follows the approval-time basis (R-7): fixed gateway text, never the agent's.
+    ...(isLegacyBasis(p.basis) ? { deprecation: legacyNoticeFor(actionType) } : {}),
   };
 }
 
@@ -301,7 +306,7 @@ export function buildActDeps(
       const action: PlannedAction = {
         type: actionType,
         origin: "agent",
-        proposer: agentProposerOf(provenance),
+        proposer: agentProposerOf(provenance, actionType),
         payload: { mcpToolId: toolId, input },
       };
       const out =
@@ -327,6 +332,22 @@ export function buildActDeps(
 
 type Ctx = { readonly gate: CaptureGateDeps; readonly caller: CaptureCaller };
 
+/**
+ * `capture.submit` (AD3a-2a, D-7): the gate's reply, plus a fixed `deprecation` line ONLY for a proposal
+ * accepted under the deprecation window. Added here because `mcp-sink/` cannot import the module that
+ * holds the text. An approved proposal and every other kind get the reply exactly as before.
+ */
+async function submitWithNotice(
+  gate: CaptureGateDeps,
+  caller: CaptureCaller,
+  params: unknown,
+): Promise<unknown> {
+  const out = await submitCapture(gate, caller, params);
+  if (out.legacy !== true) return out;
+  const actionType = actionTypeOfPayload(gate.store.get(out.id)?.payloadJson ?? null);
+  return { ...out, deprecation: legacyNoticeFor(actionType ?? "") };
+}
+
 export function idParam(params: unknown): unknown {
   return typeof params === "object" && params !== null
     ? (params as Record<string, unknown>)["id"]
@@ -349,7 +370,7 @@ export async function dispatchCaptureRpc(
         "capture.status": (_p, c) => captureStatus(c.gate),
         "capture.state": (p, c) => captureStateFor(c.gate, c.caller, idParam(p)),
         "capture.mine": (_p, c) => captureMine(c.gate, c.caller),
-        "capture.submit": (p, c) => submitCapture(c.gate, c.caller, p),
+        "capture.submit": (p, c) => submitWithNotice(c.gate, c.caller, p),
         "captures.list": (p, c) => listCaptures(c.gate, c.caller, p),
         "captures.get": (p, c) => getCapture(c.gate, c.caller, idParam(p)),
         "captures.revoke": (p, c) => revokeCapture(c.gate, c.caller, idParam(p)),

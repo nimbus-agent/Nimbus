@@ -131,7 +131,7 @@ describe("connector writes status", () => {
     const h = harness(reply);
     await runConnectorWrites(["status"], h.deps);
     expect(h.logs).toEqual([
-      "github      enabled  wave 3  9 writes, 0 offerable now",
+      "github      shared wave 3  9 writes, none approved for the model",
       "kubernetes  off",
       "Policy: allows",
     ]);
@@ -161,7 +161,7 @@ describe("connector writes status", () => {
     });
     await runConnectorWrites(["status"], h.deps);
     expect(h.logs).toEqual([
-      "github  enabled  wave 2  1 writes, 0 offerable now, 1 awaiting approval",
+      "github  shared wave 2  1 writes, none approved for the model, 1 awaiting approval",
       "jira    enabled  wave 2  3 writes, 2 offerable now",
       "Policy: allows",
     ]);

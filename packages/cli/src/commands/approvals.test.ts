@@ -544,3 +544,50 @@ describe("source pins", () => {
     }
   });
 });
+
+describe("AD3a-2a: the deprecation header and the per-row marker", () => {
+  const HEADER = "Some proposals below were accepted without approval by name (deprecated)";
+
+  test("list prints the header FIRST when the gateway sends one, and marks the legacy rows", async () => {
+    const f = fake(() => ({
+      deprecation: HEADER,
+      proposals: [
+        { ...ROW, id: "cap_old", legacy: true },
+        { ...ROW, id: "cap_new", legacy: false },
+      ],
+    }));
+    const o = sink();
+    await runApprovalsWith(f.client, { verb: "list", json: false }, o.s, TTY, 2_000);
+    const text = o.out.join("");
+    expect(text.startsWith(HEADER)).toBe(true);
+    const lines = text.split("\n");
+    expect(lines.find((l) => l.includes("cap_old"))).toContain("deprecated");
+    expect(lines.find((l) => l.includes("cap_new"))).not.toContain("deprecated");
+  });
+
+  test("no header when the gateway sends none", async () => {
+    const f = fake(() => ({ proposals: [{ ...ROW, legacy: false }] }));
+    const o = sink();
+    await runApprovalsWith(f.client, { verb: "list", json: false }, o.s, TTY, 2_000);
+    expect(o.out.join("")).not.toContain("deprecated");
+  });
+
+  test("the header is control-stripped; show prints it too", async () => {
+    const f = fake((m) =>
+      m === "approvals.get"
+        ? { ...ROW, legacy: true, deprecation: `${HEADER}${ESC}[2J`, inputLines: [], note: "n" }
+        : {},
+    );
+    const o = sink();
+    await runApprovalsWith(
+      f.client,
+      { verb: "show", id: "cap_aaaa", json: false },
+      o.s,
+      TTY,
+      2_000,
+    );
+    const text = o.out.join("");
+    expect(text).toContain(HEADER);
+    expect(text).not.toContain(ESC);
+  });
+});

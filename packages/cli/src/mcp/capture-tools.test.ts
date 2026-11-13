@@ -409,3 +409,32 @@ describe("act door tools", () => {
     });
   });
 });
+
+describe("propose_action deprecation line (AD3a-2a)", () => {
+  test("a legacy reply's deprecation is printed after the NOT-run sentence, control characters stripped", async () => {
+    const esc = String.fromCodePoint(0x1b);
+    const d = depsRecording([], {
+      "capture.submit": {
+        id: "cap_9",
+        state: "proposed",
+        expiresAt: 0,
+        legacy: true,
+        deprecation: `Deprecated: x${esc}[2J accepted for now`,
+      },
+    });
+    const spec = CAPTURE_TOOL_SPECS.find((s) => s.name === "propose_action");
+    const out = await spec?.run(d, { actionType: "a.b", input: {}, summary: "s" }, () => undefined);
+    const text = out?.content[0]?.text ?? "";
+    expect(text.indexOf("Deprecated: x")).toBeGreaterThan(text.indexOf("has NOT run"));
+    expect(text).not.toContain(esc);
+  });
+
+  test("an approved proposal's result is unchanged", async () => {
+    const d = depsRecording([], {
+      "capture.submit": { id: "cap_9", state: "proposed", expiresAt: 0 },
+    });
+    const spec = CAPTURE_TOOL_SPECS.find((s) => s.name === "propose_action");
+    const out = await spec?.run(d, { actionType: "a.b", input: {}, summary: "s" }, () => undefined);
+    expect(out?.content[0]?.text).not.toContain("Deprecated");
+  });
+});

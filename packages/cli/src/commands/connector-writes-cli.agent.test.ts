@@ -264,7 +264,7 @@ describe("connector writes status with the agent member", () => {
     const h = harness(status);
     await runConnectorWrites(["status"], h.deps);
     expect(h.logs).toEqual([
-      "github  enabled  wave 3  9 writes, 0 offerable now",
+      "github  shared wave 3  9 writes, none approved for the model",
       "  agents: 5 approved",
       "  suspended: github_pr[2Jclose definition changed since approved 2026-11-13 (approved 0123456789ab, now ba9876543210)",
       "  suspended: github_gone no longer listed since approved 2026-11-01 (approved aaaaaaaaaaaa)",
@@ -330,5 +330,115 @@ describe("the default call seam", () => {
     order.length = 0;
     await call("connector.writesStatus", {});
     expect(order).toEqual(["connector.writesStatus"]);
+  });
+});
+
+describe("AD3a-2a status additions", () => {
+  const CMD = "To keep them working run: nimbus connector writes enable <service> --door agent";
+
+  it("the model line is unchanged when something is approved for the model", async () => {
+    const h = harness({
+      services: [{ service: "jira", enabled: true, maxWave: 2, writes: 3, offerable: 2 }],
+      policyAllows: true,
+    });
+    await runConnectorWrites(["status"], h.deps);
+    expect(h.logs[0]).toBe("jira  enabled  wave 2  3 writes, 2 offerable now");
+  });
+
+  it("status declares cli first so the gateway runs the live check", async () => {
+    const h = harness({ services: [], policyAllows: true });
+    await runConnectorWrites(["status"], h.deps);
+    expect(h.calls[0]?.opts).toEqual({ declareCli: true });
+  });
+
+  it("the default seam declares cli before a status call and not before another call", async () => {
+    const order: string[] = [];
+    const withIpc = (async (
+      fn: (c: { call: (m: string) => Promise<unknown> }) => Promise<unknown>,
+    ) =>
+      fn({
+        call: async (m: string) => {
+          order.push(m);
+          return {};
+        },
+      })) as never;
+    const call = makeConnectorWritesCall(withIpc);
+    await call("connector.writesStatus", {}, { declareCli: true });
+    expect(order).toEqual(["session.declareKind", "connector.writesStatus"]);
+  });
+
+  it("an approved tool the listing omits reads 'not listed now'", async () => {
+    const h = harness({
+      services: [{ service: "github", enabled: true, maxWave: 3, writes: 9, offerable: 0 }],
+      policyAllows: true,
+      agent: {
+        policyAllows: true,
+        checked: true,
+        legacy: null,
+        services: [
+          { service: "github", approved: 3, suspended: [], notListed: ["github_a", "github_b"] },
+        ],
+      },
+    });
+    await runConnectorWrites(["status"], h.deps);
+    expect(h.logs).toContain("  not listed now: github_a, github_b");
+  });
+
+  it("the legacy line gives the count, the types and the command; nothing when null or zero", async () => {
+    const withLegacy = harness({
+      services: [],
+      policyAllows: true,
+      agent: {
+        policyAllows: true,
+        legacy: {
+          sinceMs: 0,
+          total: 3,
+          byType: { "slack.message.post": 2, "github.issue.create": 1 },
+          notice: "n",
+        },
+        services: [],
+      },
+    });
+    await runConnectorWrites(["status"], withLegacy.deps);
+    expect(withLegacy.logs).toContain(
+      "legacy: 3 proposals in the last 30 days would be refused (github.issue.create x1, slack.message.post x2)",
+    );
+    expect(withLegacy.logs).toContain(CMD);
+    for (const legacy of [null, { total: 0, byType: {} }]) {
+      const none = harness({
+        services: [],
+        policyAllows: true,
+        agent: { policyAllows: true, legacy, services: [] },
+      });
+      await runConnectorWrites(["status"], none.deps);
+      expect(none.logs.join("\n")).not.toContain("legacy:");
+    }
+  });
+
+  it("the policy warning names the lockoff, with control characters stripped", async () => {
+    const esc = String.fromCodePoint(0x1b);
+    const h = harness({
+      services: [],
+      policyAllows: true,
+      agent: {
+        policyAllows: false,
+        lockedOff: ["mcp_action", `connector_write_model_access${esc}[2J`],
+        services: [],
+      },
+    });
+    await runConnectorWrites(["status"], h.deps);
+    const line = h.logs.find((l) => l.startsWith("Agent policy:")) ?? "";
+    expect(line).toContain("mcp_action and connector_write_model_access");
+    expect(line).not.toContain(esc);
+  });
+
+  it("a status that was not re-checked says so", async () => {
+    const h = harness({
+      services: [],
+      policyAllows: true,
+      agent: { policyAllows: true, checked: false, services: [] },
+    });
+    await runConnectorWrites(["status"], h.deps);
+    expect(h.logs.join("\n")).toContain("not re-checked");
   });
 });

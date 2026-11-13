@@ -235,6 +235,7 @@ describe("approvals.list and approvals.get", () => {
     expect(out.proposals[0]).toEqual({
       id: "cap_a",
       actionType: "slack.message.post",
+      legacy: false,
       wave: 2,
       typedConfirm: false,
       label: String.raw`a\"\u000aType: x`,

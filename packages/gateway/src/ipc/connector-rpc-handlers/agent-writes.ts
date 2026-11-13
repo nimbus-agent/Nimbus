@@ -20,6 +20,7 @@ import {
   sha12,
   suspensionFromRow,
 } from "../../connectors/connector-writes/agent-door-definition.ts";
+import { LEGACY_LIST_HEADER } from "../../connectors/connector-writes/agent-door-legacy.ts";
 import {
   type DoorApproval,
   type DoorApprovalEntry,
@@ -34,13 +35,17 @@ import {
   raiseWriteEnablementWave,
 } from "../../connectors/connector-writes/enablement-store.ts";
 import { getIacGrants } from "../../connectors/connector-writes/iac-grants.ts";
+import { CONNECTOR_WRITE_ROWS } from "../../connectors/connector-writes/index.ts";
 import { getK8sGrants } from "../../connectors/connector-writes/k8s-grants.ts";
+import { CONNECTOR_WRITE_MODEL_ACCESS_CAPABILITY } from "../../connectors/connector-writes/model-write-capability.ts";
 import type {
   ConnectorWriteRow,
   ConnectorWriteWave,
 } from "../../connectors/connector-writes/types.ts";
 import type { ToolExecutor } from "../../engine/executor.ts";
+import { MCP_ACTION_CAPABILITY } from "../../mcp-sink/capture-capability.ts";
 import { APPROVER_BY_KIND } from "../../mcp-sink/capture-client-policy.ts";
+import { CaptureStore } from "../../mcp-sink/capture-store.ts";
 import type { EnforcedPolicy } from "../../policy/policy-gate.ts";
 import { ConnectorRpcError } from "../connector-rpc-shared.ts";
 import type { ClientKind } from "../server/client-kind.ts";
@@ -207,6 +212,8 @@ export interface AgentEnableReply {
   maxWave: ConnectorWriteWave;
   approved: number;
   writes: Array<{ toolId: string; sha12: string }>;
+  /** Tool ids a replacing enable deleted (AD3a-2a); empty for an enable that only adds. */
+  removed: string[];
   notice: string;
 }
 
@@ -236,12 +243,16 @@ export async function handleAgentWritesEnable(
   const existing = new Map(listDoorApprovals(deps.db, "agent", service).map((a) => [a.toolId, a]));
   const writes = shown.map((r) => promptWrite(r, existing));
   const sharedFrom = sharedWaveBefore(deps.db, service, maxWave);
+  // A replace (no --approve) deletes every earlier approval it does not carry over: say so.
+  const removes =
+    patterns === undefined ? removalsOf(existing, chosen, all, maxWave, deps.rows) : [];
   const payload: Record<string, unknown> = {
     door: "agent",
     service,
     maxWave,
     ...(sharedFrom === undefined ? {} : { raisesSharedWaveFrom: sharedFrom }),
     writes,
+    ...(removes.length === 0 ? {} : { removes }),
   };
   await requireOwnerApproval(executor, payload, deps);
   const entries: DoorApprovalEntry[] = chosen.flatMap((r) =>
@@ -261,8 +272,43 @@ export async function handleAgentWritesEnable(
     maxWave: getModelWriteEnablement(deps.db, service)?.maxWave ?? maxWave,
     approved: entries.length,
     writes: entries.map((e) => ({ toolId: e.toolId, sha12: sha12(e.definitionSha256) })),
+    removed: removes.map((x) => x.toolId),
     notice: AGENT_DOOR_NOT_ENFORCED_NOTICE,
   };
+}
+
+/** One approval a replacing enable would delete, with the fixed reason it goes. */
+interface Removal {
+  toolId: string;
+  wave: number;
+  why: "above_wave" | "not_approvable" | "gone";
+  reason?: string;
+}
+
+function removalsOf(
+  existing: ReadonlyMap<string, DoorApproval>,
+  chosen: readonly AgentApprovableRow[],
+  all: readonly AgentApprovableRow[],
+  maxWave: ConnectorWriteWave,
+  rows: readonly ConnectorWriteRow[] | undefined,
+): Removal[] {
+  const kept = new Set(chosen.map((r) => r.row.toolId));
+  const out: Removal[] = [];
+  for (const toolId of [...existing.keys()].sort((a, b) => a.localeCompare(b))) {
+    if (kept.has(toolId)) continue;
+    const known = all.find((r) => r.row.toolId === toolId);
+    const row = known?.row ?? (rows ?? CONNECTOR_WRITE_ROWS).find((r) => r.toolId === toolId);
+    if (row === undefined) {
+      out.push({ toolId, wave: 0, why: "gone" });
+    } else if (row.wave > maxWave) {
+      out.push({ toolId, wave: row.wave, why: "above_wave" });
+    } else if (known?.state === "not_approvable") {
+      out.push({ toolId, wave: row.wave, why: "not_approvable", reason: known.reason });
+    } else {
+      out.push({ toolId, wave: row.wave, why: "gone" });
+    }
+  }
+  return out;
 }
 
 /** The shared wave's current value when this enable raises it, `null` when it creates the row. */
@@ -329,9 +375,22 @@ export interface AgentStatusService {
   unverified?: string;
 }
 
+/** Proposals accepted under the deprecation window in the last 30 days (D-7); `null` when none. */
+export interface AgentLegacyReport {
+  sinceMs: number;
+  total: number;
+  byType: Record<string, number>;
+  notice: string;
+}
+
 export interface AgentStatusReply {
   policyAllows: boolean;
   notice: string;
+  /** False when the connection did not declare cli or ui: the stored view, no listing, no mark. */
+  checked: boolean;
+  /** Which of the two capabilities the door needs the organisation's policy has turned off (OR-AD-15). */
+  lockedOff: string[];
+  legacy: AgentLegacyReport | null;
   /** Present only while no approval exists: the one command that makes one. */
   hint?: string;
   services: AgentStatusService[];
@@ -343,10 +402,11 @@ async function statusOfService(
   deps: AgentWritesDeps,
   service: string,
   approvals: readonly DoorApproval[],
+  live: boolean,
 ): Promise<AgentStatusService> {
   // Sequential on purpose: a listing may start the connector (the model door's reason, too).
   // A listing that fails is the same as one that is not there: unverified, nothing marked.
-  const listed = await deps.listServerTools?.(service).catch(() => undefined);
+  const listed = live ? await deps.listServerTools?.(service).catch(() => undefined) : undefined;
   const suspended: AgentSuspendedTool[] = [];
   const notListed: string[] = [];
   let unchanged = 0;
@@ -375,8 +435,26 @@ async function statusOfService(
     approved: unchanged,
     suspended,
     ...(notListed.length === 0 ? {} : { notListed }),
-    ...(listed === undefined ? { unverified: "its tools could not be listed" } : {}),
+    ...(live && listed === undefined ? { unverified: "its tools could not be listed" } : {}),
   };
+}
+
+/** The capabilities of the two the agent door needs that the resolved policy has disabled. */
+function lockedOffOf(enforced: Pick<EnforcedPolicy, "capabilitiesDisabled"> | undefined): string[] {
+  if (enforced === undefined) return [];
+  return [CONNECTOR_WRITE_MODEL_ACCESS_CAPABILITY, MCP_ACTION_CAPABILITY].filter((c) =>
+    enforced.capabilitiesDisabled.has(c),
+  );
+}
+
+/** The window `status` counts legacy proposals over. */
+export const LEGACY_WINDOW_MS = 30 * 24 * 3_600_000;
+
+function legacyReport(deps: AgentWritesDeps): AgentLegacyReport | null {
+  const sinceMs = deps.now() - LEGACY_WINDOW_MS;
+  const { total, byType } = new CaptureStore(deps.db).legacyActionTypesSince(sinceMs);
+  if (total === 0) return null;
+  return { sinceMs, total, byType: { ...byType }, notice: LEGACY_LIST_HEADER };
 }
 
 /**
@@ -387,13 +465,19 @@ export async function handleAgentWritesStatus(deps: AgentWritesDeps): Promise<Ag
   const all = listDoorApprovals(deps.db, "agent");
   const byService = new Map<string, DoorApproval[]>();
   for (const a of all) byService.set(a.service, [...(byService.get(a.service) ?? []), a]);
+  // The live check lists connectors and writes the sticky mark, so it runs only for a connection
+  // that declared cli or ui (R-5); any other kind gets the stored view.
+  const live = APPROVER_BY_KIND[deps.clientKind ?? "unknown"];
   const services: AgentStatusService[] = [];
   for (const [service, approvals] of byService) {
-    services.push(await statusOfService(deps, service, approvals));
+    services.push(await statusOfService(deps, service, approvals, live)); // NOSONAR S9382: sequential listings
   }
   return {
     policyAllows: agentDoorPolicyAllows(deps.getEnforcedPolicy()),
     notice: AGENT_DOOR_NOT_ENFORCED_NOTICE,
+    checked: live,
+    lockedOff: lockedOffOf(deps.getEnforcedPolicy()),
+    legacy: legacyReport(deps),
     ...(all.length === 0 ? { hint: NO_APPROVALS_HINT } : {}),
     services,
   };

@@ -1,4 +1,5 @@
 import { agentDoorRow } from "../connectors/connector-writes/agent-door.ts";
+import { LEGACY_LIST_HEADER } from "../connectors/connector-writes/agent-door-legacy.ts";
 import { rowNamedByToolId } from "../connectors/connector-writes/preview.ts";
 import { agentVerbatimInputLines, escapeUnverifiedLine } from "../engine/proposer-block.ts";
 import { APPROVER_BY_KIND } from "../mcp-sink/capture-client-policy.ts";
@@ -80,12 +81,18 @@ function escapedLabel(label: string | null): string | null {
   return label === null ? null : escapeUnverifiedLine(label);
 }
 
-function listView(rpc: CaptureRpcCtx, caller: CaptureCaller): { proposals: unknown[] } {
+function listView(
+  rpc: CaptureRpcCtx,
+  caller: CaptureCaller,
+): { proposals: unknown[]; deprecation?: string } {
   const { proposals } = listActionProposals(rpc.gate, caller);
   return {
+    // The deprecation header (AD3a-2a, D-7) only when a legacy row is shown; fixed gateway text.
+    ...(proposals.some((p) => p.agentDoorLegacy) ? { deprecation: LEGACY_LIST_HEADER } : {}),
     proposals: proposals.map((p) => ({
       id: p.id,
       actionType: p.actionType,
+      legacy: p.agentDoorLegacy,
       ...rowFacts(p.actionType, rpc.act),
       label: escapedLabel(p.clientLabel),
       labelSource: "declared",
@@ -118,6 +125,8 @@ function getView(rpc: CaptureRpcCtx, caller: CaptureCaller, idRaw: unknown): unk
     id: detail.id,
     state: detail.state,
     actionType: stored.actionType,
+    legacy: detail.agentDoorLegacy,
+    ...(detail.agentDoorLegacy ? { deprecation: LEGACY_LIST_HEADER } : {}),
     ...rowFacts(stored.actionType, rpc.act),
     label: escapedLabel(detail.clientLabel),
     labelSource: "declared",

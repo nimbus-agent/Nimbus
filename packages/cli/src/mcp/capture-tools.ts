@@ -1,5 +1,5 @@
 import { z } from "zod";
-
+import { stripControlChars } from "../lib/strip-control-chars.ts";
 import type { IpcCallable } from "./client-surface.ts";
 import { type AdapterDeps, runTool, type ToolResult } from "./tool-runtime.ts";
 
@@ -9,6 +9,15 @@ import { type AdapterDeps, runTool, type ToolResult } from "./tool-runtime.ts";
  * sink is enabled for the kind — see `captureToolsFor`.
  */
 type CaptureToolKind = "note" | "decision" | "term" | "link" | "action";
+
+/** The gateway's fixed deprecation line for a proposal accepted under the window, control-stripped. */
+function deprecationOf(raw: unknown): string {
+  const d =
+    typeof raw === "object" && raw !== null
+      ? (raw as Record<string, unknown>)["deprecation"]
+      : undefined;
+  return typeof d === "string" && d !== "" ? ` ${stripControlChars(d)}` : "";
+}
 
 export interface CaptureToolSpec {
   readonly name: string;
@@ -236,7 +245,7 @@ export const CAPTURE_TOOL_SPECS: readonly CaptureToolSpec[] = [
           content: [
             {
               type: "text",
-              text: `Proposed action ${id} — expires ${when}. It has NOT run: the owner must approve it with \`nimbus approvals ${id}\` at the prompt. Poll capture_status with this id. Do not tell the user it was sent.`,
+              text: `Proposed action ${id} — expires ${when}. It has NOT run: the owner must approve it with \`nimbus approvals ${id}\` at the prompt. Poll capture_status with this id. Do not tell the user it was sent.${deprecationOf(raw)}`,
             },
           ],
         };

@@ -144,6 +144,7 @@ export type CaptureDetail = CaptureSummary & {
   readonly nativeStatus: NativeStatus | null;
   readonly outcomeRef: string | null;
   readonly errorCode: string | null;
+  readonly agentDoorLegacy: boolean;
 };
 
 export interface CaptureStatus {
@@ -181,6 +182,8 @@ export interface ActionProposalRow {
   readonly clientLabel: string | null;
   readonly createdAt: number;
   readonly expiresAt: number;
+  /** Queued under the deprecation window (V97 `legacy`): the earlier act door accepted it. */
+  readonly agentDoorLegacy: boolean;
 }
 
 export interface CaptureStateView {
@@ -994,6 +997,7 @@ export function getCapture(
         : null,
     outcomeRef: row.outcomeRef,
     errorCode: row.errorCode,
+    agentDoorLegacy: row.agentDoorLegacy,
   };
 }
 
@@ -1079,6 +1083,7 @@ export function listActionProposals(
       clientLabel: row.clientLabel,
       createdAt: row.createdAt,
       expiresAt: row.expiresAt,
+      agentDoorLegacy: row.agentDoorLegacy,
     });
   }
   return { proposals };

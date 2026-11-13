@@ -251,6 +251,7 @@ describe("listActionProposals", () => {
       clientLabel: "lab el",
       createdAt: 10,
       expiresAt: 10 + 24 * HOUR,
+      agentDoorLegacy: false,
     });
     expect(errOf(() => listActionProposals(deps, MCP)).code).toBe("ERR_CAPTURE_FORBIDDEN_CLIENT");
     clock += 25 * HOUR;

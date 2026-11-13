@@ -332,6 +332,38 @@ function agentLineText(w: AgentWriteLine): string {
   return `${head}${flagText}  ${AGENT_STATE_TEXT[w.state]}  ${w.sha12}`;
 }
 
+const REMOVE_WHY = ["above_wave", "not_approvable", "gone"] as const;
+
+interface RemovalLine {
+  readonly toolId: string;
+  readonly wave: number;
+  readonly why: (typeof REMOVE_WHY)[number];
+  readonly reason?: string;
+}
+
+/** One validated `removes` entry, or `undefined` when any field is missing or odd. */
+function removalLine(w: unknown): RemovalLine | undefined {
+  if (typeof w !== "object" || w === null) return undefined;
+  const r = w as Record<string, unknown>;
+  if (typeof r["toolId"] !== "string" || typeof r["wave"] !== "number") return undefined;
+  const why = REMOVE_WHY.find((x) => x === r["why"]);
+  if (why === undefined) return undefined;
+  // A row that is no longer approvable carries the reason it gave; the others carry none.
+  if (why === "not_approvable") {
+    return typeof r["reason"] === "string"
+      ? { toolId: r["toolId"], wave: r["wave"], why, reason: r["reason"] }
+      : undefined;
+  }
+  return r["reason"] === undefined ? { toolId: r["toolId"], wave: r["wave"], why } : undefined;
+}
+
+function removalText(l: RemovalLine): string {
+  const head = `  will be removed: ${sanitisePreviewText(l.toolId)}  wave ${l.wave}`;
+  if (l.why === "above_wave") return `${head}  (above this wave)`;
+  if (l.why === "gone") return `${head}  (no longer a write of this service)`;
+  return `${head}  (not approvable: ${sanitisePreviewText(l.reason ?? "")})`;
+}
+
 /** The sentence that says the shared wave changes, or `undefined` when it does not. */
 function sharedWaveLine(
   service: string,
@@ -370,6 +402,16 @@ function agentEnablePromptLines(payload: Record<string, unknown>): string[] | un
     const line = agentWriteLine(w);
     if (line === undefined) return undefined;
     lines.push(agentLineText(line));
+  }
+  // Approvals this (replacing) enable would delete; absent for an enable that only adds.
+  const removes = payload["removes"];
+  if (removes !== undefined) {
+    if (!Array.isArray(removes)) return undefined;
+    for (const w of removes as unknown[]) {
+      const line = removalLine(w);
+      if (line === undefined) return undefined;
+      lines.push(removalText(line));
+    }
   }
   lines.push(
     "",

@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { toStandardSchema } from "@mastra/core/schema";
 
 import { AGENT_DOOR_NOT_ENFORCED_NOTICE } from "../connectors/connector-writes/agent-door.ts";
+import { LEGACY_LIST_HEADER } from "../connectors/connector-writes/agent-door-legacy.ts";
 import { definitionSha256 } from "../connectors/connector-writes/definition-hash.ts";
 import {
   listDoorApprovals,
@@ -1053,6 +1054,7 @@ describe("connector.writesStatus through the RPC", () => {
       openUrl: async () => {},
       syncScheduler: undefined,
       getEnforcedPolicy: () => OPEN as never,
+      clientKind: "cli",
     });
     expect(hit.kind).toBe("hit");
     const value = (hit as { value: Record<string, unknown> }).value;
@@ -1110,5 +1112,192 @@ describe("agent enable: the credential's scopes and a restricted row table", () 
     expect(
       await refusal(handleConnectorWritesEnable({ ...AGENT, service: "github" }, rest as never)),
     ).toContain("ERR_CONNECTOR_WRITES_AGENT_UNLISTED");
+  });
+});
+
+describe("AD3a-2a: the removal lines of a replacing enable", () => {
+  test("a no-approve enable at a lower wave lists every approval it drops, in the prompt and in the reply", async () => {
+    const r = rig();
+    await handleConnectorWritesEnable({ ...AGENT, service: "github", wave: 4 }, r.deps);
+    const before = listDoorApprovals(db, "agent", "github").map((a) => a.toolId);
+    const high = before.filter(
+      (id) => (CONNECTOR_WRITE_ROWS.find((x) => x.toolId === id)?.wave ?? 0) > 2,
+    );
+    expect(high.length).toBeGreaterThan(0);
+    r.consent.prompts.length = 0;
+    const out = (await handleConnectorWritesEnable(
+      { ...AGENT, service: "github", wave: 2 },
+      r.deps,
+    )) as unknown as { removed: string[] };
+    const p = r.consent.prompts[0] ?? "";
+    const after = listDoorApprovals(db, "agent", "github").map((a) => a.toolId);
+    const dropped = before.filter((id) => !after.includes(id));
+    expect(dropped.length).toBeGreaterThan(0);
+    expect([...out.removed].sort((a, b) => a.localeCompare(b))).toEqual(
+      [...dropped].sort((a, b) => a.localeCompare(b)),
+    );
+    for (const id of dropped) {
+      const line = p.split("\n").find((l) => l.includes("will be removed") && l.includes(id));
+      expect(line, id).toBeDefined();
+      expect(line).toContain("above this wave");
+    }
+  });
+
+  test("with --approve nothing is listed as removed", async () => {
+    const r = rig();
+    await handleConnectorWritesEnable({ ...AGENT, service: "github", wave: 4 }, r.deps);
+    r.consent.prompts.length = 0;
+    const out = (await handleConnectorWritesEnable(
+      { ...AGENT, service: "github", wave: 2, approve: ["github_issue_create"] },
+      r.deps,
+    )) as unknown as { removed: string[] };
+    expect(r.consent.prompts[0]).not.toContain("will be removed");
+    expect(out.removed).toEqual([]);
+  });
+
+  test("a malformed removes entry makes the renderer refuse the prompt", async () => {
+    const { enableWritesPromptLines } = await import(
+      "../connectors/connector-writes/enable-prompt.ts"
+    );
+    const base = {
+      door: "agent",
+      service: "github",
+      maxWave: 2,
+      writes: [],
+    };
+    const ok = enableWritesPromptLines({
+      ...base,
+      removes: [{ toolId: "github_pr_merge", wave: 4, why: "above_wave" }],
+    });
+    expect(ok?.join(String.fromCodePoint(10))).toContain("will be removed");
+    for (const bad of [
+      [{ toolId: 1, wave: 4, why: "above_wave" }],
+      [{ toolId: "x", wave: "4", why: "above_wave" }],
+      [{ toolId: "x", wave: 4, why: "nope" }],
+      [{ toolId: "x", wave: 4, why: "not_approvable" }],
+      "text",
+    ]) {
+      expect(enableWritesPromptLines({ ...base, removes: bad })).toBeUndefined();
+    }
+  });
+});
+
+describe("AD3a-2a: the live status check is for a connection that declared cli or ui", () => {
+  async function drifted(kind: ClientKind): Promise<{ r: Rig; id: string }> {
+    const r = rig();
+    await handleConnectorWritesEnable({ ...AGENT, service: "github", wave: 3 }, r.deps);
+    r.listCalls.length = 0;
+    const id = "github_issue_create";
+    r.listing = listingOf("github", (t) => (t === id ? "changed by one byte!" : `desc ${t}`));
+    r.deps = { ...r.deps, clientKind: kind } as ModelWritesDeps;
+    return { r, id };
+  }
+
+  test.each(["mcp", "unknown", "http", "chatops", "fleet", "push"] as const)(
+    "%s: no listing, nothing marked, no audit row, checked is false and the stored view is returned",
+    async (kind) => {
+      const { r, id } = await drifted(kind);
+      const base = auditCount();
+      const s = await handleAgentWritesStatus(r.deps);
+      expect(r.listCalls).toEqual([]);
+      expect(s.checked).toBe(false);
+      expect(auditCount()).toBe(base);
+      expect(
+        listDoorApprovals(db, "agent", "github").find((x) => x.toolId === id)?.suspendedAt,
+      ).toBeNull();
+      expect(s.services[0]?.suspended).toEqual([]);
+      expect(s.services[0]?.approved).toBe(listDoorApprovals(db, "agent", "github").length);
+    },
+  );
+
+  test("a client kind that is absent is treated as unknown", async () => {
+    const { r } = await drifted("cli");
+    r.deps = { ...r.deps, clientKind: undefined } as unknown as ModelWritesDeps;
+    const s = await handleAgentWritesStatus(r.deps);
+    expect(s.checked).toBe(false);
+    expect(r.listCalls).toEqual([]);
+  });
+
+  test.each(["cli", "ui"] as const)("%s: lists, marks and reports checked", async (kind) => {
+    const { r, id } = await drifted(kind);
+    const s = await handleAgentWritesStatus(r.deps);
+    expect(r.listCalls).toEqual(["github"]);
+    expect(s.checked).toBe(true);
+    expect(s.services[0]?.suspended.map((t) => t.toolId)).toEqual([id]);
+  });
+
+  test("a stored suspension is still reported without a check", async () => {
+    const { r, id } = await drifted("cli");
+    await handleAgentWritesStatus(r.deps);
+    r.deps = { ...r.deps, clientKind: "mcp" } as ModelWritesDeps;
+    r.listCalls.length = 0;
+    const s = await handleAgentWritesStatus(r.deps);
+    expect(r.listCalls).toEqual([]);
+    expect(s.services[0]?.suspended.map((t) => t.toolId)).toEqual([id]);
+  });
+});
+
+describe("AD3a-2a: the legacy count in status", () => {
+  const DAY = 24 * 3_600_000;
+  function legacyRow(id: string, type: string, createdAt: number, legacy = true): void {
+    db.query(
+      `INSERT INTO capture (id, kind, state, payload_json, payload_bytes, session_id, created_at, expires_at, legacy)
+       VALUES (?, 'action', 'proposed', ?, 10, 's', ?, ?, ?)`,
+    ).run(
+      id,
+      JSON.stringify({ actionType: type, input: {}, summary: "s" }),
+      createdAt,
+      createdAt + DAY,
+      legacy ? 1 : 0,
+    );
+  }
+
+  test("no legacy proposals: null", async () => {
+    const r = rig();
+    expect((await handleAgentWritesStatus(r.deps)).legacy).toBeNull();
+  });
+
+  test("two of one type and one of another over 30 days count; a 31-day-old one and a non-legacy one do not", async () => {
+    const r = rig();
+    const now = 100 * DAY;
+    r.deps = { ...r.deps, now: () => now } as ModelWritesDeps;
+    legacyRow("c1", "slack.message.post", now - DAY);
+    legacyRow("c2", "slack.message.post", now - 2 * DAY);
+    legacyRow("c3", "github.issue.create", now - 3 * DAY);
+    legacyRow("c4", "github.issue.create", now - 31 * DAY);
+    legacyRow("c5", "github.issue.create", now - DAY, false);
+    const s = await handleAgentWritesStatus(r.deps);
+    expect(s.legacy).toMatchObject({
+      sinceMs: now - 30 * DAY,
+      total: 3,
+      byType: { "slack.message.post": 2, "github.issue.create": 1 },
+    });
+    expect(s.legacy?.notice).toBe(LEGACY_LIST_HEADER);
+  });
+});
+
+describe("AD3a-2a (OR-AD-15): status names the lockoff", () => {
+  test("lockedOff lists exactly the disabled capabilities of the two the door needs", async () => {
+    for (const [disabled, expected] of [
+      [[], []],
+      [["mcp_action"], ["mcp_action"]],
+      [["connector_write_model_access"], ["connector_write_model_access"]],
+      [
+        ["mcp_action", "connector_write_model_access", "other"],
+        ["connector_write_model_access", "mcp_action"],
+      ],
+    ] as const) {
+      const r = rig({ policy: { capabilitiesDisabled: new Set(disabled) } });
+      const s = await handleAgentWritesStatus(r.deps);
+      expect(s.lockedOff, disabled.join()).toEqual([...expected]);
+      expect(s.policyAllows).toBe(expected.length === 0);
+    }
+  });
+
+  test("an unreadable policy lists nothing and does not allow", async () => {
+    const r = rig({ policy: undefined });
+    const s = await handleAgentWritesStatus(r.deps);
+    expect(s.lockedOff).toEqual([]);
+    expect(s.policyAllows).toBe(false);
   });
 });
