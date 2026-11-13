@@ -17,6 +17,7 @@ import { listDoorApprovals } from "../../../src/connectors/connector-writes/door
 import { setModelWriteEnablement } from "../../../src/connectors/connector-writes/enablement-store.ts";
 import { CONNECTOR_WRITE_ROWS } from "../../../src/connectors/connector-writes/index.ts";
 import { createModelWriteToolSource } from "../../../src/connectors/connector-writes/model-write-source.ts";
+import { previewTemplateKeys } from "../../../src/connectors/connector-writes/types.ts";
 import type { LazyConnectorMesh } from "../../../src/connectors/lazy-mesh/mesh.ts";
 import { mcpClientToolKey } from "../../../src/connectors/lazy-mesh/tool-map.ts";
 import { classifyActionType } from "../../../src/connectors/proposable-actions.ts";
@@ -60,9 +61,14 @@ function listing(): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const r of CONNECTOR_WRITE_ROWS) {
     if (serviceOf(r.actionType) !== "github") continue;
+    // The schema declares every input key the row's typed preview names (the drift check).
+    const keys = r.preview === undefined ? [] : [...previewTemplateKeys(r.preview)];
     out[mcpClientToolKey("github", r.toolId)] = {
       description: describeTool(r.toolId),
-      inputSchema: toStandardSchema({ type: "object", properties: {} } as JsonSchemaInput),
+      inputSchema: toStandardSchema({
+        type: "object",
+        properties: Object.fromEntries(keys.map((k) => [k, { type: "string" }])),
+      } as JsonSchemaInput),
     };
   }
   return out;
@@ -290,19 +296,15 @@ describe("an upgrade from V96", () => {
     try {
       runIndexedSchemaMigrations(old, 96);
       setModelWriteEnablement(old, "github", 3, 5, ["github_issue_create", "github_pr_close"]);
-      const oldStore = new CaptureStore(old);
-      oldStore.insert({
-        id: "cap_old",
-        kind: "action",
-        state: "proposed",
-        itemId: null,
-        payloadJson: JSON.stringify({ actionType: "github.issue.create", input: {}, summary: "s" }),
-        payloadBytes: 60,
-        clientLabel: "claude-code",
-        sessionId: "s1",
-        createdAt: 1,
-        expiresAt: 9_999_999,
-      });
+      // A V96 `capture` has no `legacy` column, so this row is written the way V96 wrote it.
+      old.run(
+        `INSERT INTO capture (id, kind, state, item_id, payload_json, payload_bytes, client_label, session_id, created_at, expires_at)
+         VALUES (?, 'action', 'proposed', NULL, ?, 60, 'claude-code', 's1', 1, 9999999)`,
+        [
+          "cap_old",
+          JSON.stringify({ actionType: "github.issue.create", input: {}, summary: "s" }),
+        ],
+      );
       const offer = (d: Database) =>
         createModelWriteToolSource({
           db: d,

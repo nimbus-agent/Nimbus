@@ -14,13 +14,16 @@ import {
   agentApprovableRows,
   agentDoorPolicyAllows,
 } from "../../connectors/connector-writes/agent-door.ts";
-import { definitionSha256 } from "../../connectors/connector-writes/definition-hash.ts";
+import {
+  checkAgentToolDefinition,
+  type DoorSuspension,
+  sha12,
+  suspensionFromRow,
+} from "../../connectors/connector-writes/agent-door-definition.ts";
 import {
   type DoorApproval,
   type DoorApprovalEntry,
-  getDoorApproval,
   listDoorApprovals,
-  markDoorToolSuspended,
   replaceDoorApprovals,
   upsertDoorApprovals,
 } from "../../connectors/connector-writes/door-approval-store.ts";
@@ -36,8 +39,6 @@ import type {
   ConnectorWriteRow,
   ConnectorWriteWave,
 } from "../../connectors/connector-writes/types.ts";
-import { mcpClientToolKey } from "../../connectors/lazy-mesh/tool-map.ts";
-import { appendAuditEntry } from "../../db/audit-chain.ts";
 import type { ToolExecutor } from "../../engine/executor.ts";
 import { APPROVER_BY_KIND } from "../../mcp-sink/capture-client-policy.ts";
 import type { EnforcedPolicy } from "../../policy/policy-gate.ts";
@@ -120,10 +121,6 @@ function parseApprovePatterns(raw: unknown): readonly string[] | undefined {
 
 function matchesPattern(toolId: string, patterns: readonly string[]): boolean {
   return patterns.some((p) => (p.endsWith("*") ? toolId.startsWith(p.slice(0, -1)) : toolId === p));
-}
-
-function sha12(sha: string): string {
-  return sha.slice(0, 12);
 }
 
 type PromptState = "already_approved" | "will_be_approved" | "reapproved_changed";
@@ -317,19 +314,18 @@ function requireEligibleService(raw: unknown, rows: readonly ConnectorWriteRow[]
 
 // ---- status -----------------------------------------------------------------------------------
 
-export interface AgentSuspendedTool {
-  toolId: string;
-  approvedAt: number;
-  approvedSha12: string;
-  /** The hash observed when the listing first disagreed; `null` when there was none to hash. */
-  nowSha12: string | null;
-  reason?: string;
-}
+/** One suspended tool, as `connector.writesStatus` reports it (the definition module's type). */
+export type AgentSuspendedTool = DoorSuspension;
 
 export interface AgentStatusService {
   service: string;
   approved: number;
   suspended: AgentSuspendedTool[];
+  /**
+   * Approved tools the live listing omits (OR-AD-14): refused while missing, NOT suspended, no
+   * audit row; they work again when the connector lists them with the approved definition.
+   */
+  notListed?: string[];
   unverified?: string;
 }
 
@@ -343,90 +339,6 @@ export interface AgentStatusReply {
 
 const NO_APPROVALS_HINT =
   "To approve connector writes for outside agents, run: nimbus connector writes enable <service> --door agent";
-const GONE_REASON = "no longer listed";
-const UNREADABLE_NOW_REASON = "its input schema can no longer be read";
-const STORED_GONE_REASON = "no longer listed, or its input schema cannot be read";
-
-function suspendedFromRow(a: DoorApproval): AgentSuspendedTool {
-  return {
-    toolId: a.toolId,
-    approvedAt: a.approvedAt,
-    approvedSha12: sha12(a.definitionSha256),
-    nowSha12: a.suspendedSha256 === null ? null : sha12(a.suspendedSha256),
-    ...(a.suspendedSha256 === null ? { reason: STORED_GONE_REASON } : {}),
-  };
-}
-
-/** What a live listing says about one approved, not yet suspended tool: a mismatch, or `undefined`. */
-function observe(
-  a: DoorApproval,
-  listed: Readonly<Record<string, unknown>>,
-): { sha: string | null; reason?: string } | undefined {
-  const key = mcpClientToolKey(a.service, a.toolId);
-  if (!Object.hasOwn(listed, key)) return { sha: null, reason: GONE_REASON };
-  const sha = definitionSha256(a.toolId, listed[key]);
-  if (sha === undefined) return { sha: null, reason: UNREADABLE_NOW_REASON };
-  return sha === a.definitionSha256 ? undefined : { sha };
-}
-
-/**
- * Mark the approval the listing was compared against, and write its one audit row, in ONE transaction:
- * either both commit or neither does (a failed append leaves the tool unmarked, so a later status
- * observes it again). `undefined` when the approval changed underneath (re-approved with another
- * hash or removed), which is not a suspension.
- */
-function recordSuspension(
-  deps: AgentWritesDeps,
-  a: DoorApproval,
-  seen: { sha: string | null; reason?: string },
-): AgentSuspendedTool | undefined {
-  const now = deps.now();
-  const entry: AgentSuspendedTool = {
-    toolId: a.toolId,
-    approvedAt: a.approvedAt,
-    approvedSha12: sha12(a.definitionSha256),
-    nowSha12: seen.sha === null ? null : sha12(seen.sha),
-    ...(seen.reason === undefined ? {} : { reason: seen.reason }),
-  };
-  // The first observation wins: a repeat marks nothing and writes no second audit row.
-  const marked = deps.db.transaction(() => {
-    if (
-      !markDoorToolSuspended(
-        deps.db,
-        "agent",
-        a.service,
-        a.toolId,
-        a.definitionSha256,
-        seen.sha,
-        now,
-      )
-    ) {
-      return false;
-    }
-    appendAuditEntry(deps.db, {
-      actionType: "connector.writes.agent.suspend",
-      hitlStatus: "not_required",
-      actionJson: JSON.stringify({
-        service: a.service,
-        toolId: a.toolId,
-        approvedSha12: entry.approvedSha12,
-        nowSha12: entry.nowSha12,
-      }),
-      timestamp: now,
-    });
-    return true;
-  })();
-  if (marked) return entry;
-  // Not marked by this call: another observer suspended the same approval (report it from the stored
-  // columns), or the owner re-approved or removed it since the snapshot (nothing to report).
-  const current = getDoorApproval(deps.db, "agent", a.service, a.toolId);
-  return current !== undefined &&
-    current.suspendedAt !== null &&
-    current.definitionSha256 === a.definitionSha256
-    ? suspendedFromRow(current)
-    : undefined;
-}
-
 async function statusOfService(
   deps: AgentWritesDeps,
   service: string,
@@ -436,25 +348,33 @@ async function statusOfService(
   // A listing that fails is the same as one that is not there: unverified, nothing marked.
   const listed = await deps.listServerTools?.(service).catch(() => undefined);
   const suspended: AgentSuspendedTool[] = [];
+  const notListed: string[] = [];
   let unchanged = 0;
   for (const a of approvals) {
     if (a.suspendedAt !== null) {
-      suspended.push(suspendedFromRow(a));
+      suspended.push(suspensionFromRow(a));
       continue;
     }
-    const seen = listed === undefined ? undefined : observe(a, listed);
-    if (seen === undefined) {
+    if (listed === undefined) {
       unchanged++;
       continue;
     }
-    const entry = recordSuspension(deps, a, seen);
-    if (entry === undefined) unchanged++;
-    else suspended.push(entry);
+    // The ONE mark-and-audit helper (`agent-door-definition.ts`), shared with the submit, approval
+    // and veto paths: a first mismatch is marked sticky with one audit row.
+    const check = checkAgentToolDefinition(deps, a, listed);
+    if (check.kind === "changed" || check.kind === "unreadable") {
+      if (check.suspension === undefined) unchanged++;
+      else suspended.push(check.suspension);
+      continue;
+    }
+    if (check.kind === "missing") notListed.push(a.toolId);
+    unchanged++;
   }
   return {
     service,
     approved: unchanged,
     suspended,
+    ...(notListed.length === 0 ? {} : { notListed }),
     ...(listed === undefined ? { unverified: "its tools could not be listed" } : {}),
   };
 }

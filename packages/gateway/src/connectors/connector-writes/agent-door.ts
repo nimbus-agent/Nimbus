@@ -13,6 +13,7 @@ import { mcpClientToolKey } from "../lazy-mesh/tool-map.ts";
 import { definitionSha256 } from "./definition-hash.ts";
 import { OBSIDIAN_APPEND_TOOL_ID, writesEnabledBy } from "./enablement-store.ts";
 import { CONNECTOR_WRITE_ROWS } from "./index.ts";
+import { listedEntryDeclaresPreviewKeys } from "./listed-support.ts";
 import { isModelOfferableRow, MODEL_NEVER_OFFERED_REASONS } from "./model-offerable.ts";
 import { isConnectorWriteModelAccessEnabled } from "./model-write-capability.ts";
 import { scopeAvailable } from "./model-write-source.ts";
@@ -78,6 +79,8 @@ const NOT_ROUTABLE_REASON =
   "an agent cannot propose this write: its action type is reached through another tool";
 const UNLISTED_ALL_REASON = "the connector's tools could not be listed";
 const UNLISTED_ONE_REASON = "the connector does not list this tool";
+const DRIFTED_REASON =
+  "the connector's schema no longer declares an input the write's preview shows";
 const UNREADABLE_REASON = "the connector lists this tool but its input schema cannot be read";
 const NO_DIRECTORY_REASON = "no approved directory or Kubernetes context for it yet";
 const OBSIDIAN_REASON =
@@ -116,6 +119,11 @@ function classify(
   }
   const sha = definitionSha256(row.toolId, ctx.listed[key]);
   if (sha === undefined) return { row, state: "not_approvable", reason: UNREADABLE_REASON };
+  // Parity with the model door (`listedEntryFor`): a row whose typed preview names an input the
+  // listed schema does not declare would show the owner a prompt that cannot match the call.
+  if (!listedEntryDeclaresPreviewKeys(row, ctx.listed[key])) {
+    return { row, state: "not_approvable", reason: DRIFTED_REASON };
+  }
   return { row, state: "approvable", definitionSha256: sha };
 }
 

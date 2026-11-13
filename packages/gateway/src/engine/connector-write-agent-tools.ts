@@ -62,10 +62,11 @@ import {
 } from "../connectors/connector-writes/k8s-limits.ts";
 import { isModelOfferableRow } from "../connectors/connector-writes/model-offerable.ts";
 import {
-  isPlainObject,
-  previewTemplateKeys,
-  sanitisePreviewText,
-} from "../connectors/connector-writes/preview.ts";
+  beforeReaderMissing,
+  prepareToolMissing,
+  templateKeysInSchema,
+} from "../connectors/connector-writes/listed-support.ts";
+import { isPlainObject, sanitisePreviewText } from "../connectors/connector-writes/preview.ts";
 import type { ConnectorWriteRow } from "../connectors/connector-writes/types.ts";
 import { mcpClientToolKey } from "../connectors/lazy-mesh/tool-map.ts";
 import { WAVE4_BEFORE_REFUSAL } from "./before-state.ts";
@@ -81,6 +82,9 @@ import { serviceOf } from "./service-of.ts";
 import { wrapToolDescription } from "./tool-output-envelope.ts";
 import type { ActionResult, PlannedAction } from "./types.ts";
 import { offeredInputSchema, readListedJsonSchema } from "./user-mcp-agent-tools.ts";
+
+// The drift check moved to `listed-support.ts` (shared with the agent door); kept importable here.
+export { templateKeysInSchema };
 
 /** What the door reads; injected so tests supply rows and listings (ruling D1). */
 export interface ConnectorWriteToolSource {
@@ -195,24 +199,6 @@ export function connectorWriteModelToolName(service: string, toolId: string): st
   const name = `${service}__${toolId}`;
   if (name.length > CONNECTOR_WRITE_TOOL_NAME_MAX) return undefined;
   return MODEL_TOOL_NAME_PATTERN.test(name) ? name : undefined;
-}
-
-/**
- * Drift check: whether every input key the row's typed preview names (each `{key}` in `target` /
- * `summary` and each `fields[].key`, `whenUnset` fields included) is a TOP-LEVEL property of the
- * listed JSON Schema. A row without a template, or a schema without a `properties` object, fails.
- */
-export function templateKeysInSchema(
-  row: ConnectorWriteRow,
-  jsonSchema: Record<string, unknown>,
-): boolean {
-  if (row.preview === undefined) return false;
-  const properties = jsonSchema["properties"];
-  if (!isPlainObject(properties)) return false;
-  for (const key of previewTemplateKeys(row.preview)) {
-    if (!Object.hasOwn(properties, key)) return false;
-  }
-  return true;
 }
 
 /**
@@ -482,39 +468,6 @@ function warnDriftOnce(
     { service, toolId, generation: epoch },
     "connector write preview names an input key the server's schema does not declare; not offered",
   );
-}
-
-/** Whether `row` has a `before` reader one of whose tools (the first, `also`) its listing lacks. */
-function beforeReaderMissing(
-  row: ConnectorWriteRow,
-  service: string,
-  listing: Readonly<Record<string, unknown>>,
-): boolean {
-  const reader = row.before;
-  if (reader === undefined) return false;
-  const tools = reader.also === undefined ? [reader.tool] : [reader.tool, reader.also.tool];
-  return tools.some((tool) => {
-    const key = mcpClientToolKey(service, tool);
-    return !(Object.hasOwn(listing, key) && isPlainObject(listing[key]));
-  });
-}
-
-/** Whether `row` is bound and its prepare tool is missing from its listing (I54). */
-function prepareToolMissing(
-  row: ConnectorWriteRow,
-  service: string,
-  listing: Readonly<Record<string, unknown>>,
-): boolean {
-  const bound = row.bound;
-  if (bound === undefined) return false;
-  // The settle tool (the Terraform `show` read, D2) is one more prepare read of the same step.
-  const tools = [bound.prepare.tool, bound.prepare.settleTool].filter(
-    (t): t is string => t !== undefined,
-  );
-  return tools.some((tool) => {
-    const key = mcpClientToolKey(service, tool);
-    return !(Object.hasOwn(listing, key) && isPlainObject(listing[key]));
-  });
 }
 
 /** What every row of ONE service's offer shares. */

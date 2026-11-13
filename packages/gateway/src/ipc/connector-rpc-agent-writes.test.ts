@@ -21,6 +21,10 @@ import {
 } from "../connectors/connector-writes/enablement-store.ts";
 import { setIacGrants } from "../connectors/connector-writes/iac-grants.ts";
 import { CONNECTOR_WRITE_ROWS } from "../connectors/connector-writes/index.ts";
+import {
+  type ConnectorWriteRow,
+  previewTemplateKeys,
+} from "../connectors/connector-writes/types.ts";
 import { setK8sGrants } from "../connectors/connector-writes/k8s-grants.ts";
 import { createModelWriteToolSource } from "../connectors/connector-writes/model-write-source.ts";
 import { mcpClientToolKey } from "../connectors/lazy-mesh/tool-map.ts";
@@ -76,10 +80,17 @@ afterEach(() => db.close());
 type Policy = { capabilitiesDisabled: ReadonlySet<string> };
 const OPEN: Policy = { capabilitiesDisabled: new Set<string>() };
 
-function entryOf(description: string, props: Record<string, unknown> = {}): unknown {
+/** A listed entry; `row` makes its schema declare every input key the row's typed preview names. */
+function entryOf(
+  description: string,
+  props: Record<string, unknown> = {},
+  row?: ConnectorWriteRow,
+): unknown {
+  const keys = row?.preview === undefined ? [] : [...previewTemplateKeys(row.preview)];
+  const declared = { ...Object.fromEntries(keys.map((k) => [k, { type: "string" }])), ...props };
   return {
     description,
-    inputSchema: toStandardSchema({ type: "object", properties: props } as JsonSchemaInput),
+    inputSchema: toStandardSchema({ type: "object", properties: declared } as JsonSchemaInput),
   };
 }
 
@@ -91,7 +102,7 @@ function listingOf(
   const out: Record<string, unknown> = {};
   for (const r of CONNECTOR_WRITE_ROWS) {
     if (serviceOf(r.actionType) === service) {
-      out[mcpClientToolKey(service, r.toolId)] = entryOf(describe(r.toolId));
+      out[mcpClientToolKey(service, r.toolId)] = entryOf(describe(r.toolId), {}, r);
     }
   }
   return out;
@@ -860,17 +871,24 @@ describe("agent status", () => {
     expect(auditCount()).toBe(base + 1);
   });
 
-  test("a tool dropped from a listing that arrives is suspended with a null hash and reported no longer listed", async () => {
+  test("a tool dropped from a listing that arrives is reported not listed now, NOT suspended, with no audit row (OR-AD-14)", async () => {
     const r = await approved();
     const id = "github_issue_create";
+    const total = listDoorApprovals(db, "agent", "github").length;
+    const base = auditCount();
     dropTool(r, id);
     const s = await handleAgentWritesStatus(r.deps);
-    const sus = s.services[0]?.suspended.find((x) => x.toolId === id);
-    expect(sus?.nowSha12).toBeNull();
-    expect(sus?.reason).toBe("no longer listed");
+    expect(s.services[0]?.suspended).toEqual([]);
+    expect(s.services[0]?.notListed).toEqual([id]);
+    expect(s.services[0]?.approved).toBe(total);
     const row = listDoorApprovals(db, "agent", "github").find((x) => x.toolId === id);
-    expect(row?.suspendedAt).not.toBeNull();
-    expect(row?.suspendedSha256).toBeNull();
+    expect(row?.suspendedAt).toBeNull();
+    expect(auditCount()).toBe(base);
+    // when it returns with the approved definition it is simply ok again
+    r.listing = listingOf("github");
+    const back = await handleAgentWritesStatus(r.deps);
+    expect(back.services[0]?.notListed).toBeUndefined();
+    expect(back.services[0]?.suspended).toEqual([]);
   });
 
   test("a tool whose schema becomes unreadable is suspended the same way", async () => {
