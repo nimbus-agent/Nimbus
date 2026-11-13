@@ -7,6 +7,7 @@ import {
   getModelWriteEnablement,
   listModelWriteEnablement,
   modelWriteServices,
+  raiseWriteEnablementWave,
   removeModelWriteEnablement,
   setModelWriteEnablement,
   writesEnabledBy,
@@ -85,5 +86,41 @@ describe("enablement store", () => {
     expect(writesEnabledBy("github", 3).map((r) => r.toolId)).not.toContain("github_pr_merge");
     expect(writesEnabledBy("github", 4).map((r) => r.toolId)).toContain("github_pr_merge");
     expect(writesEnabledBy("mcp_x", 4)).toEqual([]);
+  });
+});
+
+describe("raiseWriteEnablementWave (the agent door's shared-wave writer)", () => {
+  function wholeRow(): unknown {
+    return db.query("SELECT * FROM connector_write_enablement WHERE service = 'github'").get();
+  }
+
+  test("creates a row with an EMPTY model approved set", () => {
+    raiseWriteEnablementWave(db, "github", 3, 10);
+    expect(wholeRow()).toEqual({
+      service: "github",
+      max_wave: 3,
+      enabled_at: 10,
+      approved_tool_ids: "[]",
+    });
+  });
+
+  test("raises 2 to 4 and never lowers 4 to 2", () => {
+    raiseWriteEnablementWave(db, "github", 2, 10);
+    raiseWriteEnablementWave(db, "github", 4, 20);
+    expect(getModelWriteEnablement(db, "github")?.maxWave).toBe(4);
+    raiseWriteEnablementWave(db, "github", 2, 30);
+    expect(getModelWriteEnablement(db, "github")?.maxWave).toBe(4);
+  });
+
+  test("never changes approved_tool_ids or enabled_at of an existing row", () => {
+    setModelWriteEnablement(db, "github", 2, 10, ["github_issue_create"]);
+    const before = wholeRow();
+    raiseWriteEnablementWave(db, "github", 2, 99);
+    expect(wholeRow()).toEqual(before);
+    raiseWriteEnablementWave(db, "github", 4, 99);
+    expect(wholeRow()).toEqual({
+      ...(before as Record<string, unknown>),
+      max_wave: 4,
+    });
   });
 });

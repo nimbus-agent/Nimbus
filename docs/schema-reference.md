@@ -1336,6 +1336,12 @@ CREATE TABLE connector_write_enablement (
 
 **SQLite write boundary.** Every production write goes through `dbRun` / `dbExec` / `dbStmtRun` in `packages/gateway/src/db/write.ts` (invariant `I14`). The wrappers translate `SQLITE_FULL` into a typed `DiskFullError`; the static-audit gate `D12` (`bun run audit:invariants`) fails the build on any direct `db.run(` / `db.exec(` outside the wrapper.
 
+## V97 — the agent door's approval list and the capture rebuild (Phase 28 AD3a-1, 2026-11-13)
+
+`connector_write_door_approval(service, door, tool_id, approved_at, definition_sha256, suspended_at, suspended_sha256, PRIMARY KEY (service, door, tool_id)) WITHOUT ROWID`: one row per write tool the owner approved by name for an outside agent (`door` is `'agent'`; no value CHECK, the store's type is the guard), with the SHA-256 of the tool's listed definition at approval (CHECK length 64). `suspended_at` is set once (sticky) when a later listing no longer matches; `suspended_sha256` is the hash observed then, or NULL when the tool was no longer listed or its schema could not be read; a hash without a time is refused by a CHECK. Written only by `connectors/connector-writes/door-approval-store.ts` (static D49(b)). No backfill: nothing is approved for any agent after an upgrade.
+
+`capture` is rebuilt (the V69 pattern; every column named on both sides of the copy, row count checked, the three indexes recreated, re-runnable by a `legacy` column probe): it gains `legacy INTEGER NOT NULL DEFAULT 0 CHECK (legacy IN (0, 1))` with `CHECK (legacy = 0 OR kind = 'action')`, and the error-code CHECK now reads `kind = 'action' AND state IN ('failed','rejected') AND length(error_code) <= 64`. Nothing writes `legacy = 1` or a code on a `rejected` row until AD3a-2.
+
 ## V96 — alert sources, deploy edge types and the one-shot regraph marker (Phase 10 IC2, 2026-11-12)
 
 Authoritative source: `packages/gateway/src/index/incident-alert-sources-v96-sql.ts`. V95 is LAN forward secrecy's `lan_peers.proto_version` (FS1); V96 chains after it.
