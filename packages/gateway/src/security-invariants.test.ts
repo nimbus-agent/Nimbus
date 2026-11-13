@@ -4250,9 +4250,7 @@ describe("I28 — MCP content enters only through the capture gate, in a fixed o
 
   test("act door: the dispatched payload's mcpToolId is the routing table's value; no delegate; policy overlay passed", async () => {
     const src = stripComments(await read("packages/gateway/src/ipc/capture-rpc.ts"));
-    expect(src).toMatch(
-      /const toolId = row\?\.toolId \?\? userMcpToolKeyForActionType\(actionType\)/,
-    );
+    expect(src).toMatch(/\(row\?\.toolId \?\? userMcpToolKeyForActionType\(actionType\)\)/);
     // AD3a-2a: routed by the write row (every row), never by the 47-type table; what may reach
     // this point is decided by the gate's verdict at submit and approval.
     expect(src).toMatch(/const row = agentDoorRow\(actionType\);/);
@@ -4262,7 +4260,7 @@ describe("I28 — MCP content enters only through the capture gate, in a fixed o
     expect(src).toContain("buildAgentWriteExecutor({");
     expect(src).toContain("policyHitl: w.policyHitl,");
     expect(src).toContain('origin: "agent",');
-    expect(src).toContain("proposer: agentProposerOf(provenance),");
+    expect(src).toContain("proposer: agentProposerOf(provenance, actionType),");
     expect(src).not.toContain("new ToolExecutor(");
     expect(src).not.toContain("provenanceConsent");
     expect(src).not.toContain("delegation");
