@@ -620,7 +620,7 @@ describe.skipIf(!sandboxAvailable)("a scaffolded user MCP over a real gateway", 
     const c = new TestIpcClient();
     opened.push(c);
     await c.connect(paths.socketPath);
-    expect(await c.call("session.declareKind", { kind })).toEqual({ kind });
+    expect(await c.call<{ kind: string }>("session.declareKind", { kind })).toEqual({ kind });
     const seen: string[] = [];
     c.onNotification("consent.request", (params) => {
       seen.push(String(params["prompt"] ?? ""));
@@ -731,11 +731,16 @@ describe.skipIf(!sandboxAvailable)("a scaffolded user MCP over a real gateway", 
     );
     // A third connection cannot read another connection's capture: the same answer as an absent id.
     expect(await refusal(other.c.call("capture.state", { id }))).toMatch(/ERR_CAPTURE_NOT_FOUND/);
-    expect(await other.c.call("capture.mine", {})).toEqual({ captures: [] });
+    expect(await other.c.call<{ captures: unknown[] }>("capture.mine", {})).toEqual({
+      captures: [],
+    });
     expect(await agent.call("capture.state", { id })).toMatchObject({ state: "proposed" });
     // The owner (cli) can decline it.
     const owner = await openConnection("cli", "human");
-    expect(await owner.c.call("approvals.decline", { id })).toEqual({ id, state: "rejected" });
+    expect(await owner.c.call<{ id: string; state: string }>("approvals.decline", { id })).toEqual({
+      id,
+      state: "rejected",
+    });
   }, 60_000);
 
   test("nimbus approvals <id> with no terminal exits 1 and sends nothing to the gateway", async () => {
