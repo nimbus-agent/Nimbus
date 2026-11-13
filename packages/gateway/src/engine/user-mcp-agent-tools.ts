@@ -108,6 +108,22 @@ export function readListedJsonSchema(listed: unknown): unknown {
 }
 
 /**
+ * The rebuilt JSON Schema {@link offeredInputSchema} wraps: the listed schema read back verbatim,
+ * `omit` removed from `properties` and `required`, then the structural allowlist rebuild; the
+ * permissive object schema when the listing cannot be read. Plain JSON, so it can cross IPC (the
+ * agent door's `capture.describe` returns it).
+ */
+export function offeredInputJsonSchema(
+  listed: unknown,
+  omit: readonly string[] = [],
+): Record<string, unknown> {
+  const json = readListedJsonSchema(listed);
+  if (json === undefined) return { ...PERMISSIVE_USER_MCP_INPUT_SCHEMA };
+  const trimmed = omit.length === 0 ? json : withoutProperties(json, omit);
+  return sanitiseUserMcpInputSchema(trimmed);
+}
+
+/**
  * `omit` names top-level properties the model must not be shown (a gateway-bound field, I54): they
  * are removed from `properties` and `required` BEFORE the allowlist rebuild.
  */
@@ -115,10 +131,7 @@ export function offeredInputSchema(
   listed: unknown,
   omit: readonly string[] = [],
 ): StandardSchemaWithJSON {
-  const json = readListedJsonSchema(listed);
-  if (json === undefined) return toStandardSchema({ ...PERMISSIVE_USER_MCP_INPUT_SCHEMA });
-  const trimmed = omit.length === 0 ? json : withoutProperties(json, omit);
-  return toStandardSchema(sanitiseUserMcpInputSchema(trimmed));
+  return toStandardSchema(offeredInputJsonSchema(listed, omit));
 }
 
 function withoutProperties(json: unknown, omit: readonly string[]): unknown {
