@@ -218,11 +218,17 @@ describe("CaptureStore per-session queries", () => {
     expect(deps.store.listBySession(MCP.clientId, 10).map((r) => r.id)).toEqual([b.id, a.id]);
     expect(deps.store.listBySession(MCP.clientId, 1)).toHaveLength(1);
   });
-  test("correction 1: V69 refuses an error_code on a rejected action", async () => {
+  test("V97 relaxed the V69 CHECK: a rejected action may carry an error_code (AD3a-2 writes one)", async () => {
+    const { id } = await submitCapture(deps, MCP, ACT);
+    deps.store.claimAction(id, clock);
+    expect(deps.store.finalizeAction(id, "rejected", { errorCode: "ERR_X" }, clock)).toBe(true);
+    expect(deps.store.get(id)?.errorCode).toBe("ERR_X");
+  });
+  test("V97 still refuses a code on an executed action", async () => {
     const { id } = await submitCapture(deps, MCP, ACT);
     deps.store.claimAction(id, clock);
     expect(() =>
-      deps.store.finalizeAction(id, "rejected", { errorCode: "ERR_X" }, clock),
+      deps.store.finalizeAction(id, "executed", { errorCode: "ERR_X" }, clock),
     ).toThrow();
   });
 });

@@ -2277,6 +2277,20 @@ describe("D32(a) — the capture table is named only by its store and its DDL", 
     ).toEqual([]);
   });
 
+  test("allows the V97 rebuild SQL, and the same SQL anywhere else is a violation", () => {
+    const rebuild = "DROP TABLE capture; ALTER TABLE capture_v97 RENAME TO capture";
+    expect(
+      checkCaptureTableConfinement([
+        file("packages/gateway/src/index/agent-door-v97-sql.ts", rebuild),
+      ]),
+    ).toEqual([]);
+    expect(
+      checkCaptureTableConfinement([
+        file("packages/gateway/src/connectors/connector-writes/agent-door.ts", rebuild),
+      ]),
+    ).toHaveLength(1);
+  });
+
   test.each([
     ["a read", "SELECT 1 FROM capture"],
     ["a write", "INSERT INTO capture (id) VALUES (?)"],

@@ -2075,6 +2075,8 @@ const D32_CAPTURE_TABLE_ALLOWED: readonly string[] = [
   "packages/gateway/src/mcp-sink/capture-store.ts",
   "packages/gateway/src/index/capture-v67-sql.ts",
   "packages/gateway/src/index/capture-action-v69-sql.ts",
+  // V97 rebuilds `capture` (the `legacy` flag, the relaxed error-code CHECK); DDL only.
+  "packages/gateway/src/index/agent-door-v97-sql.ts",
 ];
 
 function checkTableConfinement(
