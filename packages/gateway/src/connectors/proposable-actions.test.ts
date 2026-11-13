@@ -240,7 +240,7 @@ describe("extension service ids are not proposable on the act door", () => {
   });
 });
 
-test("D1: every Wave 4 row stays denied on the act door, in the class it had (nothing becomes proposable, the act door runs no before-read)", () => {
+test("D1: every Wave 4 row is denied in the baseline table, in the class it had (the table is the deprecation window's baseline since AD3a-2a; an agent reaches a Wave 4 row only on the approved basis, I58)", () => {
   const wave4 = CONNECTOR_WRITE_ROWS.filter((r) => r.wave === 4);
   expect(wave4).toHaveLength(50);
   const classes = new Map<string, string>();
@@ -317,7 +317,7 @@ describe("a bound row is never proposable on the MCP act door (D1c, spec 15.5)",
     }
   });
 
-  test("no bound row is in the proposable set, the routing table or the classification", () => {
+  test("no bound row is in the baseline table's proposable set, routing table or classification (never a legacy case; an agent reaches one only on the approved basis, I58)", () => {
     for (const r of bound) {
       expect(ACTION_PROPOSABILITY[r.actionType]?.kind, r.actionType).toBe("denied");
       expect(proposableWriteTool(r.actionType), r.actionType).toBeUndefined();

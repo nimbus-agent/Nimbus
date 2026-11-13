@@ -14,7 +14,7 @@
  * 2. `capture` is REBUILT (SQLite cannot alter a CHECK; the V69 precedent, every column named on both
  *    sides of the copy): a `legacy` flag (0 or 1, 1 only on an action) for AD3a-2's deprecation
  *    window, and the error-code CHECK now lets a `rejected` action carry a code (AD2 deferred
- *    that). Nothing writes `legacy = 1` or a code on a `rejected` row until AD3a-2. `capture` is no
+ *    that). Since AD3a-2a the capture gate writes `legacy = 1` and `finalizeAction` a code on a `rejected` row. `capture` is no
  *    FK parent and no trigger or view names it, so nothing cascades on the drop. Only this file, the
  *    V67/V69 files and `mcp-sink/capture-store.ts` name the table (static rule D32(a)).
  */

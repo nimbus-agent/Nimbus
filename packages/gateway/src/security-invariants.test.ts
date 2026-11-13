@@ -13824,7 +13824,7 @@ describe("I53 / I54 - D1c: a commit the model proposes is refused for a CI, hook
     );
   });
 
-  test("no bound row is proposable on the MCP act door (the classification table, until AD3: a bound proposal needs an approval surface that shows its diff or plan)", () => {
+  test("no bound row is a legacy case: the baseline table denies them, and an agent reaches one only on I58's approved basis (the owner approved it by name; the executor's prompt shows its diff or plan)", () => {
     for (const r of CONNECTOR_WRITE_ROWS.filter((row) => row.bound !== undefined)) {
       expect(ACTION_PROPOSABILITY[r.actionType]?.kind, r.actionType).toBe("denied");
     }
