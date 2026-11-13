@@ -157,7 +157,7 @@ describe("proposal tools", () => {
   });
 
   test("every write spec has all four annotations false; capture_status is read-only", () => {
-    for (const s of CAPTURE_TOOL_SPECS.filter((x) => x.kind !== "status")) {
+    for (const s of CAPTURE_TOOL_SPECS.filter((x) => x.kind !== "status" && x.kind !== "describe")) {
       expect(s.annotations).toEqual({
         readOnlyHint: false,
         destructiveHint: false,
@@ -324,10 +324,16 @@ describe("act door tools", () => {
         proposableActionTypes: ["jira.issue.create", "slack.message.post"],
       }),
     );
-    expect(on.map((t) => t.name)).toEqual(["capture_note", "propose_action", "capture_status"]);
-    expect(on.find((t) => t.name === "propose_action")?.description).toContain(
-      "jira.issue.create, slack.message.post",
-    );
+    expect(on.map((t) => t.name)).toEqual([
+      "capture_note",
+      "propose_action",
+      "describe_actions",
+      "capture_status",
+    ]);
+    // The type list moved to describe_actions: propose_action's text carries no list (AD3a-2b).
+    const proposeText = on.find((t) => t.name === "propose_action")?.description ?? "";
+    expect(proposeText).not.toContain("jira.issue.create");
+    expect(proposeText).not.toContain("slack.message.post");
   });
 
   test("action in kinds but actionEnabled false (e.g. policy mcp_action) → no propose_action", async () => {
@@ -337,7 +343,7 @@ describe("act door tools", () => {
     expect(t.map((x) => x.name)).toEqual(["capture_status"]);
   });
 
-  test("actionEnabled with no proposable types says so", async () => {
+  test("actionEnabled registers propose_action and describe_actions whatever the status lists (AD3a-2b)", async () => {
     const t = await captureToolsFor(
       depsWithStatus({
         enabled: true,
@@ -346,7 +352,8 @@ describe("act door tools", () => {
         proposableActionTypes: [7],
       }),
     );
-    expect(t.find((x) => x.name === "propose_action")?.description).toEndWith("(none configured).");
+    expect(t.map((x) => x.name)).toEqual(["propose_action", "describe_actions", "capture_status"]);
+    expect(t.find((x) => x.name === "propose_action")?.description).not.toContain("(none configured)");
   });
 
   test("sink off: no tools at all", async () => {
@@ -385,7 +392,7 @@ describe("act door tools", () => {
     expect(spec?.description).not.toContain("captures accept");
   });
 
-  test("the propose_action description says what the door accepts now, with no send-an-email example (AD3a-2a)", async () => {
+  test("the propose_action description points to describe_actions and appends no type list (AD3a-2b)", async () => {
     const t = await captureToolsFor(
       depsWithStatus({
         enabled: true,
@@ -396,11 +403,13 @@ describe("act door tools", () => {
     );
     const d = t.find((x) => x.name === "propose_action")?.description ?? "";
     expect(d).not.toContain("send an email");
-    expect(d).toContain("accepts now");
+    expect(d).toContain("describe_actions");
     expect(d).toContain("approved for outside agents");
     expect(d).toContain("Deprecated");
     expect(d).toContain("only a fixed code");
-    expect(d).toEndWith("github.pr.merge, slack.message.post.");
+    expect(d).not.toContain("github.pr.merge");
+    expect(d).not.toContain("Accepted action types on this machine");
+    expect(d).toEndWith(".");
   });
 
   test("capture_status says a rejected action may carry a code (AD3a-2a)", () => {
@@ -430,6 +439,66 @@ describe("act door tools", () => {
       state: "executed",
       outcomeRef: "https://x",
     });
+  });
+});
+
+describe("describe_actions (AD3a-2b)", () => {
+  const spec = () => CAPTURE_TOOL_SPECS.find((s) => s.name === "describe_actions");
+
+  test("is registered only with the act door and is read-only", async () => {
+    expect(spec()?.kind).toBe("describe");
+    expect(spec()?.annotations).toEqual({
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: false,
+      openWorldHint: false,
+    });
+    const off = await captureToolsFor(
+      depsWithStatus({ enabled: true, kinds: ["note", "action"], actionEnabled: false }),
+    );
+    expect(off.map((t) => t.name)).not.toContain("describe_actions");
+  });
+
+  test("with no arguments it sends an empty object, and actionTypes is passed through untouched", async () => {
+    const calls: Array<[string, unknown]> = [];
+    const d = depsRecording(calls, { "capture.describe": { actions: [], truncated: false } });
+    await spec()?.run(d, {}, () => "agent");
+    await spec()?.run(d, { actionTypes: ["github.pr.merge", "x".repeat(300)] }, () => "agent");
+    expect(calls).toEqual([
+      ["capture.describe", {}],
+      ["capture.describe", { actionTypes: ["github.pr.merge", "x".repeat(300)] }],
+    ]);
+  });
+
+  test("the result is one text block holding the reply's JSON, not wrapped in an I11 envelope", async () => {
+    const reply = {
+      actions: [{ actionType: "github.pr.merge", state: "approved", wave: 4 }],
+      truncated: false,
+    };
+    const d = depsRecording([], { "capture.describe": reply });
+    const out = await spec()?.run(d, {}, () => undefined);
+    expect(out?.content).toHaveLength(1);
+    expect(out?.content[0]?.type).toBe("text");
+    expect(JSON.parse(out?.content[0]?.text ?? "null")).toEqual(reply);
+    expect(out?.content[0]?.text).not.toContain("<tool_output");
+    expect(out).not.toHaveProperty("structuredContent");
+  });
+
+  test("a gateway refusal is an isError result carrying the code", async () => {
+    const { deps: d } = deps(async () => {
+      throw new Error("ERR_CAPTURE_RATE_LIMITED: too many describe attempts this hour");
+    });
+    const out = await spec()?.run(d, {}, () => undefined);
+    expect(out?.isError).toBe(true);
+    expect(out?.content[0]?.text).toContain("ERR_CAPTURE_RATE_LIMITED");
+  });
+
+  test("its description says what the reply holds and what describing can do", () => {
+    const d = spec()?.description ?? "";
+    expect(d).toContain("actionTypes");
+    expect(d).toContain("input schema");
+    expect(d).toContain("start");
+    expect(d).toContain("registered");
   });
 });
 

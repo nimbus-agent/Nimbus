@@ -371,6 +371,31 @@ describe("capture tool composition", () => {
     },
   );
 
+  test("tools/list carries describe_actions, read-only, only while the act door is on (AD3a-2b)", async () => {
+    for (const [actionEnabled, present] of [
+      [true, true],
+      [false, false],
+    ] as const) {
+      const client: IpcCallable = {
+        call: async <T>(m: string): Promise<T> =>
+          (m === "capture.status"
+            ? { enabled: true, kinds: ["note", "action"], actionEnabled }
+            : { kind: "mcp" }) as T,
+        disconnect: async () => {},
+      };
+      const editor = await connectEditor(
+        await buildMcpServerForGateway({ getClient: async () => client }),
+      );
+      const tools = (await editor.listTools()).tools;
+      const found = tools.find((t) => t.name === "describe_actions");
+      expect(found !== undefined, String(actionEnabled)).toBe(present);
+      if (found !== undefined) {
+        expect(found.annotations?.readOnlyHint).toBe(true);
+        expect(found.outputSchema).toBeUndefined();
+      }
+    }
+  });
+
   test("capture_note forwards the connected client's name as the label", async () => {
     const calls: Array<[string, unknown]> = [];
     const client: IpcCallable = {
