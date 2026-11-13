@@ -1,6 +1,7 @@
 # Phase 28 — The Agent Door
 
-Status: DRAFT for review (2026-11-13). Owner rulings OR-AD-1..5 and OR-ECO-8 are binding; do not reopen them.
+Status: DRAFT for review (2026-11-13). Owner rulings OR-AD-1..9 and OR-ECO-8 are binding; do not reopen them.
+Revision 2: the owner answered the four open questions the same day (OR-AD-6..9, § 2); the design and slices follow them.
 Date: 2026-11-13. Slot: S4 (the next project to start, OR-ECO-8). Roadmap: `docs/roadmap.md` § Phase 28 (all nine
 rows), § Direction, and the carried-in row *User-MCP write grants* (§ Carried into S4).
 Substrate mapped on `origin/main` at `165fa4353` (2026-11-13). Every `file:line` below was read in that tree.
@@ -18,7 +19,7 @@ can act outside it, and the product says so.
 Roadmap acceptance this project must meet (`docs/roadmap.md` § Phase 28):
 
 - (A1) With a write enabled and approved, an MCP client proposes it and the owner sees the same preview the model door
-  renders for the same input, asserted on the rendered text. -> AD1, AD2, AD3.
+  renders for the same input, asserted on the rendered text. -> AD1, AD2, AD3a.
 - (A2) A Wave 4 proposal is denied without the exact confirm text, on every approval surface. -> AD1 (executor), AD2
   (terminal). The desktop and ChatOps surfaces are later rows (OR-AD-1); "every approval surface" means every surface that
   exists when this phase closes, and § 8 says so.
@@ -47,6 +48,24 @@ Roadmap acceptance this project must meet (`docs/roadmap.md` § Phase 28):
 - **OR-AD-5 (2026-11-13) A changed definition suspends.** Any change to a tool's definition (a hash of its schema and
   description) suspends that tool for agents until the owner re-approves it by name. `nimbus connector writes status`
   lists what is suspended and why.
+- **OR-AD-6 (2026-11-13) Accept the self-approval bound; add friction.** Approvals only on an interactive TTY; no `--yes`;
+  typed confirmation for Wave 4; each kit writes the agent's deny rule for `nimbus approvals` where the agent supports one;
+  the README and every kit say plainly that an agent with a shell can still approve its own proposals until desktop
+  approval ships. (Answers Q1.) Where this lands: § 7.2, § 7.6, § 7.8, § 12.
+- **OR-AD-7 (2026-11-13) Full Wave 4 parity in the first release.** A Wave 4 row is offered after
+  `nimbus connector writes enable <svc> --wave 4 --door agent` and the owner's approval of the row by name, with the typed
+  confirmation and a readable before-state, as on the model door. (Answers Q2.) Where this lands: § 7.3, AD3a.
+- **OR-AD-8 (2026-11-13) Our own dual-era MCP server layer.** The owner rejected the upstream options. The layer is built in
+  `@nimbus-dev/sdk` (repo `nimbus-agent/nimbus-sdk`, MIT) and serves revision 2025-11-25 and the stateless 2026-07-28,
+  including `server/discover`, the `_meta` protocol fields and the `InputRequiredResult` multi-round-trip successor to
+  elicitation. The SDK is released; the CLI MCP adapter and the standalone connectors' consent path then consume it.
+  (Answers Q3.) Where this lands: § 7.1, AD6a, AD6b, AD6c.
+- **OR-AD-9 (2026-11-13) One release of deprecation, not an immediate major.** AD3a ships as a non-breaking `feat`: it applies
+  the per-door eligibility, but a legacy act-door proposal that would now be refused is still accepted, with a deprecation
+  warning in its response, in `nimbus approvals` and in `nimbus connector writes status`, and it is counted. AD3b, in the next
+  minor release or later, enforces. Mail sends: AD3a warns, AD3b refuses. (Answers Q4.) Consequence recorded in § 11: under
+  the repo's `!` rule AD3b DOES carry `feat(gateway)!:`, because a user who ignored the warning must act; the ruling postpones
+  the major by one release and does not avoid it.
 
 ## 3. What exists today (verified)
 
@@ -114,8 +133,10 @@ already has a second gateway-set field, `provenance`, so a `proposer` field foll
   requirements), the tool id is in the AGENT approved set for that service (new, V97), the definition hash matches
   (D-AD-9), the org policy allows BOTH `mcp_action` and `connector_write_model_access` (monotonic-stricter; no new
   capability), and Terraform and Kubernetes rows have an approved directory or pair. It runs at submit (cheap, no reads),
-  at approval start and before dispatch; the executor's own gates still run. `ACTION_PROPOSABILITY`'s table is no longer
-  consulted for first-party types.
+  at approval start and before dispatch; the executor's own gates still run. From AD3b `ACTION_PROPOSABILITY`'s table is no
+  longer consulted for first-party types. During the deprecation window (AD3a, OR-AD-9) a proposal that `agentOffered`
+  refuses is still accepted when it is a legacy case (D-AD-15); every other rule, including `modelWriteRefusal`'s refusals
+  that the old door also applied, still holds.
 - **D-AD-6 One refusal set.** The agent door uses `modelWriteRefusal` (messaging, ChatOps, broadcast, quick action, remote
   content, null optionals, calendar zone, KB, commit paths and credential look, IAM capability, and the before-state
   guards), not `actDoorRefusal`. The act door's extra rules (Linear `assigneeId` always refused, KB page update refused
@@ -156,9 +177,30 @@ already has a second gateway-set field, `provenance`, so a `proposer` field foll
   toast), never request text.
 - **D-AD-13 Label source.** The label shown is `--agent <kit>` from the owner-written server config when present
   (`labelSource: "kit"`), else `clientInfo.name` (`"declared"`). Neither is trusted for any decision; the prompt says which.
-- **D-AD-14 Off by default.** The door stays behind the `[mcp_sink]` act switch and `mcp_action` policy, and the agent
-  approved set is empty on upgrade, so nothing is proposable until the owner runs `enable --door agent`. That command is the
-  opt-in; its prompt lists the rows by name, wave and typed-confirm flag, exactly as the model door's enable prompt does.
+- **D-AD-14 Opt-in by name.** The door stays behind the `[mcp_sink]` act switch and `mcp_action` policy, and the agent
+  approved set is empty on upgrade. The owner's opt-in is `enable --door agent`; its prompt lists the rows by name, wave and
+  typed-confirm flag, exactly as the model door's enable prompt does. From AD3b nothing is proposable without it; during the
+  AD3a window the legacy cases of D-AD-15 still are, with a warning.
+- **D-AD-15 The deprecation window (OR-AD-9).** AD3a defines a *legacy proposal*: one `agentOffered` refuses ONLY because
+  the owner has not approved the tool id for agents (no agent approval, or no `--wave` high enough in the enable) or because
+  the row is one of the seven mail sends, AND which the old door accepted (the type is `proposable` in the unchanged
+  `ACTION_PROPOSABILITY` table and `actDoorRefusal` passes). It is stored, flagged `legacy` (a column in the V97
+  migration), counted, and answered with a fixed deprecation line in the `propose_action` result, at the top of the
+  `nimbus approvals` list and detail, in the approval prompt, and in `nimbus connector writes status` (count of legacy
+  proposals in the last 30 days, by type). Everything else is enforced from AD3a: a hash mismatch (a tool the owner HAS
+  approved, now changed) is suspended at once, a never-offered row other than the mail sends was never proposable and stays
+  refused, a Wave 4 row is never a legacy case (the old door had none), and a legacy proposal still runs through the one
+  executor path, so it gets the before-state, the guards and the proposer block. A legacy proposal for a mail send is
+  approved on the owner's terminal like any other; nothing about the send changes in AD3a. AD3b deletes the legacy case, the
+  column's writer and the table consult. AD3b may merge only after a release containing AD3a has been published (a manual
+  check recorded in the AD3b PR).
+- **D-AD-16 The IPC `kind` bound, and what is tightened.** The connection declares its own kind
+  (`session.declareKind`, `ipc/server/client-kind.ts:37-46`) and `CAPTURE_ROLE_BY_KIND` maps `unknown` to the owner role
+  (`capture-client-policy.ts:12-21`). Declaring `cli` costs a hostile local process nothing, so tightening `unknown` would not
+  stop it; it would only break older clients that never declare a kind. Decision: AD2 tightens ONLY the new `approvals.*`
+  methods (they need a declared `cli` or `ui` kind; they are new, so no existing client breaks). The existing `captures.*`
+  role mapping is NOT changed, and `captures accept` on an action, kept as an alias, keeps its present roles. This is
+  recorded as a stated bound (§ 12), not as a change; it needs no owner question because nothing existing breaks.
 
 ## 5. Non-goals
 
@@ -166,7 +208,7 @@ already has a second gateway-set field, `provenance`, so a `proposer` field foll
 - No mail send for agents, ever (OR-AD-3); no write the model door does not offer.
 - No authentication of the MCP client (an unverified label only); no network MCP transport (stdio only, as today).
 - No auto-approval of any kind: no standing rule, no delegate, no `--yes` for an agent proposal.
-- No new connector write rows; AD1-AD5 need no connectors release (AD6c is a release of `nimbus-mcp-servers`).
+- No new connector write rows; AD1-AD5 need no connectors release (AD6c is a release of `nimbus-mcp-servers`, AD6a a release of `@nimbus-dev/sdk`).
 - No protection against an agent that uses its own credentials or shell (§ 12).
 
 ## 6. Slices (one PR each, in order)
@@ -175,18 +217,21 @@ already has a second gateway-set field, `provenance`, so a `proposer` field foll
 | --- | --- | --- |
 | AD1 | Nimbus | Executor generalisation: `origin: "agent"` and `proposer`, `isOutsideOrigin`, `newDoorExecutor`, the proposer block in the executor's prompt, delete `provenanceConsent`/`actConsentDisplay`; amend I20, I28, I53, I54, I55, D39(e), D40(b) |
 | AD2 | Nimbus | Queue and one-step approval: `approvals.list/get/approve/decline`, `nimbus approvals`, ownership on `capture.state`, `capture.mine`, per-connection cap, count-only notification, LAN denylist entry (acceptance A3, A4) |
-| AD3 | Nimbus | Per-door eligibility: V97 table, `enable/status --door agent`, `agentOffered`, the definition hash and suspension (OR-AD-5), mail sends removed, parity with the model door, delete `actDoorRefusal`; the new invariant and D49. The breaking change (§ 11) |
+| AD3a | Nimbus | Per-door eligibility, non-breaking `feat` (OR-AD-9): V97 (door table, `legacy` flag), `enable/status --door agent` incl. `--wave 4` (OR-AD-7), `agentOffered`, the definition hash and suspension (OR-AD-5), parity with the model door; legacy proposals still accepted with a deprecation warning and counted (D-AD-15); the new invariant (with its stated legacy exception) and D49 |
+| AD3b | Nimbus | Enforcement, `feat(gateway)!:`, in the next minor release or later: legacy case deleted, mail sends refused, the `ACTION_PROPOSABILITY` first-party consult, `actDoorRefusal` and `createActionDestinationRefusal` deleted, the invariant's exception retired (§ 11) |
 | AD4 | Nimbus | Proof: door and proposer in the audit row and the egress `sourceId`, `nimbus prove --by-proposer`, audit views, completeness check |
 | AD5 | Nimbus | User MCP servers through the door: the `--agent` grant, per-call approval display, definition hash for `mcp_*`, user-MCP write grants; amend I42 and I15 |
-| AD6 | Nimbus | MCP revision 2026-07-28 in the CLI server adapter, dual-era, via SDK v2 `serveStdio` (gated on Q3) |
-| AD6c | nimbus-mcp-servers | `shared/consent-kit.ts`: the `InputRequiredResult` (MRTR) successor to elicitation, dual-era; a connectors release (gated on Q3) |
+| AD6a | nimbus-sdk | A dual-era MCP server layer in `@nimbus-dev/sdk` (new entry point `./mcp-server`, dependency-free, wire implemented in-house): 2025-11-25 and 2026-07-28, `server/discover`, the `_meta` fields, `InputRequiredResult`; spec, conformance corpus and a published release (OR-AD-8) |
+| AD6b | Nimbus | The CLI MCP adapter (`packages/cli/src/mcp`) on the new SDK; `@modelcontextprotocol/sdk` leaves `packages/cli` if nothing else needs it |
+| AD6c | nimbus-mcp-servers | `shared/consent-kit.ts` on the new SDK: the `InputRequiredResult` successor to elicitation, dual-era; a connectors release |
 | AD7 | Nimbus | Kits: `nimbus agent install|status`, steering rules and hooks per agent, the real-agent matrix, the bounds copy on the docs page and README |
 | AD8 | registry repo + Nimbus docs | The Developer role pack in the official registry; README and security-page copy for the release that ships the door |
 
-Order dependencies: AD2 needs AD1; AD3 needs AD2; AD4 needs AD1 (its fields) and may land before AD3; AD5 needs AD3; AD6
-follows AD3 (its adapter carries `propose_action` and `describe_actions`) and is otherwise independent; AD6c is independent
-of the gateway and follows the Q3 decision; AD7 needs AD3 (and AD6 if it has shipped, so the kit's server entry is whichever
-adapter ships); AD8 needs AD7.
+Order dependencies: AD2 needs AD1; AD3a needs AD2; AD4 needs AD1 (its fields) and may land before AD3a; AD5 needs AD3a;
+AD3b needs AD3a AND a published release that contains it (D-AD-15), and may land after AD7 and AD8; AD6a is independent of
+the gateway work and can start at once; AD6b needs the AD6a release and AD3a (its adapter carries `propose_action` and
+`describe_actions`); AD6c needs the AD6a release; AD7 needs AD3a (and AD6b if it has shipped, so the kit's server entry is
+whichever adapter ships); AD8 needs AD7. The release that ships AD3a carries the deprecation notice (§ 11).
 
 Numbers re-derived from `origin/main` at `165fa4353`: the schema is at V96 (`runner-v96.test.ts` exists), so this spec says
 **V97 (next free at merge)**; static rules run D10-D48, so **D49 (next free at merge)**; invariants run I1-I56. The
@@ -195,7 +240,7 @@ merge, expected I58)**. Numbers follow merge order.
 
 ## 7. Design
 
-### 7.1 MCP revision 2026-07-28 (AD6, AD6c): from the primary sources
+### 7.1 MCP revision 2026-07-28 (AD6a, AD6b, AD6c): from the primary sources
 
 Read from modelcontextprotocol.io on 2026-11-13:
 
@@ -229,47 +274,109 @@ Read from modelcontextprotocol.io on 2026-11-13:
 - MRTR (<https://modelcontextprotocol.io/specification/2026-07-28/basic/patterns/mrtr>): a server MUST NOT send
   `inputRequests` the client did not declare capability for (no `elicitation` capability, no `elicitation/create`).
 
-**SDK.** The TypeScript SDK v2 line implements this revision
-(<https://ts.sdk.modelcontextprotocol.io/v2/migration/support-2026-07-28>): packages `@modelcontextprotocol/server`
-(`McpServer`, `createMcpHandler`, `serveStdio` from `@modelcontextprotocol/server/stdio`), `@modelcontextprotocol/node`,
-`@modelcontextprotocol/client`. `serveStdio(factory)` serves 2026-07-28 and also 2025-era clients unless
-`{ legacy: 'reject' }`; a hand-built `Server` on `StdioServerTransport` serves only the 2025 protocol. A tool handler
-returns `inputRequired({ inputRequests: { id: inputRequired.elicit({...}) } })` and reads
-`acceptedContent(ctx.mcpReq.inputResponses, id, schema)` on the retry; on a 2025-era connection a shim turns the embedded
-request into a real `elicitation/create`, so one handler serves both eras (`legacyShim: false` disables it).
-**UNVERIFIED: whether v2 is a stable release.** A web search found a release note describing the first beta as "SDK v2 with
-support for the MCP 2026-07-28 specification revision", one blog saying 2.0.0 shipped stable on 2026-07-28, and one article
-naming 2.1.0; the official page states neither a status nor a minimum version. The CLI pin today is
-`@modelcontextprotocol/sdk` 1.32.0, which declares 2025-11-25 and cannot speak 2026-07-28, so the upgrade is a dependency
-swap (new package names), not a bump. Decision input for the owner: Q3.
+**Why we build the layer (OR-AD-8).** The owner rejected the upstream options. The upstream TypeScript SDK v2 line does
+implement this revision (<https://ts.sdk.modelcontextprotocol.io/v2/migration/support-2026-07-28>: `@modelcontextprotocol/server`
+with `serveStdio`, `createMcpHandler`, `inputRequired`), but its release status is UNVERIFIED (a release note calls the first
+beta "SDK v2 with support for the MCP 2026-07-28 specification revision", one blog says 2.0.0 shipped stable on 2026-07-28,
+one article names 2.1.0; the official page states no status) and it is a package rename. The CLI pin today,
+`@modelcontextprotocol/sdk` 1.32.0, declares 2025-11-25 and cannot speak 2026-07-28. The layer is built in our own SDK; the
+upstream v2 page is used only as a reference for what a dual-era `serveStdio` and an MRTR handler API look like.
 
-**AD6 design.** `packages/cli/src/mcp/adapter.ts` builds the server with `serveStdio(() => buildMcpServer(...))`. The tool
-specs (`CAPTURE_TOOL_SPECS`, the agent tools, the read tools) are SDK-neutral already (zod schemas and `runTool`); the
-migration touches `buildMcpServer`, the transport line and the client-label accessor. Differences to handle:
-(a) with no `initialize` there is no `getClientVersion()`; the label comes from `_meta` `.../clientInfo` of each request, so
-`clientLabel` is per call (`run(deps, args, clientLabel)` already takes a thunk), and on a legacy connection it is the
-`initialize` `clientInfo`. (b) `session.declareKind {kind:"mcp"}` (`adapter.ts:263`) is per connection to the gateway, not to
-the MCP client, and is unchanged. (c) `tools/list` must be deterministic (spec SHOULD) and carries `ttlMs`; because
-`captureToolsFor` decides the tool set from live gateway state, the factory is called per connection, the set is re-read
-per `tools/list`, and `ttlMs` is 0 (the owner can disable the door mid-session). (d) A gateway that is down yields no write
-tools (unchanged: a write tool is never offered on a guess). (e) Nimbus's own MCP server never needs MRTR: it asks the
-agent's client for nothing mid-call (approval is on the owner's terminal, not through the agent's client), which is the point
-of the queue.
+**Dependency rule of the SDK (read in `C:\gitrep\nimbus-sdk`, read only).** Its `CLAUDE.md` § Conventions says: "Dependency-free
+at runtime. No `dependencies` in `package.json`. If you need a helper, inline it — never add a runtime dep to the published
+surface." It also keeps the published surface from importing `@modelcontextprotocol/sdk` or `zod` (the connector-kit's
+`ZodObjectSchema` is a structural type, and the scaffold templates that do use those packages are typechecked only in separate
+CI jobs that install them). Decision: the layer does NOT depend on the upstream MCP SDK, not even as a peer; it implements the
+wire itself. That is practical: stdio MCP is newline-delimited JSON-RPC 2.0, and the SDK already ships the NDJSON line reader
+and framing under `./ipc`; the layer adds the request router, the two eras, `_meta` handling, `server/discover`, the tool
+registry and MRTR on top. Tool input schemas are plain JSON Schema objects (2020-12 keywords, which the new revision allows),
+not zod; callers holding zod schemas convert before registering (the CLI does this with `z.toJSONSchema`; the connectors do not
+need to). Sampling and roots are not implemented (the revision deprecates them). Streamable HTTP is not implemented (Nimbus
+serves MCP over stdio only); the module is a transport-neutral core plus a stdio binding, so HTTP can be added later.
+
+**AD6a design (nimbus-sdk).** A new TypeScript-only entry point `@nimbus-dev/sdk/mcp-server` (the seventh `exports` entry),
+`@moduleStability experimental` until a connector release has consumed it (RFC-0015 tiers), a normative spec at
+`docs/spec/mcp-server/v1/` (the layout `signing` and `diagnostics` use) and a conformance corpus. Surface, in outline:
+`createMcpServer({ name, version, title? })`, `server.tool({ name, description, inputSchema, annotations?, handler })`,
+`serveStdio(server, { input, output, legacy: "serve" | "reject" })`, and a `ctx` passed to handlers with `ctx.era`
+(`"modern" | "legacy"`), `ctx.clientInfo`, `ctx.clientCapabilities`, `ctx.protocolVersion`, `ctx.inputResponses`,
+`ctx.requestState`, plus `inputRequired({ inputRequests, requestState })` with `inputRequired.elicit({...})`. Behaviour:
+
+1. Era selection is per connection, from how the client opens: a first request carrying
+   `_meta["io.modelcontextprotocol/protocolVersion"]` is modern and stateless; `initialize` selects legacy semantics for the
+   stdio process (negotiating 2025-11-25 or an earlier version the layer lists). A dual-era server serves both on one process,
+   as the spec's compatibility matrix allows; `legacy: "reject"` answers `initialize` with an error naming the supported
+   versions, as the spec says a modern-only server SHOULD.
+2. Modern requests: validate the `_meta` protocol version, else `UnsupportedProtocolVersionError` (`-32022`, `data.supported`,
+   `data.requested`); read `clientCapabilities` and `clientInfo` per request; answer `server/discover` (supported versions,
+   capabilities, identity); put `resultType: "complete"` on every result and `serverInfo` in `_meta`; `tools/list` results carry
+   `ttlMs` and `cacheScope` in a deterministic order; no `ping`, no `logging/setLevel`, no session state.
+3. Legacy requests: `initialize` / `notifications/initialized`, `ping`, per-connection capabilities, results without
+   `resultType`.
+4. MRTR: a handler returning `inputRequired(...)` yields a modern `InputRequiredResult` (`resultType: "input_required"`). The
+   layer refuses (as a handler error) one that names a request the client did not declare capability for (spec server rule 7)
+   or carries neither `inputRequests` nor `requestState` (rule 6). On a legacy connection the layer performs the old
+   server-to-client `elicitation/create` itself, awaits the reply and re-invokes the handler with `inputResponses`, so one
+   handler serves both eras (the shim; a per-server option disables it). `requestState` is opaque to the layer, which offers
+   `sealState(key, payload, { principal, ttlMs, requestDigest })` and `openState(...)` (HMAC-SHA-256 through the SDK's existing
+   `./crypto` module, no new dependency) so a handler need not invent integrity protection; a failed open is a protocol
+   error, never a partial result.
+5. Errors follow the spec's allocation (`-32020..-32099` reserved for MCP, `-32000..-32019` implementation-defined, resource
+   not found `-32602`). A thrown handler error becomes `isError: true` content with the message the handler chose and never a
+   stack trace. Unknown methods return `-32601`.
+
+**Conformance (AD6a).** A normative corpus under `docs/spec/mcp-server/v1/conformance/`, built from the published specification
+and not from our implementation. (a) Vectors transcribed from the examples in the 2026-07-28 pages (the
+`UnsupportedProtocolVersionError` example with `-32022` and `supported: ["2026-07-28","2025-11-25"]`, the MRTR
+`InputRequiredResult` example and its retry, `server/discover`, the `_meta` request and result shapes, the rows of the
+compatibility matrix) and from the 2025-11-25 pages (the `initialize` handshake, `tools/list`, `tools/call`,
+`elicitation/create`). (b) The published `schema.json` of both revisions, vendored with provenance (URL, retrieval date,
+SHA-256) and a hand-written structural checker limited to the messages the layer emits (required fields, `resultType`, error
+code ranges), because the repo's dependency-free rule makes a general JSON Schema validator hand-written work; a dev-only script
+re-fetches the schemas and reports a hash change, run by a maintainer and not by CI. The runner drives every vector as a CLIENT
+against the server over in-memory NDJSON, in BOTH eras: each tool-level vector (list, call, elicit, error) runs once with a
+modern opener and once with a legacy opener and the results must be equal after removing the era envelope (`resultType`,
+`serverInfo`, `ttlMs`); era-specific vectors (discover, `-32022`, `initialize`, the stdio probe fallback) run in the era they
+belong to. Negative vectors: a modern request with no protocol version or with an unsupported one; `inputRequests` for an
+undeclared capability; a tampered `requestState`; a `requestState` presented to a request it was not issued for; an
+`initialize` after a modern request on the same process (the process stays modern); a request before `initialize` in legacy.
+The SDK repo's rule applies ("a new conformance corpus needs a `docs/conformance-coverage.json` entry for every binding"), so
+Python and Go each record a reason they do not claim it (the layer concerns a TypeScript process: the gateway spawns Bun
+connectors). A separate CI job, like the scaffold jobs, installs the real upstream `@modelcontextprotocol/sdk` 1.32.0 client
+(and the v2 client once a stable one exists) and runs interop smoke tests against a server built on the layer (list, call,
+elicitation through the legacy shim); it is the only place the upstream package is installed. The api-surface, stability and
+coverage guards apply as for any entry point. Release: `feat(sdk): ...` through release-please (a minor), published to npm
+before AD6b and AD6c start.
+
+**AD6b design (this repo).** `packages/cli/src/mcp/adapter.ts` builds its server with `createMcpServer` and `serveStdio` from
+the new entry point. The tool specs (`CAPTURE_TOOL_SPECS`, the agent tools, the read tools) keep their zod schemas, converted to
+JSON Schema at registration by one helper, with a test that each converted schema equals a snapshot of what the upstream SDK
+1.32.0 produced before the swap. Differences to handle: (a) in the modern era there is no `initialize`, so the label comes from
+`ctx.clientInfo` on each request (`run(deps, args, clientLabel)` already takes a thunk), and on a legacy connection from
+`initialize`; `--agent <kit>` overrides it (D-AD-13). (b) `session.declareKind {kind:"mcp"}` (`adapter.ts:263`) is per connection
+to the gateway, not to the MCP client, and is unchanged. (c) `tools/list` is deterministic and carries `ttlMs: 0`, because
+`captureToolsFor` decides the tool set from live gateway state and the owner can disable the door mid-session. (d) A gateway
+that is down yields no write tools (unchanged: a write tool is never offered on a guess). (e) Nimbus's own MCP server never
+returns `inputRequired`: it asks the agent's client for nothing mid-call (approval is on the owner's terminal, not through the
+agent's client), which is the point of the queue. The existing adapter tests run unchanged against both eras.
 
 **AD6c (nimbus-mcp-servers).** `shared/consent-kit.ts` asks write consent through `server.server.elicitInput` (`:116`) after
-checking `getClientCapabilities().elicitation` (`:273`). On 2026-07-28 that server-initiated request is no longer
-supported ("Servers MUST send server-to-client requests using the MRTR pattern"). The successor: the write tool returns
-`inputRequired` with an `ElicitRequest` for the confirmation and an AEAD-protected `requestState` binding the tool name, a
-digest of the arguments, the principal and a short expiry; the retry re-validates all four and only then performs the write,
-and a changed argument digest re-asks. A server-side nonce makes the consent single-use (the spec says the state alone does
-not guarantee that). The kit keeps the elicitation path for 2025-era connections (the SDK shim does this when the handler is
-written once). This is the standalone-mode path (a client talks to a connector directly, the connector's own consent) and
-is independent of the gateway door. UNVERIFIED: which SDK v2 helpers sign `requestState`; AD6c's first task reads them.
+checking `getClientCapabilities().elicitation` (`:273`). On 2026-07-28 that server-initiated request is no longer supported
+("Servers MUST send server-to-client requests using the MRTR pattern"). With the AD6a layer the consent kit becomes a handler
+helper: the write tool returns `inputRequired` with an `ElicitRequest` for the confirmation and a sealed `requestState` binding
+the tool name, a digest of the arguments, the principal and a short expiry; the retry re-opens the state, re-validates all
+four and only then performs the write, and a changed argument digest re-asks. A server-side nonce makes the consent
+single-use (the spec says the state alone does not guarantee that). Legacy connections get the old elicitation through the
+layer's shim, so the tool code is written once. Scope: the standalone-mode path (a client talks to a connector directly, the
+connector's own consent), independent of the gateway door. UNVERIFIED in this read: how the 94 connectors' standalone entry
+point starts its server today; AD6c's first task maps it and either moves the shared entry helper onto the layer or states which
+connectors keep the upstream server until a follow-up. Connectors the gateway spawns keep speaking to it as now, since the
+gateway approves their writes itself.
 
 ### 7.2 The queue and one-step approval (AD2)
 
 **Submit (agent side).** `propose_action { actionType, input, summary }` keeps its shape. `submitCapture` runs as today with
-`classifyAction` replaced (AD3) by `agentOffered` and `modelWriteRefusal`; a refusal returns a fixed code and reason (the
+`classifyAction` replaced (AD3a; the legacy case of D-AD-15 until AD3b) by `agentOffered` and `modelWriteRefusal`; a refusal returns a fixed code and reason (the
 existing `ERR_CAPTURE_*` family plus `ERR_AGENT_TOOL_SUSPENDED`). The tool result says: proposed `<id>`, NOT run, the owner
 approves with `nimbus approvals <id>`, poll `capture_status`. The agent can see only `proposed`, `executing`, `executed` (+ the
 `outcomeRef` link when the service returned one), `rejected`, `failed` (+ a fixed `errorCode`) and `expired`; never the payload
@@ -308,34 +415,45 @@ check is a denylist and a new namespace is reachable by default. No HTTP route (
 **Wave 4.** `requestConfirmedApproval` is the only path (D41). The CLI's consent handler already collects typed text for a
 confirm request; `approvals <id>` adds nothing that could echo it.
 
-### 7.3 Eligibility, per-door lists and the hash (AD3)
+### 7.3 Eligibility, per-door lists and the hash (AD3a, AD3b)
 
 **V97 (next free at merge).** `connector_write_door_approval(service TEXT, door TEXT, tool_id TEXT, approved_at INTEGER,
 definition_sha256 TEXT NOT NULL, PRIMARY KEY (service, door, tool_id))`, with `door = 'agent'` (the model door keeps its V84
 column; `door` is open for later doors). One writer, `connectors/connector-writes/door-approval-store.ts`; D49(b) pins that
 the table identifier appears only there and in its DDL file (the D33(b) pattern). The shared wave enable (V83) stays one row
 per service: `enable <svc> --door agent --wave N` creates or raises it, and `disable <svc>` removes both lists. Backfill:
-none. After upgrade the agent set is empty, so every existing act-door use stops (OR-AD-2); `status` says so once, with the
-exact command.
+none for the door table. The same migration adds `capture.legacy INTEGER NOT NULL DEFAULT 0` (written only by the capture
+store, set only for a legacy proposal, D-AD-15). After upgrade the agent set is empty. In AD3a that means every existing
+act-door use is a *legacy proposal*: still accepted, with the deprecation warning, counted (OR-AD-2 stands: the owner's
+re-approval by name is what ends the warning; AD3b is when use without it stops). `status` says so once, with the exact
+command.
 
 **CLI.** `nimbus connector writes enable <svc> --door agent [--wave N] [--approve <pattern>...]` shows the enable prompt
-listing ONLY rows `agentOffered` would accept, each with its wave and whether it needs a typed confirmation. `status` gains
-an `agent` column per service and a `suspended` section (D-AD-9). Rows withheld by `MODEL_NEVER_OFFERED_REASONS` show their
-reason; the mail-send reason text becomes "mail sends are never offered to agents or the model".
+listing ONLY rows `agentOffered` would accept, each with its wave and whether it needs a typed confirmation. A Wave 4 row
+is listed only for `--wave 4` (OR-AD-7): `nimbus connector writes enable github --wave 4 --door agent` then the owner's
+approval of each row by name, exactly the model door's flow, and the row still needs its typed confirmation and a readable
+before-state at approval (a Wave 4 proposal whose before-state cannot be read is refused before any prompt,
+`WAVE4_BEFORE_REFUSAL`). `status` gains an `agent` column per service, a `suspended` section (D-AD-9) and, in AD3a, a
+`legacy` line (count of legacy proposals in the last 30 days by type, with the AD3b date once known). Rows withheld by
+`MODEL_NEVER_OFFERED_REASONS` show their reason; the mail-send reason text becomes "mail sends are never offered to agents
+or the model".
 
 **Parity (row 1).** The agent door offers exactly the rows for which `isModelOfferableRow(row)` holds and the owner approved
-the tool id for agents. AD3 asserts parity by test over every row: `agentOffered(e, row) <=> offeredUnder(e, row) &&
-approvedForAgent(row)`. (`docs/roadmap.md` Phase 9.7 states the model is offered 108 of 124 rows, 16 never offered.)
+the tool id for agents. AD3a asserts parity by test over every row: `agentOffered(e, row) <=> offeredUnder(e, row) &&
+approvedForAgent(row)`. (`docs/roadmap.md` Phase 9.7 states the model is offered 108 of 124 rows, 16 never offered.) The
+legacy case is outside this predicate and tested separately.
 
-**Retired.** `ACTION_PROPOSABILITY` for first-party types, the `not_yet_offered` class, `actDoorRefusal`,
-`createActionDestinationRefusal` and `provenanceConsent` are deleted; the user-MCP branch of `classifyActionType` moves to
-AD5. Nothing is left that can propose a write the model door could not.
+**Retired in AD3b.** The legacy case, `ACTION_PROPOSABILITY` for first-party types, the `not_yet_offered` class,
+`actDoorRefusal` and `createActionDestinationRefusal` are deleted; the user-MCP branch of `classifyActionType` moves to AD5.
+(`provenanceConsent` is already gone from AD1.) Nothing is left that can propose a write the model door could not.
 
 **The new invariant (I5x).** "An outside agent's proposal dispatches only as an `origin: "agent"` action through the door
 executor, for a service the owner enabled to that wave, for a row the owner approved for agents by name, whose current
 definition hash equals the stored one, while policy allows both `mcp_action` and `connector_write_model_access`, never a row
 in the never-offered set, re-derived at submit, at approval and before dispatch; a changed definition suspends the tool until
-re-approved by name (static D49)." Wiring: `connectors/connector-writes/{agent-door,door-approval-store,definition-hash}.ts`,
+re-approved by name (static D49)." AD3a states one exception in the invariant's text, the way I2 states its own: "until
+AD3b, a legacy proposal (D-AD-15) is accepted without the owner's approval by name, flagged, counted and warned"; AD3b
+deletes that clause in the same commit that deletes the code (retire = delete). Wiring: `connectors/connector-writes/{agent-door,door-approval-store,definition-hash}.ts`,
 `ipc/approvals-rpc.ts`, `engine/run-ask.ts`.
 
 **Static D49.** (a) `buildAgentWriteExecutor` is named only in `engine/run-ask.ts` and its one wiring site; (b) the
@@ -343,7 +461,8 @@ re-approved by name (static D49)." Wiring: `connectors/connector-writes/{agent-d
 `ipc/approvals-rpc.ts`'s `ActDeps` (never from a payload, an IPC param or the capture gate) and `origin: "agent"` is
 constructed only there; (d) the executor and `connectors/registry.ts` both call `isOutsideOrigin(`; (e) `approvals.approve`
 calls `agentOffered(` before `buildAgentWriteExecutor(`. Textual, with the usual stated bound (D33(c)/D42): a dynamically
-composed name evades the scan; the behavioural tests are authoritative.
+composed name evades the scan; the behavioural tests are authoritative. (f) in AD3a, the `legacy` flag is written only by
+`submitCapture`'s legacy branch and read only by the status, approvals and prompt renderers; AD3b removes (f) with the branch.
 
 ### 7.4 Proof and audit (AD4)
 
@@ -418,13 +537,18 @@ door's action type (for example `gh pr merge` -> `github.pr.merge`, `terraform a
 owner commands `nimbus approvals`, `nimbus connector writes` and `nimbus captures`, which an agent must not run). Claude Code
 gets a hook `deny` with the reason "use Nimbus propose_action <type>"; Codex gets `forbidden` or `prompt` rules with the same
 justification; Cursor and VS Code get an instructions block (and a hook where AD7 verifies one). The table is data, tested
-for every entry against a real row; a command with no door equivalent is not listed.
+for every entry against a real row; a command with no door equivalent is not listed. **Per OR-AD-6, every kit that can
+express a deny rule for `nimbus approvals` writes it** (Claude Code: the hook `deny`, and a `permissions.deny` entry once its
+syntax is verified; Codex: a `forbidden` `prefix_rule`; VS Code: a `preToolUse` hook once its location is verified); Cursor,
+where no enforcement was found, gets the instruction text and `nimbus agent status` reports it as `guidance only`. The deny
+covers `nimbus approvals` for every subcommand, so the agent cannot approve, decline or list.
 
 **What each agent can still do outside the door** (stated on each kit's page and printed by `nimbus agent status`): run any
 command its harness allows, with the credentials already on the machine (`gh`, `aws`, `kubectl`, cloud logins, SSH keys,
 tokens in the environment), write files and reach the network. A rule matching a command prefix does not see a command inside
 a script, another spelling, an alias or a language runtime's HTTP call. In particular an agent with a shell can run
-`nimbus approvals <id>` itself (§ 12, Q1).
+`nimbus approvals <id>` itself and, until desktop approval ships, can still approve its own proposals (OR-AD-6; § 12). Every
+kit's page opens its "outside the door" section with that sentence.
 
 **Acceptance A6, and how it is verified.** At least two kits are verified against the REAL agent and the result is a
 published matrix (docs page *Agent kits*, one row per kit: agent version, OS, MCP listed and callable, a proposal reaches the
@@ -452,8 +576,9 @@ scores it with `nimbus eval` like any pack. Nothing in this repo beyond docs.
 One sentence set in one source file, rendered into the README paragraph, the security page and each kit page, with a test that
 all of them contain it: "The agent door guards writes that pass through Nimbus. An agent that holds its own credentials, or
 can run commands, can act without it. The ledger records the actions Nimbus dispatches, not network traffic. The proposer's
-name is not verified." The README headline does not change before the phase ships (§ Direction); the copy lands in the release
-that ships AD3.
+name is not verified. Until desktop approval ships, an agent that can run commands in your terminal can still approve its own
+proposals." (OR-AD-6: the README and every kit state the last sentence plainly.) The README headline does not change before the
+phase ships (§ Direction); the copy lands in the release that ships AD3a, and the headline waits for AD3b.
 
 ## 8. Later rows (not built here)
 
@@ -490,11 +615,11 @@ field (a caller-supplied bound field is still refused before any read). **I55** 
 | TOCTOU, proposal to approval | Everything is re-derived at approval (`agentOffered`, hash, policy, grants, refusals, configured-ness) and the before-state is read then; CAS claim with expiry; the executor re-checks per phase | The window from the owner's "yes" to the connector call is the model door's stated bound |
 | Stale before-state | Read at approval, never stored with the proposal; Wave 4 fails closed when unreadable; 5 s cap | A cold start may exceed 5 s and the write is refused (existing bound) |
 | Polling another agent's ids | `capture.state` answers only for the submitting connection (D-AD-11); unguessable ids; `capture_status` returns state, expiry, link and code only | A restarted MCP server loses its own handle (the owner still sees the row) |
-| Agent calls owner-only IPC | The adapter exposes only its tools; `approvals.*` and `captures.*` need a `cli` or `ui` connection; `unknown` no longer owns approvals; the namespaces are LAN-forbidden | A process that opens the IPC socket and declares `cli` is the owner as far as the gateway can tell (the kind is the connection's claim); the same as `captures accept` today (§ 12, Q1) |
+| Agent calls owner-only IPC | The adapter exposes only its tools; the NEW `approvals.*` methods need a declared `cli` or `ui` connection (`unknown` is refused there); the namespaces are LAN-forbidden | A process that opens the IPC socket and declares `cli` is the owner as far as the gateway can tell (the kind is the connection's claim, so `captures.*` still maps `unknown` to the owner role, D-AD-16); the same as `captures accept` today (§ 12) |
 | Definition-hash bypass (a server changes tools between listing and call) | Hash checked at submit, at approval and immediately before dispatch within one `toolsEpoch`; first-party connectors are inside the signed binary and change only with a gateway release | A user-MCP server that returns the same listing and behaves differently at call time; controlled by the sandbox and the per-call approval of the raw input |
 | Before-read as a probe | Reads run only when the owner opens a proposal, only the row's reader type, only a read of the SAME connector, ledgered, 5 s, shown to the owner only | The agent chooses the read's target (an id inside `input`) on a service the owner enabled; the model door has the same bound |
 | Injection into the owner (escape sequences, fake prompt lines) | Every agent string passes `sanitisePreviewText` and `visibleLine`; the proposer block follows the verified preview; invisible and bidi characters are shown escaped | None found |
-| Agent self-approval through its shell | TTY required, no `--yes`, kit deny rules for `nimbus approvals`, `connector writes`, `captures` | An agent that can allocate a pty can run `nimbus approvals <id>` and type the confirm text. Q1 |
+| Agent self-approval through its shell | TTY required, no `--yes`, kit deny rules for `nimbus approvals`, `connector writes`, `captures` | An agent that can allocate a pty can run `nimbus approvals <id>` and type the confirm text. Accepted by OR-AD-6; stated in the README and every kit |
 | The agent holds its own credentials | Out of scope by construction | The headline bound (§ 12) |
 | Downgrade through a legacy MCP client | Dual-era server; `describe_actions` and `propose_action` behave identically in both eras | A legacy `initialize` `clientInfo` is as unverified as before |
 | `requestState` replay in AD6c | AEAD, principal, expiry and argument digest, per the spec's security section; a server nonce for single use | Single use rests on the consent kit's nonce, not on the state |
@@ -516,18 +641,31 @@ Each slice also runs `bun run preflight:fast` and updates the five core docs and
   (`[llm]` empty; the approvals module imports nothing from `llm/`; A4); `capture.state` from a second connection is
   `ERR_CAPTURE_NOT_FOUND`; the per-connection cap; the `unknown` kind is refused; every `approvals.*` method against
   `checkLanMethodAllowed`; no `--yes`; non-TTY refused.
-- **AD3.** The parity table test over every row; mail sends refused with the never-offered reason; each refusal in
-  `modelWriteRefusal` once through the agent door; the V97 migration (fresh and upgrade; empty set after upgrade); a tool whose
-  listed description changes by one byte is suspended at submit, at approval and before dispatch, `status` lists it with both
-  hash prefixes, and re-approval by name clears it; a policy lockoff of either capability empties the door; D49 present and
-  clean with a red-proof per clause.
+- **AD3a.** The parity table test over every row; each refusal in `modelWriteRefusal` once through the agent door; a Wave 4
+  row is offered only after `--wave 4 --door agent` and approval by name, and refused before any prompt when its before-state
+  cannot be read (OR-AD-7); the V97 migration (fresh and upgrade; empty set after upgrade; `capture.legacy` default 0); the
+  legacy cases: an unapproved tool and a mail send are still accepted, flagged, counted, with the deprecation line in the
+  `propose_action` result, in `approvals` list and detail, in the prompt and in `status`, and still run through the one
+  executor path; a never-offered non-mail row, a Wave 4 row, and a hash mismatch on an approved tool are NOT legacy cases and
+  are refused; a tool whose listed description changes by one byte is suspended at submit, at approval and before dispatch,
+  `status` lists it with both hash prefixes, and re-approval by name clears it; a policy lockoff of either capability empties
+  the door (legacy included); D49 present and clean with a red-proof per clause.
+- **AD3b.** The AD3a legacy tests invert: every former legacy case is refused with its fixed reason, mail sends with the
+  never-offered reason; the legacy column's writer, `actDoorRefusal`, `createActionDestinationRefusal` and the table consult no
+  longer exist (a census); the invariant's exception clause and D49(f) are gone; the PR title carries `!`.
 - **AD4.** One audit row and one egress row per dispatch, both naming door and proposer, both chains verify with the
   unchanged formula; `prove --by-proposer` counts; the completeness mismatch prints `indeterminate`.
 - **AD5.** A `--agent` user-MCP tool is proposed, approved and called; a `--model`-only server's tool is refused; a hash change
   suspends; the write-grant validator refuses a link, a root and a Nimbus folder; the prompt shows the grants.
-- **AD6.** A scripted client speaking 2026-07-28 (`server/discover`, then `tools/list` and `tools/call` with `_meta`) and one
-  speaking 2025-11-25 (`initialize`) against the same server process: both list the same tools and both complete a
-  `propose_action`; an unsupported version returns `-32022` with the supported list; the label comes from `_meta` clientInfo.
+- **AD6a.** In nimbus-sdk: the conformance corpus of § 7.1 run in both eras (equal results after removing the era envelope),
+  the negative vectors, the `sealState`/`openState` round trip and tamper cases, the coverage-matrix entries for the other
+  bindings, the api-surface and stability guards, and the upstream-client interop CI job; the release is published before
+  AD6b and AD6c start.
+- **AD6b.** In this repo, the adapter's existing tests run against both eras of the new layer; a scripted 2026-07-28 client
+  (`server/discover`, then `tools/list` and `tools/call` with `_meta`) and a scripted 2025-11-25 client (`initialize`) against
+  one process both list the same tools and both complete a `propose_action`; an unsupported version returns `-32022` with the
+  supported list; the label comes from `ctx.clientInfo`, overridden by `--agent`; every converted JSON Schema equals the
+  pre-swap snapshot; and `describe_actions` is identical in both eras.
 - **AD6c.** In nimbus-mcp-servers: a write tool returns `input_required` with `requestState`; a tampered, expired or
   other-argument state is rejected; a legacy client gets the elicitation path; no consent means no write.
 - **AD7.** `agent install` dry-run output is the exact write set (golden per kit); install is idempotent; drift detection; the
@@ -538,20 +676,39 @@ Each slice also runs `bun run preflight:fast` and updates the five core docs and
 
 ## 11. Release and compatibility
 
-AD3 is a breaking change for anyone who proposes mail sends through the act door or relies on its static list: (1) the seven
-mail sends can no longer be proposed over MCP; (2) every previous act-door use stops until the owner runs
-`nimbus connector writes enable <svc> --door agent` and approves the rows by name; (3) `captures accept` on an action behaves
-as `approvals approve`. By the repo's test ("what does an existing user have to change to keep working?") this qualifies: the
-PR title carries `!`, the PR description has a `BREAKING CHANGE:` paragraph with the three points and the exact commands,
-`docs/CHANGELOG.md` and the release notes lead with it, and the first run after upgrade prints a one-time notice from
-`status`. It spends a major; OR-AD-2 and OR-AD-3 already chose the outcome (Q4 asks only about the wrapper).
+**AD3a, release N: not breaking.** Its PR is `feat(gateway):`. A user who changes nothing sees every previous act-door use
+keep working, plus a deprecation warning in the `propose_action` result the agent reads, at the top of `nimbus approvals`, in
+the approval prompt and in `nimbus connector writes status`, with the exact fix (`nimbus connector writes enable <svc> --door
+agent`, then approve the rows by name) and a count of the proposals that would have been refused. The notes of release N lead
+with the deprecation, name the mail sends, and say which release enforces if known. AD1 and AD2 are also non-breaking:
+`origin: "agent"`, the proposer block and `approvals` add behaviour and `captures accept` on an action keeps working as an
+alias.
+
+**AD3b, release N+1 or later: breaking, and it carries the `!`.** By the repo's test ("what does an existing user have to
+change to keep working?"), a user who ignored the warning must act: (1) the seven mail sends can no longer be proposed over
+MCP; (2) every act-door proposal without an agent approval by name is refused. So the PR title is `feat(gateway)!:`, the PR
+description has a `BREAKING CHANGE:` paragraph with those two points and the exact commands, `docs/CHANGELOG.md` and the
+release notes lead with it, and the first run after upgrade prints a one-time notice from `status`. The owner's ruling
+(OR-AD-9) postpones the major by one release; it does not avoid it, and it spends the major the repo's rule says is permanent.
+AD3b does not merge until a release containing AD3a is published (D-AD-15), so no user meets the break without a prior
+warning.
 
 ## 12. Stated bounds
 
 - The door guards writes that pass through it. An agent with its own credentials, a shell or a network can act without it.
 - The terminal approval is only as strong as the owner's terminal: a program that can open the IPC socket as the owner, or
-  allocate a pty and run `nimbus approvals`, can approve. TTY-only, no `--yes` and the kits' deny rules reduce accident, not
-  malice. The structural fix is an approval surface the agent's process cannot reach (a desktop native dialog, ChatOps; § 8).
+  allocate a pty and run `nimbus approvals`, can approve. TTY-only, no `--yes`, the typed confirmation for Wave 4 and the
+  kits' deny rules for `nimbus approvals` reduce accident, not malice (OR-AD-6). Until desktop approval ships, an agent with a
+  shell can still approve its own proposals; the README and every kit say so. The structural fix is an approval surface the
+  agent's process cannot reach (a desktop native dialog, ChatOps; § 8).
+- The gateway IPC `kind` is the connection's own claim (`session.declareKind`), and `CAPTURE_ROLE_BY_KIND` maps `unknown` to
+  the owner role (`capture-client-policy.ts:12-21`). A local process that can open the socket is therefore the owner for
+  `captures.*`, and can declare `cli` for anything else. AD2 tightens only the NEW `approvals.*` methods (a declared `cli` or
+  `ui` kind is required); it does not change the `captures.*` mapping, because that would break clients that never declare a
+  kind (older CLI and editor-extension builds) and would stop no hostile process, for which declaring `cli` is free (D-AD-16).
+  A stated bound, not a change.
+- During the AD3a window, legacy act-door proposals (D-AD-15) bypass the owner's approval by name; they still need the owner's
+  approval at the prompt. That window ends at AD3b.
 - The proposer label is unverified in prompts, audit rows and reports.
 - The definition hash covers the listed schema and description, not behaviour; a user-MCP server can change behaviour under
   one listing. First-party connectors are covered by the signed binary and the pin.
@@ -559,38 +716,25 @@ PR title carries `!`, the PR description has a `BREAKING CHANGE:` paragraph with
 - Steering rules are best-effort in every agent (prefix matching; scripts and aliases evade it). No Cursor enforcement was
   found in the documentation read. The VS Code native config path, Claude Code `permissions.deny` syntax and the Codex and
   VS Code hook locations are UNVERIFIED until AD7.
-- The MCP facts in § 7.1 come from the published specification read on 2026-11-13; SDK v2's release status is UNVERIFIED.
+- The MCP facts in § 7.1 come from the published specification read on 2026-11-13. The in-house layer is checked against
+  vectors transcribed from that specification and against the vendored schemas, not against a third party's reference
+  implementation; the interop CI job covers the upstream 1.32.0 client only, so a later upstream client may differ. Upstream
+  SDK v2's release status is UNVERIFIED and does not affect the plan.
+- The layer implements stdio only and no sampling or roots; a client that requires either is not served.
 - Textual static rules (D49) evade a dynamically composed name; the behavioural tests are authoritative.
 - Live connector reply shapes are not verified against live accounts (as in Phase 9.7).
 
-## Open owner questions
+## Owner questions (resolved)
 
-**Q1. Can an agent with a shell approve its own proposal, and what do we accept?** The terminal is the first surface
-(OR-AD-1), but a coding agent with shell access runs as the same OS user and can open the gateway socket or allocate a pty and
-type the confirmation itself. Options: (A) accept the bound for this phase: TTY-only approvals, no `--yes`, the kits deny
-`nimbus approvals`, `connector writes` and `captures`, and the docs say it plainly; (B) additionally require, for Wave 4
-only, approval on a surface the agent cannot reach, so Wave 4 proposals wait for the desktop or ChatOps rows (stricter, but
-Wave 4 over MCP then does not work until those rows ship); (C) add an owner passphrase prompt on `approvals`, a second factor
-stored hashed in the Vault (an agent that reads the owner's terminal could still capture it). **Recommendation: A for this
-phase, with B revisited when the desktop row lands.**
+The four questions of revision 1 were answered by the owner on 2026-11-13. Each answer is a binding ruling in § 2; none is
+open. No new owner question arose from the revision.
 
-**Q2. Should an outside agent be able to propose Wave 4 rows in the first release?** The roadmap says full parity and the typed
-confirmation applies, but Q1 bites hardest on merges, deploys and applies. Options: (A) full parity from AD3 (Wave 4 behind
-`--wave 4` and the same typed text); (B) AD3 ships Waves 2-3 for agents and Wave 4 follows in a later slice after the door has
-run for a while; (C) full parity, but the Wave 4 enable for agents needs its own explicit wording in the enable prompt.
-**Recommendation: A; the existing `--wave 4` prompt is already row by row and by name, so C adds no safety.**
-
-**Q3. Which MCP SDK for AD6?** v2 implements 2026-07-28, but its stable status is UNVERIFIED and it is a package rename, not a
-bump. Options: (A) wait for a stable v2 and do AD6 and AD6c only then (the door ships on SDK 1.32.0, serving 2025-11-25
-clients, which every current agent speaks); (B) adopt the v2 beta now behind the dual-era `serveStdio`, pinned exactly;
-(C) hand-roll a minimal modern-era shim in front of the 1.32.0 server (no new dependency, but we own protocol code).
-**Recommendation: A; if no stable v2 exists when AD7 lands, re-decide then.**
-
-**Q4. The `!` and the major.** AD3 meets the repo's own test for a breaking change and spends a major. Options: (A) ship it as
-`feat(gateway)!:` with the notes of § 11 (honest, one release); (B) keep the old act-door types working for one release behind
-a deprecation notice and break in the next (two doors in parallel, contrary to D-AD-3); (C) ship the break behind a config
-switch that defaults to the new behaviour (no major, but a switch that restores mail sends undoes OR-AD-3).
-**Recommendation: A.**
+| Question (revision 1) | Ruling | Where it landed |
+| --- | --- | --- |
+| Q1. Can an agent with a shell approve its own proposal, and what do we accept? | OR-AD-6: accept the bound, add friction (TTY only, no `--yes`, typed confirm for Wave 4, kit deny rules for `nimbus approvals`, plain statements in the README and every kit). Related bound found while mapping (the IPC `kind` is the connection's claim; `unknown` maps to the owner role) is stated, and only the new `approvals.*` methods are tightened | § 7.2, § 7.6, § 7.8, § 12, D-AD-16 |
+| Q2. Wave 4 for agents in the first release? | OR-AD-7: full parity; `--wave 4 --door agent`, approval by name, typed confirm and a readable before-state | § 7.3, AD3a |
+| Q3. Which MCP SDK? | OR-AD-8: our own dual-era layer in `@nimbus-dev/sdk`, wire implemented in-house (the SDK is dependency-free), released, then consumed by the CLI and by `consent-kit.ts` | § 7.1, AD6a, AD6b, AD6c |
+| Q4. The `!` and the major | OR-AD-9: one release of deprecation; AD3a non-breaking, AD3b `feat(gateway)!:` one release later or more | § 11, D-AD-15, AD3a, AD3b |
 
 ## Review log
 
