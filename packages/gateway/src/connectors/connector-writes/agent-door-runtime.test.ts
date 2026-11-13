@@ -658,3 +658,50 @@ function approvedHashOf(row: ConnectorWriteRow): string {
   return getDoorApproval(db, "agent", serviceOf(row.actionType), row.toolId)
     ?.definitionSha256 as string;
 }
+
+describe("verdict: the remaining denial classes and the scope facts", () => {
+  test("a type two rows share with no tie-break is unroutable", () => {
+    const base = ROW("github_issue_create");
+    const a = { ...base, toolId: "fake_a", actionType: "fake.thing" };
+    const b = { ...base, toolId: "fake_b", actionType: "fake.thing" };
+    const d = door({ rows: [a, b] });
+    expect(d.verdict("fake.thing")).toEqual({ kind: "denied", class: "agent_unroutable" });
+  });
+
+  test("an enabled row with no template is not offerable", () => {
+    const { preview: _drop, ...rest } = ROW("github_issue_create");
+    const bare: ConnectorWriteRow = { ...rest, toolId: "fake_bare", actionType: "fake.bare" };
+    raiseWriteEnablementWave(db, "fake", 3, 1);
+    expect(door({ rows: [bare] }).verdict("fake.bare")).toEqual({
+      kind: "denied",
+      class: "agent_not_offerable",
+    });
+  });
+
+  test("a scope-gated write whose credential lacks its scope is denied no_scope; a throwing scope reader makes no claim", () => {
+    allow("gmail_thread_archive");
+    const lacking = door({ grantedScopes: () => ({ gmail: "x" }) });
+    expect(lacking.verdict("gmail.thread.archive")).toEqual({
+      kind: "denied",
+      class: "agent_no_scope",
+    });
+    const throwing = door({
+      grantedScopes: () => {
+        throw new Error("vault");
+      },
+    });
+    expect(throwing.verdict("gmail.thread.archive")).toEqual({
+      kind: "proposable",
+      basis: "approved",
+    });
+  });
+
+  test("a grant read that throws counts as no grant (fail closed)", () => {
+    allow("iac_terraform_apply");
+    db.run("DROP TABLE connector_write_iac_grant");
+    expect(door().verdict("iac.terraform.apply")).toEqual({
+      kind: "denied",
+      class: "agent_no_scope",
+    });
+  });
+});
