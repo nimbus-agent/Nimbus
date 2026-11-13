@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794574223106,
+  "lastUpdate": 1794602147089,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
-            "name": "nimbus-release-bot[bot]",
-            "username": "nimbus-release-bot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "f48ec86b4c3310752ff50374fffbbfd86a30fa3f",
-          "message": "chore: release main (#1345)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>2.21.0</summary>\n\n##\n[2.21.0](https://github.com/nimbus-agent/Nimbus/compare/v2.20.0...v2.21.0)\n(2026-08-26)\n\n\n### Features\n\n* **connectors:** consume @nimbus-dev/connectors from npm\n([#1343](https://github.com/nimbus-agent/Nimbus/issues/1343))\n([0b6ff53](https://github.com/nimbus-agent/Nimbus/commit/0b6ff53aac924d3f4251c74785d58fead450f9b8))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
-          "timestamp": "2026-08-26T21:41:02+03:00",
-          "tree_id": "8e5e09ecd3e23123be1253244ff21c565d9de29c",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/f48ec86b4c3310752ff50374fffbbfd86a30fa3f"
-        },
-        "date": 1787770366022,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 323.9856643999959,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 329.65696204998966,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 192.89709274999768,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "5e457bd0e03d53499e703f71a0d97a90295e5ac8",
+          "message": "feat(gateway): the owner's per-door list now decides what outside agents can propose, with a one-release window for earlier proposals (agent door AD3a-2a) (#2001)\n\nAgent door AD3a-2a (Phase 28): the owner's per-door approval list now\ndecides what an outside agent may propose. It follows AD3a-1 (#1999),\nwhich recorded the list without enforcing it.\n\n## Deprecation, read this first\n\nEverything the act door accepted before this change keeps working for\none release, with a warning. That is the 47 action types of the earlier\ntable, the seven mail sends included. Each such proposal is flagged as\nlegacy and warned about in four places: the `propose_action` reply,\n`nimbus approvals`, the approval prompt, and `nimbus connector writes\nstatus`, which counts the proposals of the last 30 days that a later\nrelease will refuse. To keep a type working, approve it for agents by\nname: `nimbus connector writes enable <service> --door agent`. Mail\nsends will not be offered to agents after the window; drafts stay\nallowed. A later release, AD3b, enforces this; no date is set.\n\n## What changes\n\n1. **Two bases.** A first-party proposal is accepted as `approved` or as\nlegacy, and refused otherwise.\n- `approved` means the service is enabled up to the row's wave, the tool\nis on the agent list by name and not suspended, policy allows both\n`mcp_action` and `connector_write_model_access`, and any directory or\ncluster grant the row needs exists. Never-offered rows and the Slack DM\nrow are never approved.\n- A legacy proposal needs `mcp_action` only and runs the earlier door's\nrefusals unchanged, per owner ruling OR-AD-15.\n2. **Re-derived at submit and at approval.** The approval and the tool's\ndefinition are checked once more after the owner answers, before the\nexecutor records the answer. A veto there dispatches nothing.\n3. **Suspension.** A tool whose listed definition changed, or can no\nlonger be read, is suspended with one audit row and refused with\n`ERR_AGENT_TOOL_SUSPENDED` until the owner approves it again by name. A\ntool that is only missing from a listing is refused while it is missing,\nwith no mark, per OR-AD-14. A suspended tool is never treated as legacy.\n4. **New reach, for approved tools only.** 108 writes, 41 of them Wave\n4, and the bound rows: the two multi-file commits, the Terraform and\nCloudFormation applies, and the Kubernetes apply. Each runs on the\nexecutor's own prompt, with the typed preview, the before-state, the\ngateway-rendered diff or plan, and typed confirmation for Wave 4. A Wave\n4 write whose before-state cannot be read is refused before any prompt.\n5. **Approval rules for the approved basis.** Only `nimbus approvals\n<id>` can approve it, and only a person; the raw `captures.accept`\nmethod refuses it. One builder now sets both the human-only flag and the\nconsent wrapper.\n6. **Stored code.** A rejected action keeps a fixed code that the agent\ncan read. The owner's reason text never reaches the agent.\n7. **Payload cap.** A bound row's proposal may be up to 320 KiB so that\na legal commit can be queued; every other proposal keeps the 64 KiB cap.\n8. **Enable and status.** A replacing enable names the approvals it\nremoves. The live status check runs only for a connection that declared\n`cli` or `ui`. The model line no longer reads as enabled when nothing is\napproved for the model. Status names a policy lockoff. The \"not enforced\nyet\" notice is gone.\n9. **Invariant I58** and static rule D49 clauses a, c, d, e and f, with\nwiring, docs and tests in one commit. I57 stays reserved for the\nincident-engine stream.\n\n## Stated bounds\n\n- After the owner answers, only the approval and the definition are\nre-checked. A policy lockoff or a destination binding that changes while\na prompt is open does not stop that one write.\n- The definition hash covers the write tool's own listing, not its\nbefore-state reader or prepare tools; the gate checks only that those\nare listed.\n- The credential-scope check for the Gmail thread archive runs at the\nenable prompt and in status. At the gate it is enforced through the\ndefinition check, because the connector does not list that tool without\nthe scope. This rests on the code, not on a live connector.\n- The fixed refusal classes and `capture.status` tell an agent which\ncondition failed and which types are approved on configured services.\nThis is by design. A stored reject code reveals one bit about the\ntarget.\n- A proposal for an approved tool can start that connector to list its\ntools, bounded by the attempt limiter.\n- The client kind and the answer source are the client's own claims on\nthe local socket.\n- An agent cannot reach the Slack DM row, per OR-AD-10. The Obsidian\nappend needs the model-door approval, per OR-AD-12. A Nimbus upgrade\nthat changes a first-party definition suspends that tool, per OR-AD-13.\n\n## Not in this PR\n\n`describe_actions`, the method and MCP tool that show an agent the\nschemas of what it may propose, is AD3a-2b. The release PR stays held\nuntil that merges too.\n\n## Verification\n\nRun locally on Windows, one at a time:\n\n- `bun run typecheck`, `typecheck:tests` with 0 new errors, `bun run\npreflight:fast`: passed.\n- Gateway `ipc`, `mcp-sink`, `connector-writes`, `engine`, `index`, the\nwhole `security-invariants.test.ts` and `test/integration/mcp-sink` in\none run: 12001 pass, 0 fail.\n- `test/e2e/user-mcp.e2e.test.ts` against a real gateway with the\nsandbox helper built: 18 pass, 1 skip that is CI-only.\n- CLI `mcp` and `commands`: 5025 pass. `scripts/structure-audit`: 1583\npass. `audit:invariants`, `audit:status-drift`, `audit:doc-refs`: clean.\n`cargo test allowlist_`: 40 pass.\n- Not run locally: the whole-repo suites, the Linux coverage floor, and\nthe desktop Captures test.\n\nAn adversarial read-only review traced twelve properties end to end and\nfound no blocking issue; its findings are fixed in the last commit.\nRed-proofs were recorded for each conjunct of the eligibility predicate,\nthe suspended-before-legacy order, the listing being the last submit\ncheck, the approval-time re-checks, the post-answer veto and its\napproved-only condition, the human-only rule, the fail-closed unbound\nlisting, the legacy window's limit to the 47 types, the payload cap, the\nno-basis refusal, and each D49 clause.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Outside agents can propose connector writes only when the specific\ntool is approved and required access is enabled. Changed tool\ndefinitions suspend approval until renewed.\n* Approval and status views identify legacy proposals, deprecation\nnotices, missing tools, and policy restrictions. Previously accepted\nproposal types remain available during a temporary compatibility window.\n* Approved writes require human confirmation. Action payloads can now be\nup to 320 KiB; notes remain limited to 64 KiB.\n* **Bug Fixes**\n  * Rejected actions now include fixed error codes where applicable.\n* **Documentation**\n* Updated guidance for agent approvals, legacy proposals, status\nreporting, and security invariants.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Sonnet 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-13T20:25:23Z",
+          "tree_id": "c4ca0b47ffc9115467295456c84d5c13e577d14a",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/5e457bd0e03d53499e703f71a0d97a90295e5ac8"
+        },
+        "date": 1794602141592,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 277.4322819999996,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 278.3186582499944,
             "unit": "ms"
           }
         ]
