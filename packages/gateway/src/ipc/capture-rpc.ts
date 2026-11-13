@@ -105,6 +105,9 @@ export function createActionDestinationRefusal(
   };
 }
 
+/** The fixed text when the write's credential instance cannot be established (echoes no stored value). */
+const CREDENTIAL_UNVERIFIED_REASON = "the credential the write would use could not be verified";
+
 /** The stored row's provenance as the executor's gateway-set proposer (all of it UNVERIFIED). */
 function agentProposerOf(p: ActionProvenance): AgentProposer {
   return {
@@ -147,7 +150,7 @@ export function buildActDeps(
       try {
         await w.previewCredentialFor?.refresh?.(serviceOf(actionType));
       } catch {
-        return { status: "rejected" };
+        return { status: "rejected", reason: CREDENTIAL_UNVERIFIED_REASON };
       }
       // Phase 28 AD1: the SAME door maker as the model door (no delegate, no standing rule, the
       // before-state runner), so the executor's own prompt (the typed preview with the target's
@@ -173,7 +176,9 @@ export function buildActDeps(
         proposer: agentProposerOf(provenance),
         payload: { mcpToolId: toolId, input },
       });
-      return out.status === "ok" ? { status: "ok", result: out.result } : { status: "rejected" };
+      return out.status === "ok"
+        ? { status: "ok", result: out.result }
+        : { status: "rejected", reason: out.reason };
     },
   };
 }

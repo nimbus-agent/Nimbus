@@ -304,6 +304,8 @@ import { XaiProvider } from "../llm/xai-provider.ts";
 import { reconcileActionsAtBoot } from "../mcp-sink/capture-act.ts";
 import { resolveCaptureCapability } from "../mcp-sink/capture-capability.ts";
 import type { CaptureGateDeps } from "../mcp-sink/capture-gate.ts";
+import { newCaptureId } from "../mcp-sink/capture-id.ts";
+import { proposalsWaitingToast } from "../mcp-sink/capture-toast.ts";
 import { CaptureAttemptLimiter, CaptureRefusalCounter } from "../mcp-sink/capture-rate-limit.ts";
 import { CaptureStore, FINISHED_RETENTION_MS } from "../mcp-sink/capture-store.ts";
 import { SessionMemoryStore } from "../memory/session-memory-store.ts";
@@ -3936,8 +3938,13 @@ export async function assemblePlatformServices(
     capability: () => resolveCaptureCapability(mcpSinkLoad, policyGate.enforced()),
     limiter: new CaptureAttemptLimiter(),
     refusals: new CaptureRefusalCounter(),
-    newId: () => `cap_${randomUUID()}`,
+    newId: newCaptureId,
     now: () => Date.now(),
+    // Agent door AD2: a count-only toast (a number and fixed text, never a request-derived string).
+    onActionProposed: (pending) => {
+      const t = proposalsWaitingToast(pending);
+      void showIgnoringFailure(notifications, t.title, t.body);
+    },
     classifyAction: (t) => classifyActionType(t, actClassifyCtx),
     isServiceConfigured,
     listProposableActionTypes: () =>

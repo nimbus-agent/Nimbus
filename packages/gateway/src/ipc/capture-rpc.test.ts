@@ -395,6 +395,7 @@ describe("buildActDeps (act door)", () => {
     const { act } = wiring(d, false);
     expect(await act.execute("slack.message.post", { text: "hi" }, PROV)).toEqual({
       status: "rejected",
+      reason: "User declined consent gate.",
     });
     expect(d).toEqual([]);
   });
@@ -603,7 +604,10 @@ describe("buildActDeps: the typed preview for a templated proposable row (F5)", 
         },
       );
       const out = await h.act.execute("github.issue.comment.create", INPUT, PROV);
-      expect(out).toEqual({ status: "rejected" });
+      expect(out).toEqual({
+        status: "rejected",
+        reason: "the credential the write would use could not be verified",
+      });
       expect(h.prompts).toEqual([]);
       expect(h.dispatched).toEqual([]);
     });
@@ -836,7 +840,6 @@ describe("B1 act door: every proposable B1 type shows its typed preview (Task 4)
 });
 
 describe("B1 act door: the destination refusal, real messagingDestinationRefusal (Task 4b, OR1/OR2)", () => {
-  const MCP = { clientId: "m", kind: "mcp" as const };
   const OWNER = { clientId: "o", kind: "cli" as const };
   let policy: EnforcedPolicy | undefined;
 
@@ -880,9 +883,11 @@ describe("B1 act door: the destination refusal, real messagingDestinationRefusal
       "capture.submit",
       { kind: "action", payload: { actionType, input, summary: "why" } },
       c,
-      MCP,
+      // One connection per submission: the per-connection cap (AD2) is not what these tests probe.
+      { clientId: `mcp-${String(++submitSeq)}`, kind: "mcp" },
     );
   }
+  let submitSeq = 0;
 
   async function refusedCode(p: Promise<unknown>): Promise<unknown> {
     try {

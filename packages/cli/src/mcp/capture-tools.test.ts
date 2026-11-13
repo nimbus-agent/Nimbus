@@ -173,10 +173,11 @@ describe("proposal tools", () => {
     });
   });
 
-  test("capture_status does not claim to be bound to the submitter (the gateway answers by id)", () => {
+  test("capture_status says the gateway answers only for captures submitted on this connection", () => {
     const d = find("capture_status")?.description ?? "";
-    expect(d).not.toMatch(/you submitted/i);
-    expect(d).toContain("ANY capture id to any MCP client that holds it");
+    expect(d).toContain("answers only for captures submitted on this connection");
+    expect(d).not.toContain("ANY capture id");
+    expect(d).not.toContain("does not check who submitted it");
   });
 
   test("propose_decision sends the full payload with decidedAt as ms", async () => {

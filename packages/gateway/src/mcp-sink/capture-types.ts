@@ -156,7 +156,7 @@ export interface ActionProvenance {
 
 export type ActExecuteOutcome =
   | { readonly status: "ok"; readonly result: unknown }
-  | { readonly status: "rejected" };
+  | { readonly status: "rejected"; readonly reason?: string };
 
 /** Built per accept by `ipc/capture-rpc.ts` (spec § 8): the only path from the sink to a connector. */
 export interface ActDeps {

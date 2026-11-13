@@ -230,6 +230,27 @@ export class CaptureStore {
     ).n;
   }
 
+  /** Unexpired proposed actions one connection (`session_id`) holds: the per-connection cap. */
+  countPendingActionsBySession(sessionId: string, nowMs: number): number {
+    return (
+      this.db
+        .query(
+          "SELECT COUNT(*) AS n FROM capture WHERE kind = 'action' AND state = 'proposed' AND session_id = ? AND expires_at > ?",
+        )
+        .get(sessionId, nowMs) as { n: number }
+    ).n;
+  }
+
+  /** One connection's own captures, newest first (`capture.mine`). */
+  listBySession(sessionId: string, limit: number): CaptureRow[] {
+    const rows = this.db
+      .query(
+        "SELECT * FROM capture WHERE session_id = ? ORDER BY created_at DESC, id DESC LIMIT ?",
+      )
+      .all(sessionId, limit) as RawRow[];
+    return rows.map(toRow);
+  }
+
   /** Proposed decision/term/link rows — the queue `max_pending` bounds (spec § 7 step 8). */
   countPendingNative(): number {
     return (
