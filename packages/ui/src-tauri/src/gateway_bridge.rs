@@ -610,6 +610,16 @@ mod tests {
         assert!(is_method_allowed("connector.setConfig"));
     }
 
+    // The owner's opt-in for connector writes, for the model and (since Phase 28 AD3a-1) for outside
+    // agents, is a terminal act: approving it hands a tool to something that holds no human
+    // judgement, so a compromised renderer must not be able to ask for it, drop it or read it.
+    #[test]
+    fn allowlist_connector_writes_never_renderer() {
+        assert!(!is_method_allowed("connector.writesEnable"));
+        assert!(!is_method_allowed("connector.writesDisable"));
+        assert!(!is_method_allowed("connector.writesStatus"));
+    }
+
     #[test]
     fn allowlist_ws5c_profile_crud() {
         assert!(is_method_allowed("profile.list"));
