@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794567893273,
+  "lastUpdate": 1794574223106,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "0b6ff53aac924d3f4251c74785d58fead450f9b8",
-          "message": "feat(connectors): consume @nimbus-dev/connectors from npm (#1343)\n\nThe gateway now loads all 94 connectors from the published\n[`@nimbus-dev/connectors`](https://www.npmjs.com/package/@nimbus-dev/connectors)\npackage instead of from `packages/mcp-connectors`.\n\n**That directory still exists and its tests still run.** Deleting it is\na separate PR, deliberately last — see *Why the order matters* below.\n\n## What changed\n\n- `packages/gateway` depends on `@nimbus-dev/connectors@^0.1.1`.\n- `gen-bundled-connector-registry` defaults to package specifiers. The\nflag is **inverted, not removed**:\n`NIMBUS_CONNECTOR_SPECIFIER=workspace` still emits relative paths, now\nas a bisection tool rather than a fallback — if a connector misbehaves\nafter the switch, regenerating against the in-repo copy says whether the\npackage boundary is implicated or the connector itself is.\n- `run-bundled-connector.ts` imports `setConnectorMode` from the\npackage.\n\n## Why the order matters\n\nThat last import was the gateway's **only real source import** into the\nconnector tree, and it is why `0.1.0` needed an immediate follow-up.\nThat release *shipped* `shared/connector-mode.ts` — `shared/**` is in\n`files` — but omitted it from `exports`, and an exports map is a\nwhitelist. The file was unreachable.\n\nNothing caught it. Every check passed because the gateway still resolved\nthat file by relative path from `packages/mcp-connectors`, which had not\nbeen deleted. The connector-boot smoke test booted all 94 from the\npublished package and reported `89 answered, 5 refused, 0 failed` while\nthis one import quietly came from the in-repo copy. It would have\nsurfaced as a broken gateway build the moment that copy was removed —\nwith the source of truth already gone.\n\n`0.1.1` exports it, and the connectors repo now guards the class with\nfour red-proved properties, including the inverse case (an exports entry\nwhose file is not packed resolves in a checkout and 404s for everyone\nelse).\n\n## License gate\n\n`@nimbus-dev/connectors` is `AGPL-3.0-only`, and `audit:js-licenses`\nflagged it — correctly. An AGPL dependency imposes AGPL on whatever\nlinks it. Here the consumer is the gateway, which is `AGPL-3.0-only`\nitself, so there is no obligation to impose.\n\nOverridden **without a version pin**, unlike the third-party entries\nbeside it: those pin artefacts so a bump gets reviewed, whereas this\npackage is released by this project and pinning would mean editing the\nlist on every connector release for no review value. `AGPL-3.0-only`\nstays out of `ALLOWED_LICENSES`, so a *third-party* AGPL dependency\nstill trips the gate. `docs/license-policy.md` records the reasoning.\n\n## Verification\n\n| Check | Result |\n| --- | --- |\n| Compiled binary boots connectors from the **published** package | `94\n— 89 answered, 5 refused without credentials, 0 failed` — identical to\nthe relative-path baseline |\n| Full CI test command (`bun test packages/gateway packages/cli\npackages/mcp-connectors scripts`) | 20405 pass, 0 fail, 1577 files |\n| `preflight:fast` | all gates green |\n\n## Not in this PR\n\nThe version-skew gate, and the deletion of `packages/mcp-connectors`\nwith its coupled workspace, CI-path, config and docs changes. Both\nfollow.",
-          "timestamp": "2026-08-26T21:09:32+03:00",
-          "tree_id": "42cb182d7f5997f6cd361ac756a026b6d97af2dd",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/0b6ff53aac924d3f4251c74785d58fead450f9b8"
-        },
-        "date": 1787768453349,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 325.7676136000009,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 324.455347050001,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 295.57192079999624,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "1bc2a183c297cae6be667e51a4aeed7d36bc761a",
+          "message": "feat(gateway): record which connector writes the owner approves for outside agents, by name and by definition hash (agent door AD3a-1) (#1999)\n\nAgent door AD3a-1 (Phase 28): the owner can approve, by name, which\nconnector writes outside agents may propose. This PR records that list;\nit does not enforce it yet. AD3a-2 adds the enforcement and its\ninvariant.\n\n## What changes\n\n1. **Schema V97.** A new table, `connector_write_door_approval`, holds\none row per service, door and tool the owner approved, with a SHA-256 of\nthe tool's listed definition and two sticky suspension columns. The\n`capture` table is rebuilt to add a `legacy` flag and to let a rejected\naction carry an error code; nothing writes either until AD3a-2. The\nrebuild names every V69 column, keeps every CHECK, recreates the three\nindexes, compares row counts, runs in one transaction and is\nre-runnable.\n2. **`nimbus connector writes enable <service> --door agent`**, with\noptional `--wave N` and repeatable `--approve <pattern>`. The prompt\nlists exactly the rows that will be approved, each with its wave,\nwhether it needs typed confirmation, and the first 12 hex characters of\nthe definition hash that is stored. Without `--approve` the service's\nagent list is replaced; with it, only matching rows change, which is how\na suspended tool is re-approved by name.\n3. **Who may approve it** (owner ruling OR-AD-11): a connection that\ndeclared `cli` or `ui`, and a human answer only. `--yes`, a script, a\ndelegate and an old client become a decline.\n4. **What is approvable.** Rows the model may be offered, minus the\nSlack DM row (OR-AD-10), unlisted or unreadable tools and scope-gated\nrows. A Terraform or Kubernetes row needs an existing owner grant. The\nObsidian append needs the model-door approval, which is the sandbox\ngrant (OR-AD-12). Mail sends and the other never-offered rows stay out.\n5. **`disable`** also removes the service's agent approvals; `disable\n--door agent` removes only those.\n6. **`status`** shows the agent approvals per service. It re-lists each\nservice that has one and marks a tool whose definition changed, vanished\nor became unreadable as suspended, once, with one audit row. A\nsuspension is sticky: only re-approval by name clears it, even if the\nserver changes the definition back. After a Nimbus upgrade that changes\na first-party definition, that tool is suspended until re-approved\n(OR-AD-13).\n7. **Static rule D49, sub-rule b**: only the new store and the V97 DDL\nfile may name the table.\n\n## What does not change\n\n- Nothing an agent can propose changes. The capture gate still\nclassifies by the static proposability table, and a test pins that\nneither `mcp-sink` nor the routing table reads the new list. The enable\nprompt, the enable reply, `status` and the docs all say the list is\nrecorded and takes effect in a later release.\n- The model is offered nothing new. An agent enable may raise the shared\nwave but never lowers it and never touches the model's by-name set; a\ntest pins the model's offer before and after.\n- No new IPC method, HITL type, invariant or HTTP route. The three\n`connector.writes*` methods stay LAN-forbidden and off the renderer\nallowlist, now with a Rust negative test.\n\n## Stated bounds and follow-ups for AD3a-2\n\n- After an agent-only enable, the model section of `status` shows the\nservice as enabled with nothing offerable, because the wave row is\nshared.\n- Re-running an agent enable at a lower wave without `--approve`\nreplaces the list, so higher-wave approvals are dropped; the prompt does\nnot yet name what it removes.\n- Approvability is read before the prompt and not re-read inside the\nwrite; AD3a-2's per-call check must re-read the grants.\n- `status` can start a connector to list its tools, and any local\nconnection can call it; the mark it writes only narrows.\n- A description that is missing, null or not a string hashes the same.\n- The client kind and the answer source are the client's own claims on\nthe local socket, as on the other human-only doors.\n\n## Release note\n\nThe release PR that follows this merge is held until AD3a-2 lands, so no\nrelease carries an approval list that nothing reads.\n\n## Verification\n\nRun locally on Windows, one at a time:\n\n- `bun run typecheck`, `typecheck:tests` with 0 new errors, `bun run\npreflight:fast`: passed.\n- Gateway `ipc`, `mcp-sink`, `connector-writes`, `index`, the whole\n`security-invariants.test.ts` and `test/integration/mcp-sink` in one\nrun: 10112 pass, 0 fail.\n- `packages/cli/src/commands`: 4829 pass. `scripts/structure-audit`:\n1555 pass. `audit:invariants`, `audit:status-drift`, `audit:doc-refs`:\nclean.\n- `cargo test allowlist_`: 40 pass.\n- Not run locally: the whole-repo suites and the Linux coverage floor.\n\nRed-proofs, each by reverting the production line and watching the named\ntest fail: the row-count check in the V97 step, the\nfirst-observation-wins clause of the suspension, the never-lower rule of\nthe wave raiser, the D49 allow-list, the caller-kind check, the\nhuman-only wrap in the dispatcher, and the transaction around the two\nwrites.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Added CLI controls to record person-approved connector-write tools for\noutside agents, with approvals tied to each tool’s listed definition.\n* Status reports approval counts and flags tools whose definitions have\nchanged, are missing, or cannot be checked. Reapproval can restore\nsuspended tools, and the agent approval list can be disabled separately.\n* Agent-door approval is limited to terminal-based CLI or UI connections\nand requires human consent.\n* These approvals are recorded but not enforced yet; agent proposal\ncapabilities remain unchanged.\n* **Documentation**\n* Updated CLI, architecture, schema, and release documentation with\nsetup steps, status details, and current limitations.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Sonnet 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-13T12:43:32Z",
+          "tree_id": "954fea6c947647cef25d6a12040b01ef254a2a5c",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/1bc2a183c297cae6be667e51a4aeed7d36bc761a"
+        },
+        "date": 1794574219231,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 194.30086374999806,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 192.89709274999768,
             "unit": "ms"
           }
         ]
