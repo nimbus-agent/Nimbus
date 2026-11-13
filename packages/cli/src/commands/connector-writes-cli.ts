@@ -325,11 +325,10 @@ async function runAgentEnable(
       sha12?: unknown;
     }>;
     d.log(
-      `Recorded: ${String(r["approved"])} writes approved for outside agents on ${service} (shared wave ${String(r["maxWave"])}).`,
+      `Approved: ${String(r["approved"])} writes approved for outside agents on ${service} (shared wave ${String(r["maxWave"])}).`,
     );
     for (const w of writes)
       d.log(`  ${stripControl(String(w.toolId))}  ${stripControl(String(w.sha12))}`);
-    if (typeof r["notice"] === "string") d.log(stripControl(r["notice"]));
   } catch (e) {
     reportError(d, e, true);
   }
@@ -446,7 +445,6 @@ interface AgentServiceStatus {
 
 interface AgentStatus {
   policyAllows?: boolean;
-  notice?: unknown;
   hint?: unknown;
   checked?: unknown;
   lockedOff?: unknown;
@@ -517,10 +515,9 @@ function logStatusRow(
   logAgentRow(d, agent);
 }
 
-/** The agent door's notice, the one-time hint and its policy line; nothing for an older gateway. */
+/** The agent door's one-time hint and its deprecation count; nothing for an older gateway. */
 function logAgentTail(d: ConnectorWritesDeps, agent: AgentStatus | undefined): void {
   if (agent === undefined) return;
-  if (typeof agent.notice === "string") d.log(stripControl(agent.notice));
   if (typeof agent.hint === "string") d.log(stripControl(agent.hint));
   logLegacy(d, agent.legacy);
 }

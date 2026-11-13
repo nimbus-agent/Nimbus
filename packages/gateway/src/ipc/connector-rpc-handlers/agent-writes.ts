@@ -1,15 +1,14 @@
 // packages/gateway/src/ipc/connector-rpc-handlers/agent-writes.ts
 // `connector.writesEnable|writesStatus` with `door: "agent"` (Phase 28 AD3a-1; spec 2026-11-13 § 7.3):
 // the owner approves, BY NAME and with a hash of each tool's listed definition, the connector writes
-// an outside agent may later propose. Nothing here is read by the agent door yet (AD3a-2): what an
-// agent can propose is unchanged, and every reply says so (`AGENT_DOOR_NOT_ENFORCED_NOTICE`).
+// an outside agent may propose (invariant I58). The agent door reads this list at submit, at
+// approval and after the owner's answer (`connector-writes/agent-door-runtime.ts`).
 //
 // This module never names the approval table (static D49(b)): every read and write goes through
 // `connectors/connector-writes/door-approval-store.ts`.
 import type { Database } from "bun:sqlite";
 
 import {
-  AGENT_DOOR_NOT_ENFORCED_NOTICE,
   type AgentApprovableRow,
   agentApprovableRows,
   agentDoorPolicyAllows,
@@ -214,7 +213,6 @@ export interface AgentEnableReply {
   writes: Array<{ toolId: string; sha12: string }>;
   /** Tool ids a replacing enable deleted (AD3a-2a); empty for an enable that only adds. */
   removed: string[];
-  notice: string;
 }
 
 /**
@@ -273,7 +271,6 @@ export async function handleAgentWritesEnable(
     approved: entries.length,
     writes: entries.map((e) => ({ toolId: e.toolId, sha12: sha12(e.definitionSha256) })),
     removed: removes.map((x) => x.toolId),
-    notice: AGENT_DOOR_NOT_ENFORCED_NOTICE,
   };
 }
 
@@ -385,7 +382,6 @@ export interface AgentLegacyReport {
 
 export interface AgentStatusReply {
   policyAllows: boolean;
-  notice: string;
   /** False when the connection did not declare cli or ui: the stored view, no listing, no mark. */
   checked: boolean;
   /** Which of the two capabilities the door needs the organisation's policy has turned off (OR-AD-15). */
@@ -474,7 +470,6 @@ export async function handleAgentWritesStatus(deps: AgentWritesDeps): Promise<Ag
   }
   return {
     policyAllows: agentDoorPolicyAllows(deps.getEnforcedPolicy()),
-    notice: AGENT_DOOR_NOT_ENFORCED_NOTICE,
     checked: live,
     lockedOff: lockedOffOf(deps.getEnforcedPolicy()),
     legacy: legacyReport(deps),

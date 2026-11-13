@@ -6,7 +6,6 @@ import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { toStandardSchema } from "@mastra/core/schema";
 
-import { AGENT_DOOR_NOT_ENFORCED_NOTICE } from "../connectors/connector-writes/agent-door.ts";
 import { LEGACY_LIST_HEADER } from "../connectors/connector-writes/agent-door-legacy.ts";
 import { definitionSha256 } from "../connectors/connector-writes/definition-hash.ts";
 import {
@@ -372,7 +371,7 @@ describe("agent enable: the prompt", () => {
     expect(p).toContain("Service: github");
     expect(p).toContain("Up to wave: 4");
     expect(p).toContain("Door: outside agents (MCP)");
-    expect(p).toContain(AGENT_DOOR_NOT_ENFORCED_NOTICE);
+    expect(p).not.toContain("takes effect in a later release");
     expect(p).toContain("Each proposal still asks you, at `nimbus approvals`.");
     expect(p).toContain("An agent holding its own credentials can act without Nimbus.");
     const approved = listDoorApprovals(db, "agent", "github");
@@ -513,7 +512,6 @@ describe("agent enable: what is written", () => {
       door: string;
       maxWave: number;
       approved: number;
-      notice: string;
       writes: Array<{ toolId: string }>;
     };
     const rows = listDoorApprovals(db, "agent", "github");
@@ -521,7 +519,7 @@ describe("agent enable: what is written", () => {
     expect(out.service).toBe("github");
     expect(out.maxWave).toBe(4);
     expect(out.approved).toBe(rows.length);
-    expect(out.notice).toBe(AGENT_DOOR_NOT_ENFORCED_NOTICE);
+    expect(out).not.toHaveProperty("notice");
     for (const a of rows) {
       const entry = r.listing?.[mcpClientToolKey("github", a.toolId)];
       expect(a.definitionSha256).toBe(definitionSha256(a.toolId, entry) as string);
@@ -807,11 +805,11 @@ describe("agent status", () => {
     return r;
   }
 
-  test("no approvals: the notice, the exact command, no service, no listing", async () => {
+  test("no approvals: the exact command, no service, no listing", async () => {
     const r = rig();
     const s = await handleAgentWritesStatus(r.deps);
     expect(s.services).toEqual([]);
-    expect(s.notice).toBe(AGENT_DOOR_NOT_ENFORCED_NOTICE);
+    expect(s).not.toHaveProperty("notice");
     expect(s.hint).toContain("nimbus connector writes enable <service> --door agent");
     expect(s.policyAllows).toBe(true);
     expect(r.listCalls).toEqual([]);
@@ -995,10 +993,10 @@ describe("agent status", () => {
     expect(auditCount()).toBe(base + 1);
   });
 
-  test("every reply carries the notice and the policy; services and policyAllows of the model part are untouched", async () => {
+  test("every reply carries the policy; services and policyAllows of the model part are untouched", async () => {
     const r = await approved();
     const s = await handleAgentWritesStatus(r.deps);
-    expect(s.notice).toBe(AGENT_DOOR_NOT_ENFORCED_NOTICE);
+    expect(s).not.toHaveProperty("notice");
     const locked = rig({ policy: { capabilitiesDisabled: new Set(["mcp_action"]) } });
     expect((await handleAgentWritesStatus(locked.deps)).policyAllows).toBe(false);
     const model = handleConnectorWritesStatus(r.deps);
@@ -1025,18 +1023,17 @@ describe("agent status", () => {
   });
 });
 
-describe("the not-enforced notice (removed by AD3a-2 on purpose)", () => {
-  test("the enable prompt, the enable reply and status all carry the one constant", async () => {
+describe("the not-enforced notice is gone (AD3a-2a, invariant I58)", () => {
+  test("the enable prompt, the enable reply and status no longer say the list is not read", async () => {
     const r = rig();
     const reply = (await handleConnectorWritesEnable(
       { ...AGENT, service: "github", wave: 3 },
       r.deps,
-    )) as { notice: string };
-    const status = await handleAgentWritesStatus(r.deps);
-    expect(AGENT_DOOR_NOT_ENFORCED_NOTICE).toContain("takes effect in a later release");
-    expect(r.consent.prompts[0]).toContain(AGENT_DOOR_NOT_ENFORCED_NOTICE);
-    expect(reply.notice).toBe(AGENT_DOOR_NOT_ENFORCED_NOTICE);
-    expect(status.notice).toBe(AGENT_DOOR_NOT_ENFORCED_NOTICE);
+    )) as Record<string, unknown>;
+    const status = (await handleAgentWritesStatus(r.deps)) as unknown as Record<string, unknown>;
+    expect(r.consent.prompts[0]).not.toContain("takes effect in a later release");
+    expect(reply).not.toHaveProperty("notice");
+    expect(status).not.toHaveProperty("notice");
   });
 });
 

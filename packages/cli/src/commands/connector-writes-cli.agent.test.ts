@@ -8,9 +8,6 @@ import {
   runConnectorWrites,
 } from "./connector-writes-cli.ts";
 
-const NOTICE =
-  "This list is recorded now and takes effect in a later release: until then what an agent can propose is unchanged.";
-
 function harness(reply: unknown) {
   const calls: Array<{
     method: string;
@@ -51,7 +48,6 @@ describe("connector writes enable --door agent", () => {
         { toolId: "github_pr_close", sha12: "0123456789ab" },
         { toolId: "github_issue_create", sha12: "ba9876543210" },
       ],
-      notice: NOTICE,
     });
     await runConnectorWrites(
       [
@@ -81,10 +77,9 @@ describe("connector writes enable --door agent", () => {
       },
     ]);
     expect(h.logs).toEqual([
-      "Recorded: 2 writes approved for outside agents on github (shared wave 4).",
+      "Approved: 2 writes approved for outside agents on github (shared wave 4).",
       "  github_pr_close  0123456789ab",
       "  github_issue_create  ba9876543210",
-      NOTICE,
     ]);
     expect(process.exitCode).toBe(0);
   });
@@ -229,7 +224,6 @@ describe("connector writes status with the agent member", () => {
     policyAllows: true,
     agent: {
       policyAllows: true,
-      notice: NOTICE,
       services: [
         {
           service: "github",
@@ -260,7 +254,7 @@ describe("connector writes status with the agent member", () => {
     },
   };
 
-  it("prints the agent lines, a suspended line with both prefixes and the date, the notice once and the agent policy", async () => {
+  it("prints the agent lines, a suspended line with both prefixes and the date and the agent policy", async () => {
     const h = harness(status);
     await runConnectorWrites(["status"], h.deps);
     expect(h.logs).toEqual([
@@ -271,7 +265,6 @@ describe("connector writes status with the agent member", () => {
       "jira    off",
       "  agents: 1 approved (unverified: its tools could not be listed)",
       "slack   off",
-      NOTICE,
       "Policy: allows",
       "Agent policy: allows",
     ]);
@@ -284,11 +277,10 @@ describe("connector writes status with the agent member", () => {
     const h = harness({
       services: [],
       policyAllows: true,
-      agent: { policyAllows: false, notice: NOTICE, hint, services: [] },
+      agent: { policyAllows: false, hint, services: [] },
     });
     await runConnectorWrites(["status"], h.deps);
     expect(h.logs).toEqual([
-      NOTICE,
       hint,
       "Policy: allows",
       "Agent policy: forbids (connector_write_model_access or mcp_action)",

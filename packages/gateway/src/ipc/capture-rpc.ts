@@ -7,16 +7,12 @@ import {
   prepareToolMissing,
   type ServerToolListing,
 } from "../connectors/connector-writes/listed-support.ts";
-import {
-  actDoorRefusal,
-  type TribalKbConfig,
-} from "../connectors/connector-writes/model-write-refusals.ts";
+import type { TribalKbConfig } from "../connectors/connector-writes/model-write-refusals.ts";
 import { rowNamedByToolId } from "../connectors/connector-writes/preview.ts";
 import type {
   ConnectorWriteRow,
   PreviewCredentialResolver,
 } from "../connectors/connector-writes/types.ts";
-import { proposableWriteTool } from "../connectors/proposable-actions.ts";
 import { userMcpToolKeyForActionType } from "../connectors/user-mcp-store.ts";
 import type { EgressSink } from "../egress/egress-ledger.ts";
 import { classifyDoorRejection } from "../engine/door-rejection.ts";
@@ -52,7 +48,6 @@ import {
   CaptureError,
   isLegacyBasis,
 } from "../mcp-sink/capture-types.ts";
-import type { EnforcedPolicy } from "../policy/policy-gate.ts";
 import { dispatchByMethod, type RpcMissOrHit } from "./_lib/dispatch-by-method.ts";
 import { type ConsentCoordinator, vetoingConsent } from "./consent.ts";
 import { RpcMethodError } from "./server/rpc-error.ts";
@@ -89,10 +84,9 @@ export interface CaptureActWiring {
    */
   readonly getTribalKbConfig: () => TribalKbConfig | undefined;
   /**
-   * The agent door's runtime half (AD3a-2a): absent, the act wiring behaves exactly as before the
-   * owner's per-door list existed (no listing, no veto). Present, an `approved` proposal is
-   * re-checked after the owner's answer, and a row's before-state reader and prepare tool are
-   * checked against the live listing. Batch C supplies it when the capture gate gets the verdict.
+   * The agent door's runtime half (AD3a-2a, invariant I58): an `approved` proposal is re-checked
+   * after the owner's answer, and a row's before-state reader and prepare tool are checked against
+   * the live listing. Absent, an `approved` proposal is refused (fail closed); a legacy one still runs.
    */
   readonly agentDoor?: AgentDoorActWiring;
 }
@@ -103,46 +97,6 @@ export interface AgentDoorActWiring {
   readonly listServerTools: (service: string) => Promise<ServerToolListing | undefined>;
   /** The door's definition check (`createAgentDoor(...).verifyDefinition`); marks a suspension itself. */
   readonly verifyDefinition: (actionType: string) => Promise<DefinitionVerification>;
-}
-
-/**
- * The act door's destination refusal (owner rulings OR1/OR2, OR-B2-2, OR-B2-3, OR-B3-1, OR-B3-3),
- * injected into the capture gate as `actionDestinationRefusal` (built in `platform/assemble.ts`).
- * It is `actDoorRefusal`: the SAME `messagingDestinationRefusal` the model door calls, then the act
- * door's Linear rule, then the SAME KB-target check the model door calls, then the act door's
- * KB-child rule, run on the routing table's tool for the type, so a proposed post to a channel
- * ChatOps listens on, text carrying a broadcast mention or a GitLab quick action, a GitLab scoped
- * label, (B4a) a calendar or Drive create with an optional field set to `null`, an Outlook or
- * iCloud event time that does not show its zone, an iCloud event field or attendee with a line
- * break or control character, a Linear update that sets `assigneeId`, a page write to the tribal
- * KB destination, or (while a KB destination is configured for that service) a Notion/Confluence
- * page update or append is refused at submit and again at accept. Both accessors are read per call: the ChatOps
- * bindings from the LIVE enforced policy (a throw passes `undefined`, which refuses every
- * Slack/Teams post) and the KB destinations (a throw refuses every KB-capable row, fail closed). A
- * type with no routing row (a user-MCP type) has no destination here: `undefined`.
- */
-export function createActionDestinationRefusal(
-  enforcedPolicy: () => EnforcedPolicy | undefined,
-  tribalKbConfig: () => TribalKbConfig | undefined,
-): (actionType: string, input: Readonly<Record<string, unknown>>) => string | undefined {
-  return (actionType, input) => {
-    const tool = proposableWriteTool(actionType);
-    if (tool === undefined) return undefined;
-    let chatops: EnforcedPolicy["chatops"] | undefined;
-    try {
-      chatops = enforcedPolicy()?.chatops;
-    } catch {
-      chatops = undefined;
-    }
-    let kb: TribalKbConfig | undefined;
-    let kbUnreadable = false;
-    try {
-      kb = tribalKbConfig();
-    } catch {
-      kbUnreadable = true;
-    }
-    return actDoorRefusal(tool, input, { chatops, kb, kbUnreadable });
-  };
 }
 
 /**
@@ -238,16 +192,10 @@ export function buildActDeps(
       // and the only key the dispatcher's I42 pairing accepts for that type). The second lookup
       // returns undefined for anything that is not an `mcp_*` type.
       // Routed by the PRODUCTION write table (the `beforeStateRows` seam only changes what the
-      // preview and the before-state are built from). A verdict with no basis is the earlier
-      // gate's: only the 47 proposable types route then, so routing alone admits nothing new.
+      // preview and the before-state are built from). What may reach here is decided by the gate's
+      // verdict at submit and at approval (the agent door), never by routing.
       const row = agentDoorRow(actionType);
-      const legacyOnly =
-        row !== undefined &&
-        provenance.basis === undefined &&
-        proposableWriteTool(actionType) === undefined;
-      const toolId = legacyOnly
-        ? undefined
-        : (row?.toolId ?? userMcpToolKeyForActionType(actionType));
+      const toolId = row?.toolId ?? userMcpToolKeyForActionType(actionType);
       if (toolId === undefined) {
         // Never dispatch a first-party write by its type (spec § 6.3): no routing row, no call.
         // This exact message is what classifyActionError maps to ERR_ACTION_TOOL_NOT_FOUND.

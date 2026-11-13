@@ -39,12 +39,12 @@ import {
   buildActDeps,
   type CaptureActWiring,
   type CaptureRpcCtx,
-  createActionDestinationRefusal,
   dispatchCaptureRpc,
 } from "./capture-rpc.ts";
 import { type ConsentCoordinator, ConsentCoordinatorImpl } from "./consent.ts";
 import { createStreamRegistry } from "./engine-ask-stream.ts";
 import { checkLanMethodAllowed, LanError } from "./lan-rpc.ts";
+import { createActionDestinationRefusal } from "./legacy-refusal.test-helpers.ts";
 import type { ClientKind } from "./server/client-kind.ts";
 import { phase4RpcSkipped, type ServerCtx } from "./server/context.ts";
 import { tryDispatchPhase4Rpc } from "./server/dispatchers.ts";
@@ -403,7 +403,7 @@ describe("buildActDeps (act door)", () => {
   test("a first-party type with no routing row throws Tool not found (never dispatches by type)", async () => {
     const d: PlannedAction[] = [];
     const { act, prompts } = wiring(d, true);
-    await expect(act.execute("github.pr.merge", {}, PROV)).rejects.toThrow("Tool not found");
+    await expect(act.execute("github.repo.delete", {}, PROV)).rejects.toThrow("Tool not found");
     expect(d).toEqual([]);
     expect(prompts).toEqual([]);
   });

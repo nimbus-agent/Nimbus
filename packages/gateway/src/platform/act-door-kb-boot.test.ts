@@ -12,7 +12,7 @@ import {
   ACT_DOOR_KB_CHILD_REFUSAL,
   KNOWLEDGE_BASE_REFUSAL,
 } from "../connectors/connector-writes/model-write-refusals.ts";
-import { createActionDestinationRefusal } from "../ipc/capture-rpc.ts";
+import { createActionDestinationRefusal } from "../ipc/legacy-refusal.test-helpers.ts";
 import { tribalKbConfigOf } from "./assemble.ts";
 
 const dirs: string[] = [];

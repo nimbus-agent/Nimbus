@@ -5,8 +5,8 @@
 //
 // `agentOffered` (AD3a-2a) is the predicate itself: the conditions both doors share, the door's own
 // approved set (V97), "not suspended", policy, and the scope and Obsidian rules. It is pure over the
-// facts it is given; `agent-door-runtime.ts` reads those facts afresh on every call. Until the flip
-// (the last AD3a-2a commit) production does not call it.
+// facts it is given; `agent-door-runtime.ts` reads those facts afresh on every call. The capture gate and
+// the act wiring call it through that runtime (invariant I58).
 
 import { MCP_ACTION_CAPABILITY } from "../../mcp-sink/capture-capability.ts";
 import type { EnforcedPolicy } from "../../policy/policy-gate.ts";
@@ -25,8 +25,6 @@ import { isConnectorWriteModelAccessEnabled } from "./model-write-capability.ts"
 import { enabledAndOfferable, scopeAvailable } from "./model-write-source.ts";
 import { scopeGatedReason } from "./scope-gated.ts";
 import type { ConnectorWriteRow, ConnectorWriteWave } from "./types.ts";
-
-export { AGENT_DOOR_NOT_ENFORCED_NOTICE } from "./agent-door-notice.ts";
 
 /**
  * An action type is not a row: `slack.message.post` names both `slack_message_post` and

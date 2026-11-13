@@ -1,6 +1,5 @@
 // packages/gateway/src/connectors/connector-writes/enable-prompt.ts
 // The consent text for `connector.writes.enable`: exactly which writes become model-offerable.
-import { AGENT_DOOR_NOT_ENFORCED_NOTICE } from "./agent-door-notice.ts";
 import { OBSIDIAN_APPEND_TOOL_ID } from "./enablement-store.ts";
 import { sanitisePreviewText } from "./preview.ts";
 
@@ -415,7 +414,6 @@ function agentEnablePromptLines(payload: Record<string, unknown>): string[] | un
   }
   lines.push(
     "",
-    AGENT_DOOR_NOT_ENFORCED_NOTICE,
     "Each proposal still asks you, at `nimbus approvals`.",
     "An agent holding its own credentials can act without Nimbus.",
   );

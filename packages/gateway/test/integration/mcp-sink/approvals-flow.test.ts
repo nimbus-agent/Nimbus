@@ -5,8 +5,8 @@
  * `consent.request` notifications, a REAL `ToolExecutor` (via `buildActDeps`), a REAL egress ledger
  * and audit chain, and a FAKE connector dispatcher. No model, no router, no embedding runtime.
  *
- * A2 (typed confirmation) uses a SYNTHETIC Wave 4 row through the `beforeStateRows` seam: no Wave 4
- * type is proposable until AD3a, so the same table is re-run there with a real type.
+ * A2 (typed confirmation) uses a SYNTHETIC Wave 4 row through the `beforeStateRows` seam; the same table runs
+ * on the real `github.pr.merge` in agent-door-flow.test.ts (AD3a-2a), where the gate is the real agent door.
  */
 import type { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -321,7 +321,7 @@ describe("A1: the same prompt the model door shows", () => {
   });
 });
 
-describe("A2: typed confirmation, on a synthetic Wave 4 row (re-run with a real type at AD3a)", () => {
+describe("A2: typed confirmation, on a synthetic Wave 4 row (the real `github.pr.merge` runs in agent-door-flow.test.ts)", () => {
   const READER = {
     tool: "slack_get",
     argKeys: ["channel"],
