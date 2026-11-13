@@ -1,6 +1,6 @@
 # Plan — Agent door AD3a-2b: `capture.describe` and the `describe_actions` MCP tool
 
-Status: DRAFT for review. One PR, stacked on AD3a-2a (PR #2001). One read method, one MCP tool, no enforcement claim, no new invariant, no new static rule, no migration.
+Status: APPROVED (Antigravity round 1, 2026-11-13, no findings; owner rulings OR-AD-16 to OR-AD-18 recorded). One PR, stacked on AD3a-2a (PR #2001). One read method, one MCP tool, no enforcement claim, no new invariant, no new static rule, no migration.
 Spec: `docs/superpowers/specs/2026-11-13-agent-door.md` D-AD-10 (`:164-170`), § 6 order note (`:233-234`), § 7.7 (`:589`), § 9 (I11 sentence `:620-621`, downgrade row `:643`), § 10 AD6b (`:683-687`), § 12. Plan: `docs/superpowers/plans/2026-11-13-ad3a-2-door-enforcement.md`, "AD3a-2b in outline" (`:327-334`) and OD-3, settled as **OR-AD-16**.
 Roadmap row: Phase 28 *Write parity with the model door* (`docs/roadmap.md:3077`).
 Base: worktree `C:\gitrep\Nimbus\.claude\worktrees\p28-ad3a-2a`, HEAD `d39d55a59`. Paths are relative to `packages/gateway/src/` unless they start with `packages/`, `scripts/`, `docs/` or `.claude/`.
@@ -157,4 +157,4 @@ Description: the delta; corrections 1 to 9; OD-1 to OD-3 as ruled; OR-AD-16's bo
 
 ## Review log
 
-(empty)
+- Antigravity round 1 (2026-11-13): APPROVED, no findings. Its citations were checked against the bundle's symbols. Since the plan was drafted, AD3a-2a commit `7247c2d8a` made `verifyDefinition` re-read the approval after the listing await and compare hashes with the constant-time helper; the describe path must go through that same post-listing function (D-3 already requires it).
