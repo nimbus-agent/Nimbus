@@ -953,3 +953,48 @@ describe("connector.writesStatus through the RPC", () => {
     expect(agent.services[0]?.unverified).toBe("its tools could not be listed");
   });
 });
+
+describe("agent enable: the credential's scopes and a restricted row table", () => {
+  test("a scope-gated write is not approvable while the credential lacks the scope", async () => {
+    const r = rig({ service: "gmail" });
+    r.deps = {
+      ...r.deps,
+      grantedScopes: { gmail: "https://www.googleapis.com/auth/gmail.readonly" },
+    };
+    await handleConnectorWritesEnable({ ...AGENT, service: "gmail", wave: 2 }, r.deps).catch(
+      () => {},
+    );
+    expect(
+      listDoorApprovals(db, "agent", "gmail").some((a) => a.toolId === "gmail_thread_archive"),
+    ).toBe(false);
+    r.deps = {
+      ...r.deps,
+      grantedScopes: { gmail: "https://www.googleapis.com/auth/gmail.modify" },
+    };
+    await handleConnectorWritesEnable({ ...AGENT, service: "gmail", wave: 2 }, r.deps);
+    expect(
+      listDoorApprovals(db, "agent", "gmail").some((a) => a.toolId === "gmail_thread_archive"),
+    ).toBe(true);
+  });
+
+  test("the row-table seam restricts both the service check and the rows", async () => {
+    const only = CONNECTOR_WRITE_ROWS.filter((x) => x.toolId === "github_issue_create");
+    const r = rig();
+    r.deps = { ...r.deps, rows: only };
+    await handleConnectorWritesEnable({ ...AGENT, service: "github", wave: 3 }, r.deps);
+    expect(listDoorApprovals(db, "agent", "github").map((a) => a.toolId)).toEqual([
+      "github_issue_create",
+    ]);
+    expect(
+      await refusal(handleConnectorWritesEnable({ ...AGENT, service: "gitlab" }, r.deps)),
+    ).toContain("ERR_CONNECTOR_WRITES_UNKNOWN_SERVICE");
+  });
+
+  test("without a listing function the connector counts as not listed", async () => {
+    const r = rig();
+    const { listServerTools: _drop, ...rest } = r.deps;
+    expect(
+      await refusal(handleConnectorWritesEnable({ ...AGENT, service: "github" }, rest as never)),
+    ).toContain("ERR_CONNECTOR_WRITES_AGENT_UNLISTED");
+  });
+});
