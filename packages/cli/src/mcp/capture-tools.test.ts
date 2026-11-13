@@ -503,6 +503,18 @@ describe("describe_actions (AD3a-2b)", () => {
     expect(d).toContain("input schema");
     expect(d).toContain("start");
     expect(d).toContain("registered");
+    // It must not claim to be free of effects: describing can start a connector and record a suspension.
+    expect(d).not.toContain("Read only");
+    expect(d).toContain("proposes and dispatches nothing");
+    expect(d).toContain("suspended");
+    // It says no reason for not_proposable, and claims nothing about registration status.
+    expect(d).toContain("does not say why");
+  });
+
+  test("readOnlyHint matches capture_status and means proposes-and-dispatches-nothing", () => {
+    const status = CAPTURE_TOOL_SPECS.find((s) => s.name === "capture_status");
+    expect(status?.annotations.readOnlyHint).toBe(true);
+    expect(spec()?.annotations.readOnlyHint).toBe(true);
   });
 });
 

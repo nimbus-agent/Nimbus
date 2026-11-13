@@ -11,7 +11,7 @@ import {
   describeActions,
 } from "./capture-describe.ts";
 import { CaptureAttemptLimiter, CaptureRefusalCounter } from "./capture-rate-limit.ts";
-import type { ActionDescription } from "./capture-types.ts";
+import { type ActionDescription, CaptureError } from "./capture-types.ts";
 
 const MCP = { clientId: "c-mcp", kind: "mcp" as ClientKind };
 const NOW = 1_790_000_000_000;
@@ -93,13 +93,13 @@ const refusal = async (promise: Promise<unknown>): Promise<string> => {
 };
 
 describe("describeActions: the gate order", () => {
-  test("the source reads capability, role, limiter, params, describer, reply cap, in that order", () => {
+  test("the source reads capability, role, params, limiter, describer, reply cap, in that order", () => {
     const src = readFileSync(join(import.meta.dir, "capture-describe.ts"), "utf8");
     const order = [
       "requireDescribeCapability(",
       "CAPTURE_ROLE_BY_KIND[caller.kind]",
-      "describer.limiter.tryAcquire(",
       "requireDescribeParams(",
+      "describer.limiter.tryAcquire(",
       "describer.actions(",
       "capReply(",
     ].map((needle) => src.indexOf(needle, src.indexOf("export async function describeActions")));
@@ -206,13 +206,44 @@ describe("describeActions: the params", () => {
     expect(h2.calls[0]).toEqual(ten);
   });
 
-  test("a describer that throws is not swallowed", async () => {
+  test("a malformed call from an allowed caller consumes nothing from the limiter; a well-formed one does", async () => {
+    const limiter = new CaptureAttemptLimiter();
+    const h = harness({ maxPerHour: 1, limiter }); // 4 describes an hour
+    for (let i = 0; i < 10; i++) {
+      expect(await refusal(describeActions(h.deps, MCP, { actionTypes: [] }))).toContain(
+        "ERR_CAPTURE_INVALID",
+      );
+    }
+    for (let i = 0; i < 4; i++) await describeActions(h.deps, MCP, {});
+    expect(await refusal(describeActions(h.deps, MCP, {}))).toContain("ERR_CAPTURE_RATE_LIMITED");
+  });
+
+  test("a describer that throws becomes a fixed-text CaptureError: the thrown message never reaches the caller", async () => {
     const h = harness({
       actions: async () => {
-        throw new Error("boom");
+        throw new Error("SQLITE_CORRUPT: /home/owner/nimbus.db");
       },
     });
-    expect(await refusal(describeActions(h.deps, MCP, undefined))).toBe("boom");
+    const msg = await refusal(describeActions(h.deps, MCP, undefined));
+    expect(msg).toContain("ERR_CAPTURE_STATE");
+    expect(msg).not.toContain("SQLITE");
+    expect(msg).not.toContain("nimbus.db");
+    try {
+      await describeActions(h.deps, MCP, undefined);
+    } catch (e) {
+      expect(e).toBeInstanceOf(CaptureError);
+    }
+  });
+
+  test("a CaptureError from the describer passes through unchanged", async () => {
+    const h = harness({
+      actions: async () => {
+        throw new CaptureError("ERR_CAPTURE_DISABLED", "the agent door is not available");
+      },
+    });
+    expect(await refusal(describeActions(h.deps, MCP, undefined))).toBe(
+      "ERR_CAPTURE_DISABLED: the agent door is not available",
+    );
   });
 });
 
@@ -233,6 +264,9 @@ describe("describeActions: the reply cap", () => {
       "undescribed",
       "undescribed",
     ]);
+    const cutEntry = out.actions[2];
+    if (cutEntry?.state !== "undescribed") throw new Error("expected a cut entry");
+    expect(cutEntry.reason).not.toContain("alone");
     expect(out.actions.map((a) => a.actionType)).toEqual([
       "github.a",
       "github.b",

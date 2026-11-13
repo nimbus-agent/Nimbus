@@ -135,8 +135,17 @@ export const DEFINITION_REFUSALS = Object.freeze({
 });
 
 /** The fixed text of a type `capture.describe` does not describe (OR-AD-17). */
-export const DESCRIBE_USER_MCP_REASON =
-  "tools of servers you registered are not described here yet; read them from that server";
+export const DESCRIBE_USER_MCP_REASON = "user MCP tools are not described here yet";
+
+/**
+ * The fixed text of a type `capture.describe` cannot say anything about. It is the same for every
+ * denial class and for an unknown type, so a describe reveals nothing a submit does not (it names no
+ * `agent_*` class: a refused proposal does, once, on the audited and shared window).
+ */
+export const DESCRIBE_NOT_PROPOSABLE_REASON = "cannot be proposed now";
+
+/** The fixed text of a type whose check threw: no error text, no stack, nothing internal. */
+export const DESCRIBE_UNCHECKED_REASON = "could not be checked now";
 
 /** The class of a `denied` verdict, one fixed string per condition (R-9: it says which one failed). */
 export const AGENT_DENIED_CLASSES = Object.freeze({
@@ -373,6 +382,15 @@ export function createAgentDoor(deps: AgentDoorDeps): AgentDoor {
     return { ok: true };
   };
 
+  /** A configured-ness check that throws (synchronously or not) reads as "not configured". */
+  const configuredOrFalse = async (service: string): Promise<boolean> => {
+    try {
+      return await deps.isServiceConfigured(service);
+    } catch {
+      return false;
+    }
+  };
+
   /**
    * Every first-party type of a configured service whose verdict is `proposable` or `suspended`,
    * sorted. Sequential on purpose: a configured-ness check is a Vault read (a `secret-tool` spawn
@@ -388,11 +406,17 @@ export function createAgentDoor(deps: AgentDoorDeps): AgentDoor {
     const out: { type: string; verdict: ActionVerdict }[] = [];
     const configured = new Map<string, boolean>();
     for (const type of [...types].sort((a, b) => a.localeCompare(b))) {
-      const v = verdict(type);
+      // Fail closed per type: a read that throws omits the type, never fails the listing.
+      let v: ActionVerdict;
+      try {
+        v = verdict(type);
+      } catch {
+        continue;
+      }
       if (v.kind !== "proposable" && v.kind !== "suspended") continue;
       const service = serviceOf(type);
       if (!configured.has(service)) {
-        configured.set(service, await deps.isServiceConfigured(service)); // NOSONAR S9382: each check is a Vault read
+        configured.set(service, await configuredOrFalse(service)); // NOSONAR S9382: each check is a Vault read
       }
       if (configured.get(service) === true) out.push({ type, verdict: v });
     }
@@ -495,10 +519,8 @@ export function createAgentDoor(deps: AgentDoorDeps): AgentDoor {
     }
     // 2. The verdict, from database reads only.
     const v = verdict(type);
-    if (v.kind === "suspended") return summaryEntry(type, v);
-    if (v.kind !== "proposable") {
-      const why = v.kind === "denied" ? v.class : "unknown action type";
-      return { actionType: type, state: "not_proposable", reason: `cannot be proposed (${why})` };
+    if (v.kind !== "proposable" && v.kind !== "suspended") {
+      return { actionType: type, state: "not_proposable", reason: DESCRIBE_NOT_PROPOSABLE_REASON };
     }
     // 3. The service is configured on this machine (the submit path's step 5b).
     const service = serviceOf(type);
@@ -512,6 +534,8 @@ export function createAgentDoor(deps: AgentDoorDeps): AgentDoor {
         reason: `${service} is not configured on this machine`,
       };
     }
+    // A suspended type is reported only for a configured service, as the summary lists it.
+    if (v.kind === "suspended") return summaryEntry(type, v);
     // 4. The deprecation window: the fixed line, never a schema and never a listing (OR-AD-18).
     if (v.basis !== "approved") return summaryEntry(type, v);
     // 5. An approved type: listed once per service and judged by the submit path's own check.
@@ -525,7 +549,15 @@ export function createAgentDoor(deps: AgentDoorDeps): AgentDoor {
     const call: DescribeCall = { configured: new Map(), listings: new Map() };
     const out: ActionDescription[] = [];
     // Sequential, in request order: one listing per service, and a stable reply order.
-    for (const type of new Set(actionTypes)) out.push(await describeOne(type, call)); // NOSONAR S9382
+    // A check that throws (a failed audit append, a Vault read, a listing) is that one type's
+    // `unavailable` with a fixed text: no error text reaches the agent, and the other types go on.
+    for (const type of new Set(actionTypes)) {
+      try {
+        out.push(await describeOne(type, call)); // NOSONAR S9382
+      } catch {
+        out.push({ actionType: type, state: "unavailable", reason: DESCRIBE_UNCHECKED_REASON });
+      }
+    }
     return out;
   };
 

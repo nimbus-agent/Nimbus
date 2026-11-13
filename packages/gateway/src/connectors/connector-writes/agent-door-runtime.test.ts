@@ -19,6 +19,9 @@ import {
   type AgentDoorDeps,
   createAgentDoor,
   DEFINITION_REFUSALS,
+  DESCRIBE_NOT_PROPOSABLE_REASON,
+  DESCRIBE_UNCHECKED_REASON,
+  DESCRIBE_USER_MCP_REASON,
 } from "./agent-door-runtime.ts";
 import { COMMIT_PATH_REFUSAL } from "./commit-paths.ts";
 import { definitionSha256 } from "./definition-hash.ts";
@@ -1041,7 +1044,7 @@ describe("describe (AD3a-2b)", () => {
     expect(out[0]).toEqual({
       actionType: "nonsense.type",
       state: "not_proposable",
-      reason: "cannot be proposed (unknown action type)",
+      reason: DESCRIBE_NOT_PROPOSABLE_REASON,
     });
     expect(out[1]).toEqual({
       actionType: "github.issue.create",
@@ -1051,13 +1054,153 @@ describe("describe (AD3a-2b)", () => {
     expect(listCalls).toEqual([]);
   });
 
-  test("a type the owner has not approved names its denied class", async () => {
-    const out = await door().describe(["github.pr.merge"]);
-    expect(out).toEqual([
-      {
+  test("every denial class and an unknown type give the same fixed reason, and no class name appears in any reply", async () => {
+    const replies: ActionDescription[] = [];
+    const ask = async (type: string, d = door()): Promise<void> => {
+      replies.push(...(await d.describe([type])));
+    };
+    await ask("nonsense.type"); // unknown
+    await ask("github.pr.merge"); // agent_not_enabled
+    raiseWriteEnablementWave(db, "github", 3, 1);
+    await ask("github.pr.merge"); // agent_wave
+    raiseWriteEnablementWave(db, "github", 4, 1);
+    await ask("github.pr.merge"); // agent_not_approved
+    raiseWriteEnablementWave(db, "iac", 4, 1);
+    await ask("iac.terraform.destroy"); // agent_never_offered
+    allow("github_pr_merge");
+    policyOff = new Set(["connector_write_model_access"]);
+    await ask("github.pr.merge"); // agent_policy
+    policyOff = new Set();
+    allow("gmail_thread_archive");
+    await ask("gmail.thread.archive", door({ grantedScopes: () => ({ gmail: "x" }) })); // agent_no_scope
+    const base = ROW("github_issue_create");
+    await ask(
+      "fake.thing",
+      door({
+        rows: [
+          { ...base, toolId: "fake_a", actionType: "fake.thing" },
+          { ...base, toolId: "fake_b", actionType: "fake.thing" },
+        ],
+      }),
+    ); // agent_unroutable
+    expect(replies).toHaveLength(8);
+    for (const r of replies) {
+      expect(r.state).toBe("not_proposable");
+      if (r.state === "not_proposable") expect(r.reason).toBe(DESCRIBE_NOT_PROPOSABLE_REASON);
+    }
+    expect(JSON.stringify(replies)).not.toContain("agent_");
+    expect(DESCRIBE_NOT_PROPOSABLE_REASON).not.toContain("agent_");
+  });
+
+  test("the user-MCP text claims nothing about registration", () => {
+    expect(DESCRIBE_USER_MCP_REASON).not.toMatch(/regist/i);
+  });
+
+  describe("a check that throws is one unavailable entry with a fixed text", () => {
+    const SECRET = "SQLITE_CORRUPT: /home/owner/nimbus.db secret-detail";
+
+    test("a failing suspension audit append: that type is unavailable, the next is described, nothing is left suspended", async () => {
+      const merge = allow("github_pr_merge");
+      allow("github_issue_create");
+      const listing = fullListing("github");
+      listing[mcpClientToolKey("github", merge.toolId)] = entryFor(merge, "changed by one byte");
+      listings["github"] = listing;
+      db.run(
+        "CREATE TRIGGER audit_boom BEFORE INSERT ON audit_log WHEN NEW.action_type = 'connector.writes.agent.suspend' BEGIN SELECT RAISE(ABORT, 'SQLITE_BOOM_TEXT'); END",
+      );
+      const out = await door().describe(["github.pr.merge", "github.issue.create"]);
+      expect(out[0]).toEqual({
         actionType: "github.pr.merge",
-        state: "not_proposable",
-        reason: "cannot be proposed (agent_not_enabled)",
+        state: "unavailable",
+        reason: DESCRIBE_UNCHECKED_REASON,
+      });
+      expect(out[1]).toMatchObject({ actionType: "github.issue.create", state: "approved" });
+      expect(JSON.stringify(out)).not.toContain("SQLITE_BOOM_TEXT");
+      expect(getDoorApproval(db, "agent", "github", "github_pr_merge")?.suspendedAt).toBeNull();
+      expect(suspendAudits()).toBe(0);
+    });
+
+    test("an isServiceConfigured that throws", async () => {
+      allow("github_issue_create");
+      allow("slack_message_post");
+      listings["slack"] = fullListing("slack");
+      const d = door({
+        isServiceConfigured: async (s) => {
+          if (s === "github") throw new Error(SECRET);
+          return true;
+        },
+      });
+      const out = await d.describe(["github.issue.create", "slack.message.post"]);
+      expect(out[0]).toEqual({
+        actionType: "github.issue.create",
+        state: "unavailable",
+        reason: DESCRIBE_UNCHECKED_REASON,
+      });
+      expect(out[1]).toMatchObject({ state: "approved" });
+      expect(JSON.stringify(out)).not.toContain("secret-detail");
+    });
+
+    test("a listing function that throws synchronously", async () => {
+      allow("github_issue_create");
+      const d = door({
+        listServerTools: ((): Promise<undefined> => {
+          throw new Error(SECRET);
+        }) as never,
+      });
+      const out = await d.describe(["github.issue.create"]);
+      expect(out).toEqual([
+        {
+          actionType: "github.issue.create",
+          state: "unavailable",
+          reason: DESCRIBE_UNCHECKED_REASON,
+        },
+      ]);
+      expect(JSON.stringify(out)).not.toContain("secret-detail");
+    });
+
+    test("a verdict that throws (an unreadable database) is unavailable too", async () => {
+      allow("github_issue_create");
+      db.run("DROP TABLE connector_write_door_approval");
+      const out = await door().describe(["github.issue.create"]);
+      expect(out).toEqual([
+        {
+          actionType: "github.issue.create",
+          state: "unavailable",
+          reason: DESCRIBE_UNCHECKED_REASON,
+        },
+      ]);
+    });
+
+    test("the summary fails closed per service: a configured check that throws omits that service and does not throw", async () => {
+      allow("github_issue_create");
+      allow("slack_message_post");
+      const d = door({
+        isServiceConfigured: async (s) => {
+          if (s === "github") throw new Error(SECRET);
+          return true;
+        },
+      });
+      const rows = await d.describe(undefined);
+      const types = rows.map((r) => r.actionType);
+      expect(types).toContain("slack.message.post");
+      expect(types.some((t) => t.startsWith("github."))).toBe(false);
+      expect(JSON.stringify(rows)).not.toContain("secret-detail");
+    });
+  });
+
+  test("a suspended type of an unconfigured service is omitted from the summary and unavailable in detail (the two agree)", async () => {
+    const row = allow("github_issue_create");
+    markDoorToolSuspended(db, "agent", "github", row.toolId, approvedHashOf(row), null, 4);
+    configured.delete("github");
+    const d = door();
+    expect((await d.describe(undefined)).map((r) => r.actionType)).not.toContain(
+      "github.issue.create",
+    );
+    expect(await d.describe(["github.issue.create"])).toEqual([
+      {
+        actionType: "github.issue.create",
+        state: "unavailable",
+        reason: "github is not configured on this machine",
       },
     ]);
   });

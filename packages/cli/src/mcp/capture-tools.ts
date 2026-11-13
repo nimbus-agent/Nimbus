@@ -266,13 +266,14 @@ export const CAPTURE_TOOL_SPECS: readonly CaptureToolSpec[] = [
       "owner must type a confirmation, and whether Nimbus reads and binds part of the input itself), legacy " +
       "(still accepted for a limited time, with a Deprecated line), suspended (its definition changed since the " +
       "owner approved it, so it is refused until the owner approves it again by name), unavailable, " +
-      "not_proposable and undescribed. With actionTypes (1 to 10 types, at most 3 services, each type at most " +
+      "not_proposable (a type that cannot be proposed now; this does not say why) and undescribed. With actionTypes (1 to 10 types, at most 3 services, each type at most " +
       "128 characters) it also returns, for each approved type it can verify now, the description and the input " +
       "schema: ask for a type before you propose it, and build input from that schema alone. Fields Nimbus " +
       "binds itself are not in the schema; never send them. A described type can still have its input refused " +
-      "by the same checks as every proposal. Describing a type can start its connector, and the number of " +
-      "calls an hour is limited. Tools of servers the user registered themselves are not described. " +
-      "Read only: nothing is proposed or run.",
+      "by the same checks as every proposal. The number of calls an hour is limited. Tools of servers the " +
+      "user registered themselves are not described. This tool proposes and dispatches nothing, but " +
+      "describing an approved type can start its connector, and a definition found changed is recorded " +
+      "as suspended.",
     // Never stricter than the gateway, which is authoritative about the bounds.
     schema: { actionTypes: z.array(z.string()).optional() },
     annotations: { ...WRITE_ANNOTATIONS, readOnlyHint: true },

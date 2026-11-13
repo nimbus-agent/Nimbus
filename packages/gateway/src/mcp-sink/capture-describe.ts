@@ -3,12 +3,14 @@
 // accepts now and, for the approved ones it names, the description and input schema of each. A read
 // surface: it changes nothing about what is accepted, refused, approved or dispatched.
 //
-// `describeActions` runs a FIXED order; read it top to bottom. Steps 1 to 3 refuse without an audit
-// row, counted instead (as submit's steps 1 to 3), so the limit stays a bound:
+// `describeActions` runs a FIXED order; read it top to bottom. Steps 1 to 4 refuse without an audit
+// row, counted instead (as submit's early steps), so the limit stays a bound:
 //   1. capability: the act door is on (config and live org policy, fail closed);
 //   2. client kind: only a declared `mcp` connection reads it, as `capture.state` and `capture.mine`;
-//   3. the describe limiter: its OWN window, so describes and submits cannot starve each other;
-//   4. params: at most 10 types, each at most 128 characters, across at most 3 services;
+//   3. params: at most 10 types, each at most 128 characters, across at most 3 services (pure and
+//      cheap, so a malformed call costs and consumes nothing, and cannot burn the window every
+//      agent connection shares);
+//   4. the describe limiter: its OWN window, so describes and submits cannot starve each other;
 //   5. the injected describer (`createAgentDoor(...).describe`): this module imports nothing from
 //      `connectors/` or the executor (static D32(f)), so the function arrives through the context;
 //   6. the reply cap, in bytes, cut in request order.
@@ -41,7 +43,10 @@ const DESCRIBE_ATTEMPT_MULTIPLIER = 4;
 /** Room kept for the reply's own braces and the truncation flag. */
 const REPLY_ENVELOPE_BYTES = 64;
 
-const CUT_REASON = "the reply was full; ask for this type alone";
+const CUT_REASON = "the reply was full, so this type is not described; ask for fewer types";
+
+/** What the caller reads when the describer fails with anything but a `CaptureError`. */
+const DESCRIBE_FAILED_DETAIL = "describe could not be completed now";
 
 /** What the describe path reads: the gate's capability, counter and clock, and the injected describer. */
 export interface CaptureDescribeDeps {
@@ -147,19 +152,26 @@ export async function describeActions(
   if (CAPTURE_ROLE_BY_KIND[caller.kind] !== "submit") {
     refuse(deps, "ERR_CAPTURE_FORBIDDEN_CLIENT", "capture.describe is for MCP clients");
   }
+  // 3. Params: bounded before anything is consumed or listed.
+  const actionTypes = requireDescribeParams(deps, params);
   const describer = deps.describer;
   if (describer === undefined) {
     refuse(deps, "ERR_CAPTURE_DISABLED", "the agent door is not available");
   }
-  // 3. The describe limiter, on its own window.
+  // 4. The describe limiter, on its own window.
   const cap4 = cap.config.maxPerHour * DESCRIBE_ATTEMPT_MULTIPLIER;
   if (!describer.limiter.tryAcquire(deps.now(), cap4)) {
     refuse(deps, "ERR_CAPTURE_RATE_LIMITED", "too many describe attempts this hour");
   }
-  // 4. Params: bounded before any connector is listed.
-  const actionTypes = requireDescribeParams(deps, params);
-  // 5. The describer (a detailed call may list, and so start, an approved connector).
-  const described = await describer.actions(actionTypes);
+  // 5. The describer (a detailed call may list, and so start, an approved connector). Anything but a
+  //    `CaptureError` is internal: it becomes a fixed text, never the thrown message.
+  let described: readonly ActionDescription[];
+  try {
+    described = await describer.actions(actionTypes);
+  } catch (e) {
+    if (e instanceof CaptureError) throw e;
+    throw new CaptureError("ERR_CAPTURE_STATE", DESCRIBE_FAILED_DETAIL);
+  }
   // 6. The reply cap.
   return capReply(described);
 }
