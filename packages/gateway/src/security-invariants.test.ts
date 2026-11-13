@@ -1189,6 +1189,10 @@ describe("I10 — Constant-time compare helpers live in util/timing-safe-compare
     expect(src).toMatch(
       /import\s*\{[^}]*constantTimeStringEqual[^}]*\}\s*from\s*["']\.\.\/\.\.\/util\/timing-safe-compare(?:\.ts)?["']/,
     );
+    // The CALL, at both comparison sites (the re-read approval and the listed hash), not the bare name.
+    const calls =
+      stripComments(src).match(/constantTimeStringEqual\([^)]*\.definitionSha256[^)]*\)/g) ?? [];
+    expect(calls.length).toBe(2);
     expect(src).not.toMatch(/[!=]==\s*\w+(?:\.\w+)*\.definitionSha256/);
     expect(src).not.toMatch(/\.definitionSha256\s*[!=]==/);
   });
