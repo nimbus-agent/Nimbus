@@ -43,9 +43,11 @@ import {
   isCaptureState,
   isLegacyBasis,
   type NativeValidatedCapture,
+  NO_BASIS_CLASS,
   type ValidatedCapture,
 } from "./capture-types.ts";
 import {
+  PAYLOAD_MAX_BYTES,
   referencedItemIds,
   sanitizeClientLabel,
   validateCapturePayload,
@@ -352,22 +354,55 @@ function auditedStep<T>(ctx: SubmitContext, step: () => T): T {
   }
 }
 
+/**
+ * Step 5a's size rule: the validator accepts an action up to its structural bound, and only a
+ * proposal whose verdict marks a bound row may keep more than the ordinary cap. Runs before the
+ * destination, the configured and the definition checks, so an oversized proposal costs no I/O.
+ */
+function requireActionSize(ctx: SubmitContext, v: ActionCapture, boundInput: boolean): void {
+  if (boundInput) return;
+  if (Buffer.byteLength(JSON.stringify(v.payload), "utf8") > PAYLOAD_MAX_BYTES) {
+    refuseAudited(
+      ctx.deps,
+      ctx.caller,
+      "action",
+      ctx.clientLabel,
+      "ERR_CAPTURE_INVALID",
+      `payload exceeds ${String(PAYLOAD_MAX_BYTES)} bytes`,
+    );
+  }
+}
+
 /** The fixed detail of a suspended tool at submit; it echoes nothing stored or listed. */
 const SUSPENDED_AT_SUBMIT =
   "was approved for agents but its definition changed; it stays refused until the owner approves it again by name";
 
 /**
  * Step 5a: the action type is proposable now, and on what basis. A `suspended` verdict is its own
- * audited refusal (`ERR_AGENT_TOOL_SUSPENDED`); denied and unknown are `NOT_PROPOSABLE`. Returns the
- * basis (absent for a user-MCP type and for a classifier that gives none).
+ * audited refusal (`ERR_AGENT_TOOL_SUSPENDED`); denied and unknown are `NOT_PROPOSABLE`. A
+ * proposable verdict with no basis is accepted only when the runtime marked it `userMcp` (fail
+ * closed: a basis-less verdict is otherwise lax everywhere after it). Returns the verdict's basis
+ * (absent for a user-MCP type) and whether its row may carry a payload over the ordinary cap.
  */
 function requireProposable(
   ctx: SubmitContext,
   v: ActionCapture,
   classified: ActionVerdict | undefined,
-): ActionBasis | undefined {
+): { readonly basis: ActionBasis | undefined; readonly boundInput: boolean } {
   const verdict = classified ?? { kind: "unknown" as const };
-  if (verdict.kind === "proposable") return verdict.basis;
+  if (verdict.kind === "proposable") {
+    if (verdict.basis === undefined && verdict.userMcp !== true) {
+      refuseAudited(
+        ctx.deps,
+        ctx.caller,
+        "action",
+        ctx.clientLabel,
+        "ERR_CAPTURE_ACTION_NOT_PROPOSABLE",
+        `${v.payload.actionType} cannot be proposed (${NO_BASIS_CLASS})`,
+      );
+    }
+    return { basis: verdict.basis, boundInput: verdict.boundInput === true };
+  }
   if (verdict.kind === "suspended") {
     refuseAudited(
       ctx.deps,
@@ -538,7 +573,9 @@ export async function submitCapture(
   //    write, so a concurrent submit cannot slip past the caps.
   let basis: ActionBasis | undefined;
   if (v.kind === "action") {
-    basis = requireProposable(ctx, v, deps.classifyAction?.(v.payload.actionType));
+    const proposed = requireProposable(ctx, v, deps.classifyAction?.(v.payload.actionType));
+    basis = proposed.basis;
+    requireActionSize(ctx, v, proposed.boundInput);
     requireDestinationAllowed(ctx, v, basis);
     requireConfigured(ctx, v, await deps.isServiceConfigured?.(serviceOf(v.payload.actionType)));
     await requireDefinitionVerified(ctx, v, basis);

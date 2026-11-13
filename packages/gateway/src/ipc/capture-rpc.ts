@@ -49,7 +49,7 @@ import {
   isLegacyBasis,
 } from "../mcp-sink/capture-types.ts";
 import { dispatchByMethod, type RpcMissOrHit } from "./_lib/dispatch-by-method.ts";
-import { type ConsentCoordinator, vetoingConsent } from "./consent.ts";
+import { type ConsentCoordinator, humanOnlyConsent, vetoingConsent } from "./consent.ts";
 import { RpcMethodError } from "./server/rpc-error.ts";
 
 /**
@@ -182,10 +182,17 @@ export function buildActDeps(
   w: CaptureActWiring,
   coordinator: ConsentCoordinator,
   clientId: string,
-  opts: { readonly humanOnly?: boolean } = {},
+  opts: { readonly humanOnly?: { readonly onNonHuman: () => void } } = {},
 ): ActDeps {
+  // The flag and the wrapper it vouches for come from this ONE place: asked for humanOnly, the
+  // consent channel is wrapped here (inside the vetoing wrapper below) and the flag is set, so no
+  // caller can claim "a person answered" over a channel that takes any answer.
+  const humanChannel =
+    opts.humanOnly === undefined
+      ? coordinator
+      : humanOnlyConsent(coordinator, opts.humanOnly.onNonHuman);
   return {
-    ...(opts.humanOnly === true ? { humanOnly: true } : {}),
+    ...(opts.humanOnly === undefined ? {} : { humanOnly: true }),
     async execute(actionType, input, provenance) {
       // The tool is ALWAYS gateway-chosen: the write row for a first-party type, the canonical
       // `<serviceId>_<tool>` key for a user-MCP type (the exact pair `connector.userMcpCall` builds,
@@ -224,7 +231,7 @@ export function buildActDeps(
       const channel =
         provenance.basis === "approved" && door !== undefined
           ? vetoingConsent(
-              coordinator,
+              humanChannel,
               async () => {
                 const v = await door.verifyDefinition(actionType);
                 if (v.ok) return undefined;
@@ -237,7 +244,7 @@ export function buildActDeps(
                 vetoed = reason;
               },
             )
-          : coordinator;
+          : humanChannel;
       // Phase 28 AD1: the SAME door maker as the model door (no delegate, no standing rule, the
       // before-state runner), so the executor's own prompt (the typed preview with the target's
       // current state) is what the owner sees. The LOCAL owner who ran `captures accept` answers.

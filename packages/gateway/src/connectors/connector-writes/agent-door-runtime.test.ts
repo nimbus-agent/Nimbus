@@ -166,13 +166,38 @@ describe("AGENT_DOOR_MAIL_SEND_TOOL_IDS", () => {
 });
 
 describe("verdict", () => {
-  test("a user-MCP type returns exactly what classifyActionType returns", () => {
+  // The classifier's own answer, plus the explicit user-MCP marker the gate requires of a verdict
+  // with no basis (it is added only to a proposable one).
+  const userMcpVerdict = (t: string) => {
+    const v = classifyActionType(t, classifyContext);
+    return v.kind === "proposable" ? { ...v, userMcp: true as const } : v;
+  };
+
+  test("a user-MCP type returns what classifyActionType returns, a proposable one marked userMcp", () => {
     const d = door();
     for (const t of ["mcp_x.do_it", "mcp_y.do_it", "mcp_x.bad name", "mcp_x."]) {
-      expect(d.verdict(t), t).toEqual(classifyActionType(t, classifyContext));
+      expect(d.verdict(t), t).toEqual(userMcpVerdict(t));
     }
+    expect(d.verdict("mcp_x.do_it")).toEqual({ kind: "proposable", userMcp: true });
     userMcpAllowed = false;
-    expect(d.verdict("mcp_x.do_it")).toEqual(classifyActionType("mcp_x.do_it", classifyContext));
+    expect(d.verdict("mcp_x.do_it")).toEqual(userMcpVerdict("mcp_x.do_it"));
+  });
+
+  test("only an approved bound row is marked boundInput; an approved plain row and a legacy type are not", () => {
+    allow("github_issue_create");
+    raiseWriteEnablementWave(db, "github", 4, 1);
+    allow("github_file_commit");
+    const d = door();
+    expect(d.verdict("github.issue.create")).toEqual({ kind: "proposable", basis: "approved" });
+    expect(d.verdict("github.file.commit")).toEqual({
+      kind: "proposable",
+      basis: "approved",
+      boundInput: true,
+    });
+    expect(d.verdict("slack.message.post")).toEqual({
+      kind: "proposable",
+      basis: "legacy_unapproved",
+    });
   });
 
   test("an unknown type is unknown", () => {
@@ -224,7 +249,11 @@ describe("verdict", () => {
       class: "agent_not_approved",
     });
     allow("github_file_commit");
-    expect(d.verdict("github.file.commit")).toEqual({ kind: "proposable", basis: "approved" });
+    expect(d.verdict("github.file.commit")).toEqual({
+      kind: "proposable",
+      basis: "approved",
+      boundInput: true,
+    });
   });
 
   test("a never-offered non-mail row is denied, even when its service is enabled", () => {
@@ -290,6 +319,7 @@ describe("verdict", () => {
 
 describe("per-call re-read: each change alone flips an approved verdict on the next call, with no restart", () => {
   const approved = { kind: "proposable", basis: "approved" } as const;
+  const approvedBound = { kind: "proposable", basis: "approved", boundInput: true } as const;
   test.each([
     ["the V83 row is removed", () => removeModelWriteEnablement(db, "github")],
     [
@@ -331,7 +361,7 @@ describe("per-call re-read: each change alone flips an approved verdict on the n
     allow("iac_terraform_apply");
     setIacGrants(db, { workdirs: ["/w"], clouds: [], regions: [], net: [] }, 1);
     const d = door();
-    expect(d.verdict("iac.terraform.apply")).toEqual(approved);
+    expect(d.verdict("iac.terraform.apply")).toEqual(approvedBound);
     removeIacGrants(db);
     expect(d.verdict("iac.terraform.apply")).toEqual({ kind: "denied", class: "agent_no_scope" });
   });
@@ -345,7 +375,7 @@ describe("per-call re-read: each change alone flips an approved verdict on the n
       1,
     );
     const d = door();
-    expect(d.verdict(row.actionType)).toEqual(approved);
+    expect(d.verdict(row.actionType)).toEqual(approvedBound);
     removeK8sGrants(db);
     expect(d.verdict(row.actionType)).toEqual({ kind: "denied", class: "agent_no_scope" });
   });

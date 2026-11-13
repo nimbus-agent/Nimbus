@@ -155,7 +155,7 @@ routing row means `Tool not found`, never dispatch-by-type. An agent-supplied `m
 | `PROPOSABLE_WRITE_TOOLS` | actionType → bare tool id as registered by `@nimbus-dev/connectors`; its keys ARE the first-party proposable set |
 | `ACTION_PROPOSABILITY` | classifies EVERY `HITL_REQUIRED` type (totality test); unlisted → `unknown` → refused |
 | `classifyActionType` | adds the user-MCP arm: `mcp_*` types are proposable only for a `--model` server while `user_mcp_model_access` allows (`user_mcp_no_model_access` / `user_mcp_policy` otherwise); `ext_*` is `unknown` |
-| `listProposableActionTypes` | what `capture.status` advertises (configured first-party types + one `mcp_<id>.*` pattern per `--model` server) |
+| `createAgentDoor(...).acceptedTypes` | what `capture.status` advertises (configured approved and legacy types + one `mcp_<id>.*` pattern per `--model` server; `connectors/connector-writes/agent-door-runtime.ts`; the old `listProposableActionTypes` was deleted at AD3a-2a) |
 
 Counts — derive from `HITL_REQUIRED` (`packages/gateway/src/engine/executor.ts`) and
 `ACTION_PROPOSABILITY` (as of 2026-11-05, Phase 9.7 B3: 160 HITL types, **43 proposable / 117 denied**,
@@ -191,7 +191,7 @@ connector allowlist. The act door's configured-ness comes from
   `approvals.list|get|approve|decline` for a connection that DECLARED `cli` or `ui`
   (`APPROVER_BY_KIND`; `unknown` is refused here although `captures.*` serves it). `approve` reaches the
   act door only through `acceptCapture` (so `acceptAction` keeps its one caller, D32(e)) around the
-  connection's own consent channel wrapped by `humanOnlyConsent` (`ipc/consent.ts`): an answer whose
+  connection's own consent channel, which `buildActDeps` wraps in `humanOnlyConsent` (`ipc/consent.ts`) when asked for `humanOnly` (the option also sets `ActDeps.humanOnly`; `approvals-rpc.ts` wraps nothing): an answer whose
   `answerSource` is not `human` becomes a decline. The reply is `{ id, state, outcomeRef?, errorCode?, reason? }`;
   `reason` appears only on `rejected`, escaped, and is never stored (V69 allows no code on a rejected row).
   Static D32(b)/(c) allow exactly two RPC modules, `ipc/capture-rpc.ts` and `ipc/approvals-rpc.ts`.

@@ -74,6 +74,9 @@ interface Opts {
   readonly reply?: (a: PlannedAction) => unknown;
   readonly refreshFails?: boolean;
   readonly kb?: CaptureActWiring["getTribalKbConfig"];
+  /** The answer's source (default `human`); the option `buildActDeps` is asked for. */
+  readonly source?: "human" | "auto";
+  readonly humanOnly?: { readonly onNonHuman: () => void };
 }
 
 function harness(opts: Opts = {}) {
@@ -83,7 +86,7 @@ function harness(opts: Opts = {}) {
     requestConsent: async (_c: string, req: { prompt: string }) => {
       prompts.push(req.prompt);
       opts.answer?.();
-      return { approved: opts.approve ?? true, answerSource: "human" as const };
+      return { approved: opts.approve ?? true, answerSource: opts.source ?? ("human" as const) };
     },
     requestConfirmedConsent: async (_c: string, req: { prompt: string; confirmText: string }) => {
       prompts.push(req.prompt);
@@ -91,7 +94,7 @@ function harness(opts: Opts = {}) {
       return {
         approved: opts.approve ?? true,
         typed: req.confirmText,
-        answerSource: "human" as const,
+        answerSource: opts.source ?? ("human" as const),
       };
     },
   } as unknown as ConsentCoordinator;
@@ -118,7 +121,13 @@ function harness(opts: Opts = {}) {
       : {}),
     ...(opts.door === undefined ? {} : { agentDoor: opts.door }),
   };
-  return { act: buildActDeps(w, coord, "c-cli"), dispatched, prompts };
+  const act = buildActDeps(
+    w,
+    coord,
+    "c-cli",
+    opts.humanOnly === undefined ? {} : { humanOnly: opts.humanOnly },
+  );
+  return { act, dispatched, prompts };
 }
 
 const writesOf = (d: PlannedAction[]) => d.filter((a) => !isBeforeReadActionType(a.type));
@@ -385,7 +394,27 @@ describe("the code a rejected action stores", () => {
     const w = {} as CaptureActWiring;
     const c = {} as ConsentCoordinator;
     expect(buildActDeps(w, c, "c").humanOnly).toBeUndefined();
-    expect(buildActDeps(w, c, "c", { humanOnly: true }).humanOnly).toBe(true);
+    expect(buildActDeps(w, c, "c", { humanOnly: { onNonHuman: () => {} } }).humanOnly).toBe(true);
+  });
+
+  // ONE place produces the flag and the wrapper it vouches for: asking buildActDeps for humanOnly
+  // wraps the consent itself, so a caller can never set the flag over a channel that takes any answer.
+  test("deps built with humanOnly turn an auto answer into a decline, tell the caller, and dispatch nothing", async () => {
+    let told = 0;
+    const h = harness({ source: "auto", humanOnly: { onNonHuman: () => told++ } });
+    expect(h.act.humanOnly).toBe(true);
+    const out = await h.act.execute("slack.message.post", { text: "x" }, PROV("legacy_unapproved"));
+    expect(out.status).toBe("rejected");
+    expect(told).toBe(1);
+    expect(writesOf(h.dispatched)).toEqual([]);
+  });
+
+  test("deps built without the option (captures.accept) leave humanOnly unset and take the plain channel's answer", async () => {
+    const h = harness({ source: "auto" });
+    expect(h.act.humanOnly).toBeUndefined();
+    const out = await h.act.execute("slack.message.post", { text: "x" }, PROV("legacy_unapproved"));
+    expect(out.status).toBe("ok");
+    expect(writesOf(h.dispatched)).toHaveLength(1);
   });
 });
 

@@ -991,7 +991,7 @@ describe("act door — submit (PR 3)", () => {
       ...deps,
       classifyAction: () =>
         verdict === "proposable"
-          ? { kind: "proposable" }
+          ? { kind: "proposable", userMcp: true }
           : verdict === "denied"
             ? { kind: "denied", class: "vcs" }
             : { kind: "unknown" },

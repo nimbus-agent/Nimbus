@@ -686,7 +686,7 @@ describe("captures.accept on an action (act door wiring)", () => {
           },
           { capabilitiesDisabled: new Set() },
         ),
-      classifyAction: () => ({ kind: "proposable" }),
+      classifyAction: () => ({ kind: "proposable", userMcp: true }),
       isServiceConfigured: () => Promise.resolve(true),
     };
     gate.store.insert({
@@ -795,6 +795,16 @@ const REAL_CLASSIFY = {
   userMcpModelAccessAllowed: () => false,
 };
 
+/**
+ * The legacy classifier as a gate verdict. The gate refuses a basis-less verdict unless it carries
+ * the runtime's `userMcp` marker, so these tests (which exercise the destination refusals, not the
+ * door) add it exactly as `createAgentDoor` does for a user-MCP type.
+ */
+function classifyViaLegacyTable(t: string) {
+  const v = classifyActionType(t, REAL_CLASSIFY);
+  return v.kind === "proposable" ? { ...v, userMcp: true as const } : v;
+}
+
 function boundPolicy(channels: readonly string[]): EnforcedPolicy {
   return {
     capabilitiesDisabled: new Set<string>(),
@@ -872,7 +882,7 @@ describe("B1 act door: the destination refusal, real messagingDestinationRefusal
           },
           { capabilitiesDisabled: new Set() },
         ),
-      classifyAction: (t) => classifyActionType(t, REAL_CLASSIFY),
+      classifyAction: classifyViaLegacyTable,
       isServiceConfigured: () => Promise.resolve(true),
       actionDestinationRefusal: createActionDestinationRefusal(
         () => policy,
@@ -1383,7 +1393,7 @@ describe("B2 act door: actDoorRefusal at submit and at accept (OR-B2-2, OR-B2-3)
           },
           { capabilitiesDisabled: new Set() },
         ),
-      classifyAction: (t) => classifyActionType(t, REAL_CLASSIFY),
+      classifyAction: classifyViaLegacyTable,
       isServiceConfigured: () => Promise.resolve(true),
       actionDestinationRefusal: refusal,
     };
@@ -1564,7 +1574,7 @@ describe("B3 act door: the KB-target and KB-child refusals at submit and at acce
           },
           { capabilitiesDisabled: new Set() },
         ),
-      classifyAction: (t) => classifyActionType(t, REAL_CLASSIFY),
+      classifyAction: classifyViaLegacyTable,
       isServiceConfigured: () => Promise.resolve(true),
       actionDestinationRefusal: createActionDestinationRefusal(
         () => boundPolicy([]),
@@ -1777,7 +1787,7 @@ describe("B3r act door: remote content is refused at submit and at accept", () =
           },
           { capabilitiesDisabled: new Set() },
         ),
-      classifyAction: (t) => classifyActionType(t, REAL_CLASSIFY),
+      classifyAction: classifyViaLegacyTable,
       isServiceConfigured: () => Promise.resolve(true),
       actionDestinationRefusal: refusal,
     };

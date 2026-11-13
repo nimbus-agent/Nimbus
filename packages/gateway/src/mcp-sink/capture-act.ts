@@ -12,6 +12,7 @@ import {
   type ActionRejectCode,
   CaptureError,
   type CaptureRow,
+  NO_BASIS_CLASS,
 } from "./capture-types.ts";
 
 /**
@@ -157,7 +158,16 @@ function parseStored(row: CaptureRow): ActionPayload {
 /** 4a: the verdict now, and its basis. A suspended tool is its own code; the row stays proposed. */
 function requireVerdictAtApproval(deps: ActGateDeps, actionType: string): ActionBasis | undefined {
   const verdict = deps.classifyAction?.(actionType) ?? { kind: "unknown" as const };
-  if (verdict.kind === "proposable") return verdict.basis;
+  if (verdict.kind === "proposable") {
+    // Fail closed: a basis-less verdict is accepted only with the runtime's user-MCP marker.
+    if (verdict.basis === undefined && verdict.userMcp !== true) {
+      throw new CaptureError(
+        "ERR_CAPTURE_ACTION_NOT_PROPOSABLE",
+        `${actionType} cannot be proposed (${NO_BASIS_CLASS}); the capture stays proposed`,
+      );
+    }
+    return verdict.basis;
+  }
   if (verdict.kind === "suspended") {
     throw new CaptureError(
       "ERR_AGENT_TOOL_SUSPENDED",

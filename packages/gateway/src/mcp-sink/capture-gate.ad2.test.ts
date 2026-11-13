@@ -63,7 +63,7 @@ beforeEach(() => {
     refusals: new CaptureRefusalCounter(),
     newId: () => `cap_${String(++seq)}`,
     now: () => clock,
-    classifyAction: () => ({ kind: "proposable" }),
+    classifyAction: () => ({ kind: "proposable", userMcp: true }),
     isServiceConfigured: () => Promise.resolve(true),
     actionDestinationRefusal: () => undefined,
     onActionProposed: (n) => hookCalls.push(n),

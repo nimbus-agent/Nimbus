@@ -4296,9 +4296,11 @@ describe("I28 — MCP content enters only through the capture gate, in a fixed o
     }
     expect(src.match(/requireApprover\(c\.caller\);/g)).toHaveLength(4);
     // approve: the kind check (getCapture via requireActionRow) precedes acceptCapture, which
-    // precedes the reply; the human-only wrapper is built before acceptCapture runs.
+    // precedes the reply; the human-only option (buildActDeps wraps the consent itself) is asked
+    // for before acceptCapture runs, and approvals-rpc.ts never wraps a consent on its own.
     const iRow = approve.indexOf("requireActionRow(");
-    const iWrap = approve.indexOf("humanOnlyConsent(");
+    const iWrap = approve.indexOf("humanOnly:");
+    expect(src).not.toContain("humanOnlyConsent");
     const iAccept = approve.indexOf("acceptCapture(");
     const iReply = approve.indexOf("NON_HUMAN_REASON");
     expect(iRow).toBeGreaterThan(-1);
@@ -4310,21 +4312,44 @@ describe("I28 — MCP content enters only through the capture gate, in a fixed o
     expect(src).not.toMatch(/from\s+["'][^"']*\/llm\//);
   });
 
-  test("AD2: the human-only wrapper lives in ipc/consent.ts and is used only by approvals-rpc.ts and the dispatcher's agent-door enable; capture-rpc.ts has neither it nor delegation", async () => {
+  test("AD2: the human-only wrapper lives in ipc/consent.ts and is used only by capture-rpc.ts (buildActDeps, which also sets the flag) and the dispatcher's agent-door enable; capture-rpc.ts has no delegation", async () => {
     const consent = await read("packages/gateway/src/ipc/consent.ts");
     expect(consent).toMatch(/export function humanOnlyConsent\(/);
     expect(consent).toContain('answer.answerSource !== "human"');
     const users = (await grepRepo(/\bhumanOnlyConsent\b/)).filter(
       (p) => !p.endsWith("/ipc/consent.ts"),
     );
-    // AD3a-1 widened this to a second user: the agent-door enable in the dispatcher.
+    // AD3a-1 added the agent-door enable in the dispatcher; AD3a-2a moved the act door's use into
+    // buildActDeps, so the flag and the wrapper it vouches for have ONE producer.
     expect(users.sort()).toEqual([
-      "packages/gateway/src/ipc/approvals-rpc.ts",
+      "packages/gateway/src/ipc/capture-rpc.ts",
       "packages/gateway/src/ipc/server/dispatchers.ts",
     ]);
     const rpc = stripComments(await read("packages/gateway/src/ipc/capture-rpc.ts"));
-    expect(rpc).not.toContain("humanOnlyConsent");
     expect(rpc).not.toContain("delegation");
+  });
+
+  test("AD3a-2a: `humanOnly: true` is written in production only inside buildActDeps, in the same expression that wraps the consent in humanOnlyConsent", async () => {
+    const files = await readDirFiles("packages/gateway/src");
+    const writers = files
+      .filter(
+        (f) =>
+          !/\.test(-helpers)?\.ts$/.test(f.rel) &&
+          /\bhumanOnly:\s*true/.test(stripComments(f.contents)),
+      )
+      .map((f) => f.rel);
+    expect(writers).toEqual(["ipc/capture-rpc.ts"]);
+    const rpc = stripComments(await read("packages/gateway/src/ipc/capture-rpc.ts"));
+    const body = rpc.slice(rpc.indexOf("export function buildActDeps("));
+    const iWrap = body.indexOf("humanOnlyConsent(");
+    const iFlag = body.search(/humanOnly:\s*true/);
+    const iExecute = body.indexOf("async execute(");
+    expect(iWrap).toBeGreaterThan(-1);
+    expect(iFlag).toBeGreaterThan(iWrap);
+    expect(iFlag).toBeLessThan(iExecute);
+    // The flag is written once, and the wrapper is applied to the coordinator before the vetoing one.
+    expect(body.match(/humanOnly:\s*true/g)).toHaveLength(1);
+    expect(body.indexOf("vetoingConsent(")).toBeGreaterThan(iWrap);
   });
 
   test("AD2: buildActDeps is the only place under ipc/ that builds the act door's executor", async () => {
@@ -4801,7 +4826,7 @@ describe("I58 - an outside agent proposes only what the owner approved for agent
         },
         coordinator,
         "c-cli",
-        { humanOnly: true },
+        { humanOnly: { onNonHuman: () => {} } },
       );
       const out = await act.execute("github.pr.merge", MERGE, {
         basis: "approved",

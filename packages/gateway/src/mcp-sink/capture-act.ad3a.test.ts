@@ -240,12 +240,23 @@ describe("the basis used after step 4 is the approval-time one", () => {
   });
 
   test("a verdict with no basis (user-MCP, today's wiring) is unchanged: no definition check, no human-only rule", async () => {
-    verdict = { kind: "proposable" };
+    verdict = { kind: "proposable", userMcp: true };
     Reflect.deleteProperty(deps, "verifyActionDefinition");
     const a = act({ status: "ok", result: {} }, "absent");
     expect((await acceptAction(deps, OWNER, row(), a)).state).toBe("executed");
     expect(a.provenance[0]?.basis).toBeUndefined();
     expect(refusalBasis).toEqual([undefined]);
+  });
+
+  test("a basis-less verdict without the user-MCP marker is refused at approval and the row stays proposed", async () => {
+    verdict = { kind: "proposable" };
+    const a = act({ status: "ok", result: {} }, "absent");
+    const e = await codeOf(acceptAction(deps, OWNER, row(), a));
+    expect(e.code).toBe("ERR_CAPTURE_ACTION_NOT_PROPOSABLE");
+    expect(e.message).toContain("agent_no_basis");
+    expect(a.provenance).toHaveLength(0);
+    expect(row().state).toBe("proposed");
+    expect(acceptAudits()).toBe(0);
   });
 
   test("the order: verdict, configured, refusal, human-only, definition, then the claim", async () => {

@@ -20,7 +20,7 @@ import {
   captureErrorToRpc,
   idParam,
 } from "./capture-rpc.ts";
-import { type ConsentCoordinator, humanOnlyConsent } from "./consent.ts";
+import type { ConsentCoordinator } from "./consent.ts";
 
 /**
  * `approvals.*` (agent door AD2, spec § 7.2): the owner's queue of action proposals from MCP
@@ -44,10 +44,6 @@ export const APPROVALS_METHODS = [
 /** The fixed owner-side text when an approval was not answered by a person. */
 export const NON_HUMAN_REASON =
   "the approval did not come from a person at a terminal (--yes, a script and an old client cannot approve); nothing was run";
-
-// Defined in ipc/consent.ts: static D41(a) names the coordinator's typed-answer method only there
-// and in the executor, and the wrapper must implement it. Re-exported so the approval path reads here.
-export { humanOnlyConsent };
 
 const GET_NOTE = "the typed preview and the target's current state appear when you approve";
 
@@ -152,14 +148,13 @@ async function approve(
   let nonHuman = false;
   const act =
     rpc.act !== undefined && consent !== undefined
-      ? buildActDeps(
-          rpc.act,
-          humanOnlyConsent(consent, () => {
-            nonHuman = true;
-          }),
-          caller.clientId,
-          { humanOnly: true },
-        )
+      ? buildActDeps(rpc.act, consent, caller.clientId, {
+          humanOnly: {
+            onNonHuman: () => {
+              nonHuman = true;
+            },
+          },
+        })
       : undefined;
   // 4. The gate's own accept: capability, owner role, state, expiry, classify, configured,
   //    destination, CAS claim, then the executor (static D32(e): its only door to acceptAction).

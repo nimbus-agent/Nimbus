@@ -26,11 +26,13 @@ export const CLIENT_LABEL_MAX = 100;
  */
 export const PAYLOAD_MAX_BYTES = 65_536;
 /**
- * The cap for `kind: action` ONLY (agent door AD3a-2a): the bound rows cap their own input (a commit
- * at 96 KiB of UTF-16 code units, which is at most 288 KiB of UTF-8, CloudFormation and Kubernetes at
- * 64 KiB), so a legal commit must fit the queue. 320 KiB covers that plus the envelope and the
- * 300-character summary; the row's own cap still applies in the executor. Never used for a note,
- * decision, term or link.
+ * The STRUCTURAL cap for `kind: action` (agent door AD3a-2a): the bound rows cap their own input (a
+ * commit at 96 KiB of UTF-16 code units, which is at most 288 KiB of UTF-8, CloudFormation and
+ * Kubernetes at 64 KiB), so a legal commit must fit the queue. 320 KiB covers that plus the envelope
+ * and the 300-character summary. The validator knows no verdict, so it accepts this much for any
+ * action; `submitCapture` then applies the ordinary `PAYLOAD_MAX_BYTES` to every proposal whose
+ * verdict does not mark a bound row (`boundInput`), before anything is stored or listed. Never used
+ * for a note, decision, term or link.
  */
 export const ACTION_PAYLOAD_MAX_BYTES = 327_680;
 

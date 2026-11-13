@@ -162,7 +162,21 @@ export interface ActionPayload {
  * `connectors/` (D32(f)), so `connectors/proposable-actions.ts`'s richer type is assigned to this.
  */
 export type ActionVerdict =
-  | { readonly kind: "proposable"; readonly basis?: ActionBasis }
+  | {
+      readonly kind: "proposable";
+      readonly basis?: ActionBasis;
+      /**
+       * Set by the door runtime for a user-MCP type, the only proposable type that carries no basis.
+       * The gate accepts a basis-less verdict ONLY with this marker (fail closed, AD3a-2a).
+       */
+      readonly userMcp?: true;
+      /**
+       * Set by the door runtime for an `approved` verdict whose row is a bound row (a commit, an
+       * apply): only such a proposal may exceed the ordinary payload cap, up to the validator's
+       * structural bound.
+       */
+      readonly boundInput?: true;
+    }
   /**
    * An approved tool whose listed definition changed (AD3a-2a, D-AD-9): refused with
    * `ERR_AGENT_TOOL_SUSPENDED` until the owner approves it again by name. Never a legacy case.
@@ -179,6 +193,9 @@ export type ActionVerdict =
  * accepted it (the deprecation window, OR-AD-9); stored `legacy = 1`, counted and warned about.
  */
 export type ActionBasis = "approved" | "legacy_unapproved" | "legacy_mail_send";
+
+/** The fixed class of a proposable verdict that names neither a basis nor a user-MCP type. */
+export const NO_BASIS_CLASS = "agent_no_basis";
 
 /** True for the two deprecation-window bases. */
 export function isLegacyBasis(basis: ActionBasis | undefined): boolean {

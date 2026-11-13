@@ -44,7 +44,9 @@ beforeEach(() => {
     store: new CaptureStore(db),
     capability: () => cap,
     classifyAction: () =>
-      verdict === "proposable" ? { kind: "proposable" } : { kind: "denied", class: "vcs" },
+      verdict === "proposable"
+        ? { kind: "proposable", userMcp: true }
+        : { kind: "denied", class: "vcs" },
     isServiceConfigured: () => Promise.resolve(configured),
     now: () => clock,
     actionDestinationRefusal: () => destinationRefusal,

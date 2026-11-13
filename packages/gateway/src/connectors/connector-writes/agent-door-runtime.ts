@@ -11,10 +11,10 @@
 // between a submit and an approval is seen by the approval.
 //
 // `verdict` is synchronous and does no connector I/O. It decides, in this order:
-//   1. a user-MCP type: `classifyActionType`, unchanged, with no basis;
+//   1. a user-MCP type: `classifyActionType`, unchanged, with no basis and the `userMcp` marker;
 //   2. no row: the legacy table's answer, unchanged (a type no row routes to is never `approved`);
 //   3. the tool's approval is SUSPENDED: `suspended` (never a legacy case, D-AD-15);
-//   4. `agentOffered`: `proposable` with basis `approved`;
+//   4. `agentOffered`: `proposable` with basis `approved` (and `boundInput` for a bound row);
 //   5. a type the legacy table accepts: `proposable` with a legacy basis (the deprecation window,
 //      OR-AD-9; the seven mail sends carry their own basis);
 //   6. otherwise `denied` with a fixed class that says which condition failed.
@@ -193,8 +193,12 @@ export function createAgentDoor(deps: AgentDoorDeps): AgentDoor {
   };
 
   const verdict = (actionType: string): ActionVerdict => {
-    // 1. A user-MCP type: the legacy classifier, unchanged, no basis.
-    if (isUserMcpType(actionType)) return legacyClassification(actionType);
+    // 1. A user-MCP type: the legacy classifier, unchanged, no basis. A proposable one carries the
+    //    explicit marker the gate requires of a basis-less verdict (it refuses any other).
+    if (isUserMcpType(actionType)) {
+      const classified = legacyClassification(actionType);
+      return classified.kind === "proposable" ? { ...classified, userMcp: true } : classified;
+    }
     // 2. No row routes to the type: the legacy table's own answer (never `approved`).
     const row = agentDoorRow(actionType, rows);
     if (row === undefined) {
@@ -211,7 +215,12 @@ export function createAgentDoor(deps: AgentDoorDeps): AgentDoor {
       return { kind: "suspended" };
     }
     // 4. The owner approved it for agents by name and every condition holds.
-    if (agentOffered(row, facts)) return { kind: "proposable", basis: "approved" };
+    // Only a bound row (a commit, an apply) may queue a payload over the ordinary cap.
+    if (agentOffered(row, facts)) {
+      return row.bound === undefined
+        ? { kind: "proposable", basis: "approved" }
+        : { kind: "proposable", basis: "approved", boundInput: true };
+    }
     // 5. The deprecation window: a type the earlier act door accepted (OR-AD-9, OR-AD-15).
     const legacy = legacyClassification(actionType);
     if (legacy.kind === "proposable") {

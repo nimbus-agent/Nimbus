@@ -7,7 +7,6 @@ import { meshServerForToolKey } from "./lazy-mesh/tool-map.ts";
 import {
   ACTION_PROPOSABILITY,
   classifyActionType,
-  listProposableActionTypes,
   PROPOSABLE_WRITE_TOOLS,
   proposableWriteTool,
 } from "./proposable-actions.ts";
@@ -203,30 +202,6 @@ describe("classifyActionType", () => {
     }
     expect(classifyActionType(`mcp_echo.${"x".repeat(64)}`, OPEN)).toEqual({ kind: "proposable" });
     expect(classifyActionType("mcp_echo.do-it_2", OPEN)).toEqual({ kind: "proposable" });
-  });
-});
-
-describe("listProposableActionTypes", () => {
-  test("configured first-party types plus one pattern per --model server, sorted", async () => {
-    const out = await listProposableActionTypes({
-      ...OPEN,
-      isServiceConfigured: (s) => Promise.resolve(s === "slack" || s === "jira"),
-    });
-    expect(out).toEqual([
-      "jira.comment.add",
-      "jira.issue.create",
-      "jira.issue.update",
-      "mcp_echo.*",
-      "slack.message.post",
-    ]);
-  });
-  test("policy off: no user-MCP pattern", async () => {
-    const out = await listProposableActionTypes({
-      ...OPEN,
-      userMcpModelAccessAllowed: () => false,
-      isServiceConfigured: () => Promise.resolve(false),
-    });
-    expect(out).toEqual([]);
   });
 });
 

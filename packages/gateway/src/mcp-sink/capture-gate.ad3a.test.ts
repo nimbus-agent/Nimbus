@@ -12,6 +12,7 @@ import { type CaptureGateDeps, submitCapture } from "./capture-gate.ts";
 import { CaptureAttemptLimiter, CaptureRefusalCounter } from "./capture-rate-limit.ts";
 import { CaptureStore } from "./capture-store.ts";
 import { type ActionBasis, type ActionVerdict, CaptureError } from "./capture-types.ts";
+import { ACTION_PAYLOAD_MAX_BYTES } from "./capture-validate.ts";
 
 const OPEN = { capabilitiesDisabled: new Set<string>() };
 const MCP = { clientId: "c-mcp", kind: "mcp" as const };
@@ -154,7 +155,7 @@ describe("the order of the submit checks", () => {
     await submitCapture(deps, MCP, ACT);
     verdict = { kind: "proposable", basis: "legacy_unapproved" };
     await submitCapture(deps, { clientId: "c2", kind: "mcp" }, ACT);
-    verdict = { kind: "proposable" };
+    verdict = { kind: "proposable", userMcp: true };
     await submitCapture(deps, { clientId: "c3", kind: "mcp" }, ACT);
     expect(refusalBasis).toEqual(["approved", "legacy_unapproved", undefined]);
   });
@@ -213,7 +214,7 @@ describe("the definition check (5c)", () => {
   });
 
   test("a verdict with no basis (user-MCP, and today's production wiring) behaves exactly as before", async () => {
-    verdict = { kind: "proposable" };
+    verdict = { kind: "proposable", userMcp: true };
     Reflect.deleteProperty(deps, "verifyActionDefinition");
     const out = await submitCapture(deps, MCP, ACT);
     expect(calls).toEqual(["classify", "refusal", "configured"]);
@@ -263,5 +264,71 @@ describe("the caps still follow the awaits", () => {
     const results = (await Promise.all([a, b])).sort((x, y) => x.localeCompare(y));
     expect(results).toEqual(["ERR_CAPTURE_QUEUE_FULL", "ok"]);
     expect(captureCount()).toBe(1);
+  });
+});
+
+/** An action proposal whose rebuilt payload is exactly `total` UTF-8 bytes of JSON. */
+function actOfBytes(total: number): { kind: string; payload: Record<string, unknown> } {
+  const empty = { ...ACT, payload: { ...ACT.payload, input: { body: "" } } };
+  const base = Buffer.byteLength(JSON.stringify(empty.payload), "utf8");
+  return { ...ACT, payload: { ...ACT.payload, input: { body: "x".repeat(total - base) } } };
+}
+
+describe("the payload cap follows the verdict (only a bound row may be large)", () => {
+  const ORDINARY = 65_536;
+
+  test.each([
+    [
+      "an approved type that is not bound",
+      { kind: "proposable", basis: "approved" } as ActionVerdict,
+    ],
+    ["a legacy type", { kind: "proposable", basis: "legacy_unapproved" } as ActionVerdict],
+    ["a user-MCP type", { kind: "proposable", userMcp: true } as ActionVerdict],
+  ])("%s over 65,536 bytes is refused, audited, and lists nothing", async (_n, v) => {
+    verdict = v;
+    expect(await codeOf(submitCapture(deps, MCP, actOfBytes(ORDINARY + 1)))).toBe(
+      "ERR_CAPTURE_INVALID",
+    );
+    expect(captureCount()).toBe(0);
+    expect(auditRows()).toHaveLength(1);
+    expect(calls).toEqual(["classify"]);
+  });
+
+  test("exactly 65,536 bytes is still accepted for a type that is not bound", async () => {
+    const out = await submitCapture(deps, MCP, actOfBytes(ORDINARY));
+    expect(out.state).toBe("proposed");
+  });
+
+  test("a bound approved type at 200 KiB is accepted", async () => {
+    verdict = { kind: "proposable", basis: "approved", boundInput: true };
+    const out = await submitCapture(deps, MCP, actOfBytes(200 * 1024));
+    expect(out.state).toBe("proposed");
+    expect(calls).toContain("verify");
+  });
+
+  test("a bound type is still refused above the validator's structural bound", async () => {
+    verdict = { kind: "proposable", basis: "approved", boundInput: true };
+    expect(await codeOf(submitCapture(deps, MCP, actOfBytes(ACTION_PAYLOAD_MAX_BYTES + 1)))).toBe(
+      "ERR_CAPTURE_INVALID",
+    );
+    expect(captureCount()).toBe(0);
+  });
+});
+
+describe("a proposable verdict with no basis fails closed", () => {
+  test("a basis-less verdict without the user-MCP marker is refused at submit with a fixed text", async () => {
+    verdict = { kind: "proposable" };
+    await expect(submitCapture(deps, MCP, ACT)).rejects.toThrow(
+      "ERR_CAPTURE_ACTION_NOT_PROPOSABLE: github.issue.create cannot be proposed (agent_no_basis)",
+    );
+    expect(calls).toEqual(["classify"]);
+    expect(captureCount()).toBe(0);
+    expect(auditRows()).toHaveLength(1);
+  });
+
+  test("the user-MCP marker lets the basis-less verdict through", async () => {
+    verdict = { kind: "proposable", userMcp: true };
+    const out = await submitCapture(deps, MCP, ACT);
+    expect(out.state).toBe("proposed");
   });
 });

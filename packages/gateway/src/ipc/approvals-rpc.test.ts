@@ -16,15 +16,10 @@ import type { CaptureGateDeps } from "../mcp-sink/capture-gate.ts";
 import { CaptureAttemptLimiter, CaptureRefusalCounter } from "../mcp-sink/capture-rate-limit.ts";
 import { CaptureStore } from "../mcp-sink/capture-store.ts";
 import { createMockVault } from "../vault/mock.ts";
-import {
-  APPROVALS_METHODS,
-  dispatchApprovalsRpc,
-  humanOnlyConsent,
-  NON_HUMAN_REASON,
-} from "./approvals-rpc.ts";
+import { APPROVALS_METHODS, dispatchApprovalsRpc, NON_HUMAN_REASON } from "./approvals-rpc.ts";
 import { type CaptureRpcCtx, dispatchCaptureRpc } from "./capture-rpc.ts";
 import type { ConsentCoordinator } from "./consent.ts";
-import { ConsentCoordinatorImpl } from "./consent.ts";
+import { ConsentCoordinatorImpl, humanOnlyConsent } from "./consent.ts";
 import { createStreamRegistry } from "./engine-ask-stream.ts";
 import { checkLanMethodAllowed, LanError } from "./lan-rpc.ts";
 import type { ClientKind } from "./server/client-kind.ts";
@@ -133,7 +128,7 @@ function makeCtx(extra: Partial<NonNullable<CaptureRpcCtx["act"]>> = {}): Captur
     refusals: new CaptureRefusalCounter(),
     newId: () => "cap_new",
     now: () => 1_000,
-    classifyAction: () => ({ kind: "proposable" }),
+    classifyAction: () => ({ kind: "proposable", userMcp: true }),
     isServiceConfigured: () => Promise.resolve(true),
     actionDestinationRefusal: () => undefined,
   };
