@@ -88,6 +88,11 @@ export const LOCAL_ONLY_PROSE_TYPES: ReadonlySet<string> = new Set([
   // embedding keeps "nothing here is egress" true (success criterion 5); membership also gives the
   // 16,384 body cap via LONG_BODY_TYPES.
   "nimbus:capture",
+  // Zotero notes (zotero-note-mapping.ts): the user's own reading notes and thinking, not public
+  // bibliographic metadata. Paragraph-shaped, so they get the long body cap, but they stay on the
+  // local MiniLM embedder and are never sent to a remote one. Retrieval quality on long notes is the
+  // deliberate price, as for web clips.
+  "zotero:note",
   // A glossary term's search copy when any source it was mined from is not remote-eligible (role
   // packs P2 spec § 7.1): a pack- or owner-mapped type, or a local-only one. Its definition and
   // synonyms are text DERIVED from those items, so embedding it remotely would ship off the machine

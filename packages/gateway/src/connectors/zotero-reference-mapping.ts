@@ -8,6 +8,9 @@ export interface ZoteroMappingContext {
 
 export type ZoteroMappedRow = MappedRow<"zotero", "reference">;
 
+// Attachments stay unindexed. Notes are NOT dropped any more: `zotero-note-mapping.ts` maps them,
+// and `zotero-sync.ts` routes by `itemType`. This reference mapper still returns null for a note so
+// a note can never be indexed as a `reference` row.
 const SKIP_ITEM_TYPES: ReadonlySet<string> = new Set(["attachment", "note"]);
 
 const TITLE_MAX = 120;
