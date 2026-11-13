@@ -385,6 +385,29 @@ describe("act door tools", () => {
     expect(spec?.description).not.toContain("captures accept");
   });
 
+  test("the propose_action description says what the door accepts now, with no send-an-email example (AD3a-2a)", async () => {
+    const t = await captureToolsFor(
+      depsWithStatus({
+        enabled: true,
+        kinds: ["action"],
+        actionEnabled: true,
+        proposableActionTypes: ["github.pr.merge", "slack.message.post"],
+      }),
+    );
+    const d = t.find((x) => x.name === "propose_action")?.description ?? "";
+    expect(d).not.toContain("send an email");
+    expect(d).toContain("accepts now");
+    expect(d).toContain("approved for outside agents");
+    expect(d).toContain("Deprecated");
+    expect(d).toContain("only a fixed code");
+    expect(d).toEndWith("github.pr.merge, slack.message.post.");
+  });
+
+  test("capture_status says a rejected action may carry a code (AD3a-2a)", () => {
+    const spec = CAPTURE_TOOL_SPECS.find((s) => s.name === "capture_status");
+    expect(spec?.description).toContain("errorCode");
+  });
+
   test("propose_action without an expiresAt names the TTL rather than inventing a time", async () => {
     const d = depsRecording([], { "capture.submit": { id: "cap_2", state: "proposed" } });
     const spec = CAPTURE_TOOL_SPECS.find((s) => s.name === "propose_action");
