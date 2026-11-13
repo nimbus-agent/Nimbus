@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794559146343,
+  "lastUpdate": 1794559970843,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "3a1e8138746f2f2b22ef49169ca920579d5a42b9",
-          "message": "feat(build): prove the connector registry can import from a package, before anything moves (#1340)\n\nTask 1 of the connector-extraction plan. Its entire purpose is to test\none assumption cheaply enough\nthat a failure costs nothing — **before any file moves, any repo is\npopulated, or anything is\npublished.**\n\n## The assumption, and the result\n\nThe extraction turns the generated registry's imports from relative\npaths into bare specifiers:\n\n```diff\n- github: () => import(\"../../../mcp-connectors/github/src/server.ts\"),\n+ github: () => import(\"@nimbus-dev/connectors/github\"),\n```\n\nEverything depends on `bun build --compile` embedding the second form as\nreliably as the first. If\nit does not, the design is wrong and nothing should move.\n\n**It holds.**\n\n| | `test:connector-boot` |\n| --- | --- |\n| Baseline, relative specifiers | 94 connectors — 89 answered, 5 refused\nwithout credentials, 0 failed |\n| Package specifiers, real installed tarball | **identical** |\n\nProven through an actually-installed tarball, not a workspace link — see\nbelow for why that\ndistinction turned out to matter.\n\n## What ships here\n\n- The generator emits either form behind `NIMBUS_CONNECTOR_SPECIFIER`;\n**the default is unchanged**.\n- `packages/mcp-connectors` gains a publishable manifest, `private:\ntrue` until the plan's publish\ntask. Its `exports` map is **generated** from the same directory scan\nthe runtime registry uses,\nso the two cannot disagree about which directories are connectors. A\nhand-written map of 94\nsubpaths resolves fine in development, where the source tree is present,\nand fails only once\n  installed from the registry — the worst place to find out.\n- Two audit fixes, with a test (below).\n\n## Three things the proof surfaced that the plan had not anticipated\n\n**`packages/mcp-connectors` cannot be a bun workspace member.** A\nworkspace package may not contain\n94 other workspace packages, and `bun install` reports `no changes`\nrather than erroring. Harmless\nafter the move — it stops being a workspace — but it rules out\nworkspace-linking as a test shortcut,\nwhich is why the tarball is the only route that proves anything.\n\n**Giving the folder a `package.json` gives it a `node_modules`, and two\naudits read every directory\nthere as a connector.** `check-connector-consent` reported it as\ndeclaring ungated writes — because\nan unreadable manifest deliberately fails SAFE — and `package-readmes`\ndemanded a README of it. Both\nfixed with a test; the exclusion is permanent rather than defensive,\nsince the package will always\nhave a `node_modules` after extraction.\n\n**Seven scripts independently answer \"which directories are\nconnectors?\"** The five that survived\nrequire `src/server.ts` or a manifest to *exist*; the two that broke are\nthe two where a missing\nfile means something. A shared predicate would prevent the whole class —\nworth doing, but as its own\nchange rather than smuggled into a migration.\n\n## Tarball contents verified, not assumed\n\n94 manifests, 94 entrypoints, `shared/` and `standalone/` present,\nmulti-file connectors complete\n(`apple` ships all five files). **27 test files were leaking into the\npackage** and are now\nexcluded — they would have been dead weight in every install and would\nfail if run, since they\nimport test-only helpers that are not dependencies.\n\n## Verification\n\n- `bun test packages/gateway packages/cli packages/mcp-connectors\nscripts` — 20,561 tests, 0 fail\n- `bun run preflight:fast` — PASSED\n- Up to date with `main`; lockfile clean under `--frozen-lockfile`\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n- **New Features**\n- Added a standalone connector package with a dedicated command-line\nlauncher.\n- Connectors can now be accessed through stable package-based entry\npoints.\n- Added automatic generation of connector exports for the available\nintegrations.\n\n- **Bug Fixes**\n- Improved connector discovery and auditing by excluding dependency\ndirectories and non-connector entries.\n\n- **Documentation**\n- Documented successful startup verification for all bundled connectors\nusing both supported loading methods.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->",
-          "timestamp": "2026-08-25T18:48:09Z",
-          "tree_id": "a26df4e3ac964ec507ac0b290406b26929d244c0",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/3a1e8138746f2f2b22ef49169ca920579d5a42b9"
-        },
-        "date": 1787684190184,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 254.51791950000296,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 252.240347449997,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 290.084352750003,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
+            "name": "nimbus-release-bot[bot]",
+            "username": "nimbus-release-bot[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "5f920fcfad0aae87a0fa697f78c3907091ef8974",
+          "message": "chore: release main (#1996)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>10.57.0</summary>\n\n##\n[10.57.0](https://github.com/nimbus-agent/Nimbus/compare/v10.56.1...v10.57.0)\n(2026-11-13)\n\n\n### Features\n\n* **gateway:** the MCP act door runs proposals as agent-origin actions\non the executor's own prompt (agent door AD1)\n([#1993](https://github.com/nimbus-agent/Nimbus/issues/1993))\n([6e9a1c9](https://github.com/nimbus-agent/Nimbus/commit/6e9a1c920dfa68b08ec91d82b4ce470a8903d839))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
+          "timestamp": "2026-11-13T10:42:05+02:00",
+          "tree_id": "974dad2d407dc63cc1843a524b83e95a77093d85",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/5f920fcfad0aae87a0fa697f78c3907091ef8974"
+        },
+        "date": 1794559966147,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 286.7760110000014,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 286.61889064999815,
             "unit": "ms"
           }
         ]
