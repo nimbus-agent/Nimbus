@@ -268,7 +268,10 @@ describe("the act door now reads the target's current state (the model door's ru
       { pageId: "ffffffffffffffffffffffffffffffff", propertiesJson: "{}" },
       PROV,
     );
-    expect(out).toEqual({ status: "rejected" });
+    expect(out).toEqual({
+      status: "rejected",
+      reason: "the model cannot change a page in the Nimbus knowledge base; use the capture flow",
+    });
     expect(h.prompts).toEqual([]);
     expect(h.dispatched.map((a) => a.type)).toEqual(["notion.before.read"]);
     const rejected = db
@@ -295,7 +298,10 @@ describe("the act door now reads the target's current state (the model door's ru
       { pageId: "ffffffffffffffffffffffffffffffff", propertiesJson: "{}" },
       PROV,
     );
-    expect(out).toEqual({ status: "rejected" });
+    expect(out).toEqual({
+      status: "rejected",
+      reason: "the model cannot change a page in the Nimbus knowledge base; use the capture flow",
+    });
     expect(h.prompts).toEqual([]);
     expect(h.dispatched.some((a) => a.type === "notion.page.update")).toBe(false);
   });
