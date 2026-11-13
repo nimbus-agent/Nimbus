@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794516776214,
+  "lastUpdate": 1794550617867,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
-            "name": "nimbus-release-bot[bot]",
-            "username": "nimbus-release-bot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "695bb519ce30f765ed45762c88e0cb55e649b361",
-          "message": "chore: release main (#1337)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>2.19.0</summary>\n\n##\n[2.19.0](https://github.com/nimbus-agent/Nimbus/compare/v2.18.1...v2.19.0)\n(2026-08-25)\n\n\n### Features\n\n* **sync:** connectors reach credentials and the index only through\nscoped capabilities\n([#1333](https://github.com/nimbus-agent/Nimbus/issues/1333))\n([23233d5](https://github.com/nimbus-agent/Nimbus/commit/23233d5b4ccecfcf92ab481d2e93a9315d5527f7))\n\n\n### Bug Fixes\n\n* **llm:** enforce_air_gap now refuses the remote classifier instead of\ndoing nothing\n([#1334](https://github.com/nimbus-agent/Nimbus/issues/1334))\n([be9841c](https://github.com/nimbus-agent/Nimbus/commit/be9841cbda3746e5c727caaf131b9013dfaec697))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
-          "timestamp": "2026-08-25T17:22:56Z",
-          "tree_id": "73965ce870549215b8f1b97a48a0303d3ef23dcb",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/695bb519ce30f765ed45762c88e0cb55e649b361"
-        },
-        "date": 1787679249766,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 309.77251890000116,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 311.417613100008,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 314.05868095000477,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
+            "name": "nimbus-release-bot[bot]",
+            "username": "nimbus-release-bot[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "cb6833c41eb1b7833d872e0859d003fc248f341b",
+          "message": "chore: release main (#1991)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>10.56.0</summary>\n\n##\n[10.56.0](https://github.com/nimbus-agent/Nimbus/compare/v10.55.0...v10.56.0)\n(2026-11-12)\n\n\n### Features\n\n* **gateway:** Vantage cloud costs and recommendations are indexed,\nlocal-only (FinOps FO2)\n([#1985](https://github.com/nimbus-agent/Nimbus/issues/1985))\n([165fa43](https://github.com/nimbus-agent/Nimbus/commit/165fa435345eff0dcc59d419d08bad43b6cf9bdd))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
+          "timestamp": "2026-11-13T06:05:17Z",
+          "tree_id": "063c267e5b7ccac1fc6b462cd613628a8eb76081",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/cb6833c41eb1b7833d872e0859d003fc248f341b"
+        },
+        "date": 1794550612820,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 315.53865230000065,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 326.13204614999705,
             "unit": "ms"
           }
         ]
