@@ -2,6 +2,13 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [10.57.0](https://github.com/nimbus-agent/Nimbus/compare/v10.56.1...v10.57.0) (2026-11-13)
+
+
+### Features
+
+* **gateway:** the MCP act door runs proposals as agent-origin actions on the executor's own prompt (agent door AD1) ([#1993](https://github.com/nimbus-agent/Nimbus/issues/1993)) ([6e9a1c9](https://github.com/nimbus-agent/Nimbus/commit/6e9a1c920dfa68b08ec91d82b4ce470a8903d839))
+
 ## [10.56.1](https://github.com/nimbus-agent/Nimbus/compare/v10.56.0...v10.56.1) (2026-11-13)
 
 
