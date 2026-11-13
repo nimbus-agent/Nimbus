@@ -123,20 +123,31 @@ function byteLength(value: unknown): number {
   return Buffer.byteLength(JSON.stringify(value));
 }
 
-/** Step 6: in request order, keep entries while the JSON fits; the first that would not, and all after it, are cut. */
+/** What a cut entry is replaced with: its type and the fixed reason, nothing else. */
+function cutEntry(a: ActionDescription): ActionDescription {
+  return { actionType: a.actionType, state: "undescribed", reason: CUT_REASON };
+}
+
+/**
+ * Step 6: in request order, keep entries while the JSON fits; the first that would not, and all
+ * after it, are cut. The replacements are budgeted FIRST (for every entry), and keeping an entry
+ * costs only what it adds over its replacement, so the reply that leaves is never over the cap
+ * however the cut falls.
+ */
 function capReply(actions: readonly ActionDescription[]): DescribeReply {
-  let used = REPLY_ENVELOPE_BYTES;
+  const replacement = actions.map((a) => byteLength(cutEntry(a)) + 1);
+  let used = REPLY_ENVELOPE_BYTES + replacement.reduce((sum, n) => sum + n, 0);
   let cut = false;
-  const kept = actions.map((a): ActionDescription => {
+  const kept = actions.map((a, i): ActionDescription => {
     if (!cut) {
-      const size = byteLength(a) + 1;
-      if (used + size <= DESCRIBE_REPLY_MAX_BYTES) {
-        used += size;
+      const extra = Math.max(0, byteLength(a) + 1 - (replacement[i] ?? 0));
+      if (used + extra <= DESCRIBE_REPLY_MAX_BYTES) {
+        used += extra;
         return a;
       }
       cut = true;
     }
-    return { actionType: a.actionType, state: "undescribed", reason: CUT_REASON };
+    return cutEntry(a);
   });
   return { actions: kept, truncated: cut };
 }

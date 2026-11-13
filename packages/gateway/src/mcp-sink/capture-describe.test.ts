@@ -287,6 +287,29 @@ describe("describeActions: the reply cap", () => {
     expect(Buffer.byteLength(JSON.stringify(out))).toBeLessThan(DESCRIBE_REPLY_MAX_BYTES);
   });
 
+  test("a kept entry that nearly fills the cap, followed by a cut entry, still leaves a reply under the cap", async () => {
+    // The replacement of a cut entry has a size of its own: it is budgeted before anything is kept.
+    for (const slack of [0, 1, 40, 80, 120, 200]) {
+      const first = (t: string): ActionDescription => ({
+        ...entry(t),
+        description: "x".repeat(DESCRIBE_REPLY_MAX_BYTES - 400 + slack),
+      });
+      const h = harness({
+        actions: async (types) =>
+          (types ?? []).map((t, i) =>
+            i === 0 ? first(t) : { ...entry(t), description: "y".repeat(900) },
+          ),
+      });
+      const out = await describeActions(h.deps, MCP, {
+        actionTypes: ["github.a", "github.b", "github.c"],
+      });
+      expect(Buffer.byteLength(JSON.stringify(out)), String(slack)).toBeLessThanOrEqual(
+        DESCRIBE_REPLY_MAX_BYTES,
+      );
+      expect(out.actions.length).toBe(3);
+    }
+  });
+
   test("the reply cap leaves headroom under the IPC line limit", async () => {
     const { IPC_MAX_LINE_BYTES } = await import("../ipc/jsonrpc.ts");
     expect(DESCRIBE_REPLY_MAX_BYTES).toBeLessThanOrEqual(IPC_MAX_LINE_BYTES / 2);
