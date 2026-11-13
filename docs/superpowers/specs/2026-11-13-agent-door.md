@@ -1,7 +1,7 @@
 # Phase 28 — The Agent Door
 
-Status: DRAFT for review (2026-11-13). Owner rulings OR-AD-1..9 and OR-ECO-8 are binding; do not reopen them.
-Revision 2: the owner answered the four open questions the same day (OR-AD-6..9, § 2); the design and slices follow them.
+Status: DRAFT, review round 2 (round 1: CHANGES REQUESTED, findings applied; see Review log). Owner rulings OR-AD-1..9 and OR-ECO-8 are binding; do not reopen them.
+Revision 2 (owner rulings OR-AD-6..9, § 2); revision 3 applies the round 1 review. Date: 2026-11-13.
 Date: 2026-11-13. Slot: S4 (the next project to start, OR-ECO-8). Roadmap: `docs/roadmap.md` § Phase 28 (all nine
 rows), § Direction, and the carried-in row *User-MCP write grants* (§ Carried into S4).
 Substrate mapped on `origin/main` at `165fa4353` (2026-11-13). Every `file:line` below was read in that tree.
@@ -87,7 +87,7 @@ Roadmap acceptance this project must meet (`docs/roadmap.md` § Phase 28):
 | The dispatch audit row's `actionJson` is the whole action (so `origin` is in it) but nothing names a capture or a label; the egress row is `sourceType: "task"`, `sourceId = sessionId`; its hash covers `source_type|source_id|destination|method|hitl|result`, NOT `payload_summary`. | `engine/executor.ts:619-638`, `:828`; `egress/egress-record.ts:54`; `egress/egress-ledger.ts:29`; `db/audit-chain.ts:19` |
 | User-MCP types `mcp_<id>.<tool>` are act-door-proposable for `--model` servers while `user_mcp_model_access` allows, shown as raw JSON. Tool-definition hashing exists only for extensions (V66 digest) and toolgen. | `connectors/proposable-actions.ts:334-350`; `connectors/user-mcp-store.ts` |
 | Policy lockoffs in play: `mcp_capture`, `mcp_action`, `user_mcp_model_access`, `connector_write_model_access`. | `policy/types.ts:63-77` |
-| Rate limits: one gateway-wide hourly attempt window; the durable hourly cap `maxActions` (default 50); `actionMaxPending`; the native pending cap. | `mcp-sink/capture-rate-limit.ts:12`; `config/nimbus-toml.ts:1092`, `:1109` |
+| Rate limits: one gateway-wide hourly attempt window (`maxPerHour` x 4 attempts); the durable hourly creation cap `maxPerHour`; the native queue cap `maxPending`; the action queue cap `actionMaxPending`; the action TTL `actionTtlHours`. Defaults: `enabled` false, `maxPerHour` 30, `maxPending` 100, `actionTtlHours` 24, `actionMaxPending` 10 (TOML keys `max_per_hour`, `max_pending`, `action_ttl_hours`, `action_max_pending` under `[mcp_sink]`). | `mcp-sink/capture-rate-limit.ts:12`; `mcp-sink/capture-gate.ts:62`, `:387`, `:424`; `config/mcp-sink-toml.ts` `DEFAULT_MCP_SINK_CONFIG` (`:35-42`), keys `:95-105` |
 | `capture`/`captures` are LAN-forbidden by entries in a DENYLIST; a new namespace is LAN-reachable by default. | `ipc/lan-rpc.ts:239-241` |
 | The CLI depends on `@modelcontextprotocol/sdk` 1.32.0 (revision 2025-11-25). The standalone connectors (`nimbus-mcp-servers` `shared/consent-kit.ts:116`, `:273`) ask write consent with `server.server.elicitInput` on the same SDK 1.32.0. | `packages/cli/package.json:20`; nimbus-mcp-servers `package.json` |
 
@@ -171,8 +171,9 @@ already has a second gateway-set field, `provenance`, so a `proposer` field foll
 - **D-AD-11 Ownership of ids.** `capture.state` and a new `capture.mine` answer only for rows whose `session_id` equals the
   caller's connection (the gate already stores it, `capture-gate.ts:173`). Ids must be unguessable (>= 128 bits of CSPRNG);
   the current generator was not located in this read (UNVERIFIED) and AD2 verifies or replaces it.
-- **D-AD-12 Per-connection caps.** In addition to the global window, a connection may hold at most 10 `proposed` actions
-  (`actionMaxPending` is global, so one flooding agent fills it for everyone). A refused proposal returns a fixed code. The
+- **D-AD-12 Per-connection caps.** In addition to the global window, a connection may hold at most 3 `proposed` actions
+  (`actionMaxPending` is global and defaults to 10, so one flooding agent fills it for everyone; the cap is
+  `min(3, actionMaxPending)` and is a constant, not a new key, unless review asks). A refused proposal returns a fixed code. The
   owner-facing signal is a count-only local notification ("N agent proposals are waiting", numbers only, built like the D45
   toast), never request text.
 - **D-AD-13 Label source.** The label shown is `--agent <kit>` from the owner-written server config when present
@@ -216,7 +217,7 @@ already has a second gateway-set field, `provenance`, so a `proposer` field foll
 | Slice | Repo | Content |
 | --- | --- | --- |
 | AD1 | Nimbus | Executor generalisation: `origin: "agent"` and `proposer`, `isOutsideOrigin`, `newDoorExecutor`, the proposer block in the executor's prompt, delete `provenanceConsent`/`actConsentDisplay`; amend I20, I28, I53, I54, I55, D39(e), D40(b) |
-| AD2 | Nimbus | Queue and one-step approval: `approvals.list/get/approve/decline`, `nimbus approvals`, ownership on `capture.state`, `capture.mine`, per-connection cap, count-only notification, LAN denylist entry (acceptance A3, A4) |
+| AD2 | Nimbus | Queue and one-step approval (with the D32(b)/(c) amendment and its fixtures, § 7.2): `approvals.list/get/approve/decline`, `nimbus approvals`, ownership on `capture.state`, `capture.mine`, per-connection cap, count-only notification, LAN denylist entry (acceptance A3, A4) |
 | AD3a | Nimbus | Per-door eligibility, non-breaking `feat` (OR-AD-9): V97 (door table, `legacy` flag), `enable/status --door agent` incl. `--wave 4` (OR-AD-7), `agentOffered`, the definition hash and suspension (OR-AD-5), parity with the model door; legacy proposals still accepted with a deprecation warning and counted (D-AD-15); the new invariant (with its stated legacy exception) and D49 |
 | AD3b | Nimbus | Enforcement, `feat(gateway)!:`, in the next minor release or later: legacy case deleted, mail sends refused, the `ACTION_PROPOSABILITY` first-party consult, `actDoorRefusal` and `createActionDestinationRefusal` deleted, the invariant's exception retired (§ 11) |
 | AD4 | Nimbus | Proof: door and proposer in the audit row and the egress `sourceId`, `nimbus prove --by-proposer`, audit views, completeness check |
@@ -294,7 +295,8 @@ not zod; callers holding zod schemas convert before registering (the CLI does th
 need to). Sampling and roots are not implemented (the revision deprecates them). Streamable HTTP is not implemented (Nimbus
 serves MCP over stdio only); the module is a transport-neutral core plus a stdio binding, so HTTP can be added later.
 
-**AD6a design (nimbus-sdk).** A new TypeScript-only entry point `@nimbus-dev/sdk/mcp-server` (the seventh `exports` entry),
+**AD6a design (nimbus-sdk).** AD6a targets the standalone repository `nimbus-agent/nimbus-sdk` (MIT; `@nimbus-dev/sdk`, local clone `C:gitrep
+imbus-sdk`), not this repository, and ships under that repo's own CI and release-please. Publishing is GATED on verifying zero runtime dependencies: the PR that cuts the release shows the published tarball's `package.json` has no `dependencies` (and no `peerDependencies` on the upstream MCP SDK or zod), checked by the repo's own guard and re-checked by hand before the release PR merges. A new TypeScript-only entry point `@nimbus-dev/sdk/mcp-server` (the seventh `exports` entry),
 `@moduleStability experimental` until a connector release has consumed it (RFC-0015 tiers), a normative spec at
 `docs/spec/mcp-server/v1/` (the layout `signing` and `diagnostics` use) and a conformance corpus. Surface, in outline:
 `createMcpServer({ name, version, title? })`, `server.tool({ name, description, inputSchema, annotations?, handler })`,
@@ -402,6 +404,23 @@ CLI refuses `approvals <id>` without an interactive TTY on stdin and stdout, and
 
 A refusal at approval (a guard, an unreadable Wave 4 before-state, a prepare failure) finalizes the row as `rejected` with a
 fixed `errorCode`, and tells the owner the reason; the agent sees only the code.
+
+**How `approvals.approve` reaches the act door, and the static-rule amendment (AD2 deliverable).** Round 1 review found that an
+earlier draft had `ipc/approvals-rpc.ts` call `acceptAction`, which D32(e) allows only from `acceptCapture` in
+`capture-gate.ts`; D32(b) and D32(c) also confine the gate's functions to `ipc/capture-rpc.ts`. Verified, and fixed here by
+keeping the chokepoint single rather than adding a second `acceptAction` caller: `approvals.approve` calls the gate's
+`acceptCapture` (the same function `captures.accept` uses), so `acceptAction` still has exactly one caller and D32(e) is
+unchanged. What changes is the set of modules allowed to NAME the gate's functions. AD2 therefore amends, in ONE commit (the
+triple rule): (1) `docs/SECURITY-INVARIANTS.md` D32(b) and D32(c) to read "`ipc/capture-rpc.ts`, `ipc/approvals-rpc.ts` and
+`capture-gate.ts`" (exactly two RPC modules; D32(e) restated as "one call, in `acceptCapture`, which exactly those two
+modules reach"); (2) `scripts/structure-audit/check-nimbus-invariants.ts` (`checkActDoorConfinement` and the D32(b)/(c)
+allow-lists) so the allowed set is exactly those files; (3) fixtures in `check-nimbus-invariants.test.ts`: a good set with
+both RPC modules passes, and a THIRD module that names `acceptCapture` (or `acceptAction`, or value-imports `capture-gate.ts`)
+fails, one fixture per form, red-proved; (4) the `security-invariants.test.ts` I28 block asserting the same on the real tree.
+If review prefers the literal two-caller wording (a second `acceptAction` caller), the same deliverable applies to D32(e)
+with the allow-list `capture-gate.ts` plus `ipc/approvals-rpc.ts`; the fixtures are the same. The `approvals.approve` step
+list below (role, `agentOffered`, `ActDeps.execute`) is supplied to `acceptCapture` as the injected `ActDeps` and gate
+dependencies, as `captures.accept` supplies them today, so no step runs outside the gate.
 
 **Why a separate command from `captures`.** `captures list --kind action` shows the same rows, but without the proposer
 block, the wave, or expiry order; `nimbus approvals` is the surface the docs point to, and `captures accept <id>` on an
@@ -600,8 +619,8 @@ Invariant amendments (triple rule, in the slice that makes each true):
 **I2/I3** unchanged in text (the new origin only removes delegation and adds a line; `type` alone decides HITL; the tool is the
 routing table's). **I11** the results returned to the agent are `capture_status`'s fixed fields and `describe_actions`
 (escaped; user-MCP descriptions closer-escaped). **I20** "origin model or agent". **I28** rewritten: the submit order uses
-`agentOffered` and `modelWriteRefusal`, bound rows are proposable, `acceptAction` stays the only leaving point (called only
-from `acceptCapture` and `approvals.approve`, D32(e)) and still imports no executor (D32(f)). **I29** door and proposer in both
+`agentOffered` and `modelWriteRefusal`, bound rows are proposable, `acceptAction` stays the only leaving point (still called
+only from `acceptCapture`, D32(e); `approvals.approve` reaches it THROUGH `acceptCapture`, § 7.2) and still imports no executor (D32(f)). **I29** door and proposer in both
 ledgers (AD4). **I42** the `--agent` grant (AD5). **I53** the agent door as a second origin with a per-door list and hash
 (`CONNECTOR_WRITE_OFFER_BY_KIND` is a model-turn concept and is unaffected). **I54** the proposer's input is never a bound
 field (a caller-supplied bound field is still refused before any read). **I55** `origin: "agent"` is a negative control.
@@ -609,7 +628,7 @@ field (a caller-supplied bound field is still refused before any read). **I55** 
 
 | Attack | Control | Residual |
 | --- | --- | --- |
-| Proposal flooding | Global attempt window; durable hourly cap `maxActions` (50); `actionMaxPending`; NEW per-connection cap of 10; a refusal is cheap (no reads); a proposal nobody opens causes no connector read; count-only notification | An agent can fill its 10 slots and the hour's cap and make `approvals` noisy; the owner has `--decline-all-from <label>` |
+| Proposal flooding | Global attempt window; durable hourly cap `maxPerHour` (30); queue cap `actionMaxPending` (10); NEW per-connection cap of 3; a refusal is cheap (no reads); a proposal nobody opens causes no connector read; count-only notification | An agent can fill its 3 slots and the hour's cap and make `approvals` noisy; the owner has `--decline-all-from <label>` |
 | Forged client label | The label is never used for a decision; shown as UNVERIFIED with its source; stored hashed in the audit row | A forged label can make a report read as another agent (§ 7.4) |
 | Input that picks a different tool or smuggles a confirm text | `actionType` is a closed key of the routing table; the dispatched action is `{type, payload:{mcpToolId: <gateway>, input}}`, so `mcpToolId`, `origin`, `proposer` or `confirm` inside `input` are data (I3); the gate and dispatcher refuse a tool named under another row's type (I53); the confirm text is computed by the executor from the row's `confirm` target and compared with what the owner TYPES (D41); a bound field in `input` is refused (I54) | None found; pin tests send each such key |
 | TOCTOU, proposal to approval | Everything is re-derived at approval (`agentOffered`, hash, policy, grants, refusals, configured-ness) and the before-state is read then; CAS claim with expiry; the executor re-checks per phase | The window from the owner's "yes" to the connector call is the model door's stated bound |
@@ -634,7 +653,7 @@ Each slice also runs `bun run preflight:fast` and updates the five core docs and
   `payload.origin` and `payload.proposer` are inert; `isOutsideOrigin` is the only reader (a source pin over the five old
   sites); the I55 negative control; a census that `provenanceConsent` and `actConsentDisplay` no longer exist; D40(b) and
   D39(e) fixtures with a red-proof of a second runner site.
-- **AD2.** Real SQLite, a real gateway subprocess and the mock MCP server (the E2E tree: a gateway-spawning test belongs
+- **AD2.** The D32(b)/(c) fixtures of § 7.2 (a third module naming the gate fails, per form). Real SQLite, a real gateway subprocess and the mock MCP server (the E2E tree: a gateway-spawning test belongs
   there). An MCP client proposes; `approvals` lists it; `approvals <id>` shows the same prompt text as the model door for the
   same input (rendered-text equality, A1); a Wave 4 row is denied for an empty, a wrong-case, a trimmed and an echo answer and
   approved only for the exact text (A2); proposal to dispatch is one owner action (A3); the same path with NO model configured
@@ -738,3 +757,17 @@ open. No new owner question arose from the revision.
 
 ## Review log
 
+### Round 1 (Antigravity, 2026-11-13): CHANGES REQUESTED; no bypass of the gate found
+
+1. MAJOR, `approvals.approve` as a second `acceptAction` caller against D32(e). Verified: § 7.2 and § 9 said so, and D32(b)/(c)
+   would also have been violated (they confine the gate's functions to `ipc/capture-rpc.ts`). Applied with one choice: the
+   second module reaches the act door through `acceptCapture`, so `acceptAction` keeps its single caller; D32(b)/(c) and their
+   checker allow-lists are amended to exactly two RPC modules, with fixtures proving a third fails, as an explicit AD2
+   deliverable in one commit (§ 7.2). The literal two-`acceptAction`-caller variant is noted as an alternative with the same
+   deliverable.
+2. MINOR, wrong citation. Verified: the limits live in `config/mcp-sink-toml.ts` `DEFAULT_MCP_SINK_CONFIG` (`enabled` false,
+   `maxPerHour` 30, `maxPending` 100, `actionTtlHours` 24, `actionMaxPending` 10). § 3 row and the flooding row now use those
+   keys and values; `maxActions` (50) was another config and is removed. Consequence also fixed: the per-connection cap was 10,
+   equal to the global `actionMaxPending` default and so no cap; it is now 3 (D-AD-12).
+3. MINOR, AD6a target and gate. Applied in § 7.1: AD6a is in the standalone `nimbus-agent/nimbus-sdk`, and publishing is gated
+   on verifying zero runtime dependencies in the published `package.json`.
