@@ -36,6 +36,7 @@ import {
   classifyBeforeStateError,
   createBeforeStateRunner,
   isBeforeReadActionType,
+  throwIfWave4WithoutPreview,
   WAVE4_BEFORE_REFUSAL,
 } from "./before-state.ts";
 import { type ExecutorPolicyDep, NO_POLICY_OVERLAY, ToolExecutor } from "./executor.ts";
@@ -2160,5 +2161,54 @@ describe("Wave 4: an unread current state refuses the write (D1, fail closed)", 
       rows: [rowWith({ ...READER, guard, args: () => undefined }, 4)],
     });
     expect(await runner.read(WRITE, opsReturning(ok))).toEqual(W4_REFUSED);
+  });
+});
+
+// ---- Phase 28 AD1: the agent origin is an outside origin, exactly like the model's -------------
+
+describe("before-state runner — origin agent (AD1)", () => {
+  const AGENT: PlannedAction = { ...WRITE, origin: "agent" };
+  const ok = { summary: "old" };
+
+  test("the door's runner reads for an agent action, as for a model action", async () => {
+    const runner = createBeforeStateRunner({ rows: [rowWith(READER)] });
+    const seen: PlannedAction[] = [];
+    expect(await runner.read(AGENT, opsReturning(ok, seen))).toEqual({
+      status: "ok",
+      fields: [{ label: "Summary", value: "old" }],
+    });
+    // The read action carries no origin of the proposer's: it is the runner's own read.
+    expect(seen).toHaveLength(1);
+    expect(seen[0]?.type).toBe("jira.before.read");
+    expect(seen[0]?.origin).toBeUndefined();
+  });
+
+  test("an action with no origin is still not read by the door's runner", async () => {
+    const { origin: _o, ...none } = AGENT;
+    const runner = createBeforeStateRunner({ rows: [rowWith(READER)] });
+    expect(await runner.read(none, opsReturning(ok))).toBeUndefined();
+  });
+
+  test("a Wave 4 agent action with no reader or no preview is refused, as the model's is", async () => {
+    const { before: _b, ...noReader } = rowWith(READER, 4);
+    const { preview: _p, ...noPreview } = rowWith(READER, 4);
+    for (const r of [noReader as ConnectorWriteRow, noPreview as ConnectorWriteRow]) {
+      const seen: PlannedAction[] = [];
+      const runner = createBeforeStateRunner({ rows: [r] });
+      expect(await runner.read(AGENT, opsReturning(ok, seen))).toEqual(W4_REFUSED);
+      expect(seen).toEqual([]);
+    }
+  });
+
+  test("throwIfWave4WithoutPreview throws for an agent action of a Wave 4 type, not for others", () => {
+    const rows = [rowWith(READER, 4)];
+    expect(() => throwIfWave4WithoutPreview(AGENT, rows)).toThrow();
+    expect(() => throwIfWave4WithoutPreview({ ...WRITE }, rows)).toThrow();
+    const { origin: _o, ...none } = AGENT;
+    expect(() => throwIfWave4WithoutPreview(none, rows)).not.toThrow();
+    expect(() => throwIfWave4WithoutPreview(AGENT, [rowWith(READER, 3)])).not.toThrow();
+    expect(() =>
+      throwIfWave4WithoutPreview({ ...AGENT, type: "jira.comment.add" }, rows),
+    ).not.toThrow();
   });
 });

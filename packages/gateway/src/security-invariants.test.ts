@@ -2552,12 +2552,12 @@ describe("I20 — a delegated approval is honored only from a live, identity-val
       expect(prompts, type).toBe(1);
     }
   });
-  test('I20: an origin "model" action is never delegated; a payload.origin has no effect', async () => {
+  test('I20: an origin "model" or "agent" action is never delegated; a payload.origin has no effect', async () => {
     const { NO_POLICY_OVERLAY, ToolExecutor } = await import("./engine/executor.ts");
     const run = async (action: {
       type: string;
       payload: Record<string, unknown>;
-      origin?: "model";
+      origin?: "model" | "agent";
     }) => {
       let prompts = 0;
       let remote = 0;
@@ -2585,6 +2585,11 @@ describe("I20 — a delegated approval is honored only from a live, identity-val
       return { prompts, remote };
     };
     expect(await run({ type: "email.send", payload: {}, origin: "model" })).toEqual({
+      prompts: 1,
+      remote: 0,
+    });
+    // Phase 28 AD1: the agent origin falls back exactly like the model's.
+    expect(await run({ type: "email.send", payload: {}, origin: "agent" })).toEqual({
       prompts: 1,
       remote: 0,
     });
@@ -14345,5 +14350,32 @@ describe("I56 — a LAN session's records are encrypted only under ephemeral-DH 
   test("the protocol column and the config key exist, and the floor defaults to the compatibility window", () => {
     expect(CURRENT_SCHEMA_VERSION).toBeGreaterThanOrEqual(95);
     expect(DEFAULT_NIMBUS_LAN_TOML.minProtocol).toBe(1);
+  });
+});
+
+describe("AD1 — the agent origin is read through one helper, and the two outside origins cannot drift", () => {
+  test("no production gateway file compares an action's origin to a string literal, except the helper and the standing-rule check", async () => {
+    const files = await readDirFiles("packages/gateway/src");
+    const allowed = new Set(["engine/outside-origin.ts"]);
+    const hits = files
+      .filter((f) => !allowed.has(f.rel))
+      .filter((f) => /\.origin\s*[!=]==?\s*["'](model|agent)["']/.test(f.contents))
+      .map((f) => f.rel);
+    expect(hits).toEqual([]);
+    // The helper itself is where the two literals live, and the standing-rule check refuses any origin.
+    const helper = await read("packages/gateway/src/engine/outside-origin.ts");
+    expect(helper).toContain('return action.origin === "model";');
+    expect(helper).toContain('return action.origin === "agent";');
+    expect(helper).toContain("return isModelOrigin(action) || isAgentOrigin(action);");
+    const standing = await read("packages/gateway/src/engine/standing-rule-step.ts");
+    expect(standing).toContain("if (action.origin !== undefined) return undefined;");
+  });
+
+  test("the delegation fallback, the before-state runner and the Wave 4 guard all consult isOutsideOrigin", async () => {
+    const exec = await read("packages/gateway/src/engine/executor.ts");
+    expect(exec).toContain('if (isOutsideOrigin(action)) return "fallback";');
+    const bs = await read("packages/gateway/src/engine/before-state.ts");
+    expect(bs).toContain("if (isOutsideOrigin(action) && rows.some(");
+    expect(bs).toContain("!isOutsideOrigin(action) && options.readsEveryOrigin !== true");
   });
 });

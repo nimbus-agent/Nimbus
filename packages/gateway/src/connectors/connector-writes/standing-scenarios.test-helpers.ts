@@ -189,6 +189,12 @@ export const BREAKERS: readonly Breaker[] = [
     },
   },
   {
+    name: "origin is agent",
+    apply: (s) => {
+      s.action = { ...s.action, origin: "agent" };
+    },
+  },
+  {
     name: "a wave 4 row",
     apply: (s) =>
       aimAtRow(
