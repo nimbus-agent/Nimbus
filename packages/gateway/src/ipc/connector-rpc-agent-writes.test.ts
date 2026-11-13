@@ -924,3 +924,32 @@ describe("the not-enforced notice (removed by AD3a-2 on purpose)", () => {
     expect(status.notice).toBe(AGENT_DOOR_NOT_ENFORCED_NOTICE);
   });
 });
+
+describe("connector.writesStatus through the RPC", () => {
+  test("the model's two members are exactly what handleConnectorWritesStatus returns, plus an agent member", async () => {
+    const r = rig();
+    await handleConnectorWritesEnable({ ...AGENT, service: "github", wave: 3 }, r.deps);
+    const { dispatchConnectorRpc } = await import("./connector-rpc.ts");
+    const { createMockVault } = await import("../vault/mock.ts");
+    const hit = await dispatchConnectorRpc({
+      method: "connector.writesStatus",
+      params: {},
+      vault: createMockVault(),
+      localIndex,
+      openUrl: async () => {},
+      syncScheduler: undefined,
+      getEnforcedPolicy: () => OPEN as never,
+    });
+    expect(hit.kind).toBe("hit");
+    const value = (hit as { value: Record<string, unknown> }).value;
+    const model = handleConnectorWritesStatus(r.deps);
+    // (the RPC also reads the Gmail credential's scopes, so compare a service that does not depend on them)
+    const only = (v: unknown) =>
+      (v as Array<{ service: string }>).find((x) => x.service === "github");
+    expect(only(value["services"])).toEqual(only(model.services) as never);
+    expect(value["policyAllows"]).toBe(model.policyAllows);
+    const agent = value["agent"] as { services: Array<{ unverified?: string }> };
+    // no mesh in this call, so the listing cannot be made: unverified, nothing marked
+    expect(agent.services[0]?.unverified).toBe("its tools could not be listed");
+  });
+});
