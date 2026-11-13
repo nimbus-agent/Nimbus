@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { sanitisePreviewText } from "../connectors/connector-writes/sanitise.ts";
 import { agentVerbatimInputLines, formatProposerBlock, proposerDetails } from "./proposer-block.ts";
 import type { AgentProposer } from "./types.ts";
 
@@ -115,5 +116,25 @@ describe("proposerDetails (the desktop's proposedBy contract)", () => {
       expiresAt: 9,
     });
     expect(proposerDetails(prop()).clientLabel).toBeNull();
+  });
+});
+
+describe("the prompt block escapes at least everything the preview sanitiser does", () => {
+  test("no character sanitisePreviewText rewrites survives raw in the label or the summary", () => {
+    const survivors: string[] = [];
+    const ranges: Array<[number, number]> = [
+      [0, 0xffff],
+      [0xe0000, 0xe007f],
+    ];
+    for (const [lo, hi] of ranges) {
+      for (let cp = lo; cp <= hi; cp++) {
+        if (cp >= 0xd800 && cp <= 0xdfff) continue;
+        const ch = String.fromCodePoint(cp);
+        if (sanitisePreviewText(ch) === ch) continue;
+        const out = formatProposerBlock(prop({ label: ch, summary: ch })).join("");
+        if (out.includes(ch)) survivors.push(cp.toString(16));
+      }
+    }
+    expect(survivors).toEqual([]);
   });
 });

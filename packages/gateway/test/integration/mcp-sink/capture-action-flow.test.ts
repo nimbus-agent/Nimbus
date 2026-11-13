@@ -85,6 +85,7 @@ beforeEach(() => {
     egressSink: makeEgressSink(db),
     audit: { recordAudit: (e) => appendAuditEntry(db, e) },
     policyHitl: NO_POLICY_OVERLAY,
+    getTribalKbConfig: () => undefined,
   };
   ctx = { gate, act };
 });
@@ -149,7 +150,10 @@ describe("act door flow (real executor + real ledger, fake dispatcher)", () => {
     const src = readFileSync(join(import.meta.dir, "../../../src/ipc/capture-rpc.ts"), "utf8")
       .replace(/\/\*[\s\S]*?\*\//g, "")
       .replace(/^\s*\/\/.*$/gm, "");
-    expect(src).toMatch(/new ToolExecutor\(\s*consent,\s*w\.audit,\s*w\.dispatcher,\s*undefined,/);
+    // Phase 28 AD1: the executor is the shared door maker's, which takes no delegation at all.
+    expect(src).toContain("buildAgentWriteExecutor({");
+    expect(src).not.toContain("new ToolExecutor(");
+    expect(src).not.toContain("delegation");
   });
 
   test("a dispatcher timeout stores ERR_ACTION_TIMEOUT and no message text", async () => {

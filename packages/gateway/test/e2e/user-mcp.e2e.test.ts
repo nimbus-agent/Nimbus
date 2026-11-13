@@ -585,9 +585,18 @@ describe.skipIf(!sandboxAvailable)("a scaffolded user MCP over a real gateway", 
       (r) => r.actionType === "mcp_echo_srv.echo" && r.actionJson.includes("from-the-agent"),
     );
     expect(dispatched?.hitlStatus).toBe("approved");
-    expect(JSON.parse(dispatched?.actionJson ?? "{}")).toEqual({
+    const row = JSON.parse(dispatched?.actionJson ?? "{}") as {
+      action: { proposer?: { captureId?: string } };
+    };
+    // Phase 28 AD1: the dispatch runs as an `origin: "agent"` action; the row names the door and the
+    // capture, never the agent's label or summary.
+    expect(row.action.proposer?.captureId).toMatch(/^cap_[A-Za-z0-9_-]+$/);
+    expect(JSON.stringify(row)).not.toContain("e2e-agent");
+    expect(row).toEqual({
       action: {
         type: "mcp_echo_srv.echo",
+        proposer: { door: "agent", captureId: row.action.proposer?.captureId },
+        origin: "agent",
         payload: { mcpToolId: "mcp_echo_srv_echo", input: { text: "from-the-agent" } },
       },
       // SA1: the test's owner client reports no answer source, so the row records `unknown`.

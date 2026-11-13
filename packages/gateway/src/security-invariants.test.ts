@@ -12775,7 +12775,7 @@ describe("I53 — a first-party connector write reaches the model only through t
     // Phase 28 AD1: `ipc/capture-rpc.ts` passes the act door's wiring field through to
     // `buildAgentWriteExecutor`. PRODUCTION never sets it: the wiring site, `platform/assemble.ts`,
     // does not name it, so the rows are always the write table.
-    expect(naming).toEqual(["engine/run-ask.ts", "ipc/capture-rpc.ts"]);
+    expect([...naming].sort()).toEqual(["engine/run-ask.ts", "ipc/capture-rpc.ts"]);
     expect(naming).not.toContain("platform/assemble.ts");
   });
 
