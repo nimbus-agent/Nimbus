@@ -9,6 +9,7 @@ import {
   type ActionErrorCode,
   type ActionPayload,
   type ActionProvenance,
+  type ActionRejectCode,
   CaptureError,
   type CaptureRow,
 } from "./capture-types.ts";
@@ -27,6 +28,7 @@ export type ActGateDeps = Pick<
   | "capability"
   | "classifyAction"
   | "isServiceConfigured"
+  | "verifyActionDefinition"
   | "actionDestinationRefusal"
   | "now"
 >;
@@ -56,10 +58,10 @@ export type ActionAcceptResult = {
   readonly id: string;
   readonly state: "executed" | "rejected" | "failed";
   readonly outcomeRef?: string;
-  readonly errorCode?: ActionErrorCode;
+  readonly errorCode?: ActionErrorCode | ActionRejectCode;
   /**
    * Why the executor refused (a rejected arm only). It travels back on the OWNER's reply and is never
-   * stored: since V97 a `rejected` row may carry an `error_code`, but none is written until AD3a-2.
+   * stored; what is stored on a `rejected` row is the fixed `errorCode`, when the refusal has one.
    */
   readonly reason?: string;
 };
@@ -152,6 +154,65 @@ function parseStored(row: CaptureRow): ActionPayload {
   return JSON.parse(row.payloadJson) as ActionPayload;
 }
 
+/** 4a: the verdict now, and its basis. A suspended tool is its own code; the row stays proposed. */
+function requireVerdictAtApproval(deps: ActGateDeps, actionType: string): ActionBasis | undefined {
+  const verdict = deps.classifyAction?.(actionType) ?? { kind: "unknown" as const };
+  if (verdict.kind === "proposable") return verdict.basis;
+  if (verdict.kind === "suspended") {
+    throw new CaptureError(
+      "ERR_AGENT_TOOL_SUSPENDED",
+      `${actionType} was approved for agents but its definition changed; it stays refused until the owner approves it again by name; the capture stays proposed`,
+    );
+  }
+  throw new CaptureError(
+    "ERR_CAPTURE_ACTION_NOT_PROPOSABLE",
+    `${actionType} is not proposable now; the capture stays proposed`,
+  );
+}
+
+/** 4b: the action's connector is still configured. */
+async function requireConfiguredAtApproval(deps: ActGateDeps, actionType: string): Promise<void> {
+  const configured = (await deps.isServiceConfigured?.(serviceOf(actionType))) === true;
+  if (!configured) {
+    throw new CaptureError(
+      "ERR_CAPTURE_CONNECTOR_UNCONFIGURED",
+      `${serviceOf(actionType)} is not configured; the capture stays proposed`,
+    );
+  }
+}
+
+/** The fixed detail when the definition check cannot run or throws. */
+const DEFINITION_UNCHECKED_AT_APPROVAL = "its definition could not be checked now";
+
+/** 4e: for an `approved` basis, the definition check (absent or throwing is a refusal). */
+async function requireDefinitionAtApproval(
+  deps: ActGateDeps,
+  actionType: string,
+  basis: ActionBasis | undefined,
+): Promise<void> {
+  if (basis !== "approved") return;
+  let outcome: Awaited<ReturnType<NonNullable<ActGateDeps["verifyActionDefinition"]>>>;
+  try {
+    outcome = (await deps.verifyActionDefinition?.(actionType)) ?? {
+      ok: false,
+      code: "ERR_CAPTURE_ACTION_NOT_PROPOSABLE",
+      detail: DEFINITION_UNCHECKED_AT_APPROVAL,
+    };
+  } catch {
+    outcome = {
+      ok: false,
+      code: "ERR_CAPTURE_ACTION_NOT_PROPOSABLE",
+      detail: DEFINITION_UNCHECKED_AT_APPROVAL,
+    };
+  }
+  if (!outcome.ok) {
+    throw new CaptureError(
+      outcome.code,
+      `${actionType}: ${outcome.detail}; the capture stays proposed`,
+    );
+  }
+}
+
 export async function acceptAction(
   deps: ActGateDeps,
   caller: CaptureCaller,
@@ -186,28 +247,29 @@ export async function acceptAction(
       `capture ${row.id} expired; ask the agent to propose it again`,
     );
   }
-  // 4. Re-classify and re-check configured-ness (a --model revoke, a policy tightening, a removed
-  //    connector). A refusal leaves the row proposed.
-  const verdict = deps.classifyAction?.(stored.actionType) ?? { kind: "unknown" as const };
-  if (verdict.kind !== "proposable") {
-    throw new CaptureError(
-      "ERR_CAPTURE_ACTION_NOT_PROPOSABLE",
-      `${stored.actionType} is not proposable now; the capture stays proposed`,
-    );
-  }
-  const configured = (await deps.isServiceConfigured?.(serviceOf(stored.actionType))) === true;
-  if (!configured) {
-    throw new CaptureError(
-      "ERR_CAPTURE_CONNECTOR_UNCONFIGURED",
-      `${serviceOf(stored.actionType)} is not configured; the capture stays proposed`,
-    );
-  }
-  // 4b. The destination again (OR1/OR2): a ChatOps binding or the policy may have changed since
-  //     submit. Synchronous from here to the claim. A refusal leaves the row proposed.
-  const refused = actionDestinationVerdict(deps, stored.actionType, stored.input, undefined);
+  // 4. Re-derive everything submit decided (a --model revoke, a policy tightening, a removed
+  //    connector, a changed definition), each named step in order. A refusal leaves the row
+  //    proposed. The basis used from here on is the APPROVAL-time one, not the one stored at submit.
+  //    4a. The verdict again, and its basis.
+  const basis = requireVerdictAtApproval(deps, stored.actionType);
+  //    4b. The connector is configured.
+  await requireConfiguredAtApproval(deps, stored.actionType);
+  //    4c. The destination again (OR1/OR2) for that basis: a ChatOps binding or the policy may have
+  //        changed since submit.
+  const refused = actionDestinationVerdict(deps, stored.actionType, stored.input, basis);
   if (refused !== undefined) {
     throw new CaptureError("ERR_CAPTURE_ACTION_REFUSED", refused);
   }
+  //    4d. An owner-approved tool is approved only by a person at a terminal (R-6): checked before
+  //        the connector is listed, so a refusal that costs nothing never starts one.
+  if (basis === "approved" && act.humanOnly !== true) {
+    throw new CaptureError(
+      "ERR_CAPTURE_FORBIDDEN_CLIENT",
+      `${stored.actionType} is approved for agents by name; approve it with: nimbus approvals ${row.id}`,
+    );
+  }
+  //    4e. The listed definition against the owner's approval, for an `approved` basis only.
+  await requireDefinitionAtApproval(deps, stored.actionType, basis);
   // 5. Claim: ONE transaction, CAS incl. the expiry predicate (closes the window across step 4's await).
   const claimAt = deps.now();
   let won = false;
@@ -217,7 +279,11 @@ export async function acceptAction(
       audit(
         deps,
         "capture.action.accept",
-        { captureId: row.id, actionType: stored.actionType },
+        {
+          captureId: row.id,
+          actionType: stored.actionType,
+          ...(basis === undefined ? {} : { basis }),
+        },
         claimAt,
         caller.clientId,
       );
@@ -229,6 +295,7 @@ export async function acceptAction(
     );
   // 6. Build from the row read in step 3.
   const provenance: ActionProvenance = {
+    ...(basis === undefined ? {} : { basis }),
     captureId: row.id,
     clientLabel: row.clientLabel,
     createdAt: row.createdAt,
@@ -246,10 +313,12 @@ export async function acceptAction(
           ? { id: row.id, state: "executed" }
           : { id: row.id, state: "executed", outcomeRef };
     } else {
-      result =
-        out.reason === undefined
-          ? { id: row.id, state: "rejected" }
-          : { id: row.id, state: "rejected", reason: out.reason };
+      result = {
+        id: row.id,
+        state: "rejected",
+        ...(out.code === undefined ? {} : { errorCode: out.code }),
+        ...(out.reason === undefined ? {} : { reason: out.reason }),
+      };
     }
   } catch (e) {
     result = { id: row.id, state: "failed", errorCode: classifyActionError(e) };

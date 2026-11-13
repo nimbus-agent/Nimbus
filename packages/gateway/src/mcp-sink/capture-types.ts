@@ -186,6 +186,11 @@ export function isLegacyBasis(basis: ActionBasis | undefined): boolean {
 }
 
 export interface ActionProvenance {
+  /**
+   * The basis the approval-time verdict gave (AD3a-2a): what the act wiring routes and vetoes by.
+   * Absent for a user-MCP type and for a classifier that gives none.
+   */
+  readonly basis?: ActionBasis;
   readonly captureId: string;
   readonly clientLabel: string | null;
   readonly createdAt: number;
@@ -195,10 +200,21 @@ export interface ActionProvenance {
 
 export type ActExecuteOutcome =
   | { readonly status: "ok"; readonly result: unknown }
-  | { readonly status: "rejected"; readonly reason?: string };
+  | {
+      readonly status: "rejected";
+      readonly reason?: string;
+      /** A fixed code for a refusal the agent may be told about; absent for a plain decline. */
+      readonly code?: ActionRejectCode;
+    };
 
 /** Built per accept by `ipc/capture-rpc.ts` (spec § 8): the only path from the sink to a connector. */
 export interface ActDeps {
+  /**
+   * True when the executor's answer can only come from a person at a terminal or the desktop (the
+   * consent wrapper turns every other answer into a decline). An `approved`-basis action is accepted
+   * only when this is true (AD3a-2a, R-6): the raw `captures.accept` RPC never sets it.
+   */
+  readonly humanOnly?: boolean;
   execute(
     actionType: string,
     input: Readonly<Record<string, unknown>>,

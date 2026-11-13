@@ -240,7 +240,7 @@ describe("acceptAction — outcomes", () => {
     );
     expect(row().state).toBe("rejected");
   });
-  test("a rejected action stores NO error_code until AD3a-2 (V97 allows one; nothing writes it yet)", async () => {
+  test("a rejected action with only a reason (a plain decline) stores NO error_code; one with a code is in capture-act.ad3a.test.ts", async () => {
     await acceptAction(deps, OWNER, row(), act({ status: "rejected", reason: "no" }));
     expect(row().state).toBe("rejected");
     expect(row().errorCode).toBeNull();
