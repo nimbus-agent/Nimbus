@@ -18,6 +18,8 @@ Curated pointer index. Source of truth is the working tree — verify a path wit
 | File | Purpose |
 |---|---|
 | `packages/gateway/src/engine/executor.ts` | HITL gate — `HITL_REQUIRED` frozen set; most security-critical file |
+| `packages/gateway/src/engine/outside-origin.ts` | `isOutsideOrigin` / `isModelOrigin` / `isAgentOrigin` — the one place an action's `origin` is read (I20, I53) |
+| `packages/gateway/src/engine/proposer-block.ts` | the UNVERIFIED proposer block of an agent-origin approval prompt (Phase 28 AD1) |
 | `packages/gateway/src/engine/coordinator.ts` | `AgentCoordinator` — multi-agent orchestration; `executeAll` runs sub-tasks in parallel |
 | `packages/gateway/src/engine/sub-agent.ts` | `runSubAgent` — single sub-task executor; `sub_task_results` DB lifecycle |
 | `packages/gateway/src/engine/tool-output-envelope.ts` | `wrapToolOutput` — invariant `I11` envelope at LLM-facing boundary |

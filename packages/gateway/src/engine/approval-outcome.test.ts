@@ -71,7 +71,6 @@ describe("SA1 source pins", () => {
       // SA4: the unattended workflow executor's consent channel, which denies and asks no one.
       "engine/run-ask.ts",
       "engine/types.ts",
-      "ipc/capture-rpc.ts",
       // SA3: the standing-rule gate wraps the connection's channel so only a person's answer counts.
       "ipc/standing-rpc.ts",
     ]);

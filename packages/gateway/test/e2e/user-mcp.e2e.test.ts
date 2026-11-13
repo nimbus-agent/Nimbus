@@ -566,9 +566,10 @@ describe.skipIf(!sandboxAvailable)("a scaffolded user MCP over a real gateway", 
     const out = await client.call<{ state: string }>("captures.accept", { id: sub.id });
     expect(out.state).toBe("executed");
     const shown = prompts.slice(before).join("\n");
-    expect(shown).toContain("Agent-proposed action");
+    // Phase 28 AD1: the executor's own prompt, the verbatim input, then the UNVERIFIED proposer block.
+    expect(shown).toContain("Requested by: an outside agent (unverified)");
     expect(shown).toContain('"text": "from-the-agent"');
-    expect(shown).toContain('Proposed by MCP client "e2e-agent"');
+    expect(shown).toContain('UNVERIFIED label "e2e-agent"');
     const added = (await ledgerRowsFor("mcp_echo_srv")).filter(
       (r) => r.method === "mcp_echo_srv.echo" && !ledgerBefore.some((b) => b.id === r.id),
     );

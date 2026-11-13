@@ -191,7 +191,19 @@ export const BREAKERS: readonly Breaker[] = [
   {
     name: "origin is agent",
     apply: (s) => {
-      s.action = { ...s.action, origin: "agent" };
+      s.action = {
+        ...s.action,
+        origin: "agent",
+        proposer: {
+          door: "agent",
+          captureId: "cap_breaker",
+          label: null,
+          labelSource: "declared",
+          summary: "s",
+          createdAt: 0,
+          expiresAt: 1,
+        },
+      };
     },
   },
   {

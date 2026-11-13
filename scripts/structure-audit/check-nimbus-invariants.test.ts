@@ -2429,7 +2429,7 @@ describe("D32(e)(f)(g) — the act door", () => {
       checkActDoorConfinement([
         file(
           "packages/gateway/src/ipc/capture-rpc.ts",
-          'import { formatActionConsent } from "../mcp-sink/capture-act.ts";',
+          'import { outcomeRefOf } from "../mcp-sink/capture-act.ts";',
         ),
       ]),
     ).toEqual([]);
@@ -4172,6 +4172,31 @@ describe("D39 — the model's connector-write door is the only builder of write 
     ).toEqual([]);
   });
 
+  test("(e) buildAgentWriteExecutor is allowed in run-ask.ts and ipc/capture-rpc.ts only (Phase 28 AD1)", () => {
+    expect(
+      rules([
+        file(
+          "packages/gateway/src/engine/run-ask.ts",
+          "export function buildAgentWriteExecutor(p) {}",
+        ),
+        file(
+          "packages/gateway/src/ipc/capture-rpc.ts",
+          "const ex = buildAgentWriteExecutor({ clientId });",
+        ),
+      ]),
+    ).toEqual([]);
+    for (const rogue of [
+      "packages/gateway/src/ipc/rogue.ts",
+      "packages/gateway/src/mcp-sink/capture-act.ts",
+      "packages/gateway/src/platform/assemble.ts",
+      "packages/gateway/src/engine/agent.ts",
+    ]) {
+      expect(rules([file(rogue, "const ex = buildAgentWriteExecutor(p);")]), rogue).toEqual([
+        "connector-write-builders-confined",
+      ]);
+    }
+  });
+
   test("(e) FAILS on a rogue buildWorkflowWriteExecutor; allows run-ask.ts and gateway-main.ts (SA2)", () => {
     expect(
       rules([
@@ -4247,7 +4272,7 @@ describe("D40 — a before-state read stays a guarded read on the door's executo
     ),
     file(
       RUN_ASK,
-      'import {\n  type BeforeStateRunner,\n  createBeforeStateRunner,\n} from "./before-state.ts";\nfunction buildAskExecutor(p) {\n  return newTurnExecutor(p, p.delegation);\n}\nexport function buildModelWriteExecutor(p) {\n  return newTurnExecutor(p, undefined, createBeforeStateRunner());\n}\n',
+      'import {\n  type BeforeStateRunner,\n  createBeforeStateRunner,\n} from "./before-state.ts";\nfunction buildAskExecutor(p) {\n  return newTurnExecutor(p, p.delegation);\n}\nfunction newDoorExecutor(p) {\n  return newTurnExecutor(p, undefined, createBeforeStateRunner());\n}\n',
     ),
     file(EXECUTOR, "if (isBeforeReadActionType(action.type)) {}"),
     file(REGISTRY, "if (!isBeforeReadActionType(t)) return; // .before.read guard"),
@@ -4287,15 +4312,25 @@ describe("D40 — a before-state read stays a guarded read on the door's executo
       rules(
         replace(
           RUN_ASK,
-          'import { createBeforeStateRunner } from "./before-state.ts";\nfunction buildAskExecutor(p) {\n  return newTurnExecutor(p, p.delegation, createBeforeStateRunner());\n}\nexport function buildModelWriteExecutor(p) {\n  return newTurnExecutor(p, undefined, createBeforeStateRunner());\n}\n',
+          'import { createBeforeStateRunner } from "./before-state.ts";\nfunction buildAskExecutor(p) {\n  return newTurnExecutor(p, p.delegation, createBeforeStateRunner());\n}\nfunction newDoorExecutor(p) {\n  return newTurnExecutor(p, undefined, createBeforeStateRunner());\n}\n',
         ),
       ),
     ).toEqual(["before-state-runner-confined"]);
   });
 
+  test("(b) FAILS on the runner inside buildModelWriteExecutor itself (Phase 28 AD1: the door maker is the carrier)", () => {
+    const old =
+      'import { createBeforeStateRunner } from "./before-state.ts";\nfunction newDoorExecutor(p) {\n  return newTurnExecutor(p, undefined, createBeforeStateRunner());\n}\nexport function buildModelWriteExecutor(p) {\n  return newTurnExecutor(p, undefined, createBeforeStateRunner());\n}\nexport function buildAgentWriteExecutor(p) {\n  return newTurnExecutor(p, undefined, createBeforeStateRunner());\n}\n';
+    // Both public door builders building a runner of their own is two violations; the maker is clean.
+    expect(rules(replace(RUN_ASK, old))).toEqual([
+      "before-state-runner-confined",
+      "before-state-runner-confined",
+    ]);
+  });
+
   test("(b) allows the runner inside newWorkflowWriteExecutor too (SA2/SA4), and nowhere else in run-ask.ts", () => {
     const carriers =
-      'import { createBeforeStateRunner } from "./before-state.ts";\nfunction buildAskExecutor(p) {\n  return newTurnExecutor(p, p.delegation);\n}\nexport function buildModelWriteExecutor(p) {\n  return newTurnExecutor(p, undefined, createBeforeStateRunner());\n}\nfunction newWorkflowWriteExecutor(p) {\n  return newTurnExecutor(p, undefined, createBeforeStateRunner());\n}\n';
+      'import { createBeforeStateRunner } from "./before-state.ts";\nfunction buildAskExecutor(p) {\n  return newTurnExecutor(p, p.delegation);\n}\nfunction newDoorExecutor(p) {\n  return newTurnExecutor(p, undefined, createBeforeStateRunner());\n}\nfunction newWorkflowWriteExecutor(p) {\n  return newTurnExecutor(p, undefined, createBeforeStateRunner());\n}\n';
     expect(rules(replace(RUN_ASK, carriers))).toEqual([]);
     // A third function in run-ask.ts that builds a runner is still refused.
     expect(
@@ -4313,7 +4348,7 @@ describe("D40 — a before-state read stays a guarded read on the door's executo
       rules(
         replace(
           RUN_ASK,
-          'import { createBeforeStateRunner as mk } from "./before-state.ts";\nfunction buildAskExecutor(p) {\n  return newTurnExecutor(p, p.delegation, mk());\n}\nexport function buildModelWriteExecutor(p) {\n  return newTurnExecutor(p, undefined, mk());\n}\n',
+          'import { createBeforeStateRunner as mk } from "./before-state.ts";\nfunction buildAskExecutor(p) {\n  return newTurnExecutor(p, p.delegation, mk());\n}\nfunction newDoorExecutor(p) {\n  return newTurnExecutor(p, undefined, mk());\n}\n',
         ),
       ),
     ).toEqual(["before-state-runner-confined"]);
@@ -4385,10 +4420,9 @@ describe("D41 — a Wave 4 write is approved only by typed text, judged only at 
   const GOOD = [
     file(EXECUTOR, EXECUTOR_GOOD),
     file(TYPES, "interface ConsentChannel { requestConfirmedApproval?(req): Promise<R>; }"),
-    file(
-      WRAPPER,
-      "export function provenanceConsent(inner) {\n  const confirmed = inner.requestConfirmedApproval?.bind(inner);\n  return { requestConfirmedApproval: (req) => confirmed(req) };\n}\nfunction other() {}\n",
-    ),
+    // Phase 28 AD1: the act door's wiring site no longer names the channel method (the wrapper that did
+    // was deleted; the executor's own prompt reaches the owner on that door too).
+    file(WRAPPER, "export function buildActDeps(w) {\n  return buildAgentWriteExecutor(w);\n}\n"),
     file(
       CONSENT,
       "class C {\n  requestConfirmedConsent() {}\n  open(confirmText) {\n    return confirmText === undefined ? {} : { confirmText };\n  }\n}\n",
@@ -4410,15 +4444,16 @@ describe("D41 — a Wave 4 write is approved only by typed text, judged only at 
         file(OTHER, "async function f(c) { return c.requestConfirmedApproval(r); }"),
       ]),
     ).toEqual(["confirm-channel-confined"]);
-    // Inside the wrapper's file but outside provenanceConsent.
+    // Phase 28 AD1: ipc/capture-rpc.ts (the former wrapper's file) is no longer an allowed site, not even
+    // inside a function of the old wrapper's name.
     expect(
       rules(
         replace(
           WRAPPER,
-          "export function provenanceConsent(inner) {\n  return inner;\n}\nfunction other(i) {\n  return i.requestConfirmedApproval(r);\n}\n",
+          "export function provenanceConsent(inner) {\n  const confirmed = inner.requestConfirmedApproval?.bind(inner);\n  return { requestConfirmedApproval: (req) => confirmed(req) };\n}\n",
         ),
       ),
-    ).toEqual(["confirm-channel-confined"]);
+    ).toEqual(["confirm-channel-confined", "confirm-channel-confined"]);
     // Comments and test files are not scanned.
     expect(rules([...GOOD, file(OTHER, "// requestConfirmedApproval(x)")])).toEqual([]);
     expect(

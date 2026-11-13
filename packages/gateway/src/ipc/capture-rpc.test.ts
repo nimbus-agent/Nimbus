@@ -23,10 +23,11 @@ import {
 } from "../connectors/testing/remote-content-fixtures.ts";
 import { appendAuditEntry } from "../db/audit-chain.ts";
 import { makeEgressSink } from "../egress/egress-ledger.ts";
-import { NO_POLICY_OVERLAY, ToolExecutor } from "../engine/executor.ts";
-import type { ConfirmedApprovalRequest, ConsentChannel, PlannedAction } from "../engine/types.ts";
+import { isBeforeReadActionType } from "../engine/before-state.ts";
+import { NO_POLICY_OVERLAY } from "../engine/executor.ts";
+import { formatProposerBlock } from "../engine/proposer-block.ts";
+import type { AgentProposer, ConnectorDispatcher, PlannedAction } from "../engine/types.ts";
 import { openMigratedMemoryDb } from "../index/migrated-db-template.ts";
-import { formatActionConsent, formatActionProvenanceLines } from "../mcp-sink/capture-act.ts";
 import { resolveCaptureCapability } from "../mcp-sink/capture-capability.ts";
 import type { CaptureGateDeps } from "../mcp-sink/capture-gate.ts";
 import { CaptureAttemptLimiter, CaptureRefusalCounter } from "../mcp-sink/capture-rate-limit.ts";
@@ -40,7 +41,6 @@ import {
   type CaptureRpcCtx,
   createActionDestinationRefusal,
   dispatchCaptureRpc,
-  provenanceConsent,
 } from "./capture-rpc.ts";
 import { type ConsentCoordinator, ConsentCoordinatorImpl } from "./consent.ts";
 import { createStreamRegistry } from "./engine-ask-stream.ts";
@@ -53,6 +53,25 @@ import { RpcMethodError } from "./server/rpc-error.ts";
 
 let db: Database;
 let ctx: CaptureRpcCtx;
+
+/** The gateway-set proposer the act door puts on every accepted action, from the stored row. */
+function proposerFrom(p: {
+  captureId: string;
+  clientLabel: string | null;
+  createdAt: number;
+  expiresAt: number;
+  summary: string;
+}): AgentProposer {
+  return {
+    door: "agent",
+    captureId: p.captureId,
+    label: p.clientLabel,
+    labelSource: "declared",
+    summary: p.summary,
+    createdAt: p.createdAt,
+    expiresAt: p.expiresAt,
+  };
+}
 
 beforeEach(() => {
   db = openMigratedMemoryDb();
@@ -92,6 +111,76 @@ function serverCtx(
 }
 
 const NOTE = { kind: "note", payload: { title: "t", body: "b" } };
+
+/**
+ * A dispatcher for the act door's per-type tests: a before-read FAILS (so a row with a reader shows
+ * `Before: unavailable (failed)`, deterministically) and every write answers `reply`.
+ */
+function failingReads(dispatched: PlannedAction[], reply: unknown): ConnectorDispatcher {
+  return {
+    dispatch: (a) => {
+      dispatched.push(a);
+      return isBeforeReadActionType(a.type)
+        ? Promise.reject(new Error("before-read unavailable in this fixture"))
+        : Promise.resolve(reply);
+    },
+  };
+}
+
+/** The writes among the dispatched actions (a row's before-reads are separate, gated actions). */
+function writesOf(dispatched: readonly PlannedAction[]): PlannedAction[] {
+  return dispatched.filter((a) => !isBeforeReadActionType(a.type));
+}
+
+/** The action the act door hands the executor for an accepted proposal. */
+function agentAction(
+  type: string,
+  toolId: string,
+  input: Record<string, unknown>,
+  prov: Parameters<typeof proposerFrom>[0],
+): PlannedAction {
+  return {
+    type,
+    origin: "agent",
+    proposer: proposerFrom(prov),
+    payload: { mcpToolId: toolId, input },
+  };
+}
+
+/**
+ * The prompt the owner sees for a proposal of `type`, built from the pieces the executor owns: its
+ * header and origin line, the real row's typed preview WITH the before-state the failing reader
+ * leaves, and the trailing UNVERIFIED proposer block.
+ */
+function expectedAgentPrompt(
+  type: string,
+  input: Record<string, unknown>,
+  prov: Parameters<typeof proposerFrom>[0],
+): string {
+  const toolId = proposableWriteTool(type);
+  if (toolId === undefined) throw new Error(type);
+  const preview = buildConnectorWritePreviewFrom(
+    { type, payload: { mcpToolId: toolId, input } },
+    CONNECTOR_WRITE_ROWS,
+  );
+  if (preview === undefined) throw new Error(`no preview for ${type}`);
+  const hasReader = CONNECTOR_WRITE_ROWS.some(
+    (r) => r.actionType === type && r.before !== undefined,
+  );
+  const shown = hasReader
+    ? { ...preview, before: { status: "unavailable" as const, reason: "failed" as const } }
+    : preview;
+  return [
+    "Action requires your approval",
+    "",
+    `Type: ${type}`,
+    "Requested by: an outside agent (unverified)",
+    "",
+    ...renderConnectorWritePreviewLines(shown),
+    "",
+    ...formatProposerBlock(proposerFrom(prov)),
+  ].join(String.fromCharCode(10));
+}
 
 describe("dispatchCaptureRpc", () => {
   test("hits every method and misses others", async () => {
@@ -243,6 +332,7 @@ describe("buildActDeps (act door)", () => {
       egressSink: makeEgressSink(db),
       audit: { recordAudit: (e) => appendAuditEntry(db, e) },
       policyHitl: NO_POLICY_OVERLAY,
+      getTribalKbConfig: () => undefined,
     };
     return { act: buildActDeps(w, coord, "c-cli"), prompts };
   }
@@ -261,12 +351,17 @@ describe("buildActDeps (act door)", () => {
       status: "ok",
       result: { url: "https://x" },
     });
+    // Phase 28 AD1: the action is an `origin: "agent"` one with the gateway-set proposer; the
+    // tool and the input are exactly what they were.
     expect(d).toEqual([
       {
         type: "slack.message.post",
+        origin: "agent",
+        proposer: proposerFrom(PROV),
         payload: { mcpToolId: "slack_message_post", input: { text: "hi" } },
       },
     ]);
+    expect(d[0]?.proposer?.captureId).toMatch(/^cap_[A-Za-z0-9_-]+$/);
   });
   test("user-MCP: mcpToolId is the canonical <serviceId>_<tool> key derived from the type (I42 pairing)", async () => {
     const d: PlannedAction[] = [];
@@ -274,16 +369,25 @@ describe("buildActDeps (act door)", () => {
     await act.execute("mcp_echo.echo", { text: "hi" }, PROV);
     expect(d[0]?.payload).toEqual({ mcpToolId: "mcp_echo_echo", input: { text: "hi" } });
   });
-  test("the consent prompt is the provenance prompt, with UNREDACTED details", async () => {
+  test("the consent prompt is the executor's own, with UNREDACTED details and the proposer under proposedBy", async () => {
     // An untemplated proposable type (slack.message.post since B1, github.issue.create since B2
     // and notion.page.create since B3 have a typed preview; a wave-3 send has none yet).
     const d: PlannedAction[] = [];
     const { act, prompts } = wiring(d, true);
     await act.execute("gmail.message.send", { token_hint: "visible", title: "hi" }, PROV);
-    expect(prompts[0]?.prompt).toContain("Agent-proposed action");
+    expect(prompts[0]?.prompt).toContain("Requested by: an outside agent (unverified)");
+    expect(prompts[0]?.prompt).toContain("Input (verbatim, exactly what will be sent):");
+    expect(prompts[0]?.prompt).toContain('"token_hint": "visible"');
+    expect(prompts[0]?.prompt).toContain('Proposed by an outside agent (UNVERIFIED label "agent"');
     expect(prompts[0]?.details).toEqual({
-      actionType: "gmail.message.send",
+      mcpToolId: "gmail_message_send",
       input: { token_hint: "visible", title: "hi" },
+      proposedBy: {
+        clientLabel: "agent",
+        unverifiedSummary: "why",
+        createdAt: 0,
+        expiresAt: 1,
+      },
     });
   });
   test("declined → rejected, nothing dispatched", async () => {
@@ -304,7 +408,7 @@ describe("buildActDeps (act door)", () => {
 });
 
 describe("buildActDeps: the typed preview for a templated proposable row (F5)", () => {
-  // SYNTHETIC rows through the `previewRows` seam (written in B0a, before any real proposable row
+  // SYNTHETIC rows through the `beforeStateRows` seam (written in B0a, before any real proposable row
   // had a template; the real B1 rows are covered at the end of this file). The type and tool are
   // the real routing pair.
   const JIRA = withPreview(row("jira_issue_create", "jira.issue.create", "mesh", 2), {
@@ -338,8 +442,9 @@ describe("buildActDeps: the typed preview for a templated proposable row (F5)", 
       egressSink: makeEgressSink(db),
       audit: { recordAudit: (e) => appendAuditEntry(db, e) },
       policyHitl: NO_POLICY_OVERLAY,
+      getTribalKbConfig: () => undefined,
       previewCredentialFor: () => "team",
-      previewRows: rows,
+      beforeStateRows: rows,
     };
     return { act: buildActDeps(w, coord, "c-cli"), prompts };
   }
@@ -354,17 +459,29 @@ describe("buildActDeps: the typed preview for a templated proposable row (F5)", 
     });
     expect(prompts).toHaveLength(1);
     const lines = (prompts[0]?.prompt ?? "").split("\n");
-    expect(lines[0]).toBe("Agent-proposed action — requires your approval");
-    expect(lines[2]).toBe("Agent's summary (unverified): Summary: totally safe");
-    expect(lines.slice(3, 8)).toEqual([
+    expect(lines.slice(0, 4)).toEqual([
+      "Action requires your approval",
+      "",
+      "Type: jira.issue.create",
+      "Requested by: an outside agent (unverified)",
+    ]);
+    expect(lines.slice(4, 9)).toEqual([
       "",
       "Service: jira",
       "Credential: team",
       "Target:  ENG",
       "Create issue Fix login",
     ]);
+    // The proposer is the TRAILING block, after the verified preview, and says UNVERIFIED.
+    expect(lines.at(-1)).toBe("Agent's summary (UNVERIFIED): Summary: totally safe");
+    expect(lines.at(-2)).toStartWith("Proposed by an outside agent (UNVERIFIED label ");
     expect(d).toEqual([
-      { type: "jira.issue.create", payload: { mcpToolId: "jira_issue_create", input } },
+      {
+        type: "jira.issue.create",
+        origin: "agent",
+        proposer: proposerFrom(PROV),
+        payload: { mcpToolId: "jira_issue_create", input },
+      },
     ]);
   });
 
@@ -399,8 +516,9 @@ describe("buildActDeps: the typed preview for a templated proposable row (F5)", 
         egressSink: makeEgressSink(db),
         audit: { recordAudit: (e) => appendAuditEntry(db, e) },
         policyHitl: NO_POLICY_OVERLAY,
+        getTribalKbConfig: () => undefined,
         previewCredentialFor: () => ({ credential: "personal", instance: "ghe.example.com" }),
-        previewRows: GITHUB,
+        beforeStateRows: GITHUB,
       },
       coord,
       "c-cli",
@@ -447,11 +565,12 @@ describe("buildActDeps: the typed preview for a templated proposable row (F5)", 
           egressSink: makeEgressSink(db),
           audit: { recordAudit: (e) => appendAuditEntry(db, e) },
           policyHitl: NO_POLICY_OVERLAY,
+          getTribalKbConfig: () => undefined,
           previewCredentialFor: previewCredentialResolver(
             { credentialFor: () => pin, vault },
             { githubInstance: () => mesh },
           ),
-          previewRows: GITHUB,
+          beforeStateRows: GITHUB,
         },
         coord,
         "c-cli",
@@ -501,12 +620,28 @@ describe("buildActDeps: the typed preview for a templated proposable row (F5)", 
     });
   });
 
-  test("no template: today's verbatim prompt and { actionType, input } details, exactly", async () => {
+  test("no template: the verbatim input, with the same invisible-character escaping the old act door used", async () => {
+    // gmail.message.send has no typed preview template; the input is shown exactly as it is sent.
     const { act, prompts } = wiring([], []);
-    const input = { projectKey: "ENG", summary: "Fix login" };
-    await act.execute("jira.issue.create", input, PROV);
-    expect(prompts[0]?.details).toEqual({ actionType: "jira.issue.create", input });
-    expect(prompts[0]?.prompt).toBe(formatActionConsent(PROV, "jira.issue.create", input));
+    const rlo = String.fromCodePoint(0x202e);
+    const zwsp = String.fromCodePoint(0x200b);
+    const input = { to: "a@b.c", body: `pay ${rlo}evil${zwsp}` };
+    await act.execute("gmail.message.send", input, PROV);
+    const text = prompts[0]?.prompt ?? "";
+    expect(text).toContain("Input (verbatim, exactly what will be sent):");
+    expect(text).not.toContain(rlo);
+    expect(text).not.toContain(zwsp);
+    expect(text).toContain(String.raw`pay \u202eevil\u200b`);
+    expect(prompts[0]?.details).toEqual({
+      mcpToolId: "gmail_message_send",
+      input,
+      proposedBy: {
+        clientLabel: String.raw`agent\u{202E}evil`,
+        unverifiedSummary: "Summary: totally safe",
+        createdAt: 0,
+        expiresAt: 60_000,
+      },
+    });
   });
 });
 
@@ -561,6 +696,7 @@ describe("captures.accept on an action (act door wiring)", () => {
         egressSink: makeEgressSink(db),
         audit: { recordAudit: (e) => appendAuditEntry(db, e) },
         policyHitl: NO_POLICY_OVERLAY,
+        getTribalKbConfig: () => undefined,
       },
     };
   }
@@ -584,9 +720,17 @@ describe("captures.accept on an action (act door wiring)", () => {
     );
     expect(out).toEqual({ kind: "hit", value: { id: "cap_act", state: "executed" } });
     expect(asked).toEqual(["o"]);
-    expect(d).toEqual([
+    expect(writesOf(d)).toEqual([
       {
         type: "slack.message.post",
+        origin: "agent",
+        proposer: proposerFrom({
+          captureId: "cap_act",
+          clientLabel: "agent",
+          createdAt: 500,
+          expiresAt: 2_000,
+          summary: "why",
+        }),
         payload: { mcpToolId: "slack_message_post", input: { text: "hi" } },
       },
     ]);
@@ -659,15 +803,11 @@ describe("B1 act door: every proposable B1 type shows its typed preview (Task 4)
       },
     } as unknown as ConsentCoordinator;
     const w: CaptureActWiring = {
-      dispatcher: {
-        dispatch: (a) => {
-          dispatched.push(a);
-          return Promise.resolve({});
-        },
-      },
+      dispatcher: failingReads(dispatched, {}),
       egressSink: makeEgressSink(db),
       audit: { recordAudit: (e) => appendAuditEntry(db, e) },
       policyHitl: NO_POLICY_OVERLAY,
+      getTribalKbConfig: () => undefined,
     };
     return { act: buildActDeps(w, coord, "c-cli"), prompts };
   }
@@ -680,30 +820,17 @@ describe("B1 act door: every proposable B1 type shows its typed preview (Task 4)
   });
 
   for (const [type, input] of B1_PROPOSABLE) {
-    test(`${type}: provenance header, "", then the real row's typed preview`, async () => {
+    test(`${type}: the executor's prompt, the real row's typed preview with its before-state, then the proposer block`, async () => {
       const d: PlannedAction[] = [];
       const { act, prompts } = wiring(d);
       await act.execute(type, input, PROV);
       const toolId = proposableWriteTool(type);
       if (toolId === undefined) throw new Error(type);
-      const preview = buildConnectorWritePreviewFrom(
-        { type, payload: { mcpToolId: toolId, input } },
-        CONNECTOR_WRITE_ROWS,
-      );
-      if (preview === undefined) throw new Error(`no preview for ${type}`);
       expect(prompts).toHaveLength(1);
-      expect(prompts[0]?.prompt).toBe(
-        [
-          ...formatActionProvenanceLines(PROV),
-          "",
-          ...renderConnectorWritePreviewLines(preview),
-        ].join("\n"),
-      );
+      expect(prompts[0]?.prompt).toBe(expectedAgentPrompt(type, input, PROV));
       expect(prompts[0]?.details["kind"]).toBe("connector-write");
       expect(prompts[0]?.details["proposedBy"]).toBeDefined();
-      // The act door runs no before-read (model door only).
-      expect(prompts[0]?.details["before"]).toBeUndefined();
-      expect(d).toEqual([{ type, payload: { mcpToolId: toolId, input } }]);
+      expect(writesOf(d)).toEqual([agentAction(type, toolId, input, PROV)]);
     });
   }
 });
@@ -743,6 +870,7 @@ describe("B1 act door: the destination refusal, real messagingDestinationRefusal
         egressSink: makeEgressSink(db),
         audit: { recordAudit: (e) => appendAuditEntry(db, e) },
         policyHitl: NO_POLICY_OVERLAY,
+        getTribalKbConfig: () => undefined,
       },
     };
   }
@@ -1005,7 +1133,7 @@ const C2_PROPOSABLE: ReadonlyArray<[string, Record<string, unknown>]> = [
   ],
 ];
 
-describe("B2 act door: every proposable issue write shows its typed preview, with no before", () => {
+describe("B2 act door: every proposable issue write shows its typed preview, with the before-state the executor reads", () => {
   const PROV = {
     captureId: "cap_b2",
     clientLabel: "agent",
@@ -1023,15 +1151,11 @@ describe("B2 act door: every proposable issue write shows its typed preview, wit
       },
     } as unknown as ConsentCoordinator;
     const w: CaptureActWiring = {
-      dispatcher: {
-        dispatch: (a) => {
-          dispatched.push(a);
-          return Promise.resolve({});
-        },
-      },
+      dispatcher: failingReads(dispatched, {}),
       egressSink: makeEgressSink(db),
       audit: { recordAudit: (e) => appendAuditEntry(db, e) },
       policyHitl: NO_POLICY_OVERLAY,
+      getTribalKbConfig: () => undefined,
     };
     return { act: buildActDeps(w, coord, "c-cli"), prompts };
   }
@@ -1049,30 +1173,16 @@ describe("B2 act door: every proposable issue write shows its typed preview, wit
   });
 
   for (const [type, input] of [...B2_PROPOSABLE, ...C2_PROPOSABLE]) {
-    test(`${type}: provenance header, "", then the real row's typed preview`, async () => {
+    test(`${type}: the executor's prompt, the real row's typed preview with its before-state, then the proposer block`, async () => {
       const d: PlannedAction[] = [];
       const { act, prompts } = wiring(d);
       await act.execute(type, input, PROV);
       const toolId = proposableWriteTool(type);
       if (toolId === undefined) throw new Error(type);
-      const preview = buildConnectorWritePreviewFrom(
-        { type, payload: { mcpToolId: toolId, input } },
-        CONNECTOR_WRITE_ROWS,
-      );
-      if (preview === undefined) throw new Error(`no preview for ${type}`);
       expect(prompts).toHaveLength(1);
-      expect(prompts[0]?.prompt).toBe(
-        [
-          ...formatActionProvenanceLines(PROV),
-          "",
-          ...renderConnectorWritePreviewLines(preview),
-        ].join("\n"),
-      );
+      expect(prompts[0]?.prompt).toBe(expectedAgentPrompt(type, input, PROV));
       expect(prompts[0]?.details["kind"]).toBe("connector-write");
-      // Before-reads run on the model door only (B0b).
-      expect(prompts[0]?.details["before"]).toBeUndefined();
-      expect(prompts[0]?.prompt).not.toContain("Before:");
-      expect(d).toEqual([{ type, payload: { mcpToolId: toolId, input } }]);
+      expect(writesOf(d)).toEqual([agentAction(type, toolId, input, PROV)]);
     });
   }
 });
@@ -1092,7 +1202,7 @@ const B3_PROPOSABLE: ReadonlyArray<[string, Record<string, unknown>]> = [
   ["confluence.page.append", { pageId: "123", storageHtml: "<p>x</p>" }],
 ];
 
-describe("B3 act door: every draft and page write shows its typed preview, with no before", () => {
+describe("B3 act door: every draft and page write shows its typed preview, with the before-state the executor reads", () => {
   const PROV = {
     captureId: "cap_b3",
     clientLabel: "agent",
@@ -1110,15 +1220,11 @@ describe("B3 act door: every draft and page write shows its typed preview, with 
       },
     } as unknown as ConsentCoordinator;
     const w: CaptureActWiring = {
-      dispatcher: {
-        dispatch: (a) => {
-          dispatched.push(a);
-          return Promise.resolve({});
-        },
-      },
+      dispatcher: failingReads(dispatched, {}),
       egressSink: makeEgressSink(db),
       audit: { recordAudit: (e) => appendAuditEntry(db, e) },
       policyHitl: NO_POLICY_OVERLAY,
+      getTribalKbConfig: () => undefined,
     };
     return { act: buildActDeps(w, coord, "c-cli"), prompts };
   }
@@ -1135,30 +1241,16 @@ describe("B3 act door: every draft and page write shows its typed preview, with 
   });
 
   for (const [type, input] of B3_PROPOSABLE) {
-    test(`${type}: provenance header, "", then the real row's typed preview`, async () => {
+    test(`${type}: the executor's prompt, the real row's typed preview with its before-state, then the proposer block`, async () => {
       const d: PlannedAction[] = [];
       const { act, prompts } = wiring(d);
       await act.execute(type, input, PROV);
       const toolId = proposableWriteTool(type);
       if (toolId === undefined) throw new Error(type);
-      const preview = buildConnectorWritePreviewFrom(
-        { type, payload: { mcpToolId: toolId, input } },
-        CONNECTOR_WRITE_ROWS,
-      );
-      if (preview === undefined) throw new Error(`no preview for ${type}`);
       expect(prompts).toHaveLength(1);
-      expect(prompts[0]?.prompt).toBe(
-        [
-          ...formatActionProvenanceLines(PROV),
-          "",
-          ...renderConnectorWritePreviewLines(preview),
-        ].join("\n"),
-      );
+      expect(prompts[0]?.prompt).toBe(expectedAgentPrompt(type, input, PROV));
       expect(prompts[0]?.details["kind"]).toBe("connector-write");
-      // Before-reads run on the model door only (B0b).
-      expect(prompts[0]?.details["before"]).toBeUndefined();
-      expect(prompts[0]?.prompt).not.toContain("Before:");
-      expect(d).toEqual([{ type, payload: { mcpToolId: toolId, input } }]);
+      expect(writesOf(d)).toEqual([agentAction(type, toolId, input, PROV)]);
     });
   }
 });
@@ -1210,15 +1302,11 @@ describe("B4a act door: the calendar and Drive creates show their typed preview,
       },
     } as unknown as ConsentCoordinator;
     const w: CaptureActWiring = {
-      dispatcher: {
-        dispatch: (a) => {
-          dispatched.push(a);
-          return Promise.resolve({});
-        },
-      },
+      dispatcher: failingReads(dispatched, {}),
       egressSink: makeEgressSink(db),
       audit: { recordAudit: (e) => appendAuditEntry(db, e) },
       policyHitl: NO_POLICY_OVERLAY,
+      getTribalKbConfig: () => undefined,
     };
     return { act: buildActDeps(w, coord, "c-cli"), prompts };
   }
@@ -1231,35 +1319,21 @@ describe("B4a act door: the calendar and Drive creates show their typed preview,
   });
 
   for (const [type, input] of B4A_PROPOSABLE) {
-    test(`${type}: provenance header, "", then the real row's typed preview`, async () => {
+    test(`${type}: the executor's prompt, the real row's typed preview with its before-state, then the proposer block`, async () => {
       const d: PlannedAction[] = [];
       const { act, prompts } = wiring(d);
       await act.execute(type, input, PROV);
       const toolId = proposableWriteTool(type);
       if (toolId === undefined) throw new Error(type);
-      const preview = buildConnectorWritePreviewFrom(
-        { type, payload: { mcpToolId: toolId, input } },
-        CONNECTOR_WRITE_ROWS,
-      );
-      if (preview === undefined) throw new Error(`no preview for ${type}`);
       expect(prompts).toHaveLength(1);
-      expect(prompts[0]?.prompt).toBe(
-        [
-          ...formatActionProvenanceLines(PROV),
-          "",
-          ...renderConnectorWritePreviewLines(preview),
-        ].join("\n"),
-      );
+      expect(prompts[0]?.prompt).toBe(expectedAgentPrompt(type, input, PROV));
       const marker: Record<string, string> = {
         "google_drive.file.create": "Folder id",
         "obsidian.note.append": "Text appended (Markdown, sent as is)",
       };
       expect(prompts[0]?.prompt).toContain(marker[type] ?? "Attendees");
       expect(prompts[0]?.details["kind"]).toBe("connector-write");
-      // Before-reads run on the model door only (B0b): the Drive folder is not read here.
-      expect(prompts[0]?.details["before"]).toBeUndefined();
-      expect(prompts[0]?.prompt).not.toContain("Before:");
-      expect(d).toEqual([{ type, payload: { mcpToolId: toolId, input } }]);
+      expect(writesOf(d)).toEqual([agentAction(type, toolId, input, PROV)]);
     });
   }
 });
@@ -1301,6 +1375,7 @@ describe("B2 act door: actDoorRefusal at submit and at accept (OR-B2-2, OR-B2-3)
         egressSink: makeEgressSink(db),
         audit: { recordAudit: (e) => appendAuditEntry(db, e) },
         policyHitl: NO_POLICY_OVERLAY,
+        getTribalKbConfig: () => undefined,
       },
     };
   }
@@ -1484,6 +1559,7 @@ describe("B3 act door: the KB-target and KB-child refusals at submit and at acce
         egressSink: makeEgressSink(db),
         audit: { recordAudit: (e) => appendAuditEntry(db, e) },
         policyHitl: NO_POLICY_OVERLAY,
+        getTribalKbConfig: () => undefined,
       },
     };
   }
@@ -1648,7 +1724,8 @@ describe("B3 act door: the KB-target and KB-child refusals at submit and at acce
       requestConsent: () => Promise.resolve({ approved: true, answerSource: "human" as const }),
     } as unknown as ConsentCoordinator;
     await dispatchCaptureRpc("captures.accept", { id }, c, OWNER, consent);
-    expect(d.map((a) => a.type)).toEqual(["confluence.page.update"]);
+    // Phase 28 AD1: the act door now reads the page's current state (one gated before-read).
+    expect(d.map((a) => a.type)).toEqual(["confluence.before.read", "confluence.page.update"]);
   });
 });
 
@@ -1692,6 +1769,7 @@ describe("B3r act door: remote content is refused at submit and at accept", () =
         egressSink: makeEgressSink(db),
         audit: { recordAudit: (e) => appendAuditEntry(db, e) },
         policyHitl: NO_POLICY_OVERLAY,
+        getTribalKbConfig: () => undefined,
       },
     };
   }
@@ -1860,7 +1938,7 @@ describe("B3r act door: remote content is refused at submit and at accept", () =
       requestConsent: () => Promise.resolve({ approved: true, answerSource: "human" as const }),
     } as unknown as ConsentCoordinator;
     await dispatchCaptureRpc("captures.accept", { id }, c, OWNER, consent);
-    expect(d.map((a) => a.type)).toEqual(["confluence.comment.add"]);
+    expect(d.map((a) => a.type)).toEqual(["confluence.before.read", "confluence.comment.add"]);
   });
 
   // ---- B3w: sent Outlook mail, Teams HTML and forge Markdown (plan Task 4) -------------------
@@ -2002,96 +2080,5 @@ describe("B3r act door: remote content is refused at submit and at accept", () =
       expect(prompts).toHaveLength(1);
       expect(d.map((a) => a.type)).toEqual(["teams.message.post"]);
     });
-  });
-});
-
-describe("provenanceConsent: type-to-confirm on the act door (Phase 9.7 D0a)", () => {
-  const MERGE: PlannedAction = {
-    type: "github.pr.merge",
-    payload: {
-      mcpToolId: "github_pr_merge",
-      input: { owner: "acme", repo: "api", pullNumber: 42 },
-    },
-  };
-  const TEXT = "github/merge acme/api#42";
-
-  function executorOver(inner: ConsentChannel, dispatched: PlannedAction[]): ToolExecutor {
-    return new ToolExecutor(
-      provenanceConsent(inner, "Agent-proposed action\nwhy", { actionType: "github.pr.merge" }),
-      { recordAudit: () => {} },
-      {
-        dispatch: async (a) => {
-          dispatched.push(a);
-          return { ok: true };
-        },
-      },
-      undefined,
-      { append: () => {} },
-    );
-  }
-
-  test("a Wave 4 write is approved only by typed text, with the provenance prompt plus the fixed line", async () => {
-    const seen: ConfirmedApprovalRequest[] = [];
-    const inner: ConsentChannel = {
-      requestApproval: async () => ({ approved: true, answerSource: "human" as const }),
-      requestConfirmedApproval: async (req) => {
-        seen.push(req);
-        return { approved: true, typed: TEXT, answerSource: "human" as const };
-      },
-    };
-    const d: PlannedAction[] = [];
-    expect((await executorOver(inner, d).execute(MERGE)).status).toBe("ok");
-    expect(seen).toHaveLength(1);
-    expect(seen[0]?.prompt).toBe(`Agent-proposed action\nwhy\n\nTo approve, type exactly: ${TEXT}`);
-    expect(seen[0]?.details).toEqual({ actionType: "github.pr.merge" });
-    expect(seen[0]?.confirmText).toBe(TEXT);
-    expect(d).toHaveLength(1);
-  });
-
-  test("wrong text is declined, nothing dispatched", async () => {
-    const inner: ConsentChannel = {
-      requestApproval: async () => ({ approved: true, answerSource: "human" as const }),
-      requestConfirmedApproval: async () => ({
-        approved: true,
-        typed: "github/acme/api#43",
-        answerSource: "human" as const,
-      }),
-    };
-    const d: PlannedAction[] = [];
-    expect((await executorOver(inner, d).execute(MERGE)).status).toBe("rejected");
-    expect(d).toEqual([]);
-  });
-
-  test("an inner channel without the method yields one without it: a Wave 4 write is denied, requestApproval unused", async () => {
-    const asked: string[] = [];
-    const inner: ConsentChannel = {
-      requestApproval: async (p) => {
-        asked.push(p);
-        return { approved: true, answerSource: "human" as const };
-      },
-    };
-    const channel = provenanceConsent(inner, "p", {});
-    expect(channel.requestConfirmedApproval).toBeUndefined();
-    const d: PlannedAction[] = [];
-    expect((await executorOver(inner, d).execute(MERGE)).status).toBe("rejected");
-    expect(asked).toEqual([]);
-    expect(d).toEqual([]);
-  });
-
-  test("a plain write over the same wrapper still uses the provenance requestApproval", async () => {
-    const asked: Array<{ prompt: string; actionType: string | undefined }> = [];
-    const inner: ConsentChannel = {
-      requestApproval: async (prompt, _d, actionType) => {
-        asked.push({ prompt, actionType });
-        return { approved: true, answerSource: "human" as const };
-      },
-      requestConfirmedApproval: async () => {
-        throw new Error("must not be called");
-      },
-    };
-    const d: PlannedAction[] = [];
-    const out = await executorOver(inner, d).execute({ type: "email.send", payload: {} });
-    expect(out.status).toBe("ok");
-    expect(asked).toEqual([{ prompt: "Agent-proposed action\nwhy", actionType: "email.send" }]);
   });
 });

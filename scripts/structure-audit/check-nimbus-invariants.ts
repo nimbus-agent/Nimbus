@@ -2352,7 +2352,10 @@ export function checkEvalConfinement(files: readonly FileEntry[]): Violation[] {
 //     destructured one included) — it runs an action through the turn's executor and nothing else;
 // (e) `buildConnectorWriteAgentTools` is named only by `engine/agent.ts` and the door, and
 //     `buildModelWriteExecutor` only by `engine/run-ask.ts`, and `buildWorkflowWriteExecutor` (SA2)
-//     only by `engine/run-ask.ts` and `gateway-main.ts`;
+//     only by `engine/run-ask.ts` and `gateway-main.ts`, and `buildAgentWriteExecutor` (Phase 28
+//     AD1, the MCP act door's executor, built by the same door maker as the model door's) only by
+//     `engine/run-ask.ts` (its definition) and `ipc/capture-rpc.ts` (`buildActDeps`, the one
+//     place that has the ACCEPTING session's client and consent coordinator);
 // (d) the door file contains `origin: "model"`, the marker `tryDelegatedApproval` refuses to delegate.
 // Comments and string literals are stripped before identifiers are matched (the import clauses read
 // comment-stripped source, a specifier IS a string). Test files and anything outside
@@ -2383,6 +2386,13 @@ const D39_BUILDERS: ReadonlyArray<readonly [RegExp, readonly string[]]> = [
     ],
   ],
   [/\bbuildModelWriteExecutor\b/g, ["packages/gateway/src/engine/run-ask.ts"]],
+  // Phase 28 AD1: the MCP act door's door executor. The wiring site is `buildActDeps`, which holds
+  // the accepting client and the consent coordinator; `platform/assemble.ts` builds only the
+  // static wiring around it.
+  [
+    /\bbuildAgentWriteExecutor\b/g,
+    ["packages/gateway/src/engine/run-ask.ts", "packages/gateway/src/ipc/capture-rpc.ts"],
+  ],
   // SA4: the scheduler's unattended executor is built by run-ask.ts and handed to the scheduler as a
   // factory by the boot file; the scheduler module never names it.
   [
@@ -2684,7 +2694,9 @@ export function checkModelWriteDoor(files: readonly FileEntry[]): Violation[] {
 //     type evades it, and what stops such an action is the gate refusal and the dispatcher guard;
 // (b) `createBeforeStateRunner` is named only by `engine/before-state.ts` (its definition) and
 //     `engine/run-ask.ts`, and inside run-ask.ts only on an import line or within the body of
-//     `buildModelWriteExecutor` or `newWorkflowWriteExecutor` (SA2: the owner's own workflow
+//     `newDoorExecutor` (Phase 28 AD1: the ONE door maker, which `buildModelWriteExecutor` and
+//     `buildAgentWriteExecutor` both call, so the model door and the MCP act door cannot drift) or
+//     `newWorkflowWriteExecutor` (SA2: the owner's own workflow
 //     write step is the second carrier; it offers nothing to the model; SA4: the private function
 //     both workflow builders call, so the attended and the unattended executor share it), and it is never imported
 //     under an `as` alias (an alias would let
@@ -2713,7 +2725,7 @@ const D40_GUARD_SITES: readonly string[] = [
 /** `[start, end)` of each permitted carrier's body (the door's and the workflow write step's). */
 function d40CarrierSpans(code: string): readonly (readonly [number, number])[] {
   const spans: (readonly [number, number])[] = [];
-  for (const name of ["buildModelWriteExecutor", "newWorkflowWriteExecutor"]) {
+  for (const name of ["newDoorExecutor", "newWorkflowWriteExecutor"]) {
     const at = code.search(new RegExp(`\\bfunction\\s+${name}\\s*\\(`));
     if (at === -1) continue;
     const end = code.indexOf("\n}\n", at);
@@ -2779,9 +2791,9 @@ export function checkBeforeStateRead(files: readonly FileEntry[]): Violation[] {
 // decides whether what was typed is right: `engine/executor.ts`. Four clauses:
 // (a) `requestConfirmedApproval` (the consent channel's typed-answer method) is named only by
 //     `engine/executor.ts` (the gate, which is the only caller, and `bindConsentChannel`, which
-//     defines the IPC channel), `engine/types.ts` (the interface), and `ipc/capture-rpc.ts`
-//     inside `provenanceConsent` (the act door's wrapper, which forwards the call with its own
-//     prompt and compares nothing). `requestConfirmedConsent` (the coordinator's half) is named
+//     defines the IPC channel) and `engine/types.ts` (the interface). (The act door's wrapper,
+//     `provenanceConsent`, was the one other site until Phase 28 AD1 deleted it: the executor's own
+//     prompt now reaches the owner on that door too.) `requestConfirmedConsent` (the coordinator's half) is named
 //     only by `engine/executor.ts` and `ipc/consent.ts`;
 // (b) `renderConfirmText` is named only by `engine/executor.ts` (its one caller) and
 //     `connectors/connector-writes/confirm.ts` (its definition);
@@ -2798,16 +2810,14 @@ export function checkBeforeStateRead(files: readonly FileEntry[]): Violation[] {
 // Comments and string literals are stripped before identifiers are matched; test files and anything
 // outside packages/gateway/src/ are not scanned. STATED BOUND, as D33(c): a dynamically composed
 // name evades a text scan, a second use inside an allow-listed file is exempt whole-file (the
-// order pin and the wrapper's span narrow that for the two files that matter), and an ALIAS of the
+// order pin narrows that for the file that matters), and an ALIAS of the
 // channel method is not followed. The behaviour is pinned by `engine/executor-confirm.test.ts`.
 const D41_EXECUTOR = "packages/gateway/src/engine/executor.ts";
 const D41_CHANNEL_RE = /\brequestConfirmedApproval\b/g;
 const D41_CHANNEL_ALLOWED: readonly string[] = [
   D41_EXECUTOR,
   "packages/gateway/src/engine/types.ts",
-  "packages/gateway/src/ipc/capture-rpc.ts",
 ];
-const D41_WRAPPER_FILE = "packages/gateway/src/ipc/capture-rpc.ts";
 const D41_COORDINATOR_RE = /\brequestConfirmedConsent\b/g;
 const D41_COORDINATOR_ALLOWED: readonly string[] = [
   D41_EXECUTOR,
@@ -2849,14 +2859,6 @@ export function checkConfirmComparison(files: readonly FileEntry[]): Violation[]
     if (!D41_CHANNEL_ALLOWED.includes(f.relPath)) {
       for (const m of code.matchAll(D41_CHANNEL_RE))
         push(f, "confirm-channel-confined", code, m.index);
-    } else if (f.relPath === D41_WRAPPER_FILE) {
-      const span = d41Span(code, /\bfunction\s+provenanceConsent\s*\(/, "\n}\n");
-      for (const m of code.matchAll(D41_CHANNEL_RE)) {
-        const i = m.index;
-        if (span === undefined || i < span[0] || i >= span[1]) {
-          push(f, "confirm-channel-confined", code, i);
-        }
-      }
     }
     // A `*.test-helpers.ts` is test support (an inert coordinator stub), imported by tests only.
     if (!D41_COORDINATOR_ALLOWED.includes(f.relPath) && !f.relPath.endsWith(".test-helpers.ts")) {
@@ -4113,7 +4115,7 @@ export function checkAgentProvenanceWriters(files: readonly FileEntry[]): Violat
 
 // (e)(f)(g) The act door (spec 2026-10-15 § 12.2). (e) `acceptAction` is named only by its definition
 //     (mcp-sink/capture-act.ts) and its one caller (mcp-sink/capture-gate.ts's acceptCapture); other
-//     exports of capture-act.ts (e.g. `formatActionConsent`, imported by ipc/capture-rpc.ts) are not
+//     exports of capture-act.ts (e.g. `outcomeRefOf`) are not
 //     covered. (f) No non-test `mcp-sink/` file imports, re-exports or dynamically imports
 //     `engine/executor.ts` or anything under `connectors/` — TYPE imports included: execution,
 //     classification and configured-ness reach the sink only as injected functions, built in
@@ -4867,9 +4869,8 @@ export const RULE_ANCHORS: readonly string[] = [
   // connectors/registry.ts by name (engine/executor.ts is anchored above, for D22).
   "packages/gateway/src/engine/before-state.ts",
   "packages/gateway/src/connectors/registry.ts",
-  // D41 — the act door's wrapper (the one non-executor file that may name the channel method, inside
-  // provenanceConsent) and the consent coordinator (which must carry the text and never judge it);
-  // engine/executor.ts is anchored above, for D22.
+  // D41 — the consent coordinator (which must carry the text and never judge it); engine/executor.ts
+  // is anchored above, for D22. D39(e) — the act door's wiring site, `buildActDeps`.
   "packages/gateway/src/ipc/capture-rpc.ts",
   "packages/gateway/src/ipc/consent.ts",
   // D42 — the prepare step (the injection and the `.write.prepare` spelling live there) and the
@@ -5300,7 +5301,7 @@ async function run(): Promise<void> {
       "connector-write-context-field-confined":
         "(b) the request-context field connectorWriteExecutor named outside agent-request-context.ts and run-ask.ts",
       "connector-write-builders-confined":
-        "(e) buildConnectorWriteAgentTools named outside agent.ts and the door, or buildModelWriteExecutor outside run-ask.ts, or buildWorkflowWriteExecutor outside run-ask.ts and gateway-main.ts",
+        "(e) buildConnectorWriteAgentTools named outside agent.ts and the door, or buildModelWriteExecutor outside run-ask.ts, or buildAgentWriteExecutor outside run-ask.ts and ipc/capture-rpc.ts, or buildWorkflowWriteExecutor outside run-ask.ts and gateway-main.ts",
       "connector-write-door-names-transport":
         "(c) the door names a connector transport (invokeConnectorWrite, withConnectorSession, createConnectorDispatcher, createConnectorWriteDispatcher or dispatch())",
       "connector-write-door-origin-model": '(d) the door carries no origin: "model"',
@@ -5318,7 +5319,7 @@ async function run(): Promise<void> {
       "before-read-literal-confined":
         "(a) the .before.read action-type literal outside engine/before-state.ts and connectors/registry.ts",
       "before-state-runner-confined":
-        "(b) createBeforeStateRunner named outside engine/before-state.ts and run-ask.ts's buildModelWriteExecutor or newWorkflowWriteExecutor",
+        "(b) createBeforeStateRunner named outside engine/before-state.ts and run-ask.ts's newDoorExecutor or newWorkflowWriteExecutor",
       "before-read-guard-present":
         "(c) isBeforeReadActionType no longer called by engine/executor.ts or connectors/registry.ts",
     };
@@ -5333,7 +5334,7 @@ async function run(): Promise<void> {
     const v = checkConfirmComparison(files);
     const D41_CLAUSE: Readonly<Record<string, string>> = {
       "confirm-channel-confined":
-        "(a) requestConfirmedApproval named outside engine/executor.ts, engine/types.ts and ipc/capture-rpc.ts's provenanceConsent",
+        "(a) requestConfirmedApproval named outside engine/executor.ts and engine/types.ts",
       "confirm-coordinator-confined":
         "(a) requestConfirmedConsent named outside engine/executor.ts and ipc/consent.ts",
       "confirm-render-confined":

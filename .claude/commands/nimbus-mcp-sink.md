@@ -127,9 +127,13 @@ Rules that follow from it:
 5. Atomic claim (CAS incl. the expiry predicate) → `executing`.
 6. Rebuild the action from the stored row.
 7. Execute via `ActDeps.execute`, built per accept by `buildActDeps` in `ipc/capture-rpc.ts`: a
-   fresh `ToolExecutor` bound to the ACCEPTING session's consent channel, **no delegate**, the real
-   egress sink and policy overlay — so I2, I29, I22 and I42 apply unchanged. The consent prompt is
-   `formatActionConsent` (provenance + verbatim input, invisibles rendered visibly).
+   fresh door executor (`buildAgentWriteExecutor`, the SAME maker as the model door's, Phase 28 AD1)
+   bound to the ACCEPTING session's consent channel, **no delegate**, no standing rule, the real
+   egress sink and policy overlay — so I2, I29, I22 and I42 apply unchanged. The proposal runs as an
+   `origin: "agent"` action with a gateway-set `proposer`. The consent prompt is the EXECUTOR'S own
+   (the typed preview with the target's current state, or the verbatim input for an untemplated
+   row, invisibles rendered visibly), then the proposer as a trailing UNVERIFIED block
+   (`engine/proposer-block.ts`). The old `provenanceConsent` wrapper is deleted.
 8. Finalize in one transaction: `executed` (with a heuristic `outcome_ref`) or `failed` with a
    classified code (`ACTION_ERROR_CODES`: `ERR_ACTION_TIMEOUT`, `ERR_ACTION_TOOL_NOT_FOUND`,
    `ERR_ACTION_DISPATCH`, `ERR_ACTION_INTERRUPTED`), or `rejected` on owner deny. Never retried.
@@ -239,7 +243,7 @@ is clamped.
 | Path | Role |
 |---|---|
 | `packages/gateway/src/mcp-sink/capture-gate.ts` | `submitCapture`, `acceptCapture`, `rejectCapture`, `revokeCapture`, `purgeCapture`, list/get/state/status |
-| `packages/gateway/src/mcp-sink/capture-act.ts` | `acceptAction`, expiry sweep, boot reconcile, `formatActionConsent`, error classification |
+| `packages/gateway/src/mcp-sink/capture-act.ts` | `acceptAction`, expiry sweep, boot reconcile, error classification |
 | `packages/gateway/src/mcp-sink/capture-native.ts` | native-row write/revoke/status for decision/term/link |
 | `packages/gateway/src/mcp-sink/capture-store.ts` | the only file naming the `capture` table |
 | `packages/gateway/src/mcp-sink/capture-validate.ts` | per-kind whitelist rebuild + caps; `mcpToolId` refusal |

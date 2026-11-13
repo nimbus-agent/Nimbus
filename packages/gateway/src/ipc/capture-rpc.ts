@@ -1,15 +1,7 @@
-import { confirmPromptLine } from "../connectors/connector-writes/confirm.ts";
-import { CONNECTOR_WRITE_ROWS } from "../connectors/connector-writes/index.ts";
 import {
   actDoorRefusal,
   type TribalKbConfig,
 } from "../connectors/connector-writes/model-write-refusals.ts";
-import {
-  buildConnectorWritePreviewFrom,
-  isPlainObject,
-  renderConnectorWritePreviewLines,
-  sanitisePreviewText,
-} from "../connectors/connector-writes/preview.ts";
 import type {
   ConnectorWriteRow,
   PreviewCredentialResolver,
@@ -17,10 +9,10 @@ import type {
 import { proposableWriteTool } from "../connectors/proposable-actions.ts";
 import { userMcpToolKeyForActionType } from "../connectors/user-mcp-store.ts";
 import type { EgressSink } from "../egress/egress-ledger.ts";
-import { bindConsentChannel, type ExecutorPolicyDep, ToolExecutor } from "../engine/executor.ts";
+import type { ExecutorPolicyDep } from "../engine/executor.ts";
+import { buildAgentWriteExecutor } from "../engine/run-ask.ts";
 import { serviceOf } from "../engine/service-of.ts";
-import type { AuditSink, ConnectorDispatcher, ConsentChannel } from "../engine/types.ts";
-import { formatActionConsent, formatActionProvenanceLines } from "../mcp-sink/capture-act.ts";
+import type { AgentProposer, AuditSink, ConnectorDispatcher } from "../engine/types.ts";
 import {
   acceptCapture,
   type CaptureCaller,
@@ -64,54 +56,13 @@ export interface CaptureActWiring {
   readonly policyHitl: ExecutorPolicyDep;
   /** Which credential a write would use, for the typed preview's `Credential:` line (as runAsk). */
   readonly previewCredentialFor?: PreviewCredentialResolver;
-  /** Test seam: the rows a typed preview is built from. Production: the write table. */
-  readonly previewRows?: readonly ConnectorWriteRow[];
-}
-
-/**
- * The act door's prompt and details (F5). For a write whose row carries a preview template and an
- * object input: the provenance header, then the gateway-built typed preview; the details are that
- * preview with the proposer ONLY under `proposedBy` (its unverified summary as `unverifiedSummary`,
- * never overwriting the template's `summary`). Otherwise: the verbatim prompt and
- * `{ actionType, input }`, exactly as before.
- */
-export function actConsentDisplay(
-  w: Pick<CaptureActWiring, "previewCredentialFor" | "previewRows">,
-  actionType: string,
-  toolId: string,
-  input: Readonly<Record<string, unknown>>,
-  provenance: ActionProvenance,
-): { prompt: string; details: Record<string, unknown> } {
-  const preview = isPlainObject(input)
-    ? buildConnectorWritePreviewFrom(
-        { type: actionType, payload: { mcpToolId: toolId, input } },
-        w.previewRows ?? CONNECTOR_WRITE_ROWS,
-        w.previewCredentialFor,
-      )
-    : undefined;
-  if (preview === undefined) {
-    return {
-      prompt: formatActionConsent(provenance, actionType, input),
-      details: { actionType, input },
-    };
-  }
-  return {
-    prompt: [
-      ...formatActionProvenanceLines(provenance),
-      "",
-      ...renderConnectorWritePreviewLines(preview),
-    ].join("\n"),
-    details: {
-      ...preview,
-      proposedBy: {
-        clientLabel:
-          provenance.clientLabel === null ? null : sanitisePreviewText(provenance.clientLabel),
-        unverifiedSummary: sanitisePreviewText(provenance.summary),
-        createdAt: provenance.createdAt,
-        expiresAt: provenance.expiresAt,
-      },
-    },
-  };
+  /** Test seam: the rows the typed preview and the before-state are built from. Production: the write table. */
+  readonly beforeStateRows?: readonly ConnectorWriteRow[];
+  /**
+   * The tribal KB destinations the before-state guards read (REQUIRED: an absent config would let
+   * the KB-child guards pass). The same accessor the model door gets.
+   */
+  readonly getTribalKbConfig: () => TribalKbConfig | undefined;
 }
 
 /**
@@ -154,44 +105,23 @@ export function createActionDestinationRefusal(
   };
 }
 
-/**
- * Replace the executor's generic prompt with the provenance prompt (spec § 8 step 7). The details
- * are UNREDACTED on purpose: the owner approves the exact input that will be dispatched, and the
- * consent channel goes only to the accepting local session. The audit row stays redacted — the
- * executor's `auditPayload` is untouched.
- */
-export function provenanceConsent(
-  inner: ConsentChannel,
-  prompt: string,
-  details: Record<string, unknown>,
-): ConsentChannel {
-  const base: ConsentChannel = {
-    requestApproval: (_prompt, _details, actionType) =>
-      inner.requestApproval(prompt, details, actionType),
-  };
-  // Type-to-confirm (Phase 9.7 D0a, static D41): the act door forwards the inner channel's
-  // confirmed prompt with ITS provenance prompt and details, plus the fixed line telling the owner
-  // what to type. The confirm text comes from the executor; this channel only carries it, and
-  // never compares it. An inner channel without the method yields one without it (Wave 4 denied).
-  const confirmed = inner.requestConfirmedApproval?.bind(inner);
-  if (confirmed === undefined) return base;
+/** The stored row's provenance as the executor's gateway-set proposer (all of it UNVERIFIED). */
+function agentProposerOf(p: ActionProvenance): AgentProposer {
   return {
-    ...base,
-    requestConfirmedApproval: (req) =>
-      confirmed({
-        prompt: `${prompt}
-
-${confirmPromptLine(req.confirmText)}`,
-        details,
-        actionType: req.actionType,
-        confirmText: req.confirmText,
-      }),
+    door: "agent",
+    captureId: p.captureId,
+    label: p.clientLabel,
+    labelSource: "declared",
+    summary: p.summary,
+    createdAt: p.createdAt,
+    expiresAt: p.expiresAt,
   };
 }
 
 /**
- * The act door's executor seam (I28 + I2/I29/I22/I42): one fresh `ToolExecutor` per accept, bound
- * to the ACCEPTING session's consent channel, with NO delegate (the local owner answers).
+ * The act door's executor seam (I28 + I2/I29/I22/I42): one fresh door executor per accept
+ * (`buildAgentWriteExecutor`, static D39(e)), bound to the ACCEPTING session's consent channel,
+ * with NO delegate (the local owner answers) and the proposal run as an `origin: "agent"` action.
  */
 export function buildActDeps(
   w: CaptureActWiring,
@@ -219,19 +149,28 @@ export function buildActDeps(
       } catch {
         return { status: "rejected" };
       }
-      const { prompt, details } = actConsentDisplay(w, actionType, toolId, input, provenance);
-      const consent = provenanceConsent(bindConsentChannel(coordinator, clientId), prompt, details);
-      // I20/I42: no delegate — the LOCAL owner who ran `captures accept` answers.
-      const executor = new ToolExecutor(
-        consent,
-        w.audit,
-        w.dispatcher,
-        undefined,
-        w.egressSink,
-        w.policyHitl,
-      );
+      // Phase 28 AD1: the SAME door maker as the model door (no delegate, no standing rule, the
+      // before-state runner), so the executor's own prompt (the typed preview with the target's
+      // current state) is what the owner sees. The LOCAL owner who ran `captures accept` answers.
+      // The action's `origin` and `proposer` are set here, by the gateway, from the stored row;
+      // the tool is the routing table's, never the proposer's (I3).
+      const executor = buildAgentWriteExecutor({
+        clientId,
+        consentCoordinator: coordinator,
+        audit: w.audit,
+        dispatcher: w.dispatcher,
+        egressSink: w.egressSink,
+        policyHitl: w.policyHitl,
+        getTribalKbConfig: w.getTribalKbConfig,
+        ...(w.previewCredentialFor === undefined
+          ? {}
+          : { previewCredentialFor: w.previewCredentialFor }),
+        ...(w.beforeStateRows === undefined ? {} : { beforeStateRows: w.beforeStateRows }),
+      });
       const out = await executor.execute({
         type: actionType,
+        origin: "agent",
+        proposer: agentProposerOf(provenance),
         payload: { mcpToolId: toolId, input },
       });
       return out.status === "ok" ? { status: "ok", result: out.result } : { status: "rejected" };
