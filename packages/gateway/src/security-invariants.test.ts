@@ -3985,8 +3985,10 @@ describe("I28 — MCP content enters only through the capture gate, in a fixed o
       "cap.kinds.includes(",
       "validateCapturePayload(kindRaw",
       "deps.classifyAction?.(",
-      "requireDestinationAllowed(ctx, v)",
+      "requireDestinationAllowed(ctx, v, basis)",
       "deps.isServiceConfigured?.(",
+      // AD3a-2a: the definition check lists the connector, so it is LAST of the action checks.
+      "requireDefinitionVerified(ctx, v, basis)",
       "missingItem(",
       "resolveLinkEndpoints(",
       "deps.store.countCreatedSince(",
@@ -4147,9 +4149,14 @@ describe("I28 — MCP content enters only through the capture gate, in a fixed o
       "CAPTURE_ROLE_BY_KIND[caller.kind]",
       'row.state !== "proposed"',
       "deps.now() >= expiresAt",
-      "deps.classifyAction?.(",
-      "deps.isServiceConfigured?.(",
-      "actionDestinationVerdict(deps, stored.actionType, stored.input)",
+      // AD3a-2a: step 4 is named steps, each a function above `acceptAction` that reads the live
+      // verdict, the connector, the refusal for the approval-time basis, the human-only rule and
+      // the definition; all of them precede the claim.
+      "requireVerdictAtApproval(deps, stored.actionType)",
+      "requireConfiguredAtApproval(deps, stored.actionType)",
+      "actionDestinationVerdict(deps, stored.actionType, stored.input, basis)",
+      "act.humanOnly",
+      "requireDefinitionAtApproval(deps, stored.actionType, basis)",
       "deps.store.claimAction(",
       "act.execute(",
       "deps.store.finalizeAction(",
@@ -4163,12 +4170,12 @@ describe("I28 — MCP content enters only through the capture gate, in a fixed o
     const gate = stripComments(await read("packages/gateway/src/mcp-sink/capture-gate.ts"));
     const req = gate.slice(gate.indexOf("function requireDestinationAllowed("));
     expect(req.slice(0, req.indexOf("\n}\n"))).toContain(
-      "actionDestinationVerdict(ctx.deps, v.payload.actionType, v.payload.input)",
+      "actionDestinationVerdict(ctx.deps, v.payload.actionType, v.payload.input, basis)",
     );
     const act = stripComments(await read("packages/gateway/src/mcp-sink/capture-act.ts"));
     const verdict = act.slice(act.indexOf("export function actionDestinationVerdict("));
     expect(verdict.slice(0, verdict.indexOf("\n}\n"))).toContain(
-      "return deps.actionDestinationRefusal(actionType, input);",
+      "return deps.actionDestinationRefusal(actionType, input, basis);",
     );
     // D32(f): the sink names no ChatOps or connectors module; the check is injected.
     for (const f of ["capture-gate.ts", "capture-act.ts", "capture-types.ts"]) {
