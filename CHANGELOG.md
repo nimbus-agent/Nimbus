@@ -2,6 +2,13 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [10.56.1](https://github.com/nimbus-agent/Nimbus/compare/v10.56.0...v10.56.1) (2026-11-13)
+
+
+### Bug Fixes
+
+* **deps:** move hono to 4.13.17 and @hono/node-server to 2.1.6 / 1.19.18 for eight new advisories ([#1994](https://github.com/nimbus-agent/Nimbus/issues/1994)) ([ba90a94](https://github.com/nimbus-agent/Nimbus/commit/ba90a94b9ba97e44098e6842113d8246e896faa2))
+
 ## [10.56.0](https://github.com/nimbus-agent/Nimbus/compare/v10.55.0...v10.56.0) (2026-11-12)
 
 
