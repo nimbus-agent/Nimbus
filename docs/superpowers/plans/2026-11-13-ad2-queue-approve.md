@@ -105,8 +105,8 @@ Where the spec is right the plan follows it; these are the points where the code
 
 | Site | Fact | AD2 change |
 | --- | --- | --- |
-| `scripts/structure-audit/check-nimbus-invariants.ts:4006-4040` `D32_GATE_FN_RE`, `D32_GATE_ALLOWED`, `checkCaptureGateCallers` | names `submitCapture|acceptCapture|rejectCapture|revokeCapture|purgeCapture`; allow-list is `ipc/capture-rpc.ts` + `capture-gate.ts` | allow-list becomes exactly those two plus `ipc/approvals-rpc.ts` |
-| same file `:4042-4072` `D32_GATE_MODULE_RE`, `checkCaptureGateImporters` | exempts one file, `ipc/capture-rpc.ts`, inline (`:4050`) | replace the inline test with `D32_GATE_IMPORTERS_ALLOWED = [capture-rpc.ts, approvals-rpc.ts]` |
+| `scripts/structure-audit/check-nimbus-invariants.ts:4006-4040` `D32_GATE_FN_RE`, `D32_GATE_ALLOWED`, `checkCaptureGateCallers` | names `submitCapture|acceptCapture|rejectCapture|revokeCapture|purgeCapture`; allow-list is `ipc/capture-rpc.ts` + `capture-gate.ts` | allow-list becomes exactly those two plus `"packages/gateway/src/ipc/approvals-rpc.ts"` (entries are FULL repo-relative paths: the check is `D32_GATE_ALLOWED.includes(f.relPath)`, `:4018`) |
+| same file `:4042-4072` `D32_GATE_MODULE_RE`, `checkCaptureGateImporters` | exempts one file, `ipc/capture-rpc.ts`, inline (`:4050`) | replace the inline test with `D32_GATE_IMPORTERS_ALLOWED = ["packages/gateway/src/ipc/capture-rpc.ts", "packages/gateway/src/ipc/approvals-rpc.ts"]` and `if (D32_GATE_IMPORTERS_ALLOWED.includes(f.relPath)) continue;` |
 | same file `:5456-5466` | error text says "outside ipc/capture-rpc.ts" | reworded to "outside ipc/capture-rpc.ts and ipc/approvals-rpc.ts" |
 | `:4134-4136` `D32E_ALLOWED` (`acceptAction`: `capture-act.ts`, `capture-gate.ts`) | D32(e) | **unchanged** (this is why `approve` goes through `acceptCapture`) |
 | `check-nimbus-invariants.test.ts:2521-2635` (D32(c) and D32(b) blocks) | fixtures use `capture-rpc.ts` as the one allowed module | extend per Task 5 |
@@ -161,7 +161,7 @@ proposed actions waiting for the owner"). `PER_CONNECTION_ACTIONS = 3` is a cons
 **D-7 The toast.** `mcp-sink/capture-toast.ts` `proposalsWaitingToast(pending: number): { title: string; body: string }`: title `Nimbus: agent proposals waiting`, body
 `<n> agent proposal(s) waiting. Review with: nimbus approvals`; the parameter is a number, so no request-derived string can reach it by type. `submitCapture` calls
 `deps.onActionProposed?.(deps.store.countPendingActions(now))` after the transaction commits, inside a try/catch (a toast failure never fails a submit). `assemble.ts` wires it to
-`showIgnoringFailure(notifications, ...)` (`notifications` is built at `assemble.ts:3828`, before `captureGate` at `:3933`); the service rate-limits and honours
+`showIgnoringFailure(notifications, t.title, t.body)` (its signature is `(service, title: string, body: string)`, `platform/notifications/notifications-runtime.ts:276-280`, so the two fields are passed by name, never spread; `notifications` is built at `assemble.ts:3828`, before `captureGate` at `:3933`); the service rate-limits and honours
 `[notifications]`/`NIMBUS_NOTIFICATIONS`.
 
 **D-8 The CLI.** `packages/cli/src/commands/approvals.ts`: parse (`approvals` = list, `show <id>`, `<id>`, `<id> --decline`, `--decline-all-from <label>`, `--json` for list/show/decline
@@ -178,7 +178,7 @@ New: `ipc/approvals-rpc.ts` (+ `approvals-rpc.test.ts`), `mcp-sink/capture-id.ts
 Edited (gateway): `mcp-sink/capture-gate.ts`, `capture-store.ts`, `capture-types.ts`, `capture-act.ts`, `capture-client-policy.ts`, `ipc/capture-rpc.ts`, `ipc/server/dispatchers.ts`,
 `ipc/lan-rpc.ts`, `engine/proposer-block.ts` (one export), `platform/assemble.ts` (id, hook), `scripts/structure-audit/check-nimbus-invariants.ts` (+ test), the tests listed in Task 9.
 Edited (cli): `lib/interactive-ipc-handlers.ts`, `commands/{captures.ts,captures-format.ts,registry.ts,help.ts,index.ts,mcp-server.ts}`, `src/index.ts`, `mcp/capture-tools.ts` (+ tests).
-Edited (ui, strings only): `packages/ui/src/components/captures/format.ts` (+ its test), `packages/ui/src-tauri/src/gateway_bridge.rs` (a negative test only).
+Edited (ui, strings only): `packages/ui/src/components/captures/format.ts` (it has no test file of its own; `terminalCommands` is covered through `packages/ui/test/pages/Captures.test.tsx`), `packages/ui/src-tauri/src/gateway_bridge.rs` (a negative test only).
 Docs: Task 10. `V96` stays the schema; `docs/SECURITY-INVARIANTS.md` gains no new rule number.
 
 ## Tasks (test first; red-prove every guard by reverting the production line and watching its test fail)
@@ -234,7 +234,7 @@ Files: `capture-gate.ts`, `engine/proposer-block.ts` (export `escapeUnverifiedLi
    `formatProposerBlock` does for the label (same fixtures as AD1's). `capture-toast.test.ts`: `proposalsWaitingToast(1)` and `(7)` match the exact fixed texts (singular/plural); no other
    parameter exists (a type-level `// @ts-expect-error` for a string argument); `submitCapture` calls the hook once per queued ACTION with the pending count, never for a note, a decision
    or a refused proposal, and a throwing hook still returns the id. RED.
-2. Implement; `assemble.ts`: `onActionProposed: (n) => void showIgnoringFailure(notifications, ...proposalsWaitingToast(n))` inside `captureGate`. GREEN.
+2. Implement; `assemble.ts`: `onActionProposed: (n) => { const t = proposalsWaitingToast(n); void showIgnoringFailure(notifications, t.title, t.body); }` inside `captureGate` (an object cannot be spread into an argument list). GREEN.
 
 ### Task 4 - `ipc/approvals-rpc.ts`
 
@@ -272,7 +272,7 @@ Files: `scripts/structure-audit/check-nimbus-invariants.ts`, `.test.ts`, `docs/S
      `import()`, side-effect import, both semicolon-free orderings) and `import type` stays allowed anywhere; `approvals-rpc.ts` importing `engine/executor.ts` is NOT covered here (it is not under
      `mcp-sink/`, D32(f)), asserted so nobody reads D32(f) as wider than it is.
    RED.
-2. Checker: `D32_GATE_ALLOWED` + `ipc/approvals-rpc.ts`; `D32_GATE_IMPORTERS_ALLOWED = [capture-rpc.ts, approvals-rpc.ts]` replaces the inline exemption at `:4050`; the two error strings at `:5459`, `:5465`.
+2. Checker: `D32_GATE_ALLOWED` + `"packages/gateway/src/ipc/approvals-rpc.ts"`; `D32_GATE_IMPORTERS_ALLOWED` (the two full `packages/gateway/src/ipc/...` paths, compared with `f.relPath`) replaces the inline exemption at `:4050`; a fixture asserts a bare `ipc/approvals-rpc.ts` entry would NOT exempt the file (the path-format trap); the two error strings at `:5459`, `:5465`.
    GREEN: `bun test scripts/structure-audit/check-nimbus-invariants.test.ts`, `bun run audit:invariants`.
 3. `docs/SECURITY-INVARIANTS.md:932`: D32(b) lists the five names as named only in `ipc/capture-rpc.ts`, `ipc/approvals-rpc.ts` and `capture-gate.ts`; D32(c) "no module other than those two RPC modules";
    D32(e) restated "one call, in `acceptCapture`, which exactly those two modules reach"; the stated bound gains "a second caller inside an allow-listed RPC module is exempt whole-file; the
@@ -313,8 +313,8 @@ Files: `lib/interactive-ipc-handlers.ts`, `commands/approvals.ts` (new), `comman
    `nimbus approvals` for actions; `captures-format.ts` `doctorCapturesLines` (`:269`) action lines end `— nimbus approvals` (pins in `captures-format.test.ts`/`doctor` tests updated).
 3. MCP tool texts (`mcp/capture-tools.ts:86`, `:213-217`, `:239`): action wording becomes "the owner runs `nimbus approvals <id>`" (the native proposal wording `captures accept` stays); update
    `capture-tools.test.ts`. The tool schemas, names and annotations are unchanged (no tool list churn).
-4. Desktop string: `ui/src/components/captures/format.ts:23-27` returns `nimbus approvals <id>` / `nimbus approvals <id> --decline` for a `proposed` ACTION and the existing pair for other kinds; update the
-   vitest for `terminalCommands` and `Captures.test.tsx`. No IPC change, no allowlist change. Run `bun run --cwd packages/ui test -- Captures` where `packages/ui` is installed.
+4. Desktop string: `ui/src/components/captures/format.ts:23-27` returns `nimbus approvals <id>` / `nimbus approvals <id> --decline` for a `proposed` ACTION and the existing pair for other kinds; update
+   `packages/ui/test/pages/Captures.test.tsx` (the only test that reaches `terminalCommands`; add the action and non-action cases there). No IPC change, no allowlist change. Run `bun run --cwd packages/ui test -- Captures` where `packages/ui` is installed.
 
 ### Task 8 - Static and invariant text (CLAUDE.md, GEMINI.md, SECURITY-INVARIANTS.md, `.claude/commands/nimbus-mcp-sink.md`)
 
@@ -436,4 +436,4 @@ its base is `dev/asaf/p28-ad1`. End with the attribution lines from the session.
 
 ## Review log
 
-(none yet)
+- Antigravity round 1 (2026-11-13): CHANGES REQUIRED, 6 findings. Applied: F1 (object spread into `showIgnoringFailure`: pass `t.title, t.body`), F2 (D32 allow-list entries are full `packages/gateway/src/...` paths), F3 in part (`captures/format.ts` exists on the AD1 branch, the review bundle omitted it; it has no test of its own, the test is `test/pages/Captures.test.tsx`). F4, F5: the reviewer agrees with corrections 1 and 5. F6: already the plan's position (the integration file is the always-on proof).
