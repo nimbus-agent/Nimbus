@@ -2,6 +2,13 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [10.56.0](https://github.com/nimbus-agent/Nimbus/compare/v10.55.0...v10.56.0) (2026-11-12)
+
+
+### Features
+
+* **gateway:** Vantage cloud costs and recommendations are indexed, local-only (FinOps FO2) ([#1985](https://github.com/nimbus-agent/Nimbus/issues/1985)) ([165fa43](https://github.com/nimbus-agent/Nimbus/commit/165fa435345eff0dcc59d419d08bad43b6cf9bdd))
+
 ## [10.55.0](https://github.com/nimbus-agent/Nimbus/compare/v10.54.0...v10.55.0) (2026-11-12)
 
 
