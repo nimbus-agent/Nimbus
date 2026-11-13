@@ -19,6 +19,7 @@
 // This module never names the approval table (static D49(b)): it goes through the store.
 import type { Database } from "bun:sqlite";
 import { appendAuditEntry } from "../../db/audit-chain.ts";
+import { constantTimeStringEqual } from "../../util/timing-safe-compare.ts";
 import { mcpClientToolKey } from "../lazy-mesh/tool-map.ts";
 import { definitionSha256 } from "./definition-hash.ts";
 import {
@@ -116,7 +117,7 @@ export function recordDoorSuspension(
   const current = getDoorApproval(deps.db, "agent", a.service, a.toolId);
   return current !== undefined &&
     current.suspendedAt !== null &&
-    current.definitionSha256 === a.definitionSha256
+    constantTimeStringEqual(current.definitionSha256, a.definitionSha256)
     ? suspensionFromRow(current)
     : undefined;
 }
@@ -150,7 +151,7 @@ export function checkAgentToolDefinition(
       }),
     };
   }
-  if (sha !== approval.definitionSha256) {
+  if (!constantTimeStringEqual(sha, approval.definitionSha256)) {
     return { kind: "changed", suspension: recordDoorSuspension(deps, approval, { sha }) };
   }
   if (row !== undefined && !listedEntryDeclaresPreviewKeys(row, listed[key]))

@@ -258,7 +258,7 @@ describe("connector writes status with the agent member", () => {
     const h = harness(status);
     await runConnectorWrites(["status"], h.deps);
     expect(h.logs).toEqual([
-      "github  shared wave 3  9 writes, none approved for the model",
+      "github  shared wave 3  9 writes, 0 offerable to the model now",
       "  agents: 5 approved",
       "  suspended: github_pr[2Jclose definition changed since approved 2026-11-13 (approved 0123456789ab, now ba9876543210)",
       "  suspended: github_gone no longer listed since approved 2026-11-01 (approved aaaaaaaaaaaa)",
@@ -326,7 +326,8 @@ describe("the default call seam", () => {
 });
 
 describe("AD3a-2a status additions", () => {
-  const CMD = "To keep them working run: nimbus connector writes enable <service> --door agent";
+  const CMD =
+    "To keep the other types working run: nimbus connector writes enable <service> --door agent (mail sends cannot be approved; drafts stay allowed)";
 
   it("the model line is unchanged when something is approved for the model", async () => {
     const h = harness({

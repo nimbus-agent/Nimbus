@@ -20,7 +20,7 @@ export function legacyUnapprovedNotice(actionType: string, service: string): str
   return `Deprecated: ${actionType} is not approved for outside agents by name. It is accepted for now and will be refused in a later release. To keep it working run: nimbus connector writes enable ${service} --door agent`;
 }
 
-/** What `status` prints under the count: the command that ends the warning for every type at once. */
+/** What `status` prints under the count: the command that ends the warning for every type that can be approved (not the mail sends). */
 export const LEGACY_STATUS_COMMAND = "nimbus connector writes enable <service> --door agent";
 
 /**
@@ -41,4 +41,4 @@ export function legacyNoticeFor(actionType: string): string {
  * `status` prints with its count.
  */
 export const LEGACY_LIST_HEADER =
-  "Some proposals below were accepted without being approved for outside agents by name. That is deprecated: a later release will refuse them. To keep them working run: nimbus connector writes enable <service> --door agent";
+  "Some proposals below were accepted without being approved for outside agents by name. That is deprecated: a later release will refuse them, and the seven mail sends cannot be approved at all (drafts stay allowed). To keep the other types working run: nimbus connector writes enable <service> --door agent";

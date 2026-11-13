@@ -622,33 +622,93 @@ describe("verifyDefinition", () => {
       ?.definitionSha256 as string;
   }
 
-  test("an approval re-approved with another hash while the listing was awaited is refused as changing", async () => {
-    const row = allow("github_pr_merge");
-    listings["github"] = fullListing("github", "other");
-    const d = createAgentDoor({
+  /** A door whose listing resolves only after `mutate` ran against the store (the owner acting mid-await). */
+  function doorMutatingDuringListing(mutate: () => void, listing: Record<string, unknown>) {
+    return createAgentDoor({
       db,
       enforcedPolicy: () => ({ capabilitiesDisabled: policyOff }) as never,
-      listServerTools: async (service) => {
-        // The owner re-approves a DIFFERENT hash while the listing is in flight.
-        upsertDoorApprovals(
-          db,
-          "agent",
-          "github",
-          [{ toolId: row.toolId, definitionSha256: "7".repeat(64) }],
-          9,
-        );
-        return listings[service] as Record<string, unknown>;
+      listServerTools: async () => {
+        mutate();
+        return listing;
       },
       tribalKbConfig: () => undefined,
       classifyContext,
       isServiceConfigured: async () => true,
       now: () => 1_000,
     });
+  }
+
+  test("an approval re-approved with another hash during the listing is judged against the NEW hash: a listing of the old hash is changing and suspends the fresh row", async () => {
+    const row = allow("github_pr_merge");
+    const d = doorMutatingDuringListing(
+      () =>
+        upsertDoorApprovals(
+          db,
+          "agent",
+          "github",
+          [{ toolId: row.toolId, definitionSha256: "7".repeat(64) }],
+          9,
+        ),
+      fullListing("github"),
+    );
     expect(await d.verifyDefinition("github.pr.merge")).toMatchObject({
       ok: false,
-      detail: DEFINITION_REFUSALS.changing,
+      code: "ERR_AGENT_TOOL_SUSPENDED",
     });
-    expect(getDoorApproval(db, "agent", "github", row.toolId)?.suspendedAt).toBeNull();
+    expect(getDoorApproval(db, "agent", "github", row.toolId)?.suspendedAt).toBe(1_000);
+  });
+
+  test("an approval re-approved during the listing with the hash the listing carries is ok", async () => {
+    const row = allow("github_pr_merge");
+    const listing = fullListing("github", "other");
+    const newSha = definitionSha256(
+      row.toolId,
+      listing[mcpClientToolKey("github", row.toolId)],
+    ) as string;
+    const d = doorMutatingDuringListing(
+      () =>
+        upsertDoorApprovals(
+          db,
+          "agent",
+          "github",
+          [{ toolId: row.toolId, definitionSha256: newSha }],
+          9,
+        ),
+      listing,
+    );
+    expect(await d.verifyDefinition("github.pr.merge")).toEqual({ ok: true });
+  });
+
+  test("an approval removed during the listing is refused as not approved, with no mark and no audit row", async () => {
+    allow("github_pr_merge");
+    const d = doorMutatingDuringListing(
+      () => removeDoorApprovals(db, "github", "agent"),
+      fullListing("github"),
+    );
+    expect(await d.verifyDefinition("github.pr.merge")).toEqual({
+      ok: false,
+      code: "ERR_CAPTURE_ACTION_NOT_PROPOSABLE",
+      detail: DEFINITION_REFUSALS.notApproved,
+    });
+    const audits = db
+      .query(
+        "SELECT COUNT(*) AS n FROM audit_log WHERE action_type = 'connector.writes.agent.suspend'",
+      )
+      .get() as { n: number };
+    expect(audits.n).toBe(0);
+  });
+
+  test("an approval suspended during the listing is refused as suspended even though the listing matches", async () => {
+    const row = allow("github_pr_merge");
+    const d = doorMutatingDuringListing(
+      () => markDoorToolSuspended(db, "agent", "github", row.toolId, approvedHash(row), null, 4),
+      fullListing("github"),
+    );
+    expect(await d.verifyDefinition("github.pr.merge")).toMatchObject({
+      ok: false,
+      code: "ERR_AGENT_TOOL_SUSPENDED",
+      detail: DEFINITION_REFUSALS.suspended,
+    });
   });
 });
 

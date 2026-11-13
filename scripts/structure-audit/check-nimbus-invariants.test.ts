@@ -6563,6 +6563,84 @@ ${middle}}`;
     ).toEqual(["agent-door-check-order"]);
   });
 
+  test("(e) a vetoingConsent( call that is not the channel's initializer is refused", () => {
+    expect(
+      rules(
+        checkAgentDoorCheckOrder,
+        swap(
+          RPC,
+          goodRpc(
+            "      const channel = coordinator;\n      vetoingConsent(coordinator, recheck, onVeto);\n" +
+              EXECUTOR,
+          ),
+        ),
+      ),
+    ).toEqual(["agent-door-check-order"]);
+  });
+
+  test("(e) a vetoing wrapper inside a conditional initializer is clean", () => {
+    expect(
+      rules(
+        checkAgentDoorCheckOrder,
+        swap(
+          RPC,
+          goodRpc(
+            `      const channel =
+        provenance.basis === 1 && door !== undefined
+          ? vetoingConsent(coordinator, async () => { return 1; }, (r) => { v = r; })
+          : coordinator;
+` + EXECUTOR,
+          ),
+        ),
+      ),
+    ).toEqual([]);
+  });
+
+  test("(e) a definition helper that keeps a reference to the injected check but drops the call is refused", () => {
+    expect(
+      rules(
+        checkAgentDoorCheckOrder,
+        swap(
+          ACT,
+          GOOD_ACT.replace(
+            "await deps.verifyActionDefinition?.(actionType);",
+            `const verify = deps.verifyActionDefinition;
+  return verify;`,
+          ),
+        ),
+      ),
+    ).toEqual(["agent-door-check-order"]);
+    expect(
+      rules(
+        checkAgentDoorCheckOrder,
+        swap(
+          GATE,
+          GOOD_GATE.replace(
+            "await ctx.deps.verifyActionDefinition?.(v.payload.actionType);",
+            `const verify = ctx.deps.verifyActionDefinition;
+  return verify;`,
+          ),
+        ),
+      ),
+    ).toEqual(["agent-door-check-order"]);
+  });
+
+  test("(e) an aliased call of the injected check is clean", () => {
+    expect(
+      rules(
+        checkAgentDoorCheckOrder,
+        swap(
+          GATE,
+          GOOD_GATE.replace(
+            "await ctx.deps.verifyActionDefinition?.(v.payload.actionType);",
+            `const verify = ctx.deps.verifyActionDefinition;
+  await verify?.(v.payload.actionType);`,
+          ),
+        ),
+      ),
+    ).toEqual([]);
+  });
+
   test("(e) claimAction before the definition step at approval is refused", () => {
     expect(rules(checkAgentDoorCheckOrder, swap(ACT, goodAct(CLAIM + AFTER_VERDICT)))).toEqual([
       "agent-door-check-order",

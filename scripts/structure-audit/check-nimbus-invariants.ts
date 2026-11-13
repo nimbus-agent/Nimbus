@@ -2329,6 +2329,29 @@ function d49CallArgs(code: string, call: string): { open: number; close: number 
 
 const D49_RULE_ORDER = "agent-door-check-order";
 
+/**
+ * True when `body` INVOKES `dep` (`dep(` or `dep?.(`), directly or through a local alias of it
+ * (`const verify = dep;` then `verify(` or `verify?.(`). A bare reference is not a call.
+ */
+function d49CallsDep(body: string, dep: string): boolean {
+  const call = String.raw`\s*(?:\?\.)?\(`;
+  if (new RegExp(escapeRegex(dep) + call).test(body)) return true;
+  const alias = new RegExp(
+    String.raw`(?:const|let)\s+([\w$]+)\s*=\s*${escapeRegex(dep)}\s*[;\n]`,
+    "g",
+  );
+  for (const m of body.matchAll(alias)) {
+    const name = m[1];
+    if (
+      name !== undefined &&
+      new RegExp(String.raw`(?<![\w$.])` + escapeRegex(name) + call).test(body)
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
 /** One ordered site: every `before` marker is in `fn`'s body and precedes `after`; helpers read their dep. */
 function d49OrderSite(
   file: FileEntry | undefined,
@@ -2366,8 +2389,8 @@ function d49OrderSite(
   }
   for (const [helper, dep] of helpers) {
     const hs = d49FunctionBody(code, helper);
-    if (hs === undefined || !code.slice(hs.start, hs.end).includes(dep)) {
-      out.push(miss(`${helper} must read ${dep}`));
+    if (hs === undefined || !d49CallsDep(code.slice(hs.start, hs.end), dep)) {
+      out.push(miss(`${helper} must call ${dep}`));
     }
   }
   return out;
@@ -2388,21 +2411,38 @@ function d49VetoSite(file: FileEntry | undefined, path: string): Violation[] {
   });
   if (span === undefined) return [at("function buildActDeps not found")];
   const body = code.slice(span.start, span.end);
-  const channel = body.indexOf("const channel =");
-  const vetoing = channel < 0 ? -1 : body.indexOf("vetoingConsent(", channel);
   const builder = d49CallArgs(body, "buildAgentWriteExecutor(");
-  if (channel < 0 || vetoing < 0) {
-    return [at("buildActDeps must build its consent channel with vetoingConsent(")];
-  }
   if (builder === undefined) return [at("buildActDeps no longer calls buildAgentWriteExecutor(")];
-  const out: Violation[] = [];
-  if (vetoing > builder.open) {
-    out.push(at("vetoingConsent( must come before buildAgentWriteExecutor("));
+  // The variable the executor receives as its consent argument ...
+  const arg = /consentCoordinator\s*:\s*([\w$]+)/.exec(body.slice(builder.open, builder.close));
+  if (arg?.[1] === undefined) return [at("the executor must be given a consentCoordinator")];
+  // ... must be declared before the executor is built, and `vetoingConsent(` must sit INSIDE its
+  // initializer expression (a bare call elsewhere wraps nothing).
+  const decl = new RegExp(String.raw`(?:const|let)\s+${escapeRegex(arg[1])}\s*=`).exec(body);
+  if (decl === null || decl.index > builder.open) {
+    return [
+      at(
+        "the executor's consentCoordinator must be a channel built before it, with vetoingConsent(",
+      ),
+    ];
   }
-  if (!/consentCoordinator\s*:\s*channel\b/.test(body.slice(builder.open, builder.close))) {
-    out.push(at("the executor's consentCoordinator must be the vetoing channel"));
+  const init = d49Initializer(body, decl.index + decl[0].length);
+  if (!body.slice(init.start, init.end).includes("vetoingConsent(")) {
+    return [at("the executor's consentCoordinator must be initialised with vetoingConsent(")];
   }
-  return out;
+  return [];
+}
+
+/** The span of the expression that starts at `from`: up to the first `;` at bracket depth 0. */
+function d49Initializer(code: string, from: number): { start: number; end: number } {
+  let depth = 0;
+  for (let i = from; i < code.length; i++) {
+    const c = code[i];
+    if (c === "(" || c === "[" || c === "{") depth++;
+    else if (c === ")" || c === "]" || c === "}") depth--;
+    else if (c === ";" && depth === 0) return { start: from, end: i };
+  }
+  return { start: from, end: code.length };
 }
 
 export function checkAgentDoorCheckOrder(files: readonly FileEntry[]): Violation[] {

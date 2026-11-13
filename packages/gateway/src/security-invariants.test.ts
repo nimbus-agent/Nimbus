@@ -1182,6 +1182,17 @@ describe("I10 — Constant-time compare helpers live in util/timing-safe-compare
     );
   });
 
+  test("connectors/connector-writes/agent-door-definition.ts compares definition hashes with constantTimeStringEqual, never === or !==", async () => {
+    const src = await read(
+      "packages/gateway/src/connectors/connector-writes/agent-door-definition.ts",
+    );
+    expect(src).toMatch(
+      /import\s*\{[^}]*constantTimeStringEqual[^}]*\}\s*from\s*["']\.\.\/\.\.\/util\/timing-safe-compare(?:\.ts)?["']/,
+    );
+    expect(src).not.toMatch(/[!=]==\s*\w+(?:\.\w+)*\.definitionSha256/);
+    expect(src).not.toMatch(/\.definitionSha256\s*[!=]==/);
+  });
+
   test("ipc/lan-pairing.ts does NOT define a local timingSafeEqual or constantTimeStringEqual", async () => {
     const src = await read("packages/gateway/src/ipc/lan-pairing.ts");
     expect(src).not.toMatch(/function\s+timingSafeEqual\s*\(/);

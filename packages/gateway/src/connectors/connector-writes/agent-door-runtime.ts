@@ -309,7 +309,17 @@ export function createAgentDoor(deps: AgentDoorDeps): AgentDoor {
     if (listed === undefined) {
       return refused("ERR_CAPTURE_ACTION_NOT_PROPOSABLE", DEFINITION_REFUSALS.unlisted);
     }
-    const check = checkAgentToolDefinition(deps, approval, listed, row);
+    // The listing awaited: the owner may have removed, suspended or re-approved the tool meanwhile
+    // (and this is also the post-answer recheck). Re-read the store, with no await between that read
+    // and the comparison, and judge the listing against the row as it stands now.
+    const fresh = getDoorApproval(deps.db, "agent", service, row.toolId);
+    if (fresh === undefined) {
+      return refused("ERR_CAPTURE_ACTION_NOT_PROPOSABLE", DEFINITION_REFUSALS.notApproved);
+    }
+    if (fresh.suspendedAt !== null) {
+      return refused("ERR_AGENT_TOOL_SUSPENDED", DEFINITION_REFUSALS.suspended);
+    }
+    const check = checkAgentToolDefinition(deps, fresh, listed, row);
     switch (check.kind) {
       case "changed":
       case "unreadable":

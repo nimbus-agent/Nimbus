@@ -484,8 +484,9 @@ function logAgentRow(d: ConnectorWritesDeps, a: AgentServiceStatus | undefined):
 
 /**
  * The model section's line. A service that is enabled (its wave is shared with the agent door) but
- * has nothing approved for the model says so, instead of `0 offerable now`; the line is unchanged
- * when anything is approved.
+ * has nothing offerable to the model says so, instead of `enabled ... 0 offerable now`. The reply
+ * carries only the count of approved writes that also pass the scope check, so the wording claims
+ * no more than that (approvals can exist while it is zero); the line is unchanged otherwise.
  */
 function modelLine(row: StatusRow, width: number): string {
   const name = row.service.padEnd(width);
@@ -494,7 +495,7 @@ function modelLine(row: StatusRow, width: number): string {
   const writes = String(row.writes);
   const offerable = row.offerable ?? 0;
   if (offerable === 0) {
-    return `${name}  shared wave ${wave}  ${writes} writes, none approved for the model${awaitingSuffix(row)}`;
+    return `${name}  shared wave ${wave}  ${writes} writes, 0 offerable to the model now${awaitingSuffix(row)}`;
   }
   return `${name}  enabled  wave ${wave}  ${writes} writes, ${String(offerable)} offerable now${awaitingSuffix(row)}`;
 }
@@ -533,7 +534,9 @@ function logLegacy(d: ConnectorWritesDeps, legacy: unknown): void {
   d.log(
     `legacy: ${String(legacy["total"])} proposals in the last 30 days would be refused (${parts.join(", ")})`,
   );
-  d.log("To keep them working run: nimbus connector writes enable <service> --door agent");
+  d.log(
+    "To keep the other types working run: nimbus connector writes enable <service> --door agent (mail sends cannot be approved; drafts stay allowed)",
+  );
 }
 
 /** The agent policy line: allows, or which capability the organisation turned off (OR-AD-15). */
