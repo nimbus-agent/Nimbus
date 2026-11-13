@@ -1,5 +1,5 @@
 import { z } from "zod";
-
+import { stripControlChars } from "../lib/strip-control-chars.ts";
 import type { IpcCallable } from "./client-surface.ts";
 import { type AdapterDeps, runTool, type ToolResult } from "./tool-runtime.ts";
 
@@ -9,6 +9,15 @@ import { type AdapterDeps, runTool, type ToolResult } from "./tool-runtime.ts";
  * sink is enabled for the kind — see `captureToolsFor`.
  */
 type CaptureToolKind = "note" | "decision" | "term" | "link" | "action";
+
+/** The gateway's fixed deprecation line for a proposal accepted under the window, control-stripped. */
+function deprecationOf(raw: unknown): string {
+  const d =
+    typeof raw === "object" && raw !== null
+      ? (raw as Record<string, unknown>)["deprecation"]
+      : undefined;
+  return typeof d === "string" && d !== "" ? ` ${stripControlChars(d)}` : "";
+}
 
 export interface CaptureToolSpec {
   readonly name: string;
@@ -208,13 +217,16 @@ export const CAPTURE_TOOL_SPECS: readonly CaptureToolSpec[] = [
   {
     name: "propose_action",
     kind: "action",
-    // `captureToolsFor` appends this machine's proposable action types to the description.
+    // `captureToolsFor` appends the action types this machine accepts now to the description.
     description:
-      "Propose a connector action (post a message, create or update a ticket, send an email, …) for the " +
-      "user to approve. NOTHING is sent when you call this: the proposal waits on the user's machine " +
+      "Propose a connector action (post a message, create or update a ticket, comment, create a draft, …) for the " +
+      "user to approve. NOTHING is run when you call this: the proposal waits on the user's machine " +
       "until the owner runs `nimbus approvals <id>` and approves the exact input shown at the prompt. It expires " +
       "if not approved in time. Poll its outcome with capture_status. input is the tool's arguments as " +
-      "a JSON object. Proposable action types on this machine: ",
+      "a JSON object. The list below is what this machine accepts now: the writes its owner approved for outside " +
+      "agents by name, plus a few types still accepted for a limited time with a Deprecated warning, which a later " +
+      "release will refuse unless the owner approves them. The owner's reason for declining or rejecting is never sent to you, only a fixed code. " +
+      "Accepted action types on this machine: ",
     schema: {
       actionType: z.string(),
       input: z.record(z.string(), z.unknown()),
@@ -236,7 +248,7 @@ export const CAPTURE_TOOL_SPECS: readonly CaptureToolSpec[] = [
           content: [
             {
               type: "text",
-              text: `Proposed action ${id} — expires ${when}. It has NOT run: the owner must approve it with \`nimbus approvals ${id}\` at the prompt. Poll capture_status with this id. Do not tell the user it was sent.`,
+              text: `Proposed action ${id} — expires ${when}. It has NOT run: the owner must approve it with \`nimbus approvals ${id}\` at the prompt. Poll capture_status with this id. Do not tell the user it was sent.${deprecationOf(raw)}`,
             },
           ],
         };
@@ -249,7 +261,8 @@ export const CAPTURE_TOOL_SPECS: readonly CaptureToolSpec[] = [
       "Read the state of a capture by its id (proposed, executed, failed, rejected, expired, " +
       "accepted, live, revoked). The gateway answers only for captures submitted on this connection; " +
       "an id from another connection reads as not found. Returns the state and, for an executed action, a " +
-      "short link when the service returned one — never the payload.",
+      "short link when the service returned one — never the payload. A rejected or failed action may carry an " +
+      "errorCode (a fixed code, never the owner's reason).",
     schema: { id: z.string() },
     annotations: { ...WRITE_ANNOTATIONS, readOnlyHint: true },
     run: (deps, args) =>

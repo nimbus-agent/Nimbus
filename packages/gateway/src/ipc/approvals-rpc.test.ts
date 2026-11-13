@@ -16,15 +16,10 @@ import type { CaptureGateDeps } from "../mcp-sink/capture-gate.ts";
 import { CaptureAttemptLimiter, CaptureRefusalCounter } from "../mcp-sink/capture-rate-limit.ts";
 import { CaptureStore } from "../mcp-sink/capture-store.ts";
 import { createMockVault } from "../vault/mock.ts";
-import {
-  APPROVALS_METHODS,
-  dispatchApprovalsRpc,
-  humanOnlyConsent,
-  NON_HUMAN_REASON,
-} from "./approvals-rpc.ts";
-import type { CaptureRpcCtx } from "./capture-rpc.ts";
+import { APPROVALS_METHODS, dispatchApprovalsRpc, NON_HUMAN_REASON } from "./approvals-rpc.ts";
+import { type CaptureRpcCtx, dispatchCaptureRpc } from "./capture-rpc.ts";
 import type { ConsentCoordinator } from "./consent.ts";
-import { ConsentCoordinatorImpl } from "./consent.ts";
+import { ConsentCoordinatorImpl, humanOnlyConsent } from "./consent.ts";
 import { createStreamRegistry } from "./engine-ask-stream.ts";
 import { checkLanMethodAllowed, LanError } from "./lan-rpc.ts";
 import type { ClientKind } from "./server/client-kind.ts";
@@ -108,6 +103,7 @@ function insertAction(
     sessionId: "agent-conn",
     createdAt: 500,
     expiresAt: 500 + HOUR,
+    agentDoorLegacy: false,
   });
 }
 
@@ -132,7 +128,7 @@ function makeCtx(extra: Partial<NonNullable<CaptureRpcCtx["act"]>> = {}): Captur
     refusals: new CaptureRefusalCounter(),
     newId: () => "cap_new",
     now: () => 1_000,
-    classifyAction: () => ({ kind: "proposable" }),
+    classifyAction: () => ({ kind: "proposable", userMcp: true }),
     isServiceConfigured: () => Promise.resolve(true),
     actionDestinationRefusal: () => undefined,
   };
@@ -234,6 +230,7 @@ describe("approvals.list and approvals.get", () => {
     expect(out.proposals[0]).toEqual({
       id: "cap_a",
       actionType: "slack.message.post",
+      legacy: false,
       wave: 2,
       typedConfirm: false,
       label: String.raw`a\"\u000aType: x`,
@@ -286,6 +283,7 @@ describe("approvals.list and approvals.get", () => {
       sessionId: "s",
       createdAt: 1,
       expiresAt: null,
+      agentDoorLegacy: false,
     });
     for (const m of ["approvals.get", "approvals.approve", "approvals.decline"]) {
       expect((await rpcError(call(m, { id: "cap_d" }, OWNER, new FakeConsent()))).code).toBe(
@@ -468,7 +466,8 @@ describe("approvals.approve: order and refusals", () => {
     expect(out.reason).toBe(WAVE4_BEFORE_REFUSAL);
     expect(consent.prompts).toEqual([]);
     expect(writesOf()).toEqual([]);
-    expect(store.get("cap_a")?.errorCode).toBeNull();
+    // AD3a-2a: a refusal made before any prompt now stores its fixed code (a plain decline stores none).
+    expect(store.get("cap_a")?.errorCode).toBe("ERR_ACTION_BEFORE_STATE_UNREADABLE");
   });
 });
 
@@ -575,4 +574,54 @@ describe("LAN: the denylist trap", () => {
       }
     },
   );
+});
+
+describe("AD3a-2a: the owner list counts for the act path", () => {
+  function approvedCtx(): CaptureRpcCtx {
+    const base = makeCtx({
+      agentDoor: {
+        listServerTools: () => Promise.resolve({}),
+        verifyDefinition: () => Promise.resolve({ ok: true }),
+      },
+    });
+    return {
+      ...base,
+      gate: {
+        ...base.gate,
+        classifyAction: () => ({ kind: "proposable", basis: "approved" }),
+        verifyActionDefinition: () => Promise.resolve({ ok: true }),
+      },
+    };
+  }
+
+  test("approvals.list shows the wave and typed-confirm flag of a real Wave 4 row", async () => {
+    insertAction("cap_m", { actionType: "github.pr.merge", input: { number: 1 } });
+    const out = (await call("approvals.list", {})) as {
+      proposals: Array<{ wave: number; typedConfirm: boolean }>;
+    };
+    expect(out.proposals[0]).toMatchObject({ wave: 4, typedConfirm: true });
+  });
+
+  test("approvals.approve passes humanOnly, so an approved-basis proposal runs; captures.accept does not, and refuses it", async () => {
+    const c = approvedCtx();
+    insertAction("cap_h");
+    const viaApprovals = (await call(
+      "approvals.approve",
+      { id: "cap_h" },
+      OWNER,
+      new FakeConsent(),
+      c,
+    )) as {
+      state: string;
+    };
+    expect(viaApprovals.state).toBe("executed");
+    insertAction("cap_r");
+    const e = await rpcError(
+      dispatchCaptureRpc("captures.accept", { id: "cap_r" }, c, OWNER, new FakeConsent()).then(
+        (r) => (r.kind === "miss" ? Promise.reject(new Error("miss")) : r.value),
+      ),
+    );
+    expect(e.code).toBe("ERR_CAPTURE_FORBIDDEN_CLIENT");
+    expect(store.get("cap_r")?.state).toBe("proposed");
+  });
 });

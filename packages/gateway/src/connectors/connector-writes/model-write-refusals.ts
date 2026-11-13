@@ -1035,7 +1035,7 @@ function actDoorKbChildRefusal(toolId: string, kb: TribalKbConfig | undefined): 
 }
 
 /**
- * The MCP act door's ONE refusal (`ipc/capture-rpc.ts` `createActionDestinationRefusal`), in
+ * The MCP act door's ONE refusal (the agent door's `refusal` for a legacy basis, `connector-writes/agent-door-runtime.ts`), in
  * order: the messaging check; the Linear reassignment rule (OR-B2-3: the act door runs no
  * before-read (B0b), so it cannot prove a Linear issue unassigned, and a `linear_issue_update`
  * that sets `assigneeId`, `null` included, is refused); the KB-target check the model door also

@@ -1,26 +1,29 @@
 // packages/gateway/src/ipc/connector-rpc-handlers/agent-writes.ts
 // `connector.writesEnable|writesStatus` with `door: "agent"` (Phase 28 AD3a-1; spec 2026-11-13 § 7.3):
 // the owner approves, BY NAME and with a hash of each tool's listed definition, the connector writes
-// an outside agent may later propose. Nothing here is read by the agent door yet (AD3a-2): what an
-// agent can propose is unchanged, and every reply says so (`AGENT_DOOR_NOT_ENFORCED_NOTICE`).
+// an outside agent may propose (invariant I58). The agent door reads this list at submit, at
+// approval and after the owner's answer (`connector-writes/agent-door-runtime.ts`).
 //
 // This module never names the approval table (static D49(b)): every read and write goes through
 // `connectors/connector-writes/door-approval-store.ts`.
 import type { Database } from "bun:sqlite";
 
 import {
-  AGENT_DOOR_NOT_ENFORCED_NOTICE,
   type AgentApprovableRow,
   agentApprovableRows,
   agentDoorPolicyAllows,
 } from "../../connectors/connector-writes/agent-door.ts";
-import { definitionSha256 } from "../../connectors/connector-writes/definition-hash.ts";
+import {
+  checkAgentToolDefinition,
+  type DoorSuspension,
+  sha12,
+  suspensionFromRow,
+} from "../../connectors/connector-writes/agent-door-definition.ts";
+import { LEGACY_LIST_HEADER } from "../../connectors/connector-writes/agent-door-legacy.ts";
 import {
   type DoorApproval,
   type DoorApprovalEntry,
-  getDoorApproval,
   listDoorApprovals,
-  markDoorToolSuspended,
   replaceDoorApprovals,
   upsertDoorApprovals,
 } from "../../connectors/connector-writes/door-approval-store.ts";
@@ -31,15 +34,17 @@ import {
   raiseWriteEnablementWave,
 } from "../../connectors/connector-writes/enablement-store.ts";
 import { getIacGrants } from "../../connectors/connector-writes/iac-grants.ts";
+import { CONNECTOR_WRITE_ROWS } from "../../connectors/connector-writes/index.ts";
 import { getK8sGrants } from "../../connectors/connector-writes/k8s-grants.ts";
+import { CONNECTOR_WRITE_MODEL_ACCESS_CAPABILITY } from "../../connectors/connector-writes/model-write-capability.ts";
 import type {
   ConnectorWriteRow,
   ConnectorWriteWave,
 } from "../../connectors/connector-writes/types.ts";
-import { mcpClientToolKey } from "../../connectors/lazy-mesh/tool-map.ts";
-import { appendAuditEntry } from "../../db/audit-chain.ts";
 import type { ToolExecutor } from "../../engine/executor.ts";
+import { MCP_ACTION_CAPABILITY } from "../../mcp-sink/capture-capability.ts";
 import { APPROVER_BY_KIND } from "../../mcp-sink/capture-client-policy.ts";
+import { CaptureStore } from "../../mcp-sink/capture-store.ts";
 import type { EnforcedPolicy } from "../../policy/policy-gate.ts";
 import { ConnectorRpcError } from "../connector-rpc-shared.ts";
 import type { ClientKind } from "../server/client-kind.ts";
@@ -120,10 +125,6 @@ function parseApprovePatterns(raw: unknown): readonly string[] | undefined {
 
 function matchesPattern(toolId: string, patterns: readonly string[]): boolean {
   return patterns.some((p) => (p.endsWith("*") ? toolId.startsWith(p.slice(0, -1)) : toolId === p));
-}
-
-function sha12(sha: string): string {
-  return sha.slice(0, 12);
 }
 
 type PromptState = "already_approved" | "will_be_approved" | "reapproved_changed";
@@ -210,7 +211,8 @@ export interface AgentEnableReply {
   maxWave: ConnectorWriteWave;
   approved: number;
   writes: Array<{ toolId: string; sha12: string }>;
-  notice: string;
+  /** Tool ids a replacing enable deleted (AD3a-2a); empty for an enable that only adds. */
+  removed: string[];
 }
 
 /**
@@ -239,12 +241,16 @@ export async function handleAgentWritesEnable(
   const existing = new Map(listDoorApprovals(deps.db, "agent", service).map((a) => [a.toolId, a]));
   const writes = shown.map((r) => promptWrite(r, existing));
   const sharedFrom = sharedWaveBefore(deps.db, service, maxWave);
+  // A replace (no --approve) deletes every earlier approval it does not carry over: say so.
+  const removes =
+    patterns === undefined ? removalsOf(existing, chosen, all, maxWave, deps.rows) : [];
   const payload: Record<string, unknown> = {
     door: "agent",
     service,
     maxWave,
     ...(sharedFrom === undefined ? {} : { raisesSharedWaveFrom: sharedFrom }),
     writes,
+    ...(removes.length === 0 ? {} : { removes }),
   };
   await requireOwnerApproval(executor, payload, deps);
   const entries: DoorApprovalEntry[] = chosen.flatMap((r) =>
@@ -264,8 +270,42 @@ export async function handleAgentWritesEnable(
     maxWave: getModelWriteEnablement(deps.db, service)?.maxWave ?? maxWave,
     approved: entries.length,
     writes: entries.map((e) => ({ toolId: e.toolId, sha12: sha12(e.definitionSha256) })),
-    notice: AGENT_DOOR_NOT_ENFORCED_NOTICE,
+    removed: removes.map((x) => x.toolId),
   };
+}
+
+/** One approval a replacing enable would delete, with the fixed reason it goes. */
+interface Removal {
+  toolId: string;
+  wave: number;
+  why: "above_wave" | "not_approvable" | "gone";
+  reason?: string;
+}
+
+function removalsOf(
+  existing: ReadonlyMap<string, DoorApproval>,
+  chosen: readonly AgentApprovableRow[],
+  all: readonly AgentApprovableRow[],
+  maxWave: ConnectorWriteWave,
+  rows: readonly ConnectorWriteRow[] | undefined,
+): Removal[] {
+  const kept = new Set(chosen.map((r) => r.row.toolId));
+  const out: Removal[] = [];
+  for (const toolId of [...existing.keys()].sort((a, b) => a.localeCompare(b))) {
+    if (kept.has(toolId)) continue;
+    const known = all.find((r) => r.row.toolId === toolId);
+    const row = known?.row ?? (rows ?? CONNECTOR_WRITE_ROWS).find((r) => r.toolId === toolId);
+    if (row === undefined) {
+      out.push({ toolId, wave: 0, why: "gone" });
+    } else if (row.wave > maxWave) {
+      out.push({ toolId, wave: row.wave, why: "above_wave" });
+    } else if (known?.state === "not_approvable") {
+      out.push({ toolId, wave: row.wave, why: "not_approvable", reason: known.reason });
+    } else {
+      out.push({ toolId, wave: row.wave, why: "gone" });
+    }
+  }
+  return out;
 }
 
 /** The shared wave's current value when this enable raises it, `null` when it creates the row. */
@@ -317,25 +357,36 @@ function requireEligibleService(raw: unknown, rows: readonly ConnectorWriteRow[]
 
 // ---- status -----------------------------------------------------------------------------------
 
-export interface AgentSuspendedTool {
-  toolId: string;
-  approvedAt: number;
-  approvedSha12: string;
-  /** The hash observed when the listing first disagreed; `null` when there was none to hash. */
-  nowSha12: string | null;
-  reason?: string;
-}
+/** One suspended tool, as `connector.writesStatus` reports it (the definition module's type). */
+export type AgentSuspendedTool = DoorSuspension;
 
 export interface AgentStatusService {
   service: string;
   approved: number;
   suspended: AgentSuspendedTool[];
+  /**
+   * Approved tools the live listing omits (OR-AD-14): refused while missing, NOT suspended, no
+   * audit row; they work again when the connector lists them with the approved definition.
+   */
+  notListed?: string[];
   unverified?: string;
+}
+
+/** Proposals accepted under the deprecation window in the last 30 days (D-7); `null` when none. */
+export interface AgentLegacyReport {
+  sinceMs: number;
+  total: number;
+  byType: Record<string, number>;
+  notice: string;
 }
 
 export interface AgentStatusReply {
   policyAllows: boolean;
-  notice: string;
+  /** False when the connection did not declare cli or ui: the stored view, no listing, no mark. */
+  checked: boolean;
+  /** Which of the two capabilities the door needs the organisation's policy has turned off (OR-AD-15). */
+  lockedOff: string[];
+  legacy: AgentLegacyReport | null;
   /** Present only while no approval exists: the one command that makes one. */
   hint?: string;
   services: AgentStatusService[];
@@ -343,120 +394,63 @@ export interface AgentStatusReply {
 
 const NO_APPROVALS_HINT =
   "To approve connector writes for outside agents, run: nimbus connector writes enable <service> --door agent";
-const GONE_REASON = "no longer listed";
-const UNREADABLE_NOW_REASON = "its input schema can no longer be read";
-const STORED_GONE_REASON = "no longer listed, or its input schema cannot be read";
-
-function suspendedFromRow(a: DoorApproval): AgentSuspendedTool {
-  return {
-    toolId: a.toolId,
-    approvedAt: a.approvedAt,
-    approvedSha12: sha12(a.definitionSha256),
-    nowSha12: a.suspendedSha256 === null ? null : sha12(a.suspendedSha256),
-    ...(a.suspendedSha256 === null ? { reason: STORED_GONE_REASON } : {}),
-  };
-}
-
-/** What a live listing says about one approved, not yet suspended tool: a mismatch, or `undefined`. */
-function observe(
-  a: DoorApproval,
-  listed: Readonly<Record<string, unknown>>,
-): { sha: string | null; reason?: string } | undefined {
-  const key = mcpClientToolKey(a.service, a.toolId);
-  if (!Object.hasOwn(listed, key)) return { sha: null, reason: GONE_REASON };
-  const sha = definitionSha256(a.toolId, listed[key]);
-  if (sha === undefined) return { sha: null, reason: UNREADABLE_NOW_REASON };
-  return sha === a.definitionSha256 ? undefined : { sha };
-}
-
-/**
- * Mark the approval the listing was compared against, and write its one audit row, in ONE transaction:
- * either both commit or neither does (a failed append leaves the tool unmarked, so a later status
- * observes it again). `undefined` when the approval changed underneath (re-approved with another
- * hash or removed), which is not a suspension.
- */
-function recordSuspension(
-  deps: AgentWritesDeps,
-  a: DoorApproval,
-  seen: { sha: string | null; reason?: string },
-): AgentSuspendedTool | undefined {
-  const now = deps.now();
-  const entry: AgentSuspendedTool = {
-    toolId: a.toolId,
-    approvedAt: a.approvedAt,
-    approvedSha12: sha12(a.definitionSha256),
-    nowSha12: seen.sha === null ? null : sha12(seen.sha),
-    ...(seen.reason === undefined ? {} : { reason: seen.reason }),
-  };
-  // The first observation wins: a repeat marks nothing and writes no second audit row.
-  const marked = deps.db.transaction(() => {
-    if (
-      !markDoorToolSuspended(
-        deps.db,
-        "agent",
-        a.service,
-        a.toolId,
-        a.definitionSha256,
-        seen.sha,
-        now,
-      )
-    ) {
-      return false;
-    }
-    appendAuditEntry(deps.db, {
-      actionType: "connector.writes.agent.suspend",
-      hitlStatus: "not_required",
-      actionJson: JSON.stringify({
-        service: a.service,
-        toolId: a.toolId,
-        approvedSha12: entry.approvedSha12,
-        nowSha12: entry.nowSha12,
-      }),
-      timestamp: now,
-    });
-    return true;
-  })();
-  if (marked) return entry;
-  // Not marked by this call: another observer suspended the same approval (report it from the stored
-  // columns), or the owner re-approved or removed it since the snapshot (nothing to report).
-  const current = getDoorApproval(deps.db, "agent", a.service, a.toolId);
-  return current !== undefined &&
-    current.suspendedAt !== null &&
-    current.definitionSha256 === a.definitionSha256
-    ? suspendedFromRow(current)
-    : undefined;
-}
-
 async function statusOfService(
   deps: AgentWritesDeps,
   service: string,
   approvals: readonly DoorApproval[],
+  live: boolean,
 ): Promise<AgentStatusService> {
   // Sequential on purpose: a listing may start the connector (the model door's reason, too).
   // A listing that fails is the same as one that is not there: unverified, nothing marked.
-  const listed = await deps.listServerTools?.(service).catch(() => undefined);
+  const listed = live ? await deps.listServerTools?.(service).catch(() => undefined) : undefined;
   const suspended: AgentSuspendedTool[] = [];
+  const notListed: string[] = [];
   let unchanged = 0;
   for (const a of approvals) {
     if (a.suspendedAt !== null) {
-      suspended.push(suspendedFromRow(a));
+      suspended.push(suspensionFromRow(a));
       continue;
     }
-    const seen = listed === undefined ? undefined : observe(a, listed);
-    if (seen === undefined) {
+    if (listed === undefined) {
       unchanged++;
       continue;
     }
-    const entry = recordSuspension(deps, a, seen);
-    if (entry === undefined) unchanged++;
-    else suspended.push(entry);
+    // The ONE mark-and-audit helper (`agent-door-definition.ts`), shared with the submit, approval
+    // and veto paths: a first mismatch is marked sticky with one audit row.
+    const check = checkAgentToolDefinition(deps, a, listed);
+    if (check.kind === "changed" || check.kind === "unreadable") {
+      if (check.suspension === undefined) unchanged++;
+      else suspended.push(check.suspension);
+      continue;
+    }
+    if (check.kind === "missing") notListed.push(a.toolId);
+    unchanged++;
   }
   return {
     service,
     approved: unchanged,
     suspended,
-    ...(listed === undefined ? { unverified: "its tools could not be listed" } : {}),
+    ...(notListed.length === 0 ? {} : { notListed }),
+    ...(live && listed === undefined ? { unverified: "its tools could not be listed" } : {}),
   };
+}
+
+/** The capabilities of the two the agent door needs that the resolved policy has disabled. */
+function lockedOffOf(enforced: Pick<EnforcedPolicy, "capabilitiesDisabled"> | undefined): string[] {
+  if (enforced === undefined) return [];
+  return [CONNECTOR_WRITE_MODEL_ACCESS_CAPABILITY, MCP_ACTION_CAPABILITY].filter((c) =>
+    enforced.capabilitiesDisabled.has(c),
+  );
+}
+
+/** The window `status` counts legacy proposals over. */
+export const LEGACY_WINDOW_MS = 30 * 24 * 3_600_000;
+
+function legacyReport(deps: AgentWritesDeps): AgentLegacyReport | null {
+  const sinceMs = deps.now() - LEGACY_WINDOW_MS;
+  const { total, byType } = new CaptureStore(deps.db).legacyActionTypesSince(sinceMs);
+  if (total === 0) return null;
+  return { sinceMs, total, byType: { ...byType }, notice: LEGACY_LIST_HEADER };
 }
 
 /**
@@ -467,13 +461,18 @@ export async function handleAgentWritesStatus(deps: AgentWritesDeps): Promise<Ag
   const all = listDoorApprovals(deps.db, "agent");
   const byService = new Map<string, DoorApproval[]>();
   for (const a of all) byService.set(a.service, [...(byService.get(a.service) ?? []), a]);
+  // The live check lists connectors and writes the sticky mark, so it runs only for a connection
+  // that declared cli or ui (R-5); any other kind gets the stored view.
+  const live = APPROVER_BY_KIND[deps.clientKind ?? "unknown"];
   const services: AgentStatusService[] = [];
   for (const [service, approvals] of byService) {
-    services.push(await statusOfService(deps, service, approvals));
+    services.push(await statusOfService(deps, service, approvals, live)); // NOSONAR S9382: sequential listings
   }
   return {
     policyAllows: agentDoorPolicyAllows(deps.getEnforcedPolicy()),
-    notice: AGENT_DOOR_NOT_ENFORCED_NOTICE,
+    checked: live,
+    lockedOff: lockedOffOf(deps.getEnforcedPolicy()),
+    legacy: legacyReport(deps),
     ...(all.length === 0 ? { hint: NO_APPROVALS_HINT } : {}),
     services,
   };

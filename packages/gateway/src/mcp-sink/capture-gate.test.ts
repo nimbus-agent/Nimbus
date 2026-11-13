@@ -603,6 +603,7 @@ describe("submit — proposals", () => {
       sessionId: "c-mcp",
       createdAt: clock,
       expiresAt: null,
+      agentDoorLegacy: false,
     });
     const listed = listCaptures(deps, OWNER, { state: "proposed" });
     expect(listed.captures[0]?.title).toHaveLength(120);
@@ -990,7 +991,7 @@ describe("act door — submit (PR 3)", () => {
       ...deps,
       classifyAction: () =>
         verdict === "proposable"
-          ? { kind: "proposable" }
+          ? { kind: "proposable", userMcp: true }
           : verdict === "denied"
             ? { kind: "denied", class: "vcs" }
             : { kind: "unknown" },

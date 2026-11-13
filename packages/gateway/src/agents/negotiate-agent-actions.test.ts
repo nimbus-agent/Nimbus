@@ -84,6 +84,7 @@ function seedExecuted(actionType: string, outcomeRef: string | null, decidedAt =
     sessionId: "s",
     createdAt: decidedAt - 1,
     expiresAt: decidedAt + DAY,
+    agentDoorLegacy: false,
   });
   expect(store.claimAction(id, decidedAt)).toBe(true);
   expect(
@@ -191,6 +192,7 @@ describe("negotiate — agent-caused artifacts", () => {
       sessionId: "s",
       createdAt: Date.now() - 1,
       expiresAt: Date.now() + DAY,
+      agentDoorLegacy: false,
     });
     store.claimAction("cap_failed", Date.now());
     store.finalizeAction("cap_failed", "failed", { errorCode: "ERR_ACTION_DISPATCH" }, Date.now());

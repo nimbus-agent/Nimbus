@@ -23,14 +23,17 @@ import {
 import { CONNECTOR_WRITE_ROWS } from "./index.ts";
 import { isModelOfferableRow, MODEL_NEVER_OFFERED_REASONS } from "./model-offerable.ts";
 import { createModelWriteToolSource, enabledAndOfferable } from "./model-write-source.ts";
-import type { ConnectorWriteRow, ConnectorWriteWave } from "./types.ts";
+import { type ConnectorWriteRow, type ConnectorWriteWave, previewTemplateKeys } from "./types.ts";
 
 type JsonSchemaInput = Parameters<typeof toStandardSchema>[0];
 
-function listedEntry(): unknown {
+/** A listed entry whose schema declares every input key the row's typed preview names. */
+function listedEntry(row?: ConnectorWriteRow): unknown {
+  const keys = row?.preview === undefined ? [] : [...previewTemplateKeys(row.preview)];
+  const properties = Object.fromEntries(keys.map((k) => [k, { type: "string" }]));
   return {
     description: "d",
-    inputSchema: toStandardSchema({ type: "object", properties: {} } as JsonSchemaInput),
+    inputSchema: toStandardSchema({ type: "object", properties } as JsonSchemaInput),
   };
 }
 
@@ -41,7 +44,7 @@ function listingFor(
   const out: Record<string, unknown> = {};
   for (const r of rows) {
     if (serviceOf(r.actionType) === service)
-      out[mcpClientToolKey(service, r.toolId)] = listedEntry();
+      out[mcpClientToolKey(service, r.toolId)] = listedEntry(r);
   }
   return out;
 }
@@ -188,6 +191,31 @@ describe("agentApprovableRows", () => {
       (r) => r.row === target,
     );
     expect(got).toMatchObject({ state: "not_approvable" });
+  });
+
+  test("a listed schema that no longer declares a key the preview names is not approvable (drift)", () => {
+    const target = writesEnabledBy("github", 2).find(
+      (r) => isModelOfferableRow(r) && r.preview !== undefined,
+    ) as ConnectorWriteRow;
+    const key = mcpClientToolKey("github", target.toolId);
+    const drifted = {
+      ...listingFor("github"),
+      [key]: {
+        description: "d",
+        inputSchema: toStandardSchema({ type: "object", properties: {} } as JsonSchemaInput),
+      },
+    };
+    const got = agentApprovableRows("github", 2, fullCtx("github", { listed: drifted })).find(
+      (r) => r.row === target,
+    );
+    expect(got).toMatchObject({
+      state: "not_approvable",
+      reason: "the connector's schema no longer declares an input the write's preview shows",
+    });
+    // And the same row with an undrifted schema is approvable: the check is the only difference.
+    expect(
+      agentApprovableRows("github", 2, fullCtx("github")).find((r) => r.row === target)?.state,
+    ).toBe("approvable");
   });
 
   test("the approvable entry carries the hash of its own listing entry", () => {

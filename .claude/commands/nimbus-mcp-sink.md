@@ -155,7 +155,7 @@ routing row means `Tool not found`, never dispatch-by-type. An agent-supplied `m
 | `PROPOSABLE_WRITE_TOOLS` | actionType → bare tool id as registered by `@nimbus-dev/connectors`; its keys ARE the first-party proposable set |
 | `ACTION_PROPOSABILITY` | classifies EVERY `HITL_REQUIRED` type (totality test); unlisted → `unknown` → refused |
 | `classifyActionType` | adds the user-MCP arm: `mcp_*` types are proposable only for a `--model` server while `user_mcp_model_access` allows (`user_mcp_no_model_access` / `user_mcp_policy` otherwise); `ext_*` is `unknown` |
-| `listProposableActionTypes` | what `capture.status` advertises (configured first-party types + one `mcp_<id>.*` pattern per `--model` server) |
+| `createAgentDoor(...).acceptedTypes` | what `capture.status` advertises (configured approved and legacy types + one `mcp_<id>.*` pattern per `--model` server; `connectors/connector-writes/agent-door-runtime.ts`; the old `listProposableActionTypes` was deleted at AD3a-2a) |
 
 Counts — derive from `HITL_REQUIRED` (`packages/gateway/src/engine/executor.ts`) and
 `ACTION_PROPOSABILITY` (as of 2026-11-05, Phase 9.7 B3: 160 HITL types, **43 proposable / 117 denied**,
@@ -191,7 +191,7 @@ connector allowlist. The act door's configured-ness comes from
   `approvals.list|get|approve|decline` for a connection that DECLARED `cli` or `ui`
   (`APPROVER_BY_KIND`; `unknown` is refused here although `captures.*` serves it). `approve` reaches the
   act door only through `acceptCapture` (so `acceptAction` keeps its one caller, D32(e)) around the
-  connection's own consent channel wrapped by `humanOnlyConsent` (`ipc/consent.ts`): an answer whose
+  connection's own consent channel, which `buildActDeps` wraps in `humanOnlyConsent` (`ipc/consent.ts`) when asked for `humanOnly` (the option also sets `ActDeps.humanOnly`; `approvals-rpc.ts` wraps nothing): an answer whose
   `answerSource` is not `human` becomes a decline. The reply is `{ id, state, outcomeRef?, errorCode?, reason? }`;
   `reason` appears only on `rejected`, escaped, and is never stored (V69 allows no code on a rejected row).
   Static D32(b)/(c) allow exactly two RPC modules, `ipc/capture-rpc.ts` and `ipc/approvals-rpc.ts`.
@@ -226,7 +226,7 @@ connector allowlist. The act door's configured-ness comes from
 Out-of-range values and unknown kinds refuse at load (capability reason `config_error`); nothing
 is clamped.
 
-**An approval list for agents, recorded but not yet enforced (Phase 28 AD3a-1).** `nimbus connector writes enable <service> --door agent` records, per tool and with a hash of its listed definition, the writes the owner approved for outside agents (V97 `connector_write_door_approval`, written only by `connectors/connector-writes/door-approval-store.ts`, static D49(b)). Nothing in `mcp-sink/` or `connectors/proposable-actions.ts` reads it: what an agent can propose is still decided by `ACTION_PROPOSABILITY`, and a test pins that. AD3a-2 makes the gate read it (invariant I58). Until then every surface that shows the list prints `AGENT_DOOR_NOT_ENFORCED_NOTICE`.
+**An approval list for agents (Phase 28 AD3a-1; enforced since AD3a-2a, invariant I58).** `nimbus connector writes enable <service> --door agent` records, per tool and with a hash of its listed definition, the writes the owner approved for outside agents (V97 `connector_write_door_approval`, written only by `connectors/connector-writes/door-approval-store.ts`, static D49(b)). `mcp-sink/` still never names the store or imports `connectors/` (D32(f)): the gate is injected with the agent door's `verdict`, `refusal` and `verifyDefinition` (`connectors/connector-writes/agent-door-runtime.ts`, built in `platform/assemble.ts` over a late-bound mesh listing that fails closed). Submit's action steps: verdict (`ERR_AGENT_TOOL_SUSPENDED` / `ERR_CAPTURE_ACTION_NOT_PROPOSABLE`), the refusal for the verdict's basis, configured, then for an `approved` basis the definition check last (it lists the connector). `acceptAction` step 4 re-derives them before the claim, a Wave 4 or bound row routes to the same executor, `approved` rows are approved only through `approvals.approve`, and `buildActDeps` wraps an `approved` basis in `vetoingConsent` (a post-answer definition recheck). A type the owner has not approved but the earlier table accepted (47 types) is a `legacy` proposal for one release: stored `legacy = 1`, warned on four surfaces, counted by `connector writes status`; AD3b removes it. A rejected action stores a fixed code. Static D49(a), (c)-(f) pin the sites.
 
 ## Stated bounds (I28)
 

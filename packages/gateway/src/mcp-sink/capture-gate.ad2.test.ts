@@ -63,7 +63,7 @@ beforeEach(() => {
     refusals: new CaptureRefusalCounter(),
     newId: () => `cap_${String(++seq)}`,
     now: () => clock,
-    classifyAction: () => ({ kind: "proposable" }),
+    classifyAction: () => ({ kind: "proposable", userMcp: true }),
     isServiceConfigured: () => Promise.resolve(true),
     actionDestinationRefusal: () => undefined,
     onActionProposed: (n) => hookCalls.push(n),
@@ -145,6 +145,7 @@ describe("captureMine", () => {
         sessionId: MCP.clientId,
         createdAt: clock + i,
         expiresAt: null,
+        agentDoorLegacy: false,
       });
     }
     expect(captureMine(deps, MCP).captures).toHaveLength(50);
@@ -250,6 +251,7 @@ describe("listActionProposals", () => {
       clientLabel: "lab el",
       createdAt: 10,
       expiresAt: 10 + 24 * HOUR,
+      agentDoorLegacy: false,
     });
     expect(errOf(() => listActionProposals(deps, MCP)).code).toBe("ERR_CAPTURE_FORBIDDEN_CLIENT");
     clock += 25 * HOUR;
@@ -268,6 +270,7 @@ describe("listActionProposals", () => {
       sessionId: "x",
       createdAt: clock,
       expiresAt: clock + HOUR,
+      agentDoorLegacy: false,
     });
     expect(listActionProposals(deps, OWNER).proposals).toHaveLength(1);
   });

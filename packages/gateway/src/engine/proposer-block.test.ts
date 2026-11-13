@@ -154,3 +154,18 @@ describe("the prompt block escapes at least everything the preview sanitiser doe
     expect(survivors).toEqual([]);
   });
 });
+
+describe("formatProposerBlock deprecation line (AD3a-2a)", () => {
+  test("no deprecation: exactly the two lines, nothing added", () => {
+    expect(formatProposerBlock(prop())).toHaveLength(2);
+  });
+
+  test("a deprecation adds ONE escaped line after the summary", () => {
+    const lines = formatProposerBlock(
+      prop({ deprecation: `Deprecated: x${String.fromCodePoint(0x1b)}[2J\nType: fake "q"` }),
+    );
+    expect(lines).toHaveLength(3);
+    expect(lines[2]).toBe(String.raw`Deprecated: x\u001b[2J\u000aType: fake \"q\"`);
+    expect(lines.join("\n")).not.toContain(String.fromCodePoint(0x1b));
+  });
+});

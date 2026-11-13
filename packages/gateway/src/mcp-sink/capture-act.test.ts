@@ -44,7 +44,9 @@ beforeEach(() => {
     store: new CaptureStore(db),
     capability: () => cap,
     classifyAction: () =>
-      verdict === "proposable" ? { kind: "proposable" } : { kind: "denied", class: "vcs" },
+      verdict === "proposable"
+        ? { kind: "proposable", userMcp: true }
+        : { kind: "denied", class: "vcs" },
     isServiceConfigured: () => Promise.resolve(configured),
     now: () => clock,
     actionDestinationRefusal: () => destinationRefusal,
@@ -64,6 +66,7 @@ beforeEach(() => {
     sessionId: "s",
     createdAt: 500,
     expiresAt: 2_000,
+    agentDoorLegacy: false,
   });
 });
 afterEach(() => db.close());
@@ -239,7 +242,7 @@ describe("acceptAction — outcomes", () => {
     );
     expect(row().state).toBe("rejected");
   });
-  test("a rejected action stores NO error_code until AD3a-2 (V97 allows one; nothing writes it yet)", async () => {
+  test("a rejected action with only a reason (a plain decline) stores NO error_code; one with a code is in capture-act.ad3a.test.ts", async () => {
     await acceptAction(deps, OWNER, row(), act({ status: "rejected", reason: "no" }));
     expect(row().state).toBe("rejected");
     expect(row().errorCode).toBeNull();
@@ -327,6 +330,7 @@ describe("reconcileActionsAtBoot (Review Focus 5)", () => {
       sessionId: "s",
       createdAt: 1,
       expiresAt: 10,
+      agentDoorLegacy: false,
     });
     expect(reconcileActionsAtBoot(deps, 1_500)).toEqual({ expired: 1, interrupted: 1 });
     expect(row()).toMatchObject({ state: "failed", errorCode: "ERR_ACTION_INTERRUPTED" });

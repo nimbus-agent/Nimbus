@@ -19,6 +19,7 @@ function note(id: string, createdAt: number, over: Partial<NewCaptureRow> = {}):
     sessionId: "s1",
     createdAt,
     expiresAt: null,
+    agentDoorLegacy: false,
     ...over,
   };
 }
@@ -158,6 +159,7 @@ describe("action queries (PR 3)", () => {
       sessionId: "s",
       createdAt: 1,
       expiresAt,
+      agentDoorLegacy: false,
     });
   }
   test("countPendingActions excludes expired-by-clock rows; the boundary counts as expired", () => {
@@ -181,6 +183,7 @@ describe("action queries (PR 3)", () => {
       sessionId: "s",
       createdAt: 1,
       expiresAt: null,
+      agentDoorLegacy: false,
     });
     expect(s.countPendingNative()).toBe(1);
     expect(s.countPendingActionsExpiringBy(50, 100)).toBe(1);
@@ -280,5 +283,57 @@ describe("action queries (PR 3)", () => {
     expect(s.deleteFinishedAction("cap_x", "executed")).toBe(false);
     expect(s.deleteFinishedAction("cap_p", "proposed")).toBe(false);
     expect(s.get("cap_p")?.state).toBe("proposed");
+  });
+});
+
+describe("the legacy flag and legacyActionTypesSince (AD3a-2a)", () => {
+  function actionRow(
+    id: string,
+    createdAt: number,
+    payloadJson: string,
+    agentDoorLegacy: boolean,
+  ): NewCaptureRow {
+    return {
+      id,
+      kind: "action",
+      state: "proposed",
+      itemId: null,
+      payloadJson,
+      payloadBytes: payloadJson.length,
+      clientLabel: null,
+      sessionId: "s",
+      createdAt,
+      expiresAt: createdAt + 1000,
+      agentDoorLegacy,
+    };
+  }
+  const typed = (t: string): string => JSON.stringify({ actionType: t, input: {}, summary: "x" });
+
+  test("insert writes legacy = 1 and get reads it back", () => {
+    store.insert(actionRow("cap_l", 10, typed("github.issue.comment"), true));
+    store.insert(actionRow("cap_n", 10, typed("github.issue.comment"), false));
+    expect(store.get("cap_l")?.agentDoorLegacy).toBe(true);
+    expect(store.get("cap_n")?.agentDoorLegacy).toBe(false);
+    expect(store.get("cap_l")?.expiresAt).toBe(1010);
+  });
+
+  test("a note with the flag is refused by the V97 CHECK", () => {
+    expect(() => store.insert(note("cap_bad", 1, { agentDoorLegacy: true }))).toThrow();
+  });
+
+  test("legacyActionTypesSince counts only legacy action rows created after the bound, by type", () => {
+    store.insert(actionRow("cap_1", 100, typed("github.issue.comment"), true));
+    store.insert(actionRow("cap_2", 200, typed("github.issue.comment"), true));
+    store.insert(actionRow("cap_3", 300, typed("slack.message.post"), true));
+    store.insert(actionRow("cap_old", 50, typed("slack.message.post"), true));
+    store.insert(actionRow("cap_at", 99, typed("slack.message.post"), true));
+    store.insert(actionRow("cap_plain", 400, typed("slack.message.post"), false));
+    store.insert(actionRow("cap_bad", 500, "not json", true));
+    store.insert(note("cap_note", 600));
+    expect(store.legacyActionTypesSince(99)).toEqual({
+      total: 3,
+      byType: { "github.issue.comment": 2, "slack.message.post": 1 },
+    });
+    expect(store.legacyActionTypesSince(10_000)).toEqual({ total: 0, byType: {} });
   });
 });

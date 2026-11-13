@@ -8,6 +8,8 @@ import { stripControl } from "./captures-format.ts";
 export interface ConnectorWritesCallOptions {
   /** Declare this connection as the owner's CLI first and answer consent only as a person. */
   readonly agentDoor?: boolean;
+  /** Declare this connection as the owner's CLI first (the gateway reads the kind off the connection). */
+  readonly declareCli?: boolean;
 }
 
 /** Injectable seams: the RPC call and the two output streams. */
@@ -93,7 +95,7 @@ export function makeConnectorWritesCall(
   return (method, params, opts) =>
     withIpc(
       async (c: IPCClient) => {
-        if (opts?.agentDoor === true) await declareCliClientKind(c);
+        if (opts?.agentDoor === true || opts?.declareCli === true) await declareCliClientKind(c);
         return c.call<unknown>(method, params);
       },
       undefined,
@@ -323,11 +325,10 @@ async function runAgentEnable(
       sha12?: unknown;
     }>;
     d.log(
-      `Recorded: ${String(r["approved"])} writes approved for outside agents on ${service} (shared wave ${String(r["maxWave"])}).`,
+      `Approved: ${String(r["approved"])} writes approved for outside agents on ${service} (shared wave ${String(r["maxWave"])}).`,
     );
     for (const w of writes)
       d.log(`  ${stripControl(String(w.toolId))}  ${stripControl(String(w.sha12))}`);
-    if (typeof r["notice"] === "string") d.log(stripControl(r["notice"]));
   } catch (e) {
     reportError(d, e, true);
   }
@@ -438,13 +439,16 @@ interface AgentServiceStatus {
   service: string;
   approved?: unknown;
   suspended?: AgentSuspended[];
+  notListed?: unknown;
   unverified?: unknown;
 }
 
 interface AgentStatus {
   policyAllows?: boolean;
-  notice?: unknown;
   hint?: unknown;
+  checked?: unknown;
+  lockedOff?: unknown;
+  legacy?: unknown;
   services?: AgentServiceStatus[];
 }
 
@@ -473,6 +477,27 @@ function logAgentRow(d: ConnectorWritesDeps, a: AgentServiceStatus | undefined):
     typeof a.unverified === "string" ? ` (unverified: ${stripControl(a.unverified)})` : "";
   d.log(`  agents: ${String(a.approved)} approved${unverified}`);
   for (const t of a.suspended ?? []) d.log(suspendedLine(t));
+  if (Array.isArray(a.notListed) && a.notListed.length > 0) {
+    d.log(`  not listed now: ${a.notListed.map((t) => stripControl(String(t))).join(", ")}`);
+  }
+}
+
+/**
+ * The model section's line. A service that is enabled (its wave is shared with the agent door) but
+ * has nothing offerable to the model says so, instead of `enabled ... 0 offerable now`. The reply
+ * carries only the count of approved writes that also pass the scope check, so the wording claims
+ * no more than that (approvals can exist while it is zero); the line is unchanged otherwise.
+ */
+function modelLine(row: StatusRow, width: number): string {
+  const name = row.service.padEnd(width);
+  if (!row.enabled) return `${name}  off`;
+  const wave = String(row.maxWave);
+  const writes = String(row.writes);
+  const offerable = row.offerable ?? 0;
+  if (offerable === 0) {
+    return `${name}  shared wave ${wave}  ${writes} writes, 0 offerable to the model now${awaitingSuffix(row)}`;
+  }
+  return `${name}  enabled  wave ${wave}  ${writes} writes, ${String(offerable)} offerable now${awaitingSuffix(row)}`;
 }
 
 /** One service's `status` line, its not-offered writes and its iac or kubernetes grants. */
@@ -482,12 +507,7 @@ function logStatusRow(
   width: number,
   agent?: AgentServiceStatus,
 ): void {
-  const name = row.service.padEnd(width);
-  d.log(
-    row.enabled
-      ? `${name}  enabled  wave ${String(row.maxWave)}  ${String(row.writes)} writes, ${String(row.offerable ?? 0)} offerable now${awaitingSuffix(row)}`
-      : `${name}  off`,
-  );
+  d.log(modelLine(row, width));
   for (const n of row.notOffered ?? []) {
     d.log(`  not offered: ${String(n.toolId)} (${String(n.reason)})`);
   }
@@ -496,11 +516,38 @@ function logStatusRow(
   logAgentRow(d, agent);
 }
 
-/** The agent door's notice, the one-time hint and its policy line; nothing for an older gateway. */
+/** The agent door's one-time hint and its deprecation count; nothing for an older gateway. */
 function logAgentTail(d: ConnectorWritesDeps, agent: AgentStatus | undefined): void {
   if (agent === undefined) return;
-  if (typeof agent.notice === "string") d.log(stripControl(agent.notice));
   if (typeof agent.hint === "string") d.log(stripControl(agent.hint));
+  logLegacy(d, agent.legacy);
+}
+
+/** The deprecation count: how many proposals the earlier rule accepted that a later release refuses. */
+function logLegacy(d: ConnectorWritesDeps, legacy: unknown): void {
+  if (!isRecord(legacy) || typeof legacy["total"] !== "number" || legacy["total"] === 0) return;
+  const byType = isRecord(legacy["byType"]) ? legacy["byType"] : {};
+  const parts = Object.entries(byType)
+    .filter(([, n]) => typeof n === "number")
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([t, n]) => `${stripControl(t)} x${String(n)}`);
+  d.log(
+    `legacy: ${String(legacy["total"])} proposals in the last 30 days would be refused (${parts.join(", ")})`,
+  );
+  d.log(
+    "To keep the other types working run: nimbus connector writes enable <service> --door agent (mail sends cannot be approved; drafts stay allowed)",
+  );
+}
+
+/** The agent policy line: allows, or which capability the organisation turned off (OR-AD-15). */
+function agentPolicyLine(agent: AgentStatus): string {
+  if (agent.policyAllows === true) return "Agent policy: allows";
+  const off = Array.isArray(agent.lockedOff)
+    ? agent.lockedOff.map((c) => stripControl(String(c)))
+    : [];
+  return off.length === 0
+    ? "Agent policy: forbids (connector_write_model_access or mcp_action)"
+    : `Agent policy: forbids (your organisation turned off ${off.join(" and ")})`;
 }
 
 async function runStatus(d: ConnectorWritesDeps, tail: string[]): Promise<void> {
@@ -510,7 +557,9 @@ async function runStatus(d: ConnectorWritesDeps, tail: string[]): Promise<void> 
     return;
   }
   try {
-    const res = await d.call("connector.writesStatus", {});
+    // Declares cli first: the gateway runs the live check (and the sticky mark) only for a cli or ui
+    // connection, and replies with the stored view to any other kind.
+    const res = await d.call("connector.writesStatus", {}, { declareCli: true });
     if (json) {
       d.log(JSON.stringify(res, null, 2));
       return;
@@ -528,11 +577,10 @@ async function runStatus(d: ConnectorWritesDeps, tail: string[]): Promise<void> 
         : "Policy: forbids (connector_write_model_access)",
     );
     if (agent !== undefined) {
-      d.log(
-        agent.policyAllows === true
-          ? "Agent policy: allows"
-          : "Agent policy: forbids (connector_write_model_access or mcp_action)",
-      );
+      d.log(agentPolicyLine(agent));
+      if (agent.checked === false) {
+        d.log("Agent tools were not re-checked against their connectors (not a cli connection).");
+      }
     }
   } catch (e) {
     reportError(d, e);

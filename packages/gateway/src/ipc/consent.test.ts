@@ -3,7 +3,12 @@
 // owner typed (the comparison is `engine/executor.ts`'s alone, static D41); it carries `confirmText`
 // out and `typed` back.
 import { afterEach, describe, expect, test } from "bun:test";
-import { ConsentCoordinatorImpl, ConsentDisconnectedError } from "./consent.ts";
+import {
+  type ConsentCoordinator,
+  ConsentCoordinatorImpl,
+  ConsentDisconnectedError,
+  vetoingConsent,
+} from "./consent.ts";
 import { setGatewayEventBroadcast } from "./gateway-events.ts";
 import type { JsonRpcNotification } from "./jsonrpc.ts";
 
@@ -195,5 +200,119 @@ describe("handleRespond answerSource (Phase 10 SA1, spec 6.1)", () => {
       c.handleRespond("b", { requestId: "r1", approved: true, answerSource: "robot" })?.code,
     ).toBe(-32602);
     expect(c.pendingCount()).toBe(1);
+  });
+});
+
+describe("vetoingConsent (AD3a-2a: the post-answer re-check)", () => {
+  function fakeInner(approved: boolean, answerSource: "human" | "auto" = "human") {
+    const calls: string[] = [];
+    const inner: ConsentCoordinator = {
+      requestConsent: () => {
+        calls.push("plain");
+        return Promise.resolve({ approved, answerSource });
+      },
+      requestConfirmedConsent: () => {
+        calls.push("typed");
+        return Promise.resolve({ approved, typed: "owner/typed", answerSource });
+      },
+      rejectAllPending: () => {
+        calls.push("rejectAll");
+      },
+      pendingCount: () => 7,
+    };
+    return { inner, calls };
+  }
+  const REQ = { requestId: "r1", prompt: "p" };
+
+  test("an approved answer with a passing re-check is returned unchanged, on both requests", async () => {
+    const { inner } = fakeInner(true);
+    let vetoed = 0;
+    const w = vetoingConsent(
+      inner,
+      async () => undefined,
+      () => vetoed++,
+    );
+    expect(await w.requestConsent("c", REQ)).toEqual({ approved: true, answerSource: "human" });
+    expect(await w.requestConfirmedConsent("c", { ...REQ, confirmText: "x" })).toEqual({
+      approved: true,
+      typed: "owner/typed",
+      answerSource: "human",
+    });
+    expect(vetoed).toBe(0);
+  });
+
+  test("a failing re-check turns the approval into a decline (typed is emptied) and tells onVeto why", async () => {
+    const { inner } = fakeInner(true);
+    const reasons: string[] = [];
+    const w = vetoingConsent(
+      inner,
+      async () => "changed since approval",
+      (r) => reasons.push(r),
+    );
+    expect(await w.requestConsent("c", REQ)).toEqual({ approved: false, answerSource: "human" });
+    expect(await w.requestConfirmedConsent("c", { ...REQ, confirmText: "x" })).toEqual({
+      approved: false,
+      typed: "",
+      answerSource: "human",
+    });
+    expect(reasons).toEqual(["changed since approval", "changed since approval"]);
+  });
+
+  test("a declined answer never runs the re-check", async () => {
+    const { inner } = fakeInner(false);
+    let rechecks = 0;
+    const w = vetoingConsent(
+      inner,
+      async () => {
+        rechecks++;
+        return "never";
+      },
+      () => undefined,
+    );
+    expect(await w.requestConsent("c", REQ)).toEqual({ approved: false, answerSource: "human" });
+    expect((await w.requestConfirmedConsent("c", { ...REQ, confirmText: "x" })).approved).toBe(
+      false,
+    );
+    expect(rechecks).toBe(0);
+  });
+
+  test("a re-check that throws is a veto (fail closed) with a fixed reason that echoes nothing", async () => {
+    const { inner } = fakeInner(true);
+    const reasons: string[] = [];
+    const w = vetoingConsent(
+      inner,
+      async () => {
+        throw new Error("SENTINEL listing failure");
+      },
+      (r) => reasons.push(r),
+    );
+    expect((await w.requestConsent("c", REQ)).approved).toBe(false);
+    expect(reasons).toHaveLength(1);
+    expect(reasons[0]).not.toContain("SENTINEL");
+  });
+
+  test("the re-check runs AFTER the inner answer, and pending bookkeeping passes through", async () => {
+    const { inner, calls } = fakeInner(true);
+    const order: string[] = [];
+    const w = vetoingConsent(
+      {
+        ...inner,
+        requestConsent: async (c, p) => {
+          const a = await inner.requestConsent(c, p);
+          order.push("answered");
+          return a;
+        },
+      },
+      async () => {
+        order.push("recheck");
+        return undefined;
+      },
+      () => undefined,
+    );
+    await w.requestConsent("c", REQ);
+    expect(order).toEqual(["answered", "recheck"]);
+    expect(w.pendingCount()).toBe(7);
+    w.rejectAllPending("m", "r");
+    expect(calls).toContain("rejectAll");
   });
 });

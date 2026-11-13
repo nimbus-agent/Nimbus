@@ -91,11 +91,38 @@ describe("definitionSha256", () => {
     );
   });
 
-  test("a description that is not a string hashes as null and differs from the empty string", () => {
-    const asNull = definitionSha256("t", entry(undefined, BASE_SCHEMA));
-    expect(asNull).toBe(definitionSha256("t", entry(42, BASE_SCHEMA)));
-    expect(asNull).not.toBe(definitionSha256("t", entry("", BASE_SCHEMA)));
+  test("hashes the AD3a-1 stored values unchanged (golden): a string, an absent and an empty description", () => {
+    expect(definitionSha256("t", entry("d", BASE_SCHEMA))).toBe(
+      "bb3244e36612e33647f3ff41d79e4d27b494095eaf0f337d3bf0fbbe471861d9",
+    );
+    expect(definitionSha256("t", entry(undefined, BASE_SCHEMA))).toBe(
+      "c25ea819de40fdc60eba828f12b0aaec47f08e2d7d9b6efd3761bf22505e726b",
+    );
+    expect(definitionSha256("t", entry("", BASE_SCHEMA))).toBe(
+      "116ef8153b63b9a7626137de22d8bb34bec05d38fce64fcd5bbde32b3ba3e5f4",
+    );
   });
+
+  test("an absent description differs from the empty string", () => {
+    expect(definitionSha256("t", entry(undefined, BASE_SCHEMA))).not.toBe(
+      definitionSha256("t", entry("", BASE_SCHEMA)),
+    );
+    expect(
+      definitionSha256("t", { inputSchema: toStandardSchema(BASE_SCHEMA as JsonSchemaInput) }),
+    ).toBe(definitionSha256("t", entry(undefined, BASE_SCHEMA)));
+  });
+
+  test.each([
+    ["null", null],
+    ["a number", 42],
+    ["an object", { a: 1 }],
+    ["an array", ["d"]],
+  ])(
+    "a PRESENT description that is %s makes the definition unreadable (R-3)",
+    (_n, description) => {
+      expect(definitionSha256("t", entry(description, BASE_SCHEMA))).toBeUndefined();
+    },
+  );
 
   test("an NFC and an NFD spelling of one description hash differently", () => {
     const nfc = `caf${String.fromCodePoint(0xe9)}`;

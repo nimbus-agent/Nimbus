@@ -1,5 +1,6 @@
+import { agentDoorRow } from "../connectors/connector-writes/agent-door.ts";
+import { LEGACY_LIST_HEADER } from "../connectors/connector-writes/agent-door-legacy.ts";
 import { rowNamedByToolId } from "../connectors/connector-writes/preview.ts";
-import { proposableWriteTool } from "../connectors/proposable-actions.ts";
 import { agentVerbatimInputLines, escapeUnverifiedLine } from "../engine/proposer-block.ts";
 import { APPROVER_BY_KIND } from "../mcp-sink/capture-client-policy.ts";
 import {
@@ -19,7 +20,7 @@ import {
   captureErrorToRpc,
   idParam,
 } from "./capture-rpc.ts";
-import { type ConsentCoordinator, humanOnlyConsent } from "./consent.ts";
+import type { ConsentCoordinator } from "./consent.ts";
 
 /**
  * `approvals.*` (agent door AD2, spec § 7.2): the owner's queue of action proposals from MCP
@@ -44,10 +45,6 @@ export const APPROVALS_METHODS = [
 export const NON_HUMAN_REASON =
   "the approval did not come from a person at a terminal (--yes, a script and an old client cannot approve); nothing was run";
 
-// Defined in ipc/consent.ts: static D41(a) names the coordinator's typed-answer method only there
-// and in the executor, and the wrapper must implement it. Re-exported so the approval path reads here.
-export { humanOnlyConsent };
-
 const GET_NOTE = "the typed preview and the target's current state appear when you approve";
 
 type Ctx = { readonly rpc: CaptureRpcCtx; readonly caller: CaptureCaller };
@@ -69,8 +66,8 @@ interface ProposalView {
 
 /** The wave and typed-confirm flag of the real write row for an action type; a user-MCP type has none. */
 function rowFacts(actionType: string, w: CaptureActWiring | undefined): ProposalView {
-  const toolId = proposableWriteTool(actionType);
-  const found = toolId === undefined ? undefined : rowNamedByToolId(toolId, actWriteRows(w));
+  const routed = agentDoorRow(actionType);
+  const found = routed === undefined ? undefined : rowNamedByToolId(routed.toolId, actWriteRows(w));
   return found === undefined
     ? { wave: null, typedConfirm: false }
     : { wave: found.wave, typedConfirm: found.confirm !== undefined };
@@ -80,12 +77,18 @@ function escapedLabel(label: string | null): string | null {
   return label === null ? null : escapeUnverifiedLine(label);
 }
 
-function listView(rpc: CaptureRpcCtx, caller: CaptureCaller): { proposals: unknown[] } {
+function listView(
+  rpc: CaptureRpcCtx,
+  caller: CaptureCaller,
+): { proposals: unknown[]; deprecation?: string } {
   const { proposals } = listActionProposals(rpc.gate, caller);
   return {
+    // The deprecation header (AD3a-2a, D-7) only when a legacy row is shown; fixed gateway text.
+    ...(proposals.some((p) => p.agentDoorLegacy) ? { deprecation: LEGACY_LIST_HEADER } : {}),
     proposals: proposals.map((p) => ({
       id: p.id,
       actionType: p.actionType,
+      legacy: p.agentDoorLegacy,
       ...rowFacts(p.actionType, rpc.act),
       label: escapedLabel(p.clientLabel),
       labelSource: "declared",
@@ -111,6 +114,8 @@ function requireActionRow(rpc: CaptureRpcCtx, caller: CaptureCaller, idRaw: unkn
 function getView(rpc: CaptureRpcCtx, caller: CaptureCaller, idRaw: unknown): unknown {
   const detail = requireActionRow(rpc, caller, idRaw);
   const stored = detail.payload as ActionPayload;
+  // Read from the store, not from `captures.get`'s shape (the desktop's contract is unchanged).
+  const legacy = rpc.gate.store.get(detail.id)?.agentDoorLegacy === true;
   const lines = agentVerbatimInputLines(stored.input)
     .slice(1)
     .flatMap((l) => l.split("\n"));
@@ -118,6 +123,8 @@ function getView(rpc: CaptureRpcCtx, caller: CaptureCaller, idRaw: unknown): unk
     id: detail.id,
     state: detail.state,
     actionType: stored.actionType,
+    legacy,
+    ...(legacy ? { deprecation: LEGACY_LIST_HEADER } : {}),
     ...rowFacts(stored.actionType, rpc.act),
     label: escapedLabel(detail.clientLabel),
     labelSource: "declared",
@@ -141,13 +148,13 @@ async function approve(
   let nonHuman = false;
   const act =
     rpc.act !== undefined && consent !== undefined
-      ? buildActDeps(
-          rpc.act,
-          humanOnlyConsent(consent, () => {
-            nonHuman = true;
-          }),
-          caller.clientId,
-        )
+      ? buildActDeps(rpc.act, consent, caller.clientId, {
+          humanOnly: {
+            onNonHuman: () => {
+              nonHuman = true;
+            },
+          },
+        })
       : undefined;
   // 4. The gate's own accept: capability, owner role, state, expiry, classify, configured,
   //    destination, CAS claim, then the executor (static D32(e): its only door to acceptAction).

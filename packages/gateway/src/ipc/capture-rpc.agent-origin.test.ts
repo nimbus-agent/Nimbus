@@ -150,7 +150,7 @@ function harness(
   return { act: buildActDeps(w, coord, "c-cli"), dispatched, prompts };
 }
 
-describe("AD1 changes no reach: the 47 proposable types are the 47 they were", () => {
+describe("the legacy baseline (the deprecation window of AD3a-2a): the 47 proposable types are the 47 they were", () => {
   const proposable = Object.entries(ACTION_PROPOSABILITY)
     .filter(([, v]) => v.kind === "proposable")
     .map(([t]) => t);
@@ -163,7 +163,7 @@ describe("AD1 changes no reach: the 47 proposable types are the 47 they were", (
     for (const t of MAIL_SENDS) expect(ACTION_PROPOSABILITY[t]?.kind, t).toBe("proposable");
   });
 
-  test("no proposable type is Wave 4 (the act door has no typed-confirm surface of its own yet)", () => {
+  test("no baseline type is Wave 4 (a Wave 4 row is reachable only on the approved basis, I58)", () => {
     for (const t of proposable) {
       for (const row of CONNECTOR_WRITE_ROWS.filter((r) => r.actionType === t)) {
         expect(row.wave, t).toBeLessThan(4);
@@ -271,6 +271,7 @@ describe("the act door now reads the target's current state (the model door's ru
     expect(out).toEqual({
       status: "rejected",
       reason: "the model cannot change a page in the Nimbus knowledge base; use the capture flow",
+      code: "ERR_ACTION_GUARD_REFUSED",
     });
     expect(h.prompts).toEqual([]);
     expect(h.dispatched.map((a) => a.type)).toEqual(["notion.before.read"]);
@@ -301,6 +302,7 @@ describe("the act door now reads the target's current state (the model door's ru
     expect(out).toEqual({
       status: "rejected",
       reason: "the model cannot change a page in the Nimbus knowledge base; use the capture flow",
+      code: "ERR_ACTION_GUARD_REFUSED",
     });
     expect(h.prompts).toEqual([]);
     expect(h.dispatched.some((a) => a.type === "notion.page.update")).toBe(false);

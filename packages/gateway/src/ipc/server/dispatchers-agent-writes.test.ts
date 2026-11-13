@@ -8,6 +8,7 @@ import { toStandardSchema } from "@mastra/core/schema";
 import { listDoorApprovals } from "../../connectors/connector-writes/door-approval-store.ts";
 import { getModelWriteEnablement } from "../../connectors/connector-writes/enablement-store.ts";
 import { CONNECTOR_WRITE_ROWS } from "../../connectors/connector-writes/index.ts";
+import { previewTemplateKeys } from "../../connectors/connector-writes/types.ts";
 import type { LazyConnectorMesh } from "../../connectors/lazy-mesh/mesh.ts";
 import { mcpClientToolKey } from "../../connectors/lazy-mesh/tool-map.ts";
 import { serviceOf } from "../../engine/service-of.ts";
@@ -32,9 +33,14 @@ function githubListing(): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const r of CONNECTOR_WRITE_ROWS) {
     if (serviceOf(r.actionType) !== "github") continue;
+    // The schema declares every input key the row's typed preview names (the drift check).
+    const keys = r.preview === undefined ? [] : [...previewTemplateKeys(r.preview)];
     out[mcpClientToolKey("github", r.toolId)] = {
       description: `d ${r.toolId}`,
-      inputSchema: toStandardSchema({ type: "object", properties: {} } as JsonSchemaInput),
+      inputSchema: toStandardSchema({
+        type: "object",
+        properties: Object.fromEntries(keys.map((k) => [k, { type: "string" }])),
+      } as JsonSchemaInput),
     };
   }
   return out;
