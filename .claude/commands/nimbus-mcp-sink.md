@@ -226,6 +226,8 @@ connector allowlist. The act door's configured-ness comes from
 Out-of-range values and unknown kinds refuse at load (capability reason `config_error`); nothing
 is clamped.
 
+**An approval list for agents, recorded but not yet enforced (Phase 28 AD3a-1).** `nimbus connector writes enable <service> --door agent` records, per tool and with a hash of its listed definition, the writes the owner approved for outside agents (V97 `connector_write_door_approval`, written only by `connectors/connector-writes/door-approval-store.ts`, static D49(b)). Nothing in `mcp-sink/` or `connectors/proposable-actions.ts` reads it: what an agent can propose is still decided by `ACTION_PROPOSABILITY`, and a test pins that. AD3a-2 makes the gate read it (invariant I58). Until then every surface that shows the list prints `AGENT_DOOR_NOT_ENFORCED_NOTICE`.
+
 ## Stated bounds (I28)
 
 - A live note is searchable unreviewed; acceptance proves the owner saw the text, not that it is true.
@@ -275,7 +277,7 @@ is clamped.
 | `packages/gateway/src/mcp-sink/capture-types.ts` | kinds, states, error codes, `ActDeps` seam |
 | `packages/gateway/src/ipc/capture-rpc.ts` | IPC dispatch + `buildActDeps` (the executor seam) |
 | `packages/gateway/src/connectors/proposable-actions.ts` | proposability + routing tables |
-| `packages/gateway/src/index/capture-v67-sql.ts` · `capture-native-v68-sql.ts` · `capture-action-v69-sql.ts` | schema V67 / V68 / V69 |
+| `packages/gateway/src/index/capture-v67-sql.ts` · `capture-native-v68-sql.ts` · `capture-action-v69-sql.ts` | schema V67 / V68 / V69 (V97, `agent-door-v97-sql.ts`, rebuilds `capture` with `legacy` and a code on a `rejected` action) |
 | `packages/cli/src/mcp/capture-tools.ts` | MCP tool registration |
 | `packages/cli/src/commands/captures.ts` · `captures-format.ts` | owner CLI + rendering |
 | `packages/gateway/test/e2e/mcp-capture.e2e.test.ts` | real-gateway E2E |
