@@ -1,6 +1,6 @@
 # Phase 28 — The Agent Door
 
-Status: DRAFT, review round 2 (round 1: CHANGES REQUESTED, findings applied; see Review log). Owner rulings OR-AD-1..9 and OR-ECO-8 are binding; do not reopen them.
+Status: APPROVED by Antigravity (round 2, 2026-11-13). Owner rulings OR-AD-1..9 and OR-ECO-8 are binding; do not reopen them.
 Revision 2 (owner rulings OR-AD-6..9, § 2); revision 3 applies the round 1 review. Date: 2026-11-13.
 Date: 2026-11-13. Slot: S4 (the next project to start, OR-ECO-8). Roadmap: `docs/roadmap.md` § Phase 28 (all nine
 rows), § Direction, and the carried-in row *User-MCP write grants* (§ Carried into S4).
@@ -295,7 +295,7 @@ not zod; callers holding zod schemas convert before registering (the CLI does th
 need to). Sampling and roots are not implemented (the revision deprecates them). Streamable HTTP is not implemented (Nimbus
 serves MCP over stdio only); the module is a transport-neutral core plus a stdio binding, so HTTP can be added later.
 
-**AD6a design (nimbus-sdk).** AD6a targets the standalone repository `nimbus-agent/nimbus-sdk` (MIT; `@nimbus-dev/sdk`, local clone `C:gitrep
+**AD6a design (nimbus-sdk).** AD6a targets the standalone repository `nimbus-agent/nimbus-sdk` (MIT; `@nimbus-dev/sdk`, local clone `C:\gitrep
 imbus-sdk`), not this repository, and ships under that repo's own CI and release-please. Publishing is GATED on verifying zero runtime dependencies: the PR that cuts the release shows the published tarball's `package.json` has no `dependencies` (and no `peerDependencies` on the upstream MCP SDK or zod), checked by the repo's own guard and re-checked by hand before the release PR merges. A new TypeScript-only entry point `@nimbus-dev/sdk/mcp-server` (the seventh `exports` entry),
 `@moduleStability experimental` until a connector release has consumed it (RFC-0015 tiers), a normative spec at
 `docs/spec/mcp-server/v1/` (the layout `signing` and `diagnostics` use) and a conformance corpus. Surface, in outline:
@@ -413,7 +413,7 @@ keeping the chokepoint single rather than adding a second `acceptAction` caller:
 unchanged. What changes is the set of modules allowed to NAME the gate's functions. AD2 therefore amends, in ONE commit (the
 triple rule): (1) `docs/SECURITY-INVARIANTS.md` D32(b) and D32(c) to read "`ipc/capture-rpc.ts`, `ipc/approvals-rpc.ts` and
 `capture-gate.ts`" (exactly two RPC modules; D32(e) restated as "one call, in `acceptCapture`, which exactly those two
-modules reach"); (2) `scripts/structure-audit/check-nimbus-invariants.ts` (`checkActDoorConfinement` and the D32(b)/(c)
+modules reach"); (2) `scripts/structure-audit/check-nimbus-invariants.ts` (`checkActDoorConfinement` for D32(e)/(f)/(g), and `checkCaptureGateCallers`, `checkCaptureGateImporters` and `D32_GATE_ALLOWED` for the D32(b)/(c)
 allow-lists) so the allowed set is exactly those files; (3) fixtures in `check-nimbus-invariants.test.ts`: a good set with
 both RPC modules passes, and a THIRD module that names `acceptCapture` (or `acceptAction`, or value-imports `capture-gate.ts`)
 fails, one fixture per form, red-proved; (4) the `security-invariants.test.ts` I28 block asserting the same on the real tree.
@@ -771,3 +771,5 @@ open. No new owner question arose from the revision.
    equal to the global `actionMaxPending` default and so no cap; it is now 3 (D-AD-12).
 3. MINOR, AD6a target and gate. Applied in § 7.1: AD6a is in the standalone `nimbus-agent/nimbus-sdk`, and publishing is gated
    on verifying zero runtime dependencies in the published `package.json`.
+
+Round 2 (Antigravity, 2026-11-13): APPROVED, no blocker or major. Minor fixes applied: the D32(b)/(c) checkers are `checkCaptureGateCallers` and `checkCaptureGateImporters` with `D32_GATE_ALLOWED` (`checkActDoorConfinement` covers D32(e)/(f)/(g)); the nimbus-sdk local path.
