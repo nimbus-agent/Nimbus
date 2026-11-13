@@ -144,7 +144,6 @@ export type CaptureDetail = CaptureSummary & {
   readonly nativeStatus: NativeStatus | null;
   readonly outcomeRef: string | null;
   readonly errorCode: string | null;
-  readonly agentDoorLegacy: boolean;
 };
 
 export interface CaptureStatus {
@@ -997,7 +996,6 @@ export function getCapture(
         : null,
     outcomeRef: row.outcomeRef,
     errorCode: row.errorCode,
-    agentDoorLegacy: row.agentDoorLegacy,
   };
 }
 
