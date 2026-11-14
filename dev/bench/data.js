@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794636520041,
+  "lastUpdate": 1794641127360,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "7e496789e171f7641077b4c87bca9f6a7e4edae7",
-          "message": "docs: stop calling this repo the monorepo (#1349)\n\n`packages/` carried **100 workspaces** until 2026-08-27. It carries\n**five**.\n\nThe connectors left for\n[nimbus-agent/nimbus-mcp-servers](https://github.com/nimbus-agent/nimbus-mcp-servers),\nand with the SDK, the IPC client, the MCP launcher, the editor extension\nand the browser client already outside, \"monorepo\" describes something\nthat stopped being true.\n\n## The heading is the small part\n\nThe real change is the sentence under it. A reader arriving at\n`CLAUDE.md` — human or agent — needs to know that for **six of the seven\nsurfaces Nimbus ships, the source of truth is a different repository**,\nand that \"the repo\" in any statement here means the Gateway only.\n\nWithout that, the natural next move on \"add a connector\" is to look in\n`packages/` and find nothing there.\n\n## Both counts are derived, not asserted\n\nFive is the length of the `workspaces` array. Six is the length of the\nlist that follows.\n\nThe first draft said *seven* and was wrong — I had counted the\nsatellites from memory rather than the list. That is precisely the rule\nthis file already states:\n\n> **A total that is still right can hide an enumeration that is wrong.**\n… When a count changes, re-derive the _list_, not just the number.\n\nApplied to the file itself, and it caught me.\n\n`GEMINI.md` mirrors the same change, per the note in `CLAUDE.md` that\nthe two move together.\n\n`preflight:fast` green.",
-          "timestamp": "2026-08-27T12:27:37+03:00",
-          "tree_id": "5a9da7a52897239f1943fb28a36a657eba7e46b9",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/7e496789e171f7641077b4c87bca9f6a7e4edae7"
-        },
-        "date": 1787823370410,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 247.094427000004,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 246.37975744999858,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 295.69750189999723,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "49f5de44641fe2e170ddc2b69b52121417d19806",
+          "message": "feat(gateway): name the door and the proposer of every agent action in both ledgers, and report them with nimbus prove --by-proposer (agent door AD4) (#2005)\n\nAgent door AD4 (Phase 28): proof. Every action an outside agent proposes\nis now named, with its door and its proposer, in both tamper-evident\nledgers, and two owner commands read them.\n\n## What changes\n\n1. **Audit row.** The executor's row for an agent action carries\n`proposer` with four fields, written first in the row: the door, the\ngateway's capture id, the label, and the label's source. The label is\nthe client's own text and is unverified.\n2. **Sub-steps.** The before-state read, the prepare read and the\nchange-set discard of an agent action carry `onBehalfOf`, naming the\nsame capture.\n3. **Egress row.** The action and its sub-steps are ledgered under\n`source_id` `agent:<captureId>`. The label goes only into the unhashed\nsummary. Neither hash formula changes, so rows written earlier still\nverify and an earlier receipt keeps its digest.\n4. **Lifecycle rows.** The accept row gains the door, the label and its\nsource. The submit and accept rows gain the submitting connection's id\ninside their hashed text, per owner ruling OR-AD-20.\n5. **`nimbus prove --by-proposer`.** It groups proposals by label and\nreports, per group, how many were proposed, refused, approved, declined,\nexecuted, failed or expired, how many authorized writes the egress\nledger holds, and over how many connections they came. It then compares\nthe two ledgers capture by capture. Any disagreement, a broken chain or\na cut scan prints `INDETERMINATE` with one sentence per cause and exits\n1. `--receipt` with it is a usage error, per OR-AD-21.\n6. **`nimbus audit --door <agent|model|workflow|other>`**, with\n`--proposer` for the agent door. The door is derived from fields the\ngateway already writes; everything else is shown as `other` and is not\nclaimed to be the owner's, per OR-AD-19. Plain `nimbus audit` prints\nexactly what it printed before.\n7. **Two owner methods**, `audit.proveByProposer` and\n`audit.listByDoor`. They answer only a connection that declared `cli` or\n`ui`, are LAN-forbidden with the rest of the `audit` namespace, and are\nnot on the desktop renderer allowlist.\n8. **A fix on the existing path.** `nimbus prove --since 7d` sent `7d`\nto the model as the query. It now starts the window at `--since`, as the\nhelp line said.\n\n## Found in review and fixed here\n\n- A request's own `sessionId` is stored as the `source_id` of a\nnon-agent action, and a client chooses it. A client could send one\nbeginning with `agent:` and make an unrelated action look like part of a\ncapture, or make every proof indeterminate. Such an id is now stored in\na neutralised form at the one place egress rows are built, and the\nreader reports stray rows in the reserved range without letting them\ntouch another capture's result.\n- The reader scanned all history from the oldest row and dropped the\nnewest at its cap. It now selects the captures the window names and\nloads only their rows.\n- A malformed capture id is now refused before any row or prompt, not\nafter the owner's answer.\n- `--proposer` matches one form of the label, and both commands apply\nthe same redaction to it.\n\n## Stated bounds\n\n- A label is the client's own claim. Any program can send any label, and\nthe report marks every one as unverified.\n- A connection id lasts one gateway run and does not identify a program.\n- The report cannot show an action that never reached the executor,\nwhether the remote service applied a write, or anything an agent did\nwith its own credentials.\n- Rows older than an egress prune and proposals accepted before this\nversion are not checked; they are counted as not checked.\n- The proof keeps at most 50,000 rows per ledger for the captures a\nwindow selects. Past that it reports a cut scan and names the ledger.\n- The client kind is the connection's own claim on the local socket.\n\n## Not changed\n\nNo migration, no new invariant, no new static rule. The I28, I29 and I58\ntext and one sentence of D49 are amended, with their tests, in the same\ncommits as the code.\n\n## Verification\n\nRun locally on Windows, one at a time:\n\n- `bun run typecheck`, `typecheck:tests` with 0 new errors, `bun run\npreflight:fast`: passed.\n- Gateway `egress`, `audit`, `engine`, `ipc`, `mcp-sink`, the whole\n`security-invariants.test.ts`, `test/integration/mcp-sink` and the three\nCLI test files of this change, in one run: 7540 pass, 0 fail.\n- CLI `commands` and `mcp`: 5082 pass. `scripts/structure-audit`: 1587\npass. `audit:invariants`, `audit:status-drift`, `audit:doc-refs`,\n`audit:boundaries`: clean. `cargo test allowlist_`: 41 pass.\n- `test/e2e/user-mcp.e2e.test.ts` against a real gateway: 18 pass, 1\nskip, run before the review fixes and not re-run after them.\n- Not run locally: the whole-repo suites and the Linux coverage floor.\n\nAn adversarial read-only review traced ten properties; its six findings\nare fixed in the last commit. Red-proofs were recorded for the\nprojection order, each sub-step attribution site, the entry being built\nbefore the audit row, the anchored match against a forged input, each\nmismatch code, the prune cutoff, the capture selection at the window's\nedge, the neutralised session id, the window-bounded read, the early\ncapture-id check, the caller-kind check and each CLI refusal.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Added `nimbus prove --by-proposer` to summarize outside-agent activity\nand compare audit and egress records. Reports identify client-provided\nlabels as unverified and flag incomplete or inconsistent records.\n* Added `nimbus audit --door` to filter audit records by action source,\nwith optional proposer, time-window, limit, and JSON filters.\n* **Security**\n* Agent actions and related activity are now attributed to their capture\nin audit and egress records, with labels kept separate from hashed\negress fields.\n* Proof and door-filtered audit commands are restricted to CLI and UI\nconnections.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Sonnet 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-14T07:18:33Z",
+          "tree_id": "5a09a23809722f4b2fe1971f44c5f279febcc304",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/49f5de44641fe2e170ddc2b69b52121417d19806"
+        },
+        "date": 1794641124129,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 204.63062139999892,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 203.23763520000065,
             "unit": "ms"
           }
         ]
