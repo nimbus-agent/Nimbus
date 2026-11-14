@@ -188,6 +188,7 @@ connector allowlist. The act door's configured-ness comes from
   `chatops`, `fleet`, `push` refused). Both namespaces LAN-forbidden; no HTTP route; only
   `captures.list`/`captures.get` on the Tauri allowlist
   (`packages/ui/src-tauri/src/gateway_bridge.rs`).
+- **AD4 proof** (Phase 28): the executor's audit row of an accepted action names `{door, captureId, label, labelSource}` and its egress row `agent:<captureId>`. The owner reads them with `nimbus prove --by-proposer` (`audit.proveByProposer`, which compares the two ledgers capture by capture) and `nimbus audit --door agent` (`audit.listByDoor`, a filtered listing of `audit_log` that compares nothing), both `cli`/`ui` only; labels are the client's own claim.
 - **Approvals IPC** (Phase 28 AD2, `ipc/approvals-rpc.ts`, routed by `tryDispatchApprovalsRpc`):
   `approvals.list|get|approve|decline` for a connection that DECLARED `cli` or `ui`
   (`APPROVER_BY_KIND`; `unknown` is refused here although `captures.*` serves it). `approve` reaches the

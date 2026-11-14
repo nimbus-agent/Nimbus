@@ -106,7 +106,7 @@ function gateDeps(): CaptureGateDeps {
           ),
     limiter: new CaptureAttemptLimiter(),
     refusals: new CaptureRefusalCounter(),
-    newId: () => `cap_${String(++seq)}`,
+    newId: () => `cap_${String(++seq).padStart(32, "0")}`,
     now: () => clock,
     classifyAction: () => ({ kind: "proposable", userMcp: true }),
     isServiceConfigured: () => Promise.resolve(true),
@@ -390,7 +390,7 @@ describe("A2: typed confirmation, on a synthetic Wave 4 row (the real `github.pr
     }));
     expect(out.state).toBe("rejected");
     expect(writes()).toEqual([]);
-    expect(store.get("cap_1")?.state).toBe("rejected");
+    expect(store.get(`cap_${"1".padStart(32, "0")}`)?.state).toBe("rejected");
   });
 
   test.each(["auto", "script"] as const)(

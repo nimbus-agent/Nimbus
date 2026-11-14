@@ -10,6 +10,7 @@ import {
   type ActionPayload,
   type ActionProvenance,
   type ActionRejectCode,
+  CAPTURE_LABEL_SOURCE,
   CaptureError,
   type CaptureRow,
   NO_BASIS_CLASS,
@@ -293,6 +294,12 @@ export async function acceptAction(
           captureId: row.id,
           actionType: stored.actionType,
           ...(basis === undefined ? {} : { basis }),
+          // AD4: the proof joins on these. The label is the client's own claim (UNVERIFIED), the
+          // same text the submit row holds; `connection` is the SUBMITTING connection's id (OR-AD-20).
+          door: "agent",
+          clientLabel: row.clientLabel,
+          labelSource: CAPTURE_LABEL_SOURCE,
+          connection: row.sessionId,
         },
         claimAt,
         caller.clientId,
@@ -308,6 +315,7 @@ export async function acceptAction(
     ...(basis === undefined ? {} : { basis }),
     captureId: row.id,
     clientLabel: row.clientLabel,
+    labelSource: CAPTURE_LABEL_SOURCE,
     createdAt: row.createdAt,
     expiresAt,
     summary: stored.summary,

@@ -290,6 +290,7 @@ export async function tryDispatchAuditRpc(
   ctx: ServerCtx,
   method: string,
   params: unknown,
+  clientId: string,
 ): Promise<unknown> {
   // Namespace check, not a two-name list. This arm used to read
   //   `if (method !== "audit.verify" && method !== "audit.exportAll") return phase4RpcSkipped;`
@@ -306,7 +307,11 @@ export async function tryDispatchAuditRpc(
   // through to `phase4RpcSkipped` below, exactly as before.
   if (!method.startsWith("audit.")) return phase4RpcSkipped;
   try {
-    const out = await dispatchAuditRpc(method, params, { index: ctx.options.localIndex });
+    // The kind is the CONNECTION's, held by the server (Phase 28 AD4): only the proof methods read it.
+    const out = await dispatchAuditRpc(method, params, {
+      index: ctx.options.localIndex,
+      callerKind: ctx.getClientKind(clientId),
+    });
     if (out.kind === "hit") return out.value;
   } catch (e) {
     if (e instanceof AuditRpcError) throw new RpcMethodError(e.rpcCode, e.message);
@@ -1953,7 +1958,7 @@ async function dispatchPhase4CoreGroup(
   if (voiceOutcome !== phase4RpcSkipped) return voiceOutcome;
   const updaterOutcome = await tryDispatchUpdaterRpc(ctx, method, params);
   if (updaterOutcome !== phase4RpcSkipped) return updaterOutcome;
-  const auditOutcome = await tryDispatchAuditRpc(ctx, method, params);
+  const auditOutcome = await tryDispatchAuditRpc(ctx, method, params, clientId);
   if (auditOutcome !== phase4RpcSkipped) return auditOutcome;
   const securityOutcome = await tryDispatchSecurityRpc(ctx, method, params);
   if (securityOutcome !== phase4RpcSkipped) return securityOutcome;

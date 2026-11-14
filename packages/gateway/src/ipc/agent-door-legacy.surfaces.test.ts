@@ -54,7 +54,7 @@ beforeEach(() => {
       ),
     limiter: new CaptureAttemptLimiter(),
     refusals: new CaptureRefusalCounter(),
-    newId: () => `cap_${String(++seq)}`,
+    newId: () => `cap_${String(++seq).padStart(32, "0")}`,
     now: () => 1_000,
     classifyAction: () => ({ kind: "proposable", basis }),
     isServiceConfigured: () => Promise.resolve(true),

@@ -126,7 +126,7 @@ function makeCtx(extra: Partial<NonNullable<CaptureRpcCtx["act"]>> = {}): Captur
           ),
     limiter: new CaptureAttemptLimiter(),
     refusals: new CaptureRefusalCounter(),
-    newId: () => "cap_new",
+    newId: () => "cap_09090909090909090909090909090909",
     now: () => 1_000,
     classifyAction: () => ({ kind: "proposable", userMcp: true }),
     isServiceConfigured: () => Promise.resolve(true),
@@ -191,20 +191,25 @@ describe("who may use approvals.*", () => {
   test.each(KINDS.filter((k) => k !== "cli" && k !== "ui"))(
     "%s is refused on all four methods and the gate is never reached",
     async (kind) => {
-      insertAction("cap_a");
+      insertAction("cap_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
       const before = store.gets;
       for (const m of APPROVALS_METHODS) {
         const e = await rpcError(
-          call(m, { id: "cap_a" }, { clientId: "x", kind }, new FakeConsent()),
+          call(
+            m,
+            { id: "cap_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
+            { clientId: "x", kind },
+            new FakeConsent(),
+          ),
         );
         expect(e.code, `${kind} ${m}`).toBe("ERR_CAPTURE_FORBIDDEN_CLIENT");
       }
       expect(store.gets).toBe(before);
-      expect(store.get("cap_a")?.state).toBe("proposed");
+      expect(store.get("cap_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")?.state).toBe("proposed");
     },
   );
   test("ui is accepted like cli", async () => {
-    insertAction("cap_a");
+    insertAction("cap_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
     const out = (await call("approvals.list", {}, { clientId: "u", kind: "ui" })) as {
       proposals: unknown[];
     };
@@ -216,11 +221,14 @@ describe("approvals.list and approvals.get", () => {
   const RLO = String.fromCodePoint(0x202e);
   const BS = String.fromCharCode(92);
   test("list returns the escaped one-line view with the wave and typedConfirm of the real row", async () => {
-    insertAction("cap_a", {
+    insertAction("cap_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", {
       label: 'a"\nType: x',
       summary: `tell them${RLO}now`,
     });
-    insertAction("cap_u", { actionType: "mcp_x.y", input: { a: 1 } });
+    insertAction("cap_f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0", {
+      actionType: "mcp_x.y",
+      input: { a: 1 },
+    });
     const out = (await call("approvals.list", {})) as {
       proposals: Array<Record<string, unknown>>;
     };
@@ -228,7 +236,7 @@ describe("approvals.list and approvals.get", () => {
     const slack = CONNECTOR_WRITE_ROWS.find((r) => r.toolId === "slack_message_post");
     expect([slack?.wave, slack?.confirm]).toEqual([2, undefined]);
     expect(out.proposals[0]).toEqual({
-      id: "cap_a",
+      id: "cap_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       actionType: "slack.message.post",
       legacy: false,
       wave: 2,
@@ -240,13 +248,13 @@ describe("approvals.list and approvals.get", () => {
       expiresAt: 500 + HOUR,
     });
     expect(out.proposals[1]).toMatchObject({
-      id: "cap_u",
+      id: "cap_f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
       wave: null,
       typedConfirm: false,
     });
   });
   test("a row declared wave 4 with a confirm target reads typedConfirm", async () => {
-    insertAction("cap_a");
+    insertAction("cap_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
     const synthetic = withConfirm(row("slack_message_post", "slack.message.post", "write", 4), {
       template: "{channel}",
     });
@@ -257,13 +265,13 @@ describe("approvals.list and approvals.get", () => {
     expect(out.proposals[0]).toMatchObject({ wave: 4, typedConfirm: true });
   });
   test("get adds the escaped verbatim input and the note about the preview", async () => {
-    insertAction("cap_a", { input: { text: `x${RLO}y` } });
-    const out = (await call("approvals.get", { id: "cap_a" })) as {
+    insertAction("cap_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", { input: { text: `x${RLO}y` } });
+    const out = (await call("approvals.get", { id: "cap_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" })) as {
       inputLines: string[];
       note: string;
       id: string;
     };
-    expect(out.id).toBe("cap_a");
+    expect(out.id).toBe("cap_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
     expect(out.inputLines.join("\n")).toContain(`x${BS}u202ey`);
     expect(out.inputLines.join("\n")).not.toContain(RLO);
     expect(out.inputLines.join("\n")).not.toContain("Input (verbatim");
@@ -273,7 +281,7 @@ describe("approvals.list and approvals.get", () => {
   });
   test("a decision id is ERR_CAPTURE_STATE and an unknown id is ERR_CAPTURE_NOT_FOUND", async () => {
     store.insert({
-      id: "cap_d",
+      id: "cap_0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d",
       kind: "decision",
       state: "proposed",
       itemId: null,
@@ -286,23 +294,33 @@ describe("approvals.list and approvals.get", () => {
       agentDoorLegacy: false,
     });
     for (const m of ["approvals.get", "approvals.approve", "approvals.decline"]) {
-      expect((await rpcError(call(m, { id: "cap_d" }, OWNER, new FakeConsent()))).code).toBe(
-        "ERR_CAPTURE_STATE",
-      );
-      expect((await rpcError(call(m, { id: "cap_zz" }, OWNER, new FakeConsent()))).code).toBe(
-        "ERR_CAPTURE_NOT_FOUND",
-      );
+      expect(
+        (
+          await rpcError(
+            call(m, { id: "cap_0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d" }, OWNER, new FakeConsent()),
+          )
+        ).code,
+      ).toBe("ERR_CAPTURE_STATE");
+      expect(
+        (
+          await rpcError(
+            call(m, { id: "cap_08080808080808080808080808080808" }, OWNER, new FakeConsent()),
+          )
+        ).code,
+      ).toBe("ERR_CAPTURE_NOT_FOUND");
     }
   });
 });
 
 describe("approvals.decline", () => {
   test("rejects a proposed action, audited as capture.reject, and dispatches nothing", async () => {
-    insertAction("cap_a");
-    expect(await call("approvals.decline", { id: "cap_a" })).toEqual({
-      id: "cap_a",
-      state: "rejected",
-    });
+    insertAction("cap_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+    expect(await call("approvals.decline", { id: "cap_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" })).toEqual(
+      {
+        id: "cap_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        state: "rejected",
+      },
+    );
     expect(dispatched).toEqual([]);
     const audit = db
       .query("SELECT hitl_status FROM audit_log WHERE action_type = 'capture.reject'")
@@ -310,15 +328,20 @@ describe("approvals.decline", () => {
     expect(audit).toEqual([{ hitl_status: "rejected" }]);
   });
   test("an executed action cannot be declined, and the sink being off does not stop a decline", async () => {
-    insertAction("cap_a");
-    store.claimAction("cap_a", 1_000);
-    store.finalizeAction("cap_a", "executed", {}, 1_000);
-    expect((await rpcError(call("approvals.decline", { id: "cap_a" }))).code).toBe(
-      "ERR_CAPTURE_STATE",
-    );
-    insertAction("cap_b");
+    insertAction("cap_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+    store.claimAction("cap_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", 1_000);
+    store.finalizeAction("cap_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "executed", {}, 1_000);
+    expect(
+      (await rpcError(call("approvals.decline", { id: "cap_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" })))
+        .code,
+    ).toBe("ERR_CAPTURE_STATE");
+    insertAction("cap_0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c");
     sinkOn = false;
-    expect((await call("approvals.decline", { id: "cap_b" })) as { state: string }).toMatchObject({
+    expect(
+      (await call("approvals.decline", { id: "cap_0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c" })) as {
+        state: string;
+      },
+    ).toMatchObject({
       state: "rejected",
     });
   });
@@ -326,10 +349,19 @@ describe("approvals.decline", () => {
 
 describe("approvals.approve is human-only", () => {
   test("a human approval dispatches once and finalizes executed", async () => {
-    insertAction("cap_a");
+    insertAction("cap_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
     const consent = new FakeConsent();
-    const out = await call("approvals.approve", { id: "cap_a" }, OWNER, consent);
-    expect(out).toEqual({ id: "cap_a", state: "executed", outcomeRef: "https://x.example/1" });
+    const out = await call(
+      "approvals.approve",
+      { id: "cap_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
+      OWNER,
+      consent,
+    );
+    expect(out).toEqual({
+      id: "cap_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      state: "executed",
+      outcomeRef: "https://x.example/1",
+    });
     expect(writesOf()).toHaveLength(1);
     expect(consent.prompts).toHaveLength(1);
     expect(consent.prompts[0]).toContain("Proposed by an outside agent (UNVERIFIED");
@@ -337,17 +369,22 @@ describe("approvals.approve is human-only", () => {
   test.each(["auto", "script", "unknown", "delegate", "remote", "none"] as const)(
     "an approval from source %s dispatches nothing: the row is rejected and the owner is told why",
     async (source) => {
-      insertAction("cap_a");
+      insertAction("cap_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
       const consent = new FakeConsent();
       consent.source = source;
-      const out = (await call("approvals.approve", { id: "cap_a" }, OWNER, consent)) as {
+      const out = (await call(
+        "approvals.approve",
+        { id: "cap_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
+        OWNER,
+        consent,
+      )) as {
         state: string;
         reason?: string;
       };
       expect(out.state).toBe("rejected");
       expect(out.reason).toBe(NON_HUMAN_REASON);
       expect(writesOf()).toEqual([]);
-      expect(store.get("cap_a")?.state).toBe("rejected");
+      expect(store.get("cap_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")?.state).toBe("rejected");
       const executorRow = db
         .query("SELECT hitl_status FROM audit_log WHERE action_type = 'slack.message.post'")
         .all();
@@ -355,10 +392,15 @@ describe("approvals.approve is human-only", () => {
     },
   );
   test("a human decline is a rejection with the executor's own reason, not the non-human text", async () => {
-    insertAction("cap_a");
+    insertAction("cap_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
     const consent = new FakeConsent();
     consent.approved = false;
-    const out = (await call("approvals.approve", { id: "cap_a" }, OWNER, consent)) as {
+    const out = (await call(
+      "approvals.approve",
+      { id: "cap_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
+      OWNER,
+      consent,
+    )) as {
       state: string;
       reason?: string;
     };
@@ -368,7 +410,9 @@ describe("approvals.approve is human-only", () => {
   });
   test("through the real coordinator: a human answer runs, an answer without a source does not", async () => {
     const run = async (answerSource: string | undefined): Promise<string> => {
-      insertAction(`cap_${String(answerSource)}`);
+      const digit = answerSource === "human" ? "1" : answerSource === "auto" ? "3" : "2";
+      const rowId = `cap_${digit.repeat(32)}`;
+      insertAction(rowId);
       const impl: ConsentCoordinatorImpl = new ConsentCoordinatorImpl(() => (n) => {
         const p = n.params as { requestId: string };
         queueMicrotask(() =>
@@ -379,12 +423,9 @@ describe("approvals.approve is human-only", () => {
           }),
         );
       });
-      const out = (await call(
-        "approvals.approve",
-        { id: `cap_${String(answerSource)}` },
-        OWNER,
-        impl,
-      )) as { state: string };
+      const out = (await call("approvals.approve", { id: rowId }, OWNER, impl)) as {
+        state: string;
+      };
       return out.state;
     };
     expect(await run("human")).toBe("executed");
@@ -434,31 +475,52 @@ describe("humanOnlyConsent", () => {
 
 describe("approvals.approve: order and refusals", () => {
   test("act or consent absent is ERR_CAPTURE_DISABLED and nothing runs", async () => {
-    insertAction("cap_a");
-    const noConsent = await rpcError(call("approvals.approve", { id: "cap_a" }));
+    insertAction("cap_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+    const noConsent = await rpcError(
+      call("approvals.approve", { id: "cap_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }),
+    );
     expect(noConsent.code).toBe("ERR_CAPTURE_DISABLED");
     const noAct: CaptureRpcCtx = { gate: ctx.gate };
     const e = await rpcError(
-      call("approvals.approve", { id: "cap_a" }, OWNER, new FakeConsent(), noAct),
+      call(
+        "approvals.approve",
+        { id: "cap_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
+        OWNER,
+        new FakeConsent(),
+        noAct,
+      ),
     );
     expect(e.code).toBe("ERR_CAPTURE_DISABLED");
     expect(dispatched).toEqual([]);
-    expect(store.get("cap_a")?.state).toBe("proposed");
+    expect(store.get("cap_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")?.state).toBe("proposed");
   });
   test("the sink being off freezes approving, as for captures.accept", async () => {
-    insertAction("cap_a");
+    insertAction("cap_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
     sinkOn = false;
-    const e = await rpcError(call("approvals.approve", { id: "cap_a" }, OWNER, new FakeConsent()));
+    const e = await rpcError(
+      call(
+        "approvals.approve",
+        { id: "cap_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
+        OWNER,
+        new FakeConsent(),
+      ),
+    );
     expect(e.code).toBe("ERR_CAPTURE_DISABLED");
   });
   test("a refusal inside the executor comes back rejected with its reason, and no prompt is shown", async () => {
-    insertAction("cap_a");
+    insertAction("cap_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
     const synthetic = withConfirm(row("slack_message_post", "slack.message.post", "write", 4), {
       template: "{channel}",
     });
     const c = makeCtx({ beforeStateRows: [synthetic] });
     const consent = new FakeConsent();
-    const out = (await call("approvals.approve", { id: "cap_a" }, OWNER, consent, c)) as {
+    const out = (await call(
+      "approvals.approve",
+      { id: "cap_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
+      OWNER,
+      consent,
+      c,
+    )) as {
       state: string;
       reason?: string;
     };
@@ -467,7 +529,9 @@ describe("approvals.approve: order and refusals", () => {
     expect(consent.prompts).toEqual([]);
     expect(writesOf()).toEqual([]);
     // AD3a-2a: a refusal made before any prompt now stores its fixed code (a plain decline stores none).
-    expect(store.get("cap_a")?.errorCode).toBe("ERR_ACTION_BEFORE_STATE_UNREADABLE");
+    expect(store.get("cap_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")?.errorCode).toBe(
+      "ERR_ACTION_BEFORE_STATE_UNREADABLE",
+    );
   });
 });
 
@@ -480,10 +544,15 @@ describe("the method table", () => {
       "approvals.decline",
     ]);
     for (const m of APPROVALS_METHODS) {
-      const out = await dispatchApprovalsRpc(m, { id: "cap_none" }, ctx, {
-        clientId: "x",
-        kind: "mcp",
-      }).catch(() => ({ kind: "hit" as const }));
+      const out = await dispatchApprovalsRpc(
+        m,
+        { id: "cap_07070707070707070707070707070707" },
+        ctx,
+        {
+          clientId: "x",
+          kind: "mcp",
+        },
+      ).catch(() => ({ kind: "hit" as const }));
       expect(out.kind).toBe("hit");
     }
     expect(await dispatchApprovalsRpc("approvals.nonesuch", {}, ctx, OWNER)).toEqual({
@@ -512,33 +581,57 @@ describe("routing through tryDispatchPhase4Rpc (the entry server.ts calls)", () 
   test.each([...APPROVALS_METHODS])(
     "%s reaches the handler with the CONNECTION's kind, never a param",
     async (method) => {
-      insertAction("cap_a");
+      insertAction("cap_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
       const s = serverCtx({ captureRpcCtx: ctx }, { o: "cli", u: "unknown", m: "mcp" });
       // An undeclared connection claiming cli in the params is still refused.
       for (const id of ["u", "m"]) {
         await expect(
-          tryDispatchPhase4Rpc(s, method, { id: "cap_a", clientKind: "cli", kind: "cli" }, id),
+          tryDispatchPhase4Rpc(
+            s,
+            method,
+            { id: "cap_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", clientKind: "cli", kind: "cli" },
+            id,
+          ),
         ).rejects.toMatchObject({ rpcData: { code: "ERR_CAPTURE_FORBIDDEN_CLIENT" } });
       }
       // A declared cli connection reaches the handler (list, get and decline answer; approve is
       // refused DISABLED only because this server context has no consent channel wired to a client).
       if (method === "approvals.list") {
         expect(await tryDispatchPhase4Rpc(s, method, {}, "o")).toMatchObject({
-          proposals: [{ id: "cap_a" }],
+          proposals: [{ id: "cap_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }],
         });
       } else if (method === "approvals.get") {
-        expect(await tryDispatchPhase4Rpc(s, method, { id: "cap_a" }, "o")).toMatchObject({
-          id: "cap_a",
+        expect(
+          await tryDispatchPhase4Rpc(
+            s,
+            method,
+            { id: "cap_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
+            "o",
+          ),
+        ).toMatchObject({
+          id: "cap_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         });
       } else if (method === "approvals.decline") {
-        expect(await tryDispatchPhase4Rpc(s, method, { id: "cap_a" }, "o")).toEqual({
-          id: "cap_a",
+        expect(
+          await tryDispatchPhase4Rpc(
+            s,
+            method,
+            { id: "cap_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
+            "o",
+          ),
+        ).toEqual({
+          id: "cap_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
           state: "rejected",
         });
       } else {
         // The route hands approve the server's own coordinator: no client writer, so the executor's
         // prompt cannot be delivered and the proposal is not executed.
-        const out = (await tryDispatchPhase4Rpc(s, method, { id: "cap_a" }, "o")) as {
+        const out = (await tryDispatchPhase4Rpc(
+          s,
+          method,
+          { id: "cap_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
+          "o",
+        )) as {
           state: string;
         };
         expect(out.state).not.toBe("executed");
@@ -595,7 +688,10 @@ describe("AD3a-2a: the owner list counts for the act path", () => {
   }
 
   test("approvals.list shows the wave and typed-confirm flag of a real Wave 4 row", async () => {
-    insertAction("cap_m", { actionType: "github.pr.merge", input: { number: 1 } });
+    insertAction("cap_0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", {
+      actionType: "github.pr.merge",
+      input: { number: 1 },
+    });
     const out = (await call("approvals.list", {})) as {
       proposals: Array<{ wave: number; typedConfirm: boolean }>;
     };
@@ -604,10 +700,10 @@ describe("AD3a-2a: the owner list counts for the act path", () => {
 
   test("approvals.approve passes humanOnly, so an approved-basis proposal runs; captures.accept does not, and refuses it", async () => {
     const c = approvedCtx();
-    insertAction("cap_h");
+    insertAction("cap_0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f");
     const viaApprovals = (await call(
       "approvals.approve",
-      { id: "cap_h" },
+      { id: "cap_0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f" },
       OWNER,
       new FakeConsent(),
       c,
@@ -615,13 +711,17 @@ describe("AD3a-2a: the owner list counts for the act path", () => {
       state: string;
     };
     expect(viaApprovals.state).toBe("executed");
-    insertAction("cap_r");
+    insertAction("cap_0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b");
     const e = await rpcError(
-      dispatchCaptureRpc("captures.accept", { id: "cap_r" }, c, OWNER, new FakeConsent()).then(
-        (r) => (r.kind === "miss" ? Promise.reject(new Error("miss")) : r.value),
-      ),
+      dispatchCaptureRpc(
+        "captures.accept",
+        { id: "cap_0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b" },
+        c,
+        OWNER,
+        new FakeConsent(),
+      ).then((r) => (r.kind === "miss" ? Promise.reject(new Error("miss")) : r.value)),
     );
     expect(e.code).toBe("ERR_CAPTURE_FORBIDDEN_CLIENT");
-    expect(store.get("cap_r")?.state).toBe("proposed");
+    expect(store.get("cap_0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b")?.state).toBe("proposed");
   });
 });

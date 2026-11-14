@@ -87,7 +87,7 @@ beforeEach(() => {
       ),
     limiter: new CaptureAttemptLimiter(),
     refusals: new CaptureRefusalCounter(),
-    newId: () => `cap_${String(++seq)}`,
+    newId: () => `cap_${String(++seq).padStart(32, "0")}`,
     now: () => 1_000,
     actionDestinationRefusal: () => undefined,
   };
@@ -189,14 +189,40 @@ describe("dispatchCaptureRpc", () => {
     const own = { clientId: "o", kind: "cli" as const };
     expect((await dispatchCaptureRpc("capture.status", {}, ctx, mcp)).kind).toBe("hit");
     const sub = await dispatchCaptureRpc("capture.submit", NOTE, ctx, mcp);
-    expect(sub).toEqual({ kind: "hit", value: { id: "cap_1", state: "live" } });
-    expect((await dispatchCaptureRpc("captures.list", {}, ctx, own)).kind).toBe("hit");
-    expect((await dispatchCaptureRpc("captures.get", { id: "cap_1" }, ctx, own)).kind).toBe("hit");
-    expect(await dispatchCaptureRpc("captures.revoke", { id: "cap_1" }, ctx, own)).toEqual({
+    expect(sub).toEqual({
       kind: "hit",
-      value: { id: "cap_1", state: "revoked" },
+      value: { id: "cap_00000000000000000000000000000001", state: "live" },
     });
-    expect(await dispatchCaptureRpc("captures.nonesuch", { id: "cap_1" }, ctx, own)).toEqual({
+    expect((await dispatchCaptureRpc("captures.list", {}, ctx, own)).kind).toBe("hit");
+    expect(
+      (
+        await dispatchCaptureRpc(
+          "captures.get",
+          { id: "cap_00000000000000000000000000000001" },
+          ctx,
+          own,
+        )
+      ).kind,
+    ).toBe("hit");
+    expect(
+      await dispatchCaptureRpc(
+        "captures.revoke",
+        { id: "cap_00000000000000000000000000000001" },
+        ctx,
+        own,
+      ),
+    ).toEqual({
+      kind: "hit",
+      value: { id: "cap_00000000000000000000000000000001", state: "revoked" },
+    });
+    expect(
+      await dispatchCaptureRpc(
+        "captures.nonesuch",
+        { id: "cap_00000000000000000000000000000001" },
+        ctx,
+        own,
+      ),
+    ).toEqual({
       kind: "miss",
     });
   });
@@ -269,7 +295,7 @@ describe("routing through tryDispatchPhase4Rpc (the entry server.ts calls)", () 
   test("capture.submit reaches the gate with the CONNECTION's kind, not a param", async () => {
     const s = serverCtx({ captureRpcCtx: ctx }, { m: "mcp", o: "cli" });
     expect(await tryDispatchPhase4Rpc(s, "capture.submit", NOTE, "m")).toEqual({
-      id: "cap_1",
+      id: "cap_00000000000000000000000000000001",
       state: "live",
     });
     await expect(
@@ -340,8 +366,9 @@ describe("buildActDeps (act door)", () => {
     return { act: buildActDeps(w, coord, "c-cli"), prompts };
   }
   const PROV = {
-    captureId: "cap_1",
+    captureId: "cap_00010001000100010001000100010001",
     clientLabel: "agent",
+    labelSource: "declared" as const,
     createdAt: 0,
     expiresAt: 1,
     summary: "why",
@@ -421,8 +448,9 @@ describe("buildActDeps: the typed preview for a templated proposable row (F5)", 
     fields: [textField("description", "Description", "(none)")],
   });
   const PROV = {
-    captureId: "cap_9",
+    captureId: "cap_00090009000900090009000900090009",
     clientLabel: `agent${String.fromCodePoint(0x202e)}evil`,
+    labelSource: "declared" as const,
     createdAt: 0,
     expiresAt: 60_000,
     summary: "Summary: totally safe",
@@ -669,7 +697,16 @@ test("capture.mine lists only the asking connection's captures, with no payload"
   const mine = await dispatchCaptureRpc("capture.mine", {}, ctx, a);
   expect(mine).toEqual({
     kind: "hit",
-    value: { captures: [{ id: "cap_1", kind: "note", state: "live", createdAt: 1_000 }] },
+    value: {
+      captures: [
+        {
+          id: "cap_00000000000000000000000000000001",
+          kind: "note",
+          state: "live",
+          createdAt: 1_000,
+        },
+      ],
+    },
   });
   await expect(
     dispatchCaptureRpc("capture.mine", {}, ctx, { clientId: "o", kind: "cli" }),
@@ -767,7 +804,7 @@ describe("captures.accept on an action (act door wiring)", () => {
       isServiceConfigured: () => Promise.resolve(true),
     };
     gate.store.insert({
-      id: "cap_act",
+      id: "cap_0a0c0a0c0a0c0a0c0a0c0a0c0a0c0a0c",
       kind: "action",
       state: "proposed",
       itemId: null,
@@ -812,19 +849,22 @@ describe("captures.accept on an action (act door wiring)", () => {
     } as unknown as ConsentCoordinator;
     const out = await dispatchCaptureRpc(
       "captures.accept",
-      { id: "cap_act" },
+      { id: "cap_0a0c0a0c0a0c0a0c0a0c0a0c0a0c0a0c" },
       actionCtx(d),
       OWNER,
       consent,
     );
-    expect(out).toEqual({ kind: "hit", value: { id: "cap_act", state: "executed" } });
+    expect(out).toEqual({
+      kind: "hit",
+      value: { id: "cap_0a0c0a0c0a0c0a0c0a0c0a0c0a0c0a0c", state: "executed" },
+    });
     expect(asked).toEqual(["o"]);
     expect(writesOf(d)).toEqual([
       {
         type: "slack.message.post",
         origin: "agent",
         proposer: proposerFrom({
-          captureId: "cap_act",
+          captureId: "cap_0a0c0a0c0a0c0a0c0a0c0a0c0a0c0a0c",
           clientLabel: "agent",
           createdAt: 500,
           expiresAt: 2_000,
@@ -843,10 +883,15 @@ describe("captures.accept on an action (act door wiring)", () => {
     const d: PlannedAction[] = [];
     const c = actionCtx(d);
     await expect(
-      dispatchCaptureRpc("captures.accept", { id: "cap_act" }, c, OWNER),
+      dispatchCaptureRpc(
+        "captures.accept",
+        { id: "cap_0a0c0a0c0a0c0a0c0a0c0a0c0a0c0a0c" },
+        c,
+        OWNER,
+      ),
     ).rejects.toMatchObject({ rpcData: { code: "ERR_CAPTURE_DISABLED" } });
     expect(d).toEqual([]);
-    expect(c.gate.store.get("cap_act")?.state).toBe("proposed");
+    expect(c.gate.store.get("cap_0a0c0a0c0a0c0a0c0a0c0a0c0a0c0a0c")?.state).toBe("proposed");
   });
 });
 
@@ -896,8 +941,9 @@ function boundPolicy(channels: readonly string[]): EnforcedPolicy {
 
 describe("B1 act door: every proposable B1 type shows its typed preview (Task 4)", () => {
   const PROV = {
-    captureId: "cap_b1",
+    captureId: "cap_b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1",
     clientLabel: "agent",
+    labelSource: "declared" as const,
     createdAt: 0,
     expiresAt: 1,
     summary: "why",
@@ -1246,8 +1292,9 @@ const C2_PROPOSABLE: ReadonlyArray<[string, Record<string, unknown>]> = [
 
 describe("B2 act door: every proposable issue write shows its typed preview, with the before-state the executor reads", () => {
   const PROV = {
-    captureId: "cap_b2",
+    captureId: "cap_b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
     clientLabel: "agent",
+    labelSource: "declared" as const,
     createdAt: 0,
     expiresAt: 1,
     summary: "why",
@@ -1315,8 +1362,9 @@ const B3_PROPOSABLE: ReadonlyArray<[string, Record<string, unknown>]> = [
 
 describe("B3 act door: every draft and page write shows its typed preview, with the before-state the executor reads", () => {
   const PROV = {
-    captureId: "cap_b3",
+    captureId: "cap_b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3",
     clientLabel: "agent",
+    labelSource: "declared" as const,
     createdAt: 0,
     expiresAt: 1,
     summary: "why",
@@ -1397,8 +1445,9 @@ const B4A_PROPOSABLE: ReadonlyArray<[string, Record<string, unknown>]> = [
 
 describe("B4a act door: the calendar and Drive creates show their typed preview, with no before", () => {
   const PROV = {
-    captureId: "cap_b4a",
+    captureId: "cap_b4ab4ab4ab4ab4ab4ab4ab4ab4ab4a00",
     clientLabel: "agent",
+    labelSource: "declared" as const,
     createdAt: 0,
     expiresAt: 1,
     summary: "why",

@@ -13,7 +13,14 @@ import { openMigratedMemoryDb } from "../../../src/index/migrated-db-template.ts
 import { buildActDeps } from "../../../src/ipc/capture-rpc.ts";
 import type { ConsentCoordinator } from "../../../src/ipc/consent.ts";
 
-const PROV = { captureId: "cap_1", clientLabel: null, createdAt: 0, expiresAt: 1, summary: "s" };
+const PROV = {
+  captureId: `cap_${"1".padStart(32, "0")}`,
+  clientLabel: null,
+  labelSource: "declared" as const,
+  createdAt: 0,
+  expiresAt: 1,
+  summary: "s",
+};
 const approve = {
   requestConsent: () => Promise.resolve({ approved: true, answerSource: "human" }),
 } as unknown as ConsentCoordinator;

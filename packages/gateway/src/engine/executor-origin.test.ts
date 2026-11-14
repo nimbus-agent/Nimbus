@@ -15,7 +15,7 @@ import type { AgentProposer, PlannedAction } from "./types.ts";
 const LINE = "Requested by: the model";
 const PROPOSER: AgentProposer = {
   door: "agent",
-  captureId: "cap_abc123",
+  captureId: "cap_abc123abc123abc123abc123abc123ab",
   label: "client",
   labelSource: "declared",
   summary: "a summary",

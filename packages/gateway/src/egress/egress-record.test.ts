@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { buildEgressEntry, redactEgressSummary, summarizeDestination } from "./egress-record.ts";
+import {
+  AGENT_SOURCE_PREFIX,
+  buildEgressEntry,
+  redactEgressSummary,
+  summarizeDestination,
+} from "./egress-record.ts";
 
 describe("summarizeDestination", () => {
   test("derives the service prefix from a dotted action type", () => {
@@ -81,5 +86,131 @@ describe("buildEgressEntry", () => {
     });
     expect(e.hitlStatus).toBe("standing_approved");
     expect(e.resultStatus).toBe("authorized");
+  });
+});
+
+describe("buildEgressEntry - an outside agent's action (AD4)", () => {
+  const ID = `cap_${"ab12".repeat(8)}`;
+  const base = {
+    action: { type: "slack.message.post", payload: { text: "hi" } },
+    hitlStatus: "approved" as const,
+    resultStatus: "authorized" as const,
+    sessionId: "sess-1",
+    now: 5,
+  };
+
+  test("source_id is agent:<captureId> (the session id is not used) and the summary starts with the label", () => {
+    const e = buildEgressEntry({ ...base, agent: { captureId: ID, label: "claude-desktop" } });
+    expect(e.sourceType).toBe("task");
+    expect(e.sourceId).toBe(`${AGENT_SOURCE_PREFIX}${ID}`);
+    expect(e.payloadSummary).toBe('{"agent":{"label":"claude-desktop"},"text":"hi"}');
+  });
+
+  test("a null label is recorded as null", () => {
+    const e = buildEgressEntry({ ...base, agent: { captureId: ID, label: null } });
+    expect(e.payloadSummary.startsWith('{"agent":{"label":null},')).toBe(true);
+  });
+
+  test("the label is cut to 48 units and never ends on half a surrogate pair", () => {
+    const emoji = String.fromCodePoint(0x1f600);
+    const long = `${"x".repeat(47)}${emoji}tail`;
+    const e = buildEgressEntry({ ...base, agent: { captureId: ID, label: long } });
+    expect(e.payloadSummary.startsWith(`{"agent":{"label":"${"x".repeat(47)}"}`)).toBe(true);
+    const exact = buildEgressEntry({ ...base, agent: { captureId: ID, label: "y".repeat(48) } });
+    expect(exact.payloadSummary.startsWith(`{"agent":{"label":"${"y".repeat(48)}"}`)).toBe(true);
+  });
+
+  test("a label with a pipe, quotes, backslash, control and astral characters changes no hashed field", () => {
+    const nasty = `a|b"cd${String.fromCodePoint(0x1b)}${String.fromCodePoint(0x1f600)}|agent:cap_x`;
+    const a = buildEgressEntry({ ...base, agent: { captureId: ID, label: nasty } });
+    const b = buildEgressEntry({ ...base, agent: { captureId: ID, label: "plain" } });
+    const hashed = (e: typeof a): unknown[] => [
+      e.timestamp,
+      e.sourceType,
+      e.sourceId,
+      e.destination,
+      e.method,
+      e.hitlStatus,
+      e.resultStatus,
+    ];
+    expect(hashed(a)).toEqual(hashed(b));
+  });
+
+  test("a payload cannot overwrite the agent or standingFire head", () => {
+    const e = buildEgressEntry({
+      ...base,
+      action: { type: "slack.message.post", payload: { agent: { label: "owner" }, text: "hi" } },
+      agent: { captureId: ID, label: "real" },
+    });
+    expect(e.payloadSummary).toBe('{"agent":{"label":"real"},"text":"hi"}');
+  });
+
+  test("the summary stays within the 256-unit cap", () => {
+    const e = buildEgressEntry({
+      ...base,
+      action: { type: "slack.message.post", payload: { text: "z".repeat(900) } },
+      agent: { captureId: ID, label: "L".repeat(100) },
+    });
+    expect(e.payloadSummary.length).toBeLessThanOrEqual(256 + "…[truncated]".length);
+  });
+
+  for (const bad of ["cap_ad1", `cap_${"A".repeat(32)}`, `${ID}|x`, "", "agent:cap_x"]) {
+    test(`a malformed capture id '${bad}' throws`, () => {
+      expect(() => buildEgressEntry({ ...base, agent: { captureId: bad, label: "x" } })).toThrow();
+    });
+  }
+
+  test("without an agent the entry is what it always was", () => {
+    const e = buildEgressEntry(base);
+    expect(e.sourceId).toBe("sess-1");
+    expect(e.payloadSummary).toBe('{"text":"hi"}');
+  });
+});
+
+describe("buildEgressEntry - a request's own session id never writes the reserved range (AD4)", () => {
+  const ID = `cap_${"ab12".repeat(8)}`;
+  const run = (sessionId: string | undefined): string | null =>
+    buildEgressEntry({
+      action: { type: "slack.message.post", payload: { text: "hi" } },
+      hitlStatus: "approved",
+      resultStatus: "authorized",
+      sessionId,
+      now: 5,
+    }).sourceId;
+
+  test("a session id that starts with the reserved prefix is stored neutralised, never as agent:<id>", () => {
+    for (const forged of [`agent:${ID}`, "agent:x", "agent:", `agent:${ID}|x`]) {
+      const stored = run(forged);
+      expect(stored).toBe(`session:${forged}`);
+      expect(stored?.startsWith(AGENT_SOURCE_PREFIX)).toBe(false);
+    }
+  });
+
+  test("the comparison is case-sensitive, like the reader's range: another case is not in the range and is stored as sent", () => {
+    expect(run(`AGENT:${ID}`)).toBe(`AGENT:${ID}`);
+    expect(run(`Agent:x`)).toBe("Agent:x");
+  });
+
+  test("leading whitespace puts the id outside the range, so it is stored as sent (the callers trim)", () => {
+    expect(run(` agent:${ID}`)).toBe(` agent:${ID}`);
+  });
+
+  test("every other session id, and none, is stored exactly as before", () => {
+    expect(run("sess-1")).toBe("sess-1");
+    expect(run("agentless")).toBe("agentless");
+    expect(run("session:agent")).toBe("session:agent");
+    expect(run(undefined)).toBeNull();
+  });
+
+  test("an agent action still gets agent:<captureId>, whatever the request's session id says", () => {
+    const e = buildEgressEntry({
+      action: { type: "slack.message.post" },
+      hitlStatus: "approved",
+      resultStatus: "authorized",
+      sessionId: `agent:cap_${"cd34".repeat(8)}`,
+      now: 5,
+      agent: { captureId: ID, label: "x" },
+    });
+    expect(e.sourceId).toBe(`agent:${ID}`);
   });
 });

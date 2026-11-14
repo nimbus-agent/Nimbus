@@ -222,7 +222,7 @@ function refuseAudited(
   appendAuditEntry(deps.db, {
     actionType: "capture.submit",
     hitlStatus: "rejected",
-    actionJson: JSON.stringify({ kind, clientLabel, outcome: code }),
+    actionJson: JSON.stringify({ kind, clientLabel, connection: caller.clientId, outcome: code }),
     timestamp: deps.now(),
     sessionId: caller.clientId,
   });
@@ -702,6 +702,8 @@ function writeSubmittedCapture(
         ...(v.kind === "action" && basis !== undefined ? { basis } : {}),
         payloadBytes,
         clientLabel,
+        // AD4 (OR-AD-20): the submitting connection's id, so a report can count connections per label.
+        connection: caller.clientId,
         outcome: proposal ? "proposed" : "captured",
       }),
       timestamp: now,

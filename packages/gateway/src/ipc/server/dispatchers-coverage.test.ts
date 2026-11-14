@@ -267,7 +267,7 @@ describe("tryDispatchAuditRpc — miss path returns phase4RpcSkipped", () => {
     const localIndex = new LocalIndex(db);
     const ctx = makeCtx({ localIndex });
     // audit.verify with a valid index should succeed (covers the hit path, not the miss)
-    const out = await tryDispatchAuditRpc(ctx, "audit.verify", {});
+    const out = await tryDispatchAuditRpc(ctx, "audit.verify", {}, "c1");
     expect(out).toBeDefined();
   });
 });

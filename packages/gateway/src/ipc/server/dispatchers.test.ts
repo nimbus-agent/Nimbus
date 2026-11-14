@@ -469,19 +469,47 @@ describe("tryDispatchUpdaterRpc", () => {
 describe("tryDispatchAuditRpc", () => {
   test("skips other methods", async () => {
     const { ctx } = makeCtx();
-    expect(await tryDispatchAuditRpc(ctx, "engine.ask", {})).toBe(phase4RpcSkipped);
+    expect(await tryDispatchAuditRpc(ctx, "engine.ask", {}, "c1")).toBe(phase4RpcSkipped);
   });
   test("throws when localIndex undefined and method is audit.*", async () => {
     const { ctx } = makeCtx();
-    await expect(tryDispatchAuditRpc(ctx, "audit.verify", {})).rejects.toThrow(
+    await expect(tryDispatchAuditRpc(ctx, "audit.verify", {}, "c1")).rejects.toThrow(
       /LocalIndex not configured/,
     );
+  });
+  test("AD4: the proof methods take the kind from the CONNECTION (getClientKind), not from a param", async () => {
+    const db = trackedDb();
+    const localIndex = new LocalIndex(db);
+    const { ctx } = makeCtx({ localIndex });
+    const asKind = (kind: "cli" | "ui" | "mcp" | "unknown") => ({
+      ...ctx,
+      getClientKind: () => kind,
+    });
+    for (const kind of ["cli", "ui"] as const) {
+      const out = await tryDispatchAuditRpc(
+        asKind(kind),
+        "audit.listByDoor",
+        { door: "agent" },
+        "c1",
+      );
+      expect(out).toMatchObject({ labelsVerified: false });
+    }
+    for (const kind of ["mcp", "unknown"] as const) {
+      // A param naming a better kind changes nothing.
+      const err = await tryDispatchAuditRpc(
+        asKind(kind),
+        "audit.proveByProposer",
+        { callerKind: "cli", kind: "cli", clientKind: "cli" },
+        "c1",
+      ).catch((e: unknown) => e);
+      expect((err as { rpcCode?: number }).rpcCode).toBe(-32001);
+    }
   });
   test("delegates to dispatchAuditRpc when localIndex available", async () => {
     const db = trackedDb();
     const localIndex = new LocalIndex(db);
     const { ctx } = makeCtx({ localIndex });
-    const out = await tryDispatchAuditRpc(ctx, "audit.verify", {});
+    const out = await tryDispatchAuditRpc(ctx, "audit.verify", {}, "c1");
     expect(out).toBeDefined();
   });
 });

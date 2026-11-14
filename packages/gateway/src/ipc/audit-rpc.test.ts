@@ -94,3 +94,96 @@ describe("audit.export alias", () => {
     expect(rows1).toHaveLength(rows2.length);
   });
 });
+
+describe("Phase 28 AD4: audit.proveByProposer and audit.listByDoor", () => {
+  const METHODS = ["audit.proveByProposer", "audit.listByDoor"] as const;
+  const PARAMS: Record<(typeof METHODS)[number], unknown> = {
+    "audit.proveByProposer": {},
+    "audit.listByDoor": { door: "agent" },
+  };
+
+  test("both answer a connection that declared cli or ui", async () => {
+    for (const kind of ["cli", "ui"] as const) {
+      for (const m of METHODS) {
+        const out = await dispatchAuditRpc(m, PARAMS[m], {
+          index: seededIndex(),
+          callerKind: kind,
+        });
+        expect(out.kind).toBe("hit");
+        if (out.kind === "hit") {
+          expect((out.value as { labelsVerified: boolean }).labelsVerified).toBe(false);
+        }
+      }
+    }
+  });
+
+  test("both refuse every other kind, and a missing kind, BEFORE any read", async () => {
+    for (const kind of ["mcp", "unknown", "http", "chatops", "fleet", "push", undefined] as const) {
+      for (const m of METHODS) {
+        // No index at all: a refusal that came after the index check would be -32603, not -32001.
+        const err = await dispatchAuditRpc(m, PARAMS[m], {
+          index: undefined,
+          ...(kind === undefined ? {} : { callerKind: kind }),
+        }).catch((e: unknown) => e);
+        expect(err).toBeInstanceOf(AuditRpcError);
+        expect((err as AuditRpcError).rpcCode).toBe(-32001);
+      }
+    }
+  });
+
+  test("bad params are -32602 (the kind is checked first)", async () => {
+    const ctx = { index: seededIndex(), callerKind: "cli" as const };
+    const bad: Array<[string, unknown]> = [
+      ["audit.proveByProposer", "x"],
+      ["audit.proveByProposer", { sinceMs: -1 }],
+      ["audit.proveByProposer", { sinceMs: 1.5 }],
+      ["audit.proveByProposer", { untilMs: "x" }],
+      ["audit.proveByProposer", { sinceMs: 10, untilMs: 5 }],
+      ["audit.proveByProposer", { proposer: 5 }],
+      ["audit.proveByProposer", { proposer: "" }],
+      ["audit.listByDoor", undefined],
+      ["audit.listByDoor", {}],
+      ["audit.listByDoor", { door: "owner" }],
+      ["audit.listByDoor", { door: "agent", limit: 0 }],
+      ["audit.listByDoor", { door: "agent", limit: 1001 }],
+      ["audit.listByDoor", { door: "model", proposer: "x" }],
+      ["audit.listByDoor", { door: "agent", proposer: "x".repeat(401) }],
+    ];
+    for (const [m, p] of bad) {
+      const err = await dispatchAuditRpc(m, p, ctx).catch((e: unknown) => e);
+      expect((err as AuditRpcError).rpcCode, `${m} ${JSON.stringify(p)}`).toBe(-32602);
+    }
+  });
+
+  test("without an index it fails with -32603 once the kind is right", async () => {
+    const err = await dispatchAuditRpc(
+      "audit.listByDoor",
+      { door: "agent" },
+      {
+        index: undefined,
+        callerKind: "cli",
+      },
+    ).catch((e: unknown) => e);
+    expect((err as AuditRpcError).rpcCode).toBe(-32603);
+  });
+
+  test("the proof runs both chain verifies and reports a broken chain as indeterminate", async () => {
+    const idx = seededIndex();
+    idx.rawDb.run("UPDATE audit_log SET action_json = '{\"t\":1}' WHERE id = 1");
+    const out = await dispatchAuditRpc(
+      "audit.proveByProposer",
+      {},
+      { index: idx, callerKind: "cli" },
+    );
+    if (out.kind !== "hit") throw new Error("expected hit");
+    const proof = out.value as { completeness: { status: string; causes: string[] } };
+    expect(proof.completeness.status).toBe("indeterminate");
+    expect(proof.completeness.causes).toContain("audit_chain_broken");
+    expect(proof.completeness.causes).toContain("coverage_none");
+  });
+
+  test("the unmodified audit methods still answer without a kind", async () => {
+    const out = await dispatchAuditRpc("audit.getSummary", {}, { index: seededIndex() });
+    expect(out.kind).toBe("hit");
+  });
+});

@@ -12,6 +12,9 @@ import {
 import { computeEgressRowHash } from "./egress-ledger.ts";
 import { MARKER_SOURCE_TYPES } from "./egress-source-type.ts";
 
+/** Rows read per page while verifying the chain; bounds memory, never the result. */
+const VERIFY_PAGE_ROWS = 1_000;
+
 /** Hard ceiling on `listEgress` rows — bounds the cost of an IPC-supplied `limit`. */
 const MAX_EGRESS_LIST_LIMIT = 5000;
 
@@ -112,13 +115,13 @@ export function verifyEgressChain(db: Database, fromId = 0): EgressVerifyResult 
   // Its own type rather than the shared `RawRow`, because `listEgress` still selects
   // the column and `toRow` still reads it — narrowing the shared type would break that
   // caller at compile time.
-  const rows = db
-    .query(
-      `SELECT id, timestamp, source_type, source_id, destination, method,
+  // Read in id-ordered pages so memory is bounded by one page, not by the table; the walk and its
+  // result are the same as one read of every row.
+  const page = db.query<VerifyRow, [number, number]>(
+    `SELECT id, timestamp, source_type, source_id, destination, method,
               hitl_status, result_status, row_hash, prev_hash
-       FROM egress_ledger WHERE id > ? ORDER BY id ASC`,
-    )
-    .all(start) as VerifyRow[];
+       FROM egress_ledger WHERE id > ? ORDER BY id ASC LIMIT ?`,
+  );
 
   let prev =
     start > 0
@@ -131,44 +134,50 @@ export function verifyEgressChain(db: Database, fromId = 0): EgressVerifyResult 
 
   let verified = 0;
   let isFirst = true;
-  for (const r of rows) {
-    if (!sha256HexEqualConstantTime(r.prev_hash, prev)) {
-      // Accept a boundary mismatch only at the very first row of the walk when the prev_hash is
-      // an attested prune boundary. A mid-chain mismatch is always a real break (fail-closed).
-      if (isFirst && attestedBoundaries.has(r.prev_hash)) {
-        // Legitimate prune boundary: advance `prev` to the attested boundary so the row_hash
-        // recomputation below uses the correct prevHash the row was originally written with.
-        prev = r.prev_hash;
-      } else {
+  let after = start;
+  for (;;) {
+    const rows = page.all(after, VERIFY_PAGE_ROWS);
+    for (const r of rows) {
+      if (!sha256HexEqualConstantTime(r.prev_hash, prev)) {
+        // Accept a boundary mismatch only at the very first row of the walk when the prev_hash is
+        // an attested prune boundary. A mid-chain mismatch is always a real break (fail-closed).
+        if (isFirst && attestedBoundaries.has(r.prev_hash)) {
+          // Legitimate prune boundary: advance `prev` to the attested boundary so the row_hash
+          // recomputation below uses the correct prevHash the row was originally written with.
+          prev = r.prev_hash;
+        } else {
+          return {
+            ok: false,
+            verifiedRows: verified,
+            brokenAt: r.id,
+            reason: `prev_hash mismatch at id ${String(r.id)}`,
+          };
+        }
+      }
+      const expected = computeEgressRowHash({
+        prevHash: prev,
+        timestamp: r.timestamp,
+        sourceType: r.source_type,
+        sourceId: r.source_id,
+        destination: r.destination,
+        method: r.method,
+        hitlStatus: r.hitl_status,
+        resultStatus: r.result_status,
+      });
+      if (!sha256HexEqualConstantTime(expected, r.row_hash)) {
         return {
           ok: false,
           verifiedRows: verified,
           brokenAt: r.id,
-          reason: `prev_hash mismatch at id ${String(r.id)}`,
+          reason: `row_hash mismatch at id ${String(r.id)}`,
         };
       }
+      prev = r.row_hash;
+      verified += 1;
+      isFirst = false;
+      after = r.id;
     }
-    const expected = computeEgressRowHash({
-      prevHash: prev,
-      timestamp: r.timestamp,
-      sourceType: r.source_type,
-      sourceId: r.source_id,
-      destination: r.destination,
-      method: r.method,
-      hitlStatus: r.hitl_status,
-      resultStatus: r.result_status,
-    });
-    if (!sha256HexEqualConstantTime(expected, r.row_hash)) {
-      return {
-        ok: false,
-        verifiedRows: verified,
-        brokenAt: r.id,
-        reason: `row_hash mismatch at id ${String(r.id)}`,
-      };
-    }
-    prev = r.row_hash;
-    verified += 1;
-    isFirst = false;
+    if (rows.length < VERIFY_PAGE_ROWS) break;
   }
   return { ok: true, verifiedRows: verified };
 }

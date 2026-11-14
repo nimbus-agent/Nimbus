@@ -91,8 +91,9 @@ const MAIL_SENDS = [
 ];
 
 const PROV = {
-  captureId: "cap_ad1",
+  captureId: "cap_00a100a100a100a100a100a100a100a1",
   clientLabel: "agent",
+  labelSource: "declared" as const,
   createdAt: 0,
   expiresAt: 60_000,
   summary: "why",
@@ -246,7 +247,12 @@ describe("the act door now reads the target's current state (the model door's ru
       .get() as { action_json: string };
     const action = (JSON.parse(row.action_json) as { action: Record<string, unknown> }).action;
     expect(action["origin"]).toBe("agent");
-    expect(action["proposer"]).toEqual({ door: "agent", captureId: "cap_ad1" });
+    expect(action["proposer"]).toEqual({
+      door: "agent",
+      captureId: PROV.captureId,
+      label: "agent",
+      labelSource: "declared",
+    });
     expect(row.action_json).not.toContain("SENTINEL-77");
   });
 
@@ -317,5 +323,34 @@ describe("the act door now reads the target's current state (the model door's ru
       (await h.act.execute("jira.comment.add", { issueKey: "NIM-1", body: "x" }, PROV)).status,
     ).toBe("rejected");
     expect(h.dispatched.map((a) => a.type)).toEqual(["jira.before.read"]);
+  });
+});
+
+describe("AD4 (correction 5): the ledger rows of an agent action through the approval path", () => {
+  test("PIN FLIPPED: nothing sets a request context there, so source_id was NULL; it is now agent:<captureId>", async () => {
+    const h = harness();
+    await h.act.execute("slack.message.post", { text: "hi" }, PROV);
+    const row = db
+      .query(
+        "SELECT source_type, source_id, payload_summary FROM egress_ledger WHERE method = 'slack.message.post'",
+      )
+      .get() as { source_type: string; source_id: string | null; payload_summary: string };
+    expect(row.source_type).toBe("task");
+    expect(row.source_id).toBe(`agent:${PROV.captureId}`);
+    expect(row.payload_summary.startsWith('{"agent":{"label":"agent"},')).toBe(true);
+    // The audit column stays what it was: no request context sets a session id on this path.
+    const audit = db
+      .query("SELECT session_id FROM audit_log WHERE action_type = 'slack.message.post'")
+      .get() as { session_id: string | null };
+    expect(audit.session_id).toBeNull();
+  });
+
+  test("labelSource travels from the provenance to the proposer (a kit source is copied, never reset)", async () => {
+    const h = harness();
+    await h.act.execute("slack.message.post", { text: "hi" }, { ...PROV, labelSource: "kit" });
+    const row = db
+      .query("SELECT action_json FROM audit_log WHERE action_type = 'slack.message.post'")
+      .get() as { action_json: string };
+    expect(row.action_json).toContain('"label":"agent","labelSource":"kit"');
   });
 });

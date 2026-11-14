@@ -347,6 +347,40 @@ describe("runProve (dispatcher through withConsentIpc)", () => {
     expect(out.stdout).not.toContain("0 ✓");
   });
 
+  it("--since <dur> is a window, never the query: agent.invoke is not called with the duration", async () => {
+    const ipc = createMockIpcClient([
+      {
+        rows: [],
+        completeness: { ...COVERED_COMPLETENESS, outboundEgressEvents: 0 },
+        verify: { ok: true },
+      }, // egress.proveWindow
+    ]);
+    wiredGateway(ipc.client.call);
+    const t0 = Date.now();
+    await runProve(["--since", "7d"]);
+    expect(ipc.calls.map((c) => c.method)).toEqual(["egress.proveWindow"]);
+    const params = ipc.calls[0]?.params as { since?: number } | undefined;
+    const week = 7 * 24 * 60 * 60 * 1000;
+    expect(params?.since as number).toBeLessThanOrEqual(t0 - week + 5_000);
+    expect(params?.since as number).toBeGreaterThanOrEqual(t0 - week - 5_000);
+  });
+
+  it("--since with no value is a usage error before any IPC call", async () => {
+    const ipc = createMockIpcClient([]);
+    wiredGateway(ipc.client.call);
+    await expect(runProve(["--since"])).rejects.toThrow("--since needs a value");
+    await expect(runProve(["--since", "--receipt"])).rejects.toThrow("--since needs a value");
+    expect(ipc.calls).toEqual([]);
+  });
+
+  it("a repeated --since is a usage error and its operand is never sent to agent.invoke", async () => {
+    const ipc = createMockIpcClient([]);
+    wiredGateway(ipc.client.call);
+    await expect(runProve(["--since", "7d", "--since", "1d"])).rejects.toThrow("more than once");
+    expect(ipc.calls.map((c) => c.method)).not.toContain("agent.invoke");
+    expect(ipc.calls).toEqual([]);
+  });
+
   it("reports the egress window when the head advances", async () => {
     const ipc = createMockIpcClient([
       {}, // agent.invoke

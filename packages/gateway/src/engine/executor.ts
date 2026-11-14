@@ -28,7 +28,7 @@ import type {
 import { mcpClientToolKey } from "../connectors/lazy-mesh/tool-map.ts";
 import { isOwnerCodeServerServiceId } from "../connectors/owner-code-server.ts";
 import type { EgressSink } from "../egress/egress-ledger.ts";
-import { buildEgressEntry } from "../egress/egress-record.ts";
+import { assertAgentCaptureId, buildEgressEntry } from "../egress/egress-record.ts";
 import type { ConsentCoordinator } from "../ipc/consent.ts";
 import { ConsentDisconnectedError } from "../ipc/consent.ts";
 import { codeUnitCompare } from "../util/code-unit-compare.ts";
@@ -661,19 +661,31 @@ function omitPromptText(payload: Record<string, unknown>): Record<string, unknow
 
 /** An action as the audit row records it: the proposer is projected to the door and the capture. */
 type AuditedAction = Omit<PlannedAction, "proposer"> & {
-  proposer?: Pick<AgentProposer, "door" | "captureId">;
+  proposer?: Pick<AgentProposer, "door" | "captureId" | "label" | "labelSource">;
 };
 
 /**
- * Phase 28 AD1: an agent proposal's row names the door and the capture; the agent's own label and
- * summary stay out of the chain. The projection comes BEFORE the payload, which the row's size cap
- * may cut.
+ * Phase 28 AD1/AD4: an agent proposal's row names the door and the proposer: the capture (the
+ * gateway's own id) and the client's own label with where it came from. The label is the client's
+ * claim and every reader shows it as UNVERIFIED; the agent's summary stays out of the chain. The
+ * projection comes BEFORE the payload, which the row's size cap may cut, and a stored label is at
+ * most 100 units, so the four fields always fit the cap. Copied by name, never spread: nothing else
+ * of the proposer reaches the row (static D49(c)).
  */
 function auditedAction(action: PlannedAction): AuditedAction {
   if (action.proposer === undefined) return auditedBody(action);
   const { proposer, ...rest } = action;
   const { type, ...others } = auditedBody(rest);
-  return { type, proposer: { door: proposer.door, captureId: proposer.captureId }, ...others };
+  return {
+    type,
+    proposer: {
+      door: proposer.door,
+      captureId: proposer.captureId,
+      label: proposer.label,
+      labelSource: proposer.labelSource,
+    },
+    ...others,
+  };
 }
 
 /** The payload the audit row records: the identifying fields, without a rendered prompt body. */
@@ -886,9 +898,18 @@ interface AuditExtras {
  * The audit row's JSON. A standing rule's link and a bound write's two digests come FIRST: the payload is capped, so a long
  * action (a 5000-character commit message) must never push them out of the row.
  */
-function auditPayload(action: PlannedAction, extras: AuditExtras): string {
+function auditPayload(
+  action: PlannedAction,
+  extras: AuditExtras,
+  onBehalfOf: AgentAttribution | undefined,
+): string {
   const { boundValuesSha256, diffSha256, filesSha256, standingRule, ...rest } = extras;
   return redactAuditPayload({
+    // AD4: a sub-step (before-state read, prepare read, change-set discard) of an outside agent's
+    // action names the capture it ran for, first in the row so the size cap cannot cut it.
+    ...(onBehalfOf === undefined
+      ? {}
+      : { onBehalfOf: { door: onBehalfOf.door, captureId: onBehalfOf.captureId } }),
     // The link to the fire comes first, like the digests: the row's size cap cuts the payload's tail.
     ...(standingRule === undefined ? {} : { standingRule }),
     ...(boundValuesSha256 === undefined ? {} : { boundValuesSha256 }),
@@ -997,6 +1018,12 @@ interface GateScope {
   readonly bind: boolean;
   /** True only for the gate call the prepare step makes for its own read (see `preparePhase`). */
   readonly prepareStep?: boolean;
+  /**
+   * AD4: set only on the scope of a sub-step the executor runs for an outside agent's action (its
+   * before-state reads, its prepare read, its change-set discard). The audit row names the capture
+   * (`onBehalfOf`) and the egress row carries `agent:<captureId>`.
+   */
+  readonly onBehalfOf?: AgentAttribution;
   prepared?: PreparedWrite;
   /** Written by `preflightPhase` (D2): frees the per-workdir lock; `execute()` calls it when the run ends. */
   release?: () => void;
@@ -1014,6 +1041,33 @@ interface GateScope {
    * exactly as it would a settled one, and only if the write was never dispatched.
    */
   orphan?: DiscardTarget;
+}
+
+/** Who an outside agent's run is attributed to: the gateway's capture id and the client's own label. */
+interface AgentAttribution {
+  readonly door: "agent";
+  readonly captureId: string;
+  readonly label: string | null;
+}
+
+/**
+ * The agent a gate run is attributed to (AD4): the action's own gateway-set proposer, or, for a
+ * sub-step, the parent's attribution its scope carries. Nothing else names an agent (D49(c)).
+ */
+function attributionOf(action: PlannedAction, scope: GateScope): AgentAttribution | undefined {
+  if (isAgentOrigin(action) && action.proposer !== undefined) {
+    return { door: "agent", captureId: action.proposer.captureId, label: action.proposer.label };
+  }
+  return scope.onBehalfOf;
+}
+
+/** The scope fields a sub-step of `action` carries: its parent's attribution, or nothing. */
+function subStepAttribution(
+  action: PlannedAction,
+  scope: GateScope,
+): { readonly onBehalfOf?: AgentAttribution } {
+  const agent = attributionOf(action, scope);
+  return agent === undefined ? {} : { onBehalfOf: agent };
 }
 
 /** Writes `directory` as the working directory of the action's tool input (nested or flat). */
@@ -1277,7 +1331,7 @@ export class ToolExecutor {
     record: GateRecord,
     scope: GateScope,
   ): Promise<ApprovalOutcome> {
-    const earlier = await this.captureBeforePhase(action, opts);
+    const earlier = await this.captureBeforePhase(action, opts, scope);
     if (!(await this.preflightPhase(action, record, scope))) return gateRefusal(record);
     // A pinned working directory changes what the preview's target shows: rebuild it from the action.
     const captured =
@@ -1384,7 +1438,12 @@ export class ToolExecutor {
       prepared = await runPrepareStep(
         {
           // The one gate call allowed to run a prepare type: this step's own, never a caller's.
-          gate: (a) => this.gateWithin(a, undefined, { bind: false, prepareStep: true }),
+          gate: (a) =>
+            this.gateWithin(a, undefined, {
+              bind: false,
+              prepareStep: true,
+              ...subStepAttribution(action, scope),
+            }),
           dispatch: (a) => this.connectors.dispatch(a),
           ...(capabilities === undefined
             ? {}
@@ -1569,6 +1628,7 @@ export class ToolExecutor {
   private async captureBeforePhase(
     action: PlannedAction,
     opts: ExecuteOptions | undefined,
+    scope: GateScope,
   ): Promise<ConnectorWritePreview | undefined> {
     await this.refreshPreviewInstance(action);
     const runner = this.beforeState;
@@ -1580,7 +1640,11 @@ export class ToolExecutor {
     }
     const before = await runner.read(
       action,
-      { gate: (a) => this.gate(a), dispatch: (a) => this.connectors.dispatch(a) },
+      {
+        gate: (a) =>
+          this.gateWithin(a, undefined, { bind: false, ...subStepAttribution(action, scope) }),
+        dispatch: (a) => this.connectors.dispatch(a),
+      },
       opts?.beforeReaderUnlisted === true ? { readerUnlisted: true } : {},
     );
     if (before === undefined) return preview;
@@ -1686,6 +1750,11 @@ export class ToolExecutor {
     opts: ExecuteOptions | undefined,
     scope: GateScope,
   ): Promise<ActionResult | "proceed"> {
+    // AD4: an outside agent's capture id is checked BEFORE anything else (the before-state reads, a
+    // prepare step, the owner's prompt), so a malformed one records and dispatches nothing at all.
+    const attributed = attributionOf(action, scope);
+    if (attributed !== undefined) assertAgentCaptureId(attributed.captureId);
+
     // I2 first, the I42 user-MCP floor second, policy third, joined by OR — never by assignment,
     // and never the other way round. The frozen set and the user-MCP rule are both floors: either
     // alone decides `true`, so an org policy is only ever consulted about action types neither
@@ -1720,33 +1789,39 @@ export class ToolExecutor {
     }
 
     const sessionId = getAgentRequestSessionId();
+    const agent = attributionOf(action, scope);
+    // One instant for both rows: the egress prune deletes by timestamp, and the proof compares the
+    // two ledgers row for row, so a gate row and its ledger row must never straddle a cutoff.
+    const at = Date.now();
+    // AD4: the egress entry is built FIRST, so a malformed capture id throws before EITHER row is
+    // written and nothing is dispatched.
+    const egressEntry = buildEgressEntry({
+      // The ledger's payload summary never holds the text of a commit's files either (D1c).
+      action: withoutTemplateText(withoutFileText(action)),
+      // I55: a standing-approved action's ledger row names the fire, like its audit row.
+      ...(record.standingRule === undefined
+        ? {}
+        : {
+            standingFire: {
+              ruleId: record.standingRule.ruleId,
+              fireId: record.standingRule.fireId,
+            },
+          }),
+      ...(agent === undefined ? {} : { agent: { captureId: agent.captureId, label: agent.label } }),
+      hitlStatus,
+      resultStatus: hitlStatus === "rejected" ? "blocked" : "authorized",
+      sessionId,
+      now: at,
+    });
     this.audit.recordAudit({
       actionType: action.type,
       hitlStatus,
-      actionJson: auditPayload(action, auditExtrasOf(record)),
-      timestamp: Date.now(),
+      actionJson: auditPayload(action, auditExtrasOf(record), scope.onBehalfOf),
+      timestamp: at,
       ...(sessionId === undefined ? {} : { sessionId }),
     });
 
-    this.egressSink.append(
-      buildEgressEntry({
-        // The ledger's payload summary never holds the text of a commit's files either (D1c).
-        action: withoutTemplateText(withoutFileText(action)),
-        // I55: a standing-approved action's ledger row names the fire, like its audit row.
-        ...(record.standingRule === undefined
-          ? {}
-          : {
-              standingFire: {
-                ruleId: record.standingRule.ruleId,
-                fireId: record.standingRule.fireId,
-              },
-            }),
-        hitlStatus,
-        resultStatus: hitlStatus === "rejected" ? "blocked" : "authorized",
-        sessionId,
-        now: Date.now(),
-      }),
-    );
+    this.egressSink.append(egressEntry);
 
     if (hitlStatus === "rejected") {
       return { status: "rejected", reason: record.rejectReason };
@@ -1819,7 +1894,11 @@ export class ToolExecutor {
       },
     };
     try {
-      const gated = await this.gateWithin(discard, undefined, { bind: false, discardStep: target });
+      const gated = await this.gateWithin(discard, undefined, {
+        bind: false,
+        discardStep: target,
+        ...subStepAttribution(action, scope),
+      });
       if (gated === "proceed") await this.connectors.dispatch(discard);
     } catch (e) {
       executorLog.warn(
