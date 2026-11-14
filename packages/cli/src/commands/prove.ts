@@ -302,12 +302,18 @@ export async function runEgressReport(
 /** `nimbus prove "<query>"` — snapshot a time window around the query, print the egress delta. */
 export async function runProve(args: string[]): Promise<void> {
   const sign = args.includes("--receipt") || args.includes("--sign");
-  const query = args.find((a) => !a.startsWith("--"));
+  // `--since` takes a value: it is a window (the same grammar as `nimbus egress --since`), never the
+  // query, so the value is skipped when looking for the first positional argument.
+  const sinceIdx = args.indexOf("--since");
+  const sinceFlag = parseSince(args, Date.now());
+  const query = args.find((a, i) => !a.startsWith("--") && !(sinceIdx >= 0 && i === sinceIdx + 1));
   // `agent.invoke` below is `stream: false`, so unlike `nimbus ask` there are no tokens
   // already on stdout to salvage: a timeout here loses the whole answer AND the proof.
   await withConsentIpc(async (client) => {
-    const since = Date.now();
-    if (query !== undefined && query !== "") {
+    // With no query there is nothing to bracket, so a `--since` window starts where it says.
+    const hasQuery = query !== undefined && query !== "";
+    const since = !hasQuery && sinceFlag !== undefined ? sinceFlag : Date.now();
+    if (hasQuery) {
       // The blocking ask path (mirrors `nimbus ask`): agent.invoke runs the query so the ledger head
       // advances if (and only if) the agent dispatches a real outbound action.
       await client.call("agent.invoke", { input: query, stream: false });
