@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794641127360,
+  "lastUpdate": 1794644007602,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "b3ff071c02caef844c0b8bf243e5c7b0fd4ea71b",
-          "message": "feat(ci): gate on native dependencies reaching the gateway binary (#1350)\n\nThe last open item from the extraction plan. Its Task 5 asked for a\ncheck on the gateway's **resolved** dependency tree — a native\ntransitive dependency silently breaks the compiled binary, and a\nsource-manifest check cannot see it. When `audit:connector-deps` moved\nto the connectors repo, nothing replaced it here.\n\n## The resolved-tree version does not work, and I deleted it rather than\nship it\n\nThe first attempt walked `node_modules` upward from each package. It\nreported a **20-package closure for a tree of ~1,400**.\n\n`@mastra/core` alone declares 32 dependencies under npm **aliases**\n(`@ai-sdk/provider-utils-v5` and friends) that resolve through bun's\nisolated `.bun` store. Neither directory walking nor `Bun.resolveSync`\nfinds them from the package's own directory, and `bun.lock` is JSONC\nthat `Bun.file().json()` refuses to parse.\n\nThat version would have reported **green because it could not see\nanything** — the failure mode this repo has been bitten by repeatedly,\nand the worst kind of gate. It is gone.\n\n## What landed, and what it actually claims\n\nThe gateway's **declared** dependencies, checked for `.node` binaries\nand `binding.gyp`. The script states that bound rather than implying\nmore.\n\nIt catches the realistic regression: someone adds a native dependency,\nor bumps one that starts shipping a `.node`.\n\nThe transitive case is covered **empirically** instead, by\n`test:connector-boot` — it boots all 94 connectors out of the actually\ncompiled binary, so a native module that breaks loading fails there. Its\nown bound, worth stating: it runs on CI Linux, so it would not catch a\nmodule that loads there and not on a user's Windows machine.\n\n`sqlite-vec` is allow-listed. It is the one native dependency and is\nhandled deliberately — `compile-gateway.ts` copies its platform sidecar\nnext to the binary, which is the pattern any future native dependency\nhas to follow.\n\n## Wiring and proof\n\n`package.json`, `scripts/lib/preflight-gates.ts` **and**\n`.github/workflows/_test-suite.yml`, in one commit — #1318 put a gate in\nthe manifest and no workflow, so it ran nowhere and that PR passed\nbecause the gate never executed.\n\nNine tests, each red-proved: a prebuilt `.node`, a `binding.gyp` with no\nbuilt binary, a pure-JS package, the `sqlite-vec` exemption, a nested\n`node_modules` **not** being attributed to whoever hoisted it, and\n`optionalDependencies` being checked because they install by default.\n\n`preflight:fast` green; 1596 script tests pass.",
-          "timestamp": "2026-08-27T18:07:02+03:00",
-          "tree_id": "610d1eabd59f0a1c7f36fd3c7adab2e9412a8a79",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/b3ff071c02caef844c0b8bf243e5c7b0fd4ea71b"
-        },
-        "date": 1787843951942,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 327.4390357499964,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 325.66169869999504,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 203.23763520000065,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
+            "name": "nimbus-release-bot[bot]",
+            "username": "nimbus-release-bot[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "051e92ced30c00a071d3bbe5b57bcd512d842a6e",
+          "message": "chore: release main (#2006)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>10.60.0</summary>\n\n##\n[10.60.0](https://github.com/nimbus-agent/Nimbus/compare/v10.59.0...v10.60.0)\n(2026-11-14)\n\n\n### Features\n\n* **gateway:** name the door and the proposer of every agent action in\nboth ledgers, and report them with nimbus prove --by-proposer (agent\ndoor AD4) ([#2005](https://github.com/nimbus-agent/Nimbus/issues/2005))\n([49f5de4](https://github.com/nimbus-agent/Nimbus/commit/49f5de44641fe2e170ddc2b69b52121417d19806))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
+          "timestamp": "2026-11-14T10:07:20+02:00",
+          "tree_id": "140df4d0de7ce7f506c28e7d4cfd20a4767983ea",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/051e92ced30c00a071d3bbe5b57bcd512d842a6e"
+        },
+        "date": 1794644003921,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 183.33511080000315,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 189.71862705000495,
             "unit": "ms"
           }
         ]
