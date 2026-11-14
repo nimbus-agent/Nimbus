@@ -110,7 +110,10 @@ export interface AgentDoorActWiring {
   /** One first-party server's raw listing, or `undefined` when it cannot be listed now. */
   readonly listServerTools: (service: string) => Promise<ServerToolListing | undefined>;
   /** The door's definition check (`createAgentDoor(...).verifyDefinition`); marks a suspension itself. */
-  readonly verifyDefinition: (actionType: string) => Promise<DefinitionVerification>;
+  readonly verifyDefinition: (
+    actionType: string,
+    proposedAt?: number,
+  ) => Promise<DefinitionVerification>;
 }
 
 /**
@@ -247,7 +250,7 @@ export function buildActDeps(
           ? vetoingConsent(
               humanChannel,
               async () => {
-                const v = await door.verifyDefinition(actionType);
+                const v = await door.verifyDefinition(actionType, provenance.createdAt);
                 if (v.ok) return undefined;
                 // Only the recheck's own suspension code is stored: a tool merely missing from the
                 // listing is refused without a mark and without a code (OR-AD-14).

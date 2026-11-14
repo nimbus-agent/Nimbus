@@ -301,3 +301,27 @@ describe("a bound row is never proposable on the MCP act door (D1c, spec 15.5)",
     }
   });
 });
+
+describe("AD5a Task 1: the classifier's answers for user-MCP shaped types are pinned (a table taken before userMcpActionParts moved the checks)", () => {
+  const ctx = {
+    modelAccessServices: () => new Set(["mcp_echo", "mcp_a", "mcp_a_b"]),
+    userMcpModelAccessAllowed: () => true,
+  };
+  const cases: ReadonlyArray<readonly [string, unknown]> = [
+    ["mcp_echo.echo", { kind: "proposable" }],
+    ["mcp_a.b_c", { kind: "proposable" }],
+    ["mcp_a_b.c", { kind: "proposable" }],
+    ["mcp_other.echo", { kind: "denied", class: "user_mcp_no_model_access" }],
+    ["mcp_echo.", { kind: "unknown" }],
+    ["mcp_echo", { kind: "unknown" }],
+    ["mcp_echo.a.b", { kind: "unknown" }],
+    ["mcp_echo.a b", { kind: "unknown" }],
+    [`mcp_echo.${"x".repeat(65)}`, { kind: "unknown" }],
+    [`mcp_echo.${"x".repeat(64)}`, { kind: "proposable" }],
+    ["ext_foo.echo", { kind: "unknown" }],
+    ["mcp_.echo", { kind: "unknown" }],
+  ];
+  test.each(cases)("%s", (type, expected) => {
+    expect(classifyActionType(type, ctx)).toEqual(expected as never);
+  });
+});

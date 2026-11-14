@@ -11,7 +11,11 @@
 // between a submit and an approval is seen by the approval.
 //
 // `verdict` is synchronous and does no connector I/O. It decides, in this order:
-//   1. a user-MCP type: `classifyActionType`, unchanged, with no basis and the `userMcp` marker;
+//   1. a user-MCP (`mcp_*`) type: its own steps (AD5a, D-2), see `userMcpVerdict`: unknown for a
+//      type that names no server and tool, denied for an unregistered server, `suspended` for a
+//      suspended agent approval (even on a `--model` server), `approved` for a tool the owner
+//      approved for agents by name while policy allows, else the classifier's legacy answer as
+//      `legacy_user_mcp`;
 //   2. no row: the legacy table's answer, unchanged (a type no row routes to is never `approved`);
 //   3. the tool's approval is SUSPENDED: `suspended` (never a legacy case, D-AD-15);
 //   4. `agentOffered`: `proposable` with basis `approved` (and `boundInput` for a bound row);
@@ -21,6 +25,7 @@
 import type { Database } from "bun:sqlite";
 
 import { serviceOf } from "../../engine/service-of.ts";
+import { MCP_ACTION_CAPABILITY } from "../../mcp-sink/capture-capability.ts";
 import type {
   ActionBasis,
   ActionDescription,
@@ -29,12 +34,17 @@ import type {
 import type { EnforcedPolicy } from "../../policy/policy-gate.ts";
 import { mcpClientToolKey } from "../lazy-mesh/tool-map.ts";
 import {
+  type ActionClassification,
   type ClassifyContext,
   classifyActionType,
   PROPOSABLE_WRITE_TOOLS,
   proposableWriteTool,
 } from "../proposable-actions.ts";
-import { USER_MCP_SERVICE_ID_PATTERN } from "../user-mcp-store.ts";
+import {
+  getUserMcpConnector,
+  USER_MCP_SERVICE_ID_PATTERN,
+  userMcpActionParts,
+} from "../user-mcp-store.ts";
 import {
   AGENT_DOOR_MAIL_SEND_TOOL_IDS,
   type AgentOfferFacts,
@@ -42,10 +52,10 @@ import {
   agentDoorRow,
   agentOffered,
 } from "./agent-door.ts";
-import { checkAgentToolDefinition } from "./agent-door-definition.ts";
+import { checkAgentToolDefinition, type DefinitionCheck } from "./agent-door-definition.ts";
 import { type DescribeScope, describeApprovedWrite } from "./agent-door-describe.ts";
 import { legacyNoticeFor } from "./agent-door-legacy.ts";
-import { getDoorApproval } from "./door-approval-store.ts";
+import { type DoorApproval, getDoorApproval } from "./door-approval-store.ts";
 import {
   getModelWriteEnablement,
   isObsidianWriteGrantApproved,
@@ -79,6 +89,15 @@ export interface AgentDoorDeps {
   readonly listServerTools: (
     service: string,
   ) => Promise<Readonly<Record<string, unknown>> | undefined>;
+  /**
+   * One registered user-MCP server's STRIPPED listing (`description` and `inputSchema` per tool,
+   * keys `<serviceId>_<tool>`), or `undefined` (late-bound to the mesh in production). Absent or a
+   * throw reads as "cannot be listed now": refused, never marked. It may START the sandboxed
+   * server, so it is called only for a tool the owner approved for agents by name.
+   */
+  readonly listUserMcpDefinitions?: (
+    serviceId: string,
+  ) => Promise<Readonly<Record<string, unknown>> | undefined>;
   /** The `[tribal]` KB destinations, read per call; a throw refuses a KB-capable row. */
   readonly tribalKbConfig: () => TribalKbConfig | undefined;
   /** What `classifyActionType` needs for a user-MCP type. */
@@ -109,8 +128,13 @@ export interface AgentDoor {
     input: Readonly<Record<string, unknown>>,
     basis: ActionBasis | undefined,
   ): string | undefined;
-  /** Lists the action's service once and checks the approved tool's definition against it. */
-  verifyDefinition(actionType: string): Promise<DefinitionVerification>;
+  /**
+   * Lists the action's service once and checks the approved tool's definition against it.
+   * `proposedAt` (the approval and the post-answer veto pass the stored proposal's `createdAt`; a
+   * submit passes none) refuses, for a user-MCP type, a proposal queued against an EARLIER
+   * registration of the same server id.
+   */
+  verifyDefinition(actionType: string, proposedAt?: number): Promise<DefinitionVerification>;
   /** The types `capture.status` advertises now: approved and legacy, configured, sorted. */
   acceptedTypes(): Promise<readonly string[]>;
   /**
@@ -132,6 +156,9 @@ export const DEFINITION_REFUSALS = Object.freeze({
   drifted: "the connector's schema for this write no longer matches what the owner was shown",
   support: "the connector does not list what this write needs to show the owner its current state",
   notApproved: "this write is not approved for agents",
+  notRegistered: "this user MCP server is not registered",
+  earlierRegistration:
+    "this proposal was made before the server was registered again; ask the agent to propose it again",
 });
 
 /** The fixed text of a type `capture.describe` does not describe (OR-AD-17). */
@@ -149,6 +176,7 @@ export const DESCRIBE_UNCHECKED_REASON = "could not be checked now";
 
 /** The class of a `denied` verdict, one fixed string per condition (R-9: it says which one failed). */
 export const AGENT_DENIED_CLASSES = Object.freeze({
+  userMcpNotRegistered: "user_mcp_not_registered",
   neverOffered: "agent_never_offered",
   notOfferable: "agent_not_offerable",
   policy: "agent_policy",
@@ -197,7 +225,7 @@ export function createAgentDoor(deps: AgentDoorDeps): AgentDoor {
     };
   };
 
-  const legacyClassification = (actionType: string): ActionVerdict =>
+  const legacyClassification = (actionType: string): ActionClassification =>
     classifyActionType(actionType, deps.classifyContext);
 
   /** Why a row the legacy table does not accept is refused: the first failing condition. */
@@ -219,13 +247,55 @@ export function createAgentDoor(deps: AgentDoorDeps): AgentDoor {
     return AGENT_DENIED_CLASSES.unroutable;
   };
 
-  const verdict = (actionType: string): ActionVerdict => {
-    // 1. A user-MCP type: the legacy classifier, unchanged, no basis. A proposable one carries the
-    //    explicit marker the gate requires of a basis-less verdict (it refuses any other).
-    if (isUserMcpType(actionType)) {
-      const classified = legacyClassification(actionType);
-      return classified.kind === "proposable" ? { ...classified, userMcp: true } : classified;
+  /**
+   * Whether policy lets an owner-approved user-MCP tool reach an agent: `mcp_action` is on AND
+   * `user_mcp_model_access` is on (D-10), both from the LIVE resolved policy. Fail closed: an
+   * unreadable policy is false. It never reads `--model` (`model_access`): the two grants are
+   * independent.
+   */
+  const userMcpAgentPolicyAllows = (): boolean => {
+    const enforced = livePolicy();
+    if (enforced === undefined || enforced.capabilitiesDisabled.has(MCP_ACTION_CAPABILITY)) {
+      return false;
     }
+    try {
+      return deps.classifyContext.userMcpModelAccessAllowed();
+    } catch {
+      return false;
+    }
+  };
+
+  // D-2, in this order. Database reads only; every fact is read at the call.
+  const userMcpVerdict = (actionType: string): ActionVerdict => {
+    // 1. The type names a server and a tool the door can mean.
+    const parts = userMcpActionParts(actionType);
+    if (parts === undefined) return { kind: "unknown" };
+    // 2. The server is registered now.
+    if (getUserMcpConnector(deps.db, parts.serviceId) === null) {
+      return { kind: "denied", class: AGENT_DENIED_CLASSES.userMcpNotRegistered };
+    }
+    const approval = getDoorApproval(deps.db, "agent", parts.serviceId, parts.tool);
+    // 3. A suspended approval is a suspension, even on a `--model` server (never a legacy case).
+    if (approval !== undefined && approval.suspendedAt !== null) return { kind: "suspended" };
+    // 4. The owner approved it for agents by name. An approved tool is never downgraded to the
+    //    legacy case: if policy refuses it, it is refused.
+    if (approval !== undefined) {
+      return userMcpAgentPolicyAllows()
+        ? { kind: "proposable", basis: "approved" }
+        : { kind: "denied", class: AGENT_DENIED_CLASSES.policy };
+    }
+    // 5. Otherwise the earlier act door's rule, unchanged (a `--model` server while policy allows).
+    const legacy = legacyClassification(actionType);
+    if (legacy.kind === "proposable") return { kind: "proposable", basis: "legacy_user_mcp" };
+    // 6. Refused, with the classifier's class.
+    return legacy.kind === "denied"
+      ? legacy
+      : { kind: "denied", class: AGENT_DENIED_CLASSES.notApproved };
+  };
+
+  const verdict = (actionType: string): ActionVerdict => {
+    // 1. A user-MCP type: its own steps (never a first-party row, never an extension).
+    if (isUserMcpType(actionType)) return userMcpVerdict(actionType);
     // 2. No row routes to the type: the legacy table's own answer (never `approved`).
     const row = agentDoorRow(actionType, rows);
     if (row === undefined) {
@@ -268,6 +338,8 @@ export function createAgentDoor(deps: AgentDoorDeps): AgentDoor {
     basis: ActionBasis | undefined,
   ): string | undefined => {
     if (basis === undefined) return undefined;
+    // No destination rule exists for a tool the gateway does not understand (D-2).
+    if (isUserMcpType(actionType)) return undefined;
     if (basis === "approved") return approvedRefusal(actionType, input);
     return legacyRefusal(actionType, input);
   };
@@ -319,7 +391,12 @@ export function createAgentDoor(deps: AgentDoorDeps): AgentDoor {
     detail: string,
   ): DefinitionVerification => ({ ok: false, code, detail });
 
-  const verifyDefinition = async (actionType: string): Promise<DefinitionVerification> => {
+  const verifyDefinition = async (
+    actionType: string,
+    proposedAt?: number,
+  ): Promise<DefinitionVerification> => {
+    // A user-MCP type has no write row: its own check (D-3).
+    if (isUserMcpType(actionType)) return verifyUserMcpDefinition(actionType, proposedAt);
     const row = agentDoorRow(actionType, rows);
     const service = serviceOf(actionType);
     const approval =
@@ -334,6 +411,77 @@ export function createAgentDoor(deps: AgentDoorDeps): AgentDoor {
     // connector I/O). A listing that fails marks nothing.
     const listed = await deps.listServerTools(service).catch(() => undefined);
     return verifyListed(row, service, listed);
+  };
+
+  /** The refusal a non-`ok` definition check maps to; `undefined` for `ok`. One mapping for both kinds. */
+  const refusalOfCheck = (check: DefinitionCheck): DefinitionVerification | undefined => {
+    switch (check.kind) {
+      case "changed":
+      case "unreadable":
+        return check.suspension === undefined
+          ? refused("ERR_CAPTURE_ACTION_NOT_PROPOSABLE", DEFINITION_REFUSALS.changing)
+          : refused("ERR_AGENT_TOOL_SUSPENDED", DEFINITION_REFUSALS.suspended);
+      case "missing":
+        return refused("ERR_CAPTURE_ACTION_NOT_PROPOSABLE", DEFINITION_REFUSALS.notListed);
+      case "drifted":
+        return refused("ERR_CAPTURE_ACTION_NOT_PROPOSABLE", DEFINITION_REFUSALS.drifted);
+      case "ok":
+        return undefined;
+    }
+  };
+
+  /**
+   * The facts a user-MCP definition check needs BEFORE and AFTER a listing, read now: the server is
+   * registered (and not registered again after the proposal was made), the owner's approval for
+   * this exact (server, tool) pair stands and is not suspended. Synchronous, so the second call
+   * (after the listing) cannot be separated from the comparison that follows it.
+   */
+  const userMcpStanding = (
+    parts: NonNullable<ReturnType<typeof userMcpActionParts>>,
+    proposedAt: number | undefined,
+  ): { readonly approval: DoorApproval } | DefinitionVerification => {
+    const registration = getUserMcpConnector(deps.db, parts.serviceId);
+    if (registration === null) {
+      return refused("ERR_CAPTURE_ACTION_NOT_PROPOSABLE", DEFINITION_REFUSALS.notRegistered);
+    }
+    if (proposedAt !== undefined && proposedAt < registration.created_at) {
+      return refused("ERR_CAPTURE_ACTION_NOT_PROPOSABLE", DEFINITION_REFUSALS.earlierRegistration);
+    }
+    const approval = getDoorApproval(deps.db, "agent", parts.serviceId, parts.tool);
+    if (approval === undefined) {
+      return refused("ERR_CAPTURE_ACTION_NOT_PROPOSABLE", DEFINITION_REFUSALS.notApproved);
+    }
+    if (approval.suspendedAt !== null) {
+      return refused("ERR_AGENT_TOOL_SUSPENDED", DEFINITION_REFUSALS.suspended);
+    }
+    return { approval };
+  };
+
+  // D-3. The listing may start the sandboxed third-party server, so every refusal that needs no
+  // listing comes first. Only a tool the owner approved for agents by name is ever listed.
+  const verifyUserMcpDefinition = async (
+    actionType: string,
+    proposedAt: number | undefined,
+  ): Promise<DefinitionVerification> => {
+    const parts = userMcpActionParts(actionType);
+    if (parts === undefined) {
+      return refused("ERR_CAPTURE_ACTION_NOT_PROPOSABLE", DEFINITION_REFUSALS.notApproved);
+    }
+    const before = userMcpStanding(parts, proposedAt);
+    if (!("approval" in before)) return before;
+    const listed = await Promise.resolve()
+      .then(() => deps.listUserMcpDefinitions?.(parts.serviceId))
+      .catch(() => undefined);
+    if (listed === undefined) {
+      return refused("ERR_CAPTURE_ACTION_NOT_PROPOSABLE", DEFINITION_REFUSALS.unlisted);
+    }
+    // The listing awaited: judge the listing against the registration and the approval as they
+    // stand now, with no await between that read and the comparison. `missing` and an unlisted
+    // server mark nothing and write no row (OR-AD-14); `changed` and `unreadable` mark through the
+    // ONE shared helper.
+    const after = userMcpStanding(parts, proposedAt);
+    if (!("approval" in after)) return after;
+    return refusalOfCheck(checkAgentToolDefinition(deps, after.approval, listed)) ?? { ok: true };
   };
 
   // The post-listing half of the definition check, shared by a submit (`verifyDefinition`) and a
@@ -357,20 +505,8 @@ export function createAgentDoor(deps: AgentDoorDeps): AgentDoor {
     if (fresh.suspendedAt !== null) {
       return refused("ERR_AGENT_TOOL_SUSPENDED", DEFINITION_REFUSALS.suspended);
     }
-    const check = checkAgentToolDefinition(deps, fresh, listed, row);
-    switch (check.kind) {
-      case "changed":
-      case "unreadable":
-        return check.suspension === undefined
-          ? refused("ERR_CAPTURE_ACTION_NOT_PROPOSABLE", DEFINITION_REFUSALS.changing)
-          : refused("ERR_AGENT_TOOL_SUSPENDED", DEFINITION_REFUSALS.suspended);
-      case "missing":
-        return refused("ERR_CAPTURE_ACTION_NOT_PROPOSABLE", DEFINITION_REFUSALS.notListed);
-      case "drifted":
-        return refused("ERR_CAPTURE_ACTION_NOT_PROPOSABLE", DEFINITION_REFUSALS.drifted);
-      case "ok":
-        break;
-    }
+    const failed = refusalOfCheck(checkAgentToolDefinition(deps, fresh, listed, row));
+    if (failed !== undefined) return failed;
     // Spec 5.4 and I54: a Wave 4 write needs its current-state reader (and a bound write its
     // prepare tool) in the listing, as the model door requires before it offers the row.
     if (

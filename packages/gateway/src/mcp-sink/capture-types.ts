@@ -164,12 +164,11 @@ export interface ActionPayload {
 export type ActionVerdict =
   | {
       readonly kind: "proposable";
-      readonly basis?: ActionBasis;
       /**
-       * Set by the door runtime for a user-MCP type, the only proposable type that carries no basis.
-       * The gate accepts a basis-less verdict ONLY with this marker (fail closed, AD3a-2a).
+       * Why it is proposable. NEVER absent: the gate refuses a proposable verdict with no basis
+       * (`agent_no_basis`), so a classifier that forgets one fails closed.
        */
-      readonly userMcp?: true;
+      readonly basis: ActionBasis;
       /**
        * Set by the door runtime for an `approved` verdict whose row is a bound row (a commit, an
        * apply): only such a proposal may exceed the ordinary payload cap, up to the validator's
@@ -186,20 +185,22 @@ export type ActionVerdict =
   | { readonly kind: "unknown" };
 
 /**
- * Why a proposable action is proposable. ABSENT (the user-MCP path, and today's production
- * classifier) means no per-door rule applies and the gate behaves exactly as before AD3a-2a.
- * `approved`: the owner approved the tool for agents by name and every other condition holds.
- * `legacy_unapproved` / `legacy_mail_send`: accepted for now only because the earlier act door
- * accepted it (the deprecation window, OR-AD-9); stored `legacy = 1`, counted and warned about.
+ * Why a proposable action is proposable. `approved`: the owner approved the tool for agents by name
+ * and every other condition holds. `legacy_unapproved` / `legacy_mail_send` / `legacy_user_mcp`:
+ * accepted for now only because the earlier act door accepted it (the deprecation window, OR-AD-9;
+ * `legacy_user_mcp` is a tool of a `--model` server the owner has not approved for agents by name);
+ * stored `legacy = 1`, counted and warned about.
  */
-export type ActionBasis = "approved" | "legacy_unapproved" | "legacy_mail_send";
+export type ActionBasis = "approved" | "legacy_unapproved" | "legacy_mail_send" | "legacy_user_mcp";
 
-/** The fixed class of a proposable verdict that names neither a basis nor a user-MCP type. */
+/** The fixed class of a proposable verdict that names no basis. */
 export const NO_BASIS_CLASS = "agent_no_basis";
 
-/** True for the two deprecation-window bases. */
+/** True for the three deprecation-window bases. */
 export function isLegacyBasis(basis: ActionBasis | undefined): boolean {
-  return basis === "legacy_unapproved" || basis === "legacy_mail_send";
+  return (
+    basis === "legacy_unapproved" || basis === "legacy_mail_send" || basis === "legacy_user_mcp"
+  );
 }
 
 /**
@@ -211,7 +212,8 @@ export const CAPTURE_LABEL_SOURCE: "declared" | "kit" = "declared";
 export interface ActionProvenance {
   /**
    * The basis the approval-time verdict gave (AD3a-2a): what the act wiring routes and vetoes by.
-   * Absent for a user-MCP type and for a classifier that gives none.
+   * Present on every proposal the gate accepts since AD5a; optional only so a stored or injected
+   * provenance without one still types (the executor treats it as no per-door rule).
    */
   readonly basis?: ActionBasis;
   readonly captureId: string;

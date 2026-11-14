@@ -12,6 +12,8 @@ import {
   normalizeUserMcpServiceId,
   parseUserMcpCommandLine,
   USER_MCP_SERVICE_ID_PATTERN,
+  userMcpActionParts,
+  userMcpToolSegmentOk,
   validateUserMcpArgsJson,
 } from "./user-mcp-store.ts";
 
@@ -242,5 +244,31 @@ describe("user-mcp-store", () => {
     );
     expect(listModelAccessibleUserMcpIds(db)).toEqual([]);
     expect(listModelAccessibleUserMcpIds(makePreV11Db())).toEqual([]);
+  });
+});
+
+describe("userMcpActionParts (AD5a): one place for the pattern, the key and the tool segment", () => {
+  test("accepts a user-MCP type and splits it at the first dot", () => {
+    expect(userMcpActionParts("mcp_a.tool")).toEqual({ serviceId: "mcp_a", tool: "tool" });
+    expect(userMcpActionParts("mcp_a_b.c_d-e")).toEqual({ serviceId: "mcp_a_b", tool: "c_d-e" });
+    expect(userMcpActionParts(`mcp_a.${"x".repeat(64)}`)?.tool).toHaveLength(64);
+  });
+
+  test("refuses a 65-character tool, a tool with a dot, an ext_ id, a bare id and an empty tool", () => {
+    expect(userMcpActionParts(`mcp_a.${"x".repeat(65)}`)).toBeUndefined();
+    expect(userMcpActionParts("mcp_a.b.c")).toBeUndefined();
+    expect(userMcpActionParts("ext_a.tool")).toBeUndefined();
+    expect(userMcpActionParts("slack.message.post")).toBeUndefined();
+    expect(userMcpActionParts("mcp_a")).toBeUndefined();
+    expect(userMcpActionParts("mcp_a.")).toBeUndefined();
+    expect(userMcpActionParts(".tool")).toBeUndefined();
+    expect(userMcpActionParts("mcp_.tool")).toBeUndefined();
+    expect(userMcpActionParts(`mcp_a.t${String.fromCodePoint(0x1b)}[8m`)).toBeUndefined();
+    expect(userMcpActionParts(`mcp_a.t${String.fromCodePoint(0x202e)}`)).toBeUndefined();
+  });
+
+  test("userMcpToolSegmentOk is the segment rule alone", () => {
+    expect(userMcpToolSegmentOk("mcp_a.ok")).toBe(true);
+    expect(userMcpToolSegmentOk("mcp_a.no way")).toBe(false);
   });
 });

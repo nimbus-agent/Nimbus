@@ -3937,7 +3937,9 @@ export async function assemblePlatformServices(
   // `identityBootRefHolder` pattern): until the mesh is bound there is NO listing and no `approved`
   // proposal is accepted (fail closed); a legacy one needs none.
   const agentDoorMesh: {
-    current: Pick<LazyConnectorMesh, "listFirstPartyServerTools"> | undefined;
+    current:
+      | Pick<LazyConnectorMesh, "listFirstPartyServerTools" | "listUserMcpToolDefinitions">
+      | undefined;
   } = {
     current: undefined,
   };
@@ -3945,6 +3947,9 @@ export async function assemblePlatformServices(
     db,
     enforcedPolicy: () => policyGate.enforced(),
     listServerTools: async (service) => agentDoorMesh.current?.listFirstPartyServerTools(service),
+    // A registered user-MCP server's STRIPPED definitions (AD5a); may start that one server.
+    listUserMcpDefinitions: async (serviceId) =>
+      agentDoorMesh.current?.listUserMcpToolDefinitions(serviceId),
     tribalKbConfig: () => tribalKbConfigOf(tribalCfg),
     classifyContext: actClassifyCtx,
     isServiceConfigured,

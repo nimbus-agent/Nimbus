@@ -45,7 +45,7 @@ beforeEach(() => {
     capability: () => cap,
     classifyAction: () =>
       verdict === "proposable"
-        ? { kind: "proposable", userMcp: true }
+        ? { kind: "proposable", basis: "legacy_user_mcp" }
         : { kind: "denied", class: "vcs" },
     isServiceConfigured: () => Promise.resolve(configured),
     now: () => clock,

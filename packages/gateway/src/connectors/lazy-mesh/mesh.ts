@@ -854,6 +854,35 @@ export class LazyConnectorMesh {
   }
 
   /**
+   * ONE registered user-MCP server's tool DEFINITIONS for the agent door (AD5a), stripped to
+   * `description` and `inputSchema`. {@link listUserMcpTools} returns callable tools; their
+   * `execute` would call the sandboxed server outside the executor's HITL and egress chokepoint, so
+   * it never leaves here (the shape {@link listFirstPartyServerTools} keeps for a first-party
+   * server). `undefined` when no `user_mcp_connector` row names the id, or when the server lists
+   * nothing (it cannot be started, or lists no tool: the MCP client swallows a failed start and
+   * lists none). Keys are the slot's `<serviceId>_<tool>`; a key that does not start with
+   * `<serviceId>_` is dropped, so a listing can never speak for another server. Only THIS server's
+   * slot is ensured, and the call may start it: the caller is the door's definition check, reached
+   * only for a tool the owner approved for agents by name. A throw is the listing's own.
+   */
+  async listUserMcpToolDefinitions(
+    serviceId: string,
+  ): Promise<Readonly<Record<string, { description: unknown; inputSchema: unknown }>> | undefined> {
+    const tools = await this.listUserMcpTools(serviceId);
+    if (tools === undefined) return undefined;
+    const prefix = `${serviceId}_`;
+    const out: Record<string, { description: unknown; inputSchema: unknown }> = {};
+    for (const key of Object.keys(tools)) {
+      if (!key.startsWith(prefix)) continue;
+      const listed: unknown = tools[key];
+      const rec =
+        typeof listed === "object" && listed !== null ? (listed as Record<string, unknown>) : {};
+      out[key] = { description: rec["description"], inputSchema: rec["inputSchema"] };
+    }
+    return Object.keys(out).length === 0 ? undefined : out;
+  }
+
+  /**
    * {@link listUserMcpTools} for the connector dispatcher: the same ONE-slot listing, with each tool
    * wrapped in that slot's drain refcount exactly as {@link listToolsForDispatcher} wraps it, so a
    * slot stop still waits for an in-flight user-MCP call. Running a user-MCP action therefore

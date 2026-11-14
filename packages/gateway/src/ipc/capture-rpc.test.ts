@@ -800,7 +800,7 @@ describe("captures.accept on an action (act door wiring)", () => {
           },
           { capabilitiesDisabled: new Set() },
         ),
-      classifyAction: () => ({ kind: "proposable", userMcp: true }),
+      classifyAction: () => ({ kind: "proposable", basis: "legacy_user_mcp" }),
       isServiceConfigured: () => Promise.resolve(true),
     };
     gate.store.insert({
@@ -918,13 +918,13 @@ const REAL_CLASSIFY = {
 };
 
 /**
- * The legacy classifier as a gate verdict. The gate refuses a basis-less verdict unless it carries
- * the runtime's `userMcp` marker, so these tests (which exercise the destination refusals, not the
- * door) add it exactly as `createAgentDoor` does for a user-MCP type.
+ * The legacy classifier as a gate verdict. The gate refuses a basis-less verdict, so these tests
+ * (which exercise the destination refusals, not the door) give a proposable one the
+ * `legacy_user_mcp` basis, as `createAgentDoor` does for an unapproved `--model` user-MCP tool.
  */
 function classifyViaLegacyTable(t: string) {
   const v = classifyActionType(t, REAL_CLASSIFY);
-  return v.kind === "proposable" ? { ...v, userMcp: true as const } : v;
+  return v.kind === "proposable" ? { ...v, basis: "legacy_user_mcp" as const } : v;
 }
 
 function boundPolicy(channels: readonly string[]): EnforcedPolicy {

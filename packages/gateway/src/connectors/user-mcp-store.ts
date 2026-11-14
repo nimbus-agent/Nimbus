@@ -40,6 +40,35 @@ export function userMcpToolKeyForActionType(actionType: string): string | undefi
   return `${serviceId}_${actionType.slice(dot + 1)}`;
 }
 
+/**
+ * The tool half of a user-MCP action type (after the first `.`): the same alphabet and length the
+ * engine allows a model-facing user-MCP tool name (`engine/user-mcp-agent-tools.ts`
+ * MODEL_TOOL_NAME_PATTERN / USER_MCP_TOOL_NAME_MAX). Anything else names no tool the owner could
+ * have meant and is rendered nowhere: it is UNKNOWN, refused.
+ */
+const USER_MCP_TOOL_SEGMENT_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
+
+/** True when the part of `actionType` after its first `.` is a tool name the door accepts. */
+export function userMcpToolSegmentOk(actionType: string): boolean {
+  return USER_MCP_TOOL_SEGMENT_PATTERN.test(actionType.slice(actionType.indexOf(".") + 1));
+}
+
+/**
+ * The server and the tool a user-MCP action type names, or `undefined` when it names none the door
+ * can mean: the one place the service pattern, the canonical key and the tool segment are checked
+ * together. An approval is for this PAIR; a server id that is a prefix of another, or a tool whose
+ * name continues a longer server id, can never make one pair stand for another because the type is
+ * split at its first `.` and neither half may contain one.
+ */
+export function userMcpActionParts(
+  actionType: string,
+): { readonly serviceId: string; readonly tool: string } | undefined {
+  if (userMcpToolKeyForActionType(actionType) === undefined) return undefined;
+  if (!userMcpToolSegmentOk(actionType)) return undefined;
+  const dot = actionType.indexOf(".");
+  return { serviceId: actionType.slice(0, dot), tool: actionType.slice(dot + 1) };
+}
+
 export function normalizeUserMcpServiceId(raw: string): string | null {
   const s = raw.trim().toLowerCase();
   if (!USER_MCP_SERVICE_ID_PATTERN.test(s)) {

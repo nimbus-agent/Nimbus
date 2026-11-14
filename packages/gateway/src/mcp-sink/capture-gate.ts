@@ -105,7 +105,7 @@ export interface CaptureGateDeps {
    * `approved` proposal is refused (fail closed). Injected (this module imports nothing from
    * `connectors/`, D32(f)).
    */
-  verifyActionDefinition?(actionType: string): Promise<ActionDefinitionCheck>;
+  verifyActionDefinition?(actionType: string, proposedAt?: number): Promise<ActionDefinitionCheck>;
   /**
    * Called once after an ACTION proposal is queued, with the number now waiting. A number and
    * nothing else, so no request-derived string can reach the owner's toast. A throw is swallowed.
@@ -380,18 +380,19 @@ const SUSPENDED_AT_SUBMIT =
 /**
  * Step 5a: the action type is proposable now, and on what basis. A `suspended` verdict is its own
  * audited refusal (`ERR_AGENT_TOOL_SUSPENDED`); denied and unknown are `NOT_PROPOSABLE`. A
- * proposable verdict with no basis is accepted only when the runtime marked it `userMcp` (fail
- * closed: a basis-less verdict is otherwise lax everywhere after it). Returns the verdict's basis
- * (absent for a user-MCP type) and whether its row may carry a payload over the ordinary cap.
+ * proposable verdict with no basis is ALWAYS refused (`agent_no_basis`, fail closed: a basis-less
+ * verdict would be lax everywhere after it; since AD5a a user-MCP type carries `legacy_user_mcp` or
+ * `approved` like every other). Returns the verdict's basis and whether its row may carry a payload
+ * over the ordinary cap.
  */
 function requireProposable(
   ctx: SubmitContext,
   v: ActionCapture,
   classified: ActionVerdict | undefined,
-): { readonly basis: ActionBasis | undefined; readonly boundInput: boolean } {
+): { readonly basis: ActionBasis; readonly boundInput: boolean } {
   const verdict = classified ?? { kind: "unknown" as const };
   if (verdict.kind === "proposable") {
-    if (verdict.basis === undefined && verdict.userMcp !== true) {
+    if (verdict.basis === undefined) {
       refuseAudited(
         ctx.deps,
         ctx.caller,
