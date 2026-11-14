@@ -7,11 +7,8 @@ import { runIndexedSchemaMigrations } from "../../index/migrations/runner.ts";
 import type { ActionDescription } from "../../mcp-sink/capture-types.ts";
 import type { ChatopsPolicy } from "../../policy/types.ts";
 import { mcpClientToolKey } from "../lazy-mesh/tool-map.ts";
-import {
-  type ClassifyContext,
-  classifyActionType,
-  PROPOSABLE_WRITE_TOOLS,
-} from "../proposable-actions.ts";
+import { type ClassifyContext, PROPOSABLE_WRITE_TOOLS } from "../proposable-actions.ts";
+import { insertUserMcpConnector } from "../user-mcp-store.ts";
 import { AGENT_DOOR_MAIL_SEND_TOOL_IDS } from "./agent-door.ts";
 import { legacyNoticeFor } from "./agent-door-legacy.ts";
 import {
@@ -21,7 +18,6 @@ import {
   DEFINITION_REFUSALS,
   DESCRIBE_NOT_PROPOSABLE_REASON,
   DESCRIBE_UNCHECKED_REASON,
-  DESCRIBE_USER_MCP_REASON,
 } from "./agent-door-runtime.ts";
 import { COMMIT_PATH_REFUSAL } from "./commit-paths.ts";
 import { definitionSha256 } from "./definition-hash.ts";
@@ -156,6 +152,15 @@ beforeEach(() => {
   configured = new Set(["github", "slack", "gitlab", "linear", "gmail", "jira", "notion", "iac"]);
   modelAccess = new Set(["mcp_x"]);
   userMcpAllowed = true;
+  // A `--model` server's row: the user-MCP verdict requires the registration (AD5a).
+  insertUserMcpConnector(db, {
+    service_id: "mcp_x",
+    command: "srv",
+    args_json: "[]",
+    read_paths_json: "[]",
+    net_hosts_json: "[]",
+    model_access: 1,
+  });
 });
 afterEach(() => db.close());
 
@@ -171,21 +176,15 @@ describe("AGENT_DOOR_MAIL_SEND_TOOL_IDS", () => {
 });
 
 describe("verdict", () => {
-  // The classifier's own answer, plus the explicit user-MCP marker the gate requires of a verdict
-  // with no basis (it is added only to a proposable one).
-  const userMcpVerdict = (t: string) => {
-    const v = classifyActionType(t, classifyContext);
-    return v.kind === "proposable" ? { ...v, userMcp: true as const } : v;
-  };
-
-  test("a user-MCP type returns what classifyActionType returns, a proposable one marked userMcp", () => {
+  test("an unapproved tool of a --model server is what the classifier says, as legacy_user_mcp; everything else is as before", () => {
     const d = door();
-    for (const t of ["mcp_x.do_it", "mcp_y.do_it", "mcp_x.bad name", "mcp_x."]) {
-      expect(d.verdict(t), t).toEqual(userMcpVerdict(t));
-    }
-    expect(d.verdict("mcp_x.do_it")).toEqual({ kind: "proposable", userMcp: true });
+    expect(d.verdict("mcp_x.do_it")).toEqual({ kind: "proposable", basis: "legacy_user_mcp" });
+    // Not registered: refused (the classifier would have said the same for want of --model).
+    expect(d.verdict("mcp_y.do_it")).toEqual({ kind: "denied", class: "user_mcp_not_registered" });
+    expect(d.verdict("mcp_x.bad name")).toEqual({ kind: "unknown" });
+    expect(d.verdict("mcp_x.")).toEqual({ kind: "unknown" });
     userMcpAllowed = false;
-    expect(d.verdict("mcp_x.do_it")).toEqual(userMcpVerdict("mcp_x.do_it"));
+    expect(d.verdict("mcp_x.do_it")).toEqual({ kind: "denied", class: "user_mcp_policy" });
   });
 
   test("only an approved bound row is marked boundInput; an approved plain row and a legacy type are not", () => {
@@ -408,8 +407,10 @@ describe("refusal", () => {
     approvedBasis = true,
   ) => d.refusal(type, input, approvedBasis ? "approved" : "legacy_unapproved");
 
-  test("a user-MCP type (no basis) has no destination here", () => {
+  test("a user-MCP type has no destination here, on either user-MCP basis or none", () => {
     expect(door().refusal("mcp_x.do_it", { a: 1 }, undefined)).toBeUndefined();
+    expect(door().refusal("mcp_x.do_it", { a: 1 }, "legacy_user_mcp")).toBeUndefined();
+    expect(door().refusal("mcp_x.do_it", { a: 1 }, "approved")).toBeUndefined();
   });
 
   test("the approved basis runs the model door's refusals", () => {
@@ -860,7 +861,7 @@ describe("describe (AD3a-2b)", () => {
       state: "legacy",
       deprecation: legacyNoticeFor("slack.message.post"),
     });
-    expect(byType(rows, "mcp_x.*")).toMatchObject({ state: "undescribed" });
+    expect(byType(rows, "mcp_x.*")).toMatchObject({ state: "legacy" });
     // No summary entry carries a description or a schema.
     expect(JSON.stringify(rows)).not.toContain("inputSchema");
     expect(JSON.stringify(rows)).not.toContain("description");
@@ -1030,10 +1031,14 @@ describe("describe (AD3a-2b)", () => {
     expect(listCalls).toEqual([]);
   });
 
-  test("a user-MCP type is undescribed and starts nothing", async () => {
+  test("a legacy user-MCP type is answered with the deprecation line and starts nothing", async () => {
     const out = await door().describe(["mcp_x.do_it"]);
     expect(out).toHaveLength(1);
-    expect(out[0]).toMatchObject({ actionType: "mcp_x.do_it", state: "undescribed" });
+    expect(out[0]).toMatchObject({
+      actionType: "mcp_x.do_it",
+      state: "legacy",
+      deprecation: legacyNoticeFor("mcp_x.do_it"),
+    });
     expect(listCalls).toEqual([]);
   });
 
@@ -1090,10 +1095,6 @@ describe("describe (AD3a-2b)", () => {
     }
     expect(JSON.stringify(replies)).not.toContain("agent_");
     expect(DESCRIBE_NOT_PROPOSABLE_REASON).not.toContain("agent_");
-  });
-
-  test("the user-MCP text claims nothing about registration", () => {
-    expect(DESCRIBE_USER_MCP_REASON).not.toMatch(/regist/i);
   });
 
   describe("a check that throws is one unavailable entry with a fixed text", () => {

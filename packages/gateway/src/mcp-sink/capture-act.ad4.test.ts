@@ -30,7 +30,7 @@ beforeEach(() => {
         },
         { capabilitiesDisabled: new Set<string>() },
       ),
-    classifyAction: () => ({ kind: "proposable", userMcp: true }),
+    classifyAction: () => ({ kind: "proposable", basis: "legacy_user_mcp" }),
     isServiceConfigured: () => Promise.resolve(true),
     now: () => 1_000,
     actionDestinationRefusal: () => undefined,
@@ -72,6 +72,7 @@ describe("AD4: the accept row", () => {
     expect(JSON.parse(accept.action_json)).toEqual({
       captureId: ID,
       actionType: "slack.message.post",
+      basis: "legacy_user_mcp",
       door: "agent",
       clientLabel: 'my "agent"',
       labelSource: CAPTURE_LABEL_SOURCE,

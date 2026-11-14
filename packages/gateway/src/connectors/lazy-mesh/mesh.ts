@@ -215,8 +215,19 @@ interface FirstPartyListingEntry {
   ensure(): Promise<void>;
 }
 
+/**
+ * The gateway's own deadline on listing one user-MCP server's tools for the agent door. Before it,
+ * the only bound was the MCP client's: its connect and its `tools/list` request each default to
+ * 60 s (`DEFAULT_REQUEST_TIMEOUT_MSEC`, never configured in `lazy-mesh/`), so a server that starts
+ * and never answers held a caller for up to about two minutes. 45 s covers a cold start of a
+ * sandboxed server (the Windows AppContainer profile included) and is shorter than that worst case.
+ * On expiry the listing reads as "could not be listed" (`undefined`).
+ */
+export const USER_MCP_LISTING_DEADLINE_MS = 45_000;
+
 export class LazyConnectorMesh {
   private readonly filesystem: MCPClient;
+  private readonly userMcpListingDeadlineMs: number;
   private readonly lazySlots = new Map<string, LazyMcpSlot>();
   private readonly listUserMcpConnectors: () => readonly UserMcpConnectorRow[];
   private readonly inactivityMs: number;
@@ -276,6 +287,8 @@ export class LazyConnectorMesh {
       auditDb?: import("bun:sqlite").Database;
       obsidianVaultPaths?: readonly string[];
       isConnectorAllowed?: (serviceId: string) => boolean;
+      /** Test seam: the agent door's user-MCP listing deadline. Production: {@link USER_MCP_LISTING_DEADLINE_MS}. */
+      userMcpListingDeadlineMs?: number;
       /** Test seam: deletes a user MCP sandbox leaf. Production: recursive, forced `rmSync`. */
       removeSandboxDir?: (dir: string) => void;
       /** Test seam: whether a user MCP sandbox leaf exists. Production: `existsSync`. */
@@ -324,6 +337,8 @@ export class LazyConnectorMesh {
       options?.removeSandboxDir ?? ((dir) => rmSync(dir, { recursive: true, force: true }));
     this.sandboxDirExists = options?.sandboxDirExists ?? existsSync;
     this.inactivityMs = options?.inactivityMs ?? 300_000;
+    this.userMcpListingDeadlineMs =
+      options?.userMcpListingDeadlineMs ?? USER_MCP_LISTING_DEADLINE_MS;
     this.listUserMcpConnectors = options?.listUserMcpConnectors ?? (() => []);
     this.healthDb = options?.healthDb;
     this.auditDb = options?.auditDb;
@@ -839,7 +854,10 @@ export class LazyConnectorMesh {
    * connector's) tools. `undefined` when no `user_mcp_connector` row names the id. Keys are as the
    * slot's `MCPClient` lists them: `<serviceId>_<tool>`.
    */
-  async listUserMcpTools(serviceId: string): Promise<LazyMeshToolMap | undefined> {
+  async listUserMcpTools(
+    serviceId: string,
+    expired?: AbortSignal,
+  ): Promise<LazyMeshToolMap | undefined> {
     const registered = this.listUserMcpConnectors().some((r) => r.service_id === serviceId);
     if (!registered) {
       return undefined;
@@ -849,8 +867,64 @@ export class LazyConnectorMesh {
     // the directory the revoke is rewriting. The per-server dispatch path no longer goes through the
     // merged listing, so it waits here instead.
     await this.filesystemSpawnGate;
+    // An attempt whose caller already gave up (the agent door's deadline passed while the gate was
+    // awaited) starts nothing: no client is ensured and no tool is requested.
+    if (expired?.aborted === true) {
+      return undefined;
+    }
     await this.ensureUserMcpRunning(serviceId);
     return listLazyMeshClientTools(this.getLazyClient(userMcpMeshKey(serviceId)));
+  }
+
+  /**
+   * ONE registered user-MCP server's tool DEFINITIONS for the agent door (AD5a), stripped to
+   * `description` and `inputSchema`. {@link listUserMcpTools} returns callable tools; their
+   * `execute` would call the sandboxed server outside the executor's HITL and egress chokepoint, so
+   * it never leaves here (the shape {@link listFirstPartyServerTools} keeps for a first-party
+   * server). `undefined` when no `user_mcp_connector` row names the id, or when the server lists
+   * nothing (it cannot be started, or lists no tool: the MCP client swallows a failed start and
+   * lists none). Keys are the slot's `<serviceId>_<tool>`; a key that does not start with
+   * `<serviceId>_` is dropped, so a listing can never speak for another server. Only THIS server's
+   * slot is ensured, and the call may start it: the caller is the door's definition check, reached
+   * only for a tool the owner approved for agents by name. A throw is the listing's own. The whole
+   * listing (the wait for the spawn gate, the start and the request) is bounded by
+   * {@link USER_MCP_LISTING_DEADLINE_MS} here, in the ONE place every caller goes through: on expiry
+   * the result is `undefined` ("could not be listed"), an attempt still waiting for the spawn gate
+   * starts nothing when the gate opens (the expiry is checked after the wait and before the client
+   * is ensured), and the abandoned promise is given a no-op rejection handler, so it can neither
+   * reject unhandled nor affect a later listing. A start or a tool request already in flight when
+   * the deadline fires cannot be cancelled: it runs to its own end and its result is discarded.
+   */
+  async listUserMcpToolDefinitions(
+    serviceId: string,
+  ): Promise<Readonly<Record<string, { description: unknown; inputSchema: unknown }>> | undefined> {
+    const giveUp = new AbortController();
+    const pending = this.listUserMcpTools(serviceId, giveUp.signal);
+    pending.catch(() => undefined);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const expired = new Promise<"expired">((resolve) => {
+      timer = setTimeout(() => {
+        giveUp.abort();
+        resolve("expired");
+      }, this.userMcpListingDeadlineMs);
+    });
+    let tools: LazyMeshToolMap | undefined | "expired";
+    try {
+      tools = await Promise.race([pending, expired]);
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+    }
+    if (tools === undefined || tools === "expired") return undefined;
+    const prefix = `${serviceId}_`;
+    const out: Record<string, { description: unknown; inputSchema: unknown }> = {};
+    for (const key of Object.keys(tools)) {
+      if (!key.startsWith(prefix)) continue;
+      const listed: unknown = tools[key];
+      const rec =
+        typeof listed === "object" && listed !== null ? (listed as Record<string, unknown>) : {};
+      out[key] = { description: rec["description"], inputSchema: rec["inputSchema"] };
+    }
+    return Object.keys(out).length === 0 ? undefined : out;
   }
 
   /**

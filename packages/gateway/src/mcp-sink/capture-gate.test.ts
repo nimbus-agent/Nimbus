@@ -996,7 +996,7 @@ describe("act door — submit (PR 3)", () => {
       ...deps,
       classifyAction: () =>
         verdict === "proposable"
-          ? { kind: "proposable", userMcp: true }
+          ? { kind: "proposable", basis: "legacy_user_mcp" }
           : verdict === "denied"
             ? { kind: "denied", class: "vcs" }
             : { kind: "unknown" },
@@ -1006,7 +1006,13 @@ describe("act door — submit (PR 3)", () => {
   });
   test("stores proposed with expires_at = now + ttl; audited with actionType; no item", async () => {
     const out = await submitCapture(deps, MCP, ACT);
-    expect(out).toEqual({ id: "cap_1", state: "proposed", expiresAt: clock + 24 * 3_600_000 });
+    // The fixture verdict carries the legacy_user_mcp basis (AD5a): the reply says `legacy`.
+    expect(out).toEqual({
+      id: "cap_1",
+      state: "proposed",
+      expiresAt: clock + 24 * 3_600_000,
+      legacy: true,
+    });
     expect(deps.store.get("cap_1")?.itemId).toBeNull();
     expect(JSON.parse(auditRows().at(-1)?.action_json ?? "{}")).toMatchObject({
       kind: "action",

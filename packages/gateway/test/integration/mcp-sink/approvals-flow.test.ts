@@ -108,7 +108,7 @@ function gateDeps(): CaptureGateDeps {
     refusals: new CaptureRefusalCounter(),
     newId: () => `cap_${String(++seq).padStart(32, "0")}`,
     now: () => clock,
-    classifyAction: () => ({ kind: "proposable", userMcp: true }),
+    classifyAction: () => ({ kind: "proposable", basis: "legacy_user_mcp" }),
     isServiceConfigured: () => Promise.resolve(true),
     actionDestinationRefusal: () => undefined,
   };
@@ -299,10 +299,13 @@ describe("A1: the same prompt the model door shows", () => {
     expect(agentPrompt).toContain("Requested by: an outside agent (unverified)");
 
     const lines = agentPrompt.split("\n");
-    expect(lines.at(-2)).toStartWith(
+    // The fixture's verdict basis is legacy_user_mcp (AD5a), so the block ends with the fixed
+    // deprecation line: who and when, the agent's summary, then the warning.
+    expect(lines.at(-3)).toStartWith(
       'Proposed by an outside agent (UNVERIFIED label "claude-code"',
     );
-    expect(lines.at(-1)).toStartWith("Agent's summary (UNVERIFIED): ");
+    expect(lines.at(-2)).toStartWith("Agent's summary (UNVERIFIED): ");
+    expect(lines.at(-1)).toStartWith("Deprecated: ");
     // The prompt reached the OWNER's connection (the one that issued approvals.approve).
     expect(seen[0]?.clientId).toBe(OWNER_A);
   });
@@ -380,7 +383,9 @@ describe("A2: typed confirmation, on a synthetic Wave 4 row (the real `github.pr
     ["an empty answer", () => ""],
     ["a wrong-case answer", () => TEXT.toUpperCase()],
     ["a trimmed-away answer (spaces around the text)", () => ` ${TEXT} `],
-    ["an echo of the prompt", (r: SeenRequest) => r.prompt],
+    // The echo is cut to the longest answer the wire accepts (512): with the legacy fixture's
+    // deprecation line the whole prompt is longer, and `consent.respond` would refuse it.
+    ["an echo of the prompt", (r: SeenRequest) => r.prompt.slice(0, 512)],
     ["a different channel", () => "slack/C1"],
   ])("%s is denied and nothing is dispatched", async (_n, typed) => {
     const { out } = await approveWith((r) => ({

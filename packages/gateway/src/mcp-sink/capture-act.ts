@@ -160,8 +160,8 @@ function parseStored(row: CaptureRow): ActionPayload {
 function requireVerdictAtApproval(deps: ActGateDeps, actionType: string): ActionBasis | undefined {
   const verdict = deps.classifyAction?.(actionType) ?? { kind: "unknown" as const };
   if (verdict.kind === "proposable") {
-    // Fail closed: a basis-less verdict is accepted only with the runtime's user-MCP marker.
-    if (verdict.basis === undefined && verdict.userMcp !== true) {
+    // Fail closed: a basis-less verdict is always refused.
+    if (verdict.basis === undefined) {
       throw new CaptureError(
         "ERR_CAPTURE_ACTION_NOT_PROPOSABLE",
         `${actionType} cannot be proposed (${NO_BASIS_CLASS}); the capture stays proposed`,
@@ -224,12 +224,25 @@ async function requireDefinitionAtApproval(
   }
 }
 
+/**
+ * `deps` bound to ONE stored proposal: the definition check is given the proposal's creation time
+ * (AD5a), so a user-MCP proposal queued against an EARLIER registration of the server id is refused
+ * by it. Every other member is the caller's own. An absent check stays absent (the refusal path).
+ */
+function depsForProposal(deps: ActGateDeps, proposedAt: number): ActGateDeps {
+  const check = deps.verifyActionDefinition;
+  return check === undefined
+    ? deps
+    : { ...deps, verifyActionDefinition: (actionType) => check(actionType, proposedAt) };
+}
+
 export async function acceptAction(
-  deps: ActGateDeps,
+  gateDeps: ActGateDeps,
   caller: CaptureCaller,
   row: CaptureRow,
   act: ActDeps | undefined,
 ): Promise<ActionAcceptResult> {
+  const deps = depsForProposal(gateDeps, row.createdAt);
   // 1. Capability incl. mcp_action (live, fail-closed). No ActDeps means no way to execute: refuse.
   const cap = deps.capability();
   if (!cap.actionEnabled || act === undefined) {

@@ -511,6 +511,23 @@ describe("describe_actions (AD3a-2b)", () => {
     expect(d).toContain("does not say why");
   });
 
+  test("it describes an approved user MCP tool and no longer says such tools are never described (AD5a)", () => {
+    const d = spec()?.description ?? "";
+    expect(d).not.toContain("are not described");
+    expect(d).toContain("mcp_<id>.<tool>");
+    expect(d).toContain("approved that tool for outside agents by name");
+    expect(d).toContain("third-party");
+  });
+
+  test("propose_action names the user MCP type form and that the owner approves it by name (AD5a)", async () => {
+    const t = await captureToolsFor(
+      depsWithStatus({ enabled: true, kinds: ["action"], actionEnabled: true }),
+    );
+    const d = t.find((x) => x.name === "propose_action")?.description ?? "";
+    expect(d).toContain("mcp_<id>.<tool>");
+    expect(d).toContain("by name");
+  });
+
   test("readOnlyHint matches capture_status and means proposes-and-dispatches-nothing", () => {
     const status = CAPTURE_TOOL_SPECS.find((s) => s.name === "capture_status");
     expect(status?.annotations.readOnlyHint).toBe(true);

@@ -64,6 +64,8 @@ import {
   checkToolgenVaultKeyConfinement,
   checkTribalKbWriteInvariant,
   checkTrustTableConfinement,
+  checkUserMcpCallFacts,
+  checkUserMcpDoorReach,
   checkVaultKeyAllowList,
   checkWorkSnapshotConfinement,
   checkWrapServerSpecInvariant,
@@ -6727,6 +6729,197 @@ ${middle}}`;
     expect(checkOriginComparison(files)).toEqual([]);
     expect(checkAgentDoorCheckOrder(files)).toEqual([]);
     expect(checkAgentDoorLegacyFlag(files)).toEqual([]);
+    expect(assertScanIsMeaningful(files)).toEqual([]);
+  });
+});
+
+describe("D49(g), (h) - the user-MCP call facts and the door's reach into user servers (Phase 28 AD5a, I42)", () => {
+  const file = (relPath: string, contents: string): FileEntry => ({ relPath, contents });
+  const SRC = "packages/gateway/src/";
+  const GOOD: FileEntry[] = [
+    file(
+      `${SRC}ipc/capture-rpc.ts`,
+      "let userMcpCall: Facts | undefined; const action = { type, userMcpCall };",
+    ),
+    file(`${SRC}engine/types.ts`, "userMcpCall?: UserMcpCallFacts;"),
+    file(`${SRC}engine/executor.ts`, "if (action.userMcpCall !== undefined) {}"),
+    file(`${SRC}engine/user-mcp-call-block.ts`, "export const x = (a) => a.userMcpCall;"),
+    file(`${SRC}connectors/lazy-mesh/mesh.ts`, "async listUserMcpToolDefinitions(id) {}"),
+    file(`${SRC}platform/assemble.ts`, "mesh.listUserMcpToolDefinitions(id);"),
+    file(`${SRC}ipc/connector-rpc.ts`, "mesh.listUserMcpToolDefinitions(id);"),
+    file(
+      `${SRC}connectors/connector-writes/door-approval-store.ts`,
+      "export function removeDoorApprovals() {}",
+    ),
+    file(`${SRC}ipc/connector-rpc-handlers/model-writes.ts`, "removeDoorApprovals(db, s);"),
+    file(`${SRC}ipc/connector-rpc-handlers/removal.ts`, "removeDoorApprovals(db, s);"),
+    file(`${SRC}ipc/connector-rpc-handlers/config.ts`, "removeDoorApprovals(db, s);"),
+  ];
+  const add = (path: string, contents: string): FileEntry[] => [...GOOD, file(path, contents)];
+  const swap = (path: string, contents: string): FileEntry[] =>
+    GOOD.map((f) => (f.relPath === path ? file(path, contents) : f));
+
+  test("the good set is clean", () => {
+    expect(checkUserMcpCallFacts(GOOD)).toEqual([]);
+    expect(checkUserMcpDoorReach(GOOD)).toEqual([]);
+  });
+
+  test.each([
+    `${SRC}ipc/approvals-rpc.ts`,
+    `${SRC}engine/run-ask.ts`,
+    `${SRC}platform/assemble.ts`,
+    `${SRC}mcp-sink/capture-act.ts`,
+    `${SRC}engine/proposer-block.ts`,
+  ])("(g) the call facts named in %s are refused", (path) => {
+    expect(
+      checkUserMcpCallFacts(add(path, "const f = action.userMcpCall;")).map((v) => v.rule),
+    ).toEqual(["user-mcp-call-facts-confined"]);
+  });
+
+  test("(g) the property written in the executor or the renderer is refused, though both may name it", () => {
+    for (const path of [`${SRC}engine/executor.ts`, `${SRC}engine/user-mcp-call-block.ts`]) {
+      const v = checkUserMcpCallFacts(swap(path, "const a = { userMcpCall: facts };"));
+      expect(v.map((x) => x.rule)).toEqual(["user-mcp-call-facts-confined"]);
+    }
+  });
+
+  test("(g) the shorthand property forms are refused in a file that may only read it, a destructuring read is not", () => {
+    for (const path of [`${SRC}engine/executor.ts`, `${SRC}engine/user-mcp-call-block.ts`]) {
+      for (const code of [
+        "const a = { userMcpCall };",
+        "const a = { ...x, userMcpCall };",
+        "const a = { type, userMcpCall, payload };",
+        "const a = {\n  userMcpCall,\n};",
+      ]) {
+        expect(
+          checkUserMcpCallFacts(swap(path, code)).map((x) => x.rule),
+          code,
+        ).toEqual(["user-mcp-call-facts-confined"]);
+      }
+      expect(checkUserMcpCallFacts(swap(path, "const { userMcpCall, ...rest } = action;"))).toEqual(
+        [],
+      );
+      expect(checkUserMcpCallFacts(swap(path, "const { type, userMcpCall } = action;"))).toEqual(
+        [],
+      );
+    }
+  });
+
+  test("(g) a member assignment is a write in a file that may only read the property, a comparison is not (review finding 6)", () => {
+    for (const path of [`${SRC}engine/executor.ts`, `${SRC}engine/user-mcp-call-block.ts`]) {
+      for (const code of [
+        "action.userMcpCall = facts;",
+        "action.userMcpCall=facts;",
+        "planned.userMcpCall  =\n  facts;",
+      ]) {
+        expect(
+          checkUserMcpCallFacts(swap(path, code)).map((x) => x.rule),
+          code,
+        ).toEqual(["user-mcp-call-facts-confined"]);
+      }
+      for (const code of [
+        "if (action.userMcpCall === undefined) {}",
+        "if (action.userMcpCall == null) {}",
+        "const f = () => action.userMcpCall;",
+      ]) {
+        expect(checkUserMcpCallFacts(swap(path, code)), code).toEqual([]);
+      }
+    }
+    // Where the property may be written (the types file, the act wiring), an assignment is allowed.
+    expect(
+      checkUserMcpCallFacts(swap(`${SRC}ipc/capture-rpc.ts`, "action.userMcpCall = facts;")),
+    ).toEqual([]);
+  });
+
+  test("(g) a renamed destructuring read is allowed, the same text as an object-literal write is not (review finding 7)", () => {
+    for (const path of [`${SRC}engine/executor.ts`, `${SRC}engine/user-mcp-call-block.ts`]) {
+      for (const code of [
+        "const { userMcpCall: facts } = action;",
+        "const { type, userMcpCall: facts, ...rest } = action;",
+        "const {\n  userMcpCall: facts,\n} = action;",
+        "function f({ userMcpCall: facts } = action) {}",
+      ]) {
+        expect(checkUserMcpCallFacts(swap(path, code)), code).toEqual([]);
+      }
+      for (const code of [
+        "const a = { userMcpCall: facts };",
+        "return { type, userMcpCall: facts, payload };",
+        "send({ userMcpCall: facts });",
+      ]) {
+        expect(
+          checkUserMcpCallFacts(swap(path, code)).map((x) => x.rule),
+          code,
+        ).toEqual(["user-mcp-call-facts-confined"]);
+      }
+    }
+  });
+
+  test("(g) a comment or a string that says userMcpCall is not a violation (the IPC method name)", () => {
+    expect(
+      checkUserMcpCallFacts(
+        add(`${SRC}ipc/lan-rpc.ts`, '// connector.userMcpCall\nconst m = "connector.userMcpCall";'),
+      ),
+    ).toEqual([]);
+  });
+
+  test.each([
+    `${SRC}ipc/connector-rpc-handlers/agent-writes.ts`,
+    `${SRC}ipc/connector-rpc-handlers/agent-writes-user-mcp.ts`,
+    `${SRC}connectors/connector-writes/agent-door-runtime.ts`,
+    `${SRC}ipc/capture-rpc.ts`,
+    `${SRC}engine/run-ask.ts`,
+  ])("(h) the stripped user-MCP lister named in %s is refused", (path) => {
+    expect(
+      checkUserMcpDoorReach(add(path, "m.listUserMcpToolDefinitions(id);")).map((v) => v.rule),
+    ).toEqual(["user-mcp-door-reach-confined"]);
+  });
+
+  test.each([
+    `${SRC}ipc/capture-rpc.ts`,
+    `${SRC}engine/run-ask.ts`,
+    `${SRC}mcp-sink/capture-act.ts`,
+    `${SRC}ipc/approvals-rpc.ts`,
+    `${SRC}connectors/connector-writes/agent-door-describe.ts`,
+  ])("(h) the injected user-MCP lister named in %s is refused", (path) => {
+    expect(
+      checkUserMcpDoorReach(add(path, "await deps.listUserMcpDefinitions?.(id);")).map(
+        (v) => v.rule,
+      ),
+    ).toEqual(["user-mcp-door-reach-confined"]);
+  });
+
+  test.each([
+    `${SRC}connectors/connector-writes/agent-door-runtime.ts`,
+    `${SRC}ipc/connector-rpc-handlers/agent-writes.ts`,
+    `${SRC}ipc/connector-rpc-handlers/agent-writes-user-mcp.ts`,
+    `${SRC}ipc/connector-rpc-handlers/model-writes.ts`,
+    `${SRC}ipc/connector-rpc.ts`,
+    `${SRC}platform/assemble.ts`,
+  ])("(h) the injected user-MCP lister may be named in %s", (path) => {
+    expect(checkUserMcpDoorReach(add(path, "await deps.listUserMcpDefinitions?.(id);"))).toEqual(
+      [],
+    );
+  });
+
+  test.each([
+    `${SRC}ipc/capture-rpc.ts`,
+    `${SRC}ipc/connector-rpc-handlers/agent-writes.ts`,
+    `${SRC}ipc/connector-rpc-handlers/agent-writes-user-mcp.ts`,
+    `${SRC}connectors/connector-writes/agent-door-runtime.ts`,
+    `${SRC}platform/assemble.ts`,
+  ])("(h) the door-approval delete named in %s is refused", (path) => {
+    expect(
+      checkUserMcpDoorReach(add(path, "removeDoorApprovals(db, s);")).map((v) => v.rule),
+    ).toEqual(["user-mcp-door-reach-confined"]);
+  });
+
+  test("the real repository satisfies (g) and (h)", async () => {
+    const files: FileEntry[] = [];
+    for await (const f of iterateSourceFiles()) {
+      files.push({ relPath: f.relPath, contents: f.contents });
+    }
+    expect(checkUserMcpCallFacts(files)).toEqual([]);
+    expect(checkUserMcpDoorReach(files)).toEqual([]);
     expect(assertScanIsMeaningful(files)).toEqual([]);
   });
 });

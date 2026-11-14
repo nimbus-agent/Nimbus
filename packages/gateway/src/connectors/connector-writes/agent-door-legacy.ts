@@ -9,6 +9,7 @@
 // The text is FIXED. The only variables are an action type and a service, and both come from the
 // write table (a matching row), never from request text.
 import { serviceOf } from "../../engine/service-of.ts";
+import { userMcpActionParts } from "../user-mcp-store.ts";
 import { AGENT_DOOR_MAIL_SEND_TOOL_IDS, agentDoorRow } from "./agent-door.ts";
 
 /** The line for one of the seven mail sends. */
@@ -20,6 +21,22 @@ export function legacyUnapprovedNotice(actionType: string, service: string): str
   return `Deprecated: ${actionType} is not approved for outside agents by name. It is accepted for now and will be refused in a later release. To keep it working run: nimbus connector writes enable ${service} --door agent`;
 }
 
+/**
+ * The line for a tool of a user-registered MCP server accepted under the window (AD5a, D-7): the
+ * server and tool come from the parsed type (`userMcpActionParts`), never from request text.
+ */
+export function legacyUserMcpNotice(serviceId: string, tool: string): string {
+  return `Deprecated: ${serviceId}.${tool} is not approved for outside agents by name. It is accepted for now and will be refused in a later release. To keep it working run: nimbus connector writes enable ${serviceId} --door agent --approve ${tool}`;
+}
+
+/**
+ * The line a summary carries for a `--model` server whose unapproved tools are still accepted
+ * (AD5a): the server id comes from the owner's registration, never from request text.
+ */
+export function legacyUserMcpPatternNotice(serviceId: string): string {
+  return `Deprecated: tools of ${serviceId} that are not approved for outside agents by name are accepted for now and will be refused in a later release. To keep one working run: nimbus connector writes enable ${serviceId} --door agent --approve <tool>`;
+}
+
 /** What `status` prints under the count: the command that ends the warning for every type that can be approved (not the mail sends). */
 export const LEGACY_STATUS_COMMAND = "nimbus connector writes enable <service> --door agent";
 
@@ -28,6 +45,8 @@ export const LEGACY_STATUS_COMMAND = "nimbus connector writes enable <service> -
  * legacy proposal, but the caller is not trusted to know that) gets a line that names nothing.
  */
 export function legacyNoticeFor(actionType: string): string {
+  const userMcp = userMcpActionParts(actionType);
+  if (userMcp !== undefined) return legacyUserMcpNotice(userMcp.serviceId, userMcp.tool);
   const row = agentDoorRow(actionType);
   if (row === undefined) {
     return "Deprecated: this action type is not approved for outside agents by name. It is accepted for now and will be refused in a later release.";
@@ -41,4 +60,4 @@ export function legacyNoticeFor(actionType: string): string {
  * `status` prints with its count.
  */
 export const LEGACY_LIST_HEADER =
-  "Some proposals below were accepted without being approved for outside agents by name. That is deprecated: a later release will refuse them, and the seven mail sends cannot be approved at all (drafts stay allowed). To keep the other types working run: nimbus connector writes enable <service> --door agent";
+  "Some proposals below were accepted without being approved for outside agents by name. That is deprecated: a later release will refuse them, and the seven mail sends cannot be approved at all (drafts stay allowed). To keep the other types working run: nimbus connector writes enable <service> --door agent. For a tool of a server you registered yourself, name it: nimbus connector writes enable mcp_<id> --door agent --approve <tool>";

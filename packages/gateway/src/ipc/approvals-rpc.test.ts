@@ -128,7 +128,7 @@ function makeCtx(extra: Partial<NonNullable<CaptureRpcCtx["act"]>> = {}): Captur
     refusals: new CaptureRefusalCounter(),
     newId: () => "cap_09090909090909090909090909090909",
     now: () => 1_000,
-    classifyAction: () => ({ kind: "proposable", userMcp: true }),
+    classifyAction: () => ({ kind: "proposable", basis: "legacy_user_mcp" }),
     isServiceConfigured: () => Promise.resolve(true),
     actionDestinationRefusal: () => undefined,
   };

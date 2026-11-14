@@ -32,6 +32,8 @@ let configured: boolean;
 let refusal: string | undefined;
 let refusalBasis: Array<ActionBasis | undefined>;
 let verify: NonNullable<ActGateDeps["verifyActionDefinition"]>;
+/** The `proposedAt` each definition check was given. */
+let proposedAtSeen: Array<number | undefined>;
 let deps: ActGateDeps;
 
 function insertAction(legacy: boolean): void {
@@ -64,6 +66,7 @@ beforeEach(() => {
     { capabilitiesDisabled: new Set<string>() },
   );
   calls = [];
+  proposedAtSeen = [];
   verdict = { kind: "proposable", basis: "approved" };
   configured = true;
   refusal = undefined;
@@ -90,7 +93,10 @@ beforeEach(() => {
       refusalBasis.push(basis);
       return refusal;
     },
-    verifyActionDefinition: (t) => verify(t),
+    verifyActionDefinition: (t, at) => {
+      proposedAtSeen.push(at);
+      return verify(t);
+    },
   };
   insertAction(false);
 });
@@ -225,6 +231,11 @@ describe("the basis used after step 4 is the approval-time one", () => {
     expect(refusalBasis).toEqual(["legacy_mail_send"]);
   });
 
+  test("the approval-time definition check is given the stored proposal's createdAt (a proposal older than the registration is refused by it)", async () => {
+    await acceptAction(deps, OWNER, row(), act({ status: "ok", result: {} }));
+    expect(proposedAtSeen).toEqual([500]);
+  });
+
   test("a row queued legacy and since approved by name is held to the approved rules", async () => {
     db.run("DELETE FROM capture");
     insertAction(true);
@@ -239,17 +250,17 @@ describe("the basis used after step 4 is the approval-time one", () => {
     expect(b.provenance[0]?.basis).toBe("approved");
   });
 
-  test("a verdict with no basis (user-MCP, today's wiring) is unchanged: no definition check, no human-only rule", async () => {
-    verdict = { kind: "proposable", userMcp: true };
+  test("a legacy_user_mcp basis is unchanged from before AD5a: no definition check, no human-only rule", async () => {
+    verdict = { kind: "proposable", basis: "legacy_user_mcp" };
     Reflect.deleteProperty(deps, "verifyActionDefinition");
     const a = act({ status: "ok", result: {} }, "absent");
     expect((await acceptAction(deps, OWNER, row(), a)).state).toBe("executed");
-    expect(a.provenance[0]?.basis).toBeUndefined();
-    expect(refusalBasis).toEqual([undefined]);
+    expect(a.provenance[0]?.basis).toBe("legacy_user_mcp");
+    expect(refusalBasis).toEqual(["legacy_user_mcp"]);
   });
 
-  test("a basis-less verdict without the user-MCP marker is refused at approval and the row stays proposed", async () => {
-    verdict = { kind: "proposable" };
+  test("a basis-less proposable verdict is refused at approval and the row stays proposed", async () => {
+    verdict = { kind: "proposable" } as unknown as ActionVerdict;
     const a = act({ status: "ok", result: {} }, "absent");
     const e = await codeOf(acceptAction(deps, OWNER, row(), a));
     expect(e.code).toBe("ERR_CAPTURE_ACTION_NOT_PROPOSABLE");

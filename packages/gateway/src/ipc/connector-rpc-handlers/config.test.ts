@@ -1,5 +1,9 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { createRpcFixture, type RpcFixture } from "../../../test/helpers/rpc-harness.ts";
+import {
+  listDoorApprovals,
+  upsertDoorApprovals,
+} from "../../connectors/connector-writes/door-approval-store.ts";
 import type { ResolvedUserMcpRegistration } from "../../connectors/user-mcp-registration.ts";
 import type { ConnectorRpcError } from "../connector-rpc-shared.ts";
 import {
@@ -234,6 +238,49 @@ describe("handleConnectorAddMcp", () => {
       expect((e as ConnectorRpcError).rpcCode).toBe(-32602);
       expect((e as ConnectorRpcError).message).toContain("already exists");
     }
+  });
+});
+
+describe("handleConnectorAddMcp — door approvals and the registration (AD5a, D-5)", () => {
+  const SHA = "b".repeat(64);
+  const approvalsOf = (service: string) => listDoorApprovals(fixture.db, "agent", service);
+
+  test("adding mcp_test over LEFTOVER approvals stores none: a re-registered id starts with nothing approved", () => {
+    upsertDoorApprovals(
+      fixture.db,
+      "agent",
+      "mcp_test",
+      [{ toolId: "append", definitionSha256: SHA }],
+      1,
+    );
+    upsertDoorApprovals(
+      fixture.db,
+      "agent",
+      "mcp_other",
+      [{ toolId: "append", definitionSha256: SHA }],
+      1,
+    );
+    const { stub: scheduler } = makeStubScheduler();
+    const { stub: mesh } = makeStubMesh();
+    handleConnectorAddMcp(buildCtx({ rec: undefined, scheduler, mesh }), RESOLVED);
+    expect(approvalsOf("mcp_test")).toEqual([]);
+    expect(approvalsOf("mcp_other")).toHaveLength(1);
+  });
+
+  test("a duplicate add (the id is registered) deletes NOTHING: the live registration keeps its approvals", () => {
+    const { stub: scheduler } = makeStubScheduler();
+    const { stub: mesh } = makeStubMesh();
+    const ctx = buildCtx({ rec: undefined, scheduler, mesh });
+    handleConnectorAddMcp(ctx, RESOLVED);
+    upsertDoorApprovals(
+      fixture.db,
+      "agent",
+      "mcp_test",
+      [{ toolId: "append", definitionSha256: SHA }],
+      1,
+    );
+    expect(() => handleConnectorAddMcp(ctx, RESOLVED)).toThrow();
+    expect(approvalsOf("mcp_test")).toHaveLength(1);
   });
 });
 

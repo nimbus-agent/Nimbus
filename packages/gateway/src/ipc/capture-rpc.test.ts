@@ -2,6 +2,7 @@ import type { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
 import { DEFAULT_MCP_SINK_CONFIG } from "../config/mcp-sink-toml.ts";
+import { legacyNoticeFor } from "../connectors/connector-writes/agent-door-legacy.ts";
 import { CONNECTOR_WRITE_ROWS } from "../connectors/connector-writes/index.ts";
 import {
   actDoorRefusal,
@@ -800,7 +801,7 @@ describe("captures.accept on an action (act door wiring)", () => {
           },
           { capabilitiesDisabled: new Set() },
         ),
-      classifyAction: () => ({ kind: "proposable", userMcp: true }),
+      classifyAction: () => ({ kind: "proposable", basis: "legacy_user_mcp" }),
       isServiceConfigured: () => Promise.resolve(true),
     };
     gate.store.insert({
@@ -863,13 +864,18 @@ describe("captures.accept on an action (act door wiring)", () => {
       {
         type: "slack.message.post",
         origin: "agent",
-        proposer: proposerFrom({
-          captureId: "cap_0a0c0a0c0a0c0a0c0a0c0a0c0a0c0a0c",
-          clientLabel: "agent",
-          createdAt: 500,
-          expiresAt: 2_000,
-          summary: "why",
-        }),
+        // The fixture's verdict basis is legacy_user_mcp (AD5a): a legacy basis puts the fixed
+        // deprecation line on the proposer, from the same module every surface uses.
+        proposer: {
+          ...proposerFrom({
+            captureId: "cap_0a0c0a0c0a0c0a0c0a0c0a0c0a0c0a0c",
+            clientLabel: "agent",
+            createdAt: 500,
+            expiresAt: 2_000,
+            summary: "why",
+          }),
+          deprecation: legacyNoticeFor("slack.message.post"),
+        },
         payload: { mcpToolId: "slack_message_post", input: { text: "hi" } },
       },
     ]);
@@ -918,13 +924,13 @@ const REAL_CLASSIFY = {
 };
 
 /**
- * The legacy classifier as a gate verdict. The gate refuses a basis-less verdict unless it carries
- * the runtime's `userMcp` marker, so these tests (which exercise the destination refusals, not the
- * door) add it exactly as `createAgentDoor` does for a user-MCP type.
+ * The legacy classifier as a gate verdict. The gate refuses a basis-less verdict, so these tests
+ * (which exercise the destination refusals, not the door) give a proposable one the
+ * `legacy_user_mcp` basis, as `createAgentDoor` does for an unapproved `--model` user-MCP tool.
  */
 function classifyViaLegacyTable(t: string) {
   const v = classifyActionType(t, REAL_CLASSIFY);
-  return v.kind === "proposable" ? { ...v, userMcp: true as const } : v;
+  return v.kind === "proposable" ? { ...v, basis: "legacy_user_mcp" as const } : v;
 }
 
 function boundPolicy(channels: readonly string[]): EnforcedPolicy {
