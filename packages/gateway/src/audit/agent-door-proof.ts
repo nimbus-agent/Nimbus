@@ -13,7 +13,10 @@
  * TypeScript, never `json_extract`.
  *
  * The completeness check (design D-7 of the AD4 plan) compares the ledgers per CAPTURE and loads
- * each checked capture's whole history, so a window never truncates a capture's own rows.
+ * each checked capture's whole history, so a window never truncates a capture's own rows. The read
+ * is bounded by what the window selects: pass 1 streams the rows IN the window to find its
+ * captures, pass 2 streams both ledgers and KEEPS only those captures' rows, so history outside
+ * them consumes none of the row cap (the cap bounds the rows kept per ledger).
  */
 import type { Database } from "bun:sqlite";
 import { BOOT_MARKER_METHOD } from "../egress/egress-boot-marker.ts";
@@ -205,10 +208,22 @@ function parseLifecycle(actionType: string, actionJson: string): Lifecycle | und
   };
 }
 
-/** A label as the executor's audit row holds it: through the same redaction. */
+/**
+ * A label as the executor's audit row holds it: through the same redaction. Both commands group and
+ * match by this value, so a credential-shaped label reads the same in `prove` and `audit --door`.
+ */
 function redactLabel(label: string | null): string | null {
-  const v: unknown = JSON.parse(redactAuditPayload(label));
+  const v: unknown = JSON.parse(redactAuditPayload(label, Number.MAX_SAFE_INTEGER));
   return typeof v === "string" ? v : null;
+}
+
+/**
+ * The form `--proposer` compares: the label as the client declared it, redacted like the stored
+ * rows and then escaped like the prompt. ONE form: the escaped text of one label is never also the
+ * raw text of another.
+ */
+function wantedLabel(byLabel: string): string {
+  return escapeUnverifiedLine(redactLabel(byLabel) ?? byLabel);
 }
 
 // ---- the reads ----------------------------------------------------------------------------------
@@ -222,27 +237,6 @@ interface EgressRow {
   readonly resultStatus: string;
 }
 
-/** The audit rows of the agent door: every `capture.*` row and every row that names a capture id. */
-function readAuditRows(db: Database, maxRows: number): { rows: AuditRow[]; cut: boolean } {
-  // One row past the cap says the scan was cut. The statement always runs to completion: an early
-  // exit from an iterator would leave the cached statement open.
-  const found = db
-    .query<AuditPageRow, [number]>(
-      `SELECT id, action_type, hitl_status, action_json, timestamp FROM audit_log
-     WHERE action_type LIKE 'capture.%' OR action_json LIKE '%"captureId":"cap\\_%' ESCAPE '\\'
-     ORDER BY id ASC LIMIT ?`,
-    )
-    .all(maxRows + 1);
-  const rows: AuditRow[] = found.slice(0, maxRows).map((r) => ({
-    id: r.id,
-    actionType: r.action_type,
-    hitlStatus: r.hitl_status,
-    actionJson: r.action_json,
-    timestamp: r.timestamp,
-  }));
-  return { rows, cut: found.length > maxRows };
-}
-
 interface AuditPageRow {
   readonly id: number;
   readonly action_type: string;
@@ -251,36 +245,79 @@ interface AuditPageRow {
   readonly timestamp: number;
 }
 
-/** Every `agent:<captureId>` row of the task class (served by `idx_egress_ledger_source`). */
-function readEgressRows(db: Database, maxRows: number): { rows: EgressRow[]; cut: boolean } {
+/** Rows one page of a streaming pass holds: the ledgers are never copied into memory whole. */
+const SCAN_PAGE = 2_000;
+
+const ALL_TIME: Window = { since: Number.MIN_SAFE_INTEGER, until: Number.MAX_SAFE_INTEGER };
+
+/**
+ * Stream the audit rows of the agent door in `w`: every `capture.*` row and every row that names a
+ * capture id, oldest first, in pages by id. Each page statement runs to completion (an early exit
+ * from an iterator would leave the cached statement open); `visit` returning false ends the pass
+ * after the current page's row.
+ */
+function scanAudit(db: Database, w: Window, visit: (r: AuditRow) => boolean): void {
+  const stmt = db.query<AuditPageRow, [number, number, number, number]>(
+    `SELECT id, action_type, hitl_status, action_json, timestamp FROM audit_log
+     WHERE id > ? AND timestamp >= ? AND timestamp <= ?
+       AND (action_type LIKE 'capture.%' OR action_json LIKE '%"captureId":"cap\\_%' ESCAPE '\\')
+     ORDER BY id ASC LIMIT ?`,
+  );
+  let after = 0;
+  for (;;) {
+    const page = stmt.all(after, w.since, w.until, SCAN_PAGE);
+    for (const r of page) {
+      after = r.id;
+      const row: AuditRow = {
+        id: r.id,
+        actionType: r.action_type,
+        hitlStatus: r.hitl_status,
+        actionJson: r.action_json,
+        timestamp: r.timestamp,
+      };
+      if (!visit(row)) return;
+    }
+    if (page.length < SCAN_PAGE) return;
+  }
+}
+
+/** Stream every `task` row in the reserved `agent:` range of `w` (served by `idx_egress_ledger_source`). */
+function scanEgress(db: Database, w: Window, visit: (r: EgressRow) => boolean): void {
   const upper = `${AGENT_SOURCE_PREFIX.slice(0, -1)}${String.fromCharCode(
     AGENT_SOURCE_PREFIX.charCodeAt(AGENT_SOURCE_PREFIX.length - 1) + 1,
   )}`;
-  const found = db
-    .query<
-      {
-        id: number;
-        timestamp: number;
-        source_id: string;
-        method: string;
-        hitl_status: string;
-        result_status: string;
-      },
-      [string, string, number]
-    >(
-      `SELECT id, timestamp, source_id, method, hitl_status, result_status FROM egress_ledger
-     WHERE source_type = 'task' AND source_id >= ? AND source_id < ? ORDER BY id ASC LIMIT ?`,
-    )
-    .all(AGENT_SOURCE_PREFIX, upper, maxRows + 1);
-  const rows: EgressRow[] = found.slice(0, maxRows).map((r) => ({
-    id: r.id,
-    timestamp: r.timestamp,
-    sourceId: r.source_id,
-    method: r.method,
-    hitlStatus: r.hitl_status,
-    resultStatus: r.result_status,
-  }));
-  return { rows, cut: found.length > maxRows };
+  const stmt = db.query<
+    {
+      id: number;
+      timestamp: number;
+      source_id: string;
+      method: string;
+      hitl_status: string;
+      result_status: string;
+    },
+    [number, string, string, number, number, number]
+  >(
+    `SELECT id, timestamp, source_id, method, hitl_status, result_status FROM egress_ledger
+     WHERE id > ? AND source_type = 'task' AND source_id >= ? AND source_id < ?
+       AND timestamp >= ? AND timestamp <= ? ORDER BY id ASC LIMIT ?`,
+  );
+  let after = 0;
+  for (;;) {
+    const page = stmt.all(after, AGENT_SOURCE_PREFIX, upper, w.since, w.until, SCAN_PAGE);
+    for (const r of page) {
+      after = r.id;
+      const row: EgressRow = {
+        id: r.id,
+        timestamp: r.timestamp,
+        sourceId: r.source_id,
+        method: r.method,
+        hitlStatus: r.hitl_status,
+        resultStatus: r.result_status,
+      };
+      if (!visit(row)) return;
+    }
+    if (page.length < SCAN_PAGE) return;
+  }
 }
 
 /**
@@ -366,19 +403,43 @@ function historyOf(m: Model, id: string): History {
 
 const CAPTURE_ID_RE = /^cap_[0-9a-f]{32}$/;
 
-function addLifecycle(m: Model, r: AuditRow): void {
+/** The lifecycle rows of an action capture; every other `capture.*` row is none of this reader's business. */
+const LIFECYCLE_TYPES: ReadonlySet<string> = new Set([
+  "capture.submit",
+  "capture.action.accept",
+  "capture.action.outcome",
+  "capture.reject",
+  "capture.action.expire",
+]);
+
+/** The capture id of an `agent:<id>` source id, or `undefined` when it is not exactly the prefix and a well-formed id. */
+function captureIdOfSource(sourceId: string): string | undefined {
+  const id = sourceId.slice(AGENT_SOURCE_PREFIX.length);
+  return CAPTURE_ID_RE.test(id) ? id : undefined;
+}
+
+/** The capture a lifecycle row belongs to, when it is a row of an ACTION capture (a note's or a decision's rows are not). */
+function actionLifecycleOf(r: AuditRow): Lifecycle | undefined {
+  if (!LIFECYCLE_TYPES.has(r.actionType)) return undefined;
   const life = parseLifecycle(r.actionType, r.actionJson);
-  if (life === undefined) {
-    m.unreadable += 1;
-    return;
-  }
+  if (life === undefined) return undefined;
+  const kindMatters = r.actionType === "capture.submit" || r.actionType === "capture.reject";
+  return kindMatters && life.kind !== "action" ? undefined : life;
+}
+
+/** Add a lifecycle row of a SELECTED capture (or an in-window refused submit); true when it was kept. */
+function addLifecycle(m: Model, r: AuditRow, selected: ReadonlySet<string>, w: Window): boolean {
+  const life = actionLifecycleOf(r);
+  if (life === undefined) return false;
   if (!CAPTURE_ID_RE.test(life.captureId)) {
-    // The one lifecycle row with no capture id is a submit the gate refused.
-    if (r.actionType === "capture.submit" && life.kind === "action") {
+    // The one lifecycle row with no capture id is a submit the gate refused; it is this window's only.
+    if (r.actionType === "capture.submit" && inWindow(w, r.timestamp)) {
       m.refusedSubmits.push({ row: r, life });
+      return true;
     }
-    return;
+    return false;
   }
+  if (!selected.has(life.captureId)) return false;
   const h = historyOf(m, life.captureId);
   switch (r.actionType) {
     case "capture.submit":
@@ -393,40 +454,107 @@ function addLifecycle(m: Model, r: AuditRow): void {
     case "capture.reject":
       h.rejects.push(r);
       break;
-    case "capture.action.expire":
+    default:
       h.expires.push(r);
       break;
-    default:
-      break;
   }
+  return true;
 }
 
-function buildModel(auditRows: readonly AuditRow[], egressRows: readonly EgressRow[]): Model {
-  const m: Model = { captures: new Map(), refusedSubmits: [], unreadable: 0 };
-  for (const r of auditRows) {
+/** What the window selects (pass 1): the captures it touches, and the rows it cannot attribute to any. */
+interface Selection {
+  readonly ids: Set<string>;
+  /** Lifecycle rows IN the window that could not be read. */
+  unreadable: number;
+  /** `task` rows IN the window in the reserved range that are not exactly `agent:<well-formed capture id>`. */
+  foreign: number;
+}
+
+/**
+ * Pass 1: the captures the window selects, from the rows whose timestamp is in it: every lifecycle
+ * row of an action capture and every gate row (a proposer or an `onBehalfOf` row) names one, and so
+ * does every `agent:<id>` egress row. (D-7 checks the accept, gate and egress subset; the other
+ * lifecycle rows are selected too so the counts of the window are right.)
+ */
+function selectWindowCaptures(db: Database, w: Window): Selection {
+  const sel: Selection = { ids: new Set(), unreadable: 0, foreign: 0 };
+  scanAudit(db, w, (r) => {
     if (r.actionType.startsWith("capture.")) {
-      addLifecycle(m, r);
-      continue;
+      if (!LIFECYCLE_TYPES.has(r.actionType)) return true;
+      const life = parseLifecycle(r.actionType, r.actionJson);
+      if (life === undefined) {
+        sel.unreadable += 1;
+        return true;
+      }
+      const kept = actionLifecycleOf(r);
+      if (kept !== undefined && CAPTURE_ID_RE.test(kept.captureId)) sel.ids.add(kept.captureId);
+      return true;
     }
     const c = classifyAuditRow(r.actionType, r.actionJson);
-    if (c.door !== "agent") continue;
-    historyOf(m, c.captureId).gates.push({
-      type: c.type,
-      hitl: r.hitlStatus,
-      timestamp: r.timestamp,
-      subStep: c.subStep,
-      label: c.subStep ? undefined : c.label,
-    });
-  }
-  for (const e of egressRows) {
-    const id = e.sourceId.slice(AGENT_SOURCE_PREFIX.length);
-    if (!CAPTURE_ID_RE.test(id)) {
-      m.unreadable += 1;
-      continue;
+    if (c.door === "agent") sel.ids.add(c.captureId);
+    return true;
+  });
+  scanEgress(db, w, (e) => {
+    const id = captureIdOfSource(e.sourceId);
+    if (id === undefined) sel.foreign += 1;
+    else sel.ids.add(id);
+    return true;
+  });
+  return sel;
+}
+
+/** Which side of the proof hit the row cap. */
+export type ScanSide = "audit" | "egress";
+
+/**
+ * Pass 2: every row of every selected capture, whatever its timestamp, streamed from both ledgers
+ * and KEPT only when it belongs to a selected capture (or is a refused submit of the window), so
+ * history outside the selected captures consumes no budget. The cap bounds the rows kept per side;
+ * the first row past it ends that side's pass and names the side.
+ */
+function loadSelectedHistories(
+  db: Database,
+  sel: Selection,
+  w: Window,
+  maxRows: number,
+): { model: Model; cutSides: ScanSide[] } {
+  const model: Model = { captures: new Map(), refusedSubmits: [], unreadable: sel.unreadable };
+  const cutSides: ScanSide[] = [];
+  let auditKept = 0;
+  scanAudit(db, ALL_TIME, (r) => {
+    let kept: boolean;
+    if (r.actionType.startsWith("capture.")) {
+      kept = addLifecycle(model, r, sel.ids, w);
+    } else {
+      const c = classifyAuditRow(r.actionType, r.actionJson);
+      kept = c.door === "agent" && sel.ids.has(c.captureId);
+      if (c.door === "agent" && kept) {
+        historyOf(model, c.captureId).gates.push({
+          type: c.type,
+          hitl: r.hitlStatus,
+          timestamp: r.timestamp,
+          subStep: c.subStep,
+          label: c.subStep ? undefined : c.label,
+        });
+      }
     }
-    historyOf(m, id).egress.push(e);
-  }
-  return m;
+    if (!kept) return true;
+    auditKept += 1;
+    if (auditKept <= maxRows) return true;
+    cutSides.push("audit");
+    return false;
+  });
+  let egressKept = 0;
+  scanEgress(db, ALL_TIME, (e) => {
+    const id = captureIdOfSource(e.sourceId);
+    if (id === undefined || !sel.ids.has(id)) return true;
+    historyOf(model, id).egress.push(e);
+    egressKept += 1;
+    if (egressKept <= maxRows) return true;
+    cutSides.push("egress");
+    return false;
+  });
+  return { model, cutSides };
 }
 
 /** The type of the write itself: the first gate row that is not a sub-step, else what the lifecycle rows name. */
@@ -444,7 +572,8 @@ function labelOf(h: History): { label: string | null; source: "declared" | "kit"
   const gate = h.gates.find((g) => !g.subStep && g.label !== undefined);
   const raw = h.submit?.life.clientLabel ?? accept?.life.clientLabel ?? gate?.label ?? null;
   const source = accept?.life.labelSource ?? "declared";
-  return { label: raw, source };
+  // The submit and accept rows hold the label unredacted, the gate row redacted: group by one value.
+  return { label: redactLabel(raw), source };
 }
 
 // ---- the proof ---------------------------------------------------------------------------------
@@ -483,12 +612,23 @@ export interface ProposerProof {
   readonly untilMs: number | null;
   readonly groups: readonly ProposerGroup[];
   readonly scanCut: boolean;
+  /** Which ledger hit the row cap (empty unless `scanCut`). */
+  readonly scanCutSides: readonly ScanSide[];
+  /** How many groups the window holds before `byLabel` filtered them (so a filter that hides all can say so). */
+  readonly totalGroups: number;
   readonly completeness: {
     readonly status: "ok" | "indeterminate";
     readonly causes: readonly IndeterminateCause[];
     readonly mismatches: readonly Mismatch[];
     readonly checkedCaptures: number;
     readonly unreadableRows: number;
+    /**
+     * `task` rows of this window in the reserved `agent:` range that are not exactly the prefix and a
+     * well-formed capture id: the gateway never writes one. Reported, and not a cause of
+     * `indeterminate`: they name no capture, and a real problem cannot hide behind them, because each
+     * capture is compared on its own audit and egress rows.
+     */
+    readonly foreignRows: number;
     readonly notChecked: {
       /** Proposals accepted before this version recorded the label source. */
       readonly preVersionCaptures: number;
@@ -501,12 +641,16 @@ export interface ProposerProof {
 export interface ProofOptions {
   readonly sinceMs?: number | undefined;
   readonly untilMs?: number | undefined;
-  /** Keep only the groups whose label is this (the stored text or its escaped form). */
+  /** Keep only the groups whose label is this, as the client declared it (compared redacted and escaped). */
   readonly byLabel?: string | undefined;
   /** Result of the audit chain verify, run by the caller. */
   readonly audit: ChainStatus;
   /** Result of the egress chain verify, run by the caller. */
   readonly egress: ChainStatus;
+  /**
+   * The most rows one proof KEEPS per ledger, for the captures its window selects (default
+   * {@link PROOF_MAX_ROWS}). Rows of captures the window does not select consume none of it.
+   */
   readonly maxRows?: number | undefined;
 }
 
@@ -568,7 +712,7 @@ function countGroups(m: Model, w: Window): ProposerGroup[] {
   }
   for (const r of m.refusedSubmits) {
     if (!inWindow(w, r.row.timestamp) || r.row.hitlStatus !== "rejected") continue;
-    const c = groupFor(r.life.clientLabel ?? null, "declared");
+    const c = groupFor(redactLabel(r.life.clientLabel ?? null), "declared");
     c.refusedAtSubmit += 1;
     if (r.life.connection !== undefined) c.connections.add(r.life.connection);
   }
@@ -811,9 +955,8 @@ function selectCaptures(m: Model, w: Window): History[] {
 export function proveByProposer(db: Database, opts: ProofOptions): ProposerProof {
   const maxRows = opts.maxRows ?? PROOF_MAX_ROWS;
   const w: Window = { since: opts.sinceMs ?? 0, until: opts.untilMs ?? Number.MAX_SAFE_INTEGER };
-  const audit = readAuditRows(db, maxRows);
-  const egress = readEgressRows(db, maxRows);
-  const model = buildModel(audit.rows, egress.rows);
+  const selection = selectWindowCaptures(db, w);
+  const { model, cutSides } = loadSelectedHistories(db, selection, w, maxRows);
   const ctx: CheckCtx = { cutoff: pruneCutoff(db), newestBoot: newestBootMarker(db) };
 
   const mismatches: Mismatch[] = [];
@@ -828,7 +971,7 @@ export function proveByProposer(db: Database, opts: ProofOptions): ProposerProof
     pruned += r.prunedGateRows;
   }
 
-  const scanCut = audit.cut || egress.cut;
+  const scanCut = cutSides.length > 0;
   const coverage = coverageForWindow(db, { since: opts.sinceMs, until: opts.untilMs });
   const causes: IndeterminateCause[] = [];
   if (mismatches.length > 0) causes.push("mismatch");
@@ -839,21 +982,24 @@ export function proveByProposer(db: Database, opts: ProofOptions): ProposerProof
   if (coverage.task === "none") causes.push("coverage_none");
 
   const wanted = opts.byLabel;
-  const groups = countGroups(model, w).filter(
-    (g) => wanted === undefined || g.label === wanted || g.label === escapeUnverifiedLine(wanted),
-  );
+  const wantedEscaped = wanted === undefined ? undefined : wantedLabel(wanted);
+  const allGroups = countGroups(model, w);
+  const groups = allGroups.filter((g) => wantedEscaped === undefined || g.label === wantedEscaped);
   return {
     labelsVerified: false,
     sinceMs: opts.sinceMs ?? null,
     untilMs: opts.untilMs ?? null,
     groups,
     scanCut,
+    scanCutSides: cutSides,
+    totalGroups: allGroups.length,
     completeness: {
       status: causes.length === 0 ? "ok" : "indeterminate",
       causes,
       mismatches,
       checkedCaptures: checked,
       unreadableRows: model.unreadable,
+      foreignRows: selection.foreign,
       notChecked: { preVersionCaptures: preVersion, prunedGateRows: pruned },
     },
   };
@@ -949,14 +1095,7 @@ function doorRowOf(r: AuditPageRow, opts: ListByDoorOptions): DoorRow | undefine
   }
   const escaped =
     c.label === undefined || c.label === null ? c.label : escapeUnverifiedLine(c.label);
-  if (
-    opts.byLabel !== undefined &&
-    c.label !== opts.byLabel &&
-    escaped !== opts.byLabel &&
-    escaped !== escapeUnverifiedLine(opts.byLabel)
-  ) {
-    return undefined;
-  }
+  if (opts.byLabel !== undefined && escaped !== wantedLabel(opts.byLabel)) return undefined;
   return {
     ...base,
     door: "agent",

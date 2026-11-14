@@ -188,6 +188,15 @@ describe("formatAuditDoorListing", () => {
       "No rows came through the workflow door",
     );
   });
+
+  it("with --proposer and no rows, says no row in the window has that label (not that the door was empty)", () => {
+    const text = formatAuditDoorListing(
+      { ...base, door: "agent", proposer: "ghost" },
+      listing([]) as never,
+    );
+    expect(text).toContain('No row through the agent door in this window has the label "ghost"');
+    expect(text).not.toContain("No rows came through");
+  });
 });
 
 describe("runAuditByDoor / runAudit --door", () => {

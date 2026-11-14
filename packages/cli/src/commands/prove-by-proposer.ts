@@ -29,12 +29,18 @@ export interface ProposerProofView {
   readonly untilMs: number | null;
   readonly groups: readonly ProposerGroupView[];
   readonly scanCut: boolean;
+  /** Which ledger hit the row cap; absent from an older gateway. */
+  readonly scanCutSides?: readonly string[];
+  /** How many groups the window holds before `--proposer` filtered; absent from an older gateway. */
+  readonly totalGroups?: number;
   readonly completeness: {
     readonly status: "ok" | "indeterminate";
     readonly causes: readonly string[];
     readonly mismatches: readonly { readonly code: string; readonly captureId: string }[];
     readonly checkedCaptures: number;
     readonly unreadableRows: number;
+    /** Reserved-range egress rows that name no capture; absent from an older gateway. */
+    readonly foreignRows?: number;
     readonly notChecked: { readonly preVersionCaptures: number; readonly prunedGateRows: number };
   };
 }
@@ -99,7 +105,12 @@ const CAUSE_SENTENCES: Readonly<Record<string, (p: ProposerProofView) => string>
     "The audit log and the egress ledger disagree about at least one proposal (listed below).",
   unreadable_row: (p) =>
     `${String(p.completeness.unreadableRows)} audit row(s) of this kind could not be read, so they were not counted.`,
-  scan_cut: () => "The scan stopped at its row cap, so rows may be missing from this report.",
+  scan_cut: (p) => {
+    const sides = (p.scanCutSides ?? []).map((x) =>
+      x === "audit" ? "the audit log" : x === "egress" ? "the egress ledger" : stripControlChars(x),
+    );
+    return `The scan stopped at its row cap${sides.length === 0 ? "" : ` on ${sides.join(" and ")}`}, so rows may be missing from this report.`;
+  },
   audit_chain_broken: () =>
     "The audit log's hash chain does not verify, so its rows cannot be trusted.",
   egress_chain_broken: () =>
@@ -115,7 +126,7 @@ function labelText(label: string | null): string {
 }
 
 /** The printable report. Pure, so the tests need no gateway. */
-export function formatProposerProof(proof: ProposerProofView): string {
+export function formatProposerProof(proof: ProposerProofView, proposer?: string): string {
   const lines: string[] = [];
   const window =
     proof.sinceMs === null
@@ -127,7 +138,12 @@ export function formatProposerProof(proof: ProposerProofView): string {
   );
   lines.push("");
   if (proof.groups.length === 0) {
-    lines.push("No outside-agent proposals were recorded in this window.");
+    const total = proof.totalGroups ?? 0;
+    lines.push(
+      proposer !== undefined && total > 0
+        ? `No proposer in this window has the label "${stripControlChars(proposer)}"; the window has ${String(total)} group(s) in all.`
+        : "No outside-agent proposals were recorded in this window.",
+    );
   }
   for (const g of proof.groups) {
     lines.push(`UNVERIFIED label ${labelText(g.label)} (${stripControlChars(g.labelSource)})`);
@@ -135,12 +151,20 @@ export function formatProposerProof(proof: ProposerProofView): string {
       `  proposed ${String(g.proposed)}, refused at submit ${String(g.refusedAtSubmit)}, approved ${String(g.approved)}, declined ${String(g.declined)}, executed ${String(g.executed)}, failed ${String(g.failed)}, expired ${String(g.expired)}, waiting ${String(g.waiting)}`,
     );
     lines.push(
-      `  dispatches in the egress ledger: ${String(g.dispatches)}; connections: ${String(g.connections)} (an id lasts one gateway run)`,
+      `  authorized writes in the egress ledger: ${String(g.dispatches)}; connections: ${String(g.connections)} (an id lasts one gateway run)`,
     );
   }
   lines.push("");
   const c = proof.completeness;
-  if (c.status === "ok") {
+  const nothingChecked = c.status === "ok" && c.checkedCaptures === 0;
+  if (nothingChecked) {
+    const held = c.notChecked.preVersionCaptures + c.notChecked.prunedGateRows > 0;
+    lines.push(
+      held
+        ? "Nothing in this window could be checked: no proposal had both ledgers to compare (see the not-checked counts below)."
+        : "Nothing in this window could be checked: it holds no proposal for the two ledgers to compare.",
+    );
+  } else if (c.status === "ok") {
     lines.push(`Both ledgers agree for the ${String(c.checkedCaptures)} proposal(s) checked.`);
   } else {
     lines.push("INDETERMINATE: this report is not proof, for these reasons:");
@@ -154,14 +178,25 @@ export function formatProposerProof(proof: ProposerProofView): string {
       lines.push(`    ${stripControlChars(m.code)}  ${stripControlChars(m.captureId)}`);
     }
   }
+  if ((c.foreignRows ?? 0) > 0) {
+    lines.push(
+      `${String(c.foreignRows)} egress row(s) in the reserved agent range name no capture and were not counted; the gateway never writes one.`,
+    );
+  }
   lines.push(
     `Not checked: ${String(c.notChecked.preVersionCaptures)} proposal(s) accepted before this version recorded the label source; ${String(c.notChecked.prunedGateRows)} gate row(s) older than the newest egress prune.`,
   );
-  lines.push(
-    c.status === "ok"
-      ? "You can conclude: these proposals were recorded, the owner's gate decided this many of them, and both ledgers agree capture by capture."
-      : "You can conclude nothing from this report until the reasons above are resolved.",
-  );
+  if (nothingChecked) {
+    lines.push(
+      "You can conclude nothing about the two ledgers agreeing from this report: no proposal was compared across them.",
+    );
+  } else {
+    lines.push(
+      c.status === "ok"
+        ? "You can conclude: these proposals were recorded, the owner's gate decided this many of them, and both ledgers agree capture by capture."
+        : "You can conclude nothing from this report until the reasons above are resolved.",
+    );
+  }
   lines.push(
     "You cannot conclude which program sent them, whether the remote service applied a write, anything an agent did with its own credentials, or anything that never reached the executor.",
   );
@@ -190,6 +225,6 @@ export async function runProveByProposer(client: IPCClient, a: ProveByProposerAr
     return;
   }
   if (a.json) console.log(JSON.stringify(proof, null, 2));
-  else console.log(formatProposerProof(proof));
+  else console.log(formatProposerProof(proof, a.proposer));
   if (proof.completeness.status !== "ok") process.exitCode = 1;
 }

@@ -170,7 +170,11 @@ export function formatAuditDoorListing(a: AuditDoorArgs, listing: AuditDoorListi
     );
   }
   if (listing.rows.length === 0) {
-    lines.push(`No rows came through the ${a.door} door in this window.`);
+    lines.push(
+      a.proposer === undefined
+        ? `No rows came through the ${a.door} door in this window.`
+        : `No row through the ${a.door} door in this window has the label "${stripControlChars(a.proposer)}".`,
+    );
   } else {
     lines.push(
       `${"Timestamp".padEnd(20)} ${"Action".padEnd(28)} ${"Status".padEnd(17)} ${"Capture".padEnd(36)} Label / reason`,

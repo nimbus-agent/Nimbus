@@ -3566,7 +3566,7 @@ const streamReq: JSONRPCRequest = {
 // Audit & Integrity (Phase 4 WS3)
 // audit.verify(params: { full?, since? }) -> { ok: true, checkedCount, errors: [] }
 // audit.exportAll() -> { auditEntries: [] }
-// audit.proveByProposer(params: { sinceMs?, untilMs?, proposer? }) -> { labelsVerified: false, groups, scanCut, completeness }
+// audit.proveByProposer(params: { sinceMs?, untilMs?, proposer? }) -> { labelsVerified: false, groups, totalGroups, scanCut, scanCutSides, completeness }
 // audit.listByDoor(params: { door: 'agent'|'model'|'workflow'|'other', proposer?, sinceMs?, untilMs?, limit? 1..1000 }) -> { labelsVerified: false, rows, scanCut }
 //   (Phase 28 AD4. Both answer only a connection that declared cli or ui, -32001 otherwise; LAN-forbidden
 //   with the whole audit namespace; NOT in the Tauri ALLOWED_METHODS. Labels are the client's own claim.)

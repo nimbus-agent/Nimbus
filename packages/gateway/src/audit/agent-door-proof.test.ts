@@ -13,6 +13,7 @@ import { appendBootMarker } from "../egress/egress-boot-marker.ts";
 import { THIS_BINARY_COVERAGE } from "../egress/egress-coverage.ts";
 import { appendEgressEntry, makeEgressSink } from "../egress/egress-ledger.ts";
 import { pruneEgress } from "../egress/egress-prune.ts";
+import { agentRequestContext } from "../engine/agent-request-context.ts";
 import { createBeforeStateRunner, isBeforeReadActionType } from "../engine/before-state.ts";
 import { NO_POLICY_OVERLAY, ToolExecutor } from "../engine/executor.ts";
 import { escapeUnverifiedLine } from "../engine/proposer-block.ts";
@@ -375,12 +376,13 @@ describe("proveByProposer - counts", () => {
     expect(p.groups[0]?.label).not.toContain(String.fromCharCode(0x1b));
   });
 
-  test("--proposer keeps the matching groups (the stored label or its escaped form) and hides no mismatch", async () => {
+  test("--proposer keeps the groups whose label is the declared one and hides no mismatch", async () => {
     await executed(1, T0, { label: "a" });
     await executed(2, T0 + 100, { label: 'q"b' });
     expect(prove({ byLabel: "a" }).groups.map((g) => g.label)).toEqual(["a"]);
     expect(prove({ byLabel: 'q"b' }).groups).toHaveLength(1);
-    expect(prove({ byLabel: escapeUnverifiedLine('q"b') }).groups).toHaveLength(1);
+    // ONE form: the argument is the label as declared, so its escaped form is what is compared.
+    expect(prove({ byLabel: escapeUnverifiedLine('q"b') }).groups).toHaveLength(0);
     expect(prove({ byLabel: "nobody" }).groups).toEqual([]);
     db.run("DELETE FROM egress_ledger WHERE source_id = ?", [`agent:${idOf(2)}`]);
     expect(codesOf(prove({ byLabel: "a" }))).not.toEqual([]);
@@ -796,5 +798,248 @@ describe("listByDoor", () => {
     expect(listByDoor(db, { door: "agent", limit: 1 }).rows).toHaveLength(1);
     const cut = listByDoor(db, { door: "other", maxScan: 2 });
     expect(cut.scanCut).toBe(true);
+  });
+});
+
+// ---- AD4 fix round: a bounded, window-aware read ------------------------------------------------
+
+/** Raw rows (no chain): the reader never verifies the chain, the caller does. Fast enough for tens of thousands. */
+function bulkOldHistory(captures: number, at: number): void {
+  const insertAudit = db.prepare(
+    "INSERT INTO audit_log (action_type, hitl_status, action_json, timestamp, row_hash, prev_hash) VALUES (?, 'not_required', ?, ?, 'h', 'p')",
+  );
+  db.transaction(() => {
+    for (let i = 0; i < captures; i += 1) {
+      const id = idOf(1_000_000 + i);
+      const t = at + i;
+      insertAudit.run(
+        "capture.submit",
+        JSON.stringify({
+          captureId: id,
+          kind: "action",
+          actionType: WRITE,
+          clientLabel: "old-agent",
+          connection: "c-old",
+          outcome: "proposed",
+        }),
+        t,
+      );
+      insertAudit.run(
+        "capture.action.accept",
+        JSON.stringify({
+          captureId: id,
+          actionType: WRITE,
+          door: "agent",
+          clientLabel: "old-agent",
+          labelSource: "declared",
+          connection: "c-old",
+        }),
+        t,
+      );
+      insertAudit.run(
+        "capture.action.outcome",
+        JSON.stringify({ captureId: id, actionType: WRITE, outcome: "executed" }),
+        t,
+      );
+    }
+  })();
+  insertAudit.finalize();
+}
+
+describe("proveByProposer - the read is bounded by the window's own captures", () => {
+  const OLD_CAPTURES = 20_000; // 60,000 audit rows
+  const CAP = 500;
+
+  test("60,000 old rows outside --since consume no budget: the recent, correct history is ok", async () => {
+    bulkOldHistory(OLD_CAPTURES, 1_000);
+    await executed(1, T0);
+    const p = prove({ sinceMs: T0 - 5, maxRows: CAP });
+    expect(p.scanCut).toBe(false);
+    expect(p.scanCutSides).toEqual([]);
+    expect(p.completeness.status).toBe("ok");
+    expect(p.completeness.checkedCaptures).toBe(1);
+    // The old captures are neither counted nor checked.
+    expect(p.groups.map((g) => g.label)).toEqual(["claude-desktop"]);
+    expect(p.groups[0]).toMatchObject({ proposed: 1, approved: 1, executed: 1, dispatches: 1 });
+  });
+
+  test("the same history with a deleted recent egress row reports the mismatch, not a cut", async () => {
+    bulkOldHistory(OLD_CAPTURES, 1_000);
+    const id = await executed(1, T0);
+    db.run("DELETE FROM egress_ledger WHERE source_id = ?", [`agent:${id}`]);
+    const p = prove({ sinceMs: T0 - 5, maxRows: CAP });
+    expect(codesOf(p)).toContain("audit_row_without_egress_row");
+    expect(p.scanCut).toBe(false);
+  });
+
+  test("with no --since the window is all history and the cap is a real limit, naming the audit side", async () => {
+    bulkOldHistory(OLD_CAPTURES, 1_000);
+    await executed(1, T0);
+    const p = prove({ maxRows: CAP });
+    expect(p.scanCut).toBe(true);
+    expect(p.scanCutSides).toEqual(["audit"]);
+    expect(p.completeness.status).toBe("indeterminate");
+    expect(p.completeness.causes).toContain("scan_cut");
+  });
+
+  test("a window that itself selects more rows than the cap is cut, and the egress side is named when it is the one", async () => {
+    await executed(1, T0);
+    await executed(2, T0 + 100);
+    const audit = prove({ sinceMs: T0 - 5, maxRows: 4 });
+    expect(audit.scanCutSides).toContain("audit");
+    expect(audit.completeness.causes).toContain("scan_cut");
+    db.run("DELETE FROM audit_log WHERE action_type LIKE 'capture.%'");
+    const egress = prove({ sinceMs: T0 - 5, maxRows: 1 });
+    expect(egress.scanCutSides).toContain("egress");
+  });
+
+  test("a capture whose accept row is older than the window but whose outcome is inside it is still counted", async () => {
+    const id = idOf(1);
+    submit(id, T0);
+    accept(id, T0 + 10);
+    await dispatch(id, T0 + 20);
+    outcome(id, T0 + 300, "executed");
+    const p = prove({ sinceMs: T0 + 200 });
+    expect(p.groups[0]).toMatchObject({ executed: 1, approved: 0 });
+  });
+
+  test("an unreadable row older than the window is not this window's problem", async () => {
+    appendAuditEntry(db, {
+      actionType: "capture.action.accept",
+      hitlStatus: "not_required",
+      actionJson: `{"captureId":"${idOf(5)}",oops`,
+      timestamp: T0 - 500,
+    });
+    await executed(1, T0);
+    expect(prove({ sinceMs: T0 - 5 }).completeness.unreadableRows).toBe(0);
+    expect(prove().completeness.unreadableRows).toBe(1);
+  });
+});
+
+describe("a request's own session id cannot write the reserved range", () => {
+  test("an unrelated action run under sessionId agent:<real capture> is not in that capture's proof", async () => {
+    const id = await executed(1, T0);
+    const before = JSON.stringify(prove());
+    setSystemTime(new Date(T0 + 500));
+    const exec = new ToolExecutor(
+      { requestApproval: async () => ({ approved: true, answerSource: "human" as const }) },
+      { recordAudit: (e) => appendAuditEntry(db, e) },
+      { dispatch: async () => ({ ok: true }) },
+      undefined,
+      makeEgressSink(db),
+      NO_POLICY_OVERLAY,
+      () => "team",
+    );
+    await agentRequestContext.run({ sessionId: `agent:${id}` }, () =>
+      exec.execute({ type: WRITE, payload: { mcpToolId: "slack_message_post", input: {} } }),
+    );
+    const stored = db
+      .query<{ source_id: string | null }, []>(
+        "SELECT source_id FROM egress_ledger WHERE source_type = 'task' ORDER BY id DESC LIMIT 1",
+      )
+      .get();
+    expect(stored?.source_id).toBe(`session:agent:${id}`);
+    const after = prove();
+    expect(JSON.stringify(after)).toBe(before);
+    expect(after.completeness.status).toBe("ok");
+    expect(after.groups[0]?.dispatches).toBe(1);
+  });
+
+  test("a stray malformed row in the reserved range is reported, and never makes another capture indeterminate", async () => {
+    await executed(1, T0);
+    for (const forged of ["agent:x", "agent:", `agent:${idOf(1)}|x`, `agent:${idOf(1)}x`]) {
+      appendEgressEntry(db, {
+        timestamp: T0 + 600,
+        sourceType: "task",
+        sourceId: forged,
+        destination: "slack",
+        method: WRITE,
+        payloadSummary: "{}",
+        hitlStatus: "approved",
+        resultStatus: "authorized",
+      });
+    }
+    const p = prove();
+    expect(p.completeness.status).toBe("ok");
+    expect(p.completeness.mismatches).toEqual([]);
+    expect(p.completeness.foreignRows).toBe(4);
+    expect(p.completeness.causes).toEqual([]);
+    expect(p.groups[0]?.dispatches).toBe(1);
+  });
+
+  test("a well-formed stray row names its capture and is a mismatch for that capture only", async () => {
+    const id = await executed(1, T0);
+    await executed(2, T0 + 100);
+    appendEgressEntry(db, {
+      timestamp: T0 + 600,
+      sourceType: "task",
+      sourceId: `agent:${id}`,
+      destination: "slack",
+      method: "slack.other.thing",
+      payloadSummary: "{}",
+      hitlStatus: "approved",
+      resultStatus: "authorized",
+    });
+    const p = prove();
+    expect(p.completeness.mismatches.length).toBeGreaterThan(0);
+    expect(p.completeness.mismatches.every((m) => m.captureId === id)).toBe(true);
+    expect(codesOf(p)).toContain("egress_row_without_audit_row");
+  });
+});
+
+describe("--proposer matches ONE form, and prove and audit --door agree", () => {
+  test("one argument cannot select two labels: the escaped form of A is the raw text of B", async () => {
+    const labelA = 'a"b';
+    const labelB = String.raw`a\"b`; // escapeUnverifiedLine(labelA) === labelB
+    expect(escapeUnverifiedLine(labelA)).toBe(labelB);
+    await executed(1, T0, { label: labelA });
+    await executed(2, T0 + 100, { label: labelB });
+    expect(prove({ byLabel: labelA }).groups.map((g) => g.label)).toEqual([
+      escapeUnverifiedLine(labelA),
+    ]);
+    expect(prove({ byLabel: labelB }).groups.map((g) => g.label)).toEqual([
+      escapeUnverifiedLine(labelB),
+    ]);
+    const doorA = listByDoor(db, { door: "agent", byLabel: labelA }).rows.map((r) => r.captureId);
+    const doorB = listByDoor(db, { door: "agent", byLabel: labelB }).rows.map((r) => r.captureId);
+    expect(doorA).toEqual([idOf(1)]);
+    expect(doorB).toEqual([idOf(2)]);
+  });
+
+  test("a credential-shaped label is grouped and matched by the same (redacted) value in both views", async () => {
+    const raw = `agent ghp_${"a".repeat(30)}`;
+    await executed(1, T0, { label: raw });
+    const p = prove();
+    expect(p.groups).toHaveLength(1);
+    const shown = p.groups[0]?.label;
+    expect(shown).not.toContain("ghp_");
+    expect(p.completeness.status).toBe("ok");
+    const listed = listByDoor(db, { door: "agent" }).rows.find((r) => !r.subStep);
+    expect(listed?.label).toBe(shown);
+    // The declared (raw) label finds the same capture in both commands.
+    expect(prove({ byLabel: raw }).groups.map((g) => g.label)).toEqual([shown ?? null]);
+    expect(listByDoor(db, { door: "agent", byLabel: raw }).rows.map((r) => r.captureId)).toContain(
+      idOf(1),
+    );
+  });
+
+  test("totalGroups counts every group of the window, before --proposer filters", async () => {
+    await executed(1, T0, { label: "a" });
+    await executed(2, T0 + 100, { label: "b" });
+    await executed(3, T0 + 200, { label: null });
+    const p = prove({ byLabel: "nobody" });
+    expect(p.groups).toEqual([]);
+    expect(p.totalGroups).toBe(3);
+    expect(prove({ byLabel: "a" }).totalGroups).toBe(3);
+  });
+
+  test("the completeness result stays unfiltered by --proposer", async () => {
+    await executed(1, T0, { label: "a" });
+    const id = await executed(2, T0 + 100, { label: "b" });
+    db.run("DELETE FROM egress_ledger WHERE source_id = ?", [`agent:${id}`]);
+    const p = prove({ byLabel: "a" });
+    expect(p.groups.map((g) => g.label)).toEqual(["a"]);
+    expect(p.completeness.mismatches.map((m) => m.captureId)).toEqual([id]);
+    expect(p.completeness.status).toBe("indeterminate");
   });
 });

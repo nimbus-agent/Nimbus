@@ -71,6 +71,8 @@ function agentAction(
 interface Rig {
   readonly exec: ToolExecutor;
   readonly dispatched: PlannedAction[];
+  /** How many times the owner was asked (either prompt). */
+  readonly prompts: () => number;
 }
 
 function rig(
@@ -84,14 +86,16 @@ function rig(
   } = {},
 ): Rig {
   const dispatched: PlannedAction[] = [];
+  let prompted = 0;
   const confirmedReq: ConfirmedApprovalRequest[] = [];
   const exec = new ToolExecutor(
     {
-      requestApproval: async () => ({
-        approved: opts.approve ?? true,
-        answerSource: "human" as const,
-      }),
+      requestApproval: async () => {
+        prompted += 1;
+        return { approved: opts.approve ?? true, answerSource: "human" as const };
+      },
       requestConfirmedApproval: async (req: ConfirmedApprovalRequest) => {
+        prompted += 1;
         confirmedReq.push(req);
         return {
           approved: opts.approve ?? true,
@@ -117,7 +121,7 @@ function rig(
       : {},
     opts.writeTable,
   );
-  return { exec, dispatched };
+  return { exec, dispatched, prompts: () => prompted };
 }
 
 interface AuditRow {
@@ -435,6 +439,50 @@ describe("Task 2 - a malformed capture id writes neither row", () => {
       expect(dispatched).toEqual([]);
     });
   }
+});
+
+describe("Task 2 - a malformed capture id is refused before anything else happens", () => {
+  const REPLY = (a: PlannedAction): unknown =>
+    isBeforeReadActionType(a.type)
+      ? {
+          key: "NIM-1",
+          fields: { summary: "Fix", status: { name: "Open" }, issuetype: { name: "Bug" } },
+        }
+      : { url: "https://x" };
+  for (const bad of ["cap_ad1", `${CAPTURE_ID}x`, ""]) {
+    test(`'${bad}' on a row with a before-state: no sub-step, no prompt, no row, no dispatch`, async () => {
+      const { exec, dispatched, prompts } = rig({ withBefore: true, reply: REPLY });
+      const action = agentAction(
+        "jira.comment.add",
+        "jira_comment_add",
+        { issueKey: "NIM-1", body: "hello" },
+        "x",
+        bad,
+      );
+      await expect(exec.execute(action)).rejects.toThrow(
+        "egress: an outside agent's action must carry a gateway-minted capture id",
+      );
+      expect(prompts()).toBe(0);
+      expect(auditRows()).toEqual([]);
+      expect(egressRows()).toEqual([]);
+      expect(dispatched).toEqual([]);
+    });
+  }
+
+  test("the public gate() refuses it the same way, before any row", async () => {
+    const { exec, prompts } = rig({ withBefore: true, reply: REPLY });
+    const action = agentAction(
+      "jira.comment.add",
+      "jira_comment_add",
+      { issueKey: "NIM-1", body: "hello" },
+      "x",
+      "cap_bad",
+    );
+    await expect(exec.gate(action)).rejects.toThrow();
+    expect(prompts()).toBe(0);
+    expect(auditRows()).toEqual([]);
+    expect(egressRows()).toEqual([]);
+  });
 });
 
 describe("Task 2 - the label never enters a hashed egress field", () => {

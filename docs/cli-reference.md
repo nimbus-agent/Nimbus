@@ -4272,11 +4272,11 @@ Report what outside agents (MCP clients) proposed and what happened to it, group
 
 | Flag | Effect |
 | --- | --- |
-| `--since <dur>` | Only proposals with activity in the last `7d`, `24h`, `30m`, ... (the CLI turns the duration into epoch milliseconds). Default: the whole audit log. |
-| `--proposer <label>` | Only the group whose label is this text (the stored text or its escaped form). |
+| `--since <dur>` | Only proposals with activity in the last `7d`, `24h`, `30m`, ... (the CLI turns the duration into epoch milliseconds). The gateway finds the proposals the window touches and reads each one's whole history, so older history does not use up the row cap. Default: the whole audit log, where the cap is a real limit. |
+| `--proposer <label>` | Only the group whose label is this text, as the client declared it (compared after the same redaction the audit log applies, and escaped like the prompt). The completeness result and the exit code are never filtered. If no group has the label, the command says so and how many groups the window holds. |
 | `--json` | The gateway's reply as JSON (`labelsVerified: false`, `groups`, `scanCut`, `completeness`). |
 
-Each group counts: proposed, refused at submit, approved (by the executor's gate), declined, executed, failed, expired, waiting, dispatches in the egress ledger, and the number of connections that sent the label. Every label is printed in quotes after the word `UNVERIFIED`, on one line, with control characters removed; a proposal with no label reads `(no label)`.
+Each group counts: proposed, refused at submit, approved (by the executor's gate), declined, executed, failed, expired, waiting, authorized writes in the egress ledger, and the number of connections that sent the label. "Authorized writes" counts the egress rows in the window with result `authorized` whose method is the proposal's own write type; its before-state reads, prepare reads and change-set discards are not counted, so a checked proposal contributes at most one and the number can never exceed the proposals accepted. Every label is printed in quotes after the word `UNVERIFIED`, on one line, with control characters removed; a proposal with no label reads `(no label)`.
 
 ```text
 Actions proposed by outside agents (MCP), by proposer: since 2026-11-07 00:00:00 UTC
@@ -4284,10 +4284,10 @@ Every label below is the client's own claim and is UNVERIFIED: any program can s
 
 UNVERIFIED label "claude-code" (declared)
   proposed 5, refused at submit 1, approved 3, declined 1, executed 3, failed 0, expired 0, waiting 0
-  dispatches in the egress ledger: 7; connections: 1 (an id lasts one gateway run)
+  authorized writes in the egress ledger: 3; connections: 1 (an id lasts one gateway run)
 UNVERIFIED label (no label) (declared)
   proposed 1, refused at submit 1, approved 0, declined 0, executed 0, failed 0, expired 0, waiting 0
-  dispatches in the egress ledger: 0; connections: 1 (an id lasts one gateway run)
+  authorized writes in the egress ledger: 0; connections: 1 (an id lasts one gateway run)
 
 Both ledgers agree for the 6 proposal(s) checked.
 Not checked: 2 proposal(s) accepted before this version recorded the label source; 0 gate row(s) older than the newest egress prune.
@@ -4295,12 +4295,12 @@ You can conclude: these proposals were recorded, the owner's gate decided this m
 You cannot conclude which program sent them, whether the remote service applied a write, anything an agent did with its own credentials, or anything that never reached the executor.
 ```
 
-The proof is `indeterminate` and the command exits 1 when the two ledgers disagree about a proposal (a mismatch, listed by code and capture id), an audit row cannot be read, the scan stopped at its row cap, either hash chain fails to verify, or no boot marker covers the window. Each cause prints its own sentence.
+The proof is `indeterminate` and the command exits 1 when the two ledgers disagree about a proposal (a mismatch, listed by code and capture id), an audit row cannot be read, the scan stopped at its row cap, either hash chain fails to verify, or no boot marker covers the window. Each cause prints its own sentence. The row cap is 50,000 rows per ledger, counted over the proposals the window selects (not over older history), and the cut sentence names the ledger that reached it (`The scan stopped at its row cap on the audit log`). If the window itself selects more than that, narrow `--since`. When nothing in the window could be compared (every proposal accepted before this version or older than an egress prune, or none at all) the report says `Nothing in this window could be checked`, prints no agreement conclusion, and exits 0. Egress rows in the reserved `agent:` range that name no capture (this version never writes one) are counted on a line of their own and do not make the proof indeterminate.
 
 ```text
 UNVERIFIED label "claude-code" (declared)
   proposed 5, refused at submit 1, approved 3, declined 1, executed 3, failed 0, expired 0, waiting 0
-  dispatches in the egress ledger: 7; connections: 1 (an id lasts one gateway run)
+  authorized writes in the egress ledger: 3; connections: 1 (an id lasts one gateway run)
 
 INDETERMINATE: this report is not proof, for these reasons:
   - The audit log and the egress ledger disagree about at least one proposal (listed below).
@@ -6084,7 +6084,7 @@ Timestamp            Action                       Status            Capture     
 2026-11-14 08:00:00  slack.message.post           rejected          cap_00000000000000000000000000000002 UNVERIFIED label (no label)  reason: user-cancelled
 ```
 
-A row from before this version has no label and reads `UNVERIFIED label not recorded (older row)`. When the scan reached its row cap the output ends with `The scan was cut at its row cap: older rows were not examined.` Like the proof, this view needs a connection that declared the `cli` or `ui` kind, which the command does first.
+A row from before this version has no label and reads `UNVERIFIED label not recorded (older row)`. When the scan reached its row cap (100,000 audit rows examined, newest first) the output ends with `The scan was cut at its row cap: older rows were not examined.` With `--proposer` and no matching row it says `No row through the agent door in this window has the label "..."`, not that the door was empty. The label is compared as `prove --by-proposer` compares it, after the audit log's redaction. Like the proof, this view needs a connection that declared the `cli` or `ui` kind, which the command does first.
 
 ### `nimbus audit standing`
 

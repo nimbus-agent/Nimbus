@@ -28,7 +28,7 @@ import type {
 import { mcpClientToolKey } from "../connectors/lazy-mesh/tool-map.ts";
 import { isOwnerCodeServerServiceId } from "../connectors/owner-code-server.ts";
 import type { EgressSink } from "../egress/egress-ledger.ts";
-import { buildEgressEntry } from "../egress/egress-record.ts";
+import { assertAgentCaptureId, buildEgressEntry } from "../egress/egress-record.ts";
 import type { ConsentCoordinator } from "../ipc/consent.ts";
 import { ConsentDisconnectedError } from "../ipc/consent.ts";
 import { codeUnitCompare } from "../util/code-unit-compare.ts";
@@ -1750,6 +1750,11 @@ export class ToolExecutor {
     opts: ExecuteOptions | undefined,
     scope: GateScope,
   ): Promise<ActionResult | "proceed"> {
+    // AD4: an outside agent's capture id is checked BEFORE anything else (the before-state reads, a
+    // prepare step, the owner's prompt), so a malformed one records and dispatches nothing at all.
+    const attributed = attributionOf(action, scope);
+    if (attributed !== undefined) assertAgentCaptureId(attributed.captureId);
+
     // I2 first, the I42 user-MCP floor second, policy third, joined by OR — never by assignment,
     // and never the other way round. The frozen set and the user-MCP rule are both floors: either
     // alone decides `true`, so an org policy is only ever consulted about action types neither

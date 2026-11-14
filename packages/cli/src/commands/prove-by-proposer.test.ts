@@ -123,7 +123,7 @@ describe("formatProposerProof", () => {
     expect(text).toContain(
       "proposed 5, refused at submit 1, approved 3, declined 1, executed 3, failed 0, expired 0, waiting 0",
     );
-    expect(text).toContain("dispatches in the egress ledger: 3; connections: 1");
+    expect(text).toContain("authorized writes in the egress ledger: 3; connections: 1");
     expect(text).toContain("Both ledgers agree for the 4 proposal(s) checked.");
     expect(text).toContain("You can conclude");
     expect(text).toContain("You cannot conclude which program sent them");
@@ -188,6 +188,66 @@ describe("formatProposerProof", () => {
     );
     expect(text).toContain(`audit_row_without_egress_row  cap_${"a".repeat(32)}`);
     expect(text).toContain("Unrecognised reason something_new.");
+  });
+
+  it("names the ledger that hit its row cap", () => {
+    const cut = (sides: string[]): string =>
+      formatProposerProof(
+        proof(
+          { scanCut: true, scanCutSides: sides },
+          { status: "indeterminate", causes: ["scan_cut"] },
+        ) as never,
+      );
+    expect(cut(["audit"])).toContain("on the audit log");
+    expect(cut(["egress"])).toContain("on the egress ledger");
+    expect(cut(["audit", "egress"])).toContain("on the audit log and the egress ledger");
+    // A reply from a gateway that names no side still says the cap was hit.
+    expect(cut([])).toContain("row cap");
+  });
+
+  it("reports rows in the reserved agent range that name no capture, without calling the proof indeterminate", () => {
+    const text = formatProposerProof(proof({}, { foreignRows: 3 }) as never);
+    expect(text).toContain("3 egress row(s) in the reserved agent range name no capture");
+    expect(text).toContain("Both ledgers agree for the 4 proposal(s) checked.");
+    expect(formatProposerProof(proof({}, { foreignRows: 0 }) as never)).not.toContain(
+      "name no capture",
+    );
+  });
+
+  it("when --proposer hides every group, says so and how many groups exist", () => {
+    const hidden = proof({ groups: [], totalGroups: 3 });
+    const text = formatProposerProof(hidden as never, "ghost");
+    expect(text).toContain('No proposer in this window has the label "ghost"');
+    expect(text).toContain("3 group(s)");
+    expect(text).not.toContain("No outside-agent proposals were recorded");
+    // Truly empty: the plain sentence stays, filter or not.
+    const empty = formatProposerProof(proof({ groups: [], totalGroups: 0 }) as never, "ghost");
+    expect(empty).toContain("No outside-agent proposals were recorded in this window.");
+    // The label printed back is one line.
+    const hostile = formatProposerProof(
+      hidden as never,
+      `a
+b${ESC}[31m`,
+    );
+    expect(hostile).not.toContain(ESC);
+  });
+
+  it("when nothing could be checked it says so and does not claim the ledgers agree", () => {
+    const text = formatProposerProof(
+      proof(
+        {},
+        { checkedCaptures: 0, notChecked: { preVersionCaptures: 2, prunedGateRows: 5 } },
+      ) as never,
+    );
+    expect(text).toContain("Nothing in this window could be checked");
+    expect(text).toContain("2 proposal(s) accepted before this version");
+    expect(text).not.toContain("Both ledgers agree");
+    expect(text).not.toContain("both ledgers agree capture by capture");
+    expect(text).not.toContain("You can conclude:");
+    expect(text).toContain("You cannot conclude which program sent them");
+    const none = formatProposerProof(proof({ groups: [] }, { checkedCaptures: 0 }) as never);
+    expect(none).toContain("Nothing in this window could be checked");
+    expect(none).toContain("no proposal");
   });
 
   it("prints the not-checked counts", () => {

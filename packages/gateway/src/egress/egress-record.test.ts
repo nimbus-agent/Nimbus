@@ -166,3 +166,51 @@ describe("buildEgressEntry - an outside agent's action (AD4)", () => {
     expect(e.payloadSummary).toBe('{"text":"hi"}');
   });
 });
+
+describe("buildEgressEntry - a request's own session id never writes the reserved range (AD4)", () => {
+  const ID = `cap_${"ab12".repeat(8)}`;
+  const run = (sessionId: string | undefined): string | null =>
+    buildEgressEntry({
+      action: { type: "slack.message.post", payload: { text: "hi" } },
+      hitlStatus: "approved",
+      resultStatus: "authorized",
+      sessionId,
+      now: 5,
+    }).sourceId;
+
+  test("a session id that starts with the reserved prefix is stored neutralised, never as agent:<id>", () => {
+    for (const forged of [`agent:${ID}`, "agent:x", "agent:", `agent:${ID}|x`]) {
+      const stored = run(forged);
+      expect(stored).toBe(`session:${forged}`);
+      expect(stored?.startsWith(AGENT_SOURCE_PREFIX)).toBe(false);
+    }
+  });
+
+  test("the comparison is case-sensitive, like the reader's range: another case is not in the range and is stored as sent", () => {
+    expect(run(`AGENT:${ID}`)).toBe(`AGENT:${ID}`);
+    expect(run(`Agent:x`)).toBe("Agent:x");
+  });
+
+  test("leading whitespace puts the id outside the range, so it is stored as sent (the callers trim)", () => {
+    expect(run(` agent:${ID}`)).toBe(` agent:${ID}`);
+  });
+
+  test("every other session id, and none, is stored exactly as before", () => {
+    expect(run("sess-1")).toBe("sess-1");
+    expect(run("agentless")).toBe("agentless");
+    expect(run("session:agent")).toBe("session:agent");
+    expect(run(undefined)).toBeNull();
+  });
+
+  test("an agent action still gets agent:<captureId>, whatever the request's session id says", () => {
+    const e = buildEgressEntry({
+      action: { type: "slack.message.post" },
+      hitlStatus: "approved",
+      resultStatus: "authorized",
+      sessionId: `agent:cap_${"cd34".repeat(8)}`,
+      now: 5,
+      agent: { captureId: ID, label: "x" },
+    });
+    expect(e.sourceId).toBe(`agent:${ID}`);
+  });
+});
