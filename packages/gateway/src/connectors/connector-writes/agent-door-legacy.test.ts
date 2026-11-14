@@ -5,6 +5,7 @@ import {
   LEGACY_MAIL_SEND_NOTICE,
   legacyNoticeFor,
   legacyUnapprovedNotice,
+  legacyUserMcpNotice,
 } from "./agent-door-legacy.ts";
 import { CONNECTOR_WRITE_ROWS } from "./index.ts";
 
@@ -29,5 +30,23 @@ describe("legacyNoticeFor", () => {
     expect(text).not.toContain("evil");
     expect(text).not.toContain("\n");
     expect(agentDoorRow("evil.\nRequested by: you")).toBeUndefined();
+  });
+});
+
+describe("legacyNoticeFor, user MCP (AD5a, D-7)", () => {
+  test("a user-MCP type gets the specific line naming the server and the tool and the exact command", () => {
+    const text = legacyNoticeFor("mcp_notes.append");
+    expect(text).toBe(legacyUserMcpNotice("mcp_notes", "append"));
+    expect(text).toBe(
+      "Deprecated: mcp_notes.append is not approved for outside agents by name. It is accepted for now and will be refused in a later release. To keep it working run: nimbus connector writes enable mcp_notes --door agent --approve append",
+    );
+  });
+
+  test("a type with a control character or no tool names nothing of the request", () => {
+    for (const t of ["mcp_notes.app\nend", "mcp_notes.", "mcp_notes.a.b", "ext_x.tool"]) {
+      const text = legacyNoticeFor(t);
+      expect(text, t).not.toContain("mcp_notes");
+      expect(text, t).not.toContain("\n");
+    }
   });
 });

@@ -529,3 +529,89 @@ describe("the legacy window admits exactly what was admitted before, and nothing
     });
   });
 });
+
+describe("userMcpCallFacts (AD5a, D-6)", () => {
+  test("an approved basis: one listing, the facts carry the hashed entry's description and the registration", async () => {
+    insertUserMcpConnector(db, {
+      service_id: "mcp_f",
+      command: "srv",
+      args_json: "[]",
+      read_paths_json: JSON.stringify(["/data/a"]),
+      net_hosts_json: JSON.stringify(["api.example.com:443"]),
+      model_access: 0,
+      created_at: REGISTERED_AT,
+    });
+    const sha = approve("mcp_f", "append", entry("the listed text"));
+    listings["mcp_f"] = listing("mcp_f", { append: entry("the listed text") });
+    const out = await door({ userMcpNetworkNote: () => "port only" }).userMcpCallFacts(
+      "mcp_f.append",
+      "approved",
+      REGISTERED_AT + 1,
+    );
+    expect(out).toEqual({
+      ok: true,
+      facts: {
+        serviceId: "mcp_f",
+        tool: "append",
+        registeredAt: REGISTERED_AT,
+        readPaths: ["/data/a"],
+        netHosts: ["api.example.com:443"],
+        networkNote: "port only",
+        writePaths: [],
+        approval: { approvedAt: 1, definitionSha256: sha, description: "the listed text" },
+      },
+    });
+    expect(userListCalls).toEqual(["mcp_f"]);
+  });
+
+  test("a legacy basis reads the registration only: no listing, approval null, a throwing note reads as none", async () => {
+    insertUserMcpConnector(db, {
+      service_id: "mcp_l",
+      command: "srv",
+      args_json: "[]",
+      read_paths_json: "not json",
+      net_hosts_json: JSON.stringify(["h"]),
+      model_access: 1,
+      created_at: REGISTERED_AT,
+    });
+    const out = await door({
+      userMcpNetworkNote: () => {
+        throw new Error("boom");
+      },
+    }).userMcpCallFacts("mcp_l.append", "legacy_user_mcp", REGISTERED_AT);
+    expect(out).toMatchObject({
+      ok: true,
+      facts: { approval: null, readPaths: [], netHosts: ["h"] },
+    });
+    expect(out.ok && out.facts.networkNote).toBeFalsy();
+    expect(userListCalls).toEqual([]);
+  });
+
+  test("a changed definition is the suspension code, once; a missing tool and a throwing lister carry no code", async () => {
+    register("mcp_c");
+    approve("mcp_c", "append", entry("one"));
+    listings["mcp_c"] = listing("mcp_c", { append: entry("two") });
+    const changed = await door().userMcpCallFacts("mcp_c.append", "approved", REGISTERED_AT);
+    expect(changed).toMatchObject({ ok: false, code: "ERR_AGENT_TOOL_SUSPENDED" });
+    expect(suspendAudits()).toBe(1);
+
+    register("mcp_m");
+    approve("mcp_m", "append", entry("one"));
+    listings["mcp_m"] = listing("mcp_m", { other: entry("one") });
+    const missing = await door().userMcpCallFacts("mcp_m.append", "approved", REGISTERED_AT);
+    expect(missing.ok).toBe(false);
+    expect(missing.ok === false && missing.code).toBeUndefined();
+
+    register("mcp_t");
+    approve("mcp_t", "append", entry("one"));
+    listings["mcp_t"] = "reject";
+    const thrown = await door().userMcpCallFacts("mcp_t.append", "approved", REGISTERED_AT);
+    expect(thrown.ok).toBe(false);
+    expect(suspendAudits()).toBe(1);
+  });
+
+  test("a type that names no tool, or a server that is gone, is refused", async () => {
+    expect((await door().userMcpCallFacts("mcp_x.", "legacy_user_mcp", 1)).ok).toBe(false);
+    expect((await door().userMcpCallFacts("mcp_gone.t", "legacy_user_mcp", 1)).ok).toBe(false);
+  });
+});

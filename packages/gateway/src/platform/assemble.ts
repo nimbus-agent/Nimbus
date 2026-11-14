@@ -207,6 +207,7 @@ import { execConsent } from "../exec/exec-consent-broker.ts";
 import { resolveRuntimeById } from "../exec/exec-runtimes.ts";
 import { type AutoUpdateRuntime, createAutoUpdateRuntime } from "../extensions/auto-update-init.ts";
 import type { ContinuityEntry } from "../extensions/continuity/continuity-table.ts";
+import { describeNetworkReach } from "../extensions/extension-reach.ts";
 import { createExtensionSlotSource } from "../extensions/extension-runtime.ts";
 import {
   ensureObservationDir,
@@ -3950,6 +3951,12 @@ export async function assemblePlatformServices(
     // A registered user-MCP server's STRIPPED definitions (AD5a); may start that one server.
     listUserMcpDefinitions: async (serviceId) =>
       agentDoorMesh.current?.listUserMcpToolDefinitions(serviceId),
+    // The owner's prompt names the reach when the OS cannot limit it host by host (as the
+    // registration prompt does).
+    userMcpNetworkNote: (netHosts) => {
+      const reach = describeNetworkReach(sandboxRunner, netHosts);
+      return reach.kind === "hosts" || reach.kind === "none" ? undefined : reach.text;
+    },
     tribalKbConfig: () => tribalKbConfigOf(tribalCfg),
     classifyContext: actClassifyCtx,
     isServiceConfigured,
@@ -4831,6 +4838,7 @@ export async function assemblePlatformServices(
       agentDoor: {
         listServerTools: (service) => connectorMesh.listFirstPartyServerTools(service),
         verifyDefinition: agentDoor.verifyDefinition,
+        userMcpCallFacts: agentDoor.userMcpCallFacts,
       },
     },
     // `capture.describe` (AD3a-2b): the SAME door the gate checks submits with, and a limiter of its

@@ -75,6 +75,7 @@ import type {
   PlannedAction,
   WorkflowProvenance,
 } from "./types.ts";
+import { userMcpCallDetails, userMcpCallLines } from "./user-mcp-call-block.ts";
 
 const executorLog = pino({
   name: "executor",
@@ -430,6 +431,7 @@ export function consentDisplayPayload(
     return {
       ...neverPosesAsPreview(action.payload),
       ...originDisplay(action),
+      ...userMcpDisplay(action),
     };
   }
   const shown = shownPayload(action);
@@ -449,6 +451,15 @@ function originDisplay(action: PlannedAction): Record<string, unknown> {
     return { proposedBy: proposerDetails(action.proposer) };
   }
   return {};
+}
+
+/**
+ * The desktop's structured copy of an agent's user-MCP call (AD5a, D-6), added AFTER the payload is
+ * wrapped so the gateway's value wins over a payload key of that name. Nothing for any other origin.
+ */
+function userMcpDisplay(action: PlannedAction): Record<string, unknown> {
+  if (!isAgentOrigin(action) || action.userMcpCall === undefined) return {};
+  return { userMcp: userMcpCallDetails(action.userMcpCall) };
 }
 
 /** A plan without its joined `text` (see {@link consentDisplayPayload}). */
@@ -595,6 +606,8 @@ function formatConsentPromptBody(
   if (isAgentOrigin(action)) {
     // I42: the owner approves the exact input that will be sent, invisible characters shown as
     // escapes; a one-line JSON `Details` would hide them in a long line.
+    // AD5a: the server block (third-party code the owner registered) comes before the input.
+    if (action.userMcpCall !== undefined) lines.push("", ...userMcpCallLines(action.userMcpCall));
     lines.push("", ...agentVerbatimInputLines(extractToolInput(action)));
     return lines.join("\n");
   }
@@ -660,8 +673,10 @@ function omitPromptText(payload: Record<string, unknown>): Record<string, unknow
 }
 
 /** An action as the audit row records it: the proposer is projected to the door and the capture. */
-type AuditedAction = Omit<PlannedAction, "proposer"> & {
+type AuditedAction = Omit<PlannedAction, "proposer" | "userMcpCall"> & {
   proposer?: Pick<AgentProposer, "door" | "captureId" | "label" | "labelSource">;
+  /** AD5a: an approved user-MCP call's definition hash, and nothing else of its facts. */
+  userMcp?: { definitionSha256: string };
 };
 
 /**
@@ -673,6 +688,26 @@ type AuditedAction = Omit<PlannedAction, "proposer"> & {
  * of the proposer reaches the row (static D49(c)).
  */
 function auditedAction(action: PlannedAction): AuditedAction {
+  // AD5a: the call facts never reach the row. An approved call adds its definition hash after the
+  // proposer; any other action (a legacy proposal, a model call, an owner call) gets no key at all,
+  // so its row is byte-for-byte what it was.
+  if (action.userMcpCall !== undefined) {
+    const { userMcpCall, ...rest } = action;
+    const projected = auditedProposer(rest);
+    if (userMcpCall.approval === null || !isAgentOrigin(action)) return projected;
+    const { type, proposer, ...others } = projected;
+    return {
+      type,
+      ...(proposer === undefined ? {} : { proposer }),
+      userMcp: { definitionSha256: userMcpCall.approval.definitionSha256 },
+      ...others,
+    };
+  }
+  return auditedProposer(action);
+}
+
+/** The proposer projection of {@link auditedAction}, for an action without call facts. */
+function auditedProposer(action: Omit<PlannedAction, "userMcpCall">): AuditedAction {
   if (action.proposer === undefined) return auditedBody(action);
   const { proposer, ...rest } = action;
   const { type, ...others } = auditedBody(rest);

@@ -52,6 +52,36 @@ export type PlannedAction = {
    * credential or the confirm text (I3), and nothing in it reaches the connector call.
    */
   proposer?: AgentProposer;
+  /**
+   * Set only by the gateway beside `origin: "agent"` for a tool of a user-registered MCP server
+   * (AD5a, I42): what the owner's prompt shows about the third-party code. DISPLAY data like
+   * `proposer`; it never selects the tool or the key (the dispatcher's exact pairing does), and the
+   * audit row projects it to the definition hash alone.
+   */
+  userMcpCall?: UserMcpCallFacts;
+};
+
+/**
+ * The facts about a user MCP server and tool the approval prompt shows (AD5a, D-6), read by the
+ * agent door at the call. `approval` is null for a proposal accepted under the deprecation window;
+ * otherwise `description` is the text of the listing entry whose hash was just compared with the
+ * owner's approval, so the text shown is the text that was hashed. Every string is the server's or
+ * the owner's and is escaped by the renderer; none reaches the connector call.
+ */
+export type UserMcpCallFacts = {
+  readonly serviceId: string;
+  readonly tool: string;
+  readonly registeredAt: number;
+  readonly readPaths: readonly string[];
+  readonly netHosts: readonly string[];
+  readonly networkNote?: string;
+  /** Always empty until AD5b (write grants); rendered so AD5b fills it without touching the prompt. */
+  readonly writePaths: readonly string[];
+  readonly approval: {
+    readonly approvedAt: number;
+    readonly definitionSha256: string;
+    readonly description: string;
+  } | null;
 };
 
 /** An outside agent's proposal as the owner's prompt shows it (Phase 28 AD1). Every field is UNVERIFIED. */

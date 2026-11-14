@@ -23,8 +23,8 @@
 //      OR-AD-9; the seven mail sends carry their own basis);
 //   6. otherwise `denied` with a fixed class that says which condition failed.
 import type { Database } from "bun:sqlite";
-
 import { serviceOf } from "../../engine/service-of.ts";
+import type { UserMcpCallFacts } from "../../engine/types.ts";
 import { MCP_ACTION_CAPABILITY } from "../../mcp-sink/capture-capability.ts";
 import type {
   ActionBasis,
@@ -98,6 +98,11 @@ export interface AgentDoorDeps {
   readonly listUserMcpDefinitions?: (
     serviceId: string,
   ) => Promise<Readonly<Record<string, unknown>> | undefined>;
+  /**
+   * What the owner's prompt says about a server's network reach when the OS cannot limit it host by
+   * host (the registration prompt's own note); `undefined` when it can, or when unknown.
+   */
+  readonly userMcpNetworkNote?: (netHosts: readonly string[]) => string | undefined;
   /** The `[tribal]` KB destinations, read per call; a throw refuses a KB-capable row. */
   readonly tribalKbConfig: () => TribalKbConfig | undefined;
   /** What `classifyActionType` needs for a user-MCP type. */
@@ -135,6 +140,18 @@ export interface AgentDoor {
    * registration of the same server id.
    */
   verifyDefinition(actionType: string, proposedAt?: number): Promise<DefinitionVerification>;
+  /**
+   * The facts the owner's prompt shows for a user-MCP call (AD5a, D-6), read now. An `approved`
+   * basis lists the server once, runs the definition check on that listing and takes the description
+   * from the entry whose hash it just compared; a failed check is a refusal (no prompt). A legacy
+   * basis reads the registration only and starts nothing. `proposedAt` is the stored proposal's
+   * creation time.
+   */
+  userMcpCallFacts(
+    actionType: string,
+    basis: ActionBasis,
+    proposedAt: number,
+  ): Promise<UserMcpCallFactsOutcome>;
   /** The types `capture.status` advertises now: approved and legacy, configured, sorted. */
   acceptedTypes(): Promise<readonly string[]>;
   /**
@@ -145,6 +162,15 @@ export interface AgentDoor {
    */
   describe(actionTypes: readonly string[] | undefined): Promise<readonly ActionDescription[]>;
 }
+
+/** The answer of {@link AgentDoor.userMcpCallFacts}. */
+export type UserMcpCallFactsOutcome =
+  | { readonly ok: true; readonly facts: UserMcpCallFacts }
+  | {
+      readonly ok: false;
+      readonly code?: "ERR_AGENT_TOOL_SUSPENDED";
+      readonly detail: string;
+    };
 
 /** The fixed texts of a refused definition check; none echoes a stored or listed value. */
 export const DEFINITION_REFUSALS = Object.freeze({
@@ -459,29 +485,133 @@ export function createAgentDoor(deps: AgentDoorDeps): AgentDoor {
 
   // D-3. The listing may start the sandboxed third-party server, so every refusal that needs no
   // listing comes first. Only a tool the owner approved for agents by name is ever listed.
-  const verifyUserMcpDefinition = async (
+  type UserMcpDefinitionCheck =
+    | { readonly ok: false; readonly verification: DefinitionVerification }
+    | {
+        readonly ok: true;
+        readonly verification: DefinitionVerification;
+        readonly approval: DoorApproval;
+        /** The listing entry whose hash was compared (so a description shown is the one hashed). */
+        readonly entry: unknown;
+      };
+
+  const failedCheck = (verification: DefinitionVerification): UserMcpDefinitionCheck => ({
+    ok: false,
+    verification,
+  });
+
+  const checkUserMcpDefinition = async (
     actionType: string,
     proposedAt: number | undefined,
-  ): Promise<DefinitionVerification> => {
+  ): Promise<UserMcpDefinitionCheck> => {
     const parts = userMcpActionParts(actionType);
     if (parts === undefined) {
-      return refused("ERR_CAPTURE_ACTION_NOT_PROPOSABLE", DEFINITION_REFUSALS.notApproved);
+      return failedCheck(
+        refused("ERR_CAPTURE_ACTION_NOT_PROPOSABLE", DEFINITION_REFUSALS.notApproved),
+      );
     }
     const before = userMcpStanding(parts, proposedAt);
-    if (!("approval" in before)) return before;
+    if (!("approval" in before)) return failedCheck(before);
     const listed = await Promise.resolve()
       .then(() => deps.listUserMcpDefinitions?.(parts.serviceId))
       .catch(() => undefined);
     if (listed === undefined) {
-      return refused("ERR_CAPTURE_ACTION_NOT_PROPOSABLE", DEFINITION_REFUSALS.unlisted);
+      return failedCheck(
+        refused("ERR_CAPTURE_ACTION_NOT_PROPOSABLE", DEFINITION_REFUSALS.unlisted),
+      );
     }
     // The listing awaited: judge the listing against the registration and the approval as they
     // stand now, with no await between that read and the comparison. `missing` and an unlisted
     // server mark nothing and write no row (OR-AD-14); `changed` and `unreadable` mark through the
     // ONE shared helper.
     const after = userMcpStanding(parts, proposedAt);
-    if (!("approval" in after)) return after;
-    return refusalOfCheck(checkAgentToolDefinition(deps, after.approval, listed)) ?? { ok: true };
+    if (!("approval" in after)) return failedCheck(after);
+    const failed = refusalOfCheck(checkAgentToolDefinition(deps, after.approval, listed));
+    if (failed !== undefined) return failedCheck(failed);
+    return {
+      ok: true,
+      verification: { ok: true },
+      approval: after.approval,
+      entry: listed[mcpClientToolKey(parts.serviceId, parts.tool)],
+    };
+  };
+
+  const verifyUserMcpDefinition = async (
+    actionType: string,
+    proposedAt: number | undefined,
+  ): Promise<DefinitionVerification> =>
+    (await checkUserMcpDefinition(actionType, proposedAt)).verification;
+
+  // ---- the per-call facts (AD5a, D-6) -----------------------------------------------------------
+
+  /** The listed description as text: a description that is not a string reads as empty. */
+  const descriptionOf = (entry: unknown): string => {
+    const d =
+      typeof entry === "object" && entry !== null
+        ? (entry as { description?: unknown }).description
+        : undefined;
+    return typeof d === "string" ? d : "";
+  };
+
+  const stringArray = (json: string): readonly string[] => {
+    try {
+      const v: unknown = JSON.parse(json);
+      return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
+    } catch {
+      return [];
+    }
+  };
+
+  const userMcpCallFacts = async (
+    actionType: string,
+    basis: ActionBasis,
+    proposedAt: number,
+  ): Promise<UserMcpCallFactsOutcome> => {
+    const parts = userMcpActionParts(actionType);
+    if (parts === undefined) return { ok: false, detail: DEFINITION_REFUSALS.notApproved };
+    // An approved basis: the listing, the check and the description come from ONE pass.
+    let approval: UserMcpCallFacts["approval"] = null;
+    if (basis === "approved") {
+      const checked = await checkUserMcpDefinition(actionType, proposedAt);
+      if (!checked.ok) {
+        const v = checked.verification;
+        return v.ok
+          ? { ok: false, detail: DEFINITION_REFUSALS.notApproved }
+          : {
+              ok: false,
+              ...(v.code === "ERR_AGENT_TOOL_SUSPENDED" ? { code: v.code } : {}),
+              detail: v.detail,
+            };
+      }
+      approval = {
+        approvedAt: checked.approval.approvedAt,
+        definitionSha256: checked.approval.definitionSha256,
+        description: descriptionOf(checked.entry),
+      };
+    }
+    // The registration, read now (a legacy basis reads nothing else and starts nothing).
+    const registration = getUserMcpConnector(deps.db, parts.serviceId);
+    if (registration === null) return { ok: false, detail: DEFINITION_REFUSALS.notRegistered };
+    const netHosts = stringArray(registration.net_hosts_json);
+    let note: string | undefined;
+    try {
+      note = netHosts.length === 0 ? undefined : deps.userMcpNetworkNote?.(netHosts);
+    } catch {
+      note = undefined;
+    }
+    return {
+      ok: true,
+      facts: {
+        serviceId: parts.serviceId,
+        tool: parts.tool,
+        registeredAt: registration.created_at,
+        readPaths: stringArray(registration.read_paths_json),
+        netHosts,
+        ...(note === undefined ? {} : { networkNote: note }),
+        writePaths: [],
+        approval,
+      },
+    };
   };
 
   // The post-listing half of the definition check, shared by a submit (`verifyDefinition`) and a
@@ -697,7 +827,7 @@ export function createAgentDoor(deps: AgentDoorDeps): AgentDoor {
     return out;
   };
 
-  return { verdict, refusal, verifyDefinition, acceptedTypes, describe };
+  return { verdict, refusal, verifyDefinition, userMcpCallFacts, acceptedTypes, describe };
 }
 
 function safeList<T>(read: () => readonly T[]): readonly T[] {

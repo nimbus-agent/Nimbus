@@ -3,6 +3,7 @@ import { legacyNoticeFor } from "../connectors/connector-writes/agent-door-legac
 import type {
   AgentDoor,
   DefinitionVerification,
+  UserMcpCallFactsOutcome,
 } from "../connectors/connector-writes/agent-door-runtime.ts";
 import { CONNECTOR_WRITE_ROWS } from "../connectors/connector-writes/index.ts";
 import {
@@ -16,7 +17,7 @@ import type {
   ConnectorWriteRow,
   PreviewCredentialResolver,
 } from "../connectors/connector-writes/types.ts";
-import { userMcpToolKeyForActionType } from "../connectors/user-mcp-store.ts";
+import { userMcpActionParts, userMcpToolKeyForActionType } from "../connectors/user-mcp-store.ts";
 import type { EgressSink } from "../egress/egress-ledger.ts";
 import { classifyDoorRejection } from "../engine/door-rejection.ts";
 import type { ExecuteOptions, ExecutorPolicyDep } from "../engine/executor.ts";
@@ -28,6 +29,7 @@ import type {
   AuditSink,
   ConnectorDispatcher,
   PlannedAction,
+  UserMcpCallFacts,
 } from "../engine/types.ts";
 import { describeActions } from "../mcp-sink/capture-describe.ts";
 import {
@@ -48,6 +50,7 @@ import type { CaptureAttemptLimiter } from "../mcp-sink/capture-rate-limit.ts";
 import { actionTypeOfPayload } from "../mcp-sink/capture-store.ts";
 import {
   type ActDeps,
+  type ActionBasis,
   type ActionProvenance,
   type ActionRejectCode,
   CaptureError,
@@ -114,6 +117,17 @@ export interface AgentDoorActWiring {
     actionType: string,
     proposedAt?: number,
   ) => Promise<DefinitionVerification>;
+  /**
+   * The facts the owner's prompt shows for a user-MCP call (AD5a, D-6; `createAgentDoor(...).
+   * userMcpCallFacts`). For an `approved` basis it lists the server once and runs the definition check on
+   * that listing, so a failed check is a refusal before any prompt. Absent (a test wiring), an
+   * `approved` user-MCP proposal is refused (fail closed) and a legacy one runs without the block.
+   */
+  readonly userMcpCallFacts?: (
+    actionType: string,
+    basis: ActionBasis,
+    proposedAt: number,
+  ) => Promise<UserMcpCallFactsOutcome>;
 }
 
 /**
@@ -180,6 +194,9 @@ function rowNamed(
   return row === undefined ? undefined : rowNamedByToolId(row.toolId, actWriteRows(w));
 }
 
+/** The fixed text when a user-MCP call's facts could not be read (the check threw). */
+const USER_MCP_FACTS_UNCHECKED = "its definition could not be checked now";
+
 /** The fixed owner-side text of an `approved` proposal run without the door's runtime wired. */
 const NO_DOOR_RUNTIME_REASON = "the agent door is not available; nothing was run";
 
@@ -242,6 +259,31 @@ export function buildActDeps(
           code: "ERR_ACTION_CREDENTIAL_UNVERIFIED",
         };
       }
+      // AD5a: a user-MCP call carries the facts the prompt shows (third-party code, the server, the
+      // sandbox reach, the approval). An approved basis is checked against ONE listing here; a
+      // failed check is rejected with no prompt. A legacy basis reads the registration only.
+      let userMcpCall: UserMcpCallFacts | undefined;
+      if (userMcpActionParts(actionType) !== undefined && provenance.basis !== undefined) {
+        // No facts function wired: an approved basis fails closed, a legacy one runs without the block.
+        const f: UserMcpCallFactsOutcome | undefined =
+          door?.userMcpCallFacts === undefined
+            ? provenance.basis === "approved"
+              ? { ok: false, detail: USER_MCP_FACTS_UNCHECKED }
+              : undefined
+            : await door
+                .userMcpCallFacts(actionType, provenance.basis, provenance.createdAt)
+                .catch(
+                  (): UserMcpCallFactsOutcome => ({ ok: false, detail: USER_MCP_FACTS_UNCHECKED }),
+                );
+        if (f !== undefined && !f.ok) {
+          return {
+            status: "rejected",
+            reason: escapeUnverifiedLine(f.detail),
+            ...(f.code === undefined ? {} : { code: f.code }),
+          };
+        }
+        userMcpCall = f?.ok === true ? f.facts : undefined;
+      }
       const options = await executeOptionsFor(door, rowNamed(row, w));
       let vetoed: string | undefined;
       let vetoCode: ActionRejectCode | undefined;
@@ -284,6 +326,7 @@ export function buildActDeps(
         type: actionType,
         origin: "agent",
         proposer: agentProposerOf(provenance, actionType),
+        ...(userMcpCall === undefined ? {} : { userMcpCall }),
         payload: { mcpToolId: toolId, input },
       };
       const out =
