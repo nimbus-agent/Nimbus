@@ -230,6 +230,40 @@ describe("an approved user-MCP proposal", () => {
     expect(h.dispatched).toHaveLength(0);
   });
 
+  test("the approval re-approved with another definition while the prompt is open: the answer is overruled, no mark, no code (review finding 2)", async () => {
+    approveNotes();
+    const h = harness({
+      onPrompt: () => {
+        // The owner re-approves definition B from another terminal; the server now lists B.
+        description = "adds a note, differently";
+        const b = definitionSha256("append", entry(description)) as string;
+        upsertDoorApprovals(
+          db,
+          "agent",
+          "mcp_notes",
+          [{ toolId: "append", definitionSha256: b }],
+          9,
+        );
+      },
+    });
+    const out = await h.act.execute("mcp_notes.append", INPUT, PROV("approved"));
+    expect(out.status).toBe("rejected");
+    expect((out as { code?: string }).code).toBeUndefined();
+    expect((out as { reason?: string }).reason).toContain(
+      "approval changed while you were deciding",
+    );
+    expect(h.prompts).toHaveLength(1);
+    expect(h.dispatched).toHaveLength(0);
+    expect(getDoorApproval(db, "agent", "mcp_notes", "append")?.suspendedAt).toBeNull();
+  });
+
+  test("the approval unchanged during the prompt still runs (the binding compares the full hash)", async () => {
+    approveNotes();
+    const h = harness({ onPrompt: () => undefined });
+    expect((await h.act.execute("mcp_notes.append", INPUT, PROV("approved"))).status).toBe("ok");
+    expect(h.dispatched).toHaveLength(1);
+  });
+
   test("an approved basis without the facts function wired is refused, nothing prompted", async () => {
     approveNotes();
     const h = harness({ noFacts: true });
@@ -287,6 +321,55 @@ describe("a legacy user-MCP proposal", () => {
     expect(same.status).toBe("ok");
   });
 
+  test("the server removed and registered again while the prompt is open: the answer is overruled, nothing dispatched, no server started (review finding 1)", async () => {
+    const h = harness({
+      onPrompt: () => {
+        db.query("DELETE FROM user_mcp_connector WHERE service_id = ?").run("mcp_notes");
+        insertUserMcpConnector(db, {
+          service_id: "mcp_notes",
+          command: "replacement",
+          args_json: "[]",
+          read_paths_json: "[]",
+          net_hosts_json: "[]",
+          model_access: 0,
+          // Older than the proposal, so only "not the registration the prompt showed" can catch it.
+          created_at: REGISTERED_AT + 1,
+        });
+      },
+    });
+    const out = await h.act.execute("mcp_notes.append", INPUT, PROV("legacy_user_mcp"));
+    expect(out.status).toBe("rejected");
+    expect((out as { code?: string }).code).toBeUndefined();
+    expect(h.prompts).toHaveLength(1);
+    expect(h.dispatched).toHaveLength(0);
+    expect(listCalls).toBe(0);
+  });
+
+  test("the server removed while the prompt is open: the answer is overruled", async () => {
+    const h = harness({
+      onPrompt: () => {
+        db.query("DELETE FROM user_mcp_connector WHERE service_id = ?").run("mcp_notes");
+      },
+    });
+    const out = await h.act.execute("mcp_notes.append", INPUT, PROV("legacy_user_mcp"));
+    expect(out.status).toBe("rejected");
+    expect(h.dispatched).toHaveLength(0);
+  });
+
+  test("a registration newer than the proposal appearing during the prompt overrules the answer", async () => {
+    const h = harness({
+      onPrompt: () => {
+        db.query("UPDATE user_mcp_connector SET created_at = ? WHERE service_id = ?").run(
+          PROPOSED_AT + 10,
+          "mcp_notes",
+        );
+      },
+    });
+    const out = await h.act.execute("mcp_notes.append", INPUT, PROV("legacy_user_mcp"));
+    expect(out.status).toBe("rejected");
+    expect(h.dispatched).toHaveLength(0);
+  });
+
   test("with no door wired the prompt is today's (no block)", async () => {
     const h = harness({ noDoor: true });
     const out = await h.act.execute("mcp_notes.append", INPUT, PROV("legacy_user_mcp"));
@@ -320,9 +403,14 @@ describe("a raw captures.accept never runs an approved user-MCP basis (rule 4d)"
       actionDestinationRefusal: d.refusal,
       verifyActionDefinition: d.verifyDefinition,
     };
-    const h = harness();
+    const dispatched: PlannedAction[] = [];
     const w: CaptureActWiring = {
-      dispatcher: { dispatch: () => Promise.resolve({ ok: true }) },
+      dispatcher: {
+        dispatch: (a) => {
+          dispatched.push(a);
+          return Promise.resolve({ ok: true });
+        },
+      },
       egressSink: makeEgressSink(db),
       audit: { recordAudit: (e) => appendAuditEntry(db, e) },
       policyHitl: NO_POLICY_OVERLAY,
@@ -355,6 +443,6 @@ describe("a raw captures.accept never runs an approved user-MCP basis (rule 4d)"
     );
     expect(err?.rpcData?.code).toBe("ERR_CAPTURE_FORBIDDEN_CLIENT");
     expect(listCalls).toBe(callsAfterSubmit);
-    expect(h.dispatched).toHaveLength(0);
+    expect(dispatched).toHaveLength(0);
   });
 });

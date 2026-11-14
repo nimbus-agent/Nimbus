@@ -220,6 +220,32 @@ describe("listUserMcpToolDefinitions deadline (agent door review, finding 1)", (
     expect(Object.keys(again ?? {})).toEqual(["mcp_a_x"]);
   });
 
+  test("a deadline that passes while the spawn gate is awaited: after the gate opens nothing is ensured and nothing is listed (review finding 3)", async () => {
+    let openGate: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => {
+      openGate = resolve;
+    });
+    mesh = new LazyConnectorMesh(makePaths(), createMockVault(), {
+      listUserMcpConnectors: () => [userRow("mcp_a")],
+      userMcpListingDeadlineMs: 20,
+      filesystemSpawnGate: gate,
+    });
+    const fake = fakeClient({ mcp_a_x: { description: "late", inputSchema: SCHEMA } });
+    install(mesh, "mcp_a", fake);
+    let ensured = 0;
+    const real = mesh.ensureUserMcpRunning.bind(mesh);
+    mesh.ensureUserMcpRunning = (id: string) => {
+      ensured += 1;
+      return real(id);
+    };
+    expect(await mesh.listUserMcpToolDefinitions("mcp_a")).toBeUndefined();
+    openGate();
+    // Let the abandoned attempt run to wherever it would go.
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(ensured).toBe(0);
+    expect(fake.calls()).toBe(0);
+  });
+
   test("a listing that settles inside the deadline is returned as before", async () => {
     mesh = new LazyConnectorMesh(makePaths(), createMockVault(), {
       listUserMcpConnectors: () => [userRow("mcp_a")],

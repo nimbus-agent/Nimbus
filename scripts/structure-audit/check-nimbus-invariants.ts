@@ -2202,7 +2202,11 @@ const D49_USER_MCP_CALL_ALLOWED: readonly string[] = [
   `${D49_SRC}engine/executor.ts`,
   `${D49_SRC}engine/user-mcp-call-block.ts`,
 ];
+// An object-literal property (`{ userMcpCall: x }`). The same text inside a destructuring PATTERN
+// (`const { userMcpCall: facts } = action`, a renamed READ) is skipped by `d49IsDestructuringTarget`.
 const D49_USER_MCP_CALL_WRITE_RE = /\buserMcpCall\s*\??\s*:/g;
+// A member assignment (`action.userMcpCall = facts`); ==, === and => are not assignments.
+const D49_USER_MCP_CALL_ASSIGN_RE = /\.\s*userMcpCall\s*=(?![=>])/g;
 // The shorthand forms `{ userMcpCall }`, `{ ...x, userMcpCall }` and `{ a, userMcpCall, b }`: the
 // name directly after `{` or `,` and directly before `,` or `}`, never a member access. A
 // destructuring pattern (`const { userMcpCall, ...rest } = action`, a READ) is skipped by
@@ -2384,6 +2388,14 @@ export function checkUserMcpCallFacts(files: readonly FileEntry[]): Violation[] 
     ...d49ScanNames(
       files,
       D49_USER_MCP_CALL_WRITE_RE,
+      D49_USER_MCP_CALL_WRITE_ALLOWED,
+      "user-mcp-call-facts-confined",
+      false,
+      d49IsDestructuringTarget,
+    ),
+    ...d49ScanNames(
+      files,
+      D49_USER_MCP_CALL_ASSIGN_RE,
       D49_USER_MCP_CALL_WRITE_ALLOWED,
       "user-mcp-call-facts-confined",
       false,

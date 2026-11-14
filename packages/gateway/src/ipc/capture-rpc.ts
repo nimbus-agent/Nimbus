@@ -3,6 +3,7 @@ import { legacyNoticeFor } from "../connectors/connector-writes/agent-door-legac
 import type {
   AgentDoor,
   DefinitionVerification,
+  UserMcpCallBinding,
   UserMcpCallFactsOutcome,
 } from "../connectors/connector-writes/agent-door-runtime.ts";
 import { CONNECTOR_WRITE_ROWS } from "../connectors/connector-writes/index.ts";
@@ -116,6 +117,7 @@ export interface AgentDoorActWiring {
   readonly verifyDefinition: (
     actionType: string,
     proposedAt?: number,
+    shown?: UserMcpCallBinding,
   ) => Promise<DefinitionVerification>;
   /**
    * The facts the owner's prompt shows for a user-MCP call (AD5a, D-6; `createAgentDoor(...).
@@ -209,8 +211,9 @@ const NO_DOOR_RUNTIME_REASON = "the agent door is not available; nothing was run
  * Wave 4 or bound row reaches the SAME executor with its typed confirmation, before-state and
  * prepare step. What may reach this function is decided by the gate's verdict at submit and
  * approval, never by routing. An `approved`-basis proposal runs on a consent channel that
- * re-checks the tool's definition after the owner's answer (`vetoingConsent`); a legacy basis has
- * no approval to compare against and is never vetoed.
+ * re-checks the tool's definition after the owner's answer (`vetoingConsent`); a legacy user-MCP
+ * basis has no approval to compare against, but its registration is re-read after the answer and
+ * must still be the one the prompt showed.
  */
 export function buildActDeps(
   w: CaptureActWiring,
@@ -287,12 +290,21 @@ export function buildActDeps(
       const options = await executeOptionsFor(door, rowNamed(row, w));
       let vetoed: string | undefined;
       let vetoCode: ActionRejectCode | undefined;
+      // What the prompt showed, carried to the check after the answer: the registration it named and
+      // the FULL hash of the approval (null for a legacy call). Only a user-MCP call has facts.
+      const shown: UserMcpCallBinding | undefined =
+        userMcpCall === undefined
+          ? undefined
+          : {
+              registeredAt: userMcpCall.registeredAt,
+              definitionSha256: userMcpCall.approval?.definitionSha256 ?? null,
+            };
       const channel =
-        provenance.basis === "approved" && door !== undefined
+        door !== undefined && (provenance.basis === "approved" || shown !== undefined)
           ? vetoingConsent(
               humanChannel,
               async () => {
-                const v = await door.verifyDefinition(actionType, provenance.createdAt);
+                const v = await door.verifyDefinition(actionType, provenance.createdAt, shown);
                 if (v.ok) return undefined;
                 // Only the recheck's own suspension code is stored: a tool merely missing from the
                 // listing is refused without a mark and without a code (OR-AD-14).

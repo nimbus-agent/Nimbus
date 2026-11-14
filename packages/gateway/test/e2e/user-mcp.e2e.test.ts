@@ -974,8 +974,9 @@ describe.skipIf(!sandboxAvailable)("a scaffolded user MCP over a real gateway", 
     expect(owner.prompts).toHaveLength(1);
     const shown = owner.prompts[0] as string;
     expect(shown).toContain(`User MCP server: ${SERVICE} (third-party code you registered on`);
-    // The prompt prints each path escaped (a backslash is doubled), never raw.
-    expect(shown).toContain(`read: ${JSON.stringify(grantedDir).slice(1, -1)}`);
+    // The prompt prints each path escaped (a backslash is doubled), never raw, and it prints the
+    // CANONICAL path the registration stored (macOS temp directories sit under a symlinked /var).
+    expect(shown).toContain(`read: ${JSON.stringify(realpathSync(grantedDir)).slice(1, -1)}`);
     expect(shown).toContain("Tool description (the server's own text, UNVERIFIED):");
     expect(shown).toContain('"text": "ad5a-approved"');
     expect(shown).toContain("Requested by: an outside agent (unverified)");

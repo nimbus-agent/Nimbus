@@ -36,6 +36,7 @@ import type {
   ActionVerdict,
 } from "../../mcp-sink/capture-types.ts";
 import type { EnforcedPolicy } from "../../policy/policy-gate.ts";
+import { constantTimeStringEqual } from "../../util/timing-safe-compare.ts";
 import { mcpClientToolKey } from "../lazy-mesh/tool-map.ts";
 import {
   type ActionClassification,
@@ -128,6 +129,16 @@ export type DefinitionVerification =
       readonly detail: string;
     };
 
+/**
+ * What the owner's prompt showed about a user-MCP call (AD5a review round 2): the registration's
+ * creation time, and for an approved tool the full definition hash; `null` for a legacy call, which
+ * has no approval. The post-answer check refuses when the world is no longer the one shown.
+ */
+export interface UserMcpCallBinding {
+  readonly registeredAt: number;
+  readonly definitionSha256: string | null;
+}
+
 export interface AgentDoor {
   /** Synchronous, database reads only: never lists a connector. */
   verdict(actionType: string): ActionVerdict;
@@ -141,9 +152,16 @@ export interface AgentDoor {
    * Lists the action's service once and checks the approved tool's definition against it.
    * `proposedAt` (the approval and the post-answer veto pass the stored proposal's `createdAt`; a
    * submit passes none) refuses, for a user-MCP type, a proposal queued against an EARLIER
-   * registration of the same server id.
+   * registration of the same server id. `shown` (the post-answer check of a user-MCP call) also
+   * refuses a registration that is not the one the prompt showed and, for an approved tool, an
+   * approval whose hash is not the one the prompt showed; with a `null` hash (a legacy call) it
+   * reads the registration only and lists nothing.
    */
-  verifyDefinition(actionType: string, proposedAt?: number): Promise<DefinitionVerification>;
+  verifyDefinition(
+    actionType: string,
+    proposedAt?: number,
+    shown?: UserMcpCallBinding,
+  ): Promise<DefinitionVerification>;
   /**
    * The facts the owner's prompt shows for a user-MCP call (AD5a, D-6), read now. An `approved`
    * basis lists the server once, runs the definition check on that listing and takes the description
@@ -189,6 +207,9 @@ export const DEFINITION_REFUSALS = Object.freeze({
   notRegistered: "this user MCP server is not registered",
   earlierRegistration:
     "this proposal was made before the server was registered again; ask the agent to propose it again",
+  registrationChanged:
+    "the server was registered again while you were deciding; ask the agent to propose it again",
+  reapproved: "the approval changed while you were deciding; approve the proposal again",
 });
 
 /**
@@ -421,9 +442,10 @@ export function createAgentDoor(deps: AgentDoorDeps): AgentDoor {
   const verifyDefinition = async (
     actionType: string,
     proposedAt?: number,
+    shown?: UserMcpCallBinding,
   ): Promise<DefinitionVerification> => {
     // A user-MCP type has no write row: its own check (D-3).
-    if (isUserMcpType(actionType)) return verifyUserMcpDefinition(actionType, proposedAt);
+    if (isUserMcpType(actionType)) return verifyUserMcpDefinition(actionType, proposedAt, shown);
     const row = agentDoorRow(actionType, rows);
     const service = serviceOf(actionType);
     const approval =
@@ -463,10 +485,18 @@ export function createAgentDoor(deps: AgentDoorDeps): AgentDoor {
    * this exact (server, tool) pair stands and is not suspended. Synchronous, so the second call
    * (after the listing) cannot be separated from the comparison that follows it.
    */
-  const userMcpStanding = (
-    parts: NonNullable<ReturnType<typeof userMcpActionParts>>,
+  type UserMcpParts = NonNullable<ReturnType<typeof userMcpActionParts>>;
+
+  /**
+   * The registration half of every user-MCP check, one row read and nothing else (a legacy call is
+   * judged by this alone and starts no server): the server is registered, the proposal is not older
+   * than the registration, and, after an answer, it is the registration the prompt showed.
+   */
+  const registrationStanding = (
+    parts: UserMcpParts,
     proposedAt: number | undefined,
-  ): { readonly approval: DoorApproval } | DefinitionVerification => {
+    shown: UserMcpCallBinding | undefined,
+  ): DefinitionVerification => {
     const registration = getUserMcpConnector(deps.db, parts.serviceId);
     if (registration === null) {
       return refused("ERR_CAPTURE_ACTION_NOT_PROPOSABLE", DEFINITION_REFUSALS.notRegistered);
@@ -474,12 +504,33 @@ export function createAgentDoor(deps: AgentDoorDeps): AgentDoor {
     if (proposedAt !== undefined && proposedAt < registration.created_at) {
       return refused("ERR_CAPTURE_ACTION_NOT_PROPOSABLE", DEFINITION_REFUSALS.earlierRegistration);
     }
+    if (shown !== undefined && shown.registeredAt !== registration.created_at) {
+      return refused("ERR_CAPTURE_ACTION_NOT_PROPOSABLE", DEFINITION_REFUSALS.registrationChanged);
+    }
+    return { ok: true };
+  };
+
+  const userMcpStanding = (
+    parts: UserMcpParts,
+    proposedAt: number | undefined,
+    shown: UserMcpCallBinding | undefined,
+  ): { readonly approval: DoorApproval } | DefinitionVerification => {
+    const registered = registrationStanding(parts, proposedAt, shown);
+    if (!registered.ok) return registered;
     const approval = getDoorApproval(deps.db, "agent", parts.serviceId, parts.tool);
     if (approval === undefined) {
       return refused("ERR_CAPTURE_ACTION_NOT_PROPOSABLE", DEFINITION_REFUSALS.notApproved);
     }
     if (approval.suspendedAt !== null) {
       return refused("ERR_AGENT_TOOL_SUSPENDED", DEFINITION_REFUSALS.suspended);
+    }
+    // After an answer: the approval must be the one the prompt showed. A re-approval is not a
+    // problem with the tool, so it marks nothing and stores no suspension code.
+    if (
+      shown?.definitionSha256 != null &&
+      !constantTimeStringEqual(approval.definitionSha256, shown.definitionSha256)
+    ) {
+      return refused("ERR_CAPTURE_ACTION_NOT_PROPOSABLE", DEFINITION_REFUSALS.reapproved);
     }
     return { approval };
   };
@@ -508,6 +559,7 @@ export function createAgentDoor(deps: AgentDoorDeps): AgentDoor {
     actionType: string,
     proposedAt: number | undefined,
     lister: UserMcpLister | undefined = deps.listUserMcpDefinitions,
+    shown?: UserMcpCallBinding,
   ): Promise<UserMcpDefinitionCheck> => {
     const parts = userMcpActionParts(actionType);
     if (parts === undefined) {
@@ -515,7 +567,7 @@ export function createAgentDoor(deps: AgentDoorDeps): AgentDoor {
         refused("ERR_CAPTURE_ACTION_NOT_PROPOSABLE", DEFINITION_REFUSALS.notApproved),
       );
     }
-    const before = userMcpStanding(parts, proposedAt);
+    const before = userMcpStanding(parts, proposedAt, shown);
     if (!("approval" in before)) return failedCheck(before);
     const listed = await Promise.resolve()
       .then(() => lister?.(parts.serviceId))
@@ -529,7 +581,7 @@ export function createAgentDoor(deps: AgentDoorDeps): AgentDoor {
     // stand now, with no await between that read and the comparison. `missing` and an unlisted
     // server mark nothing and write no row (OR-AD-14); `changed` and `unreadable` mark through the
     // ONE shared helper.
-    const after = userMcpStanding(parts, proposedAt);
+    const after = userMcpStanding(parts, proposedAt, shown);
     if (!("approval" in after)) return failedCheck(after);
     const failed = refusalOfCheck(checkAgentToolDefinition(deps, after.approval, listed));
     if (failed !== undefined) return failedCheck(failed);
@@ -544,8 +596,17 @@ export function createAgentDoor(deps: AgentDoorDeps): AgentDoor {
   const verifyUserMcpDefinition = async (
     actionType: string,
     proposedAt: number | undefined,
-  ): Promise<DefinitionVerification> =>
-    (await checkUserMcpDefinition(actionType, proposedAt)).verification;
+    shown: UserMcpCallBinding | undefined,
+  ): Promise<DefinitionVerification> => {
+    // A legacy call (no approval was shown): the registration row alone, never a listing.
+    if (shown !== undefined && shown.definitionSha256 == null) {
+      const parts = userMcpActionParts(actionType);
+      return parts === undefined
+        ? refused("ERR_CAPTURE_ACTION_NOT_PROPOSABLE", DEFINITION_REFUSALS.notApproved)
+        : registrationStanding(parts, proposedAt, shown);
+    }
+    return (await checkUserMcpDefinition(actionType, proposedAt, undefined, shown)).verification;
+  };
 
   // ---- the per-call facts (AD5a, D-6) -----------------------------------------------------------
 

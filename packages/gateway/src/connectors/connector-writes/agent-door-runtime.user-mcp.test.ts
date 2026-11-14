@@ -516,6 +516,57 @@ describe("a proposal queued against an earlier registration is refused (R-2, pro
   });
 });
 
+describe("the check after the owner's answer is bound to what the prompt showed (review round 2)", () => {
+  test("a legacy call: the registration row alone, never a listing; gone, newer or another registration refuses", async () => {
+    register("mcp_x", { createdAt: 500 });
+    listings["mcp_x"] = listing("mcp_x", { append: entry() });
+    const d = door();
+    const shown = { registeredAt: 500, definitionSha256: null };
+    expect(await d.verifyDefinition("mcp_x.append", 600, shown)).toEqual({ ok: true });
+    expect(await d.verifyDefinition("mcp_x.append", 400, shown)).toMatchObject({ ok: false });
+    expect(
+      await d.verifyDefinition("mcp_x.append", 600, { registeredAt: 450, definitionSha256: null }),
+    ).toMatchObject({ ok: false, detail: DEFINITION_REFUSALS.registrationChanged });
+    deleteUserMcpConnector(db, "mcp_x");
+    expect(await d.verifyDefinition("mcp_x.append", 600, shown)).toMatchObject({
+      ok: false,
+      detail: DEFINITION_REFUSALS.notRegistered,
+    });
+    expect(userListCalls).toEqual([]);
+  });
+
+  test("a legacy binding on a type that names no tool is refused", async () => {
+    expect(
+      await door().verifyDefinition("mcp_bad", 600, { registeredAt: 1, definitionSha256: null }),
+    ).toMatchObject({ ok: false, detail: DEFINITION_REFUSALS.notApproved });
+  });
+
+  test("an approved call: another registration or another approved hash refuses, with no mark", async () => {
+    register("mcp_x", { createdAt: 500 });
+    const sha = approve("mcp_x", "append", entry());
+    listings["mcp_x"] = listing("mcp_x", { append: entry() });
+    const d = door();
+    expect(
+      await d.verifyDefinition("mcp_x.append", 600, { registeredAt: 500, definitionSha256: sha }),
+    ).toEqual({ ok: true });
+    expect(
+      await d.verifyDefinition("mcp_x.append", 600, { registeredAt: 1, definitionSha256: sha }),
+    ).toMatchObject({ ok: false, detail: DEFINITION_REFUSALS.registrationChanged });
+    const other = "f".repeat(64);
+    expect(
+      await d.verifyDefinition("mcp_x.append", 600, {
+        registeredAt: 500,
+        definitionSha256: other,
+      }),
+    ).toEqual({
+      ok: false,
+      code: "ERR_CAPTURE_ACTION_NOT_PROPOSABLE",
+      detail: DEFINITION_REFUSALS.reapproved,
+    });
+    expect(getDoorApproval(db, "agent", "mcp_x", "append")?.suspendedAt).toBeNull();
+  });
+});
+
 describe("the legacy window admits exactly what was admitted before, and nothing more (property 7)", () => {
   test("for an UNAPPROVED tool the verdict is the earlier classifier's answer, with the legacy basis in place of none", () => {
     for (const model of [true, false]) {

@@ -37,6 +37,7 @@ import {
   userMcpToolSegmentOk,
 } from "../../connectors/user-mcp-store.ts";
 import { MCP_ACTION_CAPABILITY } from "../../mcp-sink/capture-capability.ts";
+import { constantTimeStringEqual } from "../../util/timing-safe-compare.ts";
 import { ConnectorRpcError } from "../connector-rpc-shared.ts";
 import {
   type AgentWritesDeps,
@@ -103,7 +104,7 @@ export interface UserMcpAgentEnableReply {
 
 function stateOf(existing: DoorApproval | undefined, sha: string): UserMcpToolState {
   if (existing === undefined) return "will_be_approved";
-  return existing.suspendedAt === null && existing.definitionSha256 === sha
+  return existing.suspendedAt === null && constantTimeStringEqual(existing.definitionSha256, sha)
     ? "already_approved"
     : "reapproved_changed";
 }
@@ -271,13 +272,16 @@ export async function handleUserMcpAgentWritesEnable(
   };
   await requireOwnerApproval(executor, payload, deps);
   // 8. ONE transaction. The owner may have removed or re-registered the server while the prompt was
-  //    open: approvals are written only for the registration they were shown.
+  //    open, or org policy may have changed: approvals are written only for the registration they
+  //    were shown and only while policy still allows them.
   const entries: DoorApprovalEntry[] = lines.map((l) => ({
     toolId: l.toolId,
     definitionSha256: fullHash(listed, service, l.toolId),
   }));
   const now = deps.now();
   deps.db.transaction(() => {
+    // Policy may have changed during the listing or the owner's prompt: read it again, now.
+    requireUserMcpAgentPolicy(deps);
     const current = getUserMcpConnector(deps.db, service);
     if (current === null || current.created_at !== registration.created_at) {
       refuseAgentWrites(

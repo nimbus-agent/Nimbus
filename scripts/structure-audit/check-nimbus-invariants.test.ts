@@ -6805,6 +6805,55 @@ describe("D49(g), (h) - the user-MCP call facts and the door's reach into user s
     }
   });
 
+  test("(g) a member assignment is a write in a file that may only read the property, a comparison is not (review finding 6)", () => {
+    for (const path of [`${SRC}engine/executor.ts`, `${SRC}engine/user-mcp-call-block.ts`]) {
+      for (const code of [
+        "action.userMcpCall = facts;",
+        "action.userMcpCall=facts;",
+        "planned.userMcpCall  =\n  facts;",
+      ]) {
+        expect(
+          checkUserMcpCallFacts(swap(path, code)).map((x) => x.rule),
+          code,
+        ).toEqual(["user-mcp-call-facts-confined"]);
+      }
+      for (const code of [
+        "if (action.userMcpCall === undefined) {}",
+        "if (action.userMcpCall == null) {}",
+        "const f = () => action.userMcpCall;",
+      ]) {
+        expect(checkUserMcpCallFacts(swap(path, code)), code).toEqual([]);
+      }
+    }
+    // Where the property may be written (the types file, the act wiring), an assignment is allowed.
+    expect(
+      checkUserMcpCallFacts(swap(`${SRC}ipc/capture-rpc.ts`, "action.userMcpCall = facts;")),
+    ).toEqual([]);
+  });
+
+  test("(g) a renamed destructuring read is allowed, the same text as an object-literal write is not (review finding 7)", () => {
+    for (const path of [`${SRC}engine/executor.ts`, `${SRC}engine/user-mcp-call-block.ts`]) {
+      for (const code of [
+        "const { userMcpCall: facts } = action;",
+        "const { type, userMcpCall: facts, ...rest } = action;",
+        "const {\n  userMcpCall: facts,\n} = action;",
+        "function f({ userMcpCall: facts } = action) {}",
+      ]) {
+        expect(checkUserMcpCallFacts(swap(path, code)), code).toEqual([]);
+      }
+      for (const code of [
+        "const a = { userMcpCall: facts };",
+        "return { type, userMcpCall: facts, payload };",
+        "send({ userMcpCall: facts });",
+      ]) {
+        expect(
+          checkUserMcpCallFacts(swap(path, code)).map((x) => x.rule),
+          code,
+        ).toEqual(["user-mcp-call-facts-confined"]);
+      }
+    }
+  });
+
   test("(g) a comment or a string that says userMcpCall is not a violation (the IPC method name)", () => {
     expect(
       checkUserMcpCallFacts(

@@ -454,6 +454,34 @@ describe("user MCP agent enable: the owner's gate and the write", () => {
   });
 });
 
+describe("user MCP agent enable: policy is read again before the approvals are stored (review finding 4)", () => {
+  test("a policy that turns the capability off while the owner decides: nothing is written", async () => {
+    const over: { policy: Policy | undefined } = { policy: OPEN };
+    const r = rig(over);
+    r.consent.onRequest = () => {
+      over.policy = { capabilitiesDisabled: new Set(["mcp_action"]) };
+    };
+    const msg = await refusal(
+      handleConnectorWritesEnable({ ...AGENT, approve: ["append"] }, r.deps),
+    );
+    expect(msg).toContain("ERR_CONNECTOR_WRITES_POLICY");
+    expect(listDoorApprovals(db, "agent")).toEqual([]);
+  });
+
+  test("a policy that becomes unreadable while the owner decides fails closed", async () => {
+    const over: { policy: Policy | undefined } = { policy: OPEN };
+    const r = rig(over);
+    r.consent.onRequest = () => {
+      over.policy = undefined;
+    };
+    const msg = await refusal(
+      handleConnectorWritesEnable({ ...AGENT, approve: ["append"] }, r.deps),
+    );
+    expect(msg).toContain("ERR_CONNECTOR_WRITES_POLICY");
+    expect(listDoorApprovals(db, "agent")).toEqual([]);
+  });
+});
+
 describe("user MCP agent enable: with no --approve it lists and asks nothing (OR-AD-23)", () => {
   test("hash prefixes and states, no prompt, no audit row, nothing written; a tool with an unusable name is reported apart", async () => {
     const r = rig();

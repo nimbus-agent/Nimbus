@@ -694,11 +694,16 @@ function auditedAction(action: PlannedAction): AuditedAction {
   if (action.userMcpCall !== undefined) {
     const { userMcpCall, ...rest } = action;
     const projected = auditedProposer(rest);
-    if (userMcpCall.approval === null || !isAgentOrigin(action)) return projected;
-    const { type, proposer, ...others } = projected;
+    // An agent-origin action always has its proposer by here (the prompt refuses to build without
+    // one), so the proposer test narrows the type and never selects a different row in practice.
+    const { proposer } = projected;
+    if (userMcpCall.approval === null || !isAgentOrigin(action) || proposer === undefined) {
+      return projected;
+    }
+    const { type, proposer: _proposer, ...others } = projected;
     return {
       type,
-      ...(proposer === undefined ? {} : { proposer }),
+      proposer,
       userMcp: { definitionSha256: userMcpCall.approval.definitionSha256 },
       ...others,
     };

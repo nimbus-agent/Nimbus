@@ -94,7 +94,7 @@ Every roadmap decision is evaluated against the project's non-negotiables:
 
 **Order.**
 
-1. **Now** — finish S4, with the agent door as its next project, and the owner's [Reach](#reach-the-owners-track) track beside it.
+1. **Now** — finish S4, with the agent door (Phase 28; AD1 to AD5a shipped, AD5b, AD6, AD7, AD8 and AD3b remain) as its current project, and the owner's [Reach](#reach-the-owners-track) track beside it.
 2. **Next** — the team server (S5).
 3. **Later** — the Cost Pack (S6), then Engineering Excellence breadth (S7). The opportunistic and research phases keep their places in Tracks 2 and 3.
 

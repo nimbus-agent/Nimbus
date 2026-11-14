@@ -854,7 +854,10 @@ export class LazyConnectorMesh {
    * connector's) tools. `undefined` when no `user_mcp_connector` row names the id. Keys are as the
    * slot's `MCPClient` lists them: `<serviceId>_<tool>`.
    */
-  async listUserMcpTools(serviceId: string): Promise<LazyMeshToolMap | undefined> {
+  async listUserMcpTools(
+    serviceId: string,
+    expired?: AbortSignal,
+  ): Promise<LazyMeshToolMap | undefined> {
     const registered = this.listUserMcpConnectors().some((r) => r.service_id === serviceId);
     if (!registered) {
       return undefined;
@@ -864,6 +867,11 @@ export class LazyConnectorMesh {
     // the directory the revoke is rewriting. The per-server dispatch path no longer goes through the
     // merged listing, so it waits here instead.
     await this.filesystemSpawnGate;
+    // An attempt whose caller already gave up (the agent door's deadline passed while the gate was
+    // awaited) starts nothing: no client is ensured and no tool is requested.
+    if (expired?.aborted === true) {
+      return undefined;
+    }
     await this.ensureUserMcpRunning(serviceId);
     return listLazyMeshClientTools(this.getLazyClient(userMcpMeshKey(serviceId)));
   }
@@ -881,17 +889,24 @@ export class LazyConnectorMesh {
    * only for a tool the owner approved for agents by name. A throw is the listing's own. The whole
    * listing (the wait for the spawn gate, the start and the request) is bounded by
    * {@link USER_MCP_LISTING_DEADLINE_MS} here, in the ONE place every caller goes through: on expiry
-   * the result is `undefined` ("could not be listed") and the abandoned promise is given a no-op
-   * rejection handler, so it can neither reject unhandled nor affect a later listing.
+   * the result is `undefined` ("could not be listed"), an attempt still waiting for the spawn gate
+   * starts nothing when the gate opens (the expiry is checked after the wait and before the client
+   * is ensured), and the abandoned promise is given a no-op rejection handler, so it can neither
+   * reject unhandled nor affect a later listing. A start or a tool request already in flight when
+   * the deadline fires cannot be cancelled: it runs to its own end and its result is discarded.
    */
   async listUserMcpToolDefinitions(
     serviceId: string,
   ): Promise<Readonly<Record<string, { description: unknown; inputSchema: unknown }>> | undefined> {
-    const pending = this.listUserMcpTools(serviceId);
+    const giveUp = new AbortController();
+    const pending = this.listUserMcpTools(serviceId, giveUp.signal);
     pending.catch(() => undefined);
     let timer: ReturnType<typeof setTimeout> | undefined;
     const expired = new Promise<"expired">((resolve) => {
-      timer = setTimeout(() => resolve("expired"), this.userMcpListingDeadlineMs);
+      timer = setTimeout(() => {
+        giveUp.abort();
+        resolve("expired");
+      }, this.userMcpListingDeadlineMs);
     });
     let tools: LazyMeshToolMap | undefined | "expired";
     try {
