@@ -25,6 +25,10 @@
 import type { Database } from "bun:sqlite";
 import { serviceOf } from "../../engine/service-of.ts";
 import type { UserMcpCallFacts } from "../../engine/types.ts";
+import {
+  describeOwnerCodeTool,
+  offeredInputJsonSchema,
+} from "../../engine/user-mcp-agent-tools.ts";
 import { MCP_ACTION_CAPABILITY } from "../../mcp-sink/capture-capability.ts";
 import type {
   ActionBasis,
@@ -54,8 +58,8 @@ import {
 } from "./agent-door.ts";
 import { checkAgentToolDefinition, type DefinitionCheck } from "./agent-door-definition.ts";
 import { type DescribeScope, describeApprovedWrite } from "./agent-door-describe.ts";
-import { legacyNoticeFor } from "./agent-door-legacy.ts";
-import { type DoorApproval, getDoorApproval } from "./door-approval-store.ts";
+import { legacyNoticeFor, legacyUserMcpPatternNotice } from "./agent-door-legacy.ts";
+import { type DoorApproval, getDoorApproval, listDoorApprovals } from "./door-approval-store.ts";
 import {
   getModelWriteEnablement,
   isObsidianWriteGrantApproved,
@@ -186,9 +190,6 @@ export const DEFINITION_REFUSALS = Object.freeze({
   earlierRegistration:
     "this proposal was made before the server was registered again; ask the agent to propose it again",
 });
-
-/** The fixed text of a type `capture.describe` does not describe (OR-AD-17). */
-export const DESCRIBE_USER_MCP_REASON = "user MCP tools are not described here yet";
 
 /**
  * The fixed text of a type `capture.describe` cannot say anything about. It is the same for every
@@ -500,9 +501,13 @@ export function createAgentDoor(deps: AgentDoorDeps): AgentDoor {
     verification,
   });
 
+  /** One server's stripped listing; a describe passes a memoising one so a server is listed once per call. */
+  type UserMcpLister = NonNullable<AgentDoorDeps["listUserMcpDefinitions"]>;
+
   const checkUserMcpDefinition = async (
     actionType: string,
     proposedAt: number | undefined,
+    lister: UserMcpLister | undefined = deps.listUserMcpDefinitions,
   ): Promise<UserMcpDefinitionCheck> => {
     const parts = userMcpActionParts(actionType);
     if (parts === undefined) {
@@ -513,7 +518,7 @@ export function createAgentDoor(deps: AgentDoorDeps): AgentDoor {
     const before = userMcpStanding(parts, proposedAt);
     if (!("approval" in before)) return failedCheck(before);
     const listed = await Promise.resolve()
-      .then(() => deps.listUserMcpDefinitions?.(parts.serviceId))
+      .then(() => lister?.(parts.serviceId))
       .catch(() => undefined);
     if (listed === undefined) {
       return failedCheck(
@@ -689,15 +694,50 @@ export function createAgentDoor(deps: AgentDoorDeps): AgentDoor {
     return out;
   };
 
-  const userMcpPatterns = (): readonly string[] =>
-    deps.classifyContext.userMcpModelAccessAllowed()
-      ? [...deps.classifyContext.modelAccessServices()].map((id) => `${id}.*`)
-      : [];
+  const userMcpPatternServices = (): readonly string[] => {
+    try {
+      return deps.classifyContext.userMcpModelAccessAllowed()
+        ? [...deps.classifyContext.modelAccessServices()]
+        : [];
+    } catch {
+      return [];
+    }
+  };
+
+  const userMcpPatterns = (): readonly string[] => userMcpPatternServices().map((id) => `${id}.*`);
+
+  /**
+   * Every user-MCP tool the owner approved for agents by name, with the verdict now (database reads
+   * only): `proposable` (approved) or `suspended`. A tool whose server is gone or whose policy
+   * refuses is omitted. Never lists a server.
+   */
+  const approvedUserMcpTypes = (): ReadonlyArray<{ type: string; verdict: ActionVerdict }> => {
+    const out: Array<{ type: string; verdict: ActionVerdict }> = [];
+    for (const a of safeList(() => listDoorApprovals(deps.db, "agent"))) {
+      if (!USER_MCP_SERVICE_ID_PATTERN.test(a.service)) continue;
+      const type = `${a.service}.${a.toolId}`;
+      let v: ActionVerdict;
+      try {
+        v = userMcpVerdict(type);
+      } catch {
+        continue;
+      }
+      if (v.kind === "suspended" || (v.kind === "proposable" && v.basis === "approved")) {
+        out.push({ type, verdict: v });
+      }
+    }
+    return out;
+  };
 
   const acceptedTypes = async (): Promise<readonly string[]> => {
     const out = (await configuredTypes())
       .filter((t) => t.verdict.kind === "proposable")
       .map((t) => t.type);
+    out.push(
+      ...approvedUserMcpTypes()
+        .filter((t) => t.verdict.kind === "proposable")
+        .map((t) => t.type),
+    );
     out.push(...userMcpPatterns());
     return out.toSorted((a, b) => a.localeCompare(b)).slice(0, ACCEPTED_TYPES_MAX);
   };
@@ -722,6 +762,12 @@ export function createAgentDoor(deps: AgentDoorDeps): AgentDoor {
     bound: row.bound !== undefined,
   });
 
+  /** A user-MCP tool in the summary: no waves, no typed confirmation, nothing bound (AD5a). */
+  const userMcpSummary = (type: string, v: ActionVerdict): ActionDescription =>
+    v.kind === "suspended"
+      ? { actionType: type, state: "suspended", reason: DEFINITION_REFUSALS.suspended }
+      : { actionType: type, state: "approved", wave: null, typedConfirm: false, bound: false };
+
   /** A suspended or legacy type, or an approved one in the summary (no description, no schema). */
   const summaryEntry = (type: string, v: ActionVerdict): ActionDescription => {
     if (v.kind === "suspended") {
@@ -737,8 +783,13 @@ export function createAgentDoor(deps: AgentDoorDeps): AgentDoor {
   /** The summary: database and Vault reads only, never a listing. */
   const describeSummary = async (): Promise<readonly ActionDescription[]> => {
     const entries = (await configuredTypes()).map((t) => summaryEntry(t.type, t.verdict));
-    for (const pattern of userMcpPatterns()) {
-      entries.push({ actionType: pattern, state: "undescribed", reason: DESCRIBE_USER_MCP_REASON });
+    for (const t of approvedUserMcpTypes()) entries.push(userMcpSummary(t.type, t.verdict));
+    for (const id of userMcpPatternServices()) {
+      entries.push({
+        actionType: `${id}.*`,
+        state: "legacy",
+        deprecation: legacyUserMcpPatternNotice(id),
+      });
     }
     return entries
       .toSorted((a, b) => a.actionType.localeCompare(b.actionType))
@@ -749,7 +800,63 @@ export function createAgentDoor(deps: AgentDoorDeps): AgentDoor {
   interface DescribeCall {
     readonly configured: Map<string, boolean>;
     readonly listings: Map<string, Readonly<Record<string, unknown>> | undefined>;
+    /** A user-MCP server's stripped listing, taken once per call (AD5a). */
+    readonly userListings: Map<string, Promise<Readonly<Record<string, unknown>> | undefined>>;
   }
+
+  /**
+   * A tool of a user-registered server, described only after the SAME definition check a submit
+   * runs passes in this call (D-8, OR-AD-25). A legacy, unapproved, suspended or unregistered tool
+   * is answered from database reads alone: no listing, no description, no schema, no server started.
+   */
+  const describeUserMcp = async (type: string, call: DescribeCall): Promise<ActionDescription> => {
+    const v = userMcpVerdict(type);
+    if (v.kind === "suspended") {
+      return { actionType: type, state: "suspended", reason: DEFINITION_REFUSALS.suspended };
+    }
+    if (v.kind !== "proposable") {
+      return { actionType: type, state: "not_proposable", reason: DESCRIBE_NOT_PROPOSABLE_REASON };
+    }
+    // The deprecation window: the fixed line, never a schema and never a listing (OR-AD-18).
+    if (v.basis !== "approved") {
+      return { actionType: type, state: "legacy", deprecation: legacyNoticeFor(type) };
+    }
+    const parts = userMcpActionParts(type);
+    if (parts === undefined) {
+      return { actionType: type, state: "not_proposable", reason: DESCRIBE_NOT_PROPOSABLE_REASON };
+    }
+    const lister: UserMcpLister = (serviceId) => {
+      const known = call.userListings.get(serviceId);
+      if (known !== undefined) return known;
+      const fresh = Promise.resolve()
+        .then(() => deps.listUserMcpDefinitions?.(serviceId))
+        .catch(() => undefined);
+      call.userListings.set(serviceId, fresh);
+      return fresh;
+    };
+    const checked = await checkUserMcpDefinition(type, undefined, lister);
+    if (!checked.ok) {
+      const c = checked.verification;
+      return {
+        actionType: type,
+        state: !c.ok && c.code === "ERR_AGENT_TOOL_SUSPENDED" ? "suspended" : "unavailable",
+        reason: c.ok ? DESCRIBE_UNCHECKED_REASON : c.detail,
+      };
+    }
+    const entrySchema =
+      typeof checked.entry === "object" && checked.entry !== null
+        ? (checked.entry as Record<string, unknown>)["inputSchema"]
+        : undefined;
+    return {
+      actionType: type,
+      state: "approved",
+      wave: null,
+      typedConfirm: false,
+      bound: false,
+      description: describeOwnerCodeTool(parts.serviceId, descriptionOf(checked.entry)),
+      inputSchema: offeredInputJsonSchema(entrySchema),
+    };
+  };
 
   const describeApproved = async (type: string, call: DescribeCall): Promise<ActionDescription> => {
     const row = agentDoorRow(type, rows);
@@ -779,10 +886,9 @@ export function createAgentDoor(deps: AgentDoorDeps): AgentDoor {
   };
 
   const describeOne = async (type: string, call: DescribeCall): Promise<ActionDescription> => {
-    // 1. A user-registered server's tool: not described until AD5 (OR-AD-17); nothing is started.
-    if (isUserMcpType(type)) {
-      return { actionType: type, state: "undescribed", reason: DESCRIBE_USER_MCP_REASON };
-    }
+    // 1. A user-registered server's tool (AD5a): its own steps; only an approved, unsuspended tool
+    //    ever lists, and so starts, its server.
+    if (isUserMcpType(type)) return describeUserMcp(type, call);
     // 2. The verdict, from database reads only.
     const v = verdict(type);
     if (v.kind !== "proposable" && v.kind !== "suspended") {
@@ -812,7 +918,11 @@ export function createAgentDoor(deps: AgentDoorDeps): AgentDoor {
     actionTypes: readonly string[] | undefined,
   ): Promise<readonly ActionDescription[]> => {
     if (actionTypes === undefined) return describeSummary();
-    const call: DescribeCall = { configured: new Map(), listings: new Map() };
+    const call: DescribeCall = {
+      configured: new Map(),
+      listings: new Map(),
+      userListings: new Map(),
+    };
     const out: ActionDescription[] = [];
     // Sequential, in request order: one listing per service, and a stable reply order.
     // A check that throws (a failed audit append, a Vault read, a listing) is that one type's

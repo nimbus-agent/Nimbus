@@ -18,7 +18,6 @@ import {
   DEFINITION_REFUSALS,
   DESCRIBE_NOT_PROPOSABLE_REASON,
   DESCRIBE_UNCHECKED_REASON,
-  DESCRIBE_USER_MCP_REASON,
 } from "./agent-door-runtime.ts";
 import { COMMIT_PATH_REFUSAL } from "./commit-paths.ts";
 import { definitionSha256 } from "./definition-hash.ts";
@@ -862,7 +861,7 @@ describe("describe (AD3a-2b)", () => {
       state: "legacy",
       deprecation: legacyNoticeFor("slack.message.post"),
     });
-    expect(byType(rows, "mcp_x.*")).toMatchObject({ state: "undescribed" });
+    expect(byType(rows, "mcp_x.*")).toMatchObject({ state: "legacy" });
     // No summary entry carries a description or a schema.
     expect(JSON.stringify(rows)).not.toContain("inputSchema");
     expect(JSON.stringify(rows)).not.toContain("description");
@@ -1032,10 +1031,14 @@ describe("describe (AD3a-2b)", () => {
     expect(listCalls).toEqual([]);
   });
 
-  test("a user-MCP type is undescribed and starts nothing", async () => {
+  test("a legacy user-MCP type is answered with the deprecation line and starts nothing", async () => {
     const out = await door().describe(["mcp_x.do_it"]);
     expect(out).toHaveLength(1);
-    expect(out[0]).toMatchObject({ actionType: "mcp_x.do_it", state: "undescribed" });
+    expect(out[0]).toMatchObject({
+      actionType: "mcp_x.do_it",
+      state: "legacy",
+      deprecation: legacyNoticeFor("mcp_x.do_it"),
+    });
     expect(listCalls).toEqual([]);
   });
 
@@ -1092,10 +1095,6 @@ describe("describe (AD3a-2b)", () => {
     }
     expect(JSON.stringify(replies)).not.toContain("agent_");
     expect(DESCRIBE_NOT_PROPOSABLE_REASON).not.toContain("agent_");
-  });
-
-  test("the user-MCP text claims nothing about registration", () => {
-    expect(DESCRIBE_USER_MCP_REASON).not.toMatch(/regist/i);
   });
 
   describe("a check that throws is one unavailable entry with a fixed text", () => {

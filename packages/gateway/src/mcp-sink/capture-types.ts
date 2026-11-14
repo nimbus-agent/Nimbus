@@ -261,7 +261,7 @@ export interface ActDeps {
  *                  never a schema
  *   suspended      the approved definition changed, or the approval is already suspended
  *   unavailable    approved, but not describable now (not configured, not listed, drifted, ...)
- *   undescribed    a user-registered (`mcp_*`) server's tool: not described until AD5
+ *   undescribed    a type cut from a reply that was full (ask for fewer types)
  *   not_proposable the door would refuse the type, with the class submit also names
  *
  * It never carries a definition hash or a prefix of one, an approval date, an owner-side reason, a
@@ -270,7 +270,8 @@ export interface ActDeps {
 export type ActionDescription = { readonly actionType: string } & (
   | {
       readonly state: "approved";
-      readonly wave: 2 | 3 | 4;
+      /** A first-party write's wave; `null` for a tool of a user-registered MCP server (no waves). */
+      readonly wave: 2 | 3 | 4 | null;
       /** The owner types the confirm text to approve it (every Wave 4 write). */
       readonly typedConfirm: boolean;
       /** The gateway reads and pins part of the input itself (a commit, an apply). */

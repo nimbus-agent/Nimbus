@@ -29,6 +29,14 @@ export function legacyUserMcpNotice(serviceId: string, tool: string): string {
   return `Deprecated: ${serviceId}.${tool} is not approved for outside agents by name. It is accepted for now and will be refused in a later release. To keep it working run: nimbus connector writes enable ${serviceId} --door agent --approve ${tool}`;
 }
 
+/**
+ * The line a summary carries for a `--model` server whose unapproved tools are still accepted
+ * (AD5a): the server id comes from the owner's registration, never from request text.
+ */
+export function legacyUserMcpPatternNotice(serviceId: string): string {
+  return `Deprecated: tools of ${serviceId} that are not approved for outside agents by name are accepted for now and will be refused in a later release. To keep one working run: nimbus connector writes enable ${serviceId} --door agent --approve <tool>`;
+}
+
 /** What `status` prints under the count: the command that ends the warning for every type that can be approved (not the mail sends). */
 export const LEGACY_STATUS_COMMAND = "nimbus connector writes enable <service> --door agent";
 

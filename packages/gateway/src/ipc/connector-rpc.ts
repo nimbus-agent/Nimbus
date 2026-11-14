@@ -224,7 +224,16 @@ export async function dispatchConnectorRpc(options: {
     ...(agentAnswerWasNonHuman === undefined ? {} : { agentAnswerWasNonHuman }),
     ...(connectorMesh === undefined
       ? {}
-      : { listServerTools: (service: string) => connectorMesh.listFirstPartyServerTools(service) }),
+      : {
+          listServerTools: (service: string) => connectorMesh.listFirstPartyServerTools(service),
+          // AD5a: a registered user-MCP server's stripped definitions (may start that one server).
+          listUserMcpDefinitions: (serviceId: string) =>
+            connectorMesh.listUserMcpToolDefinitions(serviceId),
+          userMcpNetworkNote: (netHosts: readonly string[]) => {
+            const reach = describeNetworkReach(sandboxRunner, netHosts);
+            return reach.kind === "hosts" || reach.kind === "none" ? undefined : reach.text;
+          },
+        }),
     // The enable prompt's host line is read from the sandbox's live posture (D2 review 4).
     ...(sandboxRunner === undefined ? {} : { sandboxRunner }),
     // The Obsidian opt-in is also the trigger of its sandbox write grant (I15, B4b).

@@ -2152,8 +2152,19 @@ export function checkDoorApprovalConfinement(files: readonly FileEntry[]): Viola
 // (f) The `capture.legacy` flag (`agentDoorLegacy`) is named only by the sink's types, store and gate
 //     and the owner's approvals listing; its count (`legacyActionTypesSince`) only by the store and
 //     the status handler. AD3b removes this clause with the flag.
+// (g) The user-MCP call facts (Phase 28 AD5a, I42): the `userMcpCall` property of a planned action
+//     (what the owner's prompt shows about third-party code) is written only by `ipc/capture-rpc.ts`
+//     `buildActDeps`, from the agent door's own read, and named besides only by the file that declares
+//     it (`engine/types.ts`), the two that read it (`engine/executor.ts`, `engine/user-mcp-call-block.ts`).
+//     No other site may put facts on an action, so the prompt cannot be made to show a description the
+//     definition check did not hash.
+// (h) The agent door's reach into user-registered servers (AD5a): `listUserMcpToolDefinitions` (the
+//     stripped listing that STARTS a third-party server) is named only by the mesh that defines it, the
+//     assembly that wires the door's check, and the connector RPC that wires the owner's enable and
+//     status; and `removeDoorApprovals` (what ends an agent approval with its registration) only by its
+//     store, the disable handler and the two registration handlers (remove and add).
 // Same stated bound as D32(a): a dynamically composed identifier evades a text scan; the behavioural
-// tests under I58 are authoritative. Test files (and `.test-helpers.ts`) are not scanned.
+// tests under I58 and I42 are authoritative. Test files (and `.test-helpers.ts`) are not scanned.
 const D49_SRC = "packages/gateway/src/";
 const D49_LEGACY_TABLE_RE =
   /\b(?:ACTION_PROPOSABILITY|classifyActionType|proposableWriteTool|PROPOSABLE_WRITE_TOOLS)\b/g;
@@ -2183,6 +2194,31 @@ const D49_LEGACY_FLAG_ALLOWED: readonly string[] = [
   `${D49_SRC}mcp-sink/capture-store.ts`,
   `${D49_SRC}mcp-sink/capture-gate.ts`,
   `${D49_SRC}ipc/approvals-rpc.ts`,
+];
+const D49_USER_MCP_CALL_RE = /\buserMcpCall\b/g;
+const D49_USER_MCP_CALL_ALLOWED: readonly string[] = [
+  `${D49_SRC}ipc/capture-rpc.ts`,
+  `${D49_SRC}engine/types.ts`,
+  `${D49_SRC}engine/executor.ts`,
+  `${D49_SRC}engine/user-mcp-call-block.ts`,
+];
+const D49_USER_MCP_CALL_WRITE_RE = /\buserMcpCall\s*\??\s*:/g;
+const D49_USER_MCP_CALL_WRITE_ALLOWED: readonly string[] = [
+  `${D49_SRC}ipc/capture-rpc.ts`,
+  `${D49_SRC}engine/types.ts`,
+];
+const D49_USER_MCP_LISTER_RE = /\blistUserMcpToolDefinitions\b/g;
+const D49_USER_MCP_LISTER_ALLOWED: readonly string[] = [
+  `${D49_SRC}connectors/lazy-mesh/mesh.ts`,
+  `${D49_SRC}platform/assemble.ts`,
+  `${D49_SRC}ipc/connector-rpc.ts`,
+];
+const D49_REMOVE_APPROVALS_RE = /\bremoveDoorApprovals\b/g;
+const D49_REMOVE_APPROVALS_ALLOWED: readonly string[] = [
+  `${D49_SRC}connectors/connector-writes/door-approval-store.ts`,
+  `${D49_SRC}ipc/connector-rpc-handlers/model-writes.ts`,
+  `${D49_SRC}ipc/connector-rpc-handlers/removal.ts`,
+  `${D49_SRC}ipc/connector-rpc-handlers/config.ts`,
 ];
 const D49_LEGACY_COUNT_RE = /\blegacyActionTypesSince\b/g;
 const D49_LEGACY_COUNT_ALLOWED: readonly string[] = [
@@ -2275,6 +2311,44 @@ export function checkAgentDoorLegacyFlag(files: readonly FileEntry[]): Violation
       D49_LEGACY_COUNT_RE,
       D49_LEGACY_COUNT_ALLOWED,
       "agent-door-legacy-flag-confined",
+      false,
+    ),
+  ];
+}
+
+export function checkUserMcpCallFacts(files: readonly FileEntry[]): Violation[] {
+  return [
+    ...d49ScanNames(
+      files,
+      D49_USER_MCP_CALL_RE,
+      D49_USER_MCP_CALL_ALLOWED,
+      "user-mcp-call-facts-confined",
+      false,
+    ),
+    ...d49ScanNames(
+      files,
+      D49_USER_MCP_CALL_WRITE_RE,
+      D49_USER_MCP_CALL_WRITE_ALLOWED,
+      "user-mcp-call-facts-confined",
+      false,
+    ),
+  ];
+}
+
+export function checkUserMcpDoorReach(files: readonly FileEntry[]): Violation[] {
+  return [
+    ...d49ScanNames(
+      files,
+      D49_USER_MCP_LISTER_RE,
+      D49_USER_MCP_LISTER_ALLOWED,
+      "user-mcp-door-reach-confined",
+      false,
+    ),
+    ...d49ScanNames(
+      files,
+      D49_REMOVE_APPROVALS_RE,
+      D49_REMOVE_APPROVALS_ALLOWED,
+      "user-mcp-door-reach-confined",
       false,
     ),
   ];
@@ -5285,6 +5359,14 @@ export const RULE_ANCHORS: readonly string[] = [
   "packages/gateway/src/mcp-sink/capture-types.ts",
   "packages/gateway/src/ipc/approvals-rpc.ts",
   "packages/gateway/src/ipc/connector-rpc-handlers/agent-writes.ts",
+  // D49(g), (h) (Phase 28 AD5a) -- the sites the new clauses read by name.
+  "packages/gateway/src/engine/types.ts",
+  "packages/gateway/src/engine/user-mcp-call-block.ts",
+  "packages/gateway/src/connectors/lazy-mesh/mesh.ts",
+  "packages/gateway/src/ipc/connector-rpc.ts",
+  "packages/gateway/src/ipc/connector-rpc-handlers/model-writes.ts",
+  "packages/gateway/src/ipc/connector-rpc-handlers/removal.ts",
+  "packages/gateway/src/ipc/connector-rpc-handlers/config.ts",
 ];
 
 /** Fail loudly when the scanned set cannot support the rules about to run. */
@@ -5549,6 +5631,20 @@ async function run(): Promise<void> {
       );
     }
     if (legacyFlagViolations.length > 0) exit = 1;
+    const callFactsViolations = checkUserMcpCallFacts(files);
+    for (const e of callFactsViolations) {
+      console.error(
+        `::error file=${e.file},line=${e.line}::D49(g) the user-MCP call facts (userMcpCall) named or written outside their sites (rule user-mcp-call-facts-confined) — only ipc/capture-rpc.ts writes them, and engine/{types,executor,user-mcp-call-block}.ts name them: ${e.snippet}`,
+      );
+    }
+    if (callFactsViolations.length > 0) exit = 1;
+    const doorReachViolations = checkUserMcpDoorReach(files);
+    for (const e of doorReachViolations) {
+      console.error(
+        `::error file=${e.file},line=${e.line}::D49(h) the stripped user-MCP listing or the door-approval delete named outside their sites (rule user-mcp-door-reach-confined) — listUserMcpToolDefinitions only in the mesh, the assembly and the connector RPC; removeDoorApprovals only in its store and the disable, remove and add handlers: ${e.snippet}`,
+      );
+    }
+    if (doorReachViolations.length > 0) exit = 1;
     const spawnViolations = checkConnectorSpawnIsHidden(files);
     for (const e of spawnViolations) {
       console.error(

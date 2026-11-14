@@ -63,6 +63,16 @@ export function userMcpModelToolName(serviceId: string, tool: string): string | 
   return MODEL_TOOL_NAME_PATTERN.test(name) ? name : undefined;
 }
 
+/**
+ * The description a tool of a user-registered server is shown with: the model door's own string (a
+ * fixed first-party lead, the server's text closer-escaped inside `<tool_description>`, 1000
+ * characters in all). The agent door's `describe_actions` uses it too (AD5a), so an agent reads
+ * exactly what the model is offered.
+ */
+export function describeOwnerCodeTool(serviceId: string, serverDescription: string): string {
+  return describeFor(serviceId, serverDescription);
+}
+
 function describeFor(serviceId: string, serverDescription: string): string {
   // Names the source honestly: an extension is owner-APPROVED third-party code, a user MCP server
   // owner-REGISTERED. Either way its output is data.
