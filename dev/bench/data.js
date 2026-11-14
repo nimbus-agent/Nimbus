@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794633327507,
+  "lastUpdate": 1794635851609,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "2118cdd4ba4954d9617485973b753f47fcbed03c",
-          "message": "refactor(connectors)!: delete packages/mcp-connectors — it ships from npm now (#1347)\n\nThe last step of the extraction, and deliberately the last: everything\nhere had to be proven against the **published** package before the\nsource of truth could be removed.\n\nThat ordering paid for itself twice. `0.1.0` shipped\n`shared/connector-mode.ts` without exporting it — and this deletion is\nexactly what would have surfaced it, with the original already gone.\n\n## What is deleted\n\n**802 files**, plus:\n\n- the three gates that moved to\n[nimbus-agent/nimbus-mcp-servers](https://github.com/nimbus-agent/nimbus-mcp-servers)\n— `connector-consent`, `connector-entrypoints`, `connector-deps`;\n- `run-sandbox-contract`, whose only subject moved;\n- `gen-connector-exports` — it generated *that* package's exports map;\n- the e2e connector-structure contract.\n\n## Coupled changes, all in this commit\n\nSplitting them leaves a live gap, so they land together: workspaces\n**100 → 5**; both CI test-path lists losing `packages/mcp-connectors`\n**together**; `biome`, `knip`, `labeler`, `.coderabbit.yaml`; and 16\nlive docs plus `CLAUDE.md` / `GEMINI.md`.\n\n## Four things that were judgment, not mechanics\n\n**The parity test asserts the path is ABSENT**, not merely dropped. A\npath that no longer exists fails `bun test` on both legs, so re-adding\nit is a mistake the equality check cannot catch — both lists would\nagree, and both would be wrong.\n\n**Discovery reads the package's exports map**, not a directory scan — in\n`gen-bundled-connector-registry`, the drift audit, and the gateway's\n`BUNDLED_CONNECTORS` contract test. That is the stricter question, and\nit is the `0.1.0` bug's exact shape: present in the package, absent from\n`exports`, unreachable. A directory scan calls it present.\n\n**`checkConnectorRegistryDrift` takes an injected id list.** Discovery\nnow goes through node resolution of an installed package, which a temp\ndirectory cannot stand in for — every test was coupled to something that\nno longer exists.\n\n**`preflight-gates.test.ts` asserts the connector gate SET exactly**,\nreplacing a `>= 4` bound whose own comment read \"at least one, so a\nrename cannot make this vacuous\". The number had drifted from the intent\nand broke on a *correct* removal. A count cannot tell a deliberate\nremoval from a regression; a set can.\n\n## SECURITY-INVARIANTS\n\n27 per-connector I2 attestation rows collapse into one citing\n`engine/executor.ts`. The claim was always about that site — each row\nattested that a connector adds **no gate of its own**, which is a\nproperty of the executor, not of 27 files. The counterpart guarantee,\nthat no connector mutates without routing through the consent kit, is\nenforced in the connectors repo by its own `audit:connector-consent`.\n\n## Deliberately untouched\n\n`docs/CHANGELOG.md` and `docs/roadmap.md`. They are dated records of\nwhat was true when written; rewriting them to match today's layout would\nfalsify them. The same reasoning left the 21 `docs/superpowers/` specs\nand plans alone.\n\n## Verification\n\n- **19199 tests pass, 0 fail** (pre-rebase full run)\n- `preflight:fast` green on the rebased branch\n- 54 targeted tests covering the interaction between this PR, #1343 and\n#1346\n\nCloses the extraction: #1343 consumed the package, #1346 added the\nversion-skew gate, this removes the copy.",
-          "timestamp": "2026-08-27T04:27:39Z",
-          "tree_id": "3179623eb36c2172eeab4663f1522c37d24fbb78",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/2118cdd4ba4954d9617485973b753f47fcbed03c"
-        },
-        "date": 1787805525302,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 318.84394065000413,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 318.96239915000916,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 211.59266489999536,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "afc65de31e590008380819db968fa834e7e41144",
+          "message": "feat(gateway): add describe_actions, the read tool that tells an outside agent which writes it may propose (#2003)\n\nAgent door AD3a-2b (Phase 28): `describe_actions`, the tool that tells\nan outside agent which connector writes it may propose now and what\ninput each one takes. It follows AD3a-2a (#2001). It adds a read surface\nonly: what is accepted, refused, approved or dispatched does not change.\n\n## What is added\n\n1. **`capture.describe`**, a gateway method for `mcp`-kind connections\nonly. Other client kinds are refused, the `capture` namespace is\nLAN-forbidden, and the method is not on the desktop renderer allowlist,\nwith a Rust negative test.\n2. **Two modes.**\n- With no arguments it returns a summary: the types the door accepts\nnow, each with its state, wave, typed-confirmation flag and bound flag.\nThe summary lists no connector.\n- With up to ten named types across at most three services, it returns a\ndescription and a JSON input schema for each approved type.\n3. **Same checks as a proposal.** An approved type is returned with a\nschema only after it passed, in that call, the definition check a\nproposal goes through, including the re-read of the approval after the\nlisting and the Wave 4 reader and prepare check.\n4. **The model door's text and schema.** The description is the one the\nmodel is given. The schema is rebuilt from an allowlist, and the fields\nthe gateway injects on a bound write, such as the expected branch head\nor the plan hash, are removed.\n5. **`describe_actions`**, the MCP tool. `propose_action` now points to\nit and no longer appends the type list to its own description.\n\n## What a reply contains\n\n- **Approved:** wave, typed-confirmation and bound flags, and in detail\nmode the description and schema. By owner ruling OR-AD-16, an agent\napproved for a Terraform or Kubernetes write sees the approved directory\npaths and the context and namespace names, as the model does.\n- **Legacy:** the type and the fixed deprecation line. No schema and no\nconnector listing, per OR-AD-18.\n- **Suspended, unavailable, not proposable:** one fixed reason each, no\nschema.\n- **User MCP tools:** not described until AD5, per OR-AD-17.\n\nA reply never carries a definition hash or a prefix of one, an approval\ndate, the owner-side reason, a listing key, a credential, a server\naddress, or anything about another connection.\n\n## Stated bounds\n\n- Describe does not say why a type cannot be proposed; a refused\nproposal does. Describe returned the denial class at first, which made\nit a cheap, unaudited way to probe the owner's configuration, so it now\nreturns one fixed text.\n- Describing an approved type can start that connector to list its\ntools. A describe that is first to see a changed definition records the\nsuspension and its one audit row. The tool keeps the read-only hint,\nwhich here means that it proposes and dispatches nothing.\n- The describe rate window is one window for all agent connections, like\nthe submit window, so one agent's well-formed calls can use up the hour\nfor the others. A refused describe is counted but not audited. A\nmalformed call consumes nothing.\n- The reply is capped at 256 KiB, below the 1 MiB line limit, and cut in\nrequest order.\n- Property names and enum values in a schema pass as the connector wrote\nthem. For a bound row only the tool-level description is the gateway's\nown text. Bound-field removal covers the top level of the schema, as on\nthe model door.\n- The summary makes one credential-presence check per service.\n- A check that throws for one type returns that type as unavailable with\na fixed text; no internal error text reaches the agent.\n\n## Not changed\n\nNo migration, no new invariant, no new static rule. The gate order, I58,\nD32 and D49 are as AD3a-2a left them. The roadmap row for write parity\nstays open, because the legacy window still accepts the 47 earlier types\nuntil AD3b.\n\n## Verification\n\nRun locally on Windows, one at a time:\n\n- `bun run typecheck`, `typecheck:tests` with 0 new errors, `bun run\npreflight:fast`: passed.\n- Gateway `ipc`, `mcp-sink`, `connector-writes`, `engine`, the whole\n`security-invariants.test.ts`, `test/integration/mcp-sink` and CLI `mcp`\nin one run: 11251 pass, 0 fail.\n- CLI `commands`, `scripts/structure-audit`, `audit:invariants`,\n`audit:status-drift`, `audit:doc-refs`: clean. `cargo test allowlist_`:\n40 pass.\n- Not run locally: the whole-repo suites and the Linux coverage floor.\nDescribe was not exercised against a live connector.\n\nAn adversarial read-only review found no blocking issue; its four\nfindings are fixed in the last commit. Red-proofs were recorded for the\nrole check, the limiter and its order after validation, each request\nbound, the reply cap, the bound-field removal, the shared definition\ncheck, the no-listing rule for legacy types, the per-type failure\nhandling, the single not-proposable text, and the LAN and renderer\nnegatives.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Added a read-only MCP tool for discovering which action types are\navailable and viewing descriptions and input schemas for approved types.\n* Added per-type status information, including whether an action is\napproved, legacy, unavailable, or suspended.\n* Descriptions are available only to authorized MCP clients and are\nsubject to request and response limits.\n* **Documentation**\n* Updated the MCP, CLI, security, architecture, and roadmap\ndocumentation to explain the new discovery capability and its limits.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Sonnet 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-14T05:49:26Z",
+          "tree_id": "a6a98ce382a9ce14cfe6dbb99a29d191ad4b9eb5",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/afc65de31e590008380819db968fa834e7e41144"
+        },
+        "date": 1794635848255,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 205.87118740000332,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 207.5258507000035,
             "unit": "ms"
           }
         ]
