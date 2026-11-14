@@ -2,6 +2,20 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [10.59.0](https://github.com/nimbus-agent/Nimbus/compare/v10.58.0...v10.59.0) (2026-11-14)
+
+
+### Features
+
+* **gateway:** add describe_actions, the read tool that tells an outside agent which writes it may propose ([#2003](https://github.com/nimbus-agent/Nimbus/issues/2003)) ([afc65de](https://github.com/nimbus-agent/Nimbus/commit/afc65de31e590008380819db968fa834e7e41144))
+* **gateway:** record which connector writes the owner approves for outside agents, by name and by definition hash (agent door AD3a-1) ([#1999](https://github.com/nimbus-agent/Nimbus/issues/1999)) ([1bc2a18](https://github.com/nimbus-agent/Nimbus/commit/1bc2a183c297cae6be667e51a4aeed7d36bc761a))
+* **gateway:** the owner's per-door list now decides what outside agents can propose, with a one-release window for earlier proposals (agent door AD3a-2a) ([#2001](https://github.com/nimbus-agent/Nimbus/issues/2001)) ([5e457bd](https://github.com/nimbus-agent/Nimbus/commit/5e457bd0e03d53499e703f71a0d97a90295e5ac8))
+
+
+### Bug Fixes
+
+* **deps:** move astro to 7.4.12 for two new advisories ([#2004](https://github.com/nimbus-agent/Nimbus/issues/2004)) ([cab13e6](https://github.com/nimbus-agent/Nimbus/commit/cab13e6b0c6a41214a67e5087d3d611a5d61da81))
+
 ## [10.58.0](https://github.com/nimbus-agent/Nimbus/compare/v10.57.0...v10.58.0) (2026-11-13)
 
 
