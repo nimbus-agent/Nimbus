@@ -2,6 +2,7 @@ import type { IPCClient } from "../ipc-client/index.ts";
 import { parseSinceDurationToMs } from "../lib/parse-since.ts";
 import { INTERACTIVE_RPC_TIMEOUT_MS } from "../lib/rpc-timeouts.ts";
 import { withGatewayIpc } from "../lib/with-gateway-ipc.ts";
+import { parseProveByProposerArgs, runProveByProposer } from "./prove-by-proposer.ts";
 
 type VerifyResult = { ok: boolean; verifiedRows: number; brokenAt?: number; reason?: string };
 type EgressRow = { timestamp: number; destination: string; method: string; resultStatus: string };
@@ -301,6 +302,13 @@ export async function runEgressReport(
 
 /** `nimbus prove "<query>"` — snapshot a time window around the query, print the egress delta. */
 export async function runProve(args: string[]): Promise<void> {
+  if (args.includes("--by-proposer")) {
+    // A different command that shares the name: it parses its own flags and runs no query, so
+    // nothing below (`agent.invoke`, the egress window) is reachable from it.
+    const parsed = parseProveByProposerArgs(args, Date.now());
+    await withGatewayIpc((client) => runProveByProposer(client, parsed));
+    return;
+  }
   const sign = args.includes("--receipt") || args.includes("--sign");
   // `--since` takes a value: it is a window (the same grammar as `nimbus egress --since`), never the
   // query, so the value is skipped when looking for the first positional argument.
