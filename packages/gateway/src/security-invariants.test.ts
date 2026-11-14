@@ -4739,10 +4739,13 @@ describe("I58 - an outside agent proposes only what the owner approved for agent
     const build = rpc.slice(rpc.indexOf("export function buildActDeps("));
     at(build, "const channel =", "vetoingConsent(", "buildAgentWriteExecutor({");
     expect(build).toMatch(/consentCoordinator: channel,/);
-    // The veto is for the `approved` basis only: a legacy basis has no approval to compare against.
+    // The veto covers the `approved` basis and any user-MCP call whose prompt facts were built (a legacy
+    // user-MCP proposal is rechecked against its registration); a first-party legacy basis has
+    // nothing to compare against. The check receives what the prompt showed.
     expect(build).toMatch(
-      /provenance\.basis === "approved" && door !== undefined\s*\? vetoingConsent\(/,
+      /door !== undefined && \(provenance\.basis === "approved" \|\| shown !== undefined\)\s*\? vetoingConsent\(/,
     );
+    expect(build).toMatch(/door\.verifyDefinition\(actionType, provenance\.createdAt, shown\)/);
     // Its one user is the act deps (the wrapper lives in ipc/consent.ts for static D41(a)).
     const users = (await grepRepo(/\bvetoingConsent\b/)).filter(
       (p) => !p.endsWith("/ipc/consent.ts"),
