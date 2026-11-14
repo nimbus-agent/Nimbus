@@ -588,14 +588,18 @@ describe.skipIf(!sandboxAvailable)("a scaffolded user MCP over a real gateway", 
     expect(dispatched?.hitlStatus).toBe("approved");
     const raw: unknown = JSON.parse(dispatched?.actionJson ?? "{}");
     const row = raw as { action: { proposer?: { captureId?: string } } };
-    // Phase 28 AD1: the dispatch runs as an `origin: "agent"` action; the row names the door and the
-    // capture, never the agent's label or summary.
-    expect(row.action.proposer?.captureId).toMatch(/^cap_[A-Za-z0-9_-]+$/);
-    expect(JSON.stringify(row)).not.toContain("e2e-agent");
+    // Phase 28 AD1/AD4: the dispatch runs as an `origin: "agent"` action; the row names the door and the
+    // proposer: the capture and the client's own (UNVERIFIED) label, never the agent's summary.
+    expect(row.action.proposer?.captureId).toMatch(/^cap_[0-9a-f]{32}$/);
     expect(raw).toEqual({
       action: {
         type: "mcp_echo_srv.echo",
-        proposer: { door: "agent", captureId: row.action.proposer?.captureId },
+        proposer: {
+          door: "agent",
+          captureId: row.action.proposer?.captureId,
+          label: "e2e-agent",
+          labelSource: "declared",
+        },
         origin: "agent",
         payload: { mcpToolId: "mcp_echo_srv_echo", input: { text: "from-the-agent" } },
       },

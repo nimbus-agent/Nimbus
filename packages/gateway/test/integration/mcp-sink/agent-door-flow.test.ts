@@ -189,7 +189,7 @@ function gateDeps(d: ReturnType<typeof door>): CaptureGateDeps {
       ),
     limiter: new CaptureAttemptLimiter(),
     refusals: new CaptureRefusalCounter(),
-    newId: () => `cap_${String(++seq)}`,
+    newId: () => `cap_${String(++seq).padStart(32, "0")}`,
     now: () => clock,
     classifyAction: d.verdict,
     isServiceConfigured: () => Promise.resolve(true),

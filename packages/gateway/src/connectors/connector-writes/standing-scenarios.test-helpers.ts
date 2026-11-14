@@ -196,7 +196,7 @@ export const BREAKERS: readonly Breaker[] = [
         origin: "agent",
         proposer: {
           door: "agent",
-          captureId: "cap_breaker",
+          captureId: "cap_b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0",
           label: null,
           labelSource: "declared",
           summary: "s",

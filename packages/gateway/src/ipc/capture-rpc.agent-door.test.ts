@@ -35,8 +35,9 @@ import type { ConsentCoordinator } from "./consent.ts";
 
 const PROV = (basis: ActionBasis | undefined) => ({
   ...(basis === undefined ? {} : { basis }),
-  captureId: "cap_ad3",
+  captureId: "cap_00ad00ad00ad00ad00ad00ad00ad00ad",
   clientLabel: "agent",
+  labelSource: "declared" as const,
   createdAt: 0,
   expiresAt: 60_000,
   summary: "why",

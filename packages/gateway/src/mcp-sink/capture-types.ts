@@ -202,6 +202,12 @@ export function isLegacyBasis(basis: ActionBasis | undefined): boolean {
   return basis === "legacy_unapproved" || basis === "legacy_mail_send";
 }
 
+/**
+ * Where a proposer label came from, for every proposal today: the connection's own claim. The
+ * one producer of the value (AD4); the owner-written kit config is AD7's second source.
+ */
+export const CAPTURE_LABEL_SOURCE: "declared" | "kit" = "declared";
+
 export interface ActionProvenance {
   /**
    * The basis the approval-time verdict gave (AD3a-2a): what the act wiring routes and vetoes by.
@@ -210,6 +216,8 @@ export interface ActionProvenance {
   readonly basis?: ActionBasis;
   readonly captureId: string;
   readonly clientLabel: string | null;
+  /** Where {@link ActionProvenance.clientLabel} came from; copied to the executor's proposer (AD4). */
+  readonly labelSource: "declared" | "kit";
   readonly createdAt: number;
   readonly expiresAt: number;
   readonly summary: string;

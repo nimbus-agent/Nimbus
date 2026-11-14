@@ -130,7 +130,7 @@ function agentProposerOf(p: ActionProvenance, actionType: string): AgentProposer
     door: "agent",
     captureId: p.captureId,
     label: p.clientLabel,
-    labelSource: "declared",
+    labelSource: p.labelSource,
     summary: p.summary,
     createdAt: p.createdAt,
     expiresAt: p.expiresAt,

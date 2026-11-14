@@ -139,7 +139,7 @@ import type { AgentProposer, PlannedAction } from "./engine/types.ts";
 
 const AGENT_PROPOSER: AgentProposer = {
   door: "agent",
-  captureId: "cap_inv",
+  captureId: "cap_1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
   label: null,
   labelSource: "declared",
   summary: "s",
@@ -4848,8 +4848,9 @@ describe("I58 - an outside agent proposes only what the owner approved for agent
       );
       const out = await act.execute("github.pr.merge", MERGE, {
         basis: "approved",
-        captureId: "cap_1",
+        captureId: "cap_00010001000100010001000100010001",
         clientLabel: "agent",
+        labelSource: "declared",
         createdAt: 0,
         expiresAt: 60_000,
         summary: "why",
@@ -5838,6 +5839,98 @@ describe("I29 — egress-ledger completeness over the executor chokepoint", () =
       await sched.stop();
       db.close();
     }
+  });
+
+  // ---- Phase 28 AD4: the door and the proposer in BOTH ledgers ------------------------------------
+
+  test("AD4: an outside agent's write and its before-state read name the SAME capture in both ledgers, and no hashed egress field holds the label", async () => {
+    const { ToolExecutor, NO_POLICY_OVERLAY } = await import("./engine/executor.ts");
+    const { createBeforeStateRunner, isBeforeReadActionType } = await import(
+      "./engine/before-state.ts"
+    );
+    const { appendAuditEntry } = await import("./db/audit-chain.ts");
+    const { makeEgressSink } = await import("./egress/egress-ledger.ts");
+    const db = freshEgressDb();
+    const captureId = `cap_${"5a".repeat(16)}`;
+    const label = `a|b"cd${String.fromCodePoint(0x1f600)}|agent:cap_other`;
+    const exec = new ToolExecutor(
+      { requestApproval: async () => ({ approved: true, answerSource: "human" as const }) },
+      { recordAudit: (e) => appendAuditEntry(db, e) },
+      {
+        dispatch: async (a) =>
+          isBeforeReadActionType(a.type)
+            ? {
+                key: "NIM-1",
+                fields: { summary: "s", status: { name: "Open" }, issuetype: { name: "Bug" } },
+              }
+            : { ok: true },
+      },
+      undefined,
+      makeEgressSink(db),
+      NO_POLICY_OVERLAY,
+      () => "team",
+      { beforeState: createBeforeStateRunner({ rows: CONNECTOR_WRITE_ROWS }) },
+    );
+    await exec.execute({
+      type: "jira.comment.add",
+      origin: "agent",
+      proposer: {
+        door: "agent",
+        captureId,
+        label,
+        labelSource: "declared",
+        summary: "s",
+        createdAt: 0,
+        expiresAt: 1,
+      },
+      payload: { mcpToolId: "jira_comment_add", input: { issueKey: "NIM-1", body: "hi" } },
+    });
+    const ledger = db
+      .query("SELECT source_id, payload_summary FROM egress_ledger ORDER BY id")
+      .all() as Array<{
+      source_id: string;
+      payload_summary: string;
+    }>;
+    expect(ledger.map((r) => r.source_id)).toEqual([`agent:${captureId}`, `agent:${captureId}`]);
+    const audit = db.query("SELECT action_json FROM audit_log ORDER BY id").all() as Array<{
+      action_json: string;
+    }>;
+    expect(audit).toHaveLength(2);
+    for (const r of audit) expect(r.action_json).toContain(`"captureId":"${captureId}"`);
+    // The label is only in the unhashed summary (cut) and the audit JSON; never in source_id.
+    expect(ledger.some((r) => r.source_id.includes("|"))).toBe(false);
+    db.close();
+  });
+
+  test("AD4: the egress entry is built BEFORE the audit row, so a malformed capture id writes neither (source pin on gateWithin)", async () => {
+    const src = stripComments(await read("packages/gateway/src/engine/executor.ts"));
+    const start = src.indexOf("private async gateWithin(");
+    expect(start).toBeGreaterThan(0);
+    const body = src.slice(start);
+    const build = body.indexOf("const egressEntry = buildEgressEntry({");
+    const audit = body.indexOf("this.audit.recordAudit({");
+    const append = body.indexOf("this.egressSink.append(egressEntry);");
+    expect(build).toBeGreaterThan(0);
+    expect(build).toBeLessThan(audit);
+    expect(audit).toBeLessThan(append);
+  });
+
+  test("AD4: the audit projection copies exactly door, captureId, label and labelSource, by name, before the payload (static D49(c))", async () => {
+    const src = stripComments(await read("packages/gateway/src/engine/executor.ts"));
+    expect(src).toMatch(
+      /proposer:\s*\{\s*door:\s*proposer\.door,\s*captureId:\s*proposer\.captureId,\s*label:\s*proposer\.label,\s*labelSource:\s*proposer\.labelSource,\s*\},\s*\.\.\.others,/,
+    );
+    // The three sub-step sites pass the parent's attribution in their scope.
+    expect(src.split("...subStepAttribution(action, scope)").length - 1).toBe(3);
+  });
+
+  test("AD4: the submit and accept rows carry the label and the SUBMITTING connection's id inside their hashed JSON", async () => {
+    const gate = stripComments(await read("packages/gateway/src/mcp-sink/capture-gate.ts"));
+    expect(gate).toContain("connection: caller.clientId,");
+    const act = stripComments(await read("packages/gateway/src/mcp-sink/capture-act.ts"));
+    expect(act).toContain('door: "agent",');
+    expect(act).toContain("clientLabel: row.clientLabel,");
+    expect(act).toContain("connection: row.sessionId,");
   });
 });
 
