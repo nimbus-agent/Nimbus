@@ -182,12 +182,13 @@ connector allowlist. The act door's configured-ness comes from
   `actionEnabled`, never `kinds` alone, and so does `describe_actions` (read-only; the type list lives there, `propose_action`'s text only points to it). Gateway down or `session.declareKind` failed → no tools.
 - **IPC** (`ipc/capture-rpc.ts`, routed by `tryDispatchCaptureRpc` in `ipc/server/dispatchers.ts`):
   `capture.status` (any local client), `capture.submit`, `capture.state`, `capture.mine` and
-  `capture.describe` (`mcp` only; `capture.state` answers only for ids the asking connection AD4 proof: the executor's audit row of an accepted action names `{door, captureId, label, labelSource}` and its egress row `agent:<captureId>`; the owner reads them with `nimbus prove --by-proposer` and `nimbus audit --door agent` (`audit.proveByProposer` / `audit.listByDoor`, `cli`/`ui` only; labels are the client's own claim).
+  `capture.describe` (`mcp` only; `capture.state` answers only for ids the asking connection
   submitted, `capture.mine` lists its own, `capture.describe` returns the door's types and, for
   approved types named by the caller, the model door's description and schema; AD3a-2b), `captures.list|get|accept|reject|revoke|purge` (owner kinds `cli`/`ui`/`unknown`; `http`,
   `chatops`, `fleet`, `push` refused). Both namespaces LAN-forbidden; no HTTP route; only
   `captures.list`/`captures.get` on the Tauri allowlist
   (`packages/ui/src-tauri/src/gateway_bridge.rs`).
+- **AD4 proof** (Phase 28): the executor's audit row of an accepted action names `{door, captureId, label, labelSource}` and its egress row `agent:<captureId>`. The owner reads them with `nimbus prove --by-proposer` (`audit.proveByProposer`, which compares the two ledgers capture by capture) and `nimbus audit --door agent` (`audit.listByDoor`, a filtered listing of `audit_log` that compares nothing), both `cli`/`ui` only; labels are the client's own claim.
 - **Approvals IPC** (Phase 28 AD2, `ipc/approvals-rpc.ts`, routed by `tryDispatchApprovalsRpc`):
   `approvals.list|get|approve|decline` for a connection that DECLARED `cli` or `ui`
   (`APPROVER_BY_KIND`; `unknown` is refused here although `captures.*` serves it). `approve` reaches the

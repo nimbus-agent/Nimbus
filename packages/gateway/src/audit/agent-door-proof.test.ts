@@ -647,24 +647,37 @@ describe("proveByProposer - the egress prune", () => {
     expect(codesOf(prove())).toContain("audit_row_without_egress_row");
   });
 
-  test("a tombstone whose summary does not parse exempts nothing", async () => {
-    await pruned(T0 + 5_000, T0 + 20_000);
-    db.run("UPDATE egress_ledger SET payload_summary = 'garbage' WHERE source_type = 'prune'");
-    expect(codesOf(prove())).toContain("audit_row_without_egress_row");
-    db.run(
-      "UPDATE egress_ledger SET payload_summary = '{\"before\":\"x\"}' WHERE source_type = 'prune'",
-    );
-    expect(codesOf(prove())).toContain("audit_row_without_egress_row");
-  });
+  for (const summary of ["garbage", '{"before":"x"}']) {
+    test(`a tombstone whose summary does not parse (${summary}) still exempts only what the hashed rows allow`, async () => {
+      const { recent } = await pruned(T0 + 5_000, T0 + 20_000);
+      db.run("UPDATE egress_ledger SET payload_summary = ? WHERE source_type = 'prune'", [summary]);
+      // The oldest surviving row (the boot marker, T0 + 6_000) bounds it: the old capture is
+      // exempt, the recent one (gate row at T0 + 10_020) is checked.
+      expect(prove().completeness.checkedCaptures).toBe(1);
+      db.run("DELETE FROM egress_ledger WHERE source_id = ?", [`agent:${recent}`]);
+      expect(codesOf(prove())).toEqual(["audit_row_without_egress_row"]);
+    });
+  }
 
-  test("a cutoff later than the tombstone's own timestamp is treated as that timestamp", async () => {
-    await pruned(T0 + 5_000, T0 + 20_000);
+  test("raising the tombstone's unhashed summary to its own timestamp does not exempt a newer gate row", async () => {
+    const { recent } = await pruned(T0 + 5_000, T0 + 20_000);
     db.run("UPDATE egress_ledger SET payload_summary = ? WHERE source_type = 'prune'", [
       JSON.stringify({ before: T0 + 999_999_999, prunedCount: 1 }),
     ]);
+    db.run("DELETE FROM egress_ledger WHERE source_id = ?", [`agent:${recent}`]);
     const p = prove();
-    // Clamped to the run time (T0 + 20_000): both captures are older, so both are exempt.
-    expect(p.completeness.checkedCaptures).toBe(0);
+    // The oldest surviving non-tombstone row is T0 + 6_000, so the recent capture is still checked.
+    expect(codesOf(p)).toContain("audit_row_without_egress_row");
+    expect(p.completeness.checkedCaptures).toBe(1);
+  });
+
+  test("with no tombstone nothing is exempt", async () => {
+    const id = await executed(1, T0);
+    appendBootMarker(db, THIS_BINARY_COVERAGE, T0 + 6_000);
+    db.run("DELETE FROM egress_ledger WHERE source_id = ?", [`agent:${id}`]);
+    const p = prove();
+    expect(codesOf(p)).toContain("audit_row_without_egress_row");
+    expect(p.completeness.notChecked.prunedGateRows).toBe(0);
   });
 });
 
@@ -901,6 +914,20 @@ describe("proveByProposer - the read is bounded by the window's own captures", (
     outcome(id, T0 + 300, "executed");
     const p = prove({ sinceMs: T0 + 200 });
     expect(p.groups[0]).toMatchObject({ executed: 1, approved: 0 });
+    expect(p.completeness.checkedCaptures).toBe(1);
+    expect(p.completeness.status).toBe("ok");
+  });
+
+  test("a capture selected only by its outcome row is completeness-checked over its whole history", async () => {
+    const id = idOf(1);
+    submit(id, T0);
+    accept(id, T0 + 10);
+    await dispatch(id, T0 + 20);
+    outcome(id, T0 + 300, "executed");
+    db.run("DELETE FROM egress_ledger WHERE source_id = ?", [`agent:${id}`]);
+    const p = prove({ sinceMs: T0 + 200 });
+    expect(codesOf(p)).toContain("audit_row_without_egress_row");
+    expect(p.completeness.status).toBe("indeterminate");
   });
 
   test("an unreadable row older than the window is not this window's problem", async () => {

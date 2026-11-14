@@ -4266,14 +4266,14 @@ nimbus prove "open a GitHub issue for the flaky test" --receipt
 
 The first positional non-flag argument is the query; flags may appear in any position. `--since <dur>` is a window, never the query: with no query, `nimbus prove --since 7d` reports the ledger window that starts that long ago.
 
-### `nimbus prove --by-proposer [--since <dur>] [--proposer <label>] [--json]`
+### `nimbus prove --by-proposer [--since <dur>] [--proposer <label> | --proposer=<label>] [--json]`
 
 Report what outside agents (MCP clients) proposed and what happened to it, grouped by the label each client sent. It runs no query, calls only `audit.proveByProposer`, and checks both tamper-evident ledgers (the audit log and the egress ledger) against each other, capture by capture. A positional argument is a usage error, and so is `--receipt` or `--sign`: a signature over a report grouped by labels the clients chose themselves would read as signed proof of who acted.
 
 | Flag | Effect |
 | --- | --- |
 | `--since <dur>` | Only proposals with activity in the last `7d`, `24h`, `30m`, ... (the CLI turns the duration into epoch milliseconds). The gateway finds the proposals the window touches and reads each one's whole history, so older history does not use up the row cap. Default: the whole audit log, where the cap is a real limit. |
-| `--proposer <label>` | Only the group whose label is this text, as the client declared it (compared after the same redaction the audit log applies, and escaped like the prompt). The completeness result and the exit code are never filtered. If no group has the label, the command says so and how many groups the window holds. |
+| `--proposer <label>`, `--proposer=<label>` | Only the group whose label is this text, as the client declared it (compared after the same redaction the audit log applies, and escaped like the prompt). The completeness result and the exit code are never filtered. If no group has the label, the command says so and how many groups the window holds. Use the `=` form for a label that starts with `--` (`--proposer=--nightly`); the space-separated form refuses a value that looks like a flag. `--since` and `--proposer` may each be given once. |
 | `--json` | The gateway's reply as JSON (`labelsVerified: false`, `groups`, `scanCut`, `completeness`). |
 
 Each group counts: proposed, refused at submit, approved (by the executor's gate), declined, executed, failed, expired, waiting, authorized writes in the egress ledger, and the number of connections that sent the label. "Authorized writes" counts the egress rows in the window with result `authorized` whose method is the proposal's own write type; its before-state reads, prepare reads and change-set discards are not counted, so a checked proposal contributes at most one and the number can never exceed the proposals accepted. Every label is printed in quotes after the word `UNVERIFIED`, on one line, with control characters removed; a proposal with no label reads `(no label)`.
@@ -4310,7 +4310,7 @@ You can conclude nothing from this report until the reasons above are resolved.
 You cannot conclude which program sent them, whether the remote service applied a write, anything an agent did with its own credentials, or anything that never reached the executor.
 ```
 
-Stated bounds: a label is the client's own claim and nothing verifies it; a connection id lasts one gateway run and does not identify a program; the report cannot show an action that never reached the executor, whether the remote service applied a write (the egress row precedes the call), or anything an agent did with its own credentials; rows older than the newest egress prune and proposals accepted before this version are counted as not checked. A gateway older than this version answers "too old" and the command exits 1.
+Stated bounds: a label is the client's own claim and nothing verifies it; a connection id lasts one gateway run and does not identify a program; the report cannot show an action that never reached the executor, whether the remote service applied a write (the egress row precedes the call), or anything an agent did with its own credentials; rows older than the newest egress prune and proposals accepted before this version are counted as not checked. A gate row counts as pruned only below the prune's cutoff, which is the smallest of the tombstone's recorded `before` (an unhashed field), the timestamp of the oldest surviving non-tombstone egress row (hashed, so it cannot be edited without breaking the chain) and the tombstone's own timestamp, so editing the recorded `before` cannot hide a missing egress row. The proof verifies both hash chains from the start on every call, in pages so memory stays bounded, but its time grows with the length of the two ledgers and the gateway does that work on its request path. A gateway older than this version answers "too old" and the command exits 1.
 
 ### `nimbus egress` / `nimbus egress verify`
 
@@ -6070,9 +6070,9 @@ nimbus audit --limit 100 --json | jq -r '.[] | select(.hitlStatus == "rejected")
 
 ---
 
-### `nimbus audit --door <agent|model|workflow|other> [--proposer <label>] [--since <dur>] [--limit N] [--json]`
+### `nimbus audit --door <agent|model|workflow|other> [--proposer <label> | --proposer=<label>] [--since <dur>] [--limit N] [--json]`
 
-List the audit rows that came through one door, newest first, from `audit.listByDoor`. `agent` is an outside MCP agent's proposal (the executor's row and the rows of its before-state reads, prepare read and change-set discard), `model` is Nimbus's own model, `workflow` is a saved workflow run, and `other` is every row the gateway does not mark with a door (the owner's own commands, ChatOps, delegates and the gateway's own actions): it is not claimed to be the owner's. `--proposer <label>` implies `--door agent` and is a usage error with any other door. `--limit` takes 1 to 1000 (default 100). The unfiltered `nimbus audit` is unchanged.
+List the audit rows that came through one door, newest first, from `audit.listByDoor`. `agent` is an outside MCP agent's proposal (the executor's row and the rows of its before-state reads, prepare read and change-set discard), `model` is Nimbus's own model, `workflow` is a saved workflow run, and `other` is every row the gateway does not mark with a door (the owner's own commands, ChatOps, delegates and the gateway's own actions): it is not claimed to be the owner's. `--proposer <label>` implies `--door agent` and is a usage error with any other door. `--limit` takes 1 to 1000 (default 100). Use `--proposer=<label>` for a label that starts with `--` (`--proposer=--nightly`); the space-separated form refuses a value that looks like a flag. Each option may be given once. This command is a filtered listing of `audit_log`: it compares nothing against the egress ledger and does not verify a chain (use `nimbus prove --by-proposer` for that). The unfiltered `nimbus audit` is unchanged.
 
 ```text
 Audit rows through the agent door, newest first.

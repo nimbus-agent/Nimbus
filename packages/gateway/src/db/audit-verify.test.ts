@@ -3,7 +3,7 @@ import { describe, expect, test } from "bun:test";
 import { LocalIndex } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import { appendAuditEntry } from "./audit-chain.ts";
-import { verifyAuditChain } from "./audit-verify.ts";
+import { VERIFY_PAGE_ROWS, verifyAuditChain } from "./audit-verify.ts";
 
 function newIndex(): LocalIndex {
   const db = new Database(":memory:");
@@ -31,6 +31,33 @@ describe("verifyAuditChain", () => {
     const result = verifyAuditChain(idx, { fromId: 0 });
     expect(result.ok).toBe(false);
     expect(result.firstBreakAtId).toBe(2);
+  });
+
+  test("verifies a chain longer than one page and detects a tampered row in a later page", () => {
+    const idx = newIndex();
+    const total = VERIFY_PAGE_ROWS * 2 + 300;
+    idx.rawDb.transaction(() => {
+      for (let i = 1; i <= total; i += 1) {
+        appendAuditEntry(idx.rawDb, {
+          actionType: "a",
+          hitlStatus: "approved",
+          actionJson: "{}",
+          timestamp: i,
+        });
+      }
+    })();
+    const ok = verifyAuditChain(idx, { fromId: 0 });
+    expect(ok.ok).toBe(true);
+    expect(ok.verifiedRows).toBe(total);
+    expect(ok.lastVerifiedId).toBe(total);
+    const target = VERIFY_PAGE_ROWS * 2 + 5;
+    idx.rawDb.run(`UPDATE audit_log SET action_json = ? WHERE id = ?`, ['{"t":1}', target]);
+    const bad = verifyAuditChain(idx, { fromId: 0 });
+    expect(bad.ok).toBe(false);
+    expect(bad.firstBreakAtId).toBe(target);
+    expect(bad.verifiedRows).toBe(target - 1);
+    // A resume point in the middle of the second page walks the rest the same way.
+    expect(verifyAuditChain(idx, { fromId: VERIFY_PAGE_ROWS + 10 }).firstBreakAtId).toBe(target);
   });
 
   test("incremental mode skips rows already verified", () => {

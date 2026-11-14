@@ -62,6 +62,32 @@ const wired = (call: unknown): void => {
   });
 };
 
+describe("parseProveByProposerArgs - repeated flags and the = form", () => {
+  it("a repeated --since or --proposer is a usage error", () => {
+    for (const rest of [
+      ["--since", "7d", "--since", "1d"],
+      ["--proposer", "a", "--proposer", "b"],
+      ["--proposer", "a", "--proposer=b"],
+    ]) {
+      expect(() => parseProveByProposerArgs(["--by-proposer", ...rest], NOW)).toThrow(
+        "more than once",
+      );
+    }
+  });
+
+  it("--proposer=<label> selects a label that starts with --", () => {
+    expect(parseProveByProposerArgs(["--by-proposer", "--proposer=--nightly"], NOW).proposer).toBe(
+      "--nightly",
+    );
+    expect(() => parseProveByProposerArgs(["--by-proposer", "--proposer="], NOW)).toThrow(
+      "non-empty",
+    );
+    expect(() =>
+      parseProveByProposerArgs(["--by-proposer", "--proposer", "--nightly"], NOW),
+    ).toThrow("needs a value");
+  });
+});
+
 describe("parseProveByProposerArgs", () => {
   it("reads --since as a window relative to now, --proposer and --json", () => {
     const a = parseProveByProposerArgs(

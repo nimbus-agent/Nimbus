@@ -410,7 +410,7 @@ describe("approvals.approve is human-only", () => {
   });
   test("through the real coordinator: a human answer runs, an answer without a source does not", async () => {
     const run = async (answerSource: string | undefined): Promise<string> => {
-      const digit = { human: "1", auto: "3" }[String(answerSource)] ?? "2";
+      const digit = answerSource === "human" ? "1" : answerSource === "auto" ? "3" : "2";
       const rowId = `cap_${digit.repeat(32)}`;
       insertAction(rowId);
       const impl: ConsentCoordinatorImpl = new ConsentCoordinatorImpl(() => (n) => {

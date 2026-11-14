@@ -2,7 +2,11 @@ import type { IPCClient } from "../ipc-client/index.ts";
 import { parseSinceDurationToMs } from "../lib/parse-since.ts";
 import { INTERACTIVE_RPC_TIMEOUT_MS } from "../lib/rpc-timeouts.ts";
 import { withGatewayIpc } from "../lib/with-gateway-ipc.ts";
-import { parseProveByProposerArgs, runProveByProposer } from "./prove-by-proposer.ts";
+import {
+  ProveUsageError,
+  parseProveByProposerArgs,
+  runProveByProposer,
+} from "./prove-by-proposer.ts";
 
 type VerifyResult = { ok: boolean; verifiedRows: number; brokenAt?: number; reason?: string };
 type EgressRow = { timestamp: number; destination: string; method: string; resultStatus: string };
@@ -226,7 +230,32 @@ export function resolvePruneBeforeTs(args: string[], now: number): number {
   throw new Error("Usage: nimbus egress prune (--before <ISO|epoch> | --older-than <duration>)");
 }
 
-/** Parse `--since <dur>` (e.g. 24h, 30m, 7d) into an epoch-ms lower bound relative to now. */
+/**
+ * Read `--since <dur>` in one pass: the window and the index of its operand (so a caller looking for
+ * a positional argument skips it). A `--since` with no duration, or given twice, is a usage error
+ * before anything is sent to the gateway.
+ */
+function scanSince(
+  args: readonly string[],
+  now: number,
+): { readonly sinceMs: number | undefined; readonly operandIdx: number } {
+  let sinceMs: number | undefined;
+  let operandIdx = -1;
+  for (let i = 0; i < args.length; i += 1) {
+    if (args[i] !== "--since") continue;
+    if (operandIdx >= 0) throw new ProveUsageError("--since was given more than once.");
+    const raw = args[i + 1];
+    if (raw === undefined || raw.startsWith("--")) {
+      throw new ProveUsageError("--since needs a value, for example --since 7d.");
+    }
+    sinceMs = now - parseSinceDurationToMs(raw);
+    operandIdx = i + 1;
+    i += 1;
+  }
+  return { sinceMs, operandIdx };
+}
+
+/** `nimbus egress --since`: a dangling `--since` is ignored (its documented, tested behaviour). */
 function parseSince(args: string[], now: number): number | undefined {
   const i = args.indexOf("--since");
   if (i < 0) return undefined;
@@ -312,9 +341,8 @@ export async function runProve(args: string[]): Promise<void> {
   const sign = args.includes("--receipt") || args.includes("--sign");
   // `--since` takes a value: it is a window (the same grammar as `nimbus egress --since`), never the
   // query, so the value is skipped when looking for the first positional argument.
-  const sinceIdx = args.indexOf("--since");
-  const sinceFlag = parseSince(args, Date.now());
-  const query = args.find((a, i) => !a.startsWith("--") && !(sinceIdx >= 0 && i === sinceIdx + 1));
+  const { sinceMs: sinceFlag, operandIdx } = scanSince(args, Date.now());
+  const query = args.find((a, i) => !a.startsWith("--") && i !== operandIdx);
   // `agent.invoke` below is `stream: false`, so unlike `nimbus ask` there are no tokens
   // already on stdout to salvage: a timeout here loses the whole answer AND the proof.
   await withConsentIpc(async (client) => {

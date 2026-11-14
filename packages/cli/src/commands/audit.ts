@@ -69,8 +69,9 @@ const AUDIT_DOORS = ["agent", "model", "workflow", "other"] as const;
 type AuditDoor = (typeof AUDIT_DOORS)[number];
 
 export const AUDIT_DOOR_USAGE =
-  "usage: nimbus audit --door <agent|model|workflow|other> [--proposer <label>] [--since <dur>] [--limit N] [--json]\n" +
-  "       --proposer applies to the agent door only and implies --door agent";
+  "usage: nimbus audit --door <agent|model|workflow|other> [--proposer <label> | --proposer=<label>] [--since <dur>] [--limit N] [--json]\n" +
+  "       --proposer applies to the agent door only and implies --door agent\n" +
+  "       use --proposer=<label> for a label that starts with --";
 
 export interface AuditDoorArgs {
   readonly door: AuditDoor;
@@ -102,7 +103,11 @@ export interface AuditDoorListing {
 
 /** True when the arguments ask for the door view; the unfiltered command never reaches it. */
 export function wantsAuditDoorView(args: readonly string[]): boolean {
-  return args.includes("--door") || args.includes("--proposer");
+  return (
+    args.includes("--door") ||
+    args.includes("--proposer") ||
+    args.some((a) => a.startsWith("--proposer="))
+  );
 }
 
 function doorUsage(why: string): Error {
@@ -121,6 +126,12 @@ export function parseAuditDoorArgs(args: readonly string[], now: number): AuditD
       json = true;
       continue;
     }
+    if (a.startsWith("--proposer=")) {
+      // The unambiguous form: the label may start with `--`.
+      if (proposer !== undefined) throw doorUsage("--proposer was given more than once.");
+      proposer = a.slice("--proposer=".length);
+      continue;
+    }
     if (a !== "--door" && a !== "--proposer" && a !== "--since" && a !== "--limit") {
       throw doorUsage(
         a.startsWith("--")
@@ -131,11 +142,20 @@ export function parseAuditDoorArgs(args: readonly string[], now: number): AuditD
     const v = args[i + 1];
     if (v === undefined || v.startsWith("--")) throw doorUsage(`${a} needs a value.`);
     i += 1;
-    if (a === "--door") door = v;
-    else if (a === "--proposer") proposer = v;
-    else if (a === "--since") sinceMs = now - parseSinceDurationToMs(v);
-    else if (/^\d+$/.test(v) && Number(v) >= 1 && Number(v) <= 1000) limit = Number(v);
-    else throw doorUsage("--limit must be an integer from 1 to 1000.");
+    if (a === "--door") {
+      if (door !== undefined) throw doorUsage("--door was given more than once.");
+      door = v;
+    } else if (a === "--proposer") {
+      if (proposer !== undefined) throw doorUsage("--proposer was given more than once.");
+      proposer = v;
+    } else if (a === "--since") {
+      if (sinceMs !== undefined) throw doorUsage("--since was given more than once.");
+      sinceMs = now - parseSinceDurationToMs(v);
+    } else {
+      if (limit !== undefined) throw doorUsage("--limit was given more than once.");
+      if (/^\d+$/.test(v) && Number(v) >= 1 && Number(v) <= 1000) limit = Number(v);
+      else throw doorUsage("--limit must be an integer from 1 to 1000.");
+    }
   }
   if (proposer !== undefined) {
     if (proposer === "") throw doorUsage("--proposer needs a non-empty label.");

@@ -46,7 +46,8 @@ export interface ProposerProofView {
 }
 
 export const PROVE_BY_PROPOSER_USAGE =
-  "usage: nimbus prove --by-proposer [--since <dur>] [--proposer <label>] [--json]";
+  "usage: nimbus prove --by-proposer [--since <dur>] [--proposer <label> | --proposer=<label>] [--json]\n" +
+  "       use --proposer=<label> for a label that starts with --";
 
 export interface ProveByProposerArgs {
   readonly sinceMs: number | undefined;
@@ -79,12 +80,22 @@ export function parseProveByProposerArgs(
     if (a === "--by-proposer") continue;
     if (a === "--json") {
       json = true;
+    } else if (a.startsWith("--proposer=")) {
+      // The unambiguous form: the label may start with `--`.
+      if (proposer !== undefined) throw usage("--proposer was given more than once.");
+      proposer = a.slice("--proposer=".length);
+      if (proposer === "") throw usage("--proposer needs a non-empty label.");
     } else if (a === "--since" || a === "--proposer") {
       const v = args[i + 1];
       if (v === undefined || v.startsWith("--")) throw usage(`${a} needs a value.`);
       i += 1;
-      if (a === "--since") sinceMs = now - parseSinceDurationToMs(v);
-      else proposer = v;
+      if (a === "--since") {
+        if (sinceMs !== undefined) throw usage("--since was given more than once.");
+        sinceMs = now - parseSinceDurationToMs(v);
+      } else {
+        if (proposer !== undefined) throw usage("--proposer was given more than once.");
+        proposer = v;
+      }
     } else if (a === "--receipt" || a === "--sign") {
       throw usage(
         "--by-proposer cannot be signed: a receipt over labels the clients chose themselves would read as proof of who acted.",

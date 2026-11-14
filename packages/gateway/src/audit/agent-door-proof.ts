@@ -321,10 +321,22 @@ function scanEgress(db: Database, w: Window, visit: (r: EgressRow) => boolean): 
 }
 
 /**
- * The newest prune's CUTOFF: the `before` value its tombstone's summary records, never the run time
- * (the prune deletes rows older than `before`, so only those may lack an egress row). `payload_summary`
- * is not a hashed field, so it is read fail-closed: a summary that does not parse to a finite number
- * exempts nothing, and a `before` later than the tombstone's own timestamp is that timestamp.
+ * The newest prune's CUTOFF: the timestamp BELOW which a gate row may lack an egress row because a
+ * prune deleted it. No tombstone means nothing is exempt. With one, the cutoff is the smallest of
+ * three bounds, so no edit to an unhashed field can raise it:
+ *  (a) the `before` the tombstone's summary records, when it parses to a finite number (the summary
+ *      is NOT a hashed field, so this is only a claim, and an edit can only make it larger or junk);
+ *  (b) the timestamp of the oldest surviving non-tombstone egress row. `timestamp` is part of the row
+ *      hash, so it cannot change without breaking the chain; the prune deleted every row older than
+ *      its cutoff, so every row that survived it is at or after it, and (b) is therefore an upper
+ *      bound on the real cutoff. A gate row and its egress row carry the same timestamp (AD4), so a
+ *      gate row older than (b) has no surviving egress row by design, and one at or after (b) must
+ *      have one. Timestamps are caller-supplied and need not be non-decreasing in id order, and a row
+ *      with an older timestamp can be appended after a prune (a clock step back); that only LOWERS
+ *      (b), which exempts fewer rows, never more;
+ *  (c) the tombstone's own timestamp (a prune cannot delete rows from its own future).
+ * (b) is absent when no non-tombstone row survives. With several tombstones the largest per-tombstone
+ * (a)/(c) bound is taken, then clamped by (b).
  */
 function pruneCutoff(db: Database): number | undefined {
   const rows = db
@@ -332,19 +344,27 @@ function pruneCutoff(db: Database): number | undefined {
       `SELECT timestamp, payload_summary FROM egress_ledger WHERE source_type = 'prune' AND method = 'egress.prune'`,
     )
     .all();
-  let cutoff: number | undefined;
+  let claimed: number | undefined;
   for (const r of rows) {
     let before: unknown;
     try {
       before = (JSON.parse(r.payload_summary) as { before?: unknown }).before;
     } catch {
-      continue;
+      before = undefined;
     }
-    if (typeof before !== "number" || !Number.isFinite(before)) continue;
-    const effective = Math.min(before, r.timestamp);
-    cutoff = cutoff === undefined ? effective : Math.max(cutoff, effective);
+    const effective =
+      typeof before === "number" && Number.isFinite(before)
+        ? Math.min(before, r.timestamp)
+        : r.timestamp;
+    claimed = claimed === undefined ? effective : Math.max(claimed, effective);
   }
-  return cutoff;
+  if (claimed === undefined) return undefined;
+  const oldest = db
+    .query<{ t: number | null }, []>(
+      `SELECT MIN(timestamp) AS t FROM egress_ledger WHERE source_type != 'prune'`,
+    )
+    .get();
+  return oldest?.t == null ? claimed : Math.min(claimed, oldest.t);
 }
 
 function newestBootMarker(db: Database): number | undefined {
@@ -935,14 +955,17 @@ function result(
   };
 }
 
-/** The captures to check: those with an accept, a gate row or an egress row inside the window (D-7). */
+/** The captures to check: those with ANY row (accept, gate, sub-step, egress, outcome, reject, expiry) inside the window; each is checked over its whole history (D-7). */
 function selectCaptures(m: Model, w: Window): History[] {
   const picked: History[] = [];
   for (const h of m.captures.values()) {
     const touched =
       h.accepts.some((a) => inWindow(w, a.row.timestamp)) ||
       h.gates.some((g) => inWindow(w, g.timestamp)) ||
-      h.egress.some((e) => inWindow(w, e.timestamp));
+      h.egress.some((e) => inWindow(w, e.timestamp)) ||
+      h.outcomes.some((o) => inWindow(w, o.row.timestamp)) ||
+      h.rejects.some((r) => inWindow(w, r.timestamp)) ||
+      h.expires.some((x) => inWindow(w, x.timestamp));
     if (touched) picked.push(h);
   }
   return picked;

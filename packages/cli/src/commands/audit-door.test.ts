@@ -75,6 +75,48 @@ describe("parseAuditDoorArgs", () => {
   });
 });
 
+describe("parseAuditDoorArgs - repeated flags and the = form", () => {
+  it("a repeated option is a usage error, never last-one-wins", () => {
+    for (const args of [
+      ["--door", "agent", "--door", "model"],
+      ["--proposer", "a", "--proposer", "b"],
+      ["--door", "agent", "--since", "7d", "--since", "1d"],
+      ["--door", "agent", "--limit", "5", "--limit", "6"],
+      ["--proposer", "a", "--proposer=b"],
+    ]) {
+      expect(() => parseAuditDoorArgs(args, NOW)).toThrow("more than once");
+    }
+  });
+
+  it("--proposer=<label> selects a label that starts with --", () => {
+    const a = parseAuditDoorArgs(["--proposer=--nightly"], NOW);
+    expect(a.proposer).toBe("--nightly");
+    expect(a.door).toBe("agent");
+    expect(parseAuditDoorArgs(["--door", "agent", "--proposer=a=b"], NOW).proposer).toBe("a=b");
+  });
+
+  it("the space-separated form still refuses a label that looks like a flag", () => {
+    expect(() => parseAuditDoorArgs(["--proposer", "--nightly"], NOW)).toThrow("needs a value");
+  });
+
+  it("--proposer= with nothing after it is a usage error", () => {
+    expect(() => parseAuditDoorArgs(["--proposer="], NOW)).toThrow("non-empty");
+  });
+
+  it("runAudit routes --proposer=<label> to the door view with the label", async () => {
+    const calls: Array<{ method: string; params: unknown }> = [];
+    wired((method: string, params: unknown) => {
+      calls.push({ method, params });
+      return Promise.resolve(listing([]));
+    });
+    await runAudit(["--proposer=--nightly"]);
+    expect(calls.find((c) => c.method === "audit.listByDoor")?.params).toMatchObject({
+      door: "agent",
+      proposer: "--nightly",
+    });
+  });
+});
+
 describe("formatAuditDoorListing", () => {
   const base = {
     door: "agent" as const,
