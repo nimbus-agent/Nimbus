@@ -215,8 +215,19 @@ interface FirstPartyListingEntry {
   ensure(): Promise<void>;
 }
 
+/**
+ * The gateway's own deadline on listing one user-MCP server's tools for the agent door. Before it,
+ * the only bound was the MCP client's: its connect and its `tools/list` request each default to
+ * 60 s (`DEFAULT_REQUEST_TIMEOUT_MSEC`, never configured in `lazy-mesh/`), so a server that starts
+ * and never answers held a caller for up to about two minutes. 45 s covers a cold start of a
+ * sandboxed server (the Windows AppContainer profile included) and is shorter than that worst case.
+ * On expiry the listing reads as "could not be listed" (`undefined`).
+ */
+export const USER_MCP_LISTING_DEADLINE_MS = 45_000;
+
 export class LazyConnectorMesh {
   private readonly filesystem: MCPClient;
+  private readonly userMcpListingDeadlineMs: number;
   private readonly lazySlots = new Map<string, LazyMcpSlot>();
   private readonly listUserMcpConnectors: () => readonly UserMcpConnectorRow[];
   private readonly inactivityMs: number;
@@ -276,6 +287,8 @@ export class LazyConnectorMesh {
       auditDb?: import("bun:sqlite").Database;
       obsidianVaultPaths?: readonly string[];
       isConnectorAllowed?: (serviceId: string) => boolean;
+      /** Test seam: the agent door's user-MCP listing deadline. Production: {@link USER_MCP_LISTING_DEADLINE_MS}. */
+      userMcpListingDeadlineMs?: number;
       /** Test seam: deletes a user MCP sandbox leaf. Production: recursive, forced `rmSync`. */
       removeSandboxDir?: (dir: string) => void;
       /** Test seam: whether a user MCP sandbox leaf exists. Production: `existsSync`. */
@@ -324,6 +337,8 @@ export class LazyConnectorMesh {
       options?.removeSandboxDir ?? ((dir) => rmSync(dir, { recursive: true, force: true }));
     this.sandboxDirExists = options?.sandboxDirExists ?? existsSync;
     this.inactivityMs = options?.inactivityMs ?? 300_000;
+    this.userMcpListingDeadlineMs =
+      options?.userMcpListingDeadlineMs ?? USER_MCP_LISTING_DEADLINE_MS;
     this.listUserMcpConnectors = options?.listUserMcpConnectors ?? (() => []);
     this.healthDb = options?.healthDb;
     this.auditDb = options?.auditDb;
@@ -863,13 +878,28 @@ export class LazyConnectorMesh {
    * lists none). Keys are the slot's `<serviceId>_<tool>`; a key that does not start with
    * `<serviceId>_` is dropped, so a listing can never speak for another server. Only THIS server's
    * slot is ensured, and the call may start it: the caller is the door's definition check, reached
-   * only for a tool the owner approved for agents by name. A throw is the listing's own.
+   * only for a tool the owner approved for agents by name. A throw is the listing's own. The whole
+   * listing (the wait for the spawn gate, the start and the request) is bounded by
+   * {@link USER_MCP_LISTING_DEADLINE_MS} here, in the ONE place every caller goes through: on expiry
+   * the result is `undefined` ("could not be listed") and the abandoned promise is given a no-op
+   * rejection handler, so it can neither reject unhandled nor affect a later listing.
    */
   async listUserMcpToolDefinitions(
     serviceId: string,
   ): Promise<Readonly<Record<string, { description: unknown; inputSchema: unknown }>> | undefined> {
-    const tools = await this.listUserMcpTools(serviceId);
-    if (tools === undefined) return undefined;
+    const pending = this.listUserMcpTools(serviceId);
+    pending.catch(() => undefined);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const expired = new Promise<"expired">((resolve) => {
+      timer = setTimeout(() => resolve("expired"), this.userMcpListingDeadlineMs);
+    });
+    let tools: LazyMeshToolMap | undefined | "expired";
+    try {
+      tools = await Promise.race([pending, expired]);
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+    }
+    if (tools === undefined || tools === "expired") return undefined;
     const prefix = `${serviceId}_`;
     const out: Record<string, { description: unknown; inputSchema: unknown }> = {};
     for (const key of Object.keys(tools)) {

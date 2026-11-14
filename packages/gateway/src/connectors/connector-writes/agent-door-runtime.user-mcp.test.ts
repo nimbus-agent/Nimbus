@@ -2,13 +2,23 @@
 // Every fact is read at the call; the listing is injected (no real third-party server is started).
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { toStandardSchema } from "@mastra/core/schema";
+import type { MCPClient } from "@mastra/mcp";
 
 import {
   describeOwnerCodeTool,
   offeredInputJsonSchema,
 } from "../../engine/user-mcp-agent-tools.ts";
 import { runIndexedSchemaMigrations } from "../../index/migrations/runner.ts";
+import type { PlatformPaths } from "../../platform/paths.ts";
+import { createMockVault } from "../../vault/mock.ts";
+import { LazyDrainTracker } from "../lazy-mesh/drain.ts";
+import { userMcpMeshKey } from "../lazy-mesh/keys.ts";
+import { LazyConnectorMesh } from "../lazy-mesh/mesh.ts";
+import type { LazyMcpSlot } from "../lazy-mesh/slot.ts";
 import { mcpClientToolKey } from "../lazy-mesh/tool-map.ts";
 import { type ClassifyContext, classifyActionType } from "../proposable-actions.ts";
 import { deleteUserMcpConnector, insertUserMcpConnector } from "../user-mcp-store.ts";
@@ -615,6 +625,18 @@ describe("userMcpCallFacts (AD5a, D-6)", () => {
     expect(suspendAudits()).toBe(1);
   });
 
+  test("a legacy basis refuses a proposal made before the server's current registration, with no listing (agent door review, finding 2)", async () => {
+    register("mcp_e", { model: true, createdAt: 500 });
+    const d = door();
+    expect(await d.userMcpCallFacts("mcp_e.append", "legacy_user_mcp", 499)).toEqual({
+      ok: false,
+      detail: DEFINITION_REFUSALS.earlierRegistration,
+    });
+    expect((await d.userMcpCallFacts("mcp_e.append", "legacy_user_mcp", 500)).ok).toBe(true);
+    expect((await d.userMcpCallFacts("mcp_e.append", "legacy_user_mcp", 900)).ok).toBe(true);
+    expect(userListCalls).toEqual([]);
+  });
+
   test("a type that names no tool, or a server that is gone, is refused", async () => {
     expect((await door().userMcpCallFacts("mcp_x.", "legacy_user_mcp", 1)).ok).toBe(false);
     expect((await door().userMcpCallFacts("mcp_gone.t", "legacy_user_mcp", 1)).ok).toBe(false);
@@ -786,5 +808,60 @@ describe("describe for a user-MCP tool (AD5a, D-8, OR-AD-25)", () => {
     const types = await door().acceptedTypes();
     expect(types).toContain("mcp_a.append");
     expect(types).not.toContain("mcp_b.read");
+  });
+});
+
+describe("a listing that never answers (agent door review, finding 1)", () => {
+  test("the mesh's own deadline makes the door's check 'could not be listed': refused, no mark, no audit row, and a later listing works", async () => {
+    const root = mkdtempSync(join(tmpdir(), "nimbus-door-hang-"));
+    const paths = {
+      configDir: join(root, "config"),
+      dataDir: join(root, "data"),
+      logDir: join(root, "log"),
+      socketPath: join(root, "sock"),
+      extensionsDir: join(root, "ext"),
+      tempDir: join(root, "tmp"),
+      sandboxDir: join(root, "sandbox"),
+    } as PlatformPaths;
+    const mesh = new LazyConnectorMesh(paths, createMockVault(), {
+      listUserMcpConnectors: () => [
+        {
+          service_id: "mcp_x",
+          command: "/bin/echo",
+          args_json: "[]",
+          created_at: REGISTERED_AT,
+          read_paths_json: "[]",
+          net_hosts_json: "[]",
+          model_access: 0,
+        },
+      ],
+      userMcpListingDeadlineMs: 25,
+    });
+    const slots = (mesh as unknown as { lazySlots: Map<string, LazyMcpSlot> }).lazySlots;
+    const setClient = (listTools: () => Promise<unknown>) =>
+      slots.set(userMcpMeshKey("mcp_x"), {
+        client: { listTools, disconnect: async () => undefined } as unknown as MCPClient,
+        idleTimer: undefined,
+        drain: new LazyDrainTracker(),
+      });
+    try {
+      register("mcp_x");
+      const e = entry();
+      approve("mcp_x", "append", e);
+      setClient(() => new Promise(() => undefined));
+      const d = door({ listUserMcpDefinitions: (id) => mesh.listUserMcpToolDefinitions(id) });
+      expect(await d.verifyDefinition("mcp_x.append")).toEqual({
+        ok: false,
+        code: "ERR_CAPTURE_ACTION_NOT_PROPOSABLE",
+        detail: DEFINITION_REFUSALS.unlisted,
+      });
+      expect(getDoorApproval(db, "agent", "mcp_x", "append")?.suspendedAt).toBeNull();
+      expect(suspendAudits()).toBe(0);
+      setClient(async () => listing("mcp_x", { append: e }));
+      expect(await d.verifyDefinition("mcp_x.append")).toEqual({ ok: true });
+    } finally {
+      await mesh.disconnect().catch(() => undefined);
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });

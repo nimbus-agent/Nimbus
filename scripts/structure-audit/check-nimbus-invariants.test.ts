@@ -6783,6 +6783,28 @@ describe("D49(g), (h) - the user-MCP call facts and the door's reach into user s
     }
   });
 
+  test("(g) the shorthand property forms are refused in a file that may only read it, a destructuring read is not", () => {
+    for (const path of [`${SRC}engine/executor.ts`, `${SRC}engine/user-mcp-call-block.ts`]) {
+      for (const code of [
+        "const a = { userMcpCall };",
+        "const a = { ...x, userMcpCall };",
+        "const a = { type, userMcpCall, payload };",
+        "const a = {\n  userMcpCall,\n};",
+      ]) {
+        expect(
+          checkUserMcpCallFacts(swap(path, code)).map((x) => x.rule),
+          code,
+        ).toEqual(["user-mcp-call-facts-confined"]);
+      }
+      expect(checkUserMcpCallFacts(swap(path, "const { userMcpCall, ...rest } = action;"))).toEqual(
+        [],
+      );
+      expect(checkUserMcpCallFacts(swap(path, "const { type, userMcpCall } = action;"))).toEqual(
+        [],
+      );
+    }
+  });
+
   test("(g) a comment or a string that says userMcpCall is not a violation (the IPC method name)", () => {
     expect(
       checkUserMcpCallFacts(
@@ -6801,6 +6823,33 @@ describe("D49(g), (h) - the user-MCP call facts and the door's reach into user s
     expect(
       checkUserMcpDoorReach(add(path, "m.listUserMcpToolDefinitions(id);")).map((v) => v.rule),
     ).toEqual(["user-mcp-door-reach-confined"]);
+  });
+
+  test.each([
+    `${SRC}ipc/capture-rpc.ts`,
+    `${SRC}engine/run-ask.ts`,
+    `${SRC}mcp-sink/capture-act.ts`,
+    `${SRC}ipc/approvals-rpc.ts`,
+    `${SRC}connectors/connector-writes/agent-door-describe.ts`,
+  ])("(h) the injected user-MCP lister named in %s is refused", (path) => {
+    expect(
+      checkUserMcpDoorReach(add(path, "await deps.listUserMcpDefinitions?.(id);")).map(
+        (v) => v.rule,
+      ),
+    ).toEqual(["user-mcp-door-reach-confined"]);
+  });
+
+  test.each([
+    `${SRC}connectors/connector-writes/agent-door-runtime.ts`,
+    `${SRC}ipc/connector-rpc-handlers/agent-writes.ts`,
+    `${SRC}ipc/connector-rpc-handlers/agent-writes-user-mcp.ts`,
+    `${SRC}ipc/connector-rpc-handlers/model-writes.ts`,
+    `${SRC}ipc/connector-rpc.ts`,
+    `${SRC}platform/assemble.ts`,
+  ])("(h) the injected user-MCP lister may be named in %s", (path) => {
+    expect(checkUserMcpDoorReach(add(path, "await deps.listUserMcpDefinitions?.(id);"))).toEqual(
+      [],
+    );
   });
 
   test.each([

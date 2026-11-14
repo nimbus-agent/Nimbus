@@ -271,6 +271,22 @@ describe("a legacy user-MCP proposal", () => {
     expect(h.dispatched).toHaveLength(1);
   });
 
+  test("a proposal made before the server was registered again is refused before any prompt, and dispatches nothing (agent door review, finding 2)", async () => {
+    const h = harness();
+    const out = await h.act.execute("mcp_notes.append", INPUT, PROV("legacy_user_mcp", 50));
+    expect(out.status).toBe("rejected");
+    expect(h.prompts).toHaveLength(0);
+    expect(h.dispatched).toHaveLength(0);
+    expect(listCalls).toBe(0);
+    // Made at the registration instant or later: unchanged behaviour.
+    const same = await h.act.execute(
+      "mcp_notes.append",
+      INPUT,
+      PROV("legacy_user_mcp", REGISTERED_AT),
+    );
+    expect(same.status).toBe("ok");
+  });
+
   test("with no door wired the prompt is today's (no block)", async () => {
     const h = harness({ noDoor: true });
     const out = await h.act.execute("mcp_notes.append", INPUT, PROV("legacy_user_mcp"));

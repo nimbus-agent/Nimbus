@@ -597,6 +597,12 @@ export function createAgentDoor(deps: AgentDoorDeps): AgentDoor {
     // The registration, read now (a legacy basis reads nothing else and starts nothing).
     const registration = getUserMcpConnector(deps.db, parts.serviceId);
     if (registration === null) return { ok: false, detail: DEFINITION_REFUSALS.notRegistered };
+    // Either basis: a proposal queued against an EARLIER registration of this server id (removed and
+    // registered again, possibly with another command) is never run against the new code. A legacy
+    // basis needs no listing for this; it reads the row above and starts nothing.
+    if (proposedAt < registration.created_at) {
+      return { ok: false, detail: DEFINITION_REFUSALS.earlierRegistration };
+    }
     const netHosts = stringArray(registration.net_hosts_json);
     let note: string | undefined;
     try {

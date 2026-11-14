@@ -97,6 +97,33 @@ describe("connector writes enable mcp_<id> --door agent", () => {
     expect(process.exitCode).toBe(0);
   });
 
+  it("says how many listed tools were left out past the gateway's cap, and how to approve one anyway (agent door review, finding 5)", async () => {
+    const h = harness({
+      service: "mcp_notes",
+      door: "agent",
+      listOnly: true,
+      approved: 0,
+      writes: [],
+      tools: [{ toolId: "append", sha12: "3fa9c1d2e4b7", state: "will_be_approved" }],
+      omitted: 5,
+    });
+    await runConnectorWrites(["enable", "mcp_notes", "--door", "agent"], h.deps);
+    expect(h.logs).toContain(
+      "5 more tools are listed but not shown. A tool can still be approved by its exact name with --approve <tool>.",
+    );
+    const one = harness({
+      service: "mcp_notes",
+      door: "agent",
+      listOnly: true,
+      approved: 0,
+      writes: [],
+      tools: [],
+      omitted: 1,
+    });
+    await runConnectorWrites(["enable", "mcp_notes", "--door", "agent"], one.deps);
+    expect(one.logs.join("\n")).toContain("1 more tool is listed but not shown.");
+  });
+
   it("says so when every listed tool is approved already, and when the server lists none", async () => {
     const all = harness({
       service: "mcp_notes",

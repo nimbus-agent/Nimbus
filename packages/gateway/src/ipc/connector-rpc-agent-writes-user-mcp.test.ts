@@ -483,6 +483,39 @@ describe("user MCP agent enable: with no --approve it lists and asks nothing (OR
     expect(listDoorApprovals(db, "agent", "mcp_notes")).toHaveLength(1);
   });
 
+  test("a hostile server's long listing is capped: 200 tools hashed and returned, the rest counted as omitted (agent door review, finding 5)", async () => {
+    const r = rig();
+    const many: Record<string, string> = {};
+    for (let i = 0; i < 205; i++) many[`t${String(i).padStart(3, "0")}`] = `tool ${i}`;
+    r.listing = listingOf(many);
+    const out = await handleConnectorWritesEnable({ ...AGENT }, r.deps);
+    if (!("tools" in out)) throw new Error("expected a list-only reply");
+    expect(out.tools).toHaveLength(200);
+    expect(out.tools?.[0]?.toolId).toBe("t000");
+    expect(out.tools?.[199]?.toolId).toBe("t199");
+    expect((out as { omitted?: number }).omitted).toBe(5);
+  });
+
+  test("a listing at the cap reports nothing omitted", async () => {
+    const r = rig();
+    const exact: Record<string, string> = {};
+    for (let i = 0; i < 200; i++) exact[`t${String(i).padStart(3, "0")}`] = "d";
+    r.listing = listingOf(exact);
+    const out = await handleConnectorWritesEnable({ ...AGENT }, r.deps);
+    expect("tools" in out && out.tools).toHaveLength(200);
+    expect("omitted" in out).toBe(false);
+  });
+
+  test("a tool listed beyond the cap can still be approved by name", async () => {
+    const r = rig();
+    const many: Record<string, string> = {};
+    for (let i = 0; i < 205; i++) many[`t${String(i).padStart(3, "0")}`] = `tool ${i}`;
+    r.listing = listingOf(many);
+    const out = await handleConnectorWritesEnable({ ...AGENT, approve: ["t204"] }, r.deps);
+    expect(out).toMatchObject({ listOnly: false, approved: 1 });
+    expect(listDoorApprovals(db, "agent", "mcp_notes").map((x) => x.toolId)).toEqual(["t204"]);
+  });
+
   test("the caller and policy checks still come first (an mcp connection never starts the server)", async () => {
     const r = rig({ kind: "mcp" });
     const msg = await refusal(handleConnectorWritesEnable({ ...AGENT }, r.deps));

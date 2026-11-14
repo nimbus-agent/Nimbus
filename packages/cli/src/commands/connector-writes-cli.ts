@@ -458,6 +458,12 @@ function logUserMcpTools(
       `Not approvable (a name may use letters, digits, _ and - only): ${notApprovable.map(clean).join(", ")}`,
     );
   }
+  const omitted = typeof r["omitted"] === "number" && r["omitted"] > 0 ? r["omitted"] : 0;
+  if (omitted > 0) {
+    d.log(
+      `${String(omitted)} more ${omitted === 1 ? "tool is" : "tools are"} listed but not shown. A tool can still be approved by its exact name with --approve <tool>.`,
+    );
+  }
   const todo = tools.filter((t) => t.state !== "already_approved");
   if (todo.length > 0) {
     d.log("To approve tools for outside agents, name each one:");

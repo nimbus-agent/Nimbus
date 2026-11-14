@@ -188,3 +188,46 @@ describe("listUserMcpToolDefinitions", () => {
     expect(out["mcp_a_nil"]).toEqual({ description: undefined, inputSchema: undefined });
   });
 });
+
+describe("listUserMcpToolDefinitions deadline (agent door review, finding 1)", () => {
+  /** A client whose listing never settles until released. */
+  function hangingClient(): { client: MCPClient; release: () => void } {
+    let release: () => void = () => undefined;
+    const client = {
+      listTools: () =>
+        new Promise<Record<string, unknown>>((resolve) => {
+          release = () => resolve({ mcp_a_x: { description: "late", inputSchema: SCHEMA } });
+        }),
+      disconnect: async () => undefined,
+    };
+    return { client: client as unknown as MCPClient, release: () => release() };
+  }
+
+  test("a listing that never settles resolves as undefined within the deadline, and a later normal listing works", async () => {
+    mesh = new LazyConnectorMesh(makePaths(), createMockVault(), {
+      listUserMcpConnectors: () => [userRow("mcp_a")],
+      userMcpListingDeadlineMs: 25,
+    });
+    const hang = hangingClient();
+    install(mesh, "mcp_a", { client: hang.client, calls: () => 0 });
+    const started = Date.now();
+    expect(await mesh.listUserMcpToolDefinitions("mcp_a")).toBeUndefined();
+    expect(Date.now() - started).toBeLessThan(2000);
+    // The abandoned promise settling later is harmless (no unhandled rejection, no effect).
+    hang.release();
+    install(mesh, "mcp_a", fakeClient({ mcp_a_x: { description: "fresh", inputSchema: SCHEMA } }));
+    const again = await mesh.listUserMcpToolDefinitions("mcp_a");
+    expect(Object.keys(again ?? {})).toEqual(["mcp_a_x"]);
+  });
+
+  test("a listing that settles inside the deadline is returned as before", async () => {
+    mesh = new LazyConnectorMesh(makePaths(), createMockVault(), {
+      listUserMcpConnectors: () => [userRow("mcp_a")],
+      userMcpListingDeadlineMs: 5000,
+    });
+    install(mesh, "mcp_a", fakeClient({ mcp_a_x: { description: "d", inputSchema: SCHEMA } }));
+    expect(Object.keys((await mesh.listUserMcpToolDefinitions("mcp_a")) ?? {})).toEqual([
+      "mcp_a_x",
+    ]);
+  });
+});

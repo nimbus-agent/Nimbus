@@ -65,6 +65,13 @@ export function isUserMcpServiceParam(service: unknown): service is string {
 }
 
 const MAX_APPROVE_NAMES = 200;
+/**
+ * The most tools the list-only mode (no `--approve`) hashes and returns. The listing comes from a
+ * registered third-party server and is not bounded by anything else, so the cost of a list is. Names
+ * are taken in sorted order; the rest are only counted (`omitted`). `--approve` looks each named tool
+ * up directly in the listing, so a tool beyond this cap can still be approved by name.
+ */
+export const USER_MCP_LIST_TOOLS_MAX = 200;
 /** The first characters of the server's description the prompt shows per tool. */
 const PROMPT_DESCRIPTION_MAX = 200;
 
@@ -90,6 +97,8 @@ export interface UserMcpAgentEnableReply {
   tools?: Array<{ toolId: string; sha12: string; state: UserMcpToolState }>;
   /** Tools the server lists that cannot be approved (a name outside the allowed alphabet). */
   notApprovable?: string[];
+  /** List mode only: how many listed tools were left out past {@link USER_MCP_LIST_TOOLS_MAX}. */
+  omitted?: number;
 }
 
 function stateOf(existing: DoorApproval | undefined, sha: string): UserMcpToolState {
@@ -218,7 +227,9 @@ export async function handleUserMcpAgentWritesEnable(
   if (names === undefined) {
     const tools: NonNullable<UserMcpAgentEnableReply["tools"]> = [];
     const notApprovable: string[] = [];
-    for (const tool of listedToolNames(service, listed)) {
+    const allNames = listedToolNames(service, listed);
+    const omitted = Math.max(0, allNames.length - USER_MCP_LIST_TOOLS_MAX);
+    for (const tool of allNames.slice(0, USER_MCP_LIST_TOOLS_MAX)) {
       const l = userMcpToolSegmentOk(`x.${tool}`) ? line(tool) : undefined;
       if (l === undefined) notApprovable.push(tool);
       else tools.push({ toolId: l.toolId, sha12: l.sha12, state: l.state });
@@ -231,6 +242,7 @@ export async function handleUserMcpAgentWritesEnable(
       writes: [],
       tools,
       ...(notApprovable.length === 0 ? {} : { notApprovable }),
+      ...(omitted === 0 ? {} : { omitted }),
     };
   }
   // 6. Each named tool is in the listing and hashes.

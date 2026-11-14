@@ -2203,6 +2203,11 @@ const D49_USER_MCP_CALL_ALLOWED: readonly string[] = [
   `${D49_SRC}engine/user-mcp-call-block.ts`,
 ];
 const D49_USER_MCP_CALL_WRITE_RE = /\buserMcpCall\s*\??\s*:/g;
+// The shorthand forms `{ userMcpCall }`, `{ ...x, userMcpCall }` and `{ a, userMcpCall, b }`: the
+// name directly after `{` or `,` and directly before `,` or `}`, never a member access. A
+// destructuring pattern (`const { userMcpCall, ...rest } = action`, a READ) is skipped by
+// `d49IsDestructuringTarget`.
+const D49_USER_MCP_CALL_SHORTHAND_RE = /(?<=[{,]\s*)userMcpCall(?=\s*[,}])/g;
 const D49_USER_MCP_CALL_WRITE_ALLOWED: readonly string[] = [
   `${D49_SRC}ipc/capture-rpc.ts`,
   `${D49_SRC}engine/types.ts`,
@@ -2212,6 +2217,19 @@ const D49_USER_MCP_LISTER_ALLOWED: readonly string[] = [
   `${D49_SRC}connectors/lazy-mesh/mesh.ts`,
   `${D49_SRC}platform/assemble.ts`,
   `${D49_SRC}ipc/connector-rpc.ts`,
+];
+// The injected dependency the door's check and the owner's enable and status receive (the mesh method
+// above, late-bound). Naming it is calling the lister, so it is confined to the files that declare,
+// forward or call it; the ORDER of a call inside an allowed file (after the verdict and the approval
+// checks, never before) is covered by the behavioural tests, not by this scan.
+const D49_USER_MCP_INJECTED_LISTER_RE = /\blistUserMcpDefinitions\b/g;
+const D49_USER_MCP_INJECTED_LISTER_ALLOWED: readonly string[] = [
+  `${D49_SRC}connectors/connector-writes/agent-door-runtime.ts`,
+  `${D49_SRC}ipc/connector-rpc-handlers/agent-writes.ts`,
+  `${D49_SRC}ipc/connector-rpc-handlers/agent-writes-user-mcp.ts`,
+  `${D49_SRC}ipc/connector-rpc-handlers/model-writes.ts`,
+  `${D49_SRC}ipc/connector-rpc.ts`,
+  `${D49_SRC}platform/assemble.ts`,
 ];
 const D49_REMOVE_APPROVALS_RE = /\bremoveDoorApprovals\b/g;
 const D49_REMOVE_APPROVALS_ALLOWED: readonly string[] = [
@@ -2233,6 +2251,7 @@ function d49ScanNames(
   allowed: readonly string[],
   rule: string,
   keepStrings: boolean,
+  skip?: (code: string, index: number) => boolean,
 ): Violation[] {
   const out: Violation[] = [];
   for (const f of files) {
@@ -2242,11 +2261,48 @@ function d49ScanNames(
     const code = keepStrings ? commentFree : stripStringLiterals(commentFree);
     const original = f.contents.split("\n");
     for (const m of code.matchAll(new RegExp(re.source, "g"))) {
+      if (skip?.(code, m.index) === true) continue;
       const line = lineOfOffset(code, m.index);
       out.push({ rule, file: f.relPath, line, snippet: (original[line - 1] ?? "").trim() });
     }
   }
   return out;
+}
+
+/**
+ * True when the identifier at `index` sits inside an object PATTERN: the `{ ... }` that encloses it
+ * is followed by a single `=` (`const { a, ...rest } = x`). Such a name is a read, not a property
+ * write. Strings and comments are already blanked in `code`, so a brace in either cannot desync the
+ * depth.
+ */
+function d49IsDestructuringTarget(code: string, index: number): boolean {
+  let depth = 0;
+  let open = -1;
+  for (let i = index - 1; i >= 0; i--) {
+    const c = code[i];
+    if (c === "}") depth++;
+    else if (c === "{") {
+      if (depth === 0) {
+        open = i;
+        break;
+      }
+      depth--;
+    }
+  }
+  if (open < 0) return false;
+  depth = 0;
+  for (let i = open; i < code.length; i++) {
+    const c = code[i];
+    if (c === "{") depth++;
+    else if (c === "}") {
+      depth--;
+      if (depth === 0) {
+        const rest = code.slice(i + 1).trimStart();
+        return rest.startsWith("=") && !rest.startsWith("==") && !rest.startsWith("=>");
+      }
+    }
+  }
+  return false;
 }
 
 export function checkAgentDoorLegacyTable(files: readonly FileEntry[]): Violation[] {
@@ -2332,6 +2388,14 @@ export function checkUserMcpCallFacts(files: readonly FileEntry[]): Violation[] 
       "user-mcp-call-facts-confined",
       false,
     ),
+    ...d49ScanNames(
+      files,
+      D49_USER_MCP_CALL_SHORTHAND_RE,
+      D49_USER_MCP_CALL_WRITE_ALLOWED,
+      "user-mcp-call-facts-confined",
+      false,
+      d49IsDestructuringTarget,
+    ),
   ];
 }
 
@@ -2341,6 +2405,13 @@ export function checkUserMcpDoorReach(files: readonly FileEntry[]): Violation[] 
       files,
       D49_USER_MCP_LISTER_RE,
       D49_USER_MCP_LISTER_ALLOWED,
+      "user-mcp-door-reach-confined",
+      false,
+    ),
+    ...d49ScanNames(
+      files,
+      D49_USER_MCP_INJECTED_LISTER_RE,
+      D49_USER_MCP_INJECTED_LISTER_ALLOWED,
       "user-mcp-door-reach-confined",
       false,
     ),
@@ -5641,7 +5712,7 @@ async function run(): Promise<void> {
     const doorReachViolations = checkUserMcpDoorReach(files);
     for (const e of doorReachViolations) {
       console.error(
-        `::error file=${e.file},line=${e.line}::D49(h) the stripped user-MCP listing or the door-approval delete named outside their sites (rule user-mcp-door-reach-confined) — listUserMcpToolDefinitions only in the mesh, the assembly and the connector RPC; removeDoorApprovals only in its store and the disable, remove and add handlers: ${e.snippet}`,
+        `::error file=${e.file},line=${e.line}::D49(h) the stripped user-MCP listing or the door-approval delete named outside their sites (rule user-mcp-door-reach-confined) — listUserMcpToolDefinitions only in the mesh, the assembly and the connector RPC, and its injected name listUserMcpDefinitions only in the door runtime, the connector RPC with its agent-writes and model-writes handlers, and the assembly; removeDoorApprovals only in its store and the disable, remove and add handlers: ${e.snippet}`,
       );
     }
     if (doorReachViolations.length > 0) exit = 1;
