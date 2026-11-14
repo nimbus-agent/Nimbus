@@ -865,13 +865,15 @@ mod tests {
     #[test]
     fn allowlist_approvals_never_renderer() {
         // Phase 28 AD2 (I7, I28): the owner's queue and one-step approval are CLI-only; approving
-        // asks a person at a terminal. Neither the four approvals methods nor capture.mine (the
-        // MCP client's own list) is ever the renderer's. One assert per name, as above.
+        // asks a person at a terminal. Neither the four approvals methods nor the two MCP client
+        // reads (capture.mine, the client's own list, and capture.describe, AD3a-2b, the types the
+        // door accepts) is ever the renderer's. One assert per name, as above.
         assert!(!is_method_allowed("approvals.list"));
         assert!(!is_method_allowed("approvals.get"));
         assert!(!is_method_allowed("approvals.approve"));
         assert!(!is_method_allowed("approvals.decline"));
         assert!(!is_method_allowed("capture.mine"));
+        assert!(!is_method_allowed("capture.describe"));
     }
 
     #[test]

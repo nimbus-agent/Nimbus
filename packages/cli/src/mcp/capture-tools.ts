@@ -29,8 +29,12 @@ export interface CaptureToolSpec {
     readonly idempotentHint: false;
     readonly openWorldHint: false;
   };
-  /** `status` is not a capture kind: `capture_status` is offered whenever any kind is enabled. */
-  readonly kind: CaptureToolKind | "status";
+  /**
+   * `status` is not a capture kind: `capture_status` is offered whenever any kind is enabled.
+   * `describe` follows the act door like `propose_action`: `describe_actions` is offered whenever
+   * `actionEnabled` is true.
+   */
+  readonly kind: CaptureToolKind | "status" | "describe";
   run(
     deps: AdapterDeps,
     args: Record<string, unknown>,
@@ -217,16 +221,15 @@ export const CAPTURE_TOOL_SPECS: readonly CaptureToolSpec[] = [
   {
     name: "propose_action",
     kind: "action",
-    // `captureToolsFor` appends the action types this machine accepts now to the description.
     description:
       "Propose a connector action (post a message, create or update a ticket, comment, create a draft, …) for the " +
       "user to approve. NOTHING is run when you call this: the proposal waits on the user's machine " +
       "until the owner runs `nimbus approvals <id>` and approves the exact input shown at the prompt. It expires " +
       "if not approved in time. Poll its outcome with capture_status. input is the tool's arguments as " +
-      "a JSON object. The list below is what this machine accepts now: the writes its owner approved for outside " +
-      "agents by name, plus a few types still accepted for a limited time with a Deprecated warning, which a later " +
-      "release will refuse unless the owner approves them. The owner's reason for declining or rejecting is never sent to you, only a fixed code. " +
-      "Accepted action types on this machine: ",
+      "a JSON object. Call describe_actions first: it lists what this machine accepts now (the writes its owner " +
+      "approved for outside agents by name, plus a few types still accepted for a limited time with a Deprecated " +
+      "warning, which a later release will refuse unless the owner approves them) and returns the description " +
+      "and input schema of the types you name. The owner's reason for declining or rejecting is never sent to you, only a fixed code.",
     schema: {
       actionType: z.string(),
       input: z.record(z.string(), z.unknown()),
@@ -253,6 +256,38 @@ export const CAPTURE_TOOL_SPECS: readonly CaptureToolSpec[] = [
           ],
         };
       }),
+  },
+  {
+    name: "describe_actions",
+    kind: "describe",
+    description:
+      "Read which action types propose_action accepts on this machine now. With no arguments it lists each type " +
+      "with its state: approved (the owner approved it for outside agents by name; with its wave, whether the " +
+      "owner must type a confirmation, and whether Nimbus reads and binds part of the input itself), legacy " +
+      "(still accepted for a limited time, with a Deprecated line), suspended (its definition changed since the " +
+      "owner approved it, so it is refused until the owner approves it again by name), unavailable, " +
+      "not_proposable (a type that cannot be proposed now; this does not say why) and undescribed. With actionTypes (1 to 10 types, at most 3 services, each type at most " +
+      "128 characters) it also returns, for each approved type it can verify now, the description and the input " +
+      "schema: ask for a type before you propose it, and build input from that schema alone. Fields Nimbus " +
+      "binds itself are not in the schema; never send them. A described type can still have its input refused " +
+      "by the same checks as every proposal. The number of calls an hour is limited. Tools of servers the " +
+      "user registered themselves are not described. This tool proposes and dispatches nothing, but " +
+      "describing an approved type can start its connector, and a definition found changed is recorded " +
+      "as suspended.",
+    // Never stricter than the gateway, which is authoritative about the bounds.
+    schema: { actionTypes: z.array(z.string()).optional() },
+    annotations: { ...WRITE_ANNOTATIONS, readOnlyHint: true },
+    run: (deps, args) =>
+      runTool(deps, async (c: IpcCallable) => ({
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(
+              await c.call<unknown>("capture.describe", pick(args, ["actionTypes"])),
+            ),
+          },
+        ],
+      })),
   },
   {
     name: "capture_status",
@@ -312,21 +347,9 @@ export async function captureToolsFor(deps: AdapterDeps): Promise<readonly Captu
   // The act door has its own switch (policy `mcp_action` included): `"action"` in kinds alone
   // is not enough, so propose_action follows `actionEnabled`, never the kinds list.
   const actionOn = status["actionEnabled"] === true;
-  const types = Array.isArray(status["proposableActionTypes"])
-    ? status["proposableActionTypes"].filter((t): t is string => typeof t === "string")
-    : [];
   return CAPTURE_TOOL_SPECS.flatMap((s): CaptureToolSpec[] => {
     if (s.kind === "status") return [s];
-    if (s.kind === "action") {
-      return actionOn
-        ? [
-            {
-              ...s,
-              description: `${s.description}${types.length === 0 ? "(none configured)" : types.join(", ")}.`,
-            },
-          ]
-        : [];
-    }
+    if (s.kind === "action" || s.kind === "describe") return actionOn ? [s] : [];
     return kinds.includes(s.kind) ? [s] : [];
   });
 }

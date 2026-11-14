@@ -11,7 +11,7 @@ description: >
   the ONE tool the gateway's routing table names (`connectors/proposable-actions.ts`). Use when
   touching `packages/gateway/src/mcp-sink/`, `packages/gateway/src/ipc/capture-rpc.ts` or `packages/gateway/src/ipc/approvals-rpc.ts`, the MCP
   write tools (`capture_note`, `propose_decision`, `propose_term`, `propose_link`,
-  `propose_action`, `capture_status`), `nimbus captures list|show|accept|reject|revoke|purge`, `nimbus approvals` (the owner's queue and one-step approval of an action proposal), the
+  `propose_action`, `describe_actions`, `capture_status`), `nimbus captures list|show|accept|reject|revoke|purge`, `nimbus approvals` (the owner's queue and one-step approval of an action proposal), the
   `[mcp_sink]` config, the `mcp_capture`/`mcp_action` org-policy lockoffs, making an action type
   proposable, adding a capture kind, or asking why a capture/proposal/action was refused.
 ---
@@ -179,11 +179,12 @@ connector allowlist. The act door's configured-ness comes from
 
 - **MCP tools** (`packages/cli/src/mcp/capture-tools.ts`): registered once, at MCP-server spawn,
   from `capture.status` — each proposal tool only for a kind in `kinds`; `propose_action` follows
-  `actionEnabled`, never `kinds` alone. Gateway down or `session.declareKind` failed → no tools.
+  `actionEnabled`, never `kinds` alone, and so does `describe_actions` (read-only; the type list lives there, `propose_action`'s text only points to it). Gateway down or `session.declareKind` failed → no tools.
 - **IPC** (`ipc/capture-rpc.ts`, routed by `tryDispatchCaptureRpc` in `ipc/server/dispatchers.ts`):
-  `capture.status` (any local client), `capture.submit`, `capture.state` and `capture.mine` (`mcp`
-  only; `capture.state` answers only for ids the asking connection submitted, `capture.mine` lists its
-  own), `captures.list|get|accept|reject|revoke|purge` (owner kinds `cli`/`ui`/`unknown`; `http`,
+  `capture.status` (any local client), `capture.submit`, `capture.state`, `capture.mine` and
+  `capture.describe` (`mcp` only; `capture.state` answers only for ids the asking connection
+  submitted, `capture.mine` lists its own, `capture.describe` returns the door's types and, for
+  approved types named by the caller, the model door's description and schema; AD3a-2b), `captures.list|get|accept|reject|revoke|purge` (owner kinds `cli`/`ui`/`unknown`; `http`,
   `chatops`, `fleet`, `push` refused). Both namespaces LAN-forbidden; no HTTP route; only
   `captures.list`/`captures.get` on the Tauri allowlist
   (`packages/ui/src-tauri/src/gateway_bridge.rs`).
@@ -243,6 +244,7 @@ is clamped.
 - The routing table is proven against the INSTALLED connectors package; a later tool rename surfaces as `failed`.
 - Configured-ness treats a multi-key service as configured once ANY key is set, so an accept can
   pass it and fail at dispatch.
+- `capture.describe` can start an approved connector (a listing per service, at most 3 services and 10 types per call, its own limiter), can record the one suspension audit row a submit would, names the approved Terraform directories and Kubernetes context and namespace names to an approved agent, and describes a legacy type by its deprecation line and a user-registered type not at all (I58 bounds 16 to 24). Describe does not say why a type cannot be proposed (one fixed `not_proposable` text; a refused submit names the class), a throwing check is one `unavailable` entry with a fixed text, and params are validated before the limiter (I58 bounds 20 to 24). It shares `verifyListed` with `verifyDefinition`: never copy the post-listing check.
 - `capture.state` answers only for ids the asking connection submitted (any other id is
   `ERR_CAPTURE_NOT_FOUND`, as an absent one): state and a short outcome link, never the payload.
 - The attempt limit is in-memory (resets on restart); the hourly cap is durable. Pre-limit refusals

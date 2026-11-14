@@ -3063,7 +3063,7 @@ the whole `capture.*` namespace stay off it. The page's `ui` connection is an ow
 served like the CLI.
 
 **MCP side.** `packages/cli/src/mcp/capture-tools.ts` registers each capture tool (`capture_note`,
-`propose_decision`, `propose_term`, `propose_link`, `propose_action`) only if `capture.status` reports the sink enabled for its kind; `capture_status` is offered whenever any kind is enabled. The decision is made once, when the MCP
+`propose_decision`, `propose_term`, `propose_link`, `propose_action`) only if `capture.status` reports the sink enabled for its kind; `describe_actions` (`capture.describe`, read-only, AD3a-2b) follows `actionEnabled` as `propose_action` does; `capture_status` is offered whenever any kind is enabled. The decision is made once, when the MCP
 server process spawns; a gateway that is down at that moment, or a failed `session.declareKind`,
 yields no capture tool rather than a guessed one.
 
@@ -3080,6 +3080,7 @@ yields no capture tool rather than a guessed one.
 | `captures.reject` | owner | discard a proposal; needs no capability |
 | `captures.purge` | owner | delete a finished action row (`executed`/`failed`/`rejected`/`expired`) and its stored input; needs no capability; the action is not undone |
 | `capture.state` | `mcp` kind only | kind, state, `expiresAt`, `outcomeRef`, `errorCode` for ONE capture id the asking connection submitted (any other id is `ERR_CAPTURE_NOT_FOUND`, as an absent one) |
+| `capture.describe` | `mcp` kind only | which action types the agent door accepts now: no `actionTypes` returns each type's state, wave, typed-confirmation flag and bound flag with no connector listing; 1 to 10 named types (at most 128 characters each, at most 3 services) return, for each approved type that passes the submit path's own definition check in the same call, the model door's description and input schema (the gateway's bound fields removed). A legacy type returns the fixed deprecation line, a user-registered (`mcp_*`) type `undescribed`, and a type that cannot be proposed now `not_proposable` with one fixed text that names no cause; a check that throws is that type's `unavailable` with a fixed text; params are validated before the limiter; the reply is capped at 256 KiB, has its own rate limit and carries no hash, date, owner-side reason or server address (Phase 28 AD3a-2b) |
 | `capture.mine` | `mcp` kind only | the asking connection's own captures, newest first, at most 50: id, kind, state, times, `outcomeRef`, `errorCode`; never a payload (Phase 28 AD2) |
 | `approvals.list` / `approvals.get` | `cli` or `ui` connection | the owner's queue of waiting action proposals (escaped, oldest first) and one proposal's verbatim input (Phase 28 AD2; not renderer-exposed) |
 | `approvals.approve` | `cli` or `ui` connection | approve one proposal in one step through `acceptCapture`: the executor's prompt reaches this connection, `human` answers only (Phase 28 AD2) |

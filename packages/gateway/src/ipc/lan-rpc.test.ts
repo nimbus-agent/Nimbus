@@ -159,6 +159,7 @@ describe("checkLanMethodAllowed", () => {
     "captures.get",
     "captures.revoke",
     "capture.mine",
+    "capture.describe",
     "approvals.list",
     "approvals.get",
     "approvals.approve",

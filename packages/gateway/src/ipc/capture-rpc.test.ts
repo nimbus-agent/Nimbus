@@ -32,6 +32,7 @@ import { resolveCaptureCapability } from "../mcp-sink/capture-capability.ts";
 import type { CaptureGateDeps } from "../mcp-sink/capture-gate.ts";
 import { CaptureAttemptLimiter, CaptureRefusalCounter } from "../mcp-sink/capture-rate-limit.ts";
 import { CaptureStore } from "../mcp-sink/capture-store.ts";
+import type { ActionDescription } from "../mcp-sink/capture-types.ts";
 import { PAYLOAD_MAX_BYTES } from "../mcp-sink/capture-validate.ts";
 import type { EnforcedPolicy } from "../policy/policy-gate.ts";
 import { createMockVault } from "../vault/mock.ts";
@@ -306,6 +307,7 @@ describe("LAN", () => {
     "captures.accept",
     "captures.purge",
     "capture.mine",
+    "capture.describe",
   ])("%s is not callable over LAN (namespace denial covers future methods)", (method) => {
     expect(() => checkLanMethodAllowed(method, { peerId: "p", writeAllowed: true })).toThrow(
       LanError,
@@ -672,6 +674,81 @@ test("capture.mine lists only the asking connection's captures, with no payload"
   await expect(
     dispatchCaptureRpc("capture.mine", {}, ctx, { clientId: "o", kind: "cli" }),
   ).rejects.toMatchObject({ rpcData: { code: "ERR_CAPTURE_FORBIDDEN_CLIENT" } });
+});
+
+describe("capture.describe (AD3a-2b)", () => {
+  const actionGate = (): CaptureGateDeps => ({
+    ...ctx.gate,
+    capability: () =>
+      resolveCaptureCapability(
+        {
+          ok: true,
+          config: { ...DEFAULT_MCP_SINK_CONFIG, enabled: true, kinds: ["note", "action"] },
+        },
+        { capabilitiesDisabled: new Set() },
+      ),
+  });
+  const described: ActionDescription = {
+    actionType: "github.issue.create",
+    state: "legacy",
+    deprecation: "Deprecated: x",
+  };
+  const withDescribe = (calls: Array<readonly string[] | undefined>): CaptureRpcCtx => ({
+    gate: actionGate(),
+    describe: {
+      limiter: new CaptureAttemptLimiter(),
+      actions: async (types) => {
+        calls.push(types);
+        return [described];
+      },
+    },
+  });
+
+  test("routes for an mcp connection, with and without actionTypes", async () => {
+    const calls: Array<readonly string[] | undefined> = [];
+    const c = withDescribe(calls);
+    const mcp = { clientId: "a", kind: "mcp" as const };
+    expect(await dispatchCaptureRpc("capture.describe", {}, c, mcp)).toEqual({
+      kind: "hit",
+      value: { actions: [described], truncated: false },
+    });
+    await dispatchCaptureRpc("capture.describe", { actionTypes: ["github.issue.create"] }, c, mcp);
+    expect(calls).toEqual([undefined, ["github.issue.create"]]);
+  });
+
+  test("refuses every connection that is not mcp before the describer runs", async () => {
+    const calls: Array<readonly string[] | undefined> = [];
+    const c = withDescribe(calls);
+    for (const kind of ["cli", "ui", "unknown", "http", "chatops"] as const) {
+      await expect(
+        dispatchCaptureRpc("capture.describe", {}, c, { clientId: "o", kind }),
+      ).rejects.toMatchObject({ rpcData: { code: "ERR_CAPTURE_FORBIDDEN_CLIENT" } });
+    }
+    expect(calls).toEqual([]);
+  });
+
+  test("refuses ERR_CAPTURE_DISABLED when the context has no describer", async () => {
+    await expect(
+      dispatchCaptureRpc(
+        "capture.describe",
+        {},
+        { gate: actionGate() },
+        {
+          clientId: "a",
+          kind: "mcp",
+        },
+      ),
+    ).rejects.toMatchObject({ rpcData: { code: "ERR_CAPTURE_DISABLED" } });
+  });
+
+  test("a malformed request is an invalid-params error carrying ERR_CAPTURE_INVALID", async () => {
+    await expect(
+      dispatchCaptureRpc("capture.describe", { actionTypes: [] }, withDescribe([]), {
+        clientId: "a",
+        kind: "mcp",
+      }),
+    ).rejects.toMatchObject({ rpcData: { code: "ERR_CAPTURE_INVALID" } });
+  });
 });
 
 describe("captures.accept on an action (act door wiring)", () => {

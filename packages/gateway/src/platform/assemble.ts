@@ -4828,6 +4828,9 @@ export async function assemblePlatformServices(
         verifyDefinition: agentDoor.verifyDefinition,
       },
     },
+    // `capture.describe` (AD3a-2b): the SAME door the gate checks submits with, and a limiter of its
+    // own, so describes and submits cannot starve each other.
+    describe: { limiter: new CaptureAttemptLimiter(), actions: agentDoor.describe },
   };
 
   // I39 (S2 runtime tool generation): the sandboxed, owner-approved, session-ephemeral tool

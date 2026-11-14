@@ -1639,7 +1639,7 @@ A first-party GitHub Action wraps the endpoint for use directly in workflows —
 
 ### `nimbus mcp-server`
 
-Expose the Nimbus local index to MCP-compatible editor AIs (Cursor, Claude Code, Copilot) as an MCP stdio server: 21 read-only tools, plus up to five opt-in write tools (`capture_note`, `propose_decision`, `propose_term`, `propose_link`, `propose_action`) and the read-only `capture_status`, each registered per `[mcp_sink] kinds` when the capture sink is enabled.
+Expose the Nimbus local index to MCP-compatible editor AIs (Cursor, Claude Code, Copilot) as an MCP stdio server: 21 read-only tools, plus up to five opt-in write tools (`capture_note`, `propose_decision`, `propose_term`, `propose_link`, `propose_action`) and the read-only `describe_actions` and `capture_status`, each registered per `[mcp_sink] kinds` when the capture sink is enabled (`describe_actions` with the act door, as `propose_action`).
 
 ```bash
 nimbus mcp-server            # print the MCP config block to paste into your editor (mcp.json)
@@ -1689,7 +1689,7 @@ The three proposal tools are registered only for the kinds in `[mcp_sink] kinds`
 `propose_action { actionType, input, summary }` proposes a connector action (post a message, create or update a
 ticket, comment, create a draft, and so on); it is registered only when `[mcp_sink] kinds` lists `action` and the org policy has
 not turned `mcp_action` off. `input` is the tool's arguments as a JSON object, `summary` is the agent's one-line
-reason (shown to the owner marked unverified). The tool's description lists the action types THIS machine accepts now: the ones its owner approved for outside agents by name
+reason (shown to the owner marked unverified). The tool's description points to `describe_actions`, which lists the action types THIS machine accepts now: the ones its owner approved for outside agents by name
 (`nimbus connector writes enable <service> --door agent`) and, for one release, the 47 types accepted before that existed, which
 are accepted with a `Deprecated:` line in the reply (the seven mail sends carry their own) and will be refused in a later release
 unless the owner approves them (the seven mail sends cannot be approved for agents at all, so they simply stop being proposable by agents; drafts remain available). NOTHING is sent when it is called: the reply says the action has NOT run, that the
@@ -1697,7 +1697,7 @@ owner must approve it with `nimbus approvals <id>` at the prompt, and to poll `c
 and that is not one of those 47 (a Wave 4 write, a commit, an apply, a file, pipeline, cloud, deployment, incident or
 data-platform write the owner has not approved for agents) is refused with `ERR_CAPTURE_ACTION_NOT_PROPOSABLE`, a tool whose
 definition changed since the owner approved it with `ERR_AGENT_TOOL_SUSPENDED`, and the confined ChatOps posts, the tribal KB
-and user-MCP tools of a server not registered `--model` are refused on every basis. `capture_status { id }` reads the state of a capture by id (`proposed`, `executed`,
+and user-MCP tools of a server not registered `--model` are refused on every basis. `describe_actions { actionTypes? }` (read-only, registered with `propose_action`) tells the agent what it may propose. With no arguments it lists each type this machine accepts now with its state (`approved`, `legacy`, `suspended` or `undescribed`; at most 200), its wave, whether the owner types a confirmation and whether Nimbus binds part of the input, and starts no connector. With `actionTypes` (1 to 10 types of at most 128 characters, across at most 3 services) it returns, for each approved type it can verify in that call, the same description and input schema Nimbus's own model is shown, with the fields Nimbus binds itself removed (never send them); a type that changed since you approved it is `suspended` (recorded once, as a submit would), one the connector does not list or cannot be listed now is `unavailable`, one that cannot be proposed now (not approved, not enabled, never offered, unknown) is `not_proposable` with the same text whatever the cause, so describe does not say why (a refused proposal does),  a type accepted only under the deprecation window returns its `Deprecated:` line and no schema, and user MCP tools are `undescribed`. The tool proposes and dispatches nothing (`readOnlyHint`), but a call that names an approved type can start its connector and record a suspension. For a Terraform apply the description names the directories you approved, and for a Kubernetes write the context and namespace names. Describing an approved type can start its connector, is limited to four times `max_per_hour` calls an hour, and a described type can still have its input refused. The result is one text block of JSON (it is not wrapped as tool output: it goes to the agent). `capture_status { id }` reads the state of a capture by id (`proposed`, `executed`,
 `failed`, `rejected`, `expired`, `accepted`, `live`, `revoked`), for a failed or rejected action a fixed `errorCode` when there is one, and, for an executed action, a short `https:` link when
 the service returned one; never the payload. It is offered whenever any kind is enabled. Since Phase 28 AD2 it answers
 only for captures submitted on the same gateway connection (any other id reads as not found, as an absent one does), so

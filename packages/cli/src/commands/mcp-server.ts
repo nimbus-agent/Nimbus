@@ -76,6 +76,8 @@ capture_note stores an agent-authored note in the LOCAL index, and
 propose_decision, propose_term and propose_link queue proposals that count only
 once you accept them. propose_action queues a connector action that runs only
 after you approve it with \`nimbus approvals <id>\` and answer the prompt;
+describe_actions tells the agent which action types you accept and, for those
+you approved by name, their description and input schema (read only);
 capture_status reads the state of a capture this connection submitted. You
 review the rest with \`nimbus captures\`. The Gateway must be
 running (start it with: ${gatewayStartCommand(demo)}).

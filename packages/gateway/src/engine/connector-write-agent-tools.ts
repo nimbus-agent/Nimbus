@@ -215,7 +215,7 @@ function k8sPairPieces(pairs: readonly K8sPair[]): string[] {
 }
 
 /** One approved Kubernetes pair, as the description lists it. */
-type K8sPair = { readonly context: string; readonly namespace: string };
+export type K8sPair = { readonly context: string; readonly namespace: string };
 
 /**
  * The Kubernetes apply's own sentence (D3a): the approved (context, namespace) pairs the model must
@@ -234,7 +234,12 @@ function k8sPairsSentence(pairs: readonly K8sPair[]): string {
   return cappedListSentence(head, k8sPairPieces(pairs), 300);
 }
 
-function describeFor(
+/**
+ * The description of one row's tool exactly as the model door shows it (and, since AD3a-2b, as
+ * `capture.describe` returns it to an approved agent): a bound row's text is the gateway's own, a
+ * non-bound row's listed text sits closer-escaped inside `wrapToolDescription`.
+ */
+export function describeFor(
   row: ConnectorWriteRow,
   service: string,
   listedDescription: string,
