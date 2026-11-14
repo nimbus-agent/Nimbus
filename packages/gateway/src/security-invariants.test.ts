@@ -5924,6 +5924,29 @@ describe("I29 — egress-ledger completeness over the executor chokepoint", () =
     expect(src.split("...subStepAttribution(action, scope)").length - 1).toBe(3);
   });
 
+  test("AD4: the agent: source prefix is written only by egress-record.ts and read only by the proof reader", async () => {
+    expect(await grepRepo(/\bAGENT_SOURCE_PREFIX\b/)).toEqual([
+      "packages/gateway/src/audit/agent-door-proof.ts",
+      "packages/gateway/src/egress/egress-record.ts",
+    ]);
+  });
+
+  test("AD4: the two proof methods check the connection's kind first, off the LAN and off the renderer allowlist", async () => {
+    const src = stripComments(await read("packages/gateway/src/ipc/audit-rpc.ts"));
+    for (const fn of ["handleProveByProposer", "handleListByDoor"]) {
+      const start = src.indexOf(`function ${fn}(`);
+      expect(start).toBeGreaterThan(0);
+      const body = src.slice(start, start + 400);
+      expect(body.indexOf("requireProofCaller(ctx,")).toBeGreaterThan(0);
+      expect(body.indexOf("requireProofCaller(ctx,")).toBeLessThan(
+        body.indexOf("paramsObject(params,"),
+      );
+    }
+    expect(src).toContain(`new Set<ClientKind>(["cli", "ui"])`);
+    const rust = await read("packages/ui/src-tauri/src/gateway_bridge.rs");
+    expect(rust).not.toMatch(/^\s*"audit\.(proveByProposer|listByDoor)",/m);
+  });
+
   test("AD4: the submit and accept rows carry the label and the SUBMITTING connection's id inside their hashed JSON", async () => {
     const gate = stripComments(await read("packages/gateway/src/mcp-sink/capture-gate.ts"));
     expect(gate).toContain("connection: caller.clientId,");

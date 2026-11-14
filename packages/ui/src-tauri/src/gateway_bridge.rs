@@ -726,6 +726,18 @@ mod tests {
     }
 
     #[test]
+    fn allowlist_audit_agent_door_proof_not_renderer_callable() {
+        // Phase 28 AD4: the proof of an outside agent's actions (grouped by the client's own
+        // unverified label) is owner-terminal only. It joins neither the renderer allowlist nor
+        // the LAN: the audit namespace is off the LAN as a whole.
+        assert!(!is_method_allowed("audit.proveByProposer"));
+        assert!(!is_method_allowed("audit.listByDoor"));
+        // The audit reads the renderer already had are unchanged.
+        assert!(is_method_allowed("audit.list"));
+        assert!(is_method_allowed("audit.verify"));
+    }
+
+    #[test]
     fn allowlist_decisions_brief_only() {
         // S1 decisions: the read-only brief is renderer-callable; the maintenance
         // verbs that rewrite the decision store are not (I7). decisions.rebuild in

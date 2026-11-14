@@ -1785,6 +1785,9 @@ export class ToolExecutor {
 
     const sessionId = getAgentRequestSessionId();
     const agent = attributionOf(action, scope);
+    // One instant for both rows: the egress prune deletes by timestamp, and the proof compares the
+    // two ledgers row for row, so a gate row and its ledger row must never straddle a cutoff.
+    const at = Date.now();
     // AD4: the egress entry is built FIRST, so a malformed capture id throws before EITHER row is
     // written and nothing is dispatched.
     const egressEntry = buildEgressEntry({
@@ -1803,13 +1806,13 @@ export class ToolExecutor {
       hitlStatus,
       resultStatus: hitlStatus === "rejected" ? "blocked" : "authorized",
       sessionId,
-      now: Date.now(),
+      now: at,
     });
     this.audit.recordAudit({
       actionType: action.type,
       hitlStatus,
       actionJson: auditPayload(action, auditExtrasOf(record), scope.onBehalfOf),
-      timestamp: Date.now(),
+      timestamp: at,
       ...(sessionId === undefined ? {} : { sessionId }),
     });
 

@@ -112,7 +112,7 @@ describe("skip paths", () => {
   });
   test("an unknown audit.* method falls through to skipped", async () => {
     expect(
-      await tryDispatchAuditRpc(makeCtx({ localIndex: indexWithDb() }), "audit.nope", {}),
+      await tryDispatchAuditRpc(makeCtx({ localIndex: indexWithDb() }), "audit.nope", {}, "c1"),
     ).toBe(phase4RpcSkipped);
   });
   test("index.demoSymbol requires a local index", async () => {
