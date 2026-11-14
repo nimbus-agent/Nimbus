@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794635851609,
+  "lastUpdate": 1794636520041,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
-            "name": "nimbus-release-bot[bot]",
-            "username": "nimbus-release-bot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "9e17d8b57656209b8503fa5c92a6fa98c96ae319",
-          "message": "chore: release main (#1348)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>3.0.0</summary>\n\n##\n[3.0.0](https://github.com/nimbus-agent/Nimbus/compare/v2.21.0...v3.0.0)\n(2026-08-27)\n\n\n### ⚠ BREAKING CHANGES\n\n* **connectors:** delete packages/mcp-connectors — it ships from npm now\n([#1347](https://github.com/nimbus-agent/Nimbus/issues/1347))\n\n### Features\n\n* **ci:** gate on connector version skew between the gateway and npm\n([#1346](https://github.com/nimbus-agent/Nimbus/issues/1346))\n([1a2d38a](https://github.com/nimbus-agent/Nimbus/commit/1a2d38a42ab16d3d83a4a4d016944d2a74bc39d7))\n\n\n### Code Refactoring\n\n* **connectors:** delete packages/mcp-connectors — it ships from npm now\n([#1347](https://github.com/nimbus-agent/Nimbus/issues/1347))\n([2118cdd](https://github.com/nimbus-agent/Nimbus/commit/2118cdd4ba4954d9617485973b753f47fcbed03c))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
-          "timestamp": "2026-08-27T04:43:33Z",
-          "tree_id": "9297c34f06ba55d1f0e2dfdc722957df8cda8378",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/9e17d8b57656209b8503fa5c92a6fa98c96ae319"
-        },
-        "date": 1787806490199,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 320.78415594999825,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 320.61213255000473,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 207.5258507000035,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
+            "name": "nimbus-release-bot[bot]",
+            "username": "nimbus-release-bot[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "7f1c3791a8f6483d13f8da9e00c58e1b5b5feba3",
+          "message": "chore: release main (#2000)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>10.59.0</summary>\n\n##\n[10.59.0](https://github.com/nimbus-agent/Nimbus/compare/v10.58.0...v10.59.0)\n(2026-11-14)\n\n\n### Features\n\n* **gateway:** add describe_actions, the read tool that tells an outside\nagent which writes it may propose\n([#2003](https://github.com/nimbus-agent/Nimbus/issues/2003))\n([afc65de](https://github.com/nimbus-agent/Nimbus/commit/afc65de31e590008380819db968fa834e7e41144))\n* **gateway:** record which connector writes the owner approves for\noutside agents, by name and by definition hash (agent door AD3a-1)\n([#1999](https://github.com/nimbus-agent/Nimbus/issues/1999))\n([1bc2a18](https://github.com/nimbus-agent/Nimbus/commit/1bc2a183c297cae6be667e51a4aeed7d36bc761a))\n* **gateway:** the owner's per-door list now decides what outside agents\ncan propose, with a one-release window for earlier proposals (agent door\nAD3a-2a) ([#2001](https://github.com/nimbus-agent/Nimbus/issues/2001))\n([5e457bd](https://github.com/nimbus-agent/Nimbus/commit/5e457bd0e03d53499e703f71a0d97a90295e5ac8))\n\n\n### Bug Fixes\n\n* **deps:** move astro to 7.4.12 for two new advisories\n([#2004](https://github.com/nimbus-agent/Nimbus/issues/2004))\n([cab13e6](https://github.com/nimbus-agent/Nimbus/commit/cab13e6b0c6a41214a67e5087d3d611a5d61da81))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
+          "timestamp": "2026-11-14T05:55:53Z",
+          "tree_id": "bd483bf365d1ed8a5555d8cd78efb416569ac56b",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/7f1c3791a8f6483d13f8da9e00c58e1b5b5feba3"
+        },
+        "date": 1794636515320,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 295.965648600004,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 295.69750189999723,
             "unit": "ms"
           }
         ]
