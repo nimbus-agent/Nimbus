@@ -2,6 +2,13 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [10.60.0](https://github.com/nimbus-agent/Nimbus/compare/v10.59.0...v10.60.0) (2026-11-14)
+
+
+### Features
+
+* **gateway:** name the door and the proposer of every agent action in both ledgers, and report them with nimbus prove --by-proposer (agent door AD4) ([#2005](https://github.com/nimbus-agent/Nimbus/issues/2005)) ([49f5de4](https://github.com/nimbus-agent/Nimbus/commit/49f5de44641fe2e170ddc2b69b52121417d19806))
+
 ## [10.59.0](https://github.com/nimbus-agent/Nimbus/compare/v10.58.0...v10.59.0) (2026-11-14)
 
 
