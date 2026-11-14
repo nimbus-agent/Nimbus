@@ -50,6 +50,14 @@ describe("runConnector help / dispatcher", () => {
     expect(out.stdout).toContain("nimbus connector");
   });
 
+  it("help shows the user MCP form of the agent approval (AD5a)", async () => {
+    await runConnector(["help"]);
+    expect(out.stdout).toContain(
+      "nimbus connector writes enable mcp_<id> --door agent [--approve <tool> ...]",
+    );
+    expect(out.stdout).toContain("user MCP server");
+  });
+
   it("throws on unknown subcommand", async () => {
     await expect(runConnector(["bogus"])).rejects.toThrow("Unknown connector subcommand: bogus");
   });

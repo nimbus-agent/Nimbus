@@ -1425,6 +1425,9 @@ Usage:
   nimbus connector writes enable <service> [--wave 2|3|4]   Let the model propose this service's writes (asks you; each call still asks)
   nimbus connector writes enable <service> --door agent [--wave 2|3|4] [--approve <tool-id|prefix*>]
                                                 Approve writes for outside agents (a person at a terminal only)
+  nimbus connector writes enable mcp_<id> --door agent [--approve <tool> ...]
+                                                Approve a user MCP server's tools for outside agents, by exact name
+                                                (with no --approve: list the tools and their hashes, ask nothing)
   nimbus connector writes disable <service> [--door agent]
   nimbus connector writes status [--json]
   nimbus connector remove <service> [--yes]         Irreversible; prompts unless --yes

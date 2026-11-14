@@ -26,6 +26,7 @@ export interface ConnectorWritesDeps {
 const ENABLE_USAGE =
   "Usage: nimbus connector writes enable <service> [--wave 2|3|4]\n" +
   "       nimbus connector writes enable <service> --door agent [--wave 2|3|4] [--approve <tool-id|prefix*> ...]\n" +
+  "       nimbus connector writes enable mcp_<id> --door agent [--approve <tool> ...]\n" +
   "       nimbus connector writes enable iac --wave 4 [--workdir <dir> ...] [--cloud aws,azure,gcp] [--region <r> ...] [--net <host> ...]\n" +
   "       nimbus connector writes enable kubernetes --wave 4 --grant <namespace>@<context> [--grant ...]";
 const DISABLE_USAGE = "Usage: nimbus connector writes disable <service> [--door agent]";
@@ -72,6 +73,14 @@ const REFUSALS: ReadonlyArray<readonly [code: string, message: string]> = [
   [
     "ERR_CONNECTOR_WRITES_BAD_APPROVE",
     "Refused: --approve takes a tool id or a prefix ending in one *, and belongs to --door agent.",
+  ],
+  [
+    "ERR_CONNECTOR_WRITES_AGENT_USER_MCP_WAVE",
+    "Refused: a user MCP server has no waves; do not pass --wave.",
+  ],
+  [
+    "ERR_CONNECTOR_WRITES_AGENT_CHANGED",
+    "Not enabled: the server was removed or registered again while you were deciding. Nothing was approved.",
   ],
   [
     "ERR_CONNECTOR_WRITES_IAC_UNAVAILABLE",
@@ -125,8 +134,56 @@ function usage(d: ConnectorWritesDeps, text: string): void {
 const AGENT_POLICY_REFUSAL =
   "Refused: your organisation's policy forbids connector writes for outside agents (connector_write_model_access or mcp_action).";
 
-function reportError(d: ConnectorWritesDeps, e: unknown, agentDoor = false): void {
+/**
+ * What a refusal means for a user MCP server (`mcp_<id>`), where it differs from the first-party
+ * line: the server is the owner's own registration, its tools are named exactly, and the policy
+ * needs `user_mcp_model_access` beside `mcp_action`.
+ */
+const USER_MCP_REFUSALS: ReadonlyArray<readonly [code: string, message: string]> = [
+  [
+    "ERR_CONNECTOR_WRITES_AGENT_USER_MCP_WAVE",
+    "Refused: a user MCP server has no waves; do not pass --wave.",
+  ],
+  [
+    "ERR_CONNECTOR_WRITES_AGENT_SCOPE",
+    "Refused: --door agent takes no directory, cloud or namespace.",
+  ],
+  [
+    "ERR_CONNECTOR_WRITES_BAD_APPROVE",
+    "Refused: for a user MCP server --approve takes exact tool names (letters, digits, _ and -; no *).",
+  ],
+  [
+    "ERR_CONNECTOR_WRITES_UNKNOWN_SERVICE",
+    "Refused: that user MCP server is not registered. Register it first with `nimbus connector add --mcp`.",
+  ],
+  [
+    "ERR_CONNECTOR_WRITES_POLICY",
+    "Refused: your organisation's policy does not let outside agents use user MCP tools (it needs mcp_action and user_mcp_model_access).",
+  ],
+  [
+    "ERR_CONNECTOR_WRITES_AGENT_UNLISTED",
+    "Refused: the server could not be started or lists no tools; run `nimbus connector tools <id>` to see why.",
+  ],
+  [
+    "ERR_CONNECTOR_WRITES_AGENT_NO_MATCH",
+    "Refused: the server does not list a tool by that name that can be approved now. Run the command without --approve to see its tools.",
+  ],
+  [
+    "ERR_CONNECTOR_WRITES_AGENT_CHANGED",
+    "Not enabled: the server was removed or registered again while you were deciding. Nothing was approved.",
+  ],
+];
+
+function reportError(d: ConnectorWritesDeps, e: unknown, agentDoor = false, userMcp = false): void {
   const message = e instanceof Error ? e.message : String(e);
+  if (userMcp) {
+    const own = USER_MCP_REFUSALS.find(([code]) => message.includes(code));
+    if (own !== undefined) {
+      d.error(own[1]);
+      process.exitCode = 2;
+      return;
+    }
+  }
   if (agentDoor && message.includes("ERR_CONNECTOR_WRITES_POLICY")) {
     d.error(AGENT_POLICY_REFUSAL);
     process.exitCode = 2;
@@ -146,7 +203,15 @@ function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
-type Parsed<T> = { readonly ok: true; readonly value: T } | { readonly ok: false };
+type Parsed<T> =
+  | { readonly ok: true; readonly value: T }
+  | {
+      readonly ok: false /** A second line that says why, when the usage alone would not. */;
+      readonly note?: string;
+    };
+
+/** The id shape of an owner-registered user MCP server (the gateway's `USER_MCP_SERVICE_ID_PATTERN`). */
+const USER_MCP_ID = /^mcp_[a-z0-9_]{1,62}$/;
 
 /** The approved scope of `enable iac` (D2): every flag repeats, `--cloud` also takes a comma list. */
 interface IacScope {
@@ -261,6 +326,18 @@ function parseEnableArgs(tail: string[]): Parsed<{
   const agent = flags.door === "agent";
   const hasIac = Object.values(iac).some((l) => l.length > 0);
   if (service === undefined) return { ok: false };
+  if (USER_MCP_ID.test(service)) {
+    // A user MCP server has one door (outside agents) and no waves: say so instead of a bare usage.
+    if (!agent) {
+      return {
+        ok: false,
+        note: "A user MCP server is approved for outside agents only: add --door agent.",
+      };
+    }
+    if (wave !== undefined) {
+      return { ok: false, note: "A user MCP server has no waves; do not pass --wave." };
+    }
+  }
   // `--approve` belongs to the agent door; the agent door reads the model's scope and takes none.
   if (approve.length > 0 && !agent) return { ok: false };
   if (agent) {
@@ -278,9 +355,14 @@ async function runEnable(d: ConnectorWritesDeps, tail: string[]): Promise<void> 
   const parsed = parseEnableArgs(tail);
   if (!parsed.ok) {
     usage(d, ENABLE_USAGE);
+    if (parsed.note !== undefined) d.error(parsed.note);
     return;
   }
   const { service, wave, iac, grants, agent, approve } = parsed.value;
+  if (agent && USER_MCP_ID.test(service)) {
+    await runUserMcpEnable(d, service, approve);
+    return;
+  }
   if (agent) {
     await runAgentEnable(d, service, wave, approve);
     return;
@@ -334,6 +416,92 @@ async function runAgentEnable(
   }
 }
 
+/** Hash prefixes and tool names come from the server and the reply: print neither with a control character. */
+function clean(v: unknown): string {
+  return stripControl(String(v));
+}
+
+interface UserMcpListedTool {
+  toolId?: unknown;
+  sha12?: unknown;
+  state?: unknown;
+}
+
+const USER_MCP_STATE_TEXT: Readonly<Record<string, string>> = {
+  will_be_approved: "not approved yet",
+  already_approved: "already approved",
+  reapproved_changed: "approved before, definition changed (approving again replaces it)",
+};
+
+/** The list-only reply: each tool with its state and hash prefix, then the exact command. Asks nothing. */
+function logUserMcpTools(
+  d: ConnectorWritesDeps,
+  service: string,
+  r: Record<string, unknown>,
+): void {
+  const tools = (Array.isArray(r["tools"]) ? r["tools"] : []) as UserMcpListedTool[];
+  const notApprovable = Array.isArray(r["notApprovable"]) ? r["notApprovable"] : [];
+  if (tools.length === 0) {
+    d.log(`${service} lists no tools that can be approved.`);
+  } else {
+    d.log(
+      `${service} lists ${String(tools.length)} ${tools.length === 1 ? "tool" : "tools"}. Nothing was asked and nothing was approved.`,
+    );
+  }
+  const width = tools.reduce((w, t) => Math.max(w, clean(t.toolId).length), 0);
+  for (const t of tools) {
+    const text = USER_MCP_STATE_TEXT[String(t.state)] ?? clean(t.state);
+    d.log(`  ${clean(t.toolId).padEnd(width)}  ${clean(t.sha12)}  ${text}`);
+  }
+  if (notApprovable.length > 0) {
+    d.log(
+      `Not approvable (a name may use letters, digits, _ and - only): ${notApprovable.map(clean).join(", ")}`,
+    );
+  }
+  const todo = tools.filter((t) => t.state !== "already_approved");
+  if (todo.length > 0) {
+    d.log("To approve tools for outside agents, name each one:");
+    d.log(
+      `  nimbus connector writes enable ${service} --door agent ${todo.map((t) => `--approve ${clean(t.toolId)}`).join(" ")}`,
+    );
+  } else if (tools.length > 0) {
+    d.log("Every listed tool is approved for outside agents already.");
+  }
+}
+
+/**
+ * `enable mcp_<id> --door agent [--approve <tool> ...]`: the person-only approval, by exact tool name,
+ * of a user MCP server's tools. With no `--approve` the gateway lists the tools and asks nothing.
+ */
+async function runUserMcpEnable(
+  d: ConnectorWritesDeps,
+  service: string,
+  approve: string[],
+): Promise<void> {
+  try {
+    const res = await d.call(
+      "connector.writesEnable",
+      { service, door: "agent", ...(approve.length === 0 ? {} : { approve }) },
+      { agentDoor: true },
+    );
+    const r = isRecord(res) ? res : {};
+    if (r["listOnly"] === true) {
+      logUserMcpTools(d, service, r);
+      return;
+    }
+    const writes = (Array.isArray(r["writes"]) ? r["writes"] : []) as UserMcpListedTool[];
+    d.log(
+      `Approved: ${String(r["approved"])} ${r["approved"] === 1 ? "tool" : "tools"} approved for outside agents on ${service}.`,
+    );
+    for (const w of writes) d.log(`  ${clean(w.toolId)}  ${clean(w.sha12)}`);
+    d.log(
+      "Each call an agent proposes still asks you and shows its exact input. A tool whose listed definition changes is suspended until you approve it again by name. The hash covers what the server lists, not what its code does.",
+    );
+  } catch (e) {
+    reportError(d, e, true, true);
+  }
+}
+
 /** `disable <service> [--door agent]`. */
 function parseDisableArgs(tail: string[]): Parsed<{ service: string; agent: boolean }> {
   const service = tail[0];
@@ -375,7 +543,7 @@ async function runDisable(d: ConnectorWritesDeps, tail: string[]): Promise<void>
         : `Model writes were not enabled for ${service}.`,
     );
   } catch (e) {
-    reportError(d, e, agent);
+    reportError(d, e, agent, agent && USER_MCP_ID.test(service));
   }
 }
 
@@ -437,6 +605,7 @@ interface AgentSuspended {
 
 interface AgentServiceStatus {
   service: string;
+  userMcp?: unknown;
   approved?: unknown;
   suspended?: AgentSuspended[];
   notListed?: unknown;
@@ -516,6 +685,22 @@ function logStatusRow(
   logAgentRow(d, agent);
 }
 
+/** `status` for user MCP servers: one block per server with an approval, apart from the model's list. */
+function logUserMcpSection(d: ConnectorWritesDeps, agent: AgentStatus | undefined): void {
+  const servers = (agent?.services ?? []).filter((s) => s.userMcp === true);
+  if (servers.length === 0) return;
+  d.log("User MCP servers (outside agents):");
+  for (const a of servers) {
+    const unverified =
+      typeof a.unverified === "string" ? ` (unverified: ${stripControl(a.unverified)})` : "";
+    d.log(`  ${stripControl(a.service)}: ${String(a.approved)} approved${unverified}`);
+    for (const t of a.suspended ?? []) d.log(`  ${suspendedLine(t)}`);
+    if (Array.isArray(a.notListed) && a.notListed.length > 0) {
+      d.log(`    not listed now: ${a.notListed.map((t) => stripControl(String(t))).join(", ")}`);
+    }
+  }
+}
+
 /** The agent door's one-time hint and its deprecation count; nothing for an older gateway. */
 function logAgentTail(d: ConnectorWritesDeps, agent: AgentStatus | undefined): void {
   if (agent === undefined) return;
@@ -537,14 +722,24 @@ function logLegacy(d: ConnectorWritesDeps, legacy: unknown): void {
   d.log(
     "To keep the other types working run: nimbus connector writes enable <service> --door agent (mail sends cannot be approved; drafts stay allowed)",
   );
+  if (Object.keys(byType).some((t) => t.startsWith("mcp_"))) {
+    d.log(
+      "For a user MCP tool run: nimbus connector writes enable mcp_<id> --door agent --approve <tool>",
+    );
+  }
 }
 
 /** The agent policy line: allows, or which capability the organisation turned off (OR-AD-15). */
 function agentPolicyLine(agent: AgentStatus): string {
-  if (agent.policyAllows === true) return "Agent policy: allows";
   const off = Array.isArray(agent.lockedOff)
     ? agent.lockedOff.map((c) => stripControl(String(c)))
     : [];
+  if (agent.policyAllows === true) {
+    // Connector writes are allowed; the user MCP lockoff is a separate switch that closes only user MCP tools.
+    return off.includes("user_mcp_model_access")
+      ? "Agent policy: allows connector writes; your organisation turned off user_mcp_model_access, so outside agents cannot use user MCP tools"
+      : "Agent policy: allows";
+  }
   return off.length === 0
     ? "Agent policy: forbids (connector_write_model_access or mcp_action)"
     : `Agent policy: forbids (your organisation turned off ${off.join(" and ")})`;
@@ -570,6 +765,7 @@ async function runStatus(d: ConnectorWritesDeps, tail: string[]): Promise<void> 
     const agent = isRecord(r["agent"]) ? (r["agent"] as AgentStatus) : undefined;
     const agentByService = new Map((agent?.services ?? []).map((s) => [s.service, s]));
     for (const row of rows) logStatusRow(d, row, width, agentByService.get(row.service));
+    logUserMcpSection(d, agent);
     logAgentTail(d, agent);
     d.log(
       r["policyAllows"] === true
