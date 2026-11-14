@@ -4264,7 +4264,53 @@ nimbus prove "open a GitHub issue for the flaky test" --receipt
 # receipt: digest=… sig=…
 ```
 
-The first positional non-flag argument is the query; flags may appear in any position.
+The first positional non-flag argument is the query; flags may appear in any position. `--since <dur>` is a window, never the query: with no query, `nimbus prove --since 7d` reports the ledger window that starts that long ago.
+
+### `nimbus prove --by-proposer [--since <dur>] [--proposer <label>] [--json]`
+
+Report what outside agents (MCP clients) proposed and what happened to it, grouped by the label each client sent. It runs no query, calls only `audit.proveByProposer`, and checks both tamper-evident ledgers (the audit log and the egress ledger) against each other, capture by capture. A positional argument is a usage error, and so is `--receipt` or `--sign`: a signature over a report grouped by labels the clients chose themselves would read as signed proof of who acted.
+
+| Flag | Effect |
+| --- | --- |
+| `--since <dur>` | Only proposals with activity in the last `7d`, `24h`, `30m`, ... (the CLI turns the duration into epoch milliseconds). Default: the whole audit log. |
+| `--proposer <label>` | Only the group whose label is this text (the stored text or its escaped form). |
+| `--json` | The gateway's reply as JSON (`labelsVerified: false`, `groups`, `scanCut`, `completeness`). |
+
+Each group counts: proposed, refused at submit, approved (by the executor's gate), declined, executed, failed, expired, waiting, dispatches in the egress ledger, and the number of connections that sent the label. Every label is printed in quotes after the word `UNVERIFIED`, on one line, with control characters removed; a proposal with no label reads `(no label)`.
+
+```text
+Actions proposed by outside agents (MCP), by proposer: since 2026-11-07 00:00:00 UTC
+Every label below is the client's own claim and is UNVERIFIED: any program can send any label, and a label does not identify a program.
+
+UNVERIFIED label "claude-code" (declared)
+  proposed 5, refused at submit 1, approved 3, declined 1, executed 3, failed 0, expired 0, waiting 0
+  dispatches in the egress ledger: 7; connections: 1 (an id lasts one gateway run)
+UNVERIFIED label (no label) (declared)
+  proposed 1, refused at submit 1, approved 0, declined 0, executed 0, failed 0, expired 0, waiting 0
+  dispatches in the egress ledger: 0; connections: 1 (an id lasts one gateway run)
+
+Both ledgers agree for the 6 proposal(s) checked.
+Not checked: 2 proposal(s) accepted before this version recorded the label source; 0 gate row(s) older than the newest egress prune.
+You can conclude: these proposals were recorded, the owner's gate decided this many of them, and both ledgers agree capture by capture.
+You cannot conclude which program sent them, whether the remote service applied a write, anything an agent did with its own credentials, or anything that never reached the executor.
+```
+
+The proof is `indeterminate` and the command exits 1 when the two ledgers disagree about a proposal (a mismatch, listed by code and capture id), an audit row cannot be read, the scan stopped at its row cap, either hash chain fails to verify, or no boot marker covers the window. Each cause prints its own sentence.
+
+```text
+UNVERIFIED label "claude-code" (declared)
+  proposed 5, refused at submit 1, approved 3, declined 1, executed 3, failed 0, expired 0, waiting 0
+  dispatches in the egress ledger: 7; connections: 1 (an id lasts one gateway run)
+
+INDETERMINATE: this report is not proof, for these reasons:
+  - The audit log and the egress ledger disagree about at least one proposal (listed below).
+    audit_row_without_egress_row  cap_00000000000000000000000000000001
+Not checked: 0 proposal(s) accepted before this version recorded the label source; 0 gate row(s) older than the newest egress prune.
+You can conclude nothing from this report until the reasons above are resolved.
+You cannot conclude which program sent them, whether the remote service applied a write, anything an agent did with its own credentials, or anything that never reached the executor.
+```
+
+Stated bounds: a label is the client's own claim and nothing verifies it; a connection id lasts one gateway run and does not identify a program; the report cannot show an action that never reached the executor, whether the remote service applied a write (the egress row precedes the call), or anything an agent did with its own credentials; rows older than the newest egress prune and proposals accepted before this version are counted as not checked. A gateway older than this version answers "too old" and the command exits 1.
 
 ### `nimbus egress` / `nimbus egress verify`
 
@@ -6016,13 +6062,29 @@ nimbus audit --limit 100 --json | jq -r '.[] | select(.hitlStatus == "rejected")
 
 **Where an approval came from.** Every prompted decision records an `answerSource` in the row's `actionJson`: `human` (you answered at the terminal or in the desktop popup), `auto` (`--yes`, or a caller that had already asked you), `script` (`--script-consent-source` / `NIMBUS_SCRIPT_CONSENT_SOURCE`), `unknown` (a client that reported none), `delegate` (a delegated approval) or `remote` (ChatOps). It is reported by the client, so treat it as evidence, not proof; an unrecognised value makes the gateway deny the request. `--json` shows it inside `actionJson`.
 
-`--limit` (default 50) and `--json` are the only flags parsed. There is no `--service` or `--since` **filtering** here — such arguments are silently ignored, and the most recent `--limit` rows are returned regardless; `--json` changes the rendering only, never the row set.
+`--limit` (default 50) and `--json` are the only flags the unfiltered command parses (`--door` and `--proposer` switch to the door view below). There is no `--service` or `--since` **filtering** here — such arguments are silently ignored, and the most recent `--limit` rows are returned regardless; `--json` changes the rendering only, never the row set.
 
 **Columns:** `Timestamp`, `Action`, `Status` (`approved` / `rejected` / `not_required` / `standing_approved`; the last is an action a live standing rule approved, see [`nimbus approve`](#nimbus-approve)), `Reason` (the HITL reject reason from `action_json`; `—` when absent).
 
 **`--json` shape.** A JSON array of the raw `audit.list` rows: `{ id, actionType, hitlStatus, actionJson, timestamp }`, newest first, honouring `--limit` (default 50). `actionJson` stays the **string** the chain stored — it is not parsed for you, so a row whose payload is malformed still appears rather than being dropped; the human table's "Reason" column is that string's `hitlRejectReason` field. `--json` applies to the listing only; `nimbus audit verify` and `nimbus audit export` have their own output contracts.
 
 ---
+
+### `nimbus audit --door <agent|model|workflow|other> [--proposer <label>] [--since <dur>] [--limit N] [--json]`
+
+List the audit rows that came through one door, newest first, from `audit.listByDoor`. `agent` is an outside MCP agent's proposal (the executor's row and the rows of its before-state reads, prepare read and change-set discard), `model` is Nimbus's own model, `workflow` is a saved workflow run, and `other` is every row the gateway does not mark with a door (the owner's own commands, ChatOps, delegates and the gateway's own actions): it is not claimed to be the owner's. `--proposer <label>` implies `--door agent` and is a usage error with any other door. `--limit` takes 1 to 1000 (default 100). The unfiltered `nimbus audit` is unchanged.
+
+```text
+Audit rows through the agent door, newest first.
+Every label is the client's own claim and is UNVERIFIED; it does not identify a program.
+Timestamp            Action                       Status            Capture                              Label / reason
+--------------------------------------------------------------------------------------------------------------
+2026-11-14 08:30:00  github.pr.merge              approved          cap_00000000000000000000000000000001 UNVERIFIED label "claude-code"
+2026-11-14 08:29:00  github.pr.merge.before.read  not_required      cap_00000000000000000000000000000001 (sub-step of the proposal)
+2026-11-14 08:00:00  slack.message.post           rejected          cap_00000000000000000000000000000002 UNVERIFIED label (no label)  reason: user-cancelled
+```
+
+A row from before this version has no label and reads `UNVERIFIED label not recorded (older row)`. When the scan reached its row cap the output ends with `The scan was cut at its row cap: older rows were not examined.` Like the proof, this view needs a connection that declared the `cli` or `ui` kind, which the command does first.
 
 ### `nimbus audit standing`
 

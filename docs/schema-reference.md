@@ -501,6 +501,10 @@ CREATE TABLE egress_ledger (
 CREATE INDEX idx_egress_ledger_ts     ON egress_ledger(timestamp);
 CREATE INDEX idx_egress_ledger_source ON egress_ledger(source_type, source_id);
 CREATE INDEX idx_egress_ledger_dest   ON egress_ledger(destination);
+-- `source_id` vocabulary for `source_type = 'task'` (Phase 28 AD4, no DDL change): the row of an outside agent's
+-- connector action AND of each of its before-state reads, prepare read and change-set discard carries
+-- `agent:<captureId>` (`cap_` plus 32 hex), never the client's label (the label is in the unhashed
+-- `payload_summary` as `{"agent":{"label":...}}`). The index above serves `source_id >= 'agent:' AND < 'agent;'`.
 
 -- Implicit-knowledge glossary (S1 "Local Brain") — V45, `definition_source` widened by V46.
 -- `glossary_term` is the SSoT for the extraction pass: it holds candidates in every status,

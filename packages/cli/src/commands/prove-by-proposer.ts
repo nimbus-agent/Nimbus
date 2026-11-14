@@ -158,7 +158,9 @@ export function formatProposerProof(proof: ProposerProofView): string {
     `Not checked: ${String(c.notChecked.preVersionCaptures)} proposal(s) accepted before this version recorded the label source; ${String(c.notChecked.prunedGateRows)} gate row(s) older than the newest egress prune.`,
   );
   lines.push(
-    "You can conclude: these proposals were recorded, the owner's gate decided this many of them, and both ledgers agree capture by capture.",
+    c.status === "ok"
+      ? "You can conclude: these proposals were recorded, the owner's gate decided this many of them, and both ledgers agree capture by capture."
+      : "You can conclude nothing from this report until the reasons above are resolved.",
   );
   lines.push(
     "You cannot conclude which program sent them, whether the remote service applied a write, anything an agent did with its own credentials, or anything that never reached the executor.",

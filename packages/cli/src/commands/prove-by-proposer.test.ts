@@ -168,6 +168,9 @@ describe("formatProposerProof", () => {
     expect(text).toContain(sentence);
     expect(text).not.toContain("cannot prove zero egress");
     expect(text).not.toContain("Both ledgers agree");
+    expect(text).not.toContain("You can conclude:");
+    expect(text).toContain("You can conclude nothing from this report");
+    expect(text).toContain("You cannot conclude which program sent them");
   });
 
   it("lists mismatches by code and capture id, and names an unknown cause", () => {
