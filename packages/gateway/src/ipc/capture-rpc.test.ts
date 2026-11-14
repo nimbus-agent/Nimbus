@@ -2,6 +2,7 @@ import type { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
 import { DEFAULT_MCP_SINK_CONFIG } from "../config/mcp-sink-toml.ts";
+import { legacyNoticeFor } from "../connectors/connector-writes/agent-door-legacy.ts";
 import { CONNECTOR_WRITE_ROWS } from "../connectors/connector-writes/index.ts";
 import {
   actDoorRefusal,
@@ -863,13 +864,18 @@ describe("captures.accept on an action (act door wiring)", () => {
       {
         type: "slack.message.post",
         origin: "agent",
-        proposer: proposerFrom({
-          captureId: "cap_0a0c0a0c0a0c0a0c0a0c0a0c0a0c0a0c",
-          clientLabel: "agent",
-          createdAt: 500,
-          expiresAt: 2_000,
-          summary: "why",
-        }),
+        // The fixture's verdict basis is legacy_user_mcp (AD5a): a legacy basis puts the fixed
+        // deprecation line on the proposer, from the same module every surface uses.
+        proposer: {
+          ...proposerFrom({
+            captureId: "cap_0a0c0a0c0a0c0a0c0a0c0a0c0a0c0a0c",
+            clientLabel: "agent",
+            createdAt: 500,
+            expiresAt: 2_000,
+            summary: "why",
+          }),
+          deprecation: legacyNoticeFor("slack.message.post"),
+        },
         payload: { mcpToolId: "slack_message_post", input: { text: "hi" } },
       },
     ]);
