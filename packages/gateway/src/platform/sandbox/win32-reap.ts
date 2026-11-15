@@ -31,6 +31,11 @@ export function liveExtensionIds(db: Database): Set<string> {
   for (const m of Object.values(FIRST_PARTY_MANIFESTS)) ids.add(m.id);
   const rows = db.query("SELECT id FROM extension").all() as ReadonlyArray<{ id: string }>;
   for (const r of rows) ids.add(r.id);
+  // A registered user MCP server spawns under `user.<service_id>` (Phase 28 AD5b). Its profile
+  // used to be reaped at every boot and created again at the next spawn; that changed no access
+  // (a profile made again under the same name keeps its permissions, measured) but left the
+  // profile and the grant ledger out of step. A registered server's profile is live.
+  for (const row of listUserMcpConnectors(db)) ids.add(`user.${row.service_id}`);
   return ids;
 }
 
