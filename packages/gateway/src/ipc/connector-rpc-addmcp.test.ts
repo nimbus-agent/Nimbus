@@ -477,6 +477,7 @@ describe("buildAddMcpConsentPayload — the runner is passed in, not the OS name
     readPaths: [],
     netHosts: ["api.example.com"],
     modelAccess: false,
+    writePaths: [],
   };
 
   test("win32 with hosts says Windows cannot limit it", () => {

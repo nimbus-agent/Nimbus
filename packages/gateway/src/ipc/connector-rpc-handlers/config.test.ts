@@ -77,6 +77,7 @@ const RESOLVED: ResolvedUserMcpRegistration = {
   readPaths: ["/opt/notes"],
   netHosts: ["api.example.com"],
   modelAccess: true,
+  writePaths: [],
 };
 
 /** `resolveConnectorAddMcp` with a fake PATH/filesystem — nothing real is consulted. */

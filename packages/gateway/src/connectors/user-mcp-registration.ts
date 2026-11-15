@@ -6,7 +6,13 @@
 
 import type path from "node:path";
 import { findServiceIdPrefixCollision } from "@nimbus-dev/registry-format";
-import { findProtectedOverlap, pathApiFor } from "../util/path-overlap.ts";
+import { findProtectedOverlap, pathApiFor, pathsOverlap } from "../util/path-overlap.ts";
+import {
+  MAX_WRITE_DIRS,
+  type WriteDirDeps,
+  writeDirRefusal,
+  writeDirsOverlap,
+} from "./write-dir-rules.ts";
 
 export type UserMcpRegistrationInput = {
   readonly serviceId: string;
@@ -14,6 +20,8 @@ export type UserMcpRegistrationInput = {
   readonly readPaths: readonly string[];
   readonly netHosts: readonly string[];
   readonly modelAccess: boolean;
+  /** Directories the server may write beneath (`--write`); absent means none. */
+  readonly writePaths?: readonly string[];
 };
 
 export type UserMcpRegistrationEnv = {
@@ -22,6 +30,13 @@ export type UserMcpRegistrationEnv = {
   readonly registeredServiceIds: readonly string[];
   which(cmd: string): string | null;
   realpath(p: string): string;
+  /**
+   * The facts the write-directory rule reads. A registration that names a write directory with
+   * no `writeDir` here is refused: the rule is never skipped.
+   */
+  readonly writeDir?: WriteDirDeps;
+  /** Every OTHER registered server's write directories (for the reverse rule); absent is none. */
+  readonly registeredWriteDirs?: readonly string[];
 };
 
 export type ResolvedUserMcpRegistration = {
@@ -31,6 +46,8 @@ export type ResolvedUserMcpRegistration = {
   readonly readPaths: readonly string[];
   readonly netHosts: readonly string[];
   readonly modelAccess: boolean;
+  /** Canonical, de-duplicated and sorted; empty when the registration names none. */
+  readonly writePaths: readonly string[];
 };
 
 export type UserMcpRegistrationErrorCode =
@@ -40,6 +57,7 @@ export type UserMcpRegistrationErrorCode =
   | "ERR_USER_MCP_READ_PATH_MISSING"
   | "ERR_USER_MCP_READ_PATH_PROTECTED"
   | "ERR_USER_MCP_NET_HOST_INVALID"
+  | "ERR_USER_MCP_WRITE_PATH_REFUSED"
   | "ERR_USER_MCP_ID_COLLISION";
 
 export class UserMcpRegistrationError extends Error {
@@ -156,6 +174,68 @@ function dedupe(items: readonly string[], key: (s: string) => string = (s) => s)
   return out;
 }
 
+/** Fixed sentences of the write-directory refusals this resolver adds to `writeDirRefusal`'s. */
+export const USER_MCP_WRITE_REFUSALS = Object.freeze({
+  tooMany: `at most ${String(MAX_WRITE_DIRS)} write directories may be given`,
+  overlap: "two of the write directories overlap; give each once, and none inside another",
+  ownCode:
+    "the server's own command or one of its file arguments is inside the write directory; a server may not write the code it is started from",
+  otherWriteDir:
+    "the server's command or one of its file arguments is inside another server's write directory",
+  unavailable: "write directories cannot be checked on this gateway",
+});
+
+function writeRefused(reason: string): UserMcpRegistrationError {
+  return new UserMcpRegistrationError(
+    "ERR_USER_MCP_WRITE_PATH_REFUSED",
+    `Write directory refused: ${reason}.`,
+  );
+}
+
+/** The command's directory and every absolute argument: the code this registration starts from. */
+function ownCodePaths(command: string, args: readonly string[], api: typeof path.posix): string[] {
+  return [api.dirname(command), ...args.filter((a) => api.isAbsolute(a))];
+}
+
+/**
+ * The write directories of a registration, canonical, in a fixed order, or a thrown refusal. Each
+ * passes `writeDirRefusal` (the rule a spawn applies again); none overlaps another; none holds or
+ * sits inside this server's own code. The reverse rule runs even with no write directory: a server
+ * whose code lies inside ANOTHER server's write directory is refused, so the order of two
+ * registrations cannot defeat the check.
+ */
+function resolveWritePaths(
+  input: UserMcpRegistrationInput,
+  env: UserMcpRegistrationEnv,
+  command: string,
+  args: readonly string[],
+  api: typeof path.posix,
+): string[] {
+  const own = ownCodePaths(command, args, api);
+  for (const other of env.registeredWriteDirs ?? []) {
+    if (own.some((p) => pathsOverlap(env.platform, p, other))) {
+      throw writeRefused(USER_MCP_WRITE_REFUSALS.otherWriteDir);
+    }
+  }
+  const raw = input.writePaths ?? [];
+  if (raw.length === 0) return [];
+  if (raw.length > MAX_WRITE_DIRS) throw writeRefused(USER_MCP_WRITE_REFUSALS.tooMany);
+  if (env.writeDir === undefined) throw writeRefused(USER_MCP_WRITE_REFUSALS.unavailable);
+  const out: string[] = [];
+  for (const p of raw) {
+    const checked = writeDirRefusal(p, "register", env.writeDir);
+    if (!checked.ok) throw writeRefused(checked.reason);
+    if (out.some((seen) => writeDirsOverlap(seen, checked.path, env.platform))) {
+      throw writeRefused(USER_MCP_WRITE_REFUSALS.overlap);
+    }
+    if (own.some((code) => pathsOverlap(env.platform, code, checked.path))) {
+      throw writeRefused(USER_MCP_WRITE_REFUSALS.ownCode);
+    }
+    out.push(checked.path);
+  }
+  return out.sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+}
+
 export function resolveUserMcpRegistration(
   input: UserMcpRegistrationInput,
   env: UserMcpRegistrationEnv,
@@ -178,6 +258,7 @@ export function resolveUserMcpRegistration(
     readPaths.push(commandDir);
   }
   const netHosts = input.netHosts.map(normaliseNetHost);
+  const writePaths = resolveWritePaths(input, env, command, args, api);
 
   return {
     serviceId: input.serviceId,
@@ -186,5 +267,6 @@ export function resolveUserMcpRegistration(
     readPaths: dedupe(readPaths, (p) => (env.platform === "win32" ? p.toLowerCase() : p)),
     netHosts: dedupe(netHosts),
     modelAccess: input.modelAccess,
+    writePaths,
   };
 }

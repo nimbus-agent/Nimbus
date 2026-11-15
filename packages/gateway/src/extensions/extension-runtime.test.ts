@@ -13,6 +13,7 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { insertExtensionRow } from "../automation/extension-store.ts";
 import { userMcpManifestFromRow } from "../connectors/lazy-mesh/user-mcp.ts";
+import { NO_USER_MCP_WRITE_GRANT } from "../connectors/lazy-mesh/user-mcp-write-grant.ts";
 import { LocalIndex } from "../index/local-index.ts";
 import { DEFAULT_RUNTIME_LAYOUT, type RuntimeLayout } from "../platform/runtime-layout.ts";
 import { extensionStageRootFor, sandboxCwdFor } from "../platform/sandbox/sandbox-cwd.ts";
@@ -205,16 +206,19 @@ describe("no manifest file or user MCP row can set firstPartyWildcardHosts (I43)
   });
 
   test("a user MCP row, even one whose --net holds a wildcard, yields a manifest without it", () => {
-    const r = userMcpManifestFromRow({
-      service_id: "mcp_x",
-      command: "/bin/echo",
-      args_json: "[]",
-      created_at: 0,
-      read_paths_json: "[]",
-      net_hosts_json: JSON.stringify(WILDCARDS),
-      model_access: 0,
-      write_paths_json: "[]",
-    });
+    const r = userMcpManifestFromRow(
+      {
+        service_id: "mcp_x",
+        command: "/bin/echo",
+        args_json: "[]",
+        created_at: 0,
+        read_paths_json: "[]",
+        net_hosts_json: JSON.stringify(WILDCARDS),
+        model_access: 0,
+        write_paths_json: "[]",
+      },
+      NO_USER_MCP_WRITE_GRANT,
+    );
     expect(r.ok).toBe(true);
     if (!r.ok) return;
     expect("firstPartyWildcardHosts" in r.manifest).toBe(false);
