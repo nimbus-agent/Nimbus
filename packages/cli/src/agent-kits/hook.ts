@@ -62,7 +62,7 @@ function splitCommands(line: string): string[] {
 }
 
 /** `NAME=value` before the program, which a shell treats as an assignment for that command. */
-const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
+const ASSIGNMENT = /^[A-Za-z_]\w*=/;
 
 function unquote(word: string): string {
   const first = word[0];

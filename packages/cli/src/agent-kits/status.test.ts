@@ -294,7 +294,7 @@ describe("the real machine", () => {
     const ok = execForOutput((_f, _a, _o, cb) => cb(null, Buffer.from("out\n")));
     expect(await ok("/bin/x", ["--version"])).toBe("out\n");
     const bad = execForOutput((_f, _a, _o, cb) => cb(new Error("ETIMEDOUT"), ""));
-    expect(bad("/bin/x", [])).rejects.toThrow("ETIMEDOUT");
+    await expect(bad("/bin/x", [])).rejects.toThrow("ETIMEDOUT");
     expect(await answers(() => Promise.resolve({}))).toBe(true);
     expect(await answers(() => Promise.reject(new Error("no gateway")))).toBe(false);
     expect(readProcessEnv("NIMBUS_NO_SUCH_VARIABLE_ANYWHERE")).toBeUndefined();

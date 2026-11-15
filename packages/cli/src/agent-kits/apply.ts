@@ -142,28 +142,30 @@ async function renameWithRetry(
   }
 }
 
-async function applyOne(fs: ApplyFs, edit: FileEdit, stamp: string): Promise<AppliedFile> {
-  if (edit.refusal !== undefined) throw new KitRefusal(edit.refusal);
-  // The plan checked this; a link can appear while the owner reads it. Checked again, the same way.
-  assertWritableTarget(fs.kind, edit.root, edit.path);
-  const asPlanned = (): boolean => fs.read(edit.path) === edit.before;
-  if (!asPlanned()) throw new KitRefusal(CHANGED(edit.path));
-  fs.mkdirp(dirname(edit.path));
-  let backup: string | undefined;
-  if (edit.before !== null) {
-    backup = `${edit.path}.nimbus-bak-${stamp}`;
-    try {
-      // Exclusive: two installs in the same second cannot both write this name.
-      fs.copy(edit.path, backup);
-    } catch (e) {
-      throw new KitRefusal(
-        errorCode(e) === "EEXIST"
-          ? `${backup} already exists; nothing was written. Run the command again`
-          : `${edit.path} could not be backed up (${e instanceof Error ? e.message : String(e)}); nothing was written`,
-      );
+function reasonOf(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
+}
+
+/** Step 2: the file as it is now, copied to a NEW backup name. Undefined when there is no file yet. */
+function backUp(fs: ApplyFs, edit: FileEdit, stamp: string): string | undefined {
+  if (edit.before === null) return undefined;
+  const backup = `${edit.path}.nimbus-bak-${stamp}`;
+  try {
+    // Exclusive: two installs in the same second cannot both write this name.
+    fs.copy(edit.path, backup);
+  } catch (e) {
+    if (errorCode(e) === "EEXIST") {
+      throw new KitRefusal(`${backup} already exists; nothing was written. Run the command again`);
     }
+    throw new KitRefusal(
+      `${edit.path} could not be backed up (${reasonOf(e)}); nothing was written`,
+    );
   }
-  // This run's own temporary file; another run's is never touched.
+  return backup;
+}
+
+/** Step 3: this run's own temporary file, renamed over the target. Another run's is never touched. */
+async function replace(fs: ApplyFs, edit: FileEdit, asPlanned: () => boolean): Promise<void> {
   const temp = `${edit.path}.nimbus-new-${fs.unique()}`;
   try {
     fs.write(temp, edit.after, fs.modeOf(edit.path));
@@ -172,13 +174,27 @@ async function applyOne(fs: ApplyFs, edit: FileEdit, stamp: string): Promise<App
     // A failed write can leave half a file: it goes too.
     if (fs.exists(temp)) fs.remove(temp);
     if (e instanceof KitRefusal) throw e;
-    const held = BUSY_CODES.has(errorCode(e) ?? "");
+    if (BUSY_CODES.has(errorCode(e) ?? "")) {
+      throw new KitRefusal(
+        `${edit.path} is in use by another program; it was left unchanged. Close the agent and run the command again`,
+      );
+    }
     throw new KitRefusal(
-      held
-        ? `${edit.path} is in use by another program; it was left unchanged. Close the agent and run the command again`
-        : `${edit.path} could not be replaced (${e instanceof Error ? e.message : String(e)}); it was left unchanged`,
+      `${edit.path} could not be replaced (${reasonOf(e)}); it was left unchanged`,
     );
   }
+}
+
+async function applyOne(fs: ApplyFs, edit: FileEdit, stamp: string): Promise<AppliedFile> {
+  if (edit.refusal !== undefined) throw new KitRefusal(edit.refusal);
+  // Step 1: what the plan checked is checked again. A link can appear, and the file can change,
+  // while the owner reads the plan.
+  assertWritableTarget(fs.kind, edit.root, edit.path);
+  const asPlanned = (): boolean => fs.read(edit.path) === edit.before;
+  if (!asPlanned()) throw new KitRefusal(CHANGED(edit.path));
+  fs.mkdirp(dirname(edit.path));
+  const backup = backUp(fs, edit, stamp);
+  await replace(fs, edit, asPlanned);
   return { path: edit.path, backup };
 }
 

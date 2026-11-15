@@ -82,8 +82,11 @@ function escapeRegExp(text: string): string {
  * state this engine wrote, so it is not edited.
  */
 export function findBlock(text: string, kit: string, style: BlockStyle): FoundBlock | undefined {
+  const open = style === "html" ? "<!-- " : "# ";
+  const close = style === "html" ? " -->" : "";
+  const head = escapeRegExp(`${open}>>> nimbus agent kit ${kit} v`);
   const begin = new RegExp(
-    `^${escapeRegExp(wrap(style, `>>> nimbus agent kit ${kit} v`)).replace(/ -->$/, "")}(\\d+) sha256:([0-9a-f]{64}) >>>${style === "html" ? " -->" : ""}$`,
+    `^${head}${String.raw`(\d+) sha256:([0-9a-f]{64}) >>>`}${escapeRegExp(close)}$`,
     "gm",
   );
   const first = begin.exec(text);
@@ -94,7 +97,7 @@ export function findBlock(text: string, kit: string, style: BlockStyle): FoundBl
   const end = endMarker(kit, style);
   const bodyStart = first.index + first[0].length + 1;
   // A whole line, like the begin marker: text after it on the same line is not an end marker.
-  const endRe = new RegExp(`\\n${escapeRegExp(end)}(?=\\n|$)`, "g");
+  const endRe = new RegExp(String.raw`\n` + escapeRegExp(end) + String.raw`(?=\n|$)`, "g");
   endRe.lastIndex = first.index + first[0].length;
   const endAt = endRe.exec(text)?.index ?? -1;
   if (endAt === -1) {
@@ -110,6 +113,12 @@ export function findBlock(text: string, kit: string, style: BlockStyle): FoundBl
     version: Number(first[1]),
     hashMatches: sha256Hex(body) === first[2],
   };
+}
+
+function withoutTrailingNewlines(text: string): string {
+  let end = text.length;
+  while (end > 0 && text[end - 1] === LF) end -= 1;
+  return text.slice(0, end);
 }
 
 function newlineOf(text: string | null): string {
@@ -137,7 +146,7 @@ export function upsertBlock(
   } else if (text.trim() === "") {
     out = block + LF;
   } else {
-    out = `${text.replace(/\n*$/, "")}${LF}${LF}${block}${LF}`;
+    out = `${withoutTrailingNewlines(text)}${LF}${LF}${block}${LF}`;
   }
   if (!out.endsWith(LF)) out += LF;
   return nl === CRLF ? out.replaceAll(LF, CRLF) : out;

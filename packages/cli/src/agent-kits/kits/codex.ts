@@ -60,15 +60,17 @@ function rule(
 ): string {
   // With resource kinds the pattern's last element is a list of alternatives (the kind as its own
   // word). `deployment/web` in one word is not matched by a prefix rule; the instructions cover it.
-  const pattern =
-    resources === undefined ? list(argv) : `[${[...argv.map(quoted), list(resources)].join(", ")}]`;
-  const line = resources === undefined ? argv.join(" ") : `${argv.join(" ")} ${resources[0] ?? ""}`;
+  const kinds = resources === undefined ? [] : [list(resources)];
+  const pattern = `[${[...argv.map(quoted), ...kinds].join(", ")}]`;
+  const words = resources === undefined ? argv : [...argv, resources[0] ?? ""];
+  const line = words.join(" ");
+  const longer = `${line} ${resources === undefined ? "--help" : "web"}`;
   return [
     "prefix_rule(",
     `    pattern = ${pattern},`,
     `    decision = "forbidden",`,
     `    justification = ${quoted(justification)},`,
-    `    match = ${list([line, `${line} ${resources === undefined ? "--help" : "web"}`])},`,
+    `    match = ${list([line, longer])},`,
     ")",
   ].join("\n");
 }
@@ -83,9 +85,39 @@ export function codexRulesBody(): string {
 /** A TOML key or table name with quotes and the spaces around its dots removed. */
 function tomlName(raw: string): string {
   return raw
-    .replaceAll(/["']/g, "")
-    .replaceAll(/\s*\.\s*/g, ".")
-    .trim();
+    .replaceAll('"', "")
+    .replaceAll("'", "")
+    .split(".")
+    .map((part) => part.trim())
+    .join(".");
+}
+
+const NIMBUS_SERVER = "mcp_servers.nimbus";
+
+function isNimbusServer(name: string): boolean {
+  return name === NIMBUS_SERVER || name.startsWith(`${NIMBUS_SERVER}.`);
+}
+
+/** The name in a `[table]` or `[[table]]` header line, or undefined when the line is not one. */
+function tableHeader(line: string): string | undefined {
+  if (!line.startsWith("[")) return undefined;
+  const inner = line.startsWith("[[") ? line.slice(2) : line.slice(1);
+  const close = inner.indexOf("]");
+  return close === -1 ? undefined : tomlName(inner.slice(0, close));
+}
+
+/** Why a `key = value` line under `table` collides with the Nimbus table, or undefined. */
+function keyConflict(table: string, line: string): string | undefined {
+  const equals = line.indexOf("=");
+  if (equals <= 0) return undefined;
+  const name = tomlName(line.slice(0, equals));
+  const full = table === "" ? name : `${table}.${name}`;
+  if (full === "mcp_servers") {
+    return "defines mcp_servers as an inline table, which cannot be added to";
+  }
+  return isNimbusServer(full)
+    ? "already defines mcp_servers.nimbus, which Nimbus did not write"
+    : undefined;
 }
 
 /**
@@ -101,24 +133,16 @@ export function codexServerConflict(text: string): string | undefined {
   for (const raw of text.split("\n")) {
     const line = raw.trim();
     if (line === "" || line.startsWith("#")) continue;
-    const header = /^\[\[?\s*([^\]]+?)\s*\]\]?/.exec(line);
-    if (header) {
-      table = tomlName(header[1] ?? "");
-      if (table === "mcp_servers.nimbus" || table.startsWith("mcp_servers.nimbus.")) {
-        return "already has an [mcp_servers.nimbus] table Nimbus did not write";
-      }
+    const header = tableHeader(line);
+    if (header === undefined) {
+      const conflict = keyConflict(table, line);
+      if (conflict !== undefined) return conflict;
       continue;
     }
-    const key = /^([^=]+?)\s*=/.exec(line);
-    if (!key) continue;
-    const name = tomlName(key[1] ?? "");
-    const full = table === "" ? name : `${table}.${name}`;
-    if (full === "mcp_servers") {
-      return "defines mcp_servers as an inline table, which cannot be added to";
+    if (isNimbusServer(header)) {
+      return "already has an [mcp_servers.nimbus] table Nimbus did not write";
     }
-    if (full === "mcp_servers.nimbus" || full.startsWith("mcp_servers.nimbus.")) {
-      return "already defines mcp_servers.nimbus, which Nimbus did not write";
-    }
+    table = header;
   }
   return undefined;
 }

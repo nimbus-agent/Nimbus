@@ -10,12 +10,12 @@
  */
 import { type ApplyResult, pendingEdits } from "../agent-kits/apply.ts";
 import { decideHook, hookOutput } from "../agent-kits/hook.ts";
-import type { KitPlan } from "../agent-kits/kit-types.ts";
 import {
   isKitId,
   KIT_IDS,
   type KitEnv,
   type KitId,
+  type KitPlan,
   type KitScope,
 } from "../agent-kits/kit-types.ts";
 import { DEFAULT_SCOPE, planKit } from "../agent-kits/kits/index.ts";
@@ -187,9 +187,8 @@ function statusLines(s: KitStatus, version: string | undefined): string[] {
     return [`${s.kit} (${s.scope}): cannot tell: ${printable(s.unreadable)}`];
   }
   if (!s.installed) return [`${s.kit} (${s.scope}): not installed`];
-  const lines = [
-    `${s.kit} (${s.scope}): steering ${s.enforcement}${version === undefined ? "" : `; agent version ${version}`}`,
-  ];
+  const agent = version === undefined ? "" : `; agent version ${version}`;
+  const lines = [`${s.kit} (${s.scope}): steering ${s.enforcement}${agent}`];
   for (const c of s.components) {
     const where = printable(c.where);
     if (c.state === "manual") {
@@ -206,43 +205,52 @@ function statusLines(s: KitStatus, version: string | undefined): string[] {
   return lines;
 }
 
-async function runStatus(a: { json: boolean }, deps: AgentCmdDeps): Promise<number> {
-  const statuses = allKitStatuses(deps.env());
-  const installed = statuses.filter((s) => s.installed);
-  const versions = new Map<KitId, string>();
-  for (const s of installed) {
-    const program = VERSION_PROGRAM[s.kit];
-    if (program !== undefined && !versions.has(s.kit)) {
-      versions.set(s.kit, printable(await deps.versionOf(program)));
-    }
-  }
-  const gateway = await deps.gatewayAnswers();
-  const attention = needsAttention(statuses);
-  if (a.json) {
-    deps.out(
-      `${JSON.stringify(
-        {
-          kits: statuses.map((s) => ({ ...s, agentVersion: versions.get(s.kit) ?? null })),
-          gateway: gateway ? "running" : "not running",
-          needsAttention: attention,
-          bounds: AGENT_DOOR_BOUNDS,
-          outsideTheDoor: OUTSIDE_THE_DOOR,
-        },
-        null,
-        2,
-      )}\n`,
-    );
-    return attention ? 1 : 0;
-  }
-  const lines: string[] = [];
-  if (installed.length === 0) lines.push("No agent kit is installed.");
-  for (const s of statuses) {
-    if (s.installed || s.unreadable !== undefined)
-      lines.push(...statusLines(s, versions.get(s.kit)));
-  }
+/** The version of each installed kit's agent program, read once per kit. */
+async function agentVersions(
+  installed: readonly KitStatus[],
+  deps: AgentCmdDeps,
+): Promise<Map<KitId, string>> {
+  const kits = [...new Set(installed.map((s) => s.kit))];
+  const entries = await Promise.all(
+    kits.map(async (kit): Promise<[KitId, string] | undefined> => {
+      const program = VERSION_PROGRAM[kit];
+      return program === undefined ? undefined : [kit, printable(await deps.versionOf(program))];
+    }),
+  );
+  return new Map(entries.filter((e) => e !== undefined));
+}
+
+function statusJson(
+  statuses: readonly KitStatus[],
+  versions: Map<KitId, string>,
+  gateway: string,
+  attention: boolean,
+): string {
+  return JSON.stringify(
+    {
+      kits: statuses.map((s) => ({ ...s, agentVersion: versions.get(s.kit) ?? null })),
+      gateway,
+      needsAttention: attention,
+      bounds: AGENT_DOOR_BOUNDS,
+      outsideTheDoor: OUTSIDE_THE_DOOR,
+    },
+    null,
+    2,
+  );
+}
+
+function statusText(
+  statuses: readonly KitStatus[],
+  versions: Map<KitId, string>,
+  gateway: string,
+  attention: boolean,
+): string {
+  const shown = statuses.filter((s) => s.installed || s.unreadable !== undefined);
+  const lines = statuses.some((s) => s.installed) ? [] : ["No agent kit is installed."];
+  for (const s of shown) lines.push(...statusLines(s, versions.get(s.kit)));
   lines.push(
     "",
-    `gateway: ${gateway ? "running" : "not running"}`,
+    `gateway: ${gateway}`,
     "",
     NOT_A_BOUNDARY,
     "",
@@ -250,9 +258,22 @@ async function runStatus(a: { json: boolean }, deps: AgentCmdDeps): Promise<numb
     "",
     OUTSIDE_THE_DOOR,
   );
-  if (attention)
+  if (attention) {
     lines.push("", "Run `nimbus agent install <kit> --dry-run` to see what would change.");
-  deps.out(`${lines.join("\n")}\n`);
+  }
+  return lines.join("\n");
+}
+
+async function runStatus(a: { json: boolean }, deps: AgentCmdDeps): Promise<number> {
+  const statuses = allKitStatuses(deps.env());
+  const versions = await agentVersions(
+    statuses.filter((s) => s.installed),
+    deps,
+  );
+  const gateway = (await deps.gatewayAnswers()) ? "running" : "not running";
+  const attention = needsAttention(statuses);
+  const render = a.json ? statusJson : statusText;
+  deps.out(`${render(statuses, versions, gateway, attention)}\n`);
   return attention ? 1 : 0;
 }
 

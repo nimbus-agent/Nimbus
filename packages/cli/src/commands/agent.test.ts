@@ -268,7 +268,7 @@ describe("nimbus agent install", () => {
         throw new TypeError("bug");
       },
     });
-    expect(runAgentWith(["install", "codex"], h.deps)).rejects.toThrow("bug");
+    await expect(runAgentWith(["install", "codex"], h.deps)).rejects.toThrow("bug");
   });
 });
 
