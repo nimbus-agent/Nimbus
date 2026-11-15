@@ -68,7 +68,8 @@ Usage:
   nimbus mcp-server --stdio    Run the MCP server over stdio (your editor launches this)
   nimbus mcp-server --stdio --agent <name>
                                The same, and label what this agent captures or proposes
-                               with <name> (lowercase letters, digits and hyphens). The
+                               with <name> (1 to 32 lowercase letters, digits and hyphens,
+                               starting with a letter or digit). The
                                label is shown to you as UNVERIFIED: it is whatever the
                                agent's server entry says, and Nimbus decides nothing by it
 

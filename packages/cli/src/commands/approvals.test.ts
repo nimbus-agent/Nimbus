@@ -123,6 +123,28 @@ describe("approvals list", () => {
     expect(lines.find((l) => l.startsWith("cap_declared"))).toContain("claude-code (declared)");
     expect(lines.find((l) => l.startsWith("cap_old"))).toContain("claude-code (declared)");
 
+    // The longest label --agent accepts (32 characters): the label is cut, the source is not.
+    const long = "a".repeat(32);
+    const w = fake((m) =>
+      m === "approvals.list"
+        ? {
+            proposals: [
+              { ...ROW, id: "cap_longkit", label: long, labelSource: "kit" },
+              { ...ROW, id: "cap_longdecl", label: long, labelSource: "declared" },
+            ],
+          }
+        : {},
+    );
+    const wide = sink();
+    await runApprovalsWith(w.client, { verb: "list", json: false }, wide.s, TTY, 2_000);
+    const wideRows = wide.out.join("").split("\n");
+    expect(wideRows.find((l) => l.startsWith("cap_longkit"))).toContain(
+      `${"a".repeat(19)}… (--agent) `,
+    );
+    expect(wideRows.find((l) => l.startsWith("cap_longdecl"))).toContain(
+      `${"a".repeat(18)}… (declared) `,
+    );
+
     for (const [labelSource, want] of [
       ["kit", "(--agent, unverified)"],
       ["declared", "(declared, unverified)"],

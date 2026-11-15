@@ -143,8 +143,19 @@ function sourceWord(p: Pick<Proposal, "fromKit">): string {
   return p.fromKit ? "--agent" : "declared";
 }
 
+/** The width of the FROM column. */
+const FROM_WIDTH = 30;
+
+/**
+ * The label and where it came from, in FROM_WIDTH columns. When the two do not fit it is the LABEL
+ * that is cut, never the source: a long label must not hide whether it was declared or `--agent`.
+ */
 function labelCell(p: Pick<Proposal, "label" | "fromKit">): string {
-  return `${stripControl(p.label ?? "-")} (${sourceWord(p)})`;
+  const source = ` (${sourceWord(p)})`;
+  const label = stripControl(p.label ?? "-");
+  const room = FROM_WIDTH - source.length;
+  const shown = label.length > room ? `${label.slice(0, room - 1)}…` : label;
+  return `${shown}${source}`;
 }
 
 /** The gateway's own deprecation header (fixed text), control-stripped, as a first block; or nothing. */
@@ -158,10 +169,10 @@ function deprecationBlock(raw: unknown): string {
 
 function formatQueue(rows: Proposal[], now: number, header = ""): string {
   if (rows.length === 0) return "No agent proposals are waiting.\n";
-  const head = `${cell("ID", 42)} ${cell("FROM (unverified)", 30)} ${cell("TYPE", 26)} ${cell("WAVE", 22)} ${cell("AGE", 8)} ${cell("EXPIRES", 8)} SUMMARY`;
+  const head = `${cell("ID", 42)} ${cell("FROM (unverified)", FROM_WIDTH)} ${cell("TYPE", 26)} ${cell("WAVE", 22)} ${cell("AGE", 8)} ${cell("EXPIRES", 8)} SUMMARY`;
   const lines = rows.map(
     (r) =>
-      `${cell(r.id, 42)} ${cell(labelCell(r), 30)} ${cell(stripControl(r.actionType), 26)} ${cell(r.legacy ? `${waveCell(r)} deprecated` : waveCell(r), 22)} ${cell(ago(r.createdAt, now), 8)} ${cell(until(r.expiresAt, now), 8)} ${stripControl(r.summary).slice(0, 60)}`,
+      `${cell(r.id, 42)} ${cell(labelCell(r), FROM_WIDTH)} ${cell(stripControl(r.actionType), 26)} ${cell(r.legacy ? `${waveCell(r)} deprecated` : waveCell(r), 22)} ${cell(ago(r.createdAt, now), 8)} ${cell(until(r.expiresAt, now), 8)} ${stripControl(r.summary).slice(0, 60)}`,
   );
   return `${header}${[head, ...lines].join("\n")}\nApprove one with: nimbus approvals <id>   (read it first with: nimbus approvals show <id>)\n`;
 }

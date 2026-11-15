@@ -1647,7 +1647,7 @@ nimbus mcp-server --stdio    # run the server over stdio (your editor launches t
 nimbus mcp-server --stdio --agent <name>   # the same, labelling what this agent captures or proposes
 ```
 
-`--agent <name>` (1 to 32 lowercase letters, digits and hyphens, for example `--agent claude-code`) goes in the
+`--agent <name>` (1 to 32 lowercase letters, digits and hyphens, starting with a letter or digit, for example `--agent claude-code`) goes in the
 agent's server entry. Captures and proposals from that server are then labelled `<name>` instead of the name the
 agent declares, and `nimbus approvals` shows the label as `<name> (--agent)` rather than `<name> (declared)`. The
 label is UNVERIFIED either way: any program that can start `nimbus mcp-server` can pass any name, and Nimbus decides
