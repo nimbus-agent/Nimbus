@@ -170,6 +170,11 @@ CONFIG & DIAGNOSTICS
                               captured or proposed ([mcp_sink] in nimbus.toml); accept --all takes
                               every proposed decision/term/link after one prompt; purge deletes a
                               finished action's stored input; an action is approved with approvals
+  nimbus agent install <claude-code|codex|cursor|vscode> [--scope user|project] [--dry-run] [--yes]
+                              Write the Nimbus MCP server entry and steering rules into that
+                              agent's own configuration; every change is shown first and written
+                              only after you type yes. Steering is guidance, not a boundary
+  nimbus agent status [--json]   Whether each installed agent kit is still as Nimbus wrote it
   nimbus approvals [list|show <id>|<id>|<id> --decline|--decline-all-from <label>] [--json]
                               Agent-proposed connector actions: list what waits, read what the agent
                               sent, and approve one in a single step at this terminal (a person

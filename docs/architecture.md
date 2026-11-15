@@ -3055,6 +3055,27 @@ leaves every other column unchanged; the CHECK enforces only the `payload_json` 
 display field: the approval prompt, `approvals.list`/`approvals.get`, the accept audit row and the proof by proposer
 show it, and no step of the gate, the act door or the executor reads it.
 
+**Agent kits (Phase 28 AD7b; CLI only).** `packages/cli/src/agent-kits/` connects a coding agent to that
+server. Each kit (`kits/{claude-code,codex,cursor,vscode}.ts`) is a PURE function from a `KitEnv` (home, working
+directory, how this machine starts `nimbus`, a file reader, a path-kind reader) to a `KitPlan`: the files it would
+write (`before`, `after`, and whether something of the kit's is already `present`), any step the owner runs by
+hand, and how far the agent's harness can hold the steering (`hook`, `rules`, `guidance only`, `none`).
+`plan-files.ts` is the edit engine and knows two edits only: an owned block between marker lines that carry a
+SHA-256 of the body (hashed with CRLF read as LF), and owned keys in a strict JSON file (a file that does not parse
+is refused, and an edit that changes nothing returns the original bytes). `apply.ts` is the ONLY module that
+writes: it repeats the plan's link check (the file and every directory up to the scope's root, not followed),
+re-reads each file, refuses one that changed since the plan, copies it to `<file>.nimbus-bak-<UTC time>`,
+writes a temporary file and renames it over the target (five tries on `EPERM`/`EBUSY`/`EACCES`, then the temporary
+file is removed and the target left as it was). `status.ts` re-runs the plan and compares; it never writes.
+`steer-table.ts` holds the seven steered commands and the three owner commands, and `hook.ts` is the Claude Code
+`PreToolUse` hook (pure, imports only the steer table, fails open). The gateway is not involved: install and the
+hook work while it is stopped, and `scripts/agent-kits/steer-table.test.ts` holds every steered action type to a
+model-offerable connector write row. *Decisions:* the table lives in the CLI, not the gateway (the spec said
+gateway), for that reason; Nimbus starts no vendor CLI (a `.cmd` shim needs a shell, and a vendor CLI writes a file
+Nimbus cannot diff or back up first); the VS Code kit's project scope writes `.vscode/mcp.json`, not the workspace
+`.mcp.json` the Claude Code kit owns, so two kits never share one key. *Rejected:* a Cursor hook (its input shape
+is unverified, and a hook that misreads input blocks every command or none) and a hook that fails closed.
+
 **Items.** A note is an ordinary indexed item of type `nimbus:capture`, labelled agent-authored
 (`agentAuthored` appears in MCP read results beside the item `id`, so a client can cite it back as
 `relatesTo`). Capture items are excluded from decision and glossary extraction, and their text is

@@ -1750,6 +1750,63 @@ While a rule is live, each write of that step that is built by that exact workfl
 
 ---
 
+### `nimbus agent`
+
+Connect a coding agent to Nimbus: write the Nimbus MCP server entry and steering rules into that agent's own
+configuration, and check later that they are still there.
+
+```bash
+nimbus agent install <claude-code|codex|cursor|vscode> [--scope user|project] [--dry-run] [--yes]
+nimbus agent status [--json]
+```
+
+**Steering is guidance in the agent's own harness. It is not a security boundary.** An agent with a shell can run
+`nimbus approvals <id>` itself and, until desktop approval ships, can still approve its own proposals; it can also
+run any command its harness allows with the credentials already on the machine. The kits reduce accidents.
+
+`install` prints every file it would create or change with a diff, and any command you must run yourself, then asks
+you to type `yes`. `--dry-run` prints and stops. `--yes` skips the question (read a dry run first). With no terminal
+and no `--yes` it refuses. What it writes, per kit:
+
+| Kit | Default scope | `--scope user` | `--scope project` | Steering |
+| --- | --- | --- | --- | --- |
+| `claude-code` | user | `~/.claude/settings.json` (a `PreToolUse` hook and three deny rules); the server is a command you run, `claude mcp add --scope user nimbus -- nimbus mcp-server --stdio --agent claude-code` | `.mcp.json` and `settings.json` in the project's `.claude` folder | hook |
+| `codex` | user | `~/.codex/config.toml`, `~/.codex/rules/nimbus.rules`, `~/.codex/AGENTS.md` | refused | rules |
+| `cursor` | user | `~/.cursor/mcp.json` (no steering at user scope) | `.cursor/mcp.json` and `.cursor/rules/nimbus.mdc` | guidance only |
+| `vscode` | project | `~/.copilot/mcp-config.json` (no steering at user scope) | `.vscode/mcp.json` and `copilot-instructions.md` in the project's `.github` folder | guidance only |
+
+Rules it follows on every file: an existing file is copied to `<file>.nimbus-bak-<UTC time>` first; only a block
+between two `nimbus agent kit` marker lines, or Nimbus's own keys in a JSON file, is changed (one exception: Cursor's
+`nimbus.mdc` rules file is owned whole and rewritten on reinstall, so keep your own Cursor rules in another file); a file that is a
+symbolic link, a JSON file that is not strict JSON (comments, a trailing comma) and a Codex config with its own
+`[mcp_servers.nimbus]` table are refused, not rewritten; a file that changed after the plan was shown is not
+written; a link at the file or at any directory between it and the scope's own tree is refused, when the plan is
+made and again just before the write; nothing is deleted. User scope writes under the home directory, or under the
+directory `CLAUDE_CONFIG_DIR`, `CODEX_HOME` or `COPILOT_HOME` names when set (it must be absolute). Nimbus starts
+no other vendor's program. It refuses to install from a source tree,
+because an agent's configuration must not point at a checkout. `--scope project` needs the current directory to be
+the root of a git repository. There is no uninstall command; the docs site's *Agent kits* page lists what to delete.
+
+The steering covers `gh pr merge`, `glab mr merge`, `terraform apply`, `kubectl apply`, `kubectl scale`,
+`kubectl rollout restart` and `aws lambda invoke` (each pointed at the matching `propose_action` type; scale and
+rollout restart for deployments only, since the door acts on nothing else) and tells
+the agent never to run `nimbus approvals`, `nimbus connector writes` or `nimbus captures`. The Claude Code hook
+(`nimbus agent hook claude-code`, run by Claude Code, not by you) denies those commands with the reason and makes no
+decision about anything else; it fails open when it cannot read its input, and it does not treat a separator inside
+quotes, or an escaped one, as the start of a new command.
+
+`status` reads the same files again and reports each part of each installed kit as `ok`, `drifted` (edited, or
+written by an older Nimbus), `missing`, or `manual` (a command you ran yourself, which Nimbus cannot check). It also
+prints the agent's version where it can read it without a shell, whether the gateway is running, and the limits
+above. It never writes.
+
+**Exit codes:** `install`: `0` written, nothing to change, or a dry run; `1` refused, declined or a file could not
+be written; `2` usage. `status`: `0` every installed kit is as written (a `manual` part never counts), or none is
+installed; `1` an installed kit has a `drifted` or `missing` part, or a file Nimbus can no longer read as its own
+(`cannot tell`, with the reason). Such a file for a kit with nothing else installed is not reported.
+
+---
+
 ### `nimbus approvals`
 
 The owner's queue of connector actions that outside MCP agents proposed (`propose_action`), and the one-step approval of one (Phase 28 AD2). These are owner commands: the gateway serves them only to a connection that declared `cli` or `ui`, so an editor agent, an undeclared client, HTTP and ChatOps are refused (`ERR_CAPTURE_FORBIDDEN_CLIENT`). Nothing here needs a model.

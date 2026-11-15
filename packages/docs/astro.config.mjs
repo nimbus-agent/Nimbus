@@ -38,6 +38,7 @@ export default defineConfig({
             { label: "Connect your first service", link: "/user-guide/connect-your-first-service/" },
             { label: "Your first query", link: "/user-guide/your-first-query/" },
             { label: "HITL & safety", link: "/user-guide/hitl-and-safety/" },
+            { label: "Agent kits", link: "/user-guide/agent-kits/" },
             { label: "Watchers", link: "/user-guide/watchers/" },
             { label: "Workflows", link: "/user-guide/workflows/" },
             { label: "Morning briefing", link: "/user-guide/morning-briefing/" },

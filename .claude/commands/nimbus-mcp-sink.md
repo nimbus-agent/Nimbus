@@ -348,3 +348,12 @@ on `capture.submit`). Both are UNVERIFIED and DISPLAY ONLY: the prompt, `approva
 audit row and the proof show the source; no step of `capture-gate.ts`, `capture-act.ts` or the executor may branch on
 it (a source pin in the I28 block of `security-invariants.test.ts` fails on any line there that is not a declaration or a
 pass-through). A new fixture that builds a `NewCaptureRow` must set `labelSource`.
+
+## Agent kits (AD7b)
+
+`nimbus agent install|status` (`packages/cli/src/commands/agent.ts`, `packages/cli/src/agent-kits/`) writes the
+server entry `nimbus mcp-server --stdio --agent <kit>` and steering into an agent's own configuration. CLI only.
+Steering is guidance, never a boundary. When a connector write's action type is renamed or stops being
+model-offerable, `scripts/agent-kits/steer-table.test.ts` fails: fix `steer-table.ts`, bump
+`STEER_TABLE_VERSION` (installed kits then read as drifted), and update the table on the docs site's Agent kits
+page (`scripts/agent-kits/kit-page.test.ts` holds it).
