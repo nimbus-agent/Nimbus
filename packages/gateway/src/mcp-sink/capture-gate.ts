@@ -42,6 +42,7 @@ import {
   isCaptureKind,
   isCaptureState,
   isLegacyBasis,
+  type LabelSource,
   type NativeValidatedCapture,
   NO_BASIS_CLASS,
   type ValidatedCapture,
@@ -50,6 +51,7 @@ import {
   PAYLOAD_MAX_BYTES,
   referencedItemIds,
   sanitizeClientLabel,
+  sanitizeLabelSource,
   validateCapturePayload,
 } from "./capture-validate.ts";
 
@@ -181,6 +183,7 @@ export interface ActionProposalRow {
   readonly actionType: string;
   readonly summary: string;
   readonly clientLabel: string | null;
+  readonly labelSource: LabelSource;
   readonly createdAt: number;
   readonly expiresAt: number;
   /** Queued under the deprecation window (V97 `legacy`): the earlier act door accepted it. */
@@ -293,6 +296,8 @@ interface SubmitContext {
   readonly caller: CaptureCaller;
   readonly kind: CaptureKind;
   readonly clientLabel: string | null;
+  /** Display only (D-AD-13): stored and shown, never read by a step of this gate. */
+  readonly labelSource: LabelSource;
 }
 
 type ActionCapture = Extract<ValidatedCapture, { readonly kind: "action" }>;
@@ -564,7 +569,8 @@ export async function submitCapture(
   if (!isCaptureKind(kindRaw) || !cap.kinds.includes(kindRaw)) {
     refuseKindNotAllowed(deps, caller, kindRaw, clientLabel);
   }
-  const ctx: SubmitContext = { deps, caller, kind: kindRaw, clientLabel };
+  const labelSource = sanitizeLabelSource(params["labelSource"], clientLabel);
+  const ctx: SubmitContext = { deps, caller, kind: kindRaw, clientLabel, labelSource };
   // 5. Whitelist rebuild, per kind.
   const v = auditedStep(ctx, () => validateCapturePayload(kindRaw, params["payload"], now));
   // 5a + 5b + 5c. An action must be proposable now (and on what basis), its destination allowed for
@@ -649,7 +655,7 @@ function writeSubmittedCapture(
   now: number,
   basis: ActionBasis | undefined,
 ): SubmitResult {
-  const { deps, caller, kind, clientLabel } = ctx;
+  const { deps, caller, kind, clientLabel, labelSource } = ctx;
   const proposal = v.kind !== "note";
   const id = deps.newId();
   const itemId = proposal ? null : itemPrimaryKey(CAPTURE_ITEM_SERVICE, id);
@@ -668,6 +674,7 @@ function writeSubmittedCapture(
       payloadJson,
       payloadBytes,
       clientLabel,
+      labelSource,
       sessionId: caller.clientId,
       createdAt: now,
       expiresAt,
@@ -1121,6 +1128,7 @@ export function listActionProposals(
       clientLabel: row.clientLabel,
       createdAt: row.createdAt,
       expiresAt: row.expiresAt,
+      labelSource: row.labelSource,
       agentDoorLegacy: row.agentDoorLegacy,
     });
   }

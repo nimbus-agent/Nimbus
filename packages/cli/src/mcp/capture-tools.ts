@@ -38,7 +38,7 @@ export interface CaptureToolSpec {
   run(
     deps: AdapterDeps,
     args: Record<string, unknown>,
-    clientLabel: () => string | undefined,
+    clientLabel: ClientLabel,
   ): Promise<ToolResult>;
 }
 
@@ -57,16 +57,33 @@ function idOf(v: unknown): string {
   return id;
 }
 
+/**
+ * The label a proposal carries (D-AD-13). A plain thunk is the MCP client's declared name; one
+ * built by {@link kitLabel} is the `--agent <kit>` value from the server entry, and is sent with
+ * `labelSource: "kit"`. Either way it is this process's claim: the gateway shows it as
+ * UNVERIFIED and decides nothing by it.
+ */
+export type ClientLabel = (() => string | undefined) & { readonly fromKit?: true };
+
+/** The label thunk for a server started with `--agent <kit>`. */
+export function kitLabel(kit: string): ClientLabel {
+  return Object.assign(() => kit, { fromKit: true as const });
+}
+
 async function submitRaw(
   c: IpcCallable,
   kind: CaptureToolKind,
   payload: Record<string, unknown>,
-  clientLabel: () => string | undefined,
+  clientLabel: ClientLabel,
 ): Promise<unknown> {
   const params: Record<string, unknown> = { kind, payload };
   const label = clientLabel();
   if (label !== undefined) {
     params["clientLabel"] = label;
+    // Sent only for a kit label: an older gateway reads params by key and ignores this one.
+    if (clientLabel.fromKit === true) {
+      params["labelSource"] = "kit";
+    }
   }
   return c.call<unknown>("capture.submit", params);
 }
@@ -75,7 +92,7 @@ async function submit(
   c: IpcCallable,
   kind: CaptureToolKind,
   payload: Record<string, unknown>,
-  clientLabel: () => string | undefined,
+  clientLabel: ClientLabel,
 ): Promise<string> {
   return idOf(await submitRaw(c, kind, payload, clientLabel));
 }

@@ -1086,6 +1086,15 @@ CREATE INDEX IF NOT EXISTS idx_capture_state_created ON capture(state, created_a
 CREATE INDEX IF NOT EXISTS idx_capture_created ON capture(created_at);
 CREATE INDEX IF NOT EXISTS idx_capture_item_id ON capture(item_id) WHERE item_id IS NOT NULL;
 
+-- V99 -- where a proposer label came from (Phase 28 AD7a, 2026-11-15; D-AD-13).
+-- Authoritative source: packages/gateway/src/index/capture-label-source-v99-sql.ts
+-- `declared` is the MCP client's own `clientInfo.name`; `kit` is the `--agent <name>` value of the
+-- server entry that started `nimbus mcp-server`. Both are the connecting process's claim: shown as
+-- UNVERIFIED and read by no decision. The default keeps every earlier row at `declared`; the
+-- runner guards the ALTER with a column probe.
+ALTER TABLE capture ADD COLUMN label_source TEXT NOT NULL DEFAULT 'declared'
+  CHECK (label_source IN ('declared', 'kit'));
+
 -- V68 -- capture provenance (I28, PR 2). decision_record.extraction_source and
 -- glossary_term.definition_source admit 'agent'; both tables gain a nullable capture_id (above).
 -- Both are REBUILT (SQLite cannot widen a CHECK); decision_evidence is held aside and restored

@@ -142,6 +142,7 @@ describe("captureMine", () => {
         payloadJson: "{}",
         payloadBytes: 2,
         clientLabel: null,
+        labelSource: "declared",
         sessionId: MCP.clientId,
         createdAt: clock + i,
         expiresAt: null,
@@ -249,6 +250,7 @@ describe("listActionProposals", () => {
       actionType: "slack.message.post",
       summary: "why",
       clientLabel: "lab el",
+      labelSource: "declared",
       createdAt: 10,
       expiresAt: 10 + 24 * HOUR,
       // The fixture verdict carries the legacy_user_mcp basis (AD5a), which is stored `legacy = 1`.
@@ -268,6 +270,7 @@ describe("listActionProposals", () => {
       payloadJson: "not json",
       payloadBytes: 8,
       clientLabel: null,
+      labelSource: "declared",
       sessionId: "x",
       createdAt: clock,
       expiresAt: clock + HOUR,

@@ -1644,7 +1644,15 @@ Expose the Nimbus local index to MCP-compatible editor AIs (Cursor, Claude Code,
 ```bash
 nimbus mcp-server            # print the MCP config block to paste into your editor (mcp.json)
 nimbus mcp-server --stdio    # run the server over stdio (your editor launches this)
+nimbus mcp-server --stdio --agent <name>   # the same, labelling what this agent captures or proposes
 ```
+
+`--agent <name>` (1 to 32 lowercase letters, digits and hyphens, starting with a letter or digit, for example `--agent claude-code`) goes in the
+agent's server entry. Captures and proposals from that server are then labelled `<name>` instead of the name the
+agent declares, and `nimbus approvals` shows the label as `<name> (--agent)` rather than `<name> (declared)`. The
+label is UNVERIFIED either way: any program that can start `nimbus mcp-server` can pass any name, and Nimbus decides
+nothing by it. A missing or malformed value, `--agent` given twice, or `--agent` without `--stdio` is a usage error
+(exit code 2) and the server does not start.
 
 The Gateway must be running (`nimbus start`). Twenty-one read-only tools are always registered; run
 `nimbus mcp-server --help` for the live list, which is derived from the registry rather

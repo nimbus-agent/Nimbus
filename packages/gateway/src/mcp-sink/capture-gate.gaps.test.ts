@@ -38,6 +38,7 @@ function insert(
     payloadJson: JSON.stringify(payload),
     payloadBytes: 10,
     clientLabel: null,
+    labelSource: "declared",
     sessionId: "c-mcp",
     createdAt: clock,
     expiresAt: null,

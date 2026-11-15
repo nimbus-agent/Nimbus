@@ -20,6 +20,7 @@ import { AUDIT_SESSION_V24_SCHEMA_SQL } from "../audit-session-v24-sql.ts";
 import { BODY_STORE_V48_SQL, ITEM_FTS_UPDATE_TRIGGER_SQL } from "../body-store-v48-sql.ts";
 import { BRIEFING_V93_SQL } from "../briefing-v93-sql.ts";
 import { CAPTURE_ACTION_V69_COUNT_SQL, CAPTURE_ACTION_V69_SQL } from "../capture-action-v69-sql.ts";
+import { CAPTURE_LABEL_SOURCE_V99_SQL } from "../capture-label-source-v99-sql.ts";
 import {
   CAPTURE_NATIVE_V68_FINISH_SQL,
   CAPTURE_NATIVE_V68_REBUILD_DECISIONS_SQL,
@@ -297,6 +298,24 @@ function migrateIndexedV97ToV98(db: Database, now: number): void {
     }
     dbExec(db, "PRAGMA user_version = 98");
     recordMigration(db, 98, "user MCP write directories (Phase 28 AD5b)", now);
+  })();
+}
+
+function captureHasColumn(db: Database, columnName: string): boolean {
+  const rows = db.query("PRAGMA table_info(capture)").all() as Array<{ name: string }>;
+  return rows.some((r) => r.name === columnName);
+}
+
+/**
+ * V99 - `capture.label_source` (Phase 28 AD7a, D-AD-13). Guarded by a column probe, as V98 is.
+ */
+function migrateIndexedV98ToV99(db: Database, now: number): void {
+  db.transaction(() => {
+    if (!captureHasColumn(db, "label_source")) {
+      dbExec(db, CAPTURE_LABEL_SOURCE_V99_SQL.trim());
+    }
+    dbExec(db, "PRAGMA user_version = 99");
+    recordMigration(db, 99, "capture label source (Phase 28 AD7a)", now);
   })();
 }
 
@@ -878,6 +897,7 @@ const INDEXED_SCHEMA_STEPS: readonly IndexedSchemaStep[] = [
   ),
   { fromVersion: 96, toVersion: 97, apply: migrateIndexedV96ToV97 },
   { fromVersion: 97, toVersion: 98, apply: migrateIndexedV97ToV98 },
+  { fromVersion: 98, toVersion: 99, apply: migrateIndexedV98ToV99 },
 ];
 
 /**

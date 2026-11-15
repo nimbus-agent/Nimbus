@@ -49,6 +49,7 @@ function insertAction(legacy: boolean): void {
     }),
     payloadBytes: 10,
     clientLabel: "agent",
+    labelSource: "declared",
     sessionId: "s",
     createdAt: 500,
     expiresAt: 2_000,

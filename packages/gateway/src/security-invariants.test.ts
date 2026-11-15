@@ -4286,6 +4286,43 @@ describe("I27 — outbound share gated by share.publish HITL action", () => {
 });
 
 describe("I28 — MCP content enters only through the capture gate, in a fixed order", () => {
+  test("AD7a: a proposer label's source is display only: named by the modules that store, show or report it, and compared by none of the gate's steps (I28, D-AD-13)", async () => {
+    const files = (await grepRepo(/\blabelSource\b/)).filter(
+      (f) => f.startsWith("packages/gateway/src/") && !/\.test\.ts$|test-helpers\.ts$/.test(f),
+    );
+    expect(files).toEqual([
+      "packages/gateway/src/audit/agent-door-proof.ts",
+      "packages/gateway/src/engine/executor.ts",
+      "packages/gateway/src/engine/proposer-block.ts",
+      "packages/gateway/src/engine/types.ts",
+      "packages/gateway/src/ipc/approvals-rpc.ts",
+      "packages/gateway/src/ipc/capture-rpc.ts",
+      "packages/gateway/src/mcp-sink/capture-act.ts",
+      "packages/gateway/src/mcp-sink/capture-gate.ts",
+      "packages/gateway/src/mcp-sink/capture-store.ts",
+      "packages/gateway/src/mcp-sink/capture-types.ts",
+    ]);
+    // In the gate, the act door and the executor it is only carried: a declaration, a property
+    // passed on, or the one sanitiser call. No condition names it.
+    const carried =
+      /^(readonly labelSource: LabelSource;|labelSource,|labelSource: (row|proposer|p)\.labelSource,|const labelSource = sanitizeLabelSource\(params\["labelSource"\], clientLabel\);|const ctx: SubmitContext = \{ deps, caller, kind: kindRaw, clientLabel, labelSource \};|const \{ deps, caller, kind, clientLabel, labelSource \} = ctx;|proposer\?: Pick<AgentProposer, "door" \| "captureId" \| "label" \| "labelSource">;)$/;
+    for (const rel of [
+      "mcp-sink/capture-gate.ts",
+      "mcp-sink/capture-act.ts",
+      "engine/executor.ts",
+    ]) {
+      const src = stripComments(await read(`packages/gateway/src/${rel}`));
+      const lines = src
+        .split("\n")
+        .map((l) => l.trim())
+        .filter((l) => /\blabelSource\b/.test(l));
+      expect(lines.length, rel).toBeGreaterThan(0);
+      for (const line of lines) {
+        expect(line, `${rel}: ${line}`).toMatch(carried);
+      }
+    }
+  });
+
   test("submitCapture checks capability → client kind → attempt limit → kind → validate → items → link endpoints → durable cap → pending cap, in that order", async () => {
     const src = stripComments(await read("packages/gateway/src/mcp-sink/capture-gate.ts"));
     const body = src.slice(src.indexOf("export async function submitCapture"));

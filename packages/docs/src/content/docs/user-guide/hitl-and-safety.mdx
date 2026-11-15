@@ -222,6 +222,12 @@ payload hashes, consent decisions, and the hash chain values.
   frozen set requires a per-instance consent.
 </Aside>
 
+### Outside agents
+
+A coding agent connected through `nimbus mcp-server` can propose a write; it runs only after you approve it with `nimbus approvals <id>`. That guard has limits, and they are stated here in full:
+
+The agent door guards writes that pass through Nimbus. An agent that holds its own credentials, or can run commands, can act without it. The ledger records the actions Nimbus dispatches, not network traffic. The proposer's name is not verified. Until desktop approval ships, an agent that can run commands in your terminal can still approve its own proposals.
+
 ---
 
 ## Where to next

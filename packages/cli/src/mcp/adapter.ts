@@ -6,7 +6,12 @@ import { readGatewayState } from "../lib/gateway-process.ts";
 import { parseSearchRankedResponse } from "../lib/search-ranked-response.ts";
 import { type CliPlatformPaths, getCliPlatformPaths } from "../paths.ts";
 import { AGENT_TOOL_SPECS, failBriefsForClient } from "./agent-tools.ts";
-import { type CaptureToolSpec, captureToolsFor } from "./capture-tools.ts";
+import {
+  type CaptureToolSpec,
+  type ClientLabel,
+  captureToolsFor,
+  kitLabel,
+} from "./capture-tools.ts";
 import {
   type ClosableClient,
   type IpcCallable,
@@ -626,11 +631,17 @@ export function buildMcpServer(
       (args: unknown) => s.run(deps, asRecord(args)),
     );
   }
+  // D-AD-13: the `--agent <kit>` value of the server entry when there is one, else the client's
+  // declared name. Both are display only.
+  const label: ClientLabel =
+    deps.agentKit === undefined
+      ? () => server.server.getClientVersion()?.name
+      : kitLabel(deps.agentKit);
   for (const s of captureTools) {
     server.registerTool(
       s.name,
       { description: s.description, inputSchema: s.schema, annotations: s.annotations },
-      (args: unknown) => s.run(deps, asRecord(args), () => server.server.getClientVersion()?.name),
+      (args: unknown) => s.run(deps, asRecord(args), label),
     );
   }
   return server;

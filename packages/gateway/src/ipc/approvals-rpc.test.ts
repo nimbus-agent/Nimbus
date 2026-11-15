@@ -86,7 +86,13 @@ function writesOf(): PlannedAction[] {
 
 function insertAction(
   id: string,
-  over: { actionType?: string; summary?: string; label?: string | null; input?: object } = {},
+  over: {
+    actionType?: string;
+    summary?: string;
+    label?: string | null;
+    labelSource?: "declared" | "kit";
+    input?: object;
+  } = {},
 ): void {
   store.insert({
     id,
@@ -100,6 +106,7 @@ function insertAction(
     }),
     payloadBytes: 10,
     clientLabel: over.label === undefined ? "agent" : over.label,
+    labelSource: over.labelSource ?? "declared",
     sessionId: "agent-conn",
     createdAt: 500,
     expiresAt: 500 + HOUR,
@@ -220,6 +227,24 @@ describe("who may use approvals.*", () => {
 describe("approvals.list and approvals.get", () => {
   const RLO = String.fromCodePoint(0x202e);
   const BS = String.fromCharCode(92);
+  test("list and get say where each label came from: the stored source, never a constant (AD7a)", async () => {
+    insertAction("cap_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", { label: "codex", labelSource: "kit" });
+    insertAction("cap_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", { label: "codex" });
+    const out = (await call("approvals.list", {})) as {
+      proposals: Array<{ id: string; label: string; labelSource: string }>;
+    };
+    const byId = new Map(out.proposals.map((p) => [p.id, [p.label, p.labelSource]]));
+    expect(byId.get("cap_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")).toEqual(["codex", "kit"]);
+    expect(byId.get("cap_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")).toEqual(["codex", "declared"]);
+    for (const [id, source] of [
+      ["cap_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "kit"],
+      ["cap_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "declared"],
+    ] as const) {
+      const one = (await call("approvals.get", { id })) as { labelSource: string };
+      expect(one.labelSource).toBe(source);
+    }
+  });
+
   test("list returns the escaped one-line view with the wave and typedConfirm of the real row", async () => {
     insertAction("cap_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", {
       label: 'a"\nType: x',
@@ -288,6 +313,7 @@ describe("approvals.list and approvals.get", () => {
       payloadJson: JSON.stringify({ statement: "s" }),
       payloadBytes: 5,
       clientLabel: null,
+      labelSource: "declared",
       sessionId: "s",
       createdAt: 1,
       expiresAt: null,
