@@ -6840,6 +6840,13 @@ describe("D49(g), (h) - the user-MCP call facts and the door's reach into user s
         "[action.userMcpCall] = pair;",
         "[first, action . userMcpCall\n] = pair;",
         "return [action.userMcpCall] = pair;",
+        // A `)` that closes a control header starts a new statement: the bracket is a pattern.
+        "if (ready) [action.userMcpCall] = pair;",
+        "while (next(a)) [action.userMcpCall] = pair;",
+        "for (const p of pairs) [action.userMcpCall] = p;",
+        "if (a) x(); else [action.userMcpCall] = pair;",
+        "const f = () => [action.userMcpCall] = pair;",
+        "{ run(); } [action.userMcpCall] = pair;",
       ]) {
         expect(
           checkUserMcpCallFacts(swap(path, code)).map((x) => x.rule),
@@ -6856,6 +6863,8 @@ describe("D49(g), (h) - the user-MCP call facts and the door's reach into user s
         "slots[action.userMcpCall] = value;",
         "pick(a)[action.userMcpCall] = value;",
         "grid[0][action.userMcpCall] = value;",
+        "if (ready) slots[action.userMcpCall] = value;",
+        "(await load())[action.userMcpCall] = value;",
       ]) {
         expect(checkUserMcpCallFacts(swap(path, code)), code).toEqual([]);
       }

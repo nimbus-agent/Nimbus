@@ -2346,18 +2346,48 @@ const D49_KEYWORDS_BEFORE_ARRAY: ReadonlySet<string> = new Set([
   "void",
   "else",
   "do",
+  "throw",
+  "delete",
+  "new",
+  "instanceof",
 ]);
 
+/** Statement heads whose `( ... )` is a control header, never a receiver (`if (x) [a] = pair`). */
+const D49_CONTROL_HEADS: ReadonlySet<string> = new Set(["if", "while", "for", "with"]);
+
 /**
- * True when the `[` at `open` is an element access (`slots[key]`): it follows a name, a `)` or a
- * `]`. What it holds is a key, a READ, even when the indexed slot is then assigned to.
+ * True when the `)` that ends `before` closes a control header (`if (ready)`), so what follows is a
+ * new statement. A `)` with no matching `(` is treated the same way: fail closed.
+ */
+function d49ClosesControlHeader(before: string): boolean {
+  let depth = 0;
+  for (let i = before.length - 1; i >= 0; i--) {
+    const c = before[i];
+    if (c === ")") depth++;
+    else if (c === "(") {
+      depth--;
+      if (depth === 0) {
+        const head = /[\w$]+$/.exec(before.slice(0, i).trimEnd())?.[0];
+        return head !== undefined && D49_CONTROL_HEADS.has(head);
+      }
+    }
+  }
+  return true;
+}
+
+/**
+ * True when the `[` at `open` is an element access (`slots[key]`): it follows a name, a `]`, or a
+ * `)` that ends a receiver expression (`pick(a)[key]`), never one that ends a control header. What
+ * it holds is a key, a READ, even when the indexed slot is then assigned to. Anything this cannot
+ * tell is treated as a pattern, so a doubt is a violation, never a pass.
  */
 function d49IsElementAccess(code: string, open: number): boolean {
   if (code[open] !== "[") return false;
   const before = code.slice(0, open).trimEnd();
   const last = before.at(-1);
   if (last === undefined) return false;
-  if (last === ")" || last === "]") return true;
+  if (last === "]") return true;
+  if (last === ")") return !d49ClosesControlHeader(before);
   const word = /[\w$]+$/.exec(before)?.[0];
   return word !== undefined && !D49_KEYWORDS_BEFORE_ARRAY.has(word);
 }
