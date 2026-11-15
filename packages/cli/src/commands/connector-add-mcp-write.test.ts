@@ -94,7 +94,7 @@ describe("nimbus connector add --mcp --write", () => {
     );
     expect(sent).toHaveLength(1);
     expect(sent[0]?.method).toBe("connector.addMcp");
-    expect((sent[0]?.params as { writePaths?: string[] }).writePaths).toEqual([resolve(C, "out")]);
+    expect(sent[0]?.params).toMatchObject({ writePaths: [resolve(C, "out")] });
     expect(sent[0]?.opts).toEqual({ asPerson: true });
   });
 
@@ -144,7 +144,7 @@ describe("nimbus connector add --mcp --write", () => {
       C,
     );
     expect(sent[0]?.opts).toBeUndefined();
-    expect("writePaths" in (sent[0]?.params as object)).toBe(false);
+    expect(Object.keys((sent[0]?.params ?? {}) as object)).not.toContain("writePaths");
     expect(out.some((l) => l.startsWith("  write: "))).toBe(false);
     // An older gateway returns no lists: the read line falls back to the request, as it always did.
     expect(out).toContain(`  read: ${resolve(C, "notes")}`);

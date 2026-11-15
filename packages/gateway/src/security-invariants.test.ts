@@ -1841,6 +1841,193 @@ describe("I15 — SandboxRunner is intrinsic to every extension spawn", () => {
       expect(helper).not.toMatch(/\|\s*(?:DELETE|FILE_DELETE_CHILD)\b/);
     });
 
+    // Phase 28 AD5b-2: the owner's write grant of a user MCP server.
+    describe("a user MCP write grant (Phase 28 AD5b-2)", () => {
+      test("the spawn manifest gets a write path ONLY from the prepared grant, and every spawn decision awaits the preparation first", async () => {
+        const mesh = stripComments(await read("packages/gateway/src/connectors/lazy-mesh/mesh.ts"));
+        // The two places a user MCP client is ever created, each behind the preparation.
+        const calls = [...mesh.matchAll(/ensureUserMcpClient\(/g)];
+        expect(calls).toHaveLength(2);
+        for (const m of calls) {
+          const before = mesh.slice(Math.max(0, m.index - 220), m.index);
+          expect(before).toMatch(/const prepared = await this\.prepareUserMcpSpawn\(row\);/);
+        }
+        expect(mesh).toMatch(/ensureUserMcpClient\(this\.spawnContext, row, prepared\)/);
+        // A refused preparation creates no client: `undefined` is skipped, never replaced.
+        expect(mesh).toMatch(/if \(prepared === undefined\) return;/);
+        expect(mesh).toMatch(/if \(prepared !== undefined\) ensureUserMcpClient\(/);
+        const prepare = mesh.slice(mesh.indexOf("private prepareUserMcpSpawn("));
+        const refusal = prepare.slice(0, prepare.indexOf("\n  }\n"));
+        // A live client is left alone BEFORE anything is revoked or read.
+        expect(
+          refusal.indexOf("getLazyClient(userMcpMeshKey(row.service_id)) !== undefined"),
+        ).toBeLessThan(refusal.indexOf("prepareUserMcpWriteGrant("));
+        expect(refusal).toMatch(/return undefined;\s*\}\);/);
+      });
+
+      test("the one builder checks the stored list, the rule, the sandbox and the ledger in that order", async () => {
+        const src = stripComments(
+          await read("packages/gateway/src/connectors/lazy-mesh/user-mcp-write-grant.ts"),
+        );
+        const body = src.slice(src.indexOf("export async function prepareUserMcpWriteGrant("));
+        const order = [
+          "storedWriteDirs(row,",
+          'writeDirRefusal(dir, "spawn", deps.writeDir)',
+          "deps.canConfine(policyFor(",
+          "settleWindowsLedger(row.service_id,",
+          "return { ok: true, grant };",
+        ].map((needle) => body.indexOf(needle));
+        expect(order.every((i) => i > 0)).toBe(true);
+        expect([...order].sort((a, b) => a - b)).toEqual(order);
+        // The ledger: the revoke precedes the save, and a failed revoke returns before any save.
+        const ledger = src.slice(src.indexOf("async function settleWindowsLedger("));
+        expect(ledger.indexOf("await revoker.revoke(stale)")).toBeLessThan(
+          ledger.indexOf("deps.ledger.save(next)"),
+        );
+        expect(ledger).toMatch(
+          /await revoker\.revoke\(stale\);\s*\} catch \{\s*return USER_MCP_WRITE_GRANT_REFUSALS\.revokeFailed;/,
+        );
+        // The brand has no value outside the module: only `prepared(...)` makes one.
+        expect(src).toMatch(/declare const PREPARED: unique symbol;/);
+        expect([...src.matchAll(/as PreparedUserMcpWriteGrant/g)]).toHaveLength(1);
+      });
+
+      test("behavioural: the real rule refuses a directory that holds a marker folder and grants a clean one", async () => {
+        const { prepareUserMcpWriteGrant } = await import(
+          "./connectors/lazy-mesh/user-mcp-write-grant.ts"
+        );
+        const { productionWriteDirDeps } = await import(
+          "./connectors/lazy-mesh/user-mcp-write-deps.ts"
+        );
+        const root = realpathSync.native(mkdtempSync(join(tmpdir(), "nimbus-i15-write-")));
+        try {
+          const out = join(root, "work", "out");
+          mkdirSync(out, { recursive: true });
+          const paths = {
+            configDir: join(root, "n", "config"),
+            dataDir: join(root, "n", "data"),
+            logDir: join(root, "n", "log"),
+            socketPath: join(root, "n", "sock"),
+            extensionsDir: join(root, "n", "ext"),
+            tempDir: join(root, "n", "tmp"),
+            sandboxDir: join(root, "n", "cache", "sandbox"),
+          };
+          const calls: string[] = [];
+          const deps = {
+            writeDir: {
+              ...productionWriteDirDeps({
+                paths,
+                platform: process.platform,
+                listRows: () => [],
+                iacWorkdirs: () => [],
+                envVar: () => undefined,
+              }),
+              homeDir: join(root, "home"),
+            },
+            canConfine: () => {
+              calls.push("canConfine");
+              return null;
+            },
+            ledger: { load: () => ({}), save: () => calls.push("save") },
+            revokerFor: () => ({ active: false, revoke: () => Promise.resolve() }),
+          };
+          const row = {
+            service_id: "mcp_notes",
+            command: process.execPath,
+            args_json: "[]",
+            created_at: 1,
+            read_paths_json: "[]",
+            net_hosts_json: "[]",
+            model_access: 0,
+            write_paths_json: JSON.stringify([out]),
+          };
+          const clean = await prepareUserMcpWriteGrant(row, [], [], deps);
+          expect(clean.ok && clean.grant.dirs).toEqual([out]);
+          expect(calls).toEqual(["canConfine"]);
+          // A marker folder appears (a server planted it, or the owner ran git init): refused,
+          // and the sandbox is never asked.
+          mkdirSync(join(out, "sub", ".git", "hooks"), { recursive: true });
+          calls.length = 0;
+          const refused = await prepareUserMcpWriteGrant(row, [], [], deps);
+          expect(refused.ok).toBe(false);
+          expect(calls).toEqual([]);
+          // Inside a Nimbus folder: refused.
+          const inside = join(paths.dataDir, "x");
+          mkdirSync(inside, { recursive: true });
+          const protectedDir = await prepareUserMcpWriteGrant(
+            { ...row, write_paths_json: JSON.stringify([inside]) },
+            [],
+            [],
+            deps,
+          );
+          expect(protectedDir).toEqual({
+            ok: false,
+            reason: "the directory overlaps a folder Nimbus owns",
+          });
+        } finally {
+          rmSync(root, { recursive: true, force: true });
+        }
+      });
+
+      test("registration: the person-only and can-confine checks precede the prompt, the old grants are released after it and before the row", async () => {
+        const rpc = stripComments(await read("packages/gateway/src/ipc/connector-rpc.ts"));
+        const body = rpc.slice(rpc.indexOf("const resolved = resolveConnectorAddMcp(ctx);"));
+        const order = [
+          "assertWriteGrantRegistrable(ctx, resolved);",
+          'toolExecutor.gate({ type: "connector.addMcp", payload })',
+          "await assertUserMcpGrantsClean(ctx, resolved.serviceId);",
+          "return handleConnectorAddMcp(ctx, resolved);",
+        ].map((needle) => body.indexOf(needle));
+        expect(order.every((i) => i > 0)).toBe(true);
+        expect([...order].sort((a, b) => a - b)).toEqual(order);
+        const config = stripComments(
+          await read("packages/gateway/src/ipc/connector-rpc-handlers/config.ts"),
+        );
+        const registrable = config.slice(
+          config.indexOf("export function assertWriteGrantRegistrable("),
+        );
+        expect(registrable).toMatch(/if \(resolved\.writePaths\.length === 0\) return;/);
+        expect(registrable).toMatch(/APPROVER_BY_KIND\[ctx\.clientKind \?\? "unknown"\]/);
+        expect(registrable).toMatch(/userMcpWriteConfineRefusal\(resolved,/);
+        // The consent channel of a write-grant registration is the human-only one.
+        const dispatchers = stripComments(
+          await read("packages/gateway/src/ipc/server/dispatchers.ts"),
+        );
+        expect(dispatchers).toMatch(
+          /method === "connector\.addMcp" && Array\.isArray\(writePathsParam\) && writePathsParam\.length > 0/,
+        );
+        expect(dispatchers).toMatch(/agentEnable \|\| writeGrantAdd\s*\? humanOnlyConsent\(/);
+      });
+
+      test("the prompt: a call whose server's write directories cannot be told is refused before anyone is asked, and an agent's call to a write-granted server is typed", async () => {
+        const exec = stripComments(await read("packages/gateway/src/engine/executor.ts"));
+        const confirm = exec.slice(
+          exec.indexOf("private renderConfirmPhase(action: PlannedAction): ConfirmPlan {"),
+        );
+        const head = confirm.slice(0, confirm.indexOf("const rows = this.rows();"));
+        expect(head).toMatch(
+          /if \(userMcpDirs === "unknown"\) \{\s*return \{ kind: "refuse", reason: USER_MCP_WRITE_UNKNOWN_REASON \};/,
+        );
+        expect(head).toMatch(
+          /isAgentOrigin\(action\) && userMcpDirs\.length > 0\s*\? \{ kind: "text", text: serviceOf\(action\.type\) \}\s*: NO_CONFIRM;/,
+        );
+        // An agent's call is judged by its own facts; with none it cannot be asked about.
+        expect(exec).toMatch(
+          /if \(isAgentOrigin\(action\)\) return action\.userMcpCall\?\.writePaths \?\? "unknown";/,
+        );
+        // Every turn executor is given the reader in the ONE shared construction.
+        const runAsk = stripComments(await read("packages/gateway/src/engine/run-ask.ts"));
+        expect(runAsk).toMatch(/\{ \.\.\.extras, userMcpWriteGrants: p\.userMcpWriteGrants \}/);
+      });
+
+      test("V98: the column defaults to no grant, so no server that existed before gains one", async () => {
+        const { USER_MCP_WRITE_V98_SQL } = await import("./index/user-mcp-write-v98-sql.ts");
+        expect(USER_MCP_WRITE_V98_SQL).toContain(
+          "ADD COLUMN write_paths_json TEXT NOT NULL DEFAULT '[]'",
+        );
+      });
+    });
+
     test("the Windows revoke before a grant is the fail-closed one, never the best-effort release", async () => {
       const mesh = stripComments(await read("packages/gateway/src/connectors/lazy-mesh/mesh.ts"));
       expect(mesh).toMatch(
