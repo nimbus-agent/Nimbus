@@ -116,6 +116,9 @@ describe("data import", () => {
   });
 });
 
+/** A schema this build has not reached. Derived, never a literal: a literal 99 became current at V99. */
+const NEWER_SCHEMA_VERSION = CURRENT_SCHEMA_VERSION + 1;
+
 async function stageBundle(schemaVersion: number): Promise<string> {
   const sourceVault = memVault();
   await sourceVault.set("github.pat", "secret_value");
@@ -136,7 +139,7 @@ async function stageBundle(schemaVersion: number): Promise<string> {
 
 describe("runDataImport — schemaVersion compatibility check", () => {
   test("rejects a bundle with schema_version > current as archive_newer", async () => {
-    const bundle = await stageBundle(99);
+    const bundle = await stageBundle(NEWER_SCHEMA_VERSION);
     const err = await runDataImport({
       bundlePath: bundle,
       passphrase: "pw",
@@ -144,7 +147,7 @@ describe("runDataImport — schemaVersion compatibility check", () => {
       index: newIndex(),
     }).catch((e) => e);
     expect(err).toBeInstanceOf(DataImportVersionError);
-    expect((err as DataImportVersionError).archiveSchemaVersion).toBe(99);
+    expect((err as DataImportVersionError).archiveSchemaVersion).toBe(NEWER_SCHEMA_VERSION);
     expect((err as DataImportVersionError).relation).toBe("archive_newer");
   });
 
@@ -185,7 +188,7 @@ describe("runDataImport — schemaVersion compatibility check", () => {
   });
 
   test("no vault writes occur when schema_version is incompatible", async () => {
-    const bundle = await stageBundle(99);
+    const bundle = await stageBundle(NEWER_SCHEMA_VERSION);
     const targetVault = memVault();
     await runDataImport({
       bundlePath: bundle,
