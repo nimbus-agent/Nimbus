@@ -269,6 +269,14 @@ export async function handleUserMcpAgentWritesEnable(
     ...networkNoteOf(deps, jsonStrings(registration.net_hosts_json)),
     modelAccess: registration.model_access === 1,
     tools: lines,
+    // I15 (AD5b): only for a server that holds a write directory, so every other enable payload
+    // (and its prompt, audit row and ledger row) is what it was.
+    ...(jsonStrings(registration.write_paths_json).length === 0
+      ? {}
+      : {
+          writePaths: jsonStrings(registration.write_paths_json),
+          writePlatform: process.platform,
+        }),
   };
   await requireOwnerApproval(executor, payload, deps);
   // 8. ONE transaction. The owner may have removed or re-registered the server while the prompt was
