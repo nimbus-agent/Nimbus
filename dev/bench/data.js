@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794767110842,
+  "lastUpdate": 1794772257258,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
-            "name": "nimbus-release-bot[bot]",
-            "username": "nimbus-release-bot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "78360c35452ddcfcf074c07555c554b0080adff1",
-          "message": "chore: release main (#1355)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>4.0.1</summary>\n\n##\n[4.0.1](https://github.com/nimbus-agent/Nimbus/compare/v4.0.0...v4.0.1)\n(2026-08-28)\n\n\n### Bug Fixes\n\n* resolve the brief timeout from one definition, and make the ask\ncontext budget configurable\n([#1354](https://github.com/nimbus-agent/Nimbus/issues/1354))\n([30c1ce6](https://github.com/nimbus-agent/Nimbus/commit/30c1ce61afedf459651a25dc1fb88cc32b1152f4))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
-          "timestamp": "2026-08-28T07:23:28+03:00",
-          "tree_id": "26cb03870252eb879db624058bbee3543377bc95",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/78360c35452ddcfcf074c07555c554b0080adff1"
-        },
-        "date": 1787891525857,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 275.8407274000059,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 276.39962684998864,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 209.5343026000035,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "8fa3114397e036980d2082e59823f5cfb347a431",
+          "message": "feat(gateway): an agent's server entry can label its proposals, and the gateway records where a label came from (agent door AD7a) (#2011)\n\nAn agent's server entry can now carry a label the owner chose, and the\ngateway records which kind of label a proposal has. This is the first\nhalf of the agent kits (Phase 28 AD7); `nimbus agent install|status` is\nthe next PR (AD7b).\n\n## What changes for the owner\n\n- `nimbus mcp-server --stdio --agent <name>` labels everything that\nserver captures or proposes with `<name>`, in place of the name the\nagent declares about itself. `<name>` is 1 to 32 lowercase letters,\ndigits and hyphens. A missing or malformed value, `--agent` twice, or\n`--agent` without `--stdio` is a usage error with exit code 2, before\nany connection.\n- `nimbus approvals` shows `<label> (--agent)` or `<label> (declared)`\nunder a `FROM (unverified)` column; `nimbus approvals show <id>` says\n`(--agent, unverified)` or `(declared, unverified)`. The approval prompt\nalready had wording for both sources and now gets the stored value.\n- The README, `SECURITY.md` and the docs site's safety page carry the\nsame five sentences on what the agent door does not guard, the\nself-approval sentence among them (owner ruling OR-AD-6).\n\n## The label is not verified\n\nAny program that can start `nimbus mcp-server` can pass any `--agent`\nvalue, so a script can call itself `claude-code` and appear under that\nname in the queue, the prompt and `nimbus prove --by-proposer`. Every\nsurface calls the label UNVERIFIED. `kit` means \"from the server entry\",\nnever \"checked\". The source is a display field: what an agent may\npropose, what is refused and what is dispatched are identical for both\nsources.\n\n## How\n\n- Migration V99: `capture.label_source TEXT NOT NULL DEFAULT 'declared'\nCHECK (label_source IN ('declared','kit'))`, behind a column probe so\nthe step can run twice. Every earlier row reads as `declared`.\n- `sanitizeLabelSource` accepts exactly `\"kit\"` beside a label; anything\nelse, and a kit source with no label, is `declared`.\n- `CAPTURE_LABEL_SOURCE` (a constant `\"declared\"`) is deleted. The act\ndoor's accept audit row and provenance, `approvals.list` and\n`approvals.get` read the stored value. `CaptureDetail` and\n`CaptureSummary` are not widened, so the desktop's `captures.*` contract\nis unchanged.\n- CLI: the label thunk handed to the write tools still returns a string;\na thunk built by `kitLabel(kit)` is marked, and only then is\n`labelSource: \"kit\"` sent. A new CLI against an older gateway still\nsubmits (the gate reads params by key), with the label shown as\ndeclared.\n- `packages/cli/src/lib/agent-door-bounds.ts` holds the bounds\nsentences; `scripts/agent-kits/bounds-copy.test.ts` fails when one of\nthe three documents drifts from it.\n\nNo new invariant, static rule, HITL type, IPC method or\n`ALLOWED_METHODS` entry. I28's text gains the label-source paragraph.\n\n## Tests\n\n- `runner-v99.test.ts`: fresh database, upgrade from V98 with a queued\nproposal, the CHECK, and a second run after `user_version` is rewound.\n- Gate: the stored source for no value, `\"kit\"`, eight other values and\na kit source with no label; the same capture submitted with each source\nhas the same result, the same stored row apart from that column, and the\nsame audit facts.\n- Source pin (`security-invariants.test.ts`): the list of gateway\nmodules that name `labelSource`, and every line naming it in\n`capture-gate.ts`, `capture-act.ts` and `engine/executor.ts` must be a\ndeclaration or a pass-through.\n- `approvals.list` / `approvals.get` return the stored source; the\naccept audit row and the provenance carry `kit`.\n- CLI: argument boundary cases, the usage error on stderr with exit code\n2 and nothing started, the kit label through a real MCP client against\nthe adapter, and the `nimbus approvals` list and detail text for both\nsources and for a row from an older gateway.\n\n## Docs\n\nCLAUDE.md and GEMINI.md (status, schema V99), `docs/CHANGELOG.md`,\n`docs/README.md`, `docs/roadmap.md` (progress notes on the Agent kits\nand Bounds rows; the stale \"AD5b remains\" line corrected),\n`docs/architecture.md`, `docs/cli-reference.md`,\n`docs/schema-reference.md`, `docs/SECURITY.md`,\n`docs/SECURITY-INVARIANTS.md` (I28), the docs site's HITL page, and the\n`nimbus-mcp-sink` and `nimbus-db-migrations` skills.\n\n## Not in this PR\n\n`nimbus agent install|status`, the per-agent rules and hooks, the kit\npages and the real-agent matrix (AD7b). Acceptance A6 needs the owner's\nrun against the real agents and stays open.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JmSjrCzb214jGqUcCTWNJQ\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n- **New Features**\n- Added an optional `--agent <name>` label for MCP server connections.\nThe label appears in approval and audit views and is marked unverified.\n- Approval records and proofs now distinguish agent-kit labels from\nclient-declared labels.\n- **Documentation**\n- Updated security guidance to explain what approval covers and its\nlimitations, including actions taken outside Nimbus.\n- Recorded the latest delivery, roadmap progress, and label behavior in\nproject documentation.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Fable 5.2 <noreply@anthropic.com>",
+          "timestamp": "2026-11-15T19:43:29Z",
+          "tree_id": "3541bbc60b19865b8dd91e58d3faedced7f805a5",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/8fa3114397e036980d2082e59823f5cfb347a431"
+        },
+        "date": 1794772254102,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 200.63775750000133,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 201.3182913999968,
             "unit": "ms"
           }
         ]
