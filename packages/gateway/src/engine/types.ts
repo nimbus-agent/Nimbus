@@ -91,7 +91,10 @@ export type AgentProposer = {
   captureId: string;
   /** The client's declared name, or null. */
   label: string | null;
-  /** Where the label came from: the connection's own claim, or the owner-written kit config. */
+  /**
+   * Where the label came from: the client's declared name, or the `--agent` value of the agent's
+   * server entry. Both are what the connecting process says; neither is verified.
+   */
   labelSource: "declared" | "kit";
   /** The agent's own one-line summary of what it wants. */
   summary: string;

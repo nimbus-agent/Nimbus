@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { CAPTURE_TOOL_SPECS, captureToolsFor } from "./capture-tools.ts";
+import { CAPTURE_TOOL_SPECS, captureToolsFor, kitLabel } from "./capture-tools.ts";
 import type { IpcCallable } from "./client-surface.ts";
 import type { AdapterDeps } from "./tool-runtime.ts";
 
@@ -103,6 +103,21 @@ describe("capture_note", () => {
     expect(res?.isError).toBeUndefined();
     expect(res?.content[0]?.text).toContain("Captured note cap_1");
     expect(res?.content[0]?.text).toContain("nimbus captures revoke cap_1");
+  });
+
+  test("a kit label is sent with its source; a declared one is sent without", async () => {
+    const { deps: d, calls } = deps(async () => ({ id: "cap_1", state: "live" }));
+    await spec?.run(d, { title: "t", body: "b" }, kitLabel("codex"));
+    await spec?.run(d, { title: "t", body: "b" }, () => "codex");
+    expect(calls.map(([, p]) => p)).toEqual([
+      {
+        kind: "note",
+        payload: { title: "t", body: "b" },
+        clientLabel: "codex",
+        labelSource: "kit",
+      },
+      { kind: "note", payload: { title: "t", body: "b" }, clientLabel: "codex" },
+    ]);
   });
 
   test("forwards relatesTo and omits clientLabel when the client sent none", async () => {

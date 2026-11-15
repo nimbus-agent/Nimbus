@@ -108,6 +108,44 @@ describe("approvals list", () => {
     expect(text).toContain("nimbus approvals <id>");
   });
 
+  test("each label says where it came from, the list and the detail alike; an older gateway's row reads as declared", async () => {
+    const rows = [
+      { ...ROW, id: "cap_kit", labelSource: "kit" },
+      { ...ROW, id: "cap_declared", labelSource: "declared" },
+      { ...ROW, id: "cap_old" },
+    ];
+    const f = fake((m) => (m === "approvals.list" ? { proposals: rows } : {}));
+    const o = sink();
+    await runApprovalsWith(f.client, { verb: "list", json: false }, o.s, TTY, 2_000);
+    const lines = o.out.join("").split("\n");
+    expect(lines.find((l) => l.includes("FROM"))).toContain("FROM (unverified)");
+    expect(lines.find((l) => l.startsWith("cap_kit"))).toContain("claude-code (--agent)");
+    expect(lines.find((l) => l.startsWith("cap_declared"))).toContain("claude-code (declared)");
+    expect(lines.find((l) => l.startsWith("cap_old"))).toContain("claude-code (declared)");
+
+    for (const [labelSource, want] of [
+      ["kit", "(--agent, unverified)"],
+      ["declared", "(declared, unverified)"],
+    ] as const) {
+      const g = fake(() => ({
+        ...ROW,
+        state: "proposed",
+        inputLines: ["{}"],
+        note: "n",
+        labelSource,
+      }));
+      const d = sink();
+      await runApprovalsWith(
+        g.client,
+        { verb: "show", id: "cap_aaaa", json: false },
+        d.s,
+        NO_TTY,
+        2_000,
+      );
+      expect(d.out.join("")).toContain(want);
+    }
+  });
+
   test("wave 4 and typed confirmation are shown; a null wave is a dash", async () => {
     const f = fake(() => ({
       proposals: [

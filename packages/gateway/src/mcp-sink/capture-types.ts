@@ -74,6 +74,11 @@ export interface CaptureRow {
   readonly payloadJson: string | null;
   readonly payloadBytes: number;
   readonly clientLabel: string | null;
+  /**
+   * Where {@link CaptureRow.clientLabel} came from (V99; D-AD-13): the client's declared name, or
+   * the `--agent` value of the server entry. Both are the connection's claim; display only.
+   */
+  readonly labelSource: LabelSource;
   readonly sessionId: string;
   readonly nativeRef: string | null;
   readonly createdAt: number;
@@ -204,10 +209,11 @@ export function isLegacyBasis(basis: ActionBasis | undefined): boolean {
 }
 
 /**
- * Where a proposer label came from, for every proposal today: the connection's own claim. The
- * one producer of the value (AD4); the owner-written kit config is AD7's second source.
+ * Where a proposer label came from: `declared` is the MCP client's own `clientInfo.name`, `kit`
+ * the `--agent <kit>` value in the agent's server entry (AD7a). Neither is verified and neither
+ * is read by any decision (a source pin in `security-invariants.test.ts` holds that).
  */
-export const CAPTURE_LABEL_SOURCE: "declared" | "kit" = "declared";
+export type LabelSource = "declared" | "kit";
 
 export interface ActionProvenance {
   /**
@@ -219,7 +225,7 @@ export interface ActionProvenance {
   readonly captureId: string;
   readonly clientLabel: string | null;
   /** Where {@link ActionProvenance.clientLabel} came from; copied to the executor's proposer (AD4). */
-  readonly labelSource: "declared" | "kit";
+  readonly labelSource: LabelSource;
   readonly createdAt: number;
   readonly expiresAt: number;
   readonly summary: string;

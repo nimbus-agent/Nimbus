@@ -6223,6 +6223,43 @@ describe("I29 — egress-ledger completeness over the executor chokepoint", () =
     expect(src.split("...subStepAttribution(action, scope)").length - 1).toBe(3);
   });
 
+  test("AD7a: a proposer label's source is display only: named by the modules that store, show or report it, and compared by none of the gate's steps (I28, D-AD-13)", async () => {
+    const files = (await grepRepo(/\blabelSource\b/)).filter(
+      (f) => f.startsWith("packages/gateway/src/") && !/\.test\.ts$|test-helpers\.ts$/.test(f),
+    );
+    expect(files).toEqual([
+      "packages/gateway/src/audit/agent-door-proof.ts",
+      "packages/gateway/src/engine/executor.ts",
+      "packages/gateway/src/engine/proposer-block.ts",
+      "packages/gateway/src/engine/types.ts",
+      "packages/gateway/src/ipc/approvals-rpc.ts",
+      "packages/gateway/src/ipc/capture-rpc.ts",
+      "packages/gateway/src/mcp-sink/capture-act.ts",
+      "packages/gateway/src/mcp-sink/capture-gate.ts",
+      "packages/gateway/src/mcp-sink/capture-store.ts",
+      "packages/gateway/src/mcp-sink/capture-types.ts",
+    ]);
+    // In the gate, the act door and the executor it is only carried: a declaration, a property
+    // passed on, or the one sanitiser call. No condition names it.
+    const carried =
+      /^(readonly labelSource: LabelSource;|labelSource,|labelSource: (row|proposer|p)\.labelSource,|const labelSource = sanitizeLabelSource\(params\["labelSource"\], clientLabel\);|const ctx: SubmitContext = \{ deps, caller, kind: kindRaw, clientLabel, labelSource \};|const \{ deps, caller, kind, clientLabel, labelSource \} = ctx;|proposer\?: Pick<AgentProposer, "door" \| "captureId" \| "label" \| "labelSource">;)$/;
+    for (const rel of [
+      "mcp-sink/capture-gate.ts",
+      "mcp-sink/capture-act.ts",
+      "engine/executor.ts",
+    ]) {
+      const src = stripComments(await read(`packages/gateway/src/${rel}`));
+      const lines = src
+        .split("\n")
+        .map((l) => l.trim())
+        .filter((l) => /\blabelSource\b/.test(l));
+      expect(lines.length, rel).toBeGreaterThan(0);
+      for (const line of lines) {
+        expect(line, `${rel}: ${line}`).toMatch(carried);
+      }
+    }
+  });
+
   test("AD4: the agent: source prefix is written only by egress-record.ts and read only by the proof reader", async () => {
     expect(await grepRepo(/\bAGENT_SOURCE_PREFIX\b/)).toEqual([
       "packages/gateway/src/audit/agent-door-proof.ts",

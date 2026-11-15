@@ -23,6 +23,18 @@ describe("parseMcpServerArgs", () => {
   });
   it("returns stdio when --stdio present", () => {
     expect(parseMcpServerArgs(["--stdio"])).toEqual({ kind: "stdio" });
+    expect(parseMcpServerArgs(["--stdio", "--agent", "codex"])).toEqual({
+      kind: "stdio",
+      agent: "codex",
+    });
+    expect(parseMcpServerArgs(["--agent", "vscode", "--stdio"])).toEqual({
+      kind: "stdio",
+      agent: "vscode",
+    });
+    for (const bad of ["", "-x", "UPPER", "a b", "a_b", "x".repeat(33), 'a"b', "a\nb"]) {
+      expect(parseMcpServerArgs(["--stdio", "--agent", bad]).kind, bad).toBe("usage");
+    }
+    expect(parseMcpServerArgs(["--stdio", "--agent", "x".repeat(32)]).kind).toBe("stdio");
   });
   it("defaults to config", () => {
     expect(parseMcpServerArgs([])).toEqual({ kind: "config" });
@@ -39,8 +51,11 @@ describe("formatConfigBlock / MCP_SERVER_CONFIG", () => {
   });
 });
 
-function fakeRunDeps(): { deps: RunMcpServerDeps; ran: { count: number } } {
-  const ran = { count: 0 };
+function fakeRunDeps(): {
+  deps: RunMcpServerDeps;
+  ran: { count: number; agentKit?: string | undefined };
+} {
+  const ran: { count: number; agentKit?: string | undefined } = { count: 0 };
   const adapterDeps: AdapterDeps = {
     getClient: async () => ({
       call: <T>(): Promise<T> => Promise.resolve(null as T),
@@ -54,6 +69,7 @@ function fakeRunDeps(): { deps: RunMcpServerDeps; ran: { count: number } } {
       runStdio: async (d) => {
         expect(d).toBe(adapterDeps);
         ran.count += 1;
+        ran.agentKit = d.agentKit;
       },
     },
   };
@@ -84,6 +100,39 @@ describe("runMcpServer", () => {
     const { deps, ran } = fakeRunDeps();
     await runMcpServer(["--stdio"], deps);
     expect(ran.count).toBe(1);
+    expect(ran.agentKit).toBeUndefined();
+  });
+
+  it("--agent hands the name to the adapter as the label for this server", async () => {
+    out.reset();
+    const { deps, ran } = fakeRunDeps();
+    await runMcpServer(["--stdio", "--agent", "claude-code"], deps);
+    expect(ran.count).toBe(1);
+    expect(ran.agentKit).toBe("claude-code");
+  });
+
+  it("a bad --agent is a usage error on stderr, exit code 2, and nothing is started", async () => {
+    const before = process.exitCode;
+    try {
+      for (const args of [
+        ["--stdio", "--agent"],
+        ["--stdio", "--agent", "Claude Code"],
+        ["--stdio", "--agent", "--stdio"],
+        ["--stdio", "--agent", "a", "--agent", "b"],
+        ["--agent", "codex"],
+      ]) {
+        out.reset();
+        process.exitCode = 0;
+        const { deps, ran } = fakeRunDeps();
+        await runMcpServer(args, deps);
+        expect(ran.count, args.join(" ")).toBe(0);
+        expect(out.stderr, args.join(" ")).toContain("nimbus mcp-server: --agent");
+        expect(out.stdout).toBe("");
+        expect(process.exitCode).toBe(2);
+      }
+    } finally {
+      process.exitCode = before ?? 0;
+    }
   });
 });
 

@@ -230,6 +230,14 @@ The chain is tamper-**evident**, not tamper-**proof**: a process running at the 
 
 ---
 
+### The Agent Door: What It Does Not Guard
+
+An outside agent (an MCP client such as a coding agent) can propose a connector write through Nimbus. You approve each one at your own terminal, behind the same typed preview and, for the riskiest writes, the same typed confirmation as Nimbus's own model.
+
+The agent door guards writes that pass through Nimbus. An agent that holds its own credentials, or can run commands, can act without it. The ledger records the actions Nimbus dispatches, not network traffic. The proposer's name is not verified. Until desktop approval ships, an agent that can run commands in your terminal can still approve its own proposals.
+
+The name shown beside a proposal is the name the agent declares, or the `--agent <name>` value in the server entry that starts `nimbus mcp-server`. The prompt says which of the two it is. Any process that can start that command can pass any name, so Nimbus shows the label as UNVERIFIED and makes no decision from it.
+
 ### Standing Approvals (design for a future phase)
 
 A future phase will introduce standing approvals: pre-authorized patterns that allow recurring write actions to execute without an interactive HITL prompt. The feature is not yet on the Phase 5 delivery list, but because standing approvals are functionally a scoped HITL bypass, the security boundaries are recorded here so the design constraints are settled before any implementation begins.

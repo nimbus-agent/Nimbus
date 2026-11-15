@@ -66,6 +66,11 @@ export function formatHelp(demo: boolean = false): string {
 Usage:
   nimbus mcp-server            Print the MCP server config block to paste into your editor
   nimbus mcp-server --stdio    Run the MCP server over stdio (your editor launches this)
+  nimbus mcp-server --stdio --agent <name>
+                               The same, and label what this agent captures or proposes
+                               with <name> (lowercase letters, digits and hyphens). The
+                               label is shown to you as UNVERIFIED: it is whatever the
+                               agent's server entry says, and Nimbus decides nothing by it
 
 Read-only tools (${String(names.length)}):
 ${wrapList(names, HELP_WIDTH)}
@@ -89,16 +94,38 @@ MCP-served brief in the egress ledger, and serving one unrecorded would make
 Gateway to get them back.`;
 }
 
-export type McpServerArgs = { kind: "help" } | { kind: "config" } | { kind: "stdio" };
+export type McpServerArgs =
+  | { kind: "help" }
+  | { kind: "config" }
+  | { kind: "stdio"; agent?: string }
+  | { kind: "usage"; message: string };
+
+/** What `--agent` accepts: a short lowercase name, as the kits write it (`claude-code`, `codex`). */
+export const AGENT_KIT_NAME_RE = /^[a-z0-9][a-z0-9-]{0,31}$/;
+
+const AGENT_USAGE =
+  "--agent needs a name of 1 to 32 lowercase letters, digits and hyphens, starting with a letter or digit (for example --agent claude-code)";
 
 export function parseMcpServerArgs(args: string[]): McpServerArgs {
   if (args[0] === "help" || args[0] === "--help" || args[0] === "-h") {
     return { kind: "help" };
   }
-  if (args.includes("--stdio")) {
-    return { kind: "stdio" };
+  const at = args.indexOf("--agent");
+  const stdio = args.includes("--stdio");
+  if (at === -1) {
+    return stdio ? { kind: "stdio" } : { kind: "config" };
   }
-  return { kind: "config" };
+  const agent = args[at + 1];
+  if (agent === undefined || !AGENT_KIT_NAME_RE.test(agent)) {
+    return { kind: "usage", message: AGENT_USAGE };
+  }
+  if (args.indexOf("--agent", at + 1) !== -1) {
+    return { kind: "usage", message: "--agent may be given once" };
+  }
+  if (!stdio) {
+    return { kind: "usage", message: "--agent is used with --stdio" };
+  }
+  return { kind: "stdio", agent };
 }
 
 export interface RunMcpServerDeps {
@@ -124,5 +151,15 @@ export async function runMcpServer(
     console.log(formatConfigBlock());
     return;
   }
-  await deps.runStdio(deps.makeDeps());
+  if (parsed.kind === "usage") {
+    // Before any connection: a server entry with a bad label must fail where the owner sees it.
+    console.error(`nimbus mcp-server: ${parsed.message}`);
+    process.exitCode = 2;
+    return;
+  }
+  const adapterDeps = deps.makeDeps();
+  if (parsed.agent !== undefined) {
+    adapterDeps.agentKit = parsed.agent;
+  }
+  await deps.runStdio(adapterDeps);
 }

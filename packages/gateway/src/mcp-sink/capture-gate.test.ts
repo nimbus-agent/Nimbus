@@ -605,6 +605,7 @@ describe("submit — proposals", () => {
       }),
       payloadBytes: 700,
       clientLabel: null,
+      labelSource: "declared",
       sessionId: "c-mcp",
       createdAt: clock,
       expiresAt: null,
@@ -1270,5 +1271,58 @@ describe("AD4 (OR-AD-20): the submit row names the submitting connection", () =>
     await submitCapture(deps, MCP, NOTE);
     const j = JSON.parse(auditRows()[0]?.action_json ?? "{}") as Record<string, unknown>;
     expect(j).toMatchObject({ connection: MCP.clientId, outcome: "captured" });
+  });
+});
+
+describe("submitCapture: where the label came from (AD7a, D-AD-13)", () => {
+  test("with no source the label is a declared client name", async () => {
+    await submitCapture(deps, MCP, NOTE);
+    expect(deps.store.get("cap_1")).toMatchObject({
+      clientLabel: "claude-code",
+      labelSource: "declared",
+    });
+  });
+
+  test('exactly "kit" beside a label is stored as kit', async () => {
+    await submitCapture(deps, MCP, { ...NOTE, labelSource: "kit" });
+    expect(deps.store.get("cap_1")).toMatchObject({
+      clientLabel: "claude-code",
+      labelSource: "kit",
+    });
+  });
+
+  test("any other value, and a kit source with no label, read as declared", async () => {
+    const others: unknown[] = ["KIT", "verified", "owner", 1, true, null, { kit: true }, ["kit"]];
+    for (const [i, labelSource] of others.entries()) {
+      await submitCapture(deps, MCP, { ...NOTE, labelSource });
+      expect(deps.store.get(`cap_${String(i + 1)}`)?.labelSource, String(labelSource)).toBe(
+        "declared",
+      );
+    }
+    const { clientLabel: _dropped, ...unlabelled } = NOTE;
+    await submitCapture(deps, MCP, { ...unlabelled, labelSource: "kit" });
+    expect(deps.store.get(`cap_${String(others.length + 1)}`)).toMatchObject({
+      clientLabel: null,
+      labelSource: "declared",
+    });
+  });
+
+  test("the source changes nothing but its own column: same result, same item, same audit row", async () => {
+    const declared = await submitCapture(deps, MCP, NOTE);
+    const kit = await submitCapture(deps, MCP, { ...NOTE, labelSource: "kit" });
+    expect(declared).toEqual({ id: "cap_1", state: "live" });
+    expect(kit).toEqual({ id: "cap_2", state: "live" });
+    const strip = (id: string) => {
+      const { id: _id, itemId: _item, labelSource: _source, ...rest } = deps.store.get(id) ?? {};
+      return rest;
+    };
+    expect(strip("cap_2")).toEqual(strip("cap_1"));
+    const [a, b] = auditRows();
+    const facts = (json: string | undefined) => {
+      const { captureId: _c, ...rest } = JSON.parse(json ?? "{}") as Record<string, unknown>;
+      return rest;
+    };
+    expect(facts(b?.action_json)).toEqual(facts(a?.action_json));
+    expect([a?.hitl_status, b?.hitl_status]).toEqual(["not_required", "not_required"]);
   });
 });

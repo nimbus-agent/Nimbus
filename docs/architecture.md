@@ -3048,7 +3048,12 @@ a fixed order and refuses at the first failing step:
 per kind), `item_id`, `payload_json`, `payload_bytes`, `client_label`, `session_id`, `native_ref`,
 `created_at`, `decided_at`. Revoking a row sets `state = 'revoked'` and `decided_at`, clears `payload_json` and `item_id`, and
 leaves every other column unchanged; the CHECK enforces only the `payload_json` half. Only
-`mcp-sink/capture-store.ts` names the table (static D32(a)).
+`mcp-sink/capture-store.ts` names the table (static D32(a)). Since V99 (Phase 28 AD7a) the row also holds
+`label_source` (`declared` or `kit`): whether `client_label` is the MCP client's declared name or the
+`--agent <name>` value of the server entry (`nimbus mcp-server --stdio --agent <name>`; the CLI sends
+`labelSource: "kit"` on `capture.submit`, and `sanitizeLabelSource` accepts exactly that beside a label). It is a
+display field: the approval prompt, `approvals.list`/`approvals.get`, the accept audit row and the proof by proposer
+show it, and no step of the gate, the act door or the executor reads it.
 
 **Items.** A note is an ordinary indexed item of type `nimbus:capture`, labelled agent-authored
 (`agentAuthored` appears in MCP read results beside the item `id`, so a client can cite it back as

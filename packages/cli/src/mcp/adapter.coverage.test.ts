@@ -425,6 +425,33 @@ describe("capture tool composition", () => {
       clientLabel: "editor",
     });
   });
+
+  test("a server started with --agent labels a capture with that name, not the client's", async () => {
+    const calls: Array<[string, unknown]> = [];
+    const client: IpcCallable = {
+      call: async <T>(m: string, p?: unknown): Promise<T> => {
+        calls.push([m, p]);
+        if (m === "capture.status") {
+          return { enabled: true, kinds: ["note"] } as T;
+        }
+        if (m === "capture.submit") {
+          return { id: "cap_9", state: "live" } as T;
+        }
+        return { kind: "mcp" } as T;
+      },
+      disconnect: async () => {},
+    };
+    const editor = await connectEditor(
+      await buildMcpServerForGateway({ getClient: async () => client, agentKit: "claude-code" }),
+    );
+    await editor.callTool({ name: "capture_note", arguments: { title: "t", body: "b" } });
+    expect(calls.find(([m]) => m === "capture.submit")?.[1]).toEqual({
+      kind: "note",
+      payload: { title: "t", body: "b" },
+      clientLabel: "claude-code",
+      labelSource: "kit",
+    });
+  });
 });
 
 describe("a registered tool reached through MCP tools/call", () => {
