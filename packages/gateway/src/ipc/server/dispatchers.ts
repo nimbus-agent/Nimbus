@@ -2393,11 +2393,17 @@ export async function tryDispatchConnectorRpc(
     let agentAnswerNonHuman = false;
     const agentEnable =
       method === "connector.writesEnable" && asRecord(params)?.["door"] === "agent";
-    const gateConsent = agentEnable
-      ? humanOnlyConsent(ctx.consentImpl, () => {
-          agentAnswerNonHuman = true;
-        })
-      : ctx.consentImpl;
+    // Phase 28 AD5b (owner ruling OR-AD-33): so does registering a user MCP server WITH a write
+    // directory. A registration with none keeps the consent it always had.
+    const writePathsParam = asRecord(params)?.["writePaths"];
+    const writeGrantAdd =
+      method === "connector.addMcp" && Array.isArray(writePathsParam) && writePathsParam.length > 0;
+    const gateConsent =
+      agentEnable || writeGrantAdd
+        ? humanOnlyConsent(ctx.consentImpl, () => {
+            agentAnswerNonHuman = true;
+          })
+        : ctx.consentImpl;
     // I29: gate-only executor — local mutation, no connector dispatch, so no egress to ledger.
     const toolExecutor = new ToolExecutor(
       bindConsentChannel(gateConsent, clientId),

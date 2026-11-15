@@ -1,10 +1,13 @@
 export { handleConnectorAuth } from "./auth.ts";
 export {
+  assertUserMcpGrantsClean,
   assertUserMcpSandboxClean,
+  assertWriteGrantRegistrable,
   handleConnectorAddMcp,
   handleConnectorSetConfig,
   handleConnectorSetInterval,
   resolveConnectorAddMcp,
+  WRITE_GRANT_NON_HUMAN_DECLINE,
 } from "./config.ts";
 export type { ConnectorRpcHandlerContext } from "./context.ts";
 export {

@@ -457,6 +457,7 @@ import {
 import { registerUserMcpSyncablesFromDatabase } from "./register-user-mcp-sync.ts";
 import { isProductionRuntime } from "./runtime-layout.ts";
 import { sandboxCwdFor } from "./sandbox/sandbox-cwd.ts";
+import type { SandboxPolicy } from "./sandbox/sandbox-policy.ts";
 import { createSandboxRunner } from "./sandbox/sandbox-runner.ts";
 import { reapAppContainersAtBoot, revokeLegacyDataDirGrantsAtBoot } from "./sandbox/win32-reap.ts";
 import { ensureFullSqlite } from "./sqlite-runtime.ts";
@@ -727,6 +728,11 @@ interface SchedulerWithMeshOpts {
   decisionLlm?: DecisionLlm;
   /** Settles when the boot-time Windows data-directory revoke is done; gates the filesystem MCP’s first spawn. */
   filesystemSpawnGate?: Promise<void>;
+  /**
+   * The sandbox runner's answer for a user MCP write-directory policy (I15, AD5b). Absent, a user
+   * MCP server with a write directory is never spawned.
+   */
+  userMcpCanConfine?: (policy: SandboxPolicy) => string | null;
   /**
    * `isExtensionRuntimeEnabled` (`[extensions] runtime` AND not demo-rooted, I41). When false the
    * mesh gets no extension slot source at all, so no approved extension can spawn.
@@ -1089,6 +1095,7 @@ async function createSchedulerWithMesh(opts: SchedulerWithMeshOpts): Promise<{
     isConnectorAllowed,
     ...(filesystemSpawnGate === undefined ? {} : { filesystemSpawnGate }),
     ...(extensionSlots === undefined ? {} : { extensionSlots, extensionSpawnGate }),
+    ...(opts.userMcpCanConfine === undefined ? {} : { userMcpCanConfine: opts.userMcpCanConfine }),
   });
   // Snapshot the GitHub Enterprise Server host now (the constructor reads no Vault key) so the first
   // write preview, which can come before the lazy child first spawns, already names the instance.
@@ -4133,6 +4140,8 @@ export async function assemblePlatformServices(
     glossaryLlm: createGlossaryLlm(llmRegistry.llmRouter),
     decisionLlm: createDecisionLlm(llmRegistry.llmRouter),
     ...(dataDirRevoke === undefined ? {} : { filesystemSpawnGate: dataDirRevoke }),
+    // I15 (AD5b): whether this OS's sandbox can confine a user MCP server's write directory.
+    userMcpCanConfine: (policy) => sandboxRunner.canConfine(policy),
     extensionRuntimeEnabled,
     extensionSpawnGate: extensionSpawnGate.promise,
     continuityTable: migration.continuityTable,

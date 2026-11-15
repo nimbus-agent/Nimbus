@@ -208,6 +208,36 @@ function policyFor(
 }
 
 /**
+ * At REGISTRATION, before the owner is asked: can this OS's sandbox confine these write directories
+ * at all (owner ruling OR-AD-30)? The policy asked about is the one a spawn would carry. `null` when
+ * it can; otherwise the fixed reason. An OS that cannot confine the grant never stores one.
+ */
+export function userMcpWriteConfineRefusal(
+  registration: {
+    readonly serviceId: string;
+    readonly readPaths: readonly string[];
+    readonly netHosts: readonly string[];
+    readonly writePaths: readonly string[];
+  },
+  canConfine: (policy: SandboxPolicy) => string | null,
+): string | null {
+  if (registration.writePaths.length === 0) return null;
+  const row = { service_id: registration.serviceId } as UserMcpConnectorRow;
+  try {
+    return canConfine(
+      policyFor(
+        row,
+        registration.readPaths,
+        registration.netHosts,
+        prepared(registration.writePaths),
+      ),
+    );
+  } catch {
+    return "the sandbox could not be asked whether it can confine a write directory";
+  }
+}
+
+/**
  * Windows: revoke what an earlier spawn of this id was granted and this one is not, then record
  * this spawn's paths. An entry leaves the ledger only after a revoke of it succeeded.
  */

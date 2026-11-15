@@ -211,7 +211,15 @@ describe("handleConnectorAddMcp", () => {
     const { stub: mesh } = makeStubMesh();
     const result = handleConnectorAddMcp(buildCtx({ rec: undefined, scheduler, mesh }), RESOLVED);
     expect(result.kind).toBe("hit");
-    expect(result.value).toEqual({ ok: true, serviceId: "mcp_test" });
+    // The reply states what was stored (the CLI prints these, never what it sent).
+    expect(result.value).toEqual({
+      ok: true,
+      serviceId: "mcp_test",
+      readPaths: ["/opt/notes"],
+      netHosts: ["api.example.com"],
+      writePaths: [],
+      modelAccess: true,
+    });
     expect(schedCalls.registered).toEqual(["mcp_test"]);
     const row = fixture.db
       .query(

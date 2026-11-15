@@ -20,7 +20,9 @@ import type {
   ConnectorRpcHit,
 } from "./connector-rpc-handlers/context.ts";
 import {
+  assertUserMcpGrantsClean,
   assertUserMcpSandboxClean,
+  assertWriteGrantRegistrable,
   handleConnectorAddMcp,
   handleConnectorAuth,
   handleConnectorHealthHistory,
@@ -40,6 +42,7 @@ import {
   type ModelWritesDeps,
   refuseExtensionBackedRemoval,
   resolveConnectorAddMcp,
+  WRITE_GRANT_NON_HUMAN_DECLINE,
   withConfiguredInstance,
 } from "./connector-rpc-handlers/index.ts";
 import { asRecord, ConnectorRpcError } from "./connector-rpc-shared.ts";
@@ -86,13 +89,27 @@ async function addMcpBehindOwnerGate(
   // 1. Resolve and validate FIRST: an invalid request (protected read path, unknown command,
   //    bad host, id collision) throws here and never prompts the owner.
   const resolved = resolveConnectorAddMcp(ctx);
+  // 1b. A write directory (I15, AD5b): a declared terminal or desktop connection, and an OS whose
+  //     sandbox can confine it. Refused here, before any prompt.
+  assertWriteGrantRegistrable(ctx, resolved);
   // 2. The payload the owner approves IS the resolved registration that step 5 stores.
-  const payload = buildAddMcpConsentPayload(resolved, ctx.sandboxRunner);
+  const payload = buildAddMcpConsentPayload(resolved, ctx.sandboxRunner, ctx.platform);
   // 3. The HITL gate: anything but "proceed" stops here, before any write.
   const gateResult = await toolExecutor.gate({ type: "connector.addMcp", payload });
-  if (gateResult !== "proceed") return { kind: "hit", value: gateResult };
-  // 4. A sandbox leaf left by an earlier registration of this id is cleared, or this refuses.
+  if (gateResult !== "proceed") {
+    // A write grant answered by `--yes`, a script, a delegate or an old client is a decline; say why.
+    if (resolved.writePaths.length > 0 && ctx.agentAnswerWasNonHuman?.() === true) {
+      throw new ConnectorRpcError(
+        -32000,
+        `ERR_USER_MCP_WRITE_GRANT_NOT_A_PERSON: ${WRITE_GRANT_NON_HUMAN_DECLINE}`,
+      );
+    }
+    return { kind: "hit", value: gateResult };
+  }
+  // 4. A sandbox leaf left by an earlier registration of this id is cleared, or this refuses; and
+  //    on Windows the file permissions that registration left are revoked, or this refuses.
   await assertUserMcpSandboxClean(ctx, resolved.serviceId);
+  await assertUserMcpGrantsClean(ctx, resolved.serviceId);
   // 5. Store exactly what was approved.
   return handleConnectorAddMcp(ctx, resolved);
 }
@@ -109,6 +126,7 @@ async function addMcpBehindOwnerGate(
 export function buildAddMcpConsentPayload(
   resolved: ResolvedUserMcpRegistration,
   sandbox: ReachRunner | undefined,
+  platform?: NodeJS.Platform,
 ): Record<string, unknown> {
   const payload: Record<string, unknown> = {
     serviceId: resolved.serviceId,
@@ -122,6 +140,12 @@ export function buildAddMcpConsentPayload(
     // Only where the reach is wider than the listed hosts (or unknown): a per-host sandbox needs no note.
     const reach = describeNetworkReach(sandbox, resolved.netHosts);
     if (reach.kind !== "hosts" && reach.kind !== "none") payload["networkNote"] = reach.text;
+  }
+  // Only for a registration that names a write directory: with none, the payload (and so the
+  // prompt, the audit row and the ledger row) is exactly what it was before AD5b.
+  if (resolved.writePaths.length > 0) {
+    payload["writePaths"] = resolved.writePaths;
+    payload["writePlatform"] = platform ?? process.platform;
   }
   return payload;
 }
@@ -205,6 +229,8 @@ export async function dispatchConnectorRpc(options: {
     ...(resolveCommand === undefined ? {} : { resolveCommand }),
     ...(realpath === undefined ? {} : { realpath }),
     ...(continuityTable === undefined ? {} : { continuityTable }),
+    ...(clientKind === undefined ? {} : { clientKind }),
+    ...(agentAnswerWasNonHuman === undefined ? {} : { agentAnswerWasNonHuman }),
   };
 
   const modelWritesDeps = async (): Promise<ModelWritesDeps> => ({

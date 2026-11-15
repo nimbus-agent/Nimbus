@@ -76,6 +76,7 @@ import type {
   WorkflowProvenance,
 } from "./types.ts";
 import { userMcpCallDetails, userMcpCallLines } from "./user-mcp-call-block.ts";
+import { addMcpWritePromptLines } from "./user-mcp-write-lines.ts";
 
 const executorLog = pino({
   name: "executor",
@@ -589,6 +590,14 @@ function formatConsentPromptBody(
   if (enableLines !== undefined) {
     // Purpose-built, escaped rendering of exactly which writes the model may then propose.
     lines.push("", ...enableLines);
+    return lines.join("\n");
+  }
+  const addMcpLines =
+    action.type === "connector.addMcp" ? addMcpWritePromptLines(action.payload) : undefined;
+  if (addMcpLines !== undefined) {
+    // A registration that carries a WRITE directory (I15, AD5b): the resolved registration and the
+    // write block with its fixed warning. One with no write directory keeps the Details line.
+    lines.push("", ...addMcpLines);
     return lines.join("\n");
   }
   const evalLines = action.type === "extension.eval" ? evalPromptLines(action) : undefined;
