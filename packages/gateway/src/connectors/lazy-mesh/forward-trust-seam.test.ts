@@ -9,6 +9,7 @@ import {
 import type { UserMcpConnectorRow } from "../user-mcp-store.ts";
 import { manifestForFirstParty, manifestWithExtraNetworkHosts } from "./first-party-manifests.ts";
 import { userMcpManifestFromRow } from "./user-mcp.ts";
+import { NO_USER_MCP_WRITE_GRANT } from "./user-mcp-write-grant.ts";
 
 /**
  * The trust a forwarder entry gets is decided across three modules that never meet in one test:
@@ -30,6 +31,7 @@ function userMcpRow(netHosts: readonly string[]): UserMcpConnectorRow {
     read_paths_json: "[]",
     net_hosts_json: JSON.stringify(netHosts),
     model_access: 0,
+    write_paths_json: "[]",
   };
 }
 
@@ -54,7 +56,10 @@ describe("the trust a forwarder entry gets survives the manifest, the policy and
   });
 
   test("a real user MCP row's --net entries are trust owner", () => {
-    const built = userMcpManifestFromRow(userMcpRow(["127.0.0.1:1143", "mail.example.com:993"]));
+    const built = userMcpManifestFromRow(
+      userMcpRow(["127.0.0.1:1143", "mail.example.com:993"]),
+      NO_USER_MCP_WRITE_GRANT,
+    );
     if (!built.ok) throw new Error(built.reason);
     const entries = planForwardEntries(overTheWire(policyFromManifest(built.manifest)));
     expect(entries.map((e) => [e.host, e.port, e.trust])).toEqual([

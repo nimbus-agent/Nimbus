@@ -452,11 +452,13 @@ describe("a legacy user-MCP proposal", () => {
     }
   });
 
-  test("with no door wired the prompt is today's (no block)", async () => {
+  test("with no door wired the call cannot be asked about: refused before any prompt, nothing dispatched (AD5b)", async () => {
+    // No door means no server facts, so there is nothing to show the write directories in (I15).
     const h = harness({ noDoor: true });
     const out = await h.act.execute("mcp_notes.append", INPUT, PROV("legacy_user_mcp"));
-    expect(out.status).toBe("ok");
-    expect(h.prompts[0]?.prompt).not.toContain("User MCP server:");
+    expect(out.status).toBe("rejected");
+    expect(h.prompts).toHaveLength(0);
+    expect(h.dispatched).toHaveLength(0);
   });
 });
 

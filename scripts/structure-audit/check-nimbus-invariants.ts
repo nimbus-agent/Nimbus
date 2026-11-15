@@ -4025,9 +4025,9 @@ const D43_CONSTANT_ALLOWED: readonly string[] = [
 // ---- D10 `user-write` (a declared write DIRECTORY, I15; Phase 28 AD5b) ---------------------------
 // A sandbox policy may declare a directory the child writes beneath (`canonicalWriteDirs`). The
 // field is named only by the manifest type, the policy wire and the two checks that read it, so no
-// connector, IPC handler or engine file can build a policy that carries one. In AD5b-1 the list
-// holds NO `connectors/` file: nothing produces a write-directory grant. AD5b-2 adds the one builder
-// (`connectors/lazy-mesh/user-mcp-write-grant.ts`) to this list, in the commit that adds the flag.
+// connector, IPC handler or engine file can build a policy that carries one. The ONE `connectors/`
+// file on the list is the builder of a user MCP write grant
+// (`connectors/lazy-mesh/user-mcp-write-grant.ts`, AD5b-2): every other producer is a violation.
 // Strings are kept: a string spelling of the field (a computed key) is a spelling.
 // Stated bound: textual. A name composed at run time evades it; the real-sandbox tests are the
 // authority on what a policy can do.
@@ -4037,6 +4037,7 @@ const D10_WRITE_DIR_ALLOWED: readonly string[] = [
   "packages/gateway/src/platform/sandbox/sandbox-policy.ts",
   "packages/gateway/src/platform/sandbox/canonical-path.ts",
   "packages/gateway/src/platform/sandbox/write-grant-check.ts",
+  "packages/gateway/src/connectors/lazy-mesh/user-mcp-write-grant.ts",
 ];
 
 export function checkWriteDirDeclarationConfined(files: readonly FileEntry[]): Violation[] {

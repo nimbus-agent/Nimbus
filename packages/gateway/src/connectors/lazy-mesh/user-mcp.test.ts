@@ -12,6 +12,7 @@ import {
   recordUserMcpRowFailure,
   userMcpManifestFromRow,
 } from "./user-mcp.ts";
+import { NO_USER_MCP_WRITE_GRANT } from "./user-mcp-write-grant.ts";
 
 // Real, unique temp root for the fake sandbox cwd string (S5443) — never written.
 const SANDBOX_CWD = join(mkdtempSync(join(tmpdir(), "nimbus-user-mcp-test-")), "sandbox-cwd");
@@ -107,6 +108,7 @@ function makeRow(overrides: Partial<UserMcpConnectorRow> = {}): UserMcpConnector
     read_paths_json: "[]",
     net_hosts_json: "[]",
     model_access: 0,
+    write_paths_json: "[]",
     ...overrides,
   };
 }
@@ -185,7 +187,7 @@ describe("ensureUserMcpClient — args_json failures", () => {
     });
     const row = makeRow({ service_id: "mcp_parse_fail", args_json: "not-json" });
 
-    ensureUserMcpClient(ctx, row);
+    ensureUserMcpClient(ctx, row, NO_USER_MCP_WRITE_GRANT);
 
     expect(warns).toHaveLength(1);
     expect(warns[0]?.bindings["serviceId"]).toBe("mcp_parse_fail");
@@ -216,7 +218,7 @@ describe("ensureUserMcpClient — args_json failures", () => {
       args_json: '"a string"',
     });
 
-    ensureUserMcpClient(ctx, row);
+    ensureUserMcpClient(ctx, row, NO_USER_MCP_WRITE_GRANT);
 
     expect(warns).toHaveLength(1);
     expect(warns[0]?.bindings["reason"]).toBe("expected string array");
@@ -239,7 +241,7 @@ describe("ensureUserMcpClient — args_json failures", () => {
       args_json: "[1, 2, 3]",
     });
 
-    ensureUserMcpClient(ctx, row);
+    ensureUserMcpClient(ctx, row, NO_USER_MCP_WRITE_GRANT);
 
     expect(warns).toHaveLength(1);
     expect(warns[0]?.bindings["reason"]).toBe("expected string array");
@@ -257,7 +259,7 @@ describe("ensureUserMcpClient — args_json failures", () => {
       args_json: '["ok", 42]',
     });
 
-    ensureUserMcpClient(ctx, row);
+    ensureUserMcpClient(ctx, row, NO_USER_MCP_WRITE_GRANT);
 
     expect(warns).toHaveLength(1);
     expect(warns[0]?.bindings["reason"]).toBe("expected string array");
@@ -274,7 +276,7 @@ describe("ensureUserMcpClient — args_json failures", () => {
       args_json: '{"not":"an array"}',
     });
 
-    ensureUserMcpClient(ctx, row);
+    ensureUserMcpClient(ctx, row, NO_USER_MCP_WRITE_GRANT);
 
     expect(warns).toHaveLength(1);
     expect(warns[0]?.bindings["reason"]).toBe("expected string array");
@@ -295,7 +297,7 @@ describe("ensureUserMcpClient — early-return when client already exists", () =
       args_json: '["valid", "args"]',
     });
 
-    ensureUserMcpClient(ctx, row);
+    ensureUserMcpClient(ctx, row, NO_USER_MCP_WRITE_GRANT);
 
     expect(calls.clearLazyIdle).toEqual(["mesh:user:mcp_exists"]);
     expect(calls.getLazyClient).toEqual(["mesh:user:mcp_exists"]);
@@ -318,7 +320,7 @@ describe("ensureUserMcpClient — early-return when client already exists", () =
       args_json: "this is not json at all",
     });
 
-    ensureUserMcpClient(ctx, row);
+    ensureUserMcpClient(ctx, row, NO_USER_MCP_WRITE_GRANT);
 
     expect(calls.scheduleLazyDisconnect).toEqual(["mesh:user:mcp_exists_broken"]);
     expect(calls.setLazyClient).toHaveLength(0);
@@ -347,7 +349,7 @@ describe("ensureUserMcpClient — successful path (constructs MCPClient lazily)"
       args_json: '["one", "two"]',
     });
 
-    ensureUserMcpClient(ctx, row);
+    ensureUserMcpClient(ctx, row, NO_USER_MCP_WRITE_GRANT);
 
     expect(calls.setLazyClient).toHaveLength(1);
     expect(calls.setLazyClient[0]?.key).toBe("mesh:user:mcp_ok");
@@ -369,7 +371,7 @@ describe("ensureUserMcpClient — successful path (constructs MCPClient lazily)"
       args_json: "[]",
     });
 
-    ensureUserMcpClient(ctx, row);
+    ensureUserMcpClient(ctx, row, NO_USER_MCP_WRITE_GRANT);
 
     expect(calls.setLazyClient).toHaveLength(1);
     expect(calls.setLazyClient[0]?.key).toBe("mesh:user:mcp_with.dots+plus");
@@ -386,6 +388,7 @@ describe("userMcpManifestFromRow", () => {
         read_paths_json: '["/a"]',
         net_hosts_json: '["api.x.com"]',
       }),
+      NO_USER_MCP_WRITE_GRANT,
     );
     expect(r).toEqual({
       ok: true,
@@ -400,20 +403,23 @@ describe("userMcpManifestFromRow", () => {
   });
 
   test("every --net entry is the owner's; a row with none carries no label", () => {
-    const r = userMcpManifestFromRow(makeRow({ net_hosts_json: '["a.x.com","10.0.0.5:8080"]' }));
+    const r = userMcpManifestFromRow(
+      makeRow({ net_hosts_json: '["a.x.com","10.0.0.5:8080"]' }),
+      NO_USER_MCP_WRITE_GRANT,
+    );
     expect(r.ok && r.manifest.ownerConfiguredNetwork).toEqual(["a.x.com", "10.0.0.5:8080"]);
-    const none = userMcpManifestFromRow(makeRow({ net_hosts_json: "[]" }));
+    const none = userMcpManifestFromRow(makeRow({ net_hosts_json: "[]" }), NO_USER_MCP_WRITE_GRANT);
     expect(none.ok && "ownerConfiguredNetwork" in none.manifest).toBe(false);
   });
 
   test("unparseable read_paths_json is named", () => {
-    const r = userMcpManifestFromRow(makeRow({ read_paths_json: "nope" }));
+    const r = userMcpManifestFromRow(makeRow({ read_paths_json: "nope" }), NO_USER_MCP_WRITE_GRANT);
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.column).toBe("read_paths_json");
   });
 
   test("non-string net_hosts_json is named", () => {
-    const r = userMcpManifestFromRow(makeRow({ net_hosts_json: "[1]" }));
+    const r = userMcpManifestFromRow(makeRow({ net_hosts_json: "[1]" }), NO_USER_MCP_WRITE_GRANT);
     expect(r).toEqual({ ok: false, column: "net_hosts_json", reason: "expected string array" });
   });
 });
@@ -421,7 +427,11 @@ describe("userMcpManifestFromRow", () => {
 describe("ensureUserMcpClient — grant column failures", () => {
   test("malformed net_hosts_json registers no client and records a persistent_error", () => {
     const { ctx, calls, healthDb } = makeSpyContext({ withLogger: true, withHealthDb: true });
-    ensureUserMcpClient(ctx, makeRow({ service_id: "mcp_bad_net", net_hosts_json: "[1]" }));
+    ensureUserMcpClient(
+      ctx,
+      makeRow({ service_id: "mcp_bad_net", net_hosts_json: "[1]" }),
+      NO_USER_MCP_WRITE_GRANT,
+    );
     expect(calls.setLazyClient).toHaveLength(0);
     expect(calls.bumpToolsEpoch).toBe(0);
     if (healthDb === undefined) throw new Error("healthDb should be defined");

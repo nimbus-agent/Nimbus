@@ -1,6 +1,8 @@
 import { realpathSync } from "node:fs";
 import { normalizeConnectorServiceId } from "../../connectors/connector-catalog.ts";
 import { removeDoorApprovals } from "../../connectors/connector-writes/door-approval-store.ts";
+import { registeredWriteDirsOf } from "../../connectors/lazy-mesh/user-mcp-write-deps.ts";
+import { userMcpWriteConfineRefusal } from "../../connectors/lazy-mesh/user-mcp-write-grant.ts";
 import {
   type ResolvedUserMcpRegistration,
   resolveUserMcpRegistration,
@@ -13,6 +15,7 @@ import {
   parseUserMcpCommandLine,
 } from "../../connectors/user-mcp-store.ts";
 import { createUserMcpSyncable } from "../../connectors/user-mcp-sync.ts";
+import { APPROVER_BY_KIND } from "../../mcp-sink/capture-client-policy.ts";
 import { MIN_SYNC_INTERVAL_MS } from "../../sync/constants.ts";
 import { ConnectorRpcError, requireRegisteredSchedulerServiceId } from "../connector-rpc-shared.ts";
 import type { ConnectorRpcHandlerContext, ConnectorRpcHit } from "./context.ts";
@@ -98,19 +101,24 @@ export function resolveConnectorAddMcp(
   const argv = argvParam(rec);
   const readPaths = stringArrayParam(rec, "readPaths");
   const netHosts = stringArrayParam(rec, "netHosts");
+  const writePaths = stringArrayParam(rec, "writePaths");
   const modelAccessRaw = rec?.["modelAccess"];
   if (modelAccessRaw !== undefined && typeof modelAccessRaw !== "boolean") {
     throw new ConnectorRpcError(-32602, "modelAccess must be a boolean");
   }
+  const registered = listUserMcpConnectors(localIndex.getDatabase());
   try {
     return resolveUserMcpRegistration(
-      { serviceId, argv, readPaths, netHosts, modelAccess: modelAccessRaw === true },
+      { serviceId, argv, readPaths, netHosts, modelAccess: modelAccessRaw === true, writePaths },
       {
+        // I15 (AD5b). The write-directory rule's facts are read only for a registration that names
+        // one; every other server's write directories are read always (the reverse rule: this
+        // server's code may not lie inside one).
+        ...(writePaths.length === 0 ? {} : { writeDir: connectorMesh.userMcpWriteDirDeps() }),
+        registeredWriteDirs: registeredWriteDirsOf(registered, serviceId),
         platform: requireAddMcpPlatform(ctx),
         protectedRoots: connectorMesh.userMcpProtectedRoots(),
-        registeredServiceIds: listUserMcpConnectors(localIndex.getDatabase()).map(
-          (r) => r.service_id,
-        ),
+        registeredServiceIds: registered.map((r) => r.service_id),
         which: ctx.resolveCommand ?? defaultUserMcpWhich,
         realpath: ctx.realpath ?? defaultUserMcpRealpath,
       },
@@ -121,6 +129,88 @@ export function resolveConnectorAddMcp(
     }
     throw e;
   }
+}
+
+/** The fixed sentence a non-human approval of a write grant is declined with (OR-AD-33). */
+export const WRITE_GRANT_NON_HUMAN_DECLINE =
+  "a write directory can only be approved by a person answering at the terminal or the desktop app";
+
+/**
+ * A registration that carries a write directory (I15, AD5b), BEFORE the owner is asked:
+ *  - only a connection that declared `cli` or `ui` may ask (owner ruling OR-AD-33; the consent
+ *    channel is the human-only one, wrapped by the dispatcher);
+ *  - the sandbox of this OS must be able to confine the grant (OR-AD-30), or nothing is stored.
+ * A registration with no write directory is not touched by either check.
+ */
+export function assertWriteGrantRegistrable(
+  ctx: ConnectorRpcHandlerContext,
+  resolved: ResolvedUserMcpRegistration,
+): void {
+  if (resolved.writePaths.length === 0) return;
+  if (!APPROVER_BY_KIND[ctx.clientKind ?? "unknown"]) {
+    throw new ConnectorRpcError(
+      -32000,
+      "ERR_USER_MCP_WRITE_GRANT_CLIENT: registering a server with a write directory needs a terminal or desktop connection that declared itself",
+    );
+  }
+  const { connectorMesh } = ctx;
+  if (connectorMesh === undefined) {
+    throw new ConnectorRpcError(-32603, "User MCP registration requires sync and connector mesh");
+  }
+  const cannot = userMcpWriteConfineRefusal(resolved, (policy) =>
+    connectorMesh.userMcpWriteCanConfine(policy),
+  );
+  if (cannot !== null) {
+    throw new ConnectorRpcError(-32602, `ERR_USER_MCP_WRITE_PATH_REFUSED: ${cannot}`);
+  }
+}
+
+/**
+ * Runs AFTER the owner approved: the registration is resolved AGAIN, against the registrations and
+ * the file system as they are now, and must come out exactly as the owner was shown it. A prompt
+ * can stay open for a long time; another registration approved meanwhile (a server whose code now
+ * lies in this one's write directory, a write directory that now holds this one's code), a folder
+ * that became a link or gained a marker, would otherwise be stored unchecked.
+ */
+export function assertRegistrationUnchanged(
+  ctx: ConnectorRpcHandlerContext,
+  approved: ResolvedUserMcpRegistration,
+): void {
+  const now = resolveConnectorAddMcp(ctx);
+  assertWriteGrantRegistrable(ctx, now);
+  if (JSON.stringify(now) !== JSON.stringify(approved)) {
+    throw new ConnectorRpcError(
+      -32602,
+      "ERR_USER_MCP_CHANGED_DURING_APPROVAL: what this registration resolves to changed while you were deciding; run the command again",
+    );
+  }
+}
+
+/**
+ * Runs AFTER the owner approved and BEFORE the row is stored: on Windows, every path an EARLIER
+ * registration of this id was granted is revoked from the ledger, or the registration is REFUSED
+ * and nothing is stored. A profile created again under the same name keeps its old permissions
+ * (measured), so a re-registered id would otherwise inherit them. A no-op elsewhere.
+ */
+export async function assertUserMcpGrantsClean(
+  ctx: ConnectorRpcHandlerContext,
+  serviceId: string,
+): Promise<void> {
+  const { connectorMesh } = ctx;
+  if (connectorMesh === undefined) {
+    throw new ConnectorRpcError(-32603, "User MCP registration requires sync and connector mesh");
+  }
+  const released = await connectorMesh.releaseUserMcpGrantsUnlessRegistered(serviceId);
+  if (released === "registered") {
+    // Registered while this request waited for its approval: nothing of the live registration is
+    // revoked, and this add is the duplicate.
+    throw new ConnectorRpcError(-32602, `User MCP connector already exists: ${serviceId}`);
+  }
+  if (released) return;
+  throw new ConnectorRpcError(
+    -32602,
+    "ERR_USER_MCP_GRANTS_NOT_CLEAN: file permissions left by an earlier registration of this id could not be removed; retry, or restart Nimbus and retry",
+  );
 }
 
 /**
@@ -168,6 +258,7 @@ export function handleConnectorAddMcp(
         read_paths_json: JSON.stringify(resolved.readPaths),
         net_hosts_json: JSON.stringify(resolved.netHosts),
         model_access: resolved.modelAccess ? 1 : 0,
+        write_paths_json: JSON.stringify(resolved.writePaths),
       });
     })();
   } catch (e) {
@@ -180,7 +271,19 @@ export function handleConnectorAddMcp(
   syncScheduler.register(
     createUserMcpSyncable(serviceId, () => connectorMesh.ensureUserMcpRunning(serviceId)),
   );
-  return { kind: "hit", value: { ok: true, serviceId } };
+  // The reply states what was STORED (the CLI prints these, never what it sent): a client talking
+  // to an older gateway sees no `writePaths` key and knows no write directory was granted.
+  return {
+    kind: "hit",
+    value: {
+      ok: true,
+      serviceId,
+      readPaths: resolved.readPaths,
+      netHosts: resolved.netHosts,
+      writePaths: resolved.writePaths,
+      modelAccess: resolved.modelAccess,
+    },
+  };
 }
 
 export function handleConnectorSetInterval(ctx: ConnectorRpcHandlerContext): ConnectorRpcHit {

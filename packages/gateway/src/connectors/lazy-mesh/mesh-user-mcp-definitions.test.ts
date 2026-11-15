@@ -48,6 +48,7 @@ function userRow(serviceId: string) {
     read_paths_json: "[]",
     net_hosts_json: "[]",
     model_access: 0,
+    write_paths_json: "[]",
   };
 }
 

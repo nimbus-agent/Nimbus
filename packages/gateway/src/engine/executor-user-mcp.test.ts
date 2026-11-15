@@ -83,6 +83,8 @@ describe("I42 — the executor gate requires HITL for a user-MCP action", () => 
       undefined,
       NULL_EGRESS_SINK,
       NO_POLICY_OVERLAY,
+      undefined,
+      { userMcpWriteGrants: () => [] },
     );
     const res = await exec.execute({ type: USER_MCP, payload: { text: "hi" } });
     expect(res.status).toBe("rejected");
@@ -100,6 +102,8 @@ describe("I42 — the executor gate requires HITL for a user-MCP action", () => 
       undefined,
       NULL_EGRESS_SINK,
       NO_POLICY_OVERLAY,
+      undefined,
+      { userMcpWriteGrants: () => [] },
     );
     const res = await exec.execute({ type: USER_MCP, payload: { text: "hi" } });
     expect(res.status).toBe("ok");
@@ -117,6 +121,8 @@ describe("I42 — the executor gate requires HITL for a user-MCP action", () => 
       undefined,
       NULL_EGRESS_SINK,
       NO_POLICY_OVERLAY,
+      undefined,
+      { userMcpWriteGrants: () => [] },
     );
     const res = await exec.execute({ type: "search.run", payload: {} });
     expect(res.status).toBe("ok");
@@ -159,6 +165,8 @@ describe("I42 — a delegate (I20) never approves a user-MCP action", () => {
         },
         NULL_EGRESS_SINK,
         NO_POLICY_OVERLAY,
+        undefined,
+        { userMcpWriteGrants: () => [] },
       );
       const res = await exec.execute({ type: USER_MCP, payload: {} });
       expect(remoteCalls).toBe(0);
@@ -192,6 +200,8 @@ describe("I42 — the owner sees a user-MCP payload unredacted at the consent pr
       undefined,
       NULL_EGRESS_SINK,
       NO_POLICY_OVERLAY,
+      undefined,
+      { userMcpWriteGrants: () => [] },
     );
     return { shown, auditJson, exec };
   }

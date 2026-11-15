@@ -38,6 +38,7 @@ function harness(approve: boolean, credentialFor?: PreviewCredentialResolver) {
     sink,
     NO_POLICY_OVERLAY,
     credentialFor,
+    { userMcpWriteGrants: () => [] },
   );
   return { exec, prompts, details, dispatched, audits, egress };
 }

@@ -664,6 +664,7 @@ describe("approvals live and die with the registration", () => {
         readPaths: [],
         netHosts: [],
         modelAccess: false,
+        writePaths: [],
       },
     );
     clock += 1_000;

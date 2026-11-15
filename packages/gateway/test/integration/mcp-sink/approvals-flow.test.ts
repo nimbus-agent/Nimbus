@@ -29,7 +29,11 @@ import { buildModelWriteExecutor } from "../../../src/engine/run-ask.ts";
 import type { AnswerSource, AuditSink, PlannedAction } from "../../../src/engine/types.ts";
 import { openMigratedMemoryDb } from "../../../src/index/migrated-db-template.ts";
 import { APPROVALS_METHODS } from "../../../src/ipc/approvals-rpc.ts";
-import type { CaptureActWiring, CaptureRpcCtx } from "../../../src/ipc/capture-rpc.ts";
+import type {
+  AgentDoorActWiring,
+  CaptureActWiring,
+  CaptureRpcCtx,
+} from "../../../src/ipc/capture-rpc.ts";
 import { ConsentCoordinatorImpl } from "../../../src/ipc/consent.ts";
 import { createStreamRegistry } from "../../../src/ipc/engine-ask-stream.ts";
 import type { JsonRpcNotification } from "../../../src/ipc/jsonrpc.ts";
@@ -114,6 +118,30 @@ function gateDeps(): CaptureGateDeps {
   };
 }
 
+/**
+ * A door that knows a registered user MCP server with no approval for agents (the legacy case). An
+ * agent's `mcp_*` call carries these facts, or it cannot be asked about at all (I15, AD5b).
+ */
+const LEGACY_USER_MCP_DOOR: AgentDoorActWiring = {
+  listServerTools: async () => undefined,
+  verifyDefinition: async () => ({ ok: true }),
+  userMcpCallFacts: async (actionType) => ({
+    ok: true,
+    facts: {
+      serviceId: actionType.slice(0, actionType.indexOf(".")),
+      tool: actionType.slice(actionType.indexOf(".") + 1),
+      registeredAt: 0,
+      readPaths: [],
+      netHosts: [],
+      writePaths: [],
+      approval: null,
+    },
+  }),
+};
+
+/** Set by the one test that proposes a user-MCP call; every other test keeps a wiring with no door. */
+let userMcpDoor = false;
+
 function actWiring(): CaptureActWiring {
   return {
     dispatcher: {
@@ -132,6 +160,7 @@ function actWiring(): CaptureActWiring {
     audit: { recordAudit: (e) => appendAuditEntry(db, e) },
     policyHitl: NO_POLICY_OVERLAY,
     getTribalKbConfig: () => undefined,
+    ...(userMcpDoor ? { agentDoor: LEGACY_USER_MCP_DOOR } : {}),
     previewCredentialFor: () => "team",
     ...(rows === undefined ? {} : { beforeStateRows: rows }),
   };
@@ -311,6 +340,9 @@ describe("A1: the same prompt the model door shows", () => {
   });
 
   test("a user-MCP type shows the input verbatim, escaped, on the owner's prompt", async () => {
+    userMcpDoor = true;
+    rpcCtx = { gate: gateDeps(), act: actWiring() };
+    userMcpDoor = false;
     const RLO = String.fromCodePoint(0x202e);
     const id = await propose(AGENT_1, {
       actionType: "mcp_echo.echo",

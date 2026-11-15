@@ -1039,6 +1039,14 @@ ALTER TABLE user_mcp_connector ADD COLUMN read_paths_json TEXT NOT NULL DEFAULT 
 ALTER TABLE user_mcp_connector ADD COLUMN net_hosts_json  TEXT NOT NULL DEFAULT '[]';
 ALTER TABLE user_mcp_connector ADD COLUMN model_access    INTEGER NOT NULL DEFAULT 0;
 
+-- V98 -- the directories a user MCP server may WRITE beneath (Phase 28 AD5b-2, 2026-11-15; I15).
+-- Authoritative source: packages/gateway/src/index/user-mcp-write-v98-sql.ts
+-- A JSON array of canonical directory paths (at most four), approved by a person at registration
+-- (`nimbus connector add --mcp ... --write <dir>`) and checked again at every spawn. Written once,
+-- by `insertUserMcpConnector` (a registration has no update path). The default keeps every
+-- existing row at no write directory; the runner guards the ALTER with a column probe.
+ALTER TABLE user_mcp_connector ADD COLUMN write_paths_json TEXT NOT NULL DEFAULT '[]';
+
 -- V66 -- extension tree digest (2026-10-11). Additive column on the V10 `extension` table.
 -- Authoritative source: packages/gateway/src/index/extension-tree-digest-v66-sql.ts
 -- SHA-256 over every file under `install_path` (packages/gateway/src/extensions/tree-digest.ts),

@@ -18,6 +18,20 @@ export function isSameOrInside(platform: NodeJS.Platform, inner: string, outer: 
   return rel !== ".." && !rel.startsWith(`..${api.sep}`);
 }
 
+/** A Windows UNC, device or stream path (`\\server\share`, `\\?\`, `\\.\`, `C:\a:stream`). */
+export function isDeviceOrUnc(p: string, platform: NodeJS.Platform): boolean {
+  if (platform !== "win32") return false;
+  if (p.startsWith("\\\\") || p.startsWith("//")) return true; // UNC, `\\?\`, `\\.\`
+  // A drive letter's colon is the only colon a plain Windows path has (anything else is a stream).
+  return p.slice(2).includes(":");
+}
+
+/** A filesystem or drive root (`/`, `C:\`). */
+export function isRootOf(p: string, platform: NodeJS.Platform): boolean {
+  const api = pathApiFor(platform);
+  return api.parse(p).root === p || api.dirname(p) === p;
+}
+
 /** Two paths overlap when either is the same as, or inside, the other. */
 export function pathsOverlap(platform: NodeJS.Platform, a: string, b: string): boolean {
   return isSameOrInside(platform, a, b) || isSameOrInside(platform, b, a);

@@ -11,6 +11,8 @@ export type UserMcpConnectorRow = {
   read_paths_json: string;
   net_hosts_json: string;
   model_access: number;
+  /** JSON array of the canonical directories the server may write beneath (V98); `'[]'` is none. */
+  write_paths_json: string;
 };
 
 export const USER_MCP_SERVICE_ID_PATTERN = /^mcp_[a-z0-9_]{1,62}$/;
@@ -94,13 +96,18 @@ export function validateUserMcpArgsJson(args: string[]): string {
   return JSON.stringify(args);
 }
 
+const SELECT_V98 =
+  "SELECT service_id, command, args_json, created_at, read_paths_json, net_hosts_json, model_access, write_paths_json FROM user_mcp_connector";
 const SELECT_V65 =
-  "SELECT service_id, command, args_json, created_at, read_paths_json, net_hosts_json, model_access FROM user_mcp_connector";
+  "SELECT service_id, command, args_json, created_at, read_paths_json, net_hosts_json, model_access, '[]' AS write_paths_json FROM user_mcp_connector";
 const SELECT_PRE_V65 =
-  "SELECT service_id, command, args_json, created_at, '[]' AS read_paths_json, '[]' AS net_hosts_json, 0 AS model_access FROM user_mcp_connector";
+  "SELECT service_id, command, args_json, created_at, '[]' AS read_paths_json, '[]' AS net_hosts_json, 0 AS model_access, '[]' AS write_paths_json FROM user_mcp_connector";
 
+/** Below V98 the column does not exist and no server was ever granted a write directory. */
 function selectUserMcp(db: Database): string {
-  return readIndexedUserVersion(db) >= 65 ? SELECT_V65 : SELECT_PRE_V65;
+  const version = readIndexedUserVersion(db);
+  if (version >= 98) return SELECT_V98;
+  return version >= 65 ? SELECT_V65 : SELECT_PRE_V65;
 }
 
 export function listUserMcpConnectors(db: Database): UserMcpConnectorRow[] {
@@ -136,7 +143,10 @@ export function getUserMcpConnector(db: Database, serviceId: string): UserMcpCon
 
 export function insertUserMcpConnector(
   db: Database,
-  row: Omit<UserMcpConnectorRow, "created_at"> & { created_at?: number },
+  row: Omit<UserMcpConnectorRow, "created_at" | "write_paths_json"> & {
+    created_at?: number;
+    write_paths_json?: string;
+  },
 ): void {
   const version = readIndexedUserVersion(db);
   if (version < 11) {
@@ -146,9 +156,30 @@ export function insertUserMcpConnector(
     throw new Error("user_mcp_connector grants require schema v65+");
   }
   const created = row.created_at ?? Date.now();
+  const writePaths = row.write_paths_json ?? "[]";
+  if (version < 98) {
+    // A write grant is never dropped silently: an older schema cannot hold one, so it is refused.
+    if (writePaths !== "[]") {
+      throw new Error("user_mcp_connector write directories require schema v98+");
+    }
+    dbRun(
+      db,
+      `INSERT INTO user_mcp_connector (service_id, command, args_json, created_at, read_paths_json, net_hosts_json, model_access) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [
+        row.service_id,
+        row.command,
+        row.args_json,
+        created,
+        row.read_paths_json,
+        row.net_hosts_json,
+        row.model_access,
+      ],
+    );
+    return;
+  }
   dbRun(
     db,
-    `INSERT INTO user_mcp_connector (service_id, command, args_json, created_at, read_paths_json, net_hosts_json, model_access) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO user_mcp_connector (service_id, command, args_json, created_at, read_paths_json, net_hosts_json, model_access, write_paths_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       row.service_id,
       row.command,
@@ -157,6 +188,7 @@ export function insertUserMcpConnector(
       row.read_paths_json,
       row.net_hosts_json,
       row.model_access,
+      writePaths,
     ],
   );
 }

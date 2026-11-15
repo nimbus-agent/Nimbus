@@ -122,8 +122,8 @@ export interface AgentDoorActWiring {
   /**
    * The facts the owner's prompt shows for a user-MCP call (AD5a, D-6; `createAgentDoor(...).
    * userMcpCallFacts`). For an `approved` basis it lists the server once and runs the definition check on
-   * that listing, so a failed check is a refusal before any prompt. Absent (a test wiring), an
-   * `approved` user-MCP proposal is refused (fail closed) and a legacy one runs without the block.
+   * that listing, so a failed check is a refusal before any prompt. Absent (a test wiring), every
+   * user-MCP proposal is refused: an `approved` one here, a legacy one by the executor (no facts).
    */
   readonly userMcpCallFacts?: (
     actionType: string,
@@ -267,7 +267,8 @@ export function buildActDeps(
       // failed check is rejected with no prompt. A legacy basis reads the registration only.
       let userMcpCall: UserMcpCallFacts | undefined;
       if (userMcpActionParts(actionType) !== undefined && provenance.basis !== undefined) {
-        // No facts function wired: an approved basis fails closed, a legacy one runs without the block.
+        // No facts function wired: an approved basis fails closed here; a legacy one reaches the
+        // executor with no facts, which refuses it before any prompt (I15, AD5b).
         const f: UserMcpCallFactsOutcome | undefined =
           door?.userMcpCallFacts === undefined
             ? provenance.basis === "approved"

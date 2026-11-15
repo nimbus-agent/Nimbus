@@ -14,7 +14,13 @@
 import type { Database } from "bun:sqlite";
 
 import { dbRun } from "../../db/write.ts";
-import { findProtectedOverlap, isSameOrInside, pathApiFor } from "../../util/path-overlap.ts";
+import {
+  findProtectedOverlap,
+  isDeviceOrUnc,
+  isRootOf,
+  isSameOrInside,
+  pathApiFor,
+} from "../../util/path-overlap.ts";
 import { isConfirmChar } from "./confirm-template.ts";
 import type { GitScan } from "./iac-git-scan.ts";
 import { IAC_LIMITS, terraformInputRefusal } from "./iac-limits.ts";
@@ -126,13 +132,6 @@ export interface IacPathDeps {
   readonly gitScan: (dir: string) => GitScan;
 }
 
-function isDeviceOrUnc(p: string, platform: NodeJS.Platform): boolean {
-  if (platform !== "win32") return false;
-  if (p.startsWith("\\\\") || p.startsWith("//")) return true; // UNC, `\\?\`, `\\.\`
-  // A drive letter's colon is the only colon a plain Windows path has (anything else is a stream).
-  return p.slice(2).includes(":");
-}
-
 function typeable(p: string): boolean {
   for (const ch of p) {
     const cp = ch.codePointAt(0) ?? 0;
@@ -144,11 +143,6 @@ function typeable(p: string): boolean {
 function hasTerraformSegment(p: string, platform: NodeJS.Platform): boolean {
   const lower = (s: string): string => (platform === "win32" ? s.toLowerCase() : s);
   return p.split(/[\\/]+/).some((s) => lower(s) === ".terraform");
-}
-
-function isRootOf(p: string, platform: NodeJS.Platform): boolean {
-  const api = pathApiFor(platform);
-  return api.parse(p).root === p || api.dirname(p) === p;
 }
 
 /** Is `p` the same as, or an ancestor of, `other`? */

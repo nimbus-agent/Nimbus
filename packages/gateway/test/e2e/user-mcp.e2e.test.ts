@@ -223,7 +223,7 @@ describe.skipIf(sandboxAvailable || !IS_CI)("user MCP e2e — CI sandbox precond
  * probe reports the outcome rather than throwing, so the gateway relays a DENIED as a normal tool
  * result and the assertion can tell "the sandbox refused the read" apart from "the call failed".
  */
-const PROBE_TS = `import { readFileSync } from "node:fs";
+const PROBE_TS = `import { readFileSync, writeFileSync } from "node:fs";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { createServer } from "./server.ts";
@@ -235,6 +235,21 @@ server.registerTool(
   async ({ path }) => {
     try {
       return { content: [{ type: "text", text: \`READ \${readFileSync(path, "utf8")}\` }] };
+    } catch (e) {
+      const why = e instanceof Error ? e.message : String(e);
+      return { content: [{ type: "text", text: \`DENIED \${why}\` }] };
+    }
+  },
+);
+// Agent door AD5b: try to create a file. Like the read probe, it reports the outcome instead of
+// throwing, so a sandbox refusal is a normal tool result.
+server.registerTool(
+  "write",
+  { description: "Try to write a file", inputSchema: { path: z.string(), text: z.string() } },
+  async ({ path, text }) => {
+    try {
+      writeFileSync(path, text, "utf8");
+      return { content: [{ type: "text", text: "WROTE" }] };
     } catch (e) {
       const why = e instanceof Error ? e.message : String(e);
       return { content: [{ type: "text", text: \`DENIED \${why}\` }] };
@@ -1120,5 +1135,128 @@ describe.skipIf(!sandboxAvailable)("a scaffolded user MCP over a real gateway", 
         }),
       ),
     ).toContain("ERR_CAPTURE_ACTION_NOT_PROPOSABLE");
+  }, 120_000);
+
+  // ---- Phase 28 AD5b: a write directory (I15) ---------------------------------------------------
+  // A second registration of the same binary, with `--write`. The directory is OUTSIDE `tmp`: in
+  // this fixture `tmp` is the parent of the sandbox root, which is a folder Nimbus owns.
+  const WRITER = "mcp_writer_srv";
+  const writeRoot = realpathSync.native(mkdtempSync(join(tmpdir(), "nimbus-usermcp-write-")));
+  const writeDir = join(writeRoot, "out");
+  const besideDir = join(writeRoot, "beside");
+  const insideFile = join(writeDir, "note.txt");
+  const besideFile = join(besideDir, "note.txt");
+  afterAll(() => {
+    try {
+      rmSync(writeRoot, { recursive: true, force: true });
+    } catch {
+      /* Windows handle race; harmless */
+    }
+  });
+  const writerParams = { serviceId: WRITER, argv: [binary], writePaths: [writeDir] };
+
+  test("AD5b: a connection that did not declare itself cannot register a server with a write directory", async () => {
+    mkdirSync(writeDir, { recursive: true });
+    mkdirSync(besideDir, { recursive: true });
+    const before = prompts.length;
+    expect(await refusal(client.call("connector.addMcp", writerParams))).toContain(
+      "ERR_USER_MCP_WRITE_GRANT_CLIENT",
+    );
+    // Refused before any prompt.
+    expect(prompts.length).toBe(before);
+  }, 60_000);
+
+  test("AD5b: an approval that reports no source is a decline, and nothing is registered", async () => {
+    const scripted = await openConnection("cli", undefined);
+    expect(await refusal(scripted.c.call("connector.addMcp", writerParams))).toContain(
+      "ERR_USER_MCP_WRITE_GRANT_NOT_A_PERSON",
+    );
+    expect(scripted.prompts).toHaveLength(1);
+    const tools = await refusal(client.call("connector.userMcpTools", { serviceId: WRITER }));
+    expect(tools.length).toBeGreaterThan(0);
+  }, 60_000);
+
+  test("AD5b: a marker folder inside the directory refuses the registration before any prompt", async () => {
+    const owner = await openConnection("cli", "human");
+    mkdirSync(join(writeDir, ".git"));
+    try {
+      expect(await refusal(owner.c.call("connector.addMcp", writerParams))).toContain(
+        "ERR_USER_MCP_WRITE_PATH_REFUSED",
+      );
+      expect(owner.prompts).toHaveLength(0);
+    } finally {
+      rmSync(join(writeDir, ".git"), { recursive: true, force: true });
+    }
+  }, 60_000);
+
+  test("AD5b: a person on a declared connection registers it; the prompt carries the write block; the reply states what was stored", async () => {
+    const owner = await openConnection("cli", "human");
+    const out = await owner.c.call<{ ok?: boolean; writePaths?: string[] }>(
+      "connector.addMcp",
+      writerParams,
+    );
+    expect(out.ok).toBe(true);
+    expect(out.writePaths).toEqual([writeDir]);
+    expect(owner.prompts).toHaveLength(1);
+    const prompt = owner.prompts[0] ?? "";
+    expect(prompt).toContain(`Register a user MCP server: ${WRITER}`);
+    expect(prompt).toContain("WRITE ACCESS: this server's code can create and change files under:");
+    expect(prompt).toContain("This is third-party code.");
+    expect(prompt).toContain(`nimbus connector remove ${WRITER}`);
+  }, 60_000);
+
+  test("AD5b: the server writes a file INSIDE its directory, and the owner's prompt for the call showed the write block", async () => {
+    const owner = await openConnection("cli", "human");
+    const out = await owner.c.call<CallOutcome>("connector.userMcpCall", {
+      serviceId: WRITER,
+      tool: "write",
+      input: { path: insideFile, text: "INSIDE-CONTENT" },
+    });
+    expect(resultText(out)).toBe("WROTE");
+    // Read from the HOST: the write really landed.
+    expect(readFileSync(insideFile, "utf8")).toBe("INSIDE-CONTENT");
+    expect(owner.prompts).toHaveLength(1);
+    expect(owner.prompts[0]).toContain(
+      "WRITE ACCESS: this server's code can create and change files under:",
+    );
+  }, 60_000);
+
+  test("AD5b: the server is CONFINED: a write beside its directory is denied and nothing lands on the host", async () => {
+    const owner = await openConnection("cli", "human");
+    const out = await owner.c.call<CallOutcome>("connector.userMcpCall", {
+      serviceId: WRITER,
+      tool: "write",
+      input: { path: besideFile, text: "ESCAPED" },
+    });
+    const text = resultText(out);
+    expect(text.startsWith("DENIED")).toBe(true);
+    expect(existsSync(besideFile)).toBe(false);
+  }, 60_000);
+
+  test("AD5b: the first server, registered without --write, still cannot write there", async () => {
+    const out = await client.call<CallOutcome>("connector.userMcpCall", {
+      serviceId: SERVICE,
+      tool: "write",
+      input: { path: join(writeDir, "from-the-other-server.txt"), text: "NO" },
+    });
+    expect(resultText(out).startsWith("DENIED")).toBe(true);
+    expect(existsSync(join(writeDir, "from-the-other-server.txt"))).toBe(false);
+  }, 60_000);
+
+  test("AD5b: removing the server succeeds, and a later registration of the same id asks again", async () => {
+    const out = await client.call<{ ok?: boolean }>("connector.remove", { serviceId: WRITER });
+    expect(out.ok).toBe(true);
+    // The file the server wrote is the owner's: removal does not touch it.
+    expect(readFileSync(insideFile, "utf8")).toBe("INSIDE-CONTENT");
+    const owner = await openConnection("cli", "human");
+    const again = await owner.c.call<{ ok?: boolean; writePaths?: string[] }>(
+      "connector.addMcp",
+      writerParams,
+    );
+    expect(again.ok).toBe(true);
+    expect(owner.prompts).toHaveLength(1);
+    expect(
+      (await client.call<{ ok?: boolean }>("connector.remove", { serviceId: WRITER })).ok,
+    ).toBe(true);
   }, 120_000);
 });

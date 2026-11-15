@@ -95,7 +95,7 @@ function harness(opts: {
     sink,
     NO_POLICY_OVERLAY,
     undefined,
-    { beforeState: opts.runner },
+    { beforeState: opts.runner, userMcpWriteGrants: () => [] },
   );
   return { exec, plain, confirmed, audits, egress, dispatched };
 }

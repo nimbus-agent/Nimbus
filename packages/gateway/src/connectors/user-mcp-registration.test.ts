@@ -214,3 +214,189 @@ describe("resolveUserMcpRegistration", () => {
     expect(r.modelAccess).toBe(true);
   });
 });
+
+// Phase 28 AD5b-2: write directories. The placement rule itself is tested in write-dir-rules.test.ts;
+// here it is the resolver's own rules, with a `writeDir` that passes everything it is not told to refuse.
+describe("resolveUserMcpRegistration: write directories (AD5b-2)", () => {
+  const DIR = { isDirectory: () => true, isSymbolicLink: () => false };
+  function writeEnv(over: EnvOver & { refuse?: Record<string, "link"> } = {}) {
+    const base = makeEnv({ existing: ["/opt/srv/bin/x"], ...over });
+    const scans: string[] = [];
+    const env: UserMcpRegistrationEnv = {
+      ...base,
+      writeDir: {
+        platform: base.platform,
+        realpath: (p) => (p === "/srv/alias" ? "/srv/out" : p),
+        lstat: () => DIR,
+        exists: () => false,
+        homeDir: "/home/u",
+        tmpDir: "/tmp",
+        pathEntries: [],
+        appDataDirs: [],
+        protectedRoots: () => base.protectedRoots,
+        iacWorkdirs: () => [],
+        serverCodePaths: () => [],
+        scan: (dir) => {
+          scans.push(dir);
+          return over.refuse?.[dir] ?? "clean";
+        },
+      },
+    };
+    return { env, scans };
+  }
+  const refused = (fn: () => unknown, text: string): void => {
+    let caught: unknown;
+    try {
+      fn();
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(UserMcpRegistrationError);
+    expect((caught as UserMcpRegistrationError).code).toBe("ERR_USER_MCP_WRITE_PATH_REFUSED");
+    expect((caught as UserMcpRegistrationError).message).toContain(text);
+  };
+
+  test("no write directory: the resolved registration has an empty list and nothing is checked", () => {
+    const { env, scans } = writeEnv();
+    expect(resolveUserMcpRegistration(input(), env).writePaths).toEqual([]);
+    expect(
+      resolveUserMcpRegistration(
+        input({ writePaths: [] }),
+        makeEnv({ existing: ["/opt/srv/bin/x"] }),
+      ).writePaths,
+    ).toEqual([]);
+    expect(scans).toEqual([]);
+  });
+
+  test("the stored value is the canonical form, de-duplicated by overlap and sorted", () => {
+    const { env } = writeEnv();
+    const r = resolveUserMcpRegistration(input({ writePaths: ["/srv/zeta", "/srv/alias"] }), env);
+    expect(r.writePaths).toEqual(["/srv/out", "/srv/zeta"]);
+  });
+
+  test("a directory the placement rule refuses is refused with that rule's sentence", () => {
+    const { env } = writeEnv({ refuse: { "/srv/out": "link" } });
+    refused(
+      () => resolveUserMcpRegistration(input({ writePaths: ["/srv/out"] }), env),
+      "the directory holds a link",
+    );
+  });
+
+  test("two overlapping write directories are refused, the same one twice included", () => {
+    const { env } = writeEnv();
+    for (const pair of [
+      ["/srv/out", "/srv/out/sub"],
+      ["/srv/out/sub", "/srv/out"],
+      ["/srv/out", "/srv/alias"],
+    ]) {
+      refused(() => resolveUserMcpRegistration(input({ writePaths: pair }), env), "overlap");
+    }
+  });
+
+  test("five are refused before any is checked (OR-AD-34)", () => {
+    const { env, scans } = writeEnv();
+    refused(
+      () =>
+        resolveUserMcpRegistration(
+          input({ writePaths: ["/srv/a", "/srv/b", "/srv/c", "/srv/d", "/srv/e"] }),
+          env,
+        ),
+      "at most 4",
+    );
+    expect(scans).toEqual([]);
+    expect(
+      resolveUserMcpRegistration(
+        input({ writePaths: ["/srv/a", "/srv/b", "/srv/c", "/srv/d"] }),
+        env,
+      ).writePaths,
+    ).toHaveLength(4);
+  });
+
+  test("a server may not write its own code: the command directory, above it, or a file argument", () => {
+    const { env } = writeEnv({ existing: ["/opt/srv/bin/x"] });
+    for (const dir of ["/opt/srv/bin", "/opt/srv", "/opt/srv/bin/data"]) {
+      refused(
+        () => resolveUserMcpRegistration(input({ writePaths: [dir] }), env),
+        "may not write the code it is started from",
+      );
+    }
+    refused(
+      () =>
+        resolveUserMcpRegistration(
+          input({ argv: ["/opt/srv/bin/x", "/srv/scripts/main.js"], writePaths: ["/srv/scripts"] }),
+          env,
+        ),
+      "may not write the code it is started from",
+    );
+  });
+
+  test("the reverse rule: a server whose code is inside ANOTHER server's write directory is refused, with or without a write directory of its own", () => {
+    const { env } = writeEnv({ existing: ["/opt/srv/bin/x"] });
+    const withOther = { ...env, registeredWriteDirs: ["/opt/srv"] };
+    refused(
+      () => resolveUserMcpRegistration(input(), withOther),
+      "another server's write directory",
+    );
+    refused(
+      () => resolveUserMcpRegistration(input({ writePaths: ["/srv/out"] }), withOther),
+      "another server's write directory",
+    );
+    const elsewhere = { ...env, registeredWriteDirs: ["/srv/other-out"] };
+    expect(resolveUserMcpRegistration(input(), elsewhere).writePaths).toEqual([]);
+  });
+
+  test("a code argument that is a LINK into the write directory is refused by its real target, both ways", () => {
+    // `/opt/entry.js` is a link to `/srv/out/main.js`: compared by spelling alone it looks outside.
+    const linked = (p: string): string => (p === "/opt/entry.js" ? "/srv/out/main.js" : p);
+    const { env } = writeEnv({ existing: ["/opt/srv/bin/x"], realpath: linked });
+    refused(
+      () =>
+        resolveUserMcpRegistration(
+          input({ argv: ["/opt/srv/bin/x", "/opt/entry.js"], writePaths: ["/srv/out"] }),
+          env,
+        ),
+      "may not write the code it is started from",
+    );
+    // The reverse rule sees the same target against another server's write directory.
+    refused(
+      () =>
+        resolveUserMcpRegistration(input({ argv: ["/opt/srv/bin/x", "/opt/entry.js"] }), {
+          ...env,
+          registeredWriteDirs: ["/srv/out"],
+        }),
+      "another server's write directory",
+    );
+    // A link that points elsewhere is not refused.
+    const elsewhere = writeEnv({
+      existing: ["/opt/srv/bin/x"],
+      realpath: (p) => (p === "/opt/entry.js" ? "/srv/code/main.js" : p),
+    });
+    expect(
+      resolveUserMcpRegistration(
+        input({ argv: ["/opt/srv/bin/x", "/opt/entry.js"], writePaths: ["/srv/out"] }),
+        elsewhere.env,
+      ).writePaths,
+    ).toEqual(["/srv/out"]);
+  });
+
+  test("a write directory with no rule wired is refused, never accepted unchecked", () => {
+    refused(
+      () =>
+        resolveUserMcpRegistration(
+          input({ writePaths: ["/srv/out"] }),
+          makeEnv({ existing: ["/opt/srv/bin/x"] }),
+        ),
+      "cannot be checked",
+    );
+  });
+
+  test("a write directory equal to a read path is kept in both lists", () => {
+    const { env } = writeEnv({ existing: ["/opt/srv/bin/x", "/srv/out"] });
+    const r = resolveUserMcpRegistration(
+      input({ readPaths: ["/srv/out"], writePaths: ["/srv/out"] }),
+      env,
+    );
+    expect(r.readPaths).toContain("/srv/out");
+    expect(r.writePaths).toEqual(["/srv/out"]);
+  });
+});

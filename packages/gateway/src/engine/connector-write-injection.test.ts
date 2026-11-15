@@ -412,6 +412,7 @@ function harness(
     localIndex,
     dispatcher,
     egressSink: { append: (e) => egress.push(e) },
+    userMcpWriteGrants: () => [],
     getTribalKbConfig: () => door?.kb,
     sendChunk: () => {},
     conversationalAgent: scripted,

@@ -6978,17 +6978,19 @@ describe("D10 user-write - a write-directory declaration is confined to the poli
     `${SRC}platform/sandbox/sandbox-policy.ts`,
     `${SRC}platform/sandbox/canonical-path.ts`,
     `${SRC}platform/sandbox/write-grant-check.ts`,
+    `${SRC}connectors/lazy-mesh/user-mcp-write-grant.ts`,
   ];
   const USE = "const d = policy.canonicalWriteDirs ?? [];";
 
-  test("the four files that declare, carry and check the field may name it", () => {
+  test("the files that declare, carry and check the field, and the ONE builder, may name it", () => {
     expect(checkWriteDirDeclarationConfined(ALLOWED.map((p) => file(p, USE)))).toEqual([]);
   });
 
-  test("no connectors, ipc, engine or other sandbox file may name it (AD5b-1 has no producer)", () => {
+  test("no other connectors, ipc, engine or sandbox file may name it", () => {
     for (const path of [
       `${SRC}connectors/lazy-mesh/user-mcp.ts`,
-      `${SRC}connectors/lazy-mesh/user-mcp-write-grant.ts`,
+      `${SRC}connectors/lazy-mesh/user-mcp-write-deps.ts`,
+      `${SRC}connectors/lazy-mesh/mesh.ts`,
       `${SRC}connectors/lazy-mesh/wrap-server-spec.ts`,
       `${SRC}ipc/connector-rpc-handlers/config.ts`,
       `${SRC}engine/executor.ts`,

@@ -8,11 +8,16 @@ import { transitionHealth } from "../health.ts";
 import type { UserMcpConnectorRow } from "../user-mcp-store.ts";
 import { userMcpMeshKey } from "./keys.ts";
 import type { MeshSpawnContext } from "./slot.ts";
+import {
+  type PreparedUserMcpWriteGrant,
+  userMcpPolicyId,
+  userMcpWriteManifestParts,
+} from "./user-mcp-write-grant.ts";
 import { wrapServerSpec } from "./wrap-server-spec.ts";
 
 type StringArrayParse = { ok: true; value: string[] } | { ok: false; reason: string };
 
-function parseStringArrayColumn(raw: string): StringArrayParse {
+export function parseStringArrayColumn(raw: string): StringArrayParse {
   try {
     const parsed: unknown = JSON.parse(raw);
     if (!Array.isArray(parsed) || !parsed.every((x) => typeof x === "string")) {
@@ -27,9 +32,14 @@ function parseStringArrayColumn(raw: string): StringArrayParse {
 /**
  * The spawn manifest for a user MCP server: its owner-approved grants, nothing more. The id stays
  * `user.<service_id>` — it names the Windows AppContainer profile and the sandbox cwd leaf.
+ *
+ * A WRITE path comes only from `prepared` (I15, AD5b): the row's own `write_paths_json` is never
+ * read here, so no caller can turn a stored value into a grant without the preparation that
+ * re-checks it (`prepareUserMcpWriteGrant`, the one builder of a `PreparedUserMcpWriteGrant`).
  */
 export function userMcpManifestFromRow(
   row: UserMcpConnectorRow,
+  prepared: PreparedUserMcpWriteGrant,
 ):
   | { ok: true; manifest: ExtensionManifest }
   | { ok: false; column: "read_paths_json" | "net_hosts_json"; reason: string } {
@@ -41,15 +51,17 @@ export function userMcpManifestFromRow(
   if (!net.ok) {
     return { ok: false, column: "net_hosts_json", reason: net.reason };
   }
+  const { read: readPaths, write, ...declared } = userMcpWriteManifestParts(read.value, prepared);
   return {
     ok: true,
     manifest: {
-      id: `user.${row.service_id}`,
+      id: userMcpPolicyId(row.service_id),
       version: "0.0.0",
       permissions: {
         network: net.value,
-        filesystem: { read: read.value, write: [] },
+        filesystem: { read: readPaths, write },
       },
+      ...declared,
       // Every `--net` entry is the owner's: it is what they typed at `connector add --mcp`.
       ...(net.value.length === 0 ? {} : { ownerConfiguredNetwork: [...net.value] }),
       updateChannel: "stable",
@@ -86,7 +98,11 @@ function mcpServerKeyForUserConnector(serviceId: string): string {
  * sandbox wrap and the `MCPClient` construction all complete here, and the client connects (spawns
  * its server) lazily, on first use.
  */
-export function ensureUserMcpClient(ctx: MeshSpawnContext, row: UserMcpConnectorRow): void {
+export function ensureUserMcpClient(
+  ctx: MeshSpawnContext,
+  row: UserMcpConnectorRow,
+  prepared: PreparedUserMcpWriteGrant,
+): void {
   const meshKey = userMcpMeshKey(row.service_id);
   ctx.clearLazyIdle(meshKey);
   if (ctx.getLazyClient(meshKey) !== undefined) {
@@ -99,7 +115,7 @@ export function ensureUserMcpClient(ctx: MeshSpawnContext, row: UserMcpConnector
     return;
   }
   const args = argsParsed.value;
-  const m = userMcpManifestFromRow(row);
+  const m = userMcpManifestFromRow(row, prepared);
   if (!m.ok) {
     recordUserMcpRowFailure(ctx, row.service_id, m.column, m.reason);
     return;

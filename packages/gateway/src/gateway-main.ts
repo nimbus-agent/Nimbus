@@ -12,6 +12,7 @@ import {
   meshDispatcherClient,
 } from "./connectors/index.ts";
 import { listPolicyGatedModelAccessibleOwnerCodeServerIds } from "./connectors/user-mcp-model-capability.ts";
+import { userMcpWriteGrantsReader } from "./connectors/user-mcp-write-reader.ts";
 import { makeEgressSink } from "./egress/egress-ledger.ts";
 import type { EmbeddingReadiness } from "./embedding/embedding-readiness.ts";
 import { createNimbusEngineAgent } from "./engine/agent.ts";
@@ -281,6 +282,7 @@ export async function main(): Promise<void> {
         platform.connectorWriteDeps,
         platform.connectorMesh,
       ),
+      userMcpWriteGrants: userMcpWriteGrantsReader(() => platform.localIndex.getDatabase()),
       // I42 (user-MCP model access): decided at the IPC entry from the live session's kind
       // (`USER_MCP_OFFER_BY_KIND`); only a literal `true` offers.
       offerUserMcpTools: ctx.offerUserMcpTools === true,
@@ -326,6 +328,7 @@ export async function main(): Promise<void> {
         platform.connectorWriteDeps,
         platform.connectorMesh,
       ),
+      userMcpWriteGrants: userMcpWriteGrantsReader(() => platform.localIndex.getDatabase()),
       // I42: a ChatOps mention is never the local owner's turn, so owner-registered user-MCP
       // tools are never offered here. Literal, not looked up: this call's clientId "chatops" is
       // not a registered ClientKind and would read as `unknown` (the plain CLI, an OWNER kind)

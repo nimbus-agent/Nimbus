@@ -173,6 +173,7 @@ describe("lazy mesh slot walks run concurrently, and still answer in slot order"
         read_paths_json: "[]",
         net_hosts_json: "[]",
         model_access: 0,
+        write_paths_json: "[]",
       },
     ];
     mesh = new LazyConnectorMesh(makePaths(), createMockVault(), {

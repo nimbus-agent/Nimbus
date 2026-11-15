@@ -10,7 +10,7 @@ import { appendAuditEntry } from "../../../src/db/audit-chain.ts";
 import { makeEgressSink } from "../../../src/egress/egress-ledger.ts";
 import { NO_POLICY_OVERLAY } from "../../../src/engine/executor.ts";
 import { openMigratedMemoryDb } from "../../../src/index/migrated-db-template.ts";
-import { buildActDeps } from "../../../src/ipc/capture-rpc.ts";
+import { type AgentDoorActWiring, buildActDeps } from "../../../src/ipc/capture-rpc.ts";
 import type { ConsentCoordinator } from "../../../src/ipc/consent.ts";
 
 const PROV = {
@@ -53,9 +53,31 @@ afterEach(() => {
   for (const db of openDbs.splice(0)) db.close();
 });
 
+/**
+ * A door that knows a registered user MCP server with no approval for agents (the legacy case). An
+ * agent's `mcp_*` call carries these facts, or it cannot be asked about at all (I15, AD5b).
+ */
+const LEGACY_USER_MCP_DOOR: AgentDoorActWiring = {
+  listServerTools: async () => undefined,
+  verifyDefinition: async () => ({ ok: true }),
+  userMcpCallFacts: async (actionType) => ({
+    ok: true,
+    facts: {
+      serviceId: actionType.slice(0, actionType.indexOf(".")),
+      tool: actionType.slice(actionType.indexOf(".") + 1),
+      registeredAt: 0,
+      readPaths: [],
+      netHosts: [],
+      writePaths: [],
+      approval: null,
+    },
+  }),
+};
+
 function makeAct(
   dispatcher: ReturnType<typeof createConnectorDispatcher>,
   db: ReturnType<typeof openMigratedMemoryDb>,
+  agentDoor?: AgentDoorActWiring,
 ) {
   return buildActDeps(
     {
@@ -64,6 +86,7 @@ function makeAct(
       audit: { recordAudit: (e) => appendAuditEntry(db, e) },
       policyHitl: NO_POLICY_OVERLAY,
       getTribalKbConfig: () => undefined,
+      ...(agentDoor === undefined ? {} : { agentDoor }),
     },
     approve,
     "c-cli",
@@ -114,8 +137,8 @@ describe("act door routing through the real dispatcher", () => {
       listTools: () => Promise.resolve({}),
       listUserMcpTools: (s) => Promise.resolve(s === "mcp_echo" ? userTools : undefined),
     });
-    const act = makeAct(dispatcher, db);
-    await act.execute("mcp_echo.echo", { text: "hi" }, PROV);
+    const act = makeAct(dispatcher, db, LEGACY_USER_MCP_DOOR);
+    await act.execute("mcp_echo.echo", { text: "hi" }, { ...PROV, basis: "legacy_user_mcp" });
     expect(calls).toEqual([["mcp_echo_echo", { text: "hi" }]]);
   });
 

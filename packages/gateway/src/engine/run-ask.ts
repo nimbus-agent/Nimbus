@@ -84,6 +84,7 @@ export type ExecutorBuildParams = Pick<
   | "egressSink"
   | "policyHitl"
   | "previewCredentialFor"
+  | "userMcpWriteGrants"
 >;
 
 export type RunAskParams = {
@@ -130,6 +131,11 @@ export type RunAskParams = {
   policyHitl?: ExecutorPolicyDep;
   /** Names the credential kind in a connector write's consent preview (config-derived). */
   previewCredentialFor?: PreviewCredentialResolver;
+  /**
+   * I15 (AD5b): what a registered user MCP server may write, for the prompt of a call to it. An
+   * executor built without it refuses every `mcp_*` call before any prompt (fail closed).
+   */
+  userMcpWriteGrants?: (serviceId: string) => readonly string[] | undefined;
   /**
    * Test seam ONLY (pinned by the I53 block): the rows the door executor previews and reads with.
    * Production never sets it, so the runner uses the write table.
@@ -704,7 +710,11 @@ function newExecutorOnChannel(
     p.egressSink,
     p.policyHitl ?? NO_POLICY_OVERLAY,
     p.previewCredentialFor,
-    extras,
+    // I15 (AD5b): EVERY turn executor carries the reader (ask, model write door, agent door, both
+    // workflow executors), so none can prompt for an `mcp_*` call without the write directories.
+    p.userMcpWriteGrants === undefined
+      ? extras
+      : { ...extras, userMcpWriteGrants: p.userMcpWriteGrants },
   );
 }
 

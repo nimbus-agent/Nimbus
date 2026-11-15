@@ -521,6 +521,7 @@ describe("connector.* — forwarded notify and connector mesh", () => {
       ensureUserMcpRunning: async () => {},
       userMcpProtectedRoots: () => [],
       ensureUserMcpSandboxClean: async () => true,
+      releaseUserMcpGrantsUnlessRegistered: async () => true,
     } as unknown as LazyConnectorMesh;
     // An absolute command that exists on every runner: the production `which`/`realpath`
     // defaults resolve it for real (no PATH dependency on `node`).
@@ -541,7 +542,9 @@ describe("connector.* — forwarded notify and connector mesh", () => {
       { localIndex: freshIndex(), syncScheduler: scheduler, connectorMesh: mesh },
       "approve",
     );
-    expect(await tryDispatchConnectorRpc(withMesh, "connector.addMcp", request, "c1")).toEqual({
+    expect(
+      await tryDispatchConnectorRpc(withMesh, "connector.addMcp", request, "c1"),
+    ).toMatchObject({
       ok: true,
       serviceId: "mcp_wiring_demo",
     });

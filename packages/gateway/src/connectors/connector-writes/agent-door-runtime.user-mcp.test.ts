@@ -126,7 +126,7 @@ function suspendAudits(): number {
 
 beforeEach(() => {
   db = new Database(":memory:");
-  runIndexedSchemaMigrations(db, 97);
+  runIndexedSchemaMigrations(db, 98);
   policyOff = new Set();
   policyThrows = false;
   userMcpAllowed = true;
@@ -684,6 +684,47 @@ describe("the legacy window admits exactly what was admitted before, and nothing
   });
 });
 
+describe("userMcpCallFacts: the write directories (AD5b, I15)", () => {
+  function registerWith(serviceId: string, writePathsJson: string): void {
+    insertUserMcpConnector(db, {
+      service_id: serviceId,
+      command: "srv",
+      args_json: "[]",
+      read_paths_json: "[]",
+      net_hosts_json: "[]",
+      model_access: 1,
+      created_at: REGISTERED_AT,
+      write_paths_json: writePathsJson,
+    });
+  }
+
+  test("the stored directories are carried in the facts; none is an empty list", async () => {
+    registerWith("mcp_w", JSON.stringify(["/out", "/more"]));
+    registerWith("mcp_n", "[]");
+    const withDirs = await door().userMcpCallFacts(
+      "mcp_w.append",
+      "legacy_user_mcp",
+      REGISTERED_AT,
+    );
+    expect(withDirs.ok && withDirs.facts.writePaths).toEqual(["/out", "/more"]);
+    const none = await door().userMcpCallFacts("mcp_n.append", "legacy_user_mcp", REGISTERED_AT);
+    expect(none.ok && none.facts.writePaths).toEqual([]);
+  });
+
+  test("a stored value that is not a JSON array of strings cannot be told: the call is refused, never shown as no grant", async () => {
+    const bad = ["not json", '{"a":1}', '[1,"/x"]', '"/x"'];
+    for (const [i, value] of bad.entries()) {
+      registerWith(`mcp_bad${String(i)}`, value);
+      const out = await door().userMcpCallFacts(
+        `mcp_bad${String(i)}.append`,
+        "legacy_user_mcp",
+        REGISTERED_AT,
+      );
+      expect(out, value).toEqual({ ok: false, detail: DEFINITION_REFUSALS.writeUnknown });
+    }
+  });
+});
+
 describe("userMcpCallFacts (AD5a, D-6)", () => {
   test("an approved basis: one listing, the facts carry the hashed entry's description and the registration", async () => {
     insertUserMcpConnector(db, {
@@ -693,6 +734,7 @@ describe("userMcpCallFacts (AD5a, D-6)", () => {
       read_paths_json: JSON.stringify(["/data/a"]),
       net_hosts_json: JSON.stringify(["api.example.com:443"]),
       model_access: 0,
+      write_paths_json: "[]",
       created_at: REGISTERED_AT,
     });
     const sha = approve("mcp_f", "append", entry("the listed text"));
@@ -726,6 +768,7 @@ describe("userMcpCallFacts (AD5a, D-6)", () => {
       read_paths_json: "not json",
       net_hosts_json: JSON.stringify(["h"]),
       model_access: 1,
+      write_paths_json: "[]",
       created_at: REGISTERED_AT,
     });
     const out = await door({
@@ -922,6 +965,7 @@ describe("describe for a user-MCP tool (AD5a, D-8, OR-AD-25)", () => {
       read_paths_json: JSON.stringify(["/secret/readroot"]),
       net_hosts_json: JSON.stringify(["internal.example.net:443"]),
       model_access: 0,
+      write_paths_json: "[]",
       created_at: REGISTERED_AT,
     });
     const sha = approve("mcp_z", "append");
@@ -972,6 +1016,7 @@ describe("a listing that never answers (agent door review, finding 1)", () => {
           read_paths_json: "[]",
           net_hosts_json: "[]",
           model_access: 0,
+          write_paths_json: "[]",
         },
       ],
       userMcpListingDeadlineMs: 25,

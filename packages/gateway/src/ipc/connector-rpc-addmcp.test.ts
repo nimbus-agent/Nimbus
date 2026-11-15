@@ -137,6 +137,7 @@ function opts(exec: ToolExecutor, registered: string[] = [], sandbox: SandboxSea
       ensureUserMcpRunning: async () => {},
       userMcpProtectedRoots: () => [dataDir, configDir, sandboxDir],
       ensureUserMcpSandboxClean: (id: string) => sandbox.ensureUserMcpSandboxClean(id),
+      releaseUserMcpGrantsUnlessRegistered: async () => true,
       userMcpSandboxLeaf: (id: string) => sandbox.userMcpSandboxLeaf(id),
     } as never,
     toolExecutor: exec,
@@ -183,7 +184,7 @@ describe("connector.addMcp — argv is stored verbatim", () => {
         method: "connector.addMcp",
         params: { serviceId: "mcp_spaced", argv: [cmd] },
       });
-      expect(r).toEqual({ kind: "hit", value: { ok: true, serviceId: "mcp_spaced" } });
+      expect(r).toMatchObject({ kind: "hit", value: { ok: true, serviceId: "mcp_spaced" } });
     } finally {
       known.delete(cmd);
     }
@@ -302,7 +303,7 @@ describe("connector.addMcp — the owner approves the resolved grants", () => {
       method: "connector.addMcp",
       params,
     });
-    expect(r).toEqual({ kind: "hit", value: { ok: true, serviceId: "mcp_notes" } });
+    expect(r).toMatchObject({ kind: "hit", value: { ok: true, serviceId: "mcp_notes" } });
     expect(calls).toHaveLength(1);
     expect(calls[0]?.type).toBe("connector.addMcp");
     // JSON round-trip: the transform the audit and egress sinks apply (#808).
@@ -405,7 +406,7 @@ describe("connector.addMcp — a sandbox leaf left by an earlier registration", 
       method: "connector.addMcp",
       params: { serviceId: "mcp_reused", argv: ["node"] },
     });
-    expect(r).toEqual({ kind: "hit", value: { ok: true, serviceId: "mcp_reused" } });
+    expect(r).toMatchObject({ kind: "hit", value: { ok: true, serviceId: "mcp_reused" } });
     expect(calls).toHaveLength(1);
     expect(existsSync(leaf)).toBe(false);
     expect(rowOf("mcp_reused")).not.toBeNull();
@@ -449,7 +450,7 @@ describe("connector.addMcp — a sandbox leaf left by an earlier registration", 
       method: "connector.addMcp",
       params: { serviceId: "mcp_fresh", argv: ["node"] },
     });
-    expect(r).toEqual({ kind: "hit", value: { ok: true, serviceId: "mcp_fresh" } });
+    expect(r).toMatchObject({ kind: "hit", value: { ok: true, serviceId: "mcp_fresh" } });
     expect(deleted).toEqual([]);
     expect(rowOf("mcp_fresh")).not.toBeNull();
   });
@@ -477,6 +478,7 @@ describe("buildAddMcpConsentPayload — the runner is passed in, not the OS name
     readPaths: [],
     netHosts: ["api.example.com"],
     modelAccess: false,
+    writePaths: [],
   };
 
   test("win32 with hosts says Windows cannot limit it", () => {
@@ -579,5 +581,289 @@ describe("connector.addMcp — production seam defaults", () => {
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
+  });
+});
+
+// Phase 28 AD5b-2 (I15): a registration that names a write directory.
+describe("connector.addMcp — a write directory (AD5b-2)", () => {
+  const outDir = join(fakeRoot, "work", "out");
+  const DIR = { isDirectory: () => true, isSymbolicLink: () => false };
+
+  function writeOpts(
+    exec: ToolExecutor,
+    over: {
+      canConfine?: string | null;
+      release?: boolean | "registered";
+      scan?: "clean" | "marker";
+      realpath?: (p: string) => string;
+      released?: string[];
+      registered?: string[];
+    } = {},
+  ) {
+    const base = opts(exec, over.registered ?? []);
+    return {
+      ...base,
+      connectorMesh: {
+        ensureUserMcpRunning: async () => {},
+        userMcpProtectedRoots: () => [dataDir, configDir, sandboxDir],
+        ensureUserMcpSandboxClean: async () => true,
+        userMcpSandboxLeaf: (id: string) => join(sandboxDir, `user_${id}`),
+        releaseUserMcpGrantsUnlessRegistered: async (id: string) => {
+          over.released?.push(id);
+          return over.release ?? true;
+        },
+        userMcpWriteCanConfine: () => over.canConfine ?? null,
+        userMcpWriteDirDeps: () => ({
+          platform: process.platform,
+          realpath: (p: string) => (over.realpath ?? ((x: string) => x))(p),
+          lstat: () => DIR,
+          exists: () => false,
+          homeDir: join(fakeRoot, "home"),
+          tmpDir: join(fakeRoot, "tmp"),
+          pathEntries: [],
+          appDataDirs: [],
+          protectedRoots: () => [dataDir, configDir, sandboxDir],
+          iacWorkdirs: () => [],
+          serverCodePaths: () => [],
+          scan: () => over.scan ?? "clean",
+        }),
+      } as never,
+    };
+  }
+
+  const params = { serviceId: "mcp_writer", argv: ["node"], writePaths: [outDir] };
+  const writeRowOf = (id: string): string | undefined =>
+    (
+      db.query("SELECT write_paths_json FROM user_mcp_connector WHERE service_id = ?").get(id) as {
+        write_paths_json: string;
+      } | null
+    )?.write_paths_json;
+
+  test("a person on a declared connection: the gate sees the write directory and the platform, the row stores it, the reply reports it", async () => {
+    const { exec, calls } = stubExecutor("proceed");
+    const released: string[] = [];
+    const r = await dispatchConnectorRpc({
+      getEnforcedPolicy: () => undefined,
+      ...writeOpts(exec, { released }),
+      clientKind: "cli",
+      method: "connector.addMcp",
+      params,
+    });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.payload).toMatchObject({
+      serviceId: "mcp_writer",
+      writePaths: [outDir],
+      writePlatform: process.platform,
+    });
+    expect(writeRowOf("mcp_writer")).toBe(JSON.stringify([outDir]));
+    expect(r).toMatchObject({ kind: "hit", value: { ok: true, writePaths: [outDir] } });
+    // The permissions an earlier registration left are released after the answer, before the row.
+    expect(released).toEqual(["mcp_writer"]);
+  });
+
+  test("a registration with NO write directory: the payload has neither key and no rule fact is read", async () => {
+    const { exec, calls } = stubExecutor("proceed");
+    const r = await dispatchConnectorRpc({
+      getEnforcedPolicy: () => undefined,
+      ...opts(exec),
+      method: "connector.addMcp",
+      params: { serviceId: "mcp_plain", argv: ["node"] },
+    });
+    const payload = calls[0]?.payload as Record<string, unknown>;
+    expect("writePaths" in payload).toBe(false);
+    expect("writePlatform" in payload).toBe(false);
+    expect(writeRowOf("mcp_plain")).toBe("[]");
+    expect(r).toMatchObject({ kind: "hit", value: { ok: true, writePaths: [] } });
+  });
+
+  test("an undeclared, an mcp and an http connection are refused before any prompt, and nothing is stored", async () => {
+    for (const clientKind of [undefined, "unknown", "mcp", "http"] as const) {
+      const { exec, calls } = stubExecutor("proceed");
+      const err = await rpcErrorOf(
+        dispatchConnectorRpc({
+          getEnforcedPolicy: () => undefined,
+          ...writeOpts(exec),
+          ...(clientKind === undefined ? {} : { clientKind: clientKind as never }),
+          method: "connector.addMcp",
+          params,
+        }),
+      );
+      expect(err.message).toContain("ERR_USER_MCP_WRITE_GRANT_CLIENT");
+      expect(calls).toHaveLength(0);
+      expect(writeRowOf("mcp_writer")).toBeUndefined();
+    }
+  });
+
+  test("an OS whose sandbox cannot confine the grant refuses before any prompt (OR-AD-30)", async () => {
+    const { exec, calls } = stubExecutor("proceed");
+    const err = await rpcErrorOf(
+      dispatchConnectorRpc({
+        getEnforcedPolicy: () => undefined,
+        ...writeOpts(exec, { canConfine: "this OS cannot confine a write directory" }),
+        clientKind: "ui",
+        method: "connector.addMcp",
+        params,
+      }),
+    );
+    expect(err.rpcCode).toBe(-32602);
+    expect(err.message).toBe(
+      "ERR_USER_MCP_WRITE_PATH_REFUSED: this OS cannot confine a write directory",
+    );
+    expect(calls).toHaveLength(0);
+    expect(writeRowOf("mcp_writer")).toBeUndefined();
+  });
+
+  test("a directory the placement rule refuses never prompts", async () => {
+    const { exec, calls } = stubExecutor("proceed");
+    const err = await rpcErrorOf(
+      dispatchConnectorRpc({
+        getEnforcedPolicy: () => undefined,
+        ...writeOpts(exec, { scan: "marker" }),
+        clientKind: "cli",
+        method: "connector.addMcp",
+        params,
+      }),
+    );
+    expect(err.message).toContain("ERR_USER_MCP_WRITE_PATH_REFUSED");
+    expect(calls).toHaveLength(0);
+  });
+
+  test("an answer that did not come from a person is a decline with its own code, and nothing is stored (OR-AD-33)", async () => {
+    const { exec, calls } = stubExecutor({ status: "rejected", reason: "declined" });
+    const err = await rpcErrorOf(
+      dispatchConnectorRpc({
+        getEnforcedPolicy: () => undefined,
+        ...writeOpts(exec),
+        clientKind: "cli",
+        agentAnswerWasNonHuman: () => true,
+        method: "connector.addMcp",
+        params,
+      }),
+    );
+    expect(err.message).toContain("ERR_USER_MCP_WRITE_GRANT_NOT_A_PERSON");
+    expect(calls).toHaveLength(1);
+    expect(writeRowOf("mcp_writer")).toBeUndefined();
+  });
+
+  test("a decline by the person is the gate result, unchanged", async () => {
+    const { exec } = stubExecutor({ status: "rejected", reason: "declined" });
+    const r = await dispatchConnectorRpc({
+      getEnforcedPolicy: () => undefined,
+      ...writeOpts(exec),
+      clientKind: "cli",
+      agentAnswerWasNonHuman: () => false,
+      method: "connector.addMcp",
+      params,
+    });
+    expect(r).toEqual({ kind: "hit", value: { status: "rejected", reason: "declined" } });
+    expect(writeRowOf("mcp_writer")).toBeUndefined();
+  });
+
+  test("permissions left by an earlier registration that cannot be removed refuse AFTER approval: no row", async () => {
+    const { exec } = stubExecutor("proceed");
+    const registered: string[] = [];
+    const err = await rpcErrorOf(
+      dispatchConnectorRpc({
+        getEnforcedPolicy: () => undefined,
+        ...writeOpts(exec, { release: false, registered }),
+        clientKind: "cli",
+        method: "connector.addMcp",
+        params,
+      }),
+    );
+    expect(err.message).toContain("ERR_USER_MCP_GRANTS_NOT_CLEAN");
+    expect(writeRowOf("mcp_writer")).toBeUndefined();
+    expect(registered).toEqual([]);
+  });
+
+  test("the same release runs for a registration with no write directory (its read permissions too)", async () => {
+    const { exec } = stubExecutor("proceed");
+    const released: string[] = [];
+    await dispatchConnectorRpc({
+      getEnforcedPolicy: () => undefined,
+      ...writeOpts(exec, { released }),
+      method: "connector.addMcp",
+      params: { serviceId: "mcp_reader", argv: ["node"] },
+    });
+    expect(released).toEqual(["mcp_reader"]);
+  });
+
+  test("the directory gained a marker folder while the prompt was open: refused after approval, nothing stored or released", async () => {
+    const over: Parameters<typeof writeOpts>[1] = { released: [], registered: [] };
+    const exec = {
+      // The owner approves; meanwhile the directory changed.
+      async gate(): Promise<GateResult> {
+        over.scan = "marker";
+        return "proceed";
+      },
+    } as unknown as ToolExecutor;
+    const err = await rpcErrorOf(
+      dispatchConnectorRpc({
+        getEnforcedPolicy: () => undefined,
+        ...writeOpts(exec, over),
+        clientKind: "cli",
+        method: "connector.addMcp",
+        params,
+      }),
+    );
+    expect(err.message).toContain("ERR_USER_MCP_WRITE_PATH_REFUSED");
+    expect(writeRowOf("mcp_writer")).toBeUndefined();
+    expect(over.released).toEqual([]);
+    expect(over.registered).toEqual([]);
+  });
+
+  test("the registration resolves to something else after approval (a link appeared on the way): refused, run it again", async () => {
+    const over: Parameters<typeof writeOpts>[1] = { released: [] };
+    const moved = join(fakeRoot, "work", "elsewhere");
+    const exec = {
+      async gate(): Promise<GateResult> {
+        over.realpath = (p) => (p === outDir ? moved : p);
+        return "proceed";
+      },
+    } as unknown as ToolExecutor;
+    const err = await rpcErrorOf(
+      dispatchConnectorRpc({
+        getEnforcedPolicy: () => undefined,
+        ...writeOpts(exec, over),
+        clientKind: "cli",
+        method: "connector.addMcp",
+        params,
+      }),
+    );
+    expect(err.message).toContain("ERR_USER_MCP_CHANGED_DURING_APPROVAL");
+    expect(writeRowOf("mcp_writer")).toBeUndefined();
+    expect(over.released).toEqual([]);
+  });
+
+  test("the id was registered while this request waited: the duplicate is refused and NOTHING of the live registration is revoked", async () => {
+    const { exec } = stubExecutor("proceed");
+    const registered: string[] = [];
+    const err = await rpcErrorOf(
+      dispatchConnectorRpc({
+        getEnforcedPolicy: () => undefined,
+        ...writeOpts(exec, { release: "registered", registered }),
+        clientKind: "cli",
+        method: "connector.addMcp",
+        params,
+      }),
+    );
+    expect(err.message).toBe("User MCP connector already exists: mcp_writer");
+    expect(writeRowOf("mcp_writer")).toBeUndefined();
+    expect(registered).toEqual([]);
+  });
+
+  test("writePaths that is not an array of strings is a parameter error", async () => {
+    const { exec, calls } = stubExecutor("proceed");
+    const err = await rpcErrorOf(
+      dispatchConnectorRpc({
+        getEnforcedPolicy: () => undefined,
+        ...writeOpts(exec),
+        clientKind: "cli",
+        method: "connector.addMcp",
+        params: { ...params, writePaths: "/x" },
+      }),
+    );
+    expect(err.rpcCode).toBe(-32602);
+    expect(calls).toHaveLength(0);
   });
 });
