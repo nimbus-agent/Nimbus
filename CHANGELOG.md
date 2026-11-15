@@ -2,6 +2,15 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [10.61.0](https://github.com/nimbus-agent/Nimbus/compare/v10.60.0...v10.61.0) (2026-11-15)
+
+
+### Features
+
+* **gateway:** a user MCP server can be given a directory to write in, approved by a person and re-checked at every start (agent door AD5b-2) ([#2010](https://github.com/nimbus-agent/Nimbus/issues/2010)) ([cbd2c34](https://github.com/nimbus-agent/Nimbus/commit/cbd2c3467dc11e42d59ea7c6fd941c2191aaa4f2))
+* **gateway:** let the owner approve user MCP tools for outside agents by name, and hold every agent call to that approval (agent door AD5a) ([#2007](https://github.com/nimbus-agent/Nimbus/issues/2007)) ([43e17fd](https://github.com/nimbus-agent/Nimbus/commit/43e17fd23c9aacb791627467424c05a0ce6aea17))
+* **gateway:** the sandbox can confine a write directory on all three OSes, measured, with nothing using it yet (agent door AD5b-1) ([#2009](https://github.com/nimbus-agent/Nimbus/issues/2009)) ([c0ffb28](https://github.com/nimbus-agent/Nimbus/commit/c0ffb286eb00261c7c56c86fd90c203cdb007f32))
+
 ## [10.60.0](https://github.com/nimbus-agent/Nimbus/compare/v10.59.0...v10.60.0) (2026-11-14)
 
 
