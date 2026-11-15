@@ -319,10 +319,42 @@ describe("nimbus agent status", () => {
     expect(new Map(h.m.files)).toEqual(before);
   });
 
-  test("a file Nimbus cannot read as a plan is reported and does not change the exit code", async () => {
+  test("a file Nimbus cannot read, for a kit that is not installed, changes nothing", async () => {
     const h = harness({ files: { [join(REPO, ".vscode", "mcp.json")]: "{ // c\n}" } });
     expect(await runAgentWith(["status"], h.deps)).toBe(0);
-    expect(text(h.out)).toContain("vscode (project): cannot tell:");
+    expect(text(h.out)).toContain("No agent kit is installed.");
+  });
+
+  test("an installed kit with a file it can no longer read says cannot tell, with the reason, and exits 1", async () => {
+    const h = harness();
+    await runAgentWith(["install", "cursor", "--scope", "project", "--yes"], h.deps);
+    const rules = join(REPO, ".cursor", "rules", "nimbus.mdc");
+    h.m.files.set(rules, "replaced\n");
+    h.out.length = 0;
+    expect(await runAgentWith(["status"], h.deps)).toBe(1);
+    const shown = text(h.out);
+    expect(shown).toContain("  mcp: ok");
+    expect(shown).toContain(`  instructions: cannot tell  ${rules} (`);
+    expect(shown).toContain("Nimbus did not write it");
+  });
+
+  test("a path with a control character, and a nimbus path with a space, are printed safely", async () => {
+    const h = harness();
+    const esc = String.fromCharCode(27);
+    const env = {
+      ...h.m.env,
+      home: `${h.m.env.home}${esc}[31m`,
+      nimbus: join("C:", "Program Files", "Nimbus", "nimbus.exe"),
+    };
+    const deps = { ...h.deps, env: () => env };
+    expect(await runAgentWith(["install", "claude-code", "--dry-run"], deps)).toBe(0);
+    const shown = text(h.out);
+    expect(shown).not.toContain(esc);
+    expect(shown).toContain("Create ");
+    // The executable with a space is one quoted word, so the printed command can be pasted.
+    expect(shown).toMatch(
+      /claude mcp add --scope user nimbus -- ['"].*Program Files.*nimbus\.exe['"] mcp-server/,
+    );
   });
 
   test("--json carries the same facts and the same exit code", async () => {

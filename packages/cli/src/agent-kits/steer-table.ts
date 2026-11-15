@@ -24,7 +24,21 @@ export interface SteerRow {
   readonly argv: readonly string[];
   /** The agent door action type to propose instead. */
   readonly actionType: string;
+  /**
+   * When set, the command is steered only for these resource kinds (its first argument that is
+   * not a flag, before any `/`): the door action exists for nothing else. `kubectl rollout
+   * restart daemonset/x` has no door equivalent and is left alone.
+   */
+  readonly resources?: readonly string[];
 }
+
+/** How `kubectl` names a Deployment. The door's scale and restart act on deployments only. */
+const DEPLOYMENT_KINDS: readonly string[] = [
+  "deployment",
+  "deployments",
+  "deploy",
+  "deployment.apps",
+];
 
 /** A command with no door equivalent is NOT listed (`kubectl delete`, `git push --force`). */
 export const STEER_ROWS: readonly SteerRow[] = [
@@ -32,8 +46,16 @@ export const STEER_ROWS: readonly SteerRow[] = [
   { argv: ["glab", "mr", "merge"], actionType: "gitlab.mr.merge" },
   { argv: ["terraform", "apply"], actionType: "iac.terraform.apply" },
   { argv: ["kubectl", "apply"], actionType: "kubernetes.manifest.apply" },
-  { argv: ["kubectl", "scale"], actionType: "kubernetes.deployment.scale" },
-  { argv: ["kubectl", "rollout", "restart"], actionType: "kubernetes.rollout.restart" },
+  {
+    argv: ["kubectl", "scale"],
+    actionType: "kubernetes.deployment.scale",
+    resources: DEPLOYMENT_KINDS,
+  },
+  {
+    argv: ["kubectl", "rollout", "restart"],
+    actionType: "kubernetes.rollout.restart",
+    resources: DEPLOYMENT_KINDS,
+  },
   { argv: ["aws", "lambda", "invoke"], actionType: "aws.lambda.invoke" },
 ];
 
@@ -70,13 +92,27 @@ function startsWith(words: readonly string[], prefix: readonly string[]): boolea
   return prefix.every((p, i) => (i === 0 ? programName(words[0] ?? "") === p : words[i] === p));
 }
 
+/** True when the row names no resource kinds, or the command's first non-flag argument is one. */
+function resourceMatches(row: SteerRow, words: readonly string[]): boolean {
+  if (row.resources === undefined) return true;
+  const first = words.slice(row.argv.length).find((w) => !w.startsWith("-"));
+  return first !== undefined && row.resources.includes(first.split("/")[0] ?? "");
+}
+
+/** The command as the docs and the instructions show it: `kubectl scale deployment`. */
+export function steerLabel(row: SteerRow): string {
+  return row.resources === undefined
+    ? row.argv.join(" ")
+    : `${row.argv.join(" ")} ${row.resources[0] ?? ""}`;
+}
+
 /** The first table entry whose leading words these are. Owner commands are checked first. */
 export function matchSteer(words: readonly string[]): SteerMatch | undefined {
   for (const command of OWNER_COMMANDS) {
     if (startsWith(words, command)) return { kind: "owner", command };
   }
   for (const row of STEER_ROWS) {
-    if (startsWith(words, row.argv)) return { kind: "steer", row };
+    if (startsWith(words, row.argv) && resourceMatches(row, words)) return { kind: "steer", row };
   }
   return undefined;
 }
@@ -97,7 +133,7 @@ export function renderInstructions(): string {
     "Do not run these commands. Propose the matching action instead:",
     "",
     ...STEER_ROWS.map(
-      (r) => `- \`${r.argv.join(" ")}\` -> \`propose_action\` type \`${r.actionType}\``,
+      (r) => `- \`${steerLabel(r)}\` -> \`propose_action\` type \`${r.actionType}\``,
     ),
     "",
     "Never run these, in any form. They are the owner's commands:",

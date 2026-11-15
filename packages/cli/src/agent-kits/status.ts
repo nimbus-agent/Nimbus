@@ -6,9 +6,11 @@
  * there but is not what the kit would write now: edited by hand, or written by an older kit),
  * `missing` (nothing of the kit's is there). A step the owner runs by hand is `manual`: Nimbus
  * cannot read where it lands, so it is neither healthy nor unhealthy and never changes the result.
+ * A file that cannot be read as the kit's (`cannot tell`) is reported beside the kit's other files;
+ * it needs attention only when the kit is otherwise installed.
  */
 import { join } from "node:path";
-
+import { quoteForPrintedCommand } from "../lib/shell-quote.ts";
 import {
   KIT_IDS,
   type KitComponent,
@@ -21,13 +23,15 @@ import {
 import { planKit, SUPPORTED_SCOPES } from "./kits/index.ts";
 import { KitRefusal, sameText } from "./plan-files.ts";
 
-export type ComponentState = "ok" | "drifted" | "missing" | "manual";
+export type ComponentState = "ok" | "drifted" | "missing" | "manual" | "cannot tell";
 
 export interface ComponentStatus {
   readonly component: KitComponent;
   readonly state: ComponentState;
   /** The file, or for a manual step the command to run. */
   readonly where: string;
+  /** For `cannot tell`: why the file could not be read as this kit's. */
+  readonly reason?: string;
 }
 
 export interface KitStatus {
@@ -44,6 +48,9 @@ export interface KitStatus {
 
 function componentsOf(plan: KitPlan): ComponentStatus[] {
   const files = plan.files.map((f): ComponentStatus => {
+    if (f.refusal !== undefined) {
+      return { component: f.component, state: "cannot tell", where: f.path, reason: f.refusal };
+    }
     let state: ComponentState;
     if (f.before !== null && sameText(f.before, f.after)) state = "ok";
     else state = f.present ? "drifted" : "missing";
@@ -53,7 +60,7 @@ function componentsOf(plan: KitPlan): ComponentStatus[] {
     (m): ComponentStatus => ({
       component: m.component,
       state: "manual",
-      where: m.argv.join(" "),
+      where: m.argv.map((a) => quoteForPrintedCommand(a)).join(" "),
     }),
   );
   return [...files, ...manual];
@@ -61,7 +68,7 @@ function componentsOf(plan: KitPlan): ComponentStatus[] {
 
 export function kitStatus(kit: KitId, env: KitEnv, scope: KitScope): KitStatus {
   try {
-    const plan = planKit(kit, env, scope);
+    const plan = planKit(kit, { ...env, tolerant: true }, scope);
     const components = componentsOf(plan);
     return {
       kit,
@@ -101,6 +108,10 @@ export function allKitStatuses(env: KitEnv): KitStatus[] {
 /** True when an installed kit has a file component that is not `ok`. */
 export function needsAttention(statuses: readonly KitStatus[]): boolean {
   return statuses.some(
-    (s) => s.installed && s.components.some((c) => c.state === "drifted" || c.state === "missing"),
+    (s) =>
+      s.installed &&
+      s.components.some(
+        (c) => c.state === "drifted" || c.state === "missing" || c.state === "cannot tell",
+      ),
   );
 }

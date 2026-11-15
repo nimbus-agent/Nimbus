@@ -131,7 +131,7 @@ describe("applyPlan on an in-memory machine", () => {
         `${B} is in use by another program; it was left unchanged. Close the agent and run the command again`,
       );
       expect(m.files.get(B)).toBe("old\n");
-      expect(m.files.has(`${B}.nimbus-new`)).toBe(false);
+      expect([...m.files.keys()].some((k) => k.includes(".nimbus-new"))).toBe(false);
       // The backup made before the attempt stays: it is a copy, and nothing is ever deleted.
       expect(m.files.get(`${B}.nimbus-bak-20261115T201509Z`)).toBe("old\n");
     },
@@ -144,7 +144,7 @@ describe("applyPlan on an in-memory machine", () => {
     expect(m.fs.renames).toBe(1);
     expect(result.failure?.message).toContain("could not be replaced (ENOSPC");
     expect(m.files.get(B)).toBe("old\n");
-    expect(m.files.has(`${B}.nimbus-new`)).toBe(false);
+    expect([...m.files.keys()].some((k) => k.includes(".nimbus-new"))).toBe(false);
   });
 
   test("a failure in the second file reports the first as written, with its backup", async () => {
@@ -197,15 +197,65 @@ describe("applyPlan on an in-memory machine", () => {
     const result = await applyPlan(plan([edit(B, "old\n", "new content\n")]), m.fs, AT);
     expect(result.failure?.message).toContain("could not be replaced (ENOSPC");
     expect(m.files.get(B)).toBe("old\n");
-    expect(m.files.has(`${B}.nimbus-new`)).toBe(false);
+    expect([...m.files.keys()].some((k) => k.includes(".nimbus-new"))).toBe(false);
     expect(m.fs.renames).toBe(0);
   });
 
-  test("a leftover temporary file from an interrupted run does not block the next one", async () => {
-    const m = fakeMachine({ [B]: "old\n", [`${B}.nimbus-new`]: "half" });
+  test("each run writes its own temporary file and never touches another run's", async () => {
+    const other = `${B}.nimbus-new-other`;
+    const m = fakeMachine({ [B]: "old\n", [other]: "another install, mid-write" });
     const result = await applyPlan(plan([edit(B, "old\n", "new\n")]), m.fs, AT);
     expect(result.failure).toBeUndefined();
     expect(m.files.get(B)).toBe("new\n");
+    expect(m.files.get(other)).toBe("another install, mid-write");
+    expect(m.fs.uniques).toBe(1);
+  });
+
+  test("the backup is created exclusively: a name another install took in the same second is never overwritten", async () => {
+    const m = fakeMachine({ [B]: "mine\n" });
+    const realCopy = m.fs.copy;
+    // The other install writes the same backup name just before this one copies.
+    m.fs.copy = (from, to) => {
+      m.files.set(to, "the other install's original\n");
+      realCopy(from, to);
+    };
+    const result = await applyPlan(plan([edit(B, "mine\n", "new\n")]), m.fs, AT);
+    expect(result.failure?.message).toContain("already exists; nothing was written");
+    expect(m.files.get(`${B}.nimbus-bak-20261115T201509Z`)).toBe("the other install's original\n");
+    expect(m.files.get(B)).toBe("mine\n");
+  });
+
+  test("a backup that cannot be made for another reason stops the file before anything is written", async () => {
+    const m = fakeMachine({ [B]: "mine\n" });
+    m.fs.copy = () => {
+      throw codedError("EACCES");
+    };
+    const result = await applyPlan(plan([edit(B, "mine\n", "new\n")]), m.fs, AT);
+    expect(result.failure?.message).toContain("could not be backed up (EACCES");
+    expect(m.files.get(B)).toBe("mine\n");
+    expect(m.fs.uniques).toBe(0);
+  });
+
+  test("a save made while a held file is being retried is not overwritten", async () => {
+    const m = fakeMachine({ [B]: "old\n" });
+    m.fs.renameError = () => {
+      // The agent saves its settings while the rename is refused.
+      m.files.set(B, "the agent's new settings\n");
+      return codedError("EBUSY");
+    };
+    const result = await applyPlan(plan([edit(B, "old\n", "new\n")]), m.fs, AT);
+    expect(m.fs.renames).toBe(1);
+    expect(result.failure?.message).toContain("changed after the plan was shown");
+    expect(m.files.get(B)).toBe("the agent's new settings\n");
+    expect([...m.files.keys()].some((k) => k.includes(".nimbus-new-"))).toBe(false);
+  });
+
+  test("an edit that carries a refusal is never applied", async () => {
+    const m = fakeMachine();
+    const refused = { ...edit(A, null, "x\n"), refusal: "A is not strict JSON" };
+    const result = await applyPlan(plan([refused]), m.fs, AT);
+    expect(result.failure?.message).toBe("A is not strict JSON");
+    expect(m.files.has(A)).toBe(false);
   });
 });
 
@@ -290,5 +340,13 @@ describe("applyPlan on the real file system", () => {
     expect(NODE_APPLY_FS.kind(join(dirs.home, "f.txt"))).toBe("file");
     expect(NODE_APPLY_FS.kind(dirs.home)).toBe("dir");
     expect(NODE_APPLY_FS.kind(join(dirs.home, "missing"))).toBe("absent");
+    // The real copy refuses an existing destination, and each temporary name is new.
+    writeFileSync(join(dirs.home, "g.txt"), "y");
+    expect(() => NODE_APPLY_FS.copy(join(dirs.home, "f.txt"), join(dirs.home, "g.txt"))).toThrow(
+      /EEXIST/,
+    );
+    expect(readFileSync(join(dirs.home, "g.txt"), "utf8")).toBe("y");
+    expect(NODE_APPLY_FS.unique()).toMatch(/^[0-9a-f]{12}$/);
+    expect(NODE_APPLY_FS.unique()).not.toBe(NODE_APPLY_FS.unique());
   });
 });

@@ -5,7 +5,11 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { KIT_IDS } from "../../packages/cli/src/agent-kits/kit-types.ts";
-import { OWNER_COMMANDS, STEER_ROWS } from "../../packages/cli/src/agent-kits/steer-table.ts";
+import {
+  OWNER_COMMANDS,
+  STEER_ROWS,
+  steerLabel,
+} from "../../packages/cli/src/agent-kits/steer-table.ts";
 import { NOT_A_BOUNDARY, OUTSIDE_THE_DOOR } from "../../packages/cli/src/commands/agent.ts";
 
 const ROOT = join(import.meta.dir, "..", "..");
@@ -29,7 +33,7 @@ describe("the Agent kits page", () => {
   test("lists exactly the steer table's rows and the three owner commands", () => {
     for (const row of STEER_ROWS) {
       expect(PAGE).toContain(
-        `| \`${row.argv.join(" ")}\` | \`propose_action\` with type \`${row.actionType}\` |`,
+        `| \`${steerLabel(row)}\` | \`propose_action\` with type \`${row.actionType}\` |`,
       );
     }
     expect(PAGE.split("| `propose_action` with type `").length - 1).toBe(STEER_ROWS.length);

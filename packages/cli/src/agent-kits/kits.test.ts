@@ -7,7 +7,7 @@ import { applyPlan, pendingEdits } from "./apply.ts";
 import { fakeMachine, HOME, REPO } from "./fake-env.test-helpers.ts";
 import { KIT_IDS, type KitId, type KitPlan, type KitScope } from "./kit-types.ts";
 import { CLAUDE_DENY_RULES } from "./kits/claude-code.ts";
-import { CODEX_MCP_UNVERIFIED, codexRulesBody } from "./kits/codex.ts";
+import { CODEX_MCP_UNVERIFIED, codexRulesBody, codexServerConflict } from "./kits/codex.ts";
 import { NO_USER_STEERING } from "./kits/cursor.ts";
 import { DEFAULT_SCOPE, planKit, SUPPORTED_SCOPES } from "./kits/index.ts";
 import { VSCODE_LOCAL_HARNESS_NOTE } from "./kits/vscode.ts";
@@ -232,6 +232,34 @@ describe("claude-code", () => {
     expect([...after.permissions.deny].sort()).toEqual([...CLAUDE_DENY_RULES].sort());
   });
 
+  test("a hook group the owner added a handler to keeps that handler and its matcher; only the Nimbus one is replaced", async () => {
+    const m = fakeMachine();
+    await install(m, "claude-code", "user");
+    const edited = JSON.parse(m.files.get(SETTINGS) ?? "") as {
+      hooks: { PreToolUse: Array<{ matcher: string; hooks: Array<Record<string, unknown>> }> };
+    };
+    const group = edited.hooks.PreToolUse[0];
+    if (group === undefined) throw new Error("no group");
+    group.matcher = "Bash";
+    group.hooks.unshift({ type: "command", command: "my-audit.sh" });
+    const mine = group.hooks[1];
+    if (mine === undefined) throw new Error("no nimbus handler");
+    mine["command"] = "/old/nimbus";
+    m.files.set(SETTINGS, `${JSON.stringify(edited, null, 2)}\n`);
+    const after = JSON.parse(
+      planKit("claude-code", m.env, "user").files[0]?.after ?? "",
+    ) as typeof edited;
+    expect(after.hooks.PreToolUse).toEqual([
+      {
+        matcher: "Bash",
+        hooks: [
+          { type: "command", command: "my-audit.sh" },
+          { type: "command", command: "nimbus", args: ["agent", "hook", "claude-code"] },
+        ],
+      },
+    ]);
+  });
+
   test("settings that are not strict JSON, or whose hooks is not an object, are refused", () => {
     for (const bad of ["{ // mine\n}", '{"hooks": []}', '{"permissions": {"deny": "all"}}']) {
       const m = fakeMachine({ [SETTINGS]: bad });
@@ -289,6 +317,11 @@ describe("codex", () => {
     expect(body).toContain('match = ["gh pr merge", "gh pr merge --help"],');
     expect(body).toContain('pattern = ["nimbus", "approvals"],');
     expect(body).toContain("propose_action tool with type github.pr.merge");
+    // A row limited to deployments lists the kinds as alternatives for the next word.
+    expect(body).toContain(
+      'pattern = ["kubectl", "scale", ["deployment", "deployments", "deploy", "deployment.apps"]],',
+    );
+    expect(body).toContain('match = ["kubectl scale deployment", "kubectl scale deployment web"],');
     expect(body).not.toContain('"allow"');
   });
 
@@ -302,21 +335,39 @@ describe("codex", () => {
     expect(planKit("codex", m.env, "user").files[0]?.path).toBe(join(HOME, "cx", "config.toml"));
   });
 
-  test("a [mcp_servers.nimbus] table Nimbus did not write is refused, in any spelling", () => {
-    for (const header of [
+  test("anything that would make the appended table invalid TOML is refused, in any spelling", () => {
+    const refused = [
       "[mcp_servers.nimbus]",
       "  [ mcp_servers . nimbus ]",
       '[mcp_servers."nimbus"]',
       "[mcp_servers.nimbus.env]",
-    ]) {
-      const m = fakeMachine({ [CONFIG]: `${header}\ncommand = "x"\n` });
-      expect(() => planKit("codex", m.env, "user"), header).toThrow(
-        /already has an \[mcp_servers\.nimbus\]/,
-      );
+      // An inline table cannot be added to.
+      'mcp_servers = { other = { command = "other" } }',
+      '"mcp_servers" = {}',
+      // Dotted keys define the same table.
+      'mcp_servers.nimbus.command = "x"',
+      'mcp_servers . "nimbus" = { command = "x" }',
+      '[mcp_servers]\nnimbus = { command = "x" }',
+      '[mcp_servers]\n# mine\nnimbus.command = "x"',
+    ];
+    for (const text of refused) {
+      const m = fakeMachine({ [CONFIG]: `${text}\ncommand = "x"\n` });
+      expect(() => planKit("codex", m.env, "user"), text).toThrow(KitRefusal);
+      expect(codexServerConflict(text), text).toBeDefined();
     }
-    // Another server whose name merely starts the same way is not ours.
-    const other = fakeMachine({ [CONFIG]: '[mcp_servers.nimbus2]\ncommand = "x"\n' });
-    expect(() => planKit("codex", other.env, "user")).not.toThrow();
+    const fine = [
+      '[mcp_servers.nimbus2]\ncommand = "x"',
+      '[mcp_servers.other]\ncommand = "nimbus"',
+      '[mcp_servers]\nother = { command = "x" }',
+      "[other]\nnimbus = 1\nmcp_servers = 2",
+      '# mcp_servers = { }\nmodel = "o"',
+      "",
+    ];
+    for (const text of fine) {
+      expect(codexServerConflict(text), text).toBeUndefined();
+      const m = fakeMachine({ [CONFIG]: `${text}\n` });
+      expect(() => planKit("codex", m.env, "user"), text).not.toThrow();
+    }
   });
 });
 

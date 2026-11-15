@@ -53,34 +53,81 @@ function tomlBody(nimbus: string): string {
   ].join("\n");
 }
 
-function rule(argv: readonly string[], justification: string): string {
-  const line = argv.join(" ");
+function rule(
+  argv: readonly string[],
+  justification: string,
+  resources?: readonly string[],
+): string {
+  // With resource kinds the pattern's last element is a list of alternatives (the kind as its own
+  // word). `deployment/web` in one word is not matched by a prefix rule; the instructions cover it.
+  const pattern =
+    resources === undefined ? list(argv) : `[${[...argv.map(quoted), list(resources)].join(", ")}]`;
+  const line = resources === undefined ? argv.join(" ") : `${argv.join(" ")} ${resources[0] ?? ""}`;
   return [
     "prefix_rule(",
-    `    pattern = ${list(argv)},`,
+    `    pattern = ${pattern},`,
     `    decision = "forbidden",`,
     `    justification = ${quoted(justification)},`,
-    `    match = ${list([line, `${line} --help`])},`,
+    `    match = ${list([line, `${line} ${resources === undefined ? "--help" : "web"}`])},`,
     ")",
   ].join("\n");
 }
 
 export function codexRulesBody(): string {
   return [
-    ...STEER_ROWS.map((r) => rule(r.argv, steerReason(r.actionType))),
+    ...STEER_ROWS.map((r) => rule(r.argv, steerReason(r.actionType), r.resources)),
     ...OWNER_COMMANDS.map((c) => rule(c, OWNER_COMMAND_REASON)),
   ].join("\n\n");
 }
 
-const NIMBUS_TABLE = /^\s*\[\s*mcp_servers\s*\.\s*(?:nimbus|"nimbus"|'nimbus')\s*(?:\]|\.)/m;
+/** A TOML key or table name with quotes and the spaces around its dots removed. */
+function tomlName(raw: string): string {
+  return raw
+    .replaceAll(/["']/g, "")
+    .replaceAll(/\s*\.\s*/g, ".")
+    .trim();
+}
+
+/**
+ * Why Nimbus's `[mcp_servers.nimbus]` table cannot be appended to this file, or undefined when it
+ * can. TOML defines a table once, and an inline table cannot be extended, so each of these would
+ * turn a valid file into an invalid one: an `[mcp_servers.nimbus]` table, a `mcp_servers = {...}`
+ * inline table, and a `mcp_servers.nimbus...` or (inside `[mcp_servers]`) `nimbus...` key.
+ * A line scan, not a parser: it can refuse a file that would have been fine, never accept one
+ * that is not.
+ */
+export function codexServerConflict(text: string): string | undefined {
+  let table = "";
+  for (const raw of text.split("\n")) {
+    const line = raw.trim();
+    if (line === "" || line.startsWith("#")) continue;
+    const header = /^\[\[?\s*([^\]]+?)\s*\]\]?/.exec(line);
+    if (header) {
+      table = tomlName(header[1] ?? "");
+      if (table === "mcp_servers.nimbus" || table.startsWith("mcp_servers.nimbus.")) {
+        return "already has an [mcp_servers.nimbus] table Nimbus did not write";
+      }
+      continue;
+    }
+    const key = /^([^=]+?)\s*=/.exec(line);
+    if (!key) continue;
+    const name = tomlName(key[1] ?? "");
+    const full = table === "" ? name : `${table}.${name}`;
+    if (full === "mcp_servers") {
+      return "defines mcp_servers as an inline table, which cannot be added to";
+    }
+    if (full === "mcp_servers.nimbus" || full.startsWith("mcp_servers.nimbus.")) {
+      return "already defines mcp_servers.nimbus, which Nimbus did not write";
+    }
+  }
+  return undefined;
+}
 
 function editConfig(before: string | null, path: string, nimbus: string): string {
-  // A `[mcp_servers.nimbus]` table the owner wrote would collide with ours (TOML allows a table
-  // once): never edit theirs, and never add a second.
-  if (before !== null && NIMBUS_TABLE.test(withoutBlock(before, KIT, "hash"))) {
-    throw new KitRefusal(
-      `${path} already has an [mcp_servers.nimbus] table Nimbus did not write; remove it or edit it by hand`,
-    );
+  const conflict =
+    before === null ? undefined : codexServerConflict(withoutBlock(before, KIT, "hash"));
+  if (conflict !== undefined) {
+    throw new KitRefusal(`${path} ${conflict}; remove it or edit the file by hand`);
   }
   return upsertBlock(before, KIT, STEER_TABLE_VERSION, tomlBody(nimbus), "hash");
 }

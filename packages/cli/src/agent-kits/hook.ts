@@ -38,7 +38,11 @@ function splitCommands(line: string): string[] {
   let quote = "";
   for (let i = 0; i < line.length; i += 1) {
     const c = line[i] ?? "";
-    if (quote !== "") {
+    if (c === "\\" && quote !== "'") {
+      // An escaped character is itself, never a quote or a separator (`\\"` inside double quotes).
+      current += c + (line[i + 1] ?? "");
+      i += 1;
+    } else if (quote !== "") {
       if (c === quote) quote = "";
       current += c;
     } else if (c === '"' || c === "'") {

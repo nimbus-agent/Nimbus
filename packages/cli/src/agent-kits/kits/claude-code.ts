@@ -42,21 +42,38 @@ export const CLAUDE_DENY_RULES: readonly string[] = OWNER_COMMANDS.map(
 
 const HOOK_ARGS = ["agent", "hook", KIT] as const;
 
-function hookGroup(nimbus: string): JsonObject {
-  return {
-    matcher: "Bash|PowerShell",
-    hooks: [{ type: "command", command: nimbus, args: [...HOOK_ARGS] }],
-  };
+function hookHandler(nimbus: string): JsonObject {
+  return { type: "command", command: nimbus, args: [...HOOK_ARGS] };
 }
 
-/** True for a hook group a Nimbus kit wrote: one of its handlers runs `<x> agent hook claude-code`. */
+function hookGroup(nimbus: string): JsonObject {
+  return { matcher: "Bash|PowerShell", hooks: [hookHandler(nimbus)] };
+}
+
+/** True for a handler a Nimbus kit wrote: it runs `<x> agent hook claude-code`. */
+function isNimbusHandler(h: unknown): boolean {
+  if (!isJsonObject(h) || !Array.isArray(h["args"])) return false;
+  const args = h["args"];
+  return args.length === HOOK_ARGS.length && HOOK_ARGS.every((a, i) => args[i] === a);
+}
+
+/** True for a hook group that holds a Nimbus handler (alone, or beside the owner's own). */
 function isNimbusHookGroup(group: unknown): boolean {
-  if (!isJsonObject(group) || !Array.isArray(group["hooks"])) return false;
-  return group["hooks"].some((h) => {
-    if (!isJsonObject(h) || !Array.isArray(h["args"])) return false;
-    const args = h["args"];
-    return args.length === HOOK_ARGS.length && HOOK_ARGS.every((a, i) => args[i] === a);
-  });
+  return (
+    isJsonObject(group) && Array.isArray(group["hooks"]) && group["hooks"].some(isNimbusHandler)
+  );
+}
+
+/**
+ * The group with the Nimbus handler brought up to date. A group that holds ONLY that handler is
+ * the kit's and is rewritten whole; one the owner added handlers to keeps its matcher and every
+ * other handler, and only the Nimbus one is replaced.
+ */
+function refreshedGroup(group: unknown, nimbus: string): unknown {
+  if (!isJsonObject(group) || !Array.isArray(group["hooks"])) return hookGroup(nimbus);
+  const hooks = group["hooks"];
+  if (hooks.every(isNimbusHandler)) return hookGroup(nimbus);
+  return { ...group, hooks: hooks.map((h) => (isNimbusHandler(h) ? hookHandler(nimbus) : h)) };
 }
 
 function editSettings(before: string | null, path: string, nimbus: string): string {
@@ -64,7 +81,7 @@ function editSettings(before: string | null, path: string, nimbus: string): stri
     const pre = childArray(childObject(root, "hooks", path), "PreToolUse", path);
     const mine = pre.findIndex(isNimbusHookGroup);
     if (mine === -1) pre.push(hookGroup(nimbus));
-    else pre[mine] = hookGroup(nimbus);
+    else pre[mine] = refreshedGroup(pre[mine], nimbus);
     const deny = childArray(childObject(root, "permissions", path), "deny", path);
     for (const rule of CLAUDE_DENY_RULES) {
       if (!deny.includes(rule)) deny.push(rule);

@@ -18,7 +18,12 @@ home directory and a scratch Nimbus profile.
 ```bash
 mkdir -p "$SCRATCH/home" "$SCRATCH/repo"
 git -C "$SCRATCH/repo" init
+unset GH_TOKEN GITHUB_TOKEN GH_REPO GH_HOST GH_ENTERPRISE_TOKEN GITHUB_ENTERPRISE_TOKEN
 ```
+
+The `unset` matters: a scratch home hides `gh`'s stored login, but those variables authenticate `gh` and pick a
+repository regardless of the home directory. With them cleared, a `gh pr merge 1` that slips past the steering has
+nothing to act on.
 
 Point the agent and Nimbus at the scratch home for this shell only. On macOS and Linux set `HOME`; on Windows set
 `USERPROFILE` and `LOCALAPPDATA` (Nimbus keeps its data under `LOCALAPPDATA`). Log the agent in again inside the

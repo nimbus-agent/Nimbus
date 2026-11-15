@@ -14,7 +14,12 @@ export interface FakeMachine {
   readonly links: Set<string>;
   readonly vars: Record<string, string | undefined>;
   /** An `ApplyFs` over the same files; `renames` counts attempts. */
-  readonly fs: ApplyFs & { renames: number; renameError?: () => Error | undefined; slept: number };
+  readonly fs: ApplyFs & {
+    renames: number;
+    renameError?: () => Error | undefined;
+    slept: number;
+    uniques: number;
+  };
 }
 
 /** A machine whose working directory is a repository (it has a `.git` entry). */
@@ -42,12 +47,18 @@ export function fakeMachine(initial: Record<string, string> = {}, repo = true): 
   const fs: FakeMachine["fs"] = {
     renames: 0,
     slept: 0,
+    uniques: 0,
     read: (p) => files.get(p) ?? null,
     kind,
     exists: (p) => files.has(p),
     mkdirp: () => {},
     copy: (from, to) => {
+      if (files.has(to)) throw codedError("EEXIST");
       files.set(to, files.get(from) ?? "");
+    },
+    unique: () => {
+      fs.uniques += 1;
+      return `t${String(fs.uniques)}`;
     },
     write: (p, text) => {
       if (files.has(p)) throw new Error(`EEXIST ${p}`);

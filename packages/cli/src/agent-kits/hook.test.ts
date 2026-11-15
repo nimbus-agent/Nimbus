@@ -11,6 +11,7 @@ import {
   renderInstructions,
   STEER_ROWS,
   STEER_TABLE_VERSION,
+  steerLabel,
   steerReason,
 } from "./steer-table.ts";
 
@@ -25,13 +26,39 @@ function bash(command: string, tool = "Bash"): string {
 describe("the steer table", () => {
   test("every row and every owner command matches its own words, with and without arguments", () => {
     for (const row of STEER_ROWS) {
-      expect(matchSteer([...row.argv])).toEqual({ kind: "steer", row });
-      expect(matchSteer([...row.argv, "--flag", "x"])).toEqual({ kind: "steer", row });
+      const words = steerLabel(row).split(" ");
+      expect(matchSteer(words)).toEqual({ kind: "steer", row });
+      expect(matchSteer([...words, "--flag", "x"])).toEqual({ kind: "steer", row });
     }
     for (const command of OWNER_COMMANDS) {
       expect(matchSteer([...command])).toEqual({ kind: "owner", command });
       expect(matchSteer([...command, "cap_1"])).toEqual({ kind: "owner", command });
     }
+  });
+
+  test("scale and rollout restart are steered for deployments only: the door acts on nothing else", () => {
+    for (const words of [
+      ["kubectl", "scale", "deployment/web", "--replicas=3"],
+      ["kubectl", "scale", "--replicas=3", "deploy/web"],
+      ["kubectl", "scale", "deployments", "web", "--replicas", "3"],
+      ["kubectl", "rollout", "restart", "deployment", "web"],
+      ["kubectl", "rollout", "restart", "deployment.apps/web"],
+    ]) {
+      expect(matchSteer(words)?.kind, words.join(" ")).toBe("steer");
+    }
+    for (const words of [
+      ["kubectl", "rollout", "restart", "daemonset/abc"],
+      ["kubectl", "rollout", "restart", "statefulset", "db"],
+      ["kubectl", "scale", "statefulset/db", "--replicas=2"],
+      ["kubectl", "scale", "rs/web", "--replicas=2"],
+      ["kubectl", "scale"],
+      ["kubectl", "rollout", "restart"],
+      ["kubectl", "scale", "--replicas=3"],
+      ["kubectl", "scale", "Deployment/web"],
+    ]) {
+      expect(matchSteer(words), words.join(" ")).toBeUndefined();
+    }
+    expect(steerLabel({ argv: ["a", "b"], actionType: "x" })).toBe("a b");
   });
 
   test("the program may be named by a path or with .exe; later words are exact", () => {
@@ -75,7 +102,7 @@ describe("the steer table", () => {
   test("the instruction text names every row, every owner command and the bounds", () => {
     const text = renderInstructions();
     for (const row of STEER_ROWS) {
-      expect(text).toContain(`\`${row.argv.join(" ")}\``);
+      expect(text).toContain(`\`${steerLabel(row)}\``);
       expect(text).toContain(`\`${row.actionType}\``);
     }
     for (const command of OWNER_COMMANDS) expect(text).toContain(`\`${command.join(" ")}\``);
@@ -128,6 +155,7 @@ describe("decideCommand", () => {
       "FOO=bar gh pr merge 1",
       "A=1 B=2 aws lambda invoke --function-name f out.json",
       "sudo kubectl scale deploy/web --replicas=0",
+      "kubectl rollout restart deployment/web",
       '"nimbus" approvals',
       "'gh' pr merge 1",
       "   nimbus    approvals   ",
@@ -149,6 +177,18 @@ describe("decideCommand", () => {
     // Outside the quotes the separator still counts.
     expect(decideCommand('echo "done"; gh pr merge 1').decision).toBe("deny");
     expect(decideCommand("echo 'a' && nimbus approvals").decision).toBe("deny");
+    // An escaped quote does not close the quotes; an escaped separator is not a separator.
+    for (const c of [
+      String.raw`git commit -m "document \"quote; nimbus approvals list\""`,
+      String.raw`echo one\; gh pr merge 1`,
+      String.raw`echo "a \\"; nimbus approvals`,
+    ]) {
+      expect(decideCommand(c).decision, c).toBe(c.endsWith("nimbus approvals") ? "deny" : "none");
+    }
+    // A real command after an argument with escaped quotes is still seen.
+    expect(decideCommand(String.raw`echo "say \"hi\"" && gh pr merge 1`).decision).toBe("deny");
+    // Inside single quotes a backslash is only a backslash.
+    expect(decideCommand(String.raw`echo 'a\'; gh pr merge 1`).decision).toBe("deny");
     // An unclosed quote swallows the rest: no decision, never a throw.
     expect(decideCommand('echo "unclosed; gh pr merge 1')).toEqual({ decision: "none" });
   });

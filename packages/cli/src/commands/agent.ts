@@ -23,6 +23,7 @@ import { unifiedDiff } from "../agent-kits/line-diff.ts";
 import { KitRefusal } from "../agent-kits/plan-files.ts";
 import { allKitStatuses, type KitStatus, needsAttention } from "../agent-kits/status.ts";
 import { AGENT_DOOR_BOUNDS } from "../lib/agent-door-bounds.ts";
+import { quoteForPrintedCommand } from "../lib/shell-quote.ts";
 import { stripControlChars } from "../lib/strip-control-chars.ts";
 
 export const AGENT_USAGE = [
@@ -118,15 +119,19 @@ function planText(plan: KitPlan): string {
   for (const f of pending) {
     lines.push(
       f.before === null
-        ? `Create ${f.path}`
-        : `Change ${f.path} (the file as it is now is kept beside it as a .nimbus-bak-<time> copy)`,
+        ? `Create ${printable(f.path)}`
+        : `Change ${printable(f.path)} (the file as it is now is kept beside it as a .nimbus-bak-<time> copy)`,
       printable(unifiedDiff(f.before, f.after)),
       "",
     );
   }
   if (pending.length === 0) lines.push("No file needs to change.", "");
   for (const m of plan.manual) {
-    lines.push(`Run this yourself (${m.why}):`, `  ${m.argv.join(" ")}`, "");
+    lines.push(
+      `Run this yourself (${m.why}):`,
+      `  ${printable(m.argv.map((a) => quoteForPrintedCommand(a)).join(" "))}`,
+      "",
+    );
   }
   for (const n of plan.notes) lines.push(`Note: ${n}`);
   lines.push("", AGENT_DOOR_BOUNDS, "", OUTSIDE_THE_DOOR, "");
@@ -162,7 +167,9 @@ async function runInstall(
   const result = await deps.apply(plan);
   for (const w of result.written) {
     deps.out(
-      w.backup === undefined ? `Created ${w.path}\n` : `Changed ${w.path} (before: ${w.backup})\n`,
+      w.backup === undefined
+        ? `Created ${printable(w.path)}\n`
+        : `Changed ${printable(w.path)} (before: ${printable(w.backup)})\n`,
     );
   }
   if (result.failure !== undefined) {
@@ -184,11 +191,16 @@ function statusLines(s: KitStatus, version: string | undefined): string[] {
     `${s.kit} (${s.scope}): steering ${s.enforcement}${version === undefined ? "" : `; agent version ${version}`}`,
   ];
   for (const c of s.components) {
-    lines.push(
-      c.state === "manual"
-        ? `  ${c.component}: manual (Nimbus cannot read where this lands). Command: ${c.where}`
-        : `  ${c.component}: ${c.state}  ${c.where}`,
-    );
+    const where = printable(c.where);
+    if (c.state === "manual") {
+      lines.push(
+        `  ${c.component}: manual (Nimbus cannot read where this lands). Command: ${where}`,
+      );
+    } else if (c.state === "cannot tell") {
+      lines.push(`  ${c.component}: cannot tell  ${where} (${printable(c.reason ?? "")})`);
+    } else {
+      lines.push(`  ${c.component}: ${c.state}  ${where}`);
+    }
   }
   for (const n of s.notes) lines.push(`  note: ${n}`);
   return lines;

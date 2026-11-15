@@ -5,14 +5,19 @@
  *  - the file is read again just before the write, and a change since the plan was shown stops the
  *    run (the owner approved a diff against bytes that no longer exist);
  *  - an existing file is copied to a timestamped backup first, and a backup is never overwritten;
- *  - the new content goes to a temporary file in the same directory and is renamed over the
- *    target, so a reader never sees half a file;
+ *  - the new content goes to this run's own temporary file in the same directory and is renamed
+ *    over the target, so a reader never sees half a file and two runs never share one;
  *  - on Windows a rename fails while another program holds the target open, so it is retried, and
  *    when it still fails the temporary file is removed and the target is left exactly as it was;
+ *    the target is read again after every wait, so a save made meanwhile is not overwritten.
+ *    (Between that last read and the rename itself there is no lock: a program that saves in
+ *    that instant loses its save to the backup. Stated on the kit page.)
  *  - a link at the file or at a directory above it is refused here too, not only when planning;
  *  - nothing is ever deleted except that temporary file.
  */
+import { randomBytes } from "node:crypto";
 import {
+  constants,
   copyFileSync,
   existsSync,
   lstatSync,
@@ -35,7 +40,10 @@ export interface ApplyFs {
   kind(path: string): PathKind;
   exists(path: string): boolean;
   mkdirp(dir: string): void;
+  /** Copies to a NEW file: it must fail (`EEXIST`) when `to` exists, never overwrite it. */
   copy(from: string, to: string): void;
+  /** A short random suffix, so two installs at once never share a temporary file. */
+  unique(): string;
   /** Writes a NEW file; `mode` is the target's own when it exists. */
   write(path: string, text: string, mode: number | undefined): void;
   modeOf(path: string): number | undefined;
@@ -64,8 +72,9 @@ export const NODE_APPLY_FS: ApplyFs = {
     mkdirSync(d, { recursive: true });
   },
   copy: (from, to) => {
-    copyFileSync(from, to);
+    copyFileSync(from, to, constants.COPYFILE_EXCL);
   },
+  unique: () => randomBytes(6).toString("hex"),
   write: (p, text, mode) => {
     writeFileSync(p, text, mode === undefined ? { flag: "wx" } : { flag: "wx", mode });
   },
@@ -106,7 +115,20 @@ function errorCode(e: unknown): string | undefined {
   return typeof code === "string" ? code : undefined;
 }
 
-async function renameWithRetry(fs: ApplyFs, from: string, to: string): Promise<void> {
+const CHANGED = (path: string): string =>
+  `${path} changed after the plan was shown; nothing was written to it. Run the command again`;
+
+/**
+ * Renames `from` over `to`, retrying while another program holds `to`. After every wait the
+ * target is read again: a program that saved the file meanwhile must not be overwritten by a
+ * plan made against the bytes before it.
+ */
+async function renameWithRetry(
+  fs: ApplyFs,
+  from: string,
+  to: string,
+  stillAsPlanned: () => boolean,
+): Promise<void> {
   for (let attempt = 1; ; attempt += 1) {
     try {
       fs.rename(from, to);
@@ -115,36 +137,41 @@ async function renameWithRetry(fs: ApplyFs, from: string, to: string): Promise<v
       const busy = BUSY_CODES.has(errorCode(e) ?? "");
       if (!busy || attempt === RENAME_ATTEMPTS) throw e;
       await fs.sleep(RENAME_WAIT_MS);
+      if (!stillAsPlanned()) throw new KitRefusal(CHANGED(to));
     }
   }
 }
 
 async function applyOne(fs: ApplyFs, edit: FileEdit, stamp: string): Promise<AppliedFile> {
+  if (edit.refusal !== undefined) throw new KitRefusal(edit.refusal);
   // The plan checked this; a link can appear while the owner reads it. Checked again, the same way.
   assertWritableTarget(fs.kind, edit.root, edit.path);
-  const now = fs.read(edit.path);
-  if (now !== edit.before) {
-    throw new KitRefusal(
-      `${edit.path} changed after the plan was shown; nothing was written to it. Run the command again`,
-    );
-  }
+  const asPlanned = (): boolean => fs.read(edit.path) === edit.before;
+  if (!asPlanned()) throw new KitRefusal(CHANGED(edit.path));
   fs.mkdirp(dirname(edit.path));
   let backup: string | undefined;
   if (edit.before !== null) {
     backup = `${edit.path}.nimbus-bak-${stamp}`;
-    if (fs.exists(backup)) {
-      throw new KitRefusal(`${backup} already exists; nothing was written. Run the command again`);
+    try {
+      // Exclusive: two installs in the same second cannot both write this name.
+      fs.copy(edit.path, backup);
+    } catch (e) {
+      throw new KitRefusal(
+        errorCode(e) === "EEXIST"
+          ? `${backup} already exists; nothing was written. Run the command again`
+          : `${edit.path} could not be backed up (${e instanceof Error ? e.message : String(e)}); nothing was written`,
+      );
     }
-    fs.copy(edit.path, backup);
   }
-  const temp = `${edit.path}.nimbus-new`;
-  if (fs.exists(temp)) fs.remove(temp);
+  // This run's own temporary file; another run's is never touched.
+  const temp = `${edit.path}.nimbus-new-${fs.unique()}`;
   try {
     fs.write(temp, edit.after, fs.modeOf(edit.path));
-    await renameWithRetry(fs, temp, edit.path);
+    await renameWithRetry(fs, temp, edit.path, asPlanned);
   } catch (e) {
     // A failed write can leave half a file: it goes too.
     if (fs.exists(temp)) fs.remove(temp);
+    if (e instanceof KitRefusal) throw e;
     const held = BUSY_CODES.has(errorCode(e) ?? "");
     throw new KitRefusal(
       held

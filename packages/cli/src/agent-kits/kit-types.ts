@@ -31,6 +31,12 @@ export interface KitEnv {
   read(path: string): string | null;
   kind(path: string): PathKind;
   envVar(name: string): string | undefined;
+  /**
+   * Set by `status` only: a file that cannot be planned (not strict JSON, a link, a file Nimbus
+   * did not write) becomes an edit carrying its `refusal` instead of failing the whole kit, so
+   * the kit's other files are still reported. Install never sets it.
+   */
+  readonly tolerant?: boolean;
 }
 
 export type KitComponent = "mcp" | "steer" | "instructions";
@@ -50,6 +56,8 @@ export interface FileEdit {
   readonly present: boolean;
   /** The scope's tree this file belongs to; the link check runs from the file up to it. */
   readonly root: string;
+  /** Why this file could not be planned (tolerant planning only). Such an edit is never applied. */
+  readonly refusal?: string;
 }
 
 /** A step the OWNER runs. Nimbus never starts another vendor's program to change its settings. */
@@ -144,14 +152,19 @@ export function fileEdit(
   build: (before: string | null) => string,
   present: (before: string) => boolean,
 ): FileEdit {
-  assertWritableTarget(env.kind, root, path);
-  const before = env.read(path);
-  return {
-    path,
-    component,
-    before,
-    after: build(before),
-    present: before !== null && present(before),
-    root,
-  };
+  try {
+    assertWritableTarget(env.kind, root, path);
+    const before = env.read(path);
+    return {
+      path,
+      component,
+      before,
+      after: build(before),
+      present: before !== null && present(before),
+      root,
+    };
+  } catch (e) {
+    if (!(e instanceof KitRefusal) || env.tolerant !== true) throw e;
+    return { path, component, before: null, after: "", present: false, root, refusal: e.message };
+  }
 }

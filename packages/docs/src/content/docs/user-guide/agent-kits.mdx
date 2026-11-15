@@ -30,7 +30,12 @@ command you have to run yourself. Then it asks you to type `yes`. Nothing is wri
 - An existing file is copied to `<file>.nimbus-bak-<time>` before it is changed. Every install that changes a file
   leaves its own backup.
 - Nimbus edits only what it owns: a block between two `nimbus agent kit` marker lines in a text file, or its own
-  keys in a JSON file. Everything else in the file is left as it was.
+  keys in a JSON file. Everything else in the file is left as it was. One exception: Cursor's
+  `.cursor/rules/nimbus.mdc` is a file Nimbus owns whole, and a reinstall rewrites all of it. Keep your own Cursor
+  rules in another file.
+- Run one install at a time, with the agent closed. Each run uses its own temporary file and never overwrites a
+  backup, and a file that changes while it waits on a locked file is left alone; but nothing locks the file
+  against a program that saves it in the instant before the write.
 - A file Nimbus cannot edit safely is refused, not rewritten: a JSON file with comments, a file that is a symbolic
   link or sits under a linked directory, a `[mcp_servers.nimbus]` table you wrote yourself. The link check runs
   when the plan is made and again just before each file is written.
@@ -54,9 +59,12 @@ start `nimbus mcp-server` can pass any name.
 | `glab mr merge` | `propose_action` with type `gitlab.mr.merge` |
 | `terraform apply` | `propose_action` with type `iac.terraform.apply` |
 | `kubectl apply` | `propose_action` with type `kubernetes.manifest.apply` |
-| `kubectl scale` | `propose_action` with type `kubernetes.deployment.scale` |
-| `kubectl rollout restart` | `propose_action` with type `kubernetes.rollout.restart` |
+| `kubectl scale deployment` | `propose_action` with type `kubernetes.deployment.scale` |
+| `kubectl rollout restart deployment` | `propose_action` with type `kubernetes.rollout.restart` |
 | `aws lambda invoke` | `propose_action` with type `aws.lambda.invoke` |
+
+`kubectl scale` and `kubectl rollout restart` are steered for deployments only (`deployment/web`, `deploy web`):
+the door has no action for a StatefulSet or a DaemonSet, so those commands are left alone.
 
 Three commands are yours alone, and every kit tells the agent never to run them: `nimbus approvals`,
 `nimbus connector writes` and `nimbus captures`.
@@ -103,7 +111,8 @@ Project scope is refused: a project `.codex/` applies only after Codex trusts th
 The MCP table's format was read from a documentation summary and has not yet been checked against a real Codex;
 install and status say so until it has.
 
-To remove: delete the Nimbus block from `config.toml` and from `AGENTS.md`, and delete `rules/nimbus.rules`.
+To remove: delete the Nimbus block from `config.toml`, from `AGENTS.md` and from `rules/nimbus.rules`. Delete
+`rules/nimbus.rules` itself only if nothing of yours is left in it.
 
 ## Cursor
 
@@ -148,8 +157,8 @@ To remove: delete the `nimbus` key under `servers` (or `mcpServers`), and the Ni
 It also shows the agent's version where it can read it without a shell, whether the gateway is running, and the
 limits stated at the top of this page. It never writes. The exit code is 1 when an installed kit has a `drifted` or
 `missing` part, and 0 otherwise. A file Nimbus cannot read as a kit's file (a `.vscode/mcp.json` with comments, for
-example) is shown as `cannot tell` and does not change the exit code: Nimbus cannot know whether a kit was ever
-installed there. `nimbus agent install <kit> --dry-run` shows what would put it right.
+example) is `cannot tell`. For a kit whose other parts are installed that is shown with the reason and counts like
+`drifted`; for a kit with nothing else installed it is not shown, because Nimbus cannot know a kit was ever there. `nimbus agent install <kit> --dry-run` shows what would put it right.
 
 ## Verified against real agents
 

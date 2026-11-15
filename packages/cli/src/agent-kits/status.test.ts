@@ -101,11 +101,37 @@ describe("kit status", () => {
     expect(needsAttention([gone])).toBe(false);
   });
 
-  test("a file Nimbus cannot read as a plan is reported as such and does not count as needing attention", () => {
+  test("a file Nimbus cannot read for a kit that is not otherwise installed is cannot tell, and needs no attention", () => {
     const m = fakeMachine({ [join(REPO, ".vscode", "mcp.json")]: "{ // comments\n}" });
     const s = kitStatus("vscode", m.env, "project");
     expect(s.installed).toBe(false);
-    expect(s.unreadable).toContain("not strict JSON");
+    expect(s.unreadable).toBeUndefined();
+    expect(s.components.map((c) => [c.component, c.state])).toEqual([
+      ["mcp", "cannot tell"],
+      ["instructions", "missing"],
+    ]);
+    expect(s.components[0]?.reason).toContain("not strict JSON");
+    expect(needsAttention([s])).toBe(false);
+  });
+
+  test("an installed kit keeps its other parts when one file can no longer be read as its own, and needs attention", async () => {
+    const m = fakeMachine();
+    await install(m, "cursor", "project");
+    m.files.set(join(REPO, ".cursor", "rules", "nimbus.mdc"), "someone replaced this\n");
+    const s = kitStatus("cursor", m.env, "project");
+    expect(s.installed).toBe(true);
+    expect(s.components.map((c) => [c.component, c.state])).toEqual([
+      ["mcp", "ok"],
+      ["instructions", "cannot tell"],
+    ]);
+    expect(s.components[1]?.reason).toContain("Nimbus did not write it");
+    expect(needsAttention([s])).toBe(true);
+  });
+
+  test("a refusal of the whole kit (project scope outside a repository) is still reported as one", () => {
+    const s = kitStatus("cursor", fakeMachine({}, false).env, "project");
+    expect(s.installed).toBe(false);
+    expect(s.unreadable).toContain("not the root of a git repository");
     expect(needsAttention([s])).toBe(false);
   });
 });
@@ -156,6 +182,7 @@ describe("unifiedDiff", () => {
 
 describe("the real machine", () => {
   test("nodeKitEnv reads files, tells kinds apart, and treats an empty variable as unset", () => {
+    const VARS: Record<string, string | undefined> = { SET: "v", EMPTY: "" };
     const root = mkdtempSync(join(tmpdir(), "nimbus-agent-env-"));
     try {
       mkdirSync(join(root, "dir"));
@@ -164,7 +191,7 @@ describe("the real machine", () => {
         home: root,
         cwd: root,
         nimbus: "nimbus",
-        envVar: (n) => ({ SET: "v", EMPTY: "" })[n],
+        envVar: (n) => VARS[n],
       });
       expect(env.read(join(root, "dir", "f.txt"))).toBe("hello");
       expect(env.read(join(root, "missing"))).toBeNull();

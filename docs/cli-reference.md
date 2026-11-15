@@ -1776,7 +1776,8 @@ and no `--yes` it refuses. What it writes, per kit:
 | `vscode` | project | `~/.copilot/mcp-config.json` (no steering at user scope) | `.vscode/mcp.json` and `copilot-instructions.md` in the project's `.github` folder | guidance only |
 
 Rules it follows on every file: an existing file is copied to `<file>.nimbus-bak-<UTC time>` first; only a block
-between two `nimbus agent kit` marker lines, or Nimbus's own keys in a JSON file, is changed; a file that is a
+between two `nimbus agent kit` marker lines, or Nimbus's own keys in a JSON file, is changed (one exception: Cursor's
+`nimbus.mdc` rules file is owned whole and rewritten on reinstall, so keep your own Cursor rules in another file); a file that is a
 symbolic link, a JSON file that is not strict JSON (comments, a trailing comma) and a Codex config with its own
 `[mcp_servers.nimbus]` table are refused, not rewritten; a file that changed after the plan was shown is not
 written; a link at the file or at any directory between it and the scope's own tree is refused, when the plan is
@@ -1787,11 +1788,12 @@ because an agent's configuration must not point at a checkout. `--scope project`
 the root of a git repository. There is no uninstall command; the docs site's *Agent kits* page lists what to delete.
 
 The steering covers `gh pr merge`, `glab mr merge`, `terraform apply`, `kubectl apply`, `kubectl scale`,
-`kubectl rollout restart` and `aws lambda invoke` (each pointed at the matching `propose_action` type) and tells
+`kubectl rollout restart` and `aws lambda invoke` (each pointed at the matching `propose_action` type; scale and
+rollout restart for deployments only, since the door acts on nothing else) and tells
 the agent never to run `nimbus approvals`, `nimbus connector writes` or `nimbus captures`. The Claude Code hook
 (`nimbus agent hook claude-code`, run by Claude Code, not by you) denies those commands with the reason and makes no
 decision about anything else; it fails open when it cannot read its input, and it does not treat a separator inside
-quotes as the start of a new command.
+quotes, or an escaped one, as the start of a new command.
 
 `status` reads the same files again and reports each part of each installed kit as `ok`, `drifted` (edited, or
 written by an older Nimbus), `missing`, or `manual` (a command you ran yourself, which Nimbus cannot check). It also
@@ -1800,8 +1802,8 @@ above. It never writes.
 
 **Exit codes:** `install`: `0` written, nothing to change, or a dry run; `1` refused, declined or a file could not
 be written; `2` usage. `status`: `0` every installed kit is as written (a `manual` part never counts), or none is
-installed; `1` an installed kit has a `drifted` or `missing` part. A file Nimbus cannot read as a kit's file is
-printed as `cannot tell` and never changes the exit code.
+installed; `1` an installed kit has a `drifted` or `missing` part, or a file Nimbus can no longer read as its own
+(`cannot tell`, with the reason). Such a file for a kit with nothing else installed is not reported.
 
 ---
 
