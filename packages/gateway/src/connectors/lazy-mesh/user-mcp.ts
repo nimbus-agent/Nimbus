@@ -72,7 +72,7 @@ export function userMcpManifestFromRow(
 export function recordUserMcpRowFailure(
   ctx: MeshSpawnContext,
   serviceId: string,
-  column: "args_json" | "read_paths_json" | "net_hosts_json" | "write_paths_json",
+  column: "args_json" | "read_paths_json" | "net_hosts_json",
   reason: string,
 ): void {
   if (ctx.logger !== undefined) {

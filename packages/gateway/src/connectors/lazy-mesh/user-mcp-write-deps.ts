@@ -61,7 +61,7 @@ export interface ProductionWriteDirOptions {
   /** The owner-approved iac working directories, read at the call. */
   readonly iacWorkdirs: () => readonly string[];
   /** One environment variable of the gateway process. */
-  readonly env: (name: string) => string | undefined;
+  readonly envVar: (name: string) => string | undefined;
 }
 
 /**
@@ -85,10 +85,10 @@ export function productionWriteDirDeps(o: ProductionWriteDirOptions): WriteDirDe
     },
     homeDir: homedir(),
     tmpDir: tmpdir(),
-    pathEntries: (o.env("PATH") ?? o.env("Path") ?? "").split(delimiter),
+    pathEntries: (o.envVar("PATH") ?? o.envVar("Path") ?? "").split(delimiter),
     appDataDirs:
       platform === "win32"
-        ? [o.env("APPDATA"), o.env("LOCALAPPDATA")].filter(
+        ? [o.envVar("APPDATA"), o.envVar("LOCALAPPDATA")].filter(
             (d): d is string => d !== undefined && d !== "",
           )
         : [],
@@ -96,7 +96,7 @@ export function productionWriteDirDeps(o: ProductionWriteDirOptions): WriteDirDe
     // the iac root, the Linux runtime directory); the log folder is added because it can be
     // configured outside `dataDir`.
     protectedRoots: () => [
-      ...iacProtectedRootsFor(paths, platform, o.env("XDG_RUNTIME_DIR")),
+      ...iacProtectedRootsFor(paths, platform, o.envVar("XDG_RUNTIME_DIR")),
       paths.logDir,
     ],
     iacWorkdirs: o.iacWorkdirs,

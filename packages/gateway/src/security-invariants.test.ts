@@ -1718,7 +1718,7 @@ describe("I15 — SandboxRunner is intrinsic to every extension spawn", () => {
       expect(entries.filter(([, m]) => m.permissions.filesystem.write.length > 0)).toEqual([]);
     });
 
-    test("the only spawn-time write additions under lazy-mesh are the filesystem dataDir and the Obsidian vaults", async () => {
+    test("the only spawn-time write additions under lazy-mesh are the filesystem dataDir, the Obsidian vaults and a user MCP server's prepared grant", async () => {
       const dir = resolve(REPO_ROOT, "packages/gateway/src/connectors/lazy-mesh");
       const files = (await readdir(dir, { recursive: true })).filter(
         (f) => f.endsWith(".ts") && !f.endsWith(".test.ts"),
@@ -1755,7 +1755,17 @@ describe("I15 — SandboxRunner is intrinsic to every extension spawn", () => {
       expect(additions.sort()).toEqual([
         "connector-spawns.ts: ...writePaths",
         "mesh.ts: paths.dataDir",
+        // AD5b: the ONE builder of a user MCP write grant. `grant.dirs` exists only on a
+        // `PreparedUserMcpWriteGrant`, which only `prepareUserMcpWriteGrant` constructs.
+        "user-mcp-write-grant.ts: ...grant.dirs",
+        "user-mcp-write-grant.ts: ...parts.write",
       ]);
+      // The user MCP spawn manifest takes its write list from those parts and nowhere else.
+      const userMcp = stripComments(await readFile(resolve(dir, "user-mcp.ts"), "utf8"));
+      expect(userMcp).toMatch(
+        /const \{ read: readPaths, write, \.\.\.declared \} = userMcpWriteManifestParts\(read\.value, prepared\);/,
+      );
+      expect(userMcp).toMatch(/filesystem: \{ read: readPaths, write \},/);
     });
 
     test("assemble wires the live approval; the connector RPC wires the restart to the mesh", async () => {
@@ -1812,10 +1822,13 @@ describe("I15 — SandboxRunner is intrinsic to every extension spawn", () => {
         await read("packages/gateway/src/platform/sandbox/canonical-path.ts"),
       );
       expect(canon).toMatch(/assertDeclaredWriteGrantsUnchanged\(policy, canonical\);\s*return \{/);
-      // No producer: a user MCP spawn still has an empty write list, and no file under connectors/
-      // names the declaration (static D10 `user-write` holds the full list).
-      const userMcp = await read("packages/gateway/src/connectors/lazy-mesh/user-mcp.ts");
-      expect(stripComments(userMcp)).toMatch(/write: \[\]/);
+      // The spawn manifest takes its write list ONLY from the prepared grant, never from the row
+      // (static D10 `user-write` holds the list of files that may name the declaration).
+      const userMcp = stripComments(
+        await read("packages/gateway/src/connectors/lazy-mesh/user-mcp.ts"),
+      );
+      expect(userMcp).toMatch(/userMcpWriteManifestParts\(read\.value, prepared\)/);
+      expect(userMcp).not.toContain("write_paths_json");
       expect(userMcp).not.toContain("canonicalWriteDirs");
       // The Windows helper refuses a declared directory that is not a real one, then grants it
       // inheritably with no DELETE right.

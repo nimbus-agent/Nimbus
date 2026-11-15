@@ -161,6 +161,13 @@ export function storedWriteDirs(
   return { ok: true, dirs };
 }
 
+/** The file-system half of a user MCP spawn manifest, with its two declarations when it has a grant. */
+export type UserMcpWriteManifestParts = Pick<
+  ExtensionManifest,
+  "canonicalWritePaths" | "canonicalWriteDirs"
+> &
+  Readonly<Record<"read" | "write", string[]>>;
+
 /**
  * The permissions of a user MCP spawn for a prepared grant: the directories are readable as well as
  * writable (a macOS write rule grants no read, so read is the union), each is declared a canonical
@@ -169,10 +176,7 @@ export function storedWriteDirs(
 export function userMcpWriteManifestParts(
   read: readonly string[],
   grant: PreparedUserMcpWriteGrant,
-): Pick<ExtensionManifest, "canonicalWritePaths" | "canonicalWriteDirs"> & {
-  readonly read: string[];
-  readonly write: string[];
-} {
+): UserMcpWriteManifestParts {
   if (grant.dirs.length === 0) return { read: [...read], write: [] };
   const seen = new Set(read);
   return {
@@ -193,7 +197,7 @@ function policyFor(
   const parts = userMcpWriteManifestParts(read, grant);
   return {
     id: userMcpPolicyId(row.service_id),
-    permissions: { network: [...net], filesystem: { read: parts.read, write: parts.write } },
+    permissions: { network: [...net], filesystem: { read: parts.read, write: [...parts.write] } },
     ...(parts.canonicalWritePaths === undefined
       ? {}
       : { canonicalWritePaths: parts.canonicalWritePaths }),

@@ -432,7 +432,7 @@ export class LazyConnectorMesh {
         platform,
         listRows: () => this.listUserMcpConnectors(),
         iacWorkdirs: () => iacGrantsNow().workdirs,
-        env: processEnvGet,
+        envVar: processEnvGet,
       }),
       ...options?.userMcpWriteDirDeps,
     };
