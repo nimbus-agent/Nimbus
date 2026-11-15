@@ -69,6 +69,23 @@ beforeEach(() => {
       audit: { recordAudit: (e) => appendAuditEntry(db, e) },
       policyHitl: NO_POLICY_OVERLAY,
       getTribalKbConfig: () => undefined,
+      // An agent's `mcp_*` call carries the server's facts, or it cannot be asked about (I15, AD5b).
+      agentDoor: {
+        listServerTools: async () => undefined,
+        verifyDefinition: async () => ({ ok: true }),
+        userMcpCallFacts: async (actionType) => ({
+          ok: true,
+          facts: {
+            serviceId: actionType.slice(0, actionType.indexOf(".")),
+            tool: actionType.slice(actionType.indexOf(".") + 1),
+            registeredAt: 0,
+            readPaths: [],
+            netHosts: [],
+            writePaths: [],
+            approval: null,
+          },
+        }),
+      },
     },
   };
 });
