@@ -4022,6 +4022,44 @@ const D43_CONSTANT_ALLOWED: readonly string[] = [
   D42_REGISTRY,
 ];
 
+// ---- D10 `user-write` (a declared write DIRECTORY, I15; Phase 28 AD5b) ---------------------------
+// A sandbox policy may declare a directory the child writes beneath (`canonicalWriteDirs`). The
+// field is named only by the manifest type, the policy wire and the two checks that read it, so no
+// connector, IPC handler or engine file can build a policy that carries one. In AD5b-1 the list
+// holds NO `connectors/` file: nothing produces a write-directory grant. AD5b-2 adds the one builder
+// (`connectors/lazy-mesh/user-mcp-write-grant.ts`) to this list, in the commit that adds the flag.
+// Strings are kept: a string spelling of the field (a computed key) is a spelling.
+// Stated bound: textual. A name composed at run time evades it; the real-sandbox tests are the
+// authority on what a policy can do.
+const D10_WRITE_DIR_RE = /\bcanonicalWriteDirs\b/g;
+const D10_WRITE_DIR_ALLOWED: readonly string[] = [
+  "packages/gateway/src/extensions/manifest.ts",
+  "packages/gateway/src/platform/sandbox/sandbox-policy.ts",
+  "packages/gateway/src/platform/sandbox/canonical-path.ts",
+  "packages/gateway/src/platform/sandbox/write-grant-check.ts",
+];
+
+export function checkWriteDirDeclarationConfined(files: readonly FileEntry[]): Violation[] {
+  const out: Violation[] = [];
+  for (const f of files) {
+    if (f.relPath.endsWith(".test.ts") || f.relPath.endsWith(".test-helpers.ts")) continue;
+    if (!f.relPath.startsWith("packages/gateway/src/")) continue;
+    if (D10_WRITE_DIR_ALLOWED.includes(f.relPath)) continue;
+    const commentFree = stripComments(f.contents);
+    const original = f.contents.split("\n");
+    for (const m of commentFree.matchAll(D10_WRITE_DIR_RE)) {
+      const line = lineOfOffset(commentFree, m.index);
+      out.push({
+        rule: "D10-user-write",
+        file: f.relPath,
+        line,
+        snippet: (original[line - 1] ?? "").trim(),
+      });
+    }
+  }
+  return out;
+}
+
 export function checkIacDiscard(files: readonly FileEntry[]): Violation[] {
   const out: Violation[] = [];
   const add = (f: FileEntry, rule: string, src: string, index: number | undefined): void => {
@@ -5409,6 +5447,7 @@ export const RULE_ANCHORS: readonly string[] = [
   "packages/gateway/src/agents/_lib/briefing-build.ts", // D45
   "packages/gateway/src/finops/cost-series.ts", // D48 — FinOps cost code is inert
   "packages/gateway/src/ipc/lan-legacy.ts", // D47 — the only home of the v1 static-box LAN path
+  "packages/gateway/src/platform/sandbox/write-grant-check.ts", // D10 user-write — a file the rule reads and then permits
   "packages/gateway/src/engine/executor.ts", // D22 — connectors.dispatch chokepoint
   "packages/gateway/src/ipc/agents-rpc.ts", // D22(d) — agent emitter confinement
   "packages/gateway/src/db/write.ts", // D12 — bound-param SQL writes
@@ -6099,6 +6138,15 @@ async function run(): Promise<void> {
     for (const e of v) {
       console.error(
         `::error file=${e.file},line=${e.line}::D42${D42_CLAUSE[e.rule] ?? ""} — a bound write could be dispatched with values its own gate-run prepare step did not produce, or a caller could supply them (I54): ${e.snippet}`,
+      );
+    }
+    if (v.length > 0) exit = 1;
+  }
+  if (mode === "binary-only" || mode === "all") {
+    const v = checkWriteDirDeclarationConfined(files);
+    for (const e of v) {
+      console.error(
+        `::error file=${e.file},line=${e.line}::D10 (user-write) a sandbox policy's write-directory declaration is named outside the policy wire and its checks — a spawn could be handed a directory write grant that no owner approved (I15): ${e.snippet}`,
       );
     }
     if (v.length > 0) exit = 1;

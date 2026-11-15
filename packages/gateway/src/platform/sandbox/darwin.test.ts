@@ -308,6 +308,35 @@ describe("a file write grant is a literal (the Obsidian daily note, I15)", () =>
     expect(block).not.toContain("2026-11-05.md");
   });
 
+  it("a declared directory stays a subpath in the write block, and the directory itself may not be unlinked (AD5b-1)", () => {
+    const p = generateSbplProfile({
+      cwd: "/s/cwd",
+      tmpdir: "/s/tmp",
+      policy: {
+        id: "user.mcp_notes",
+        permissions: { network: [], filesystem: { read: ["/out"], write: ["/out", "/data"] } },
+      },
+      writeDirs: new Set(["/out"]),
+    });
+    const lines = p.split("\n");
+    const start = lines.indexOf("(allow file-write*");
+    const end = lines.indexOf(")", start);
+    const block = lines.slice(start, end).join("\n");
+    expect(block).toContain('  (subpath "/out")');
+    expect(block).toContain('  (subpath "/data")');
+    // The deny comes AFTER the allow block (the last matching rule decides) and names the literal.
+    const deny = lines.indexOf('(deny file-write-unlink (literal "/out"))');
+    expect(deny).toBeGreaterThan(end);
+    // Only a declared directory gets it: an undeclared write path has no deny.
+    expect(lines.filter((l) => l.startsWith("(deny file-write-unlink"))).toHaveLength(1);
+    expect(p).not.toContain('(deny file-write-unlink (literal "/data"))');
+  });
+
+  it("a profile with no declared directory holds no unlink deny (every other spawn is unchanged)", () => {
+    const p = generateSbplProfile({ cwd: "/s/cwd", tmpdir: "/s/tmp", policy: filePolicy });
+    expect(p).not.toContain("file-write-unlink");
+  });
+
   it("writeFilesOf is exactly the DECLARED files in the write list, never guessed from disk", () => {
     // A declared file that is now a folder, or deleted, is still a file grant here (the wrapper
     // refuses that spawn first); an undeclared path that is a file on disk is still a subpath.

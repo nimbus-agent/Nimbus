@@ -99,3 +99,46 @@ describe("buildHelperArgv: a declared file never falls back to an inheritable gr
     ).toThrow("is not in the write list");
   });
 });
+
+describe("buildHelperArgv: a declared directory is --grant-write-dir (Phase 28 AD5b-1)", () => {
+  const dirPolicy = (over: Record<string, unknown> = {}) => ({
+    id: "user.mcp_notes",
+    permissions: {
+      network: [],
+      filesystem: { read: ["C:/out"], write: ["C:/out", "C:/n/note.md", "C:/data"] },
+    },
+    canonicalWritePaths: ["C:/out", "C:/n/note.md"],
+    canonicalWriteFiles: ["C:/n/note.md"],
+    canonicalWriteDirs: ["C:/out"],
+    ...over,
+  });
+
+  it("each kind of write path gets its own flag, in the write list's order", () => {
+    const argv = buildHelperArgv(dirPolicy(), { cwd: "C:/cwd" });
+    const writes = argv.filter((_, i) => argv[i - 1]?.startsWith("--grant-write") === true);
+    expect(writes).toEqual(["C:/out", "C:/n/note.md", "C:/data"]);
+    expect(argv[argv.indexOf("--grant-write-dir") + 1]).toBe("C:/out");
+    expect(argv[argv.indexOf("--grant-write-file") + 1]).toBe("C:/n/note.md");
+    expect(argv[argv.indexOf("--grant-write") + 1]).toBe("C:/data");
+    expect(argv.filter((a) => a === "--grant-write-dir")).toHaveLength(1);
+    expect(argv.at(-1)).toBe("--");
+  });
+
+  it("a declared directory that is not in the write list throws instead of being skipped", () => {
+    expect(() =>
+      buildHelperArgv(dirPolicy({ canonicalWriteDirs: ["C:/elsewhere"] }), { cwd: "C:/cwd" }),
+    ).toThrow("the declared directory grant C:/elsewhere is not in the write list");
+  });
+
+  it("a path declared both a file and a directory throws", () => {
+    expect(() =>
+      buildHelperArgv(dirPolicy({ canonicalWriteDirs: ["C:/n/note.md"] }), { cwd: "C:/cwd" }),
+    ).toThrow("is declared both a file and a directory");
+  });
+
+  it("a policy with no declared directory is unchanged: no --grant-write-dir", () => {
+    const argv = buildHelperArgv(dirPolicy({ canonicalWriteDirs: undefined }), { cwd: "C:/cwd" });
+    expect(argv).not.toContain("--grant-write-dir");
+    expect(argv[argv.indexOf("--grant-write") + 1]).toBe("C:/out");
+  });
+});

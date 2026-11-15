@@ -69,6 +69,7 @@ import {
   checkVaultKeyAllowList,
   checkWorkSnapshotConfinement,
   checkWrapServerSpecInvariant,
+  checkWriteDirDeclarationConfined,
   collectDbRunCensus,
   DB_RUN_EXEC_ALLOW_LIST,
   type FileEntry,
@@ -6966,5 +6967,66 @@ describe("D49(g), (h) - the user-MCP call facts and the door's reach into user s
     expect(checkUserMcpCallFacts(files)).toEqual([]);
     expect(checkUserMcpDoorReach(files)).toEqual([]);
     expect(assertScanIsMeaningful(files)).toEqual([]);
+  });
+});
+
+describe("D10 user-write - a write-directory declaration is confined to the policy wire (Phase 28 AD5b-1, I15)", () => {
+  const SRC = "packages/gateway/src/";
+  const file = (relPath: string, contents: string): FileEntry => ({ relPath, contents });
+  const ALLOWED = [
+    `${SRC}extensions/manifest.ts`,
+    `${SRC}platform/sandbox/sandbox-policy.ts`,
+    `${SRC}platform/sandbox/canonical-path.ts`,
+    `${SRC}platform/sandbox/write-grant-check.ts`,
+  ];
+  const USE = "const d = policy.canonicalWriteDirs ?? [];";
+
+  test("the four files that declare, carry and check the field may name it", () => {
+    expect(checkWriteDirDeclarationConfined(ALLOWED.map((p) => file(p, USE)))).toEqual([]);
+  });
+
+  test("no connectors, ipc, engine or other sandbox file may name it (AD5b-1 has no producer)", () => {
+    for (const path of [
+      `${SRC}connectors/lazy-mesh/user-mcp.ts`,
+      `${SRC}connectors/lazy-mesh/user-mcp-write-grant.ts`,
+      `${SRC}connectors/lazy-mesh/wrap-server-spec.ts`,
+      `${SRC}ipc/connector-rpc-handlers/config.ts`,
+      `${SRC}engine/executor.ts`,
+      `${SRC}platform/sandbox/darwin.ts`,
+      `${SRC}platform/sandbox/win32-argv.ts`,
+      `${SRC}platform/sandbox/linux.ts`,
+      `${SRC}platform/sandbox/sandbox-wrapper.ts`,
+    ]) {
+      const v = checkWriteDirDeclarationConfined([file(path, USE)]);
+      expect(
+        v.map((x) => [x.rule, x.file, x.line]),
+        path,
+      ).toEqual([["D10-user-write", path, 1]]);
+    }
+  });
+
+  test("an object-literal key and a string spelling are both violations", () => {
+    const path = `${SRC}connectors/lazy-mesh/user-mcp.ts`;
+    expect(
+      checkWriteDirDeclarationConfined([file(path, "return { canonicalWriteDirs: dirs };")]),
+    ).toHaveLength(1);
+    expect(
+      checkWriteDirDeclarationConfined([file(path, 'const k = "canonicalWriteDirs";')]),
+    ).toHaveLength(1);
+  });
+
+  test("a comment, a test file and a file outside the gateway source are not violations", () => {
+    expect(
+      checkWriteDirDeclarationConfined([
+        file(`${SRC}connectors/lazy-mesh/user-mcp.ts`, "// canonicalWriteDirs comes in AD5b-2"),
+        file(`${SRC}connectors/lazy-mesh/user-mcp.test.ts`, USE),
+        file("packages/cli/src/commands/connector-user-mcp.ts", USE),
+        file(`${SRC}platform/sandbox/canonicalWriteDirsLike.ts`, "const canonicalWriteDirsX = 1;"),
+      ]),
+    ).toEqual([]);
+  });
+
+  test("the rule's anchor is a file it reads", () => {
+    expect(RULE_ANCHORS).toContain(`${SRC}platform/sandbox/write-grant-check.ts`);
   });
 });

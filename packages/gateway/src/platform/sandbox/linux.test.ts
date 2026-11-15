@@ -784,3 +784,28 @@ describe("createForwarderDir", () => {
     expect(() => createForwarderDir(["/"], {})).toThrow(ForwarderSocketPathError);
   });
 });
+
+// Phase 28 AD5b-1 (I15). A regression pin of an order that already holds, not new logic: every read
+// bind comes before every write bind, so when a read path sits INSIDE a write directory the later
+// write bind covers it and the write wins. The owner approved writing the whole directory.
+describe("buildBwrapArgv: a write directory is bound after every read path (the write wins)", () => {
+  it("binds a read path nested in a write directory first, then the directory read-write", () => {
+    const argv = buildBwrapArgv(
+      basePolicy({
+        filesystem: { read: ["/data/out/inner", "/data/out", "/ref"], write: ["/data/out"] },
+      }),
+      { mode: "no-net", cwd: CWD },
+    );
+    const at = (flag: string, path: string): number =>
+      argv.findIndex((a, i) => a === flag && argv[i + 1] === path && argv[i + 2] === path);
+    const write = at("--bind", "/data/out");
+    expect(write).toBeGreaterThan(0);
+    for (const read of ["/data/out/inner", "/data/out", "/ref"]) {
+      const ro = at("--ro-bind", read);
+      expect(ro).toBeGreaterThan(0);
+      expect(ro).toBeLessThan(write);
+    }
+    // Nothing is bound after the write directory: it is the last word on that path.
+    expect(argv.slice(write)).toEqual(["--bind", "/data/out", "/data/out"]);
+  });
+});

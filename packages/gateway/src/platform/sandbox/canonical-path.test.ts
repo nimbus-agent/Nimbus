@@ -1,9 +1,14 @@
 import { describe, expect, it } from "bun:test";
-import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { canonicalPath, canonicalPolicyPaths } from "./canonical-path.ts";
+import {
+  assertDeclaredWriteGrantsUnchanged,
+  canonicalPath,
+  canonicalPolicyPaths,
+  declaredWriteDirs,
+} from "./canonical-path.ts";
 import { generateSbplProfile, writeFilesOf } from "./darwin.ts";
 import type { SandboxPolicy } from "./sandbox-policy.ts";
 import { buildHelperArgv } from "./win32-argv.ts";
@@ -147,5 +152,54 @@ describe("canonicalPolicyPaths: a declared path that changed refuses the spawn (
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe("the write-grant assertions every runner makes (Phase 28 AD5b-1)", () => {
+  const base = {
+    id: "user.mcp_notes",
+    permissions: { network: [], filesystem: { read: [], write: ["/out", "/n.md"] } },
+  };
+
+  it("assertDeclaredWriteGrantsUnchanged throws for a drifted path of each of the three kinds", () => {
+    const moved = (p: string) => (p === "/out" ? "/elsewhere" : p);
+    for (const field of ["canonicalWritePaths", "canonicalWriteFiles", "canonicalWriteDirs"]) {
+      expect(() =>
+        assertDeclaredWriteGrantsUnchanged({ ...base, [field]: ["/out"] }, moved),
+      ).toThrow("refusing to spawn: the write grant /out changed since the gateway decided it");
+      expect(() =>
+        assertDeclaredWriteGrantsUnchanged({ ...base, [field]: ["/out"] }, (p) => p),
+      ).not.toThrow();
+    }
+  });
+
+  it("a policy that declares nothing is never canonicalised", () => {
+    expect(() =>
+      assertDeclaredWriteGrantsUnchanged(base, () => {
+        throw new Error("never called");
+      }),
+    ).not.toThrow();
+  });
+
+  it("declaredWriteDirs returns the declared set, and throws for one outside the write list or also a file", () => {
+    expect([...declaredWriteDirs({ ...base, canonicalWriteDirs: ["/out"] })]).toEqual(["/out"]);
+    expect([...declaredWriteDirs(base)]).toEqual([]);
+    expect(() => declaredWriteDirs({ ...base, canonicalWriteDirs: ["/x"] })).toThrow(
+      "the declared directory grant /x is not in the write list",
+    );
+    expect(() =>
+      declaredWriteDirs({ ...base, canonicalWriteDirs: ["/n.md"], canonicalWriteFiles: ["/n.md"] }),
+    ).toThrow("is declared both a file and a directory");
+  });
+
+  it("the Linux runner makes the assertion on its spawn path, before either spawn (source pin)", () => {
+    const src = readFileSync(join(import.meta.dir, "linux.ts"), "utf8");
+    const call = src.indexOf("assertDeclaredWriteGrantsUnchanged(opts.policy);");
+    expect(call).toBeGreaterThan(
+      src.indexOf("spawn(cmd: string, args: string[], opts: SandboxSpawnOptions)"),
+    );
+    expect(src.indexOf("return spawnBehindForwarder(", call)).toBeGreaterThan(call);
+    expect(src.indexOf("return spawnWithoutForwarder(", call)).toBeGreaterThan(call);
+    expect(src.lastIndexOf("return spawnBehindForwarder(", call)).toBe(-1);
   });
 });
