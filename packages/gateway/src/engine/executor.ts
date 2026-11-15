@@ -27,6 +27,7 @@ import type {
 } from "../connectors/connector-writes/types.ts";
 import { mcpClientToolKey } from "../connectors/lazy-mesh/tool-map.ts";
 import { isOwnerCodeServerServiceId } from "../connectors/owner-code-server.ts";
+import { USER_MCP_SERVICE_ID_PATTERN } from "../connectors/user-mcp-store.ts";
 import type { EgressSink } from "../egress/egress-ledger.ts";
 import { assertAgentCaptureId, buildEgressEntry } from "../egress/egress-record.ts";
 import type { ConsentCoordinator } from "../ipc/consent.ts";
@@ -76,7 +77,7 @@ import type {
   WorkflowProvenance,
 } from "./types.ts";
 import { userMcpCallDetails, userMcpCallLines } from "./user-mcp-call-block.ts";
-import { addMcpWritePromptLines } from "./user-mcp-write-lines.ts";
+import { addMcpWritePromptLines, userMcpWriteLines } from "./user-mcp-write-lines.ts";
 
 const executorLog = pino({
   name: "executor",
@@ -561,8 +562,9 @@ export function formatConsentPrompt(
   action: PlannedAction,
   credentialFor?: PreviewCredentialResolver,
   preview?: ConnectorWritePreview,
+  userMcpWriteDirs?: readonly string[],
 ): string {
-  const body = formatConsentPromptBody(action, credentialFor, preview);
+  const body = formatConsentPromptBody(action, credentialFor, preview, userMcpWriteDirs);
   if (!isAgentOrigin(action)) return body;
   // Phase 28 AD1: the proposer is an UNVERIFIED block AFTER every prompt shape, never inside the
   // gateway-built preview. An agent action without one is a bug: refuse to build an unlabelled prompt.
@@ -574,6 +576,7 @@ function formatConsentPromptBody(
   action: PlannedAction,
   credentialFor?: PreviewCredentialResolver,
   preview?: ConnectorWritePreview,
+  userMcpWriteDirs?: readonly string[],
 ): string {
   const lines = [`Action requires your approval`, ``, `Type: ${action.type}`];
   // One fixed line on every prompt shape below; the origin is gateway-set, never payload text.
@@ -619,6 +622,11 @@ function formatConsentPromptBody(
     if (action.userMcpCall !== undefined) lines.push("", ...userMcpCallLines(action.userMcpCall));
     lines.push("", ...agentVerbatimInputLines(extractToolInput(action)));
     return lines.join("\n");
+  }
+  // I15 (AD5b): a model's or the owner's call to a user MCP server that holds a write directory
+  // shows it, with the fixed warning, before the input. A server with none adds nothing here.
+  if (userMcpWriteDirs !== undefined && userMcpWriteDirs.length > 0) {
+    lines.push("", ...userMcpWriteLines(userMcpWriteDirs, process.platform));
   }
   if (action.payload !== undefined && Object.keys(action.payload).length > 0) {
     lines.push("", `Details: ${JSON.stringify(detailsLinePayload(action))}`);
@@ -980,6 +988,10 @@ type ConfirmPlan =
 
 const NO_CONFIRM: ConfirmPlan = Object.freeze({ kind: "none" });
 
+/** The fixed refusal of a user MCP call whose server's write directories cannot be told (I15). */
+export const USER_MCP_WRITE_UNKNOWN_REASON =
+  "this call cannot be asked about: what the server's code may write could not be read";
+
 /**
  * Optional multi-user/delegated-HITL wiring (Slice 2). When present, the gate routes a HITL
  * action's approval to an active in-scope delegate before falling back to the local owner prompt.
@@ -1169,6 +1181,13 @@ export interface ToolExecutorExtras {
    * or the owner. Set only by `newWorkflowWriteExecutor` in `engine/run-ask.ts`.
    */
   readonly unattended?: boolean | undefined;
+  /**
+   * I15 (Phase 28 AD5b): the directories a registered user MCP server (`mcp_*`) may WRITE, read
+   * NOW for the prompt of a call to it. `undefined` means it cannot tell. An executor without the
+   * reader, or a reader that cannot tell, REFUSES a model's or the owner's `mcp_*` call before any
+   * prompt: no door can ask about a server while omitting what its code may write.
+   */
+  readonly userMcpWriteGrants?: ((serviceId: string) => readonly string[] | undefined) | undefined;
 }
 
 export class ToolExecutor {
@@ -1195,6 +1214,32 @@ export class ToolExecutor {
     this.beforeState = extras.beforeState;
     this.standingRules = extras.standingRules;
     this.unattended = extras.unattended === true;
+    this.userMcpWriteGrants = extras.userMcpWriteGrants;
+  }
+
+  /** I15 (AD5b): see {@link ToolExecutorExtras.userMcpWriteGrants}. */
+  private readonly userMcpWriteGrants:
+    | ((serviceId: string) => readonly string[] | undefined)
+    | undefined;
+
+  /**
+   * The write directories of the user MCP server an action calls: `undefined` for any other
+   * action, `"unknown"` when they cannot be told. An agent's call carries them in its facts (the
+   * agent door read them with the registration); a model's or the owner's call reads them here.
+   */
+  private userMcpWriteDirs(action: PlannedAction): readonly string[] | "unknown" | undefined {
+    const serviceId = serviceOf(action.type);
+    if (!USER_MCP_SERVICE_ID_PATTERN.test(serviceId)) return undefined;
+    // An outside agent's call shows the server block built from its facts. Without them there is
+    // nothing to show the write directories in, so it cannot be asked about at all.
+    if (isAgentOrigin(action)) return action.userMcpCall?.writePaths ?? "unknown";
+    let dirs: readonly string[] | undefined;
+    try {
+      dirs = this.userMcpWriteGrants?.(serviceId);
+    } catch {
+      dirs = undefined;
+    }
+    return dirs ?? "unknown";
   }
 
   /**
@@ -1557,6 +1602,19 @@ export class ToolExecutor {
    * any prompt.
    */
   private renderConfirmPhase(action: PlannedAction): ConfirmPlan {
+    // I15 (AD5b): a call to a user MCP server. What its code may write must be known before
+    // anyone is asked (fail closed), and an OUTSIDE AGENT's call to a server with a write
+    // directory is approved only by typing the server id (owner ruling OR-AD-32): Nimbus cannot
+    // show a before-state for, or undo, what third-party code writes to the disk.
+    const userMcpDirs = this.userMcpWriteDirs(action);
+    if (userMcpDirs === "unknown") {
+      return { kind: "refuse", reason: USER_MCP_WRITE_UNKNOWN_REASON };
+    }
+    if (userMcpDirs !== undefined) {
+      return isAgentOrigin(action) && userMcpDirs.length > 0
+        ? { kind: "text", text: serviceOf(action.type) }
+        : NO_CONFIRM;
+    }
     const rows = this.rows();
     const wave4 = rows.find((r) => r.wave === 4 && r.actionType === action.type);
     if (wave4 === undefined) return NO_CONFIRM;
@@ -1610,7 +1668,13 @@ export class ToolExecutor {
       return { kind: "rejected", reason: record.rejectReason, answerSource: delegateSource };
     }
     const details = consentDisplayPayload(action, this.previewCredentialFor, preview);
-    const prompt = formatConsentPrompt(action, this.previewCredentialFor, preview);
+    const writeDirs = this.userMcpWriteDirs(action);
+    const prompt = formatConsentPrompt(
+      action,
+      this.previewCredentialFor,
+      preview,
+      Array.isArray(writeDirs) ? writeDirs : undefined,
+    );
     if (confirm.kind === "none") {
       const answer = await this.consent.requestApproval(prompt, details, action.type);
       return ownerOutcome(answer, record.rejectReason);

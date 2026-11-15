@@ -542,7 +542,9 @@ describe("connector.* — forwarded notify and connector mesh", () => {
       { localIndex: freshIndex(), syncScheduler: scheduler, connectorMesh: mesh },
       "approve",
     );
-    expect(await tryDispatchConnectorRpc(withMesh, "connector.addMcp", request, "c1")).toMatchObject({
+    expect(
+      await tryDispatchConnectorRpc(withMesh, "connector.addMcp", request, "c1"),
+    ).toMatchObject({
       ok: true,
       serviceId: "mcp_wiring_demo",
     });

@@ -8243,6 +8243,8 @@ describe("I42 — every user-MCP tool call needs the local owner's approval", ()
       undefined,
       NULL_EGRESS_SINK,
       NO_POLICY_OVERLAY,
+      undefined,
+      { userMcpWriteGrants: () => [] },
     );
     const res = await exec.execute({ type, payload: {} });
     expect(res.status).toBe("rejected");
@@ -8368,6 +8370,8 @@ describe("I42 — every user-MCP tool call needs the local owner's approval", ()
       undefined,
       NULL_EGRESS_SINK,
       NO_POLICY_OVERLAY,
+      undefined,
+      { userMcpWriteGrants: () => [] },
     );
     const input = { keywords: "kw-VALUE", author: "au-VALUE", api_key: "ak-VALUE" };
     await exec.execute({

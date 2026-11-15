@@ -11,6 +11,7 @@
 import { sanitisePreviewText } from "../connectors/connector-writes/sanitise.ts";
 import { escapeUnverifiedLine } from "./proposer-block.ts";
 import type { UserMcpCallFacts } from "./types.ts";
+import { userMcpWriteLines } from "./user-mcp-write-lines.ts";
 
 /** The most characters of the server's description the owner is shown (the model door's own cap). */
 export const USER_MCP_DESCRIPTION_SHOWN_MAX = 1000;
@@ -44,7 +45,10 @@ function listLines(label: string, values: readonly string[]): string[] {
 }
 
 /** The block's lines, in order; the executor puts them before the verbatim input. */
-export function userMcpCallLines(f: UserMcpCallFacts): string[] {
+export function userMcpCallLines(
+  f: UserMcpCallFacts,
+  platform: string = process.platform,
+): string[] {
   const lines = [
     `User MCP server: ${escapeUnverifiedLine(f.serviceId)} (third-party code you registered on ${iso(f.registeredAt)})`,
     "Sandbox reach:",
@@ -55,7 +59,8 @@ export function userMcpCallLines(f: UserMcpCallFacts): string[] {
     lines.push(`  net note: ${escapeUnverifiedLine(f.networkNote)}`);
   }
   if (f.writePaths.length === 0) lines.push(NO_WRITE_LINE);
-  else lines.push(...listLines("write", f.writePaths));
+  // I15 (AD5b): the write block with its fixed warning (the same words as on every other door).
+  else lines.push(...userMcpWriteLines(f.writePaths, platform));
   lines.push(`Tool: ${escapeUnverifiedLine(f.tool)}`);
   if (f.approval === null) {
     lines.push("Not approved for outside agents by name.");

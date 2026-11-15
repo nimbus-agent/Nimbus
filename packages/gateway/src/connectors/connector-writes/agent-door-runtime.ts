@@ -717,7 +717,7 @@ export function createAgentDoor(deps: AgentDoorDeps): AgentDoor {
         readPaths: stringArray(registration.read_paths_json),
         netHosts,
         ...(note === undefined ? {} : { networkNote: note }),
-        writePaths: [],
+        writePaths: stringArray(registration.write_paths_json),
         approval,
       },
     };

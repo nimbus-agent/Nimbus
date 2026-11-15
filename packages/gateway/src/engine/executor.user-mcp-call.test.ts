@@ -12,6 +12,7 @@ import {
   formatConsentPrompt,
   NO_POLICY_OVERLAY,
   ToolExecutor,
+  USER_MCP_WRITE_UNKNOWN_REASON,
 } from "./executor.ts";
 import type {
   AgentProposer,
@@ -185,6 +186,7 @@ function harness(): {
     { append: (e) => egress.push(e as unknown as Record<string, unknown>) },
     NO_POLICY_OVERLAY,
     () => "team",
+    { userMcpWriteGrants: () => [] },
   );
   return { exec, audits, egress };
 }
@@ -224,14 +226,14 @@ describe("the audit row", () => {
     expect(Object.keys(action)).toEqual(["type", "origin", "payload"]);
   });
 
-  test("a call with no facts: the row is byte-identical to the legacy one", async () => {
+  test("an agent call with NO facts cannot be asked about: refused before any prompt, nothing dispatched (AD5b)", async () => {
+    // Without the facts there is no server block to show the write directories in (I15).
     const a = harness();
-    const b = harness();
-    await a.exec.execute(base);
-    await b.exec.execute(LEGACY);
-    expect(a.audits.find((x) => x.actionType === "mcp_notes.append")?.actionJson).toBe(
-      b.audits.find((x) => x.actionType === "mcp_notes.append")?.actionJson,
-    );
+    const res = await a.exec.execute(base);
+    expect(res).toMatchObject({ status: "rejected", reason: USER_MCP_WRITE_UNKNOWN_REASON });
+    const row = a.audits.find((x) => x.actionType === "mcp_notes.append");
+    expect(row?.actionJson).toContain(USER_MCP_WRITE_UNKNOWN_REASON);
+    expect(a.egress.every((e) => e["resultStatus"] !== "ok")).toBe(true);
   });
 
   test("the dispatcher still receives only the gateway's key and the input", async () => {

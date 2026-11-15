@@ -11,6 +11,7 @@ import {
 } from "../../config/nimbus-toml.ts";
 import { createConnectorDispatcher, meshDispatcherClient } from "../../connectors/registry.ts";
 import { asRecord } from "../../connectors/unknown-record.ts";
+import { userMcpWriteGrantsReader } from "../../connectors/user-mcp-write-reader.ts";
 import { graphAnnotatedDeployment } from "../../deployment/graph-annotated.ts";
 import { makeEgressSink, NULL_EGRESS_SINK } from "../../egress/egress-ledger.ts";
 import {
@@ -2414,6 +2415,7 @@ export async function tryDispatchConnectorRpc(
       ctx.options.policyHitl ?? NO_POLICY_OVERLAY,
     );
     const mesh = ctx.options.connectorMesh;
+    const userMcpDb = ctx.options.localIndex;
     // I42 + I29: unlike the gate-only executor above, this one DISPATCHES, so it carries a real
     // egress sink and the real connector dispatcher. No delegation dep: I42 asks the local owner.
     const userMcpExecutor =
@@ -2425,6 +2427,11 @@ export async function tryDispatchConnectorRpc(
             undefined,
             makeEgressSink(ctx.options.localIndex.getDatabase()),
             ctx.options.policyHitl ?? NO_POLICY_OVERLAY,
+            undefined,
+            // I15 (AD5b): the owner's own call shows what the server's code may write.
+            {
+              userMcpWriteGrants: userMcpWriteGrantsReader(() => userMcpDb.getDatabase()),
+            },
           )
         : undefined;
     const out = await dispatchConnectorRpc({

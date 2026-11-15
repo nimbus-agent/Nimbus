@@ -92,6 +92,7 @@ function harness(over: Partial<RunAskParams> = {}): Harness {
     localIndex,
     dispatcher,
     egressSink: { append: (e) => egress.push(e) },
+    userMcpWriteGrants: () => [],
     getTribalKbConfig: () => undefined,
     sendChunk: () => {},
     conversationalAgent: agent,
