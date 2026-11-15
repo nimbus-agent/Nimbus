@@ -1,7 +1,8 @@
 // The wrapper's write-directory checks (I15; Phase 28 AD5b-1): the order, the fixed sentences, and
 // that the wrapper calls the ONE function before it creates a runner.
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import type { SandboxPolicy } from "./sandbox-policy.ts";
@@ -100,6 +101,32 @@ describe("writeDirGrantRefusal", () => {
     expect(writeDirGrantRefusal(p, deps)).toBe(
       "refusing to spawn: the write grant /b holds a link",
     );
+  });
+});
+
+describe("writeDirGrantRefusal with the real file system (no injected reader)", () => {
+  test("a real clean directory passes; a planted marker, and a directory that is gone, refuse", () => {
+    const top = realpathSync.native(mkdtempSync(join(tmpdir(), "nimbus-write-grant-check-")));
+    try {
+      const dir = join(top, "out");
+      mkdirSync(join(dir, "sub"), { recursive: true });
+      const p = policy({
+        permissions: { network: [], filesystem: { read: [dir], write: [dir] } },
+        canonicalWritePaths: [dir],
+        canonicalWriteDirs: [dir],
+      });
+      expect(writeDirGrantRefusal(p)).toBeUndefined();
+      mkdirSync(join(dir, "sub", ".git"));
+      expect(writeDirGrantRefusal(p)).toBe(
+        `refusing to spawn: the write grant ${dir} ${WRITE_DIR_SCAN_REASONS.marker}`,
+      );
+      rmSync(dir, { recursive: true, force: true });
+      expect(writeDirGrantRefusal(p)).toBe(
+        `refusing to spawn: the write grant ${dir} is no longer a real directory`,
+      );
+    } finally {
+      rmSync(top, { recursive: true, force: true });
+    }
   });
 });
 
