@@ -210,6 +210,7 @@ export const DEFINITION_REFUSALS = Object.freeze({
   registrationChanged:
     "the server was registered again while you were deciding; ask the agent to propose it again",
   reapproved: "the approval changed while you were deciding; approve the proposal again",
+  noLongerAllowed: "policy or the owner's grants no longer allow agents this call",
 });
 
 /**
@@ -456,6 +457,11 @@ export function createAgentDoor(deps: AgentDoorDeps): AgentDoor {
     if (approval.suspendedAt !== null) {
       return refused("ERR_AGENT_TOOL_SUSPENDED", DEFINITION_REFUSALS.suspended);
     }
+    // The LIVE policy, read at every check: a lockoff set while the owner's prompt was open refuses
+    // the call after the answer. A policy change is not a problem with the tool: it marks nothing.
+    if (!agentDoorPolicyAllows(livePolicy())) {
+      return refused("ERR_CAPTURE_ACTION_NOT_PROPOSABLE", DEFINITION_REFUSALS.noLongerAllowed);
+    }
     // One listing for the service, and the LAST thing a submit does (every other refusal is free of
     // connector I/O). A listing that fails marks nothing.
     const listed = await deps.listServerTools(service).catch(() => undefined);
@@ -523,6 +529,11 @@ export function createAgentDoor(deps: AgentDoorDeps): AgentDoor {
     }
     if (approval.suspendedAt !== null) {
       return refused("ERR_AGENT_TOOL_SUSPENDED", DEFINITION_REFUSALS.suspended);
+    }
+    // The LIVE policy, on both sides of the listing and again after the owner's answer: a lockoff
+    // set while the prompt was open refuses the call. It marks nothing (the tool did not change).
+    if (!userMcpAgentPolicyAllows()) {
+      return refused("ERR_CAPTURE_ACTION_NOT_PROPOSABLE", DEFINITION_REFUSALS.noLongerAllowed);
     }
     // After an answer: the approval must be the one the prompt showed. A re-approval is not a
     // problem with the tool, so it marks nothing and stores no suspension code.
@@ -593,17 +604,43 @@ export function createAgentDoor(deps: AgentDoorDeps): AgentDoor {
     };
   };
 
+  /**
+   * A legacy call after the owner's answer: the door's verdict, derived again from the live policy,
+   * the `--model` grant and the per-door table, must still be the legacy case the prompt was shown
+   * for. An approval made while the prompt was open is not the basis the owner answered on (and a
+   * suspended one is a suspension); a lockoff or a withdrawn grant refuses. Nothing is marked.
+   */
+  const legacyStillStands = (actionType: string): DefinitionVerification => {
+    // `mcp_action` is the submit gate's own check, not the verdict's: read here, fail closed.
+    const enforced = livePolicy();
+    if (enforced === undefined || enforced.capabilitiesDisabled.has(MCP_ACTION_CAPABILITY)) {
+      return refused("ERR_CAPTURE_ACTION_NOT_PROPOSABLE", DEFINITION_REFUSALS.noLongerAllowed);
+    }
+    const v = userMcpVerdict(actionType);
+    if (v.kind === "suspended") {
+      return refused("ERR_AGENT_TOOL_SUSPENDED", DEFINITION_REFUSALS.suspended);
+    }
+    if (v.kind !== "proposable") {
+      return refused("ERR_CAPTURE_ACTION_NOT_PROPOSABLE", DEFINITION_REFUSALS.noLongerAllowed);
+    }
+    return v.basis === "legacy_user_mcp"
+      ? { ok: true }
+      : refused("ERR_CAPTURE_ACTION_NOT_PROPOSABLE", DEFINITION_REFUSALS.reapproved);
+  };
+
   const verifyUserMcpDefinition = async (
     actionType: string,
     proposedAt: number | undefined,
     shown: UserMcpCallBinding | undefined,
   ): Promise<DefinitionVerification> => {
-    // A legacy call (no approval was shown): the registration row alone, never a listing.
+    // A legacy call (no approval was shown): database reads only, never a listing.
     if (shown !== undefined && shown.definitionSha256 == null) {
       const parts = userMcpActionParts(actionType);
-      return parts === undefined
-        ? refused("ERR_CAPTURE_ACTION_NOT_PROPOSABLE", DEFINITION_REFUSALS.notApproved)
-        : registrationStanding(parts, proposedAt, shown);
+      if (parts === undefined) {
+        return refused("ERR_CAPTURE_ACTION_NOT_PROPOSABLE", DEFINITION_REFUSALS.notApproved);
+      }
+      const registered = registrationStanding(parts, proposedAt, shown);
+      return registered.ok ? legacyStillStands(actionType) : registered;
     }
     return (await checkUserMcpDefinition(actionType, proposedAt, undefined, shown)).verification;
   };

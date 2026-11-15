@@ -518,7 +518,7 @@ describe("a proposal queued against an earlier registration is refused (R-2, pro
 
 describe("the check after the owner's answer is bound to what the prompt showed (review round 2)", () => {
   test("a legacy call: the registration row alone, never a listing; gone, newer or another registration refuses", async () => {
-    register("mcp_x", { createdAt: 500 });
+    register("mcp_x", { createdAt: 500, model: true });
     listings["mcp_x"] = listing("mcp_x", { append: entry() });
     const d = door();
     const shown = { registeredAt: 500, definitionSha256: null };
@@ -533,6 +533,94 @@ describe("the check after the owner's answer is bound to what the prompt showed 
       detail: DEFINITION_REFUSALS.notRegistered,
     });
     expect(userListCalls).toEqual([]);
+  });
+
+  test("a legacy call is judged by the door's verdict as it stands now: a lockoff, a withdrawn grant, a new approval or a suspension refuses, with no listing (review round 3)", async () => {
+    register("mcp_x", { createdAt: 500, model: true });
+    listings["mcp_x"] = listing("mcp_x", { append: entry() });
+    const d = door();
+    const shown = { registeredAt: 500, definitionSha256: null };
+    const check = () => d.verifyDefinition("mcp_x.append", 600, shown);
+    const notAllowed = { ok: false, detail: DEFINITION_REFUSALS.noLongerAllowed };
+
+    policyOff.add("mcp_action");
+    expect(await check()).toMatchObject(notAllowed);
+    policyOff.clear();
+    userMcpAllowed = false;
+    expect(await check()).toMatchObject(notAllowed);
+    userMcpAllowed = true;
+    policyThrows = true;
+    expect(await check()).toMatchObject(notAllowed);
+    policyThrows = false;
+    modelAccess.delete("mcp_x");
+    expect(await check()).toMatchObject(notAllowed);
+    modelAccess.add("mcp_x");
+    expect(await check()).toEqual({ ok: true });
+
+    // Approved for agents while the prompt was open: not the basis the owner answered on.
+    const sha = approve("mcp_x", "append");
+    expect(await check()).toEqual({
+      ok: false,
+      code: "ERR_CAPTURE_ACTION_NOT_PROPOSABLE",
+      detail: DEFINITION_REFUSALS.reapproved,
+    });
+    // And suspended: a suspension, with its code.
+    markDoorToolSuspended(db, "agent", "mcp_x", "append", sha, null, 700);
+    expect(await check()).toEqual({
+      ok: false,
+      code: "ERR_AGENT_TOOL_SUSPENDED",
+      detail: DEFINITION_REFUSALS.suspended,
+    });
+    expect(userListCalls).toEqual([]);
+    expect(suspendAudits()).toBe(0);
+  });
+
+  test("an approved call: a lockoff set while the prompt was open refuses after the answer, marks nothing and lists nothing (review round 3)", async () => {
+    register("mcp_x", { createdAt: 500 });
+    listings["mcp_x"] = listing("mcp_x", { append: entry() });
+    const sha = approve("mcp_x", "append");
+    const d = door();
+    const shown = { registeredAt: 500, definitionSha256: sha };
+    expect(await d.verifyDefinition("mcp_x.append", 600, shown)).toEqual({ ok: true });
+    userListCalls.length = 0;
+    const turnOff: Array<() => void> = [
+      () => policyOff.add("mcp_action"),
+      () => {
+        userMcpAllowed = false;
+      },
+      () => {
+        policyThrows = true;
+      },
+    ];
+    for (const off of turnOff) {
+      policyOff.clear();
+      userMcpAllowed = true;
+      policyThrows = false;
+      off();
+      expect(await d.verifyDefinition("mcp_x.append", 600, shown)).toEqual({
+        ok: false,
+        code: "ERR_CAPTURE_ACTION_NOT_PROPOSABLE",
+        detail: DEFINITION_REFUSALS.noLongerAllowed,
+      });
+    }
+    expect(userListCalls).toEqual([]);
+    expect(getDoorApproval(db, "agent", "mcp_x", "append")?.suspendedAt).toBeNull();
+  });
+
+  test("an approved call: a lockoff set while the listing was in flight refuses", async () => {
+    register("mcp_x");
+    approve("mcp_x", "append");
+    const d = door({
+      listUserMcpDefinitions: async () => {
+        policyOff.add("mcp_action");
+        return listing("mcp_x", { append: entry() });
+      },
+    });
+    expect(await d.verifyDefinition("mcp_x.append")).toMatchObject({
+      ok: false,
+      detail: DEFINITION_REFUSALS.noLongerAllowed,
+    });
+    expect(getDoorApproval(db, "agent", "mcp_x", "append")?.suspendedAt).toBeNull();
   });
 
   test("a legacy binding on a type that names no tool is refused", async () => {

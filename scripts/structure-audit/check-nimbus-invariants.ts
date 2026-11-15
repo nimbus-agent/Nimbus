@@ -2207,6 +2207,12 @@ const D49_USER_MCP_CALL_ALLOWED: readonly string[] = [
 const D49_USER_MCP_CALL_WRITE_RE = /\buserMcpCall\s*\??\s*:/g;
 // A member assignment (`action.userMcpCall = facts`); ==, === and => are not assignments.
 const D49_USER_MCP_CALL_ASSIGN_RE = /\.\s*userMcpCall\s*=(?![=>])/g;
+// A member that is the TARGET of a destructuring assignment (`({ a: action.userMcpCall } = src)`,
+// `[action.userMcpCall] = pair`): the member directly before `,`, `}` or `]`, counted only when an
+// enclosing `{ ... }` or `[ ... ]` is itself assigned to (`d49IsMemberPatternTarget`). The same
+// text as a VALUE (`send({ a: action.userMcpCall })`) is a read. Stated bound, fail closed: a
+// member used as a default inside a pattern (`const { a = action.userMcpCall } = x`) is refused too.
+const D49_USER_MCP_CALL_MEMBER_TARGET_RE = /\.\s*userMcpCall(?=\s*[,}\]])/g;
 // The shorthand forms `{ userMcpCall }`, `{ ...x, userMcpCall }` and `{ a, userMcpCall, b }`: the
 // name directly after `{` or `,` and directly before `,` or `}`, never a member access. A
 // destructuring pattern (`const { userMcpCall, ...rest } = action`, a READ) is skipped by
@@ -2309,6 +2315,47 @@ function d49IsDestructuringTarget(code: string, index: number): boolean {
   return false;
 }
 
+/** True when the single `=` of an assignment follows `rest` (never `==`, `===` or `=>`). */
+function d49StartsWithAssignment(rest: string): boolean {
+  return rest.startsWith("=") && !rest.startsWith("==") && !rest.startsWith("=>");
+}
+
+/** The index of the bracket that closes the `{` or `[` at `open`, or -1. */
+function d49MatchingClose(code: string, open: number): number {
+  let depth = 0;
+  for (let i = open; i < code.length; i++) {
+    const c = code[i];
+    if (c === "{" || c === "[") depth++;
+    else if (c === "}" || c === "]") {
+      depth--;
+      if (depth === 0) return i;
+    }
+  }
+  return -1;
+}
+
+/**
+ * True when the member at `index` sits inside a `{ ... }` or `[ ... ]` group, at any depth, that is
+ * itself assigned to: a destructuring assignment whose target is the member, so a WRITE. Every
+ * enclosing group is tried, innermost first, so a nested pattern is seen too.
+ */
+function d49IsMemberPatternTarget(code: string, index: number): boolean {
+  let depth = 0;
+  for (let i = index - 1; i >= 0; i--) {
+    const c = code[i];
+    if (c === "}" || c === "]") depth++;
+    else if (c === "{" || c === "[") {
+      if (depth > 0) {
+        depth--;
+        continue;
+      }
+      const close = d49MatchingClose(code, i);
+      if (close >= 0 && d49StartsWithAssignment(code.slice(close + 1).trimStart())) return true;
+    }
+  }
+  return false;
+}
+
 export function checkAgentDoorLegacyTable(files: readonly FileEntry[]): Violation[] {
   return [
     ...d49ScanNames(
@@ -2399,6 +2446,14 @@ export function checkUserMcpCallFacts(files: readonly FileEntry[]): Violation[] 
       D49_USER_MCP_CALL_WRITE_ALLOWED,
       "user-mcp-call-facts-confined",
       false,
+    ),
+    ...d49ScanNames(
+      files,
+      D49_USER_MCP_CALL_MEMBER_TARGET_RE,
+      D49_USER_MCP_CALL_WRITE_ALLOWED,
+      "user-mcp-call-facts-confined",
+      false,
+      (code, index) => !d49IsMemberPatternTarget(code, index),
     ),
     ...d49ScanNames(
       files,

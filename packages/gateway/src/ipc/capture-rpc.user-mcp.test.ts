@@ -10,10 +10,14 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { toStandardSchema } from "@mastra/core/schema";
 
 import { DEFAULT_MCP_SINK_CONFIG } from "../config/mcp-sink-toml.ts";
-import { createAgentDoor } from "../connectors/connector-writes/agent-door-runtime.ts";
+import {
+  createAgentDoor,
+  DEFINITION_REFUSALS,
+} from "../connectors/connector-writes/agent-door-runtime.ts";
 import { definitionSha256 } from "../connectors/connector-writes/definition-hash.ts";
 import {
   getDoorApproval,
+  markDoorToolSuspended,
   upsertDoorApprovals,
 } from "../connectors/connector-writes/door-approval-store.ts";
 import { mcpClientToolKey } from "../connectors/lazy-mesh/tool-map.ts";
@@ -51,6 +55,10 @@ let description: string;
 let listing: "none" | "list";
 let listCalls: number;
 let clock: number;
+/** The live facts the door's verdict reads: the `--model` servers and the policy lockoffs. */
+let modelAccess: Set<string>;
+let policyOff: Set<string>;
+let userMcpAllowed: boolean;
 
 function entry(d: string, schema: Record<string, unknown> = { type: "object", properties: {} }) {
   return { description: d, inputSchema: toStandardSchema(schema as JsonSchemaInput) };
@@ -62,6 +70,10 @@ beforeEach(() => {
   listing = "list";
   listCalls = 0;
   clock = 1_000;
+  // The registered server carries the `--model` grant, so an unapproved tool is the legacy case.
+  modelAccess = new Set(["mcp_notes"]);
+  policyOff = new Set();
+  userMcpAllowed = true;
   insertUserMcpConnector(db, {
     service_id: "mcp_notes",
     command: "srv",
@@ -83,7 +95,7 @@ function approveNotes(): string {
 function door() {
   return createAgentDoor({
     db,
-    enforcedPolicy: () => ({ capabilitiesDisabled: new Set<string>() }) as never,
+    enforcedPolicy: () => ({ capabilitiesDisabled: policyOff }) as never,
     listServerTools: async () => undefined,
     listUserMcpDefinitions: async () => {
       listCalls++;
@@ -93,8 +105,8 @@ function door() {
     },
     tribalKbConfig: () => undefined,
     classifyContext: {
-      modelAccessServices: () => new Set<string>(),
-      userMcpModelAccessAllowed: () => true,
+      modelAccessServices: () => modelAccess,
+      userMcpModelAccessAllowed: () => userMcpAllowed,
     },
     isServiceConfigured: async () => true,
     now: () => clock,
@@ -368,6 +380,76 @@ describe("a legacy user-MCP proposal", () => {
     const out = await h.act.execute("mcp_notes.append", INPUT, PROV("legacy_user_mcp"));
     expect(out.status).toBe("rejected");
     expect(h.dispatched).toHaveLength(0);
+  });
+
+  test("an approval for agents made while the legacy prompt is open overrules the answer, with no code and no listing (review round 3)", async () => {
+    const h = harness({ onPrompt: () => void approveNotes() });
+    const out = await h.act.execute("mcp_notes.append", INPUT, PROV("legacy_user_mcp"));
+    expect(out).toMatchObject({ status: "rejected", reason: DEFINITION_REFUSALS.reapproved });
+    expect((out as { code?: string }).code).toBeUndefined();
+    expect(h.dispatched).toHaveLength(0);
+    expect(listCalls).toBe(0);
+  });
+
+  test("an approval made and suspended while the legacy prompt is open overrules the answer as a suspension (review round 3)", async () => {
+    const h = harness({
+      onPrompt: () => {
+        const sha = approveNotes();
+        markDoorToolSuspended(db, "agent", "mcp_notes", "append", sha, null, 2_000);
+      },
+    });
+    const out = await h.act.execute("mcp_notes.append", INPUT, PROV("legacy_user_mcp"));
+    expect(out).toMatchObject({ status: "rejected", code: "ERR_AGENT_TOOL_SUSPENDED" });
+    expect(h.dispatched).toHaveLength(0);
+    expect(listCalls).toBe(0);
+  });
+
+  test("a lockoff or a withdrawn --model grant while the legacy prompt is open overrules the answer (review round 3)", async () => {
+    const changes: Array<() => void> = [
+      () => policyOff.add("mcp_action"),
+      () => {
+        userMcpAllowed = false;
+      },
+      () => modelAccess.clear(),
+    ];
+    for (const change of changes) {
+      policyOff = new Set();
+      userMcpAllowed = true;
+      modelAccess = new Set(["mcp_notes"]);
+      const h = harness({ onPrompt: change });
+      const out = await h.act.execute("mcp_notes.append", INPUT, PROV("legacy_user_mcp"));
+      expect(out).toMatchObject({
+        status: "rejected",
+        reason: DEFINITION_REFUSALS.noLongerAllowed,
+      });
+      expect((out as { code?: string }).code).toBeUndefined();
+      expect(h.prompts).toHaveLength(1);
+      expect(h.dispatched).toHaveLength(0);
+    }
+  });
+
+  test("a lockoff set while an APPROVED call's prompt is open overrules the answer and marks nothing (review round 3)", async () => {
+    const changes: Array<() => void> = [
+      () => policyOff.add("mcp_action"),
+      () => {
+        userMcpAllowed = false;
+      },
+    ];
+    for (const change of changes) {
+      policyOff = new Set();
+      userMcpAllowed = true;
+      approveNotes();
+      const h = harness({ onPrompt: change });
+      const out = await h.act.execute("mcp_notes.append", INPUT, PROV("approved"));
+      expect(out).toMatchObject({
+        status: "rejected",
+        reason: DEFINITION_REFUSALS.noLongerAllowed,
+      });
+      expect((out as { code?: string }).code).toBeUndefined();
+      expect(h.prompts).toHaveLength(1);
+      expect(h.dispatched).toHaveLength(0);
+      expect(getDoorApproval(db, "agent", "mcp_notes", "append")?.suspendedAt).toBeNull();
+    }
   });
 
   test("with no door wired the prompt is today's (no block)", async () => {

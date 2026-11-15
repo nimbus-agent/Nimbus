@@ -507,6 +507,23 @@ describe("verifyDefinition", () => {
     expect(listCalls).toEqual(["github"]);
   });
 
+  test("a policy lockoff refuses at every check (the one after the owner's answer included), before any listing, and marks nothing (review round 3)", async () => {
+    allow("github_pr_merge");
+    listings["github"] = fullListing("github");
+    const d = door();
+    for (const capability of ["mcp_action", "connector_write_model_access"]) {
+      policyOff = new Set([capability]);
+      expect(await d.verifyDefinition("github.pr.merge")).toEqual({
+        ok: false,
+        code: "ERR_CAPTURE_ACTION_NOT_PROPOSABLE",
+        detail: DEFINITION_REFUSALS.noLongerAllowed,
+      });
+    }
+    expect(listCalls).toEqual([]);
+    policyOff = new Set();
+    expect(await d.verifyDefinition("github.pr.merge")).toEqual({ ok: true });
+  });
+
   test("a changed definition is ERR_AGENT_TOOL_SUSPENDED, marked once; a repeat lists nothing", async () => {
     allow("github_pr_merge");
     listings["github"] = fullListing("github", "changed by one byte");

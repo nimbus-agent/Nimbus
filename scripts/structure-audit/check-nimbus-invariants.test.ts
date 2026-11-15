@@ -6831,6 +6831,36 @@ describe("D49(g), (h) - the user-MCP call facts and the door's reach into user s
     ).toEqual([]);
   });
 
+  test("(g) a member that is the target of a destructuring assignment is a write, the same member as a value is not (review round 3)", () => {
+    for (const path of [`${SRC}engine/executor.ts`, `${SRC}engine/user-mcp-call-block.ts`]) {
+      for (const code of [
+        "({ userMcpCall: action.userMcpCall } = source);",
+        "({ facts: action.userMcpCall, type } = source);",
+        "({ a: { b: action.userMcpCall } } = source);",
+        "[action.userMcpCall] = pair;",
+        "[first, action . userMcpCall\n] = pair;",
+      ]) {
+        expect(
+          checkUserMcpCallFacts(swap(path, code)).map((x) => x.rule),
+          code,
+        ).toEqual(["user-mcp-call-facts-confined"]);
+      }
+      for (const code of [
+        "send({ facts: action.userMcpCall });",
+        "const list = [action.userMcpCall];",
+        "const o = { a: action.userMcpCall, b };",
+        "if (ok) { use(action.userMcpCall); }",
+      ]) {
+        expect(checkUserMcpCallFacts(swap(path, code)), code).toEqual([]);
+      }
+    }
+    expect(
+      checkUserMcpCallFacts(
+        swap(`${SRC}ipc/capture-rpc.ts`, "({ userMcpCall: action.userMcpCall } = source);"),
+      ),
+    ).toEqual([]);
+  });
+
   test("(g) a renamed destructuring read is allowed, the same text as an object-literal write is not (review finding 7)", () => {
     for (const path of [`${SRC}engine/executor.ts`, `${SRC}engine/user-mcp-call-block.ts`]) {
       for (const code of [
