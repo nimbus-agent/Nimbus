@@ -693,6 +693,7 @@ describe("userMcpCallFacts (AD5a, D-6)", () => {
       read_paths_json: JSON.stringify(["/data/a"]),
       net_hosts_json: JSON.stringify(["api.example.com:443"]),
       model_access: 0,
+      write_paths_json: "[]",
       created_at: REGISTERED_AT,
     });
     const sha = approve("mcp_f", "append", entry("the listed text"));
@@ -726,6 +727,7 @@ describe("userMcpCallFacts (AD5a, D-6)", () => {
       read_paths_json: "not json",
       net_hosts_json: JSON.stringify(["h"]),
       model_access: 1,
+      write_paths_json: "[]",
       created_at: REGISTERED_AT,
     });
     const out = await door({
@@ -922,6 +924,7 @@ describe("describe for a user-MCP tool (AD5a, D-8, OR-AD-25)", () => {
       read_paths_json: JSON.stringify(["/secret/readroot"]),
       net_hosts_json: JSON.stringify(["internal.example.net:443"]),
       model_access: 0,
+      write_paths_json: "[]",
       created_at: REGISTERED_AT,
     });
     const sha = approve("mcp_z", "append");
@@ -972,6 +975,7 @@ describe("a listing that never answers (agent door review, finding 1)", () => {
           read_paths_json: "[]",
           net_hosts_json: "[]",
           model_access: 0,
+          write_paths_json: "[]",
         },
       ],
       userMcpListingDeadlineMs: 25,

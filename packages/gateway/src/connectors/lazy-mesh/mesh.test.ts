@@ -269,6 +269,7 @@ describe("listToolsForDispatcher merges fs + builtin + user slot tools", () => {
         read_paths_json: "[]",
         net_hosts_json: "[]",
         model_access: 0,
+        write_paths_json: "[]",
       },
     ];
     mesh = new LazyConnectorMesh(makePaths(), createMockVault(), {
@@ -509,6 +510,7 @@ describe("ensureUserMcpRunning constructs a slot when a matching row exists", ()
         read_paths_json: "[]",
         net_hosts_json: "[]",
         model_access: 0,
+        write_paths_json: "[]",
       },
     ];
     mesh = new LazyConnectorMesh(makePaths(), createMockVault(), {
@@ -532,6 +534,7 @@ describe("ensureUserMcpRunning constructs a slot when a matching row exists", ()
         read_paths_json: "[]",
         net_hosts_json: "[]",
         model_access: 0,
+        write_paths_json: "[]",
       },
     ];
     mesh = new LazyConnectorMesh(makePaths(), createMockVault(), {
@@ -554,6 +557,7 @@ describe("listUserMcpTools lists ONE user slot, never the merged map", () => {
       read_paths_json: "[]",
       net_hosts_json: "[]",
       model_access: 0,
+      write_paths_json: "[]",
     };
   }
 
@@ -602,6 +606,7 @@ describe("listUserMcpToolsForDispatcher lists ONE slot and keeps its drain refco
       read_paths_json: "[]",
       net_hosts_json: "[]",
       model_access: 0,
+      write_paths_json: "[]",
     };
   }
 
@@ -668,6 +673,7 @@ describe("listUserMcpTools waits for the boot-revoke gate", () => {
           read_paths_json: "[]",
           net_hosts_json: "[]",
           model_access: 0,
+          write_paths_json: "[]",
         },
       ],
       filesystemSpawnGate: gate,

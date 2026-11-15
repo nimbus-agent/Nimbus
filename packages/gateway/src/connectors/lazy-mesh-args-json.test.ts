@@ -52,6 +52,7 @@ function makeArgsJsonFixture(serviceId: string, argsJson: string) {
         read_paths_json: "[]",
         net_hosts_json: "[]",
         model_access: 0,
+        write_paths_json: "[]",
       },
     ],
     healthDb: db,
@@ -92,6 +93,7 @@ describe("LazyConnectorMesh — args_json failure (S8-F9)", () => {
           read_paths_json: "[]",
           net_hosts_json: "[]",
           model_access: 0,
+          write_paths_json: "[]",
         },
       ],
     });

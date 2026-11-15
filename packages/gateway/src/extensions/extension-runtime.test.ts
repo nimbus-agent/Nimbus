@@ -213,6 +213,7 @@ describe("no manifest file or user MCP row can set firstPartyWildcardHosts (I43)
       read_paths_json: "[]",
       net_hosts_json: JSON.stringify(WILDCARDS),
       model_access: 0,
+      write_paths_json: "[]",
     });
     expect(r.ok).toBe(true);
     if (!r.ok) return;

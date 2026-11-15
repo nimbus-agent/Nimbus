@@ -30,6 +30,7 @@ function userMcpRow(netHosts: readonly string[]): UserMcpConnectorRow {
     read_paths_json: "[]",
     net_hosts_json: JSON.stringify(netHosts),
     model_access: 0,
+    write_paths_json: "[]",
   };
 }
 

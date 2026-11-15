@@ -7,6 +7,7 @@ import {
   MAX_WRITE_DIRS,
   WRITE_DIR_REFUSALS,
   type WriteDirDeps,
+  type WriteDirResult,
   writeDirRefusal,
   writeDirsOverlap,
 } from "./write-dir-rules.ts";
@@ -65,8 +66,8 @@ function world(w: World = {}): { deps: WriteDirDeps; scans: string[] } {
 }
 
 const OUT = "/home/me/work/out";
-const ok = (path: string) => ({ ok: true, path });
-const no = (reason: string) => ({ ok: false, reason });
+const ok = (path: string): WriteDirResult => ({ ok: true, path });
+const no = (reason: string): WriteDirResult => ({ ok: false, reason }) as WriteDirResult;
 
 describe("writeDirRefusal: what passes", () => {
   test("a plain directory two levels below home passes, and the scan is the last thing run", () => {
