@@ -3063,7 +3063,8 @@ hand, and how far the agent's harness can hold the steering (`hook`, `rules`, `g
 `plan-files.ts` is the edit engine and knows two edits only: an owned block between marker lines that carry a
 SHA-256 of the body (hashed with CRLF read as LF), and owned keys in a strict JSON file (a file that does not parse
 is refused, and an edit that changes nothing returns the original bytes). `apply.ts` is the ONLY module that
-writes: it re-reads each file, refuses one that changed since the plan, copies it to `<file>.nimbus-bak-<UTC time>`,
+writes: it repeats the plan's link check (the file and every directory up to the scope's root, not followed),
+re-reads each file, refuses one that changed since the plan, copies it to `<file>.nimbus-bak-<UTC time>`,
 writes a temporary file and renames it over the target (five tries on `EPERM`/`EBUSY`/`EACCES`, then the temporary
 file is removed and the target left as it was). `status.ts` re-runs the plan and compares; it never writes.
 `steer-table.ts` holds the seven steered commands and the three owner commands, and `hook.ts` is the Claude Code

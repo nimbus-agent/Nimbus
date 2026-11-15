@@ -59,7 +59,10 @@ function editRules(before: string | null, path: string): string {
   if (before !== null && findBlock(normaliseNewlines(before), KIT, "html") === undefined) {
     throw new KitRefusal(`${path} exists and Nimbus did not write it; move it aside first`);
   }
-  return FRONT_MATTER + upsertBlock(null, KIT, STEER_TABLE_VERSION, renderInstructions(), "html");
+  const text =
+    FRONT_MATTER + upsertBlock(null, KIT, STEER_TABLE_VERSION, renderInstructions(), "html");
+  // The file is owned whole, but it keeps the line ending it has on disk.
+  return before?.includes("\r\n") ? text.replaceAll("\n", "\r\n") : text;
 }
 
 export function planCursor(env: KitEnv, scope: KitScope): KitPlan {
@@ -68,7 +71,7 @@ export function planCursor(env: KitEnv, scope: KitScope): KitPlan {
     return {
       kit: KIT,
       scope,
-      files: [fileEdit(env, mcp, "mcp", (b) => editMcp(b, mcp, env.nimbus), hasServer)],
+      files: [fileEdit(env, env.home, mcp, "mcp", (b) => editMcp(b, mcp, env.nimbus), hasServer)],
       manual: [],
       enforcement: "none",
       notes: [NO_USER_STEERING],
@@ -81,9 +84,10 @@ export function planCursor(env: KitEnv, scope: KitScope): KitPlan {
     kit: KIT,
     scope,
     files: [
-      fileEdit(env, mcp, "mcp", (b) => editMcp(b, mcp, env.nimbus), hasServer),
+      fileEdit(env, env.cwd, mcp, "mcp", (b) => editMcp(b, mcp, env.nimbus), hasServer),
       fileEdit(
         env,
+        env.cwd,
         rules,
         "instructions",
         (b) => editRules(b, rules),

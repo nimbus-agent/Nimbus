@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { CliExit } from "../lib/cli-exit.ts";
 import type { CliPlatformPaths } from "../paths.ts";
 import { AGENT_USAGE } from "./agent.ts";
-import { type AgentIo, productionAgentDeps, runAgentCmd } from "./agent-cmd.ts";
+import { type AgentIo, productionAgentDeps, REAL_AGENT_IO, runAgentCmd } from "./agent-cmd.ts";
 
 const temps: string[] = [];
 afterEach(() => {
@@ -84,6 +84,35 @@ describe("nimbus agent (production wiring)", () => {
   test("an agent program that is not on PATH has no version, and nothing is started", async () => {
     const deps = productionAgentDeps(io().over);
     expect(await deps.versionOf("claude")).toBe("not found");
+  });
+
+  test("an agent program on PATH is started with --version, directly and with a time limit", async () => {
+    const calls: Array<
+      [string, string[], { timeout: number; windowsHide: boolean; shell: false }]
+    > = [];
+    const deps = productionAgentDeps({
+      ...io().over,
+      which: (name) => `/bin/${name}`,
+      exec: (file, args, options, cb) => {
+        calls.push([file, args, options]);
+        cb(null, "9.9.9\n");
+      },
+    });
+    expect(await deps.versionOf("codex")).toBe("9.9.9");
+    expect(calls).toEqual([
+      ["/bin/codex", ["--version"], { timeout: 3_000, windowsHide: true, shell: false }],
+    ]);
+  });
+
+  test("the real streams and PATH lookup are wired: an empty write and an unknown program are harmless", () => {
+    REAL_AGENT_IO.stdout("");
+    REAL_AGENT_IO.stderr("");
+    expect(REAL_AGENT_IO.which("nimbus-no-such-program-anywhere")).toBeNull();
+    expect(typeof REAL_AGENT_IO.exec).toBe("function");
+    expect(REAL_AGENT_IO.paths().dataDir.length).toBeGreaterThan(0);
+    expect(typeof REAL_AGENT_IO.readStdin).toBe("function");
+    // With nothing replaced the real inputs are used; building the wiring touches none of them.
+    expect(typeof productionAgentDeps().gatewayAnswers).toBe("function");
   });
 
   test("applying a plan with nothing to change writes nothing", async () => {

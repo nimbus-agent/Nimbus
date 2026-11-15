@@ -98,6 +98,24 @@ describe("owned blocks", () => {
     expect(findBlock(upsertBlock(null, "codex2", 1, "x", "hash"), "codex", "hash")).toBeUndefined();
   });
 
+  test("an end marker with text after it on the same line is not an end: the block is refused, the tail never orphaned", () => {
+    const good = upsertBlock("top\n", "codex", 1, BODY, "hash");
+    const tailed = good.replace(
+      "# <<< nimbus agent kit codex <<<",
+      "# <<< nimbus agent kit codex <<< my note",
+    );
+    expect(() => upsertBlock(tailed, "codex", 1, "new", "hash")).toThrow(/with no end/);
+    // A real end marker further down still closes it, and the tailed line is part of the body.
+    const closed = `${tailed}# <<< nimbus agent kit codex <<<\nafter\n`;
+    const found = findBlock(closed, "codex", "hash");
+    expect(found?.body).toContain("my note");
+    expect(upsertBlock(closed, "codex", 1, "new", "hash")).toBe(
+      `top\n\n${renderBlock("codex", 1, "new", "hash")}\nafter\n`,
+    );
+    // The end marker as the very last bytes of the file (no trailing newline) is an end.
+    expect(findBlock(good.trimEnd(), "codex", "hash")?.body).toBe(BODY);
+  });
+
   test("a block with no end, and two blocks for one kit, are refused and never edited", () => {
     const open = renderBlock("codex", 1, BODY, "hash").split("\n").slice(0, 2).join("\n");
     expect(() => upsertBlock(`${open}\n`, "codex", 1, BODY, "hash")).toThrow(KitRefusal);

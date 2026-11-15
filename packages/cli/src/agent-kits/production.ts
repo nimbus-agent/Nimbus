@@ -109,3 +109,47 @@ export async function agentVersion(
     return "unknown";
   }
 }
+
+/** `node:child_process` `execFile`, as far as this module uses it. */
+export type ExecFileLike = (
+  file: string,
+  args: string[],
+  options: { timeout: number; windowsHide: boolean; shell: false },
+  callback: (error: Error | null, stdout: string | Buffer) => void,
+) => unknown;
+
+/** How long an agent program gets to print its version. */
+export const VERSION_TIMEOUT_MS = 3_000;
+
+/** Starts a program directly: no shell, a hard time limit, its stdout as text. */
+export function execForOutput(
+  exec: ExecFileLike,
+): (path: string, args: readonly string[]) => Promise<string> {
+  return (path, args) =>
+    new Promise((resolve, reject) => {
+      exec(
+        path,
+        [...args],
+        { timeout: VERSION_TIMEOUT_MS, windowsHide: true, shell: false },
+        (error, stdout) => {
+          if (error) reject(error);
+          else resolve(String(stdout));
+        },
+      );
+    });
+}
+
+/** True when `probe` (one gateway call) returns; any failure, a missing gateway included, is false. */
+export async function answers(probe: () => Promise<unknown>): Promise<boolean> {
+  try {
+    await probe();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** This process's own environment variable, for the kits' directory overrides. */
+export function readProcessEnv(name: string): string | undefined {
+  return process.env[name];
+}

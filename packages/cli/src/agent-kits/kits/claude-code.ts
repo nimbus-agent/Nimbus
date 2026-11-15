@@ -12,7 +12,7 @@
  * shape for that scope is not documented. Nimbus does not edit it and does not run `claude`: the
  * entry is ONE command the owner runs.
  */
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import {
   assertProject,
@@ -20,6 +20,7 @@ import {
   type KitEnv,
   type KitPlan,
   type KitScope,
+  overrideDir,
   serverArgs,
 } from "../kit-types.ts";
 import {
@@ -99,9 +100,10 @@ export function planClaudeCode(env: KitEnv, scope: KitScope): KitPlan {
       kit: KIT,
       scope,
       files: [
-        fileEdit(env, mcp, "mcp", (b) => editMcp(b, mcp, env.nimbus), hasServer),
+        fileEdit(env, env.cwd, mcp, "mcp", (b) => editMcp(b, mcp, env.nimbus), hasServer),
         fileEdit(
           env,
+          env.cwd,
           settings,
           "steer",
           (b) => editSettings(b, settings, env.nimbus),
@@ -113,7 +115,9 @@ export function planClaudeCode(env: KitEnv, scope: KitScope): KitPlan {
       notes: [],
     };
   }
-  const configDir = env.envVar("CLAUDE_CONFIG_DIR") ?? join(env.home, ".claude");
+  const override = overrideDir(env, "CLAUDE_CONFIG_DIR");
+  const configDir = override ?? join(env.home, ".claude");
+  const root = override === undefined ? env.home : dirname(override);
   const settings = join(configDir, "settings.json");
   return {
     kit: KIT,
@@ -121,6 +125,7 @@ export function planClaudeCode(env: KitEnv, scope: KitScope): KitPlan {
     files: [
       fileEdit(
         env,
+        root,
         settings,
         "steer",
         (b) => editSettings(b, settings, env.nimbus),

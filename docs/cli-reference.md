@@ -1779,7 +1779,10 @@ Rules it follows on every file: an existing file is copied to `<file>.nimbus-bak
 between two `nimbus agent kit` marker lines, or Nimbus's own keys in a JSON file, is changed; a file that is a
 symbolic link, a JSON file that is not strict JSON (comments, a trailing comma) and a Codex config with its own
 `[mcp_servers.nimbus]` table are refused, not rewritten; a file that changed after the plan was shown is not
-written; nothing is deleted. Nimbus starts no other vendor's program. It refuses to install from a source tree,
+written; a link at the file or at any directory between it and the scope's own tree is refused, when the plan is
+made and again just before the write; nothing is deleted. User scope writes under the home directory, or under the
+directory `CLAUDE_CONFIG_DIR`, `CODEX_HOME` or `COPILOT_HOME` names when set (it must be absolute). Nimbus starts
+no other vendor's program. It refuses to install from a source tree,
 because an agent's configuration must not point at a checkout. `--scope project` needs the current directory to be
 the root of a git repository. There is no uninstall command; the docs site's *Agent kits* page lists what to delete.
 
@@ -1787,7 +1790,8 @@ The steering covers `gh pr merge`, `glab mr merge`, `terraform apply`, `kubectl 
 `kubectl rollout restart` and `aws lambda invoke` (each pointed at the matching `propose_action` type) and tells
 the agent never to run `nimbus approvals`, `nimbus connector writes` or `nimbus captures`. The Claude Code hook
 (`nimbus agent hook claude-code`, run by Claude Code, not by you) denies those commands with the reason and makes no
-decision about anything else; it fails open when it cannot read its input.
+decision about anything else; it fails open when it cannot read its input, and it does not treat a separator inside
+quotes as the start of a new command.
 
 `status` reads the same files again and reports each part of each installed kit as `ok`, `drifted` (edited, or
 written by an older Nimbus), `missing`, or `manual` (a command you ran yourself, which Nimbus cannot check). It also
@@ -1796,7 +1800,8 @@ above. It never writes.
 
 **Exit codes:** `install`: `0` written, nothing to change, or a dry run; `1` refused, declined or a file could not
 be written; `2` usage. `status`: `0` every installed kit is as written (a `manual` part never counts), or none is
-installed; `1` an installed kit has a `drifted` or `missing` part.
+installed; `1` an installed kit has a `drifted` or `missing` part. A file Nimbus cannot read as a kit's file is
+printed as `cannot tell` and never changes the exit code.
 
 ---
 

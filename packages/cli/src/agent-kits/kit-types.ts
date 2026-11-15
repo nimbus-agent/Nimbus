@@ -5,7 +5,7 @@
  * (`KitPlan`). Install prints the plan and applies it after a typed `yes`; status re-runs the plan
  * and reports whether it would change anything. Nothing in a kit touches the file system itself.
  */
-import { dirname } from "node:path";
+import { dirname, isAbsolute, relative, sep } from "node:path";
 
 import { KitRefusal } from "./plan-files.ts";
 
@@ -48,6 +48,8 @@ export interface FileEdit {
    * what the kit would write now).
    */
   readonly present: boolean;
+  /** The scope's tree this file belongs to; the link check runs from the file up to it. */
+  readonly root: string;
 }
 
 /** A step the OWNER runs. Nimbus never starts another vendor's program to change its settings. */
@@ -78,20 +80,50 @@ export function serverArgs(kit: KitId): string[] {
 }
 
 /**
- * A file a kit may write: a regular file or nothing, in a real directory (or one not made yet).
- * A link at the file or at its directory is refused, so a kit never writes through one.
+ * A file a kit may write: a regular file or nothing, reached from `root` through real directories
+ * (or ones not made yet). A link at the file or at ANY directory between it and `root` is refused,
+ * so a kit never writes through one. `root` itself is not looked at: it is the scope's own tree
+ * (the home directory, the repository, or the directory the agent's own variable names).
+ *
+ * Takes the path reader as a function so planning and applying run the SAME check.
  */
-export function assertWritableTarget(env: KitEnv, path: string): void {
-  const kind = env.kind(path);
-  if (kind !== "file" && kind !== "absent") {
-    throw new KitRefusal(`${path} is not a regular file (${kind}), so Nimbus will not write it`);
+export function assertWritableTarget(
+  kind: (path: string) => PathKind,
+  root: string,
+  path: string,
+): void {
+  const rel = relative(root, path);
+  if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) {
+    throw new KitRefusal(`${path} is not inside ${root}, so Nimbus will not write it`);
   }
-  const parent = env.kind(dirname(path));
-  if (parent !== "dir" && parent !== "absent") {
+  const target = kind(path);
+  if (target !== "file" && target !== "absent") {
+    throw new KitRefusal(`${path} is not a regular file (${target}), so Nimbus will not write it`);
+  }
+  let dir = dirname(path);
+  for (let left = rel.split(sep).length - 1; left > 0; left -= 1) {
+    const k = kind(dir);
+    if (k !== "dir" && k !== "absent") {
+      throw new KitRefusal(`${dir} is not a real directory (${k}), so Nimbus will not write in it`);
+    }
+    dir = dirname(dir);
+  }
+}
+
+/**
+ * The directory an agent's own variable names (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `COPILOT_HOME`),
+ * or undefined when it is unset. It must be absolute: a relative one would move with the working
+ * directory, and a user-scope install must never land wherever the command happened to run.
+ */
+export function overrideDir(env: KitEnv, name: string): string | undefined {
+  const value = env.envVar(name);
+  if (value === undefined) return undefined;
+  if (!isAbsolute(value)) {
     throw new KitRefusal(
-      `${dirname(path)} is not a real directory (${parent}), so Nimbus will not write in it`,
+      `${name} is not an absolute path (${value}), so Nimbus will not write there`,
     );
   }
+  return value;
 }
 
 /** Project scope means a repository: the working directory holds a `.git` entry. */
@@ -106,12 +138,13 @@ export function assertProject(env: KitEnv, gitEntry: string): void {
 /** One planned edit, with its target checked. */
 export function fileEdit(
   env: KitEnv,
+  root: string,
   path: string,
   component: KitComponent,
   build: (before: string | null) => string,
   present: (before: string) => boolean,
 ): FileEdit {
-  assertWritableTarget(env, path);
+  assertWritableTarget(env.kind, root, path);
   const before = env.read(path);
   return {
     path,
@@ -119,5 +152,6 @@ export function fileEdit(
     before,
     after: build(before),
     present: before !== null && present(before),
+    root,
   };
 }

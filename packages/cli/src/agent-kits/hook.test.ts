@@ -136,6 +136,27 @@ describe("decideCommand", () => {
     }
   });
 
+  test("a separator inside quotes does not start a new command", () => {
+    for (const c of [
+      'git commit -m "docs: why we avoid gh pr merge; nimbus approvals is the owner\'s"',
+      "git commit -m 'one; gh pr merge 1 && kubectl apply -f x'",
+      'echo "a | nimbus approvals"',
+      'printf "x\\n" "terraform apply & done"',
+      'git log --grep="x;nimbus captures"',
+    ]) {
+      expect(decideCommand(c), c).toEqual({ decision: "none" });
+    }
+    // Outside the quotes the separator still counts.
+    expect(decideCommand('echo "done"; gh pr merge 1').decision).toBe("deny");
+    expect(decideCommand("echo 'a' && nimbus approvals").decision).toBe("deny");
+    // An unclosed quote swallows the rest: no decision, never a throw.
+    expect(decideCommand('echo "unclosed; gh pr merge 1')).toEqual({ decision: "none" });
+  });
+
+  test("stated bound: a line of a here-document that starts with a steered command is read as that command", () => {
+    expect(decideCommand("cat > notes.md << EOF\ngh pr merge 1\nEOF").decision).toBe("deny");
+  });
+
   test("everything else gets no decision", () => {
     for (const c of [
       "",

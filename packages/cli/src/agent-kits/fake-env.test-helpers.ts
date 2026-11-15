@@ -43,6 +43,7 @@ export function fakeMachine(initial: Record<string, string> = {}, repo = true): 
     renames: 0,
     slept: 0,
     read: (p) => files.get(p) ?? null,
+    kind,
     exists: (p) => files.has(p),
     mkdirp: () => {},
     copy: (from, to) => {

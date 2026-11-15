@@ -23,8 +23,39 @@ const NONE: HookDecision = { decision: "none" };
 /** The shells whose `tool_input.command` is a command line. */
 const SHELL_TOOLS: ReadonlySet<string> = new Set(["Bash", "PowerShell"]);
 
-/** The separators Claude Code's own permission rules split a command line on. */
-const SEPARATORS = /&&|\|\||\|&|[;|&\n]/;
+/**
+ * The simple commands of a command line: split on `&&`, `||`, `|&`, `;`, `|`, `&` and a line break,
+ * the separators Claude Code's own permission rules use, but NOT inside single or double quotes.
+ * `git commit -m "why we avoid gh pr merge; see docs"` is one command, and it is `git`.
+ *
+ * It does not understand a here-document: a line of one that starts with a steered command is
+ * read as that command. Stated on the kit page; the hook errs toward one refusal the agent can
+ * rephrase around, never toward silence about a real one.
+ */
+function splitCommands(line: string): string[] {
+  const parts: string[] = [];
+  let current = "";
+  let quote = "";
+  for (let i = 0; i < line.length; i += 1) {
+    const c = line[i] ?? "";
+    if (quote !== "") {
+      if (c === quote) quote = "";
+      current += c;
+    } else if (c === '"' || c === "'") {
+      quote = c;
+      current += c;
+    } else if (c === ";" || c === "\n" || c === "&" || c === "|") {
+      parts.push(current);
+      current = "";
+      const next = line[i + 1];
+      if ((c === "&" || c === "|") && (next === "&" || next === "|")) i += 1;
+    } else {
+      current += c;
+    }
+  }
+  parts.push(current);
+  return parts;
+}
 
 /** `NAME=value` before the program, which a shell treats as an assignment for that command. */
 const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
@@ -52,7 +83,7 @@ function wordsOf(part: string): string[] {
 
 /** What the hook answers for one command line. */
 export function decideCommand(command: string): HookDecision {
-  for (const part of command.split(SEPARATORS)) {
+  for (const part of splitCommands(command)) {
     const match = matchSteer(wordsOf(part));
     if (match?.kind === "owner") return { decision: "deny", reason: OWNER_COMMAND_REASON };
     if (match?.kind === "steer") {

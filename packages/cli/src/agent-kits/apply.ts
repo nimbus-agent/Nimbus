@@ -9,11 +9,13 @@
  *    target, so a reader never sees half a file;
  *  - on Windows a rename fails while another program holds the target open, so it is retried, and
  *    when it still fails the temporary file is removed and the target is left exactly as it was;
+ *  - a link at the file or at a directory above it is refused here too, not only when planning;
  *  - nothing is ever deleted except that temporary file.
  */
 import {
   copyFileSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   readFileSync,
   renameSync,
@@ -23,12 +25,14 @@ import {
 } from "node:fs";
 import { dirname } from "node:path";
 
-import type { FileEdit, KitPlan } from "./kit-types.ts";
+import { assertWritableTarget, type FileEdit, type KitPlan, type PathKind } from "./kit-types.ts";
 import { KitRefusal, sameText } from "./plan-files.ts";
 
 /** The file operations `applyPlan` uses, injectable so a locked file can be simulated. */
 export interface ApplyFs {
   read(path: string): string | null;
+  /** What is at the path, WITHOUT following a link. */
+  kind(path: string): PathKind;
   exists(path: string): boolean;
   mkdirp(dir: string): void;
   copy(from: string, to: string): void;
@@ -40,7 +44,20 @@ export interface ApplyFs {
   sleep(ms: number): Promise<void>;
 }
 
+function lstatKind(path: string): PathKind {
+  let st: ReturnType<typeof lstatSync>;
+  try {
+    st = lstatSync(path);
+  } catch (e) {
+    return (e as { code?: unknown }).code === "ENOENT" ? "absent" : "other";
+  }
+  if (st.isSymbolicLink()) return "link";
+  if (st.isFile()) return "file";
+  return st.isDirectory() ? "dir" : "other";
+}
+
 export const NODE_APPLY_FS: ApplyFs = {
+  kind: lstatKind,
   read: (p) => (existsSync(p) ? readFileSync(p, "utf8") : null),
   exists: (p) => existsSync(p),
   mkdirp: (d) => {
@@ -103,6 +120,8 @@ async function renameWithRetry(fs: ApplyFs, from: string, to: string): Promise<v
 }
 
 async function applyOne(fs: ApplyFs, edit: FileEdit, stamp: string): Promise<AppliedFile> {
+  // The plan checked this; a link can appear while the owner reads it. Checked again, the same way.
+  assertWritableTarget(fs.kind, edit.root, edit.path);
   const now = fs.read(edit.path);
   if (now !== edit.before) {
     throw new KitRefusal(
@@ -120,11 +139,12 @@ async function applyOne(fs: ApplyFs, edit: FileEdit, stamp: string): Promise<App
   }
   const temp = `${edit.path}.nimbus-new`;
   if (fs.exists(temp)) fs.remove(temp);
-  fs.write(temp, edit.after, fs.modeOf(edit.path));
   try {
+    fs.write(temp, edit.after, fs.modeOf(edit.path));
     await renameWithRetry(fs, temp, edit.path);
   } catch (e) {
-    fs.remove(temp);
+    // A failed write can leave half a file: it goes too.
+    if (fs.exists(temp)) fs.remove(temp);
     const held = BUSY_CODES.has(errorCode(e) ?? "");
     throw new KitRefusal(
       held

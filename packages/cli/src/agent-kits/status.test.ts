@@ -9,7 +9,14 @@ import type { KitId, KitScope } from "./kit-types.ts";
 import { planKit } from "./kits/index.ts";
 import { unifiedDiff } from "./line-diff.ts";
 import { KitRefusal } from "./plan-files.ts";
-import { agentVersion, nodeKitEnv, resolveNimbusCommand } from "./production.ts";
+import {
+  agentVersion,
+  answers,
+  execForOutput,
+  nodeKitEnv,
+  readProcessEnv,
+  resolveNimbusCommand,
+} from "./production.ts";
 import { allKitStatuses, kitStatus, needsAttention } from "./status.ts";
 
 async function install(m: ReturnType<typeof fakeMachine>, kit: KitId, scope: KitScope) {
@@ -254,5 +261,16 @@ describe("the real machine", () => {
         () => Promise.resolve("v".repeat(200)),
       ),
     ).toHaveLength(60);
+  });
+
+  test("a program's output is its stdout; a failure rejects; the probe turns either into yes or no", async () => {
+    const ok = execForOutput((_f, _a, _o, cb) => cb(null, Buffer.from("out\n")));
+    expect(await ok("/bin/x", ["--version"])).toBe("out\n");
+    const bad = execForOutput((_f, _a, _o, cb) => cb(new Error("ETIMEDOUT"), ""));
+    expect(bad("/bin/x", [])).rejects.toThrow("ETIMEDOUT");
+    expect(await answers(() => Promise.resolve({}))).toBe(true);
+    expect(await answers(() => Promise.reject(new Error("no gateway")))).toBe(false);
+    expect(readProcessEnv("NIMBUS_NO_SUCH_VARIABLE_ANYWHERE")).toBeUndefined();
+    expect(readProcessEnv("PATH") ?? readProcessEnv("Path")).toBeDefined();
   });
 });

@@ -12,7 +12,7 @@
  * GUIDANCE ONLY: terminal auto-approve rules ask rather than block, and the hook file location for
  * the current harness was not read.
  */
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import {
   assertProject,
@@ -20,6 +20,7 @@ import {
   type KitEnv,
   type KitPlan,
   type KitScope,
+  overrideDir,
   serverArgs,
 } from "../kit-types.ts";
 import { childObject, editJsonFile, hasBlock, jsonAt, upsertBlock } from "../plan-files.ts";
@@ -33,7 +34,9 @@ export const VSCODE_LOCAL_HARNESS_NOTE =
 
 export function planVscode(env: KitEnv, scope: KitScope): KitPlan {
   if (scope === "user") {
-    const dir = env.envVar("COPILOT_HOME") ?? join(env.home, ".copilot");
+    const override = overrideDir(env, "COPILOT_HOME");
+    const dir = override ?? join(env.home, ".copilot");
+    const root = override === undefined ? env.home : dirname(override);
     const mcp = join(dir, "mcp-config.json");
     return {
       kit: KIT,
@@ -41,6 +44,7 @@ export function planVscode(env: KitEnv, scope: KitScope): KitPlan {
       files: [
         fileEdit(
           env,
+          root,
           mcp,
           "mcp",
           (b) =>
@@ -69,6 +73,7 @@ export function planVscode(env: KitEnv, scope: KitScope): KitPlan {
     files: [
       fileEdit(
         env,
+        env.cwd,
         mcp,
         "mcp",
         (b) =>
@@ -83,6 +88,7 @@ export function planVscode(env: KitEnv, scope: KitScope): KitPlan {
       ),
       fileEdit(
         env,
+        env.cwd,
         instructions,
         "instructions",
         (b) => upsertBlock(b, KIT, STEER_TABLE_VERSION, renderInstructions(), "html"),

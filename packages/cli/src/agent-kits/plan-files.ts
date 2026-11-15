@@ -93,7 +93,10 @@ export function findBlock(text: string, kit: string, style: BlockStyle): FoundBl
   }
   const end = endMarker(kit, style);
   const bodyStart = first.index + first[0].length + 1;
-  const endAt = text.indexOf(`${LF}${end}`, first.index + first[0].length);
+  // A whole line, like the begin marker: text after it on the same line is not an end marker.
+  const endRe = new RegExp(`\\n${escapeRegExp(end)}(?=\\n|$)`, "g");
+  endRe.lastIndex = first.index + first[0].length;
+  const endAt = endRe.exec(text)?.index ?? -1;
   if (endAt === -1) {
     throw new KitRefusal(
       `the file holds the start of a Nimbus block for ${kit} with no end; repair it by hand`,

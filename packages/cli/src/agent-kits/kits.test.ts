@@ -1,6 +1,6 @@
 // The four agent kits, planned against an in-memory machine (no real home directory).
 import { describe, expect, test } from "bun:test";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import { AGENT_DOOR_BOUNDS } from "../lib/agent-door-bounds.ts";
 import { applyPlan, pendingEdits } from "./apply.ts";
@@ -69,18 +69,49 @@ describe("every kit, every scope", () => {
   );
 
   test.each(EVERY)(
-    "%s (%s): a target that is a link, and one inside a linked directory, is refused",
+    "%s (%s): a link at ANY planned file, or at any directory between it and the scope's root, is refused",
     (kit, scope) => {
-      const first = planKit(kit, fakeMachine().env, scope).files[0];
-      if (first === undefined) throw new Error("no file");
-      const linkedFile = fakeMachine();
-      linkedFile.links.add(first.path);
-      expect(() => planKit(kit, linkedFile.env, scope)).toThrow(/is not a regular file \(link\)/);
-      const linkedDir = fakeMachine();
-      linkedDir.links.add(join(first.path, ".."));
-      expect(() => planKit(kit, linkedDir.env, scope)).toThrow(/is not a real directory \(link\)/);
+      const root = scope === "user" ? HOME : REPO;
+      for (const file of planKit(kit, fakeMachine().env, scope).files) {
+        const linkedFile = fakeMachine();
+        linkedFile.links.add(file.path);
+        expect(() => planKit(kit, linkedFile.env, scope), file.path).toThrow(
+          /is not a regular file \(link\)/,
+        );
+        // Every directory strictly between the root and the file: the parent, and its parents.
+        for (let dir = dirname(file.path); dir !== root; dir = dirname(dir)) {
+          const linkedDir = fakeMachine();
+          linkedDir.links.add(dir);
+          expect(() => planKit(kit, linkedDir.env, scope), dir).toThrow(
+            /is not a real directory \(link\)/,
+          );
+        }
+        expect(file.root).toBe(root);
+      }
     },
   );
+
+  test("the agent's own directory variable must be absolute, and the link check then runs inside it", () => {
+    for (const [kit, name] of [
+      ["claude-code", "CLAUDE_CONFIG_DIR"],
+      ["codex", "CODEX_HOME"],
+      ["vscode", "COPILOT_HOME"],
+    ] as const) {
+      const relativeDir = fakeMachine();
+      relativeDir.vars[name] = join(".", "conf");
+      expect(() => planKit(kit, relativeDir.env, "user"), name).toThrow(/is not an absolute path/);
+      const m = fakeMachine();
+      const dir = join(HOME, "elsewhere", "conf");
+      m.vars[name] = dir;
+      const plan = planKit(kit, m.env, "user");
+      for (const f of plan.files) {
+        expect(f.path.startsWith(dir), f.path).toBe(true);
+        expect(f.root).toBe(join(HOME, "elsewhere"));
+      }
+      m.links.add(dir);
+      expect(() => planKit(kit, m.env, "user"), name).toThrow(/is not a real directory \(link\)/);
+    }
+  });
 
   test("project scope outside a repository is refused; Codex has no project scope", () => {
     const m = fakeMachine({}, false);
@@ -325,6 +356,17 @@ describe("cursor", () => {
     m.files.set(path, `${m.files.get(path) ?? ""}\nstray line\n`);
     const plan = planKit("cursor", m.env, "project");
     expect(fileOf(plan, "nimbus.mdc").after).not.toContain("stray line");
+  });
+
+  test("a rules file checked out with CRLF keeps CRLF and needs no change", async () => {
+    const path = join(REPO, ".cursor", "rules", "nimbus.mdc");
+    const m = fakeMachine();
+    await install(m, "cursor", "project");
+    const crlf = (m.files.get(path) ?? "").replaceAll("\n", "\r\n");
+    m.files.set(path, crlf);
+    const plan = planKit("cursor", m.env, "project");
+    expect(fileOf(plan, "nimbus.mdc").after).toBe(crlf);
+    expect(pendingEdits(plan)).toEqual([]);
   });
 });
 

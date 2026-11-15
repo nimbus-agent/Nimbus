@@ -25,7 +25,7 @@ function plan(files: FileEdit[]): KitPlan {
 }
 
 function edit(path: string, before: string | null, after: string): FileEdit {
-  return { path, component: "mcp", before, after, present: before !== null };
+  return { path, component: "mcp", before, after, present: before !== null, root: HOME };
 }
 
 describe("backupStamp", () => {
@@ -162,6 +162,45 @@ describe("applyPlan on an in-memory machine", () => {
     expect(m.files.get(B)).toBe("b1\n");
   });
 
+  test("a link that appears AFTER the plan was made is refused at write time: the file and every directory above it", async () => {
+    const nested = join(HOME, "a", "b", "c.json");
+    for (const link of [nested, join(HOME, "a", "b"), join(HOME, "a")]) {
+      const m = fakeMachine({ [nested]: "old\n" });
+      const planned = plan([edit(nested, "old\n", "new\n")]);
+      m.links.add(link);
+      const result = await applyPlan(planned, m.fs, AT);
+      expect(result.written, link).toEqual([]);
+      expect(result.failure?.message, link).toMatch(
+        /is not a (regular file|real directory) \(link\)/,
+      );
+      expect(m.files.get(nested)).toBe("old\n");
+      expect([...m.files.keys()].some((k) => k.includes(".nimbus-"))).toBe(false);
+      expect(m.fs.renames).toBe(0);
+    }
+  });
+
+  test("a file outside its scope's root is never written", async () => {
+    const m = fakeMachine();
+    const outside = { ...edit(join(HOME, "..", "elsewhere.json"), null, "x\n"), root: HOME };
+    const result = await applyPlan(plan([outside]), m.fs, AT);
+    expect(result.failure?.message).toContain("is not inside");
+    expect(m.files.size).toBe(1);
+  });
+
+  test("a write that fails half way leaves no temporary file and the target untouched", async () => {
+    const m = fakeMachine({ [B]: "old\n" });
+    const realWrite = m.fs.write;
+    m.fs.write = (p, text, mode) => {
+      realWrite(p, text.slice(0, 2), mode);
+      throw codedError("ENOSPC");
+    };
+    const result = await applyPlan(plan([edit(B, "old\n", "new content\n")]), m.fs, AT);
+    expect(result.failure?.message).toContain("could not be replaced (ENOSPC");
+    expect(m.files.get(B)).toBe("old\n");
+    expect(m.files.has(`${B}.nimbus-new`)).toBe(false);
+    expect(m.fs.renames).toBe(0);
+  });
+
   test("a leftover temporary file from an interrupted run does not block the next one", async () => {
     const m = fakeMachine({ [B]: "old\n", [`${B}.nimbus-new`]: "half" });
     const result = await applyPlan(plan([edit(B, "old\n", "new\n")]), m.fs, AT);
@@ -222,12 +261,14 @@ describe("applyPlan on the real file system", () => {
     expect(pendingEdits(planKit("cursor", envOf(dirs), "project"))).toEqual([]);
   });
 
-  test("a target that is a symbolic link is refused (run only where this platform can make one)", () => {
+  test("a target that becomes a symbolic link is refused when planning AND when writing (run only where this platform can make one)", async () => {
     const dirs = scratch();
     const real = join(dirs.home, "real.json");
     const link = join(dirs.home, ".cursor", "mcp.json");
     writeFileSync(real, "{}\n");
     mkdirSync(join(dirs.home, ".cursor"));
+    // Planned while the target does not exist...
+    const planned = planKit("cursor", envOf(dirs), "user");
     try {
       symlinkSync(real, link);
     } catch {
@@ -235,7 +276,19 @@ describe("applyPlan on the real file system", () => {
       expect(existsSync(link)).toBe(false);
       return;
     }
-    expect(() => planKit("cursor", envOf(dirs), "user")).toThrow(/is not a regular file \(link\)/);
+    // ...then a link appears in its place: writing refuses, and the link's target is untouched.
+    const result = await applyPlan(planned, NODE_APPLY_FS, AT);
+    expect(result.written).toEqual([]);
+    expect(result.failure?.message).toMatch(/is not a regular file \(link\)/);
     expect(readFileSync(real, "utf8")).toBe("{}\n");
+    expect(() => planKit("cursor", envOf(dirs), "user")).toThrow(/is not a regular file \(link\)/);
+  });
+
+  test("the real file system tells a file, a directory and nothing apart without following links", () => {
+    const dirs = scratch();
+    writeFileSync(join(dirs.home, "f.txt"), "x");
+    expect(NODE_APPLY_FS.kind(join(dirs.home, "f.txt"))).toBe("file");
+    expect(NODE_APPLY_FS.kind(dirs.home)).toBe("dir");
+    expect(NODE_APPLY_FS.kind(join(dirs.home, "missing"))).toBe("absent");
   });
 });

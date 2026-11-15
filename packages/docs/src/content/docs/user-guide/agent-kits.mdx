@@ -32,13 +32,17 @@ command you have to run yourself. Then it asks you to type `yes`. Nothing is wri
 - Nimbus edits only what it owns: a block between two `nimbus agent kit` marker lines in a text file, or its own
   keys in a JSON file. Everything else in the file is left as it was.
 - A file Nimbus cannot edit safely is refused, not rewritten: a JSON file with comments, a file that is a symbolic
-  link, a `[mcp_servers.nimbus]` table you wrote yourself.
+  link or sits under a linked directory, a `[mcp_servers.nimbus]` table you wrote yourself. The link check runs
+  when the plan is made and again just before each file is written.
+- User scope writes under your home directory, or under the directory the agent's own variable names
+  (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `COPILOT_HOME`) when you set one; it must be an absolute path.
 - Nimbus never starts another vendor's program to change its settings. Where an agent keeps a setting in a file it
   manages itself, install prints the one command for you to run.
 - `--dry-run` prints the plan and stops. `--yes` skips the question; use it only after reading a dry run.
 - There is no uninstall command. Each section below lists what to delete.
 
-The server entry is the same for every agent: `nimbus mcp-server --stdio --agent <kit>`. The `--agent` value is the
+The command every entry runs is the same: `nimbus mcp-server --stdio --agent <kit>`. Only the file and the JSON or
+TOML around it differ per agent. The `--agent` value is the
 label you see beside that agent's proposals in `nimbus approvals`. It is shown as unverified: any program that can
 start `nimbus mcp-server` can pass any name.
 
@@ -78,7 +82,9 @@ Steering: a **hook** that Claude Code runs before each shell command, plus deny 
 
 The hook denies a command from the table above with the action type to propose instead, and stays silent for
 everything else. It **fails open**: if it cannot read what Claude Code sent, it makes no decision and Claude Code's
-own permission flow applies. `nimbus agent status` shows the user-scope server as `manual`, because Nimbus does not
+own permission flow applies. It reads a command line the way Claude Code's own rules do, split on `&&`, `||`, `;`,
+`|` and line breaks outside quotes, so a commit message that mentions `gh pr merge` is not refused; a line of a
+here-document that starts with one of the commands is. `nimbus agent status` shows the user-scope server as `manual`, because Nimbus does not
 read the file Claude Code keeps it in.
 
 To remove: delete the `PreToolUse` entry whose command ends `agent hook claude-code`, the three
@@ -141,7 +147,9 @@ To remove: delete the `nimbus` key under `servers` (or `mcpServers`), and the Ni
 
 It also shows the agent's version where it can read it without a shell, whether the gateway is running, and the
 limits stated at the top of this page. It never writes. The exit code is 1 when an installed kit has a `drifted` or
-`missing` part, and 0 otherwise. `nimbus agent install <kit> --dry-run` shows what would put it right.
+`missing` part, and 0 otherwise. A file Nimbus cannot read as a kit's file (a `.vscode/mcp.json` with comments, for
+example) is shown as `cannot tell` and does not change the exit code: Nimbus cannot know whether a kit was ever
+installed there. `nimbus agent install <kit> --dry-run` shows what would put it right.
 
 ## Verified against real agents
 

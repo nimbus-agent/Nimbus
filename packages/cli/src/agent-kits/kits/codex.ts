@@ -11,9 +11,16 @@
  * User scope only: a project `.codex/` applies only after Codex trusts the project, which Nimbus
  * cannot see, so a project install could silently do nothing.
  */
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
-import { fileEdit, type KitEnv, type KitPlan, type KitScope, serverArgs } from "../kit-types.ts";
+import {
+  fileEdit,
+  type KitEnv,
+  type KitPlan,
+  type KitScope,
+  overrideDir,
+  serverArgs,
+} from "../kit-types.ts";
 import { hasBlock, KitRefusal, upsertBlock, withoutBlock } from "../plan-files.ts";
 import {
   OWNER_COMMAND_REASON,
@@ -84,7 +91,9 @@ export function planCodex(env: KitEnv, scope: KitScope): KitPlan {
       "the Codex kit installs at user scope only: a project .codex/ applies only after Codex trusts the project, which Nimbus cannot see",
     );
   }
-  const dir = env.envVar("CODEX_HOME") ?? join(env.home, ".codex");
+  const override = overrideDir(env, "CODEX_HOME");
+  const dir = override ?? join(env.home, ".codex");
+  const root = override === undefined ? env.home : dirname(override);
   const config = join(dir, "config.toml");
   const rules = join(dir, "rules", "nimbus.rules");
   const agents = join(dir, "AGENTS.md");
@@ -94,6 +103,7 @@ export function planCodex(env: KitEnv, scope: KitScope): KitPlan {
     files: [
       fileEdit(
         env,
+        root,
         config,
         "mcp",
         (b) => editConfig(b, config, env.nimbus),
@@ -101,6 +111,7 @@ export function planCodex(env: KitEnv, scope: KitScope): KitPlan {
       ),
       fileEdit(
         env,
+        root,
         rules,
         "steer",
         (b) => upsertBlock(b, KIT, STEER_TABLE_VERSION, codexRulesBody(), "hash"),
@@ -108,6 +119,7 @@ export function planCodex(env: KitEnv, scope: KitScope): KitPlan {
       ),
       fileEdit(
         env,
+        root,
         agents,
         "instructions",
         (b) => upsertBlock(b, KIT, STEER_TABLE_VERSION, renderInstructions(), "html"),

@@ -17,6 +17,15 @@ function linesOf(text: string | null): string[] {
   return (flat.endsWith("\n") ? flat.slice(0, -1) : flat).split("\n");
 }
 
+/** `noUncheckedIndexedAccess` makes every read optional; these are the only two fallbacks. */
+function lineAt(lines: readonly string[], at: number): string {
+  return lines[at] ?? "";
+}
+
+function cellAt(table: Uint32Array, at: number): number {
+  return table[at] ?? 0;
+}
+
 function ops(a: readonly string[], b: readonly string[]): Op[] {
   if (a.length * b.length > MAX_CELLS) {
     return [
@@ -29,29 +38,29 @@ function ops(a: readonly string[], b: readonly string[]): Op[] {
   for (let i = a.length - 1; i >= 0; i -= 1) {
     for (let j = b.length - 1; j >= 0; j -= 1) {
       table[i * w + j] =
-        a[i] === b[j]
-          ? (table[(i + 1) * w + j + 1] ?? 0) + 1
-          : Math.max(table[(i + 1) * w + j] ?? 0, table[i * w + j + 1] ?? 0);
+        lineAt(a, i) === lineAt(b, j)
+          ? cellAt(table, (i + 1) * w + j + 1) + 1
+          : Math.max(cellAt(table, (i + 1) * w + j), cellAt(table, i * w + j + 1));
     }
   }
   const out: Op[] = [];
   let i = 0;
   let j = 0;
   while (i < a.length && j < b.length) {
-    if (a[i] === b[j]) {
-      out.push({ tag: " ", line: a[i] ?? "" });
+    if (lineAt(a, i) === lineAt(b, j)) {
+      out.push({ tag: " ", line: lineAt(a, i) });
       i += 1;
       j += 1;
-    } else if ((table[(i + 1) * w + j] ?? 0) >= (table[i * w + j + 1] ?? 0)) {
-      out.push({ tag: "-", line: a[i] ?? "" });
+    } else if (cellAt(table, (i + 1) * w + j) >= cellAt(table, i * w + j + 1)) {
+      out.push({ tag: "-", line: lineAt(a, i) });
       i += 1;
     } else {
-      out.push({ tag: "+", line: b[j] ?? "" });
+      out.push({ tag: "+", line: lineAt(b, j) });
       j += 1;
     }
   }
-  for (; i < a.length; i += 1) out.push({ tag: "-", line: a[i] ?? "" });
-  for (; j < b.length; j += 1) out.push({ tag: "+", line: b[j] ?? "" });
+  for (; i < a.length; i += 1) out.push({ tag: "-", line: lineAt(a, i) });
+  for (; j < b.length; j += 1) out.push({ tag: "+", line: lineAt(b, j) });
   return out;
 }
 
