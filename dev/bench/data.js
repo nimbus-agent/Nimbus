@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794755480545,
+  "lastUpdate": 1794760752488,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "5ac042c04fda879fdfd943eaacb99a09ae022cae",
-          "message": "feat(llm)!: route the LLM by (provider, model) instead of provider kind (#1352)\n\n## What this changes\n\n`LlmRouter` kept its providers in a map keyed on a closed three-member\nunion, so it had exactly **one seat per provider kind**. Registering a\nsecond provider of a kind silently evicted the first, because `Map.set`\non the same key overwrites. That seat was never filled: only Ollama and\nllama.cpp were ever registered, and `[llm] remote_model` defaulted to a\nmodel name for a provider that does not exist.\n\nThe same limit applied one level down. `OllamaProvider` takes a model\nname and there is no allowlist, so `local_model = \"qwen3\"` already\nworked — but two local models at once was unrepresentable, because the\nseat is per runtime and the model was a single global config string.\n\nThis re-keys the router on **`(provider, model)` routes**. Provider\nimplementations are unchanged: two models means two instances sharing a\n`providerId`, so only the map key moved.\n\n## What ships\n\n- Multiple local models at once, per task — `[llm.local.<name>]`\nsub-tables plus `route_priority`\n- Availability that means **this model answers**, not **the daemon is\nup**\n- Egress destination naming the vendor instead of the literal string\n`model`\n- One definition of `isLocal`, declared by the provider, replacing three\ncopies that had to agree\n\n## What does NOT ship\n\n**Zero cloud vendors.** No adapter for Anthropic, OpenAI, Gemini, xAI or\nBedrock. This slice is the enabling refactor; vendors are slice 2.\n\nTwo fixes here are **unit-proven only**, because no remote route exists\nyet to exercise them: the vendor-named egress destination, and the\nroute-aware context-overflow fallback.\n\n## Breaking\n\n- `llm.status` returns a route list. `nimbus llm status --json`\ntherefore changes shape — anything scripting against it must be updated.\n- The deprecated `LlmProviderKind` alias and\n`LlmRouter.registerProvider` shim are removed.\n\n`ALLOWED_METHODS` is untouched — no new IPC method, so invariant I7 is\nunaffected.\n\n## Known bounds, stated rather than papered over\n\n- `packages/cli` keeps a private copy of the route-status type. A shared\ntype is forbidden by the IPC-only dependency rule, and nothing pins the\ncopy to the real payload. This break already happened once during\ndevelopment and the suite stayed green throughout. A gateway-side shape\npin now catches the gateway half; the CLI half remains a documented gap.\n- `LlmRouter.generate` still calls the route provider directly with no\negress append. Previously only a route keyed `remote` could reach it —\nnever. Now any registered non-local route can, once slice 2 adds one.\n**Named slice-2 blocker**: resolve `generate`'s I29 coverage before the\nfirst remote route registers.\n- A malformed `route_priority` value, as opposed to an unresolvable\nentry, is swallowed during parsing with no diagnostic, so assembly\ncannot name it.\n- Per-task pinning did not ship. Slice 4 is therefore a router change,\nnot the surface-only change the spec originally claimed.\n\n## Verification\n\n- `bun test packages/gateway/src` — 12370 pass, 0 fail\n- `bun test packages/cli/src` — 2470 pass, 0 fail\n- `bun test scripts` — 1596 pass, 0 fail\n- `bun run typecheck` — exit 0\n- `bun run lint:markdown` — exit 0\n\n**Not run locally:** the coverage floor, which is CI-Linux-authoritative\nand could not run without Docker here. Three new source files land in\n`llm/`, which is under the Engine gate. Please let CI settle before\nmerging.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-08-27T21:22:15Z",
-          "tree_id": "42b38b42304ac152def9bf67cd0ea037f24ec4f9",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/5ac042c04fda879fdfd943eaacb99a09ae022cae"
-        },
-        "date": 1787866421864,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 315.11441159999885,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 314.86610090000215,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 192.46639970000177,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "c0ffb286eb00261c7c56c86fd90c203cdb007f32",
+          "message": "feat(gateway): the sandbox can confine a write directory on all three OSes, measured, with nothing using it yet (agent door AD5b-1) (#2009)\n\nAgent door AD5b-1 (Phase 28): the sandbox mechanism for user MCP write\ngrants, measured on all three OSes, with nothing that uses it yet.\n\n## Nothing changes for a user in this PR\n\nNo command can give a user MCP server write access. Every user MCP\nserver's sandbox still has `filesystem.write: []`. The `--write` flag,\nthe V98 column, the Windows ledger and the prompts come in AD5b-2. A\nrelease cut between the two PRs is safe: static rule D10 `user-write`\nfails the build if any `connectors/`, `ipc/` or `engine/` file names the\nnew policy field.\n\n## What this PR builds\n\n1. **A declared write directory.** `SandboxPolicy.canonicalWriteDirs`\nnames directories a child may write beneath. Each must also be in the\nwrite list and in `canonicalWritePaths`, and never a declared file.\n2. **The wrapper refuses a bad one before any runner exists.**\n`writeDirGrantRefusal` (`platform/sandbox/write-grant-check.ts`) runs\nafter the two existing checks. It refuses, with a fixed sentence, a\ndirectory that is missing, a file or a link, and a directory whose tree\nfails the tree rule.\n3. **The tree rule** (`platform/sandbox/write-dir-scan.ts`). Only\n`clean` passes. It refuses a link or junction, a file with a second\nname, an entry that is neither a file nor a folder, a `.git`,\n`.obsidian`, `.vscode`, `.idea`, `.husky`, `.devcontainer` or\n`.terraform` entry in any letter case, a tree over 16 levels or 50,000\nentries, and anything it cannot read. It never follows a link.\n4. **Runners.** Linux now makes the canonical-path check the other two\nrunners already made. macOS denies unlinking the granted directory\nitself. Windows passes `--grant-write-dir`.\n5. **The Windows helper** gains `--grant-write-dir`: the same\ninheritable grant as `--grant-write` (no delete right), refused with\nexit 66 unless the path is a real directory.\n6. **Static rule D10, clause `user-write`**, with fixtures, and an I15\nenforcement test.\n\n## What was measured\n\n\n`test/integration/platform/sandbox/user-mcp-write-grant.integration.test.ts`\nruns a list of file operations through the real `__nimbus-sandbox` role\nand reads every result from the host. Each attack run starts with an\nallowed write that the test checks landed. A control run of the same\noperations with no sandbox succeeds.\n\n| Case | Claim | Windows | Linux | macOS |\n| --- | --- | --- | --- | --- |\n| A-1 | create and change inside the directory | yes | yes | yes |\n| A-2 | nothing beside, above or merely readable is written | holds |\nholds (see note) | holds |\n| x-1 | a link the child makes inside does not reach outside; no rename\nout or in | holds (the child cannot create a junction) | holds | holds |\n| x-2 | a file it can only read is not written through a hard link |\nholds | holds (the link fails across two binds) | holds |\n| x-3 | the granted directory itself cannot be deleted, renamed or\nreplaced | holds | holds | holds |\n| A-3 | delete and rename inside | refused | allowed | allowed |\n| A-4 | a planted `.git/hooks` is found and the next spawn is refused |\nholds | holds | holds |\n| A-5 | five swaps after the policy was built: no spawn | holds | holds\n| holds |\n| W-4, W-5, W-6 | the ACE outlives the child; no propagation through a\njunction; a re-created profile keeps its grants | measured | n/a | n/a |\n\nLinux and macOS were measured on this PR's CI legs. Linux note: a write\nto the grant's PARENT reports success to the child, because the test\ntree is under `/tmp` and the Linux sandbox mounts a private `/tmp`;\nnothing reaches the host, which is what the test asserts.\n\nWindows note, a limit of the probe and not of the sandbox: on the\n`windows-2025` runner the sandboxed PowerShell has no `New-Item`,\n`Move-Item` or `Remove-Item` cmdlets, so there the link, rename and\ndelete attempts fail before they reach the file system. Folder creation\nfalls back to a direct .NET call and is measured on the runner. The\nWindows answers for links, renames and deletes come from a Windows 11\nmachine where the cmdlets load and all 21 cases ran. AD5b-2 changes the\nprobe to direct .NET and `cmd` calls so the runner measures them too.\n\nOn CI the file's last test fails if any real case of that OS did not\nrun.\n\n## Stated bounds\n\n- A running server can create a marker folder (for example `.git/hooks`)\ninside its directory. No sandbox here can refuse a name that does not\nexist yet. The next spawn is refused.\n- On Windows a reparse point that is neither a symlink nor a junction\nreads as a plain entry to the tree rule.\n- The static rule is textual.\n\n## Owner rulings recorded (2026-11-15)\n\nOR-AD-27 to OR-AD-34: two PRs; the guarded grant width; marker folders\nrefused at, beneath and above; an OS that cannot confine refuses\n`--write`; Windows is create and modify only; a typed confirmation for\nan agent's call to a write-granted server; only a person may register\nwith `--write`; at most four directories.\n\n## Docs\n\n`CLAUDE.md` and `GEMINI.md` (status), `docs/CHANGELOG.md`,\n`docs/roadmap.md`, `docs/architecture.md`, `docs/README.md`,\n`docs/SECURITY-INVARIANTS.md` (I15 paragraph and the D10 clause), and\nthe helper README. `docs/cli-reference.md` is unchanged because no\ncommand or flag changes.\n\n## Verification\n\n- `bun run preflight:fast`: passed.\n- `bun test packages/gateway/src/platform/sandbox`,\n`packages/gateway/src/security-invariants.test.ts`,\n`scripts/structure-audit/check-nimbus-invariants.test.ts`: passed.\n- The real-sandbox file on Windows: 21 of 21.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JmSjrCzb214jGqUcCTWNJQ\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **Documentation**\n* Updated the security, architecture, and roadmap documentation to\ndescribe directory-scoped sandbox write grants and their validation\nlimits.\n* **Sandbox Improvements**\n* Added support for restricting sandbox write access to validated\ndirectories across Linux, macOS, and Windows.\n* Directory grants reject unsafe contents and do not permit deleting or\nrenaming the granted directory. The capability is not yet available\nthrough a user-facing option.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->",
+          "timestamp": "2026-11-15T16:28:04Z",
+          "tree_id": "6d30042b3776f4caf83e887bfba006308b72c143",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/c0ffb286eb00261c7c56c86fd90c203cdb007f32"
+        },
+        "date": 1794760747509,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 294.6524243999982,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 293.0934617499985,
             "unit": "ms"
           }
         ]
