@@ -22,6 +22,8 @@ const ACT = {
 };
 
 type Verify = NonNullable<CaptureGateDeps["verifyActionDefinition"]>;
+/** The `proposedAt` each definition check was given. */
+const proposedAtSeen: Array<number | undefined> = [];
 
 let db: Database;
 let deps: CaptureGateDeps;
@@ -78,10 +80,16 @@ beforeEach(() => {
       refusalBasis.push(basis);
       return refusal;
     },
-    verifyActionDefinition: (t) => verify(t),
+    verifyActionDefinition: (t, at) => {
+      proposedAtSeen.push(at);
+      return verify(t);
+    },
   };
 });
-afterEach(() => db.close());
+afterEach(() => {
+  proposedAtSeen.length = 0;
+  db.close();
+});
 
 async function codeOf(p: Promise<unknown>): Promise<string> {
   try {
@@ -155,13 +163,18 @@ describe("the order of the submit checks", () => {
     await submitCapture(deps, MCP, ACT);
     verdict = { kind: "proposable", basis: "legacy_unapproved" };
     await submitCapture(deps, { clientId: "c2", kind: "mcp" }, ACT);
-    verdict = { kind: "proposable", userMcp: true };
+    verdict = { kind: "proposable", basis: "legacy_user_mcp" };
     await submitCapture(deps, { clientId: "c3", kind: "mcp" }, ACT);
-    expect(refusalBasis).toEqual(["approved", "legacy_unapproved", undefined]);
+    expect(refusalBasis).toEqual(["approved", "legacy_unapproved", "legacy_user_mcp"]);
   });
 });
 
 describe("the definition check (5c)", () => {
+  test("a submit passes NO proposedAt (the comparison with the registration is for approval and the veto)", async () => {
+    await submitCapture(deps, MCP, ACT);
+    expect(proposedAtSeen).toEqual([undefined]);
+  });
+
   test("an approved basis with no verifyActionDefinition is refused (fail closed)", async () => {
     Reflect.deleteProperty(deps, "verifyActionDefinition");
     expect(await codeOf(submitCapture(deps, MCP, ACT))).toBe("ERR_CAPTURE_ACTION_NOT_PROPOSABLE");
@@ -213,20 +226,16 @@ describe("the definition check (5c)", () => {
     });
   });
 
-  test("a verdict with no basis (user-MCP, and today's production wiring) behaves exactly as before", async () => {
-    verdict = { kind: "proposable", userMcp: true };
+  test("a legacy_user_mcp verdict is accepted as the other legacy bases are: no definition check, stored legacy = 1, the reply says so", async () => {
+    verdict = { kind: "proposable", basis: "legacy_user_mcp" };
     Reflect.deleteProperty(deps, "verifyActionDefinition");
     const out = await submitCapture(deps, MCP, ACT);
     expect(calls).toEqual(["classify", "refusal", "configured"]);
-    expect(Object.keys(out).sort((a, b) => a.localeCompare(b))).toEqual([
-      "expiresAt",
-      "id",
-      "state",
-    ]);
-    expect(new CaptureStore(db).get(out.id)?.agentDoorLegacy).toBe(false);
-    expect(Object.hasOwn(JSON.parse(auditRows().at(-1)?.action_json as string), "basis")).toBe(
-      false,
-    );
+    expect(out.legacy).toBe(true);
+    expect(new CaptureStore(db).get(out.id)?.agentDoorLegacy).toBe(true);
+    expect(JSON.parse(auditRows().at(-1)?.action_json as string)).toMatchObject({
+      basis: "legacy_user_mcp",
+    });
   });
 });
 
@@ -283,7 +292,7 @@ describe("the payload cap follows the verdict (only a bound row may be large)", 
       { kind: "proposable", basis: "approved" } as ActionVerdict,
     ],
     ["a legacy type", { kind: "proposable", basis: "legacy_unapproved" } as ActionVerdict],
-    ["a user-MCP type", { kind: "proposable", userMcp: true } as ActionVerdict],
+    ["a user-MCP type", { kind: "proposable", basis: "legacy_user_mcp" } as ActionVerdict],
   ])("%s over 65,536 bytes is refused, audited, and lists nothing", async (_n, v) => {
     verdict = v;
     expect(await codeOf(submitCapture(deps, MCP, actOfBytes(ORDINARY + 1)))).toBe(
@@ -316,8 +325,8 @@ describe("the payload cap follows the verdict (only a bound row may be large)", 
 });
 
 describe("a proposable verdict with no basis fails closed", () => {
-  test("a basis-less verdict without the user-MCP marker is refused at submit with a fixed text", async () => {
-    verdict = { kind: "proposable" };
+  test("a basis-less proposable verdict is refused at submit with a fixed text", async () => {
+    verdict = { kind: "proposable" } as unknown as ActionVerdict;
     await expect(submitCapture(deps, MCP, ACT)).rejects.toThrow(
       "ERR_CAPTURE_ACTION_NOT_PROPOSABLE: github.issue.create cannot be proposed (agent_no_basis)",
     );
@@ -326,8 +335,8 @@ describe("a proposable verdict with no basis fails closed", () => {
     expect(auditRows()).toHaveLength(1);
   });
 
-  test("the user-MCP marker lets the basis-less verdict through", async () => {
-    verdict = { kind: "proposable", userMcp: true };
+  test("a legacy_user_mcp basis is a basis like any other and goes through", async () => {
+    verdict = { kind: "proposable", basis: "legacy_user_mcp" };
     const out = await submitCapture(deps, MCP, ACT);
     expect(out.state).toBe("proposed");
   });

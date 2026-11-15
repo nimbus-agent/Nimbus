@@ -11,6 +11,7 @@ import {
   clearOAuthVaultIfProviderUnused,
   sharedOAuthKey,
 } from "../../connectors/connector-vault.ts";
+import { removeDoorApprovals } from "../../connectors/connector-writes/door-approval-store.ts";
 import { extensionIdBackingServiceId } from "../../connectors/extension-sync/extension-identity.ts";
 import {
   clearRemoveIntent,
@@ -166,7 +167,13 @@ export async function handleConnectorRemove(
   ]);
 
   unregisterConnectorFromSyncScheduler(syncScheduler, id);
-  deleteUserMcpConnector(db, id);
+  // A user MCP server's agent approvals live and die with its registration (AD5a, D-5): the row and
+  // its approvals go in ONE transaction, so a row that cannot be deleted leaves them. A first-party
+  // connector's approvals are the owner's, not the registration's, and stay.
+  db.transaction(() => {
+    deleteUserMcpConnector(db, id);
+    if (USER_MCP_SERVICE_ID_PATTERN.test(id)) removeDoorApprovals(db, id);
+  })();
   if (ctx.connectorMesh !== undefined && USER_MCP_SERVICE_ID_PATTERN.test(id)) {
     // Stops the child and deletes its sandbox leaf; never throws (a locked leaf is logged).
     await ctx.connectorMesh.removeUserMcpSandbox(id);

@@ -69,7 +69,7 @@ beforeEach(() => {
     refusals: new CaptureRefusalCounter(),
     newId: () => `cap_${String(++seq).padStart(32, "0")}`,
     now: () => clock,
-    classifyAction: () => ({ kind: "proposable", userMcp: true }),
+    classifyAction: () => ({ kind: "proposable", basis: "legacy_user_mcp" }),
     isServiceConfigured: () => Promise.resolve(true),
     actionDestinationRefusal: () => undefined,
   };

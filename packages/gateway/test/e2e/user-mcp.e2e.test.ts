@@ -246,6 +246,22 @@ server.registerTool(
   { description: "Report an in-band tool error", inputSchema: {} },
   async () => ({ isError: true, content: [{ type: "text", text: "FAIL-MARKER no such thing" }] }),
 );
+// Agent door AD5a: a tool whose LISTED description the owner can change on the live server, so the
+// definition hash can be seen to change without rebuilding the binary. \`retitle\` updates the
+// registered tool in place, as a server that edits its own listing would.
+const mutable = server.registerTool(
+  "mutable",
+  { description: "mutable v1", inputSchema: { text: z.string() } },
+  async ({ text }) => ({ content: [{ type: "text", text: \`MUTABLE \${text}\` }] }),
+);
+server.registerTool(
+  "retitle",
+  { description: "Change the listed description of the mutable tool", inputSchema: { description: z.string() } },
+  async ({ description }) => {
+    mutable.update({ description });
+    return { content: [{ type: "text", text: "RETITLED" }] };
+  },
+);
 await server.connect(new StdioServerTransport());
 `;
 
@@ -843,6 +859,223 @@ describe.skipIf(!sandboxAvailable)("a scaffolded user MCP over a real gateway", 
     ).rejects.toThrow(/ERR_CAPTURE_ACTION_NOT_PROPOSABLE/);
   }, 30_000);
 
+  // --- Agent door AD5a: the owner approves a user MCP tool for agents by name; a person approves each call ---
+
+  interface ListOnlyReply {
+    listOnly: boolean;
+    approved: number;
+    writes: Array<{ toolId: string; sha12: string }>;
+    tools?: Array<{ toolId: string; sha12: string; state: string }>;
+  }
+  interface AgentStatusReply {
+    agent: {
+      checked: boolean;
+      services: Array<{
+        service: string;
+        userMcp?: boolean;
+        approved: number;
+        suspended: Array<{ toolId: string; approvedSha12: string; nowSha12: string | null }>;
+      }>;
+    };
+  }
+  const SERVICE = "mcp_echo_srv";
+  /** The first 12 hex of the approved definition hash, as the enable printed it. */
+  const approvedSha12: Record<string, string> = {};
+
+  test("AD5a: a list-only enable from a declared cli connection shows each tool with a hash prefix and asks nothing", async () => {
+    const owner = await openConnection("cli", "human");
+    const out = await owner.c.call<ListOnlyReply>("connector.writesEnable", {
+      service: SERVICE,
+      door: "agent",
+    });
+    expect(out.listOnly).toBe(true);
+    expect(out.approved).toBe(0);
+    const names = (out.tools ?? []).map((t) => t.toolId);
+    for (const n of ["echo", "probe", "fail", "mutable", "retitle"]) expect(names).toContain(n);
+    for (const t of out.tools ?? []) {
+      expect(t.sha12).toMatch(/^[0-9a-f]{12}$/);
+      expect(t.state).toBe("will_be_approved");
+    }
+    expect(owner.prompts).toEqual([]);
+    // The older, undeclared owner client cannot enable (no declared cli or ui kind).
+    expect(
+      await refusal(client.call("connector.writesEnable", { service: SERVICE, door: "agent" })),
+    ).toContain("ERR_CONNECTOR_WRITES_AGENT_CLIENT");
+    // An mcp connection (the agent itself) cannot either.
+    expect(
+      await refusal(
+        agent.call("connector.writesEnable", {
+          service: SERVICE,
+          door: "agent",
+          approve: ["echo"],
+        }),
+      ),
+    ).toContain("ERR_CONNECTOR_WRITES_AGENT_CLIENT");
+  }, 60_000);
+
+  test("AD5a: an answer that is not a person's approves nothing", async () => {
+    const owner = await openConnection("cli", undefined);
+    const err = await refusal(
+      owner.c.call("connector.writesEnable", {
+        service: SERVICE,
+        door: "agent",
+        approve: ["echo"],
+      }),
+    );
+    expect(err).toContain("ERR_CONNECTOR_WRITES_DECLINED");
+    const list = await owner.c.call<ListOnlyReply>("connector.writesEnable", {
+      service: SERVICE,
+      door: "agent",
+    });
+    expect((list.tools ?? []).every((t) => t.state === "will_be_approved")).toBe(true);
+  }, 60_000);
+
+  test("AD5a: the owner approves echo and mutable by exact name as a person", async () => {
+    const owner = await openConnection("cli", "human");
+    const out = await owner.c.call<ListOnlyReply>("connector.writesEnable", {
+      service: SERVICE,
+      door: "agent",
+      approve: ["echo", "mutable"],
+    });
+    expect(out).toMatchObject({ listOnly: false, approved: 2 });
+    for (const w of out.writes) approvedSha12[w.toolId] = w.sha12;
+    expect(owner.prompts).toHaveLength(1);
+    expect(owner.prompts[0]).toContain(SERVICE);
+    expect(owner.prompts[0]).toContain(approvedSha12["echo"] as string);
+    const status = await owner.c.call<AgentStatusReply>("connector.writesStatus", {});
+    const mine = status.agent.services.find((s) => s.service === SERVICE);
+    expect(mine).toMatchObject({ userMcp: true, approved: 2, suspended: [] });
+  }, 60_000);
+
+  test("AD5a: an agent proposes the approved echo, a person approves it, the prompt shows the server, and the audit row carries the definition hash after the proposer", async () => {
+    const sub = await agent.call<{ id: string; state: string; legacy?: boolean }>(
+      "capture.submit",
+      {
+        kind: "action",
+        payload: {
+          actionType: `${SERVICE}.echo`,
+          input: { text: "ad5a-approved" },
+          summary: "say it",
+        },
+        clientLabel: "e2e-ad5a",
+      },
+    );
+    expect(sub.state).toBe("proposed");
+    expect(sub).not.toHaveProperty("legacy");
+    // The raw accept of an approved proposal is refused whoever asks.
+    expect(await refusal(client.call("captures.accept", { id: sub.id }))).toContain(
+      "ERR_CAPTURE_FORBIDDEN_CLIENT",
+    );
+    const owner = await openConnection("cli", "human");
+    const out = await owner.c.call<{ id: string; state: string }>("approvals.approve", {
+      id: sub.id,
+    });
+    expect(out.state).toBe("executed");
+    expect(owner.prompts).toHaveLength(1);
+    const shown = owner.prompts[0] as string;
+    expect(shown).toContain(`User MCP server: ${SERVICE} (third-party code you registered on`);
+    // The prompt prints each path escaped (a backslash is doubled), never raw, and it prints the
+    // CANONICAL path the registration stored (macOS temp directories sit under a symlinked /var).
+    expect(shown).toContain(`read: ${JSON.stringify(realpathSync(grantedDir)).slice(1, -1)}`);
+    expect(shown).toContain("Tool description (the server's own text, UNVERIFIED):");
+    expect(shown).toContain('"text": "ad5a-approved"');
+    expect(shown).toContain("Requested by: an outside agent (unverified)");
+    const audit = await client.call<
+      Array<{ actionType: string; hitlStatus: string; actionJson: string }>
+    >("audit.list", { limit: 60 });
+    const row = audit.find(
+      (r) => r.actionType === `${SERVICE}.echo` && r.actionJson.includes("ad5a-approved"),
+    );
+    expect(row?.hitlStatus).toBe("approved");
+    const parsed = JSON.parse(row?.actionJson ?? "{}") as {
+      action: Record<string, unknown> & { userMcp?: { definitionSha256: string } };
+    };
+    const keys = Object.keys(parsed.action);
+    expect(keys.indexOf("userMcp")).toBeGreaterThan(keys.indexOf("proposer"));
+    expect(Object.keys(parsed.action.userMcp ?? {})).toEqual(["definitionSha256"]);
+    expect(parsed.action.userMcp?.definitionSha256).toMatch(/^[0-9a-f]{64}$/);
+    expect(
+      parsed.action.userMcp?.definitionSha256.startsWith(approvedSha12["echo"] as string),
+    ).toBe(true);
+  }, 60_000);
+
+  test("AD5a: a tool the live server re-lists with a changed description is refused as suspended, and a queued proposal fails at approval", async () => {
+    const queued = await agent.call<{ id: string }>("capture.submit", {
+      kind: "action",
+      payload: {
+        actionType: `${SERVICE}.mutable`,
+        input: { text: "queued-before-change" },
+        summary: "s",
+      },
+      clientLabel: "e2e-ad5a",
+    });
+    // The owner (the older client, which auto-approves) calls the server's own `retitle` tool: the
+    // LIVE server now lists another description for `mutable`.
+    const retitled = await client.call<CallOutcome>("connector.userMcpCall", {
+      serviceId: SERVICE,
+      tool: "retitle",
+      input: { description: "mutable v2 (changed)" },
+    });
+    expect(resultText(retitled)).toContain("RETITLED");
+
+    // A second listing of the live server asks the server again: the new description is seen.
+    expect(
+      await refusal(
+        agent.call("capture.submit", {
+          kind: "action",
+          payload: { actionType: `${SERVICE}.mutable`, input: { text: "x" }, summary: "s" },
+          clientLabel: "e2e-ad5a",
+        }),
+      ),
+    ).toContain("ERR_AGENT_TOOL_SUSPENDED");
+
+    const owner = await openConnection("cli", "human");
+    expect(await refusal(owner.c.call("approvals.approve", { id: queued.id }))).toContain(
+      "ERR_AGENT_TOOL_SUSPENDED",
+    );
+    expect(owner.prompts).toEqual([]);
+
+    const status = await owner.c.call<AgentStatusReply>("connector.writesStatus", {});
+    const mine = status.agent.services.find((s) => s.service === SERVICE);
+    expect(mine?.approved).toBe(1);
+    expect(mine?.suspended.map((t) => t.toolId)).toEqual(["mutable"]);
+    expect(mine?.suspended[0]?.approvedSha12).toBe(approvedSha12["mutable"] as string);
+    expect(mine?.suspended[0]?.nowSha12).not.toBeNull();
+
+    // Exactly one suspension audit row, however many checks saw the change.
+    const audit = await client.call<Array<{ actionType: string }>>("audit.list", { limit: 200 });
+    expect(audit.filter((r) => r.actionType === "connector.writes.agent.suspend")).toHaveLength(1);
+
+    // Only a re-approval by name clears it.
+    const again = await owner.c.call<ListOnlyReply>("connector.writesEnable", {
+      service: SERVICE,
+      door: "agent",
+      approve: ["mutable"],
+    });
+    expect(again.approved).toBe(1);
+    const ok = await agent.call<{ id: string; state: string }>("capture.submit", {
+      kind: "action",
+      payload: { actionType: `${SERVICE}.mutable`, input: { text: "after" }, summary: "s" },
+      clientLabel: "e2e-ad5a",
+    });
+    expect(ok.state).toBe("proposed");
+    await owner.c.call("approvals.decline", { id: ok.id });
+  }, 120_000);
+
+  test("AD5a: describe_actions returns the approved tool's sanitised description and nothing for the others", async () => {
+    const out = await agent.call<{
+      actions: Array<{ actionType: string; state: string; description?: string }>;
+    }>("capture.describe", {
+      actionTypes: [`${SERVICE}.echo`, `${SERVICE}.probe`],
+    });
+    const echo = out.actions.find((a) => a.actionType === `${SERVICE}.echo`);
+    expect(echo?.state).toBe("approved");
+    expect(echo?.description).toContain(`owner-registered user MCP server ${SERVICE}`);
+    const probe = out.actions.find((a) => a.actionType === `${SERVICE}.probe`);
+    expect(probe?.state).not.toBe("approved");
+    expect(probe).not.toHaveProperty("description");
+  }, 60_000);
+
   test("connector.remove deletes the sandbox leaf (or logs why it could not)", async () => {
     // The leaf existed: the calls above ran inside it.
     expect(existsSync(leaf)).toBe(true);
@@ -858,4 +1091,34 @@ describe.skipIf(!sandboxAvailable)("a scaffolded user MCP over a real gateway", 
     );
     expect(!existsSync(leaf) || logged).toBe(true);
   }, 60_000);
+
+  test("AD5a: the removal deleted the agent approvals, and the same id registered again starts with none", async () => {
+    const owner = await openConnection("cli", "human");
+    const gone = await owner.c.call<AgentStatusReply>("connector.writesStatus", {});
+    expect(gone.agent.services.find((s) => s.service === SERVICE)).toBeUndefined();
+
+    const back = await client.call<{ ok?: boolean }>("connector.addMcp", {
+      serviceId: SERVICE,
+      argv: [binary],
+      readPaths: [grantedDir],
+      modelAccess: false,
+    });
+    expect(back.ok).toBe(true);
+    const out = await owner.c.call<ListOnlyReply>("connector.writesEnable", {
+      service: SERVICE,
+      door: "agent",
+    });
+    expect((out.tools ?? []).map((t) => t.state)).not.toContain("already_approved");
+    expect((out.tools ?? []).every((t) => t.state === "will_be_approved")).toBe(true);
+    // Registered without --model and approved for nothing: the proposal is refused as before.
+    expect(
+      await refusal(
+        agent.call("capture.submit", {
+          kind: "action",
+          payload: { actionType: `${SERVICE}.echo`, input: { text: "x" }, summary: "s" },
+          clientLabel: "e2e-ad5a",
+        }),
+      ),
+    ).toContain("ERR_CAPTURE_ACTION_NOT_PROPOSABLE");
+  }, 120_000);
 });

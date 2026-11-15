@@ -204,6 +204,22 @@ describe("the consent-side veto (approved basis only)", () => {
     expect(writesOf(h.dispatched)).toHaveLength(1);
   });
 
+  test("the veto passes the stored proposal's createdAt to the door's check (so a proposal older than a user-MCP registration is vetoed)", async () => {
+    const seen: Array<number | undefined> = [];
+    const h = harness({
+      door: {
+        listServerTools: async () => ({}),
+        verifyDefinition: async (_t, at) => {
+          seen.push(at);
+          return { ok: true };
+        },
+      },
+    });
+    const prov = { ...PROV("approved"), createdAt: 1234 };
+    await h.act.execute("github.issue.create", { title: "t" }, prov);
+    expect(seen).toEqual([1234]);
+  });
+
   test("a LEGACY basis is never vetoed: an empty door table and a changed listing still dispatch", async () => {
     let verifyCalls = 0;
     const h = harness({

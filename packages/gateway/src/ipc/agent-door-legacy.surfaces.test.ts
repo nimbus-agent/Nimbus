@@ -127,6 +127,32 @@ describe("the four surfaces carry the module's text", () => {
     expect(status.legacy?.total).toBe(1);
   });
 
+  test("a user-MCP tool carries the specific line on the reply, the prompt and the status count (AD5a)", async () => {
+    basis = "legacy_user_mcp";
+    const reply = await submit("mcp_notes.append");
+    const line =
+      "Deprecated: mcp_notes.append is not approved for outside agents by name. It is accepted for now and will be refused in a later release. To keep it working run: nimbus connector writes enable mcp_notes --door agent --approve append";
+    expect(reply["deprecation"]).toBe(line);
+    expect(reply["deprecation"]).toBe(legacyNoticeFor("mcp_notes.append"));
+    expect(reply["legacy"]).toBe(true);
+    const list = (await dispatchApprovalsRpc("approvals.list", {}, ctx, OWNER)) as {
+      value: { deprecation?: string; proposals: Array<{ legacy: boolean }> };
+    };
+    expect(list.value.deprecation).toBe(LEGACY_LIST_HEADER);
+    expect(LEGACY_LIST_HEADER).toContain("--approve <tool>");
+    expect(list.value.proposals[0]?.legacy).toBe(true);
+    await dispatchApprovalsRpc("approvals.approve", { id: reply["id"] }, ctx, OWNER, consent);
+    expect((prompts[0] ?? "").split(String.fromCharCode(10))).toContain(line);
+    const status = await handleAgentWritesStatus({
+      db,
+      toolExecutor: undefined,
+      getEnforcedPolicy: () => ({ capabilitiesDisabled: new Set<string>() }),
+      now: () => 2_000,
+      clientKind: "cli",
+    } as ModelWritesDeps);
+    expect(status.legacy?.byType).toEqual({ "mcp_notes.append": 1 });
+  });
+
   test("a mail send carries the mail-send text on the reply and the prompt", async () => {
     basis = "legacy_mail_send";
     const reply = await submit("gmail.message.send");

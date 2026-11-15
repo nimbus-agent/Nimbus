@@ -228,7 +228,8 @@ export const CAPTURE_TOOL_SPECS: readonly CaptureToolSpec[] = [
       "if not approved in time. Poll its outcome with capture_status. input is the tool's arguments as " +
       "a JSON object. Call describe_actions first: it lists what this machine accepts now (the writes its owner " +
       "approved for outside agents by name, plus a few types still accepted for a limited time with a Deprecated " +
-      "warning, which a later release will refuse unless the owner approves them) and returns the description " +
+      "warning, which a later release will refuse unless the owner approves them; a tool of a server the user " +
+      "registered themselves is proposed as mcp_<id>.<tool> and is approved by name the same way) and returns the description " +
       "and input schema of the types you name. The owner's reason for declining or rejecting is never sent to you, only a fixed code.",
     schema: {
       actionType: z.string(),
@@ -270,10 +271,12 @@ export const CAPTURE_TOOL_SPECS: readonly CaptureToolSpec[] = [
       "128 characters) it also returns, for each approved type it can verify now, the description and the input " +
       "schema: ask for a type before you propose it, and build input from that schema alone. Fields Nimbus " +
       "binds itself are not in the schema; never send them. A described type can still have its input refused " +
-      "by the same checks as every proposal. The number of calls an hour is limited. Tools of servers the " +
-      "user registered themselves are not described. This tool proposes and dispatches nothing, but " +
-      "describing an approved type can start its connector, and a definition found changed is recorded " +
-      "as suspended.",
+      "by the same checks as every proposal. The number of calls an hour is limited. A tool of a server the " +
+      "user registered themselves (a type of the form mcp_<id>.<tool>, third-party code) is described only " +
+      "after the owner approved that tool for outside agents by name and its listed definition is unchanged; " +
+      "tools of such a server the owner has not approved appear as one mcp_<id>.* entry while they are still " +
+      "accepted for a limited time. This tool proposes and dispatches nothing, but describing an approved " +
+      "type can start its connector or user MCP server, and a definition found changed is recorded as suspended.",
     // Never stricter than the gateway, which is authoritative about the bounds.
     schema: { actionTypes: z.array(z.string()).optional() },
     annotations: { ...WRITE_ANNOTATIONS, readOnlyHint: true },

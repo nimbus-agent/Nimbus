@@ -61,6 +61,11 @@ import { codeUnitCompare } from "../../util/code-unit-compare.ts";
 import { ConnectorRpcError } from "../connector-rpc-shared.ts";
 import type { ClientKind } from "../server/client-kind.ts";
 import { type AgentEnableReply, handleAgentWritesEnable, parseWriteDoor } from "./agent-writes.ts";
+import {
+  handleUserMcpAgentWritesEnable,
+  isUserMcpServiceParam,
+  type UserMcpAgentEnableReply,
+} from "./agent-writes-user-mcp.ts";
 
 export interface ModelWritesDeps {
   readonly db: Database;
@@ -114,6 +119,12 @@ export interface ModelWritesDeps {
   readonly clientKind?: ClientKind;
   /** True once the human-only consent wrapper turned a non-human approval into a decline. */
   readonly agentAnswerWasNonHuman?: () => boolean;
+  /** AD5a (agent door, user MCP servers): see `AgentWritesDeps.listUserMcpDefinitions`. */
+  readonly listUserMcpDefinitions?: (
+    serviceId: string,
+  ) => Promise<Readonly<Record<string, unknown>> | undefined>;
+  /** AD5a: see `AgentWritesDeps.userMcpNetworkNote`. */
+  readonly userMcpNetworkNote?: (netHosts: readonly string[]) => string | undefined;
   readonly obsidianWriteScope?: () => {
     readonly roots: readonly string[];
     /** Per vault, its daily-note file pattern (`<vault>/<daily folder>/<format>.md`). */
@@ -383,8 +394,17 @@ function obsidianScopeFor(
 export async function handleConnectorWritesEnable(
   rec: Record<string, unknown> | undefined,
   deps: ModelWritesDeps,
-): Promise<{ service: string; maxWave: ConnectorWriteWave; writes: number } | AgentEnableReply> {
-  if (parseWriteDoor(rec?.["door"]) === "agent") return handleAgentWritesEnable(rec, deps);
+): Promise<
+  | { service: string; maxWave: ConnectorWriteWave; writes: number }
+  | AgentEnableReply
+  | UserMcpAgentEnableReply
+> {
+  if (parseWriteDoor(rec?.["door"]) === "agent") {
+    // A user-registered MCP server has its own enable (AD5a): no waves, no write rows, exact tool names.
+    return isUserMcpServiceParam(rec?.["service"])
+      ? handleUserMcpAgentWritesEnable(rec, deps)
+      : handleAgentWritesEnable(rec, deps);
+  }
   if (rec?.["approve"] !== undefined) {
     throw new ConnectorRpcError(
       -32602,

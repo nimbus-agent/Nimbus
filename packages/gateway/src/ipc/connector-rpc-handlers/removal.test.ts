@@ -9,8 +9,13 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { createRpcFixture, type RpcFixture } from "../../../test/helpers/rpc-harness.ts";
 import { insertExtensionRow } from "../../automation/extension-store.ts";
+import {
+  listDoorApprovals,
+  upsertDoorApprovals,
+} from "../../connectors/connector-writes/door-approval-store.ts";
 import { extensionIdBackingServiceId } from "../../connectors/extension-sync/extension-identity.ts";
 import { LazyConnectorMesh } from "../../connectors/lazy-mesh/mesh.ts";
+import { getUserMcpConnector, insertUserMcpConnector } from "../../connectors/user-mcp-store.ts";
 import { dbRun } from "../../db/write.ts";
 import type { ContinuityEntry } from "../../extensions/continuity/continuity-table.ts";
 import type { ExtensionManifest } from "../../extensions/manifest.ts";
@@ -688,5 +693,74 @@ describe("handleConnectorRemove — extension-backed ids refuse ERR_CONNECTOR_IS
       extensionBackingId: backing,
     });
     expect((r.value as { ok: boolean }).ok).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AD5a Task 5: a user MCP server's agent approvals live and die with its registration
+// ---------------------------------------------------------------------------
+
+describe("handleConnectorRemove — a user MCP server's door approvals (AD5a, D-5)", () => {
+  const SHA = "a".repeat(64);
+
+  function seedServer(serviceId: string): void {
+    insertUserMcpConnector(fixture.db, {
+      service_id: serviceId,
+      command: "srv",
+      args_json: "[]",
+      read_paths_json: "[]",
+      net_hosts_json: "[]",
+      model_access: 0,
+    });
+    registerConnector(serviceId);
+    upsertDoorApprovals(
+      fixture.db,
+      "agent",
+      serviceId,
+      [{ toolId: "append", definitionSha256: SHA }],
+      1,
+    );
+  }
+
+  const approvalsOf = (service: string) => listDoorApprovals(fixture.db, "agent", service);
+
+  test("removing mcp_x deletes ITS approvals and only its own", async () => {
+    seedServer("mcp_x");
+    seedServer("mcp_y");
+    upsertDoorApprovals(
+      fixture.db,
+      "agent",
+      "github",
+      [{ toolId: "github_issue_create", definitionSha256: SHA }],
+      1,
+    );
+    await handleConnectorRemove(buildCtx({ serviceId: "mcp_x" }));
+    expect(approvalsOf("mcp_x")).toEqual([]);
+    expect(getUserMcpConnector(fixture.db, "mcp_x")).toBeNull();
+    expect(approvalsOf("mcp_y")).toHaveLength(1);
+    expect(approvalsOf("github")).toHaveLength(1);
+  });
+
+  test("the approvals go in the SAME transaction as the row: a row delete that fails leaves them", async () => {
+    seedServer("mcp_x");
+    fixture.db.run(
+      "CREATE TRIGGER user_mcp_boom BEFORE DELETE ON user_mcp_connector BEGIN SELECT RAISE(ABORT, 'boom'); END",
+    );
+    await expect(handleConnectorRemove(buildCtx({ serviceId: "mcp_x" }))).rejects.toThrow();
+    expect(approvalsOf("mcp_x")).toHaveLength(1);
+    expect(getUserMcpConnector(fixture.db, "mcp_x")).not.toBeNull();
+  });
+
+  test("a first-party connector remove does not touch the door table", async () => {
+    registerConnector("slack");
+    upsertDoorApprovals(
+      fixture.db,
+      "agent",
+      "slack",
+      [{ toolId: "slack_message_post", definitionSha256: SHA }],
+      1,
+    );
+    await handleConnectorRemove(buildCtx({ serviceId: "slack" }));
+    expect(approvalsOf("slack")).toHaveLength(1);
   });
 });
