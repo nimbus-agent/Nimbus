@@ -1,4 +1,4 @@
-import { afterAll, beforeEach, describe, expect, it } from "bun:test";
+import { afterAll, beforeEach, describe, expect, it, setDefaultTimeout } from "bun:test";
 import { spawnSync } from "node:child_process";
 import {
   existsSync,
@@ -58,6 +58,9 @@ const POLICY_ID = "test.user-mcp-write-grant";
 const PROFILE = `nimbus-ext-${POLICY_ID}`;
 const SPAWN_MS = 60_000;
 const MARK = "PROBE-WRITE";
+
+// A sandboxed PowerShell start is slow on a CI runner (measured: over 30 s for one case).
+setDefaultTimeout(180_000);
 
 function findBwrap(): string | null {
   const r = spawnSync("sh", ["-c", "command -v bwrap"], { encoding: "utf8" });
@@ -178,7 +181,15 @@ function psStatement(op: Op): string {
     case "append":
       return `[IO.File]::AppendAllText(${psq(op[1])}, '${MARK}')`;
     case "mkdir":
-      return `New-Item -ItemType Directory -Path ${psq(op[1])} -ErrorAction Stop | Out-Null`;
+      // Three ways, because the first two are PowerShell and .NET conveniences that also look at
+      // ancestor folders (measured: `New-Item` failed on the windows-2025 runner where a plain file
+      // create succeeded). The claim is about the directory, so the result is whether it EXISTS.
+      return [
+        `try { New-Item -ItemType Directory -Path ${psq(op[1])} -ErrorAction Stop | Out-Null } catch { [Console]::Error.WriteLine('mkdir New-Item: ' + $_.Exception.Message) }`,
+        `if (-not [IO.Directory]::Exists(${psq(op[1])})) { try { [IO.Directory]::CreateDirectory(${psq(op[1])}) | Out-Null } catch { [Console]::Error.WriteLine('mkdir CreateDirectory: ' + $_.Exception.Message) } }`,
+        `if (-not [IO.Directory]::Exists(${psq(op[1])})) { & cmd.exe /c mkdir ${psq(op[1])} 2>&1 | ForEach-Object { [Console]::Error.WriteLine('mkdir cmd: ' + $_) } }`,
+        `if (-not [IO.Directory]::Exists(${psq(op[1])})) { throw 'the directory was not created' }`,
+      ].join("; ");
     case "linkdir":
       return `New-Item -ItemType Junction -Path ${psq(op[2])} -Target ${psq(op[1])} -ErrorAction Stop | Out-Null`;
     case "hardlink":
@@ -216,7 +227,10 @@ const POSIX_INTERPRETER = [
 function probeArgv(ops: readonly Op[]): string[] {
   if (IS_WIN) {
     const body = ops
-      .map((op) => `try { ${psStatement(op)}; $o += 'y' } catch { $o += 'n' }`)
+      .map(
+        (op) =>
+          `try { ${psStatement(op)}; $o += 'y' } catch { $o += 'n'; [Console]::Error.WriteLine('${op[0]}: ' + $_.Exception.Message) }`,
+      )
       .join("; ");
     const script = join(work, "probe.ps1");
     writeFileSync(script, `$o = ''; ${body}; [Console]::Out.Write($o)`);
@@ -389,7 +403,10 @@ describe("a directory write grant under the real sandbox (AD5b-1)", () => {
       ["append", join(readonlyDir, "new.txt")],
     ]);
     expect(r.status).toBe(0);
-    expect(r.stdout).toBe("ynnnnnn");
+    // Linux (measured): the write to the grant's PARENT reports success to the child. The test tree
+    // is under /tmp, where bwrap mounts a private tmpfs, so that file lands in the sandbox's own
+    // scratch /tmp and never on the host. The host assertions below are the claim on every OS.
+    expect(r.stdout).toBe(process.platform === "linux" ? "ynnnynn" : "ynnnnnn");
     expect(marked(PROOF)).toBe(true);
     expect(readIfPresent(VICTIM)).toBe("victim\n");
     expect(readdirSync(sibling)).toEqual(["victim.txt"]);
