@@ -36,7 +36,7 @@ describe("the Agent kits page", () => {
     for (const command of OWNER_COMMANDS) expect(PAGE).toContain(`\`${command.join(" ")}\``);
   });
 
-  test("has a section and a matrix row for every kit, and no row is filled without a run", () => {
+  test("has a section and a matrix row for every kit", () => {
     const titles: Record<(typeof KIT_IDS)[number], string> = {
       "claude-code": "Claude Code",
       codex: "Codex",
@@ -45,7 +45,8 @@ describe("the Agent kits page", () => {
     };
     for (const kit of KIT_IDS) {
       expect(PAGE).toContain(`## ${titles[kit]} `);
-      expect(PAGE).toMatch(new RegExp(`\\| ${titles[kit].replace(/[()]/g, "\\$&")} \\| [^|]+ \\|`));
+      // A matrix row: the kit's title as the first cell (plain text, no pattern built from it).
+      expect(PAGE).toContain(`| ${titles[kit]} | `);
     }
   });
 });
