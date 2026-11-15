@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794760752488,
+  "lastUpdate": 1794766606506,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
-            "name": "nimbus-release-bot[bot]",
-            "username": "nimbus-release-bot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "40569a563d8b152a9833d975dec98bb500214b20",
-          "message": "chore: release main (#1353)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>4.0.0</summary>\n\n##\n[4.0.0](https://github.com/nimbus-agent/Nimbus/compare/v3.1.0...v4.0.0)\n(2026-08-27)\n\n\n### ⚠ BREAKING CHANGES\n\n* **llm:** route the LLM by (provider, model) instead of provider kind\n([#1352](https://github.com/nimbus-agent/Nimbus/issues/1352))\n\n### Features\n\n* **llm:** route the LLM by (provider, model) instead of provider kind\n([#1352](https://github.com/nimbus-agent/Nimbus/issues/1352))\n([5ac042c](https://github.com/nimbus-agent/Nimbus/commit/5ac042c04fda879fdfd943eaacb99a09ae022cae))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
-          "timestamp": "2026-08-27T21:41:27Z",
-          "tree_id": "266c52911bf5690f409333812e66f31806b86349",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/40569a563d8b152a9833d975dec98bb500214b20"
-        },
-        "date": 1787867599317,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 333.06199290000006,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 335.7032335000011,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 293.0934617499985,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "cbd2c3467dc11e42d59ea7c6fd941c2191aaa4f2",
+          "message": "feat(gateway): a user MCP server can be given a directory to write in, approved by a person and re-checked at every start (agent door AD5b-2) (#2010)\n\nAgent door AD5b-2 (Phase 28): user MCP write grants. A user MCP server\ncan be given a directory to write in. This closes the *User-MCP write\ngrants* row carried into S4.\n\n## What a user can do now\n\n`nimbus connector add --mcp <id> --write <dir> -- <command>` lets a\nserver you register create and change files under that directory. Repeat\n`--write` for up to four directories.\n\n- Only a person can approve it, at the terminal or in the desktop app.\n`--yes`, a script and an older client are declined.\n- The prompt shows the resolved registration, each directory and a fixed\nwarning.\n- **On Windows the server can create and change files there but cannot\ndelete or rename them.** On Linux and macOS it can do all four. The\nprompt says which applies.\n- To change a write directory, remove the server and add it again. That\nalso deletes its approvals for outside agents.\n- **Before downgrading on Windows, remove any server registered with\n`--write`.** An older gateway would leave the Windows permission on the\ndirectory.\n\nNothing changes for a server registered without `--write`: its prompts,\nits stored row and its sandbox policy are what they were.\n\n## What Nimbus refuses, at registration and again every time the server\nstarts\n\nOne function, `writeDirRefusal`, runs at both points:\n\n- a link, or a path reached through one;\n- a drive or filesystem root, the home folder, a folder directly inside\nit, a hidden home folder, `~/Library`, `%APPDATA%`, `%LOCALAPPDATA%`\n(the temp folder is allowed), a folder on `PATH`;\n- a Nimbus folder, an approved infrastructure working directory, any\nregistered server's own code;\n- a directory inside a Git repository, a vault or an editor workspace;\n- a tree that holds a link, a file with a second name, a `.git`,\n`.obsidian`, `.vscode`, `.idea`, `.husky`, `.devcontainer` or\n`.terraform` entry, or more than 50,000 entries or 16 levels.\n\nIf a check fails at start, the server does not start and its health\nrecord says why. It never starts without the directory instead.\n\n## The prompts\n\nEvery approval prompt for a call to such a server shows the directories:\nthe owner's `nimbus connector call`, the model's calls in `nimbus ask`,\nand an outside agent's proposals. A call whose server's write\ndirectories cannot be shown is refused before any prompt. **An outside\nagent's call to a write-granted server is approved only by typing the\nserver id** (owner ruling OR-AD-32).\n\n## How it is built\n\n| Piece | Where |\n| --- | --- |\n| The placement rule | `connectors/write-dir-rules.ts` |\n| The column (V98, default `'[]'`) | `index/user-mcp-write-v98-sql.ts`,\n`connectors/user-mcp-store.ts` |\n| The only builder of a write grant, and the Windows ledger |\n`connectors/lazy-mesh/user-mcp-write-grant.ts` |\n| The spawn, removal and orphan paths | `connectors/lazy-mesh/mesh.ts` |\n| Registration: person-only, can-confine, release of old permissions |\n`ipc/connector-rpc.ts`, `ipc/connector-rpc-handlers/config.ts`,\n`ipc/server/dispatchers.ts` |\n| The prompts and the typed server id | `engine/executor.ts`,\n`engine/user-mcp-write-lines.ts`, `engine/user-mcp-call-block.ts` |\n| The CLI flag | `packages/cli/src/commands/connector-add-mcp-args.ts`,\n`connector-user-mcp.ts` |\n\nAlso in this PR: `enable iac` refuses a working directory that overlaps\na write directory; the Windows boot reap counts a registered user MCP\nserver's profile as live; the Windows sandbox probe attempts links,\nrenames and deletes with direct calls, so the CI runner measures them.\n\n## Owner rulings applied\n\nOR-AD-27 to OR-AD-34 (2026-11-15). One deviation, stated in the\ninvariant's bounds: the \"is it inside a repository or vault\" check stops\nbelow the home folder. A `.vscode` or `.git` directly in home is the\nowner's profile, which nearly every developer has, and counting it would\nrefuse every directory under home.\n\n## Stated bounds\n\n- Nimbus does not read, limit or undo what the server writes.\n- A running server can plant a `.git` folder or a link inside its\ndirectory. The next start is refused, but nothing stops the owner\nrunning git there first. The prompt says so.\n- On Windows a directory the owner moves keeps its permission.\n- The placement rules run when the client is created; the canonical path\nand the tree at every real spawn.\n- The client kind and the answer source are claims made on the local\nsocket.\n\n## Invariants and docs\n\nI15 text amended in `CLAUDE.md`, `GEMINI.md` and\n`docs/SECURITY-INVARIANTS.md`, with its enforcement tests in\n`security-invariants.test.ts` in the same PR. Static D10 `user-write`\nadmits the one builder. No new invariant or static-rule number, no new\nIPC method, schema V98.\n\nDocs: `docs/CHANGELOG.md`, `docs/roadmap.md`, `docs/architecture.md`,\n`docs/README.md`, `docs/cli-reference.md`, `docs/schema-reference.md`,\n`docs/sandbox.md`, and the `nimbus-db-migrations` and\n`nimbus-sandbox-and-extensions` skills.\n\n## Verification\n\n- `bun run preflight:fast`: passed.\n- Gateway suites `src/connectors`, `src/ipc`, `src/engine`,\n`src/mcp-sink`, `src/platform/sandbox`, `src/index/migrations`,\n`src/security-invariants.test.ts`, the mcp-sink and sandbox integration\ntrees; CLI `src/commands`; `scripts/structure-audit`: 24,411 passed, 0\nfailed.\n- `test/e2e/user-mcp.e2e.test.ts` on Windows, with the helper built from\nthis branch: 33 passed. A real sandboxed server writes a file inside its\ndirectory, a write beside it is denied, and a server registered without\n`--write` cannot write there.\n- The real-sandbox measurement file on Windows: 21 of 21. Linux and\nmacOS run it on their CI legs.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JmSjrCzb214jGqUcCTWNJQ\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* User-supplied MCP servers can now request write access to up to four\napproved directories when registered from a supported CLI or desktop\nconnection.\n* Writes are restricted to approved directories, which are checked again\nwhenever a server starts. Approval prompts show the granted paths;\noutside-agent calls require typing the server ID when write access is\ngranted.\n* Write controls vary by platform; on Windows, deleting and renaming are\nnot permitted. Removing a server does not undo files it has already\nwritten.\n* **Documentation**\n* Updated the CLI reference, security guidance, and release\ndocumentation with grant limits and platform-specific behavior.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->",
+          "timestamp": "2026-11-15T18:09:23Z",
+          "tree_id": "9869395da6bd223a29241e0e75cbae847788f38e",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/cbd2c3467dc11e42d59ea7c6fd941c2191aaa4f2"
+        },
+        "date": 1794766603397,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 207.081525350001,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 207.41760725000168,
             "unit": "ms"
           }
         ]
