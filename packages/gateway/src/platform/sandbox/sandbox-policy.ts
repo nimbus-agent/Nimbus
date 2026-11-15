@@ -53,6 +53,14 @@ export interface SandboxPolicy {
    */
   readonly canonicalWriteFiles?: readonly string[];
   /**
+   * Write paths the gateway declared DIRECTORIES the child may write beneath (`ExtensionManifest`'s
+   * field of the same name; a user MCP server's owner-approved write grant, I15). Each must also be
+   * in `permissions.filesystem.write` and in `canonicalWritePaths`, and never in
+   * `canonicalWriteFiles`. The sandbox wrapper refuses the spawn unless each is, right now, a real
+   * directory that is not a link and whose tree passes `scanWriteDir`. Set only by gateway code.
+   */
+  readonly canonicalWriteDirs?: readonly string[];
+  /**
    * True for a spawn of one of the iac connector's per-run profiles (D2, OR-D2-5). On Linux its
    * seccomp program answers `pidfd_send_signal` with ENOSYS instead of killing (Terraform's Go
    * runtime probes it); on Windows the wrapper releases the spawn's grants when the child exits (the
@@ -80,6 +88,9 @@ export function policyFromManifest(manifest: ExtensionManifest): SandboxPolicy {
     ...(manifest.canonicalWriteFiles === undefined
       ? {}
       : { canonicalWriteFiles: manifest.canonicalWriteFiles }),
+    ...(manifest.canonicalWriteDirs === undefined
+      ? {}
+      : { canonicalWriteDirs: manifest.canonicalWriteDirs }),
   };
 }
 
@@ -108,6 +119,42 @@ export function writeFileDrift(
     try {
       const st = lstat(p);
       if (!st.isFile() || st.isSymbolicLink() || st.nlink !== 1) return p;
+    } catch {
+      return p;
+    }
+  }
+  return undefined;
+}
+
+/** What `writeDirDrift` needs of an `lstat`. */
+export interface DirKind {
+  isDirectory(): boolean;
+  isSymbolicLink(): boolean;
+}
+
+/**
+ * The first `canonicalWriteDirs` entry that is not granted write, is not also a canonicalised write
+ * path, is also declared a single file, or is not, right now, a real directory (it is missing, a
+ * file, or a link, junction or other reparse point AT the path), or `undefined`. The sandbox wrapper
+ * refuses the spawn on one: a link swapped in at a declared directory's path between the gateway's
+ * preparation and this spawn would otherwise hand the grant to the link's target. `lstat` never
+ * follows the path, so a link to a directory is refused. Stated bound: a swap after this check and
+ * before the runner applies the grant is not seen here (the Windows helper re-checks the directory).
+ */
+export function writeDirDrift(
+  policy: SandboxPolicy,
+  lstat: (p: string) => DirKind,
+): string | undefined {
+  const dirs = policy.canonicalWriteDirs ?? [];
+  if (dirs.length === 0) return undefined;
+  const write = new Set(policy.permissions.filesystem.write);
+  const canonical = new Set(policy.canonicalWritePaths ?? []);
+  const files = new Set(policy.canonicalWriteFiles ?? []);
+  for (const p of dirs) {
+    if (!write.has(p) || !canonical.has(p) || files.has(p)) return p;
+    try {
+      const st = lstat(p);
+      if (st.isSymbolicLink() || !st.isDirectory()) return p;
     } catch {
       return p;
     }
@@ -297,6 +344,9 @@ export function parseSandboxPolicy(json: string): SandboxPolicy {
     ...(o["canonicalWriteFiles"] === undefined
       ? {}
       : { canonicalWriteFiles: strings(o["canonicalWriteFiles"], "policy.canonicalWriteFiles") }),
+    ...(o["canonicalWriteDirs"] === undefined
+      ? {}
+      : { canonicalWriteDirs: strings(o["canonicalWriteDirs"], "policy.canonicalWriteDirs") }),
     ...(o["iacProfile"] === undefined
       ? {}
       : { iacProfile: booleanField(o["iacProfile"], "policy.iacProfile") }),

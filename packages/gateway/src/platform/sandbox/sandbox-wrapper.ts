@@ -24,6 +24,7 @@ import {
 } from "./sandbox-policy.ts";
 import { createSandboxRunner, type SandboxRunner } from "./sandbox-runner.ts";
 import { profileNameFor } from "./win32-argv.ts";
+import { writeDirGrantRefusal } from "./write-grant-check.ts";
 
 function signalNumber(signal: string): number {
   return (osConstants.signals as Record<string, number | undefined>)[signal] ?? 0;
@@ -235,6 +236,13 @@ export async function runSandboxWrapper(
   const notAFile = writeFileDrift(policy, (p) => lstatSync(p));
   if (notAFile !== undefined) {
     fatal(`refusing to spawn: the write grant ${notAFile} is no longer a single regular file`);
+  }
+  // A path the gateway declared a DIRECTORY (a user MCP server's write grant, AD5b) must still be a
+  // real directory, not a link, and its tree must hold no link, no multiply-linked file and no
+  // marker folder: the grant reaches file objects, so what sits in the directory decides its reach.
+  const badDir = writeDirGrantRefusal(policy);
+  if (badDir !== undefined) {
+    fatal(badDir);
   }
 
   const childEnv = wrapperChildEnv(process.env);

@@ -56,6 +56,14 @@ export type ExtensionManifest = RegistryExtensionManifest & {
    * name. Same provenance rule: set only by gateway code, never read from a manifest file.
    */
   canonicalWriteFiles?: readonly string[];
+  /**
+   * The write paths the gateway DECLARES directories the child may write beneath (a user MCP
+   * server's owner-approved write grant, I15, Phase 28 AD5b). Each is also in `canonicalWritePaths`.
+   * The sandbox wrapper refuses the spawn unless each is still a real directory, not a link, whose
+   * tree holds no link, no multiply-linked file and no marker folder. Same provenance rule: set only
+   * by gateway code, never read from a manifest file.
+   */
+  canonicalWriteDirs?: readonly string[];
 };
 
 export const EXTENSION_MANIFEST_FILENAME = "nimbus.extension.json";

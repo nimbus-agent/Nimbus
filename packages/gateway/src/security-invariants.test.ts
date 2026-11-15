@@ -1787,6 +1787,47 @@ describe("I15 — SandboxRunner is intrinsic to every extension spawn", () => {
       expect(w.slice(check, check + 200)).toMatch(/if \(drifted !== undefined\) \{\s*fatal\(/);
     });
 
+    // Phase 28 AD5b-1: the mechanism for a declared write DIRECTORY, with no producer yet.
+    test("a declared write directory is checked by the wrapper BEFORE the runner, and nothing in production declares one", async () => {
+      const w = stripComments(
+        await read("packages/gateway/src/platform/sandbox/sandbox-wrapper.ts"),
+      );
+      const check = w.indexOf("writeDirGrantRefusal(policy)");
+      expect(check).toBeGreaterThan(w.indexOf("writeFileDrift(policy,"));
+      expect(check).toBeLessThan(w.indexOf("createSandboxRunner("));
+      expect(w.slice(check, check + 120)).toMatch(
+        /if \(badDir !== undefined\) \{\s*fatal\(badDir\);/,
+      );
+      // The one function checks the kind first and the tree second, and only `clean` passes.
+      const g = stripComments(
+        await read("packages/gateway/src/platform/sandbox/write-grant-check.ts"),
+      );
+      expect(g.indexOf("writeDirDrift(policy,")).toBeGreaterThan(0);
+      expect(g.indexOf("writeDirDrift(policy,")).toBeLessThan(g.indexOf("scan(dir)"));
+      expect(g).toMatch(/if \(verdict !== "clean"\) \{\s*return `refusing to spawn:/);
+      // Every runner refuses a declared write path that no longer canonicalises to itself.
+      const linux = stripComments(await read("packages/gateway/src/platform/sandbox/linux.ts"));
+      expect(linux).toMatch(/assertDeclaredWriteGrantsUnchanged\(opts\.policy\);/);
+      const canon = stripComments(
+        await read("packages/gateway/src/platform/sandbox/canonical-path.ts"),
+      );
+      expect(canon).toMatch(/assertDeclaredWriteGrantsUnchanged\(policy, canonical\);\s*return \{/);
+      // No producer: a user MCP spawn still has an empty write list, and no file under connectors/
+      // names the declaration (static D10 `user-write` holds the full list).
+      const userMcp = await read("packages/gateway/src/connectors/lazy-mesh/user-mcp.ts");
+      expect(stripComments(userMcp)).toMatch(/write: \[\]/);
+      expect(userMcp).not.toContain("canonicalWriteDirs");
+      // The Windows helper refuses a declared directory that is not a real one, then grants it
+      // inheritably with no DELETE right.
+      const helper = await read("packages/gateway/src-native/sandbox-helper-win32/main.c");
+      expect(helper).toMatch(/rc = require_real_directory\(o->write_dirs\[k\]\);/);
+      expect(helper).toMatch(
+        /grant_path\(o->write_dirs\[k\], sid,\s*FILE_GENERIC_READ \| FILE_GENERIC_EXECUTE \| FILE_GENERIC_WRITE,\s*SUB_CONTAINERS_AND_OBJECTS_INHERIT\)/,
+      );
+      // No delete right is OR-ed into any grant (the names appear in comments only).
+      expect(helper).not.toMatch(/\|\s*(?:DELETE|FILE_DELETE_CHILD)\b/);
+    });
+
     test("the Windows revoke before a grant is the fail-closed one, never the best-effort release", async () => {
       const mesh = stripComments(await read("packages/gateway/src/connectors/lazy-mesh/mesh.ts"));
       expect(mesh).toMatch(

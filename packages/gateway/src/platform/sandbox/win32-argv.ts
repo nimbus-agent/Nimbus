@@ -1,4 +1,4 @@
-import { declaredWriteFiles } from "./canonical-path.ts";
+import { declaredWriteDirs, declaredWriteFiles } from "./canonical-path.ts";
 import type { SandboxPolicy } from "./sandbox-policy.ts";
 
 /**
@@ -29,8 +29,13 @@ export function buildHelperArgv(policy: SandboxPolicy, opts: { cwd: string }): s
   // file only, with no inheritance, and refuses if it is not a regular file. Never guessed from disk.
   // Fails closed: a declared file missing from the write list refuses the spawn (it throws).
   const files = declaredWriteFiles(policy);
+  // A path the gateway declared a DIRECTORY (a user MCP server's write grant) is passed as one
+  // (`--grant-write-dir`): the same inheritable grant, but the helper refuses a path that is not a
+  // real directory. A path declared both THROWS.
+  const dirs = declaredWriteDirs(policy);
   for (const p of policy.permissions.filesystem.write) {
-    argv.push(files.has(p) ? "--grant-write-file" : "--grant-write", p);
+    const fileOrPlain = files.has(p) ? "--grant-write-file" : "--grant-write";
+    argv.push(dirs.has(p) ? "--grant-write-dir" : fileOrPlain, p);
   }
   argv.push("--");
   return argv;

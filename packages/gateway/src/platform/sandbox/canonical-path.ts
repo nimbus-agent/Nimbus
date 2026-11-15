@@ -52,17 +52,34 @@ export function canonicalPath(p: string): string {
  * matching its declaration and fall back to a folder grant (a macOS `subpath`, an inheritable
  * Windows ACE). The declarations are carried through with the same mapping.
  */
-export function canonicalPolicyPaths(
+/**
+ * THROWS when a write path the gateway canonicalised or declared (`canonicalWritePaths`,
+ * `canonicalWriteFiles`, `canonicalWriteDirs`) no longer canonicalises to itself. Every runner calls
+ * it on its spawn path: the macOS and Windows runners through `canonicalPolicyPaths`, the Linux
+ * runner directly (it binds the policy's paths as given and maps nothing).
+ */
+export function assertDeclaredWriteGrantsUnchanged(
   policy: SandboxPolicy,
   canonical: (p: string) => string = canonicalPath,
-): SandboxPolicy {
-  for (const p of [...(policy.canonicalWritePaths ?? []), ...(policy.canonicalWriteFiles ?? [])]) {
+): void {
+  for (const p of [
+    ...(policy.canonicalWritePaths ?? []),
+    ...(policy.canonicalWriteFiles ?? []),
+    ...(policy.canonicalWriteDirs ?? []),
+  ]) {
     if (canonical(p) !== p) {
       throw new Error(
         `refusing to spawn: the write grant ${p} changed since the gateway decided it`,
       );
     }
   }
+}
+
+export function canonicalPolicyPaths(
+  policy: SandboxPolicy,
+  canonical: (p: string) => string = canonicalPath,
+): SandboxPolicy {
+  assertDeclaredWriteGrantsUnchanged(policy, canonical);
   return {
     ...policy,
     permissions: {
@@ -78,6 +95,9 @@ export function canonicalPolicyPaths(
     ...(policy.canonicalWriteFiles === undefined
       ? {}
       : { canonicalWriteFiles: policy.canonicalWriteFiles.map(canonical) }),
+    ...(policy.canonicalWriteDirs === undefined
+      ? {}
+      : { canonicalWriteDirs: policy.canonicalWriteDirs.map(canonical) }),
   };
 }
 
@@ -94,4 +114,27 @@ export function declaredWriteFiles(policy: SandboxPolicy): ReadonlySet<string> {
     }
   }
   return new Set(policy.canonicalWriteFiles ?? []);
+}
+
+/**
+ * The declared write DIRECTORIES (`canonicalWriteDirs`), each of which MUST be in the final write
+ * list and must not also be a declared file. Either THROWS (the runner refuses the spawn): a path
+ * declared a directory is never granted as anything else.
+ */
+export function declaredWriteDirs(policy: SandboxPolicy): ReadonlySet<string> {
+  const write = new Set(policy.permissions.filesystem.write);
+  const files = new Set(policy.canonicalWriteFiles ?? []);
+  for (const p of policy.canonicalWriteDirs ?? []) {
+    if (!write.has(p)) {
+      throw new Error(
+        `refusing to spawn: the declared directory grant ${p} is not in the write list`,
+      );
+    }
+    if (files.has(p)) {
+      throw new Error(
+        `refusing to spawn: the write grant ${p} is declared both a file and a directory`,
+      );
+    }
+  }
+  return new Set(policy.canonicalWriteDirs ?? []);
 }

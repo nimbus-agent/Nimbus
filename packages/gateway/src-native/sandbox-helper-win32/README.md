@@ -83,6 +83,7 @@ mutex is taken over. Proven by `test/integration/platform/sandbox/win32-dacl-loc
   |---|---|---|---|
   | `--cwd` (the leaf) | Read + Execute + Write | `SUB_CONTAINERS_AND_OBJECTS_INHERIT` | **fail closed** — aborts the spawn with exit `66` |
   | `--grant-read` / `--grant-write` paths | Read+Execute, or Read+Execute+Write | `SUB_CONTAINERS_AND_OBJECTS_INHERIT` | **fail closed** — aborts the spawn with exit `66` |
+  | `--grant-write-dir` paths (a directory the gateway DECLARED one: a user MCP server's owner-approved write grant) | Read + Execute + Write (no `DELETE`, no `FILE_DELETE_CHILD`: the child can create and change, not delete or rename) | `SUB_CONTAINERS_AND_OBJECTS_INHERIT` | **fail closed** — exit `66`, also when the path is missing, is not a directory, or is a reparse point (a junction, a symlink) |
   | anything else (`--cwd`'s ancestors, policy paths' ancestors) | — (no grant, ever) | n/a | n/a |
 
   The leaf and a policy path both inherit because each one's whole subtree is what it
