@@ -1,4 +1,5 @@
 export { runAdmin } from "./admin.ts";
+export { runAgentCmd } from "./agent-cmd.ts";
 export { runApprovalsCmd } from "./approvals.ts";
 export { runApproveCmd } from "./approve.ts";
 export { runAsk } from "./ask.ts";

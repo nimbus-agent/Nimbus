@@ -1,7 +1,8 @@
 /**
  * What the agent door does NOT guard (Phase 28, spec section 7.8; owner ruling OR-AD-6).
  *
- * ONE source for the sentences. The README, the security page and the docs site carry them
+ * ONE source for the sentences. The README, the security page, the docs site's safety page and
+ * its Agent kits page carry them
  * verbatim, and `scripts/agent-kits/bounds-copy.test.ts` fails when any of them drifts from this
  * string. Change the wording here and in those files together, never in one place.
  */
@@ -17,4 +18,5 @@ export const AGENT_DOOR_BOUNDS_FILES = [
   "docs/README.md",
   "docs/SECURITY.md",
   "packages/docs/src/content/docs/user-guide/hitl-and-safety.mdx",
+  "packages/docs/src/content/docs/user-guide/agent-kits.mdx",
 ] as const;
