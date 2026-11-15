@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794644007602,
+  "lastUpdate": 1794755480545,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
-            "name": "nimbus-release-bot[bot]",
-            "username": "nimbus-release-bot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "96ba9f07d31490911a9574c5cc7a8826fabab4cf",
-          "message": "chore: release main (#1351)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>3.1.0</summary>\n\n##\n[3.1.0](https://github.com/nimbus-agent/Nimbus/compare/v3.0.0...v3.1.0)\n(2026-08-27)\n\n\n### Features\n\n* **ci:** gate on native dependencies reaching the gateway binary\n([#1350](https://github.com/nimbus-agent/Nimbus/issues/1350))\n([b3ff071](https://github.com/nimbus-agent/Nimbus/commit/b3ff071c02caef844c0b8bf243e5c7b0fd4ea71b))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
-          "timestamp": "2026-08-27T20:14:45+03:00",
-          "tree_id": "9af99d6404310b863ec00046ce866e49b5ba84ef",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/96ba9f07d31490911a9574c5cc7a8826fabab4cf"
-        },
-        "date": 1787851425950,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 281.1846489500011,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 285.4330446000029,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 189.71862705000495,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "43e17fd23c9aacb791627467424c05a0ce6aea17",
+          "message": "feat(gateway): let the owner approve user MCP tools for outside agents by name, and hold every agent call to that approval (agent door AD5a) (#2007)\n\nAgent door AD5a (Phase 28): user MCP servers through the door. The owner\ncan approve named tools of a user MCP server for outside agents, and\nevery call an agent proposes is then held to that approval. A user MCP\nserver is third-party code the owner registered; it runs in the\ngateway's sandbox.\n\n## Deprecation, read this first\n\nUntil now an outside agent could propose a call to any tool of a user\nMCP server that has the owner's `--model` grant. That keeps working for\nnow, flagged and warned, and a later release will refuse it. To keep a\ntool working, approve it for agents by name:\n\n`nimbus connector writes enable mcp_<id> --door agent --approve <tool>`\n\nBy owner ruling OR-AD-26, the old rule is removed only after a release\ncontaining this change has been published.\n\n## What changes\n\n1. **The grant.** `nimbus connector writes enable mcp_<id> --door agent\n--approve <tool>` approves exact tool names, per OR-AD-22 and OR-AD-23.\nIt is stored in the existing per-door table; there is no flag at\nregistration and no migration. Without `--approve` the command lists the\nserver's tools with a hash prefix each and asks nothing. Only a person\non a terminal or desktop connection can approve it.\n2. **Independent of the model grant.** A tool approved for agents needs\nno `--model` grant, and a `--model` grant approves nothing for agents.\n3. **Enforcement for an approved tool.** Its listed definition is hashed\nat submit, at approval, and once more after the owner answers. A changed\nor unreadable definition suspends the tool, with one audit row, until\nthe owner approves it again by name. A tool that is missing from the\nlisting, or a server that cannot be listed, is refused without a mark.\nOnly `nimbus approvals <id>` with a person's answer can approve the\ncall; the raw accept method, `--yes` and scripts are refused. There is\nno typed confirmation, per OR-AD-24.\n4. **The approval prompt.** For an agent's user-MCP call the prompt now\nnames the server as third-party code the owner registered and when, its\nsandbox reach, the tool, when it was approved for agents and its hash\nprefix, and the server's own description marked UNVERIFIED, before the\nexact input and the proposer block. Every server-supplied and\nagent-supplied string is escaped. A model-origin or owner call shows\nexactly what it showed before.\n5. **`describe_actions`.** An approved, verified user-MCP tool is\ndescribed with its sanitised description and rebuilt schema, per\nOR-AD-25. Legacy, unapproved, suspended and missing tools carry neither.\n6. **Lifecycle.** Removing a server deletes its agent approvals in the\nsame transaction; re-adding it starts with none. A proposal older than\nthe server's current registration is refused, on both the approved and\nthe legacy basis.\n7. **Audit row.** An approved agent call records the definition hash\nafter the proposer. Legacy, model and owner rows are byte-identical to\nbefore.\n8. **Status.** `nimbus connector writes status` gains a section for user\nMCP servers: approved count, suspended tools, tools not listed now, and\nservers that could not be listed.\n9. **Rules.** The I42, I11, I28 and I58 text is amended and two clauses\nare added to static rule D49, with their tests in the same commit as the\ncode.\n\n## Stated bounds\n\n- The hash covers what the server lists, not what its code does.\n- A submit, an approval or a describe of an approved tool starts the\nthird-party server in its sandbox, and so does `status` from the owner's\nterminal. A legacy, unapproved, suspended or missing tool never starts\none.\n- A listing has a gateway deadline of 45 seconds. Past it the tool is\ntreated as not listable and refused, with no suspension.\n- Approving third-party code for one agent call is a single keystroke by\na person.\n- The client kind and the answer source are the client's own claims on\nthe local socket.\n- A server's read and network grants cannot be changed in place; a\nchange is a remove and re-add, which deletes the approvals.\n- The registration comparison uses wall-clock times.\n- Prompt text escapes backslashes, so a Windows path is shown with them\ndoubled.\n- The list-only output shows at most 200 tools and says how many it left\nout.\n\n## Not in this PR\n\nUser-MCP write grants and the I15 amendment are AD5b. A user MCP server\nstill has no write grant beyond its own sandbox directory. The roadmap\nrow for this item stays open.\n\n## Verification\n\nRun locally on Windows, one at a time:\n\n- `bun run typecheck`, `typecheck:tests` with 0 new errors, `bun run\npreflight:fast`: passed.\n- Gateway `connector-writes`, `lazy-mesh`, `engine`, `ipc`, `mcp-sink`,\nthe whole `security-invariants.test.ts`, `test/integration/mcp-sink`,\nand the CLI tests of this change, in one run: 12388 pass, 0 fail.\n- `test/e2e/user-mcp.e2e.test.ts` against a real gateway and the real\nsandboxed fixture server: 25 pass, 1 skip that is CI-only. It shows that\na second listing of a live server asks the server again: a description\nchanged in place was caught and the tool suspended.\n- `scripts/structure-audit`: 1618 pass. `audit:invariants`,\n`audit:status-drift`, `audit:doc-refs`, `audit:boundaries`: clean.\n`cargo test allowlist_`: 41 pass, run before the review fixes.\n- Not run locally: the whole-repo suites and the Linux coverage floor.\n\nAn adversarial read-only review traced ten properties and found no\nblocking issue; its findings are fixed in the last commit. Red-proofs\nwere recorded for the independence of the two grants, tool identity\nacross servers, each step of the verdict, the definition check and its\nre-read, the missing-tool rule, the lifecycle deletes, the human-only\nrule, each step of the enable's order, the escaping in both prompts,\ndescribe's listing order, the listing deadline, the earlier-registration\nrefusal on the legacy basis, and each new static clause.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Owners can enable outside-agent access to selected tools on registered\nuser MCP servers by approving exact tool names.\n* Approval prompts show tool details and sandbox access; each approved\ncall requires owner consent.\n* Approved tool definitions are checked before use. Changed definitions\nsuspend approval until the tool is reviewed again.\n* The CLI can list tools and approval states without approving them.\nApproved tools can be described to agents; limited legacy access remains\nfor some unapproved tools.\n* Tool listings share a 45-second deadline, and status and audit records\nshow relevant approval details.\n\n* **Bug Fixes**\n* Removing a user MCP server also removes its tool approvals; failed\nremoval preserves the registration and approvals.\n\n* **Documentation**\n* Updated guides and command references to explain approval flows,\nlegacy behavior, security checks, and current limitations.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Sonnet 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-15T15:04:05Z",
+          "tree_id": "1647f2c4b9c7df8ff9d7516ccc52d812fc348720",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/43e17fd23c9aacb791627467424c05a0ce6aea17"
+        },
+        "date": 1794755477099,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 193.72443215,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 192.46639970000177,
             "unit": "ms"
           }
         ]
