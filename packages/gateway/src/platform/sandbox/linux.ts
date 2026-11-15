@@ -12,7 +12,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import pino from "pino";
 
-import { assertDeclaredWriteGrantsUnchanged } from "./canonical-path.ts";
+import {
+  assertDeclaredWriteGrantsUnchanged,
+  declaredWriteDirs,
+  declaredWriteFiles,
+} from "./canonical-path.ts";
 
 import {
   type ForwarderSessionOpts,
@@ -617,6 +621,10 @@ export function createLinuxSandboxRunner(
       // the gateway canonicalised or declared must still be that path (the check the macOS and
       // Windows runners make inside `canonicalPolicyPaths`); a swapped-in link refuses the spawn.
       assertDeclaredWriteGrantsUnchanged(opts.policy);
+      // The same declarations the macOS and Windows runners check: a declared file or directory
+      // must be in the write list, and never both. Each THROWS, so the spawn is refused.
+      declaredWriteFiles(opts.policy);
+      declaredWriteDirs(opts.policy);
       // Only a helper that is not there at all takes the documented fallback.
       const mode = decideNetworkMode(opts.policy, { helperAvailable: HELPER_PATH !== null });
       // OR-D2-5: only an iac profile (`iacProfile`, set by `wrapIacServerSpec` alone) gets the

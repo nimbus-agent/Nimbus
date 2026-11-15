@@ -81,6 +81,9 @@ export function scanWriteDir(root: string, deps: WriteDirScanDeps = {}): WriteDi
   const readNames = deps.readNames ?? ((dir: string) => readdirSync(dir));
   const lstat = deps.lstat ?? ((p: string) => lstatSync(p));
   const limits = deps.limits ?? WRITE_DIR_SCAN_LIMITS;
+  // The directory itself, or a folder it sits in, named a marker: a grant on `.git/hooks` or on
+  // `.obsidian` IS the thing the rule exists to refuse, and nothing beneath it would say so.
+  if (root.split(/[\\/]/).some((segment) => isWriteDirMarkerName(segment))) return "marker";
   const counter = { examined: 0 };
   let level: string[] = [root];
   let depth = 0;

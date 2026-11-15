@@ -118,6 +118,23 @@ describe("scanWriteDir on a real tree", () => {
     expect(scanWriteDir(both)).toBe("multi-link");
   });
 
+  test("a directory that IS a marker, or sits inside one, is a marker whatever it holds", () => {
+    const d = dir();
+    mkdirSync(join(d, ".git", "hooks"), { recursive: true });
+    mkdirSync(join(d, ".Obsidian", "plugins", "x"), { recursive: true });
+    expect(scanWriteDir(join(d, ".git"))).toBe("marker");
+    expect(scanWriteDir(join(d, ".git", "hooks"))).toBe("marker");
+    expect(scanWriteDir(join(d, ".Obsidian", "plugins", "x"))).toBe("marker");
+    // Decided from the path alone: nothing is read.
+    expect(
+      scanWriteDir(join("repo", ".vscode", "out"), {
+        readNames: () => {
+          throw new Error("never called");
+        },
+      }),
+    ).toBe("marker");
+  });
+
   test("a directory that does not exist is unreadable, not clean", () => {
     expect(scanWriteDir(join(root, "does-not-exist"))).toBe("unreadable");
   });

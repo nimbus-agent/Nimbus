@@ -412,7 +412,9 @@ describe("a directory write grant under the real sandbox (AD5b-1)", () => {
         ["rename", SOURCE, join(grant, "moved-in.txt")],
       ]);
       expect(r.status).toBe(0);
-      expect(r.stdout).toHaveLength(6);
+      // Windows: the child cannot even create the junction. Elsewhere it creates the link, and
+      // every write through it and every rename out or in is refused.
+      expect(r.stdout).toBe(IS_WIN ? "ynnnnn" : "yynnnn");
       expect(marked(PROOF)).toBe(true);
       // The security claim, read from the host: nothing outside the grant changed.
       expect(readIfPresent(VICTIM)).toBe("victim\n");
@@ -459,8 +461,7 @@ describe("a directory write grant under the real sandbox (AD5b-1)", () => {
         ["rmdir", grant],
       ]);
       expect(r.status).toBe(0);
-      expect(r.stdout).toHaveLength(4);
-      expect(r.stdout.startsWith("y")).toBe(true);
+      expect(r.stdout).toBe("ynnn");
       // The same directory object is still at the granted path, and it went nowhere else.
       expect(lstatSync(grant).isDirectory()).toBe(true);
       expect(statSync(grant).ino).toBe(before);
@@ -607,6 +608,9 @@ describe("a directory write grant under the real sandbox (AD5b-1)", () => {
       );
       expect(r.status).toBe(0);
       expect(explicitAces(grant).length).toBeGreaterThan(0);
+      // Measured: the inheritable grant does not travel through the junction.
+      expect(onTarget).toEqual([]);
+      expect(beneath).toEqual([]);
       // Whatever the measurement says, the tree rule is what keeps this directory from a grant.
       expect(scanWriteDir(grant)).toBe("link");
       spawnSync(WIN_HELPER, ["--revoke-grants", "--profile", PROFILE, "--path", sibling], {

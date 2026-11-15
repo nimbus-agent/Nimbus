@@ -201,5 +201,10 @@ describe("the write-grant assertions every runner makes (Phase 28 AD5b-1)", () =
     expect(src.indexOf("return spawnBehindForwarder(", call)).toBeGreaterThan(call);
     expect(src.indexOf("return spawnWithoutForwarder(", call)).toBeGreaterThan(call);
     expect(src.lastIndexOf("return spawnBehindForwarder(", call)).toBe(-1);
+    for (const check of ["declaredWriteFiles(opts.policy);", "declaredWriteDirs(opts.policy);"]) {
+      const at = src.indexOf(check);
+      expect(at).toBeGreaterThan(call);
+      expect(src.indexOf("return spawnBehindForwarder(", at)).toBeGreaterThan(at);
+    }
   });
 });
