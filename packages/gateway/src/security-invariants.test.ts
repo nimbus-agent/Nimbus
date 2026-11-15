@@ -1859,9 +1859,16 @@ describe("I15 — SandboxRunner is intrinsic to every extension spawn", () => {
         const prepare = mesh.slice(mesh.indexOf("private prepareUserMcpSpawn("));
         const refusal = prepare.slice(0, prepare.indexOf("\n  }\n"));
         // A live client is left alone BEFORE anything is revoked or read.
-        expect(
-          refusal.indexOf("getLazyClient(userMcpMeshKey(row.service_id)) !== undefined"),
-        ).toBeLessThan(refusal.indexOf("prepareUserMcpWriteGrant("));
+        // Both must EXIST (a missing guard would be index -1 and pass a bare order check), the
+        // guard must return before the builder is reached, and it comes first.
+        const guard = refusal.indexOf(
+          "getLazyClient(userMcpMeshKey(row.service_id)) !== undefined",
+        );
+        const builder = refusal.indexOf("prepareUserMcpWriteGrant(");
+        expect(guard).toBeGreaterThan(0);
+        expect(builder).toBeGreaterThan(0);
+        expect(guard).toBeLessThan(builder);
+        expect(refusal.slice(guard, builder)).toMatch(/return NO_USER_MCP_WRITE_GRANT;/);
         expect(refusal).toMatch(/return undefined;\s*\}\);/);
       });
 
@@ -1874,7 +1881,7 @@ describe("I15 — SandboxRunner is intrinsic to every extension spawn", () => {
           "storedWriteDirs(row,",
           'writeDirRefusal(dir, "spawn", deps.writeDir)',
           "deps.canConfine(policyFor(",
-          "settleWindowsLedger(row.service_id,",
+          "await settleWindowsLedger(",
           "return { ok: true, grant };",
         ].map((needle) => body.indexOf(needle));
         expect(order.every((i) => i > 0)).toBe(true);
@@ -1975,6 +1982,8 @@ describe("I15 — SandboxRunner is intrinsic to every extension spawn", () => {
         const order = [
           "assertWriteGrantRegistrable(ctx, resolved);",
           'toolExecutor.gate({ type: "connector.addMcp", payload })',
+          // After the answer the registration must still resolve to what was approved.
+          "assertRegistrationUnchanged(ctx, resolved);",
           "await assertUserMcpGrantsClean(ctx, resolved.serviceId);",
           "return handleConnectorAddMcp(ctx, resolved);",
         ].map((needle) => body.indexOf(needle));

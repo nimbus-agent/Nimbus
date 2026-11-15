@@ -4,7 +4,7 @@ import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { delimiter, join } from "node:path";
+import { delimiter, join, resolve } from "node:path";
 
 import { formatConsentPrompt } from "../../engine/executor.ts";
 import { USER_MCP_WRITE_HEADER } from "../../engine/user-mcp-write-lines.ts";
@@ -125,13 +125,30 @@ describe("productionWriteDirDeps", () => {
     );
   });
 
-  test("PATH is split with the host delimiter; Windows also reads Path; an unset one is empty", () => {
-    expect(deps("linux", { PATH: ["/usr/bin", "/opt/bin"].join(delimiter) }).pathEntries).toEqual([
-      "/usr/bin",
-      "/opt/bin",
+  test("PATH is split with the host delimiter and every entry is resolved; Windows also reads Path", () => {
+    const cwd = resolve("gateway-cwd");
+    const abs = resolve("/opt/bin");
+    const withCwd = (env: Record<string, string | undefined>) =>
+      productionWriteDirDeps({
+        paths: PATHS,
+        platform: process.platform,
+        listRows: () => [],
+        iacWorkdirs: () => [],
+        envVar: (name) => env[name],
+        cwd: () => cwd,
+      });
+    // An absolute entry is itself; a RELATIVE one and an EMPTY one name a folder under the
+    // gateway's working directory, where programs are looked up too.
+    expect(withCwd({ PATH: [abs, "tools", ""].join(delimiter) }).pathEntries).toEqual([
+      abs,
+      resolve(cwd, "tools"),
+      cwd,
     ]);
-    expect(deps("win32", { Path: "C:/a" }).pathEntries).toEqual(["C:/a"]);
-    expect(deps("linux", {}).pathEntries).toEqual([""]);
+    expect(withCwd({ Path: abs }).pathEntries).toEqual([abs]);
+    // Unset: the one empty entry, which is the working directory.
+    expect(withCwd({}).pathEntries).toEqual([cwd]);
+    // With no seam the real working directory is used.
+    expect(deps(process.platform, { PATH: "tools" }).pathEntries).toEqual([resolve("tools")]);
   });
 
   test("the application-data folders are named on Windows only, and only when set", () => {

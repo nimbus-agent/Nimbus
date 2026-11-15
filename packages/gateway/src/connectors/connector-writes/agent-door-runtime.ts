@@ -211,6 +211,7 @@ export const DEFINITION_REFUSALS = Object.freeze({
     "the server was registered again while you were deciding; ask the agent to propose it again",
   reapproved: "the approval changed while you were deciding; approve the proposal again",
   noLongerAllowed: "policy or the owner's grants no longer allow agents this call",
+  writeUnknown: "what this server's code may write could not be read",
 });
 
 /**
@@ -665,6 +666,16 @@ export function createAgentDoor(deps: AgentDoorDeps): AgentDoor {
     }
   };
 
+  /** A JSON array of strings, or `undefined` for anything else (never a silent empty list). */
+  const strictStringArray = (json: string): readonly string[] | undefined => {
+    try {
+      const v: unknown = JSON.parse(json);
+      return Array.isArray(v) && v.every((x): x is string => typeof x === "string") ? v : undefined;
+    } catch {
+      return undefined;
+    }
+  };
+
   const userMcpCallFacts = async (
     actionType: string,
     basis: ActionBasis,
@@ -701,6 +712,13 @@ export function createAgentDoor(deps: AgentDoorDeps): AgentDoor {
     if (proposedAt < registration.created_at) {
       return { ok: false, detail: DEFINITION_REFUSALS.earlierRegistration };
     }
+    // I15 (AD5b): the write directories, parsed STRICTLY. A value that is not a JSON array of
+    // strings cannot be shown, so the call cannot be asked about (the executors' reader refuses
+    // the same value; `'[]'` is a valid empty grant).
+    const writePaths = strictStringArray(registration.write_paths_json);
+    if (writePaths === undefined) {
+      return { ok: false, detail: DEFINITION_REFUSALS.writeUnknown };
+    }
     const netHosts = stringArray(registration.net_hosts_json);
     let note: string | undefined;
     try {
@@ -717,7 +735,7 @@ export function createAgentDoor(deps: AgentDoorDeps): AgentDoor {
         readPaths: stringArray(registration.read_paths_json),
         netHosts,
         ...(note === undefined ? {} : { networkNote: note }),
-        writePaths: stringArray(registration.write_paths_json),
+        writePaths,
         approval,
       },
     };

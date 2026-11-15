@@ -14,7 +14,7 @@ import { createMockVault } from "../../vault/mock.ts";
 import { approveWorkdir, IAC_WORKDIR_REFUSALS } from "../connector-writes/iac-grants.ts";
 import type { UserMcpConnectorRow } from "../user-mcp-store.ts";
 import { LazyConnectorMesh } from "./mesh.ts";
-import type { UserMcpGrantLedgerStore } from "./user-mcp-write-grant.ts";
+import type { UserMcpGrantLedgerStore, UserMcpLedgerEntry } from "./user-mcp-write-grant.ts";
 
 const roots: string[] = [];
 const meshes: LazyConnectorMesh[] = [];
@@ -51,10 +51,20 @@ function row(over: Partial<UserMcpConnectorRow> = {}): UserMcpConnectorRow {
   };
 }
 
+/** A ledger from plain path lists: every listed path read-only unless named in `write`. */
+function ledgerOf(
+  simple: Record<string, readonly string[]>,
+  write: Record<string, readonly string[]> = {},
+): Record<string, UserMcpLedgerEntry> {
+  return Object.fromEntries(
+    Object.entries(simple).map(([id, paths]) => [id, { paths, writable: write[id] ?? [] }]),
+  );
+}
+
 interface Seams {
   readonly calls: string[];
   readonly warns: Array<{ reason?: unknown; msg: string }>;
-  readonly ledger: { all: Record<string, readonly string[]> };
+  readonly ledger: { all: Record<string, UserMcpLedgerEntry> };
 }
 
 function build(
@@ -69,7 +79,7 @@ function build(
 ): { mesh: LazyConnectorMesh } & Seams {
   const calls: string[] = [];
   const warns: Seams["warns"] = [];
-  const ledger = { all: { ...(over.ledger ?? {}) } };
+  const ledger = { all: ledgerOf(over.ledger ?? {}) };
   const store: UserMcpGrantLedgerStore = {
     load: () => ledger.all,
     save: (all) => {
@@ -112,7 +122,9 @@ describe("the spawn preparation of a user MCP server with a write directory", ()
     const s = build(root, [row({ write_paths_json: JSON.stringify([out]) })], { active: true });
     await s.mesh.ensureUserMcpRunning("mcp_notes");
     expect(s.warns).toEqual([]);
-    expect(s.calls).toEqual([`save ${JSON.stringify({ mcp_notes: [out] })}`]);
+    expect(s.calls).toEqual([
+      `save ${JSON.stringify({ mcp_notes: { paths: [out], writable: [out] } })}`,
+    ]);
   });
 
   test("a server with no write directory and no read path touches neither the helper nor the ledger", async () => {
@@ -212,7 +224,7 @@ describe("the Windows ledger at removal and for orphans", () => {
     await s.mesh.removeUserMcpSandbox("mcp_notes");
     expect(s.calls).toEqual([
       'revoke user.mcp_notes ["/data","/out"]',
-      `save ${JSON.stringify({ mcp_other: ["/x"] })}`,
+      `save ${JSON.stringify(ledgerOf({ mcp_other: ["/x"] }))}`,
     ]);
   });
 
@@ -224,10 +236,38 @@ describe("the Windows ledger at removal and for orphans", () => {
       ledger: { mcp_notes: ["/out"] },
     });
     await s.mesh.removeUserMcpSandbox("mcp_notes");
-    expect(s.ledger.all).toEqual({ mcp_notes: ["/out"] });
+    expect(s.ledger.all).toEqual(ledgerOf({ mcp_notes: ["/out"] }));
     expect(s.warns.map((w) => w.msg)).toContain(
       "user MCP sandbox grants not revoked; kept in the ledger",
     );
+  });
+
+  test("a registration's release revokes an UNREGISTERED id's leftovers, and never touches an id that is registered now", async () => {
+    const root = makeRoot();
+    const rows = [row()];
+    const s = build(root, rows, {
+      active: true,
+      ledger: { mcp_notes: ["/live-out"], mcp_gone: ["/old-out"] },
+    });
+    // Registered: a second add of the same id must not cut the live registration's grants.
+    expect(await s.mesh.releaseUserMcpGrantsUnlessRegistered("mcp_notes")).toBe("registered");
+    expect(s.calls).toEqual([]);
+    expect(Object.keys(s.ledger.all)).toContain("mcp_notes");
+    // Not registered: the earlier registration's permissions are revoked and its entry dropped.
+    expect(await s.mesh.releaseUserMcpGrantsUnlessRegistered("mcp_gone")).toBe(true);
+    expect(s.calls[0]).toBe('revoke user.mcp_gone ["/old-out"]');
+    expect(Object.keys(s.ledger.all)).not.toContain("mcp_gone");
+  });
+
+  test("that release reports false when the revoke fails, so the registration is refused", async () => {
+    const root = makeRoot();
+    const s = build(root, [], {
+      active: true,
+      revokeThrows: true,
+      ledger: { mcp_gone: ["/old-out"] },
+    });
+    expect(await s.mesh.releaseUserMcpGrantsUnlessRegistered("mcp_gone")).toBe(false);
+    expect(Object.keys(s.ledger.all)).toContain("mcp_gone");
   });
 
   test("before the first spawn decision, entries whose server is no longer registered are revoked, once", async () => {

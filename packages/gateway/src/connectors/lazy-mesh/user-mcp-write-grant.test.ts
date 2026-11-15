@@ -18,6 +18,7 @@ import {
   storedWriteDirs,
   USER_MCP_WRITE_GRANT_REFUSALS,
   type UserMcpGrantLedgerStore,
+  type UserMcpLedgerEntry,
   type UserMcpWriteGrantDeps,
   userMcpGrantLedgerFile,
   userMcpPolicyId,
@@ -25,6 +26,16 @@ import {
 } from "./user-mcp-write-grant.ts";
 
 const DIR = { isDirectory: () => true, isSymbolicLink: () => false };
+
+/** A ledger from plain path lists: every listed path read-only unless named in `write`. */
+function ledgerOf(
+  simple: Record<string, readonly string[]>,
+  write: Record<string, readonly string[]> = {},
+): Record<string, UserMcpLedgerEntry> {
+  return Object.fromEntries(
+    Object.entries(simple).map(([id, paths]) => [id, { paths, writable: write[id] ?? [] }]),
+  );
+}
 
 function row(over: Partial<UserMcpConnectorRow> = {}): UserMcpConnectorRow {
   return {
@@ -43,7 +54,7 @@ function row(over: Partial<UserMcpConnectorRow> = {}): UserMcpConnectorRow {
 interface Spy {
   readonly calls: string[];
   readonly deps: UserMcpWriteGrantDeps;
-  readonly ledger: { all: Record<string, readonly string[]> };
+  readonly ledger: { all: Record<string, UserMcpLedgerEntry> };
   readonly policies: SandboxPolicy[];
 }
 
@@ -53,6 +64,8 @@ function spy(
     canConfine?: string | null;
     active?: boolean;
     ledger?: Record<string, readonly string[]>;
+    /** Which of the ledger's paths were WRITE grants. */
+    ledgerWrite?: Record<string, readonly string[]>;
     loadThrows?: boolean;
     saveThrows?: boolean;
     revokeThrows?: boolean;
@@ -60,7 +73,7 @@ function spy(
 ): Spy {
   const calls: string[] = [];
   const policies: SandboxPolicy[] = [];
-  const ledger = { all: { ...(over.ledger ?? {}) } };
+  const ledger = { all: ledgerOf(over.ledger ?? {}, over.ledgerWrite ?? {}) };
   const writeDir: WriteDirDeps = {
     platform: "linux",
     realpath: (p) => p,
@@ -242,12 +255,16 @@ describe("prepareUserMcpWriteGrant: the Windows ledger", () => {
       `scan ${OUT}`,
       "canConfine",
       "ledger.load",
-      `ledger.save ${JSON.stringify({ mcp_notes: ["/data", OUT] })}`,
+      `ledger.save ${JSON.stringify({ mcp_notes: { paths: ["/data", OUT], writable: [OUT] } })}`,
     ]);
   });
 
   test("an unchanged entry is neither revoked nor rewritten", async () => {
-    const s = spy({ active: true, ledger: { mcp_notes: ["/data", OUT] } });
+    const s = spy({
+      active: true,
+      ledger: { mcp_notes: ["/data", OUT] },
+      ledgerWrite: { mcp_notes: [OUT] },
+    });
     await prepareUserMcpWriteGrant(row({ write_paths_json: WRITES }), ["/data"], [], s.deps);
     expect(s.calls).toEqual([`scan ${OUT}`, "canConfine", "ledger.load"]);
   });
@@ -267,7 +284,27 @@ describe("prepareUserMcpWriteGrant: the Windows ledger", () => {
     expect(s.calls.slice(2)).toEqual([
       "ledger.load",
       'revoke user.mcp_notes ["/srv/old-out"]',
-      `ledger.save ${JSON.stringify({ mcp_notes: ["/data", OUT], mcp_other: ["/x"] })}`,
+      `ledger.save ${JSON.stringify({
+        mcp_notes: { paths: ["/data", OUT], writable: [OUT] },
+        mcp_other: { paths: ["/x"], writable: [] },
+      })}`,
+    ]);
+  });
+
+  test("a path that is KEPT but may no longer be written is revoked before it is granted read-only", async () => {
+    // The earlier spawn could write /data; this one may only read it. A Windows grant merges
+    // rights, so without the revoke the server would keep its write access to /data.
+    const s = spy({
+      active: true,
+      ledger: { mcp_notes: ["/data"] },
+      ledgerWrite: { mcp_notes: ["/data"] },
+    });
+    const r = await prepareUserMcpWriteGrant(row(), ["/data"], [], s.deps);
+    expect(r.ok).toBe(true);
+    expect(s.calls).toEqual([
+      "ledger.load",
+      'revoke user.mcp_notes ["/data"]',
+      `ledger.save ${JSON.stringify({ mcp_notes: { paths: ["/data"], writable: [] } })}`,
     ]);
   });
 
@@ -293,7 +330,7 @@ describe("prepareUserMcpWriteGrant: the Windows ledger", () => {
       await prepareUserMcpWriteGrant(row({ write_paths_json: WRITES }), [], [], revoke.deps),
     ).toEqual({ ok: false, reason: USER_MCP_WRITE_GRANT_REFUSALS.revokeFailed });
     // The entry is untouched: it leaves only after a revoke of it succeeded.
-    expect(revoke.ledger.all).toEqual({ mcp_notes: ["/old"] });
+    expect(revoke.ledger.all).toEqual(ledgerOf({ mcp_notes: ["/old"] }));
     expect(revoke.calls.some((c) => c.startsWith("ledger.save"))).toBe(false);
 
     const save = spy({ active: true, saveThrows: true });
@@ -316,7 +353,7 @@ describe("releaseUserMcpGrants", () => {
     expect(s.calls).toEqual([
       "ledger.load",
       `revoke user.mcp_notes ${JSON.stringify(["/data", OUT])}`,
-      `ledger.save ${JSON.stringify({ mcp_other: ["/x"] })}`,
+      `ledger.save ${JSON.stringify(ledgerOf({ mcp_other: ["/x"] }))}`,
     ]);
   });
 
@@ -329,7 +366,7 @@ describe("releaseUserMcpGrants", () => {
   test("a failed revoke, and an unreadable ledger, report false and keep the entry", async () => {
     const failing = spy({ active: true, revokeThrows: true, ledger: { mcp_notes: [OUT] } });
     expect(await releaseUserMcpGrants("mcp_notes", failing.deps)).toBe(false);
-    expect(failing.ledger.all).toEqual({ mcp_notes: [OUT] });
+    expect(failing.ledger.all).toEqual(ledgerOf({ mcp_notes: [OUT] }));
     const unreadable = spy({ active: true, loadThrows: true });
     expect(await releaseUserMcpGrants("mcp_notes", unreadable.deps)).toBe(false);
   });
@@ -392,9 +429,10 @@ describe("the ledger file", () => {
     const ledger = fileUserMcpGrantLedger(file);
     expect(ledger.load()).toEqual({});
     expect(ledgerServiceIds(ledger)).toEqual([]);
-    ledger.save({ mcp_notes: ["/data", OUT] });
-    expect(JSON.parse(readFileSync(file, "utf8"))).toEqual({ mcp_notes: ["/data", OUT] });
-    expect(ledger.load()).toEqual({ mcp_notes: ["/data", OUT] });
+    const entry = { mcp_notes: { paths: ["/data", OUT], writable: [OUT] } };
+    ledger.save(entry);
+    expect(JSON.parse(readFileSync(file, "utf8"))).toEqual(entry);
+    expect(ledger.load()).toEqual(entry);
     expect(ledgerServiceIds(ledger)).toEqual(["mcp_notes"]);
   });
 
@@ -403,7 +441,14 @@ describe("the ledger file", () => {
     const file = userMcpGrantLedgerFile(dir);
     const ledger = fileUserMcpGrantLedger(file);
     ledger.save({});
-    for (const bad of ["[]", '{"mcp_notes":"/x"}', '{"mcp_notes":[1]}', "not json"]) {
+    for (const bad of [
+      "[]",
+      '{"mcp_notes":"/x"}',
+      '{"mcp_notes":["/x"]}',
+      '{"mcp_notes":{"paths":["/x"]}}',
+      '{"mcp_notes":{"paths":[1],"writable":[]}}',
+      "not json",
+    ]) {
       writeFileSync(file, bad);
       expect(() => ledger.load()).toThrow();
       expect(ledgerServiceIds(ledger)).toBeUndefined();

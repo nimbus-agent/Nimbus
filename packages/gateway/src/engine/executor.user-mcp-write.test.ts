@@ -155,6 +155,31 @@ describe("the owner's and the model's call to a user MCP server", () => {
     });
   }
 
+  test("a reader that can tell at the confirm phase but NOT when the prompt is built: nobody is asked, nothing is dispatched", async () => {
+    // The first read (before the approval phase) answers; the second (for the prompt) cannot.
+    for (const second of ["undefined", "throws"] as const) {
+      let reads = 0;
+      const h = harness({
+        userMcpWriteGrants: () => {
+          reads += 1;
+          if (reads === 1) return [OUT];
+          if (second === "throws") throw new Error("db closed");
+          return undefined;
+        },
+      });
+      const res = await h.exec.execute(OWNER_CALL);
+      expect(res, second).toMatchObject({
+        status: "rejected",
+        reason: USER_MCP_WRITE_UNKNOWN_REASON,
+      });
+      expect(reads).toBe(2);
+      expect(h.plain).toEqual([]);
+      expect(h.confirmed).toEqual([]);
+      expect(h.dispatched).toEqual([]);
+      expect(h.audits.join("\n")).toContain(USER_MCP_WRITE_UNKNOWN_REASON);
+    }
+  });
+
   test("the reader is asked for the server the TYPE names, never one a payload names", async () => {
     const asked: string[] = [];
     const h = harness({

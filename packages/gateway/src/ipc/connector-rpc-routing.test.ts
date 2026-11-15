@@ -91,7 +91,7 @@ describe("dispatchConnectorRpc — addMcp gate", () => {
       ensureUserMcpRunning: async () => {},
       userMcpProtectedRoots: () => [],
       ensureUserMcpSandboxClean: async () => true,
-      releaseUserMcpGrants: async () => true,
+      releaseUserMcpGrantsUnlessRegistered: async () => true,
     },
   });
 

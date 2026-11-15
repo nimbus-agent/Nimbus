@@ -345,6 +345,40 @@ describe("resolveUserMcpRegistration: write directories (AD5b-2)", () => {
     expect(resolveUserMcpRegistration(input(), elsewhere).writePaths).toEqual([]);
   });
 
+  test("a code argument that is a LINK into the write directory is refused by its real target, both ways", () => {
+    // `/opt/entry.js` is a link to `/srv/out/main.js`: compared by spelling alone it looks outside.
+    const linked = (p: string): string => (p === "/opt/entry.js" ? "/srv/out/main.js" : p);
+    const { env } = writeEnv({ existing: ["/opt/srv/bin/x"], realpath: linked });
+    refused(
+      () =>
+        resolveUserMcpRegistration(
+          input({ argv: ["/opt/srv/bin/x", "/opt/entry.js"], writePaths: ["/srv/out"] }),
+          env,
+        ),
+      "may not write the code it is started from",
+    );
+    // The reverse rule sees the same target against another server's write directory.
+    refused(
+      () =>
+        resolveUserMcpRegistration(input({ argv: ["/opt/srv/bin/x", "/opt/entry.js"] }), {
+          ...env,
+          registeredWriteDirs: ["/srv/out"],
+        }),
+      "another server's write directory",
+    );
+    // A link that points elsewhere is not refused.
+    const elsewhere = writeEnv({
+      existing: ["/opt/srv/bin/x"],
+      realpath: (p) => (p === "/opt/entry.js" ? "/srv/code/main.js" : p),
+    });
+    expect(
+      resolveUserMcpRegistration(
+        input({ argv: ["/opt/srv/bin/x", "/opt/entry.js"], writePaths: ["/srv/out"] }),
+        elsewhere.env,
+      ).writePaths,
+    ).toEqual(["/srv/out"]);
+  });
+
   test("a write directory with no rule wired is refused, never accepted unchecked", () => {
     refused(
       () =>

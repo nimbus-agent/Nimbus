@@ -20,6 +20,7 @@ import type {
   ConnectorRpcHit,
 } from "./connector-rpc-handlers/context.ts";
 import {
+  assertRegistrationUnchanged,
   assertUserMcpGrantsClean,
   assertUserMcpSandboxClean,
   assertWriteGrantRegistrable,
@@ -108,6 +109,8 @@ async function addMcpBehindOwnerGate(
   }
   // 4. A sandbox leaf left by an earlier registration of this id is cleared, or this refuses; and
   //    on Windows the file permissions that registration left are revoked, or this refuses.
+  //    First, the registration must still resolve to exactly what the owner approved.
+  assertRegistrationUnchanged(ctx, resolved);
   await assertUserMcpSandboxClean(ctx, resolved.serviceId);
   await assertUserMcpGrantsClean(ctx, resolved.serviceId);
   // 5. Store exactly what was approved.

@@ -137,7 +137,7 @@ function opts(exec: ToolExecutor, registered: string[] = [], sandbox: SandboxSea
       ensureUserMcpRunning: async () => {},
       userMcpProtectedRoots: () => [dataDir, configDir, sandboxDir],
       ensureUserMcpSandboxClean: (id: string) => sandbox.ensureUserMcpSandboxClean(id),
-      releaseUserMcpGrants: async () => true,
+      releaseUserMcpGrantsUnlessRegistered: async () => true,
       userMcpSandboxLeaf: (id: string) => sandbox.userMcpSandboxLeaf(id),
     } as never,
     toolExecutor: exec,
@@ -593,8 +593,9 @@ describe("connector.addMcp — a write directory (AD5b-2)", () => {
     exec: ToolExecutor,
     over: {
       canConfine?: string | null;
-      release?: boolean;
+      release?: boolean | "registered";
       scan?: "clean" | "marker";
+      realpath?: (p: string) => string;
       released?: string[];
       registered?: string[];
     } = {},
@@ -607,14 +608,14 @@ describe("connector.addMcp — a write directory (AD5b-2)", () => {
         userMcpProtectedRoots: () => [dataDir, configDir, sandboxDir],
         ensureUserMcpSandboxClean: async () => true,
         userMcpSandboxLeaf: (id: string) => join(sandboxDir, `user_${id}`),
-        releaseUserMcpGrants: async (id: string) => {
+        releaseUserMcpGrantsUnlessRegistered: async (id: string) => {
           over.released?.push(id);
           return over.release ?? true;
         },
         userMcpWriteCanConfine: () => over.canConfine ?? null,
         userMcpWriteDirDeps: () => ({
           platform: process.platform,
-          realpath: (p: string) => p,
+          realpath: (p: string) => (over.realpath ?? ((x: string) => x))(p),
           lstat: () => DIR,
           exists: () => false,
           homeDir: join(fakeRoot, "home"),
@@ -785,6 +786,70 @@ describe("connector.addMcp — a write directory (AD5b-2)", () => {
       params: { serviceId: "mcp_reader", argv: ["node"] },
     });
     expect(released).toEqual(["mcp_reader"]);
+  });
+
+  test("the directory gained a marker folder while the prompt was open: refused after approval, nothing stored or released", async () => {
+    const over: Parameters<typeof writeOpts>[1] = { released: [], registered: [] };
+    const exec = {
+      // The owner approves; meanwhile the directory changed.
+      async gate(): Promise<GateResult> {
+        over.scan = "marker";
+        return "proceed";
+      },
+    } as unknown as ToolExecutor;
+    const err = await rpcErrorOf(
+      dispatchConnectorRpc({
+        getEnforcedPolicy: () => undefined,
+        ...writeOpts(exec, over),
+        clientKind: "cli",
+        method: "connector.addMcp",
+        params,
+      }),
+    );
+    expect(err.message).toContain("ERR_USER_MCP_WRITE_PATH_REFUSED");
+    expect(writeRowOf("mcp_writer")).toBeUndefined();
+    expect(over.released).toEqual([]);
+    expect(over.registered).toEqual([]);
+  });
+
+  test("the registration resolves to something else after approval (a link appeared on the way): refused, run it again", async () => {
+    const over: Parameters<typeof writeOpts>[1] = { released: [] };
+    const moved = join(fakeRoot, "work", "elsewhere");
+    const exec = {
+      async gate(): Promise<GateResult> {
+        over.realpath = (p) => (p === outDir ? moved : p);
+        return "proceed";
+      },
+    } as unknown as ToolExecutor;
+    const err = await rpcErrorOf(
+      dispatchConnectorRpc({
+        getEnforcedPolicy: () => undefined,
+        ...writeOpts(exec, over),
+        clientKind: "cli",
+        method: "connector.addMcp",
+        params,
+      }),
+    );
+    expect(err.message).toContain("ERR_USER_MCP_CHANGED_DURING_APPROVAL");
+    expect(writeRowOf("mcp_writer")).toBeUndefined();
+    expect(over.released).toEqual([]);
+  });
+
+  test("the id was registered while this request waited: the duplicate is refused and NOTHING of the live registration is revoked", async () => {
+    const { exec } = stubExecutor("proceed");
+    const registered: string[] = [];
+    const err = await rpcErrorOf(
+      dispatchConnectorRpc({
+        getEnforcedPolicy: () => undefined,
+        ...writeOpts(exec, { release: "registered", registered }),
+        clientKind: "cli",
+        method: "connector.addMcp",
+        params,
+      }),
+    );
+    expect(err.message).toBe("User MCP connector already exists: mcp_writer");
+    expect(writeRowOf("mcp_writer")).toBeUndefined();
+    expect(registered).toEqual([]);
   });
 
   test("writePaths that is not an array of strings is a parameter error", async () => {

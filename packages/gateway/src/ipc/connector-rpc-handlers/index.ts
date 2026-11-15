@@ -1,5 +1,6 @@
 export { handleConnectorAuth } from "./auth.ts";
 export {
+  assertRegistrationUnchanged,
   assertUserMcpGrantsClean,
   assertUserMcpSandboxClean,
   assertWriteGrantRegistrable,

@@ -135,7 +135,7 @@ describe("the runner reaches the consent prompts through the real dispatch", () 
           ensureUserMcpRunning: async () => {},
           userMcpProtectedRoots: () => [],
           ensureUserMcpSandboxClean: async () => {},
-          releaseUserMcpGrants: async () => true,
+          releaseUserMcpGrantsUnlessRegistered: async () => true,
           userMcpSandboxLeaf: () => "",
         } as never,
         sandboxRunner: runner({

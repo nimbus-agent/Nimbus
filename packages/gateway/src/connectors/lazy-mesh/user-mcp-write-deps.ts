@@ -5,7 +5,7 @@
 // a server registered since the grant refuses the next spawn.
 import { lstatSync, realpathSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { delimiter } from "node:path";
+import { delimiter, resolve } from "node:path";
 
 import type { PlatformPaths } from "../../platform/paths.ts";
 import { scanWriteDir } from "../../platform/sandbox/write-dir-scan.ts";
@@ -62,6 +62,8 @@ export interface ProductionWriteDirOptions {
   readonly iacWorkdirs: () => readonly string[];
   /** One environment variable of the gateway process. */
   readonly envVar: (name: string) => string | undefined;
+  /** Test seam: the gateway's working directory. Production: `process.cwd()`. */
+  readonly cwd?: () => string;
 }
 
 /**
@@ -85,7 +87,11 @@ export function productionWriteDirDeps(o: ProductionWriteDirOptions): WriteDirDe
     },
     homeDir: homedir(),
     tmpDir: tmpdir(),
-    pathEntries: (o.envVar("PATH") ?? o.envVar("Path") ?? "").split(delimiter),
+    // A relative entry, and an empty one, name a folder under the gateway's working directory:
+    // programs are looked up there too, so they are resolved before the overlap check.
+    pathEntries: (o.envVar("PATH") ?? o.envVar("Path") ?? "")
+      .split(delimiter)
+      .map((entry) => resolve(o.cwd?.() ?? process.cwd(), entry)),
     appDataDirs:
       platform === "win32"
         ? [o.envVar("APPDATA"), o.envVar("LOCALAPPDATA")].filter(

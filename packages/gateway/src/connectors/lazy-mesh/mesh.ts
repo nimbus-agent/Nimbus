@@ -763,6 +763,24 @@ export class LazyConnectorMesh {
     );
   }
 
+  /**
+   * Before a registration stores its row: the Windows permissions an EARLIER registration of this
+   * id left are revoked. On the same serial chain as every spawn preparation, and only while no
+   * row holds the id: a second add of an id that was registered meanwhile answers `registered`
+   * and revokes nothing, so it can never cut the grants of the live registration it lost to.
+   */
+  releaseUserMcpGrantsUnlessRegistered(serviceId: string): Promise<boolean | "registered"> {
+    return this.runUserMcpPrepareSerial(async () => {
+      if (this.listUserMcpConnectors().some((r) => r.service_id === serviceId)) {
+        return "registered" as const;
+      }
+      return releaseUserMcpGrants(serviceId, {
+        ledger: this.userMcpLedger,
+        revokerFor: this.userMcpRevokerFor,
+      });
+    });
+  }
+
   /** Once, before the first spawn decision: ledger entries whose id has no row are revoked. */
   private async settleOrphanUserMcpGrants(): Promise<void> {
     if (this.userMcpOrphansSettled) return;

@@ -65,11 +65,23 @@ export const USER_MCP_WRITE_GRANT_REFUSALS = Object.freeze({
   ledgerWriteFailed: "the record of this spawn's Windows grants could not be written",
 });
 
+/**
+ * What one user MCP profile was granted: every path (read and write), and which of them it could
+ * WRITE. The access level is recorded so that a path which is kept but loses its write right is
+ * revoked before it is granted again as read-only (a Windows grant merges rights, it never narrows).
+ */
+export interface UserMcpLedgerEntry {
+  readonly paths: readonly string[];
+  readonly writable: readonly string[];
+}
+
+export type UserMcpLedger = Readonly<Record<string, UserMcpLedgerEntry>>;
+
 export interface UserMcpGrantLedgerStore {
-  /** Every recorded profile's paths. Missing file: `{}`. Unreadable or malformed: THROWS. */
-  load(): Readonly<Record<string, readonly string[]>>;
+  /** Every recorded profile's entry. Missing file: `{}`. Unreadable or malformed: THROWS. */
+  load(): UserMcpLedger;
   /** Replace the record (atomically: a temp file renamed over the old one). */
-  save(all: Readonly<Record<string, readonly string[]>>): void;
+  save(all: UserMcpLedger): void;
 }
 
 /** The ledger file for a given config dir: beside the Obsidian and iac ledgers, never under `dataDir`. */
@@ -81,11 +93,19 @@ function isErrno(err: unknown, code: string): boolean {
   return typeof err === "object" && err !== null && (err as { code?: unknown }).code === code;
 }
 
-function isLedgerShape(v: unknown): v is Record<string, string[]> {
+function isStringArray(v: unknown): v is string[] {
+  return Array.isArray(v) && v.every((p) => typeof p === "string");
+}
+
+function isLedgerEntry(v: unknown): v is UserMcpLedgerEntry {
   if (typeof v !== "object" || v === null || Array.isArray(v)) return false;
-  return Object.values(v).every(
-    (paths) => Array.isArray(paths) && paths.every((p) => typeof p === "string"),
-  );
+  const e = v as { paths?: unknown; writable?: unknown };
+  return isStringArray(e.paths) && isStringArray(e.writable);
+}
+
+function isLedgerShape(v: unknown): v is Record<string, UserMcpLedgerEntry> {
+  if (typeof v !== "object" || v === null || Array.isArray(v)) return false;
+  return Object.values(v).every(isLedgerEntry);
 }
 
 /** The production store: one JSON object, service id to paths, in `file`. */
@@ -243,21 +263,29 @@ export function userMcpWriteConfineRefusal(
  */
 async function settleWindowsLedger(
   serviceId: string,
-  current: readonly string[],
+  current: UserMcpLedgerEntry,
   deps: UserMcpWriteGrantDeps,
 ): Promise<string | undefined> {
   const revoker = deps.revokerFor(userMcpPolicyId(serviceId));
   if (!revoker.active) return undefined;
-  let all: Readonly<Record<string, readonly string[]>>;
+  let all: UserMcpLedger;
   try {
     all = deps.ledger.load();
   } catch {
     return USER_MCP_WRITE_GRANT_REFUSALS.ledgerUnreadable;
   }
-  const earlier = all[serviceId] ?? [];
-  if (earlier.length === 0 && current.length === 0) return undefined;
-  const keep = new Set(current);
-  const stale = earlier.filter((p) => !keep.has(p));
+  const earlier = all[serviceId] ?? { paths: [], writable: [] };
+  if (earlier.paths.length === 0 && current.paths.length === 0) return undefined;
+  // Stale: a path this spawn is not granted at all, AND a path it keeps but may no longer WRITE
+  // (the helper would only add read to the existing permission, leaving the write right in place).
+  const keep = new Set(current.paths);
+  const keepWrite = new Set(current.writable);
+  const stale = [
+    ...new Set([
+      ...earlier.paths.filter((p) => !keep.has(p)),
+      ...earlier.writable.filter((p) => !keepWrite.has(p)),
+    ]),
+  ];
   if (stale.length > 0) {
     try {
       await revoker.revoke(stale);
@@ -265,12 +293,15 @@ async function settleWindowsLedger(
       return USER_MCP_WRITE_GRANT_REFUSALS.revokeFailed;
     }
   }
-  const same = stale.length === 0 && earlier.length === current.length;
+  const same =
+    stale.length === 0 &&
+    earlier.paths.length === current.paths.length &&
+    earlier.writable.length === current.writable.length;
   if (same) return undefined;
   try {
-    const next: Record<string, readonly string[]> = { ...all };
-    if (current.length === 0) delete next[serviceId];
-    else next[serviceId] = [...current];
+    const next: Record<string, UserMcpLedgerEntry> = { ...all };
+    if (current.paths.length === 0) delete next[serviceId];
+    else next[serviceId] = { paths: [...current.paths], writable: [...current.writable] };
     deps.ledger.save(next);
   } catch {
     return USER_MCP_WRITE_GRANT_REFUSALS.ledgerWriteFailed;
@@ -310,7 +341,11 @@ export async function prepareUserMcpWriteGrant(
   }
   // 4. Windows: the ledger, before any client exists.
   const parts = userMcpWriteManifestParts(read, grant);
-  const failed = await settleWindowsLedger(row.service_id, parts.read, deps);
+  const failed = await settleWindowsLedger(
+    row.service_id,
+    { paths: parts.read, writable: parts.write },
+    deps,
+  );
   if (failed !== undefined) return no(failed);
   return { ok: true, grant };
 }
@@ -328,10 +363,10 @@ export async function releaseUserMcpGrants(
   if (!revoker.active) return true;
   try {
     const all = deps.ledger.load();
-    const paths = all[serviceId];
-    if (paths === undefined) return true;
-    if (paths.length > 0) await revoker.revoke(paths);
-    const next: Record<string, readonly string[]> = { ...all };
+    const entry = all[serviceId];
+    if (entry === undefined) return true;
+    if (entry.paths.length > 0) await revoker.revoke(entry.paths);
+    const next: Record<string, UserMcpLedgerEntry> = { ...all };
     delete next[serviceId];
     deps.ledger.save(next);
     return true;

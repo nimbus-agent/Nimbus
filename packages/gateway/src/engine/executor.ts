@@ -1668,13 +1668,15 @@ export class ToolExecutor {
       return { kind: "rejected", reason: record.rejectReason, answerSource: delegateSource };
     }
     const details = consentDisplayPayload(action, this.previewCredentialFor, preview);
+    // Read again for the prompt, after the awaits above. If it cannot be told NOW the prompt
+    // would be built without the write block, so nobody is asked and nothing is dispatched.
     const writeDirs = this.userMcpWriteDirs(action);
-    const prompt = formatConsentPrompt(
-      action,
-      this.previewCredentialFor,
-      preview,
-      Array.isArray(writeDirs) ? writeDirs : undefined,
-    );
+    if (writeDirs === "unknown") {
+      record.rejectReason = USER_MCP_WRITE_UNKNOWN_REASON;
+      record.hitlRejectReason = USER_MCP_WRITE_UNKNOWN_REASON;
+      return { kind: "rejected", reason: USER_MCP_WRITE_UNKNOWN_REASON, answerSource: "none" };
+    }
+    const prompt = formatConsentPrompt(action, this.previewCredentialFor, preview, writeDirs);
     if (confirm.kind === "none") {
       const answer = await this.consent.requestApproval(prompt, details, action.type);
       return ownerOutcome(answer, record.rejectReason);

@@ -166,6 +166,27 @@ export function assertWriteGrantRegistrable(
 }
 
 /**
+ * Runs AFTER the owner approved: the registration is resolved AGAIN, against the registrations and
+ * the file system as they are now, and must come out exactly as the owner was shown it. A prompt
+ * can stay open for a long time; another registration approved meanwhile (a server whose code now
+ * lies in this one's write directory, a write directory that now holds this one's code), a folder
+ * that became a link or gained a marker, would otherwise be stored unchecked.
+ */
+export function assertRegistrationUnchanged(
+  ctx: ConnectorRpcHandlerContext,
+  approved: ResolvedUserMcpRegistration,
+): void {
+  const now = resolveConnectorAddMcp(ctx);
+  assertWriteGrantRegistrable(ctx, now);
+  if (JSON.stringify(now) !== JSON.stringify(approved)) {
+    throw new ConnectorRpcError(
+      -32602,
+      "ERR_USER_MCP_CHANGED_DURING_APPROVAL: what this registration resolves to changed while you were deciding; run the command again",
+    );
+  }
+}
+
+/**
  * Runs AFTER the owner approved and BEFORE the row is stored: on Windows, every path an EARLIER
  * registration of this id was granted is revoked from the ledger, or the registration is REFUSED
  * and nothing is stored. A profile created again under the same name keeps its old permissions
@@ -179,7 +200,13 @@ export async function assertUserMcpGrantsClean(
   if (connectorMesh === undefined) {
     throw new ConnectorRpcError(-32603, "User MCP registration requires sync and connector mesh");
   }
-  if (await connectorMesh.releaseUserMcpGrants(serviceId)) return;
+  const released = await connectorMesh.releaseUserMcpGrantsUnlessRegistered(serviceId);
+  if (released === "registered") {
+    // Registered while this request waited for its approval: nothing of the live registration is
+    // revoked, and this add is the duplicate.
+    throw new ConnectorRpcError(-32602, `User MCP connector already exists: ${serviceId}`);
+  }
+  if (released) return;
   throw new ConnectorRpcError(
     -32602,
     "ERR_USER_MCP_GRANTS_NOT_CLEAN: file permissions left by an earlier registration of this id could not be removed; retry, or restart Nimbus and retry",

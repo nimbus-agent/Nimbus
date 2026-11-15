@@ -6,7 +6,7 @@
 
 import type path from "node:path";
 import { findServiceIdPrefixCollision } from "@nimbus-dev/registry-format";
-import { findProtectedOverlap, pathApiFor, pathsOverlap } from "../util/path-overlap.ts";
+import { findProtectedOverlap, pathApiFor } from "../util/path-overlap.ts";
 import {
   MAX_WRITE_DIRS,
   type WriteDirDeps,
@@ -212,10 +212,12 @@ function resolveWritePaths(
   api: typeof path.posix,
 ): string[] {
   const own = ownCodePaths(command, args, api);
+  // Each code path is compared by its spelling AND by its real target (`findProtectedOverlap`
+  // does both), so a link argument that points into a write directory is seen as inside it.
+  const touchesCode = (dir: string): boolean =>
+    findProtectedOverlap(dir, own, env.platform, (p) => env.realpath(p)) !== undefined;
   for (const other of env.registeredWriteDirs ?? []) {
-    if (own.some((p) => pathsOverlap(env.platform, p, other))) {
-      throw writeRefused(USER_MCP_WRITE_REFUSALS.otherWriteDir);
-    }
+    if (touchesCode(other)) throw writeRefused(USER_MCP_WRITE_REFUSALS.otherWriteDir);
   }
   const raw = input.writePaths ?? [];
   if (raw.length === 0) return [];
@@ -228,9 +230,7 @@ function resolveWritePaths(
     if (out.some((seen) => writeDirsOverlap(seen, checked.path, env.platform))) {
       throw writeRefused(USER_MCP_WRITE_REFUSALS.overlap);
     }
-    if (own.some((code) => pathsOverlap(env.platform, code, checked.path))) {
-      throw writeRefused(USER_MCP_WRITE_REFUSALS.ownCode);
-    }
+    if (touchesCode(checked.path)) throw writeRefused(USER_MCP_WRITE_REFUSALS.ownCode);
     out.push(checked.path);
   }
   return out.sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));

@@ -233,7 +233,9 @@ describe("the audit row", () => {
     expect(res).toMatchObject({ status: "rejected", reason: USER_MCP_WRITE_UNKNOWN_REASON });
     const row = a.audits.find((x) => x.actionType === "mcp_notes.append");
     expect(row?.actionJson).toContain(USER_MCP_WRITE_UNKNOWN_REASON);
-    expect(a.egress.every((e) => e["resultStatus"] !== "ok")).toBe(true);
+    // The ledger row exists and says the call was blocked (never `authorized`).
+    expect(a.egress.length).toBeGreaterThan(0);
+    expect(a.egress.map((e) => e["resultStatus"])).toEqual(a.egress.map(() => "blocked"));
   });
 
   test("the dispatcher still receives only the gateway's key and the input", async () => {

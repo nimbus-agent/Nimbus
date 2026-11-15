@@ -521,7 +521,7 @@ describe("connector.* — forwarded notify and connector mesh", () => {
       ensureUserMcpRunning: async () => {},
       userMcpProtectedRoots: () => [],
       ensureUserMcpSandboxClean: async () => true,
-      releaseUserMcpGrants: async () => true,
+      releaseUserMcpGrantsUnlessRegistered: async () => true,
     } as unknown as LazyConnectorMesh;
     // An absolute command that exists on every runner: the production `which`/`realpath`
     // defaults resolve it for real (no PATH dependency on `node`).
