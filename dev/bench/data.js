@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794772744414,
+  "lastUpdate": 1794775777683,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
-            "name": "nimbus-release-bot[bot]",
-            "username": "nimbus-release-bot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "f820848eda233fc07c5eed1bb5cd4b4b8b0c78e2",
-          "message": "chore: release main (#1358)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>4.1.0</summary>\n\n##\n[4.1.0](https://github.com/nimbus-agent/Nimbus/compare/v4.0.1...v4.1.0)\n(2026-08-28)\n\n\n### Features\n\n* **egress:** ledger every non-local LLM route at the provider\nchokepoint ([#1357](https://github.com/nimbus-agent/Nimbus/issues/1357))\n([278e6b2](https://github.com/nimbus-agent/Nimbus/commit/278e6b2412d80d4cd7aa064e250a9a2f406b129a))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
-          "timestamp": "2026-08-28T09:21:04Z",
-          "tree_id": "a651034c11d2dbef0b734db2177ef00a470168ba",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/f820848eda233fc07c5eed1bb5cd4b4b8b0c78e2"
-        },
-        "date": 1787909591707,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 334.4604515000061,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 344.58151004999746,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 208.2609381000033,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "cb72db9d393a55fce50b18d3b22c865d7968ae0c",
+          "message": "feat(cli): add nimbus agent install and status, which connect a coding agent to Nimbus and check the connection (agent door AD7b) (#2013)\n\n`nimbus agent install` connects a coding agent (Claude Code, Codex,\nCursor, VS Code with Copilot) to Nimbus, and `nimbus agent status`\nchecks that the connection is still as written. This is the second half\nof the agent kits (Phase 28 AD7); the first, the `--agent` label, is\n#2011.\n\nCLI only: no gateway change, migration, invariant, static rule, HITL\ntype or IPC method.\n\n## Steering is guidance, not a boundary\n\nA kit writes rules or a hook into the agent's own harness. An agent with\na shell can run `nimbus approvals <id>` itself and, until desktop\napproval ships, can still approve its own proposals. It can also run any\ncommand its harness allows with the credentials already on the machine.\nA rule that matches a command's first words does not see the same\ncommand in a script, under another spelling or behind an alias. Install,\nstatus, every kit's instruction text and the docs page say this each\ntime (owner ruling OR-AD-6).\n\n## What it does\n\n```bash\nnimbus agent install <claude-code|codex|cursor|vscode> [--scope user|project] [--dry-run] [--yes]\nnimbus agent status [--json]\n```\n\n- `install` prints every file it would create or change with a diff, and\nany command the owner must run, then asks for the typed word `yes`. No\nterminal and no `--yes` is a refusal. `--dry-run` prints and stops.\n- The server entry is `nimbus mcp-server --stdio --agent <kit>`\neverywhere.\n- `status` re-runs each kit's plan against the files as they are: `ok`,\n`drifted`, `missing`, or `manual` for a step the owner ran. It never\nwrites. Exit 1 when an installed kit has a drifted or missing part; a\n`manual` part never counts, and a file Nimbus cannot read as a kit's\nfile is printed as `cannot tell` without changing the exit code.\n\n| Kit | Steering | User scope | Project scope |\n| --- | --- | --- | --- |\n| claude-code | a `PreToolUse` hook plus three deny rules |\n`~/.claude/settings.json`; the server is one `claude mcp add` command\nthe owner runs | `.mcp.json`, `.claude/settings.json` |\n| codex | `forbidden` rules plus instructions | `~/.codex/config.toml`,\n`rules/nimbus.rules`, `AGENTS.md` | refused |\n| cursor | instructions only | `~/.cursor/mcp.json` (no steering there)\n| `.cursor/mcp.json`, `.cursor/rules/nimbus.mdc` |\n| vscode | instructions only | `~/.copilot/mcp-config.json` (no steering\nthere) | `.vscode/mcp.json`, `.github/copilot-instructions.md` |\n\nSeven commands are steered to their `propose_action` type: `gh pr\nmerge`, `glab mr merge`, `terraform apply`, `kubectl apply`, `kubectl\nscale`, `kubectl rollout restart`, `aws lambda invoke`. Three are the\nowner's and every kit tells the agent never to run them: `nimbus\napprovals`, `nimbus connector writes`, `nimbus captures`.\n\n## How it edits another product's files\n\n- Two edits only: an owned block between marker lines that carry a\nSHA-256 of the body, or Nimbus's own keys in a strict JSON file.\nEverything else in the file is kept.\n- Refused, never rewritten: a symbolic link at the file or at any\ndirectory between it and the scope's own tree (checked when the plan is\nmade and again just before the write), a JSON file that is not strict\nJSON, a Codex config with its own `[mcp_servers.nimbus]` table, a\n`nimbus.mdc` Nimbus did not write, project scope outside a repository.\n- Before a change the file is copied to `<file>.nimbus-bak-<UTC time>`;\nan existing backup name is a refusal.\n- The file is read again just before the write, and a change since the\nplan was shown stops the run.\n- The new content goes to a temporary file and is renamed over the\ntarget. A rename that fails because another program holds the file is\ntried five times; then the temporary file is removed and the target is\nleft as it was.\n- Nimbus starts no vendor CLI, and refuses to install from a source\ntree. User scope writes under the home directory, or under the directory\n`CLAUDE_CONFIG_DIR`, `CODEX_HOME` or `COPILOT_HOME` names, which must be\nabsolute.\n- The Claude Code hook (`nimbus agent hook claude-code`) is pure: it\nimports only the steer table, opens no connection and fails open. It\nsplits a command line on the separators Claude Code's own rules use,\noutside quotes only; a line of a here-document that starts with a\nsteered command is still read as that command (stated on the docs page).\n\n## Not verified against the real agents\n\nThe formats were read from each vendor's documentation on 2026-11-15.\nThe Codex MCP table was read from a summary, and the kit says so at\ninstall and in status. Acceptance A6 asks for two kits verified against\nthe real agents; that run needs the agents' own accounts and is the\nowner's (`docs/agent-kits-verification.md`). The matrix on the docs site\nreads `not yet run`, and the roadmap's Agent kits row stays open.\n\n## Deviations from the spec and the plan, stated\n\n- The steer table lives in the CLI, not the gateway: install and the\nhook must work while the gateway is stopped.\n`scripts/agent-kits/steer-table.test.ts` holds every steered action type\nto a model-offerable connector write row.\n- `kubectl delete` and `git push --force` are not steered: neither has a\ndoor action an agent may propose.\n- VS Code's project scope writes `.vscode/mcp.json`, not the workspace\n`.mcp.json` the Claude Code kit owns, so two kits never share one key.\n- Cursor has a shell hook, but its input shape is unverified, so no hook\nis installed.\n- The helper script the plan named for the real-agent run is not in this\nPR; the procedure is written out by hand.\n- There is no uninstall command; the docs page lists what to delete.\n\n## Tests\n\n190 tests on an in-memory machine plus a real temporary directory: the\nedit engine (block replace and append, CRLF, two kits in one file, a\ndamaged block, strict JSON, indent and key order), each kit at each\nscope (fresh, over a populated config, twice, a link, drift), apply\n(backups, changed-since-plan, a held file, partial failure, a leftover\ntemporary file), status and its exit code, the hook (every row, compound\ncommands, neighbours, malformed input, its import list), and the command\n(typed yes, `--yes`, `--dry-run`, no terminal, refusals, control\ncharacters). Three tests under `scripts/agent-kits/` hold the steer\ntable, the bounds copy and the docs page to the code.\n\nAn independent review (Antigravity) of the first version found that\nlinks were checked only at plan time, that a failed write could leave\nits temporary file, that an end marker was matched as a prefix, that a\nCRLF rules file was rewritten as LF, and that the hook split inside\nquotes. All five are fixed with tests.\n\n## Docs\n\nCLAUDE.md and GEMINI.md, `docs/CHANGELOG.md`, `docs/README.md`,\n`docs/roadmap.md` (the Bounds row closes; the Agent kits row gets a\nprogress note and stays open), `docs/architecture.md`,\n`docs/cli-reference.md`, the new docs-site page *Agent kits* with the\nmatrix, `docs/agent-kits-verification.md`, and the `nimbus-mcp-sink` and\n`nimbus-commands` skills.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JmSjrCzb214jGqUcCTWNJQ\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Added `nimbus agent install` and `nimbus agent status` for configuring\nand checking Nimbus integrations with Claude Code, Codex, Cursor, and VS\nCode.\n* Install previews changes, supports dry runs and user or project scope\nwhere available, and creates backups. Status reports missing or changed\nconfiguration.\n* Added guidance on each integration’s steering rules, limitations, and\nremoval instructions.\n* **Documentation**\n* Added an Agent kits user guide and manual verification instructions.\nReal-agent verification is not yet complete.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Fable 5.2 <noreply@anthropic.com>",
+          "timestamp": "2026-11-15T20:41:32Z",
+          "tree_id": "8f71a236b5c09e0f85ceb1d78e762df9aa48d9b7",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/cb72db9d393a55fce50b18d3b22c865d7968ae0c"
+        },
+        "date": 1794775774201,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 209.35237309999576,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 207.96667719999604,
             "unit": "ms"
           }
         ]
