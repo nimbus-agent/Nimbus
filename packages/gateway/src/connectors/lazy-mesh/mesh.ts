@@ -463,6 +463,8 @@ export class LazyConnectorMesh {
       bumpToolsEpoch: () => this.bumpToolsEpoch(),
       scheduleLazyDisconnect: (k) => this.scheduleLazyDisconnect(k),
     };
+    const iacStaticRoots = iacProtectedRootsFor(paths, platform, processEnvGet("XDG_RUNTIME_DIR"));
+    const listRowsNow = (): readonly UserMcpConnectorRow[] => this.listUserMcpConnectors();
     this.iacPathDeps = {
       platform,
       realpath: (p) => realpathSync.native(p),
@@ -475,8 +477,14 @@ export class LazyConnectorMesh {
       },
       homeDir: homedir(),
       tmpDir: tmpdir(),
-      // Nimbus's own folders: no approved Terraform directory may overlap them.
-      protectedRoots: iacProtectedRootsFor(paths, platform, processEnvGet("XDG_RUNTIME_DIR")),
+      // Nimbus's own folders: no approved Terraform directory may overlap them. Read at every use
+      // (a getter), because the list also holds every user MCP server's WRITE directory (I15, AD5b):
+      // a Terraform working directory inside one, or holding one, would let that server's code
+      // rewrite what an apply runs. The user MCP rule refuses the same overlap from its side, so the
+      // order of the two approvals cannot defeat either check.
+      get protectedRoots(): readonly string[] {
+        return [...iacStaticRoots, ...registeredWriteDirsOf(listRowsNow())];
+      },
       gitScan: (dir) => scanForGitEntry(dir),
     };
     this.iacRunner = new IacRunner({
