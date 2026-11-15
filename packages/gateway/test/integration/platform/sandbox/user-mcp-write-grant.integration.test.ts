@@ -176,6 +176,25 @@ function psq(s: string): string {
   return `'${s.replace(/'/g, "''")}'`;
 }
 
+/**
+ * Runs one `cmd.exe /c` line from the sandboxed PowerShell through .NET's `Process`, and reports
+ * its exit code and output on stderr. Not the call operator (`& cmd.exe`): inside the AppContainer
+ * PowerShell has no file-system provider drive, so `&` fails before anything is started (measured).
+ */
+function psCmd(line: string): string {
+  return [
+    `$psi = [Diagnostics.ProcessStartInfo]::new('cmd.exe', ${psq(`/c ${line}`)})`,
+    "$psi.UseShellExecute = $false",
+    "$psi.CreateNoWindow = $true",
+    "$psi.RedirectStandardOutput = $true",
+    "$psi.RedirectStandardError = $true",
+    "$proc = [Diagnostics.Process]::Start($psi)",
+    "$out = $proc.StandardOutput.ReadToEnd() + $proc.StandardError.ReadToEnd()",
+    "$proc.WaitForExit()",
+    "[Console]::Error.WriteLine('cmd exit ' + $proc.ExitCode + ': ' + $out.Trim())",
+  ].join("; ");
+}
+
 function psStatement(op: Op): string {
   switch (op[0]) {
     case "append":
@@ -190,16 +209,27 @@ function psStatement(op: Op): string {
         `if (-not [IO.Directory]::Exists(${psq(op[1])})) { & cmd.exe /c mkdir ${psq(op[1])} 2>&1 | ForEach-Object { [Console]::Error.WriteLine('mkdir cmd: ' + $_) } }`,
         `if (-not [IO.Directory]::Exists(${psq(op[1])})) { throw 'the directory was not created' }`,
       ].join("; ");
+    // The rest use .NET and `cmd` directly, never a cmdlet: on the windows-2025 runner the
+    // sandboxed PowerShell has no `New-Item`, `Move-Item` or `Remove-Item` (measured), so a cmdlet
+    // would fail before the attempt ever reached the file system.
     case "linkdir":
-      return `New-Item -ItemType Junction -Path ${psq(op[2])} -Target ${psq(op[1])} -ErrorAction Stop | Out-Null`;
+      return [
+        psCmd(`mklink /J "${op[2]}" "${op[1]}"`),
+        // `mklink /J` makes a plain folder first and then turns it into a junction. Only a folder
+        // that IS a reparse point counts as a link.
+        `if (-not [IO.Directory]::Exists(${psq(op[2])}) -or -not ([IO.File]::GetAttributes(${psq(op[2])}) -band [IO.FileAttributes]::ReparsePoint)) { throw 'the junction was not created' }`,
+      ].join("; ");
     case "hardlink":
-      return `New-Item -ItemType HardLink -Path ${psq(op[2])} -Target ${psq(op[1])} -ErrorAction Stop | Out-Null`;
+      return [
+        psCmd(`mklink /H "${op[2]}" "${op[1]}"`),
+        `if (-not [IO.File]::Exists(${psq(op[2])})) { throw 'the hard link was not created' }`,
+      ].join("; ");
     case "rename":
-      return `Move-Item -LiteralPath ${psq(op[1])} -Destination ${psq(op[2])} -ErrorAction Stop`;
+      return `if ([IO.Directory]::Exists(${psq(op[1])})) { [IO.Directory]::Move(${psq(op[1])}, ${psq(op[2])}) } else { [IO.File]::Move(${psq(op[1])}, ${psq(op[2])}) }`;
     case "rm":
-      return `Remove-Item -LiteralPath ${psq(op[1])} -Force -ErrorAction Stop`;
+      return `[IO.File]::Delete(${psq(op[1])}); if ([IO.File]::Exists(${psq(op[1])})) { throw 'the file is still there' }`;
     case "rmdir":
-      return `Remove-Item -LiteralPath ${psq(op[1])} -Recurse -Force -ErrorAction Stop`;
+      return `[IO.Directory]::Delete(${psq(op[1])}, $true); if ([IO.Directory]::Exists(${psq(op[1])})) { throw 'the directory is still there' }`;
   }
 }
 
@@ -429,9 +459,12 @@ describe("a directory write grant under the real sandbox (AD5b-1)", () => {
         ["rename", SOURCE, join(grant, "moved-in.txt")],
       ]);
       expect(r.status).toBe(0);
-      // Windows: the child cannot even create the junction. Elsewhere it creates the link, and
-      // every write through it and every rename out or in is refused.
-      expect(r.stdout).toBe(IS_WIN ? "ynnnnn" : "yynnnn");
+      // Windows (measured): the child cannot turn a folder into a junction (access denied), so
+      // `mklink /J` leaves a PLAIN folder inside the grant and the two writes land in that folder,
+      // inside the grant. Elsewhere it creates the link and every write through it is refused.
+      // Every rename out or in is refused everywhere.
+      expect(r.stdout).toBe(IS_WIN ? "ynyynn" : "yynnnn");
+      if (IS_WIN) expect(lstatSync(join(grant, "escape")).isSymbolicLink()).toBe(false);
       expect(marked(PROOF)).toBe(true);
       // The security claim, read from the host: nothing outside the grant changed.
       expect(readIfPresent(VICTIM)).toBe("victim\n");
