@@ -2334,10 +2334,39 @@ function d49MatchingClose(code: string, open: number): number {
   return -1;
 }
 
+/** Words after which a `[` opens an array, never an element access (`return [a] = pair`). */
+const D49_KEYWORDS_BEFORE_ARRAY: ReadonlySet<string> = new Set([
+  "return",
+  "of",
+  "in",
+  "yield",
+  "await",
+  "case",
+  "typeof",
+  "void",
+  "else",
+  "do",
+]);
+
+/**
+ * True when the `[` at `open` is an element access (`slots[key]`): it follows a name, a `)` or a
+ * `]`. What it holds is a key, a READ, even when the indexed slot is then assigned to.
+ */
+function d49IsElementAccess(code: string, open: number): boolean {
+  if (code[open] !== "[") return false;
+  const before = code.slice(0, open).trimEnd();
+  const last = before.at(-1);
+  if (last === undefined) return false;
+  if (last === ")" || last === "]") return true;
+  const word = /[\w$]+$/.exec(before)?.[0];
+  return word !== undefined && !D49_KEYWORDS_BEFORE_ARRAY.has(word);
+}
+
 /**
  * True when the member at `index` sits inside a `{ ... }` or `[ ... ]` group, at any depth, that is
  * itself assigned to: a destructuring assignment whose target is the member, so a WRITE. Every
- * enclosing group is tried, innermost first, so a nested pattern is seen too.
+ * enclosing group is tried, innermost first, so a nested pattern is seen too. An element access is
+ * not a pattern: the member inside it is a key that is read, and the walk stops there.
  */
 function d49IsMemberPatternTarget(code: string, index: number): boolean {
   let depth = 0;
@@ -2349,6 +2378,7 @@ function d49IsMemberPatternTarget(code: string, index: number): boolean {
         depth--;
         continue;
       }
+      if (d49IsElementAccess(code, i)) return false;
       const close = d49MatchingClose(code, i);
       if (close >= 0 && d49StartsWithAssignment(code.slice(close + 1).trimStart())) return true;
     }

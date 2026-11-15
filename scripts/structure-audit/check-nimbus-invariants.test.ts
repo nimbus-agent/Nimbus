@@ -6839,6 +6839,7 @@ describe("D49(g), (h) - the user-MCP call facts and the door's reach into user s
         "({ a: { b: action.userMcpCall } } = source);",
         "[action.userMcpCall] = pair;",
         "[first, action . userMcpCall\n] = pair;",
+        "return [action.userMcpCall] = pair;",
       ]) {
         expect(
           checkUserMcpCallFacts(swap(path, code)).map((x) => x.rule),
@@ -6850,6 +6851,11 @@ describe("D49(g), (h) - the user-MCP call facts and the door's reach into user s
         "const list = [action.userMcpCall];",
         "const o = { a: action.userMcpCall, b };",
         "if (ok) { use(action.userMcpCall); }",
+        // An element access: the member is a key that is read, whatever is assigned to the slot.
+        "slots[select(action.userMcpCall, key)] = value;",
+        "slots[action.userMcpCall] = value;",
+        "pick(a)[action.userMcpCall] = value;",
+        "grid[0][action.userMcpCall] = value;",
       ]) {
         expect(checkUserMcpCallFacts(swap(path, code)), code).toEqual([]);
       }
