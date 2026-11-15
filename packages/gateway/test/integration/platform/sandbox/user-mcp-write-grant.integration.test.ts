@@ -464,7 +464,11 @@ describe("a directory write grant under the real sandbox (AD5b-1)", () => {
       // inside the grant. Elsewhere it creates the link and every write through it is refused.
       // Every rename out or in is refused everywhere.
       expect(r.stdout).toBe(IS_WIN ? "ynyynn" : "yynnnn");
-      if (IS_WIN) expect(lstatSync(join(grant, "escape")).isSymbolicLink()).toBe(false);
+      if (IS_WIN) {
+        expect(lstatSync(join(grant, "escape")).isSymbolicLink()).toBe(false);
+        // The attempt was DISPATCHED: `cmd` ran inside the sandbox and reported its own failure.
+        expect(r.stderr).toContain("cmd exit 1");
+      }
       expect(marked(PROOF)).toBe(true);
       // The security claim, read from the host: nothing outside the grant changed.
       expect(readIfPresent(VICTIM)).toBe("victim\n");
@@ -489,6 +493,8 @@ describe("a directory write grant under the real sandbox (AD5b-1)", () => {
       ]);
       expect(r.status).toBe(0);
       expect(r.stdout).toHaveLength(5);
+      // Windows: both link attempts were DISPATCHED (`cmd` ran and was denied), not skipped.
+      if (IS_WIN) expect(r.stderr.split("cmd exit 1")).toHaveLength(3);
       expect(marked(PROOF)).toBe(true);
       // The security claim: the outside files hold their original bytes and still have ONE name.
       expect(readIfPresent(SOURCE)).toBe("source\n");

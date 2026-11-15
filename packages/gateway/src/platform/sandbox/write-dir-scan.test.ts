@@ -194,6 +194,44 @@ describe("scanWriteDir verdicts and caps (a fake reader)", () => {
     ).toBe("unreadable");
   });
 
+  test("a queued folder swapped for a link before it is read is a link, and is never read", () => {
+    const read: string[] = [];
+    let subLstats = 0;
+    expect(
+      scanWriteDir("/r", {
+        readNames: (d) => {
+          read.push(d);
+          return d === "/r" ? ["sub"] : [".git"];
+        },
+        // `sub` is a folder when its parent is read, and a link when its own turn comes.
+        lstat: (p) => {
+          if (!p.endsWith("sub")) return kind("dir");
+          subLstats += 1;
+          return subLstats === 1 ? kind("dir") : kind("link");
+        },
+      }),
+    ).toBe("link");
+    expect(read).toEqual(["/r"]);
+  });
+
+  test("a queued folder that became a file, or vanished, before its turn is unreadable", () => {
+    for (const later of ["file", "gone"] as const) {
+      let subLstats = 0;
+      expect(
+        scanWriteDir("/r", {
+          readNames: (d) => (d === "/r" ? ["sub"] : []),
+          lstat: (p) => {
+            if (!p.endsWith("sub")) return kind("dir");
+            subLstats += 1;
+            if (subLstats === 1) return kind("dir");
+            if (later === "gone") throw new Error("ENOENT");
+            return kind("file");
+          },
+        }),
+      ).toBe("unreadable");
+    }
+  });
+
   test("a marker is reported before its lstat is taken", () => {
     expect(
       scanWriteDir("/r", {

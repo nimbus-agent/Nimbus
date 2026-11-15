@@ -90,7 +90,16 @@ export function scanWriteDir(root: string, deps: WriteDirScanDeps = {}): WriteDi
   while (level.length > 0) {
     const next: string[] = [];
     for (const dir of level) {
-      const verdict = scanOneDirectory(dir, next, counter, limits.maxEntries, readNames, lstat);
+      // The root was checked by the caller just before; every queued folder is checked again.
+      const verdict = scanOneDirectory(
+        dir,
+        next,
+        counter,
+        limits.maxEntries,
+        readNames,
+        lstat,
+        depth > 0,
+      );
       if (verdict !== "clean") return verdict;
     }
     if (next.length > 0 && depth + 1 > limits.maxDepth) return "over-cap";
@@ -108,7 +117,16 @@ function scanOneDirectory(
   maxEntries: number,
   readNames: (dir: string) => readonly string[],
   lstat: (path: string) => WriteDirEntryKind,
+  recheck: boolean,
 ): WriteDirScan {
+  // Checked again right before the read: the folder was classified when its parent was read, and a
+  // writer could have swapped it for a link since. `readdir` follows a link, so without this the
+  // walk would read the link's target and could answer `clean`. This narrows the gap and does not
+  // close it (stated bound): closing it needs a no-follow directory handle, which Node has not.
+  if (recheck) {
+    const kind = classifyEntry(dir, lstat);
+    if (kind !== "directory") return kind === "file" ? "unreadable" : kind;
+  }
   let names: readonly string[];
   try {
     names = readNames(dir);
