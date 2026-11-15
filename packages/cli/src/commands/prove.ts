@@ -2,6 +2,11 @@ import type { IPCClient } from "../ipc-client/index.ts";
 import { parseSinceDurationToMs } from "../lib/parse-since.ts";
 import { INTERACTIVE_RPC_TIMEOUT_MS } from "../lib/rpc-timeouts.ts";
 import { withGatewayIpc } from "../lib/with-gateway-ipc.ts";
+import {
+  ProveUsageError,
+  parseProveByProposerArgs,
+  runProveByProposer,
+} from "./prove-by-proposer.ts";
 
 type VerifyResult = { ok: boolean; verifiedRows: number; brokenAt?: number; reason?: string };
 type EgressRow = { timestamp: number; destination: string; method: string; resultStatus: string };
@@ -225,7 +230,32 @@ export function resolvePruneBeforeTs(args: string[], now: number): number {
   throw new Error("Usage: nimbus egress prune (--before <ISO|epoch> | --older-than <duration>)");
 }
 
-/** Parse `--since <dur>` (e.g. 24h, 30m, 7d) into an epoch-ms lower bound relative to now. */
+/**
+ * Read `--since <dur>` in one pass: the window and the index of its operand (so a caller looking for
+ * a positional argument skips it). A `--since` with no duration, or given twice, is a usage error
+ * before anything is sent to the gateway.
+ */
+function scanSince(
+  args: readonly string[],
+  now: number,
+): { readonly sinceMs: number | undefined; readonly operandIdx: number } {
+  let sinceMs: number | undefined;
+  let operandIdx = -1;
+  for (let i = 0; i < args.length; i += 1) {
+    if (args[i] !== "--since") continue;
+    if (operandIdx >= 0) throw new ProveUsageError("--since was given more than once.");
+    const raw = args[i + 1];
+    if (raw === undefined || raw.startsWith("--")) {
+      throw new ProveUsageError("--since needs a value, for example --since 7d.");
+    }
+    sinceMs = now - parseSinceDurationToMs(raw);
+    operandIdx = i + 1;
+    i += 1;
+  }
+  return { sinceMs, operandIdx };
+}
+
+/** `nimbus egress --since`: a dangling `--since` is ignored (its documented, tested behaviour). */
 function parseSince(args: string[], now: number): number | undefined {
   const i = args.indexOf("--since");
   if (i < 0) return undefined;
@@ -301,13 +331,25 @@ export async function runEgressReport(
 
 /** `nimbus prove "<query>"` — snapshot a time window around the query, print the egress delta. */
 export async function runProve(args: string[]): Promise<void> {
+  if (args.includes("--by-proposer")) {
+    // A different command that shares the name: it parses its own flags and runs no query, so
+    // nothing below (`agent.invoke`, the egress window) is reachable from it.
+    const parsed = parseProveByProposerArgs(args, Date.now());
+    await withGatewayIpc((client) => runProveByProposer(client, parsed));
+    return;
+  }
   const sign = args.includes("--receipt") || args.includes("--sign");
-  const query = args.find((a) => !a.startsWith("--"));
+  // `--since` takes a value: it is a window (the same grammar as `nimbus egress --since`), never the
+  // query, so the value is skipped when looking for the first positional argument.
+  const { sinceMs: sinceFlag, operandIdx } = scanSince(args, Date.now());
+  const query = args.find((a, i) => !a.startsWith("--") && i !== operandIdx);
   // `agent.invoke` below is `stream: false`, so unlike `nimbus ask` there are no tokens
   // already on stdout to salvage: a timeout here loses the whole answer AND the proof.
   await withConsentIpc(async (client) => {
-    const since = Date.now();
-    if (query !== undefined && query !== "") {
+    // With no query there is nothing to bracket, so a `--since` window starts where it says.
+    const hasQuery = query !== undefined && query !== "";
+    const since = !hasQuery && sinceFlag !== undefined ? sinceFlag : Date.now();
+    if (hasQuery) {
       // The blocking ask path (mirrors `nimbus ask`): agent.invoke runs the query so the ledger head
       // advances if (and only if) the agent dispatches a real outbound action.
       await client.call("agent.invoke", { input: query, stream: false });

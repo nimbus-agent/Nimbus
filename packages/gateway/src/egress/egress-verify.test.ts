@@ -44,6 +44,19 @@ describe("verifyEgressChain", () => {
   test("an empty ledger verifies ok with 0 rows", () => {
     expect(verifyEgressChain(db)).toEqual({ ok: true, verifiedRows: 0 });
   });
+  test("verifies a chain longer than one page and detects a tampered row in a later page", () => {
+    const total = 2_300;
+    db.transaction(() => {
+      for (let i = 1; i <= total; i += 1) appendEgressEntry(db, e({ timestamp: i }));
+    })();
+    expect(verifyEgressChain(db)).toEqual({ ok: true, verifiedRows: total });
+    db.run("UPDATE egress_ledger SET timestamp = 999999 WHERE id = 2105");
+    const bad = verifyEgressChain(db);
+    expect(bad.ok).toBe(false);
+    expect(bad.brokenAt).toBe(2105);
+    expect(bad.verifiedRows).toBe(2104);
+    expect(verifyEgressChain(db, 1_500).brokenAt).toBe(2105);
+  });
   test("verifying from a mid-chain id walks only the later rows, linked to the row it starts after", () => {
     appendEgressEntry(db, e({ method: "a.x", timestamp: 1 }));
     appendEgressEntry(db, e({ method: "b.y", timestamp: 2 }));

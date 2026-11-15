@@ -210,7 +210,7 @@ describe("tryDispatchAuditRpc — body coverage", () => {
     const db = trackDb();
     const localIndex = new LocalIndex(db);
     const ctx = makeCtx({ localIndex });
-    const out = await tryDispatchAuditRpc(ctx, "audit.exportAll", {});
+    const out = await tryDispatchAuditRpc(ctx, "audit.exportAll", {}, "c1");
     expect(out).toBeDefined();
   });
 });

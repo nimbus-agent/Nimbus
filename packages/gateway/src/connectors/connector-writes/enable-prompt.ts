@@ -1,5 +1,6 @@
 // packages/gateway/src/connectors/connector-writes/enable-prompt.ts
 // The consent text for `connector.writes.enable`: exactly which writes become model-offerable.
+import { escapeUnverifiedLine } from "../../engine/proposer-block.ts";
 import { OBSIDIAN_APPEND_TOOL_ID } from "./enablement-store.ts";
 import { sanitisePreviewText } from "./preview.ts";
 
@@ -222,7 +223,11 @@ export function enableWritesPromptLines(
   payload: Record<string, unknown> | undefined,
 ): string[] | undefined {
   // The agent door has its own validated shape (Phase 28 AD3a-1).
-  if (payload?.["door"] === "agent") return agentEnablePromptLines(payload);
+  if (payload?.["door"] === "agent") {
+    return payload["userMcp"] === true
+      ? userMcpEnablePromptLines(payload)
+      : agentEnablePromptLines(payload);
+  }
   if (payload?.["door"] !== undefined) return undefined;
   const service = payload?.["service"];
   const maxWave = payload?.["maxWave"];
@@ -417,5 +422,99 @@ function agentEnablePromptLines(payload: Record<string, unknown>): string[] | un
     "Each proposal still asks you, at `nimbus approvals`.",
     "An agent holding its own credentials can act without Nimbus.",
   );
+  return lines;
+}
+
+/** The fixed sentences of a user-MCP agent enable (AD5a, D-4): what the owner is and is not told. */
+export const USER_MCP_ENABLE_FIXED_LINES = [
+  "Every call is still approved by you, one at a time, and shows the exact input.",
+  "A changed definition suspends the tool until you approve it by name again.",
+  "The hash covers what the server lists, not what the code does.",
+  "Approvals are removed when the server is removed.",
+  "An agent holding its own credentials can act without Nimbus.",
+] as const;
+
+const USER_MCP_TOOL_STATE_TEXT: Readonly<Record<string, string>> = AGENT_STATE_TEXT;
+
+/** At most this many reach lines of each kind are printed before "and N more". */
+const USER_MCP_REACH_LINES_MAX = 20;
+
+function reachLines(label: string, values: readonly string[]): string[] {
+  if (values.length === 0) return [`  ${label}: none`];
+  const lines = values
+    .slice(0, USER_MCP_REACH_LINES_MAX)
+    .map((v) => `  ${label}: ${escapeUnverifiedLine(v)}`);
+  if (values.length > USER_MCP_REACH_LINES_MAX) {
+    lines.push(`  ${label}: and ${values.length - USER_MCP_REACH_LINES_MAX} more`);
+  }
+  return lines;
+}
+
+/** The first twelve hex characters of a definition hash, or `undefined` for anything else. */
+function userMcpToolLine(w: unknown): string[] | undefined {
+  if (typeof w !== "object" || w === null) return undefined;
+  const r = w as Record<string, unknown>;
+  if (
+    typeof r["toolId"] !== "string" ||
+    typeof r["state"] !== "string" ||
+    !Object.hasOwn(USER_MCP_TOOL_STATE_TEXT, r["state"]) ||
+    typeof r["sha12"] !== "string" ||
+    !SHA12.test(r["sha12"]) ||
+    typeof r["description"] !== "string"
+  ) {
+    return undefined;
+  }
+  return [
+    `  ${escapeUnverifiedLine(r["toolId"])}  ${USER_MCP_TOOL_STATE_TEXT[r["state"]]}  ${r["sha12"]}`,
+    `    the server's own text, UNVERIFIED: "${escapeUnverifiedLine(r["description"])}"`,
+  ];
+}
+
+/**
+ * The consent text of an agent-door enable for a user-registered MCP server: the server and its
+ * sandbox reach (third-party code the owner registered), then one entry per tool with its state, the
+ * first twelve hex characters of the definition hash and the server's own description (escaped,
+ * marked as the server's text), then the fixed sentences. `undefined` when the payload is malformed.
+ */
+function userMcpEnablePromptLines(payload: Record<string, unknown>): string[] | undefined {
+  const service = payload["service"];
+  const registeredAt = payload["registeredAt"];
+  const readPaths = stringList(payload["readPaths"]);
+  const netHosts = stringList(payload["netHosts"]);
+  const tools = payload["tools"];
+  const note = payload["networkNote"];
+  if (
+    typeof service !== "string" ||
+    typeof registeredAt !== "number" ||
+    !Number.isFinite(registeredAt) ||
+    readPaths === undefined ||
+    netHosts === undefined ||
+    typeof payload["modelAccess"] !== "boolean" ||
+    !Array.isArray(tools) ||
+    tools.length === 0 ||
+    (note !== undefined && typeof note !== "string")
+  ) {
+    return undefined;
+  }
+  const lines = [
+    `Service: ${escapeUnverifiedLine(service)}`,
+    "Door: outside agents (MCP)",
+    `Third-party code you registered on ${new Date(registeredAt).toISOString()}`,
+    "Sandbox reach:",
+    ...reachLines("read", readPaths),
+    ...reachLines("net", netHosts),
+  ];
+  if (note !== undefined) lines.push(`  net note: ${escapeUnverifiedLine(note)}`);
+  lines.push(
+    "  write: none beyond its own sandbox directory",
+    `Also registered for your own model (--model, a separate grant): ${payload["modelAccess"] ? "yes" : "no"}`,
+    "Tools to approve for outside agents (exact names, first 12 characters of each definition hash):",
+  );
+  for (const t of tools as unknown[]) {
+    const tl = userMcpToolLine(t);
+    if (tl === undefined) return undefined;
+    lines.push(...tl);
+  }
+  lines.push("", ...USER_MCP_ENABLE_FIXED_LINES);
   return lines;
 }

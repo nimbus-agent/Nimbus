@@ -40,7 +40,7 @@ const SENTINEL = "PROPOSER-SENTINEL-91c2";
 
 const PROPOSER: AgentProposer = {
   door: "agent",
-  captureId: "cap_AbC-123_xyz",
+  captureId: "cap_0123456789abcdef0123456789abcdef",
   label: `agent${RLO}x`,
   labelSource: "declared",
   summary: `Summary ${SENTINEL}`,
@@ -292,13 +292,18 @@ describe("executor — origin agent, end to end", () => {
     const row = (JSON.parse(write?.actionJson ?? "{}") as { action: Record<string, unknown> })
       .action;
     expect(row["origin"]).toBe("agent");
-    expect(row["proposer"]).toEqual({ door: "agent", captureId: PROPOSER.captureId });
+    // AD4: the row names the door and the proposer (the capture, the client's own label and where it came from).
+    expect(row["proposer"]).toEqual({
+      door: "agent",
+      captureId: PROPOSER.captureId,
+      label: PROPOSER.label,
+      labelSource: "declared",
+    });
     expect((row["proposer"] as Record<string, unknown>)["captureId"]).toMatch(
       /^cap_[A-Za-z0-9_-]+$/,
     );
-    // The label and the summary (the agent's own words) never enter the audit chain.
+    // The agent's summary never enters the audit chain; its label does, as the client's own UNVERIFIED claim.
     expect(write?.actionJson).not.toContain(SENTINEL);
-    expect(write?.actionJson).not.toContain(PROPOSER.label);
     expect(Object.keys(row).indexOf("proposer")).toBeLessThan(Object.keys(row).indexOf("payload"));
   });
 

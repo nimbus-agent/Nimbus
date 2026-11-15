@@ -10,7 +10,11 @@ import {
   listActionProposals,
   rejectCapture,
 } from "../mcp-sink/capture-gate.ts";
-import { type ActionPayload, CaptureError } from "../mcp-sink/capture-types.ts";
+import {
+  type ActionPayload,
+  CAPTURE_LABEL_SOURCE,
+  CaptureError,
+} from "../mcp-sink/capture-types.ts";
 import { dispatchByMethod, type RpcMissOrHit } from "./_lib/dispatch-by-method.ts";
 import {
   actWriteRows,
@@ -91,7 +95,7 @@ function listView(
       legacy: p.agentDoorLegacy,
       ...rowFacts(p.actionType, rpc.act),
       label: escapedLabel(p.clientLabel),
-      labelSource: "declared",
+      labelSource: CAPTURE_LABEL_SOURCE,
       summary: escapeUnverifiedLine(p.summary),
       createdAt: p.createdAt,
       expiresAt: p.expiresAt,
@@ -127,7 +131,7 @@ function getView(rpc: CaptureRpcCtx, caller: CaptureCaller, idRaw: unknown): unk
     ...(legacy ? { deprecation: LEGACY_LIST_HEADER } : {}),
     ...rowFacts(stored.actionType, rpc.act),
     label: escapedLabel(detail.clientLabel),
-    labelSource: "declared",
+    labelSource: CAPTURE_LABEL_SOURCE,
     summary: escapeUnverifiedLine(stored.summary),
     createdAt: detail.createdAt,
     expiresAt: detail.expiresAt,

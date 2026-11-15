@@ -35,8 +35,9 @@ import type { ConsentCoordinator } from "./consent.ts";
 
 const PROV = (basis: ActionBasis | undefined) => ({
   ...(basis === undefined ? {} : { basis }),
-  captureId: "cap_ad3",
+  captureId: "cap_00ad00ad00ad00ad00ad00ad00ad00ad",
   clientLabel: "agent",
+  labelSource: "declared" as const,
   createdAt: 0,
   expiresAt: 60_000,
   summary: "why",
@@ -201,6 +202,22 @@ describe("the consent-side veto (approved basis only)", () => {
     const out = await h.act.execute("github.issue.create", { title: "t" }, PROV("approved"));
     expect(out.status).toBe("ok");
     expect(writesOf(h.dispatched)).toHaveLength(1);
+  });
+
+  test("the veto passes the stored proposal's createdAt to the door's check (so a proposal older than a user-MCP registration is vetoed)", async () => {
+    const seen: Array<number | undefined> = [];
+    const h = harness({
+      door: {
+        listServerTools: async () => ({}),
+        verifyDefinition: async (_t, at) => {
+          seen.push(at);
+          return { ok: true };
+        },
+      },
+    });
+    const prov = { ...PROV("approved"), createdAt: 1234 };
+    await h.act.execute("github.issue.create", { title: "t" }, prov);
+    expect(seen).toEqual([1234]);
   });
 
   test("a LEGACY basis is never vetoed: an empty door table and a changed listing still dispatch", async () => {

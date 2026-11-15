@@ -236,7 +236,12 @@ describe("submitCapture — ordered refusals", () => {
       await codeOfAsync(() => submitCapture(deps, MCP, { kind: "note", payload: { body: "" } })),
     ).toBe("ERR_CAPTURE_INVALID");
     const j = JSON.parse(auditRows()[0]?.action_json ?? "{}") as Record<string, unknown>;
-    expect(j).toEqual({ kind: "note", clientLabel: null, outcome: "ERR_CAPTURE_INVALID" });
+    expect(j).toEqual({
+      kind: "note",
+      clientLabel: null,
+      connection: MCP.clientId,
+      outcome: "ERR_CAPTURE_INVALID",
+    });
   });
 
   test("6 relatesTo must name existing items; a capture item only while live", async () => {
@@ -991,7 +996,7 @@ describe("act door — submit (PR 3)", () => {
       ...deps,
       classifyAction: () =>
         verdict === "proposable"
-          ? { kind: "proposable", userMcp: true }
+          ? { kind: "proposable", basis: "legacy_user_mcp" }
           : verdict === "denied"
             ? { kind: "denied", class: "vcs" }
             : { kind: "unknown" },
@@ -1001,7 +1006,13 @@ describe("act door — submit (PR 3)", () => {
   });
   test("stores proposed with expires_at = now + ttl; audited with actionType; no item", async () => {
     const out = await submitCapture(deps, MCP, ACT);
-    expect(out).toEqual({ id: "cap_1", state: "proposed", expiresAt: clock + 24 * 3_600_000 });
+    // The fixture verdict carries the legacy_user_mcp basis (AD5a): the reply says `legacy`.
+    expect(out).toEqual({
+      id: "cap_1",
+      state: "proposed",
+      expiresAt: clock + 24 * 3_600_000,
+      legacy: true,
+    });
     expect(deps.store.get("cap_1")?.itemId).toBeNull();
     expect(JSON.parse(auditRows().at(-1)?.action_json ?? "{}")).toMatchObject({
       kind: "action",
@@ -1251,5 +1262,13 @@ describe("act door — submit (PR 3)", () => {
       actionExpiringWithinHour: 0,
       pending: 0,
     });
+  });
+});
+
+describe("AD4 (OR-AD-20): the submit row names the submitting connection", () => {
+  test("a stored proposal's hashed JSON holds the connection id beside the label", async () => {
+    await submitCapture(deps, MCP, NOTE);
+    const j = JSON.parse(auditRows()[0]?.action_json ?? "{}") as Record<string, unknown>;
+    expect(j).toMatchObject({ connection: MCP.clientId, outcome: "captured" });
   });
 });

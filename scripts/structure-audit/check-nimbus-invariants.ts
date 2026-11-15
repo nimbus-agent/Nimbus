@@ -2152,8 +2152,19 @@ export function checkDoorApprovalConfinement(files: readonly FileEntry[]): Viola
 // (f) The `capture.legacy` flag (`agentDoorLegacy`) is named only by the sink's types, store and gate
 //     and the owner's approvals listing; its count (`legacyActionTypesSince`) only by the store and
 //     the status handler. AD3b removes this clause with the flag.
+// (g) The user-MCP call facts (Phase 28 AD5a, I42): the `userMcpCall` property of a planned action
+//     (what the owner's prompt shows about third-party code) is written only by `ipc/capture-rpc.ts`
+//     `buildActDeps`, from the agent door's own read, and named besides only by the file that declares
+//     it (`engine/types.ts`), the two that read it (`engine/executor.ts`, `engine/user-mcp-call-block.ts`).
+//     No other site may put facts on an action, so the prompt cannot be made to show a description the
+//     definition check did not hash.
+// (h) The agent door's reach into user-registered servers (AD5a): `listUserMcpToolDefinitions` (the
+//     stripped listing that STARTS a third-party server) is named only by the mesh that defines it, the
+//     assembly that wires the door's check, and the connector RPC that wires the owner's enable and
+//     status; and `removeDoorApprovals` (what ends an agent approval with its registration) only by its
+//     store, the disable handler and the two registration handlers (remove and add).
 // Same stated bound as D32(a): a dynamically composed identifier evades a text scan; the behavioural
-// tests under I58 are authoritative. Test files (and `.test-helpers.ts`) are not scanned.
+// tests under I58 and I42 are authoritative. Test files (and `.test-helpers.ts`) are not scanned.
 const D49_SRC = "packages/gateway/src/";
 const D49_LEGACY_TABLE_RE =
   /\b(?:ACTION_PROPOSABILITY|classifyActionType|proposableWriteTool|PROPOSABLE_WRITE_TOOLS)\b/g;
@@ -2184,6 +2195,59 @@ const D49_LEGACY_FLAG_ALLOWED: readonly string[] = [
   `${D49_SRC}mcp-sink/capture-gate.ts`,
   `${D49_SRC}ipc/approvals-rpc.ts`,
 ];
+const D49_USER_MCP_CALL_RE = /\buserMcpCall\b/g;
+const D49_USER_MCP_CALL_ALLOWED: readonly string[] = [
+  `${D49_SRC}ipc/capture-rpc.ts`,
+  `${D49_SRC}engine/types.ts`,
+  `${D49_SRC}engine/executor.ts`,
+  `${D49_SRC}engine/user-mcp-call-block.ts`,
+];
+// An object-literal property (`{ userMcpCall: x }`). The same text inside a destructuring PATTERN
+// (`const { userMcpCall: facts } = action`, a renamed READ) is skipped by `d49IsDestructuringTarget`.
+const D49_USER_MCP_CALL_WRITE_RE = /\buserMcpCall\s*\??\s*:/g;
+// A member assignment (`action.userMcpCall = facts`); ==, === and => are not assignments.
+const D49_USER_MCP_CALL_ASSIGN_RE = /\.\s*userMcpCall\s*=(?![=>])/g;
+// A member that is the TARGET of a destructuring assignment (`({ a: action.userMcpCall } = src)`,
+// `[action.userMcpCall] = pair`): the member directly before `,`, `}` or `]`, counted only when an
+// enclosing `{ ... }` or `[ ... ]` is itself assigned to (`d49IsMemberPatternTarget`). The same
+// text as a VALUE (`send({ a: action.userMcpCall })`) is a read. Stated bound, fail closed: a
+// member used as a default inside a pattern (`const { a = action.userMcpCall } = x`) is refused too.
+const D49_USER_MCP_CALL_MEMBER_TARGET_RE = /\.\s*userMcpCall(?=\s*[,}\]])/g;
+// The shorthand forms `{ userMcpCall }`, `{ ...x, userMcpCall }` and `{ a, userMcpCall, b }`: the
+// name directly after `{` or `,` and directly before `,` or `}`, never a member access. A
+// destructuring pattern (`const { userMcpCall, ...rest } = action`, a READ) is skipped by
+// `d49IsDestructuringTarget`.
+const D49_USER_MCP_CALL_SHORTHAND_RE = /(?<=[{,]\s*)userMcpCall(?=\s*[,}])/g;
+const D49_USER_MCP_CALL_WRITE_ALLOWED: readonly string[] = [
+  `${D49_SRC}ipc/capture-rpc.ts`,
+  `${D49_SRC}engine/types.ts`,
+];
+const D49_USER_MCP_LISTER_RE = /\blistUserMcpToolDefinitions\b/g;
+const D49_USER_MCP_LISTER_ALLOWED: readonly string[] = [
+  `${D49_SRC}connectors/lazy-mesh/mesh.ts`,
+  `${D49_SRC}platform/assemble.ts`,
+  `${D49_SRC}ipc/connector-rpc.ts`,
+];
+// The injected dependency the door's check and the owner's enable and status receive (the mesh method
+// above, late-bound). Naming it is calling the lister, so it is confined to the files that declare,
+// forward or call it; the ORDER of a call inside an allowed file (after the verdict and the approval
+// checks, never before) is covered by the behavioural tests, not by this scan.
+const D49_USER_MCP_INJECTED_LISTER_RE = /\blistUserMcpDefinitions\b/g;
+const D49_USER_MCP_INJECTED_LISTER_ALLOWED: readonly string[] = [
+  `${D49_SRC}connectors/connector-writes/agent-door-runtime.ts`,
+  `${D49_SRC}ipc/connector-rpc-handlers/agent-writes.ts`,
+  `${D49_SRC}ipc/connector-rpc-handlers/agent-writes-user-mcp.ts`,
+  `${D49_SRC}ipc/connector-rpc-handlers/model-writes.ts`,
+  `${D49_SRC}ipc/connector-rpc.ts`,
+  `${D49_SRC}platform/assemble.ts`,
+];
+const D49_REMOVE_APPROVALS_RE = /\bremoveDoorApprovals\b/g;
+const D49_REMOVE_APPROVALS_ALLOWED: readonly string[] = [
+  `${D49_SRC}connectors/connector-writes/door-approval-store.ts`,
+  `${D49_SRC}ipc/connector-rpc-handlers/model-writes.ts`,
+  `${D49_SRC}ipc/connector-rpc-handlers/removal.ts`,
+  `${D49_SRC}ipc/connector-rpc-handlers/config.ts`,
+];
 const D49_LEGACY_COUNT_RE = /\blegacyActionTypesSince\b/g;
 const D49_LEGACY_COUNT_ALLOWED: readonly string[] = [
   `${D49_SRC}mcp-sink/capture-store.ts`,
@@ -2197,6 +2261,7 @@ function d49ScanNames(
   allowed: readonly string[],
   rule: string,
   keepStrings: boolean,
+  skip?: (code: string, index: number) => boolean,
 ): Violation[] {
   const out: Violation[] = [];
   for (const f of files) {
@@ -2206,11 +2271,149 @@ function d49ScanNames(
     const code = keepStrings ? commentFree : stripStringLiterals(commentFree);
     const original = f.contents.split("\n");
     for (const m of code.matchAll(new RegExp(re.source, "g"))) {
+      if (skip?.(code, m.index) === true) continue;
       const line = lineOfOffset(code, m.index);
       out.push({ rule, file: f.relPath, line, snippet: (original[line - 1] ?? "").trim() });
     }
   }
   return out;
+}
+
+/**
+ * True when the identifier at `index` sits inside an object PATTERN: the `{ ... }` that encloses it
+ * is followed by a single `=` (`const { a, ...rest } = x`). Such a name is a read, not a property
+ * write. Strings and comments are already blanked in `code`, so a brace in either cannot desync the
+ * depth.
+ */
+function d49IsDestructuringTarget(code: string, index: number): boolean {
+  let depth = 0;
+  let open = -1;
+  for (let i = index - 1; i >= 0; i--) {
+    const c = code[i];
+    if (c === "}") depth++;
+    else if (c === "{") {
+      if (depth === 0) {
+        open = i;
+        break;
+      }
+      depth--;
+    }
+  }
+  if (open < 0) return false;
+  depth = 0;
+  for (let i = open; i < code.length; i++) {
+    const c = code[i];
+    if (c === "{") depth++;
+    else if (c === "}") {
+      depth--;
+      if (depth === 0) {
+        const rest = code.slice(i + 1).trimStart();
+        return rest.startsWith("=") && !rest.startsWith("==") && !rest.startsWith("=>");
+      }
+    }
+  }
+  return false;
+}
+
+/** True when the single `=` of an assignment follows `rest` (never `==`, `===` or `=>`). */
+function d49StartsWithAssignment(rest: string): boolean {
+  return rest.startsWith("=") && !rest.startsWith("==") && !rest.startsWith("=>");
+}
+
+/** The index of the bracket that closes the `{` or `[` at `open`, or -1. */
+function d49MatchingClose(code: string, open: number): number {
+  let depth = 0;
+  for (let i = open; i < code.length; i++) {
+    const c = code[i];
+    if (c === "{" || c === "[") depth++;
+    else if (c === "}" || c === "]") {
+      depth--;
+      if (depth === 0) return i;
+    }
+  }
+  return -1;
+}
+
+/** Words after which a `[` opens an array, never an element access (`return [a] = pair`). */
+const D49_KEYWORDS_BEFORE_ARRAY: ReadonlySet<string> = new Set([
+  "return",
+  "of",
+  "in",
+  "yield",
+  "await",
+  "case",
+  "typeof",
+  "void",
+  "else",
+  "do",
+  "throw",
+  "delete",
+  "new",
+  "instanceof",
+]);
+
+/** Statement heads whose `( ... )` is a control header, never a receiver (`if (x) [a] = pair`). */
+const D49_CONTROL_HEADS: ReadonlySet<string> = new Set(["if", "while", "for", "with"]);
+
+/**
+ * True when the `)` that ends `before` closes a control header (`if (ready)`), so what follows is a
+ * new statement. A `)` with no matching `(` is treated the same way: fail closed.
+ */
+function d49ClosesControlHeader(before: string): boolean {
+  let depth = 0;
+  for (let i = before.length - 1; i >= 0; i--) {
+    const c = before[i];
+    if (c === ")") depth++;
+    else if (c === "(") {
+      depth--;
+      if (depth === 0) {
+        const head = /[\w$]+$/.exec(before.slice(0, i).trimEnd())?.[0];
+        return head !== undefined && D49_CONTROL_HEADS.has(head);
+      }
+    }
+  }
+  return true;
+}
+
+/**
+ * True when the `[` at `open` is an element access (`slots[key]`): it follows a name, a `]`, or a
+ * `)` that ends a receiver expression (`pick(a)[key]`), never one that ends a control header. What
+ * it holds is a key, a READ, even when the indexed slot is then assigned to. Anything this cannot
+ * tell is treated as a pattern, so a doubt is a violation, never a pass.
+ */
+function d49IsElementAccess(code: string, open: number): boolean {
+  if (code[open] !== "[") return false;
+  const before = code.slice(0, open).trimEnd();
+  const last = before.at(-1);
+  if (last === undefined) return false;
+  if (last === "]") return true;
+  if (last === ")") return !d49ClosesControlHeader(before);
+  const word = /[\w$]+$/.exec(before)?.[0];
+  return word !== undefined && !D49_KEYWORDS_BEFORE_ARRAY.has(word);
+}
+
+/**
+ * True when the member at `index` sits inside a `{ ... }` or `[ ... ]` group, at any depth, that is
+ * itself assigned to: a destructuring assignment whose target is the member, so a WRITE. Every
+ * enclosing group is tried, innermost first, so a nested pattern is seen too. An element access is
+ * not a pattern: the member inside it is a key that is read, and the walk stops there.
+ */
+function d49IsMemberPatternTarget(code: string, index: number): boolean {
+  let depth = 0;
+  for (let i = index - 1; i >= 0; i--) {
+    const c = code[i];
+    if (c === "}" || c === "]") depth++;
+    else if (c === "{" || c === "[") {
+      if (depth > 0) {
+        depth--;
+        continue;
+      }
+      if (d49IsElementAccess(code, i)) return false;
+      const close = d49MatchingClose(code, i);
+      if (close >= 0 && d49StartsWithAssignment(code.slice(close + 1).trimStart())) return true;
+    }
+  }
+  return false;
 }
 
 export function checkAgentDoorLegacyTable(files: readonly FileEntry[]): Violation[] {
@@ -2275,6 +2478,75 @@ export function checkAgentDoorLegacyFlag(files: readonly FileEntry[]): Violation
       D49_LEGACY_COUNT_RE,
       D49_LEGACY_COUNT_ALLOWED,
       "agent-door-legacy-flag-confined",
+      false,
+    ),
+  ];
+}
+
+export function checkUserMcpCallFacts(files: readonly FileEntry[]): Violation[] {
+  return [
+    ...d49ScanNames(
+      files,
+      D49_USER_MCP_CALL_RE,
+      D49_USER_MCP_CALL_ALLOWED,
+      "user-mcp-call-facts-confined",
+      false,
+    ),
+    ...d49ScanNames(
+      files,
+      D49_USER_MCP_CALL_WRITE_RE,
+      D49_USER_MCP_CALL_WRITE_ALLOWED,
+      "user-mcp-call-facts-confined",
+      false,
+      d49IsDestructuringTarget,
+    ),
+    ...d49ScanNames(
+      files,
+      D49_USER_MCP_CALL_ASSIGN_RE,
+      D49_USER_MCP_CALL_WRITE_ALLOWED,
+      "user-mcp-call-facts-confined",
+      false,
+    ),
+    ...d49ScanNames(
+      files,
+      D49_USER_MCP_CALL_MEMBER_TARGET_RE,
+      D49_USER_MCP_CALL_WRITE_ALLOWED,
+      "user-mcp-call-facts-confined",
+      false,
+      (code, index) => !d49IsMemberPatternTarget(code, index),
+    ),
+    ...d49ScanNames(
+      files,
+      D49_USER_MCP_CALL_SHORTHAND_RE,
+      D49_USER_MCP_CALL_WRITE_ALLOWED,
+      "user-mcp-call-facts-confined",
+      false,
+      d49IsDestructuringTarget,
+    ),
+  ];
+}
+
+export function checkUserMcpDoorReach(files: readonly FileEntry[]): Violation[] {
+  return [
+    ...d49ScanNames(
+      files,
+      D49_USER_MCP_LISTER_RE,
+      D49_USER_MCP_LISTER_ALLOWED,
+      "user-mcp-door-reach-confined",
+      false,
+    ),
+    ...d49ScanNames(
+      files,
+      D49_USER_MCP_INJECTED_LISTER_RE,
+      D49_USER_MCP_INJECTED_LISTER_ALLOWED,
+      "user-mcp-door-reach-confined",
+      false,
+    ),
+    ...d49ScanNames(
+      files,
+      D49_REMOVE_APPROVALS_RE,
+      D49_REMOVE_APPROVALS_ALLOWED,
+      "user-mcp-door-reach-confined",
       false,
     ),
   ];
@@ -3750,6 +4022,44 @@ const D43_CONSTANT_ALLOWED: readonly string[] = [
   D42_REGISTRY,
 ];
 
+// ---- D10 `user-write` (a declared write DIRECTORY, I15; Phase 28 AD5b) ---------------------------
+// A sandbox policy may declare a directory the child writes beneath (`canonicalWriteDirs`). The
+// field is named only by the manifest type, the policy wire and the two checks that read it, so no
+// connector, IPC handler or engine file can build a policy that carries one. In AD5b-1 the list
+// holds NO `connectors/` file: nothing produces a write-directory grant. AD5b-2 adds the one builder
+// (`connectors/lazy-mesh/user-mcp-write-grant.ts`) to this list, in the commit that adds the flag.
+// Strings are kept: a string spelling of the field (a computed key) is a spelling.
+// Stated bound: textual. A name composed at run time evades it; the real-sandbox tests are the
+// authority on what a policy can do.
+const D10_WRITE_DIR_RE = /\bcanonicalWriteDirs\b/g;
+const D10_WRITE_DIR_ALLOWED: readonly string[] = [
+  "packages/gateway/src/extensions/manifest.ts",
+  "packages/gateway/src/platform/sandbox/sandbox-policy.ts",
+  "packages/gateway/src/platform/sandbox/canonical-path.ts",
+  "packages/gateway/src/platform/sandbox/write-grant-check.ts",
+];
+
+export function checkWriteDirDeclarationConfined(files: readonly FileEntry[]): Violation[] {
+  const out: Violation[] = [];
+  for (const f of files) {
+    if (f.relPath.endsWith(".test.ts") || f.relPath.endsWith(".test-helpers.ts")) continue;
+    if (!f.relPath.startsWith("packages/gateway/src/")) continue;
+    if (D10_WRITE_DIR_ALLOWED.includes(f.relPath)) continue;
+    const commentFree = stripComments(f.contents);
+    const original = f.contents.split("\n");
+    for (const m of commentFree.matchAll(D10_WRITE_DIR_RE)) {
+      const line = lineOfOffset(commentFree, m.index);
+      out.push({
+        rule: "D10-user-write",
+        file: f.relPath,
+        line,
+        snippet: (original[line - 1] ?? "").trim(),
+      });
+    }
+  }
+  return out;
+}
+
 export function checkIacDiscard(files: readonly FileEntry[]): Violation[] {
   const out: Violation[] = [];
   const add = (f: FileEntry, rule: string, src: string, index: number | undefined): void => {
@@ -5137,6 +5447,7 @@ export const RULE_ANCHORS: readonly string[] = [
   "packages/gateway/src/agents/_lib/briefing-build.ts", // D45
   "packages/gateway/src/finops/cost-series.ts", // D48 — FinOps cost code is inert
   "packages/gateway/src/ipc/lan-legacy.ts", // D47 — the only home of the v1 static-box LAN path
+  "packages/gateway/src/platform/sandbox/write-grant-check.ts", // D10 user-write — a file the rule reads and then permits
   "packages/gateway/src/engine/executor.ts", // D22 — connectors.dispatch chokepoint
   "packages/gateway/src/ipc/agents-rpc.ts", // D22(d) — agent emitter confinement
   "packages/gateway/src/db/write.ts", // D12 — bound-param SQL writes
@@ -5285,6 +5596,14 @@ export const RULE_ANCHORS: readonly string[] = [
   "packages/gateway/src/mcp-sink/capture-types.ts",
   "packages/gateway/src/ipc/approvals-rpc.ts",
   "packages/gateway/src/ipc/connector-rpc-handlers/agent-writes.ts",
+  // D49(g), (h) (Phase 28 AD5a) -- the sites the new clauses read by name.
+  "packages/gateway/src/engine/types.ts",
+  "packages/gateway/src/engine/user-mcp-call-block.ts",
+  "packages/gateway/src/connectors/lazy-mesh/mesh.ts",
+  "packages/gateway/src/ipc/connector-rpc.ts",
+  "packages/gateway/src/ipc/connector-rpc-handlers/model-writes.ts",
+  "packages/gateway/src/ipc/connector-rpc-handlers/removal.ts",
+  "packages/gateway/src/ipc/connector-rpc-handlers/config.ts",
 ];
 
 /** Fail loudly when the scanned set cannot support the rules about to run. */
@@ -5549,6 +5868,20 @@ async function run(): Promise<void> {
       );
     }
     if (legacyFlagViolations.length > 0) exit = 1;
+    const callFactsViolations = checkUserMcpCallFacts(files);
+    for (const e of callFactsViolations) {
+      console.error(
+        `::error file=${e.file},line=${e.line}::D49(g) the user-MCP call facts (userMcpCall) named or written outside their sites (rule user-mcp-call-facts-confined) — only ipc/capture-rpc.ts writes them, and engine/{types,executor,user-mcp-call-block}.ts name them: ${e.snippet}`,
+      );
+    }
+    if (callFactsViolations.length > 0) exit = 1;
+    const doorReachViolations = checkUserMcpDoorReach(files);
+    for (const e of doorReachViolations) {
+      console.error(
+        `::error file=${e.file},line=${e.line}::D49(h) the stripped user-MCP listing or the door-approval delete named outside their sites (rule user-mcp-door-reach-confined) — listUserMcpToolDefinitions only in the mesh, the assembly and the connector RPC, and its injected name listUserMcpDefinitions only in the door runtime, the connector RPC with its agent-writes and model-writes handlers, and the assembly; removeDoorApprovals only in its store and the disable, remove and add handlers: ${e.snippet}`,
+      );
+    }
+    if (doorReachViolations.length > 0) exit = 1;
     const spawnViolations = checkConnectorSpawnIsHidden(files);
     for (const e of spawnViolations) {
       console.error(
@@ -5805,6 +6138,15 @@ async function run(): Promise<void> {
     for (const e of v) {
       console.error(
         `::error file=${e.file},line=${e.line}::D42${D42_CLAUSE[e.rule] ?? ""} — a bound write could be dispatched with values its own gate-run prepare step did not produce, or a caller could supply them (I54): ${e.snippet}`,
+      );
+    }
+    if (v.length > 0) exit = 1;
+  }
+  if (mode === "binary-only" || mode === "all") {
+    const v = checkWriteDirDeclarationConfined(files);
+    for (const e of v) {
+      console.error(
+        `::error file=${e.file},line=${e.line}::D10 (user-write) a sandbox policy's write-directory declaration is named outside the policy wire and its checks — a spawn could be handed a directory write grant that no owner approved (I15): ${e.snippet}`,
       );
     }
     if (v.length > 0) exit = 1;

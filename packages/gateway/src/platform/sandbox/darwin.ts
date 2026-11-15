@@ -3,7 +3,12 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
-import { canonicalPath, canonicalPolicyPaths, declaredWriteFiles } from "./canonical-path.ts";
+import {
+  canonicalPath,
+  canonicalPolicyPaths,
+  declaredWriteDirs,
+  declaredWriteFiles,
+} from "./canonical-path.ts";
 import { declaredNetworkPorts, type SandboxPolicy } from "./sandbox-policy.ts";
 import type { SandboxRunner, SandboxSpawnOptions } from "./sandbox-runner.ts";
 
@@ -17,6 +22,12 @@ interface SbplOpts {
    * every other write path stays a `(subpath ...)`.
    */
   writeFiles?: ReadonlySet<string>;
+  /**
+   * The write paths the gateway DECLARED directories (a user MCP server's write grant, I15). Each
+   * stays a `(subpath ...)` in the write block, and the directory ITSELF may not be unlinked or
+   * renamed away: `subpath` matches the directory as well as what is beneath it.
+   */
+  writeDirs?: ReadonlySet<string>;
 }
 
 /**
@@ -184,6 +195,11 @@ export function generateSbplProfile(opts: SbplOpts): string {
     ...fsWrite
       .filter((p) => opts.writeFiles?.has(p) === true)
       .map((p) => `(allow file-write-data (literal "${p}"))`),
+    // A declared DIRECTORY (I15, AD5b): the child writes beneath it, but may not remove or rename
+    // the directory itself. After the allow block, because the last matching rule decides.
+    ...fsWrite
+      .filter((p) => opts.writeDirs?.has(p) === true)
+      .map((p) => `(deny file-write-unlink (literal "${p}"))`),
   ];
   // PORTS ONLY: a declared entry opens its TCP port to every host, so here a connector's list limits
   // ports and not hosts. The address in an SBPL `remote` filter is `*` or `localhost` and a port, with
@@ -227,6 +243,7 @@ export function createDarwinSandboxRunner(): SandboxRunner {
         tmpdir: sandboxDir,
         policy,
         writeFiles: writeFilesOf(policy),
+        writeDirs: declaredWriteDirs(policy),
       });
       writeFileSync(profilePath, profile);
       // Absolute path to the SIP-protected system binary — never resolve via

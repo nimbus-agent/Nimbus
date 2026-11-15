@@ -13,6 +13,8 @@ import type { LazyMeshToolMap } from "../connectors/lazy-mesh/tool-map.ts";
 import type { ActionResult, PlannedAction } from "./types.ts";
 import {
   buildUserMcpAgentTools,
+  offeredInputJsonSchema,
+  offeredInputSchema,
   USER_MCP_DESCRIPTION_MAX,
   USER_MCP_TOOL_NAME_MAX,
   type UserMcpAgentToolSource,
@@ -611,5 +613,43 @@ describe("owner-approved extensions (ext_) on the same model path", () => {
     const tools = await buildUserMcpAgentTools(src, () => undefined, wrapSpy().wrap);
     expect(Object.keys(tools)).toEqual([]);
     expect(src.warnings).toEqual([]);
+  });
+});
+
+describe("offeredInputJsonSchema (the JSON half of offeredInputSchema, AD3a-2b)", () => {
+  const listedSchema = (): unknown =>
+    toStandardSchema({
+      type: "object",
+      properties: { owner: { type: "string" }, expectedHeadSha: { type: "string" } },
+      required: ["owner", "expectedHeadSha"],
+    } as Parameters<typeof toStandardSchema>[0]);
+
+  test("equals the JSON Schema of offeredInputSchema for a plain, a bound and an unreadable listing", () => {
+    for (const [listed, omit] of [
+      [listedSchema(), []],
+      [listedSchema(), ["expectedHeadSha"]],
+      ["not a schema", []],
+      [undefined, ["expectedHeadSha"]],
+    ] as const) {
+      // Only the `$schema` marker may differ (the wrapper's conversion adds it).
+      const { $schema: _marker, ...wrapped } = standardSchemaToJSONSchema(
+        offeredInputSchema(listed, omit),
+        { io: "input" },
+      ) as Record<string, unknown>;
+      const { $schema: _own, ...direct } = offeredInputJsonSchema(listed, omit);
+      expect(direct).toEqual(wrapped);
+    }
+  });
+
+  test("a bound field is absent from properties and required", () => {
+    const out = offeredInputJsonSchema(listedSchema(), ["expectedHeadSha"]);
+    expect(Object.keys(out["properties"] as Record<string, unknown>)).toEqual(["owner"]);
+    expect(out["required"]).toEqual(["owner"]);
+    const kept = offeredInputJsonSchema(listedSchema(), []);
+    expect(Object.keys(kept["properties"] as Record<string, unknown>)).toContain("expectedHeadSha");
+  });
+
+  test("an unreadable listing gives the permissive object schema", () => {
+    expect(offeredInputJsonSchema("nope", [])["type"]).toBe("object");
   });
 });

@@ -41,6 +41,8 @@ import type {
   ConnectorWriteRow,
   ConnectorWriteWave,
 } from "../../connectors/connector-writes/types.ts";
+import { USER_MCP_MODEL_ACCESS_CAPABILITY } from "../../connectors/user-mcp-model-capability.ts";
+import { USER_MCP_SERVICE_ID_PATTERN } from "../../connectors/user-mcp-store.ts";
 import type { ToolExecutor } from "../../engine/executor.ts";
 import { MCP_ACTION_CAPABILITY } from "../../mcp-sink/capture-capability.ts";
 import { APPROVER_BY_KIND } from "../../mcp-sink/capture-client-policy.ts";
@@ -67,6 +69,17 @@ export interface AgentWritesDeps {
   readonly clientKind?: ClientKind;
   /** True once the human-only consent wrapper turned a non-human approval into a decline. */
   readonly agentAnswerWasNonHuman?: () => boolean;
+  /**
+   * AD5a: one registered user-MCP server's STRIPPED definitions (keys `<serviceId>_<tool>`), or
+   * `undefined`. It may START the sandboxed server, so it is called only by the enable (after the
+   * caller, arguments, registration and policy steps) and by a live `status` for a connection that
+   * declared `cli` or `ui`.
+   */
+  readonly listUserMcpDefinitions?: (
+    serviceId: string,
+  ) => Promise<Readonly<Record<string, unknown>> | undefined>;
+  /** AD5a: the registration prompt's note on a reach the OS cannot limit host by host. */
+  readonly userMcpNetworkNote?: (netHosts: readonly string[]) => string | undefined;
 }
 
 /** Fixed text of a decline whose answer did not come from a person. */
@@ -91,8 +104,13 @@ function refuse(code: string, message: string, rpcCode = -32000): never {
   throw new ConnectorRpcError(rpcCode, `${code}: ${message}`);
 }
 
+/** {@link refuse} for the sibling user-MCP enable (`agent-writes-user-mcp.ts`). */
+export function refuseAgentWrites(code: string, message: string, rpcCode = -32000): never {
+  return refuse(code, message, rpcCode);
+}
+
 /** Step 1: a gate to ask, and a connection that declared `cli` or `ui` (it says a person is there). */
-function requireAgentEnableCaller(deps: AgentWritesDeps): ToolExecutor {
+export function requireAgentEnableCaller(deps: AgentWritesDeps): ToolExecutor {
   if (deps.toolExecutor === undefined) {
     throw new ConnectorRpcError(-32603, "connector.writesEnable requires a toolExecutor");
   }
@@ -315,7 +333,7 @@ function sharedWaveBefore(db: Database, service: string, maxWave: ConnectorWrite
   return current.maxWave < maxWave ? current.maxWave : undefined;
 }
 
-function refuseScopeParams(rec: Rec): void {
+export function refuseScopeParams(rec: Rec): void {
   if (SCOPE_PARAMS.some((k) => rec?.[k] !== undefined)) {
     refuse(
       "ERR_CONNECTOR_WRITES_AGENT_SCOPE",
@@ -334,7 +352,7 @@ function requireAgentPolicy(deps: AgentWritesDeps): void {
   }
 }
 
-async function requireOwnerApproval(
+export async function requireOwnerApproval(
   executor: ToolExecutor,
   payload: Record<string, unknown>,
   deps: AgentWritesDeps,
@@ -362,6 +380,8 @@ export type AgentSuspendedTool = DoorSuspension;
 
 export interface AgentStatusService {
   service: string;
+  /** AD5a: true for a user-registered MCP server (`mcp_<id>`); absent for a first-party connector. */
+  userMcp?: true;
   approved: number;
   suspended: AgentSuspendedTool[];
   /**
@@ -402,7 +422,15 @@ async function statusOfService(
 ): Promise<AgentStatusService> {
   // Sequential on purpose: a listing may start the connector (the model door's reason, too).
   // A listing that fails is the same as one that is not there: unverified, nothing marked.
-  const listed = live ? await deps.listServerTools?.(service).catch(() => undefined) : undefined;
+  // A user MCP server is listed by its own lister (AD5a): the first-party one refuses a service with
+  // no write row. Either way the check below is the same shared helper.
+  const userMcp = USER_MCP_SERVICE_ID_PATTERN.test(service);
+  const lister = userMcp ? deps.listUserMcpDefinitions : deps.listServerTools;
+  const listed = live
+    ? await Promise.resolve()
+        .then(() => lister?.(service))
+        .catch(() => undefined)
+    : undefined;
   const suspended: AgentSuspendedTool[] = [];
   const notListed: string[] = [];
   let unchanged = 0;
@@ -428,6 +456,7 @@ async function statusOfService(
   }
   return {
     service,
+    ...(userMcp ? { userMcp: true as const } : {}),
     approved: unchanged,
     suspended,
     ...(notListed.length === 0 ? {} : { notListed }),
@@ -438,9 +467,11 @@ async function statusOfService(
 /** The capabilities of the two the agent door needs that the resolved policy has disabled. */
 function lockedOffOf(enforced: Pick<EnforcedPolicy, "capabilitiesDisabled"> | undefined): string[] {
   if (enforced === undefined) return [];
-  return [CONNECTOR_WRITE_MODEL_ACCESS_CAPABILITY, MCP_ACTION_CAPABILITY].filter((c) =>
-    enforced.capabilitiesDisabled.has(c),
-  );
+  return [
+    CONNECTOR_WRITE_MODEL_ACCESS_CAPABILITY,
+    MCP_ACTION_CAPABILITY,
+    USER_MCP_MODEL_ACCESS_CAPABILITY,
+  ].filter((c) => enforced.capabilitiesDisabled.has(c));
 }
 
 /** The window `status` counts legacy proposals over. */

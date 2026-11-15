@@ -52,6 +52,12 @@ describe("checkLanMethodAllowed", () => {
     );
   });
 
+  test("rejects the AD4 proof methods: the whole audit namespace is off the LAN", () => {
+    for (const m of ["audit.proveByProposer", "audit.listByDoor"]) {
+      expect(() => checkLanMethodAllowed(m, { peerId: "p", writeAllowed: true })).toThrow(LanError);
+    }
+  });
+
   test("rejects data namespace regardless of grant-write", () => {
     expect(() => checkLanMethodAllowed("data.delete", { peerId: "p", writeAllowed: true })).toThrow(
       LanError,
@@ -159,6 +165,7 @@ describe("checkLanMethodAllowed", () => {
     "captures.get",
     "captures.revoke",
     "capture.mine",
+    "capture.describe",
     "approvals.list",
     "approvals.get",
     "approvals.approve",

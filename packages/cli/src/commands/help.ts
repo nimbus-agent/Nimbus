@@ -84,8 +84,11 @@ METRICS & CI/CD
 
 PRIVACY & AUDIT
   nimbus prove [--since 7d]   What left this machine, from the append-only egress ledger
+  nimbus prove --by-proposer [--since 7d] [--proposer <label>] [--json]   What outside agents proposed, by their own (unverified) label
   nimbus egress verify | prune   Verify the ledger chain; prune behind a HITL gate
   nimbus audit [--limit N]    Recent HITL audit rows
+  nimbus audit --door <agent|model|workflow|other> [--proposer <label>] [--since 7d] [--limit N] [--json]
+                              Audit rows by the door the action came through
   nimbus exec --code <src> | --file <path>   Run code in the sandbox, behind an approval prompt
                               (off by default; enable with [code_execution] enabled = true)
   nimbus tool create --description <d> --host <h> [--credential <h>=<tok>]   Owner-approved

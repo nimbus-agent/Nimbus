@@ -1,5 +1,6 @@
 import { realpathSync } from "node:fs";
 import { normalizeConnectorServiceId } from "../../connectors/connector-catalog.ts";
+import { removeDoorApprovals } from "../../connectors/connector-writes/door-approval-store.ts";
 import {
   type ResolvedUserMcpRegistration,
   resolveUserMcpRegistration,
@@ -155,14 +156,20 @@ export function handleConnectorAddMcp(
   const { serviceId } = resolved;
   const db = localIndex.getDatabase();
   try {
-    insertUserMcpConnector(db, {
-      service_id: serviceId,
-      command: resolved.command,
-      args_json: JSON.stringify(resolved.args),
-      read_paths_json: JSON.stringify(resolved.readPaths),
-      net_hosts_json: JSON.stringify(resolved.netHosts),
-      model_access: resolved.modelAccess ? 1 : 0,
-    });
+    // One transaction: leftover agent approvals of an earlier registration of this id are deleted
+    // with the insert (AD5a, D-5), so a re-registered id starts with nothing approved for agents. A
+    // duplicate add fails the insert and rolls the delete back: the live registration keeps its own.
+    db.transaction(() => {
+      removeDoorApprovals(db, serviceId);
+      insertUserMcpConnector(db, {
+        service_id: serviceId,
+        command: resolved.command,
+        args_json: JSON.stringify(resolved.args),
+        read_paths_json: JSON.stringify(resolved.readPaths),
+        net_hosts_json: JSON.stringify(resolved.netHosts),
+        model_access: resolved.modelAccess ? 1 : 0,
+      });
+    })();
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     if (msg.includes("UNIQUE") || msg.includes("unique")) {

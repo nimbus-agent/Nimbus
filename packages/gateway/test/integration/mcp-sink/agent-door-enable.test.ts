@@ -141,7 +141,7 @@ function gateDeps(): CaptureGateDeps {
       ),
     limiter: new CaptureAttemptLimiter(),
     refusals: new CaptureRefusalCounter(),
-    newId: () => `cap_${String(++seq)}`,
+    newId: () => `cap_${String(++seq).padStart(32, "0")}`,
     now: () => 1_000 + seq,
     // The production wiring: the verdict, the refusal and the definition check are the agent door's.
     classifyAction: agentDoor().verdict,

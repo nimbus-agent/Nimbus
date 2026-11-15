@@ -1639,7 +1639,7 @@ A first-party GitHub Action wraps the endpoint for use directly in workflows —
 
 ### `nimbus mcp-server`
 
-Expose the Nimbus local index to MCP-compatible editor AIs (Cursor, Claude Code, Copilot) as an MCP stdio server: 21 read-only tools, plus up to five opt-in write tools (`capture_note`, `propose_decision`, `propose_term`, `propose_link`, `propose_action`) and the read-only `capture_status`, each registered per `[mcp_sink] kinds` when the capture sink is enabled.
+Expose the Nimbus local index to MCP-compatible editor AIs (Cursor, Claude Code, Copilot) as an MCP stdio server: 21 read-only tools, plus up to five opt-in write tools (`capture_note`, `propose_decision`, `propose_term`, `propose_link`, `propose_action`) and the read-only `describe_actions` and `capture_status`, each registered per `[mcp_sink] kinds` when the capture sink is enabled (`describe_actions` with the act door, as `propose_action`).
 
 ```bash
 nimbus mcp-server            # print the MCP config block to paste into your editor (mcp.json)
@@ -1689,7 +1689,7 @@ The three proposal tools are registered only for the kinds in `[mcp_sink] kinds`
 `propose_action { actionType, input, summary }` proposes a connector action (post a message, create or update a
 ticket, comment, create a draft, and so on); it is registered only when `[mcp_sink] kinds` lists `action` and the org policy has
 not turned `mcp_action` off. `input` is the tool's arguments as a JSON object, `summary` is the agent's one-line
-reason (shown to the owner marked unverified). The tool's description lists the action types THIS machine accepts now: the ones its owner approved for outside agents by name
+reason (shown to the owner marked unverified). The tool's description points to `describe_actions`, which lists the action types THIS machine accepts now: the ones its owner approved for outside agents by name
 (`nimbus connector writes enable <service> --door agent`) and, for one release, the 47 types accepted before that existed, which
 are accepted with a `Deprecated:` line in the reply (the seven mail sends carry their own) and will be refused in a later release
 unless the owner approves them (the seven mail sends cannot be approved for agents at all, so they simply stop being proposable by agents; drafts remain available). NOTHING is sent when it is called: the reply says the action has NOT run, that the
@@ -1697,7 +1697,7 @@ owner must approve it with `nimbus approvals <id>` at the prompt, and to poll `c
 and that is not one of those 47 (a Wave 4 write, a commit, an apply, a file, pipeline, cloud, deployment, incident or
 data-platform write the owner has not approved for agents) is refused with `ERR_CAPTURE_ACTION_NOT_PROPOSABLE`, a tool whose
 definition changed since the owner approved it with `ERR_AGENT_TOOL_SUSPENDED`, and the confined ChatOps posts, the tribal KB
-and user-MCP tools of a server not registered `--model` are refused on every basis. `capture_status { id }` reads the state of a capture by id (`proposed`, `executed`,
+are refused on every basis. A tool of a user MCP server (`mcp_<id>.<tool>`) is proposable only when you approved that tool for agents by name (`nimbus connector writes enable mcp_<id> --door agent --approve <tool>`) and its definition is unchanged; until a later release an unapproved tool of a server registered `--model` is still accepted, flagged `legacy` and warned about. `describe_actions { actionTypes? }` (read-only, registered with `propose_action`) tells the agent what it may propose. With no arguments it lists each type this machine accepts now with its state (`approved`, `legacy`, `suspended` or `undescribed`; at most 200), its wave, whether the owner types a confirmation and whether Nimbus binds part of the input, and starts no connector. With `actionTypes` (1 to 10 types of at most 128 characters, across at most 3 services) it returns, for each approved type it can verify in that call, the same description and input schema Nimbus's own model is shown, with the fields Nimbus binds itself removed (never send them); a type that changed since you approved it is `suspended` (recorded once, as a submit would), one the connector does not list or cannot be listed now is `unavailable`, one that cannot be proposed now (not approved, not enabled, never offered, unknown) is `not_proposable` with the same text whatever the cause, so describe does not say why (a refused proposal does),  a type accepted only under the deprecation window returns its `Deprecated:` line and no schema, and a tool of a user MCP server is described only when you approved it for agents by name and its definition is unchanged (the server's description, closer-escaped, and the rebuilt input schema; a `--model` server's other tools appear in the summary as one `mcp_<id>.*` entry with state `legacy`). The tool proposes and dispatches nothing (`readOnlyHint`), but a call that names an approved type can start its connector (or, for a user MCP tool, that third-party server in its sandbox) and record a suspension. For a Terraform apply the description names the directories you approved, and for a Kubernetes write the context and namespace names. Describing an approved type can start its connector, is limited to four times `max_per_hour` calls an hour, and a described type can still have its input refused. The result is one text block of JSON (it is not wrapped as tool output: it goes to the agent). `capture_status { id }` reads the state of a capture by id (`proposed`, `executed`,
 `failed`, `rejected`, `expired`, `accepted`, `live`, `revoked`), for a failed or rejected action a fixed `errorCode` when there is one, and, for an executed action, a short `https:` link when
 the service returned one; never the payload. It is offered whenever any kind is enabled. Since Phase 28 AD2 it answers
 only for captures submitted on the same gateway connection (any other id reads as not found, as an absent one does), so
@@ -3377,6 +3377,28 @@ nimbus connector writes disable kubernetes   # drops the approved pairs; no appr
 - `status` adds, under each service that has an agent approval, `agents: <n> approved` and one `suspended: <tool> definition changed since approved <date> (approved <sha12>, now <sha12>)` line for each tool whose listing no longer matches what you approved (or `no longer listed`), then, after the services, `legacy: <n> proposals in the last 30 days would be refused (<type> x<n>, ...)` with the command to run (only when there were any), `Policy: ...` and `Agent policy: allows` or `forbids (your organisation turned off <capability> and <capability>)`: an approved write needs both `mcp_action` and `connector_write_model_access`, a legacy one `mcp_action` alone. It lists each such service's tools, one at a time, which can start that connector, but only on a `cli` or `ui` connection (`nimbus connector writes status` declares `cli`; any other kind gets the stored view and a line saying the tools were not re-checked); a service whose tools cannot be listed is shown as `unverified`, and a tool the connector no longer lists is shown as `not listed now`, refused while it is missing, and not suspended. A suspension is recorded the first time it is seen, stays until you approve that tool again by name, and writes one audit row (`connector.writes.agent.suspend`). After a connectors upgrade that edits a tool's description, expect that tool to need approving again: it is refused (`ERR_AGENT_TOOL_SUSPENDED`) at submit, at approval and after you answer a prompt that was open when it changed, until you approve it again by name. A rejected proposal's `capture.state` carries a fixed `errorCode` (`ERR_AGENT_TOOL_SUSPENDED` and the guard, before-state, prepare and credential codes); the reason stays in your reply only. With no approval at all, `status` prints the command to run. `--json` prints the raw reply, which has an `agent` member.
 - Exit codes are the model door's: `0` on success, `2` for a usage error or a refusal, `1` otherwise. `--approve` without `--door agent`, and `--workdir`, `--cloud`, `--net`, `--region` or `--grant` with it, are usage errors.
 
+**A user MCP server's tools (`mcp_<id>`, Phase 28 AD5a).** `nimbus connector writes enable mcp_<id> --door agent [--approve <tool> ...]` approves, by exact tool name, which tools of a server you registered with `nimbus connector add --mcp` an outside agent may propose. The server is third-party code that runs in its sandbox; the command lists it to read each tool's definition, which starts the server.
+
+- With no `--approve` it prints what the server lists and asks nothing and writes nothing:
+
+  ```text
+  mcp_notes lists 3 tools. Nothing was asked and nothing was approved.
+    append  3fa9c1d2e4b7  not approved yet
+    search  0123456789ab  already approved
+    wipe    ba9876543210  approved before, definition changed (approving again replaces it)
+  To approve tools for outside agents, name each one:
+    nimbus connector writes enable mcp_notes --door agent --approve append --approve wipe
+  ```
+
+  The 12 characters are the start of the SHA-256 of the tool's listed description and input schema. A tool name outside letters, digits, `_` and `-` is listed under `Not approvable`. The list shows at most 200 tools; when a server lists more, a line says how many are not shown, and any tool can still be approved by its exact name with `--approve <tool>`.
+- With `--approve` (repeat it for each tool; exact names only, no `*`, and the `--approve=<name>` form is not accepted) it asks you, as a person (`--yes`, scripts, delegates and old clients become a decline), after showing the server (`--read` paths, `--net` hosts, whether it also has `--model`), each named tool with its hash prefix and the first 200 characters of the server's own description, marked as the server's text. It prints `Approved: <n> tools approved for outside agents on mcp_<id>.` and one `<tool>  <hash prefix>` line each. `--wave` and the `iac` and `kubernetes` flags are usage errors for a user MCP server, which has no waves, and `--door agent` is required.
+- Approving needs `mcp_action` and `user_mcp_model_access` in the organisation's policy, and the server needs no `--model`. `disable mcp_<id> --door agent` removes the approvals.
+- Every call an agent proposes still asks you through `nimbus approvals <id>`, one at a time. The prompt names the server (its id, when you registered it, its `--read` paths and `--net` hosts), the tool, the day you approved it and the hash prefix, then the server's own description marked `UNVERIFIED`, then the exact input, then the agent's label and summary marked `UNVERIFIED`. It says no before-state is available for a user MCP tool. You approve with a plain answer; there is no typed text. The prompt escapes backslashes, so a Windows path is shown with doubled backslashes. A proposal an agent queued before you removed the server and registered the id again is refused (a proposal for an approved tool and one for an unapproved `--model` tool alike): ask the agent to propose it again.
+- The definition is listed from the live server again at submit, at approval and after you answer. If it changed, the tool is suspended until you approve it by name again (one audit row), and a queued proposal for it is refused. A tool the server no longer lists, or a server that cannot be started, is refused without suspending anything. Removing the server (`nimbus connector remove`) or registering the same id again deletes its approvals.
+- `status` prints a section `User MCP servers (outside agents):` with one line per server that has approvals (`mcp_notes: 3 approved`, `(unverified: its tools could not be listed)` when it could not be listed), each suspended tool with both hash prefixes, and `not listed now: <tool>`. When your organisation turned off `user_mcp_model_access`, the `Agent policy:` line says outside agents cannot use user MCP tools.
+- **Deprecation.** A proposal for an unapproved tool of a `--model` server is still accepted for now. It is stored as `legacy`, carries `Deprecated: mcp_<id>.<tool> is not approved for outside agents by name. It is accepted for now and will be refused in a later release. To keep it working run: nimbus connector writes enable mcp_<id> --door agent --approve <tool>` in the `propose_action` reply, in `nimbus approvals` and in the approval prompt, and is counted by `status`. A later release refuses it.
+- Bounds. The hash covers what the server lists, not what its code does. A submit, an approval or a describe of an approved tool starts the server in its sandbox. Approving third-party code for an agent's call is one keystroke by a person. The client kind and the answer source are the client's own claims on the local socket. A server removed and registered again loses its approvals. Listing a server's tools for an agent, an approval or `status` waits at most 45 seconds; a server that has not answered by then counts as unlistable (refused, nothing marked); a start already under way at that moment cannot be cancelled and finishes on its own. After you answer a prompt for an agent's call, Nimbus checks again that the server is still the registration the prompt showed and, for an approved tool, that the approval is still the one shown; if either changed while you were deciding, your answer is overruled and nothing runs. The registration comparison uses the computer's clock, so a clock set back across a remove and a re-add could make an older proposal look newer (you still approve the tools by name again). A server's `--read` and `--net` grants cannot be changed in place (remove it and register it again, which deletes the approvals); a change in the operating system's sandbox after an approval shows only in the prompt's network note. `status` and `describe_actions` share one 200-entry list, so beyond that some approved types are not advertised. A user MCP server has no write grant yet, so it writes nowhere beyond its own sandbox directory.
+
 ---
 
 ### `nimbus connector remove <name>`
@@ -4264,7 +4286,53 @@ nimbus prove "open a GitHub issue for the flaky test" --receipt
 # receipt: digest=… sig=…
 ```
 
-The first positional non-flag argument is the query; flags may appear in any position.
+The first positional non-flag argument is the query; flags may appear in any position. `--since <dur>` is a window, never the query: with no query, `nimbus prove --since 7d` reports the ledger window that starts that long ago.
+
+### `nimbus prove --by-proposer [--since <dur>] [--proposer <label> | --proposer=<label>] [--json]`
+
+Report what outside agents (MCP clients) proposed and what happened to it, grouped by the label each client sent. It runs no query, calls only `audit.proveByProposer`, and checks both tamper-evident ledgers (the audit log and the egress ledger) against each other, capture by capture. A positional argument is a usage error, and so is `--receipt` or `--sign`: a signature over a report grouped by labels the clients chose themselves would read as signed proof of who acted.
+
+| Flag | Effect |
+| --- | --- |
+| `--since <dur>` | Only proposals with activity in the last `7d`, `24h`, `30m`, ... (the CLI turns the duration into epoch milliseconds). The gateway finds the proposals the window touches and reads each one's whole history, so older history does not use up the row cap. Default: the whole audit log, where the cap is a real limit. |
+| `--proposer <label>`, `--proposer=<label>` | Only the group whose label is this text, as the client declared it (compared after the same redaction the audit log applies, and escaped like the prompt). The completeness result and the exit code are never filtered. If no group has the label, the command says so and how many groups the window holds. Use the `=` form for a label that starts with `--` (`--proposer=--nightly`); the space-separated form refuses a value that looks like a flag. `--since` and `--proposer` may each be given once. |
+| `--json` | The gateway's reply as JSON (`labelsVerified: false`, `groups`, `scanCut`, `completeness`). |
+
+Each group counts: proposed, refused at submit, approved (by the executor's gate), declined, executed, failed, expired, waiting, authorized writes in the egress ledger, and the number of connections that sent the label. "Authorized writes" counts the egress rows in the window with result `authorized` whose method is the proposal's own write type; its before-state reads, prepare reads and change-set discards are not counted, so a checked proposal contributes at most one and the number can never exceed the proposals accepted. Every label is printed in quotes after the word `UNVERIFIED`, on one line, with control characters removed; a proposal with no label reads `(no label)`.
+
+```text
+Actions proposed by outside agents (MCP), by proposer: since 2026-11-07 00:00:00 UTC
+Every label below is the client's own claim and is UNVERIFIED: any program can send any label, and a label does not identify a program.
+
+UNVERIFIED label "claude-code" (declared)
+  proposed 5, refused at submit 1, approved 3, declined 1, executed 3, failed 0, expired 0, waiting 0
+  authorized writes in the egress ledger: 3; connections: 1 (an id lasts one gateway run)
+UNVERIFIED label (no label) (declared)
+  proposed 1, refused at submit 1, approved 0, declined 0, executed 0, failed 0, expired 0, waiting 0
+  authorized writes in the egress ledger: 0; connections: 1 (an id lasts one gateway run)
+
+Both ledgers agree for the 6 proposal(s) checked.
+Not checked: 2 proposal(s) accepted before this version recorded the label source; 0 gate row(s) older than the newest egress prune.
+You can conclude: these proposals were recorded, the owner's gate decided this many of them, and both ledgers agree capture by capture.
+You cannot conclude which program sent them, whether the remote service applied a write, anything an agent did with its own credentials, or anything that never reached the executor.
+```
+
+The proof is `indeterminate` and the command exits 1 when the two ledgers disagree about a proposal (a mismatch, listed by code and capture id), an audit row cannot be read, the scan stopped at its row cap, either hash chain fails to verify, or no boot marker covers the window. Each cause prints its own sentence. The row cap is 50,000 rows per ledger, counted over the proposals the window selects (not over older history), and the cut sentence names the ledger that reached it (`The scan stopped at its row cap on the audit log`). If the window itself selects more than that, narrow `--since`. When nothing in the window could be compared (every proposal accepted before this version or older than an egress prune, or none at all) the report says `Nothing in this window could be checked`, prints no agreement conclusion, and exits 0. Egress rows in the reserved `agent:` range that name no capture (this version never writes one) are counted on a line of their own and do not make the proof indeterminate.
+
+```text
+UNVERIFIED label "claude-code" (declared)
+  proposed 5, refused at submit 1, approved 3, declined 1, executed 3, failed 0, expired 0, waiting 0
+  authorized writes in the egress ledger: 3; connections: 1 (an id lasts one gateway run)
+
+INDETERMINATE: this report is not proof, for these reasons:
+  - The audit log and the egress ledger disagree about at least one proposal (listed below).
+    audit_row_without_egress_row  cap_00000000000000000000000000000001
+Not checked: 0 proposal(s) accepted before this version recorded the label source; 0 gate row(s) older than the newest egress prune.
+You can conclude nothing from this report until the reasons above are resolved.
+You cannot conclude which program sent them, whether the remote service applied a write, anything an agent did with its own credentials, or anything that never reached the executor.
+```
+
+Stated bounds: a label is the client's own claim and nothing verifies it; a connection id lasts one gateway run and does not identify a program; the report cannot show an action that never reached the executor, whether the remote service applied a write (the egress row precedes the call), or anything an agent did with its own credentials; rows older than the newest egress prune and proposals accepted before this version are counted as not checked. A gate row counts as pruned only below the prune's cutoff, which is the smallest of the tombstone's recorded `before` (an unhashed field), the timestamp of the oldest surviving non-tombstone egress row (hashed, so it cannot be edited without breaking the chain) and the tombstone's own timestamp, so editing the recorded `before` cannot hide a missing egress row. The proof verifies both hash chains from the start on every call, in pages so memory stays bounded, but its time grows with the length of the two ledgers and the gateway does that work on its request path. A gateway older than this version answers "too old" and the command exits 1.
 
 ### `nimbus egress` / `nimbus egress verify`
 
@@ -6016,13 +6084,29 @@ nimbus audit --limit 100 --json | jq -r '.[] | select(.hitlStatus == "rejected")
 
 **Where an approval came from.** Every prompted decision records an `answerSource` in the row's `actionJson`: `human` (you answered at the terminal or in the desktop popup), `auto` (`--yes`, or a caller that had already asked you), `script` (`--script-consent-source` / `NIMBUS_SCRIPT_CONSENT_SOURCE`), `unknown` (a client that reported none), `delegate` (a delegated approval) or `remote` (ChatOps). It is reported by the client, so treat it as evidence, not proof; an unrecognised value makes the gateway deny the request. `--json` shows it inside `actionJson`.
 
-`--limit` (default 50) and `--json` are the only flags parsed. There is no `--service` or `--since` **filtering** here — such arguments are silently ignored, and the most recent `--limit` rows are returned regardless; `--json` changes the rendering only, never the row set.
+`--limit` (default 50) and `--json` are the only flags the unfiltered command parses (`--door` and `--proposer` switch to the door view below). There is no `--service` or `--since` **filtering** here — such arguments are silently ignored, and the most recent `--limit` rows are returned regardless; `--json` changes the rendering only, never the row set.
 
 **Columns:** `Timestamp`, `Action`, `Status` (`approved` / `rejected` / `not_required` / `standing_approved`; the last is an action a live standing rule approved, see [`nimbus approve`](#nimbus-approve)), `Reason` (the HITL reject reason from `action_json`; `—` when absent).
 
 **`--json` shape.** A JSON array of the raw `audit.list` rows: `{ id, actionType, hitlStatus, actionJson, timestamp }`, newest first, honouring `--limit` (default 50). `actionJson` stays the **string** the chain stored — it is not parsed for you, so a row whose payload is malformed still appears rather than being dropped; the human table's "Reason" column is that string's `hitlRejectReason` field. `--json` applies to the listing only; `nimbus audit verify` and `nimbus audit export` have their own output contracts.
 
 ---
+
+### `nimbus audit --door <agent|model|workflow|other> [--proposer <label> | --proposer=<label>] [--since <dur>] [--limit N] [--json]`
+
+List the audit rows that came through one door, newest first, from `audit.listByDoor`. `agent` is an outside MCP agent's proposal (the executor's row and the rows of its before-state reads, prepare read and change-set discard), `model` is Nimbus's own model, `workflow` is a saved workflow run, and `other` is every row the gateway does not mark with a door (the owner's own commands, ChatOps, delegates and the gateway's own actions): it is not claimed to be the owner's. `--proposer <label>` implies `--door agent` and is a usage error with any other door. `--limit` takes 1 to 1000 (default 100). Use `--proposer=<label>` for a label that starts with `--` (`--proposer=--nightly`); the space-separated form refuses a value that looks like a flag. Each option may be given once. This command is a filtered listing of `audit_log`: it compares nothing against the egress ledger and does not verify a chain (use `nimbus prove --by-proposer` for that). The unfiltered `nimbus audit` is unchanged.
+
+```text
+Audit rows through the agent door, newest first.
+Every label is the client's own claim and is UNVERIFIED; it does not identify a program.
+Timestamp            Action                       Status            Capture                              Label / reason
+--------------------------------------------------------------------------------------------------------------
+2026-11-14 08:30:00  github.pr.merge              approved          cap_00000000000000000000000000000001 UNVERIFIED label "claude-code"
+2026-11-14 08:29:00  github.pr.merge.before.read  not_required      cap_00000000000000000000000000000001 (sub-step of the proposal)
+2026-11-14 08:00:00  slack.message.post           rejected          cap_00000000000000000000000000000002 UNVERIFIED label (no label)  reason: user-cancelled
+```
+
+A row from before this version has no label and reads `UNVERIFIED label not recorded (older row)`. When the scan reached its row cap (100,000 audit rows examined, newest first) the output ends with `The scan was cut at its row cap: older rows were not examined.` With `--proposer` and no matching row it says `No row through the agent door in this window has the label "..."`, not that the door was empty. The label is compared as `prove --by-proposer` compares it, after the audit log's redaction. Like the proof, this view needs a connection that declared the `cli` or `ui` kind, which the command does first.
 
 ### `nimbus audit standing`
 

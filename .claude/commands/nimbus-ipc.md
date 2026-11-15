@@ -558,6 +558,8 @@ two HITL kinds carry `{ requestId, actionType }` only, never the rendered prompt
 | `audit.exportAll` | request | Export the full audit log as a JSON array |
 | `audit.getSummary` | request | Aggregate audit summary |
 | `audit.toolCalls` | request | Forensic `tool_call_log` read surface (V29; complement to `I11`). NOT LAN-callable, NOT in the Tauri allowlist |
+| `audit.proveByProposer` | request | `{ sinceMs?, untilMs?, proposer? }` -> outside-agent actions grouped by the client's own (UNVERIFIED) label, with a completeness check of the audit log against the egress ledger (Phase 28 AD4). `cli`/`ui` connections only (-32001 otherwise); LAN-forbidden, NOT in the Tauri allowlist |
+| `audit.listByDoor` | request | `{ door, proposer?, sinceMs?, untilMs?, limit? }` -> audit rows through one door (`agent`/`model`/`workflow`/`other`), newest first, with `scanCut`. Same caller rule |
 
 ---
 

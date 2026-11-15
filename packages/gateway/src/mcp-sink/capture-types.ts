@@ -164,12 +164,11 @@ export interface ActionPayload {
 export type ActionVerdict =
   | {
       readonly kind: "proposable";
-      readonly basis?: ActionBasis;
       /**
-       * Set by the door runtime for a user-MCP type, the only proposable type that carries no basis.
-       * The gate accepts a basis-less verdict ONLY with this marker (fail closed, AD3a-2a).
+       * Why it is proposable. NEVER absent: the gate refuses a proposable verdict with no basis
+       * (`agent_no_basis`), so a classifier that forgets one fails closed.
        */
-      readonly userMcp?: true;
+      readonly basis: ActionBasis;
       /**
        * Set by the door runtime for an `approved` verdict whose row is a bound row (a commit, an
        * apply): only such a proposal may exceed the ordinary payload cap, up to the validator's
@@ -186,30 +185,41 @@ export type ActionVerdict =
   | { readonly kind: "unknown" };
 
 /**
- * Why a proposable action is proposable. ABSENT (the user-MCP path, and today's production
- * classifier) means no per-door rule applies and the gate behaves exactly as before AD3a-2a.
- * `approved`: the owner approved the tool for agents by name and every other condition holds.
- * `legacy_unapproved` / `legacy_mail_send`: accepted for now only because the earlier act door
- * accepted it (the deprecation window, OR-AD-9); stored `legacy = 1`, counted and warned about.
+ * Why a proposable action is proposable. `approved`: the owner approved the tool for agents by name
+ * and every other condition holds. `legacy_unapproved` / `legacy_mail_send` / `legacy_user_mcp`:
+ * accepted for now only because the earlier act door accepted it (the deprecation window, OR-AD-9;
+ * `legacy_user_mcp` is a tool of a `--model` server the owner has not approved for agents by name);
+ * stored `legacy = 1`, counted and warned about.
  */
-export type ActionBasis = "approved" | "legacy_unapproved" | "legacy_mail_send";
+export type ActionBasis = "approved" | "legacy_unapproved" | "legacy_mail_send" | "legacy_user_mcp";
 
-/** The fixed class of a proposable verdict that names neither a basis nor a user-MCP type. */
+/** The fixed class of a proposable verdict that names no basis. */
 export const NO_BASIS_CLASS = "agent_no_basis";
 
-/** True for the two deprecation-window bases. */
+/** True for the three deprecation-window bases. */
 export function isLegacyBasis(basis: ActionBasis | undefined): boolean {
-  return basis === "legacy_unapproved" || basis === "legacy_mail_send";
+  return (
+    basis === "legacy_unapproved" || basis === "legacy_mail_send" || basis === "legacy_user_mcp"
+  );
 }
+
+/**
+ * Where a proposer label came from, for every proposal today: the connection's own claim. The
+ * one producer of the value (AD4); the owner-written kit config is AD7's second source.
+ */
+export const CAPTURE_LABEL_SOURCE: "declared" | "kit" = "declared";
 
 export interface ActionProvenance {
   /**
    * The basis the approval-time verdict gave (AD3a-2a): what the act wiring routes and vetoes by.
-   * Absent for a user-MCP type and for a classifier that gives none.
+   * Present on every proposal the gate accepts since AD5a; optional only so a stored or injected
+   * provenance without one still types (the executor treats it as no per-door rule).
    */
   readonly basis?: ActionBasis;
   readonly captureId: string;
   readonly clientLabel: string | null;
+  /** Where {@link ActionProvenance.clientLabel} came from; copied to the executor's proposer (AD4). */
+  readonly labelSource: "declared" | "kit";
   readonly createdAt: number;
   readonly expiresAt: number;
   readonly summary: string;
@@ -237,4 +247,47 @@ export interface ActDeps {
     input: Readonly<Record<string, unknown>>,
     provenance: ActionProvenance,
   ): Promise<ActExecuteOutcome>;
+}
+
+/**
+ * One action type as `capture.describe` reports it to an outside agent (Phase 28 AD3a-2b, D-AD-10).
+ * Every string is fixed gateway text, except the `description` and `inputSchema` of an `approved`
+ * type, which are the model door's own (the connector's text closer-escaped and delimited, the
+ * schema rebuilt from a structural allowlist, the gateway's bound fields removed).
+ *
+ *   approved       the owner approved it for agents and its listed definition passed, in this call,
+ *                  the check a submit runs; the summary mode carries no description or schema
+ *   legacy         accepted for now only under the deprecation window: the fixed deprecation line,
+ *                  never a schema
+ *   suspended      the approved definition changed, or the approval is already suspended
+ *   unavailable    approved, but not describable now (not configured, not listed, drifted, ...)
+ *   undescribed    a type cut from a reply that was full (ask for fewer types)
+ *   not_proposable the door would refuse the type, with the class submit also names
+ *
+ * It never carries a definition hash or a prefix of one, an approval date, an owner-side reason, a
+ * credential or a server address.
+ */
+export type ActionDescription = { readonly actionType: string } & (
+  | {
+      readonly state: "approved";
+      /** A first-party write's wave; `null` for a tool of a user-registered MCP server (no waves). */
+      readonly wave: 2 | 3 | 4 | null;
+      /** The owner types the confirm text to approve it (every Wave 4 write). */
+      readonly typedConfirm: boolean;
+      /** The gateway reads and pins part of the input itself (a commit, an apply). */
+      readonly bound: boolean;
+      readonly description?: string;
+      readonly inputSchema?: Record<string, unknown>;
+    }
+  | { readonly state: "legacy"; readonly deprecation: string }
+  | {
+      readonly state: "suspended" | "unavailable" | "undescribed" | "not_proposable";
+      readonly reason: string;
+    }
+);
+
+/** The reply of `capture.describe`: in request order, cut at the byte cap with `truncated`. */
+export interface DescribeReply {
+  readonly actions: readonly ActionDescription[];
+  readonly truncated: boolean;
 }

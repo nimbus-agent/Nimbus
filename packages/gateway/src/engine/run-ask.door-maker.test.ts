@@ -16,7 +16,7 @@ import type { AgentProposer, AuditSink, PlannedAction } from "./types.ts";
 
 const PROPOSER: AgentProposer = {
   door: "agent",
-  captureId: "cap_door1",
+  captureId: "cap_d001d001d001d001d001d001d001d001",
   label: "client",
   labelSource: "declared",
   summary: "why",

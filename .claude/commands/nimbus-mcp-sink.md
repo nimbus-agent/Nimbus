@@ -11,7 +11,7 @@ description: >
   the ONE tool the gateway's routing table names (`connectors/proposable-actions.ts`). Use when
   touching `packages/gateway/src/mcp-sink/`, `packages/gateway/src/ipc/capture-rpc.ts` or `packages/gateway/src/ipc/approvals-rpc.ts`, the MCP
   write tools (`capture_note`, `propose_decision`, `propose_term`, `propose_link`,
-  `propose_action`, `capture_status`), `nimbus captures list|show|accept|reject|revoke|purge`, `nimbus approvals` (the owner's queue and one-step approval of an action proposal), the
+  `propose_action`, `describe_actions`, `capture_status`), `nimbus captures list|show|accept|reject|revoke|purge`, `nimbus approvals` (the owner's queue and one-step approval of an action proposal), the
   `[mcp_sink]` config, the `mcp_capture`/`mcp_action` org-policy lockoffs, making an action type
   proposable, adding a capture kind, or asking why a capture/proposal/action was refused.
 ---
@@ -179,14 +179,16 @@ connector allowlist. The act door's configured-ness comes from
 
 - **MCP tools** (`packages/cli/src/mcp/capture-tools.ts`): registered once, at MCP-server spawn,
   from `capture.status` — each proposal tool only for a kind in `kinds`; `propose_action` follows
-  `actionEnabled`, never `kinds` alone. Gateway down or `session.declareKind` failed → no tools.
+  `actionEnabled`, never `kinds` alone, and so does `describe_actions` (read-only; the type list lives there, `propose_action`'s text only points to it). Gateway down or `session.declareKind` failed → no tools.
 - **IPC** (`ipc/capture-rpc.ts`, routed by `tryDispatchCaptureRpc` in `ipc/server/dispatchers.ts`):
-  `capture.status` (any local client), `capture.submit`, `capture.state` and `capture.mine` (`mcp`
-  only; `capture.state` answers only for ids the asking connection submitted, `capture.mine` lists its
-  own), `captures.list|get|accept|reject|revoke|purge` (owner kinds `cli`/`ui`/`unknown`; `http`,
+  `capture.status` (any local client), `capture.submit`, `capture.state`, `capture.mine` and
+  `capture.describe` (`mcp` only; `capture.state` answers only for ids the asking connection
+  submitted, `capture.mine` lists its own, `capture.describe` returns the door's types and, for
+  approved types named by the caller, the model door's description and schema; AD3a-2b), `captures.list|get|accept|reject|revoke|purge` (owner kinds `cli`/`ui`/`unknown`; `http`,
   `chatops`, `fleet`, `push` refused). Both namespaces LAN-forbidden; no HTTP route; only
   `captures.list`/`captures.get` on the Tauri allowlist
   (`packages/ui/src-tauri/src/gateway_bridge.rs`).
+- **AD4 proof** (Phase 28): the executor's audit row of an accepted action names `{door, captureId, label, labelSource}` and its egress row `agent:<captureId>`. The owner reads them with `nimbus prove --by-proposer` (`audit.proveByProposer`, which compares the two ledgers capture by capture) and `nimbus audit --door agent` (`audit.listByDoor`, a filtered listing of `audit_log` that compares nothing), both `cli`/`ui` only; labels are the client's own claim.
 - **Approvals IPC** (Phase 28 AD2, `ipc/approvals-rpc.ts`, routed by `tryDispatchApprovalsRpc`):
   `approvals.list|get|approve|decline` for a connection that DECLARED `cli` or `ui`
   (`APPROVER_BY_KIND`; `unknown` is refused here although `captures.*` serves it). `approve` reaches the
@@ -228,6 +230,8 @@ is clamped.
 
 **An approval list for agents (Phase 28 AD3a-1; enforced since AD3a-2a, invariant I58).** `nimbus connector writes enable <service> --door agent` records, per tool and with a hash of its listed definition, the writes the owner approved for outside agents (V97 `connector_write_door_approval`, written only by `connectors/connector-writes/door-approval-store.ts`, static D49(b)). `mcp-sink/` still never names the store or imports `connectors/` (D32(f)): the gate is injected with the agent door's `verdict`, `refusal` and `verifyDefinition` (`connectors/connector-writes/agent-door-runtime.ts`, built in `platform/assemble.ts` over a late-bound mesh listing that fails closed). Submit's action steps: verdict (`ERR_AGENT_TOOL_SUSPENDED` / `ERR_CAPTURE_ACTION_NOT_PROPOSABLE`), the refusal for the verdict's basis, configured, then for an `approved` basis the definition check last (it lists the connector). `acceptAction` step 4 re-derives them before the claim, a Wave 4 or bound row routes to the same executor, `approved` rows are approved only through `approvals.approve`, and `buildActDeps` wraps an `approved` basis in `vetoingConsent` (a post-answer definition recheck). A type the owner has not approved but the earlier table accepted (47 types) is a `legacy` proposal for one release: stored `legacy = 1`, warned on four surfaces, counted by `connector writes status`; AD3b removes it. A rejected action stores a fixed code. Static D49(a), (c)-(f) pin the sites.
 
+**User MCP tools (Phase 28 AD5a, invariants I42 and I58).** `mcp_<id>.<tool>` has its own verdict in `agent-door-runtime.ts`: `suspended`, then `approved` (a V97 row for `(mcp_<id>, tool)` while policy allows `mcp_action` and `user_mcp_model_access`; no `--model` needed), then the classifier's `legacy_user_mcp` for a `--model` server, else `denied`. `ActionBasis` has no basis-less proposable verdict. The owner approves tools with `connector.writesEnable { door: "agent", service: "mcp_<id>", approve: [...] }` (`ipc/connector-rpc-handlers/agent-writes-user-mcp.ts`; no `approve` is a list-only reply); the act wiring's `userMcpCallFacts` lists the server once, checks the hash on that listing and puts `userMcpCall` on the action (static D49(g)); raw `captures.accept` of an approved basis is refused (rule 4d); `capture.describe` describes an approved tool from a live listing and starts nothing for any other. After the owner's answer the recheck is bound to what the prompt showed (`UserMcpCallBinding`: the registration's creation time and, for an approved tool, the approval's full hash, compared in constant time): an approved tool re-reads the registration, the approval and a fresh listing, a legacy proposal the registration row alone; a mismatch overrules the answer with a fixed reason and marks nothing. A proposal older than the server's registration is refused for both bases: an approved tool at submit, approval and the call, a legacy tool when `userMcpCallFacts` reads the registration (before any prompt, no listing). The mesh bounds every user-server listing for the door with one 45-second deadline (`USER_MCP_LISTING_DEADLINE_MS`); an expired listing reads as unlistable (refused, nothing marked). The list-only enable returns at most 200 tools plus `omitted`.
+
 ## Stated bounds (I28)
 
 - A live note is searchable unreviewed; acceptance proves the owner saw the text, not that it is true.
@@ -243,6 +247,7 @@ is clamped.
 - The routing table is proven against the INSTALLED connectors package; a later tool rename surfaces as `failed`.
 - Configured-ness treats a multi-key service as configured once ANY key is set, so an accept can
   pass it and fail at dispatch.
+- `capture.describe` can start an approved connector (a listing per service, at most 3 services and 10 types per call, its own limiter), can record the one suspension audit row a submit would, names the approved Terraform directories and Kubernetes context and namespace names to an approved agent, and describes a legacy type by its deprecation line and a user-registered type not at all (I58 bounds 16 to 24). Describe does not say why a type cannot be proposed (one fixed `not_proposable` text; a refused submit names the class), a throwing check is one `unavailable` entry with a fixed text, and params are validated before the limiter (I58 bounds 20 to 24). It shares `verifyListed` with `verifyDefinition`: never copy the post-listing check.
 - `capture.state` answers only for ids the asking connection submitted (any other id is
   `ERR_CAPTURE_NOT_FOUND`, as an absent one): state and a short outcome link, never the payload.
 - The attempt limit is in-memory (resets on restart); the hourly cap is durable. Pre-limit refusals

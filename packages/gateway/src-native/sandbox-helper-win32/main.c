@@ -280,6 +280,11 @@ typedef struct {
      * daily note, I15). Granted on that file only, never inherited; refused unless it IS one. */
     const wchar_t *write_files[MAX_GRANTS];
     int nwrite_file;
+    /* --grant-write-dir: the gateway DECLARES each of these a directory the child may write beneath
+     * (a user MCP server's owner-approved write grant, I15). The same inheritable grant as
+     * --grant-write, but refused unless the path IS a directory and is not a reparse point. */
+    const wchar_t *write_dirs[MAX_GRANTS];
+    int nwrite_dir;
     int child_argv_start;
 } spawn_opts;
 
@@ -296,6 +301,7 @@ static int parse_spawn_option(int argc, wchar_t **argv, int *i, spawn_opts *o) {
     else if (wcscmp(argv[*i], L"--grant-read") == 0 && *i + 1 < argc)  { if (o->nread  >= MAX_GRANTS) { err(L"too many --grant-read");  return 64; } o->reads[o->nread++]   = argv[++(*i)]; }
     else if (wcscmp(argv[*i], L"--grant-write") == 0 && *i + 1 < argc) { if (o->nwrite >= MAX_GRANTS) { err(L"too many --grant-write"); return 64; } o->writes[o->nwrite++] = argv[++(*i)]; }
     else if (wcscmp(argv[*i], L"--grant-write-file") == 0 && *i + 1 < argc) { if (o->nwrite_file >= MAX_GRANTS) { err(L"too many --grant-write-file"); return 64; } o->write_files[o->nwrite_file++] = argv[++(*i)]; }
+    else if (wcscmp(argv[*i], L"--grant-write-dir") == 0 && *i + 1 < argc) { if (o->nwrite_dir >= MAX_GRANTS) { err(L"too many --grant-write-dir"); return 64; } o->write_dirs[o->nwrite_dir++] = argv[++(*i)]; }
     else { err(L"unexpected arg: %s", argv[*i]); return 64; }
     return 0;
 }
@@ -310,6 +316,7 @@ static int parse_spawn_args(int argc, wchar_t **argv, spawn_opts *o) {
     o->nread = 0;
     o->nwrite = 0;
     o->nwrite_file = 0;
+    o->nwrite_dir = 0;
 
     int i = 1;
     for (; i < argc; i++) {
@@ -337,6 +344,21 @@ static int require_regular_file(const wchar_t *path) {
     if (attrs == INVALID_FILE_ATTRIBUTES) { err(L"--grant-write-file %s: not found (%lu)", path, GetLastError()); return 66; }
     if (attrs & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT)) {
         err(L"--grant-write-file %s: not a regular file", path);
+        return 66;
+    }
+    return 0;
+}
+
+/* A declared directory (--grant-write-dir) must be exactly that NOW: it exists, it is a directory
+ * and it is not a reparse point (a junction, a symlink, a mount point). Anything else refuses the
+ * spawn (66): a junction swapped in at the path would otherwise hand the inheritable grant to its
+ * target. Racy only against a swap between this check and grant_path's DACL write; the gateway's
+ * wrapper checks too, before it calls us. */
+static int require_real_directory(const wchar_t *path) {
+    DWORD attrs = GetFileAttributesW(path);
+    if (attrs == INVALID_FILE_ATTRIBUTES) { err(L"--grant-write-dir %s: not found (%lu)", path, GetLastError()); return 66; }
+    if ((attrs & FILE_ATTRIBUTE_DIRECTORY) == 0 || (attrs & FILE_ATTRIBUTE_REPARSE_POINT) != 0) {
+        err(L"--grant-write-dir %s: not a real directory", path);
         return 66;
     }
     return 0;
@@ -370,6 +392,17 @@ static int apply_grants(PSID sid, const spawn_opts *o) {
         rc = grant_path(o->write_files[k], sid,
                         FILE_GENERIC_READ | FILE_GENERIC_EXECUTE | FILE_GENERIC_WRITE,
                         NO_INHERITANCE);
+        if (rc != 0) return rc;
+    }
+    /* Declared directories: the same inheritable grant as --grant-write (read, execute and write;
+     * no DELETE and no FILE_DELETE_CHILD, so the child can create and change but neither delete nor
+     * rename there, and cannot remove the directory itself), and only if it IS a real directory. */
+    for (int k = 0; k < o->nwrite_dir; k++) {
+        rc = require_real_directory(o->write_dirs[k]);
+        if (rc != 0) return rc;
+        rc = grant_path(o->write_dirs[k], sid,
+                        FILE_GENERIC_READ | FILE_GENERIC_EXECUTE | FILE_GENERIC_WRITE,
+                        SUB_CONTAINERS_AND_OBJECTS_INHERIT);
         if (rc != 0) return rc;
     }
     return 0;

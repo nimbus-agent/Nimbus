@@ -63,7 +63,7 @@ beforeEach(() => {
     refusals: new CaptureRefusalCounter(),
     newId: () => `cap_${String(++seq)}`,
     now: () => clock,
-    classifyAction: () => ({ kind: "proposable", userMcp: true }),
+    classifyAction: () => ({ kind: "proposable", basis: "legacy_user_mcp" }),
     isServiceConfigured: () => Promise.resolve(true),
     actionDestinationRefusal: () => undefined,
     onActionProposed: (n) => hookCalls.push(n),
@@ -251,7 +251,8 @@ describe("listActionProposals", () => {
       clientLabel: "lab el",
       createdAt: 10,
       expiresAt: 10 + 24 * HOUR,
-      agentDoorLegacy: false,
+      // The fixture verdict carries the legacy_user_mcp basis (AD5a), which is stored `legacy = 1`.
+      agentDoorLegacy: true,
     });
     expect(errOf(() => listActionProposals(deps, MCP)).code).toBe("ERR_CAPTURE_FORBIDDEN_CLIENT");
     clock += 25 * HOUR;

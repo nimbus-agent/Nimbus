@@ -41,12 +41,17 @@ import {
   PROPOSABLE_WRITE_TOOLS,
 } from "../../../src/connectors/proposable-actions.ts";
 import { appendAuditEntry } from "../../../src/db/audit-chain.ts";
+import { verifyAuditChain } from "../../../src/db/audit-verify.ts";
+import { appendBootMarker } from "../../../src/egress/egress-boot-marker.ts";
+import { THIS_BINARY_COVERAGE } from "../../../src/egress/egress-coverage.ts";
 import { makeEgressSink } from "../../../src/egress/egress-ledger.ts";
+import { verifyEgressChain } from "../../../src/egress/egress-verify.ts";
 import { isBeforeReadActionType } from "../../../src/engine/before-state.ts";
 import { NO_POLICY_OVERLAY } from "../../../src/engine/executor.ts";
 import { isPrepareActionType } from "../../../src/engine/prepare-step.ts";
 import { serviceOf } from "../../../src/engine/service-of.ts";
 import type { AnswerSource, PlannedAction } from "../../../src/engine/types.ts";
+import { LocalIndex } from "../../../src/index/local-index.ts";
 import { openMigratedMemoryDb } from "../../../src/index/migrated-db-template.ts";
 import type { CaptureActWiring, CaptureRpcCtx } from "../../../src/ipc/capture-rpc.ts";
 import { ConsentCoordinatorImpl } from "../../../src/ipc/consent.ts";
@@ -110,6 +115,8 @@ let disabledCaps: Set<string>;
 let answer: (req: Seen) => Answer;
 let beforeFails: boolean;
 let rpcCtx: CaptureRpcCtx;
+/** Set only by the AD4 block; the audit methods read through it. */
+let proofIndex: LocalIndex | undefined;
 const kinds: Record<string, ClientKind> = {
   [OWNER]: "cli",
   [OWNER_UI]: "ui",
@@ -189,7 +196,7 @@ function gateDeps(d: ReturnType<typeof door>): CaptureGateDeps {
       ),
     limiter: new CaptureAttemptLimiter(),
     refusals: new CaptureRefusalCounter(),
-    newId: () => `cap_${String(++seq)}`,
+    newId: () => `cap_${String(++seq).padStart(32, "0")}`,
     now: () => clock,
     classifyAction: d.verdict,
     isServiceConfigured: () => Promise.resolve(true),
@@ -270,7 +277,11 @@ beforeEach(() => {
     });
   });
   const d = door();
-  rpcCtx = { gate: gateDeps(d), act: actWiring(d) };
+  rpcCtx = {
+    gate: gateDeps(d),
+    act: actWiring(d),
+    describe: { limiter: new CaptureAttemptLimiter(), actions: d.describe },
+  };
 });
 afterEach(() => db.close());
 
@@ -279,7 +290,12 @@ function serverCtx(): ServerCtx {
     listenPath: "",
     vault: createMockVault(),
     version: "test",
-    captureRpcCtx: { gate: rpcCtx.gate, ...(rpcCtx.act === undefined ? {} : { act: rpcCtx.act }) },
+    ...(proofIndex === undefined ? {} : { localIndex: proofIndex }),
+    captureRpcCtx: {
+      gate: rpcCtx.gate,
+      ...(rpcCtx.act === undefined ? {} : { act: rpcCtx.act }),
+      ...(rpcCtx.describe === undefined ? {} : { describe: rpcCtx.describe }),
+    },
   };
   return {
     options,
@@ -822,5 +838,234 @@ describe("the approval path", () => {
         type,
       ).toBe(true);
     }
+  });
+});
+
+describe("capture.describe, end to end (AD3a-2b)", () => {
+  interface Described {
+    readonly actions: ReadonlyArray<{
+      readonly actionType: string;
+      readonly state: string;
+      readonly description?: string;
+      readonly inputSchema?: { readonly properties?: Record<string, unknown> };
+      readonly reason?: string;
+    }>;
+    readonly truncated: boolean;
+  }
+  const describeTypes = (types?: string[]): Promise<Described> =>
+    rpc(
+      AGENT,
+      "capture.describe",
+      types === undefined ? {} : { actionTypes: types },
+    ) as Promise<Described>;
+
+  test("an approved agent describes github.pr.merge, builds an input from the returned schema, submits it and sees it queued", async () => {
+    approveForAgents("github", 4, ["github_pr_merge"]);
+    const summary = await describeTypes();
+    expect(listCalls).toEqual([]);
+    expect(summary.actions.find((a) => a.actionType === "github.pr.merge")).toMatchObject({
+      state: "approved",
+      wave: 4,
+      typedConfirm: true,
+    });
+    const detail = await describeTypes(["github.pr.merge"]);
+    const entry = detail.actions[0];
+    expect(entry?.state).toBe("approved");
+    expect(entry?.description).toContain("<tool_description");
+    const props = Object.keys(entry?.inputSchema?.properties ?? {});
+    expect(props.length).toBeGreaterThan(0);
+    // Build an input from the schema alone: the key names it returned, a plain value each, the
+    // head the owner will later see as the pull request head.
+    const input = Object.fromEntries(props.map((k) => [k, k === "sha" ? HEAD : "plain"]));
+    const queued = await submit("github.pr.merge", input);
+    expect(queued.state).toBe("proposed");
+    expect(queued).not.toHaveProperty("legacy");
+  });
+
+  test("the reply never carries a hash, a reason from the owner side or a listing key", async () => {
+    approveForAgents("github", 4, ["github_pr_merge"]);
+    const row = getDoorApproval(db, "agent", "github", "github_pr_merge");
+    const text = JSON.stringify(await describeTypes(["github.pr.merge", "slack.message.post"]));
+    expect(text).not.toContain((row?.definitionSha256 ?? "x").slice(0, 12));
+    expect(text).not.toMatch(/[0-9a-f]{20,}/);
+    expect(text).not.toContain(mcpClientToolKey("github", "github_pr_merge"));
+  });
+
+  test("a changed listing is suspended by describe, which records one audit row, and the submit then refuses", async () => {
+    approveForAgents("github", 4, ["github_pr_merge"]);
+    describeTool = (t) => (t === "github_pr_merge" ? "changed under you" : `d ${t}`);
+    const out = await describeTypes(["github.pr.merge"]);
+    expect(out.actions[0]).toMatchObject({ state: "suspended" });
+    expect(out.actions[0]).not.toHaveProperty("description");
+    expect(out.actions[0]).not.toHaveProperty("inputSchema");
+    expect(suspendAuditCount()).toBe(1);
+    expect(
+      await code(submit("github.pr.merge", { owner: "o", repo: "r", pullNumber: 1, sha: HEAD })),
+    ).toBe(SUSPENDED);
+    expect(suspendAuditCount()).toBe(1);
+  });
+
+  test("only an mcp connection may describe, and a legacy type is reported with no listing", async () => {
+    for (const client of [OWNER, OWNER_UI, UNDECLARED]) {
+      expect(await code(rpc(client, "capture.describe", {}))).toBe("ERR_CAPTURE_FORBIDDEN_CLIENT");
+    }
+    const out = await describeTypes(["slack.message.post"]);
+    expect(out.actions[0]).toMatchObject({ state: "legacy" });
+    expect(listCalls).toEqual([]);
+  });
+});
+
+describe("AD4 (acceptance A5): the proof names the door and the proposer in both ledgers", () => {
+  const MERGE = { owner: "o", repo: "r", pullNumber: 1, sha: HEAD };
+
+  interface Group {
+    readonly label: string | null;
+    readonly proposed: number;
+    readonly approved: number;
+    readonly declined: number;
+    readonly executed: number;
+    readonly dispatches: number;
+    readonly connections: number;
+  }
+  interface Proof {
+    readonly labelsVerified: boolean;
+    readonly groups: Group[];
+    readonly completeness: {
+      readonly status: string;
+      readonly causes: string[];
+      readonly mismatches: { code: string; captureId: string }[];
+      readonly checkedCaptures: number;
+    };
+  }
+  const prove = (client = OWNER, params: unknown = {}) =>
+    rpc(client, "audit.proveByProposer", params) as Promise<Proof>;
+
+  beforeEach(() => {
+    proofIndex = new LocalIndex(db);
+    appendBootMarker(db, THIS_BINARY_COVERAGE, 1);
+    approveForAgents("github", 4, ["github_pr_merge"]);
+  });
+  afterEach(() => {
+    proofIndex = undefined;
+  });
+
+  test("a proposed, approved and executed write leaves one approved audit row and one authorized egress row naming the door and the proposer; both chains verify and the report is ok", async () => {
+    const { id } = await submit("github.pr.merge", MERGE);
+    expect((await approve(id)).state).toBe("executed");
+
+    const gate = db
+      .query(
+        "SELECT hitl_status, action_json FROM audit_log WHERE action_type = 'github.pr.merge' AND hitl_status = 'approved'",
+      )
+      .all() as { hitl_status: string; action_json: string }[];
+    expect(gate).toHaveLength(1);
+    const row = JSON.parse(gate[0]?.action_json ?? "{}") as {
+      action: { proposer: { door: string; captureId: string; label: string; labelSource: string } };
+    };
+    expect(row.action.proposer).toEqual({
+      door: "agent",
+      captureId: id,
+      label: "claude-code",
+      labelSource: "declared",
+    });
+
+    const egress = db
+      .query(
+        "SELECT source_id, payload_summary, result_status FROM egress_ledger WHERE method = 'github.pr.merge' AND source_id = ?",
+      )
+      .all(`agent:${id}`) as {
+      source_id: string;
+      payload_summary: string;
+      result_status: string;
+    }[];
+    expect(egress).toHaveLength(1);
+    expect(egress[0]?.result_status).toBe("authorized");
+    expect(egress[0]?.payload_summary.startsWith('{"agent":{"label":"claude-code"')).toBe(true);
+
+    // The before-state read ran for this proposal and is attributed to it in both ledgers.
+    const attributed = db
+      .query("SELECT COUNT(*) AS n FROM egress_ledger WHERE source_id = ?")
+      .get(`agent:${id}`) as { n: number };
+    expect(attributed.n).toBeGreaterThan(1);
+
+    expect(verifyAuditChain(proofIndex as LocalIndex, { fromId: 0 }).ok).toBe(true);
+    expect(verifyEgressChain(db).ok).toBe(true);
+
+    const proof = await prove();
+    expect(proof.labelsVerified).toBe(false);
+    expect(proof.completeness.status).toBe("ok");
+    expect(proof.completeness.mismatches).toEqual([]);
+    expect(proof.groups).toHaveLength(1);
+    expect(proof.groups[0]).toMatchObject({
+      label: "claude-code",
+      proposed: 1,
+      approved: 1,
+      declined: 0,
+      executed: 1,
+      connections: 1,
+    });
+    expect(proof.groups[0]?.dispatches).toBeGreaterThanOrEqual(1);
+  });
+
+  test("a declined proposal in the same history keeps the report ok and is counted as declined", async () => {
+    const first = await submit("github.pr.merge", MERGE);
+    expect((await approve(first.id)).state).toBe("executed");
+    const second = await submit("github.pr.merge", { ...MERGE, pullNumber: 2 });
+    await decline(second.id);
+    const proof = await prove();
+    expect(proof.completeness.status).toBe("ok");
+    expect(proof.groups[0]).toMatchObject({ proposed: 2, approved: 1, declined: 1, executed: 1 });
+  });
+
+  test("a proposal the owner rejects at the prompt is ledgered blocked and the report stays ok", async () => {
+    answer = () => ({ approved: false, answerSource: "human" });
+    const { id } = await submit("github.pr.merge", MERGE);
+    expect((await approve(id)).state).not.toBe("executed");
+    const proof = await prove();
+    expect(proof.completeness.status).toBe("ok");
+    expect(proof.groups[0]?.executed).toBe(0);
+  });
+
+  test("deleting the egress row of the dispatch makes the report indeterminate, naming the mismatch and the capture", async () => {
+    const { id } = await submit("github.pr.merge", MERGE);
+    expect((await approve(id)).state).toBe("executed");
+    expect((await prove()).completeness.status).toBe("ok");
+
+    db.run("DELETE FROM egress_ledger WHERE method = 'github.pr.merge' AND source_id = ?", [
+      `agent:${id}`,
+    ]);
+    const proof = await prove();
+    expect(proof.completeness.status).toBe("indeterminate");
+    expect(proof.completeness.causes).toContain("mismatch");
+    expect(proof.completeness.mismatches).toContainEqual({
+      code: "audit_row_without_egress_row",
+      captureId: id,
+    });
+  });
+
+  test("audit.listByDoor shows the agent door row with the unverified label, and a proposer filter narrows it", async () => {
+    const { id } = await submit("github.pr.merge", MERGE);
+    await approve(id);
+    const listed = (await rpc(OWNER, "audit.listByDoor", { door: "agent" })) as {
+      rows: { actionType: string; captureId?: string; label?: string | null; subStep: boolean }[];
+    };
+    const gateRow = listed.rows.find((r) => r.actionType === "github.pr.merge" && !r.subStep);
+    expect(gateRow?.captureId).toBe(id);
+    expect(gateRow?.label).toBe("claude-code");
+    const other = (await rpc(OWNER_UI, "audit.listByDoor", {
+      door: "agent",
+      proposer: "someone-else",
+    })) as { rows: unknown[] };
+    expect(other.rows).toEqual([]);
+  });
+
+  test("an mcp connection (and an undeclared one) is refused both methods", async () => {
+    for (const client of [AGENT, UNDECLARED]) {
+      expect(await code(rpc(client, "audit.proveByProposer", {}))).toContain("declared cli or ui");
+      expect(await code(rpc(client, "audit.listByDoor", { door: "agent" }))).toContain(
+        "declared cli or ui",
+      );
+    }
+    expect((await prove(OWNER_UI)).labelsVerified).toBe(false);
   });
 });

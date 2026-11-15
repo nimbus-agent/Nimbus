@@ -63,6 +63,16 @@ export function userMcpModelToolName(serviceId: string, tool: string): string | 
   return MODEL_TOOL_NAME_PATTERN.test(name) ? name : undefined;
 }
 
+/**
+ * The description a tool of a user-registered server is shown with: the model door's own string (a
+ * fixed first-party lead, the server's text closer-escaped inside `<tool_description>`, 1000
+ * characters in all). The agent door's `describe_actions` uses it too (AD5a), so an agent reads
+ * exactly what the model is offered.
+ */
+export function describeOwnerCodeTool(serviceId: string, serverDescription: string): string {
+  return describeFor(serviceId, serverDescription);
+}
+
 function describeFor(serviceId: string, serverDescription: string): string {
   // Names the source honestly: an extension is owner-APPROVED third-party code, a user MCP server
   // owner-REGISTERED. Either way its output is data.
@@ -108,6 +118,22 @@ export function readListedJsonSchema(listed: unknown): unknown {
 }
 
 /**
+ * The rebuilt JSON Schema {@link offeredInputSchema} wraps: the listed schema read back verbatim,
+ * `omit` removed from `properties` and `required`, then the structural allowlist rebuild; the
+ * permissive object schema when the listing cannot be read. Plain JSON, so it can cross IPC (the
+ * agent door's `capture.describe` returns it).
+ */
+export function offeredInputJsonSchema(
+  listed: unknown,
+  omit: readonly string[] = [],
+): Record<string, unknown> {
+  const json = readListedJsonSchema(listed);
+  if (json === undefined) return { ...PERMISSIVE_USER_MCP_INPUT_SCHEMA };
+  const trimmed = omit.length === 0 ? json : withoutProperties(json, omit);
+  return sanitiseUserMcpInputSchema(trimmed);
+}
+
+/**
  * `omit` names top-level properties the model must not be shown (a gateway-bound field, I54): they
  * are removed from `properties` and `required` BEFORE the allowlist rebuild.
  */
@@ -115,10 +141,7 @@ export function offeredInputSchema(
   listed: unknown,
   omit: readonly string[] = [],
 ): StandardSchemaWithJSON {
-  const json = readListedJsonSchema(listed);
-  if (json === undefined) return toStandardSchema({ ...PERMISSIVE_USER_MCP_INPUT_SCHEMA });
-  const trimmed = omit.length === 0 ? json : withoutProperties(json, omit);
-  return toStandardSchema(sanitiseUserMcpInputSchema(trimmed));
+  return toStandardSchema(offeredInputJsonSchema(listed, omit));
 }
 
 function withoutProperties(json: unknown, omit: readonly string[]): unknown {

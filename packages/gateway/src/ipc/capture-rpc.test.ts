@@ -2,6 +2,7 @@ import type { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
 import { DEFAULT_MCP_SINK_CONFIG } from "../config/mcp-sink-toml.ts";
+import { legacyNoticeFor } from "../connectors/connector-writes/agent-door-legacy.ts";
 import { CONNECTOR_WRITE_ROWS } from "../connectors/connector-writes/index.ts";
 import {
   actDoorRefusal,
@@ -32,6 +33,7 @@ import { resolveCaptureCapability } from "../mcp-sink/capture-capability.ts";
 import type { CaptureGateDeps } from "../mcp-sink/capture-gate.ts";
 import { CaptureAttemptLimiter, CaptureRefusalCounter } from "../mcp-sink/capture-rate-limit.ts";
 import { CaptureStore } from "../mcp-sink/capture-store.ts";
+import type { ActionDescription } from "../mcp-sink/capture-types.ts";
 import { PAYLOAD_MAX_BYTES } from "../mcp-sink/capture-validate.ts";
 import type { EnforcedPolicy } from "../policy/policy-gate.ts";
 import { createMockVault } from "../vault/mock.ts";
@@ -86,7 +88,7 @@ beforeEach(() => {
       ),
     limiter: new CaptureAttemptLimiter(),
     refusals: new CaptureRefusalCounter(),
-    newId: () => `cap_${String(++seq)}`,
+    newId: () => `cap_${String(++seq).padStart(32, "0")}`,
     now: () => 1_000,
     actionDestinationRefusal: () => undefined,
   };
@@ -188,14 +190,40 @@ describe("dispatchCaptureRpc", () => {
     const own = { clientId: "o", kind: "cli" as const };
     expect((await dispatchCaptureRpc("capture.status", {}, ctx, mcp)).kind).toBe("hit");
     const sub = await dispatchCaptureRpc("capture.submit", NOTE, ctx, mcp);
-    expect(sub).toEqual({ kind: "hit", value: { id: "cap_1", state: "live" } });
-    expect((await dispatchCaptureRpc("captures.list", {}, ctx, own)).kind).toBe("hit");
-    expect((await dispatchCaptureRpc("captures.get", { id: "cap_1" }, ctx, own)).kind).toBe("hit");
-    expect(await dispatchCaptureRpc("captures.revoke", { id: "cap_1" }, ctx, own)).toEqual({
+    expect(sub).toEqual({
       kind: "hit",
-      value: { id: "cap_1", state: "revoked" },
+      value: { id: "cap_00000000000000000000000000000001", state: "live" },
     });
-    expect(await dispatchCaptureRpc("captures.nonesuch", { id: "cap_1" }, ctx, own)).toEqual({
+    expect((await dispatchCaptureRpc("captures.list", {}, ctx, own)).kind).toBe("hit");
+    expect(
+      (
+        await dispatchCaptureRpc(
+          "captures.get",
+          { id: "cap_00000000000000000000000000000001" },
+          ctx,
+          own,
+        )
+      ).kind,
+    ).toBe("hit");
+    expect(
+      await dispatchCaptureRpc(
+        "captures.revoke",
+        { id: "cap_00000000000000000000000000000001" },
+        ctx,
+        own,
+      ),
+    ).toEqual({
+      kind: "hit",
+      value: { id: "cap_00000000000000000000000000000001", state: "revoked" },
+    });
+    expect(
+      await dispatchCaptureRpc(
+        "captures.nonesuch",
+        { id: "cap_00000000000000000000000000000001" },
+        ctx,
+        own,
+      ),
+    ).toEqual({
       kind: "miss",
     });
   });
@@ -268,7 +296,7 @@ describe("routing through tryDispatchPhase4Rpc (the entry server.ts calls)", () 
   test("capture.submit reaches the gate with the CONNECTION's kind, not a param", async () => {
     const s = serverCtx({ captureRpcCtx: ctx }, { m: "mcp", o: "cli" });
     expect(await tryDispatchPhase4Rpc(s, "capture.submit", NOTE, "m")).toEqual({
-      id: "cap_1",
+      id: "cap_00000000000000000000000000000001",
       state: "live",
     });
     await expect(
@@ -306,6 +334,7 @@ describe("LAN", () => {
     "captures.accept",
     "captures.purge",
     "capture.mine",
+    "capture.describe",
   ])("%s is not callable over LAN (namespace denial covers future methods)", (method) => {
     expect(() => checkLanMethodAllowed(method, { peerId: "p", writeAllowed: true })).toThrow(
       LanError,
@@ -338,8 +367,9 @@ describe("buildActDeps (act door)", () => {
     return { act: buildActDeps(w, coord, "c-cli"), prompts };
   }
   const PROV = {
-    captureId: "cap_1",
+    captureId: "cap_00010001000100010001000100010001",
     clientLabel: "agent",
+    labelSource: "declared" as const,
     createdAt: 0,
     expiresAt: 1,
     summary: "why",
@@ -419,8 +449,9 @@ describe("buildActDeps: the typed preview for a templated proposable row (F5)", 
     fields: [textField("description", "Description", "(none)")],
   });
   const PROV = {
-    captureId: "cap_9",
+    captureId: "cap_00090009000900090009000900090009",
     clientLabel: `agent${String.fromCodePoint(0x202e)}evil`,
+    labelSource: "declared" as const,
     createdAt: 0,
     expiresAt: 60_000,
     summary: "Summary: totally safe",
@@ -667,11 +698,95 @@ test("capture.mine lists only the asking connection's captures, with no payload"
   const mine = await dispatchCaptureRpc("capture.mine", {}, ctx, a);
   expect(mine).toEqual({
     kind: "hit",
-    value: { captures: [{ id: "cap_1", kind: "note", state: "live", createdAt: 1_000 }] },
+    value: {
+      captures: [
+        {
+          id: "cap_00000000000000000000000000000001",
+          kind: "note",
+          state: "live",
+          createdAt: 1_000,
+        },
+      ],
+    },
   });
   await expect(
     dispatchCaptureRpc("capture.mine", {}, ctx, { clientId: "o", kind: "cli" }),
   ).rejects.toMatchObject({ rpcData: { code: "ERR_CAPTURE_FORBIDDEN_CLIENT" } });
+});
+
+describe("capture.describe (AD3a-2b)", () => {
+  const actionGate = (): CaptureGateDeps => ({
+    ...ctx.gate,
+    capability: () =>
+      resolveCaptureCapability(
+        {
+          ok: true,
+          config: { ...DEFAULT_MCP_SINK_CONFIG, enabled: true, kinds: ["note", "action"] },
+        },
+        { capabilitiesDisabled: new Set() },
+      ),
+  });
+  const described: ActionDescription = {
+    actionType: "github.issue.create",
+    state: "legacy",
+    deprecation: "Deprecated: x",
+  };
+  const withDescribe = (calls: Array<readonly string[] | undefined>): CaptureRpcCtx => ({
+    gate: actionGate(),
+    describe: {
+      limiter: new CaptureAttemptLimiter(),
+      actions: async (types) => {
+        calls.push(types);
+        return [described];
+      },
+    },
+  });
+
+  test("routes for an mcp connection, with and without actionTypes", async () => {
+    const calls: Array<readonly string[] | undefined> = [];
+    const c = withDescribe(calls);
+    const mcp = { clientId: "a", kind: "mcp" as const };
+    expect(await dispatchCaptureRpc("capture.describe", {}, c, mcp)).toEqual({
+      kind: "hit",
+      value: { actions: [described], truncated: false },
+    });
+    await dispatchCaptureRpc("capture.describe", { actionTypes: ["github.issue.create"] }, c, mcp);
+    expect(calls).toEqual([undefined, ["github.issue.create"]]);
+  });
+
+  test("refuses every connection that is not mcp before the describer runs", async () => {
+    const calls: Array<readonly string[] | undefined> = [];
+    const c = withDescribe(calls);
+    for (const kind of ["cli", "ui", "unknown", "http", "chatops"] as const) {
+      await expect(
+        dispatchCaptureRpc("capture.describe", {}, c, { clientId: "o", kind }),
+      ).rejects.toMatchObject({ rpcData: { code: "ERR_CAPTURE_FORBIDDEN_CLIENT" } });
+    }
+    expect(calls).toEqual([]);
+  });
+
+  test("refuses ERR_CAPTURE_DISABLED when the context has no describer", async () => {
+    await expect(
+      dispatchCaptureRpc(
+        "capture.describe",
+        {},
+        { gate: actionGate() },
+        {
+          clientId: "a",
+          kind: "mcp",
+        },
+      ),
+    ).rejects.toMatchObject({ rpcData: { code: "ERR_CAPTURE_DISABLED" } });
+  });
+
+  test("a malformed request is an invalid-params error carrying ERR_CAPTURE_INVALID", async () => {
+    await expect(
+      dispatchCaptureRpc("capture.describe", { actionTypes: [] }, withDescribe([]), {
+        clientId: "a",
+        kind: "mcp",
+      }),
+    ).rejects.toMatchObject({ rpcData: { code: "ERR_CAPTURE_INVALID" } });
+  });
 });
 
 describe("captures.accept on an action (act door wiring)", () => {
@@ -686,11 +801,11 @@ describe("captures.accept on an action (act door wiring)", () => {
           },
           { capabilitiesDisabled: new Set() },
         ),
-      classifyAction: () => ({ kind: "proposable", userMcp: true }),
+      classifyAction: () => ({ kind: "proposable", basis: "legacy_user_mcp" }),
       isServiceConfigured: () => Promise.resolve(true),
     };
     gate.store.insert({
-      id: "cap_act",
+      id: "cap_0a0c0a0c0a0c0a0c0a0c0a0c0a0c0a0c",
       kind: "action",
       state: "proposed",
       itemId: null,
@@ -735,24 +850,32 @@ describe("captures.accept on an action (act door wiring)", () => {
     } as unknown as ConsentCoordinator;
     const out = await dispatchCaptureRpc(
       "captures.accept",
-      { id: "cap_act" },
+      { id: "cap_0a0c0a0c0a0c0a0c0a0c0a0c0a0c0a0c" },
       actionCtx(d),
       OWNER,
       consent,
     );
-    expect(out).toEqual({ kind: "hit", value: { id: "cap_act", state: "executed" } });
+    expect(out).toEqual({
+      kind: "hit",
+      value: { id: "cap_0a0c0a0c0a0c0a0c0a0c0a0c0a0c0a0c", state: "executed" },
+    });
     expect(asked).toEqual(["o"]);
     expect(writesOf(d)).toEqual([
       {
         type: "slack.message.post",
         origin: "agent",
-        proposer: proposerFrom({
-          captureId: "cap_act",
-          clientLabel: "agent",
-          createdAt: 500,
-          expiresAt: 2_000,
-          summary: "why",
-        }),
+        // The fixture's verdict basis is legacy_user_mcp (AD5a): a legacy basis puts the fixed
+        // deprecation line on the proposer, from the same module every surface uses.
+        proposer: {
+          ...proposerFrom({
+            captureId: "cap_0a0c0a0c0a0c0a0c0a0c0a0c0a0c0a0c",
+            clientLabel: "agent",
+            createdAt: 500,
+            expiresAt: 2_000,
+            summary: "why",
+          }),
+          deprecation: legacyNoticeFor("slack.message.post"),
+        },
         payload: { mcpToolId: "slack_message_post", input: { text: "hi" } },
       },
     ]);
@@ -766,10 +889,15 @@ describe("captures.accept on an action (act door wiring)", () => {
     const d: PlannedAction[] = [];
     const c = actionCtx(d);
     await expect(
-      dispatchCaptureRpc("captures.accept", { id: "cap_act" }, c, OWNER),
+      dispatchCaptureRpc(
+        "captures.accept",
+        { id: "cap_0a0c0a0c0a0c0a0c0a0c0a0c0a0c0a0c" },
+        c,
+        OWNER,
+      ),
     ).rejects.toMatchObject({ rpcData: { code: "ERR_CAPTURE_DISABLED" } });
     expect(d).toEqual([]);
-    expect(c.gate.store.get("cap_act")?.state).toBe("proposed");
+    expect(c.gate.store.get("cap_0a0c0a0c0a0c0a0c0a0c0a0c0a0c0a0c")?.state).toBe("proposed");
   });
 });
 
@@ -796,13 +924,13 @@ const REAL_CLASSIFY = {
 };
 
 /**
- * The legacy classifier as a gate verdict. The gate refuses a basis-less verdict unless it carries
- * the runtime's `userMcp` marker, so these tests (which exercise the destination refusals, not the
- * door) add it exactly as `createAgentDoor` does for a user-MCP type.
+ * The legacy classifier as a gate verdict. The gate refuses a basis-less verdict, so these tests
+ * (which exercise the destination refusals, not the door) give a proposable one the
+ * `legacy_user_mcp` basis, as `createAgentDoor` does for an unapproved `--model` user-MCP tool.
  */
 function classifyViaLegacyTable(t: string) {
   const v = classifyActionType(t, REAL_CLASSIFY);
-  return v.kind === "proposable" ? { ...v, userMcp: true as const } : v;
+  return v.kind === "proposable" ? { ...v, basis: "legacy_user_mcp" as const } : v;
 }
 
 function boundPolicy(channels: readonly string[]): EnforcedPolicy {
@@ -819,8 +947,9 @@ function boundPolicy(channels: readonly string[]): EnforcedPolicy {
 
 describe("B1 act door: every proposable B1 type shows its typed preview (Task 4)", () => {
   const PROV = {
-    captureId: "cap_b1",
+    captureId: "cap_b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1",
     clientLabel: "agent",
+    labelSource: "declared" as const,
     createdAt: 0,
     expiresAt: 1,
     summary: "why",
@@ -1169,8 +1298,9 @@ const C2_PROPOSABLE: ReadonlyArray<[string, Record<string, unknown>]> = [
 
 describe("B2 act door: every proposable issue write shows its typed preview, with the before-state the executor reads", () => {
   const PROV = {
-    captureId: "cap_b2",
+    captureId: "cap_b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
     clientLabel: "agent",
+    labelSource: "declared" as const,
     createdAt: 0,
     expiresAt: 1,
     summary: "why",
@@ -1238,8 +1368,9 @@ const B3_PROPOSABLE: ReadonlyArray<[string, Record<string, unknown>]> = [
 
 describe("B3 act door: every draft and page write shows its typed preview, with the before-state the executor reads", () => {
   const PROV = {
-    captureId: "cap_b3",
+    captureId: "cap_b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3",
     clientLabel: "agent",
+    labelSource: "declared" as const,
     createdAt: 0,
     expiresAt: 1,
     summary: "why",
@@ -1320,8 +1451,9 @@ const B4A_PROPOSABLE: ReadonlyArray<[string, Record<string, unknown>]> = [
 
 describe("B4a act door: the calendar and Drive creates show their typed preview, with no before", () => {
   const PROV = {
-    captureId: "cap_b4a",
+    captureId: "cap_b4ab4ab4ab4ab4ab4ab4ab4ab4ab4a00",
     clientLabel: "agent",
+    labelSource: "declared" as const,
     createdAt: 0,
     expiresAt: 1,
     summary: "why",
