@@ -56,7 +56,11 @@ export function canonicalPolicyPaths(
   policy: SandboxPolicy,
   canonical: (p: string) => string = canonicalPath,
 ): SandboxPolicy {
-  for (const p of [...(policy.canonicalWritePaths ?? []), ...(policy.canonicalWriteFiles ?? [])]) {
+  for (const p of [
+    ...(policy.canonicalWritePaths ?? []),
+    ...(policy.canonicalWriteFiles ?? []),
+    ...(policy.canonicalWriteDirs ?? []),
+  ]) {
     if (canonical(p) !== p) {
       throw new Error(
         `refusing to spawn: the write grant ${p} changed since the gateway decided it`,
@@ -78,6 +82,9 @@ export function canonicalPolicyPaths(
     ...(policy.canonicalWriteFiles === undefined
       ? {}
       : { canonicalWriteFiles: policy.canonicalWriteFiles.map(canonical) }),
+    ...(policy.canonicalWriteDirs === undefined
+      ? {}
+      : { canonicalWriteDirs: policy.canonicalWriteDirs.map(canonical) }),
   };
 }
 

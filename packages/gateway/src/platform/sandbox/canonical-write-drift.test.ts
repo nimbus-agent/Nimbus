@@ -17,12 +17,13 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { canonicalPath } from "./canonical-path.ts";
+import { canonicalPath, canonicalPolicyPaths } from "./canonical-path.ts";
 import {
   canonicalWriteDrift,
   parseSandboxPolicy,
   policyFromManifest,
   type SandboxPolicy,
+  writeDirDrift,
   writeFileDrift,
 } from "./sandbox-policy.ts";
 
@@ -150,5 +151,102 @@ describe("writeFileDrift: a declared file must still be one regular file (re-rev
         canonicalWriteFiles: ["/n.md"],
       } as unknown as Parameters<typeof policyFromManifest>[0]).canonicalWriteFiles,
     ).toEqual(["/n.md"]);
+  });
+});
+
+describe("writeDirDrift: a declared write DIRECTORY must still be a real directory (Phase 28 AD5b-1)", () => {
+  function dirPolicy(
+    write: readonly string[],
+    dirs: readonly string[],
+    canonical: readonly string[] = dirs,
+  ): SandboxPolicy {
+    return {
+      id: "user.mcp_notes",
+      permissions: { network: [], filesystem: { read: [], write: [...write] } },
+      canonicalWritePaths: canonical,
+      canonicalWriteDirs: dirs,
+    };
+  }
+  const real = (p: string) => lstatSync(p);
+  const isDir = () => ({ isDirectory: () => true, isSymbolicLink: () => false });
+
+  test("a real directory, declared, granted and canonical, passes", () => {
+    const d = join(base(), "out");
+    mkdirSync(d);
+    expect(writeDirDrift(dirPolicy([d], [d]), real)).toBeUndefined();
+  });
+
+  test("a missing path, a file and a link to a directory at a declared directory's path refuse", () => {
+    const b = base();
+    const gone = join(b, "gone");
+    expect(writeDirDrift(dirPolicy([gone], [gone]), real)).toBe(gone);
+    const file = join(b, "a-file");
+    writeFileSync(file, "");
+    expect(writeDirDrift(dirPolicy([file], [file]), real)).toBe(file);
+    const target = join(b, "target");
+    mkdirSync(target);
+    const link = join(b, "link");
+    symlinkSync(target, link, process.platform === "win32" ? "junction" : "dir");
+    expect(writeDirDrift(dirPolicy([link], [link]), real)).toBe(link);
+  });
+
+  test("a declared directory missing from the write list or from the canonical list refuses", () => {
+    expect(writeDirDrift(dirPolicy([], ["/d"]), isDir)).toBe("/d");
+    expect(writeDirDrift(dirPolicy(["/d"], ["/d"], []), isDir)).toBe("/d");
+    expect(writeDirDrift(dirPolicy(["/d"], ["/d"]), isDir)).toBeUndefined();
+  });
+
+  test("a path declared both a directory and a single file refuses", () => {
+    expect(
+      writeDirDrift({ ...dirPolicy(["/d"], ["/d"]), canonicalWriteFiles: ["/d"] }, isDir),
+    ).toBe("/d");
+  });
+
+  test("an lstat that reports a link refuses even when it also reports a directory", () => {
+    expect(
+      writeDirDrift(dirPolicy(["/d"], ["/d"]), () => ({
+        isDirectory: () => true,
+        isSymbolicLink: () => true,
+      })),
+    ).toBe("/d");
+  });
+
+  test("no declaration, no check (every other spawn is unchanged)", () => {
+    expect(
+      writeDirDrift(
+        { id: "x", permissions: { network: [], filesystem: { read: [], write: ["/d"] } } },
+        () => {
+          throw new Error("never called");
+        },
+      ),
+    ).toBeUndefined();
+  });
+
+  test("the field crosses the wire: policyFromManifest carries it only when set, parseSandboxPolicy validates it", () => {
+    const p = dirPolicy(["/d"], ["/d"]);
+    expect(parseSandboxPolicy(JSON.stringify(p)).canonicalWriteDirs).toEqual(["/d"]);
+    expect(() => parseSandboxPolicy(JSON.stringify({ ...p, canonicalWriteDirs: [1] }))).toThrow();
+    expect(() => parseSandboxPolicy(JSON.stringify({ ...p, canonicalWriteDirs: "/d" }))).toThrow();
+    const manifest = {
+      id: "user.mcp_notes",
+      version: "1.0.0",
+      permissions: { network: [], filesystem: { read: [], write: ["/d"] } },
+    };
+    type M = Parameters<typeof policyFromManifest>[0];
+    expect(
+      policyFromManifest({ ...manifest, canonicalWriteDirs: ["/d"] } as unknown as M)
+        .canonicalWriteDirs,
+    ).toEqual(["/d"]);
+    expect("canonicalWriteDirs" in policyFromManifest(manifest as unknown as M)).toBe(false);
+  });
+
+  test("canonicalPolicyPaths throws for a declared directory that no longer canonicalises to itself, and carries the field", () => {
+    const p: SandboxPolicy = {
+      id: "user.mcp_notes",
+      permissions: { network: [], filesystem: { read: [], write: ["/d"] } },
+      canonicalWriteDirs: ["/d"],
+    };
+    expect(() => canonicalPolicyPaths(p, () => "/elsewhere")).toThrow(/changed since/);
+    expect(canonicalPolicyPaths(p, (x) => x).canonicalWriteDirs).toEqual(["/d"]);
   });
 });
