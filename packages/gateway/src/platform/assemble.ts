@@ -2815,7 +2815,8 @@ function buildTeamCredentialContexts(deps: {
  *  the chatops↔tribal reply cycle is preserved by rebinding `tribalSendHolder.current` here. */
 async function bootChatopsIntoAssembly(deps: {
   chatopsCfg: ReturnType<typeof loadNimbusChatopsFromConfigDir>;
-  policyGate: Parameters<typeof buildChatopsBoot>[0]["policyGate"] & Pick<PolicyGate, "status">;
+  policyGate: Parameters<typeof buildChatopsBoot>[0]["policyGate"] &
+    Pick<PolicyGate, "status" | "governanceIntended">;
   tribalBoot: TribalBoot | undefined;
   tribalInterceptCommand: ((m: ChatMessage) => Promise<boolean>) | undefined;
   identityBoot: ReturnType<typeof buildIdentityBoot> | undefined;
@@ -2867,7 +2868,7 @@ async function bootChatopsIntoAssembly(deps: {
     policyGate,
     ...(watcherPinnedChannel === undefined
       ? {}
-      : { watcherPinnedChannel, orgPolicyActive: () => policyGate.status().signatureValid }),
+      : { watcherPinnedChannel, orgPolicyActive: () => policyGate.governanceIntended() }),
     ...(tribalBoot === undefined ? {} : { onInboundMessage: tribalBoot.onInboundMessage }),
     ...(tribalInterceptCommand === undefined ? {} : { interceptCommand: tribalInterceptCommand }),
     ...(identityBootRef === undefined

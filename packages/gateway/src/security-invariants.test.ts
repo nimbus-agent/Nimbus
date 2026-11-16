@@ -16197,7 +16197,9 @@ describe("I23 (d)-(g) — the ChatOps watcher notice has a construction-bound de
 
   test("(h) the pinned watcher channel is named only by the chatops types, dispatcher, boot and assemble (static D17(d))", async () => {
     expect(
-      await grepRepo(/\bwatcherPinnedChannel\b|\bpostWatcherNoticePinned\b|["']watcherPinned["']/),
+      await grepRepo(
+        /\bwatcherPinnedChannel\b|\bpostWatcherNoticePinned\b|["'`]watcherPinned["'`]/,
+      ),
     ).toEqual([
       "packages/gateway/src/chatops/chatops-boot.ts",
       "packages/gateway/src/chatops/reply-dispatcher.ts",

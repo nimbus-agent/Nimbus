@@ -177,6 +177,22 @@ export class PolicyGate {
   status(): PolicyState {
     return this.state;
   }
+
+  /**
+   * True when this install is, or was meant to be, under an org policy: a verified policy is active,
+   * OR a policy is persisted or an org trust anchor is pinned even though nothing verified. The second
+   * half matters because a persisted policy that fails verification at boot leaves the gate ungoverned
+   * (`rehydrate`), and a feature that RELAXES when there is no org policy (the watcher-notice pin, I23)
+   * must not relax for an install whose policy file was tampered with or cannot be read.
+   */
+  governanceIntended(): boolean {
+    if (this.state.signatureValid) return true;
+    try {
+      return this.store.load() !== undefined || this.store.getAnchorPubkey() !== undefined;
+    } catch {
+      return true; // cannot tell: fail closed
+    }
+  }
 }
 
 /** Build a PolicyGate bound to a db (helper for assembly). */

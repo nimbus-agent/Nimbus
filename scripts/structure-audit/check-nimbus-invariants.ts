@@ -542,7 +542,7 @@ const WATCHER_PINNED_ALLOWED = new Set([
   "packages/gateway/src/platform/assemble.ts",
 ]);
 const WATCHER_PINNED_RE =
-  /\b(?:watcherPinnedChannel|postWatcherNoticePinned)\b|["']watcherPinned["']/;
+  /\b(?:watcherPinnedChannel|postWatcherNoticePinned)\b|["'`]watcherPinned["'`]/;
 
 export function checkChatopsWatcherPinned(files: readonly FileEntry[]): Violation[] {
   const out: Violation[] = [];

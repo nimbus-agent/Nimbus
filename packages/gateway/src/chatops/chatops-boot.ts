@@ -113,7 +113,8 @@ export interface ChatopsBootDeps {
    */
   readonly watcherPinnedChannel?: string;
   /**
-   * Whether a signed org policy is active (`PolicyGate.status().signatureValid`). The pin posts
+   * Whether this install is under an org policy (`PolicyGate.governanceIntended()`: a verified policy,
+   * or a persisted policy or pinned org anchor that did not verify, so tampering never relaxes). The pin posts
    * under an active policy only when that policy lists it as a `notify` channel, even a policy that
    * declares no ChatOps channels at all. Absent means unknown, and unknown is governed (fail closed).
    */

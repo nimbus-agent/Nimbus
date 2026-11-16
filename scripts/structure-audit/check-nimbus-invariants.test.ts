@@ -7410,6 +7410,8 @@ describe("D17(d) - the pinned watcher channel is built and passed only by the ch
   const src = "packages/gateway/src/";
   const uses = [
     'const t = { kind: "watcherPinned" };\n',
+    "const t = { kind: `watcherPinned` as const };\n",
+    "const t = { kind: 'watcherPinned' };\n",
     "const c = deps.watcherPinnedChannel;\n",
     "await chatopsBoot.postWatcherNoticePinned(text);\n",
   ];
