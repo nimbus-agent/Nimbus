@@ -1,8 +1,4 @@
-import {
-  collapseWhitespace,
-  plainTextFromHtml,
-  stripHtmlTagsToSpaces,
-} from "../string/html-plain-text.ts";
+import { collapseWhitespace } from "../string/html-plain-text.ts";
 import { namedTags } from "./_lib/field-helpers.ts";
 import { asRecord, numberField, stringField } from "./unknown-record.ts";
 
@@ -34,19 +30,92 @@ const TITLE_MAX = 120;
 /** Closing tags that end a visual line in a Zotero note, so the first line can be found. */
 const BLOCK_END = /<\/(?:p|div|h[1-6]|li|blockquote|pre|tr)>|<br\s*\/?>/giu;
 
-const ENTITIES: Readonly<Record<string, string>> = {
-  "&nbsp;": " ",
-  "&lt;": "<",
-  "&gt;": ">",
-  "&quot;": '"',
-  "&#39;": "'",
-  "&apos;": "'",
-  "&amp;": "&",
+/**
+ * Tags that start or end a block (or a table cell, or a line break). Only these become a space when
+ * a note's tags are removed; every other tag (`<sub>`, `<sup>`, `<em>`, `<strong>`, a highlight
+ * `<span>`) is dropped with no separator, so `H<sub>2</sub>O` stays `H2O`.
+ */
+const BLOCK_TAG_NAMES: ReadonlySet<string> = new Set([
+  "address",
+  "article",
+  "aside",
+  "blockquote",
+  "br",
+  "dd",
+  "div",
+  "dl",
+  "dt",
+  "figcaption",
+  "figure",
+  "footer",
+  "h1",
+  "h2",
+  "h3",
+  "h4",
+  "h5",
+  "h6",
+  "header",
+  "hr",
+  "li",
+  "ol",
+  "p",
+  "pre",
+  "section",
+  "table",
+  "tbody",
+  "td",
+  "tfoot",
+  "th",
+  "thead",
+  "tr",
+  "ul",
+]);
+
+const TAG = /<\/?([a-z][a-z0-9]*)\b[^>]*>/giu;
+
+/**
+ * Remove a note's tags: a block tag becomes a space, an inline tag becomes nothing. Note-specific on
+ * purpose; the shared `stripHtmlTagsToSpaces` turns every tag into a space and other connectors
+ * depend on that.
+ */
+function stripNoteTags(html: string): string {
+  return html.replace(TAG, (_tag, name: string) =>
+    BLOCK_TAG_NAMES.has(name.toLowerCase()) ? " " : "",
+  );
+}
+
+const NAMED_ENTITIES: Readonly<Record<string, string>> = {
+  nbsp: " ",
+  lt: "<",
+  gt: ">",
+  quot: '"',
+  apos: "'",
+  amp: "&",
 };
 
-/** Decode the handful of entities Zotero's note editor emits. `&amp;` goes last so `&amp;lt;` stays `&lt;`. */
+const ENTITY = /&(?:#(\d{1,8})|#[xX]([0-9a-fA-F]{1,6})|(nbsp|lt|gt|quot|apos|amp));/gu;
+
+/** A code point that can stand for text: not NUL, not a surrogate, not past U+10FFFF. */
+function isDecodableCodePoint(cp: number): boolean {
+  return cp > 0 && cp <= 0x10ffff && !(cp >= 0xd800 && cp <= 0xdfff);
+}
+
+/**
+ * Decode the named entities Zotero's note editor emits and decimal or hex character references, in
+ * ONE pass, so `&amp;lt;` becomes `&lt;` and is not decoded again. A reference whose code point is
+ * not decodable (`&#0;`, a surrogate, past U+10FFFF) is left as written.
+ */
 function decodeEntities(text: string): string {
-  return text.replace(/&(?:nbsp|lt|gt|quot|#39|apos|amp);/gu, (m) => ENTITIES[m] ?? m);
+  return text.replace(
+    ENTITY,
+    (m, dec: string | undefined, hex: string | undefined, named: string | undefined) => {
+      if (named !== undefined) {
+        return NAMED_ENTITIES[named] ?? m;
+      }
+      const cp = dec !== undefined ? Number.parseInt(dec, 10) : Number.parseInt(hex ?? "", 16);
+      return isDecodableCodePoint(cp) ? String.fromCodePoint(cp) : m;
+    },
+  );
 }
 
 function parseIsoMs(v: unknown): number | null {
@@ -55,13 +124,13 @@ function parseIsoMs(v: unknown): number | null {
 
 /** Plain text of a note's HTML body: tags removed first, entities decoded after, whitespace collapsed. */
 export function noteBodyText(html: string): string {
-  return collapseWhitespace(decodeEntities(plainTextFromHtml(html)));
+  return collapseWhitespace(decodeEntities(stripNoteTags(html)));
 }
 
 /** First non-empty line of the note as plain text, truncated. `null` when the note has no text. */
 export function noteTitle(html: string): string | null {
   for (const line of html.replace(BLOCK_END, "\n$&").split("\n")) {
-    const text = collapseWhitespace(decodeEntities(stripHtmlTagsToSpaces(line)));
+    const text = collapseWhitespace(decodeEntities(stripNoteTags(line)));
     if (text !== "") {
       return text.length > TITLE_MAX ? `${text.slice(0, TITLE_MAX)}…` : text;
     }

@@ -112,6 +112,37 @@ describe("note text helpers", () => {
     expect(noteTitle("<div><br/></div>")).toBeNull();
   });
 
+  test("inline tags do not split words; block boundaries still separate", () => {
+    expect(noteBodyText("<p>H<sub>2</sub>O</p>")).toBe("H2O");
+    expect(noteBodyText("<p>E = mc<sup>2</sup></p>")).toBe("E = mc2");
+    expect(noteBodyText("<p>micro<strong>service</strong>s and <em>more</em></p>")).toBe(
+      "microservices and more",
+    );
+    expect(noteBodyText('<p>a <span class="highlight">marked</span>word</p>')).toBe("a markedword");
+    expect(noteBodyText("<p>first</p><p>second</p>")).toBe("first second");
+    expect(noteBodyText("line one<br/>line two")).toBe("line one line two");
+    expect(noteBodyText("<ul><li>one</li><li>two</li></ul>")).toBe("one two");
+    expect(noteBodyText("<table><tr><td>a</td><td>b</td></tr></table>")).toBe("a b");
+    expect(noteTitle("<p>H<sub>2</sub>O in <em>vitro</em></p><p>rest</p>")).toBe("H2O in vitro");
+  });
+
+  test("decimal and hex character references are decoded", () => {
+    expect(noteBodyText("<p>caf&#233; &#x3B1; &#X3b2;</p>")).toBe("café α β");
+    expect(noteBodyText("<p>it&#39;s &#128512;</p>")).toBe("it's 😀");
+    expect(noteTitle("<p>caf&#233; &#x3B1;</p>")).toBe("café α");
+  });
+
+  test("a reference to an invalid code point is left as written", () => {
+    expect(noteBodyText("<p>a&#0;b</p>")).toBe("a&#0;b");
+    expect(noteBodyText("<p>&#xD800;</p>")).toBe("&#xD800;");
+    expect(noteBodyText("<p>&#x110000;</p>")).toBe("&#x110000;");
+    expect(noteBodyText("<p>&#99999999;</p>")).toBe("&#99999999;");
+  });
+
+  test("entities decode in one pass, so an escaped reference stays escaped once", () => {
+    expect(noteBodyText("<p>&amp;lt; &amp;#233;</p>")).toBe("&lt; &#233;");
+  });
+
   test("noteBodyText leaves a literal escaped tag as text, not markup", () => {
     expect(noteBodyText("<p>use &lt;div&gt; here</p>")).toBe("use <div> here");
   });
