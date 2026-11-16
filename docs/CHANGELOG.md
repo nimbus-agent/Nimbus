@@ -18,6 +18,11 @@ Phase-level history before `v0.1.0` (Phases 1â€“4) lives in [`docs/roadmap.md` Â
 
 ## Post-Phase-6 deliveries
 
+- **2026-11-16: Nimbus can tell you when a connector's sync looks unusual (a carried-in item; no schema change, invariant or IPC method).**
+  What you can do now: set `[watcher.anomaly] notify = true` (it is off by default). When a connector's sync duration or item count scores at least `min_score` (default 3) against its rolling window, Nimbus raises one local OS notification: `Unusual sync activity on <connector> (<n.n> standard deviations from the usual)`. At most one per connector per `min_interval_minutes` (default 60).
+  What it does not do: the text carries the connector name and one number, never anything the connector indexed. Nothing leaves the machine and no egress row is written. A demo gateway sends none. A failing notification backend never reaches the sync path.
+  Bounds: the detector is still a rolling z-score with no seasonality, the rate limit is kept in memory, and the setting is read when the gateway starts. No real toast was checked on any OS in this change.
+
 - **2026-11-16: `nimbus mcp-server --stdio` serves both MCP protocol eras (Phase 28 AD6b; CLI only: no gateway change, migration, invariant or IPC method).**
   What changes for you: an agent whose MCP client has moved to revision `2026-07-28` (no `initialize` handshake) can use the Nimbus MCP server, and an agent that still opens with `initialize` keeps working. Both see the same tools with the same input schemas as before.
   How: the server is built on `@nimbus-dev/sdk/mcp-server` (SDK 2.2.0) instead of `@modelcontextprotocol/sdk`. A test compares every tool's schema with a recorded listing from the upstream SDK 1.32.0, so the swap changed none of them.
