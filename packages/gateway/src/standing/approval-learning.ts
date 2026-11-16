@@ -42,6 +42,13 @@ export type LearningStepRun = StepKey & {
   /** For the log line only. */
   readonly workflowName: string;
   readonly stepLabel: string;
+  /**
+   * `guardRequiresPresence(step.when)`, set only by the runner. REQUIRED (no default) so a caller
+   * that forgets it fails the typecheck instead of defaulting to "eligible". A step whose guard
+   * can hold at a count of zero can never have a rule (rule creation refuses it), so it never
+   * earns a streak or a suggestion.
+   */
+  readonly ruleEligibleGuard: boolean;
   readonly trigger: WorkflowTrigger | undefined;
   /** When the run started: audit rows older than this are not the run's. */
   readonly startedAt: number;
@@ -168,6 +175,9 @@ export function learnFromStepRun(
   cfg: LearningConfig,
 ): LearningResult {
   if (!cfg.enabled() || !isOwnerStarted(run.trigger)) return { kind: "off" };
+  // Before any streak is read, written or reset: the owner is never invited to create a rule that
+  // the create path refuses (guardRequiresPresence, I55).
+  if (!run.ruleEligibleGuard) return { kind: "off" };
   const suggestAfter = cfg.suggestAfter();
   if (suggestAfter <= 0) return { kind: "off" };
   // A run of content the workflow no longer has (it was edited while the run was going) changes no

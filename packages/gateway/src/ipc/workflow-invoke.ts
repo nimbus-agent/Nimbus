@@ -31,5 +31,13 @@ export type WorkflowRunHandler = (ctx: WorkflowRunContext) => Promise<{
   runId: string;
   status: string;
   dryRun: boolean;
-  stepResults: Array<{ label?: string; status: string; output?: string; error?: string }>;
+  stepResults: Array<{
+    label?: string;
+    status: string;
+    output?: string;
+    error?: string;
+    /** A guarded step's `when` and (dry run) what it would do now. */
+    guard?: string;
+    evaluation?: string;
+  }>;
 }>;
