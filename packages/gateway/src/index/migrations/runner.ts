@@ -74,6 +74,7 @@ import { GRAPH_V7_MIGRATION_SQL } from "../graph-v7-sql.ts";
 import { rebuildHitlStatusTables } from "../hitl-status-v87-sql.ts";
 import { V34_IDENTITY_SQL } from "../identity-v34-sql.ts";
 import { INCIDENT_ALERT_SOURCES_V96_SQL } from "../incident-alert-sources-v96-sql.ts";
+import { INCIDENT_RECORD_V100_SQL } from "../incident-record-v100-sql.ts";
 import { ITEM_HISTORY_V94_SQL } from "../item-history-v94-sql.ts";
 import { KNOWN_NAMESPACES_V38_SQL } from "../known-namespaces-v38-sql.ts";
 import { LAN_PEER_PROTO_V95_SQL } from "../lan-peer-proto-v95-sql.ts";
@@ -898,6 +899,7 @@ const INDEXED_SCHEMA_STEPS: readonly IndexedSchemaStep[] = [
   { fromVersion: 96, toVersion: 97, apply: migrateIndexedV96ToV97 },
   { fromVersion: 97, toVersion: 98, apply: migrateIndexedV97ToV98 },
   { fromVersion: 98, toVersion: 99, apply: migrateIndexedV98ToV99 },
+  simpleStep(99, 100, "incident records and their versions (Phase 10 IC3)", INCIDENT_RECORD_V100_SQL),
 ];
 
 /**
