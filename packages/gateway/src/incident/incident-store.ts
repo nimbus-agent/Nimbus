@@ -332,3 +332,14 @@ export function eraseIncidentRecordsForService(db: Database, service: string): E
   });
   return tx();
 }
+
+/**
+ * Record that a record was looked at without being assembled (its trigger item is gone from the index): sets
+ * `checked_at_ms` only, so the engine's least-recently-checked ordering does not keep returning it first.
+ */
+export function markRecordChecked(db: Database, triggerItemId: string, nowMs: number): void {
+  dbRun(db, "UPDATE incident_record SET checked_at_ms = ? WHERE trigger_item_id = ?", [
+    nowMs,
+    triggerItemId,
+  ]);
+}
