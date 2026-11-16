@@ -1014,7 +1014,7 @@ Additionally, all tool outputs are wrapped in `<tool_output>` tags (Invariant I1
 **No migration.** The `item` table holds any `type` and JSON `metadata`. If the reader ever needs an index of its own, the migration takes the next free version at merge. Static rule D48 confines `finops/`.
 **Table `item_history` (V94).** See [schema-reference](./schema-reference.md#v94--item-history-phase-10-ic1-2026-11-12).
 
-**V96 (Phase 10 IC2).** See [schema-reference](./schema-reference.md#v96--alert-sources-deploy-edge-types-and-the-one-shot-regraph-marker-phase-10-ic2-2026-11-12). V95 is a no-op placeholder step held for LAN forward secrecy (FS1) until it merges.
+**V96 (Phase 10 IC2).** See [schema-reference](./schema-reference.md#v96--alert-sources-deploy-edge-types-and-the-one-shot-regraph-marker-phase-10-ic2-2026-11-12). V95 is LAN forward secrecy's `lan_peers.proto_version` (FS1); V96 chains after it.
 
 ### Alert sources and bindings (Phase 10 IC2)
 

@@ -9,7 +9,7 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import type { JSONRPCMessage } from "@modelcontextprotocol/sdk/types.js";
 import type { McpServer } from "@nimbus-dev/sdk/mcp-server";
 
-export async function connectUpstreamClient(server: McpServer, name = "editor"): Promise<Client> {
+export async function connectUpstreamClient(server: McpServer, name: string): Promise<Client> {
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   const connection = server.connect((message) => {
     void serverTransport.send(message as JSONRPCMessage);
