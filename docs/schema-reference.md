@@ -1359,6 +1359,33 @@ CREATE TABLE connector_write_enablement (
 
 **SQLite write boundary.** Every production write goes through `dbRun` / `dbExec` / `dbStmtRun` in `packages/gateway/src/db/write.ts` (invariant `I14`). The wrappers translate `SQLITE_FULL` into a typed `DiskFullError`; the static-audit gate `D12` (`bun run audit:invariants`) fails the build on any direct `db.run(` / `db.exec(` outside the wrapper.
 
+## V101 — signed workflow import provenance and the replay floor (S4 workflow import, I59, 2026-11-16)
+
+Authoritative source: `packages/gateway/src/index/workflow-import-v101-sql.ts`. V100 is incident records (IC3); V101 chains after it. Written ONLY by `automation/workflow-import-store.ts` (static D50(a)), whose `recordImport` is called only by `automation/workflow-import.ts` inside the import's one transaction. Every store function checks `user_version >= 101`, so `workflow list` works on an older database. Re-runnable (`CREATE ... IF NOT EXISTS` only); no backfill.
+
+```sql
+CREATE TABLE IF NOT EXISTS workflow_import (
+  signer_fingerprint TEXT NOT NULL,           -- 32 hex: the first 32 of SHA-256 of the signer's public key
+  bundle_name        TEXT NOT NULL,
+  issued_at          INTEGER NOT NULL,        -- the replay floor: only ever raised (the exporter's clock)
+  bundle_sha256      TEXT NOT NULL,           -- SHA-256 of the canonical signed body
+  steps_sha256       TEXT NOT NULL,           -- workflowStepsSha256 of what was stored (the hash rules and runs use)
+  signer_pubkey      TEXT NOT NULL,           -- base64, for display
+  author_label       TEXT,                    -- UNVERIFIED text the bundle wrote about itself, at most 64 characters
+  workflow_id        TEXT NOT NULL,           -- the workflow row it produced; NO foreign key (the floor outlives it)
+  imported_at        INTEGER NOT NULL,
+  import_count       INTEGER NOT NULL DEFAULT 1,
+  approval_audit_id  INTEGER NOT NULL,        -- the audit row of the owner's `workflow.import` approval
+  PRIMARY KEY (signer_fingerprint, bundle_name),
+  CHECK (length(signer_fingerprint) = 32),
+  CHECK (length(steps_sha256) = 64 AND length(bundle_sha256) = 64)
+);
+CREATE INDEX IF NOT EXISTS workflow_import_workflow ON workflow_import (workflow_id);
+CREATE INDEX IF NOT EXISTS workflow_import_name ON workflow_import (bundle_name);
+```
+
+Why a table and not columns on `workflow`: the replay floor must survive `workflow.delete`; `workflow` is read by the runner, the scheduler, standing-rule derivation and approval learning, and a provenance column there would let every one of those reads drift; and a separate table keeps "nothing in the rule or run path reads provenance" greppable (static D50(d)). `workflow list` derives a `source` per workflow at read time, for the owner's own `cli` or `ui` connection only: `imported from <fp12>` (the newest row by `imported_at DESC, rowid DESC` whose `steps_sha256` equals the current content hash), `imported from <fp12>, edited since` (a different hash) or `local`. The label is a hash comparison and never an authority. The table holds no connector data, so `nimbus data delete`, `connector remove` and `data export` leave it alone.
+
 ## V100 — incident records and their versions (Phase 10 IC3, 2026-11-16)
 
 Authoritative source: `packages/gateway/src/index/incident-record-v100-sql.ts`. V97 to V99 are the agent door (`connector_write_door_approval`, the `capture` rebuild, `capture.label_source`); V100 chains after them. Written ONLY by `incident/incident-store.ts` (static D46(d)); the records of an erased service, with their versions and the pushed briefs built from them, are deleted by `incident/incident-erasure.ts` in the eraser's own transaction. Re-runnable (`CREATE ... IF NOT EXISTS` only); no backfill: the next engine pass, or `nimbus incident show`, assembles.
