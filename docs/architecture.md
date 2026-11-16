@@ -1027,6 +1027,8 @@ Additionally, all tool outputs are wrapped in `<tool_output>` tags (Invariant I1
 
 **Embedding exclusion.** `embedding/embedding-exclusions.ts` lists the types that are never embedded (`cost_allocation`); the sites are the sync write (`upsertIndexedItemForSync`), the three row re-readers (`lazy-scheduler.ts`, `create-routing-runtime.ts`, `embedding-worker-core.ts`), `backfillAll` and `backfillForRoutingKeys` (COUNT and SELECT each), `buildCandidateSql` and the index-health per-service count. It cannot live in `embedItem`: `backfillAll` selects "items with no chunk" until none remain. `cost_recommendation` is embedded locally only because it is not in `PROSE_HEAVY_TYPES`.
 
+**Cost anomaly detection (detector slice, 2026-11-16).** `finops/cost-anomaly.ts` `judgeDay` is pure: given a series' points and a UTC day it returns `anomaly`, `normal`, `insufficient_history` (fewer than 5 of the 7 days before it exist) or `no_day` (no finalized row on that day). Provisional points are dropped first, so a provisional day is never judged and never in a baseline; the baseline is the mean of the days that exist, never zero-filled; the test is `amount >= mean * [finops] anomaly_ratio` AND `amount - mean >= [finops] anomaly_min_amount`, and a baseline that is not positive has no ratio, only the floor. `finops/cost-anomaly-query.ts` reads the whole window once through `cost-series.ts` (`readCostDataExtent`, `readCostSeriesWindow`: one `json_extract` pass over the cost rows, never one scan per series), judges the newest `days` complete days (the newest finalized day in the index is the judged day, shared by every series), and returns a status of `no_data`, `insufficient_history`, `ok` or `anomalies` with counts of what it skipped. `ipc/cost-rpc.ts` serves it as `cost.anomalies`; the `cost` namespace is in `FORBIDDEN_OVER_LAN` and the method is not on the Tauri allowlist. No notification, scheduler, model, migration or invariant yet; alerting is a later slice. Static rule D48 covers the new files.
+
 **No migration.** The `item` table holds any `type` and JSON `metadata`. If the reader ever needs an index of its own, the migration takes the next free version at merge. Static rule D48 confines `finops/`.
 **Table `item_history` (V94).** See [schema-reference](./schema-reference.md#v94--item-history-phase-10-ic1-2026-11-12).
 
@@ -3342,6 +3344,12 @@ string evades a text scan; capability confinement is the primary defense.
 demo-rooted gateway (I41 — `BootPolicy.osNotifications` is `false`, so a demo's fired page never reaches the owner's
 real notification centre), a platform with no backend, or a `[notifications]` section that failed to load (logged at
 ERROR; notifications then run OFF until it is fixed — the fail-closed direction for a privacy setting).
+
+**Sync anomaly notice (2026-11-16).** `watcher/anomaly-notifier.ts` routes the sync-telemetry detector's `onNotify` to this
+service through `showIgnoringFailure`, behind `[watcher.anomaly] notify` (default `false`), at most one notice per connector
+per `min_interval_minutes` (5 to 1440, default 60, kept in memory) and a `min_score` z-score floor (3 to 20, default 3). The text
+is `Unusual sync activity on <connector> (<n.n> standard deviations from the usual)`: the connector id and one number, never an
+item title, body or name. A demo gateway sends none (I41); no network, egress row, model or schema change.
 
 **Where it lives.** `packages/gateway/src/platform/notifications/`:
 

@@ -16,6 +16,7 @@ export const COMMAND_NAMES = [
   "config",
   "conflicts",
   "connector",
+  "cost",
   "data",
   "db",
   "decisions",

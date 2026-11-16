@@ -1203,6 +1203,28 @@ nimbus oncall handoff --json
 
 **Bounds.** The index holds current and upcoming shifts only, so a shift that already ended cannot be found: run this before it ends or pass `--since`. PagerDuty marks a shift as yours only with a user-level token or `pagerduty.from_email`. State-change history begins at the V94 upgrade. Only PagerDuty incidents and Jira Service Management alerts are read. A window that ends in the past places items by their own open and resolution times; an item that changed afterwards without a provider time may be misplaced. Reply shapes of the providers are not verified against live accounts. Not reachable over LAN, HTTP, MCP or ChatOps; the method is on the desktop allowlist.
 
+### `nimbus cost anomalies`
+
+Which days of cloud spend jumped over their recent baseline, judged from the daily cost series the index already holds (today the Vantage sync). It makes **no provider call**, sends nothing and uses no model; it only reads the local index. Detection only: there is no notification yet.
+
+```bash
+nimbus cost anomalies
+nimbus cost anomalies --days 7
+nimbus cost anomalies --service vantage --json
+```
+
+| Flag | Description |
+|---|---|
+| `--service <id>` | One cost service (`vantage` today). Omit it for every indexed cost service. |
+| `--days <1-30>` | Judge each of the newest N complete UTC days, each against its own baseline (default 1). |
+| `--json` | Print the result object (`status`, `judgedDayMs`, `daysChecked`, `baseline`, `thresholds`, `counts`, `anomalies`, `anomaliesTruncated`, `gaps`) on one line, with the same exit codes. |
+
+**The rule.** A series' day is anomalous when its amount is at least `[finops] anomaly_ratio` times the mean of the 7 UTC days before it **and** exceeds that mean by at least `[finops] anomaly_min_amount` (in the series' own currency). Only complete days count: the last three days of a series are provisional (the vendor may restate them) and are never judged and never in a baseline; the judged day is the newest complete day in the index. A day with no row is not a zero: the baseline is the mean of the days that exist, and with fewer than 5 of the 7 present the series is skipped as "not enough history", never reported as normal. A zero or negative baseline has no ratio, and only the absolute floor decides. A series that reports in more than one currency is skipped.
+
+**Statuses and exit codes.** `anomalies` (exit 0): the anomalous days, largest excess first (at most 100 listed). `ok` (exit 0): at least one series was checked and none is anomalous. `insufficient_history` (exit 1): no series had enough history to be checked, so nothing can be ruled in or out. `no_data` (exit 1): no cost rows are indexed, or every day is still provisional; the gap says which. The text always names the judged day or days, the baseline window, the two thresholds and how many series were skipped and why.
+
+**Bounds.** Amounts are the vendor's, not verified against a live account. History begins when the first sync ran (45 days at most), so a new series needs a week of rows first. The IPC method is `cost.anomalies` (the whole `cost` namespace is LAN-forbidden; it is not on the desktop allowlist). Series names are vendor strings and are stripped of control characters before printing.
+
 ### `nimbus briefing`
 
 Your morning briefing, built from the local index. It makes **no provider call** and **uses no model**: the text is rendered deterministically, and nothing leaves the machine except a local notification.
@@ -1608,6 +1630,27 @@ deploy gate, and the counts being zero means "nothing was checked", not "nothing
 same envelope is served over `GET /v1/preflight/deploy`, so the GitHub Action blocks too.
 
 A first-party GitHub Action wraps `GET /v1/preflight/deploy` for use directly in workflows — see [`packages/github-actions/preflight-query/`](../packages/github-actions/preflight-query/).
+
+**Advisory deploy risk (Phase 17).** After the three checks the command prints a `Deploy risk (advisory)` block, and the JSON envelope (IPC and `GET /v1/preflight/deploy`) gains an OPTIONAL `risk` member: `{ level, why, factors[], advisory: true, fail_at, verdict_escalated }`. `level` is `low`, `elevated`, `high` or `unknown`, the MAXIMUM over the factors the local index could answer; when none could be answered it is `unknown`, never `low`. Each factor is `{ id, level, evidence, known }` and an unanswerable one is `unknown` with `known: false`:
+
+| Factor | What it reads | Scoring |
+|---|---|---|
+| `system_state` | open PagerDuty incidents and JSM alerts bound to the service or a service it `depends_on` (fresh index only), and the latest deployment | open P1 incident on the service: `high`; any other open incident, an incident on a dependency, an open P1 or P2 alert, or a failed latest deployment in the last 24h: `elevated`; sources bound and fresh with none of those: `low`; no bound and fresh source: `unknown` |
+| `change_velocity` | successful deployments in 24h and 7d against the service's own 28 days before the last week (the DORA deployment-frequency reader) | 4 or more in 24h and 4x the baseline: `high`; 2 or more in 24h and 2x, or 6 or more in 7d and 2x the baseline week: `elevated`; otherwise `low`; under 3 baseline deployments, no history, or a CI provider the index cannot judge: `unknown` |
+| `oncall_coverage` | the indexed on-call shifts of the service's bound PagerDuty services (the `oncall.now` reader) | someone on call: `low`; fresh, complete shift data showing nobody: `elevated`; no binding, no shift data, no match, stale data or an incomplete service map: `unknown` (never `uncovered`) |
+| `time_of_week` | the service-local weekday and time | inside a quiet day or window: `elevated`; otherwise `low` |
+
+The block is a heads-up, not a gate: it never changes the verdict or the exit code by default. Two optional config keys in `nimbus.toml` (`[preflight.risk]`, layered like every section; a bad value falls back to its default with a warning that `nimbus config explain` shows):
+
+```toml
+[preflight.risk]
+quiet_days  = ["sat", "sun"]        # whole days flagged
+quiet_hours = ["fri 15:00-24:00"]   # "<day> HH:MM-HH:MM", end after start, no midnight crossing
+tz          = "Europe/Berlin"       # the zone the two keys are read in; absent = the gateway machine's zone
+fail_at     = "high"                # "elevated" | "high"; absent = the risk never changes the verdict
+```
+
+With `fail_at` set, a known level at or above it turns an `ok` verdict into `warn` (`risk.verdict_escalated: true`), so `--mode block` and the GitHub Action then fail it; `unknown` never trips it. Read from the local index only: no network, no model, no connector call.
 
 Read-only; no HITL.
 
@@ -3063,6 +3106,8 @@ Limits for the FinOps cost data the Vantage sync indexes (`nimbus config explain
 |---|---|---|
 | `[finops] max_series` | `500` | 1 to 5000: how many named series are indexed; the rest of each day is summed into one `__other__` row |
 | `[finops] retain_days` | `400` | 30 to 3650: `cost_allocation` rows older than this are deleted by a daily pass; recommendations are not pruned by age |
+| `[finops] anomaly_ratio` | `1.5` | 1.05 to 100 (a plain decimal): `nimbus cost anomalies` flags a day at least this many times its 7-day baseline |
+| `[finops] anomaly_min_amount` | `10` | 0 to 1000000000 (a plain decimal): ... and only when it also exceeds the baseline by this much, in the series' currency |
 
 The data comes from `vantage.api_token` (set with `nimbus vault set vantage.api_token`; every 6 hours the sync reads 45 days on the first run, then from three days before the last success). `vantage.group_by` is a comma-separated grouping (default `provider,service,account_id`); a `tag:` entry is refused because where Vantage returns a tag value is undocumented. `nimbus connector auth vantage` prints the keys.
 

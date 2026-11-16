@@ -1,8 +1,10 @@
 import type { Database } from "bun:sqlite";
+import type { NimbusPreflightRiskToml } from "../config/preflight-risk-toml.ts";
 import { unevaluableCiServices } from "../metrics/ci-evaluability.ts";
 import { ciRunHeadSha, repoLikeMatchesUrn } from "../metrics/dora.ts";
 import type { ParsedDoraRepoUrn, ServiceConfig } from "../metrics/dora-config.ts";
 import { distinctCiServiceColumns, distinctPrServiceColumns } from "../metrics/dora-config.ts";
+import { computeDeployRisk, type DeployRisk } from "./deploy-risk.ts";
 
 export type PreflightGap =
   | null
@@ -63,6 +65,18 @@ export type DeployPreflightResult = {
     readonly failing_ci_runs: PreflightCheck<CiFinding>;
     readonly merge_conflicts: PreflightCheck<PrFinding>;
   };
+  /**
+   * The advisory deploy-risk block (Phase 17). OPTIONAL and additive: a consumer that ignores it
+   * sees the same envelope as before. It changes `verdict` only when the owner set
+   * `[preflight.risk] fail_at` and the level reached it.
+   */
+  readonly risk?: DeployRisk;
+};
+
+/** What the risk block needs beyond the service's own config; absent = no `risk` member at all. */
+export type DeployRiskOptions = {
+  readonly configs: ReadonlyMap<string, ServiceConfig>;
+  readonly riskConfig: NimbusPreflightRiskToml;
 };
 
 const FAILED_CONCLUSIONS = ["failure", "cancelled", "timed_out"] as const;
@@ -294,12 +308,28 @@ export function computeDeployPreflight(
   targetRef: string,
   nowMs: number,
   maxFindings: number,
+  riskOptions?: DeployRiskOptions,
 ): DeployPreflightResult {
   const incidents = selectActiveP1Incidents(db, cfg, maxFindings);
   const ciRuns = selectFailingCiRuns(db, cfg, targetRef, maxFindings);
   const conflicts = selectMergeConflicts(db, cfg, maxFindings);
-  const verdict =
+  const checksVerdict =
     incidents.count === 0 && ciRuns.count === 0 && conflicts.count === 0 ? "ok" : "warn";
+  const risk =
+    riskOptions === undefined
+      ? undefined
+      : computeDeployRisk(
+          {
+            db,
+            cfg,
+            configs: riskOptions.configs,
+            riskConfig: riskOptions.riskConfig,
+            nowMs,
+          },
+          checksVerdict,
+        );
+  // Advisory unless the owner opted in: only `fail_at` can turn a clean `ok` into `warn`.
+  const verdict = risk?.verdict_escalated === true ? "warn" : checksVerdict;
   return {
     service: cfg.serviceId,
     target_ref: targetRef,
@@ -310,5 +340,6 @@ export function computeDeployPreflight(
       failing_ci_runs: ciRuns,
       merge_conflicts: conflicts,
     },
+    ...(risk === undefined ? {} : { risk }),
   };
 }
