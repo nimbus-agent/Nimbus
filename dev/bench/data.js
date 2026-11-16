@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794776230586,
+  "lastUpdate": 1794807907496,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
-            "name": "nimbus-release-bot[bot]",
-            "username": "nimbus-release-bot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "09ac5ec0b06af70689577794f0280b092c4dfccc",
-          "message": "chore: release main (#1361)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>5.0.0</summary>\n\n##\n[5.0.0](https://github.com/nimbus-agent/Nimbus/compare/v4.1.0...v5.0.0)\n(2026-08-28)\n\n\n### ⚠ BREAKING CHANGES\n\n* **llm:** the Mastra engine agent no longer falls back to a vendor API\nkey found in the environment. An install that today relies on\n`ANTHROPIC_API_KEY` alone, with no `[llm.remote.*]` configuration, will\nstop constructing the agent — `nimbus ask` then answers from the local\nrouter if one is configured, and workflows refuse with a message naming\nthe fix. To restore the previous behaviour, add `[llm.remote.anthropic]\nenabled = true` with a `model`, and store `anthropic.api_key` in the\nVault. This is the point of the change rather than a side effect: a\ncapability that turns itself on because a credential happens to exist is\nthe air-gap defect's shape, one level up.\n\n### Features\n\n* **llm:** register four cloud vendors behind a default-off per-vendor\nopt-in ([#1359](https://github.com/nimbus-agent/Nimbus/issues/1359))\n([1a59735](https://github.com/nimbus-agent/Nimbus/commit/1a59735f7ee5cf3fcfe2866d804e149b3bbc3c73))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
-          "timestamp": "2026-08-28T13:04:19Z",
-          "tree_id": "b3370e7c12350eccfc65629d5db68fbd9709a674",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/09ac5ec0b06af70689577794f0280b092c4dfccc"
-        },
-        "date": 1787922970995,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 321.05356239999566,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 319.62658720000366,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 206.37404894999855,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "89dd597e1e747bfc2fa142af4de4cdcaddee08cd",
+          "message": "feat(cli): nimbus mcp-server answers both MCP protocol eras, the 2026-07-28 revision and the initialize handshake (agent door AD6b) (#2015)\n\nAgent door AD6b: the Nimbus MCP server (`nimbus mcp-server --stdio`) now\nanswers both MCP protocol eras from one process.\n\n## What changes for a user\n\n- An agent whose MCP client has moved to revision `2026-07-28` (no\n`initialize` handshake) can use the Nimbus MCP server.\n- An agent that still opens with `initialize` (`2025-11-25` and the\nthree revisions before it) keeps working.\n- Both are listed the same tools, with the same input schemas as before.\n\nNothing needs to be reconfigured, so this is not a breaking change.\n\n## How\n\n`packages/cli/src/mcp/adapter.ts` builds the server on\n`@nimbus-dev/sdk/mcp-server` (SDK 2.2.0, shipped in nimbus-sdk as AD6a)\ninstead of `@modelcontextprotocol/sdk`. Three things the adapter now\ndoes itself:\n\n- **Schemas.** Each tool's zod shape is converted to draft-07 JSON\nSchema by one helper. A test holds every converted schema equal to a\nrecorded `tools/list` from the upstream SDK 1.32.0, captured on the\ncommit before the swap.\n- **Argument checks.** The new layer sends a schema and enforces\nnothing, so the adapter parses the arguments with the tool's own shape\nbefore the tool runs. A member the shape does not name never reaches a\ntool.\n- **The client label.** It is read from each call's context: per request\nin the modern era, from `initialize` in the legacy one. `--agent` still\noverrides it. The label stays UNVERIFIED and display only.\n\nNo Nimbus tool asks the client for input in the middle of a call.\nApproval stays at the owner's terminal.\n\n## What differs on the wire\n\n- A call to a tool that is not registered is a JSON-RPC `-32602` error,\nnot an `isError` result.\n- The text after `Invalid arguments for tool <name>:` is worded\ndifferently.\n- `tools/list` no longer carries upstream's `execution.taskSupport`.\n- A modern `tools/list` carries `ttlMs: 0`, and an unsupported protocol\nversion is refused with `-32022` and the supported list.\n\n## Other changes\n\n- `@modelcontextprotocol/sdk` moves to the CLI's devDependencies. The\nscaffold templates pin it, and the adapter tests drive the server with\nits client as an implementation that is not ours.\n- The registry action's committed bundle is rebuilt, because it bundles\nthe SDK and the lockfile now resolves 2.2.0.\n- Docs: CLAUDE.md, GEMINI.md, roadmap, architecture, docs/README,\ncli-reference, the changelog and the MCP-sink skill.\n\n## Stated bounds\n\n- No real 2026-07-28 client has been run against it. The modern era is\ntested with scripted requests written from the published specification.\n- Until the connectors move to SDK 2.2.0 (AD6c), the gateway binary\ncarries two SDK copies: 2.1.0 for the connectors and 2.2.0 for the rest.\n\n## Checks run\n\n- `bun run preflight:fast`: passed.\n- `bun test packages/cli/src/mcp packages/cli/src/commands/scaffold*`:\n466 pass. The 196 existing adapter tests pass unchanged apart from the\nunknown-tool assertion; 38 new tests cover both eras and the schema\nrecord.\n- `bun test packages/cli --parallel` locally: one failure, `cli e2e\nsmoke > command module resolves without running CLI entry` (an\n`ink`/`yoga-layout` load-order error). It passes when run alone and does\nnot touch the adapter; my machine runs Bun 1.3.14 and CI runs 1.4.\n\nNo gateway change, migration, invariant, static rule or IPC method.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JmSjrCzb214jGqUcCTWNJQ\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* The MCP server now supports both the newer stateless protocol and\nclients using the earlier initialization handshake, while offering the\nsame tools across both.\n* Invalid tool arguments are rejected, and unsupported protocol versions\nreceive a clear error.\n* **Documentation**\n* Updated the CLI and project documentation to describe protocol\ncompatibility, tool behavior, and current verification status.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Fable 5.2 <noreply@anthropic.com>",
+          "timestamp": "2026-11-16T05:35:20Z",
+          "tree_id": "f5ced557894dc9e63a1143ce95d0da2dca1632af",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/89dd597e1e747bfc2fa142af4de4cdcaddee08cd"
+        },
+        "date": 1794807901978,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 237.5437721499993,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 240.3920035999992,
             "unit": "ms"
           }
         ]
