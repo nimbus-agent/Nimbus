@@ -194,9 +194,9 @@ describe("buildScaffoldFiles", () => {
     const cliPkg = JSON.parse(
       readFileSync(join(import.meta.dir, "../../package.json"), "utf8"),
     ) as {
-      dependencies: Record<string, string>;
+      devDependencies: Record<string, string>;
     };
-    expect(cliPkg.dependencies["@modelcontextprotocol/sdk"]).toBe(SCAFFOLD_MCP_SDK_VERSION);
+    expect(cliPkg.devDependencies["@modelcontextprotocol/sdk"]).toBe(SCAFFOLD_MCP_SDK_VERSION);
   });
 
   it("README register line is absolute and OS-specific", () => {

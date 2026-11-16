@@ -50,10 +50,9 @@
       },
       "dependencies": {
         "@clack/prompts": "^1.8.0",
-        "@modelcontextprotocol/sdk": "1.32.0",
         "@nimbus-dev/client": "^0.18.0",
         "@nimbus-dev/registry-format": "workspace:*",
-        "@nimbus-dev/sdk": "^2.0.0",
+        "@nimbus-dev/sdk": "^2.2.0",
         "ink": "^7.1.1",
         "pino": "^10.4.0",
         "react": "^19.3.0",
@@ -61,6 +60,7 @@
         "yaml": "^2.9.1",
       },
       "devDependencies": {
+        "@modelcontextprotocol/sdk": "1.32.0",
         "@types/bun": "^1.4.2",
         "@types/react": "^19.3.0",
         "ink-testing-library": "^4.0.0",
@@ -628,7 +628,7 @@
 
     "@nimbus-dev/registry-format": ["@nimbus-dev/registry-format@workspace:packages/registry-format"],
 
-    "@nimbus-dev/sdk": ["@nimbus-dev/sdk@2.1.0", "", {}, "sha512-7KqMDmqyABwOrWbjdf/jIJt+rCLi9nSZNG19PUxDm0caIRfMYeFr32oQKT5LsEcQZBro98BmQe2KUV/r63NjMQ=="],
+    "@nimbus-dev/sdk": ["@nimbus-dev/sdk@2.2.0", "", {}, "sha512-vvkH1lHfb7c41zyzkxyFHFlqbQ/9DhZFDBEEC1yxR3Kw3DpYpd3Bo4K3dz+nAX7jy+MNUzqMjs2SWOflgCXgsQ=="],
 
     "@nimbus/cli": ["@nimbus/cli@workspace:packages/cli"],
 
@@ -2517,6 +2517,8 @@
     "@mswjs/interceptors/@open-draft/deferred-promise": ["@open-draft/deferred-promise@2.2.0", "", {}, "sha512-CecwLWx3rhxVQF6V4bAgPS5t+So2sTbPgAzafKkVizyi7tlwpcFpdFqq+wqF2OwNBmqFuu6tOyouTuxgpMfzmA=="],
 
     "@nimbus-dev/client/@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.34.0", "", {}, "sha512-/dN1jMx2KIM11AbHKzqkKY/Y3wcUllfj3lb3aHqXpVUTn70ETE7C673REdP0V77kyh9RE+T5+3VFZ6QRV1k/Rg=="],
+
+    "@nimbus-dev/connectors/@nimbus-dev/sdk": ["@nimbus-dev/sdk@2.1.0", "", {}, "sha512-7KqMDmqyABwOrWbjdf/jIJt+rCLi9nSZNG19PUxDm0caIRfMYeFr32oQKT5LsEcQZBro98BmQe2KUV/r63NjMQ=="],
 
     "@nimbus/docs/typescript": ["typescript@6.0.3", "", { "bin": { "tsc": "bin/tsc", "tsserver": "bin/tsserver" } }, "sha512-y2TvuxSZPDyQakkFRPZHKFm+KKVqIisdg9/CZwm9ftvKXLP8NRWj38/ODjNbr43SsoXqNuAisEf1GdCxqWcdBw=="],
 

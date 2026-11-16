@@ -18,6 +18,12 @@ Phase-level history before `v0.1.0` (Phases 1â€“4) lives in [`docs/roadmap.md` Â
 
 ## Post-Phase-6 deliveries
 
+- **2026-11-16: `nimbus mcp-server --stdio` serves both MCP protocol eras (Phase 28 AD6b; CLI only: no gateway change, migration, invariant or IPC method).**
+  What changes for you: an agent whose MCP client has moved to revision `2026-07-28` (no `initialize` handshake) can use the Nimbus MCP server, and an agent that still opens with `initialize` keeps working. Both see the same tools with the same input schemas as before.
+  How: the server is built on `@nimbus-dev/sdk/mcp-server` (SDK 2.2.0) instead of `@modelcontextprotocol/sdk`. A test compares every tool's schema with a recorded listing from the upstream SDK 1.32.0, so the swap changed none of them.
+  What differs on the wire: a call to a tool that is not registered is now a JSON-RPC `-32602` error instead of a tool error result; the text after `Invalid arguments for tool <name>:` is worded differently; `tools/list` no longer carries `execution.taskSupport`.
+  Not verified: no real 2026-07-28 client has been run against it. The legacy era is exercised with the upstream SDK's own client; the modern era with scripted requests written from the published specification.
+
 - **2026-11-15: `nimbus agent install` connects a coding agent to Nimbus, and `nimbus agent status` checks it (Phase 28 AD7b, the agent kits; CLI only: no gateway change, migration, invariant or IPC method).**
   What you can do now: `nimbus agent install claude-code` (or `codex`, `cursor`, `vscode`) writes the Nimbus MCP server entry and steering into that agent's own configuration. It prints every file it would create or change, with a diff, and writes only after you type `yes`. `--dry-run` shows the plan and stops; `--scope user|project` picks where; `nimbus agent status` later tells you whether each part is `ok`, `drifted`, `missing` or `manual`.
   **Steering is guidance in the agent's own harness. It is not a security boundary.** An agent with a shell can run `nimbus approvals <id>` itself and, until desktop approval ships, can still approve its own proposals. It can also run any command its harness allows with the credentials already on your machine. A rule that matches a command's first words does not see the same command in a script, under another spelling or behind an alias. The kits reduce accidents; install, status and the docs page say this every time.

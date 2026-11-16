@@ -1014,7 +1014,7 @@ Additionally, all tool outputs are wrapped in `<tool_output>` tags (Invariant I1
 **No migration.** The `item` table holds any `type` and JSON `metadata`. If the reader ever needs an index of its own, the migration takes the next free version at merge. Static rule D48 confines `finops/`.
 **Table `item_history` (V94).** See [schema-reference](./schema-reference.md#v94--item-history-phase-10-ic1-2026-11-12).
 
-**V96 (Phase 10 IC2).** See [schema-reference](./schema-reference.md#v96--alert-sources-deploy-edge-types-and-the-one-shot-regraph-marker-phase-10-ic2-2026-11-12). V95 is a no-op placeholder step held for LAN forward secrecy (FS1) until it merges.
+**V96 (Phase 10 IC2).** See [schema-reference](./schema-reference.md#v96--alert-sources-deploy-edge-types-and-the-one-shot-regraph-marker-phase-10-ic2-2026-11-12). V95 is LAN forward secrecy's `lan_peers.proto_version` (FS1); V96 chains after it.
 
 ### Alert sources and bindings (Phase 10 IC2)
 
@@ -3054,6 +3054,19 @@ leaves every other column unchanged; the CHECK enforces only the `payload_json` 
 `labelSource: "kit"` on `capture.submit`, and `sanitizeLabelSource` accepts exactly that beside a label). It is a
 display field: the approval prompt, `approvals.list`/`approvals.get`, the accept audit row and the proof by proposer
 show it, and no step of the gate, the act door or the executor reads it.
+
+**The MCP server's protocol layer (Phase 28 AD6b; CLI only).** `packages/cli/src/mcp/adapter.ts` builds the server
+with `createMcpServer` and `serveStdio` from `@nimbus-dev/sdk/mcp-server`, not from `@modelcontextprotocol/sdk`.
+One process serves a client of MCP revision `2026-07-28` (stateless: version, capabilities and client name in
+every request's `_meta`) and a client that opens with `initialize`; a connection's first request decides its era.
+Three things the adapter now does itself, in `toolFor`: it converts each tool's zod shape to draft-07 JSON Schema
+(`toInputSchema`; `adapter-eras.test.ts` holds every one equal to a recorded upstream 1.32.0 listing), it checks
+the arguments against that shape before `run` (the layer sends a schema and enforces nothing), and it reads the
+client's declared name from the call's context, which is per request in the modern era. `tools/list` carries
+`ttlMs: 0` for a modern client. No tool returns `inputRequired`: approval is at the owner's terminal, never through
+the agent's client. `session.declareKind` is unchanged (it is the gateway connection's, not the MCP client's).
+`@modelcontextprotocol/sdk` remains a devDependency: the scaffold templates pin it, and the adapter tests drive
+the server with its client as an implementation that is not ours.
 
 **Agent kits (Phase 28 AD7b; CLI only).** `packages/cli/src/agent-kits/` connects a coding agent to that
 server. Each kit (`kits/{claude-code,codex,cursor,vscode}.ts`) is a PURE function from a `KitEnv` (home, working

@@ -1,5 +1,10 @@
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import {
+  createMcpServer,
+  type McpJsonObject,
+  type McpServer,
+  type McpTool,
+  serveStdio,
+} from "@nimbus-dev/sdk/mcp-server";
 import { z } from "zod";
 import { IPCClient } from "../ipc-client/index.ts";
 import { readGatewayState } from "../lib/gateway-process.ts";
@@ -23,6 +28,7 @@ import { GatewayUnavailableError, isDisconnectError } from "./errors.ts";
 import {
   type AdapterDeps,
   AGENT_TOOLS_UNSUPPORTED_MESSAGE,
+  errorResult,
   jsonResult,
   runAgentClassifiedTool,
   runTool,
@@ -611,37 +617,75 @@ export async function agentToolsSupported(deps: AdapterDeps): Promise<boolean> {
 }
 
 /**
+ * A tool's zod shape as the JSON Schema `tools/list` carries. The MCP layer sends it and does not
+ * enforce it (`toolFor` does), so this is the ONE conversion: draft-07, the dialect the adapter has
+ * always listed. `adapter-schema.test.ts` holds every tool's output equal to what the upstream MCP
+ * SDK 1.32.0 listed before the adapter left it.
+ */
+export function toInputSchema(shape: Record<string, z.core.$ZodType>): McpJsonObject {
+  return z.toJSONSchema(z.object(shape), { target: "draft-7", io: "input" }) as McpJsonObject;
+}
+
+/**
+ * One tool as the MCP layer registers it. The layer hands a handler whatever the client sent, so
+ * the arguments are checked against the tool's own shape HERE, before `run`: arguments the shape
+ * rejects never reach the gateway, and `run` receives only the members the shape names.
+ */
+function toolFor(
+  spec: Pick<ToolSpec, "name" | "description" | "schema">,
+  annotations: McpJsonObject | undefined,
+  run: (args: Record<string, unknown>, clientName: string | undefined) => Promise<ToolResult>,
+): McpTool {
+  const shape = z.object(spec.schema);
+  return {
+    name: spec.name,
+    description: spec.description,
+    inputSchema: toInputSchema(spec.schema),
+    ...(annotations === undefined ? {} : { annotations }),
+    handler: async (args, ctx) => {
+      const parsed = shape.safeParse(args);
+      if (!parsed.success) {
+        return errorResult(
+          `Invalid arguments for tool ${spec.name}: ${z.prettifyError(parsed.error)}`,
+        );
+      }
+      return run(asRecord(parsed.data), ctx.clientInfo?.name);
+    },
+  };
+}
+
+/**
  * Build the MCP server.
  *
  * `includeAgentTools: false` registers ONLY the nine read-only index tools — the fail-closed shape
  * for a gateway that rejects `session.declareKind`. Serving unrecorded briefs while `nimbus prove`
  * reports a clean scope is the exact failure this feature exists to close, so the honest answer is
  * to withhold the surface, not to warn about it on a stream the editor discards.
+ *
+ * The server answers both MCP eras from one process (`@nimbus-dev/sdk/mcp-server`): a client of
+ * revision 2026-07-28, which sends its version and identity with every request, and a client that
+ * opens with `initialize`. No tool here ever asks the client for input in the middle of a call:
+ * approval happens at the owner's terminal, never through the agent's own client.
  */
 export function buildMcpServer(
   deps: AdapterDeps,
   includeAgentTools = true,
   captureTools: readonly CaptureToolSpec[] = [],
 ): McpServer {
-  const server = new McpServer({ name: "nimbus", version: "0.1.0" });
+  const server = createMcpServer({ name: "nimbus", version: "0.1.0" });
   for (const s of includeAgentTools ? TOOL_SPECS : INDEX_TOOL_SPECS) {
-    server.registerTool(
-      s.name,
-      { description: s.description, inputSchema: s.schema },
-      (args: unknown) => s.run(deps, asRecord(args)),
-    );
+    server.tool(toolFor(s, undefined, (args) => s.run(deps, args)));
   }
-  // D-AD-13: the `--agent <kit>` value of the server entry when there is one, else the client's
-  // declared name. Both are display only.
-  const label: ClientLabel =
-    deps.agentKit === undefined
-      ? () => server.server.getClientVersion()?.name
-      : kitLabel(deps.agentKit);
   for (const s of captureTools) {
-    server.registerTool(
-      s.name,
-      { description: s.description, inputSchema: s.schema, annotations: s.annotations },
-      (args: unknown) => s.run(deps, asRecord(args), label),
+    server.tool(
+      toolFor(s, { ...s.annotations }, (args, clientName) => {
+        // D-AD-13: the `--agent <kit>` value of the server entry when there is one, else the name
+        // the client declared: with each request in the modern era, at `initialize` in the legacy
+        // one. Both are display only.
+        const label: ClientLabel =
+          deps.agentKit === undefined ? () => clientName : kitLabel(deps.agentKit);
+        return s.run(deps, args, label);
+      }),
     );
   }
   return server;
@@ -665,6 +709,21 @@ export async function buildMcpServerForGateway(deps: AdapterDeps): Promise<McpSe
 /** Run the MCP server over stdio (this process is launched by the editor). */
 export async function runMcpServerStdio(deps: AdapterDeps): Promise<void> {
   const server = await buildMcpServerForGateway(deps);
-  const transport = new StdioServerTransport();
-  await server.connect(transport);
+  // Read once, here: what this process's stdio is when the server starts is what it serves on.
+  const input = process.stdin;
+  const output = process.stdout;
+  // Not awaited: this resolves once the server is serving, as it always has. The process then
+  // lives for as long as its stdin does.
+  void serveStdio(server, {
+    input,
+    write: (line) => {
+      output.write(line);
+    },
+  }).catch((e: unknown) => {
+    // stderr is safe: the protocol channel is stdout.
+    process.stderr.write(
+      `nimbus-mcp: the MCP connection failed: ${e instanceof Error ? e.message : String(e)}\n`,
+    );
+    process.exitCode = 1;
+  });
 }

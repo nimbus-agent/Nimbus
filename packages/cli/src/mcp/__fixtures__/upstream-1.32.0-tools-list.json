@@ -1,0 +1,671 @@
+[
+  {
+    "name": "searchIndex",
+    "description": "Search the Nimbus local index across all connected services (Drive, GitHub, Slack, Jira, etc.). Returns ranked items. Optionally filter by service or itemType.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "string"
+        },
+        "service": {
+          "type": "string"
+        },
+        "itemType": {
+          "type": "string"
+        },
+        "limit": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "semantic": {
+          "type": "boolean"
+        }
+      },
+      "required": ["query"],
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "execution": {
+      "taskSupport": "forbidden"
+    }
+  },
+  {
+    "name": "getConnectorStatus",
+    "description": "List Nimbus connector health and sync state for every configured connector.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {},
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "execution": {
+      "taskSupport": "forbidden"
+    }
+  },
+  {
+    "name": "getRecentIncidents",
+    "description": "List recent incidents from the local index (most recent first). Optionally filter by service.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "limit": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "service": {
+          "type": "string"
+        }
+      },
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "execution": {
+      "taskSupport": "forbidden"
+    }
+  },
+  {
+    "name": "getRecentPullRequests",
+    "description": "List recent pull requests from the local index (most recent first). Each item carries its state (open/closed/merged) under meta.state when the connector recorded it — filter on that; the index cannot pre-filter by PR state.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "limit": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "service": {
+          "type": "string"
+        }
+      },
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "execution": {
+      "taskSupport": "forbidden"
+    }
+  },
+  {
+    "name": "getRecentDeployments",
+    "description": "List recent deployments from the local index (most recent first). Optionally filter by service.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "limit": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "service": {
+          "type": "string"
+        }
+      },
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "execution": {
+      "taskSupport": "forbidden"
+    }
+  },
+  {
+    "name": "getDoraMetrics",
+    "description": "Get DORA metrics (deployment frequency, lead time for changes, change failure rate, MTTR) for a configured service. `since` accepts values like '30d'.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "service": {
+          "type": "string"
+        },
+        "since": {
+          "type": "string"
+        }
+      },
+      "required": ["service"],
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "execution": {
+      "taskSupport": "forbidden"
+    }
+  },
+  {
+    "name": "findPrsNotTouching",
+    "description": "findPrsNotTouching(pathGlob, service?, limit?) — pull requests with NO indexed changed-file path matching pathGlob (a GLOB such as 'tests/**'; required). Use this, never searchIndex, when the question is which PRs do NOT touch something: it proves its substrate first and REFUSES (status 'refused' in the returned JSON) when PR file coverage is not indexed, because an unfetched PR is indistinguishable from one that never touched the path — do not fall back to searchIndex on a refusal, and do not answer the negation from a ranked search instead. When it returns rows (not a refusal), it also reports how many PRs were excluded as unverifiable; report that count to the caller. service is optional; omitting it searches every indexed forge. limit is optional (default 20, max 50).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "pathGlob": {
+          "type": "string"
+        },
+        "service": {
+          "type": "string"
+        },
+        "limit": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": ["pathGlob"],
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "execution": {
+      "taskSupport": "forbidden"
+    }
+  },
+  {
+    "name": "findDeploymentsWithoutIncident",
+    "description": "findDeploymentsWithoutIncident(service?, limit?) — deployments with NO outgoing correlates_with edge to a downstream incident. Use this, never searchIndex, when the question is which deployments had NO incident: it proves its substrate first and REFUSES (status 'refused' in the returned JSON) when deployment-to-incident correlation is not indexed — do not fall back to searchIndex on a refusal, and do not answer the negation from a ranked search instead. The correlation window is fixed at the time the correlation edge was written, not at query time, so there is deliberately no window argument here. service is optional; omitting it searches every indexed service. limit is optional (default 20, max 50).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "service": {
+          "type": "string"
+        },
+        "limit": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "execution": {
+      "taskSupport": "forbidden"
+    }
+  },
+  {
+    "name": "findPeopleWithoutReviews",
+    "description": "findPeopleWithoutReviews(sinceDays?, limit?) — people with NO outgoing reviewed edge newer than sinceDays days ago. Use this, never searchIndex, when the question is who has NOT reviewed anything: it proves its substrate first and REFUSES (status 'refused' in the returned JSON) when review activity is not indexed for the window — do not fall back to searchIndex on a refusal, and do not answer the negation from a ranked search instead. sinceDays is a whole number of days back from now (e.g. 7 for the last week); omitting it means ever. There is no service argument: a person spans services by construction, so people.list has no service dimension to filter on. limit is optional (default 20, max 50).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "sinceDays": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "limit": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "execution": {
+      "taskSupport": "forbidden"
+    }
+  },
+  {
+    "name": "peekWhy",
+    "description": "Fast why-lens probe: returns a one-line explanation of why code is the way it is (author, commit, date, subject, PR, ticket), drawn from the local relationship graph. `ref` is a repo-relative `path[:line]` or a bare symbol name. Synchronous — use explainWhy for the full brief.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "ref": {
+          "type": "string"
+        }
+      },
+      "required": ["ref"],
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "execution": {
+      "taskSupport": "forbidden"
+    }
+  },
+  {
+    "name": "explainWhy",
+    "description": "Explain why code is the way it is — six parallel lanes over the local relationship graph (authorship, PRs, incidents, decisions, discussions, adjacent code). Returns a markdown brief. `ref` is a repo-relative `path[:line]` or a bare symbol name resolved against indexed code symbols — not a PR URL.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "ref": {
+          "type": "string"
+        },
+        "line": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": ["ref"],
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "execution": {
+      "taskSupport": "forbidden"
+    }
+  },
+  {
+    "name": "getCatchup",
+    "description": "Retrospective digest of what happened across connected services while the user was away, personalized to their work. `sinceMs` is a lookback window in milliseconds, capped at 90 days. `service` narrows the digest to one connected service (e.g. 'github', 'slack').",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "sinceMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 7776000000
+        },
+        "service": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        }
+      },
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "execution": {
+      "taskSupport": "forbidden"
+    }
+  },
+  {
+    "name": "findExpert",
+    "description": "Answer 'who has the most context on this?' — a ranked list of people drawn from indexed PRs, reviews, incidents and discussions. `limit` is capped at 25.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "topicOrFile": {
+          "type": "string"
+        },
+        "limit": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 25
+        }
+      },
+      "required": ["topicOrFile"],
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "execution": {
+      "taskSupport": "forbidden"
+    }
+  },
+  {
+    "name": "assessImpact",
+    "description": "Answer 'if I change this, what breaks?' — reverse-dependency blast radius across services, dashboards, tests, docs and owners.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "fileOrPrUrl": {
+          "type": "string"
+        },
+        "depth": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 5
+        }
+      },
+      "required": ["fileOrPrUrl"],
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "execution": {
+      "taskSupport": "forbidden"
+    }
+  },
+  {
+    "name": "findConflicts",
+    "description": "Warn of work-in-progress collisions before editing a file — teammates with an open PR or assigned ticket touching the same code.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "file": {
+          "type": "string"
+        }
+      },
+      "required": ["file"],
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "execution": {
+      "taskSupport": "forbidden"
+    }
+  },
+  {
+    "name": "findDecisions",
+    "description": "Recover decision records that were made but never written down, reconstructed from discussions, PRs and issues. There is no topic filter, but the result can be narrowed: `sinceMs` is a lookback window in milliseconds, `service` restricts to one connected service, `minConfidence` (0..1) raises the floor above the configured default, and `explain` adds the per-decision breakdown of what drove its confidence score.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "sinceMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "minConfidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "service": {
+          "type": "string"
+        },
+        "explain": {
+          "type": "boolean"
+        },
+        "limit": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "execution": {
+      "taskSupport": "forbidden"
+    }
+  },
+  {
+    "name": "getGlossary",
+    "description": "Team terminology as a queryable glossary, extracted from how the team actually writes. Returns one term's definition when `term` is given, otherwise lists the glossary.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "term": {
+          "type": "string"
+        },
+        "limit": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "execution": {
+      "taskSupport": "forbidden"
+    }
+  },
+  {
+    "name": "findOwners",
+    "description": "Answer 'who owns this code?' from recency-weighted git blame already in the local index. Pass `path` for a file or directory inside a configured root, or `service` for a [ci.service.<id>] id, or neither for a coverage summary. `path` and `service` are mutually exclusive. This is AUTHORSHIP-derived ownership — who wrote the lines, not who is formally accountable.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "service": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        }
+      },
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "execution": {
+      "taskSupport": "forbidden"
+    }
+  },
+  {
+    "name": "checkResourceUsage",
+    "description": "Answer 'is this cloud resource still in use, and what breaks if I delete it?' — cross-references a resource against indexed code, config and deploys.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "resourceRef": {
+          "type": "string"
+        }
+      },
+      "required": ["resourceRef"],
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "execution": {
+      "taskSupport": "forbidden"
+    }
+  },
+  {
+    "name": "getPeerContext",
+    "description": "Ambient teammate context for a file, gathered from paired peers across the federation mesh. Reaches the network beyond this machine.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "file": {
+          "type": "string"
+        }
+      },
+      "required": ["file"],
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "execution": {
+      "taskSupport": "forbidden"
+    }
+  },
+  {
+    "name": "getTeamHuddle",
+    "description": "Team-scoped briefing aggregating each teammate's recent PRs, tickets and incidents from paired peers. Reaches the network beyond this machine.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "namespace": {
+          "type": "string"
+        }
+      },
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "execution": {
+      "taskSupport": "forbidden"
+    }
+  },
+  {
+    "name": "capture_note",
+    "description": "Save a note into the user's LOCAL Nimbus index (stored on their machine; nothing leaves it). The note is searchable immediately via searchIndex and is labelled agent-authored. relatesTo takes item ids exactly as the `id` field returned by searchIndex or another read tool. The user can revoke any note with `nimbus captures revoke <id>`.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "title": {
+          "type": "string"
+        },
+        "body": {
+          "type": "string"
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "relatesTo": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": ["title", "body"],
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": false
+    },
+    "execution": {
+      "taskSupport": "forbidden"
+    }
+  },
+  {
+    "name": "propose_decision",
+    "description": "Propose a decision for the user's LOCAL Nimbus decision log. Stored on the user's machine (nothing leaves it), labelled agent-authored, and INERT until the owner reviews it: it is not searchable and appears in no brief until accepted. evidence takes item ids exactly as the `id` field a read tool returned; decidedAt is an ISO 8601 date.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "statement": {
+          "type": "string"
+        },
+        "rationale": {
+          "type": "string"
+        },
+        "alternatives": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "decidedAt": {
+          "type": "string"
+        },
+        "evidence": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": ["statement"],
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": false
+    },
+    "execution": {
+      "taskSupport": "forbidden"
+    }
+  },
+  {
+    "name": "propose_term",
+    "description": "Propose a glossary term for the user's LOCAL Nimbus glossary. Stored on the user's machine (nothing leaves it), labelled agent-authored, and INERT until the owner reviews it: it is not searchable and appears in no brief until accepted. A term the owner defined in nimbus.toml cannot be overridden.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "term": {
+          "type": "string"
+        },
+        "definition": {
+          "type": "string"
+        },
+        "synonyms": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": ["term", "definition"],
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": false
+    },
+    "execution": {
+      "taskSupport": "forbidden"
+    }
+  },
+  {
+    "name": "propose_link",
+    "description": "Propose a typed link between two indexed items in the user's LOCAL Nimbus relationship graph. Stored on the user's machine (nothing leaves it), labelled agent-authored, and INERT until the owner reviews it: it is not searchable and appears in no brief until accepted. Both ids must be the `id` field a read tool returned, and both items must be in the graph (a note captured over MCP is not).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "fromItemId": {
+          "type": "string"
+        },
+        "toItemId": {
+          "type": "string"
+        },
+        "relation": {
+          "type": "string",
+          "enum": ["relates_to", "fixes", "caused_by", "supersedes", "documents"]
+        },
+        "note": {
+          "type": "string"
+        }
+      },
+      "required": ["fromItemId", "toItemId", "relation"],
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": false
+    },
+    "execution": {
+      "taskSupport": "forbidden"
+    }
+  },
+  {
+    "name": "propose_action",
+    "description": "Propose a connector action (post a message, create or update a ticket, comment, create a draft, …) for the user to approve. NOTHING is run when you call this: the proposal waits on the user's machine until the owner runs `nimbus approvals <id>` and approves the exact input shown at the prompt. It expires if not approved in time. Poll its outcome with capture_status. input is the tool's arguments as a JSON object. Call describe_actions first: it lists what this machine accepts now (the writes its owner approved for outside agents by name, plus a few types still accepted for a limited time with a Deprecated warning, which a later release will refuse unless the owner approves them; a tool of a server the user registered themselves is proposed as mcp_<id>.<tool> and is approved by name the same way) and returns the description and input schema of the types you name. The owner's reason for declining or rejecting is never sent to you, only a fixed code.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "actionType": {
+          "type": "string"
+        },
+        "input": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {}
+        },
+        "summary": {
+          "type": "string"
+        }
+      },
+      "required": ["actionType", "input", "summary"],
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": false
+    },
+    "execution": {
+      "taskSupport": "forbidden"
+    }
+  },
+  {
+    "name": "describe_actions",
+    "description": "Read which action types propose_action accepts on this machine now. With no arguments it lists each type with its state: approved (the owner approved it for outside agents by name; with its wave, whether the owner must type a confirmation, and whether Nimbus reads and binds part of the input itself), legacy (still accepted for a limited time, with a Deprecated line), suspended (its definition changed since the owner approved it, so it is refused until the owner approves it again by name), unavailable, not_proposable (a type that cannot be proposed now; this does not say why) and undescribed. With actionTypes (1 to 10 types, at most 3 services, each type at most 128 characters) it also returns, for each approved type it can verify now, the description and the input schema: ask for a type before you propose it, and build input from that schema alone. Fields Nimbus binds itself are not in the schema; never send them. A described type can still have its input refused by the same checks as every proposal. The number of calls an hour is limited. A tool of a server the user registered themselves (a type of the form mcp_<id>.<tool>, third-party code) is described only after the owner approved that tool for outside agents by name and its listed definition is unchanged; tools of such a server the owner has not approved appear as one mcp_<id>.* entry while they are still accepted for a limited time. This tool proposes and dispatches nothing, but describing an approved type can start its connector or user MCP server, and a definition found changed is recorded as suspended.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "actionTypes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": false
+    },
+    "execution": {
+      "taskSupport": "forbidden"
+    }
+  },
+  {
+    "name": "capture_status",
+    "description": "Read the state of a capture by its id (proposed, executed, failed, rejected, expired, accepted, live, revoked). The gateway answers only for captures submitted on this connection; an id from another connection reads as not found. Returns the state and, for an executed action, a short link when the service returned one — never the payload. A rejected or failed action may carry an errorCode (a fixed code, never the owner's reason).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        }
+      },
+      "required": ["id"],
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": false
+    },
+    "execution": {
+      "taskSupport": "forbidden"
+    }
+  }
+]
