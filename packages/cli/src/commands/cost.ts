@@ -64,37 +64,62 @@ const DAY_MS = 86_400_000;
 const clean = (s: string): string => stripControlChars(s);
 const utcDay = (ms: number): string => new Date(ms).toISOString().slice(0, 10);
 
+type ValueFlag = "--service" | "--days";
+
+/** Which value flag `a` is (`--flag` or `--flag=value`), or undefined for anything else. */
+function valueFlagOf(a: string): ValueFlag | undefined {
+  if (a === "--service" || a.startsWith("--service=")) return "--service";
+  if (a === "--days" || a.startsWith("--days=")) return "--days";
+  return undefined;
+}
+
+/** A flag's value, or undefined when it is missing, blank or looks like another flag. */
+function flagValue(value: string | undefined): string | undefined {
+  if (value === undefined || value.trim() === "" || value.startsWith("-")) return undefined;
+  return value;
+}
+
+/** The parsed `--days` value, or undefined when it is not a whole number from 1 to 30. */
+function parseDays(value: string): number | undefined {
+  if (!/^\d+$/.test(value)) return undefined;
+  const days = Number(value);
+  return days < 1 || days > 30 ? undefined : days;
+}
+
+interface ParsedValues {
+  service: string | undefined;
+  days: number | undefined;
+}
+
+/** Records one value flag; false when it is repeated or its value is refused. */
+function applyValueFlag(state: ParsedValues, flag: ValueFlag, value: string): boolean {
+  if (flag === "--service") {
+    if (state.service !== undefined) return false;
+    state.service = value.trim();
+    return true;
+  }
+  if (state.days !== undefined) return false;
+  state.days = parseDays(value);
+  return state.days !== undefined;
+}
+
 export function parseCostAnomaliesArgs(argv: readonly string[]): CostAnomaliesArgs | undefined {
   let json = false;
-  let service: string | undefined;
-  let days: number | undefined;
+  const state: ParsedValues = { service: undefined, days: undefined };
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i] as string;
     if (a === "--json") {
       json = true;
       continue;
     }
-    const isService = a === "--service" || a.startsWith("--service=");
-    const isDays = a === "--days" || a.startsWith("--days=");
-    if (!isService && !isDays) return undefined;
-    const flag = isService ? "--service" : "--days";
-    let value: string | undefined;
-    if (a === flag) {
-      i += 1;
-      value = argv[i];
-    } else {
-      value = a.slice(flag.length + 1);
-    }
-    if (value === undefined || value.trim() === "" || value.startsWith("-")) return undefined;
-    if (isService) {
-      if (service !== undefined) return undefined;
-      service = value.trim();
-    } else {
-      if (days !== undefined || !/^\d+$/.test(value)) return undefined;
-      days = Number(value);
-      if (days < 1 || days > 30) return undefined;
-    }
+    const flag = valueFlagOf(a);
+    if (flag === undefined) return undefined;
+    const separate = a === flag;
+    if (separate) i += 1;
+    const value = flagValue(separate ? argv[i] : a.slice(flag.length + 1));
+    if (value === undefined || !applyValueFlag(state, flag, value)) return undefined;
   }
+  const { service, days } = state;
   return {
     json,
     ...(service === undefined ? {} : { service }),

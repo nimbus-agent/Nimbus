@@ -177,5 +177,7 @@ export function readCostSeriesWindow(db: Database, query: CostWindowQuery): Cost
     if (r.currency !== null) cur.currencies.add(r.currency);
     cur.points.push({ dayMs: r.day, amount: r.amount, finalized: r.finalized === 1 });
   }
-  return out.map((s) => ({ ...s, currencies: [...s.currencies].sort() }));
+  // Code-unit order (what a bare `.sort()` gives), spelled out: deterministic, locale-independent.
+  const byCodeUnit = (a: string, b: string): number => (a < b ? -1 : Number(a > b));
+  return out.map((s) => ({ ...s, currencies: [...s.currencies].sort(byCodeUnit) }));
 }

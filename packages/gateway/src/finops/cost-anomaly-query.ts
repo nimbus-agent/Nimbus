@@ -11,7 +11,7 @@ import {
   judgeDay,
 } from "./cost-anomaly.ts";
 import { DAY_MS, startOfUtcDay } from "./cost-item-contract.ts";
-import { readCostDataExtent, readCostSeriesWindow } from "./cost-series.ts";
+import { type CostWindowSeries, readCostDataExtent, readCostSeriesWindow } from "./cost-series.ts";
 
 export const COST_ANOMALY_MAX_DAYS = 30;
 export const COST_ANOMALY_MAX_LISTED = 100;
@@ -109,6 +109,45 @@ function skipGaps(insufficientHistory: number, noDayData: number, mixedCurrency:
   return gaps;
 }
 
+interface Tally {
+  judged: number;
+  insufficientHistory: number;
+  noDayData: number;
+  mixedCurrency: number;
+}
+
+/** Judge one single-currency series on one day: count the verdict and keep an anomaly. */
+function judgeSeriesDay(
+  s: CostWindowSeries,
+  dayMs: number,
+  thresholds: AnomalyThresholds,
+  tally: Tally,
+  found: CostAnomaly[],
+): void {
+  const v = judgeDay(s.points, dayMs, thresholds);
+  if (v.kind === "no_day") {
+    tally.noDayData += 1;
+    return;
+  }
+  if (v.kind === "insufficient_history") {
+    tally.insufficientHistory += 1;
+    return;
+  }
+  tally.judged += 1;
+  if (v.kind !== "anomaly") return;
+  found.push({
+    seriesKey: s.seriesKey,
+    name: s.name,
+    dayMs: v.dayMs,
+    amount: v.amount,
+    baselineMean: v.baselineMean,
+    baselineDays: v.baselineDays,
+    ratio: v.ratio,
+    excess: v.excess,
+    currency: s.currencies[0] ?? null,
+  });
+}
+
 /** Judge every series of the window on each of the newest `days` complete days. */
 export function queryCostAnomalies(db: Database, q: CostAnomalyQuery): CostAnomalyResult {
   const days = Math.min(COST_ANOMALY_MAX_DAYS, Math.max(1, Math.floor(q.days)));
@@ -140,41 +179,18 @@ export function queryCostAnomalies(db: Database, q: CostAnomalyQuery): CostAnoma
     toMs: newest,
     finalizedOnly: true,
   });
-  let judged = 0;
-  let insufficientHistory = 0;
-  let noDayData = 0;
-  let mixedCurrency = 0;
+  const tally: Tally = { judged: 0, insufficientHistory: 0, noDayData: 0, mixedCurrency: 0 };
   const found: CostAnomaly[] = [];
   for (const s of seriesSet) {
     if (s.currencies.length > 1) {
-      mixedCurrency += 1;
+      tally.mixedCurrency += 1;
       continue;
     }
-    const currency = s.currencies[0] ?? null;
     for (let i = 0; i < days; i += 1) {
-      const v = judgeDay(s.points, newest - i * DAY_MS, q.thresholds);
-      if (v.kind === "no_day") {
-        noDayData += 1;
-      } else if (v.kind === "insufficient_history") {
-        insufficientHistory += 1;
-      } else {
-        judged += 1;
-        if (v.kind === "anomaly") {
-          found.push({
-            seriesKey: s.seriesKey,
-            name: s.name,
-            dayMs: v.dayMs,
-            amount: v.amount,
-            baselineMean: v.baselineMean,
-            baselineDays: v.baselineDays,
-            ratio: v.ratio,
-            excess: v.excess,
-            currency,
-          });
-        }
-      }
+      judgeSeriesDay(s, newest - i * DAY_MS, q.thresholds, tally, found);
     }
   }
+  const { judged, insufficientHistory, noDayData, mixedCurrency } = tally;
   found.sort(
     (a, b) => b.excess - a.excess || a.seriesKey.localeCompare(b.seriesKey) || b.dayMs - a.dayMs,
   );
