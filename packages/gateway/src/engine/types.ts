@@ -187,7 +187,10 @@ export interface AuditSink {
     actionJson: string;
     timestamp: number;
     sessionId?: string;
-  }): void;
+    // A sink that can name the row it appended returns its `audit_log.id`; one that cannot returns
+    // nothing, and a caller that needs the id (the standing-rule owner approval) then fails closed.
+    // biome-ignore lint/suspicious/noConfusingVoidType: a sink with nothing to report (a `void` fake) stays assignable
+  }): number | void;
 }
 
 export interface ConnectorDispatcher {

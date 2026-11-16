@@ -521,12 +521,11 @@ export async function dispatchStandingRpc(
  * consent channel. The channel is wrapped so that an approval whose source is not `human` (`--yes`
  * is `auto`, a script is `script`, an old client is `unknown`) is turned into a decline BEFORE the
  * executor records it: the audit row says rejected, and the caller is told why. The audit id of an
- * approved action is read synchronously from the sink the executor writes to.
+ * approved action is the id the sink returns for the row it appended (fail closed when it returns none).
  */
 export function createStandingOwnerAsk(deps: {
   readonly consent: ConsentChannel;
   readonly audit: AuditSink;
-  readonly db: Database;
   readonly policyHitl?: ExecutorPolicyDep | undefined;
 }): (action: PlannedAction) => Promise<OwnerApproval> {
   return async (action) => {
@@ -549,11 +548,11 @@ export function createStandingOwnerAsk(deps: {
     };
     const capturing: AuditSink = {
       recordAudit(entry) {
-        deps.audit.recordAudit(entry);
-        const row = deps.db.query("SELECT MAX(id) AS id FROM audit_log").get() as {
-          id: number | null;
-        } | null;
-        auditId = row?.id ?? undefined;
+        const id = deps.audit.recordAudit(entry);
+        // The id comes from the sink's own return value (the inserted row), never from a re-read of
+        // the table: a sink that returns none leaves the approval undecided and it is declined.
+        auditId = typeof id === "number" ? id : undefined;
+        return id;
       },
     };
     const executor = new ToolExecutor(

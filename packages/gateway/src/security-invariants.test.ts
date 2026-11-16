@@ -15301,8 +15301,7 @@ describe("I55 — a standing rule approves a write only inside approvalPhase, fo
       const s = i55BaseScenario();
       const ask = createStandingOwnerAsk({
         consent: { requestApproval: async () => ({ approved: true, answerSource }) },
-        db: s.db,
-        audit: { recordAudit: (e) => void appendAuditEntry(s.db, e) },
+        audit: { recordAudit: (e) => appendAuditEntry(s.db, e) },
       });
       const out = await dispatchStandingRpc(
         "standing.create",

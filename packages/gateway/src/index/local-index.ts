@@ -932,8 +932,8 @@ export class LocalIndex {
     actionJson: string;
     timestamp: number;
     sessionId?: string;
-  }): void {
-    appendAuditEntry(this.db, entry);
+  }): number {
+    return appendAuditEntry(this.db, entry);
   }
 
   get rawDb(): Database {

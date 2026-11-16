@@ -347,8 +347,7 @@ describe("createStandingOwnerAsk — a person must answer", () => {
     };
     const own = createStandingOwnerAsk({
       consent,
-      db,
-      audit: { recordAudit: (e) => void appendAuditEntry(db, e) },
+      audit: { recordAudit: (e) => appendAuditEntry(db, e) },
     });
     return { own, db, prompts };
   }
@@ -387,6 +386,42 @@ describe("createStandingOwnerAsk — a person must answer", () => {
       const row = db.query("SELECT hitl_status FROM audit_log").get() as { hitl_status: string };
       expect(row.hitl_status, answerSource).toBe("rejected");
     }
+  });
+
+  test("the recorded audit id is the appended row's own, even if another row lands after it", async () => {
+    const db = freshDb();
+    const own = createStandingOwnerAsk({
+      consent: { requestApproval: async () => ({ approved: true, answerSource: "human" }) },
+      audit: {
+        recordAudit: (e) => {
+          const id = appendAuditEntry(db, e);
+          // An interleaved append (a wrapped or queued sink, another writer) before the sink returns.
+          appendAuditEntry(db, {
+            actionType: "other",
+            hitlStatus: "not_required",
+            actionJson: "{}",
+            timestamp: 1,
+          });
+          return id;
+        },
+      },
+    });
+    const out = await own(action);
+    const mine = db
+      .query("SELECT id FROM audit_log WHERE action_type = 'standing.rule.create'")
+      .get() as { id: number };
+    const max = db.query("SELECT MAX(id) AS id FROM audit_log").get() as { id: number };
+    expect(max.id).toBeGreaterThan(mine.id);
+    expect(out).toEqual({ approved: true, auditId: mine.id });
+  });
+
+  test("a sink that returns no id leaves the approval declined (fail closed)", async () => {
+    const db = freshDb();
+    const own = createStandingOwnerAsk({
+      consent: { requestApproval: async () => ({ approved: true, answerSource: "human" }) },
+      audit: { recordAudit: (e) => void appendAuditEntry(db, e) },
+    });
+    expect(await own(action)).toEqual({ approved: false, reason: "declined" });
   });
 
   test("a human decline is a plain decline", async () => {
