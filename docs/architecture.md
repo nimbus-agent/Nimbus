@@ -3341,6 +3341,12 @@ demo-rooted gateway (I41 — `BootPolicy.osNotifications` is `false`, so a demo'
 real notification centre), a platform with no backend, or a `[notifications]` section that failed to load (logged at
 ERROR; notifications then run OFF until it is fixed — the fail-closed direction for a privacy setting).
 
+**Sync anomaly notice (2026-11-16).** `watcher/anomaly-notifier.ts` routes the sync-telemetry detector's `onNotify` to this
+service through `showIgnoringFailure`, behind `[watcher.anomaly] notify` (default `false`), at most one notice per connector
+per `min_interval_minutes` (5 to 1440, default 60, kept in memory) and a `min_score` z-score floor (3 to 20, default 3). The text
+is `Unusual sync activity on <connector> (<n.n> standard deviations from the usual)`: the connector id and one number, never an
+item title, body or name. A demo gateway sends none (I41); no network, egress row, model or schema change.
+
 **Where it lives.** `packages/gateway/src/platform/notifications/`:
 
 - `win32.ts` / `darwin.ts` / `linux.ts` — one `NotificationBackend` each (`probe()`, `send(title, body)`), every spawn

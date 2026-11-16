@@ -54,6 +54,7 @@ import {
   resolveShellById,
 } from "../computer-use/cu-lanes/terminal-shells.ts";
 import { startCuSnapshotRetention } from "../computer-use/cu-snapshot-retention.ts";
+import { loadNimbusAnomalyFromConfigDir } from "../config/anomaly-toml.ts";
 import { loadNimbusBriefingFromConfigDir } from "../config/briefing-toml.ts";
 import { loadNimbusFilesystemRootsFromConfigDir } from "../config/filesystem-toml.ts";
 import { loadNimbusFinopsFromConfigDir } from "../config/finops-toml.ts";
@@ -428,7 +429,7 @@ import { setApprovalPendingNotifier } from "../util/approval-pending.ts";
 import { createNimbusVault } from "../vault/factory.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
 import { GATEWAY_VERSION } from "../version.ts";
-import { AnomalyDetectorStub } from "../watcher/anomaly-detector.ts";
+import { createSyncAnomalyDetector } from "../watcher/anomaly-notifier.ts";
 import { registerConnectorMeshSyncables } from "./assemble-sync-registrations.ts";
 import { openUrlInDefaultBrowser } from "./browser.ts";
 import { bootPolicyFor } from "./demo-boot.ts";
@@ -822,9 +823,13 @@ async function createSchedulerWithMesh(opts: SchedulerWithMeshOpts): Promise<{
   // I41 clause (6), spec § 11.2: a demo gateway's scheduler exists (IPC and the post-sync
   // refreshers are built alongside it) but can never run a job.
   const syncEnabled = bootPolicyFor(paths).syncScheduler;
-  const syncAnomaly = new AnomalyDetectorStub({
-    windowSize: 64,
-    onNotify: (e) => {
+  const syncAnomaly = createSyncAnomalyDetector({
+    config: loadNimbusAnomalyFromConfigDir(paths.configDir),
+    demo: !syncEnabled,
+    notify: (title, body) => showIgnoringFailure(notifications, title, body),
+    now: () => Date.now(),
+    onFailure: (err) => syncLogger.warn({ err }, "sync anomaly notification failed"),
+    logger: (e) => {
       syncLogger.warn(
         { seriesId: e.seriesId, value: e.value, score: e.score, atMs: e.atMs },
         "sync telemetry anomaly (stub — no automated remediation)",
