@@ -23,6 +23,7 @@ import {
   type TraverseGraphResult,
   traverseGraph as traverseGraphSubgraph,
 } from "../graph/relationship-graph.ts";
+import { eraseIncidentDataForService } from "../incident/incident-erasure.ts";
 import { prunePeopleAfterServiceRemoval } from "../people/prune.ts";
 import { hybridSearch } from "../search/hybrid.ts";
 // Aliased to this file's names: `ItemRow` is the same `item` row shape hybrid search selects, and
@@ -519,6 +520,8 @@ export class LocalIndex {
       const n = countItemsForService(this.db, serviceId);
       deleteAllItemsForService(this.db, serviceId);
       deleteChatReadMarkersForService(this.db, serviceId);
+      // Records and pushed briefs that cite the service go in the same transaction (Phase 10 IC3, I57 (a)).
+      eraseIncidentDataForService(this.db, serviceId);
       deleteSchedulerStateRow(this.db, serviceId);
       dbRun(this.db, "DELETE FROM sync_state WHERE connector_id = ?", [serviceId]);
       prunePeopleAfterServiceRemoval(this.db, serviceId);

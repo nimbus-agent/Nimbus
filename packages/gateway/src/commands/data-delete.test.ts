@@ -1,8 +1,15 @@
 import { Database } from "bun:sqlite";
 import { beforeEach, describe, expect, test } from "bun:test";
 import { memVault, newIndex } from "../../test/fixtures/data-test-helpers.ts";
+import {
+  briefItems,
+  recordItems,
+  seedErasureScenario,
+} from "../incident/__fixtures__/erasure-seed.ts";
 import { listChatReadMarkers, setChatReadMarkerRows } from "../index/chat-read-marker-store.ts";
+import { INCIDENT_RECORD_V100_SQL } from "../index/incident-record-v100-sql.ts";
 import type { LocalIndex } from "../index/local-index.ts";
+import { ONCALL_PUSH_V64_SQL } from "../index/oncall-push-v64-sql.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
 import { runDataDelete } from "./data-delete.ts";
 
@@ -247,6 +254,8 @@ describe("data delete", () => {
       )
     `);
     rawDb.run("CREATE TABLE item_history (service TEXT NOT NULL)");
+    for (const stmt of INCIDENT_RECORD_V100_SQL) rawDb.run(stmt);
+    for (const stmt of ONCALL_PUSH_V64_SQL) rawDb.run(stmt);
     const bareIndex = { rawDb } as unknown as LocalIndex;
     const bareVault = memVault();
 
@@ -326,5 +335,54 @@ describe("data delete - item history (Phase 10 IC1)", () => {
     expect(idx.rawDb.query("SELECT service FROM item_history").all()).toEqual([
       { service: "jira" },
     ]);
+  });
+});
+
+describe("data delete - incident records and pushed briefs (Phase 10 IC3)", () => {
+  test("the dry run counts both and deletes nothing; deletion removes them with the service", async () => {
+    const vault = memVault();
+    const idx = newIndex();
+    seedErasureScenario(idx.rawDb);
+    const dry = await runDataDelete({ service: "slack", dryRun: true, vault, index: idx });
+    expect(dry.preflight.incidentRecordsToDelete).toBe(2);
+    expect(dry.preflight.pushedBriefsToDelete).toBe(2);
+    expect(recordItems(idx.rawDb)).toHaveLength(3);
+    expect(briefItems(idx.rawDb)).toHaveLength(4);
+    await runDataDelete({ service: "slack", dryRun: false, vault, index: idx });
+    expect(recordItems(idx.rawDb)).toEqual(["sentry:S1"]);
+    // the brief written by the old dispatch (no record, no cited services) is outside the stated bound
+    expect(briefItems(idx.rawDb)).toEqual(["bigeye:OLD-NO-RECORD", "sentry:S1"]);
+  });
+
+  test("removing a trigger service deletes its records and its briefs by the key prefix", async () => {
+    const vault = memVault();
+    const idx = newIndex();
+    seedErasureScenario(idx.rawDb);
+    await runDataDelete({ service: "bigeye", dryRun: false, vault, index: idx });
+    expect(briefItems(idx.rawDb)).not.toContain("bigeye:OLD-NO-RECORD");
+    await runDataDelete({ service: "pagerduty", dryRun: false, vault, index: idx });
+    expect(recordItems(idx.rawDb)).toEqual(["jira:J1", "sentry:S1"]);
+    expect(briefItems(idx.rawDb)).toEqual(["jira:J1", "sentry:S1"]);
+  });
+
+  test("a failing brief delete rolls the whole erasure back", async () => {
+    const vault = memVault();
+    const idx = newIndex();
+    seedErasureScenario(idx.rawDb);
+    idx.rawDb.run(
+      "INSERT INTO item (id, service, type, external_id, title, modified_at, synced_at) VALUES ('slack:1','slack','message','1','t',1,1)",
+    );
+    idx.rawDb.run(
+      "CREATE TRIGGER boom BEFORE DELETE ON pushed_brief BEGIN SELECT RAISE(ABORT, 'forced'); END",
+    );
+    await expect(
+      runDataDelete({ service: "slack", dryRun: false, vault, index: idx }),
+    ).rejects.toThrow("forced");
+    expect(recordItems(idx.rawDb)).toHaveLength(3);
+    expect(idx.rawDb.query("SELECT count(*) AS n FROM item WHERE service = 'slack'").get()).toEqual(
+      {
+        n: 1,
+      },
+    );
   });
 });

@@ -2,6 +2,10 @@ import { dbRun } from "../db/write.ts";
 import { deleteChatReadMarkersForService } from "../index/chat-read-marker-store.ts";
 import { deleteItemHistoryForService } from "../index/item-history.ts";
 import type { LocalIndex } from "../index/local-index.ts";
+import {
+  eraseIncidentDataForService,
+  previewIncidentErasure,
+} from "../incident/incident-erasure.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
 
 export type DataDeletePreflight = {
@@ -9,6 +13,10 @@ export type DataDeletePreflight = {
   itemsToDelete: number;
   /** `item_history` rows of the service (Phase 10 IC1): they can outlive their deleted items, so count separately. */
   itemHistoryRowsToDelete: number;
+  /** Incident records citing the service (any version), Phase 10 IC3: deleted with it. */
+  incidentRecordsToDelete: number;
+  /** Pushed briefs built from those records, or keyed by the service itself. */
+  pushedBriefsToDelete: number;
   vecRowsToDelete: number;
   syncTokensToDelete: number;
   vaultEntriesToDelete: number;
@@ -56,6 +64,7 @@ async function buildPreflight(input: RunDataDeleteInput): Promise<DataDeletePref
       .query(`SELECT COUNT(*) AS c FROM item_history WHERE service = ?`)
       .get(input.service) as { c: number }
   ).c;
+  const incidents = previewIncidentErasure(input.index.rawDb, input.service);
   const vecRows = vecRowsForService(input.index, input.service);
   const syncTokens = (
     input.index.rawDb
@@ -67,6 +76,8 @@ async function buildPreflight(input: RunDataDeleteInput): Promise<DataDeletePref
     service: input.service,
     itemsToDelete: items,
     itemHistoryRowsToDelete: historyRows,
+    incidentRecordsToDelete: incidents.recordsDeleted,
+    pushedBriefsToDelete: incidents.pushedBriefsDeleted,
     vecRowsToDelete: vecRows,
     syncTokensToDelete: syncTokens,
     vaultEntriesToDelete: vaultKeys.length,
@@ -98,6 +109,7 @@ export async function runDataDelete(input: RunDataDeleteInput): Promise<RunDataD
     // An owner erasure: the service's item-history change log goes with it (Phase 10 IC1).
     deleteItemHistoryForService(input.index.rawDb, input.service);
     deleteChatReadMarkersForService(input.index.rawDb, input.service);
+    eraseIncidentDataForService(input.index.rawDb, input.service);
     dbRun(
       input.index.rawDb,
       `DELETE FROM sync_state WHERE ${SYNC_STATE_FOR_SERVICE}`,
