@@ -4,6 +4,7 @@
 // workflow's own write step, so a rule can never be wider than the step it names, and a caller can
 // never supply a scope, a hash, a tool or an action type. Pure but for the read of the workflow.
 import type { Database } from "bun:sqlite";
+import { guardRequiresPresence, guardRuleLines } from "../automation/workflow-guard.ts";
 import {
   parseWorkflowSteps,
   type WorkflowStep,
@@ -37,6 +38,14 @@ export type CreateRuleRequest = {
   readonly max?: unknown;
   readonly window?: unknown;
 };
+
+/**
+ * Why a guarded step can have no rule (I55): a guard that can hold at a count of zero also holds
+ * when a sync failed, a credential lapsed or the index is empty, so an unattended rule could fire
+ * on a broken connector. Such a step always asks.
+ */
+export const GUARD_ABSENCE_REASON =
+  "that step runs when nothing matches, and a failed sync looks the same, so it always asks you";
 
 /** The eligibility of a connector write row for a standing rule (OR-10-1), as a reason or `undefined`. */
 export function ineligibleReason(
@@ -128,6 +137,8 @@ export function deriveRule(
   if (row === undefined || why !== undefined) {
     throw new StandingRuleError(`that step cannot have a standing rule: ${why ?? "unknown write"}`);
   }
+  // The whole guard, not one comparison (I55): one absence-satisfiable comparison is enough to refuse.
+  if (!guardRequiresPresence(step.when)) throw new StandingRuleError(GUARD_ABSENCE_REASON);
   const days = parseDays(req.days);
   const maxActions = parseMaxActions(req.max);
   const window = parseWindow(req.window);
@@ -158,6 +169,7 @@ export function deriveRule(
       window,
       expiresAt,
       maxActions,
+      ...(step.when !== undefined && { guardLines: guardRuleLines(step.when, steps) }),
     },
   };
 }

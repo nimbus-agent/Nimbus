@@ -49,11 +49,26 @@ export type DeclaredQuery = {
   readonly limit: number;
 };
 
+/** The six comparison operators of a `when` guard (closed under negation). */
+export type GuardOp = "gt" | "gte" | "lt" | "lte" | "eq" | "ne";
+
+/**
+ * One comparison of a `when` guard: the COUNT of values the named earlier `query` step produced in
+ * this run, against an integer. A list of comparisons on a step means AND.
+ */
+export type WorkflowGuard = {
+  readonly count: string;
+  readonly op: GuardOp;
+  readonly value: number;
+};
+
 export type RunWorkflowStep = {
   kind: "run";
   label?: string;
   run: string;
   continueOnError?: boolean;
+  /** Absent (never `undefined`-valued) when the step has no guard, so an old workflow hashes as before. */
+  when?: readonly WorkflowGuard[];
 };
 
 export type QueryWorkflowStep = { kind: "query"; label: string; query: DeclaredQuery };
@@ -64,6 +79,7 @@ export type WriteWorkflowStep = {
   tool: string;
   input: Readonly<Record<string, WriteValue>>;
   continueOnError?: boolean;
+  when?: readonly WorkflowGuard[];
 };
 
 export type WorkflowStep = RunWorkflowStep | QueryWorkflowStep | WriteWorkflowStep;
@@ -78,6 +94,12 @@ const MAX_INPUT_FIELDS = 32;
 const MAX_CONST_BYTES = 8192;
 const MAX_JSON_DEPTH = 6;
 const MAX_DAYS = 36_500;
+/** A `when` is one comparison or a list of at most this many (AND). */
+export const MAX_GUARD_COMPARISONS = 4;
+/** A workflow that uses `when` has at most this many steps (a workflow without one has no cap). */
+export const MAX_STEPS_WITH_GUARD = 100;
+export const MAX_GUARDED_STEPS = 50;
+export const GUARD_OPS: readonly GuardOp[] = ["gt", "gte", "lt", "lte", "eq", "ne"];
 
 /** A metadata key in a declared query: a bound JSON path component, never SQL. */
 export const METADATA_KEY_PATTERN = /^[A-Za-z]\w{0,63}$/;
@@ -113,6 +135,53 @@ function parseLabel(
   if (typeof raw !== "string" || raw.trim() === "")
     refuse(`${where}: label must be a non-empty string`);
   return raw.trim();
+}
+
+/** The `when` of a row: one comparison object or a non-empty list of at most four (AND). */
+function parseGuard(raw: unknown, where: string): readonly WorkflowGuard[] {
+  const list: unknown[] = Array.isArray(raw) ? raw : [raw];
+  if (list.length === 0 || list.length > MAX_GUARD_COMPARISONS) {
+    refuse(
+      `${where}: when must be one comparison or a list of 1 to ${String(MAX_GUARD_COMPARISONS)}`,
+    );
+  }
+  return list.map((c, i) => {
+    const at = `${where} when[${String(i)}]`;
+    if (!isPlainRecord(c)) {
+      refuse(`${at}: a comparison must be an object { count, <operator>: <integer> }`);
+    }
+    const ops = GUARD_OPS.filter((o) => Object.hasOwn(c, o));
+    if (ops.length !== 1) refuse(`${at}: exactly one of gt, gte, lt, lte, eq or ne is required`);
+    const op = ops[0] as GuardOp;
+    onlyKeys(c, ["count", op], at);
+    const count = c["count"];
+    if (typeof count !== "string" || count === "") refuse(`${at}: count must name a query step`);
+    const value = c[op];
+    if (typeof value !== "number" || !Number.isInteger(value)) {
+      refuse(`${at}: ${op} must be an integer`);
+    }
+    return { count, op, value };
+  });
+}
+
+/**
+ * A `run` row that carries the key `when` is STRICT whatever its value (a guarded step must never be
+ * dropped or half-read by the legacy leniency): a missing or empty prompt, an unknown key or a bad
+ * `when` refuses the whole workflow.
+ */
+function parseGuardedRunRow(rec: Record<string, unknown>, index: number): RunWorkflowStep {
+  const where = `step ${String(index + 1)} (run)`;
+  onlyKeys(rec, ["kind", "label", "run", "continueOnError", "continue_on_error", "when"], where);
+  const run = typeof rec["run"] === "string" ? rec["run"].trim() : "";
+  if (run === "") refuse(`${where}: a guarded run step needs a non-empty run prompt`);
+  const step: RunWorkflowStep = { kind: "run", run };
+  const label = parseLabel(rec, where, false);
+  if (label !== undefined) step.label = label;
+  if (rec["continueOnError"] === true || rec["continue_on_error"] === true) {
+    step.continueOnError = true;
+  }
+  step.when = parseGuard(rec["when"], where);
+  return step;
 }
 
 function parseRunRow(rec: Record<string, unknown>): RunWorkflowStep | null {
@@ -227,6 +296,7 @@ export function parseDeclaredQuery(raw: unknown, where: string): DeclaredQuery {
 
 function parseQueryRow(rec: Record<string, unknown>, index: number): QueryWorkflowStep {
   const where = `step ${String(index + 1)} (query)`;
+  if (Object.hasOwn(rec, "when")) refuse(`${where}: a query step always runs and takes no when`);
   onlyKeys(rec, ["kind", "label", "query"], where);
   const label = parseLabel(rec, where, true) as string;
   return { kind: "query", label, query: parseDeclaredQuery(rec["query"], where) };
@@ -276,7 +346,11 @@ function parseWriteValue(field: string, raw: unknown, where: string): WriteValue
 
 function parseWriteRow(rec: Record<string, unknown>, index: number): WriteWorkflowStep {
   const where = `step ${String(index + 1)} (write)`;
-  onlyKeys(rec, ["kind", "label", "tool", "input", "continueOnError", "continue_on_error"], where);
+  onlyKeys(
+    rec,
+    ["kind", "label", "tool", "input", "continueOnError", "continue_on_error", "when"],
+    where,
+  );
   const tool = rec["tool"];
   if (typeof tool !== "string" || tool === "")
     refuse(`${where}: tool must be a connector write tool id`);
@@ -299,6 +373,7 @@ function parseWriteRow(rec: Record<string, unknown>, index: number): WriteWorkfl
   if (label !== undefined) step.label = label;
   if (rec["continueOnError"] === true || rec["continue_on_error"] === true)
     step.continueOnError = true;
+  if (Object.hasOwn(rec, "when")) step.when = parseGuard(rec["when"], where);
   return step;
 }
 
@@ -373,6 +448,58 @@ function validateReferences(steps: readonly WorkflowStep[]): void {
   });
 }
 
+/** The matrix of D1: a comparison against a query with limit `limit` must be satisfiable and not trivial. */
+function refuseTrivialGuard(g: WorkflowGuard, limit: number, where: string): void {
+  if (g.value < 0 || g.value >= limit) {
+    refuse(
+      `${where}: ${g.op} ${String(g.value)} is out of range (the operand must be 0 to ${String(limit - 1)}, one below the limit of query "${g.count}")`,
+    );
+  }
+  if (g.op === "gte" && g.value === 0) refuse(`${where}: gte 0 is always true`);
+  if (g.op === "lt" && g.value === 0) refuse(`${where}: lt 0 can never be true`);
+}
+
+/**
+ * Guard rules (D5): a `when` names an EARLIER `query` step only (never a run or write step, so the
+ * model can never influence which write runs), every comparison passes the matrix, and the step
+ * caps hold. The caps apply only to a workflow that uses `when`, so no older workflow can start
+ * failing.
+ */
+function validateGuards(steps: readonly WorkflowStep[]): void {
+  const queryAt = new Map<string, number>();
+  const labelAt = new Map<string, number>();
+  steps.forEach((s, i) => {
+    labelAt.set(s.label ?? `step-${String(i + 1)}`, i);
+    if (s.kind === "query") queryAt.set(s.label, i);
+  });
+  let guarded = 0;
+  steps.forEach((s, i) => {
+    if (s.kind === "query" || s.when === undefined) return;
+    guarded++;
+    const where = `step ${String(i + 1)} (${s.kind})`;
+    for (const g of s.when) {
+      const at = queryAt.get(g.count);
+      if (at === undefined || at >= i) {
+        const named = labelAt.get(g.count);
+        const why =
+          named !== undefined && steps[named]?.kind !== "query"
+            ? "a condition can never read a run or write step"
+            : "it must name an earlier query step";
+        refuse(`${where}: when count "${g.count}": ${why}`);
+      }
+      const q = steps[at];
+      if (q?.kind === "query") refuseTrivialGuard(g, q.query.limit, where);
+    }
+  });
+  if (guarded === 0) return;
+  if (steps.length > MAX_STEPS_WITH_GUARD) {
+    refuse(`a workflow that uses when has at most ${String(MAX_STEPS_WITH_GUARD)} steps`);
+  }
+  if (guarded > MAX_GUARDED_STEPS) {
+    refuse(`a workflow has at most ${String(MAX_GUARDED_STEPS)} steps with a when`);
+  }
+}
+
 /**
  * Parses a workflow's `steps_json`. Legacy `run` rows keep their old leniency and old error text;
  * a `query` or `write` row is strict. Throws {@link WorkflowStepsError} for a strict violation, a
@@ -393,7 +520,8 @@ export function parseWorkflowSteps(stepsJson: string): WorkflowStep[] {
     if (!isPlainRecord(row)) return;
     const kind = row["kind"];
     if (kind === undefined || kind === "run") {
-      const step = parseRunRow(row);
+      // A row with `when` is strict BEFORE the legacy null return, so a guarded step is never dropped.
+      const step = Object.hasOwn(row, "when") ? parseGuardedRunRow(row, index) : parseRunRow(row);
       if (step !== null) out.push(step);
     } else if (kind === "query") {
       out.push(parseQueryRow(row, index));
@@ -407,6 +535,7 @@ export function parseWorkflowSteps(stepsJson: string): WorkflowStep[] {
     throw new Error("workflow has no executable steps (need objects with non-empty run string)");
   }
   validateReferences(out);
+  validateGuards(out);
   return out;
 }
 

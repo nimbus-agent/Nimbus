@@ -1819,7 +1819,7 @@ Briefs served over MCP are recorded in the egress ledger (`I29`) — the adapter
 
 ### `nimbus approve`
 
-Standing approval rules (Phase 10 SA3, invariant I55): approve a recurring workflow write ONCE, so it runs without a prompt, and only that write. A rule names one write step of one saved workflow at one content hash. Creating a rule is itself an approval that only you can give: `nimbus approve add` and `resume` refuse `--yes`, the gateway refuses an approval whose source is not a person answering the prompt (a scripted consent file or an old client does not count), the connection must be the owner's CLI on the local socket, and org policy must not have locked `standing_approvals` off.
+Standing approval rules (Phase 10 SA3, invariant I55): approve a recurring workflow write ONCE, so it runs without a prompt, and only that write. A rule names one write step of one saved workflow at one content hash. Creating a rule is itself an approval that only you can give: `nimbus approve add` and `resume` refuse `--yes`, the gateway refuses an approval whose source is not a person answering the prompt (a scripted consent file or an old client does not count), the connection must be the owner's CLI on the local socket, and org policy must not have locked `standing_approvals` off. If the step has a `when` guard (see `nimbus workflow save`), the approval text carries a `Runs only when:` line, and a step whose guard can hold at a count of zero (for example `eq 0`, `lt`, `lte`) is refused: a failed sync looks the same, so that step always asks you.
 
 ```bash
 nimbus approve add --workflow <name> --step <label|number> [--days 1-90] [--max 1-500] [--window "Mon-Fri 06:00-10:00 Europe/Berlin"]
@@ -5889,6 +5889,23 @@ steps:
 ```
 
 A `write` input is `{ const: <json> }` or `{ from: <an earlier query label>, column: <what it selects> }`; it can never read a `run` step's output. The write runs once per selected id and **asks you for each one**, with the typed preview and the current state of its target. `workflow save` validates both kinds (an unknown key, a wave 4 or mail-send tool, or a bad reference is refused with -32602) and `workflow run` validates them again. A workflow with no `run` step needs no model vendor. A `paramsOverride` for a `write` or `query` step's label is refused. The gateway derives how a run started from the connection's declared client kind (`cli`, `ui`); a `trigger` or `provenance` parameter is refused, and `--dry-run` shows both kinds without running them.
+
+**Conditional steps: the `when` guard.** A `run` or `write` step may carry `when`, a comparison over the **count** of an earlier `query` step (the number of values it selected in this run), so a workflow can act only when there is something to act on:
+
+```yaml
+  - kind: write
+    label: archive-old
+    when: { count: old-read-mail, gt: 0 }   # gt, gte, lt, lte, eq or ne, against an integer
+    tool: gmail_thread_archive
+    input:
+      threadId: { from: old-read-mail, column: metadata.threadId }
+  - kind: run
+    label: nothing-to-do
+    when: { count: old-read-mail, eq: 0 }   # a list of up to 4 comparisons means ALL must hold
+    run: "Say in one line that the inbox has no old read mail."
+```
+
+`count` names an earlier `query` step (never a `run` or `write` step, so the model can never decide which write runs); a `query` step is never guarded. The operand must be an integer from 0 to one below that query's `limit`, and a comparison that is always true (`gte 0`) or never true (`lt 0`) is refused; equivalent forms (`ne 0`, `gt 0`) are stored as written and hash differently. A row that carries `when` is parsed strictly (a guarded `run` row with no prompt, an unknown key or a bad `when` refuses the whole workflow). A workflow that uses `when` has at most 100 steps and at most 50 guarded steps. A step whose guard is false is recorded `not_taken` (with the observed counts), asks nothing, calls no model and dispatches nothing; the run goes on and ends `done`, and the run's audit row carries `stepsNotTaken`. When a query hit its `limit` the count is only a lower bound, so on such a query only `gt`, `gte` and `ne 0` can hold. `--dry-run` from the owner's CLI or desktop evaluates each guard against the index as of now (`would run` / `would not run`), and from any other client shows the guard text without counts. **A standing rule may cover a guarded write only when every comparison needs presence**, that is, is false at a count of zero (`gt`, `gte`, `eq` with a positive operand, `ne 0`): a failed sync, a lapsed credential and an empty index all read as zero, so a guard such as `eq 0` could otherwise trigger an unattended write because a connector broke. A step with such a guard always asks (an unattended run stops and waits), and `nimbus approve add` refuses it with that reason; the rule's approval text names the condition on a `Runs only when:` line. Resuming a blocked run re-evaluates the blocked step's guard on fresh counts: if it no longer holds the resumed run stops there with the status `condition_lapsed` and runs nothing after it; run the workflow again to evaluate every guard fresh.
 
 ---
 
