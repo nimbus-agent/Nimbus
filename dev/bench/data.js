@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794828010701,
+  "lastUpdate": 1794833500826,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "61173ae92dc87002d3bc844ce0c792257292d677",
-          "message": "fix(connectors): align the aws sync interval with its AWS-CLI siblings (#1377)\n\nThe `aws` syncable re-listed Lambda functions every **120 s** while\nevery sibling AWS-CLI syncable used **10 minutes**:\n\n| Syncable | Interval before |\n| --- | --- |\n| `aws` | **120 s** |\n| `cloudwatch` | 10 min |\n| `sagemaker` | 10 min |\n| `athena` | 10 min |\n\nFive times the outbound API traffic of any sibling, indefinitely, on any\nmachine with `aws.*` credentials in the Vault — and nothing in the code\nor history explains the difference. It reads as an oversight rather than\na decision, which is why this aligns rather than tunes.\n\n## How it surfaced\n\nIt was the visible half of the console-window storm fixed in #1370. Each\nrun shells out to the AWS CLI, and until `platform/spawn-capture.ts`\nlanded, every one of those spawns popped a console window on Windows —\nso the shortest interval in the group was also the loudest symptom.\nObserved live as a `conhost.exe` under `aws.exe` under\n`nimbus-gateway.exe`, roughly one every 1.8 s during a sync tick.\n\n#1370 stopped the windows appearing. This stops the underlying traffic\nbeing five times what the design intends.\n\n## Pinned as a group, not as a number\n\nThe test asserts two things: that the four intervals collapse to a\n**single distinct value**, and that the value the group settled on is\nten minutes.\n\nAsserting only that `aws` equals ten minutes would have kept passing if\na **sibling** drifted instead — the same divergence, just discovered\nfrom the other side. The set check fails whichever member moves; the\nsecond assertion pins which value they agreed on.\n\n**Red-proved:** restoring the 120 s literal fails the test.\n\n## Verification\n\n- `bun run preflight:fast` — pass.\n- Full CI command `bun test packages/gateway packages/cli scripts` —\n19,462 pass. The three `tui` failures are the known load-flake; they\npass in isolation.\n\n## Note for anyone who wanted the faster cadence\n\nIf a two-minute Lambda index is genuinely wanted, `nimbus connector\nset-interval aws 2m` sets it per-install without putting the cost on\neveryone by default. And an install that never queries Lambda functions\nis better served by `nimbus connector pause aws`.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)",
-          "timestamp": "2026-08-29T10:32:35+03:00",
-          "tree_id": "670d2bbf7677dd9cb9bee2a826794e7e4f9eec5b",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/61173ae92dc87002d3bc844ce0c792257292d677"
-        },
-        "date": 1787990397984,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 338.8023532999938,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 335.4460096000068,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 163.09070230000435,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "d239b2d0a37f6bb61335c686a995a80e8d504414",
+          "message": "feat(gateway): nimbus pre-mortem works for Linear projects, indexed as linear:project items (#2032)\n\n## What\n\n`nimbus pre-mortem linear:<project>` now gives a risk brief for a Linear\nproject, as it already does for a Jira epic. The reference is the\nproject's slug id, URL, UUID or exact name; a bare `linear.app` project\nURL also works.\n\n- The Linear sync lists every project, archived ones included, at most\nevery 30 minutes and indexes each as a `linear:project` item. The pass\nis best effort and never fails the issue sync. A complete listing\nreplaces the set; a capped, failed or rate-limited listing keeps what it\nwrote and deletes nothing.\n- The cohort, child-count, affected-service and theme-discovery queries\nread through a per-tracker `EpicTracker` descriptor in\n`premortem/epic-tracker.ts`. A Linear project is compared only with\nclosed Linear projects, and a Jira epic only with Jira epics.\n- A reference that is not found, is ambiguous, or arrives before any\nproject is indexed is an error, never an empty brief.\n- `linear:project` bodies are embedded on the local model only.\n\nNo migration, no new invariant, static rule, HITL type, egress class or\nIPC method.\n\n## Stated bounds\n\n- A project reaches services only through pull requests whose title or\nopening text names an issue identifier and that were indexed after the\nissue.\n- Issues older than the 30-day sync window are absent.\n- Theme mining has one global watermark, so the brief reports an upper\nbound: \"up to N closed Linear projects may not have been mined\".\n- A closed project with neither `completedAt` nor `canceledAt` is in no\ncohort.\n- A workspace with more than 1,000 projects is indexed in part and\ndeletes nothing.\n- Reply shapes were checked against Linear's published GraphQL schema,\nnot a live account.\n\n## Verification\n\n- `bun run preflight:fast` passed.\n- Red-proved by reverting, each restored afterwards: the cross-tracker\ncohort refusal, the partial listing that deletes nothing, the `unknown`\nstatus mapping, and the local-only embedding routing.\n- Not run locally: the `RoutingEmbeddingPipeline` test for\n`linear:project`, which skips on Windows because sqlite-vec does not\nload there; the Linux and macOS legs; the coverage floor. CI is their\nfirst run.\n\n## Docs\n\n`docs/cli-reference.md`, `docs/architecture.md` and the pre-mortem\nlimits row of `docs/roadmap.md` are updated here. The status paragraph\nin CLAUDE.md and GEMINI.md, `docs/CHANGELOG.md` and `docs/README.md`\nfollow in the batch docs PR.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JmSjrCzb214jGqUcCTWNJQ\n\n---------\n\nCo-authored-by: Claude Fable 5.2 <noreply@anthropic.com>",
+          "timestamp": "2026-11-16T14:43:41+02:00",
+          "tree_id": "f9e0e8f123e59b55a2616185b94c62c9f878164c",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/d239b2d0a37f6bb61335c686a995a80e8d504414"
+        },
+        "date": 1794833497404,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 172.40401089999978,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 173.7868711000021,
             "unit": "ms"
           }
         ]
