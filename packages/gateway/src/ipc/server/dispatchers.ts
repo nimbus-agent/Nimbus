@@ -96,6 +96,7 @@ import { dispatchMediaRpc } from "../media-rpc.ts";
 import { dispatchMetricsRpc, MetricsRpcError } from "../metrics-rpc.ts";
 import { dispatchMigrationRpc } from "../migration-rpc.ts";
 import { dispatchNotificationsRpc } from "../notifications-rpc.ts";
+import { dispatchOncallHandoffRpc } from "../oncall-handoff-rpc.ts";
 import { dispatchOncallNowRpc, OncallNowRpcError } from "../oncall-now-rpc.ts";
 import { dispatchOncallPushRpc, OncallPushRpcError } from "../oncall-push-rpc.ts";
 import { dispatchOwnershipRpc } from "../ownership-rpc.ts";
@@ -1525,7 +1526,8 @@ export async function tryDispatchFleetRpc(
 }
 
 /**
- * `oncall.now` (Phase 10 MB3) — who is on call, from the local index only. Separate from the push
+ * `oncall.now` (Phase 10 MB3) — who is on call, from the local index only, and `oncall.handoff` (Phase 17), the
+ * shift handoff brief from the same index (read-only, no HITL). Separate from the push
  * dispatcher because that one needs the push runtime and this needs only the index and the config dir
  * (both on `ServerCtx.options`, so it also answers in a demo gateway, whose index is the synthetic
  * corpus). LAN-forbidden by the `oncall` namespace entry (I5); renderer-callable (I7).
@@ -1535,12 +1537,21 @@ export async function tryDispatchOncallNowRpc(
   method: string,
   params: unknown,
 ): Promise<unknown> {
-  if (method !== "oncall.now" || ctx.options.localIndex === undefined) return phase4RpcSkipped;
+  if (
+    (method !== "oncall.now" && method !== "oncall.handoff") ||
+    ctx.options.localIndex === undefined
+  ) {
+    return phase4RpcSkipped;
+  }
   try {
-    const out = await dispatchOncallNowRpc(method, params, {
+    const rpcCtx = {
       db: ctx.options.localIndex.getDatabase(),
       ...(ctx.options.configDir === undefined ? {} : { configDir: ctx.options.configDir }),
-    });
+    };
+    const out =
+      method === "oncall.now"
+        ? await dispatchOncallNowRpc(method, params, rpcCtx)
+        : await dispatchOncallHandoffRpc(method, params, rpcCtx);
     if (out.kind === "hit") return out.value;
   } catch (e) {
     if (e instanceof OncallNowRpcError) throw new RpcMethodError(e.rpcCode, e.message);

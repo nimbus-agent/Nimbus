@@ -2,6 +2,7 @@ import type { BriefTextFormat } from "../format/slack-markdown.ts";
 import { fetchAgentBrief } from "../lib/agent-cli-dispatcher.ts";
 import { parseDurationToMs } from "../lib/parse-duration.ts";
 import { scanBriefCommandFlags, writeBriefOutput } from "./_agent-brief-cli.ts";
+import { ONCALL_HANDOFF_USAGE, runOncallHandoff } from "./oncall-handoff.ts";
 import { ONCALL_NOW_USAGE, runOncallNow } from "./oncall-now.ts";
 import { ONCALL_PUSHED_USAGE, runOncallPushed } from "./oncall-pushed.ts";
 
@@ -83,6 +84,8 @@ const USAGE =
   "\n" +
   ONCALL_NOW_USAGE +
   "\n" +
+  ONCALL_HANDOFF_USAGE +
+  "\n" +
   ONCALL_PUSHED_USAGE;
 
 export function parseOncallArgs(args: string[]): OncallCliArgs {
@@ -153,6 +156,10 @@ export async function runOncallCommand(
 ): Promise<void> {
   if (args[0] === "now") {
     await runOncallNow(args.slice(1));
+    return;
+  }
+  if (args[0] === "handoff") {
+    await runOncallHandoff(args.slice(1));
     return;
   }
   if (args[0] === "pushed") {

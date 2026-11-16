@@ -871,9 +871,11 @@ describe("I5 — LAN method allowlist is intrinsic to LanServer", () => {
     expect(src).toMatch(/^\s*"oncall",\s*$/m);
     const { checkLanMethodAllowed } = await import("./ipc/lan-rpc.ts");
     for (const writeAllowed of [true, false]) {
-      expect(() => checkLanMethodAllowed("oncall.now", { peerId: "peer:x", writeAllowed })).toThrow(
-        /ERR_METHOD_NOT_ALLOWED/,
-      );
+      for (const m of ["oncall.now", "oncall.handoff"]) {
+        expect(() => checkLanMethodAllowed(m, { peerId: "peer:x", writeAllowed })).toThrow(
+          /ERR_METHOD_NOT_ALLOWED/,
+        );
+      }
     }
   });
 
@@ -2293,9 +2295,9 @@ describe("I7 — Tauri ALLOWED_METHODS surface for T2 PR 3", () => {
     expect(rust).not.toContain("toolgen.");
   });
 
-  test("allowlist_exact_size assertion is 131", async () => {
+  test("allowlist_exact_size assertion is 132", async () => {
     const rust = await read("packages/ui/src-tauri/src/gateway_bridge.rs");
-    expect(rust).toMatch(/assert_eq!\s*\(\s*ALLOWED_METHODS\.len\(\),\s*131\s*\)/);
+    expect(rust).toMatch(/assert_eq!\s*\(\s*ALLOWED_METHODS\.len\(\),\s*132\s*\)/);
   });
 
   // Role packs Project 4: 111 + 7 - 2 = 116; Project 5 (onboarding): + pack.install, decisions.status
@@ -2345,6 +2347,10 @@ describe("I7 — Tauri ALLOWED_METHODS surface for T2 PR 3", () => {
     expect(rust).toMatch(/^\s*"oncall\.now",\s*$/m);
     expect(rust).toContain('assert!(is_method_allowed("oncall.now"));');
     expect(rust).toContain('assert!(!is_no_timeout_method("oncall.now"));');
+    // `oncall.handoff` (Phase 17) is the fourth read: the shift brief from the local index, synchronous.
+    expect(rust).toMatch(/^\s*"oncall\.handoff",\s*$/m);
+    expect(rust).toContain('assert!(is_method_allowed("oncall.handoff"));');
+    expect(rust).toContain('assert!(!is_no_timeout_method("oncall.handoff"));');
     expect(rust).toMatch(/^\s*"oncall\.pushedGet",\s*$/m);
     expect(rust).toMatch(/^\s*"oncall\.pushedList",\s*$/m);
     expect(rust).not.toMatch(/^\s*"oncall\.pushedRetry",\s*$/m);
@@ -11084,7 +11090,7 @@ describe("I46 — a renderer can create an extension run grant only through migr
     }
     expect(rust).toContain('assert!(is_method_allowed("migration.list"));');
     expect(rust).toContain('assert!(is_method_allowed("migration.accept"));');
-    expect(rust).toMatch(/assert_eq!\s*\(\s*ALLOWED_METHODS\.len\(\),\s*131\s*\)/);
+    expect(rust).toMatch(/assert_eq!\s*\(\s*ALLOWED_METHODS\.len\(\),\s*132\s*\)/);
   });
 
   // ---- the positive control ------------------------------------------------------------------

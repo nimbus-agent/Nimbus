@@ -83,6 +83,7 @@ describe("demoRefusal", () => {
     "pack.list",
     "pack.show",
     "oncall.now",
+    "oncall.handoff",
     "briefing.latest",
     "briefing.list",
     "briefing.get",
