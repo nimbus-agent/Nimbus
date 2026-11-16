@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794824226145,
+  "lastUpdate": 1794825483446,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
-            "name": "nimbus-release-bot[bot]",
-            "username": "nimbus-release-bot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "4c6cc4641d6c629998b1410cd3caf9c5ee430959",
-          "message": "chore: release main (#1371)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>6.0.1</summary>\n\n##\n[6.0.1](https://github.com/nimbus-agent/Nimbus/compare/v6.0.0...v6.0.1)\n(2026-08-28)\n\n\n### Bug Fixes\n\n* **connectors:** stop connector CLI spawns flashing console windows on\nWindows ([#1370](https://github.com/nimbus-agent/Nimbus/issues/1370))\n([184dc42](https://github.com/nimbus-agent/Nimbus/commit/184dc42aed22b4156d1f8367f69e60118ebcffab))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
-          "timestamp": "2026-08-28T20:43:14+03:00",
-          "tree_id": "1c25c6497e223b662fc0e05f8192f67a2ef890d3",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/4c6cc4641d6c629998b1410cd3caf9c5ee430959"
-        },
-        "date": 1787939698542,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 332.7614881499961,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 332.49636665000725,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 252.593835100003,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "87c3039058acb0bc4231f2ae4cd30d86a486d8d6",
+          "message": "feat(gateway): add an advisory deploy-risk block to deploy preflight, each factor with its evidence (#2023)\n\nPhase 17, Wave 1: the deploy-risk advisor. `nimbus deploy preflight` now\nends with an advisory risk block, and each factor shows its evidence.\n\n## What you get\n\n`nimbus deploy preflight`, the `deploy.preflight` method and `GET\n/v1/preflight/deploy` gain an optional `risk` member:\n\n- `level`: `low`, `elevated`, `high` or `unknown`.\n- `why`: one line.\n- Four factors, each `{ id, level, evidence, known }`:\n\n| Factor | What it reads |\n| --- | --- |\n| `system_state` | open incidents and alerts on the service or a direct\n`depends_on` service; a failed latest deployment |\n| `change_velocity` | deployments in the last 24 hours and 7 days\nagainst the service's own 28-day baseline |\n| `oncall_coverage` | whether the indexed shifts show someone on call\nfor the service now |\n| `time_of_week` | a quiet window: Friday after 15:00 and weekends by\ndefault |\n\nThe overall level is the highest level among the factors the index could\nanswer.\n\n## It is advisory\n\nThe verdict and the exit code do not change unless you set\n`[preflight.risk] fail_at` to `elevated` or `high`. With it set, a known\nlevel at or above it turns `ok` into `warn`.\n\n## Missing data is never good news\n\nA factor whose data is missing, stale or unbound is `unknown`. It is\nnever `low`, never \"clear\" and never \"nobody on call\". If no factor is\nknown, the overall level is `unknown`.\n\n## How\n\n- `preflight/deploy-risk.ts`: one exported scoring table\n(`RISK_SCORING`, a comment per row), the four factors and the\ncombination rule. No model, no network, local index only.\n- Config `[preflight.risk]`: `quiet_days`, `quiet_hours`, `tz`,\n`fail_at`.\n- The OpenAPI document gains the optional `risk` schema. The\n`preflight-query` GitHub Action is untouched: it ignores `risk`, and an\nescalated verdict reaches it as `warn`.\n\n## Stated bounds\n\n- Sentry issues and data-quality tests are not read: unresolved Sentry\nissues are always numerous and would turn the score into noise.\n- Only direct dependencies are followed.\n- The baseline needs 3 deployments in the 28 days before the last week.\n- Quiet windows cannot cross midnight.\n- The thresholds are fixed constants, not tuned on real outage data.\n- Reply shapes are not checked against live accounts. Daylight-saving\nbehaviour is tested for one zone.\n\n## Checks run\n\n- `bun run preflight:fast` after merging `main`: passed.\n- `bun test` on the preflight, config, IPC, HTTP route and CLI files:\n774 pass, 0 fail; a wider run over the HTTP server and config\ndirectories: 1,143 pass.\n- Not run locally: the coverage floor. CI runs it.\n\nNo schema migration, invariant, HITL type, egress class, IPC method or\nallowlist change. Docs: roadmap (row ticked, with bounds), cli-reference\nand the CI/CD data-layer skill. The status sentence in CLAUDE.md and\nGEMINI.md, the changelog entry and the README line land with the last\npull request of this batch.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JmSjrCzb214jGqUcCTWNJQ\n\n---------\n\nCo-authored-by: Claude Fable 5.2 <noreply@anthropic.com>",
+          "timestamp": "2026-11-16T10:26:55Z",
+          "tree_id": "90fb0984299540ccae47b34a4355b9a70c5e828c",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/87c3039058acb0bc4231f2ae4cd30d86a486d8d6"
+        },
+        "date": 1794825478623,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 251.17057450000084,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 252.502778700001,
             "unit": "ms"
           }
         ]
