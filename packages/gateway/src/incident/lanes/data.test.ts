@@ -10,7 +10,14 @@ import {
   T0,
   writeMergedPr,
 } from "../__fixtures__/index-writers.ts";
-import { dataLane, dataSubstrateGaps, holdsToken, modelToken } from "./data.ts";
+import {
+  dataLane,
+  dataSubstrateGaps,
+  holdsToken,
+  MODEL_KEY_CAP,
+  modelToken,
+  SCAN_ROW_CAP,
+} from "./data.ts";
 
 const dbs: Database[] = [];
 afterEach(() => {
@@ -153,5 +160,56 @@ describe("lane 6, data", () => {
     expect(r.lane.lineage).toHaveLength(10);
     expect(r.lane.orchestration).toHaveLength(10);
     expect(r.lane.totals).toMatchObject({ lineage: 12, orchestration: 12 });
+  });
+});
+
+describe("lane 6, bounded queries", () => {
+  function many(d: Database, n: number): void {
+    d.run("BEGIN");
+    for (let i = 0; i < n; i++)
+      put(d, "dbt", "job", `1:${String(i)}`, `orders refresh ${String(i)}`);
+    // jobs that cannot match are not loaded at all
+    for (let i = 0; i < n; i++) put(d, "dbt", "job", `2:${String(i)}`, `unrelated ${String(i)}`);
+    d.run("COMMIT");
+  }
+
+  test("a service with thousands of jobs loads at most the row cap, lists 10, and discloses the cut", () => {
+    const d = db();
+    many(d, SCAN_ROW_CAP + 100);
+    const res = dataLane(d, { metadata: { monitoredDataModelKeys: [MODEL] }, openedAtMs: OPEN });
+    expect(res.lane.orchestration).toHaveLength(10);
+    expect(res.lane.totals.orchestration).toBe(SCAN_ROW_CAP);
+    expect(res.gaps.some((g) => g.detail.includes(`${String(SCAN_ROW_CAP)}-row limit`))).toBe(true);
+  });
+
+  test("below the cap nothing is disclosed, and non-matching rows never reach the lane", () => {
+    const d = db();
+    many(d, 5);
+    const res = dataLane(d, { metadata: { monitoredDataModelKeys: [MODEL] }, openedAtMs: OPEN });
+    expect(res.lane.totals.orchestration).toBe(5);
+    expect(res.gaps.some((g) => g.detail.includes("row limit"))).toBe(false);
+  });
+
+  test("more monitored models than the cap: only the first are followed, the true count is a gap", () => {
+    const d = db();
+    const keys = Array.from(
+      { length: MODEL_KEY_CAP + 7 },
+      (_, i) => `a.b.model${String(1000 + i)}`,
+    );
+    const res = dataLane(d, { metadata: { monitoredDataModelKeys: keys }, openedAtMs: OPEN });
+    expect(res.lane.models).toHaveLength(MODEL_KEY_CAP);
+    expect(res.gaps.some((g) => g.detail.includes(`${String(MODEL_KEY_CAP + 7)} models`))).toBe(
+      true,
+    );
+  });
+
+  test("a token with LIKE wildcards or the escape character matches only itself", () => {
+    const d = db();
+    put(d, "dbt", "job", "1:1", "orders refresh");
+    const res = dataLane(d, {
+      metadata: { monitoredDataModelKeys: ["a.b.%%%", "a.b.o_ders", "a.b.!!!"] },
+      openedAtMs: OPEN,
+    });
+    expect(res.lane.totals.orchestration).toBe(0);
   });
 });

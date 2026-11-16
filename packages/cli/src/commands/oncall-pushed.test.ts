@@ -105,6 +105,35 @@ describe("runOncallPushedWith (spec § 2.7 exit table)", () => {
     expect(s.err).toContain("nimbus oncall pushed pagerduty:A --retry");
   });
 
+  test("a retried brief that was stored but not delivered says so plainly, with the reason", async () => {
+    const { s, sink: k } = sink();
+    expect(
+      await runOncallPushedWith(
+        fake({
+          "oncall.pushedRetry": {
+            brief: OK,
+            notDelivered: "you are not on call for this service now\u001b[31m",
+          },
+        }),
+        { mode: "one", incidentId: "jira:J1", retry: true, json: false },
+        k,
+        false,
+      ),
+    ).toBe(0);
+    expect(s.err).toBe(
+      "Retried and stored; not delivered: you are not on call for this service now[31m.\n",
+    );
+    // json keeps the field for scripts
+    const j = sink();
+    await runOncallPushedWith(
+      fake({ "oncall.pushedRetry": { brief: OK, notDelivered: "x" } }),
+      { mode: "one", incidentId: "jira:J1", retry: true, json: true },
+      j.sink,
+      false,
+    );
+    expect(JSON.parse(j.s.out)).toMatchObject({ notDelivered: "x" });
+  });
+
   test("unknown id → exit 1", async () => {
     const { s, sink: k } = sink();
     expect(

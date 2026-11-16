@@ -1,6 +1,5 @@
 import type { Database } from "bun:sqlite";
 import { createHash } from "node:crypto";
-
 import { serviceFreshness } from "../agents/_lib/briefing-queries.ts";
 import type { IncidentBrief } from "../agents/_lib/incident-types.ts";
 import { synthesize } from "../agents/_lib/synthesize.ts";
@@ -9,6 +8,7 @@ import { loadServiceHistoryStarts } from "../index/item-history-at.ts";
 import type { ServiceConfig } from "../metrics/dora-config.ts";
 import { buildServiceIdentityResolver } from "../metrics/service-identity.ts";
 import { canonicalJson } from "../util/canonical-json.ts";
+import { erasureGeneration } from "./erasure-generation.ts";
 import {
   type BindingBlock,
   coreOf,
@@ -186,6 +186,9 @@ function citedServicesOf(record: IncidentRecordV1): string[] {
   if (c.ci !== null) out.add(c.ci.service);
   for (const m of record.chat.messages) out.add(m.service);
   for (const p of record.prior.incidents) out.add(p.service);
+  // The on-call lane holds PagerDuty (or JSM) shift names and has no source field, so a record that lists
+  // people cites PagerDuty: removing PagerDuty erases it, conservatively.
+  if (record.onCall.current.length > 0 || record.onCall.next.length > 0) out.add("pagerduty");
   if (record.data !== null) {
     for (const o of record.data.orchestration) out.add(o.service);
     for (const p of record.data.prs) out.add(p.service);
@@ -201,6 +204,11 @@ function freshnessOf(
 ): Freshness {
   const ids = new Set<string>([record.trigger.service]);
   if (record.binding.bound) ids.add("github");
+  // The providers of the change evidence actually shown (a GitLab pull request, a Jenkins run) report their own sync time.
+  const change = record.change;
+  if (change.deployment !== null) ids.add(change.deployment.provider);
+  if (change.pr !== null) ids.add(change.pr.service);
+  if (change.ci !== null) ids.add(change.ci.service);
   const chat = serviceFreshness(db, CHAT_SERVICES);
   const connectedChat = chat.filter((c) => c.connected);
   if (record.chat.skipped === null) {
@@ -361,12 +369,28 @@ function loadEvidence(deps: AssembleDeps, row: ItemRow, service: TriggerService)
   };
 }
 
-/** Assemble (or refresh) the record of one trigger item. Never writes outside `incident-store.ts`. */
+/**
+ * Assemble (or refresh) the record of one trigger item. Never writes outside `incident-store.ts`. If an owner
+ * erasure committed while this pass was gathering or rendering, the evidence is gathered again once; a second
+ * overlap reports the item as missing (the next pass retries) rather than store text that was just erased.
+ */
 export async function assembleOne(
   deps: AssembleDeps,
   triggerItemId: string,
   nowMs: number,
 ): Promise<AssembleOutcome> {
+  const first = await assembleAttempt(deps, triggerItemId, nowMs);
+  if (first !== "erased_meanwhile") return first;
+  const second = await assembleAttempt(deps, triggerItemId, nowMs);
+  return second === "erased_meanwhile" ? { outcome: "missing" } : second;
+}
+
+async function assembleAttempt(
+  deps: AssembleDeps,
+  triggerItemId: string,
+  nowMs: number,
+): Promise<AssembleOutcome | "erased_meanwhile"> {
+  const generation = erasureGeneration();
   const row = deps.db
     .query("SELECT id, service, type, external_id, title, url, metadata FROM item WHERE id = ?")
     .get(triggerItemId) as ItemRow | null;
@@ -441,6 +465,10 @@ export async function assembleOne(
   };
   // ONE argument, always: no runner, so the render is deterministic and no model is reachable from here.
   const rendered = await synthesize(brief);
+  // From here to the write there is no await: nothing can erase between this check and the insert.
+  if (erasureGeneration() !== generation) return "erased_meanwhile";
+  const stillThere = deps.db.query("SELECT 1 AS n FROM item WHERE id = ?").get(triggerItemId);
+  if (stillThere === null) return { outcome: "missing" };
   const result = upsertIncidentRecord(deps.db, {
     record,
     markdown: rendered.markdown,

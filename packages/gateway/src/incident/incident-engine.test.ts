@@ -234,6 +234,48 @@ describe("trigger", () => {
     expect(ids(d)).toEqual(["pagerduty:OK", "pagerduty:POISON"]);
   });
 
+  test("backed-off records do not hold the refresh slots: a healthy record behind a full pass of failing ones is still refreshed", async () => {
+    const d = db();
+    const poisoned: string[] = [];
+    for (let i = 0; i < PASS_CAP; i += 1) {
+      poisoned.push(
+        writePagerdutyIncident(
+          d,
+          { id: `BAD${String(i)}`, openedAtMs: recent(5), priority: "P1" },
+          resolver,
+        ),
+      );
+    }
+    const healthy = writePagerdutyIncident(
+      d,
+      { id: "GOOD", openedAtMs: recent(5), priority: "P1" },
+      resolver,
+    );
+    let now = NOW;
+    const h = harness(d, { now: () => now });
+    await h.engine.trigger("pagerduty");
+    await h.engine.trigger("pagerduty"); // a pass takes at most PASS_CAP new items
+    expect(listRecords(d, { limit: 100 }).length).toBe(PASS_CAP + 1);
+    // the failing ones are the OLDEST by checked_at, so a plain LIMIT would return only them
+    d.run(
+      "UPDATE incident_record SET checked_at_ms = 1 WHERE trigger_item_id LIKE 'pagerduty:BAD%'",
+    );
+    d.run("UPDATE incident_record SET checked_at_ms = 5 WHERE trigger_item_id = ?", [healthy]);
+    d.run(
+      "CREATE TRIGGER poison BEFORE UPDATE ON incident_record WHEN OLD.trigger_item_id LIKE 'pagerduty:BAD%' BEGIN SELECT RAISE(ABORT, 'boom'); END",
+    );
+    now += 60_000;
+    await h.engine.trigger("pagerduty"); // the 20 fail and enter backoff
+    d.run("UPDATE incident_record SET checked_at_ms = 5 WHERE trigger_item_id = ?", [healthy]);
+    now += 60_000;
+    await h.engine.trigger("pagerduty"); // backoff holds: the healthy record must still be reached
+    const checked = d
+      .query("SELECT checked_at_ms AS c FROM incident_record WHERE trigger_item_id = ?")
+      .get(healthy) as { c: number };
+    expect(checked.c).toBe(now);
+    expect(poisoned).toHaveLength(PASS_CAP);
+  });
+
   test("an on-demand record refreshes whatever its severity; a closed one only through class C", async () => {
     const d = db();
     const low = writePagerdutyIncident(

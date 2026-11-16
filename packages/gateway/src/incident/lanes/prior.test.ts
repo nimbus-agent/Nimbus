@@ -8,7 +8,7 @@ import {
   writePagerdutyIncident,
   writeSentryIssue,
 } from "../__fixtures__/trigger-writers.ts";
-import { priorLane, skippedPrior } from "./prior.ts";
+import { priorLane, priorOrder, skippedPrior } from "./prior.ts";
 
 const dbs: Database[] = [];
 afterEach(() => {
@@ -140,5 +140,19 @@ describe("lane 4, prior incidents", () => {
 
   test("skippedPrior carries the reason", () => {
     expect(skippedPrior("unbound").lane).toEqual({ skipped: "unbound", total: 0, incidents: [] });
+  });
+});
+
+describe("priorOrder", () => {
+  test("newest first, then by id; an unknown open time sorts as zero", () => {
+    expect(priorOrder({ id: "a", openedAtMs: 1 }, { id: "b", openedAtMs: 2 })).toBeGreaterThan(0);
+    expect(priorOrder({ id: "a", openedAtMs: 2 }, { id: "b", openedAtMs: 2 })).toBeLessThan(0);
+    expect(priorOrder({ id: "a", openedAtMs: null }, { id: "b", openedAtMs: null })).toBeLessThan(
+      0,
+    );
+    expect(priorOrder({ id: "a", openedAtMs: null }, { id: "b", openedAtMs: 5 })).toBeGreaterThan(
+      0,
+    );
+    expect(priorOrder({ id: "a", openedAtMs: 5 }, { id: "b", openedAtMs: null })).toBeLessThan(0);
   });
 });

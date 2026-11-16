@@ -3,7 +3,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 
 import { createMemoryIndexDb } from "../../connectors/connector-sync-test-helpers.ts";
 import { HOUR, serviceConfig, T0, writePagerdutyShift } from "../__fixtures__/index-writers.ts";
-import { oncallLane } from "./oncall.ts";
+import { oncallLane, personOrder } from "./oncall.ts";
 
 const dbs: Database[] = [];
 afterEach(() => {
@@ -120,5 +120,36 @@ describe("lane 7, on call", () => {
     expect(r.lane.status).toBe("none_on_call");
     expect(r.lane.next[0]?.userName).toBe("Sam Lee");
     expect(JSON.stringify(r.lane)).not.toContain("sam@acme.test");
+  });
+});
+
+describe("personOrder is a total order that falls through every key", () => {
+  const base = {
+    userName: "a",
+    scheduleName: "s",
+    level: 1,
+    startMs: 1,
+    endMs: 2,
+    isMe: false,
+  } as const;
+  test("schedule, level, user, start, end, in that order; nulls sort as empty or zero", () => {
+    expect(
+      personOrder({ ...base, scheduleName: "a" }, { ...base, scheduleName: "b" }),
+    ).toBeLessThan(0);
+    expect(personOrder({ ...base, level: 1 }, { ...base, level: 2 })).toBeLessThan(0);
+    expect(personOrder({ ...base, userName: "a" }, { ...base, userName: "b" })).toBeLessThan(0);
+    expect(personOrder({ ...base, startMs: 1 }, { ...base, startMs: 2 })).toBeLessThan(0);
+    expect(personOrder({ ...base, endMs: 1 }, { ...base, endMs: 2 })).toBeLessThan(0);
+    expect(personOrder(base, { ...base })).toBe(0);
+    const nulls = {
+      ...base,
+      scheduleName: null,
+      level: null,
+      userName: null,
+      startMs: null,
+      endMs: null,
+    };
+    expect(personOrder(nulls, { ...nulls })).toBe(0);
+    expect(personOrder(nulls, base)).toBeLessThan(0);
   });
 });

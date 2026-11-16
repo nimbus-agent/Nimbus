@@ -324,3 +324,16 @@ describe("resolveIncidentRef", () => {
     expect(resolveIncidentRef(d, "PD_")).toEqual({ kind: "none" });
   });
 });
+
+describe("resolveIncidentRef, a retained record whose item left the index", () => {
+  test("is found by its trigger item id and by its record id, not reported as none", () => {
+    const d = db();
+    const a = up(d, { itemId: "pagerduty:PD9" });
+    // no item row exists for PD9: the upstream delete took it, the record is retained
+    expect(resolveIncidentRef(d, "pagerduty:PD9")).toEqual({
+      kind: "record",
+      recordId: a.recordId,
+      triggerItemId: "pagerduty:PD9",
+    });
+  });
+});

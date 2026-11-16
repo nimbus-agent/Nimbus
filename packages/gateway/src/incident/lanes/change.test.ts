@@ -95,6 +95,10 @@ describe("lane 2, change", () => {
     expect(r.lane.deployment).toBeNull();
     expect(r.gaps[0]?.detail).toContain("61 minutes before");
     expect(r.gaps[0]?.detail).toContain("window of 60 minutes");
+    // the minutes shown are floored, but the window is compared in milliseconds: 60 min 30 s is outside it
+    expect(
+      changeLane(d, input("pagerduty:x", T0 + 60 * 60_000 + 30_000)).lane.deployment,
+    ).toBeNull();
     // at exactly the window it is a candidate
     expect(changeLane(d, input("pagerduty:x", T0 + 60 * 60_000)).lane.deployment).not.toBeNull();
   });

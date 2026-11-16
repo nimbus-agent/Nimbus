@@ -4,6 +4,7 @@ import {
   hasUnterminatedString,
   parseIntDec,
   parseString,
+  parseStringArray,
   splitKeyValue,
   stripComment,
 } from "./toml-primitives.ts";
@@ -94,5 +95,14 @@ describe("parseIntDec rejects partial tokens", () => {
   test("an empty or non-numeric value is still undefined", () => {
     expect(parseIntDec("")).toBeUndefined();
     expect(parseIntDec("abc")).toBeUndefined();
+  });
+});
+
+describe("parseStringArray keeps a comma inside a quoted entry", () => {
+  test("splits only on commas outside quotes, and an escaped quote does not end the string", () => {
+    expect(parseStringArray('["checkout,prod", "pay"]')).toEqual(["checkout,prod", "pay"]);
+    expect(parseStringArray('["a", "b"]')).toEqual(["a", "b"]);
+    expect(parseStringArray('["say \\"hi, you\\"", "x"]')).toEqual(['say "hi, you"', "x"]);
+    expect(parseStringArray("[]")).toEqual([]);
   });
 });

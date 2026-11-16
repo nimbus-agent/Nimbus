@@ -117,6 +117,24 @@ function makeRunner(over: Partial<Parameters<typeof createOncallPushRunner>[0]> 
   return { runner, delivered };
 }
 
+const RETRY_WIDE = {
+  ...DEFAULT_ONCALL_PUSH_CONFIG,
+  sources: ["pagerduty", "jira", "sentry", "montecarlo"],
+  severities: ["p1", "fatal", "SEV-1"],
+};
+
+/** The owner is on call for PSVC now, on fresh data. */
+function onCallNow(over: { isMe?: boolean; fetchedAtMs?: number } = {}): void {
+  markSynced(db, "pagerduty", T0);
+  writePagerdutyShift(db, {
+    startMs: T0 - HOUR,
+    endMs: T0 + HOUR,
+    fetchedAtMs: over.fetchedAtMs ?? T0 - 60_000,
+    isMe: over.isMe ?? true,
+    serviceIds: ["PSVC"],
+  });
+}
+
 const failingRecords = (message = "boom"): PushRecords => ({
   assembleNow: async () => {
     throw new Error(message);
@@ -429,7 +447,8 @@ describe("push runner retry", () => {
     for (const id of [jsm, sentry, mc]) {
       store.insert(id, { status: "failed", sessionId: null, failureCode: "x" }, T0);
     }
-    const { runner, delivered } = makeRunner();
+    onCallNow();
+    const { runner, delivered } = makeRunner({ config: RETRY_WIDE });
     for (const id of [jsm, sentry, mc]) {
       expect((await runner.retry(id)).status).toBe("ok");
     }
@@ -493,5 +512,112 @@ describe("widened sources, through the runner", () => {
     proof();
     expect(await runner.run("jira")).toMatchObject({ selected: 1, ok: 1, notPushed: {} });
     expect(store.get(id)?.status).toBe("ok");
+  });
+});
+
+describe("retry of a non-PagerDuty record needs the same proof as its first push", () => {
+  function failedJsm(over: { priority?: string; tags?: string[]; status?: string } = {}): string {
+    const id = writeJsmAlert(
+      db,
+      {
+        id: "J9",
+        openedAtMs: T0,
+        priority: over.priority ?? "P1",
+        tags: over.tags ?? ["payments"],
+        ...(over.status === undefined ? {} : { status: over.status }),
+      },
+      resolver,
+    );
+    store.insert(id, { status: "failed", sessionId: null, failureCode: "x" }, T0);
+    return id;
+  }
+
+  test("proven (opted in, severity, open, bound, owner on call on fresh data): delivered", async () => {
+    const id = failedJsm();
+    onCallNow();
+    const { runner, delivered } = makeRunner({ config: RETRY_WIDE });
+    const out = await runner.retry(id);
+    expect(out.status).toBe("ok");
+    expect(out.notDelivered).toBeUndefined();
+    expect(delivered.map((d) => d.incident.id)).toEqual([id]);
+  });
+
+  const cases: ReadonlyArray<{
+    name: string;
+    arrange: (id: string) => void;
+    config?: typeof RETRY_WIDE;
+    reason: string;
+    tags?: string[];
+    status?: string;
+  }> = [
+    {
+      name: "the owner is not on call",
+      arrange: () => onCallNow({ isMe: false }),
+      reason: "you are not on call for this service now",
+    },
+    {
+      name: "there is no on-call data",
+      arrange: () => {},
+      reason: "there is no on-call data for its service",
+    },
+    {
+      name: "the on-call data is stale",
+      arrange: () => onCallNow({ fetchedAtMs: T0 - 2 * HOUR }),
+      reason: "the on-call data for its service is stale",
+    },
+    {
+      name: "the source is no longer opted in",
+      arrange: () => onCallNow(),
+      config: { ...DEFAULT_ONCALL_PUSH_CONFIG, sources: ["pagerduty"] } as typeof RETRY_WIDE,
+      reason: "its source is no longer opted in under [oncall.push] sources",
+    },
+    {
+      name: "the incident is closed",
+      arrange: () => onCallNow(),
+      status: "closed",
+      reason: "the incident is no longer open",
+    },
+    {
+      name: "the service is unbound",
+      arrange: () => onCallNow(),
+      tags: ["no-such-service"],
+      reason: "it is not bound to a service",
+    },
+  ];
+
+  for (const c of cases) {
+    test(`${c.name}: the brief is re-assembled and stored, nothing is delivered, the reason is returned`, async () => {
+      const id = failedJsm({
+        ...(c.tags === undefined ? {} : { tags: c.tags }),
+        ...(c.status === undefined ? {} : { status: c.status }),
+      });
+      await realRecords().assembleNow(id);
+      c.arrange(id);
+      const { runner, delivered } = makeRunner({ config: c.config ?? RETRY_WIDE });
+      const out = await runner.retry(id);
+      expect(out.status).toBe("ok");
+      expect(store.get(id)?.status).toBe("ok");
+      expect(delivered).toHaveLength(0);
+      expect(out.notDelivered).toBe(c.reason);
+    });
+  }
+
+  test("a severity that left the push set is not delivered either", async () => {
+    const id = failedJsm({ priority: "P3" });
+    onCallNow();
+    const { runner, delivered } = makeRunner({ config: RETRY_WIDE });
+    const out = await runner.retry(id);
+    expect(delivered).toHaveLength(0);
+    expect(out.notDelivered).toBe("its severity is no longer in the push set");
+  });
+
+  test("PagerDuty retry is unchanged: delivered with no on-call proof and no sources check", async () => {
+    store.insert("pagerduty:PA", { status: "failed", sessionId: null, failureCode: "x" }, T0);
+    const { runner, delivered } = makeRunner({
+      config: { ...DEFAULT_ONCALL_PUSH_CONFIG, sources: ["jira"] },
+    });
+    const out = await runner.retry("pagerduty:PA");
+    expect(out.notDelivered).toBeUndefined();
+    expect(delivered.map((d) => d.incident.id)).toEqual(["pagerduty:PA"]);
   });
 });

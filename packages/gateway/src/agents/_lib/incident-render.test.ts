@@ -180,6 +180,41 @@ describe("incident brief render", () => {
     expect(md.split("\n").filter((l) => l.startsWith("# ")).length).toBe(1);
   });
 
+  test("escape sequences, C1 controls and bidi characters in provider text never reach the Markdown", () => {
+    const cp = (n: number): string => String.fromCodePoint(n);
+    const evil = `${cp(0x1b)}]2;PWNED${cp(7)}${cp(0x1b)}[31mred${cp(0x9b)}2J${cp(0x2066)}x${cp(0x202e)}`;
+    const record: IncidentRecordV1 = {
+      ...rich(),
+      trigger: { ...rich().trigger, title: evil },
+      chat: {
+        ...rich().chat,
+        messages: [{ ...(rich().chat.messages[0] as never as object), title: evil } as never],
+      },
+    };
+    const md = renderIncident(brief(record));
+    for (const c of Array.from(md, (ch) => ch.codePointAt(0) ?? 0)) {
+      const control = c !== 10 && (c < 0x20 || (c >= 0x7f && c <= 0x9f));
+      const bidi = (c >= 0x202a && c <= 0x202e) || (c >= 0x2066 && c <= 0x2069);
+      expect(control || bidi).toBe(false);
+    }
+  });
+
+  test("a list the size cap emptied reports its true total, never 'no match'", () => {
+    const base = rich();
+    const record: IncidentRecordV1 = {
+      ...base,
+      chat: { ...base.chat, messages: [], total: 7 },
+      prior: { ...base.prior, incidents: [], total: 3 },
+      concurrent: { ...base.concurrent, records: [], total: 2 },
+    };
+    const md = renderIncident(brief(record));
+    expect(md).toContain("7 found; none shown");
+    expect(md).toContain("3 found; none shown");
+    expect(md).toContain("2 found; none shown");
+    expect(md).not.toContain("_No matching message._");
+    expect(md).not.toContain("_No earlier incident on this service._");
+  });
+
   test("omitReserved withholds Gaps and Data freshness", () => {
     const b = brief(rich(), [{ category: "missing_connector", detail: "GAP-ONE" }]);
     const body = renderIncident(b, { omitReserved: true });

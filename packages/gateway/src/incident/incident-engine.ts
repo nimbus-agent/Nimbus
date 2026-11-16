@@ -105,6 +105,12 @@ export function createIncidentEngine(deps: IncidentEngineDeps): IncidentEngine {
     }
   }
 
+  function backedOffCount(nowMs: number): number {
+    let n = 0;
+    for (const at of failedAt.values()) if (nowMs - at < FAILURE_BACKOFF_MS) n += 1;
+    return n;
+  }
+
   function candidates(service: TriggerService, cfg: EngineConfig, nowMs: number): string[] {
     const trig = {
       severities: cfg.incident.severities,
@@ -113,7 +119,9 @@ export function createIncidentEngine(deps: IncidentEngineDeps): IncidentEngine {
     };
     const ids = [
       ...selectNewItemIds(deps.db, service, trig, nowMs - cfg.incident.lookbackDays * DAY_MS),
-      ...selectRefreshItemIds(deps.db, service, PASS_CAP),
+      // Ask for enough extra rows to absorb the items in backoff, so a healthy record behind 20 failing
+      // ones is still reached.
+      ...selectRefreshItemIds(deps.db, service, PASS_CAP + backedOffCount(nowMs)),
       ...selectChangedItemIds(deps.db, service, nowMs),
     ];
     const seen = new Set<string>();

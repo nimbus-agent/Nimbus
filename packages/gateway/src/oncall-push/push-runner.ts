@@ -5,6 +5,7 @@ import type { AssembleOutcome } from "../incident/assemble.ts";
 import { getByTriggerItem } from "../incident/incident-store.ts";
 import { isTriggerService } from "../incident/trigger-sources.ts";
 import {
+  proveRecordForRetry,
   pushIncidentForItem,
   type RecordPushSkip,
   selectRecordPushCandidates,
@@ -35,6 +36,9 @@ export type PushRunSummary = {
   readonly notPushed?: Readonly<Partial<Record<RecordPushSkip, number>>>;
 };
 
+/** A retried row; `notDelivered` names why a stored brief of a non-PagerDuty record was not pushed. */
+export type PushRetryResult = PushedBriefRow & { readonly notDelivered?: string };
+
 export class PushRetryRefusedError extends Error {
   constructor(
     readonly code: "ERR_ONCALL_PUSH_NOT_FOUND" | "ERR_ONCALL_PUSH_NOT_FAILED",
@@ -63,7 +67,7 @@ export interface OncallPushRunnerDeps {
 
 export interface OncallPushRunner {
   run(serviceId: string): Promise<PushRunSummary>;
-  retry(incidentId: string): Promise<PushedBriefRow>;
+  retry(incidentId: string): Promise<PushRetryResult>;
   /** The summary of the last completed run (counts per not-pushed reason included), for diagnosis. */
   lastRun(): PushRunSummary | null;
 }
@@ -140,7 +144,7 @@ export function createOncallPushRunner(deps: OncallPushRunnerDeps): OncallPushRu
   const now = deps.now ?? Date.now;
   let inFlight: Promise<PushRunSummary> | undefined;
   let rerunRequested = false;
-  const retrying = new Map<string, Promise<PushedBriefRow>>();
+  const retrying = new Map<string, Promise<PushRetryResult>>();
   let lastSummary: PushRunSummary | null = null;
 
   async function once(): Promise<PushRunSummary> {
@@ -214,7 +218,7 @@ export function createOncallPushRunner(deps: OncallPushRunnerDeps): OncallPushRu
     }
   }
 
-  async function doRetry(incidentId: string): Promise<PushedBriefRow> {
+  async function doRetry(incidentId: string): Promise<PushRetryResult> {
     const existing = deps.store.get(incidentId);
     if (existing === null)
       throw new PushRetryRefusedError(
@@ -242,8 +246,23 @@ export function createOncallPushRunner(deps: OncallPushRunnerDeps): OncallPushRu
       }
       throw e;
     }
-    const incident = pushIncidentForItem(deps.db, incidentId);
-    if (row.status === "ok" && incident !== null) await deps.deliver([{ row, incident }]);
+    if (row.status !== "ok") return row;
+    if (incidentId.startsWith("pagerduty:")) {
+      // PagerDuty keeps its retry exactly as it was: deliver when the incident is still indexed.
+      const incident = pushIncidentForItem(deps.db, incidentId);
+      if (incident !== null) await deps.deliver([{ row, incident }]);
+      return row;
+    }
+    // Any other source: the SAME proof as the first push, at retry time (one predicate, push-record-selector).
+    const severities = resolveSeveritySet(deps.config, deps.pagerdutyAliases);
+    const proof = proveRecordForRetry(deps.db, incidentId, {
+      sources: deps.config.sources,
+      severities,
+      nowMs: now(),
+      serviceConfig: deps.serviceConfig,
+    });
+    if (!proof.delivered) return { ...row, notDelivered: proof.reason };
+    await deps.deliver([{ row, incident: proof.incident }]);
     return row;
   }
 

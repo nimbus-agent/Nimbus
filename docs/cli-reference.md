@@ -1347,7 +1347,7 @@ nimbus oncall pushed --json
 | `--retry` | Only with an incident id: re-assemble a brief for that incident (the recovery path when a stored brief is `FAILED`). |
 | `--json` | Print the stored record as JSON. Exit codes are unchanged: a failed brief or a named id with no brief exits `1`. |
 
-A brief that could not be assembled is stored as `FAILED` with its failure code and is never silently dropped; the command prints the code and the exact `--retry` line, and exits `1`.
+A brief that could not be assembled is stored as `FAILED` with its failure code and is never silently dropped; the command prints the code and the exact `--retry` line, and exits `1`. A retry of a record from a source other than PagerDuty is re-assembled and stored, but delivered to the sinks only if it passes the push proof again now (the source is still in `[oncall.push] sources`, the record is open, bound and in the push severity set, and you are on call for its service on fresh data); otherwise the command prints `Retried and stored; not delivered: <reason>.` (and `notDelivered` under `--json`). A PagerDuty retry is delivered as before.
 
 **Configuration** (`nimbus.toml`):
 

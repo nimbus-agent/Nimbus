@@ -17,9 +17,14 @@ import {
 import { loadServiceConfigsOrEmpty } from "../config/service-configs.ts";
 import { emitGatewayEvent } from "../ipc/gateway-events.ts";
 import { createLiveEnabled } from "./push-live-enabled.ts";
-import { createOncallPushRunner, type PushRecords, type PushRunSummary } from "./push-runner.ts";
+import {
+  createOncallPushRunner,
+  type PushRecords,
+  type PushRetryResult,
+  type PushRunSummary,
+} from "./push-runner.ts";
 import { type ChatopsPoster, createPushDeliverer } from "./push-sinks.ts";
-import { type PushedBriefRow, PushStore } from "./push-store.ts";
+import { PushStore } from "./push-store.ts";
 
 const DAY_MS = 86_400_000;
 
@@ -44,7 +49,7 @@ export interface OncallPushRuntime {
   run(serviceId: string): Promise<PushRunSummary>;
   /** Fire-and-forget for the sync hook; never throws. */
   trigger(serviceId: string): void;
-  retry(incidentId: string): Promise<PushedBriefRow>;
+  retry(incidentId: string): Promise<PushRetryResult>;
   identityResolved(): Promise<boolean>;
   /**
    * Design § 4 (2026-10-02-oncall-push-chatops-design.md) (boot race): bind the ChatOps poster, or record that there is none, and release every

@@ -19,6 +19,15 @@ export const TRIGGER_SOURCES: readonly TriggerSource[] = Object.freeze([
   Object.freeze({ service: "bigeye", type: "data_quality_test" }),
 ] as const);
 
+/** Keyed by the union, so a service missing from the registry is a type error, not a runtime miss. */
+const TYPE_OF: Readonly<Record<TriggerService, string>> = Object.freeze({
+  pagerduty: "incident",
+  jira: "alert",
+  sentry: "error_issue",
+  montecarlo: "data_quality_test",
+  bigeye: "data_quality_test",
+});
+
 export const TRIGGER_SERVICES: readonly TriggerService[] = Object.freeze(
   TRIGGER_SOURCES.map((s) => s.service),
 );
@@ -29,9 +38,7 @@ export function isTriggerService(service: string): service is TriggerService {
 
 /** The item `type` of a trigger service. */
 export function triggerTypeOf(service: TriggerService): string {
-  const found = TRIGGER_SOURCES.find((s) => s.service === service);
-  // The registry holds every TriggerService member, so a miss is unreachable.
-  return found === undefined ? "" : found.type;
+  return TYPE_OF[service];
 }
 
 export function isTriggerPair(service: string, type: string): service is TriggerService {

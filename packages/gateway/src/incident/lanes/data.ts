@@ -15,6 +15,32 @@ import { CHAT_WINDOW_BEFORE_MS, codeUnitCompare, DATA_LIST_CAP, gap, oneLine } f
 export type DataResult = { readonly lane: DataLane; readonly gaps: readonly GapNote[] };
 
 const MIN_TOKEN = 3;
+/** At most this many monitored model keys are followed; the true count is disclosed as a gap. */
+export const MODEL_KEY_CAP = 50;
+/** Rows a single lane query may load. A query that returns this many has been cut, and the lane says so. */
+export const SCAN_ROW_CAP = 500;
+
+/** Escape a token for a LIKE pattern (`!` is the ESCAPE character; tokens are already lower-cased). */
+function likeOf(token: string): string {
+  return `%${token.replace(/[!%_]/g, (ch) => `!${ch}`)}%`;
+}
+
+/** `(lower(col) LIKE ? ESCAPE '!' OR ...)` over the tokens: a SQL pre-filter, the whole-token check stays in JS. */
+function likeAny(
+  cols: readonly string[],
+  tokens: readonly string[],
+): { sql: string; args: string[] } {
+  const parts: string[] = [];
+  const args: string[] = [];
+  for (const t of tokens) {
+    for (const c of cols) {
+      parts.push(`lower(${c}) LIKE ? ESCAPE '!'`);
+      args.push(likeOf(t));
+    }
+  }
+  return { sql: `(${parts.join(" OR ")})`, args };
+}
+
 const ORCHESTRATION: readonly (readonly [string, string])[] = [
   ["dbt", "job"],
   ["airflow", "dag"],
@@ -53,7 +79,11 @@ function monitoredKeys(metadata: Record<string, unknown> | null): string[] {
     : [];
 }
 
-function lineage(db: Database, keys: readonly string[]): DataLineageView[] {
+function lineage(
+  db: Database,
+  keys: readonly string[],
+  truncated: { value: boolean },
+): DataLineageView[] {
   const out: DataLineageView[] = [];
   for (const model of keys) {
     const rows = db
@@ -62,9 +92,11 @@ function lineage(db: Database, keys: readonly string[]): DataLineageView[] {
            JOIN graph_relation r ON r.from_id = m.id AND r.type = 'derived_from'
            JOIN graph_entity up ON up.id = r.to_id
           WHERE m.type = 'data_model' AND m.external_id = ?
-          ORDER BY up.external_id ASC`,
+          ORDER BY up.external_id ASC
+          LIMIT ${String(SCAN_ROW_CAP)}`,
       )
       .all(model) as { ext: string }[];
+    if (rows.length >= SCAN_ROW_CAP) truncated.value = true;
     for (const r of rows) out.push({ model, to: r.ext, rule: "data:derived_from" });
   }
   return out.sort((a, b) =>
@@ -82,13 +114,22 @@ type ItemRow = {
   metadata: string | null;
 };
 
-function orchestration(db: Database, tokens: readonly string[]): DataItemView[] {
+function orchestration(
+  db: Database,
+  tokens: readonly string[],
+  truncated: { value: boolean },
+): DataItemView[] {
   const out = new Map<string, DataItemView>();
+  if (tokens.length === 0) return [];
+  const like = likeAny(["title"], tokens);
   const q = db.query(
-    "SELECT id, service, type, title, url, modified_at, metadata FROM item WHERE service = ? AND type = ? ORDER BY title ASC, id ASC",
+    `SELECT id, service, type, title, url, modified_at, metadata FROM item
+      WHERE service = ? AND type = ? AND ${like.sql} ORDER BY title ASC, id ASC LIMIT ${String(SCAN_ROW_CAP)}`,
   );
   for (const [service, type] of ORCHESTRATION) {
-    for (const r of q.all(service, type) as ItemRow[]) {
+    const found = q.all(service, type, ...like.args) as ItemRow[];
+    if (found.length >= SCAN_ROW_CAP) truncated.value = true;
+    for (const r of found) {
       if (out.has(r.id) || !tokens.some((t) => holdsToken(r.title, t))) continue;
       out.set(r.id, {
         id: r.id,
@@ -121,8 +162,11 @@ function mergedPrs(
   db: Database,
   tokens: readonly string[],
   openedAtMs: number,
+  truncated: { value: boolean },
 ): { readonly items: DataItemView[]; readonly mergedAt: Map<string, number> } {
   const from = openedAtMs - CHAT_WINDOW_BEFORE_MS;
+  if (tokens.length === 0) return { items: [], mergedAt: new Map() };
+  const like = likeAny(["title", "metadata"], tokens);
   // lane-census: scope=pr service=github,gitlab
   const rows = db
     .query(
@@ -131,9 +175,12 @@ function mergedPrs(
          FROM item
         WHERE type = 'pr' AND service IN (${PR_SERVICES.map(() => "?").join(",")})
           AND CASE WHEN json_valid(metadata) THEN json_extract(metadata, '$.merged_at') END BETWEEN ? AND ?
-        ORDER BY merged_at DESC, id ASC`,
+          AND ${like.sql}
+        ORDER BY merged_at DESC, id ASC
+        LIMIT ${String(SCAN_ROW_CAP)}`,
     )
-    .all(...PR_SERVICES, from, openedAtMs) as (ItemRow & { merged_at: number })[];
+    .all(...PR_SERVICES, from, openedAtMs, ...like.args) as (ItemRow & { merged_at: number })[];
+  if (rows.length >= SCAN_ROW_CAP) truncated.value = true;
   const mergedAt = new Map<string, number>();
   const items: DataItemView[] = [];
   for (const r of rows) {
@@ -171,12 +218,31 @@ export function dataLane(
   db: Database,
   input: { readonly metadata: Record<string, unknown> | null; readonly openedAtMs: number | null },
 ): DataResult {
-  const models = monitoredKeys(input.metadata);
+  const allModels = monitoredKeys(input.metadata);
+  const models = allModels.slice(0, MODEL_KEY_CAP);
   const tokens = models.map(modelToken).filter((t): t is string => t !== null);
-  const lin = lineage(db, models);
-  const orch = orchestration(db, tokens);
-  const prs = input.openedAtMs === null ? { items: [] } : mergedPrs(db, tokens, input.openedAtMs);
+  const truncated = { value: false };
+  const lin = lineage(db, models, truncated);
+  const orch = orchestration(db, tokens, truncated);
+  const prs =
+    input.openedAtMs === null ? { items: [] } : mergedPrs(db, tokens, input.openedAtMs, truncated);
   const gaps = dataSubstrateGaps();
+  if (allModels.length > MODEL_KEY_CAP) {
+    gaps.push(
+      gap(
+        "missing_entity_type",
+        `This item monitors ${String(allModels.length)} models; only the first ${String(MODEL_KEY_CAP)} (by key) were followed.`,
+      ),
+    );
+  }
+  if (truncated.value) {
+    gaps.push(
+      gap(
+        "missing_entity_type",
+        `A data query reached its ${String(SCAN_ROW_CAP)}-row limit, so the counts here are lower bounds.`,
+      ),
+    );
+  }
   if (models.length === 0) {
     gaps.push(
       gap(

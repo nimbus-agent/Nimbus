@@ -21,6 +21,7 @@ import {
 import { createIncidentEngine } from "../incident/incident-engine.ts";
 import { ownerOnCallForService } from "./owner-on-call.ts";
 import {
+  proveRecordForRetry,
   pushIncidentForItem,
   type RecordSelectInput,
   selectRecordPushCandidates,
@@ -335,5 +336,28 @@ describe("pushIncidentForItem", () => {
     expect(pushIncidentForItem(db, pd)).toMatchObject({ id: pd, pagerdutyServiceId: "PSVC1" });
     expect(pushIncidentForItem(db, "jira:nope")).toBeNull();
     expect(pushIncidentForItem(db, "pagerduty:nope")).toBeNull();
+  });
+});
+
+describe("proveRecordForRetry (the retry-time proof, the same predicate as the first push)", () => {
+  test("proven: returns the incident; the enable boundary and the dedupe row are NOT part of it", async () => {
+    const id = await jsmP1();
+    proof();
+    const out = proveRecordForRetry(db, id, { ...input(), alreadyPushed: undefined } as never);
+    expect(out).toMatchObject({ delivered: true, incident: { id } });
+  });
+
+  test("an id naming no record, and a PagerDuty id (never through this path), are not delivered", async () => {
+    expect(proveRecordForRetry(db, "jira:NOPE", input())).toEqual({
+      delivered: false,
+      reason: "the record no longer exists",
+    });
+    const pd = writePagerdutyIncident(
+      db,
+      { id: "P1", openedAtMs: OPEN, priority: "P1" },
+      resolver2,
+    );
+    await assemble(pd);
+    expect(proveRecordForRetry(db, pd, input())).toMatchObject({ delivered: false });
   });
 });

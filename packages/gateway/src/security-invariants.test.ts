@@ -15893,13 +15893,19 @@ describe("I57 (a) - assembling an incident record is inert: it reads the local i
         /\bSynthesisRunner\b|\bresolveForSynthesis\b|\bcreateLlm\w*\b|synthesis-llm|\brunner\s*:/,
       );
     }
-    const calls = [
-      ...stripComments(files.find((f) => f.rel === "assemble.ts")?.contents ?? "").matchAll(
-        /\bsynthesize\s*\(([^)]*)\)/g,
-      ),
-    ];
-    expect(calls.length).toBeGreaterThan(0);
-    for (const c of calls) expect(c[1]?.trim()).toMatch(/^[\w.]+$/);
+    // every call in EVERY incident file, not only assemble.ts: a lane could pass options (a runner) too
+    const synthesizeArgs = (src: string): string[] =>
+      [...stripComments(src).matchAll(/\bsynthesize\s*\(([^)]*)\)/g)].map((m) =>
+        (m[1] ?? "").trim(),
+      );
+    const all = files.flatMap((f) =>
+      synthesizeArgs(f.contents).map((arg) => ({ rel: f.rel, arg })),
+    );
+    expect(all.some((c) => c.rel === "assemble.ts")).toBe(true);
+    for (const c of all) expect(c.arg, c.rel).toMatch(/^[\w.]+$/);
+    // the scan itself catches a two-argument call anywhere (negative fixtures)
+    expect(synthesizeArgs("await synthesize(brief, options);")).toEqual(["brief, options"]);
+    expect(synthesizeArgs("await synthesize(brief, { runner });")).toEqual(["brief, { runner }"]);
   });
 
   test("4: the hook triggers the engine before the push, and the engine's construction names no egress, executor, connectors, vault or llm", async () => {
@@ -15913,6 +15919,22 @@ describe("I57 (a) - assembling an incident record is inert: it reads the local i
     const body = src.slice(from, src.indexOf("\n  });", from));
     expect(body.length).toBeGreaterThan(100);
     expect(body).not.toMatch(/\b(?:egress|executor|connectors|vault|llm)\b/i);
+  });
+
+  test("4b: a retried non-PagerDuty push passes the same proof as the first push, by ONE shared predicate", async () => {
+    const sel = await read("packages/gateway/src/oncall-push/push-record-selector.ts");
+    const runner = await read("packages/gateway/src/oncall-push/push-runner.ts");
+    // both entry points call the one predicate, and neither re-implements the on-call check
+    expect(sel.match(/proofSkip\(db, /g)?.length).toBe(2);
+    expect(sel.match(/ownerOnCallForService\(/g)?.length).toBe(1);
+    // the retry path reaches delivery for a non-PagerDuty record only through the proof
+    const retry = runner.slice(runner.indexOf("async function doRetry"));
+    const proofAt = retry.indexOf("proveRecordForRetry(");
+    const deliverAt = retry.indexOf("deps.deliver([{ row, incident: proof.incident }])");
+    expect(proofAt).toBeGreaterThan(0);
+    expect(deliverAt).toBeGreaterThan(proofAt);
+    expect(runner.match(/pushIncidentForItem\(/g)?.length).toBe(1); // the PagerDuty-only call
+    expect(runner).not.toMatch(/ownerOnCallForService/);
   });
 
   test("5: D46(d) - the record tables are written only by their store, over the real tree", async () => {

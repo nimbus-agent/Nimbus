@@ -281,7 +281,8 @@ export function changeLane(
   }
   const dep = deploymentView(last, openedAtMs);
   const windowMin = cfg.incidentWindowMinutes;
-  if (dep.minutesBeforeOpen > windowMin) {
+  // Compare in milliseconds: the minutes are floored for display, so 60 min 30 s would otherwise pass a 60 min window.
+  if (openedAtMs - last.startedAtMs > windowMin * MINUTE_MS) {
     return {
       lane: emptyLane(null),
       gaps: [

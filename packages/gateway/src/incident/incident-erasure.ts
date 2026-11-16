@@ -1,9 +1,9 @@
 import type { Database } from "bun:sqlite";
-
 import {
   countPushedBriefsForErasure,
   deletePushedBriefsForErasure,
 } from "../oncall-push/push-store.ts";
+import { noteErasure } from "./erasure-generation.ts";
 import {
   eraseIncidentRecordsForService,
   INCIDENT_PRUNE_BATCH,
@@ -31,6 +31,7 @@ export type IncidentErasure = {
  */
 export function eraseIncidentDataForService(db: Database, service: string): IncidentErasure {
   const tx = db.transaction((): IncidentErasure => {
+    noteErasure(); // an assembly that gathered evidence before this must not write it after
     const erased = eraseIncidentRecordsForService(db, service);
     const pushedBriefsDeleted = deletePushedBriefsForErasure(db, {
       triggerItemIds: erased.triggerItemIds,

@@ -1,5 +1,6 @@
 import { briefTextFor } from "../lib/agent-brief-render.ts";
 import { CliExit } from "../lib/cli-exit.ts";
+import { stripControlChars } from "../lib/strip-control-chars.ts";
 import { withGatewayIpc } from "../lib/with-gateway-ipc.ts";
 import { getCliPlatformPaths } from "../paths.ts";
 
@@ -160,13 +161,20 @@ export async function runOncallPushedWith(
     if (a.mode === "list") return await runList(c, a.json, sink);
     const raw = await requestBrief(c, a);
     const brief = (raw as { brief: Brief | null }).brief;
+    const notDelivered = (raw as { notDelivered?: unknown }).notDelivered;
     if (a.json) {
-      sink.out(`${JSON.stringify({ brief })}\n`);
+      sink.out(
+        `${JSON.stringify(typeof notDelivered === "string" ? { brief, notDelivered } : { brief })}\n`,
+      );
       return jsonExitCode(brief, a.mode === "one");
     }
     // `return await`, not a bare return: a failing off-hint lookup must reach the catch below.
     if (brief === null) return await renderNoBrief(c, a, sink);
-    return renderBrief(brief, sink, demo);
+    const code = renderBrief(brief, sink, demo);
+    if (typeof notDelivered === "string") {
+      sink.err(`Retried and stored; not delivered: ${stripControlChars(notDelivered)}.\n`);
+    }
+    return code;
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     if (a.json) sink.out(`${JSON.stringify({ error: msg })}\n`);

@@ -88,6 +88,38 @@ function toIncident(r: Row): OncallIncident {
   };
 }
 
+type ServiceLookup = RecordSelectInput["serviceConfig"];
+
+/**
+ * THE proof a non-PagerDuty record must pass to be pushed, in the documented order, shared by the first push
+ * (`selectRecordPushCandidates`) and a retry (`proveRecordForRetry`) so the two can never drift. `null` means
+ * proven. The enable boundary and the dedupe row belong to the FIRST push only and are checked by the caller.
+ */
+function proofSkip(
+  db: Database,
+  r: Row,
+  ctx: {
+    readonly severities: ReadonlySet<string>;
+    readonly nowMs: number;
+    readonly serviceConfig: ServiceLookup;
+  },
+): RecordPushSkip | null {
+  if (r.severity === null || !severityInSet(r.trigger_service, r.severity, ctx.severities)) {
+    return "severity_not_in_push_set";
+  }
+  if (r.opened_at_ms === null) return "no_open_time";
+  if (r.service === null) return "unbound";
+  const proof = ownerOnCallForService(
+    db,
+    ctx.serviceConfig(r.service) ?? { pagerdutyServices: [] },
+    ctx.nowMs,
+  );
+  if (proof === "yes") return null;
+  if (proof === "stale") return "stale_oncall_data";
+  if (proof === "no_data") return "no_oncall_data";
+  return "owner_not_on_call";
+}
+
 /** The push candidates among the stored records of the opted-in, non-PagerDuty sources. */
 export function selectRecordPushCandidates(
   db: Database,
@@ -102,33 +134,63 @@ export function selectRecordPushCandidates(
     )
     .all(JSON.stringify(input.sources)) as Row[];
   const counts: Partial<Record<RecordPushSkip, number>> = {};
-  const skip = (reason: RecordPushSkip): void => {
-    counts[reason] = (counts[reason] ?? 0) + 1;
-  };
   const floor = input.enabledAtMs - ENABLE_GRACE_MS;
   const candidates: OncallIncident[] = [];
   for (const r of rows) {
-    if (r.severity === null || !severityInSet(r.trigger_service, r.severity, input.severities)) {
-      skip("severity_not_in_push_set");
-    } else if (r.opened_at_ms === null) {
-      skip("no_open_time");
-    } else if (r.opened_at_ms < floor || input.alreadyPushed(r.trigger_item_id)) {
-      // Normal: older than the enable boundary, or already pushed. Not a skip worth counting.
-    } else if (r.service === null) {
-      skip("unbound");
-    } else {
-      const proof = ownerOnCallForService(
-        db,
-        input.serviceConfig(r.service) ?? { pagerdutyServices: [] },
-        input.nowMs,
-      );
-      if (proof === "yes") candidates.push(toIncident(r));
-      else if (proof === "stale") skip("stale_oncall_data");
-      else if (proof === "no_data") skip("no_oncall_data");
-      else skip("owner_not_on_call");
-    }
+    const reason = proofSkip(db, r, input);
+    // Normal and not counted: older than the enable boundary, or already pushed (only once the record is
+    // otherwise eligible, so a severity or open-time skip is still counted as before).
+    const settled =
+      r.opened_at_ms !== null &&
+      reason !== "severity_not_in_push_set" &&
+      (r.opened_at_ms < floor || input.alreadyPushed(r.trigger_item_id));
+    if (settled) continue;
+    if (reason === null) candidates.push(toIncident(r));
+    else counts[reason] = (counts[reason] ?? 0) + 1;
   }
   return { candidates, notPushed: counts };
+}
+
+export type RetryProof =
+  | { readonly delivered: true; readonly incident: OncallIncident }
+  | { readonly delivered: false; readonly reason: string };
+
+const RETRY_REASON: Readonly<
+  Record<RecordPushSkip | "not_a_source" | "not_open" | "gone", string>
+> = {
+  severity_not_in_push_set: "its severity is no longer in the push set",
+  no_open_time: "it has no open time",
+  unbound: "it is not bound to a service",
+  no_oncall_data: "there is no on-call data for its service",
+  stale_oncall_data: "the on-call data for its service is stale",
+  owner_not_on_call: "you are not on call for this service now",
+  not_a_source: "its source is no longer opted in under [oncall.push] sources",
+  not_open: "the incident is no longer open",
+  gone: "the record no longer exists",
+};
+
+/**
+ * A retry of a NON-PagerDuty record is delivered only if it passes the same proof as its first push, now: the
+ * source is still opted in, the record is open, and `proofSkip` (severity, bound, owner on call on fresh data)
+ * holds. A PagerDuty id never reaches this function (its retry is unchanged). The brief is stored either way.
+ */
+export function proveRecordForRetry(
+  db: Database,
+  itemId: string,
+  input: Pick<RecordSelectInput, "sources" | "severities" | "nowMs" | "serviceConfig">,
+): RetryProof {
+  const r = db.query(`${SELECT} WHERE trigger_item_id = ?`).get(itemId) as Row | null;
+  const no = (k: keyof typeof RETRY_REASON): RetryProof => ({
+    delivered: false,
+    reason: RETRY_REASON[k],
+  });
+  if (r === null) return no("gone");
+  if (r.trigger_service === "pagerduty" || !input.sources.includes(r.trigger_service)) {
+    return no("not_a_source");
+  }
+  if (r.status !== "open") return no("not_open");
+  const skip = proofSkip(db, r, input);
+  return skip === null ? { delivered: true, incident: toIncident(r) } : no(skip);
 }
 
 /**

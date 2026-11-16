@@ -128,7 +128,10 @@ async function handleRetry(params: unknown, ctx: OncallPushRpcCtx) {
   if (id === undefined)
     throw new OncallPushRpcError(-32602, "oncall.pushedRetry: incidentId is required");
   try {
-    return { brief: detail(ctx, await ctx.runtime.retry(id)) };
+    const { notDelivered, ...row } = await ctx.runtime.retry(id);
+    return notDelivered === undefined
+      ? { brief: detail(ctx, row) }
+      : { brief: detail(ctx, row), notDelivered };
   } catch (e) {
     if (e instanceof PushRetryRefusedError) {
       throw new OncallPushRpcError(

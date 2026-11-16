@@ -116,6 +116,24 @@ export function splitKeyValue(trimmed: string): { key: string; valRaw: string } 
   return { key: trimmed.slice(0, eq).trim(), valRaw: trimmed.slice(eq + 1).trim() };
 }
 
+/** Split on commas that are not inside a double-quoted string (a backslash escapes the next character there). */
+function splitOutsideQuotes(inner: string): string[] {
+  const parts: string[] = [];
+  let start = 0;
+  let quoted = false;
+  for (let i = 0; i < inner.length; i += 1) {
+    const ch = inner[i];
+    if (quoted && ch === "\\") i += 1;
+    else if (ch === '"') quoted = !quoted;
+    else if (ch === "," && !quoted) {
+      parts.push(inner.slice(start, i));
+      start = i + 1;
+    }
+  }
+  parts.push(inner.slice(start));
+  return parts;
+}
+
 export function parseStringArray(raw: string): string[] {
   const t = raw.trim();
   if (!t.startsWith("[") || !t.endsWith("]")) {
@@ -124,7 +142,7 @@ export function parseStringArray(raw: string): string[] {
   const inner = t.slice(1, -1).trim();
   if (inner.length === 0) return [];
   const out: string[] = [];
-  for (const part of inner.split(",")) {
+  for (const part of splitOutsideQuotes(inner)) {
     const v = parseString(part);
     if (v.length > 0) out.push(v);
   }

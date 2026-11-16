@@ -114,8 +114,17 @@ export function pushAgentCommand(incidentId: string): string {
   return `@nimbus agent oncall incidentId=${field(incidentId)}`;
 }
 
-function deploymentLine(brief: HeadlineBrief | null, openedAtMs: number | null): string {
-  if (brief === null) return "Brief could not be assembled; rerun the agent below to retry";
+function deploymentLine(
+  brief: HeadlineBrief | null,
+  openedAtMs: number | null,
+  incidentId: string,
+): string {
+  if (brief === null) {
+    // Only a PagerDuty item has an agent to rerun; any other source is retried with the pushed-brief command.
+    return isPagerdutyItemId(incidentId)
+      ? "Brief could not be assembled; rerun the agent below to retry"
+      : `Brief could not be assembled; retry with: nimbus oncall pushed ${field(incidentId)} --retry`;
+  }
   const dep = brief.deployment;
   if (dep === null) return "No deployment found before the alert";
   const deployAt = dep.finishedAtMs ?? dep.startedAtMs;
@@ -135,7 +144,7 @@ export function renderPushHeadline(d: PushDelivery): string {
   const id = d.row.incidentId;
   return [
     `${field(severity)} · ${field(service)} — ${field(title)}`,
-    deploymentLine(brief, d.incident.openedAtMs),
+    deploymentLine(brief, d.incident.openedAtMs, id),
     isPagerdutyItemId(id)
       ? `${pushAgentCommand(id)}  ·  locally: nimbus oncall pushed ${field(id)}`
       : `locally: nimbus incident show ${field(id)}`,

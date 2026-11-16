@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 
 import { buildRecord } from "../__fixtures__/record-builder.ts";
 import type { IncidentRecordV1 } from "../incident-record-types.ts";
-import { capRecordSize, gap, oneLine } from "./caps.ts";
+import { allocate, capRecordSize, gap, oneLine } from "./caps.ts";
 
 function fat(n: number): IncidentRecordV1 {
   const base = buildRecord();
@@ -77,5 +77,14 @@ describe("gap", () => {
   test("omits an absent remediation", () => {
     expect(gap("missing_connector", "d")).toEqual({ category: "missing_connector", detail: "d" });
     expect(gap("missing_connector", "d", "r").remediation).toBe("r");
+  });
+});
+
+describe("allocate and the data cut", () => {
+  test("shares the retained entries round-robin over the lists that still have some", () => {
+    expect(allocate(5, [10, 0, 0])).toEqual([5, 0, 0]);
+    expect(allocate(5, [1, 10, 10])).toEqual([1, 2, 2]);
+    expect(allocate(100, [2, 1, 0])).toEqual([2, 1, 0]);
+    expect(allocate(0, [3, 3])).toEqual([0, 0]);
   });
 });

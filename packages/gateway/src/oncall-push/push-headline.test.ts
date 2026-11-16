@@ -371,3 +371,19 @@ describe("non-PagerDuty pushes name no agent command (Phase 10 IC3)", () => {
     );
   });
 });
+
+describe("the failed-brief hint names a command that exists", () => {
+  test("a non-PagerDuty item is retried with nimbus oncall pushed <id> --retry, never 'rerun the agent'", async () => {
+    const d = await realDelivery();
+    const id = "jira:J1";
+    const failed: PushDelivery = {
+      row: { ...d.row, incidentId: id, status: "failed", briefJson: null, failureCode: "x" },
+      incident: { ...d.incident, id },
+    };
+    const out = lines(renderPushHeadline(failed));
+    expect(out[1]).toBe(
+      "Brief could not be assembled; retry with: nimbus oncall pushed jira:J1 --retry",
+    );
+    expect(out[1]).not.toContain("agent");
+  });
+});

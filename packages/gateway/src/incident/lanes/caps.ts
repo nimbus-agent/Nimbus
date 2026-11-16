@@ -53,6 +53,27 @@ function jsonBytes(record: IncidentRecordV1): number {
 }
 
 /**
+ * Share `n` retained entries across lists of the given sizes, one at a time round-robin over the lists that
+ * still have entries, so a short list never wastes its share and the retained total is `min(n, sum)`.
+ */
+export function allocate(n: number, sizes: readonly number[]): number[] {
+  const out = sizes.map(() => 0);
+  let left = n;
+  let progressed = true;
+  while (left > 0 && progressed) {
+    progressed = false;
+    for (let i = 0; i < sizes.length && left > 0; i += 1) {
+      if ((out[i] ?? 0) < (sizes[i] ?? 0)) {
+        out[i] = (out[i] ?? 0) + 1;
+        left -= 1;
+        progressed = true;
+      }
+    }
+  }
+  return out;
+}
+
+/**
  * Cut lists until `record_json` fits the soft cap, in a fixed order (chat, concurrent, prior, history, data):
  * each lane's list is halved, then emptied, before the next lane is touched. Returns the record and the cuts
  * made; the caller adds a `truncated` gap naming them, so a cut is never silent. A record that already fits is
@@ -70,7 +91,7 @@ export function capRecordSize(
       if (jsonBytes(work) <= maxBytes || length() === 0) return;
       const before = length();
       keep(target);
-      cuts.push({ lane, before, after: target });
+      cuts.push({ lane, before, after: length() });
     }
   };
   shrink(
@@ -112,11 +133,16 @@ export function capRecordSize(
       "data",
       () => data.orchestration.length + data.prs.length + data.lineage.length,
       (n) => {
+        const [lin, orch, prs] = allocate(n, [
+          data.lineage.length,
+          data.orchestration.length,
+          data.prs.length,
+        ]);
         work.data = {
           ...data,
-          lineage: data.lineage.slice(0, Math.floor(n / 3)),
-          orchestration: data.orchestration.slice(0, Math.floor(n / 3)),
-          prs: data.prs.slice(0, Math.floor(n / 3)),
+          lineage: data.lineage.slice(0, lin),
+          orchestration: data.orchestration.slice(0, orch),
+          prs: data.prs.slice(0, prs),
         };
       },
     );

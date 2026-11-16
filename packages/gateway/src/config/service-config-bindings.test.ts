@@ -45,6 +45,11 @@ for (const { header, parse } of BLOCKS) {
       expect(parse(table(header, "")).get("payments")?.chatAliases).toEqual([]);
     });
 
+    test("a comma inside a quoted chat alias is part of the alias", () => {
+      const cfg = parse(table(header, 'chat_aliases = ["checkout,prod", "web"]')).get("payments");
+      expect(cfg?.chatAliases).toEqual(["checkout,prod", "web"]);
+    });
+
     test("absent keys default to empty arrays", () => {
       const cfg = parse(table(header, "")).get("payments");
       expect(cfg?.jsmAlertTags).toEqual([]);

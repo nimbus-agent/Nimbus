@@ -24,6 +24,7 @@ import {
   writeSentryIssue,
 } from "./__fixtures__/trigger-writers.ts";
 import { type AssembleDeps, assembleOne, IncidentError, recordHash } from "./assemble.ts";
+import { eraseIncidentDataForService } from "./incident-erasure.ts";
 import {
   CORE_KEYS,
   coreOf,
@@ -437,5 +438,70 @@ describe("what a record holds", () => {
     expect(rec.gaps.some((g) => g.detail.includes("first observed state stands in"))).toBe(true);
     expect(rec.trigger.opened.basis).toBe("provider");
     expect(rec.trigger.firstObservedMs).not.toBeNull();
+  });
+});
+
+describe("an owner erasure that commits while a pass is rendering", () => {
+  test("the stale evidence is not written: the pass gathers again, and an erased trigger item is 'missing'", async () => {
+    const d = db();
+    const item = seedFull(d);
+    const pending = assembleOne(deps(d), item, NOW); // runs to its first await: evidence is gathered
+    // the owner erases Slack (its messages and the records citing it) before the render resolves
+    d.run("DELETE FROM item WHERE service = 'slack'");
+    eraseIncidentDataForService(d, "slack");
+    const r = await pending;
+    if (r.outcome === "missing") throw new Error("the item still exists");
+    const rec = stored(d, r.recordId);
+    expect(rec.chat.messages).toEqual([]);
+    expect(getById(d, r.recordId)?.markdown).not.toContain("payment-service looks slow");
+    expect(getById(d, r.recordId)?.cited_services).not.toContain("slack");
+  });
+
+  test("the trigger item erased meanwhile writes no record at all", async () => {
+    const d = db();
+    const item = seedFull(d);
+    const pending = assembleOne(deps(d), item, NOW);
+    d.run("DELETE FROM item WHERE id = ?", [item]);
+    eraseIncidentDataForService(d, "pagerduty");
+    expect(await pending).toEqual({ outcome: "missing" });
+    expect(d.query("SELECT count(*) AS n FROM incident_record").get()).toEqual({ n: 0 });
+  });
+});
+
+describe("what a record cites and reports", () => {
+  test("a Jira alert whose on-call lane lists people cites pagerduty, so removing PagerDuty erases it", async () => {
+    const d = db();
+    markSynced(d, "pagerduty", NOW);
+    writePagerdutyShift(d, {
+      startMs: NOW - HOUR,
+      endMs: NOW + HOUR,
+      fetchedAtMs: NOW - 60_000,
+      isMe: true,
+      serviceIds: ["PSVC1"],
+    });
+    const item = writeJsmAlert(
+      d,
+      { id: "J1", openedAtMs: OPEN, priority: "P1", tags: ["payments"] },
+      resolver,
+    );
+    const r = await assemble(d, item);
+    const rec = stored(d, r.recordId);
+    expect(rec.onCall.current.length + rec.onCall.next.length).toBeGreaterThan(0);
+    expect(JSON.parse(getById(d, r.recordId)?.cited_services ?? "[]")).toContain("pagerduty");
+  });
+
+  test("freshness lists the providers of the change evidence that is shown, not only github", async () => {
+    const d = db();
+    const item = seedFull(d);
+    const r = await assemble(d, item);
+    const rec = stored(d, r.recordId);
+    const listed = rec.freshness.rows.map((s) => s.service);
+    for (const s of [
+      rec.change.deployment?.provider,
+      rec.change.pr?.service,
+      rec.change.ci?.service,
+    ]) {
+      if (s !== undefined) expect(listed).toContain(s);
+    }
   });
 });

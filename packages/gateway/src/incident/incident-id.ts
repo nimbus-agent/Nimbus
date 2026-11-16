@@ -53,6 +53,13 @@ export function resolveIncidentRef(db: Database, ref: string): IncidentRef {
   if (byRecord !== null) {
     return { kind: "record", recordId: byRecord.id, triggerItemId: byRecord.trigger_item_id };
   }
+  const byTrigger = db
+    .query("SELECT id, trigger_item_id FROM incident_record WHERE trigger_item_id = ?")
+    .get(ref) as { id: string; trigger_item_id: string } | null;
+  // A retained record whose item left the index (an upstream delete) is still found by its trigger item id.
+  if (byTrigger !== null) {
+    return { kind: "record", recordId: byTrigger.id, triggerItemId: byTrigger.trigger_item_id };
+  }
   const byItem = db
     .query("SELECT id, service, type FROM item WHERE id = ?")
     .get(ref) as ItemRow | null;

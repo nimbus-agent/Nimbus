@@ -1,5 +1,5 @@
 import type { OncallBriefPushedPayload } from "../ipc/gateway-events.ts";
-import { allPagerduty, renderPushHeadline, renderPushSummary } from "./push-headline.ts";
+import { allPagerduty, oneLine, renderPushHeadline, renderPushSummary } from "./push-headline.ts";
 import type { PushDelivery } from "./push-runner.ts";
 import type { PushStore, SinkOutcome } from "./push-store.ts";
 
@@ -44,9 +44,13 @@ export interface PushSinkDeps {
 }
 
 function bodyFor(d: PushDelivery): string {
+  // Third-party text (a title, an id) is single-lined and stripped of controls and format characters here, the
+  // one place a toast body is built, so an escape sequence cannot reach a notifier or a terminal.
+  const title = oneLine(d.incident.title);
+  const id = oneLine(d.row.incidentId);
   return d.row.status === "ok"
-    ? `${d.incident.title} — brief ready: nimbus oncall pushed ${d.row.incidentId}`
-    : `${d.incident.title} — brief could not be assembled: nimbus oncall pushed ${d.row.incidentId}`;
+    ? `${title} — brief ready: nimbus oncall pushed ${id}`
+    : `${title} — brief could not be assembled: nimbus oncall pushed ${id}`;
 }
 
 function errText(e: unknown): string {

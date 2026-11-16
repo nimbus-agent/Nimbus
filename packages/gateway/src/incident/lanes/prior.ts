@@ -60,6 +60,16 @@ export function skippedPrior(reason: "unbound" | "no_open_time"): PriorResult {
   return { lane: { skipped: reason, total: 0, incidents: [] }, gaps: [] };
 }
 
+/** Newest first; equal open times (or two unknown ones) fall back to the id, so the order is total. */
+export function priorOrder(
+  a: { readonly id: string; readonly openedAtMs: number | null },
+  b: { readonly id: string; readonly openedAtMs: number | null },
+): number {
+  return a.openedAtMs === b.openedAtMs
+    ? codeUnitCompare(a.id, b.id)
+    : (b.openedAtMs ?? 0) - (a.openedAtMs ?? 0);
+}
+
 export function priorLane(
   db: Database,
   input: { readonly service: string; readonly triggerItemId: string; readonly openedAtMs: number },
@@ -88,13 +98,7 @@ export function priorLane(
         LIMIT ?`,
     )
     .all(...params, PRIOR_CAP) as Row[];
-  const incidents = rows
-    .map(view)
-    .sort((a, b) =>
-      a.openedAtMs === b.openedAtMs
-        ? codeUnitCompare(a.id, b.id)
-        : (b.openedAtMs ?? 0) - (a.openedAtMs ?? 0),
-    );
+  const incidents = rows.map(view).sort(priorOrder);
   const gaps: GapNote[] = [
     gap(
       "missing_entity_type",

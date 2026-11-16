@@ -36,7 +36,7 @@ function person(s: OncallShiftView): OnCallPerson {
   };
 }
 
-function personOrder(a: OnCallPerson, b: OnCallPerson): number {
+export function personOrder(a: OnCallPerson, b: OnCallPerson): number {
   return (
     codeUnitCompare(a.scheduleName ?? "", b.scheduleName ?? "") ||
     (a.level ?? 0) - (b.level ?? 0) ||

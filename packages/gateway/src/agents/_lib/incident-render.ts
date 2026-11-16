@@ -101,10 +101,17 @@ function changeLines(c: ChangeLane): string[] {
   return lines;
 }
 
+/** A list the size cap emptied while its true total survived: never say "none" when there were some. */
+function omittedForSize(total: number): string {
+  return `_${String(total)} found; none shown, omitted to keep this record within its size limit._`;
+}
+
 function chatLines(c: ChatLane): string[] {
   if (c.skipped !== null)
     return [`_Skipped: ${c.skipped === "unbound" ? "no bound service" : "no open time"}._`];
-  if (c.messages.length === 0) return ["_No matching message._"];
+  if (c.messages.length === 0) {
+    return c.total > 0 ? [omittedForSize(c.total)] : ["_No matching message._"];
+  }
   const rows = c.messages.map(
     (m) =>
       `- ${hardenedTitleLink(m.title, m.url)} - ${plain(m.service)}, ${utcLabel(m.atMs)} (rule: ${plain(m.rule)})`,
@@ -116,7 +123,9 @@ function chatLines(c: ChatLane): string[] {
 function priorLines(p: PriorLane): string[] {
   if (p.skipped !== null)
     return [`_Skipped: ${p.skipped === "unbound" ? "no bound service" : "no open time"}._`];
-  if (p.incidents.length === 0) return ["_No earlier incident on this service._"];
+  if (p.incidents.length === 0) {
+    return p.total > 0 ? [omittedForSize(p.total)] : ["_No earlier incident on this service._"];
+  }
   const rows = p.incidents.map((i) => {
     const closed =
       i.status === "closed"
@@ -161,7 +170,9 @@ function onCallLines(o: OnCallLane): string[] {
 
 function concurrentLines(c: ConcurrentLane): string[] {
   if (c.skipped !== null) return ["_Skipped: no open time._"];
-  if (c.records.length === 0) return ["_No other open record within 30 minutes._"];
+  if (c.records.length === 0) {
+    return c.total > 0 ? [omittedForSize(c.total)] : ["_No other open record within 30 minutes._"];
+  }
   const rows = c.records.map(
     (r) =>
       `- \`${plain(r.recordId)}\` ${plain(r.source)}${r.severity === null ? "" : ` ${plain(r.severity)}`}, ${r.service === null ? "unbound" : plain(r.service)}, opened ${utcLabel(r.openedAtMs)} (rule: ${r.rule})`,
