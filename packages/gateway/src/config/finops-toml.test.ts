@@ -26,16 +26,23 @@ describe("[finops] config", () => {
   test("an absent section is the defaults: 500 series, 400 days", () => {
     expect(parseNimbusTomlFinops("")).toEqual(DEFAULT_FINOPS_CONFIG);
     expect(parseNimbusTomlFinops("[fleet]\nenabled = true\n")).toEqual(DEFAULT_FINOPS_CONFIG);
-    expect(DEFAULT_FINOPS_CONFIG).toEqual({ maxSeries: 500, retainDays: 400 });
+    expect(DEFAULT_FINOPS_CONFIG).toEqual({
+      maxSeries: 500,
+      retainDays: 400,
+      anomalyRatio: 1.5,
+      anomalyMinAmount: 10,
+    });
     expect(Object.isFrozen(DEFAULT_FINOPS_CONFIG)).toBe(true);
   });
 
   test("parses both keys at their bounds", () => {
     expect(parseNimbusTomlFinops("[finops]\nmax_series = 1\nretain_days = 30\n")).toEqual({
+      ...DEFAULT_FINOPS_CONFIG,
       maxSeries: 1,
       retainDays: 30,
     });
     expect(parseNimbusTomlFinops("[finops]\nmax_series = 5000\nretain_days = 3650\n")).toEqual({
+      ...DEFAULT_FINOPS_CONFIG,
       maxSeries: 5000,
       retainDays: 3650,
     });
@@ -60,7 +67,39 @@ describe("[finops] config", () => {
     const cfg = parseNimbusTomlFinops(
       "[finops]\nmax_series = 7\nretain_days = 1\nother = 3\n[finops.x]\nmax_series = 9\n",
     );
-    expect(cfg).toEqual({ maxSeries: 7, retainDays: 400 });
+    expect(cfg).toEqual({ ...DEFAULT_FINOPS_CONFIG, maxSeries: 7 });
+  });
+
+  test("anomaly_ratio and anomaly_min_amount parse decimals at their bounds", () => {
+    expect(
+      parseNimbusTomlFinops("[finops]\nanomaly_ratio = 2.25\nanomaly_min_amount = 0\n"),
+    ).toEqual({ ...DEFAULT_FINOPS_CONFIG, anomalyRatio: 2.25, anomalyMinAmount: 0 });
+    expect(
+      parseNimbusTomlFinops("[finops]\nanomaly_ratio = 100\nanomaly_min_amount = 12.5\n"),
+    ).toEqual({ ...DEFAULT_FINOPS_CONFIG, anomalyRatio: 100, anomalyMinAmount: 12.5 });
+  });
+
+  test("a bad anomaly threshold falls back to its default and is reported", () => {
+    const seen: string[] = [];
+    const report = (m: string): void => {
+      seen.push(m);
+    };
+    for (const bad of ["1.04", "101", "-1", '"x"', "1e2", "true"]) {
+      const cfg = parseNimbusTomlFinops(
+        ["[finops]", `anomaly_ratio = ${bad}`, ""].join("\n"),
+        report,
+      );
+      expect(cfg.anomalyRatio).toBe(1.5);
+    }
+    for (const bad of ["-1", "1000000001", "abc"]) {
+      const cfg = parseNimbusTomlFinops(
+        ["[finops]", `anomaly_min_amount = ${bad}`, ""].join("\n"),
+        report,
+      );
+      expect(cfg.anomalyMinAmount).toBe(10);
+    }
+    expect(seen).toHaveLength(9);
+    expect(seen[0]).toContain("[finops].anomaly_ratio");
   });
 
   test("the layered loader reads the config dir; an absent file is the defaults", () => {

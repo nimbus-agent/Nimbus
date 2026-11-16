@@ -38,6 +38,7 @@ function runOf(over: Partial<LearningStepRun> = {}): LearningStepRun {
     actionType: TYPE,
     workflowName: "archive-old",
     stepLabel: "archive",
+    ruleEligibleGuard: true,
     trigger: "owner_cli",
     startedAt: T0,
     ...over,
@@ -384,5 +385,35 @@ describe("learnFromStepRun: the streak and the suggestion", () => {
   test("openSuggestion is not reachable from a streak below the threshold", () => {
     const db = fresh();
     expect(openSuggestion(db, runOf(), 1, T0)?.streak).toBe(1);
+  });
+});
+
+describe("a guard that can hold at zero", () => {
+  test("learning is off before any streak is read, written or reset; an eligible step still learns", () => {
+    const db = fresh();
+    for (let i = 1; i <= 5; i += 1) {
+      const run = runOf({ runId: `g-${String(i)}`, ruleEligibleGuard: false });
+      addRow(db, human(), run);
+      expect(learnFromStepRun(db, run, cfg())).toEqual({ kind: "off" });
+    }
+    expect(listSuggestions(db, "open")).toHaveLength(0);
+    expect(db.query("SELECT COUNT(*) AS n FROM standing_streak").get()).toEqual({ n: 0 });
+    const ok = runOf({ runId: "ok-1", ruleEligibleGuard: true });
+    addRow(db, human(), ok);
+    expect(learnFromStepRun(db, ok, cfg()).kind).toBe("learned");
+  });
+
+  test("a provenance guard field does not stop a row from parsing and counting", () => {
+    const db = fresh();
+    const run = runOf({ runId: "pg-1" });
+    addRow(
+      db,
+      {
+        ...human(),
+        prov: { guard: [{ query: 0, op: "gt", value: 0, observed: 2, capped: false }] },
+      },
+      run,
+    );
+    expect(learnFromStepRun(db, run, cfg())).toMatchObject({ kind: "learned", verdict: "counts" });
   });
 });

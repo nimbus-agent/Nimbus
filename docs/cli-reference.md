@@ -1203,6 +1203,28 @@ nimbus oncall handoff --json
 
 **Bounds.** The index holds current and upcoming shifts only, so a shift that already ended cannot be found: run this before it ends or pass `--since`. PagerDuty marks a shift as yours only with a user-level token or `pagerduty.from_email`. State-change history begins at the V94 upgrade. Only PagerDuty incidents and Jira Service Management alerts are read. A window that ends in the past places items by their own open and resolution times; an item that changed afterwards without a provider time may be misplaced. Reply shapes of the providers are not verified against live accounts. Not reachable over LAN, HTTP, MCP or ChatOps; the method is on the desktop allowlist.
 
+### `nimbus cost anomalies`
+
+Which days of cloud spend jumped over their recent baseline, judged from the daily cost series the index already holds (today the Vantage sync). It makes **no provider call**, sends nothing and uses no model; it only reads the local index. Detection only: there is no notification yet.
+
+```bash
+nimbus cost anomalies
+nimbus cost anomalies --days 7
+nimbus cost anomalies --service vantage --json
+```
+
+| Flag | Description |
+|---|---|
+| `--service <id>` | One cost service (`vantage` today). Omit it for every indexed cost service. |
+| `--days <1-30>` | Judge each of the newest N complete UTC days, each against its own baseline (default 1). |
+| `--json` | Print the result object (`status`, `judgedDayMs`, `daysChecked`, `baseline`, `thresholds`, `counts`, `anomalies`, `anomaliesTruncated`, `gaps`) on one line, with the same exit codes. |
+
+**The rule.** A series' day is anomalous when its amount is at least `[finops] anomaly_ratio` times the mean of the 7 UTC days before it **and** exceeds that mean by at least `[finops] anomaly_min_amount` (in the series' own currency). Only complete days count: the last three days of a series are provisional (the vendor may restate them) and are never judged and never in a baseline; the judged day is the newest complete day in the index. A day with no row is not a zero: the baseline is the mean of the days that exist, and with fewer than 5 of the 7 present the series is skipped as "not enough history", never reported as normal. A zero or negative baseline has no ratio, and only the absolute floor decides. A series that reports in more than one currency is skipped.
+
+**Statuses and exit codes.** `anomalies` (exit 0): the anomalous days, largest excess first (at most 100 listed). `ok` (exit 0): at least one series was checked and none is anomalous. `insufficient_history` (exit 1): no series had enough history to be checked, so nothing can be ruled in or out. `no_data` (exit 1): no cost rows are indexed, or every day is still provisional; the gap says which. The text always names the judged day or days, the baseline window, the two thresholds and how many series were skipped and why.
+
+**Bounds.** Amounts are the vendor's, not verified against a live account. History begins when the first sync ran (45 days at most), so a new series needs a week of rows first. The IPC method is `cost.anomalies` (the whole `cost` namespace is LAN-forbidden; it is not on the desktop allowlist). Series names are vendor strings and are stripped of control characters before printing.
+
 ### `nimbus briefing`
 
 Your morning briefing, built from the local index. It makes **no provider call** and **uses no model**: the text is rendered deterministically, and nothing leaves the machine except a local notification.
@@ -1280,6 +1302,30 @@ nimbus incident show PXXXXX --json        # the provider's own id
 **Bounds.** A record is a snapshot at its version's assembly time; the chat lane is a literal phrase match; the change lane covers GitHub pull requests only (a GitLab or Bitbucket repository gets a gap); Monte Carlo, Bigeye and Jira Service Management reply shapes are checked against documentation only; and a deployment is "the last deployment before the alert", timing only, never a proven cause.
 
 ---
+
+### `nimbus statuspage draft`
+
+A static status page generated from the local index, for you to review and publish. It writes ONE local HTML file and does nothing else: no upload, no network, no connector call, no model, no HITL action. Publishing is your act.
+
+```bash
+nimbus statuspage draft                          # writes ./nimbus-status.html
+nimbus statuspage draft --out status/index.html --force
+nimbus statuspage draft --service payments --titles
+nimbus statuspage draft --out - > page.html      # to stdout
+nimbus statuspage draft --json                   # the page model, no HTML
+```
+
+| Flag | Meaning |
+|---|---|
+| `--out <file>` | Output path (default `nimbus-status.html` in the current directory). `-` writes the HTML to stdout. |
+| `--force` | Overwrite an existing file. Without it the command refuses and exits 1. |
+| `--service <id>` | Restrict the page to a configured service (`[metrics.dora.<id>]` / `[ci.service.<id>]`); repeatable. Filters incidents, on-call and the scorecard. |
+| `--title <text>` | The page heading and `<title>` (default `Service status`). |
+| `--titles` | Include incident titles (default: `Incident <short id>` only). E-mail addresses and URLs are removed from a title. |
+| `--links` | Include a link to PagerDuty incidents (default: none; no URL of a source system appears). |
+| `--json` | Print the page model as JSON instead of writing HTML. |
+
+The page lists open PagerDuty incidents and Jira Service Management alerts (short id, status, severity, bound service, opened time), who is on call now, and a 30-day DORA scorecard per configured service, with a footer that says when it was generated, which sources it read, how old each sync is and what is missing. It never contains an e-mail address, an incident body or assignee, or a repository name; an on-call person is shown by display name only. "No open incidents" and "no incident data is indexed" are different statements, and a scorecard cell without data says so instead of printing 0. The file starts with a comment and a visible banner, `Draft generated by Nimbus on <date>. Review before publishing.`; delete the banner element when you publish. The command uses the gateway method `statuspage.model`, which is CLI-only (not callable over the LAN, not in the desktop allowlist).
 
 ### `nimbus oncall pushed`
 
@@ -1649,6 +1695,27 @@ same envelope is served over `GET /v1/preflight/deploy`, so the GitHub Action bl
 
 A first-party GitHub Action wraps `GET /v1/preflight/deploy` for use directly in workflows — see [`packages/github-actions/preflight-query/`](../packages/github-actions/preflight-query/).
 
+**Advisory deploy risk (Phase 17).** After the three checks the command prints a `Deploy risk (advisory)` block, and the JSON envelope (IPC and `GET /v1/preflight/deploy`) gains an OPTIONAL `risk` member: `{ level, why, factors[], advisory: true, fail_at, verdict_escalated }`. `level` is `low`, `elevated`, `high` or `unknown`, the MAXIMUM over the factors the local index could answer; when none could be answered it is `unknown`, never `low`. Each factor is `{ id, level, evidence, known }` and an unanswerable one is `unknown` with `known: false`:
+
+| Factor | What it reads | Scoring |
+|---|---|---|
+| `system_state` | open PagerDuty incidents and JSM alerts bound to the service or a service it `depends_on` (fresh index only), and the latest deployment | open P1 incident on the service: `high`; any other open incident, an incident on a dependency, an open P1 or P2 alert, or a failed latest deployment in the last 24h: `elevated`; sources bound and fresh with none of those: `low`; no bound and fresh source: `unknown` |
+| `change_velocity` | successful deployments in 24h and 7d against the service's own 28 days before the last week (the DORA deployment-frequency reader) | 4 or more in 24h and 4x the baseline: `high`; 2 or more in 24h and 2x, or 6 or more in 7d and 2x the baseline week: `elevated`; otherwise `low`; under 3 baseline deployments, no history, or a CI provider the index cannot judge: `unknown` |
+| `oncall_coverage` | the indexed on-call shifts of the service's bound PagerDuty services (the `oncall.now` reader) | someone on call: `low`; fresh, complete shift data showing nobody: `elevated`; no binding, no shift data, no match, stale data or an incomplete service map: `unknown` (never `uncovered`) |
+| `time_of_week` | the service-local weekday and time | inside a quiet day or window: `elevated`; otherwise `low` |
+
+The block is a heads-up, not a gate: it never changes the verdict or the exit code by default. Two optional config keys in `nimbus.toml` (`[preflight.risk]`, layered like every section; a bad value falls back to its default with a warning that `nimbus config explain` shows):
+
+```toml
+[preflight.risk]
+quiet_days  = ["sat", "sun"]        # whole days flagged
+quiet_hours = ["fri 15:00-24:00"]   # "<day> HH:MM-HH:MM", end after start, no midnight crossing
+tz          = "Europe/Berlin"       # the zone the two keys are read in; absent = the gateway machine's zone
+fail_at     = "high"                # "elevated" | "high"; absent = the risk never changes the verdict
+```
+
+With `fail_at` set, a known level at or above it turns an `ok` verdict into `warn` (`risk.verdict_escalated: true`), so `--mode block` and the GitHub Action then fail it; `unknown` never trips it. Read from the local index only: no network, no model, no connector call.
+
 Read-only; no HITL.
 
 ---
@@ -1792,7 +1859,7 @@ Briefs served over MCP are recorded in the egress ledger (`I29`) — the adapter
 
 ### `nimbus approve`
 
-Standing approval rules (Phase 10 SA3, invariant I55): approve a recurring workflow write ONCE, so it runs without a prompt, and only that write. A rule names one write step of one saved workflow at one content hash. Creating a rule is itself an approval that only you can give: `nimbus approve add` and `resume` refuse `--yes`, the gateway refuses an approval whose source is not a person answering the prompt (a scripted consent file or an old client does not count), the connection must be the owner's CLI on the local socket, and org policy must not have locked `standing_approvals` off.
+Standing approval rules (Phase 10 SA3, invariant I55): approve a recurring workflow write ONCE, so it runs without a prompt, and only that write. A rule names one write step of one saved workflow at one content hash. Creating a rule is itself an approval that only you can give: `nimbus approve add` and `resume` refuse `--yes`, the gateway refuses an approval whose source is not a person answering the prompt (a scripted consent file or an old client does not count), the connection must be the owner's CLI on the local socket, and org policy must not have locked `standing_approvals` off. If the step has a `when` guard (see `nimbus workflow save`), the approval text carries a `Runs only when:` line, and a step whose guard can hold at a count of zero (for example `eq 0`, `lt`, `lte`) is refused: a failed sync looks the same, so that step always asks you.
 
 ```bash
 nimbus approve add --workflow <name> --step <label|number> [--days 1-90] [--max 1-500] [--window "Mon-Fri 06:00-10:00 Europe/Berlin"]
@@ -3103,6 +3170,8 @@ Limits for the FinOps cost data the Vantage sync indexes (`nimbus config explain
 |---|---|---|
 | `[finops] max_series` | `500` | 1 to 5000: how many named series are indexed; the rest of each day is summed into one `__other__` row |
 | `[finops] retain_days` | `400` | 30 to 3650: `cost_allocation` rows older than this are deleted by a daily pass; recommendations are not pruned by age |
+| `[finops] anomaly_ratio` | `1.5` | 1.05 to 100 (a plain decimal): `nimbus cost anomalies` flags a day at least this many times its 7-day baseline |
+| `[finops] anomaly_min_amount` | `10` | 0 to 1000000000 (a plain decimal): ... and only when it also exceeds the baseline by this much, in the series' currency |
 
 The data comes from `vantage.api_token` (set with `nimbus vault set vantage.api_token`; every 6 hours the sync reads 45 days on the first run, then from three days before the last success). `vantage.group_by` is a comma-separated grouping (default `provider,service,account_id`); a `tag:` entry is refused because where Vantage returns a tag value is undocumented. `nimbus connector auth vantage` prints the keys.
 
@@ -5860,6 +5929,23 @@ steps:
 ```
 
 A `write` input is `{ const: <json> }` or `{ from: <an earlier query label>, column: <what it selects> }`; it can never read a `run` step's output. The write runs once per selected id and **asks you for each one**, with the typed preview and the current state of its target. `workflow save` validates both kinds (an unknown key, a wave 4 or mail-send tool, or a bad reference is refused with -32602) and `workflow run` validates them again. A workflow with no `run` step needs no model vendor. A `paramsOverride` for a `write` or `query` step's label is refused. The gateway derives how a run started from the connection's declared client kind (`cli`, `ui`); a `trigger` or `provenance` parameter is refused, and `--dry-run` shows both kinds without running them.
+
+**Conditional steps: the `when` guard.** A `run` or `write` step may carry `when`, a comparison over the **count** of an earlier `query` step (the number of values it selected in this run), so a workflow can act only when there is something to act on:
+
+```yaml
+  - kind: write
+    label: archive-old
+    when: { count: old-read-mail, gt: 0 }   # gt, gte, lt, lte, eq or ne, against an integer
+    tool: gmail_thread_archive
+    input:
+      threadId: { from: old-read-mail, column: metadata.threadId }
+  - kind: run
+    label: nothing-to-do
+    when: { count: old-read-mail, eq: 0 }   # a list of up to 4 comparisons means ALL must hold
+    run: "Say in one line that the inbox has no old read mail."
+```
+
+`count` names an earlier `query` step (never a `run` or `write` step, so the model can never decide which write runs); a `query` step is never guarded. The operand must be an integer from 0 to one below that query's `limit`, and a comparison that is always true (`gte 0`) or never true (`lt 0`) is refused; equivalent forms (`ne 0`, `gt 0`) are stored as written and hash differently. A row that carries `when` is parsed strictly (a guarded `run` row with no prompt, an unknown key or a bad `when` refuses the whole workflow). A workflow that uses `when` has at most 100 steps and at most 50 guarded steps. A step whose guard is false is recorded `not_taken` (with the observed counts), asks nothing, calls no model and dispatches nothing; the run goes on and ends `done`, and the run's audit row carries `stepsNotTaken`. When a query hit its `limit` the count is only a lower bound, so on such a query only `gt`, `gte` and `ne 0` can hold. `--dry-run` from the owner's CLI or desktop evaluates each guard against the index as of now (`would run` / `would not run`), and from any other client shows the guard text without counts. **A standing rule may cover a guarded write only when every comparison needs presence**, that is, is false at a count of zero (`gt`, `gte`, `eq` with a positive operand, `ne 0`): a failed sync, a lapsed credential and an empty index all read as zero, so a guard such as `eq 0` could otherwise trigger an unattended write because a connector broke. A step with such a guard always asks (an unattended run stops and waits), and `nimbus approve add` refuses it with that reason; the rule's approval text names the condition on a `Runs only when:` line. Resuming a blocked run re-evaluates the blocked step's guard on fresh counts: if it no longer holds the resumed run stops there with the status `condition_lapsed` and runs nothing after it; run the workflow again to evaluate every guard fresh.
 
 ---
 

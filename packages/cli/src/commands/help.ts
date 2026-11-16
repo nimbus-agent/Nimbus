@@ -60,6 +60,7 @@ AGENTS — read-only briefs over the local index
   nimbus oncall handoff [--since ..]  Shift handoff brief: events, what is still open, watch-list (local index, no approval)
   nimbus briefing [now|list|status] [--json]  Your morning briefing, built from the local index (no model, nothing leaves the machine)
   nimbus incident list|show <id> [--json]  Incident records the gateway assembled from the local index (no model, nothing leaves the machine)
+  nimbus statuspage draft [--out <file>]   A static status page (incidents, on call, DORA) written locally for you to review and publish
 
 AGENTS THAT NEED PAIRED PEERS — see TEAM below; these query the federation mesh
   nimbus conflicts <file>            Teammates with an open PR, ticket or branch on the same file
@@ -116,6 +117,8 @@ PRIVACY & AUDIT
   nimbus eval --installed [--threshold <n>] [--json]
                               Evaluate every enabled extension (one approval); compare with the registry's score
   nimbus security scan        Local security scan (secrets, vulnerable deps, risky IaC)
+  nimbus cost anomalies [--service <id>] [--days <n>] [--json]
+                              Days whose cloud spend jumped over the 7-day baseline, from the local index
   nimbus data export|import|delete   Encrypted bundle export/import; per-service deletion
   nimbus vault set|get|delete|list   Secrets (OS keyring only — never config, never logs)
   nimbus telemetry show | disable

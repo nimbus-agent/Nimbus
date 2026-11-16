@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DEFAULT_PREFLIGHT_RISK_CONFIG } from "../../../src/config/preflight-risk-toml.ts";
 import { CURRENT_SCHEMA_VERSION } from "../../../src/index/local-index.ts";
 import { dispatchPreflightRpc, PreflightRpcError } from "../../../src/ipc/preflight-rpc.ts";
 import {
@@ -28,6 +29,46 @@ describe("preflight-rpc: deploy.preflight", () => {
     } catch {
       /* non-fatal */
     }
+  });
+
+  it("adds the advisory risk block, using [preflight.risk] when the context supplies it", async () => {
+    const { config } = await seedPaymentServicePreflightFixture(db);
+    const ctx = {
+      db,
+      loadConfig: () => new Map([[config.serviceId, config]]),
+      nowMs: () => PREFLIGHT_FIXTURE_NOW_MS,
+    };
+    const base = await dispatchPreflightRpc(
+      "deploy.preflight",
+      { service: "payment-service", target_ref: "main" },
+      ctx,
+    );
+    if (base.kind !== "hit") throw new Error("expected hit");
+    expect(base.value.risk?.advisory).toBe(true);
+    expect(base.value.risk?.fail_at).toBeNull();
+    const failing = await dispatchPreflightRpc(
+      "deploy.preflight",
+      { service: "payment-service", target_ref: "main" },
+      {
+        ...ctx,
+        loadRiskConfig: () => ({ ...DEFAULT_PREFLIGHT_RISK_CONFIG, failAt: "elevated" as const }),
+      },
+    );
+    if (failing.kind !== "hit") throw new Error("expected hit");
+    // The fixture's checks already say warn, so the opt-in never claims to have escalated it.
+    expect(failing.value.verdict).toBe(base.value.verdict);
+    expect(failing.value.risk?.fail_at).toBe("elevated");
+    expect(failing.value.risk?.verdict_escalated).toBe(false);
+  });
+
+  it("an unknown service has no risk block", async () => {
+    const out = await dispatchPreflightRpc(
+      "deploy.preflight",
+      { service: "ghost", target_ref: "main" },
+      { db, loadConfig: () => new Map(), nowMs: () => PREFLIGHT_FIXTURE_NOW_MS },
+    );
+    if (out.kind !== "hit") throw new Error("expected hit");
+    expect("risk" in out.value).toBe(false);
   });
 
   it("returns a configured envelope for a fixture-seeded service", async () => {

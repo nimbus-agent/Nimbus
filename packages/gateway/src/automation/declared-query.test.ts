@@ -82,7 +82,7 @@ describe("each predicate", () => {
         { olderThanDays: 60 },
       ],
     });
-    expect(r).toEqual({ values: ["t-old-read"], dropped: 0 });
+    expect(r).toEqual({ values: ["t-old-read"], dropped: 0, rows: 1 });
   });
 
   test("service and type narrow the rows", () => {
@@ -172,7 +172,7 @@ describe("select, distinct, the drop count and the limit", () => {
   });
 
   test("an empty index selects nothing", () => {
-    expect(run()).toEqual({ values: [], dropped: 0 });
+    expect(run()).toEqual({ values: [], dropped: 0, rows: 0 });
   });
 
   test("the default clock is the real one", () => {

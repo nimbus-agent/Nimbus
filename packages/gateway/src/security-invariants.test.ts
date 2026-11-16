@@ -15535,6 +15535,7 @@ describe("I55 SA5 — approval learning only suggests: it never creates, widens 
           actionType: "gmail.thread.archive",
           workflowName: "w",
           stepLabel: "s",
+          ruleEligibleGuard: true,
           trigger: "owner_cli" as const,
           startedAt: 1,
         };
@@ -16048,5 +16049,52 @@ describe("I57 (a) - assembling an incident record is inert: it reads the local i
       ),
     );
     expect(writers.map((f) => f.rel)).toEqual(["incident/incident-store.ts"]);
+  });
+});
+
+describe("I55 — a workflow `when` guard only removes runs and can never widen a rule (workflow conditionals)", () => {
+  // The behavioural proofs (a not-taken rule-covered write dispatches, asks and claims nothing; an
+  // edited guard changes the hash; every absence-satisfiable guard is refused at rule creation,
+  // resume and learning; a resume whose guard lapsed stops) are in
+  // `automation/workflow-runner-guards.test.ts` and `ipc/standing-rpc-guard.test.ts`, through the
+  // real runner, executor, ledger and store. These are the structural pins.
+  test("the approval check never reads a guard and the guard module imports only types and the sanitiser", async () => {
+    const step = await read("packages/gateway/src/engine/standing-rule-step.ts");
+    expect(/\.\s*when\b|\bwhen\s*[:,}]|workflow-guard|\bguardRequiresPresence\b/.test(step)).toBe(
+      false,
+    );
+    const guard = await read("packages/gateway/src/automation/workflow-guard.ts");
+    const specs = [...guard.matchAll(/from\s+"([^"]+)"/g)].map((m) => m[1]);
+    expect(specs.sort()).toEqual(
+      ["../connectors/connector-writes/sanitise.ts", "./workflow-steps.ts"].sort(),
+    );
+  });
+
+  test("rule creation, rule resume and the learner all consult the one presence definition", async () => {
+    const derive = await read("packages/gateway/src/standing/standing-rule-derive.ts");
+    expect(derive).toContain("guardRequiresPresence(step.when)");
+    const rpc = await read("packages/gateway/src/ipc/standing-rpc.ts");
+    expect(rpc).toContain("guardRequiresPresence(step.when)");
+    const runner = await read("packages/gateway/src/automation/workflow-runner.ts");
+    expect(runner).toContain("ruleEligibleGuard: guardRequiresPresence(step.when)");
+    const learning = await read("packages/gateway/src/standing/approval-learning.ts");
+    expect(learning).toContain('if (!run.ruleEligibleGuard) return { kind: "off" };');
+  });
+
+  test("a guard is decided before an action exists: the runner evaluates it ahead of the write step and the model step", async () => {
+    const runner = await read("packages/gateway/src/automation/workflow-runner.ts");
+    const at = (needle: string): number => runner.indexOf(needle);
+    expect(at("decideGuard(p, runId, stepIndex, step, state)")).toBeGreaterThan(-1);
+    expect(at("decideGuard(p, runId, stepIndex, step, state)")).toBeLessThan(
+      at("executeRunStep(p, runId, stepIndex, step, state.outputs)"),
+    );
+    expect(at("decideGuard(p, runId, stepIndex, step, state)")).toBeLessThan(
+      at("await executeWriteStep(p, runId, stepIndex, step, state, decided.evaluation)"),
+    );
+  });
+
+  test("a guarded write step is built only from a guard that held (fail closed in depth)", async () => {
+    const ws = await read("packages/gateway/src/automation/workflow-write-step.ts");
+    expect(ws).toContain("run.guard?.holds !== true");
   });
 });

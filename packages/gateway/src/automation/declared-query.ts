@@ -28,6 +28,12 @@ export type DeclaredQueryResult = {
   readonly values: readonly string[];
   /** Rows whose selected value was absent, not a string or not an id. */
   readonly dropped: number;
+  /**
+   * How many rows the SELECT returned (at most `limit`). `rows >= limit` means the query hit its
+   * limit: `values.length` is then only a lower bound of the real count (a `distinct` or
+   * id-dropping query can read `limit` rows and show fewer values).
+   */
+  readonly rows: number;
 };
 
 export type CompiledQuery = { readonly sql: string; readonly params: readonly (string | number)[] };
@@ -122,5 +128,5 @@ export function runDeclaredQuery(
     }
     values.push(v);
   }
-  return { values, dropped };
+  return { values, dropped, rows: rows.length };
 }

@@ -26,6 +26,19 @@ export type WorkflowProvenance = {
   readonly fieldSources: Readonly<
     Record<string, "constant" | { readonly query: number; readonly column: string }>
   >;
+  /**
+   * Display and history only (never read by the standing-rule check or the learner): the `when`
+   * comparisons that held for a guarded step, at most four, each the flat index of the query step,
+   * the operator, the operand and the count observed. Small numbers and fixed words, so the audit
+   * row's size cap bounds it.
+   */
+  readonly guard?: readonly {
+    readonly query: number;
+    readonly op: string;
+    readonly value: number;
+    readonly observed: number;
+    readonly capped: boolean;
+  }[];
 };
 
 export type PlannedAction = {
