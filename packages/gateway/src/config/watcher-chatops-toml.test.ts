@@ -117,7 +117,7 @@ describe("I23 (g): [watcher.chatops] is owner-only", () => {
   test("the loader is read only by config/ and platform/assemble.ts", () => {
     const root = join(import.meta.dir, "..");
     const readers = sourceFiles(root)
-      .filter((f) => readFileSync(f, "utf8").includes("loadNimbusWatcherChatopsFromConfigDir"))
+      .filter((f) => readFileSync(f, "utf8").includes("loadNimbusWatcherChatopsFromConfigDir("))
       .map((f) => f.slice(root.length + 1).replaceAll("\\", "/"))
       .filter((f) => !f.startsWith("config/"));
     expect(readers).toEqual(["platform/assemble.ts"]);

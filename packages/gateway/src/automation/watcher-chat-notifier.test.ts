@@ -709,6 +709,58 @@ describe("pre-settle hold and delivery state (the scenario table)", () => {
     expect(r.warns.filter((w) => w.msg === BREAKER_REASON)).toHaveLength(1);
   });
 
+  describe("a queued flush notice is accounted at its own delivery start", () => {
+    const tick = (): Promise<void> => new Promise((res) => setTimeout(res, 0));
+    function slowFirst(): {
+      r: Rig;
+      pending: Array<(n: number) => void>;
+    } {
+      const pending: Array<(n: number) => void> = [];
+      const r = rig({
+        poster: () =>
+          new Promise<number>((res) => {
+            pending.push(res);
+          }),
+      });
+      r.setNow(2 * MIN);
+      for (const id of [UUID_A, UUID_B]) r.n.notify(notice(id, 0));
+      r.n.settle(async () => 1);
+      return { r, pending };
+    }
+
+    test("the second notice records its own start time, so its interval counts from there", async () => {
+      const { r, pending } = slowFirst();
+      await tick();
+      expect(pending).toHaveLength(1); // the first is posting; the second waits behind it
+      r.setNow(6 * MIN); // the first post took four minutes
+      pending[0]?.(1);
+      await tick();
+      expect(pending).toHaveLength(2);
+      r.setNow(6 * MIN + 30 * SEC);
+      pending[1]?.(1);
+      await r.n.whenIdle();
+      const s = r.n.snapshot();
+      expect(s.lastPostedAt[UUID_A]).toBe(2 * MIN);
+      expect(s.lastPostedAt[UUID_B]).toBe(6 * MIN);
+      expect(s.hourly).toBe(2);
+    });
+
+    test("a notice that went stale while it waited is dropped: no post, no slot, counted", async () => {
+      const { r, pending } = slowFirst();
+      await tick();
+      r.setNow(2 * MIN + PRE_SETTLE_MAX_AGE_MS + 1); // one millisecond past the limit
+      pending[0]?.(1);
+      await r.n.whenIdle();
+      expect(pending).toHaveLength(1);
+      expect(r.calls).toHaveLength(1);
+      const s = r.n.snapshot();
+      expect(s.suppressed[UUID_B]).toBe(1);
+      expect(s.hourly).toBe(1);
+      expect(s.inflight).toEqual([]);
+      expect(s.lastPostedAt[UUID_B]).toBeUndefined();
+    });
+  });
+
   test("S6: a live fire after a full hourly cap is suppressed", async () => {
     const ids = Array.from({ length: 60 }, (_, i) => `w${String(i + 1)}`);
     const r = rig({ config: { maxPerHour: 10 } });

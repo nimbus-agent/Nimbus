@@ -659,6 +659,26 @@ describe("buildChatopsBoot — full production graph", () => {
     expect(listEgress(db, { limit: 10 })).toHaveLength(0);
   });
 
+  test("I23 (f): a Slack-disabled ChatOps (Teams only) posts no namespace watcher notice and writes no egress row", async () => {
+    const h = await buildHarness({
+      cfg: {
+        enabled: true,
+        slackEnabled: false,
+        teamsEnabled: true,
+        botVaultEntry: "chatops-bot",
+        identityCacheTtlSeconds: 900,
+        teamsBotAppId: "app",
+      },
+      policyGate: {
+        enforced: () =>
+          enforcedWith({ C0: { namespace: "project:pay", unmapped: "refuse", notify: ["C_ONE"] } }),
+      },
+    });
+    expect(await h.boot.postWatcherNotice("project:pay", "x")).toBe(0);
+    expect(h.posts).toHaveLength(0);
+    expect(listEgress(db, { limit: 10 })).toHaveLength(0);
+  });
+
   describe("I23 amendment: the owner's pinned watcher channel", () => {
     const PIN = "C0123ABCD";
     const pinned = { watcherPinnedChannel: PIN, orgPolicyActive: () => false } as const;

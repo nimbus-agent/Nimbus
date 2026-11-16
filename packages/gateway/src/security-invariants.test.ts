@@ -16120,12 +16120,43 @@ describe("I55 — a workflow `when` guard only removes runs and can never widen 
   });
 });
 
+/** Every module specifier of whole import/export-from declarations (multiline too) and dynamic imports. */
+function moduleSpecifiers(src: string): string[] {
+  const found: { at: number; spec: string }[] = [];
+  const decl = /(?:^|[;\n])\s*(?:import|export)\b[^;"']*?["']([^"']+)["']/g;
+  for (const m of src.matchAll(decl)) found.push({ at: m.index, spec: m[1] ?? "" });
+  for (const m of src.matchAll(/\bimport\s*\(\s*["']([^"']+)["']/g)) {
+    found.push({ at: m.index, spec: m[1] ?? "" });
+  }
+  return found.sort((a, b) => a.at - b.at).map((f) => f.spec);
+}
+
 describe("I23 (d)-(g) — the ChatOps watcher notice has a construction-bound destination and no item text", () => {
+  test("(d) the specifier check sees a multiline import, a side-effect import, a re-export and a dynamic import", () => {
+    const fixture = [
+      "import {",
+      "  a,",
+      "  b,",
+      '} from "../chatops/reply-dispatcher.ts";',
+      'import "../chatops/side-effect.ts";',
+      'export * from "../chatops/reexport.ts";',
+      'const m = await import("../chatops/dynamic.ts");',
+      'import { ok } from "./fine.ts";',
+    ].join("\n");
+    expect(moduleSpecifiers(fixture)).toEqual([
+      "../chatops/reply-dispatcher.ts",
+      "../chatops/side-effect.ts",
+      "../chatops/reexport.ts",
+      "../chatops/dynamic.ts",
+      "./fine.ts",
+    ]);
+  });
+
   test("(d) the notifier module imports nothing from chatops/ and names no post tool or the poster handle", async () => {
     const src = await read("packages/gateway/src/automation/watcher-chat-notifier.ts");
-    const imports = src.split("\n").filter((l) => l.startsWith("import "));
-    expect(imports.length).toBeGreaterThan(0);
-    for (const line of imports) expect(line).not.toContain("chatops/");
+    const specifiers = moduleSpecifiers(stripComments(src));
+    expect(specifiers.length).toBeGreaterThan(0);
+    for (const spec of specifiers) expect(spec).not.toContain("chatops/");
     expect(stripComments(src)).not.toMatch(
       /\b(?:slack_chat_post|teams_chat_post|slack_views_open|postWatcherNotice)\b/,
     );
@@ -16304,7 +16335,7 @@ describe("I29 — the ChatOps watcher notice is ledgered before the post and fai
       /watcherNoticeDispatcher = new ReplyDispatcher\(\{\s*post: posts\.watcherNotice,/,
     );
     expect(src).toMatch(
-      /postWatcherNotice: \(namespace, text\) =>\s*watcherNoticeDispatcher\.send\(/,
+      /postWatcherNotice: \(namespace, text\) =>\s*cfg\.slackEnabled\s*\?\s*watcherNoticeDispatcher\.send\(/,
     );
   });
 

@@ -121,6 +121,8 @@ type Reservation = {
   readonly earlier: number;
   readonly delayed: boolean;
   readonly t: number;
+  /** When the newest fire this notice stands for was held; only a flush entry has one. */
+  readonly heldAt: number | undefined;
 };
 
 function isPromise(value: unknown): value is Promise<unknown> {
@@ -263,7 +265,7 @@ class WatcherChatNotifierImpl implements WatcherChatNotifier {
         continue;
       }
       // 4c. Reserve; this entry's own folded fires are reported in THIS notice.
-      toPost.push(this.reserve(e.notice, now, true, e.fires - 1));
+      toPost.push(this.reserve(e.notice, now, true, e.fires - 1, e.lastHeldAt));
     }
     return { toPost, stale, rateLimited };
   }
@@ -277,17 +279,40 @@ class WatcherChatNotifierImpl implements WatcherChatNotifier {
         this.addSuppressed(r.notice.watcherId, r.earlier + 1);
         continue;
       }
-      await this.deliver(r);
+      // Each queued notice starts its own delivery now, so its interval, hourly and failure
+      // accounting uses THIS time, not the settlement time, and it must still be fresh.
+      const startedAt = this.clock();
+      if (r.heldAt !== undefined && startedAt - r.heldAt > PRE_SETTLE_MAX_AGE_MS) {
+        this.rollBack(r);
+        this.addSuppressed(r.notice.watcherId, r.earlier + 1);
+        continue;
+      }
+      await this.deliver(this.restamp(r, startedAt));
     }
   }
 
-  private reserve(notice: WatcherNotice, t: number, delayed: boolean, folded: number): Reservation {
+  /** Moves a reservation's hourly slot to its real delivery-start time. */
+  private restamp(r: Reservation, t: number): Reservation {
+    if (t === r.t) return r;
+    const i = this.hourly.indexOf(r.t);
+    if (i >= 0) this.hourly.splice(i, 1);
+    this.hourly.push(t);
+    return { ...r, t };
+  }
+
+  private reserve(
+    notice: WatcherNotice,
+    t: number,
+    delayed: boolean,
+    folded: number,
+    heldAt?: number,
+  ): Reservation {
     const id = notice.watcherId;
     this.inflight.add(id);
     this.hourly.push(t);
     const earlier = folded + (this.suppressed.get(id) ?? 0);
     this.suppressed.delete(id);
-    return { notice, earlier, delayed, t };
+    return { notice, earlier, delayed, t, heldAt };
   }
 
   /** Never rejects: every failure is contained and counted. */

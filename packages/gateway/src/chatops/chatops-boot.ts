@@ -805,8 +805,11 @@ export async function buildChatopsBoot(deps: ChatopsBootDeps): Promise<ChatopsBo
     },
     postPushedBrief: (namespace, text) =>
       pushedBriefDispatcher.send({ kind: "namespaceNotify", namespace }, text),
+    // The dispatcher posts as slack, so a Teams-only ChatOps posts and ledgers nothing here.
     postWatcherNotice: (namespace, text) =>
-      watcherNoticeDispatcher.send({ kind: "namespaceNotify", namespace }, text),
+      cfg.slackEnabled
+        ? watcherNoticeDispatcher.send({ kind: "namespaceNotify", namespace }, text)
+        : Promise.resolve(0),
     postWatcherNoticePinned: (text) =>
       watcherNoticeDispatcher.send({ kind: "watcherPinned" }, text),
     requestOwnerApproval: (prompt, details) => consent.requestApproval(prompt, details),
