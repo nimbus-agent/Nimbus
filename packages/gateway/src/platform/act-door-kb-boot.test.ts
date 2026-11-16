@@ -3,12 +3,18 @@
 // `platform.tribalKbConfig` (pinned in security-invariants.test.ts, I28 block); this proves that
 // composition (the real loader, the real `tribalKbConfigOf`, the door's refusal) refuses.
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { loadNimbusTribalFromConfigDir } from "../config/nimbus-toml.ts";
-import { KNOWLEDGE_BASE_REFUSAL } from "../connectors/connector-writes/model-write-refusals.ts";
+import {
+  loadNimbusTribalFromConfigDir,
+  nimbusTribalConfigUnreadable,
+} from "../config/nimbus-toml.ts";
+import {
+  KNOWLEDGE_BASE_REFUSAL,
+  KNOWLEDGE_BASE_UNREADABLE_REFUSAL,
+} from "../connectors/connector-writes/model-write-refusals.ts";
 import { createActionDestinationRefusal } from "../ipc/approved-door.test-helpers.ts";
 import { tribalKbConfigOf } from "./assemble.ts";
 
@@ -17,14 +23,18 @@ afterEach(() => {
   for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
 });
 
-function bootRefusal(toml: string | undefined) {
+function bootRefusal(toml: string | undefined, unreadableLayer = false) {
   const dir = mkdtempSync(join(tmpdir(), "nimbus-act-door-kb-"));
   dirs.push(dir);
-  if (toml !== undefined) writeFileSync(join(dir, "nimbus.toml"), toml, "utf8");
+  // A config path that exists but cannot be read as a file (a directory) is an UNREADABLE layer.
+  if (unreadableLayer) mkdirSync(join(dir, "nimbus.toml"));
+  else if (toml !== undefined) writeFileSync(join(dir, "nimbus.toml"), toml, "utf8");
   const tribalCfg = loadNimbusTribalFromConfigDir(dir);
+  const unreadable = nimbusTribalConfigUnreadable(dir);
+  expect(unreadable).toBe(unreadableLayer);
   return createActionDestinationRefusal(
     () => undefined,
-    () => tribalKbConfigOf(tribalCfg),
+    () => tribalKbConfigOf(tribalCfg, unreadable),
   );
 }
 
@@ -44,6 +54,21 @@ describe("a KB configured at boot reaches the act door (B3, review fix 2)", () =
       }),
     ).toBe(KNOWLEDGE_BASE_REFUSAL);
     expect(refusal("notion.page.update", { pageId: "ffff", propertiesJson: "{}" })).toBeUndefined();
+  });
+
+  test("an UNREADABLE config layer is not an absent KB: every KB-capable page write is refused", () => {
+    const refusal = bootRefusal(undefined, true);
+    expect(refusal("notion.page.update", { pageId: "ffff", propertiesJson: "{}" })).toBe(
+      KNOWLEDGE_BASE_UNREADABLE_REFUSAL,
+    );
+    expect(
+      refusal("confluence.page.update", {
+        pageId: "9",
+        versionNumber: 1,
+        title: "t",
+        storageHtml: "x",
+      }),
+    ).toBe(KNOWLEDGE_BASE_UNREADABLE_REFUSAL);
   });
 
   test("with no [tribal] KB the same proposals are not refused", () => {

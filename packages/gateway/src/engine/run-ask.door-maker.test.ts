@@ -5,7 +5,10 @@
  * outside origin only) or the KB-child guards (a KB accessor that throws refuses a KB-capable row).
  */
 import { describe, expect, test } from "bun:test";
-import { KNOWLEDGE_BASE_CHILD_REFUSAL } from "../connectors/connector-writes/model-write-refusals.ts";
+import {
+  KNOWLEDGE_BASE_CHILD_REFUSAL,
+  type TribalKbConfig,
+} from "../connectors/connector-writes/model-write-refusals.ts";
 import { NULL_EGRESS_SINK } from "../egress/egress-ledger.ts";
 import { ConsentCoordinatorImpl } from "../ipc/consent.ts";
 import type { JsonRpcNotification } from "../ipc/jsonrpc.ts";
@@ -58,7 +61,7 @@ interface Fixture {
 
 type Door = "model" | "agent";
 
-function fixture(door: Door, kb: () => undefined = () => undefined): Fixture {
+function fixture(door: Door, kb: () => TribalKbConfig | undefined = () => undefined): Fixture {
   const prompts: string[] = [];
   const dispatched: PlannedAction[] = [];
   const coordinator: ConsentCoordinatorImpl = new ConsentCoordinatorImpl(
@@ -148,6 +151,16 @@ describe("the two doors are one maker", () => {
         f.dispatched.map((a) => a.type),
         door,
       ).toEqual(["notion.before.read"]);
+    }
+  });
+
+  test("an UNREADABLE [tribal] config refuses a KB-capable page update before any prompt, on both doors; an absent one does not", async () => {
+    for (const door of ["model", "agent"] as const) {
+      const f = fixture(door, () => ({ unreadable: true }));
+      const out = await f.executor.execute(withOrigin(door, PAGE_UPDATE));
+      expect(out, door).toEqual({ status: "rejected", reason: KNOWLEDGE_BASE_CHILD_REFUSAL });
+      expect(f.prompts, door).toEqual([]);
+      expect(f.dispatched.some((a) => a.type === "notion.page.update")).toBe(false);
     }
   });
 

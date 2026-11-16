@@ -53,6 +53,9 @@ export const CHATOPS_CHANNEL_REFUSAL =
   "the model cannot post to a channel Nimbus ChatOps listens on";
 export const KNOWLEDGE_BASE_REFUSAL =
   "the model cannot write to the Nimbus knowledge base; use the capture flow";
+/** The refusal when the `[tribal]` configuration cannot be read, so the KB cannot be told apart. */
+export const KNOWLEDGE_BASE_UNREADABLE_REFUSAL =
+  "the Nimbus knowledge-base configuration could not be read, so this page write is refused";
 /**
  * OR-B3-3 (R11): an update or append to a page whose parent is the KB destination. The model door
  * enforces it with the four page readers' KB-child guard (`knowledge.ts`), from the page's
@@ -1001,6 +1004,10 @@ function knowledgeBaseRefusal(
   kb: TribalKbConfig | undefined,
 ): string | undefined {
   if (kb === undefined) return undefined;
+  // An unreadable `[tribal]` section is not an absent one: refuse every KB-capable row.
+  if (kb.unreadable === true) {
+    return isKnowledgeBaseCapableRow(toolId) ? KNOWLEDGE_BASE_UNREADABLE_REFUSAL : undefined;
+  }
   if (refusesNotion(toolId, input, kb) || refusesConfluence(toolId, input, kb)) {
     return KNOWLEDGE_BASE_REFUSAL;
   }

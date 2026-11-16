@@ -4596,7 +4596,7 @@ describe("I28 — MCP content enters only through the capture gate, in a fixed o
     expect(assemble).toMatch(
       /enforcedPolicy: \(\) => policyGate\.enforced\(\),\s*listServerTools:/,
     );
-    expect(assemble).toMatch(/tribalKbConfig: \(\) => tribalKbConfigOf\(tribalCfg\),/);
+    expect(assemble).toMatch(/tribalKbConfig: \(\) => tribalKbConfigOf\(tribalCfg, tribalUnreadable\),/);
     const load = assemble.indexOf(
       "const tribalCfg = loadNimbusTribalFromConfigDir(paths.configDir);",
     );

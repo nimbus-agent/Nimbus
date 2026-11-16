@@ -13,6 +13,7 @@ import {
   isChatopsDestinationRow,
   isKnowledgeBaseCapableRow,
   KNOWLEDGE_BASE_REFUSAL,
+  KNOWLEDGE_BASE_UNREADABLE_REFUSAL,
   LINEAR_ASSIGNEE_REFUSAL,
   messagingDestinationRefusal,
   modelWriteRefusal,
@@ -206,6 +207,26 @@ const kb = (
 const NOTION_ID_CANONICAL = "1a2b3c4d5e6f7a8b9c0d112233445566";
 
 describe("F4: the knowledge base", () => {
+  test("an UNREADABLE [tribal] config refuses every KB-capable row, and only those; an absent one refuses none", () => {
+    const unreadable = { unreadable: true } as const;
+    for (const [tool, input] of [
+      ["notion_page_update", { pageId: "ffff" }],
+      ["notion_page_create", { parentPageId: "ffff" }],
+      ["notion_block_append", { parentBlockId: "ffff" }],
+      ["notion_comment_create", { pageId: "ffff" }],
+      ["confluence_page_update", { pageId: "99" }],
+      ["confluence_page_append", { pageId: "99" }],
+      ["confluence_page_create", { parentPageId: "99" }],
+    ] as const) {
+      expect(kb(tool, input, unreadable), tool).toBe(KNOWLEDGE_BASE_UNREADABLE_REFUSAL);
+      expect(
+        modelWriteRefusal(tool, withCleanBody(tool, input), { chatops: NONE, kb: undefined }),
+        tool,
+      ).toBeUndefined();
+    }
+    expect(kb("jira_comment_add", { issueKey: "N-1" }, unreadable)).toBeUndefined();
+  });
+
   test("every Notion KB-capable key naming the KB database is refused, in any spelling", () => {
     expect(kb("notion_page_create", { parentPageId: NOTION_ID_CANONICAL })).toBe(
       KNOWLEDGE_BASE_REFUSAL,

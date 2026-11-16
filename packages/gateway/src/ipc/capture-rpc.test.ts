@@ -1790,7 +1790,7 @@ describe("B3 act door: the KB-target and KB-child refusals at submit and at acce
     expect(c.gate.store.countPendingActions(1_000)).toBe(0);
   });
 
-  test("with a KB configured a page update outside it is queued: the executor's before-state guard, not the door, reads the page's parent (AD3b)", async () => {
+  test("with a KB configured the door itself does not read a page's parent: a page update outside the KB is queued (the executor's before-state guard decides at dispatch, proven in capture-rpc.agent-origin.test.ts)", async () => {
     const input = { pageId: "ffffffffffffffffffffffffffffffff", propertiesJson: "{}" };
     kbAccessor = () => ({ notion: KB.notion });
     expect(await outcome(submit(actCtx([]), "notion.page.update", input))).toBe("queued");
@@ -1799,6 +1799,20 @@ describe("B3 act door: the KB-target and KB-child refusals at submit and at acce
     );
     kbAccessor = () => undefined;
     expect(await outcome(submit(actCtx([]), "notion.page.update", input))).toBe("queued");
+  });
+
+  test("an UNREADABLE [tribal] config refuses every KB-capable proposal at submit, unlike an absent one", async () => {
+    kbAccessor = () => ({ unreadable: true });
+    const c = actCtx([]);
+    expect(
+      await outcome(submit(c, "notion.page.update", { pageId: "ffff", propertiesJson: "{}" })),
+    ).toEqual(REFUSED);
+    expect(await outcome(submit(c, "confluence.page.update", UPDATE_IN_ENG))).toEqual(REFUSED);
+    expect(c.gate.store.countPendingActions(1_000)).toBe(0);
+    kbAccessor = () => undefined;
+    expect(
+      await outcome(submit(c, "notion.page.update", { pageId: "ffff", propertiesJson: "{}" })),
+    ).toBe("queued");
   });
 
   test("a throwing KB accessor refuses every proposal (fail closed, as on the model door)", async () => {

@@ -308,6 +308,24 @@ describe("the act door now reads the target's current state (the model door's ru
     expect(h.dispatched.some((a) => a.type === "notion.page.update")).toBe(false);
   });
 
+  test("an UNREADABLE [tribal] config refuses a page update at dispatch, before any prompt, on this door", async () => {
+    const h = harness({
+      kb: () => ({ unreadable: true }),
+      reply: (a) =>
+        isBeforeReadActionType(a.type)
+          ? { page: { parent: { type: "page_id", page_id: "p" } }, blockChildren: { results: [] } }
+          : { url: "https://x" },
+    });
+    const out = await h.act.execute(
+      "notion.page.update",
+      { pageId: "ffffffffffffffffffffffffffffffff", propertiesJson: "{}" },
+      PROV,
+    );
+    expect(out.status).toBe("rejected");
+    expect(h.prompts).toEqual([]);
+    expect(h.dispatched.some((a) => a.type === "notion.page.update")).toBe(false);
+  });
+
   test("a declined prompt dispatches only the read", async () => {
     const h = harness({
       approve: false,

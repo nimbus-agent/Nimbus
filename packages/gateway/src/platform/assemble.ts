@@ -115,6 +115,7 @@ import {
   type NimbusLlmRemoteVendor,
   type NimbusLlmToml,
   type NimbusTribalToml,
+  nimbusTribalConfigUnreadable,
   type TeamCredentialConnector,
 } from "../config/nimbus-toml.ts";
 import { loadNimbusWorkdayFromConfigDir } from "../config/nimbus-toml-workday.ts";
@@ -2485,7 +2486,13 @@ function wireUpdaterIntoIpc(
  * (Phase 9.7 B, F4), from the loaded config whether or not `[tribal].enabled`: a configured KB is
  * the capture gate's destination either way. `undefined` when neither is configured.
  */
-export function tribalKbConfigOf(cfg: NimbusTribalToml): TribalKbConfig | undefined {
+export function tribalKbConfigOf(
+  cfg: NimbusTribalToml,
+  unreadable = false,
+): TribalKbConfig | undefined {
+  // An UNREADABLE `[tribal]` section is not an absent one: its defaults name no destination, so
+  // every KB-capable write must be refused (fail closed), not allowed as "no KB configured".
+  if (unreadable) return { unreadable: true };
   if (cfg.notion === undefined && cfg.confluence === undefined) return undefined;
   return {
     ...(cfg.notion === undefined ? {} : { notion: { databaseId: cfg.notion.databaseId } }),
@@ -4042,6 +4049,7 @@ export async function assemblePlatformServices(
   // value `platform.tribalKbConfig` returns below. A pure config read; nothing between here and its
   // other uses writes the `[tribal]` section.
   const tribalCfg = loadNimbusTribalFromConfigDir(paths.configDir);
+  const tribalUnreadable = nimbusTribalConfigUnreadable(paths.configDir);
   // The agent door (invariant I58): what an outside agent may propose is decided per door, by the
   // owner's approval by name, and re-derived at submit, at approval and after the owner's answer.
   // It is built BEFORE the mesh exists, so the listing it hashes is late-bound (the
@@ -4067,7 +4075,7 @@ export async function assemblePlatformServices(
       const reach = describeNetworkReach(sandboxRunner, netHosts);
       return reach.kind === "hosts" || reach.kind === "none" ? undefined : reach.text;
     },
-    tribalKbConfig: () => tribalKbConfigOf(tribalCfg),
+    tribalKbConfig: () => tribalKbConfigOf(tribalCfg, tribalUnreadable),
     userMcpPolicy: actClassifyCtx,
     isServiceConfigured,
     now: () => Date.now(),
@@ -4962,7 +4970,7 @@ export async function assemblePlatformServices(
       previewCredentialFor: previewCredentialResolver(connectorWriteDeps, connectorMesh),
       // Phase 28 AD1: the before-state guards read the tribal KB destinations, from the same
       // accessor as `platform.tribalKbConfig` (the model door's) and the act door's destination refusal.
-      getTribalKbConfig: () => tribalKbConfigOf(tribalCfg),
+      getTribalKbConfig: () => tribalKbConfigOf(tribalCfg, tribalUnreadable),
       agentDoor: {
         listServerTools: (service) => connectorMesh.listFirstPartyServerTools(service),
         verifyDefinition: agentDoor.verifyDefinition,
@@ -5388,7 +5396,7 @@ export async function assemblePlatformServices(
     // (`policyGate.applyVerified`) must reach the user-MCP model tool source (I42's
     // `user_mcp_model_access` lock-off) on the next turn, not the next restart.
     enforcedPolicy: () => policyGate.enforced(),
-    tribalKbConfig: () => tribalKbConfigOf(tribalCfg),
+    tribalKbConfig: () => tribalKbConfigOf(tribalCfg, tribalUnreadable),
     disposeSidecars(): void {
       for (const s of sidecarStops) {
         try {
