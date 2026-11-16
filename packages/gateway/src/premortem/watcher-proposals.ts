@@ -5,10 +5,37 @@ import { bytesToHex } from "@noble/hashes/utils.js";
 import { insertWatcherIfAbsent } from "../automation/watcher-store.ts";
 import { dbRun } from "../db/write.ts";
 
+/**
+ * The two kinds of paused watcher pre-mortem proposes per affected service. The kind is part of the
+ * watcher id and of the tombstone, so deleting one never suppresses the other.
+ */
+export type ProposalRiskKind = "incident_coupling" | "deploy_failure";
+
+type ProposalKind = {
+  readonly riskKind: ProposalRiskKind;
+  /** The watcher condition this kind creates (`automation/watcher-condition-kinds.ts`). */
+  readonly conditionType: "incident_opened" | "deploy_failed";
+  readonly name: (service: string) => string;
+};
+
+/** Per service, in this order: the incident watcher first, then the deploy-failure one. */
+const PROPOSAL_KINDS: readonly ProposalKind[] = [
+  {
+    riskKind: "incident_coupling",
+    conditionType: "incident_opened",
+    name: (service) => `Pre-mortem: incidents on ${service}`,
+  },
+  {
+    riskKind: "deploy_failure",
+    conditionType: "deploy_failed",
+    name: (service) => `Pre-mortem: failed deploys of ${service}`,
+  },
+];
+
 export type WatcherProposal = {
   watcherId: string;
   service: string;
-  riskKind: "incident_coupling";
+  riskKind: ProposalRiskKind;
   state: "created" | "already_present" | "suppressed";
 };
 
@@ -49,8 +76,66 @@ function proposedWatcherId(epicItemId: string, riskKind: string, service: string
 }
 
 /**
- * Propose one paused `incident_opened` watcher per affected service that
- * resolves to a configured deployment-service id.
+ * Writes one paused watcher and its tombstone, or reports it `suppressed` when the owner deleted it.
+ * The id is keyed on the REPO, not the config id: the tombstone identity must stay stable across a
+ * config edit that renames or re-points a service id, or a deliberate deletion would silently
+ * un-suppress itself.
+ */
+function proposeOne(
+  db: Database,
+  input: { epicItemId: string; nowMs: number },
+  kind: ProposalKind,
+  service: string,
+  configServiceId: string,
+): WatcherProposal {
+  const { riskKind } = kind;
+  const watcherId = proposedWatcherId(input.epicItemId, riskKind, service);
+
+  const wasTombstoned =
+    db.query(`SELECT 1 FROM premortem_watcher_proposal WHERE watcher_id = ?`).get(watcherId) !==
+    null;
+  const watcherExists = db.query(`SELECT 1 FROM watcher WHERE id = ?`).get(watcherId) !== null;
+
+  // Deliberately deleted: the tombstone survives, the watcher row does not.
+  // Never call insertWatcherIfAbsent here — that would resurrect it.
+  if (wasTombstoned && !watcherExists) {
+    return { watcherId, service, riskKind, state: "suppressed" };
+  }
+
+  // Not suppressed, so it is safe to (re-)attempt both writes every run —
+  // insertWatcherIfAbsent never touches an existing row's `enabled`, and the
+  // tombstone insert is idempotent (INSERT OR IGNORE). Re-attempting on every
+  // re-run, rather than short-circuiting once tombstoned, is what keeps this
+  // path actually exercised: a regression that made insertWatcherIfAbsent
+  // overwrite `enabled` on conflict would otherwise only be reachable on the
+  // very first proposal, when there is nothing yet to overwrite.
+  let inserted = false;
+  db.transaction(() => {
+    inserted = insertWatcherIfAbsent(db, {
+      id: watcherId,
+      name: kind.name(service),
+      enabled: 0,
+      condition_type: kind.conditionType,
+      condition_json: JSON.stringify({ filter: { affectedService: configServiceId } }),
+      action_type: "notify",
+      action_json: "{}",
+      created_at: input.nowMs,
+    });
+    dbRun(
+      db,
+      `INSERT OR IGNORE INTO premortem_watcher_proposal
+         (watcher_id, epic_item_id, risk_kind, service, proposed_at)
+       VALUES (?, ?, ?, ?, ?)`,
+      [watcherId, input.epicItemId, riskKind, service, input.nowMs],
+    );
+  })();
+
+  return { watcherId, service, riskKind, state: inserted ? "created" : "already_present" };
+}
+
+/**
+ * Propose a paused `incident_opened` watcher and a paused `deploy_failed` watcher per affected
+ * service that resolves to a configured deployment-service id.
  *
  * THE TRANSLATION IS LOAD-BEARING, not a nicety. `services` here are PR repo
  * paths (`acme/billing-api`), and the watcher engine's `filter.affectedService`
@@ -66,14 +151,12 @@ function proposedWatcherId(epicItemId: string, riskKind: string, service: string
  * returned in `unmappedServices` for the caller to name in the brief. Falling
  * back to the repo path would recreate the inert proposal.
  *
- * Only incident-coupling watchers are proposed. The engine can now scope a
- * `deploy_failed` watcher the same way, so the old vocabulary-mismatch
- * justification no longer holds; the reason it is not proposed today is that
- * `deployment/annotate.ts` — the only writer of the `metadata.conclusion` that
- * condition matches — INSERTs its `item` row directly and creates no
- * `deployment` graph entity, so such a watcher matches nothing until an index
- * regraph. Deploy failure is a watcher CONDITION KIND, not one of the five
- * risks in `premortem/risks.ts` — there is no deploy-failure risk to report.
+ * The deploy-failure watcher was withheld while `deployment/annotate.ts` created no `deployment`
+ * graph entity (a `deploy_failed` watcher scoped by service matched nothing until `nimbus index
+ * regraph`). The annotation paths now graph the deployment at annotation time
+ * (`deployment/graph-annotated.ts`, Phase 10 IC2), so its entity carries the `affectedService` the
+ * filter matches. Deploy failure is a watcher CONDITION KIND, not one of the five risks in
+ * `premortem/risks.ts`: there is no deploy-failure risk to report.
  *
  * Every proposed id is recorded in `premortem_watcher_proposal`, INCLUDING
  * the `already_present` case, so the tombstone stays complete across runs.
@@ -91,7 +174,6 @@ export function proposeWatchers(
     resolveConfigServiceId: ResolveConfigServiceId;
   },
 ): WatcherProposalResult {
-  const riskKind = "incident_coupling" as const;
   const out: WatcherProposal[] = [];
   const unmappedServices: string[] = [];
 
@@ -101,57 +183,9 @@ export function proposeWatchers(
       unmappedServices.push(service);
       continue;
     }
-    // Keyed on the REPO, not the config id: the tombstone identity must stay
-    // stable across a config edit that renames or re-points a service id, or
-    // a deliberate deletion would silently un-suppress itself.
-    const watcherId = proposedWatcherId(input.epicItemId, riskKind, service);
-
-    const wasTombstoned =
-      db.query(`SELECT 1 FROM premortem_watcher_proposal WHERE watcher_id = ?`).get(watcherId) !==
-      null;
-    const watcherExists = db.query(`SELECT 1 FROM watcher WHERE id = ?`).get(watcherId) !== null;
-
-    // Deliberately deleted: the tombstone survives, the watcher row does not.
-    // Never call insertWatcherIfAbsent here — that would resurrect it.
-    if (wasTombstoned && !watcherExists) {
-      out.push({ watcherId, service, riskKind, state: "suppressed" });
-      continue;
+    for (const kind of PROPOSAL_KINDS) {
+      out.push(proposeOne(db, input, kind, service, configServiceId));
     }
-
-    // Not suppressed, so it is safe to (re-)attempt both writes every run —
-    // insertWatcherIfAbsent never touches an existing row's `enabled`, and the
-    // tombstone insert is idempotent (INSERT OR IGNORE). Re-attempting on every
-    // re-run, rather than short-circuiting once tombstoned, is what keeps this
-    // path actually exercised: a regression that made insertWatcherIfAbsent
-    // overwrite `enabled` on conflict would otherwise only be reachable on the
-    // very first proposal, when there is nothing yet to overwrite.
-    let inserted = false;
-    db.transaction(() => {
-      inserted = insertWatcherIfAbsent(db, {
-        id: watcherId,
-        name: `Pre-mortem: incidents on ${service}`,
-        enabled: 0,
-        condition_type: "incident_opened",
-        condition_json: JSON.stringify({ filter: { affectedService: configServiceId } }),
-        action_type: "notify",
-        action_json: "{}",
-        created_at: input.nowMs,
-      });
-      dbRun(
-        db,
-        `INSERT OR IGNORE INTO premortem_watcher_proposal
-           (watcher_id, epic_item_id, risk_kind, service, proposed_at)
-         VALUES (?, ?, ?, ?, ?)`,
-        [watcherId, input.epicItemId, riskKind, service, input.nowMs],
-      );
-    })();
-
-    out.push({
-      watcherId,
-      service,
-      riskKind,
-      state: inserted ? "created" : "already_present",
-    });
   }
 
   return { proposals: out, unmappedServices };

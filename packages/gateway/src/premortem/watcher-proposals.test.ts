@@ -2,6 +2,8 @@ import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import { evaluateWatchersAfterSync } from "../automation/watcher-engine.ts";
 import { deleteWatcher, listWatchers, setWatcherEnabled } from "../automation/watcher-store.ts";
+import { annotateDeployment } from "../deployment/annotate.ts";
+import { graphAnnotatedDeployment } from "../deployment/graph-annotated.ts";
 import { upsertIndexedItem } from "../index/item-store.ts";
 import { LocalIndex } from "../index/local-index.ts";
 import type { ServiceIdentityResolver } from "../metrics/service-identity.ts";
@@ -30,13 +32,22 @@ const INPUT = {
 };
 
 describe("proposeWatchers", () => {
-  test("creates one paused incident_opened watcher per service, scoped by CONFIG id", () => {
+  test("creates a paused incident_opened and a paused deploy_failed watcher per service, scoped by CONFIG id", () => {
     const db = makeDb();
     const out = proposeWatchers(db, INPUT);
-    expect(out.proposals).toHaveLength(1);
-    expect(out.proposals[0]?.state).toBe("created");
+    expect(out.proposals.map((p) => [p.riskKind, p.state])).toEqual([
+      ["incident_coupling", "created"],
+      ["deploy_failure", "created"],
+    ]);
     expect(out.unmappedServices).toEqual([]);
-    const w = listWatchers(db)[0];
+    const all = listWatchers(db);
+    expect(all.map((w) => w.condition_type).sort()).toEqual(["deploy_failed", "incident_opened"]);
+    expect(all.every((w) => w.enabled === 0)).toBe(true);
+    const deploy = all.find((w) => w.condition_type === "deploy_failed");
+    expect(JSON.parse(deploy?.condition_json ?? "{}")).toEqual({
+      filter: { affectedService: "billing" },
+    });
+    const w = all.find((x) => x.condition_type === "incident_opened");
     expect(w?.enabled).toBe(0);
     expect(w?.condition_type).toBe("incident_opened");
     // `affectedService`, NOT `service`: the engine matches `filter.service` against the
@@ -53,13 +64,13 @@ describe("proposeWatchers", () => {
       ...INPUT,
       services: ["acme/billing-api", "acme/unmapped"],
     });
-    expect(out.proposals.map((p) => p.service)).toEqual(["acme/billing-api"]);
+    expect(out.proposals.map((p) => p.service)).toEqual(["acme/billing-api", "acme/billing-api"]);
     expect(out.unmappedServices).toEqual(["acme/unmapped"]);
-    expect(listWatchers(db)).toHaveLength(1);
+    expect(listWatchers(db)).toHaveLength(2);
     // Not even a tombstone: nothing was proposed, so there is nothing to record as deleted.
     expect(
       db.query(`SELECT COUNT(*) AS n FROM premortem_watcher_proposal`).get() as { n: number },
-    ).toEqual({ n: 1 });
+    ).toEqual({ n: 2 });
   });
 
   test("never falls back to the repo path when nothing resolves", () => {
@@ -74,8 +85,8 @@ describe("proposeWatchers", () => {
     const db = makeDb();
     proposeWatchers(db, INPUT);
     const second = proposeWatchers(db, INPUT);
-    expect(listWatchers(db)).toHaveLength(1);
-    expect(second.proposals[0]?.state).toBe("already_present");
+    expect(listWatchers(db)).toHaveLength(2);
+    expect(second.proposals.map((p) => p.state)).toEqual(["already_present", "already_present"]);
   });
 
   test("rule 2 — an armed watcher survives a re-run UN-PAUSED", () => {
@@ -83,7 +94,9 @@ describe("proposeWatchers", () => {
     const id = proposeWatchers(db, INPUT).proposals[0]?.watcherId as string;
     setWatcherEnabled(db, id, true);
     proposeWatchers(db, INPUT);
-    expect(listWatchers(db)[0]?.enabled).toBe(1);
+    const rows = listWatchers(db);
+    expect(rows.find((w) => w.id === id)?.enabled).toBe(1);
+    expect(rows.filter((w) => w.id !== id).every((w) => w.enabled === 0)).toBe(true);
   });
 
   test("rule 3 — a deleted watcher stays deleted and is reported suppressed", () => {
@@ -91,8 +104,12 @@ describe("proposeWatchers", () => {
     const id = proposeWatchers(db, INPUT).proposals[0]?.watcherId as string;
     deleteWatcher(db, id);
     const again = proposeWatchers(db, INPUT);
-    expect(listWatchers(db)).toHaveLength(0);
-    expect(again.proposals[0]?.state).toBe("suppressed");
+    // Only the deleted incident watcher stays gone; the deploy-failure one is a separate proposal.
+    expect(listWatchers(db).map((w) => w.condition_type)).toEqual(["deploy_failed"]);
+    expect(again.proposals.map((p) => [p.riskKind, p.state])).toEqual([
+      ["incident_coupling", "suppressed"],
+      ["deploy_failure", "already_present"],
+    ]);
   });
 
   test("the watcher id is keyed on the REPO, so a config-id rename cannot un-suppress it", () => {
@@ -105,13 +122,24 @@ describe("proposeWatchers", () => {
     });
     expect(renamed.proposals[0]?.watcherId).toBe(id);
     expect(renamed.proposals[0]?.state).toBe("suppressed");
-    expect(listWatchers(db)).toHaveLength(0);
+    expect(listWatchers(db).map((w) => w.condition_type)).toEqual(["deploy_failed"]);
   });
 
-  test("proposes NO deploy-failure watcher", () => {
+  test("deleting the deploy-failure watcher suppresses only it, and --repropose-style clearing restores it", () => {
     const db = makeDb();
-    proposeWatchers(db, INPUT);
-    expect(listWatchers(db).map((w) => w.condition_type)).not.toContain("deploy_failed");
+    const first = proposeWatchers(db, INPUT);
+    const deployId = first.proposals.find((p) => p.riskKind === "deploy_failure")?.watcherId;
+    expect(deployId).toBeDefined();
+    expect(deployId).not.toBe(first.proposals[0]?.watcherId);
+    deleteWatcher(db, deployId as string);
+    const again = proposeWatchers(db, INPUT);
+    expect(again.proposals.map((p) => [p.riskKind, p.state])).toEqual([
+      ["incident_coupling", "already_present"],
+      ["deploy_failure", "suppressed"],
+    ]);
+    clearProposalTombstones(db, INPUT.epicItemId);
+    const restored = proposeWatchers(db, INPUT);
+    expect(restored.proposals.find((p) => p.riskKind === "deploy_failure")?.state).toBe("created");
   });
 });
 
@@ -237,6 +265,67 @@ describe("proposeWatchers — the armed proposal actually fires", () => {
   });
 });
 
+/**
+ * The deploy-failure proposal's reason to exist: a CI-annotated failed deploy reaches the graph at
+ * annotation time, so the armed watcher fires with NO `nimbus index regraph`. Written against the
+ * production annotation path (`annotateDeployment` then `graphAnnotatedDeployment`, what the HTTP
+ * route and the RPC run), never a hand-seeded graph entity.
+ */
+describe("proposeWatchers — the armed deploy-failure proposal fires on an annotated deploy", () => {
+  const cfgResolver: ServiceIdentityResolver = (item) =>
+    item.metadata["nimbus_service_id"] === "billing"
+      ? { kind: "bound", serviceId: "billing" }
+      : { kind: "unknown" };
+
+  function annotated(db: Database, service: string, status: "failure" | "success", atMs: number) {
+    const r = annotateDeployment(
+      db,
+      {
+        service,
+        provider: "github-actions",
+        environment: "prod",
+        sha: "abcdef1234567",
+        ref: "main",
+        status,
+        started_at_ms: atMs,
+        run_id: `run-${service}-${status}`,
+      },
+      atMs,
+    );
+    graphAnnotatedDeployment(db, `deployment:${r.external_id}`, cfgResolver);
+  }
+
+  function armedDeployWatcherDb(): { db: Database; nowMs: number } {
+    const db = makeDb();
+    const nowMs = Date.now();
+    const out = proposeWatchers(db, { ...INPUT, nowMs });
+    const id = out.proposals.find((p) => p.riskKind === "deploy_failure")?.watcherId as string;
+    expect(setWatcherEnabled(db, id, true)).toBe(true);
+    return { db, nowMs };
+  }
+
+  function fireCount(db: Database, nowMs: number): number {
+    const fired: string[] = [];
+    evaluateWatchersAfterSync(db, "github-actions", nowMs + 2_000, (_t, body) => {
+      fired.push(body);
+    });
+    return fired.length;
+  }
+
+  test("FIRES on a failed annotated deploy of the proposed service, with no regraph", () => {
+    const { db, nowMs } = armedDeployWatcherDb();
+    annotated(db, "billing", "failure", nowMs + 1_000);
+    expect(fireCount(db, nowMs)).toBe(1);
+  });
+
+  test("does NOT fire on a successful deploy, or on a failed deploy of another service", () => {
+    const { db, nowMs } = armedDeployWatcherDb();
+    annotated(db, "billing", "success", nowMs + 1_000);
+    annotated(db, "payments", "failure", nowMs + 1_500);
+    expect(fireCount(db, nowMs)).toBe(0);
+  });
+});
+
 describe("clearProposalTombstones", () => {
   test("clearing THIS epic's tombstone lets a suppressed proposal be created fresh", () => {
     const db = makeDb();
@@ -250,9 +339,9 @@ describe("clearProposalTombstones", () => {
     const reproposed = proposeWatchers(db, INPUT);
     expect(reproposed.proposals[0]?.state).toBe("created");
     expect(reproposed.proposals[0]?.watcherId).toBe(id);
-    expect(listWatchers(db)).toHaveLength(1);
+    expect(listWatchers(db)).toHaveLength(2);
     // Re-created paused, never auto-armed on repropose.
-    expect(listWatchers(db)[0]?.enabled).toBe(0);
+    expect(listWatchers(db).every((w) => w.enabled === 0)).toBe(true);
   });
 
   test("is scoped to ONE epic — a sibling epic's tombstone survives untouched", () => {
