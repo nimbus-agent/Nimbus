@@ -1179,6 +1179,30 @@ nimbus oncall now --service payment-service --json
 
 **Bounds.** Reply shapes of the providers are not verified against live accounts. Jira Service Management shifts carry no start or end time and no service mapping (look them up by schedule name). PagerDuty `you` needs a user-level API token or `pagerduty.from_email` (`nimbus connector auth pagerduty --token <token> --username <email>`). `nimbus ask "who's on call for payment-service?"` uses the `oncall_now` tool only where the Mastra agent runs (with a remote model vendor); the local-router path has no tools, and there only ranked retrieval of the shift rows can surface the answer. The IPC method is `oncall.now` (LAN-forbidden, renderer-callable, served by a demo gateway); the `nimbus oncall` brief also carries an `On call now` line under `## Incident`.
 
+### `nimbus oncall handoff`
+
+A shift handoff brief for the next person on call, from the local index only. It makes **no provider call**, **uses no model** and asks for **no approval**; nothing is written.
+
+```bash
+nimbus oncall handoff
+nimbus oncall handoff --since 8h
+nimbus oncall handoff --since yesterday-18:00 --until 2026-11-16T06:00Z --service checkout
+nimbus oncall handoff --json
+```
+
+| Flag | Description |
+|---|---|
+| `--since <duration\|time>` | Window start: a duration back from now (`12h`, `2d`) or a time in the forms `nimbus query --at` accepts (`2026-11-16T08:00Z`, `2026-11-16T08:00` in the gateway zone, `yesterday-18:00`, `-2h`). Default: when your current indexed on-call shift began (at most 7 days back) if a shift is marked as yours, else 12 hours back. The window may not exceed 31 days. |
+| `--until <duration\|time>` | Window end, same forms; default now. With only `--until`, the window is the 12 hours before it. |
+| `--service <id\|name>` | Limit incidents, alerts, deployments and the watch-list to one `[ci.service.<id>]` (its PagerDuty services, `jsm_alert_tags` and deployments). An unknown name exits 1 and lists the configured ones. |
+| `--json` | Print the structured result on one line, with the same exit codes. |
+
+**Sections.** *Shift*: the window and why it was chosen, your shift, who is on call now, who is next. *Events during the shift*: PagerDuty incidents and Jira Service Management alerts opened, changed (status, severity, urgency, assignee) or resolved, in time order, each marked `(observed)` when its time is the moment a sync saw the change rather than the provider's own; then the deployments that started in the window. *Still open*: incidents and alerts open at the end of the window, oldest first. *Watch-list*: items reopened after being resolved or whose status changed more than once, deployments followed by an incident or alert of the same service within that service's `incident_window_minutes`, and your assigned Jira, Linear and GitHub work due within 24 hours of the window end (overdue included). Then `## Gaps` and `## Data freshness`. Each list shows at most 50 entries; the rest are counted.
+
+**Honesty rules.** A section with no substrate says so in `## Gaps`; an empty list is never the only evidence that nothing happened. Gaps name: no incidents or alerts indexed, history that begins after the window starts, unsourced observation times, a shift that is not marked as yours, Jira Service Management shifts without times, no deployments or bindings, an empty work snapshot, and capped lists.
+
+**Bounds.** The index holds current and upcoming shifts only, so a shift that already ended cannot be found: run this before it ends or pass `--since`. PagerDuty marks a shift as yours only with a user-level token or `pagerduty.from_email`. State-change history begins at the V94 upgrade. Only PagerDuty incidents and Jira Service Management alerts are read. A window that ends in the past places items by their own open and resolution times; an item that changed afterwards without a provider time may be misplaced. Reply shapes of the providers are not verified against live accounts. Not reachable over LAN, HTTP, MCP or ChatOps; the method is on the desktop allowlist.
+
 ### `nimbus briefing`
 
 Your morning briefing, built from the local index. It makes **no provider call** and **uses no model**: the text is rendered deterministically, and nothing leaves the machine except a local notification.
