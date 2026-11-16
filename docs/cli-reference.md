@@ -80,9 +80,9 @@ What it does:
 
 **What do you do?** Once the Gateway is up — after a successful index inside a repository, or
 after starting it outside one — an interactive terminal (not `CI=true`) is asked one question. The
-choices come from the Gateway: one per bundled role pack (`Product`, `DevOps`), then
+choices come from the Gateway: one per bundled role pack (`Product`, `DevOps`, `Developer`), then
 `Engineering`, `Design` and `Something else`; `--role <value>` answers it up front with a pack role
-tag (`product`, `devops`, `sre`), a pack id (`pm`, `devops`) or `engineering` / `design` / `other`.
+tag (`product`, `devops`, `sre`, `developer`), a pack id (`pm`, `devops`, `developer`) or `engineering` / `design` / `other`.
 
 - **A pack** (for example Product): `init` runs [`nimbus pack install`](#nimbus-pack) for it, with
   its usual approval at this terminal, then lists the pack's suggested connectors (`connected`, or
@@ -646,13 +646,15 @@ nimbus pack remove <id>
 
 A role pack is a curated settings layer (agent visibility, fleet jobs, defaults) for one role. The gateway must be running. All four verbs are refused over LAN and on a `--demo` root, and `show`, `install` and `remove` are CLI-only and not on the Tauri allowlist; `list` is also renderer-callable as `pack.list`, the one pack method on the allowlist. They act on the **active profile**.
 
-- `list` prints the packs installed on the active profile (marking `update available` when the bundled copy differs from the installed one, and naming any pack whose layer was skipped and why) and the bundled packs you could install (`pm`, `devops`). When nothing is installed and the list was read, it ends with one line naming them: `Tip: nimbus pack install <id> sets Nimbus up for a role: pm (Product), devops (DevOps).` `--json` prints the raw result; its rows carry each pack's `roles` and `suggestedConnectors` (what [`nimbus init`](#nimbus-init) builds its question and connector list from).
+- `list` prints the packs installed on the active profile (marking `update available` when the bundled copy differs from the installed one, and naming any pack whose layer was skipped and why) and the bundled packs you could install (`pm`, `devops`, `developer`). When nothing is installed and the list was read, it ends with one line naming them: `Tip: nimbus pack install <id> sets Nimbus up for a role: pm (Product), devops (DevOps), developer (Developer).` `--json` prints the raw result; its rows carry each pack's `roles` and `suggestedConnectors` (what [`nimbus init`](#nimbus-init) builds its question and connector list from).
 - `show` prints the exact prompt `install` would ask you, plus an `Installed:` line when the pack is already installed. It changes nothing. Pack-supplied text is shown visibly escaped, never raw.
 - `install` asks under the `pack.install` approval and writes the pack as a layer under the profile. It needs a terminal on both stdin and stdout and has **no `--yes`**: it refuses `Refusing to install a pack in non-TTY mode`. Installing an identical pack again is `already installed`; a damaged or hand-edited layer file is offered as a repair. A delegate never approves it. Installing the DevOps pack turns on the on-call pushed brief ([`[oncall.push]`](#nimbus-oncall)): an OS toast, plus a ChatOps headline if `[oncall.push] chatops_namespace` is already set. `nimbus doctor` reports an available pack update.
 - `--file <path>` installs a pack from a local file (at most 131072 bytes). A local-file pack is **refused in a production build** (`ERR_PACK_LOCAL_FILE_PRODUCTION`); only bundled packs install there.
 - `remove` deletes the pack's layer without a prompt. Removing a pack that is not installed prints `not installed` and is not an error.
 
 Errors print as `ERR_PACK_*: detail` and exit `1`; an unknown verb prints the usage and exits `2`.
+
+**The Developer pack** (`developer`, 1.0.0) is presentation only: its one setting is `[agents] visible` = `why`, `impact`, `ownership`, `expert`, `catchup`, `conflicts`, `decisions`, `glossary`, the briefs a coding agent can call through the MCP read tools of `nimbus mcp-server`. It sets no fleet job, no source mapping and no push, and grants no write, connector enablement, credential or approval. Hiding is presentation only, so the other briefs still run.
 
 **What a pack never changes:** credentials (the Vault), network reach (no host or egress grant), approvals (the HITL gate and its action types) or your `nimbus.toml`. Your own file and profile layers still win over a pack, and the prompt marks a key `(your file overrides this)` when yours already sets it.
 
