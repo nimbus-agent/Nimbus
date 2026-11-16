@@ -7032,3 +7032,82 @@ describe("D10 user-write - a write-directory declaration is confined to the poli
     expect(RULE_ANCHORS).toContain(`${SRC}platform/sandbox/write-grant-check.ts`);
   });
 });
+
+describe("D44(g) — a workflow `when` guard stays out of the approval check and its module stays pure (I55)", () => {
+  const file = (relPath: string, contents: string): FileEntry => ({ relPath, contents });
+  const SRC = "packages/gateway/src/";
+  const GUARD = `${SRC}automation/workflow-guard.ts`;
+  const STEP = `${SRC}engine/standing-rule-step.ts`;
+  const RUNNER = `${SRC}automation/workflow-runner.ts`;
+  const DERIVE = `${SRC}standing/standing-rule-derive.ts`;
+  const RPC = `${SRC}ipc/standing-rpc.ts`;
+  const OTHER = `${SRC}ipc/other.ts`;
+  const GOOD_GUARD = [
+    'import { sanitisePreviewText } from "../connectors/connector-writes/sanitise.ts";',
+    'import type { WorkflowGuard } from "./workflow-steps.ts";',
+    "export function evaluateGuard() {}",
+    "export function guardRequiresPresence() {}",
+    "export function guardRuleLines() {}",
+  ].join("\n");
+  const GOOD: FileEntry[] = [
+    file(GUARD, GOOD_GUARD),
+    file(STEP, "export function standingRuleStep(action) { return action.payload; }\n"),
+    file(RUNNER, "evaluateGuard(step.when, q); guardRequiresPresence(step.when);\n"),
+    file(DERIVE, "guardRequiresPresence(step.when); guardRuleLines(step.when, steps);\n"),
+    file(RPC, "guardRequiresPresence(step.when); guardRuleLines(step.when, steps);\n"),
+  ];
+  const rules = (files: FileEntry[]): string[] => [
+    ...new Set(checkStandingApprovals(files).map((v) => v.rule)),
+  ];
+  const swap = (path: string, contents: string): FileEntry[] =>
+    GOOD.map((f) => (f.relPath === path ? file(path, contents) : f));
+
+  test("the control: the allowed shape is clean", () => {
+    expect(checkStandingApprovals(GOOD)).toEqual([]);
+  });
+
+  test("FAILS when the guard module imports an executor, a vault, a network or a model module", () => {
+    for (const imp of [
+      'import { ToolExecutor } from "../engine/executor.ts";',
+      'import { vault } from "../vault/index.ts";',
+      'import { appendEgress } from "../egress/egress-ledger.ts";',
+      'import http from "node:http";',
+      'import "../x.ts";',
+      'const m = await import("../x.ts");',
+    ]) {
+      expect(rules(swap(GUARD, `${GOOD_GUARD}\n${imp}\n`)), imp).toEqual([
+        "standing-guard-confined",
+      ]);
+    }
+    expect(rules(swap(GUARD, `${GOOD_GUARD}\nconst r = fetch("x");\n`))).toEqual([
+      "standing-guard-confined",
+    ]);
+  });
+
+  test("FAILS when the standing-rule step reads a when or names the guard module", () => {
+    for (const body of [
+      "const g = step.when;",
+      "const { when } = step;",
+      'import { evaluateGuard } from "../automation/workflow-guard.ts";',
+    ]) {
+      expect(rules(swap(STEP, `${body}\nexport function standingRuleStep() {}\n`)), body).toContain(
+        "standing-guard-confined",
+      );
+    }
+    expect(
+      rules(
+        swap(
+          STEP,
+          "// when a guard (workflow-guard) holds\nexport function standingRuleStep() {}\n",
+        ),
+      ),
+    ).toEqual([]);
+  });
+
+  test("FAILS when a guard function is named outside the runner, derivation and the standing RPC", () => {
+    for (const fn of ["evaluateGuard", "guardRequiresPresence", "guardRuleLines"]) {
+      expect(rules([...GOOD, file(OTHER, `${fn}(x);`)]), fn).toEqual(["standing-guard-confined"]);
+    }
+    expect(rules([...GOOD, file(OTHER, "// evaluateGuard guardRequiresPresence")])).toEqual([]);
+  });
+});

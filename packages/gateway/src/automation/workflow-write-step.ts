@@ -17,6 +17,7 @@ import type {
   WorkflowProvenance,
   WorkflowTrigger,
 } from "../engine/types.ts";
+import type { GuardEvaluation } from "./workflow-guard.ts";
 import type { JsonValue, WriteValue, WriteWorkflowStep } from "./workflow-steps.ts";
 
 /** What a write step needs from the executor: one call. */
@@ -38,6 +39,8 @@ export type WriteStepRun = {
     { readonly index: number; readonly values: readonly string[] }
   >;
   readonly signal?: AbortSignal | undefined;
+  /** The evaluated `when` of a guarded step (the runner decided it held); required for such a step. */
+  readonly guard?: GuardEvaluation | undefined;
 };
 
 export type WriteStepOutcome =
@@ -94,6 +97,10 @@ export function referencedQuery(step: WriteWorkflowStep): string | undefined {
 export function buildWriteActions(step: WriteWorkflowStep, run: WriteStepRun): PlannedAction[] {
   const row = connectorWriteRowByToolId(step.tool);
   if (row === undefined) throw new Error(`"${step.tool}" is not a connector write tool`);
+  // Fail closed in depth: a guarded step is built only from an evaluation that held.
+  if (step.when !== undefined && run.guard?.holds !== true) {
+    throw new Error("a guarded write step was built without a guard that held");
+  }
   const label = referencedQuery(step);
   let ids: readonly (string | undefined)[];
   if (label === undefined) {
@@ -119,6 +126,15 @@ export function buildWriteActions(step: WriteWorkflowStep, run: WriteStepRun): P
         runId: run.runId,
         trigger,
         fieldSources,
+        ...(run.guard !== undefined && {
+          guard: run.guard.observed.map((o) => ({
+            query: o.query,
+            op: o.op,
+            value: o.value,
+            observed: o.observed,
+            capped: o.capped,
+          })),
+        }),
       };
     }
     return action;

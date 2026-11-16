@@ -209,7 +209,15 @@ export type RuleTextInput = {
   readonly maxActions: number;
   /** Set on a resume: the actions already used. */
   readonly actionsUsed?: number;
+  /** The guarded step's `Runs only when:` lines (`guardRuleLines`); absent for an unguarded step. */
+  readonly guardLines?: readonly string[];
+  /** Set on a resume when the stored workflow no longer hashes to the rule's: the rule cannot fire. */
+  readonly workflowEdited?: boolean;
 };
+
+/** The resume text's line for a rule whose workflow was edited after the rule was made. */
+export const WORKFLOW_EDITED_LINE =
+  "This workflow was edited after the rule was made; the rule can no longer fire.";
 
 /**
  * The exact text of a rule: what the owner reads and approves. Every value that came from a stored
@@ -221,6 +229,8 @@ export function renderRuleText(r: RuleTextInput, now: number): string[] {
     `Workflow: ${sanitisePreviewText(r.workflowName)} (content ${r.workflowSha256.slice(0, 12)})`,
     `Step ${String(r.stepIndex + 1)}: ${sanitisePreviewText(r.stepLabel)}`,
     `Write: ${sanitisePreviewText(r.toolId)} (${sanitisePreviewText(r.actionType)})`,
+    ...(r.guardLines ?? []),
+    ...(r.workflowEdited === true ? [WORKFLOW_EDITED_LINE] : []),
     "Inputs:",
     ...Object.keys(r.scope)
       .sort(byCodeUnit)
@@ -230,9 +240,10 @@ export function renderRuleText(r: RuleTextInput, now: number): string[] {
     ceilingLine(r.maxActions, r.actionsUsed),
     "",
     "While this rule is live, each matching write runs WITHOUT asking you, and only when this exact",
-    "workflow (unchanged) is started by you. A run started by anything else, an edited workflow, a",
-    "different value or a model-proposed write still asks. Revoke it any time: nimbus approve revoke.",
-    "Runs that nobody is watching (a schedule) are not part of this rule yet.",
+    "workflow (unchanged) is started by you or by its schedule. A run started by anything else, an",
+    "edited workflow, a different value or a model-proposed write still asks. Revoke it any time:",
+    "nimbus approve revoke.",
+    "A run the schedule starts uses this rule too; with no rule covering a write it stops and waits for you.",
   ];
   return lines;
 }

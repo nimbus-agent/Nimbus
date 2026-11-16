@@ -11,10 +11,19 @@ import {
 import type { WorkflowTrigger } from "../engine/types.ts";
 import { readIndexedUserVersion } from "../index/migrations/runner.ts";
 import { type LearningConfig, learnFromStepRun } from "../standing/approval-learning.ts";
-import { runDeclaredQuery } from "./declared-query.ts";
+import { type DeclaredQueryResult, runDeclaredQuery } from "./declared-query.ts";
+import {
+  evaluateGuard,
+  type GuardEvaluation,
+  guardRequiresPresence,
+  guardText,
+  observationText,
+  type QueryCount,
+} from "./workflow-guard.ts";
 import { previewHitlActionsForStepText } from "./workflow-hitl-preview.ts";
 import { pruneWorkflowRuns } from "./workflow-run-history.ts";
 import {
+  type DeclaredQuery,
   needsModel,
   nonRunStepLabels,
   parseWorkflowSteps,
@@ -57,6 +66,8 @@ function emitRunCompletedAudit(params: {
   readonly dryRun: boolean;
   readonly paramsOverride?: Readonly<Record<string, Record<string, unknown>>>;
   readonly errorMsg?: string | null;
+  /** How many guarded steps did not run in a real run; absent when none. */
+  readonly stepsNotTaken?: number;
   /** The run's derived trigger, so audit history tells a scheduled run from an owner-started one. */
   readonly trigger?: WorkflowTrigger;
 }): void {
@@ -76,6 +87,9 @@ function emitRunCompletedAudit(params: {
   }
   if (params.errorMsg !== undefined && params.errorMsg !== null) {
     details["errorMsg"] = params.errorMsg;
+  }
+  if (params.stepsNotTaken !== undefined && params.stepsNotTaken > 0) {
+    details["stepsNotTaken"] = params.stepsNotTaken;
   }
   appendAuditEntry(params.db, {
     actionType: "workflow.run.completed",
@@ -148,6 +162,8 @@ export type RunWorkflowExecutionParams = {
    * anything unless it says so. A throw is caught: learning never fails or changes a run.
    */
   readonly learning?: LearningConfig;
+  /** Test seam: runs a declared query (production: `runDeclaredQuery`). Used by steps and the dry run. */
+  readonly queryRunner?: (db: Database, q: DeclaredQuery) => DeclaredQueryResult;
 };
 
 export type RunWorkflowExecutionResult = {
@@ -155,7 +171,8 @@ export type RunWorkflowExecutionResult = {
   /** The blocked run this one resumed (SA4). */
   resumedFrom?: string;
   /**
-   * The run's terminal status: "preview" | "done" | "error" | "cancelled" | "blocked_on_approval".
+   * The run's terminal status: "preview" | "done" | "error" | "cancelled" | "blocked_on_approval" |
+   * "condition_lapsed" (a resumed run whose blocked step's `when` no longer holds: it stopped there).
    * Mirrors what finalizeRun wrote to workflow_run — an IPC caller cannot read
    * that table, so a cancelled run would otherwise be indistinguishable from a
    * short one that completed.
@@ -168,18 +185,24 @@ export type RunWorkflowExecutionResult = {
     output?: string;
     error?: string;
     hitlActions?: readonly string[];
+    /** A guarded step's `when`, as one sanitised line. */
+    guard?: string;
+    /** Dry run only: what the guard would do now. */
+    evaluation?: string;
   }>;
 };
 
 type StepExecOutcome =
   | { kind: "ok"; label: string; reply: string; status?: string }
   | { kind: "err"; label: string; message: string; halt: boolean }
-  | { kind: "blocked"; label: string; message: string };
+  | { kind: "blocked"; label: string; message: string }
+  /** The step's `when` did not hold: nothing ran, nothing was asked, the run goes on. */
+  | { kind: "not_taken"; label: string; message: string; guard: string };
 
 /** What the steps of one run share: the outputs of `run` steps and the query results. */
 type RunState = {
   readonly outputs: string[];
-  readonly queries: Map<string, { index: number; values: readonly string[] }>;
+  readonly queries: Map<string, QueryCount>;
   readonly workflowId: string;
   readonly workflowSha256: string;
   readonly workflowName: string;
@@ -248,8 +271,13 @@ function executeQueryStep(
 ): StepExecOutcome {
   const label = stepLabelOf(step, stepIndex);
   try {
-    const r = runDeclaredQuery(p.db, step.query);
-    state.queries.set(step.label, { index: stepIndex, values: r.values });
+    const r = (p.queryRunner ?? runDeclaredQuery)(p.db, step.query);
+    // `rows >= limit`: the SELECT hit its limit, so the count is only a lower bound (D1).
+    state.queries.set(step.label, {
+      index: stepIndex,
+      values: r.values,
+      capped: r.rows >= step.query.limit,
+    });
     const reply = `selected ${String(r.values.length)}; dropped ${String(r.dropped)} (not an id)`;
     updateWorkflowRunStepRow(p.db, runId, stepIndex, {
       status: "done",
@@ -275,6 +303,7 @@ async function executeWriteStep(
   stepIndex: number,
   step: WriteWorkflowStep,
   state: RunState,
+  guard: GuardEvaluation | undefined,
 ): Promise<StepExecOutcome> {
   const label = stepLabelOf(step, stepIndex);
   const halt = step.continueOnError !== true;
@@ -298,6 +327,7 @@ async function executeWriteStep(
     trigger: p.trigger,
     queries: state.queries,
     signal: p.signal,
+    ...(guard !== undefined && { guard }),
   };
   try {
     const out = await runWriteStep(step, run, p.writeExecutor);
@@ -332,11 +362,61 @@ async function executeWorkflowStep(
     status: "running",
     startedAt: Date.now(),
   });
-  if (step.kind === "run") return executeRunStep(p, runId, stepIndex, step, state.outputs);
   if (step.kind === "query") return executeQueryStep(p, runId, stepIndex, step, state);
-  const outcome = await executeWriteStep(p, runId, stepIndex, step, state);
+  // The guard is decided HERE, before anything is built: a step that is not taken never reaches the
+  // model, the executor, the standing-rule check or the learner (I55: a guard only removes runs).
+  const decided = decideGuard(p, runId, stepIndex, step, state);
+  if (decided.kind === "outcome") return decided.outcome;
+  if (step.kind === "run") return executeRunStep(p, runId, stepIndex, step, state.outputs);
+  const outcome = await executeWriteStep(p, runId, stepIndex, step, state, decided.evaluation);
   learnAfterWriteStep(p, runId, stepIndex, step, state);
   return outcome;
+}
+
+/** The step's guard: proceed (with the evaluation to record), or an outcome that ends the step. */
+function decideGuard(
+  p: RunWorkflowExecutionParams,
+  runId: string,
+  stepIndex: number,
+  step: RunWorkflowStep | WriteWorkflowStep,
+  state: RunState,
+):
+  | { kind: "proceed"; evaluation: GuardEvaluation | undefined }
+  | { kind: "outcome"; outcome: StepExecOutcome } {
+  if (step.when === undefined) return { kind: "proceed", evaluation: undefined };
+  const label = stepLabelOf(step, stepIndex);
+  let evaluation: GuardEvaluation;
+  try {
+    evaluation = evaluateGuard(step.when, state.queries);
+  } catch (err) {
+    // Fail closed: a guard that cannot be evaluated never lets the step run.
+    const msg = err instanceof Error ? err.message : String(err);
+    updateWorkflowRunStepRow(p.db, runId, stepIndex, {
+      status: "error",
+      resultJson: JSON.stringify({ error: msg }),
+      finishedAt: Date.now(),
+    });
+    return { kind: "outcome", outcome: errorOutcome(label, err, true) };
+  }
+  if (evaluation.holds) return { kind: "proceed", evaluation };
+  const guard = guardText(step.when);
+  const labels = step.when.map((g) => g.count);
+  const observed = evaluation.observed.map((o, i) => ({
+    query: labels[i],
+    count: o.observed,
+    capped: o.capped,
+    holds: o.holds,
+  }));
+  updateWorkflowRunStepRow(p.db, runId, stepIndex, {
+    status: "not_taken",
+    resultJson: JSON.stringify({ guard, observed }),
+    finishedAt: Date.now(),
+  });
+  const counts = evaluation.observed.map((o) => observationText(o)).join(", ");
+  return {
+    kind: "outcome",
+    outcome: { kind: "not_taken", label, message: `${guard}: selected ${counts}`, guard },
+  };
 }
 
 /** Approval learning after a write step, whatever its status. It can never fail or change the run. */
@@ -359,6 +439,7 @@ function learnAfterWriteStep(
         workflowSha256: state.workflowSha256,
         workflowName: state.workflowName,
         stepLabel: stepLabelOf(step, stepIndex),
+        ruleEligibleGuard: guardRequiresPresence(step.when),
         actionType,
         trigger: p.trigger,
         startedAt: state.startedAt,
@@ -392,6 +473,7 @@ function finalizeRun(
   status: string,
   startedAt: number,
   errorMsg: string | null,
+  stepsNotTaken = 0,
 ): void {
   finishWorkflowRunRow(p.db, runId, status, Date.now(), errorMsg);
   emitRunCompletedAudit({
@@ -403,6 +485,7 @@ function finalizeRun(
     dryRun: p.dryRun,
     ...(p.paramsOverride !== undefined && { paramsOverride: p.paramsOverride }),
     ...(errorMsg !== null && { errorMsg }),
+    ...(stepsNotTaken > 0 && { stepsNotTaken }),
     ...(p.trigger !== undefined && { trigger: p.trigger }),
   });
   pruneWorkflowRuns(p.db, wf.id, RUN_RETENTION_PER_WORKFLOW);
@@ -449,30 +532,93 @@ function skippedOnResume(p: RunWorkflowExecutionParams, step: WorkflowStep, i: n
   return p.resume !== undefined && i < p.resume.blockedStep && step.kind !== "query";
 }
 
+/** What the dry run learned about one query a guard names: its count, or why it could not be read. */
+type DryObservation = { readonly count: QueryCount } | { readonly error: string };
+
+const DRY_AS_OF = "as of now; a real run re-reads the index";
+const NOT_EVALUATED = "not evaluated: only the owner's CLI or desktop connection evaluates guards";
+
+/** What a guard would do against the dry run's observations, as one owner-readable line. */
+function dryEvaluation(
+  when: NonNullable<RunWorkflowStep["when"]>,
+  observed: ReadonlyMap<string, DryObservation> | undefined,
+): string {
+  if (observed === undefined) return NOT_EVALUATED;
+  const queries = new Map<string, QueryCount>();
+  for (const g of when) {
+    const o = observed.get(g.count);
+    if (o === undefined) return `cannot tell: query "${g.count}" was not read`;
+    if ("error" in o) return `cannot tell: ${o.error}`;
+    queries.set(g.count, o.count);
+  }
+  const ev = evaluateGuard(when, queries);
+  const counts = ev.observed.map((o) => observationText(o)).join(", ");
+  if (ev.holds) return `would run (selects ${counts}; ${DRY_AS_OF})`;
+  const cappedFailure = ev.observed.some((o) => o.capped && !o.holds);
+  return cappedFailure
+    ? `would not run (selects ${counts}; a query hit its limit, so a comparison other than gt, gte or ne 0 cannot be established; ${DRY_AS_OF})`
+    : `would not run (selects ${counts}; ${DRY_AS_OF})`;
+}
+
 /** One step's dry-run entry: a prompt as before; a query or write shown as the declared form. */
 function previewStep(
   s: WorkflowStep,
   i: number,
+  observed: ReadonlyMap<string, DryObservation> | undefined,
 ): RunWorkflowExecutionResult["stepResults"][number] {
   const label = stepLabelOf(s, i);
+  if (s.kind === "query") {
+    return { label, status: "preview", output: JSON.stringify(s.query), hitlActions: [] };
+  }
+  let entry: RunWorkflowExecutionResult["stepResults"][number];
   if (s.kind === "run") {
-    return {
+    entry = {
       label,
       status: "preview",
       output: s.run,
       hitlActions: previewHitlActionsForStepText(s.run),
     };
+  } else {
+    const row = connectorWriteRowByToolId(s.tool);
+    entry = {
+      label,
+      status: "preview",
+      output: `write ${s.tool} ${JSON.stringify(s.input)}`,
+      hitlActions: row === undefined ? [] : [row.actionType],
+    };
   }
-  if (s.kind === "query") {
-    return { label, status: "preview", output: JSON.stringify(s.query), hitlActions: [] };
+  if (s.when !== undefined) {
+    entry.guard = guardText(s.when);
+    entry.evaluation = dryEvaluation(s.when, observed);
   }
-  const row = connectorWriteRowByToolId(s.tool);
-  return {
-    label,
-    status: "preview",
-    output: `write ${s.tool} ${JSON.stringify(s.input)}`,
-    hitlActions: row === undefined ? [] : [row.actionType],
-  };
+  return entry;
+}
+
+/**
+ * Reads, once each, the queries the guards of `steps` name (read-only bound SELECTs), for a dry run.
+ * Only the owner's CLI or desktop connection gets counts (the trigger is derived from the declared
+ * kind, never from params): another local kind gets the guard text and no count.
+ */
+function observeGuardQueries(
+  p: RunWorkflowExecutionParams,
+  steps: readonly WorkflowStep[],
+): ReadonlyMap<string, DryObservation> | undefined {
+  if (p.trigger !== "owner_cli" && p.trigger !== "owner_ui") return undefined;
+  const named = new Set<string>();
+  for (const s of steps) {
+    if (s.kind !== "query" && s.when !== undefined) for (const g of s.when) named.add(g.count);
+  }
+  const out = new Map<string, DryObservation>();
+  steps.forEach((s, index) => {
+    if (s.kind !== "query" || !named.has(s.label)) return;
+    try {
+      const r = (p.queryRunner ?? runDeclaredQuery)(p.db, s.query);
+      out.set(s.label, { count: { index, values: r.values, capped: r.rows >= s.query.limit } });
+    } catch (err) {
+      out.set(s.label, { error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+  return out;
 }
 
 function executeDryRun(
@@ -493,11 +639,12 @@ function executeDryRun(
     paramsOverrideJson,
   });
   finalizeRun(p, wf, runId, "preview", now, null);
+  const observed = observeGuardQueries(p, steps);
   return {
     runId,
     status: "preview",
     dryRun: true,
-    stepResults: steps.map((s, i) => previewStep(s, i)),
+    stepResults: steps.map((s, i) => previewStep(s, i, observed)),
   };
 }
 
@@ -533,6 +680,7 @@ export async function executeRealRunSteps(
     startedAt: now,
   };
   const stepResults: RunWorkflowExecutionResult["stepResults"] = [];
+  let notTaken = 0;
   // Checked once up front too: a zero-step workflow never enters the loop
   // below, so without this an already-aborted signal would be ignored and
   // the run would finalise "done" instead of honouring the cancellation.
@@ -542,7 +690,7 @@ export async function executeRealRunSteps(
   }
   for (let i = 0; i < steps.length; i++) {
     if (isAborted(p)) {
-      finalizeRun(p, wf, runId, "cancelled", now, "Run cancelled");
+      finalizeRun(p, wf, runId, "cancelled", now, "Run cancelled", notTaken);
       return { runId, status: "cancelled", dryRun: false, stepResults };
     }
     const step = steps[i];
@@ -552,6 +700,24 @@ export async function executeRealRunSteps(
       stepResults.push({ label: outcome.label, status: "blocked", output: outcome.message });
       blockRun(p, wf, runId, now, { stepIndex: i, label: outcome.label, message: outcome.message });
       return { runId, status: "blocked_on_approval", dryRun: false, stepResults };
+    }
+    if (outcome.kind === "not_taken") {
+      notTaken++;
+      stepResults.push({
+        label: outcome.label,
+        status: "not_taken",
+        output: outcome.message,
+        guard: outcome.guard,
+      });
+      // A resume was asked to answer a prompt for THIS step. If its condition no longer holds on
+      // the fresh counts, stop: later steps would run on data the owner never saw.
+      if (p.resume?.blockedStep === i) {
+        const message = lapsedMessage(outcome);
+        stepResults.push({ label: outcome.label, status: "condition_lapsed", output: message });
+        finalizeRun(p, wf, runId, "condition_lapsed", now, message, notTaken);
+        return { runId, status: "condition_lapsed", dryRun: false, stepResults };
+      }
+      continue;
     }
     if (outcome.kind === "ok") {
       stepResults.push({
@@ -563,12 +729,17 @@ export async function executeRealRunSteps(
     }
     stepResults.push({ label: outcome.label, status: "error", error: outcome.message });
     if (outcome.halt) {
-      finalizeRun(p, wf, runId, "error", now, outcome.message);
+      finalizeRun(p, wf, runId, "error", now, outcome.message, notTaken);
       return { runId, status: "error", dryRun: false, stepResults };
     }
   }
-  finalizeRun(p, wf, runId, "done", now, null);
+  finalizeRun(p, wf, runId, "done", now, null, notTaken);
   return { runId, status: "done", dryRun: false, stepResults };
+}
+
+/** The fixed text of a resumed run that stopped because the blocked step's condition lapsed. */
+function lapsedMessage(outcome: { message: string }): string {
+  return `the condition no longer holds (${outcome.message}); nothing was done for this step and the steps after it were not run; run the workflow again to evaluate it fresh`;
 }
 
 /** Only `run` steps take overrides: nothing outside the hashed definition may change a write or a query. */

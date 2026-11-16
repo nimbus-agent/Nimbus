@@ -4207,6 +4207,15 @@ function d43ExecutorPins(f: FileEntry, code: string, commentFree: string): Viola
 //     only by that pass and the workflow runner (`automation/workflow-runner.ts`); and
 //     `hasLiveRuleFor`, the pass's one question to the rule store, only by the rule store and the
 //     pass. The pass may READ the `"owner_workflow"` literal (clause (a)) but never construct it.
+// (g) workflow `when` guards (Phase 10, workflow conditionals): a guard only REMOVES runs, decided by
+//     the runner before an action exists, so it must stay out of the approval check. The guard module
+//     `automation/workflow-guard.ts` imports only `./workflow-steps.ts` and
+//     `connectors/connector-writes/sanitise.ts` (no executor, vault, egress, network or model
+//     module); its functions `evaluateGuard`, `guardRequiresPresence` and `guardRuleLines` are named
+//     only by it, the runner (the decision and the learner's `ruleEligibleGuard` field), rule
+//     derivation and the `standing.*` RPC handler (rule creation and resume); and
+//     `engine/standing-rule-step.ts` never reads a `when` or names the guard module, so nothing the
+//     step does depends on a guard and a guard cannot widen what a rule approves.
 // Comments are stripped before matching (string literals are kept for the literal clauses); test
 // files, a test-support `*.test-helpers.ts` that no production file imports, and anything outside
 // packages/gateway/src/ are not scanned. STATED BOUND, as D33(c)/D41/D42: a dynamically composed
@@ -4227,6 +4236,13 @@ const D44_LEARNING = `${D44_SRC}standing/approval-learning.ts`;
 const D44_SUGGESTION_STORE = `${D44_SRC}standing/standing-suggestion-store.ts`;
 const D44_V90 = `${D44_SRC}index/standing-suggestion-v90-sql.ts`;
 const D44_RUNNER = `${D44_SRC}automation/workflow-runner.ts`;
+const D44_GUARD = `${D44_SRC}automation/workflow-guard.ts`;
+const D44_DERIVE = `${D44_SRC}standing/standing-rule-derive.ts`;
+/** What the guard module may import: the step types and the text sanitiser, nothing else. */
+const D44_GUARD_IMPORTS: readonly string[] = [
+  "./workflow-steps.ts",
+  "../connectors/connector-writes/sanitise.ts",
+];
 const D44_LEARNING_TABLE_RES: readonly RegExp[] = ["standing_streak", "standing_suggestion"].map(
   (t) => {
     const re = sqlTableReferenceRe(t);
@@ -4335,7 +4351,44 @@ const D44_NAME_RULES: ReadonlyArray<{
     allowed: [D44_STORE, D44_LEARNING],
     keepStrings: false,
   },
+  {
+    rule: "standing-guard-confined",
+    re: /\b(?:evaluateGuard|guardRequiresPresence|guardRuleLines)\b/g,
+    allowed: [D44_GUARD, D44_RUNNER, D44_DERIVE, D44_RPC],
+    keepStrings: false,
+  },
 ];
+
+/** Clause (g): the guard module is pure and the approval check never reads a guard. */
+function d44GuardPins(f: FileEntry, commentFree: string, code: string): Violation[] {
+  const out: Violation[] = [];
+  const add = (src: string, index: number | undefined): void => {
+    const line = src.slice(0, index).split("\n").length;
+    out.push({
+      rule: "standing-guard-confined",
+      file: f.relPath,
+      line,
+      snippet: (f.contents.split("\n")[line - 1] ?? "").trim(),
+    });
+  };
+  if (f.relPath === D44_GUARD) {
+    for (const m of commentFree.matchAll(
+      /\bfrom\s*["']([^"']+)["']|\bimport\s*["']([^"']+)["']/g,
+    )) {
+      const spec = m[1] ?? m[2] ?? "";
+      if (!D44_GUARD_IMPORTS.includes(spec)) add(commentFree, m.index);
+    }
+    for (const m of code.matchAll(/\bfetch\s*\(|\bimport\s*\(|\brequire\s*\(|\bglobalThis\b/g)) {
+      add(code, m.index);
+    }
+  }
+  if (f.relPath === D44_STEP) {
+    for (const m of commentFree.matchAll(/\.\s*when\b|\bwhen\s*[:,}]|workflow-guard/g)) {
+      add(commentFree, m.index);
+    }
+  }
+  return out;
+}
 
 export function checkStandingApprovals(files: readonly FileEntry[]): Violation[] {
   const out: Violation[] = [];
@@ -4370,6 +4423,7 @@ export function checkStandingApprovals(files: readonly FileEntry[]): Violation[]
       const src = r.keepStrings ? commentFree : code;
       for (const m of src.matchAll(r.re)) add(f, r.rule, src, m.index);
     }
+    for (const v of d44GuardPins(f, commentFree, code)) out.push(v);
     if (f.relPath === D44_EXECUTOR) for (const v of d44ExecutorPins(f, code)) out.push(v);
     if (f.relPath === D44_RUN_ASK) for (const v of d44RunAskPins(f, code)) out.push(v);
   }
@@ -6178,6 +6232,8 @@ async function run(): Promise<void> {
         "(d) the unattended executor option, its refusal text or the schedule trigger is used outside its confinement",
       "standing-learning-confined":
         "(f) a learning table, writer or the learning pass is reached outside the suggestion store, the pass and the workflow runner",
+      "standing-guard-confined":
+        "(g) the workflow guard module imports more than the step types and the sanitiser, a guard function is named outside the runner, rule derivation and the standing RPC, or the standing-rule step reads a guard",
     };
     for (const e of v) {
       console.error(

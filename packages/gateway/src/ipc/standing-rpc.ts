@@ -19,6 +19,7 @@
 // The rule's scope is DERIVED here from the stored workflow (`standing-rule-derive.ts`); the caller
 // names only `{ workflow, step, days?, max?, window? }`. A bad request never reaches the prompt.
 import type { Database } from "bun:sqlite";
+import { guardRequiresPresence, guardRuleLines } from "../automation/workflow-guard.ts";
 import { parseWorkflowSteps, workflowStepsSha256 } from "../automation/workflow-steps.ts";
 import { NULL_EGRESS_SINK } from "../egress/egress-ledger.ts";
 import { type ExecutorPolicyDep, NO_POLICY_OVERLAY, ToolExecutor } from "../engine/executor.ts";
@@ -29,7 +30,7 @@ import type {
   PlannedAction,
 } from "../engine/types.ts";
 import { STANDING_APPROVALS_DISABLED_MESSAGE } from "../standing/standing-rule-capability.ts";
-import { deriveRule } from "../standing/standing-rule-derive.ts";
+import { deriveRule, GUARD_ABSENCE_REASON } from "../standing/standing-rule-derive.ts";
 import {
   getRule,
   insertRule,
@@ -369,6 +370,35 @@ function dismissOne(ctx: StandingRpcCtx, params: unknown): Record<string, unknow
   return { id: s.id, changed };
 }
 
+/**
+ * What a resume shows of the step's guard. A rule whose stored workflow still hashes to the rule's
+ * carries the guard it was created under (the guard is inside the hash), which creation already
+ * vetted: it is rendered, and re-checked (defence in depth: it can fail only if the store was
+ * changed outside the owner's approval path). A rule whose workflow was edited since gets the
+ * "edited" line and no guard.
+ */
+function resumeGuard(
+  stepsJson: string | undefined,
+  rule: StandingRule,
+): { guardLines?: readonly string[]; workflowEdited?: true } {
+  let steps: ReturnType<typeof parseWorkflowSteps> | undefined;
+  try {
+    steps = stepsJson === undefined ? undefined : parseWorkflowSteps(stepsJson);
+  } catch {
+    steps = undefined;
+  }
+  if (
+    steps === undefined ||
+    !sha256HexEqualConstantTime(workflowStepsSha256(steps), rule.workflowSha256)
+  ) {
+    return { workflowEdited: true };
+  }
+  const step = steps[rule.stepIndex];
+  if (step === undefined || step.kind !== "write" || step.when === undefined) return {};
+  if (!guardRequiresPresence(step.when)) throw ERR("ERR_STANDING_GUARD", GUARD_ABSENCE_REASON);
+  return { guardLines: guardRuleLines(step.when, steps) };
+}
+
 async function resumeOne(ctx: StandingRpcCtx, params: unknown): Promise<Record<string, unknown>> {
   requireWidening(ctx);
   const rule = requireRule(ctx.db, idOf(params));
@@ -377,10 +407,10 @@ async function resumeOne(ctx: StandingRpcCtx, params: unknown): Promise<Record<s
     throw ERR("ERR_STANDING_REVOKED", "a revoked rule is final; create a new one");
   }
   if (rule.pausedAt === undefined) throw ERR("ERR_STANDING_NOT_PAUSED", "the rule is not paused");
-  const wf = ctx.db.query("SELECT name FROM workflow WHERE id = ?").get(rule.workflowId) as
-    | { name: string }
-    | null
-    | undefined;
+  const wf = ctx.db
+    .query("SELECT name, steps_json FROM workflow WHERE id = ?")
+    .get(rule.workflowId) as { name: string; steps_json: string } | null | undefined;
+  const guard = resumeGuard(wf?.steps_json, rule);
   const text: RuleTextInput = {
     workflowName: wf?.name ?? rule.workflowId,
     workflowSha256: rule.workflowSha256,
@@ -393,6 +423,7 @@ async function resumeOne(ctx: StandingRpcCtx, params: unknown): Promise<Record<s
     expiresAt: rule.expiresAt,
     maxActions: rule.maxActions,
     actionsUsed: rule.actionsUsed,
+    ...guard,
   };
   const approval = await ctx.askOwner({
     type: "standing.rule.resume",
