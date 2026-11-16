@@ -11,6 +11,9 @@ import type {
   TimeValue,
   TriggerBlock,
 } from "../../incident/incident-record-types.ts";
+import type { CascadeGroup, CascadeMember, CascadeReason } from "../../incident/cascade.ts";
+import type { CascadeInfo } from "../../incident/cascade-read.ts";
+import type { Timeline } from "../../incident/timeline.ts";
 import type { IncidentBrief } from "./incident-types.ts";
 import { hardenedPlain, hardenedTitleLink, type RenderOpts, renderGaps } from "./render.ts";
 
@@ -227,6 +230,87 @@ export function renderIncidentFreshness(f: Freshness): string {
   if (f.chatToMs !== null) lines.push(`- chat searched up to ${utcLabel(f.chatToMs)}`);
   if (lines.length === 0) return "";
   return [INCIDENT_FRESHNESS_HEADING, "", ...lines].join("\n");
+}
+
+/** `YYYY-MM-DD HH:MM:SS UTC`: the timeline keeps seconds, so events a minute apart keep their order. */
+export function utcSecondsLabel(ms: number): string {
+  return `${new Date(ms).toISOString().slice(0, 19).replace("T", " ")} UTC`;
+}
+
+/**
+ * The timeline of one record (Phase 10 IC4): deterministic, no model, zone-free. Each line names its clock
+ * (`source` or `observed`) and its event kind; the text is provider-influenced and goes through
+ * `hardenedPlain`, so a title can neither forge a heading nor open a link. `## Timeline` is an ordinary section
+ * of a view, never a reserved heading of the incident brief (I31 is not engaged: nothing here is synthesized).
+ */
+export function renderTimeline(timeline: Timeline): string {
+  const lines =
+    timeline.events.length === 0
+      ? ["_No event to show._"]
+      : timeline.events.map(
+          (e) => `- ${utcSecondsLabel(e.atMs)} (${e.atBasis}) ${e.kind}: ${plain(e.text)}`,
+        );
+  const notes = timeline.notes.map((n) => `- ${plain(n)}`);
+  const sections = [section("Timeline", lines)];
+  if (notes.length > 0) sections.push(section("Notes", notes));
+  return sections.join("\n\n");
+}
+
+function cascadeReasonText(m: CascadeMember): string {
+  const r: CascadeReason = m.reason;
+  switch (r.kind) {
+    case "declared_dependency":
+      return r.path === undefined
+        ? `${String(r.dependents)} other open record${r.dependents === 1 ? "" : "s"} in this window run on a service that depends on this one (declared depends_on)`
+        : `depends on the root through ${r.path.map(plain).join(" -> ")} (declared depends_on)`;
+    case "shared_deployment":
+      return "cites the same deployment as the root";
+    case "time_only":
+      return m.role === "root"
+        ? "ranked by open time (no declared dependency decides it)"
+        : `no declared path to the root; opened ${String(r.minutesAfterRoot)} min after it`;
+  }
+}
+
+function cascadeMemberLine(m: CascadeMember, info: ReadonlyMap<string, CascadeInfo>): string {
+  const i = info.get(m.recordId);
+  const label =
+    i === undefined
+      ? `record \`${plain(m.recordId)}\``
+      : `${hardenedPlain(i.title, PLAIN_MAX)} (${plain(i.source)}${i.service === null ? "" : `, ${plain(i.service)}`}, opened ${utcLabel(i.openedAtMs)})`;
+  return `- ${m.role === "root" ? "Root candidate" : "Downstream"}: ${label}: ${cascadeReasonText(m)}`;
+}
+
+/**
+ * The cascade block of one record (Phase 10 IC4, spec § 5.4): where this record stands among the open records
+ * that opened within 30 minutes of one another. Deterministic and model-free; wording is D-IC-2 (a ranked
+ * root CANDIDATE, never a proven cause). Appended to a PUSHED brief and shown by `incident show` after the
+ * stored Markdown; it never enters the stored record and never passes through `synthesize()` (I31 is not
+ * engaged), so `## Cascade` is not a reserved heading of the incident brief.
+ */
+export function renderCascadeSection(
+  group: CascadeGroup,
+  thisRecordId: string,
+  info: ReadonlyMap<string, CascadeInfo>,
+): string {
+  const me = group.members.find((m) => m.recordId === thisRecordId);
+  const root = group.members.find((m) => m.role === "root");
+  const rootInfo = root === undefined ? undefined : info.get(root.recordId);
+  const rootName =
+    rootInfo === undefined ? "the root candidate" : `\`${hardenedPlain(rootInfo.title, PLAIN_MAX).replaceAll("`", "")}\``;
+  const headline =
+    me?.role === "root"
+      ? `- This record is the ranked root candidate of ${String(group.members.length)} open records that opened within 30 minutes of one another.`
+      : `- This record is downstream of ${rootName}, the ranked root candidate of ${String(group.members.length)} open records that opened within 30 minutes of one another.`;
+  const lines = [
+    headline,
+    `- Ranking: ${group.relationLabel}. It ranks candidates; it does not prove a cause.`,
+    ...(group.reachCapped
+      ? ["- The dependency graph was too large to search completely; some relations were treated as absent."]
+      : []),
+    ...group.members.map((m) => cascadeMemberLine(m, info)),
+  ];
+  return section("Cascade", lines);
 }
 
 export function renderIncident(brief: IncidentBrief, opts?: RenderOpts): string {

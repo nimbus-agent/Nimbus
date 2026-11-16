@@ -41,7 +41,10 @@ import { isTriggerPair, type TriggerService } from "./trigger-sources.ts";
  */
 
 export class IncidentError extends Error {
-  readonly code: "ERR_INCIDENT_NOT_A_TRIGGER" | "ERR_INCIDENT_NOT_FOUND";
+  readonly code:
+    | "ERR_INCIDENT_NOT_A_TRIGGER"
+    | "ERR_INCIDENT_NOT_FOUND"
+    | "ERR_INCIDENT_VERSION_NOT_FOUND";
   constructor(code: IncidentError["code"], message: string) {
     super(message);
     this.name = "IncidentError";

@@ -111,6 +111,7 @@ function makeRunner(over: Partial<Parameters<typeof createOncallPushRunner>[0]> 
     },
     records: realRecords(),
     serviceConfig: (id) => (id === "payments" ? cfg : undefined),
+    dependsOn: () => new Map(),
     now: () => T0,
     ...over,
   });

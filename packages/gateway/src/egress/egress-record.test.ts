@@ -214,3 +214,63 @@ describe("buildEgressEntry - a request's own session id never writes the reserve
     expect(e.sourceId).toBe(`agent:${ID}`);
   });
 });
+
+describe("buildEgressEntry: the incident link (IC4 3.9)", () => {
+  const LINK = { id: "inc_0123456789abcdef", version: 2 } as const;
+  const HEAD = '{"incident":{"id":"inc_0123456789abcdef","version":2}';
+  const base = {
+    hitlStatus: "approved",
+    resultStatus: "authorized",
+    sessionId: undefined,
+    now: 1,
+  } as const;
+
+  test("a linked action's summary starts with the link", () => {
+    const e = buildEgressEntry({
+      ...base,
+      action: { type: "email.send", payload: { to: "a@b.c" } },
+      incident: LINK,
+    });
+    expect(e.payloadSummary.startsWith(`${HEAD},`)).toBe(true);
+    expect(e.payloadSummary).toContain('"to":"a@b.c"');
+  });
+
+  test("a caller-supplied payload.incident cannot replace the head's link and is absent from the summary", () => {
+    const e = buildEgressEntry({
+      ...base,
+      action: {
+        type: "email.send",
+        payload: { incident: { id: "inc_spoofed", version: 99 }, to: "a@b.c" },
+      },
+      incident: LINK,
+    });
+    expect(e.payloadSummary.startsWith(HEAD)).toBe(true);
+    expect(e.payloadSummary).not.toContain("inc_spoofed");
+    expect(e.payloadSummary).not.toContain("99");
+  });
+
+  test("an agent head and a link are both kept, link first, and a payload incident is dropped under any head", () => {
+    const e = buildEgressEntry({
+      ...base,
+      action: { type: "email.send", payload: { incident: "x", to: "a@b.c" } },
+      incident: LINK,
+      agent: { captureId: "cap_0123456789abcdef0123456789abcdef", label: "ag" },
+    });
+    expect(e.payloadSummary.startsWith(`${HEAD},"agent"`)).toBe(true);
+    expect(e.payloadSummary).not.toContain('"incident":"x"');
+    const noLink = buildEgressEntry({
+      ...base,
+      action: { type: "email.send", payload: { incident: "x", to: "a@b.c" } },
+      agent: { captureId: "cap_0123456789abcdef0123456789abcdef", label: "ag" },
+    });
+    expect(noLink.payloadSummary).not.toContain('"incident"');
+  });
+
+  test("an unlinked action with no head keeps its payload exactly as before", () => {
+    const e = buildEgressEntry({
+      ...base,
+      action: { type: "email.send", payload: { to: "a@b.c" } },
+    });
+    expect(e.payloadSummary).toBe('{"to":"a@b.c"}');
+  });
+});

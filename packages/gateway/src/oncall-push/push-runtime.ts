@@ -191,6 +191,14 @@ export function assembleOncallPushRuntime(deps: OncallPushBootDeps): OncallPushR
       loadServiceConfigsOrEmpty(deps.configDir, (m) => deps.logger.warn?.({}, m)).find(
         (c) => c.serviceId === serviceId,
       ),
+    // Read fresh on every use, like `serviceConfig`: an edit of `depends_on` applies to the next brief.
+    dependsOn: () =>
+      new Map(
+        loadServiceConfigsOrEmpty(deps.configDir, (m) => deps.logger.warn?.({}, m)).map((c) => [
+          c.serviceId,
+          c.dependsOn,
+        ]),
+      ),
     resolveSelf,
     deliver: createPushDeliverer({
       store,

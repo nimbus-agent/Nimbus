@@ -67,6 +67,7 @@ test("a real incident record is stored as the brief; no synthesis is attempted e
     deliver: async () => {},
     records: engineForConfigDir(db, configDir),
     serviceConfig: () => undefined,
+    dependsOn: () => new Map(),
   });
 
   expect(await runner.run("pagerduty")).toMatchObject({ selected: 1, ok: 1, failed: 0 });

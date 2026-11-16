@@ -23,7 +23,7 @@ type Row = {
 const ADDRESS_KEYS: ReadonlySet<string> = new Set(["assignee_emails", "resolved_by_email"]);
 
 /** A JSON array value reduced to its length; anything else to `set` or `unset`. Never the content. */
-function redact(key: string, value: string | null): string | null {
+export function redactHistoryValue(key: string, value: string | null): string | null {
   if (!ADDRESS_KEYS.has(key)) return value === null ? null : oneLine(value);
   if (value === null || value === "") return null;
   try {
@@ -56,8 +56,8 @@ export function historyLane(
     .all(input.itemId, HISTORY_CAP) as Row[];
   const views: HistoryRowView[] = rows.map((r) => ({
     key: r.key,
-    from: redact(r.key, r.old_value),
-    to: redact(r.key, r.new_value),
+    from: redactHistoryValue(r.key, r.old_value),
+    to: redactHistoryValue(r.key, r.new_value),
     observedAtMs: r.observed_at_ms,
     sourceAtMs: r.source_at_ms,
   }));
