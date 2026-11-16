@@ -35,10 +35,7 @@ describe("incident link shape (IC4 2.1)", () => {
         version = 1;
       })(),
     ],
-    [
-      "getter",
-      Object.defineProperty({ version: 1 }, "id", { get: () => ID, enumerable: true }),
-    ],
+    ["getter", Object.defineProperty({ version: 1 }, "id", { get: () => ID, enumerable: true })],
     ["symbol key", { id: ID, version: 1, [Symbol("x")]: 1 }],
   ];
   for (const [name, value] of bad) {

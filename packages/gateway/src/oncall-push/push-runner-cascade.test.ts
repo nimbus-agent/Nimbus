@@ -148,7 +148,10 @@ describe("9.3 a record in a cluster of two or more gets the block; a record alon
     for (const id of ["pagerduty:PA", "pagerduty:PB"]) {
       const row = store.get(id);
       expect(row?.briefMarkdown).toContain("## Cascade");
-      expect((JSON.parse(row?.briefJson ?? "{}") as { cascade: { rootRecordId: string } }).cascade.rootRecordId).toBe(rootId ?? "");
+      expect(
+        (JSON.parse(row?.briefJson ?? "{}") as { cascade: { rootRecordId: string } }).cascade
+          .rootRecordId,
+      ).toBe(rootId ?? "");
     }
   });
 
@@ -159,11 +162,19 @@ describe("9.3 a record in a cluster of two or more gets the block; a record alon
     await runner.run("pagerduty");
     const a = store.get("pagerduty:PA");
     const b = store.get("pagerduty:PB");
-    expect(b?.briefMarkdown).toContain("This record is the ranked root candidate of 2 open records");
+    expect(b?.briefMarkdown).toContain(
+      "This record is the ranked root candidate of 2 open records",
+    );
     expect(a?.briefMarkdown).toContain("This record is downstream of");
-    expect(a?.briefMarkdown).toContain("depends on the root through api -> db (declared depends_on)");
-    expect((JSON.parse(a?.briefJson ?? "{}") as { cascade: { role: string } }).cascade.role).toBe("downstream");
-    expect((JSON.parse(b?.briefJson ?? "{}") as { cascade: { role: string } }).cascade.role).toBe("root");
+    expect(a?.briefMarkdown).toContain(
+      "depends on the root through api -> db (declared depends_on)",
+    );
+    expect((JSON.parse(a?.briefJson ?? "{}") as { cascade: { role: string } }).cascade.role).toBe(
+      "downstream",
+    );
+    expect((JSON.parse(b?.briefJson ?? "{}") as { cascade: { role: string } }).cascade.role).toBe(
+      "root",
+    );
   });
 });
 

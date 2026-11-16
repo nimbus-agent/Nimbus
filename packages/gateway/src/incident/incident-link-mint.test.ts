@@ -1,11 +1,10 @@
 import type { Database } from "bun:sqlite";
 import { afterEach, describe, expect, test } from "bun:test";
-
+import { DEFAULT_INCIDENT_CONFIG } from "../config/incident-toml.ts";
 import { createMemoryIndexDb } from "../connectors/connector-sync-test-helpers.ts";
 import { isIncidentLink } from "../engine/incident-link.ts";
 import { configMap, resolverFor, serviceConfig, T0 } from "./__fixtures__/index-writers.ts";
 import { writePagerdutyIncident } from "./__fixtures__/trigger-writers.ts";
-import { DEFAULT_INCIDENT_CONFIG } from "../config/incident-toml.ts";
 import { createIncidentEngine } from "./incident-engine.ts";
 import { mintIncidentLink } from "./incident-link-mint.ts";
 
@@ -44,7 +43,9 @@ describe("mintIncidentLink (IC4 2.2)", () => {
     const two = mintIncidentLink(d, id);
     expect(two.version).toBe(4);
     expect(two).not.toBe(one);
-    expect(() => mintIncidentLink(d, "inc_ffffffffffffffff")).toThrow(/ERR_INCIDENT_NOT_FOUND|no incident/);
+    expect(() => mintIncidentLink(d, "inc_ffffffffffffffff")).toThrow(
+      /ERR_INCIDENT_NOT_FOUND|no incident/,
+    );
     try {
       mintIncidentLink(d, "inc_ffffffffffffffff");
     } catch (e) {

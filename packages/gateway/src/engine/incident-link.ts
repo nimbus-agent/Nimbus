@@ -59,7 +59,9 @@ export function isIncidentLink(x: unknown): x is IncidentLink {
 /** Throws unless `x` is exactly a well-formed link. */
 export function assertIncidentLink(x: unknown): asserts x is IncidentLink {
   if (!isIncidentLink(x)) {
-    throw new IncidentLinkError("an incident link must be exactly { id: inc_<16 hex>, version: 1..1000000 }");
+    throw new IncidentLinkError(
+      "an incident link must be exactly { id: inc_<16 hex>, version: 1..1000000 }",
+    );
   }
 }
 
@@ -114,7 +116,11 @@ export function assertLinkedActionAllowed(
   if (own !== undefined) assertIncidentLink(own);
   if (scopeLink !== undefined) assertIncidentLink(scopeLink);
   if (own !== undefined) {
-    if (action.origin !== undefined || action.proposer !== undefined || action.provenance !== undefined) {
+    if (
+      action.origin !== undefined ||
+      action.proposer !== undefined ||
+      action.provenance !== undefined
+    ) {
       throw new IncidentLinkError(
         "an incident-linked action is the owner's own: it carries no origin, proposer or provenance",
       );

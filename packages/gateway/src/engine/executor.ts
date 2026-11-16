@@ -46,11 +46,7 @@ import {
 import type { BoundWriteCapabilities, SettleContext } from "./bound-write-capabilities.ts";
 import { type RemoteApprovalOutcome, resolveDelegatedApproval } from "./delegated-approval.ts";
 import type { DelegationReader } from "./delegation-store.ts";
-import {
-  assertLinkedActionAllowed,
-  type IncidentLink,
-  promptForRow,
-} from "./incident-link.ts";
+import { assertLinkedActionAllowed, type IncidentLink, promptForRow } from "./incident-link.ts";
 import { isAgentOrigin, isModelOrigin, isOutsideOrigin } from "./outside-origin.ts";
 import {
   boundInputRefusal,
@@ -2019,7 +2015,10 @@ export class ToolExecutor {
         scope.onBehalfOf,
         incident === undefined
           ? undefined
-          : { link: incident, subStep: action.incident === undefined && scope.incidentSubStep === true },
+          : {
+              link: incident,
+              subStep: action.incident === undefined && scope.incidentSubStep === true,
+            },
       ),
       timestamp: at,
       ...(sessionId === undefined ? {} : { sessionId }),

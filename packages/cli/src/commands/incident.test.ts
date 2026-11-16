@@ -61,7 +61,12 @@ function harness(replies: Record<string, unknown | ((p: unknown) => unknown)>) {
 
 describe("parseIncidentArgs", () => {
   test("list flags", () => {
-    expect(parseIncidentArgs(["list"])).toEqual({ verb: "list", json: false, open: false, cascade: false });
+    expect(parseIncidentArgs(["list"])).toEqual({
+      verb: "list",
+      json: false,
+      open: false,
+      cascade: false,
+    });
     expect(
       parseIncidentArgs([
         "list",
@@ -191,12 +196,20 @@ describe("incident list", () => {
       },
     });
     expect(
-      await runIncidentWith(none.ipc, { verb: "list", json: false, open: false, cascade: false }, none.sink),
+      await runIncidentWith(
+        none.ipc,
+        { verb: "list", json: false, open: false, cascade: false },
+        none.sink,
+      ),
     ).toBe(0);
     expect(none.out.join("")).toContain("Connected: pagerduty");
     const nodata = harness({ "incident.list": { status: "no_data", records: [], sources: [] } });
     expect(
-      await runIncidentWith(nodata.ipc, { verb: "list", json: false, open: false, cascade: false }, nodata.sink),
+      await runIncidentWith(
+        nodata.ipc,
+        { verb: "list", json: false, open: false, cascade: false },
+        nodata.sink,
+      ),
     ).toBe(1);
     expect(nodata.err.join("")).toContain("Connect PagerDuty");
   });
@@ -212,22 +225,36 @@ describe("incident list", () => {
     expect(JSON.parse(h.out.join(""))).toMatchObject({ status: "no_data" });
     expect(h.calls[1]?.params).toEqual({ service: "s", source: "jira" });
     const ok = harness({ "incident.list": { status: "none", records: [], sources: [] } });
-    expect(await runIncidentWith(ok.ipc, { verb: "list", json: true, open: false, cascade: false }, ok.sink)).toBe(
-      0,
-    );
+    expect(
+      await runIncidentWith(
+        ok.ipc,
+        { verb: "list", json: true, open: false, cascade: false },
+        ok.sink,
+      ),
+    ).toBe(0);
   });
 
   test("a gateway error is printed and exits 1, as JSON under --json", async () => {
     const h = harness({
       "incident.list": new Error("ERR_INCIDENT_FORBIDDEN_CLIENT: no\u001b[31m"),
     });
-    expect(await runIncidentWith(h.ipc, { verb: "list", json: false, open: false, cascade: false }, h.sink)).toBe(
-      1,
-    );
+    expect(
+      await runIncidentWith(
+        h.ipc,
+        { verb: "list", json: false, open: false, cascade: false },
+        h.sink,
+      ),
+    ).toBe(1);
     expect(h.err.join("")).toContain("ERR_INCIDENT_FORBIDDEN_CLIENT");
     expect(h.err.join("")).not.toContain("\u001b");
     const j = harness({ "incident.list": new Error("boom") });
-    expect(await runIncidentWith(j.ipc, { verb: "list", json: true, open: false, cascade: false }, j.sink)).toBe(1);
+    expect(
+      await runIncidentWith(
+        j.ipc,
+        { verb: "list", json: true, open: false, cascade: false },
+        j.sink,
+      ),
+    ).toBe(1);
     expect(JSON.parse(j.out.join(""))).toEqual({ error: "boom" });
   });
 });
@@ -317,7 +344,11 @@ describe("runIncidentCommand", () => {
 
 describe("incident timeline and the cascade (IC4)", () => {
   test("timeline parses its id, --version and --json, and refuses anything else", () => {
-    expect(parseIncidentArgs(["timeline", "inc_x"])).toEqual({ verb: "timeline", json: false, id: "inc_x" });
+    expect(parseIncidentArgs(["timeline", "inc_x"])).toEqual({
+      verb: "timeline",
+      json: false,
+      id: "inc_x",
+    });
     expect(parseIncidentArgs(["timeline", "inc_x", "--version", "3", "--json"])).toEqual({
       verb: "timeline",
       json: true,
@@ -351,11 +382,17 @@ describe("incident timeline and the cascade (IC4)", () => {
         recordId: "inc_0123456789abcdef",
         version: 1,
         currentVersion: 2,
-        events: [{ atMs: T, atBasis: "source", kind: "opened", text: "Opened: bad\u001b[31m title" }],
+        events: [
+          { atMs: T, atBasis: "source", kind: "opened", text: "Opened: bad\u001b[31m title" },
+        ],
         notes: ["note\u001b[0m one"],
       },
     });
-    const code = await runIncidentWith(h.ipc, { verb: "timeline", json: false, id: "inc_x", version: 1 }, h.sink);
+    const code = await runIncidentWith(
+      h.ipc,
+      { verb: "timeline", json: false, id: "inc_x", version: 1 },
+      h.sink,
+    );
     expect(code).toBe(0);
     expect(h.calls.map((c) => c.method)).toEqual(["session.declareKind", "incident.timeline"]);
     expect(h.calls[1]?.params).toEqual({ id: "inc_x", version: 1 });
@@ -364,14 +401,20 @@ describe("incident timeline and the cascade (IC4)", () => {
     expect(text).toContain("2026-11-12 08:30:00 UTC (source) opened: Opened: bad[31m title");
     expect(text).not.toContain("\u001b");
     expect(text).toContain("Note: note[0m one");
-    const j = harness({ "incident.timeline": { recordId: "r", version: 1, currentVersion: 1, events: [], notes: [] } });
+    const j = harness({
+      "incident.timeline": { recordId: "r", version: 1, currentVersion: 1, events: [], notes: [] },
+    });
     expect(await runIncidentWith(j.ipc, { verb: "timeline", json: true, id: "r" }, j.sink)).toBe(0);
     expect(JSON.parse(j.out.join(""))).toMatchObject({ recordId: "r" });
   });
 
   test("a timeline of an unknown id exits 1 with the gateway's message", async () => {
-    const h = harness({ "incident.timeline": new Error("ERR_INCIDENT_NOT_FOUND: no record is stored for that id") });
-    expect(await runIncidentWith(h.ipc, { verb: "timeline", json: false, id: "x" }, h.sink)).toBe(1);
+    const h = harness({
+      "incident.timeline": new Error("ERR_INCIDENT_NOT_FOUND: no record is stored for that id"),
+    });
+    expect(await runIncidentWith(h.ipc, { verb: "timeline", json: false, id: "x" }, h.sink)).toBe(
+      1,
+    );
     expect(h.err.join("")).toContain("ERR_INCIDENT_NOT_FOUND");
   });
 
@@ -393,18 +436,36 @@ describe("incident timeline and the cascade (IC4)", () => {
         ],
       },
     });
-    expect(await runIncidentWith(h.ipc, { verb: "list", json: false, open: false, cascade: true }, h.sink)).toBe(0);
+    expect(
+      await runIncidentWith(
+        h.ipc,
+        { verb: "list", json: false, open: false, cascade: true },
+        h.sink,
+      ),
+    ).toBe(0);
     expect(h.calls[1]?.params).toEqual({ cascade: true });
     const text = h.out.join("");
     expect(text).toContain("Cascade 1: ranked by declared depends_on");
     expect(text).toContain("root candidate  inc_a  db  db[31m down");
     expect(text).toContain("downstream      inc_b  (unbound)  api slow");
     expect(text).not.toContain("\u001b");
-    const bad = harness({ "incident.list": { status: "ok", records: [summary()], sources: [], groups: null } });
-    await runIncidentWith(bad.ipc, { verb: "list", json: false, open: false, cascade: true }, bad.sink);
+    const bad = harness({
+      "incident.list": { status: "ok", records: [summary()], sources: [], groups: null },
+    });
+    await runIncidentWith(
+      bad.ipc,
+      { verb: "list", json: false, open: false, cascade: true },
+      bad.sink,
+    );
     expect(bad.out.join("")).toContain("could not be ranked");
-    const none = harness({ "incident.list": { status: "ok", records: [summary()], sources: [], groups: [] } });
-    await runIncidentWith(none.ipc, { verb: "list", json: false, open: false, cascade: true }, none.sink);
+    const none = harness({
+      "incident.list": { status: "ok", records: [summary()], sources: [], groups: [] },
+    });
+    await runIncidentWith(
+      none.ipc,
+      { verb: "list", json: false, open: false, cascade: true },
+      none.sink,
+    );
     expect(none.out.join("")).toContain("No cascade");
   });
 
@@ -415,16 +476,28 @@ describe("incident timeline and the cascade (IC4)", () => {
           summary: summary(),
           markdown: "# Incident Payments",
           versions: [],
-          cascade: { status: "ok", markdown: "## Cascade\n\n- This record is the ranked root candidate\u001b[31m of 2" },
+          cascade: {
+            status: "ok",
+            markdown: "## Cascade\n\n- This record is the ranked root candidate\u001b[31m of 2",
+          },
         },
       },
     });
-    expect(await runIncidentWith(h.ipc, { verb: "show", json: false, id: "inc_x" }, h.sink, T)).toBe(0);
+    expect(
+      await runIncidentWith(h.ipc, { verb: "show", json: false, id: "inc_x" }, h.sink, T),
+    ).toBe(0);
     const text = h.out.join("");
     expect(text.indexOf("# Incident Payments")).toBeLessThan(text.indexOf("## Cascade"));
     expect(text).not.toContain("\u001b");
     const un = harness({
-      "incident.get": { record: { summary: summary(), markdown: "# I", versions: [], cascade: { status: "unavailable" } } },
+      "incident.get": {
+        record: {
+          summary: summary(),
+          markdown: "# I",
+          versions: [],
+          cascade: { status: "unavailable" },
+        },
+      },
     });
     await runIncidentWith(un.ipc, { verb: "show", json: false, id: "inc_x" }, un.sink, T);
     expect(un.out.join("")).toContain("could not be ranked");

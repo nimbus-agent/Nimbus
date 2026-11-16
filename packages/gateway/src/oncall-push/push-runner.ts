@@ -175,8 +175,15 @@ async function briefFromRecord(deps: OncallPushRunnerDeps, itemId: string): Prom
     return {
       status: "ok",
       sessionId: `incident:${row.id}:v${String(row.version)}`,
-      briefMarkdown: cascade.markdown === "" ? row.markdown : `${row.markdown}\n\n${cascade.markdown}`,
-      briefJson: compatibilityJson(row.service, row.record_json, row.id, row.version, cascade.summary),
+      briefMarkdown:
+        cascade.markdown === "" ? row.markdown : `${row.markdown}\n\n${cascade.markdown}`,
+      briefJson: compatibilityJson(
+        row.service,
+        row.record_json,
+        row.id,
+        row.version,
+        cascade.summary,
+      ),
     };
   } catch (e) {
     return failed(`assembly: ${clip(e instanceof Error ? e.message : String(e))}`);

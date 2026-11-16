@@ -26,9 +26,9 @@ const PREFIX_LEN = 40;
 
 const STR = String.raw`(?:[^"\\]|\\.)*`;
 const LINK_HEAD = String.raw`^\{"incident":\{"id":"(inc_[0-9a-f]{16})","version":(\d{1,7})\}`;
-const SUBSTEP_PART = String.raw`(,"subStep":true)?`;
-const PROMPT_PART = String.raw`(?:,"promptSha256":"([0-9a-f]{64})","prompt":"(${STR})")?`;
-const CUT_PART = String.raw`(,"promptCut":true)?`;
+const SUBSTEP_PART = `(,"subStep":true)?`;
+const PROMPT_PART = `(?:,"promptSha256":"([0-9a-f]{64})","prompt":"(${STR})")?`;
+const CUT_PART = `(,"promptCut":true)?`;
 const ROW_RE = new RegExp(`${LINK_HEAD}${SUBSTEP_PART}${PROMPT_PART}${CUT_PART}`);
 /** A prompt string that was itself cut by the row cap (no closing quote). */
 const OPEN_PROMPT_RE = new RegExp(

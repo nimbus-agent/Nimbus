@@ -1,11 +1,10 @@
 import type { Database } from "bun:sqlite";
 import { afterEach, describe, expect, test } from "bun:test";
-
+import { DEFAULT_INCIDENT_CONFIG } from "../config/incident-toml.ts";
 import { createMemoryIndexDb } from "../connectors/connector-sync-test-helpers.ts";
 import { configMap, resolverFor, serviceConfig, T0 } from "./__fixtures__/index-writers.ts";
 import { writePagerdutyIncident } from "./__fixtures__/trigger-writers.ts";
 import { createIncidentEngine } from "./incident-engine.ts";
-import { DEFAULT_INCIDENT_CONFIG } from "../config/incident-toml.ts";
 import { selectChangedItemIds } from "./incident-selection.ts";
 
 const dbs: Database[] = [];
@@ -45,10 +44,10 @@ function mkEngine(d: Database, now: () => number): ReturnType<typeof createIncid
 /** Assemble the item through the real engine, then force the record closed with the given check time. */
 async function closeRecord(d: Database, itemId: string, checkedAtMs: number): Promise<void> {
   await mkEngine(d, () => NOW).assembleNow(itemId);
-  d.run("UPDATE incident_record SET status = 'closed', checked_at_ms = ? WHERE trigger_item_id = ?", [
-    checkedAtMs,
-    itemId,
-  ]);
+  d.run(
+    "UPDATE incident_record SET status = 'closed', checked_at_ms = ? WHERE trigger_item_id = ?",
+    [checkedAtMs, itemId],
+  );
 }
 
 function history(d: Database, itemId: string, observedAtMs: number): void {
@@ -123,7 +122,13 @@ describe("selectChangedItemIds: the item_history arm (IC4 task 1)", () => {
     // the provider reopens it, stamping a time EARLIER than the check; the sync observes it now
     writePagerdutyIncident(
       d,
-      { id: "RO", openedAtMs: open, status: "triggered", updatedAtMs: open + 300_000, priority: "P1" },
+      {
+        id: "RO",
+        openedAtMs: open,
+        status: "triggered",
+        updatedAtMs: open + 300_000,
+        priority: "P1",
+      },
       resolver,
     );
     d.run("UPDATE item_history SET observed_at_ms = ? WHERE item_id = ? AND observed_at_ms > ?", [

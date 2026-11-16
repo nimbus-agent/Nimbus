@@ -53,14 +53,12 @@ describe("4.1 census: only three files touch an action's incident link", () => {
     const hits = walk(SRC)
       .filter((f) => {
         const s = strip(readFileSync(f, "utf8"));
-        return /\bPlannedAction\b/.test(s) && /\bIncidentLink\b|\bincident\s*:|\.incident\b/.test(s);
+        return (
+          /\bPlannedAction\b/.test(s) && /\bIncidentLink\b|\bincident\s*:|\.incident\b/.test(s)
+        );
       })
       .map((f) => relative(SRC, f).split("\\").join("/"))
       .sort();
-    expect(hits).toEqual([
-      "egress/egress-record.ts",
-      "engine/executor.ts",
-      "engine/types.ts",
-    ]);
+    expect(hits).toEqual(["egress/egress-record.ts", "engine/executor.ts", "engine/types.ts"]);
   });
 });

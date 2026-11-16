@@ -395,7 +395,10 @@ const utcSec = (ms: number): string =>
 
 /** The prompt escaped (`JSON.stringify` escapes controls and quotes), then stripped of what it leaves (bidi marks). */
 function escapedPrompt(text: string): string {
-  return stripControlChars(JSON.stringify(text)).replace(/[\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, "");
+  return stripControlChars(JSON.stringify(text)).replace(
+    /[\u200e\u200f\u202a-\u202e\u2066-\u2069]/g,
+    "",
+  );
 }
 
 function replayRowLine(r: ReplayRowView, indent: string): string[] {
@@ -468,7 +471,10 @@ export async function runAuditReplay(
   await declareCliClientKind(client);
   let r: ReplayView;
   try {
-    r = await client.call<ReplayView>("audit.replay", { id: a.id, ...(a.json ? { full: true } : {}) });
+    r = await client.call<ReplayView>("audit.replay", {
+      id: a.id,
+      ...(a.json ? { full: true } : {}),
+    });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     if (msg.includes("ERR_INCIDENT_NOT_FOUND")) {

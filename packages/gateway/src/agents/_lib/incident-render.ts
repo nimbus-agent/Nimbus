@@ -1,3 +1,5 @@
+import type { CascadeGroup, CascadeMember, CascadeReason } from "../../incident/cascade.ts";
+import type { CascadeInfo } from "../../incident/cascade-read.ts";
 import type {
   ChangeLane,
   ChatLane,
@@ -11,8 +13,6 @@ import type {
   TimeValue,
   TriggerBlock,
 } from "../../incident/incident-record-types.ts";
-import type { CascadeGroup, CascadeMember, CascadeReason } from "../../incident/cascade.ts";
-import type { CascadeInfo } from "../../incident/cascade-read.ts";
 import type { Timeline } from "../../incident/timeline.ts";
 import type { IncidentBrief } from "./incident-types.ts";
 import { hardenedPlain, hardenedTitleLink, type RenderOpts, renderGaps } from "./render.ts";
@@ -297,7 +297,9 @@ export function renderCascadeSection(
   const root = group.members.find((m) => m.role === "root");
   const rootInfo = root === undefined ? undefined : info.get(root.recordId);
   const rootName =
-    rootInfo === undefined ? "the root candidate" : `\`${hardenedPlain(rootInfo.title, PLAIN_MAX).replaceAll("`", "")}\``;
+    rootInfo === undefined
+      ? "the root candidate"
+      : `\`${hardenedPlain(rootInfo.title, PLAIN_MAX).replaceAll("`", "")}\``;
   const headline =
     me?.role === "root"
       ? `- This record is the ranked root candidate of ${String(group.members.length)} open records that opened within 30 minutes of one another.`
@@ -306,7 +308,9 @@ export function renderCascadeSection(
     headline,
     `- Ranking: ${group.relationLabel}. It ranks candidates; it does not prove a cause.`,
     ...(group.reachCapped
-      ? ["- The dependency graph was too large to search completely; some relations were treated as absent."]
+      ? [
+          "- The dependency graph was too large to search completely; some relations were treated as absent.",
+        ]
       : []),
     ...group.members.map((m) => cascadeMemberLine(m, info)),
   ];

@@ -302,7 +302,10 @@ function timeline(ctx: IncidentRpcCtx, raw: unknown): unknown {
   const version = p["version"];
   if (
     version !== undefined &&
-    (typeof version !== "number" || !Number.isInteger(version) || version < 1 || version > 1_000_000)
+    (typeof version !== "number" ||
+      !Number.isInteger(version) ||
+      version < 1 ||
+      version > 1_000_000)
   ) {
     throw new IncidentRpcError(-32602, "incident.timeline: version must be a positive integer");
   }

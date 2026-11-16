@@ -9,8 +9,8 @@ import { chainVerifiers, replayIncident } from "../audit/incident-replay.ts";
 import { verifyAuditChain } from "../db/audit-verify.ts";
 import { readToolCallLog, type ToolCallLogFilter } from "../db/tool-call-log.ts";
 import { verifyEgressChain } from "../egress/egress-verify.ts";
-import type { LocalIndex } from "../index/local-index.ts";
 import { IncidentError } from "../incident/assemble.ts";
+import type { LocalIndex } from "../index/local-index.ts";
 import { dispatchByMethod, type RpcMissOrHit } from "./_lib/dispatch-by-method.ts";
 import type { ClientKind } from "./server/client-kind.ts";
 

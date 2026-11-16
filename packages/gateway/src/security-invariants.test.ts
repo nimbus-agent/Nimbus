@@ -16099,9 +16099,9 @@ describe("I57 (a) - assembling an incident record is inert: it reads the local i
     expect(delegateAsked).toBe(0);
     expect(ownerAsked).toBe(1);
     expect(rows[0]?.hitlStatus).toBe("approved");
-    expect(rows[0]?.actionJson.startsWith('{"incident":{"id":"inc_0123456789abcdef","version":1}')).toBe(
-      true,
-    );
+    expect(
+      rows[0]?.actionJson.startsWith('{"incident":{"id":"inc_0123456789abcdef","version":1}'),
+    ).toBe(true);
     expect(rows[0]?.actionJson).not.toContain("standingRule");
     // an outside origin on a linked action is refused before any row
     const before = rows.length;

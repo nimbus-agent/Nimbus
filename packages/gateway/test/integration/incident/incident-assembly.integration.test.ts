@@ -284,6 +284,7 @@ describe("the on-call push over records", () => {
         },
         records: engine,
         serviceConfig: (id) => (id === "payments" ? cfg : undefined),
+        dependsOn: () => new Map(),
         now: () => NOW,
       }),
     };

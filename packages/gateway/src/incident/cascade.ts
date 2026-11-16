@@ -37,7 +37,11 @@ export type DependsOn = ReadonlyMap<string, readonly string[]>;
 
 export type CascadeReason =
   /** A downstream member: the path from its service to the root's, exactly as the search returned it. */
-  | { readonly kind: "declared_dependency"; readonly path: readonly string[]; readonly dependents?: never }
+  | {
+      readonly kind: "declared_dependency";
+      readonly path: readonly string[];
+      readonly dependents?: never;
+    }
   /** The root: how many other records of the cluster run on a service that depends on the root's. */
   | { readonly kind: "declared_dependency"; readonly dependents: number; readonly path?: never }
   | { readonly kind: "shared_deployment"; readonly deploymentId: string }

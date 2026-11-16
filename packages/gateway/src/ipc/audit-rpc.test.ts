@@ -191,10 +191,14 @@ describe("Phase 28 AD4: audit.proveByProposer and audit.listByDoor", () => {
 describe("Phase 10 IC4: audit.replay", () => {
   test("serves only cli and ui, and refuses every other kind BEFORE the params and any read", async () => {
     for (const kind of ["mcp", "unknown", "http", "chatops", "fleet", "push", undefined] as const) {
-      const err = await dispatchAuditRpc("audit.replay", {}, {
-        index: undefined,
-        ...(kind === undefined ? {} : { callerKind: kind }),
-      }).catch((e: unknown) => e);
+      const err = await dispatchAuditRpc(
+        "audit.replay",
+        {},
+        {
+          index: undefined,
+          ...(kind === undefined ? {} : { callerKind: kind }),
+        },
+      ).catch((e: unknown) => e);
       expect(err).toBeInstanceOf(AuditRpcError);
       expect((err as AuditRpcError).rpcCode).toBe(-32001);
     }
@@ -202,7 +206,16 @@ describe("Phase 10 IC4: audit.replay", () => {
 
   test("bad params are -32602; an unknown record is ERR_INCIDENT_NOT_FOUND", async () => {
     const ctx = { index: seededIndex(), callerKind: "cli" as const };
-    for (const p of [undefined, {}, { id: "" }, { id: 5 }, { id: "x".repeat(257) }, { id: "a", full: "y" }, { id: "a", extra: 1 }, "x"]) {
+    for (const p of [
+      undefined,
+      {},
+      { id: "" },
+      { id: 5 },
+      { id: "x".repeat(257) },
+      { id: "a", full: "y" },
+      { id: "a", extra: 1 },
+      "x",
+    ]) {
       const err = await dispatchAuditRpc("audit.replay", p, ctx).catch((e: unknown) => e);
       expect((err as AuditRpcError).rpcCode, JSON.stringify(p)).toBe(-32602);
     }

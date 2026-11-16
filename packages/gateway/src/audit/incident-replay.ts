@@ -2,7 +2,6 @@ import type { Database } from "bun:sqlite";
 
 import { verifyAuditChain } from "../db/audit-verify.ts";
 import { verifyEgressChain } from "../egress/egress-verify.ts";
-import type { LocalIndex } from "../index/local-index.ts";
 import {
   type ActionStep,
   groupSteps,
@@ -13,6 +12,7 @@ import {
 import { IncidentError } from "../incident/assemble.ts";
 import { resolveIncidentRef } from "../incident/incident-id.ts";
 import { getById, versionJson, versionsOf } from "../incident/incident-store.ts";
+import type { LocalIndex } from "../index/local-index.ts";
 import { canonicalJson } from "../util/canonical-json.ts";
 
 /**

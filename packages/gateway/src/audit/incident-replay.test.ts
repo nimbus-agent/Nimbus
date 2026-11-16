@@ -262,9 +262,9 @@ describe("10.2 the anchor is the greatest id BELOW the first linked row (ids hav
     const olds = (db.query("SELECT id FROM audit_log ORDER BY id").all() as { id: number }[]).map(
       (r) => r.id,
     );
-    olds.forEach((old, i) =>
-      db.run("UPDATE audit_log SET id = ? WHERE id = ?", [newIds[i] ?? 0, old]),
-    );
+    for (const [i, old] of olds.entries()) {
+      db.run("UPDATE audit_log SET id = ? WHERE id = ?", [newIds[i] ?? 0, old]);
+    }
     const r = replayIncident(db, recordId, verify());
     expect(r.verification.audit).toMatchObject({ anchorId: 2, toId: 9, ok: true });
   });

@@ -1,6 +1,6 @@
 import { redactAuditPayload } from "../audit/format-audit-payload.ts";
-import { serviceOf } from "../engine/service-of.ts";
 import type { IncidentLink } from "../engine/incident-link.ts";
+import { serviceOf } from "../engine/service-of.ts";
 import type { PlannedAction } from "../engine/types.ts";
 import { isCaptureId } from "../mcp-sink/capture-id.ts";
 import type { EgressSourceType } from "./egress-source-type.ts";

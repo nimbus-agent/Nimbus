@@ -178,6 +178,9 @@ describe("verifyAuditChain: the inclusive upper bound (IC4 10.1)", () => {
   test("toId below fromId throws", () => {
     const idx = chain(3);
     expect(() => verifyAuditChain(idx, { fromId: 3, toId: 2 })).toThrow(RangeError);
-    expect(verifyAuditChain(idx, { fromId: 2, toId: 2 })).toMatchObject({ ok: true, verifiedRows: 0 });
+    expect(verifyAuditChain(idx, { fromId: 2, toId: 2 })).toMatchObject({
+      ok: true,
+      verifiedRows: 0,
+    });
   });
 });

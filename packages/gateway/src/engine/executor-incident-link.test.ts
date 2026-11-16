@@ -112,7 +112,10 @@ function harness(o: Options = {}): Harness {
   return { exec, prompts, confirmed, audits, egress, dispatched };
 }
 
-const linked = (a: PlannedAction, link: NonNullable<PlannedAction["incident"]> = LINK): PlannedAction => ({
+const linked = (
+  a: PlannedAction,
+  link: NonNullable<PlannedAction["incident"]> = LINK,
+): PlannedAction => ({
   ...a,
   incident: link,
 });
@@ -174,7 +177,10 @@ describe("2.4 a linked action is the owner's own (refused before any row)", () =
       { id: LINK.id, version: 1, extra: 1 },
     ]) {
       await expect(
-        h.exec.execute({ ...PLAIN, incident: bad as unknown as NonNullable<PlannedAction["incident"]> }),
+        h.exec.execute({
+          ...PLAIN,
+          incident: bad as unknown as NonNullable<PlannedAction["incident"]>,
+        }),
       ).rejects.toThrow(IncidentLinkError);
     }
     expect(h.audits).toHaveLength(0);
@@ -531,4 +537,3 @@ describe("3.9 the egress summary head", () => {
     ).toBe(true);
   });
 });
-

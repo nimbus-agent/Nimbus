@@ -101,7 +101,12 @@ describe("incident assembly acceptance (IC3)", () => {
     const ipc = {
       call: async (method: string, params?: unknown) => {
         if (method === "session.declareKind") return {};
-        const o = await dispatchIncidentRpc(method, params, { db, engine }, { kind: "cli" });
+        const o = await dispatchIncidentRpc(
+          method,
+          params,
+          { db, engine, dependsOn: () => new Map() },
+          { kind: "cli" },
+        );
         if (o.kind === "miss") throw new Error(`miss ${method}`);
         return o.value;
       },

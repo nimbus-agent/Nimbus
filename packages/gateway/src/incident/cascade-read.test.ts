@@ -73,7 +73,11 @@ describe("7.8 readOpenCascadeRecords / readCascade over a real incident_record t
     );
     expect(groups).toHaveLength(1);
     expect(groups[0]?.root).toBe("inc_0000000000000002");
-    expect(info.get("inc_0000000000000001")).toMatchObject({ title: "t", source: "pagerduty", service: "api" });
+    expect(info.get("inc_0000000000000001")).toMatchObject({
+      title: "t",
+      source: "pagerduty",
+      service: "api",
+    });
   });
 
   test("a stored row whose JSON is not valid reads as no deployment (never throws); a failed SQL read is a typed error", () => {
