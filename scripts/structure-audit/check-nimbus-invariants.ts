@@ -1255,7 +1255,6 @@ export function checkFleetClientKindConfinement(files: readonly FileEntry[]): Vi
 const D28_PUSH_KIND_ALLOWED = [
   "packages/gateway/src/ipc/server/client-kind.ts",
   "packages/gateway/src/egress/egress-bearing-kinds.ts",
-  "packages/gateway/src/oncall-push/push-runner.ts",
 ];
 // Same shapes as D28_FLEET_KIND_RE with "push" substituted. Both quote styles match in each rule:
 // a single-quoted `kind: 'push'` is the same assignment, and a double-quote-only regex passed it. The bare unquoted key matches only a
@@ -5506,8 +5505,9 @@ export const RULE_ANCHORS: readonly string[] = [
   // without an anchor of its own, D28 would report clean while scanning nothing the moment
   // `iterateSourceFiles()` stopped reaching `fleet/`.
   "packages/gateway/src/fleet/fleet-invoker.ts",
-  // D28 — second anchor, on `push-runner.ts`: the one file allowed to wear the `push` ClientKind
-  // (`kind: "push"`), scanned by the rule and then permitted, so D28 cannot go blind to it.
+  // D28 — second anchor, on `push-runner.ts`: the file that USED to wear the `push` ClientKind
+  // (`kind: "push"`) before the push re-based on incident records (Phase 10 IC3). It is still scanned, and
+  // now permitted nothing, so the literal cannot quietly return there and D28 cannot go blind to the file.
   "packages/gateway/src/oncall-push/push-runner.ts",
   // D29 (a)/(b)/(c)/(d) — anchored on `toolgen-broker.ts`, a file all four rules SCAN (it names
   // none of `nimbus/fetch`, `buildGeneratedManifest`'s definition, a `toolgen.` vault-key template,

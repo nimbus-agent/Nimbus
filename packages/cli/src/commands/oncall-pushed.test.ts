@@ -266,6 +266,43 @@ describe("oncall pushed: remaining branches", () => {
     expect(off.s.out).toContain("[oncall.push] enabled = true");
   });
 
+  test("list names why records were not pushed, and says records are off when sources are widened (Phase 10 IC3)", async () => {
+    const { s, sink: k } = sink();
+    const c = fake({
+      "oncall.pushedList": {
+        enabled: true,
+        identity: "resolved",
+        briefs: [],
+        sources: ["pagerduty", "jira"],
+        incidentEngineEnabled: false,
+        lastRun: { notPushed: { owner_not_on_call: 2, unbound: 0, no_oncall_data: 1 } },
+      },
+    });
+    await runOncallPushedWith(c, { mode: "list", json: false }, k, false);
+    expect(s.out).toContain(
+      "Records are off: pushes of other sources need [incident] enabled = true",
+    );
+    expect(s.out).toContain("The last run did not push: owner_not_on_call 2, no_oncall_data 1.");
+    const quiet = sink();
+    await runOncallPushedWith(
+      fake({
+        "oncall.pushedList": {
+          enabled: true,
+          identity: "resolved",
+          briefs: [OK],
+          sources: ["pagerduty"],
+          incidentEngineEnabled: false,
+          lastRun: null,
+        },
+      }),
+      { mode: "list", json: false },
+      quiet.sink,
+      false,
+    );
+    expect(quiet.s.out).not.toContain("Records are off");
+    expect(quiet.s.out).not.toContain("did not push");
+  });
+
   test("newest empty with push enabled: no off-hint", async () => {
     const { s, sink: k } = sink();
     const c = fake({

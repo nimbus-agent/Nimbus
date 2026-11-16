@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { resolveSelfPerson } from "../agents/_lib/self-person.ts";
+import { loadNimbusIncidentFromConfigDir } from "../config/incident-toml.ts";
 import {
   assertLayersReadable,
   getLayeredConfig,
@@ -13,10 +14,10 @@ import {
   loadNimbusOncallPushFromConfigDir,
   type NimbusOncallPushToml,
 } from "../config/oncall-push-toml.ts";
-import type { LocalIndex } from "../index/local-index.ts";
+import { loadServiceConfigsOrEmpty } from "../config/service-configs.ts";
 import { emitGatewayEvent } from "../ipc/gateway-events.ts";
 import { createLiveEnabled } from "./push-live-enabled.ts";
-import { createOncallPushRunner, type PushRunSummary } from "./push-runner.ts";
+import { createOncallPushRunner, type PushRecords, type PushRunSummary } from "./push-runner.ts";
 import { type ChatopsPoster, createPushDeliverer } from "./push-sinks.ts";
 import { type PushedBriefRow, PushStore } from "./push-store.ts";
 
@@ -36,6 +37,10 @@ export interface OncallPushRuntime {
    */
   stop(): void;
   readonly store: PushStore;
+  /** The last completed run's summary, with the count of records NOT pushed by reason; null before the first run. */
+  lastRun(): PushRunSummary | null;
+  /** Live `[incident] enabled`. With it false, widened `[oncall.push] sources` have no candidates until records exist. */
+  incidentEngineEnabled(): boolean;
   run(serviceId: string): Promise<PushRunSummary>;
   /** Fire-and-forget for the sync hook; never throws. */
   trigger(serviceId: string): void;
@@ -54,7 +59,8 @@ export interface OncallPushRuntime {
 export interface OncallPushBootDeps {
   readonly db: Database;
   readonly configDir: string;
-  readonly localIndex?: LocalIndex;
+  /** The incident engine's `assembleNow`: the push pushes the record it assembles (Phase 10 IC3). */
+  readonly records: PushRecords;
   /**
    * Structurally `NotificationService`: `delivers: false` makes every toast record `skipped`. Read
    * at delivery time — pass the service itself (whose `delivers` may be a getter), never a copy.
@@ -127,6 +133,17 @@ export function assembleOncallPushRuntime(deps: OncallPushBootDeps): OncallPushR
     { version: bootVersion, enabled: config.enabled, reconciled: bootReadError === undefined },
   );
   live.start();
+  // With the incident engine off, the automatic post-sync assembly stops, so a widened `sources` has no
+  // records to select. Say so once at boot rather than leave the owner guessing.
+  if (
+    loadNimbusIncidentFromConfigDir(deps.configDir).enabled === false &&
+    config.sources.some((s) => s !== "pagerduty")
+  ) {
+    deps.logger.warn?.(
+      {},
+      "[oncall.push] sources lists a source beyond pagerduty while [incident] enabled = false: records are not assembled automatically, so those sources have no push candidates until records exist",
+    );
+  }
   const isEnabled = (): boolean => live.isEnabled();
   const { enabled: _bootEnabled, ...bootConfig } = config;
 
@@ -163,8 +180,12 @@ export function assembleOncallPushRuntime(deps: OncallPushBootDeps): OncallPushR
     config: bootConfig,
     isEnabled,
     pagerdutyAliases: loadNimbusPagerdutyFromConfigDir(deps.configDir).severityP1Aliases,
-    configDir: deps.configDir,
-    ...(deps.localIndex === undefined ? {} : { index: deps.localIndex }),
+    records: deps.records,
+    // Read fresh on every use: the configured services (and their PagerDuty ids) can change at any time.
+    serviceConfig: (serviceId) =>
+      loadServiceConfigsOrEmpty(deps.configDir, (m) => deps.logger.warn?.({}, m)).find(
+        (c) => c.serviceId === serviceId,
+      ),
     resolveSelf,
     deliver: createPushDeliverer({
       store,
@@ -185,6 +206,8 @@ export function assembleOncallPushRuntime(deps: OncallPushBootDeps): OncallPushR
     isEnabled,
     stop: () => live.stop(),
     store,
+    lastRun: () => runner.lastRun(),
+    incidentEngineEnabled: () => loadNimbusIncidentFromConfigDir(deps.configDir).enabled,
     run,
     trigger(serviceId) {
       run(serviceId).catch((err: unknown) => {

@@ -189,6 +189,56 @@ describe("PushStore", () => {
     expect(store.list(10).map((r) => r.incidentId)).toEqual(["b"]);
   });
 
+  describe("the item join covers every trigger type (Phase 10 IC3)", () => {
+    test("listWithIncident, incidentTitle and incidentPagerdutyServiceId read an alert, a Sentry issue and a data-quality item", () => {
+      for (const [service, type, externalId, title] of [
+        ["jira", "alert", "AL1", "Alert one"],
+        ["sentry", "error_issue", "SN1", "TypeError in checkout"],
+        ["montecarlo", "data_quality_test", "montecarlo:MC1", "Monte Carlo incident MC1"],
+      ] as const) {
+        upsertIndexedItem(db, {
+          service,
+          type,
+          externalId,
+          title,
+          body: "",
+          modifiedAt: 1,
+          syncedAt: 1,
+          authorId: null,
+          url: null,
+          metadata: {},
+        } as never);
+        const id = `${service}:${externalId.replace(`${service}:`, "")}`;
+        store.insert(id, OK, 1);
+        expect(store.incidentTitle(id)).toBe(title);
+        expect(store.incidentPagerdutyServiceId(id)).toBeNull();
+      }
+      const titles = store.listWithIncident(10).map((l) => l.title);
+      expect(titles.sort()).toEqual([
+        "Alert one",
+        "Monte Carlo incident MC1",
+        "TypeError in checkout",
+      ]);
+    });
+
+    test("an item of another type with the same id is not joined", () => {
+      upsertIndexedItem(db, {
+        service: "github",
+        type: "issue",
+        externalId: "x",
+        title: "not an incident",
+        body: "",
+        modifiedAt: 1,
+        syncedAt: 1,
+        authorId: null,
+        url: null,
+        metadata: {},
+      } as never);
+      store.insert("github:x", OK, 1);
+      expect(store.incidentTitle("github:x")).toBeNull();
+    });
+  });
+
   describe("reconcileEnabledState (spec § 4.1)", () => {
     test("enabled + no row → stamps now", () => {
       store.reconcileEnabledState(true, 7000);

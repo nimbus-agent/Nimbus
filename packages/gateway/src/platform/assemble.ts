@@ -1032,7 +1032,8 @@ async function createSchedulerWithMesh(opts: SchedulerWithMeshOpts): Promise<{
   const oncallPush = assembleOncallPushRuntime({
     db,
     configDir: paths.configDir,
-    localIndex,
+    // The push pushes the record the engine assembled, assembling a candidate's on demand (Phase 10 IC3).
+    records: incidentEngine,
     // Passed WHOLE so the push sinks read `delivers` LIVE at delivery time (the OS service's probe
     // can flip it after boot) and record "skipped" rather than attempting a toast that cannot show.
     notifications,

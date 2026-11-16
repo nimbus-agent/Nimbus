@@ -34,7 +34,32 @@ type Brief = {
   failureCode: string | null;
   service?: string | null;
 };
-type ListResult = { enabled: boolean; identity: string; briefs: Brief[] };
+type ListResult = {
+  enabled: boolean;
+  identity: string;
+  briefs: Brief[];
+  /** Phase 10 IC3; absent on an older gateway. */
+  sources?: string[];
+  incidentEngineEnabled?: boolean;
+  lastRun?: { notPushed?: Record<string, number> } | null;
+};
+
+/** The two diagnostics that make a silent non-push explainable (Phase 10 IC3). */
+function recordDiagnostics(r: ListResult): string[] {
+  const out: string[] = [];
+  const widened = (r.sources ?? []).some((s) => s !== "pagerduty");
+  if (widened && r.incidentEngineEnabled === false) {
+    out.push(
+      "Records are off: pushes of other sources need [incident] enabled = true in nimbus.toml.\n",
+    );
+  }
+  const counts = Object.entries(r.lastRun?.notPushed ?? {}).filter(([, n]) => n > 0);
+  if (counts.length > 0) {
+    const text = counts.map(([why, n]) => `${why} ${String(n)}`).join(", ");
+    out.push(`The last run did not push: ${text}.\n`);
+  }
+  return out;
+}
 
 export function parseOncallPushedArgs(argv: readonly string[]): OncallPushedArgs | undefined {
   let json = false;
@@ -73,6 +98,7 @@ async function runList(c: OncallPushedIpc, json: boolean, sink: OncallPushedSink
   if (r.briefs.length === 0) {
     sink.out("No pushed briefs yet.\n");
     if (!r.enabled) sink.out(PUSH_OFF_HINT);
+    for (const line of recordDiagnostics(r)) sink.out(line);
     return 0;
   }
   for (const b of r.briefs) {
@@ -83,6 +109,7 @@ async function runList(c: OncallPushedIpc, json: boolean, sink: OncallPushedSink
       `${new Date(b.createdAt).toISOString()}  ${status}  ${b.incidentId}  ${svc}${b.title ?? ""}\n`,
     );
   }
+  for (const line of recordDiagnostics(r)) sink.out(line);
   return 0;
 }
 

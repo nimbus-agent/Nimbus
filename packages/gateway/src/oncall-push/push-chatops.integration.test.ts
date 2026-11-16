@@ -12,6 +12,7 @@ import type { ChatPlatform } from "../chatops/types.ts";
 import { fireDemoPage, seedDemoCorpus } from "../demo/seed.ts";
 import { buildLedgeredChatPosts } from "../egress/chatops-egress.ts";
 import { listEgress } from "../egress/egress-verify.ts";
+import { engineForConfigDir } from "../incident/__fixtures__/test-engine.ts";
 import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import {
@@ -69,6 +70,7 @@ test("a pushed headline to a namespace with two notify channels appends two rows
     notifyChannelsFor: (ns) => (ns === NS ? ["C_A", "C_B"] : []),
   });
   const rt = assembleOncallPushRuntime({
+    records: engineForConfigDir(db, configDir, () => nowMs),
     db,
     configDir,
     notifications: { show: () => {} },
@@ -102,6 +104,7 @@ test("an append failure posts NOTHING and records failed", async () => {
     notifyChannelsFor: () => ["C_A", "C_B"],
   });
   const rt = assembleOncallPushRuntime({
+    records: engineForConfigDir(db, configDir, () => nowMs),
     db,
     configDir,
     notifications: { show: () => {} },

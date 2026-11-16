@@ -1,5 +1,5 @@
 import type { OncallBriefPushedPayload } from "../ipc/gateway-events.ts";
-import { renderPushHeadline, renderPushSummary } from "./push-headline.ts";
+import { allPagerduty, renderPushHeadline, renderPushSummary } from "./push-headline.ts";
 import type { PushDelivery } from "./push-runner.ts";
 import type { PushStore, SinkOutcome } from "./push-store.ts";
 
@@ -190,7 +190,7 @@ export function createPushDeliverer(
     const summary = await attempt(() =>
       deps.notify(
         TITLE,
-        `${items.length} P1 incidents paged (${ready} brief${ready === 1 ? "" : "s"} ready) — nimbus oncall pushed list`,
+        `${items.length} ${allPagerduty(items) ? "P1 incidents" : "incidents"} paged (${ready} brief${ready === 1 ? "" : "s"} ready) — nimbus oncall pushed list`,
       ),
     );
     const coalesced: Attempt =

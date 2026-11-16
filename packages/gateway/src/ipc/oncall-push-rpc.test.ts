@@ -23,6 +23,8 @@ const runtime = (over: Partial<OncallPushRuntime> = {}): OncallPushRuntime => ({
   isEnabled: () => true,
   stop: () => {},
   store,
+  lastRun: () => null,
+  incidentEngineEnabled: () => true,
   run: async () => ({ selected: 0, ok: 0, failed: 0 }),
   trigger: () => {},
   retry: async () => {
@@ -51,6 +53,9 @@ test("pushedList: empty, with status", async () => {
     identity: "resolved",
     briefs: [],
     chatops: { namespace: null, posting: false },
+    sources: ["pagerduty"],
+    incidentEngineEnabled: true,
+    lastRun: null,
   });
 });
 
@@ -119,6 +124,9 @@ test("no params at all: pushedList uses its defaults, pushedGet reads the newest
     identity: "unresolved",
     briefs: [],
     chatops: { namespace: null, posting: false },
+    sources: ["pagerduty"],
+    incidentEngineEnabled: true,
+    lastRun: null,
   });
   expect((await hit("oncall.pushedGet", undefined, rt))["brief"]).toBeNull();
 });

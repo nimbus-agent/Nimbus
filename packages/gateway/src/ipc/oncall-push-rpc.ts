@@ -108,6 +108,12 @@ async function handleList(params: unknown, ctx: OncallPushRpcCtx) {
         ctx.runtime.config.chatopsNamespace === "" ? null : ctx.runtime.config.chatopsNamespace,
       posting: ctx.runtime.chatopsSinkState() === "bound",
     },
+    // Phase 10 IC3: the sources whose incident records may be pushed (default `["pagerduty"]`), whether the
+    // incident engine assembles records automatically (a widened `sources` has no candidates without them),
+    // and why records were NOT pushed on the last run (a silent non-push is diagnosable).
+    sources: [...ctx.runtime.config.sources],
+    incidentEngineEnabled: ctx.runtime.incidentEngineEnabled(),
+    lastRun: ctx.runtime.lastRun(),
   };
 }
 

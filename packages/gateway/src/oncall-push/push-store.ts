@@ -1,5 +1,12 @@
 import type { Database } from "bun:sqlite";
 import { dbRun } from "../db/write.ts";
+import { TRIGGER_TYPES } from "../incident/trigger-sources.ts";
+
+/**
+ * The item types the push can be about (Phase 10 IC3): a PagerDuty incident, a JSM alert, a Sentry issue or a
+ * data-quality item. The key of a pushed brief is still the trigger item id.
+ */
+const TRIGGER_TYPES_SQL = `(${TRIGGER_TYPES.map((t) => `'${t}'`).join(", ")})`;
 
 export type PushedBriefStatus = "ok" | "failed";
 export type SinkOutcomeKind = "delivered" | "skipped" | "coalesced" | "failed";
@@ -170,7 +177,7 @@ export class PushStore {
       .query(
         `SELECT ${PB_COLS}, i.title AS incident_title, ${PD_SERVICE_SQL} AS incident_pd_service_id
            FROM pushed_brief pb
-           LEFT JOIN item i ON i.id = pb.incident_id AND i.type = 'incident'
+           LEFT JOIN item i ON i.id = pb.incident_id AND i.type IN ${TRIGGER_TYPES_SQL}
           ORDER BY pb.created_at DESC, pb.incident_id ASC
           LIMIT ?`,
       )
@@ -208,14 +215,16 @@ export class PushStore {
   /** Display-only read of the incident's indexed title. */
   incidentTitle(incidentId: string): string | null {
     const r = this.db
-      .query("SELECT title FROM item WHERE id = ? AND type = 'incident'")
+      .query(`SELECT title FROM item WHERE id = ? AND type IN ${TRIGGER_TYPES_SQL}`)
       .get(incidentId) as { title: string } | null;
     return r === null ? null : r.title;
   }
 
   incidentPagerdutyServiceId(incidentId: string): string | null {
     const r = this.db
-      .query(`SELECT ${PD_SERVICE_SQL} AS v FROM item i WHERE i.id = ? AND i.type = 'incident'`)
+      .query(
+        `SELECT ${PD_SERVICE_SQL} AS v FROM item i WHERE i.id = ? AND i.type IN ${TRIGGER_TYPES_SQL}`,
+      )
       .get(incidentId) as { v: unknown } | null;
     return r !== null && typeof r.v === "string" ? r.v : null;
   }

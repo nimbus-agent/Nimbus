@@ -95,6 +95,20 @@ export function resolvePushService(
   return nonEmpty(brief?.nimbusServiceId) ?? nonEmpty(pagerdutyServiceId) ?? null;
 }
 
+/**
+ * A trigger item id is `<service>:<external id>`, so a PagerDuty incident starts with `pagerduty:`. Only those
+ * can be briefed by the `agents.oncall` agent (`selectIncidentById` requires `type = 'incident'`); any other
+ * source is read locally with `nimbus incident show`.
+ */
+export function isPagerdutyItemId(itemId: string): boolean {
+  return itemId.startsWith("pagerduty:");
+}
+
+/** True when every delivery is a PagerDuty incident (the only case that may name the agent command). */
+export function allPagerduty(items: readonly PushDelivery[]): boolean {
+  return items.every((d) => isPagerdutyItemId(d.row.incidentId));
+}
+
 /** The ChatOps agent intent for one incident. The parameter is `incidentId` (ipc/agent-param-kinds.ts). */
 export function pushAgentCommand(incidentId: string): string {
   return `@nimbus agent oncall incidentId=${field(incidentId)}`;
@@ -122,7 +136,9 @@ export function renderPushHeadline(d: PushDelivery): string {
   return [
     `${field(severity)} · ${field(service)} — ${field(title)}`,
     deploymentLine(brief, d.incident.openedAtMs),
-    `${pushAgentCommand(id)}  ·  locally: nimbus oncall pushed ${field(id)}`,
+    isPagerdutyItemId(id)
+      ? `${pushAgentCommand(id)}  ·  locally: nimbus oncall pushed ${field(id)}`
+      : `locally: nimbus incident show ${field(id)}`,
   ].join("\n");
 }
 
@@ -141,6 +157,11 @@ export function renderPushSummary(
     more > 0
       ? `${shown.join(", ")} … and ${more} more (locally: nimbus oncall pushed list)`
       : shown.join(", ");
+  const briefs = `${ready} brief${ready === 1 ? "" : "s"} ready`;
   // `<id>` is template text; `toWireText` escapes it at the wire, like every other `<` here.
-  return `${all.length} P1 incidents paged (${ready} brief${ready === 1 ? "" : "s"} ready). Not posted individually: ${list} — @nimbus agent oncall incidentId=<id> for any of them`;
+  if (allPagerduty(all)) {
+    return `${all.length} P1 incidents paged (${briefs}). Not posted individually: ${list} — @nimbus agent oncall incidentId=<id> for any of them`;
+  }
+  // A summary that lists a non-PagerDuty item names no agent command: `agents.oncall` cannot brief it.
+  return `${all.length} incidents paged (${briefs}). Not posted individually: ${list} — locally: nimbus incident show <id> for any of them`;
 }

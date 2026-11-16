@@ -2958,10 +2958,9 @@ describe("D28 — push ClientKind confinement (oncall push)", () => {
     expect(flagged([file(ROGUE, "const caller = { clientId: id, kind: 'push' };")])).toBe(true);
     expect(flagged([file(ROGUE, "const k = 'push' as ClientKind;")])).toBe(true);
   });
-  test("allows it in the runner", () => {
-    expect(flagged([file(RUNNER, `caller: { clientId: "oncall-push", kind: "push" },`)])).toBe(
-      false,
-    );
+  test("the runner no longer wears the kind (Phase 10 IC3: it pushes records, it dispatches no agent), so the literal is flagged there too", () => {
+    expect(flagged([file(RUNNER, `caller: { clientId: "oncall-push", kind: "push" },`)])).toBe(true);
+    expect(flagged([file(RUNNER, "const x = 1;")])).toBe(false);
   });
   test("the unquoted `push: null` egress entry is allow-listed in EGRESS, flagged elsewhere", () => {
     const entry = `  fleet: null,\n  push: null,\n});`;

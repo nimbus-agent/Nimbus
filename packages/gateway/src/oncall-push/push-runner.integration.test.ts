@@ -10,10 +10,9 @@ import {
   syncTestContext,
 } from "../connectors/connector-sync-test-helpers.ts";
 import { syncPagerdutyIncidentItems } from "../connectors/pagerduty-sync.ts";
-import { LocalIndex } from "../index/local-index.ts";
-import { dispatchAgentsRpc } from "../ipc/agents-rpc.ts";
+import { engineForConfigDir } from "../incident/__fixtures__/test-engine.ts";
 import { findPersonByCanonicalEmail } from "../people/person-store.ts";
-import { createOncallPushRunner, type PushDispatch } from "./push-runner.ts";
+import { createOncallPushRunner } from "./push-runner.ts";
 import { PushStore } from "./push-store.ts";
 
 let db: Database;
@@ -27,7 +26,7 @@ afterEach(() => {
   rmSync(configDir, { recursive: true, force: true });
 });
 
-test("a real agents.oncall brief is stored, synthesis is NOT attempted even under allow-remote", async () => {
+test("a real incident record is stored as the brief; no synthesis is attempted even under allow-remote", async () => {
   const now = Date.now();
   const ctx = syncTestContext(db, createStubVault({ "pagerduty.api_token": "tok" }), "pagerduty");
   syncPagerdutyIncidentItems(
@@ -50,25 +49,12 @@ test("a real agents.oncall brief is stored, synthesis is NOT attempted even unde
   );
   const me = findPersonByCanonicalEmail(db, "me@acme.example");
   if (me === null) throw new Error("fixture: no person");
-  // allow-remote is configured on purpose: the runner must still never build a synthesis runner.
+  // allow-remote is configured on purpose: the record's render has no runner, so no model is reachable.
   writeFileSync(
     join(configDir, "nimbus.toml"),
     `[user]\nme_person_id = "${me.id}"\n\n[agents]\nsynthesis = "allow-remote"\n`,
   );
 
-  const synthesisSeen: unknown[] = [];
-  const spyDispatch: PushDispatch = async (m, p, c) => {
-    const out = await dispatchAgentsRpc(m, p, {
-      ...c,
-      notify: (method, params) => {
-        if (method === "oncall.briefReady")
-          synthesisSeen.push((params as { synthesis?: unknown }).synthesis);
-        c.notify(method, params);
-      },
-    });
-    if (out.kind === "miss") throw new Error("miss");
-    return out.value;
-  };
   const store = new PushStore(db);
   store.reconcileEnabledState(true, now - 1000);
   const runner = createOncallPushRunner({
@@ -77,15 +63,16 @@ test("a real agents.oncall brief is stored, synthesis is NOT attempted even unde
     config: DEFAULT_ONCALL_PUSH_CONFIG,
     isEnabled: () => true,
     pagerdutyAliases: [],
-    configDir,
-    index: new LocalIndex(db),
     resolveSelf: async () => me.id,
     deliver: async () => {},
-    dispatch: spyDispatch,
+    records: engineForConfigDir(db, configDir),
+    serviceConfig: () => undefined,
   });
 
   expect(await runner.run("pagerduty")).toMatchObject({ selected: 1, ok: 1, failed: 0 });
   const row = store.get("pagerduty:PINT");
+  expect(row?.briefMarkdown).toContain("# Incident");
   expect(row?.briefMarkdown).toContain("## Gaps");
-  expect(synthesisSeen).toEqual([{ attempted: false, reason: "disabled" }]);
+  expect(row?.briefMarkdown).toContain("Rendered deterministically");
+  expect(row?.sessionId).toMatch(/^incident:inc_[0-9a-f]{16}:v1$/);
 });

@@ -8,6 +8,7 @@ import { loadNimbusFilesystemRootsFromConfigDir } from "../config/filesystem-tom
 import { loadNimbusServiceConfigsFromConfigDir } from "../config/nimbus-toml.ts";
 import { PR_META_VERSION } from "../connectors/pr-meta.ts";
 import { AnnotateError } from "../deployment/annotate.ts";
+import { engineForConfigDir } from "../incident/__fixtures__/test-engine.ts";
 import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import { queryOncallNow } from "../index/oncall-now-query.ts";
@@ -116,6 +117,7 @@ describe("seedDemoCorpus", () => {
 
     // The runtime boots AFTER the seed, as the real gateway does after `nimbus demo`'s restart.
     const rt = assembleOncallPushRuntime({
+      records: engineForConfigDir(db, configDir, () => nowMs + 5_000),
       settleImmediately: true,
       db,
       configDir,
@@ -154,6 +156,7 @@ describe("seedDemoCorpus", () => {
     const notifications = createUnimplementedNotifications(logger);
     expect(notifications.delivers).toBe(false);
     const rt = assembleOncallPushRuntime({
+      records: engineForConfigDir(db, configDir, () => nowMs),
       settleImmediately: true,
       db,
       configDir,
@@ -194,6 +197,7 @@ describe("seedDemoCorpus", () => {
     const nowMs = Date.now();
     await seedDemoCorpus(db, { configDir, dataDir, nowMs });
     const rt = assembleOncallPushRuntime({
+      records: engineForConfigDir(db, configDir, () => nowMs),
       settleImmediately: true,
       db,
       configDir,

@@ -263,6 +263,15 @@ const DEFAULT_LABELS: Readonly<Record<TriggerService, readonly string[]>> = {
 };
 
 /**
+ * The normalised severity label of a raw value, the way `triggerFacts` normalises each source's own (Monte Carlo
+ * also drops separators). The on-call push compares its configured severities with a record's stored label
+ * through this, so `SEV-1` in `[oncall.push] severities` matches a Monte Carlo record stored as `sev1`.
+ */
+export function normaliseSeverityLabel(service: TriggerService, raw: string): string {
+  return service === "montecarlo" ? monteCarloLabel(raw) : plainLabel(raw);
+}
+
+/**
  * The labels that qualify an item of `service` for assembly: the per-source defaults (PagerDuty adds the
  * `[pagerduty]` P1 aliases), REPLACED by a non-empty `[incident] severities`. Bigeye has no severity, so only
  * `bigeye_sla_statuses` qualifies it. One function feeds both `qualifies` and `qualifiesSql`.

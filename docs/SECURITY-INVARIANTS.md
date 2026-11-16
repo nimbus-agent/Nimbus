@@ -1458,11 +1458,13 @@ Wiring, docs entry and enforcement test land in the SAME commit — the triple r
 **D28 has a twin for the `push` ClientKind — `D28-push-client-kind`.** The on-call pushed brief files its
 `agents.oncall` call under a second gateway-derived kind, `push` (absent from `RECOGNISED`, so no socket
 client can declare it; `EGRESS_BEARING_CLIENT_KINDS.push` is `null`, since a push brief is local SQLite). The twin
-applies the same assignment shapes with `"push"` substituted, and its allow-list is three files:
+applies the same assignment shapes with `"push"` substituted, and its allow-list is two files:
 `ipc/server/client-kind.ts` (the union member, which no shape matches), `egress/egress-bearing-kinds.ts` (the
-`push: null` classification) and `oncall-push/push-runner.ts` (the one runner that wears it, `kind: "push"`). A
-second anchor in the checker scans `push-runner.ts` and then permits it, so the rule cannot go blind to the one
-file that legitimately matches. **Why `push: false` in `OWNER_SCOPED_ONCALL_ALLOWED` is not matched:** the bare
+`push: null` classification). Until Phase 10 IC3 a third file, `oncall-push/push-runner.ts`, wore it
+(`kind: "push"`, on its `agents.oncall` dispatch); the push now pushes the incident record the engine assembled
+and dispatches no agent, so the runner left the allow-list and the literal is flagged there too. The checker's
+second anchor still scans `push-runner.ts`, so the rule cannot go blind to the file. The `push` member of
+`ClientKind` stays (other code and tests name it). **Why `push: false` in `OWNER_SCOPED_ONCALL_ALLOWED` is not matched:** the bare
 unquoted-key alternative matches only a `null` VALUE (`\bpush\s*:\s*null\b`), and that table's entry is `false`, as
 is every `arr.push(x)` call, so neither is flagged. That `false` is deliberate and is a behaviour, not an
 oversight: the push runner always names `incidentId`, so the entry is never consulted on the happy path — it exists so
