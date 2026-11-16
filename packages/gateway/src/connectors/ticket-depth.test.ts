@@ -3,6 +3,7 @@ import { expect, test } from "bun:test";
 import {
   msFromIso,
   normalizeJiraStatusCategory,
+  normalizeLinearProjectState,
   normalizeLinearStateType,
   TICKET_META_VERSION,
 } from "./ticket-depth.ts";
@@ -53,4 +54,25 @@ test("msFromIso returns epoch ms, or undefined for anything unusable", () => {
 
 test("the metadata version is 1", () => {
   expect(TICKET_META_VERSION).toBe(1);
+});
+
+test("linear project status types normalize; planned and paused are open", () => {
+  expect(normalizeLinearProjectState("backlog")).toBe("todo");
+  expect(normalizeLinearProjectState("planned")).toBe("todo");
+  expect(normalizeLinearProjectState("started")).toBe("in_progress");
+  expect(normalizeLinearProjectState("paused")).toBe("in_progress");
+  expect(normalizeLinearProjectState("completed")).toBe("done");
+  expect(normalizeLinearProjectState("canceled")).toBe("canceled");
+});
+
+test("an unrecognised, absent or prototype-named project status is unknown", () => {
+  expect(normalizeLinearProjectState("archived")).toBe("unknown");
+  expect(normalizeLinearProjectState("constructor")).toBe("unknown");
+  expect(normalizeLinearProjectState(undefined)).toBe("unknown");
+  expect(normalizeLinearProjectState("")).toBe("unknown");
+});
+
+test("the issue state table is unchanged by the project table", () => {
+  expect(normalizeLinearStateType("planned")).toBe("unknown");
+  expect(normalizeLinearStateType("paused")).toBe("unknown");
 });
