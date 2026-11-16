@@ -69,6 +69,7 @@ export const COMMAND_NAMES = [
   "standup",
   "oncall",
   "briefing",
+  "incident",
   "start",
   "stats",
   "status",

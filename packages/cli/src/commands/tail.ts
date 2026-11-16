@@ -11,7 +11,8 @@ export type TailCategory =
   | "extension"
   | "hitl"
   | "oncall"
-  | "briefing";
+  | "briefing"
+  | "incident";
 
 const ALL_CATEGORIES: readonly TailCategory[] = [
   "connector",
