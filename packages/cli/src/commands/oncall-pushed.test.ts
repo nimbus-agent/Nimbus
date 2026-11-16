@@ -257,6 +257,25 @@ describe("oncall pushed: remaining branches", () => {
     expect(c.calls[0]).toEqual(["oncall.pushedList", { limit: 50 }]);
   });
 
+  test("list strips terminal control, bidi and line-separator characters from third-party text", async () => {
+    const { s, sink: k } = sink();
+    const esc = String.fromCodePoint(0x1b);
+    const hostile = `DB down${esc}[31;1m${esc}]2;x${String.fromCodePoint(0x07)}\r\n2026-01-01T00:00:00.000Z  ok  forged${String.fromCodePoint(0x202e)}${String.fromCodePoint(0x2028)}${String.fromCodePoint(0x9b)}`;
+    const c = fake({
+      "oncall.pushedList": {
+        enabled: true,
+        identity: "resolved",
+        briefs: [{ ...OK, title: hostile, service: `pay${esc}[0m` }],
+      },
+    });
+    expect(await runOncallPushedWith(c, { mode: "list", json: false }, k, false)).toBe(0);
+    expect(s.out.trimEnd().split("\n")).toHaveLength(1);
+    for (const cp of [0x1b, 0x07, 0x0d, 0x202e, 0x2028, 0x9b]) {
+      expect(s.out.includes(String.fromCodePoint(cp))).toBe(false);
+    }
+    expect(s.out).toContain("[pay[0m]  DB down[31;1m]2;x2026-01-01T00:00:00.000Z  ok  forged");
+  });
+
   test("list shows [service] before the title when known; unchanged when null", async () => {
     const { s, sink: k } = sink();
     const c = fake({

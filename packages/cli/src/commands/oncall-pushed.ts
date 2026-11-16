@@ -1,6 +1,15 @@
 import { briefTextFor } from "../lib/agent-brief-render.ts";
 import { CliExit } from "../lib/cli-exit.ts";
 import { stripControlChars } from "../lib/strip-control-chars.ts";
+
+/**
+ * A title, id or service name on a list line is third-party text (an alert or ticket title): drop control
+ * characters, and the format (bidi, zero-width) and line or paragraph separator characters a terminal acts on.
+ */
+function terminalSafe(s: string): string {
+  return stripControlChars(s).replace(/[\p{Cf}\p{Zl}\p{Zp}]/gu, "");
+}
+
 import { withGatewayIpc } from "../lib/with-gateway-ipc.ts";
 import { getCliPlatformPaths } from "../paths.ts";
 
@@ -105,9 +114,11 @@ async function runList(c: OncallPushedIpc, json: boolean, sink: OncallPushedSink
   for (const b of r.briefs) {
     const status = b.status === "ok" ? "ok    " : "FAILED";
     const svc =
-      b.service !== undefined && b.service !== null && b.service !== "" ? `[${b.service}]  ` : "";
+      b.service !== undefined && b.service !== null && b.service !== ""
+        ? `[${terminalSafe(b.service)}]  `
+        : "";
     sink.out(
-      `${new Date(b.createdAt).toISOString()}  ${status}  ${b.incidentId}  ${svc}${b.title ?? ""}\n`,
+      `${new Date(b.createdAt).toISOString()}  ${status}  ${terminalSafe(b.incidentId)}  ${svc}${terminalSafe(b.title ?? "")}\n`,
     );
   }
   for (const line of recordDiagnostics(r)) sink.out(line);

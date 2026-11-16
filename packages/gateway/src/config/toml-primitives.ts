@@ -116,14 +116,16 @@ export function splitKeyValue(trimmed: string): { key: string; valRaw: string } 
   return { key: trimmed.slice(0, eq).trim(), valRaw: trimmed.slice(eq + 1).trim() };
 }
 
-/** Split on commas that are not inside a double-quoted string (a backslash escapes the next character there). */
-function splitOutsideQuotes(inner: string): string[] {
+type QuoteSplit = { parts: string[]; unterminated: boolean };
+
+/** One pass: split on commas outside a double-quoted string. `escapes` decides whether a backslash consumes the next character. */
+function splitPass(inner: string, escapes: boolean): QuoteSplit {
   const parts: string[] = [];
   let start = 0;
   let quoted = false;
   for (let i = 0; i < inner.length; i += 1) {
     const ch = inner[i];
-    if (quoted && ch === "\\") i += 1;
+    if (escapes && quoted && ch === "\\") i += 1;
     else if (ch === '"') quoted = !quoted;
     else if (ch === "," && !quoted) {
       parts.push(inner.slice(start, i));
@@ -131,7 +133,17 @@ function splitOutsideQuotes(inner: string): string[] {
     }
   }
   parts.push(inner.slice(start));
-  return parts;
+  return { parts, unterminated: quoted };
+}
+
+/**
+ * Split on commas that are not inside a double-quoted string. The same two passes as `stripComment`, for
+ * the same reason: escape-aware first (`"say \"hi, you\""` keeps its comma), and when that ends inside a
+ * string, backslash as a literal, which is what keeps `["C:\", "D:\"]` two Windows paths.
+ */
+function splitOutsideQuotes(inner: string): string[] {
+  const withEscapes = splitPass(inner, true);
+  return withEscapes.unterminated ? splitPass(inner, false).parts : withEscapes.parts;
 }
 
 export function parseStringArray(raw: string): string[] {

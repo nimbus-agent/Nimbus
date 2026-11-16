@@ -105,4 +105,14 @@ describe("parseStringArray keeps a comma inside a quoted entry", () => {
     expect(parseStringArray('["say \\"hi, you\\"", "x"]')).toEqual(['say "hi, you"', "x"]);
     expect(parseStringArray("[]")).toEqual([]);
   });
+
+  test("a Windows path that ends in a backslash does not swallow its closing quote", () => {
+    // The TOML text is ["C:\services\web\", "C:\services\worker\"]: each backslash below is doubled for JS.
+    expect(parseStringArray('["C:servicesweb\\", "C:servicesworker\\"]')).toEqual([
+      "C:servicesweb\\",
+      "C:servicesworker\\",
+    ]);
+    expect(parseStringArray('["C:a\\", "x", "D:\b\\"]')).toEqual(["C:a\\", "x", "D:\b\\"]);
+    expect(parseStringArray('["C:a\\"]')).toEqual(["C:a\\"]);
+  });
 });
