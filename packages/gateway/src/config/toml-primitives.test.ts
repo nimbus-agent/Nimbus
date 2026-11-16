@@ -106,13 +106,39 @@ describe("parseStringArray keeps a comma inside a quoted entry", () => {
     expect(parseStringArray("[]")).toEqual([]);
   });
 
+  // B is ONE backslash. Building the TOML text from it keeps the tests honest: a JS string written as
+  // "C:\a" can lose its backslash to an editor or formatter and still pass, which is how an earlier
+  // version of these tests ended up testing "C:a".
+  const B = String.fromCodePoint(92);
+  const toml = (...entries: string[]): string => `[${entries.join(", ")}]`;
+
   test("a Windows path that ends in a backslash does not swallow its closing quote", () => {
-    // The TOML text is ["C:\services\web\", "C:\services\worker\"]: each backslash below is doubled for JS.
-    expect(parseStringArray('["C:servicesweb\\", "C:servicesworker\\"]')).toEqual([
-      "C:servicesweb\\",
-      "C:servicesworker\\",
-    ]);
-    expect(parseStringArray('["C:a\\", "x", "D:\b\\"]')).toEqual(["C:a\\", "x", "D:\b\\"]);
-    expect(parseStringArray('["C:a\\"]')).toEqual(["C:a\\"]);
+    const web = `C:${B}services${B}web${B}`;
+    const worker = `C:${B}services${B}worker${B}`;
+    expect(web).toHaveLength(16);
+    expect(parseStringArray(toml(`"${web}"`, `"${worker}"`))).toEqual([web, worker]);
+    const a = `C:${B}a${B}`;
+    const d = `D:${B}b${B}`;
+    expect(parseStringArray(toml(`"${a}"`, '"x"', `"${d}"`))).toEqual([a, "x", d]);
+    expect(parseStringArray(toml(`"${a}"`))).toEqual([a]);
+  });
+
+  test("a path ending in a backslash beside an escaped quote stays two entries (review round 3)", () => {
+    // The escape-aware pass ends OUTSIDE a string here but has merged both entries into one.
+    const auth = `C:${B}services${B}auth${B}`;
+    const billing = `"billing ${B}"audit${B}""`;
+    expect(parseStringArray(toml(`"${auth}"`, billing))).toEqual([auth, 'billing "audit"']);
+    expect(parseStringArray(toml(billing, `"${auth}"`))).toEqual(['billing "audit"', auth]);
+  });
+
+  test("an array that resolves under neither reading is refused, never merged", () => {
+    const sayHi = `"say ${B}"hi, you${B}""`;
+    expect(() => parseStringArray(toml(`"C:${B}a${B}"`, sayHi))).toThrow(TypeError);
+    expect(() => parseStringArray('["a" "b"]')).toThrow(TypeError);
+  });
+
+  test("bare tokens and a trailing comma keep their old reading", () => {
+    expect(parseStringArray("[a, b]")).toEqual(["a", "b"]);
+    expect(parseStringArray('["a",]')).toEqual(["a"]);
   });
 });
