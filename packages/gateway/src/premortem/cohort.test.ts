@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test";
 import { LocalIndex } from "../index/local-index.ts";
 import { seedEpicWithServices } from "./cohort.test-helpers.ts";
 import { selectCohort } from "./cohort.ts";
+import { JIRA_TRACKER } from "./epic-tracker.ts";
 
 function makeDb(): Database {
   const db = new Database(":memory:");
@@ -15,6 +16,7 @@ describe("selectCohort", () => {
     const db = makeDb();
     seedEpicWithServices(db, { key: "OTHER-1", services: ["unrelated"], resolvedAtMs: 1_000 });
     const out = selectCohort(db, ["billing"], {
+      tracker: JIRA_TRACKER,
       maxCandidateScan: 200,
       maxCohortSize: 10,
       excludeItemId: "jira:TARGET-1",
@@ -41,6 +43,7 @@ describe("selectCohort", () => {
     });
 
     const out = selectCohort(db, ["shared-utils", "billing"], {
+      tracker: JIRA_TRACKER,
       maxCandidateScan: 200,
       maxCohortSize: 10,
       excludeItemId: "jira:TARGET-1",
@@ -54,6 +57,7 @@ describe("selectCohort", () => {
     const db = makeDb();
     seedEpicWithServices(db, { key: "TARGET-1", services: ["billing"], resolvedAtMs: 1_000 });
     const out = selectCohort(db, ["billing"], {
+      tracker: JIRA_TRACKER,
       maxCandidateScan: 200,
       maxCohortSize: 10,
       excludeItemId: "jira:TARGET-1",
@@ -67,6 +71,7 @@ describe("selectCohort", () => {
       seedEpicWithServices(db, { key: `E-${i}`, services: ["billing"], resolvedAtMs: 1_000 + i });
     }
     const out = selectCohort(db, ["billing"], {
+      tracker: JIRA_TRACKER,
       maxCandidateScan: 200,
       maxCohortSize: 3,
       excludeItemId: "jira:TARGET-1",
@@ -82,6 +87,7 @@ describe("selectCohort", () => {
     seedEpicWithServices(db, { key: "UNRELATED-1", services: ["mail"], resolvedAtMs: 9_000_000 });
 
     const out = selectCohort(db, ["billing"], {
+      tracker: JIRA_TRACKER,
       maxCandidateScan: 200,
       maxCohortSize: 10,
       excludeItemId: "jira:TARGET-1",
@@ -96,6 +102,7 @@ describe("selectCohort", () => {
       seedEpicWithServices(db, { key: `E-${i}`, services: ["billing"], resolvedAtMs: 1_000 + i });
     }
     const out = selectCohort(db, ["billing"], {
+      tracker: JIRA_TRACKER,
       maxCandidateScan: 2,
       maxCohortSize: 10,
       excludeItemId: "jira:TARGET-1",
@@ -122,6 +129,7 @@ describe("selectCohort", () => {
     );
 
     const out = selectCohort(db, ["billing"], {
+      tracker: JIRA_TRACKER,
       maxCandidateScan: 200,
       maxCohortSize: 10,
       excludeItemId: "jira:TARGET-1",
@@ -141,6 +149,7 @@ describe("selectCohort", () => {
       resolvedAtMs: 1_000,
     });
     const out = selectCohort(db, ["billing"], {
+      tracker: JIRA_TRACKER,
       maxCandidateScan: 200,
       maxCohortSize: 10,
       excludeItemId: "jira:TARGET-1",
@@ -162,6 +171,7 @@ describe("selectCohort", () => {
       });
     }
     const out = selectCohort(db, ["ubiquitous"], {
+      tracker: JIRA_TRACKER,
       maxCandidateScan: 200,
       maxCohortSize: 10,
       excludeItemId: "jira:TARGET-1",
@@ -181,6 +191,7 @@ describe("selectCohort", () => {
       createdAtMs: 500,
     });
     const out = selectCohort(db, ["billing"], {
+      tracker: JIRA_TRACKER,
       maxCandidateScan: 200,
       maxCohortSize: 10,
       excludeItemId: "jira:TARGET-1",
@@ -197,6 +208,7 @@ describe("selectCohort", () => {
       statusCategory: "canceled",
     });
     const out = selectCohort(db, ["billing"], {
+      tracker: JIRA_TRACKER,
       maxCandidateScan: 200,
       maxCohortSize: 10,
       excludeItemId: "jira:TARGET-1",
@@ -209,6 +221,7 @@ describe("selectCohort", () => {
     seedEpicWithServices(db, { key: "NOKIDS-1", services: [], resolvedAtMs: 1_000 });
     seedEpicWithServices(db, { key: "HASKIDS-1", services: ["billing"], resolvedAtMs: 900 });
     const out = selectCohort(db, ["billing"], {
+      tracker: JIRA_TRACKER,
       maxCandidateScan: 200,
       maxCohortSize: 10,
       excludeItemId: "jira:TARGET-1",

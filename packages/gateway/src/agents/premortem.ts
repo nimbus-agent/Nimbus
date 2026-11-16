@@ -1,8 +1,14 @@
 import type { Database } from "bun:sqlite";
 
 import type { ServiceIdentityResolver } from "../metrics/service-identity.ts";
-import { type CohortCandidate, type CohortResult, selectCohort } from "../premortem/cohort.ts";
+import {
+  type CohortCandidate,
+  type CohortResult,
+  childCountsFor,
+  selectCohort,
+} from "../premortem/cohort.ts";
 import { affectedServicesForEpic } from "../premortem/epic-services.ts";
+import { type EpicTracker, JIRA_TRACKER } from "../premortem/epic-tracker.ts";
 import { median } from "../premortem/median.ts";
 import { computeRisks, type Risk } from "../premortem/risks.ts";
 import { type PremortemTheme, themesForServices } from "../premortem/theme-store.ts";
@@ -84,27 +90,6 @@ function lookupJiraItem(db: Database, key: string): RawJiraItemRow | null {
     .get(key) as RawJiraItemRow | null;
 }
 
-/**
- * The RAW child count (every `parent_key`-linked child, whether or not it
- * ever resolved to a service) — `computeRisks`'s `targetChildCount` input.
- * Mirrors `cohort.ts`'s `childCountsFor`, but for the single TARGET epic
- * rather than a batch of already-selected cohort candidates.
- */
-// lane-census: scope=issue service=jira
-function childCountFor(db: Database, epicItemId: string, epicKey: string): number {
-  const row = db
-    .query(
-      `SELECT COUNT(*) AS n
-         FROM item child
-        WHERE json_valid(child.metadata)
-          AND json_extract(child.metadata, '$.parent_key') = ?
-          AND child.service = (SELECT service FROM item WHERE id = ?)
-          AND child.id <> ?`,
-    )
-    .get(epicKey, epicItemId, epicItemId) as { n: number };
-  return row.n;
-}
-
 type PrDurationRow = { opened_at_ms: number; merged_at: number };
 
 function toDurations(rows: readonly PrDurationRow[]): number[] {
@@ -142,10 +127,14 @@ function prRepoExpr(alias: "pr_item" | "item"): string {
  * actually comparable, not "every PR any cohort child happens to touch, in
  * any repo, vs. only these repos".
  */
-function cohortPrJoinSql(epicPlaceholders: string, repoPlaceholders: string): string {
+function cohortPrJoinSql(
+  tracker: EpicTracker,
+  epicPlaceholders: string,
+  repoPlaceholders: string,
+): string {
   return `FROM item epic
          JOIN item child ON json_valid(child.metadata)
-                          AND json_extract(child.metadata, '$.parent_key') = epic.external_id
+                          AND ${tracker.childOfSql("child", "epic")}
                           AND child.service = epic.service
                           AND child.id <> epic.id
          JOIN graph_entity child_ent ON child_ent.type = 'issue'
@@ -174,6 +163,7 @@ type CohortPrTiming = {
  */
 function cohortPrTimings(
   db: Database,
+  tracker: EpicTracker,
   epicItemIds: readonly string[],
   services: readonly string[],
 ): CohortPrTiming[] {
@@ -189,7 +179,7 @@ function cohortPrTimings(
               json_extract(pr_item.metadata, '$.opened_at_ms') AS opened_at_ms,
               json_extract(pr_item.metadata, '$.merged_at')    AS merged_at,
               json_extract(pr_item.metadata, '$.merged')       AS merged
-         ${cohortPrJoinSql(epicPlaceholders, servicePlaceholders)}`,
+         ${cohortPrJoinSql(tracker, epicPlaceholders, servicePlaceholders)}`,
     )
     .all(...epicItemIds, ...services) as CohortPrTiming[];
 }
@@ -262,6 +252,7 @@ function repoForgesMissingTiming(
 
 function reviewDragMedians(
   db: Database,
+  tracker: EpicTracker,
   cohort: CohortResult,
   services: readonly string[],
   nowMs: number,
@@ -271,7 +262,7 @@ function reviewDragMedians(
   forgesMissingTiming: string[];
 } {
   const epicItemIds = cohort.members.map((m) => m.itemId);
-  const timings = cohortPrTimings(db, epicItemIds, services);
+  const timings = cohortPrTimings(db, tracker, epicItemIds, services);
   const forgesMissingTiming = [
     ...new Set(
       timings.filter((t) => t.opened_at_ms === null || t.merged_at === null).map((t) => t.service),
@@ -740,6 +731,7 @@ function noAffectedServicesGap(epicKey: string, childCount: number): GapNote {
 function analyseCohort(
   db: Database,
   args: {
+    tracker: EpicTracker;
     cohort: CohortResult;
     services: readonly string[];
     childCount: number;
@@ -753,6 +745,7 @@ function analyseCohort(
   const gaps: GapNote[] = [];
   const { reviewDragMedianMs, repoReviewMedianMs, forgesMissingTiming } = reviewDragMedians(
     db,
+    args.tracker,
     cohort,
     services,
     now,
@@ -771,9 +764,9 @@ function analyseCohort(
     repoReviewMedianMs,
     forgesMissingTiming,
     incidentCoupling,
-    // Structurally true, not merely intended: `selectCohort`'s candidate query filters
-    // `service = 'jira'`, so the cohort cannot blend trackers with different cancel/done
-    // semantics even if another tracker started writing `metadata.issue_type = 'Epic'`.
+    // Structurally true, not merely intended: `selectCohort`'s candidate query is scoped by
+    // `tracker.isEpicSql`, which carries its own `service = '<id>'`, so the cohort cannot blend
+    // trackers with different cancel/done semantics.
     cohortIsMixedTracker: false,
   });
 
@@ -846,8 +839,9 @@ function buildPremortemBrief(input: PremortemInput, ctx: PremortemContext): Prem
     title: epicRow.title,
   };
 
-  const childCount = childCountFor(ctx.db, epic.itemId, epic.key);
-  const derivedServices = affectedServicesForEpic(ctx.db, epic.itemId, epic.key);
+  const tracker = JIRA_TRACKER;
+  const childCount = childCountsFor(ctx.db, [epic.itemId]).get(epic.itemId) ?? 0;
+  const derivedServices = affectedServicesForEpic(ctx.db, epic.itemId);
   const services = overrides.length > 0 ? overrides : derivedServices;
 
   // One translation, two consumers (incident coupling + the watcher proposals). `undefined` here
@@ -889,6 +883,7 @@ function buildPremortemBrief(input: PremortemInput, ctx: PremortemContext): Prem
     }
 
     cohort = selectCohort(ctx.db, services, {
+      tracker,
       maxCandidateScan: DEFAULT_MAX_CANDIDATE_SCAN,
       maxCohortSize: DEFAULT_MAX_COHORT_SIZE,
       excludeItemId: epic.itemId,
@@ -908,6 +903,7 @@ function buildPremortemBrief(input: PremortemInput, ctx: PremortemContext): Prem
       });
     } else {
       const analysed = analyseCohort(ctx.db, {
+        tracker,
         cohort,
         services,
         childCount,

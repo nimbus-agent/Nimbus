@@ -67,7 +67,7 @@ test("derives services through children -> resolving PRs -> the PR's repo", () =
   const prEnt = addEntity(db, "github:pr:7", "pr", "acme/billing-api");
   addRelation(db, prEnt, issueEnt, "resolves");
 
-  expect(affectedServicesForEpic(db, "jira:PROJ-1", "PROJ-1")).toEqual(["acme/billing-api"]);
+  expect(affectedServicesForEpic(db, "jira:PROJ-1")).toEqual(["acme/billing-api"]);
   db.close();
 });
 
@@ -86,7 +86,7 @@ test("merges and sorts services across several children", () => {
   }
   // Sorted and de-duplicated: the caller compares these sets, so a stable
   // order keeps cohort ranking deterministic across runs.
-  expect(affectedServicesForEpic(db, "jira:PROJ-1", "PROJ-1")).toEqual([
+  expect(affectedServicesForEpic(db, "jira:PROJ-1")).toEqual([
     "acme/billing-api",
     "acme/payments-worker",
   ]);
@@ -101,7 +101,7 @@ test("a PR with no repo in its metadata contributes nothing, not a null service"
   const prEnt = addEntity(db, "github:pr:7", "pr"); // no repo
   addRelation(db, prEnt, issueEnt, "resolves");
 
-  expect(affectedServicesForEpic(db, "jira:PROJ-1", "PROJ-1")).toEqual([]);
+  expect(affectedServicesForEpic(db, "jira:PROJ-1")).toEqual([]);
   db.close();
 });
 
@@ -110,7 +110,7 @@ test("an epic with no children resolves to no services", () => {
   // `--service` prompt; it must never look like an answer.
   const db = freshDb();
   addItem(db, "jira:PROJ-1", "PROJ-1", { meta_v: 1, issue_type: "Epic" });
-  expect(affectedServicesForEpic(db, "jira:PROJ-1", "PROJ-1")).toEqual([]);
+  expect(affectedServicesForEpic(db, "jira:PROJ-1")).toEqual([]);
   db.close();
 });
 
@@ -119,7 +119,7 @@ test("children whose PRs never referenced them resolve to no services", () => {
   addItem(db, "jira:PROJ-1", "PROJ-1", { meta_v: 1, issue_type: "Epic" });
   addItem(db, "jira:PROJ-2", "PROJ-2", { meta_v: 1, parent_key: "PROJ-1" });
   addEntity(db, "jira:PROJ-2", "issue");
-  expect(affectedServicesForEpic(db, "jira:PROJ-1", "PROJ-1")).toEqual([]);
+  expect(affectedServicesForEpic(db, "jira:PROJ-1")).toEqual([]);
   db.close();
 });
 
@@ -130,7 +130,7 @@ test("a child of a DIFFERENT epic is not counted", () => {
   const issueEnt = addEntity(db, "jira:OTHER-9", "issue");
   const prEnt = addEntity(db, "github:pr:7", "pr", "acme/search");
   addRelation(db, prEnt, issueEnt, "resolves");
-  expect(affectedServicesForEpic(db, "jira:PROJ-1", "PROJ-1")).toEqual([]);
+  expect(affectedServicesForEpic(db, "jira:PROJ-1")).toEqual([]);
   db.close();
 });
 
@@ -151,7 +151,7 @@ test("a same-key child in a DIFFERENT service is not counted (service scoping)",
   const linearPrEnt = addEntity(db, "github:pr:99", "pr", "acme/unrelated-service");
   addRelation(db, linearPrEnt, linearIssueEnt, "resolves");
 
-  expect(affectedServicesForEpic(db, "jira:PROJ-1", "PROJ-1")).toEqual(["acme/billing-api"]);
+  expect(affectedServicesForEpic(db, "jira:PROJ-1")).toEqual(["acme/billing-api"]);
   db.close();
 });
 
@@ -231,7 +231,7 @@ test("a same-service, non-JSON metadata row elsewhere in item does not break aff
   const badPrEnt = addEntity(db, "github:pr:bad", "pr", "acme/bad-service");
   addRelation(db, badPrEnt, badIssueEnt, "resolves");
 
-  expect(affectedServicesForEpic(db, "jira:PROJ-1", "PROJ-1")).toEqual(["acme/billing-api"]);
+  expect(affectedServicesForEpic(db, "jira:PROJ-1")).toEqual(["acme/billing-api"]);
   db.close();
 });
 
@@ -275,7 +275,7 @@ test("a PR entity with non-JSON metadata does not break affectedServicesForEpic 
   );
   addRelation(db, badPrId, issueEnt2, "resolves");
 
-  expect(affectedServicesForEpic(db, "jira:PROJ-1", "PROJ-1")).toEqual(["acme/billing-api"]);
+  expect(affectedServicesForEpic(db, "jira:PROJ-1")).toEqual(["acme/billing-api"]);
   db.close();
 });
 
@@ -353,7 +353,7 @@ test("a GitLab MR (metadata.project, NO metadata.repo) still yields its project 
     "resolves",
   );
 
-  expect(affectedServicesForEpic(db, "jira:PROJ-GL", "PROJ-GL")).toEqual(["acme/gitlab-svc"]);
+  expect(affectedServicesForEpic(db, "jira:PROJ-GL")).toEqual(["acme/gitlab-svc"]);
   expect(affectedServicesForEpics(db, ["jira:PROJ-GL"]).get("jira:PROJ-GL")).toEqual([
     "acme/gitlab-svc",
   ]);

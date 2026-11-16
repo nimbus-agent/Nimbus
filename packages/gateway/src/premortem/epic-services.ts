@@ -1,5 +1,7 @@
 import type { Database } from "bun:sqlite";
 
+import { type EpicTracker, trackerForService } from "./epic-tracker.ts";
+
 /**
  * The AFFECTED services an epic touched — `billing-api`, not `jira`.
  *
@@ -33,41 +35,10 @@ import type { Database } from "bun:sqlite";
  * legitimately has no children, and PR B turns the empty result into a named
  * gap plus the `--service` prompt — never into a silently weaker cohort.
  */
-export function affectedServicesForEpic(
-  db: Database,
-  epicItemId: string,
-  epicKey: string,
-): string[] {
-  // `$.repo` HERE is the GRAPH ENTITY's metadata, NOT the PR item's, and the two are not the
-  // same shape. `graph-populator.ts` writes the PR entity as
-  // `metadata: { repo: repoPathFromMetadata(row.metadata) }`, and `repoPathFromMetadata` is
-  // `repo ?? project` — so a GitLab merge request, whose ITEM carries only `metadata.project`
-  // (`connectors/_lib/gitlab/events.ts`), is already stored under the entity's `repo` key.
-  // That coalescing is what makes this query provider-neutral.
-  //
-  // Do NOT "fix" this to `COALESCE(..., '$.project')`: nothing writes a `project` key onto a
-  // graph entity, so it would be a no-op that falsely implies one exists. The identical-looking
-  // expression against ITEM metadata DOES need the coalesce, and `agents/premortem.ts`'s
-  // `PR_REPO_SQL` carries it — one expression, two sources, only one of them pre-coalesced.
-  // lane-census: scope=issue service=jira
-  const rows = db
-    .query(
-      `SELECT DISTINCT json_extract(pr.metadata, '$.repo') AS service
-         FROM item child
-         JOIN graph_entity   child_ent ON child_ent.type = 'issue'
-                                       AND child_ent.external_id = child.id
-         JOIN graph_relation res       ON res.to_id = child_ent.id AND res.type = 'resolves'
-         JOIN graph_entity   pr        ON pr.id     = res.from_id
-        WHERE json_valid(child.metadata)
-          AND json_extract(child.metadata, '$.parent_key') = ?
-          AND child.id <> ?
-          AND child.service = (SELECT service FROM item WHERE id = ?)
-          AND json_valid(pr.metadata)
-          AND json_extract(pr.metadata, '$.repo') IS NOT NULL
-        ORDER BY service ASC`,
-    )
-    .all(epicKey, epicItemId, epicItemId) as Array<{ service: string }>;
-  return rows.map((r) => r.service);
+export function affectedServicesForEpic(db: Database, epicItemId: string): string[] {
+  // The same statement as the batch form with one id: the epic's own tracker and its
+  // `external_id` come from the epic ROW (the key rule in `epic-tracker.ts`), so no key travels in.
+  return affectedServicesForEpics(db, [epicItemId]).get(epicItemId) ?? [];
 }
 
 /**
@@ -101,17 +72,64 @@ export function affectedServicesForEpics(
   if (epicItemIds.length === 0) {
     return result;
   }
+  // One execution per tracker present: each tracker's `childOfSql` runs against its own rows only.
+  for (const [tracker, ids] of groupIdsByTracker(db, epicItemIds)) {
+    for (const r of queryAffectedServices(db, tracker, ids)) {
+      const services = result.get(r.epicItemId) ?? [];
+      // DISTINCT per epic: rows arrive service-sorted, so a plain de-dupe
+      // preserves the same sorted order the single-epic function returns.
+      if (services.at(-1) !== r.service) {
+        services.push(r.service);
+      }
+      result.set(r.epicItemId, services);
+    }
+  }
+  return result;
+}
+
+/**
+ * Groups item ids by their `item.service` tracker (one cheap query). An id that matches no item, or
+ * whose service has no descriptor, is dropped: pre-mortem covers Jira and Linear only.
+ */
+export function groupIdsByTracker(
+  db: Database,
+  itemIds: readonly string[],
+): Map<EpicTracker, string[]> {
+  const out = new Map<EpicTracker, string[]>();
+  if (itemIds.length === 0) {
+    return out;
+  }
+  const placeholders = itemIds.map(() => "?").join(", ");
+  const rows = db
+    .query(`SELECT id, service FROM item WHERE id IN (${placeholders})`)
+    .all(...itemIds) as Array<{ id: string; service: string }>;
+  for (const row of rows) {
+    const tracker = trackerForService(row.service);
+    if (tracker === undefined) {
+      continue;
+    }
+    const ids = out.get(tracker) ?? [];
+    ids.push(row.id);
+    out.set(tracker, ids);
+  }
+  return out;
+}
+
+function queryAffectedServices(
+  db: Database,
+  tracker: EpicTracker,
+  epicItemIds: readonly string[],
+): Array<{ epicItemId: string; service: string }> {
   const placeholders = epicItemIds.map(() => "?").join(", ");
-  // Same `$.repo`-on-the-GRAPH-ENTITY rule as the single-epic query above: already
+  // Same `$.repo`-on-the-GRAPH-ENTITY rule as the module doc: already
   // `repo ?? project` via `graph-populator.ts`'s `repoPathFromMetadata`, so no COALESCE belongs
   // here, and one against ITEM metadata would be a different (and necessary) expression.
-  // lane-census: scope=issue service=jira
-  const rows = db
+  return db
     .query(
       `SELECT epic.id AS epicItemId, json_extract(pr.metadata, '$.repo') AS service
          FROM item epic
          JOIN item child             ON json_valid(child.metadata)
-                                      AND json_extract(child.metadata, '$.parent_key') = epic.external_id
+                                      AND ${tracker.childOfSql("child", "epic")}
                                       AND child.service = epic.service
                                       AND child.id <> epic.id
          JOIN graph_entity   child_ent ON child_ent.type = 'issue'
@@ -124,14 +142,4 @@ export function affectedServicesForEpics(
         ORDER BY epic.id ASC, service ASC`,
     )
     .all(...epicItemIds) as Array<{ epicItemId: string; service: string }>;
-  for (const r of rows) {
-    const services = result.get(r.epicItemId) ?? [];
-    // DISTINCT per epic: rows arrive service-sorted, so a plain de-dupe
-    // preserves the same sorted order the single-epic function returns.
-    if (services.at(-1) !== r.service) {
-      services.push(r.service);
-    }
-    result.set(r.epicItemId, services);
-  }
-  return result;
 }
