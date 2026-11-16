@@ -232,6 +232,33 @@ describe("the discard of an unused change set runs after a rejection (D2, D43)",
   });
 });
 
+describe("the discard of an incident-linked deploy carries the parent's link (Phase 10 IC4)", () => {
+  const LINK = Object.freeze({ id: "inc_0123456789abcdef", version: 2 });
+  const HEAD = '{"incident":{"id":"inc_0123456789abcdef","version":2}';
+
+  test("the discard's audit and egress rows start with the link, and it is no sub-step of the deploy", async () => {
+    const h = harness({ consent: "decline" });
+    rejected(await h.exec.execute({ ...CFN_DEPLOY, incident: LINK }));
+    expect(discardsOf(h.dispatched)).toHaveLength(1);
+    const audit = h.audits.filter((a) => a.actionType === IAC_DISCARD.actionType);
+    expect(audit).toHaveLength(1);
+    expect(audit[0]?.actionJson.startsWith(HEAD)).toBe(true);
+    // A discard is a step of its own: unlike a before-state or prepare read it is not marked a sub-step.
+    expect(audit[0]?.actionJson).not.toContain('"subStep"');
+    expect(audit[0]?.actionJson).not.toContain("promptSha256");
+    const ledger = h.egress.filter((e) => e.method === IAC_DISCARD.actionType);
+    expect(ledger).toHaveLength(1);
+    expect(ledger[0]?.payloadSummary.startsWith('{"incident"')).toBe(true);
+  });
+
+  test("control: an unlinked deploy's discard row carries no link", async () => {
+    const h = harness({ consent: "decline" });
+    rejected(await h.exec.execute(CFN_DEPLOY));
+    const audit = h.audits.filter((a) => a.actionType === IAC_DISCARD.actionType);
+    expect(audit[0]?.actionJson.startsWith('{"incident"')).toBe(false);
+  });
+});
+
 describe("the discard NEVER runs after a dispatch (D2, D43)", () => {
   test("approved and dispatched: no discard", async () => {
     const h = harness();

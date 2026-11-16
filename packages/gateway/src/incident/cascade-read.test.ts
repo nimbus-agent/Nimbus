@@ -89,3 +89,21 @@ describe("7.8 readOpenCascadeRecords / readCascade over a real incident_record t
     expect(() => readOpenCascadeRecords(d)).toThrow(CascadeReadError);
   });
 });
+
+describe("CascadeReadError names its cause", () => {
+  test("a read that throws a value that is not an Error is reported as unknown, never rethrown raw", () => {
+    const broken = {
+      query: () => {
+        throw "disk gone";
+      },
+    } as unknown as Database;
+    expect(() => readOpenCascadeRecords(broken)).toThrow(CascadeReadError);
+    expect(() => readOpenCascadeRecords(broken)).toThrow("the cascade could not be read: unknown");
+  });
+
+  test("an Error cause keeps its message", () => {
+    expect(new CascadeReadError(new Error("no such table")).message).toBe(
+      "the cascade could not be read: no such table",
+    );
+  });
+});
