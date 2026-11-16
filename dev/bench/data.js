@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794853880210,
+  "lastUpdate": 1794854431649,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "ea92fa30952bc032943750d1cc2361801296ad0e",
-          "message": "docs(roadmap): record the agent-reach direction and two rejected directions (#1385)\n\nDocs-only. A **direction record, not a re-sequencing** — the build slot\nstays S2, no phase moved, and nothing here is committed to a slot.\n\n## What prompted this\n\nA brainstorm about whether Nimbus should fork VS Code the way Cursor\ndid, and which features from OpenClaw and Hermes Agent are worth\nadopting.\n\n## The finding that reshaped it\n\n**Five of the six capabilities the OpenClaw / Hermes survey turned up\nwere already roadmap rows.** Filing them would have produced six\nduplicates:\n\n| Capability | Already lives at |\n| --- | --- |\n| Self-authored / runtime-generated skills | S2 runtime tool generation;\nPhase 14 stretch |\n| Persistent cross-session memory | Phase 10 — long-term episodic memory\n|\n| Proactive scheduled runs / morning digest | Phase 10 — scheduled\nworkflows, morning briefing |\n| Trajectory export for fine-tuning | Phase 14 — tool-use trace dataset\nbuilder |\n| Any OpenAI-compatible endpoint | S2 already names a local\nOpenAI-compatible runtime as still open |\n\nThey are recorded as a \"do not re-file\" table so the survey is not\nrepeated.\n\n## The one real gap\n\nVerified in the tree rather than assumed. `IntentRouter.handle` in\n`chatops/intent-router.ts` dispatches on exactly two `parseCommand`\noutcomes — `read` calls `askEngine`, `write` calls `runGatedWrite` — and\nthere is no `agents.*` call anywhere under `chatops/`.\n\nSo the fourteen built-in agents, the output that renders\n**deterministically with no LLM**, are the one thing a channel cannot\nget, while the reachable read path requires a model. The dependency\nprofile is inverted. Phase 6 marks the bot shipped, which is true and\ndoes not cover this.\n\nRecorded as a surface direction in § Track 2 → Client surfaces, with\nacceptance criteria. The `egress_ledger` question is left **explicitly\nopen** rather than assumed: `recordAgentBriefEgress` selects on\n`ClientKind`, whose `mcp` and `http` arms do not cover a ChatOps origin.\nThat map is total by construction, so adding this surface is a compile\nerror until the class is decided — the intended behaviour, not an\nobstacle.\n\n## New section: Rejected Directions\n\nEach entry carries the condition that would reopen it. A matching\nconvention was added to § How to Update This Document.\n\n- **Forking VS Code.** The four wants behind it — distribution, UI\ncontrol, code-writing, marketplace independence — each have a cheaper\ninstrument. The load-bearing premise \"the extension API blocks us\" is\n**untested**: the `why`-lens hover is specified and unbuilt. That is the\nreopen condition, and it is a cheap experiment.\n- **Agent-authored code generation.** Scoped narrowly so adjacent\nplanned work is not read as rejected: Phase 9.7 connector writes stay\nplanned, and owner-invoked `nimbus exec` already ships under I33. What\nis rejected is an LLM that authors and applies changes to the user's\nsource — which walks through the exact door I33's own scope bound names\nas the first assumption to re-examine, since indexed Slack / Jira /\nemail text would reach the prompt.\n- **Default-on browser and shell automation.** The posture, not the\ncapability; S2's computer-use row is the sanctioned form.\n\n## Files\n\n- `docs/roadmap.md` — messaging promoted to a client surface, new\nRejected Directions section plus Contents entry, Last-updated entry,\nHow-to-Update convention\n- `docs/architecture.md` — the ChatOps two-intent surface stated as a\nload-bearing fact\n- `docs/README.md` — Slack/Teams bot added to the surfaces diagram; a\nlabelled direction-not-built paragraph\n- `CLAUDE.md` / `GEMINI.md` — **drive-by, required for this branch to be\ngreen:** the `packages/mcp-connectors` path has not existed since v3.0.0\nand was already reding `audit:doc-refs` on main. Fixed with the same\nwording the in-flight embedding branch uses, so the two cannot diverge.\n\n## Verification\n\n- `bun run preflight:fast` — all 32 gates pass\n- `bun run audit:links` — 1,661 links, 0 errors\n- No source touched, so no test-suite delta\n\n## Note for whoever merges second\n\n`dev/asaf/embedding-egress-task-routing` makes S2's \"embeddings remain\nI29's one model-class exclusion\" sentence stale. This PR deliberately\ndoes not touch that sentence, so there is no conflict — but it should be\nre-read after both land.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01XYrDUio5eZvPhLEbh45zXR\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-08-29T12:33:53Z",
-          "tree_id": "f3146d89304d700248ce3163d05cebf34212099c",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/ea92fa30952bc032943750d1cc2361801296ad0e"
-        },
-        "date": 1788007641334,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 316.94844329999904,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 318.3399633500063,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 174.61831634999652,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "37ad233467c164c2ba3fd560965b32970139a400",
+          "message": "feat(gateway): assemble incident records from the local index, with nimbus incident list and show (#2030)\n\nThird slice of the incident engine (Phase 10). The gateway now assembles\nan incident record from the local index, and the pushed on-call brief is\nbuilt from those records.\n\n## What you can do now\n\n- `nimbus incident list` and `nimbus incident show <id>` print the\nrecord assembled for a PagerDuty incident, a Jira Service Management\nalert, a Sentry issue or a Monte Carlo or Bigeye test.\n- A record holds the changes before the incident, the chat around it,\nearlier and concurrent incidents of the service, data lineage, who is on\ncall and the item's history. Each entry carries the rule that put it\nthere.\n- Assembly reads the local index only. It calls no model and no network.\n- An unchanged factual core makes no new version of a record.\n\n## What it must never do, and how that holds\n\n| Property | Where it is enforced |\n| --- | --- |\n| A record from a source other than PagerDuty is pushed only when its\nseverity is in `[oncall.push]`, its service is bound, and the owner is\non call for that exact PagerDuty service on fresh shift data | Inside\n`selectRecordPushCandidates` |\n| `[incident] enabled = false` never drops a page | The push assembles\nits own candidates on demand |\n| Erasing a connector or pruning a record deletes the pushed briefs\nbuilt from it | Same transaction as the record delete |\n| `incident.list`, `incident.get` and `incident.assemble` answer only\nthe owner's CLI or desktop connection | The RPC module; the namespace is\nrefused over the LAN and is not on the Tauri allowlist |\n| The engine never reaches a network, a connector, a model, ChatOps,\negress or federation | Static rule D46(a) |\n| Only the store writes the record tables | Static rule D46(d) |\n\nInvariant I57 gains sub-clause (a), with its wiring, its section in\n`docs/SECURITY-INVARIANTS.md` and its enforcement tests in this pull\nrequest.\n\n## Schema\n\nV100 adds `incident_record` and `incident_record_version`. The step is\nre-runnable.\n\n## Checks run\n\n- `bun run preflight:fast` after merging `main`: passed.\n- Incident, on-call push and IPC tests: 4,835 pass, 0 fail. CLI tests:\n6,403 pass, 0 fail. Both were run before the merge of `main`; the merged\ninvariants, structure-audit and help tests were re-run after it (1,413\npass).\n- Defences removed in turn, each making tests fail: the owner-kind check\non `incident.get`, the erasure of pushed briefs, the severity filter\nahead of the per-sync cap, and each of the four parts of the push\nselection (source filter, severity, bound service, on-call proof).\n\n## Not verified\n\n- Reply shapes against live PagerDuty, Jira Service Management, Sentry,\nMonte Carlo or Bigeye accounts.\n- The full `preflight` and the coverage floor locally. CI is the check\nfor both.\n- The whole-repo test suites after the last fixes. On Windows they show\nfailures in toolgen sandbox tests, installer script tests and a Slack\nread-marker test; the Slack one fails the same way without this change,\nand the others were not compared with `main`.\n- The scheduler hook itself: the wiring test drives the engine's trigger\ndirectly.\n\n## Deviations from the approved plan\n\n- The owner-open-incidents selection runs once per status, because a\nsingle `IN (...)` forced a temporary B-tree.\n- The data lane reads a pull request's merge time for GitHub and GitLab\nonly, because Bitbucket never writes it.\n- The chat window ends at assembly time.\n- \"Truncated\" gaps use the existing `missing_entity_type` category,\nbecause the gap category is a closed SDK union.\n\nThe plan had three review rounds before any code was written. Docs: the\nstatus text in `CLAUDE.md` and `GEMINI.md`, changelog, README, roadmap\nrows, cli-reference, architecture, schema reference and\nSECURITY-INVARIANTS.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JmSjrCzb214jGqUcCTWNJQ\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Added `nimbus incident list` and `nimbus incident show` to browse and\ninspect incident records assembled from locally indexed data.\n* Incident records include related service, change, chat, history, and\non-call details, with freshness and data-gap information where\navailable.\n* On-call briefs can include eligible non-PagerDuty incident records\nwhen configured.\n* Data-deletion previews now report incident records and pushed briefs\nslated for removal.\n* **Documentation**\n* Updated CLI, configuration, schema, and architecture references with\nincident-record and on-call push details.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Fable 5.2 <noreply@anthropic.com>",
+          "timestamp": "2026-11-16T18:32:16Z",
+          "tree_id": "fcdcee3d4ee472324597f1ece1c85a406e5c1a89",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/37ad233467c164c2ba3fd560965b32970139a400"
+        },
+        "date": 1794854428101,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 175.9824457999992,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 176.9750643999996,
             "unit": "ms"
           }
         ]
