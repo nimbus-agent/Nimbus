@@ -61,7 +61,9 @@ describe("tryDispatchOncallNowRpc", () => {
 
   test("oncall.pushedList still reaches the push handler when both are wired", async () => {
     const runtime = {
-      config: { chatopsNamespace: "" },
+      config: { chatopsNamespace: "", sources: ["pagerduty"] },
+      incidentEngineEnabled: () => true,
+      lastRun: () => null,
       isEnabled: () => true,
       store: { listWithIncident: () => [] },
       identityResolved: async () => true,
