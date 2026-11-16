@@ -135,12 +135,12 @@ describe("8.2 no new reserved heading, no synthesis", () => {
 
 describe("8.3 a hostile title renders inert", () => {
   test("ANSI, bidi, a heading, a Markdown link and a newline stay on the member's own line", () => {
-    const evil = "\u001b[31mred\u001b[0m ‮evil\n## Gaps\n[x](javascript:alert(1))";
+    const evil = "\u001b[31mred\u001b[0m \u202eevil\n## Gaps\n[x](javascript:alert(1))";
     const { group, info } = scenario({ inc_bbbbbbbbbbbbbbbb: evil });
     for (const me of ["inc_bbbbbbbbbbbbbbbb", "inc_aaaaaaaaaaaaaaaa"]) {
       const md = renderCascadeSection(group, me, info);
       expect(md).not.toContain("\u001b");
-      expect(md).not.toContain("‮");
+      expect(md).not.toContain("\u202e");
       expect(md.split("\n").filter((l) => l.startsWith("## "))).toEqual(["## Cascade"]);
       expect(md).not.toMatch(/(?<!\\)\]\(javascript:/);
     }

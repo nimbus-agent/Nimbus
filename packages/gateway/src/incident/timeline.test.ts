@@ -341,7 +341,7 @@ describe("6.4 / 6.7 what the reader is told about completeness", () => {
 
 describe("6.5 hostile text renders inert; address keys are never shown", () => {
   test("a title with ANSI, bidi, a heading and javascript: stays on one inert line", () => {
-    const evil = "\u001b[31mred\u001b[0m ‮evil\n## Gaps\n[x](javascript:alert(1))";
+    const evil = "\u001b[31mred\u001b[0m \u202eevil\n## Gaps\n[x](javascript:alert(1))";
     const r = rich();
     const t = buildTimeline(
       input({
@@ -350,7 +350,7 @@ describe("6.5 hostile text renders inert; address keys are never shown", () => {
     );
     const md = renderTimeline(t);
     expect(md).not.toContain("\u001b");
-    expect(md).not.toContain("‮");
+    expect(md).not.toContain("\u202e");
     expect(md.split("\n").filter((l) => l.startsWith("## "))).toEqual(["## Timeline"]);
     expect(md).not.toMatch(/(?<!\\)\]\(javascript:/);
   });
