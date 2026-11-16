@@ -19,7 +19,6 @@ import {
   sha12,
   suspensionFromRow,
 } from "../../connectors/connector-writes/agent-door-definition.ts";
-import { LEGACY_LIST_HEADER } from "../../connectors/connector-writes/agent-door-legacy.ts";
 import {
   type DoorApproval,
   type DoorApprovalEntry,
@@ -46,7 +45,6 @@ import { USER_MCP_SERVICE_ID_PATTERN } from "../../connectors/user-mcp-store.ts"
 import type { ToolExecutor } from "../../engine/executor.ts";
 import { MCP_ACTION_CAPABILITY } from "../../mcp-sink/capture-capability.ts";
 import { APPROVER_BY_KIND } from "../../mcp-sink/capture-client-policy.ts";
-import { CaptureStore } from "../../mcp-sink/capture-store.ts";
 import type { EnforcedPolicy } from "../../policy/policy-gate.ts";
 import { ConnectorRpcError } from "../connector-rpc-shared.ts";
 import type { ClientKind } from "../server/client-kind.ts";
@@ -392,28 +390,19 @@ export interface AgentStatusService {
   unverified?: string;
 }
 
-/** Proposals accepted under the deprecation window in the last 30 days (D-7); `null` when none. */
-export interface AgentLegacyReport {
-  sinceMs: number;
-  total: number;
-  byType: Record<string, number>;
-  notice: string;
-}
-
 export interface AgentStatusReply {
   policyAllows: boolean;
   /** False when the connection did not declare cli or ui: the stored view, no listing, no mark. */
   checked: boolean;
   /** Which of the two capabilities the door needs the organisation's policy has turned off (OR-AD-15). */
   lockedOff: string[];
-  legacy: AgentLegacyReport | null;
   /** Present only while no approval exists: the one command that makes one. */
   hint?: string;
   services: AgentStatusService[];
 }
 
 const NO_APPROVALS_HINT =
-  "To approve connector writes for outside agents, run: nimbus connector writes enable <service> --door agent";
+  "No write is approved for outside agents, so they can propose none. Approve rows by name: nimbus connector writes enable <service> --door agent (mail sends cannot be approved)";
 async function statusOfService(
   deps: AgentWritesDeps,
   service: string,
@@ -474,16 +463,6 @@ function lockedOffOf(enforced: Pick<EnforcedPolicy, "capabilitiesDisabled"> | un
   ].filter((c) => enforced.capabilitiesDisabled.has(c));
 }
 
-/** The window `status` counts legacy proposals over. */
-export const LEGACY_WINDOW_MS = 30 * 24 * 3_600_000;
-
-function legacyReport(deps: AgentWritesDeps): AgentLegacyReport | null {
-  const sinceMs = deps.now() - LEGACY_WINDOW_MS;
-  const { total, byType } = new CaptureStore(deps.db).legacyActionTypesSince(sinceMs);
-  if (total === 0) return null;
-  return { sinceMs, total, byType: { ...byType }, notice: LEGACY_LIST_HEADER };
-}
-
 /**
  * Per service that has an agent approval: re-derive each approved tool's hash from a live listing.
  * The one read that writes: a first mismatch is marked (sticky, narrows only) with one audit row.
@@ -503,7 +482,6 @@ export async function handleAgentWritesStatus(deps: AgentWritesDeps): Promise<Ag
     policyAllows: agentDoorPolicyAllows(deps.getEnforcedPolicy()),
     checked: live,
     lockedOff: lockedOffOf(deps.getEnforcedPolicy()),
-    legacy: legacyReport(deps),
     ...(all.length === 0 ? { hint: NO_APPROVALS_HINT } : {}),
     services,
   };

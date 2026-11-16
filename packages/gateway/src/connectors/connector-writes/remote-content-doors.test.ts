@@ -3,8 +3,8 @@
  * shared check. Every
  * structural bypass form of both adversarial reviews (`testing/remote-content-fixtures.ts`), in the
  * scanned field of a real row, is refused identically by `messagingDestinationRefusal`, the model
- * door's `modelWriteRefusal` and the act door's `actDoorRefusal`; each allowed form passes all
- * three. Plus the row-level rules (which field, which format, OPTIONAL Drive content, the
+ * door's `modelWriteRefusal` (the agent door runs the same one since AD3b); each allowed form passes
+ * both. Plus the row-level rules (which field, which format, OPTIONAL Drive content, the
  * contentType and Drive type/name cases), the order pin, fail-closed throws, the completeness
  * tripwire and a source pin on the call.
  */
@@ -13,7 +13,6 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { stripComments } from "../../../../../scripts/structure-audit/lib.ts";
 import type { ChatopsPolicy } from "../../policy/types.ts";
-import { PROPOSABLE_WRITE_TOOLS } from "../proposable-actions.ts";
 import {
   installedConnectorsPackageRoot,
   readConnectorPackageSources,
@@ -26,7 +25,6 @@ import {
 import { CONNECTOR_WRITE_ROWS } from "./index.ts";
 import { isModelOfferableRow } from "./model-offerable.ts";
 import {
-  actDoorRefusal,
   BROADCAST_MENTION_REFUSAL,
   CHATOPS_CHANNEL_REFUSAL,
   driveMarkupFormats,
@@ -43,13 +41,15 @@ import {
 
 /** ChatOps readable and binding nothing, so only the remote-content rule can refuse a Teams post. */
 const NO_CHATOPS: ChatopsPolicy = { channels: new Map(), ownership: new Map() };
-const ACT = { chatops: NO_CHATOPS, kb: undefined, kbUnreadable: false } as const;
 
-/** The same result through all three entry points (the rule is in the shared check). */
+function doorRefusal(toolId: string, input: Readonly<Record<string, unknown>>): string | undefined {
+  return modelWriteRefusal(toolId, input, { chatops: NO_CHATOPS, kb: undefined });
+}
+
+/** The same result through both entry points (the rule is in the shared check). */
 function onAllDoors(toolId: string, input: Readonly<Record<string, unknown>>): string | undefined {
   const messaging = messagingDestinationRefusal(toolId, input, { chatops: NO_CHATOPS });
   expect(modelWriteRefusal(toolId, input, { chatops: NO_CHATOPS, kb: undefined })).toBe(messaging);
-  expect(actDoorRefusal(toolId, input, ACT)).toBe(messaging);
   return messaging;
 }
 
@@ -178,16 +178,13 @@ describe("B3r: the row rules (plan R1, R10, R11 and the coordinator's rulings)",
     expect(modelWriteRefusal("confluence_comment_add", embed, { chatops: undefined, kb })).toBe(
       REMOTE_CONTENT_REFUSAL,
     );
-    expect(actDoorRefusal("confluence_comment_add", embed, { ...ACT, kb })).toBe(
-      REMOTE_CONTENT_REFUSAL,
-    );
     const clean = { pageId: "4242", storageHtml: "<p>x</p>" };
     expect(modelWriteRefusal("confluence_comment_add", clean, { chatops: undefined, kb })).toBe(
       KNOWLEDGE_BASE_REFUSAL,
     );
   });
 
-  test("a throw inside the rule refuses on both doors (an enumerable getter that throws)", () => {
+  test("a throw inside the rule refuses (an enumerable getter that throws)", () => {
     for (const [toolId, key] of [
       ["confluence_page_append", "storageHtml"],
       ["gdrive_file_create", "mimeType"],
@@ -200,7 +197,6 @@ describe("B3r: the row rules (plan R1, R10, R11 and the coordinator's rulings)",
           throw new Error("x");
         },
       });
-      expect(actDoorRefusal(toolId, input, ACT), toolId).toBe(REMOTE_CONTENT_REFUSAL);
       expect(modelWriteRefusal(toolId, input, { chatops: NO_CHATOPS, kb: undefined }), toolId).toBe(
         REMOTE_CONTENT_REFUSAL,
       );
@@ -311,7 +307,7 @@ describe("B3w: the row rules (plan W2-W4, W11, Review Focus 1 and 5)", () => {
   test("a throwing enumerable getter on each B3w row's body: the rule refuses where it reads first", () => {
     // The broadcast (B1) and quick-action (B2) scans read the Teams, GitHub and GitLab bodies
     // earlier in the shared chain and do not catch; there the throw propagates out of
-    // actDoorRefusal and the act door's verdict (capture-act.ts actionDestinationVerdict) refuses
+    // `modelWriteRefusal` and the gate's verdict (capture-act.ts actionDestinationVerdict) refuses
     // it with its fixed text. MCP input is JSON, so a getter is only reachable in-process.
     const READ_EARLIER = new Set([
       "teams_message_post",
@@ -335,9 +331,9 @@ describe("B3w: the row rules (plan W2-W4, W11, Review Focus 1 and 5)", () => {
         },
       });
       if (READ_EARLIER.has(toolId)) {
-        expect(() => actDoorRefusal(toolId, input, ACT), toolId).toThrow();
+        expect(() => doorRefusal(toolId, input), toolId).toThrow();
       } else {
-        expect(actDoorRefusal(toolId, input, ACT), toolId).toBe(REMOTE_CONTENT_REFUSAL);
+        expect(doorRefusal(toolId, input), toolId).toBe(REMOTE_CONTENT_REFUSAL);
       }
     }
   });
@@ -375,11 +371,11 @@ describe("B3w: the row rules (plan W2-W4, W11, Review Focus 1 and 5)", () => {
     );
     // A Linear update that sets assigneeId and carries an image: messaging runs first.
     expect(
-      actDoorRefusal(
-        "linear_issue_update",
-        { issueId: "i", assigneeId: "u", description: "![](https://h)" },
-        ACT,
-      ),
+      doorRefusal("linear_issue_update", {
+        issueId: "i",
+        assigneeId: "u",
+        description: "![](https://h)",
+      }),
     ).toBe(REMOTE_CONTENT_REFUSAL);
   });
 });
@@ -405,23 +401,17 @@ const NOT_SCANNED_REMOTE: Readonly<Record<string, string>> = {
   apple_mail_draft_create: "sent as text/plain",
   outlook_calendar_create: "the connector always sends contentType Text (B4 R4)",
   apple_calendar_event_create: "iCalendar DESCRIPTION text (B4 R4)",
+  github_file_commit:
+    "bound row (I54): the commit message and file text are shown in full as a diff and deliberately not scanned (commit-free-text.test.ts)",
+  gitlab_commit_create:
+    "bound row (I54): the commit message and file text are shown in full as a diff and deliberately not scanned (commit-free-text.test.ts)",
   github_branch_create:
     "no text field: branch and fromRef are refs, which cannot load content (C2)",
   gitlab_branch_create:
     "no text field: branch and fromRef are refs (C2); the schema reader over-reads a `description` from the unrelated schema after `gitlabRefSchema`",
 };
 
-/** Untemplated proposable send rows (no preview fields to read): each sends plain text. */
-const UNTEMPLATED_SENDS: Readonly<Record<string, string>> = {
-  gmail_draft_send: "takes a draftId only; sends an existing draft (no model-written body)",
-  gmail_message_send: "`rawMessage` writes Content-Type: text/plain (pinned (k))",
-  fastmail_mail_send: "JMAP bodyStructure type text/plain (pinned (k))",
-  imap_mail_send: "imapflow-adapter gives nodemailer `text: input.body` only (pinned (k))",
-  protonmail_mail_send: "imapflow-adapter gives nodemailer `text: input.body` only (pinned (k))",
-  apple_mail_send: "Content-Type: text/plain (pinned (k))",
-};
-
-/** The free-text keys of a proposable tool's installed 0.5.0 zod schema, found by registration. */
+/** The free-text keys of a tool's installed 0.5.0 zod schema, found by registration. */
 function schemaTextKeys(toolId: string): readonly string[] {
   const out = new Set<string>();
   for (const r of SCAN.registrations.filter((x) => x.id === toolId)) {
@@ -473,10 +463,8 @@ const BODY_KEYS = new Set(["body", "text", "description", "content"]);
 const MARKUP_KEYS = new Set(["storageHtml", "childrenJson", "propertiesJson"]);
 
 describe("B3r and B3w completeness tripwire", () => {
-  const proposable = new Set(Object.values(PROPOSABLE_WRITE_TOOLS));
-  const doorRows = CONNECTOR_WRITE_ROWS.filter(
-    (r) => isModelOfferableRow(r) || proposable.has(r.toolId),
-  );
+  // An outside agent reaches every row the model is offered, so one set covers both.
+  const doorRows = CONNECTOR_WRITE_ROWS.filter((r) => isModelOfferableRow(r));
 
   test("the scanned rows are exactly the twenty-four, with exactly the field column", () => {
     expect([...remoteContentScannedRows()].sort((a, b) => a.localeCompare(b))).toEqual([
@@ -556,12 +544,11 @@ describe("B3r and B3w completeness tripwire", () => {
     const unexplained: string[] = [];
     for (const r of doorRows) {
       if (r.preview === undefined) {
-        // B3w review fix 3: an untemplated row is scanned OR a named plain-text send, never neither
-        // and never both.
-        const scannedRow = remoteContentScannedKeys(r.toolId).length > 0;
-        const named = Object.hasOwn(UNTEMPLATED_SENDS, r.toolId);
-        if (!scannedRow && !named) unexplained.push(`${r.toolId} (untemplated)`);
-        if (scannedRow && named) unexplained.push(`${r.toolId} (untemplated, both)`);
+        // An untemplated row on a door must be scanned (the mail sends, which had no template,
+        // are never offered to an agent or the model since AD3b).
+        if (remoteContentScannedKeys(r.toolId).length === 0) {
+          unexplained.push(`${r.toolId} (untemplated)`);
+        }
         continue;
       }
       const hasBody = r.preview.fields.some((f) => BODY_KEYS.has(f.key) || MARKUP_KEYS.has(f.key));
@@ -574,18 +561,17 @@ describe("B3r and B3w completeness tripwire", () => {
     expect(unexplained).toEqual([]);
     // No stale entries: each named row still exists on a door.
     const ids = new Set(doorRows.map((r) => r.toolId));
-    for (const id of [...Object.keys(NOT_SCANNED_REMOTE), ...Object.keys(UNTEMPLATED_SENDS)]) {
+    for (const id of Object.keys(NOT_SCANNED_REMOTE)) {
       expect(ids.has(id), id).toBe(true);
     }
   });
 
   /**
-   * Final B3w review, item 4: per KEY, not per tool. Each free-text key a proposable tool's schema
+   * Final B3w review, item 4: per KEY, not per tool. Each free-text key an offerable tool's schema
    * declares is scanned for that tool, unless the whole tool is named as not scanned.
    */
   function unclassifiedKeys(toolId: string, keys: readonly string[]): readonly string[] {
-    if (Object.hasOwn(NOT_SCANNED_REMOTE, toolId) || Object.hasOwn(UNTEMPLATED_SENDS, toolId))
-      return [];
+    if (Object.hasOwn(NOT_SCANNED_REMOTE, toolId)) return [];
     const scanned = remoteContentScannedKeys(toolId);
     return keys.filter((k) => !scanned.includes(k)).map((k) => `${toolId}.${k}`);
   }
@@ -598,10 +584,10 @@ describe("B3r and B3w completeness tripwire", () => {
     expect(unclassifiedKeys("slack_message_post", ["text", "message"])).toEqual([]);
   });
 
-  test("every free-text key of every proposable tool's 0.5.0 schema is scanned or its tool named", () => {
+  test("every free-text key of every offerable tool's 0.5.0 schema is scanned or its tool named", () => {
     const unexplained: string[] = [];
     let withKeys = 0;
-    for (const toolId of new Set(Object.values(PROPOSABLE_WRITE_TOOLS))) {
+    for (const toolId of new Set(doorRows.map((r) => r.toolId))) {
       const keys = schemaTextKeys(toolId);
       if (keys.length === 0) continue;
       withKeys++;

@@ -232,8 +232,8 @@ export const MAIL_CALENDAR_ROWS: readonly ConnectorWriteRow[] = [
   // (`users.threads.modify`); nothing is deleted and the thread is found again under All Mail. The
   // connector lists the tool only when the token holds `gmail.modify` (or the full-mailbox scope),
   // so an existing Gmail connection must be re-authorised. The before-state reads the thread's
-  // subject, size, unread count and whether any message is still in the inbox. Withheld from the MCP
-  // act door (`not_yet_offered`): that door shows no before-state.
+  // subject, size, unread count and whether any message is still in the inbox. An outside agent
+  // may propose it only after the owner approved it for agents by name (the door executor shows the before-state).
   withBefore(
     withPreview(row("gmail_thread_archive", "gmail.thread.archive", "mesh", 2), {
       target: "{threadId}",
@@ -254,8 +254,8 @@ export const MAIL_CALENDAR_ROWS: readonly ConnectorWriteRow[] = [
   ),
   row("gmail_draft_send", "gmail.draft.send", "mesh", 3),
   row("gmail_message_send", "gmail.message.send", "mesh", 3),
-  // No template, so the model is never offered it (B3w W3, owner ruling OR-B3w-1); the act door's
-  // verbatim prompt shows every recipient; both doors refuse an HTML body that loads remote
+  // No template, so the model is never offered it (B3w W3, owner ruling OR-B3w-1), and no door offers
+  // or accepts a mail send (AD3b); the owner's own doors refuse an HTML body that loads remote
   // content (B3w).
   row("outlook_mail_send", "outlook.mail.send", "mesh", 3),
   row("fastmail_mail_send", "fastmail.mail.send", "mesh", 3),

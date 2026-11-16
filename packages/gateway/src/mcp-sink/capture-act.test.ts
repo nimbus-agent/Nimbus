@@ -45,8 +45,9 @@ beforeEach(() => {
     capability: () => cap,
     classifyAction: () =>
       verdict === "proposable"
-        ? { kind: "proposable", basis: "legacy_user_mcp" }
+        ? { kind: "proposable", basis: "approved" }
         : { kind: "denied", class: "vcs" },
+    verifyActionDefinition: () => Promise.resolve({ ok: true }),
     isServiceConfigured: () => Promise.resolve(configured),
     now: () => clock,
     actionDestinationRefusal: () => destinationRefusal,
@@ -67,7 +68,6 @@ beforeEach(() => {
     sessionId: "s",
     createdAt: 500,
     expiresAt: 2_000,
-    agentDoorLegacy: false,
   });
 });
 afterEach(() => db.close());
@@ -81,6 +81,7 @@ function act(
   const calls: unknown[][] = [];
   return {
     calls,
+    humanOnly: true,
     execute: (...a) => {
       calls.push(a);
       return out instanceof Error ? Promise.reject(out) : Promise.resolve(out);
@@ -230,6 +231,7 @@ describe("acceptAction — outcomes", () => {
   test("execute sees the row as executing (claim happened first)", async () => {
     let seen = "";
     await acceptAction(deps, OWNER, row(), {
+      humanOnly: true,
       execute: () => {
         seen = row().state;
         return Promise.resolve({ status: "rejected" });
@@ -280,6 +282,7 @@ describe("acceptAction — outcomes", () => {
     let out: Awaited<ReturnType<typeof acceptAction>>;
     try {
       out = await acceptAction(deps, OWNER, row(), {
+        humanOnly: true,
         execute: () => {
           // Simulates the row leaving `executing` behind the gate's back (a concurrent boot reconcile).
           deps.store.failInterruptedActions(clock);
@@ -332,7 +335,6 @@ describe("reconcileActionsAtBoot (Review Focus 5)", () => {
       sessionId: "s",
       createdAt: 1,
       expiresAt: 10,
-      agentDoorLegacy: false,
     });
     expect(reconcileActionsAtBoot(deps, 1_500)).toEqual({ expired: 1, interrupted: 1 });
     expect(row()).toMatchObject({ state: "failed", errorCode: "ERR_ACTION_INTERRUPTED" });

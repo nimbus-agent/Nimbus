@@ -1,5 +1,4 @@
 import { agentDoorRow } from "../connectors/connector-writes/agent-door.ts";
-import { legacyNoticeFor } from "../connectors/connector-writes/agent-door-legacy.ts";
 import type {
   AgentDoor,
   DefinitionVerification,
@@ -48,14 +47,12 @@ import {
   submitCapture,
 } from "../mcp-sink/capture-gate.ts";
 import type { CaptureAttemptLimiter } from "../mcp-sink/capture-rate-limit.ts";
-import { actionTypeOfPayload } from "../mcp-sink/capture-store.ts";
 import {
   type ActDeps,
   type ActionBasis,
   type ActionProvenance,
   type ActionRejectCode,
   CaptureError,
-  isLegacyBasis,
 } from "../mcp-sink/capture-types.ts";
 import { dispatchByMethod, type RpcMissOrHit } from "./_lib/dispatch-by-method.ts";
 import { type ConsentCoordinator, humanOnlyConsent, vetoingConsent } from "./consent.ts";
@@ -104,7 +101,7 @@ export interface CaptureActWiring {
   /**
    * The agent door's runtime half (AD3a-2a, invariant I58): an `approved` proposal is re-checked
    * after the owner's answer, and a row's before-state reader and prepare tool are checked against
-   * the live listing. Absent, an `approved` proposal is refused (fail closed); a legacy one still runs.
+   * the live listing. Absent, every proposal is refused (fail closed).
    */
   readonly agentDoor?: AgentDoorActWiring;
 }
@@ -123,7 +120,7 @@ export interface AgentDoorActWiring {
    * The facts the owner's prompt shows for a user-MCP call (AD5a, D-6; `createAgentDoor(...).
    * userMcpCallFacts`). For an `approved` basis it lists the server once and runs the definition check on
    * that listing, so a failed check is a refusal before any prompt. Absent (a test wiring), every
-   * user-MCP proposal is refused: an `approved` one here, a legacy one by the executor (no facts).
+   * user-MCP proposal is refused (no facts).
    */
   readonly userMcpCallFacts?: (
     actionType: string,
@@ -144,7 +141,7 @@ export function actWriteRows(w: CaptureActWiring | undefined): readonly Connecto
 const CREDENTIAL_UNVERIFIED_REASON = "the credential the write would use could not be verified";
 
 /** The stored row's provenance as the executor's gateway-set proposer (all of it UNVERIFIED). */
-function agentProposerOf(p: ActionProvenance, actionType: string): AgentProposer {
+function agentProposerOf(p: ActionProvenance): AgentProposer {
   return {
     door: "agent",
     captureId: p.captureId,
@@ -153,8 +150,6 @@ function agentProposerOf(p: ActionProvenance, actionType: string): AgentProposer
     summary: p.summary,
     createdAt: p.createdAt,
     expiresAt: p.expiresAt,
-    // The prompt's line follows the approval-time basis (R-7): fixed gateway text, never the agent's.
-    ...(isLegacyBasis(p.basis) ? { deprecation: legacyNoticeFor(actionType) } : {}),
   };
 }
 
@@ -210,10 +205,9 @@ const NO_DOOR_RUNTIME_REASON = "the agent door is not available; nothing was run
  * AD3a-2a: the tool is routed by `agentDoorRow` (every write row, not the 47-type table), so a
  * Wave 4 or bound row reaches the SAME executor with its typed confirmation, before-state and
  * prepare step. What may reach this function is decided by the gate's verdict at submit and
- * approval, never by routing. An `approved`-basis proposal runs on a consent channel that
- * re-checks the tool's definition after the owner's answer (`vetoingConsent`); a legacy user-MCP
- * basis has no approval to compare against, but its registration is re-read after the answer and
- * must still be the one the prompt showed.
+ * approval, never by routing. Every proposal runs on a consent channel that re-checks the
+ * tool's definition after the owner's answer (`vetoingConsent`); a proposal with no `approved` basis
+ * is rejected before anything is built (AD3b: there is no other basis).
  */
 export function buildActDeps(
   w: CaptureActWiring,
@@ -246,7 +240,7 @@ export function buildActDeps(
         throw new Error("Tool not found");
       }
       const door = w.agentDoor;
-      if (provenance.basis === "approved" && door === undefined) {
+      if (provenance.basis !== "approved" || door === undefined) {
         return { status: "rejected", reason: NO_DOOR_RUNTIME_REASON };
       }
       // The prompt must name the instance the write WILL run against, read fresh from the Vault
@@ -263,45 +257,44 @@ export function buildActDeps(
         };
       }
       // AD5a: a user-MCP call carries the facts the prompt shows (third-party code, the server, the
-      // sandbox reach, the approval). An approved basis is checked against ONE listing here; a
-      // failed check is rejected with no prompt. A legacy basis reads the registration only.
+      // sandbox reach, the approval), checked against ONE listing here; a failed check is rejected
+      // with no prompt. No facts function wired: fail closed.
       let userMcpCall: UserMcpCallFacts | undefined;
-      if (userMcpActionParts(actionType) !== undefined && provenance.basis !== undefined) {
-        // No facts function wired: an approved basis fails closed here; a legacy one reaches the
-        // executor with no facts, which refuses it before any prompt (I15, AD5b).
-        const f: UserMcpCallFactsOutcome | undefined =
-          door?.userMcpCallFacts === undefined
-            ? provenance.basis === "approved"
-              ? { ok: false, detail: USER_MCP_FACTS_UNCHECKED }
-              : undefined
+      if (userMcpActionParts(actionType) !== undefined) {
+        const f: UserMcpCallFactsOutcome =
+          door.userMcpCallFacts === undefined
+            ? { ok: false, detail: USER_MCP_FACTS_UNCHECKED }
             : await door
                 .userMcpCallFacts(actionType, provenance.basis, provenance.createdAt)
                 .catch(
                   (): UserMcpCallFactsOutcome => ({ ok: false, detail: USER_MCP_FACTS_UNCHECKED }),
                 );
-        if (f !== undefined && !f.ok) {
+        if (!f.ok) {
           return {
             status: "rejected",
             reason: escapeUnverifiedLine(f.detail),
             ...(f.code === undefined ? {} : { code: f.code }),
           };
         }
-        userMcpCall = f?.ok === true ? f.facts : undefined;
+        userMcpCall = f.facts;
       }
       const options = await executeOptionsFor(door, rowNamed(row, w));
       let vetoed: string | undefined;
       let vetoCode: ActionRejectCode | undefined;
       // What the prompt showed, carried to the check after the answer: the registration it named and
-      // the FULL hash of the approval (null for a legacy call). Only a user-MCP call has facts.
+      // the FULL hash of the approval. Only a user-MCP call has facts; one with no approval is refused.
+      if (userMcpCall !== undefined && userMcpCall.approval === null) {
+        return { status: "rejected", reason: USER_MCP_FACTS_UNCHECKED };
+      }
       const shown: UserMcpCallBinding | undefined =
-        userMcpCall === undefined
+        userMcpCall?.approval == null
           ? undefined
           : {
               registeredAt: userMcpCall.registeredAt,
-              definitionSha256: userMcpCall.approval?.definitionSha256 ?? null,
+              definitionSha256: userMcpCall.approval.definitionSha256,
             };
       const channel =
-        door !== undefined && (provenance.basis === "approved" || shown !== undefined)
+        door !== undefined
           ? vetoingConsent(
               humanChannel,
               async () => {
@@ -338,7 +331,7 @@ export function buildActDeps(
       const action: PlannedAction = {
         type: actionType,
         origin: "agent",
-        proposer: agentProposerOf(provenance, actionType),
+        proposer: agentProposerOf(provenance),
         ...(userMcpCall === undefined ? {} : { userMcpCall }),
         payload: { mcpToolId: toolId, input },
       };
@@ -368,22 +361,6 @@ export function buildActDeps(
 }
 
 type Ctx = { readonly gate: CaptureGateDeps; readonly caller: CaptureCaller };
-
-/**
- * `capture.submit` (AD3a-2a, D-7): the gate's reply, plus a fixed `deprecation` line ONLY for a proposal
- * accepted under the deprecation window. Added here because `mcp-sink/` cannot import the module that
- * holds the text. An approved proposal and every other kind get the reply exactly as before.
- */
-async function submitWithNotice(
-  gate: CaptureGateDeps,
-  caller: CaptureCaller,
-  params: unknown,
-): Promise<unknown> {
-  const out = await submitCapture(gate, caller, params);
-  if (out.legacy !== true) return out;
-  const actionType = actionTypeOfPayload(gate.store.get(out.id)?.payloadJson ?? null);
-  return { ...out, deprecation: legacyNoticeFor(actionType ?? "") };
-}
 
 export function idParam(params: unknown): unknown {
   return typeof params === "object" && params !== null
@@ -418,7 +395,7 @@ export async function dispatchCaptureRpc(
             c.caller,
             p,
           ),
-        "capture.submit": (p, c) => submitWithNotice(c.gate, c.caller, p),
+        "capture.submit": (p, c) => submitCapture(c.gate, c.caller, p),
         "captures.list": (p, c) => listCaptures(c.gate, c.caller, p),
         "captures.get": (p, c) => getCapture(c.gate, c.caller, idParam(p)),
         "captures.revoke": (p, c) => revokeCapture(c.gate, c.caller, idParam(p)),

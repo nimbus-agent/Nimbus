@@ -326,9 +326,6 @@ describe("the default call seam", () => {
 });
 
 describe("AD3a-2a status additions", () => {
-  const CMD =
-    "To keep the other types working run: nimbus connector writes enable <service> --door agent (mail sends cannot be approved; drafts stay allowed)";
-
   it("the model line is unchanged when something is approved for the model", async () => {
     const h = harness({
       services: [{ service: "jira", enabled: true, maxWave: 2, writes: 3, offerable: 2 }],
@@ -377,35 +374,18 @@ describe("AD3a-2a status additions", () => {
     expect(h.logs).toContain("  not listed now: github_a, github_b");
   });
 
-  it("the legacy line gives the count, the types and the command; nothing when null or zero", async () => {
-    const withLegacy = harness({
+  it("AD3b: a status reply from an older gateway that still carries a legacy count prints no legacy line", async () => {
+    const h = harness({
       services: [],
       policyAllows: true,
       agent: {
         policyAllows: true,
-        legacy: {
-          sinceMs: 0,
-          total: 3,
-          byType: { "slack.message.post": 2, "github.issue.create": 1 },
-          notice: "n",
-        },
+        legacy: { sinceMs: 0, total: 3, byType: { "slack.message.post": 3 }, notice: "n" },
         services: [],
       },
     });
-    await runConnectorWrites(["status"], withLegacy.deps);
-    expect(withLegacy.logs).toContain(
-      "legacy: 3 proposals in the last 30 days would be refused (github.issue.create x1, slack.message.post x2)",
-    );
-    expect(withLegacy.logs).toContain(CMD);
-    for (const legacy of [null, { total: 0, byType: {} }]) {
-      const none = harness({
-        services: [],
-        policyAllows: true,
-        agent: { policyAllows: true, legacy, services: [] },
-      });
-      await runConnectorWrites(["status"], none.deps);
-      expect(none.logs.join("\n")).not.toContain("legacy:");
-    }
+    await runConnectorWrites(["status"], h.deps);
+    expect(h.logs.join(String.fromCodePoint(10))).not.toContain("legacy");
   });
 
   it("the policy warning names the lockoff, with control characters stripped", async () => {

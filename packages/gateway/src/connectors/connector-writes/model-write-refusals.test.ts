@@ -5,8 +5,6 @@ import type { ChatopsChannelBinding, ChatopsPolicy } from "../../policy/types.ts
 import { CONNECTOR_WRITE_ROWS } from "./index.ts";
 import { isModelOfferableRow } from "./model-offerable.ts";
 import {
-  ACT_DOOR_KB_CHILD_REFUSAL,
-  actDoorRefusal,
   BROADCAST_MENTION_REFUSAL,
   CALENDAR_TEXT_REFUSAL,
   CALENDAR_TIME_REFUSAL,
@@ -711,107 +709,25 @@ describe("B3: the KB-target refusal covers every page row (plan R5)", () => {
   });
 });
 
-describe("B3: actDoorRefusal's KB rules (plan R5, R12)", () => {
-  const KB = {
+describe("B3: the model door's KB rules apply to an agent proposal too (AD3b: one check for both)", () => {
+  const KB3 = {
     notion: { databaseId: "0123abcd0123abcd0123abcd0123abcd" },
     confluence: { spaceKey: "KB", parentPageId: "4242" },
   } satisfies TribalKbConfig;
-  const ctxWith = (kb: TribalKbConfig | undefined, kbUnreadable = false) => ({
-    chatops: undefined,
-    kb,
-    kbUnreadable,
-  });
-  const PAGE_ROWS: ReadonlyArray<
-    readonly [string, Record<string, unknown>, Record<string, unknown>]
-  > = [
-    [
-      "notion_page_create",
-      { parentPageId: "0123abcd0123abcd0123abcd0123abcd" },
-      { parentPageId: "ffff" },
-    ],
-    ["notion_page_update", { pageId: "0123ABCD-0123-abcd-0123-abcd0123abcd" }, { pageId: "ffff" }],
-    [
-      "notion_block_append",
-      { parentBlockId: "0123abcd0123abcd0123abcd0123abcd" },
-      { parentBlockId: "ffff" },
-    ],
-    ["notion_comment_create", { pageId: "0123abcd0123abcd0123abcd0123abcd" }, { pageId: "ffff" }],
-    ["confluence_page_create", { parentPageId: " 4242 " }, { parentPageId: "55" }],
-    ["confluence_page_update", { pageId: "04242" }, { pageId: "55" }],
-    ["confluence_page_append", { pageId: 4242 }, { pageId: "55" }],
-    ["confluence_comment_add", { pageId: "4242" }, { pageId: "55" }],
-  ];
-  const KB_CHILD_ROWS = [
-    "notion_page_update",
-    "notion_block_append",
-    "confluence_page_update",
-    "confluence_page_append",
-  ];
 
-  test("equals messagingDestinationRefusal on every row that is not KB-capable", () => {
-    for (const r of CONNECTOR_WRITE_ROWS) {
-      if (isKnowledgeBaseCapableRow(r.toolId) || r.toolId === "linear_issue_update") continue;
-      for (const kbUnreadable of [false, true]) {
-        expect(actDoorRefusal(r.toolId, {}, ctxWith(KB, kbUnreadable)), r.toolId).toBe(
-          messagingDestinationRefusal(r.toolId, {}, { chatops: undefined }),
-        );
-      }
-    }
-  });
-
-  test("the KB-target cases refuse with KNOWLEDGE_BASE_REFUSAL, before the KB-child rule", () => {
-    for (const [toolId, target] of PAGE_ROWS) {
-      expect(actDoorRefusal(toolId, withCleanBody(toolId, target), ctxWith(KB)), toolId).toBe(
-        KNOWLEDGE_BASE_REFUSAL,
-      );
-    }
-  });
-
-  test("R12: the four update/append rows refuse while their service's KB is configured, not otherwise", () => {
-    for (const [toolId, , other] of PAGE_ROWS) {
-      const child = KB_CHILD_ROWS.includes(toolId);
-      expect(actDoorRefusal(toolId, withCleanBody(toolId, other), ctxWith(KB)), toolId).toBe(
-        child ? ACT_DOOR_KB_CHILD_REFUSAL : undefined,
-      );
+  test("a page write aimed at the KB destination is refused", () => {
+    const aimed: ReadonlyArray<readonly [string, Record<string, unknown>]> = [
+      ["notion_page_create", { parentPageId: "0123abcd0123abcd0123abcd0123abcd" }],
+      ["notion_page_update", { pageId: "0123ABCD-0123-abcd-0123-abcd0123abcd" }],
+      ["confluence_page_create", { parentPageId: " 4242 " }],
+      ["confluence_page_append", { pageId: 4242 }],
+    ];
+    for (const [toolId, target] of aimed) {
       expect(
-        actDoorRefusal(toolId, withCleanBody(toolId, other), ctxWith(undefined)),
-        toolId,
-      ).toBeUndefined();
-      const otherService = toolId.startsWith("notion")
-        ? { confluence: KB.confluence }
-        : { notion: KB.notion };
-      expect(
-        actDoorRefusal(toolId, withCleanBody(toolId, other), ctxWith(otherService)),
-        toolId,
-      ).toBeUndefined();
-    }
-  });
-
-  test("an unreadable KB config refuses every KB-capable row with KNOWLEDGE_BASE_REFUSAL", () => {
-    for (const [toolId, , other] of PAGE_ROWS) {
-      expect(
-        actDoorRefusal(toolId, withCleanBody(toolId, other), ctxWith(undefined, true)),
+        modelWriteRefusal(toolId, withCleanBody(toolId, target), { chatops: NONE, kb: KB3 }),
         toolId,
       ).toBe(KNOWLEDGE_BASE_REFUSAL);
     }
-  });
-
-  test("the order is messaging, Linear, KB target, KB child", () => {
-    // Linear first: the KB never matters for it.
-    expect(
-      actDoorRefusal("linear_issue_update", { issueId: "i", assigneeId: null }, ctxWith(KB, true)),
-    ).toBe(LINEAR_ASSIGNEE_REFUSAL);
-    // A KB-target append reports the KB-target reason, not the KB-child one.
-    expect(
-      actDoorRefusal(
-        "confluence_page_append",
-        withCleanBody("confluence_page_append", { pageId: "4242" }),
-        ctxWith(KB),
-      ),
-    ).toBe(KNOWLEDGE_BASE_REFUSAL);
-    expect(ACT_DOOR_KB_CHILD_REFUSAL).toBe(
-      "an MCP proposal cannot update or append to a Notion or Confluence page while a Nimbus knowledge base is configured there: the act door cannot check whether the page is in it",
-    );
   });
 });
 
@@ -833,13 +749,10 @@ describe("R6: calendar event times and iCloud event text (both doors)", () => {
     end: "20261105T110000Z",
     ...over,
   });
-  const ACT_CTX = { chatops: NONE, kb: undefined, kbUnreadable: false };
-
-  /** The same result through all three entry points (the rule is in the shared check). */
+  /** The same result through both entry points (the rule is in the shared check). */
   function onAllDoors(toolId: string, input: Record<string, unknown>): string | undefined {
     const messaging = messagingDestinationRefusal(toolId, input, { chatops: NONE });
     expect(modelWriteRefusal(toolId, input, { chatops: NONE, kb: undefined })).toBe(messaging);
-    expect(actDoorRefusal(toolId, input, ACT_CTX)).toBe(messaging);
     return messaging;
   }
 
@@ -1055,11 +968,9 @@ describe("R6: calendar event times and iCloud event text (both doors)", () => {
 });
 
 describe("B4a: a present-but-null optional field on the calendar and Drive creates (coordinator rulings, both doors)", () => {
-  const ACT_CTX = { chatops: NONE, kb: undefined, kbUnreadable: false };
   const all = (toolId: string, input: Record<string, unknown>): Array<string | undefined> => [
     messagingDestinationRefusal(toolId, input, { chatops: NONE }),
     modelWriteRefusal(toolId, input, { chatops: NONE, kb: undefined }),
-    actDoorRefusal(toolId, input, ACT_CTX),
   ];
   const CLEAN: Readonly<Record<string, Record<string, unknown>>> = {
     outlook_calendar_create: {
@@ -1114,18 +1025,17 @@ describe("B4a: a present-but-null optional field on the calendar and Drive creat
     ["firebase_app_distribution_distribute", "groupAliases"],
     ["firebase_app_distribution_distribute", "testerEmails"],
   ] as const) {
-    test(`${toolId}: ${key} null is refused on every entry point, naming ${key}`, () => {
+    test(`${toolId}: ${key} null is refused on both entry points, naming ${key}`, () => {
       const refusal = nullOptionalFieldRefusal(key);
-      expect(all(toolId, { ...CLEAN[toolId], [key]: null })).toEqual([refusal, refusal, refusal]);
+      expect(all(toolId, { ...CLEAN[toolId], [key]: null })).toEqual([refusal, refusal]);
     });
   }
 
   test("every optional key of every row: null refused; omitted or undefined allowed", () => {
     for (const toolId of ROWS) {
-      expect(all(toolId, { ...CLEAN[toolId] }), toolId).toEqual([undefined, undefined, undefined]);
+      expect(all(toolId, { ...CLEAN[toolId] }), toolId).toEqual([undefined, undefined]);
       for (const key of nullRefusedOptionalKeys(toolId)) {
         expect(all(toolId, { ...CLEAN[toolId], [key]: undefined }), `${toolId}.${key}`).toEqual([
-          undefined,
           undefined,
           undefined,
         ]);

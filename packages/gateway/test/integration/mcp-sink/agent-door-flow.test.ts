@@ -1,6 +1,6 @@
 /**
  * Agent door AD3a-2a (invariant I58), end to end: the owner's per-door approval list decides what an
- * outside agent can propose, with a one-release deprecation window for what the earlier door accepted.
+ * outside agent can propose, and since AD3b nothing else (the one-release window for what the earlier door accepted is over).
  *
  * Everything between the agent's `capture.submit` and the connector call is the PRODUCTION chain: the
  * real dispatch entry (`tryDispatchPhase4Rpc`), the real capture gate and store over migrated SQLite,
@@ -14,32 +14,26 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { toStandardSchema } from "@mastra/core/schema";
 
 import { DEFAULT_MCP_SINK_CONFIG } from "../../../src/config/mcp-sink-toml.ts";
-import {
-  AGENT_DOOR_MAIL_SEND_TOOL_IDS,
-  agentDoorRow,
-} from "../../../src/connectors/connector-writes/agent-door.ts";
-import {
-  LEGACY_LIST_HEADER,
-  legacyNoticeFor,
-} from "../../../src/connectors/connector-writes/agent-door-legacy.ts";
+import { agentDoorRow } from "../../../src/connectors/connector-writes/agent-door.ts";
 import { createAgentDoor } from "../../../src/connectors/connector-writes/agent-door-runtime.ts";
 import { definitionSha256 } from "../../../src/connectors/connector-writes/definition-hash.ts";
 import {
   getDoorApproval,
+  removeDoorApprovals,
   upsertDoorApprovals,
 } from "../../../src/connectors/connector-writes/door-approval-store.ts";
 import {
   raiseWriteEnablementWave,
   setModelWriteEnablement,
 } from "../../../src/connectors/connector-writes/enablement-store.ts";
+import {
+  FORMERLY_PROPOSABLE,
+  FORMERLY_PROPOSABLE_MAIL_SENDS,
+} from "../../../src/connectors/connector-writes/formerly-proposable.test-helpers.ts";
 import { CONNECTOR_WRITE_ROWS } from "../../../src/connectors/connector-writes/index.ts";
 import { MODEL_NEVER_OFFERED_TOOL_IDS } from "../../../src/connectors/connector-writes/model-offerable.ts";
 import { previewTemplateKeys } from "../../../src/connectors/connector-writes/types.ts";
 import { mcpClientToolKey } from "../../../src/connectors/lazy-mesh/tool-map.ts";
-import {
-  classifyActionType,
-  PROPOSABLE_WRITE_TOOLS,
-} from "../../../src/connectors/proposable-actions.ts";
 import { appendAuditEntry } from "../../../src/db/audit-chain.ts";
 import { verifyAuditChain } from "../../../src/db/audit-verify.ts";
 import { appendBootMarker } from "../../../src/egress/egress-boot-marker.ts";
@@ -57,7 +51,6 @@ import type { CaptureActWiring, CaptureRpcCtx } from "../../../src/ipc/capture-r
 import { ConsentCoordinatorImpl } from "../../../src/ipc/consent.ts";
 import { createStreamRegistry } from "../../../src/ipc/engine-ask-stream.ts";
 import type { JsonRpcNotification } from "../../../src/ipc/jsonrpc.ts";
-import { createActionDestinationRefusal } from "../../../src/ipc/legacy-refusal.test-helpers.ts";
 import type { ClientKind } from "../../../src/ipc/server/client-kind.ts";
 import type { ServerCtx } from "../../../src/ipc/server/context.ts";
 import { tryDispatchPhase4Rpc } from "../../../src/ipc/server/dispatchers.ts";
@@ -168,10 +161,7 @@ function door() {
       return listing(service);
     },
     tribalKbConfig: () => undefined,
-    classifyContext: {
-      userMcpModelAccessAllowed: () => false,
-      modelAccessServices: () => new Set<string>(),
-    },
+    userMcpPolicy: { userMcpModelAccessAllowed: () => false },
     isServiceConfigured: async () => true,
     now: () => clock,
   });
@@ -325,8 +315,6 @@ async function code(p: Promise<unknown>): Promise<string | undefined> {
 interface Submitted {
   readonly id: string;
   readonly state: string;
-  readonly legacy?: boolean;
-  readonly deprecation?: string;
 }
 /** Inputs the structural scans of the destination refusal accept (an empty input fails closed). */
 const INPUT_OVERRIDES: Record<string, Record<string, unknown>> = {
@@ -407,96 +395,83 @@ const suspendAuditCount = (): number =>
       .get() as { n: number }
   ).n;
 
-const LEGACY_TYPES = Object.keys(PROPOSABLE_WRITE_TOOLS);
-const MAIL_SEND_TYPES = CONNECTOR_WRITE_ROWS.filter((r) =>
-  AGENT_DOOR_MAIL_SEND_TOOL_IDS.has(r.toolId),
-).map((r) => r.actionType);
+const MAIL_SEND_TYPES = FORMERLY_PROPOSABLE_MAIL_SENDS;
 
-describe("the window: with an empty door table every earlier use still works, warned", () => {
-  test("the legacy table is the 47 types the earlier door accepted", () => {
-    expect(LEGACY_TYPES).toHaveLength(47);
+describe("AD3b: the window is over, with an empty door table every type the earlier door accepted is refused", () => {
+  test("the snapshot is the 47 types the earlier door accepted, the seven mail sends among them", () => {
+    expect(FORMERLY_PROPOSABLE).toHaveLength(47);
     expect(MAIL_SEND_TYPES).toHaveLength(7);
-    for (const t of MAIL_SEND_TYPES) expect(LEGACY_TYPES).toContain(t);
+    for (const t of MAIL_SEND_TYPES) expect(FORMERLY_PROPOSABLE).toContain(t);
   });
 
-  test("each of the 47 types is accepted, stored legacy, warned, listed with the header, declined without a listing call", async () => {
-    for (const type of LEGACY_TYPES) {
-      const out = await submit(type);
-      expect(out.state, type).toBe("proposed");
-      expect(out.legacy, type).toBe(true);
-      expect(out.deprecation, type).toBe(legacyNoticeFor(type));
-      const stored = db.query("SELECT legacy FROM capture WHERE id = ?").get(out.id) as {
-        legacy: number;
-      };
-      expect(stored.legacy, type).toBe(1);
-      await decline(out.id);
+  test("each of the 47 types is refused at submit with ERR_CAPTURE_ACTION_NOT_PROPOSABLE: nothing queued, no listing", async () => {
+    for (const type of FORMERLY_PROPOSABLE) {
+      expect(await code(submit(type)), type).toBe(NOT_PROPOSABLE);
     }
-    // No listing: a legacy proposal makes no connector read at submit.
     expect(listCalls).toEqual([]);
+    expect(store.listBySession(AGENT, 10)).toEqual([]);
   });
 
-  test("the seven mail sends carry the mail-send warning, the others the unapproved-type one", () => {
-    for (const type of LEGACY_TYPES) {
-      const mail = MAIL_SEND_TYPES.includes(type);
-      expect(legacyNoticeFor(type).includes("mail sends"), type).toBe(mail);
+  test("the seven mail sends stay refused even with their service enabled and every approvable tool approved", async () => {
+    const services = new Set(MAIL_SEND_TYPES.map((t) => serviceOf(t)));
+    for (const service of services) {
+      approveForAgents(
+        service,
+        3,
+        CONNECTOR_WRITE_ROWS.filter((r) => serviceOf(r.actionType) === service).map(
+          (r) => r.toolId,
+        ),
+      );
+    }
+    for (const type of MAIL_SEND_TYPES) {
+      expect(await code(submit(type)), type).toBe(NOT_PROPOSABLE);
     }
   });
 
-  test("the list view carries the deprecation header and a per-proposal flag, only while a legacy proposal waits", async () => {
-    const approved = (await rpc(OWNER, "approvals.list")) as { deprecation?: string };
-    expect(approved.deprecation).toBeUndefined();
+  test("the list view carries no deprecation header and no per-proposal flag", async () => {
+    approveForAgents("github", 2, ["github_issue_create"]);
     const out = await submit("github.issue.create");
     const list = (await rpc(OWNER, "approvals.list")) as {
       deprecation?: string;
       proposals: Array<{ id: string; legacy?: boolean }>;
     };
-    expect(list.deprecation).toBe(LEGACY_LIST_HEADER);
-    expect(list.proposals.find((p) => p.id === out.id)?.legacy).toBe(true);
+    expect(list).not.toHaveProperty("deprecation");
+    expect(list.proposals.find((p) => p.id === out.id)).not.toHaveProperty("legacy");
   });
 
-  test("a legacy proposal is approved through the same prompt, carrying the warning, and dispatched once", async () => {
-    const out = await submit("github.issue.create", { owner: "o", repo: "r", title: "t" });
-    const res = await approve(out.id);
-    expect(res.state).toBe("executed");
-    expect(seen).toHaveLength(1);
-    expect(seen[0]?.clientId).toBe(OWNER);
-    expect(seen[0]?.prompt).toContain(legacyNoticeFor("github.issue.create"));
-    expect(writes()).toHaveLength(1);
-    expect(listCalls).toEqual([]);
+  test("a proposal queued before the upgrade for a type nobody approved is refused at approval, stays proposed and can be declined", async () => {
+    // How a V97-era legacy proposal sits in the table: queued, `legacy = 1`.
+    approveForAgents("github", 2, ["github_issue_create"]);
+    const queued = await submit("github.issue.create", { owner: "o", repo: "r", title: "t" });
+    db.run("UPDATE capture SET legacy = 1 WHERE id = ?", [queued.id]);
+    // The owner's approval of that type is withdrawn (the upgrade left it never approved).
+    removeDoorApprovals(db, "github", "agent");
+    expect(await code(approve(queued.id))).toBe(NOT_PROPOSABLE);
+    expect(store.get(queued.id)?.state).toBe("proposed");
+    expect(seen).toEqual([]);
+    expect(writes()).toEqual([]);
+    expect(await rpc(OWNER, "approvals.decline", { id: queued.id })).toMatchObject({
+      state: "rejected",
+    });
   });
 
-  test("the refusals of the earlier door are byte-equal on a legacy basis", () => {
-    const earlier = createActionDestinationRefusal(
-      () =>
-        ({
-          capabilitiesDisabled: new Set<string>(),
-          chatops: { channels: new Map(), ownership: new Map() },
-        }) as never,
-      () => undefined,
-    );
+  test("the door's refusals are the model door's: a broadcast mention, a quick action, a scoped label and a ChatOps channel are refused for an approved type", () => {
     const d = door();
     const cases: Array<[string, Record<string, unknown>]> = [
-      ["github.issue.comment.create", { body: "hi <!here>" }],
+      ["github.issue.comment.create", { body: "cc @org/team" }],
       ["gitlab.issue.note.create", { body: "/close" }],
       ["gitlab.issue.labels.add", { labels: ["a::b"] }],
       ["slack.message.post", { channel: "C1", text: "<!channel> hi" }],
-      ["linear.issue.update", { assigneeId: "u1" }],
-      ["github.issue.create", { title: "plain" }],
-      ["gmail.draft.create", { to: "a@b.c" }],
     ];
     for (const [type, input] of cases) {
-      expect(d.refusal(type, input, "legacy_unapproved"), type).toBe(earlier(type, input));
+      expect(d.refusal(type, input, "approved"), type).toBeDefined();
     }
-    // At least one case really is a refusal, or the comparison proves nothing.
-    expect(
-      cases.some(([t, i]) => earlier(t, i) !== undefined),
-      "the fixture refuses nothing",
-    ).toBe(true);
+    expect(d.refusal("github.issue.create", { title: "plain" }, "approved")).toBeUndefined();
   });
 });
 
 describe("opt-in: approved by name, on the shared wave, with an unchanged definition", () => {
-  test("github.pr.merge is refused without the enable, at wave 3, and enabled-but-unapproved; accepted once approved, with no warning", async () => {
+  test("github.pr.merge is refused without the enable, at wave 3, and enabled-but-unapproved; accepted once approved", async () => {
     expect(await code(submit("github.pr.merge"))).toBe(NOT_PROPOSABLE);
     approveForAgents("github", 3, ["github_pr_close"]);
     expect(await code(submit("github.pr.merge"))).toBe(NOT_PROPOSABLE);
@@ -515,13 +490,12 @@ describe("opt-in: approved by name, on the shared wave, with an unchanged defini
     expect(listCalls).toContain("github");
   });
 
-  test("a type not approved and not one of the 47 is never accepted: Wave 4 with no approval, a never-offered row, a bound row", async () => {
-    expect(LEGACY_TYPES).not.toContain("github.pr.merge");
+  test("a type not approved is never accepted: Wave 4 with no approval, a never-offered row, a bound row", async () => {
+    expect(FORMERLY_PROPOSABLE).not.toContain("github.pr.merge");
     expect(await code(submit("github.pr.merge"))).toBe(NOT_PROPOSABLE);
     expect(await code(submit("github.file.commit"))).toBe(NOT_PROPOSABLE);
     const neverOffered = CONNECTOR_WRITE_ROWS.find(
-      (r) =>
-        MODEL_NEVER_OFFERED_TOOL_IDS.has(r.toolId) && !AGENT_DOOR_MAIL_SEND_TOOL_IDS.has(r.toolId),
+      (r) => MODEL_NEVER_OFFERED_TOOL_IDS.has(r.toolId) && !MAIL_SEND_TYPES.includes(r.actionType),
     );
     expect(neverOffered).toBeDefined();
     expect(await code(submit((neverOffered as { actionType: string }).actionType))).toBe(
@@ -529,12 +503,12 @@ describe("opt-in: approved by name, on the shared wave, with an unchanged defini
     );
   });
 
-  test("a suspended tool of one of the 47 types is refused, not accepted as legacy", async () => {
+  test("a suspended tool is refused as suspended, and its never-approved sibling is refused as not proposable", async () => {
     approveForAgents("github", 2, ["github_issue_create"]);
     describeTool = (t) => (t === "github_issue_create" ? "changed" : `d ${t}`);
     expect(await code(submit("github.issue.create"))).toBe(SUSPENDED);
-    // The sibling that was never approved is still a legacy case.
-    expect((await submit("github.issue.comment.create")).legacy).toBe(true);
+    // The sibling that was never approved is refused too (AD3b: there is no legacy case).
+    expect(await code(submit("github.issue.comment.create"))).toBe(NOT_PROPOSABLE);
   });
 
   test("a bound Terraform apply with no approved directory is refused at submit", async () => {
@@ -564,7 +538,7 @@ describe("A2 on a real Wave 4 type: github.pr.merge asks for the typed text", ()
     expect(seen[0]?.confirmText).toBe("github/merge o/r#1");
     expect(seen[0]?.prompt).toContain("Add the thing");
     expect(seen[0]?.prompt).toContain("Proposed by an outside agent (UNVERIFIED");
-    expect(seen[0]?.prompt).not.toContain(legacyNoticeFor("github.pr.merge"));
+    expect(seen[0]?.prompt).not.toContain("Deprecated:");
     expect(seen[0]?.clientId).toBe(OWNER);
     expect(writes()).toHaveLength(1);
   });
@@ -726,10 +700,7 @@ describe("suspension: a changed definition stops the tool at all three points", 
         return l;
       },
       tribalKbConfig: () => undefined,
-      classifyContext: {
-        userMcpModelAccessAllowed: () => false,
-        modelAccessServices: () => new Set<string>(),
-      },
+      userMcpPolicy: { userMcpModelAccessAllowed: () => false },
       isServiceConfigured: async () => true,
       now: () => clock,
     });
@@ -741,13 +712,12 @@ describe("suspension: a changed definition stops the tool at all three points", 
   });
 });
 
-describe("policy: both capabilities for an approved type, mcp_action alone for the window", () => {
-  test("connector_write_model_access off refuses an approved Wave 4 type and still accepts one of the 47 as legacy", async () => {
+describe("policy: both capabilities for an approved type", () => {
+  test("connector_write_model_access off refuses every approved type (no earlier window to fall back on)", async () => {
     approveForAgents("github", 4, ["github_pr_merge", "github_issue_create"]);
     disabledCaps = new Set(["connector_write_model_access"]);
     expect(await code(submit("github.pr.merge"))).toBe(NOT_PROPOSABLE);
-    const out = await submit("github.issue.create");
-    expect(out.legacy).toBe(true);
+    expect(await code(submit("github.issue.create"))).toBe(NOT_PROPOSABLE);
   });
 
   test("mcp_action off refuses everything", async () => {
@@ -793,25 +763,22 @@ describe("the owner's facts are re-read between submit and approval", () => {
     const out = await submit("obsidian.note.append", { content: "x" });
     expect(out).not.toHaveProperty("legacy");
     setModelWriteEnablement(db, "obsidian", 2, clock, []);
-    // One of the 47: with the grant withdrawn it is a deprecation-window case again, not a hole.
-    const again = await submit("obsidian.note.append", { content: "y" });
-    expect(again.legacy).toBe(true);
+    // With the grant withdrawn it is refused (AD3b: no deprecation-window fallback), not a hole.
+    expect(await code(submit("obsidian.note.append", { content: "y" }))).toBe(NOT_PROPOSABLE);
   });
 });
 
 describe("the approval path", () => {
-  test("an approved proposal cannot be approved through the raw captures.accept RPC; the same call still approves a legacy one", async () => {
+  test("an approved proposal cannot be approved through the raw captures.accept RPC, from a declared or an undeclared connection", async () => {
     approveForAgents("github", 2, ["github_issue_create"]);
     const approvedRow = await submit("github.issue.create", { owner: "o", repo: "r", title: "t" });
-    expect(await code(rpc(UNDECLARED, "captures.accept", { id: approvedRow.id }))).toBe(
-      "ERR_CAPTURE_FORBIDDEN_CLIENT",
-    );
+    for (const client of [UNDECLARED, OWNER]) {
+      expect(await code(rpc(client, "captures.accept", { id: approvedRow.id })), client).toBe(
+        "ERR_CAPTURE_FORBIDDEN_CLIENT",
+      );
+    }
     expect(store.get(approvedRow.id)?.state).toBe("proposed");
-    const legacyRow = await submit("github.issue.comment.create");
-    const out = (await rpc(UNDECLARED, "captures.accept", { id: legacyRow.id })) as {
-      state: string;
-    };
-    expect(out.state).toBe("executed");
+    expect(writes()).toEqual([]);
   });
 
   test("a non-human answer to an approved proposal dispatches nothing", async () => {
@@ -823,20 +790,11 @@ describe("the approval path", () => {
     expect(writes()).toEqual([]);
   });
 
-  test("the verdict agrees with the earlier table for every legacy type when nothing is approved", () => {
+  test("with nothing approved the verdict of every type the earlier table accepted is denied", () => {
     const d = door();
-    for (const type of LEGACY_TYPES) {
-      const earlier = classifyActionType(type, {
-        userMcpModelAccessAllowed: () => false,
-        modelAccessServices: () => new Set<string>(),
-      });
-      expect(earlier.kind, type).toBe("proposable");
-      const v = d.verdict(type);
-      expect(v.kind, type).toBe("proposable");
-      expect(
-        agentDoorRow(type) !== undefined && "basis" in v && String(v.basis).startsWith("legacy"),
-        type,
-      ).toBe(true);
+    for (const type of FORMERLY_PROPOSABLE) {
+      expect(agentDoorRow(type), type).toBeDefined();
+      expect(d.verdict(type).kind, type).toBe("denied");
     }
   });
 });
@@ -905,12 +863,12 @@ describe("capture.describe, end to end (AD3a-2b)", () => {
     expect(suspendAuditCount()).toBe(1);
   });
 
-  test("only an mcp connection may describe, and a legacy type is reported with no listing", async () => {
+  test("only an mcp connection may describe, and an unapproved type is reported not_proposable with no listing", async () => {
     for (const client of [OWNER, OWNER_UI, UNDECLARED]) {
       expect(await code(rpc(client, "capture.describe", {}))).toBe("ERR_CAPTURE_FORBIDDEN_CLIENT");
     }
     const out = await describeTypes(["slack.message.post"]);
-    expect(out.actions[0]).toMatchObject({ state: "legacy" });
+    expect(out.actions[0]).toMatchObject({ state: "not_proposable" });
     expect(listCalls).toEqual([]);
   });
 });

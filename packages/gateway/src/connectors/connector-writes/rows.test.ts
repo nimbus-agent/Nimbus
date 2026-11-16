@@ -10,7 +10,6 @@ import {
   connectorWriteRowByToolId,
   isConnectorWriteToolId,
 } from "../connector-write-registry.ts";
-import { ACTION_PROPOSABILITY } from "../proposable-actions.ts";
 import { CONNECTOR_WRITE_ROWS } from "./index.ts";
 import { isModelOfferableRow } from "./model-offerable.ts";
 
@@ -271,16 +270,12 @@ describe("connectors 0.4.0 writes (B-X)", () => {
     expect(rows.map((r) => r.toolId)).toEqual([]);
   });
 
-  test("thirteen are proposable over MCP; only the Jira transition stays not_yet_offered", () => {
-    const withheld = ["jira_issue_transition"];
+  test("every 0.4.0 write is templated and offered to the model, so an agent can be approved for it by name (AD3b: no per-type MCP verdict table)", () => {
     for (const id of CONNECTORS_0_4_0_WRITES) {
-      expect(ACTION_PROPOSABILITY[id.replaceAll("_", ".")], id).toEqual(
-        withheld.includes(id)
-          ? { kind: "denied", class: "not_yet_offered" }
-          : { kind: "proposable" },
-      );
+      const r = CONNECTOR_WRITE_ROWS.find((x) => x.toolId === id);
+      expect(r?.preview, id).toBeDefined();
+      expect(r !== undefined && isModelOfferableRow(r), id).toBe(true);
     }
-    expect(CONNECTORS_0_4_0_WRITES.filter((id) => !withheld.includes(id))).toHaveLength(13);
   });
 
   test("the new read jira_issue_transitions_list is not a write and is read-only", () => {
@@ -350,9 +345,6 @@ describe("connectors 0.6.0 writes (C1)", () => {
       expect(isConnectorWriteToolId(id), id).toBe(true);
       expect(isConnectorWriteToolId(`${id.split("_")[0]}_${id}`), id).toBe(true);
       expect(r !== undefined && isModelOfferableRow(r), id).toBe(true);
-      const p = ACTION_PROPOSABILITY[actionType];
-      expect(p?.kind, id).toBe("denied");
-      expect(p?.kind === "denied" ? p.class : undefined, id).toBe("vcs");
     }
     expect(CONNECTOR_WRITE_ROWS.filter((r) => r.wave === 3)).toHaveLength(WAVE3_COUNT);
   });
@@ -364,22 +356,11 @@ describe("connectors 0.6.0 writes (C1)", () => {
     }
   });
 
-  test("C2 and C3: the six VCS writes and the five flag and alert writes are templated; only the four VCS creates are proposable, the other seven stay not_yet_offered", () => {
-    const vcs = CONNECTORS_0_6_0_WRITES.slice(0, 6);
-    for (const [id, actionType] of vcs) {
-      expect(connectorWriteRowByToolId(id)?.preview, id).toBeDefined();
-      const creates = id.endsWith("_create");
-      expect(ACTION_PROPOSABILITY[actionType], id).toEqual(
-        creates ? { kind: "proposable" } : { kind: "denied", class: "not_yet_offered" },
-      );
-    }
-    for (const [id, actionType] of CONNECTORS_0_6_0_WRITES.slice(6)) {
-      // C3 templated these five; the act door has no before-read, so they stay withheld.
-      expect(connectorWriteRowByToolId(id)?.preview, id).toBeDefined();
-      expect(ACTION_PROPOSABILITY[actionType], id).toEqual({
-        kind: "denied",
-        class: "not_yet_offered",
-      });
+  test("C2 and C3: the six VCS writes and the five flag and alert writes are templated and offered to the model", () => {
+    for (const [id] of CONNECTORS_0_6_0_WRITES) {
+      const r = connectorWriteRowByToolId(id);
+      expect(r?.preview, id).toBeDefined();
+      expect(r !== undefined && isModelOfferableRow(r), id).toBe(true);
     }
     expect(CONNECTORS_0_6_0_WRITES.slice(6).map(([id]) => id)).toEqual([
       "launchdarkly_flag_toggle",
@@ -388,24 +369,11 @@ describe("connectors 0.6.0 writes (C1)", () => {
       "jira_ops_alert_acknowledge",
       "jira_ops_alert_close",
     ]);
-    const notYet = Object.entries(ACTION_PROPOSABILITY)
-      .filter(([, e]) => e.kind === "denied" && e.class === "not_yet_offered")
-      .map(([t]) => t)
-      .sort((a, b) => a.localeCompare(b));
-    expect(notYet).toEqual(
-      [
-        "github.pr.update",
-        "gitlab.mr.update",
-        "gmail.thread.archive",
-        ...CONNECTORS_0_6_0_WRITES.slice(6).map(([, t]) => t),
-        "jira.issue.transition",
-      ].sort((a, b) => a.localeCompare(b)),
-    );
   });
 });
 
-describe("the B4a rows on the act door (plan Task A4)", () => {
-  test("the calendar and Drive creates are templated and proposable; overall 47 proposable, 138 denied (9 not_yet_offered)", () => {
+describe("the B4a rows", () => {
+  test("the calendar and Drive creates are templated and offered to the model", () => {
     for (const id of [
       "outlook_calendar_create",
       "apple_calendar_event_create",
@@ -413,15 +381,7 @@ describe("the B4a rows on the act door (plan Task A4)", () => {
     ]) {
       const r = connectorWriteRowByToolId(id);
       expect(r?.preview, id).toBeDefined();
-      expect(r === undefined ? undefined : ACTION_PROPOSABILITY[r.actionType], id).toEqual({
-        kind: "proposable",
-      });
+      expect(r !== undefined && isModelOfferableRow(r), id).toBe(true);
     }
-    const entries = Object.values(ACTION_PROPOSABILITY);
-    expect(entries.filter((e) => e.kind === "proposable")).toHaveLength(47);
-    expect(entries.filter((e) => e.kind === "denied")).toHaveLength(138);
-    expect(
-      entries.filter((e) => e.kind === "denied" && e.class === "not_yet_offered"),
-    ).toHaveLength(9);
   });
 });

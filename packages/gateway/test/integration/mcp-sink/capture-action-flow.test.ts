@@ -13,6 +13,8 @@ import { makeEgressSink } from "../../../src/egress/egress-ledger.ts";
 import { NO_POLICY_OVERLAY } from "../../../src/engine/executor.ts";
 import type { PlannedAction } from "../../../src/engine/types.ts";
 import { openMigratedMemoryDb } from "../../../src/index/migrated-db-template.ts";
+import { dispatchApprovalsRpc } from "../../../src/ipc/approvals-rpc.ts";
+import { PERMISSIVE_DOOR } from "../../../src/ipc/approved-door.test-helpers.ts";
 import {
   type CaptureActWiring,
   type CaptureRpcCtx,
@@ -69,7 +71,8 @@ beforeEach(() => {
     refusals: new CaptureRefusalCounter(),
     newId: () => `cap_${String(++seq).padStart(32, "0")}`,
     now: () => clock,
-    classifyAction: () => ({ kind: "proposable", basis: "legacy_user_mcp" }),
+    classifyAction: () => ({ kind: "proposable", basis: "approved" }),
+    verifyActionDefinition: () => Promise.resolve({ ok: true }),
     isServiceConfigured: () => Promise.resolve(true),
     actionDestinationRefusal: () => undefined,
   };
@@ -86,6 +89,7 @@ beforeEach(() => {
     audit: { recordAudit: (e) => appendAuditEntry(db, e) },
     policyHitl: NO_POLICY_OVERLAY,
     getTribalKbConfig: () => undefined,
+    agentDoor: PERMISSIVE_DOOR,
   };
   ctx = { gate, act };
 });
@@ -106,7 +110,7 @@ async function propose(): Promise<string> {
 }
 
 async function accept(id: string): Promise<unknown> {
-  const out = await dispatchCaptureRpc("captures.accept", { id }, ctx, OWNER, coordinator);
+  const out = await dispatchApprovalsRpc("approvals.approve", { id }, ctx, OWNER, coordinator);
   if (out.kind !== "hit") throw new Error("accept missed");
   return out.value;
 }
@@ -202,7 +206,8 @@ describe("act door flow (real executor + real ledger, fake dispatcher)", () => {
     clock += 25 * HOUR;
     let caught: unknown;
     try {
-      await accept(id);
+      // The raw RPC reaches the expiry check before any approval rule (approvals.* sweeps first).
+      await dispatchCaptureRpc("captures.accept", { id }, ctx, OWNER, coordinator);
     } catch (e) {
       caught = e;
     }

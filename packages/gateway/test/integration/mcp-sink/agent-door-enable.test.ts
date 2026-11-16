@@ -118,10 +118,7 @@ function agentDoor(): AgentDoor {
     enforcedPolicy: () => ({ capabilitiesDisabled: new Set<string>(), chatops: [] }) as never,
     listServerTools: async (service) => (service === "github" ? listing() : undefined),
     tribalKbConfig: () => undefined,
-    classifyContext: {
-      userMcpModelAccessAllowed: () => false,
-      modelAccessServices: () => new Set<string>(),
-    },
+    userMcpPolicy: { userMcpModelAccessAllowed: () => false },
     isServiceConfigured: async () => true,
     now: () => 1_000 + seq,
   });
@@ -321,13 +318,18 @@ describe("the list counts: what an outside agent can propose depends on the owne
     expect(((await submit("github.pr.close")) as { state: string }).state).toBe("proposed");
   });
 
-  test("a type the earlier door accepted is still accepted with no approval, flagged and warned", async () => {
+  test("AD3b: a type the earlier door accepted is refused with no approval, and accepted once the owner approves it by name", async () => {
+    expect(await code(submit("github.issue.create"))).toBe("ERR_CAPTURE_ACTION_NOT_PROPOSABLE");
+    await connector(OWNER, "connector.writesEnable", {
+      service: "github",
+      wave: 2,
+      door: "agent",
+      approve: ["github_issue_create"],
+    });
     const out = (await submit("github.issue.create")) as Record<string, unknown>;
     expect(out["state"]).toBe("proposed");
-    expect(out["legacy"]).toBe(true);
-    expect(String(out["deprecation"])).toContain(
-      "nimbus connector writes enable github --door agent",
-    );
+    expect(out).not.toHaveProperty("legacy");
+    expect(out).not.toHaveProperty("deprecation");
   });
 
   test("a bound type with no approval stays refused", async () => {

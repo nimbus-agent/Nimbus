@@ -172,11 +172,7 @@ import {
 import { createOpenapiIndexerSyncable } from "../connectors/openapi-indexer-sync.ts";
 import { createProposableServiceConfigured } from "../connectors/proposable-service-configured.ts";
 import { isUserMcpModelAccessEnabled } from "../connectors/user-mcp-model-capability.ts";
-import {
-  getUserMcpConnector,
-  listModelAccessibleUserMcpIds,
-  listUserMcpConnectors,
-} from "../connectors/user-mcp-store.ts";
+import { getUserMcpConnector, listUserMcpConnectors } from "../connectors/user-mcp-store.ts";
 import { resolveTeamListOpenSession } from "../connectors/warehouse-sync-transport.ts";
 import { appendAuditEntry } from "../db/audit-chain.ts";
 import { startLatencyFlushScheduler } from "../db/latency-ring-buffer.ts";
@@ -4029,10 +4025,9 @@ export async function assemblePlatformServices(
   // MCP capture sink (I28). Config at boot; org policy LIVE per call (I22) — an absent/undefined
   // policy result fails closed inside resolveCaptureCapability.
   const { mcpSinkLoad, captureStore } = bootCaptureStore(db, paths.configDir, syncLogger);
-  // Both halves read LIVE per call: a `--model` registration and the `user_mcp_model_access`
-  // policy capability (I42) can change at runtime, so neither is snapshotted at boot.
+  // The `user_mcp_model_access` policy capability (I42) can change at runtime, so it is read LIVE
+  // per call, never snapshotted at boot.
   const actClassifyCtx = {
-    modelAccessServices: (): ReadonlySet<string> => new Set(listModelAccessibleUserMcpIds(db)),
     userMcpModelAccessAllowed: (): boolean => isUserMcpModelAccessEnabled(policyGate.enforced()),
   };
   // Obsidian's server spawns from the boot-time `[[filesystem.roots]]` (createSchedulerWithMesh), so
@@ -4051,7 +4046,7 @@ export async function assemblePlatformServices(
   // owner's approval by name, and re-derived at submit, at approval and after the owner's answer.
   // It is built BEFORE the mesh exists, so the listing it hashes is late-bound (the
   // `identityBootRefHolder` pattern): until the mesh is bound there is NO listing and no `approved`
-  // proposal is accepted (fail closed); a legacy one needs none.
+  // proposal is accepted (fail closed).
   const agentDoorMesh: {
     current:
       | Pick<LazyConnectorMesh, "listFirstPartyServerTools" | "listUserMcpToolDefinitions">
@@ -4073,7 +4068,7 @@ export async function assemblePlatformServices(
       return reach.kind === "hosts" || reach.kind === "none" ? undefined : reach.text;
     },
     tribalKbConfig: () => tribalKbConfigOf(tribalCfg),
-    classifyContext: actClassifyCtx,
+    userMcpPolicy: actClassifyCtx,
     isServiceConfigured,
     now: () => Date.now(),
   });
@@ -4093,8 +4088,8 @@ export async function assemblePlatformServices(
     classifyAction: agentDoor.verdict,
     isServiceConfigured,
     listProposableActionTypes: agentDoor.acceptedTypes,
-    // The refusal follows the verdict's basis: the model door's check for an approved type, the
-    // earlier act door's for a legacy one (both over the LIVE policy and the `[tribal]` KB config).
+    // The refusal follows the verdict's basis: the model door's check, over the LIVE policy and
+    // the `[tribal]` KB config.
     actionDestinationRefusal: agentDoor.refusal,
     verifyActionDefinition: agentDoor.verifyDefinition,
     ...(scheduleItemEmbedding === undefined

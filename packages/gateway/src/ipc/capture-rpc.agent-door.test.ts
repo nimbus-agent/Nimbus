@@ -18,7 +18,6 @@ import { raiseWriteEnablementWave } from "../connectors/connector-writes/enablem
 import { CONNECTOR_WRITE_ROWS } from "../connectors/connector-writes/index.ts";
 import { previewTemplateKeys } from "../connectors/connector-writes/types.ts";
 import { mcpClientToolKey } from "../connectors/lazy-mesh/tool-map.ts";
-import { classifyActionType } from "../connectors/proposable-actions.ts";
 import { appendAuditEntry } from "../db/audit-chain.ts";
 import { makeEgressSink } from "../egress/egress-ledger.ts";
 import { isBeforeReadActionType, WAVE4_BEFORE_REFUSAL } from "../engine/before-state.ts";
@@ -68,8 +67,16 @@ beforeEach(() => {
 });
 afterEach(() => db.close());
 
+/** A wired door that vouches for everything: what a test that is not about the door's checks runs on. */
+const PERMISSIVE_DOOR: AgentDoorActWiring = {
+  listServerTools: async () => ({}),
+  verifyDefinition: async () => ({ ok: true }),
+};
+
 interface Opts {
   readonly door?: AgentDoorActWiring;
+  /** Leave the door runtime unwired (the fail-closed case). */
+  readonly noDoor?: boolean;
   readonly answer?: () => void;
   readonly approve?: boolean;
   readonly reply?: (a: PlannedAction) => unknown;
@@ -120,7 +127,7 @@ function harness(opts: Opts = {}) {
           } as never,
         }
       : {}),
-    ...(opts.door === undefined ? {} : { agentDoor: opts.door }),
+    ...(opts.noDoor === true ? {} : { agentDoor: opts.door ?? PERMISSIVE_DOOR }),
   };
   const act = buildActDeps(
     w,
@@ -140,10 +147,7 @@ function realDoor(listing: () => Record<string, unknown> | undefined) {
     enforcedPolicy: () => ({ capabilitiesDisabled: new Set<string>() }) as never,
     listServerTools: async () => listing(),
     tribalKbConfig: () => undefined,
-    classifyContext: {
-      modelAccessServices: () => new Set<string>(),
-      userMcpModelAccessAllowed: () => false,
-    },
+    userMcpPolicy: { userMcpModelAccessAllowed: () => false },
     isServiceConfigured: async () => true,
     now: () => 5_000,
   });
@@ -220,27 +224,32 @@ describe("the consent-side veto (approved basis only)", () => {
     expect(seen).toEqual([1234]);
   });
 
-  test("a LEGACY basis is never vetoed: an empty door table and a changed listing still dispatch", async () => {
+  test("a proposal with no approved basis is refused before any prompt, whatever the door says (AD3b: there is no other basis)", async () => {
     let verifyCalls = 0;
     const h = harness({
       door: {
         listServerTools: async () => ({}),
         verifyDefinition: async () => {
           verifyCalls++;
-          return { ok: false, code: "ERR_AGENT_TOOL_SUSPENDED", detail: "would veto" };
+          return { ok: true };
         },
       },
     });
-    for (const basis of ["legacy_unapproved", "legacy_mail_send", undefined] as const) {
-      const out = await h.act.execute("github.issue.create", { title: "t" }, PROV(basis));
-      expect(out.status, String(basis)).toBe("ok");
+    for (const basis of [undefined, "legacy_unapproved", "legacy_mail_send"] as const) {
+      const out = await h.act.execute(
+        "github.issue.create",
+        { title: "t" },
+        PROV(basis as ActionBasis | undefined),
+      );
+      expect(out.status, String(basis)).toBe("rejected");
     }
     expect(verifyCalls).toBe(0);
-    expect(writesOf(h.dispatched)).toHaveLength(3);
+    expect(h.prompts).toEqual([]);
+    expect(h.dispatched).toEqual([]);
   });
 
   test("an approved basis without the door runtime wired is refused, nothing prompted or dispatched", async () => {
-    const h = harness();
+    const h = harness({ noDoor: true });
     const out = await h.act.execute("github.issue.create", { title: "t" }, PROV("approved"));
     expect(out.status).toBe("rejected");
     expect(h.prompts).toEqual([]);
@@ -292,11 +301,7 @@ describe("routing by the write row", () => {
       verifyDefinition: async () => ({ ok: true }),
     };
     const plain = harness({ door });
-    const out = await plain.act.execute(
-      "onedrive.item.delete",
-      { itemId: "i" },
-      PROV("legacy_unapproved"),
-    );
+    const out = await plain.act.execute("onedrive.item.delete", { itemId: "i" }, PROV("approved"));
     expect(out).toMatchObject({
       status: "rejected",
       code: "ERR_ACTION_BEFORE_STATE_UNREADABLE",
@@ -308,7 +313,7 @@ describe("routing by the write row", () => {
     const g = await guarded.act.execute(
       "github.pr.merge",
       { owner: "o", repo: "r", number: 1 },
-      PROV("legacy_unapproved"),
+      PROV("approved"),
     );
     expect(g).toMatchObject({ status: "rejected", code: "ERR_ACTION_GUARD_REFUSED" });
     expect(guarded.prompts).toEqual([]);
@@ -350,7 +355,7 @@ describe("routing by the write row", () => {
     await h.act.execute(
       "slack.message.post",
       { mcpToolId: "github_pr_merge", origin: "model", confirm: "slack/x", text: "hi" },
-      PROV(undefined),
+      PROV("approved"),
     );
     const write = writesOf(h.dispatched)[0];
     expect(write?.payload).toMatchObject({ mcpToolId: "slack_message_post" });
@@ -364,7 +369,7 @@ describe("routing by the write row", () => {
     const out = await h.act.execute(
       "jira.comment.add",
       { issueKey: "NIM-1", body: "x" },
-      PROV("legacy_unapproved"),
+      PROV("approved"),
     );
     expect(out.status).toBe("ok");
     expect(h.dispatched.map((a) => a.type)).toEqual(["jira.comment.add"]);
@@ -388,21 +393,21 @@ describe("the code a rejected action stores", () => {
     const out = await h.act.execute(
       "notion.page.update",
       { pageId: "ffffffffffffffffffffffffffffffff", propertiesJson: "{}" },
-      PROV(undefined),
+      PROV("approved"),
     );
     expect(out).toMatchObject({ status: "rejected", code: "ERR_ACTION_GUARD_REFUSED" });
   });
 
   test("an unverified credential stores the credential code", async () => {
     const h = harness({ refreshFails: true });
-    const out = await h.act.execute("slack.message.post", { text: "x" }, PROV(undefined));
+    const out = await h.act.execute("slack.message.post", { text: "x" }, PROV("approved"));
     expect(out).toMatchObject({ status: "rejected", code: "ERR_ACTION_CREDENTIAL_UNVERIFIED" });
     expect(h.dispatched).toEqual([]);
   });
 
   test("a plain decline stores no code", async () => {
     const h = harness({ approve: false });
-    const out = await h.act.execute("slack.message.post", { text: "x" }, PROV(undefined));
+    const out = await h.act.execute("slack.message.post", { text: "x" }, PROV("approved"));
     expect(out.status).toBe("rejected");
     expect(out).not.toHaveProperty("code");
   });
@@ -420,7 +425,7 @@ describe("the code a rejected action stores", () => {
     let told = 0;
     const h = harness({ source: "auto", humanOnly: { onNonHuman: () => told++ } });
     expect(h.act.humanOnly).toBe(true);
-    const out = await h.act.execute("slack.message.post", { text: "x" }, PROV("legacy_unapproved"));
+    const out = await h.act.execute("slack.message.post", { text: "x" }, PROV("approved"));
     expect(out.status).toBe("rejected");
     expect(told).toBe(1);
     expect(writesOf(h.dispatched)).toEqual([]);
@@ -429,14 +434,14 @@ describe("the code a rejected action stores", () => {
   test("deps built without the option (captures.accept) leave humanOnly unset and take the plain channel's answer", async () => {
     const h = harness({ source: "auto" });
     expect(h.act.humanOnly).toBeUndefined();
-    const out = await h.act.execute("slack.message.post", { text: "x" }, PROV("legacy_unapproved"));
+    const out = await h.act.execute("slack.message.post", { text: "x" }, PROV("approved"));
     expect(out.status).toBe("ok");
     expect(writesOf(h.dispatched)).toHaveLength(1);
   });
 });
 
-describe("routing alone admits nothing: a type outside the 47 is still refused end to end", () => {
-  test("github.pr.merge, a real Wave 4 row, is not proposable through the legacy-table gate", async () => {
+describe("routing alone admits nothing: an unapproved type is still refused end to end", () => {
+  test("github.pr.merge, a real Wave 4 row, is not proposable until the owner approves it by name", async () => {
     const cap = resolveCaptureCapability(
       {
         ok: true,
@@ -453,11 +458,7 @@ describe("routing alone admits nothing: a type outside the 47 is still refused e
       refusals: new CaptureRefusalCounter(),
       newId: () => `cap_${String(++seq)}`,
       now: () => 1_000_000,
-      classifyAction: (t: string) =>
-        classifyActionType(t, {
-          modelAccessServices: () => new Set<string>(),
-          userMcpModelAccessAllowed: () => false,
-        }),
+      classifyAction: realDoor(() => undefined).verdict,
       isServiceConfigured: async () => true,
       actionDestinationRefusal: () => undefined,
     };

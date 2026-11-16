@@ -2,12 +2,11 @@ import type { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
 import { DEFAULT_MCP_SINK_CONFIG } from "../config/mcp-sink-toml.ts";
-import { legacyNoticeFor } from "../connectors/connector-writes/agent-door-legacy.ts";
+import { agentDoorRow } from "../connectors/connector-writes/agent-door.ts";
 import { CONNECTOR_WRITE_ROWS } from "../connectors/connector-writes/index.ts";
 import {
-  actDoorRefusal,
-  LINEAR_ASSIGNEE_REFUSAL,
   messagingDestinationRefusal,
+  modelWriteRefusal,
   type TribalKbConfig,
 } from "../connectors/connector-writes/model-write-refusals.ts";
 import {
@@ -16,7 +15,6 @@ import {
 } from "../connectors/connector-writes/preview.ts";
 import { previewCredentialResolver } from "../connectors/connector-writes/preview-credential.ts";
 import { row, textField, withPreview } from "../connectors/connector-writes/types.ts";
-import { classifyActionType, proposableWriteTool } from "../connectors/proposable-actions.ts";
 import {
   REMOTE_CONTENT_ALLOWED_CASES,
   REMOTE_CONTENT_REFUSED_CASES,
@@ -37,6 +35,12 @@ import type { ActionDescription } from "../mcp-sink/capture-types.ts";
 import { PAYLOAD_MAX_BYTES } from "../mcp-sink/capture-validate.ts";
 import type { EnforcedPolicy } from "../policy/policy-gate.ts";
 import { createMockVault } from "../vault/mock.ts";
+import { dispatchApprovalsRpc } from "./approvals-rpc.ts";
+import {
+  classifyViaApprovedDoor,
+  createActionDestinationRefusal,
+  PERMISSIVE_DOOR,
+} from "./approved-door.test-helpers.ts";
 import {
   type AgentDoorActWiring,
   buildActDeps,
@@ -47,7 +51,6 @@ import {
 import { type ConsentCoordinator, ConsentCoordinatorImpl } from "./consent.ts";
 import { createStreamRegistry } from "./engine-ask-stream.ts";
 import { checkLanMethodAllowed, LanError } from "./lan-rpc.ts";
-import { createActionDestinationRefusal } from "./legacy-refusal.test-helpers.ts";
 import type { ClientKind } from "./server/client-kind.ts";
 import { phase4RpcSkipped, type ServerCtx } from "./server/context.ts";
 import { tryDispatchPhase4Rpc } from "./server/dispatchers.ts";
@@ -155,12 +158,14 @@ function agentAction(
  * header and origin line, the real row's typed preview WITH the before-state the failing reader
  * leaves, and the trailing UNVERIFIED proposer block.
  */
+const toolOfType = (type: string): string | undefined => agentDoorRow(type)?.toolId;
+
 function expectedAgentPrompt(
   type: string,
   input: Record<string, unknown>,
   prov: Parameters<typeof proposerFrom>[0],
 ): string {
-  const toolId = proposableWriteTool(type);
+  const toolId = toolOfType(type);
   if (toolId === undefined) throw new Error(type);
   const preview = buildConnectorWritePreviewFrom(
     { type, payload: { mcpToolId: toolId, input } },
@@ -345,10 +350,10 @@ describe("LAN", () => {
 
 describe("buildActDeps (act door)", () => {
   /**
-   * A door that knows one registered user MCP server with no approval for agents (the legacy case):
-   * an agent's `mcp_*` call carries these facts, or it cannot be asked about at all (I15, AD5b).
+   * A door that knows one registered user MCP server with an approval for agents: an agent's
+   * `mcp_*` call carries these facts, or it cannot be asked about at all (I15, AD5b).
    */
-  const LEGACY_USER_MCP_DOOR: AgentDoorActWiring = {
+  const USER_MCP_DOOR: AgentDoorActWiring = {
     listServerTools: async () => undefined,
     verifyDefinition: async () => ({ ok: true }),
     userMcpCallFacts: async (actionType) => ({
@@ -360,7 +365,7 @@ describe("buildActDeps (act door)", () => {
         readPaths: [],
         netHosts: [],
         writePaths: [],
-        approval: null,
+        approval: { approvedAt: 1, definitionSha256: "a".repeat(64), description: "" },
       },
     }),
   };
@@ -385,11 +390,12 @@ describe("buildActDeps (act door)", () => {
       audit: { recordAudit: (e) => appendAuditEntry(db, e) },
       policyHitl: NO_POLICY_OVERLAY,
       getTribalKbConfig: () => undefined,
-      ...(agentDoor === undefined ? {} : { agentDoor }),
+      agentDoor: agentDoor ?? PERMISSIVE_DOOR,
     };
     return { act: buildActDeps(w, coord, "c-cli"), prompts };
   }
   const PROV = {
+    basis: "approved" as const,
     captureId: "cap_00010001000100010001000100010001",
     clientLabel: "agent",
     labelSource: "declared" as const,
@@ -419,8 +425,8 @@ describe("buildActDeps (act door)", () => {
   });
   test("user-MCP: mcpToolId is the canonical <serviceId>_<tool> key derived from the type (I42 pairing)", async () => {
     const d: PlannedAction[] = [];
-    const { act } = wiring(d, true, LEGACY_USER_MCP_DOOR);
-    await act.execute("mcp_echo.echo", { text: "hi" }, { ...PROV, basis: "legacy_user_mcp" });
+    const { act } = wiring(d, true, USER_MCP_DOOR);
+    await act.execute("mcp_echo.echo", { text: "hi" }, PROV);
     expect(d[0]?.payload).toEqual({ mcpToolId: "mcp_echo_echo", input: { text: "hi" } });
   });
   test("the consent prompt is the executor's own, with UNREDACTED details and the proposer under proposedBy", async () => {
@@ -472,6 +478,7 @@ describe("buildActDeps: the typed preview for a templated proposable row (F5)", 
     fields: [textField("description", "Description", "(none)")],
   });
   const PROV = {
+    basis: "approved" as const,
     captureId: "cap_00090009000900090009000900090009",
     clientLabel: `agent${String.fromCodePoint(0x202e)}evil`,
     labelSource: "declared" as const,
@@ -499,6 +506,7 @@ describe("buildActDeps: the typed preview for a templated proposable row (F5)", 
       audit: { recordAudit: (e) => appendAuditEntry(db, e) },
       policyHitl: NO_POLICY_OVERLAY,
       getTribalKbConfig: () => undefined,
+      agentDoor: PERMISSIVE_DOOR,
       previewCredentialFor: () => "team",
       beforeStateRows: rows,
     };
@@ -573,6 +581,7 @@ describe("buildActDeps: the typed preview for a templated proposable row (F5)", 
         audit: { recordAudit: (e) => appendAuditEntry(db, e) },
         policyHitl: NO_POLICY_OVERLAY,
         getTribalKbConfig: () => undefined,
+        agentDoor: PERMISSIVE_DOOR,
         previewCredentialFor: () => ({ credential: "personal", instance: "ghe.example.com" }),
         beforeStateRows: GITHUB,
       },
@@ -622,6 +631,7 @@ describe("buildActDeps: the typed preview for a templated proposable row (F5)", 
           audit: { recordAudit: (e) => appendAuditEntry(db, e) },
           policyHitl: NO_POLICY_OVERLAY,
           getTribalKbConfig: () => undefined,
+          agentDoor: PERMISSIVE_DOOR,
           previewCredentialFor: previewCredentialResolver(
             { credentialFor: () => pin, vault },
             { githubInstance: () => mesh },
@@ -751,8 +761,10 @@ describe("capture.describe (AD3a-2b)", () => {
   });
   const described: ActionDescription = {
     actionType: "github.issue.create",
-    state: "legacy",
-    deprecation: "Deprecated: x",
+    state: "approved",
+    wave: 2,
+    typedConfirm: false,
+    bound: false,
   };
   const withDescribe = (calls: Array<readonly string[] | undefined>): CaptureRpcCtx => ({
     gate: actionGate(),
@@ -824,7 +836,8 @@ describe("captures.accept on an action (act door wiring)", () => {
           },
           { capabilitiesDisabled: new Set() },
         ),
-      classifyAction: () => ({ kind: "proposable", basis: "legacy_user_mcp" }),
+      classifyAction: () => ({ kind: "proposable", basis: "approved" }),
+      verifyActionDefinition: async () => ({ ok: true }),
       isServiceConfigured: () => Promise.resolve(true),
     };
     gate.store.insert({
@@ -843,7 +856,6 @@ describe("captures.accept on an action (act door wiring)", () => {
       sessionId: "s",
       createdAt: 500,
       expiresAt: 2_000,
-      agentDoorLegacy: false,
     });
     return {
       gate,
@@ -858,6 +870,7 @@ describe("captures.accept on an action (act door wiring)", () => {
         audit: { recordAudit: (e) => appendAuditEntry(db, e) },
         policyHitl: NO_POLICY_OVERLAY,
         getTribalKbConfig: () => undefined,
+        agentDoor: PERMISSIVE_DOOR,
       },
     };
   }
@@ -872,8 +885,8 @@ describe("captures.accept on an action (act door wiring)", () => {
         return Promise.resolve({ approved: true, answerSource: "human" as const });
       },
     } as unknown as ConsentCoordinator;
-    const out = await dispatchCaptureRpc(
-      "captures.accept",
+    const out = await dispatchApprovalsRpc(
+      "approvals.approve",
       { id: "cap_0a0c0a0c0a0c0a0c0a0c0a0c0a0c0a0c" },
       actionCtx(d),
       OWNER,
@@ -888,18 +901,13 @@ describe("captures.accept on an action (act door wiring)", () => {
       {
         type: "slack.message.post",
         origin: "agent",
-        // The fixture's verdict basis is legacy_user_mcp (AD5a): a legacy basis puts the fixed
-        // deprecation line on the proposer, from the same module every surface uses.
-        proposer: {
-          ...proposerFrom({
-            captureId: "cap_0a0c0a0c0a0c0a0c0a0c0a0c0a0c0a0c",
-            clientLabel: "agent",
-            createdAt: 500,
-            expiresAt: 2_000,
-            summary: "why",
-          }),
-          deprecation: legacyNoticeFor("slack.message.post"),
-        },
+        proposer: proposerFrom({
+          captureId: "cap_0a0c0a0c0a0c0a0c0a0c0a0c0a0c0a0c",
+          clientLabel: "agent",
+          createdAt: 500,
+          expiresAt: 2_000,
+          summary: "why",
+        }),
         payload: { mcpToolId: "slack_message_post", input: { text: "hi" } },
       },
     ]);
@@ -913,8 +921,8 @@ describe("captures.accept on an action (act door wiring)", () => {
     const d: PlannedAction[] = [];
     const c = actionCtx(d);
     await expect(
-      dispatchCaptureRpc(
-        "captures.accept",
+      dispatchApprovalsRpc(
+        "approvals.approve",
         { id: "cap_0a0c0a0c0a0c0a0c0a0c0a0c0a0c0a0c" },
         c,
         OWNER,
@@ -942,20 +950,8 @@ const B1_PROPOSABLE: ReadonlyArray<[string, Record<string, unknown>]> = [
   ["confluence.comment.add", { pageId: "123", storageHtml: "<p>c</p>" }],
 ];
 
-const REAL_CLASSIFY = {
-  modelAccessServices: (): ReadonlySet<string> => new Set<string>(),
-  userMcpModelAccessAllowed: () => false,
-};
-
-/**
- * The legacy classifier as a gate verdict. The gate refuses a basis-less verdict, so these tests
- * (which exercise the destination refusals, not the door) give a proposable one the
- * `legacy_user_mcp` basis, as `createAgentDoor` does for an unapproved `--model` user-MCP tool.
- */
-function classifyViaLegacyTable(t: string) {
-  const v = classifyActionType(t, REAL_CLASSIFY);
-  return v.kind === "proposable" ? { ...v, basis: "legacy_user_mcp" as const } : v;
-}
+/** Whether a door with every row approved would accept the type (AD3b: no per-type MCP table). */
+const isProposable = (t: string): boolean => classifyViaApprovedDoor(t).kind === "proposable";
 
 function boundPolicy(channels: readonly string[]): EnforcedPolicy {
   return {
@@ -971,6 +967,7 @@ function boundPolicy(channels: readonly string[]): EnforcedPolicy {
 
 describe("B1 act door: every proposable B1 type shows its typed preview (Task 4)", () => {
   const PROV = {
+    basis: "approved" as const,
     captureId: "cap_b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1",
     clientLabel: "agent",
     labelSource: "declared" as const,
@@ -993,6 +990,7 @@ describe("B1 act door: every proposable B1 type shows its typed preview (Task 4)
       audit: { recordAudit: (e) => appendAuditEntry(db, e) },
       policyHitl: NO_POLICY_OVERLAY,
       getTribalKbConfig: () => undefined,
+      agentDoor: PERMISSIVE_DOOR,
     };
     return { act: buildActDeps(w, coord, "c-cli"), prompts };
   }
@@ -1000,7 +998,7 @@ describe("B1 act door: every proposable B1 type shows its typed preview (Task 4)
   test("the B1 list is exactly the proposable B1 types", () => {
     expect(B1_PROPOSABLE).toHaveLength(11);
     for (const [t] of B1_PROPOSABLE) {
-      expect(classifyActionType(t, REAL_CLASSIFY), t).toEqual({ kind: "proposable" });
+      expect(isProposable(t), t).toBe(true);
     }
   });
 
@@ -1009,7 +1007,7 @@ describe("B1 act door: every proposable B1 type shows its typed preview (Task 4)
       const d: PlannedAction[] = [];
       const { act, prompts } = wiring(d);
       await act.execute(type, input, PROV);
-      const toolId = proposableWriteTool(type);
+      const toolId = toolOfType(type);
       if (toolId === undefined) throw new Error(type);
       expect(prompts).toHaveLength(1);
       expect(prompts[0]?.prompt).toBe(expectedAgentPrompt(type, input, PROV));
@@ -1035,7 +1033,8 @@ describe("B1 act door: the destination refusal, real messagingDestinationRefusal
           },
           { capabilitiesDisabled: new Set() },
         ),
-      classifyAction: classifyViaLegacyTable,
+      classifyAction: classifyViaApprovedDoor,
+      verifyActionDefinition: async () => ({ ok: true }),
       isServiceConfigured: () => Promise.resolve(true),
       actionDestinationRefusal: createActionDestinationRefusal(
         () => policy,
@@ -1055,6 +1054,7 @@ describe("B1 act door: the destination refusal, real messagingDestinationRefusal
         audit: { recordAudit: (e) => appendAuditEntry(db, e) },
         policyHitl: NO_POLICY_OVERLAY,
         getTribalKbConfig: () => undefined,
+        agentDoor: PERMISSIVE_DOOR,
       },
     };
   }
@@ -1158,7 +1158,7 @@ describe("B1 act door: the destination refusal, real messagingDestinationRefusal
     } as unknown as ConsentCoordinator;
     let rpcData: unknown;
     try {
-      await dispatchCaptureRpc("captures.accept", { id }, c, OWNER, consent);
+      await dispatchApprovalsRpc("approvals.approve", { id }, c, OWNER, consent);
     } catch (e) {
       rpcData = (e as RpcMethodError).rpcData;
     }
@@ -1251,41 +1251,19 @@ describe("B1 act door: the destination refusal, real messagingDestinationRefusal
       sessionId: "s",
       createdAt: now,
       expiresAt: now + 3_600_000,
-      agentDoorLegacy: false,
     });
     const consent = {
       requestConsent: () => Promise.resolve({ approved: true, answerSource: "human" as const }),
     } as unknown as ConsentCoordinator;
     let rpcData: unknown;
     try {
-      await dispatchCaptureRpc("captures.accept", { id: "cap_cal_old" }, c, OWNER, consent);
+      await dispatchApprovalsRpc("approvals.approve", { id: "cap_cal_old" }, c, OWNER, consent);
     } catch (e) {
       rpcData = (e as RpcMethodError).rpcData;
     }
     expect(rpcData).toEqual({ code: "ERR_CAPTURE_ACTION_REFUSED" });
     expect(c.gate.store.get("cap_cal_old")?.state).toBe("proposed");
     expect(d).toEqual([]);
-  });
-
-  test("a not_yet_offered type is still refused at submit as not proposable", async () => {
-    policy = boundPolicy([]);
-    expect(
-      await refusedCode(submit(actCtx([]), "jira.issue.transition", { issueKey: "NIM-1" })),
-    ).toEqual({ code: "ERR_CAPTURE_ACTION_NOT_PROPOSABLE" });
-  });
-  test("the two bound commits are refused at submit as not proposable (D1c): the act door cannot show a diff", async () => {
-    policy = boundPolicy([]);
-    for (const type of ["github.file.commit", "gitlab.commit.create"]) {
-      expect(
-        await refusedCode(
-          submit(actCtx([]), type, {
-            message: "m",
-            files: [{ path: "src/a.ts", content: "x" }],
-          }),
-        ),
-        type,
-      ).toEqual({ code: "ERR_CAPTURE_ACTION_NOT_PROPOSABLE" });
-    }
   });
 });
 
@@ -1323,6 +1301,7 @@ const C2_PROPOSABLE: ReadonlyArray<[string, Record<string, unknown>]> = [
 
 describe("B2 act door: every proposable issue write shows its typed preview, with the before-state the executor reads", () => {
   const PROV = {
+    basis: "approved" as const,
     captureId: "cap_b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
     clientLabel: "agent",
     labelSource: "declared" as const,
@@ -1345,6 +1324,7 @@ describe("B2 act door: every proposable issue write shows its typed preview, wit
       audit: { recordAudit: (e) => appendAuditEntry(db, e) },
       policyHitl: NO_POLICY_OVERLAY,
       getTribalKbConfig: () => undefined,
+      agentDoor: PERMISSIVE_DOOR,
     };
     return { act: buildActDeps(w, coord, "c-cli"), prompts };
   }
@@ -1353,12 +1333,9 @@ describe("B2 act door: every proposable issue write shows its typed preview, wit
     expect(B2_PROPOSABLE).toHaveLength(12);
     expect(C2_PROPOSABLE).toHaveLength(4);
     for (const [t] of [...B2_PROPOSABLE, ...C2_PROPOSABLE]) {
-      expect(classifyActionType(t, REAL_CLASSIFY), t).toEqual({ kind: "proposable" });
+      expect(isProposable(t), t).toBe(true);
     }
-    expect(classifyActionType("jira.issue.transition", REAL_CLASSIFY)).toEqual({
-      kind: "denied",
-      class: "not_yet_offered",
-    });
+    expect(isProposable("jira.issue.transition")).toBe(true);
   });
 
   for (const [type, input] of [...B2_PROPOSABLE, ...C2_PROPOSABLE]) {
@@ -1366,7 +1343,7 @@ describe("B2 act door: every proposable issue write shows its typed preview, wit
       const d: PlannedAction[] = [];
       const { act, prompts } = wiring(d);
       await act.execute(type, input, PROV);
-      const toolId = proposableWriteTool(type);
+      const toolId = toolOfType(type);
       if (toolId === undefined) throw new Error(type);
       expect(prompts).toHaveLength(1);
       expect(prompts[0]?.prompt).toBe(expectedAgentPrompt(type, input, PROV));
@@ -1393,6 +1370,7 @@ const B3_PROPOSABLE: ReadonlyArray<[string, Record<string, unknown>]> = [
 
 describe("B3 act door: every draft and page write shows its typed preview, with the before-state the executor reads", () => {
   const PROV = {
+    basis: "approved" as const,
     captureId: "cap_b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3",
     clientLabel: "agent",
     labelSource: "declared" as const,
@@ -1415,6 +1393,7 @@ describe("B3 act door: every draft and page write shows its typed preview, with 
       audit: { recordAudit: (e) => appendAuditEntry(db, e) },
       policyHitl: NO_POLICY_OVERLAY,
       getTribalKbConfig: () => undefined,
+      agentDoor: PERMISSIVE_DOOR,
     };
     return { act: buildActDeps(w, coord, "c-cli"), prompts };
   }
@@ -1422,12 +1401,9 @@ describe("B3 act door: every draft and page write shows its typed preview, with 
   test("the nine are proposable; email.draft.create stays unroutable", () => {
     expect(B3_PROPOSABLE).toHaveLength(9);
     for (const [t] of B3_PROPOSABLE) {
-      expect(classifyActionType(t, REAL_CLASSIFY), t).toEqual({ kind: "proposable" });
+      expect(isProposable(t), t).toBe(true);
     }
-    expect(classifyActionType("email.draft.create", REAL_CLASSIFY)).toEqual({
-      kind: "denied",
-      class: "unroutable",
-    });
+    expect(classifyViaApprovedDoor("email.draft.create")).toEqual({ kind: "unknown" });
   });
 
   for (const [type, input] of B3_PROPOSABLE) {
@@ -1435,7 +1411,7 @@ describe("B3 act door: every draft and page write shows its typed preview, with 
       const d: PlannedAction[] = [];
       const { act, prompts } = wiring(d);
       await act.execute(type, input, PROV);
-      const toolId = proposableWriteTool(type);
+      const toolId = toolOfType(type);
       if (toolId === undefined) throw new Error(type);
       expect(prompts).toHaveLength(1);
       expect(prompts[0]?.prompt).toBe(expectedAgentPrompt(type, input, PROV));
@@ -1476,6 +1452,7 @@ const B4A_PROPOSABLE: ReadonlyArray<[string, Record<string, unknown>]> = [
 
 describe("B4a act door: the calendar and Drive creates show their typed preview, with no before", () => {
   const PROV = {
+    basis: "approved" as const,
     captureId: "cap_b4ab4ab4ab4ab4ab4ab4ab4ab4ab4a00",
     clientLabel: "agent",
     labelSource: "declared" as const,
@@ -1498,6 +1475,7 @@ describe("B4a act door: the calendar and Drive creates show their typed preview,
       audit: { recordAudit: (e) => appendAuditEntry(db, e) },
       policyHitl: NO_POLICY_OVERLAY,
       getTribalKbConfig: () => undefined,
+      agentDoor: PERMISSIVE_DOOR,
     };
     return { act: buildActDeps(w, coord, "c-cli"), prompts };
   }
@@ -1505,7 +1483,7 @@ describe("B4a act door: the calendar and Drive creates show their typed preview,
   test("the three B4a creates and the B4b append are proposable", () => {
     expect(B4A_PROPOSABLE).toHaveLength(4);
     for (const [t] of B4A_PROPOSABLE) {
-      expect(classifyActionType(t, REAL_CLASSIFY), t).toEqual({ kind: "proposable" });
+      expect(isProposable(t), t).toBe(true);
     }
   });
 
@@ -1514,7 +1492,7 @@ describe("B4a act door: the calendar and Drive creates show their typed preview,
       const d: PlannedAction[] = [];
       const { act, prompts } = wiring(d);
       await act.execute(type, input, PROV);
-      const toolId = proposableWriteTool(type);
+      const toolId = toolOfType(type);
       if (toolId === undefined) throw new Error(type);
       expect(prompts).toHaveLength(1);
       expect(prompts[0]?.prompt).toBe(expectedAgentPrompt(type, input, PROV));
@@ -1550,7 +1528,8 @@ describe("B2 act door: actDoorRefusal at submit and at accept (OR-B2-2, OR-B2-3)
           },
           { capabilitiesDisabled: new Set() },
         ),
-      classifyAction: classifyViaLegacyTable,
+      classifyAction: classifyViaApprovedDoor,
+      verifyActionDefinition: async () => ({ ok: true }),
       isServiceConfigured: () => Promise.resolve(true),
       actionDestinationRefusal: refusal,
     };
@@ -1567,6 +1546,7 @@ describe("B2 act door: actDoorRefusal at submit and at accept (OR-B2-2, OR-B2-3)
         audit: { recordAudit: (e) => appendAuditEntry(db, e) },
         policyHitl: NO_POLICY_OVERLAY,
         getTribalKbConfig: () => undefined,
+        agentDoor: PERMISSIVE_DOOR,
       },
     };
   }
@@ -1622,11 +1602,8 @@ describe("B2 act door: actDoorRefusal at submit and at accept (OR-B2-2, OR-B2-3)
         labels: [`priority${String.fromCodePoint(0xff1a, 0xff1a)}low`],
       },
     ],
-    // The act door has no before-read: ANY assigneeId on a Linear update is refused.
-    ["linear.issue.update", { issueId: "i", assigneeId: "user-1" }],
-    ["linear.issue.update", { issueId: "i", title: "x", assigneeId: "" }],
-    // An explicit null would unassign the current assignee.
-    ["linear.issue.update", { issueId: "i", assigneeId: null }],
+    // A Linear assigneeId is NOT refused at the door any more (AD3b): the executor's before-state
+    // guard allows it only while the issue is proved unassigned (linear-assignee tests).
   ];
 
   test("each is refused at submit with ERR_CAPTURE_ACTION_REFUSED; nothing is queued", async () => {
@@ -1648,28 +1625,8 @@ describe("B2 act door: actDoorRefusal at submit and at accept (OR-B2-2, OR-B2-3)
     });
   }
 
-  test("C2: the two VCS updates are refused at submit as not proposable", async () => {
+  test("at accept: a scoped label queued without the check is refused, nothing dispatched", async () => {
     for (const [type, input] of [
-      ["github.pr.update", { owner: "o", repo: "r", pullNumber: 1, title: "T" }],
-      ["gitlab.mr.update", { projectPath: "g/r", mergeRequestIid: 1, title: "T" }],
-    ] as const) {
-      expect(await outcome(submit(actCtx([]), type, input)), type).toEqual({
-        code: "ERR_CAPTURE_ACTION_NOT_PROPOSABLE",
-      });
-    }
-  });
-
-  test("the Jira transition is refused at submit as not proposable (OR-B2-4)", async () => {
-    expect(
-      await outcome(
-        submit(actCtx([]), "jira.issue.transition", { issueKey: "NIM-1", transitionId: "31" }),
-      ),
-    ).toEqual({ code: "ERR_CAPTURE_ACTION_NOT_PROPOSABLE" });
-  });
-
-  test("at accept: a Linear reassignment and a scoped label queued without the check are refused, nothing dispatched", async () => {
-    for (const [type, input] of [
-      ["linear.issue.update", { issueId: "i", assigneeId: "user-1" }],
       ["gitlab.issue.labels.add", { projectPath: "g/r", issueIid: 7, labels: ["prio::high"] }],
     ] as const) {
       // Queued by a door that did not check (a row from before the rule): the accept re-checks.
@@ -1683,7 +1640,7 @@ describe("B2 act door: actDoorRefusal at submit and at accept (OR-B2-2, OR-B2-3)
         requestConsent: () => Promise.resolve({ approved: true, answerSource: "human" as const }),
       } as unknown as ConsentCoordinator;
       expect(
-        await outcome(dispatchCaptureRpc("captures.accept", { id }, strict, OWNER, consent)),
+        await outcome(dispatchApprovalsRpc("approvals.approve", { id }, strict, OWNER, consent)),
         type,
       ).toEqual({ code: "ERR_CAPTURE_ACTION_REFUSED" });
       expect(strict.gate.store.get(id)?.state, type).toBe("proposed");
@@ -1691,18 +1648,16 @@ describe("B2 act door: actDoorRefusal at submit and at accept (OR-B2-2, OR-B2-3)
     }
   });
 
-  test("actDoorRefusal equals messagingDestinationRefusal on every row but a Linear update that sets assigneeId", () => {
+  test("the door's refusal (the model door's check) reports the messaging refusal first, on every row", () => {
     const NO_CHATOPS = { chatops: undefined };
     for (const r of CONNECTOR_WRITE_ROWS) {
       for (const input of [{}, { assigneeId: "u" }, { title: "@all", labels: ["a::b"] }]) {
-        const expected =
-          r.toolId === "linear_issue_update" && "assigneeId" in input
-            ? LINEAR_ASSIGNEE_REFUSAL
-            : messagingDestinationRefusal(r.toolId, input, NO_CHATOPS);
+        const messaging = messagingDestinationRefusal(r.toolId, input, NO_CHATOPS);
+        if (messaging === undefined) continue; // the model door's own rules may add refusals
         expect(
-          actDoorRefusal(r.toolId, input, { ...NO_CHATOPS, kb: undefined, kbUnreadable: false }),
+          modelWriteRefusal(r.toolId, input, { ...NO_CHATOPS, kb: undefined }),
           `${r.toolId} ${JSON.stringify(input)}`,
-        ).toBe(expected);
+        ).toBe(messaging);
       }
     }
   });
@@ -1731,7 +1686,8 @@ describe("B3 act door: the KB-target and KB-child refusals at submit and at acce
           },
           { capabilitiesDisabled: new Set() },
         ),
-      classifyAction: classifyViaLegacyTable,
+      classifyAction: classifyViaApprovedDoor,
+      verifyActionDefinition: async () => ({ ok: true }),
       isServiceConfigured: () => Promise.resolve(true),
       actionDestinationRefusal: createActionDestinationRefusal(
         () => boundPolicy([]),
@@ -1751,6 +1707,7 @@ describe("B3 act door: the KB-target and KB-child refusals at submit and at acce
         audit: { recordAudit: (e) => appendAuditEntry(db, e) },
         policyHitl: NO_POLICY_OVERLAY,
         getTribalKbConfig: () => undefined,
+        agentDoor: PERMISSIVE_DOOR,
       },
     };
   }
@@ -1833,21 +1790,18 @@ describe("B3 act door: the KB-target and KB-child refusals at submit and at acce
     expect(c.gate.store.countPendingActions(1_000)).toBe(0);
   });
 
-  test("R12: with a Notion KB configured a Notion page update is refused; with none it is queued", async () => {
+  test("with a KB configured a page update outside it is queued: the executor's before-state guard, not the door, reads the page's parent (AD3b)", async () => {
     const input = { pageId: "ffffffffffffffffffffffffffffffff", propertiesJson: "{}" };
     kbAccessor = () => ({ notion: KB.notion });
-    expect(await outcome(submit(actCtx([]), "notion.page.update", input))).toEqual(REFUSED);
-    // A Confluence-only KB does not refuse a Notion update.
-    kbAccessor = () => ({ confluence: KB.confluence });
-    expect(await outcome(submit(actCtx([]), "notion.page.update", input))).toBe("queued");
-    kbAccessor = () => undefined;
     expect(await outcome(submit(actCtx([]), "notion.page.update", input))).toBe("queued");
     expect(await outcome(submit(actCtx([]), "confluence.page.update", UPDATE_IN_ENG))).toBe(
       "queued",
     );
+    kbAccessor = () => undefined;
+    expect(await outcome(submit(actCtx([]), "notion.page.update", input))).toBe("queued");
   });
 
-  test("a throwing KB accessor refuses every KB-capable proposal; others are unaffected", async () => {
+  test("a throwing KB accessor refuses every proposal (fail closed, as on the model door)", async () => {
     kbAccessor = () => {
       throw new Error("tribal config");
     };
@@ -1865,23 +1819,23 @@ describe("B3 act door: the KB-target and KB-child refusals at submit and at acce
           body: "x",
         }),
       ),
-    ).toBe("queued");
+    ).toEqual(REFUSED);
   });
 
   test("a KB configured between submit and accept is caught at accept: refused, row stays proposed, nothing dispatched", async () => {
     kbAccessor = () => undefined;
     const d: PlannedAction[] = [];
     const c = actCtx(d);
-    const sub = await submit(c, "confluence.page.update", UPDATE_IN_ENG);
+    const sub = await submit(c, "confluence.page.update", { ...UPDATE_IN_ENG, pageId: "4242" });
     if (sub.kind !== "hit") throw new Error("submit missed");
     const id = (sub.value as { id: string }).id;
     kbAccessor = () => ({ confluence: KB.confluence });
     const consent = {
       requestConsent: () => Promise.resolve({ approved: true, answerSource: "human" as const }),
     } as unknown as ConsentCoordinator;
-    expect(await outcome(dispatchCaptureRpc("captures.accept", { id }, c, OWNER, consent))).toEqual(
-      REFUSED,
-    );
+    expect(
+      await outcome(dispatchApprovalsRpc("approvals.approve", { id }, c, OWNER, consent)),
+    ).toEqual(REFUSED);
     expect(c.gate.store.get(id)?.state).toBe("proposed");
     expect(d).toEqual([]);
   });
@@ -1897,9 +1851,9 @@ describe("B3 act door: the KB-target and KB-child refusals at submit and at acce
     const consent = {
       requestConsent: () => Promise.resolve({ approved: true, answerSource: "human" as const }),
     } as unknown as ConsentCoordinator;
-    expect(await outcome(dispatchCaptureRpc("captures.accept", { id }, c, OWNER, consent))).toEqual(
-      REFUSED,
-    );
+    expect(
+      await outcome(dispatchApprovalsRpc("approvals.approve", { id }, c, OWNER, consent)),
+    ).toEqual(REFUSED);
     expect(c.gate.store.get(id)?.state).toBe("proposed");
     expect(d).toEqual([]);
   });
@@ -1914,7 +1868,7 @@ describe("B3 act door: the KB-target and KB-child refusals at submit and at acce
     const consent = {
       requestConsent: () => Promise.resolve({ approved: true, answerSource: "human" as const }),
     } as unknown as ConsentCoordinator;
-    await dispatchCaptureRpc("captures.accept", { id }, c, OWNER, consent);
+    await dispatchApprovalsRpc("approvals.approve", { id }, c, OWNER, consent);
     // Phase 28 AD1: the act door now reads the page's current state (one gated before-read).
     expect(d.map((a) => a.type)).toEqual(["confluence.before.read", "confluence.page.update"]);
   });
@@ -1944,7 +1898,8 @@ describe("B3r act door: remote content is refused at submit and at accept", () =
           },
           { capabilitiesDisabled: new Set() },
         ),
-      classifyAction: classifyViaLegacyTable,
+      classifyAction: classifyViaApprovedDoor,
+      verifyActionDefinition: async () => ({ ok: true }),
       isServiceConfigured: () => Promise.resolve(true),
       actionDestinationRefusal: refusal,
     };
@@ -1961,6 +1916,7 @@ describe("B3r act door: remote content is refused at submit and at accept", () =
         audit: { recordAudit: (e) => appendAuditEntry(db, e) },
         policyHitl: NO_POLICY_OVERLAY,
         getTribalKbConfig: () => undefined,
+        agentDoor: PERMISSIVE_DOOR,
       },
     };
   }
@@ -1974,8 +1930,7 @@ describe("B3r act door: remote content is refused at submit and at accept", () =
 
   // The fixtures also cover the two VCS updates, which the model door offers and the act door
   // withholds (not_yet_offered, C2): only proposable types are queued here.
-  const proposableType = (k: RemoteContentDoorCase): boolean =>
-    classifyActionType(typeOf(k), REAL_CLASSIFY).kind === "proposable";
+  const proposableType = (k: RemoteContentDoorCase): boolean => isProposable(typeOf(k));
   const ACT_REFUSED_CASES = REMOTE_CONTENT_REFUSED_CASES.filter(proposableType);
   const ACT_ALLOWED_CASES = REMOTE_CONTENT_ALLOWED_CASES.filter(proposableType);
 
@@ -2014,7 +1969,7 @@ describe("B3r act door: remote content is refused at submit and at accept", () =
     ).length > PAYLOAD_MAX_BYTES;
   const INVALID = { code: "ERR_CAPTURE_INVALID" };
 
-  test("the twenty-two proposable scanned types are all proposable", () => {
+  test("the scanned types an approved agent can propose are all proposable (no mail send among them)", () => {
     const types = new Set(ACT_REFUSED_CASES.map(typeOf));
     expect([...types].sort((a, b) => a.localeCompare(b))).toEqual([
       "confluence.comment.add",
@@ -2024,10 +1979,12 @@ describe("B3r act door: remote content is refused at submit and at accept", () =
       "github.issue.comment.create",
       "github.issue.create",
       "github.pr.create",
+      "github.pr.update",
       "gitlab.issue.create",
       "gitlab.issue.note.create",
       "gitlab.mr.create",
       "gitlab.mr.note.create",
+      "gitlab.mr.update",
       "google_drive.file.create",
       "linear.comment.create",
       "linear.issue.create",
@@ -2036,12 +1993,10 @@ describe("B3r act door: remote content is refused at submit and at accept", () =
       "notion.page.update",
       "obsidian.note.append",
       "outlook.draft.create",
-      "outlook.mail.send",
       "teams.message.post",
       "teams.message.postChat",
     ]);
-    for (const t of types)
-      expect(classifyActionType(t, REAL_CLASSIFY), t).toEqual({ kind: "proposable" });
+    for (const t of types) expect(isProposable(t), t).toBe(true);
   });
 
   test("an ri:url image in a Confluence append: refused at submit, nothing queued, one audit row", async () => {
@@ -2107,7 +2062,7 @@ describe("B3r act door: remote content is refused at submit and at accept", () =
         requestConsent: () => Promise.resolve({ approved: true, answerSource: "human" as const }),
       } as unknown as ConsentCoordinator;
       expect(
-        await outcome(dispatchCaptureRpc("captures.accept", { id }, strict, OWNER, consent)),
+        await outcome(dispatchApprovalsRpc("approvals.approve", { id }, strict, OWNER, consent)),
       ).toEqual(REFUSED);
       expect(strict.gate.store.get(id)?.state).toBe("proposed");
       expect(d).toEqual([]);
@@ -2128,7 +2083,7 @@ describe("B3r act door: remote content is refused at submit and at accept", () =
     const consent = {
       requestConsent: () => Promise.resolve({ approved: true, answerSource: "human" as const }),
     } as unknown as ConsentCoordinator;
-    await dispatchCaptureRpc("captures.accept", { id }, c, OWNER, consent);
+    await dispatchApprovalsRpc("approvals.approve", { id }, c, OWNER, consent);
     expect(d.map((a) => a.type)).toEqual(["confluence.before.read", "confluence.comment.add"]);
   });
 
@@ -2139,19 +2094,19 @@ describe("B3r act door: remote content is refused at submit and at accept", () =
       "github.issue.comment.create",
       "github.issue.create",
       "github.pr.create",
+      "github.pr.update",
       "gitlab.issue.create",
       "gitlab.issue.note.create",
       "gitlab.mr.create",
       "gitlab.mr.note.create",
+      "gitlab.mr.update",
       "linear.comment.create",
       "linear.issue.create",
       "linear.issue.update",
-      "outlook.mail.send",
       "teams.message.post",
       "teams.message.postChat",
     ];
     const isB3w = (k: RemoteContentDoorCase): boolean => B3W_TYPES.includes(typeOf(k));
-    const SEND_TO = { to: "ann@x.com", cc: "bob@x.com", subject: "Status" };
     const accepted = (prompts: string[]): ConsentCoordinator =>
       ({
         requestConsent: (_c: string, req: { prompt: string }) => {
@@ -2160,45 +2115,12 @@ describe("B3r act door: remote content is refused at submit and at accept", () =
         },
       }) as unknown as ConsentCoordinator;
 
-    test("all eleven new types are proposable", () => {
-      for (const t of B3W_TYPES)
-        expect(classifyActionType(t, REAL_CLASSIFY), t).toEqual({ kind: "proposable" });
-    });
-
-    test("an HTML outlook.mail.send with a tracking pixel: refused at submit, nothing queued, one audit row", async () => {
-      const c = actCtx([]);
-      const before = submitAudits();
-      const send: RemoteContentDoorCase = {
-        label: "pixel",
-        toolId: "outlook_mail_send",
-        input: { ...SEND_TO, contentType: "html", body: `<p>hi</p><img src="https://h/p.gif">` },
-      };
-      expect(await outcome(submit(c, send))).toEqual(REFUSED);
-      expect(c.gate.store.countPendingActions(1_000)).toBe(0);
-      expect(submitAudits()).toBe(before + 1);
-    });
-
-    test("the same send as text is queued, and the verbatim prompt shows to, cc and the body", async () => {
-      const d: PlannedAction[] = [];
-      const c = actCtx(d);
-      const body = `<p>hi</p><img src="https://h/p.gif">`;
-      const send: RemoteContentDoorCase = {
-        label: "text",
-        toolId: "outlook_mail_send",
-        input: { ...SEND_TO, contentType: "text", body },
-      };
-      const sub = await submit(c, send);
-      if (sub.kind !== "hit") throw new Error("submit missed");
-      expect(c.gate.store.countPendingActions(1_000)).toBe(1);
-      const prompts: string[] = [];
-      const id = (sub.value as { id: string }).id;
-      await dispatchCaptureRpc("captures.accept", { id }, c, OWNER, accepted(prompts));
-      expect(prompts).toHaveLength(1);
-      const prompt = prompts[0] ?? "";
-      expect(prompt).toContain('"to": "ann@x.com"');
-      expect(prompt).toContain('"cc": "bob@x.com"');
-      expect(prompt).toContain(JSON.stringify(body));
-      expect(d.map((a) => a.type)).toEqual(["outlook.mail.send"]);
+    test("every B3w type is proposable, and no mail send is (AD3b)", () => {
+      for (const t of B3W_TYPES) expect(isProposable(t), t).toBe(true);
+      expect(classifyViaApprovedDoor("outlook.mail.send")).toEqual({
+        kind: "denied",
+        class: "agent_never_offered",
+      });
     });
 
     test("every new refused fixture is refused at submit (a fresh limiter and counter each)", async () => {
@@ -2243,7 +2165,9 @@ describe("B3r act door: remote content is refused at submit and at accept", () =
         const d: PlannedAction[] = [];
         const strict = actCtx(d);
         expect(
-          await outcome(dispatchCaptureRpc("captures.accept", { id }, strict, OWNER, accepted([]))),
+          await outcome(
+            dispatchApprovalsRpc("approvals.approve", { id }, strict, OWNER, accepted([])),
+          ),
         ).toEqual(REFUSED);
         expect(strict.gate.store.get(id)?.state).toBe("proposed");
         expect(d).toEqual([]);
@@ -2267,7 +2191,7 @@ describe("B3r act door: remote content is refused at submit and at accept", () =
       if (sub.kind !== "hit") throw new Error("submit missed");
       const id = (sub.value as { id: string }).id;
       const prompts: string[] = [];
-      await dispatchCaptureRpc("captures.accept", { id }, c, OWNER, accepted(prompts));
+      await dispatchApprovalsRpc("approvals.approve", { id }, c, OWNER, accepted(prompts));
       expect(prompts).toHaveLength(1);
       expect(d.map((a) => a.type)).toEqual(["teams.message.post"]);
     });

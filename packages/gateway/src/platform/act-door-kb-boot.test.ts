@@ -1,18 +1,15 @@
 // B3 review fix 2: a KB configured at boot is refused on the MCP act door. `assemble.ts` loads
 // `[tribal]` once, BEFORE the capture gate, and hands the act door the same accessor as
 // `platform.tribalKbConfig` (pinned in security-invariants.test.ts, I28 block); this proves that
-// composition (the real loader, the real `tribalKbConfigOf`, the real act-door refusal) refuses.
+// composition (the real loader, the real `tribalKbConfigOf`, the door's refusal) refuses.
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { loadNimbusTribalFromConfigDir } from "../config/nimbus-toml.ts";
-import {
-  ACT_DOOR_KB_CHILD_REFUSAL,
-  KNOWLEDGE_BASE_REFUSAL,
-} from "../connectors/connector-writes/model-write-refusals.ts";
-import { createActionDestinationRefusal } from "../ipc/legacy-refusal.test-helpers.ts";
+import { KNOWLEDGE_BASE_REFUSAL } from "../connectors/connector-writes/model-write-refusals.ts";
+import { createActionDestinationRefusal } from "../ipc/approved-door.test-helpers.ts";
 import { tribalKbConfigOf } from "./assemble.ts";
 
 const dirs: string[] = [];
@@ -36,7 +33,7 @@ const KB_TOML =
   '[tribal.notion]\ndatabase_id = "0123abcd0123abcd0123abcd0123abcd"\n';
 
 describe("a KB configured at boot reaches the act door (B3, review fix 2)", () => {
-  test("a page write to the KB destination, and a page update while a KB is configured, are refused", () => {
+  test("a page write to the KB destination is refused; a page update elsewhere is left to the executor's before-state guard", () => {
     const refusal = bootRefusal(KB_TOML);
     expect(
       refusal("confluence.page.update", {
@@ -46,9 +43,7 @@ describe("a KB configured at boot reaches the act door (B3, review fix 2)", () =
         storageHtml: "x",
       }),
     ).toBe(KNOWLEDGE_BASE_REFUSAL);
-    expect(refusal("notion.page.update", { pageId: "ffff", propertiesJson: "{}" })).toBe(
-      ACT_DOOR_KB_CHILD_REFUSAL,
-    );
+    expect(refusal("notion.page.update", { pageId: "ffff", propertiesJson: "{}" })).toBeUndefined();
   });
 
   test("with no [tribal] KB the same proposals are not refused", () => {

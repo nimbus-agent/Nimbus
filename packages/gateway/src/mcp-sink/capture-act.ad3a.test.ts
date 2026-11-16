@@ -36,7 +36,7 @@ let verify: NonNullable<ActGateDeps["verifyActionDefinition"]>;
 let proposedAtSeen: Array<number | undefined>;
 let deps: ActGateDeps;
 
-function insertAction(legacy: boolean): void {
+function insertAction(): void {
   deps.store.insert({
     id: "cap_a",
     kind: "action",
@@ -53,7 +53,6 @@ function insertAction(legacy: boolean): void {
     sessionId: "s",
     createdAt: 500,
     expiresAt: 2_000,
-    agentDoorLegacy: legacy,
   });
 }
 
@@ -99,7 +98,7 @@ beforeEach(() => {
       return verify(t);
     },
   };
-  insertAction(false);
+  insertAction();
 });
 afterEach(() => db.close());
 
@@ -215,49 +214,21 @@ describe("step 4: each refusal leaves the row proposed, claims nothing and write
 });
 
 describe("the basis used after step 4 is the approval-time one", () => {
-  test("a legacy basis never calls the definition check and is not held to the human-only rule", async () => {
-    verdict = { kind: "proposable", basis: "legacy_unapproved" };
-    const a = act({ status: "rejected" }, false);
-    const out = await acceptAction(deps, OWNER, row(), a);
-    expect(out.state).toBe("rejected");
-    expect(calls).not.toContain("verify");
-    expect(a.provenance[0]?.basis).toBe("legacy_unapproved");
-  });
-
-  test("a row queued approved whose approval was withdrawn is accepted as legacy", async () => {
-    verdict = { kind: "proposable", basis: "legacy_mail_send" };
+  // AD3b: a row queued before the upgrade whose type the owner never approved for agents (what the
+  // deprecation window used to accept) is refused at approval, with no legacy basis to fall back to.
+  test("a queued row the door no longer proposes is refused and stays proposed (the window is over)", async () => {
+    verdict = { kind: "denied", class: "agent_not_approved" };
     const a = act({ status: "ok", result: {} });
-    await acceptAction(deps, OWNER, row(), a);
-    expect(a.provenance[0]?.basis).toBe("legacy_mail_send");
-    expect(refusalBasis).toEqual(["legacy_mail_send"]);
+    expect((await codeOf(acceptAction(deps, OWNER, row(), a))).code).toBe(
+      "ERR_CAPTURE_ACTION_NOT_PROPOSABLE",
+    );
+    expect(a.provenance).toEqual([]);
+    expect(new CaptureStore(db).get("cap_a")?.state).toBe("proposed");
   });
 
   test("the approval-time definition check is given the stored proposal's createdAt (a proposal older than the registration is refused by it)", async () => {
     await acceptAction(deps, OWNER, row(), act({ status: "ok", result: {} }));
     expect(proposedAtSeen).toEqual([500]);
-  });
-
-  test("a row queued legacy and since approved by name is held to the approved rules", async () => {
-    db.run("DELETE FROM capture");
-    insertAction(true);
-    const a = act({ status: "ok", result: {} }, false);
-    expect((await codeOf(acceptAction(deps, OWNER, row(), a))).code).toBe(
-      "ERR_CAPTURE_FORBIDDEN_CLIENT",
-    );
-    const b = act({ status: "ok", result: {} });
-    await acceptAction(deps, OWNER, row(), b);
-    expect(refusalBasis.at(-1)).toBe("approved");
-    expect(calls).toContain("verify");
-    expect(b.provenance[0]?.basis).toBe("approved");
-  });
-
-  test("a legacy_user_mcp basis is unchanged from before AD5a: no definition check, no human-only rule", async () => {
-    verdict = { kind: "proposable", basis: "legacy_user_mcp" };
-    Reflect.deleteProperty(deps, "verifyActionDefinition");
-    const a = act({ status: "ok", result: {} }, "absent");
-    expect((await acceptAction(deps, OWNER, row(), a)).state).toBe("executed");
-    expect(a.provenance[0]?.basis).toBe("legacy_user_mcp");
-    expect(refusalBasis).toEqual(["legacy_user_mcp"]);
   });
 
   test("a basis-less proposable verdict is refused at approval and the row stays proposed", async () => {

@@ -28,7 +28,7 @@ import type {
 import { runIndexedSchemaMigrations } from "../../index/migrations/runner.ts";
 import type { EnforcedPolicy } from "../../policy/policy-gate.ts";
 import { mcpClientToolKey } from "../lazy-mesh/tool-map.ts";
-import { classifyActionType } from "../proposable-actions.ts";
+import { createAgentDoor } from "./agent-door-runtime.ts";
 import { DEPLOY_MOBILE_ROWS } from "./deploy-mobile.ts";
 import {
   FIREBASE_TESTER_EMAIL_REFUSAL,
@@ -413,13 +413,21 @@ describe("D3b through the real door", () => {
     expect(c.confirmed[0]?.prompt).toContain("last 50 builds");
   });
 
-  test("none of the seven is proposable on the MCP act door", () => {
-    const ctx = {
-      modelAccessServices: () => new Set<string>(),
-      userMcpModelAccessAllowed: () => false,
-    };
+  test("none of the seven is proposable by an outside agent until the owner approves it by name", () => {
+    const bare = new Database(":memory:");
+    runIndexedSchemaMigrations(bare, 97);
+    const agentDoor = createAgentDoor({
+      db: bare,
+      enforcedPolicy: () => ({ capabilitiesDisabled: new Set<string>() }) as never,
+      listServerTools: async () => undefined,
+      tribalKbConfig: () => undefined,
+      userMcpPolicy: { userMcpModelAccessAllowed: () => false },
+      isServiceConfigured: async () => true,
+      now: () => 1,
+    });
     for (const r of DEPLOY_MOBILE_ROWS) {
-      expect(classifyActionType(r.actionType, ctx).kind, r.toolId).toBe("denied");
+      expect(agentDoor.verdict(r.actionType).kind, r.toolId).toBe("denied");
     }
+    bare.close();
   });
 });

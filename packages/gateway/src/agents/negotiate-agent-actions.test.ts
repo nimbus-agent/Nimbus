@@ -85,7 +85,6 @@ function seedExecuted(actionType: string, outcomeRef: string | null, decidedAt =
     sessionId: "s",
     createdAt: decidedAt - 1,
     expiresAt: decidedAt + DAY,
-    agentDoorLegacy: false,
   });
   expect(store.claimAction(id, decidedAt)).toBe(true);
   expect(
@@ -194,7 +193,6 @@ describe("negotiate — agent-caused artifacts", () => {
       sessionId: "s",
       createdAt: Date.now() - 1,
       expiresAt: Date.now() + DAY,
-      agentDoorLegacy: false,
     });
     store.claimAction("cap_failed", Date.now());
     store.finalizeAction("cap_failed", "failed", { errorCode: "ERR_ACTION_DISPATCH" }, Date.now());
@@ -227,10 +225,15 @@ describe("negotiate — agent-caused artifacts", () => {
     clean.close();
   });
 
-  test("the lane table names only proposable action types", async () => {
-    const { PROPOSABLE_WRITE_TOOLS } = await import("../connectors/proposable-actions.ts");
+  test("the lane table names only action types a write row routes to, none of them never-offered", async () => {
+    const { CONNECTOR_WRITE_ROWS } = await import("../connectors/connector-writes/index.ts");
+    const { MODEL_NEVER_OFFERED_TOOL_IDS } = await import(
+      "../connectors/connector-writes/model-offerable.ts"
+    );
     for (const t of Object.keys(AGENT_ACTION_LANES)) {
-      expect(Object.keys(PROPOSABLE_WRITE_TOOLS)).toContain(t);
+      const row = CONNECTOR_WRITE_ROWS.find((r) => r.actionType === t);
+      expect(row, t).toBeDefined();
+      expect(MODEL_NEVER_OFFERED_TOOL_IDS.has(row?.toolId ?? ""), t).toBe(false);
     }
   });
 

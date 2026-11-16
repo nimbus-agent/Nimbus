@@ -7,8 +7,7 @@ import {
   checkActDoorConfinement,
   checkActuationConfinement,
   checkAgentDoorCheckOrder,
-  checkAgentDoorLegacyFlag,
-  checkAgentDoorLegacyTable,
+  checkAgentDoorWindowRetired,
   checkAgentEmitterImportConfinement,
   checkAgentOriginWriter,
   checkAgentProvenanceWriters,
@@ -616,14 +615,14 @@ describe("D20 — connector write-id confinement (every row in connectors/connec
     expect(v).toEqual([]);
   });
 
-  test("proposable-actions.ts may name write ids", () => {
+  test("proposable-actions.ts is no longer an allowed site (the table was deleted in AD3b)", () => {
     const v = checkConnectorWriteConfinement([
       {
         relPath: "packages/gateway/src/connectors/proposable-actions.ts",
         contents: `const id = "jira_issue_create";`,
       },
     ]);
-    expect(v).toHaveLength(0);
+    expect(v.length).toBeGreaterThan(0);
   });
 
   test("connector-code-execution-tool-ids.ts may name write ids", () => {
@@ -2485,7 +2484,7 @@ describe("D32(e)(f)(g) — the act door", () => {
   test.each([
     'import { ToolExecutor } from "../engine/executor.ts";',
     'import type { HITL_REQUIRED } from "../engine/executor.ts";',
-    'import { proposableWriteTool } from "../connectors/proposable-actions.ts";',
+    'import { agentDoorRow } from "../connectors/connector-writes/agent-door.ts";',
     'import type { X } from "../connectors/registry.ts";',
     'export * from "../connectors/x.ts";',
     'export type { Y } from "../engine/executor";',
@@ -3846,7 +3845,6 @@ describe("D34 — the connector migration's table, grant entry point and consent
           "return createMigrationEngine({});",
         ),
         file("packages/gateway/src/engine/executor.ts", '  "extension.migrate",'),
-        file("packages/gateway/src/connectors/proposable-actions.ts", '  "extension.migrate",'),
       ]),
     ).toEqual([]);
   });
@@ -6400,7 +6398,7 @@ describe("D49(b) - the connector_write_door_approval table is named only by its 
   });
 });
 
-describe("D49(a), (c)-(f) - the agent door's enforcement sites (Phase 28 AD3a-2a, I58)", () => {
+describe("D49(a), (c)-(e) - the agent door's enforcement sites (Phase 28 AD3a-2a, I58)", () => {
   const file = (relPath: string, contents: string): FileEntry => ({ relPath, contents });
   const SRC = "packages/gateway/src/";
   const RPC = `${SRC}ipc/capture-rpc.ts`;
@@ -6456,13 +6454,10 @@ ${middle}}`;
     file(RPC, GOOD_RPC),
     file(ACT, GOOD_ACT),
     file(GATE, GOOD_GATE),
-    file(RUNTIME, "const x = ACTION_PROPOSABILITY; export function createAgentDoor() {}"),
-    file(`${SRC}connectors/proposable-actions.ts`, "export const ACTION_PROPOSABILITY = {};"),
+    file(RUNTIME, "export function createAgentDoor() {}"),
     file(ASSEMBLE, "const d = createAgentDoor({});"),
     file(`${SRC}engine/outside-origin.ts`, 'return action.origin === "agent";'),
     file(`${SRC}engine/types.ts`, "proposer?: AgentProposer;"),
-    file(`${SRC}mcp-sink/capture-store.ts`, "agentDoorLegacy; legacyActionTypesSince(1);"),
-    file(`${SRC}ipc/connector-rpc-handlers/agent-writes.ts`, "store.legacyActionTypesSince(1);"),
   ];
   const rules = (fn: (f: FileEntry[]) => Violation[], files: FileEntry[]): string[] =>
     fn(files).map((v) => v.rule);
@@ -6472,11 +6467,10 @@ ${middle}}`;
 
   test("the good set is clean under every clause", () => {
     for (const fn of [
-      checkAgentDoorLegacyTable,
+      checkAgentDoorWindowRetired,
       checkAgentOriginWriter,
       checkOriginComparison,
       checkAgentDoorCheckOrder,
-      checkAgentDoorLegacyFlag,
     ]) {
       expect(fn(GOOD)).toEqual([]);
     }
@@ -6488,21 +6482,25 @@ ${middle}}`;
     [`${SRC}ipc/other.ts`, "const tool = proposableWriteTool(t);"],
     [`${SRC}mcp-sink/capture-gate.ts`, "const t = PROPOSABLE_WRITE_TOOLS;"],
     [`${SRC}platform/other.ts`, "import { classifyActionType as c } from './x';"],
-  ])("(a) the legacy table named in %s is refused", (path, code) => {
-    expect(rules(checkAgentDoorLegacyTable, add(path, code))).toEqual([
-      "agent-door-legacy-table-consulted-once",
+    [`${SRC}connectors/connector-writes/agent-door-runtime.ts`, "const t = ACTION_PROPOSABILITY;"],
+    [`${SRC}ipc/other.ts`, "const r = actDoorRefusal(t, i, c);"],
+    [`${SRC}mcp-sink/capture-store.ts`, "const n = legacyActionTypesSince(1);"],
+    [`${SRC}mcp-sink/capture-types.ts`, "const l = isLegacyBasis(b);"],
+  ])("(a) the retired deprecation-window name in %s is refused", (path, code) => {
+    expect(rules(checkAgentDoorWindowRetired, add(path, code))).toEqual([
+      "agent-door-window-names-absent",
     ]);
   });
 
   test("(a) createAgentDoor in a third file is refused", () => {
     expect(
-      rules(checkAgentDoorLegacyTable, add(`${SRC}ipc/other.ts`, "createAgentDoor(d);")),
+      rules(checkAgentDoorWindowRetired, add(`${SRC}ipc/other.ts`, "createAgentDoor(d);")),
     ).toEqual(["agent-door-built-once"]);
   });
 
   test("(a) comments, test files and test helpers stay clean", () => {
     expect(
-      checkAgentDoorLegacyTable([
+      checkAgentDoorWindowRetired([
         ...GOOD,
         file(`${SRC}x.ts`, "// classifyActionType createAgentDoor\nconst a = 1;"),
         file(`${SRC}x.test.ts`, "classifyActionType(t)"),
@@ -6710,31 +6708,15 @@ ${middle}}`;
     ]);
   });
 
-  test("(f) the legacy flag or its count in another file is refused", () => {
-    expect(
-      rules(
-        checkAgentDoorLegacyFlag,
-        add(`${SRC}engine/executor.ts`, "const f = row.agentDoorLegacy;"),
-      ),
-    ).toEqual(["agent-door-legacy-flag-confined"]);
-    expect(
-      rules(
-        checkAgentDoorLegacyFlag,
-        add(`${SRC}ipc/capture-rpc.ts`, "store.legacyActionTypesSince(1);"),
-      ),
-    ).toEqual(["agent-door-legacy-flag-confined"]);
-  });
-
   test("the real repository satisfies every clause", async () => {
     const files: FileEntry[] = [];
     for await (const f of iterateSourceFiles()) {
       files.push({ relPath: f.relPath, contents: f.contents });
     }
-    expect(checkAgentDoorLegacyTable(files)).toEqual([]);
+    expect(checkAgentDoorWindowRetired(files)).toEqual([]);
     expect(checkAgentOriginWriter(files)).toEqual([]);
     expect(checkOriginComparison(files)).toEqual([]);
     expect(checkAgentDoorCheckOrder(files)).toEqual([]);
-    expect(checkAgentDoorLegacyFlag(files)).toEqual([]);
     expect(assertScanIsMeaningful(files)).toEqual([]);
   });
 });

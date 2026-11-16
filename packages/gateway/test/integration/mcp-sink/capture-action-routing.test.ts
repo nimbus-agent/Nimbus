@@ -10,10 +10,12 @@ import { appendAuditEntry } from "../../../src/db/audit-chain.ts";
 import { makeEgressSink } from "../../../src/egress/egress-ledger.ts";
 import { NO_POLICY_OVERLAY } from "../../../src/engine/executor.ts";
 import { openMigratedMemoryDb } from "../../../src/index/migrated-db-template.ts";
+import { PERMISSIVE_DOOR } from "../../../src/ipc/approved-door.test-helpers.ts";
 import { type AgentDoorActWiring, buildActDeps } from "../../../src/ipc/capture-rpc.ts";
 import type { ConsentCoordinator } from "../../../src/ipc/consent.ts";
 
 const PROV = {
+  basis: "approved" as const,
   captureId: `cap_${"1".padStart(32, "0")}`,
   clientLabel: null,
   labelSource: "declared" as const,
@@ -54,12 +56,11 @@ afterEach(() => {
 });
 
 /**
- * A door that knows a registered user MCP server with no approval for agents (the legacy case). An
- * agent's `mcp_*` call carries these facts, or it cannot be asked about at all (I15, AD5b).
+ * A door that knows a registered user MCP server the owner approved for agents. An agent's `mcp_*`
+ * call carries these facts, or it cannot be asked about at all (I15, AD5b).
  */
-const LEGACY_USER_MCP_DOOR: AgentDoorActWiring = {
-  listServerTools: async () => undefined,
-  verifyDefinition: async () => ({ ok: true }),
+const USER_MCP_DOOR: AgentDoorActWiring = {
+  ...PERMISSIVE_DOOR,
   userMcpCallFacts: async (actionType) => ({
     ok: true,
     facts: {
@@ -69,7 +70,7 @@ const LEGACY_USER_MCP_DOOR: AgentDoorActWiring = {
       readPaths: [],
       netHosts: [],
       writePaths: [],
-      approval: null,
+      approval: { approvedAt: 1, definitionSha256: "a".repeat(64), description: "" },
     },
   }),
 };
@@ -86,7 +87,7 @@ function makeAct(
       audit: { recordAudit: (e) => appendAuditEntry(db, e) },
       policyHitl: NO_POLICY_OVERLAY,
       getTribalKbConfig: () => undefined,
-      ...(agentDoor === undefined ? {} : { agentDoor }),
+      agentDoor: agentDoor ?? PERMISSIVE_DOOR,
     },
     approve,
     "c-cli",
@@ -137,8 +138,8 @@ describe("act door routing through the real dispatcher", () => {
       listTools: () => Promise.resolve({}),
       listUserMcpTools: (s) => Promise.resolve(s === "mcp_echo" ? userTools : undefined),
     });
-    const act = makeAct(dispatcher, db, LEGACY_USER_MCP_DOOR);
-    await act.execute("mcp_echo.echo", { text: "hi" }, { ...PROV, basis: "legacy_user_mcp" });
+    const act = makeAct(dispatcher, db, USER_MCP_DOOR);
+    await act.execute("mcp_echo.echo", { text: "hi" }, PROV);
     expect(calls).toEqual([["mcp_echo_echo", { text: "hi" }]]);
   });
 

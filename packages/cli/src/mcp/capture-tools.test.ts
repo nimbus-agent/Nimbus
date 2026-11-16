@@ -424,7 +424,8 @@ describe("act door tools", () => {
     expect(d).not.toContain("send an email");
     expect(d).toContain("describe_actions");
     expect(d).toContain("approved for outside agents");
-    expect(d).toContain("Deprecated");
+    expect(d).not.toContain("Deprecated");
+    expect(d).toContain("mail sends are never accepted");
     expect(d).toContain("only a fixed code");
     expect(d).not.toContain("github.pr.merge");
     expect(d).not.toContain("Accepted action types on this machine");
@@ -550,8 +551,8 @@ describe("describe_actions (AD3a-2b)", () => {
   });
 });
 
-describe("propose_action deprecation line (AD3a-2a)", () => {
-  test("a legacy reply's deprecation is printed after the NOT-run sentence, control characters stripped", async () => {
+describe("propose_action reply (AD3b)", () => {
+  test("a reply from an older gateway that still carries a deprecation prints none", async () => {
     const esc = String.fromCodePoint(0x1b);
     const d = depsRecording([], {
       "capture.submit": {
@@ -565,16 +566,7 @@ describe("propose_action deprecation line (AD3a-2a)", () => {
     const spec = CAPTURE_TOOL_SPECS.find((s) => s.name === "propose_action");
     const out = await spec?.run(d, { actionType: "a.b", input: {}, summary: "s" }, () => undefined);
     const text = out?.content[0]?.text ?? "";
-    expect(text.indexOf("Deprecated: x")).toBeGreaterThan(text.indexOf("has NOT run"));
-    expect(text).not.toContain(esc);
-  });
-
-  test("an approved proposal's result is unchanged", async () => {
-    const d = depsRecording([], {
-      "capture.submit": { id: "cap_9", state: "proposed", expiresAt: 0 },
-    });
-    const spec = CAPTURE_TOOL_SPECS.find((s) => s.name === "propose_action");
-    const out = await spec?.run(d, { actionType: "a.b", input: {}, summary: "s" }, () => undefined);
-    expect(out?.content[0]?.text).not.toContain("Deprecated");
+    expect(text).toContain("has NOT run");
+    expect(text).not.toContain("Deprecated");
   });
 });

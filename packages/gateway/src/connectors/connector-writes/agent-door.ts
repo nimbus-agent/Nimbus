@@ -28,30 +28,12 @@ import type { ConnectorWriteRow, ConnectorWriteWave } from "./types.ts";
 
 /**
  * An action type is not a row: `slack.message.post` names both `slack_message_post` and
- * `slack_message_post_dm`. For a type with several rows an agent reaches the one named here (the same
- * row `PROPOSABLE_WRITE_TOOLS` routes to), so the Slack DM row cannot be reached by an agent
- * (OR-AD-10, a stated exception to model-door parity).
+ * `slack_message_post_dm`. For a type with several rows an agent reaches the one named here, so the
+ * Slack DM row cannot be reached by an agent (OR-AD-10, a stated exception to model-door parity).
  */
 export const AGENT_DOOR_TYPE_TIEBREAK: Readonly<Record<string, string>> = Object.freeze({
   "slack.message.post": "slack_message_post",
 });
-
-/**
- * The seven mail sends (OR-W34-1, OR-B3w-1): never offered to an agent, but accepted during the
- * deprecation window with a warning of their own (OR-AD-3, OR-AD-9). A test pins that this set is
- * exactly the rows of `MODEL_NEVER_OFFERED_REASONS` whose reason is the mail-send one.
- */
-export const AGENT_DOOR_MAIL_SEND_TOOL_IDS: ReadonlySet<string> = Object.freeze(
-  new Set([
-    "gmail_message_send",
-    "gmail_draft_send",
-    "fastmail_mail_send",
-    "imap_mail_send",
-    "protonmail_mail_send",
-    "apple_mail_send",
-    "outlook_mail_send",
-  ]),
-);
 
 /** The one row an agent's proposal of `actionType` runs, or `undefined` when none can be named. */
 export function agentDoorRow(

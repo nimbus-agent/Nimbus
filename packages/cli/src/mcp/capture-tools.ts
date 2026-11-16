@@ -1,5 +1,4 @@
 import { z } from "zod";
-import { stripControlChars } from "../lib/strip-control-chars.ts";
 import type { IpcCallable } from "./client-surface.ts";
 import { type AdapterDeps, runTool, type ToolResult } from "./tool-runtime.ts";
 
@@ -9,15 +8,6 @@ import { type AdapterDeps, runTool, type ToolResult } from "./tool-runtime.ts";
  * sink is enabled for the kind — see `captureToolsFor`.
  */
 type CaptureToolKind = "note" | "decision" | "term" | "link" | "action";
-
-/** The gateway's fixed deprecation line for a proposal accepted under the window, control-stripped. */
-function deprecationOf(raw: unknown): string {
-  const d =
-    typeof raw === "object" && raw !== null
-      ? (raw as Record<string, unknown>)["deprecation"]
-      : undefined;
-  return typeof d === "string" && d !== "" ? ` ${stripControlChars(d)}` : "";
-}
 
 export interface CaptureToolSpec {
   readonly name: string;
@@ -244,8 +234,7 @@ export const CAPTURE_TOOL_SPECS: readonly CaptureToolSpec[] = [
       "until the owner runs `nimbus approvals <id>` and approves the exact input shown at the prompt. It expires " +
       "if not approved in time. Poll its outcome with capture_status. input is the tool's arguments as " +
       "a JSON object. Call describe_actions first: it lists what this machine accepts now (the writes its owner " +
-      "approved for outside agents by name, plus a few types still accepted for a limited time with a Deprecated " +
-      "warning, which a later release will refuse unless the owner approves them; a tool of a server the user " +
+      "approved for outside agents by name; mail sends are never accepted, and a tool of a server the user " +
       "registered themselves is proposed as mcp_<id>.<tool> and is approved by name the same way) and returns the description " +
       "and input schema of the types you name. The owner's reason for declining or rejecting is never sent to you, only a fixed code.",
     schema: {
@@ -269,7 +258,7 @@ export const CAPTURE_TOOL_SPECS: readonly CaptureToolSpec[] = [
           content: [
             {
               type: "text",
-              text: `Proposed action ${id} — expires ${when}. It has NOT run: the owner must approve it with \`nimbus approvals ${id}\` at the prompt. Poll capture_status with this id. Do not tell the user it was sent.${deprecationOf(raw)}`,
+              text: `Proposed action ${id} — expires ${when}. It has NOT run: the owner must approve it with \`nimbus approvals ${id}\` at the prompt. Poll capture_status with this id. Do not tell the user it was sent.`,
             },
           ],
         };
@@ -281,8 +270,8 @@ export const CAPTURE_TOOL_SPECS: readonly CaptureToolSpec[] = [
     description:
       "Read which action types propose_action accepts on this machine now. With no arguments it lists each type " +
       "with its state: approved (the owner approved it for outside agents by name; with its wave, whether the " +
-      "owner must type a confirmation, and whether Nimbus reads and binds part of the input itself), legacy " +
-      "(still accepted for a limited time, with a Deprecated line), suspended (its definition changed since the " +
+      "owner must type a confirmation, and whether Nimbus reads and binds part of the input itself), " +
+      "suspended (its definition changed since the " +
       "owner approved it, so it is refused until the owner approves it again by name), unavailable, " +
       "not_proposable (a type that cannot be proposed now; this does not say why) and undescribed. With actionTypes (1 to 10 types, at most 3 services, each type at most " +
       "128 characters) it also returns, for each approved type it can verify now, the description and the input " +
@@ -290,9 +279,7 @@ export const CAPTURE_TOOL_SPECS: readonly CaptureToolSpec[] = [
       "binds itself are not in the schema; never send them. A described type can still have its input refused " +
       "by the same checks as every proposal. The number of calls an hour is limited. A tool of a server the " +
       "user registered themselves (a type of the form mcp_<id>.<tool>, third-party code) is described only " +
-      "after the owner approved that tool for outside agents by name and its listed definition is unchanged; " +
-      "tools of such a server the owner has not approved appear as one mcp_<id>.* entry while they are still " +
-      "accepted for a limited time. This tool proposes and dispatches nothing, but describing an approved " +
+      "after the owner approved that tool for outside agents by name and its listed definition is unchanged. This tool proposes and dispatches nothing, but describing an approved " +
       "type can start its connector or user MCP server, and a definition found changed is recorded as suspended.",
     // Never stricter than the gateway, which is authoritative about the bounds.
     schema: { actionTypes: z.array(z.string()).optional() },

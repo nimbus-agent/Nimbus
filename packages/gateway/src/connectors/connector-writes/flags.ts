@@ -375,8 +375,8 @@ export function selectFlagsmithState(
 // Feature-flag writes (connectors 0.6.0, spec 15.3, OR-W34-6). All three are wave 3: a flag change
 // can be reverted by flipping it back, so none is wave 4. The environment comes FIRST in each
 // preview (target, summary and field order): the same change in production and in staging must not
-// look alike. They are offered to the model, not proposable over MCP (`not_yet_offered`: the act
-// door has no before-read, and a variation id is opaque without one).
+// look alike. They are offered to the model, and an outside agent may propose one only after the
+// owner approved it for agents by name (the door executor runs the same before-read, I58).
 export const FLAGS_ROWS: readonly ConnectorWriteRow[] = [
   withBefore(
     withPreview(row("launchdarkly_flag_toggle", "launchdarkly.flag.toggle", "mesh", 3), {

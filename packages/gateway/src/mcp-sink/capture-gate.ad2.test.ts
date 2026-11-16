@@ -63,7 +63,8 @@ beforeEach(() => {
     refusals: new CaptureRefusalCounter(),
     newId: () => `cap_${String(++seq)}`,
     now: () => clock,
-    classifyAction: () => ({ kind: "proposable", basis: "legacy_user_mcp" }),
+    classifyAction: () => ({ kind: "proposable", basis: "approved" }),
+    verifyActionDefinition: () => Promise.resolve({ ok: true }),
     isServiceConfigured: () => Promise.resolve(true),
     actionDestinationRefusal: () => undefined,
     onActionProposed: (n) => hookCalls.push(n),
@@ -146,7 +147,6 @@ describe("captureMine", () => {
         sessionId: MCP.clientId,
         createdAt: clock + i,
         expiresAt: null,
-        agentDoorLegacy: false,
       });
     }
     expect(captureMine(deps, MCP).captures).toHaveLength(50);
@@ -253,8 +253,6 @@ describe("listActionProposals", () => {
       labelSource: "declared",
       createdAt: 10,
       expiresAt: 10 + 24 * HOUR,
-      // The fixture verdict carries the legacy_user_mcp basis (AD5a), which is stored `legacy = 1`.
-      agentDoorLegacy: true,
     });
     expect(errOf(() => listActionProposals(deps, MCP)).code).toBe("ERR_CAPTURE_FORBIDDEN_CLIENT");
     clock += 25 * HOUR;
@@ -274,7 +272,6 @@ describe("listActionProposals", () => {
       sessionId: "x",
       createdAt: clock,
       expiresAt: clock + HOUR,
-      agentDoorLegacy: false,
     });
     expect(listActionProposals(deps, OWNER).proposals).toHaveLength(1);
   });
@@ -306,6 +303,7 @@ describe("onActionProposed hook", () => {
   test("a rejected outcome's reason reaches the accept result and is never stored", async () => {
     const { id } = await submitCapture(deps, MCP, ACT);
     const out = await acceptCapture(deps, OWNER, id, {
+      humanOnly: true,
       execute: () => Promise.resolve({ status: "rejected", reason: "r" }),
     });
     expect(out).toMatchObject({ state: "rejected", reason: "r" });

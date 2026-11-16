@@ -17,7 +17,6 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { toStandardSchema } from "@mastra/core/schema";
 
 import { DEFAULT_MCP_SINK_CONFIG } from "../../../src/config/mcp-sink-toml.ts";
-import { legacyUserMcpNotice } from "../../../src/connectors/connector-writes/agent-door-legacy.ts";
 import { createAgentDoor } from "../../../src/connectors/connector-writes/agent-door-runtime.ts";
 import { definitionSha256 } from "../../../src/connectors/connector-writes/definition-hash.ts";
 import {
@@ -140,9 +139,8 @@ function door() {
     listServerTools: async () => undefined,
     listUserMcpDefinitions: listUserMcp,
     tribalKbConfig: () => undefined,
-    classifyContext: {
+    userMcpPolicy: {
       userMcpModelAccessAllowed: () => isUserMcpModelAccessEnabled(enforced()),
-      modelAccessServices: () => new Set(listModelAccessibleUserMcpIds(db)),
     },
     isServiceConfigured: createProposableServiceConfigured({
       vault: createMockVault(),
@@ -299,8 +297,6 @@ async function code(p: Promise<unknown>): Promise<string | undefined> {
 interface Submitted {
   readonly id: string;
   readonly state: string;
-  readonly legacy?: boolean;
-  readonly deprecation?: string;
 }
 const submit = (actionType: string, input: Record<string, unknown> = { text: "hi" }) =>
   rpc(AGENT, "capture.submit", {
@@ -338,35 +334,13 @@ const suspendAuditCount = (): number =>
       )
       .get() as { n: number }
   ).n;
-const storedLegacy = (id: string): number =>
-  (db.query("SELECT legacy FROM capture WHERE id = ?").get(id) as { legacy: number }).legacy;
 
-describe("the window: what worked before keeps working, warned", () => {
-  test("a --model server with nothing approved still accepts a proposal: flagged legacy, warned with the exact command, no listing", async () => {
-    const out = await submit(`${LEGACY}.append`);
-    expect(out.state).toBe("proposed");
-    expect(out.legacy).toBe(true);
-    expect(out.deprecation).toBe(legacyUserMcpNotice(LEGACY, "append"));
-    expect(out.deprecation).toContain(
-      `nimbus connector writes enable ${LEGACY} --door agent --approve append`,
-    );
-    expect(storedLegacy(out.id)).toBe(1);
+describe("AD3b: the window is over, an unapproved tool is refused", () => {
+  test("a --model server with nothing approved is refused, with no listing and nothing queued", async () => {
+    expect(await code(submit(`${LEGACY}.append`))).toBe(NOT_PROPOSABLE);
     expect(listCalls).toEqual([]);
-  });
-
-  test("the legacy proposal is approved through the same prompt, carrying the warning, and dispatched to its tool without a listing", async () => {
-    const out = await submit(`${LEGACY}.append`, { text: "legacy hello" });
-    const res = await approve(out.id);
-    expect(res.state).toBe("executed");
-    expect(prompts).toHaveLength(1);
-    expect(prompts[0]).toContain("Deprecated:");
-    expect(prompts[0]).toContain("Not approved for outside agents by name.");
-    expect(writes()).toHaveLength(1);
-    expect(writes()[0]?.payload).toEqual({
-      mcpToolId: `${LEGACY}_append`,
-      input: { text: "legacy hello" },
-    });
-    expect(listCalls).toEqual([]);
+    const n = db.query("SELECT COUNT(*) AS n FROM capture").get() as { n: number };
+    expect(n.n).toBe(0);
   });
 
   test("a server without --model and nothing approved is refused as before, with no listing", async () => {
@@ -378,15 +352,12 @@ describe("the window: what worked before keeps working, warned", () => {
     expect(await code(submit("ext_notes.append"))).toBe(NOT_PROPOSABLE);
   });
 
-  test("approving one tool of a --model server: that tool is approved, its sibling stays a legacy case", async () => {
+  test("approving one tool of a --model server: that tool is approved, its sibling is still refused", async () => {
     await enable(OWNER, LEGACY, { approve: ["append"] });
     const approved = await submit(`${LEGACY}.append`);
     expect(approved.state).toBe("proposed");
     expect(approved).not.toHaveProperty("legacy");
-    expect(storedLegacy(approved.id)).toBe(0);
-    const sibling = await submit(`${LEGACY}.read`);
-    expect(sibling.legacy).toBe(true);
-    expect(sibling.deprecation).toBe(legacyUserMcpNotice(LEGACY, "read"));
+    expect(await code(submit(`${LEGACY}.read`))).toBe(NOT_PROPOSABLE);
   });
 });
 
@@ -693,7 +664,7 @@ describe("capture.describe for a user MCP server", () => {
       actions: Array<Record<string, unknown> & { actionType: string; state: string }>;
     }>;
 
-  test("the summary lists approved tools and legacy servers, starts no server, and carries no hash, date, path or host", async () => {
+  test("the summary lists approved tools only (no legacy pattern entry), starts no server, and carries no hash, date, path or host", async () => {
     await enable(OWNER, NOTES, { approve: ["append"] });
     listCalls.length = 0;
     const out = await describeOf();
@@ -705,8 +676,7 @@ describe("capture.describe for a user MCP server", () => {
       typedConfirm: false,
       bound: false,
     });
-    const legacy = out.actions.find((a) => a.actionType === `${LEGACY}.*`);
-    expect(legacy?.state).toBe("legacy");
+    expect(out.actions.find((a) => a.actionType === `${LEGACY}.*`)).toBeUndefined();
     const text = JSON.stringify(out);
     expect(text).not.toContain("/data/notes");
     expect(text).not.toMatch(/[0-9a-f]{12}/);
@@ -730,7 +700,7 @@ describe("capture.describe for a user MCP server", () => {
       "ext_x.y",
     ]);
     expect(listCalls).toEqual([NOTES]);
-    const [approved, other, legacy, ext] = out.actions;
+    const [approved, other, unapproved, ext] = out.actions;
     expect(approved?.state).toBe("approved");
     const description = String(approved?.["description"]);
     expect(description).toContain("owner-registered user MCP server mcp_notes");
@@ -741,9 +711,8 @@ describe("capture.describe for a user MCP server", () => {
     expect(JSON.stringify(schema)).toContain("text");
     expect(other?.state).not.toBe("approved");
     expect(other).not.toHaveProperty("description");
-    expect(legacy?.state).toBe("legacy");
-    expect(legacy).not.toHaveProperty("description");
-    expect(legacy?.["deprecation"]).toBe(legacyUserMcpNotice(LEGACY, "append"));
+    expect(unapproved?.state).toBe("not_proposable");
+    expect(unapproved).not.toHaveProperty("description");
     expect(ext?.state).not.toBe("approved");
   });
 

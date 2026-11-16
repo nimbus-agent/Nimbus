@@ -8,7 +8,7 @@ description: >
   INERT proposals that count only after the owner's `acceptCapture()` (`'agent'` provenance, an
   I31-anchored disclosure); `propose_action` queues a connector action that runs only through
   `mcp-sink/capture-act.ts` `acceptAction()` and then the executor's own HITL prompt, dispatched to
-  the ONE tool the gateway's routing table names (`connectors/proposable-actions.ts`). Use when
+  the ONE tool the write row names (`agentDoorRow` in `connectors/connector-writes/agent-door.ts`; the old routing table `connectors/proposable-actions.ts` was deleted in AD3b). Use when
   touching `packages/gateway/src/mcp-sink/`, `packages/gateway/src/ipc/capture-rpc.ts` or `packages/gateway/src/ipc/approvals-rpc.ts`, the MCP
   write tools (`capture_note`, `propose_decision`, `propose_term`, `propose_link`,
   `propose_action`, `describe_actions`, `capture_status`), `nimbus captures list|show|accept|reject|revoke|purge`, `nimbus approvals` (the owner's queue and one-step approval of an action proposal), the
@@ -51,7 +51,7 @@ All three doors share this one entry (`capture.submit`). Order is the invariant;
 | 3 | Gateway-wide attempt limit (`CaptureAttemptLimiter`, before any validation) | `ERR_CAPTURE_RATE_LIMITED` | no — counted |
 | 4 | Kind allowed by `[mcp_sink] kinds` and `SUBMITTABLE_KINDS` | `ERR_CAPTURE_KIND_NOT_ALLOWED` | yes |
 | 5 | Whitelist rebuild per kind (`capture-validate.ts`; unknown siblings dropped, caps enforced) | `ERR_CAPTURE_INVALID` | yes |
-| 5a/5b | Action only: proposable now, its destination allowed (`actionDestinationRefusal` = `actDoorRefusal`: a ChatOps channel, a broadcast mention, a GitLab quick action or scoped label, a draft, page, note or markup file that loads remote content (since B3r), a sent Outlook HTML mail, Teams HTML message or GitHub, GitLab or Linear Markdown body that loads remote content (since B3w), a calendar or Drive create with an optional field set to `null`, an Outlook or iCloud calendar event whose time does not show its zone or an iCloud event field or attendee with a line break or control character (since B4a), a Linear update that sets `assigneeId`, or a KB page target is refused), and its connector configured | `ERR_CAPTURE_ACTION_NOT_PROPOSABLE` / `ERR_CAPTURE_ACTION_REFUSED` / `ERR_CAPTURE_CONNECTOR_UNCONFIGURED` | yes |
+| 5a/5b | Action only: proposable now, its destination allowed (`actionDestinationRefusal` = the door's `refusal`, the model door's `modelWriteRefusal` since AD3b: a ChatOps channel, a broadcast mention, a GitLab quick action or scoped label, a draft, page, note or markup file that loads remote content (since B3r), a sent Outlook HTML mail, Teams HTML message or GitHub, GitLab or Linear Markdown body that loads remote content (since B3w), a calendar or Drive create with an optional field set to `null`, an Outlook or iCloud calendar event whose time does not show its zone or an iCloud event field or attendee with a line break or control character (since B4a), a model-door rule for a commit, an IaC, Kubernetes or deploy write, or a KB page target is refused), and its connector configured | `ERR_CAPTURE_ACTION_NOT_PROPOSABLE` / `ERR_CAPTURE_ACTION_REFUSED` / `ERR_CAPTURE_CONNECTOR_UNCONFIGURED` | yes |
 | 6 | Referenced items exist (a link's endpoints must resolve) | `ERR_CAPTURE_UNKNOWN_ITEM` | yes |
 | 7 | Durable hourly cap, read from the `capture` table (survives restart) | `ERR_CAPTURE_RATE_LIMITED` | yes |
 | 8 | Pending cap, proposals only (`max_pending`; actions `action_max_pending`) | `ERR_CAPTURE_QUEUE_FULL` | yes |
@@ -105,25 +105,21 @@ Rules that follow from it:
 1. Capability incl. `mcp_action` (live, fail-closed); no `ActDeps` → `ERR_CAPTURE_DISABLED`.
 2. Owner only.
 3. `proposed` and not expired (`ERR_CAPTURE_EXPIRED`; TTL `action_ttl_hours`). The row is read once.
-4. Re-classify (`classifyActionType`) and re-check configured-ness — a `--model` revoke or policy
-   tightening since submit takes effect here. 4b (Phase 9.7 B1): the destination again,
-   `actionDestinationVerdict` over the injected `actionDestinationRefusal` (`actDoorRefusal`: the
-   model door's `messagingDestinationRefusal`, then, since B2, the act-door-only Linear rule, then,
-   since B3, the model door's `knowledgeBaseRefusal` and the act-door KB-child rule; built in
-   `ipc/capture-rpc.ts` `createActionDestinationRefusal(enforcedPolicy, tribalKbConfig)`, both
-   accessors read per call, and wired in `platform/assemble.ts` with
-   `() => tribalKbConfigOf(tribalCfg)`): a ChatOps binding added since submit, a broadcast mention,
-   a GitLab quick action or scoped label, (since B3r, inside the messaging check) a draft, page,
-   note, markup file, and since B3w a sent Outlook HTML mail (`outlook.mail.send`), Teams HTML
-   message or GitHub, GitLab or Linear Markdown body, that loads remote content (so such a
-   proposal queued before B3r or B3w is refused here), (since B4a, inside the messaging check) a calendar or
-   Drive create with an optional field set to `null`, an Outlook or iCloud calendar event whose
-   time does not show its zone or an iCloud event field or attendee with a line break or control
-   character (so a calendar proposal queued before B4a is refused here), a `linear.issue.update` that sets `assigneeId` (the act
-   door has no before-read, so it cannot prove the issue unassigned), a page write to the tribal KB
-   destination, or, while a KB destination is configured for that service, a Notion/Confluence
-   page update or append (the act door cannot tell whether the page is in the KB; an unreadable KB
-   config refuses every KB-capable row) → `ERR_CAPTURE_ACTION_REFUSED`, the row stays proposed.
+4. Re-derive the verdict (the agent door's `verdict`, through `requireVerdictAtApproval`) and re-check
+   configured-ness: an approval removed, a wave lowered, a policy tightening or a changed definition
+   since submit takes effect here, and a proposal queued before AD3b for a type the owner never approved
+   is refused here and stays proposed. 4b (Phase 9.7 B1): the destination again, `actionDestinationVerdict`
+   over the injected `actionDestinationRefusal` (the door's `refusal`, which since AD3b is the model
+   door's `modelWriteRefusal` alone: `messagingDestinationRefusal`, the commit, IaC, Kubernetes and
+   deploy rules, then `knowledgeBaseRefusal`; built in `agent-door-runtime.ts`, both accessors read per
+   call, and wired in `platform/assemble.ts` with `() => tribalKbConfigOf(tribalCfg)`): a ChatOps
+   binding added since submit, a broadcast mention, a GitLab quick action or scoped label, a draft,
+   page, note, markup file, Teams HTML message or GitHub, GitLab or Linear Markdown body that loads
+   remote content, a calendar or Drive create with an optional field set to `null`, an Outlook or iCloud
+   calendar event whose time does not show its zone or an iCloud event field or attendee with a line
+   break or control character, or a page write to the tribal KB destination → `ERR_CAPTURE_ACTION_REFUSED`,
+   the row stays proposed. (A Linear `assigneeId` and a page update under the KB are the executor's
+   before-state guards, not the door's.)
 5. Atomic claim (CAS incl. the expiry predicate) → `executing`.
 6. Rebuild the action from the stored row.
 7. Execute via `ActDeps.execute`, built per accept by `buildActDeps` in `ipc/capture-rpc.ts`: a
@@ -148,24 +144,26 @@ overdue rows and marks rows left `executing` by a dead process `failed` /
 routing row means `Tool not found`, never dispatch-by-type. An agent-supplied `mcpToolId` (beside
 `actionType` or inside `input`) is REFUSED at submit by `validateActionPayload`.
 
-### Proposability — `packages/gateway/src/connectors/proposable-actions.ts`
+### Proposability — the agent door's verdict (AD3b)
 
-| Table | Role |
-|---|---|
-| `PROPOSABLE_WRITE_TOOLS` | actionType → bare tool id as registered by `@nimbus-dev/connectors`; its keys ARE the first-party proposable set |
-| `ACTION_PROPOSABILITY` | classifies EVERY `HITL_REQUIRED` type (totality test); unlisted → `unknown` → refused |
-| `classifyActionType` | adds the user-MCP arm: `mcp_*` types are proposable only for a `--model` server while `user_mcp_model_access` allows (`user_mcp_no_model_access` / `user_mcp_policy` otherwise); `ext_*` is `unknown` |
-| `createAgentDoor(...).acceptedTypes` | what `capture.status` advertises (configured approved and legacy types + one `mcp_<id>.*` pattern per `--model` server; `connectors/connector-writes/agent-door-runtime.ts`; the old `listProposableActionTypes` was deleted at AD3a-2a) |
+There is no classification table any more (`connectors/proposable-actions.ts` was deleted in AD3b). A
+first-party type is proposable by an outside agent when `agentDoorRow(actionType)` finds a write row
+and `agentOffered` holds: the owner enabled the service to the row's wave and approved the tool for
+agents by name, the listed definition hashes to the stored value, policy allows `mcp_action` and
+`connector_write_model_access`, and the row is offered to the model (never one of the 16 never-offered
+rows: the seven mail sends, the Bitbucket merge, the owner-only iac rows, the four `az`/`gcloud`-read
+cloud rows, the pod delete) and not the Slack DM row. Anything else is `denied` with a fixed `agent_*`
+class (`agent_not_enabled`, `agent_wave`, `agent_not_approved`, `agent_policy`, `agent_no_scope`,
+`agent_never_offered`, `agent_not_offerable`, `agent_unroutable`) or `unknown` (a HITL type no row
+routes to, such as `extension.run`, `standing.rule.create` or `email.draft.create`). A `mcp_*` type is
+proposable only for a tool the owner approved for agents by name (`user_mcp_not_registered`,
+`agent_not_approved`, `agent_policy` otherwise); `ext_*` is `unknown`.
+`createAgentDoor(...).acceptedTypes` is what `capture.status` advertises (the approved types of
+configured services, sorted, plus approved user-MCP tools; no legacy entry, no `mcp_<id>.*` pattern;
+`connectors/connector-writes/agent-door-runtime.ts`).
 
-Counts — derive from `HITL_REQUIRED` (`packages/gateway/src/engine/executor.ts`) and
-`ACTION_PROPOSABILITY` (as of 2026-11-05, Phase 9.7 B3: 160 HITL types, **43 proposable / 117 denied**,
-1 of them `not_yet_offered` — `jira.issue.transition` (owner ruling OR-B2-4: the act door has no
-before-read to show its From and To); B3 offered `outlook.draft.create` and `confluence.page.append`
-— 0 unclassified; the KB refusals above are config-conditional and do not change these counts). Denied classes (`DeniedClass`): `file`, `calendar_delete`, `vcs`, `pipeline`,
-`cloud`, `iac`, `k8s`, `deployment`, `incident`, `data_platform`, `tribal_kb` (I25/D19),
-`chatops_confined` (I23/D17), `unroutable`, `not_yet_offered` (a routable connector write
-withheld from MCP; since B3 only `jira.issue.transition`, because the act door cannot show its
-before-state), `gateway_internal`.
+Counts: derive from `CONNECTOR_WRITE_ROWS` and `MODEL_NEVER_OFFERED_TOOL_IDS` (as of AD3b: 125 rows on
+124 types, 16 never offered, so 109 model-offerable rows, 108 reachable by an agent).
 
 **Mesh-only servers:** `obsidian.note.append` is proposable although `obsidian` is not a catalog
 connector. `resolveServerTool` attributes keys with `meshServerForToolKey` — the catalog rule
@@ -228,9 +226,9 @@ connector allowlist. The act door's configured-ness comes from
 Out-of-range values and unknown kinds refuse at load (capability reason `config_error`); nothing
 is clamped.
 
-**An approval list for agents (Phase 28 AD3a-1; enforced since AD3a-2a, invariant I58).** `nimbus connector writes enable <service> --door agent` records, per tool and with a hash of its listed definition, the writes the owner approved for outside agents (V97 `connector_write_door_approval`, written only by `connectors/connector-writes/door-approval-store.ts`, static D49(b)). `mcp-sink/` still never names the store or imports `connectors/` (D32(f)): the gate is injected with the agent door's `verdict`, `refusal` and `verifyDefinition` (`connectors/connector-writes/agent-door-runtime.ts`, built in `platform/assemble.ts` over a late-bound mesh listing that fails closed). Submit's action steps: verdict (`ERR_AGENT_TOOL_SUSPENDED` / `ERR_CAPTURE_ACTION_NOT_PROPOSABLE`), the refusal for the verdict's basis, configured, then for an `approved` basis the definition check last (it lists the connector). `acceptAction` step 4 re-derives them before the claim, a Wave 4 or bound row routes to the same executor, `approved` rows are approved only through `approvals.approve`, and `buildActDeps` wraps an `approved` basis in `vetoingConsent` (a post-answer definition recheck). A type the owner has not approved but the earlier table accepted (47 types) is a `legacy` proposal for one release: stored `legacy = 1`, warned on four surfaces, counted by `connector writes status`; AD3b removes it. A rejected action stores a fixed code. Static D49(a), (c)-(f) pin the sites.
+**An approval list for agents (Phase 28 AD3a-1; enforced since AD3a-2a, invariant I58).** `nimbus connector writes enable <service> --door agent` records, per tool and with a hash of its listed definition, the writes the owner approved for outside agents (V97 `connector_write_door_approval`, written only by `connectors/connector-writes/door-approval-store.ts`, static D49(b)). `mcp-sink/` still never names the store or imports `connectors/` (D32(f)): the gate is injected with the agent door's `verdict`, `refusal` and `verifyDefinition` (`connectors/connector-writes/agent-door-runtime.ts`, built in `platform/assemble.ts` over a late-bound mesh listing that fails closed). Submit's action steps: verdict (`ERR_AGENT_TOOL_SUSPENDED` / `ERR_CAPTURE_ACTION_NOT_PROPOSABLE`), the refusal for the verdict's basis, configured, then for an `approved` basis the definition check last (it lists the connector). `acceptAction` step 4 re-derives them before the claim, a Wave 4 or bound row routes to the same executor, `approved` rows are approved only through `approvals.approve`, and `buildActDeps` wraps an `approved` basis in `vetoingConsent` (a post-answer definition recheck). Since AD3b (a breaking release) there is no other basis: a type the earlier table accepted with no approval (47 types, the seven mail sends among them) is refused like any other unapproved type, and a proposal queued before then is refused at approval and left to expire or be declined (the V97 `capture.legacy` column stays, unused). A rejected action stores a fixed code. Static D49(a), (c)-(e) pin the sites; (a) bans the window's names from production source.
 
-**User MCP tools (Phase 28 AD5a, invariants I42 and I58).** `mcp_<id>.<tool>` has its own verdict in `agent-door-runtime.ts`: `suspended`, then `approved` (a V97 row for `(mcp_<id>, tool)` while policy allows `mcp_action` and `user_mcp_model_access`; no `--model` needed), then the classifier's `legacy_user_mcp` for a `--model` server, else `denied`. `ActionBasis` has no basis-less proposable verdict. The owner approves tools with `connector.writesEnable { door: "agent", service: "mcp_<id>", approve: [...] }` (`ipc/connector-rpc-handlers/agent-writes-user-mcp.ts`; no `approve` is a list-only reply); the act wiring's `userMcpCallFacts` lists the server once, checks the hash on that listing and puts `userMcpCall` on the action (static D49(g)); raw `captures.accept` of an approved basis is refused (rule 4d); `capture.describe` describes an approved tool from a live listing and starts nothing for any other. After the owner's answer the recheck is bound to what the prompt showed (`UserMcpCallBinding`: the registration's creation time and, for an approved tool, the approval's full hash, compared in constant time): an approved tool re-reads the registration, the approval and a fresh listing, a legacy proposal the registration row alone; a mismatch overrules the answer with a fixed reason and marks nothing. A proposal older than the server's registration is refused for both bases: an approved tool at submit, approval and the call, a legacy tool when `userMcpCallFacts` reads the registration (before any prompt, no listing). The mesh bounds every user-server listing for the door with one 45-second deadline (`USER_MCP_LISTING_DEADLINE_MS`); an expired listing reads as unlistable (refused, nothing marked). The list-only enable returns at most 200 tools plus `omitted`.
+**User MCP tools (Phase 28 AD5a, invariants I42 and I58).** `mcp_<id>.<tool>` has its own verdict in `agent-door-runtime.ts`: `suspended`, then `approved` (a V97 row for `(mcp_<id>, tool)` while policy allows `mcp_action` and `user_mcp_model_access`; no `--model` needed), else `denied` (since AD3b a `--model` server's unapproved tool is no longer a legacy case). `ActionBasis` has no basis-less proposable verdict. The owner approves tools with `connector.writesEnable { door: "agent", service: "mcp_<id>", approve: [...] }` (`ipc/connector-rpc-handlers/agent-writes-user-mcp.ts`; no `approve` is a list-only reply); the act wiring's `userMcpCallFacts` lists the server once, checks the hash on that listing and puts `userMcpCall` on the action (static D49(g)); raw `captures.accept` of an approved basis is refused (rule 4d); `capture.describe` describes an approved tool from a live listing and starts nothing for any other. After the owner's answer the recheck is bound to what the prompt showed (`UserMcpCallBinding`: the registration's creation time and, for an approved tool, the approval's full hash, compared in constant time): an approved tool re-reads the registration, the approval and a fresh listing; a mismatch overrules the answer with a fixed reason and marks nothing. A proposal older than the server's registration is refused at submit, approval and the call. The mesh bounds every user-server listing for the door with one 45-second deadline (`USER_MCP_LISTING_DEADLINE_MS`); an expired listing reads as unlistable (refused, nothing marked). The list-only enable returns at most 200 tools plus `omitted`.
 
 ## Stated bounds (I28)
 
@@ -247,7 +245,7 @@ is clamped.
 - The routing table is proven against the INSTALLED connectors package; a later tool rename surfaces as `failed`.
 - Configured-ness treats a multi-key service as configured once ANY key is set, so an accept can
   pass it and fail at dispatch.
-- `capture.describe` can start an approved connector (a listing per service, at most 3 services and 10 types per call, its own limiter), can record the one suspension audit row a submit would, names the approved Terraform directories and Kubernetes context and namespace names to an approved agent, and describes a legacy type by its deprecation line and a user-registered type not at all (I58 bounds 16 to 24). Describe does not say why a type cannot be proposed (one fixed `not_proposable` text; a refused submit names the class), a throwing check is one `unavailable` entry with a fixed text, and params are validated before the limiter (I58 bounds 20 to 24). It shares `verifyListed` with `verifyDefinition`: never copy the post-listing check.
+- `capture.describe` can start an approved connector (a listing per service, at most 3 services and 10 types per call, its own limiter), can record the one suspension audit row a submit would, names the approved Terraform directories and Kubernetes context and namespace names to an approved agent, and describes a user-registered type only when the owner approved that tool (I58 bounds 16 to 24). Describe does not say why a type cannot be proposed (one fixed `not_proposable` text; a refused submit names the class), a throwing check is one `unavailable` entry with a fixed text, and params are validated before the limiter (I58 bounds 20 to 24). It shares `verifyListed` with `verifyDefinition`: never copy the post-listing check.
 - `capture.state` answers only for ids the asking connection submitted (any other id is
   `ERR_CAPTURE_NOT_FOUND`, as an absent one): state and a short outcome link, never the payload.
 - The attempt limit is in-memory (resets on restart); the hourly cap is durable. Pre-limit refusals
@@ -281,8 +279,7 @@ is clamped.
 | `packages/gateway/src/mcp-sink/invisible-text.ts` | `FORMAT_INVISIBLE_RANGES` / `rangesRegExp` shared by validate and act |
 | `packages/gateway/src/mcp-sink/capture-types.ts` | kinds, states, error codes, `ActDeps` seam |
 | `packages/gateway/src/ipc/capture-rpc.ts` | IPC dispatch + `buildActDeps` (the executor seam) |
-| `packages/gateway/src/connectors/proposable-actions.ts` | proposability + routing tables |
-| `packages/gateway/src/index/capture-v67-sql.ts` · `capture-native-v68-sql.ts` · `capture-action-v69-sql.ts` | schema V67 / V68 / V69 (V97, `agent-door-v97-sql.ts`, rebuilds `capture` with `legacy` and a code on a `rejected` action) |
+| `packages/gateway/src/index/capture-v67-sql.ts` · `capture-native-v68-sql.ts` · `capture-action-v69-sql.ts` | schema V67 / V68 / V69 (V97, `agent-door-v97-sql.ts`, rebuilds `capture` with a `legacy` column, unused since AD3b, and a code on a `rejected` action) |
 | `packages/cli/src/mcp/capture-tools.ts` | MCP tool registration |
 | `packages/cli/src/commands/captures.ts` · `captures-format.ts` | owner CLI + rendering |
 | `packages/gateway/test/e2e/mcp-capture.e2e.test.ts` | real-gateway E2E |
@@ -290,11 +287,14 @@ is clamped.
 ## Checklist for changing this area
 
 **Making an action type proposable:**
-1. It must already be in `HITL_REQUIRED`. Move it from its `denied(...)` group into
-   `PROPOSABLE_WRITE_TOOLS` with the **bare tool id the connector actually registers** — tool names
-   are not derivable from types (e.g. `google_drive.file.create` → `gdrive_file_create`).
-2. `proposable-actions.sync.test.ts` proves the row against the installed `@nimbus-dev/connectors`;
-   check the pin is current before trusting a red/green there.
+1. It must already be in `HITL_REQUIRED`, and a write row (`connector-writes/*.ts`, the generated manifest)
+   must route to it with the **bare tool id the connector actually registers** — tool names are not
+   derivable from types (e.g. `google_drive.file.create` → `gdrive_file_create`). The row's wave, its
+   template and, for a Wave 4 row, its before-state reader or prepare step decide whether the model
+   door offers it; the owner then approves it for agents by name (`enable <service> --door agent`).
+2. The row table is generated from and tested against the installed `@nimbus-dev/connectors`
+   (`connector-writes/rows.test.ts`, `manifest.generated.ts`); check the pin is current before trusting
+   a red/green there.
 3. Never make a type proposable whose tool literal is confined elsewhere (D17 ChatOps, D19 tribal
    KB, D20 connector writes are reasons a class is denied).
 4. The service must be attributable by `meshServerForToolKey` (a catalog id, or a

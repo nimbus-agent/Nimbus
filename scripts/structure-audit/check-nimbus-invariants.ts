@@ -740,9 +740,9 @@ export function checkTribalKbWriteInvariant(files: readonly FileEntry[]): Violat
 }
 
 // D20 (I26): every connector write tool id in the row table (connectors/connector-writes) may be
-// NAMED only in five gateway sites: the row table itself (and the manifest generated from the
-// installed package), the write transport, the write dispatch, the act door's routing table
-// (proposable-actions.ts) and the code-execution id classification. Any other reference could route
+// NAMED only in four gateway sites: the row table itself (and the manifest generated from the
+// installed package), the write transport, the write dispatch and the code-execution id
+// classification (the act door's routing table was deleted in AD3b). Any other reference could route
 // a write outside the local executor I2 gate. The id set is DERIVED from CONNECTOR_WRITE_ROWS, so a
 // new row is confined the moment it lands; there is no hand-spelled list to forget. A trailing
 // slash in an allowed entry makes it a directory prefix (the shape D17 uses). Also requires
@@ -754,7 +754,6 @@ const CONNECTOR_WRITE_ALLOWED = [
   "packages/gateway/src/connectors/connector-writes/",
   "packages/gateway/src/connectors/connector-write-transport.ts",
   "packages/gateway/src/connectors/connector-write-dispatch.ts",
-  "packages/gateway/src/connectors/proposable-actions.ts",
   "packages/gateway/src/connectors/connector-code-execution-tool-ids.ts",
   // D2: the iac runner's routing table names the tools it runs in their own sandboxed children
   // (static D43(c)); the row table, not this file, decides that any of them is a write.
@@ -2273,11 +2272,11 @@ export function checkDoorApprovalConfinement(files: readonly FileEntry[]): Viola
 }
 
 // ---- D49 (a), (c), (d), (e), (f): the agent door's enforcement (Phase 28 AD3a-2a, invariant I58) ---
-// (a) The legacy proposability table is consulted in ONE place. `ACTION_PROPOSABILITY`,
-//     `classifyActionType`, `proposableWriteTool` and `PROPOSABLE_WRITE_TOOLS` are named in
-//     production source only in `connectors/proposable-actions.ts` (their definition) and
-//     `connectors/connector-writes/agent-door-runtime.ts` (the one consumer, which applies them only
-//     to a type the owner has not approved by name); and `createAgentDoor` only in its module and
+// (a) The deprecation window's names are GONE (AD3b), and the door is built once. The retired names
+//     (`ACTION_PROPOSABILITY`, `classifyActionType`, `proposableWriteTool`, `PROPOSABLE_WRITE_TOOLS`,
+//     `actDoorRefusal`, `createActionDestinationRefusal`, `agentDoorLegacy`, `legacyActionTypesSince`,
+//     `isLegacyBasis`) appear in NO production source file, so nothing can consult a table other than
+//     the write table and the owner's list again; and `createAgentDoor` only in its module and
 //     `platform/assemble.ts`, so a second door built over other facts cannot appear.
 // (c) `origin: "agent"` is written only by `ipc/capture-rpc.ts` `buildActDeps`, the one place that
 //     holds the accepting session's consent channel; a `proposer:` property only there and in the
@@ -2290,9 +2289,7 @@ export function checkDoorApprovalConfinement(files: readonly FileEntry[]): Viola
 //     executor's consent argument; in `acceptAction` the verdict step and the definition step both
 //     come before `claimAction(`; in `submitCapture` the verdict and the definition step both come
 //     before `writeSubmittedCapture(`; and each helper reads the injected dependency it is named for.
-// (f) The `capture.legacy` flag (`agentDoorLegacy`) is named only by the sink's types, store and gate
-//     and the owner's approvals listing; its count (`legacyActionTypesSince`) only by the store and
-//     the status handler. AD3b removes this clause with the flag.
+// (f) (retired in AD3b with the capture `legacy` flag; its names are covered by (a).)
 // (g) The user-MCP call facts (Phase 28 AD5a, I42): the `userMcpCall` property of a planned action
 //     (what the owner's prompt shows about third-party code) is written only by `ipc/capture-rpc.ts`
 //     `buildActDeps`, from the agent door's own read, and named besides only by the file that declares
@@ -2307,12 +2304,9 @@ export function checkDoorApprovalConfinement(files: readonly FileEntry[]): Viola
 // Same stated bound as D32(a): a dynamically composed identifier evades a text scan; the behavioural
 // tests under I58 and I42 are authoritative. Test files (and `.test-helpers.ts`) are not scanned.
 const D49_SRC = "packages/gateway/src/";
-const D49_LEGACY_TABLE_RE =
-  /\b(?:ACTION_PROPOSABILITY|classifyActionType|proposableWriteTool|PROPOSABLE_WRITE_TOOLS)\b/g;
-const D49_LEGACY_TABLE_ALLOWED: readonly string[] = [
-  `${D49_SRC}connectors/proposable-actions.ts`,
-  `${D49_SRC}connectors/connector-writes/agent-door-runtime.ts`,
-];
+const D49_RETIRED_NAMES_RE =
+  /\b(?:ACTION_PROPOSABILITY|classifyActionType|proposableWriteTool|PROPOSABLE_WRITE_TOOLS|actDoorRefusal|createActionDestinationRefusal|agentDoorLegacy|legacyActionTypesSince|isLegacyBasis)\b/g;
+const D49_RETIRED_NAMES_ALLOWED: readonly string[] = [];
 const D49_BUILD_DOOR_RE = /\bcreateAgentDoor\b/g;
 const D49_BUILD_DOOR_ALLOWED: readonly string[] = [
   `${D49_SRC}connectors/connector-writes/agent-door-runtime.ts`,
@@ -2329,13 +2323,6 @@ const D49_PROPOSER_PROP_ALLOWED: readonly string[] = [
 const D49_ORIGIN_COMPARE_RE =
   /\borigin\s*[!=]==?\s*["'](?:agent|model)["']|["'](?:agent|model)["']\s*[!=]==?\s*[\w.?]*\borigin\b/g;
 const D49_ORIGIN_COMPARE_ALLOWED: readonly string[] = [`${D49_SRC}engine/outside-origin.ts`];
-const D49_LEGACY_FLAG_RE = /\bagentDoorLegacy\b/g;
-const D49_LEGACY_FLAG_ALLOWED: readonly string[] = [
-  `${D49_SRC}mcp-sink/capture-types.ts`,
-  `${D49_SRC}mcp-sink/capture-store.ts`,
-  `${D49_SRC}mcp-sink/capture-gate.ts`,
-  `${D49_SRC}ipc/approvals-rpc.ts`,
-];
 const D49_USER_MCP_CALL_RE = /\buserMcpCall\b/g;
 const D49_USER_MCP_CALL_ALLOWED: readonly string[] = [
   `${D49_SRC}ipc/capture-rpc.ts`,
@@ -2389,12 +2376,6 @@ const D49_REMOVE_APPROVALS_ALLOWED: readonly string[] = [
   `${D49_SRC}ipc/connector-rpc-handlers/removal.ts`,
   `${D49_SRC}ipc/connector-rpc-handlers/config.ts`,
 ];
-const D49_LEGACY_COUNT_RE = /\blegacyActionTypesSince\b/g;
-const D49_LEGACY_COUNT_ALLOWED: readonly string[] = [
-  `${D49_SRC}mcp-sink/capture-store.ts`,
-  `${D49_SRC}ipc/connector-rpc-handlers/agent-writes.ts`,
-];
-
 /** Production files under packages/gateway/src (no test file, no test helper), unless allowed. */
 function d49ScanNames(
   files: readonly FileEntry[],
@@ -2557,13 +2538,13 @@ function d49IsMemberPatternTarget(code: string, index: number): boolean {
   return false;
 }
 
-export function checkAgentDoorLegacyTable(files: readonly FileEntry[]): Violation[] {
+export function checkAgentDoorWindowRetired(files: readonly FileEntry[]): Violation[] {
   return [
     ...d49ScanNames(
       files,
-      D49_LEGACY_TABLE_RE,
-      D49_LEGACY_TABLE_ALLOWED,
-      "agent-door-legacy-table-consulted-once",
+      D49_RETIRED_NAMES_RE,
+      D49_RETIRED_NAMES_ALLOWED,
+      "agent-door-window-names-absent",
       false,
     ),
     ...d49ScanNames(
@@ -2603,25 +2584,6 @@ export function checkOriginComparison(files: readonly FileEntry[]): Violation[] 
     "origin-compared-once",
     true,
   );
-}
-
-export function checkAgentDoorLegacyFlag(files: readonly FileEntry[]): Violation[] {
-  return [
-    ...d49ScanNames(
-      files,
-      D49_LEGACY_FLAG_RE,
-      D49_LEGACY_FLAG_ALLOWED,
-      "agent-door-legacy-flag-confined",
-      false,
-    ),
-    ...d49ScanNames(
-      files,
-      D49_LEGACY_COUNT_RE,
-      D49_LEGACY_COUNT_ALLOWED,
-      "agent-door-legacy-flag-confined",
-      false,
-    ),
-  ];
 }
 
 export function checkUserMcpCallFacts(files: readonly FileEntry[]): Violation[] {
@@ -4133,7 +4095,7 @@ export function checkBoundCapabilities(files: readonly FileEntry[]): Violation[]
 //     `this.resolveHitlApproval(`;
 // (c) the tool id, the action type and the `IAC_DISCARD` constant are named only by the row table
 //     (`cloud-infra.ts`, `iac-limits.ts`), the executor (frozen set, the discard step), the registry
-//     (the dispatcher pin), `proposable-actions.ts`, `manifest.generated.ts`, the model-offerable
+//     (the dispatcher pin), `manifest.generated.ts`, the model-offerable
 //     never-offered table and the iac runner's routing table.
 // Clause (d) (only `lazy-mesh/iac-runner.ts` builds an iac or kubernetes `ServerSpec`, and only
 // through `wrapIacServerSpec`; D3a added the kubernetes `kube` profile to it) is below. Comments are stripped (strings kept for (c));
@@ -4145,7 +4107,6 @@ const D43_NAME_ALLOWED: readonly string[] = [
   `${D43_BASE}connector-writes/iac-limits.ts`,
   `${D43_BASE}connector-writes/manifest.generated.ts`,
   `${D43_BASE}connector-writes/model-offerable.ts`,
-  `${D43_BASE}proposable-actions.ts`,
   `${D43_BASE}lazy-mesh/iac-runner.ts`,
   D42_EXECUTOR,
 ];
@@ -4781,8 +4742,7 @@ export function checkPackLayerWriters(files: readonly FileEntry[]): Violation[] 
 // (c) the `extension.migrate` consent is raised only by the engine and the RPC path:
 //     `migrationConsentViaGate` and `EXTENSION_MIGRATE_ACTION_TYPE` are named only by the engine and
 //     `ipc/migration-rpc.ts`; the `"extension.migrate"` literal only by the engine, the I2 frozen set
-//     (`engine/executor.ts`, which is what gates it) and the proposability table
-//     (`connectors/proposable-actions.ts`, which denies it); `createMigrationEngine` only by the
+//     (`engine/executor.ts`, which is what gates it); `createMigrationEngine` only by the
 //     engine and `platform/migration-boot.ts`, the one production constructor; and the
 //     `migrationEngine` option that carries the built instance only by `platform/assemble.ts` (which
 //     sets it), `ipc/server/options.ts` (which types it) and `ipc/server/dispatchers.ts` (which hands
@@ -4835,7 +4795,6 @@ const D34_LITERAL_RE = /["'`]extension\.migrate["'`]/g;
 const D34_LITERAL_ALLOWED: readonly string[] = [
   D34_ENGINE,
   "packages/gateway/src/engine/executor.ts",
-  "packages/gateway/src/connectors/proposable-actions.ts",
 ];
 
 export function checkMigrationConfinement(files: readonly FileEntry[]): Violation[] {
@@ -5827,7 +5786,6 @@ export const RULE_ANCHORS: readonly string[] = [
   "packages/gateway/src/connectors/connector-writes/door-approval-store.ts",
   // D49(a), (c)-(f) (Phase 28 AD3a-2a) -- every site the clauses read by name; any of them moving out
   // of the scan would leave a clause passing over nothing (ipc/capture-rpc.ts is anchored above).
-  "packages/gateway/src/connectors/proposable-actions.ts",
   "packages/gateway/src/connectors/connector-writes/agent-door-runtime.ts",
   "packages/gateway/src/engine/outside-origin.ts",
   "packages/gateway/src/mcp-sink/capture-gate.ts",
@@ -6105,10 +6063,10 @@ async function run(): Promise<void> {
       );
     }
     if (doorApprovalViolations.length > 0) exit = 1;
-    const doorTableViolations = checkAgentDoorLegacyTable(files);
+    const doorTableViolations = checkAgentDoorWindowRetired(files);
     for (const e of doorTableViolations) {
       console.error(
-        `::error file=${e.file},line=${e.line}::D49(a) the legacy proposability table or the agent door's constructor named outside its sites (rule ${e.rule}) — only connectors/proposable-actions.ts and connector-writes/agent-door-runtime.ts consult the table, and createAgentDoor is built only in platform/assemble.ts: ${e.snippet}`,
+        `::error file=${e.file},line=${e.line}::D49(a) a retired deprecation-window name (the proposability table, actDoorRefusal, the capture legacy flag) is back in production source, or the agent door's constructor is named outside its sites (rule ${e.rule}) — createAgentDoor is built only in platform/assemble.ts: ${e.snippet}`,
       );
     }
     if (doorTableViolations.length > 0) exit = 1;
@@ -6133,13 +6091,6 @@ async function run(): Promise<void> {
       );
     }
     if (checkOrderViolations.length > 0) exit = 1;
-    const legacyFlagViolations = checkAgentDoorLegacyFlag(files);
-    for (const e of legacyFlagViolations) {
-      console.error(
-        `::error file=${e.file},line=${e.line}::D49(f) the capture legacy flag or its count named outside its sites (rule agent-door-legacy-flag-confined): ${e.snippet}`,
-      );
-    }
-    if (legacyFlagViolations.length > 0) exit = 1;
     const callFactsViolations = checkUserMcpCallFacts(files);
     for (const e of callFactsViolations) {
       console.error(

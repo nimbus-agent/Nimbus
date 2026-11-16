@@ -86,11 +86,6 @@ export interface CaptureRow {
   readonly expiresAt: number | null;
   readonly outcomeRef: string | null;
   readonly errorCode: string | null;
-  /**
-   * Agent door (AD3a-2a): true on an action proposal queued under the deprecation window, i.e. one
-   * the earlier act door accepted that the owner's per-door list would not (V97 `legacy`).
-   */
-  readonly agentDoorLegacy: boolean;
 }
 
 export const LINK_RELATIONS = [
@@ -164,7 +159,7 @@ export interface ActionPayload {
 
 /**
  * The sink's view of a proposability verdict. Structural on purpose: `mcp-sink/` may not import
- * `connectors/` (D32(f)), so `connectors/proposable-actions.ts`'s richer type is assigned to this.
+ * `connectors/` (D32(f)), so the door runtime's own verdict type is assigned to this.
  */
 export type ActionVerdict =
   | {
@@ -183,30 +178,22 @@ export type ActionVerdict =
     }
   /**
    * An approved tool whose listed definition changed (AD3a-2a, D-AD-9): refused with
-   * `ERR_AGENT_TOOL_SUSPENDED` until the owner approves it again by name. Never a legacy case.
+   * `ERR_AGENT_TOOL_SUSPENDED` until the owner approves it again by name.
    */
   | { readonly kind: "suspended" }
   | { readonly kind: "denied"; readonly class: string }
   | { readonly kind: "unknown" };
 
 /**
- * Why a proposable action is proposable. `approved`: the owner approved the tool for agents by name
- * and every other condition holds. `legacy_unapproved` / `legacy_mail_send` / `legacy_user_mcp`:
- * accepted for now only because the earlier act door accepted it (the deprecation window, OR-AD-9;
- * `legacy_user_mcp` is a tool of a `--model` server the owner has not approved for agents by name);
- * stored `legacy = 1`, counted and warned about.
+ * Why a proposable action is proposable: the owner approved the tool for agents by name and every
+ * other condition holds (invariant I58). It is the only basis since AD3b ended the deprecation window
+ * (a type the earlier act door accepted without that approval is refused); the field stays threaded so
+ * the audit rows that carry it keep their shape.
  */
-export type ActionBasis = "approved" | "legacy_unapproved" | "legacy_mail_send" | "legacy_user_mcp";
+export type ActionBasis = "approved";
 
 /** The fixed class of a proposable verdict that names no basis. */
 export const NO_BASIS_CLASS = "agent_no_basis";
-
-/** True for the three deprecation-window bases. */
-export function isLegacyBasis(basis: ActionBasis | undefined): boolean {
-  return (
-    basis === "legacy_unapproved" || basis === "legacy_mail_send" || basis === "legacy_user_mcp"
-  );
-}
 
 /**
  * Where a proposer label came from: `declared` is the MCP client's own `clientInfo.name`, `kit`
@@ -263,8 +250,6 @@ export interface ActDeps {
  *
  *   approved       the owner approved it for agents and its listed definition passed, in this call,
  *                  the check a submit runs; the summary mode carries no description or schema
- *   legacy         accepted for now only under the deprecation window: the fixed deprecation line,
- *                  never a schema
  *   suspended      the approved definition changed, or the approval is already suspended
  *   unavailable    approved, but not describable now (not configured, not listed, drifted, ...)
  *   undescribed    a type cut from a reply that was full (ask for fewer types)
@@ -285,7 +270,6 @@ export type ActionDescription = { readonly actionType: string } & (
       readonly description?: string;
       readonly inputSchema?: Record<string, unknown>;
     }
-  | { readonly state: "legacy"; readonly deprecation: string }
   | {
       readonly state: "suspended" | "unavailable" | "undescribed" | "not_proposable";
       readonly reason: string;

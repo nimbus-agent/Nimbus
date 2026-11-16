@@ -161,11 +161,22 @@ describe("the order of the submit checks", () => {
 
   test("the refusal is given the verdict's basis", async () => {
     await submitCapture(deps, MCP, ACT);
-    verdict = { kind: "proposable", basis: "legacy_unapproved" };
-    await submitCapture(deps, { clientId: "c2", kind: "mcp" }, ACT);
-    verdict = { kind: "proposable", basis: "legacy_user_mcp" };
-    await submitCapture(deps, { clientId: "c3", kind: "mcp" }, ACT);
-    expect(refusalBasis).toEqual(["approved", "legacy_unapproved", "legacy_user_mcp"]);
+    expect(refusalBasis).toEqual(["approved"]);
+  });
+
+  // AD3b: what the deprecation window accepted is refused at submit, before any destination or
+  // connector read, with the class the verdict names.
+  test.each([
+    ["an unapproved type", "agent_not_approved"],
+    ["a mail send", "agent_never_offered"],
+  ])("%s is refused (the window is over), audited, nothing queued", async (_n, cls) => {
+    verdict = { kind: "denied", class: cls };
+    await expect(submitCapture(deps, MCP, ACT)).rejects.toThrow(
+      `ERR_CAPTURE_ACTION_NOT_PROPOSABLE: github.issue.create cannot be proposed (${cls})`,
+    );
+    expect(calls).toEqual(["classify"]);
+    expect(captureCount()).toBe(0);
+    expect(auditRows()).toHaveLength(1);
   });
 });
 
@@ -200,41 +211,15 @@ describe("the definition check (5c)", () => {
     expect(captureCount()).toBe(0);
   });
 
-  test.each([["legacy_unapproved" as const], ["legacy_mail_send" as const]])(
-    "a %s basis never calls it and stores legacy = 1",
-    async (basis) => {
-      verdict = { kind: "proposable", basis };
-      const out = await submitCapture(deps, MCP, ACT);
-      expect(calls).not.toContain("verify");
-      expect(out.legacy).toBe(true);
-      expect(new CaptureStore(db).get(out.id)?.agentDoorLegacy).toBe(true);
-      const audit = JSON.parse(auditRows().at(-1)?.action_json as string);
-      expect(audit).toMatchObject({ outcome: "proposed", basis });
-    },
-  );
-
-  test("an approved proposal stores legacy = 0, replies without the key, and its audit row names the basis", async () => {
+  test("an approved proposal replies with the three fields, and its audit row names the basis", async () => {
     const out = await submitCapture(deps, MCP, ACT);
     expect(Object.keys(out).sort((a, b) => a.localeCompare(b))).toEqual([
       "expiresAt",
       "id",
       "state",
     ]);
-    expect(new CaptureStore(db).get(out.id)?.agentDoorLegacy).toBe(false);
     expect(JSON.parse(auditRows().at(-1)?.action_json as string)).toMatchObject({
       basis: "approved",
-    });
-  });
-
-  test("a legacy_user_mcp verdict is accepted as the other legacy bases are: no definition check, stored legacy = 1, the reply says so", async () => {
-    verdict = { kind: "proposable", basis: "legacy_user_mcp" };
-    Reflect.deleteProperty(deps, "verifyActionDefinition");
-    const out = await submitCapture(deps, MCP, ACT);
-    expect(calls).toEqual(["classify", "refusal", "configured"]);
-    expect(out.legacy).toBe(true);
-    expect(new CaptureStore(db).get(out.id)?.agentDoorLegacy).toBe(true);
-    expect(JSON.parse(auditRows().at(-1)?.action_json as string)).toMatchObject({
-      basis: "legacy_user_mcp",
     });
   });
 });
@@ -291,8 +276,6 @@ describe("the payload cap follows the verdict (only a bound row may be large)", 
       "an approved type that is not bound",
       { kind: "proposable", basis: "approved" } as ActionVerdict,
     ],
-    ["a legacy type", { kind: "proposable", basis: "legacy_unapproved" } as ActionVerdict],
-    ["a user-MCP type", { kind: "proposable", basis: "legacy_user_mcp" } as ActionVerdict],
   ])("%s over 65,536 bytes is refused, audited, and lists nothing", async (_n, v) => {
     verdict = v;
     expect(await codeOf(submitCapture(deps, MCP, actOfBytes(ORDINARY + 1)))).toBe(
@@ -333,11 +316,5 @@ describe("a proposable verdict with no basis fails closed", () => {
     expect(calls).toEqual(["classify"]);
     expect(captureCount()).toBe(0);
     expect(auditRows()).toHaveLength(1);
-  });
-
-  test("a legacy_user_mcp basis is a basis like any other and goes through", async () => {
-    verdict = { kind: "proposable", basis: "legacy_user_mcp" };
-    const out = await submitCapture(deps, MCP, ACT);
-    expect(out.state).toBe("proposed");
   });
 });

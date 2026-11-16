@@ -1,9 +1,10 @@
 // packages/gateway/src/connectors/connector-writes/agent-door-runtime.ts
 // The agent door's runtime (Phase 28 AD3a-2a, D-2; invariant I58): the functions the MCP capture
-// gate and the act wiring are given, built over live reads. `createAgentDoor` is the ONLY place the
-// legacy proposability table (`ACTION_PROPOSABILITY`, `PROPOSABLE_WRITE_TOOLS`) is consulted for a
-// first-party type (static D49(a)); `mcp-sink/` cannot import `connectors/` (D32(f)), so the gate
-// receives these functions by injection.
+// gate and the act wiring are given, built over live reads. Since AD3b the verdict is a function of
+// the write table and the owner's per-door list ONLY: there is no earlier table to fall back to, so
+// a type nothing routes to, or that the owner has not approved by name, is never proposable.
+// `createAgentDoor` is built in one place (static D49(a)); `mcp-sink/` cannot import `connectors/`
+// (D32(f)), so the gate receives these functions by injection.
 //
 // EVERY function reads its facts at the call: the shared enablement (V83), the door approval (V97),
 // the Terraform directories (V85), the Kubernetes pairs (V86), the Obsidian model approval, the
@@ -13,15 +14,13 @@
 // `verdict` is synchronous and does no connector I/O. It decides, in this order:
 //   1. a user-MCP (`mcp_*`) type: its own steps (AD5a, D-2), see `userMcpVerdict`: unknown for a
 //      type that names no server and tool, denied for an unregistered server, `suspended` for a
-//      suspended agent approval (even on a `--model` server), `approved` for a tool the owner
-//      approved for agents by name while policy allows, else the classifier's legacy answer as
-//      `legacy_user_mcp`;
-//   2. no row: the legacy table's answer, unchanged (a type no row routes to is never `approved`);
-//   3. the tool's approval is SUSPENDED: `suspended` (never a legacy case, D-AD-15);
+//      suspended agent approval, `approved` for a tool the owner approved for agents by name while
+//      policy allows, else denied (`agent_not_approved`);
+//   2. no row routes to the type: `unknown` (or `unroutable` when a row names it);
+//   3. the tool's approval is SUSPENDED: `suspended`;
 //   4. `agentOffered`: `proposable` with basis `approved` (and `boundInput` for a bound row);
-//   5. a type the legacy table accepts: `proposable` with a legacy basis (the deprecation window,
-//      OR-AD-9; the seven mail sends carry their own basis);
-//   6. otherwise `denied` with a fixed class that says which condition failed.
+//   5. otherwise `denied` with a fixed class that says which condition failed (the seven mail
+//      sends are `agent_never_offered`).
 import type { Database } from "bun:sqlite";
 import { serviceOf } from "../../engine/service-of.ts";
 import type { UserMcpCallFacts } from "../../engine/types.ts";
@@ -39,19 +38,11 @@ import type { EnforcedPolicy } from "../../policy/policy-gate.ts";
 import { constantTimeStringEqual } from "../../util/timing-safe-compare.ts";
 import { mcpClientToolKey } from "../lazy-mesh/tool-map.ts";
 import {
-  type ActionClassification,
-  type ClassifyContext,
-  classifyActionType,
-  PROPOSABLE_WRITE_TOOLS,
-  proposableWriteTool,
-} from "../proposable-actions.ts";
-import {
   getUserMcpConnector,
   USER_MCP_SERVICE_ID_PATTERN,
   userMcpActionParts,
 } from "../user-mcp-store.ts";
 import {
-  AGENT_DOOR_MAIL_SEND_TOOL_IDS,
   type AgentOfferFacts,
   agentDoorPolicyAllows,
   agentDoorRow,
@@ -59,7 +50,6 @@ import {
 } from "./agent-door.ts";
 import { checkAgentToolDefinition, type DefinitionCheck } from "./agent-door-definition.ts";
 import { type DescribeScope, describeApprovedWrite } from "./agent-door-describe.ts";
-import { legacyNoticeFor, legacyUserMcpPatternNotice } from "./agent-door-legacy.ts";
 import { type DoorApproval, getDoorApproval, listDoorApprovals } from "./door-approval-store.ts";
 import {
   getModelWriteEnablement,
@@ -72,7 +62,6 @@ import { getK8sGrants } from "./k8s-grants.ts";
 import { beforeReaderMissing, prepareToolMissing } from "./listed-support.ts";
 import { isModelOfferableRow, MODEL_NEVER_OFFERED_TOOL_IDS } from "./model-offerable.ts";
 import {
-  actDoorRefusal,
   CHATOPS_CHANNEL_REFUSAL,
   isChatopsDestinationRow,
   modelWriteRefusal,
@@ -84,6 +73,12 @@ import type { ConnectorWriteRow } from "./types.ts";
 
 /** The most types `capture.status` advertises. */
 const ACCEPTED_TYPES_MAX = 200;
+
+/** What the door asks of the user-MCP policy; false when the accessor is absent or throws. */
+export interface UserMcpPolicyContext {
+  /** `user_mcp_model_access` per the LIVE resolved policy. */
+  userMcpModelAccessAllowed(): boolean;
+}
 
 /** What the runtime reads; every member is read at the call. */
 export interface AgentDoorDeps {
@@ -110,8 +105,8 @@ export interface AgentDoorDeps {
   readonly userMcpNetworkNote?: (netHosts: readonly string[]) => string | undefined;
   /** The `[tribal]` KB destinations, read per call; a throw refuses a KB-capable row. */
   readonly tribalKbConfig: () => TribalKbConfig | undefined;
-  /** What `classifyActionType` needs for a user-MCP type. */
-  readonly classifyContext: ClassifyContext;
+  /** The user-MCP policy read: whether `user_mcp_model_access` is on in the LIVE resolved policy. */
+  readonly userMcpPolicy: UserMcpPolicyContext;
   readonly isServiceConfigured: (service: string) => Promise<boolean>;
   readonly now: () => number;
   /** Credential scopes per service, for the scope-gated writes; absent makes no claim. */
@@ -131,12 +126,12 @@ export type DefinitionVerification =
 
 /**
  * What the owner's prompt showed about a user-MCP call (AD5a review round 2): the registration's
- * creation time, and for an approved tool the full definition hash; `null` for a legacy call, which
- * has no approval. The post-answer check refuses when the world is no longer the one shown.
+ * creation time and the full definition hash of the approval. The post-answer check refuses when
+ * the world is no longer the one shown.
  */
 export interface UserMcpCallBinding {
   readonly registeredAt: number;
-  readonly definitionSha256: string | null;
+  readonly definitionSha256: string;
 }
 
 export interface AgentDoor {
@@ -153,9 +148,8 @@ export interface AgentDoor {
    * `proposedAt` (the approval and the post-answer veto pass the stored proposal's `createdAt`; a
    * submit passes none) refuses, for a user-MCP type, a proposal queued against an EARLIER
    * registration of the same server id. `shown` (the post-answer check of a user-MCP call) also
-   * refuses a registration that is not the one the prompt showed and, for an approved tool, an
-   * approval whose hash is not the one the prompt showed; with a `null` hash (a legacy call) it
-   * reads the registration only and lists nothing.
+   * refuses a registration that is not the one the prompt showed and an approval whose hash is not
+   * the one the prompt showed.
    */
   verifyDefinition(
     actionType: string,
@@ -165,16 +159,15 @@ export interface AgentDoor {
   /**
    * The facts the owner's prompt shows for a user-MCP call (AD5a, D-6), read now. An `approved`
    * basis lists the server once, runs the definition check on that listing and takes the description
-   * from the entry whose hash it just compared; a failed check is a refusal (no prompt). A legacy
-   * basis reads the registration only and starts nothing. `proposedAt` is the stored proposal's
-   * creation time.
+   * from the entry whose hash it just compared; a failed check is a refusal (no prompt).
+   * `proposedAt` is the stored proposal's creation time.
    */
   userMcpCallFacts(
     actionType: string,
     basis: ActionBasis,
     proposedAt: number,
   ): Promise<UserMcpCallFactsOutcome>;
-  /** The types `capture.status` advertises now: approved and legacy, configured, sorted. */
+  /** The types `capture.status` advertises now: approved, configured, sorted. */
   acceptedTypes(): Promise<readonly string[]>;
   /**
    * What `capture.describe` returns (AD3a-2b). `undefined`: the summary, from database and Vault
@@ -275,10 +268,7 @@ export function createAgentDoor(deps: AgentDoorDeps): AgentDoor {
     };
   };
 
-  const legacyClassification = (actionType: string): ActionClassification =>
-    classifyActionType(actionType, deps.classifyContext);
-
-  /** Why a row the legacy table does not accept is refused: the first failing condition. */
+  /** Why a row is refused: the first failing condition. */
   const deniedClassFor = (row: ConnectorWriteRow, facts: AgentOfferFacts): string => {
     if (MODEL_NEVER_OFFERED_TOOL_IDS.has(row.toolId)) return AGENT_DENIED_CLASSES.neverOffered;
     if (!isModelOfferableRow(row)) return AGENT_DENIED_CLASSES.notOfferable;
@@ -309,7 +299,7 @@ export function createAgentDoor(deps: AgentDoorDeps): AgentDoor {
       return false;
     }
     try {
-      return deps.classifyContext.userMcpModelAccessAllowed();
+      return deps.userMcpPolicy.userMcpModelAccessAllowed();
     } catch {
       return false;
     }
@@ -325,39 +315,30 @@ export function createAgentDoor(deps: AgentDoorDeps): AgentDoor {
       return { kind: "denied", class: AGENT_DENIED_CLASSES.userMcpNotRegistered };
     }
     const approval = getDoorApproval(deps.db, "agent", parts.serviceId, parts.tool);
-    // 3. A suspended approval is a suspension, even on a `--model` server (never a legacy case).
+    // 3. A suspended approval is a suspension, even on a `--model` server.
     if (approval !== undefined && approval.suspendedAt !== null) return { kind: "suspended" };
-    // 4. The owner approved it for agents by name. An approved tool is never downgraded to the
-    //    legacy case: if policy refuses it, it is refused.
-    if (approval !== undefined) {
-      return userMcpAgentPolicyAllows()
-        ? { kind: "proposable", basis: "approved" }
-        : { kind: "denied", class: AGENT_DENIED_CLASSES.policy };
-    }
-    // 5. Otherwise the earlier act door's rule, unchanged (a `--model` server while policy allows).
-    const legacy = legacyClassification(actionType);
-    if (legacy.kind === "proposable") return { kind: "proposable", basis: "legacy_user_mcp" };
-    // 6. Refused, with the classifier's class.
-    return legacy.kind === "denied"
-      ? legacy
-      : { kind: "denied", class: AGENT_DENIED_CLASSES.notApproved };
+    // 4. Not approved for agents by name: refused. A `--model` grant is the model's, not an agent's.
+    if (approval === undefined) return { kind: "denied", class: AGENT_DENIED_CLASSES.notApproved };
+    // 5. Approved by name: proposable while policy allows both capabilities (fail closed).
+    return userMcpAgentPolicyAllows()
+      ? { kind: "proposable", basis: "approved" }
+      : { kind: "denied", class: AGENT_DENIED_CLASSES.policy };
   };
 
   const verdict = (actionType: string): ActionVerdict => {
     // 1. A user-MCP type: its own steps (never a first-party row, never an extension).
     if (isUserMcpType(actionType)) return userMcpVerdict(actionType);
-    // 2. No row routes to the type: the legacy table's own answer (never `approved`).
+    // 2. No row routes to the type: never proposable (a gateway-internal or unknown type, or a type
+    //    several rows share with no tiebreak).
     const row = agentDoorRow(actionType, rows);
     if (row === undefined) {
       const named = rows.some((r) => r.actionType === actionType);
-      if (named) return { kind: "denied", class: AGENT_DENIED_CLASSES.unroutable };
-      const legacy = legacyClassification(actionType);
-      return legacy.kind === "proposable"
-        ? { kind: "proposable", basis: "legacy_unapproved" }
-        : legacy;
+      return named
+        ? { kind: "denied", class: AGENT_DENIED_CLASSES.unroutable }
+        : { kind: "unknown" };
     }
     const facts = factsOf(row);
-    // 3. A suspended approval is a suspension, never a legacy case (D-AD-15).
+    // 3. A suspended approval is a suspension.
     if (facts.approval !== undefined && facts.approval.suspendedAt !== null) {
       return { kind: "suspended" };
     }
@@ -368,17 +349,7 @@ export function createAgentDoor(deps: AgentDoorDeps): AgentDoor {
         ? { kind: "proposable", basis: "approved" }
         : { kind: "proposable", basis: "approved", boundInput: true };
     }
-    // 5. The deprecation window: a type the earlier act door accepted (OR-AD-9, OR-AD-15).
-    const legacy = legacyClassification(actionType);
-    if (legacy.kind === "proposable") {
-      return {
-        kind: "proposable",
-        basis: AGENT_DOOR_MAIL_SEND_TOOL_IDS.has(row.toolId)
-          ? "legacy_mail_send"
-          : "legacy_unapproved",
-      };
-    }
-    // 6. Refused, with the condition that failed.
+    // 5. Refused, with the condition that failed.
     return { kind: "denied", class: deniedClassFor(row, facts) };
   };
 
@@ -390,8 +361,7 @@ export function createAgentDoor(deps: AgentDoorDeps): AgentDoor {
     if (basis === undefined) return undefined;
     // No destination rule exists for a tool the gateway does not understand (D-2).
     if (isUserMcpType(actionType)) return undefined;
-    if (basis === "approved") return approvedRefusal(actionType, input);
-    return legacyRefusal(actionType, input);
+    return approvedRefusal(actionType, input);
   };
 
   // The model door's check, with the same live ChatOps bindings and KB config (the shape of
@@ -410,30 +380,6 @@ export function createAgentDoor(deps: AgentDoorDeps): AgentDoor {
       throw err;
     }
     return modelWriteRefusal(row.toolId, input, { chatops, kb: deps.tribalKbConfig() });
-  };
-
-  // The act door's refusal exactly as it ran before AD3a-2a (`createActionDestinationRefusal`): the
-  // routing table's tool, a policy or KB accessor that throws read as "cannot tell".
-  const legacyRefusal = (
-    actionType: string,
-    input: Readonly<Record<string, unknown>>,
-  ): string | undefined => {
-    const tool = proposableWriteTool(actionType);
-    if (tool === undefined) return undefined;
-    let chatops: EnforcedPolicy["chatops"] | undefined;
-    try {
-      chatops = deps.enforcedPolicy()?.chatops;
-    } catch {
-      chatops = undefined;
-    }
-    let kb: TribalKbConfig | undefined;
-    let kbUnreadable = false;
-    try {
-      kb = deps.tribalKbConfig();
-    } catch {
-      kbUnreadable = true;
-    }
-    return actDoorRefusal(tool, input, { chatops, kb, kbUnreadable });
   };
 
   const refused = (
@@ -495,8 +441,7 @@ export function createAgentDoor(deps: AgentDoorDeps): AgentDoor {
   type UserMcpParts = NonNullable<ReturnType<typeof userMcpActionParts>>;
 
   /**
-   * The registration half of every user-MCP check, one row read and nothing else (a legacy call is
-   * judged by this alone and starts no server): the server is registered, the proposal is not older
+   * The registration half of every user-MCP check, one row read and nothing else: the server is registered, the proposal is not older
    * than the registration, and, after an answer, it is the registration the prompt showed.
    */
   const registrationStanding = (
@@ -539,7 +484,7 @@ export function createAgentDoor(deps: AgentDoorDeps): AgentDoor {
     // After an answer: the approval must be the one the prompt showed. A re-approval is not a
     // problem with the tool, so it marks nothing and stores no suspension code.
     if (
-      shown?.definitionSha256 != null &&
+      shown !== undefined &&
       !constantTimeStringEqual(approval.definitionSha256, shown.definitionSha256)
     ) {
       return refused("ERR_CAPTURE_ACTION_NOT_PROPOSABLE", DEFINITION_REFUSALS.reapproved);
@@ -605,44 +550,11 @@ export function createAgentDoor(deps: AgentDoorDeps): AgentDoor {
     };
   };
 
-  /**
-   * A legacy call after the owner's answer: the door's verdict, derived again from the live policy,
-   * the `--model` grant and the per-door table, must still be the legacy case the prompt was shown
-   * for. An approval made while the prompt was open is not the basis the owner answered on (and a
-   * suspended one is a suspension); a lockoff or a withdrawn grant refuses. Nothing is marked.
-   */
-  const legacyStillStands = (actionType: string): DefinitionVerification => {
-    // `mcp_action` is the submit gate's own check, not the verdict's: read here, fail closed.
-    const enforced = livePolicy();
-    if (enforced === undefined || enforced.capabilitiesDisabled.has(MCP_ACTION_CAPABILITY)) {
-      return refused("ERR_CAPTURE_ACTION_NOT_PROPOSABLE", DEFINITION_REFUSALS.noLongerAllowed);
-    }
-    const v = userMcpVerdict(actionType);
-    if (v.kind === "suspended") {
-      return refused("ERR_AGENT_TOOL_SUSPENDED", DEFINITION_REFUSALS.suspended);
-    }
-    if (v.kind !== "proposable") {
-      return refused("ERR_CAPTURE_ACTION_NOT_PROPOSABLE", DEFINITION_REFUSALS.noLongerAllowed);
-    }
-    return v.basis === "legacy_user_mcp"
-      ? { ok: true }
-      : refused("ERR_CAPTURE_ACTION_NOT_PROPOSABLE", DEFINITION_REFUSALS.reapproved);
-  };
-
   const verifyUserMcpDefinition = async (
     actionType: string,
     proposedAt: number | undefined,
     shown: UserMcpCallBinding | undefined,
   ): Promise<DefinitionVerification> => {
-    // A legacy call (no approval was shown): database reads only, never a listing.
-    if (shown !== undefined && shown.definitionSha256 == null) {
-      const parts = userMcpActionParts(actionType);
-      if (parts === undefined) {
-        return refused("ERR_CAPTURE_ACTION_NOT_PROPOSABLE", DEFINITION_REFUSALS.notApproved);
-      }
-      const registered = registrationStanding(parts, proposedAt, shown);
-      return registered.ok ? legacyStillStands(actionType) : registered;
-    }
     return (await checkUserMcpDefinition(actionType, proposedAt, undefined, shown)).verification;
   };
 
@@ -683,32 +595,30 @@ export function createAgentDoor(deps: AgentDoorDeps): AgentDoor {
   ): Promise<UserMcpCallFactsOutcome> => {
     const parts = userMcpActionParts(actionType);
     if (parts === undefined) return { ok: false, detail: DEFINITION_REFUSALS.notApproved };
-    // An approved basis: the listing, the check and the description come from ONE pass.
-    let approval: UserMcpCallFacts["approval"] = null;
-    if (basis === "approved") {
-      const checked = await checkUserMcpDefinition(actionType, proposedAt);
-      if (!checked.ok) {
-        const v = checked.verification;
-        return v.ok
-          ? { ok: false, detail: DEFINITION_REFUSALS.notApproved }
-          : {
-              ok: false,
-              ...(v.code === "ERR_AGENT_TOOL_SUSPENDED" ? { code: v.code } : {}),
-              detail: v.detail,
-            };
-      }
-      approval = {
-        approvedAt: checked.approval.approvedAt,
-        definitionSha256: checked.approval.definitionSha256,
-        description: descriptionOf(checked.entry),
-      };
+    // Fail closed on any basis but the one that exists.
+    if (basis !== "approved") return { ok: false, detail: DEFINITION_REFUSALS.notApproved };
+    // The listing, the check and the description come from ONE pass.
+    const checked = await checkUserMcpDefinition(actionType, proposedAt);
+    if (!checked.ok) {
+      const v = checked.verification;
+      return v.ok
+        ? { ok: false, detail: DEFINITION_REFUSALS.notApproved }
+        : {
+            ok: false,
+            ...(v.code === "ERR_AGENT_TOOL_SUSPENDED" ? { code: v.code } : {}),
+            detail: v.detail,
+          };
     }
-    // The registration, read now (a legacy basis reads nothing else and starts nothing).
+    const approval: UserMcpCallFacts["approval"] = {
+      approvedAt: checked.approval.approvedAt,
+      definitionSha256: checked.approval.definitionSha256,
+      description: descriptionOf(checked.entry),
+    };
+    // The registration, read now.
     const registration = getUserMcpConnector(deps.db, parts.serviceId);
     if (registration === null) return { ok: false, detail: DEFINITION_REFUSALS.notRegistered };
-    // Either basis: a proposal queued against an EARLIER registration of this server id (removed and
-    // registered again, possibly with another command) is never run against the new code. A legacy
-    // basis needs no listing for this; it reads the row above and starts nothing.
+    // A proposal queued against an EARLIER registration of this server id (removed and registered
+    // again, possibly with another command) is never run against the new code.
     if (proposedAt < registration.created_at) {
       return { ok: false, detail: DEFINITION_REFUSALS.earlierRegistration };
     }
@@ -792,10 +702,7 @@ export function createAgentDoor(deps: AgentDoorDeps): AgentDoor {
   const configuredTypes = async (): Promise<
     readonly { readonly type: string; readonly verdict: ActionVerdict }[]
   > => {
-    const types = new Set<string>([
-      ...rows.map((r) => r.actionType),
-      ...Object.keys(PROPOSABLE_WRITE_TOOLS),
-    ]);
+    const types = new Set<string>(rows.map((r) => r.actionType));
     const out: { type: string; verdict: ActionVerdict }[] = [];
     const configured = new Map<string, boolean>();
     for (const type of [...types].sort((a, b) => a.localeCompare(b))) {
@@ -815,18 +722,6 @@ export function createAgentDoor(deps: AgentDoorDeps): AgentDoor {
     }
     return out;
   };
-
-  const userMcpPatternServices = (): readonly string[] => {
-    try {
-      return deps.classifyContext.userMcpModelAccessAllowed()
-        ? [...deps.classifyContext.modelAccessServices()]
-        : [];
-    } catch {
-      return [];
-    }
-  };
-
-  const userMcpPatterns = (): readonly string[] => userMcpPatternServices().map((id) => `${id}.*`);
 
   /**
    * Every user-MCP tool the owner approved for agents by name, with the verdict now (database reads
@@ -860,7 +755,6 @@ export function createAgentDoor(deps: AgentDoorDeps): AgentDoor {
         .filter((t) => t.verdict.kind === "proposable")
         .map((t) => t.type),
     );
-    out.push(...userMcpPatterns());
     return out.toSorted((a, b) => a.localeCompare(b)).slice(0, ACCEPTED_TYPES_MAX);
   };
 
@@ -890,7 +784,7 @@ export function createAgentDoor(deps: AgentDoorDeps): AgentDoor {
       ? { actionType: type, state: "suspended", reason: DEFINITION_REFUSALS.suspended }
       : { actionType: type, state: "approved", wave: null, typedConfirm: false, bound: false };
 
-  /** A suspended or legacy type, or an approved one in the summary (no description, no schema). */
+  /** A suspended type, or an approved one in the summary (no description, no schema). */
   const summaryEntry = (type: string, v: ActionVerdict): ActionDescription => {
     if (v.kind === "suspended") {
       return { actionType: type, state: "suspended", reason: DEFINITION_REFUSALS.suspended };
@@ -898,7 +792,7 @@ export function createAgentDoor(deps: AgentDoorDeps): AgentDoor {
     const row =
       v.kind === "proposable" && v.basis === "approved" ? agentDoorRow(type, rows) : undefined;
     return row === undefined
-      ? { actionType: type, state: "legacy", deprecation: legacyNoticeFor(type) }
+      ? { actionType: type, state: "not_proposable", reason: DESCRIBE_NOT_PROPOSABLE_REASON }
       : approvedSummary(type, row);
   };
 
@@ -906,13 +800,6 @@ export function createAgentDoor(deps: AgentDoorDeps): AgentDoor {
   const describeSummary = async (): Promise<readonly ActionDescription[]> => {
     const entries = (await configuredTypes()).map((t) => summaryEntry(t.type, t.verdict));
     for (const t of approvedUserMcpTypes()) entries.push(userMcpSummary(t.type, t.verdict));
-    for (const id of userMcpPatternServices()) {
-      entries.push({
-        actionType: `${id}.*`,
-        state: "legacy",
-        deprecation: legacyUserMcpPatternNotice(id),
-      });
-    }
     return entries
       .toSorted((a, b) => a.actionType.localeCompare(b.actionType))
       .slice(0, ACCEPTED_TYPES_MAX);
@@ -928,7 +815,7 @@ export function createAgentDoor(deps: AgentDoorDeps): AgentDoor {
 
   /**
    * A tool of a user-registered server, described only after the SAME definition check a submit
-   * runs passes in this call (D-8, OR-AD-25). A legacy, unapproved, suspended or unregistered tool
+   * runs passes in this call (D-8, OR-AD-25). An unapproved, suspended or unregistered tool
    * is answered from database reads alone: no listing, no description, no schema, no server started.
    */
   const describeUserMcp = async (type: string, call: DescribeCall): Promise<ActionDescription> => {
@@ -938,10 +825,6 @@ export function createAgentDoor(deps: AgentDoorDeps): AgentDoor {
     }
     if (v.kind !== "proposable") {
       return { actionType: type, state: "not_proposable", reason: DESCRIBE_NOT_PROPOSABLE_REASON };
-    }
-    // The deprecation window: the fixed line, never a schema and never a listing (OR-AD-18).
-    if (v.basis !== "approved") {
-      return { actionType: type, state: "legacy", deprecation: legacyNoticeFor(type) };
     }
     const parts = userMcpActionParts(type);
     if (parts === undefined) {
@@ -1030,9 +913,7 @@ export function createAgentDoor(deps: AgentDoorDeps): AgentDoor {
     }
     // A suspended type is reported only for a configured service, as the summary lists it.
     if (v.kind === "suspended") return summaryEntry(type, v);
-    // 4. The deprecation window: the fixed line, never a schema and never a listing (OR-AD-18).
-    if (v.basis !== "approved") return summaryEntry(type, v);
-    // 5. An approved type: listed once per service and judged by the submit path's own check.
+    // 4. An approved type: listed once per service and judged by the submit path's own check.
     return describeApproved(type, call);
   };
 
