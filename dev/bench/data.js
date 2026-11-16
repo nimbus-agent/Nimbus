@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794815703845,
+  "lastUpdate": 1794816790918,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
-            "name": "nimbus-release-bot[bot]",
-            "username": "nimbus-release-bot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "cad14d121ca486e1b02dfc48c94d95889bec6f79",
-          "message": "chore: release main (#1369)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>6.0.0</summary>\n\n##\n[6.0.0](https://github.com/nimbus-agent/Nimbus/compare/v5.0.1...v6.0.0)\n(2026-08-28)\n\n\n### ⚠ BREAKING CHANGES\n\n* **llm:** remove the inert remote_model key and document the vendor\ntables ([#1368](https://github.com/nimbus-agent/Nimbus/issues/1368))\n* **llm:** ledger the ask intent classifier, and three defects found on\na live install\n([#1366](https://github.com/nimbus-agent/Nimbus/issues/1366))\n\n### Bug Fixes\n\n* **llm:** ledger the ask intent classifier, and three defects found on\na live install\n([#1366](https://github.com/nimbus-agent/Nimbus/issues/1366))\n([8202ec6](https://github.com/nimbus-agent/Nimbus/commit/8202ec64199c524ff436f3d4d04822e9c9a8620c))\n* **llm:** remove the inert remote_model key and document the vendor\ntables ([#1368](https://github.com/nimbus-agent/Nimbus/issues/1368))\n([0ca8232](https://github.com/nimbus-agent/Nimbus/commit/0ca82323f26dbd10dc59efa28eab3c43ba9c593e))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
-          "timestamp": "2026-08-28T15:59:56Z",
-          "tree_id": "57884ad0bc7c4d62d5bde363fa313f1daadf542d",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/cad14d121ca486e1b02dfc48c94d95889bec6f79"
-        },
-        "date": 1787933984666,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 315.8752882499968,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 314.1019683000042,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 269.6965686499996,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
+            "name": "nimbus-release-bot[bot]",
+            "username": "nimbus-release-bot[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "fd0444dc79ab0ac259a4ac21d0c9473403ae5236",
+          "message": "chore: release main (#2025)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>10.65.0</summary>\n\n##\n[10.65.0](https://github.com/nimbus-agent/Nimbus/compare/v10.64.0...v10.65.0)\n(2026-11-16)\n\n\n### Features\n\n* **gateway:** add nimbus oncall handoff, a read-only shift brief from\nthe local index\n([#2018](https://github.com/nimbus-agent/Nimbus/issues/2018))\n([d2d81a7](https://github.com/nimbus-agent/Nimbus/commit/d2d81a71c7dd4e41fb262de621c332991df2ff8b))\n* **gateway:** nimbus pre-mortem proposes a paused deploy-failure\nwatcher beside the incident one\n([#2020](https://github.com/nimbus-agent/Nimbus/issues/2020))\n([f1f43d6](https://github.com/nimbus-agent/Nimbus/commit/f1f43d6b420149f64b8575141d92188bd6b908b2))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
+          "timestamp": "2026-11-16T10:05:22+02:00",
+          "tree_id": "62afee965153dc49c52333ceeb31b3abac8f07fa",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/fd0444dc79ab0ac259a4ac21d0c9473403ae5236"
+        },
+        "date": 1794816787335,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 178.59920439999968,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 179.47479750000258,
             "unit": "ms"
           }
         ]
