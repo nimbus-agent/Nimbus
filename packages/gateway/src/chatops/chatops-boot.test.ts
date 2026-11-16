@@ -659,6 +659,163 @@ describe("buildChatopsBoot — full production graph", () => {
     expect(listEgress(db, { limit: 10 })).toHaveLength(0);
   });
 
+  describe("I23 amendment: the owner's pinned watcher channel", () => {
+    const PIN = "C0123ABCD";
+    const pinned = { watcherPinnedChannel: PIN, orgPolicyActive: () => false } as const;
+
+    test("with no org ChatOps policy the pin posts as slack, ledgered chatops.watcherNotice, and nothing else", async () => {
+      const h = await buildHarness({ policyGate: { enforced: () => enforcedWith({}) }, ...pinned });
+      expect(await h.boot.postWatcherNoticePinned("Nimbus watcher notice")).toBe(1);
+      expect(h.posts.map((p) => [p.platform, p.channel])).toEqual([["slack", PIN]]);
+      const rows = listEgress(db, { limit: 10 });
+      expect(rows.map((r) => r.method)).toEqual(["chatops.watcherNotice"]);
+      expect(rows[0]?.sourceType).toBe("chatops");
+    });
+
+    test("(b) when the org policy declares ChatOps channels, a pin it does not list as notify posts nothing and ledgers nothing", async () => {
+      const h = await buildHarness({ ...pinned });
+      // the default harness policy declares C0 with notify C_ALERT: the pin is not listed
+      expect(await h.boot.postWatcherNoticePinned("x")).toBe(0);
+      expect(h.posts).toHaveLength(0);
+      expect(listEgress(db, { limit: 10 })).toHaveLength(0);
+    });
+
+    test("when the org policy lists the pin as a notify channel, it posts", async () => {
+      const h = await buildHarness({
+        policyGate: {
+          enforced: () =>
+            enforcedWith({ C0: { namespace: "project:pay", unmapped: "refuse", notify: [PIN] } }),
+        },
+        ...pinned,
+      });
+      expect(await h.boot.postWatcherNoticePinned("x")).toBe(1);
+      expect(h.posts.map((p) => p.channel)).toEqual([PIN]);
+    });
+
+    test("a channel that is only a COMMAND channel in policy (not notify) is not a listed pin", async () => {
+      const h = await buildHarness({
+        policyGate: {
+          enforced: () =>
+            enforcedWith({
+              [PIN]: { namespace: "project:pay", unmapped: "refuse", notify: [] },
+            }),
+        },
+        ...pinned,
+      });
+      expect(await h.boot.postWatcherNoticePinned("x")).toBe(0);
+      expect(h.posts).toHaveLength(0);
+    });
+
+    test("the policy is read at POST time: a policy that appears after boot governs the next post", async () => {
+      let withPolicy = false;
+      const h = await buildHarness({
+        policyGate: {
+          enforced: () =>
+            withPolicy
+              ? enforcedWith({ C0: { namespace: "n", unmapped: "refuse", notify: ["C_OTHER"] } })
+              : enforcedWith({}),
+        },
+        ...pinned,
+      });
+      expect(await h.boot.postWatcherNoticePinned("a")).toBe(1);
+      withPolicy = true;
+      expect(await h.boot.postWatcherNoticePinned("b")).toBe(0);
+      expect(h.posts).toHaveLength(1);
+    });
+
+    test("a signed org policy that declares NO ChatOps channels still governs: the pin is refused (fail closed)", async () => {
+      const h = await buildHarness({
+        policyGate: { enforced: () => enforcedWith({}) },
+        watcherPinnedChannel: PIN,
+        orgPolicyActive: () => true,
+      });
+      expect(await h.boot.postWatcherNoticePinned("x")).toBe(0);
+      expect(h.posts).toHaveLength(0);
+      expect(listEgress(db, { limit: 10 })).toHaveLength(0);
+    });
+
+    test("when the boot cannot tell whether an org policy is active, the pin is governed (fail closed)", async () => {
+      const h = await buildHarness({
+        policyGate: { enforced: () => enforcedWith({}) },
+        watcherPinnedChannel: PIN,
+      });
+      expect(await h.boot.postWatcherNoticePinned("x")).toBe(0);
+      expect(h.posts).toHaveLength(0);
+    });
+
+    test("an org policy that arrives after boot with no channels blocks the next pinned post", async () => {
+      let active = false;
+      const h = await buildHarness({
+        policyGate: { enforced: () => enforcedWith({}) },
+        watcherPinnedChannel: PIN,
+        orgPolicyActive: () => active,
+      });
+      expect(await h.boot.postWatcherNoticePinned("a")).toBe(1);
+      active = true;
+      expect(await h.boot.postWatcherNoticePinned("b")).toBe(0);
+      expect(h.posts).toHaveLength(1);
+    });
+
+    test("a Slack-disabled ChatOps (Teams only) refuses the pin: nothing posts and no row is written", async () => {
+      const h = await buildHarness({
+        cfg: {
+          enabled: true,
+          slackEnabled: false,
+          teamsEnabled: true,
+          botVaultEntry: "chatops-bot",
+          identityCacheTtlSeconds: 900,
+          teamsBotAppId: "app",
+        },
+        policyGate: { enforced: () => enforcedWith({}) },
+        ...pinned,
+      });
+      expect(await h.boot.postWatcherNoticePinned("x")).toBe(0);
+      expect(h.posts).toHaveLength(0);
+      expect(listEgress(db, { limit: 10 })).toHaveLength(0);
+    });
+
+    test("an invalid pin handed to the boot is treated as absent: nothing posts", async () => {
+      for (const bad of ["#general", "D0123456789", "C1", "", " C0123ABCD", "<!here>"]) {
+        const h = await buildHarness({
+          policyGate: { enforced: () => enforcedWith({}) },
+          watcherPinnedChannel: bad,
+          orgPolicyActive: () => false,
+        });
+        expect(await h.boot.postWatcherNoticePinned("x")).toBe(0);
+        expect(h.posts).toHaveLength(0);
+      }
+    });
+
+    test("no pin handed to the boot: nothing posts", async () => {
+      const h = await buildHarness({
+        policyGate: { enforced: () => enforcedWith({}) },
+        orgPolicyActive: () => false,
+      });
+      expect(await h.boot.postWatcherNoticePinned("x")).toBe(0);
+      expect(h.posts).toHaveLength(0);
+    });
+
+    test("(a) the pinned target is accepted by the watcher notice dispatcher ONLY: reply, agent brief and pushed brief refuse it", async () => {
+      const h = await buildHarness({ policyGate: { enforced: () => enforcedWith({}) }, ...pinned });
+      await expect(h.boot.replyTo({ kind: "watcherPinned" }, "x")).rejects.toThrow();
+      expect(h.posts).toHaveLength(0);
+      expect(listEgress(db, { limit: 10 })).toHaveLength(0);
+    });
+
+    test("(c) a ledger append failure posts nothing to the pinned channel and reaches the caller as a rejection", async () => {
+      const h = await buildHarness({ policyGate: { enforced: () => enforcedWith({}) }, ...pinned });
+      db.exec("DROP TABLE egress_ledger");
+      await expect(h.boot.postWatcherNoticePinned("x")).rejects.toThrow();
+      expect(h.posts).toHaveLength(0);
+    });
+
+    test("the pinned post leaves the namespace post untouched: namespace mode never reads the pin", async () => {
+      const h = await buildHarness({ ...pinned });
+      expect(await h.boot.postWatcherNotice("project:pay", "x")).toBe(1);
+      expect(h.posts.map((p) => p.channel)).toEqual(["C_ALERT"]);
+    });
+  });
+
   test("a partial multi-channel failure: one ledger row per channel attempted, the notifier contains it, the watcher stays stamped", async () => {
     const posted: string[] = [];
     const runTool: RunChatopsTool = (_platform, toolId, args) => {

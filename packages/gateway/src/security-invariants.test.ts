@@ -16164,7 +16164,7 @@ describe("I23 (d)-(g) — the ChatOps watcher notice has a construction-bound de
       channel: "C_ATTACKER",
     } as never);
     await n?.whenIdle();
-    expect(n?.namespace).toBe("constructed");
+    expect(n?.destination).toEqual({ kind: "namespace", namespace: "constructed" });
     expect(seen).toHaveLength(1);
     expect(seen[0]).toHaveLength(1);
     expect(String(seen[0]?.[0])).not.toMatch(/attacker|C_ATTACKER/i);
@@ -16179,7 +16179,8 @@ describe("I23 (d)-(g) — the ChatOps watcher notice has a construction-bound de
 
   test("(f) assemble binds the poster to the CONFIG namespace in one place and settles the notifier once", async () => {
     const src = stripComments(await read("packages/gateway/src/platform/assemble.ts"));
-    expect(src.match(/watcherChat\.settle\(/g)).toHaveLength(2);
+    expect(src.match(/watcherChat\.settle\(/g)).toHaveLength(3);
+    expect(src).toContain("chatopsBoot.postWatcherNoticePinned(text)");
     expect(src.match(/settleWatcherChatops\(watcherChat, chatopsBoot\)/g)).toHaveLength(1);
     expect(src).toContain("chatopsBoot.postWatcherNotice(namespace, text)");
     expect(src).toContain("demo: !syncEnabled");
@@ -16192,6 +16193,45 @@ describe("I23 (d)-(g) — the ChatOps watcher notice has a construction-bound de
       (f) => !f.startsWith("packages/gateway/src/config/"),
     );
     expect(readers).toEqual(["packages/gateway/src/platform/assemble.ts"]);
+  });
+
+  test("(h) the pinned watcher channel is named only by the chatops types, dispatcher, boot and assemble (static D17(d))", async () => {
+    expect(
+      await grepRepo(/\bwatcherPinnedChannel\b|\bpostWatcherNoticePinned\b|["']watcherPinned["']/),
+    ).toEqual([
+      "packages/gateway/src/chatops/chatops-boot.ts",
+      "packages/gateway/src/chatops/reply-dispatcher.ts",
+      "packages/gateway/src/chatops/types.ts",
+      "packages/gateway/src/platform/assemble.ts",
+    ]);
+  });
+
+  test("(h) only the watcher-notice dispatcher is built with the pinned resolver", async () => {
+    const src = stripComments(await read("packages/gateway/src/chatops/chatops-boot.ts"));
+    expect(src.match(/pinnedChannelFor/g)?.length).toBe(2);
+    const at = src.indexOf("const watcherNoticeDispatcher = new ReplyDispatcher({");
+    expect(at).toBeGreaterThan(0);
+    const block = src.slice(at, src.indexOf("});", at));
+    expect(block).toContain("post: posts.watcherNotice");
+    expect(block).toContain("pinnedChannelFor");
+    for (const other of ["replyDispatcher", "agentBriefDispatcher", "pushedBriefDispatcher"]) {
+      const o = src.indexOf(`const ${other} = new ReplyDispatcher({`);
+      expect(o).toBeGreaterThan(0);
+      expect(src.slice(o, src.indexOf("});", o)).includes("pinnedChannelFor")).toBe(false);
+    }
+  });
+
+  test("(h) no pack fragment, IPC module or HTTP route can set [watcher.chatops].channel", async () => {
+    const { PACK_SETTABLE_KEYS, checkPackFragment } = await import("./config/pack-settable.ts");
+    expect(PACK_SETTABLE_KEYS.some((k) => k.section.startsWith("watcher"))).toBe(false);
+    expect(checkPackFragment('[watcher.chatops]\nchannel = "C0123ABCD"\n', () => []).ok).toBe(
+      false,
+    );
+    // the section name appears in no IPC handler, HTTP route or federation module
+    const named = (await grepRepo(/watcher\.chatops/)).filter((f) =>
+      /\/(ipc|federation|identity|share|mcp-sink)\//.test(f),
+    );
+    expect(named).toEqual([]);
   });
 
   test("the posted text holds no indexed item text: the engine's notice and the template carry counts and ids only", async () => {

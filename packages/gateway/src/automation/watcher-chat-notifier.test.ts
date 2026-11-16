@@ -63,7 +63,6 @@ function rig(
   over: {
     config?: Partial<NimbusWatcherChatopsToml>;
     poster?: WatcherNoticePoster;
-    initialFailureTimes?: number[];
     onFailure?: (err: unknown) => void;
     warn?: (msg: string, counts: Record<string, number>) => void;
   } = {},
@@ -87,9 +86,6 @@ function rig(
       ((msg, counts) => {
         warns.push({ msg, counts });
       }),
-    ...(over.initialFailureTimes === undefined
-      ? {}
-      : { initialFailureTimes: over.initialFailureTimes }),
   });
   if (n === undefined) throw new Error("rig: notifier is off");
   const poster: WatcherNoticePoster = async (text) => {
@@ -160,7 +156,7 @@ describe("I23 (e): the destination comes only from construction", () => {
       onFailure: () => {},
       warn: () => {},
     });
-    expect(n?.namespace).toBe("platform");
+    expect(n?.destination).toEqual({ kind: "namespace", namespace: "platform" });
     n?.settle(async (...args: unknown[]) => {
       seen.push(args);
       return 1;
@@ -672,27 +668,44 @@ describe("pre-settle hold and delivery state (the scenario table)", () => {
     expect(after.suppressed[UUID_A]).toBe(suppressedA + 1);
   });
 
-  test("S5e: a flush chain stops attempting once the breaker opens", async () => {
+  test("S5e: a flush chain stops attempting once the breaker opens (driven by real failures)", async () => {
+    const tick = (): Promise<void> => new Promise((res) => setTimeout(res, 0));
+    const pending: Array<{ text: string; rej: (e: unknown) => void }> = [];
     const r = rig({
       config: { maxPerHour: 3 },
-      initialFailureTimes: [0, 0],
-      poster: async () => {
-        throw new Error("down");
-      },
+      poster: (text) =>
+        new Promise<number>((_res, rej) => {
+          pending.push({ text, rej });
+        }),
     });
     r.setNow(1 * SEC);
-    for (const id of ["w1", "w2", "w3"]) r.n.notify(notice(id, 0));
+    for (const id of ["w1", "w2"]) r.n.notify(notice(id, 0));
     r.setNow(2 * SEC);
     r.n.settle(async () => 1);
-    expect(counts(flushWarn(r))).toEqual([3, 3, 0, 0, 0]);
+    expect(counts(flushWarn(r))).toEqual([2, 2, 0, 0, 0]);
+    await tick();
+    expect(pending).toHaveLength(1); // the chain is posting w1; w2 waits behind it
+    // two live fires fail while w1 is still in flight: three real failures in all
+    r.n.notify(notice("x1", 0));
+    await tick();
+    expect(pending).toHaveLength(2);
+    pending[1]?.rej(new Error("down"));
+    await tick();
+    r.n.notify(notice("x2", 0));
+    await tick();
+    expect(pending).toHaveLength(3);
+    pending[2]?.rej(new Error("down"));
+    await tick();
+    expect(r.n.snapshot().failures).toBe(2);
+    pending[0]?.rej(new Error("down"));
     await r.n.whenIdle();
-    expect(r.calls).toHaveLength(1);
-    expect(r.failures).toHaveLength(1);
+    expect(r.calls).toHaveLength(3); // w1, x1, x2: w2 was never attempted
     const s = r.n.snapshot();
+    expect(s.failures).toBe(3);
+    expect(s.breakerOpen).toBe(true);
     expect(s.hourly).toBe(0);
     expect(s.inflight).toEqual([]);
-    expect([s.suppressed["w1"], s.suppressed["w2"], s.suppressed["w3"]]).toEqual([1, 1, 1]);
-    expect(s.failures).toBe(3);
+    expect(s.suppressed["w2"]).toBe(1);
     expect(r.warns.filter((w) => w.msg === BREAKER_REASON)).toHaveLength(1);
   });
 
@@ -860,11 +873,114 @@ describe("containment", () => {
 describe("production wiring", () => {
   test("assemble builds the notifier from the config loader with demo: !syncEnabled", () => {
     const src = readFileSync(join(import.meta.dir, "..", "platform", "assemble.ts"), "utf8");
-    const at = src.indexOf("createWatcherChatNotifier({");
+    const at = src.indexOf("const watcherChatopsCfg =");
     expect(at).toBeGreaterThan(0);
-    const block = src.slice(at, at + 700);
+    const block = src.slice(at, at + 1000);
     expect(block).toContain("loadNimbusWatcherChatopsFromConfigDir(paths.configDir)");
+    expect(block).toContain("config: watcherChatopsCfg");
     expect(block).toContain("demo: !syncEnabled");
+    expect(block).toContain("watcherChatopsDestination(watcherChatopsCfg)");
     expect(block).not.toContain("initialFailureTimes");
+  });
+
+  test("the test-only initialFailureTimes seam is gone from production source", () => {
+    expect(readFileSync(join(import.meta.dir, "watcher-chat-notifier.ts"), "utf8")).not.toContain(
+      "initialFailureTimes",
+    );
+    expect(
+      readFileSync(join(import.meta.dir, "..", "platform", "assemble.ts"), "utf8"),
+    ).not.toContain("initialFailureTimes");
+  });
+});
+
+describe("I23 amendment: the pinned channel destination", () => {
+  const PIN = "C0123ABCD";
+  const base = { demo: false, onFailure: () => {} } as const;
+
+  test("a valid pin gives a pinned destination that names no channel", () => {
+    const n = createWatcherChatNotifier({
+      ...base,
+      config: config({ namespace: "", channel: PIN }),
+      warn: () => {},
+    });
+    expect(n?.destination).toEqual({ kind: "pinned" });
+    expect(JSON.stringify(n?.destination)).not.toContain(PIN);
+  });
+
+  test("(5) a demo gateway gets no handler even with a valid pin", () => {
+    expect(
+      createWatcherChatNotifier({
+        demo: true,
+        onFailure: () => {},
+        config: config({ namespace: "", channel: PIN }),
+        warn: () => {},
+      }),
+    ).toBeUndefined();
+  });
+
+  test("namespace and channel together: no handler, one boot warning with the reason", () => {
+    const warns: string[] = [];
+    const n = createWatcherChatNotifier({
+      ...base,
+      config: config({ namespace: "platform", channel: PIN }),
+      warn: (m) => warns.push(m),
+    });
+    expect(n).toBeUndefined();
+    expect(warns).toHaveLength(1);
+    expect(warns[0]).toContain("not both");
+  });
+
+  test("an invalid pin: no handler, one warning, and no fallback to the namespace", () => {
+    for (const channel of ["#general", "D0123456789", "C1"]) {
+      const warns: string[] = [];
+      const n = createWatcherChatNotifier({
+        ...base,
+        config: config({ namespace: "", channel }),
+        warn: (m) => warns.push(m),
+      });
+      expect(n).toBeUndefined();
+      expect(warns).toHaveLength(1);
+    }
+  });
+
+  test("off or demo never warns (a quiet default)", () => {
+    const warns: string[] = [];
+    createWatcherChatNotifier({
+      ...base,
+      config: DEFAULT_WATCHER_CHATOPS_CONFIG,
+      warn: (m) => warns.push(m),
+    });
+    createWatcherChatNotifier({
+      demo: true,
+      onFailure: () => {},
+      config: config({ namespace: "a", channel: PIN }),
+      warn: (m) => warns.push(m),
+    });
+    expect(warns).toEqual([]);
+  });
+
+  test("a notice carrying channel fields posts the fixed text through the one-argument poster", async () => {
+    const seen: unknown[][] = [];
+    let t = 0;
+    const n = createWatcherChatNotifier({
+      ...base,
+      config: config({ namespace: "", channel: PIN }),
+      now: () => t,
+      warn: () => {},
+    });
+    n?.settle(async (...args: unknown[]) => {
+      seen.push(args);
+      return 1;
+    });
+    t = 10 * SEC;
+    n?.notify({
+      ...notice(UUID_A, 0),
+      channel: "C_ATTACKER",
+      channelId: "C_ATTACKER",
+    } as WatcherNotice);
+    await n?.whenIdle();
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toHaveLength(1);
+    expect(String(seen[0]?.[0])).not.toContain("C_ATTACKER");
   });
 });

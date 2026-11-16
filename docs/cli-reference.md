@@ -6049,12 +6049,13 @@ Output is JSON in all forms. Each row carries its full `id`, which is the key `[
 
 #### `[watcher.chatops]` - a ChatOps notice when a watcher fires (2026-11-16)
 
-Off by default. When an opted-in watcher fires, ONE fixed-template notice is posted to the Slack `notify` channels that your signed org policy lists for the namespace you name here. It needs a signed org policy with `notify` channels for that namespace (a solo owner without one cannot use it), `[chatops] enabled = true`, and Slack. Teams is not reachable through this path.
+Off by default. When an opted-in watcher fires, ONE fixed-template notice is posted to ONE destination you choose: either the Slack `notify` channels that your signed org policy lists for the `namespace` you name (this needs that policy), or, with no org policy, the single Slack channel id you pin in `channel`. Set one of the two, not both (both set, or an invalid `channel`, posts nothing and logs one warning). It needs `[chatops] enabled = true` with Slack enabled; Teams is not reachable through this path. A signed org policy always wins over `channel`: while one is active, the pin posts only if the policy lists that channel as a `notify` channel (a policy that says nothing about ChatOps therefore blocks it).
 
 ```toml
 [watcher.chatops]
 enabled = false            # master switch
-namespace = ""             # the policy namespace whose notify channels receive the notice; "" = nothing posts
+namespace = ""             # the policy namespace whose notify channels receive the notice; "" = not used
+channel = ""               # OR one Slack channel id (C... or G..., not a DM, a name or a URL) pinned by you, read at gateway start
 watchers = []              # FULL watcher ids that may post (copy one from the notice or from `nimbus watch list`); "*" = every watcher
 min_interval_minutes = 60  # 5 to 1440: per-watcher minimum gap between posts
 max_per_hour = 10          # 1 to 60: cap across all watchers in a sliding hour

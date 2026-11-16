@@ -122,7 +122,10 @@ import { resolvePersona } from "../config/persona.ts";
 import { ProfileManager } from "../config/profiles.ts";
 import { loadServiceConfigsOrEmpty } from "../config/service-configs.ts";
 import { loadNimbusSessionFromConfigDir } from "../config/session-toml.ts";
-import { loadNimbusWatcherChatopsFromConfigDir } from "../config/watcher-chatops-toml.ts";
+import {
+  loadNimbusWatcherChatopsFromConfigDir,
+  watcherChatopsDestination,
+} from "../config/watcher-chatops-toml.ts";
 import { Config } from "../config.ts";
 import { bitbucketFetchOneUrlIsSupported } from "../connectors/bitbucket-sync.ts";
 import { createBlameIndexSyncable } from "../connectors/blame-index-sync.ts";
@@ -817,6 +820,12 @@ async function createSchedulerWithMesh(opts: SchedulerWithMeshOpts): Promise<{
    * a demo gateway. It holds fires until `settleWatcherChatops` binds the poster after ChatOps boots.
    */
   watcherChat: WatcherChatNotifier | undefined;
+  /**
+   * The owner's pinned watcher-notice channel (I23 amendment) from the boot-time
+   * `[watcher.chatops].channel`: set only when the notifier exists (so never in a demo) and the
+   * destination resolved to `pinned`. Handed to the ChatOps boot at construction and nowhere else.
+   */
+  watcherPinnedChannel: string | undefined;
   /** The I22 policy-filtered `register`, for the extension sync host built after the boot gate. */
   policyFilteredRegistrar: Pick<SyncScheduler, "register">;
 }> {
@@ -857,12 +866,17 @@ async function createSchedulerWithMesh(opts: SchedulerWithMeshOpts): Promise<{
   // Off by default and never in a demo gateway (I41): then `watcherChat` is undefined and no post
   // path exists. The destination is the config namespace alone (I23); the poster is bound later,
   // by `settleWatcherChatops`, once ChatOps has booted.
+  const watcherChatopsCfg = loadNimbusWatcherChatopsFromConfigDir(paths.configDir);
   const watcherChat = createWatcherChatNotifier({
-    config: loadNimbusWatcherChatopsFromConfigDir(paths.configDir),
+    config: watcherChatopsCfg,
     demo: !syncEnabled,
     onFailure: (err) => syncLogger.warn({ err }, "watcher chatops notice failed"),
     warn: (msg, counts) => syncLogger.warn(counts, msg),
   });
+  const watcherDestination =
+    watcherChat === undefined ? undefined : watcherChatopsDestination(watcherChatopsCfg);
+  const watcherPinnedChannel =
+    watcherDestination?.kind === "pinned" ? watcherDestination.channelId : undefined;
   const automation = loadNimbusAutomationFromConfigDir(paths.configDir);
   const watcherOpts = {
     graphConditionsEnabled: automation.graphConditions,
@@ -1204,6 +1218,7 @@ async function createSchedulerWithMesh(opts: SchedulerWithMeshOpts): Promise<{
     oncallPush,
     incidentEngine,
     watcherChat,
+    watcherPinnedChannel,
     policyFilteredRegistrar,
   };
 }
@@ -2800,7 +2815,7 @@ function buildTeamCredentialContexts(deps: {
  *  the chatops↔tribal reply cycle is preserved by rebinding `tribalSendHolder.current` here. */
 async function bootChatopsIntoAssembly(deps: {
   chatopsCfg: ReturnType<typeof loadNimbusChatopsFromConfigDir>;
-  policyGate: Parameters<typeof buildChatopsBoot>[0]["policyGate"];
+  policyGate: Parameters<typeof buildChatopsBoot>[0]["policyGate"] & Pick<PolicyGate, "status">;
   tribalBoot: TribalBoot | undefined;
   tribalInterceptCommand: ((m: ChatMessage) => Promise<boolean>) | undefined;
   identityBoot: ReturnType<typeof buildIdentityBoot> | undefined;
@@ -2814,6 +2829,8 @@ async function bootChatopsIntoAssembly(deps: {
   sidecarStops: Array<() => void>;
   tribalSendHolder: { current: (target: ReplyTarget, text: string) => Promise<void> };
   chatopsAllowedByBootPolicy: boolean;
+  /** I23 amendment: the owner's pinned watcher-notice channel, boot-time config only. */
+  watcherPinnedChannel: string | undefined;
   /** The connector-write transport's context, the one `runAsk`'s dispatcher is wrapped with too. */
   connectorWriteDeps: ConnectorWriteContext;
 }): Promise<ChatopsBoot | undefined> {
@@ -2833,6 +2850,7 @@ async function bootChatopsIntoAssembly(deps: {
     sidecarStops,
     tribalSendHolder,
     chatopsAllowedByBootPolicy,
+    watcherPinnedChannel,
     connectorWriteDeps,
   } = deps;
   // I41: a demo gateway never boots ChatOps, whatever its config says (BootPolicy.chatops).
@@ -2847,6 +2865,9 @@ async function bootChatopsIntoAssembly(deps: {
     db,
     vault,
     policyGate,
+    ...(watcherPinnedChannel === undefined
+      ? {}
+      : { watcherPinnedChannel, orgPolicyActive: () => policyGate.status().signatureValid }),
     ...(tribalBoot === undefined ? {} : { onInboundMessage: tribalBoot.onInboundMessage }),
     ...(tribalInterceptCommand === undefined ? {} : { interceptCommand: tribalInterceptCommand }),
     ...(identityBootRef === undefined
@@ -3126,15 +3147,21 @@ export function settleOncallPushChatops(
  * `watcherChat` is `undefined` when the feature is off or the gateway is a demo: a no-op.
  */
 export function settleWatcherChatops(
-  watcherChat: Pick<WatcherChatNotifier, "settle" | "namespace"> | undefined,
-  chatopsBoot: Pick<ChatopsBoot, "postWatcherNotice"> | undefined,
+  watcherChat: Pick<WatcherChatNotifier, "settle" | "destination"> | undefined,
+  chatopsBoot: Pick<ChatopsBoot, "postWatcherNotice" | "postWatcherNoticePinned"> | undefined,
 ): void {
   if (watcherChat === undefined) return;
   if (chatopsBoot === undefined) {
     watcherChat.settle(undefined);
     return;
   }
-  const namespace = watcherChat.namespace;
+  const dest = watcherChat.destination;
+  if (dest.kind === "pinned") {
+    // The channel is not here: the boot was built with it (`watcherPinnedChannel`).
+    watcherChat.settle((text) => chatopsBoot.postWatcherNoticePinned(text));
+    return;
+  }
+  const namespace = dest.namespace;
   watcherChat.settle((text) => chatopsBoot.postWatcherNotice(namespace, text));
 }
 
@@ -4217,6 +4244,7 @@ export async function assemblePlatformServices(
     oncallPush,
     incidentEngine,
     watcherChat,
+    watcherPinnedChannel,
     policyFilteredRegistrar,
   } = await createSchedulerWithMesh({
     paths,
@@ -4574,6 +4602,7 @@ export async function assemblePlatformServices(
   // (`chatopsBoot` is declared above so the tribal in-chat capture interceptor can late-bind to it.)
   chatopsBoot = await bootChatopsIntoAssembly({
     chatopsAllowedByBootPolicy: bootPolicy.chatops,
+    watcherPinnedChannel,
     chatopsCfg,
     policyGate,
     tribalBoot,

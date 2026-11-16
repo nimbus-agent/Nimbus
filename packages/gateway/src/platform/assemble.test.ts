@@ -306,7 +306,10 @@ describe("settleOncallPushChatops (design: 2026-10-02-oncall-push-chatops-design
 describe("settleWatcherChatops (I23: the poster is bound to the CONFIG namespace)", () => {
   it("is a clean no-op when the notifier is off or this is a demo gateway", () => {
     expect(() =>
-      settleWatcherChatops(undefined, { postWatcherNotice: async () => 1 }),
+      settleWatcherChatops(undefined, {
+        postWatcherNotice: async () => 1,
+        postWatcherNoticePinned: async () => 1,
+      }),
     ).not.toThrow();
     expect(() => settleWatcherChatops(undefined, undefined)).not.toThrow();
   });
@@ -314,7 +317,10 @@ describe("settleWatcherChatops (I23: the poster is bound to the CONFIG namespace
   it("settles with undefined when ChatOps did not boot", () => {
     const settled: Array<WatcherNoticePoster | undefined> = [];
     settleWatcherChatops(
-      { namespace: "project:pay", settle: (p) => void settled.push(p) },
+      {
+        destination: { kind: "namespace", namespace: "project:pay" },
+        settle: (p) => void settled.push(p),
+      },
       undefined,
     );
     expect(settled).toEqual([undefined]);
@@ -324,17 +330,43 @@ describe("settleWatcherChatops (I23: the poster is bound to the CONFIG namespace
     const settled: Array<WatcherNoticePoster | undefined> = [];
     const calls: unknown[][] = [];
     settleWatcherChatops(
-      { namespace: "project:pay", settle: (p) => void settled.push(p) },
+      {
+        destination: { kind: "namespace", namespace: "project:pay" },
+        settle: (p) => void settled.push(p),
+      },
       {
         postWatcherNotice: async (...args: [string, string]) => {
           calls.push(args);
           return 2;
         },
+        postWatcherNoticePinned: async () => 0,
       },
     );
     expect(settled).toHaveLength(1);
     expect(await settled[0]?.("hello")).toBe(2);
     expect(calls).toEqual([["project:pay", "hello"]]);
+  });
+
+  it("a pinned destination binds a poster that passes the TEXT ONLY to postWatcherNoticePinned", async () => {
+    const settled: Array<WatcherNoticePoster | undefined> = [];
+    const pinnedCalls: unknown[][] = [];
+    const nsCalls: unknown[][] = [];
+    settleWatcherChatops(
+      { destination: { kind: "pinned" }, settle: (p) => void settled.push(p) },
+      {
+        postWatcherNotice: async (...args: [string, string]) => {
+          nsCalls.push(args);
+          return 2;
+        },
+        postWatcherNoticePinned: async (...args: [string]) => {
+          pinnedCalls.push(args);
+          return 1;
+        },
+      },
+    );
+    expect(await settled[0]?.("hello")).toBe(1);
+    expect(pinnedCalls).toEqual([["hello"]]);
+    expect(nsCalls).toEqual([]);
   });
 
   it("a second settle throws (the real notifier is settled once)", () => {
@@ -349,7 +381,7 @@ describe("settleWatcherChatops (I23: the poster is bound to the CONFIG namespace
       onFailure: () => {},
       warn: () => {},
     });
-    const boot = { postWatcherNotice: async () => 1 };
+    const boot = { postWatcherNotice: async () => 1, postWatcherNoticePinned: async () => 1 };
     settleWatcherChatops(n, boot);
     expect(() => settleWatcherChatops(n, boot)).toThrow();
   });

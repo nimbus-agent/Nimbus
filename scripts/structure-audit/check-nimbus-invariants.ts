@@ -527,6 +527,43 @@ export function checkChatopsWatcherNoticeCaller(files: readonly FileEntry[]): Vi
   return out;
 }
 
+// D17(d) (I23 amendment) — the owner-pinned watcher channel. The `watcherPinned` ReplyTarget kind,
+// the boot's `watcherPinnedChannel` dependency and `postWatcherNoticePinned` may appear in
+// production code ONLY in the four files that define, resolve and wire them: the kind (`types.ts`),
+// the dispatcher that refuses it unless built with the resolver (`reply-dispatcher.ts`), the boot
+// that builds the target and the resolver (`chatops-boot.ts`), and the one wiring site that hands the
+// boot-time config value over (`assemble.ts`). No watcher, row, pack, IPC handler or other module can
+// build or pass the target, so a channel never reaches the dispatcher from anywhere but the owner's
+// own config.
+const WATCHER_PINNED_ALLOWED = new Set([
+  "packages/gateway/src/chatops/types.ts",
+  "packages/gateway/src/chatops/reply-dispatcher.ts",
+  "packages/gateway/src/chatops/chatops-boot.ts",
+  "packages/gateway/src/platform/assemble.ts",
+]);
+const WATCHER_PINNED_RE =
+  /\b(?:watcherPinnedChannel|postWatcherNoticePinned)\b|["']watcherPinned["']/;
+
+export function checkChatopsWatcherPinned(files: readonly FileEntry[]): Violation[] {
+  const out: Violation[] = [];
+  for (const f of files) {
+    if (f.relPath.endsWith(".test.ts") || WATCHER_PINNED_ALLOWED.has(f.relPath)) continue;
+    const strippedLines = stripComments(f.contents).split("\n");
+    const originalLines = f.contents.split("\n");
+    for (let i = 0; i < strippedLines.length; i++) {
+      if (WATCHER_PINNED_RE.test(strippedLines[i] ?? "")) {
+        out.push({
+          rule: "D17-chatops-watcher-pinned",
+          file: f.relPath,
+          line: i + 1,
+          snippet: (originalLines[i] ?? "").trim(),
+        });
+      }
+    }
+  }
+  return out;
+}
+
 // D17 (I23/I29) — `buildConnectorPost(...)` produces an UNLEDGERED post function. It may be
 // CALLED only as an argument to `buildLedgeredChatPosts(...)`, never bound to a name, so no
 // consumer can reach an unwrapped post. Without this the ledger covers the consumers that exist
@@ -5912,6 +5949,15 @@ async function run(): Promise<void> {
     for (const e of v) {
       console.error(
         `::error file=${e.file},line=${e.line}::D17 chatops post tool referenced outside reply-dispatcher/transport — bypasses I23: ${e.snippet}`,
+      );
+    }
+    if (v.length > 0) exit = 1;
+  }
+  if (mode === "binary-only" || mode === "all") {
+    const v = checkChatopsWatcherPinned(files);
+    for (const e of v) {
+      console.error(
+        `::error file=${e.file},line=${e.line}::D17(d) the watcher-pinned channel referenced outside chatops types/dispatcher/boot and assemble — a pinned destination must come only from the owner's boot config (I23): ${e.snippet}`,
       );
     }
     if (v.length > 0) exit = 1;

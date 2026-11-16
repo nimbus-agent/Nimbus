@@ -1,4 +1,9 @@
-import { type NimbusWatcherChatopsToml, WATCHER_ID_RE } from "../config/watcher-chatops-toml.ts";
+import {
+  type NimbusWatcherChatopsToml,
+  WATCHER_ID_RE,
+  type WatcherChatopsDestination,
+  watcherChatopsDestination,
+} from "../config/watcher-chatops-toml.ts";
 import { isKnownWatcherConditionType } from "./watcher-condition-kinds.ts";
 import type { WatcherNotice } from "./watcher-engine.ts";
 
@@ -26,9 +31,16 @@ export type WatcherChatNotifierDeps = {
   readonly onFailure: (err: unknown) => void;
   /** A counts-only logger. Never given text. */
   readonly warn: (msg: string, counts: Record<string, number>) => void;
-  /** Test aid: failure times already on record, so a scenario can start with a nearly open breaker. */
-  readonly initialFailureTimes?: readonly number[];
 };
+
+/**
+ * Where the poster this notifier is settled with sends. It carries NO channel id: a namespace is the
+ * owner's config namespace (signed policy lists the channels), and `pinned` means the one channel
+ * the chatops boot was built with (I23 amendment). The notifier cannot name or see either channel.
+ */
+export type WatcherNoticeDestination =
+  | { readonly kind: "namespace"; readonly namespace: string }
+  | { readonly kind: "pinned" };
 
 /** Ids and counts only, never text. */
 export type WatcherChatNotifierSnapshot = {
@@ -46,8 +58,8 @@ export type WatcherChatNotifierSnapshot = {
 };
 
 export type WatcherChatNotifier = {
-  /** The config namespace, read-only, so the settle helper can bind the poster to it. */
-  readonly namespace: string;
+  /** Read-only, so the settle helper can bind the right poster (namespace or pinned channel). */
+  readonly destination: WatcherNoticeDestination;
   notify(notice: WatcherNotice): void;
   /** Binds the poster (or records there is none) and flushes the pre-settle hold. Once only. */
   settle(poster: WatcherNoticePoster | undefined): void;
@@ -121,7 +133,7 @@ function compareHeld(a: Held, b: Held): number {
 }
 
 class WatcherChatNotifierImpl implements WatcherChatNotifier {
-  readonly namespace: string;
+  readonly destination: WatcherNoticeDestination;
   private readonly config: NimbusWatcherChatopsToml;
   private readonly clock: () => number;
   private readonly deps: WatcherChatNotifierDeps;
@@ -139,13 +151,13 @@ class WatcherChatNotifierImpl implements WatcherChatNotifier {
   private noChannelsLogged = false;
   private readonly active = new Set<Promise<void>>();
 
-  constructor(deps: WatcherChatNotifierDeps) {
+  constructor(deps: WatcherChatNotifierDeps, destination: WatcherNoticeDestination) {
     this.deps = deps;
     this.config = deps.config;
-    this.namespace = deps.config.namespace;
+    this.destination = destination;
     this.clock = deps.now ?? Date.now;
     this.intervalMs = deps.config.minIntervalMinutes * 60_000;
-    this.failures = [...(deps.initialFailureTimes ?? [])];
+    this.failures = [];
   }
 
   notify(notice: WatcherNotice): void {
@@ -423,12 +435,29 @@ class WatcherChatNotifierImpl implements WatcherChatNotifier {
 }
 
 /**
- * The notifier, or `undefined` when the feature is off (gate 1: not enabled, or no namespace) or the
- * gateway is a demo (gate 2, I41): then no handler exists at all and nothing can post.
+ * The notifier, or `undefined` when the feature is off, has no usable destination (none named, both
+ * a namespace and a channel named, or an invalid channel: one boot warning says why, never any text)
+ * or the gateway is a demo (I41): then no handler exists at all and nothing can post.
  */
 export function createWatcherChatNotifier(
   deps: WatcherChatNotifierDeps,
 ): WatcherChatNotifier | undefined {
-  if (!deps.config.enabled || deps.config.namespace === "" || deps.demo) return undefined;
-  return new WatcherChatNotifierImpl(deps);
+  if (deps.demo) return undefined;
+  const dest: WatcherChatopsDestination = watcherChatopsDestination(deps.config);
+  if (dest.kind === "none") {
+    if (deps.config.enabled) {
+      try {
+        deps.warn(dest.reason, {});
+      } catch {
+        // a throwing logger must not stop the boot
+      }
+    }
+    return undefined;
+  }
+  return new WatcherChatNotifierImpl(
+    deps,
+    dest.kind === "namespace"
+      ? { kind: "namespace", namespace: dest.namespace }
+      : { kind: "pinned" },
+  );
 }

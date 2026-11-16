@@ -23,6 +23,7 @@ import {
   checkChatopsReplySurfaceInvariant,
   checkChatopsUnwrappedPost,
   checkChatopsWatcherNoticeCaller,
+  checkChatopsWatcherPinned,
   checkChatReadMarkerConfinement,
   checkConfigReaderConfinement,
   checkConfirmComparison,
@@ -7402,5 +7403,52 @@ describe("D17(c) — postWatcherNotice is referenced only by chatops-boot and as
       { relPath: "packages/gateway/src/x.test.ts", contents: call },
     ]);
     expect(v).toEqual([]);
+  });
+});
+
+describe("D17(d) - the pinned watcher channel is built and passed only by the chatops boot wiring", () => {
+  const src = "packages/gateway/src/";
+  const uses = [
+    'const t = { kind: "watcherPinned" };\n',
+    "const c = deps.watcherPinnedChannel;\n",
+    "await chatopsBoot.postWatcherNoticePinned(text);\n",
+  ];
+
+  test("rejects each identifier in another production module", () => {
+    for (const body of uses) {
+      const v = checkChatopsWatcherPinned([
+        { relPath: `${src}automation/watcher-chat-notifier.ts`, contents: body },
+        { relPath: `${src}engine/agent.ts`, contents: body },
+        { relPath: `${src}ipc/automation-rpc.ts`, contents: body },
+      ]);
+      expect(v.map((x) => x.rule)).toEqual([
+        "D17-chatops-watcher-pinned",
+        "D17-chatops-watcher-pinned",
+        "D17-chatops-watcher-pinned",
+      ]);
+    }
+  });
+
+  test("accepts the four allowed files and ignores comments and tests", () => {
+    const files = [
+      "chatops/types.ts",
+      "chatops/reply-dispatcher.ts",
+      "chatops/chatops-boot.ts",
+      "platform/assemble.ts",
+    ];
+    for (const body of uses) {
+      expect(
+        checkChatopsWatcherPinned(files.map((f) => ({ relPath: `${src}${f}`, contents: body }))),
+      ).toEqual([]);
+    }
+    expect(
+      checkChatopsWatcherPinned([
+        {
+          relPath: `${src}engine/agent.ts`,
+          contents: "// watcherPinnedChannel postWatcherNoticePinned\n",
+        },
+        { relPath: `${src}x.test.ts`, contents: uses.join("") },
+      ]),
+    ).toEqual([]);
   });
 });

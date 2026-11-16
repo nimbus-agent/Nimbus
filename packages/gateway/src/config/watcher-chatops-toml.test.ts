@@ -3,10 +3,11 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 
 import { SECTION_LOADERS } from "./config-explain.ts";
-import { PACK_SETTABLE_KEYS } from "./pack-settable.ts";
+import { checkPackFragment, PACK_SETTABLE_KEYS } from "./pack-settable.ts";
 import {
   DEFAULT_WATCHER_CHATOPS_CONFIG,
   parseNimbusTomlWatcherChatops,
+  watcherChatopsDestination,
 } from "./watcher-chatops-toml.ts";
 
 const UUID = "0b9c1f7e-4d2a-4c55-9a3e-1f2d3c4b5a69";
@@ -29,7 +30,25 @@ describe("[watcher.chatops] config", () => {
       watchers: [UUID, "*"],
       minIntervalMinutes: 15,
       maxPerHour: 3,
+      channel: "",
     });
+  });
+
+  test("reads the pinned channel, trimmed, and defaults to none", () => {
+    expect(DEFAULT_WATCHER_CHATOPS_CONFIG.channel).toBe("");
+    const c = parseNimbusTomlWatcherChatops(
+      '[watcher.chatops]\nenabled = true\nchannel = " C0123ABCD "\n',
+    );
+    expect(c.channel).toBe("C0123ABCD");
+  });
+
+  test("an invalid pinned channel is reported", () => {
+    const warnings: string[] = [];
+    parseNimbusTomlWatcherChatops('[watcher.chatops]\nchannel = "#general"\n', (m) =>
+      warnings.push(m),
+    );
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain("channel");
   });
 
   test("other sections are ignored", () => {
@@ -102,5 +121,61 @@ describe("I23 (g): [watcher.chatops] is owner-only", () => {
       .map((f) => f.slice(root.length + 1).replaceAll("\\", "/"))
       .filter((f) => !f.startsWith("config/"));
     expect(readers).toEqual(["platform/assemble.ts"]);
+  });
+});
+
+describe("[watcher.chatops] destination (I23 amendment: the owner's pinned channel)", () => {
+  const on = { ...DEFAULT_WATCHER_CHATOPS_CONFIG, enabled: true };
+
+  test("off is none", () => {
+    expect(
+      watcherChatopsDestination({ ...DEFAULT_WATCHER_CHATOPS_CONFIG, channel: "C0123ABCD" }).kind,
+    ).toBe("none");
+  });
+
+  test("a namespace alone, or a valid channel alone, resolves", () => {
+    expect(watcherChatopsDestination({ ...on, namespace: "platform" })).toEqual({
+      kind: "namespace",
+      namespace: "platform",
+    });
+    expect(watcherChatopsDestination({ ...on, channel: "C0123ABCD" })).toEqual({
+      kind: "pinned",
+      channelId: "C0123ABCD",
+    });
+    expect(watcherChatopsDestination({ ...on, channel: "G0123ABCD9" }).kind).toBe("pinned");
+  });
+
+  test("neither is none", () => {
+    expect(watcherChatopsDestination(on).kind).toBe("none");
+  });
+
+  test("namespace AND channel is a config error: none, never a precedence", () => {
+    const d = watcherChatopsDestination({ ...on, namespace: "platform", channel: "C0123ABCD" });
+    expect(d.kind).toBe("none");
+    if (d.kind === "none") expect(d.reason).toContain("not both");
+  });
+
+  test.each([
+    "C123",
+    "D0123456789",
+    "#general",
+    "U0123ABCD9",
+    "c0123abcd",
+    "C0123ABCD\n",
+    "C0123 ABCD",
+    "https://x.slack.com/C0123ABCD",
+    "C0123456789012345678901",
+    "<!here>",
+  ])("an invalid pin %p is none and NEVER falls back to a namespace", (channel) => {
+    expect(watcherChatopsDestination({ ...on, channel }).kind).toBe("none");
+    expect(watcherChatopsDestination({ ...on, namespace: "platform", channel }).kind).toBe("none");
+  });
+});
+
+describe("I23 amendment: no pack can set the channel", () => {
+  test("a pack fragment naming [watcher.chatops] channel is refused whole", () => {
+    const r = checkPackFragment('[watcher.chatops]\nchannel = "C0123ABCD"\n', () => []);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.problems.join(" ")).toContain("watcher.chatops");
   });
 });

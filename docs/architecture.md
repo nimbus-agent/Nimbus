@@ -3391,6 +3391,8 @@ ChatOps boots: fires before `settle` are held (one entry per watcher, at most 50
 reach the watcher engine; a failed attempt consumes no post slot but counts toward a global circuit breaker. In-memory state,
 boot-time config. Static D17(c) confines `postWatcherNotice` to `chatops-boot.ts` and `assemble.ts`.
 
+**Pinned channel (I23 amendment, 2026-11-16).** `[watcher.chatops] channel = "C..."` lets a solo owner with no signed org policy use the notice. `config/watcher-chatops-toml.ts` `watcherChatopsDestination` is the one function that turns the section into `namespace`, `pinned` or `none` (`namespace` and `channel` together, or an invalid `channel`, is `none` with one boot warning; an invalid pin never falls back to the namespace). The notifier holds only `{ kind: "pinned" }`; `createSchedulerWithMesh` hands the id to `bootChatopsIntoAssembly` -> `buildChatopsBoot`, which re-validates it and builds the pinned resolver on the watcher-notice dispatcher alone. `ChatopsBoot.postWatcherNoticePinned(text)` sends a `{ kind: "watcherPinned" }` target (no channel field) through it. The resolver runs per post: no signed policy active and no channel bindings -> the pin; otherwise the pin only if some binding lists it under `notify` (so a signed policy with no ChatOps channels blocks it; unknown is governed); Slack disabled -> absent. Same ledgered `chatops.watcherNotice` kind, one row before the post. Static D17(d) confines the new identifiers to `chatops/{types,reply-dispatcher,chatops-boot}.ts` and `platform/assemble.ts`.
+
 **Where it lives.** `packages/gateway/src/platform/notifications/`:
 
 - `win32.ts` / `darwin.ts` / `linux.ts` — one `NotificationBackend` each (`probe()`, `send(title, body)`), every spawn

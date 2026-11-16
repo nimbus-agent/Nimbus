@@ -33,7 +33,51 @@ export type NimbusWatcherChatopsToml = {
   readonly minIntervalMinutes: number;
   /** Global cap on posts across watchers in a sliding hour. */
   readonly maxPerHour: number;
+  /**
+   * The owner-pinned Slack channel id, as written (trimmed); "" when unset. Validated ONLY by
+   * `watcherChatopsDestination` (the one source of truth), never here and never elsewhere.
+   */
+  readonly channel: string;
 };
+
+/** Slack public (`C`) and private (`G`) conversation ids. A DM (`D`), a name or a URL never matches. */
+export const PINNED_CHANNEL_RE = /^[CG][A-Z0-9]{8,20}$/;
+
+/** Where a watcher notice may go: exactly one of these, decided once at boot. */
+export type WatcherChatopsDestination =
+  | { readonly kind: "namespace"; readonly namespace: string }
+  | { readonly kind: "pinned"; readonly channelId: string }
+  | { readonly kind: "none"; readonly reason: string };
+
+/**
+ * I23 amendment: the ONE function that turns the owner's `[watcher.chatops]` text into a
+ * destination. `namespace` and `channel` together are a config error (two destinations is an
+ * ambiguous intent: nothing posts); an invalid `channel` never falls back to the namespace.
+ */
+export function watcherChatopsDestination(c: NimbusWatcherChatopsToml): WatcherChatopsDestination {
+  if (!c.enabled) return { kind: "none", reason: "off" };
+  if (c.namespace !== "" && c.channel !== "") {
+    return {
+      kind: "none",
+      reason: "[watcher.chatops] sets namespace and channel: set one, not both; nothing will post",
+    };
+  }
+  if (c.channel !== "") {
+    if (!PINNED_CHANNEL_RE.test(c.channel)) {
+      return {
+        kind: "none",
+        reason:
+          "[watcher.chatops].channel is not a Slack channel id (C... or G...); nothing will post",
+      };
+    }
+    return { kind: "pinned", channelId: c.channel };
+  }
+  if (c.namespace !== "") return { kind: "namespace", namespace: c.namespace };
+  return {
+    kind: "none",
+    reason: "[watcher.chatops] names no namespace or channel; nothing will post",
+  };
+}
 
 export const WATCHER_CHATOPS_INTERVAL_MIN = 5;
 export const WATCHER_CHATOPS_INTERVAL_MAX = 1440;
@@ -49,6 +93,7 @@ export const DEFAULT_WATCHER_CHATOPS_CONFIG: NimbusWatcherChatopsToml = Object.f
   watchers: Object.freeze([]) as readonly string[],
   minIntervalMinutes: 60,
   maxPerHour: 10,
+  channel: "",
 });
 
 type Draft = { -readonly [K in keyof NimbusWatcherChatopsToml]: NimbusWatcherChatopsToml[K] };
@@ -115,6 +160,15 @@ function applyKey(out: Draft, key: string, valRaw: string, report: (msg: string)
     case "namespace":
       out.namespace = parseString(valRaw).trim();
       break;
+    case "channel": {
+      out.channel = parseString(valRaw).trim();
+      if (out.channel !== "" && !PINNED_CHANNEL_RE.test(out.channel)) {
+        report(
+          `[watcher.chatops].channel must be a Slack channel id such as C0123ABCD (got: ${out.channel.slice(0, 32)}); nothing will post`,
+        );
+      }
+      break;
+    }
     case "watchers":
       applyWatchers(out, valRaw, report);
       break;

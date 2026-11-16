@@ -83,3 +83,56 @@ describe("ReplyDispatcher (I23)", () => {
     expect(posted).toEqual(["C_O", "C_A", "C_B"]);
   });
 });
+
+describe("ReplyDispatcher watcherPinned target (I23 amendment)", () => {
+  test("a dispatcher built WITHOUT pinnedChannelFor refuses the target and posts nothing", async () => {
+    const { d, posted } = makeDispatcher();
+    await expect(d.send({ kind: "watcherPinned" }, "x")).rejects.toThrow(/watcher-pinned/);
+    expect(posted).toEqual([]);
+  });
+
+  test("a dispatcher built with it posts as slack to exactly the resolved channel", async () => {
+    const calls: [string, string, string][] = [];
+    const d = new ReplyDispatcher({
+      post: async (platform, channelId, text) => {
+        calls.push([platform, channelId, text]);
+      },
+      notifyChannelsFor: () => ["C_NS"],
+      pinnedChannelFor: () => ["C0123ABCD"],
+    });
+    expect(await d.send({ kind: "watcherPinned" }, "t")).toBe(1);
+    expect(calls).toEqual([["slack", "C0123ABCD", "t"]]);
+  });
+
+  test("a resolver that returns nothing posts nothing and resolves 0", async () => {
+    const calls: string[] = [];
+    const d = new ReplyDispatcher({
+      post: async (_p, c) => {
+        calls.push(c);
+      },
+      notifyChannelsFor: () => ["C_NS"],
+      pinnedChannelFor: () => [],
+    });
+    expect(await d.send({ kind: "watcherPinned" }, "t")).toBe(0);
+    expect(calls).toEqual([]);
+  });
+
+  test("the namespace and originating targets never consult the pinned resolver", async () => {
+    let consulted = 0;
+    const calls: string[] = [];
+    const d = new ReplyDispatcher({
+      post: async (_p, c) => {
+        calls.push(c);
+      },
+      notifyChannelsFor: () => ["C_NS"],
+      pinnedChannelFor: () => {
+        consulted += 1;
+        return ["C_PIN"];
+      },
+    });
+    await d.send({ kind: "namespaceNotify", namespace: "n" }, "t");
+    await d.send({ kind: "originating", platform: "slack", channelId: "C_O" }, "t");
+    expect(calls).toEqual(["C_NS", "C_O"]);
+    expect(consulted).toBe(0);
+  });
+});
