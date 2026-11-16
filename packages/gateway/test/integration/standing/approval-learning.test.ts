@@ -139,7 +139,6 @@ function ownerCtx() {
         requestApproval: async () => ({ approved: true, answerSource: "human" as const }),
       },
       audit: localIndex,
-      db,
     }),
     recordNarrowing: () => {},
     frozenHitl: (t: string) => HITL_REQUIRED.has(t),

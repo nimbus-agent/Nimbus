@@ -53,7 +53,7 @@ export function auditLogHasFederationJson(db: Database): boolean {
   return has;
 }
 
-export function appendAuditEntry(db: Database, fields: AppendAuditEntryFields): void {
+export function appendAuditEntry(db: Database, fields: AppendAuditEntryFields): number {
   const rawPrev = db.query(`SELECT row_hash FROM audit_log ORDER BY id DESC LIMIT 1`).get() as
     | { row_hash: string | null }
     | undefined;
@@ -71,7 +71,7 @@ export function appendAuditEntry(db: Database, fields: AppendAuditEntryFields): 
     federationJson,
   });
   if (auditLogHasFederationJson(db)) {
-    dbRun(
+    const result = dbRun(
       db,
       `INSERT INTO audit_log (action_type, hitl_status, action_json, timestamp, row_hash, prev_hash, session_id, federation_json)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -86,9 +86,9 @@ export function appendAuditEntry(db: Database, fields: AppendAuditEntryFields): 
         federationJson,
       ],
     );
-    return;
+    return Number(result.lastInsertRowid);
   }
-  dbRun(
+  const result = dbRun(
     db,
     `INSERT INTO audit_log (action_type, hitl_status, action_json, timestamp, row_hash, prev_hash, session_id)
      VALUES (?, ?, ?, ?, ?, ?, ?)`,
@@ -102,4 +102,5 @@ export function appendAuditEntry(db: Database, fields: AppendAuditEntryFields): 
       fields.sessionId ?? null,
     ],
   );
+  return Number(result.lastInsertRowid);
 }

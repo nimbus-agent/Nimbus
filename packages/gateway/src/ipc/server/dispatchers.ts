@@ -1746,7 +1746,6 @@ export async function tryDispatchStandingRpc(
     askOwner: createStandingOwnerAsk({
       consent: bindConsentChannel(ctx.consentImpl, clientId),
       audit: localIndex,
-      db,
       policyHitl: ctx.options.policyHitl,
     }),
     recordNarrowing: (actionType, actionJson) =>
