@@ -3936,11 +3936,18 @@ const streamReq: JSONRPCRequest = {
 //   Exists only when `[premortem].enabled` (default true); otherwise the refresher is never
 //   constructed and the method throws `ERR_PREMORTEM_DISABLED` rather than surfacing as
 //   "Method not found" — `dispatchPremortemRpc` always claims the `premortem.` prefix.
-//   **Jira-only today:** the discover stage keys on `metadata.issue_type = 'Epic'`
-//   (`premortem/theme-discover.ts`), written only by `jira-sync.ts`. `linear-sync.ts` never
-//   writes `issue_type`, and — the deeper reason — no `linear:project` items are indexed at all,
-//   so there is no Linear epic-shaped row to mine. Supporting Linear needs a connector change and
-//   is out of scope here.
+//   **Two trackers (Phase 10 PM2):** the discover stage runs one statement per tracker in
+//   `EPIC_TRACKERS` (`premortem/epic-tracker.ts`), merged by `(modified_at, id)`: Jira keys on
+//   `metadata.issue_type = 'Epic'` (written by `jira-sync.ts`), Linear on `type = 'project'`
+//   (`linear:project` items written by `connectors/linear-projects.ts`; `linear-sync.ts` never
+//   writes `issue_type`). The cohort, child-count and affected-service queries take the same
+//   `EpicTracker` descriptor (alias-literal SQL fragments: epic row, child join on the epic ROW's
+//   `external_id`, display key), so a Jira epic is only ever compared with Jira epics and a Linear
+//   project with Linear projects. A Linear project's children are the issues whose `project_id`
+//   equals its UUID; its human reference is its slug id (never the UUID). The pass keeps ONE global
+//   watermark, so a Linear project last updated before it is never mined: the brief reports that as
+//   an upper bound (`mayBeUnminedLinearProjects`), and a per-tracker watermark is a follow-up that
+//   needs a migration.
 //   **`parent_key` is TEAM-MANAGED-Jira-only, narrower still:** `connectors/jira-sync.ts` writes
 //   `metadata.parent_key` only on team-managed projects; classic company-managed projects express
 //   epic membership through a per-instance `customfield_100xx` this connector does not chase, so

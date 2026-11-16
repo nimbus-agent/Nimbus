@@ -8,9 +8,11 @@ import {
   selectCohort,
 } from "../premortem/cohort.ts";
 import { affectedServicesForEpic } from "../premortem/epic-services.ts";
-import { type EpicTracker, JIRA_TRACKER } from "../premortem/epic-tracker.ts";
+import { type EpicTracker, JIRA_TRACKER, LINEAR_TRACKER } from "../premortem/epic-tracker.ts";
+import { resolveLinearProject } from "../premortem/linear-project-ref.ts";
 import { median } from "../premortem/median.ts";
 import { computeRisks, type Risk } from "../premortem/risks.ts";
+import { mayBeUnminedLinearProjects } from "../premortem/theme-discover.ts";
 import { type PremortemTheme, themesForServices } from "../premortem/theme-store.ts";
 import {
   clearProposalTombstones,
@@ -47,15 +49,30 @@ const DAY_MS = 86_400_000;
 const HISTORY_SPAN_SHORT_MS = 180 * DAY_MS;
 
 /**
- * "PROJ-120" or "jira:PROJ-120" both name the bare key `PROJ-120`. Any OTHER
- * prefix (`linear:ABC-1`, ...) names a tracker pre-mortem does not cover —
- * see the foreign-tracker branch in `buildPremortemBrief`, which recognizes this
- * from the prefix alone and never touches the database for it.
+ * Where a reference points. "PROJ-120" and "jira:PROJ-120" are a Jira epic; "linear:<ref>" (the slug
+ * id, the project URL, the UUID or the exact name) and a bare `https://linear.app/...` URL are a
+ * Linear project; any OTHER prefix names a tracker pre-mortem does not cover, which the foreign
+ * branch in `buildPremortemBrief` recognizes from the prefix alone and never touches the database for.
  */
-function parseEpicRef(ref: string): { trackerPrefix: string | null; key: string } {
+type EpicRefRoute =
+  | { readonly kind: "jira"; readonly key: string }
+  | { readonly kind: "linear"; readonly key: string }
+  | { readonly kind: "foreign"; readonly prefix: string };
+
+const LINEAR_URL_RE = /^https?:\/\/(?:[a-z0-9-]+\.)?linear\.app(?:[/?#]|$)/i;
+
+function routeEpicRef(ref: string): EpicRefRoute {
+  if (LINEAR_URL_RE.test(ref)) {
+    return { kind: "linear", key: ref };
+  }
   const idx = ref.indexOf(":");
-  if (idx === -1) return { trackerPrefix: null, key: ref };
-  return { trackerPrefix: ref.slice(0, idx), key: ref.slice(idx + 1) };
+  if (idx === -1) return { kind: "jira", key: ref };
+  const prefix = ref.slice(0, idx);
+  const key = ref.slice(idx + 1);
+  const lowered = prefix.toLowerCase();
+  if (lowered === "jira") return { kind: "jira", key };
+  if (lowered === "linear") return { kind: "linear", key };
+  return { kind: "foreign", prefix };
 }
 
 function isoDay(ms: number): string {
@@ -460,17 +477,21 @@ function cohortBodyTruncation(
   return row;
 }
 
-function nonJiraTrackerDetail(epicRef: string, trackerPrefix: string): string {
-  if (trackerPrefix.toLowerCase() === "linear") {
-    return (
-      `\`${epicRef}\` is a Linear reference. Pre-mortem covers Jira epics only, ` +
-      "and no Linear project items are indexed."
-    );
-  }
-  return `\`${epicRef}\` is not a Jira epic reference — pre-mortem covers Jira epics only.`;
+function foreignTrackerDetail(epicRef: string): string {
+  return (
+    `\`${epicRef}\` is not a supported tracker reference — pre-mortem covers Jira epics and ` +
+    "Linear projects (`PROJ-120`, `linear:<project>`)."
+  );
 }
 
-function noChildrenDetail(epicKey: string): string {
+function noChildrenDetail(tracker: EpicTracker, epicKey: string): string {
+  if (tracker.id === "linear") {
+    return (
+      `\`${epicKey}\` has no issues assigned to it in the index (Linear indexes issues updated in ` +
+      `the last 30 days on a first sync; \`${tracker.reindexHint}\` widens that) — pass ` +
+      "`--service`, or re-run once issues and their pull requests are indexed."
+    );
+  }
   return (
     `\`${epicKey}\` has no \`parent_key\` children in the index. This looks like a ` +
     "company-managed Jira project (`parent_key` is only populated for team-managed projects) " +
@@ -478,11 +499,52 @@ function noChildrenDetail(epicKey: string): string {
   );
 }
 
-function noChildrenWithPrsDetail(epicKey: string, childCount: number): string {
+function noChildrenWithPrsDetail(
+  tracker: EpicTracker,
+  epicKey: string,
+  childCount: number,
+): string {
+  if (tracker.id === "linear") {
+    return (
+      `\`${epicKey}\` has ${String(childCount)} issue(s), but none resolve to a merged pull ` +
+      "request yet, so no affected service could be derived. An issue reaches a pull request only " +
+      "when the pull request's title or opening text names the issue identifier (for example " +
+      "ENG-123) and the pull request was indexed after the issue (`nimbus index regraph` re-links " +
+      "earlier ones) — pass `--service`, or re-run once child PRs land."
+    );
+  }
   return (
     `\`${epicKey}\` has ${String(childCount)} child item(s), but none resolve to a merged ` +
     "pull request yet, so no affected service could be derived — pass `--service`, or re-run " +
     "once child PRs land."
+  );
+}
+
+/** The always-on "what this brief covers" statement; `null` is the foreign-tracker brief. */
+function coverageStatement(tracker: EpicTracker | null): string {
+  if (tracker === null) {
+    return (
+      "Pre-mortem covers Jira epics and Linear projects only; no other tracker is read for this " +
+      "brief."
+    );
+  }
+  if (tracker.id === "linear") {
+    return (
+      "Pre-mortem compares a Linear project only with other Linear projects. A project's issues " +
+      "reach pull requests only when a pull request's title or opening text names the issue " +
+      "identifier (for example ENG-123) and the pull request was indexed after the issue; team " +
+      "keys of one letter, or lower-case identifiers, are not matched, and an identifier that " +
+      "also exists in Jira can attach to the wrong tracker. Issues older than the sync window " +
+      "are not indexed unless widened. Cycle time runs from the project's creation, not its " +
+      "start date. Themes are keyed by repository and may come from either tracker's closed " +
+      "work; cohort rates never blend trackers. Projects are listed whole every 30 minutes; a " +
+      "capped listing (over 1,000 projects) indexes only part."
+    );
+  }
+  return (
+    "Pre-mortem for a Jira epic traces only `parent_key`-linked children, which Jira populates " +
+    "on team-managed projects only; a company-managed project's children cannot be traced the " +
+    "same way, and a Jira epic is compared only with other Jira epics."
   );
 }
 
@@ -492,7 +554,7 @@ function noChildrenWithPrsDetail(epicKey: string, childCount: number): string {
  * produced it, mirroring `ownership.ts`'s own unconditional authorship-limit
  * note (always the last push in its `buildGaps`, reached from every branch).
  */
-function pushUnconditionalGaps(gaps: GapNote[]): void {
+function pushUnconditionalGaps(gaps: GapNote[], tracker: EpicTracker | null): void {
   gaps.push(
     {
       category: "missing_relation_emit",
@@ -505,15 +567,12 @@ function pushUnconditionalGaps(gaps: GapNote[]): void {
       category: "missing_connector",
       detail:
         "Theme confidence tops out at 0.86, not 1.0: no connector indexes ticket comments, so " +
-        "a blocker argued out entirely in a Jira comment thread is invisible to theme " +
-        "extraction.",
+        `a blocker argued out entirely in a ${tracker?.id === "linear" ? "Linear" : "Jira"} comment ` +
+        "thread is invisible to theme extraction.",
     },
     {
       category: "missing_connector",
-      detail:
-        "Pre-mortem covers Jira epics only, and only `parent_key`-linked children on " +
-        "team-managed projects — other trackers (e.g. Linear) are not indexed for this brief, " +
-        "and a company-managed Jira project's children cannot be traced the same way.",
+      detail: coverageStatement(tracker),
     },
     {
       category: "missing_relation_emit",
@@ -628,16 +687,15 @@ function buildWatcherProposals(
 }
 
 /**
- * The brief returned when the ref names a tracker other than Jira.
+ * The brief returned when the ref names a tracker pre-mortem does not cover.
  *
- * Every measured field is empty and the single gap says why — pre-mortem is JIRA-ONLY, and
- * an empty brief with no explanation would read as "nothing to worry about" rather than
- * "nothing was looked at". Split out of {@link buildPremortemBrief} so that function's happy
- * path is not preceded by a 20-line literal (Sonar `S3776`).
+ * Every measured field is empty and the single gap says why — an empty brief with no explanation
+ * would read as "nothing to worry about" rather than "nothing was looked at". Split out of
+ * {@link buildPremortemBrief} so that function's happy path is not preceded by a 20-line literal
+ * (Sonar `S3776`).
  */
-function nonJiraTrackerBrief(
+function foreignTrackerBrief(
   epicRef: string,
-  trackerPrefix: string,
   now: number,
   start: number,
   query: PremortemBrief["query"],
@@ -645,11 +703,13 @@ function nonJiraTrackerBrief(
   const gaps: GapNote[] = [
     {
       category: "missing_relation_emit",
-      detail: nonJiraTrackerDetail(epicRef, trackerPrefix),
-      remediation: "Pass a Jira epic key, e.g. `PROJ-120` or `jira:PROJ-120`.",
+      detail: foreignTrackerDetail(epicRef),
+      remediation:
+        "Pass a Jira epic key, e.g. `PROJ-120` or `jira:PROJ-120`, or a Linear project, e.g. " +
+        "`linear:<slug id>`.",
     },
   ];
-  pushUnconditionalGaps(gaps);
+  pushUnconditionalGaps(gaps, null);
   return {
     kind: "premortem",
     agentVersion: 1,
@@ -700,6 +760,45 @@ function requireIndexedJiraEpic(
   return rawRow;
 }
 
+/** The epic a brief is about, whichever tracker it came from. */
+type ResolvedEpic = {
+  readonly tracker: EpicTracker;
+  readonly itemId: string;
+  /** The human reference (a Jira key, or a Linear slug id / name); never a Linear UUID. */
+  readonly key: string;
+  readonly title: string;
+  readonly createdAtMs: number | null;
+};
+
+/**
+ * Resolves the route to ONE indexed epic or throws a clear error (never an empty brief): a Jira key
+ * through {@link requireIndexedJiraEpic}, a Linear reference through `resolveLinearProject`.
+ */
+function requireIndexedEpic(
+  db: PremortemContext["db"],
+  epicRef: string,
+  route: { readonly kind: "jira" | "linear"; readonly key: string },
+): ResolvedEpic {
+  if (route.kind === "linear") {
+    const project = resolveLinearProject(db, epicRef, route.key);
+    return {
+      tracker: LINEAR_TRACKER,
+      itemId: project.itemId,
+      key: project.displayKey,
+      title: project.title,
+      createdAtMs: project.createdAtMs,
+    };
+  }
+  const row = requireIndexedJiraEpic(db, epicRef, route.key);
+  return {
+    tracker: JIRA_TRACKER,
+    itemId: row.id,
+    key: row.external_id,
+    title: row.title,
+    createdAtMs: row.created_at_ms,
+  };
+}
+
 /**
  * The gap raised when no affected service could be derived and none was passed.
  *
@@ -709,12 +808,27 @@ function requireIndexedJiraEpic(
  * {@link buildPremortemBrief} with {@link analyseCohort} to bring it under the
  * cognitive-complexity gate (Sonar `S3776`).
  */
-function noAffectedServicesGap(epicKey: string, childCount: number): GapNote {
+function noAffectedServicesGap(tracker: EpicTracker, epicKey: string, childCount: number): GapNote {
   return {
     category: "missing_relation_emit",
     detail:
-      childCount === 0 ? noChildrenDetail(epicKey) : noChildrenWithPrsDetail(epicKey, childCount),
+      childCount === 0
+        ? noChildrenDetail(tracker, epicKey)
+        : noChildrenWithPrsDetail(tracker, epicKey, childCount),
     remediation: "Pass `--service <repo>`, or re-run once child PRs land.",
+  };
+}
+
+const UNMINED_REFRESH_CAVEAT =
+  "`--refresh` mines only projects updated after the theme pass's watermark.";
+
+function unminedProjectsGap(n: number): GapNote {
+  return {
+    category: "missing_connector",
+    detail:
+      `Up to ${String(n)} closed Linear project(s) may not have been mined for themes: each was ` +
+      "last updated at or before the theme pass's watermark and has no theme evidence, which is " +
+      `also what a project that was mined and produced no theme looks like. ${UNMINED_REFRESH_CAVEAT}`,
   };
 }
 
@@ -771,6 +885,13 @@ function analyseCohort(
   });
 
   const themes = themesForServices(db, services);
+  // An UPPER BOUND, never a claim: the theme pass has one global watermark, so a closed Linear project
+  // last updated before it is not reached by `--refresh`, and the pass leaves no trace of a project it
+  // examined that yielded no theme.
+  const unmined = args.tracker.id === "linear" ? mayBeUnminedLinearProjects(db) : 0;
+  if (unmined > 0) {
+    gaps.push(unminedProjectsGap(unmined));
+  }
   if (themes.length === 0) {
     gaps.push({
       category: "missing_connector",
@@ -779,7 +900,8 @@ function analyseCohort(
         "causes: the theme pass has not run yet; `[premortem].enabled = false`; " +
         "`[premortem].use_llm = false`; no local LLM was reachable; or every " +
         "previously-extracted theme was later demoted once its source items left the " +
-        "index. The risk figures above are structural findings only, unaffected by this.",
+        "index. The risk figures above are structural findings only, unaffected by this." +
+        (unmined > 0 ? ` ${UNMINED_REFRESH_CAVEAT}` : ""),
       remediation: `Run \`nimbus pre-mortem ${args.epicRef} --refresh\`, or configure a local model and re-run.`,
     });
   }
@@ -792,10 +914,9 @@ function analyseCohort(
     gaps.push({
       category: "missing_connector",
       detail:
-        `${String(cohort.members.length)} epic(s), oldest closed ${isoDay(cohort.oldestResolvedAtMs)} ` +
+        `${String(cohort.members.length)} ${args.tracker.epicNoun}(s), oldest closed ${isoDay(cohort.oldestResolvedAtMs)} ` +
         "— this is a short history, so the comparison above may not be representative yet.",
-      remediation:
-        "Run `nimbus index rebody --service jira --since <days>` to widen indexed history.",
+      remediation: `Run \`${args.tracker.reindexHint}\` to widen indexed history.`,
     });
   }
 
@@ -826,20 +947,21 @@ function buildPremortemBrief(input: PremortemInput, ctx: PremortemContext): Prem
     serviceOverrides: overrides.length > 0 ? overrides : null,
   };
 
-  const { trackerPrefix, key } = parseEpicRef(input.epicRef);
+  const route = routeEpicRef(input.epicRef);
 
-  if (trackerPrefix !== null && trackerPrefix.toLowerCase() !== "jira") {
-    return nonJiraTrackerBrief(input.epicRef, trackerPrefix, now, start, query);
+  if (route.kind === "foreign") {
+    return foreignTrackerBrief(input.epicRef, now, start, query);
   }
 
-  const epicRow = requireIndexedJiraEpic(ctx.db, input.epicRef, key);
+  const resolved = requireIndexedEpic(ctx.db, input.epicRef, route);
+  const { tracker } = resolved;
   const epic: PremortemEpicView = {
-    itemId: epicRow.id,
-    key: epicRow.external_id,
-    title: epicRow.title,
+    itemId: resolved.itemId,
+    key: resolved.key,
+    title: resolved.title,
+    ...(tracker.id === "linear" ? { tracker: "linear" as const } : {}),
   };
 
-  const tracker = JIRA_TRACKER;
   const childCount = childCountsFor(ctx.db, [epic.itemId]).get(epic.itemId) ?? 0;
   const derivedServices = affectedServicesForEpic(ctx.db, epic.itemId);
   const services = overrides.length > 0 ? overrides : derivedServices;
@@ -859,7 +981,7 @@ function buildPremortemBrief(input: PremortemInput, ctx: PremortemContext): Prem
   let watchers: WatcherProposal[] = [];
 
   if (services.length === 0) {
-    gaps.push(noAffectedServicesGap(epic.key, childCount));
+    gaps.push(noAffectedServicesGap(tracker, epic.key, childCount));
   } else {
     // Watcher proposals are a function of the TARGET's affected services, NOT of the cohort:
     // an epic with no comparable history still has services worth watching. They used to sit
@@ -895,10 +1017,10 @@ function buildPremortemBrief(input: PremortemInput, ctx: PremortemContext): Prem
       gaps.push({
         category: "missing_entity_type",
         detail:
-          `No past epics touching ${services.join(", ")} closed in the indexed window ` +
-          `(${String(cohort.scannedCount)} candidate epic(s) scanned).`,
+          `No past ${tracker.epicNoun}s touching ${services.join(", ")} closed in the indexed window ` +
+          `(${String(cohort.scannedCount)} candidate ${tracker.epicNoun}(s) scanned).`,
         remediation:
-          "Widen history with `nimbus index rebody --service jira --since <days>`, or check " +
+          `Widen history with \`${tracker.reindexHint}\`, or check ` +
           "that `--service` names match real repos.",
       });
     } else {
@@ -907,7 +1029,7 @@ function buildPremortemBrief(input: PremortemInput, ctx: PremortemContext): Prem
         cohort,
         services,
         childCount,
-        targetCreatedAtMs: epicRow.created_at_ms,
+        targetCreatedAtMs: resolved.createdAtMs,
         epicRef: input.epicRef,
         now,
         configIdFor,
@@ -918,7 +1040,7 @@ function buildPremortemBrief(input: PremortemInput, ctx: PremortemContext): Prem
     }
   }
 
-  pushUnconditionalGaps(gaps);
+  pushUnconditionalGaps(gaps, tracker);
 
   return {
     kind: "premortem",

@@ -303,7 +303,7 @@ export const AGENT_CATALOG = Object.freeze({
   "agents.premortem": entry({
     displayName: "Pre-mortem",
     description:
-      "A risk brief for a Jira epic from comparable past epics in the index; it also proposes paused watchers.",
+      "Risk brief for a Jira epic or Linear project from comparable past ones; proposes paused watchers.",
     category: "operations",
     roles: ["manager", "engineer"],
     params: [

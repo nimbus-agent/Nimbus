@@ -69,8 +69,11 @@ export async function seedJiraViaSync(
     );
   }
   const vault = createStubVault({
+    // audit-ignore-next-line D11-vault-key
     "jira.email": "u@example.com",
+    // audit-ignore-next-line D11-vault-key
     "jira.api_token": "tok",
+    // audit-ignore-next-line D11-vault-key
     "jira.base_url": "https://example.atlassian.net",
   });
   const ctx = {
@@ -169,6 +172,7 @@ export async function seedLinearViaSync(
   db: Database,
   input: { projects: readonly LinearFixtureProject[]; issues?: readonly LinearFixtureIssue[] },
 ): Promise<void> {
+  // audit-ignore-next-line D11-vault-key
   const vault = createStubVault({ "linear.api_key": "key" });
   const ctx = {
     db,
