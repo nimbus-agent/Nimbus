@@ -19,7 +19,7 @@
     "@clack/prompts": "^1.8.0",
     "@nimbus-dev/client": "^0.18.0",
     "@nimbus-dev/registry-format": "workspace:*",
-    "@nimbus-dev/sdk": "^2.2.0",
+    "@nimbus-dev/sdk": "^2.3.0",
     "ink": "^7.1.1",
     "pino": "^10.4.0",
     "react": "^19.3.0",
