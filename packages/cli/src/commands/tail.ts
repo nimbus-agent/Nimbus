@@ -11,7 +11,8 @@ export type TailCategory =
   | "extension"
   | "hitl"
   | "oncall"
-  | "briefing";
+  | "briefing"
+  | "incident";
 
 const ALL_CATEGORIES: readonly TailCategory[] = [
   "connector",
@@ -21,6 +22,7 @@ const ALL_CATEGORIES: readonly TailCategory[] = [
   "hitl",
   "oncall",
   "briefing",
+  "incident",
 ];
 
 export type TailCliArgs = {
@@ -145,6 +147,7 @@ function categoryOf(method: string, params: unknown): TailCategory | null {
   if (kind.startsWith("hitl.")) return "hitl";
   if (kind.startsWith("oncall.")) return "oncall";
   if (kind.startsWith("briefing.")) return "briefing";
+  if (kind.startsWith("incident.")) return "incident";
   return null;
 }
 
@@ -220,6 +223,15 @@ function renderGatewayEvent(o: Record<string, unknown>): string | null {
   if (kind === "briefing.ready") {
     const headline = str(payload, "headline");
     if (headline !== null) return `${at} [briefing] ${oneLine(headline)} - nimbus briefing`;
+  }
+
+  if (kind === "incident.assembled") {
+    const recordId = str(payload, "recordId");
+    const version = payload["version"];
+    const status = str(payload, "status");
+    if (recordId !== null && typeof version === "number" && status !== null) {
+      return `${at} [incident] ${oneLine(recordId, 40)} v${String(version)} ${oneLine(status, 20)} - nimbus incident show ${oneLine(recordId, 40)}`;
+    }
   }
 
   // Never dropped: a stream that discards what it does not recognise is the same failure as a

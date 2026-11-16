@@ -14,6 +14,7 @@ describe("parseTailArgs", () => {
       "hitl",
       "oncall",
       "briefing",
+      "incident",
     ]);
     expect(a.json).toBe(false);
   });
@@ -72,6 +73,7 @@ describe("parseTailArgs", () => {
       "hitl",
       "oncall",
       "briefing",
+      "incident",
     ]);
   });
 
@@ -479,6 +481,42 @@ describe("runTailCommand lifecycle", () => {
     expect(h.out[0]).toContain("[briefing] 3 meetings second line - nimbus briefing");
     expect(h.out[1]).toContain("[unknown: briefing.ready]");
     expect(h.out[2]).toContain("[unknown: briefing.futureThing]");
+    process.emit("SIGINT");
+    await done;
+  });
+
+  test("--filter incident renders incident.assembled with control characters stripped; a malformed one is shown as unknown", async () => {
+    const h = harness();
+    const done = runTailCommand(["--filter", "incident"], h.deps);
+    await nextMacrotask();
+    h.handlers["gateway.event"]?.({
+      kind: "incident.assembled",
+      ts: 1_789_300_000_000,
+      payload: { recordId: "inc_ab12\n[forged]", version: 2, status: "open" },
+    });
+    h.handlers["gateway.event"]?.({
+      kind: "incident.assembled",
+      ts: 1,
+      payload: { recordId: "x" },
+    });
+    expect(h.out).toHaveLength(2);
+    expect(h.out[0]).toContain("[incident] inc_ab12 [forged] v2 open - nimbus incident show");
+    expect(h.out[0]?.trimEnd().includes(String.fromCharCode(10))).toBe(false);
+    expect(h.out[1]).toContain("[unknown: incident.assembled]");
+    process.emit("SIGINT");
+    await done;
+  });
+
+  test("incident.assembled is suppressed under --filter sync", async () => {
+    const h = harness();
+    const done = runTailCommand(["--filter", "sync"], h.deps);
+    await nextMacrotask();
+    h.handlers["gateway.event"]?.({
+      kind: "incident.assembled",
+      ts: 1,
+      payload: { recordId: "inc_1", version: 1, status: "open" },
+    });
+    expect(h.out).toHaveLength(0);
     process.emit("SIGINT");
     await done;
   });

@@ -646,3 +646,22 @@ test("chatops: a throwing poster getter skips every row as not running, and the 
   }
   expect(toasts).toHaveLength(2);
 });
+
+test("a toast body carries no escape sequence, C1 control, bidi override or line break from a title or id", async () => {
+  const hostile = `\u001b]2;PWNED\u0007\u001b[31mDB\u009b2J\u202e down\r\nline2`;
+  const toasts: string[] = [];
+  const d = item("pagerduty:T", "ok", 1);
+  const deliver = createPushDeliverer({
+    store,
+    notify: (_t, b) => {
+      toasts.push(b);
+    },
+    emit: () => {},
+    now: () => 1,
+  });
+  await deliver([{ ...d, incident: { ...d.incident, title: hostile } }]);
+  expect(toasts).toHaveLength(1);
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: the test asserts none survive
+  expect(toasts[0]).not.toMatch(/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/u);
+  expect(toasts[0]).toContain("DB");
+});

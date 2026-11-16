@@ -123,6 +123,8 @@ async function runDataDeleteCli(args: string[]): Promise<void> {
         preflight: {
           itemsToDelete: number;
           itemHistoryRowsToDelete?: number;
+          incidentRecordsToDelete?: number;
+          pushedBriefsToDelete?: number;
           vaultEntriesToDelete: number;
         };
         deleted: boolean;
@@ -134,6 +136,15 @@ async function runDataDeleteCli(args: string[]): Promise<void> {
         console.log(
           `  Item history rows to delete: ${String(pre.preflight.itemHistoryRowsToDelete)}`,
         );
+      }
+      // Incident records and pushed briefs that cite the service go with it (older gateways omit them).
+      if (typeof pre.preflight.incidentRecordsToDelete === "number") {
+        console.log(
+          `  Incident records to delete: ${String(pre.preflight.incidentRecordsToDelete)}`,
+        );
+      }
+      if (typeof pre.preflight.pushedBriefsToDelete === "number") {
+        console.log(`  Pushed briefs to delete: ${String(pre.preflight.pushedBriefsToDelete)}`);
       }
       console.log(`  Vault entries to delete: ${String(pre.preflight.vaultEntriesToDelete)}`);
       if (dryRun) return;

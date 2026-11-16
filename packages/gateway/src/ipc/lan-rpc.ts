@@ -72,6 +72,10 @@ const FORBIDDEN_OVER_LAN = new Set([
   // requests, incidents, mail subjects, calendar and on-call: the whole index in prose. `briefing.runNow`
   // also composes and shows a notification. A peer with a legitimate question has `federation.ask`.
   "briefing",
+  // `incident.*` (Phase 10 IC3) - the WHOLE namespace. An incident record restates capped titles of the
+  // owner's incidents, alerts, chat messages, deployments and pull requests, and `incident.assemble` writes
+  // one. A peer with a legitimate question has `federation.ask`.
+  "incident",
   // S2 runtime tool generation — the WHOLE namespace, matching exec/computer/media/fleet.
   // `toolgen.create` is RCE-class by definition (it registers model-authored code that then runs),
   // and `toolgen.approvalRespond` is the LOCAL owner answering a registration prompt — admitting it

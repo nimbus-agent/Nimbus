@@ -30,6 +30,7 @@ const SERVICE_CONFIG_KNOWN_KEYS: ReadonlySet<string> = new Set([
   "sentry_projects",
   "data_models",
   "depends_on",
+  "chat_aliases",
 ]);
 
 function materializeDeployWorkflowPattern(
@@ -95,6 +96,15 @@ function materializeDeployEnvironments(
 const MAX_BINDING_ENTRIES = 50;
 const MAX_JSM_TAG_CHARS = 128;
 const MAX_DATA_MODEL_GLOB_CHARS = 200;
+const MIN_CHAT_ALIAS_CHARS = 3;
+const MAX_CHAT_ALIAS_CHARS = 64;
+function hasControlCharacter(text: string): boolean {
+  for (const ch of text) {
+    const cp = ch.codePointAt(0) ?? 0;
+    if (cp < 0x20 || (cp >= 0x7f && cp <= 0x9f) || cp === 0x2028 || cp === 0x2029) return true;
+  }
+  return false;
+}
 const SENTRY_SLUG_PATTERN = /^[a-z0-9][a-z0-9_-]{0,99}$/;
 const WHITESPACE_PATTERN = /\s/;
 
@@ -132,7 +142,10 @@ function materializeBindings(
   kv: Record<string, string>,
   blockLabel: string,
   serviceId: string,
-): Pick<ServiceConfig, "jsmAlertTags" | "sentryProjects" | "dataModels" | "dependsOn"> {
+): Pick<
+  ServiceConfig,
+  "jsmAlertTags" | "sentryProjects" | "dataModels" | "dependsOn" | "chatAliases"
+> {
   const label = `[${blockLabel}.${serviceId}]`;
   return {
     jsmAlertTags: materializeBindingList(kv, "jsm_alert_tags", label, (tag) => {
@@ -168,6 +181,19 @@ function materializeBindings(
       if (dep === serviceId)
         throw new Error(`${label}.depends_on must not name the service itself`);
       return dep;
+    }),
+    chatAliases: materializeBindingList(kv, "chat_aliases", label, (alias) => {
+      if (alias.length < MIN_CHAT_ALIAS_CHARS || alias.length > MAX_CHAT_ALIAS_CHARS) {
+        throw new Error(
+          `${label}.chat_aliases entry must be ${String(MIN_CHAT_ALIAS_CHARS)} to ${String(MAX_CHAT_ALIAS_CHARS)} characters`,
+        );
+      }
+      if (hasControlCharacter(alias)) {
+        throw new Error(
+          `${label}.chat_aliases entry must not hold a control character or line break`,
+        );
+      }
+      return alias;
     }),
   };
 }

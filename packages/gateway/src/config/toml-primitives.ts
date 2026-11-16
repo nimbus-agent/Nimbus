@@ -116,6 +116,66 @@ export function splitKeyValue(trimmed: string): { key: string; valRaw: string } 
   return { key: trimmed.slice(0, eq).trim(), valRaw: trimmed.slice(eq + 1).trim() };
 }
 
+type QuoteSplit = { parts: string[]; unterminated: boolean };
+
+/** One pass: split on commas outside a double-quoted string. `escapes` decides whether a backslash consumes the next character. */
+function splitPass(inner: string, escapes: boolean): QuoteSplit {
+  const parts: string[] = [];
+  let start = 0;
+  let quoted = false;
+  for (let i = 0; i < inner.length; i += 1) {
+    const ch = inner[i];
+    if (escapes && quoted && ch === "\\") i += 1;
+    else if (ch === '"') quoted = !quoted;
+    else if (ch === "," && !quoted) {
+      parts.push(inner.slice(start, i));
+      start = i + 1;
+    }
+  }
+  parts.push(inner.slice(start));
+  return { parts, unterminated: quoted };
+}
+
+/**
+ * True when `part` is ONE complete element under the given backslash mode: empty, a bare token with no
+ * quote, or a single double-quoted string whose interior holds no quote that would end it. With escapes
+ * on, a backslash consumes the next character (and must not consume the closing quote); with escapes off,
+ * an interior quote is allowed only as `\"`, the one escape `parseString` decodes.
+ */
+function isWholeElement(part: string, escapes: boolean): boolean {
+  const t = part.trim();
+  if (t.length === 0 || !t.includes('"')) return true;
+  if (t.length < 2 || !t.startsWith('"') || !t.endsWith('"')) return false;
+  const last = t.length - 1;
+  for (let i = 1; i < last; i += 1) {
+    const ch = t[i];
+    if (escapes && ch === "\\") {
+      if (i + 1 >= last) return false;
+      i += 1;
+    } else if (ch === '"' && (escapes || t[i - 1] !== "\\")) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
+ * Split on commas that are not inside a double-quoted string, by the same two readings as `stripComment`:
+ * escape-aware first (`"say \"hi, you\""` keeps its comma), then backslash as a literal, which is what
+ * keeps `["C:\", "D:\"]` two Windows paths. A reading is accepted only when EVERY element it yields is one
+ * whole string: an array mixing the two (a path ending in `\` beside an escaped quote) can end the
+ * escape-aware pass outside a string with two entries merged, so "did not end inside a string" is not
+ * enough. When neither reading gives whole elements the array is refused, never merged.
+ */
+function splitOutsideQuotes(inner: string): string[] {
+  for (const escapes of [true, false]) {
+    const pass = splitPass(inner, escapes);
+    if (!pass.unterminated && pass.parts.every((p) => isWholeElement(p, escapes)))
+      return pass.parts;
+  }
+  throw new TypeError(`ambiguous string array (quotes and backslashes do not resolve): [${inner}]`);
+}
+
 export function parseStringArray(raw: string): string[] {
   const t = raw.trim();
   if (!t.startsWith("[") || !t.endsWith("]")) {
@@ -124,7 +184,7 @@ export function parseStringArray(raw: string): string[] {
   const inner = t.slice(1, -1).trim();
   if (inner.length === 0) return [];
   const out: string[] = [];
-  for (const part of inner.split(",")) {
+  for (const part of splitOutsideQuotes(inner)) {
     const v = parseString(part);
     if (v.length > 0) out.push(v);
   }

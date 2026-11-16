@@ -95,13 +95,36 @@ export function resolvePushService(
   return nonEmpty(brief?.nimbusServiceId) ?? nonEmpty(pagerdutyServiceId) ?? null;
 }
 
+/**
+ * A trigger item id is `<service>:<external id>`, so a PagerDuty incident starts with `pagerduty:`. Only those
+ * can be briefed by the `agents.oncall` agent (`selectIncidentById` requires `type = 'incident'`); any other
+ * source is read locally with `nimbus incident show`.
+ */
+export function isPagerdutyItemId(itemId: string): boolean {
+  return itemId.startsWith("pagerduty:");
+}
+
+/** True when every delivery is a PagerDuty incident (the only case that may name the agent command). */
+export function allPagerduty(items: readonly PushDelivery[]): boolean {
+  return items.every((d) => isPagerdutyItemId(d.row.incidentId));
+}
+
 /** The ChatOps agent intent for one incident. The parameter is `incidentId` (ipc/agent-param-kinds.ts). */
 export function pushAgentCommand(incidentId: string): string {
   return `@nimbus agent oncall incidentId=${field(incidentId)}`;
 }
 
-function deploymentLine(brief: HeadlineBrief | null, openedAtMs: number | null): string {
-  if (brief === null) return "Brief could not be assembled; rerun the agent below to retry";
+function deploymentLine(
+  brief: HeadlineBrief | null,
+  openedAtMs: number | null,
+  incidentId: string,
+): string {
+  if (brief === null) {
+    // Only a PagerDuty item has an agent to rerun; any other source is retried with the pushed-brief command.
+    return isPagerdutyItemId(incidentId)
+      ? "Brief could not be assembled; rerun the agent below to retry"
+      : `Brief could not be assembled; retry with: nimbus oncall pushed ${field(incidentId)} --retry`;
+  }
   const dep = brief.deployment;
   if (dep === null) return "No deployment found before the alert";
   const deployAt = dep.finishedAtMs ?? dep.startedAtMs;
@@ -121,8 +144,10 @@ export function renderPushHeadline(d: PushDelivery): string {
   const id = d.row.incidentId;
   return [
     `${field(severity)} · ${field(service)} — ${field(title)}`,
-    deploymentLine(brief, d.incident.openedAtMs),
-    `${pushAgentCommand(id)}  ·  locally: nimbus oncall pushed ${field(id)}`,
+    deploymentLine(brief, d.incident.openedAtMs, id),
+    isPagerdutyItemId(id)
+      ? `${pushAgentCommand(id)}  ·  locally: nimbus oncall pushed ${field(id)}`
+      : `locally: nimbus incident show ${field(id)}`,
   ].join("\n");
 }
 
@@ -141,6 +166,11 @@ export function renderPushSummary(
     more > 0
       ? `${shown.join(", ")} … and ${more} more (locally: nimbus oncall pushed list)`
       : shown.join(", ");
+  const briefs = `${ready} brief${ready === 1 ? "" : "s"} ready`;
   // `<id>` is template text; `toWireText` escapes it at the wire, like every other `<` here.
-  return `${all.length} P1 incidents paged (${ready} brief${ready === 1 ? "" : "s"} ready). Not posted individually: ${list} — @nimbus agent oncall incidentId=<id> for any of them`;
+  if (allPagerduty(all)) {
+    return `${all.length} P1 incidents paged (${briefs}). Not posted individually: ${list} — @nimbus agent oncall incidentId=<id> for any of them`;
+  }
+  // A summary that lists a non-PagerDuty item names no agent command: `agents.oncall` cannot brief it.
+  return `${all.length} incidents paged (${briefs}). Not posted individually: ${list} — locally: nimbus incident show <id> for any of them`;
 }

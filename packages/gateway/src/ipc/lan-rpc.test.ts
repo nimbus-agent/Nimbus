@@ -139,6 +139,25 @@ describe("checkLanMethodAllowed", () => {
     }
   });
 
+  test.each(["incident.list", "incident.get", "incident.assemble"])(
+    "%s is not callable over LAN regardless of grant-write (Phase 10 IC3)",
+    (method) => {
+      for (const writeAllowed of [true, false]) {
+        expect(() => checkLanMethodAllowed(method, { peerId: "p", writeAllowed })).toThrow(
+          /not callable over LAN/,
+        );
+      }
+    },
+  );
+
+  test("negative controls: agents.incident and federation.query are NOT refused by the `incident` entry", () => {
+    for (const writeAllowed of [true, false]) {
+      for (const method of ["agents.incident", "federation.query"]) {
+        expect(() => checkLanMethodAllowed(method, { peerId: "p", writeAllowed })).not.toThrow();
+      }
+    }
+  });
+
   test("negative control: agents.briefing is NOT refused by the `briefing` namespace entry", () => {
     for (const writeAllowed of [true, false]) {
       expect(() =>

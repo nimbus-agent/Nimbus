@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { buildRecord } from "../../incident/__fixtures__/record-builder.ts";
 import type { SynthInput } from "./brief-kinds.ts";
 import type { BriefingBrief } from "./briefing-types.ts";
 import type { ChangelogBrief } from "./changelog-types.ts";
@@ -15,6 +16,7 @@ import type {
   PreflightBrief,
 } from "./findings.ts";
 import type { GlossaryBrief } from "./glossary-types.ts";
+import type { IncidentBrief } from "./incident-types.ts";
 import type { NegotiateBrief } from "./negotiate-types.ts";
 import type { OncallBrief } from "./oncall-types.ts";
 import type { OwnershipBrief } from "./ownership-types.ts";
@@ -462,6 +464,22 @@ const BRIEFING: BriefingBrief = {
   freshness: [{ section: "Calendar", text: "FRESHNESS-SENTINEL" }],
 };
 
+const INCIDENT: IncidentBrief = {
+  kind: "incident",
+  agentVersion: 1,
+  generatedAt: 0,
+  latencyMs: 0,
+  gaps: [GAP],
+  record: {
+    ...buildRecord(),
+    freshness: {
+      rows: [{ service: "pagerduty", connected: true, lastSyncMs: 1_000_000 }],
+      chatToMs: null,
+      onCallStale: null,
+    },
+  },
+};
+
 /**
  * Every brief kind, keyed by its own `kind` literal.
  *
@@ -492,6 +510,7 @@ const BY_KIND: Readonly<Record<SynthInput["kind"], SynthInput>> = {
   changelog: CHANGELOG,
   standup: STANDUP,
   briefing: BRIEFING,
+  incident: INCIDENT,
 };
 
 const ALL_KINDS: readonly SynthInput[] = Object.values(BY_KIND);
@@ -534,6 +553,21 @@ describe("every renderer honours omitReserved", () => {
     expect(full).toContain("## Data freshness");
     expect(full).toContain("FRESHNESS-SENTINEL");
     expect(reservedBlocksFor(briefing).map((b) => b.heading)).toEqual([
+      "## Gaps",
+      "## Data freshness",
+    ]);
+  });
+
+  test("incident withholds `## Data freshness` under omitReserved and renders it otherwise", () => {
+    const incident = ALL_KINDS.find((b) => b.kind === "incident");
+    if (incident === undefined) throw new Error("incident fixture missing from ALL_KINDS");
+    const body = deterministicRenderForTest(incident, { omitReserved: true });
+    expect(body).not.toContain("## Data freshness");
+    expect(body).not.toContain("last synced");
+    const full = deterministicRenderForTest(incident);
+    expect(full).toContain("## Data freshness");
+    expect(full).toContain("pagerduty: last synced");
+    expect(reservedBlocksFor(incident).map((b) => b.heading)).toEqual([
       "## Gaps",
       "## Data freshness",
     ]);

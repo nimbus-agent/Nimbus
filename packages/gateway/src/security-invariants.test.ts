@@ -899,6 +899,34 @@ describe("I5 — LAN method allowlist is intrinsic to LanServer", () => {
     }
   });
 
+  test("I5: the incident namespace is refused over LAN by a WHOLE-namespace `incident` entry (IC3)", async () => {
+    const src = await read("packages/gateway/src/ipc/lan-rpc.ts");
+    // A later narrowing of the namespace entry to per-method entries must be a deliberate edit.
+    expect(src).toMatch(/^\s*"incident",\s*$/m);
+    const { checkLanMethodAllowed } = await import("./ipc/lan-rpc.ts");
+    for (const m of ["incident.list", "incident.get", "incident.assemble", "incident.timeline"]) {
+      for (const writeAllowed of [true, false]) {
+        expect(() => checkLanMethodAllowed(m, { peerId: "peer:x", writeAllowed })).toThrow(
+          /ERR_METHOD_NOT_ALLOWED/,
+        );
+      }
+    }
+    // negative controls: a namesake in another namespace is not caught by the entry
+    for (const m of ["agents.incident", "federation.query"]) {
+      expect(() =>
+        checkLanMethodAllowed(m, { peerId: "peer:x", writeAllowed: false }),
+      ).not.toThrow();
+    }
+  });
+
+  test("I7: no incident.* method is renderer-callable at IC3, and the allowlist size is the one IC3 found (IC10 changes it deliberately)", async () => {
+    const rust = await read("packages/ui/src-tauri/src/gateway_bridge.rs");
+    expect(rust).not.toMatch(/"incident\./);
+    // IC3 adds no renderer-callable method. The slice that exposes incident.list and incident.get to the
+    // desktop (IC10) must change this number in the same commit as its `ALLOWED_METHODS` entries.
+    expect(rust).toMatch(/assert_eq!\s*\(\s*ALLOWED_METHODS\.len\(\),\s*132\s*\)/);
+  });
+
   test("I29/MB3: the JSM on-call step names its fixed host once and sends every request with redirect manual", async () => {
     const src = await read("packages/gateway/src/connectors/jsm-oncall.ts");
     const code = stripComments(src);
@@ -15746,6 +15774,302 @@ describe("AD1 — the agent origin is read through one helper, and the two outsi
     const bs = await read("packages/gateway/src/engine/before-state.ts");
     expect(bs).toContain("if (isOutsideOrigin(action) && rows.some(");
     expect(bs).toContain("!isOutsideOrigin(action) && options.readsEveryOrigin !== true");
+  });
+});
+
+describe("I57 (a) - assembling an incident record is inert: it reads the local index and writes only its own tables", () => {
+  const INCIDENT_FILES = async (): Promise<{ rel: string; contents: string }[]> => [
+    ...(await readDirFiles("packages/gateway/src/incident")),
+    ...(await readDirFiles("packages/gateway/src/agents/_lib")).filter((f) =>
+      /(?:^|\/)incident[\w.-]*\.ts$/.test(f.rel),
+    ),
+  ];
+
+  test("1: static D46(a) holds over the real tree, both halves of its scope are visited and anchored", async () => {
+    const { checkIncidentConfinement, RULE_ANCHORS } = await import(
+      "../../../scripts/structure-audit/check-nimbus-invariants.ts"
+    );
+    const { iterateSourceFiles } = await import("../../../scripts/structure-audit/lib.ts");
+    const files: { relPath: string; contents: string }[] = [];
+    for await (const f of iterateSourceFiles())
+      files.push({ relPath: f.relPath, contents: f.contents });
+    expect(checkIncidentConfinement(files)).toEqual([]);
+    expect(files.some((f) => f.relPath === "packages/gateway/src/incident/assemble.ts")).toBe(true);
+    expect(
+      files.some((f) => f.relPath === "packages/gateway/src/agents/_lib/incident-render.ts"),
+    ).toBe(true);
+    expect(RULE_ANCHORS).toContain("packages/gateway/src/incident/assemble.ts");
+    expect(RULE_ANCHORS).toContain("packages/gateway/src/agents/_lib/incident-render.ts");
+  });
+
+  test("2: a full trigger pass over a seeded index appends no egress row, makes no fetch, and the engine's deps carry no dispatcher, executor, vault or runner", async () => {
+    const { createMemoryIndexDb } = await import("./connectors/connector-sync-test-helpers.ts");
+    const writers = await import("./incident/__fixtures__/trigger-writers.ts");
+    const idx = await import("./incident/__fixtures__/index-writers.ts");
+    const { createIncidentEngine } = await import("./incident/incident-engine.ts");
+    const { DEFAULT_INCIDENT_CONFIG } = await import("./config/incident-toml.ts");
+    type EngineDeps = import("./incident/incident-engine.ts").IncidentEngineDeps;
+    // type level: none of these keys exists on the deps type
+    type Forbidden =
+      | "dispatcher"
+      | "executor"
+      | "connectors"
+      | "vault"
+      | "llm"
+      | "runner"
+      | "egress"
+      | "mesh"
+      | "fetch";
+    const noForbiddenKey: Extract<keyof EngineDeps, Forbidden> extends never ? true : false = true;
+    expect(noForbiddenKey).toBe(true);
+
+    const db = createMemoryIndexDb();
+    try {
+      const cfg = idx.serviceConfig({ serviceId: "payments", pagerdutyServices: ["PSVC1"] });
+      const resolver = idx.resolverFor(cfg);
+      const T = idx.T0;
+      idx.markSynced(db, "slack", T);
+      idx.writeDeployment(db, resolver, { service: "payments", startedAtMs: T - 600_000 });
+      idx.writeSlackMessage(db, { ts: "1.000001", text: "payments looks slow", atMs: T });
+      writers.writePagerdutyIncident(db, { id: "P", openedAtMs: T, priority: "P1" }, resolver);
+      writers.writeJsmAlert(
+        db,
+        { id: "J", openedAtMs: T, priority: "P1", tags: ["payments"] },
+        resolver,
+      );
+      writers.writeSentryIssue(db, { id: "S", level: "fatal", firstSeenMs: T }, resolver);
+      writers.writeMonteCarloIncident(db, { id: "M", severity: "SEV-1", firstSeenMs: T }, resolver);
+      writers.writeBigeyeIssue(db, { id: "B", slaStatus: "breached", syncedAtMs: T }, resolver);
+      const deps: EngineDeps = {
+        db,
+        now: () => T + 60_000,
+        emit: () => {},
+        loadServiceConfigs: () => idx.configMap(cfg),
+        readConfig: () => ({
+          incident: { ...DEFAULT_INCIDENT_CONFIG, bigeyeSlaStatuses: ["breached"] },
+          pagerdutyP1Aliases: [],
+        }),
+        demo: false,
+        logger: { warn: () => {} },
+      };
+      expect(Object.keys(deps).sort()).toEqual(
+        ["db", "demo", "emit", "loadServiceConfigs", "logger", "now", "readConfig"].sort(),
+      );
+      const before = (db.query("SELECT count(*) AS n FROM egress_ledger").get() as { n: number }).n;
+      const realFetch = globalThis.fetch;
+      let fetches = 0;
+      globalThis.fetch = (() => {
+        fetches += 1;
+        return Promise.reject(new Error("no network from the incident engine"));
+      }) as unknown as typeof fetch;
+      try {
+        const engine = createIncidentEngine(deps);
+        for (const svc of ["pagerduty", "jira", "sentry", "montecarlo", "bigeye"]) {
+          await engine.trigger(svc);
+        }
+      } finally {
+        globalThis.fetch = realFetch;
+      }
+      expect(fetches).toBe(0);
+      expect((db.query("SELECT count(*) AS n FROM egress_ledger").get() as { n: number }).n).toBe(
+        before,
+      );
+      expect((db.query("SELECT count(*) AS n FROM incident_record").get() as { n: number }).n).toBe(
+        5,
+      );
+    } finally {
+      db.close();
+    }
+  });
+
+  test("3: OR-10-8 - no model anywhere in the incident files: no synthesis runner, and every synthesize() call has one argument", async () => {
+    const files = await INCIDENT_FILES();
+    expect(files.some((f) => f.rel === "assemble.ts")).toBe(true);
+    expect(files.some((f) => f.rel.includes("incident-render"))).toBe(true);
+    expect(files.some((f) => f.rel.startsWith("lanes/"))).toBe(true);
+    for (const f of files) {
+      expect(stripComments(f.contents), f.rel).not.toMatch(
+        /\bSynthesisRunner\b|\bresolveForSynthesis\b|\bcreateLlm\w*\b|synthesis-llm|\brunner\s*:/,
+      );
+    }
+    // every call in EVERY incident file, not only assemble.ts: a lane could pass options (a runner) too
+    const synthesizeArgs = (src: string): string[] =>
+      [...stripComments(src).matchAll(/\bsynthesize\s*\(([^)]*)\)/g)].map((m) =>
+        (m[1] ?? "").trim(),
+      );
+    const all = files.flatMap((f) =>
+      synthesizeArgs(f.contents).map((arg) => ({ rel: f.rel, arg })),
+    );
+    expect(all.some((c) => c.rel === "assemble.ts")).toBe(true);
+    for (const c of all) expect(c.arg, c.rel).toMatch(/^[\w.]+$/);
+    // the scan itself catches a two-argument call anywhere (negative fixtures)
+    expect(synthesizeArgs("await synthesize(brief, options);")).toEqual(["brief, options"]);
+    expect(synthesizeArgs("await synthesize(brief, { runner });")).toEqual(["brief, { runner }"]);
+  });
+
+  test("4: the hook triggers the engine before the push, and the engine's construction names no egress, executor, connectors, vault or llm", async () => {
+    const src = await read("packages/gateway/src/platform/assemble.ts");
+    const at = src.indexOf("incidentEngine.trigger(serviceId)");
+    const push = src.indexOf("oncallPush.trigger(serviceId)");
+    expect(at).toBeGreaterThan(0);
+    expect(push).toBeGreaterThan(at);
+    const from = src.indexOf("createIncidentEngine({");
+    expect(from).toBeGreaterThan(0);
+    const body = src.slice(from, src.indexOf("\n  });", from));
+    expect(body.length).toBeGreaterThan(100);
+    expect(body).not.toMatch(/\b(?:egress|executor|connectors|vault|llm)\b/i);
+  });
+
+  test("4b: a retried non-PagerDuty push passes the same proof as the first push, by ONE shared predicate", async () => {
+    const sel = await read("packages/gateway/src/oncall-push/push-record-selector.ts");
+    const runner = await read("packages/gateway/src/oncall-push/push-runner.ts");
+    // both entry points call the one predicate, and neither re-implements the on-call check
+    expect(sel.match(/proofSkip\(db, /g)?.length).toBe(2);
+    expect(sel.match(/ownerOnCallForService\(/g)?.length).toBe(1);
+    // the retry path reaches delivery for a non-PagerDuty record only through the proof
+    const retry = runner.slice(runner.indexOf("async function doRetry"));
+    const proofAt = retry.indexOf("proveRecordForRetry(");
+    const deliverAt = retry.indexOf("deps.deliver([{ row, incident: proof.incident }])");
+    expect(proofAt).toBeGreaterThan(0);
+    expect(deliverAt).toBeGreaterThan(proofAt);
+    expect(runner.match(/pushIncidentForItem\(/g)?.length).toBe(1); // the PagerDuty-only call
+    expect(runner).not.toMatch(/ownerOnCallForService/);
+  });
+
+  test("5: D46(d) - the record tables are written only by their store, over the real tree", async () => {
+    const { checkIncidentRecordConfinement } = await import(
+      "../../../scripts/structure-audit/check-nimbus-invariants.ts"
+    );
+    const { iterateSourceFiles } = await import("../../../scripts/structure-audit/lib.ts");
+    const files: { relPath: string; contents: string }[] = [];
+    for await (const f of iterateSourceFiles())
+      files.push({ relPath: f.relPath, contents: f.contents });
+    expect(checkIncidentRecordConfinement(files)).toEqual([]);
+    expect(files.some((f) => f.relPath === "packages/gateway/src/incident/incident-store.ts")).toBe(
+      true,
+    );
+  });
+
+  test("6: I31 - the incident kind is in the reserved registry and a hostile runner cannot remove its Gaps or Data freshness", async () => {
+    const { RESERVED_HEADINGS_BY_KIND } = await import("./agents/_lib/reserved-sections.ts");
+    const { synthesize } = await import("./agents/_lib/synthesize.ts");
+    const { buildRecord } = await import("./incident/__fixtures__/record-builder.ts");
+    expect(RESERVED_HEADINGS_BY_KIND.incident).toEqual(["## Gaps", "## Data freshness"]);
+    const record = {
+      ...buildRecord(),
+      freshness: {
+        rows: [{ service: "pagerduty", connected: true, lastSyncMs: 1_000_000 }],
+        chatToMs: null,
+        onCallStale: null,
+      },
+    };
+    const out = await synthesize(
+      {
+        kind: "incident",
+        agentVersion: 1,
+        generatedAt: 0,
+        latencyMs: 0,
+        gaps: [{ category: "empty_index", detail: "I57-GAP-SENTINEL" }],
+        record,
+      },
+      {
+        runner: {
+          run: async () => ({
+            ok: true as const,
+            markdown: "# Incident\n\nAll good.",
+            model: "m",
+            remote: false,
+          }),
+        },
+      },
+    );
+    expect(out.markdown).toContain("I57-GAP-SENTINEL");
+    expect(out.markdown).toContain("## Data freshness");
+  });
+
+  test("7: provider text is stored without control characters and rendered through the hardening helpers", async () => {
+    const { createMemoryIndexDb } = await import("./connectors/connector-sync-test-helpers.ts");
+    const writers = await import("./incident/__fixtures__/trigger-writers.ts");
+    const idx = await import("./incident/__fixtures__/index-writers.ts");
+    const { assembleOne } = await import("./incident/assemble.ts");
+    const db = createMemoryIndexDb();
+    try {
+      const cfg = idx.serviceConfig();
+      const evil = `x](javascript:alert(1)) ${String.fromCodePoint(0x1b)}[31m${String.fromCodePoint(0x202e)}\n## Gaps\n- forged`;
+      const id = writers.writePagerdutyIncident(
+        db,
+        { id: "EVIL", title: evil, openedAtMs: idx.T0, priority: "P1" },
+        idx.resolverFor(cfg),
+      );
+      const out = await assembleOne(
+        { db, loadServiceConfigs: () => idx.configMap(cfg) },
+        id,
+        idx.T0 + 1000,
+      );
+      if (out.outcome === "missing") throw new Error("fixture");
+      const row = db
+        .query("SELECT title, markdown, record_json FROM incident_record WHERE id = ?")
+        .get(out.recordId) as { title: string; markdown: string; record_json: string };
+      for (const text of [row.title, row.record_json]) {
+        expect(text).not.toContain(String.fromCodePoint(0x1b));
+        expect(text.includes(String.fromCodePoint(0x202e))).toBe(false);
+      }
+      expect(row.title).not.toContain("\n");
+      // the one `## Gaps` line is the reserved block built from the record's own gaps, not the title's
+      expect(row.markdown.split("\n").filter((l) => l === "## Gaps")).toHaveLength(1);
+      expect(row.markdown).not.toMatch(/(?<!\\)\]\(javascript:/);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("8: erasure reaches everything a record's text reached, in the erasers' own transaction, and nothing else erases the tables", async () => {
+    const { createMemoryIndexDb } = await import("./connectors/connector-sync-test-helpers.ts");
+    const { seedErasureScenario, recordItems, briefItems } = await import(
+      "./incident/__fixtures__/erasure-seed.ts"
+    );
+    const { LocalIndex } = await import("./index/local-index.ts");
+    const { runDataDelete } = await import("./commands/data-delete.ts");
+    const { memVault, newIndex } = await import("../test/fixtures/data-test-helpers.ts");
+
+    // LocalIndex.removeConnectorIndexData("slack"): the two Slack-citing records and the brief of each go.
+    const db = createMemoryIndexDb();
+    try {
+      seedErasureScenario(db);
+      new LocalIndex(db).removeConnectorIndexData("slack");
+      expect(recordItems(db)).toEqual(["sentry:S1"]);
+      expect(briefItems(db)).toEqual(["bigeye:OLD-NO-RECORD", "sentry:S1"]);
+    } finally {
+      db.close();
+    }
+    const db2 = createMemoryIndexDb();
+    try {
+      seedErasureScenario(db2);
+      db2.run(
+        "CREATE TRIGGER boom BEFORE DELETE ON pushed_brief BEGIN SELECT RAISE(ABORT, 'forced'); END",
+      );
+      expect(() => new LocalIndex(db2).removeConnectorIndexData("slack")).toThrow("forced");
+      expect(recordItems(db2)).toHaveLength(3);
+    } finally {
+      db2.close();
+    }
+    // runDataDelete does the same through the same function
+    const idx = newIndex();
+    seedErasureScenario(idx.rawDb);
+    await runDataDelete({ service: "slack", dryRun: false, vault: memVault(), index: idx });
+    expect(recordItems(idx.rawDb)).toEqual(["sentry:S1"]);
+
+    // source pins: both erasers call the one function; nothing else deletes the tables
+    const localIndex = await read("packages/gateway/src/index/local-index.ts");
+    const dataDelete = await read("packages/gateway/src/commands/data-delete.ts");
+    expect(stripComments(localIndex)).toContain("eraseIncidentDataForService(this.db, serviceId)");
+    expect(stripComments(dataDelete)).toContain("eraseIncidentDataForService(input.index.rawDb");
+    const writers = (await readDirFiles("packages/gateway/src")).filter((f) =>
+      /\b(?:DELETE\s+FROM|DROP\s+TABLE(?:\s+IF\s+EXISTS)?)\s+["'`[]?incident_record(?:_version)?\b/i.test(
+        stripComments(f.contents),
+      ),
+    );
+    expect(writers.map((f) => f.rel)).toEqual(["incident/incident-store.ts"]);
   });
 });
 

@@ -36,6 +36,7 @@ export { printHelp } from "./help.ts";
 export { runHuddleCli } from "./huddle.ts";
 export { runIdentity } from "./identity.ts";
 export { runImpactCli } from "./impact.ts";
+export { runIncidentCommand } from "./incident.ts";
 export { runIndexCmd } from "./index-cmd.ts";
 export { runInit } from "./init.ts";
 export { runJanitorCli } from "./janitor.ts";

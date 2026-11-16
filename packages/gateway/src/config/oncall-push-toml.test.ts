@@ -32,7 +32,23 @@ describe("[oncall.push] config", () => {
       severities: ["p1", "sev-1"],
       chatopsNamespace: "payments",
       retentionDays: 30,
+      sources: ["pagerduty"],
     });
+  });
+
+  test("sources: default pagerduty, five ids accepted, unknown dropped, empty disables", () => {
+    expect(DEFAULT_ONCALL_PUSH_CONFIG.sources).toEqual(["pagerduty"]);
+    const one = (v: string) => parseNimbusTomlOncallPush(`[oncall.push]\nsources = ${v}\n`).sources;
+    expect(one('["PagerDuty", "jira", "sentry", "montecarlo", "bigeye", "jira"]')).toEqual([
+      "pagerduty",
+      "jira",
+      "sentry",
+      "montecarlo",
+      "bigeye",
+    ]);
+    expect(one('["jira", "slack", "x"]')).toEqual(["jira"]);
+    expect(one("[]")).toEqual([]);
+    expect(one('"jira"')).toEqual(["pagerduty"]);
   });
 
   test("only the exact header counts — [oncall] and [oncall.push.x] are ignored", () => {
@@ -81,6 +97,7 @@ describe("[oncall.push] config", () => {
       severities: ["p1"],
       chatopsNamespace: "",
       retentionDays: 30,
+      sources: ["pagerduty"],
     });
   });
 

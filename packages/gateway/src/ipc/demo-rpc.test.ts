@@ -3,7 +3,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-
+import { engineForConfigDir } from "../incident/__fixtures__/test-engine.ts";
 import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import {
@@ -140,6 +140,7 @@ describe("dispatchDemoRpc", () => {
     const nowMs = Date.now();
     await dispatchDemoRpc("demo.seed", { nowMs }, { db, configDir, dataDir });
     const oncallPush = assembleOncallPushRuntime({
+      records: engineForConfigDir(db, configDir, () => nowMs + 1_000),
       settleImmediately: true,
       db,
       configDir,

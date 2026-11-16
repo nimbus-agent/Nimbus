@@ -1151,7 +1151,7 @@ nimbus oncall now --service payment-service
 
 **A conditional gap names the missing merge commit:** a deployment is matched to its change by merge commit, and only the GitHub connector records one, so on GitLab and Bitbucket the change section is always empty. The brief says so as a `missing_connector` gap, and states the limit plainly: there is no remedy on GitLab or Bitbucket today, and on GitHub the thing to check is that the pull request which merged the commit is indexed.
 
-**Service bindings (Phase 10 IC2).** `[ci.service.<id>]` and `[metrics.dora.<id>]` also accept `jsm_alert_tags` (JSM Operations alert tags, matched case-insensitively), `sentry_projects` (Sentry project slugs), `data_models` (warehouse model globs, `*` only, e.g. `analytics.payments.*`) and `depends_on` (service ids this one depends on; stored for the cascade, a missing target only warns). At most 50 entries each; an invalid entry is an error naming `[block.id].key`. `repos` is still required. `nimbus metrics dora` reports `incomplete_resolution_data` on MTTR when resolved PagerDuty incidents have no recorded resolution time (rows written before IC2 until they re-sync), and `nimbus changelog` lists a resolved incident at its recorded resolution time (`event`) or, for an older row, at its last-touch time (`index`).
+**Service bindings (Phase 10 IC2).** `[ci.service.<id>]` and `[metrics.dora.<id>]` also accept `jsm_alert_tags` (JSM Operations alert tags, matched case-insensitively), `sentry_projects` (Sentry project slugs), `data_models` (warehouse model globs, `*` only, e.g. `analytics.payments.*`) and `depends_on` (service ids this one depends on; stored for the cascade, a missing target only warns). At most 50 entries each; an invalid entry is an error naming `[block.id].key`. `chat_aliases` (Phase 10 IC3; the chat terms the incident record searches for this service instead of the derived ones) is accepted too. `repos` is still required. `nimbus metrics dora` reports `incomplete_resolution_data` on MTTR when resolved PagerDuty incidents have no recorded resolution time (rows written before IC2 until they re-sync), and `nimbus changelog` lists a resolved incident at its recorded resolution time (`event`) or, for an older row, at its last-touch time (`index`).
 
 **A fourth gap is conditional and worth fixing when you see it:** an incident whose PagerDuty service maps to no configured Nimbus service leaves the deployment, change, CI and chat sections structurally empty. The brief names the unmapped PagerDuty id and points at the `[metrics.dora.<service>]` / `[ci.service.<service>]` binding — the same one `nimbus metrics dora` already uses.
 
@@ -1267,6 +1267,43 @@ Text from the index (a title, a sender) is stripped of control characters before
 
 **Bounds.** Outlook mail is counted per message (no thread key or sender is indexed); an empty work snapshot reads "not run yet", never "nothing assigned"; GitHub only for reviews; Slack unread needs the read markers the Slack sync records.
 
+### `nimbus incident`
+
+The incident records the gateway assembled from the local index when a PagerDuty incident, a Jira Service Management Operations alert, a Sentry issue or a Monte Carlo or Bigeye item was indexed. It makes **no provider call** and **uses no model**: a record is built from the index alone and rendered deterministically; nothing leaves the machine.
+
+```bash
+nimbus incident list                      # newest first
+nimbus incident list --open --service payment-service --limit 20
+nimbus incident list --source jira --json
+nimbus incident show inc_0123456789abcdef # a record id
+nimbus incident show pagerduty:PXXXXX     # a trigger item id
+nimbus incident show PXXXXX --json        # the provider's own id
+```
+
+| Form | What it does |
+|---|---|
+| `list [--open] [--service <id>] [--source <service>] [--limit <n>] [--json]` | One line per record, newest first by open time (a record whose source records no open time sorts last): id, open time, status, severity, source, bound service (or `(unbound)`), version, title. `--open` keeps open records, `--service` a bound Nimbus service, `--source` one of `pagerduty`, `jira`, `sentry`, `montecarlo`, `bigeye`; `--limit` 1 to 200 (default 50). Each flag may be given once. |
+| `show <id> [--json]` | The record's Markdown (the summary, the service, the change candidate with its pull request and CI run, chat, earlier incidents, who is on call, concurrent records, history, then `## Gaps` and `## Data freshness`) and a footer `Record <id> v<N>, assembled <UTC> (<age> ago), last checked <UTC>`. An id that is a trigger item with no record (it was below the automatic severity rule, or not yet assembled) is assembled on demand and the output says so. `--json` prints the `incident.get` result. |
+
+**Exit codes.** `list` exits `0` with records or with none (the text names which trigger connectors are connected), and `1` when no incident source is connected at all (`--json` always prints the `status`, `ok`, `none` or `no_data`, so a script reads the state, not only the exit code). `show` exits `0` with a record and `1` when nothing is indexed under the id, the id is ambiguous (the message names the candidates; use the full item id) or the item is not an incident source. Text from the index (a title, a chat message) is stripped of control characters before it reaches the terminal.
+
+**Owner surfaces only.** `incident.list`, `incident.get` and `incident.assemble` answer only a connection that declared `cli` or `ui`; every other kind (`mcp`, `http`, `chatops`, `fleet`, `push`, an undeclared client) gets `ERR_INCIDENT_FORBIDDEN_CLIENT`, a paired LAN peer cannot call them at all, and none is on the desktop renderer's allowlist yet. A record holds capped titles of items from several services, so it is shown to your own surfaces only. `incident.assembled` is a gateway event (`{ recordId, version, status }`, never a title): `nimbus tail --filter incident` follows it.
+
+**Configuration** (`nimbus.toml`; a bad value falls back to that key's own default and `nimbus config explain` names it, nothing is clamped):
+
+| Key | Default | Meaning |
+|---|---|---|
+| `[incident] enabled` | `true` | `false` stops ONLY the automatic assembly after a sync. `nimbus incident show`, `incident.assemble`, the on-call push's own assembly of a candidate (so a page is never dropped), the reads, retention and erasure keep working; a widened `[oncall.push] sources` has no candidates until records exist. |
+| `[incident] severities` | `[]` | `[]` keeps the per-source defaults (PagerDuty `p1` plus `[pagerduty] severity_p1_aliases`, JSM `p1`, Sentry `fatal`, Monte Carlo `sev1` and `high`); a non-empty list REPLACES them for every source. It decides what is ASSEMBLED and never what is pushed. |
+| `[incident] bigeye_sla_statuses` | `[]` | Bigeye `slaStatus` values (lower-cased) that make a Bigeye item trigger; Bigeye has no severity, so it never auto-triggers without this. |
+| `[incident] retention_days` | `365` | 7 to 3650; records older than this (by open time, or by assembly time when the source gives none) are pruned daily with the pushed briefs built from them. |
+| `[incident] lookback_days` | `7` | 1 to 90; how far back a never-assembled item is picked up automatically (the first sync after the upgrade assembles at most 200 items per source, 20 per pass). An older item is assembled on demand by `show`. |
+| `[ci.service.<id>] chat_aliases` | derived | When non-empty, the ONLY terms searched in chat for that service (3 to 64 characters, at most 50 entries, no control characters); by default the service id, its Sentry slugs and its repository names. Also accepted under `[metrics.dora.<id>]`. |
+
+**Bounds.** A record is a snapshot at its version's assembly time; the chat lane is a literal phrase match; the change lane covers GitHub pull requests only (a GitLab or Bitbucket repository gets a gap); Monte Carlo, Bigeye and Jira Service Management reply shapes are checked against documentation only; and a deployment is "the last deployment before the alert", timing only, never a proven cause.
+
+---
+
 ### `nimbus statuspage draft`
 
 A static status page generated from the local index, for you to review and publish. It writes ONE local HTML file and does nothing else: no upload, no network, no connector call, no model, no HITL action. Publishing is your act.
@@ -1311,7 +1348,7 @@ nimbus oncall pushed --json
 | `--retry` | Only with an incident id: re-assemble a brief for that incident (the recovery path when a stored brief is `FAILED`). |
 | `--json` | Print the stored record as JSON. Exit codes are unchanged: a failed brief or a named id with no brief exits `1`. |
 
-A brief that could not be assembled is stored as `FAILED` with its failure code and is never silently dropped; the command prints the code and the exact `--retry` line, and exits `1`.
+A brief that could not be assembled is stored as `FAILED` with its failure code and is never silently dropped; the command prints the code and the exact `--retry` line, and exits `1`. A retry of a record from a source other than PagerDuty is re-assembled and stored, but delivered to the sinks only if it passes the push proof again now (the source is still in `[oncall.push] sources`, the record is open, bound and in the push severity set, and you are on call for its service on fresh data); otherwise the command prints `Retried and stored; not delivered: <reason>.` (and `notDelivered` under `--json`). A PagerDuty retry is delivered as before.
 
 **Configuration** (`nimbus.toml`):
 
@@ -1321,7 +1358,10 @@ enabled = false          # default off; a role pack (the bundled DevOps pack, 1.
 severities = []          # [] = {"p1"} plus [pagerduty] severity_p1_aliases; a non-empty list REPLACES that set
 chatops_namespace = ""   # "" = post nothing; else the namespace whose policy notify channels get each pushed headline
 retention_days = 90      # stored briefs older than this are pruned at boot (even when disabled) and on each run
+sources = ["pagerduty"]  # whose incident records may be pushed; [] pushes nothing. Another source (jira, sentry, montecarlo, bigeye) is pushed only for a record bound to a service, when the index shows YOU on call for it
 ```
+
+**What is pushed (Phase 10 IC3).** The push pushes the incident record the gateway assembled ([`nimbus incident`](#nimbus-incident)), assembling a candidate's on demand, so the stored brief is the record's Markdown. A PagerDuty incident is selected exactly as before (assigned to you, active, severity in the set above). With `sources` widened, a record of another source is pushed ONLY when all of these hold, each failure counted under its own reason and shown by `nimbus oncall pushed list` ("The last run did not push: ..."), and never broadcast: its severity is in `[oncall.push] severities` (default `p1`, so out of the box only a JSM `p1`; list `fatal`, `sev1` and so on to include Sentry and Monte Carlo; `[incident] severities` never filters a push), it is open with an open time after push was enabled, it is bound to a `[ci.service.<id>]` service, the index shows YOU on call for that service now (a current PagerDuty shift of yours for one of the service's `pagerduty_services`, fetched within 60 minutes; `isMe` needs a user-level token or `pagerduty.from_email`; a JSM schedule cannot prove it), and the source is listed in `sources`. A record that fails a check is simply not pushed this run and is re-evaluated at the next. With `[incident] enabled = false` a page is still never dropped (the push assembles its own PagerDuty candidates), but other sources have no candidates until records exist, and `nimbus oncall pushed list` says so.
 
 **Pack-settable and live.** `enabled` is the one `[oncall.push]` key a role pack may set (the bundled DevOps pack, version 1.1.0, sets `enabled = true`). It takes effect without a gateway restart: installing or removing a pack, or editing your own `nimbus.toml`, is picked up without a restart, and a disable followed by an enable does not backfill the gap: incidents opened while it was off are pushed only if they opened no further back than 5 minutes before the re-enable. Your own `nimbus.toml` or profile file still overrides a pack, so an explicit `enabled = false` keeps push off. Every other `[oncall.push]` key (`severities`, `chatops_namespace`, `retention_days`) is read at gateway start and is not pack-settable. A DevOps pack installed before 1.1.0 shows `update available` in `nimbus pack list`; re-install it to pick the key up.
 
@@ -1347,7 +1387,7 @@ nimbus tail --filter connector,hitl --json
 
 | Flag | Description |
 |---|---|
-| `--filter <categories>` | Comma-separated, repeatable: `connector`, `watcher`, `sync`, `extension`, `hitl`, `oncall` (a pushed on-call brief, [`nimbus oncall pushed`](#nimbus-oncall-pushed)). Default (flag omitted): all six. An event of a kind this build does not recognise is never filtered out, even under a narrow `--filter` — a stream that silently drops what it does not recognise is worse than one unfamiliar line. |
+| `--filter <categories>` | Comma-separated, repeatable: `connector`, `watcher`, `sync`, `extension`, `hitl`, `oncall` (a pushed on-call brief, [`nimbus oncall pushed`](#nimbus-oncall-pushed)). `briefing` (a composed morning briefing), `incident` (an incident record was created or got a new version: `incident <recordId> v<version> <status>`, [`nimbus incident`](#nimbus-incident)). Default (flag omitted): all six. An event of a kind this build does not recognise is never filtered out, even under a narrow `--filter` — a stream that silently drops what it does not recognise is worse than one unfamiliar line. |
 | `--json` | Emit the raw JSON-RPC notification (`{method, params}`) as one JSON object per line, instead of the human-readable rendering. |
 
 **`nimbus tail` is follow-only** — the same contract as `tail -f -n 0`. It shows only what happens *from the moment it connects*; there is no backfill of events that occurred before it started, and nothing it prints is persisted anywhere. Reaching for it after the fact (e.g. "what happened to that sync ten minutes ago?") will not work — that history exists only if some other subsystem records it (the egress ledger, `nimbus audit`), not here.
@@ -6390,7 +6430,7 @@ nimbus data delete --service slack --yes         # Execute — required for non-
 | Flag | Description |
 |---|---|
 | `--service <name>` | Connector to purge (`github`, `slack`, `google_drive`, …) |
-| `--dry-run` | Print the preflight (item count, item-history row count, vault entry count) and exit |
+| `--dry-run` | Print the preflight (item count, item-history row count, incident records and pushed briefs that cite the service, vault entry count) and exit |
 | `--yes` | Required to execute the deletion (the CLI is non-interactive) |
 
 The preflight is always printed — even with `--yes` — so the deletion blast radius is recorded in the audit log before the destructive write.

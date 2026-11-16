@@ -10,7 +10,7 @@ import {
   syncTestContext,
 } from "../connectors/connector-sync-test-helpers.ts";
 import { syncPagerdutyIncidentItems } from "../connectors/pagerduty-sync.ts";
-import { LocalIndex } from "../index/local-index.ts";
+import { engineForConfigDir } from "../incident/__fixtures__/test-engine.ts";
 import { setGatewayEventBroadcast } from "../ipc/gateway-events.ts";
 import { findPersonByCanonicalEmail } from "../people/person-store.ts";
 import {
@@ -64,8 +64,13 @@ beforeEach(() => {
 });
 // Every runtime a test assembles is stopped, so its live `enabled` reader never outlives it.
 const runtimes: OncallPushRuntime[] = [];
-function assembleOncallPushRuntime(deps: OncallPushBootDeps): OncallPushRuntime {
-  const rt = assembleRuntime(deps);
+function assembleOncallPushRuntime(
+  deps: Omit<OncallPushBootDeps, "records"> & { readonly records?: OncallPushBootDeps["records"] },
+): OncallPushRuntime {
+  const rt = assembleRuntime({
+    ...deps,
+    records: deps.records ?? engineForConfigDir(deps.db, deps.configDir, deps.now ?? Date.now),
+  });
   runtimes.push(rt);
   return rt;
 }
@@ -211,7 +216,6 @@ test("run() drives the real pipeline end to end: default dispatch, brief stored,
     settleImmediately: true,
     db,
     configDir,
-    localIndex: new LocalIndex(db),
     notifications: {
       show: (t, b) => {
         toasts.push([t, b]);
@@ -224,7 +228,7 @@ test("run() drives the real pipeline end to end: default dispatch, brief stored,
   const events: Record<string, unknown>[] = [];
   setGatewayEventBroadcast((_m, p) => events.push(p));
   try {
-    expect(await rt.run("pagerduty")).toEqual({ selected: 1, ok: 1, failed: 0 });
+    expect(await rt.run("pagerduty")).toEqual({ selected: 1, ok: 1, failed: 0, notPushed: {} });
   } finally {
     setGatewayEventBroadcast(undefined);
   }
@@ -367,7 +371,7 @@ test("without a [user] override and the default clock, identity agrees with reso
   });
   const expected = (await resolveSelfPerson(db, {})).personId !== null;
   expect(await rt.identityResolved()).toBe(expected);
-  expect(await rt.run("github")).toMatchObject({ skipped: "not_pagerduty" });
+  expect(await rt.run("github")).toMatchObject({ skipped: "not_a_source" });
 });
 
 test("a run before settleChatopsPoster waits for it, then runs once (design: 2026-10-02-oncall-push-chatops-design.md § 4 boot race)", async () => {
@@ -379,7 +383,6 @@ test("a run before settleChatopsPoster waits for it, then runs once (design: 202
   const rt = assembleOncallPushRuntime({
     db,
     configDir,
-    localIndex: new LocalIndex(db),
     notifications: { show: () => {} },
     logger: { error: () => {} },
     now: () => T0 - 1000,
@@ -396,7 +399,7 @@ test("a run before settleChatopsPoster waits for it, then runs once (design: 202
   expect(rt.store.get("pagerduty:PGATE")).toBeNull();
   rt.settleChatopsPoster(undefined);
   expect(rt.chatopsSinkState()).toBe("none");
-  expect(await p).toEqual({ selected: 1, ok: 1, failed: 0 });
+  expect(await p).toEqual({ selected: 1, ok: 1, failed: 0, notPushed: {} });
   expect(rt.store.get("pagerduty:PGATE")?.status).toBe("ok");
 });
 
@@ -446,7 +449,6 @@ test("a run settled with a poster posts the headline through it and records deli
   const rt = assembleOncallPushRuntime({
     db,
     configDir,
-    localIndex: new LocalIndex(db),
     notifications: { show: () => {} },
     logger: { error: () => {} },
     now: () => T0 - 1000,

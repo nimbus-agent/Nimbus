@@ -1,5 +1,12 @@
 import type { Database } from "bun:sqlite";
 import { dbRun } from "../db/write.ts";
+import { TRIGGER_TYPES } from "../incident/trigger-sources.ts";
+
+/**
+ * The item types the push can be about (Phase 10 IC3): a PagerDuty incident, a JSM alert, a Sentry issue or a
+ * data-quality item. The key of a pushed brief is still the trigger item id.
+ */
+const TRIGGER_TYPES_SQL = `(${TRIGGER_TYPES.map((t) => `'${t}'`).join(", ")})`;
 
 export type PushedBriefStatus = "ok" | "failed";
 export type SinkOutcomeKind = "delivered" | "skipped" | "coalesced" | "failed";
@@ -170,7 +177,7 @@ export class PushStore {
       .query(
         `SELECT ${PB_COLS}, i.title AS incident_title, ${PD_SERVICE_SQL} AS incident_pd_service_id
            FROM pushed_brief pb
-           LEFT JOIN item i ON i.id = pb.incident_id AND i.type = 'incident'
+           LEFT JOIN item i ON i.id = pb.incident_id AND i.type IN ${TRIGGER_TYPES_SQL}
           ORDER BY pb.created_at DESC, pb.incident_id ASC
           LIMIT ?`,
       )
@@ -208,14 +215,16 @@ export class PushStore {
   /** Display-only read of the incident's indexed title. */
   incidentTitle(incidentId: string): string | null {
     const r = this.db
-      .query("SELECT title FROM item WHERE id = ? AND type = 'incident'")
+      .query(`SELECT title FROM item WHERE id = ? AND type IN ${TRIGGER_TYPES_SQL}`)
       .get(incidentId) as { title: string } | null;
     return r === null ? null : r.title;
   }
 
   incidentPagerdutyServiceId(incidentId: string): string | null {
     const r = this.db
-      .query(`SELECT ${PD_SERVICE_SQL} AS v FROM item i WHERE i.id = ? AND i.type = 'incident'`)
+      .query(
+        `SELECT ${PD_SERVICE_SQL} AS v FROM item i WHERE i.id = ? AND i.type IN ${TRIGGER_TYPES_SQL}`,
+      )
       .get(incidentId) as { v: unknown } | null;
     return r !== null && typeof r.v === "string" ? r.v : null;
   }
@@ -225,4 +234,42 @@ export class PushStore {
     if (row === null) throw new Error(`pushed_brief row vanished: ${incidentId}`);
     return row;
   }
+}
+
+export type PushedBriefErasure = {
+  /** Trigger item ids whose record was erased (the V64 primary key IS the trigger item id). */
+  readonly triggerItemIds: readonly string[];
+  /** When set, also every row whose key begins with `<service>:` (the erased service's own incidents). */
+  readonly service?: string;
+};
+
+function erasureWhere(e: PushedBriefErasure): { clause: string; params: (string | number)[] } {
+  const arms = ["incident_id IN (SELECT value FROM json_each(?))"];
+  const params: (string | number)[] = [JSON.stringify(e.triggerItemIds)];
+  if (e.service !== undefined) {
+    // substr compare, never LIKE: a `%` or `_` in a service id is literal.
+    const prefix = `${e.service}:`;
+    arms.push("substr(incident_id, 1, ?) = ?");
+    params.push(prefix.length, prefix);
+  }
+  return { clause: arms.join(" OR "), params };
+}
+
+/**
+ * Delete the pushed briefs built from erased or pruned incident records (Phase 10 IC3, design I). Lives here
+ * because this file is the only one that names `pushed_brief` (static D46(d)); called only by
+ * `incident/incident-erasure.ts`. Opens no transaction: the caller owns it. Returns the rows deleted.
+ */
+export function deletePushedBriefsForErasure(db: Database, e: PushedBriefErasure): number {
+  const w = erasureWhere(e);
+  return dbRun(db, `DELETE FROM pushed_brief WHERE ${w.clause}`, w.params).changes;
+}
+
+/** Read-only count for the `data delete` dry run, by the same predicate. */
+export function countPushedBriefsForErasure(db: Database, e: PushedBriefErasure): number {
+  const w = erasureWhere(e);
+  const row = db
+    .query(`SELECT count(*) AS n FROM pushed_brief WHERE ${w.clause}`)
+    .get(...w.params) as { n: number };
+  return row.n;
 }

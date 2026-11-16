@@ -71,6 +71,7 @@ export const COMMAND_NAMES = [
   "oncall",
   "statuspage",
   "briefing",
+  "incident",
   "start",
   "stats",
   "status",

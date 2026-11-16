@@ -1,5 +1,15 @@
 import { briefTextFor } from "../lib/agent-brief-render.ts";
 import { CliExit } from "../lib/cli-exit.ts";
+import { stripControlChars } from "../lib/strip-control-chars.ts";
+
+/**
+ * A title, id or service name on a list line is third-party text (an alert or ticket title): drop control
+ * characters, and the format (bidi, zero-width) and line or paragraph separator characters a terminal acts on.
+ */
+function terminalSafe(s: string): string {
+  return stripControlChars(s).replace(/[\p{Cf}\p{Zl}\p{Zp}]/gu, "");
+}
+
 import { withGatewayIpc } from "../lib/with-gateway-ipc.ts";
 import { getCliPlatformPaths } from "../paths.ts";
 
@@ -34,7 +44,32 @@ type Brief = {
   failureCode: string | null;
   service?: string | null;
 };
-type ListResult = { enabled: boolean; identity: string; briefs: Brief[] };
+type ListResult = {
+  enabled: boolean;
+  identity: string;
+  briefs: Brief[];
+  /** Phase 10 IC3; absent on an older gateway. */
+  sources?: string[];
+  incidentEngineEnabled?: boolean;
+  lastRun?: { notPushed?: Record<string, number> } | null;
+};
+
+/** The two diagnostics that make a silent non-push explainable (Phase 10 IC3). */
+function recordDiagnostics(r: ListResult): string[] {
+  const out: string[] = [];
+  const widened = (r.sources ?? []).some((s) => s !== "pagerduty");
+  if (widened && r.incidentEngineEnabled === false) {
+    out.push(
+      "Records are off: pushes of other sources need [incident] enabled = true in nimbus.toml.\n",
+    );
+  }
+  const counts = Object.entries(r.lastRun?.notPushed ?? {}).filter(([, n]) => n > 0);
+  if (counts.length > 0) {
+    const text = counts.map(([why, n]) => `${why} ${String(n)}`).join(", ");
+    out.push(`The last run did not push: ${text}.\n`);
+  }
+  return out;
+}
 
 export function parseOncallPushedArgs(argv: readonly string[]): OncallPushedArgs | undefined {
   let json = false;
@@ -73,16 +108,20 @@ async function runList(c: OncallPushedIpc, json: boolean, sink: OncallPushedSink
   if (r.briefs.length === 0) {
     sink.out("No pushed briefs yet.\n");
     if (!r.enabled) sink.out(PUSH_OFF_HINT);
+    for (const line of recordDiagnostics(r)) sink.out(line);
     return 0;
   }
   for (const b of r.briefs) {
     const status = b.status === "ok" ? "ok    " : "FAILED";
     const svc =
-      b.service !== undefined && b.service !== null && b.service !== "" ? `[${b.service}]  ` : "";
+      b.service !== undefined && b.service !== null && b.service !== ""
+        ? `[${terminalSafe(b.service)}]  `
+        : "";
     sink.out(
-      `${new Date(b.createdAt).toISOString()}  ${status}  ${b.incidentId}  ${svc}${b.title ?? ""}\n`,
+      `${new Date(b.createdAt).toISOString()}  ${status}  ${terminalSafe(b.incidentId)}  ${svc}${terminalSafe(b.title ?? "")}\n`,
     );
   }
+  for (const line of recordDiagnostics(r)) sink.out(line);
   return 0;
 }
 
@@ -133,13 +172,20 @@ export async function runOncallPushedWith(
     if (a.mode === "list") return await runList(c, a.json, sink);
     const raw = await requestBrief(c, a);
     const brief = (raw as { brief: Brief | null }).brief;
+    const notDelivered = (raw as { notDelivered?: unknown }).notDelivered;
     if (a.json) {
-      sink.out(`${JSON.stringify({ brief })}\n`);
+      sink.out(
+        `${JSON.stringify(typeof notDelivered === "string" ? { brief, notDelivered } : { brief })}\n`,
+      );
       return jsonExitCode(brief, a.mode === "one");
     }
     // `return await`, not a bare return: a failing off-hint lookup must reach the catch below.
     if (brief === null) return await renderNoBrief(c, a, sink);
-    return renderBrief(brief, sink, demo);
+    const code = renderBrief(brief, sink, demo);
+    if (typeof notDelivered === "string") {
+      sink.err(`Retried and stored; not delivered: ${stripControlChars(notDelivered)}.\n`);
+    }
+    return code;
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     if (a.json) sink.out(`${JSON.stringify({ error: msg })}\n`);

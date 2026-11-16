@@ -8,6 +8,7 @@ import { parseAgentCommand } from "../agent-commands/parse-agent-command.ts";
 import { selectIncidentById } from "../agents/_lib/oncall-queries.ts";
 import { toWireText } from "../chatops/escape-outbound.ts";
 import { fireDemoPage, seedDemoCorpus } from "../demo/seed.ts";
+import { engineForConfigDir } from "../incident/__fixtures__/test-engine.ts";
 import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import { EXTERNAL_AGENT_NAMES } from "../ipc/agents-rpc.ts";
@@ -60,6 +61,7 @@ async function realDelivery(): Promise<PushDelivery> {
   const nowMs = Date.now();
   await seedDemoCorpus(db, { configDir, dataDir, nowMs });
   const rt = assembleOncallPushRuntime({
+    records: engineForConfigDir(db, configDir, () => nowMs),
     db,
     configDir,
     notifications: { show: () => {} },
@@ -329,5 +331,59 @@ describe("resolvePushService", () => {
   });
   test("returns the raw value, never escaped", () => {
     expect(resolvePushService(brief("a&b"), null)).toBe("a&b");
+  });
+});
+
+describe("non-PagerDuty pushes name no agent command (Phase 10 IC3)", () => {
+  function fakeAny(id: string, base: PushDelivery): PushDelivery {
+    return { ...base, row: { ...base.row, incidentId: id, status: "ok" } };
+  }
+
+  test("a JSM record's headline points at nimbus incident show, and a PagerDuty one is unchanged", async () => {
+    const d = await realDelivery();
+    const jsm = renderPushHeadline(fakeAny("jira:J1", d));
+    expect(jsm.split("\n")[2]).toBe("locally: nimbus incident show jira:J1");
+    expect(jsm).not.toContain("@nimbus agent");
+    const pd = renderPushHeadline(fakeAny("pagerduty:P1", d));
+    expect(pd.split("\n")[2]).toBe(
+      "@nimbus agent oncall incidentId=pagerduty:P1  ·  locally: nimbus oncall pushed pagerduty:P1",
+    );
+  });
+
+  test("a summary with ANY non-PagerDuty row (in all or in rest) names no agent and says incidents paged", async () => {
+    const d = await realDelivery();
+    const all = [fakeAny("pagerduty:A", d), fakeAny("sentry:S", d), fakeAny("pagerduty:C", d)];
+    for (const rest of [all.slice(2), all.slice(1), all]) {
+      const out = renderPushSummary(all, rest);
+      expect(out).toContain("3 incidents paged (3 briefs ready)");
+      expect(out).not.toContain("P1 incidents");
+      expect(out).not.toContain("@nimbus agent");
+      expect(out).toContain("locally: nimbus incident show <id> for any of them");
+      expect(toWireText("slack", out)).not.toContain("<id>");
+    }
+  });
+
+  test("a summary of only PagerDuty rows is byte-identical to the shipped text", async () => {
+    const d = await realDelivery();
+    const all = [fakeAny("pagerduty:A", d), fakeAny("pagerduty:B", d)];
+    expect(renderPushSummary(all, all.slice(1))).toBe(
+      "2 P1 incidents paged (2 briefs ready). Not posted individually: pagerduty:B — @nimbus agent oncall incidentId=<id> for any of them",
+    );
+  });
+});
+
+describe("the failed-brief hint names a command that exists", () => {
+  test("a non-PagerDuty item is retried with nimbus oncall pushed <id> --retry, never 'rerun the agent'", async () => {
+    const d = await realDelivery();
+    const id = "jira:J1";
+    const failed: PushDelivery = {
+      row: { ...d.row, incidentId: id, status: "failed", briefJson: null, failureCode: "x" },
+      incident: { ...d.incident, id },
+    };
+    const out = lines(renderPushHeadline(failed));
+    expect(out[1]).toBe(
+      "Brief could not be assembled; retry with: nimbus oncall pushed jira:J1 --retry",
+    );
+    expect(out[1]).not.toContain("agent");
   });
 });

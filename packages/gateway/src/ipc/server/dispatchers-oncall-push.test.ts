@@ -33,11 +33,18 @@ type FakeRuntime = Pick<
   | "identityResolved"
   | "run"
   | "chatopsSinkState"
+  | "incidentEngineEnabled"
+  | "lastRun"
 >;
 
 function fakeRuntime(over: Partial<FakeRuntime> = {}): OncallPushRuntime {
   const base: FakeRuntime = {
-    config: { chatopsNamespace: "" } as OncallPushRuntime["config"],
+    config: {
+      chatopsNamespace: "",
+      sources: ["pagerduty"],
+    } as unknown as OncallPushRuntime["config"],
+    incidentEngineEnabled: () => true,
+    lastRun: () => null,
     isEnabled: () => true,
     stop: () => {},
     store: {
@@ -110,6 +117,9 @@ describe("tryDispatchOncallPushRpc", () => {
       identity: "unresolved",
       briefs: [],
       chatops: { namespace: null, posting: false },
+      sources: ["pagerduty"],
+      incidentEngineEnabled: true,
+      lastRun: null,
     });
   });
 
