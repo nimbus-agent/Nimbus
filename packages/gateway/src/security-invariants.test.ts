@@ -899,6 +899,32 @@ describe("I5 — LAN method allowlist is intrinsic to LanServer", () => {
     }
   });
 
+  test("I5: the incident namespace is refused over LAN by a WHOLE-namespace `incident` entry (IC3)", async () => {
+    const src = await read("packages/gateway/src/ipc/lan-rpc.ts");
+    // A later narrowing of the namespace entry to per-method entries must be a deliberate edit.
+    expect(src).toMatch(/^\s*"incident",\s*$/m);
+    const { checkLanMethodAllowed } = await import("./ipc/lan-rpc.ts");
+    for (const m of ["incident.list", "incident.get", "incident.assemble", "incident.timeline"]) {
+      for (const writeAllowed of [true, false]) {
+        expect(() => checkLanMethodAllowed(m, { peerId: "peer:x", writeAllowed })).toThrow(
+          /ERR_METHOD_NOT_ALLOWED/,
+        );
+      }
+    }
+    // negative controls: a namesake in another namespace is not caught by the entry
+    for (const m of ["agents.incident", "federation.query"]) {
+      expect(() => checkLanMethodAllowed(m, { peerId: "peer:x", writeAllowed: false })).not.toThrow();
+    }
+  });
+
+  test("I7: no incident.* method is renderer-callable at IC3, and the allowlist size is the one IC3 found (IC10 changes it deliberately)", async () => {
+    const rust = await read("packages/ui/src-tauri/src/gateway_bridge.rs");
+    expect(rust).not.toMatch(/"incident\./);
+    // IC3 adds no renderer-callable method. The slice that exposes incident.list and incident.get to the
+    // desktop (IC10) must change this number in the same commit as its `ALLOWED_METHODS` entries.
+    expect(rust).toMatch(/assert_eq!\s*\(\s*ALLOWED_METHODS\.len\(\),\s*132\s*\)/);
+  });
+
   test("I29/MB3: the JSM on-call step names its fixed host once and sends every request with redirect manual", async () => {
     const src = await read("packages/gateway/src/connectors/jsm-oncall.ts");
     const code = stripComments(src);

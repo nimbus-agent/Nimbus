@@ -4870,6 +4870,9 @@ export async function assemblePlatformServices(
     logger: syncLogger,
   });
   ipcOpts.briefingRpcCtx = { runtime: briefing };
+  // Incident records (Phase 10 IC3): incident.list / get / assemble. cli/ui connections only (checked per
+  // call from the connection's declared kind); LAN-forbidden (I5), not Tauri-exposed (I7).
+  ipcOpts.incidentRpcCtx = { db, engine: incidentEngine };
   // pre-S3 item E: notifications.status / notifications.test (CLI-only; LAN-forbidden, not Tauri).
   ipcOpts.notificationsRpcCtx = { runtime: notificationsRuntime };
   // MCP capture sink (I28): capture.* / captures.* (LAN-forbidden by namespace, not Tauri, no HTTP).

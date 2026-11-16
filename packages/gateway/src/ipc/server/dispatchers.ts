@@ -85,6 +85,7 @@ import { dispatchFleetRpc, FleetRpcError } from "../fleet-rpc.ts";
 import { dispatchGlossaryRpc, GlossaryRpcError } from "../glossary-rpc.ts";
 import { dispatchHitlRpc, HitlRpcError } from "../hitl-rpc.ts";
 import { dispatchIdentityRpc, type IdentityRpcContext, IdentityRpcError } from "../identity-rpc.ts";
+import { dispatchIncidentRpc, IncidentRpcError } from "../incident-rpc.ts";
 import { dispatchIndexDemoSymbolRpc, IndexDemoSymbolRpcError } from "../index-demo-symbol-rpc.ts";
 import { dispatchIndexRebodyRpc, IndexRebodyRpcError } from "../index-rebody-rpc.ts";
 import { dispatchIndexReembedRpc, IndexReembedRpcError } from "../index-reembed-rpc.ts";
@@ -1583,6 +1584,34 @@ export async function tryDispatchBriefingRpc(
   return phase4RpcSkipped;
 }
 
+/**
+ * `incident.*` (Phase 10 IC3) - the incident records the engine assembled. Served only to a connection that
+ * DECLARED `cli` or `ui` (the kind is the CONNECTION's, `getClientKind`, never a param; `requireOwnerKind`
+ * answers every other kind with `ERR_INCIDENT_FORBIDDEN_CLIENT` before any query). The namespace is
+ * LAN-forbidden (I5) and has no entry in the Tauri allowlist (I7); answered on a demo gateway too (its index is
+ * the synthetic corpus, in its own database).
+ */
+export async function tryDispatchIncidentRpc(
+  ctx: ServerCtx,
+  method: string,
+  params: unknown,
+  clientId: string,
+): Promise<unknown> {
+  if (!method.startsWith("incident.")) return phase4RpcSkipped;
+  const rpc = ctx.options.incidentRpcCtx;
+  if (rpc === undefined) return phase4RpcSkipped;
+  try {
+    const out = await dispatchIncidentRpc(method, params, rpc, {
+      kind: ctx.getClientKind(clientId),
+    });
+    if (out.kind === "hit") return out.value;
+  } catch (e) {
+    if (e instanceof IncidentRpcError) throw new RpcMethodError(e.rpcCode, e.message);
+    throw e;
+  }
+  return phase4RpcSkipped;
+}
+
 export async function tryDispatchOncallPushRpc(
   ctx: ServerCtx,
   method: string,
@@ -2045,6 +2074,7 @@ const PHASE4_PLATFORM_DISPATCHERS: ReadonlyArray<
   tryDispatchOncallNowRpc,
   tryDispatchOncallPushRpc,
   tryDispatchBriefingRpc,
+  tryDispatchIncidentRpc,
   tryDispatchNotificationsRpc,
   tryDispatchCaptureRpc,
   tryDispatchApprovalsRpc,

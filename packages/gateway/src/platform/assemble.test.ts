@@ -479,11 +479,8 @@ describe("assemblePlatformServices — in-process assembly", () => {
         (e) => (e.params as { kind?: string }).kind === "incident.assembled",
       );
       expect(events).toHaveLength(1);
-      expect(Object.keys((events[0]?.params as { payload: object }).payload).sort()).toEqual([
-        "recordId",
-        "status",
-        "version",
-      ]);
+      const first = events[0] as { params: { payload: object } };
+      expect(Object.keys(first.params.payload).sort()).toEqual(["recordId", "status", "version"]);
     } finally {
       setGatewayEventBroadcast(undefined);
     }

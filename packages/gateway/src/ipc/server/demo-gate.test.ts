@@ -89,6 +89,9 @@ describe("demoRefusal", () => {
     "briefing.get",
     "briefing.status",
     "briefing.runNow",
+    "incident.list",
+    "incident.get",
+    "incident.assemble",
   ])("%s is allowed", (m) => {
     expect(demoRefusal(m)).toBeUndefined();
   });
