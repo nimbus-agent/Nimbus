@@ -19,7 +19,7 @@ Phase-level history before `v0.1.0` (Phases 1â€“4) lives in [`docs/roadmap.md` Â
 ## Post-Phase-6 deliveries
 
 - **2026-11-16: Nimbus can tell you when a connector's sync looks unusual (a carried-in item; no schema change, invariant or IPC method).**
-  What you can do now: set `[watcher.anomaly] notify = true` (it is off by default). When a connector's sync duration or item count scores at least `min_score` (default 3) against its rolling window, Nimbus raises one local OS notification: `Unusual sync activity on <connector> (<n.n> standard deviations from the usual)`. At most one per connector per `min_interval_minutes` (default 60).
+  What you can do now: under the `[watcher.anomaly]` table in `nimbus.toml`, set `notify = true` (it is off by default; the key goes on its own line below the `[watcher.anomaly]` header). When a connector's sync duration or item count scores at least `min_score` (default 3) against its rolling window, Nimbus raises one local OS notification: `Unusual sync activity on <connector> (<n.n> standard deviations from the usual)`. At most one per connector per `min_interval_minutes` (default 60).
   What it does not do: the text carries the connector name and one number, never anything the connector indexed. Nothing leaves the machine and no egress row is written. A demo gateway sends none. A failing notification backend never reaches the sync path.
   Bounds: the detector is still a rolling z-score with no seasonality, the rate limit is kept in memory, and the setting is read when the gateway starts. No real toast was checked on any OS in this change.
 

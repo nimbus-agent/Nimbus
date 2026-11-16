@@ -11,10 +11,19 @@ export type AnomalyNotifierDeps = {
   readonly onFailure?: (err: unknown) => void;
 };
 
-/** `sync:<metric>:<serviceId>` -> the connector id, only when it looks like one. */
+/** `sync:<metric>:<serviceId>` -> the service id, exactly as the series names it. */
+function serviceIdOf(seriesId: string): string {
+  return seriesId.split(":").slice(2).join(":");
+}
+
+/**
+ * The name shown in the notification: the service id when it looks like one (`github`,
+ * `google_calendar`, `mcp_notes`), otherwise a fixed phrase. Display only: the rate limit is keyed
+ * on the service id itself, so two connectors whose ids cannot be shown never share a slot.
+ */
 function connectorOf(seriesId: string): string {
-  const id = seriesId.split(":").slice(2).join(":");
-  return /^[a-z0-9][a-z0-9._-]{0,63}$/.test(id) ? id : "a connector";
+  const id = serviceIdOf(seriesId);
+  return /^[a-z0-9][a-z0-9_.-]{0,63}$/.test(id) ? id : "a connector";
 }
 
 /**
@@ -42,11 +51,11 @@ export function createAnomalyNotifyHandler(
   return (event) => {
     try {
       if (event.score < deps.config.minScore) return;
-      const connector = connectorOf(event.seriesId);
+      const service = serviceIdOf(event.seriesId);
       const at = deps.now();
-      const prev = lastAt.get(connector);
+      const prev = lastAt.get(service);
       if (prev !== undefined && at - prev < intervalMs) return;
-      lastAt.set(connector, at);
+      lastAt.set(service, at);
       const { title, body } = anomalyNotificationText(event);
       void Promise.resolve(deps.notify(title, body)).catch((err: unknown) => deps.onFailure?.(err));
     } catch (err) {

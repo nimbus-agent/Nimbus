@@ -85,6 +85,24 @@ describe("anomaly notifier", () => {
     );
   });
 
+  test("an id with an underscore is shown, and two ids that cannot be shown do not share a rate-limit slot", () => {
+    expect(anomalyNotificationText({ seriesId: "sync:items:mcp_notes", score: 4 }).body).toContain(
+      "on mcp_notes (",
+    );
+    expect(
+      anomalyNotificationText({ seriesId: "sync:items:google_calendar", score: 4 }).body,
+    ).toContain("on google_calendar (");
+    // Neither id below can be shown, so both read "a connector"; each still has its own slot.
+    const h = rig({});
+    h.feed("sync:duration:Odd One", 500);
+    h.feed("sync:duration:Odd Two", 500);
+    expect(h.sent).toHaveLength(2);
+    expect(h.sent.every((n) => n.body.includes("a connector"))).toBe(true);
+    // And one id is still limited to one notice per interval.
+    h.feed("sync:duration:Odd One", 900);
+    expect(h.sent).toHaveLength(2);
+  });
+
   test("a throwing or rejecting notifier never throws into the sync path", async () => {
     const throwing = rig({
       notify: () => {
