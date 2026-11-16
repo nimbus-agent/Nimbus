@@ -2,6 +2,15 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [10.66.0](https://github.com/nimbus-agent/Nimbus/compare/v10.65.0...v10.66.0) (2026-11-16)
+
+
+### Features
+
+* **gateway:** add an advisory deploy-risk block to deploy preflight, each factor with its evidence ([#2023](https://github.com/nimbus-agent/Nimbus/issues/2023)) ([87c3039](https://github.com/nimbus-agent/Nimbus/commit/87c3039058acb0bc4231f2ae4cd30d86a486d8d6))
+* **gateway:** add nimbus cost anomalies, a local detector over the indexed daily cost series ([#2021](https://github.com/nimbus-agent/Nimbus/issues/2021)) ([d930c37](https://github.com/nimbus-agent/Nimbus/commit/d930c376caf3002cfef53d7a7a0ade75fa0cac8c))
+* **gateway:** notify the owner of a sync anomaly with a local OS notification, off by default ([#2017](https://github.com/nimbus-agent/Nimbus/issues/2017)) ([44eb04b](https://github.com/nimbus-agent/Nimbus/commit/44eb04bd2e9b28ff62cc39b3ab8fb41f117e1b59))
+
 ## [10.65.0](https://github.com/nimbus-agent/Nimbus/compare/v10.64.0...v10.65.0) (2026-11-16)
 
 
