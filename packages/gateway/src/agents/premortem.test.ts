@@ -328,9 +328,11 @@ describe("runPremortem", () => {
     expect(brief.cohort.members.length).toBeGreaterThan(0);
     expect(brief.risks).toHaveLength(5);
     expect(brief.themes.length).toBeGreaterThan(0);
-    expect(brief.watchers).toHaveLength(1);
-    expect(brief.watchers[0]?.state).toBe("created");
-    expect(brief.watchers[0]?.service).toBe("acme/billing-api");
+    // One incident watcher and one deploy-failure watcher for the one mapped service.
+    expect(brief.watchers.map((w) => [w.riskKind, w.state, w.service])).toEqual([
+      ["incident_coupling", "created", "acme/billing-api"],
+      ["deploy_failure", "created", "acme/billing-api"],
+    ]);
   });
 
   // `nimbus pre-mortem <ref> --repropose` (Task 5): `input.repropose` must reach
@@ -629,7 +631,7 @@ describe("runPremortem", () => {
       "are correlations, not causes",
       "Theme confidence tops out at 0.86",
       "Pre-mortem covers Jira epics only, and only",
-      "No deploy-failure watcher is proposed",
+      "Deploy failure is a watcher condition kind",
     ];
     for (const brief of [linearBrief, noChildrenBrief, fullBrief]) {
       for (const statement of statements) {
@@ -637,15 +639,14 @@ describe("runPremortem", () => {
       }
     }
 
-    // The deploy-watcher note must state the cause that is STILL true. The engine now supports
-    // `filter.affectedService` for `deploy_failed`, so the old "a deployment item's item.service
-    // is the annotate provider slug" reasoning is obsolete — repeating it would be a false cause,
-    // the exact defect this brief's honesty rules exist to prevent.
+    // The deploy note must not claim the old, now-false cause (no graph entity at annotation time)
+    // and must say what a deploy-failure watcher can and cannot match.
     const deployNote = fullBrief.gaps.find((g) =>
-      g.detail.includes("No deploy-failure watcher is proposed"),
+      g.detail.includes("Deploy failure is a watcher condition kind"),
     );
-    expect(deployNote?.detail).toContain("creates no `deployment` graph entity");
-    expect(deployNote?.detail).not.toMatch(/could never fire/);
+    expect(deployNote?.detail).not.toContain("creates no `deployment` graph entity");
+    expect(deployNote?.detail).toContain("POST /v1/deployments");
+    expect(deployNote?.detail).toContain("matches nothing");
   });
 
   test("--service overrides derivation entirely, not merges with it", async () => {
@@ -1499,7 +1500,7 @@ describe("runPremortem", () => {
       const brief = await runPremortem({ epicRef: "PROJ-NOCOHORT" }, ctxMapped(db, BILLING_MAP));
 
       expect(brief.cohort.members).toHaveLength(0);
-      expect(brief.watchers).toHaveLength(1);
+      expect(brief.watchers).toHaveLength(2);
       expect(brief.watchers[0]?.state).toBe("created");
     });
 
@@ -1537,7 +1538,10 @@ describe("runPremortem", () => {
 
       const brief = await runPremortem({ epicRef: "PROJ-UNMAPPED" }, ctxMapped(db, BILLING_MAP));
 
-      expect(brief.watchers.map((w) => w.service)).toEqual(["acme/billing-api"]);
+      expect(brief.watchers.map((w) => w.service)).toEqual([
+        "acme/billing-api",
+        "acme/billing-api",
+      ]);
       const gap = brief.gaps.find((g) => g.detail.includes("acme/unmapped"));
       expect(gap?.detail).toContain("no `[metrics.dora.<id>]` / `[ci.service.<id>]` block claims");
       // The real cause, not a repo-path fallback that writes a watcher which can never fire.

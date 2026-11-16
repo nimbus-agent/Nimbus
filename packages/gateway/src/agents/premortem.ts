@@ -527,15 +527,13 @@ function pushUnconditionalGaps(gaps: GapNote[]): void {
     {
       category: "missing_relation_emit",
       detail:
-        "No deploy-failure watcher is proposed. The watcher engine can now scope one by " +
-        "affected service (the same `filter.affectedService` the incident proposals use), so " +
-        "the old reason — a deployment item's `item.service` being the annotate provider slug " +
-        "— no longer applies. What still does: `deployment/annotate.ts`, the only writer of " +
-        "the `metadata.conclusion` a `deploy_failed` watcher matches, inserts its `item` row " +
-        "directly and creates no `deployment` graph entity, so such a watcher would match " +
-        "nothing until `nimbus index regraph` runs. Deploy failure is a watcher condition kind, " +
-        "not one of the five risks above — no deploy-failure risk is computed, so nothing is " +
-        "reported about deploy outcomes anywhere in this brief.",
+        "Deploy failure is a watcher condition kind, not one of the five risks above: no " +
+        "deploy-failure risk is computed, so nothing is reported about deploy outcomes in this " +
+        "brief. The paused deploy-failure watcher proposed beside each incident watcher matches " +
+        "only deployments a CI job annotated through `POST /v1/deployments` for a configured " +
+        "service (`deployment.annotate` over local IPC maps no service, so it matches no " +
+        "service-scoped watcher); a deploy that only a connector indexed (Vercel, Prefect) " +
+        "records no `metadata.conclusion` and matches nothing.",
     },
   );
 }
@@ -557,10 +555,10 @@ function unmappedWatcherServicesGap(unmapped: readonly string[], hasResolver: bo
   return {
     category: "missing_relation_emit",
     detail: hasResolver
-      ? `No incident watcher was proposed for ${list}: no \`[metrics.dora.<id>]\` / ` +
+      ? `No incident or deploy-failure watcher was proposed for ${list}: no \`[metrics.dora.<id>]\` / ` +
         "`[ci.service.<id>]` block claims that repo, and a watcher scoped to an unmapped " +
-        "service would match no incident once armed."
-      : `No incident watcher was proposed for ${list}: no deployment-service mapping ` +
+        "service would match no incident or deployment once armed."
+      : `No incident or deploy-failure watcher was proposed for ${list}: no deployment-service mapping ` +
         "(`[metrics.dora.<id>]` / `[ci.service.<id>]`) is configured at all, and an incident " +
         "watcher is scoped by the configured service id an incident resolves to.",
     remediation:
