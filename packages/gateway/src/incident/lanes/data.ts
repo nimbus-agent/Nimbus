@@ -1,0 +1,195 @@
+import type { Database } from "bun:sqlite";
+
+import type { DataItemView, DataLane, DataLineageView, GapNote } from "../incident-record-types.ts";
+import { CHAT_WINDOW_BEFORE_MS, codeUnitCompare, DATA_LIST_CAP, gap, oneLine } from "./caps.ts";
+
+/**
+ * Lane 6, data (Phase 10 IC3, design C step 8), for Monte Carlo and Bigeye triggers only: the monitored model
+ * keys, one hop of lineage (the `derived_from` edges FROM the model), orchestration items (dbt jobs, Airflow
+ * DAGs, Dagster jobs, Prefect deployments) whose TITLE holds the model's last identifier segment as a whole
+ * token (a name match, not lineage: those items carry no model reference), and pull requests merged in the 24 h
+ * before the trigger whose title or branch holds the same token. The run-level lanes the spec names (DAG-run
+ * logs, dbt test results, warehouse schema deltas) are not indexed, and are always listed as gaps.
+ */
+
+export type DataResult = { readonly lane: DataLane; readonly gaps: readonly GapNote[] };
+
+const MIN_TOKEN = 3;
+const ORCHESTRATION: readonly (readonly [string, string])[] = [
+  ["dbt", "job"],
+  ["airflow", "dag"],
+  ["dagster", "job"],
+  ["prefect", "deployment"],
+];
+const PR_SERVICES = ["github", "gitlab", "bitbucket"] as const;
+
+/** The last `.`-separated segment of a normalised model key, lower-cased, or null when too short. */
+export function modelToken(key: string): string | null {
+  const seg = key.split(".").pop() ?? "";
+  const t = seg.toLowerCase();
+  return t.length >= MIN_TOKEN ? t : null;
+}
+
+/** Whole-token match: the token bounded by non-alphanumeric characters (`orders` does not match `reorders`). */
+export function holdsToken(text: string, token: string): boolean {
+  const lower = text.toLowerCase();
+  let from = 0;
+  for (;;) {
+    const at = lower.indexOf(token, from);
+    if (at < 0) return false;
+    const before = at === 0 ? "" : (lower[at - 1] ?? "");
+    const after = lower[at + token.length] ?? "";
+    if (!/[a-z0-9]/.test(before) && !/[a-z0-9]/.test(after)) return true;
+    from = at + 1;
+  }
+}
+
+function monitoredKeys(metadata: Record<string, unknown> | null): string[] {
+  const v = metadata?.["monitoredDataModelKeys"];
+  return Array.isArray(v)
+    ? v.filter((x): x is string => typeof x === "string" && x !== "").sort(codeUnitCompare)
+    : [];
+}
+
+function lineage(db: Database, keys: readonly string[]): DataLineageView[] {
+  const out: DataLineageView[] = [];
+  for (const model of keys) {
+    const rows = db
+      .query(
+        `SELECT up.external_id AS ext FROM graph_entity m
+           JOIN graph_relation r ON r.from_id = m.id AND r.type = 'derived_from'
+           JOIN graph_entity up ON up.id = r.to_id
+          WHERE m.type = 'data_model' AND m.external_id = ?
+          ORDER BY up.external_id ASC`,
+      )
+      .all(model) as { ext: string }[];
+    for (const r of rows) out.push({ model, to: r.ext, rule: "data:derived_from" });
+  }
+  return out.sort((a, b) =>
+    a.model === b.model ? codeUnitCompare(a.to, b.to) : codeUnitCompare(a.model, b.model),
+  );
+}
+
+type ItemRow = {
+  id: string;
+  service: string;
+  type: string;
+  title: string;
+  url: string | null;
+  modified_at: number;
+  metadata: string | null;
+};
+
+function orchestration(db: Database, tokens: readonly string[]): DataItemView[] {
+  const out = new Map<string, DataItemView>();
+  const q = db.query(
+    "SELECT id, service, type, title, url, modified_at, metadata FROM item WHERE service = ? AND type = ? ORDER BY title ASC, id ASC",
+  );
+  for (const [service, type] of ORCHESTRATION) {
+    for (const r of q.all(service, type) as ItemRow[]) {
+      if (out.has(r.id) || !tokens.some((t) => holdsToken(r.title, t))) continue;
+      out.set(r.id, {
+        id: r.id,
+        service: r.service,
+        type: r.type,
+        title: oneLine(r.title),
+        url: r.url,
+        atMs: r.modified_at,
+        rule: "name_match",
+      });
+    }
+  }
+  return [...out.values()].sort((a, b) =>
+    a.title === b.title ? codeUnitCompare(a.id, b.id) : codeUnitCompare(a.title, b.title),
+  );
+}
+
+function branchOf(metadata: string | null): string {
+  if (metadata === null) return "";
+  try {
+    const v: unknown = JSON.parse(metadata);
+    const b = v !== null && typeof v === "object" ? (v as Record<string, unknown>)["branch"] : null;
+    return typeof b === "string" ? b : "";
+  } catch {
+    return "";
+  }
+}
+
+function mergedPrs(
+  db: Database,
+  tokens: readonly string[],
+  openedAtMs: number,
+): { readonly items: DataItemView[]; readonly mergedAt: Map<string, number> } {
+  const from = openedAtMs - CHAT_WINDOW_BEFORE_MS;
+  const rows = db
+    .query(
+      `SELECT id, service, type, title, url, modified_at, metadata,
+              CASE WHEN json_valid(metadata) THEN json_extract(metadata, '$.merged_at') END AS merged_at
+         FROM item
+        WHERE type = 'pr' AND service IN (${PR_SERVICES.map(() => "?").join(",")})
+          AND CASE WHEN json_valid(metadata) THEN json_extract(metadata, '$.merged_at') END BETWEEN ? AND ?
+        ORDER BY merged_at DESC, id ASC`,
+    )
+    .all(...PR_SERVICES, from, openedAtMs) as (ItemRow & { merged_at: number })[];
+  const mergedAt = new Map<string, number>();
+  const items: DataItemView[] = [];
+  for (const r of rows) {
+    const hay = `${r.title}\n${branchOf(r.metadata)}`;
+    if (!tokens.some((t) => holdsToken(hay, t))) continue;
+    mergedAt.set(r.id, r.merged_at);
+    items.push({
+      id: r.id,
+      service: r.service,
+      type: r.type,
+      title: oneLine(r.title),
+      url: r.url,
+      atMs: r.merged_at,
+      rule: "data:pr_title_or_branch",
+    });
+  }
+  return { items, mergedAt };
+}
+
+/** The gaps every data record carries: the run-level lanes the index does not hold. */
+export function dataSubstrateGaps(): GapNote[] {
+  return [
+    gap(
+      "missing_entity_type",
+      "DAG-run logs, dbt test results and warehouse schema deltas are not indexed, so what a failing run or a schema change did is absent here.",
+    ),
+    gap(
+      "missing_relation_emit",
+      "Orchestration jobs listed here are matched by NAME only (they carry no model reference), so a job that builds the model under another name is absent.",
+    ),
+  ];
+}
+
+export function dataLane(
+  db: Database,
+  input: { readonly metadata: Record<string, unknown> | null; readonly openedAtMs: number | null },
+): DataResult {
+  const models = monitoredKeys(input.metadata);
+  const tokens = models.map(modelToken).filter((t): t is string => t !== null);
+  const lin = lineage(db, models);
+  const orch = orchestration(db, tokens);
+  const prs = input.openedAtMs === null ? { items: [] } : mergedPrs(db, tokens, input.openedAtMs);
+  const gaps = dataSubstrateGaps();
+  if (models.length === 0) {
+    gaps.push(
+      gap(
+        "missing_relation_emit",
+        "This item names no monitored table, so no lineage, job or change could be matched.",
+      ),
+    );
+  }
+  return {
+    lane: {
+      models,
+      lineage: lin.slice(0, DATA_LIST_CAP),
+      orchestration: orch.slice(0, DATA_LIST_CAP),
+      prs: prs.items.slice(0, DATA_LIST_CAP),
+      totals: { lineage: lin.length, orchestration: orch.length, prs: prs.items.length },
+    },
+    gaps,
+  };
+}
