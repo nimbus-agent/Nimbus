@@ -48,13 +48,13 @@ const head = (version: number, id = recordId): string =>
 
 function linkedJson(
   version: number,
-  over: { prompt?: string; cut?: boolean; confirm?: string; type?: string } = {},
+  over: { prompt?: string; cut?: boolean; confirm?: string; type?: string; sub?: boolean } = {},
 ): string {
   const prompt =
     over.prompt === undefined
       ? ""
       : `,"promptSha256":"${SHA}","prompt":${JSON.stringify(over.prompt)}${over.cut === true ? ',"promptCut":true' : ""}`;
-  return `${head(version)}${prompt},"action":{"type":"${over.type ?? "email.send"}"},"answerSource":"human"${over.confirm === undefined ? "" : `,"confirm":"${over.confirm}"`}}`;
+  return `${head(version)}${over.sub === true ? ',"subStep":true' : ""}${prompt},"action":{"type":"${over.type ?? "email.send"}"},"answerSource":"human"${over.confirm === undefined ? "" : `,"confirm":"${over.confirm}"`}}`;
 }
 
 type Written = { auditId: number; egressId: number };
@@ -89,7 +89,7 @@ const unlinked = (at: number): Written =>
 describe("10.3 the record versions and the linked actions", () => {
   test("record versions with changed-key lists; actions grouped with their sub-steps; the prompt escaped, with the note", () => {
     unlinked(10);
-    write(20, "jira.before.read", "not_required", linkedJson(2));
+    write(20, "jira.before.read", "not_required", linkedJson(2, { sub: true }));
     const a = write(
       20,
       "email.send",
@@ -161,8 +161,8 @@ describe("10.3 the record versions and the linked actions", () => {
 
 describe("10.4 egress pairing by order within (timestamp, method)", () => {
   test("two same-type rows in one millisecond pair in order", () => {
-    const a = write(50, "jira.before.read", "not_required", linkedJson(2));
-    const b = write(50, "jira.before.read", "not_required", linkedJson(2));
+    const a = write(50, "jira.before.read", "not_required", linkedJson(2, { sub: true }));
+    const b = write(50, "jira.before.read", "not_required", linkedJson(2, { sub: true }));
     const c = write(60, "email.send", "approved", linkedJson(2));
     const r = replayIncident(db, recordId, verify());
     const reads = r.actions[0]?.subSteps ?? [];
@@ -305,7 +305,7 @@ describe("10.6 a broken chain is printed, not hidden", () => {
 
 describe("10.7 determinism", () => {
   test("two runs on one database serialise to the same bytes", () => {
-    write(20, "jira.before.read", "not_required", linkedJson(2));
+    write(20, "jira.before.read", "not_required", linkedJson(2, { sub: true }));
     write(20, "email.send", "approved", linkedJson(2, { prompt: "shown" }), head(2));
     unlinked(30);
     write(40, "slack.message.post", "rejected", linkedJson(1), head(1));

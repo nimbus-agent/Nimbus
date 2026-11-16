@@ -972,7 +972,7 @@ function auditPayload(
   action: PlannedAction,
   extras: AuditExtras,
   onBehalfOf: AgentAttribution | undefined,
-  incident: IncidentLink | undefined,
+  incident: IncidentRowLink | undefined,
 ): string {
   const { boundValuesSha256, diffSha256, filesSha256, standingRule, shownPrompt, ...rest } = extras;
   // IC4: the link is its own first key, so `action` must not repeat it.
@@ -980,7 +980,12 @@ function auditPayload(
   return redactAuditPayload({
     // IC4: the incident link is FIRST (replay finds a row by its first 40 characters), then, for a
     // prompted linked action, what the owner was shown. Both come before the payload the cap may cut.
-    ...(incident === undefined ? {} : { incident: { id: incident.id, version: incident.version } }),
+    ...(incident === undefined
+      ? {}
+      : { incident: { id: incident.link.id, version: incident.link.version } }),
+    // A before-state read or a prepare read of a linked action is marked, so a replay groups it with the
+    // action it ran for without naming any sub-step type.
+    ...(incident?.subStep === true ? { subStep: true } : {}),
     ...(incident === undefined || shownPrompt === undefined ? {} : promptRowKeys(shownPrompt)),
     // AD4: a sub-step (before-state read, prepare read, change-set discard) of an outside agent's
     // action names the capture it ran for, first in the row so the size cap cannot cut it.
@@ -995,6 +1000,12 @@ function auditPayload(
     action: auditedAction(actionBody),
     ...rest,
   });
+}
+
+/** What an audit row records of the link: the link, and whether the row is a read the executor ran FOR a linked action. */
+interface IncidentRowLink {
+  readonly link: IncidentLink;
+  readonly subStep: boolean;
 }
 
 /** The prompt keys of a linked row, in order: the hash, the (cut) text, and `promptCut` only when cut. */
@@ -1120,6 +1131,8 @@ interface GateScope {
    * sub-step's own audit and egress rows carry the parent's link (`subStepIncident`).
    */
   readonly incident?: IncidentLink;
+  /** IC4: true on the scope of a before-state read or a prepare read of a linked action (not the discard). */
+  readonly incidentSubStep?: boolean;
   prepared?: PreparedWrite;
   /** Written by `preflightPhase` (D2): frees the per-workdir lock; `execute()` calls it when the run ends. */
   release?: () => void;
@@ -1171,13 +1184,19 @@ function incidentOf(action: PlannedAction, scope: GateScope): IncidentLink | und
   return action.incident ?? scope.incident;
 }
 
-/** The scope field a sub-step of `action` carries: its parent's incident link, or nothing. */
+/**
+ * The scope fields a sub-step of `action` carries: its parent's incident link, or nothing. `read` is true for a
+ * before-state read and a prepare read (rows a replay groups with the action), false for the gateway's own
+ * change-set discard, which is a step of its own.
+ */
 function subStepIncident(
   action: PlannedAction,
   scope: GateScope,
-): { readonly incident?: IncidentLink } {
+  read: boolean,
+): { readonly incident?: IncidentLink; readonly incidentSubStep?: boolean } {
   const link = incidentOf(action, scope);
-  return link === undefined ? {} : { incident: link };
+  if (link === undefined) return {};
+  return read ? { incident: link, incidentSubStep: true } : { incident: link };
 }
 
 /** Writes `directory` as the working directory of the action's tool input (nested or flat). */
@@ -1588,7 +1607,7 @@ export class ToolExecutor {
               bind: false,
               prepareStep: true,
               ...subStepAttribution(action, scope),
-              ...subStepIncident(action, scope),
+              ...subStepIncident(action, scope, true),
             }),
           dispatch: (a) => this.connectors.dispatch(a),
           ...(capabilities === undefined
@@ -1815,7 +1834,7 @@ export class ToolExecutor {
           this.gateWithin(a, undefined, {
             bind: false,
             ...subStepAttribution(action, scope),
-            ...subStepIncident(action, scope),
+            ...subStepIncident(action, scope, true),
           }),
         dispatch: (a) => this.connectors.dispatch(a),
       },
@@ -1994,7 +2013,14 @@ export class ToolExecutor {
     this.audit.recordAudit({
       actionType: action.type,
       hitlStatus,
-      actionJson: auditPayload(action, auditExtrasOf(record), scope.onBehalfOf, incident),
+      actionJson: auditPayload(
+        action,
+        auditExtrasOf(record),
+        scope.onBehalfOf,
+        incident === undefined
+          ? undefined
+          : { link: incident, subStep: action.incident === undefined && scope.incidentSubStep === true },
+      ),
       timestamp: at,
       ...(sessionId === undefined ? {} : { sessionId }),
     });
@@ -2076,7 +2102,7 @@ export class ToolExecutor {
         bind: false,
         discardStep: target,
         ...subStepAttribution(action, scope),
-        ...subStepIncident(action, scope),
+        ...subStepIncident(action, scope, false),
       });
       if (gated === "proceed") await this.connectors.dispatch(discard);
     } catch (e) {

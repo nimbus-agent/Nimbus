@@ -10,6 +10,7 @@ import {
   SYNTH_REPLY,
   synthBoundRow,
 } from "../connectors/connector-writes/bound-fixtures.test-helpers.ts";
+import { CONNECTOR_WRITE_ROWS } from "../connectors/connector-writes/index.ts";
 import type { EgressSink } from "../egress/egress-ledger.ts";
 import type { EgressEntry } from "../egress/egress-record.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
@@ -308,7 +309,7 @@ describe("3.1 the audit row starts with the link, whatever the verdict", () => {
 describe("3.2 / 2.7 a sub-step carries the parent's link and no prompt keys", () => {
   /** A before-state runner that makes one gated, dispatched read for any action (the real runner's shape). */
   const readOnce: BeforeStateRunner = {
-    rows: [],
+    rows: CONNECTOR_WRITE_ROWS,
     read: async (_action, ops) => {
       const read: PlannedAction = {
         type: "email.before.read",
@@ -330,9 +331,9 @@ describe("3.2 / 2.7 a sub-step carries the parent's link and no prompt keys", ()
       }),
     );
     const reads = h.audits.filter((a) => a.actionType === "email.before.read");
-    // the fake reader is reached only when the row has a before reader; assert on what ran
+    expect(reads.length).toBeGreaterThan(0);
     for (const r of reads) {
-      expect(r.actionJson.startsWith(PREFIX)).toBe(true);
+      expect(r.actionJson.startsWith(`${PREFIX},"subStep":true,"action"`)).toBe(true);
       expect(r.actionJson).not.toContain("promptSha256");
     }
     const u = harness({ runner: readOnce });
@@ -355,11 +356,13 @@ describe("3.2 / 2.7 a sub-step carries the parent's link and no prompt keys", ()
     const prepare = h.audits.filter((a) => a.actionType.endsWith(".write.prepare"));
     expect(prepare.length).toBeGreaterThan(0);
     for (const p of prepare) {
-      expect(p.actionJson.startsWith(PREFIX)).toBe(true);
+      expect(p.actionJson.startsWith(`${PREFIX},"subStep":true,"action"`)).toBe(true);
       expect(p.actionJson).not.toContain("promptSha256");
     }
     const write = h.audits.find((a) => a.actionType === "iac.terraform.apply");
     expect(write?.actionJson.startsWith(PREFIX)).toBe(true);
+    // the write's own row is a gate row: no sub-step marker
+    expect(write?.actionJson).not.toContain('"subStep"');
     expect(write?.actionJson).toContain('"promptSha256"');
     // the ledger rows of the sub-steps carry the link too
     const ledger = h.egress.filter((e) => e.method.endsWith(".write.prepare"));

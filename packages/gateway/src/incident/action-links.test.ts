@@ -44,7 +44,7 @@ function insert(d: Database, json: string, type = "email.send", status = "approv
 
 describe("5.1 the anchored, truncation-safe parser", () => {
   test("a valid link, with and without the prompt keys", () => {
-    expect(parseLinkPrefix(row())).toEqual({ id: ID, version: 2, prompt: undefined });
+    expect(parseLinkPrefix(row())).toEqual({ id: ID, version: 2, subStep: false, prompt: undefined });
     const p = parseLinkPrefix(promptRow('line one\n"quoted" é'));
     expect(p?.prompt).toEqual({ sha256: SHA, text: 'line one\n"quoted" é', cut: false });
     expect(parseLinkPrefix(promptRow("x", true))?.prompt?.cut).toBe(true);
@@ -125,21 +125,37 @@ describe("5.3 event mapping and steps", () => {
     expect(eventKindOf({ actionType: "x.undo", hitlStatus: "approved" })).toBe("action_undone");
   });
 
-  test("sub-steps attach to the gate row that follows them; a discard to the one before", () => {
+  test("marked sub-step rows attach to the gate row that follows them; an unmarked discard is a step of its own", () => {
     const d = db();
-    insert(d, row(), "jira.before.read", "not_required");
-    insert(d, row(), "iac.write.prepare", "not_required");
+    const sub = (type: string): number => insert(d, row(ID, ',"subStep":true'), type, "not_required");
+    sub("jira.before.read");
+    sub("iac.write.prepare");
     insert(d, row(), "iac.terraform.apply");
     insert(d, row(), "iac.cloudformation.changeset.discard", "not_required");
     insert(d, row(), "email.send");
     const steps = groupSteps(readLinkedActions(d, ID).rows);
-    expect(steps.map((s) => s.gate.actionType)).toEqual(["iac.terraform.apply", "email.send"]);
+    expect(steps.map((s) => s.gate.actionType)).toEqual([
+      "iac.terraform.apply",
+      "iac.cloudformation.changeset.discard",
+      "email.send",
+    ]);
     expect(steps[0]?.subSteps.map((s) => s.actionType)).toEqual([
       "jira.before.read",
       "iac.write.prepare",
-      "iac.cloudformation.changeset.discard",
     ]);
     expect(steps[1]?.subSteps).toEqual([]);
+    expect(steps[2]?.subSteps).toEqual([]);
+  });
+
+  test("the sub-step marker parses with and without a prompt, and only as the key right after the link", () => {
+    expect(parseLinkPrefix(row(ID, ',"subStep":true'))?.subStep).toBe(true);
+    expect(parseLinkPrefix(row())?.subStep).toBe(false);
+    expect(parseLinkPrefix(`${head()},"subStep":true,"promptSha256":"${SHA}","prompt":"x","action":{}}`)).toMatchObject({
+      subStep: true,
+      prompt: { text: "x" },
+    });
+    // a marker spelled later in the row (inside the action) is no marker
+    expect(parseLinkPrefix(`${head()},"action":{"subStep":true}}`)?.subStep).toBe(false);
   });
 
   test("a row cut by the row cap has no answer source (it is not JSON)", () => {
@@ -152,7 +168,7 @@ describe("5.3 event mapping and steps", () => {
 
   test("sub-step rows with no gate row on either side are returned alone", () => {
     const d = db();
-    insert(d, row(), "jira.before.read", "not_required");
+    insert(d, row(ID, ',"subStep":true'), "jira.before.read", "not_required");
     const steps = groupSteps(readLinkedActions(d, ID).rows);
     expect(steps).toHaveLength(1);
     expect(steps[0]?.gate.actionType).toBe("jira.before.read");

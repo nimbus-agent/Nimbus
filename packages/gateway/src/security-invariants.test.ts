@@ -15990,6 +15990,128 @@ describe("I57 (a) - assembling an incident record is inert: it reads the local i
     }
   });
 
+  test("9: IC4 - the timeline, the cascade, the link reader and the replay append no egress row and make no fetch", async () => {
+    const { createMemoryIndexDb } = await import("./connectors/connector-sync-test-helpers.ts");
+    const writers = await import("./incident/__fixtures__/trigger-writers.ts");
+    const idx = await import("./incident/__fixtures__/index-writers.ts");
+    const { createIncidentEngine } = await import("./incident/incident-engine.ts");
+    const { DEFAULT_INCIDENT_CONFIG } = await import("./config/incident-toml.ts");
+    const { readTimeline } = await import("./incident/timeline-read.ts");
+    const { readCascade } = await import("./incident/cascade-read.ts");
+    const { readLinkedActions } = await import("./incident/action-links.ts");
+    const { replayIncident, chainVerifiers } = await import("./audit/incident-replay.ts");
+    const db = createMemoryIndexDb();
+    try {
+      const api = idx.serviceConfig({ serviceId: "api", pagerdutyServices: ["PSVC1"] });
+      const dbCfg = idx.serviceConfig({ serviceId: "db", pagerdutyServices: ["PSVC2"] });
+      const resolver = idx.resolverFor(api, dbCfg);
+      const T = idx.T0;
+      writers.writePagerdutyIncident(db, { id: "A", openedAtMs: T, priority: "P1" }, resolver);
+      writers.writePagerdutyIncident(
+        db,
+        { id: "B", openedAtMs: T + 60_000, priority: "P1", pagerdutyServiceId: "PSVC2" },
+        resolver,
+      );
+      const engine = createIncidentEngine({
+        db,
+        now: () => T + 120_000,
+        emit: () => {},
+        loadServiceConfigs: () => idx.configMap(api, dbCfg),
+        readConfig: () => ({ incident: DEFAULT_INCIDENT_CONFIG, pagerdutyP1Aliases: [] }),
+        demo: false,
+        logger: { warn: () => {} },
+      });
+      await engine.trigger("pagerduty");
+      const id = (db.query("SELECT id FROM incident_record LIMIT 1").get() as { id: string }).id;
+      const before = (db.query("SELECT count(*) AS n FROM egress_ledger").get() as { n: number }).n;
+      const realFetch = globalThis.fetch;
+      let fetches = 0;
+      globalThis.fetch = (() => {
+        fetches += 1;
+        return Promise.reject(new Error("no network from an incident read"));
+      }) as unknown as typeof fetch;
+      try {
+        readTimeline(db, id);
+        readCascade(db, new Map([["api", ["db"]]]));
+        readLinkedActions(db, id);
+        replayIncident(db, id, chainVerifiers({ rawDb: db } as never));
+      } finally {
+        globalThis.fetch = realFetch;
+      }
+      expect(fetches).toBe(0);
+      expect((db.query("SELECT count(*) AS n FROM egress_ledger").get() as { n: number }).n).toBe(
+        before,
+      );
+    } finally {
+      db.close();
+    }
+  });
+
+  test("10: IC4 - D46(e) holds over the real tree; a linked action is never delegated and never standing-approved, and its link is the first key of the audit row", async () => {
+    const { checkIncidentLinkMinting } = await import(
+      "../../../scripts/structure-audit/check-nimbus-invariants.ts"
+    );
+    const { iterateSourceFiles } = await import("../../../scripts/structure-audit/lib.ts");
+    const files: { relPath: string; contents: string }[] = [];
+    for await (const f of iterateSourceFiles())
+      files.push({ relPath: f.relPath, contents: f.contents });
+    expect(checkIncidentLinkMinting(files)).toEqual([]);
+
+    const { Database } = await import("bun:sqlite");
+    const { runIndexedSchemaMigrations } = await import("./index/migrations/runner.ts");
+    const { DelegationStore } = await import("./engine/delegation-store.ts");
+    const { NULL_EGRESS_SINK } = await import("./egress/egress-ledger.ts");
+    const { ToolExecutor } = await import("./engine/executor.ts");
+    const dbd = new Database(":memory:");
+    runIndexedSchemaMigrations(dbd, 35);
+    const store = new DelegationStore(dbd);
+    store.create({
+      delegatePeer: "peer:bob",
+      scopeKind: "action_type",
+      scopeValue: "email.send",
+      expiresAt: 9e15,
+      nowMs: 1,
+    });
+    const rows: { hitlStatus: string; actionJson: string }[] = [];
+    let delegateAsked = 0;
+    let ownerAsked = 0;
+    const exec = new ToolExecutor(
+      {
+        requestApproval: async () => {
+          ownerAsked += 1;
+          return { approved: true, answerSource: "human" as const };
+        },
+      },
+      { recordAudit: (e) => rows.push({ hitlStatus: e.hitlStatus, actionJson: e.actionJson }) },
+      { dispatch: async () => ({}) },
+      {
+        store,
+        isOperatorValid: () => true,
+        requestRemote: async () => {
+          delegateAsked += 1;
+          return { kind: "answered" as const, peerId: "peer:bob", approved: true };
+        },
+      },
+      NULL_EGRESS_SINK,
+    );
+    const link = { id: "inc_0123456789abcdef", version: 1 };
+    await exec.execute({ type: "email.send", payload: {}, incident: link });
+    expect(delegateAsked).toBe(0);
+    expect(ownerAsked).toBe(1);
+    expect(rows[0]?.hitlStatus).toBe("approved");
+    expect(rows[0]?.actionJson.startsWith('{"incident":{"id":"inc_0123456789abcdef","version":1}')).toBe(
+      true,
+    );
+    expect(rows[0]?.actionJson).not.toContain("standingRule");
+    // an outside origin on a linked action is refused before any row
+    const before = rows.length;
+    await expect(
+      exec.execute({ type: "email.send", payload: {}, incident: link, origin: "model" }),
+    ).rejects.toThrow();
+    expect(rows).toHaveLength(before);
+    dbd.close();
+  });
+
   test("8: erasure reaches everything a record's text reached, in the erasers' own transaction, and nothing else erases the tables", async () => {
     const { createMemoryIndexDb } = await import("./connectors/connector-sync-test-helpers.ts");
     const { seedErasureScenario, recordItems, briefItems } = await import(

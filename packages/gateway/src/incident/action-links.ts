@@ -26,12 +26,13 @@ const PREFIX_LEN = 40;
 
 const STR = String.raw`(?:[^"\\]|\\.)*`;
 const LINK_HEAD = String.raw`^\{"incident":\{"id":"(inc_[0-9a-f]{16})","version":(\d{1,7})\}`;
+const SUBSTEP_PART = String.raw`(,"subStep":true)?`;
 const PROMPT_PART = String.raw`(?:,"promptSha256":"([0-9a-f]{64})","prompt":"(${STR})")?`;
 const CUT_PART = String.raw`(,"promptCut":true)?`;
-const ROW_RE = new RegExp(`${LINK_HEAD}${PROMPT_PART}${CUT_PART}`);
+const ROW_RE = new RegExp(`${LINK_HEAD}${SUBSTEP_PART}${PROMPT_PART}${CUT_PART}`);
 /** A prompt string that was itself cut by the row cap (no closing quote). */
 const OPEN_PROMPT_RE = new RegExp(
-  `${LINK_HEAD},"promptSha256":"([0-9a-f]{64})","prompt":"(${STR})$`,
+  `${LINK_HEAD}${SUBSTEP_PART},"promptSha256":"([0-9a-f]{64})","prompt":"(${STR})$`,
 );
 
 const TRUNCATED_MARK = "…[truncated]";
@@ -39,6 +40,8 @@ const TRUNCATED_MARK = "…[truncated]";
 export type ParsedLink = {
   readonly id: string;
   readonly version: number;
+  /** The row is a before-state read or a prepare read the executor ran FOR a linked action. */
+  readonly subStep: boolean;
   readonly prompt:
     | {
         readonly sha256: string;
@@ -66,28 +69,31 @@ function decodeJsonString(body: string): string | undefined {
 export function parseLinkPrefix(actionJson: string): ParsedLink | undefined {
   const m = ROW_RE.exec(actionJson);
   // A prompt string the row cap cut has no closing quote, so the optional prompt group did not match.
-  if (m === null || (m[3] === undefined && actionJson.startsWith(',"promptSha256"', m[0].length))) {
+  if (m === null || (m[4] === undefined && actionJson.startsWith(',"promptSha256"', m[0].length))) {
     const open = OPEN_PROMPT_RE.exec(actionJson);
     if (open === null) return undefined;
     const version = Number(open[2]);
     if (!Number.isInteger(version) || version < 1 || version > 1_000_000) return undefined;
-    const body = (open[4] ?? "").replace(TRUNCATED_MARK, "");
+    const body = (open[5] ?? "").replace(TRUNCATED_MARK, "");
     return {
       id: open[1] ?? "",
       version,
-      prompt: { sha256: open[3] ?? "", text: decodeJsonString(body) ?? "", cut: true },
+      subStep: open[3] !== undefined,
+      prompt: { sha256: open[4] ?? "", text: decodeJsonString(body) ?? "", cut: true },
     };
   }
   const id = m[1] ?? "";
   const version = Number(m[2]);
   if (!INCIDENT_LINK_ID_RE.test(id) || !Number.isInteger(version)) return undefined;
   if (version < 1 || version > 1_000_000) return undefined;
-  if (m[3] === undefined) return { id, version, prompt: undefined };
-  const text = decodeJsonString(m[4] ?? "");
+  const subStep = m[3] !== undefined;
+  if (m[4] === undefined) return { id, version, subStep, prompt: undefined };
+  const text = decodeJsonString(m[5] ?? "");
   return {
     id,
     version,
-    prompt: { sha256: m[3], text: text ?? "", cut: m[5] !== undefined || text === undefined },
+    subStep,
+    prompt: { sha256: m[4], text: text ?? "", cut: m[6] !== undefined || text === undefined },
   };
 }
 
@@ -107,15 +113,6 @@ export type LinkedActionRow = {
   readonly confirm: string | undefined;
   readonly role: StepRole;
 };
-
-/** A before-state read, a prepare read or a change-set discard: a step the executor ran FOR an action. */
-export function isSubStepType(actionType: string): boolean {
-  return (
-    actionType.endsWith(".before.read") ||
-    actionType.endsWith(".write.prepare") ||
-    actionType === "iac.cloudformation.changeset.discard"
-  );
-}
 
 function tailFields(
   actionJson: string,
@@ -187,7 +184,7 @@ export function readLinkedActions(db: Database, recordId: string): LinkedActions
       rowTruncated,
       answerSource: tail.answerSource,
       confirm: tail.confirm,
-      role: isSubStepType(r.action_type) ? "sub_step" : "gate",
+      role: parsed.subStep ? "sub_step" : "gate",
     });
   }
   return { rows, truncated };
@@ -212,20 +209,16 @@ export type ActionStep = {
 
 /**
  * Group rows into steps. A before-state read and a prepare read are recorded BEFORE the action's own gate row
- * (the gate records after its phases), a change-set discard AFTER it, so a run of sub-step rows attaches to the
- * gate row that follows it, and a discard to the one before. A sub-step row with no gate row on either side
- * (the gate threw before its row) is returned alone, as its own step with `gate` set to that row.
+ * (the gate records after its phases), so a run of sub-step rows attaches to the gate row that follows it. A
+ * sub-step row with no gate row after it (the gate threw before its row) is returned alone, as its own step with
+ * `gate` set to that row.
  */
 export function groupSteps(rows: readonly LinkedActionRow[]): ActionStep[] {
   const steps: { gate: LinkedActionRow; subSteps: LinkedActionRow[] }[] = [];
   let pending: LinkedActionRow[] = [];
   for (const r of rows) {
     if (r.role === "sub_step") {
-      if (r.actionType === "iac.cloudformation.changeset.discard" && steps.length > 0) {
-        steps[steps.length - 1]?.subSteps.push(r);
-      } else {
-        pending.push(r);
-      }
+      pending.push(r);
       continue;
     }
     steps.push({ gate: r, subSteps: pending });

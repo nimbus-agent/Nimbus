@@ -7,9 +7,10 @@
  *
  * Declared HERE because the executor (`engine/`) must validate and record a link and `engine/` may not
  * import `incident/`; the only constructor, `mintIncidentLink`, lives in `incident/incident-link-mint.ts`
- * (static D46(e) confines it). This module imports only `node:crypto`.
+ * (static D46(e) confines it). This module imports `node:crypto` and one TYPE.
  */
 import { createHash } from "node:crypto";
+import type { PlannedAction } from "./types.ts";
 
 export type IncidentLink = {
   readonly id: string;
@@ -105,12 +106,7 @@ export function promptForRow(shown: string): PromptForRow {
  * is the parent's link a sub-step carries. Throws {@link IncidentLinkError}.
  */
 export function assertLinkedActionAllowed(
-  action: {
-    readonly incident?: unknown;
-    readonly origin?: unknown;
-    readonly proposer?: unknown;
-    readonly provenance?: unknown;
-  },
+  action: Pick<PlannedAction, "incident" | "origin" | "proposer" | "provenance">,
   scopeLink: IncidentLink | undefined,
 ): void {
   const own = Object.hasOwn(action, "incident") ? action.incident : undefined;
