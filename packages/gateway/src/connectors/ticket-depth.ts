@@ -30,6 +30,19 @@ const LINEAR_STATE_TYPE: Readonly<Record<string, TicketStatusCategory>> = {
   canceled: "canceled",
 };
 
+/**
+ * Linear `ProjectStatusType` (the project's own status, NOT an issue's `WorkflowState.type`).
+ * `paused` can only appear on old projects but is mapped; anything else is `unknown`.
+ */
+const LINEAR_PROJECT_STATUS_TYPE: Readonly<Record<string, TicketStatusCategory>> = {
+  backlog: "todo",
+  planned: "todo",
+  started: "in_progress",
+  paused: "in_progress",
+  completed: "done",
+  canceled: "canceled",
+};
+
 function lookup(
   table: Readonly<Record<string, TicketStatusCategory>>,
   raw: string | undefined,
@@ -43,7 +56,7 @@ function lookup(
   //
   // (The bucket is deliberately not named literally here: Sonar's S1135 reads
   // the bare word as a task marker and files an INFO finding on this comment.)
-  return table[raw] ?? "unknown";
+  return Object.hasOwn(table, raw) ? (table[raw] ?? "unknown") : "unknown";
 }
 
 export function normalizeJiraStatusCategory(raw: string | undefined): TicketStatusCategory {
@@ -52,6 +65,11 @@ export function normalizeJiraStatusCategory(raw: string | undefined): TicketStat
 
 export function normalizeLinearStateType(raw: string | undefined): TicketStatusCategory {
   return lookup(LINEAR_STATE_TYPE, raw);
+}
+
+/** Maps a Linear project's `status.type`; absent or unrecognised is `unknown` (never open, never closed). */
+export function normalizeLinearProjectState(raw: string | undefined): TicketStatusCategory {
+  return lookup(LINEAR_PROJECT_STATUS_TYPE, raw);
 }
 
 /**

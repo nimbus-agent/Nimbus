@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite";
-import { affectedServicesForEpics } from "./epic-services.ts";
+import { affectedServicesForEpics, groupIdsByTracker } from "./epic-services.ts";
+import type { EpicTracker } from "./epic-tracker.ts";
 
 export type CohortCandidate = {
   itemId: string;
@@ -22,7 +23,7 @@ export type CohortResult = {
 
 type CandidateRow = {
   id: string;
-  external_id: string;
+  display_key: string;
   title: string;
   created_at_ms: number | null;
   resolved_at_ms: number;
@@ -35,58 +36,71 @@ type ChildCountRow = {
 };
 
 /**
- * Total child count per epic — every item whose `metadata.parent_key` points
- * back at the epic and whose `service` matches the epic's own (the same
- * own-service scoping `affectedServicesForEpics` applies), regardless of
- * whether that child ever resolved to a service. This is a scope-size
- * signal for later risk scoring, not a re-derivation of `services`: an epic
- * can have children that never shipped a PR, and those still count here.
+ * Total child count per epic: every item the epic's own tracker says is its child
+ * (`tracker.childOfSql`, which reads `epic.external_id` from the epic ROW, never a caller-supplied
+ * key) and whose `service` matches the epic's own, regardless of whether that child ever resolved to
+ * a service. This is a scope-size signal for later risk scoring, not a re-derivation of `services`:
+ * an epic can have children that never shipped a PR, and those still count here.
  *
- * Computed only for the final cohort members (not every scanned candidate),
- * since it plays no role in the overlap gate or the IDF score.
+ * Serves both the cohort members and the single TARGET (`agents/premortem.ts` calls it with
+ * `[epic.itemId]`). Ids are grouped by `item.service` first, so each tracker's join fragment runs
+ * against its own rows only; an id whose service has no descriptor is absent from the map.
  */
-// lane-census: scope=issue service=jira
-function childCountsFor(db: Database, epicItemIds: readonly string[]): Map<string, number> {
+export function childCountsFor(db: Database, epicItemIds: readonly string[]): Map<string, number> {
   const result = new Map<string, number>();
   if (epicItemIds.length === 0) {
     return result;
   }
-  const placeholders = epicItemIds.map(() => "?").join(", ");
-  const rows = db
-    .query(
-      `SELECT epic.id AS epicItemId, COUNT(*) AS childCount
-         FROM item epic
-         JOIN item child ON json_valid(child.metadata)
-                          AND json_extract(child.metadata, '$.parent_key') = epic.external_id
-                          AND child.service = epic.service
-                          AND child.id <> epic.id
-        WHERE epic.id IN (${placeholders})
-        GROUP BY epic.id`,
-    )
-    .all(...epicItemIds) as ChildCountRow[];
-  for (const r of rows) {
-    result.set(r.epicItemId, r.childCount);
+  const idsByTracker = groupIdsByTracker(db, epicItemIds);
+  for (const [tracker, ids] of idsByTracker) {
+    const placeholders = ids.map(() => "?").join(", ");
+    const rows = db
+      .query(
+        `SELECT epic.id AS epicItemId, COUNT(*) AS childCount
+           FROM item epic
+           JOIN item child ON json_valid(child.metadata)
+                            AND ${tracker.childOfSql("child", "epic")}
+                            AND child.service = epic.service
+                            AND child.id <> epic.id
+          WHERE epic.id IN (${placeholders})
+          GROUP BY epic.id`,
+      )
+      .all(...ids) as ChildCountRow[];
+    for (const r of rows) {
+      result.set(r.epicItemId, r.childCount);
+    }
   }
   return result;
 }
 
+/** Refuses an `excludeItemId` that belongs to a different tracker: the caller must not blend them. */
+function assertExcludedItemBelongsTo(db: Database, itemId: string, tracker: EpicTracker): void {
+  const row = db.query("SELECT service FROM item WHERE id = ?").get(itemId) as {
+    service: string;
+  } | null;
+  if (row !== null && row.service !== tracker.service) {
+    throw new Error(
+      `selectCohort: the excluded item belongs to "${row.service}", not to the "${tracker.service}" cohort`,
+    );
+  }
+}
+
 /**
- * Selects and ranks the cohort of closed Jira epics comparable to a target
- * epic, by service overlap.
+ * Selects and ranks the cohort of closed epics (of ONE tracker) comparable to a target epic, by
+ * service overlap.
  *
- * `service = 'jira'` is LOAD-BEARING, not redundant with the `issue_type`
- * filter. `agents/premortem.ts` passes `cohortIsMixedTracker: false` to
- * `computeRisks`, which is what lets the abandonment rate be reported at all
- * (Jira and another tracker do not agree on what a canceled status means, so a
- * blended rate would not be comparable). Without this clause that claim rested
- * on nothing structural: any tracker writing `metadata.issue_type = 'Epic'`
- * plus a `status_category` would enter the cohort and silently blend. The
- * filter makes the claim true by construction rather than by convention.
+ * `tracker` is REQUIRED, never defaulted: a default would let a Linear target silently use the Jira
+ * cohort, the exact blend this file forbids. `tracker.isEpicSql` carries its own `service = '<id>'`
+ * clause, and THAT is the structural guarantee behind `cohortIsMixedTracker: false` in
+ * `agents/premortem.ts` (Jira and Linear do not agree on what a canceled status means, so a blended
+ * abandonment rate would not be comparable): the candidate statement can only ever return rows of one
+ * tracker, tested for both. `excludeItemId` is derived, not trusted: when it names an existing row of
+ * another tracker the call throws.
  *
  * Candidates are scanned `resolved_at_ms DESC` so `maxCandidateScan` truncates
  * the OLDEST history, never an arbitrary slice. `resolved_at_ms` is read out
  * of `metadata` via `json_extract` — it is not a real `item` column, only
- * `connectors/jira-sync.ts` writes it, and a candidate whose sync never
+ * the tracker's writers set it, and a candidate whose sync never
  * recorded one is excluded rather than guessed at (see the `IS NOT NULL`
  * filter below): it is the ordering key, and the scan cap's whole meaning is
  * undefined without it.
@@ -109,20 +123,26 @@ function childCountsFor(db: Database, epicItemIds: readonly string[]): Map<strin
 export function selectCohort(
   db: Database,
   targetServices: readonly string[],
-  opts: { maxCandidateScan: number; maxCohortSize: number; excludeItemId: string },
+  opts: {
+    tracker: EpicTracker;
+    maxCandidateScan: number;
+    maxCohortSize: number;
+    excludeItemId: string;
+  },
 ): CohortResult {
+  assertExcludedItemBelongsTo(db, opts.excludeItemId, opts.tracker);
+  const { tracker } = opts;
   const rows = db
     .query(
       `SELECT id,
-              external_id,
+              ${tracker.displayKeySql("item")} AS display_key,
               title,
               json_extract(metadata, '$.created_at_ms')   AS created_at_ms,
               json_extract(metadata, '$.resolved_at_ms')  AS resolved_at_ms,
               json_extract(metadata, '$.status_category') AS status_category
          FROM item
-        WHERE service = 'jira'
+        WHERE ${tracker.isEpicSql("item")}
           AND json_valid(metadata)
-          AND json_extract(metadata, '$.issue_type') = 'Epic'
           AND json_extract(metadata, '$.status_category') IN ('done', 'canceled')
           AND json_extract(metadata, '$.resolved_at_ms') IS NOT NULL
           AND id <> ?
@@ -195,7 +215,7 @@ export function selectCohort(
 
   const members: CohortCandidate[] = sliced.map(({ row, services, score }) => ({
     itemId: row.id,
-    key: row.external_id,
+    key: row.display_key,
     title: row.title,
     services,
     createdAtMs: row.created_at_ms,

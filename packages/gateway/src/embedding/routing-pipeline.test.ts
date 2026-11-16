@@ -102,6 +102,35 @@ describe("RoutingEmbeddingPipeline", () => {
   });
 
   test.skipIf(!VEC_AVAILABLE)(
+    "a linear:project row is embedded on the local model only, never the remote one",
+    async () => {
+      const db = freshDb();
+      insertItem(db, "p1", "linear", "project");
+      const local = new SqliteEmbeddingPipeline({
+        db,
+        embedder: stubEmbedder("Xenova/all-MiniLM-L6-v2", 384, true),
+      });
+      const openai = new SqliteEmbeddingPipeline({
+        db,
+        embedder: stubEmbedder("openai:text-embedding-3-small", 1536, false),
+      });
+      const router = new RoutingEmbeddingPipeline(db, local, openai);
+      await router.embedItem({
+        id: "linear:p1",
+        service: "linear",
+        type: "project",
+        title: "Payments",
+        body_preview: "the full specification",
+      });
+      const dims = db
+        .query(`SELECT dims FROM embedding_chunk WHERE item_id = ?`)
+        .all("linear:p1") as Array<{ dims: number }>;
+      expect(dims.length).toBeGreaterThan(0);
+      expect(dims.every((r) => r.dims === 384)).toBe(true);
+    },
+  );
+
+  test.skipIf(!VEC_AVAILABLE)(
     "an item whose type moves to the other route keeps no vector from its old route",
     async () => {
       // A Drive Doc is re-typed in place, `google_drive:file` -> `google_drive:doc`, under the same

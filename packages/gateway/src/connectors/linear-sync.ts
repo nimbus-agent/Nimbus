@@ -7,6 +7,12 @@ import {
   snapshotDue,
   snapshotIntervalMs,
 } from "./_lib/work-snapshot-run.ts";
+import {
+  type FetchProjectsPage,
+  PROJECTS_INTERVAL_MS,
+  PROJECTS_QUERY,
+  runLinearProjectsPass,
+} from "./linear-projects.ts";
 import { decodeNimbusJsonCursorObject, encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import { msFromIso, normalizeLinearStateType, TICKET_META_VERSION } from "./ticket-depth.ts";
 import { asRecord, stringField } from "./unknown-record.ts";
@@ -77,8 +83,11 @@ query LinearOpenWork($after: String) {
 `;
 const SNAPSHOT_MAX_PAGES = 3;
 
-/** `snapAt`: epoch ms of the last "my open work" snapshot ATTEMPT (success or failure). */
-type LinearSyncCursorV1 = { since: string; snapAt?: number };
+/**
+ * `snapAt`: epoch ms of the last "my open work" snapshot ATTEMPT (success or failure). `projAt`: the
+ * same for the project listing (Phase 10 PM2). An older cursor without either just means "due now".
+ */
+type LinearSyncCursorV1 = { since: string; snapAt?: number; projAt?: number };
 
 function encodeCursor(c: LinearSyncCursorV1): string {
   return encodeNimbusJsonCursor(CURSOR_PREFIX, c);
@@ -94,7 +103,12 @@ function decodeCursor(raw: string | null): LinearSyncCursorV1 | null {
     return null;
   }
   const snapAt = rec["snapAt"];
-  return { since, ...(typeof snapAt === "number" && Number.isFinite(snapAt) ? { snapAt } : {}) };
+  const projAt = rec["projAt"];
+  return {
+    since,
+    ...(typeof snapAt === "number" && Number.isFinite(snapAt) ? { snapAt } : {}),
+    ...(typeof projAt === "number" && Number.isFinite(projAt) ? { projAt } : {}),
+  };
 }
 
 type SyncPage = {
@@ -395,6 +409,41 @@ async function linearSnapshotIfDue(
   return now;
 }
 
+/**
+ * Lists every project (best effort, never throws) when due; returns the new `projAt`, an ATTEMPT time
+ * so a failing provider is retried once per interval. Rides the issue sync's rate limiter and key.
+ */
+async function linearProjectsIfDue(
+  ctx: SyncContext,
+  apiKey: string,
+  prevProjAt: number | undefined,
+): Promise<number> {
+  const now = Date.now();
+  if (prevProjAt !== undefined && now - prevProjAt < PROJECTS_INTERVAL_MS && now >= prevProjAt) {
+    return prevProjAt;
+  }
+  const fetchPage: FetchProjectsPage = async (after, signal) => {
+    // The FIRST page never waits on the limiter (a 429 earlier in this sync penalises it for a
+    // minute): a pass that cannot take a token stops, writes nothing and deletes nothing. Later pages
+    // wait for a token as the issue loop does (the pass's own time budget bounds the whole listing).
+    if (after === null) {
+      if (!(await ctx.rateLimiter.tryAcquire("linear"))) {
+        throw new Error("Linear projects: rate limited, retrying next interval");
+      }
+    } else {
+      await ctx.rateLimiter.acquire("linear");
+    }
+    const res = await linearPost(
+      apiKey,
+      JSON.stringify({ query: PROJECTS_QUERY, variables: after === null ? {} : { after } }),
+      signal,
+    );
+    return linearRequireData(ctx, res);
+  };
+  await runLinearProjectsPass(ctx, fetchPage);
+  return now;
+}
+
 export type LinearSyncableOptions = {
   ensureLinearMcpRunning: () => Promise<void>;
   /** `[briefing] snapshot_interval_minutes`, read per sync so an edit applies without a restart. */
@@ -464,9 +513,11 @@ export function createLinearSyncable(options: LinearSyncableOptions): Syncable {
       }
 
       const snapAt = await linearSnapshotIfDue(ctx, apiKey, prev?.snapAt, options);
+      const projAt = await linearProjectsIfDue(ctx, apiKey, prev?.projAt);
       const nextCursor = encodeCursor({
         since: maxUpdated,
         ...(snapAt === undefined ? {} : { snapAt }),
+        projAt,
       });
 
       return syncPassCursorSuccess(t0, bytesTransferred, nextCursor, upserted);

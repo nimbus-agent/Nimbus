@@ -306,7 +306,7 @@ An approved extension runs as a lazy, sandboxed MCP stdio server (`mesh:ext:<ser
 | `agents.glossary` | request | S1 — read over the materialized `glossary_term` table (V45/V46) |
 | `agents.decisions` | request | S1 — read over the materialized `decision_record` table (V47) |
 | `agents.ownership` | request | S1 — read over the git-blame-derived ownership graph (V51); `nimbus owners` |
-| `agents.premortem` | request | S1 — risk brief for a Jira epic from comparable past epics; writes only disabled `watcher` proposals and their tombstones, never fires HITL |
+| `agents.premortem` | request | S1 — risk brief for a Jira epic or a Linear project from comparable past ones; writes only disabled `watcher` proposals and their tombstones, never fires HITL |
 | `agents.negotiate` | request | S1 — cited contribution brief for one person over a window; externally excluded, since `--person` makes it a dossier-builder |
 | `agents.changelog` | request | v0.1.1 — Markdown changelog assembled from the local index over a window |
 | `agents.standup` | request | v0.1.1 — the owner's own activity over a window (default `24h`); owner-scoped, so externally excluded |

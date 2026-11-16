@@ -3,8 +3,13 @@ import { describe, expect, test } from "bun:test";
 import os from "node:os";
 import pino from "pino";
 import { gitlabMrMetadata } from "../connectors/_lib/gitlab/events.ts";
-import { createMemoryIndexDb } from "../connectors/connector-sync-test-helpers.ts";
+import {
+  createMemoryIndexDb,
+  createStubVault,
+  syncTestContext,
+} from "../connectors/connector-sync-test-helpers.ts";
 import { GIT_COMMIT_META_VERSION } from "../connectors/git-commit-meta.ts";
+import { upsertLinearProject } from "../connectors/linear-projects.ts";
 import { OUTLOOK_MAIL_META_VERSION } from "../connectors/outlook-mail-meta.ts";
 import { PAGERDUTY_INCIDENT_META_VERSION } from "../connectors/pagerduty-attribution.ts";
 import { PR_META_VERSION } from "../connectors/pr-meta.ts";
@@ -1001,6 +1006,32 @@ describe("REBODY_META_TARGETS", () => {
         { service: "jira", type: "issue", requiredMetaVersion: 1 },
       ]),
     ).toEqual({ jira: 1 });
+    db.close();
+  });
+});
+
+describe("a freshly synced linear:project row", () => {
+  test("is not rebody-pending, even with a body over the 512 default cap", () => {
+    const db = createMemoryIndexDb();
+    const ctx = syncTestContext(db, createStubVault({ "linear.api_key": "k" }), "linear");
+    upsertLinearProject(
+      ctx,
+      {
+        id: "proj-1",
+        name: "Payments",
+        content: "x".repeat(5000),
+        status: { type: "started", name: "In Progress" },
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-02-01T00:00:00.000Z",
+      },
+      1,
+    );
+    const row = db.query("SELECT body_complete AS c FROM item WHERE type = 'project'").get() as {
+      c: number;
+    };
+    expect(row.c).toBe(1);
+    expect(computePendingByService(db)).toEqual({});
+    expect(computePendingMetaByService(db)).toEqual({});
     db.close();
   });
 });

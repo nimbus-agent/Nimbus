@@ -622,6 +622,8 @@ The morning briefing (MB5) needs the index to know what is yours and open, when 
 
 **The interval.** `[briefing] snapshot_interval_minutes` (default 15, 5 to 240; a value outside falls back to 15 with a recorded section fallback, never a clamp; `config/briefing-toml.ts`, registered in `SECTION_LOADERS`). Syncables have no config view, so it reaches them as an optional `snapshotIntervalMinutes: () => number` factory option fed from `ConnectorMeshSyncableOptions.briefingSnapshotIntervalMinutes` (a closure over the layered reader, so an edit applies on the next sync). "At most once per interval" is persisted in each sync's own cursor as `snapAt`, the epoch ms of the last ATTEMPT (success or failure, so a failing provider is retried once per interval, not once per minute); `nimbus index rebody` clears the cursor of each service it re-syncs (the services with recoverable rows, or the one `--service` names; `resolveTargetServices` in `ipc/index-rebody-rpc.ts`) and therefore forces a snapshot for exactly those services, not for Jira, Linear or GitHub in general.
 
+**Linear projects (Phase 10 PM2).** The `linear` sync also lists every project, archived included, at most every 30 minutes (`projAt` in the `nimbus-lnr1:` cursor, an ATTEMPT time like `snapAt`, so an older cursor just means "due now" and the issue cursor is never moved), as `linear:project` items (`connectors/linear-projects.ts`: external id the project UUID, `meta_v` 1, `status_category` from the project status type with `unknown` for anything unrecognised, `created_at_ms`, `resolved_at_ms` = `completedAt` else `canceledAt`, `slug_id`). It is best effort and never fails the issue sync: each page is parsed whole before it is written, a parsed page stays if a later one fails, and only a COMPLETE listing (every page parsed within 20 pages of 50, inside a 45 s budget) replaces the set through `replaceItemSet` (`linear` joined `REPLACE_ITEM_SET_TYPES` for `project`); a capped, failed or rate-limited one deletes nothing. The first page never waits on the rate limiter. `linear:project` is in `LOCAL_ONLY_PROSE_TYPES` (16 KiB body cap, embedded on the local model only). No migration.
+
 **Depth the briefing reads.** GitHub issue rows carry `meta_v` 1, `due_at_ms` and `milestone` (from the milestone's `due_on`; omitted, never null, when unknown, like Jira and Linear). Outlook mail rows carry `is_read` and `meta_v` 1; the cursor prefix moved `nimbus-outl2:` to `nimbus-outl3:` because a stored delta link keeps the projection that minted it, so the mailbox re-lists ONCE (the history is outl1, outl2, outl3; MB2b's decoder must accept `nimbus-outl3:` as a mail-only cursor), and `outlook`/`email` joins `REBODY_META_TARGETS`. iCloud event rows carry `start_ms`, `end_ms`, `all_day`, `organizer_email`, `attendee_count`, `self_response` and `meta_v` 1: the SDK parser drops TZID, DURATION and PARTSTAT, so a gateway-local `connectors/_lib/ical-event-extras.ts` re-reads the same raw ICS, and `connectors/_lib/zoned-time.ts` converts a wall time in an IANA zone to an instant (a nonexistent local time takes the offset before the gap, a repeated one its first occurrence; an all-day event is midnight to midnight in the gateway zone). The raw `start`, `end`, `allDay`, `organizer` and `status` keys are unchanged (`status` stays upper case).
 
 **Deliberate omissions, recorded.** `github`/`issue` and `apple`/`event` are NOT in `REBODY_META_TARGETS`: the events feed has no issue list so an old issue row can never be re-walked, and the CalDAV window is re-fetched in full on every pass, so each would stay pending forever and make every `nimbus index rebody` resync for nothing (the `ci_run` reasoning). The Jira and GitHub snapshots make no `/myself` call (JQL `currentUser()` and `@me` are resolved by the provider): MB3 made its own `GET /myself` for the JSM `is_me` test. Stated bounds: an invitation addressed to an iCloud alias other than the account address yields `self_response: null`; Jira's snapshot reuses `POST /rest/api/3/search`, which Atlassian has announced a token-paginated replacement for (the incremental sync inherits the same change).
@@ -3934,11 +3936,18 @@ const streamReq: JSONRPCRequest = {
 //   Exists only when `[premortem].enabled` (default true); otherwise the refresher is never
 //   constructed and the method throws `ERR_PREMORTEM_DISABLED` rather than surfacing as
 //   "Method not found" — `dispatchPremortemRpc` always claims the `premortem.` prefix.
-//   **Jira-only today:** the discover stage keys on `metadata.issue_type = 'Epic'`
-//   (`premortem/theme-discover.ts`), written only by `jira-sync.ts`. `linear-sync.ts` never
-//   writes `issue_type`, and — the deeper reason — no `linear:project` items are indexed at all,
-//   so there is no Linear epic-shaped row to mine. Supporting Linear needs a connector change and
-//   is out of scope here.
+//   **Two trackers (Phase 10 PM2):** the discover stage runs one statement per tracker in
+//   `EPIC_TRACKERS` (`premortem/epic-tracker.ts`), merged by `(modified_at, id)`: Jira keys on
+//   `metadata.issue_type = 'Epic'` (written by `jira-sync.ts`), Linear on `type = 'project'`
+//   (`linear:project` items written by `connectors/linear-projects.ts`; `linear-sync.ts` never
+//   writes `issue_type`). The cohort, child-count and affected-service queries take the same
+//   `EpicTracker` descriptor (alias-literal SQL fragments: epic row, child join on the epic ROW's
+//   `external_id`, display key), so a Jira epic is only ever compared with Jira epics and a Linear
+//   project with Linear projects. A Linear project's children are the issues whose `project_id`
+//   equals its UUID; its human reference is its slug id (never the UUID). The pass keeps ONE global
+//   watermark, so a Linear project last updated before it is never mined: the brief reports that as
+//   an upper bound (`mayBeUnminedLinearProjects`), and a per-tracker watermark is a follow-up that
+//   needs a migration.
 //   **`parent_key` is TEAM-MANAGED-Jira-only, narrower still:** `connectors/jira-sync.ts` writes
 //   `metadata.parent_key` only on team-managed projects; classic company-managed projects express
 //   epic membership through a per-instance `customfield_100xx` this connector does not chase, so

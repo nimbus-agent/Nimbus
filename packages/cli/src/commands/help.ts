@@ -51,7 +51,7 @@ AGENTS — read-only briefs over the local index
   nimbus janitor <resource>          Is this cloud resource still in use, and what breaks if I delete it
   nimbus glossary [<term>]           The team's own terminology, mined from the local index
   nimbus decisions [--since 90d]     Decisions buried in chat and docs, corroborated against the graph
-  nimbus pre-mortem <epic>           Risk brief for a Jira epic, from comparable past epics
+  nimbus pre-mortem <epic>           Risk brief for a Jira epic or a Linear project (linear:<project>)
   nimbus negotiate [--since 90d]     Your own contribution record, for a compensation conversation
   nimbus changelog [--since 7d]      Merged PRs, deployments and incidents in one window, per service
   nimbus standup [--since 24h]       What YOU did — PRs, reviews, tickets, incidents, Slack

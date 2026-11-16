@@ -11,7 +11,8 @@ export type PreMortemCliArgs = {
 
 const USAGE =
   "Usage: nimbus pre-mortem <epic-ref> [--service <name>]... [--json] [--refresh] [--repropose]\n" +
-  "  <epic-ref>   a Jira epic key, e.g. PROJ-120 or jira:PROJ-120\n" +
+  "  <epic-ref>   a Jira epic key, e.g. PROJ-120 or jira:PROJ-120, or a Linear project,\n" +
+  "               e.g. linear:<slug id | project URL | UUID | exact name>\n" +
   "  --service    repeatable; overrides the derived affected-service set\n" +
   "  --refresh    run the pre-mortem theme pass before building the brief\n" +
   "  --repropose  re-create a previously-deleted watcher proposal for this epic";
