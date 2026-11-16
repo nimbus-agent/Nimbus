@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794812816113,
+  "lastUpdate": 1794813796514,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
-            "name": "nimbus-release-bot[bot]",
-            "username": "nimbus-release-bot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "7517357f4a676248d171352db5e70f27b194a78c",
-          "message": "chore: release main (#1365)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>5.0.1</summary>\n\n##\n[5.0.1](https://github.com/nimbus-agent/Nimbus/compare/v5.0.0...v5.0.1)\n(2026-08-28)\n\n\n### Bug Fixes\n\n* **connectors:** index a Confluence page under its browser URL\n([#1364](https://github.com/nimbus-agent/Nimbus/issues/1364))\n([c7a9e1a](https://github.com/nimbus-agent/Nimbus/commit/c7a9e1a53fcc5fc22e2830e38ad25009b7e5d6e5))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
-          "timestamp": "2026-08-28T15:06:11Z",
-          "tree_id": "a6ffa465a5f2028445fdcbafb8f5432685754374",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/7517357f4a676248d171352db5e70f27b194a78c"
-        },
-        "date": 1787930107176,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 219.14595860000009,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 218.2559776000002,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 170.28494959999952,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "209806df0d4b2500147ae6c8b58e8789f9a8d53b",
+          "message": "chore(deps): pin @nimbus-dev/connectors 0.15.0 and @nimbus-dev/sdk 2.3.0 (agent door AD6c) (#2019)\n\nAgent door AD6c, the gateway side: pin `@nimbus-dev/connectors` 0.15.0.\n\n## Why now\n\n0.15.0 is published, so `audit:connector-version-skew` fails on every\nbranch until this lands.\n\n## What 0.15.0 changes\n\n- **Standalone connectors** (`nimbus-connector <id>`): they answer both\nMCP protocol eras, and write consent works with a client of revision\n2026-07-28. The tool answers `input_required`; the retry carries a\nsealed, single-use state bound to the tool, the exact arguments and a\nfive-minute expiry.\n- **Connectors the gateway starts:** unchanged. They still run on the\nupstream MCP server and the `initialize` handshake, and the gateway\napproves their writes itself.\n\n## What is in this pull request\n\n- `packages/gateway`: `@nimbus-dev/connectors` `^0.15.0`.\n- `@nimbus-dev/sdk` `^2.3.0` in `gateway`, `cli` and `registry-format`,\nso the tree holds one SDK copy for them instead of two (the connectors\nneed 2.3.0).\n- The registry action's committed bundle, rebuilt because it bundles the\nSDK.\n- `docs/roadmap.md`: the MCP revision row's progress note; AD6c is no\nlonger listed as remaining.\n\n## Checks run\n\n- `bun run preflight:fast`: passed.\n- `bun test packages/gateway/src/connectors --parallel`: 9,458 pass, 0\nfail.\n\n## Not verified\n\nNo real 2026-07-28 client has been run against a standalone connector or\nagainst the gateway's MCP server.\n\nThe status sentence in CLAUDE.md and GEMINI.md, the changelog entry and\nthe README line land with the last pull request of this batch, because\nseveral pull requests are open at once and all of them edit that one\nparagraph. `architecture.md` and `cli-reference.md` are unchanged: no\ngateway behaviour or command changed.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JmSjrCzb214jGqUcCTWNJQ\n\nCo-authored-by: Claude Fable 5.2 <noreply@anthropic.com>",
+          "timestamp": "2026-11-16T07:15:13Z",
+          "tree_id": "f3de2becccbfc248c65d776d22b663ed8043d982",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/209806df0d4b2500147ae6c8b58e8789f9a8d53b"
+        },
+        "date": 1794813792481,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 192.2785973499984,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 192.32534545000127,
             "unit": "ms"
           }
         ]
