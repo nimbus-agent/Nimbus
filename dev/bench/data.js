@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794857233346,
+  "lastUpdate": 1794862712012,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "1a4338c32582ae578dacc3babb34671b07b155f9",
-          "message": "fix(cli): refuse a nested-table key in nimbus config set/get (#1387)\n\nCloses #1382.\n\n## The bug\n\n`nimbus config set llm.tasks.classification <route>` succeeded, changed\nthe file, and did nothing.\n\nBoth the reader and the writer split the dotted key on the **first**\ndot, so the key became section `llm`, key `tasks.classification` —\nwritten verbatim under `[llm]`, where `parseLlmTaskPins`, which scans\nfor a literal `[llm.tasks]` table, never sees it.\n\nReproduced end-to-end against the real helper and the real parser before\nwriting any fix:\n\n```\n$ nimbus config set llm.tasks.classification ollama/llama3.2:latest\n# nimbus.toml gains:  tasks.classification = \"ollama/llama3.2:latest\"   ← under [llm]\n# parseNimbusTomlLlmSection ->  taskPins: undefined\n```\n\n## It was worse than reported\n\n`getTomlValueFromFile` had the identical first-dot split, so it read the\ninert line back and **echoed it**. `set` appeared to work and `get`\nappeared to confirm it, while routing ignored the value entirely — a\nfalse *confirmation* loop, not just a silent no-op. A guard on the write\npath alone would have left that in place for any hand-edited file, so\n**both** paths are guarded.\n\n## The fix\n\nOne shared `splitFlatDottedKey` refuses any key naming a nested table,\nplaced before any file read or write so a refusal touches nothing on\ndisk.\n\nRefused rather than taught last-dot splitting, per the issue's\nrecommendation: last-dot is safe today only because every caller is\nsingle-dot, and it reintroduces the same ambiguity the moment a third\ndotted shape appears. A refusal is fail-closed with no parsing to get\nwrong.\n\nThe CLI layer adds what the user actually needs — where to go instead:\n\n```\n`llm.tasks.classification` addresses a nested table, which `nimbus config`\ncannot express — it handles a flat `section.key` only.\nUse: nimbus llm use classification ollama/llama3.2:latest\nOr edit the [llm.tasks] table in nimbus.toml directly.\n```\n\nAn unrelated nested key such as `sync.service.github` gets the generic\nanswer. Inventing an `llm` command for a key that has none would trade a\nsilent no-op for a confident wrong instruction.\n\n## Not a regression\n\nEvery existing call site is single-dot, and no `ENV_BY_DOTTED` key has\ntwo dots, so `nimbus config list` is unaffected. A dotless key still\nreports the original flat-key usage error, not the new one.\n\n## Verification\n\n- **Red-proved by reverting the two source files: 8 tests fail without\nthe fix, 0 with it.**\n- 12 new tests, covering the refusal on both paths, the fail-closed\nproperty — file byte-identical after a refusal — the `llm.tasks.*` vs\ngeneric message split, deep nesting, and both non-regression bounds.\n- `bun test packages/cli/src` → 2495 pass, 0 fail.\n- `bun run preflight:fast` → 32/32 gates green.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01J6qbQmiRqJcxDc6ENA8LFc\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **Bug Fixes**\n* `nimbus config get` and `nimbus config set` now clearly reject\nunsupported nested TOML keys.\n* Errors for `llm.tasks.<task>` keys provide guidance to use `nimbus llm\nuse` or edit the TOML directly.\n* Prevented rejected configuration writes from modifying the\nconfiguration file.\n  * Existing single-dot configuration keys continue to work as expected.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->",
-          "timestamp": "2026-08-29T18:22:16+03:00",
-          "tree_id": "b9badb8f9a00a77d8d959b6741781f30676b45c2",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/1a4338c32582ae578dacc3babb34671b07b155f9"
-        },
-        "date": 1788017365855,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 210.91773989999928,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 199.23833120000054,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 238.94014175000848,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "734cbf9f61ffa1d073aa41ede2a630b8189af87c",
+          "message": "feat(gateway): post a notice to your ChatOps namespace when a watcher fires, off by default (#2031)\n\nPosts one fixed-template notice to your ChatOps when a watcher you opted\nin by id fires. Off by default.\n\n- **Destination** is exactly one of: (a) the Slack `notify` channels\nyour signed org policy lists for `[watcher.chatops] namespace`, or (b)\nwith no org policy, ONE Slack channel id you pin in `[watcher.chatops]\nchannel` (`C...` or `G...`). Setting both, or an invalid pin, posts\nnothing and logs one boot warning; an invalid pin never falls back to\nthe namespace.\n- **I23 amendment (owner ruling 2026-11-16):** a new `watcherPinned`\nreply target carries no channel. The id is a construction-time value of\nthe ChatOps boot, and only the watcher-notice dispatcher is built with\nthe resolver that yields it; the other dispatchers throw on it. Static\nD17(d) confines the identifiers to four files (`chatops/types.ts`,\n`chatops/reply-dispatcher.ts`, `chatops/chatops-boot.ts`,\n`platform/assemble.ts`) and matches every quote spelling, backticks\nincluded.\n- **I22 precedence, resolved at post time:** the pin posts on its own\nonly while the install has no org policy and was never meant to\n(`PolicyGate.governanceIntended()`: a verified policy, or a persisted\npolicy or pinned org anchor that failed verification, all count as\ngoverned, so a tampered policy file never relaxes it) and no channel\nbinding exists. Under a policy, even one with no ChatOps channels, it\nposts only if the policy lists it as `notify`. Unknown counts as\ngoverned. Slack disabled means the pin is absent and no ledger row is\nwritten.\n- **I29:** the same `chatops.watcherNotice` kind, one row appended\nbefore the post; a failed append sends nothing. A demo gateway posts\nnothing (I41).\n- Removes the test-only `initialFailureTimes` seam; the breaker tests\ndrive real failures.\n- No migration, no new invariant number, no IPC method, no Tauri\nallowlist change.\n\n**Reviews.** Antigravity: plan round 1 REVISE (4 findings, all\naddressed); code round 1 (pre-pin) APPROVE; code round 2 REQUEST CHANGES\n(the D17(d) backtick spelling), fixed in this PR along with the\ngovernance-intent tightening; round 3 on the fix.\n\n**Red-proofs** (each defence reverted, a named test fails, restored):\norg policy governs and tightens (3 tests), the listing check (3), one\npost kind only (static I23 (h)), caller-supplied destination (dispatcher\nthrows; D17(d) audit exits 1), ledger before post, Slack disabled,\ngovernance intent on a tampered policy (2 tests), D17(d) backtick\nspelling.\n\n**Stated bounds:** the pin is one Slack channel (no DM, no Teams); a\npolicy binding that lists the pin suffices whatever its namespace (the\nnotice is counts-only text about the owner's own watchers); there is no\nChatOps lockoff capability, so \"a policy governs\" is how a lockoff\napplies; config is read at gateway start; rate, dedupe and breaker state\nare in memory; no live Slack post was made.\n\n**Docs:** this PR updates its own roadmap row,\n`docs/SECURITY-INVARIANTS.md` (I23, D17(d)), `docs/architecture.md` and\n`docs/cli-reference.md`. The status paragraph in CLAUDE.md/GEMINI.md,\nthe top of `docs/CHANGELOG.md` and `docs/README.md` are batched into the\nfinal docs PR of this batch (owner-approved exception).\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Opted-in watchers can now send Slack notifications when they fire, to\na configured policy destination or an authorized pinned channel.\n* Notifications use fixed, sanitized content and are rate-limited;\nindexed item content is not included.\n* **Documentation**\n* Added configuration guidance and details about notification\ndestinations, delivery limits, and policy requirements.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Fable 5.2 <noreply@anthropic.com>",
+          "timestamp": "2026-11-16T20:50:08Z",
+          "tree_id": "e971f5197c03c1b88382d5e084a86d4ac0a29d18",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/734cbf9f61ffa1d073aa41ede2a630b8189af87c"
+        },
+        "date": 1794862707684,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 198.51476469999943,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 200.5794388500013,
             "unit": "ms"
           }
         ]
