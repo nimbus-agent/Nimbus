@@ -2,6 +2,19 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [10.69.0](https://github.com/nimbus-agent/Nimbus/compare/v10.68.0...v10.69.0) (2026-11-16)
+
+
+### Features
+
+* **gateway:** assemble incident records from the local index, with nimbus incident list and show ([#2030](https://github.com/nimbus-agent/Nimbus/issues/2030)) ([37ad233](https://github.com/nimbus-agent/Nimbus/commit/37ad233467c164c2ba3fd560965b32970139a400))
+* **gateway:** bundle a Developer role pack, installed with nimbus pack install developer ([#2033](https://github.com/nimbus-agent/Nimbus/issues/2033)) ([147f362](https://github.com/nimbus-agent/Nimbus/commit/147f3629663795d803c90be10d3c2c132b566630))
+
+
+### Bug Fixes
+
+* **gateway:** the audit append returns its row id, so a standing approval records its own audit row ([#2036](https://github.com/nimbus-agent/Nimbus/issues/2036)) ([e00b979](https://github.com/nimbus-agent/Nimbus/commit/e00b979c320aa40e501a6df060b41d51478d3cf9))
+
 ## [10.68.0](https://github.com/nimbus-agent/Nimbus/compare/v10.67.0...v10.68.0) (2026-11-16)
 
 
