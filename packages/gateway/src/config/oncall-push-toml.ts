@@ -20,13 +20,29 @@ export type NimbusOncallPushToml = {
   readonly severities: readonly string[];
   readonly chatopsNamespace: string;
   readonly retentionDays: number;
+  /**
+   * Trigger sources whose incident records may be pushed (Phase 10 IC3). Default `["pagerduty"]`; any other
+   * source is pushed only when its record is bound to a service, the index shows the owner on call for it,
+   * and the source is listed here. `[]` disables every source.
+   */
+  readonly sources: readonly string[];
 };
+
+/** The five incident trigger sources, the only values `sources` accepts. */
+export const ONCALL_PUSH_SOURCE_IDS: readonly string[] = Object.freeze([
+  "pagerduty",
+  "jira",
+  "sentry",
+  "montecarlo",
+  "bigeye",
+]);
 
 export const DEFAULT_ONCALL_PUSH_CONFIG: NimbusOncallPushToml = Object.freeze({
   enabled: false,
   severities: Object.freeze([]) as readonly string[],
   chatopsNamespace: "",
   retentionDays: 90,
+  sources: Object.freeze(["pagerduty"]) as readonly string[],
 });
 
 function lowerDeduped(values: readonly string[]): string[] {
@@ -61,6 +77,16 @@ function applyOncallPushKey(out: OncallPushDraft, key: string, valRaw: string): 
         out.severities = lowerDeduped(parseStringArray(valRaw));
       } catch {
         // keep the value in effect (the default, unless an earlier line set one)
+      }
+      break;
+    case "sources":
+      // Same tolerance as `severities`; unknown ids are dropped, an explicit empty list disables every source.
+      try {
+        out.sources = lowerDeduped(parseStringArray(valRaw)).filter((s) =>
+          ONCALL_PUSH_SOURCE_IDS.includes(s),
+        );
+      } catch {
+        // keep the value in effect
       }
       break;
     case "chatops_namespace":

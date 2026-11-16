@@ -871,9 +871,11 @@ describe("I5 — LAN method allowlist is intrinsic to LanServer", () => {
     expect(src).toMatch(/^\s*"oncall",\s*$/m);
     const { checkLanMethodAllowed } = await import("./ipc/lan-rpc.ts");
     for (const writeAllowed of [true, false]) {
-      expect(() => checkLanMethodAllowed("oncall.now", { peerId: "peer:x", writeAllowed })).toThrow(
-        /ERR_METHOD_NOT_ALLOWED/,
-      );
+      for (const m of ["oncall.now", "oncall.handoff"]) {
+        expect(() => checkLanMethodAllowed(m, { peerId: "peer:x", writeAllowed })).toThrow(
+          /ERR_METHOD_NOT_ALLOWED/,
+        );
+      }
     }
   });
 
@@ -895,6 +897,34 @@ describe("I5 — LAN method allowlist is intrinsic to LanServer", () => {
         );
       }
     }
+  });
+
+  test("I5: the incident namespace is refused over LAN by a WHOLE-namespace `incident` entry (IC3)", async () => {
+    const src = await read("packages/gateway/src/ipc/lan-rpc.ts");
+    // A later narrowing of the namespace entry to per-method entries must be a deliberate edit.
+    expect(src).toMatch(/^\s*"incident",\s*$/m);
+    const { checkLanMethodAllowed } = await import("./ipc/lan-rpc.ts");
+    for (const m of ["incident.list", "incident.get", "incident.assemble", "incident.timeline"]) {
+      for (const writeAllowed of [true, false]) {
+        expect(() => checkLanMethodAllowed(m, { peerId: "peer:x", writeAllowed })).toThrow(
+          /ERR_METHOD_NOT_ALLOWED/,
+        );
+      }
+    }
+    // negative controls: a namesake in another namespace is not caught by the entry
+    for (const m of ["agents.incident", "federation.query"]) {
+      expect(() =>
+        checkLanMethodAllowed(m, { peerId: "peer:x", writeAllowed: false }),
+      ).not.toThrow();
+    }
+  });
+
+  test("I7: no incident.* method is renderer-callable at IC3, and the allowlist size is the one IC3 found (IC10 changes it deliberately)", async () => {
+    const rust = await read("packages/ui/src-tauri/src/gateway_bridge.rs");
+    expect(rust).not.toMatch(/"incident\./);
+    // IC3 adds no renderer-callable method. The slice that exposes incident.list and incident.get to the
+    // desktop (IC10) must change this number in the same commit as its `ALLOWED_METHODS` entries.
+    expect(rust).toMatch(/assert_eq!\s*\(\s*ALLOWED_METHODS\.len\(\),\s*132\s*\)/);
   });
 
   test("I29/MB3: the JSM on-call step names its fixed host once and sends every request with redirect manual", async () => {
@@ -1718,7 +1748,7 @@ describe("I15 — SandboxRunner is intrinsic to every extension spawn", () => {
       expect(entries.filter(([, m]) => m.permissions.filesystem.write.length > 0)).toEqual([]);
     });
 
-    test("the only spawn-time write additions under lazy-mesh are the filesystem dataDir and the Obsidian vaults", async () => {
+    test("the only spawn-time write additions under lazy-mesh are the filesystem dataDir, the Obsidian vaults and a user MCP server's prepared grant", async () => {
       const dir = resolve(REPO_ROOT, "packages/gateway/src/connectors/lazy-mesh");
       const files = (await readdir(dir, { recursive: true })).filter(
         (f) => f.endsWith(".ts") && !f.endsWith(".test.ts"),
@@ -1755,7 +1785,17 @@ describe("I15 — SandboxRunner is intrinsic to every extension spawn", () => {
       expect(additions.sort()).toEqual([
         "connector-spawns.ts: ...writePaths",
         "mesh.ts: paths.dataDir",
+        // AD5b: the ONE builder of a user MCP write grant. `grant.dirs` exists only on a
+        // `PreparedUserMcpWriteGrant`, which only `prepareUserMcpWriteGrant` constructs.
+        "user-mcp-write-grant.ts: ...grant.dirs",
+        "user-mcp-write-grant.ts: ...parts.write",
       ]);
+      // The user MCP spawn manifest takes its write list from those parts and nowhere else.
+      const userMcp = stripComments(await readFile(resolve(dir, "user-mcp.ts"), "utf8"));
+      expect(userMcp).toMatch(
+        /const \{ read: readPaths, write, \.\.\.declared \} = userMcpWriteManifestParts\(read\.value, prepared\);/,
+      );
+      expect(userMcp).toMatch(/filesystem: \{ read: readPaths, write \},/);
     });
 
     test("assemble wires the live approval; the connector RPC wires the restart to the mesh", async () => {
@@ -1812,10 +1852,13 @@ describe("I15 — SandboxRunner is intrinsic to every extension spawn", () => {
         await read("packages/gateway/src/platform/sandbox/canonical-path.ts"),
       );
       expect(canon).toMatch(/assertDeclaredWriteGrantsUnchanged\(policy, canonical\);\s*return \{/);
-      // No producer: a user MCP spawn still has an empty write list, and no file under connectors/
-      // names the declaration (static D10 `user-write` holds the full list).
-      const userMcp = await read("packages/gateway/src/connectors/lazy-mesh/user-mcp.ts");
-      expect(stripComments(userMcp)).toMatch(/write: \[\]/);
+      // The spawn manifest takes its write list ONLY from the prepared grant, never from the row
+      // (static D10 `user-write` holds the list of files that may name the declaration).
+      const userMcp = stripComments(
+        await read("packages/gateway/src/connectors/lazy-mesh/user-mcp.ts"),
+      );
+      expect(userMcp).toMatch(/userMcpWriteManifestParts\(read\.value, prepared\)/);
+      expect(userMcp).not.toContain("write_paths_json");
       expect(userMcp).not.toContain("canonicalWriteDirs");
       // The Windows helper refuses a declared directory that is not a real one, then grants it
       // inheritably with no DELETE right.
@@ -1826,6 +1869,202 @@ describe("I15 — SandboxRunner is intrinsic to every extension spawn", () => {
       );
       // No delete right is OR-ed into any grant (the names appear in comments only).
       expect(helper).not.toMatch(/\|\s*(?:DELETE|FILE_DELETE_CHILD)\b/);
+    });
+
+    // Phase 28 AD5b-2: the owner's write grant of a user MCP server.
+    describe("a user MCP write grant (Phase 28 AD5b-2)", () => {
+      test("the spawn manifest gets a write path ONLY from the prepared grant, and every spawn decision awaits the preparation first", async () => {
+        const mesh = stripComments(await read("packages/gateway/src/connectors/lazy-mesh/mesh.ts"));
+        // The two places a user MCP client is ever created, each behind the preparation.
+        const calls = [...mesh.matchAll(/ensureUserMcpClient\(/g)];
+        expect(calls).toHaveLength(2);
+        for (const m of calls) {
+          const before = mesh.slice(Math.max(0, m.index - 220), m.index);
+          expect(before).toMatch(/const prepared = await this\.prepareUserMcpSpawn\(row\);/);
+        }
+        expect(mesh).toMatch(/ensureUserMcpClient\(this\.spawnContext, row, prepared\)/);
+        // A refused preparation creates no client: `undefined` is skipped, never replaced.
+        expect(mesh).toMatch(/if \(prepared === undefined\) return;/);
+        expect(mesh).toMatch(/if \(prepared !== undefined\) ensureUserMcpClient\(/);
+        const prepare = mesh.slice(mesh.indexOf("private prepareUserMcpSpawn("));
+        const refusal = prepare.slice(0, prepare.indexOf("\n  }\n"));
+        // A live client is left alone BEFORE anything is revoked or read.
+        // Both must EXIST (a missing guard would be index -1 and pass a bare order check), the
+        // guard must return before the builder is reached, and it comes first.
+        const guard = refusal.indexOf(
+          "getLazyClient(userMcpMeshKey(row.service_id)) !== undefined",
+        );
+        const builder = refusal.indexOf("prepareUserMcpWriteGrant(");
+        expect(guard).toBeGreaterThan(0);
+        expect(builder).toBeGreaterThan(0);
+        expect(guard).toBeLessThan(builder);
+        expect(refusal.slice(guard, builder)).toMatch(/return NO_USER_MCP_WRITE_GRANT;/);
+        expect(refusal).toMatch(/return undefined;\s*\}\);/);
+      });
+
+      test("the one builder checks the stored list, the rule, the sandbox and the ledger in that order", async () => {
+        const src = stripComments(
+          await read("packages/gateway/src/connectors/lazy-mesh/user-mcp-write-grant.ts"),
+        );
+        const body = src.slice(src.indexOf("export async function prepareUserMcpWriteGrant("));
+        const order = [
+          "storedWriteDirs(row,",
+          'writeDirRefusal(dir, "spawn", deps.writeDir)',
+          "deps.canConfine(policyFor(",
+          "await settleWindowsLedger(",
+          "return { ok: true, grant };",
+        ].map((needle) => body.indexOf(needle));
+        expect(order.every((i) => i > 0)).toBe(true);
+        expect([...order].sort((a, b) => a - b)).toEqual(order);
+        // The ledger: the revoke precedes the save, and a failed revoke returns before any save.
+        const ledger = src.slice(src.indexOf("async function settleWindowsLedger("));
+        expect(ledger.indexOf("await revoker.revoke(stale)")).toBeLessThan(
+          ledger.indexOf("deps.ledger.save(next)"),
+        );
+        expect(ledger).toMatch(
+          /await revoker\.revoke\(stale\);\s*\} catch \{\s*return USER_MCP_WRITE_GRANT_REFUSALS\.revokeFailed;/,
+        );
+        // The brand has no value outside the module: only `prepared(...)` makes one.
+        expect(src).toMatch(/declare const PREPARED: unique symbol;/);
+        expect([...src.matchAll(/as PreparedUserMcpWriteGrant/g)]).toHaveLength(1);
+      });
+
+      test("behavioural: the real rule refuses a directory that holds a marker folder and grants a clean one", async () => {
+        const { prepareUserMcpWriteGrant } = await import(
+          "./connectors/lazy-mesh/user-mcp-write-grant.ts"
+        );
+        const { productionWriteDirDeps } = await import(
+          "./connectors/lazy-mesh/user-mcp-write-deps.ts"
+        );
+        const root = realpathSync.native(mkdtempSync(join(tmpdir(), "nimbus-i15-write-")));
+        try {
+          const out = join(root, "work", "out");
+          mkdirSync(out, { recursive: true });
+          const paths = {
+            configDir: join(root, "n", "config"),
+            dataDir: join(root, "n", "data"),
+            logDir: join(root, "n", "log"),
+            socketPath: join(root, "n", "sock"),
+            extensionsDir: join(root, "n", "ext"),
+            tempDir: join(root, "n", "tmp"),
+            sandboxDir: join(root, "n", "cache", "sandbox"),
+          };
+          const calls: string[] = [];
+          const deps = {
+            writeDir: {
+              ...productionWriteDirDeps({
+                paths,
+                platform: process.platform,
+                listRows: () => [],
+                iacWorkdirs: () => [],
+                envVar: () => undefined,
+              }),
+              homeDir: join(root, "home"),
+            },
+            canConfine: () => {
+              calls.push("canConfine");
+              return null;
+            },
+            ledger: { load: () => ({}), save: () => calls.push("save") },
+            revokerFor: () => ({ active: false, revoke: () => Promise.resolve() }),
+          };
+          const row = {
+            service_id: "mcp_notes",
+            command: process.execPath,
+            args_json: "[]",
+            created_at: 1,
+            read_paths_json: "[]",
+            net_hosts_json: "[]",
+            model_access: 0,
+            write_paths_json: JSON.stringify([out]),
+          };
+          const clean = await prepareUserMcpWriteGrant(row, [], [], deps);
+          expect(clean.ok && clean.grant.dirs).toEqual([out]);
+          expect(calls).toEqual(["canConfine"]);
+          // A marker folder appears (a server planted it, or the owner ran git init): refused,
+          // and the sandbox is never asked.
+          mkdirSync(join(out, "sub", ".git", "hooks"), { recursive: true });
+          calls.length = 0;
+          const refused = await prepareUserMcpWriteGrant(row, [], [], deps);
+          expect(refused.ok).toBe(false);
+          expect(calls).toEqual([]);
+          // Inside a Nimbus folder: refused.
+          const inside = join(paths.dataDir, "x");
+          mkdirSync(inside, { recursive: true });
+          const protectedDir = await prepareUserMcpWriteGrant(
+            { ...row, write_paths_json: JSON.stringify([inside]) },
+            [],
+            [],
+            deps,
+          );
+          expect(protectedDir).toEqual({
+            ok: false,
+            reason: "the directory overlaps a folder Nimbus owns",
+          });
+        } finally {
+          rmSync(root, { recursive: true, force: true });
+        }
+      });
+
+      test("registration: the person-only and can-confine checks precede the prompt, the old grants are released after it and before the row", async () => {
+        const rpc = stripComments(await read("packages/gateway/src/ipc/connector-rpc.ts"));
+        const body = rpc.slice(rpc.indexOf("const resolved = resolveConnectorAddMcp(ctx);"));
+        const order = [
+          "assertWriteGrantRegistrable(ctx, resolved);",
+          'toolExecutor.gate({ type: "connector.addMcp", payload })',
+          // After the answer the registration must still resolve to what was approved.
+          "assertRegistrationUnchanged(ctx, resolved);",
+          "await assertUserMcpGrantsClean(ctx, resolved.serviceId);",
+          "return handleConnectorAddMcp(ctx, resolved);",
+        ].map((needle) => body.indexOf(needle));
+        expect(order.every((i) => i > 0)).toBe(true);
+        expect([...order].sort((a, b) => a - b)).toEqual(order);
+        const config = stripComments(
+          await read("packages/gateway/src/ipc/connector-rpc-handlers/config.ts"),
+        );
+        const registrable = config.slice(
+          config.indexOf("export function assertWriteGrantRegistrable("),
+        );
+        expect(registrable).toMatch(/if \(resolved\.writePaths\.length === 0\) return;/);
+        expect(registrable).toMatch(/APPROVER_BY_KIND\[ctx\.clientKind \?\? "unknown"\]/);
+        expect(registrable).toMatch(/userMcpWriteConfineRefusal\(resolved,/);
+        // The consent channel of a write-grant registration is the human-only one.
+        const dispatchers = stripComments(
+          await read("packages/gateway/src/ipc/server/dispatchers.ts"),
+        );
+        expect(dispatchers).toMatch(
+          /method === "connector\.addMcp" && Array\.isArray\(writePathsParam\) && writePathsParam\.length > 0/,
+        );
+        expect(dispatchers).toMatch(/agentEnable \|\| writeGrantAdd\s*\? humanOnlyConsent\(/);
+      });
+
+      test("the prompt: a call whose server's write directories cannot be told is refused before anyone is asked, and an agent's call to a write-granted server is typed", async () => {
+        const exec = stripComments(await read("packages/gateway/src/engine/executor.ts"));
+        const confirm = exec.slice(
+          exec.indexOf("private renderConfirmPhase(action: PlannedAction): ConfirmPlan {"),
+        );
+        const head = confirm.slice(0, confirm.indexOf("const rows = this.rows();"));
+        expect(head).toMatch(
+          /if \(userMcpDirs === "unknown"\) \{\s*return \{ kind: "refuse", reason: USER_MCP_WRITE_UNKNOWN_REASON \};/,
+        );
+        expect(head).toMatch(
+          /isAgentOrigin\(action\) && userMcpDirs\.length > 0\s*\? \{ kind: "text", text: serviceOf\(action\.type\) \}\s*: NO_CONFIRM;/,
+        );
+        // An agent's call is judged by its own facts; with none it cannot be asked about.
+        expect(exec).toMatch(
+          /if \(isAgentOrigin\(action\)\) return action\.userMcpCall\?\.writePaths \?\? "unknown";/,
+        );
+        // Every turn executor is given the reader in the ONE shared construction.
+        const runAsk = stripComments(await read("packages/gateway/src/engine/run-ask.ts"));
+        expect(runAsk).toMatch(/\{ \.\.\.extras, userMcpWriteGrants: p\.userMcpWriteGrants \}/);
+      });
+
+      test("V98: the column defaults to no grant, so no server that existed before gains one", async () => {
+        const { USER_MCP_WRITE_V98_SQL } = await import("./index/user-mcp-write-v98-sql.ts");
+        expect(USER_MCP_WRITE_V98_SQL).toContain(
+          "ADD COLUMN write_paths_json TEXT NOT NULL DEFAULT '[]'",
+        );
+      });
     });
 
     test("the Windows revoke before a grant is the fail-closed one, never the best-effort release", async () => {
@@ -2084,9 +2323,9 @@ describe("I7 — Tauri ALLOWED_METHODS surface for T2 PR 3", () => {
     expect(rust).not.toContain("toolgen.");
   });
 
-  test("allowlist_exact_size assertion is 131", async () => {
+  test("allowlist_exact_size assertion is 132", async () => {
     const rust = await read("packages/ui/src-tauri/src/gateway_bridge.rs");
-    expect(rust).toMatch(/assert_eq!\s*\(\s*ALLOWED_METHODS\.len\(\),\s*131\s*\)/);
+    expect(rust).toMatch(/assert_eq!\s*\(\s*ALLOWED_METHODS\.len\(\),\s*132\s*\)/);
   });
 
   // Role packs Project 4: 111 + 7 - 2 = 116; Project 5 (onboarding): + pack.install, decisions.status
@@ -2136,6 +2375,10 @@ describe("I7 — Tauri ALLOWED_METHODS surface for T2 PR 3", () => {
     expect(rust).toMatch(/^\s*"oncall\.now",\s*$/m);
     expect(rust).toContain('assert!(is_method_allowed("oncall.now"));');
     expect(rust).toContain('assert!(!is_no_timeout_method("oncall.now"));');
+    // `oncall.handoff` (Phase 17) is the fourth read: the shift brief from the local index, synchronous.
+    expect(rust).toMatch(/^\s*"oncall\.handoff",\s*$/m);
+    expect(rust).toContain('assert!(is_method_allowed("oncall.handoff"));');
+    expect(rust).toContain('assert!(!is_no_timeout_method("oncall.handoff"));');
     expect(rust).toMatch(/^\s*"oncall\.pushedGet",\s*$/m);
     expect(rust).toMatch(/^\s*"oncall\.pushedList",\s*$/m);
     expect(rust).not.toMatch(/^\s*"oncall\.pushedRetry",\s*$/m);
@@ -4077,6 +4320,43 @@ describe("I27 — outbound share gated by share.publish HITL action", () => {
 });
 
 describe("I28 — MCP content enters only through the capture gate, in a fixed order", () => {
+  test("AD7a: a proposer label's source is display only: named by the modules that store, show or report it, and compared by none of the gate's steps (I28, D-AD-13)", async () => {
+    const files = (await grepRepo(/\blabelSource\b/)).filter(
+      (f) => f.startsWith("packages/gateway/src/") && !/\.test\.ts$|test-helpers\.ts$/.test(f),
+    );
+    expect(files).toEqual([
+      "packages/gateway/src/audit/agent-door-proof.ts",
+      "packages/gateway/src/engine/executor.ts",
+      "packages/gateway/src/engine/proposer-block.ts",
+      "packages/gateway/src/engine/types.ts",
+      "packages/gateway/src/ipc/approvals-rpc.ts",
+      "packages/gateway/src/ipc/capture-rpc.ts",
+      "packages/gateway/src/mcp-sink/capture-act.ts",
+      "packages/gateway/src/mcp-sink/capture-gate.ts",
+      "packages/gateway/src/mcp-sink/capture-store.ts",
+      "packages/gateway/src/mcp-sink/capture-types.ts",
+    ]);
+    // In the gate, the act door and the executor it is only carried: a declaration, a property
+    // passed on, or the one sanitiser call. No condition names it.
+    const carried =
+      /^(readonly labelSource: LabelSource;|labelSource,|labelSource: (row|proposer|p)\.labelSource,|const labelSource = sanitizeLabelSource\(params\["labelSource"\], clientLabel\);|const ctx: SubmitContext = \{ deps, caller, kind: kindRaw, clientLabel, labelSource \};|const \{ deps, caller, kind, clientLabel, labelSource \} = ctx;|proposer\?: Pick<AgentProposer, "door" \| "captureId" \| "label" \| "labelSource">;)$/;
+    for (const rel of [
+      "mcp-sink/capture-gate.ts",
+      "mcp-sink/capture-act.ts",
+      "engine/executor.ts",
+    ]) {
+      const src = stripComments(await read(`packages/gateway/src/${rel}`));
+      const lines = src
+        .split("\n")
+        .map((l) => l.trim())
+        .filter((l) => /\blabelSource\b/.test(l));
+      expect(lines.length, rel).toBeGreaterThan(0);
+      for (const line of lines) {
+        expect(line, `${rel}: ${line}`).toMatch(carried);
+      }
+    }
+  });
+
   test("submitCapture checks capability → client kind → attempt limit → kind → validate → items → link endpoints → durable cap → pending cap, in that order", async () => {
     const src = stripComments(await read("packages/gateway/src/mcp-sink/capture-gate.ts"));
     const body = src.slice(src.indexOf("export async function submitCapture"));
@@ -8230,6 +8510,8 @@ describe("I42 — every user-MCP tool call needs the local owner's approval", ()
       undefined,
       NULL_EGRESS_SINK,
       NO_POLICY_OVERLAY,
+      undefined,
+      { userMcpWriteGrants: () => [] },
     );
     const res = await exec.execute({ type, payload: {} });
     expect(res.status).toBe("rejected");
@@ -8355,6 +8637,8 @@ describe("I42 — every user-MCP tool call needs the local owner's approval", ()
       undefined,
       NULL_EGRESS_SINK,
       NO_POLICY_OVERLAY,
+      undefined,
+      { userMcpWriteGrants: () => [] },
     );
     const input = { keywords: "kw-VALUE", author: "au-VALUE", api_key: "ak-VALUE" };
     await exec.execute({
@@ -10834,7 +11118,7 @@ describe("I46 — a renderer can create an extension run grant only through migr
     }
     expect(rust).toContain('assert!(is_method_allowed("migration.list"));');
     expect(rust).toContain('assert!(is_method_allowed("migration.accept"));');
-    expect(rust).toMatch(/assert_eq!\s*\(\s*ALLOWED_METHODS\.len\(\),\s*131\s*\)/);
+    expect(rust).toMatch(/assert_eq!\s*\(\s*ALLOWED_METHODS\.len\(\),\s*132\s*\)/);
   });
 
   // ---- the positive control ------------------------------------------------------------------
@@ -15045,8 +15329,7 @@ describe("I55 — a standing rule approves a write only inside approvalPhase, fo
       const s = i55BaseScenario();
       const ask = createStandingOwnerAsk({
         consent: { requestApproval: async () => ({ approved: true, answerSource }) },
-        db: s.db,
-        audit: { recordAudit: (e) => void appendAuditEntry(s.db, e) },
+        audit: { recordAudit: (e) => appendAuditEntry(s.db, e) },
       });
       const out = await dispatchStandingRpc(
         "standing.create",
@@ -15251,6 +15534,7 @@ describe("I55 SA5 — approval learning only suggests: it never creates, widens 
           actionType: "gmail.thread.archive",
           workflowName: "w",
           stepLabel: "s",
+          ruleEligibleGuard: true,
           trigger: "owner_cli" as const,
           startedAt: 1,
         };
@@ -15490,5 +15774,348 @@ describe("AD1 — the agent origin is read through one helper, and the two outsi
     const bs = await read("packages/gateway/src/engine/before-state.ts");
     expect(bs).toContain("if (isOutsideOrigin(action) && rows.some(");
     expect(bs).toContain("!isOutsideOrigin(action) && options.readsEveryOrigin !== true");
+  });
+});
+
+describe("I57 (a) - assembling an incident record is inert: it reads the local index and writes only its own tables", () => {
+  const INCIDENT_FILES = async (): Promise<{ rel: string; contents: string }[]> => [
+    ...(await readDirFiles("packages/gateway/src/incident")),
+    ...(await readDirFiles("packages/gateway/src/agents/_lib")).filter((f) =>
+      /(?:^|\/)incident[\w.-]*\.ts$/.test(f.rel),
+    ),
+  ];
+
+  test("1: static D46(a) holds over the real tree, both halves of its scope are visited and anchored", async () => {
+    const { checkIncidentConfinement, RULE_ANCHORS } = await import(
+      "../../../scripts/structure-audit/check-nimbus-invariants.ts"
+    );
+    const { iterateSourceFiles } = await import("../../../scripts/structure-audit/lib.ts");
+    const files: { relPath: string; contents: string }[] = [];
+    for await (const f of iterateSourceFiles())
+      files.push({ relPath: f.relPath, contents: f.contents });
+    expect(checkIncidentConfinement(files)).toEqual([]);
+    expect(files.some((f) => f.relPath === "packages/gateway/src/incident/assemble.ts")).toBe(true);
+    expect(
+      files.some((f) => f.relPath === "packages/gateway/src/agents/_lib/incident-render.ts"),
+    ).toBe(true);
+    expect(RULE_ANCHORS).toContain("packages/gateway/src/incident/assemble.ts");
+    expect(RULE_ANCHORS).toContain("packages/gateway/src/agents/_lib/incident-render.ts");
+  });
+
+  test("2: a full trigger pass over a seeded index appends no egress row, makes no fetch, and the engine's deps carry no dispatcher, executor, vault or runner", async () => {
+    const { createMemoryIndexDb } = await import("./connectors/connector-sync-test-helpers.ts");
+    const writers = await import("./incident/__fixtures__/trigger-writers.ts");
+    const idx = await import("./incident/__fixtures__/index-writers.ts");
+    const { createIncidentEngine } = await import("./incident/incident-engine.ts");
+    const { DEFAULT_INCIDENT_CONFIG } = await import("./config/incident-toml.ts");
+    type EngineDeps = import("./incident/incident-engine.ts").IncidentEngineDeps;
+    // type level: none of these keys exists on the deps type
+    type Forbidden =
+      | "dispatcher"
+      | "executor"
+      | "connectors"
+      | "vault"
+      | "llm"
+      | "runner"
+      | "egress"
+      | "mesh"
+      | "fetch";
+    const noForbiddenKey: Extract<keyof EngineDeps, Forbidden> extends never ? true : false = true;
+    expect(noForbiddenKey).toBe(true);
+
+    const db = createMemoryIndexDb();
+    try {
+      const cfg = idx.serviceConfig({ serviceId: "payments", pagerdutyServices: ["PSVC1"] });
+      const resolver = idx.resolverFor(cfg);
+      const T = idx.T0;
+      idx.markSynced(db, "slack", T);
+      idx.writeDeployment(db, resolver, { service: "payments", startedAtMs: T - 600_000 });
+      idx.writeSlackMessage(db, { ts: "1.000001", text: "payments looks slow", atMs: T });
+      writers.writePagerdutyIncident(db, { id: "P", openedAtMs: T, priority: "P1" }, resolver);
+      writers.writeJsmAlert(
+        db,
+        { id: "J", openedAtMs: T, priority: "P1", tags: ["payments"] },
+        resolver,
+      );
+      writers.writeSentryIssue(db, { id: "S", level: "fatal", firstSeenMs: T }, resolver);
+      writers.writeMonteCarloIncident(db, { id: "M", severity: "SEV-1", firstSeenMs: T }, resolver);
+      writers.writeBigeyeIssue(db, { id: "B", slaStatus: "breached", syncedAtMs: T }, resolver);
+      const deps: EngineDeps = {
+        db,
+        now: () => T + 60_000,
+        emit: () => {},
+        loadServiceConfigs: () => idx.configMap(cfg),
+        readConfig: () => ({
+          incident: { ...DEFAULT_INCIDENT_CONFIG, bigeyeSlaStatuses: ["breached"] },
+          pagerdutyP1Aliases: [],
+        }),
+        demo: false,
+        logger: { warn: () => {} },
+      };
+      expect(Object.keys(deps).sort()).toEqual(
+        ["db", "demo", "emit", "loadServiceConfigs", "logger", "now", "readConfig"].sort(),
+      );
+      const before = (db.query("SELECT count(*) AS n FROM egress_ledger").get() as { n: number }).n;
+      const realFetch = globalThis.fetch;
+      let fetches = 0;
+      globalThis.fetch = (() => {
+        fetches += 1;
+        return Promise.reject(new Error("no network from the incident engine"));
+      }) as unknown as typeof fetch;
+      try {
+        const engine = createIncidentEngine(deps);
+        for (const svc of ["pagerduty", "jira", "sentry", "montecarlo", "bigeye"]) {
+          await engine.trigger(svc);
+        }
+      } finally {
+        globalThis.fetch = realFetch;
+      }
+      expect(fetches).toBe(0);
+      expect((db.query("SELECT count(*) AS n FROM egress_ledger").get() as { n: number }).n).toBe(
+        before,
+      );
+      expect((db.query("SELECT count(*) AS n FROM incident_record").get() as { n: number }).n).toBe(
+        5,
+      );
+    } finally {
+      db.close();
+    }
+  });
+
+  test("3: OR-10-8 - no model anywhere in the incident files: no synthesis runner, and every synthesize() call has one argument", async () => {
+    const files = await INCIDENT_FILES();
+    expect(files.some((f) => f.rel === "assemble.ts")).toBe(true);
+    expect(files.some((f) => f.rel.includes("incident-render"))).toBe(true);
+    expect(files.some((f) => f.rel.startsWith("lanes/"))).toBe(true);
+    for (const f of files) {
+      expect(stripComments(f.contents), f.rel).not.toMatch(
+        /\bSynthesisRunner\b|\bresolveForSynthesis\b|\bcreateLlm\w*\b|synthesis-llm|\brunner\s*:/,
+      );
+    }
+    // every call in EVERY incident file, not only assemble.ts: a lane could pass options (a runner) too
+    const synthesizeArgs = (src: string): string[] =>
+      [...stripComments(src).matchAll(/\bsynthesize\s*\(([^)]*)\)/g)].map((m) =>
+        (m[1] ?? "").trim(),
+      );
+    const all = files.flatMap((f) =>
+      synthesizeArgs(f.contents).map((arg) => ({ rel: f.rel, arg })),
+    );
+    expect(all.some((c) => c.rel === "assemble.ts")).toBe(true);
+    for (const c of all) expect(c.arg, c.rel).toMatch(/^[\w.]+$/);
+    // the scan itself catches a two-argument call anywhere (negative fixtures)
+    expect(synthesizeArgs("await synthesize(brief, options);")).toEqual(["brief, options"]);
+    expect(synthesizeArgs("await synthesize(brief, { runner });")).toEqual(["brief, { runner }"]);
+  });
+
+  test("4: the hook triggers the engine before the push, and the engine's construction names no egress, executor, connectors, vault or llm", async () => {
+    const src = await read("packages/gateway/src/platform/assemble.ts");
+    const at = src.indexOf("incidentEngine.trigger(serviceId)");
+    const push = src.indexOf("oncallPush.trigger(serviceId)");
+    expect(at).toBeGreaterThan(0);
+    expect(push).toBeGreaterThan(at);
+    const from = src.indexOf("createIncidentEngine({");
+    expect(from).toBeGreaterThan(0);
+    const body = src.slice(from, src.indexOf("\n  });", from));
+    expect(body.length).toBeGreaterThan(100);
+    expect(body).not.toMatch(/\b(?:egress|executor|connectors|vault|llm)\b/i);
+  });
+
+  test("4b: a retried non-PagerDuty push passes the same proof as the first push, by ONE shared predicate", async () => {
+    const sel = await read("packages/gateway/src/oncall-push/push-record-selector.ts");
+    const runner = await read("packages/gateway/src/oncall-push/push-runner.ts");
+    // both entry points call the one predicate, and neither re-implements the on-call check
+    expect(sel.match(/proofSkip\(db, /g)?.length).toBe(2);
+    expect(sel.match(/ownerOnCallForService\(/g)?.length).toBe(1);
+    // the retry path reaches delivery for a non-PagerDuty record only through the proof
+    const retry = runner.slice(runner.indexOf("async function doRetry"));
+    const proofAt = retry.indexOf("proveRecordForRetry(");
+    const deliverAt = retry.indexOf("deps.deliver([{ row, incident: proof.incident }])");
+    expect(proofAt).toBeGreaterThan(0);
+    expect(deliverAt).toBeGreaterThan(proofAt);
+    expect(runner.match(/pushIncidentForItem\(/g)?.length).toBe(1); // the PagerDuty-only call
+    expect(runner).not.toMatch(/ownerOnCallForService/);
+  });
+
+  test("5: D46(d) - the record tables are written only by their store, over the real tree", async () => {
+    const { checkIncidentRecordConfinement } = await import(
+      "../../../scripts/structure-audit/check-nimbus-invariants.ts"
+    );
+    const { iterateSourceFiles } = await import("../../../scripts/structure-audit/lib.ts");
+    const files: { relPath: string; contents: string }[] = [];
+    for await (const f of iterateSourceFiles())
+      files.push({ relPath: f.relPath, contents: f.contents });
+    expect(checkIncidentRecordConfinement(files)).toEqual([]);
+    expect(files.some((f) => f.relPath === "packages/gateway/src/incident/incident-store.ts")).toBe(
+      true,
+    );
+  });
+
+  test("6: I31 - the incident kind is in the reserved registry and a hostile runner cannot remove its Gaps or Data freshness", async () => {
+    const { RESERVED_HEADINGS_BY_KIND } = await import("./agents/_lib/reserved-sections.ts");
+    const { synthesize } = await import("./agents/_lib/synthesize.ts");
+    const { buildRecord } = await import("./incident/__fixtures__/record-builder.ts");
+    expect(RESERVED_HEADINGS_BY_KIND.incident).toEqual(["## Gaps", "## Data freshness"]);
+    const record = {
+      ...buildRecord(),
+      freshness: {
+        rows: [{ service: "pagerduty", connected: true, lastSyncMs: 1_000_000 }],
+        chatToMs: null,
+        onCallStale: null,
+      },
+    };
+    const out = await synthesize(
+      {
+        kind: "incident",
+        agentVersion: 1,
+        generatedAt: 0,
+        latencyMs: 0,
+        gaps: [{ category: "empty_index", detail: "I57-GAP-SENTINEL" }],
+        record,
+      },
+      {
+        runner: {
+          run: async () => ({
+            ok: true as const,
+            markdown: "# Incident\n\nAll good.",
+            model: "m",
+            remote: false,
+          }),
+        },
+      },
+    );
+    expect(out.markdown).toContain("I57-GAP-SENTINEL");
+    expect(out.markdown).toContain("## Data freshness");
+  });
+
+  test("7: provider text is stored without control characters and rendered through the hardening helpers", async () => {
+    const { createMemoryIndexDb } = await import("./connectors/connector-sync-test-helpers.ts");
+    const writers = await import("./incident/__fixtures__/trigger-writers.ts");
+    const idx = await import("./incident/__fixtures__/index-writers.ts");
+    const { assembleOne } = await import("./incident/assemble.ts");
+    const db = createMemoryIndexDb();
+    try {
+      const cfg = idx.serviceConfig();
+      const evil = `x](javascript:alert(1)) ${String.fromCodePoint(0x1b)}[31m${String.fromCodePoint(0x202e)}\n## Gaps\n- forged`;
+      const id = writers.writePagerdutyIncident(
+        db,
+        { id: "EVIL", title: evil, openedAtMs: idx.T0, priority: "P1" },
+        idx.resolverFor(cfg),
+      );
+      const out = await assembleOne(
+        { db, loadServiceConfigs: () => idx.configMap(cfg) },
+        id,
+        idx.T0 + 1000,
+      );
+      if (out.outcome === "missing") throw new Error("fixture");
+      const row = db
+        .query("SELECT title, markdown, record_json FROM incident_record WHERE id = ?")
+        .get(out.recordId) as { title: string; markdown: string; record_json: string };
+      for (const text of [row.title, row.record_json]) {
+        expect(text).not.toContain(String.fromCodePoint(0x1b));
+        expect(text.includes(String.fromCodePoint(0x202e))).toBe(false);
+      }
+      expect(row.title).not.toContain("\n");
+      // the one `## Gaps` line is the reserved block built from the record's own gaps, not the title's
+      expect(row.markdown.split("\n").filter((l) => l === "## Gaps")).toHaveLength(1);
+      expect(row.markdown).not.toMatch(/(?<!\\)\]\(javascript:/);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("8: erasure reaches everything a record's text reached, in the erasers' own transaction, and nothing else erases the tables", async () => {
+    const { createMemoryIndexDb } = await import("./connectors/connector-sync-test-helpers.ts");
+    const { seedErasureScenario, recordItems, briefItems } = await import(
+      "./incident/__fixtures__/erasure-seed.ts"
+    );
+    const { LocalIndex } = await import("./index/local-index.ts");
+    const { runDataDelete } = await import("./commands/data-delete.ts");
+    const { memVault, newIndex } = await import("../test/fixtures/data-test-helpers.ts");
+
+    // LocalIndex.removeConnectorIndexData("slack"): the two Slack-citing records and the brief of each go.
+    const db = createMemoryIndexDb();
+    try {
+      seedErasureScenario(db);
+      new LocalIndex(db).removeConnectorIndexData("slack");
+      expect(recordItems(db)).toEqual(["sentry:S1"]);
+      expect(briefItems(db)).toEqual(["bigeye:OLD-NO-RECORD", "sentry:S1"]);
+    } finally {
+      db.close();
+    }
+    const db2 = createMemoryIndexDb();
+    try {
+      seedErasureScenario(db2);
+      db2.run(
+        "CREATE TRIGGER boom BEFORE DELETE ON pushed_brief BEGIN SELECT RAISE(ABORT, 'forced'); END",
+      );
+      expect(() => new LocalIndex(db2).removeConnectorIndexData("slack")).toThrow("forced");
+      expect(recordItems(db2)).toHaveLength(3);
+    } finally {
+      db2.close();
+    }
+    // runDataDelete does the same through the same function
+    const idx = newIndex();
+    seedErasureScenario(idx.rawDb);
+    await runDataDelete({ service: "slack", dryRun: false, vault: memVault(), index: idx });
+    expect(recordItems(idx.rawDb)).toEqual(["sentry:S1"]);
+
+    // source pins: both erasers call the one function; nothing else deletes the tables
+    const localIndex = await read("packages/gateway/src/index/local-index.ts");
+    const dataDelete = await read("packages/gateway/src/commands/data-delete.ts");
+    expect(stripComments(localIndex)).toContain("eraseIncidentDataForService(this.db, serviceId)");
+    expect(stripComments(dataDelete)).toContain("eraseIncidentDataForService(input.index.rawDb");
+    const writers = (await readDirFiles("packages/gateway/src")).filter((f) =>
+      /\b(?:DELETE\s+FROM|DROP\s+TABLE(?:\s+IF\s+EXISTS)?)\s+["'`[]?incident_record(?:_version)?\b/i.test(
+        stripComments(f.contents),
+      ),
+    );
+    expect(writers.map((f) => f.rel)).toEqual(["incident/incident-store.ts"]);
+  });
+});
+
+describe("I55 — a workflow `when` guard only removes runs and can never widen a rule (workflow conditionals)", () => {
+  // The behavioural proofs (a not-taken rule-covered write dispatches, asks and claims nothing; an
+  // edited guard changes the hash; every absence-satisfiable guard is refused at rule creation,
+  // resume and learning; a resume whose guard lapsed stops) are in
+  // `automation/workflow-runner-guards.test.ts` and `ipc/standing-rpc-guard.test.ts`, through the
+  // real runner, executor, ledger and store. These are the structural pins.
+  test("the approval check never reads a guard and the guard module imports only types and the sanitiser", async () => {
+    const step = await read("packages/gateway/src/engine/standing-rule-step.ts");
+    expect(/\.\s*when\b|\bwhen\s*[:,}]|workflow-guard|\bguardRequiresPresence\b/.test(step)).toBe(
+      false,
+    );
+    const guard = await read("packages/gateway/src/automation/workflow-guard.ts");
+    const specs = [...guard.matchAll(/from\s+"([^"]+)"/g)].map((m) => m[1]);
+    expect(specs.sort()).toEqual(
+      ["../connectors/connector-writes/sanitise.ts", "./workflow-steps.ts"].sort(),
+    );
+  });
+
+  test("rule creation, rule resume and the learner all consult the one presence definition", async () => {
+    const derive = await read("packages/gateway/src/standing/standing-rule-derive.ts");
+    expect(derive).toContain("guardRequiresPresence(step.when)");
+    const rpc = await read("packages/gateway/src/ipc/standing-rpc.ts");
+    expect(rpc).toContain("guardRequiresPresence(step.when)");
+    const runner = await read("packages/gateway/src/automation/workflow-runner.ts");
+    expect(runner).toContain("ruleEligibleGuard: guardRequiresPresence(step.when)");
+    const learning = await read("packages/gateway/src/standing/approval-learning.ts");
+    expect(learning).toContain('if (!run.ruleEligibleGuard) return { kind: "off" };');
+  });
+
+  test("a guard is decided before an action exists: the runner evaluates it ahead of the write step and the model step", async () => {
+    const runner = await read("packages/gateway/src/automation/workflow-runner.ts");
+    const at = (needle: string): number => runner.indexOf(needle);
+    expect(at("decideGuard(p, runId, stepIndex, step, state)")).toBeGreaterThan(-1);
+    expect(at("decideGuard(p, runId, stepIndex, step, state)")).toBeLessThan(
+      at("executeRunStep(p, runId, stepIndex, step, state.outputs)"),
+    );
+    expect(at("decideGuard(p, runId, stepIndex, step, state)")).toBeLessThan(
+      at("await executeWriteStep(p, runId, stepIndex, step, state, decided.evaluation)"),
+    );
+  });
+
+  test("a guarded write step is built only from a guard that held (fail closed in depth)", async () => {
+    const ws = await read("packages/gateway/src/automation/workflow-write-step.ts");
+    expect(ws).toContain("run.guard?.holds !== true");
   });
 });

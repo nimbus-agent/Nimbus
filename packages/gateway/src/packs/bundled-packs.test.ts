@@ -18,8 +18,8 @@ afterEach(() => {
 });
 
 describe("BUNDLED_PACKS", () => {
-  test("holds pm and devops", () => {
-    expect([...BUNDLED_PACKS.keys()].sort()).toEqual(["devops", "pm"]);
+  test("holds pm, devops and developer", () => {
+    expect([...BUNDLED_PACKS.keys()].sort()).toEqual(["developer", "devops", "pm"]);
     expect(BUNDLED_PACKS.get("pm")?.members).toEqual([]);
   });
 
@@ -49,6 +49,31 @@ describe("BUNDLED_PACKS", () => {
     expect(mapping.kindOf("google_drive:doc")).toBe("doc");
     expect(mapping.typesFor("decisions")).toContain("google_drive:doc");
     expect(mapping.typesFor("glossary")).toContain("google_drive:doc");
+  });
+
+  test("developer is 1.0.0, sets only [agents] visible, and every name is a catalog agent", () => {
+    const dev = BUNDLED_PACKS.get("developer");
+    expect(dev?.version).toBe("1.0.0");
+    expect(dev?.members).toEqual([]);
+    const r = checkPackFragment(dev?.defaults ?? "", checkPackFleetJobs);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect([...r.scalars.keys()]).toEqual([]);
+    expect([...r.lists.keys()]).toEqual(["agents.visible"]);
+    const visible = r.lists.get("agents.visible") ?? [];
+    // The coding agent's MCP read tools reach these (packages/cli/src/mcp/agent-tools.ts pins the
+    // same set from its side). premortem and preflight are deliberately NOT reachable there.
+    expect([...visible].sort()).toEqual([
+      "catchup",
+      "conflicts",
+      "decisions",
+      "expert",
+      "glossary",
+      "impact",
+      "ownership",
+      "why",
+    ]);
+    for (const name of visible) expect(CATALOG_AGENT_NAMES).toContain(name);
   });
 
   test("every bundled pack passes checkPackFragment with checkPackFleetJobs", () => {

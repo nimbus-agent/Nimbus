@@ -51,13 +51,16 @@ AGENTS — read-only briefs over the local index
   nimbus janitor <resource>          Is this cloud resource still in use, and what breaks if I delete it
   nimbus glossary [<term>]           The team's own terminology, mined from the local index
   nimbus decisions [--since 90d]     Decisions buried in chat and docs, corroborated against the graph
-  nimbus pre-mortem <epic>           Risk brief for a Jira epic, from comparable past epics
+  nimbus pre-mortem <epic>           Risk brief for a Jira epic or a Linear project (linear:<project>)
   nimbus negotiate [--since 90d]     Your own contribution record, for a compensation conversation
   nimbus changelog [--since 7d]      Merged PRs, deployments and incidents in one window, per service
   nimbus standup [--since 24h]       What YOU did — PRs, reviews, tickets, incidents, Slack
   nimbus oncall [--service <name>]   Your active incident, the deploy before it, and what shipped
   nimbus oncall now [--service <id>] Who is on call right now, from the index (PagerDuty, Jira Service Management)
+  nimbus oncall handoff [--since ..]  Shift handoff brief: events, what is still open, watch-list (local index, no approval)
   nimbus briefing [now|list|status] [--json]  Your morning briefing, built from the local index (no model, nothing leaves the machine)
+  nimbus incident list|show <id> [--json]  Incident records the gateway assembled from the local index (no model, nothing leaves the machine)
+  nimbus statuspage draft [--out <file>]   A static status page (incidents, on call, DORA) written locally for you to review and publish
 
 AGENTS THAT NEED PAIRED PEERS — see TEAM below; these query the federation mesh
   nimbus conflicts <file>            Teammates with an open PR, ticket or branch on the same file
@@ -114,6 +117,8 @@ PRIVACY & AUDIT
   nimbus eval --installed [--threshold <n>] [--json]
                               Evaluate every enabled extension (one approval); compare with the registry's score
   nimbus security scan        Local security scan (secrets, vulnerable deps, risky IaC)
+  nimbus cost anomalies [--service <id>] [--days <n>] [--json]
+                              Days whose cloud spend jumped over the 7-day baseline, from the local index
   nimbus data export|import|delete   Encrypted bundle export/import; per-service deletion
   nimbus vault set|get|delete|list   Secrets (OS keyring only — never config, never logs)
   nimbus telemetry show | disable
@@ -170,6 +175,11 @@ CONFIG & DIAGNOSTICS
                               captured or proposed ([mcp_sink] in nimbus.toml); accept --all takes
                               every proposed decision/term/link after one prompt; purge deletes a
                               finished action's stored input; an action is approved with approvals
+  nimbus agent install <claude-code|codex|cursor|vscode> [--scope user|project] [--dry-run] [--yes]
+                              Write the Nimbus MCP server entry and steering rules into that
+                              agent's own configuration; every change is shown first and written
+                              only after you type yes. Steering is guidance, not a boundary
+  nimbus agent status [--json]   Whether each installed agent kit is still as Nimbus wrote it
   nimbus approvals [list|show <id>|<id>|<id> --decline|--decline-all-from <label>] [--json]
                               Agent-proposed connector actions: list what waits, read what the agent
                               sent, and approve one in a single step at this terminal (a person

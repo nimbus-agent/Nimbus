@@ -38,6 +38,7 @@ import { PAYLOAD_MAX_BYTES } from "../mcp-sink/capture-validate.ts";
 import type { EnforcedPolicy } from "../policy/policy-gate.ts";
 import { createMockVault } from "../vault/mock.ts";
 import {
+  type AgentDoorActWiring,
   buildActDeps,
   type CaptureActWiring,
   type CaptureRpcCtx,
@@ -343,7 +344,28 @@ describe("LAN", () => {
 });
 
 describe("buildActDeps (act door)", () => {
-  function wiring(dispatched: PlannedAction[], approve: boolean) {
+  /**
+   * A door that knows one registered user MCP server with no approval for agents (the legacy case):
+   * an agent's `mcp_*` call carries these facts, or it cannot be asked about at all (I15, AD5b).
+   */
+  const LEGACY_USER_MCP_DOOR: AgentDoorActWiring = {
+    listServerTools: async () => undefined,
+    verifyDefinition: async () => ({ ok: true }),
+    userMcpCallFacts: async (actionType) => ({
+      ok: true,
+      facts: {
+        serviceId: actionType.slice(0, actionType.indexOf(".")),
+        tool: actionType.slice(actionType.indexOf(".") + 1),
+        registeredAt: 0,
+        readPaths: [],
+        netHosts: [],
+        writePaths: [],
+        approval: null,
+      },
+    }),
+  };
+
+  function wiring(dispatched: PlannedAction[], approve: boolean, agentDoor?: AgentDoorActWiring) {
     const prompts: Array<{ prompt: string; details: unknown }> = [];
     // A coordinator stub that answers every request; `requestConsent` is the only member bindConsentChannel calls.
     const coord = {
@@ -363,6 +385,7 @@ describe("buildActDeps (act door)", () => {
       audit: { recordAudit: (e) => appendAuditEntry(db, e) },
       policyHitl: NO_POLICY_OVERLAY,
       getTribalKbConfig: () => undefined,
+      ...(agentDoor === undefined ? {} : { agentDoor }),
     };
     return { act: buildActDeps(w, coord, "c-cli"), prompts };
   }
@@ -396,8 +419,8 @@ describe("buildActDeps (act door)", () => {
   });
   test("user-MCP: mcpToolId is the canonical <serviceId>_<tool> key derived from the type (I42 pairing)", async () => {
     const d: PlannedAction[] = [];
-    const { act } = wiring(d, true);
-    await act.execute("mcp_echo.echo", { text: "hi" }, PROV);
+    const { act } = wiring(d, true, LEGACY_USER_MCP_DOOR);
+    await act.execute("mcp_echo.echo", { text: "hi" }, { ...PROV, basis: "legacy_user_mcp" });
     expect(d[0]?.payload).toEqual({ mcpToolId: "mcp_echo_echo", input: { text: "hi" } });
   });
   test("the consent prompt is the executor's own, with UNREDACTED details and the proposer under proposedBy", async () => {
@@ -816,6 +839,7 @@ describe("captures.accept on an action (act door wiring)", () => {
       }),
       payloadBytes: 10,
       clientLabel: "agent",
+      labelSource: "declared",
       sessionId: "s",
       createdAt: 500,
       expiresAt: 2_000,
@@ -1223,6 +1247,7 @@ describe("B1 act door: the destination refusal, real messagingDestinationRefusal
       }),
       payloadBytes: 10,
       clientLabel: "agent",
+      labelSource: "declared",
       sessionId: "s",
       createdAt: now,
       expiresAt: now + 3_600_000,

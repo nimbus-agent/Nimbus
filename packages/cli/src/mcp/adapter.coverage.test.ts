@@ -18,11 +18,10 @@ import { join } from "node:path";
 import { PassThrough } from "node:stream";
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { ReadBuffer, serializeMessage } from "@modelcontextprotocol/sdk/shared/stdio.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import type { JSONRPCMessage } from "@modelcontextprotocol/sdk/types.js";
+import type { McpServer } from "@nimbus-dev/sdk/mcp-server";
 
 import type { CliPlatformPaths } from "../paths.ts";
 import {
@@ -42,6 +41,7 @@ import {
   type ToolSpec,
 } from "./adapter.ts";
 import { supportsNotifications } from "./client-surface.ts";
+import { connectUpstreamClient } from "./upstream-client.test-helpers.ts";
 
 const tempRoots: string[] = [];
 
@@ -319,11 +319,8 @@ describe("tools run directly, without the SDK's schema validation in front", () 
 });
 
 /** Connect a real MCP client to `server` over an in-memory transport pair. */
-async function connectEditor(server: McpServer): Promise<Client> {
-  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
-  const editor = new Client({ name: "editor", version: "0" });
-  await Promise.all([server.connect(serverTransport), editor.connect(clientTransport)]);
-  return editor;
+function connectEditor(server: McpServer): Promise<Client> {
+  return connectUpstreamClient(server, "editor");
 }
 
 describe("capture tool composition", () => {
@@ -425,6 +422,33 @@ describe("capture tool composition", () => {
       clientLabel: "editor",
     });
   });
+
+  test("a server started with --agent labels a capture with that name, not the client's", async () => {
+    const calls: Array<[string, unknown]> = [];
+    const client: IpcCallable = {
+      call: async <T>(m: string, p?: unknown): Promise<T> => {
+        calls.push([m, p]);
+        if (m === "capture.status") {
+          return { enabled: true, kinds: ["note"] } as T;
+        }
+        if (m === "capture.submit") {
+          return { id: "cap_9", state: "live" } as T;
+        }
+        return { kind: "mcp" } as T;
+      },
+      disconnect: async () => {},
+    };
+    const editor = await connectEditor(
+      await buildMcpServerForGateway({ getClient: async () => client, agentKit: "claude-code" }),
+    );
+    await editor.callTool({ name: "capture_note", arguments: { title: "t", body: "b" } });
+    expect(calls.find(([m]) => m === "capture.submit")?.[1]).toEqual({
+      kind: "note",
+      payload: { title: "t", body: "b" },
+      clientLabel: "claude-code",
+      labelSource: "kit",
+    });
+  });
 });
 
 describe("a registered tool reached through MCP tools/call", () => {
@@ -491,11 +515,11 @@ type StdioKey = "stdin" | "stdout";
 /**
  * Run `fn` with `process.stdin`/`process.stdout` replaced by in-memory streams, returning them.
  *
- * `runMcpServerStdio` builds `new StdioServerTransport()` with no arguments, which binds the
- * PROCESS streams at construction — so this swap is the only way to drive the shipped entry point
- * in-process without it reading the test runner's stdin or writing protocol frames into the
- * runner's output. The window is exactly the call: the transport keeps its own references once
- * built, and both descriptors are restored in `finally` even when the call throws.
+ * `runMcpServerStdio` serves on the PROCESS streams, which it reads once, when the server starts
+ * — so this swap is the only way to drive the shipped entry point in-process without it reading
+ * the test runner's stdin or writing protocol frames into the runner's output. The window is
+ * exactly the call: the server keeps its own references once it is serving, and both descriptors
+ * are restored in `finally` even when the call throws.
  */
 async function withSwappedStdio(fn: () => Promise<void>): Promise<SwappedStdio> {
   const io: SwappedStdio = { stdin: new PassThrough(), stdout: new PassThrough() };
@@ -647,9 +671,9 @@ describe("runMcpServerStdio", () => {
       const { tools } = await editor.listTools();
       expect(sortedNames(tools)).toEqual(sortedNames(INDEX_TOOL_SPECS));
       // Not registered at all, as opposed to registered-but-refusing.
-      const res = await editor.callTool({ name: "peekWhy", arguments: { ref: "src/a.ts" } });
-      expect(res.isError).toBe(true);
-      expect(firstText(res)).toContain("Tool peekWhy not found");
+      await expect(
+        editor.callTool({ name: "peekWhy", arguments: { ref: "src/a.ts" } }),
+      ).rejects.toThrow("Unknown tool: peekWhy");
     } finally {
       await editor.close();
     }

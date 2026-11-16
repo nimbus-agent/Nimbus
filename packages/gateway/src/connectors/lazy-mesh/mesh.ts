@@ -11,6 +11,7 @@ import { extensionProcessEnv } from "../../extensions/spawn-env.ts";
 import { processEnvGet } from "../../platform/env-access.ts";
 import type { PlatformPaths } from "../../platform/paths.ts";
 import { extensionStageRootFor, sandboxCwdFor } from "../../platform/sandbox/sandbox-cwd.ts";
+import type { SandboxPolicy } from "../../platform/sandbox/sandbox-policy.ts";
 import {
   type AppContainerGrantRevoker,
   appContainerGrantRevokerFor,
@@ -28,8 +29,10 @@ import { CONNECTOR_WRITE_ROWS } from "../connector-writes/index.ts";
 import type { K8sGrant } from "../connector-writes/k8s-grants.ts";
 import type { ExtensionSyncRequest } from "../extension-sync/sync-response.ts";
 import { resolveGithubBase } from "../github-api-base.ts";
+import { transitionHealth } from "../health.ts";
 import { discoverVaultsForWriteGrant } from "../obsidian-discovery.ts";
 import type { UserMcpConnectorRow } from "../user-mcp-store.ts";
+import type { WriteDirDeps } from "../write-dir-rules.ts";
 import {
   ensureAppleMcp,
   ensureBitbucketMcp,
@@ -128,7 +131,19 @@ import {
   meshServerForToolKey,
   serviceIdForToolKey,
 } from "./tool-map.ts";
-import { ensureUserMcpClient } from "./user-mcp.ts";
+import { ensureUserMcpClient, parseStringArrayColumn } from "./user-mcp.ts";
+import { productionWriteDirDeps, registeredWriteDirsOf } from "./user-mcp-write-deps.ts";
+import {
+  fileUserMcpGrantLedger,
+  ledgerServiceIds,
+  NO_USER_MCP_WRITE_GRANT,
+  type PreparedUserMcpWriteGrant,
+  prepareUserMcpWriteGrant,
+  releaseUserMcpGrants,
+  type UserMcpGrantLedgerStore,
+  userMcpGrantLedgerFile,
+  userMcpPolicyId,
+} from "./user-mcp-write-grant.ts";
 import { wrapServerSpec } from "./wrap-server-spec.ts";
 
 type Phase3ServerAdder = (
@@ -275,6 +290,17 @@ export class LazyConnectorMesh {
   private githubInstanceSeq = 0;
   /** Tail of the Obsidian spawn/restart queue (see {@link runObsidianSerial}). */
   private obsidianTail: Promise<void> = Promise.resolve();
+  /** The user MCP write-grant seams (I15, AD5b): the rule's facts, the sandbox's answer, the Windows ledger. */
+  private readonly userMcpWriteDir: WriteDirDeps;
+  private readonly userMcpCanConfine: (policy: SandboxPolicy) => string | null;
+  private readonly userMcpLedger: UserMcpGrantLedgerStore;
+  private readonly userMcpRevokerFor: (policyId: string) => AppContainerGrantRevoker;
+  /** Tail of the user MCP spawn-preparation queue: one ledger read-modify-write at a time. */
+  private userMcpPrepareTail: Promise<void> = Promise.resolve();
+  /** Ledger entries of ids with no row are revoked once, before the first spawn decision. */
+  private userMcpOrphansSettled = false;
+  /** Servers whose write grant is being refused, so the refusal is logged once per streak. */
+  private readonly userMcpWriteRefused = new Set<string>();
 
   constructor(
     paths: PlatformPaths,
@@ -327,6 +353,17 @@ export class LazyConnectorMesh {
       k8sGrants?: () => readonly K8sGrant[];
       /** Test seam: overrides of the IaC runner's dependencies. */
       iacRunnerDeps?: Partial<IacRunnerDeps>;
+      /**
+       * The sandbox runner's answer for a user MCP write-directory policy (`canConfine`). Absent
+       * means it cannot be asked, and a server with a write directory is then never spawned.
+       */
+      userMcpCanConfine?: (policy: SandboxPolicy) => string | null;
+      /** Test seam: overrides of the facts the write-directory rule reads. */
+      userMcpWriteDirDeps?: Partial<WriteDirDeps>;
+      /** Test seam: the user MCP grant ledger. Production: a file under `configDir`. */
+      userMcpGrantLedger?: UserMcpGrantLedgerStore;
+      /** Test seam: the Windows revoker for one user MCP policy id. */
+      userMcpGrantRevokerFor?: (policyId: string) => AppContainerGrantRevoker;
     },
   ) {
     // Only stored here; `collectBuiltInToolMaps` and `listUserMcpTools` await it (undefined means
@@ -388,6 +425,26 @@ export class LazyConnectorMesh {
     this.obsidianLedger =
       options?.obsidianGrantLedger ??
       fileObsidianGrantLedger(obsidianGrantLedgerFile(paths.configDir));
+    const iacGrantsNow = options?.iacGrants ?? (() => EMPTY_IAC_GRANTS);
+    this.userMcpWriteDir = {
+      ...productionWriteDirDeps({
+        paths,
+        platform,
+        listRows: () => this.listUserMcpConnectors(),
+        iacWorkdirs: () => iacGrantsNow().workdirs,
+        envVar: processEnvGet,
+      }),
+      ...options?.userMcpWriteDirDeps,
+    };
+    this.userMcpCanConfine =
+      options?.userMcpCanConfine ??
+      (() => "this gateway has no sandbox runner to confine a write directory");
+    this.userMcpLedger =
+      options?.userMcpGrantLedger ??
+      fileUserMcpGrantLedger(userMcpGrantLedgerFile(paths.configDir));
+    this.userMcpRevokerFor =
+      options?.userMcpGrantRevokerFor ??
+      ((policyId) => appContainerGrantRevokerFor(platform, policyId));
     this.spawnContext = {
       vault: this.vault,
       logger: this.logger,
@@ -406,6 +463,8 @@ export class LazyConnectorMesh {
       bumpToolsEpoch: () => this.bumpToolsEpoch(),
       scheduleLazyDisconnect: (k) => this.scheduleLazyDisconnect(k),
     };
+    const iacStaticRoots = iacProtectedRootsFor(paths, platform, processEnvGet("XDG_RUNTIME_DIR"));
+    const listRowsNow = (): readonly UserMcpConnectorRow[] => this.listUserMcpConnectors();
     this.iacPathDeps = {
       platform,
       realpath: (p) => realpathSync.native(p),
@@ -418,8 +477,14 @@ export class LazyConnectorMesh {
       },
       homeDir: homedir(),
       tmpDir: tmpdir(),
-      // Nimbus's own folders: no approved Terraform directory may overlap them.
-      protectedRoots: iacProtectedRootsFor(paths, platform, processEnvGet("XDG_RUNTIME_DIR")),
+      // Nimbus's own folders: no approved Terraform directory may overlap them. Read at every use
+      // (a getter), because the list also holds every user MCP server's WRITE directory (I15, AD5b):
+      // a Terraform working directory inside one, or holding one, would let that server's code
+      // rewrite what an apply runs. The user MCP rule refuses the same overlap from its side, so the
+      // order of the two approvals cannot defeat either check.
+      get protectedRoots(): readonly string[] {
+        return [...iacStaticRoots, ...registeredWriteDirsOf(listRowsNow())];
+      },
       gitScan: (dir) => scanForGitEntry(dir),
     };
     this.iacRunner = new IacRunner({
@@ -646,11 +711,139 @@ export class LazyConnectorMesh {
     } catch (err) {
       this.logger?.warn({ serviceId, err }, "user MCP client not stopped before sandbox removal");
     }
+    // After the stop, never under a running child: on Windows every path the profile was granted
+    // (read and write) is revoked from the ledger. A failed revoke keeps the entry as a debt that
+    // the next registration of this id, or the boot step, settles; removal itself still succeeds.
+    if (!(await this.releaseUserMcpGrants(serviceId))) {
+      this.logger?.warn({ serviceId }, "user MCP sandbox grants not revoked; kept in the ledger");
+    }
+    this.userMcpWriteRefused.delete(serviceId);
     const leaf = this.userMcpSandboxLeaf(serviceId);
     const lastErr = await this.deleteSandboxLeaf(leaf);
     if (lastErr !== undefined) {
       this.logger?.warn({ serviceId, err: lastErr }, "user MCP sandbox directory not removed");
     }
+  }
+
+  /** The facts the user MCP write-directory rule reads, live (I15, AD5b). */
+  userMcpWriteDirDeps(): WriteDirDeps {
+    return this.userMcpWriteDir;
+  }
+
+  /** The sandbox's answer for a write-directory policy: `null` when it can confine it. */
+  userMcpWriteCanConfine(policy: SandboxPolicy): string | null {
+    return this.userMcpCanConfine(policy);
+  }
+
+  /** The write directories of every registered user MCP server but `exceptServiceId`. */
+  userMcpRegisteredWriteDirs(exceptServiceId?: string): readonly string[] {
+    return registeredWriteDirsOf(this.listUserMcpConnectors(), exceptServiceId);
+  }
+
+  /** One at a time: every user MCP spawn preparation and every release of a ledger entry. */
+  private runUserMcpPrepareSerial<T>(fn: () => Promise<T>): Promise<T> {
+    const result = this.userMcpPrepareTail.then(fn);
+    this.userMcpPrepareTail = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    return result;
+  }
+
+  /**
+   * Windows: revokes every path the ledger records for `serviceId` and drops the entry. `false`
+   * when it could not (the entry stays). A no-op elsewhere. Never throws.
+   */
+  releaseUserMcpGrants(serviceId: string): Promise<boolean> {
+    return this.runUserMcpPrepareSerial(() =>
+      releaseUserMcpGrants(serviceId, {
+        ledger: this.userMcpLedger,
+        revokerFor: this.userMcpRevokerFor,
+      }),
+    );
+  }
+
+  /**
+   * Before a registration stores its row: the Windows permissions an EARLIER registration of this
+   * id left are revoked. On the same serial chain as every spawn preparation, and only while no
+   * row holds the id: a second add of an id that was registered meanwhile answers `registered`
+   * and revokes nothing, so it can never cut the grants of the live registration it lost to.
+   */
+  releaseUserMcpGrantsUnlessRegistered(serviceId: string): Promise<boolean | "registered"> {
+    return this.runUserMcpPrepareSerial(async () => {
+      if (this.listUserMcpConnectors().some((r) => r.service_id === serviceId)) {
+        return "registered" as const;
+      }
+      return releaseUserMcpGrants(serviceId, {
+        ledger: this.userMcpLedger,
+        revokerFor: this.userMcpRevokerFor,
+      });
+    });
+  }
+
+  /** Once, before the first spawn decision: ledger entries whose id has no row are revoked. */
+  private async settleOrphanUserMcpGrants(): Promise<void> {
+    if (this.userMcpOrphansSettled) return;
+    this.userMcpOrphansSettled = true;
+    if (!this.userMcpRevokerFor(userMcpPolicyId("mcp_probe")).active) return;
+    const recorded = ledgerServiceIds(this.userMcpLedger);
+    if (recorded === undefined) return;
+    const live = new Set(this.listUserMcpConnectors().map((r) => r.service_id));
+    for (const id of recorded) {
+      if (live.has(id)) continue;
+      const released = await releaseUserMcpGrants(id, {
+        ledger: this.userMcpLedger,
+        revokerFor: this.userMcpRevokerFor,
+      });
+      if (!released) {
+        this.logger?.warn({ serviceId: id }, "orphaned user MCP sandbox grants not revoked");
+      }
+    }
+  }
+
+  /**
+   * The write grant ONE spawn decision of `row` may carry (I15, AD5b), or `undefined` when the
+   * spawn is refused. A slot that already has a client is left alone (a revoke under a running
+   * child would cut its grant). A refusal records a persistent error, logs once per failing
+   * streak, and NEVER falls back to a spawn without the grant.
+   */
+  private prepareUserMcpSpawn(
+    row: UserMcpConnectorRow,
+  ): Promise<PreparedUserMcpWriteGrant | undefined> {
+    return this.runUserMcpPrepareSerial(async () => {
+      if (this.spawnContext.getLazyClient(userMcpMeshKey(row.service_id)) !== undefined) {
+        return NO_USER_MCP_WRITE_GRANT;
+      }
+      await this.settleOrphanUserMcpGrants();
+      const read = parseStringArrayColumn(row.read_paths_json);
+      const net = parseStringArrayColumn(row.net_hosts_json);
+      // A malformed read or host column is the client builder's refusal, with its own record.
+      if (!read.ok || !net.ok) return NO_USER_MCP_WRITE_GRANT;
+      const result = await prepareUserMcpWriteGrant(row, read.value, net.value, {
+        writeDir: this.userMcpWriteDir,
+        canConfine: this.userMcpCanConfine,
+        ledger: this.userMcpLedger,
+        revokerFor: this.userMcpRevokerFor,
+      });
+      if (result.ok) {
+        this.userMcpWriteRefused.delete(row.service_id);
+        return result.grant;
+      }
+      if (!this.userMcpWriteRefused.has(row.service_id)) {
+        this.userMcpWriteRefused.add(row.service_id);
+        this.logger?.warn(
+          { serviceId: row.service_id, reason: result.reason },
+          "user MCP not started: its write directory may not be granted now",
+        );
+      }
+      if (this.healthDb !== undefined) {
+        transitionHealth(this.healthDb, row.service_id, {
+          type: "persistent_error",
+          error: `write directory refused: ${result.reason}`,
+        });
+      }
+      return undefined;
+    });
   }
 
   /** The deterministic sandbox leaf a user MCP server with this id spawns in. */
@@ -838,13 +1031,15 @@ export class LazyConnectorMesh {
    * (from the row lookup or the client registration) into a rejection, as `async` did.
    */
   ensureUserMcpRunning(serviceId: string): Promise<void> {
-    return Promise.try(() => {
+    return Promise.try(async () => {
       const rows = this.listUserMcpConnectors();
       const row = rows.find((r) => r.service_id === serviceId);
       if (row === undefined) {
         return;
       }
-      ensureUserMcpClient(this.spawnContext, row);
+      const prepared = await this.prepareUserMcpSpawn(row);
+      if (prepared === undefined) return;
+      ensureUserMcpClient(this.spawnContext, row, prepared);
     });
   }
 
@@ -974,7 +1169,8 @@ export class LazyConnectorMesh {
       .filter((id) => !active.has(id));
     await Promise.all(staleIds.map((id) => this.stopUserMcpClient(id)));
     for (const row of rows) {
-      ensureUserMcpClient(this.spawnContext, row);
+      const prepared = await this.prepareUserMcpSpawn(row);
+      if (prepared !== undefined) ensureUserMcpClient(this.spawnContext, row, prepared);
     }
   }
 

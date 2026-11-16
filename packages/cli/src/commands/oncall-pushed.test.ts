@@ -105,6 +105,35 @@ describe("runOncallPushedWith (spec § 2.7 exit table)", () => {
     expect(s.err).toContain("nimbus oncall pushed pagerduty:A --retry");
   });
 
+  test("a retried brief that was stored but not delivered says so plainly, with the reason", async () => {
+    const { s, sink: k } = sink();
+    expect(
+      await runOncallPushedWith(
+        fake({
+          "oncall.pushedRetry": {
+            brief: OK,
+            notDelivered: "you are not on call for this service now\u001b[31m",
+          },
+        }),
+        { mode: "one", incidentId: "jira:J1", retry: true, json: false },
+        k,
+        false,
+      ),
+    ).toBe(0);
+    expect(s.err).toBe(
+      "Retried and stored; not delivered: you are not on call for this service now[31m.\n",
+    );
+    // json keeps the field for scripts
+    const j = sink();
+    await runOncallPushedWith(
+      fake({ "oncall.pushedRetry": { brief: OK, notDelivered: "x" } }),
+      { mode: "one", incidentId: "jira:J1", retry: true, json: true },
+      j.sink,
+      false,
+    );
+    expect(JSON.parse(j.s.out)).toMatchObject({ notDelivered: "x" });
+  });
+
   test("unknown id → exit 1", async () => {
     const { s, sink: k } = sink();
     expect(
@@ -228,6 +257,25 @@ describe("oncall pushed: remaining branches", () => {
     expect(c.calls[0]).toEqual(["oncall.pushedList", { limit: 50 }]);
   });
 
+  test("list strips terminal control, bidi and line-separator characters from third-party text", async () => {
+    const { s, sink: k } = sink();
+    const esc = String.fromCodePoint(0x1b);
+    const hostile = `DB down${esc}[31;1m${esc}]2;x${String.fromCodePoint(0x07)}\r\n2026-01-01T00:00:00.000Z  ok  forged${String.fromCodePoint(0x202e)}${String.fromCodePoint(0x2028)}${String.fromCodePoint(0x9b)}`;
+    const c = fake({
+      "oncall.pushedList": {
+        enabled: true,
+        identity: "resolved",
+        briefs: [{ ...OK, title: hostile, service: `pay${esc}[0m` }],
+      },
+    });
+    expect(await runOncallPushedWith(c, { mode: "list", json: false }, k, false)).toBe(0);
+    expect(s.out.trimEnd().split("\n")).toHaveLength(1);
+    for (const cp of [0x1b, 0x07, 0x0d, 0x202e, 0x2028, 0x9b]) {
+      expect(s.out.includes(String.fromCodePoint(cp))).toBe(false);
+    }
+    expect(s.out).toContain("[pay[0m]  DB down[31;1m]2;x2026-01-01T00:00:00.000Z  ok  forged");
+  });
+
   test("list shows [service] before the title when known; unchanged when null", async () => {
     const { s, sink: k } = sink();
     const c = fake({
@@ -264,6 +312,43 @@ describe("oncall pushed: remaining branches", () => {
       false,
     );
     expect(off.s.out).toContain("[oncall.push] enabled = true");
+  });
+
+  test("list names why records were not pushed, and says records are off when sources are widened (Phase 10 IC3)", async () => {
+    const { s, sink: k } = sink();
+    const c = fake({
+      "oncall.pushedList": {
+        enabled: true,
+        identity: "resolved",
+        briefs: [],
+        sources: ["pagerduty", "jira"],
+        incidentEngineEnabled: false,
+        lastRun: { notPushed: { owner_not_on_call: 2, unbound: 0, no_oncall_data: 1 } },
+      },
+    });
+    await runOncallPushedWith(c, { mode: "list", json: false }, k, false);
+    expect(s.out).toContain(
+      "Records are off: pushes of other sources need [incident] enabled = true",
+    );
+    expect(s.out).toContain("The last run did not push: owner_not_on_call 2, no_oncall_data 1.");
+    const quiet = sink();
+    await runOncallPushedWith(
+      fake({
+        "oncall.pushedList": {
+          enabled: true,
+          identity: "resolved",
+          briefs: [OK],
+          sources: ["pagerduty"],
+          incidentEngineEnabled: false,
+          lastRun: null,
+        },
+      }),
+      { mode: "list", json: false },
+      quiet.sink,
+      false,
+    );
+    expect(quiet.s.out).not.toContain("Records are off");
+    expect(quiet.s.out).not.toContain("did not push");
   });
 
   test("newest empty with push enabled: no off-hint", async () => {

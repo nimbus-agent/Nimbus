@@ -88,7 +88,7 @@ describe("dispatchPackRpc", () => {
 
   test("pack.list routes to listPacks (null and {} both accepted)", async () => {
     const r = (await hit("pack.list", null)) as { available: { id: string }[] };
-    expect(r.available.map((p) => p.id).sort()).toEqual(["devops", "pm"]);
+    expect(r.available.map((p) => p.id).sort()).toEqual(["developer", "devops", "pm"]);
     expect(await hit("pack.list", {})).toEqual(r);
     expect(await hit("pack.list", undefined)).toEqual(r);
   });

@@ -57,6 +57,7 @@ type RawRow = {
   payload_json: string | null;
   payload_bytes: number;
   client_label: string | null;
+  label_source: string;
   session_id: string;
   native_ref: string | null;
   created_at: number;
@@ -79,6 +80,8 @@ function toRow(r: RawRow): CaptureRow {
     payloadJson: r.payload_json,
     payloadBytes: r.payload_bytes,
     clientLabel: r.client_label,
+    // The column CHECK allows two values; anything else reads as the weaker claim.
+    labelSource: r.label_source === "kit" ? "kit" : "declared",
     sessionId: r.session_id,
     nativeRef: r.native_ref,
     createdAt: r.created_at,
@@ -101,8 +104,8 @@ export class CaptureStore {
   insert(row: NewCaptureRow): void {
     dbRun(
       this.db,
-      `INSERT INTO capture (id, kind, state, item_id, payload_json, payload_bytes, client_label, session_id, created_at, expires_at, legacy)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO capture (id, kind, state, item_id, payload_json, payload_bytes, client_label, label_source, session_id, created_at, expires_at, legacy)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         row.id,
         row.kind,
@@ -111,6 +114,7 @@ export class CaptureStore {
         row.payloadJson,
         row.payloadBytes,
         row.clientLabel,
+        row.labelSource,
         row.sessionId,
         row.createdAt,
         row.expiresAt,

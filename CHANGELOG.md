@@ -2,6 +2,81 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [10.69.0](https://github.com/nimbus-agent/Nimbus/compare/v10.68.0...v10.69.0) (2026-11-16)
+
+
+### Features
+
+* **gateway:** assemble incident records from the local index, with nimbus incident list and show ([#2030](https://github.com/nimbus-agent/Nimbus/issues/2030)) ([37ad233](https://github.com/nimbus-agent/Nimbus/commit/37ad233467c164c2ba3fd560965b32970139a400))
+* **gateway:** bundle a Developer role pack, installed with nimbus pack install developer ([#2033](https://github.com/nimbus-agent/Nimbus/issues/2033)) ([147f362](https://github.com/nimbus-agent/Nimbus/commit/147f3629663795d803c90be10d3c2c132b566630))
+
+
+### Bug Fixes
+
+* **gateway:** the audit append returns its row id, so a standing approval records its own audit row ([#2036](https://github.com/nimbus-agent/Nimbus/issues/2036)) ([e00b979](https://github.com/nimbus-agent/Nimbus/commit/e00b979c320aa40e501a6df060b41d51478d3cf9))
+
+## [10.68.0](https://github.com/nimbus-agent/Nimbus/compare/v10.67.0...v10.68.0) (2026-11-16)
+
+
+### Features
+
+* **gateway:** nimbus pre-mortem works for Linear projects, indexed as linear:project items ([#2032](https://github.com/nimbus-agent/Nimbus/issues/2032)) ([d239b2d](https://github.com/nimbus-agent/Nimbus/commit/d239b2d0a37f6bb61335c686a995a80e8d504414))
+
+## [10.67.0](https://github.com/nimbus-agent/Nimbus/compare/v10.66.0...v10.67.0) (2026-11-16)
+
+
+### Features
+
+* **cli:** add nimbus statuspage draft, a static status page written from the local index for the owner to publish ([#2022](https://github.com/nimbus-agent/Nimbus/issues/2022)) ([3f6d731](https://github.com/nimbus-agent/Nimbus/commit/3f6d7314751521c576574bc6434d5a08f9087f52))
+* **gateway:** a saved workflow step can run only when an earlier query found rows (a when guard) ([#2027](https://github.com/nimbus-agent/Nimbus/issues/2027)) ([71de957](https://github.com/nimbus-agent/Nimbus/commit/71de957f16a026a568d3c2ee0840e6b08959a6c6))
+
+## [10.66.0](https://github.com/nimbus-agent/Nimbus/compare/v10.65.0...v10.66.0) (2026-11-16)
+
+
+### Features
+
+* **gateway:** add an advisory deploy-risk block to deploy preflight, each factor with its evidence ([#2023](https://github.com/nimbus-agent/Nimbus/issues/2023)) ([87c3039](https://github.com/nimbus-agent/Nimbus/commit/87c3039058acb0bc4231f2ae4cd30d86a486d8d6))
+* **gateway:** add nimbus cost anomalies, a local detector over the indexed daily cost series ([#2021](https://github.com/nimbus-agent/Nimbus/issues/2021)) ([d930c37](https://github.com/nimbus-agent/Nimbus/commit/d930c376caf3002cfef53d7a7a0ade75fa0cac8c))
+* **gateway:** notify the owner of a sync anomaly with a local OS notification, off by default ([#2017](https://github.com/nimbus-agent/Nimbus/issues/2017)) ([44eb04b](https://github.com/nimbus-agent/Nimbus/commit/44eb04bd2e9b28ff62cc39b3ab8fb41f117e1b59))
+
+## [10.65.0](https://github.com/nimbus-agent/Nimbus/compare/v10.64.0...v10.65.0) (2026-11-16)
+
+
+### Features
+
+* **gateway:** add nimbus oncall handoff, a read-only shift brief from the local index ([#2018](https://github.com/nimbus-agent/Nimbus/issues/2018)) ([d2d81a7](https://github.com/nimbus-agent/Nimbus/commit/d2d81a71c7dd4e41fb262de621c332991df2ff8b))
+* **gateway:** nimbus pre-mortem proposes a paused deploy-failure watcher beside the incident one ([#2020](https://github.com/nimbus-agent/Nimbus/issues/2020)) ([f1f43d6](https://github.com/nimbus-agent/Nimbus/commit/f1f43d6b420149f64b8575141d92188bd6b908b2))
+
+## [10.64.0](https://github.com/nimbus-agent/Nimbus/compare/v10.63.0...v10.64.0) (2026-11-16)
+
+
+### Features
+
+* **cli:** nimbus mcp-server answers both MCP protocol eras, the 2026-07-28 revision and the initialize handshake (agent door AD6b) ([#2015](https://github.com/nimbus-agent/Nimbus/issues/2015)) ([89dd597](https://github.com/nimbus-agent/Nimbus/commit/89dd597e1e747bfc2fa142af4de4cdcaddee08cd))
+
+## [10.63.0](https://github.com/nimbus-agent/Nimbus/compare/v10.62.0...v10.63.0) (2026-11-15)
+
+
+### Features
+
+* **cli:** add nimbus agent install and status, which connect a coding agent to Nimbus and check the connection (agent door AD7b) ([#2013](https://github.com/nimbus-agent/Nimbus/issues/2013)) ([cb72db9](https://github.com/nimbus-agent/Nimbus/commit/cb72db9d393a55fce50b18d3b22c865d7968ae0c))
+
+## [10.62.0](https://github.com/nimbus-agent/Nimbus/compare/v10.61.0...v10.62.0) (2026-11-15)
+
+
+### Features
+
+* **gateway:** an agent's server entry can label its proposals, and the gateway records where a label came from (agent door AD7a) ([#2011](https://github.com/nimbus-agent/Nimbus/issues/2011)) ([8fa3114](https://github.com/nimbus-agent/Nimbus/commit/8fa3114397e036980d2082e59823f5cfb347a431))
+
+## [10.61.0](https://github.com/nimbus-agent/Nimbus/compare/v10.60.0...v10.61.0) (2026-11-15)
+
+
+### Features
+
+* **gateway:** a user MCP server can be given a directory to write in, approved by a person and re-checked at every start (agent door AD5b-2) ([#2010](https://github.com/nimbus-agent/Nimbus/issues/2010)) ([cbd2c34](https://github.com/nimbus-agent/Nimbus/commit/cbd2c3467dc11e42d59ea7c6fd941c2191aaa4f2))
+* **gateway:** let the owner approve user MCP tools for outside agents by name, and hold every agent call to that approval (agent door AD5a) ([#2007](https://github.com/nimbus-agent/Nimbus/issues/2007)) ([43e17fd](https://github.com/nimbus-agent/Nimbus/commit/43e17fd23c9aacb791627467424c05a0ce6aea17))
+* **gateway:** the sandbox can confine a write directory on all three OSes, measured, with nothing using it yet (agent door AD5b-1) ([#2009](https://github.com/nimbus-agent/Nimbus/issues/2009)) ([c0ffb28](https://github.com/nimbus-agent/Nimbus/commit/c0ffb286eb00261c7c56c86fd90c203cdb007f32))
+
 ## [10.60.0](https://github.com/nimbus-agent/Nimbus/compare/v10.59.0...v10.60.0) (2026-11-14)
 
 

@@ -391,6 +391,17 @@ describe("section fallbacks", () => {
     expect(r.sectionFallback).toContain("history_retention_days");
   });
 
+  test("an out-of-range [incident] retention_days and lookback_days are reported as fallbacks", () => {
+    writeBase("[incident]\nretention_days = 1\n");
+    expect(
+      explainConfig(initLayeredConfig(dir), "incident.retention_days", noEnv).sectionFallback,
+    ).toContain("retention_days");
+    writeBase("[incident]\nlookback_days = 0\n");
+    expect(
+      explainConfig(initLayeredConfig(dir), "incident.lookback_days", noEnv).sectionFallback,
+    ).toContain("lookback_days");
+  });
+
   test("a loader that throws is reported as refused", () => {
     writeBase('[notifications]\ncontent = "bogus"\n');
     const r = explainConfig(initLayeredConfig(dir), "notifications.content", noEnv);

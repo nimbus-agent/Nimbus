@@ -10,11 +10,7 @@ import {
   listActionProposals,
   rejectCapture,
 } from "../mcp-sink/capture-gate.ts";
-import {
-  type ActionPayload,
-  CAPTURE_LABEL_SOURCE,
-  CaptureError,
-} from "../mcp-sink/capture-types.ts";
+import { type ActionPayload, CaptureError } from "../mcp-sink/capture-types.ts";
 import { dispatchByMethod, type RpcMissOrHit } from "./_lib/dispatch-by-method.ts";
 import {
   actWriteRows,
@@ -95,7 +91,7 @@ function listView(
       legacy: p.agentDoorLegacy,
       ...rowFacts(p.actionType, rpc.act),
       label: escapedLabel(p.clientLabel),
-      labelSource: CAPTURE_LABEL_SOURCE,
+      labelSource: p.labelSource,
       summary: escapeUnverifiedLine(p.summary),
       createdAt: p.createdAt,
       expiresAt: p.expiresAt,
@@ -119,7 +115,8 @@ function getView(rpc: CaptureRpcCtx, caller: CaptureCaller, idRaw: unknown): unk
   const detail = requireActionRow(rpc, caller, idRaw);
   const stored = detail.payload as ActionPayload;
   // Read from the store, not from `captures.get`'s shape (the desktop's contract is unchanged).
-  const legacy = rpc.gate.store.get(detail.id)?.agentDoorLegacy === true;
+  const row = rpc.gate.store.get(detail.id);
+  const legacy = row?.agentDoorLegacy === true;
   const lines = agentVerbatimInputLines(stored.input)
     .slice(1)
     .flatMap((l) => l.split("\n"));
@@ -131,7 +128,7 @@ function getView(rpc: CaptureRpcCtx, caller: CaptureCaller, idRaw: unknown): unk
     ...(legacy ? { deprecation: LEGACY_LIST_HEADER } : {}),
     ...rowFacts(stored.actionType, rpc.act),
     label: escapedLabel(detail.clientLabel),
-    labelSource: CAPTURE_LABEL_SOURCE,
+    labelSource: row?.labelSource ?? "declared",
     summary: escapeUnverifiedLine(stored.summary),
     createdAt: detail.createdAt,
     expiresAt: detail.expiresAt,

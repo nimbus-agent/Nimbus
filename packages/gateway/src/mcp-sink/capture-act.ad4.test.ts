@@ -10,7 +10,7 @@ import { openMigratedMemoryDb } from "../index/migrated-db-template.ts";
 import { type ActGateDeps, acceptAction } from "./capture-act.ts";
 import { resolveCaptureCapability } from "./capture-capability.ts";
 import { CaptureStore } from "./capture-store.ts";
-import { type ActionProvenance, CAPTURE_LABEL_SOURCE } from "./capture-types.ts";
+import type { ActionProvenance } from "./capture-types.ts";
 
 const ID = `cap_${"ab12".repeat(8)}`;
 const OWNER = { clientId: "c-cli", kind: "cli" as const };
@@ -47,6 +47,7 @@ beforeEach(() => {
     }),
     payloadBytes: 10,
     clientLabel: 'my "agent"',
+    labelSource: "declared",
     sessionId: "conn-submitter-1",
     createdAt: 500,
     expiresAt: 2_000,
@@ -75,12 +76,12 @@ describe("AD4: the accept row", () => {
       basis: "legacy_user_mcp",
       door: "agent",
       clientLabel: 'my "agent"',
-      labelSource: CAPTURE_LABEL_SOURCE,
+      labelSource: "declared",
       connection: "conn-submitter-1",
     });
     // The approver's connection stays in the (unhashed) session column, as before.
     expect(accept.session_id).toBe("c-cli");
-    expect(seen?.labelSource).toBe(CAPTURE_LABEL_SOURCE);
+    expect(seen?.labelSource).toBe("declared");
   });
 
   test("a null label is recorded as null", async () => {
@@ -94,7 +95,19 @@ describe("AD4: the accept row", () => {
     expect(JSON.parse(accept.action_json)).toMatchObject({ clientLabel: null });
   });
 
-  test("the label source is the one constant", () => {
-    expect(CAPTURE_LABEL_SOURCE).toBe("declared");
+  test("a label that came from the server entry's --agent value is recorded and handed on as kit (AD7a)", async () => {
+    db.run("UPDATE capture SET label_source = 'kit' WHERE id = ?", [ID]);
+    let seen: ActionProvenance | undefined;
+    await acceptAction(deps, OWNER, deps.store.get(ID) as never, {
+      execute: (_t, _i, p) => {
+        seen = p;
+        return Promise.resolve({ status: "ok", result: {} });
+      },
+    });
+    const accept = db
+      .query("SELECT action_json FROM audit_log WHERE action_type = 'capture.action.accept'")
+      .get() as { action_json: string };
+    expect(JSON.parse(accept.action_json)).toMatchObject({ labelSource: "kit" });
+    expect(seen?.labelSource).toBe("kit");
   });
 });

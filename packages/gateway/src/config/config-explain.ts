@@ -6,6 +6,7 @@ import { loadMultimodalConfig } from "../multimodal/multimodal-config.ts";
 import { processEnvGet } from "../platform/env-access.ts";
 import { sourceMappingFor } from "../sources/source-mapping.ts";
 import type { ProfileSource } from "./active-profile.ts";
+import { loadNimbusAnomalyFromConfigDir } from "./anomaly-toml.ts";
 import { loadNimbusBriefingFromConfigDir } from "./briefing-toml.ts";
 import { CONFIG_ENV_OVERRIDES, isPolicyConstrainedPath } from "./config-env-overrides.ts";
 import { loadNimbusFilesystemRootsFromConfigDir } from "./filesystem-toml.ts";
@@ -15,6 +16,7 @@ import {
   loadNimbusFleetFromConfigDir,
   resolveFleetJobs,
 } from "./fleet-toml.ts";
+import { loadNimbusIncidentFromConfigDir } from "./incident-toml.ts";
 import { loadNimbusIndexFromConfigDir } from "./index-toml.ts";
 import {
   type ConfigSnapshot,
@@ -69,6 +71,7 @@ import { loadGlossaryManualFromConfigDir } from "./nimbus-toml-glossary-terms.ts
 import { loadNimbusWorkdayFromConfigDir } from "./nimbus-toml-workday.ts";
 import { loadNimbusNotificationsFromConfigDir } from "./notifications-toml.ts";
 import { loadNimbusOncallPushFromConfigDir } from "./oncall-push-toml.ts";
+import { loadNimbusPreflightRiskFromConfigDir } from "./preflight-risk-toml.ts";
 import { loadNimbusSessionFromConfigDir } from "./session-toml.ts";
 import { loadNimbusStandingFromConfigDir } from "./standing-toml.ts";
 import { loadNimbusTelemetryFromConfigDir } from "./telemetry-toml.ts";
@@ -103,6 +106,7 @@ export const SECTION_LOADERS: Readonly<Record<string, (configDir: string) => unk
   "glossary.terms": loadGlossaryManualFromConfigDir,
   "hitl.quorum": loadNimbusQuorumFromConfigDir,
   identity: loadNimbusIdentityFromConfigDir,
+  incident: loadNimbusIncidentFromConfigDir,
   index: loadNimbusIndexFromConfigDir,
   lan: loadNimbusLanFromConfigDir,
   llm: loadNimbusLlmFromConfigDir,
@@ -117,6 +121,7 @@ export const SECTION_LOADERS: Readonly<Record<string, (configDir: string) => unk
   ownership: loadNimbusOwnershipFromConfigDir,
   pagerduty: loadNimbusPagerdutyFromConfigDir,
   persona: (configDir) => loadNimbusPersonaFromConfigDir(configDir),
+  "preflight.risk": loadNimbusPreflightRiskFromConfigDir,
   premortem: loadNimbusPremortemFromConfigDir,
   scim: loadNimbusScimFromConfigDir,
   security: loadNimbusSecurityFromConfigDir,
@@ -130,6 +135,7 @@ export const SECTION_LOADERS: Readonly<Record<string, (configDir: string) => unk
   updater: loadNimbusUpdaterFromConfigDir,
   user: loadNimbusUserFromConfigDir,
   voice: loadNimbusVoiceFromConfigDir,
+  "watcher.anomaly": loadNimbusAnomalyFromConfigDir,
 };
 
 /**

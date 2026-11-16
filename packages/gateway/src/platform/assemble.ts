@@ -54,6 +54,7 @@ import {
   resolveShellById,
 } from "../computer-use/cu-lanes/terminal-shells.ts";
 import { startCuSnapshotRetention } from "../computer-use/cu-snapshot-retention.ts";
+import { loadNimbusAnomalyFromConfigDir } from "../config/anomaly-toml.ts";
 import { loadNimbusBriefingFromConfigDir } from "../config/briefing-toml.ts";
 import { loadNimbusFilesystemRootsFromConfigDir } from "../config/filesystem-toml.ts";
 import { loadNimbusFinopsFromConfigDir } from "../config/finops-toml.ts";
@@ -67,6 +68,7 @@ import {
   type NimbusFleetLoad,
   type NimbusFleetToml,
 } from "../config/fleet-toml.ts";
+import { loadNimbusIncidentFromConfigDir } from "../config/incident-toml.ts";
 import { loadNimbusIndexFromConfigDir } from "../config/index-toml.ts";
 import { getLayeredConfig, initLayeredConfig } from "../config/layered-config.ts";
 import { loadNimbusMcpSinkFromConfigDir } from "../config/mcp-sink-toml.ts";
@@ -113,6 +115,7 @@ import {
 import { loadNimbusWorkdayFromConfigDir } from "../config/nimbus-toml-workday.ts";
 import { resolvePersona } from "../config/persona.ts";
 import { ProfileManager } from "../config/profiles.ts";
+import { loadServiceConfigsOrEmpty } from "../config/service-configs.ts";
 import { loadNimbusSessionFromConfigDir } from "../config/session-toml.ts";
 import { Config } from "../config.ts";
 import { bitbucketFetchOneUrlIsSupported } from "../connectors/bitbucket-sync.ts";
@@ -258,6 +261,8 @@ import { runPendingRegraph } from "../graph/regraph-once.ts";
 import { buildIdentityBoot } from "../identity/identity-boot.ts";
 import { buildTeamsBotJwtValidator } from "../identity/teams-bot-jwt.ts";
 import { isOperatorValid } from "../identity/verifier.ts";
+import { createIncidentEngine, type IncidentEngine } from "../incident/incident-engine.ts";
+import { startIncidentRetention } from "../incident/incident-retention.ts";
 import { readUnreadChatThreads } from "../index/chat-unread-query.ts";
 import { startItemHistoryRetention } from "../index/item-history-retention.ts";
 import {
@@ -428,7 +433,7 @@ import { setApprovalPendingNotifier } from "../util/approval-pending.ts";
 import { createNimbusVault } from "../vault/factory.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
 import { GATEWAY_VERSION } from "../version.ts";
-import { AnomalyDetectorStub } from "../watcher/anomaly-detector.ts";
+import { createSyncAnomalyDetector } from "../watcher/anomaly-notifier.ts";
 import { registerConnectorMeshSyncables } from "./assemble-sync-registrations.ts";
 import { openUrlInDefaultBrowser } from "./browser.ts";
 import { bootPolicyFor } from "./demo-boot.ts";
@@ -457,6 +462,7 @@ import {
 import { registerUserMcpSyncablesFromDatabase } from "./register-user-mcp-sync.ts";
 import { isProductionRuntime } from "./runtime-layout.ts";
 import { sandboxCwdFor } from "./sandbox/sandbox-cwd.ts";
+import type { SandboxPolicy } from "./sandbox/sandbox-policy.ts";
 import { createSandboxRunner } from "./sandbox/sandbox-runner.ts";
 import { reapAppContainersAtBoot, revokeLegacyDataDirGrantsAtBoot } from "./sandbox/win32-reap.ts";
 import { ensureFullSqlite } from "./sqlite-runtime.ts";
@@ -728,6 +734,11 @@ interface SchedulerWithMeshOpts {
   /** Settles when the boot-time Windows data-directory revoke is done; gates the filesystem MCP’s first spawn. */
   filesystemSpawnGate?: Promise<void>;
   /**
+   * The sandbox runner's answer for a user MCP write-directory policy (I15, AD5b). Absent, a user
+   * MCP server with a write directory is never spawned.
+   */
+  userMcpCanConfine?: (policy: SandboxPolicy) => string | null;
+  /**
    * `isExtensionRuntimeEnabled` (`[extensions] runtime` AND not demo-rooted, I41). When false the
    * mesh gets no extension slot source at all, so no approved extension can spawn.
    */
@@ -793,6 +804,8 @@ async function createSchedulerWithMesh(opts: SchedulerWithMeshOpts): Promise<{
   ownershipRefresher: OwnershipRefresher | undefined;
   premortemRefresher: PremortemRefresher | undefined;
   oncallPush: OncallPushRuntime;
+  /** The incident engine (Phase 10 IC3); the sync hook triggers it ahead of the on-call push. */
+  incidentEngine: IncidentEngine;
   /** The I22 policy-filtered `register`, for the extension sync host built after the boot gate. */
   policyFilteredRegistrar: Pick<SyncScheduler, "register">;
 }> {
@@ -816,9 +829,13 @@ async function createSchedulerWithMesh(opts: SchedulerWithMeshOpts): Promise<{
   // I41 clause (6), spec § 11.2: a demo gateway's scheduler exists (IPC and the post-sync
   // refreshers are built alongside it) but can never run a job.
   const syncEnabled = bootPolicyFor(paths).syncScheduler;
-  const syncAnomaly = new AnomalyDetectorStub({
-    windowSize: 64,
-    onNotify: (e) => {
+  const syncAnomaly = createSyncAnomalyDetector({
+    config: loadNimbusAnomalyFromConfigDir(paths.configDir),
+    demo: !syncEnabled,
+    notify: (title, body) => showIgnoringFailure(notifications, title, body),
+    now: () => Date.now(),
+    onFailure: (err) => syncLogger.warn({ err }, "sync anomaly notification failed"),
+    logger: (e) => {
       syncLogger.warn(
         { seriesId: e.seriesId, value: e.value, score: e.score, atMs: e.atMs },
         "sync telemetry anomaly (stub — no automated remediation)",
@@ -989,10 +1006,34 @@ async function createSchedulerWithMesh(opts: SchedulerWithMeshOpts): Promise<{
       })
     : undefined;
 
+  // Incident engine (Phase 10 IC3, I57 (a)): assembles incident records from the local index after a sync.
+  // Its deps carry no dispatcher, executor, egress sink or model, so a pass can read and store only.
+  // The service configs and `[incident]` are re-read on every use, so an edited nimbus.toml applies.
+  const incidentEngine = createIncidentEngine({
+    db,
+    now: Date.now,
+    emit: (p) => emitGatewayEvent("incident.assembled", { ...p }),
+    loadServiceConfigs: () =>
+      new Map(
+        loadServiceConfigsOrEmpty(paths.configDir, (m) => syncLogger.warn(m)).map((c) => [
+          c.serviceId,
+          c,
+        ]),
+      ),
+    readConfig: () => ({
+      incident: loadNimbusIncidentFromConfigDir(paths.configDir),
+      pagerdutyP1Aliases: loadNimbusPagerdutyFromConfigDir(paths.configDir).severityP1Aliases,
+    }),
+    // Not spelled like the IPC options line: the I41 wiring pin counts that exact text once.
+    demo: Boolean(paths.demo),
+    logger: syncLogger,
+  });
+
   const oncallPush = assembleOncallPushRuntime({
     db,
     configDir: paths.configDir,
-    localIndex,
+    // The push pushes the record the engine assembled, assembling a candidate's on demand (Phase 10 IC3).
+    records: incidentEngine,
     // Passed WHOLE so the push sinks read `delivers` LIVE at delivery time (the OS service's probe
     // can flip it after boot) and record "skipped" rather than attempting a toast that cannot show.
     notifications,
@@ -1005,7 +1046,10 @@ async function createSchedulerWithMesh(opts: SchedulerWithMeshOpts): Promise<{
     notify: (title, body) => showIgnoringFailure(notifications, title, body),
     onConnectorSyncSuccess: (serviceId, result, durationMs) => {
       // FIRST: the scheduler calls this hook unguarded, so a throw below would skip the push;
-      // trigger() never throws (and returns at once for anything but pagerduty).
+      // trigger() never throws (and returns at once for anything but pagerduty). The incident engine
+      // goes before the push (Phase 10 IC3): its trigger never rejects, and the push assembles its own
+      // candidates on demand, so the order is a courtesy, not a dependency.
+      void incidentEngine.trigger(serviceId);
       oncallPush.trigger(serviceId);
       const at = Date.now();
       syncAnomaly.recordSample(`sync:duration_ms:${serviceId}`, durationMs, at);
@@ -1089,6 +1133,7 @@ async function createSchedulerWithMesh(opts: SchedulerWithMeshOpts): Promise<{
     isConnectorAllowed,
     ...(filesystemSpawnGate === undefined ? {} : { filesystemSpawnGate }),
     ...(extensionSlots === undefined ? {} : { extensionSlots, extensionSpawnGate }),
+    ...(opts.userMcpCanConfine === undefined ? {} : { userMcpCanConfine: opts.userMcpCanConfine }),
   });
   // Snapshot the GitHub Enterprise Server host now (the constructor reads no Vault key) so the first
   // write preview, which can come before the lazy child first spawns, already names the instance.
@@ -1136,6 +1181,7 @@ async function createSchedulerWithMesh(opts: SchedulerWithMeshOpts): Promise<{
     ownershipRefresher,
     premortemRefresher,
     oncallPush,
+    incidentEngine,
     policyFilteredRegistrar,
   };
 }
@@ -4060,6 +4106,14 @@ export async function assemblePlatformServices(
   });
   sidecarStops.push(() => itemHistoryRetention.stop());
 
+  // Incident record retention (Phase 10 IC3): `[incident] retention_days`, re-read on every tick. A pruned
+  // record takes its pushed briefs with it, in one transaction per batch.
+  const incidentRetention = startIncidentRetention(db, {
+    retentionDays: () => loadNimbusIncidentFromConfigDir(paths.configDir).retentionDays,
+    onError: (err) => syncLogger.warn({ err }, "incident record retention pass failed"),
+  });
+  sidecarStops.push(() => incidentRetention.stop());
+
   // GDPR purge-retry (Task 25): each cycle, retry the pending `federation.purge`
   // requests durable in the gdpr_purge ledger; when all of a job's requests are
   // done, close it with an aggregate signed completion record + a
@@ -4120,6 +4174,7 @@ export async function assemblePlatformServices(
     ownershipRefresher,
     premortemRefresher,
     oncallPush,
+    incidentEngine,
     policyFilteredRegistrar,
   } = await createSchedulerWithMesh({
     paths,
@@ -4133,6 +4188,8 @@ export async function assemblePlatformServices(
     glossaryLlm: createGlossaryLlm(llmRegistry.llmRouter),
     decisionLlm: createDecisionLlm(llmRegistry.llmRouter),
     ...(dataDirRevoke === undefined ? {} : { filesystemSpawnGate: dataDirRevoke }),
+    // I15 (AD5b): whether this OS's sandbox can confine a user MCP server's write directory.
+    userMcpCanConfine: (policy) => sandboxRunner.canConfine(policy),
     extensionRuntimeEnabled,
     extensionSpawnGate: extensionSpawnGate.promise,
     continuityTable: migration.continuityTable,
@@ -4814,6 +4871,9 @@ export async function assemblePlatformServices(
     logger: syncLogger,
   });
   ipcOpts.briefingRpcCtx = { runtime: briefing };
+  // Incident records (Phase 10 IC3): incident.list / get / assemble. cli/ui connections only (checked per
+  // call from the connection's declared kind); LAN-forbidden (I5), not Tauri-exposed (I7).
+  ipcOpts.incidentRpcCtx = { db, engine: incidentEngine };
   // pre-S3 item E: notifications.status / notifications.test (CLI-only; LAN-forbidden, not Tauri).
   ipcOpts.notificationsRpcCtx = { runtime: notificationsRuntime };
   // MCP capture sink (I28): capture.* / captures.* (LAN-forbidden by namespace, not Tauri, no HTTP).
@@ -5253,6 +5313,7 @@ export async function assemblePlatformServices(
     askExplainRecorder,
     agentLatencyRecorder,
     oncallPush,
+    incidentEngine,
     briefing,
     policyHitl,
     // A GETTER, not `policyGate.enforced()` evaluated here: a signed policy applied after boot

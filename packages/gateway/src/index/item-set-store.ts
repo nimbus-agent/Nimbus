@@ -15,6 +15,8 @@ export const REPLACE_ITEM_SET_TYPES: Readonly<Record<string, readonly string[]>>
   jira: ["oncall_shift"],
   // Phase 10 FO2: the drained active-recommendation set is the whole set (no time window).
   vantage: ["cost_recommendation"],
+  // Phase 10 PM2: the complete Linear project listing is the whole set (archived included).
+  linear: ["project"],
 };
 
 /** A bug guard far above any run's keep set (Google: 20 calendars x 10 pages x 250 events). */

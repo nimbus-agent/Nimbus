@@ -19,6 +19,14 @@ describe("parsePreMortemArgs", () => {
     });
   });
 
+  test("a linear: ref, with a URL or spaces in its key, is accepted verbatim", () => {
+    expect(parsePreMortemArgs(["linear:abc123def456"]).epicRef).toBe("linear:abc123def456");
+    expect(parsePreMortemArgs(["linear:https://linear.app/x/project/p-abc"]).epicRef).toBe(
+      "linear:https://linear.app/x/project/p-abc",
+    );
+    expect(parsePreMortemArgs(["linear:Payments rewrite"]).epicRef).toBe("linear:Payments rewrite");
+  });
+
   test("a jira:-prefixed ref is accepted verbatim (parsing does not strip the prefix)", () => {
     expect(parsePreMortemArgs(["jira:PROJ-120"]).epicRef).toBe("jira:PROJ-120");
   });

@@ -46,6 +46,7 @@ import type { EgressRpcCtx } from "../egress-rpc.ts";
 import type { ExecRpcCtx } from "../exec-rpc.ts";
 import type { FederationRpcContext } from "../federation-rpc.ts";
 import type { FleetRpcCtx } from "../fleet-rpc.ts";
+import type { IncidentRpcCtx } from "../incident-rpc.ts";
 import type { BoxKeypair } from "../lan-crypto.ts";
 import type { PairingWindow } from "../lan-pairing.ts";
 import type { LanServer } from "../lan-server.ts";
@@ -238,6 +239,9 @@ export type CreateIpcServerOptions = {
   // (I7), briefing.runNow is CLI-only; LAN-forbidden (I5). Present once assembled at boot, a demo gateway
   // included (no scheduler there); the dispatcher skips when unset.
   briefingRpcCtx?: BriefingRpcCtx;
+  // Incident records (Phase 10 IC3). Backs incident.list / get / assemble: served only to a `cli` or `ui`
+  // connection; LAN-forbidden (I5), not Tauri-exposed (I7). The dispatcher skips when unset.
+  incidentRpcCtx?: IncidentRpcCtx;
   // OS notifications (pre-S3 item E). Backs notifications.status / notifications.test; CLI-only —
   // LAN-forbidden (I5) and not Tauri-exposed (I7). Present once assembled at boot (a demo or an
   // unsupported platform still reports its inactive status); the dispatcher skips when unset.

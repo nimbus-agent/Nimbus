@@ -91,6 +91,7 @@ describe("dispatchConnectorRpc — addMcp gate", () => {
       ensureUserMcpRunning: async () => {},
       userMcpProtectedRoots: () => [],
       ensureUserMcpSandboxClean: async () => true,
+      releaseUserMcpGrantsUnlessRegistered: async () => true,
     },
   });
 
@@ -140,7 +141,7 @@ describe("dispatchConnectorRpc — addMcp gate", () => {
     });
     expect(r.kind).toBe("hit");
     if (r.kind !== "hit") return;
-    expect(r.value).toEqual({ ok: true, serviceId: "mcp_ok" });
+    expect(r.value).toMatchObject({ ok: true, serviceId: "mcp_ok" });
   });
 
   test("the gated payload names the resolved values the handler stores", async () => {

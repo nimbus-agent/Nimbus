@@ -83,11 +83,15 @@ describe("demoRefusal", () => {
     "pack.list",
     "pack.show",
     "oncall.now",
+    "oncall.handoff",
     "briefing.latest",
     "briefing.list",
     "briefing.get",
     "briefing.status",
     "briefing.runNow",
+    "incident.list",
+    "incident.get",
+    "incident.assemble",
   ])("%s is allowed", (m) => {
     expect(demoRefusal(m)).toBeUndefined();
   });

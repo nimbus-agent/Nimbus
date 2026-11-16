@@ -4,6 +4,7 @@ import { wrapToolOutput } from "../../engine/tool-output-envelope.ts";
 import { contractViolations } from "./brief-contract.ts";
 import { assertNeverBrief, type SynthInput } from "./brief-kinds.ts";
 import { renderBriefing } from "./briefing-render.ts";
+import { renderIncident } from "./incident-render.ts";
 import {
   stripMetaPreamble,
   stripSections,
@@ -141,6 +142,8 @@ function deterministicRender(brief: SynthInput, opts?: RenderOpts): string {
       return renderOncall(brief, opts);
     case brief.kind === "briefing":
       return renderBriefing(brief, opts);
+    case brief.kind === "incident":
+      return renderIncident(brief, opts);
     default:
       return assertNeverBrief(brief);
   }
@@ -179,6 +182,8 @@ const TOOL_NAME_BY_KIND: Readonly<Record<SynthInput["kind"], string>> = {
   oncall: "agents.oncall",
   // Never sent anywhere: the briefing calls `synthesize` with no runner (OR-10-8), so no tool envelope exists.
   briefing: "agents.briefing",
+  // Never sent anywhere either: an incident record is rendered with no runner (OR-10-8, I57 (a)).
+  incident: "agents.incident",
 };
 
 function toolNameFor(brief: SynthInput): string {

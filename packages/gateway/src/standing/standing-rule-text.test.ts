@@ -136,7 +136,8 @@ describe("renderRuleText", () => {
     expect(text).toContain("When: Mon-Fri 06:00-10:00 Europe/Berlin");
     expect(text).toContain("Expires: 2026-12-11T00:00:00.000Z (30 days from now)");
     expect(text).toContain("Ceiling: 50 actions");
-    expect(text).toContain("not part of this rule yet");
+    expect(text).toContain("started by you or by its schedule");
+    expect(text).not.toContain("not part of this rule yet");
   });
 
   test("stored text cannot forge a line or move the cursor", () => {
@@ -156,5 +157,36 @@ describe("renderRuleText", () => {
     );
     expect(text.join("\n")).toContain("When: any time");
     expect(text.join("\n")).toContain("Ceiling: 50 actions (7 used)");
+  });
+});
+
+describe("renderRuleText with a guard", () => {
+  const input = {
+    workflowName: "w",
+    workflowSha256: "ab".repeat(32),
+    stepIndex: 1,
+    stepLabel: "archive",
+    toolId: "gmail_thread_archive",
+    actionType: "gmail.thread.archive",
+    scope: { threadId: { query: 0, column: "metadata.threadId" } },
+    window: undefined,
+    expiresAt: Date.UTC(2026, 11, 11),
+    maxActions: 50,
+  };
+  const now = Date.UTC(2026, 10, 11);
+
+  test("an unguarded step's text is unchanged by the guard feature; a guarded one only gains its lines", () => {
+    const plain = renderRuleText(input, now);
+    const guardLines = ["Runs only when: query step 1 (q) selects more than 0"];
+    const guarded = renderRuleText({ ...input, guardLines }, now);
+    expect(plain.some((l) => l.includes("Runs only when"))).toBe(false);
+    expect(guarded.filter((l) => !plain.includes(l))).toEqual(guardLines);
+    expect(guarded.indexOf(guardLines[0] as string)).toBe(3); // right under the Write line
+  });
+
+  test("the edited-workflow line appears only when asked", () => {
+    const edited = renderRuleText({ ...input, workflowEdited: true }, now).join("\n");
+    expect(edited).toContain("can no longer fire");
+    expect(renderRuleText(input, now).join("\n")).not.toContain("can no longer fire");
   });
 });

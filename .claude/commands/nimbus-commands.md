@@ -691,3 +691,9 @@ The script fetches metadata from `registry.npmjs.org` and prints author, maintai
 - Author/maintainer is unfamiliar for a name resembling a well-known package (`expresss`, `lodahs`, `react-domm`)
 
 When all three checks pass, include the package's published age and maintainer in your suggestion.
+
+## `nimbus agent` (Phase 28 AD7b)
+
+`nimbus agent install <claude-code|codex|cursor|vscode> [--scope user|project] [--dry-run] [--yes]` and
+`nimbus agent status [--json]`. Tests run on an in-memory machine
+(`packages/cli/src/agent-kits/fake-env.test-helpers.ts`); never point a kit test at a real home directory.

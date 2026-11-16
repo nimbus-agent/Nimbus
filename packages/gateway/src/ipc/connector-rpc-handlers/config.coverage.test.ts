@@ -54,6 +54,7 @@ function harness(serviceId: string): Harness {
       readPaths: [],
       netHosts: [],
       modelAccess: false,
+      writePaths: [],
     },
     ctx: {
       rec: undefined,

@@ -40,6 +40,8 @@ import {
   checkForwardShareConfinement,
   checkGeneratedManifestConfinement,
   checkIacDiscard,
+  checkIncidentConfinement,
+  checkIncidentRecordConfinement,
   checkItemHistoryConfinement,
   checkLanBoxPathConfinement,
   checkListenerRegistryConfinement,
@@ -2958,10 +2960,11 @@ describe("D28 — push ClientKind confinement (oncall push)", () => {
     expect(flagged([file(ROGUE, "const caller = { clientId: id, kind: 'push' };")])).toBe(true);
     expect(flagged([file(ROGUE, "const k = 'push' as ClientKind;")])).toBe(true);
   });
-  test("allows it in the runner", () => {
+  test("the runner no longer wears the kind (Phase 10 IC3: it pushes records, it dispatches no agent), so the literal is flagged there too", () => {
     expect(flagged([file(RUNNER, `caller: { clientId: "oncall-push", kind: "push" },`)])).toBe(
-      false,
+      true,
     );
+    expect(flagged([file(RUNNER, "const x = 1;")])).toBe(false);
   });
   test("the unquoted `push: null` egress entry is allow-listed in EGRESS, flagged elsewhere", () => {
     const entry = `  fleet: null,\n  push: null,\n});`;
@@ -6978,17 +6981,19 @@ describe("D10 user-write - a write-directory declaration is confined to the poli
     `${SRC}platform/sandbox/sandbox-policy.ts`,
     `${SRC}platform/sandbox/canonical-path.ts`,
     `${SRC}platform/sandbox/write-grant-check.ts`,
+    `${SRC}connectors/lazy-mesh/user-mcp-write-grant.ts`,
   ];
   const USE = "const d = policy.canonicalWriteDirs ?? [];";
 
-  test("the four files that declare, carry and check the field may name it", () => {
+  test("the files that declare, carry and check the field, and the ONE builder, may name it", () => {
     expect(checkWriteDirDeclarationConfined(ALLOWED.map((p) => file(p, USE)))).toEqual([]);
   });
 
-  test("no connectors, ipc, engine or other sandbox file may name it (AD5b-1 has no producer)", () => {
+  test("no other connectors, ipc, engine or sandbox file may name it", () => {
     for (const path of [
       `${SRC}connectors/lazy-mesh/user-mcp.ts`,
-      `${SRC}connectors/lazy-mesh/user-mcp-write-grant.ts`,
+      `${SRC}connectors/lazy-mesh/user-mcp-write-deps.ts`,
+      `${SRC}connectors/lazy-mesh/mesh.ts`,
       `${SRC}connectors/lazy-mesh/wrap-server-spec.ts`,
       `${SRC}ipc/connector-rpc-handlers/config.ts`,
       `${SRC}engine/executor.ts`,
@@ -7028,5 +7033,345 @@ describe("D10 user-write - a write-directory declaration is confined to the poli
 
   test("the rule's anchor is a file it reads", () => {
     expect(RULE_ANCHORS).toContain(`${SRC}platform/sandbox/write-grant-check.ts`);
+  });
+});
+
+describe("D46(a) - incident assembly is inert (Phase 10 IC3, I57 (a))", () => {
+  const file = (relPath: string, contents: string): FileEntry => ({ relPath, contents });
+  const SRC = "packages/gateway/src/";
+  const ASSEMBLE = `${SRC}incident/assemble.ts`;
+  const RENDER = `${SRC}agents/_lib/incident-render.ts`;
+  const LANE = `${SRC}incident/lanes/chat.ts`;
+  const GOOD: FileEntry[] = [
+    file(
+      ASSEMBLE,
+      [
+        'import type { Database } from "bun:sqlite";',
+        'import { synthesize } from "../agents/_lib/synthesize.ts";',
+        'import type { X } from "../connectors/health.ts";',
+        'import { dbRun } from "../db/write.ts";',
+        "",
+      ].join("\n"),
+    ),
+    file(RENDER, 'import { hardenedPlain } from "./render.ts";\n'),
+    file(LANE, 'import { selectServiceMessages } from "../../agents/_lib/oncall-queries.ts";\n'),
+    file(`${SRC}incident/assemble.test.ts`, 'import { x } from "../chatops/x.ts";\nfetch("u");\n'),
+    file(
+      `${SRC}incident/comment.ts`,
+      '// import { x } from "../chatops/x.ts"; fetch("u")\nconst s = "fetch(";\ndb.fetch(1);\n',
+    ),
+    file(`${SRC}agents/_lib/incident-render.test.ts`, 'fetch("u");\n'),
+  ];
+  const rules = (files: FileEntry[]): string[] =>
+    checkIncidentConfinement(files).map((v) => v.rule);
+  const bad = (path: string, contents: string): FileEntry[] => [...GOOD, file(path, contents)];
+
+  test("the control passes", () => {
+    expect(checkIncidentConfinement(GOOD)).toEqual([]);
+  });
+
+  test.each([
+    'import { x } from "../chatops/x.ts";',
+    'import { x } from "../egress/x.ts";',
+    'import { x } from "../federation/x.ts";',
+    'import { x } from "../share/x.ts";',
+    'import { x } from "../connectors/x.ts";',
+    'import { type A, b } from "../connectors/x.ts";',
+    'const m = await import("../chatops/x.ts");',
+    "const m = await import(`../egress/x.ts`);",
+    'const m = require("../egress/x.ts");',
+    'export { x } from "../connectors/x.ts";',
+    'import type { X } from "../chatops/x.ts";',
+    'import "../federation/x.ts";',
+  ])("a forbidden import is flagged in both halves of the scope: %s", (body) => {
+    expect(rules(bad(ASSEMBLE, body))).toEqual(["incident-forbidden-import"]);
+    expect(rules(bad(RENDER, body))).toEqual(["incident-forbidden-import"]);
+    expect(rules(bad(LANE, body))).toEqual(["incident-forbidden-import"]);
+  });
+
+  test.each([
+    'fetch("https://x");',
+    'globalThis.fetch("https://x");',
+    'Bun.fetch("https://x");',
+    'const w = new WebSocket("wss://x");',
+    "const x = new XMLHttpRequest();",
+    'import { get } from "node:http";',
+    'import { get } from "node:https";',
+    'import h from "node:http2";',
+    'import n from "node:net";',
+    'import t from "node:tls";',
+    'import d from "node:dgram";',
+    'import { fetch } from "undici";',
+    "const outbound = fetch;",
+    "const b = fetch.bind(globalThis);",
+    "const w = window;",
+    "const s = self;",
+  ])("a network primitive is flagged: %s", (body) => {
+    expect(rules(bad(ASSEMBLE, body))).toContain("incident-no-network");
+    expect(rules(bad(RENDER, body))).toContain("incident-no-network");
+  });
+
+  test("a type-only connectors import, an allowed side-effect import, a comment and a string are fine", () => {
+    expect(rules(bad(LANE, 'import type { X } from "../../connectors/health.ts";'))).toEqual([]);
+    expect(rules(bad(LANE, 'import "../../db/write.ts";'))).toEqual([]);
+    expect(rules(bad(LANE, '// fetch("u")\nconst s = "globalThis";'))).toEqual([]);
+  });
+
+  test("files outside the scope and test files are not scanned", () => {
+    expect(
+      rules(bad(`${SRC}oncall-push/x.ts`, 'import { x } from "../chatops/x.ts"; fetch("u");')),
+    ).toEqual([]);
+    expect(
+      rules(bad(`${SRC}agents/_lib/render.ts`, 'import { x } from "../../chatops/x.ts";')),
+    ).toEqual([]);
+    expect(rules(bad(`${SRC}incident/x.test.ts`, 'fetch("u");'))).toEqual([]);
+  });
+
+  test("BOTH halves of the scope are anchored: dropping either from the scan is reported", () => {
+    expect(RULE_ANCHORS).toContain(ASSEMBLE);
+    expect(RULE_ANCHORS).toContain(RENDER);
+    const withoutLib = RULE_ANCHORS.filter((a) => a !== RENDER).map((relPath) => ({
+      relPath,
+      contents: "",
+    }));
+    expect(assertScanIsMeaningful(withoutLib)).toEqual([RENDER]);
+    const withoutAssemble = RULE_ANCHORS.filter((a) => a !== ASSEMBLE).map((relPath) => ({
+      relPath,
+      contents: "",
+    }));
+    expect(assertScanIsMeaningful(withoutAssemble)).toEqual([ASSEMBLE]);
+  });
+
+  test("the real repository satisfies the rule and the checker visits both halves of its scope", async () => {
+    const files: FileEntry[] = [];
+    for await (const f of iterateSourceFiles())
+      files.push({ relPath: f.relPath, contents: f.contents });
+    expect(checkIncidentConfinement(files)).toEqual([]);
+    const visited = files.filter(
+      (f) =>
+        !f.relPath.endsWith(".test.ts") &&
+        (f.relPath.startsWith(`${SRC}incident/`) ||
+          /agents\/_lib\/incident[\w.-]*\.ts$/.test(f.relPath)),
+    );
+    expect(visited.some((f) => f.relPath === ASSEMBLE)).toBe(true);
+    expect(visited.some((f) => f.relPath === RENDER)).toBe(true);
+    expect(visited.some((f) => f.relPath.startsWith(`${SRC}incident/lanes/`))).toBe(true);
+    expect(assertScanIsMeaningful(files)).toEqual([]);
+  });
+});
+
+describe("D46(d) - the incident record tables are written only by their store (Phase 10 IC3)", () => {
+  const file = (relPath: string, contents: string): FileEntry => ({ relPath, contents });
+  const SRC = "packages/gateway/src/";
+  const STORE = `${SRC}incident/incident-store.ts`;
+  const DDL = `${SRC}index/incident-record-v100-sql.ts`;
+  const ASSEMBLE = `${SRC}incident/assemble.ts`;
+  const ENGINE = `${SRC}incident/incident-engine.ts`;
+  const ERASURE = `${SRC}incident/incident-erasure.ts`;
+  const RETENTION = `${SRC}incident/incident-retention.ts`;
+  const PUSH_STORE = `${SRC}oncall-push/push-store.ts`;
+  const LOCAL_INDEX = `${SRC}index/local-index.ts`;
+  const DATA_DELETE = `${SRC}commands/data-delete.ts`;
+  const GOOD: FileEntry[] = [
+    file(
+      STORE,
+      'export function upsertIncidentRecord() { dbRun(db, "INSERT INTO incident_record (a) VALUES (1)"); dbRun(db, "DELETE FROM incident_record_version WHERE a = ?"); dbRun(db, "UPDATE incident_record SET a = 1"); }\nexport function markRecordChecked() {}\nexport function eraseIncidentRecordsForService() {}\nexport function pruneIncidentRecords() {}\n',
+    ),
+    file(DDL, 'export const X = ["CREATE TABLE IF NOT EXISTS incident_record (a)"];\n'),
+    file(ASSEMBLE, "const r = upsertIncidentRecord(db, i);\n"),
+    file(ENGINE, "markRecordChecked(db, id, 1);\n"),
+    file(
+      ERASURE,
+      "export function eraseIncidentDataForService() { eraseIncidentRecordsForService(db, s); deletePushedBriefsForErasure(db, e); countPushedBriefsForErasure(db, e); pruneIncidentRecords(db, 1); }\nexport function pruneIncidentRecordsWithBriefs() {}\n",
+    ),
+    file(RETENTION, "pruneIncidentRecordsWithBriefs(db, 1);\n"),
+    file(
+      PUSH_STORE,
+      'export function deletePushedBriefsForErasure() { dbRun(db, "DELETE FROM pushed_brief WHERE a"); }\nexport function countPushedBriefsForErasure() {}\n',
+    ),
+    file(LOCAL_INDEX, "eraseIncidentDataForService(this.db, id);\n"),
+    file(DATA_DELETE, "eraseIncidentDataForService(db, service);\n"),
+    file(
+      `${SRC}ipc/incident-rpc.ts`,
+      'const q = "SELECT * FROM incident_record WHERE id = ?"; // INSERT INTO incident_record\n',
+    ),
+    file(
+      `${SRC}incident/incident-store.test.ts`,
+      'db.run("INSERT INTO incident_record VALUES (1)"); upsertIncidentRecord(); pruneIncidentRecords(); db.run("DELETE FROM pushed_brief");\n',
+    ),
+  ];
+  const rules = (files: FileEntry[]): string[] =>
+    checkIncidentRecordConfinement(files).map((v) => v.rule);
+  const withBad = (path: string, contents: string): FileEntry[] => [...GOOD, file(path, contents)];
+
+  test("the good set is clean", () => {
+    expect(checkIncidentRecordConfinement(GOOD)).toEqual([]);
+  });
+
+  for (const table of ["incident_record", "incident_record_version"]) {
+    for (const [name, sql] of [
+      ["INSERT", `dbRun(db, "INSERT INTO ${table} (a) VALUES (1)")`],
+      ["DELETE", `dbRun(db, "DELETE FROM ${table}")`],
+      ["UPDATE", `dbRun(db, "UPDATE ${table} SET a = 1")`],
+      ["INSERT OR REPLACE", `dbRun(db, "INSERT OR REPLACE INTO ${table} (a) VALUES (1)")`],
+      ["REPLACE INTO", `dbRun(db, "REPLACE INTO ${table} (a) VALUES (1)")`],
+      ["DROP", `dbRun(db, "DROP TABLE ${table}")`],
+      ["DROP IF EXISTS", `dbRun(db, "DROP TABLE IF EXISTS ${table}")`],
+      ["a multi-line DROP", `dbExec(db, \`DROP TABLE\n  IF  EXISTS\n  main.${table}\`)`],
+      ["ALTER", `dbRun(db, "ALTER TABLE ${table} ADD COLUMN x")`],
+      ["a quoted name", `dbRun(db, 'INSERT INTO "${table}" (a) VALUES (1)')`],
+      ["a bracketed name", `dbRun(db, 'INSERT INTO [${table}] (a) VALUES (1)')`],
+      ["a multi-line statement", `dbRun(db, \`INSERT\n  INTO\n  ${table} (a) VALUES (1)\`)`],
+      ["a schema-qualified DELETE", `dbRun(db, "DELETE FROM main.${table}")`],
+    ] as const) {
+      test(`${table}: ${name} outside the store is refused`, () => {
+        expect(rules(withBad(`${SRC}incident/lanes/evil.ts`, `${sql};\n`))).toEqual([
+          "incident-record-confined",
+        ]);
+        expect(rules(withBad(`${SRC}ipc/x-rpc.ts`, `${sql};\n`))).toEqual([
+          "incident-record-confined",
+        ]);
+      });
+    }
+  }
+
+  test("a write verb on pushed_brief outside its store is refused, a read is not", () => {
+    for (const sql of [
+      'db.run("DELETE FROM pushed_brief")',
+      'db.run("INSERT INTO pushed_brief (a) VALUES (1)")',
+      'db.run("UPDATE pushed_brief SET a = 1")',
+    ]) {
+      expect(rules(withBad(ERASURE.replace("erasure", "x"), `${sql};\n`))).toEqual([
+        "incident-record-confined",
+      ]);
+    }
+    expect(rules(withBad(`${SRC}ipc/x.ts`, 'db.query("SELECT * FROM pushed_brief");\n'))).toEqual(
+      [],
+    );
+  });
+
+  test("each guarded identifier is refused outside its allowed files", () => {
+    const cases: [string, string[]][] = [
+      ["upsertIncidentRecord(db, i);", [ENGINE, ERASURE, RETENTION, LOCAL_INDEX]],
+      ["markRecordChecked(db, id, 1);", [ASSEMBLE, ERASURE, RETENTION]],
+      ["eraseIncidentRecordsForService(db, s);", [ASSEMBLE, ENGINE, LOCAL_INDEX, DATA_DELETE]],
+      ["pruneIncidentRecords(db, 1);", [ASSEMBLE, ENGINE, RETENTION, LOCAL_INDEX]],
+      ["eraseIncidentDataForService(db, s);", [ASSEMBLE, ENGINE, RETENTION, STORE]],
+      ["pruneIncidentRecordsWithBriefs(db, 1);", [ASSEMBLE, ENGINE, LOCAL_INDEX, STORE]],
+      ["deletePushedBriefsForErasure(db, e);", [ASSEMBLE, ENGINE, RETENTION, STORE, LOCAL_INDEX]],
+      ["countPushedBriefsForErasure(db, e);", [ASSEMBLE, ENGINE, RETENTION, STORE, DATA_DELETE]],
+    ];
+    for (const [call, paths] of cases) {
+      for (const path of paths) {
+        const files = [...GOOD.filter((f) => f.relPath !== path), file(path, `${call}\n`)];
+        expect(rules(files), `${call} in ${path}`).toEqual(["incident-record-confined"]);
+      }
+      expect(rules(withBad(`${SRC}connectors/evil-sync.ts`, `${call}\n`)), call).toEqual([
+        "incident-record-confined",
+      ]);
+    }
+  });
+
+  test("pruneIncidentRecords does not match its WithBriefs wrapper, and a comment and a read are fine", () => {
+    expect(rules(withBad(RETENTION, "pruneIncidentRecordsWithBriefs(db, 1);\n"))).toEqual([]);
+    expect(
+      rules(
+        withBad(
+          `${SRC}incident/ok.ts`,
+          '// INSERT INTO incident_record; upsertIncidentRecord\nconst q = "SELECT * FROM incident_record_version";\n',
+        ),
+      ),
+    ).toEqual([]);
+  });
+
+  test("the store is anchored, and the real repository satisfies the rule", async () => {
+    expect(RULE_ANCHORS).toContain(STORE);
+    const files: FileEntry[] = [];
+    for await (const f of iterateSourceFiles())
+      files.push({ relPath: f.relPath, contents: f.contents });
+    expect(checkIncidentRecordConfinement(files)).toEqual([]);
+    expect(assertScanIsMeaningful(files)).toEqual([]);
+  });
+});
+
+describe("D44(g) — a workflow `when` guard stays out of the approval check and its module stays pure (I55)", () => {
+  const file = (relPath: string, contents: string): FileEntry => ({ relPath, contents });
+  const SRC = "packages/gateway/src/";
+  const GUARD = `${SRC}automation/workflow-guard.ts`;
+  const STEP = `${SRC}engine/standing-rule-step.ts`;
+  const RUNNER = `${SRC}automation/workflow-runner.ts`;
+  const DERIVE = `${SRC}standing/standing-rule-derive.ts`;
+  const RPC = `${SRC}ipc/standing-rpc.ts`;
+  const OTHER = `${SRC}ipc/other.ts`;
+  const GOOD_GUARD = [
+    'import { sanitisePreviewText } from "../connectors/connector-writes/sanitise.ts";',
+    'import type { WorkflowGuard } from "./workflow-steps.ts";',
+    "export function evaluateGuard() {}",
+    "export function guardRequiresPresence() {}",
+    "export function guardRuleLines() {}",
+  ].join("\n");
+  const GOOD: FileEntry[] = [
+    file(GUARD, GOOD_GUARD),
+    file(STEP, "export function standingRuleStep(action) { return action.payload; }\n"),
+    file(RUNNER, "evaluateGuard(step.when, q); guardRequiresPresence(step.when);\n"),
+    file(DERIVE, "guardRequiresPresence(step.when); guardRuleLines(step.when, steps);\n"),
+    file(RPC, "guardRequiresPresence(step.when); guardRuleLines(step.when, steps);\n"),
+  ];
+  const rules = (files: FileEntry[]): string[] => [
+    ...new Set(checkStandingApprovals(files).map((v) => v.rule)),
+  ];
+  const swap = (path: string, contents: string): FileEntry[] =>
+    GOOD.map((f) => (f.relPath === path ? file(path, contents) : f));
+
+  test("the control: the allowed shape is clean", () => {
+    expect(checkStandingApprovals(GOOD)).toEqual([]);
+  });
+
+  test("FAILS when the guard module imports an executor, a vault, a network or a model module", () => {
+    for (const imp of [
+      'import { ToolExecutor } from "../engine/executor.ts";',
+      'import { vault } from "../vault/index.ts";',
+      'import { appendEgress } from "../egress/egress-ledger.ts";',
+      'import http from "node:http";',
+      'import "../x.ts";',
+      'const m = await import("../x.ts");',
+    ]) {
+      expect(rules(swap(GUARD, `${GOOD_GUARD}\n${imp}\n`)), imp).toEqual([
+        "standing-guard-confined",
+      ]);
+    }
+    expect(rules(swap(GUARD, `${GOOD_GUARD}\nconst r = fetch("x");\n`))).toEqual([
+      "standing-guard-confined",
+    ]);
+  });
+
+  test("FAILS when the standing-rule step reads a when or names the guard module", () => {
+    for (const body of [
+      "const g = step.when;",
+      "const { when } = step;",
+      'const g = step["when"];',
+      "const g = step['when'];",
+      "const g = step[ `when` ];",
+      'import { evaluateGuard } from "../automation/workflow-guard.ts";',
+    ]) {
+      expect(rules(swap(STEP, `${body}\nexport function standingRuleStep() {}\n`)), body).toContain(
+        "standing-guard-confined",
+      );
+    }
+    expect(
+      rules(
+        swap(
+          STEP,
+          "// when a guard (workflow-guard) holds\nexport function standingRuleStep() {}\n",
+        ),
+      ),
+    ).toEqual([]);
+  });
+
+  test("FAILS when a guard function is named outside the runner, derivation and the standing RPC", () => {
+    for (const fn of ["evaluateGuard", "guardRequiresPresence", "guardRuleLines"]) {
+      expect(rules([...GOOD, file(OTHER, `${fn}(x);`)]), fn).toEqual(["standing-guard-confined"]);
+    }
+    expect(rules([...GOOD, file(OTHER, "// evaluateGuard guardRequiresPresence")])).toEqual([]);
   });
 });

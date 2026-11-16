@@ -14,6 +14,7 @@ import type { LocalIndex } from "../../index/local-index.ts";
 import type { SyncScheduler } from "../../sync/scheduler.ts";
 import type { NimbusVault } from "../../vault/nimbus-vault.ts";
 
+import type { ClientKind } from "../server/client-kind.ts";
 export type ConnectorRpcHit = { kind: "hit"; value: unknown };
 
 /** One OAuth provider's client credentials plus the help text shown when they are missing. */
@@ -94,6 +95,13 @@ export type ConnectorRpcHandlerContext = {
    * missing.
    */
   realpath?: (p: string) => string;
+  /**
+   * The kind the calling connection declared. Registering a user MCP server WITH a write directory
+   * needs `cli` or `ui` (I15, AD5b; owner ruling OR-AD-33). Absent is treated as undeclared.
+   */
+  clientKind?: ClientKind;
+  /** True once the human-only consent wrapper turned a non-human approval into a decline. */
+  agentAnswerWasNonHuman?: () => boolean;
   /**
    * The gateway composition's continuity table, which `connector.remove`'s extension-backed refusal
    * binds through. Absent means the production default.

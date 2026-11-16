@@ -10,6 +10,7 @@ import { CATALOG_AGENT_NAMES } from "../catalog/agent-catalog.ts";
 import { builtinCatalogConnectorIds } from "../catalog/catalog-list.ts";
 import { initLayeredConfig, resetLayeredConfigsForTests } from "../config/layered-config.ts";
 import { createMemoryIndexDb } from "../connectors/connector-sync-test-helpers.ts";
+import { engineForConfigDir } from "../incident/__fixtures__/test-engine.ts";
 import { BUNDLED_PACKS } from "../packs/bundled-packs.ts";
 import {
   installPack,
@@ -58,6 +59,7 @@ const approve: PackOwnerGate = async () => true;
 
 function boot(): OncallPushRuntime {
   const rt = assembleOncallPushRuntime({
+    records: engineForConfigDir(db, dir, () => nowMs),
     settleImmediately: true,
     checkMs: 60_000,
     db,

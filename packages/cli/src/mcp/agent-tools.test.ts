@@ -1,4 +1,6 @@
 import { expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { TOOL_SPECS } from "./adapter.ts";
 import { AGENT_TOOL_SPECS, agentTimeoutMs, failBriefsForClient } from "./agent-tools.ts";
 import type { IpcCallable } from "./client-surface.ts";
@@ -456,5 +458,38 @@ test("every tool's BUILT params reach its own agents.* method with only accepted
     );
     // A parameter the model can set must actually reach the wire, or it is decoration.
     expect(sent.sort()).toEqual(Object.keys(row.args).sort());
+  }
+});
+
+test("every agent the bundled Developer pack makes visible has an MCP read tool", () => {
+  // The pack file is read as data (cli never imports the gateway). Its agents are the ones a coding
+  // agent can actually call; premortem and preflight have no MCP tool by design.
+  const packPath = join(
+    import.meta.dir,
+    "..",
+    "..",
+    "..",
+    "gateway",
+    "src",
+    "packs",
+    "bundled",
+    "developer.json",
+  );
+  const pack = JSON.parse(readFileSync(packPath, "utf8")) as { defaults: string };
+  const m = /visible = \[(.*)\]/.exec(pack.defaults);
+  const agents = (m?.[1] ?? "").split(",").map((s) => s.trim().replaceAll('"', ""));
+  const toolFor: Record<string, string> = {
+    why: "explainWhy",
+    impact: "assessImpact",
+    ownership: "findOwners",
+    expert: "findExpert",
+    catchup: "getCatchup",
+    conflicts: "findConflicts",
+    decisions: "findDecisions",
+    glossary: "getGlossary",
+  };
+  expect(agents.sort()).toEqual(Object.keys(toolFor).sort());
+  for (const a of agents) {
+    expect(AGENT_TOOL_SPECS.map((t) => t.name)).toContain(toolFor[a] ?? "");
   }
 });

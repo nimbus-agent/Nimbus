@@ -26,6 +26,19 @@ export type WorkflowProvenance = {
   readonly fieldSources: Readonly<
     Record<string, "constant" | { readonly query: number; readonly column: string }>
   >;
+  /**
+   * Display and history only (never read by the standing-rule check or the learner): the `when`
+   * comparisons that held for a guarded step, at most four, each the flat index of the query step,
+   * the operator, the operand and the count observed. Small numbers and fixed words, so the audit
+   * row's size cap bounds it.
+   */
+  readonly guard?: readonly {
+    readonly query: number;
+    readonly op: string;
+    readonly value: number;
+    readonly observed: number;
+    readonly capped: boolean;
+  }[];
 };
 
 export type PlannedAction = {
@@ -91,7 +104,10 @@ export type AgentProposer = {
   captureId: string;
   /** The client's declared name, or null. */
   label: string | null;
-  /** Where the label came from: the connection's own claim, or the owner-written kit config. */
+  /**
+   * Where the label came from: the client's declared name, or the `--agent` value of the agent's
+   * server entry. Both are what the connecting process says; neither is verified.
+   */
   labelSource: "declared" | "kit";
   /** The agent's own one-line summary of what it wants. */
   summary: string;
@@ -171,7 +187,10 @@ export interface AuditSink {
     actionJson: string;
     timestamp: number;
     sessionId?: string;
-  }): void;
+    // A sink that can name the row it appended returns its `audit_log.id`; one that cannot returns
+    // nothing, and a caller that needs the id (the standing-rule owner approval) then fails closed.
+    // biome-ignore lint/suspicious/noConfusingVoidType: a sink with nothing to report (a `void` fake) stays assignable
+  }): number | void;
 }
 
 export interface ConnectorDispatcher {

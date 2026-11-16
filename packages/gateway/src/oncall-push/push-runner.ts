@@ -1,36 +1,43 @@
 import type { Database } from "bun:sqlite";
-import { selectIncidentById } from "../agents/_lib/oncall-queries.ts";
 import type { OncallIncident } from "../agents/_lib/oncall-types.ts";
 import type { NimbusOncallPushToml } from "../config/oncall-push-toml.ts";
-import type { LocalIndex } from "../index/local-index.ts";
-import { type AgentsRpcContext, AgentsRpcError, dispatchAgentsRpc } from "../ipc/agents-rpc.ts";
+import type { AssembleOutcome } from "../incident/assemble.ts";
+import { getByTriggerItem } from "../incident/incident-store.ts";
+import { isTriggerService } from "../incident/trigger-sources.ts";
+import {
+  proveRecordForRetry,
+  pushIncidentForItem,
+  type RecordPushSkip,
+  selectRecordPushCandidates,
+} from "./push-record-selector.ts";
 import { resolveSeveritySet, selectPushCandidates } from "./push-selector.ts";
 import type { BriefOutcome, PushedBriefRow, PushStore } from "./push-store.ts";
 
-export const PUSH_BRIEF_TIMEOUT_MS = 30_000;
 const DAY_MS = 86_400_000;
 const MAX_DETAIL = 500;
 
 /**
- * `runner` is OMITTED by type: a push dispatch can never carry a synthesis runner, so the brief is
- * always the deterministic render and no unattended push reaches a model (spec § 2.3).
+ * The incident engine's `assembleNow`, injected: the push no longer dispatches the `agents.oncall` agent, it
+ * pushes the record the engine assembled (Phase 10 IC3), assembling on demand when a candidate has none. The
+ * engine is idempotent and single-flight per trigger item, so this joins a pass that is assembling the same item.
  */
-export type PushDispatchContext = Omit<AgentsRpcContext, "caller" | "runner"> & {
-  readonly caller: { readonly clientId: string; readonly kind: "push" };
+export type PushRecords = {
+  readonly assembleNow: (triggerItemId: string) => Promise<AssembleOutcome>;
 };
-export type PushDispatch = (
-  method: string,
-  params: unknown,
-  ctx: PushDispatchContext,
-) => Promise<unknown>;
 export type PushDelivery = { readonly row: PushedBriefRow; readonly incident: OncallIncident };
-export type PushRunSkip = "disabled" | "not_pagerduty" | "identity_unresolved" | "not_reconciled";
+/** `not_a_source`: the sync that triggered the run is not one of the `[oncall.push] sources`. */
+export type PushRunSkip = "disabled" | "not_a_source" | "identity_unresolved" | "not_reconciled";
 export type PushRunSummary = {
   readonly selected: number;
   readonly ok: number;
   readonly failed: number;
   readonly skipped?: PushRunSkip;
+  /** Records that were NOT pushed this run, by reason (a diagnosable silent non-push). */
+  readonly notPushed?: Readonly<Partial<Record<RecordPushSkip, number>>>;
 };
+
+/** A retried row; `notDelivered` names why a stored brief of a non-PagerDuty record was not pushed. */
+export type PushRetryResult = PushedBriefRow & { readonly notDelivered?: string };
 
 export class PushRetryRefusedError extends Error {
   constructor(
@@ -48,134 +55,97 @@ export interface OncallPushRunnerDeps {
   readonly config: Omit<NimbusOncallPushToml, "enabled">;
   readonly isEnabled: () => boolean;
   readonly pagerdutyAliases: readonly string[];
-  readonly configDir: string;
-  readonly index?: LocalIndex;
   readonly resolveSelf: () => Promise<string | null>;
   readonly deliver: (items: readonly PushDelivery[]) => Promise<void>;
-  readonly dispatch?: PushDispatch;
-  readonly timeoutMs?: number;
+  readonly records: PushRecords;
+  /** A configured service's PagerDuty service ids (read fresh), for the on-call proof of a non-PagerDuty record. */
+  readonly serviceConfig: (
+    serviceId: string,
+  ) => { readonly pagerdutyServices: readonly string[] } | undefined;
   readonly now?: () => number;
 }
 
 export interface OncallPushRunner {
   run(serviceId: string): Promise<PushRunSummary>;
-  retry(incidentId: string): Promise<PushedBriefRow>;
+  retry(incidentId: string): Promise<PushRetryResult>;
+  /** The summary of the last completed run (counts per not-pushed reason included), for diagnosis. */
+  lastRun(): PushRunSummary | null;
 }
-
-const defaultDispatch: PushDispatch = async (method, params, ctx) => {
-  const out = await dispatchAgentsRpc(method, params, ctx);
-  if (out.kind === "miss") throw new AgentsRpcError(-32601, `agent method not served: ${method}`);
-  return out.value;
-};
 
 function clip(s: string): string {
   return s.length > MAX_DETAIL ? `${s.slice(0, MAX_DETAIL)}…` : s;
 }
-function sessionIdOf(v: unknown): string | undefined {
-  if (v === null || typeof v !== "object" || !("sessionId" in v)) return undefined;
-  const id: unknown = v.sessionId;
-  return typeof id === "string" && id !== "" ? id : undefined;
-}
-function field(p: unknown, key: string): unknown {
-  return p !== null && typeof p === "object" && key in p
-    ? (p as Record<string, unknown>)[key]
-    : undefined;
-}
-/**
- * A `briefError` payload's `error`. `emitBriefWithSynthesis` always sends a string; anything else
- * carries no usable message and reads as `unknown`, never as `[object Object]`.
- */
-function briefErrorText(p: unknown): string {
-  const error = field(p, "error");
-  return typeof error === "string" ? error : "unknown";
+
+function failed(code: string, sessionId: string | null = null): BriefOutcome {
+  return { status: "failed", sessionId, failureCode: code };
 }
 
-/** One `agents.oncall` dispatch, awaited through the runner's OWN listener (fleet-invoker's shape). */
-function briefIncident(deps: OncallPushRunnerDeps, incidentId: string): Promise<BriefOutcome> {
-  const dispatch = deps.dispatch ?? defaultDispatch;
-  const timeoutMs = deps.timeoutMs ?? PUSH_BRIEF_TIMEOUT_MS;
-  return new Promise<BriefOutcome>((resolve) => {
-    let settled = false;
-    let expected: string | undefined;
-    const pending: Array<{ m: string; p: unknown }> = [];
-    const settle = (o: BriefOutcome): void => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      resolve(o);
+/** The two fields the headline reads from the stored brief JSON, plus the record's id and version. */
+function compatibilityJson(
+  rowService: string | null,
+  recordJson: string,
+  id: string,
+  version: number,
+): string {
+  let deployment: { title: string; startedAtMs: number; finishedAtMs: number | null } | null = null;
+  try {
+    const rec = JSON.parse(recordJson) as {
+      change?: {
+        deployment?: { title?: unknown; startedAtMs?: unknown; finishedAtMs?: unknown } | null;
+      };
     };
-    const timer = setTimeout(
-      () =>
-        settle({
-          status: "failed",
-          sessionId: expected ?? null,
-          failureCode: `timeout: no brief in ${timeoutMs}ms`,
-        }),
-      timeoutMs,
-    );
-    const consider = (m: string, p: unknown): void => {
-      if (settled) return;
-      if (expected === undefined) {
-        pending.push({ m, p });
-        return;
-      }
-      if (sessionIdOf(p) !== expected) return;
-      if (m === "oncall.briefReady") {
-        const brief = field(p, "brief");
-        settle({
-          status: "ok",
-          sessionId: expected,
-          briefMarkdown: typeof brief === "string" ? brief : "",
-          briefJson: JSON.stringify(field(p, "findings") ?? {}),
-        });
-      } else if (m === "oncall.briefError") {
-        settle({
-          status: "failed",
-          sessionId: expected,
-          failureCode: `brief_error: ${clip(briefErrorText(p))}`,
-        });
-      }
-    };
-    void (async () => {
-      try {
-        const out = await dispatch(
-          "agents.oncall",
-          { incidentId },
-          {
-            db: deps.db,
-            notify: consider,
-            configDir: deps.configDir,
-            ...(deps.index === undefined ? {} : { index: deps.index }),
-            // Server-derived: the gateway's own post-sync hook is calling (D28 confines this literal).
-            caller: { clientId: "oncall-push", kind: "push" },
-          },
-        );
-        expected = sessionIdOf(out);
-        if (expected === undefined) {
-          settle({
-            status: "failed",
-            sessionId: null,
-            failureCode: "no_session: agents.oncall returned no sessionId",
-          });
-          return;
-        }
-        for (const q of pending.splice(0)) consider(q.m, q.p);
-      } catch (e) {
-        settle({
-          status: "failed",
-          sessionId: null,
-          failureCode: `refused: ${clip(e instanceof Error ? e.message : String(e))}`,
-        });
-      }
-    })();
+    const d = rec.change?.deployment;
+    if (
+      d !== null &&
+      d !== undefined &&
+      typeof d.title === "string" &&
+      typeof d.startedAtMs === "number"
+    ) {
+      deployment = {
+        title: d.title,
+        startedAtMs: d.startedAtMs,
+        finishedAtMs: typeof d.finishedAtMs === "number" ? d.finishedAtMs : null,
+      };
+    }
+  } catch {
+    // an unreadable record reads as "no deployment"; the Markdown is still the brief
+  }
+  return JSON.stringify({
+    binding: { nimbusServiceId: rowService },
+    deployment,
+    recordId: id,
+    version,
   });
+}
+
+/**
+ * The brief of one trigger item: the record the engine assembled (on demand when there is none), its Markdown as
+ * the stored brief and a small compatibility JSON the headline parses. Never throws: any failure is a `failed`
+ * outcome, stored like any other so dedup holds and `retry` can re-assemble.
+ */
+async function briefFromRecord(deps: OncallPushRunnerDeps, itemId: string): Promise<BriefOutcome> {
+  try {
+    const out = await deps.records.assembleNow(itemId);
+    if (out.outcome === "missing") return failed("assembly: the item is no longer indexed");
+    const row = getByTriggerItem(deps.db, itemId);
+    if (row === null) return failed("assembly: no record was stored");
+    return {
+      status: "ok",
+      sessionId: `incident:${row.id}:v${String(row.version)}`,
+      briefMarkdown: row.markdown,
+      briefJson: compatibilityJson(row.service, row.record_json, row.id, row.version),
+    };
+  } catch (e) {
+    return failed(`assembly: ${clip(e instanceof Error ? e.message : String(e))}`);
+  }
 }
 
 export function createOncallPushRunner(deps: OncallPushRunnerDeps): OncallPushRunner {
   const now = deps.now ?? Date.now;
   let inFlight: Promise<PushRunSummary> | undefined;
   let rerunRequested = false;
-  const retrying = new Map<string, Promise<PushedBriefRow>>();
+  const retrying = new Map<string, Promise<PushRetryResult>>();
+  let lastSummary: PushRunSummary | null = null;
 
   async function once(): Promise<PushRunSummary> {
     if (!deps.isEnabled()) return { selected: 0, ok: 0, failed: 0, skipped: "disabled" };
@@ -184,12 +154,27 @@ export function createOncallPushRunner(deps: OncallPushRunnerDeps): OncallPushRu
     const personId = await deps.resolveSelf();
     if (personId === null) return { selected: 0, ok: 0, failed: 0, skipped: "identity_unresolved" };
     deps.store.pruneOlderThan(now() - deps.config.retentionDays * DAY_MS);
-    const candidates = selectPushCandidates(deps.db, {
-      personId,
-      severities: resolveSeveritySet(deps.config, deps.pagerdutyAliases),
+    const severities = resolveSeveritySet(deps.config, deps.pagerdutyAliases);
+    const sources = deps.config.sources;
+    // PagerDuty keeps ONLY its assignment-based path; every other opted-in source is a stored record that
+    // must pass the three-part proof inside `selectRecordPushCandidates` (never a broadcast).
+    const pagerduty = sources.includes("pagerduty")
+      ? selectPushCandidates(deps.db, {
+          personId,
+          severities,
+          enabledAtMs: enabledAt,
+          alreadyPushed: (id) => deps.store.has(id),
+        })
+      : [];
+    const records = selectRecordPushCandidates(deps.db, {
+      sources,
+      severities,
       enabledAtMs: enabledAt,
+      nowMs: now(),
       alreadyPushed: (id) => deps.store.has(id),
+      serviceConfig: deps.serviceConfig,
     });
+    const candidates = [...pagerduty, ...records.candidates];
     const items: PushDelivery[] = [];
     let ok = 0;
     try {
@@ -198,7 +183,7 @@ export function createOncallPushRunner(deps: OncallPushRunnerDeps): OncallPushRu
         if (deps.store.has(incident.id)) continue;
         // A live disable mid-run (a pack removed) stops the loop; the finally delivers what is stored.
         if (!deps.isEnabled()) break;
-        const outcome = await briefIncident(deps, incident.id); // NOSONAR S9382: one agents.oncall session at a time - the has() re-check above must see every row stored before it, and a failed insert must stop the later briefs (the finally delivers the rows already stored)
+        const outcome = await briefFromRecord(deps, incident.id); // NOSONAR S9382: one assembly at a time - the has() re-check above must see every row stored before it, and a failed insert must stop the later briefs (the finally delivers the rows already stored)
         const row = deps.store.insert(incident.id, outcome, now());
         if (row.status === "ok") ok += 1;
         items.push({ row, incident });
@@ -208,7 +193,12 @@ export function createOncallPushRunner(deps: OncallPushRunnerDeps): OncallPushRu
       // an insert that throws mid-loop must not strand the rows before it undelivered.
       if (items.length > 0) await deps.deliver(items);
     }
-    return { selected: candidates.length, ok, failed: items.length - ok };
+    return {
+      selected: candidates.length,
+      ok,
+      failed: items.length - ok,
+      notPushed: records.notPushed,
+    };
   }
 
   async function loop(): Promise<PushRunSummary> {
@@ -218,6 +208,7 @@ export function createOncallPushRunner(deps: OncallPushRunnerDeps): OncallPushRu
         rerunRequested = false;
         last = await once(); // NOSONAR S9382: single-flight rerun - the loop condition is set by run() calls landing while the previous once() ran, and runs never overlap (each dedups against the rows the last one stored)
       }
+      lastSummary = last;
       return last;
     } finally {
       // Same synchronous step as the final `rerunRequested` check (and the throw path): a run()
@@ -227,7 +218,7 @@ export function createOncallPushRunner(deps: OncallPushRunnerDeps): OncallPushRu
     }
   }
 
-  async function doRetry(incidentId: string): Promise<PushedBriefRow> {
+  async function doRetry(incidentId: string): Promise<PushRetryResult> {
     const existing = deps.store.get(incidentId);
     if (existing === null)
       throw new PushRetryRefusedError(
@@ -240,7 +231,7 @@ export function createOncallPushRunner(deps: OncallPushRunnerDeps): OncallPushRu
         `${incidentId} already has a brief; use nimbus oncall --incident ${incidentId}`,
       );
     }
-    const outcome = await briefIncident(deps, incidentId);
+    const outcome = await briefFromRecord(deps, incidentId);
     let row: PushedBriefRow;
     try {
       row = deps.store.applyRetry(incidentId, outcome, now());
@@ -255,15 +246,32 @@ export function createOncallPushRunner(deps: OncallPushRunnerDeps): OncallPushRu
       }
       throw e;
     }
-    const incident = selectIncidentById(deps.db, incidentId);
-    if (row.status === "ok" && incident !== null) await deps.deliver([{ row, incident }]);
+    if (row.status !== "ok") return row;
+    if (incidentId.startsWith("pagerduty:")) {
+      // PagerDuty keeps its retry exactly as it was: deliver when the incident is still indexed.
+      const incident = pushIncidentForItem(deps.db, incidentId);
+      if (incident !== null) await deps.deliver([{ row, incident }]);
+      return row;
+    }
+    // Any other source: the SAME proof as the first push, at retry time (one predicate, push-record-selector).
+    const severities = resolveSeveritySet(deps.config, deps.pagerdutyAliases);
+    const proof = proveRecordForRetry(deps.db, incidentId, {
+      sources: deps.config.sources,
+      severities,
+      nowMs: now(),
+      serviceConfig: deps.serviceConfig,
+    });
+    if (!proof.delivered) return { ...row, notDelivered: proof.reason };
+    await deps.deliver([{ row, incident: proof.incident }]);
     return row;
   }
 
   return {
     async run(serviceId) {
-      if (serviceId !== "pagerduty")
-        return { selected: 0, ok: 0, failed: 0, skipped: "not_pagerduty" };
+      // A cheap early exit, NOT the guard: whether a record may be pushed is decided inside the selectors.
+      if (!isTriggerService(serviceId) || !deps.config.sources.includes(serviceId)) {
+        return { selected: 0, ok: 0, failed: 0, skipped: "not_a_source" };
+      }
       if (inFlight !== undefined) {
         rerunRequested = true;
         return inFlight;
@@ -272,10 +280,12 @@ export function createOncallPushRunner(deps: OncallPushRunnerDeps): OncallPushRu
       return inFlight;
     },
 
+    lastRun: () => lastSummary,
+
     retry(incidentId) {
       // Single-flight per incident: the `failed` check and the write are separated by a brief that
       // can take PUSH_BRIEF_TIMEOUT_MS, so two concurrent retries would both pass the check, open
-      // two `agents.oncall` sessions, and race their writes. A second caller joins the attempt
+      // two assemblies, and race their writes. A second caller joins the attempt
       // already running instead.
       const pending = retrying.get(incidentId);
       if (pending !== undefined) return pending;

@@ -9,8 +9,10 @@ import {
   loadNimbusPreflightFromConfigDir,
   loadNimbusServiceConfigsFromConfigDir,
 } from "../../config/nimbus-toml.ts";
+import { loadNimbusPreflightRiskFromConfigDir } from "../../config/preflight-risk-toml.ts";
 import { createConnectorDispatcher, meshDispatcherClient } from "../../connectors/registry.ts";
 import { asRecord } from "../../connectors/unknown-record.ts";
+import { userMcpWriteGrantsReader } from "../../connectors/user-mcp-write-reader.ts";
 import { graphAnnotatedDeployment } from "../../deployment/graph-annotated.ts";
 import { makeEgressSink, NULL_EGRESS_SINK } from "../../egress/egress-ledger.ts";
 import {
@@ -67,6 +69,7 @@ import { dispatchClipRpc } from "../clip-rpc.ts";
 import { ComputerRpcError, dispatchComputerRpc } from "../computer-rpc.ts";
 import { ConnectorRpcError, dispatchConnectorRpc } from "../connector-rpc.ts";
 import { humanOnlyConsent } from "../consent.ts";
+import { CostRpcError, dispatchCostRpc } from "../cost-rpc.ts";
 import { DataRpcError, dispatchDataRpc } from "../data-rpc.ts";
 import {
   DecisionsRpcError,
@@ -84,6 +87,7 @@ import { dispatchFleetRpc, FleetRpcError } from "../fleet-rpc.ts";
 import { dispatchGlossaryRpc, GlossaryRpcError } from "../glossary-rpc.ts";
 import { dispatchHitlRpc, HitlRpcError } from "../hitl-rpc.ts";
 import { dispatchIdentityRpc, type IdentityRpcContext, IdentityRpcError } from "../identity-rpc.ts";
+import { dispatchIncidentRpc, IncidentRpcError } from "../incident-rpc.ts";
 import { dispatchIndexDemoSymbolRpc, IndexDemoSymbolRpcError } from "../index-demo-symbol-rpc.ts";
 import { dispatchIndexRebodyRpc, IndexRebodyRpcError } from "../index-rebody-rpc.ts";
 import { dispatchIndexReembedRpc, IndexReembedRpcError } from "../index-reembed-rpc.ts";
@@ -95,6 +99,7 @@ import { dispatchMediaRpc } from "../media-rpc.ts";
 import { dispatchMetricsRpc, MetricsRpcError } from "../metrics-rpc.ts";
 import { dispatchMigrationRpc } from "../migration-rpc.ts";
 import { dispatchNotificationsRpc } from "../notifications-rpc.ts";
+import { dispatchOncallHandoffRpc } from "../oncall-handoff-rpc.ts";
 import { dispatchOncallNowRpc, OncallNowRpcError } from "../oncall-now-rpc.ts";
 import { dispatchOncallPushRpc, OncallPushRpcError } from "../oncall-push-rpc.ts";
 import { dispatchOwnershipRpc } from "../ownership-rpc.ts";
@@ -111,6 +116,7 @@ import type { ClientSession } from "../session.ts";
 import { dispatchSessionRpc, SessionRpcError } from "../session-rpc.ts";
 import { dispatchShareRpc, ShareRpcError } from "../share-rpc.ts";
 import { createStandingOwnerAsk, dispatchStandingRpc } from "../standing-rpc.ts";
+import { dispatchStatuspageRpc, StatuspageRpcError } from "../statuspage-rpc.ts";
 import { dispatchTeamVaultRpc, TeamVaultRpcError } from "../teamvault-rpc.ts";
 import { dispatchToolgenRpc, ToolgenRpcError } from "../toolgen-rpc.ts";
 import { dispatchTourRpc, TourRpcError } from "../tour-rpc.ts";
@@ -580,6 +586,7 @@ export async function tryDispatchPreflightRpc(
     const out = await dispatchPreflightRpc(method, params, {
       db: ctx.options.localIndex.getDatabase(),
       loadConfig: () => loadNimbusServiceConfigsFromConfigDir(configDir),
+      loadRiskConfig: () => loadNimbusPreflightRiskFromConfigDir(configDir),
     });
     if (out.kind === "hit") return out.value;
   } catch (e) {
@@ -1524,7 +1531,8 @@ export async function tryDispatchFleetRpc(
 }
 
 /**
- * `oncall.now` (Phase 10 MB3) — who is on call, from the local index only. Separate from the push
+ * `oncall.now` (Phase 10 MB3) — who is on call, from the local index only, and `oncall.handoff` (Phase 17), the
+ * shift handoff brief from the same index (read-only, no HITL). Separate from the push
  * dispatcher because that one needs the push runtime and this needs only the index and the config dir
  * (both on `ServerCtx.options`, so it also answers in a demo gateway, whose index is the synthetic
  * corpus). LAN-forbidden by the `oncall` namespace entry (I5); renderer-callable (I7).
@@ -1534,15 +1542,74 @@ export async function tryDispatchOncallNowRpc(
   method: string,
   params: unknown,
 ): Promise<unknown> {
-  if (method !== "oncall.now" || ctx.options.localIndex === undefined) return phase4RpcSkipped;
+  if (
+    (method !== "oncall.now" && method !== "oncall.handoff") ||
+    ctx.options.localIndex === undefined
+  ) {
+    return phase4RpcSkipped;
+  }
   try {
-    const out = await dispatchOncallNowRpc(method, params, {
+    const rpcCtx = {
+      db: ctx.options.localIndex.getDatabase(),
+      ...(ctx.options.configDir === undefined ? {} : { configDir: ctx.options.configDir }),
+    };
+    const out =
+      method === "oncall.now"
+        ? await dispatchOncallNowRpc(method, params, rpcCtx)
+        : await dispatchOncallHandoffRpc(method, params, rpcCtx);
+    if (out.kind === "hit") return out.value;
+  } catch (e) {
+    if (e instanceof OncallNowRpcError) throw new RpcMethodError(e.rpcCode, e.message);
+    throw e;
+  }
+  return phase4RpcSkipped;
+}
+
+/**
+ * `statuspage.model` (Phase 17) - the page model behind `nimbus statuspage draft`, from the local index
+ * only (also answered by a demo gateway, whose index is the synthetic corpus). CLI-only: LAN-forbidden by
+ * the `statuspage` namespace entry (I5) and absent from the Tauri allowlist (I7).
+ */
+export async function tryDispatchStatuspageRpc(
+  ctx: ServerCtx,
+  method: string,
+  params: unknown,
+): Promise<unknown> {
+  if (method !== "statuspage.model" || ctx.options.localIndex === undefined) {
+    return phase4RpcSkipped;
+  }
+  try {
+    const out = await dispatchStatuspageRpc(method, params, {
       db: ctx.options.localIndex.getDatabase(),
       ...(ctx.options.configDir === undefined ? {} : { configDir: ctx.options.configDir }),
     });
     if (out.kind === "hit") return out.value;
   } catch (e) {
-    if (e instanceof OncallNowRpcError) throw new RpcMethodError(e.rpcCode, e.message);
+    if (e instanceof StatuspageRpcError) throw new RpcMethodError(e.rpcCode, e.message);
+    throw e;
+  }
+  return phase4RpcSkipped;
+}
+
+/**
+ * `cost.anomalies` (Phase 10 FinOps) - the cost anomaly detector over the indexed daily cost series, local
+ * index only. Also answers in a demo gateway (no cost rows there: `no_data`). LAN-forbidden by the `cost`
+ * namespace entry (I5); NOT renderer-callable (CLI only).
+ */
+export async function tryDispatchCostRpc(
+  ctx: ServerCtx,
+  method: string,
+  params: unknown,
+): Promise<unknown> {
+  if (!method.startsWith("cost.") || ctx.options.localIndex === undefined) return phase4RpcSkipped;
+  try {
+    const out = await dispatchCostRpc(method, params, {
+      db: ctx.options.localIndex.getDatabase(),
+      ...(ctx.options.configDir === undefined ? {} : { configDir: ctx.options.configDir }),
+    });
+    if (out.kind === "hit") return out.value;
+  } catch (e) {
+    if (e instanceof CostRpcError) throw new RpcMethodError(e.rpcCode, e.message);
     throw e;
   }
   return phase4RpcSkipped;
@@ -1566,6 +1633,34 @@ export async function tryDispatchBriefingRpc(
     if (out.kind === "hit") return out.value;
   } catch (e) {
     if (e instanceof BriefingRpcError) throw new RpcMethodError(e.rpcCode, e.message);
+    throw e;
+  }
+  return phase4RpcSkipped;
+}
+
+/**
+ * `incident.*` (Phase 10 IC3) - the incident records the engine assembled. Served only to a connection that
+ * DECLARED `cli` or `ui` (the kind is the CONNECTION's, `getClientKind`, never a param; `requireOwnerKind`
+ * answers every other kind with `ERR_INCIDENT_FORBIDDEN_CLIENT` before any query). The namespace is
+ * LAN-forbidden (I5) and has no entry in the Tauri allowlist (I7); answered on a demo gateway too (its index is
+ * the synthetic corpus, in its own database).
+ */
+export async function tryDispatchIncidentRpc(
+  ctx: ServerCtx,
+  method: string,
+  params: unknown,
+  clientId: string,
+): Promise<unknown> {
+  if (!method.startsWith("incident.")) return phase4RpcSkipped;
+  const rpc = ctx.options.incidentRpcCtx;
+  if (rpc === undefined) return phase4RpcSkipped;
+  try {
+    const out = await dispatchIncidentRpc(method, params, rpc, {
+      kind: ctx.getClientKind(clientId),
+    });
+    if (out.kind === "hit") return out.value;
+  } catch (e) {
+    if (e instanceof IncidentRpcError) throw new RpcMethodError(e.rpcCode, e.message);
     throw e;
   }
   return phase4RpcSkipped;
@@ -1680,7 +1775,6 @@ export async function tryDispatchStandingRpc(
     askOwner: createStandingOwnerAsk({
       consent: bindConsentChannel(ctx.consentImpl, clientId),
       audit: localIndex,
-      db,
       policyHitl: ctx.options.policyHitl,
     }),
     recordNarrowing: (actionType, actionJson) =>
@@ -2031,8 +2125,11 @@ const PHASE4_PLATFORM_DISPATCHERS: ReadonlyArray<
   tryDispatchComputerRpc,
   tryDispatchFleetRpc,
   tryDispatchOncallNowRpc,
+  tryDispatchStatuspageRpc,
+  tryDispatchCostRpc,
   tryDispatchOncallPushRpc,
   tryDispatchBriefingRpc,
+  tryDispatchIncidentRpc,
   tryDispatchNotificationsRpc,
   tryDispatchCaptureRpc,
   tryDispatchApprovalsRpc,
@@ -2393,11 +2490,17 @@ export async function tryDispatchConnectorRpc(
     let agentAnswerNonHuman = false;
     const agentEnable =
       method === "connector.writesEnable" && asRecord(params)?.["door"] === "agent";
-    const gateConsent = agentEnable
-      ? humanOnlyConsent(ctx.consentImpl, () => {
-          agentAnswerNonHuman = true;
-        })
-      : ctx.consentImpl;
+    // Phase 28 AD5b (owner ruling OR-AD-33): so does registering a user MCP server WITH a write
+    // directory. A registration with none keeps the consent it always had.
+    const writePathsParam = asRecord(params)?.["writePaths"];
+    const writeGrantAdd =
+      method === "connector.addMcp" && Array.isArray(writePathsParam) && writePathsParam.length > 0;
+    const gateConsent =
+      agentEnable || writeGrantAdd
+        ? humanOnlyConsent(ctx.consentImpl, () => {
+            agentAnswerNonHuman = true;
+          })
+        : ctx.consentImpl;
     // I29: gate-only executor — local mutation, no connector dispatch, so no egress to ledger.
     const toolExecutor = new ToolExecutor(
       bindConsentChannel(gateConsent, clientId),
@@ -2408,6 +2511,7 @@ export async function tryDispatchConnectorRpc(
       ctx.options.policyHitl ?? NO_POLICY_OVERLAY,
     );
     const mesh = ctx.options.connectorMesh;
+    const userMcpDb = ctx.options.localIndex;
     // I42 + I29: unlike the gate-only executor above, this one DISPATCHES, so it carries a real
     // egress sink and the real connector dispatcher. No delegation dep: I42 asks the local owner.
     const userMcpExecutor =
@@ -2419,6 +2523,11 @@ export async function tryDispatchConnectorRpc(
             undefined,
             makeEgressSink(ctx.options.localIndex.getDatabase()),
             ctx.options.policyHitl ?? NO_POLICY_OVERLAY,
+            undefined,
+            // I15 (AD5b): the owner's own call shows what the server's code may write.
+            {
+              userMcpWriteGrants: userMcpWriteGrantsReader(() => userMcpDb.getDatabase()),
+            },
           )
         : undefined;
     const out = await dispatchConnectorRpc({

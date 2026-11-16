@@ -1025,8 +1025,8 @@ export function checkChatReadMarkerConfinement(files: readonly FileEntry[]): Vio
 // there, in `index/item-store.ts` (`deleteAllItemsForService`, which `LocalIndex.removeConnectorIndexData`
 // calls) and in `commands/data-delete.ts` (an owner erasure); `pruneItemHistory` only there and in
 // `index/item-history-retention.ts`. Reads are unrestricted (the reconstruction and the incident assembly
-// read the table). D46 has only sub-rule (b) after IC1: (a) and (c) are reserved by the incident-engine
-// spec for IC3 and IC5.
+// read the table). D46 has sub-rules (a), (b) and (d) after IC3: (a) confines `incident/**` (below, next to
+// D48), (d) confines the incident record tables, and (c) is reserved by the incident-engine spec for IC5.
 //
 // Stated bounds: a text scan, so a dynamically composed table name evades it (as D33(b) says). The retention
 // module's batch DELETE lives in `item-history.ts`, which it only calls. `iterateGlob` skips every `-sql.ts`
@@ -1070,6 +1070,80 @@ export function checkItemHistoryConfinement(files: readonly FileEntry[]): Violat
     }
     if (f.relPath !== D46_STORE && f.relPath !== D46_RETENTION) {
       for (const m of commentFree.matchAll(D46_PRUNE_RE)) add(f, commentFree, m.index);
+    }
+  }
+  return out;
+}
+
+// D46(d) (Phase 10 IC3, incident-engine spec § 5.3): the incident record tables are written only by their store.
+// Rule `incident-record-confined`. A WRITE verb on `incident_record` or `incident_record_version` may appear only
+// in `incident/incident-store.ts` and the V100 DDL file; `upsertIncidentRecord` only there and in
+// `incident/assemble.ts` (the one assembler); `markRecordChecked` only there and in `incident/incident-engine.ts`;
+// `eraseIncidentRecordsForService` and `pruneIncidentRecords` only there and in `incident/incident-erasure.ts`;
+// `eraseIncidentDataForService` only in `incident/incident-erasure.ts` (its definition), `index/local-index.ts`
+// (`removeConnectorIndexData`) and `commands/data-delete.ts` (the two owner erasures);
+// `pruneIncidentRecordsWithBriefs` only there and in `incident/incident-retention.ts`. The pushed briefs built from
+// a record are deleted only through `deletePushedBriefsForErasure` (and counted through
+// `countPushedBriefsForErasure`), named only in `oncall-push/push-store.ts` and `incident/incident-erasure.ts`, and a
+// write verb on `pushed_brief` itself stays in `oncall-push/push-store.ts` (and the V64 DDL). Reads are unrestricted.
+// Stated bounds: a text scan, so a dynamically composed table name evades it; `iterateGlob` skips every `-sql.ts`
+// file, so the real scan never visits the DDL files (they stay in the allow-list for a synthetic file set).
+const D46D_SRC = "packages/gateway/src/";
+const D46D_STORE = `${D46D_SRC}incident/incident-store.ts`;
+const D46D_DDL = `${D46D_SRC}index/incident-record-v100-sql.ts`;
+const D46D_ASSEMBLE = `${D46D_SRC}incident/assemble.ts`;
+const D46D_ENGINE = `${D46D_SRC}incident/incident-engine.ts`;
+const D46D_ERASURE = `${D46D_SRC}incident/incident-erasure.ts`;
+const D46D_RETENTION = `${D46D_SRC}incident/incident-retention.ts`;
+const D46D_PUSH_STORE = `${D46D_SRC}oncall-push/push-store.ts`;
+const D46D_PUSH_DDL = `${D46D_SRC}index/oncall-push-v64-sql.ts`;
+const D46D_VERBS =
+  "(?:INSERT\\s+(?:OR\\s+\\w+\\s+)?INTO|REPLACE\\s+INTO|DELETE\\s+FROM|UPDATE(?:\\s+OR\\s+\\w+)?|DROP\\s+TABLE(?:\\s+IF\\s+EXISTS)?|ALTER\\s+TABLE)";
+const d46dWriteRe = (table: string): RegExp =>
+  new RegExp(`\\b${D46D_VERBS}\\s+(?:["'\`[]?\\w+["'\`\\]]?\\s*\\.\\s*)?["'\`[]?${table}\\b`, "gi");
+const D46D_RECORD_WRITE_RE = d46dWriteRe("incident_record(?:_version)?");
+const D46D_BRIEF_WRITE_RE = d46dWriteRe("pushed_brief");
+const D46D_IDENTIFIERS: readonly { readonly re: RegExp; readonly allowed: readonly string[] }[] = [
+  { re: /\bupsertIncidentRecord\b/g, allowed: [D46D_STORE, D46D_ASSEMBLE] },
+  { re: /\bmarkRecordChecked\b/g, allowed: [D46D_STORE, D46D_ENGINE] },
+  { re: /\beraseIncidentRecordsForService\b/g, allowed: [D46D_STORE, D46D_ERASURE] },
+  { re: /\bpruneIncidentRecords\b/g, allowed: [D46D_STORE, D46D_ERASURE] },
+  {
+    re: /\beraseIncidentDataForService\b/g,
+    allowed: [
+      D46D_ERASURE,
+      `${D46D_SRC}index/local-index.ts`,
+      `${D46D_SRC}commands/data-delete.ts`,
+    ],
+  },
+  { re: /\bpruneIncidentRecordsWithBriefs\b/g, allowed: [D46D_ERASURE, D46D_RETENTION] },
+  { re: /\b(?:delete|count)PushedBriefsForErasure\b/g, allowed: [D46D_PUSH_STORE, D46D_ERASURE] },
+];
+
+export function checkIncidentRecordConfinement(files: readonly FileEntry[]): Violation[] {
+  const out: Violation[] = [];
+  const add = (f: FileEntry, src: string, index: number | undefined): void => {
+    const line = src.slice(0, index).split("\n").length;
+    out.push({
+      rule: "incident-record-confined",
+      file: f.relPath,
+      line,
+      snippet: (f.contents.split("\n")[line - 1] ?? "").trim(),
+    });
+  };
+  for (const f of files) {
+    if (f.relPath.endsWith(".test.ts") || f.relPath.endsWith(".test-helpers.ts")) continue;
+    if (!f.relPath.startsWith(D46D_SRC)) continue;
+    const commentFree = stripComments(f.contents);
+    if (f.relPath !== D46D_STORE && f.relPath !== D46D_DDL) {
+      for (const m of commentFree.matchAll(D46D_RECORD_WRITE_RE)) add(f, commentFree, m.index);
+    }
+    if (f.relPath !== D46D_PUSH_STORE && f.relPath !== D46D_PUSH_DDL) {
+      for (const m of commentFree.matchAll(D46D_BRIEF_WRITE_RE)) add(f, commentFree, m.index);
+    }
+    for (const id of D46D_IDENTIFIERS) {
+      if (id.allowed.includes(f.relPath)) continue;
+      for (const m of commentFree.matchAll(id.re)) add(f, commentFree, m.index);
     }
   }
   return out;
@@ -1255,7 +1329,6 @@ export function checkFleetClientKindConfinement(files: readonly FileEntry[]): Vi
 const D28_PUSH_KIND_ALLOWED = [
   "packages/gateway/src/ipc/server/client-kind.ts",
   "packages/gateway/src/egress/egress-bearing-kinds.ts",
-  "packages/gateway/src/oncall-push/push-runner.ts",
 ];
 // Same shapes as D28_FLEET_KIND_RE with "push" substituted. Both quote styles match in each rule:
 // a single-quoted `kind: 'push'` is the same assignment, and a double-quote-only regex passed it. The bare unquoted key matches only a
@@ -3232,6 +3305,38 @@ export function checkFinopsConfinement(files: readonly FileEntry[]): Violation[]
   });
 }
 
+// ---- D46(a) (incident assembly is inert, I57 (a)) ------------------------------------------------
+// Rule ids `incident-forbidden-import` and `incident-no-network`: the D45/D48 shape. `packages/gateway/src/incident/`
+// holds the incident engine (the assembler, its lanes, its store, its retention and erasure) and
+// `agents/_lib/incident*.ts` its render. Every pass runs after a sync with nobody present, so it must be
+// incapable of an outbound request, a post, a connector call or a model call. Scope: every non-test file under
+// `packages/gateway/src/incident/` and every `packages/gateway/src/agents/_lib/incident*.ts`. In scope:
+//   - no import (static, side-effect, dynamic, `require`, re-export) of `chatops/`, `egress/`, `federation/` or
+//     `share/`, even type-only; none of `connectors/` unless it is a TYPE-only import;
+//   - no network primitive: ANY reference to the global `fetch`, any use of `globalThis`, `window` or `self`,
+//     `Bun.fetch`, `new WebSocket`, `XMLHttpRequest`, and no import of `node:http`, `node:https`, `node:http2`,
+//     `node:net`, `node:tls`, `node:dgram` or `undici`.
+// Scope is the whole directory at IC3 because it holds only inert code; the slice that adds an action-building
+// file carves it out in the same commit as its own rule (D46(c)). Stated bounds: a text scan of DIRECT imports;
+// an indirect path through an allowed module (`index/`, `agents/_lib/synthesize.ts`, `oncall-push/push-store.ts`)
+// is not followed, which is why the zero-egress and OR-10-8 pins in security-invariants.test.ts are the other half.
+const D46A_DIR = "packages/gateway/src/incident/";
+const D46A_LIB_RE = /^packages\/gateway\/src\/agents\/_lib\/incident[\w.-]*\.ts$/;
+
+function inIncidentScope(relPath: string): boolean {
+  if (relPath.endsWith(".test.ts")) return false;
+  return relPath.startsWith(D46A_DIR) || D46A_LIB_RE.test(relPath);
+}
+
+export function checkIncidentConfinement(files: readonly FileEntry[]): Violation[] {
+  return checkConfinement(files, {
+    inScope: inIncidentScope,
+    forbiddenSegmentRe: D45_FORBIDDEN_SEGMENT_RE,
+    forbiddenImportRule: "incident-forbidden-import",
+    noNetworkRule: "incident-no-network",
+  });
+}
+
 // ---- D47 (the v1 static-box LAN path, I56) -------------------------------------------------------
 // Rule id `lan-box-path-confined`. The LAN's v1 wire seals every frame under the STATIC `nacl.box`
 // secret of the two identity keys, which has no forward secrecy. Since LAN FS1 that path is reachable
@@ -4025,9 +4130,9 @@ const D43_CONSTANT_ALLOWED: readonly string[] = [
 // ---- D10 `user-write` (a declared write DIRECTORY, I15; Phase 28 AD5b) ---------------------------
 // A sandbox policy may declare a directory the child writes beneath (`canonicalWriteDirs`). The
 // field is named only by the manifest type, the policy wire and the two checks that read it, so no
-// connector, IPC handler or engine file can build a policy that carries one. In AD5b-1 the list
-// holds NO `connectors/` file: nothing produces a write-directory grant. AD5b-2 adds the one builder
-// (`connectors/lazy-mesh/user-mcp-write-grant.ts`) to this list, in the commit that adds the flag.
+// connector, IPC handler or engine file can build a policy that carries one. The ONE `connectors/`
+// file on the list is the builder of a user MCP write grant
+// (`connectors/lazy-mesh/user-mcp-write-grant.ts`, AD5b-2): every other producer is a violation.
 // Strings are kept: a string spelling of the field (a computed key) is a spelling.
 // Stated bound: textual. A name composed at run time evades it; the real-sandbox tests are the
 // authority on what a policy can do.
@@ -4037,6 +4142,7 @@ const D10_WRITE_DIR_ALLOWED: readonly string[] = [
   "packages/gateway/src/platform/sandbox/sandbox-policy.ts",
   "packages/gateway/src/platform/sandbox/canonical-path.ts",
   "packages/gateway/src/platform/sandbox/write-grant-check.ts",
+  "packages/gateway/src/connectors/lazy-mesh/user-mcp-write-grant.ts",
 ];
 
 export function checkWriteDirDeclarationConfined(files: readonly FileEntry[]): Violation[] {
@@ -4206,6 +4312,15 @@ function d43ExecutorPins(f: FileEntry, code: string, commentFree: string): Viola
 //     only by that pass and the workflow runner (`automation/workflow-runner.ts`); and
 //     `hasLiveRuleFor`, the pass's one question to the rule store, only by the rule store and the
 //     pass. The pass may READ the `"owner_workflow"` literal (clause (a)) but never construct it.
+// (g) workflow `when` guards (Phase 10, workflow conditionals): a guard only REMOVES runs, decided by
+//     the runner before an action exists, so it must stay out of the approval check. The guard module
+//     `automation/workflow-guard.ts` imports only `./workflow-steps.ts` and
+//     `connectors/connector-writes/sanitise.ts` (no executor, vault, egress, network or model
+//     module); its functions `evaluateGuard`, `guardRequiresPresence` and `guardRuleLines` are named
+//     only by it, the runner (the decision and the learner's `ruleEligibleGuard` field), rule
+//     derivation and the `standing.*` RPC handler (rule creation and resume); and
+//     `engine/standing-rule-step.ts` never reads a `when` or names the guard module, so nothing the
+//     step does depends on a guard and a guard cannot widen what a rule approves.
 // Comments are stripped before matching (string literals are kept for the literal clauses); test
 // files, a test-support `*.test-helpers.ts` that no production file imports, and anything outside
 // packages/gateway/src/ are not scanned. STATED BOUND, as D33(c)/D41/D42: a dynamically composed
@@ -4226,6 +4341,13 @@ const D44_LEARNING = `${D44_SRC}standing/approval-learning.ts`;
 const D44_SUGGESTION_STORE = `${D44_SRC}standing/standing-suggestion-store.ts`;
 const D44_V90 = `${D44_SRC}index/standing-suggestion-v90-sql.ts`;
 const D44_RUNNER = `${D44_SRC}automation/workflow-runner.ts`;
+const D44_GUARD = `${D44_SRC}automation/workflow-guard.ts`;
+const D44_DERIVE = `${D44_SRC}standing/standing-rule-derive.ts`;
+/** What the guard module may import: the step types and the text sanitiser, nothing else. */
+const D44_GUARD_IMPORTS: readonly string[] = [
+  "./workflow-steps.ts",
+  "../connectors/connector-writes/sanitise.ts",
+];
 const D44_LEARNING_TABLE_RES: readonly RegExp[] = ["standing_streak", "standing_suggestion"].map(
   (t) => {
     const re = sqlTableReferenceRe(t);
@@ -4334,7 +4456,48 @@ const D44_NAME_RULES: ReadonlyArray<{
     allowed: [D44_STORE, D44_LEARNING],
     keepStrings: false,
   },
+  {
+    rule: "standing-guard-confined",
+    re: /\b(?:evaluateGuard|guardRequiresPresence|guardRuleLines)\b/g,
+    allowed: [D44_GUARD, D44_RUNNER, D44_DERIVE, D44_RPC],
+    keepStrings: false,
+  },
 ];
+
+/** Clause (g): the guard module is pure and the approval check never reads a guard. */
+function d44GuardPins(f: FileEntry, commentFree: string, code: string): Violation[] {
+  const out: Violation[] = [];
+  const add = (src: string, index: number | undefined): void => {
+    const line = src.slice(0, index).split("\n").length;
+    out.push({
+      rule: "standing-guard-confined",
+      file: f.relPath,
+      line,
+      snippet: (f.contents.split("\n")[line - 1] ?? "").trim(),
+    });
+  };
+  if (f.relPath === D44_GUARD) {
+    for (const m of commentFree.matchAll(
+      /\bfrom\s*["']([^"']+)["']|\bimport\s*["']([^"']+)["']/g,
+    )) {
+      const spec = m[1] ?? m[2] ?? "";
+      if (!D44_GUARD_IMPORTS.includes(spec)) add(commentFree, m.index);
+    }
+    for (const m of code.matchAll(/\bfetch\s*\(|\bimport\s*\(|\brequire\s*\(|\bglobalThis\b/g)) {
+      add(code, m.index);
+    }
+  }
+  if (f.relPath === D44_STEP) {
+    for (const m of commentFree.matchAll(
+      // A property read, a destructure or object key, a quoted bracket read (`step["when"]`), or the
+      // guard module's name.
+      /\.\s*when\b|\bwhen\s*[:,}]|\[\s*["'`]when["'`]\s*\]|workflow-guard/g,
+    )) {
+      add(commentFree, m.index);
+    }
+  }
+  return out;
+}
 
 export function checkStandingApprovals(files: readonly FileEntry[]): Violation[] {
   const out: Violation[] = [];
@@ -4369,6 +4532,7 @@ export function checkStandingApprovals(files: readonly FileEntry[]): Violation[]
       const src = r.keepStrings ? commentFree : code;
       for (const m of src.matchAll(r.re)) add(f, r.rule, src, m.index);
     }
+    for (const v of d44GuardPins(f, commentFree, code)) out.push(v);
     if (f.relPath === D44_EXECUTOR) for (const v of d44ExecutorPins(f, code)) out.push(v);
     if (f.relPath === D44_RUN_ASK) for (const v of d44RunAskPins(f, code)) out.push(v);
   }
@@ -5445,6 +5609,11 @@ async function loadFiles(): Promise<FileEntry[]> {
 export const RULE_ANCHORS: readonly string[] = [
   "packages/gateway/src/briefing/briefing-runner.ts", // D45 — the briefing delivers locally only
   "packages/gateway/src/agents/_lib/briefing-build.ts", // D45
+  // D46(a) (incident-forbidden-import / incident-no-network, Phase 10 IC3) -- anchored on BOTH halves of its
+  // scope, as D45 is: the assembler under `incident/` and the render under `agents/_lib/`. Either moving out of
+  // the scan (a move, a glob change) would leave half the rule passing over nothing.
+  "packages/gateway/src/incident/assemble.ts",
+  "packages/gateway/src/agents/_lib/incident-render.ts",
   "packages/gateway/src/finops/cost-series.ts", // D48 — FinOps cost code is inert
   "packages/gateway/src/ipc/lan-legacy.ts", // D47 — the only home of the v1 static-box LAN path
   "packages/gateway/src/platform/sandbox/write-grant-check.ts", // D10 user-write — a file the rule reads and then permits
@@ -5505,8 +5674,9 @@ export const RULE_ANCHORS: readonly string[] = [
   // without an anchor of its own, D28 would report clean while scanning nothing the moment
   // `iterateSourceFiles()` stopped reaching `fleet/`.
   "packages/gateway/src/fleet/fleet-invoker.ts",
-  // D28 — second anchor, on `push-runner.ts`: the one file allowed to wear the `push` ClientKind
-  // (`kind: "push"`), scanned by the rule and then permitted, so D28 cannot go blind to it.
+  // D28 — second anchor, on `push-runner.ts`: the file that USED to wear the `push` ClientKind
+  // (`kind: "push"`) before the push re-based on incident records (Phase 10 IC3). It is still scanned, and
+  // now permitted nothing, so the literal cannot quietly return there and D28 cannot go blind to the file.
   "packages/gateway/src/oncall-push/push-runner.ts",
   // D29 (a)/(b)/(c)/(d) — anchored on `toolgen-broker.ts`, a file all four rules SCAN (it names
   // none of `nimbus/fetch`, `buildGeneratedManifest`'s definition, a `toolgen.` vault-key template,
@@ -5582,6 +5752,8 @@ export const RULE_ANCHORS: readonly string[] = [
   "packages/gateway/src/index/item-history.ts",
   "packages/gateway/src/index/item-store.ts",
   "packages/gateway/src/index/item-history-retention.ts",
+  // D46(d) (incident-record-confined, Phase 10 IC3) -- the only writer of the record tables.
+  "packages/gateway/src/incident/incident-store.ts",
   // D49(b) (door-approval-confined, Phase 28 AD3a-1) — the only store of the per-door approval table;
   // it moving out of the scan would leave the rule passing over nothing.
   "packages/gateway/src/connectors/connector-writes/door-approval-store.ts",
@@ -5826,6 +5998,20 @@ async function run(): Promise<void> {
       );
     }
     if (historyViolations.length > 0) exit = 1;
+    const incidentViolations = checkIncidentConfinement(files);
+    for (const e of incidentViolations) {
+      console.error(
+        `::error file=${e.file},line=${e.line}::D46(a) incident assembly reached outside the local index (rule ${e.rule}) - no ChatOps/egress/federation/share import, no connectors value import, no network primitive: ${e.snippet}`,
+      );
+    }
+    if (incidentViolations.length > 0) exit = 1;
+    const incidentRecordViolations = checkIncidentRecordConfinement(files);
+    for (const e of incidentRecordViolations) {
+      console.error(
+        `::error file=${e.file},line=${e.line}::D46(d) an incident record table, or the pushed briefs built from one, written or erased outside its owner (rule ${e.rule}) - incident/incident-store.ts, incident/incident-erasure.ts and oncall-push/push-store.ts are the only writers: ${e.snippet}`,
+      );
+    }
+    if (incidentRecordViolations.length > 0) exit = 1;
     const doorApprovalViolations = checkDoorApprovalConfinement(files);
     for (const e of doorApprovalViolations) {
       console.error(
@@ -6177,6 +6363,8 @@ async function run(): Promise<void> {
         "(d) the unattended executor option, its refusal text or the schedule trigger is used outside its confinement",
       "standing-learning-confined":
         "(f) a learning table, writer or the learning pass is reached outside the suggestion store, the pass and the workflow runner",
+      "standing-guard-confined":
+        "(g) the workflow guard module imports more than the step types and the sanitiser, a guard function is named outside the runner, rule derivation and the standing RPC, or the standing-rule step reads a guard",
     };
     for (const e of v) {
       console.error(

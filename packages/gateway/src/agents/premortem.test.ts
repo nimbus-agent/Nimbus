@@ -328,9 +328,11 @@ describe("runPremortem", () => {
     expect(brief.cohort.members.length).toBeGreaterThan(0);
     expect(brief.risks).toHaveLength(5);
     expect(brief.themes.length).toBeGreaterThan(0);
-    expect(brief.watchers).toHaveLength(1);
-    expect(brief.watchers[0]?.state).toBe("created");
-    expect(brief.watchers[0]?.service).toBe("acme/billing-api");
+    // One incident watcher and one deploy-failure watcher for the one mapped service.
+    expect(brief.watchers.map((w) => [w.riskKind, w.state, w.service])).toEqual([
+      ["incident_coupling", "created", "acme/billing-api"],
+      ["deploy_failure", "created", "acme/billing-api"],
+    ]);
   });
 
   // `nimbus pre-mortem <ref> --repropose` (Task 5): `input.repropose` must reach
@@ -416,28 +418,7 @@ describe("runPremortem", () => {
     ).toBe(true);
   });
 
-  test("a Linear ref names the Linear cause without touching the database", async () => {
-    const db = makeDb();
-
-    const brief = await runPremortem({ epicRef: "linear:ABC-120" }, ctx(db));
-
-    expect(brief.epic).toBeNull();
-    expect(brief.services).toEqual([]);
-    // Unique to the Linear-specific branch, NOT present in the always-on
-    // unconditional Jira-only gap (which also mentions "Linear" and "Jira
-    // epics only", with different wording) — a weak assertion here would
-    // pass even if the Linear-specific cause were deleted entirely and this
-    // ref fell through to the generic non-Jira-tracker message.
-    expect(
-      brief.gaps.some(
-        (g) =>
-          g.detail.includes("is a Linear reference") &&
-          g.detail.includes("no Linear project items are indexed"),
-      ),
-    ).toBe(true);
-  });
-
-  test("a non-Linear, non-Jira tracker prefix falls through to the generic non-Jira message", async () => {
+  test("an unsupported tracker prefix gives the foreign-tracker brief without touching the database", async () => {
     const db = makeDb();
 
     const brief = await runPremortem({ epicRef: "asana:ABC-120" }, ctx(db));
@@ -447,12 +428,10 @@ describe("runPremortem", () => {
     expect(
       brief.gaps.some(
         (g) =>
-          g.detail.includes("is not a Jira epic reference") &&
-          g.detail.includes("pre-mortem covers Jira epics only"),
+          g.detail.includes("is not a supported tracker reference") &&
+          g.detail.includes("pre-mortem covers Jira epics and Linear projects"),
       ),
     ).toBe(true);
-    // The Linear-specific wording must NOT leak onto an unrelated tracker.
-    expect(brief.gaps.some((g) => g.detail.includes("is a Linear reference"))).toBe(false);
   });
 
   test("an indexed non-Epic issue type states what was checked, not a false not-found claim", async () => {
@@ -619,33 +598,38 @@ describe("runPremortem", () => {
       createdAtMs: NOW - 70 * DAY_MS,
     });
 
-    const linearBrief = await runPremortem({ epicRef: "linear:X-1" }, ctx(db));
+    const foreignBrief = await runPremortem({ epicRef: "asana:X-1" }, ctx(db));
     const noChildrenBrief = await runPremortem({ epicRef: "PROJ-500" }, ctx(db));
     const fullBrief = await runPremortem({ epicRef: "PROJ-501" }, ctx(db));
 
     // All FOUR, individually — a mutation deleting 3 of the 4 must fail this,
     // unlike checking a single shared substring across them.
-    const statements = [
+    const shared = [
       "are correlations, not causes",
       "Theme confidence tops out at 0.86",
-      "Pre-mortem covers Jira epics only, and only",
-      "No deploy-failure watcher is proposed",
+      "Deploy failure is a watcher condition kind",
     ];
-    for (const brief of [linearBrief, noChildrenBrief, fullBrief]) {
-      for (const statement of statements) {
+    // The third statement is per tracker: a Jira brief and the foreign-tracker brief each say what
+    // pre-mortem covers, in their own words.
+    const cases: Array<[typeof fullBrief, string]> = [
+      [foreignBrief, "Pre-mortem covers Jira epics and Linear projects only"],
+      [noChildrenBrief, "Pre-mortem for a Jira epic traces only"],
+      [fullBrief, "Pre-mortem for a Jira epic traces only"],
+    ];
+    for (const [brief, coverage] of cases) {
+      for (const statement of [...shared, coverage]) {
         expect(brief.gaps.some((g) => g.detail.includes(statement))).toBe(true);
       }
     }
 
-    // The deploy-watcher note must state the cause that is STILL true. The engine now supports
-    // `filter.affectedService` for `deploy_failed`, so the old "a deployment item's item.service
-    // is the annotate provider slug" reasoning is obsolete — repeating it would be a false cause,
-    // the exact defect this brief's honesty rules exist to prevent.
+    // The deploy note must not claim the old, now-false cause (no graph entity at annotation time)
+    // and must say what a deploy-failure watcher can and cannot match.
     const deployNote = fullBrief.gaps.find((g) =>
-      g.detail.includes("No deploy-failure watcher is proposed"),
+      g.detail.includes("Deploy failure is a watcher condition kind"),
     );
-    expect(deployNote?.detail).toContain("creates no `deployment` graph entity");
-    expect(deployNote?.detail).not.toMatch(/could never fire/);
+    expect(deployNote?.detail).not.toContain("creates no `deployment` graph entity");
+    expect(deployNote?.detail).toContain("POST /v1/deployments");
+    expect(deployNote?.detail).toContain("matches nothing");
   });
 
   test("--service overrides derivation entirely, not merges with it", async () => {
@@ -1499,7 +1483,7 @@ describe("runPremortem", () => {
       const brief = await runPremortem({ epicRef: "PROJ-NOCOHORT" }, ctxMapped(db, BILLING_MAP));
 
       expect(brief.cohort.members).toHaveLength(0);
-      expect(brief.watchers).toHaveLength(1);
+      expect(brief.watchers).toHaveLength(2);
       expect(brief.watchers[0]?.state).toBe("created");
     });
 
@@ -1537,7 +1521,10 @@ describe("runPremortem", () => {
 
       const brief = await runPremortem({ epicRef: "PROJ-UNMAPPED" }, ctxMapped(db, BILLING_MAP));
 
-      expect(brief.watchers.map((w) => w.service)).toEqual(["acme/billing-api"]);
+      expect(brief.watchers.map((w) => w.service)).toEqual([
+        "acme/billing-api",
+        "acme/billing-api",
+      ]);
       const gap = brief.gaps.find((g) => g.detail.includes("acme/unmapped"));
       expect(gap?.detail).toContain("no `[metrics.dora.<id>]` / `[ci.service.<id>]` block claims");
       // The real cause, not a repo-path fallback that writes a watcher which can never fire.

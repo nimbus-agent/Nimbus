@@ -20,15 +20,35 @@ import {
 // The two POSIX-only cases below are skipped on Windows rather than on non-Windows, so they still
 // run — and still count — on the CI-Linux-authoritative coverage run.
 
+/** A database stand-in: `extension` rows, `user_mcp_connector` rows, and a schema version. */
+function fakeDb(extensions: string[] = [], userMcp: string[] = []): never {
+  return {
+    query: (sql: string) => ({
+      get: () => ({ user_version: 98 }),
+      all: () =>
+        sql.includes("user_mcp_connector")
+          ? userMcp.map((service_id) => ({ service_id }))
+          : extensions.map((id) => ({ id })),
+    }),
+  } as never;
+}
+
 describe("liveExtensionIds", () => {
   it("includes every first-party manifest id", () => {
-    const ids = liveExtensionIds({ query: () => ({ all: () => [] }) } as never);
+    const ids = liveExtensionIds(fakeDb());
     expect(ids.has("com.nimbus.github")).toBe(true);
   });
 
   it("includes installed extension ids from the extension table", () => {
-    const db = { query: () => ({ all: () => [{ id: "com.acme.custom" }] }) };
-    expect(liveExtensionIds(db as never).has("com.acme.custom")).toBe(true);
+    expect(liveExtensionIds(fakeDb(["com.acme.custom"])).has("com.acme.custom")).toBe(true);
+  });
+
+  it("includes the profile id of every registered user MCP server, and of no other (AD5b)", () => {
+    const ids = liveExtensionIds(fakeDb([], ["mcp_notes", "mcp_tools"]));
+    expect(ids.has("user.mcp_notes")).toBe(true);
+    expect(ids.has("user.mcp_tools")).toBe(true);
+    expect(ids.has("user.mcp_removed")).toBe(false);
+    expect(liveExtensionIds(fakeDb()).has("user.mcp_notes")).toBe(false);
   });
 });
 
@@ -82,7 +102,7 @@ describe("reapAppContainersAtBoot", () => {
   }
 
   function emptyDb(): never {
-    return { query: () => ({ all: () => [] }) } as never;
+    return fakeDb();
   }
 
   function pretendWindows(): void {

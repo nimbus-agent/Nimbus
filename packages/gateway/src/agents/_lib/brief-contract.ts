@@ -151,7 +151,9 @@ export function requiredPhrases(brief: SynthInput): readonly Disclosure[] {
     brief.kind === "huddle" ||
     brief.kind === "premortem" ||
     // The briefing is never handed to a model (OR-10-8); its disclosures are reserved blocks.
-    brief.kind === "briefing"
+    brief.kind === "briefing" ||
+    // Nor is an incident record (OR-10-8, I57 (a)); its disclosures are reserved blocks.
+    brief.kind === "incident"
   ) {
     return [];
   }

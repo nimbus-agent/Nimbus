@@ -1,4 +1,8 @@
 import type { Database } from "bun:sqlite";
+import {
+  DEFAULT_PREFLIGHT_RISK_CONFIG,
+  type NimbusPreflightRiskToml,
+} from "../config/preflight-risk-toml.ts";
 import type { ServiceConfig } from "../metrics/dora-config.ts";
 import { computeDeployPreflight, type DeployPreflightResult } from "../preflight/preflight.ts";
 
@@ -14,6 +18,8 @@ export class PreflightRpcError extends Error {
 export type PreflightRpcContext = {
   db: Database;
   loadConfig: () => Map<string, ServiceConfig>;
+  /** `[preflight.risk]`; absent = the defaults (quiet Friday afternoon and weekends, never fails). */
+  loadRiskConfig?: () => NimbusPreflightRiskToml;
   nowMs?: () => number;
 };
 
@@ -134,7 +140,10 @@ function evaluatePreflightRpc(
   }
   return {
     kind: "hit",
-    value: computeDeployPreflight(ctx.db, cfg, targetRef, nowMs, maxFindings),
+    value: computeDeployPreflight(ctx.db, cfg, targetRef, nowMs, maxFindings, {
+      configs: configMap,
+      riskConfig: (ctx.loadRiskConfig ?? (() => DEFAULT_PREFLIGHT_RISK_CONFIG))(),
+    }),
   };
 }
 

@@ -20,6 +20,7 @@ import { AUDIT_SESSION_V24_SCHEMA_SQL } from "../audit-session-v24-sql.ts";
 import { BODY_STORE_V48_SQL, ITEM_FTS_UPDATE_TRIGGER_SQL } from "../body-store-v48-sql.ts";
 import { BRIEFING_V93_SQL } from "../briefing-v93-sql.ts";
 import { CAPTURE_ACTION_V69_COUNT_SQL, CAPTURE_ACTION_V69_SQL } from "../capture-action-v69-sql.ts";
+import { CAPTURE_LABEL_SOURCE_V99_SQL } from "../capture-label-source-v99-sql.ts";
 import {
   CAPTURE_NATIVE_V68_FINISH_SQL,
   CAPTURE_NATIVE_V68_REBUILD_DECISIONS_SQL,
@@ -73,6 +74,7 @@ import { GRAPH_V7_MIGRATION_SQL } from "../graph-v7-sql.ts";
 import { rebuildHitlStatusTables } from "../hitl-status-v87-sql.ts";
 import { V34_IDENTITY_SQL } from "../identity-v34-sql.ts";
 import { INCIDENT_ALERT_SOURCES_V96_SQL } from "../incident-alert-sources-v96-sql.ts";
+import { INCIDENT_RECORD_V100_SQL } from "../incident-record-v100-sql.ts";
 import { ITEM_HISTORY_V94_SQL } from "../item-history-v94-sql.ts";
 import { KNOWN_NAMESPACES_V38_SQL } from "../known-namespaces-v38-sql.ts";
 import { LAN_PEER_PROTO_V95_SQL } from "../lan-peer-proto-v95-sql.ts";
@@ -121,6 +123,7 @@ import {
 } from "../unified-item-v3-sql.ts";
 import { USER_MCP_GRANTS_V65_SQL } from "../user-mcp-grants-v65-sql.ts";
 import { USER_MCP_V11_MIGRATION_SQL } from "../user-mcp-v11-sql.ts";
+import { USER_MCP_WRITE_V98_SQL } from "../user-mcp-write-v98-sql.ts";
 import {
   VEC_ITEMS_1536_V30_NO_VEC_SQL,
   VEC_ITEMS_1536_V30_SCHEMA_SQL,
@@ -277,6 +280,43 @@ function migrateIndexedV96ToV97(db: Database, now: number): void {
       "agent door: per-door approval list, capture.legacy, error code on a rejected action (Phase 28 AD3a-1)",
       now,
     );
+  })();
+}
+
+function userMcpConnectorHasColumn(db: Database, columnName: string): boolean {
+  const rows = db.query("PRAGMA table_info(user_mcp_connector)").all() as Array<{ name: string }>;
+  return rows.some((r) => r.name === columnName);
+}
+
+/**
+ * V98 - `user_mcp_connector.write_paths_json` (Phase 28 AD5b, I15). Guarded by a column probe, as
+ * V95 is: SQLite has no `ADD COLUMN IF NOT EXISTS`, and a step must be re-runnable.
+ */
+function migrateIndexedV97ToV98(db: Database, now: number): void {
+  db.transaction(() => {
+    if (!userMcpConnectorHasColumn(db, "write_paths_json")) {
+      dbExec(db, USER_MCP_WRITE_V98_SQL.trim());
+    }
+    dbExec(db, "PRAGMA user_version = 98");
+    recordMigration(db, 98, "user MCP write directories (Phase 28 AD5b)", now);
+  })();
+}
+
+function captureHasColumn(db: Database, columnName: string): boolean {
+  const rows = db.query("PRAGMA table_info(capture)").all() as Array<{ name: string }>;
+  return rows.some((r) => r.name === columnName);
+}
+
+/**
+ * V99 - `capture.label_source` (Phase 28 AD7a, D-AD-13). Guarded by a column probe, as V98 is.
+ */
+function migrateIndexedV98ToV99(db: Database, now: number): void {
+  db.transaction(() => {
+    if (!captureHasColumn(db, "label_source")) {
+      dbExec(db, CAPTURE_LABEL_SOURCE_V99_SQL.trim());
+    }
+    dbExec(db, "PRAGMA user_version = 99");
+    recordMigration(db, 99, "capture label source (Phase 28 AD7a)", now);
   })();
 }
 
@@ -857,6 +897,14 @@ const INDEXED_SCHEMA_STEPS: readonly IndexedSchemaStep[] = [
     INCIDENT_ALERT_SOURCES_V96_SQL,
   ),
   { fromVersion: 96, toVersion: 97, apply: migrateIndexedV96ToV97 },
+  { fromVersion: 97, toVersion: 98, apply: migrateIndexedV97ToV98 },
+  { fromVersion: 98, toVersion: 99, apply: migrateIndexedV98ToV99 },
+  simpleStep(
+    99,
+    100,
+    "incident records and their versions (Phase 10 IC3)",
+    INCIDENT_RECORD_V100_SQL,
+  ),
 ];
 
 /**

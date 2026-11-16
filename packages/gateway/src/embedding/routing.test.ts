@@ -174,6 +174,15 @@ describe("routing — local-only prose types", () => {
   });
 });
 
+describe("routing - Linear project bodies", () => {
+  test("linear:project is local-only prose, never remote-routable; linear:issue stays prose-heavy", () => {
+    expect(LOCAL_ONLY_PROSE_TYPES.has("linear:project")).toBe(true);
+    expect(PROSE_HEAVY_TYPES.has("linear:project")).toBe(false);
+    expect(isProseHeavy("linear", "project")).toBe(false);
+    expect(isProseHeavy("linear", "issue")).toBe(true);
+  });
+});
+
 describe("the Readwise item types", () => {
   test("readwise highlight and book stay off PROSE_HEAVY_TYPES", () => {
     // The extension writes the same item types the bundled connector did; routing them to a

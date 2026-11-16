@@ -10,6 +10,11 @@ import os from "node:os";
 import type { NimbusItem } from "@nimbus-dev/sdk";
 import pino from "pino";
 import { getConnectorHealthHistory, transitionHealth } from "../connectors/health.ts";
+import {
+  briefItems,
+  recordItems,
+  seedErasureScenario,
+} from "../incident/__fixtures__/erasure-seed.ts";
 import { ProviderRateLimiter } from "../sync/rate-limiter.ts";
 import { SyncScheduler } from "../sync/scheduler.ts";
 import { unboundSyncCapabilities } from "../sync/sync-capabilities.ts";
@@ -2198,5 +2203,44 @@ describe("ftsTitleMatchQuery edge cases (via searchRanked)", () => {
     idx.upsert(makeItem({ id: "fts3", name: 'File with "quotes"' }));
     // Should not throw — the quote is escaped in the FTS query
     expect(() => idx.searchRanked({ name: 'with "quotes"' }, {})).not.toThrow();
+  });
+});
+
+describe("LocalIndex.removeConnectorIndexData - incident records (Phase 10 IC3)", () => {
+  test("deletes the records citing the service in any version and their pushed briefs, in one transaction", () => {
+    const idx = makeIndex();
+    seedErasureScenario(idx.rawDb);
+    idx.rawDb.run(
+      "INSERT INTO item (id, service, type, external_id, title, modified_at, synced_at) VALUES ('slack:1','slack','message','1','t',1,1)",
+    );
+    idx.removeConnectorIndexData("slack");
+    expect(recordItems(idx.rawDb)).toEqual(["sentry:S1"]);
+    expect(briefItems(idx.rawDb)).toEqual(["bigeye:OLD-NO-RECORD", "sentry:S1"]);
+  });
+
+  test("a failing brief delete rolls the item delete back", () => {
+    const idx = makeIndex();
+    seedErasureScenario(idx.rawDb);
+    idx.rawDb.run(
+      "INSERT INTO item (id, service, type, external_id, title, modified_at, synced_at) VALUES ('slack:1','slack','message','1','t',1,1)",
+    );
+    idx.rawDb.run(
+      "CREATE TRIGGER boom BEFORE DELETE ON pushed_brief BEGIN SELECT RAISE(ABORT, 'forced'); END",
+    );
+    expect(() => idx.removeConnectorIndexData("slack")).toThrow("forced");
+    expect(idx.rawDb.query("SELECT count(*) AS n FROM item WHERE service = 'slack'").get()).toEqual(
+      {
+        n: 1,
+      },
+    );
+    expect(recordItems(idx.rawDb)).toHaveLength(3);
+  });
+
+  test("removing pagerduty deletes its records, versions and briefs by the key prefix", () => {
+    const idx = makeIndex();
+    seedErasureScenario(idx.rawDb);
+    idx.removeConnectorIndexData("pagerduty");
+    expect(recordItems(idx.rawDb)).toEqual(["jira:J1", "sentry:S1"]);
+    expect(briefItems(idx.rawDb)).toEqual(["bigeye:OLD-NO-RECORD", "jira:J1", "sentry:S1"]);
   });
 });

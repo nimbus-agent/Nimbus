@@ -80,9 +80,9 @@ What it does:
 
 **What do you do?** Once the Gateway is up — after a successful index inside a repository, or
 after starting it outside one — an interactive terminal (not `CI=true`) is asked one question. The
-choices come from the Gateway: one per bundled role pack (`Product`, `DevOps`), then
+choices come from the Gateway: one per bundled role pack (`Product`, `DevOps`, `Developer`), then
 `Engineering`, `Design` and `Something else`; `--role <value>` answers it up front with a pack role
-tag (`product`, `devops`, `sre`), a pack id (`pm`, `devops`) or `engineering` / `design` / `other`.
+tag (`product`, `devops`, `sre`, `developer`), a pack id (`pm`, `devops`, `developer`) or `engineering` / `design` / `other`.
 
 - **A pack** (for example Product): `init` runs [`nimbus pack install`](#nimbus-pack) for it, with
   its usual approval at this terminal, then lists the pack's suggested connectors (`connected`, or
@@ -646,13 +646,15 @@ nimbus pack remove <id>
 
 A role pack is a curated settings layer (agent visibility, fleet jobs, defaults) for one role. The gateway must be running. All four verbs are refused over LAN and on a `--demo` root, and `show`, `install` and `remove` are CLI-only and not on the Tauri allowlist; `list` is also renderer-callable as `pack.list`, the one pack method on the allowlist. They act on the **active profile**.
 
-- `list` prints the packs installed on the active profile (marking `update available` when the bundled copy differs from the installed one, and naming any pack whose layer was skipped and why) and the bundled packs you could install (`pm`, `devops`). When nothing is installed and the list was read, it ends with one line naming them: `Tip: nimbus pack install <id> sets Nimbus up for a role: pm (Product), devops (DevOps).` `--json` prints the raw result; its rows carry each pack's `roles` and `suggestedConnectors` (what [`nimbus init`](#nimbus-init) builds its question and connector list from).
+- `list` prints the packs installed on the active profile (marking `update available` when the bundled copy differs from the installed one, and naming any pack whose layer was skipped and why) and the bundled packs you could install (`pm`, `devops`, `developer`). When nothing is installed and the list was read, it ends with one line naming them: `Tip: nimbus pack install <id> sets Nimbus up for a role: pm (Product), devops (DevOps), developer (Developer).` `--json` prints the raw result; its rows carry each pack's `roles` and `suggestedConnectors` (what [`nimbus init`](#nimbus-init) builds its question and connector list from).
 - `show` prints the exact prompt `install` would ask you, plus an `Installed:` line when the pack is already installed. It changes nothing. Pack-supplied text is shown visibly escaped, never raw.
 - `install` asks under the `pack.install` approval and writes the pack as a layer under the profile. It needs a terminal on both stdin and stdout and has **no `--yes`**: it refuses `Refusing to install a pack in non-TTY mode`. Installing an identical pack again is `already installed`; a damaged or hand-edited layer file is offered as a repair. A delegate never approves it. Installing the DevOps pack turns on the on-call pushed brief ([`[oncall.push]`](#nimbus-oncall)): an OS toast, plus a ChatOps headline if `[oncall.push] chatops_namespace` is already set. `nimbus doctor` reports an available pack update.
 - `--file <path>` installs a pack from a local file (at most 131072 bytes). A local-file pack is **refused in a production build** (`ERR_PACK_LOCAL_FILE_PRODUCTION`); only bundled packs install there.
 - `remove` deletes the pack's layer without a prompt. Removing a pack that is not installed prints `not installed` and is not an error.
 
 Errors print as `ERR_PACK_*: detail` and exit `1`; an unknown verb prints the usage and exits `2`.
+
+**The Developer pack** (`developer`, 1.0.0) is presentation only: its one setting is `[agents] visible` = `why`, `impact`, `ownership`, `expert`, `catchup`, `conflicts`, `decisions`, `glossary`, the briefs a coding agent can call through the MCP read tools of `nimbus mcp-server`. It sets no fleet job, no source mapping and no push, and grants no write, connector enablement, credential or approval. Hiding is presentation only, so the other briefs still run.
 
 **What a pack never changes:** credentials (the Vault), network reach (no host or egress grant), approvals (the HITL gate and its action types) or your `nimbus.toml`. Your own file and profile layers still win over a pack, and the prompt marks a key `(your file overrides this)` when yours already sets it.
 
@@ -899,13 +901,14 @@ Like `nimbus glossary`, `nimbus owners` **hard-rejects** an unrecognised flag ra
 
 ### `nimbus pre-mortem`
 
-The thirteenth built-in agent: a risk brief for a Jira epic, built from comparable past epics already in the local index. Four sequential lanes — resolve the epic to its affected services, build an IDF-weighted service-overlap cohort of closed epics touching those services, compute five structural risks over that cohort (cycle-time overrun, size overrun, review drag, incident coupling, abandonment), and read recurring blocker themes mined by the background pass (schema **V53**). It then proposes — but never arms — one paused `incident_opened` watcher per affected service that resolves to a configured deployment-service id.
+The thirteenth built-in agent: a risk brief for a Jira epic or a Linear project, built from comparable past epics (or projects) of the same tracker already in the local index. Four sequential lanes — resolve the epic to its affected services, build an IDF-weighted service-overlap cohort of closed epics touching those services, compute five structural risks over that cohort (cycle-time overrun, size overrun, review drag, incident coupling, abandonment), and read recurring blocker themes mined by the background pass (schema **V53**). It then proposes — but never arms — one paused `incident_opened` watcher per affected service that resolves to a configured deployment-service id.
 
-**Jira-only, and narrower still within Jira:** `--service` overrides aside, affected-service derivation walks `parent_key`-linked children, which `jira-sync.ts` only populates for **team-managed** projects — a company-managed epic resolves to zero derived services. No Linear epic is ever recognized: no `linear:project` items are indexed at all, so a `linear:...` reference is reported as an unsupported-tracker gap, not silently ignored.
+**Two trackers, never blended.** A Jira epic is compared only with closed Jira epics, and a Linear project (indexed as `linear:project` items by the Linear sync, archived included, listed at most every 30 minutes) only with closed Linear projects; cohort rates never mix them. **Narrower within Jira:** `--service` overrides aside, affected-service derivation walks `parent_key`-linked children, which `jira-sync.ts` only populates for **team-managed** projects — a company-managed epic resolves to zero derived services. **For a Linear project** the children are the issues carrying its `project_id`, and an issue reaches a service only through a pull request whose title or opening text names the issue identifier (for example `ENG-123`) and that was indexed AFTER the issue (`nimbus index regraph` re-links earlier ones); issues older than the 30-day first-sync window are not indexed unless widened with `nimbus index rebody --service linear --since <days>`; cycle time runs from the project's creation, not its start date. Theme mining reaches a Linear project only if it was updated after the theme pass's single watermark, so a brief may say "Up to N closed Linear project(s) may not have been mined for themes" (an upper bound: a project mined with no theme looks the same), and `--refresh` does not reach those. Any other tracker prefix (e.g. `asana:`) is reported as an unsupported-tracker gap, not silently ignored.
 
 ```text
 Usage: nimbus pre-mortem <epic-ref> [--service <name>]... [--json] [--refresh] [--repropose]
-  <epic-ref>   a Jira epic key, e.g. PROJ-120 or jira:PROJ-120
+  <epic-ref>   a Jira epic key, e.g. PROJ-120 or jira:PROJ-120, or a Linear project,
+               e.g. linear:<slug id | project URL | UUID | exact name>
   --service    repeatable; overrides the derived affected-service set
   --refresh    run the pre-mortem theme pass before building the brief
   --repropose  re-create a previously-deleted watcher proposal for this epic
@@ -923,7 +926,7 @@ nimbus pre-mortem PROJ-120 --json
 
 | Flag | Description |
 |---|---|
-| `<epic-ref>` | Required. A Jira epic key (`PROJ-120`) or explicitly-prefixed reference (`jira:PROJ-120`). Any other tracker prefix (e.g. `linear:ABC-1`) is reported as an unsupported-tracker gap rather than looked up. |
+| `<epic-ref>` | Required. A Jira epic key (`PROJ-120`) or `jira:PROJ-120`; or a Linear project as `linear:<ref>` where `<ref>` is its slug id (the 12-character id at the end of the project URL, case-insensitive), the full project URL, the project UUID or its exact name (case-insensitive), tried in that order; a bare `https://linear.app/...` URL is accepted too. A reference that is not found, matches several projects (the error lists up to five and asks for the slug id) or finds no Linear projects indexed at all is an **error** (exit code 2), never an empty brief. Any other tracker prefix (e.g. `asana:`) is reported as an unsupported-tracker gap rather than looked up. |
 | `--service <name>` | Repeatable. Overrides the derived affected-service set entirely — useful for a brand-new epic with no PR-derivable services yet. |
 | `--refresh` | Run `premortem.refresh` (the on-demand theme-extraction pass) before building the brief. Unlike `glossary`/`decisions`/`ownership`'s `.refresh`, this is a bare awaited RPC call, not a `{ jobId }` long-running job — a disabled pass (`[premortem].enabled = false`) or a concurrent pass surfaces as a normal error, exit code 2. |
 | `--repropose` | Deletes this epic's `premortem_watcher_proposal` tombstones before proposing, so a watcher the user had previously deleted is re-created (paused) instead of staying suppressed. Scoped to this one epic only. |
@@ -935,7 +938,7 @@ Like `nimbus owners`/`nimbus glossary`, `nimbus pre-mortem` **hard-rejects** an 
 
 **A proposal is scoped by affected service, not by connector.** The watcher condition carries `filter.affectedService` — the `[metrics.dora.<id>]` / `[ci.service.<id>]` id the repo resolves to — which the watcher engine matches against the incident's `graph_entity.metadata.affectedService`. The older `filter.service` axis matches the `item.service` **column**, which for an incident is always the connector id (`pagerduty`), so it can only ever scope a watcher to a whole connector. **A repo with no configured service mapping gets no watcher at all**, and the brief says so by name: falling back to the repo path would write a watcher that silently matches nothing once armed. Add a `[ci.service.<id>]` block whose `repos` names the repository, then re-run.
 
-**No deploy-failure watcher is proposed.** Deploy failure is a watcher condition kind, not one of the five risks — the fifth risk is abandonment, and no deploy-failure risk is computed. The engine can now scope such a watcher the same way, so the earlier reason (`item.service` being the annotate provider slug) no longer holds; what does is that `deployment/annotate.ts` — the only writer of the `metadata.conclusion` a `deploy_failed` watcher matches — inserts its `item` row directly; since Phase 10 IC2 the HTTP route and RPC graph the stored row right after the annotation (fail-soft), so the `deployment` entity now exists without `nimbus index regraph`.
+**A paused deploy-failure watcher is proposed beside each incident watcher.** For every affected service that maps to a configured `[ci.service.<id>]` id, `nimbus pre-mortem` also writes one paused `deploy_failed` watcher scoped by the same `filter.affectedService` (its own id and tombstone, so deleting one never suppresses the other; `--repropose` restores both). It fires on a deployment a CI job annotated through `POST /v1/deployments` with a `failure` conclusion: since Phase 10 IC2 the route graphs the stored row right after the annotation, so the `deployment` entity exists without `nimbus index regraph`. It matches nothing for a deploy a connector merely indexed (Vercel, Prefect record no `metadata.conclusion`), and `deployment.annotate` over local IPC maps no service, so it matches no service-scoped watcher. Deploy failure is a watcher condition kind, not one of the five risks, so no deploy-failure risk is computed and the brief says so in `## Gaps`. Arming either watcher is still your action (`nimbus watch resume <id>`).
 
 **Review drag is measured only for pull requests carrying both an *opened* and a *merged* timestamp:** GitHub and GitLab can record both; Bitbucket never records a merge time, and a repo with no indexed pull request has neither. Where it cannot be measured the review-drag risk reports a gap that names the forge behind it, rather than a fabricated `0`. When review drag IS measured but some pull requests lacked a timestamp — linked to the cohort, or merged in the same repos over the repo-wide baseline window — those are left out of both medians and the summary names the forges concerned and why.
 
@@ -1150,7 +1153,7 @@ nimbus oncall now --service payment-service
 
 **A conditional gap names the missing merge commit:** a deployment is matched to its change by merge commit, and only the GitHub connector records one, so on GitLab and Bitbucket the change section is always empty. The brief says so as a `missing_connector` gap, and states the limit plainly: there is no remedy on GitLab or Bitbucket today, and on GitHub the thing to check is that the pull request which merged the commit is indexed.
 
-**Service bindings (Phase 10 IC2).** `[ci.service.<id>]` and `[metrics.dora.<id>]` also accept `jsm_alert_tags` (JSM Operations alert tags, matched case-insensitively), `sentry_projects` (Sentry project slugs), `data_models` (warehouse model globs, `*` only, e.g. `analytics.payments.*`) and `depends_on` (service ids this one depends on; stored for the cascade, a missing target only warns). At most 50 entries each; an invalid entry is an error naming `[block.id].key`. `repos` is still required. `nimbus metrics dora` reports `incomplete_resolution_data` on MTTR when resolved PagerDuty incidents have no recorded resolution time (rows written before IC2 until they re-sync), and `nimbus changelog` lists a resolved incident at its recorded resolution time (`event`) or, for an older row, at its last-touch time (`index`).
+**Service bindings (Phase 10 IC2).** `[ci.service.<id>]` and `[metrics.dora.<id>]` also accept `jsm_alert_tags` (JSM Operations alert tags, matched case-insensitively), `sentry_projects` (Sentry project slugs), `data_models` (warehouse model globs, `*` only, e.g. `analytics.payments.*`) and `depends_on` (service ids this one depends on; stored for the cascade, a missing target only warns). At most 50 entries each; an invalid entry is an error naming `[block.id].key`. `chat_aliases` (Phase 10 IC3; the chat terms the incident record searches for this service instead of the derived ones) is accepted too. `repos` is still required. `nimbus metrics dora` reports `incomplete_resolution_data` on MTTR when resolved PagerDuty incidents have no recorded resolution time (rows written before IC2 until they re-sync), and `nimbus changelog` lists a resolved incident at its recorded resolution time (`event`) or, for an older row, at its last-touch time (`index`).
 
 **A fourth gap is conditional and worth fixing when you see it:** an incident whose PagerDuty service maps to no configured Nimbus service leaves the deployment, change, CI and chat sections structurally empty. The brief names the unmapped PagerDuty id and points at the `[metrics.dora.<service>]` / `[ci.service.<service>]` binding — the same one `nimbus metrics dora` already uses.
 
@@ -1178,6 +1181,52 @@ nimbus oncall now --service payment-service --json
 **Data age.** One line per source (`PagerDuty data 3 min old`), and `WARNING: older than 1 h; the shift may have changed` when a source's oldest row is stale or has no recorded age.
 
 **Bounds.** Reply shapes of the providers are not verified against live accounts. Jira Service Management shifts carry no start or end time and no service mapping (look them up by schedule name). PagerDuty `you` needs a user-level API token or `pagerduty.from_email` (`nimbus connector auth pagerduty --token <token> --username <email>`). `nimbus ask "who's on call for payment-service?"` uses the `oncall_now` tool only where the Mastra agent runs (with a remote model vendor); the local-router path has no tools, and there only ranked retrieval of the shift rows can surface the answer. The IPC method is `oncall.now` (LAN-forbidden, renderer-callable, served by a demo gateway); the `nimbus oncall` brief also carries an `On call now` line under `## Incident`.
+
+### `nimbus oncall handoff`
+
+A shift handoff brief for the next person on call, from the local index only. It makes **no provider call**, **uses no model** and asks for **no approval**; nothing is written.
+
+```bash
+nimbus oncall handoff
+nimbus oncall handoff --since 8h
+nimbus oncall handoff --since yesterday-18:00 --until 2026-11-16T06:00Z --service checkout
+nimbus oncall handoff --json
+```
+
+| Flag | Description |
+|---|---|
+| `--since <duration\|time>` | Window start: a duration back from now (`12h`, `2d`) or a time in the forms `nimbus query --at` accepts (`2026-11-16T08:00Z`, `2026-11-16T08:00` in the gateway zone, `yesterday-18:00`, `-2h`). Default: when your current indexed on-call shift began (at most 7 days back) if a shift is marked as yours, else 12 hours back. The window may not exceed 31 days. |
+| `--until <duration\|time>` | Window end, same forms; default now. With only `--until`, the window is the 12 hours before it. |
+| `--service <id\|name>` | Limit incidents, alerts, deployments and the watch-list to one `[ci.service.<id>]` (its PagerDuty services, `jsm_alert_tags` and deployments). An unknown name exits 1 and lists the configured ones. |
+| `--json` | Print the structured result on one line, with the same exit codes. |
+
+**Sections.** *Shift*: the window and why it was chosen, your shift, who is on call now, who is next. *Events during the shift*: PagerDuty incidents and Jira Service Management alerts opened, changed (status, severity, urgency, assignee) or resolved, in time order, each marked `(observed)` when its time is the moment a sync saw the change rather than the provider's own; then the deployments that started in the window. *Still open*: incidents and alerts open at the end of the window, oldest first. *Watch-list*: items reopened after being resolved or whose status changed more than once, deployments followed by an incident or alert of the same service within that service's `incident_window_minutes`, and your assigned Jira, Linear and GitHub work due within 24 hours of the window end (overdue included). Then `## Gaps` and `## Data freshness`. Each list shows at most 50 entries; the rest are counted.
+
+**Honesty rules.** A section with no substrate says so in `## Gaps`; an empty list is never the only evidence that nothing happened. Gaps name: no incidents or alerts indexed, history that begins after the window starts, unsourced observation times, a shift that is not marked as yours, Jira Service Management shifts without times, no deployments or bindings, an empty work snapshot, and capped lists.
+
+**Bounds.** The index holds current and upcoming shifts only, so a shift that already ended cannot be found: run this before it ends or pass `--since`. PagerDuty marks a shift as yours only with a user-level token or `pagerduty.from_email`. State-change history begins at the V94 upgrade. Only PagerDuty incidents and Jira Service Management alerts are read. A window that ends in the past places items by their own open and resolution times; an item that changed afterwards without a provider time may be misplaced. Reply shapes of the providers are not verified against live accounts. Not reachable over LAN, HTTP, MCP or ChatOps; the method is on the desktop allowlist.
+
+### `nimbus cost anomalies`
+
+Which days of cloud spend jumped over their recent baseline, judged from the daily cost series the index already holds (today the Vantage sync). It makes **no provider call**, sends nothing and uses no model; it only reads the local index. Detection only: there is no notification yet.
+
+```bash
+nimbus cost anomalies
+nimbus cost anomalies --days 7
+nimbus cost anomalies --service vantage --json
+```
+
+| Flag | Description |
+|---|---|
+| `--service <id>` | One cost service (`vantage` today). Omit it for every indexed cost service. |
+| `--days <1-30>` | Judge each of the newest N complete UTC days, each against its own baseline (default 1). |
+| `--json` | Print the result object (`status`, `judgedDayMs`, `daysChecked`, `baseline`, `thresholds`, `counts`, `anomalies`, `anomaliesTruncated`, `gaps`) on one line, with the same exit codes. |
+
+**The rule.** A series' day is anomalous when its amount is at least `[finops] anomaly_ratio` times the mean of the 7 UTC days before it **and** exceeds that mean by at least `[finops] anomaly_min_amount` (in the series' own currency). Only complete days count: the last three days of a series are provisional (the vendor may restate them) and are never judged and never in a baseline; the judged day is the newest complete day in the index. A day with no row is not a zero: the baseline is the mean of the days that exist, and with fewer than 5 of the 7 present the series is skipped as "not enough history", never reported as normal. A zero or negative baseline has no ratio, and only the absolute floor decides. A series that reports in more than one currency is skipped.
+
+**Statuses and exit codes.** `anomalies` (exit 0): the anomalous days, largest excess first (at most 100 listed). `ok` (exit 0): at least one series was checked and none is anomalous. `insufficient_history` (exit 1): no series had enough history to be checked, so nothing can be ruled in or out. `no_data` (exit 1): no cost rows are indexed, or every day is still provisional; the gap says which. The text always names the judged day or days, the baseline window, the two thresholds and how many series were skipped and why.
+
+**Bounds.** Amounts are the vendor's, not verified against a live account. History begins when the first sync ran (45 days at most), so a new series needs a week of rows first. The IPC method is `cost.anomalies` (the whole `cost` namespace is LAN-forbidden; it is not on the desktop allowlist). Series names are vendor strings and are stripped of control characters before printing.
 
 ### `nimbus briefing`
 
@@ -1220,6 +1269,67 @@ Text from the index (a title, a sender) is stripped of control characters before
 
 **Bounds.** Outlook mail is counted per message (no thread key or sender is indexed); an empty work snapshot reads "not run yet", never "nothing assigned"; GitHub only for reviews; Slack unread needs the read markers the Slack sync records.
 
+### `nimbus incident`
+
+The incident records the gateway assembled from the local index when a PagerDuty incident, a Jira Service Management Operations alert, a Sentry issue or a Monte Carlo or Bigeye item was indexed. It makes **no provider call** and **uses no model**: a record is built from the index alone and rendered deterministically; nothing leaves the machine.
+
+```bash
+nimbus incident list                      # newest first
+nimbus incident list --open --service payment-service --limit 20
+nimbus incident list --source jira --json
+nimbus incident show inc_0123456789abcdef # a record id
+nimbus incident show pagerduty:PXXXXX     # a trigger item id
+nimbus incident show PXXXXX --json        # the provider's own id
+```
+
+| Form | What it does |
+|---|---|
+| `list [--open] [--service <id>] [--source <service>] [--limit <n>] [--json]` | One line per record, newest first by open time (a record whose source records no open time sorts last): id, open time, status, severity, source, bound service (or `(unbound)`), version, title. `--open` keeps open records, `--service` a bound Nimbus service, `--source` one of `pagerduty`, `jira`, `sentry`, `montecarlo`, `bigeye`; `--limit` 1 to 200 (default 50). Each flag may be given once. |
+| `show <id> [--json]` | The record's Markdown (the summary, the service, the change candidate with its pull request and CI run, chat, earlier incidents, who is on call, concurrent records, history, then `## Gaps` and `## Data freshness`) and a footer `Record <id> v<N>, assembled <UTC> (<age> ago), last checked <UTC>`. An id that is a trigger item with no record (it was below the automatic severity rule, or not yet assembled) is assembled on demand and the output says so. `--json` prints the `incident.get` result. |
+
+**Exit codes.** `list` exits `0` with records or with none (the text names which trigger connectors are connected), and `1` when no incident source is connected at all (`--json` always prints the `status`, `ok`, `none` or `no_data`, so a script reads the state, not only the exit code). `show` exits `0` with a record and `1` when nothing is indexed under the id, the id is ambiguous (the message names the candidates; use the full item id) or the item is not an incident source. Text from the index (a title, a chat message) is stripped of control characters before it reaches the terminal.
+
+**Owner surfaces only.** `incident.list`, `incident.get` and `incident.assemble` answer only a connection that declared `cli` or `ui`; every other kind (`mcp`, `http`, `chatops`, `fleet`, `push`, an undeclared client) gets `ERR_INCIDENT_FORBIDDEN_CLIENT`, a paired LAN peer cannot call them at all, and none is on the desktop renderer's allowlist yet. A record holds capped titles of items from several services, so it is shown to your own surfaces only. `incident.assembled` is a gateway event (`{ recordId, version, status }`, never a title): `nimbus tail --filter incident` follows it.
+
+**Configuration** (`nimbus.toml`; a bad value falls back to that key's own default and `nimbus config explain` names it, nothing is clamped):
+
+| Key | Default | Meaning |
+|---|---|---|
+| `[incident] enabled` | `true` | `false` stops ONLY the automatic assembly after a sync. `nimbus incident show`, `incident.assemble`, the on-call push's own assembly of a candidate (so a page is never dropped), the reads, retention and erasure keep working; a widened `[oncall.push] sources` has no candidates until records exist. |
+| `[incident] severities` | `[]` | `[]` keeps the per-source defaults (PagerDuty `p1` plus `[pagerduty] severity_p1_aliases`, JSM `p1`, Sentry `fatal`, Monte Carlo `sev1` and `high`); a non-empty list REPLACES them for every source. It decides what is ASSEMBLED and never what is pushed. |
+| `[incident] bigeye_sla_statuses` | `[]` | Bigeye `slaStatus` values (lower-cased) that make a Bigeye item trigger; Bigeye has no severity, so it never auto-triggers without this. |
+| `[incident] retention_days` | `365` | 7 to 3650; records older than this (by open time, or by assembly time when the source gives none) are pruned daily with the pushed briefs built from them. |
+| `[incident] lookback_days` | `7` | 1 to 90; how far back a never-assembled item is picked up automatically (the first sync after the upgrade assembles at most 200 items per source, 20 per pass). An older item is assembled on demand by `show`. |
+| `[ci.service.<id>] chat_aliases` | derived | When non-empty, the ONLY terms searched in chat for that service (3 to 64 characters, at most 50 entries, no control characters); by default the service id, its Sentry slugs and its repository names. Also accepted under `[metrics.dora.<id>]`. |
+
+**Bounds.** A record is a snapshot at its version's assembly time; the chat lane is a literal phrase match; the change lane covers GitHub pull requests only (a GitLab or Bitbucket repository gets a gap); Monte Carlo, Bigeye and Jira Service Management reply shapes are checked against documentation only; and a deployment is "the last deployment before the alert", timing only, never a proven cause.
+
+---
+
+### `nimbus statuspage draft`
+
+A static status page generated from the local index, for you to review and publish. It writes ONE local HTML file and does nothing else: no upload, no network, no connector call, no model, no HITL action. Publishing is your act.
+
+```bash
+nimbus statuspage draft                          # writes ./nimbus-status.html
+nimbus statuspage draft --out status/index.html --force
+nimbus statuspage draft --service payments --titles
+nimbus statuspage draft --out - > page.html      # to stdout
+nimbus statuspage draft --json                   # the page model, no HTML
+```
+
+| Flag | Meaning |
+|---|---|
+| `--out <file>` | Output path (default `nimbus-status.html` in the current directory). `-` writes the HTML to stdout. |
+| `--force` | Overwrite an existing file. Without it the command refuses and exits 1. |
+| `--service <id>` | Restrict the page to a configured service (`[metrics.dora.<id>]` / `[ci.service.<id>]`); repeatable. Filters incidents, on-call and the scorecard. |
+| `--title <text>` | The page heading and `<title>` (default `Service status`). |
+| `--titles` | Include incident titles (default: `Incident <short id>` only). E-mail addresses and URLs are removed from a title. |
+| `--links` | Include a link to PagerDuty incidents (default: none; no URL of a source system appears). |
+| `--json` | Print the page model as JSON instead of writing HTML. |
+
+The page lists open PagerDuty incidents and Jira Service Management alerts (short id, status, severity, bound service, opened time), who is on call now, and a 30-day DORA scorecard per configured service, with a footer that says when it was generated, which sources it read, how old each sync is and what is missing. It never contains an e-mail address, an incident body or assignee, or a repository name; an on-call person is shown by display name only. "No open incidents" and "no incident data is indexed" are different statements, and a scorecard cell without data says so instead of printing 0. The file starts with a comment and a visible banner, `Draft generated by Nimbus on <date>. Review before publishing.`; delete the banner element when you publish. The command uses the gateway method `statuspage.model`, which is CLI-only (not callable over the LAN, not in the desktop allowlist).
+
 ### `nimbus oncall pushed`
 
 Read the brief the gateway assembled **on its own** when a P1 page reached you — the on-call push. This is the read side of an unattended pass: with `[oncall.push] enabled = true` (default **off**), every PagerDuty sync checks for an ACTIVE (`triggered`/`acknowledged`) incident assigned to you, with a severity in `{"p1"} ∪ [pagerduty] severity_p1_aliases` (or the `[oncall.push] severities` list, which replaces that set), that opened at or after the moment push was enabled (minus five minutes). Each such incident gets **one** brief, assembled exactly as [`nimbus oncall --incident`](#nimbus-oncall) would assemble it, stored, announced by an `oncall.briefPushed` gateway event, and readable here. It also raises an OS notification ([`nimbus notifications`](#nimbus-notifications); real since 2026-10-10), recorded as `skipped` when OS notifications are off or unavailable on this gateway; `nimbus tail --filter oncall` (the event) and this command remain the durable delivery surfaces. When `chatops_namespace` names a namespace with policy `notify` channels and `[chatops]` is enabled, a three-line headline is also posted there (at most three per delivery, then one summary); `delivery.chatops` in `--json` shows the outcome.
@@ -1240,7 +1350,7 @@ nimbus oncall pushed --json
 | `--retry` | Only with an incident id: re-assemble a brief for that incident (the recovery path when a stored brief is `FAILED`). |
 | `--json` | Print the stored record as JSON. Exit codes are unchanged: a failed brief or a named id with no brief exits `1`. |
 
-A brief that could not be assembled is stored as `FAILED` with its failure code and is never silently dropped; the command prints the code and the exact `--retry` line, and exits `1`.
+A brief that could not be assembled is stored as `FAILED` with its failure code and is never silently dropped; the command prints the code and the exact `--retry` line, and exits `1`. A retry of a record from a source other than PagerDuty is re-assembled and stored, but delivered to the sinks only if it passes the push proof again now (the source is still in `[oncall.push] sources`, the record is open, bound and in the push severity set, and you are on call for its service on fresh data); otherwise the command prints `Retried and stored; not delivered: <reason>.` (and `notDelivered` under `--json`). A PagerDuty retry is delivered as before.
 
 **Configuration** (`nimbus.toml`):
 
@@ -1250,7 +1360,10 @@ enabled = false          # default off; a role pack (the bundled DevOps pack, 1.
 severities = []          # [] = {"p1"} plus [pagerduty] severity_p1_aliases; a non-empty list REPLACES that set
 chatops_namespace = ""   # "" = post nothing; else the namespace whose policy notify channels get each pushed headline
 retention_days = 90      # stored briefs older than this are pruned at boot (even when disabled) and on each run
+sources = ["pagerduty"]  # whose incident records may be pushed; [] pushes nothing. Another source (jira, sentry, montecarlo, bigeye) is pushed only for a record bound to a service, when the index shows YOU on call for it
 ```
+
+**What is pushed (Phase 10 IC3).** The push pushes the incident record the gateway assembled ([`nimbus incident`](#nimbus-incident)), assembling a candidate's on demand, so the stored brief is the record's Markdown. A PagerDuty incident is selected exactly as before (assigned to you, active, severity in the set above). With `sources` widened, a record of another source is pushed ONLY when all of these hold, each failure counted under its own reason and shown by `nimbus oncall pushed list` ("The last run did not push: ..."), and never broadcast: its severity is in `[oncall.push] severities` (default `p1`, so out of the box only a JSM `p1`; list `fatal`, `sev1` and so on to include Sentry and Monte Carlo; `[incident] severities` never filters a push), it is open with an open time after push was enabled, it is bound to a `[ci.service.<id>]` service, the index shows YOU on call for that service now (a current PagerDuty shift of yours for one of the service's `pagerduty_services`, fetched within 60 minutes; `isMe` needs a user-level token or `pagerduty.from_email`; a JSM schedule cannot prove it), and the source is listed in `sources`. A record that fails a check is simply not pushed this run and is re-evaluated at the next. With `[incident] enabled = false` a page is still never dropped (the push assembles its own PagerDuty candidates), but other sources have no candidates until records exist, and `nimbus oncall pushed list` says so.
 
 **Pack-settable and live.** `enabled` is the one `[oncall.push]` key a role pack may set (the bundled DevOps pack, version 1.1.0, sets `enabled = true`). It takes effect without a gateway restart: installing or removing a pack, or editing your own `nimbus.toml`, is picked up without a restart, and a disable followed by an enable does not backfill the gap: incidents opened while it was off are pushed only if they opened no further back than 5 minutes before the re-enable. Your own `nimbus.toml` or profile file still overrides a pack, so an explicit `enabled = false` keeps push off. Every other `[oncall.push]` key (`severities`, `chatops_namespace`, `retention_days`) is read at gateway start and is not pack-settable. A DevOps pack installed before 1.1.0 shows `update available` in `nimbus pack list`; re-install it to pick the key up.
 
@@ -1276,7 +1389,7 @@ nimbus tail --filter connector,hitl --json
 
 | Flag | Description |
 |---|---|
-| `--filter <categories>` | Comma-separated, repeatable: `connector`, `watcher`, `sync`, `extension`, `hitl`, `oncall` (a pushed on-call brief, [`nimbus oncall pushed`](#nimbus-oncall-pushed)). Default (flag omitted): all six. An event of a kind this build does not recognise is never filtered out, even under a narrow `--filter` — a stream that silently drops what it does not recognise is worse than one unfamiliar line. |
+| `--filter <categories>` | Comma-separated, repeatable: `connector`, `watcher`, `sync`, `extension`, `hitl`, `oncall` (a pushed on-call brief, [`nimbus oncall pushed`](#nimbus-oncall-pushed)). `briefing` (a composed morning briefing), `incident` (an incident record was created or got a new version: `incident <recordId> v<version> <status>`, [`nimbus incident`](#nimbus-incident)). Default (flag omitted): all six. An event of a kind this build does not recognise is never filtered out, even under a narrow `--filter` — a stream that silently drops what it does not recognise is worse than one unfamiliar line. |
 | `--json` | Emit the raw JSON-RPC notification (`{method, params}`) as one JSON object per line, instead of the human-readable rendering. |
 
 **`nimbus tail` is follow-only** — the same contract as `tail -f -n 0`. It shows only what happens *from the moment it connects*; there is no backfill of events that occurred before it started, and nothing it prints is persisted anywhere. Reaching for it after the fact (e.g. "what happened to that sync ten minutes ago?") will not work — that history exists only if some other subsystem records it (the egress ledger, `nimbus audit`), not here.
@@ -1585,6 +1698,27 @@ same envelope is served over `GET /v1/preflight/deploy`, so the GitHub Action bl
 
 A first-party GitHub Action wraps `GET /v1/preflight/deploy` for use directly in workflows — see [`packages/github-actions/preflight-query/`](../packages/github-actions/preflight-query/).
 
+**Advisory deploy risk (Phase 17).** After the three checks the command prints a `Deploy risk (advisory)` block, and the JSON envelope (IPC and `GET /v1/preflight/deploy`) gains an OPTIONAL `risk` member: `{ level, why, factors[], advisory: true, fail_at, verdict_escalated }`. `level` is `low`, `elevated`, `high` or `unknown`, the MAXIMUM over the factors the local index could answer; when none could be answered it is `unknown`, never `low`. Each factor is `{ id, level, evidence, known }` and an unanswerable one is `unknown` with `known: false`:
+
+| Factor | What it reads | Scoring |
+|---|---|---|
+| `system_state` | open PagerDuty incidents and JSM alerts bound to the service or a service it `depends_on` (fresh index only), and the latest deployment | open P1 incident on the service: `high`; any other open incident, an incident on a dependency, an open P1 or P2 alert, or a failed latest deployment in the last 24h: `elevated`; sources bound and fresh with none of those: `low`; no bound and fresh source: `unknown` |
+| `change_velocity` | successful deployments in 24h and 7d against the service's own 28 days before the last week (the DORA deployment-frequency reader) | 4 or more in 24h and 4x the baseline: `high`; 2 or more in 24h and 2x, or 6 or more in 7d and 2x the baseline week: `elevated`; otherwise `low`; under 3 baseline deployments, no history, or a CI provider the index cannot judge: `unknown` |
+| `oncall_coverage` | the indexed on-call shifts of the service's bound PagerDuty services (the `oncall.now` reader) | someone on call: `low`; fresh, complete shift data showing nobody: `elevated`; no binding, no shift data, no match, stale data or an incomplete service map: `unknown` (never `uncovered`) |
+| `time_of_week` | the service-local weekday and time | inside a quiet day or window: `elevated`; otherwise `low` |
+
+The block is a heads-up, not a gate: it never changes the verdict or the exit code by default. Two optional config keys in `nimbus.toml` (`[preflight.risk]`, layered like every section; a bad value falls back to its default with a warning that `nimbus config explain` shows):
+
+```toml
+[preflight.risk]
+quiet_days  = ["sat", "sun"]        # whole days flagged
+quiet_hours = ["fri 15:00-24:00"]   # "<day> HH:MM-HH:MM", end after start, no midnight crossing
+tz          = "Europe/Berlin"       # the zone the two keys are read in; absent = the gateway machine's zone
+fail_at     = "high"                # "elevated" | "high"; absent = the risk never changes the verdict
+```
+
+With `fail_at` set, a known level at or above it turns an `ok` verdict into `warn` (`risk.verdict_escalated: true`), so `--mode block` and the GitHub Action then fail it; `unknown` never trips it. Read from the local index only: no network, no model, no connector call.
+
 Read-only; no HITL.
 
 ---
@@ -1644,7 +1778,22 @@ Expose the Nimbus local index to MCP-compatible editor AIs (Cursor, Claude Code,
 ```bash
 nimbus mcp-server            # print the MCP config block to paste into your editor (mcp.json)
 nimbus mcp-server --stdio    # run the server over stdio (your editor launches this)
+nimbus mcp-server --stdio --agent <name>   # the same, labelling what this agent captures or proposes
 ```
+
+`--agent <name>` (1 to 32 lowercase letters, digits and hyphens, starting with a letter or digit, for example `--agent claude-code`) goes in the
+agent's server entry. Captures and proposals from that server are then labelled `<name>` instead of the name the
+agent declares, and `nimbus approvals` shows the label as `<name> (--agent)` rather than `<name> (declared)`. The
+label is UNVERIFIED either way: any program that can start `nimbus mcp-server` can pass any name, and Nimbus decides
+nothing by it. A missing or malformed value, `--agent` given twice, or `--agent` without `--stdio` is a usage error
+(exit code 2) and the server does not start.
+
+The server speaks both MCP protocol eras on one process: a client of revision `2026-07-28` (no handshake) and a
+client that opens with `initialize` (`2025-11-25`, `2025-06-18`, `2025-03-26` or `2024-11-05`) are listed the same
+tools. A connection's first request decides which era it is in. A protocol version it does not serve is refused
+with error `-32022` and the list of versions it does. A call to a tool that is not registered is a JSON-RPC
+`-32602` error; arguments a tool's schema rejects come back as a tool error that starts
+`Invalid arguments for tool <name>`. Tools are all it serves: no resources, prompts or HTTP transport.
 
 The Gateway must be running (`nimbus start`). Twenty-one read-only tools are always registered; run
 `nimbus mcp-server --help` for the live list, which is derived from the registry rather
@@ -1713,7 +1862,7 @@ Briefs served over MCP are recorded in the egress ledger (`I29`) — the adapter
 
 ### `nimbus approve`
 
-Standing approval rules (Phase 10 SA3, invariant I55): approve a recurring workflow write ONCE, so it runs without a prompt, and only that write. A rule names one write step of one saved workflow at one content hash. Creating a rule is itself an approval that only you can give: `nimbus approve add` and `resume` refuse `--yes`, the gateway refuses an approval whose source is not a person answering the prompt (a scripted consent file or an old client does not count), the connection must be the owner's CLI on the local socket, and org policy must not have locked `standing_approvals` off.
+Standing approval rules (Phase 10 SA3, invariant I55): approve a recurring workflow write ONCE, so it runs without a prompt, and only that write. A rule names one write step of one saved workflow at one content hash. Creating a rule is itself an approval that only you can give: `nimbus approve add` and `resume` refuse `--yes`, the gateway refuses an approval whose source is not a person answering the prompt (a scripted consent file or an old client does not count), the connection must be the owner's CLI on the local socket, and org policy must not have locked `standing_approvals` off. If the step has a `when` guard (see `nimbus workflow save`), the approval text carries a `Runs only when:` line, and a step whose guard can hold at a count of zero (for example `eq 0`, `lt`, `lte`) is refused: a failed sync looks the same, so that step always asks you.
 
 ```bash
 nimbus approve add --workflow <name> --step <label|number> [--days 1-90] [--max 1-500] [--window "Mon-Fri 06:00-10:00 Europe/Berlin"]
@@ -1739,6 +1888,63 @@ While a rule is live, each write of that step that is built by that exact workfl
 **Calendar sync (Phase 10 MB2b).** MB2b adds no other command or flag. `nimbus connector auth google_calendar` runs its own Google consent for `https://www.googleapis.com/auth/calendar.readonly` (so connecting Gmail or Drive never grants calendar access, and `nimbus connector auth google_calendar --help` prints the Google OAuth setup); once connected, the sync keeps each selected Google calendar (at most 20) for the window one day back to 30 days ahead, and the existing `outlook` connection keeps the same window of your mailbox calendar (a connection made before Outlook asked for `Calendars.Read` needs `nimbus connector auth outlook` again). `nimbus connector remove google_calendar` removes its credential like any connector.
 
 **Exit codes:** `0` done, `1` the gateway refused (policy, not a person's answer, a bad request, a decline, a stale suggestion), `2` usage.
+
+---
+
+### `nimbus agent`
+
+Connect a coding agent to Nimbus: write the Nimbus MCP server entry and steering rules into that agent's own
+configuration, and check later that they are still there.
+
+```bash
+nimbus agent install <claude-code|codex|cursor|vscode> [--scope user|project] [--dry-run] [--yes]
+nimbus agent status [--json]
+```
+
+**Steering is guidance in the agent's own harness. It is not a security boundary.** An agent with a shell can run
+`nimbus approvals <id>` itself and, until desktop approval ships, can still approve its own proposals; it can also
+run any command its harness allows with the credentials already on the machine. The kits reduce accidents.
+
+`install` prints every file it would create or change with a diff, and any command you must run yourself, then asks
+you to type `yes`. `--dry-run` prints and stops. `--yes` skips the question (read a dry run first). With no terminal
+and no `--yes` it refuses. What it writes, per kit:
+
+| Kit | Default scope | `--scope user` | `--scope project` | Steering |
+| --- | --- | --- | --- | --- |
+| `claude-code` | user | `~/.claude/settings.json` (a `PreToolUse` hook and three deny rules); the server is a command you run, `claude mcp add --scope user nimbus -- nimbus mcp-server --stdio --agent claude-code` | `.mcp.json` and `settings.json` in the project's `.claude` folder | hook |
+| `codex` | user | `~/.codex/config.toml`, `~/.codex/rules/nimbus.rules`, `~/.codex/AGENTS.md` | refused | rules |
+| `cursor` | user | `~/.cursor/mcp.json` (no steering at user scope) | `.cursor/mcp.json` and `.cursor/rules/nimbus.mdc` | guidance only |
+| `vscode` | project | `~/.copilot/mcp-config.json` (no steering at user scope) | `.vscode/mcp.json` and `copilot-instructions.md` in the project's `.github` folder | guidance only |
+
+Rules it follows on every file: an existing file is copied to `<file>.nimbus-bak-<UTC time>` first; only a block
+between two `nimbus agent kit` marker lines, or Nimbus's own keys in a JSON file, is changed (one exception: Cursor's
+`nimbus.mdc` rules file is owned whole and rewritten on reinstall, so keep your own Cursor rules in another file); a file that is a
+symbolic link, a JSON file that is not strict JSON (comments, a trailing comma) and a Codex config with its own
+`[mcp_servers.nimbus]` table are refused, not rewritten; a file that changed after the plan was shown is not
+written; a link at the file or at any directory between it and the scope's own tree is refused, when the plan is
+made and again just before the write; nothing is deleted. User scope writes under the home directory, or under the
+directory `CLAUDE_CONFIG_DIR`, `CODEX_HOME` or `COPILOT_HOME` names when set (it must be absolute). Nimbus starts
+no other vendor's program. It refuses to install from a source tree,
+because an agent's configuration must not point at a checkout. `--scope project` needs the current directory to be
+the root of a git repository. There is no uninstall command; the docs site's *Agent kits* page lists what to delete.
+
+The steering covers `gh pr merge`, `glab mr merge`, `terraform apply`, `kubectl apply`, `kubectl scale`,
+`kubectl rollout restart` and `aws lambda invoke` (each pointed at the matching `propose_action` type; scale and
+rollout restart for deployments only, since the door acts on nothing else) and tells
+the agent never to run `nimbus approvals`, `nimbus connector writes` or `nimbus captures`. The Claude Code hook
+(`nimbus agent hook claude-code`, run by Claude Code, not by you) denies those commands with the reason and makes no
+decision about anything else; it fails open when it cannot read its input, and it does not treat a separator inside
+quotes, or an escaped one, as the start of a new command.
+
+`status` reads the same files again and reports each part of each installed kit as `ok`, `drifted` (edited, or
+written by an older Nimbus), `missing`, or `manual` (a command you ran yourself, which Nimbus cannot check). It also
+prints the agent's version where it can read it without a shell, whether the gateway is running, and the limits
+above. It never writes.
+
+**Exit codes:** `install`: `0` written, nothing to change, or a dry run; `1` refused, declined or a file could not
+be written; `2` usage. `status`: `0` every installed kit is as written (a `manual` part never counts), or none is
+installed; `1` an installed kit has a `drifted` or `missing` part, or a file Nimbus can no longer read as its own
+(`cannot tell`, with the reason). Such a file for a kit with nothing else installed is not reported.
 
 ---
 
@@ -2967,6 +3173,8 @@ Limits for the FinOps cost data the Vantage sync indexes (`nimbus config explain
 |---|---|---|
 | `[finops] max_series` | `500` | 1 to 5000: how many named series are indexed; the rest of each day is summed into one `__other__` row |
 | `[finops] retain_days` | `400` | 30 to 3650: `cost_allocation` rows older than this are deleted by a daily pass; recommendations are not pruned by age |
+| `[finops] anomaly_ratio` | `1.5` | 1.05 to 100 (a plain decimal): `nimbus cost anomalies` flags a day at least this many times its 7-day baseline |
+| `[finops] anomaly_min_amount` | `10` | 0 to 1000000000 (a plain decimal): ... and only when it also exceeds the baseline by this much, in the series' currency |
 
 The data comes from `vantage.api_token` (set with `nimbus vault set vantage.api_token`; every 6 hours the sync reads 45 days on the first run, then from three days before the last success). `vantage.group_by` is a comma-separated grouping (default `provider,service,account_id`); a `tag:` entry is refused because where Vantage returns a tag value is undocumented. `nimbus connector auth vantage` prints the keys.
 
@@ -3247,7 +3455,7 @@ Output is always JSON.
 
 ---
 
-### `nimbus connector add --mcp <mcp_id> [--read <path>]... [--net <host[:port]>]... [--model] -- <command> [args...]`
+### `nimbus connector add --mcp <mcp_id> [--read <path>]... [--write <dir>]... [--net <host[:port]>]... [--model] -- <command> [args...]`
 
 Register a user-supplied MCP server and approve what it may touch. The id must start with `mcp_`. Everything after `--` is the server command and its arguments. Without any grant flags the `--` may be omitted (`nimbus connector add --mcp mcp_x npx -y pkg`); in that form the whole remainder is the command, including any `--` of its own (`... npx -y pkg -- --stdio`). Once the first token after the id is a flag, the FIRST `--` ends the flags.
 
@@ -3256,7 +3464,8 @@ nimbus connector add --mcp mcp_notes --read ~/notes -- /opt/notes-mcp/server
 nimbus connector add --mcp mcp_api --net api.example.com:443 -- /opt/api-mcp/server
 ```
 
-- **`--read <path>`** (repeatable) grants read access to a directory or file. There is no write grant.
+- **`--read <path>`** (repeatable) grants read access to a directory or file.
+- **`--write <dir>`** (repeatable, at most four) lets the server's code create and change files under a directory. On Linux and macOS it can also delete and rename there; **on Windows it cannot**. Only a person can approve it, at this terminal or in the desktop app: `--yes` and scripted consent are declined (`ERR_USER_MCP_WRITE_GRANT_NOT_A_PERSON`). Refused, with a fixed reason (`ERR_USER_MCP_WRITE_PATH_REFUSED`): a link, a drive or filesystem root, your home folder or a folder directly inside it, a hidden home folder, `~/Library`, `%APPDATA%` and `%LOCALAPPDATA%` (your temp folder is allowed), a folder on `PATH`, a Nimbus folder, an approved infrastructure working directory, any registered server's own code, a directory inside a Git repository, a vault or an editor workspace, and a directory that holds a link, a file with a second name, a `.git`, `.obsidian`, `.vscode`, `.idea`, `.husky`, `.devcontainer` or `.terraform` entry, or more than 50,000 entries or 16 levels. The same checks run every time the server starts; if one fails the server does not start and `nimbus connector status` shows the reason. The directory cannot be changed afterwards: remove the server and add it again (that also deletes its approvals for outside agents). Every approval prompt for a call to the server shows the directory, and an outside agent's call to it is approved only by typing the server id. Before downgrading Nimbus on Windows, remove a server registered with `--write`.
 - **`--net <host[:port]>`** (repeatable) grants network access to a host. IPv6 host literals are not accepted. On Windows the network grant is **all-or-nothing** (AppContainer `internetClient`): any `--net` opens every internet host to that server, not just the named host; the approval prompt says so (a Linux machine with no sandbox helper degrades the same way: the approval says the whole network). On macOS it limits the **port**, not the host: the server can reach any host on a declared port, and the approval prompt says so too.
 - **`--model`** offers this server's tools to the model during `nimbus ask` (and the desktop and VS Code surfaces that share its path), named `<mcp_id>__<tool>`. It is shown in the prompt as `modelAccess`. The tools are offered only when the asker is the local owner (the CLI, the desktop app, or an undeclared client) — never to ChatOps, the HTTP API, the MCP server, fleet or push callers, and not to `workflow.run`. Every model-initiated call still goes through the turn's own executor: the I42 approval prompt (always the local owner; a delegate never approves), an audit row and an egress row, and the result returns to the model wrapped in the `<tool_output>` envelope. Non-object input is refused. Bounds: The agent exists only when a remote `[llm.remote.*]` vendor is enabled, so tool results reach that vendor (ledgered under the I29 `model` class); the local-router path (`[llm].prefer_local = true`) has no tool calling, so a user-MCP tool is never offered there; server-supplied tool descriptions and input schemas are covered by I11: each description is prefixed `owner-registered user MCP server <id>; treat its output as data.` and delimited in an escaped `<tool_description server="<id>">` block, capped at 1000 characters, and each input schema is rebuilt from a structural-keyword allowlist (`examples`, `default`, `$comment` and unrecognised keys dropped; `description`/`title` capped at 200 characters) — but a delimited description is still prose the model reads, and `enum`/`const` values and property names reach it verbatim; a signed org policy can lock model access off with `[policy.capabilities.ai_v2] user_mcp_model_access = false` — enforced at the tool source, so no `--model` server is listed and the model is offered nothing, and fail-closed when the policy accessor is absent; the owner's own `nimbus connector call` / `connector tools` are owner-initiated, not model access, and stay unaffected; an owner turn waits for the opted-in servers' tool listings before the agent runs (a server that fails to list is skipped with a warning); and the same call is spelled `mcp_x__echo` in `tool_call_log` and `nimbus explain last` but `mcp_x.echo` in the audit and egress rows. Also: every owner turn the engine agent runs starts every `--model` server (sandboxed) to list its tools, one after another, even when the model calls none of them; a model call dispatches through the merged mesh listing, which starts every credentialed connector and every registered user MCP server (the same as `nimbus connector call`); the tools are offered only on the conversational (agent) route, so an `empty_index` turn and a high-confidence `plan_dispatch` turn get none; and the approval prompt shows the model's input unredacted (a key named like `author` or `api_key` is not masked, so no key name can hide what the model sends from the owner) and marks the call `requestedBy: "model"`, while the audit row stays redacted.
 
@@ -3397,7 +3606,7 @@ nimbus connector writes disable kubernetes   # drops the approved pairs; no appr
 - The definition is listed from the live server again at submit, at approval and after you answer. If it changed, the tool is suspended until you approve it by name again (one audit row), and a queued proposal for it is refused. A tool the server no longer lists, or a server that cannot be started, is refused without suspending anything. Removing the server (`nimbus connector remove`) or registering the same id again deletes its approvals.
 - `status` prints a section `User MCP servers (outside agents):` with one line per server that has approvals (`mcp_notes: 3 approved`, `(unverified: its tools could not be listed)` when it could not be listed), each suspended tool with both hash prefixes, and `not listed now: <tool>`. When your organisation turned off `user_mcp_model_access`, the `Agent policy:` line says outside agents cannot use user MCP tools.
 - **Deprecation.** A proposal for an unapproved tool of a `--model` server is still accepted for now. It is stored as `legacy`, carries `Deprecated: mcp_<id>.<tool> is not approved for outside agents by name. It is accepted for now and will be refused in a later release. To keep it working run: nimbus connector writes enable mcp_<id> --door agent --approve <tool>` in the `propose_action` reply, in `nimbus approvals` and in the approval prompt, and is counted by `status`. A later release refuses it.
-- Bounds. The hash covers what the server lists, not what its code does. A submit, an approval or a describe of an approved tool starts the server in its sandbox. Approving third-party code for an agent's call is one keystroke by a person. The client kind and the answer source are the client's own claims on the local socket. A server removed and registered again loses its approvals. Listing a server's tools for an agent, an approval or `status` waits at most 45 seconds; a server that has not answered by then counts as unlistable (refused, nothing marked); a start already under way at that moment cannot be cancelled and finishes on its own. After you answer a prompt for an agent's call, Nimbus checks again that the server is still the registration the prompt showed and, for an approved tool, that the approval is still the one shown; if either changed while you were deciding, your answer is overruled and nothing runs. The registration comparison uses the computer's clock, so a clock set back across a remove and a re-add could make an older proposal look newer (you still approve the tools by name again). A server's `--read` and `--net` grants cannot be changed in place (remove it and register it again, which deletes the approvals); a change in the operating system's sandbox after an approval shows only in the prompt's network note. `status` and `describe_actions` share one 200-entry list, so beyond that some approved types are not advertised. A user MCP server has no write grant yet, so it writes nowhere beyond its own sandbox directory.
+- Bounds. The hash covers what the server lists, not what its code does. A submit, an approval or a describe of an approved tool starts the server in its sandbox. Approving third-party code for an agent's call is one keystroke by a person. The client kind and the answer source are the client's own claims on the local socket. A server removed and registered again loses its approvals. Listing a server's tools for an agent, an approval or `status` waits at most 45 seconds; a server that has not answered by then counts as unlistable (refused, nothing marked); a start already under way at that moment cannot be cancelled and finishes on its own. After you answer a prompt for an agent's call, Nimbus checks again that the server is still the registration the prompt showed and, for an approved tool, that the approval is still the one shown; if either changed while you were deciding, your answer is overruled and nothing runs. The registration comparison uses the computer's clock, so a clock set back across a remove and a re-add could make an older proposal look newer (you still approve the tools by name again). A server's `--read` and `--net` grants cannot be changed in place (remove it and register it again, which deletes the approvals); a change in the operating system's sandbox after an approval shows only in the prompt's network note. `status` and `describe_actions` share one 200-entry list, so beyond that some approved types are not advertised. A user MCP server writes nowhere beyond its own sandbox directory unless you registered it with `--write <dir>`; then the approval prompt shows the directory, and an outside agent's call takes a typed server id.
 
 ---
 
@@ -5724,6 +5933,23 @@ steps:
 
 A `write` input is `{ const: <json> }` or `{ from: <an earlier query label>, column: <what it selects> }`; it can never read a `run` step's output. The write runs once per selected id and **asks you for each one**, with the typed preview and the current state of its target. `workflow save` validates both kinds (an unknown key, a wave 4 or mail-send tool, or a bad reference is refused with -32602) and `workflow run` validates them again. A workflow with no `run` step needs no model vendor. A `paramsOverride` for a `write` or `query` step's label is refused. The gateway derives how a run started from the connection's declared client kind (`cli`, `ui`); a `trigger` or `provenance` parameter is refused, and `--dry-run` shows both kinds without running them.
 
+**Conditional steps: the `when` guard.** A `run` or `write` step may carry `when`, a comparison over the **count** of an earlier `query` step (the number of values it selected in this run), so a workflow can act only when there is something to act on:
+
+```yaml
+  - kind: write
+    label: archive-old
+    when: { count: old-read-mail, gt: 0 }   # gt, gte, lt, lte, eq or ne, against an integer
+    tool: gmail_thread_archive
+    input:
+      threadId: { from: old-read-mail, column: metadata.threadId }
+  - kind: run
+    label: nothing-to-do
+    when: { count: old-read-mail, eq: 0 }   # a list of up to 4 comparisons means ALL must hold
+    run: "Say in one line that the inbox has no old read mail."
+```
+
+`count` names an earlier `query` step (never a `run` or `write` step, so the model can never decide which write runs); a `query` step is never guarded. The operand must be an integer from 0 to one below that query's `limit`, and a comparison that is always true (`gte 0`) or never true (`lt 0`) is refused; equivalent forms (`ne 0`, `gt 0`) are stored as written and hash differently. A row that carries `when` is parsed strictly (a guarded `run` row with no prompt, an unknown key or a bad `when` refuses the whole workflow). A workflow that uses `when` has at most 100 steps and at most 50 guarded steps. A step whose guard is false is recorded `not_taken` (with the observed counts), asks nothing, calls no model and dispatches nothing; the run goes on and ends `done`, and the run's audit row carries `stepsNotTaken`. When a query hit its `limit` the count is only a lower bound, so on such a query only `gt`, `gte` and `ne 0` can hold. `--dry-run` from the owner's CLI or desktop evaluates each guard against the index as of now (`would run` / `would not run`), and from any other client shows the guard text without counts. **A standing rule may cover a guarded write only when every comparison needs presence**, that is, is false at a count of zero (`gt`, `gte`, `eq` with a positive operand, `ne 0`): a failed sync, a lapsed credential and an empty index all read as zero, so a guard such as `eq 0` could otherwise trigger an unattended write because a connector broke. A step with such a guard always asks (an unattended run stops and waits), and `nimbus approve add` refuses it with that reason; the rule's approval text names the condition on a `Runs only when:` line. Resuming a blocked run re-evaluates the blocked step's guard on fresh counts: if it no longer holds the resumed run stops there with the status `condition_lapsed` and runs nothing after it; run the workflow again to evaluate every guard fresh.
+
 ---
 
 ### `nimbus workflow list`
@@ -6206,7 +6432,7 @@ nimbus data delete --service slack --yes         # Execute — required for non-
 | Flag | Description |
 |---|---|
 | `--service <name>` | Connector to purge (`github`, `slack`, `google_drive`, …) |
-| `--dry-run` | Print the preflight (item count, item-history row count, vault entry count) and exit |
+| `--dry-run` | Print the preflight (item count, item-history row count, incident records and pushed briefs that cite the service, vault entry count) and exit |
 | `--yes` | Required to execute the deletion (the CLI is non-interactive) |
 
 The preflight is always printed — even with `--yes` — so the deletion blast radius is recorded in the audit log before the destructive write.

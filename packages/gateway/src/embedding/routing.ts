@@ -99,6 +99,10 @@ export const LOCAL_ONLY_PROSE_TYPES: ReadonlySet<string> = new Set([
   // what the source items themselves never send. `glossary/glossary-visibility.ts`'s
   // `syncTermProjection` is the only writer and picks this type or `nimbus:glossary_term`.
   "nimbus:glossary_term_local",
+  // A Linear project's `content` is often the full specification. It gets the 16 KiB body cap
+  // (so a long document is not pinned at body_complete = 0) but is embedded on the LOCAL model only,
+  // never sent to a remote embedder even when `openai.api_key` is set (Phase 10 PM2).
+  "linear:project",
 ]);
 
 export function routingKey(service: string, type: string): string {

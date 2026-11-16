@@ -502,10 +502,10 @@ describe("listPacks and previewPack", () => {
     const before = listPacks(deps());
     expect(before.profile).toBe(profile());
     expect(before.installed).toEqual([]);
-    expect(before.available.map((p) => p.id).sort()).toEqual(["devops", "pm"]);
+    expect(before.available.map((p) => p.id).sort()).toEqual(["developer", "devops", "pm"]);
     await installPack({ id: "pm" }, deps(), gate().gate);
     const after = listPacks(deps());
-    expect(after.available.map((p) => p.id)).toEqual(["devops"]);
+    expect(after.available.map((p) => p.id)).toEqual(["devops", "developer"]);
     expect(after.installed).toEqual([
       {
         id: "pm",

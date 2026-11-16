@@ -37,6 +37,12 @@ export interface AdapterDeps {
    */
   agentToolsDisabledReason?(): string | undefined;
   /**
+   * The `--agent <kit>` value this server was started with (D-AD-13), when there is one: the
+   * label every capture and proposal from this connection carries, in place of the client's
+   * declared name. Display only.
+   */
+  agentKit?: string;
+  /**
    * Whether this connection targets a demo-rooted gateway (`CliPlatformPaths.demo === true`).
    * Optional, defaulting to `false` — a hand-built test fake or an old `ConnectionEnv`-built deps
    * object stays valid without a stub. Read by the mid-connection-drop path in `runTool` so a

@@ -1,6 +1,7 @@
 // packages/gateway/src/connectors/connector-writes/enable-prompt.ts
 // The consent text for `connector.writes.enable`: exactly which writes become model-offerable.
 import { escapeUnverifiedLine } from "../../engine/proposer-block.ts";
+import { userMcpWriteLines } from "../../engine/user-mcp-write-lines.ts";
 import { OBSIDIAN_APPEND_TOOL_ID } from "./enablement-store.ts";
 import { sanitisePreviewText } from "./preview.ts";
 
@@ -483,7 +484,14 @@ function userMcpEnablePromptLines(payload: Record<string, unknown>): string[] | 
   const netHosts = stringList(payload["netHosts"]);
   const tools = payload["tools"];
   const note = payload["networkNote"];
+  // I15 (AD5b): the server's write directories. Absent means none (the payload of a server with no
+  // write directory is exactly what it was); present, it must be the shape the handler builds.
+  const writeRaw = payload["writePaths"];
+  const writePaths = writeRaw === undefined ? [] : stringList(writeRaw);
+  const writePlatform = payload["writePlatform"];
   if (
+    writePaths === undefined ||
+    (writePaths.length > 0 && typeof writePlatform !== "string") ||
     typeof service !== "string" ||
     typeof registeredAt !== "number" ||
     !Number.isFinite(registeredAt) ||
@@ -505,8 +513,9 @@ function userMcpEnablePromptLines(payload: Record<string, unknown>): string[] | 
     ...reachLines("net", netHosts),
   ];
   if (note !== undefined) lines.push(`  net note: ${escapeUnverifiedLine(note)}`);
+  if (writePaths.length === 0) lines.push("  write: none beyond its own sandbox directory");
+  else lines.push(...userMcpWriteLines(writePaths, String(writePlatform)));
   lines.push(
-    "  write: none beyond its own sandbox directory",
     `Also registered for your own model (--model, a separate grant): ${payload["modelAccess"] ? "yes" : "no"}`,
     "Tools to approve for outside agents (exact names, first 12 characters of each definition hash):",
   );

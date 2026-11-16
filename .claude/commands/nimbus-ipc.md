@@ -298,6 +298,7 @@ An approved extension runs as a lazy, sandboxed MCP stdio server (`mesh:ext:<ser
 | `agents.conflicts` | request | Slice 6a — WIP collisions (open PR / ticket / branch / recent commit) before editing a file |
 | `agents.huddle` | request | Slice 6a — team-scoped morning briefing across paired peers |
 | `briefing.latest` / `list` / `get` / `status` | request | Phase 10 MB5 — the morning briefing runs the gateway stored. Renderer-callable (I7); the whole `briefing` namespace is LAN-forbidden (I5); served on a demo gateway. |
+| `incident.list` / `get` / `assemble` | request | Phase 10 IC3 — the incident records the engine assembled. Served ONLY to a connection that declared `cli` or `ui` (`ERR_INCIDENT_FORBIDDEN_CLIENT` otherwise, before any query; the kind is the connection's, never a param); the whole `incident` namespace is LAN-forbidden (I5) and NOT on the Tauri allowlist (the count stays 132 until IC10); served on a demo gateway. `incident.assembled` is a `gateway.event` kind carrying `{ recordId, version, status }`. |
 | `briefing.runNow` | request | Composes a briefing now (CLI-only: not on the Tauri allowlist), `-32000 ERR_BRIEFING_BUSY` while one runs. |
 | `agents.janitor` | request | Slice 6b — idle cloud-resource verdict; a `--cleanup` proposal is HITL-gated at the executor (`I24`) |
 | `agents.preflight` | request | Slice 6b — blast-radius preflight over a peer namespace; each downstream owner approves behind their own gate (`I24`/`D18`) |
@@ -306,7 +307,7 @@ An approved extension runs as a lazy, sandboxed MCP stdio server (`mesh:ext:<ser
 | `agents.glossary` | request | S1 — read over the materialized `glossary_term` table (V45/V46) |
 | `agents.decisions` | request | S1 — read over the materialized `decision_record` table (V47) |
 | `agents.ownership` | request | S1 — read over the git-blame-derived ownership graph (V51); `nimbus owners` |
-| `agents.premortem` | request | S1 — risk brief for a Jira epic from comparable past epics; writes only disabled `watcher` proposals and their tombstones, never fires HITL |
+| `agents.premortem` | request | S1 — risk brief for a Jira epic or a Linear project from comparable past ones; writes only disabled `watcher` proposals and their tombstones, never fires HITL |
 | `agents.negotiate` | request | S1 — cited contribution brief for one person over a window; externally excluded, since `--person` makes it a dossier-builder |
 | `agents.changelog` | request | v0.1.1 — Markdown changelog assembled from the local index over a window |
 | `agents.standup` | request | v0.1.1 — the owner's own activity over a window (default `24h`); owner-scoped, so externally excluded |
@@ -538,7 +539,7 @@ file is the authority for its method set.
 | `fleet.*` | `status`, `list`, `briefs`, `show`, `runNow`, `digest` | `ipc/fleet-rpc.ts` | overnight fleets (I38); only `briefs`/`show` are on the Tauri `ALLOWED_METHODS` (stored-brief reads) |
 | `toolgen.*` | `create`, `approvalRespond`, `save`, `saveApprovalRespond`, `list`, `invoke`, `revoke`, `credentialSet` | `ipc/toolgen-rpc.ts` | runtime tool generation (I39/I40) |
 | `ask.*` | `explainLast` | `ipc/diagnostics-rpc.ts` | `nimbus explain last`; also needs its entry in `tryDispatchDiagnosticsRpc`'s outer match |
-| `oncall.*` | `now`, `pushedList`, `pushedGet`, `pushedRetry` | `ipc/oncall-now-rpc.ts` (`now`: who is on call from the indexed shifts, own dispatcher, no push runtime needed, served in a demo gateway), `ipc/oncall-push-rpc.ts` | the on-call pushed brief, default-off `[oncall.push]`; `now`, `pushedList` and `pushedGet` ARE on the Tauri `ALLOWED_METHODS` (desktop On-call page), `pushedRetry` is CLI-only |
+| `oncall.*` | `now`, `handoff`, `pushedList`, `pushedGet`, `pushedRetry` | `ipc/oncall-now-rpc.ts` (`now`: who is on call from the indexed shifts, own dispatcher, no push runtime needed, served in a demo gateway), `handoff`: the shift handoff brief from the local index, `ipc/oncall-handoff-rpc.ts`, read-only, no HITL, on the Tauri allowlist), `ipc/oncall-push-rpc.ts` | the on-call pushed brief, default-off `[oncall.push]`; `now`, `pushedList` and `pushedGet` ARE on the Tauri `ALLOWED_METHODS` (desktop On-call page), `pushedRetry` is CLI-only |
 | `demo.*` | `seed`, `firePage` | `ipc/demo-rpc.ts` | claimed only by a demo-rooted gateway (I41) |
 | `notifications.*` | `status`, `test` | `ipc/notifications-rpc.ts` | OS toasts (pre-S3 E). `status` awaits the backend probe; `test` sends one fixed-text toast through the real service (rate limit + `title_only` apply) and returns `{ delivered: true, status }` or `{ delivered: false, reason, status }` — an undelivered toast is a result, never a JSON-RPC error. `nimbus notifications`, `nimbus doctor` |
 

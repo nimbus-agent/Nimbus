@@ -1,7 +1,5 @@
 import { describe, expect, it, test } from "bun:test";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { McpServer } from "@nimbus-dev/sdk/mcp-server";
 import {
   type AdapterDeps,
   AGENT_TOOLS_UNSUPPORTED_MESSAGE,
@@ -22,6 +20,7 @@ import {
 } from "./adapter.ts";
 import { supportsClose, supportsNotifications } from "./client-surface.ts";
 import { gatewayDownMessage } from "./errors.ts";
+import { connectUpstreamClient } from "./upstream-client.test-helpers.ts";
 
 describe("clampLimit", () => {
   it("defaults to 20 when undefined", () => {
@@ -616,9 +615,7 @@ describe("degraded mode on a gateway without session.declareKind", () => {
 
   /** Ask a real MCP client, over an in-memory transport, what this server actually lists. */
   async function listToolNames(server: McpServer): Promise<string[]> {
-    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
-    const client = new Client({ name: "test", version: "0" });
-    await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+    const client = await connectUpstreamClient(server, "test");
     const listed = await client.listTools();
     await client.close();
     return listed.tools.map((t) => t.name).sort();

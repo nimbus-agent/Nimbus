@@ -5,6 +5,7 @@ import {
   CaptureError,
   type CaptureKind,
   type DecisionPayload,
+  type LabelSource,
   LINK_RELATIONS,
   type LinkPayload,
   type LinkRelation,
@@ -330,4 +331,12 @@ export function sanitizeClientLabel(raw: unknown): string | null {
   if (typeof raw !== "string") return null;
   const cleaned = raw.replace(CONTROL_RE, "").trim();
   return cleaned === "" ? null : clampBody(cleaned, CLIENT_LABEL_MAX);
+}
+
+/**
+ * Where the label came from (AD7a, D-AD-13). Exactly `"kit"` WITH a label is `kit`; anything else,
+ * a kit source with no label included, is `declared`. Display only: nothing decides by it.
+ */
+export function sanitizeLabelSource(raw: unknown, label: string | null): LabelSource {
+  return raw === "kit" && label !== null ? "kit" : "declared";
 }

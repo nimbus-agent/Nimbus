@@ -220,6 +220,15 @@ describe("replaceItemSetRows — refusals", () => {
     });
   });
 
+  test("linear may sweep project rows only, never issue rows", () => {
+    withDb((db) => {
+      expect(replaceItemSetRows(db, "linear", "project", [])).toBe(0);
+      expect(() => replaceItemSetRows(db, "linear", "issue", [])).toThrow(
+        'may not sweep "issue" rows of "linear"',
+      );
+    });
+  });
+
   test("an oversized keep set, a non-finite endBeforeMs and an empty prefix throw", () => {
     withDb((db) => {
       const huge = Array.from({ length: REPLACE_ITEM_SET_MAX_KEEP + 1 }, (_, i) => String(i));
@@ -233,13 +242,14 @@ describe("replaceItemSetRows — refusals", () => {
     });
   });
 
-  test("the allowlist names only the calendar services (event) and the on-call sources (oncall_shift)", () => {
+  test("the allowlist names only the calendar services (event), the on-call sources (oncall_shift) and the Linear project set", () => {
     expect(REPLACE_ITEM_SET_TYPES).toEqual({
       google_calendar: ["event"],
       outlook: ["event"],
       pagerduty: ["oncall_shift"],
       jira: ["oncall_shift"],
       vantage: ["cost_recommendation"],
+      linear: ["project"],
     });
   });
 });

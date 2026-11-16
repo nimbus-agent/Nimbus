@@ -2,10 +2,11 @@
 // them; parsed at module load, so a malformed file fails the first import rather than an install.
 
 import { parseRolePackManifestValue, type RolePackManifest } from "@nimbus-dev/registry-format";
+import developer from "./bundled/developer.json" with { type: "json" };
 import devops from "./bundled/devops.json" with { type: "json" };
 import pm from "./bundled/pm.json" with { type: "json" };
 
-const entries: readonly RolePackManifest[] = [pm, devops].map((raw) =>
+const entries: readonly RolePackManifest[] = [pm, devops, developer].map((raw) =>
   parseRolePackManifestValue(raw),
 );
 

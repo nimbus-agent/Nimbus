@@ -9,6 +9,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fireDemoPage, seedDemoCorpus } from "../demo/seed.ts";
+import { engineForConfigDir } from "../incident/__fixtures__/test-engine.ts";
 import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import {
@@ -108,6 +109,7 @@ test("the UI fixture has the shape the real oncall.pushedList / pushedGet return
   const nowMs = Date.now();
   await seedDemoCorpus(db, { configDir, dataDir, nowMs });
   const rt = assembleOncallPushRuntime({
+    records: engineForConfigDir(db, configDir, () => nowMs),
     db,
     configDir,
     notifications: { show: () => {} },
@@ -165,7 +167,15 @@ test("the UI fixture has the shape the real oncall.pushedList / pushedGet return
     writeFileSync(FIXTURE, `${JSON.stringify(live, null, 2)}\n`);
   }
   const committed: unknown = JSON.parse(readFileSync(FIXTURE, "utf8"));
-  expect(shape(live)).toEqual(shape(committed));
+  // Phase 10 IC3 added three CLI-facing diagnostics to `oncall.pushedList` (the sources whose records may be
+  // pushed, whether records are assembled automatically, and the last run's not-pushed counts). The desktop
+  // does not read them and its fixture does not model them; every key the desktop DOES read is still compared.
+  const withoutCliDiagnostics = (v: unknown): unknown => {
+    const o = v as { list: Record<string, unknown> };
+    const { sources: _s, incidentEngineEnabled: _e, lastRun: _l, ...list } = o.list;
+    return { ...o, list };
+  };
+  expect(shape(withoutCliDiagnostics(live))).toEqual(shape(committed));
   // The values the desktop tests rely on, pinned so a regenerated fixture cannot quietly lose them.
   const list = (
     live as { list: { briefs: { incidentId: string; service: unknown; retriedAt: unknown }[] } }

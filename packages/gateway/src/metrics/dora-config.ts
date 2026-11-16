@@ -22,17 +22,23 @@ export type ServiceConfig = {
   readonly dataModels: readonly string[];
   /** Service ids this service directly depends on (IC4's cascade reads it; IC2 only stores it). */
   readonly dependsOn: readonly string[];
+  /**
+   * Chat search terms for this service's incident records (Phase 10 IC3). When non-empty they REPLACE the
+   * derived terms (service id, Sentry slugs, repo basenames) entirely.
+   */
+  readonly chatAliases: readonly string[];
 };
 
 /** The four incident-engine binding fields, empty, for a literal to spread. */
 export const NO_INCIDENT_BINDINGS: Pick<
   ServiceConfig,
-  "jsmAlertTags" | "sentryProjects" | "dataModels" | "dependsOn"
+  "jsmAlertTags" | "sentryProjects" | "dataModels" | "dependsOn" | "chatAliases"
 > = Object.freeze({
   jsmAlertTags: [],
   sentryProjects: [],
   dataModels: [],
   dependsOn: [],
+  chatAliases: [],
 });
 
 export const DEFAULT_DEPLOY_WORKFLOW_PATTERN = "^[Dd]eploy";

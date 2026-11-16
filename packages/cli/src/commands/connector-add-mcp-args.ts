@@ -6,10 +6,17 @@ export type AddMcpRequest = {
   readPaths: string[];
   netHosts: string[];
   modelAccess: boolean;
+  /**
+   * Directories the server may write beneath (`--write`). Present only when at least one was
+   * given, so a registration without one sends exactly the request it always did.
+   */
+  writePaths?: string[];
 };
 
 export const ADD_MCP_USAGE =
-  "Usage: nimbus connector add --mcp <mcp_id> [--read <path>]... [--net <host[:port]>]... [--model] -- <command> [args...]\n" +
+  "Usage: nimbus connector add --mcp <mcp_id> [--read <path>]... [--write <dir>]... [--net <host[:port]>]... [--model] -- <command> [args...]\n" +
+  "  --write <dir>  a directory the server's code may create and change files in (at most 4). You\n" +
+  "                 approve it at this terminal, and Nimbus checks it again every time the server starts.\n" +
   "Example: nimbus connector add --mcp mcp_echo -- /abs/path/echo/dist/echo";
 
 function usageError(): Error {
@@ -22,21 +29,24 @@ function resolveCommand(command: string, cwd: string): string {
   return hasSeparator && !isAbsolute(command) ? resolve(cwd, command) : command;
 }
 
-type Grants = Pick<AddMcpRequest, "readPaths" | "netHosts" | "modelAccess">;
+type Grants = Pick<AddMcpRequest, "readPaths" | "netHosts" | "modelAccess"> & {
+  writePaths: string[];
+};
 
 /** Parses the grant flags that precede the `--`; any unknown flag or missing value is a usage error. */
 function parseGrantFlags(flags: readonly string[], cwd: string): Grants {
-  const grants: Grants = { readPaths: [], netHosts: [], modelAccess: false };
+  const grants: Grants = { readPaths: [], netHosts: [], modelAccess: false, writePaths: [] };
   for (let i = 0; i < flags.length; i++) {
     const flag = flags[i];
     if (flag === "--model") {
       grants.modelAccess = true;
       continue;
     }
-    if (flag !== "--read" && flag !== "--net") throw usageError();
+    if (flag !== "--read" && flag !== "--net" && flag !== "--write") throw usageError();
     const value = flags[++i];
     if (value === undefined || value === "" || value.startsWith("-")) throw usageError();
     if (flag === "--read") grants.readPaths.push(resolve(cwd, value));
+    else if (flag === "--write") grants.writePaths.push(resolve(cwd, value));
     else grants.netHosts.push(value);
   }
   return grants;
@@ -61,12 +71,13 @@ export function parseAddMcpArgs(tail: readonly string[], cwd: string): AddMcpReq
   const serviceId = tail[0]?.trim() ?? "";
   if (serviceId === "" || serviceId.startsWith("-")) throw usageError();
   const { flags, command } = splitFlagsAndCommand(tail.slice(1));
-  const grants = parseGrantFlags(flags, cwd);
+  const { writePaths, ...grants } = parseGrantFlags(flags, cwd);
   const first = command[0];
   if (first === undefined || first.trim() === "") throw usageError();
   return {
     serviceId,
     argv: [resolveCommand(first, cwd), ...command.slice(1)],
     ...grants,
+    ...(writePaths.length === 0 ? {} : { writePaths }),
   };
 }

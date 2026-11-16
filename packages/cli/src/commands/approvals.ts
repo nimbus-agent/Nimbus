@@ -86,6 +86,8 @@ interface Proposal {
   wave: number | null;
   typedConfirm: boolean;
   label: string | null;
+  /** True when the label is the `--agent` value of the agent's server entry (D-AD-13). */
+  fromKit: boolean;
   summary: string;
   createdAt: number;
   expiresAt: number;
@@ -116,6 +118,8 @@ function parseProposal(v: unknown): Proposal {
     wave: typeof wave === "number" ? wave : null,
     typedConfirm: r["typedConfirm"] === true,
     label: typeof label === "string" ? label : null,
+    // An older gateway sends no source, or only "declared".
+    fromKit: r["labelSource"] === "kit",
     summary: field(r, "summary", "string") as string,
     createdAt: field(r, "createdAt", "number") as number,
     expiresAt: field(r, "expiresAt", "number") as number,
@@ -134,8 +138,24 @@ function waveCell(p: { wave: number | null; typedConfirm: boolean }): string {
   return p.typedConfirm ? `${String(p.wave)} (type-to-confirm)` : String(p.wave);
 }
 
-function labelCell(label: string | null): string {
-  return `${stripControl(label ?? "-")} (unverified)`;
+/** Where the label came from, in the words the list and the detail share. Never a verification. */
+function sourceWord(p: Pick<Proposal, "fromKit">): string {
+  return p.fromKit ? "--agent" : "declared";
+}
+
+/** The width of the FROM column. */
+const FROM_WIDTH = 30;
+
+/**
+ * The label and where it came from, in FROM_WIDTH columns. When the two do not fit it is the LABEL
+ * that is cut, never the source: a long label must not hide whether it was declared or `--agent`.
+ */
+function labelCell(p: Pick<Proposal, "label" | "fromKit">): string {
+  const source = ` (${sourceWord(p)})`;
+  const label = stripControl(p.label ?? "-");
+  const room = FROM_WIDTH - source.length;
+  const shown = label.length > room ? `${label.slice(0, room - 1)}…` : label;
+  return `${shown}${source}`;
 }
 
 /** The gateway's own deprecation header (fixed text), control-stripped, as a first block; or nothing. */
@@ -149,10 +169,10 @@ function deprecationBlock(raw: unknown): string {
 
 function formatQueue(rows: Proposal[], now: number, header = ""): string {
   if (rows.length === 0) return "No agent proposals are waiting.\n";
-  const head = `${cell("ID", 42)} ${cell("FROM (declared, unverified)", 30)} ${cell("TYPE", 26)} ${cell("WAVE", 22)} ${cell("AGE", 8)} ${cell("EXPIRES", 8)} SUMMARY`;
+  const head = `${cell("ID", 42)} ${cell("FROM (unverified)", FROM_WIDTH)} ${cell("TYPE", 26)} ${cell("WAVE", 22)} ${cell("AGE", 8)} ${cell("EXPIRES", 8)} SUMMARY`;
   const lines = rows.map(
     (r) =>
-      `${cell(r.id, 42)} ${cell(labelCell(r.label), 30)} ${cell(stripControl(r.actionType), 26)} ${cell(r.legacy ? `${waveCell(r)} deprecated` : waveCell(r), 22)} ${cell(ago(r.createdAt, now), 8)} ${cell(until(r.expiresAt, now), 8)} ${stripControl(r.summary).slice(0, 60)}`,
+      `${cell(r.id, 42)} ${cell(labelCell(r), FROM_WIDTH)} ${cell(stripControl(r.actionType), 26)} ${cell(r.legacy ? `${waveCell(r)} deprecated` : waveCell(r), 22)} ${cell(ago(r.createdAt, now), 8)} ${cell(until(r.expiresAt, now), 8)} ${stripControl(r.summary).slice(0, 60)}`,
   );
   return `${header}${[head, ...lines].join("\n")}\nApprove one with: nimbus approvals <id>   (read it first with: nimbus approvals show <id>)\n`;
 }
@@ -164,7 +184,7 @@ function formatDetail(raw: unknown, now: number): string {
   const lines = [
     ...(p.legacy ? [deprecationBlock(r).trimEnd(), ""] : []),
     `${p.id}  ${stripControl(p.actionType)}  wave ${waveCell(p)}`,
-    `Proposed by ${stripControl(p.label ?? "an unnamed MCP client")} (declared, unverified) ${ago(p.createdAt, now)}; expires in ${until(p.expiresAt, now)}.`,
+    `Proposed by ${stripControl(p.label ?? "an unnamed MCP client")} (${sourceWord(p)}, unverified) ${ago(p.createdAt, now)}; expires in ${until(p.expiresAt, now)}.`,
     `Agent's summary (UNVERIFIED): ${stripControl(p.summary)}`,
     "",
     ...(Array.isArray(input)

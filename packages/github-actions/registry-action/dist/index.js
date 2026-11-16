@@ -1,4 +1,4 @@
-// nimbus-action-dist bun=1.3.14 inputHash=sha256:ce776c61a05efb4348b011100da5edb4d82d86a9c086a279acadd9412f2a93dd
+// nimbus-action-dist bun=1.3.14 inputHash=sha256:d655fd783bf67ac7528e437390fd4fa9953a6a08d494a577f85a54b7bf346d13
 import { createRequire } from "node:module";
 var __create = Object.create;
 var __getProtoOf = Object.getPrototypeOf;
@@ -4721,7 +4721,7 @@ import { createHash } from "node:crypto";
 function publisherKeyFingerprint(base64Key) {
   return createHash("sha256").update(Buffer.from(base64Key, "base64")).digest("hex").slice(0, 32);
 }
-// ../../../node_modules/.bun/@nimbus-dev+sdk@2.1.0/node_modules/@nimbus-dev/sdk/dist/agents/guard-factory.js
+// ../../../node_modules/.bun/@nimbus-dev+sdk@2.3.0/node_modules/@nimbus-dev/sdk/dist/agents/guard-factory.js
 function createBriefGuard(kind, extra, opts) {
   const requireQuery = opts?.requireQuery ?? false;
   return (x) => {
@@ -4739,7 +4739,7 @@ function createBriefGuard(kind, extra, opts) {
   };
 }
 
-// ../../../node_modules/.bun/@nimbus-dev+sdk@2.1.0/node_modules/@nimbus-dev/sdk/dist/agents/brief-guards.js
+// ../../../node_modules/.bun/@nimbus-dev+sdk@2.3.0/node_modules/@nimbus-dev/sdk/dist/agents/brief-guards.js
 var STRICT = { requireQuery: true };
 var isExpertBrief = createBriefGuard("expert", (b) => Array.isArray(b["ranked"]), STRICT);
 var isImpactBrief = createBriefGuard("impact", (b) => Array.isArray(b["affected"]), STRICT);
@@ -4753,10 +4753,10 @@ var isWhyBrief = createBriefGuard("why", (b) => Array.isArray(b["findings"]), ST
 var isGlossaryBrief = createBriefGuard("glossary", (b) => Array.isArray(b["entries"]) && Array.isArray(b["suggestions"]), STRICT);
 var isDecisionsBrief = createBriefGuard("decisions", (b) => Array.isArray(b["entries"]), STRICT);
 var isOwnershipBrief = createBriefGuard("ownership", (b) => typeof b["coverage"] === "object" && b["coverage"] !== null, STRICT);
-// ../../../node_modules/.bun/@nimbus-dev+sdk@2.1.0/node_modules/@nimbus-dev/sdk/dist/contract-version.js
+// ../../../node_modules/.bun/@nimbus-dev+sdk@2.3.0/node_modules/@nimbus-dev/sdk/dist/contract-version.js
 var CONTRACT_VERSION_PATTERN = /^[1-9][0-9]*$/;
 
-// ../../../node_modules/.bun/@nimbus-dev+sdk@2.1.0/node_modules/@nimbus-dev/sdk/dist/contract-tests.js
+// ../../../node_modules/.bun/@nimbus-dev+sdk@2.3.0/node_modules/@nimbus-dev/sdk/dist/contract-tests.js
 var PERMS = new Set(["read", "write", "delete"]);
 var HITL = new Set(["write", "delete"]);
 var ALL_BLANK = /^[\p{White_Space}\uFEFF]*$/u;
@@ -4967,7 +4967,7 @@ var ROW_DATA_TOOL_SEGMENTS = new Set([
   "export",
   "download"
 ]);
-// ../../../node_modules/.bun/@nimbus-dev+sdk@2.1.0/node_modules/@nimbus-dev/sdk/dist/crypto/canonical-json.js
+// ../../../node_modules/.bun/@nimbus-dev+sdk@2.3.0/node_modules/@nimbus-dev/sdk/dist/crypto/canonical-json.js
 class NonIntegerNumberInManifest extends Error {
   name = "NonIntegerNumberInManifest";
 }
@@ -5018,7 +5018,7 @@ function canonicalizeManifest(manifest) {
   delete clone["signature"];
   return new TextEncoder().encode(canonicalize(clone));
 }
-// ../../../node_modules/.bun/@nimbus-dev+sdk@2.1.0/node_modules/@nimbus-dev/sdk/dist/crypto/verify-signature.js
+// ../../../node_modules/.bun/@nimbus-dev+sdk@2.3.0/node_modules/@nimbus-dev/sdk/dist/crypto/verify-signature.js
 class PublisherKeyMismatch extends Error {
   name = "PublisherKeyMismatch";
 }
@@ -5063,7 +5063,7 @@ async function verifyManifestSignature(manifest, resolvedPubkey) {
   if (!ok)
     throw new SignatureInvalid;
 }
-// ../../../node_modules/.bun/@nimbus-dev+sdk@2.1.0/node_modules/@nimbus-dev/sdk/dist/internal/whitespace.js
+// ../../../node_modules/.bun/@nimbus-dev+sdk@2.3.0/node_modules/@nimbus-dev/sdk/dist/internal/whitespace.js
 var NORMATIVE_WHITESPACE = new Set([
   9,
   10,
@@ -5091,7 +5091,7 @@ var NORMATIVE_WHITESPACE = new Set([
   12288,
   65279
 ]);
-// ../../../node_modules/.bun/@nimbus-dev+sdk@2.1.0/node_modules/@nimbus-dev/sdk/dist/distribution-channel.js
+// ../../../node_modules/.bun/@nimbus-dev+sdk@2.3.0/node_modules/@nimbus-dev/sdk/dist/distribution-channel.js
 var KNOWN_CHANNELS = new Set([
   "homebrew",
   "scoop",
@@ -5101,7 +5101,7 @@ var KNOWN_CHANNELS = new Set([
   "msi",
   "pkg"
 ]);
-// ../../../node_modules/.bun/@nimbus-dev+sdk@2.1.0/node_modules/@nimbus-dev/sdk/dist/item-types.js
+// ../../../node_modules/.bun/@nimbus-dev+sdk@2.3.0/node_modules/@nimbus-dev/sdk/dist/item-types.js
 var KNOWN_ITEM_TYPES = [
   "account",
   "api_endpoint",
@@ -5173,7 +5173,7 @@ var KNOWN_ITEM_TYPES = [
   "worker"
 ];
 var KNOWN = new Set(KNOWN_ITEM_TYPES);
-// ../../../node_modules/.bun/@nimbus-dev+sdk@2.1.0/node_modules/@nimbus-dev/sdk/dist/ipc/ndjson-line-reader.js
+// ../../../node_modules/.bun/@nimbus-dev+sdk@2.3.0/node_modules/@nimbus-dev/sdk/dist/ipc/ndjson-line-reader.js
 var IPC_MAX_LINE_BYTES = 1024 * 1024;
 function byteLengthUtf8(s) {
   return new TextEncoder().encode(s).length;
@@ -5253,7 +5253,7 @@ class NdjsonLineReader {
     return this.flushFrames().frames;
   }
 }
-// ../../../node_modules/.bun/@nimbus-dev+sdk@2.1.0/node_modules/@nimbus-dev/sdk/dist/testing/sandbox-protocol.js
+// ../../../node_modules/.bun/@nimbus-dev+sdk@2.3.0/node_modules/@nimbus-dev/sdk/dist/testing/sandbox-protocol.js
 var NETWORK_BLOCKED_CODES = new Set([
   "ECONNREFUSED",
   "EPERM",

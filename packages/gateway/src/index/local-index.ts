@@ -23,6 +23,7 @@ import {
   type TraverseGraphResult,
   traverseGraph as traverseGraphSubgraph,
 } from "../graph/relationship-graph.ts";
+import { eraseIncidentDataForService } from "../incident/incident-erasure.ts";
 import { prunePeopleAfterServiceRemoval } from "../people/prune.ts";
 import { hybridSearch } from "../search/hybrid.ts";
 // Aliased to this file's names: `ItemRow` is the same `item` row shape hybrid search selects, and
@@ -306,7 +307,7 @@ export interface LanPeerRow {
   proto_version: number;
 }
 
-export const CURRENT_SCHEMA_VERSION = 97;
+export const CURRENT_SCHEMA_VERSION = 100;
 
 // `role_pack_card_dismissed`: the desktop's "Try a role pack" card, set once when an upgraded user
 // dismisses it so it never returns (role packs P5).
@@ -519,6 +520,8 @@ export class LocalIndex {
       const n = countItemsForService(this.db, serviceId);
       deleteAllItemsForService(this.db, serviceId);
       deleteChatReadMarkersForService(this.db, serviceId);
+      // Records and pushed briefs that cite the service go in the same transaction (Phase 10 IC3, I57 (a)).
+      eraseIncidentDataForService(this.db, serviceId);
       deleteSchedulerStateRow(this.db, serviceId);
       dbRun(this.db, "DELETE FROM sync_state WHERE connector_id = ?", [serviceId]);
       prunePeopleAfterServiceRemoval(this.db, serviceId);
@@ -932,8 +935,8 @@ export class LocalIndex {
     actionJson: string;
     timestamp: number;
     sessionId?: string;
-  }): void {
-    appendAuditEntry(this.db, entry);
+  }): number {
+    return appendAuditEntry(this.db, entry);
   }
 
   get rawDb(): Database {

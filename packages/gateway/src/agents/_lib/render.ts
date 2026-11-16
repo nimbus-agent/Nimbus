@@ -638,15 +638,16 @@ function renderPremortemRisk(r: Risk): string {
  * (the watcher is created PAUSED, by design).
  */
 function renderPremortemWatcher(w: WatcherProposal, epicRef: string): string {
+  const label = w.riskKind === "deploy_failure" ? "failed deploys" : "incidents";
   if (w.state === "suppressed") {
     return (
-      `- ${w.service} — suppressed (id \`${w.watcherId}\`); this watcher was deliberately ` +
+      `- ${w.service} (${label}) — suppressed (id \`${w.watcherId}\`); this watcher was deliberately ` +
       `deleted on a previous run. Re-create it with \`nimbus pre-mortem ${epicRef} --repropose\`.`
     );
   }
   const stateLabel = w.state === "created" ? "created" : "already present";
   return (
-    `- ${w.service} — ${stateLabel} (id \`${w.watcherId}\`, paused). ` +
+    `- ${w.service} (${label}) — ${stateLabel} (id \`${w.watcherId}\`, paused). ` +
     `Enable it with \`nimbus watch resume ${w.watcherId}\`.`
   );
 }
@@ -669,8 +670,9 @@ export function renderPremortem(brief: PremortemBrief, opts?: RenderOpts): strin
 
   if (brief.cohort.members.length > 0) {
     const rows = brief.cohort.members.map((m) => `- ${m.key} — ${m.title}`);
+    const noun = brief.epic?.tracker === "linear" ? "projects" : "epics";
     sections.push(
-      `\n## Comparable epics (${String(brief.cohort.members.length)})\n\n${rows.join("\n")}`,
+      `\n## Comparable ${noun} (${String(brief.cohort.members.length)})\n\n${rows.join("\n")}`,
     );
   }
 

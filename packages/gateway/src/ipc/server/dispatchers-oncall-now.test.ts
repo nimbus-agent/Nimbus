@@ -61,7 +61,9 @@ describe("tryDispatchOncallNowRpc", () => {
 
   test("oncall.pushedList still reaches the push handler when both are wired", async () => {
     const runtime = {
-      config: { chatopsNamespace: "" },
+      config: { chatopsNamespace: "", sources: ["pagerduty"] },
+      incidentEngineEnabled: () => true,
+      lastRun: () => null,
       isEnabled: () => true,
       store: { listWithIncident: () => [] },
       identityResolved: async () => true,
@@ -82,5 +84,29 @@ describe("tryDispatchOncallNowRpc", () => {
 
   test("a demo gateway serves oncall.now: the demo gate does not refuse it", () => {
     expect(demoRefusal("oncall.now")).toBeUndefined();
+  });
+  test("oncall.handoff is answered through the phase 4 group with the push runtime UNSET", async () => {
+    const ctx = makeCtx(true);
+    const out = (await tryDispatchPhase4Rpc(ctx, "oncall.handoff", {}, "c1")) as {
+      status: string;
+      gaps: Array<{ code: string }>;
+    };
+    expect(out.status).toBe("ok");
+    expect(out.gaps.map((g) => g.code)).toContain("no_incident_data");
+  });
+
+  test("oncall.handoff with no index is skipped and a validation error keeps its code", async () => {
+    expect(await tryDispatchOncallNowRpc(makeCtx(false), "oncall.handoff", {})).toBe(
+      phase4RpcSkipped,
+    );
+    const err = await tryDispatchOncallNowRpc(makeCtx(true), "oncall.handoff", {
+      service: 5,
+    }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(RpcMethodError);
+    expect((err as RpcMethodError).rpcCode).toBe(-32602);
+  });
+
+  test("a demo gateway serves oncall.handoff: the demo gate does not refuse it", () => {
+    expect(demoRefusal("oncall.handoff")).toBeUndefined();
   });
 });

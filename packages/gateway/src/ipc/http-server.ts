@@ -8,6 +8,7 @@ import { type RelatedHit, type RelatedInput, runClipRelated } from "../clips/cli
 import { addApiToken, generateClipToken, verifyApiToken } from "../clips/clip-token-store.ts";
 import type { PairingWindowController } from "../clips/pairing-window.ts";
 import { loadNimbusServiceConfigsFromConfigDir } from "../config/nimbus-toml.ts";
+import { loadNimbusPreflightRiskFromConfigDir } from "../config/preflight-risk-toml.ts";
 import { getAllConnectorHealth } from "../connectors/health.ts";
 import { applyWritablePragmas } from "../db/writable-pragmas.ts";
 import { dbRun } from "../db/write.ts";
@@ -548,7 +549,14 @@ async function handleDeployPreflight(
       maxFindings === undefined
         ? { service, target_ref: targetRef }
         : { service, target_ref: targetRef, max_findings: maxFindings },
-      serviceRpcContext(db, opts, () => loadServiceConfigs(opts)),
+      {
+        ...serviceRpcContext(db, opts, () => loadServiceConfigs(opts)),
+        ...(opts.configDir === undefined
+          ? {}
+          : {
+              loadRiskConfig: () => loadNimbusPreflightRiskFromConfigDir(opts.configDir as string),
+            }),
+      },
     ),
   );
 }

@@ -10,7 +10,11 @@ import {
   RegistryError,
 } from "@nimbus-dev/registry-format";
 
-/** Pinned to the CLI's own `@modelcontextprotocol/sdk` dependency; a test enforces equality. */
+/**
+ * Pinned to the CLI's own `@modelcontextprotocol/sdk` devDependency (the version its tests run a
+ * scaffolded project against); a test enforces equality. The CLI itself no longer runs on that
+ * package: its MCP server is built on `@nimbus-dev/sdk/mcp-server`.
+ */
 export const SCAFFOLD_MCP_SDK_VERSION = "1.32.0";
 
 export type ScaffoldFile = { readonly path: readonly string[]; readonly content: string };
