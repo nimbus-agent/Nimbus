@@ -179,8 +179,8 @@ function list(ctx: IncidentRpcCtx, raw: unknown): unknown {
   }));
   let status: "ok" | "none" | "no_data" = "ok";
   if (records.length === 0) {
-    const any = ctx.db.query("SELECT 1 AS n FROM incident_record LIMIT 1").get() !== null;
-    status = !any && !sources.some((s) => s.connected) ? "no_data" : "none";
+    const hasRecords = ctx.db.query("SELECT 1 AS n FROM incident_record LIMIT 1").get() !== null;
+    status = !hasRecords && !sources.some((s) => s.connected) ? "no_data" : "none";
   }
   return { status, records: records.map(summaryOf), sources };
 }

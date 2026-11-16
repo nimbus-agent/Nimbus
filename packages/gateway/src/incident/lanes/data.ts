@@ -21,7 +21,8 @@ const ORCHESTRATION: readonly (readonly [string, string])[] = [
   ["dagster", "job"],
   ["prefect", "deployment"],
 ];
-const PR_SERVICES = ["github", "gitlab", "bitbucket"] as const;
+// Bitbucket writes no merge time (`merged_at` is never set), so its pull requests cannot be placed in the window.
+const PR_SERVICES = ["github", "gitlab"] as const;
 
 /** The last `.`-separated segment of a normalised model key, lower-cased, or null when too short. */
 export function modelToken(key: string): string | null {
@@ -45,6 +46,7 @@ export function holdsToken(text: string, token: string): boolean {
 }
 
 function monitoredKeys(metadata: Record<string, unknown> | null): string[] {
+  // lane-census: scope=data_quality_test service=montecarlo,bigeye
   const v = metadata?.["monitoredDataModelKeys"];
   return Array.isArray(v)
     ? v.filter((x): x is string => typeof x === "string" && x !== "").sort(codeUnitCompare)
@@ -121,6 +123,7 @@ function mergedPrs(
   openedAtMs: number,
 ): { readonly items: DataItemView[]; readonly mergedAt: Map<string, number> } {
   const from = openedAtMs - CHAT_WINDOW_BEFORE_MS;
+  // lane-census: scope=pr service=github,gitlab
   const rows = db
     .query(
       `SELECT id, service, type, title, url, modified_at, metadata,

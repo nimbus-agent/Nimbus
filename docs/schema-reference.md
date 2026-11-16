@@ -1359,6 +1359,47 @@ CREATE TABLE connector_write_enablement (
 
 **SQLite write boundary.** Every production write goes through `dbRun` / `dbExec` / `dbStmtRun` in `packages/gateway/src/db/write.ts` (invariant `I14`). The wrappers translate `SQLITE_FULL` into a typed `DiskFullError`; the static-audit gate `D12` (`bun run audit:invariants`) fails the build on any direct `db.run(` / `db.exec(` outside the wrapper.
 
+## V100 — incident records and their versions (Phase 10 IC3, 2026-11-16)
+
+Authoritative source: `packages/gateway/src/index/incident-record-v100-sql.ts`. V97 to V99 are the agent door (`connector_write_door_approval`, the `capture` rebuild, `capture.label_source`); V100 chains after them. Written ONLY by `incident/incident-store.ts` (static D46(d)); the records of an erased service, with their versions and the pushed briefs built from them, are deleted by `incident/incident-erasure.ts` in the eraser's own transaction. Re-runnable (`CREATE ... IF NOT EXISTS` only); no backfill: the next engine pass, or `nimbus incident show`, assembles.
+
+```sql
+CREATE TABLE IF NOT EXISTS incident_record (
+  id               TEXT PRIMARY KEY,           -- 'inc_' + the first 16 hex of SHA-256(trigger_item_id): stable across a re-assembly
+  trigger_item_id  TEXT NOT NULL UNIQUE,       -- the trigger item: one record per item (a collision is a hard error)
+  trigger_service  TEXT NOT NULL,              -- pagerduty | jira | sentry | montecarlo | bigeye (no CHECK: SQLite cannot alter one)
+  trigger_type     TEXT NOT NULL,
+  service          TEXT,                       -- the bound Nimbus service, NULL when unbound
+  title            TEXT NOT NULL,              -- capped, single-lined
+  severity         TEXT,                       -- the NORMALISED label (sev1, p1, fatal); Bigeye has none
+  opened_at_ms     INTEGER,                    -- the source's own open time; NULL when it records none (Bigeye)
+  status           TEXT NOT NULL CHECK (status IN ('open', 'closed', 'unknown')),
+  version          INTEGER NOT NULL CHECK (version >= 1),
+  assembled_at_ms  INTEGER NOT NULL,           -- when the stored version's content was assembled
+  checked_at_ms    INTEGER NOT NULL,           -- when the engine last re-assembled it, changed or not
+  record_sha256    TEXT NOT NULL,              -- the hash of the factual core (version, assembly time, freshness excluded)
+  cited_services   TEXT NOT NULL,              -- a sorted JSON array of the services whose items the record cites (erasure)
+  record_json      TEXT NOT NULL CHECK (length(CAST(record_json AS BLOB)) <= 131072),
+  markdown         TEXT NOT NULL CHECK (length(CAST(markdown AS BLOB)) <= 131072)
+);
+CREATE INDEX IF NOT EXISTS incident_record_open      ON incident_record (status, opened_at_ms DESC, id);
+CREATE INDEX IF NOT EXISTS incident_record_service   ON incident_record (service, opened_at_ms DESC, id);
+CREATE INDEX IF NOT EXISTS incident_record_opened    ON incident_record (opened_at_ms DESC, id);
+CREATE INDEX IF NOT EXISTS incident_record_retention ON incident_record (opened_at_ms, assembled_at_ms);
+CREATE INDEX IF NOT EXISTS incident_record_checked   ON incident_record (status, checked_at_ms, id);
+CREATE TABLE IF NOT EXISTS incident_record_version (
+  record_id       TEXT NOT NULL REFERENCES incident_record(id) ON DELETE CASCADE,
+  version         INTEGER NOT NULL CHECK (version >= 1),
+  assembled_at_ms INTEGER NOT NULL,
+  record_sha256   TEXT NOT NULL,
+  cited_services  TEXT NOT NULL,
+  record_json     TEXT NOT NULL CHECK (length(CAST(record_json AS BLOB)) <= 131072),
+  PRIMARY KEY (record_id, version)
+) WITHOUT ROWID;
+```
+
+Why the shape: there is NO foreign key to `item` (an upstream deletion must not erase the record that says the incident existed, as for `item_history`); every list query orders `opened_at_ms DESC, id` and each index ends in `id`, so SQLite sorts NULL last with no temporary B-tree (the migration test asserts the plans); the retention predicate is written as two arms (`opened_at_ms IS NOT NULL AND opened_at_ms < ?` OR `opened_at_ms IS NULL AND assembled_at_ms < ?`), never a `COALESCE`, which defeats the index; the engine's refresh selection reads `incident_record_checked` once per status, since an `IN (...)` of two statuses needs a sort; version N's `record_json` is immutable once written, the version table keeps no Markdown (re-rendered by the same pure renderer), and the store deletes versions itself before the record because `PRAGMA foreign_keys` is set per connection and the cascade is only a backstop. A pushed brief is tied to a record by `pushed_brief.incident_id = incident_record.trigger_item_id` (the V64 primary key), so the push needs no schema change.
+
 ## V97 — the agent door's approval list and the capture rebuild (Phase 28 AD3a-1, 2026-11-13)
 
 `connector_write_door_approval(service, door, tool_id, approved_at, definition_sha256, suspended_at, suspended_sha256, PRIMARY KEY (service, door, tool_id)) WITHOUT ROWID`: one row per write tool the owner approved by name for an outside agent (`door` is `'agent'`; no value CHECK, the store's type is the guard), with the SHA-256 of the tool's listed definition at approval (CHECK length 64). `suspended_at` is set once (sticky) when a later listing no longer matches; `suspended_sha256` is the hash observed then, or NULL when the tool was listed but its schema could not be read (since AD3a-2a a tool that a listing merely omits is not marked, owner ruling OR-AD-14); a hash without a time is refused by a CHECK. Written only by `connectors/connector-writes/door-approval-store.ts` (static D49(b)). No backfill: nothing is approved for any agent after an upgrade.

@@ -899,7 +899,12 @@ const INDEXED_SCHEMA_STEPS: readonly IndexedSchemaStep[] = [
   { fromVersion: 96, toVersion: 97, apply: migrateIndexedV96ToV97 },
   { fromVersion: 97, toVersion: 98, apply: migrateIndexedV97ToV98 },
   { fromVersion: 98, toVersion: 99, apply: migrateIndexedV98ToV99 },
-  simpleStep(99, 100, "incident records and their versions (Phase 10 IC3)", INCIDENT_RECORD_V100_SQL),
+  simpleStep(
+    99,
+    100,
+    "incident records and their versions (Phase 10 IC3)",
+    INCIDENT_RECORD_V100_SQL,
+  ),
 ];
 
 /**

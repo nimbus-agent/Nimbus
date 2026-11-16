@@ -1,11 +1,11 @@
 import { dbRun } from "../db/write.ts";
-import { deleteChatReadMarkersForService } from "../index/chat-read-marker-store.ts";
-import { deleteItemHistoryForService } from "../index/item-history.ts";
-import type { LocalIndex } from "../index/local-index.ts";
 import {
   eraseIncidentDataForService,
   previewIncidentErasure,
 } from "../incident/incident-erasure.ts";
+import { deleteChatReadMarkersForService } from "../index/chat-read-marker-store.ts";
+import { deleteItemHistoryForService } from "../index/item-history.ts";
+import type { LocalIndex } from "../index/local-index.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
 
 export type DataDeletePreflight = {

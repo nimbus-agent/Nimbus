@@ -60,6 +60,7 @@ function itemById(db: Database, id: string): ItemMeta | null {
 
 function prViewFromItem(item: ItemMeta, rule: PrView["rule"]): PrView {
   const meta = parseMeta(item.metadata);
+  // lane-census: scope=pr service=github
   return {
     id: item.id,
     title: oneLine(item.title),
@@ -75,6 +76,7 @@ function prViewFromItem(item: ItemMeta, rule: PrView["rule"]): PrView {
 
 function ciViewFromItem(item: ItemMeta, rule: CiView["rule"]): CiView {
   const meta = parseMeta(item.metadata);
+  // lane-census: scope=ci_run service=github_actions
   const conclusion = meta["conclusion"];
   return {
     id: item.id,

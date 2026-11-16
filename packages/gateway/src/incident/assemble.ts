@@ -92,11 +92,14 @@ function assigneeCountOf(
 ): number | null {
   if (meta === null) return null;
   if (service === "pagerduty") {
+    // lane-census: scope=incident service=pagerduty
     const v = meta["assignee_emails"];
     return Array.isArray(v) ? v.length : null;
   }
-  if (service === "sentry")
+  if (service === "sentry") {
+    // lane-census: scope=error_issue service=sentry
     return meta["assignedTo"] === null || meta["assignedTo"] === undefined ? 0 : 1;
+  }
   return null;
 }
 
@@ -300,6 +303,7 @@ function buildBody(deps: AssembleDeps, ev: Evidence, nowMs: number, trigger: Tri
     trigger.service === "montecarlo" || trigger.service === "bigeye"
       ? dataLane(db, { metadata: ev.meta, openedAtMs: open })
       : null;
+  // lane-census: scope=incident service=pagerduty
   const pdService =
     typeof ev.meta?.["pagerduty_service_id"] === "string"
       ? (ev.meta["pagerduty_service_id"] as string)
