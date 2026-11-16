@@ -92,7 +92,7 @@ Every built-in agent must be:
 
 ### The pre-mortem exception, and its exact bounds
 
-`pre-mortem` is the one built-in agent that is not purely read-only. `runPremortem` calls `proposeWatchers` (`packages/gateway/src/premortem/watcher-proposals.ts`), which writes exactly two things and nothing else:
+`pre-mortem` is the one built-in agent that is not purely read-only. `runPremortem` calls `proposeWatchers` (`packages/gateway/src/premortem/watcher-proposals.ts`), which writes exactly two things and nothing else (per mapped service it proposes two paused watchers, `incident_opened` and `deploy_failed`, each with its own tombstone):
 
 - **`watcher` rows, always inserted with `enabled = 0`** — via `insertWatcherIfAbsent`, which never touches an existing row's `enabled` on a re-run.
 - **`premortem_watcher_proposal` rows** — a tombstone recording that this epic/service/risk-kind triple was proposed, so a user-deleted watcher stays deleted (`suppressed`) across re-runs instead of being silently resurrected. `--repropose` deletes *only this epic's* tombstones (`clearProposalTombstones`), never a global clear.

@@ -638,15 +638,16 @@ function renderPremortemRisk(r: Risk): string {
  * (the watcher is created PAUSED, by design).
  */
 function renderPremortemWatcher(w: WatcherProposal, epicRef: string): string {
+  const label = w.riskKind === "deploy_failure" ? "failed deploys" : "incidents";
   if (w.state === "suppressed") {
     return (
-      `- ${w.service} — suppressed (id \`${w.watcherId}\`); this watcher was deliberately ` +
+      `- ${w.service} (${label}) — suppressed (id \`${w.watcherId}\`); this watcher was deliberately ` +
       `deleted on a previous run. Re-create it with \`nimbus pre-mortem ${epicRef} --repropose\`.`
     );
   }
   const stateLabel = w.state === "created" ? "created" : "already present";
   return (
-    `- ${w.service} — ${stateLabel} (id \`${w.watcherId}\`, paused). ` +
+    `- ${w.service} (${label}) — ${stateLabel} (id \`${w.watcherId}\`, paused). ` +
     `Enable it with \`nimbus watch resume ${w.watcherId}\`.`
   );
 }
