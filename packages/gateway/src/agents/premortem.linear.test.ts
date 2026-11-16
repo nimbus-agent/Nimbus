@@ -196,6 +196,34 @@ describe("runPremortem for a Linear project", () => {
     );
   });
 
+  test("candidate names in the ambiguity error carry no control or bidi characters", async () => {
+    const db = makeDb();
+    const esc = String.fromCodePoint(0x1b);
+    const rlo = String.fromCodePoint(0x202e);
+    await seedLinearViaSync(db, {
+      projects: [
+        {
+          id: "eeeeeeee-0000-4000-8000-000000000015",
+          name: `One${esc}[31m${rlo}`,
+          slugId: "dup000000001",
+        },
+        {
+          id: "ffffffff-0000-4000-8000-000000000016",
+          name: "Two\r\nforged",
+          slugId: "dup000000001",
+        },
+      ],
+    });
+    const err = await runPremortem({ epicRef: "linear:dup000000001" }, ctx(db)).then(
+      () => null,
+      (e: unknown) => (e instanceof Error ? e.message : String(e)),
+    );
+    expect(err).toContain("matches 2 indexed Linear projects");
+    for (const cp of [0x1b, 0x202e, 0x0d, 0x0a]) {
+      expect(err?.includes(String.fromCodePoint(cp))).toBe(false);
+    }
+  });
+
   test("a project whose name equals another's slug id resolves by the slug first", async () => {
     const db = makeDb();
     await seedLinearViaSync(db, {

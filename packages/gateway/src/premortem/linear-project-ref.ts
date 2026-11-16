@@ -90,8 +90,13 @@ function matchRung(rows: readonly ProjectRow[], key: string): ProjectRow[] {
   return rows.filter((r) => r.title.toLowerCase() === lowered);
 }
 
+/** A project name is third-party text bound for an error line: no control, format or separator characters. */
+function plain(s: string): string {
+  return s.replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]+/gu, " ").trim();
+}
+
 function describeCandidate(r: ProjectRow): string {
-  return r.slug_id === null ? r.title : `${r.title} (${r.slug_id})`;
+  return r.slug_id === null ? plain(r.title) : `${plain(r.title)} (${plain(r.slug_id)})`;
 }
 
 function toResolved(r: ProjectRow): ResolvedLinearProject {
@@ -115,9 +120,9 @@ function listProjectRows(db: Database): ProjectRow[] {
          FROM item
         WHERE service = 'linear' AND type = 'project'
         ORDER BY id ASC
-        LIMIT ${String(MAX_PROJECT_ROWS)}`,
+        LIMIT ?`,
     )
-    .all() as ProjectRow[];
+    .all(MAX_PROJECT_ROWS) as ProjectRow[];
 }
 
 /** Resolves `key` (the text after `linear:`, or a bare Linear URL) or throws a clear error. */
