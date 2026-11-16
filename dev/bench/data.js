@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794827180338,
+  "lastUpdate": 1794827641354,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
-            "name": "nimbus-release-bot[bot]",
-            "username": "nimbus-release-bot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "b90476d2df668d29dd0a34d14e6888cbc5c2df6c",
-          "message": "chore: release main (#1375)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>7.0.0</summary>\n\n##\n[7.0.0](https://github.com/nimbus-agent/Nimbus/compare/v6.0.1...v7.0.0)\n(2026-08-29)\n\n\n### ⚠ BREAKING CHANGES\n\n* **llm:** make LlmRegistryOptions.db required so an unledgered\nnon-local route is a compile error\n([#1372](https://github.com/nimbus-agent/Nimbus/issues/1372))\n\n### Bug Fixes\n\n* **perf:** drift-check must use each surface own noise floor, not a\nhardcoded 10%\n([#1374](https://github.com/nimbus-agent/Nimbus/issues/1374))\n([8607743](https://github.com/nimbus-agent/Nimbus/commit/860774328ca64b358c1259b3ab29178f9b63375b))\n\n\n### Code Refactoring\n\n* **llm:** make LlmRegistryOptions.db required so an unledgered\nnon-local route is a compile error\n([#1372](https://github.com/nimbus-agent/Nimbus/issues/1372))\n([97ce904](https://github.com/nimbus-agent/Nimbus/commit/97ce9043cb6c08e9e7c5c06a3db5bf71f0bda1c0))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
-          "timestamp": "2026-08-29T09:51:40+03:00",
-          "tree_id": "0f1ecd720d361255557945580d144115fe93deb8",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/b90476d2df668d29dd0a34d14e6888cbc5c2df6c"
-        },
-        "date": 1787986820458,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 272.3573945999968,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 275.1613730999932,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 188.13322460000163,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "69747ffcd93fd7e8043228b91f1672b087713cd4",
+          "message": "docs: record the seven slices that shipped on 2026-11-16 in the status text, the changelog and the README (#2029)\n\nSeven slices merged on 2026-11-16 as parallel pull requests. To keep\nthem from conflicting, each one updated only its own roadmap row and\nfeature docs. This pull request adds the shared text for all of them in\none place.\n\n## What it records\n\n| Slice | Pull request |\n| --- | --- |\n| Standalone connectors on both MCP eras (AD6c, the connectors 0.15.0\npin) | #2019 |\n| `nimbus oncall handoff` | #2018 |\n| The pre-mortem deploy-failure watcher | #2020 |\n| `nimbus cost anomalies` | #2021 |\n| `nimbus statuspage draft` | #2022 |\n| The advisory deploy-risk block | #2023 |\n| Workflow `when` guards | #2027 |\n\nThe sync anomaly notice (#2017) carried its own text and is not\nrepeated.\n\n## Files\n\n- `CLAUDE.md` and `GEMINI.md`: one status sentence per slice, the I55\nline's new clause about `when` guards, and the typed-confirmation\nfollow-up changed from deferred to shipped.\n- `docs/CHANGELOG.md`: one dated entry per slice.\n- `docs/README.md`: one short paragraph per slice.\n- `docs/roadmap.md`: the one sentence that still called the\ntyped-confirmation follow-up deferred.\n\nDocs only. No code, test or configuration file changes.\n\n## Checks\n\n`bun run preflight:fast` passes on the branch after merging `main`. That\nincludes the doc-reference, status-drift and README command audits.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JmSjrCzb214jGqUcCTWNJQ\n\nCo-authored-by: Claude Fable 5.2 <noreply@anthropic.com>",
+          "timestamp": "2026-11-16T11:04:37Z",
+          "tree_id": "48bf60579c9c8485fc9df27d8e3960f6b4f3b461",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/69747ffcd93fd7e8043228b91f1672b087713cd4"
+        },
+        "date": 1794827638557,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 171.6713983000027,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 173.05947694999887,
             "unit": "ms"
           }
         ]
