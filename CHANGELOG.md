@@ -2,6 +2,14 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [10.67.0](https://github.com/nimbus-agent/Nimbus/compare/v10.66.0...v10.67.0) (2026-11-16)
+
+
+### Features
+
+* **cli:** add nimbus statuspage draft, a static status page written from the local index for the owner to publish ([#2022](https://github.com/nimbus-agent/Nimbus/issues/2022)) ([3f6d731](https://github.com/nimbus-agent/Nimbus/commit/3f6d7314751521c576574bc6434d5a08f9087f52))
+* **gateway:** a saved workflow step can run only when an earlier query found rows (a when guard) ([#2027](https://github.com/nimbus-agent/Nimbus/issues/2027)) ([71de957](https://github.com/nimbus-agent/Nimbus/commit/71de957f16a026a568d3c2ee0840e6b08959a6c6))
+
 ## [10.66.0](https://github.com/nimbus-agent/Nimbus/compare/v10.65.0...v10.66.0) (2026-11-16)
 
 
