@@ -1025,8 +1025,8 @@ export function checkChatReadMarkerConfinement(files: readonly FileEntry[]): Vio
 // there, in `index/item-store.ts` (`deleteAllItemsForService`, which `LocalIndex.removeConnectorIndexData`
 // calls) and in `commands/data-delete.ts` (an owner erasure); `pruneItemHistory` only there and in
 // `index/item-history-retention.ts`. Reads are unrestricted (the reconstruction and the incident assembly
-// read the table). D46 has only sub-rule (b) after IC1: (a) and (c) are reserved by the incident-engine
-// spec for IC3 and IC5.
+// read the table). D46 has sub-rules (a), (b) and (d) after IC3: (a) confines `incident/**` (below, next to
+// D48), (d) confines the incident record tables, and (c) is reserved by the incident-engine spec for IC5.
 //
 // Stated bounds: a text scan, so a dynamically composed table name evades it (as D33(b) says). The retention
 // module's batch DELETE lives in `item-history.ts`, which it only calls. `iterateGlob` skips every `-sql.ts`
@@ -1070,6 +1070,80 @@ export function checkItemHistoryConfinement(files: readonly FileEntry[]): Violat
     }
     if (f.relPath !== D46_STORE && f.relPath !== D46_RETENTION) {
       for (const m of commentFree.matchAll(D46_PRUNE_RE)) add(f, commentFree, m.index);
+    }
+  }
+  return out;
+}
+
+// D46(d) (Phase 10 IC3, incident-engine spec § 5.3): the incident record tables are written only by their store.
+// Rule `incident-record-confined`. A WRITE verb on `incident_record` or `incident_record_version` may appear only
+// in `incident/incident-store.ts` and the V100 DDL file; `upsertIncidentRecord` only there and in
+// `incident/assemble.ts` (the one assembler); `markRecordChecked` only there and in `incident/incident-engine.ts`;
+// `eraseIncidentRecordsForService` and `pruneIncidentRecords` only there and in `incident/incident-erasure.ts`;
+// `eraseIncidentDataForService` only in `incident/incident-erasure.ts` (its definition), `index/local-index.ts`
+// (`removeConnectorIndexData`) and `commands/data-delete.ts` (the two owner erasures);
+// `pruneIncidentRecordsWithBriefs` only there and in `incident/incident-retention.ts`. The pushed briefs built from
+// a record are deleted only through `deletePushedBriefsForErasure` (and counted through
+// `countPushedBriefsForErasure`), named only in `oncall-push/push-store.ts` and `incident/incident-erasure.ts`, and a
+// write verb on `pushed_brief` itself stays in `oncall-push/push-store.ts` (and the V64 DDL). Reads are unrestricted.
+// Stated bounds: a text scan, so a dynamically composed table name evades it; `iterateGlob` skips every `-sql.ts`
+// file, so the real scan never visits the DDL files (they stay in the allow-list for a synthetic file set).
+const D46D_SRC = "packages/gateway/src/";
+const D46D_STORE = `${D46D_SRC}incident/incident-store.ts`;
+const D46D_DDL = `${D46D_SRC}index/incident-record-v100-sql.ts`;
+const D46D_ASSEMBLE = `${D46D_SRC}incident/assemble.ts`;
+const D46D_ENGINE = `${D46D_SRC}incident/incident-engine.ts`;
+const D46D_ERASURE = `${D46D_SRC}incident/incident-erasure.ts`;
+const D46D_RETENTION = `${D46D_SRC}incident/incident-retention.ts`;
+const D46D_PUSH_STORE = `${D46D_SRC}oncall-push/push-store.ts`;
+const D46D_PUSH_DDL = `${D46D_SRC}index/oncall-push-v64-sql.ts`;
+const D46D_VERBS =
+  "(?:INSERT\\s+(?:OR\\s+\\w+\\s+)?INTO|REPLACE\\s+INTO|DELETE\\s+FROM|UPDATE(?:\\s+OR\\s+\\w+)?|DROP\\s+TABLE(?:\\s+IF\\s+EXISTS)?|ALTER\\s+TABLE)";
+const d46dWriteRe = (table: string): RegExp =>
+  new RegExp(`\\b${D46D_VERBS}\\s+(?:["'\`[]?\\w+["'\`\\]]?\\s*\\.\\s*)?["'\`[]?${table}\\b`, "gi");
+const D46D_RECORD_WRITE_RE = d46dWriteRe("incident_record(?:_version)?");
+const D46D_BRIEF_WRITE_RE = d46dWriteRe("pushed_brief");
+const D46D_IDENTIFIERS: readonly { readonly re: RegExp; readonly allowed: readonly string[] }[] = [
+  { re: /\bupsertIncidentRecord\b/g, allowed: [D46D_STORE, D46D_ASSEMBLE] },
+  { re: /\bmarkRecordChecked\b/g, allowed: [D46D_STORE, D46D_ENGINE] },
+  { re: /\beraseIncidentRecordsForService\b/g, allowed: [D46D_STORE, D46D_ERASURE] },
+  { re: /\bpruneIncidentRecords\b/g, allowed: [D46D_STORE, D46D_ERASURE] },
+  {
+    re: /\beraseIncidentDataForService\b/g,
+    allowed: [
+      D46D_ERASURE,
+      `${D46D_SRC}index/local-index.ts`,
+      `${D46D_SRC}commands/data-delete.ts`,
+    ],
+  },
+  { re: /\bpruneIncidentRecordsWithBriefs\b/g, allowed: [D46D_ERASURE, D46D_RETENTION] },
+  { re: /\b(?:delete|count)PushedBriefsForErasure\b/g, allowed: [D46D_PUSH_STORE, D46D_ERASURE] },
+];
+
+export function checkIncidentRecordConfinement(files: readonly FileEntry[]): Violation[] {
+  const out: Violation[] = [];
+  const add = (f: FileEntry, src: string, index: number | undefined): void => {
+    const line = src.slice(0, index).split("\n").length;
+    out.push({
+      rule: "incident-record-confined",
+      file: f.relPath,
+      line,
+      snippet: (f.contents.split("\n")[line - 1] ?? "").trim(),
+    });
+  };
+  for (const f of files) {
+    if (f.relPath.endsWith(".test.ts") || f.relPath.endsWith(".test-helpers.ts")) continue;
+    if (!f.relPath.startsWith(D46D_SRC)) continue;
+    const commentFree = stripComments(f.contents);
+    if (f.relPath !== D46D_STORE && f.relPath !== D46D_DDL) {
+      for (const m of commentFree.matchAll(D46D_RECORD_WRITE_RE)) add(f, commentFree, m.index);
+    }
+    if (f.relPath !== D46D_PUSH_STORE && f.relPath !== D46D_PUSH_DDL) {
+      for (const m of commentFree.matchAll(D46D_BRIEF_WRITE_RE)) add(f, commentFree, m.index);
+    }
+    for (const id of D46D_IDENTIFIERS) {
+      if (id.allowed.includes(f.relPath)) continue;
+      for (const m of commentFree.matchAll(id.re)) add(f, commentFree, m.index);
     }
   }
   return out;
@@ -3228,6 +3302,38 @@ export function checkFinopsConfinement(files: readonly FileEntry[]): Violation[]
     forbiddenSegmentRe: D48_FORBIDDEN_SEGMENT_RE,
     forbiddenImportRule: "finops-forbidden-import",
     noNetworkRule: "finops-no-network",
+  });
+}
+
+// ---- D46(a) (incident assembly is inert, I57 (a)) ------------------------------------------------
+// Rule ids `incident-forbidden-import` and `incident-no-network`: the D45/D48 shape. `packages/gateway/src/incident/`
+// holds the incident engine (the assembler, its lanes, its store, its retention and erasure) and
+// `agents/_lib/incident*.ts` its render. Every pass runs after a sync with nobody present, so it must be
+// incapable of an outbound request, a post, a connector call or a model call. Scope: every non-test file under
+// `packages/gateway/src/incident/` and every `packages/gateway/src/agents/_lib/incident*.ts`. In scope:
+//   - no import (static, side-effect, dynamic, `require`, re-export) of `chatops/`, `egress/`, `federation/` or
+//     `share/`, even type-only; none of `connectors/` unless it is a TYPE-only import;
+//   - no network primitive: ANY reference to the global `fetch`, any use of `globalThis`, `window` or `self`,
+//     `Bun.fetch`, `new WebSocket`, `XMLHttpRequest`, and no import of `node:http`, `node:https`, `node:http2`,
+//     `node:net`, `node:tls`, `node:dgram` or `undici`.
+// Scope is the whole directory at IC3 because it holds only inert code; the slice that adds an action-building
+// file carves it out in the same commit as its own rule (D46(c)). Stated bounds: a text scan of DIRECT imports;
+// an indirect path through an allowed module (`index/`, `agents/_lib/synthesize.ts`, `oncall-push/push-store.ts`)
+// is not followed, which is why the zero-egress and OR-10-8 pins in security-invariants.test.ts are the other half.
+const D46A_DIR = "packages/gateway/src/incident/";
+const D46A_LIB_RE = /^packages\/gateway\/src\/agents\/_lib\/incident[\w.-]*\.ts$/;
+
+function inIncidentScope(relPath: string): boolean {
+  if (relPath.endsWith(".test.ts")) return false;
+  return relPath.startsWith(D46A_DIR) || D46A_LIB_RE.test(relPath);
+}
+
+export function checkIncidentConfinement(files: readonly FileEntry[]): Violation[] {
+  return checkConfinement(files, {
+    inScope: inIncidentScope,
+    forbiddenSegmentRe: D45_FORBIDDEN_SEGMENT_RE,
+    forbiddenImportRule: "incident-forbidden-import",
+    noNetworkRule: "incident-no-network",
   });
 }
 
@@ -5445,6 +5551,11 @@ async function loadFiles(): Promise<FileEntry[]> {
 export const RULE_ANCHORS: readonly string[] = [
   "packages/gateway/src/briefing/briefing-runner.ts", // D45 — the briefing delivers locally only
   "packages/gateway/src/agents/_lib/briefing-build.ts", // D45
+  // D46(a) (incident-forbidden-import / incident-no-network, Phase 10 IC3) -- anchored on BOTH halves of its
+  // scope, as D45 is: the assembler under `incident/` and the render under `agents/_lib/`. Either moving out of
+  // the scan (a move, a glob change) would leave half the rule passing over nothing.
+  "packages/gateway/src/incident/assemble.ts",
+  "packages/gateway/src/agents/_lib/incident-render.ts",
   "packages/gateway/src/finops/cost-series.ts", // D48 — FinOps cost code is inert
   "packages/gateway/src/ipc/lan-legacy.ts", // D47 — the only home of the v1 static-box LAN path
   "packages/gateway/src/platform/sandbox/write-grant-check.ts", // D10 user-write — a file the rule reads and then permits
@@ -5583,6 +5694,8 @@ export const RULE_ANCHORS: readonly string[] = [
   "packages/gateway/src/index/item-history.ts",
   "packages/gateway/src/index/item-store.ts",
   "packages/gateway/src/index/item-history-retention.ts",
+  // D46(d) (incident-record-confined, Phase 10 IC3) -- the only writer of the record tables.
+  "packages/gateway/src/incident/incident-store.ts",
   // D49(b) (door-approval-confined, Phase 28 AD3a-1) — the only store of the per-door approval table;
   // it moving out of the scan would leave the rule passing over nothing.
   "packages/gateway/src/connectors/connector-writes/door-approval-store.ts",
@@ -5827,6 +5940,20 @@ async function run(): Promise<void> {
       );
     }
     if (historyViolations.length > 0) exit = 1;
+    const incidentViolations = checkIncidentConfinement(files);
+    for (const e of incidentViolations) {
+      console.error(
+        `::error file=${e.file},line=${e.line}::D46(a) incident assembly reached outside the local index (rule ${e.rule}) - no ChatOps/egress/federation/share import, no connectors value import, no network primitive: ${e.snippet}`,
+      );
+    }
+    if (incidentViolations.length > 0) exit = 1;
+    const incidentRecordViolations = checkIncidentRecordConfinement(files);
+    for (const e of incidentRecordViolations) {
+      console.error(
+        `::error file=${e.file},line=${e.line}::D46(d) an incident record table, or the pushed briefs built from one, written or erased outside its owner (rule ${e.rule}) - incident/incident-store.ts, incident/incident-erasure.ts and oncall-push/push-store.ts are the only writers: ${e.snippet}`,
+      );
+    }
+    if (incidentRecordViolations.length > 0) exit = 1;
     const doorApprovalViolations = checkDoorApprovalConfinement(files);
     for (const e of doorApprovalViolations) {
       console.error(
