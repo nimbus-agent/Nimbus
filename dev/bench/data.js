@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794815010344,
+  "lastUpdate": 1794815703845,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "0ca82323f26dbd10dc59efa28eab3c43ba9c593e",
-          "message": "fix(llm)!: remove the inert remote_model key and document the vendor tables (#1368)\n\nFollow-on to #1366, found while verifying the **Gemini adapter against\nthe live API** — which was the one thing #1366 left open.\n\n## What the live check found\n\nThe adapter itself is **correct**. Verified against the real endpoint\nwith a key read straight from the Vault: URL-path model, query-string\nkey, `systemInstruction`, `generationConfig`, multi-part concatenation\nand `usageMetadata` all work, and `?key=` and `x-goog-api-key` both\nauthenticate.\n\n```\ngemini-3.5-flash          200  text=\"pong\" in=8 out=1\ngemini-flash-lite-latest  200  text=\"pong\" in=8 out=1\n```\n\nWhat is **not** correct is the model id every internal document had been\nusing:\n\n```\ngemini-2.5-pro    404  NOT_FOUND: This model models/gemini-2.5-pro is no longer available\n                       to new users. Please update your code to use models/gemini-3.1-pro-preview\ngemini-2.5-flash  404  NOT_FOUND: … no longer available to new users\n```\n\nBoth still appear in Google's `GET /v1beta/models` listing, so \"it's in\nthe model list\" is not evidence the model answers. Anyone following our\nexamples got a hard 404 from a model we told them to use.\n\n## The larger finding\n\nChasing where that default was documented turned up that\n**`[llm.remote.*]` has no user-facing reference documentation at all**,\ndespite shipping in `v5.0.0` — and that what `docs/cli-reference.md`\n*does* document for cloud models is dead:\n\n- `getEffectiveAgentModel()` has **no production caller**. Slice 2b\nmoved the engine agent onto `[llm.remote.<vendor>] model` and left the\nwhole `remote_model → tomlAgentModel → getEffectiveAgentModel()` chain\ndead-ended.\n- So `[llm] remote_model` and `NIMBUS_AGENT_MODEL` changed nothing —\nwhile `nimbus config list` still surfaced `llm.remote_model` as a live\nenv-overridable key, and `cli-reference.md` and `docs/README.md` both\ndocumented `nimbus config set llm.remote_model claude-sonnet-4-6` as\n**the** way to choose a cloud model.\n- A comment in `engine/agent.ts` asserted the keys *\"still override the\nMODEL NAME within the enabled vendor, so no existing config breaks\nsilently\"*. Nothing wired that. `deps.agentModel` is a test injection\nseam and no production call site passes it.\n\nThis is the same defect class as the `classifier_model` removal in\n#1366, found one file over.\n\n## Removed, not rewired\n\nWith four vendors the key is no longer well defined — a bare\n`claude-sonnet-4-6` says nothing about which vendor is enabled, and that\nambiguity is exactly why the per-vendor `model` key exists. So both keys\ngo, the same way `classifier_model` did: a stale entry in an existing\n`nimbus.toml` is **ignored**, as any unrecognised `[llm]` key is, never\nan error that would revert the section and take the live keys with it.\n\n## Documentation added\n\n`docs/cli-reference.md` gains the `[llm.remote.<vendor>]` section it\nshipped without: the `enabled` + `model` pair (both required, `enabled`\nnever inferred from a key), the four Vault key names, the note that\n`openai.api_key` is deliberately shared with the embedding runtime, the\ntwo independent failure modes (key without opt-in → no route; opt-in\nwithout key → `no (no api key)`), and that no vendor credential or\nselection is env-overridable by design.\n\nIt also says to check the vendor's current model list rather than copy\nan id from a document, with `gemini-2.5-pro` as the worked example — a\nretired id that still appears in the listing is the failure mode a\nreader will not predict.\n\n`docs/README.md`'s prerequisites table replaces the two `export\nANTHROPIC_API_KEY` / `nimbus config set llm.remote_model` rows with the\nreal two-halves setup.\n\n## Verification\n\n- `bun run typecheck`, `bun run preflight:fast` — pass.\n- The verbatim CI command `bun test packages/gateway packages/cli\nscripts` — 19,437 pass; the three `tui` failures are the known\nload-flake (they pass in isolation, on this branch and on `main`).\n- **Both Linux-authoritative coverage gates** rebuilt through the\n`reseed-docker.sh` docker block against the committed baseline:\n`audit:coverage-floor` ok, `audit:coverage-scopes` ok across all 23\nscopes.\n- The `listTomlKeysWithEnv` suite was rebuilt on `telemetry.endpoint`\nrather than deleted — env-source, file-source, env-beats-file,\nwhitespace-trim and omitted-when-unset all still covered — plus a new\ncase asserting the two removed keys do **not** surface even when set in\nboth the environment and the file.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)",
-          "timestamp": "2026-08-28T18:45:05+03:00",
-          "tree_id": "5a6a3fe40d85750d248bdcdd5c9eb1a6f5b5c7b7",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/0ca82323f26dbd10dc59efa28eab3c43ba9c593e"
-        },
-        "date": 1787932584443,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 326.13479855000077,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 318.95270905000035,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 169.91952674999666,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "f1f43d6b420149f64b8575141d92188bd6b908b2",
+          "message": "feat(gateway): nimbus pre-mortem proposes a paused deploy-failure watcher beside the incident one (#2020)\n\nA carried-in S4 item, the first of its two halves: `nimbus pre-mortem`\ndid not propose a deploy-failure watcher, and the reason it gave is no\nlonger true.\n\n## What you get\n\nFor each affected service that maps to a configured `[ci.service.<id>]`\nid, `nimbus pre-mortem <epic>` now proposes two paused watchers instead\nof one:\n\n- incidents on the service (as before), and\n- failed deploys of the service (new).\n\nEach has its own id and its own tombstone, so deleting one never\nsuppresses the other, and `--repropose` restores both. Nothing is armed:\nboth are written paused.\n\n## Why it was withheld, and why that ended\n\nA deployment annotated by CI used to get no `deployment` graph entity\nuntil `nimbus index regraph` ran, so a `deploy_failed` watcher matched\nnothing. Since Phase 10 IC2 the HTTP annotation route graphs a\ndeployment when it is annotated. A new test proves it on the production\npath: annotate a failed deploy, graph it, and the armed proposal fires\nwith no regraph. With the graph call removed, the test fails.\n\n## Stated bounds, also in the brief's Gaps section\n\n- A deployment annotated over local IPC maps no service, so it matches\nno service-scoped watcher.\n- A deployment only a connector indexed (Vercel, Prefect) records no\n`conclusion`, so it matches nothing.\n\n## Still open: Linear\n\nThe agent stays Jira-only. Supporting Linear is more than a small\nchange, and the roadmap row now says exactly what it needs: a Linear\nprojects sync pass, the cohort and epic queries generalised from the\nJira-specific shape, and confirmation that Linear issues reach the graph\nwith `resolves` edges.\n\n## Checks run\n\n- `bun test` on `premortem/`, the agent tests and the IPC test: 220\npass, 0 fail. The pre-mortem end-to-end scenario: 4 pass.\n- `bun run preflight:fast`: every gate passes except\n`audit:connector-version-skew`, which fails on `main` too until #2019\n(the connectors 0.15.0 pin) lands. This branch will be updated onto it.\n\nNot verified: a live CI post to `POST /v1/deployments` with a real\n`[ci.service]` config.\n\nNo schema change, invariant, IPC method, allowlist entry or HITL type;\nthe pre-mortem exception is the same two writes. Docs: roadmap,\narchitecture, cli-reference and the agent-patterns skill. The status\nsentence in CLAUDE.md and GEMINI.md and the changelog entry land with\nthe last pull request of this batch.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JmSjrCzb214jGqUcCTWNJQ\n\n---------\n\nCo-authored-by: Claude Fable 5.2 <noreply@anthropic.com>",
+          "timestamp": "2026-11-16T07:36:32Z",
+          "tree_id": "8bc4ff8a7d3bc6953581151537d7d5337943fbb2",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/f1f43d6b420149f64b8575141d92188bd6b908b2"
+        },
+        "date": 1794815699646,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 259.55036720000425,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 269.6965686499996,
             "unit": "ms"
           }
         ]
