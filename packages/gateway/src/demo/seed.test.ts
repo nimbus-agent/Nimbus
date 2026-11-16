@@ -12,6 +12,7 @@ import { engineForConfigDir } from "../incident/__fixtures__/test-engine.ts";
 import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import { queryOncallNow } from "../index/oncall-now-query.ts";
+import { dispatchIncidentRpc } from "../ipc/incident-rpc.ts";
 import {
   assembleOncallPushRuntime as assembleRuntime,
   type OncallPushBootDeps,
@@ -116,8 +117,9 @@ describe("seedDemoCorpus", () => {
     expect(count(db, "SELECT COUNT(*) AS n FROM item WHERE id = 'pagerduty:PDEMO412'")).toBe(0);
 
     // The runtime boots AFTER the seed, as the real gateway does after `nimbus demo`'s restart.
+    const engine = engineForConfigDir(db, configDir, () => nowMs + 5_000);
     const rt = assembleOncallPushRuntime({
-      records: engineForConfigDir(db, configDir, () => nowMs + 5_000),
+      records: engine,
       settleImmediately: true,
       db,
       configDir,
@@ -142,6 +144,14 @@ describe("seedDemoCorpus", () => {
     ).toBe(1);
     // Idempotent: firing again pushes nothing new.
     expect((await fireDemoPage(db, rt, nowMs + 20_000)).push.selected).toBe(0);
+    // The demo gateway serves the same record through incident.get (IC3), to an owner surface.
+    const got = (await dispatchIncidentRpc(
+      "incident.get",
+      { id: "pagerduty:PDEMO412" },
+      { db, engine },
+      { kind: "ui" },
+    )) as { kind: "hit"; value: { record: { markdown: string } | null } };
+    expect(got.value.record?.markdown).toContain("payment-service");
   });
 
   test("with the PRODUCTION notifier (delivers: false) the pushed toast records skipped, never delivered", async () => {
