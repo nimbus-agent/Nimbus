@@ -136,12 +136,22 @@ export interface StatuspageOptions {
   configError?: boolean;
 }
 
-const EMAIL = /[^\s<>()"',;:]+@[^\s<>()"',;:]+/g;
+/**
+ * A maximal run of characters that can belong to an e-mail address. One greedy class and nothing after
+ * it, so the scan is linear (an `x+@y+` pattern backtracks quadratically over a long run with no `@`).
+ */
+const ADDRESS_RUN = /[^\s<>()"',;:]+/g;
 const URL_LIKE = /\b(?:https?|ftp):\/\/\S+/gi;
+
+/** True when the run holds an `@` with at least one character on each side, i.e. it reads as an address. */
+function looksLikeAddress(run: string): boolean {
+  const at = run.indexOf("@", 1);
+  return at !== -1 && at < run.length - 1;
+}
 
 /** Removes e-mail addresses and (unless `keepUrls`) URLs from an index string, flattens it and caps it. */
 export function scrubPublicText(raw: string, max: number, keepUrls = false): string {
-  let s = raw.replaceAll(EMAIL, "[redacted]");
+  let s = raw.replaceAll(ADDRESS_RUN, (run) => (looksLikeAddress(run) ? "[redacted]" : run));
   if (!keepUrls) s = s.replaceAll(URL_LIKE, "[link removed]");
   s = s.replaceAll(/\s+/g, " ").trim();
   return s.length > max ? `${s.slice(0, max - 1)}…` : s;
@@ -427,10 +437,8 @@ const SOURCE_NAME: Record<SourceId, string> = {
   jsm: "Jira Service Management",
 };
 
-export function buildStatuspageModel(db: Database, opts: StatuspageOptions): StatuspageModel {
-  const gaps: string[] = [];
-  const requested = opts.services ?? [];
-  const { chosen, unknown } = selectConfigs(opts.serviceConfigs, requested);
+/** The gaps that come from the service configuration itself, before anything is read. */
+function pushConfigGaps(gaps: string[], opts: StatuspageOptions, unknown: readonly string[]): void {
   for (const u of unknown)
     gaps.push(`Service "${u}" is not configured, so it is not on this page.`);
   if (opts.configError === true) {
@@ -442,14 +450,15 @@ export function buildStatuspageModel(db: Database, opts: StatuspageOptions): Sta
       "No services are configured ([metrics.dora.<id>] or [ci.service.<id>] in nimbus.toml).",
     );
   }
-  const scoped = requested.length > 0;
-  const filter: ServiceFilter | null = scoped
-    ? {
-        pd: new Set(chosen.flatMap((c) => [...c.pagerdutyServices])),
-        tags: new Set(chosen.flatMap((c) => c.jsmAlertTags.map(norm))),
-      }
-    : null;
+}
 
+/** The incidents section and its gaps (what is not indexed, what is stale, what is cut). */
+function gatherIncidents(
+  db: Database,
+  opts: StatuspageOptions,
+  filter: ServiceFilter | null,
+  gaps: string[],
+): StatuspageModel["incidents"] {
   const resolver = buildServiceIdentityResolver(opts.serviceConfigs);
   const alerts = readOpenAlerts(db);
   const pd = pagerdutyIncidents(db, opts, filter, resolver);
@@ -490,6 +499,27 @@ export function buildStatuspageModel(db: Database, opts: StatuspageOptions): Sta
       `Only the newest ${String(STATUSPAGE_MAX_INCIDENTS)} of ${String(items.length)} open incidents are listed.`,
     );
   }
+  return {
+    status,
+    total: items.length,
+    items: items.slice(0, STATUSPAGE_MAX_INCIDENTS),
+    sources,
+  };
+}
+
+export function buildStatuspageModel(db: Database, opts: StatuspageOptions): StatuspageModel {
+  const gaps: string[] = [];
+  const requested = opts.services ?? [];
+  const { chosen, unknown } = selectConfigs(opts.serviceConfigs, requested);
+  pushConfigGaps(gaps, opts, unknown);
+  const scoped = requested.length > 0;
+  const filter: ServiceFilter | null = scoped
+    ? {
+        pd: new Set(chosen.flatMap((c) => [...c.pagerdutyServices])),
+        tags: new Set(chosen.flatMap((c) => c.jsmAlertTags.map(norm))),
+      }
+    : null;
+  const incidents = gatherIncidents(db, opts, filter, gaps);
   if (chosen.length > STATUSPAGE_MAX_SERVICES) {
     gaps.push(`Only the first ${String(STATUSPAGE_MAX_SERVICES)} services are scored.`);
   }
@@ -506,12 +536,7 @@ export function buildStatuspageModel(db: Database, opts: StatuspageOptions): Sta
       titles: opts.titles === true,
       links: opts.links === true,
     },
-    incidents: {
-      status,
-      total: items.length,
-      items: items.slice(0, STATUSPAGE_MAX_INCIDENTS),
-      sources,
-    },
+    incidents,
     onCall,
     dora: gatherDora(db, opts, chosen),
     gaps,

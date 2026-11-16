@@ -188,15 +188,26 @@ function formatValue(c: PageDoraCell): string {
   }
 }
 
+/** `(text)` in a muted note span; `text` is escaped. */
+function noteSpan(text: string): string {
+  return `<span class="note">(${esc(text)})</span>`;
+}
+
+/** One `<li>`; `text` is escaped. */
+function listItem(text: string): string {
+  return `<li>${esc(text)}</li>`;
+}
+
 function doraCell(c: PageDoraCell): string {
   if (c.value === null) {
     const why = gapText(c.gap);
-    return `<td class="nodata">No data${why === "" ? "" : ` <span class="note">(${esc(why)})</span>`}</td>`;
+    const note = why === "" ? "" : ` ${noteSpan(why)}`;
+    return `<td class="nodata">No data${note}</td>`;
   }
   const notes = [`n=${String(c.sample)}`];
   const why = gapText(c.gap);
   if (why !== "") notes.push(why);
-  return `<td>${esc(formatValue(c))} <span class="note">(${esc(notes.join(", "))})</span></td>`;
+  return `<td>${esc(formatValue(c))} ${noteSpan(notes.join(", "))}</td>`;
 }
 
 function incidentRow(i: PageIncident, titles: boolean): string {
@@ -232,7 +243,8 @@ function incidentsSection(m: StatuspagePageModel): string {
       `<table><thead><tr><th>Incident</th><th>Status</th><th>Severity</th><th>Service</th><th>Opened</th></tr></thead><tbody>` +
       `${inc.items.map((i) => incidentRow(i, m.options.titles)).join("")}</tbody></table>`;
     if (inc.total > inc.items.length) {
-      body += `<p class="note">${esc(`Showing ${String(inc.items.length)} of ${String(inc.total)}.`)}</p>`;
+      const shown = `Showing ${String(inc.items.length)} of ${String(inc.total)}.`;
+      body += `<p class="note">${esc(shown)}</p>`;
     }
   }
   const src = inc.sources
@@ -291,19 +303,19 @@ function doraSection(m: StatuspagePageModel): string {
           `<tr><th scope="row">${esc(r.service)}</th>${doraCell(r.deployment_frequency)}${doraCell(r.lead_time_for_changes)}${doraCell(r.change_failure_rate)}${doraCell(r.mttr)}</tr>`,
       )
       .join("");
+    const window = `Computed over the last ${String(d.windowDays)} days.`;
     body =
       `<table><thead><tr><th>Service</th><th>Deployment frequency</th><th>Lead time for changes</th>` +
       `<th>Change failure rate</th><th>Time to restore</th></tr></thead><tbody>${rows}</tbody></table>` +
-      `<p class="note">${esc(`Computed over the last ${String(d.windowDays)} days.`)}</p>`;
+      `<p class="note">${esc(window)}</p>`;
   }
   return `<section><h2>Delivery scorecard (DORA)</h2>${body}</section>`;
 }
 
 function footer(m: StatuspagePageModel): string {
+  const gapItems = m.gaps.map(listItem).join("");
   const gaps =
-    m.gaps.length === 0
-      ? "<p>No gaps were found in the indexed data.</p>"
-      : `<ul>${m.gaps.map((g) => `<li>${esc(g)}</li>`).join("")}</ul>`;
+    m.gaps.length === 0 ? "<p>No gaps were found in the indexed data.</p>" : `<ul>${gapItems}</ul>`;
   const scope =
     m.options.services.length === 0
       ? "all configured services"

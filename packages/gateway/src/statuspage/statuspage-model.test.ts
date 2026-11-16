@@ -360,4 +360,22 @@ describe("scrubPublicText", () => {
     expect(scrubPublicText("see https://e.f/g", 100, true)).toBe("see https://e.f/g");
     expect(scrubPublicText("x".repeat(50), 10)).toHaveLength(10);
   });
+
+  test("an address is the whole run around an inner @, stopped by separators", () => {
+    expect(scrubPublicText("<a@b@c>", 100)).toBe("<[redacted]>");
+    expect(scrubPublicText("(x@@y), z", 100)).toBe("([redacted]), z");
+    expect(scrubPublicText("pager:ops@corp.example;", 100)).toBe("pager:[redacted];");
+  });
+
+  test("an @ at either end of a run is not an address", () => {
+    expect(scrubPublicText("@here and ab@ stay", 100)).toBe("@here and ab@ stay");
+  });
+
+  test("a long run with no address scans in linear time", () => {
+    const long = `${"a".repeat(200_000)}@`;
+    const started = performance.now();
+    expect(scrubPublicText(long, 300_000)).toBe(long);
+    // Quadratic backtracking over 200k characters takes many seconds; a linear scan takes milliseconds.
+    expect(performance.now() - started).toBeLessThan(2_000);
+  });
 });

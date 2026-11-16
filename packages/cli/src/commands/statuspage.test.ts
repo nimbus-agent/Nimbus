@@ -120,6 +120,9 @@ describe("parseStatuspageArgs", () => {
     [["draft", "--service", " "]],
     [["draft", "--service", "-x"]],
     [["draft", "extra"]],
+    [["draft", "--force=1"]],
+    [["draft", "--title="]],
+    [["draft", "--out=a", "--out=b"]],
   ])("rejects %j", (argv) => {
     expect(parseStatuspageArgs(argv)).toBeUndefined();
   });

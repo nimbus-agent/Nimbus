@@ -37,43 +37,75 @@ export interface StatuspageIo {
 
 const VALUE_FLAGS = new Set(["--out", "--service", "--title"]);
 
+interface BooleanFlags {
+  force: boolean;
+  titles: boolean;
+  links: boolean;
+  json: boolean;
+}
+
+const BOOLEAN_FLAGS: ReadonlyMap<string, keyof BooleanFlags> = new Map([
+  ["--force", "force"],
+  ["--titles", "titles"],
+  ["--links", "links"],
+  ["--json", "json"],
+]);
+
+interface ValueFlagRead {
+  name: string;
+  value: string;
+  /** The index of the last argument this flag consumed. */
+  last: number;
+}
+
+/**
+ * Reads the value flag at `argv[i]` (`--name value` or `--name=value`). Undefined when it is not a
+ * value flag, or its value is missing, blank or starts with a dash (`--out -` is the one exception).
+ */
+function readValueFlag(argv: readonly string[], i: number): ValueFlagRead | undefined {
+  const a = argv[i] as string;
+  const eq = a.indexOf("=");
+  const name = eq === -1 ? a : a.slice(0, eq);
+  if (!VALUE_FLAGS.has(name)) return undefined;
+  const value = eq === -1 ? argv[i + 1] : a.slice(eq + 1);
+  if (value === undefined || value.trim() === "") return undefined;
+  if (value.startsWith("-") && !(name === "--out" && value === "-")) return undefined;
+  return { name, value, last: eq === -1 ? i + 1 : i };
+}
+
+interface ValueFlags {
+  out?: string;
+  title?: string;
+  services: string[];
+}
+
+/** Records one value flag; false when `--out` or `--title` is given twice. */
+function applyValueFlag(acc: ValueFlags, read: ValueFlagRead): boolean {
+  if (read.name === "--service") {
+    acc.services.push(read.value.trim());
+    return true;
+  }
+  const key = read.name === "--out" ? "out" : "title";
+  if (acc[key] !== undefined) return false;
+  acc[key] = read.value;
+  return true;
+}
+
 export function parseStatuspageArgs(argv: readonly string[]): StatuspageArgs | undefined {
   if (argv[0] !== "draft") return undefined;
-  let out: string | undefined;
-  let title: string | undefined;
-  const services: string[] = [];
-  const flags = { force: false, titles: false, links: false, json: false };
+  const values: ValueFlags = { services: [] };
+  const flags: BooleanFlags = { force: false, titles: false, links: false, json: false };
   for (let i = 1; i < argv.length; i += 1) {
-    const a = argv[i] as string;
-    if (a === "--force") flags.force = true;
-    else if (a === "--titles") flags.titles = true;
-    else if (a === "--links") flags.links = true;
-    else if (a === "--json") flags.json = true;
-    else {
-      const eq = a.indexOf("=");
-      const name = eq === -1 ? a : a.slice(0, eq);
-      if (!VALUE_FLAGS.has(name)) return undefined;
-      let value: string | undefined;
-      if (eq === -1) {
-        i += 1;
-        value = argv[i];
-      } else {
-        value = a.slice(eq + 1);
-      }
-      if (value === undefined || value.trim() === "") return undefined;
-      // `--out -` is the one value that starts with a dash.
-      if (value.startsWith("-") && !(name === "--out" && value === "-")) return undefined;
-      if (name === "--out") {
-        if (out !== undefined) return undefined;
-        out = value;
-      } else if (name === "--title") {
-        if (title !== undefined) return undefined;
-        title = value;
-      } else {
-        services.push(value.trim());
-      }
+    const boolKey = BOOLEAN_FLAGS.get(argv[i] as string);
+    if (boolKey !== undefined) {
+      flags[boolKey] = true;
+      continue;
     }
+    const read = readValueFlag(argv, i);
+    if (read === undefined || !applyValueFlag(values, read)) return undefined;
+    i = read.last;
   }
+  const { out, title, services } = values;
   return {
     ...flags,
     services,

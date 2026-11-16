@@ -40,7 +40,7 @@ describe("esc", () => {
   });
 
   test("control, bidi-override and separator characters become a space", () => {
-    expect(esc("a\u0000b\u001bc\nd‮e f\u0085g\u007fh")).toBe("a b c d e f g h");
+    expect(esc("a\u0000b\u001bc\nd\u202ee\u2028f\u0085g\u007fh")).toBe("a b c d e f g h");
   });
 
   test("non-strings are stringified", () => {
