@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794826678336,
+  "lastUpdate": 1794827180338,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "860774328ca64b358c1259b3ab29178f9b63375b",
-          "message": "fix(perf): drift-check must use each surface own noise floor, not a hardcoded 10% (#1374)\n\nCloses #1308. Closes #1309.\n\n**Both issues are false positives**, and the detector that filed them is\nfour times more sensitive than the surfaces it watches.\n\n## The evidence\n\nBoth fired at the **same position, on both surfaces**, from this window\nof `gha-ubuntu` samples (reconstructed from the `perf-data` branch's\n`dev/bench/data.js`):\n\n```\nwindow: 224, 249, 261, 253, 247, 333, 306    →  rolling median 253\n                                                (series median across 495 samples: 311)\nthen:   316  (+25 % vs 253)\n        333  (+28 % vs 253)   →  3 consecutive  →  ALARM\n```\n\nThe window is a cluster of unusually **fast** runs. Nothing got slower —\nthe \"regression\" is the runner **returning to normal** against a\nbaseline the fast runs had dragged down.\n\nThis is the part worth internalising: a rolling *median* moves with the\ndata, so downward outliers depress it and ordinary samples afterwards\nread as a regression. It is not simply \"the threshold is too tight\".\n\nRunning the shipped detector over the full recorded history:\n\n| Floor | Tripping positions across 495 samples |\n| --- | --- |\n| **10 %** (as shipped) | **2** — both in that one window |\n| 25 % | 0 |\n| **40 %** (what S11-a/b actually declare) | **0** |\n\n## Root cause\n\n`detectDrift` took a bare percentage and the caller passed a module\nconstant:\n\n```ts\nconst DRIFT_NOISE_FLOOR_PCT = 10;\n...\nif (detectDrift(series, DRIFT_NOISE_FLOOR_PCT)) drifting.push(surfaceId);\n```\n\nMeanwhile `SLO_THRESHOLDS` already declares a floor **per surface**, and\nS11-a/S11-b declare **40 %** with an absolute floor of 50 ms / 10 ms.\nTheir own comments say exactly why:\n\n> *\"The jitter is a runner property, not a code signal, so S11-a is\ntrend-class.\"*\n\nThe drift detector ignored both fields. A gate four times tighter than\nthe surface's declared noise floor cannot do anything but alarm on\nnoise.\n\n## The fix\n\n`detectDrift` now takes the surface's `SloThreshold` and applies **its**\nfloor — reusing the formula the SLO comparator already uses,\n`max(noiseFloorPct, noiseFloorAbs / baseline × 100)`, rather than a\nsecond copy. That formula is extracted as `effectiveNoiseFloorPct` in\n`threshold-comparator.ts` so both readers share one definition; the\ncomparator's own behaviour is unchanged (its 32 tests pass untouched).\n\nThe filed issue body now names the surface's own floor instead of a\nglobal constant, so a future reader can check the claim against\n`slo-thresholds.ts`.\n\n## Tests\n\nA `describe` block built from the **real** window, so the regression is\npinned to the data that caused it rather than to a synthetic curve:\n\n- `the shipped 10% floor fires on this window` — asserts `true`. This is\nthe bug, kept as a test so the fix cannot be quietly reverted.\n- `the surface's OWN 40% floor does not` — asserts `false` for both\nS11-a's and S11-b's real floors.\n- `a real 2x regression still trips at the 40% floor` — the floor must\nnot be so wide it detects nothing.\n- `the absolute floor binds when the baseline is small` — 40 % of 20 ms\nis 8 ms of scheduler noise; the 50 ms absolute floor raises the bar to\n250 %, which is why the two are combined.\n\nOne existing fixture had to be resized, and that is itself evidence: the\nmain-flow test drifted 100 → 130 (+30 %), which cleared the hardcoded 10\n% but would **not** clear S1's own declared floor (25 %, or 30 % once\nits 300 ms absolute floor binds). It now uses 1000 → 1600.\n\n## Verification\n\n- `bun run preflight:fast` — pass, including `regen-slo --check` (the\nprose lives in the generator, since `docs/perf/slo.md` is generated).\n- Full CI command `bun test packages/gateway packages/cli scripts` —\n**19,462 pass, 0 fail**.\n\n## Checked and rejected\n\nI also looked at whether S11-b is mismeasured, since it reports ~319 ms\nagainst a `refMax` of 50 ms and its values track S11-a (cold) almost\nexactly — both spawn a fresh process per sample, so \"warm\" only means\nthe OS cache is warm. It is **not** a breach: `refMax` applies to\n`reference-m1air` only, and the CI ceiling is `ghaMax: 900`. Worth\nknowing that S11-b adds little signal over S11-a on `gha-ubuntu`, but\nthat is a surface-design question, not this fix.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n- **Bug Fixes**\n- Improved performance drift detection by applying each surface’s\nconfigured noise floor.\n- Reduced false alarms caused by unusually fast runs and\nsurface-specific performance variation.\n- Drift alerts now require sustained regressions across three\nconsecutive samples.\n\n- **Documentation**\n- Updated performance SLO documentation with detection rules,\nrolling-baseline behavior, and illustrative examples.\n- Drift reports now identify the applicable surface-specific noise\nfloor.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->",
-          "timestamp": "2026-08-29T05:02:43Z",
-          "tree_id": "cc8e270e3f8475698d12cfe40695e61753e86872",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/860774328ca64b358c1259b3ab29178f9b63375b"
-        },
-        "date": 1787980458605,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 329.61971284999964,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 326.1689060000026,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 194.4828106999972,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "71de957f16a026a568d3c2ee0840e6b08959a6c6",
+          "message": "feat(gateway): a saved workflow step can run only when an earlier query found rows (a when guard) (#2027)\n\nA carried-in S4 item: saved workflows had no way to run a step\nconditionally. A step can now carry a `when` guard.\n\n## What you can do now\n\nA `run` or `write` step of a saved workflow may carry a guard that\ncompares how many values an earlier declared `query` step selected:\n\n```json\n{ \"kind\": \"write\", \"label\": \"archive\", \"tool\": \"gmail_thread_archive\",\n  \"when\": { \"count\": \"stale-threads\", \"gt\": 0 } }\n```\n\n- Operators: `gt`, `gte`, `lt`, `lte`, `eq`, `ne`. A list of up to four\nconditions means all must hold.\n- A step whose guard is false is recorded `not_taken`. It asks nobody,\ndispatches nothing and calls no model. The run still ends `done`.\n- The guard is a closed form. There are no expressions, no model output,\nno strings, no OR, no nesting.\n\n## What it must never do, and how that holds\n\nA guard can only remove runs of a step. It never adds one.\n\n- **Standing rules.** A standing rule may cover a guarded write only\nwhen every condition is false at a count of zero. A failed sync, a\nlapsed credential and an empty index all read as zero, so a write that\nfires on \"nothing found\" could otherwise run unattended on missing data.\nThe one check (`guardRequiresPresence`) is used at rule creation, at\nrule resume and by approval learning. The rule's approval text shows the\ncondition on a `Runs only when:` line.\n- **Content hash.** The hash a rule is bound to covers the parsed steps,\nguards included, so editing a guard ends the rule.\n- **Capped queries.** A query that hit its limit gives only a lower\nbound. On it, only `gt`, `gte` and `ne 0` can hold; everything else\nfails closed.\n- **Resume.** If the blocked step's condition no longer holds when the\nowner resumes, the run stops there with the new status\n`condition_lapsed`, and no later step runs.\n- **Strict parsing.** A row that carries `when` with a missing prompt or\nan unknown key is refused at save and at run. It is never silently\ndropped.\n\nThe executor and `standing-rule-step.ts` are unchanged. Static rule\nD44(g) confines the presence check, and I55's text gains a paragraph.\n\n## Also fixed\n\nThe standing-rule approval text still said a scheduled run \"is not part\nof this rule yet\". That stopped being true when scheduling shipped.\n\n## Stated bounds\n\n- A guard reads the local index, so it is only as fresh as the last\nsync.\n- There is no check that a list of conditions can all hold at once.\n- Steps before a resumed block are not re-evaluated.\n- A scheduled workflow whose guard is mostly false records a `done` run\nper fire.\n- A client outside this repository that switches on the run status\nstring will meet the new value `condition_lapsed`.\n\n## Checks run\n\n- `bun run preflight:fast` after merging `main`: passed.\n- `bun test` across automation, standing, IPC, the invariants test, the\nstanding and schedule acceptance test, the structure audit and the CLI\ncommands: 12,327 pass, 0 fail before the merge; the automation,\nstanding, invariants and acceptance tests re-run after it with 0 fail.\n- Three defences were removed in turn and their tests failed each time:\nthe presence check at rule creation, the resume stop, and the strict\nparse.\n- Not run locally: the full `preflight`, the coverage floor, and a live\ngateway run. CI covers the first two.\n\nThe design had two review rounds before any code was written. No schema\nmigration and no new invariant number. Docs: roadmap (row ticked, with\nbounds), cli-reference, architecture and SECURITY-INVARIANTS. The status\nsentence in CLAUDE.md and GEMINI.md, the changelog entry and the README\nline land with the last pull request of this batch.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JmSjrCzb214jGqUcCTWNJQ\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Workflows can now conditionally run actions and writes based on counts\nreturned by earlier queries, using up to four combined comparisons.\n* Dry runs show whether guarded steps would run. Steps whose conditions\ndo not hold are recorded as not taken.\n* Resumed runs stop when a guarded step’s condition no longer holds, and\nrun history reflects skipped guarded steps.\n* Approval details show guard conditions. Standing approvals are\nunavailable when a condition could allow a write at a zero count.\n* Approval rules clarify when matching writes can run without prompting\nand when further approval is required.\n* **Documentation**\n* Updated workflow, approval, and security documentation to describe\nguard behavior and limits.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Fable 5.2 <noreply@anthropic.com>",
+          "timestamp": "2026-11-16T10:56:12Z",
+          "tree_id": "abe41c8cd52afaf86d648c4de2cd146c7038eb40",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/71de957f16a026a568d3c2ee0840e6b08959a6c6"
+        },
+        "date": 1794827176029,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 189.30667265000412,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 188.13322460000163,
             "unit": "ms"
           }
         ]
