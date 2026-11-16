@@ -62,6 +62,9 @@ const FORBIDDEN_OVER_LAN = new Set([
   // owner's incident, assignees and deploy history, and `pushedRetry` runs an agent. `agents.oncall`
   // is a different namespace and is unaffected.
   "oncall",
+  // `statuspage.model` (Phase 17): the page model behind `nimbus statuspage draft`. It restates the owner's
+  // open incidents, on-call shifts and DORA scorecard, and is CLI-only (the owner decides what to publish).
+  "statuspage",
   // `cost.anomalies` (Phase 10 FinOps) - the WHOLE namespace. Daily spend per cloud service, team and
   // account restates the owner's cost index; a peer with a legitimate question has `federation.ask`.
   "cost",

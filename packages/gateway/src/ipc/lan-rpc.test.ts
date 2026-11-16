@@ -189,6 +189,14 @@ describe("checkLanMethodAllowed", () => {
     }
   });
 
+  test("statuspage.model is not callable over LAN regardless of grant-write (Phase 17)", () => {
+    for (const writeAllowed of [true, false]) {
+      expect(() =>
+        checkLanMethodAllowed("statuspage.model", { peerId: "p", writeAllowed }),
+      ).toThrow(/not callable over LAN/);
+    }
+  });
+
   test("negative control: the match is the exact namespace, not a prefix", () => {
     expect(() =>
       checkLanMethodAllowed("oncallish.read", { peerId: "p", writeAllowed: false }),
