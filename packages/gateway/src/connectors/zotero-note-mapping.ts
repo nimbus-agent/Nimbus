@@ -71,7 +71,8 @@ const BLOCK_TAG_NAMES: ReadonlySet<string> = new Set([
   "ul",
 ]);
 
-const TAG = /<\/?([a-z][a-z0-9]*)\b[^>]*>/giu;
+/** A start or end tag. A quoted attribute value may hold a `>`, so the tag does not end there. */
+const TAG = /<\/?([a-z][a-z0-9]*)\b(?:[^>"']|"[^"]*"|'[^']*')*>/giu;
 
 /**
  * Remove a note's tags: a block tag becomes a space, an inline tag becomes nothing. Note-specific on
@@ -127,12 +128,22 @@ export function noteBodyText(html: string): string {
   return collapseWhitespace(decodeEntities(stripNoteTags(html)));
 }
 
+/** `text` cut to `max` UTF-16 code units, without leaving half of a surrogate pair at the end. */
+function truncateTitle(text: string, max: number): string {
+  if (text.length <= max) {
+    return text;
+  }
+  const last = text.charCodeAt(max - 1);
+  const end = last >= 0xd800 && last <= 0xdbff ? max - 1 : max;
+  return `${text.slice(0, end)}…`;
+}
+
 /** First non-empty line of the note as plain text, truncated. `null` when the note has no text. */
 export function noteTitle(html: string): string | null {
-  for (const line of html.replace(BLOCK_END, "\n$&").split("\n")) {
+  for (const line of html.split(BLOCK_END)) {
     const text = collapseWhitespace(decodeEntities(stripNoteTags(line)));
     if (text !== "") {
-      return text.length > TITLE_MAX ? `${text.slice(0, TITLE_MAX)}…` : text;
+      return truncateTitle(text, TITLE_MAX);
     }
   }
   return null;

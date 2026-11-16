@@ -77,6 +77,12 @@ describe("mapZoteroNoteToItem", () => {
     expect(mapped(makeNote({ note: `<p>${"x".repeat(300)}</p>` })).title).toBe(
       `${"x".repeat(120)}…`,
     );
+    // 119 ASCII characters then an emoji: the cut must not keep half of its surrogate pair.
+    const emojiTitle = mapped(makeNote({ note: `<p>${"x".repeat(119)}😀 tail</p>` })).title;
+    expect(emojiTitle).toBe(`${"x".repeat(119)}…`);
+    expect(mapped(makeNote({ note: `<p>${"x".repeat(118)}😀 tail</p>` })).title).toBe(
+      `${"x".repeat(118)}😀…`,
+    );
     const empty = mapped(makeNote({ note: "<div> <p></p> </div>" }));
     expect(empty.title).toBe("Note NOTE1234");
     expect(empty.body).toBe("");
@@ -124,6 +130,13 @@ describe("note text helpers", () => {
     expect(noteBodyText("<ul><li>one</li><li>two</li></ul>")).toBe("one two");
     expect(noteBodyText("<table><tr><td>a</td><td>b</td></tr></table>")).toBe("a b");
     expect(noteTitle("<p>H<sub>2</sub>O in <em>vitro</em></p><p>rest</p>")).toBe("H2O in vitro");
+  });
+
+  test("a > inside a quoted attribute does not end the tag", () => {
+    const html = '<p><a href="https://x.test/?q=a>b">visible</a></p>';
+    expect(noteBodyText(html)).toBe("visible");
+    expect(noteTitle(html)).toBe("visible");
+    expect(noteBodyText("<p><span title='1 > 0'>ok</span></p>")).toBe("ok");
   });
 
   test("decimal and hex character references are decoded", () => {
