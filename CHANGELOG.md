@@ -2,6 +2,13 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [10.64.0](https://github.com/nimbus-agent/Nimbus/compare/v10.63.0...v10.64.0) (2026-11-16)
+
+
+### Features
+
+* **cli:** nimbus mcp-server answers both MCP protocol eras, the 2026-07-28 revision and the initialize handshake (agent door AD6b) ([#2015](https://github.com/nimbus-agent/Nimbus/issues/2015)) ([89dd597](https://github.com/nimbus-agent/Nimbus/commit/89dd597e1e747bfc2fa142af4de4cdcaddee08cd))
+
 ## [10.63.0](https://github.com/nimbus-agent/Nimbus/compare/v10.62.0...v10.63.0) (2026-11-15)
 
 
