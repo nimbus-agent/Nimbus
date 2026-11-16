@@ -12,7 +12,10 @@ import { type TriggerService, triggerTypeOf } from "./trigger-sources.ts";
  *   filtered IN SQL before the 200-row cap (a cap that ran first would let non-qualifying items hide qualifying
  *   ones for ever). Status is not a filter: a P1 that fired and resolved between two syncs is assembled once.
  * - R (refresh): open or unknown records, least recently CHECKED first, so an unchanged record goes to the back.
- * - C (changed): closed records whose item changed since their last check (and not in the future).
+ * - C (changed): closed records whose item changed since their last check (and not in the future). A change is
+ *   the provider's `modified_at` moving past the check, OR a tracked state change the sync OBSERVED (V94
+ *   `item_history.observed_at_ms`, the sync's own clock) at or after the check: a reopening that arrives late with
+ *   an earlier provider time is caught by the second arm. Only the IC1 allowlist of state keys counts (stated bound).
  */
 
 export const SELECT_NEW_CAP = 200;
@@ -69,9 +72,12 @@ export function selectChangedItemIds(
     .query(
       `SELECT r.trigger_item_id AS id FROM incident_record r JOIN item i ON i.id = r.trigger_item_id
         WHERE r.trigger_service = ? AND r.status = 'closed'
-          AND i.modified_at > r.checked_at_ms AND i.modified_at <= ?
+          AND ((i.modified_at > r.checked_at_ms AND i.modified_at <= ?)
+            OR EXISTS (SELECT 1 FROM item_history h
+                        WHERE h.item_id = r.trigger_item_id
+                          AND h.observed_at_ms >= r.checked_at_ms AND h.observed_at_ms <= ?))
         ORDER BY r.checked_at_ms ASC, r.id ASC LIMIT ${String(SELECT_CHANGED_CAP)}`,
     )
-    .all(service, nowMs) as { id: string }[];
+    .all(service, nowMs, nowMs) as { id: string }[];
   return rows.map((r) => r.id);
 }

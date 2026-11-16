@@ -1,4 +1,5 @@
 import type { BoundWriteCapabilities } from "./bound-write-capabilities.ts";
+import type { IncidentLink } from "./incident-link.ts";
 
 /** How a workflow run started, as the gateway derived it (never from params). */
 /**
@@ -72,6 +73,15 @@ export type PlannedAction = {
    * audit row projects it to the definition hash alone.
    */
   userMcpCall?: UserMcpCallFacts;
+  /**
+   * Phase 10 IC4: set only by the gateway for an action it runs on behalf of an assembled incident
+   * record (`incident/incident-link-mint.ts`, static D46(e); nothing produces one before IC5). A JOIN
+   * KEY for the audit row, the ledger row and `nimbus audit replay`, never authorisation: a linked
+   * action is a local-owner action, so it never carries `origin`, `proposer` or `provenance`, is
+   * never delegated and never matches a standing rule. Top level only: a `payload.incident` means
+   * nothing.
+   */
+  incident?: IncidentLink;
 };
 
 /**
