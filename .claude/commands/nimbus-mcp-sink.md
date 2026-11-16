@@ -349,6 +349,14 @@ audit row and the proof show the source; no step of `capture-gate.ts`, `capture-
 it (a source pin in the I28 block of `security-invariants.test.ts` fails on any line there that is not a declaration or a
 pass-through). A new fixture that builds a `NewCaptureRow` must set `labelSource`.
 
+## The protocol layer (AD6b)
+
+`packages/cli/src/mcp/adapter.ts` builds the server on `@nimbus-dev/sdk/mcp-server` (both MCP eras, one process).
+The layer does NOT validate arguments: `toolFor` parses them with the tool's zod shape before `run`, and only the
+members the shape names reach the tool. A new tool needs nothing else, but `adapter-eras.test.ts` requires it to
+be named in `ADDED_SINCE_THE_RECORD` (the recorded upstream 1.32.0 listing is never regenerated). The client label
+comes from the call's `ctx.clientInfo`, per request in the modern era. No tool may return `inputRequired`.
+
 ## Agent kits (AD7b)
 
 `nimbus agent install|status` (`packages/cli/src/commands/agent.ts`, `packages/cli/src/agent-kits/`) writes the

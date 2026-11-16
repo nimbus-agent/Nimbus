@@ -1654,6 +1654,13 @@ label is UNVERIFIED either way: any program that can start `nimbus mcp-server` c
 nothing by it. A missing or malformed value, `--agent` given twice, or `--agent` without `--stdio` is a usage error
 (exit code 2) and the server does not start.
 
+The server speaks both MCP protocol eras on one process: a client of revision `2026-07-28` (no handshake) and a
+client that opens with `initialize` (`2025-11-25`, `2025-06-18`, `2025-03-26` or `2024-11-05`) are listed the same
+tools. A connection's first request decides which era it is in. A protocol version it does not serve is refused
+with error `-32022` and the list of versions it does. A call to a tool that is not registered is a JSON-RPC
+`-32602` error; arguments a tool's schema rejects come back as a tool error that starts
+`Invalid arguments for tool <name>`. Tools are all it serves: no resources, prompts or HTTP transport.
+
 The Gateway must be running (`nimbus start`). Twenty-one read-only tools are always registered; run
 `nimbus mcp-server --help` for the live list, which is derived from the registry rather
 than restated.
