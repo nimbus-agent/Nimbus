@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794825483446,
+  "lastUpdate": 1794826163323,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "21c1a889878b7cf6d88670531f6c7b140f0b6e3b",
-          "message": "ci: raise the Windows cross-platform test cap to 1080s and the job ceiling with it (#1373)\n\nCloses #1360.\n\n## The tripwire fired\n\nThe 900 s cap's own comment left one: *\"Re-check this number if a\nhealthy run ever exceeds ~700 s.\"*\n\nMeasured on `windows-2025`, the capped step only, **successful** runs:\n\n```\n519 s · 538 s · 560 s · 637 s · 669 s · 698 s · 709 s\n```\n\nThe runner's variance is ~28 % on identical work (404 s then 516 s on\nconsecutive runs of the same commit set). A worst healthy run of **709\ns** therefore implies **~907 s** at the top of that swing — *above* the\n900 s cap.\n\nThat is not a prediction. #1359 hit it twice, dying at **16,958** and\n**18,679** of 19,520 tests on the two attempts. Different death points\nrule out a deterministic hang and confirm plain slowness — and `exit\n124` is a wall-clock kill with **zero failing tests**, so it reads like\na mystery failure to whoever triages it.\n\n1080 s puts the worst observed healthy run at **66 %** of the cap,\nabsorbing the measured variance instead of sitting inside it.\n\n## The constraint the last raise missed\n\n`timeout-minutes` moves in the same commit, and this is the part worth\nreviewing:\n\n```\nsetup + 2 × cap  ≤  ceiling\n```\n\nMeasured setup overhead on `windows-2025` is **~270 s** (job 975 s vs.\ncapped step 709 s on the same run). At an 18-minute cap the worst case\nis `270 + 2160 = 2430 s ≈ 40.5 min` — so the existing 40-minute ceiling\nwas no longer enough, and the ceiling goes to 48.\n\n**A cap raised alone would have been silently useless.** The second\nattempt could never finish: the job would be cancelled at the ceiling\nwith *\"The operation was canceled\"* instead of surfacing the wrapper's\n`exit 124` — precisely the failure mode the per-attempt cap exists to\nprevent. The 600 s → 900 s raise did not state this arithmetic and so\ncould not check it; it is now written down next to both numbers.\n\n## A test that pinned the wrong thing\n\n`scripts/ci/cross-platform-parity.test.ts` identified the PR step by the\nliteral string `run-with-timeout.ts 900 bun test`, so this change failed\nit — a test whose subject is the **test paths**, not the cap value. It\nnow matches `\\d+` for the seconds.\n\nThat mattered beyond convenience: the tempting fix for a predicate that\nstops matching is to relax it until it matches *nothing*, which would\nmake the parity assertion vacuously true. The existing `toHaveLength(1)`\nassertion catches that, but only while the predicate still identifies\nthe step at all — so the comment says so.\n\n**Red-proved both directions:** the test passes with the cap changed to\nan arbitrary `1234` (correctly cap-agnostic) and fails all three\nassertions when the wrapper is removed entirely (still identifies the\nstep).\n\n## Not pretending this is the fix\n\nThe durable answer is a faster suite, not a fourth cap raise. The suite\nhas grown from **11,166 tests / 796 files** to **19,525 / 1,379** in\nunder a month, and the comment now says that plainly, with the next\nre-check threshold (~850 s) written down.\n\n## Verification\n\n- `bun run preflight:fast` — pass, including `audit:workflow-lint`.\n- `scripts/ci/cross-platform-parity.test.ts` — 3 pass, red-proved as\nabove.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)",
-          "timestamp": "2026-08-28T21:15:49+03:00",
-          "tree_id": "d9fda7b25699acb4c16977663bcb2fc3e4c2618a",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/21c1a889878b7cf6d88670531f6c7b140f0b6e3b"
-        },
-        "date": 1787941641923,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 317.74896250000313,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 316.81038419999607,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 252.502778700001,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "d930c376caf3002cfef53d7a7a0ade75fa0cac8c",
+          "message": "feat(gateway): add nimbus cost anomalies, a local detector over the indexed daily cost series (#2021)\n\nPhase 10, the first slice of cost anomaly detection: detection and a way\nto read it. No alert yet.\n\n## What you can do now\n\n```\nnimbus cost anomalies [--service <id>] [--days <1-30>] [--json]\n```\n\nIt reads the daily cost series the Vantage sync indexed and lists the\ndays whose spend jumped over their recent baseline.\n\n## The rule\n\n- Each series' newest complete UTC day is compared with the mean of the\n7 days before it.\n- A day is anomalous when it is at least `[finops] anomaly_ratio` times\nthat mean (default 1.5) **and** over it by at least `[finops]\nanomaly_min_amount` (default 10, in the series' currency). The floor\nkeeps a tiny series from flagging.\n- The last three days of a series are provisional. They are never judged\nand never averaged.\n- A missing day is not a zero. The mean is over the days that exist.\n- Fewer than 5 baseline days reads as \"not enough history\", never as\nnormal.\n- A zero or negative baseline has no ratio, so only the floor decides.\n- A series reported in two currencies is skipped and counted.\n\n## How it tells you what it could not answer\n\n| Status | Meaning | Exit code |\n| --- | --- | --- |\n| `anomalies` | at least one flagged day | 0 |\n| `ok` | series were checked and none is anomalous | 0 |\n| `insufficient_history` | nothing could be judged | 1 |\n| `no_data` | no cost rows, or every day still provisional | 1 |\n\n## What it does not do\n\n- No notification, schedule, ChatOps post or model. Alerting is a later\nslice, and the roadmap row stays open for it.\n- No provider call: it reads the local index only. Cost rows still reach\nno embedder and no model.\n- Not callable from the desktop app yet (CLI only), and the `cost`\nnamespace is refused over the LAN.\n\n## Stated bounds\n\n- Vantage amounts and reply shapes are checked against documentation\nonly, not a live account.\n- A new series needs about a week of rows before it can be judged.\n- Behaviour on a production-size index was not timed.\n\n## Checks run\n\n- `bun test` over the finops, config, IPC, LAN and CLI files touched:\n215 pass, 0 fail. The invariants test and the IPC server tests: 1,305\npass, 0 fail.\n- `bun run preflight:fast`: every gate passes except\n`audit:connector-version-skew`, which fails on `main` too until #2019\n(the connectors 0.15.0 pin) lands. This branch will be updated onto it.\n- Not run locally: the coverage floor. CI runs it.\n\nNo schema migration, invariant, HITL type or egress class; static rule\nD48 covers the new files. Docs: roadmap (progress note), architecture\nand cli-reference. The status sentence in CLAUDE.md and GEMINI.md, the\nchangelog entry and the README line land with the last pull request of\nthis batch.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JmSjrCzb214jGqUcCTWNJQ\n\n---------\n\nCo-authored-by: Claude Fable 5.2 <noreply@anthropic.com>",
+          "timestamp": "2026-11-16T10:30:22Z",
+          "tree_id": "8ceb32b00451f6ce10a4f94d9ded1eb5b843fc33",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/d930c376caf3002cfef53d7a7a0ade75fa0cac8c"
+        },
+        "date": 1794826159006,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 252.64185560000587,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 253.3131147999964,
             "unit": "ms"
           }
         ]
