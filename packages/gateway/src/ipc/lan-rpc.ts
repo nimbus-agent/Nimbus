@@ -65,6 +65,9 @@ const FORBIDDEN_OVER_LAN = new Set([
   // `statuspage.model` (Phase 17): the page model behind `nimbus statuspage draft`. It restates the owner's
   // open incidents, on-call shifts and DORA scorecard, and is CLI-only (the owner decides what to publish).
   "statuspage",
+  // `cost.anomalies` (Phase 10 FinOps) - the WHOLE namespace. Daily spend per cloud service, team and
+  // account restates the owner's cost index; a peer with a legitimate question has `federation.ask`.
+  "cost",
   // `briefing.*` (Phase 10 MB5) - the WHOLE namespace. The morning briefing restates the owner's pull
   // requests, incidents, mail subjects, calendar and on-call: the whole index in prose. `briefing.runNow`
   // also composes and shows a notification. A peer with a legitimate question has `federation.ask`.

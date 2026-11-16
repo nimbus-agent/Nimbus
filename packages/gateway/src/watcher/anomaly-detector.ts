@@ -14,8 +14,11 @@ export class AnomalyDetectorStub {
   private readonly series = new Map<string, number[]>();
   private notify: AnomalyNotifyFn | undefined;
 
-  constructor(options?: { windowSize?: number; onNotify?: AnomalyNotifyFn }) {
+  private readonly minScore: number;
+
+  constructor(options?: { windowSize?: number; minScore?: number; onNotify?: AnomalyNotifyFn }) {
     this.windowSize = options?.windowSize ?? DEFAULT_WINDOW;
+    this.minScore = options?.minScore ?? 3;
     this.notify = options?.onNotify;
   }
 
@@ -35,7 +38,7 @@ export class AnomalyDetectorStub {
       next.shift();
     }
     this.series.set(key, next);
-    if (score >= 3 && prev.length >= 3 && this.notify !== undefined) {
+    if (score >= this.minScore && prev.length >= 3 && this.notify !== undefined) {
       this.notify({ seriesId: key, value, score, atMs });
     }
     return score;

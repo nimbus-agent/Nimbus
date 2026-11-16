@@ -147,6 +147,17 @@ describe("checkLanMethodAllowed", () => {
     }
   });
 
+  test.each(["cost.anomalies", "cost.anything"])(
+    "%s is not callable over LAN regardless of grant-write",
+    (method) => {
+      for (const writeAllowed of [true, false]) {
+        expect(() => checkLanMethodAllowed(method, { peerId: "p", writeAllowed })).toThrow(
+          /not callable over LAN/,
+        );
+      }
+    },
+  );
+
   test.each(["oncall.pushedList", "oncall.pushedGet", "oncall.pushedRetry", "oncall.now"])(
     "%s is not callable over LAN regardless of grant-write",
     (method) => {

@@ -64,13 +64,44 @@ type CheckShape = {
   findings: readonly Finding[];
   gap: string | null;
 };
+type RiskFactorShape = { id: string; level: string; evidence: string; known: boolean };
+/** The gateway's advisory deploy-risk block; OPTIONAL, so an older gateway's envelope still parses. */
+type RiskShape = {
+  level: string;
+  why: string;
+  factors: readonly RiskFactorShape[];
+  fail_at: string | null;
+  verdict_escalated: boolean;
+};
 type Envelope = {
   service: string;
   target_ref: string;
   verdict: "ok" | "warn";
   computed_at: string;
   checks: Record<string, CheckShape>;
+  risk?: RiskShape;
 };
+
+function isRiskFactor(f: unknown): boolean {
+  if (f === null || typeof f !== "object") return false;
+  const o = f as Record<string, unknown>;
+  return (
+    typeof o["id"] === "string" &&
+    typeof o["level"] === "string" &&
+    typeof o["evidence"] === "string"
+  );
+}
+
+function isRiskShape(x: unknown): x is RiskShape {
+  if (x === null || typeof x !== "object") return false;
+  const o = x as Record<string, unknown>;
+  return (
+    typeof o["level"] === "string" &&
+    typeof o["why"] === "string" &&
+    Array.isArray(o["factors"]) &&
+    (o["factors"] as unknown[]).every(isRiskFactor)
+  );
+}
 
 function isEnvelope(x: unknown): x is Envelope {
   if (x === null || typeof x !== "object") return false;
@@ -80,7 +111,8 @@ function isEnvelope(x: unknown): x is Envelope {
     typeof o["target_ref"] === "string" &&
     (o["verdict"] === "ok" || o["verdict"] === "warn") &&
     typeof o["checks"] === "object" &&
-    o["checks"] !== null
+    o["checks"] !== null &&
+    (o["risk"] === undefined || isRiskShape(o["risk"]))
   );
 }
 
@@ -120,6 +152,22 @@ function formatCheckLines(key: string, m: CheckShape, useColor: boolean): string
   return lines;
 }
 
+/** The advisory risk block, printed after the checks. Says "advisory" in words and names every factor's evidence. */
+export function formatRiskLines(risk: RiskShape): string[] {
+  const lines = ["", `Deploy risk (advisory): ${risk.level.toUpperCase()}`, `  ${risk.why}`];
+  for (const f of risk.factors) {
+    lines.push(`  ${f.id.padEnd(16)} ${f.level.padEnd(9)} ${f.evidence}`);
+  }
+  if (risk.verdict_escalated) {
+    lines.push(
+      `  The risk reached your [preflight.risk] fail_at = "${String(risk.fail_at)}", so the verdict above is warn.`,
+    );
+  } else {
+    lines.push("  This is a heads-up, not a gate: it does not change the verdict above.");
+  }
+  return lines;
+}
+
 function formatPretty(env: Envelope, useColor: boolean): string {
   const lines: string[] = [
     `Deploy preflight — ${env.service} @ ${env.target_ref}  ${formatVerdictTag(env.verdict, useColor)}`,
@@ -130,6 +178,7 @@ function formatPretty(env: Envelope, useColor: boolean): string {
     if (m === undefined) continue;
     lines.push(...formatCheckLines(key, m, useColor));
   }
+  if (env.risk !== undefined) lines.push(...formatRiskLines(env.risk));
   return lines.join("\n");
 }
 

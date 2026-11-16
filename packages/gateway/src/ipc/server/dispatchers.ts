@@ -9,6 +9,7 @@ import {
   loadNimbusPreflightFromConfigDir,
   loadNimbusServiceConfigsFromConfigDir,
 } from "../../config/nimbus-toml.ts";
+import { loadNimbusPreflightRiskFromConfigDir } from "../../config/preflight-risk-toml.ts";
 import { createConnectorDispatcher, meshDispatcherClient } from "../../connectors/registry.ts";
 import { asRecord } from "../../connectors/unknown-record.ts";
 import { userMcpWriteGrantsReader } from "../../connectors/user-mcp-write-reader.ts";
@@ -68,6 +69,7 @@ import { dispatchClipRpc } from "../clip-rpc.ts";
 import { ComputerRpcError, dispatchComputerRpc } from "../computer-rpc.ts";
 import { ConnectorRpcError, dispatchConnectorRpc } from "../connector-rpc.ts";
 import { humanOnlyConsent } from "../consent.ts";
+import { CostRpcError, dispatchCostRpc } from "../cost-rpc.ts";
 import { DataRpcError, dispatchDataRpc } from "../data-rpc.ts";
 import {
   DecisionsRpcError,
@@ -583,6 +585,7 @@ export async function tryDispatchPreflightRpc(
     const out = await dispatchPreflightRpc(method, params, {
       db: ctx.options.localIndex.getDatabase(),
       loadConfig: () => loadNimbusServiceConfigsFromConfigDir(configDir),
+      loadRiskConfig: () => loadNimbusPreflightRiskFromConfigDir(configDir),
     });
     if (out.kind === "hit") return out.value;
   } catch (e) {
@@ -1588,6 +1591,30 @@ export async function tryDispatchStatuspageRpc(
 }
 
 /**
+ * `cost.anomalies` (Phase 10 FinOps) - the cost anomaly detector over the indexed daily cost series, local
+ * index only. Also answers in a demo gateway (no cost rows there: `no_data`). LAN-forbidden by the `cost`
+ * namespace entry (I5); NOT renderer-callable (CLI only).
+ */
+export async function tryDispatchCostRpc(
+  ctx: ServerCtx,
+  method: string,
+  params: unknown,
+): Promise<unknown> {
+  if (!method.startsWith("cost.") || ctx.options.localIndex === undefined) return phase4RpcSkipped;
+  try {
+    const out = await dispatchCostRpc(method, params, {
+      db: ctx.options.localIndex.getDatabase(),
+      ...(ctx.options.configDir === undefined ? {} : { configDir: ctx.options.configDir }),
+    });
+    if (out.kind === "hit") return out.value;
+  } catch (e) {
+    if (e instanceof CostRpcError) throw new RpcMethodError(e.rpcCode, e.message);
+    throw e;
+  }
+  return phase4RpcSkipped;
+}
+
+/**
  * `briefing.*` (Phase 10 MB5) - the morning briefing. Answered whenever the runtime exists, which includes
  * a demo gateway (its index is the synthetic corpus; `runNow` shows no toast there). The four reads are
  * renderer-callable (I7), `briefing.runNow` is CLI-only; the namespace is LAN-forbidden (I5).
@@ -2071,6 +2098,7 @@ const PHASE4_PLATFORM_DISPATCHERS: ReadonlyArray<
   tryDispatchFleetRpc,
   tryDispatchOncallNowRpc,
   tryDispatchStatuspageRpc,
+  tryDispatchCostRpc,
   tryDispatchOncallPushRpc,
   tryDispatchBriefingRpc,
   tryDispatchNotificationsRpc,

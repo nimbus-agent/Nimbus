@@ -9,7 +9,7 @@ import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import { type CostPoint, DAY_MS, OTHER_VALUE, seriesKeyOf } from "./cost-item-contract.ts";
 import { rollUpCostPoints } from "./cost-rollup.ts";
-import { readCostSeries } from "./cost-series.ts";
+import { readCostSeries, readCostSeriesWindow } from "./cost-series.ts";
 
 const SYNCED = Date.UTC(2026, 10, 12, 6);
 const DAY0 = Date.UTC(2026, 10, 1);
@@ -126,6 +126,23 @@ describe("readCostSeries", () => {
     expect(
       readCostSeries(db, { seriesKey: "github|default|service||EC2", fromMs: DAY0, toMs: DAY0 }),
     ).toEqual({ points: [], gaps: [] });
+  });
+
+  test("readCostSeriesWindow lists a series' currencies in code-unit order, not the order the rows were read", () => {
+    const db = freshDb();
+    // Rows are read by day, so the window sees USD (days 0-1) before EUR (days 2-3) and ZAR (day 4).
+    const rows = [
+      ...vendorRows("EC2", [0, 1]),
+      ...vendorRows("EC2", [2, 3]).map((r) => ({ ...(r as object), currency: "EUR" })),
+      ...vendorRows("EC2", [4]).map((r) => ({ ...(r as object), currency: "ZAR" })),
+    ];
+    index(db, rows);
+    const out = readCostSeriesWindow(db, { fromMs: DAY0, toMs: DAY0 + 4 * DAY_MS });
+    expect(out).toHaveLength(1);
+    expect(out[0]?.points.map((p) => p.dayMs)).toEqual(
+      [0, 1, 2, 3, 4].map((d) => DAY0 + d * DAY_MS),
+    );
+    expect(out[0]?.currencies).toEqual(["EUR", "USD", "ZAR"]);
   });
 
   test("writes nothing: row counts and data_version are unchanged", () => {
