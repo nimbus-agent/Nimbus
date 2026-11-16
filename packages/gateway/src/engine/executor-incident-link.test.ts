@@ -11,6 +11,10 @@ import {
   synthBoundRow,
 } from "../connectors/connector-writes/bound-fixtures.test-helpers.ts";
 import { CONNECTOR_WRITE_ROWS } from "../connectors/connector-writes/index.ts";
+import {
+  baseScenario,
+  ruleCounters,
+} from "../connectors/connector-writes/standing-scenarios.test-helpers.ts";
 import type { EgressSink } from "../egress/egress-ledger.ts";
 import type { EgressEntry } from "../egress/egress-record.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
@@ -258,6 +262,27 @@ describe("2.6 a linked action never matches a standing rule (I55)", () => {
     expect(h.prompts).toHaveLength(1);
     expect(h.audits.at(-1)?.hitlStatus).toBe("approved");
     expect(rowOf(h)).not.toContain("standingRule");
+  });
+});
+
+describe("2.6b a linked action that ALSO matches a live standing rule is refused, never standing-approved (I55)", () => {
+  test("control: the same action without the link IS standing-approved; with the link nothing is recorded and nothing is claimed", async () => {
+    const control = baseScenario();
+    const hc = harness({ standing: { standingRules: control.deps, userMcpWriteGrants: () => [] } });
+    const ok = await hc.exec.execute(control.action);
+    expect(ok.status).toBe("ok");
+    expect(hc.audits.at(-1)?.hitlStatus).toBe("standing_approved");
+    expect(hc.prompts).toHaveLength(0);
+
+    const s = baseScenario();
+    const h = harness({ standing: { standingRules: s.deps, userMcpWriteGrants: () => [] } });
+    await expect(h.exec.execute({ ...s.action, incident: LINK })).rejects.toThrow(
+      IncidentLinkError,
+    );
+    expect(h.audits).toHaveLength(0);
+    expect(h.egress).toHaveLength(0);
+    expect(h.dispatched).toHaveLength(0);
+    expect(ruleCounters(s)).toEqual({ used: 0, fires: 0 });
   });
 });
 

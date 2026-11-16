@@ -379,7 +379,10 @@ describe("the on-call push over records", () => {
     expect(delivered).toEqual(["pagerduty:PD1"]);
     const record = getByTriggerItem(db, "pagerduty:PD1");
     expect(record).not.toBeNull();
-    expect(store.get("pagerduty:PD1")?.briefMarkdown).toBe(record?.markdown);
+    // the pushed copy is the record Markdown, then (IC4) the live cascade block when another record is open
+    const pushed = store.get("pagerduty:PD1")?.briefMarkdown ?? "";
+    expect(pushed.startsWith(record?.markdown ?? " ")).toBe(true);
+    expect(pushed.slice((record?.markdown ?? "").length)).toMatch(/^\n\n## Cascade\n/);
     expect(store.get("jira:BOUND")).toBeNull();
   });
 });

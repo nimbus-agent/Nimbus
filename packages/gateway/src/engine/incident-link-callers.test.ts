@@ -48,7 +48,7 @@ describe("4.3 the doors never build an action with an incident link", () => {
   }
 });
 
-describe("4.1 census: only three files touch an action's incident link", () => {
+describe("4.1 census: only four files touch an action's incident link", () => {
   test("a non-test source file that mentions both PlannedAction and an incident link is on the list", () => {
     const hits = walk(SRC)
       .filter((f) => {
@@ -59,6 +59,11 @@ describe("4.1 census: only three files touch an action's incident link", () => {
       })
       .map((f) => relative(SRC, f).split("\\").join("/"))
       .sort();
-    expect(hits).toEqual(["egress/egress-record.ts", "engine/executor.ts", "engine/types.ts"]);
+    expect(hits).toEqual([
+      "egress/egress-record.ts",
+      "engine/executor.ts",
+      "engine/incident-link.ts",
+      "engine/types.ts",
+    ]);
   });
 });

@@ -916,7 +916,8 @@ describe("I5 — LAN method allowlist is intrinsic to LanServer", () => {
 
   test("I7: no incident.* method is renderer-callable at IC3, and the allowlist size is the one IC3 found (IC10 changes it deliberately)", async () => {
     const rust = await read("packages/ui/src-tauri/src/gateway_bridge.rs");
-    expect(rust).not.toMatch(/"incident\./);
+    // only a NEGATIVE pin (`!is_method_allowed("incident.timeline")`) may name an incident method
+    expect(rust).not.toMatch(/(?<!is_method_allowed\()"incident\./);
     // IC3 adds no renderer-callable method. The slice that exposes incident.list and incident.get to the
     // desktop (IC10) must change this number in the same commit as its `ALLOWED_METHODS` entries.
     expect(rust).toMatch(/assert_eq!\s*\(\s*ALLOWED_METHODS\.len\(\),\s*132\s*\)/);
