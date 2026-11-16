@@ -4383,7 +4383,11 @@ function d44GuardPins(f: FileEntry, commentFree: string, code: string): Violatio
     }
   }
   if (f.relPath === D44_STEP) {
-    for (const m of commentFree.matchAll(/\.\s*when\b|\bwhen\s*[:,}]|workflow-guard/g)) {
+    for (const m of commentFree.matchAll(
+      // A property read, a destructure or object key, a quoted bracket read (`step["when"]`), or the
+      // guard module's name.
+      /\.\s*when\b|\bwhen\s*[:,}]|\[\s*["'`]when["'`]\s*\]|workflow-guard/g,
+    )) {
       add(commentFree, m.index);
     }
   }

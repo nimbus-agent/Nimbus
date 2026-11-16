@@ -7088,6 +7088,9 @@ describe("D44(g) — a workflow `when` guard stays out of the approval check and
     for (const body of [
       "const g = step.when;",
       "const { when } = step;",
+      'const g = step["when"];',
+      "const g = step['when'];",
+      "const g = step[ `when` ];",
       'import { evaluateGuard } from "../automation/workflow-guard.ts";',
     ]) {
       expect(rules(swap(STEP, `${body}\nexport function standingRuleStep() {}\n`)), body).toContain(
