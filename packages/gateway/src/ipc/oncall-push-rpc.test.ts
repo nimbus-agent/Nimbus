@@ -13,6 +13,7 @@ const BOOT_CONFIG: OncallPushRuntime["config"] = {
   severities: DEFAULT_ONCALL_PUSH_CONFIG.severities,
   chatopsNamespace: DEFAULT_ONCALL_PUSH_CONFIG.chatopsNamespace,
   retentionDays: DEFAULT_ONCALL_PUSH_CONFIG.retentionDays,
+  sources: DEFAULT_ONCALL_PUSH_CONFIG.sources,
 };
 
 let db: Database;

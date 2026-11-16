@@ -37,6 +37,14 @@ for (const { header, parse } of BLOCKS) {
       expect(cfg?.dependsOn).toEqual(["ledger", "auth"]);
     });
 
+    test("chat_aliases parses, and absent reads empty", () => {
+      const cfg = parse(table(header, 'chat_aliases = ["checkout", "web-checkout"]')).get(
+        "payments",
+      );
+      expect(cfg?.chatAliases).toEqual(["checkout", "web-checkout"]);
+      expect(parse(table(header, "")).get("payments")?.chatAliases).toEqual([]);
+    });
+
     test("absent keys default to empty arrays", () => {
       const cfg = parse(table(header, "")).get("payments");
       expect(cfg?.jsmAlertTags).toEqual([]);
@@ -69,6 +77,23 @@ for (const { header, parse } of BLOCKS) {
         "a glob over 200 characters",
         `data_models = ["${"a".repeat(201)}"]`,
         /at most 200 characters/,
+      ],
+      ["an empty chat alias", 'chat_aliases = ["abc", "   "]', /chat_aliases has an empty entry/],
+      ["a too-short chat alias", 'chat_aliases = ["ab"]', /chat_aliases entry must be 3 to 64/],
+      [
+        "a too-long chat alias",
+        `chat_aliases = ["${"a".repeat(65)}"]`,
+        /chat_aliases entry must be 3 to 64/,
+      ],
+      [
+        "a chat alias with a control character",
+        'chat_aliases = ["ab\u0007c"]',
+        /control character or line break/,
+      ],
+      [
+        "more than 50 chat aliases",
+        `chat_aliases = [${Array.from({ length: 51 }, (_, i) => `"alias${String(i)}"`).join(", ")}]`,
+        /chat_aliases has more than 50 entries/,
       ],
       [
         "depends_on naming the service itself",
