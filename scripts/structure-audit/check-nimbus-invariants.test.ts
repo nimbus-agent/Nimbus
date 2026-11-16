@@ -22,6 +22,7 @@ import {
   checkCaptureTableConfinement,
   checkChatopsReplySurfaceInvariant,
   checkChatopsUnwrappedPost,
+  checkChatopsWatcherNoticeCaller,
   checkChatReadMarkerConfinement,
   checkConfigReaderConfinement,
   checkConfirmComparison,
@@ -7373,5 +7374,33 @@ describe("D44(g) — a workflow `when` guard stays out of the approval check and
       expect(rules([...GOOD, file(OTHER, `${fn}(x);`)]), fn).toEqual(["standing-guard-confined"]);
     }
     expect(rules([...GOOD, file(OTHER, "// evaluateGuard guardRequiresPresence")])).toEqual([]);
+  });
+});
+
+describe("D17(c) — postWatcherNotice is referenced only by chatops-boot and assemble", () => {
+  const call = "await chatopsBoot.postWatcherNotice(ns, text);\n";
+
+  test("rejects a reference in another production module", () => {
+    const v = checkChatopsWatcherNoticeCaller([
+      { relPath: "packages/gateway/src/automation/watcher-chat-notifier.ts", contents: call },
+      { relPath: "packages/gateway/src/engine/agent.ts", contents: call },
+    ]);
+    expect(v.map((x) => x.rule)).toEqual([
+      "D17-chatops-watcher-notice-caller",
+      "D17-chatops-watcher-notice-caller",
+    ]);
+  });
+
+  test("accepts the two allowed files and ignores comments and tests", () => {
+    const v = checkChatopsWatcherNoticeCaller([
+      { relPath: "packages/gateway/src/chatops/chatops-boot.ts", contents: call },
+      { relPath: "packages/gateway/src/platform/assemble.ts", contents: call },
+      {
+        relPath: "packages/gateway/src/automation/watcher-chat-notifier.ts",
+        contents: "// postWatcherNotice is bound by assemble\n",
+      },
+      { relPath: "packages/gateway/src/x.test.ts", contents: call },
+    ]);
+    expect(v).toEqual([]);
   });
 });

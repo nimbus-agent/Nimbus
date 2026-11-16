@@ -14,8 +14,13 @@ import { platform, tmpdir } from "node:os";
 import { join } from "node:path";
 import { makeInMemoryVault } from "../../test/helpers/in-memory-vault.ts";
 import type { ChatopsAgentInvokerDeps } from "../agent-runs/agent-chatops-invoke.ts";
+import {
+  createWatcherChatNotifier,
+  type WatcherNoticePoster,
+} from "../automation/watcher-chat-notifier.ts";
 import { DEFAULT_ONCALL_PUSH_CONFIG } from "../config/oncall-push-toml.ts";
 import { resetPersonaWarningsForTest } from "../config/persona.ts";
+import { DEFAULT_WATCHER_CHATOPS_CONFIG } from "../config/watcher-chatops-toml.ts";
 import { writeConnectorSecret } from "../connectors/connector-vault.ts";
 import { LazyConnectorMesh } from "../connectors/lazy-mesh/mesh.ts";
 import { THIS_BINARY_COVERAGE } from "../egress/egress-coverage.ts";
@@ -36,6 +41,7 @@ import {
   createUnimplementedNotifications,
   httpOriginFor,
   settleOncallPushChatops,
+  settleWatcherChatops,
 } from "./assemble.ts";
 import { processEnvSet } from "./env-access.ts";
 import { gatewayDailyLogPath } from "./gateway-log-file.ts";
@@ -294,6 +300,58 @@ describe("settleOncallPushChatops (design: 2026-10-02-oncall-push-chatops-design
       undefined,
     );
     expect(settled).toEqual([undefined]);
+  });
+});
+
+describe("settleWatcherChatops (I23: the poster is bound to the CONFIG namespace)", () => {
+  it("is a clean no-op when the notifier is off or this is a demo gateway", () => {
+    expect(() =>
+      settleWatcherChatops(undefined, { postWatcherNotice: async () => 1 }),
+    ).not.toThrow();
+    expect(() => settleWatcherChatops(undefined, undefined)).not.toThrow();
+  });
+
+  it("settles with undefined when ChatOps did not boot", () => {
+    const settled: Array<WatcherNoticePoster | undefined> = [];
+    settleWatcherChatops(
+      { namespace: "project:pay", settle: (p) => void settled.push(p) },
+      undefined,
+    );
+    expect(settled).toEqual([undefined]);
+  });
+
+  it("binds a poster that posts the text to the CONFIG namespace only", async () => {
+    const settled: Array<WatcherNoticePoster | undefined> = [];
+    const calls: unknown[][] = [];
+    settleWatcherChatops(
+      { namespace: "project:pay", settle: (p) => void settled.push(p) },
+      {
+        postWatcherNotice: async (...args: [string, string]) => {
+          calls.push(args);
+          return 2;
+        },
+      },
+    );
+    expect(settled).toHaveLength(1);
+    expect(await settled[0]?.("hello")).toBe(2);
+    expect(calls).toEqual([["project:pay", "hello"]]);
+  });
+
+  it("a second settle throws (the real notifier is settled once)", () => {
+    const n = createWatcherChatNotifier({
+      config: {
+        ...DEFAULT_WATCHER_CHATOPS_CONFIG,
+        enabled: true,
+        namespace: "project:pay",
+        watchers: ["*"],
+      },
+      demo: false,
+      onFailure: () => {},
+      warn: () => {},
+    });
+    const boot = { postWatcherNotice: async () => 1 };
+    settleWatcherChatops(n, boot);
+    expect(() => settleWatcherChatops(n, boot)).toThrow();
   });
 });
 

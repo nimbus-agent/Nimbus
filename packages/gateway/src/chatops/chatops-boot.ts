@@ -188,6 +188,14 @@ export interface ChatopsBoot {
    */
   postPushedBrief(namespace: string, text: string): Promise<number>;
   /**
+   * The watcher notice (I23, I29): the same shape as `postPushedBrief`, ledgered as
+   * `chatops.watcherNotice`. `platform/assemble.ts` binds it to the namespace the owner named in
+   * `[watcher.chatops]`; the text is the fixed template of `automation/watcher-chat-notifier.ts`.
+   * It resolves to the number of channels posted to (0 when the namespace has none) and rejects at
+   * the first failing channel, so a resolve of N means all N were posted.
+   */
+  postWatcherNotice(namespace: string, text: string): Promise<number>;
+  /**
    * Slice 6c: the chatops owner-consent channel (the same I2 fallback the chatops executor uses),
    * exposed so an in-chat tribal capture routes its HITL approval to the LOCAL owner.
    */
@@ -320,6 +328,11 @@ export async function buildChatopsBoot(deps: ChatopsBootDeps): Promise<ChatopsBo
   const agentBriefDispatcher = new ReplyDispatcher({ post: posts.agentBrief, notifyChannelsFor });
   // I23: the pushed-brief counterpart. Same dispatcher shape, ledgered as `chatops.pushedBrief`.
   const pushedBriefDispatcher = new ReplyDispatcher({ post: posts.pushedBrief, notifyChannelsFor });
+  // I23: the watcher-notice counterpart, ledgered as `chatops.watcherNotice`.
+  const watcherNoticeDispatcher = new ReplyDispatcher({
+    post: posts.watcherNotice,
+    notifyChannelsFor,
+  });
 
   const presenter: ApprovalPresenter = new ApprovalPresenter({
     post: async (channelId, text, card) => {
@@ -748,6 +761,8 @@ export async function buildChatopsBoot(deps: ChatopsBootDeps): Promise<ChatopsBo
     },
     postPushedBrief: (namespace, text) =>
       pushedBriefDispatcher.send({ kind: "namespaceNotify", namespace }, text),
+    postWatcherNotice: (namespace, text) =>
+      watcherNoticeDispatcher.send({ kind: "namespaceNotify", namespace }, text),
     requestOwnerApproval: (prompt, details) => consent.requestApproval(prompt, details),
     isSenderMapped: async (platform, userId) =>
       (await mapper.resolve(platform, userId)).kind === "mapped",

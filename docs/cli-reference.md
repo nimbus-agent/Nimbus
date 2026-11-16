@@ -6045,7 +6045,22 @@ nimbus watch pause <watcher-id>  # Stop firing without deleting
 nimbus watch resume <watcher-id> # Re-enable a paused watcher
 ```
 
-Output is JSON in all forms.
+Output is JSON in all forms. Each row carries its full `id`, which is the key `[watcher.chatops]` needs.
+
+#### `[watcher.chatops]` - a ChatOps notice when a watcher fires (2026-11-16)
+
+Off by default. When an opted-in watcher fires, ONE fixed-template notice is posted to the Slack `notify` channels that your signed org policy lists for the namespace you name here. It needs a signed org policy with `notify` channels for that namespace (a solo owner without one cannot use it), `[chatops] enabled = true`, and Slack. Teams is not reachable through this path.
+
+```toml
+[watcher.chatops]
+enabled = false            # master switch
+namespace = ""             # the policy namespace whose notify channels receive the notice; "" = nothing posts
+watchers = []              # FULL watcher ids that may post (copy one from the notice or from `nimbus watch list`); "*" = every watcher
+min_interval_minutes = 60  # 5 to 1440: per-watcher minimum gap between posts
+max_per_hour = 10          # 1 to 60: cap across all watchers in a sliding hour
+```
+
+The text is `Nimbus watcher "<name>" (<id>) fired: <n> new match(es) of <condition type>.` and nothing else: never an item title, service, body or summary. `<name>` is the watcher's name reduced to letters, digits, spaces and hyphens (`unnamed` if nothing survives) and is display only; the watcher is opted in by its `<id>`, never by its name (an entry in `watchers` that looks like a name is ignored, and `nimbus config explain watcher.chatops` says so). `<n>` is at most 5 and reads `<n> or more` when the five-row candidate limit was hit. A fire that was not posted (inside the interval, over the hourly cap, held too long during startup, or after a failed post) is counted and reported by that watcher's next notice (`k earlier fire(s) not posted`). A post that fails takes no post slot, but `max_per_hour` failed attempts in an hour pause every watcher's notices until the hour slides (one log line). Each channel post appends one `chatops.watcherNotice` row to the egress ledger before it is sent (`nimbus egress`), and a failed append sends nothing. `[watcher.chatops]` is read at gateway start, is not pack-settable and has no IPC method; a demo gateway and a gateway without ChatOps post nothing. Limits are kept in memory, so a restart can post once per opted-in watcher.
 
 ---
 

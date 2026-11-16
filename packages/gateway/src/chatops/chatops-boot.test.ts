@@ -1,11 +1,16 @@
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { createWatcherChatNotifier } from "../automation/watcher-chat-notifier.ts";
+import { evaluateWatchersStartupCatchUp } from "../automation/watcher-engine.ts";
+import { insertWatcher } from "../automation/watcher-store.ts";
+import { DEFAULT_WATCHER_CHATOPS_CONFIG } from "../config/watcher-chatops-toml.ts";
 import { NULL_EGRESS_SINK } from "../egress/egress-ledger.ts";
 import type { EgressEntry } from "../egress/egress-record.ts";
 import { listEgress } from "../egress/egress-verify.ts";
 import { TOOL_TYPE_MISMATCH_REASON } from "../engine/executor.ts";
 import type { PlannedAction } from "../engine/types.ts";
-import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
+import { upsertIndexedItem } from "../index/item-store.ts";
+import { CURRENT_SCHEMA_VERSION, LocalIndex } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import type { EnforcedPolicy } from "../policy/policy-gate.ts";
 import type { ChatopsChannelBinding } from "../policy/types.ts";
@@ -625,6 +630,107 @@ describe("buildChatopsBoot — full production graph", () => {
     expect(await h.boot.postPushedBrief("project:none", "x")).toBe(0);
     expect(h.posts).toHaveLength(0);
     expect(listEgress(db, { limit: 10 })).toHaveLength(0);
+  });
+
+  test("I23 (f): postWatcherNotice sends a namespaceNotify target as slack to exactly the policy notify channels, ledgered as chatops.watcherNotice", async () => {
+    const h = await buildHarness({
+      policyGate: {
+        enforced: () =>
+          enforcedWith({
+            C0: { namespace: "project:pay", unmapped: "refuse", notify: ["C_ONE", "C_TWO"] },
+            C9: { namespace: "project:other", unmapped: "refuse", notify: ["C_OTHER"] },
+          }),
+      },
+    });
+    expect(await h.boot.postWatcherNotice("project:pay", "Nimbus watcher notice")).toBe(2);
+    expect(h.posts.map((p) => [p.platform, p.channel])).toEqual([
+      ["slack", "C_ONE"],
+      ["slack", "C_TWO"],
+    ]);
+    const rows = listEgress(db, { limit: 10 });
+    expect(rows.map((r) => r.method)).toEqual(["chatops.watcherNotice", "chatops.watcherNotice"]);
+    expect(rows.every((r) => r.sourceType === "chatops")).toBe(true);
+  });
+
+  test("I23 (f): postWatcherNotice to a namespace with no binding posts nothing, ledgers nothing, resolves 0", async () => {
+    const h = await buildHarness();
+    expect(await h.boot.postWatcherNotice("project:none", "x")).toBe(0);
+    expect(h.posts).toHaveLength(0);
+    expect(listEgress(db, { limit: 10 })).toHaveLength(0);
+  });
+
+  test("a partial multi-channel failure: one ledger row per channel attempted, the notifier contains it, the watcher stays stamped", async () => {
+    const posted: string[] = [];
+    const runTool: RunChatopsTool = (_platform, toolId, args) => {
+      if (toolId === "slack_socket_open") return Promise.resolve({ url: "wss://fake" });
+      if (toolId === "slack_chat_post") {
+        const channel = (args as { channel: string }).channel;
+        if (channel === "C_TWO") return Promise.reject(new Error("channel_not_found"));
+        posted.push(channel);
+        return Promise.resolve({ ok: true });
+      }
+      throw new Error(`unexpected tool ${toolId}`);
+    };
+    const h = await buildHarness({
+      runTool,
+      policyGate: {
+        enforced: () =>
+          enforcedWith({
+            C0: { namespace: "project:pay", unmapped: "refuse", notify: ["C_ONE", "C_TWO"] },
+          }),
+      },
+    });
+    const idx = new Database(":memory:");
+    LocalIndex.ensureSchema(idx);
+    const wid = insertWatcher(idx, {
+      name: "w",
+      enabled: 1,
+      condition_type: "alert_fired",
+      condition_json: JSON.stringify({ filter: { service: "sentry" } }),
+      action_type: "notify",
+      action_json: "{}",
+      created_at: 1_000,
+    });
+    upsertIndexedItem(idx, {
+      service: "sentry",
+      type: "alert",
+      externalId: "a1",
+      title: "t",
+      modifiedAt: 2_000,
+      syncedAt: 2_000,
+    });
+    const failures: unknown[] = [];
+    const notifier = createWatcherChatNotifier({
+      config: {
+        ...DEFAULT_WATCHER_CHATOPS_CONFIG,
+        enabled: true,
+        namespace: "project:pay",
+        watchers: ["*"],
+      },
+      demo: false,
+      now: () => 3_000,
+      onFailure: (e) => failures.push(e),
+      warn: () => {},
+    });
+    notifier?.settle((text) => h.boot.postWatcherNotice("project:pay", text));
+    evaluateWatchersStartupCatchUp(idx, 3_000, () => {}, {
+      onNotice: (n) => notifier?.notify(n),
+    });
+    await notifier?.whenIdle();
+    const stamped = idx.query("SELECT last_fired_at FROM watcher WHERE id = ?").get(wid) as {
+      last_fired_at: number | null;
+    };
+    idx.close();
+    expect(stamped.last_fired_at).toBe(3_000);
+    expect(posted).toEqual(["C_ONE"]);
+    expect(failures).toHaveLength(1);
+    expect(listEgress(db, { limit: 10 }).map((r) => r.method)).toEqual([
+      "chatops.watcherNotice",
+      "chatops.watcherNotice",
+    ]);
+    const snap = notifier?.snapshot();
+    expect(snap?.lastPostedAt[wid]).toBeUndefined();
+    expect([snap?.hourly, snap?.failures]).toEqual([0, 1]);
   });
 
   test("identity disabled (no identity dep) → isOperatorValid fallback is false (?? false)", async () => {

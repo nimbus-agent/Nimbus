@@ -1,6 +1,8 @@
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { createWatcherChatNotifier } from "../automation/watcher-chat-notifier.ts";
 import type { ChatPlatform } from "../chatops/types.ts";
+import { DEFAULT_WATCHER_CHATOPS_CONFIG } from "../config/watcher-chatops-toml.ts";
 import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import { buildLedgeredChatPosts } from "./chatops-egress.ts";
@@ -34,6 +36,7 @@ describe("chatops egress appender", () => {
     await posts.approvalCard("slack", "C123", "approve?");
     await posts.agentBrief("teams", "19:abc", "## Gaps");
     await posts.pushedBrief("slack", "C123", "P1 · svc — t");
+    await posts.watcherNotice("slack", "C123", "Nimbus watcher notice");
 
     const rows = listEgress(db, { limit: 10 });
     expect(rows.map((r) => r.method)).toEqual([
@@ -41,9 +44,10 @@ describe("chatops egress appender", () => {
       "chatops.approvalCard",
       "chatops.agentBrief",
       "chatops.pushedBrief",
+      "chatops.watcherNotice",
     ]);
     expect(rows.every((r) => r.sourceType === "chatops")).toBe(true);
-    expect(rows.map((r) => r.destination)).toEqual(["slack", "slack", "teams", "slack"]);
+    expect(rows.map((r) => r.destination)).toEqual(["slack", "slack", "teams", "slack", "slack"]);
   });
 
   test("pushedBrief stores the byte count, never the headline text", async () => {
@@ -56,6 +60,59 @@ describe("chatops egress appender", () => {
       `"bytes":${Buffer.byteLength("SECRET-HEADLINE-TEXT", "utf8")}`,
     );
     expect(s.calls).toHaveLength(1);
+  });
+
+  test("I29: a watcher notice appends one chatops.watcherNotice row BEFORE the post, bytes only", async () => {
+    const seen: string[] = [];
+    const raw = async (_p: ChatPlatform, _c: string, _t: string): Promise<void> => {
+      seen.push(`rows-at-post-time:${listEgress(db, { limit: 10 }).length}`);
+    };
+    const text = "Nimbus watcher SECRET-NOTICE-TEXT";
+    await buildLedgeredChatPosts(db, raw, SALT).watcherNotice("slack", "C01ABC2DEF3", text);
+    expect(seen).toEqual(["rows-at-post-time:1"]);
+    const rows = listEgress(db, { limit: 10 });
+    expect(rows.map((r) => r.method)).toEqual(["chatops.watcherNotice"]);
+    expect(rows[0]?.sourceId).toMatch(/^[0-9a-f]{64}$/);
+    const dump = JSON.stringify(rows);
+    expect(dump).not.toContain("C01ABC2DEF3");
+    expect(dump).not.toContain("SECRET-NOTICE-TEXT");
+    expect(rows[0]?.payloadSummary).toContain(`"bytes":${Buffer.byteLength(text, "utf8")}`);
+  });
+
+  test("I29: a failed append on a watcher notice posts nothing and the notifier contains it", async () => {
+    const s = spy();
+    const posts = buildLedgeredChatPosts(db, s.fn, SALT);
+    db.close();
+    const failures: unknown[] = [];
+    const notifier = createWatcherChatNotifier({
+      config: {
+        ...DEFAULT_WATCHER_CHATOPS_CONFIG,
+        enabled: true,
+        namespace: "ns",
+        watchers: ["*"],
+      },
+      demo: false,
+      now: () => 1_000,
+      onFailure: (e) => failures.push(e),
+      warn: () => {},
+    });
+    notifier?.settle(async (text) => {
+      await posts.watcherNotice("slack", "C1", text);
+      return 1;
+    });
+    notifier?.notify({
+      watcherId: "w1",
+      name: "n",
+      conditionType: "alert_fired",
+      matchCount: 1,
+      capped: false,
+      firedAt: 1,
+    });
+    await notifier?.whenIdle();
+    expect(s.calls).toHaveLength(0);
+    expect(failures).toHaveLength(1);
+    expect(failures[0]).toBeInstanceOf(EgressAppendFailedError);
+    db = new Database(":memory:");
   });
 
   test("Slack-bound text is escaped BEFORE the append, so the ledger counts the bytes that leave", async () => {

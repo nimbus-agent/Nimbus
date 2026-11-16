@@ -3375,6 +3375,22 @@ per `min_interval_minutes` (5 to 1440, default 60, kept in memory) and a `min_sc
 is `Unusual sync activity on <connector> (<n.n> standard deviations from the usual)`: the connector id and one number, never an
 item title, body or name. A demo gateway sends none (I41); no network, egress row, model or schema change.
 
+**ChatOps watcher notice (2026-11-16).** The outbound counterpart, behind `[watcher.chatops]` (default off, owner-only, not
+pack-settable, no IPC method). `automation/watcher-engine.ts` calls `opts.onNotice` once per fired watcher, after
+`updateWatcherLastFired`, inside its own `try/catch`, with a `WatcherNotice` of ids and counts (`matchCount`, and `capped`
+when the five-row SQL candidate limit `WATCHER_CANDIDATE_LIMIT` was hit); `makeChatopsWatcherNotify` is gone. The chain is
+`automation/watcher-chat-notifier.ts` (gates in order: enabled and a namespace, not a demo gateway (`demo: !syncEnabled`), opt-in by
+full watcher id or `*`, the per-watcher interval or a post in flight, the hourly cap or the global failure breaker, then reserve
+and post) -> `platform/assemble.ts` `settleWatcherChatops` (the one place the poster is bound, to the config namespace) ->
+`ChatopsBoot.postWatcherNotice` -> a fourth `ReplyDispatcher` (I23, a `namespaceNotify` target, so Slack only) over
+`posts.watcherNotice` (I29, `chatops.watcherNotice`, one row per channel before the post, a failed append posts nothing). The
+notifier is built inside `createSchedulerWithMesh` and returned as `watcherChat`, because the startup catch-up runs before
+ChatOps boots: fires before `settle` are held (one entry per watcher, at most 50, each posted only if its newest fire is at most
+5 minutes old, oldest first, marked delayed, through the same gates) and a counts-only log line says what happened. A failure
+(a poster rejection, a zero-channel namespace, a ledger failure, a throwing logger) is contained in the notifier and can never
+reach the watcher engine; a failed attempt consumes no post slot but counts toward a global circuit breaker. In-memory state,
+boot-time config. Static D17(c) confines `postWatcherNotice` to `chatops-boot.ts` and `assemble.ts`.
+
 **Where it lives.** `packages/gateway/src/platform/notifications/`:
 
 - `win32.ts` / `darwin.ts` / `linux.ts` — one `NotificationBackend` each (`probe()`, `send(title, body)`), every spawn

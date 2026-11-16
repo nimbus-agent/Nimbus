@@ -16119,3 +16119,177 @@ describe("I55 — a workflow `when` guard only removes runs and can never widen 
     expect(ws).toContain("run.guard?.holds !== true");
   });
 });
+
+describe("I23 (d)-(g) — the ChatOps watcher notice has a construction-bound destination and no item text", () => {
+  test("(d) the notifier module imports nothing from chatops/ and names no post tool or the poster handle", async () => {
+    const src = await read("packages/gateway/src/automation/watcher-chat-notifier.ts");
+    const imports = src.split("\n").filter((l) => l.startsWith("import "));
+    expect(imports.length).toBeGreaterThan(0);
+    for (const line of imports) expect(line).not.toContain("chatops/");
+    expect(stripComments(src)).not.toMatch(
+      /\b(?:slack_chat_post|teams_chat_post|slack_views_open|postWatcherNotice)\b/,
+    );
+  });
+
+  test("(e) a notice's own namespace or channel fields never reach the poster: it receives the text alone", async () => {
+    const { createWatcherChatNotifier } = await import("./automation/watcher-chat-notifier.ts");
+    const { DEFAULT_WATCHER_CHATOPS_CONFIG } = await import("./config/watcher-chatops-toml.ts");
+    let now = 0;
+    const seen: unknown[][] = [];
+    const n = createWatcherChatNotifier({
+      config: {
+        ...DEFAULT_WATCHER_CHATOPS_CONFIG,
+        enabled: true,
+        namespace: "constructed",
+        watchers: ["*"],
+      },
+      demo: false,
+      now: () => now,
+      onFailure: () => {},
+      warn: () => {},
+    });
+    n?.settle(async (...args: unknown[]) => {
+      seen.push(args);
+      return 1;
+    });
+    now = 1_000;
+    n?.notify({
+      watcherId: "w1",
+      name: "n",
+      conditionType: "alert_fired",
+      matchCount: 1,
+      capped: false,
+      firedAt: 1,
+      namespace: "attacker",
+      channel: "C_ATTACKER",
+    } as never);
+    await n?.whenIdle();
+    expect(n?.namespace).toBe("constructed");
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toHaveLength(1);
+    expect(String(seen[0]?.[0])).not.toMatch(/attacker|C_ATTACKER/i);
+  });
+
+  test("(f) postWatcherNotice appears in production only in chatops-boot and assemble", async () => {
+    expect(await grepRepo(/\bpostWatcherNotice\b/)).toEqual([
+      "packages/gateway/src/chatops/chatops-boot.ts",
+      "packages/gateway/src/platform/assemble.ts",
+    ]);
+  });
+
+  test("(f) assemble binds the poster to the CONFIG namespace in one place and settles the notifier once", async () => {
+    const src = stripComments(await read("packages/gateway/src/platform/assemble.ts"));
+    expect(src.match(/watcherChat\.settle\(/g)).toHaveLength(2);
+    expect(src.match(/settleWatcherChatops\(watcherChat, chatopsBoot\)/g)).toHaveLength(1);
+    expect(src).toContain("chatopsBoot.postWatcherNotice(namespace, text)");
+    expect(src).toContain("demo: !syncEnabled");
+  });
+
+  test("(g) [watcher.chatops] is not pack-settable and its loader is read only by config/ and assemble", async () => {
+    const { PACK_SETTABLE_KEYS } = await import("./config/pack-settable.ts");
+    expect(PACK_SETTABLE_KEYS.some((k) => k.section.startsWith("watcher"))).toBe(false);
+    const readers = (await grepRepo(/loadNimbusWatcherChatopsFromConfigDir/)).filter(
+      (f) => !f.startsWith("packages/gateway/src/config/"),
+    );
+    expect(readers).toEqual(["packages/gateway/src/platform/assemble.ts"]);
+  });
+
+  test("the posted text holds no indexed item text: the engine's notice and the template carry counts and ids only", async () => {
+    const { LocalIndex } = await import("./index/local-index.ts");
+    const { upsertIndexedItem } = await import("./index/item-store.ts");
+    const { insertWatcher } = await import("./automation/watcher-store.ts");
+    const { evaluateWatchersStartupCatchUp } = await import("./automation/watcher-engine.ts");
+    const { createWatcherChatNotifier } = await import("./automation/watcher-chat-notifier.ts");
+    const { DEFAULT_WATCHER_CHATOPS_CONFIG } = await import("./config/watcher-chatops-toml.ts");
+    const idx = new Database(":memory:");
+    LocalIndex.ensureSchema(idx);
+    const id = insertWatcher(idx, {
+      name: "plain",
+      enabled: 1,
+      condition_type: "alert_fired",
+      condition_json: JSON.stringify({ filter: { service: "sentry" } }),
+      action_type: "notify",
+      action_json: "{}",
+      created_at: 1_000,
+    });
+    const title = "<!channel> SECRET title https://evil.example";
+    upsertIndexedItem(idx, {
+      service: "sentry",
+      type: "alert",
+      externalId: "a1",
+      title,
+      modifiedAt: 2_000,
+      syncedAt: 2_000,
+    });
+    const posted: string[] = [];
+    const n = createWatcherChatNotifier({
+      config: {
+        ...DEFAULT_WATCHER_CHATOPS_CONFIG,
+        enabled: true,
+        namespace: "ns",
+        watchers: [id],
+      },
+      demo: false,
+      now: () => 3_000,
+      onFailure: () => {},
+      warn: () => {},
+    });
+    n?.settle(async (text) => {
+      posted.push(text);
+      return 1;
+    });
+    evaluateWatchersStartupCatchUp(idx, 3_000, () => {}, { onNotice: (x) => n?.notify(x) });
+    await n?.whenIdle();
+    idx.close();
+    expect(posted).toEqual([
+      `Nimbus watcher "plain" (${id}) fired: 1 new match(es) of alert_fired.`,
+    ]);
+    expect(posted[0]).not.toMatch(/SECRET|evil|sentry|channel/);
+  });
+});
+
+describe("I29 — the ChatOps watcher notice is ledgered before the post and fails closed", () => {
+  test("the watcherNotice kind is in the total ChatPostKind record with its own method", async () => {
+    const src = await read("packages/gateway/src/egress/chatops-egress.ts");
+    expect(src).toContain('| "watcherNotice"');
+    expect(src).toContain('watcherNotice: "chatops.watcherNotice"');
+    expect(src).toContain('watcherNotice: wrap("watcherNotice")');
+  });
+
+  test("the boot's watcher dispatcher posts through posts.watcherNotice and no other kind", async () => {
+    const src = stripComments(await read("packages/gateway/src/chatops/chatops-boot.ts"));
+    expect(src).toMatch(
+      /watcherNoticeDispatcher = new ReplyDispatcher\(\{\s*post: posts\.watcherNotice,/,
+    );
+    expect(src).toMatch(
+      /postWatcherNotice: \(namespace, text\) =>\s*watcherNoticeDispatcher\.send\(/,
+    );
+  });
+
+  test("a watcher notice appends one row BEFORE the post, and a failed append posts nothing", async () => {
+    const { buildLedgeredChatPosts } = await import("./egress/chatops-egress.ts");
+    const { runIndexedSchemaMigrations } = await import("./index/migrations/runner.ts");
+    const { CURRENT_SCHEMA_VERSION } = await import("./index/local-index.ts");
+    const { listEgress } = await import("./egress/egress-verify.ts");
+    const { EgressAppendFailedError } = await import("./egress/model-egress.ts");
+    const db = new Database(":memory:");
+    runIndexedSchemaMigrations(db, CURRENT_SCHEMA_VERSION);
+    const salt = Buffer.alloc(32, 3).toString("base64");
+    const order: string[] = [];
+    const posts = buildLedgeredChatPosts(
+      db,
+      async () => {
+        order.push(`post-with-${String(listEgress(db, { limit: 10 }).length)}-rows`);
+      },
+      salt,
+    );
+    await posts.watcherNotice("slack", "C1", "Nimbus watcher notice");
+    expect(order).toEqual(["post-with-1-rows"]);
+    expect(listEgress(db, { limit: 10 }).map((r) => r.method)).toEqual(["chatops.watcherNotice"]);
+    db.close();
+    await expect(posts.watcherNotice("slack", "C1", "x")).rejects.toBeInstanceOf(
+      EgressAppendFailedError,
+    );
+    expect(order).toEqual(["post-with-1-rows"]);
+  });
+});
