@@ -68,6 +68,7 @@ import {
   type NimbusFleetLoad,
   type NimbusFleetToml,
 } from "../config/fleet-toml.ts";
+import { loadNimbusIncidentFromConfigDir } from "../config/incident-toml.ts";
 import { loadNimbusIndexFromConfigDir } from "../config/index-toml.ts";
 import { getLayeredConfig, initLayeredConfig } from "../config/layered-config.ts";
 import { loadNimbusMcpSinkFromConfigDir } from "../config/mcp-sink-toml.ts";
@@ -114,6 +115,7 @@ import {
 import { loadNimbusWorkdayFromConfigDir } from "../config/nimbus-toml-workday.ts";
 import { resolvePersona } from "../config/persona.ts";
 import { ProfileManager } from "../config/profiles.ts";
+import { loadServiceConfigsOrEmpty } from "../config/service-configs.ts";
 import { loadNimbusSessionFromConfigDir } from "../config/session-toml.ts";
 import { Config } from "../config.ts";
 import { bitbucketFetchOneUrlIsSupported } from "../connectors/bitbucket-sync.ts";
@@ -259,6 +261,8 @@ import { runPendingRegraph } from "../graph/regraph-once.ts";
 import { buildIdentityBoot } from "../identity/identity-boot.ts";
 import { buildTeamsBotJwtValidator } from "../identity/teams-bot-jwt.ts";
 import { isOperatorValid } from "../identity/verifier.ts";
+import { createIncidentEngine, type IncidentEngine } from "../incident/incident-engine.ts";
+import { startIncidentRetention } from "../incident/incident-retention.ts";
 import { readUnreadChatThreads } from "../index/chat-unread-query.ts";
 import { startItemHistoryRetention } from "../index/item-history-retention.ts";
 import {
@@ -800,6 +804,8 @@ async function createSchedulerWithMesh(opts: SchedulerWithMeshOpts): Promise<{
   ownershipRefresher: OwnershipRefresher | undefined;
   premortemRefresher: PremortemRefresher | undefined;
   oncallPush: OncallPushRuntime;
+  /** The incident engine (Phase 10 IC3); the sync hook triggers it ahead of the on-call push. */
+  incidentEngine: IncidentEngine;
   /** The I22 policy-filtered `register`, for the extension sync host built after the boot gate. */
   policyFilteredRegistrar: Pick<SyncScheduler, "register">;
 }> {
@@ -1000,6 +1006,29 @@ async function createSchedulerWithMesh(opts: SchedulerWithMeshOpts): Promise<{
       })
     : undefined;
 
+  // Incident engine (Phase 10 IC3, I57 (a)): assembles incident records from the local index after a sync.
+  // Its deps carry no dispatcher, executor, egress sink or model, so a pass can read and store only.
+  // The service configs and `[incident]` are re-read on every use, so an edited nimbus.toml applies.
+  const incidentEngine = createIncidentEngine({
+    db,
+    now: Date.now,
+    emit: (p) => emitGatewayEvent("incident.assembled", { ...p }),
+    loadServiceConfigs: () =>
+      new Map(
+        loadServiceConfigsOrEmpty(paths.configDir, (m) => syncLogger.warn(m)).map((c) => [
+          c.serviceId,
+          c,
+        ]),
+      ),
+    readConfig: () => ({
+      incident: loadNimbusIncidentFromConfigDir(paths.configDir),
+      pagerdutyP1Aliases: loadNimbusPagerdutyFromConfigDir(paths.configDir).severityP1Aliases,
+    }),
+    // Not spelled like the IPC options line: the I41 wiring pin counts that exact text once.
+    demo: Boolean(paths.demo),
+    logger: syncLogger,
+  });
+
   const oncallPush = assembleOncallPushRuntime({
     db,
     configDir: paths.configDir,
@@ -1016,7 +1045,10 @@ async function createSchedulerWithMesh(opts: SchedulerWithMeshOpts): Promise<{
     notify: (title, body) => showIgnoringFailure(notifications, title, body),
     onConnectorSyncSuccess: (serviceId, result, durationMs) => {
       // FIRST: the scheduler calls this hook unguarded, so a throw below would skip the push;
-      // trigger() never throws (and returns at once for anything but pagerduty).
+      // trigger() never throws (and returns at once for anything but pagerduty). The incident engine
+      // goes before the push (Phase 10 IC3): its trigger never rejects, and the push assembles its own
+      // candidates on demand, so the order is a courtesy, not a dependency.
+      void incidentEngine.trigger(serviceId);
       oncallPush.trigger(serviceId);
       const at = Date.now();
       syncAnomaly.recordSample(`sync:duration_ms:${serviceId}`, durationMs, at);
@@ -1148,6 +1180,7 @@ async function createSchedulerWithMesh(opts: SchedulerWithMeshOpts): Promise<{
     ownershipRefresher,
     premortemRefresher,
     oncallPush,
+    incidentEngine,
     policyFilteredRegistrar,
   };
 }
@@ -4072,6 +4105,14 @@ export async function assemblePlatformServices(
   });
   sidecarStops.push(() => itemHistoryRetention.stop());
 
+  // Incident record retention (Phase 10 IC3): `[incident] retention_days`, re-read on every tick. A pruned
+  // record takes its pushed briefs with it, in one transaction per batch.
+  const incidentRetention = startIncidentRetention(db, {
+    retentionDays: () => loadNimbusIncidentFromConfigDir(paths.configDir).retentionDays,
+    onError: (err) => syncLogger.warn({ err }, "incident record retention pass failed"),
+  });
+  sidecarStops.push(() => incidentRetention.stop());
+
   // GDPR purge-retry (Task 25): each cycle, retry the pending `federation.purge`
   // requests durable in the gdpr_purge ledger; when all of a job's requests are
   // done, close it with an aggregate signed completion record + a
@@ -4132,6 +4173,7 @@ export async function assemblePlatformServices(
     ownershipRefresher,
     premortemRefresher,
     oncallPush,
+    incidentEngine,
     policyFilteredRegistrar,
   } = await createSchedulerWithMesh({
     paths,
@@ -5267,6 +5309,7 @@ export async function assemblePlatformServices(
     askExplainRecorder,
     agentLatencyRecorder,
     oncallPush,
+    incidentEngine,
     briefing,
     policyHitl,
     // A GETTER, not `policyGate.enforced()` evaluated here: a signed policy applied after boot

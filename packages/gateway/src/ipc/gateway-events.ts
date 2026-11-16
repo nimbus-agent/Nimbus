@@ -18,7 +18,8 @@ export type GatewayEventKind =
   | "hitl.requested"
   | "hitl.resolved"
   | "oncall.briefPushed"
-  | "briefing.ready";
+  | "briefing.ready"
+  | "incident.assembled";
 
 export interface GatewayEventNotification<P = Record<string, unknown>> {
   readonly kind: GatewayEventKind;
@@ -104,6 +105,17 @@ export interface BriefingReadyPayload {
   readonly firedBy: "schedule" | "manual";
   readonly headline: string;
   readonly counts: Readonly<Record<string, number>>;
+}
+
+/**
+ * `incident.assembled` - an incident record was created or got a new version (Phase 10 IC3). A record id, a
+ * version and a status ONLY, never a title or any indexed text (a gateway event goes to every connected
+ * session). A `gateway.event` kind like `briefing.ready`, not a notification method of its own.
+ */
+export interface IncidentAssembledEventPayload {
+  readonly recordId: string;
+  readonly version: number;
+  readonly status: string;
 }
 
 export interface HitlResolvedPayload {

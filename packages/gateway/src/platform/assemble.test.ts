@@ -22,8 +22,10 @@ import { THIS_BINARY_COVERAGE } from "../egress/egress-coverage.ts";
 import { appendEgressEntry } from "../egress/egress-ledger.ts";
 import { coverageForWindow } from "../egress/egress-verify.ts";
 import { loadOrCreateFederationIdentity } from "../federation/federation-identity.ts";
+import { writePagerdutyIncident } from "../incident/__fixtures__/trigger-writers.ts";
 import { LocalIndex } from "../index/local-index.ts";
 import { openMigratedMemoryDb } from "../index/migrated-db-template.ts";
+import { setGatewayEventBroadcast } from "../ipc/gateway-events.ts";
 import type { ChatopsPoster } from "../oncall-push/push-sinks.ts";
 import type { Syncable } from "../sync/types.ts";
 import { AgentLatencyRecorder } from "../telemetry/agent-latency.ts";
@@ -461,6 +463,48 @@ describe("assemblePlatformServices — in-process assembly", () => {
     await services.autostart.disable();
     await services.notifications.show("title", "body");
   });
+
+  it("the incident engine is built, assembles over the live index and emits incident.assembled (Phase 10 IC3)", async () => {
+    services = await assemblePlatformServices(makePaths(), makeInMemoryVault(), NO_TRUST_FEED);
+    const seen: Array<{ method: string; params: unknown }> = [];
+    setGatewayEventBroadcast((method, params) => seen.push({ method, params }));
+    try {
+      writePagerdutyIncident(services.localIndex.rawDb, {
+        id: "WIRED",
+        openedAtMs: Date.now() - 60_000,
+        priority: "P1",
+      });
+      await services.incidentEngine.trigger("pagerduty");
+      const events = seen.filter(
+        (e) => (e.params as { kind?: string }).kind === "incident.assembled",
+      );
+      expect(events).toHaveLength(1);
+      expect(Object.keys((events[0]?.params as { payload: object }).payload).sort()).toEqual([
+        "recordId",
+        "status",
+        "version",
+      ]);
+    } finally {
+      setGatewayEventBroadcast(undefined);
+    }
+  }, 30000);
+
+  it("a demo-rooted incident engine never assembles after a sync (I41)", async () => {
+    services = await assemblePlatformServices(
+      { ...makePaths(), demo: true },
+      makeInMemoryVault(),
+      NO_TRUST_FEED,
+    );
+    writePagerdutyIncident(services.localIndex.rawDb, {
+      id: "DEMO",
+      openedAtMs: Date.now() - 60_000,
+      priority: "P1",
+    });
+    await services.incidentEngine.trigger("pagerduty");
+    expect(
+      services.localIndex.rawDb.query("SELECT count(*) AS n FROM incident_record").get(),
+    ).toEqual({ n: 0 });
+  }, 30000);
 
   it("a demo-rooted assembly does not boot ChatOps even with [chatops] enabled (I41)", async () => {
     const paths: PlatformPaths = { ...makePaths(), demo: true };
