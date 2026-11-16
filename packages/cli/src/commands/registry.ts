@@ -68,6 +68,7 @@ export const COMMAND_NAMES = [
   "share",
   "standup",
   "oncall",
+  "statuspage",
   "briefing",
   "start",
   "stats",

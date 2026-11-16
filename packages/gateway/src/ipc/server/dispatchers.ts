@@ -112,6 +112,7 @@ import type { ClientSession } from "../session.ts";
 import { dispatchSessionRpc, SessionRpcError } from "../session-rpc.ts";
 import { dispatchShareRpc, ShareRpcError } from "../share-rpc.ts";
 import { createStandingOwnerAsk, dispatchStandingRpc } from "../standing-rpc.ts";
+import { dispatchStatuspageRpc, StatuspageRpcError } from "../statuspage-rpc.ts";
 import { dispatchTeamVaultRpc, TeamVaultRpcError } from "../teamvault-rpc.ts";
 import { dispatchToolgenRpc, ToolgenRpcError } from "../toolgen-rpc.ts";
 import { dispatchTourRpc, TourRpcError } from "../tour-rpc.ts";
@@ -1550,6 +1551,32 @@ export async function tryDispatchOncallNowRpc(
 }
 
 /**
+ * `statuspage.model` (Phase 17) - the page model behind `nimbus statuspage draft`, from the local index
+ * only (also answered by a demo gateway, whose index is the synthetic corpus). CLI-only: LAN-forbidden by
+ * the `statuspage` namespace entry (I5) and absent from the Tauri allowlist (I7).
+ */
+export async function tryDispatchStatuspageRpc(
+  ctx: ServerCtx,
+  method: string,
+  params: unknown,
+): Promise<unknown> {
+  if (method !== "statuspage.model" || ctx.options.localIndex === undefined) {
+    return phase4RpcSkipped;
+  }
+  try {
+    const out = await dispatchStatuspageRpc(method, params, {
+      db: ctx.options.localIndex.getDatabase(),
+      ...(ctx.options.configDir === undefined ? {} : { configDir: ctx.options.configDir }),
+    });
+    if (out.kind === "hit") return out.value;
+  } catch (e) {
+    if (e instanceof StatuspageRpcError) throw new RpcMethodError(e.rpcCode, e.message);
+    throw e;
+  }
+  return phase4RpcSkipped;
+}
+
+/**
  * `briefing.*` (Phase 10 MB5) - the morning briefing. Answered whenever the runtime exists, which includes
  * a demo gateway (its index is the synthetic corpus; `runNow` shows no toast there). The four reads are
  * renderer-callable (I7), `briefing.runNow` is CLI-only; the namespace is LAN-forbidden (I5).
@@ -2032,6 +2059,7 @@ const PHASE4_PLATFORM_DISPATCHERS: ReadonlyArray<
   tryDispatchComputerRpc,
   tryDispatchFleetRpc,
   tryDispatchOncallNowRpc,
+  tryDispatchStatuspageRpc,
   tryDispatchOncallPushRpc,
   tryDispatchBriefingRpc,
   tryDispatchNotificationsRpc,

@@ -70,6 +70,7 @@ export { runStandupCommand } from "./standup.ts";
 export { runStart } from "./start.ts";
 export { runStats } from "./stats.ts";
 export { runStatus } from "./status.ts";
+export { runStatuspageCommand } from "./statuspage.ts";
 export { runStop } from "./stop.ts";
 export { runTailCommand } from "./tail.ts";
 export { runTeam } from "./team.ts";
