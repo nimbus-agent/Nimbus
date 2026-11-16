@@ -1,3 +1,5 @@
+import nacl from "tweetnacl";
+import { decodeBase64, encodeBase64 } from "../util/base64.ts";
 import { ensureVaultEd25519Keypair } from "../util/ed25519.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
 
@@ -21,4 +23,20 @@ export function ensureShareKeypair(
   vault: NimbusVault,
 ): Promise<{ privkeyB64: string; pubkeyB64: string }> {
   return ensureVaultEd25519Keypair(vault, SHARE_SIGNING_PRIVKEY, SHARE_SIGNING_PUBKEY);
+}
+
+/**
+ * Sign `bytes` with the share signing key (detached Ed25519), like `signWindowDigest` does for an egress
+ * digest: the seed is read here solely to thread into the in-process call and is NEVER returned. The
+ * result is the signature and the public key (both safe to surface). The signed-workflow export uses this
+ * so no workflow module ever holds the seed; callers must domain-tag what they sign.
+ */
+export async function signBytesWithShareKey(
+  vault: NimbusVault,
+  bytes: Uint8Array,
+): Promise<{ sigB64: string; pubkeyB64: string }> {
+  const { privkeyB64, pubkeyB64 } = await ensureShareKeypair(vault);
+  const kp = nacl.sign.keyPair.fromSeed(decodeBase64(privkeyB64));
+  const sig = nacl.sign.detached(bytes, kp.secretKey);
+  return { sigB64: encodeBase64(sig), pubkeyB64 };
 }

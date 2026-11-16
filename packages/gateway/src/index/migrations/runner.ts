@@ -132,6 +132,7 @@ import { VEC_JOIN_INDEX_V62_SQL } from "../vec-join-index-v62-sql.ts";
 import { WATCHER_GRAPH_V22_SQL } from "../watcher-graph-v22-sql.ts";
 import { WATCHER_V8_MIGRATION_SQL } from "../watcher-v8-sql.ts";
 import { WORK_SNAPSHOT_V91_SQL } from "../work-snapshot-v91-sql.ts";
+import { WORKFLOW_IMPORT_V101_SQL } from "../workflow-import-v101-sql.ts";
 import { WORKFLOW_RUN_COLUMNS_V23_SQL } from "../workflow-run-columns-v23-sql.ts";
 import { WORKFLOW_SCHEDULE_V89_SQL } from "../workflow-schedule-v89-sql.ts";
 import { WORKFLOW_V9_MIGRATION_SQL } from "../workflow-v9-sql.ts";
@@ -904,6 +905,12 @@ const INDEXED_SCHEMA_STEPS: readonly IndexedSchemaStep[] = [
     100,
     "incident records and their versions (Phase 10 IC3)",
     INCIDENT_RECORD_V100_SQL,
+  ),
+  simpleStep(
+    100,
+    101,
+    "signed workflow import provenance and replay floor (I59)",
+    WORKFLOW_IMPORT_V101_SQL,
   ),
 ];
 
