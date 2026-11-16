@@ -9,6 +9,12 @@ export interface ReplyDispatcherDeps {
   readonly post: (platform: ChatPlatform, channelId: string, text: string) => Promise<void>;
   /** Policy-declared notify channels for a namespace (from EnforcedPolicy.chatops). */
   readonly notifyChannelsFor: (namespace: string) => readonly string[];
+  /**
+   * The owner's pinned watcher-notice channel after the org policy's say (0 or 1 id). Supplied ONLY
+   * to the watcher-notice dispatcher in `chatops-boot.ts`; every other dispatcher is built without
+   * it and refuses a `watcherPinned` target.
+   */
+  readonly pinnedChannelFor?: () => readonly string[];
 }
 
 /**
@@ -30,6 +36,18 @@ export class ReplyDispatcher {
     if (target.kind === "originating") {
       await this.deps.post(target.platform, target.channelId, text);
       return 1;
+    }
+    if (target.kind === "watcherPinned") {
+      const pinned = this.deps.pinnedChannelFor;
+      if (pinned === undefined) {
+        throw new Error("this reply dispatcher cannot post to the watcher-pinned channel");
+      }
+      let postedPinned = 0;
+      for (const channelId of pinned()) {
+        await this.deps.post("slack", channelId, text); // NOSONAR S9382: I23/I29 — the post appends its own egress row first
+        postedPinned += 1;
+      }
+      return postedPinned;
     }
     let posted = 0;
     for (const channelId of this.deps.notifyChannelsFor(target.namespace)) {

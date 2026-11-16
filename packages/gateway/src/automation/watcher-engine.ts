@@ -16,17 +16,44 @@ import {
   type WatcherRow,
 } from "./watcher-store.ts";
 
+/**
+ * The most candidate rows the item query selects for one watcher. The SQL `LIMIT` and the `capped`
+ * flag of a `WatcherNotice` both read this one constant (a compile-time number, never user input).
+ */
+export const WATCHER_CANDIDATE_LIMIT = 5;
+
+/**
+ * What the engine tells a notice consumer about a fire, and nothing else: counts and ids, never an
+ * item title, service, summary or condition body. `name` is the watcher's own name, display text
+ * only (whoever creates a watcher chooses it, so it must never be used to decide anything).
+ * `capped` means ONLY that the SQL candidate query hit `WATCHER_CANDIDATE_LIMIT`, so `matchCount`
+ * is then a lower bound.
+ */
+export type WatcherNotice = {
+  readonly watcherId: string;
+  readonly name: string;
+  readonly conditionType: string;
+  readonly matchCount: number;
+  readonly capped: boolean;
+  readonly firedAt: number;
+};
+
 export type WatcherEvalOptions = {
   graphConditionsEnabled?: boolean;
   /**
-   * Structured observation of a fire, for the operational event stream.
+   * Structured observation of a fire, for the operational event stream (`watcher.fired`).
    *
    * Deliberately NOT the `notify(title, body)` parameter beside it: that one is human prose for an
-   * OS toast. Keeping them separate also keeps this lane visibly distinct from
-   * `makeChatopsWatcherNotify`, which is unwired precisely because routing watcher alerts OUTBOUND
-   * would put the path under I23 and plausibly I29.
+   * OS toast. Its `summary` carries an indexed item title, so it must never reach a channel; the
+   * outbound lane is `onNotice` below. A throw here is contained and never skips a stamp.
    */
   onFired?: (payload: WatcherFiredPayload) => void;
+  /**
+   * The outbound ChatOps lane (I23): called once per fired watcher, AFTER `updateWatcherLastFired`,
+   * inside its own `try/catch`, with a `WatcherNotice` that holds no item text. A throw cannot skip
+   * the stamp or the loop's later watchers.
+   */
+  onNotice?: (notice: WatcherNotice) => void;
 };
 
 /**
@@ -116,14 +143,36 @@ function evaluateEnabledWatchers(
     if (fired !== null) {
       insertWatcherEvent(db, w.id, nowMs, fired.snapshot, JSON.stringify({ ok: true }));
       void notify("Nimbus watcher", `${w.name}: ${fired.summary}`);
-      opts.onFired?.({
-        watcherId: w.id,
-        name: w.name,
-        summary: fired.summary,
-        firedAt: nowMs,
-      });
+      runContained(() =>
+        opts.onFired?.({
+          watcherId: w.id,
+          name: w.name,
+          summary: fired.summary,
+          firedAt: nowMs,
+        }),
+      );
       updateWatcherLastFired(db, w.id, nowMs);
+      // After the stamp, so nothing the consumer does can leave this watcher unstamped.
+      runContained(() =>
+        opts.onNotice?.({
+          watcherId: w.id,
+          name: w.name,
+          conditionType: w.condition_type,
+          matchCount: fired.matchCount,
+          capped: fired.capped,
+          firedAt: nowMs,
+        }),
+      );
     }
+  }
+}
+
+/** Runs an observer callback; a throw is dropped so it cannot reach the evaluation loop. */
+function runContained(fn: () => void): void {
+  try {
+    fn();
+  } catch {
+    // An observer failing must not skip `updateWatcherLastFired` or a later watcher.
   }
 }
 
@@ -182,7 +231,7 @@ function evaluateOneWatcher(
   w: WatcherRow,
   syncedServiceId: string | undefined,
   graphEnabled: boolean,
-): { summary: string; snapshot: string } | null {
+): { summary: string; snapshot: string; matchCount: number; capped: boolean } | null {
   const kind = watcherConditionKind(w.condition_type);
   if (kind === undefined) {
     return null;
@@ -203,7 +252,7 @@ function evaluateOneWatcher(
          ${kind.extraSql}
          ${affectedService === undefined ? "" : AFFECTED_SERVICE_EXISTS_SQL}
        ORDER BY modified_at DESC
-       LIMIT 5`,
+       LIMIT ${String(WATCHER_CANDIDATE_LIMIT)}`,
     )
     .all(
       kind.itemType,
@@ -263,40 +312,10 @@ function evaluateOneWatcher(
   }
   const summary = `${first.service}: ${first.title}`;
   const snapshot = JSON.stringify({ matches: filtered, condition: w.condition_json });
-  return { summary, snapshot };
-}
-
-export interface ChatopsWatcherNotifyDeps {
-  /** Map the current watcher context to a namespace (or undefined for local-only). */
-  readonly namespaceForWatcher: () => string | undefined;
-  /** Post to a namespace's ChatOps notify channels (ReplyDispatcher.send w/ a namespaceNotify target). */
-  readonly sendToNamespace: (namespace: string, text: string) => Promise<void>;
-}
-
-/**
- * Build a watcher `notify(title, body)` callback that routes to a ChatOps notify channel
- * (Slice 5). When no namespace maps, this is a no-op (local-only watcher).
- *
- * NOT WIRED. This function has no production caller — only its own unit test. Every
- * watcher-notify callsite in `platform/assemble.ts` passes the OS notification service alone,
- * so watcher alerts do not reach Slack/Teams today. An earlier version of this comment
- * claimed it "composes with the existing IPC-notify callback at the wiring site (both
- * are called)", describing a wiring site that has never existed.
- *
- * Kept rather than deleted because it is the seam the feature lands on, but wiring it
- * is NOT a one-liner: it would make a code path that emits nothing today start posting
- * outbound to a channel, which puts it under I23 (ChatOps posts go only through
- * `reply-dispatcher.ts` to a server-derived `ReplyTarget`) and plausibly I29 (egress
- * ledger). That needs the invariant triple-rule — wiring + docs + enforcement test in
- * one commit — not an incidental hookup. The corresponding `docs/roadmap.md`
- * "Notification routing" row is unchecked to match.
- */
-export function makeChatopsWatcherNotify(
-  deps: ChatopsWatcherNotifyDeps,
-): (title: string, body: string) => Promise<void> {
-  return async (_title, body) => {
-    const ns = deps.namespaceForWatcher();
-    if (ns === undefined) return;
-    await deps.sendToNamespace(ns, body);
+  return {
+    summary,
+    snapshot,
+    matchCount: filtered.length,
+    capped: rows.length >= WATCHER_CANDIDATE_LIMIT,
   };
 }

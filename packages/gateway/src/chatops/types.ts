@@ -50,7 +50,14 @@ export interface ChatIdentity {
 /** Stable, server-derived reply destination (never a caller-supplied raw channel). */
 export type ReplyTarget =
   | { readonly kind: "originating"; readonly platform: ChatPlatform; readonly channelId: string }
-  | { readonly kind: "namespaceNotify"; readonly namespace: string };
+  | { readonly kind: "namespaceNotify"; readonly namespace: string }
+  /**
+   * The owner's pinned watcher-notice channel (I23 amendment). It carries NO channel: the id is a
+   * construction-time value of `chatops-boot.ts`, so no caller can pass one, and only the watcher
+   * notice dispatcher (the one built with `pinnedChannelFor`) accepts this kind. Built only in
+   * `chatops-boot.ts` (static D17(d)).
+   */
+  | { readonly kind: "watcherPinned" };
 
 export type RefusalReason =
   | "unbound_channel"
