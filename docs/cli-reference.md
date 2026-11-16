@@ -1179,6 +1179,28 @@ nimbus oncall now --service payment-service --json
 
 **Bounds.** Reply shapes of the providers are not verified against live accounts. Jira Service Management shifts carry no start or end time and no service mapping (look them up by schedule name). PagerDuty `you` needs a user-level API token or `pagerduty.from_email` (`nimbus connector auth pagerduty --token <token> --username <email>`). `nimbus ask "who's on call for payment-service?"` uses the `oncall_now` tool only where the Mastra agent runs (with a remote model vendor); the local-router path has no tools, and there only ranked retrieval of the shift rows can surface the answer. The IPC method is `oncall.now` (LAN-forbidden, renderer-callable, served by a demo gateway); the `nimbus oncall` brief also carries an `On call now` line under `## Incident`.
 
+### `nimbus cost anomalies`
+
+Which days of cloud spend jumped over their recent baseline, judged from the daily cost series the index already holds (today the Vantage sync). It makes **no provider call**, sends nothing and uses no model; it only reads the local index. Detection only: there is no notification yet.
+
+```bash
+nimbus cost anomalies
+nimbus cost anomalies --days 7
+nimbus cost anomalies --service vantage --json
+```
+
+| Flag | Description |
+|---|---|
+| `--service <id>` | One cost service (`vantage` today). Omit it for every indexed cost service. |
+| `--days <1-30>` | Judge each of the newest N complete UTC days, each against its own baseline (default 1). |
+| `--json` | Print the result object (`status`, `judgedDayMs`, `daysChecked`, `baseline`, `thresholds`, `counts`, `anomalies`, `anomaliesTruncated`, `gaps`) on one line, with the same exit codes. |
+
+**The rule.** A series' day is anomalous when its amount is at least `[finops] anomaly_ratio` times the mean of the 7 UTC days before it **and** exceeds that mean by at least `[finops] anomaly_min_amount` (in the series' own currency). Only complete days count: the last three days of a series are provisional (the vendor may restate them) and are never judged and never in a baseline; the judged day is the newest complete day in the index. A day with no row is not a zero: the baseline is the mean of the days that exist, and with fewer than 5 of the 7 present the series is skipped as "not enough history", never reported as normal. A zero or negative baseline has no ratio, and only the absolute floor decides. A series that reports in more than one currency is skipped.
+
+**Statuses and exit codes.** `anomalies` (exit 0): the anomalous days, largest excess first (at most 100 listed). `ok` (exit 0): at least one series was checked and none is anomalous. `insufficient_history` (exit 1): no series had enough history to be checked, so nothing can be ruled in or out. `no_data` (exit 1): no cost rows are indexed, or every day is still provisional; the gap says which. The text always names the judged day or days, the baseline window, the two thresholds and how many series were skipped and why.
+
+**Bounds.** Amounts are the vendor's, not verified against a live account. History begins when the first sync ran (45 days at most), so a new series needs a week of rows first. The IPC method is `cost.anomalies` (the whole `cost` namespace is LAN-forbidden; it is not on the desktop allowlist). Series names are vendor strings and are stripped of control characters before printing.
+
 ### `nimbus briefing`
 
 Your morning briefing, built from the local index. It makes **no provider call** and **uses no model**: the text is rendered deterministically, and nothing leaves the machine except a local notification.
@@ -3039,6 +3061,8 @@ Limits for the FinOps cost data the Vantage sync indexes (`nimbus config explain
 |---|---|---|
 | `[finops] max_series` | `500` | 1 to 5000: how many named series are indexed; the rest of each day is summed into one `__other__` row |
 | `[finops] retain_days` | `400` | 30 to 3650: `cost_allocation` rows older than this are deleted by a daily pass; recommendations are not pruned by age |
+| `[finops] anomaly_ratio` | `1.5` | 1.05 to 100 (a plain decimal): `nimbus cost anomalies` flags a day at least this many times its 7-day baseline |
+| `[finops] anomaly_min_amount` | `10` | 0 to 1000000000 (a plain decimal): ... and only when it also exceeds the baseline by this much, in the series' currency |
 
 The data comes from `vantage.api_token` (set with `nimbus vault set vantage.api_token`; every 6 hours the sync reads 45 days on the first run, then from three days before the last success). `vantage.group_by` is a comma-separated grouping (default `provider,service,account_id`); a `tag:` entry is refused because where Vantage returns a tag value is undocumented. `nimbus connector auth vantage` prints the keys.
 
