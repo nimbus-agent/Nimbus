@@ -2,6 +2,13 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [10.68.0](https://github.com/nimbus-agent/Nimbus/compare/v10.67.0...v10.68.0) (2026-11-16)
+
+
+### Features
+
+* **gateway:** nimbus pre-mortem works for Linear projects, indexed as linear:project items ([#2032](https://github.com/nimbus-agent/Nimbus/issues/2032)) ([d239b2d](https://github.com/nimbus-agent/Nimbus/commit/d239b2d0a37f6bb61335c686a995a80e8d504414))
+
 ## [10.67.0](https://github.com/nimbus-agent/Nimbus/compare/v10.66.0...v10.67.0) (2026-11-16)
 
 
