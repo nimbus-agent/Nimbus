@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794856633842,
+  "lastUpdate": 1794857233346,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
-            "name": "nimbus-release-bot[bot]",
-            "username": "nimbus-release-bot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "a096f15c8a6eb5fb204da0be2c7b2d0862496770",
-          "message": "chore: release main (#1386)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>7.1.0</summary>\n\n##\n[7.1.0](https://github.com/nimbus-agent/Nimbus/compare/v7.0.1...v7.1.0)\n(2026-08-29)\n\n\n### Features\n\n* **egress:** ledger remote embeddings and add per-task model routing\n([#1384](https://github.com/nimbus-agent/Nimbus/issues/1384))\n([33273b2](https://github.com/nimbus-agent/Nimbus/commit/33273b27aa387d0fb8232847757b95d198efe602))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
-          "timestamp": "2026-08-29T13:28:07Z",
-          "tree_id": "af273b8f7c5a45f5e2fa1b255e0f48ea1b2ad40b",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/a096f15c8a6eb5fb204da0be2c7b2d0862496770"
-        },
-        "date": 1788010803735,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 316.0030265000023,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 315.94420619999727,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 179.90199955000026,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
+            "name": "nimbus-release-bot[bot]",
+            "username": "nimbus-release-bot[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "b098256d9ce27f3429db93e9297d2b0b5cf110f7",
+          "message": "chore: release main (#2037)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>10.69.0</summary>\n\n##\n[10.69.0](https://github.com/nimbus-agent/Nimbus/compare/v10.68.0...v10.69.0)\n(2026-11-16)\n\n\n### Features\n\n* **gateway:** assemble incident records from the local index, with\nnimbus incident list and show\n([#2030](https://github.com/nimbus-agent/Nimbus/issues/2030))\n([37ad233](https://github.com/nimbus-agent/Nimbus/commit/37ad233467c164c2ba3fd560965b32970139a400))\n* **gateway:** bundle a Developer role pack, installed with nimbus pack\ninstall developer\n([#2033](https://github.com/nimbus-agent/Nimbus/issues/2033))\n([147f362](https://github.com/nimbus-agent/Nimbus/commit/147f3629663795d803c90be10d3c2c132b566630))\n\n\n### Bug Fixes\n\n* **gateway:** the audit append returns its row id, so a standing\napproval records its own audit row\n([#2036](https://github.com/nimbus-agent/Nimbus/issues/2036))\n([e00b979](https://github.com/nimbus-agent/Nimbus/commit/e00b979c320aa40e501a6df060b41d51478d3cf9))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
+          "timestamp": "2026-11-16T21:17:10+02:00",
+          "tree_id": "b7700c18773d390675977f5eaf4292d25eb4c16b",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/b098256d9ce27f3429db93e9297d2b0b5cf110f7"
+        },
+        "date": 1794857227714,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 243.49795309999755,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 238.94014175000848,
             "unit": "ms"
           }
         ]
