@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794846745145,
+  "lastUpdate": 1794853880210,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
-            "name": "nimbus-release-bot[bot]",
-            "username": "nimbus-release-bot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "cd86f3e01dc5a28965a2d9d6c38d131d619c186e",
-          "message": "chore: release main (#1379)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>7.0.1</summary>\n\n##\n[7.0.1](https://github.com/nimbus-agent/Nimbus/compare/v7.0.0...v7.0.1)\n(2026-08-29)\n\n\n### Bug Fixes\n\n* **connectors:** align the aws sync interval with its AWS-CLI siblings\n([#1377](https://github.com/nimbus-agent/Nimbus/issues/1377))\n([61173ae](https://github.com/nimbus-agent/Nimbus/commit/61173ae92dc87002d3bc844ce0c792257292d677))\n* **llm:** stop Ollama reasoning tokens truncating answers and costing\n~16s per ask\n([#1376](https://github.com/nimbus-agent/Nimbus/issues/1376))\n([abdbbdc](https://github.com/nimbus-agent/Nimbus/commit/abdbbdcf41ba91243f3d76e1b5ad301e01aba3a8))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
-          "timestamp": "2026-08-29T11:07:55+03:00",
-          "tree_id": "3029ce36a3dbdda416330cff615b18f81eb11a4c",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/cd86f3e01dc5a28965a2d9d6c38d131d619c186e"
-        },
-        "date": 1787991675877,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 249.2567904499985,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 248.59105424999143,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 213.22082195000402,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "e00b979c320aa40e501a6df060b41d51478d3cf9",
+          "message": "fix(gateway): the audit append returns its row id, so a standing approval records its own audit row (#2036)\n\n`createStandingOwnerAsk` found the audit id of the owner's standing-rule\napproval with `SELECT MAX(id) FROM audit_log` right after appending.\nThat is not exploitable today (`bun:sqlite` is synchronous and both\ncalls run in one turn), but any wrapped or queued sink, or a second\nwriter, would make it record an unrelated row id. This fixes it at the\nsource:\n\n- `appendAuditEntry` returns the inserted `lastInsertRowid`.\n- `AuditSink.recordAudit` may return that id (`number | void`), and\n`LocalIndex.recordAudit` does.\n- `createStandingOwnerAsk` uses the id the sink returns; a sink that\nreturns none leaves the approval declined (fail closed, as before when\nno id was found). No `MAX(id)` fallback.\n- The now-unused `db` dep of `createStandingOwnerAsk` is removed from\nits type and its three callers.\n\n**Tests.** A sink that appends an unrelated audit row before returning:\nred on the old code (recorded id 2, expected 1), green now. A sink\nreturning nothing declines. `typecheck`, `typecheck:tests` (0 new) and\nthe ipc/audit/db/engine/standing suites plus\n`security-invariants.test.ts` pass.\n\nNo schema, IPC or allowlist change; nothing user-visible. This is the\nstandalone prerequisite (task 0(a)) of the signed-workflow-import slice.\nDocs: `docs/architecture.md` (the standing-rule paragraph). The status\nparagraph, CHANGELOG top and README are batched into this batch's final\ndocs PR (owner-approved exception).\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-16T18:23:45Z",
+          "tree_id": "51747ae6168efb966f0e93215d8babc6ef0270a8",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/e00b979c320aa40e501a6df060b41d51478d3cf9"
+        },
+        "date": 1794853877232,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 176.7475554500026,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 174.61831634999652,
             "unit": "ms"
           }
         ]
