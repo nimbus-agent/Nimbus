@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794813796514,
+  "lastUpdate": 1794815010344,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "8202ec64199c524ff436f3d4d04822e9c9a8620c",
-          "message": "fix(llm)!: ledger the ask intent classifier, and three defects found on a live install (#1366)\n\nFour defects found on a live `v5.0.0` install while smoke-testing the\nslice 2b vendor path, fixed in severity order. Two were pre-existing,\ntwo were introduced by #1359.\n\n## 1. The `ask` intent classifier egressed outside the ledger and\noutside the opt-in (#1363)\n\n`engine/router.ts` held its **own HTTP client**. It read\n`ANTHROPIC_API_KEY` / `OPENAI_API_KEY` straight from the process\nenvironment and POSTed the user's question to Anthropic or OpenAI,\nappending **no `egress_ledger` row**.\n\nObserved live: `ANTHROPIC_API_KEY` was stale in the environment; no\n`[llm.remote.anthropic]` block existed; the user had opted into **Gemini\nonly**. `nimbus ask` still sent the question text to\n`https://api.anthropic.com/v1/messages`, and:\n\n```\n$ nimbus prove\noutbound egress events during this query, in the covered classes: 0\n```\n\nOnly the stale key prevented a successful send. Two properties the rest\nof the gateway guarantees did not hold here:\n\n- **No egress row.** `nimbus prove` reported a clean zero over a window\ncontaining a real outbound request carrying user text.\n- **No opt-in.** Slice 2b's central promise is that a vendor cannot be\nreached because a credential happens to exist. That held for the route\ntable and the Mastra agent, and not for this path — one path over.\n\nIt also evaded static rule **D22**: a raw `fetch` is not\n`connectors.dispatch`, and the file never named `appendEgressEntry`.\n\n**Fix.** The classifier now asks `LlmRouter` for the `\"classification\"`\ntask — a task type that already existed. `wrapLedgeredProvider` covers\nit like any other route (`method='engine.ask.classify'`), the per-vendor\n`[llm.remote.*]` opt-in applies, and the hand-rolled client, both wire\nformats and both env reads are deleted. This is the preferred fix from\nthe issue, not the interim one.\n\nThree consequences worth reading closely:\n\n- **The `model` class's \"ONE EXCLUSION REMAINS\" claim is now true.** It\nwas under-reporting: there were two, and the second was undisclosed.\nDocs updated in all five places #1359 touched, recording that the\nboundary moved rather than quietly making the sentence correct.\n- **Classification can run on a LOCAL model for the first time.** So\n`enforce_air_gap = true` with a local route now classifies instead of\nrefusing — which is exactly what the `air_gap` message already promised\n(\"configure a local model … to answer without leaving the machine\").\n- **An unparseable reply degrades to `intent: \"unknown\"`** instead of\nthrowing. Small local models return prose regularly, and they are on\nthis path now; a throw would abort the `ask` on a routine event.\nTransport and auth failures still throw — those are real, and the owner\nhas to see them.\n\n### Breaking\n\n`[llm] classifier_model`, `NIMBUS_CLASSIFIER_MODEL` and\n`NIMBUS_OPENAI_CLASSIFIER_MODEL` are **removed**. Nothing reads a\nclassifier model name any more, and a live config key that does nothing\nis worse than no key. A stale entry in an existing `nimbus.toml` is\nignored, as any unrecognised `[llm]` key is. No action is required of\nanyone who has not set them.\n\n## 2. `route_priority` could not name a cloud vendor\n\nIntroduced by #1359. `routeIdsToRegister` was computed from **local**\nroutes only, so `dropUnresolvableRoutePriorityEntries` dropped every\nenabled vendor's route id as unresolvable — before the router was\nconstructed and before the vendors were registered. Under `prefer_local\n= true` that made an enabled cloud vendor effectively unreachable.\n\nLocal and remote ids now come from one `resolveEnabledVendors` call (one\nresolution, so no duplicate warnings) and are validated together.\n\n## 3. `providerLabel` knew only `anthropic` and `openai`\n\nSlice 2b added `gemini` and `xai` as registrable vendors but not here,\nso their failures rendered as the generic \"the LLM provider\" — and on a\nGemini-only install a classifier 401 read as an **Anthropic** problem,\nwhich sent diagnosis in the wrong direction and cost real time. The\nlabel map is now TOTAL over `AgentProviderName`, so a vendor added\nwithout a label is a compile error rather than a silent downgrade.\n\n## 4. `nimbus llm status` ran two columns together (#1362)\n\n`pad()` returned the value unchanged at or over the column width,\nemitting no separator:\n\n```\nRoute                 Provider  Model\nollama/llama3.2:latestollama    llama3.2:latest\n```\n\n`ollama/llama3.2:latest` is exactly 22, the `routeId` width — and slice\n2b's own documented `anthropic/claude-sonnet-4-6` is 27, so the first\nvendor most people enable collides. The gap is now unconditional rather\nthan a function of the value's length. Widening the column is not the\nfix: it moves the cliff to the first longer model name, and\n`ollama/hf.co/user/some-long-model` is already a supported route-id\nshape.\n\n## Verification\n\n- **Every fix red-proved by reverting it**, not by observing green: the\ncolumn tests fail at all three lengths on the old `pad`; the\n`engine.ask.classify` assertion fails without the `egressMethod`; the\nwire test below fails when the classifier answers without the router.\n- **A wire test, not two end tests.** `router.test.ts` injects\n`generate` and proves the classifier asks for the right thing;\n`egress/model-egress.test.ts` proves a wrapped provider appends. Neither\nproves the two are connected — and \"both ends tested, wire dead\" is the\nshape that let this egress unledgered for as long as it did.\n`engine/classifier-egress-wire.test.ts` runs the real\n`LlmRegistry.addRoute` → `LlmRouter` → real SQLite ledger, and asserts\none `model` row for a remote route and **zero** for a local one.\n- **The air-gap `run-ask` test's claim was corrected rather than left\nstanding.** `reached === []` is now structural — the classifier has no\nHTTP client to reach with — so it can no longer fail for the reason its\ncomment claimed. It is kept as a regression guard against a direct\nclient coming back, and the comment now says which of the two assertions\nstill tests air-gap.\n- `bun run preflight:fast` — pass, including `audit:status-drift` and\n`audit:doc-refs`.\n- The verbatim CI command `bun test packages/gateway packages/cli\nscripts` — 19,441 pass. The three `tui` failures in that run are the\nknown load-flake: they pass in isolation both with and without this\nbranch.\n- **Both Linux-authoritative coverage gates**, built through the\n`reseed-docker.sh` docker block against the committed baseline:\n`audit:coverage-floor` ok, `audit:coverage-scopes` ok across all 23\nscopes (Engine 97.7%).\n\n## Still open\n\nThe **Gemini adapter has never made a successful call** — its wire\nformat is unproven, because the `route_priority` defect above blocked\nroute selection during the smoke test. Fix 2 unblocks that; the live\nretry is the next step, not part of this PR.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)",
-          "timestamp": "2026-08-28T18:19:40+03:00",
-          "tree_id": "aa1fd3f829789d613bc16d34a9c8faf671ec375f",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/8202ec64199c524ff436f3d4d04822e9c9a8620c"
-        },
-        "date": 1787931130161,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 330.6049841499971,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 336.971313200007,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 192.32534545000127,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "d2d81a71c7dd4e41fb262de621c332991df2ff8b",
+          "message": "feat(gateway): add nimbus oncall handoff, a read-only shift brief from the local index (#2018)\n\nPhase 17, Wave 4: the on-call handoff brief. `nimbus oncall handoff`\nprints what the next person on call needs, from the local index.\n\n## What you can do now\n\n```\nnimbus oncall handoff [--since <duration|time>] [--until <time>] [--service <id|name>] [--json]\n```\n\n- **Shift:** the window used and why, your shift, who is on call now,\nwho is next.\n- **Events during the shift:** PagerDuty incidents and Jira Service\nManagement alerts that opened, changed state or resolved, then\ndeployments. An event is marked `(observed)` when its time is the sync's\nand not the provider's.\n- **Still open:** what was open at the end of the window, oldest first.\n- **Watch-list:** items reopened after resolving or with two or more\nstatus changes, deployments followed by an incident or alert of the same\nservice, and assigned work due within 24 hours.\n- **Gaps** and **Data freshness**, always.\n\nThe default window starts at your current indexed shift when one is\nmarked as yours (capped at 7 days). Otherwise it is the last 12 hours.\n`--since` and `--until` override it, up to 31 days.\n\n## What it does not do\n\n- It reads the local index only. No live API call, no connector\ndispatch, no model, no write, and no approval prompt.\n- An empty index yields gaps, never \"nothing happened\". Each section\nthat has no data says so.\n\n## How\n\n- `index/oncall-handoff-query.ts`: the query, pure over the database.\n- `ipc/oncall-handoff-rpc.ts`: `oncall.handoff`, served beside\n`oncall.now`, so a demo gateway serves it too.\n- The `oncall` namespace is refused over the LAN as a whole; the I5 test\nnow names this method.\n- Desktop allowlist: `oncall.handoff` is added (read-only, like\n`oncall.now`), 131 to 132, with the list and the count updated in the\nRust assertions, the invariants test and the docs.\n\nIt is deterministic and is not an `agents/` emitter: no model text\nexists, so there is nothing to synthesize.\n\n## Stated bounds\n\n- History begins at the V94 upgrade, and observation times are the\nsync's.\n- Jira Service Management shifts carry no start or end time.\n- Each list shows 50 entries and carries its true total.\n- The under-15-seconds criterion was not measured. It is a handful of\nindexed reads.\n- Provider reply shapes are not checked against live accounts, and no\nreal gateway process was run end to end.\n- The new Rust assertions were not compiled locally. CI builds them.\n\n## Checks run\n\n- `bun run preflight:fast`: passed.\n- `bun test` on the new and touched files: 814 pass, 0 fail.\n- Not run locally: the coverage floor. CI runs it.\n\n## Docs\n\nRoadmap (row ticked, with bounds), architecture, cli-reference,\nSECURITY-INVARIANTS and three skill files. The status sentence in\nCLAUDE.md and GEMINI.md, the changelog entry and the README line land\nwith the last pull request of this batch, because several pull requests\nare open at once and all of them edit that one paragraph.\n\nNo schema migration, invariant, HITL type or egress class.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JmSjrCzb214jGqUcCTWNJQ\n\n---------\n\nCo-authored-by: Claude Fable 5.2 <noreply@anthropic.com>",
+          "timestamp": "2026-11-16T07:36:17Z",
+          "tree_id": "ce98d4003480850321b43d39bc085f8a247fbf9f",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/d2d81a71c7dd4e41fb262de621c332991df2ff8b"
+        },
+        "date": 1794815006919,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 170.52274154999742,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 169.91952674999666,
             "unit": "ms"
           }
         ]
