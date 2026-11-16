@@ -2,6 +2,14 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [10.65.0](https://github.com/nimbus-agent/Nimbus/compare/v10.64.0...v10.65.0) (2026-11-16)
+
+
+### Features
+
+* **gateway:** add nimbus oncall handoff, a read-only shift brief from the local index ([#2018](https://github.com/nimbus-agent/Nimbus/issues/2018)) ([d2d81a7](https://github.com/nimbus-agent/Nimbus/commit/d2d81a71c7dd4e41fb262de621c332991df2ff8b))
+* **gateway:** nimbus pre-mortem proposes a paused deploy-failure watcher beside the incident one ([#2020](https://github.com/nimbus-agent/Nimbus/issues/2020)) ([f1f43d6](https://github.com/nimbus-agent/Nimbus/commit/f1f43d6b420149f64b8575141d92188bd6b908b2))
+
 ## [10.64.0](https://github.com/nimbus-agent/Nimbus/compare/v10.63.0...v10.64.0) (2026-11-16)
 
 
