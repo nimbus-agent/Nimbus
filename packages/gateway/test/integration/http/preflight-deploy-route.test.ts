@@ -92,7 +92,8 @@ pagerduty_services = ["P12ABCD"]
     expect(typeof legacy["service"]).toBe("string");
     expect(typeof legacy["target_ref"]).toBe("string");
     expect(typeof legacy["computed_at"]).toBe("string");
-    expect(["ok", "warn"]).toContain(legacy["verdict"]);
+    expect(typeof legacy["verdict"]).toBe("string");
+    expect(["ok", "warn"]).toContain(legacy["verdict"] as string);
     const checks = legacy["checks"] as Record<string, { count: number; findings: unknown[] }>;
     for (const k of ["active_p1_incidents", "failing_ci_runs", "merge_conflicts"]) {
       expect(typeof checks[k]?.count).toBe("number");

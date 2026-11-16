@@ -126,7 +126,7 @@ function quietDaysKey(raw: string, report: Report): readonly number[] {
 function quietHoursKey(raw: string, report: Report): readonly QuietWindow[] {
   const values = stringList(raw);
   const windows = values?.map(parseQuietWindow);
-  if (values === null || windows === undefined || windows.some((w) => w === null)) {
+  if (values === null || windows === undefined || windows.includes(null)) {
     report(
       `[preflight.risk].quiet_hours must be a one-line array of "<day> HH:MM-HH:MM" windows with the end after the start and no later than 24:00 (got: ${raw}); using ${DEFAULT_QUIET_HOURS_TEXT.join(", ")}`,
     );

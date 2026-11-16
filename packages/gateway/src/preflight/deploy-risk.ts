@@ -228,7 +228,7 @@ function alertHits(
 function recentFailedDeploy(inputs: RiskInputs): Hit | null {
   const { db, cfg, nowMs } = inputs;
   const last = selectLastDeploymentBefore(db, cfg.serviceId, cfg.deployEnvironments, nowMs + 1);
-  if (last === null || last.conclusion !== "failure") return null;
+  if (last?.conclusion !== "failure") return null;
   const at = last.finishedAtMs ?? last.startedAtMs;
   if (nowMs - at > DAY_MS) return null;
   return {
@@ -289,8 +289,9 @@ export function systemStateFactor(inputs: RiskInputs): RiskFactor {
     alertsReady ? "alerts" : null,
     "the last deployment",
   ].filter((x): x is string => x !== null);
+  const depsNote = deps.length > 0 ? `; dependencies: ${deps.join(", ")}` : "";
   const notes = [
-    `none open or failed (checked ${checked.join(", ")}${deps.length > 0 ? `; dependencies: ${deps.join(", ")}` : ""})`,
+    `none open or failed (checked ${checked.join(", ")}${depsNote})`,
     unscoredAlerts > 0
       ? `${plural(unscoredAlerts, "lower-priority alert")} open, not scored`
       : null,
