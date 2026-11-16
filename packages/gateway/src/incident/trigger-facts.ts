@@ -111,6 +111,20 @@ function isoMs(meta: Meta, key: string): number | null {
   return Number.isFinite(ms) ? ms : null;
 }
 
+/** The status words that read closed, per source (anything else, present, reads open). */
+const CLOSED_WORDS: Readonly<Record<TriggerService, readonly string[]>> = {
+  pagerduty: ["resolved"],
+  jira: ["closed"],
+  sentry: ["resolved", "ignored"],
+  montecarlo: ["resolved", "closed"],
+  bigeye: [],
+};
+
+/** Whether a status VALUE (e.g. an `item_history` new value) reads closed for `service`. */
+export function isClosedStatusWord(service: TriggerService, raw: string | null): boolean {
+  return raw !== null && CLOSED_WORDS[service].includes(asciiLower(trimSpaces(raw)));
+}
+
 function statusOf(
   raw: string | null,
   closed: readonly string[],
@@ -129,7 +143,7 @@ function timePair(
 
 function pagerdutyFacts(meta: Meta): TriggerFacts {
   const statusRaw = str(meta, "status");
-  const status = statusOf(statusRaw, ["resolved"], "open");
+  const status = statusOf(statusRaw, CLOSED_WORDS.pagerduty, "open");
   const severityRaw = str(meta, "severity");
   const opened = timePair(finiteMs(meta, "opened_at_ms"), "provider");
   const closed =
@@ -152,7 +166,7 @@ function pagerdutyFacts(meta: Meta): TriggerFacts {
 
 function jsmFacts(meta: Meta): TriggerFacts {
   const statusRaw = str(meta, "status");
-  const status = statusOf(statusRaw, ["closed"], "unknown");
+  const status = statusOf(statusRaw, CLOSED_WORDS.jira, "unknown");
   const severityRaw = str(meta, "priority");
   const opened = timePair(finiteMs(meta, "opened_at_ms"), "provider");
   const closed =
@@ -175,7 +189,7 @@ function jsmFacts(meta: Meta): TriggerFacts {
 
 function sentryFacts(meta: Meta): TriggerFacts {
   const statusRaw = str(meta, "status");
-  const status = statusOf(statusRaw, ["resolved", "ignored"], "unknown");
+  const status = statusOf(statusRaw, CLOSED_WORDS.sentry, "unknown");
   const severityRaw = str(meta, "level");
   const opened = timePair(finiteMs(meta, "firstSeen"), "provider");
   return {
@@ -195,7 +209,7 @@ function sentryFacts(meta: Meta): TriggerFacts {
 
 function monteCarloFacts(meta: Meta): TriggerFacts {
   const statusRaw = str(meta, "status");
-  const status = statusOf(statusRaw, ["resolved", "closed"], "unknown");
+  const status = statusOf(statusRaw, CLOSED_WORDS.montecarlo, "unknown");
   const severityRaw = str(meta, "severity");
   const opened = timePair(isoMs(meta, "firstSeenAt"), "provider");
   return {
