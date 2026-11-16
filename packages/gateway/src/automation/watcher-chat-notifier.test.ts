@@ -759,6 +759,43 @@ describe("pre-settle hold and delivery state (the scenario table)", () => {
   });
 });
 
+describe("edges", () => {
+  test("held entries with the same lastHeldAt flush by watcher id", async () => {
+    const r = rig();
+    r.setNow(5 * SEC);
+    r.n.notify(notice("wb", 0));
+    r.n.notify(notice("wa", 0));
+    r.setNow(6 * SEC);
+    r.n.settle(async () => 1);
+    await r.n.whenIdle();
+    expect(r.calls.map((c) => /\((w[ab])\)/.exec(c.text)?.[1])).toEqual(["wa", "wb"]);
+  });
+
+  test("a match count that is not a safe integer reads 0, never NaN", () => {
+    const text = watcherNoticeText(notice(UUID_A, 0, { matchCount: Number.NaN }), 0, false);
+    expect(text).toContain("fired: 0 new match(es)");
+  });
+
+  test("a poster that resolves a non-number is a failure", async () => {
+    const r = rig({ poster: (async () => "ok") as unknown as WatcherNoticePoster });
+    r.n.settle(async () => 1);
+    r.setNow(10 * SEC);
+    r.n.notify(notice(UUID_A, 0));
+    await r.n.whenIdle();
+    expect(r.n.snapshot().failures).toBe(1);
+    expect(r.n.snapshot().lastPostedAt[UUID_A]).toBeUndefined();
+  });
+
+  test("after settle(undefined) a live fire is dropped without a second log line", () => {
+    const r = rig();
+    r.n.settle(undefined);
+    r.setNow(10 * SEC);
+    r.n.notify(notice(UUID_A, 0));
+    expect(r.n.snapshot().suppressed[UUID_A]).toBeUndefined();
+    expect(r.warns).toHaveLength(1);
+  });
+});
+
 describe("containment", () => {
   test("a poster that throws synchronously or rejects never escapes notify()", async () => {
     const sync = rig();
