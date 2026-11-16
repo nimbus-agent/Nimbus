@@ -6486,6 +6486,10 @@ ${middle}}`;
     [`${SRC}ipc/other.ts`, "const r = actDoorRefusal(t, i, c);"],
     [`${SRC}mcp-sink/capture-store.ts`, "const n = legacyActionTypesSince(1);"],
     [`${SRC}mcp-sink/capture-types.ts`, "const l = isLegacyBasis(b);"],
+    [`${SRC}connectors/connector-writes/agent-door.ts`, 'const v = { basis: "legacy_mail_send" };'],
+    [`${SRC}ipc/capture-rpc.ts`, "if (basis === 'legacy_unapproved') return;"],
+    [`${SRC}mcp-sink/capture-gate.ts`, "const b = `legacy_user_mcp`;"],
+    [`${SRC}ipc/other.ts`, 'const r = "actDoorRefusal";'],
   ])("(a) the retired deprecation-window name in %s is refused", (path, code) => {
     expect(rules(checkAgentDoorWindowRetired, add(path, code))).toEqual([
       "agent-door-window-names-absent",

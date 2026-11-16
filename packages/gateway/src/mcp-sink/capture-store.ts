@@ -99,6 +99,10 @@ function toRow(r: RawRow): CaptureRow {
 export class CaptureStore {
   constructor(private readonly db: Database) {}
 
+  // The V97 `capture.legacy` column is DEAD since AD3b (the deprecation window it flagged is closed):
+  // it is never written (it takes its DEFAULT 0) and never read. It stays only because dropping a
+  // column is a migration. Do not read it: a proposal's basis is the agent door's verdict, re-derived
+  // at submit and at approval, never a stored flag.
   insert(row: NewCaptureRow): void {
     dbRun(
       this.db,

@@ -2305,7 +2305,7 @@ export function checkDoorApprovalConfinement(files: readonly FileEntry[]): Viola
 // tests under I58 and I42 are authoritative. Test files (and `.test-helpers.ts`) are not scanned.
 const D49_SRC = "packages/gateway/src/";
 const D49_RETIRED_NAMES_RE =
-  /\b(?:ACTION_PROPOSABILITY|classifyActionType|proposableWriteTool|PROPOSABLE_WRITE_TOOLS|actDoorRefusal|createActionDestinationRefusal|agentDoorLegacy|legacyActionTypesSince|isLegacyBasis)\b/g;
+  /\b(?:ACTION_PROPOSABILITY|classifyActionType|proposableWriteTool|PROPOSABLE_WRITE_TOOLS|actDoorRefusal|createActionDestinationRefusal|agentDoorLegacy|legacyActionTypesSince|isLegacyBasis|legacy_unapproved|legacy_mail_send|legacy_user_mcp)\b/g;
 const D49_RETIRED_NAMES_ALLOWED: readonly string[] = [];
 const D49_BUILD_DOOR_RE = /\bcreateAgentDoor\b/g;
 const D49_BUILD_DOOR_ALLOWED: readonly string[] = [
@@ -2545,7 +2545,9 @@ export function checkAgentDoorWindowRetired(files: readonly FileEntry[]): Violat
       D49_RETIRED_NAMES_RE,
       D49_RETIRED_NAMES_ALLOWED,
       "agent-door-window-names-absent",
-      false,
+      // Strings are KEPT: the three `legacy_*` bases were string literals (`basis: "legacy_mail_send"`),
+      // so a scan of identifiers alone would miss them coming back.
+      true,
     ),
     ...d49ScanNames(
       files,
