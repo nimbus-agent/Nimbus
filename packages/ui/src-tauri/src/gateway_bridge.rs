@@ -733,6 +733,10 @@ mod tests {
         // the LAN: the audit namespace is off the LAN as a whole.
         assert!(!is_method_allowed("audit.proveByProposer"));
         assert!(!is_method_allowed("audit.listByDoor"));
+        // Phase 10 IC4: the incident replay and timeline are owner-terminal only for now
+        // (`incident.timeline` joins the renderer at the desktop slice, IC10; `audit.replay` never).
+        assert!(!is_method_allowed("audit.replay"));
+        assert!(!is_method_allowed("incident.timeline"));
         // The audit reads the renderer already had are unchanged.
         assert!(is_method_allowed("audit.list"));
         assert!(is_method_allowed("audit.verify"));

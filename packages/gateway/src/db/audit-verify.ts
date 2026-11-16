@@ -6,6 +6,11 @@ export const VERIFY_PAGE_ROWS = 1_000;
 
 export type AuditVerifyOptions = {
   fromId: number;
+  /**
+   * Phase 10 IC4: stop after the row with this id (inclusive), so `nimbus audit replay` verifies only the range
+   * it read. Absent: to the end of the table, exactly as before. A `toId` below `fromId` throws.
+   */
+  toId?: number;
 };
 
 export type AuditVerifyResult = {
@@ -22,6 +27,8 @@ export function verifyAuditChain(idx: LocalIndex, opts: AuditVerifyOptions): Aud
   // without the column reconstructs with federationJson = null, i.e. the legacy hash.
   const fedColumn = auditLogHasFederationJson(idx.rawDb) ? ", federation_json" : "";
   const fromId = Math.max(0, Math.floor(opts.fromId));
+  const toId = opts.toId === undefined ? Number.MAX_SAFE_INTEGER : Math.floor(opts.toId);
+  if (toId < fromId) throw new RangeError("verifyAuditChain: toId is below fromId");
   type AuditVerifyRow = {
     id: number;
     action_type: string;
@@ -34,9 +41,9 @@ export function verifyAuditChain(idx: LocalIndex, opts: AuditVerifyOptions): Aud
   };
   // Read in id-ordered pages so memory is bounded by one page, not by the table; the walk, its
   // result and its first-break id are the same as one read of every row.
-  const page = idx.rawDb.query<AuditVerifyRow, [number, number]>(
+  const page = idx.rawDb.query<AuditVerifyRow, [number, number, number]>(
     `SELECT id, action_type, hitl_status, action_json, timestamp, row_hash, prev_hash${fedColumn}
-       FROM audit_log WHERE id > ? ORDER BY id ASC LIMIT ?`,
+       FROM audit_log WHERE id > ? AND id <= ? ORDER BY id ASC LIMIT ?`,
   );
 
   let prev =
@@ -53,7 +60,7 @@ export function verifyAuditChain(idx: LocalIndex, opts: AuditVerifyOptions): Aud
 
   let after = fromId;
   for (;;) {
-    const rows = page.all(after, VERIFY_PAGE_ROWS);
+    const rows = page.all(after, toId, VERIFY_PAGE_ROWS);
     for (const r of rows) {
       if (r.prev_hash !== prev) {
         return {

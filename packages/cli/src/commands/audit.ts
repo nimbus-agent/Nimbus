@@ -306,6 +306,183 @@ export async function runAuditStanding(
   }
 }
 
+// ---- `nimbus audit replay <incident-id>` (incident engine IC4) ------------------------------------
+
+export const AUDIT_REPLAY_USAGE = "usage: nimbus audit replay <incident-id> [--json]";
+
+export interface AuditReplayArgs {
+  readonly id: string;
+  readonly json: boolean;
+}
+
+export function parseAuditReplayArgs(args: readonly string[]): AuditReplayArgs {
+  let json = false;
+  let id: string | undefined;
+  for (const a of args) {
+    if (a === "--json") {
+      if (json) throw new Error(`--json was given more than once.\n${AUDIT_REPLAY_USAGE}`);
+      json = true;
+    } else if (a.startsWith("--")) {
+      throw new Error(`Unknown option ${stripControlChars(a)}.\n${AUDIT_REPLAY_USAGE}`);
+    } else if (id !== undefined) {
+      throw new Error(`Give one incident id.\n${AUDIT_REPLAY_USAGE}`);
+    } else {
+      id = a;
+    }
+  }
+  if (id === undefined) throw new Error(`An incident id is required.\n${AUDIT_REPLAY_USAGE}`);
+  return { id, json };
+}
+
+/** Mirrors `ReplayResult` in `gateway/src/audit/incident-replay.ts` (the CLI cannot import the gateway). */
+interface ReplayRowView {
+  readonly auditId: number;
+  readonly timestamp: number;
+  readonly actionType: string;
+  readonly hitlStatus: string;
+  readonly answerSource: string | null;
+  readonly confirm: string | null;
+  readonly linkVersion: number;
+  readonly unknownVersion: boolean;
+  readonly rowTruncated: boolean;
+  readonly egress: {
+    readonly id: number;
+    readonly resultStatus: string;
+    readonly paired: string;
+    readonly summaryMismatch: boolean;
+    readonly statusDiffers: boolean;
+  } | null;
+}
+interface ReplayStepView extends ReplayRowView {
+  readonly prompt: { readonly text: string; readonly cut: boolean; readonly sha256: string } | null;
+  readonly subSteps: readonly ReplayRowView[];
+}
+interface ReplayRangeView {
+  readonly anchorId: number;
+  readonly toId: number;
+  readonly rowsRead: number;
+  readonly ok: boolean;
+  readonly verifiedRows: number;
+  readonly firstBreak: number | null;
+  readonly reason: string | null;
+}
+export interface ReplayView {
+  readonly ok: boolean;
+  readonly record: {
+    readonly id: string;
+    readonly triggerItemId: string;
+    readonly service: string | null;
+    readonly currentVersion: number;
+    readonly versions: readonly {
+      readonly version: number;
+      readonly assembledAtMs: number;
+      readonly recordSha256: string;
+      readonly changedKeys: readonly string[];
+    }[];
+  };
+  readonly actions: readonly ReplayStepView[];
+  readonly proposals: { readonly note: string };
+  readonly verification: {
+    readonly audit: ReplayRangeView | null;
+    readonly egress: ReplayRangeView | null;
+  };
+  readonly notes: readonly string[];
+}
+
+const oneLineClean = (s: string): string => stripControlChars(s).replace(/\s+/g, " ").trim();
+const utcSec = (ms: number): string =>
+  `${new Date(ms).toISOString().slice(0, 19).replace("T", " ")} UTC`;
+
+/** The prompt escaped (`JSON.stringify` escapes controls and quotes), then stripped of what it leaves (bidi marks). */
+function escapedPrompt(text: string): string {
+  return stripControlChars(JSON.stringify(text)).replace(/[\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, "");
+}
+
+function replayRowLine(r: ReplayRowView, indent: string): string[] {
+  const parts = [
+    `${indent}#${String(r.auditId)} ${utcSec(r.timestamp)} ${oneLineClean(r.actionType)}  ${oneLineClean(r.hitlStatus)}`,
+    r.answerSource === null ? "" : `answered by ${oneLineClean(r.answerSource)}`,
+    r.confirm === null ? "" : `typed confirmation: ${oneLineClean(r.confirm)}`,
+    `record version ${String(r.linkVersion)}${r.unknownVersion ? " (not stored)" : ""}`,
+    r.rowTruncated ? "(row cut by the audit cap)" : "",
+  ].filter((p) => p !== "");
+  const lines = [parts.join("  ")];
+  if (r.egress !== null) {
+    const flags = [
+      r.egress.paired === "ambiguous" ? "pairing ambiguous" : "",
+      r.egress.summaryMismatch ? "summary head does not name this record (summary_mismatch)" : "",
+      r.egress.statusDiffers ? "status differs from the verdict" : "",
+    ].filter((f) => f !== "");
+    lines.push(
+      `${indent}  egress #${String(r.egress.id)} ${oneLineClean(r.egress.resultStatus)}${flags.length === 0 ? "" : ` (${flags.join("; ")})`}`,
+    );
+  } else {
+    lines.push(`${indent}  no egress row paired`);
+  }
+  return lines;
+}
+
+function rangeLine(label: string, r: ReplayRangeView | null): string {
+  if (r === null) return `${label}: not verified (no rows read)`;
+  const span = `rows after #${String(r.anchorId)} up to #${String(r.toId)} (${String(r.rowsRead)} read, ${String(r.verifiedRows)} verified)`;
+  return r.ok
+    ? `${label}: ok over ${span}`
+    : `${label}: BROKEN at #${String(r.firstBreak)} over ${span}: ${oneLineClean(r.reason ?? "unknown")}`;
+}
+
+/** The replay as terminal text. Every field that came from a row passes through `stripControlChars`. */
+export function formatReplay(r: ReplayView): string {
+  const lines: string[] = [
+    `Replay of incident record ${oneLineClean(r.record.id)} (trigger ${oneLineClean(r.record.triggerItemId)}, service ${r.record.service === null ? "(unbound)" : oneLineClean(r.record.service)})`,
+    "",
+    "Record versions:",
+    ...r.record.versions.map(
+      (v) =>
+        `  v${String(v.version)}  ${utcSec(v.assembledAtMs)}  sha256 ${v.recordSha256.slice(0, 12)}  changed: ${v.changedKeys.length === 0 ? "nothing" : v.changedKeys.map(oneLineClean).join(", ")}`,
+    ),
+    "",
+    "Nimbus actions for this record:",
+  ];
+  if (r.actions.length === 0) lines.push("  No linked actions.");
+  for (const a of r.actions) {
+    lines.push(...replayRowLine(a, "  "));
+    if (a.prompt !== null) {
+      lines.push(
+        `    prompt shown${a.prompt.cut ? " (cut)" : ""}, sha256 ${a.prompt.sha256.slice(0, 12)}: ${escapedPrompt(a.prompt.text)}`,
+      );
+    }
+    for (const s of a.subSteps) lines.push(...replayRowLine(s, "    sub-step "));
+  }
+  lines.push("", "Proposals:", `  ${oneLineClean(r.proposals.note)}`, "", "Verification:");
+  lines.push(`  ${rangeLine("audit chain", r.verification.audit)}`);
+  lines.push(`  ${rangeLine("egress chain", r.verification.egress)}`);
+  for (const n of r.notes) lines.push(`Note: ${oneLineClean(n)}`);
+  return lines.join("\n");
+}
+
+/** Exit 0 when both chains verified over the range read, 1 when one is broken, 2 for an unknown id. */
+export async function runAuditReplay(
+  client: Pick<IPCClient, "call">,
+  a: AuditReplayArgs,
+): Promise<void> {
+  await declareCliClientKind(client);
+  let r: ReplayView;
+  try {
+    r = await client.call<ReplayView>("audit.replay", { id: a.id, ...(a.json ? { full: true } : {}) });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (msg.includes("ERR_INCIDENT_NOT_FOUND")) {
+      console.error(oneLineClean(msg));
+      process.exitCode = 2;
+      return;
+    }
+    throw e;
+  }
+  if (a.json) console.log(JSON.stringify(r, null, 2));
+  else console.log(formatReplay(r));
+  process.exitCode = r.ok ? 0 : 1;
+}
+
 export async function runAuditExport(
   client: IPCClient,
   outPath: string,
@@ -332,6 +509,11 @@ export async function runAudit(args: string[]): Promise<void> {
     await withGatewayIpc((c) =>
       runAuditExport(c, outPath, (p, data) => Bun.write(p, data) as Promise<unknown>),
     );
+    return;
+  }
+  if (sub === "replay") {
+    const parsed = parseAuditReplayArgs(rest);
+    await withGatewayIpc((c) => runAuditReplay(c, parsed));
     return;
   }
   if (sub === "standing") {

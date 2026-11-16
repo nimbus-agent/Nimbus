@@ -53,7 +53,7 @@ describe("checkLanMethodAllowed", () => {
   });
 
   test("rejects the AD4 proof methods: the whole audit namespace is off the LAN", () => {
-    for (const m of ["audit.proveByProposer", "audit.listByDoor"]) {
+    for (const m of ["audit.proveByProposer", "audit.listByDoor", "audit.replay"]) {
       expect(() => checkLanMethodAllowed(m, { peerId: "p", writeAllowed: true })).toThrow(LanError);
     }
   });
@@ -139,7 +139,7 @@ describe("checkLanMethodAllowed", () => {
     }
   });
 
-  test.each(["incident.list", "incident.get", "incident.assemble"])(
+  test.each(["incident.list", "incident.get", "incident.assemble", "incident.timeline"])(
     "%s is not callable over LAN regardless of grant-write (Phase 10 IC3)",
     (method) => {
       for (const writeAllowed of [true, false]) {

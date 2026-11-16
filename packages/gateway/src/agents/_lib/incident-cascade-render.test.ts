@@ -68,7 +68,7 @@ describe("8.1 renderCascadeSection", () => {
     );
     expect(md).toContain("depends on the root through api -> db (declared depends_on)");
     expect(md).toContain("depends on the root through web -> api -> db (declared depends_on)");
-    expect(md).not.toMatch(/\bcause[sd]?\b(?! a cause)/);
+    expect(md).not.toMatch(/root cause|caused by|because of/i);
   });
 
   test("for a downstream member: it names the root", () => {

@@ -5,10 +5,12 @@ import {
   type ProposerProof,
   proveByProposer,
 } from "../audit/agent-door-proof.ts";
+import { chainVerifiers, replayIncident } from "../audit/incident-replay.ts";
 import { verifyAuditChain } from "../db/audit-verify.ts";
 import { readToolCallLog, type ToolCallLogFilter } from "../db/tool-call-log.ts";
 import { verifyEgressChain } from "../egress/egress-verify.ts";
 import type { LocalIndex } from "../index/local-index.ts";
+import { IncidentError } from "../incident/assemble.ts";
 import { dispatchByMethod, type RpcMissOrHit } from "./_lib/dispatch-by-method.ts";
 import type { ClientKind } from "./server/client-kind.ts";
 
@@ -258,6 +260,39 @@ function handleListByDoor(params: unknown, ctx: AuditRpcContext): unknown {
   return listByDoor(idx.rawDb, { door: door as Door, byLabel: proposer, sinceMs, untilMs, limit });
 }
 
+/**
+ * `nimbus audit replay <incident-id>` (Phase 10 IC4): the record's versions, the Nimbus actions linked to it with
+ * the prompt text shown to the owner, and both chains verified over the range read. The kind is the CONNECTION's
+ * (`requireProofCaller`, first, before the params and any read); it is never renderer-callable (I7) and the
+ * whole `audit` namespace is LAN-forbidden (I5). An unknown id answers `ERR_INCIDENT_NOT_FOUND`.
+ */
+function handleReplay(params: unknown, ctx: AuditRpcContext): unknown {
+  const method = "audit.replay";
+  requireProofCaller(ctx, method);
+  const p = paramsObject(params, method);
+  for (const key of Object.keys(p)) {
+    if (key !== "id" && key !== "full") {
+      throw new AuditRpcError(-32602, `${method}: unknown parameter "${key}"`);
+    }
+  }
+  const id = p["id"];
+  if (typeof id !== "string" || id.trim() === "" || id.length > 256) {
+    throw new AuditRpcError(-32602, `${method}: id must be a non-empty string`);
+  }
+  if (p["full"] !== undefined && typeof p["full"] !== "boolean") {
+    throw new AuditRpcError(-32602, `${method}: full must be a boolean`);
+  }
+  const idx = ensureIndex(ctx);
+  try {
+    return replayIncident(idx.rawDb, id.trim(), chainVerifiers(idx), {
+      includeRecords: p["full"] === true,
+    });
+  } catch (e) {
+    if (e instanceof IncidentError) throw new AuditRpcError(-32602, `${e.code}: ${e.message}`);
+    throw e;
+  }
+}
+
 export async function dispatchAuditRpc(
   method: string,
   params: unknown,
@@ -271,5 +306,6 @@ export async function dispatchAuditRpc(
     "audit.toolCalls": handleAuditToolCalls,
     "audit.proveByProposer": handleProveByProposer,
     "audit.listByDoor": handleListByDoor,
+    "audit.replay": handleReplay,
   });
 }

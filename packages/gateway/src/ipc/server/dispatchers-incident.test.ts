@@ -35,7 +35,7 @@ function makeCtx(wired: boolean, kind: ClientKind): ServerCtx {
       listenPath: "",
       vault: createMockVault(),
       version: "test",
-      ...(wired ? { incidentRpcCtx: { db, engine } } : {}),
+      ...(wired ? { incidentRpcCtx: { db, engine, dependsOn: () => new Map() } } : {}),
     },
     consentImpl: new ConsentCoordinatorImpl(() => undefined),
     startedAtMs: Date.now(),

@@ -133,3 +133,51 @@ describe("verifyAuditChain", () => {
     expect(result.verifiedRows).toBe(1);
   });
 });
+
+describe("verifyAuditChain: the inclusive upper bound (IC4 10.1)", () => {
+  function chain(n: number): LocalIndex {
+    const idx = newIndex();
+    for (let i = 1; i <= n; i += 1) {
+      idx.recordAudit({
+        actionType: "a",
+        hitlStatus: "approved",
+        actionJson: `{"n":${String(i)}}`,
+        timestamp: i,
+      });
+    }
+    return idx;
+  }
+
+  test("with no toId the result is exactly what it was", () => {
+    const idx = chain(5);
+    expect(verifyAuditChain(idx, { fromId: 0 })).toEqual({
+      ok: true,
+      verifiedRows: 5,
+      lastVerifiedId: 5,
+    });
+    expect(verifyAuditChain(idx, { fromId: 2 })).toEqual({
+      ok: true,
+      verifiedRows: 3,
+      lastVerifiedId: 5,
+    });
+  });
+
+  test("a break after toId is not reported; a break inside the range is", () => {
+    const idx = chain(6);
+    idx.rawDb.run("UPDATE audit_log SET action_json = ? WHERE id = 5", ['{"t":1}']);
+    expect(verifyAuditChain(idx, { fromId: 1, toId: 4 })).toEqual({
+      ok: true,
+      verifiedRows: 3,
+      lastVerifiedId: 4,
+    });
+    const bad = verifyAuditChain(idx, { fromId: 1, toId: 5 });
+    expect(bad.ok).toBe(false);
+    expect(bad.firstBreakAtId).toBe(5);
+  });
+
+  test("toId below fromId throws", () => {
+    const idx = chain(3);
+    expect(() => verifyAuditChain(idx, { fromId: 3, toId: 2 })).toThrow(RangeError);
+    expect(verifyAuditChain(idx, { fromId: 2, toId: 2 })).toMatchObject({ ok: true, verifiedRows: 0 });
+  });
+});

@@ -4949,7 +4949,17 @@ export async function assemblePlatformServices(
   ipcOpts.briefingRpcCtx = { runtime: briefing };
   // Incident records (Phase 10 IC3): incident.list / get / assemble. cli/ui connections only (checked per
   // call from the connection's declared kind); LAN-forbidden (I5), not Tauri-exposed (I7).
-  ipcOpts.incidentRpcCtx = { db, engine: incidentEngine };
+  ipcOpts.incidentRpcCtx = {
+    db,
+    engine: incidentEngine,
+    dependsOn: () =>
+      new Map(
+        loadServiceConfigsOrEmpty(paths.configDir, (m) => syncLogger.warn(m)).map((c) => [
+          c.serviceId,
+          c.dependsOn,
+        ]),
+      ),
+  };
   // pre-S3 item E: notifications.status / notifications.test (CLI-only; LAN-forbidden, not Tauri).
   ipcOpts.notificationsRpcCtx = { runtime: notificationsRuntime };
   // MCP capture sink (I28): capture.* / captures.* (LAN-forbidden by namespace, not Tauri, no HTTP).
