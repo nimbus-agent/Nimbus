@@ -1507,7 +1507,7 @@ describe("B4a act door: the calendar and Drive creates show their typed preview,
   }
 });
 
-describe("B2 act door: actDoorRefusal at submit and at accept (OR-B2-2, OR-B2-3)", () => {
+describe("B2 act door: the door's refusal at submit and at accept (OR-B2-2, OR-B2-3)", () => {
   const MCP = { clientId: "m", kind: "mcp" as const };
   const OWNER = { clientId: "o", kind: "cli" as const };
 
