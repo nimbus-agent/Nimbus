@@ -498,6 +498,42 @@ components:
               $ref: "#/components/schemas/PreflightCiCheck"
             merge_conflicts:
               $ref: "#/components/schemas/PreflightPrCheck"
+        risk:
+          $ref: "#/components/schemas/DeployRisk"
+    DeployRisk:
+      type: object
+      description: >-
+        Advisory deploy-risk block (Phase 17). OPTIONAL: a consumer that ignores it sees the same
+        envelope as before. It changes `verdict` only when the owner configured
+        `[preflight.risk] fail_at` and the level reached it.
+      required: [level, why, factors, advisory, fail_at, verdict_escalated]
+      properties:
+        level:
+          type: string
+          enum: [low, elevated, high, unknown]
+          description: The maximum over the known factors; `unknown` when no factor is known, never `low`.
+        why: { type: string }
+        factors:
+          type: array
+          items: { $ref: "#/components/schemas/DeployRiskFactor" }
+        advisory: { type: boolean, enum: [true] }
+        fail_at:
+          nullable: true
+          type: string
+          enum: [elevated, high]
+        verdict_escalated: { type: boolean }
+    DeployRiskFactor:
+      type: object
+      required: [id, level, evidence, known]
+      properties:
+        id:
+          type: string
+          enum: [system_state, change_velocity, oncall_coverage, time_of_week]
+        level:
+          type: string
+          enum: [low, elevated, high, unknown]
+        evidence: { type: string }
+        known: { type: boolean }
     PreflightIncidentCheck:
       type: object
       required: [count, findings, gap]

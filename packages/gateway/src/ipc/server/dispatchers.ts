@@ -9,6 +9,7 @@ import {
   loadNimbusPreflightFromConfigDir,
   loadNimbusServiceConfigsFromConfigDir,
 } from "../../config/nimbus-toml.ts";
+import { loadNimbusPreflightRiskFromConfigDir } from "../../config/preflight-risk-toml.ts";
 import { createConnectorDispatcher, meshDispatcherClient } from "../../connectors/registry.ts";
 import { asRecord } from "../../connectors/unknown-record.ts";
 import { userMcpWriteGrantsReader } from "../../connectors/user-mcp-write-reader.ts";
@@ -581,6 +582,7 @@ export async function tryDispatchPreflightRpc(
     const out = await dispatchPreflightRpc(method, params, {
       db: ctx.options.localIndex.getDatabase(),
       loadConfig: () => loadNimbusServiceConfigsFromConfigDir(configDir),
+      loadRiskConfig: () => loadNimbusPreflightRiskFromConfigDir(configDir),
     });
     if (out.kind === "hit") return out.value;
   } catch (e) {

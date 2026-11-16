@@ -68,6 +68,38 @@ pagerduty_services = ["P12ABCD"]
     expect(body.checks).toHaveProperty("merge_conflicts");
   });
 
+  it("carries the optional advisory risk block, and a consumer that ignores it still validates", async () => {
+    const res = await fetch(
+      `http://127.0.0.1:${port}/v1/preflight/deploy?service=payment-service&target_ref=main`,
+    );
+    const body = (await res.json()) as Record<string, unknown>;
+    const risk = body["risk"] as {
+      level: string;
+      advisory: boolean;
+      factors: { id: string; level: string; evidence: string; known: boolean }[];
+    };
+    expect(["low", "elevated", "high", "unknown"]).toContain(risk.level);
+    expect(risk.advisory).toBe(true);
+    expect(risk.factors.map((f) => f.id)).toEqual([
+      "system_state",
+      "change_velocity",
+      "oncall_coverage",
+      "time_of_week",
+    ]);
+    // What the published Action reads: every member below must be present and well typed with
+    // `risk` removed, so adding the block cannot have displaced one of them.
+    const { risk: _ignored, ...legacy } = body;
+    expect(typeof legacy["service"]).toBe("string");
+    expect(typeof legacy["target_ref"]).toBe("string");
+    expect(typeof legacy["computed_at"]).toBe("string");
+    expect(["ok", "warn"]).toContain(legacy["verdict"]);
+    const checks = legacy["checks"] as Record<string, { count: number; findings: unknown[] }>;
+    for (const k of ["active_p1_incidents", "failing_ci_runs", "merge_conflicts"]) {
+      expect(typeof checks[k]?.count).toBe("number");
+      expect(Array.isArray(checks[k]?.findings)).toBe(true);
+    }
+  });
+
   it("returns 400 when service param is missing", async () => {
     const res = await fetch(`http://127.0.0.1:${port}/v1/preflight/deploy?target_ref=main`);
     expect(res.status).toBe(400);

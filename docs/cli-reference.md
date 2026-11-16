@@ -1585,6 +1585,27 @@ same envelope is served over `GET /v1/preflight/deploy`, so the GitHub Action bl
 
 A first-party GitHub Action wraps `GET /v1/preflight/deploy` for use directly in workflows — see [`packages/github-actions/preflight-query/`](../packages/github-actions/preflight-query/).
 
+**Advisory deploy risk (Phase 17).** After the three checks the command prints a `Deploy risk (advisory)` block, and the JSON envelope (IPC and `GET /v1/preflight/deploy`) gains an OPTIONAL `risk` member: `{ level, why, factors[], advisory: true, fail_at, verdict_escalated }`. `level` is `low`, `elevated`, `high` or `unknown`, the MAXIMUM over the factors the local index could answer; when none could be answered it is `unknown`, never `low`. Each factor is `{ id, level, evidence, known }` and an unanswerable one is `unknown` with `known: false`:
+
+| Factor | What it reads | Scoring |
+|---|---|---|
+| `system_state` | open PagerDuty incidents and JSM alerts bound to the service or a service it `depends_on` (fresh index only), and the latest deployment | open P1 incident on the service: `high`; any other open incident, an incident on a dependency, an open P1 or P2 alert, or a failed latest deployment in the last 24h: `elevated`; sources bound and fresh with none of those: `low`; no bound and fresh source: `unknown` |
+| `change_velocity` | successful deployments in 24h and 7d against the service's own 28 days before the last week (the DORA deployment-frequency reader) | 4 or more in 24h and 4x the baseline: `high`; 2 or more in 24h and 2x, or 6 or more in 7d and 2x the baseline week: `elevated`; otherwise `low`; under 3 baseline deployments, no history, or a CI provider the index cannot judge: `unknown` |
+| `oncall_coverage` | the indexed on-call shifts of the service's bound PagerDuty services (the `oncall.now` reader) | someone on call: `low`; fresh, complete shift data showing nobody: `elevated`; no binding, no shift data, no match, stale data or an incomplete service map: `unknown` (never `uncovered`) |
+| `time_of_week` | the service-local weekday and time | inside a quiet day or window: `elevated`; otherwise `low` |
+
+The block is a heads-up, not a gate: it never changes the verdict or the exit code by default. Two optional config keys in `nimbus.toml` (`[preflight.risk]`, layered like every section; a bad value falls back to its default with a warning that `nimbus config explain` shows):
+
+```toml
+[preflight.risk]
+quiet_days  = ["sat", "sun"]        # whole days flagged
+quiet_hours = ["fri 15:00-24:00"]   # "<day> HH:MM-HH:MM", end after start, no midnight crossing
+tz          = "Europe/Berlin"       # the zone the two keys are read in; absent = the gateway machine's zone
+fail_at     = "high"                # "elevated" | "high"; absent = the risk never changes the verdict
+```
+
+With `fail_at` set, a known level at or above it turns an `ok` verdict into `warn` (`risk.verdict_escalated: true`), so `--mode block` and the GitHub Action then fail it; `unknown` never trips it. Read from the local index only: no network, no model, no connector call.
+
 Read-only; no HITL.
 
 ---
