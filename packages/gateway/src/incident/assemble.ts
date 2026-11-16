@@ -270,27 +270,32 @@ function buildBody(deps: AssembleDeps, ev: Evidence, nowMs: number, trigger: Tri
   });
   gaps.push(...history.gaps);
 
-  const timeless = open === null;
-  if (timeless) gaps.push(noOpenTimeGap());
-  const skip = cfg === null ? "unbound" : timeless ? "no_open_time" : null;
+  if (open === null) gaps.push(noOpenTimeGap());
+  // Lanes 2 to 5 are anchored on a bound service AND an open time; without either they are skipped, with the reason.
+  const anchor = ev.cfg !== null && open !== null ? { cfg: ev.cfg, open } : null;
+  const reason = ev.cfg === null ? "unbound" : "no_open_time";
 
   const change =
-    skip !== null || cfg === null || open === null
-      ? skippedChange(skip ?? "unbound")
+    anchor === null
+      ? skippedChange(reason)
       : changeLane(db, {
-          cfg,
+          cfg: anchor.cfg,
           triggerItemId: trigger.itemId,
           triggerService: trigger.service,
-          openedAtMs: open,
+          openedAtMs: anchor.open,
         });
   const chat =
-    skip !== null || cfg === null || open === null
-      ? skippedChat(skip ?? "unbound")
-      : chatLane(db, { cfg, openedAtMs: open, nowMs });
+    anchor === null
+      ? skippedChat(reason)
+      : chatLane(db, { cfg: anchor.cfg, openedAtMs: anchor.open, nowMs });
   const prior =
-    skip !== null || cfg === null || open === null
-      ? skippedPrior(skip ?? "unbound")
-      : priorLane(db, { service: cfg.serviceId, triggerItemId: trigger.itemId, openedAtMs: open });
+    anchor === null
+      ? skippedPrior(reason)
+      : priorLane(db, {
+          service: anchor.cfg.serviceId,
+          triggerItemId: trigger.itemId,
+          openedAtMs: anchor.open,
+        });
   const concurrent =
     open === null
       ? skippedConcurrent()

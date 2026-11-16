@@ -140,7 +140,7 @@ describe("re-assembly", () => {
     const first = getByTriggerItem(db, "pagerduty:P");
     const v1 = db
       .query("SELECT record_json FROM incident_record_version WHERE record_id = ? AND version = 1")
-      .get(first?.id) as { record_json: string };
+      .get(first?.id ?? "") as { record_json: string };
     await engine.trigger("pagerduty"); // a no-op sync
     expect(versionsOf(db, first?.id ?? "")).toHaveLength(1);
     expect(events).toHaveLength(1);
@@ -166,7 +166,7 @@ describe("re-assembly", () => {
     expect(rec.trigger.closed).toEqual({ ms: OPEN + 3 * 60_000, basis: "provider" });
     const stillV1 = db
       .query("SELECT record_json FROM incident_record_version WHERE record_id = ? AND version = 1")
-      .get(first?.id) as { record_json: string };
+      .get(first?.id ?? "") as { record_json: string };
     expect(stillV1.record_json).toBe(v1.record_json);
     expect(events.map((e) => e.version)).toEqual([1, 2]);
   });

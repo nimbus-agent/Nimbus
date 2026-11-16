@@ -39,7 +39,10 @@ type FakeRuntime = Pick<
 
 function fakeRuntime(over: Partial<FakeRuntime> = {}): OncallPushRuntime {
   const base: FakeRuntime = {
-    config: { chatopsNamespace: "", sources: ["pagerduty"] } as OncallPushRuntime["config"],
+    config: {
+      chatopsNamespace: "",
+      sources: ["pagerduty"],
+    } as unknown as OncallPushRuntime["config"],
     incidentEngineEnabled: () => true,
     lastRun: () => null,
     isEnabled: () => true,
