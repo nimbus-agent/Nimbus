@@ -115,6 +115,8 @@ PRIVACY & AUDIT
   nimbus eval --installed [--threshold <n>] [--json]
                               Evaluate every enabled extension (one approval); compare with the registry's score
   nimbus security scan        Local security scan (secrets, vulnerable deps, risky IaC)
+  nimbus cost anomalies [--service <id>] [--days <n>] [--json]
+                              Days whose cloud spend jumped over the 7-day baseline, from the local index
   nimbus data export|import|delete   Encrypted bundle export/import; per-service deletion
   nimbus vault set|get|delete|list   Secrets (OS keyring only — never config, never logs)
   nimbus telemetry show | disable

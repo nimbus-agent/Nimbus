@@ -16,6 +16,7 @@ export { runComputer } from "./computer.ts";
 export { runConfig } from "./config.ts";
 export { runConflictsCli } from "./conflicts.ts";
 export { runConnector } from "./connector.ts";
+export { runCostCommand } from "./cost.ts";
 export { runData } from "./data.ts";
 export { runDb } from "./db.ts";
 export { runDecisionsCommand } from "./decisions.ts";
