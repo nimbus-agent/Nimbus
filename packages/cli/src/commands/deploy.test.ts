@@ -377,6 +377,84 @@ describe("runDeployCli — dispatcher", () => {
     expect(stderrChunks.join("")).toContain("malformed envelope");
   });
 
+  describe("advisory risk block", () => {
+    const risk = {
+      level: "elevated",
+      why: "Elevated risk, driven by time_of_week: sat 12:00 in UTC is a quiet day.",
+      advisory: true,
+      fail_at: null,
+      verdict_escalated: false,
+      factors: [
+        { id: "system_state", level: "unknown", evidence: "no source", known: false },
+        { id: "time_of_week", level: "elevated", evidence: "sat 12:00 in UTC", known: true },
+      ],
+    };
+    const okEnvelope = {
+      service: "svc",
+      target_ref: "main",
+      verdict: "ok" as const,
+      computed_at: "2026-05-22T00:00:00Z",
+      checks: {
+        active_p1_incidents: { count: 0, findings: [], gap: null },
+        failing_ci_runs: { count: 0, findings: [], gap: null },
+        merge_conflicts: { count: 0, findings: [], gap: null },
+      },
+    };
+
+    it("prints the risk after the checks, every factor with its evidence, and says advisory", async () => {
+      const mock = createMockIpcClient([{ ...okEnvelope, risk }]);
+      setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH }, ipcClient: mock.client });
+      await runDeployCli(["preflight", "--service", "svc", "--target-ref", "main"]);
+      const out = stdoutChunks.join("");
+      expect(out.indexOf("Open PR merge conflicts")).toBeLessThan(out.indexOf("Deploy risk"));
+      expect(out).toContain("Deploy risk (advisory): ELEVATED");
+      expect(out).toContain("system_state");
+      expect(out).toContain("no source");
+      expect(out).toContain("sat 12:00 in UTC");
+      expect(out).toContain("does not change the verdict above");
+    });
+
+    it("an elevated risk does not change the exit code under --mode block when the verdict is ok", async () => {
+      const mock = createMockIpcClient([{ ...okEnvelope, risk }]);
+      setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH }, ipcClient: mock.client });
+      await runDeployCli([
+        "preflight",
+        "--service",
+        "svc",
+        "--target-ref",
+        "main",
+        "--mode",
+        "block",
+      ]);
+      expect(stdoutChunks.join("")).toContain("[ok]");
+    });
+
+    it("an escalated verdict blocks under --mode block and the output says why", async () => {
+      const escalated = { ...risk, fail_at: "elevated", verdict_escalated: true };
+      const mock = createMockIpcClient([{ ...okEnvelope, verdict: "warn", risk: escalated }]);
+      setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH }, ipcClient: mock.client });
+      await expect(
+        runDeployCli(["preflight", "--service", "svc", "--target-ref", "main", "--mode", "block"]),
+      ).rejects.toThrow(/process\.exit/);
+      expect(stdoutChunks.join("")).toContain('fail_at = "elevated"');
+    });
+
+    it("an older gateway's envelope with no risk member still renders", async () => {
+      const mock = createMockIpcClient([okEnvelope]);
+      setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH }, ipcClient: mock.client });
+      await runDeployCli(["preflight", "--service", "svc", "--target-ref", "main"]);
+      expect(stdoutChunks.join("")).not.toContain("Deploy risk");
+    });
+
+    it("a malformed risk member is a malformed envelope", async () => {
+      const mock = createMockIpcClient([{ ...okEnvelope, risk: { level: 3 } }]);
+      setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH }, ipcClient: mock.client });
+      await expect(
+        runDeployCli(["preflight", "--service", "svc", "--target-ref", "main"]),
+      ).rejects.toThrow("process.exit(2)");
+    });
+  });
+
   // Color branches are tested as PURE functions — no global process.stdout.isTTY /
   // process.env.NO_COLOR mutation (that leaks across files in the combined run).
   it("shouldUseColor / formatVerdictTag / formatGapTag cover the color branches (pure)", () => {

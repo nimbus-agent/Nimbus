@@ -70,6 +70,7 @@ import { loadGlossaryManualFromConfigDir } from "./nimbus-toml-glossary-terms.ts
 import { loadNimbusWorkdayFromConfigDir } from "./nimbus-toml-workday.ts";
 import { loadNimbusNotificationsFromConfigDir } from "./notifications-toml.ts";
 import { loadNimbusOncallPushFromConfigDir } from "./oncall-push-toml.ts";
+import { loadNimbusPreflightRiskFromConfigDir } from "./preflight-risk-toml.ts";
 import { loadNimbusSessionFromConfigDir } from "./session-toml.ts";
 import { loadNimbusStandingFromConfigDir } from "./standing-toml.ts";
 import { loadNimbusTelemetryFromConfigDir } from "./telemetry-toml.ts";
@@ -118,6 +119,7 @@ export const SECTION_LOADERS: Readonly<Record<string, (configDir: string) => unk
   ownership: loadNimbusOwnershipFromConfigDir,
   pagerduty: loadNimbusPagerdutyFromConfigDir,
   persona: (configDir) => loadNimbusPersonaFromConfigDir(configDir),
+  "preflight.risk": loadNimbusPreflightRiskFromConfigDir,
   premortem: loadNimbusPremortemFromConfigDir,
   scim: loadNimbusScimFromConfigDir,
   security: loadNimbusSecurityFromConfigDir,
