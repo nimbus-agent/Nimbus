@@ -3305,6 +3305,8 @@ interface ConfinementSpec {
   readonly forbiddenSegmentRe: RegExp;
   readonly forbiddenImportRule: string;
   readonly noNetworkRule: string;
+  /** An import target the rule permits although its path segment would be forbidden (D50(e) only). */
+  readonly allowTarget?: (target: string) => boolean;
 }
 
 function inBriefingScope(relPath: string): boolean {
@@ -3329,6 +3331,11 @@ function checkConfinement(files: readonly FileEntry[], spec: ConfinementSpec): V
       out.push({ rule, file: f.relPath, line, snippet: (original[line - 1] ?? "").trim() });
     };
     const specifier = (target: string, valueImport: boolean, index: number | undefined): void => {
+      if (spec.allowTarget?.(target) === true) {
+        // A named exception: still no network module.
+        if (D45_NETWORK_MODULE_RE.test(target)) push(spec.noNetworkRule, commentFree, index);
+        return;
+      }
       if (spec.forbiddenSegmentRe.test(target)) {
         push(spec.forbiddenImportRule, commentFree, index);
       } else if (D45_CONNECTORS_SEGMENT_RE.test(target) && valueImport) {
@@ -3423,6 +3430,172 @@ export function checkIncidentConfinement(files: readonly FileEntry[]): Violation
     forbiddenImportRule: "incident-forbidden-import",
     noNetworkRule: "incident-no-network",
   });
+}
+
+// ---- D50 (signed workflow import, I59) ------------------------------------------------------------
+// (a) Rule `workflow-import-table-confined`: the table `workflow_import` (V101) is named only by its store
+//     (`automation/workflow-import-store.ts`) and its DDL; the writer `recordImport` and the floor reads
+//     `floorFor` / `signerHistory` only there and in `automation/workflow-import.ts`.
+// (b) Rule `workflow-import-entry-confined`: `importWorkflowBundle` is named only by
+//     `automation/workflow-import.ts` and `ipc/workflow-import-rpc.ts`; the literals "workflow.import" and
+//     "workflow.export" only by the executor, the import module, the RPC module,
+//     `connectors/proposable-actions.ts`, `ipc/lan-rpc.ts` and `ipc/server/demo-gate.ts`.
+// (c) Rule `workflow-import-upsert-confined`: `upsertWorkflowByName` is called only by its definition
+//     (`automation/workflow-store.ts`), the `workflow.save` handler (`ipc/automation-rpc.ts`) and
+//     `automation/workflow-import.ts`, so nothing else (an agent door, a template path) becomes a second way
+//     to write a workflow.
+// (d) Rule `workflow-import-rule-isolation`: the rule and learning path (`engine/standing-rule-step.ts`,
+//     `standing/standing-rule-derive.ts`, `standing/approval-learning.ts`, `standing/standing-rule-store.ts`)
+//     names neither `workflow_import` nor the import store nor any of its reads; the display reads are named
+//     only where the plan allows (`readImportSource`: the store, `ipc/standing-rpc.ts`,
+//     `automation/workflow-import.ts`; `listSources`: the store, `ipc/automation-rpc.ts`,
+//     `ipc/workflow-import-rpc.ts`; `signersForName`: the store and `automation/workflow-import.ts`); and
+//     the import modules name none of `standing_rule`, `standing_rule_fire`, `standing_streak`,
+//     `standing_suggestion`, `insertRule`, `claimFire`, `standingRuleStep`. So an import can never satisfy a
+//     rule and a rule never relaxes for an import.
+// (e) Rules `workflow-import-forbidden-import` and `workflow-import-no-network`: the import modules
+//     (`automation/workflow-bundle.ts`, `workflow-import.ts`, `workflow-import-prompt.ts`,
+//     `workflow-import-store.ts`, `ipc/workflow-import-rpc.ts`) import no ChatOps, egress, federation or
+//     share module (from `share/` only `share-keypair.ts`, which holds the key behind
+//     `signBytesWithShareKey`), no `connectors/` value (the ONE permitted exception is
+//     `connectors/connector-writes/sanitise.ts`, the text escaper, which has no imports of its own) and no
+//     network primitive.
+// (f) Rule `workflow-import-schedule-isolation`: `setWorkflowSchedule`, `resolveSaveSchedule` and
+//     `upsertWorkflowByName` are named among the import modules only by `automation/workflow-import.ts`
+//     (the bundle layer, the prompt, the store and the RPC module name none), so the bundle layer cannot
+//     carry a schedule.
+// Stated bounds: a text scan, so a dynamically composed name evades it (as D33(c), D41 and D42 say); the
+// behavioural tests in `security-invariants.test.ts` (I59) are authoritative. Tied to I59.
+const D50_SRC = "packages/gateway/src/";
+const D50_STORE = `${D50_SRC}automation/workflow-import-store.ts`;
+const D50_DDL = `${D50_SRC}index/workflow-import-v101-sql.ts`;
+const D50_IMPORT = `${D50_SRC}automation/workflow-import.ts`;
+const D50_RPC = `${D50_SRC}ipc/workflow-import-rpc.ts`;
+const D50_BUNDLE = `${D50_SRC}automation/workflow-bundle.ts`;
+const D50_PROMPT = `${D50_SRC}automation/workflow-import-prompt.ts`;
+const D50_MODULES: readonly string[] = [D50_BUNDLE, D50_IMPORT, D50_PROMPT, D50_STORE, D50_RPC];
+const D50_RULE_PATH: readonly string[] = [
+  `${D50_SRC}engine/standing-rule-step.ts`,
+  `${D50_SRC}standing/standing-rule-derive.ts`,
+  `${D50_SRC}standing/approval-learning.ts`,
+  `${D50_SRC}standing/standing-rule-store.ts`,
+];
+const D50_TABLE_RE = sqlTableReferenceRe("workflow_import");
+const D50_IDENTIFIERS: readonly {
+  readonly re: RegExp;
+  readonly allowed: readonly string[];
+  readonly rule: string;
+}[] = [
+  {
+    re: /\b(?:recordImport|floorFor|signerHistory)\b/g,
+    allowed: [D50_STORE, D50_IMPORT],
+    rule: "workflow-import-table-confined",
+  },
+  {
+    re: /\bimportWorkflowBundle\b/g,
+    allowed: [D50_IMPORT, D50_RPC],
+    rule: "workflow-import-entry-confined",
+  },
+  {
+    re: /\bupsertWorkflowByName\b/g,
+    allowed: [
+      `${D50_SRC}automation/workflow-store.ts`,
+      `${D50_SRC}ipc/automation-rpc.ts`,
+      D50_IMPORT,
+    ],
+    rule: "workflow-import-upsert-confined",
+  },
+  {
+    re: /\breadImportSource\b/g,
+    allowed: [D50_STORE, `${D50_SRC}ipc/standing-rpc.ts`, D50_IMPORT],
+    rule: "workflow-import-rule-isolation",
+  },
+  {
+    re: /\blistSources\b/g,
+    allowed: [D50_STORE, `${D50_SRC}ipc/automation-rpc.ts`, D50_RPC],
+    rule: "workflow-import-rule-isolation",
+  },
+  {
+    re: /\bsignersForName\b/g,
+    allowed: [D50_STORE, D50_IMPORT],
+    rule: "workflow-import-rule-isolation",
+  },
+];
+const D50_LITERAL_RE = /(["'`])workflow\.(?:import|export)\1/g;
+const D50_LITERAL_ALLOWED: readonly string[] = [
+  `${D50_SRC}engine/executor.ts`,
+  D50_IMPORT,
+  D50_RPC,
+  `${D50_SRC}connectors/proposable-actions.ts`,
+  `${D50_SRC}ipc/lan-rpc.ts`,
+  `${D50_SRC}ipc/server/demo-gate.ts`,
+];
+const D50_RULE_NAMES_RE =
+  /\b(?:standing_rule(?:_fire)?|standing_streak|standing_suggestion|insertRule|claimFire|standingRuleStep)\b/g;
+const D50_STORE_NAMES_RE =
+  /\bworkflow_import\b|workflow-import-store|\b(?:readImportSource|listSources|signersForName|floorFor|signerHistory|recordImport)\b/g;
+const D50_SCHEDULE_NAMES_RE =
+  /\b(?:setWorkflowSchedule|resolveSaveSchedule|upsertWorkflowByName)\b/g;
+const D50_ALLOWED_TARGET_RE =
+  /(?:^|\/)share\/share-keypair(?:\.ts)?$|(?:^|\/)connectors\/connector-writes\/sanitise(?:\.ts)?$/;
+
+export function checkWorkflowImportConfinement(files: readonly FileEntry[]): Violation[] {
+  const out: Violation[] = [];
+  for (const f of files) {
+    if (!f.relPath.startsWith(D50_SRC)) continue;
+    if (f.relPath.endsWith(".test.ts") || f.relPath.endsWith(".test-helpers.ts")) continue;
+    const code = stripComments(f.contents);
+    const original = f.contents.split("\n");
+    const push = (rule: string, index: number | undefined): void => {
+      const line = code.slice(0, index).split("\n").length;
+      out.push({ rule, file: f.relPath, line, snippet: (original[line - 1] ?? "").trim() });
+    };
+    // (a) the table
+    if (f.relPath !== D50_STORE && f.relPath !== D50_DDL) {
+      for (const m of code.matchAll(new RegExp(D50_TABLE_RE.source, "gi"))) {
+        push("workflow-import-table-confined", m.index);
+      }
+    }
+    // (a)-(d) identifiers
+    for (const id of D50_IDENTIFIERS) {
+      if (id.allowed.includes(f.relPath)) continue;
+      for (const m of code.matchAll(id.re)) push(id.rule, m.index);
+    }
+    // (b) the method literals
+    if (!D50_LITERAL_ALLOWED.includes(f.relPath)) {
+      for (const m of code.matchAll(D50_LITERAL_RE))
+        push("workflow-import-entry-confined", m.index);
+    }
+    // (d) the rule and learning path never reads provenance
+    if (D50_RULE_PATH.includes(f.relPath)) {
+      for (const m of code.matchAll(D50_STORE_NAMES_RE)) {
+        push("workflow-import-rule-isolation", m.index);
+      }
+    }
+    // (d) the import modules never touch a rule or a learning table
+    if (D50_MODULES.includes(f.relPath)) {
+      for (const m of code.matchAll(D50_RULE_NAMES_RE)) {
+        push("workflow-import-rule-isolation", m.index);
+      }
+    }
+    // (f) schedules: only the import core names the schedule writers
+    if (D50_MODULES.includes(f.relPath) && f.relPath !== D50_IMPORT) {
+      for (const m of code.matchAll(D50_SCHEDULE_NAMES_RE)) {
+        push("workflow-import-schedule-isolation", m.index);
+      }
+    }
+  }
+  // (e) the import modules' imports and network primitives
+  out.push(
+    ...checkConfinement(files, {
+      inScope: (relPath) => D50_MODULES.includes(relPath),
+      forbiddenSegmentRe: D45_FORBIDDEN_SEGMENT_RE,
+      forbiddenImportRule: "workflow-import-forbidden-import",
+      noNetworkRule: "workflow-import-no-network",
+      allowTarget: (target) => D50_ALLOWED_TARGET_RE.test(target),
+    }),
+  );
+  return out;
 }
 
 // ---- D47 (the v1 static-box LAN path, I56) -------------------------------------------------------
@@ -5700,6 +5873,7 @@ export const RULE_ANCHORS: readonly string[] = [
   "packages/gateway/src/incident/assemble.ts",
   "packages/gateway/src/agents/_lib/incident-render.ts",
   "packages/gateway/src/finops/cost-series.ts", // D48 — FinOps cost code is inert
+  "packages/gateway/src/automation/workflow-import.ts", // D50 - the only way a workflow enters from outside
   "packages/gateway/src/ipc/lan-legacy.ts", // D47 — the only home of the v1 static-box LAN path
   "packages/gateway/src/platform/sandbox/write-grant-check.ts", // D10 user-write — a file the rule reads and then permits
   "packages/gateway/src/engine/executor.ts", // D22 — connectors.dispatch chokepoint
@@ -6125,6 +6299,13 @@ async function run(): Promise<void> {
       );
     }
     if (incidentLinkViolations.length > 0) exit = 1;
+    const workflowImportViolations = checkWorkflowImportConfinement(files);
+    for (const e of workflowImportViolations) {
+      console.error(
+        `::error file=${e.file},line=${e.line}::D50 the signed workflow import left its confinement (rule ${e.rule}) - workflow_import, importWorkflowBundle and upsertWorkflowByName only at their sites, no rule or learning table or schedule writer in the import modules, no rule-path read of provenance, and no ChatOps/egress/federation import, connectors value import or network primitive in them: ${e.snippet}`,
+      );
+    }
+    if (workflowImportViolations.length > 0) exit = 1;
     const doorApprovalViolations = checkDoorApprovalConfinement(files);
     for (const e of doorApprovalViolations) {
       console.error(
