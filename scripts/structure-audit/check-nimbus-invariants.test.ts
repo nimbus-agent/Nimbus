@@ -44,6 +44,7 @@ import {
   checkIncidentConfinement,
   checkIncidentLinkMinting,
   checkIncidentRecordConfinement,
+  checkIncidentFindingConfinement,
   checkIncidentRemediationConfinement,
   checkItemHistoryConfinement,
   checkLanBoxPathConfinement,
@@ -7952,5 +7953,41 @@ describe("D50 - the signed workflow import stays inside its confinement (I59)", 
 
   test("workflow-import.ts is a rule anchor, so a scan that lost it is not meaningful", () => {
     expect(RULE_ANCHORS).toContain(IMPORT);
+  });
+});
+
+describe("D46(f) - the IC8 finding and baseline tables are written only by their store (Phase 10 IC8, I57 (a))", () => {
+  const file = (relPath: string, contents: string): FileEntry => ({ relPath, contents });
+  const SRC = "packages/gateway/src/";
+  const rules = (files: FileEntry[]): string[] =>
+    checkIncidentFindingConfinement(files).map((v) => v.rule);
+
+  test("the store, the DDL, tests, comments and reads pass", () => {
+    expect(
+      rules([
+        file(`${SRC}incident/finding-store.ts`, "dbRun(db, `INSERT INTO incident_finding (id) VALUES (?)`);\n"),
+        file(`${SRC}index/incident-predict-v103-sql.ts`, "CREATE TABLE IF NOT EXISTS anomaly_baseline (x);\n"),
+        file(`${SRC}incident/x.test.ts`, "db.run('DELETE FROM anomaly_baseline');\n"),
+        file(`${SRC}incident/predict-pass.ts`, "// UPDATE incident_finding SET x\nconst q = 'SELECT * FROM incident_finding';\n"),
+      ]),
+    ).toEqual([]);
+  });
+
+  test("a write anywhere else is a violation, for each verb and both tables", () => {
+    expect(
+      rules([
+        file(`${SRC}incident/predict-pass.ts`, "db.run('UPDATE incident_finding SET cleared_at_ms = 1');\n"),
+        file(`${SRC}watcher/anomaly-notifier.ts`, 'db.run("INSERT OR REPLACE INTO anomaly_baseline VALUES (1)");\n'),
+        file(`${SRC}ipc/incident-rpc.ts`, "db.run(`DELETE FROM \"incident_finding\"`);\n"),
+      ]),
+    ).toEqual([
+      "incident-finding-table-confined",
+      "incident-finding-table-confined",
+      "incident-finding-table-confined",
+    ]);
+  });
+
+  test("files outside the gateway source are not scanned", () => {
+    expect(rules([file("packages/cli/src/x.ts", "DELETE FROM incident_finding")])).toEqual([]);
   });
 });

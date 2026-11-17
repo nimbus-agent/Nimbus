@@ -39,9 +39,9 @@ function insertProposal(
 }
 
 describe("V102 incident_proposal and incident_engine_state (Phase 10 IC5a)", () => {
-  test("the schema constant and the registered chain end at 102", () => {
-    expect(CURRENT_SCHEMA_VERSION).toBe(102);
-    expect(maxRegisteredIndexedSchemaVersion()).toBe(102);
+  test("the schema constant and the registered chain reach 102", () => {
+    expect(CURRENT_SCHEMA_VERSION).toBeGreaterThanOrEqual(102);
+    expect(maxRegisteredIndexedSchemaVersion()).toBeGreaterThanOrEqual(102);
   });
 
   test("a fresh database has both tables with the declared columns", () => {
@@ -68,7 +68,9 @@ describe("V102 incident_proposal and incident_engine_state (Phase 10 IC5a)", () 
     ]);
     const state = db.query("PRAGMA table_info(incident_engine_state)").all() as ColRow[];
     expect(state.map((c) => c.name)).toEqual(["key", "value", "updated_at_ms"]);
-    expect(db.query("PRAGMA user_version").get()).toEqual({ user_version: 102 });
+    expect((db.query("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(
+      CURRENT_SCHEMA_VERSION,
+    );
     db.close();
   });
 

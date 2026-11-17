@@ -1344,6 +1344,37 @@ export function checkIncidentRemediationConfinement(files: readonly FileEntry[])
   return out;
 }
 
+// D46(f) (Phase 10 IC8, incident-engine spec § 5.8, invariant I57 (a)): the radar's and the anomaly baseline's
+// tables are written only by their store. Rule id `incident-finding-table-confined`, over every non-test file of
+// `packages/gateway/src/`, comments stripped: a write verb on `incident_finding` or `anomaly_baseline` only in
+// `incident/finding-store.ts` and the V103 DDL file. Detection never acts (D-IC-5): a finding is written here and
+// read for display only. Stated bounds: a text scan, so a write verb spelled in a template literal assembled from
+// parts evades it.
+const D46F_SRC = "packages/gateway/src/";
+const D46F_STORE = `${D46F_SRC}incident/finding-store.ts`;
+const D46F_DDL = `${D46F_SRC}index/incident-predict-v103-sql.ts`;
+const D46F_TABLE_WRITE_RE = d46dWriteRe("(?:incident_finding|anomaly_baseline)");
+
+export function checkIncidentFindingConfinement(files: readonly FileEntry[]): Violation[] {
+  const out: Violation[] = [];
+  for (const f of files) {
+    if (/\.test(?:-helpers)?\.ts$/.test(f.relPath)) continue;
+    if (!f.relPath.startsWith(D46F_SRC)) continue;
+    if (f.relPath === D46F_STORE || f.relPath === D46F_DDL) continue;
+    const commentFree = stripComments(f.contents);
+    for (const m of commentFree.matchAll(D46F_TABLE_WRITE_RE)) {
+      const line = commentFree.slice(0, m.index).split("\n").length;
+      out.push({
+        rule: "incident-finding-table-confined",
+        file: f.relPath,
+        line,
+        snippet: (f.contents.split("\n")[line - 1] ?? "").trim(),
+      });
+    }
+  }
+  return out;
+}
+
 // D25: a CONNECTOR SYNCABLE may not call `Bun.spawn` — it must go through
 // `platform/spawn-capture.ts`, which spawns with `windowsHide`.
 //
@@ -5953,6 +5984,7 @@ export const RULE_ANCHORS: readonly string[] = [
   "packages/gateway/src/incident/assemble.ts",
   "packages/gateway/src/agents/_lib/incident-render.ts",
   "packages/gateway/src/incident/remediation.ts", // D46(c) -- the one builder of an engine-proposed action; the D46(a) carve-out
+  "packages/gateway/src/incident/finding-store.ts", // D46(f) -- the one writer of the IC8 finding and baseline tables
   "packages/gateway/src/finops/cost-series.ts", // D48 — FinOps cost code is inert
   "packages/gateway/src/automation/workflow-import.ts", // D50 - the only way a workflow enters from outside
   "packages/gateway/src/ipc/lan-legacy.ts", // D47 — the only home of the v1 static-box LAN path
@@ -6380,6 +6412,13 @@ async function run(): Promise<void> {
       );
     }
     if (remediationViolations.length > 0) exit = 1;
+    const findingViolations = checkIncidentFindingConfinement(files);
+    for (const e of findingViolations) {
+      console.error(
+        `::error file=${e.file},line=${e.line}::D46(f) an incident finding or anomaly baseline table written outside incident/finding-store.ts (rule ${e.rule}): ${e.snippet}`,
+      );
+    }
+    if (findingViolations.length > 0) exit = 1;
     const incidentLinkViolations = checkIncidentLinkMinting(files);
     for (const e of incidentLinkViolations) {
       console.error(
