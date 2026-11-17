@@ -1,5 +1,10 @@
 import type { SynthInput } from "./brief-kinds.ts";
 import { BRIEFING_FRESHNESS_HEADING, renderBriefingFreshness } from "./briefing-render.ts";
+import {
+  POSTMORTEM_DECISION_LOG_HEADING,
+  POSTMORTEM_TIMELINE_HEADING,
+  postmortemReservedBlocks,
+} from "./incident-postmortem-render.ts";
 import { INCIDENT_FRESHNESS_HEADING, renderIncidentFreshness } from "./incident-render.ts";
 import {
   GLOSSARY_TERMS_HEADING,
@@ -58,6 +63,14 @@ export const RESERVED_HEADINGS_BY_KIND: Readonly<Record<SynthInput["kind"], read
     oncall: [GAPS_HEADING],
     briefing: [GAPS_HEADING, BRIEFING_FRESHNESS_HEADING],
     incident: [GAPS_HEADING, INCIDENT_FRESHNESS_HEADING],
+    // IC7a: the timeline and the decision log are the record of what happened and who decided; a rewrite
+    // keeps neither's wording, so both are withheld and re-attached verbatim.
+    incident_postmortem: [
+      POSTMORTEM_TIMELINE_HEADING,
+      POSTMORTEM_DECISION_LOG_HEADING,
+      GAPS_HEADING,
+      INCIDENT_FRESHNESS_HEADING,
+    ],
   });
 
 export function reservedHeadingsFor(brief: SynthInput): readonly string[] {
@@ -120,6 +133,7 @@ export function isDisclosureOnlyHeading(heading: string): boolean {
  */
 export function reservedBlocksFor(brief: SynthInput): readonly ReservedBlock[] {
   const blocks: ReservedBlock[] = [];
+  if (brief.kind === "incident_postmortem") blocks.push(...postmortemReservedBlocks(brief));
   if (brief.kind === "negotiate") {
     blocks.push(
       {
@@ -145,7 +159,7 @@ export function reservedBlocksFor(brief: SynthInput): readonly ReservedBlock[] {
     const freshness = renderBriefingFreshness(brief.freshness);
     if (freshness !== "") blocks.push({ heading: BRIEFING_FRESHNESS_HEADING, markdown: freshness });
   }
-  if (brief.kind === "incident") {
+  if (brief.kind === "incident" || brief.kind === "incident_postmortem") {
     const freshness = renderIncidentFreshness(brief.record.freshness);
     if (freshness !== "") blocks.push({ heading: INCIDENT_FRESHNESS_HEADING, markdown: freshness });
   }

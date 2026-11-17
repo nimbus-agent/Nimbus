@@ -144,6 +144,8 @@ describe("checkLanMethodAllowed", () => {
     "incident.get",
     "incident.assemble",
     "incident.timeline",
+    "incident.postmortem",
+    "incident.postmortemPush",
     "incident.proposals",
     "incident.remediate",
     "incident.undo",
