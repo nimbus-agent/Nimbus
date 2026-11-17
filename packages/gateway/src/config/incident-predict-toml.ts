@@ -62,7 +62,12 @@ export function parseMaxGap(raw: string): number | undefined {
   return ms >= MIN_GAP_MS && ms <= MAX_GAP_MS ? ms : undefined;
 }
 
-type Draft = { kind?: string; service?: string; type?: string; maxGap?: string };
+type Draft = {
+  kind?: string | undefined;
+  service?: string | undefined;
+  type?: string | undefined;
+  maxGap?: string | undefined;
+};
 
 function stringValue(raw: string): string | undefined {
   try {

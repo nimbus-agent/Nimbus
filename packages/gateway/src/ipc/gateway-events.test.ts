@@ -112,6 +112,17 @@ describe("incident.assembled", () => {
   });
 });
 
+describe("incident.finding", () => {
+  test("reaches a bound broadcast as gateway.event with the two counts only", () => {
+    const seen: Array<{ method: string; params: unknown }> = [];
+    setGatewayEventBroadcast((method, params) => seen.push({ method, params }));
+    emitGatewayEvent("incident.finding", { opened: 2, cleared: 1 });
+    const p = seen[0]?.params as { kind: string; payload: Record<string, unknown> };
+    expect(p.kind).toBe("incident.finding");
+    expect(p.payload).toEqual({ opened: 2, cleared: 1 });
+  });
+});
+
 describe("briefing.ready", () => {
   test("reaches a bound broadcast as gateway.event with that kind and only the payload given", () => {
     const seen: Array<{ method: string; params: unknown }> = [];

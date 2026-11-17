@@ -94,7 +94,8 @@ describe("the radar half", () => {
   });
 
   test("a demo gateway (no notify) still records, and raises nothing", () => {
-    const r = runPredictPass(deps({ notify: undefined }));
+    const { notify: _drop, ...rest } = deps();
+    const r = runPredictPass(rest);
     expect(r.radar.opened).toBe(1);
     expect(toasts).toEqual([]);
   });

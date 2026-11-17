@@ -234,6 +234,14 @@ function renderGatewayEvent(o: Record<string, unknown>): string | null {
     }
   }
 
+  if (kind === "incident.finding") {
+    const opened = payload["opened"];
+    const cleared = payload["cleared"];
+    if (typeof opened === "number" && typeof cleared === "number") {
+      return `${at} [incident] findings: ${String(opened)} opened, ${String(cleared)} cleared - nimbus incident findings`;
+    }
+  }
+
   // Never dropped: a stream that discards what it does not recognise is the same failure as a
   // brief that renders a missing section as empty.
   return `${at} [unknown: ${kind}] ${JSON.stringify(payload)}`;
