@@ -21,6 +21,7 @@ import {
   NO_POLICY_OVERLAY,
   ToolExecutor,
 } from "../../engine/executor.ts";
+import { createOwnerOnlyAsk } from "../../engine/owner-only-approval.ts";
 import type { ConnectorDispatcher } from "../../engine/types.ts";
 import { resolveRuntimeById } from "../../exec/exec-runtimes.ts";
 import {
@@ -87,7 +88,7 @@ import { dispatchFleetRpc, FleetRpcError } from "../fleet-rpc.ts";
 import { dispatchGlossaryRpc, GlossaryRpcError } from "../glossary-rpc.ts";
 import { dispatchHitlRpc, HitlRpcError } from "../hitl-rpc.ts";
 import { dispatchIdentityRpc, type IdentityRpcContext, IdentityRpcError } from "../identity-rpc.ts";
-import { dispatchIncidentRpc, IncidentRpcError } from "../incident-rpc.ts";
+import { dispatchIncidentRpc, IncidentRpcError, isOwnerKind } from "../incident-rpc.ts";
 import { dispatchIndexDemoSymbolRpc, IndexDemoSymbolRpcError } from "../index-demo-symbol-rpc.ts";
 import { dispatchIndexRebodyRpc, IndexRebodyRpcError } from "../index-rebody-rpc.ts";
 import { dispatchIndexReembedRpc, IndexReembedRpcError } from "../index-reembed-rpc.ts";
@@ -126,6 +127,7 @@ import { dispatchTrustRpc } from "../trust-rpc.ts";
 import { dispatchUpdaterRpc, UpdaterRpcError } from "../updater-rpc.ts";
 import { dispatchVoiceRpc, VoiceRpcError } from "../voice-rpc.ts";
 import { createWorkflowCancelHandler } from "../workflow-cancel.ts";
+import { dispatchWorkflowImportRpc, isWorkflowImportMethod } from "../workflow-import-rpc.ts";
 import {
   automationRpcSkipped,
   connectorRpcSkipped,
@@ -1542,6 +1544,7 @@ export async function tryDispatchOncallNowRpc(
   ctx: ServerCtx,
   method: string,
   params: unknown,
+  clientId?: string,
 ): Promise<unknown> {
   if (
     (method !== "oncall.now" && method !== "oncall.handoff") ||
@@ -1553,6 +1556,8 @@ export async function tryDispatchOncallNowRpc(
     const rpcCtx = {
       db: ctx.options.localIndex.getDatabase(),
       ...(ctx.options.configDir === undefined ? {} : { configDir: ctx.options.configDir }),
+      // IC9a: the incident-record sections of the handoff, for a connection that declared cli or ui only.
+      includeRecords: clientId !== undefined && isOwnerKind(ctx.getClientKind(clientId)),
     };
     const out =
       method === "oncall.now"
@@ -1658,6 +1663,7 @@ export async function tryDispatchIncidentRpc(
   try {
     const out = await dispatchIncidentRpc(method, params, rpc, {
       kind: ctx.getClientKind(clientId),
+      clientId,
     });
     if (out.kind === "hit") return out.value;
   } catch (e) {
@@ -2474,6 +2480,43 @@ async function dispatchExtensionAutomationRpc(
   throw new RpcMethodError(-32601, `Method not found: ${method}`);
 }
 
+/**
+ * `workflow.export` and `workflow.import` (I59): the owner's signed workflow bundles. Both answer only a
+ * connection that declared `cli` or `ui` (`getClientKind`, never a param), are LAN-forbidden and
+ * demo-refused, and the import asks the LOCAL owner through the gate-only executor with no delegation on
+ * THIS connection's consent channel (a human answer only).
+ */
+async function dispatchWorkflowImportRpcFor(
+  ctx: ServerCtx,
+  clientId: string,
+  method: string,
+  params: unknown,
+): Promise<unknown> {
+  const localIndex = ctx.options.localIndex;
+  if (localIndex === undefined) {
+    throw new RpcMethodError(-32603, "Local index is not available");
+  }
+  const out = await dispatchWorkflowImportRpc(method, params, {
+    db: localIndex.getDatabase(),
+    callerKind: ctx.getClientKind(clientId),
+    askOwner: createOwnerOnlyAsk({
+      consent: bindConsentChannel(ctx.consentImpl, clientId),
+      audit: localIndex,
+      policyHitl: ctx.options.policyHitl,
+    }),
+    vault: ctx.options.vault,
+    recordAudit: (actionType, actionJson) =>
+      localIndex.recordAudit({
+        actionType,
+        hitlStatus: "not_required",
+        actionJson,
+        timestamp: Date.now(),
+      }),
+  });
+  if (out.kind === "hit") return out.value;
+  throw new RpcMethodError(-32601, `Method not found: ${method}`);
+}
+
 export async function tryDispatchAutomationRpc(
   ctx: ServerCtx,
   clientId: string,
@@ -2481,6 +2524,10 @@ export async function tryDispatchAutomationRpc(
   method: string,
   params: unknown,
 ): Promise<unknown> {
+  if (isWorkflowImportMethod(method)) {
+    return dispatchWorkflowImportRpcFor(ctx, clientId, method, params);
+  }
+
   if (method === "workflow.run") {
     return dispatchWorkflowRunRpc(ctx, clientId, session, params);
   }

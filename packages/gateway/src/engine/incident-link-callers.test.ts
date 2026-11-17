@@ -64,6 +64,8 @@ describe("4.1 census: only five files touch an action's incident link", () => {
       "engine/executor.ts",
       "engine/incident-link.ts",
       "engine/types.ts",
+      // Phase 10 IC5a: the one module that builds an engine-proposed action (static D46(c)) sets the link.
+      "incident/remediation.ts",
       // Phase 10 IC7a: the owner's post-mortem push, the first producer of a linked action (static D46(e)).
       "postmortem/postmortem-push.ts",
     ]);

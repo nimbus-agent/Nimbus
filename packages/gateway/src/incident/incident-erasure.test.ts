@@ -66,7 +66,7 @@ describe("eraseIncidentDataForService", () => {
     expect(preview).toEqual({ recordsDeleted: 1, pushedBriefsDeleted: 1 });
     expect(briefIds(d)).toHaveLength(3); // the preview deletes nothing
     const r = eraseIncidentDataForService(d, "slack");
-    expect(r).toEqual({ recordsDeleted: 1, pushedBriefsDeleted: 1 });
+    expect(r).toEqual({ recordsDeleted: 1, pushedBriefsDeleted: 1, proposalsDeleted: 0 });
     expect(briefIds(d)).toEqual(["jira:J1", "pagerduty:P2"]);
     expect(d.query("SELECT count(*) AS n FROM incident_record").get()).toEqual({ n: 2 });
     expect(d.query("SELECT count(*) AS n FROM incident_record_version").get()).toEqual({ n: 2 });
@@ -82,6 +82,7 @@ describe("eraseIncidentDataForService", () => {
     expect(eraseIncidentDataForService(d, "pagerduty")).toEqual({
       recordsDeleted: 1,
       pushedBriefsDeleted: 2,
+      proposalsDeleted: 0,
     });
     expect(briefIds(d)).toEqual(["jira:J1"]);
   });
@@ -126,6 +127,7 @@ describe("pruneIncidentRecordsWithBriefs", () => {
     expect(eraseIncidentDataForService(d, "slack")).toEqual({
       recordsDeleted: 0,
       pushedBriefsDeleted: 0,
+      proposalsDeleted: 0,
     });
     expect(
       d.query("SELECT count(*) AS n FROM pushed_brief WHERE brief_markdown LIKE '%Slack%'").get(),
@@ -169,5 +171,48 @@ describe("deletePushedBriefsForErasure", () => {
     expect(deletePushedBriefsForErasure(d, { triggerItemIds: [], service: "a" })).toBe(2);
     expect(deletePushedBriefsForErasure(d, { triggerItemIds: [], service: "%" })).toBe(1);
     expect(briefIds(d)).toEqual(["b:1"]);
+  });
+});
+
+describe("IC5a: proposals follow an OWNER erasure, not retention", () => {
+  const seed = (d: Database, itemId: string, n: number): string => {
+    record(d, itemId, ["pagerduty", "slack"]);
+    const id = (
+      d.query("SELECT id FROM incident_record WHERE trigger_item_id = ?").get(itemId) as {
+        id: string;
+      }
+    ).id;
+    d.run(
+      `INSERT INTO incident_proposal (id, record_id, record_version, kind, tool_id, input_json, evidence_json,
+         confidence, reversibility, status, created_at_ms, expires_at_ms, updated_at_ms)
+       VALUES (?, ?, 1, 'close', 't', '{}', '{}', NULL, 'unknown', 'executed', 1, 2, 1)`,
+      [`prp_${String(n).padStart(16, "0")}`, id],
+    );
+    return id;
+  };
+  const proposals = (d: Database): number =>
+    (d.query("SELECT count(*) AS n FROM incident_proposal").get() as { n: number }).n;
+
+  test("an erasure of the cited service deletes the erased records' proposals and counts them", () => {
+    const d = db();
+    seed(d, "pagerduty:P1", 1);
+    record(d, "pagerduty:P2", ["pagerduty"]);
+    d.run(
+      `INSERT INTO incident_proposal (id, record_id, record_version, kind, tool_id, input_json, evidence_json,
+         confidence, reversibility, status, created_at_ms, expires_at_ms, updated_at_ms)
+       SELECT 'prp_0000000000000002', id, 1, 'close', 't', '{}', '{}', NULL, 'unknown', 'executed', 1, 2, 1
+         FROM incident_record WHERE trigger_item_id = 'pagerduty:P2'`,
+    );
+    const out = eraseIncidentDataForService(d, "slack");
+    expect(out).toMatchObject({ recordsDeleted: 1, proposalsDeleted: 1 });
+    expect(proposals(d)).toBe(1);
+  });
+
+  test("retention pruning keeps what Nimbus did for a pruned record", () => {
+    const d = db();
+    seed(d, "pagerduty:P1", 1);
+    pruneIncidentRecordsWithBriefs(d, 9_999_999_999_999);
+    expect((d.query("SELECT count(*) AS n FROM incident_record").get() as { n: number }).n).toBe(0);
+    expect(proposals(d)).toBe(1);
   });
 });

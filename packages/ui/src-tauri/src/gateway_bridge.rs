@@ -157,6 +157,9 @@ pub const ALLOWED_METHODS: &[&str] = &[
     "identity.login",
     "identity.logout",
     "identity.status",
+    "incident.get",
+    "incident.list",
+    "incident.timeline",
     "index.metrics",
     "llm.cancelPull",
     "llm.getRouterStatus",
@@ -733,10 +736,8 @@ mod tests {
         // the LAN: the audit namespace is off the LAN as a whole.
         assert!(!is_method_allowed("audit.proveByProposer"));
         assert!(!is_method_allowed("audit.listByDoor"));
-        // Phase 10 IC4: the incident replay and timeline are owner-terminal only for now
-        // (`incident.timeline` joins the renderer at the desktop slice, IC10; `audit.replay` never).
+        // The audit replay (which carries the prompt shown to the owner) is owner-terminal only.
         assert!(!is_method_allowed("audit.replay"));
-        assert!(!is_method_allowed("incident.timeline"));
         // The audit reads the renderer already had are unchanged.
         assert!(is_method_allowed("audit.list"));
         assert!(is_method_allowed("audit.verify"));
@@ -827,6 +828,44 @@ mod tests {
         assert!(is_method_allowed("agents.glossary"));
         assert!(!is_method_allowed("glossary.refresh"));
         assert!(!is_method_allowed("glossary.rebuild"));
+    }
+
+    #[test]
+    fn allowlist_incident_reads_only() {
+        // Phase 10 IC10a: the desktop reads incident records. Only the three reads join the renderer;
+        // `assemble` runs the engine, and the later write-class incident methods never will (I7).
+        // Named on both sides, and the exact set of `incident.` entries is pinned, because a
+        // one-for-one swap would keep allowlist_exact_size unchanged.
+        assert!(is_method_allowed("incident.list"));
+        assert!(is_method_allowed("incident.get"));
+        assert!(is_method_allowed("incident.timeline"));
+        for m in [
+            "incident.assemble",
+            // Phase 10 IC5a (I57 (b)): the renderer can already answer a consent prompt, so it must not
+            // also START an engine action or flip advisory mode.
+            "incident.advisory",
+            "incident.advisorySet",
+            "incident.proposals",
+            "incident.findings",
+            "incident.remediate",
+            "incident.undo",
+            "incident.export",
+            "incident.replay",
+            "audit.replay",
+        ] {
+            assert!(!is_method_allowed(m), "{m} must not be renderer-callable");
+        }
+        let incident: Vec<&&str> = ALLOWED_METHODS
+            .iter()
+            .filter(|m| m.starts_with("incident."))
+            .collect();
+        assert_eq!(
+            incident,
+            vec![&"incident.get", &"incident.list", &"incident.timeline"]
+        );
+        for m in ["incident.list", "incident.get", "incident.timeline"] {
+            assert!(!is_no_timeout_method(m));
+        }
     }
 
     #[test]
@@ -1058,7 +1097,7 @@ mod tests {
 
     #[test]
     fn allowlist_exact_size() {
-        assert_eq!(ALLOWED_METHODS.len(), 132);
+        assert_eq!(ALLOWED_METHODS.len(), 135);
     }
 
     #[test]

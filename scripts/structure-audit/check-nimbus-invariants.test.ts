@@ -44,6 +44,7 @@ import {
   checkIncidentConfinement,
   checkIncidentLinkMinting,
   checkIncidentRecordConfinement,
+  checkIncidentRemediationConfinement,
   checkItemHistoryConfinement,
   checkLanBoxPathConfinement,
   checkListenerRegistryConfinement,
@@ -71,6 +72,7 @@ import {
   checkUserMcpCallFacts,
   checkUserMcpDoorReach,
   checkVaultKeyAllowList,
+  checkWorkflowImportConfinement,
   checkWorkSnapshotConfinement,
   checkWrapServerSpecInvariant,
   checkWriteDirDeclarationConfined,
@@ -7585,5 +7587,401 @@ describe("D17(d) - the pinned watcher channel is built and passed only by the ch
         { relPath: `${src}x.test.ts`, contents: uses.join("") },
       ]),
     ).toEqual([]);
+  });
+});
+
+describe("D46(c) - an engine-proposed action is built in one module (Phase 10 IC5a, I57 (b))", () => {
+  const file = (relPath: string, contents: string): FileEntry => ({ relPath, contents });
+  const SRC = "packages/gateway/src/";
+  const REMEDIATION = `${SRC}incident/remediation.ts`;
+  const STORE = `${SRC}incident/proposal-store.ts`;
+  const DDL = `${SRC}index/incident-proposal-v102-sql.ts`;
+  const TYPES = `${SRC}engine/types.ts`;
+  const RUN_ASK = `${SRC}engine/run-ask.ts`;
+  const MAIN = `${SRC}gateway-main.ts`;
+  const GOOD: FileEntry[] = [
+    file(
+      REMEDIATION,
+      "function buildRemediationAction() { return { type: 't', engineProposal: { proposalId: 'p' } }; }\n",
+    ),
+    file(
+      STORE,
+      "db.run(`UPDATE incident_proposal SET status = 'x'`); // DELETE FROM incident_engine_state\n",
+    ),
+    file(DDL, "CREATE TABLE IF NOT EXISTS incident_proposal (id TEXT);\n"),
+    file(TYPES, "export type PlannedAction = { engineProposal?: EngineProposal };\n"),
+    file(RUN_ASK, "export function buildRemediationExecutor(p) { return null; }\n"),
+    file(MAIN, "platform.bind(() => buildRemediationExecutor({}));\n"),
+    file(
+      `${SRC}engine/executor.ts`,
+      "const p = action.engineProposal;\nif (action.engineProposal !== undefined) {}\n",
+    ),
+    file(
+      `${SRC}incident/x.test.ts`,
+      "const a = { engineProposal: 1 }; buildRemediationAction(); db.run('DELETE FROM incident_proposal');\n",
+    ),
+    file(
+      `${SRC}incident/c.ts`,
+      "// engineProposal: x; buildRemediationAction(); INSERT INTO incident_proposal\nconst s = 'buildRemediationExecutor';\n",
+    ),
+    file(
+      `${SRC}incident/proposals.ts`,
+      "db.query('SELECT * FROM incident_proposal WHERE id = ?');\n",
+    ),
+  ];
+  const rules = (files: FileEntry[]): string[] =>
+    checkIncidentRemediationConfinement(files).map((v) => v.rule);
+  const bad = (path: string, contents: string): FileEntry[] => [...GOOD, file(path, contents)];
+
+  test("the control: the allowed shape is clean (reads, comments, strings and tests are not violations)", () => {
+    expect(checkIncidentRemediationConfinement(GOOD)).toEqual([]);
+  });
+
+  test("clause 1: the engineProposal key is set or declared only in remediation.ts and engine/types.ts", () => {
+    for (const text of [
+      "const a = { engineProposal: { proposalId: 'p' } };",
+      "const a = { 'engineProposal': 1 };",
+      "type X = { engineProposal?: Y };",
+      "a = { ...b, engineProposal : c };",
+    ]) {
+      expect(rules(bad(`${SRC}ipc/forge.ts`, `${text}\n`)), text).toEqual([
+        "engine-proposal-key-confined",
+      ]);
+      expect(rules(bad(`${SRC}mcp-sink/forge.ts`, `${text}\n`)), text).toEqual([
+        "engine-proposal-key-confined",
+      ]);
+    }
+    // The executor, the prompt and the audit row only READ it.
+    expect(rules(bad(`${SRC}engine/y.ts`, "const p = action.engineProposal;\n"))).toEqual([]);
+  });
+
+  test("clause 2: a write verb on either table outside the store and the DDL", () => {
+    for (const verb of [
+      "INSERT INTO incident_proposal (id) VALUES (1)",
+      "UPDATE incident_proposal SET status = 'executed'",
+      "DELETE FROM incident_proposal",
+      "UPDATE incident_engine_state SET value = 'off'",
+      "INSERT OR REPLACE INTO incident_engine_state (key) VALUES ('advisory')",
+      "DROP TABLE IF EXISTS incident_proposal",
+    ]) {
+      expect(rules(bad(`${SRC}incident/remediation-x.ts`, `db.run("${verb}");\n`)), verb).toEqual([
+        "incident-proposal-table-confined",
+      ]);
+      expect(rules(bad(`${SRC}ipc/incident-rpc.ts`, `db.run("${verb}");\n`)), verb).toEqual([
+        "incident-proposal-table-confined",
+      ]);
+    }
+    // remediation.ts itself must not write the tables either: only the store does.
+    expect(
+      rules([
+        ...GOOD.filter((f) => f.relPath !== REMEDIATION),
+        file(REMEDIATION, 'db.run("UPDATE incident_proposal SET a = 1");\n'),
+      ]),
+    ).toEqual(["incident-proposal-table-confined"]);
+  });
+
+  test("clause 3: buildRemediationAction is named only in remediation.ts", () => {
+    expect(rules(bad(`${SRC}ipc/x.ts`, "buildRemediationAction(a);\n"))).toEqual([
+      "remediation-action-builder-confined",
+    ]);
+    expect(
+      rules(
+        bad(
+          `${SRC}incident/proposals-x.ts`,
+          "import { buildRemediationAction as b } from './remediation.ts';\n",
+        ),
+      ),
+    ).toEqual(["remediation-action-builder-confined"]);
+  });
+
+  test("clause 4: buildRemediationExecutor is named only in run-ask.ts and gateway-main.ts", () => {
+    expect(rules(bad(`${SRC}ipc/x.ts`, "buildRemediationExecutor({});\n"))).toEqual([
+      "remediation-executor-confined",
+    ]);
+    expect(
+      rules(
+        bad(
+          `${SRC}platform/assemble.ts`,
+          "import { buildRemediationExecutor } from '../engine/run-ask.ts';\n",
+        ),
+      ),
+    ).toEqual(["remediation-executor-confined"]);
+  });
+
+  test("the real repository satisfies the rule and remediation.ts is an anchor that is scanned", async () => {
+    expect(RULE_ANCHORS).toContain(REMEDIATION);
+    const files: FileEntry[] = [];
+    for await (const f of iterateSourceFiles())
+      files.push({ relPath: f.relPath, contents: f.contents });
+    expect(files.some((f) => f.relPath === REMEDIATION)).toBe(true);
+    expect(checkIncidentRemediationConfinement(files)).toEqual([]);
+    expect(assertScanIsMeaningful(files)).toEqual([]);
+  });
+});
+
+describe("D46(a) carve-out and D46(e) / D40(b) for the remediation module (Phase 10 IC5a)", () => {
+  const file = (relPath: string, contents: string): FileEntry => ({ relPath, contents });
+  const SRC = "packages/gateway/src/";
+  const VALUE_IMPORT =
+    'import { CONNECTOR_WRITE_ROWS } from "../connectors/connector-writes/index.ts";\n';
+
+  test("D46(a): remediation.ts may import the write table as a value; proposals.ts and the store may not", () => {
+    expect(checkIncidentConfinement([file(`${SRC}incident/remediation.ts`, VALUE_IMPORT)])).toEqual(
+      [],
+    );
+    for (const where of [
+      "incident/proposals.ts",
+      "incident/proposal-store.ts",
+      "incident/other.ts",
+    ]) {
+      expect(
+        checkIncidentConfinement([file(`${SRC}${where}`, VALUE_IMPORT)]).map((v) => v.rule),
+      ).toEqual(["incident-forbidden-import"]);
+    }
+    // The carve-out is exactly one file: egress is still forbidden even there? No: it is carved out whole, so the
+    // rule for it is D46(c) alone. A near-miss name is NOT carved out.
+    expect(
+      checkIncidentConfinement([file(`${SRC}incident/remediation-x.ts`, VALUE_IMPORT)]).map(
+        (v) => v.rule,
+      ),
+    ).toEqual(["incident-forbidden-import"]);
+  });
+
+  test("D46(e): remediation.ts may call mintIncidentLink; nothing else but its own module may", () => {
+    expect(
+      checkIncidentLinkMinting([
+        file(`${SRC}incident/remediation.ts`, "mintIncidentLink(db, id);\n"),
+      ]),
+    ).toEqual([]);
+    expect(
+      checkIncidentLinkMinting([
+        file(`${SRC}incident/remediation-x.ts`, "mintIncidentLink(db, id);\n"),
+      ]).map((v) => v.rule),
+    ).toEqual(["incident-link-minted-in-incident"]);
+  });
+
+  test("D40(b): a runner built inside newRemediationExecutor is the third carrier; anywhere else in run-ask.ts is not", () => {
+    const BEFORE = file(
+      `${SRC}engine/before-state.ts`,
+      'const S = ".before.read";\nexport function createBeforeStateRunner() {}\nexport function isBeforeReadActionType() {}',
+    );
+    const EXEC = file(`${SRC}engine/executor.ts`, "if (isBeforeReadActionType(action.type)) {}");
+    const REG = file(
+      `${SRC}connectors/registry.ts`,
+      "if (!isBeforeReadActionType(t)) return; // .before.read",
+    );
+    const runAsk = (body: string) =>
+      file(
+        `${SRC}engine/run-ask.ts`,
+        `import { createBeforeStateRunner } from "./before-state.ts";\n${body}`,
+      );
+    const ok = runAsk(
+      "function newRemediationExecutor(p) {\n  return x(createBeforeStateRunner());\n}\n",
+    );
+    expect(checkBeforeStateRead([BEFORE, EXEC, REG, ok])).toEqual([]);
+    const stray = runAsk(
+      "export function buildRemediationExecutor(p) {\n  return x(createBeforeStateRunner());\n}\nfunction newRemediationExecutor(p) {\n  return x(createBeforeStateRunner());\n}\n",
+    );
+    expect(checkBeforeStateRead([BEFORE, EXEC, REG, stray]).map((v) => v.rule)).toEqual([
+      "before-state-runner-confined",
+    ]);
+  });
+});
+
+describe("D50 - the signed workflow import stays inside its confinement (I59)", () => {
+  const file = (relPath: string, contents: string): FileEntry => ({ relPath, contents });
+  const SRC = "packages/gateway/src/";
+  const STORE = `${SRC}automation/workflow-import-store.ts`;
+  const DDL = `${SRC}index/workflow-import-v101-sql.ts`;
+  const IMPORT = `${SRC}automation/workflow-import.ts`;
+  const RPC = `${SRC}ipc/workflow-import-rpc.ts`;
+  const BUNDLE = `${SRC}automation/workflow-bundle.ts`;
+  const PROMPT = `${SRC}automation/workflow-import-prompt.ts`;
+  const GOOD: FileEntry[] = [
+    file(
+      STORE,
+      "SELECT 1 FROM workflow_import; export function recordImport() {} export function floorFor() {}",
+    ),
+    file(DDL, "CREATE TABLE IF NOT EXISTS workflow_import ("),
+    file(
+      IMPORT,
+      'import { upsertWorkflowByName } from "./workflow-store.ts"; import { resolveSaveSchedule } from "./workflow-schedule.ts"; export function importWorkflowBundle() { recordImport(); floorFor(); readImportSource(); signersForName(); }',
+    ),
+    file(
+      RPC,
+      'import { signBytesWithShareKey } from "../share/share-keypair.ts"; import { importWorkflowBundle } from "../automation/workflow-import.ts"; const a = "workflow.import"; const b = "workflow.export"; listSources();',
+    ),
+    file(BUNDLE, 'import { canonicalJson } from "../util/canonical-json.ts";'),
+    file(PROMPT, 'import { escapeDiffText } from "../connectors/connector-writes/sanitise.ts";'),
+    file(`${SRC}ipc/automation-rpc.ts`, "upsertWorkflowByName(); listSources();"),
+    file(`${SRC}ipc/standing-rpc.ts`, "readImportSource();"),
+    file(`${SRC}engine/executor.ts`, 'const t = "workflow.import";'),
+    file(`${SRC}ipc/lan-rpc.ts`, 'const t = "workflow.export";'),
+    file(`${SRC}engine/standing-rule-step.ts`, "export function standingRuleStep() {}"),
+  ];
+  const rules = (files: FileEntry[]): string[] =>
+    checkWorkflowImportConfinement(files).map((v) => v.rule);
+
+  test("the sanctioned layout is clean", () => {
+    expect(checkWorkflowImportConfinement(GOOD)).toEqual([]);
+  });
+
+  test("(a) the table is named only by its store and DDL; the writer and floor reads only by the store and the import core", () => {
+    const other = file(`${SRC}ipc/automation-rpc.ts`, "SELECT * FROM workflow_import");
+    expect(rules([...GOOD, other])).toContain("workflow-import-table-confined");
+    for (const body of ["recordImport();", "floorFor();", "signerHistory();"]) {
+      expect(rules([...GOOD, file(`${SRC}ipc/x.ts`, body)]), body).toContain(
+        "workflow-import-table-confined",
+      );
+    }
+  });
+
+  test("(b) importWorkflowBundle and the two method literals are named only at their sites", () => {
+    expect(rules([...GOOD, file(`${SRC}ipc/x.ts`, "importWorkflowBundle();")])).toContain(
+      "workflow-import-entry-confined",
+    );
+    for (const lit of ['"workflow.import"', "'workflow.export'", "`workflow.import`"]) {
+      expect(
+        rules([...GOOD, file(`${SRC}ipc/server/dispatchers.ts`, `const m = ${lit};`)]),
+        lit,
+      ).toContain("workflow-import-entry-confined");
+    }
+    // A longer string that merely starts with the method name is not the literal.
+    expect(
+      rules([...GOOD, file(`${SRC}ipc/server/dispatchers.ts`, 'const m = "workflow.import: x";')]),
+    ).toEqual([]);
+  });
+
+  test("(c) a second caller of upsertWorkflowByName is refused", () => {
+    for (const path of [`${SRC}mcp-sink/capture-act.ts`, `${SRC}ipc/server/inline-handlers.ts`]) {
+      expect(rules([...GOOD, file(path, "upsertWorkflowByName(db)")]), path).toContain(
+        "workflow-import-upsert-confined",
+      );
+    }
+  });
+
+  test("(d) the rule and learning path names no provenance, and the import modules name no rule or learning table", () => {
+    for (const path of [
+      `${SRC}engine/standing-rule-step.ts`,
+      `${SRC}standing/standing-rule-derive.ts`,
+      `${SRC}standing/approval-learning.ts`,
+      `${SRC}standing/standing-rule-store.ts`,
+    ]) {
+      for (const body of [
+        "readImportSource(db, id)",
+        "FROM workflow_import",
+        'from "../automation/workflow-import-store.ts"',
+      ]) {
+        expect(rules([...GOOD, file(path, body)]), `${path} ${body}`).toContain(
+          "workflow-import-rule-isolation",
+        );
+      }
+    }
+    for (const path of [IMPORT, BUNDLE, PROMPT, STORE, RPC]) {
+      for (const body of [
+        "insertRule(db)",
+        "claimFire(db)",
+        "standingRuleStep()",
+        "FROM standing_rule",
+        "standing_streak",
+        "standing_suggestion",
+      ]) {
+        expect(
+          rules([...GOOD, file(path, `${file(path, "").contents}${body}`)]),
+          `${path} ${body}`,
+        ).toContain("workflow-import-rule-isolation");
+      }
+    }
+    // The display reads stay inside their allow-lists.
+    expect(rules([...GOOD, file(`${SRC}ipc/x.ts`, "listSources(db)")])).toContain(
+      "workflow-import-rule-isolation",
+    );
+    expect(rules([...GOOD, file(`${SRC}ipc/x.ts`, "signersForName(db, n)")])).toContain(
+      "workflow-import-rule-isolation",
+    );
+  });
+
+  test("(e) the import modules import no ChatOps, egress, federation or share module (but share-keypair), no connectors value (but sanitise) and no network", () => {
+    for (const path of [BUNDLE, IMPORT, PROMPT, STORE, RPC]) {
+      for (const [imp, why] of [
+        ['import { x } from "../chatops/reply-dispatcher.ts";', "chatops"],
+        ['import { x } from "../egress/egress-ledger.ts";', "egress"],
+        ['import { x } from "../federation/query-gate.ts";', "federation"],
+        ['import { x } from "../share/share-gate.ts";', "share"],
+        ['import { x } from "../connectors/connector-write-registry.ts";', "a connectors value"],
+        [
+          'import { x } from "../connectors/connector-writes/preview.ts";',
+          "another connector-writes file",
+        ],
+      ] as const) {
+        expect(rules([...GOOD, file(path, imp)]), `${path} ${why}`).toContain(
+          "workflow-import-forbidden-import",
+        );
+      }
+      for (const body of [
+        'import "node:https";',
+        "fetch(url);",
+        "new WebSocket(u);",
+        'import { x } from "undici";',
+      ]) {
+        expect(rules([...GOOD, file(path, body)]), `${path} ${body}`).toContain(
+          "workflow-import-no-network",
+        );
+      }
+    }
+    // A forbidden import that FOLLOWS another on the same line (after a `;`) is still read.
+    for (const path of [BUNDLE, IMPORT, PROMPT, STORE, RPC]) {
+      expect(
+        rules([
+          ...GOOD,
+          file(
+            path,
+            'import { a } from "../util/canonical-json.ts"; import { x } from "../share/share-gate.ts";',
+          ),
+        ]),
+        `${path} same-line`,
+      ).toContain("workflow-import-forbidden-import");
+    }
+    // The two named exceptions stay allowed; a type-only connectors import is allowed too, also
+    // when it follows another import on the same line.
+    expect(
+      rules([
+        ...GOOD,
+        file(BUNDLE, 'import type { X } from "../connectors/connector-write-registry.ts";'),
+      ]),
+    ).toEqual([]);
+    expect(
+      rules([
+        ...GOOD,
+        file(
+          PROMPT,
+          'import { a } from "../util/canonical-json.ts"; import { escapeDiffText } from "../connectors/connector-writes/sanitise.ts";',
+        ),
+      ]),
+    ).toEqual([]);
+  });
+
+  test("(f) the bundle layer, the prompt, the store and the RPC module name no schedule writer; the import core may", () => {
+    for (const path of [BUNDLE, PROMPT, STORE, RPC]) {
+      for (const body of ["setWorkflowSchedule(db)", "resolveSaveSchedule({})"]) {
+        expect(rules([...GOOD, file(path, body)]), `${path} ${body}`).toContain(
+          "workflow-import-schedule-isolation",
+        );
+      }
+    }
+    expect(rules(GOOD)).toEqual([]);
+  });
+
+  test("tests and test helpers are exempt", () => {
+    expect(
+      rules([
+        ...GOOD,
+        file(`${SRC}ipc/x.test.ts`, "importWorkflowBundle(); upsertWorkflowByName();"),
+      ]),
+    ).toEqual([]);
+  });
+
+  test("workflow-import.ts is a rule anchor, so a scan that lost it is not meaningful", () => {
+    expect(RULE_ANCHORS).toContain(IMPORT);
   });
 });

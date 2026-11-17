@@ -108,6 +108,9 @@ beforeAll(async () => {
     // resolved the name. `pack.list` reaches the pack-layer store's `read`.
     fleetRpcCtx: { store: { listBriefs: t, getBrief: t }, now: t } as never,
     packLayerStore: { read: t } as never,
+    // `incident.list|get|timeline` (IC10a): this connection declared no kind, so the handler refuses with
+    // ERR_INCIDENT_FORBIDDEN_CLIENT (-32000) before it reads anything; that proves the arm resolved the name.
+    incidentRpcCtx: { db, engine: { assembleNow: t }, dependsOn: t } as never,
   } as never);
   await server.start();
 });

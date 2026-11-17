@@ -1220,8 +1220,9 @@ export function checkIncidentRecordConfinement(files: readonly FileEntry[]): Vio
 // `incident/`. Rule `incident-link-minted-in-incident`. Three clauses over every non-test file of
 // `packages/gateway/src/`, comments stripped:
 //   (1) the identifier `mintIncidentLink` (a call, an import, aliased or not) only in its own module,
-//       `incident/incident-link-mint.ts`, and `postmortem/postmortem-push.ts` (IC7a, the first producer of a
-//       link; IC5 adds its remediation module to this list in the commit that creates it);
+//       `incident/incident-link-mint.ts`, in `incident/remediation.ts` (Phase 10 IC5a: the one module that
+//       runs a stored proposal as an incident-linked action) and in `postmortem/postmortem-push.ts` (Phase 10
+//       IC7a: the owner's post-mortem push);
 //   (2) `type IncidentLink`, `interface IncidentLink` and `function assertIncidentLink` are declared only in
 //       `engine/incident-link.ts`, the one module the executor validates a link through;
 //   (3) a QUOTED `"incident":{` key (a string or template literal that spells a link into a JSON row) appears
@@ -1233,10 +1234,12 @@ export function checkIncidentRecordConfinement(files: readonly FileEntry[]): Vio
 // object literal that names the key unquoted is not matched by clause (3).
 const D46E_SRC = "packages/gateway/src/";
 const D46E_MINT = `${D46E_SRC}incident/incident-link-mint.ts`;
+const D46E_MINT_USERS: readonly string[] = [
+  D46E_MINT,
+  `${D46E_SRC}incident/remediation.ts`,
+  `${D46E_SRC}postmortem/postmortem-push.ts`,
+];
 const D46E_LINK = `${D46E_SRC}engine/incident-link.ts`;
-// The files that may NAME the minter: its own module and each module that runs a linked owner action. IC7a
-// adds the post-mortem push (the first producer of a link); IC5 adds its remediation module the same way.
-const D46E_MINTERS: readonly string[] = [D46E_MINT, `${D46E_SRC}postmortem/postmortem-push.ts`];
 const D46E_READERS: readonly string[] = [
   `${D46E_SRC}incident/action-links.ts`,
   `${D46E_SRC}audit/incident-replay.ts`,
@@ -1262,7 +1265,7 @@ export function checkIncidentLinkMinting(files: readonly FileEntry[]): Violation
     if (!f.relPath.startsWith(D46E_SRC)) continue;
     const commentFree = stripComments(f.contents);
     const code = stripStringLiterals(commentFree);
-    if (!D46E_MINTERS.includes(f.relPath)) {
+    if (!D46E_MINT_USERS.includes(f.relPath)) {
       for (const m of code.matchAll(D46E_MINT_RE)) add(f, code, m.index);
     }
     if (f.relPath !== D46E_LINK) {
@@ -1270,6 +1273,77 @@ export function checkIncidentLinkMinting(files: readonly FileEntry[]): Violation
     }
     if (!D46E_READERS.includes(f.relPath)) {
       for (const m of commentFree.matchAll(D46E_KEY_RE)) add(f, commentFree, m.index);
+    }
+  }
+  return out;
+}
+
+// D46(c) (Phase 10 IC5a, incident-engine spec § 5.5, invariant I57 (b)): an engine-proposed action is built in ONE
+// module. Rule ids, over every non-test file of `packages/gateway/src/`, comments stripped:
+//   `engine-proposal-key-confined`: the property key `engineProposal` (declared or assigned, quoted or not) only in
+//       `incident/remediation.ts` (which sets it) and `engine/types.ts` (which declares it); the executor, the
+//       prompt and the audit row only READ `action.engineProposal`;
+//   `incident-proposal-table-confined`: a write verb on `incident_proposal` or `incident_engine_state` only in
+//       `incident/proposal-store.ts` and the V102 DDL file;
+//   `remediation-action-builder-confined`: the identifier `buildRemediationAction` only in `incident/remediation.ts`;
+//   `remediation-executor-confined`: the identifier `buildRemediationExecutor` only in `engine/run-ask.ts` (its
+//       definition) and `gateway-main.ts` (its one caller).
+// Stated bounds: a text scan, so a dynamically composed key or name evades it (the executor refuses an engine proposal
+// that is not beside a valid link, and `security-invariants.test.ts` pins the behaviour: never delegated, never
+// standing-approved, refused in advisory mode, never offered to the model); a write verb spelled in a template
+// literal assembled from parts evades the table clause.
+const D46C_SRC = "packages/gateway/src/";
+const D46C_KEY_ALLOWED: readonly string[] = [
+  `${D46C_SRC}incident/remediation.ts`,
+  `${D46C_SRC}engine/types.ts`,
+];
+const D46C_STORE = `${D46C_SRC}incident/proposal-store.ts`;
+const D46C_DDL = `${D46C_SRC}index/incident-proposal-v102-sql.ts`;
+const D46C_BUILDER = `${D46C_SRC}incident/remediation.ts`;
+const D46C_EXECUTOR_ALLOWED: readonly string[] = [
+  `${D46C_SRC}engine/run-ask.ts`,
+  `${D46C_SRC}gateway-main.ts`,
+];
+const D46C_KEY_RE = /\bengineProposal\s*\??\s*:|["']engineProposal["']\s*:/g;
+const D46C_TABLE_WRITE_RE = d46dWriteRe("incident_(?:proposal|engine_state)");
+const D46C_BUILDER_RE = /\bbuildRemediationAction\b/g;
+const D46C_EXECUTOR_RE = /\bbuildRemediationExecutor\b/g;
+
+export function checkIncidentRemediationConfinement(files: readonly FileEntry[]): Violation[] {
+  const out: Violation[] = [];
+  const add = (rule: string, f: FileEntry, src: string, index: number | undefined): void => {
+    const line = src.slice(0, index).split("\n").length;
+    out.push({
+      rule,
+      file: f.relPath,
+      line,
+      snippet: (f.contents.split("\n")[line - 1] ?? "").trim(),
+    });
+  };
+  for (const f of files) {
+    if (/\.test(?:-helpers)?\.ts$/.test(f.relPath)) continue;
+    if (!f.relPath.startsWith(D46C_SRC)) continue;
+    const commentFree = stripComments(f.contents);
+    const code = stripStringLiterals(commentFree);
+    if (!D46C_KEY_ALLOWED.includes(f.relPath)) {
+      for (const m of commentFree.matchAll(D46C_KEY_RE)) {
+        add("engine-proposal-key-confined", f, commentFree, m.index);
+      }
+    }
+    if (f.relPath !== D46C_STORE && f.relPath !== D46C_DDL) {
+      for (const m of commentFree.matchAll(D46C_TABLE_WRITE_RE)) {
+        add("incident-proposal-table-confined", f, commentFree, m.index);
+      }
+    }
+    if (f.relPath !== D46C_BUILDER) {
+      for (const m of code.matchAll(D46C_BUILDER_RE)) {
+        add("remediation-action-builder-confined", f, code, m.index);
+      }
+    }
+    if (!D46C_EXECUTOR_ALLOWED.includes(f.relPath)) {
+      for (const m of code.matchAll(D46C_EXECUTOR_RE)) {
+        add("remediation-executor-confined", f, code, m.index);
+      }
     }
   }
   return out;
@@ -3235,8 +3309,9 @@ function specifierNamesWriteTable(importerRel: string, spec: string): boolean {
   return D39_ROWS_SPECIFIER_RE.test(spec);
 }
 // `import <clause> from "x"` (static, comment-stripped); `export … from` re-exports count as values.
+// Anchored at a line start OR after a `;`, so a second import on the same line is read too.
 const D39_STATIC_IMPORT_RE =
-  /^[ \t]*(?:import|export)\s+(type\s+)?([^;"']*?)\s*from\s*["']([^"']+)["']/gm;
+  /(?:^|;)[ \t]*(?:import|export)\s+(type\s+)?([^;"']*?)\s*from\s*["']([^"']+)["']/gm;
 const D39_DYNAMIC_IMPORT_RE = /\bimport\s*\(\s*["']([^"']+)["']\s*\)/g;
 
 /** True when an import clause names at least one value (not `type X` / `import type`). */
@@ -3314,6 +3389,8 @@ interface ConfinementSpec {
   readonly forbiddenSegmentRe: RegExp;
   readonly forbiddenImportRule: string;
   readonly noNetworkRule: string;
+  /** An import target the rule permits although its path segment would be forbidden (D50(e) only). */
+  readonly allowTarget?: (target: string) => boolean;
 }
 
 function inBriefingScope(relPath: string): boolean {
@@ -3338,6 +3415,11 @@ function checkConfinement(files: readonly FileEntry[], spec: ConfinementSpec): V
       out.push({ rule, file: f.relPath, line, snippet: (original[line - 1] ?? "").trim() });
     };
     const specifier = (target: string, valueImport: boolean, index: number | undefined): void => {
+      if (spec.allowTarget?.(target) === true) {
+        // A named exception: still no network module.
+        if (D45_NETWORK_MODULE_RE.test(target)) push(spec.noNetworkRule, commentFree, index);
+        return;
+      }
       if (spec.forbiddenSegmentRe.test(target)) {
         push(spec.forbiddenImportRule, commentFree, index);
       } else if (D45_CONNECTORS_SEGMENT_RE.test(target) && valueImport) {
@@ -3420,8 +3502,14 @@ export function checkFinopsConfinement(files: readonly FileEntry[]): Violation[]
 const D46A_DIR = "packages/gateway/src/incident/";
 const D46A_LIB_RE = /^packages\/gateway\/src\/agents\/_lib\/incident[\w.-]*\.ts$/;
 
+// Phase 10 IC5a carves out ONE file: `incident/remediation.ts` builds and runs the owner remediation actions, so it
+// imports the connector write table as a value and the executor types. It is governed instead by D46(c) below.
+// Everything else under `incident/` (including the pure derivation `proposals.ts` and the store) stays in scope.
+const D46A_ACTION_BUILDER = "packages/gateway/src/incident/remediation.ts";
+
 function inIncidentScope(relPath: string): boolean {
   if (relPath.endsWith(".test.ts")) return false;
+  if (relPath === D46A_ACTION_BUILDER) return false;
   return relPath.startsWith(D46A_DIR) || D46A_LIB_RE.test(relPath);
 }
 
@@ -3432,6 +3520,172 @@ export function checkIncidentConfinement(files: readonly FileEntry[]): Violation
     forbiddenImportRule: "incident-forbidden-import",
     noNetworkRule: "incident-no-network",
   });
+}
+
+// ---- D50 (signed workflow import, I59) ------------------------------------------------------------
+// (a) Rule `workflow-import-table-confined`: the table `workflow_import` (V101) is named only by its store
+//     (`automation/workflow-import-store.ts`) and its DDL; the writer `recordImport` and the floor reads
+//     `floorFor` / `signerHistory` only there and in `automation/workflow-import.ts`.
+// (b) Rule `workflow-import-entry-confined`: `importWorkflowBundle` is named only by
+//     `automation/workflow-import.ts` and `ipc/workflow-import-rpc.ts`; the literals "workflow.import" and
+//     "workflow.export" only by the executor, the import module, the RPC module,
+//     `connectors/proposable-actions.ts`, `ipc/lan-rpc.ts` and `ipc/server/demo-gate.ts`.
+// (c) Rule `workflow-import-upsert-confined`: `upsertWorkflowByName` is called only by its definition
+//     (`automation/workflow-store.ts`), the `workflow.save` handler (`ipc/automation-rpc.ts`) and
+//     `automation/workflow-import.ts`, so nothing else (an agent door, a template path) becomes a second way
+//     to write a workflow.
+// (d) Rule `workflow-import-rule-isolation`: the rule and learning path (`engine/standing-rule-step.ts`,
+//     `standing/standing-rule-derive.ts`, `standing/approval-learning.ts`, `standing/standing-rule-store.ts`)
+//     names neither `workflow_import` nor the import store nor any of its reads; the display reads are named
+//     only where the plan allows (`readImportSource`: the store, `ipc/standing-rpc.ts`,
+//     `automation/workflow-import.ts`; `listSources`: the store, `ipc/automation-rpc.ts`,
+//     `ipc/workflow-import-rpc.ts`; `signersForName`: the store and `automation/workflow-import.ts`); and
+//     the import modules name none of `standing_rule`, `standing_rule_fire`, `standing_streak`,
+//     `standing_suggestion`, `insertRule`, `claimFire`, `standingRuleStep`. So an import can never satisfy a
+//     rule and a rule never relaxes for an import.
+// (e) Rules `workflow-import-forbidden-import` and `workflow-import-no-network`: the import modules
+//     (`automation/workflow-bundle.ts`, `workflow-import.ts`, `workflow-import-prompt.ts`,
+//     `workflow-import-store.ts`, `ipc/workflow-import-rpc.ts`) import no ChatOps, egress, federation or
+//     share module (from `share/` only `share-keypair.ts`, which holds the key behind
+//     `signBytesWithShareKey`), no `connectors/` value (the ONE permitted exception is
+//     `connectors/connector-writes/sanitise.ts`, the text escaper, which has no imports of its own) and no
+//     network primitive.
+// (f) Rule `workflow-import-schedule-isolation`: `setWorkflowSchedule`, `resolveSaveSchedule` and
+//     `upsertWorkflowByName` are named among the import modules only by `automation/workflow-import.ts`
+//     (the bundle layer, the prompt, the store and the RPC module name none), so the bundle layer cannot
+//     carry a schedule.
+// Stated bounds: a text scan, so a dynamically composed name evades it (as D33(c), D41 and D42 say); the
+// behavioural tests in `security-invariants.test.ts` (I59) are authoritative. Tied to I59.
+const D50_SRC = "packages/gateway/src/";
+const D50_STORE = `${D50_SRC}automation/workflow-import-store.ts`;
+const D50_DDL = `${D50_SRC}index/workflow-import-v101-sql.ts`;
+const D50_IMPORT = `${D50_SRC}automation/workflow-import.ts`;
+const D50_RPC = `${D50_SRC}ipc/workflow-import-rpc.ts`;
+const D50_BUNDLE = `${D50_SRC}automation/workflow-bundle.ts`;
+const D50_PROMPT = `${D50_SRC}automation/workflow-import-prompt.ts`;
+const D50_MODULES: readonly string[] = [D50_BUNDLE, D50_IMPORT, D50_PROMPT, D50_STORE, D50_RPC];
+const D50_RULE_PATH: readonly string[] = [
+  `${D50_SRC}engine/standing-rule-step.ts`,
+  `${D50_SRC}standing/standing-rule-derive.ts`,
+  `${D50_SRC}standing/approval-learning.ts`,
+  `${D50_SRC}standing/standing-rule-store.ts`,
+];
+const D50_TABLE_RE = sqlTableReferenceRe("workflow_import");
+const D50_IDENTIFIERS: readonly {
+  readonly re: RegExp;
+  readonly allowed: readonly string[];
+  readonly rule: string;
+}[] = [
+  {
+    re: /\b(?:recordImport|floorFor|signerHistory)\b/g,
+    allowed: [D50_STORE, D50_IMPORT],
+    rule: "workflow-import-table-confined",
+  },
+  {
+    re: /\bimportWorkflowBundle\b/g,
+    allowed: [D50_IMPORT, D50_RPC],
+    rule: "workflow-import-entry-confined",
+  },
+  {
+    re: /\bupsertWorkflowByName\b/g,
+    allowed: [
+      `${D50_SRC}automation/workflow-store.ts`,
+      `${D50_SRC}ipc/automation-rpc.ts`,
+      D50_IMPORT,
+    ],
+    rule: "workflow-import-upsert-confined",
+  },
+  {
+    re: /\breadImportSource\b/g,
+    allowed: [D50_STORE, `${D50_SRC}ipc/standing-rpc.ts`, D50_IMPORT],
+    rule: "workflow-import-rule-isolation",
+  },
+  {
+    re: /\blistSources\b/g,
+    allowed: [D50_STORE, `${D50_SRC}ipc/automation-rpc.ts`, D50_RPC],
+    rule: "workflow-import-rule-isolation",
+  },
+  {
+    re: /\bsignersForName\b/g,
+    allowed: [D50_STORE, D50_IMPORT],
+    rule: "workflow-import-rule-isolation",
+  },
+];
+const D50_LITERAL_RE = /(["'`])workflow\.(?:import|export)\1/g;
+const D50_LITERAL_ALLOWED: readonly string[] = [
+  `${D50_SRC}engine/executor.ts`,
+  D50_IMPORT,
+  D50_RPC,
+  `${D50_SRC}connectors/proposable-actions.ts`,
+  `${D50_SRC}ipc/lan-rpc.ts`,
+  `${D50_SRC}ipc/server/demo-gate.ts`,
+];
+const D50_RULE_NAMES_RE =
+  /\b(?:standing_rule(?:_fire)?|standing_streak|standing_suggestion|insertRule|claimFire|standingRuleStep)\b/g;
+const D50_STORE_NAMES_RE =
+  /\bworkflow_import\b|workflow-import-store|\b(?:readImportSource|listSources|signersForName|floorFor|signerHistory|recordImport)\b/g;
+const D50_SCHEDULE_NAMES_RE =
+  /\b(?:setWorkflowSchedule|resolveSaveSchedule|upsertWorkflowByName)\b/g;
+const D50_ALLOWED_TARGET_RE =
+  /(?:^|\/)share\/share-keypair(?:\.ts)?$|(?:^|\/)connectors\/connector-writes\/sanitise(?:\.ts)?$/;
+
+export function checkWorkflowImportConfinement(files: readonly FileEntry[]): Violation[] {
+  const out: Violation[] = [];
+  for (const f of files) {
+    if (!f.relPath.startsWith(D50_SRC)) continue;
+    if (f.relPath.endsWith(".test.ts") || f.relPath.endsWith(".test-helpers.ts")) continue;
+    const code = stripComments(f.contents);
+    const original = f.contents.split("\n");
+    const push = (rule: string, index: number | undefined): void => {
+      const line = code.slice(0, index).split("\n").length;
+      out.push({ rule, file: f.relPath, line, snippet: (original[line - 1] ?? "").trim() });
+    };
+    // (a) the table
+    if (f.relPath !== D50_STORE && f.relPath !== D50_DDL) {
+      for (const m of code.matchAll(new RegExp(D50_TABLE_RE.source, "gi"))) {
+        push("workflow-import-table-confined", m.index);
+      }
+    }
+    // (a)-(d) identifiers
+    for (const id of D50_IDENTIFIERS) {
+      if (id.allowed.includes(f.relPath)) continue;
+      for (const m of code.matchAll(id.re)) push(id.rule, m.index);
+    }
+    // (b) the method literals
+    if (!D50_LITERAL_ALLOWED.includes(f.relPath)) {
+      for (const m of code.matchAll(D50_LITERAL_RE))
+        push("workflow-import-entry-confined", m.index);
+    }
+    // (d) the rule and learning path never reads provenance
+    if (D50_RULE_PATH.includes(f.relPath)) {
+      for (const m of code.matchAll(D50_STORE_NAMES_RE)) {
+        push("workflow-import-rule-isolation", m.index);
+      }
+    }
+    // (d) the import modules never touch a rule or a learning table
+    if (D50_MODULES.includes(f.relPath)) {
+      for (const m of code.matchAll(D50_RULE_NAMES_RE)) {
+        push("workflow-import-rule-isolation", m.index);
+      }
+    }
+    // (f) schedules: only the import core names the schedule writers
+    if (D50_MODULES.includes(f.relPath) && f.relPath !== D50_IMPORT) {
+      for (const m of code.matchAll(D50_SCHEDULE_NAMES_RE)) {
+        push("workflow-import-schedule-isolation", m.index);
+      }
+    }
+  }
+  // (e) the import modules' imports and network primitives
+  out.push(
+    ...checkConfinement(files, {
+      inScope: (relPath) => D50_MODULES.includes(relPath),
+      forbiddenSegmentRe: D45_FORBIDDEN_SEGMENT_RE,
+      forbiddenImportRule: "workflow-import-forbidden-import",
+      noNetworkRule: "workflow-import-no-network",
+      allowTarget: (target) => D50_ALLOWED_TARGET_RE.test(target),
+    }),
+  );
+  return out;
 }
 
 // ---- D47 (the v1 static-box LAN path, I56) -------------------------------------------------------
@@ -3539,7 +3793,8 @@ export function checkModelWriteDoor(files: readonly FileEntry[]): Violation[] {
 //     `buildAgentWriteExecutor` both call, so the model door and the MCP act door cannot drift) or
 //     `newWorkflowWriteExecutor` (SA2: the owner's own workflow
 //     write step is the second carrier; it offers nothing to the model; SA4: the private function
-//     both workflow builders call, so the attended and the unattended executor share it), and it is never imported
+//     both workflow builders call, so the attended and the unattended executor share it) or `newRemediationExecutor`
+//     (Phase 10 IC5a: the incident engine remediation, the owner own action with a capture observer), and it is never imported
 //     under an `as` alias (an alias would let
 //     run-ask.ts call it outside that body unseen); a runner handed around as a value (an object
 //     literal, a re-export under another name in another module) is outside a text scan;
@@ -3566,7 +3821,7 @@ const D40_GUARD_SITES: readonly string[] = [
 /** `[start, end)` of each permitted carrier's body (the door's and the workflow write step's). */
 function d40CarrierSpans(code: string): readonly (readonly [number, number])[] {
   const spans: (readonly [number, number])[] = [];
-  for (const name of ["newDoorExecutor", "newWorkflowWriteExecutor"]) {
+  for (const name of ["newDoorExecutor", "newWorkflowWriteExecutor", "newRemediationExecutor"]) {
     const at = code.search(new RegExp(`\\bfunction\\s+${name}\\s*\\(`));
     if (at === -1) continue;
     const end = code.indexOf("\n}\n", at);
@@ -5708,7 +5963,9 @@ export const RULE_ANCHORS: readonly string[] = [
   // the scan (a move, a glob change) would leave half the rule passing over nothing.
   "packages/gateway/src/incident/assemble.ts",
   "packages/gateway/src/agents/_lib/incident-render.ts",
+  "packages/gateway/src/incident/remediation.ts", // D46(c) -- the one builder of an engine-proposed action; the D46(a) carve-out
   "packages/gateway/src/finops/cost-series.ts", // D48 — FinOps cost code is inert
+  "packages/gateway/src/automation/workflow-import.ts", // D50 - the only way a workflow enters from outside
   "packages/gateway/src/ipc/lan-legacy.ts", // D47 — the only home of the v1 static-box LAN path
   "packages/gateway/src/platform/sandbox/write-grant-check.ts", // D10 user-write — a file the rule reads and then permits
   "packages/gateway/src/engine/executor.ts", // D22 — connectors.dispatch chokepoint
@@ -6127,6 +6384,13 @@ async function run(): Promise<void> {
       );
     }
     if (incidentRecordViolations.length > 0) exit = 1;
+    const remediationViolations = checkIncidentRemediationConfinement(files);
+    for (const e of remediationViolations) {
+      console.error(
+        `::error file=${e.file},line=${e.line}::D46(c) an engine-proposed action built or its tables written outside incident/remediation.ts and incident/proposal-store.ts (rule ${e.rule}): ${e.snippet}`,
+      );
+    }
+    if (remediationViolations.length > 0) exit = 1;
     const incidentLinkViolations = checkIncidentLinkMinting(files);
     for (const e of incidentLinkViolations) {
       console.error(
@@ -6134,6 +6398,13 @@ async function run(): Promise<void> {
       );
     }
     if (incidentLinkViolations.length > 0) exit = 1;
+    const workflowImportViolations = checkWorkflowImportConfinement(files);
+    for (const e of workflowImportViolations) {
+      console.error(
+        `::error file=${e.file},line=${e.line}::D50 the signed workflow import left its confinement (rule ${e.rule}) - workflow_import, importWorkflowBundle and upsertWorkflowByName only at their sites, no rule or learning table or schedule writer in the import modules, no rule-path read of provenance, and no ChatOps/egress/federation import, connectors value import or network primitive in them: ${e.snippet}`,
+      );
+    }
+    if (workflowImportViolations.length > 0) exit = 1;
     const doorApprovalViolations = checkDoorApprovalConfinement(files);
     for (const e of doorApprovalViolations) {
       console.error(

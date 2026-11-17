@@ -146,6 +146,11 @@ describe("checkLanMethodAllowed", () => {
     "incident.timeline",
     "incident.postmortem",
     "incident.postmortemPush",
+    "incident.proposals",
+    "incident.remediate",
+    "incident.undo",
+    "incident.advisory",
+    "incident.advisorySet",
   ])("%s is not callable over LAN regardless of grant-write (Phase 10 IC3)", (method) => {
     for (const writeAllowed of [true, false]) {
       expect(() => checkLanMethodAllowed(method, { peerId: "p", writeAllowed })).toThrow(

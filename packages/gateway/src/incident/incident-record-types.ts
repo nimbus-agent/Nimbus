@@ -15,7 +15,7 @@ import type { TriggerService } from "./trigger-sources.ts";
  */
 
 /** Bump when the lane logic changes: it is inside the hash, so the next refresh writes a new version. */
-export const INCIDENT_ENGINE_VERSION = 1;
+export const INCIDENT_ENGINE_VERSION = 2;
 export const INCIDENT_SCHEMA_VERSION = 1;
 
 export type { GapNote };
@@ -137,6 +137,12 @@ export type PriorView = {
   readonly status: TriggerStatus;
   readonly closedAtMs: number | null;
   readonly closedBasis: TimeBasis;
+  /**
+   * How many remediation proposals Nimbus EXECUTED for that earlier incident (Phase 10 IC5a, engine version 2): what
+   * was done, never what worked. Counted from `incident_proposal` (status `executed`), 0 when it was never acted
+   * on or its record is gone.
+   */
+  readonly actions: number;
   readonly rule: "same_service_prior";
 };
 

@@ -2,6 +2,23 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [11.3.0](https://github.com/nimbus-agent/Nimbus/compare/v11.2.0...v11.3.0) (2026-11-17)
+
+
+### Features
+
+* **gateway:** add incident-record sections to nimbus oncall handoff and nimbus incident investigate (incident engine IC9a) ([#2043](https://github.com/nimbus-agent/Nimbus/issues/2043)) ([fba462b](https://github.com/nimbus-agent/Nimbus/commit/fba462bbca841853a29f1df47a467ffc13a2e18f))
+* **gateway:** incident engine IC5a, remediation proposals with a declared reversibility, remediate, undo and advisory mode (I57 (b), D46(c), V102) ([#2046](https://github.com/nimbus-agent/Nimbus/issues/2046)) ([a1f504d](https://github.com/nimbus-agent/Nimbus/commit/a1f504dc6fd217e691b7fab4d3554eba5158ca14))
+
+## [11.2.0](https://github.com/nimbus-agent/Nimbus/compare/v11.1.1...v11.2.0) (2026-11-17)
+
+
+### Features
+
+* **gateway:** add nimbus incident debt, symbols that incidents keep pointing at and nobody has touched (incident engine IC7b) ([#2045](https://github.com/nimbus-agent/Nimbus/issues/2045)) ([0269ea1](https://github.com/nimbus-agent/Nimbus/commit/0269ea1aebfeda198d806b9fd9616e7a30464b04))
+* **gateway:** signed workflow import and export, the owner approves the exact steps (I59, D50, V101) ([#2040](https://github.com/nimbus-agent/Nimbus/issues/2040)) ([02eb872](https://github.com/nimbus-agent/Nimbus/commit/02eb87255ce4ecd83eaa1da44719753e41e3abea))
+* **ui:** a read-only Incidents page lists incident records, shows a record with its cascade and its timeline (IC10a) ([#2042](https://github.com/nimbus-agent/Nimbus/issues/2042)) ([362a147](https://github.com/nimbus-agent/Nimbus/commit/362a147f02b95f1d4f40cb52e243ff0b61ef5e49))
+
 ## [11.1.1](https://github.com/nimbus-agent/Nimbus/compare/v11.1.0...v11.1.1) (2026-11-17)
 
 

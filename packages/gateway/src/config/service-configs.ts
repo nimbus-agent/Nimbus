@@ -38,3 +38,25 @@ export function loadDependsOnMap(configDir: string | undefined): Map<string, rea
     ]),
   );
 }
+
+/**
+ * The two bindings the remediation proposals read for one service (Phase 10 IC5a): its Argo CD applications and its
+ * deploy environments. `undefined` for an unbound service, an unreadable config or a missing directory: the
+ * proposals then say the application is not bound, never fail.
+ */
+export function loadServiceBindings(
+  configDir: string | undefined,
+  service: string | null,
+):
+  | { readonly argocdApps: readonly string[]; readonly deployEnvironments: readonly string[] }
+  | undefined {
+  if (configDir === undefined || service === null) return undefined;
+  try {
+    const cfg = loadNimbusServiceConfigsFromConfigDir(configDir).get(service);
+    return cfg === undefined
+      ? undefined
+      : { argocdApps: cfg.argocdApps, deployEnvironments: cfg.deployEnvironments };
+  } catch {
+    return undefined;
+  }
+}

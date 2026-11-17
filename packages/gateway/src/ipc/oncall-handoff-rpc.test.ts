@@ -10,8 +10,9 @@ import {
   syncTestContext,
 } from "../connectors/connector-sync-test-helpers.ts";
 import { syncPagerdutyIncidentItems } from "../connectors/pagerduty-sync.ts";
-import type { OncallHandoffResult } from "../index/oncall-handoff-query.ts";
-import { dispatchOncallHandoffRpc } from "./oncall-handoff-rpc.ts";
+import { buildRecord } from "../incident/__fixtures__/record-builder.ts";
+import { upsertIncidentRecord } from "../incident/incident-store.ts";
+import { dispatchOncallHandoffRpc, type OncallHandoffReply } from "./oncall-handoff-rpc.ts";
 import { OncallNowRpcError } from "./oncall-now-rpc.ts";
 
 const NOW = Date.UTC(2026, 10, 16, 18, 0);
@@ -52,16 +53,17 @@ afterEach(() => {
 
 async function call(
   params: unknown,
-  over: { configDir?: string; warn?: (m: string) => void } = {},
-): Promise<OncallHandoffResult> {
+  over: { configDir?: string; warn?: (m: string) => void; includeRecords?: boolean } = {},
+): Promise<OncallHandoffReply> {
   const out = await dispatchOncallHandoffRpc("oncall.handoff", params, {
     db,
     now: () => NOW,
     ...(over.configDir === undefined ? {} : { configDir: over.configDir }),
     ...(over.warn === undefined ? {} : { warn: over.warn }),
+    ...(over.includeRecords === undefined ? {} : { includeRecords: over.includeRecords }),
   });
   if (out.kind !== "hit") throw new Error("miss");
-  return out.value as OncallHandoffResult;
+  return out.value as OncallHandoffReply;
 }
 
 async function rpcError(params: unknown): Promise<OncallNowRpcError> {
@@ -69,6 +71,55 @@ async function rpcError(params: unknown): Promise<OncallNowRpcError> {
   expect(err).toBeInstanceOf(OncallNowRpcError);
   return err as OncallNowRpcError;
 }
+
+describe("oncall.handoff incident-record sections (IC9a)", () => {
+  function seedRecord(): void {
+    const record = buildRecord({
+      itemId: "pagerduty:INC1",
+      title: "Checkout 500s",
+      openedAtMs: NOW - 2 * HOUR,
+      boundService: "checkout",
+    });
+    upsertIncidentRecord(db, {
+      record,
+      markdown: "m",
+      recordSha256: "h",
+      citedServices: ["pagerduty"],
+      nowMs: NOW,
+    });
+  }
+
+  test("includeRecords attaches the records section for the same window", async () => {
+    seedRecord();
+    const r = await call({}, { includeRecords: true });
+    expect(r.records?.status).toBe("ok");
+    expect(r.records?.opened.items.map((x) => x.triggerItemId)).toEqual(["pagerduty:INC1"]);
+    expect(r.records?.stillOpen.total).toBe(1);
+  });
+
+  test("without includeRecords (or with false) the key is absent, not empty", async () => {
+    seedRecord();
+    expect("records" in (await call({}))).toBe(false);
+    expect("records" in (await call({}, { includeRecords: false }))).toBe(false);
+  });
+
+  test("the service argument filters the records and no_match carries none", async () => {
+    seedRecord();
+    writeFileSync(
+      join(dir, "nimbus.toml"),
+      `[ci.service.checkout]
+repos = ["github:acme/c"]
+pagerduty_services = ["P1"]
+`,
+      "utf8",
+    );
+    const mine = await call({ service: "checkout" }, { configDir: dir, includeRecords: true });
+    expect(mine.records?.opened.total).toBe(1);
+    const none = await call({ service: "other" }, { configDir: dir, includeRecords: true });
+    expect(none.status).toBe("no_match");
+    expect("records" in none).toBe(false);
+  });
+});
 
 describe("oncall.handoff", () => {
   test("no params returns the brief for the default window, from the index, with no network", async () => {

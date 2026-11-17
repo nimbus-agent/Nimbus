@@ -27,18 +27,24 @@ export type ServiceConfig = {
    * derived terms (service id, Sentry slugs, repo basenames) entirely.
    */
   readonly chatAliases: readonly string[];
+  /**
+   * Argo CD application names bound to this service (Phase 10 IC5a). The remediation proposals roll one of
+   * them back; nothing else reads the key. Exact names, at most `MAX_BINDING_ENTRIES`.
+   */
+  readonly argocdApps: readonly string[];
 };
 
 /** The four incident-engine binding fields, empty, for a literal to spread. */
 export const NO_INCIDENT_BINDINGS: Pick<
   ServiceConfig,
-  "jsmAlertTags" | "sentryProjects" | "dataModels" | "dependsOn" | "chatAliases"
+  "jsmAlertTags" | "sentryProjects" | "dataModels" | "dependsOn" | "chatAliases" | "argocdApps"
 > = Object.freeze({
   jsmAlertTags: [],
   sentryProjects: [],
   dataModels: [],
   dependsOn: [],
   chatAliases: [],
+  argocdApps: [],
 });
 
 export const DEFAULT_DEPLOY_WORKFLOW_PATTERN = "^[Dd]eploy";

@@ -41,9 +41,12 @@ export function getWorkflowByName(db: Database, name: string): WorkflowRow | nul
   if (readIndexedUserVersion(db) < 9) {
     return null;
   }
+  // The schedule columns exist from V89; the signed-workflow import snapshots them (I59).
+  const schedule =
+    readIndexedUserVersion(db) >= SCHEDULE_SCHEMA_VERSION ? ", schedule, schedule_tz" : "";
   const row = db
     .query(
-      `SELECT id, name, description, steps_json, created_at, updated_at FROM workflow WHERE name = ?`,
+      `SELECT id, name, description, steps_json, created_at, updated_at${schedule} FROM workflow WHERE name = ?`,
     )
     .get(name) as WorkflowRow | null | undefined;
   return row ?? null;

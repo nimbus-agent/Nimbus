@@ -12,6 +12,7 @@ import {
   LINEAR_ASSIGNEE_REFUSAL,
 } from "../connectors/connector-writes/model-write-refusals.ts";
 import {
+  type BeforeCaptures,
   type BeforeGuardContext,
   type BeforeStateGuard,
   type BeforeStateReader,
@@ -2210,5 +2211,106 @@ describe("before-state runner — origin agent (AD1)", () => {
     expect(() =>
       throwIfWave4WithoutPreview({ ...AGENT, type: "jira.comment.add" }, rows),
     ).not.toThrow();
+  });
+});
+
+describe("before-state captures for an inverse (Phase 10 IC5a, D3)", () => {
+  const captureReader = (pick: BeforeCaptures["pick"]): BeforeStateReader => ({
+    ...READER,
+    captures: { keys: ["summary"], pick },
+  });
+  const validPick = (reply: unknown): Record<string, string> => ({
+    summary: String((reply as { summary?: unknown }).summary),
+  });
+
+  test("a successful read reports the validated capture once, with the action, and shows the same fields", async () => {
+    const calls: Array<{ action: PlannedAction; captured: unknown }> = [];
+    const withCap = createBeforeStateRunner({
+      rows: [rowWith(captureReader(validPick))],
+      onCaptured: (action, captured) => calls.push({ action, captured }),
+    });
+    const without = createBeforeStateRunner({ rows: [rowWith(READER)] });
+    const a = await withCap.read(WRITE, opsReturning({ summary: "old" }));
+    const b = await without.read(WRITE, opsReturning({ summary: "old" }));
+    expect(a).toEqual(b);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.captured).toEqual({ summary: "old" });
+    expect(calls[0]?.action).toBe(WRITE);
+    expect(Object.isFrozen(calls[0]?.captured)).toBe(true);
+    expect(JSON.stringify(a)).not.toContain("captured");
+  });
+
+  test("no observer means no pick at all", async () => {
+    let picks = 0;
+    const runner = createBeforeStateRunner({
+      rows: [
+        rowWith(
+          captureReader((r) => {
+            picks++;
+            return validPick(r);
+          }),
+        ),
+      ],
+    });
+    await runner.read(WRITE, opsReturning({ summary: "old" }));
+    expect(picks).toBe(0);
+  });
+
+  test("a row whose reader declares no captures reports nothing", async () => {
+    const calls: unknown[] = [];
+    const runner = createBeforeStateRunner({
+      rows: [rowWith(READER)],
+      onCaptured: (_a, c) => calls.push(c),
+    });
+    await runner.read(WRITE, opsReturning({ summary: "old" }));
+    expect(calls).toEqual([]);
+  });
+
+  test("an unavailable read reports nothing", async () => {
+    const calls: unknown[] = [];
+    const runner = createBeforeStateRunner({
+      rows: [rowWith(captureReader(validPick))],
+      onCaptured: (_a, c) => calls.push(c),
+    });
+    const out = await runner.read(WRITE, {
+      gate: async () => "proceed",
+      dispatch: async () => {
+        throw new Error("boom");
+      },
+    });
+    expect(out).toEqual({ status: "unavailable", reason: "failed" });
+    expect(calls).toEqual([]);
+  });
+
+  test("an invalid capture is dropped and never changes what the owner is shown", async () => {
+    const bad: Array<(r: unknown) => unknown> = [
+      () => ({ summary: "x", extra: "y" }),
+      () => ({ other: "x" }),
+      () => ({ summary: "" }),
+      () => ({ summary: "a".repeat(513) }),
+      () => ({ summary: 5 }),
+      () => "text",
+      () => null,
+      () => {
+        throw new Error("no value");
+      },
+    ];
+    for (const pick of bad) {
+      const calls: unknown[] = [];
+      const runner = createBeforeStateRunner({
+        rows: [rowWith(captureReader(pick as never))],
+        onCaptured: (_a, c) => calls.push(c),
+      });
+      const out = await runner.read(WRITE, opsReturning({ summary: "old" }));
+      expect(out).toEqual({ status: "ok", fields: [{ label: "Summary", value: "old" }] });
+      expect(calls).toEqual([]);
+    }
+    const edge = createBeforeStateRunner({
+      rows: [rowWith(captureReader(() => ({ summary: "a".repeat(512) })))],
+      onCaptured: (_a, c) => edge_calls.push(c),
+    });
+    const edge_calls: unknown[] = [];
+    await edge.read(WRITE, opsReturning({ summary: "old" }));
+    expect(edge_calls).toHaveLength(1);
   });
 });

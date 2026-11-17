@@ -33,6 +33,9 @@ const DEMO_REFUSED_METHODS: ReadonlySet<string> = new Set([
   "pack.remove",
   // A demo gateway fetches no trust feed (I41); `trust.status` stays a read.
   "trust.refresh",
+  // Signed workflow import/export (I59): a demo root has an ephemeral key and synthetic data.
+  "workflow.import",
+  "workflow.export",
 ]);
 
 /** The refusal for `method` on a demo-rooted gateway, or `undefined` when it may proceed. */
