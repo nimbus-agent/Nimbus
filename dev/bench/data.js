@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794939568239,
+  "lastUpdate": 1794940977419,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "2356e6a7e4d25aab4baf954ce8a2e1d17df604f6",
-          "message": "fix(embedding): ship the onnx binding and stub sharp so the worker can start (#1399)\n\nAddresses the load failure in #1396. **Semantic search was dead in every\ninstall** — not degraded, dead.\n\n## The single-binding theory in the issue was wrong\n\nThere are **two** native modules in the chain, and fixing only the first\nmoves the error rather than clearing it.\n\n**1. `onnxruntime-node`** does\n`require(\"../bin/napi-v3/<platform>/<arch>/onnxruntime_binding.node\")`\nrelative to itself. Once the worker is bundled to\n`dist/workers/embedding-worker.js`, that resolves to\n`dist/bin/napi-v3/…` — which nothing ever created.\n\n`copy-onnx-sidecar.ts` places it there, mirroring `copy-vec0-sidecar.ts`\n**including its recorded lesson**: that copy once lived only in\n`compile-gateway.ts`, which the release pipeline never runs, so binaries\nshipped without it and failed silently. This is called from\n`build-workers.ts` for exactly that reason.\n\n**2. `sharp`** then fails identically. Transformers imports it\nstatically for **image** preprocessing and it is also native. The\nembedding worker does text feature-extraction only; transformers guards\nevery use with `else if (sharp)`; and upstream already maps `\"sharp\":\nfalse` in its own browser field. A falsy stub is the sanctioned shape\nhere, not a workaround.\n\n`build-workers.ts` moves from the `bun build` CLI to `Bun.build()`\npurely because the CLI has no aliasing flag.\n\n## Why no gate caught this\n\n`onnxruntime-node` joins `ALLOWED_NATIVE`, with the reasoning inline.\nThe audit never fired because it scans **declared** dependencies and\nthis arrives transitively — it reported `ok (19 declared dependencies\nchecked)` while the capability was dead. Its own doc comment predicted\nthis gap.\n\n## Verification, from source\n\n```\nbefore          -> ResolveMessage: Cannot find module '…/onnxruntime_binding.node'\nbinding only    -> Could not load the \"sharp\" module using the win32-x64 runtime\nbinding + stub  -> embedding worker initialized; semantic search is now active\n```\n\nThat last line is the first success on this machine. 728 structure-audit\n+ worker tests pass; `preflight:fast` 32/32.\n\n## ⚠️ Not yet verified — please weigh this in review\n\n**The compiled binary.** Inside it the worker lives on a virtual FS\n(`B:/~BUN/root/…`), and a native `.node` cannot load from there — so the\nrelative lookup may need to become an absolute one, the way\n`tryLoadFromSidecar()` works for `vec0`. Source-tree success is **not**\nevidence about the packaged build, and that exact gap is the bug class\nthis sits in (F15/F22, both of which shipped dead workers while every\nsource test passed).\n\nThe release packaging path is untouched by this PR. If the binary needs\nthe absolute lookup, that is a follow-up on top of this, not a revision\nof it — the sidecar still has to exist either way.\n\nAlso unverified: macOS and Linux. The copier derives platform/arch and\nthe layout is identical, but only `win32/x64` has actually been\nexercised.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01J6qbQmiRqJcxDc6ENA8LFc\n\n---------\n\nCo-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-08-29T21:56:53+03:00",
-          "tree_id": "2d8e7280e70ec1c50d93ea89e1c9cfb62052dca3",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/2356e6a7e4d25aab4baf954ce8a2e1d17df604f6"
-        },
-        "date": 1788030541661,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 339.65434800000077,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 336.3757689499995,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 179.13830904999958,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
+            "name": "nimbus-release-bot[bot]",
+            "username": "nimbus-release-bot[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "431fb1339e8865a135c0904b1915c57fba0465d7",
+          "message": "chore: release main (#2047)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>11.1.1</summary>\n\n##\n[11.1.1](https://github.com/nimbus-agent/Nimbus/compare/v11.1.0...v11.1.1)\n(2026-11-17)\n\n\n### Bug Fixes\n\n* **deps:** accept picomatch GHSA-fc5q-39xc-vjpf until a fix ships (no\npatched release; unreachable in what ships)\n([#2044](https://github.com/nimbus-agent/Nimbus/issues/2044))\n([fd40ac1](https://github.com/nimbus-agent/Nimbus/commit/fd40ac1929a0ec80ee430e35b55710b256d967ce))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
+          "timestamp": "2026-11-17T20:35:11+02:00",
+          "tree_id": "7f31f1860e5e3bb57f7856d070208d4fa3a8f237",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/431fb1339e8865a135c0904b1915c57fba0465d7"
+        },
+        "date": 1794940973729,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 172.36885585,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 174.21079959999915,
             "unit": "ms"
           }
         ]
