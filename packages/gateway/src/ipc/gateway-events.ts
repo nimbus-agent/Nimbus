@@ -19,7 +19,8 @@ export type GatewayEventKind =
   | "hitl.resolved"
   | "oncall.briefPushed"
   | "briefing.ready"
-  | "incident.assembled";
+  | "incident.assembled"
+  | "incident.updateDrafted";
 
 export interface GatewayEventNotification<P = Record<string, unknown>> {
   readonly kind: GatewayEventKind;
@@ -116,6 +117,16 @@ export interface IncidentAssembledEventPayload {
   readonly recordId: string;
   readonly version: number;
   readonly status: string;
+}
+
+/**
+ * `incident.updateDrafted` - the incident scribe queued an update draft for a new record version (Phase 10 IC9b).
+ * A record id, the version and how many drafts are waiting ONLY, never a title or the draft text.
+ */
+export interface IncidentUpdateDraftedEventPayload {
+  readonly recordId: string;
+  readonly version: number;
+  readonly queued: number;
 }
 
 export interface HitlResolvedPayload {

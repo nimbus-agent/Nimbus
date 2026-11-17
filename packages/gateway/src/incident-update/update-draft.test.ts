@@ -3,7 +3,12 @@ import { afterEach, describe, expect, test } from "bun:test";
 
 import { DEFAULT_INCIDENT_CONFIG } from "../config/incident-toml.ts";
 import { createMemoryIndexDb } from "../connectors/connector-sync-test-helpers.ts";
-import { configMap, resolverFor, serviceConfig, T0 } from "../incident/__fixtures__/index-writers.ts";
+import {
+  configMap,
+  resolverFor,
+  serviceConfig,
+  T0,
+} from "../incident/__fixtures__/index-writers.ts";
 import { writePagerdutyIncident } from "../incident/__fixtures__/trigger-writers.ts";
 import { IncidentError } from "../incident/assemble.ts";
 import { createIncidentEngine } from "../incident/incident-engine.ts";

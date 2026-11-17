@@ -21,6 +21,7 @@ import {
   type TimelineReplyLike,
 } from "./incident-format.ts";
 import { runRemediation } from "./incident-remediate.ts";
+import { runUpdateCommand } from "./incident-update.ts";
 
 /**
  * `nimbus incident list | show <id> | timeline <id>` (Phase 10 IC3, IC4): the incident records the gateway assembled from the local
@@ -205,6 +206,8 @@ export async function runIncidentWith(
 }
 
 export async function runIncidentCommand(args: string[]): Promise<void> {
+  // IC9b: the update draft, send and queue have their own flags and (for the send) approval timeout.
+  if (args[0] === "update") return runUpdateCommand(args.slice(1));
   const a = parseIncidentArgs(args);
   if (a === undefined) {
     process.stderr.write(`${INCIDENT_USAGE}\n`);

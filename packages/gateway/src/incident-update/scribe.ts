@@ -80,7 +80,8 @@ function readEntries(dir: string): QueuedDraft[] {
         parsed !== null && typeof parsed === "object"
           ? (parsed as Record<string, unknown>)["queuedAtMs"]
           : undefined;
-      queuedAtMs = typeof q === "number" && Number.isFinite(q) ? q : statSync(join(dir, name)).mtimeMs;
+      queuedAtMs =
+        typeof q === "number" && Number.isFinite(q) ? q : statSync(join(dir, name)).mtimeMs;
     } catch {
       continue;
     }

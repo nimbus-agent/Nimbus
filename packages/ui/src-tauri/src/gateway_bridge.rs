@@ -851,6 +851,10 @@ mod tests {
             "incident.undo",
             "incident.export",
             "incident.replay",
+            // Phase 10 IC9b: the update send STARTS an owner post; the draft and the queue stay CLI-only.
+            "incident.update",
+            "incident.updateSend",
+            "incident.updateQueue",
             "audit.replay",
         ] {
             assert!(!is_method_allowed(m), "{m} must not be renderer-callable");

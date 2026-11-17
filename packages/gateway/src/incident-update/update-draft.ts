@@ -41,9 +41,11 @@ export function draftIncidentUpdate(
   const tl = readTimeline(db, recordId, opts.version);
   const json =
     tl.version === tl.currentVersion
-      ? (db.query("SELECT record_json FROM incident_record WHERE id = ?").get(recordId) as {
-          record_json: string;
-        } | null)?.record_json
+      ? (
+          db.query("SELECT record_json FROM incident_record WHERE id = ?").get(recordId) as {
+            record_json: string;
+          } | null
+        )?.record_json
       : versionJson(db, recordId, tl.version);
   if (json === undefined || json === null) {
     // A concurrent owner erasure removed it between the two reads.

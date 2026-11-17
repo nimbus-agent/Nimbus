@@ -761,6 +761,30 @@ export function buildAgentWriteExecutor(p: AgentWriteExecutorParams): ToolExecut
   return newDoorExecutor(p, bindConsentChannel(p.consentCoordinator, p.clientId), p.audit);
 }
 
+/** What the owner's post-mortem push builds its executor from (Phase 10 IC7a): the shared turn arguments. */
+export type OwnerPushExecutorParams = Omit<ExecutorBuildParams, "localIndex"> & {
+  readonly audit: AuditSink;
+};
+
+/**
+ * The owner's own push executor (Phase 10 IC7a, D-IC-3): NOT a door. No delegation (I20), EMPTY extras (no
+ * before-state runner, no standing rules, never unattended), on THIS connection's consent channel, so
+ * the owner's `nimbus incident postmortem --push` is asked at the terminal that ran it and nobody else can
+ * answer. The action it runs carries no `origin`, no `proposer`, no `provenance` and the incident link.
+ * Its callers are the post-mortem push's RPC (IC7a) and `ipc/incident-update-rpc.ts` (IC9b: the owner's
+ * incident update post) (static D39(e)). It sits between the two door builders and
+ * `buildWorkflowWriteExecutor` so the I55 census slice covers it: it can never carry a standing rule.
+ */
+export function buildOwnerPushExecutor(p: OwnerPushExecutorParams): ToolExecutor {
+  return newExecutorOnChannel(
+    p,
+    bindConsentChannel(p.consentCoordinator, p.clientId),
+    undefined,
+    {},
+    p.audit,
+  );
+}
+
 /**
  * The ONE place a connector-write door executor is made (static D40(b)): no delegation (I20) and
  * the before-state runner, with NO `readsEveryOrigin` (it reads for an outside origin only) and NO

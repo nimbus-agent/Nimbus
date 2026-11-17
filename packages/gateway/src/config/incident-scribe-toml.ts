@@ -47,9 +47,7 @@ export function parseNimbusTomlIncidentScribe(
 }
 
 /** `[incident.scribe]` over the layered snapshot (packs, base, active profile). */
-export function loadNimbusIncidentScribeFromConfigDir(
-  configDir: string,
-): NimbusIncidentScribeToml {
+export function loadNimbusIncidentScribeFromConfigDir(configDir: string): NimbusIncidentScribeToml {
   const raw = layeredConfigText(configDir);
   if (raw === null) return DEFAULT_INCIDENT_SCRIBE_CONFIG;
   return parseNimbusTomlIncidentScribe(raw, sectionFallbackSink(configDir, "incident.scribe"));

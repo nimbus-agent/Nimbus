@@ -73,6 +73,7 @@ import {
   type NimbusFleetLoad,
   type NimbusFleetToml,
 } from "../config/fleet-toml.ts";
+import { loadNimbusIncidentScribeFromConfigDir } from "../config/incident-scribe-toml.ts";
 import { loadNimbusIncidentFromConfigDir } from "../config/incident-toml.ts";
 import { loadNimbusIndexFromConfigDir } from "../config/index-toml.ts";
 import { getLayeredConfig, initLayeredConfig } from "../config/layered-config.ts";
@@ -274,6 +275,7 @@ import { isOperatorValid } from "../identity/verifier.ts";
 import { createIncidentEngine, type IncidentEngine } from "../incident/incident-engine.ts";
 import { startIncidentRetention } from "../incident/incident-retention.ts";
 import { createRemediation, type MakeExecutor } from "../incident/remediation.ts";
+import { createIncidentScribe } from "../incident-update/scribe.ts";
 import { readUnreadChatThreads } from "../index/chat-unread-query.ts";
 import { startItemHistoryRetention } from "../index/item-history-retention.ts";
 import {
@@ -1046,10 +1048,25 @@ async function createSchedulerWithMesh(opts: SchedulerWithMeshOpts): Promise<{
   // Incident engine (Phase 10 IC3, I57 (a)): assembles incident records from the local index after a sync.
   // Its deps carry no dispatcher, executor, egress sink or model, so a pass can read and store only.
   // The service configs and `[incident]` are re-read on every use, so an edited nimbus.toml applies.
+  // The incident scribe (Phase 10 IC9b, `[incident.scribe]`, default off): queues an update draft (metadata only)
+  // for every new record version and shows a counts-only toast. It never posts. Not built on a demo gateway (I41).
+  const incidentScribe = paths.demo
+    ? undefined
+    : createIncidentScribe({
+        dataDir: paths.dataDir,
+        enabled: () => loadNimbusIncidentScribeFromConfigDir(paths.configDir).enabled,
+        now: Date.now,
+        emit: (p) => emitGatewayEvent("incident.updateDrafted", { ...p }),
+        notify: (title, body) => showIgnoringFailure(notifications, title, body),
+        logger: syncLogger,
+      });
   const incidentEngine = createIncidentEngine({
     db,
     now: Date.now,
-    emit: (p) => emitGatewayEvent("incident.assembled", { ...p }),
+    emit: (p) => {
+      emitGatewayEvent("incident.assembled", { ...p });
+      incidentScribe?.onAssembled(p);
+    },
     loadServiceConfigs: () =>
       new Map(
         loadServiceConfigsOrEmpty(paths.configDir, (m) => syncLogger.warn(m)).map((c) => [
