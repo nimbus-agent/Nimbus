@@ -95,8 +95,10 @@ export function countIndexBuckets(
   }
   for (const r of runs) {
     const meta = parseMeta(r.metadata);
+    if (meta === null) continue;
     // lane-census: scope=ci_run
-    if (meta === null || meta["conclusion"] !== "failure") continue;
+    const conclusion = meta["conclusion"];
+    if (conclusion !== "failure") continue;
     const res = resolve({ service: r.service, type: "ci_run", metadata: meta });
     if (res.kind === "bound") bump("ci_failed", res.serviceId, r.modified_at);
   }

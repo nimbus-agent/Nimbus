@@ -47,8 +47,10 @@ function newestCiSuccess(
   const byService = new Map<string, number>();
   for (const r of rows.slice(0, CI_SCAN_CAP)) {
     const meta = parseMeta(r.metadata);
+    if (meta === null) continue;
     // lane-census: scope=ci_run
-    if (meta === null || meta["conclusion"] !== "success") continue;
+    const conclusion = meta["conclusion"];
+    if (conclusion !== "success") continue;
     const res = resolve({ service: r.service, type: "ci_run", metadata: meta });
     if (res.kind !== "bound" || byService.has(res.serviceId)) continue;
     byService.set(res.serviceId, r.modified_at);
