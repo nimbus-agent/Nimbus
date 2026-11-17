@@ -2,6 +2,13 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [11.4.0](https://github.com/nimbus-agent/Nimbus/compare/v11.3.0...v11.4.0) (2026-11-17)
+
+
+### Features
+
+* **gateway:** add nimbus incident postmortem, a post-mortem draft from the incident record with an owner-approved push to Confluence or Notion (incident engine IC7a) ([#2048](https://github.com/nimbus-agent/Nimbus/issues/2048)) ([9df8e50](https://github.com/nimbus-agent/Nimbus/commit/9df8e507f3ed50b8434521c347aedb25135e60d6))
+
 ## [11.3.0](https://github.com/nimbus-agent/Nimbus/compare/v11.2.0...v11.3.0) (2026-11-17)
 
 
