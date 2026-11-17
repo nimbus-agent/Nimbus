@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794940977419,
+  "lastUpdate": 1794942272515,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "7ca83798c1c2d40e91ab6839e5c94cf54646a88d",
-          "message": "fix(embedding): embed the onnx addon so the compiled binary can load it (#1402)\n\nCloses the remaining half of #1396. **#1399 fixed the source tree and\ndid nothing for users.**\n\n## Proof it was still broken\n\nBuilt the binary from `main` after #1399 merged and ran it:\n\n```\n[gateway] embeddings: unavailable (ResolveMessage: Cannot find module\n  '../bin/napi-v3/win32/x64/onnxruntime_binding.node'\n  from 'B:\\~BUN\\root\\embedding-worker-t7wc5b73.js')\n```\n\nThe worker executes from Bun's virtual FS, so the relative path resolves\nto `B:\\~bin\\…` — which cannot exist. A sidecar beside the bundled worker\nonly ever helped the source tree. This is the risk flagged in #1399's\nown body, now confirmed rather than theoretical.\n\n## Two measurements decided the design\n\nBoth taken **inside a real compiled binary**, not reasoned about:\n\n- a `.node` **can** be dlopen'd from an absolute path on disk\n- `readFileSync` **can** read an embedded file synchronously — required,\nbecause we are replacing a *synchronous* `require`\n\n## Why embed rather than ship a sidecar like `vec0`\n\nBoth designs need this same plugin — the baked-in relative path has to\nbe replaced either way. They differ only in where the bytes come from.\nSo a sidecar buys **no** simplicity and costs a file that must be added\nto **seven** shipping paths:\n\n`install.sh` · `install.ps1` · `package-headless-bundle` ·\n`package-linux-installers` · `package-macos-installer.sh` ·\n`package-windows-installer.ps1` · `compile-gateway`\n\n`copy-vec0-sidecar.ts` records in its own header that this exact mistake\nalready happened once and **failed silently**. Embedding touches none of\nthose paths, so `copy-onnx-sidecar.ts` is deleted rather than extended.\n\n## The interception point is `binding.js`, not the `.node`\n\nThat module loads the addon with a **template literal**:\n\n```js\nexports.binding = require(`../bin/napi-v3/${process.platform}/${process.arch}/…node`);\n```\n\nwhich the bundler cannot resolve statically — it emits a runtime\nrequire, so an `onResolve` hook on the specifier never fires. **My first\nattempt filtered on the specifier and silently did nothing**, leaving\nthe bundle byte-identical. Bundle size is what caught it, and it is the\nsignal worth watching: **1,643,078 → 1,931,211**.\n\nThe emitted module is CommonJS and keeps `binding.js`'s exact shape — a\nnamed `binding` export plus the `__esModule` marker. An ESM default\nexport would come back as `{ default: … }` through the interop and leave\n`binding.InferenceSession` undefined **at first use** rather than\nfailing at load.\n\n## Three failure modes handled deliberately\n\n- **Staleness** — the extracted filename carries a content hash, so an\nupgrade cannot keep loading a stale addon. \"Extract once if absent\"\nwould.\n- **Concurrency** — write-to-temp-then-rename, so two gateways starting\ntogether cannot observe a half-written addon. Losing the rename race is\nfine: the name *is* the hash of those bytes.\n- **Truncation** — a size check catches a leftover from a killed\nprocess, whose dlopen error is otherwise inscrutable.\n\n## Verified end to end in the compiled binary\n\nThe thing #1399 could not claim:\n\n```\n[ok] Embeddings: ready (all-MiniLM-L6-v2).\n```\n\nreported by `nimbus doctor` through the #1397 probe over real IPC. The\naddon extracted as `onnxruntime_binding-447b01363735daaf.node` (215,448\nbytes).\n\n1626 script tests pass; `preflight:fast` 32/32.\n\n## Known bound\n\nResolution is keyed to the **build host's** platform/arch, so a\ncross-compiled build would embed the wrong addon. Stated here rather\nthan discovered later. macOS and Linux are unexercised — the mechanism\nis platform-neutral, but only `win32/x64` has actually been run.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01J6qbQmiRqJcxDc6ENA8LFc",
-          "timestamp": "2026-08-30T04:12:10Z",
-          "tree_id": "2c0f0d7374aed0aa890d1ac27cb2b14c4b9ace6c",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/7ca83798c1c2d40e91ab6839e5c94cf54646a88d"
-        },
-        "date": 1788063880734,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 330.0493389500007,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 328.0734841999962,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 174.21079959999915,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "362a147f02b95f1d4f40cb52e243ff0b61ef5e49",
+          "message": "feat(ui): a read-only Incidents page lists incident records, shows a record with its cascade and its timeline (IC10a) (#2042)\n\nAdds the desktop Incidents page (`/incidents`): the incident list (open\nby default, polled every 60 s, with cascade-group counts) and a record\nview with its brief, cascade block, versions and timeline. Phase 10\nincident engine, slice IC10a.\n\n- **Allowlist 132 → 135, by name:** exactly `incident.get`,\n`incident.list`, `incident.timeline` join `ALLOWED_METHODS`.\n`incident.assemble`, `audit.replay` and every later write-class incident\nmethod (`remediate`, `undo`, `advisory`, `proposals`, `findings`,\n`export`, `replay`) stay off the renderer, pinned by the new Rust test\n`allowlist_incident_reads_only` and an enumeration test in\n`security-invariants.test.ts`; none of the three is a no-timeout method.\n- Each handler already serves only a connection that declared `cli` or\n`ui` (`requireOwnerKind`), the Tauri bridge declares `ui`, and the\n`incident` namespace stays off the LAN.\n- Provider text is rendered through `safeText` (`showInvisible`: bidi,\ncontrol and zero-width characters shown as `\\u{XXXX}`) or the existing\nlexer-only Markdown component; a source pin forbids\n`dangerouslySetInnerHTML`/`innerHTML` and `incident.assemble` in the\npage. No anchors or images.\n- `ipc/allowlist-resolves.test.ts` stubs `incidentRpcCtx`, since every\nallowlisted method must resolve on a real router.\n- No schema, invariant, HITL type or egress class. IC10b (the proposals\nand findings views) stays open.\n\n**Verification.** Red-proofs: removing `incident.timeline` from the\nlist, adding `incident.assemble`, dropping `requireOwnerKind`, and\nbypassing `safeText` each fail a test. `preflight:fast` passes; UI\nvitest 1,400 tests; `security-invariants.test.ts` 623; `src/ipc` green.\n**`cargo test` was not run locally** (the build machine's paging file is\ntoo small to compile the Tauri crate), so CI's Rust leg is the first\nexecution of the Rust pins; the list was checked sorted, unique and 135\nlong by script, and the TS pins parse the same Rust source. Antigravity:\ncode review APPROVE (round 2).\n\n**Stated bounds.** Read-only; the declared client kind is\nclient-reported on the local socket; reply shapes are the gateway's own;\nthe list shows the first 50 records with no paging.\n\n**Docs.** `docs/architecture.md`, `docs/SECURITY-INVARIANTS.md` (I7, 132\n→ 135 by name), the roadmap (an IC10a sub-bullet; the IC10 row stays\nopen for IC10b), and the IPC and Tauri-allowlist skills. The status\nparagraph, the top of `docs/CHANGELOG.md` and `docs/README.md` are\nbatched into the batch docs PR (owner-approved exception).\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-17T18:55:26Z",
+          "tree_id": "fb36ee09a6927af957845158295a8997adf89f72",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/362a147f02b95f1d4f40cb52e243ff0b61ef5e49"
+        },
+        "date": 1794942268393,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 208.6432618999941,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 207.3120697999995,
             "unit": "ms"
           }
         ]
