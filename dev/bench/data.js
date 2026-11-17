@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794944111007,
+  "lastUpdate": 1794944943327,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "fcef76f46e0e6a07f6028e91fb3ba2e6d6c1953e",
-          "message": "feat(egress): ledger every outbound ChatOps post (#1403)\n\nEvery outbound Slack/Teams post now appends one `egress_ledger` row\n**before** the bytes leave, fail-closed. This is PR 1 of 2; PR 2 adds\nthe ChatOps agent intent and needs no egress work because this seam\nalready covers it.\n\n## The gap this closes\n\nNo ChatOps post was ledgered. The reply path is `ReplyDispatcher` →\n`buildConnectorPost` → an ephemeral bot-credentialed connector spawn,\nwhich never reaches the executor: `connectors.dispatch` has exactly one\ncaller in the tree (`engine/executor.ts:401`) and this is not it. So\nI29's chokepoint never saw a chat post.\n\n**And the gap was not disclosed.** That is the part that matters. The\n`mcp` and `http` classes cover less than their names suggest and say so\nexplicitly; chat posts were neither covered nor disclosed — grepping\nI29's section for `chatops`, `slack` or `reply` returned nothing.\n`nimbus prove` could therefore report **0 outbound events** for a window\nin which an answer synthesized from the private index had been posted to\nSlack's servers. Same defect shape as the `ask` intent classifier closed\non 2026-08-28.\n\n## Approach\n\nA **decorator at construction**, not a call-site append — the same shape\nas `wrapLedgeredProvider` (D22(e)) and `wrapLedgeredEmbedder` (D22(f)),\nand for the same reason: it covers consumers written later without any\nof them cooperating.\n\n`buildLedgeredChatPosts` returns one wrapped function per kind (`reply`,\n`approvalCard`, `agentBrief`), so `method` stays **server-derived**. An\noptional `kind?` argument was rejected: it would make the value\ncaller-supplied *and* omittable, so a consumer that forgot it would be\nsilently mis-attributed.\n\nRow shape: `source_type='chatops'`, `source_id` = a **salted** BLAKE3\nhash of the channel id (per-install salt, Vault-only under\n`chatops.channel.salt`), `destination` = the platform, `payload_summary`\n= the message **byte length only** — never the text. The salt is\nrequired, not belt-and-braces: channel ids are enumerable, so a bare\nhash is reversible by dictionary.\n\n`chatops` joins `COVERAGE_CLASSES` at **index 0** — that array's order\nis the wire format (it is serialised into a hashed boot-marker field),\nso appending would typecheck, round-trip within one binary, and produce\na canonical string no other binary agrees with.\n\n## Static enforcement\n\n`D17-chatops-unwrapped-post` fails the build if\n`buildConnectorPost(...)` is ever called outside\n`buildLedgeredChatPosts(...)`. It is **per-occurrence, not per-file**: a\nfile-level check would skip a file that contains any wrapped call — and\n`chatops-boot.ts` is the only file that legitimately contains one, so it\nwould have been blind in exactly the file it must watch. Token-counting\nfails the same way from the other side (a wrapper whose argument is\nsomething else keeps the counts equal). Red-proved twice: once with no\nwrapper present, once with an unwrapped call added *beside* the correct\none.\n\nTwo dead entries (`packages/mcp-connectors/{slack,teams}/src/server.ts`,\nremoved in `v3.0.0`) dropped from the D17 allowlist — verified dead with\n`git ls-files`, not `ls`, because a stale untracked directory survives\non machines predating the extraction.\n\n## Behaviour changes worth knowing\n\n- **A Vault write failure at boot is gateway-fatal, not merely\nchatops-fatal.** `ensureChannelSalt` throws and nothing catches it up to\n`assemblePlatformServices`. This is deliberate: `[chatops].enabled =\ntrue` is an explicit opt-in (the guard sits *before* the call, so this\ncannot reach a user who did not enable it), and a capability that cannot\nsatisfy its security invariant should refuse to start — the same posture\nI33 takes for a sandbox that cannot confine. The error text says so\nexplicitly. Not a `!`: nobody has to change anything to keep working.\n- **A failed ledger append no longer kills the gateway.** It previously\npropagated to a `void this.onFrame(...)`, became an\n`unhandledRejection`, and hit `host.exit(1)` — so a locked or full index\nDB would take the gateway down on the next inbound chat message. It is\nnow contained at the ChatOps message seam with an `error`-level log\nnaming the channel (unhashed), the post kind and the cause. The catch is\nnarrow: only `EgressAppendFailedError`; everything else still\npropagates. Fail-closed is preserved — nothing is posted when the append\nfailed.\n\n## Verification\n\n`typecheck`, `audit:invariants`, `lint:markdown`, chatops+egress (268),\ncli prove (39), structure-audit (725) — all pass, each run with its own\nexit code.\n\n`audit:coverage-floor` reports 7 violations locally, all in files with\n**zero diff** against this branch and none baseline-grandfathered;\n`exclusions.ts:18` states the exclusion set is written for a Linux\nrunner, so running it on Windows inverts which platform arms are active.\nThe two new files are clean — `channel-salt.ts` is at 100% line.\n\nThree `test:ci` failures are environmental (the Windows sandbox helper\nbinary is not built locally; those suites fail loudly by design rather\nthan skip).\n\n## Included documents\n\nThe design spec, both implementation plans, and the two review documents\nship with the code they argue for. The spec's §13 records responses to a\ndesign review that found a self-contradiction in the appender's `method`\nderivation and a live `NaN` hole in `minConfidence` validation (the\nlatter is a pre-existing IPC/HTTP issue, recorded as its own follow-up\nrather than widened into this PR).\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_0112DzCFzXs1osvcGLUuGwSQ\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Outbound Slack and Teams messages are now recorded in the egress\nledger before delivery.\n* Ledger entries include protected channel identifiers and\nmessage-length summaries.\n* Coverage reporting now includes ChatOps posts as a per-call egress\nclass.\n\n* **Bug Fixes**\n* ChatOps posts are blocked when ledger recording fails, preventing\nuntracked outbound messages.\n\n* **Documentation**\n* Updated security invariants, changelog, coverage guidance, and\nimplementation plans for ChatOps egress tracking.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-08-30T06:55:17Z",
-          "tree_id": "bc525aae95f88b717ab602ec7ce2fdcc8627b561",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/fcef76f46e0e6a07f6028e91fb3ba2e6d6c1953e"
-        },
-        "date": 1788073636878,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 325.04328325000023,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 322.20834995000405,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 256.7570461000003,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "0269ea1aebfeda198d806b9fd9616e7a30464b04",
+          "message": "feat(gateway): add nimbus incident debt, symbols that incidents keep pointing at and nobody has touched (incident engine IC7b) (#2045)\n\n## Summary\n- `nimbus incident debt [--since <n>d] [--untouched <n>d]\n[--min-incidents <n>] [--limit <n>] [--json]` (IPC `incident.debt`,\nowner kinds `cli`/`ui` only, off the LAN, not renderer-callable) lists\ncode symbols in files that at least 2 incident records pointed at,\nthrough their change-lane pull request's changed files, and that nobody\nhas committed to in the owner's local checkout for the untouched period\n(Phase 10 \"Proactive technical debt detection\").\n- It lives in `debt/`, not `incident/`, because it runs `git`;\n`debt/git-history.ts` is the only child process, so I57 (a) (\"incident\nassembly is inert\") stays true, pinned by a source test.\n- **Default `--since` is 365d, not the spec's 90d.** A file an\nincident's change touched was touched by that change, so with `--since`\nno longer than `--untouched` (180d) nothing can ever qualify; the output\nsays so (`window_too_short`). One constant (`DEBT_DEFAULTS.sinceDays`)\nif a different default is wanted.\n- Every gap is named, never silent: `repo_not_local`, `not_a_repo`,\n`history_shallow`, `git_failed`, `history_too_large`,\n`history_truncated`, `last_touch_unknown`, `no_symbols_indexed`,\n`no_pr_evidence`, `pr_files_unknown`, `pr_files_truncated`,\n`record_unreadable`, `record_cap`, `window_too_short`.\n\n## Security shape\n- A direct `Bun.spawn([\"git\",\"-C\",<configured root>,...])`, the same\nclass as `blame-index-sync` and `repo-remote`; env is\n`extensionProcessEnv` plus `GIT_TERMINAL_PROMPT=0`,\n`GIT_OPTIONAL_LOCKS=0`, `LC_ALL=C` (I1).\n- Constant argv (`-c core.fsmonitor=false --no-pager`, then `rev-parse`,\n`ls-files -z`, and `log --raw --no-renames --relative -z --no-ext-diff\n--no-textconv --no-show-signature --max-count=20000`), no pathspec, so\nno PR file, symbol or repo name reaches git; the root is the owner's\nconfigured spelling, never the index's.\n- 30 s deadline, a 32 MiB stdout cap that kills the child, stdin/stderr\nignored, hidden window.\n- The log parser consumes the token after a `:<modes>` line as a path,\nso a file named like a commit header cannot forge a time.\n\n## Verification\n- Red-proofs for header/meta forgery, real-git framing, shallow check,\nextra pathspec, env spread, threshold and min-incident off-by-ones, the\nconfigured-root intersection and `gitAware` filter, the root spelling,\nprefix stripping, the removed-file filter, `no_symbols_indexed` and\n`window_too_short`, the IPC kind gate and param allowlist, a spawn under\n`incident/`, the `assemble.ts` wiring pin, and the CLI bidi strip and\nexit mapping. A real-git test builds a temp repo (fixed dates, a\nsub-directory root, a shallow clone, a spaced non-ASCII name, an\nuntracked file).\n- `preflight:fast`, `typecheck:tests`, `bunx biome ci .` pass; gateway\n`debt`, `incident`, `ipc`, `security-invariants.test.ts` (621), CLI\ncommands (5,118) and `scripts/structure-audit` (1,711) pass. The `debt/`\nfiles are 99.6–100% line coverage.\n- Antigravity: plan APPROVE (round 2); code APPROVE (round 4, on the\nfinal tree).\n\n## Stated bounds\nFile-level, PR-only evidence (a Sentry culprit has no file; failing CI\nruns are not evidence); one PR per record; committer time (a rebase\nmoves it); the log is capped at 20,000 commits or 32 MiB; shallow\nclones, merge-only changes, repos no configured root tracks and files\nwith no indexed symbol are named gaps; a hostile `.git/config` in a\nconfigured root is the same trust the index sync already extends.\n\nNo migration, no allowlist change, no new invariant or static rule. The\nstatus paragraph, CHANGELOG top and README are batched into the batch\ndocs PR (owner-approved exception).\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-17T19:42:52Z",
+          "tree_id": "26cdd39a048ed9a79ca066cdb44daab13c3e79d5",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/0269ea1aebfeda198d806b9fd9616e7a30464b04"
+        },
+        "date": 1794944940194,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 156.96230845000136,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 175.95207910000244,
             "unit": "ms"
           }
         ]
