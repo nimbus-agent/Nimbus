@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794951210209,
+  "lastUpdate": 1794952790611,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "a6a052e2d019eb077a0b90d3a352c0d5d58cf590",
-          "message": "feat(chatops): invoke the built-in read-only agents from a Slack or Teams channel (#1412)\n\nAdds an `agent` intent to the ChatOps `IntentRouter`, so a mapped Slack\nor Teams user can run a\nbuilt-in read-only agent from a channel:\n\n```\n@nimbus agent expert query=auth\n@nimbus agent janitor allowGaps=true\n```\n\nIt works with **no LLM configured** — a brief renders deterministically\nunder\n`[agents].synthesis = \"off\"`, where `ask` in the same channel would\nrefuse. That is the point of\nthe feature, not a side effect.\n\nFollows #1403, which ledgered every outbound ChatOps post and is what\nmakes the brief post\nappear in `nimbus prove`.\n\n## Scope: eleven agents, not fourteen\n\n`AGENTS_RPC_HANDLERS` carries fifteen entries — the fourteen built-in\nagents plus `whyPeek`, a\ncompanion that shares `why`'s dispatch rather than a fifteenth agent.\n`EXTERNAL_EXCLUDED_AGENT_METHODS` — the same set the HTTP and MCP\nsurfaces already exclude,\ngeneralized from `HTTP_EXCLUDED_AGENT_METHODS` so ChatOps inherits it\nrather than re-deciding it\n— drops `preflight` and `premortem` for their side effects, `negotiate`\nbecause its `--person`\nargument turns it into a dossier-builder for anyone who can read the\nchannel, and `whyPeek` as a\ncompanion. Every one of those reasons is stronger in a shared room than\non a private surface.\n\n## Params are coerced, not validated\n\n`ipc/agent-param-kinds.ts` declares only the primitive kind of each\nparameter — four kinds:\n`string`, `number`, `boolean`, `stringArray`. `ipc/agents-rpc.ts` keeps\nsole ownership of every\nbound and every `-32602` message, so no bounds constant is duplicated\nonto the chat surface.\nA one-directional static audit,\n`scripts/structure-audit/check-agent-param-kinds.ts`, fails when\na validator gains a field the kinds map does not know about.\n\nOne real bug this closed: a non-finite `minConfidence` passed all three\nof its validator's\nchecks, because `NaN` satisfies `typeof x === \"number\"`, `NaN < 0` is\nfalse, and `NaN > 1` is\nfalse. The parser now refuses it before dispatch.\n\n## Invariants\n\n**I23** — the brief post goes through a second `ReplyDispatcher` bound\nto `posts.agentBrief`,\nnot a direct emitter, so the invariant's \"sole operational post path\"\nclaim stays true in code.\nReview caught this about to be falsified; it was fixed by adding the\ndispatcher rather than by\nsoftening the prose.\n\n**I29** — the post appends exactly one `egress_ledger` row with\n`method='chatops.agentBrief'`,\nfrom the post appender rather than the invoker, so it cannot\ndouble-count.\n\n**I31** — rendering caps the brief at a per-platform byte budget and\nalways binds it. Ordinary\nbody content is dropped from the end first, at any heading level. A\nreserved section is touched\nonly once that is exhausted: glossary's synthesis-reserved `## Terms`\ntable is shrunk first with\nan honest count, and a disclosure section such as `## Gaps` has its own\nbytes cut only as an\nabsolute last resort, always behind an unambiguous \"content was cut\"\nnotice rather than a silent\noverflow. The truncator reuses `agents/_lib`'s own section machinery\nrather than a second\nmarkdown parser, so it cannot disagree with the invariant at the\nboundary.\n\nThe heading classification is **fail-closed**:\n`SYNTHESIS_RESERVED_HEADINGS` is a positive,\nexplicit set, and any reserved heading not in it is treated as a\ndisclosure and is never the\ndrop candidate. An earlier revision derived droppability from *absence*\nfrom a disclosure set,\nwhich meant a future disclosure-only heading would silently become the\nfirst thing cut.\n\n## One wire that no per-task review could see\n\n`selfIdentity` was never wired in production. `PlatformServices` carried\nno federation-identity\nfield, so the ChatOps invoker structurally could not receive one, while\nits HTTP sibling did.\nFour of the eleven — `ghost`, `conflicts`, `huddle`, `janitor` — would\nhave fanned out to peers\nwith a zero keypair and returned briefs full of per-peer gaps, while\nthree docs asserted the\nworking behaviour.\n\nEach half had a passing test. Nothing tested the join.\n`chatops-agent-invoker-boot.test.ts` now\nboots the real `assemblePlatformServices` and observes the deps the real\ninternal call receives.\n\n## Known open, disclosed not fixed\n\nThe agent intent is **not rate-limited**, unlike `POST\n/v1/agents/{agent}`. The pre-existing\n`read` path is equally unbounded, so this is not a regression on its own\n— but the\npeer-amplification arm is new: an unbounded run count now means\nunbounded federated fan-out onto\nother paired machines, and unbounded remote-LLM spend under\n`[agents].synthesis = \"allow-remote\"`,\nwhere before it meant only unbounded local `ask` calls. Recorded in\n`docs/roadmap.md`. A rate\nlimiter is its own change.\n\n## Verification\n\n`bun run preflight`: 35 gates pass. `test:ci` reports 19692 pass / 70\nskip / 3 fail — the three\nfailures are the I33 sandbox precondition tests, which fail loudly\nrather than skip when the\nWindows sandbox helper binary is absent locally. Those three files have\nzero commits on this\nbranch and take the Linux arm on CI.\n\nCoverage floor: 7 violations, all pre-existing Windows platform-arm\nfiles with zero commits here.\nEvery new source file on this branch clears the floor.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_0112DzCFzXs1osvcGLUuGwSQ\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **New Features**\n  * Added ChatOps support for commands invoking eleven built-in agents.\n* Added parameter parsing and validation for agent commands, including\nnumeric, boolean, string, and list values.\n* Added federation-aware agent execution and reliable brief delivery\nwith egress tracking.\n* Added byte-limit handling that preserves important disclosure sections\nin truncated responses.\n\n* **Bug Fixes**\n* Improved handling of malformed commands, unsupported agents, invalid\nparameters, timeouts, and non-finite values.\n\n* **Documentation**\n* Updated architecture, security, roadmap, changelog, and workflow\ndocumentation for ChatOps agent functionality.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-08-30T17:35:38Z",
-          "tree_id": "5f113244ebcbf302997ad14b17af8e34e9a8eb7a",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/a6a052e2d019eb077a0b90d3a352c0d5d58cf590"
-        },
-        "date": 1788112125206,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 319.88255224999625,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 319.12867754999604,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 178.86839254999867,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "9df8e507f3ed50b8434521c347aedb25135e60d6",
+          "message": "feat(gateway): add nimbus incident postmortem, a post-mortem draft from the incident record with an owner-approved push to Confluence or Notion (incident engine IC7a) (#2048)\n\nIncident engine slice IC7a (Phase 10 \"Post-mortem generation\", Phase 17\n\"Auto post-mortem\").\n\n## What\n- `nimbus incident postmortem <id> [--out <file>] [--force] [--template\n<file>] [--synthesize] [--json]` (`incident.postmortem`): a Markdown\npost-mortem for a record whose trigger is closed, built from the stored\nrecord, its timeline and its linked audit rows. New brief kind\n`incident_postmortem` (the 20th) with four reserved sections (Timeline,\nDecision log, Gaps, Data freshness; I31). The change lane is \"Candidate\ncauses\", never a stated cause. Deterministic, byte-identical per record\nversion; the file is written `0600` with `wx` and not overwritten\nwithout `--force`.\n- No model unless `--synthesize` (attended, owner kinds, existing\nledgered synthesis runner, only from `postmortem/postmortem-draft.ts`;\nOR-10-8).\n- `--push confluence|notion` (`incident.postmortemPush`) runs the\nEXISTING `confluence_page_create`, or `notion_page_create` then\n`notion_block_append`, as the local owner's own action carrying the\nincident link, through the new `buildOwnerPushExecutor` (no delegation,\nempty extras). The typed preview, the KB refusal and the remote-content\nrefusal run first. Notion's partial outcome is reported.\n\n## Invariants and static rules\nNo migration (schema stays V100), no `ALLOWED_METHODS` change (132), no\nnew invariant, no new write row. D39(e) lists the new builder (caller:\n`ipc/postmortem-rpc.ts` only). D46(e) clause (1) lists\n`postmortem/postmortem-push.ts` as a link minter. I57 (a) text notes it.\nBoth methods are off the LAN (pinned in `lan-rpc.test.ts`).\n\n## Stated bounds\n- A Notion push takes two approvals and can leave a page without its\nbody.\n- A Notion push over 100 blocks is refused.\n- Only a subset of Markdown is converted.\n- Action items are placeholders until IC5 and IC6 exist.\n- A Bigeye record gets no post-mortem (Bigeye has no closed state).\n- The push preview does not show the parent page's current state.\n\n## Docs\nRoadmap rows, architecture, SECURITY-INVARIANTS, cli-reference and the\nskills are updated here. Per the owner's batching rule, the hot shared\ndocs (the CLAUDE.md/GEMINI.md status paragraph, the top of CHANGELOG and\ndocs/README) are **batched into the last PR of this batch**. The\nproposed text is kept locally.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JmSjrCk6NpLauKU2yYCwva\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-17T21:52:46Z",
+          "tree_id": "2ee5ca4da9c3dd4d2e8b6bc2748bbe0924e9caa4",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/9df8e507f3ed50b8434521c347aedb25135e60d6"
+        },
+        "date": 1794952787504,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 176.6851992499982,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 173.91270030000197,
             "unit": "ms"
           }
         ]
