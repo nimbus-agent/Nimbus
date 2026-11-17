@@ -140,7 +140,7 @@ function blastOf(input: DeriveInput): ProposalEvidence["blast"] & { environment:
   return {
     service,
     environment: input.record.change.deployment?.environment ?? null,
-    dependents: [...seen].sort(),
+    dependents: [...seen].sort((a, b) => Number(a > b) - Number(a < b)),
     dependentsTruncated: truncated,
   };
 }
