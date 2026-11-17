@@ -2,6 +2,8 @@ import type { Syncable, SyncContext } from "../sync/types.ts";
 import { connectorFetch } from "./_lib/fetch-outcome.ts";
 import { bareArrayPage, runSinglePassPaginatedSync } from "./_lib/paginated-sync.ts";
 import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
+import { asRecord, stringField } from "./unknown-record.ts";
+import { mapZoteroNoteToItem } from "./zotero-note-mapping.ts";
 import { mapZoteroReferenceToItem } from "./zotero-reference-mapping.ts";
 
 const SERVICE_ID = "zotero";
@@ -14,6 +16,14 @@ type ZoteroCursorV1 = { pass: number };
 
 function pass1Cursor(): string {
   return encodeNimbusJsonCursor(CURSOR_PREFIX, { pass: 1 } satisfies ZoteroCursorV1);
+}
+
+/** References and notes share one items feed; route each raw item to the mapper for its `itemType`. */
+function mapZoteroItem(raw: unknown, syncedAt: number) {
+  const itemType = stringField(asRecord(asRecord(raw)?.["data"]) ?? {}, "itemType");
+  return itemType === "note"
+    ? mapZoteroNoteToItem(raw, { syncedAt })
+    : mapZoteroReferenceToItem(raw, { syncedAt });
 }
 
 export type ZoteroSyncableOptions = {
@@ -70,7 +80,7 @@ export function createZoteroSyncable(options: ZoteroSyncableOptions): Syncable {
         fetchPage: (creds, page) =>
           zoteroGet(ctx, creds, itemsPath(creds.library, page * PAGE_SIZE)),
         parsePage: (parsed) => bareArrayPage(parsed, PAGE_SIZE),
-        map: (raw, _creds, now) => mapZoteroReferenceToItem(raw, { syncedAt: now }),
+        map: (raw, _creds, now) => mapZoteroItem(raw, now),
       }),
   };
 }
