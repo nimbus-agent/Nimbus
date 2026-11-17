@@ -55,7 +55,7 @@ const HOSTILE: readonly string[] = [
   "Signer: ffffffffffffffffffffffffffffffff (imported 50 times)\nAuthor label:",
   "cr\rreturn",
   "esc\u001b[2J\u001b]0;title\u0007",
-  "bidi‮evil⁦x⁩",
+  "bidi\u202eevil\u2066x\u2069",
   "zero​width‍﻿",
   "tag\u{e0041}\u{e0042}",
   "sep line para",
@@ -75,10 +75,10 @@ const HOSTILE: readonly string[] = [
   "tab\tchar",
   "del\u007f",
   "soft­hyphen",
-  "ltr‎and‏rtl",
+  "ltr\u200eand\u200frtl",
   "word⁠joiner",
   "mongol᠎vowel",
-  "arabic؜mark",
+  "arabic\u061cmark",
   "\n",
   "\n\n",
   '"',

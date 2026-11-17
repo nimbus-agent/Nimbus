@@ -142,7 +142,7 @@ describe("verifyBundle: body fields", () => {
       "ERR_WORKFLOW_BUNDLE_FORMAT",
     );
   });
-  test.each(["", "-x", "has space", "a/b", "x".repeat(65), "line\nbreak", "‮evil"])(
+  test.each(["", "-x", "has space", "a/b", "x".repeat(65), "line\nbreak", "\u202eevil"])(
     "the name %j is refused",
     (name) => {
       expect(code(verify(signFixture(fixtureBody({ name }))))).toBe("ERR_WORKFLOW_BUNDLE_NAME");
