@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794888689686,
+  "lastUpdate": 1794890535926,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
-            "name": "nimbus-release-bot[bot]",
-            "username": "nimbus-release-bot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "3cdd54e16d7c8c39241d78e18f04007144053175",
-          "message": "chore: release main (#1395)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>7.1.2</summary>\n\n##\n[7.1.2](https://github.com/nimbus-agent/Nimbus/compare/v7.1.1...v7.1.2)\n(2026-08-29)\n\n\n### Bug Fixes\n\n* **index:** extract `export default` symbols in the code indexer\n([#1391](https://github.com/nimbus-agent/Nimbus/issues/1391))\n([78751d2](https://github.com/nimbus-agent/Nimbus/commit/78751d2f54ab9898f7e1a0fc77ec3df226003357))\n* **logging:** stop logging every Error as {}\n([#1393](https://github.com/nimbus-agent/Nimbus/issues/1393))\n([7734ab1](https://github.com/nimbus-agent/Nimbus/commit/7734ab10b68ea5c221b56cfc8ccfabe555ef80ca))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
-          "timestamp": "2026-08-29T20:32:28+03:00",
-          "tree_id": "edf5d72c63e5cbcbb354579778ac70fc935ea5f5",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/3cdd54e16d7c8c39241d78e18f04007144053175"
-        },
-        "date": 1788025604725,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 317.33381999999835,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 343.8442682499968,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 170.26170679999615,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "9a6ad2239b74acdabf7b91a18278b45ec7d57260",
+          "message": "feat(gateway): add nimbus incident timeline, cascade ranking in the pushed brief, and nimbus audit replay (incident engine IC4) (#2038)\n\nPhase 10 incident engine, slice IC4: the incident timeline, cascade\nranking, the incident link on actions, and `nimbus audit replay`. No\nmigration (schema stays V100), no Tauri allowlist change (132), no new\ninvariant; static D46(e); I57(a) extended; one sentence each in I4, I20\nand I29.\n\n## What it adds\n- **Timeline.** `nimbus incident timeline <id> [--version N] [--json]`\n(`incident.timeline`) lists one record version's events with the clock\neach line came from (pure `incident/timeline.ts` plus a loader).\n- **Cascade.** Open records inside a 30-minute anchor window are ranked\nfor one root candidate: a service others depend on (and that depends on\nno other record in the cluster) outranks them, then a shared deployment,\nthen open time (`incident/cascade.ts`, search capped at 64 services).\nThe pushed on-call brief carries a `## Cascade` block (the stored\n`incident_record.markdown` is untouched); `incident show` shows it live\nand `incident list --cascade` lists it.\n- **No re-push (owner ruling OR-IC4-1).** A record pushed before its\nsiblings existed is not pushed again when a later record becomes its\nroot; pinned by a test and stated as a bound.\n- **The incident link.** A gateway-minted `{ id, version }`\n(`incident/incident-link-mint.ts`, the only constructor; nothing calls\nit until IC5) goes FIRST in the audit row and the egress summary of a\nlinked action and its reads (`engine/incident-link.ts`).\n`assertLinkedActionAllowed` runs first in the gate and refuses a link on\nan action with `origin`, `proposer` or `provenance`; a linked action is\nnever delegated and never standing-approved. A payload `incident` key is\nstripped from the egress summary.\n- **The approval prompt (owner ruling OR-IC4-2).** For a prompted,\nincident-linked action ONLY, the audit row stores the prompt's SHA-256\n(of the exact text shown, typed-confirm line included) and up to 1,600\nJSON-escaped characters of the credential-redacted prompt; every other\nrow is byte-identical to before (golden test, also run against the\npre-change executor). `audit.export` and the audit shipper carry that\ntext.\n- **Replay.** `nimbus audit replay <incident-id>` (`audit.replay`,\n`audit/incident-replay.ts`) rebuilds versions, linked actions, prompts\nand paired egress rows and verifies both hash chains over the range read\n(anchored at the greatest id below the first linked row; id gaps and a\npruned egress ledger handled); canonical JSON, so two runs are\nbyte-identical; exit 1 for a broken chain, 2 for an unknown id.\n- **IC3's late-reopening gap closed** for tracked state changes: a\nclosed record whose trigger has an `item_history` row observed at or\nafter its check is reselected.\n- `incident.timeline` and `audit.replay` answer only declared `cli`/`ui`\nconnections, are LAN-forbidden and are not renderer-callable (negative\nI7 assertions added).\n\n## Deviations from the plan (all accepted by the Antigravity code\nreview)\n1. No per-RPC `-32602` refusals: no site that builds a `PlannedAction`\ncopies an unknown top-level key; a census pins the four files that touch\na link, and a payload-nested `incident` is shown inert.\n2. Before-state and prepare reads of a linked action carry\n`\"subStep\":true` after the link, so replay groups them without naming\nthose action types inside `incident/` (D40(a), D42(a), D43).\n3. D46(e) clause 1 allows `mintIncidentLink` only in its own file; IC5\nadds its importer.\n4. Replay lives in `audit/` because it verifies the egress chain and\nD46(a) forbids `incident/**` importing `egress/`.\n5. `OncallPushRunnerDeps.dependsOn` and `IncidentRpcCtx.dependsOn` are\nrequired, wired once each.\n6. The I7 Rust pin now allows only the negative form\n`is_method_allowed(\"incident.timeline\")`.\n\n## Verification\n- Red-proofs (production line reverted, named tests fail, restored\nbyte-identical): the history recheck, outside-origin refusal, delegation\nfallback, standing rule never reaching a linked action, link-first\nordering, unlinked golden rows, confirm line inside the hash, stripping\n`payload.incident`, a door naming a link, the offset-0 anchor,\ntop-candidate ranking, window vs chaining, stored markdown unchanged,\nthe `firstId-1` anchor, replay determinism and range start, D46(e), the\nzero-egress pin.\n- After rebasing onto main (IC3 and the audit row-id fix):\n`preflight:fast` passes; incident, oncall-push, engine, audit, egress,\nipc, standing, `security-invariants.test.ts`, structure-audit and CLI\ncommand suites: 14,620 pass, 0 fail.\n- Antigravity: plan approved in round 2; code review APPROVE (one\ninformational note: a prompt cut mid-escape by the row ceiling is\nreported as cut, fail-safe).\n\n## Stated bounds\nThe audit link scan is a full pass over `audit_log` (capped at 5,000\nrows, truncation reported; an expression index goes into IC5's migration\nif it misses its CI budget). The stored prompt is redacted and capped,\nso replay cannot recompute the hash from stored text and says so. The\negress summary head is unhashed, so pairing is by order within\n`(timestamp, method)` and flagged `ambiguous` when counts differ.\nVerification starts at the row before the first linked row, anchored on\nits stored hash; that anchor row itself is not checked. The cascade\nsearch stops at 64 services. The recheck follows only tracked state\nchanges. D46(e) is a text scan. Executed/failed/proposed event kinds and\nthe prior-incident lane's action count arrive with IC5.\n\n## Docs\nThis PR updates `docs/architecture.md`, `docs/cli-reference.md`,\n`docs/SECURITY-INVARIANTS.md`, its roadmap row and two skills. The\nstatus paragraph in CLAUDE.md/GEMINI.md, the top of `docs/CHANGELOG.md`\nand `docs/README.md` are batched into this batch's final docs PR\n(owner-approved exception). No `!`: nothing a user must change.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* View an incident’s chronological timeline, including its history and\nrecorded actions, with support for viewing earlier versions.\n* Group related open incidents into cascade rankings in the CLI and\non-call briefs, with explanations of likely relationships.\n* Replay an incident’s recorded versions and linked actions, and check\naudit and egress chain integrity.\n* Link eligible actions to incident records for clearer audit and replay\ndetails.\n* **Documentation**\n* Updated CLI references and security and architecture documentation for\nincident timelines, cascade views, and audit replay.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-17T04:33:50Z",
+          "tree_id": "b3cba3ee2d8962b76266df5db35859c0dc13a6bb",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/9a6ad2239b74acdabf7b91a18278b45ec7d57260"
+        },
+        "date": 1794890531193,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 202.56142214999983,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 203.0001436500017,
             "unit": "ms"
           }
         ]
