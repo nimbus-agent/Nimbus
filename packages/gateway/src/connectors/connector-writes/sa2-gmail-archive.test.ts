@@ -3,7 +3,7 @@
 import { describe, expect, test } from "bun:test";
 
 import { HITL_REQUIRED } from "../../engine/executor.ts";
-import { ACTION_PROPOSABILITY, PROPOSABLE_WRITE_TOOLS } from "../proposable-actions.ts";
+import { agentDoorRow } from "./agent-door.ts";
 import { enableWritesPromptLines } from "./enable-prompt.ts";
 import { CONNECTOR_WRITE_ROWS } from "./index.ts";
 import { selectGmailThreadArchive } from "./mail-calendar.ts";
@@ -51,13 +51,9 @@ describe("the row", () => {
     }
   });
 
-  test("in the HITL set; withheld from the act door as not_yet_offered", () => {
+  test("in the HITL set; the agent door routes the type to this row (reachable only once the owner approves it by name)", () => {
     expect(HITL_REQUIRED.has("gmail.thread.archive")).toBe(true);
-    expect(ACTION_PROPOSABILITY["gmail.thread.archive"]).toEqual({
-      kind: "denied",
-      class: "not_yet_offered",
-    });
-    expect(PROPOSABLE_WRITE_TOOLS["gmail.thread.archive"]).toBeUndefined();
+    expect(agentDoorRow("gmail.thread.archive")?.toolId).toBe("gmail_thread_archive");
   });
 
   test("the preview names the thread and says nothing is deleted", () => {

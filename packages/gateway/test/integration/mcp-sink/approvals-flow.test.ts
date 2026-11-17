@@ -21,14 +21,17 @@ import {
   withConfirm,
   withPreview,
 } from "../../../src/connectors/connector-writes/types.ts";
+import { mcpClientToolKey } from "../../../src/connectors/lazy-mesh/tool-map.ts";
 import { appendAuditEntry } from "../../../src/db/audit-chain.ts";
 import { makeEgressSink, NULL_EGRESS_SINK } from "../../../src/egress/egress-ledger.ts";
 import { isBeforeReadActionType, WAVE4_BEFORE_REFUSAL } from "../../../src/engine/before-state.ts";
 import { NO_POLICY_OVERLAY } from "../../../src/engine/executor.ts";
 import { buildModelWriteExecutor } from "../../../src/engine/run-ask.ts";
+import { serviceOf } from "../../../src/engine/service-of.ts";
 import type { AnswerSource, AuditSink, PlannedAction } from "../../../src/engine/types.ts";
 import { openMigratedMemoryDb } from "../../../src/index/migrated-db-template.ts";
 import { APPROVALS_METHODS } from "../../../src/ipc/approvals-rpc.ts";
+import { PERMISSIVE_DOOR, readerListing } from "../../../src/ipc/approved-door.test-helpers.ts";
 import type {
   AgentDoorActWiring,
   CaptureActWiring,
@@ -112,19 +115,19 @@ function gateDeps(): CaptureGateDeps {
     refusals: new CaptureRefusalCounter(),
     newId: () => `cap_${String(++seq).padStart(32, "0")}`,
     now: () => clock,
-    classifyAction: () => ({ kind: "proposable", basis: "legacy_user_mcp" }),
+    classifyAction: () => ({ kind: "proposable", basis: "approved" }),
+    verifyActionDefinition: () => Promise.resolve({ ok: true }),
     isServiceConfigured: () => Promise.resolve(true),
     actionDestinationRefusal: () => undefined,
   };
 }
 
 /**
- * A door that knows a registered user MCP server with no approval for agents (the legacy case). An
- * agent's `mcp_*` call carries these facts, or it cannot be asked about at all (I15, AD5b).
+ * A door that knows a registered user MCP server the owner approved for agents. An agent's `mcp_*`
+ * call carries these facts, or it cannot be asked about at all (I15, AD5b).
  */
-const LEGACY_USER_MCP_DOOR: AgentDoorActWiring = {
-  listServerTools: async () => undefined,
-  verifyDefinition: async () => ({ ok: true }),
+const USER_MCP_DOOR: AgentDoorActWiring = {
+  ...PERMISSIVE_DOOR,
   userMcpCallFacts: async (actionType) => ({
     ok: true,
     facts: {
@@ -134,12 +137,12 @@ const LEGACY_USER_MCP_DOOR: AgentDoorActWiring = {
       readPaths: [],
       netHosts: [],
       writePaths: [],
-      approval: null,
+      approval: { approvedAt: 1, definitionSha256: "a".repeat(64), description: "" },
     },
   }),
 };
 
-/** Set by the one test that proposes a user-MCP call; every other test keeps a wiring with no door. */
+/** Set by the one test that proposes a user-MCP call; every other test keeps the permissive door. */
 let userMcpDoor = false;
 
 function actWiring(): CaptureActWiring {
@@ -160,7 +163,23 @@ function actWiring(): CaptureActWiring {
     audit: { recordAudit: (e) => appendAuditEntry(db, e) },
     policyHitl: NO_POLICY_OVERLAY,
     getTribalKbConfig: () => undefined,
-    ...(userMcpDoor ? { agentDoor: LEGACY_USER_MCP_DOOR } : {}),
+    agentDoor: userMcpDoor
+      ? USER_MCP_DOOR
+      : {
+          ...PERMISSIVE_DOOR,
+          // A synthetic row's reader (`rows`) is listed too, as its connector would list it.
+          listServerTools: async (service) => ({
+            ...readerListing(service),
+            ...Object.fromEntries(
+              (rows ?? [])
+                .filter((r) => serviceOf(r.actionType) === service && r.before !== undefined)
+                .map((r) => [
+                  mcpClientToolKey(service, r.before?.tool ?? ""),
+                  { description: "r", inputSchema: {} },
+                ]),
+            ),
+          }),
+        },
     previewCredentialFor: () => "team",
     ...(rows === undefined ? {} : { beforeStateRows: rows }),
   };
@@ -328,13 +347,11 @@ describe("A1: the same prompt the model door shows", () => {
     expect(agentPrompt).toContain("Requested by: an outside agent (unverified)");
 
     const lines = agentPrompt.split("\n");
-    // The fixture's verdict basis is legacy_user_mcp (AD5a), so the block ends with the fixed
-    // deprecation line: who and when, the agent's summary, then the warning.
-    expect(lines.at(-3)).toStartWith(
+    // The block ends with who and when, then the agent's summary (AD3b: no deprecation line).
+    expect(lines.at(-2)).toStartWith(
       'Proposed by an outside agent (UNVERIFIED label "claude-code"',
     );
-    expect(lines.at(-2)).toStartWith("Agent's summary (UNVERIFIED): ");
-    expect(lines.at(-1)).toStartWith("Deprecated: ");
+    expect(lines.at(-1)).toStartWith("Agent's summary (UNVERIFIED): ");
     // The prompt reached the OWNER's connection (the one that issued approvals.approve).
     expect(seen[0]?.clientId).toBe(OWNER_A);
   });
@@ -415,8 +432,8 @@ describe("A2: typed confirmation, on a synthetic Wave 4 row (the real `github.pr
     ["an empty answer", () => ""],
     ["a wrong-case answer", () => TEXT.toUpperCase()],
     ["a trimmed-away answer (spaces around the text)", () => ` ${TEXT} `],
-    // The echo is cut to the longest answer the wire accepts (512): with the legacy fixture's
-    // deprecation line the whole prompt is longer, and `consent.respond` would refuse it.
+    // The echo is cut to the longest answer the wire accepts (512): the whole prompt is longer,
+    // and `consent.respond` would refuse it.
     ["an echo of the prompt", (r: SeenRequest) => r.prompt.slice(0, 512)],
     ["a different channel", () => "slack/C1"],
   ])("%s is denied and nothing is dispatched", async (_n, typed) => {
@@ -577,21 +594,19 @@ describe("who may use the queue, and who can see a capture", () => {
     expect(await code(rpc(OWNER_B, "approvals.approve", { id }))).toBe("ERR_CAPTURE_STATE");
   });
 
-  test("captures.* still serves an undeclared connection, including accepting an action (D-AD-16, unchanged)", async () => {
+  test("captures.* still serves an undeclared connection for a listing, but it can no longer accept an action: every action proposal is approved only through approvals.approve (AD3b)", async () => {
     const id = await propose();
     const listed = (await rpc("unk", "captures.list", { kind: "action" })) as {
       captures: Array<{ id: string }>;
     };
     expect(listed.captures.map((c) => c.id)).toEqual([id]);
-    // The gateway's captures.accept is not human-only (correction 3, a stated bound): an answer that
-    // reports no source (an older client, the sandboxed user-MCP e2e) still approves it. The CLI
-    // alias and approvals.approve are the human-only paths.
+    // An undeclared connection's raw accept is refused (the owner command is named), whatever
+    // the answer source; nothing is prompted or dispatched.
     answer = () => ({ approved: true });
-    expect(((await rpc("unk", "captures.accept", { id })) as { state: string }).state).toBe(
-      "executed",
-    );
-    const id2 = await propose();
-    const viaApprovals = (await rpc(OWNER_A, "approvals.approve", { id: id2 })) as {
+    expect(await code(rpc("unk", "captures.accept", { id }))).toBe("ERR_CAPTURE_FORBIDDEN_CLIENT");
+    expect(dispatched.filter((a) => !isBeforeReadActionType(a.type))).toEqual([]);
+    // approvals.approve is human-only: an answer that reports no source becomes a decline.
+    const viaApprovals = (await rpc(OWNER_A, "approvals.approve", { id })) as {
       state: string;
     };
     expect(viaApprovals.state).toBe("rejected");

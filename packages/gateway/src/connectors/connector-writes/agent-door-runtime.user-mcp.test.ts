@@ -20,9 +20,7 @@ import { userMcpMeshKey } from "../lazy-mesh/keys.ts";
 import { LazyConnectorMesh } from "../lazy-mesh/mesh.ts";
 import type { LazyMcpSlot } from "../lazy-mesh/slot.ts";
 import { mcpClientToolKey } from "../lazy-mesh/tool-map.ts";
-import { type ClassifyContext, classifyActionType } from "../proposable-actions.ts";
 import { deleteUserMcpConnector, insertUserMcpConnector } from "../user-mcp-store.ts";
-import { legacyNoticeFor } from "./agent-door-legacy.ts";
 import { type AgentDoorDeps, createAgentDoor, DEFINITION_REFUSALS } from "./agent-door-runtime.ts";
 import { definitionSha256 } from "./definition-hash.ts";
 import {
@@ -38,15 +36,13 @@ let db: Database;
 let policyOff: Set<string>;
 let policyThrows: boolean;
 let userMcpAllowed: boolean;
-let modelAccess: Set<string>;
 /** serviceId -> the listing the injected lister returns (`"reject"` throws, `"none"` is undefined). */
 let listings: Record<string, Record<string, unknown> | "reject" | "none">;
 let userListCalls: string[];
 let firstPartyListCalls: string[];
 let clock: number;
 
-const classifyContext: ClassifyContext = {
-  modelAccessServices: () => modelAccess,
+const userMcpPolicy = {
   userMcpModelAccessAllowed: () => userMcpAllowed,
 };
 
@@ -79,7 +75,6 @@ function register(serviceId: string, opts: { model?: boolean; createdAt?: number
     model_access: opts.model === true ? 1 : 0,
     created_at: opts.createdAt ?? REGISTERED_AT,
   });
-  if (opts.model === true) modelAccess.add(serviceId);
 }
 
 /** Approve `tool` of `serviceId` for agents at the hash of `e` (a real definition hash). */
@@ -107,7 +102,7 @@ function door(over: Partial<AgentDoorDeps> = {}) {
       return l === undefined || l === "none" ? undefined : l;
     },
     tribalKbConfig: () => undefined,
-    classifyContext,
+    userMcpPolicy,
     isServiceConfigured: async () => true,
     now: () => clock,
     ...over,
@@ -130,7 +125,6 @@ beforeEach(() => {
   policyOff = new Set();
   policyThrows = false;
   userMcpAllowed = true;
-  modelAccess = new Set();
   listings = {};
   userListCalls = [];
   firstPartyListCalls = [];
@@ -163,7 +157,7 @@ describe("verdict: one test per step of D-2", () => {
     });
   });
 
-  test("3. a suspended approval is suspended, even on a --model server (never a legacy case)", () => {
+  test("3. a suspended approval is suspended, even on a --model server", () => {
     register("mcp_x", { model: true });
     const sha = approve("mcp_x", "append");
     expect(markDoorToolSuspended(db, "agent", "mcp_x", "append", sha, "b".repeat(64), 2)).toBe(
@@ -178,7 +172,7 @@ describe("verdict: one test per step of D-2", () => {
     expect(door().verdict("mcp_x.append")).toEqual({ kind: "proposable", basis: "approved" });
   });
 
-  test("4. approved needs user_mcp_model_access: with it off the tool is denied, not approved and not legacy", () => {
+  test("4. approved needs user_mcp_model_access: with it off the tool is denied, not approved", () => {
     register("mcp_x");
     approve("mcp_x", "append");
     userMcpAllowed = false;
@@ -186,7 +180,7 @@ describe("verdict: one test per step of D-2", () => {
     expect(v.kind).toBe("denied");
   });
 
-  test("4. approved needs mcp_action: with it locked off the tool is denied, not downgraded to legacy", () => {
+  test("4. approved needs mcp_action: with it locked off the tool is denied", () => {
     register("mcp_x", { model: true });
     approve("mcp_x", "append");
     policyOff.add("mcp_action");
@@ -200,23 +194,13 @@ describe("verdict: one test per step of D-2", () => {
     expect(door().verdict("mcp_x.append").kind).toBe("denied");
   });
 
-  test("5. an unapproved tool of a --model server is legacy_user_mcp, exactly as before", () => {
+  test("5. an unapproved tool is denied agent_not_approved, on a --model server or not, and whatever the policy says (AD3b)", () => {
     register("mcp_x", { model: true });
-    expect(door().verdict("mcp_x.append")).toEqual({
-      kind: "proposable",
-      basis: "legacy_user_mcp",
-    });
-  });
-
-  test("6. an unapproved tool of a server without --model keeps the classifier's class; policy off keeps user_mcp_policy", () => {
-    register("mcp_x");
-    expect(door().verdict("mcp_x.append")).toEqual({
-      kind: "denied",
-      class: "user_mcp_no_model_access",
-    });
-    register("mcp_m", { model: true });
+    register("mcp_n");
+    expect(door().verdict("mcp_x.append")).toEqual({ kind: "denied", class: "agent_not_approved" });
+    expect(door().verdict("mcp_n.append")).toEqual({ kind: "denied", class: "agent_not_approved" });
     userMcpAllowed = false;
-    expect(door().verdict("mcp_m.append")).toEqual({ kind: "denied", class: "user_mcp_policy" });
+    expect(door().verdict("mcp_x.append")).toEqual({ kind: "denied", class: "agent_not_approved" });
   });
 
   test("the verdict never lists anything", () => {
@@ -236,14 +220,13 @@ describe("the --model grant and the agent grant are independent (property 1)", (
     approve("mcp_x", "append");
     const d = door();
     expect(d.verdict("mcp_x.append")).toEqual({ kind: "proposable", basis: "approved" });
-    // The sibling has no agent approval: it is the legacy case, never `approved`.
-    expect(d.verdict("mcp_x.other")).toEqual({ kind: "proposable", basis: "legacy_user_mcp" });
+    // The sibling has no agent approval: it is refused, never `approved`.
+    expect(d.verdict("mcp_x.other")).toEqual({ kind: "denied", class: "agent_not_approved" });
   });
 
   test("revoking --model does not revoke the agent approval, and the agent approval does not need --model", () => {
     register("mcp_y");
     approve("mcp_y", "append");
-    expect(modelAccess.has("mcp_y")).toBe(false);
     expect(door().verdict("mcp_y.append")).toEqual({ kind: "proposable", basis: "approved" });
   });
 });
@@ -287,7 +270,7 @@ describe("every fact is read at the call", () => {
     const d = door();
     expect(d.verdict("mcp_x.append").kind).toBe("denied");
     register("mcp_x", { model: true });
-    expect(d.verdict("mcp_x.append")).toEqual({ kind: "proposable", basis: "legacy_user_mcp" });
+    expect(d.verdict("mcp_x.append")).toEqual({ kind: "denied", class: "agent_not_approved" });
     const sha = approve("mcp_x", "append");
     expect(d.verdict("mcp_x.append")).toEqual({ kind: "proposable", basis: "approved" });
     policyOff.add("mcp_action");
@@ -297,17 +280,16 @@ describe("every fact is read at the call", () => {
     markDoorToolSuspended(db, "agent", "mcp_x", "append", sha, null, 5);
     expect(d.verdict("mcp_x.append")).toEqual({ kind: "suspended" });
     removeDoorApprovals(db, "mcp_x");
-    expect(d.verdict("mcp_x.append")).toEqual({ kind: "proposable", basis: "legacy_user_mcp" });
+    expect(d.verdict("mcp_x.append")).toEqual({ kind: "denied", class: "agent_not_approved" });
     deleteUserMcpConnector(db, "mcp_x");
     expect(d.verdict("mcp_x.append").kind).toBe("denied");
   });
 });
 
 describe("refusal: no destination rule exists for a tool the gateway does not understand", () => {
-  test("both user-MCP bases return undefined; nothing is invented", () => {
+  test("the approved basis returns undefined; nothing is invented", () => {
     register("mcp_x", { model: true });
     expect(door().refusal("mcp_x.append", { a: 1 }, "approved")).toBeUndefined();
-    expect(door().refusal("mcp_x.append", { a: 1 }, "legacy_user_mcp")).toBeUndefined();
   });
 });
 
@@ -410,7 +392,7 @@ describe("verifyDefinition for an mcp_* type (D-3)", () => {
       enforcedPolicy: () => ({ capabilitiesDisabled: policyOff }) as never,
       listServerTools: async () => undefined,
       tribalKbConfig: () => undefined,
-      classifyContext,
+      userMcpPolicy,
       isServiceConfigured: async () => true,
       now: () => clock,
     });
@@ -428,7 +410,7 @@ describe("verifyDefinition for an mcp_* type (D-3)", () => {
     expect(await door().verifyDefinition("mcp_x.append")).toEqual({ ok: true });
   });
 
-  test("an unapproved tool (the legacy case) is refused without calling any lister", async () => {
+  test("an unapproved tool is refused without calling any lister", async () => {
     register("mcp_x", { model: true });
     listings["mcp_x"] = listing("mcp_x", { append: E });
     expect(await door().verifyDefinition("mcp_x.append")).toEqual({
@@ -517,64 +499,6 @@ describe("a proposal queued against an earlier registration is refused (R-2, pro
 });
 
 describe("the check after the owner's answer is bound to what the prompt showed (review round 2)", () => {
-  test("a legacy call: the registration row alone, never a listing; gone, newer or another registration refuses", async () => {
-    register("mcp_x", { createdAt: 500, model: true });
-    listings["mcp_x"] = listing("mcp_x", { append: entry() });
-    const d = door();
-    const shown = { registeredAt: 500, definitionSha256: null };
-    expect(await d.verifyDefinition("mcp_x.append", 600, shown)).toEqual({ ok: true });
-    expect(await d.verifyDefinition("mcp_x.append", 400, shown)).toMatchObject({ ok: false });
-    expect(
-      await d.verifyDefinition("mcp_x.append", 600, { registeredAt: 450, definitionSha256: null }),
-    ).toMatchObject({ ok: false, detail: DEFINITION_REFUSALS.registrationChanged });
-    deleteUserMcpConnector(db, "mcp_x");
-    expect(await d.verifyDefinition("mcp_x.append", 600, shown)).toMatchObject({
-      ok: false,
-      detail: DEFINITION_REFUSALS.notRegistered,
-    });
-    expect(userListCalls).toEqual([]);
-  });
-
-  test("a legacy call is judged by the door's verdict as it stands now: a lockoff, a withdrawn grant, a new approval or a suspension refuses, with no listing (review round 3)", async () => {
-    register("mcp_x", { createdAt: 500, model: true });
-    listings["mcp_x"] = listing("mcp_x", { append: entry() });
-    const d = door();
-    const shown = { registeredAt: 500, definitionSha256: null };
-    const check = () => d.verifyDefinition("mcp_x.append", 600, shown);
-    const notAllowed = { ok: false, detail: DEFINITION_REFUSALS.noLongerAllowed };
-
-    policyOff.add("mcp_action");
-    expect(await check()).toMatchObject(notAllowed);
-    policyOff.clear();
-    userMcpAllowed = false;
-    expect(await check()).toMatchObject(notAllowed);
-    userMcpAllowed = true;
-    policyThrows = true;
-    expect(await check()).toMatchObject(notAllowed);
-    policyThrows = false;
-    modelAccess.delete("mcp_x");
-    expect(await check()).toMatchObject(notAllowed);
-    modelAccess.add("mcp_x");
-    expect(await check()).toEqual({ ok: true });
-
-    // Approved for agents while the prompt was open: not the basis the owner answered on.
-    const sha = approve("mcp_x", "append");
-    expect(await check()).toEqual({
-      ok: false,
-      code: "ERR_CAPTURE_ACTION_NOT_PROPOSABLE",
-      detail: DEFINITION_REFUSALS.reapproved,
-    });
-    // And suspended: a suspension, with its code.
-    markDoorToolSuspended(db, "agent", "mcp_x", "append", sha, null, 700);
-    expect(await check()).toEqual({
-      ok: false,
-      code: "ERR_AGENT_TOOL_SUSPENDED",
-      detail: DEFINITION_REFUSALS.suspended,
-    });
-    expect(userListCalls).toEqual([]);
-    expect(suspendAudits()).toBe(0);
-  });
-
   test("an approved call: a lockoff set while the prompt was open refuses after the answer, marks nothing and lists nothing (review round 3)", async () => {
     register("mcp_x", { createdAt: 500 });
     listings["mcp_x"] = listing("mcp_x", { append: entry() });
@@ -623,9 +547,12 @@ describe("the check after the owner's answer is bound to what the prompt showed 
     expect(getDoorApproval(db, "agent", "mcp_x", "append")?.suspendedAt).toBeNull();
   });
 
-  test("a legacy binding on a type that names no tool is refused", async () => {
+  test("a binding on a type that names no tool is refused", async () => {
     expect(
-      await door().verifyDefinition("mcp_bad", 600, { registeredAt: 1, definitionSha256: null }),
+      await door().verifyDefinition("mcp_bad", 600, {
+        registeredAt: 1,
+        definitionSha256: "a".repeat(64),
+      }),
     ).toMatchObject({ ok: false, detail: DEFINITION_REFUSALS.notApproved });
   });
 
@@ -655,32 +582,20 @@ describe("the check after the owner's answer is bound to what the prompt showed 
   });
 });
 
-describe("the legacy window admits exactly what was admitted before, and nothing more (property 7)", () => {
-  test("for an UNAPPROVED tool the verdict is the earlier classifier's answer, with the legacy basis in place of none", () => {
+describe("an unapproved tool is never `approved` (AD3b)", () => {
+  test("whatever the server, the policy or the listing, an unapproved tool is denied", () => {
     for (const model of [true, false]) {
       for (const allowed of [true, false]) {
         const id = `mcp_${model ? "m" : "n"}${allowed ? "1" : "0"}`;
         register(id, { model });
         userMcpAllowed = allowed;
-        const before = classifyActionType(`${id}.append`, classifyContext);
-        const now = door().verdict(`${id}.append`);
-        if (before.kind === "proposable") {
-          expect(now, id).toEqual({ kind: "proposable", basis: "legacy_user_mcp" });
-        } else {
-          expect(now, id).toEqual(before);
-        }
+        listings[id] = listing(id, { append: entry() });
+        expect(door().verdict(`${id}.append`), id).toEqual({
+          kind: "denied",
+          class: "agent_not_approved",
+        });
       }
     }
-  });
-
-  test("an unapproved tool is never `approved`, whatever the server, policy or listing", () => {
-    register("mcp_x", { model: true });
-    listings["mcp_x"] = listing("mcp_x", { append: entry() });
-    expect(door().verdict("mcp_x.append")).not.toEqual({ kind: "proposable", basis: "approved" });
-    expect(door().verdict("mcp_x.append")).toEqual({
-      kind: "proposable",
-      basis: "legacy_user_mcp",
-    });
   });
 });
 
@@ -696,18 +611,16 @@ describe("userMcpCallFacts: the write directories (AD5b, I15)", () => {
       created_at: REGISTERED_AT,
       write_paths_json: writePathsJson,
     });
+    approve(serviceId, "append");
+    listings[serviceId] = listing(serviceId, { append: entry() });
   }
 
   test("the stored directories are carried in the facts; none is an empty list", async () => {
     registerWith("mcp_w", JSON.stringify(["/out", "/more"]));
     registerWith("mcp_n", "[]");
-    const withDirs = await door().userMcpCallFacts(
-      "mcp_w.append",
-      "legacy_user_mcp",
-      REGISTERED_AT,
-    );
+    const withDirs = await door().userMcpCallFacts("mcp_w.append", "approved", REGISTERED_AT);
     expect(withDirs.ok && withDirs.facts.writePaths).toEqual(["/out", "/more"]);
-    const none = await door().userMcpCallFacts("mcp_n.append", "legacy_user_mcp", REGISTERED_AT);
+    const none = await door().userMcpCallFacts("mcp_n.append", "approved", REGISTERED_AT);
     expect(none.ok && none.facts.writePaths).toEqual([]);
   });
 
@@ -717,7 +630,7 @@ describe("userMcpCallFacts: the write directories (AD5b, I15)", () => {
       registerWith(`mcp_bad${String(i)}`, value);
       const out = await door().userMcpCallFacts(
         `mcp_bad${String(i)}.append`,
-        "legacy_user_mcp",
+        "approved",
         REGISTERED_AT,
       );
       expect(out, value).toEqual({ ok: false, detail: DEFINITION_REFUSALS.writeUnknown });
@@ -760,27 +673,11 @@ describe("userMcpCallFacts (AD5a, D-6)", () => {
     expect(userListCalls).toEqual(["mcp_f"]);
   });
 
-  test("a legacy basis reads the registration only: no listing, approval null, a throwing note reads as none", async () => {
-    insertUserMcpConnector(db, {
-      service_id: "mcp_l",
-      command: "srv",
-      args_json: "[]",
-      read_paths_json: "not json",
-      net_hosts_json: JSON.stringify(["h"]),
-      model_access: 1,
-      write_paths_json: "[]",
-      created_at: REGISTERED_AT,
-    });
-    const out = await door({
-      userMcpNetworkNote: () => {
-        throw new Error("boom");
-      },
-    }).userMcpCallFacts("mcp_l.append", "legacy_user_mcp", REGISTERED_AT);
-    expect(out).toMatchObject({
-      ok: true,
-      facts: { approval: null, readPaths: [], netHosts: ["h"] },
-    });
-    expect(out.ok && out.facts.networkNote).toBeFalsy();
+  test("an unapproved tool is refused with no listing and no approval facts", async () => {
+    register("mcp_l", { model: true });
+    listings["mcp_l"] = listing("mcp_l", { append: entry() });
+    const out = await door().userMcpCallFacts("mcp_l.append", "approved", REGISTERED_AT);
+    expect(out).toEqual({ ok: false, detail: DEFINITION_REFUSALS.notApproved });
     expect(userListCalls).toEqual([]);
   });
 
@@ -807,28 +704,30 @@ describe("userMcpCallFacts (AD5a, D-6)", () => {
     expect(suspendAudits()).toBe(1);
   });
 
-  test("a legacy basis refuses a proposal made before the server's current registration, with no listing (agent door review, finding 2)", async () => {
+  test("a proposal made before the server's current registration is refused, with no listing", async () => {
     register("mcp_e", { model: true, createdAt: 500 });
+    approve("mcp_e", "append");
+    listings["mcp_e"] = listing("mcp_e", { append: entry() });
     const d = door();
-    expect(await d.userMcpCallFacts("mcp_e.append", "legacy_user_mcp", 499)).toEqual({
+    expect(await d.userMcpCallFacts("mcp_e.append", "approved", 499)).toEqual({
       ok: false,
       detail: DEFINITION_REFUSALS.earlierRegistration,
     });
-    expect((await d.userMcpCallFacts("mcp_e.append", "legacy_user_mcp", 500)).ok).toBe(true);
-    expect((await d.userMcpCallFacts("mcp_e.append", "legacy_user_mcp", 900)).ok).toBe(true);
     expect(userListCalls).toEqual([]);
+    expect((await d.userMcpCallFacts("mcp_e.append", "approved", 500)).ok).toBe(true);
+    expect((await d.userMcpCallFacts("mcp_e.append", "approved", 900)).ok).toBe(true);
   });
 
   test("a type that names no tool, or a server that is gone, is refused", async () => {
-    expect((await door().userMcpCallFacts("mcp_x.", "legacy_user_mcp", 1)).ok).toBe(false);
-    expect((await door().userMcpCallFacts("mcp_gone.t", "legacy_user_mcp", 1)).ok).toBe(false);
+    expect((await door().userMcpCallFacts("mcp_x.", "approved", 1)).ok).toBe(false);
+    expect((await door().userMcpCallFacts("mcp_gone.t", "approved", 1)).ok).toBe(false);
   });
 });
 
 describe("describe for a user-MCP tool (AD5a, D-8, OR-AD-25)", () => {
   const CLOSE = "</tool_description>";
 
-  test("the summary lists approved tools by name (no waves) and a pattern per --model server, and starts nothing", async () => {
+  test("the summary lists approved tools by name (no waves), no pattern entry, and starts nothing", async () => {
     register("mcp_a", { model: true });
     register("mcp_b");
     approve("mcp_a", "append");
@@ -843,7 +742,7 @@ describe("describe for a user-MCP tool (AD5a, D-8, OR-AD-25)", () => {
       bound: false,
     });
     expect(find("mcp_b.read")).toMatchObject({ state: "approved", wave: null });
-    expect(find("mcp_a.*")).toMatchObject({ state: "legacy" });
+    expect(find("mcp_a.*")).toBeUndefined();
     expect(find("mcp_b.*")).toBeUndefined();
     expect(userListCalls).toEqual([]);
     expect(JSON.stringify(out)).not.toContain("inputSchema");
@@ -930,7 +829,7 @@ describe("describe for a user-MCP tool (AD5a, D-8, OR-AD-25)", () => {
     expect(suspendAudits()).toBe(0);
   });
 
-  test("a legacy tool, an unapproved tool, an unregistered server, a suspended tool and a policy-off tool never start a server", async () => {
+  test("an unapproved tool, an unregistered server, a suspended tool and a policy-off tool never start a server", async () => {
     register("mcp_m", { model: true });
     register("mcp_n");
     register("mcp_s");
@@ -939,10 +838,7 @@ describe("describe for a user-MCP tool (AD5a, D-8, OR-AD-25)", () => {
     register("mcp_p");
     approve("mcp_p", "append");
     const d = door();
-    expect((await d.describe(["mcp_m.append"]))[0]).toMatchObject({
-      state: "legacy",
-      deprecation: legacyNoticeFor("mcp_m.append"),
-    });
+    expect((await d.describe(["mcp_m.append"]))[0]).toMatchObject({ state: "not_proposable" });
     expect((await d.describe(["mcp_n.append"]))[0]).toMatchObject({ state: "not_proposable" });
     expect((await d.describe(["mcp_gone.append"]))[0]).toMatchObject({ state: "not_proposable" });
     expect((await d.describe(["mcp_s.append"]))[0]).toMatchObject({ state: "suspended" });

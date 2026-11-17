@@ -623,7 +623,6 @@ interface AgentStatus {
   hint?: unknown;
   checked?: unknown;
   lockedOff?: unknown;
-  legacy?: unknown;
   services?: AgentServiceStatus[];
 }
 
@@ -707,32 +706,10 @@ function logUserMcpSection(d: ConnectorWritesDeps, agent: AgentStatus | undefine
   }
 }
 
-/** The agent door's one-time hint and its deprecation count; nothing for an older gateway. */
+/** The agent door's hint while nothing is approved; nothing for an older gateway. */
 function logAgentTail(d: ConnectorWritesDeps, agent: AgentStatus | undefined): void {
   if (agent === undefined) return;
   if (typeof agent.hint === "string") d.log(stripControl(agent.hint));
-  logLegacy(d, agent.legacy);
-}
-
-/** The deprecation count: how many proposals the earlier rule accepted that a later release refuses. */
-function logLegacy(d: ConnectorWritesDeps, legacy: unknown): void {
-  if (!isRecord(legacy) || typeof legacy["total"] !== "number" || legacy["total"] === 0) return;
-  const byType = isRecord(legacy["byType"]) ? legacy["byType"] : {};
-  const parts = Object.entries(byType)
-    .filter(([, n]) => typeof n === "number")
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([t, n]) => `${stripControl(t)} x${String(n)}`);
-  d.log(
-    `legacy: ${String(legacy["total"])} proposals in the last 30 days would be refused (${parts.join(", ")})`,
-  );
-  d.log(
-    "To keep the other types working run: nimbus connector writes enable <service> --door agent (mail sends cannot be approved; drafts stay allowed)",
-  );
-  if (Object.keys(byType).some((t) => t.startsWith("mcp_"))) {
-    d.log(
-      "For a user MCP tool run: nimbus connector writes enable mcp_<id> --door agent --approve <tool>",
-    );
-  }
 }
 
 /** The agent policy line: allows, or which capability the organisation turned off (OR-AD-15). */

@@ -42,7 +42,6 @@ function insert(
     sessionId: "c-mcp",
     createdAt: clock,
     expiresAt: null,
-    agentDoorLegacy: false,
     ...extra,
   });
 }

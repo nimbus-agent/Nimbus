@@ -12,7 +12,6 @@
 import { describe, expect, test } from "bun:test";
 import type { ChatopsPolicy } from "../../policy/types.ts";
 import {
-  actDoorRefusal,
   modelWriteRefusal,
   nullRefusedOptionalKeys,
   quickActionTextKeys,
@@ -59,22 +58,5 @@ describe("iac free text is shown in full and not scanned", () => {
     expect(
       modelWriteRefusal("iac_cloudformation_deploy", input, { chatops: NO_CHATOPS, kb: undefined }),
     ).toBeUndefined();
-  });
-
-  test("the act door's refusal check is not the control for an iac row either (every iac type is denied there)", () => {
-    for (const id of IAC_ROWS) {
-      expect(
-        actDoorRefusal(
-          id,
-          { templateBody: "<img src=x>" },
-          {
-            chatops: NO_CHATOPS,
-            kb: undefined,
-            kbUnreadable: false,
-          },
-        ),
-        id,
-      ).toBeUndefined();
-    }
   });
 });

@@ -310,20 +310,4 @@ describe("connector writes status: user MCP servers", () => {
     expect(line).toContain("user_mcp_model_access");
     expect(line).toContain("user MCP");
   });
-
-  it("the legacy block adds the user MCP command when a user MCP type was accepted", async () => {
-    const h = harness({
-      services: [],
-      policyAllows: true,
-      agent: {
-        policyAllows: true,
-        legacy: { sinceMs: 0, total: 2, byType: { "mcp_notes.append": 2 }, notice: "n" },
-        services: [],
-      },
-    });
-    await runConnectorWrites(["status"], h.deps);
-    expect(h.logs).toContain(
-      "For a user MCP tool run: nimbus connector writes enable mcp_<id> --door agent --approve <tool>",
-    );
-  });
 });

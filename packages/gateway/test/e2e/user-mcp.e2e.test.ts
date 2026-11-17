@@ -573,6 +573,96 @@ describe.skipIf(!sandboxAvailable)("a scaffolded user MCP over a real gateway", 
     }
   }, 60_000);
 
+  // AD3b: an agent may propose a user MCP tool only after the owner approved it for agents by name, so the
+  // approval comes before every act-door test below (it used to come after, under the removed legacy basis).
+  // --- Agent door AD5a: the owner approves a user MCP tool for agents by name; a person approves each call ---
+
+  interface ListOnlyReply {
+    listOnly: boolean;
+    approved: number;
+    writes: Array<{ toolId: string; sha12: string }>;
+    tools?: Array<{ toolId: string; sha12: string; state: string }>;
+  }
+  interface AgentStatusReply {
+    agent: {
+      checked: boolean;
+      services: Array<{
+        service: string;
+        userMcp?: boolean;
+        approved: number;
+        suspended: Array<{ toolId: string; approvedSha12: string; nowSha12: string | null }>;
+      }>;
+    };
+  }
+  const SERVICE = "mcp_echo_srv";
+  /** The first 12 hex of the approved definition hash, as the enable printed it. */
+  const approvedSha12: Record<string, string> = {};
+
+  test("AD5a: a list-only enable from a declared cli connection shows each tool with a hash prefix and asks nothing", async () => {
+    const owner = await openConnection("cli", "human");
+    const out = await owner.c.call<ListOnlyReply>("connector.writesEnable", {
+      service: SERVICE,
+      door: "agent",
+    });
+    expect(out.listOnly).toBe(true);
+    expect(out.approved).toBe(0);
+    const names = (out.tools ?? []).map((t) => t.toolId);
+    for (const n of ["echo", "probe", "fail", "mutable", "retitle"]) expect(names).toContain(n);
+    for (const t of out.tools ?? []) {
+      expect(t.sha12).toMatch(/^[0-9a-f]{12}$/);
+      expect(t.state).toBe("will_be_approved");
+    }
+    expect(owner.prompts).toEqual([]);
+    // The older, undeclared owner client cannot enable (no declared cli or ui kind).
+    expect(
+      await refusal(client.call("connector.writesEnable", { service: SERVICE, door: "agent" })),
+    ).toContain("ERR_CONNECTOR_WRITES_AGENT_CLIENT");
+    // An mcp connection (the agent itself) cannot either.
+    expect(
+      await refusal(
+        agent.call("connector.writesEnable", {
+          service: SERVICE,
+          door: "agent",
+          approve: ["echo"],
+        }),
+      ),
+    ).toContain("ERR_CONNECTOR_WRITES_AGENT_CLIENT");
+  }, 60_000);
+
+  test("AD5a: an answer that is not a person's approves nothing", async () => {
+    const owner = await openConnection("cli", undefined);
+    const err = await refusal(
+      owner.c.call("connector.writesEnable", {
+        service: SERVICE,
+        door: "agent",
+        approve: ["echo"],
+      }),
+    );
+    expect(err).toContain("ERR_CONNECTOR_WRITES_DECLINED");
+    const list = await owner.c.call<ListOnlyReply>("connector.writesEnable", {
+      service: SERVICE,
+      door: "agent",
+    });
+    expect((list.tools ?? []).every((t) => t.state === "will_be_approved")).toBe(true);
+  }, 60_000);
+
+  test("AD5a: the owner approves echo and mutable by exact name as a person", async () => {
+    const owner = await openConnection("cli", "human");
+    const out = await owner.c.call<ListOnlyReply>("connector.writesEnable", {
+      service: SERVICE,
+      door: "agent",
+      approve: ["echo", "mutable"],
+    });
+    expect(out).toMatchObject({ listOnly: false, approved: 2 });
+    for (const w of out.writes) approvedSha12[w.toolId] = w.sha12;
+    expect(owner.prompts).toHaveLength(1);
+    expect(owner.prompts[0]).toContain(SERVICE);
+    expect(owner.prompts[0]).toContain(approvedSha12["echo"] as string);
+    const status = await owner.c.call<AgentStatusReply>("connector.writesStatus", {});
+    const mine = status.agent.services.find((s) => s.service === SERVICE);
+    expect(mine).toMatchObject({ userMcp: true, approved: 2, suspended: [] });
+  }, 60_000);
+
   test("act door: propose -> capture.state proposed -> owner accept -> the user MCP got the exact input -> executed", async () => {
     const sub = await agent.call<{ id: string; state: string; expiresAt: number }>(
       "capture.submit",
@@ -592,12 +682,16 @@ describe.skipIf(!sandboxAvailable)("a scaffolded user MCP over a real gateway", 
       state: "proposed",
     });
 
-    const before = prompts.length;
     const ledgerBefore = await ledgerRowsFor("mcp_echo_srv");
-    approve = true;
-    const out = await client.call<{ state: string }>("captures.accept", { id: sub.id });
+    // AD3b: the proposal is on the approved basis (the owner approved `echo` for agents above), so the raw
+    // accept is refused whoever asks, and only a person on a declared cli connection approves it.
+    expect(await refusal(client.call("captures.accept", { id: sub.id }))).toContain(
+      "ERR_CAPTURE_FORBIDDEN_CLIENT",
+    );
+    const owner = await openConnection("cli", "human");
+    const out = await owner.c.call<{ state: string }>("approvals.approve", { id: sub.id });
     expect(out.state).toBe("executed");
-    const shown = prompts.slice(before).join("\n");
+    const shown = owner.prompts.join("\n");
     // Phase 28 AD1: the executor's own prompt, the verbatim input, then the UNVERIFIED proposer block.
     expect(shown).toContain("Requested by: an outside agent (unverified)");
     expect(shown).toContain('"text": "from-the-agent"');
@@ -618,7 +712,9 @@ describe.skipIf(!sandboxAvailable)("a scaffolded user MCP over a real gateway", 
     );
     expect(dispatched?.hitlStatus).toBe("approved");
     const raw: unknown = JSON.parse(dispatched?.actionJson ?? "{}");
-    const row = raw as { action: { proposer?: { captureId?: string } } };
+    const row = raw as {
+      action: { proposer?: { captureId?: string }; userMcp?: { definitionSha256?: string } };
+    };
     // Phase 28 AD1/AD4: the dispatch runs as an `origin: "agent"` action; the row names the door and the
     // proposer: the capture and the client's own (UNVERIFIED) label, never the agent's summary.
     expect(row.action.proposer?.captureId).toMatch(/^cap_[0-9a-f]{32}$/);
@@ -633,10 +729,13 @@ describe.skipIf(!sandboxAvailable)("a scaffolded user MCP over a real gateway", 
         },
         origin: "agent",
         payload: { mcpToolId: "mcp_echo_srv_echo", input: { text: "from-the-agent" } },
+        // AD5a: an approved user-MCP proposal records the definition hash the owner approved.
+        userMcp: { definitionSha256: row.action.userMcp?.definitionSha256 },
       },
-      // SA1: the test's owner client reports no answer source, so the row records `unknown`.
-      answerSource: "unknown",
+      // The approval came from a declared cli connection that answered as a person.
+      answerSource: "human",
     });
+    expect(row.action.userMcp?.definitionSha256).toMatch(/^[0-9a-f]{64}$/);
   }, 60_000);
 
   // --- Agent door AD2: the owner's queue and the one-step approval, over the real wire ---
@@ -852,7 +951,7 @@ describe.skipIf(!sandboxAvailable)("a scaffolded user MCP over a real gateway", 
     await client.call("captures.reject", { id: sub.id });
   }, 30_000);
 
-  test("act door: a first-party write whose connector is not configured is refused at submit", async () => {
+  test("act door: a first-party write the owner never approved for agents is refused at submit (AD3b)", async () => {
     await expect(
       agent.call("capture.submit", {
         kind: "action",
@@ -862,7 +961,7 @@ describe.skipIf(!sandboxAvailable)("a scaffolded user MCP over a real gateway", 
           summary: "s",
         },
       }),
-    ).rejects.toThrow(/ERR_CAPTURE_CONNECTOR_UNCONFIGURED/);
+    ).rejects.toThrow(/ERR_CAPTURE_ACTION_NOT_PROPOSABLE/);
   }, 30_000);
 
   test("act door: a denied type is refused at submit", async () => {
@@ -873,94 +972,6 @@ describe.skipIf(!sandboxAvailable)("a scaffolded user MCP over a real gateway", 
       }),
     ).rejects.toThrow(/ERR_CAPTURE_ACTION_NOT_PROPOSABLE/);
   }, 30_000);
-
-  // --- Agent door AD5a: the owner approves a user MCP tool for agents by name; a person approves each call ---
-
-  interface ListOnlyReply {
-    listOnly: boolean;
-    approved: number;
-    writes: Array<{ toolId: string; sha12: string }>;
-    tools?: Array<{ toolId: string; sha12: string; state: string }>;
-  }
-  interface AgentStatusReply {
-    agent: {
-      checked: boolean;
-      services: Array<{
-        service: string;
-        userMcp?: boolean;
-        approved: number;
-        suspended: Array<{ toolId: string; approvedSha12: string; nowSha12: string | null }>;
-      }>;
-    };
-  }
-  const SERVICE = "mcp_echo_srv";
-  /** The first 12 hex of the approved definition hash, as the enable printed it. */
-  const approvedSha12: Record<string, string> = {};
-
-  test("AD5a: a list-only enable from a declared cli connection shows each tool with a hash prefix and asks nothing", async () => {
-    const owner = await openConnection("cli", "human");
-    const out = await owner.c.call<ListOnlyReply>("connector.writesEnable", {
-      service: SERVICE,
-      door: "agent",
-    });
-    expect(out.listOnly).toBe(true);
-    expect(out.approved).toBe(0);
-    const names = (out.tools ?? []).map((t) => t.toolId);
-    for (const n of ["echo", "probe", "fail", "mutable", "retitle"]) expect(names).toContain(n);
-    for (const t of out.tools ?? []) {
-      expect(t.sha12).toMatch(/^[0-9a-f]{12}$/);
-      expect(t.state).toBe("will_be_approved");
-    }
-    expect(owner.prompts).toEqual([]);
-    // The older, undeclared owner client cannot enable (no declared cli or ui kind).
-    expect(
-      await refusal(client.call("connector.writesEnable", { service: SERVICE, door: "agent" })),
-    ).toContain("ERR_CONNECTOR_WRITES_AGENT_CLIENT");
-    // An mcp connection (the agent itself) cannot either.
-    expect(
-      await refusal(
-        agent.call("connector.writesEnable", {
-          service: SERVICE,
-          door: "agent",
-          approve: ["echo"],
-        }),
-      ),
-    ).toContain("ERR_CONNECTOR_WRITES_AGENT_CLIENT");
-  }, 60_000);
-
-  test("AD5a: an answer that is not a person's approves nothing", async () => {
-    const owner = await openConnection("cli", undefined);
-    const err = await refusal(
-      owner.c.call("connector.writesEnable", {
-        service: SERVICE,
-        door: "agent",
-        approve: ["echo"],
-      }),
-    );
-    expect(err).toContain("ERR_CONNECTOR_WRITES_DECLINED");
-    const list = await owner.c.call<ListOnlyReply>("connector.writesEnable", {
-      service: SERVICE,
-      door: "agent",
-    });
-    expect((list.tools ?? []).every((t) => t.state === "will_be_approved")).toBe(true);
-  }, 60_000);
-
-  test("AD5a: the owner approves echo and mutable by exact name as a person", async () => {
-    const owner = await openConnection("cli", "human");
-    const out = await owner.c.call<ListOnlyReply>("connector.writesEnable", {
-      service: SERVICE,
-      door: "agent",
-      approve: ["echo", "mutable"],
-    });
-    expect(out).toMatchObject({ listOnly: false, approved: 2 });
-    for (const w of out.writes) approvedSha12[w.toolId] = w.sha12;
-    expect(owner.prompts).toHaveLength(1);
-    expect(owner.prompts[0]).toContain(SERVICE);
-    expect(owner.prompts[0]).toContain(approvedSha12["echo"] as string);
-    const status = await owner.c.call<AgentStatusReply>("connector.writesStatus", {});
-    const mine = status.agent.services.find((s) => s.service === SERVICE);
-    expect(mine).toMatchObject({ userMcp: true, approved: 2, suspended: [] });
-  }, 60_000);
 
   test("AD5a: an agent proposes the approved echo, a person approves it, the prompt shows the server, and the audit row carries the definition hash after the proposer", async () => {
     const sub = await agent.call<{ id: string; state: string; legacy?: boolean }>(

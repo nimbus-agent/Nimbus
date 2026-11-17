@@ -565,6 +565,15 @@ describe("the KB-child allows functions over the MCP reply shape (OR-B3-3, R11)"
     }
   });
 
+  test("an unreadable [tribal] config proves nothing: both guards apply and refuse", () => {
+    const unreadable = { unreadable: true } as const;
+    expect(notionKbChildAllowed(page({ type: "page_id" }), unreadable)).toBe(false);
+    expect(confluenceKbChildAllowed({ space: { key: "ENG" } }, unreadable)).toBe(false);
+    expect(confluenceKbChildAllowed({ space: { key: "ENG" } }, { confluence: KB.confluence })).toBe(
+      true,
+    );
+  });
+
   test("Notion: no Notion KB in the config cannot prove anything: false", () => {
     const ok = page({ type: "page_id" });
     expect(notionKbChildAllowed(ok, undefined)).toBe(false);

@@ -2247,6 +2247,14 @@ export function parseNimbusTribalToml(
   return result;
 }
 
+/**
+ * Whether a config layer exists but cannot be read, so `loadNimbusTribalFromConfigDir` returned the
+ * defaults for a reason other than "nothing configured". The KB refusals fail closed on it.
+ */
+export function nimbusTribalConfigUnreadable(configDir: string): boolean {
+  return layerReadError(configDir) !== undefined;
+}
+
 export function loadNimbusTribalFromConfigDir(configDir: string): NimbusTribalToml {
   return loadTomlSectionFromConfig(
     configDir,

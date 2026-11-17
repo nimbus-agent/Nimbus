@@ -6,7 +6,6 @@ import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { toStandardSchema } from "@mastra/core/schema";
 
-import { LEGACY_LIST_HEADER } from "../connectors/connector-writes/agent-door-legacy.ts";
 import { definitionSha256 } from "../connectors/connector-writes/definition-hash.ts";
 import {
   listDoorApprovals,
@@ -1231,45 +1230,6 @@ describe("AD3a-2a: the live status check is for a connection that declared cli o
     const s = await handleAgentWritesStatus(r.deps);
     expect(r.listCalls).toEqual([]);
     expect(s.services[0]?.suspended.map((t) => t.toolId)).toEqual([id]);
-  });
-});
-
-describe("AD3a-2a: the legacy count in status", () => {
-  const DAY = 24 * 3_600_000;
-  function legacyRow(id: string, type: string, createdAt: number, legacy = true): void {
-    db.query(
-      `INSERT INTO capture (id, kind, state, payload_json, payload_bytes, session_id, created_at, expires_at, legacy)
-       VALUES (?, 'action', 'proposed', ?, 10, 's', ?, ?, ?)`,
-    ).run(
-      id,
-      JSON.stringify({ actionType: type, input: {}, summary: "s" }),
-      createdAt,
-      createdAt + DAY,
-      legacy ? 1 : 0,
-    );
-  }
-
-  test("no legacy proposals: null", async () => {
-    const r = rig();
-    expect((await handleAgentWritesStatus(r.deps)).legacy).toBeNull();
-  });
-
-  test("two of one type and one of another over 30 days count; a 31-day-old one and a non-legacy one do not", async () => {
-    const r = rig();
-    const now = 100 * DAY;
-    r.deps = { ...r.deps, now: () => now } as ModelWritesDeps;
-    legacyRow("c1", "slack.message.post", now - DAY);
-    legacyRow("c2", "slack.message.post", now - 2 * DAY);
-    legacyRow("c3", "github.issue.create", now - 3 * DAY);
-    legacyRow("c4", "github.issue.create", now - 31 * DAY);
-    legacyRow("c5", "github.issue.create", now - DAY, false);
-    const s = await handleAgentWritesStatus(r.deps);
-    expect(s.legacy).toMatchObject({
-      sinceMs: now - 30 * DAY,
-      total: 3,
-      byType: { "slack.message.post": 2, "github.issue.create": 1 },
-    });
-    expect(s.legacy?.notice).toBe(LEGACY_LIST_HEADER);
   });
 });
 

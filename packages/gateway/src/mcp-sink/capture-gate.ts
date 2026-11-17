@@ -41,7 +41,6 @@ import {
   type CaptureState,
   isCaptureKind,
   isCaptureState,
-  isLegacyBasis,
   type LabelSource,
   type NativeValidatedCapture,
   NO_BASIS_CLASS,
@@ -186,8 +185,6 @@ export interface ActionProposalRow {
   readonly labelSource: LabelSource;
   readonly createdAt: number;
   readonly expiresAt: number;
-  /** Queued under the deprecation window (V97 `legacy`): the earlier act door accepted it. */
-  readonly agentDoorLegacy: boolean;
 }
 
 export interface CaptureStateView {
@@ -386,8 +383,8 @@ const SUSPENDED_AT_SUBMIT =
  * Step 5a: the action type is proposable now, and on what basis. A `suspended` verdict is its own
  * audited refusal (`ERR_AGENT_TOOL_SUSPENDED`); denied and unknown are `NOT_PROPOSABLE`. A
  * proposable verdict with no basis is ALWAYS refused (`agent_no_basis`, fail closed: a basis-less
- * verdict would be lax everywhere after it; since AD5a a user-MCP type carries `legacy_user_mcp` or
- * `approved` like every other). Returns the verdict's basis and whether its row may carry a payload
+ * verdict would be lax everywhere after it; a user-MCP type carries `approved` like every
+ * other). Returns the verdict's basis and whether its row may carry a payload
  * over the ordinary cap.
  */
 function requireProposable(
@@ -533,12 +530,11 @@ function refuseQueueFull(ctx: SubmitContext, v: ValidatedCapture, cap: CaptureCa
   );
 }
 
-/** What `submitCapture` returns; `legacy` only on a proposal accepted under the deprecation window. */
+/** What `submitCapture` returns. */
 export type SubmitResult = {
   id: string;
   state: CaptureState;
   expiresAt?: number;
-  legacy?: true;
 };
 
 export async function submitCapture(
@@ -663,8 +659,6 @@ function writeSubmittedCapture(
   const payloadBytes = Buffer.byteLength(payloadJson, "utf8");
   const state: CaptureState = proposal ? "proposed" : "live";
   const expiresAt = v.kind === "action" ? now + cap.config.actionTtlHours * HOUR_MS : null;
-  // The deprecation window (OR-AD-9): stored, counted and warned about; never set on a note.
-  const legacy = v.kind === "action" && isLegacyBasis(basis);
   deps.db.transaction(() => {
     deps.store.insert({
       id,
@@ -678,7 +672,6 @@ function writeSubmittedCapture(
       sessionId: caller.clientId,
       createdAt: now,
       expiresAt,
-      agentDoorLegacy: legacy,
     });
     if (v.kind === "note") {
       const payload = v.payload;
@@ -720,7 +713,7 @@ function writeSubmittedCapture(
   })();
   if (itemId !== null) deps.scheduleEmbedding?.(itemId);
   if (expiresAt === null) return { id, state };
-  return legacy ? { id, state, expiresAt, legacy: true } : { id, state, expiresAt };
+  return { id, state, expiresAt };
 }
 
 // ---- revoke (spec § 5.3) -------------------------------------------------------------------------
@@ -1129,7 +1122,6 @@ export function listActionProposals(
       createdAt: row.createdAt,
       expiresAt: row.expiresAt,
       labelSource: row.labelSource,
-      agentDoorLegacy: row.agentDoorLegacy,
     });
   }
   return { proposals };

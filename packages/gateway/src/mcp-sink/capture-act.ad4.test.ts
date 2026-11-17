@@ -30,7 +30,8 @@ beforeEach(() => {
         },
         { capabilitiesDisabled: new Set<string>() },
       ),
-    classifyAction: () => ({ kind: "proposable", basis: "legacy_user_mcp" }),
+    classifyAction: () => ({ kind: "proposable", basis: "approved" }),
+    verifyActionDefinition: () => Promise.resolve({ ok: true }),
     isServiceConfigured: () => Promise.resolve(true),
     now: () => 1_000,
     actionDestinationRefusal: () => undefined,
@@ -51,7 +52,6 @@ beforeEach(() => {
     sessionId: "conn-submitter-1",
     createdAt: 500,
     expiresAt: 2_000,
-    agentDoorLegacy: false,
   });
 });
 afterEach(() => db.close());
@@ -60,6 +60,7 @@ describe("AD4: the accept row", () => {
   test("names the door, the label, its source and the submitting connection (not the approver's)", async () => {
     let seen: ActionProvenance | undefined;
     await acceptAction(deps, OWNER, deps.store.get(ID) as never, {
+      humanOnly: true,
       execute: (_t, _i, p) => {
         seen = p;
         return Promise.resolve({ status: "ok", result: {} });
@@ -73,7 +74,7 @@ describe("AD4: the accept row", () => {
     expect(JSON.parse(accept.action_json)).toEqual({
       captureId: ID,
       actionType: "slack.message.post",
-      basis: "legacy_user_mcp",
+      basis: "approved",
       door: "agent",
       clientLabel: 'my "agent"',
       labelSource: "declared",
@@ -87,6 +88,7 @@ describe("AD4: the accept row", () => {
   test("a null label is recorded as null", async () => {
     db.run("UPDATE capture SET client_label = NULL WHERE id = ?", [ID]);
     await acceptAction(deps, OWNER, deps.store.get(ID) as never, {
+      humanOnly: true,
       execute: () => Promise.resolve({ status: "ok", result: {} }),
     });
     const accept = db
@@ -99,6 +101,7 @@ describe("AD4: the accept row", () => {
     db.run("UPDATE capture SET label_source = 'kit' WHERE id = ?", [ID]);
     let seen: ActionProvenance | undefined;
     await acceptAction(deps, OWNER, deps.store.get(ID) as never, {
+      humanOnly: true,
       execute: (_t, _i, p) => {
         seen = p;
         return Promise.resolve({ status: "ok", result: {} });

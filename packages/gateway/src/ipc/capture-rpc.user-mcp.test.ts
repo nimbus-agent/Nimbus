@@ -2,8 +2,8 @@
  * Phase 28 AD5a, Task 6: the act wiring for an approved user-MCP proposal. The call facts are read
  * through the real door over a real in-memory database; the listing is injected (no real third-party
  * server). What is pinned: the facts on the action (the description is the hashed entry's), a failed
- * check is a refusal with no prompt, the post-answer veto, the inert fields, the legacy basis, and
- * that a raw `captures.accept` never runs an approved basis.
+ * check is a refusal with no prompt, the post-answer veto, the inert fields, a proposal with no
+ * approval, and that a raw `captures.accept` never runs an approved basis.
  */
 import type { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -55,8 +55,7 @@ let description: string;
 let listing: "none" | "list";
 let listCalls: number;
 let clock: number;
-/** The live facts the door's verdict reads: the `--model` servers and the policy lockoffs. */
-let modelAccess: Set<string>;
+/** The live facts the door's verdict reads: the policy lockoffs. */
 let policyOff: Set<string>;
 let userMcpAllowed: boolean;
 
@@ -70,8 +69,6 @@ beforeEach(() => {
   listing = "list";
   listCalls = 0;
   clock = 1_000;
-  // The registered server carries the `--model` grant, so an unapproved tool is the legacy case.
-  modelAccess = new Set(["mcp_notes"]);
   policyOff = new Set();
   userMcpAllowed = true;
   insertUserMcpConnector(db, {
@@ -104,10 +101,7 @@ function door() {
         : { [mcpClientToolKey("mcp_notes", "append")]: entry(description) };
     },
     tribalKbConfig: () => undefined,
-    classifyContext: {
-      modelAccessServices: () => modelAccess,
-      userMcpModelAccessAllowed: () => userMcpAllowed,
-    },
+    userMcpPolicy: { userMcpModelAccessAllowed: () => userMcpAllowed },
     isServiceConfigured: async () => true,
     now: () => clock,
   });
@@ -305,35 +299,38 @@ describe("an approved user-MCP proposal", () => {
   });
 });
 
-describe("a legacy user-MCP proposal", () => {
-  test("shows the block with the not-approved line, starts no server, and is never vetoed", async () => {
+describe("a user-MCP proposal with no approval or a changed registration (AD3b: there is no legacy basis)", () => {
+  test("a proposal with no approved basis is refused before any prompt, starts no server and dispatches nothing", async () => {
     const h = harness();
-    const out = await h.act.execute("mcp_notes.append", INPUT, PROV("legacy_user_mcp"));
-    expect(out.status).toBe("ok");
+    const out = await h.act.execute("mcp_notes.append", INPUT, PROV(undefined as never));
+    expect(out.status).toBe("rejected");
     expect(listCalls).toBe(0);
-    const prompt = h.prompts[0]?.prompt ?? "";
-    expect(prompt).toContain("Not approved for outside agents by name.");
-    expect(prompt).toContain("Deprecated: mcp_notes.append is not approved");
-    expect(h.dispatched).toHaveLength(1);
+    expect(h.prompts).toHaveLength(0);
+    expect(h.dispatched).toHaveLength(0);
   });
 
-  test("a proposal made before the server was registered again is refused before any prompt, and dispatches nothing (agent door review, finding 2)", async () => {
+  test("an approved tool with no approval row left (withdrawn after the proposal) is refused before any prompt", async () => {
     const h = harness();
-    const out = await h.act.execute("mcp_notes.append", INPUT, PROV("legacy_user_mcp", 50));
+    const out = await h.act.execute("mcp_notes.append", INPUT, PROV("approved"));
     expect(out.status).toBe("rejected");
     expect(h.prompts).toHaveLength(0);
     expect(h.dispatched).toHaveLength(0);
-    expect(listCalls).toBe(0);
-    // Made at the registration instant or later: unchanged behaviour.
-    const same = await h.act.execute(
-      "mcp_notes.append",
-      INPUT,
-      PROV("legacy_user_mcp", REGISTERED_AT),
-    );
+  });
+
+  test("a proposal made before the server was registered again is refused before any prompt, and dispatches nothing (agent door review, finding 2)", async () => {
+    approveNotes();
+    const h = harness();
+    const out = await h.act.execute("mcp_notes.append", INPUT, PROV("approved", 50));
+    expect(out.status).toBe("rejected");
+    expect(h.prompts).toHaveLength(0);
+    expect(h.dispatched).toHaveLength(0);
+    // Made at the registration instant or later: runs.
+    const same = await h.act.execute("mcp_notes.append", INPUT, PROV("approved", REGISTERED_AT));
     expect(same.status).toBe("ok");
   });
 
-  test("the server removed and registered again while the prompt is open: the answer is overruled, nothing dispatched, no server started (review finding 1)", async () => {
+  test("the server removed and registered again while the prompt is open: the answer is overruled, nothing dispatched (review finding 1)", async () => {
+    approveNotes();
     const h = harness({
       onPrompt: () => {
         db.query("DELETE FROM user_mcp_connector WHERE service_id = ?").run("mcp_notes");
@@ -349,26 +346,27 @@ describe("a legacy user-MCP proposal", () => {
         });
       },
     });
-    const out = await h.act.execute("mcp_notes.append", INPUT, PROV("legacy_user_mcp"));
+    const out = await h.act.execute("mcp_notes.append", INPUT, PROV("approved"));
     expect(out.status).toBe("rejected");
     expect((out as { code?: string }).code).toBeUndefined();
     expect(h.prompts).toHaveLength(1);
     expect(h.dispatched).toHaveLength(0);
-    expect(listCalls).toBe(0);
   });
 
   test("the server removed while the prompt is open: the answer is overruled", async () => {
+    approveNotes();
     const h = harness({
       onPrompt: () => {
         db.query("DELETE FROM user_mcp_connector WHERE service_id = ?").run("mcp_notes");
       },
     });
-    const out = await h.act.execute("mcp_notes.append", INPUT, PROV("legacy_user_mcp"));
+    const out = await h.act.execute("mcp_notes.append", INPUT, PROV("approved"));
     expect(out.status).toBe("rejected");
     expect(h.dispatched).toHaveLength(0);
   });
 
   test("a registration newer than the proposal appearing during the prompt overrules the answer", async () => {
+    approveNotes();
     const h = harness({
       onPrompt: () => {
         db.query("UPDATE user_mcp_connector SET created_at = ? WHERE service_id = ?").run(
@@ -377,55 +375,9 @@ describe("a legacy user-MCP proposal", () => {
         );
       },
     });
-    const out = await h.act.execute("mcp_notes.append", INPUT, PROV("legacy_user_mcp"));
+    const out = await h.act.execute("mcp_notes.append", INPUT, PROV("approved"));
     expect(out.status).toBe("rejected");
     expect(h.dispatched).toHaveLength(0);
-  });
-
-  test("an approval for agents made while the legacy prompt is open overrules the answer, with no code and no listing (review round 3)", async () => {
-    const h = harness({ onPrompt: () => void approveNotes() });
-    const out = await h.act.execute("mcp_notes.append", INPUT, PROV("legacy_user_mcp"));
-    expect(out).toMatchObject({ status: "rejected", reason: DEFINITION_REFUSALS.reapproved });
-    expect((out as { code?: string }).code).toBeUndefined();
-    expect(h.dispatched).toHaveLength(0);
-    expect(listCalls).toBe(0);
-  });
-
-  test("an approval made and suspended while the legacy prompt is open overrules the answer as a suspension (review round 3)", async () => {
-    const h = harness({
-      onPrompt: () => {
-        const sha = approveNotes();
-        markDoorToolSuspended(db, "agent", "mcp_notes", "append", sha, null, 2_000);
-      },
-    });
-    const out = await h.act.execute("mcp_notes.append", INPUT, PROV("legacy_user_mcp"));
-    expect(out).toMatchObject({ status: "rejected", code: "ERR_AGENT_TOOL_SUSPENDED" });
-    expect(h.dispatched).toHaveLength(0);
-    expect(listCalls).toBe(0);
-  });
-
-  test("a lockoff or a withdrawn --model grant while the legacy prompt is open overrules the answer (review round 3)", async () => {
-    const changes: Array<() => void> = [
-      () => policyOff.add("mcp_action"),
-      () => {
-        userMcpAllowed = false;
-      },
-      () => modelAccess.clear(),
-    ];
-    for (const change of changes) {
-      policyOff = new Set();
-      userMcpAllowed = true;
-      modelAccess = new Set(["mcp_notes"]);
-      const h = harness({ onPrompt: change });
-      const out = await h.act.execute("mcp_notes.append", INPUT, PROV("legacy_user_mcp"));
-      expect(out).toMatchObject({
-        status: "rejected",
-        reason: DEFINITION_REFUSALS.noLongerAllowed,
-      });
-      expect((out as { code?: string }).code).toBeUndefined();
-      expect(h.prompts).toHaveLength(1);
-      expect(h.dispatched).toHaveLength(0);
-    }
   });
 
   test("a lockoff set while an APPROVED call's prompt is open overrules the answer and marks nothing (review round 3)", async () => {
@@ -452,10 +404,24 @@ describe("a legacy user-MCP proposal", () => {
     }
   });
 
+  test("an approval made and suspended while the prompt is open overrules the answer as a suspension", async () => {
+    approveNotes();
+    const h = harness({
+      onPrompt: () => {
+        const sha = getDoorApproval(db, "agent", "mcp_notes", "append")?.definitionSha256 as string;
+        markDoorToolSuspended(db, "agent", "mcp_notes", "append", sha, null, 2_000);
+      },
+    });
+    const out = await h.act.execute("mcp_notes.append", INPUT, PROV("approved"));
+    expect(out).toMatchObject({ status: "rejected", code: "ERR_AGENT_TOOL_SUSPENDED" });
+    expect(h.dispatched).toHaveLength(0);
+  });
+
   test("with no door wired the call cannot be asked about: refused before any prompt, nothing dispatched (AD5b)", async () => {
     // No door means no server facts, so there is nothing to show the write directories in (I15).
+    approveNotes();
     const h = harness({ noDoor: true });
-    const out = await h.act.execute("mcp_notes.append", INPUT, PROV("legacy_user_mcp"));
+    const out = await h.act.execute("mcp_notes.append", INPUT, PROV("approved"));
     expect(out.status).toBe("rejected");
     expect(h.prompts).toHaveLength(0);
     expect(h.dispatched).toHaveLength(0);

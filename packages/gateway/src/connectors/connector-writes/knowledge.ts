@@ -356,6 +356,7 @@ const NOTION_NON_DATABASE_PARENTS: ReadonlySet<string> = new Set([
  * fails the page GET and is refused.)
  */
 export function notionKbChildAllowed(reply: unknown, kb: TribalKbConfig | undefined): boolean {
+  if (kb?.unreadable === true) return false;
   const db = kb?.notion?.databaseId;
   if (typeof db !== "string") return false;
   try {
@@ -444,6 +445,7 @@ function confluenceAncestors(j: unknown): ConfluenceAncestors | undefined {
  * the reply.
  */
 export function confluenceKbChildAllowed(reply: unknown, kb: TribalKbConfig | undefined): boolean {
+  if (kb?.unreadable === true) return false;
   const c = kb?.confluence;
   if (c === undefined) return false;
   try {
@@ -467,7 +469,7 @@ export function confluenceKbChildAllowed(reply: unknown, kb: TribalKbConfig | un
 const NOTION_KB_CHILD_GUARD: BeforeStateGuard = {
   reason: KNOWLEDGE_BASE_CHILD_REFUSAL,
   appliesTo: (_picked, ctx: BeforeGuardContext | undefined) =>
-    ctx === undefined || ctx.kb?.notion !== undefined,
+    ctx === undefined || ctx.kb?.unreadable === true || ctx.kb?.notion !== undefined,
   allows: (reply, _picked, _alsoReply, ctx) => notionKbChildAllowed(reply, ctx?.kb),
 };
 
@@ -475,7 +477,7 @@ const NOTION_KB_CHILD_GUARD: BeforeStateGuard = {
 const CONFLUENCE_KB_CHILD_GUARD: BeforeStateGuard = {
   reason: KNOWLEDGE_BASE_CHILD_REFUSAL,
   appliesTo: (_picked, ctx: BeforeGuardContext | undefined) =>
-    ctx === undefined || ctx.kb?.confluence !== undefined,
+    ctx === undefined || ctx.kb?.unreadable === true || ctx.kb?.confluence !== undefined,
   allows: (reply, _picked, _alsoReply, ctx) => confluenceKbChildAllowed(reply, ctx?.kb),
 };
 

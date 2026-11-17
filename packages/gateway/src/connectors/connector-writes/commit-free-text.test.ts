@@ -10,7 +10,6 @@
 import { describe, expect, test } from "bun:test";
 import type { ChatopsPolicy } from "../../policy/types.ts";
 import {
-  actDoorRefusal,
   modelWriteRefusal,
   nullRefusedOptionalKeys,
   quickActionTextKeys,
@@ -53,15 +52,6 @@ describe("commit free text is shown in full and not scanned", () => {
         modelWriteRefusal(id, input, { chatops: NO_CHATOPS, kb: undefined }),
         id,
       ).toBeUndefined();
-    }
-  });
-
-  test("the act door never proposes a commit, so its refusal check is not the control there", () => {
-    // The act door's check is the shared messaging check; for a commit it returns undefined, and the
-    // row is not proposable at all (proposable-actions.test.ts).
-    for (const id of COMMITS) {
-      const ctx = { chatops: NO_CHATOPS, kb: undefined, kbUnreadable: false };
-      expect(actDoorRefusal(id, { message: "m", files: [] }, ctx), id).toBeUndefined();
     }
   });
 });

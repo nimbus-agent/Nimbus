@@ -12,11 +12,12 @@
 // content in drafts, pages, notes and Drive markup files, and since B3w in sent Outlook mail,
 // Teams HTML and GitHub, GitLab and Linear Markdown; since B4a also the calendar event-time
 // and iCloud event-text checks) is the ONE function
-// both the model door and the MCP act door call. The KB-target refusal (`knowledgeBaseRefusal`,
+// both the model door and the agent door call. The KB-target refusal (`knowledgeBaseRefusal`,
 // one module-private implementation) runs on both doors too since B3 (owner ruling OR-B3-1), and
 // covers every page row: Notion page create, update, block append and comment; Confluence page
-// create, update, append and comment. The act door's Linear reassignment rule is act-door-only
-// (`actDoorRefusal`, which runs the messaging check first).
+// create, update, append and comment. Since AD3b (the act door's own `actDoorRefusal` is deleted)
+// an agent's proposal gets the model door's `modelWriteRefusal` and the executor's before-state
+// guards (the Linear assignee guard, the KB-child guards), never a separate act-door rule set.
 //
 // KB-target bounds (stated): a Confluence create in the KB space with no parent is not refused
 // (the parent alone decides); a comment on, or a Notion page created under, a page INSIDE the KB is
@@ -52,6 +53,9 @@ export const CHATOPS_CHANNEL_REFUSAL =
   "the model cannot post to a channel Nimbus ChatOps listens on";
 export const KNOWLEDGE_BASE_REFUSAL =
   "the model cannot write to the Nimbus knowledge base; use the capture flow";
+/** The refusal when the `[tribal]` configuration cannot be read, so the KB cannot be told apart. */
+export const KNOWLEDGE_BASE_UNREADABLE_REFUSAL =
+  "the Nimbus knowledge-base configuration could not be read, so this page write is refused";
 /**
  * OR-B3-3 (R11): an update or append to a page whose parent is the KB destination. The model door
  * enforces it with the four page readers' KB-child guard (`knowledge.ts`), from the page's
@@ -85,9 +89,6 @@ const CHATOPS_POST_ROWS: Readonly<Record<string, { platform: Platform; key: stri
   teams_message_post: { platform: "teams", key: "channelId" },
   teams_message_post_chat: { platform: "teams", key: "chatId" },
 };
-
-/** The Linear update row: on the act door its `assigneeId` is refused (`actDoorRefusal`). */
-const LINEAR_ISSUE_UPDATE_ROW = "linear_issue_update";
 
 /** The Slack DM row: its destination is `user_ids`, never a channel (see `refusesSlackDm`). */
 const SLACK_DM_ROW = "slack_message_post_dm";
@@ -805,7 +806,7 @@ function nullOptionalFieldCheck(
 // links stay allowed and are shown verbatim. The detectors are structural scans
 // (`remote-content.ts`: a markup tokenizer, `JSON.parse` and a walk, a fixed `![` rule); they
 // never strip or rewrite. Anything that does not tokenize, parse or settle is refused, and a
-// throw inside the rule refuses too (fail closed, on the act door as well).
+// throw inside the rule refuses too (fail closed, on the agent door as well).
 //
 // Scanned rows and fields (derived from the 0.5.0 connector source; pinned by
 // `remote-content.sync.test.ts`):
@@ -818,8 +819,8 @@ function nullOptionalFieldCheck(
 //  - `gdrive_file_create` `content` (OPTIONAL: unset or `""` makes an empty file and is not
 //    scanned), when its `mimeType` is markup or its `name` ends in a markup extension
 //    (`driveContentFormats`), and as Markdown for a `.md` name, whatever its type;
-//  - (B3w) `outlook_mail_send` `body`, as Outlook HTML on the same rule as the draft (the model is
-//    never offered sends, owner ruling OR-B3w-1; the act door scans its proposals);
+//  - (B3w) `outlook_mail_send` `body`, as Outlook HTML on the same rule as the draft (neither the model
+//    nor, since AD3b, an agent is offered sends, owner ruling OR-B3w-1; the rule guards the owner's own doors);
 //  - (B3w) `teams_message_post` and `teams_message_post_chat` `body`, as Teams HTML unless
 //    `contentType` is absent or exactly `"text"`;
 //  - (B3w) forge Markdown: `github_issue_comment_create` `body`, `github_issue_create` `body`
@@ -992,75 +993,8 @@ export function messagingDestinationRefusal(
 }
 
 /**
- * OR-B3-3 on the act door (R12): it runs no before-read, so it cannot tell a KB child from any
- * other page; while a KB destination is configured for that service (or the config is
- * unreadable), these update and append rows are refused over MCP (fail closed). Fixed text.
- */
-export const ACT_DOOR_KB_CHILD_REFUSAL =
-  "an MCP proposal cannot update or append to a Notion or Confluence page while a Nimbus knowledge base is configured there: the act door cannot check whether the page is in it";
-
-/** The page update/append rows the act door refuses while their service's KB is configured. */
-const NOTION_KB_CHILD_ROWS: ReadonlySet<string> = new Set([
-  "notion_page_update",
-  "notion_block_append",
-]);
-const CONFLUENCE_KB_CHILD_ROWS: ReadonlySet<string> = new Set([
-  "confluence_page_update",
-  "confluence_page_append",
-]);
-
-/** What the act door's refusal reads: the ChatOps bindings and the KB destinations. */
-export interface ActDoorRefusalContext {
-  readonly chatops: ChatopsPolicy | undefined;
-  readonly kb: TribalKbConfig | undefined;
-  /** The KB config could not be read: every KB-capable row is refused (fail closed). */
-  readonly kbUnreadable: boolean;
-}
-
-/** OR-B2-3 on the act door: a Linear update that sets `assigneeId` (anything but `undefined`). */
-function linearAssigneeRefusal(
-  toolId: string,
-  input: Readonly<Record<string, unknown>>,
-): string | undefined {
-  if (toolId !== LINEAR_ISSUE_UPDATE_ROW) return undefined;
-  const assignee = Object.hasOwn(input, "assigneeId") ? input["assigneeId"] : undefined;
-  return assignee === undefined ? undefined : LINEAR_ASSIGNEE_REFUSAL;
-}
-
-/** R12: a page update or append while its service's KB destination is configured. */
-function actDoorKbChildRefusal(toolId: string, kb: TribalKbConfig | undefined): string | undefined {
-  const notion = NOTION_KB_CHILD_ROWS.has(toolId) && kb?.notion !== undefined;
-  const confluence = CONFLUENCE_KB_CHILD_ROWS.has(toolId) && kb?.confluence !== undefined;
-  return notion || confluence ? ACT_DOOR_KB_CHILD_REFUSAL : undefined;
-}
-
-/**
- * The MCP act door's ONE refusal (the agent door's `refusal` for a legacy basis, `connector-writes/agent-door-runtime.ts`), in
- * order: the messaging check; the Linear reassignment rule (OR-B2-3: the act door runs no
- * before-read (B0b), so it cannot prove a Linear issue unassigned, and a `linear_issue_update`
- * that sets `assigneeId`, `null` included, is refused); the KB-target check the model door also
- * runs (OR-B3-1; an unreadable KB config refuses every KB-capable row); then the KB-child rule
- * (R12). The model door does NOT call this: there the readers' guards decide from the current
- * state.
- */
-export function actDoorRefusal(
-  toolId: string,
-  input: Readonly<Record<string, unknown>>,
-  ctx: ActDoorRefusalContext,
-): string | undefined {
-  const messaging = messagingDestinationRefusal(toolId, input, { chatops: ctx.chatops });
-  if (messaging !== undefined) return messaging;
-  const linear = linearAssigneeRefusal(toolId, input);
-  if (linear !== undefined) return linear;
-  if (ctx.kbUnreadable) {
-    return isKnowledgeBaseCapableRow(toolId) ? KNOWLEDGE_BASE_REFUSAL : undefined;
-  }
-  return knowledgeBaseRefusal(toolId, input, ctx.kb) ?? actDoorKbChildRefusal(toolId, ctx.kb);
-}
-
-/**
  * F4 / I25: the KB-target refusal, the ONE implementation both doors call
- * (`modelWriteRefusal`, `actDoorRefusal`): {@link KNOWLEDGE_BASE_REFUSAL} when a KB-capable key of
+ * (`modelWriteRefusal`): {@link KNOWLEDGE_BASE_REFUSAL} when a KB-capable key of
  * `toolId` names (or cannot be proven distinct from) the configured KB destination; `undefined`
  * when no KB is configured.
  */
@@ -1070,6 +1004,10 @@ function knowledgeBaseRefusal(
   kb: TribalKbConfig | undefined,
 ): string | undefined {
   if (kb === undefined) return undefined;
+  // An unreadable `[tribal]` section is not an absent one: refuse every KB-capable row.
+  if (kb.unreadable === true) {
+    return isKnowledgeBaseCapableRow(toolId) ? KNOWLEDGE_BASE_UNREADABLE_REFUSAL : undefined;
+  }
   if (refusesNotion(toolId, input, kb) || refusesConfluence(toolId, input, kb)) {
     return KNOWLEDGE_BASE_REFUSAL;
   }
@@ -1089,21 +1027,21 @@ export function modelWriteRefusal(
   const messaging = messagingDestinationRefusal(toolId, input, { chatops: ctx.chatops });
   if (messaging !== undefined) return messaging;
   // D1c (owner ruling 1): a commit touching a CI, workflow, hook or review-rule file, or carrying
-  // credential-looking text. MODEL door only: the owner's own doors are not restricted, and the
-  // act door never proposes a commit.
+  // credential-looking text. Outside origins only (the model and the agent door, which run this
+  // function since AD3b): the owner's own doors are not restricted.
   const commit = commitModelRefusal(toolId, input);
   if (commit !== undefined) return commit;
-  // D2: a CloudFormation deploy asking for an IAM capability. MODEL door only.
+  // D2: a CloudFormation deploy asking for an IAM capability. Outside origins only.
   const iac = iacModelRefusal(toolId, input);
   if (iac !== undefined) return iac;
   // D3a (OR-D3-6): RBAC kinds and privileged or host-access settings in a model-written manifest.
-  // MODEL door only.
+  // Outside origins only.
   if (toolId === "k8s_manifest_apply") {
     const k8s = k8sModelRefusal(input);
     if (k8s !== undefined) return k8s;
   }
   // D3b (OR-D3-1..3): a Netlify build with neither or both of branch and production, and a
-  // Firebase distribute to tester emails. MODEL door only.
+  // Firebase distribute to tester emails. Outside origins only.
   const deploy = deployModelRefusal(toolId, input);
   if (deploy !== undefined) return deploy;
   return knowledgeBaseRefusal(toolId, input, ctx.kb);

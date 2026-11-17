@@ -313,8 +313,8 @@ export const VCS_CI_ROWS: readonly ConnectorWriteRow[] = [
   ),
   // Connectors 0.6.0 (spec 15.3, OR-W34-6): branch, PR and MR create/update, all wave 3. The
   // create writes are recoverable (the branch/PR/MR can be deleted or closed), the updates are not
-  // (the connector captures the old text first). C2 templates all six; the four creates are also
-  // proposable over MCP behind the same refusals, the two updates are not (no act-door before-state).
+  // (the connector captures the old text first). C2 templates all six; an outside agent reaches
+  // each only after the owner approved it for agents by name (I58), behind the same refusals.
   // `expectedSha` is SHOWN, not injected (bound: a ref can move between the read and the dispatch).
   withBefore(
     withPreview(row("github_branch_create", "github.branch.create", "mesh", 3), {
@@ -530,7 +530,7 @@ export const VCS_CI_ROWS: readonly ConnectorWriteRow[] = [
   // the caller's) and shows the owner the whole change as a unified diff the gateway renders from
   // the caller's text and the prepare reply (`commit-bound.ts`, `diff.ts`). `message` and the file
   // text are shown in full and are not scanned for remote content: file text is code (spec § 15.3).
-  // The act door denies both (class vcs): its consent display has no diff (`proposable-actions.ts`).
+  // An outside agent reaches both only on I58's approved basis, through the same prepare step.
   withConfirm(
     withBound(
       withPreview(row("github_file_commit", "github.file.commit", "mesh", 4), {

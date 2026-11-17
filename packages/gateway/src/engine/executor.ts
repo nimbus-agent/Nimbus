@@ -706,7 +706,7 @@ type AuditedAction = Omit<PlannedAction, "proposer" | "userMcpCall"> & {
  */
 function auditedAction(action: PlannedAction): AuditedAction {
   // AD5a: the call facts never reach the row. An approved call adds its definition hash after the
-  // proposer; any other action (a legacy proposal, a model call, an owner call) gets no key at all,
+  // proposer; any other action (a model call, an owner call) gets no key at all,
   // so its row is byte-for-byte what it was.
   if (action.userMcpCall !== undefined) {
     const { userMcpCall, ...rest } = action;

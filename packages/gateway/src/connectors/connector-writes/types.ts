@@ -250,6 +250,13 @@ export interface BeforeStateRead {
 
 /** The `[tribal]` knowledge-base destinations (`config/nimbus-toml.ts` `NimbusTribalToml`). */
 export interface TribalKbConfig {
+  /**
+   * `true` when the `[tribal]` configuration could not be read (a layer exists but is unreadable):
+   * the loader then falls back to defaults that name no destination, which must NOT read as "no
+   * KB configured". Every consumer refuses a KB-capable write while this is set (fail closed).
+   * Absent otherwise; an ABSENT configuration is `undefined`, never this.
+   */
+  readonly unreadable?: true;
   readonly notion?: { readonly databaseId: string };
   readonly confluence?: { readonly spaceKey: string; readonly parentPageId: string };
 }

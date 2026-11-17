@@ -7,10 +7,7 @@ import { runIndexedSchemaMigrations } from "../../index/migrations/runner.ts";
 import type { ActionDescription } from "../../mcp-sink/capture-types.ts";
 import type { ChatopsPolicy } from "../../policy/types.ts";
 import { mcpClientToolKey } from "../lazy-mesh/tool-map.ts";
-import { type ClassifyContext, PROPOSABLE_WRITE_TOOLS } from "../proposable-actions.ts";
 import { insertUserMcpConnector } from "../user-mcp-store.ts";
-import { AGENT_DOOR_MAIL_SEND_TOOL_IDS } from "./agent-door.ts";
-import { legacyNoticeFor } from "./agent-door-legacy.ts";
 import {
   type AgentDoor,
   type AgentDoorDeps,
@@ -33,17 +30,17 @@ import {
   removeModelWriteEnablement,
   setModelWriteEnablement,
 } from "./enablement-store.ts";
+import { FORMERLY_PROPOSABLE } from "./formerly-proposable.test-helpers.ts";
 import { removeIacGrants, setIacGrants } from "./iac-grants.ts";
 import { CONNECTOR_WRITE_ROWS } from "./index.ts";
 import { removeK8sGrants, setK8sGrants } from "./k8s-grants.ts";
-import { MODEL_NEVER_OFFERED_REASONS } from "./model-offerable.ts";
+import { MODEL_NEVER_OFFERED_REASONS, MODEL_NEVER_OFFERED_TOOL_IDS } from "./model-offerable.ts";
 import {
   BROADCAST_MENTION_REFUSAL,
   CHATOPS_CHANNEL_REFUSAL,
   GITLAB_QUICK_ACTION_REFUSAL,
   GITLAB_SCOPED_LABEL_REFUSAL,
   KNOWLEDGE_BASE_REFUSAL,
-  LINEAR_ASSIGNEE_REFUSAL,
   type TribalKbConfig,
 } from "./model-write-refusals.ts";
 import { type ConnectorWriteRow, previewTemplateKeys } from "./types.ts";
@@ -65,11 +62,9 @@ let kbThrows: boolean;
 let listings: Record<string, Record<string, unknown> | undefined | "reject">;
 let listCalls: string[];
 let configured: Set<string>;
-let modelAccess: Set<string>;
 let userMcpAllowed: boolean;
 
-const classifyContext: ClassifyContext = {
-  modelAccessServices: () => modelAccess,
+const userMcpPolicy = {
   userMcpModelAccessAllowed: () => userMcpAllowed,
 };
 
@@ -122,7 +117,7 @@ function door(over: Partial<AgentDoorDeps> = {}): AgentDoor {
       if (kbThrows) throw new Error("kb unreadable");
       return kb;
     },
-    classifyContext,
+    userMcpPolicy,
     isServiceConfigured: async (s) => configured.has(s),
     now: () => 1_000,
     ...over,
@@ -150,7 +145,6 @@ beforeEach(() => {
   listings = {};
   listCalls = [];
   configured = new Set(["github", "slack", "gitlab", "linear", "gmail", "jira", "notion", "iac"]);
-  modelAccess = new Set(["mcp_x"]);
   userMcpAllowed = true;
   // A `--model` server's row: the user-MCP verdict requires the registration (AD5a).
   insertUserMcpConnector(db, {
@@ -164,30 +158,56 @@ beforeEach(() => {
 });
 afterEach(() => db.close());
 
-describe("AGENT_DOOR_MAIL_SEND_TOOL_IDS", () => {
-  test("is exactly the rows of MODEL_NEVER_OFFERED_REASONS whose reason is the mail-send one", () => {
-    const derived = Object.entries(MODEL_NEVER_OFFERED_REASONS)
-      .filter(([, reason]) => reason.startsWith("mail sends are never offered"))
-      .map(([id]) => id)
-      .sort((a, b) => a.localeCompare(b));
-    expect([...AGENT_DOOR_MAIL_SEND_TOOL_IDS].sort((a, b) => a.localeCompare(b))).toEqual(derived);
-    expect(derived).toHaveLength(7);
+describe("the seven mail sends", () => {
+  const sends = Object.entries(MODEL_NEVER_OFFERED_REASONS)
+    .filter(([, reason]) => reason.startsWith("mail sends are never offered"))
+    .map(([id]) => id);
+
+  test("there are seven, and each is denied agent_never_offered even with its service enabled and the tool approved by name", () => {
+    expect(sends).toHaveLength(7);
+    for (const toolId of sends) {
+      const row = ROW(toolId);
+      const service = serviceOf(row.actionType);
+      raiseWriteEnablementWave(db, service, row.wave, 1);
+      upsertDoorApprovals(
+        db,
+        "agent",
+        service,
+        [{ toolId, definitionSha256: definitionSha256(toolId, entryFor(row)) as string }],
+        1,
+      );
+      expect(door().verdict(row.actionType), toolId).toEqual({
+        kind: "denied",
+        class: "agent_never_offered",
+      });
+    }
   });
 });
 
 describe("verdict", () => {
-  test("an unapproved tool of a --model server is what the classifier says, as legacy_user_mcp; everything else is as before", () => {
+  test("an unapproved tool of a --model server is denied agent_not_approved (AD3b); an unregistered server and a malformed name are as before", () => {
     const d = door();
-    expect(d.verdict("mcp_x.do_it")).toEqual({ kind: "proposable", basis: "legacy_user_mcp" });
-    // Not registered: refused (the classifier would have said the same for want of --model).
+    expect(d.verdict("mcp_x.do_it")).toEqual({ kind: "denied", class: "agent_not_approved" });
     expect(d.verdict("mcp_y.do_it")).toEqual({ kind: "denied", class: "user_mcp_not_registered" });
     expect(d.verdict("mcp_x.bad name")).toEqual({ kind: "unknown" });
     expect(d.verdict("mcp_x.")).toEqual({ kind: "unknown" });
-    userMcpAllowed = false;
-    expect(d.verdict("mcp_x.do_it")).toEqual({ kind: "denied", class: "user_mcp_policy" });
   });
 
-  test("only an approved bound row is marked boundInput; an approved plain row and a legacy type are not", () => {
+  test("a user-MCP tool approved by name is proposable while policy allows, else agent_policy", () => {
+    upsertDoorApprovals(
+      db,
+      "agent",
+      "mcp_x",
+      [{ toolId: "do_it", definitionSha256: "a".repeat(64) }],
+      1,
+    );
+    const d = door();
+    expect(d.verdict("mcp_x.do_it")).toEqual({ kind: "proposable", basis: "approved" });
+    userMcpAllowed = false;
+    expect(d.verdict("mcp_x.do_it")).toEqual({ kind: "denied", class: "agent_policy" });
+  });
+
+  test("only an approved bound row is marked boundInput; an approved plain row and an unapproved type are not", () => {
     allow("github_issue_create");
     raiseWriteEnablementWave(db, "github", 4, 1);
     allow("github_file_commit");
@@ -199,8 +219,8 @@ describe("verdict", () => {
       boundInput: true,
     });
     expect(d.verdict("slack.message.post")).toEqual({
-      kind: "proposable",
-      basis: "legacy_unapproved",
+      kind: "denied",
+      class: "agent_not_enabled",
     });
   });
 
@@ -208,21 +228,41 @@ describe("verdict", () => {
     expect(door().verdict("nope.thing")).toEqual({ kind: "unknown" });
   });
 
-  test("each of the 47 proposable types with an empty door table is legacy: the seven sends their own basis", () => {
+  test("with an empty door table NO first-party type is proposable (AD3b: the earlier 47 are refused)", () => {
     const d = door();
-    const types = Object.keys(PROPOSABLE_WRITE_TOOLS);
-    expect(types).toHaveLength(47);
-    let sends = 0;
+    const types = new Set(CONNECTOR_WRITE_ROWS.map((r) => r.actionType));
+    expect(types.size).toBeGreaterThan(100);
     for (const t of types) {
-      const v = d.verdict(t);
-      const isSend = AGENT_DOOR_MAIL_SEND_TOOL_IDS.has(PROPOSABLE_WRITE_TOOLS[t] as string);
-      if (isSend) sends++;
-      expect(v, t).toEqual({
-        kind: "proposable",
-        basis: isSend ? "legacy_mail_send" : "legacy_unapproved",
-      });
+      expect(d.verdict(t).kind, t).not.toBe("proposable");
     }
-    expect(sends).toBe(7);
+    expect(FORMERLY_PROPOSABLE).toHaveLength(47);
+    for (const t of FORMERLY_PROPOSABLE) {
+      expect(d.verdict(t), t).toMatchObject({ kind: "denied" });
+    }
+  });
+
+  test("with every row enabled and approved by name, a never-offered row is still never proposable", () => {
+    const d = door();
+    for (const r of CONNECTOR_WRITE_ROWS) {
+      const service = serviceOf(r.actionType);
+      raiseWriteEnablementWave(db, service, r.wave, 1);
+      upsertDoorApprovals(
+        db,
+        "agent",
+        service,
+        [{ toolId: r.toolId, definitionSha256: definitionSha256(r.toolId, entryFor(r)) as string }],
+        1,
+      );
+    }
+    let proposable = 0;
+    for (const r of CONNECTOR_WRITE_ROWS) {
+      const v = d.verdict(r.actionType);
+      if (MODEL_NEVER_OFFERED_TOOL_IDS.has(r.toolId)) {
+        expect(v.kind, r.toolId).not.toBe("proposable");
+      }
+      if (v.kind === "proposable") proposable++;
+    }
+    expect(proposable).toBeGreaterThan(50);
   });
 
   test("an approved, enabled type is proposable on the approved basis", () => {
@@ -268,7 +308,7 @@ describe("verdict", () => {
     });
   });
 
-  test("a suspended approval of one of the 47 types is suspended, not legacy; the suspended check precedes legacy", () => {
+  test("a suspended approval is suspended", () => {
     const row = allow("github_issue_create");
     const sha = definitionSha256(row.toolId, entryFor(row)) as string;
     expect(markDoorToolSuspended(db, "agent", "github", row.toolId, sha, "9".repeat(64), 5)).toBe(
@@ -290,31 +330,25 @@ describe("verdict", () => {
     expect(door().verdict("slack.message.post")).toEqual({ kind: "proposable", basis: "approved" });
   });
 
-  test("OD-1 / OR-AD-15: under a connector_write_model_access lockoff an approved type of the 47 is legacy, else agent_policy", () => {
+  test("under a connector_write_model_access lockoff an approved type is agent_policy (no earlier door to fall back to)", () => {
     allow("github_issue_create");
     allow("github_pr_merge");
     policyOff = new Set(["connector_write_model_access"]);
     const d = door();
-    expect(d.verdict("github.issue.create")).toEqual({
-      kind: "proposable",
-      basis: "legacy_unapproved",
-    });
+    expect(d.verdict("github.issue.create")).toEqual({ kind: "denied", class: "agent_policy" });
     expect(d.verdict("github.pr.merge")).toEqual({ kind: "denied", class: "agent_policy" });
   });
 
-  test("an unreadable policy refuses the approved basis (fail closed) and leaves the legacy rule alone", () => {
+  test("an unreadable policy refuses an approved type (fail closed)", () => {
     allow("github_issue_create");
     allow("github_pr_merge");
     policyThrows = true;
     const d = door();
-    expect(d.verdict("github.issue.create")).toEqual({
-      kind: "proposable",
-      basis: "legacy_unapproved",
-    });
+    expect(d.verdict("github.issue.create")).toEqual({ kind: "denied", class: "agent_policy" });
     expect(d.verdict("github.pr.merge")).toEqual({ kind: "denied", class: "agent_policy" });
   });
 
-  test("a mcp_action lockoff: nothing is approved (the gate's own capability check refuses legacy too)", () => {
+  test("a mcp_action lockoff: nothing is approved", () => {
     allow("github_pr_merge");
     policyOff = new Set(["mcp_action"]);
     expect(door().verdict("github.pr.merge")).toEqual({ kind: "denied", class: "agent_policy" });
@@ -390,26 +424,17 @@ describe("per-call re-read: each change alone flips an approved verdict on the n
     const d = door();
     expect(d.verdict(ROW(OBSIDIAN_APPEND_TOOL_ID).actionType)).toEqual(approved);
     setModelWriteEnablement(db, "obsidian", 4, 2, []);
-    // Withdrawn model-door approval: no longer `approved`; one of the 47, so a legacy case (D-AD-15
-    // correction 4), and not a suspension.
-    expect(d.verdict(ROW(OBSIDIAN_APPEND_TOOL_ID).actionType)).toEqual({
-      kind: "proposable",
-      basis: "legacy_unapproved",
-    });
+    // Withdrawn model-door approval: no longer `approved`, and not a suspension (AD3b: no fallback).
+    expect(d.verdict(ROW(OBSIDIAN_APPEND_TOOL_ID).actionType).kind).toBe("denied");
   });
 });
 
 describe("refusal", () => {
-  const refuse = (
-    d: AgentDoor,
-    type: string,
-    input: Record<string, unknown>,
-    approvedBasis = true,
-  ) => d.refusal(type, input, approvedBasis ? "approved" : "legacy_unapproved");
+  const refuse = (d: AgentDoor, type: string, input: Record<string, unknown>) =>
+    d.refusal(type, input, "approved");
 
-  test("a user-MCP type has no destination here, on either user-MCP basis or none", () => {
+  test("a user-MCP type has no destination here, on the approved basis or none", () => {
     expect(door().refusal("mcp_x.do_it", { a: 1 }, undefined)).toBeUndefined();
-    expect(door().refusal("mcp_x.do_it", { a: 1 }, "legacy_user_mcp")).toBeUndefined();
     expect(door().refusal("mcp_x.do_it", { a: 1 }, "approved")).toBeUndefined();
   });
 
@@ -447,30 +472,26 @@ describe("refusal", () => {
     ).toBeUndefined();
   });
 
-  test("a Linear assigneeId is NOT refused on the approved basis and IS on a legacy basis", () => {
+  test("a Linear assigneeId is not refused by the door itself (the executor's before-state guard decides)", () => {
     const d = door();
-    const input = { issueId: "i", assigneeId: "u" };
-    expect(refuse(d, "linear.issue.update", input)).toBeUndefined();
-    expect(refuse(d, "linear.issue.update", input, false)).toBe(LINEAR_ASSIGNEE_REFUSAL);
+    expect(refuse(d, "linear.issue.update", { issueId: "i", assigneeId: "u" })).toBeUndefined();
   });
 
-  test("a legacy basis runs actDoorRefusal exactly as before: the KB target and a broadcast mention", () => {
+  test("a Notion page write aimed at the KB destination is refused, as is a broadcast mention", () => {
     kb = { notion: { databaseId: "1a2b3c4d5e6f7a8b9c0d112233445566" } };
     const d = door();
     expect(
-      refuse(
-        d,
-        "notion.page.create",
-        { parentPageId: "1a2b3c4d5e6f7a8b9c0d112233445566", title: "t" },
-        false,
-      ),
+      refuse(d, "notion.page.create", {
+        parentPageId: "1a2b3c4d5e6f7a8b9c0d112233445566",
+        title: "t",
+      }),
     ).toBe(KNOWLEDGE_BASE_REFUSAL);
-    expect(refuse(d, "slack.message.post", { channel: "C1", text: "<!here>" }, false)).toBe(
+    expect(refuse(d, "slack.message.post", { channel: "C1", text: "<!here>" })).toBe(
       BROADCAST_MENTION_REFUSAL,
     );
   });
 
-  test("a ChatOps channel post is refused, and a throwing policy accessor refuses a ChatOps post on both bases", () => {
+  test("a ChatOps channel post is refused, and a throwing policy accessor refuses a ChatOps post", () => {
     chatopsPolicy = {
       channels: new Map([["C0123ABCD", { namespace: "ns", unmapped: "refuse", notify: [] }]]),
       ownership: new Map(),
@@ -484,18 +505,12 @@ describe("refusal", () => {
     expect(refuse(door(), "slack.message.post", { channel: "C0123ABCD", text: "hi" })).toBe(
       CHATOPS_CHANNEL_REFUSAL,
     );
-    expect(refuse(door(), "slack.message.post", { channel: "C0123ABCD", text: "hi" }, false)).toBe(
-      CHATOPS_CHANNEL_REFUSAL,
-    );
   });
 
-  test("a throwing KB accessor refuses a KB-capable row on both bases (the approved basis lets the gate catch it)", () => {
+  test("a throwing KB accessor propagates, so the gate refuses a KB-capable row", () => {
     kbThrows = true;
     const d = door();
     expect(() => refuse(d, "notion.page.create", { parentPageId: "ffff", title: "t" })).toThrow();
-    expect(refuse(d, "notion.page.create", { parentPageId: "ffff", title: "t" }, false)).toBe(
-      KNOWLEDGE_BASE_REFUSAL,
-    );
   });
 });
 
@@ -655,7 +670,7 @@ describe("verifyDefinition", () => {
         return listing;
       },
       tribalKbConfig: () => undefined,
-      classifyContext,
+      userMcpPolicy,
       isServiceConfigured: async () => true,
       now: () => 1_000,
     });
@@ -736,33 +751,51 @@ describe("verifyDefinition", () => {
 });
 
 describe("acceptedTypes", () => {
-  test("lists approved and legacy types of configured services, sorted, plus the user-MCP patterns; never a suspended or denied one", async () => {
+  test("lists approved types of configured services and approved user-MCP tools, sorted; never a suspended, unapproved or denied one", async () => {
     allow("github_pr_merge");
     const susp = allow("github_issue_create");
     markDoorToolSuspended(db, "agent", "github", susp.toolId, approvedHashOf(susp), null, 3);
     const types = await door().acceptedTypes();
-    expect(types).toContain("github.pr.merge"); // approved, not legacy
+    expect(types).toContain("github.pr.merge"); // approved
     expect(types).not.toContain("github.issue.create"); // suspended
-    expect(types).toContain("github.issue.comment.create"); // legacy
+    expect(types).not.toContain("github.issue.comment.create"); // formerly accepted, not approved
     expect(types).not.toContain("github.file.commit"); // denied
-    expect(types).toContain("jira.issue.create"); // legacy: not enabled, but the earlier door accepted it
+    expect(types).not.toContain("jira.issue.create"); // formerly accepted, not approved
+    expect(types.some((t) => t.endsWith(".*"))).toBe(false); // no pattern entry
   });
 
-  test("skips a service that is not configured, and includes mcp_<id>.* only while user-MCP access is allowed", async () => {
+  test("skips a service that is not configured, and lists an approved mcp_<id> tool only while user-MCP access is allowed", async () => {
+    allow("github_pr_merge");
+    upsertDoorApprovals(
+      db,
+      "agent",
+      "mcp_x",
+      [{ toolId: "do_it", definitionSha256: "a".repeat(64) }],
+      1,
+    );
     configured.delete("github");
     const d = door();
     const types = await d.acceptedTypes();
     expect(types.some((t) => t.startsWith("github."))).toBe(false);
-    expect(types).toContain("mcp_x.*");
+    expect(types).toContain("mcp_x.do_it");
     userMcpAllowed = false;
-    expect(await d.acceptedTypes()).not.toContain("mcp_x.*");
+    expect(await d.acceptedTypes()).not.toContain("mcp_x.do_it");
     expect(types).toEqual([...types].sort((a, b) => a.localeCompare(b)));
   });
 
   test("is capped at 200 entries", async () => {
-    modelAccess = new Set(
-      Array.from({ length: 250 }, (_, i) => `mcp_s${String(i).padStart(3, "0")}`),
-    );
+    for (let i = 0; i < 250; i++) {
+      const id = `mcp_s${String(i).padStart(3, "0")}`;
+      insertUserMcpConnector(db, {
+        service_id: id,
+        command: "srv",
+        args_json: "[]",
+        read_paths_json: "[]",
+        net_hosts_json: "[]",
+        model_access: 1,
+      });
+      upsertDoorApprovals(db, "agent", id, [{ toolId: "t", definitionSha256: "a".repeat(64) }], 1);
+    }
     expect((await door().acceptedTypes()).length).toBe(200);
   });
 });
@@ -873,12 +906,10 @@ describe("describe (AD3a-2b)", () => {
       state: "suspended",
       reason: DEFINITION_REFUSALS.suspended,
     });
-    expect(byType(rows, "slack.message.post")).toEqual({
-      actionType: "slack.message.post",
-      state: "legacy",
-      deprecation: legacyNoticeFor("slack.message.post"),
-    });
-    expect(byType(rows, "mcp_x.*")).toMatchObject({ state: "legacy" });
+    // Nothing the owner has not approved appears: no legacy entry, no `<id>.*` pattern.
+    expect(types).not.toContain("slack.message.post");
+    expect(types.some((t) => t.endsWith(".*"))).toBe(false);
+    expect(JSON.stringify(rows)).not.toContain("legacy");
     // No summary entry carries a description or a schema.
     expect(JSON.stringify(rows)).not.toContain("inputSchema");
     expect(JSON.stringify(rows)).not.toContain("description");
@@ -1036,26 +1067,27 @@ describe("describe (AD3a-2b)", () => {
     });
   });
 
-  test("a legacy type returns its deprecation line and causes no listing", async () => {
+  test("a formerly accepted type the owner has not approved is not_proposable and causes no listing", async () => {
     const out = await door().describe(["slack.message.post"]);
     expect(out).toEqual([
       {
         actionType: "slack.message.post",
-        state: "legacy",
-        deprecation: legacyNoticeFor("slack.message.post"),
+        state: "not_proposable",
+        reason: DESCRIBE_NOT_PROPOSABLE_REASON,
       },
     ]);
     expect(listCalls).toEqual([]);
   });
 
-  test("a legacy user-MCP type is answered with the deprecation line and starts nothing", async () => {
+  test("an unapproved user-MCP tool is not_proposable and starts nothing", async () => {
     const out = await door().describe(["mcp_x.do_it"]);
-    expect(out).toHaveLength(1);
-    expect(out[0]).toMatchObject({
-      actionType: "mcp_x.do_it",
-      state: "legacy",
-      deprecation: legacyNoticeFor("mcp_x.do_it"),
-    });
+    expect(out).toEqual([
+      {
+        actionType: "mcp_x.do_it",
+        state: "not_proposable",
+        reason: DESCRIBE_NOT_PROPOSABLE_REASON,
+      },
+    ]);
     expect(listCalls).toEqual([]);
   });
 

@@ -5,7 +5,6 @@ import { toStandardSchema } from "@mastra/core/schema";
 import { serviceOf } from "../../engine/service-of.ts";
 import { runIndexedSchemaMigrations } from "../../index/migrations/runner.ts";
 import { mcpClientToolKey } from "../lazy-mesh/tool-map.ts";
-import { PROPOSABLE_WRITE_TOOLS } from "../proposable-actions.ts";
 import {
   AGENT_DOOR_TYPE_TIEBREAK,
   type AgentApprovableContext,
@@ -70,7 +69,7 @@ describe("agentDoorRow", () => {
     for (const t of TYPES) expect(agentDoorRow(t)?.actionType, t).toBe(t);
   });
 
-  test("every multi-row type has a tie-break entry, equal to the proposable routing where both exist", () => {
+  test("every multi-row type has a tie-break entry, and it is the row agentDoorRow resolves", () => {
     const multi = TYPES.filter(
       (t) => CONNECTOR_WRITE_ROWS.filter((r) => r.actionType === t).length > 1,
     );
@@ -78,9 +77,6 @@ describe("agentDoorRow", () => {
     for (const t of multi) {
       expect(Object.hasOwn(AGENT_DOOR_TYPE_TIEBREAK, t), t).toBe(true);
       expect(agentDoorRow(t)?.toolId, t).toBe(AGENT_DOOR_TYPE_TIEBREAK[t] as string);
-      if (Object.hasOwn(PROPOSABLE_WRITE_TOOLS, t)) {
-        expect(AGENT_DOOR_TYPE_TIEBREAK[t], t).toBe(PROPOSABLE_WRITE_TOOLS[t] as string);
-      }
     }
     expect(Object.keys(AGENT_DOOR_TYPE_TIEBREAK).sort()).toEqual([...multi].sort());
   });
@@ -99,15 +95,8 @@ describe("agentDoorRow", () => {
     expect(unreachable).toEqual(["slack_message_post_dm"]);
   });
 
-  test("every proposable type routes to the tool the proposable routing table names", () => {
-    for (const [type, tool] of Object.entries(PROPOSABLE_WRITE_TOOLS)) {
-      const row = agentDoorRow(type);
-      if (row !== undefined) expect(row.toolId, type).toBe(tool);
-    }
-    // And the two tables are not disjoint: the check above did compare something.
-    expect(Object.keys(PROPOSABLE_WRITE_TOOLS).some((t) => agentDoorRow(t) !== undefined)).toBe(
-      true,
-    );
+  test("slack.message.post routes to the channel row, never the DM row (OR-AD-10)", () => {
+    expect(agentDoorRow("slack.message.post")?.toolId).toBe("slack_message_post");
   });
 });
 

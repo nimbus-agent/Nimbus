@@ -76,8 +76,8 @@ export type PlannedAction = {
 
 /**
  * The facts about a user MCP server and tool the approval prompt shows (AD5a, D-6), read by the
- * agent door at the call. `approval` is null for a proposal accepted under the deprecation window;
- * otherwise `description` is the text of the listing entry whose hash was just compared with the
+ * agent door at the call. `approval` is null only for facts no producer builds any more (the
+ * deprecation window ended in AD3b, and a null one is refused); `description` is the text of the listing entry whose hash was just compared with the
  * owner's approval, so the text shown is the text that was hashed. Every string is the server's or
  * the owner's and is escaped by the renderer; none reaches the connector call.
  */
@@ -113,11 +113,6 @@ export type AgentProposer = {
   summary: string;
   createdAt: number;
   expiresAt: number;
-  /**
-   * The gateway's own fixed deprecation text (AD3a-2a), set only when the proposal was accepted
-   * under the deprecation window; never the agent's words. Shown as a third line of the block.
-   */
-  deprecation?: string;
 };
 
 export type ActionResult =

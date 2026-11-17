@@ -115,6 +115,7 @@ import {
   type NimbusLlmRemoteVendor,
   type NimbusLlmToml,
   type NimbusTribalToml,
+  nimbusTribalConfigUnreadable,
   type TeamCredentialConnector,
 } from "../config/nimbus-toml.ts";
 import { loadNimbusWorkdayFromConfigDir } from "../config/nimbus-toml-workday.ts";
@@ -172,11 +173,7 @@ import {
 import { createOpenapiIndexerSyncable } from "../connectors/openapi-indexer-sync.ts";
 import { createProposableServiceConfigured } from "../connectors/proposable-service-configured.ts";
 import { isUserMcpModelAccessEnabled } from "../connectors/user-mcp-model-capability.ts";
-import {
-  getUserMcpConnector,
-  listModelAccessibleUserMcpIds,
-  listUserMcpConnectors,
-} from "../connectors/user-mcp-store.ts";
+import { getUserMcpConnector, listUserMcpConnectors } from "../connectors/user-mcp-store.ts";
 import { resolveTeamListOpenSession } from "../connectors/warehouse-sync-transport.ts";
 import { appendAuditEntry } from "../db/audit-chain.ts";
 import { startLatencyFlushScheduler } from "../db/latency-ring-buffer.ts";
@@ -2489,7 +2486,13 @@ function wireUpdaterIntoIpc(
  * (Phase 9.7 B, F4), from the loaded config whether or not `[tribal].enabled`: a configured KB is
  * the capture gate's destination either way. `undefined` when neither is configured.
  */
-export function tribalKbConfigOf(cfg: NimbusTribalToml): TribalKbConfig | undefined {
+export function tribalKbConfigOf(
+  cfg: NimbusTribalToml,
+  unreadable = false,
+): TribalKbConfig | undefined {
+  // An UNREADABLE `[tribal]` section is not an absent one: its defaults name no destination, so
+  // every KB-capable write must be refused (fail closed), not allowed as "no KB configured".
+  if (unreadable) return { unreadable: true };
   if (cfg.notion === undefined && cfg.confluence === undefined) return undefined;
   return {
     ...(cfg.notion === undefined ? {} : { notion: { databaseId: cfg.notion.databaseId } }),
@@ -4029,10 +4032,9 @@ export async function assemblePlatformServices(
   // MCP capture sink (I28). Config at boot; org policy LIVE per call (I22) — an absent/undefined
   // policy result fails closed inside resolveCaptureCapability.
   const { mcpSinkLoad, captureStore } = bootCaptureStore(db, paths.configDir, syncLogger);
-  // Both halves read LIVE per call: a `--model` registration and the `user_mcp_model_access`
-  // policy capability (I42) can change at runtime, so neither is snapshotted at boot.
+  // The `user_mcp_model_access` policy capability (I42) can change at runtime, so it is read LIVE
+  // per call, never snapshotted at boot.
   const actClassifyCtx = {
-    modelAccessServices: (): ReadonlySet<string> => new Set(listModelAccessibleUserMcpIds(db)),
     userMcpModelAccessAllowed: (): boolean => isUserMcpModelAccessEnabled(policyGate.enforced()),
   };
   // Obsidian's server spawns from the boot-time `[[filesystem.roots]]` (createSchedulerWithMesh), so
@@ -4047,11 +4049,12 @@ export async function assemblePlatformServices(
   // value `platform.tribalKbConfig` returns below. A pure config read; nothing between here and its
   // other uses writes the `[tribal]` section.
   const tribalCfg = loadNimbusTribalFromConfigDir(paths.configDir);
+  const tribalUnreadable = nimbusTribalConfigUnreadable(paths.configDir);
   // The agent door (invariant I58): what an outside agent may propose is decided per door, by the
   // owner's approval by name, and re-derived at submit, at approval and after the owner's answer.
   // It is built BEFORE the mesh exists, so the listing it hashes is late-bound (the
   // `identityBootRefHolder` pattern): until the mesh is bound there is NO listing and no `approved`
-  // proposal is accepted (fail closed); a legacy one needs none.
+  // proposal is accepted (fail closed).
   const agentDoorMesh: {
     current:
       | Pick<LazyConnectorMesh, "listFirstPartyServerTools" | "listUserMcpToolDefinitions">
@@ -4072,8 +4075,8 @@ export async function assemblePlatformServices(
       const reach = describeNetworkReach(sandboxRunner, netHosts);
       return reach.kind === "hosts" || reach.kind === "none" ? undefined : reach.text;
     },
-    tribalKbConfig: () => tribalKbConfigOf(tribalCfg),
-    classifyContext: actClassifyCtx,
+    tribalKbConfig: () => tribalKbConfigOf(tribalCfg, tribalUnreadable),
+    userMcpPolicy: actClassifyCtx,
     isServiceConfigured,
     now: () => Date.now(),
   });
@@ -4093,8 +4096,8 @@ export async function assemblePlatformServices(
     classifyAction: agentDoor.verdict,
     isServiceConfigured,
     listProposableActionTypes: agentDoor.acceptedTypes,
-    // The refusal follows the verdict's basis: the model door's check for an approved type, the
-    // earlier act door's for a legacy one (both over the LIVE policy and the `[tribal]` KB config).
+    // The refusal follows the verdict's basis: the model door's check, over the LIVE policy and
+    // the `[tribal]` KB config.
     actionDestinationRefusal: agentDoor.refusal,
     verifyActionDefinition: agentDoor.verifyDefinition,
     ...(scheduleItemEmbedding === undefined
@@ -4967,7 +4970,7 @@ export async function assemblePlatformServices(
       previewCredentialFor: previewCredentialResolver(connectorWriteDeps, connectorMesh),
       // Phase 28 AD1: the before-state guards read the tribal KB destinations, from the same
       // accessor as `platform.tribalKbConfig` (the model door's) and the act door's destination refusal.
-      getTribalKbConfig: () => tribalKbConfigOf(tribalCfg),
+      getTribalKbConfig: () => tribalKbConfigOf(tribalCfg, tribalUnreadable),
       agentDoor: {
         listServerTools: (service) => connectorMesh.listFirstPartyServerTools(service),
         verifyDefinition: agentDoor.verifyDefinition,
@@ -5393,7 +5396,7 @@ export async function assemblePlatformServices(
     // (`policyGate.applyVerified`) must reach the user-MCP model tool source (I42's
     // `user_mcp_model_access` lock-off) on the next turn, not the next restart.
     enforcedPolicy: () => policyGate.enforced(),
-    tribalKbConfig: () => tribalKbConfigOf(tribalCfg),
+    tribalKbConfig: () => tribalKbConfigOf(tribalCfg, tribalUnreadable),
     disposeSidecars(): void {
       for (const s of sidecarStops) {
         try {

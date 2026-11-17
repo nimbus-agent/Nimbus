@@ -110,7 +110,6 @@ function insertAction(
     sessionId: "agent-conn",
     createdAt: 500,
     expiresAt: 500 + HOUR,
-    agentDoorLegacy: false,
   });
 }
 
@@ -135,7 +134,8 @@ function makeCtx(extra: Partial<NonNullable<CaptureRpcCtx["act"]>> = {}): Captur
     refusals: new CaptureRefusalCounter(),
     newId: () => "cap_09090909090909090909090909090909",
     now: () => 1_000,
-    classifyAction: () => ({ kind: "proposable", basis: "legacy_user_mcp" }),
+    classifyAction: () => ({ kind: "proposable", basis: "approved" }),
+    verifyActionDefinition: () => Promise.resolve({ ok: true }),
     isServiceConfigured: () => Promise.resolve(true),
     actionDestinationRefusal: () => undefined,
   };
@@ -152,6 +152,10 @@ function makeCtx(extra: Partial<NonNullable<CaptureRpcCtx["act"]>> = {}): Captur
       audit: { recordAudit: (e) => appendAuditEntry(db, e) },
       policyHitl: NO_POLICY_OVERLAY,
       getTribalKbConfig: () => undefined,
+      agentDoor: {
+        listServerTools: () => Promise.resolve(undefined),
+        verifyDefinition: () => Promise.resolve({ ok: true }),
+      },
       ...extra,
     },
   };
@@ -263,7 +267,6 @@ describe("approvals.list and approvals.get", () => {
     expect(out.proposals[0]).toEqual({
       id: "cap_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       actionType: "slack.message.post",
-      legacy: false,
       wave: 2,
       typedConfirm: false,
       label: String.raw`a\"\u000aType: x`,
@@ -317,7 +320,6 @@ describe("approvals.list and approvals.get", () => {
       sessionId: "s",
       createdAt: 1,
       expiresAt: null,
-      agentDoorLegacy: false,
     });
     for (const m of ["approvals.get", "approvals.approve", "approvals.decline"]) {
       expect(
@@ -749,5 +751,51 @@ describe("AD3a-2a: the owner list counts for the act path", () => {
     );
     expect(e.code).toBe("ERR_CAPTURE_FORBIDDEN_CLIENT");
     expect(store.get("cap_0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b")?.state).toBe("proposed");
+  });
+});
+
+describe("AD3b: a proposal queued before the upgrade, whose type the owner never approved for agents", () => {
+  const ID = "cap_1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a";
+  /** What the real door says now: the earlier window is over, so an unapproved type is denied. */
+  const refusingCtx = (): CaptureRpcCtx => {
+    const c = makeCtx();
+    return {
+      ...c,
+      gate: {
+        ...c.gate,
+        classifyAction: () => ({ kind: "denied", class: "agent_not_approved" }),
+      },
+    };
+  };
+
+  test("approvals.approve refuses it with NOT_PROPOSABLE: the row stays proposed, nothing is prompted, audited as accepted or dispatched", async () => {
+    insertAction(ID);
+    // The V97 `legacy` flag a pre-upgrade row carries: nothing reads it any more.
+    db.run("UPDATE capture SET legacy = 1 WHERE id = ?", [ID]);
+    const consent = new FakeConsent();
+    const c = refusingCtx();
+    const e = await rpcError(call("approvals.approve", { id: ID }, OWNER, consent, c));
+    expect(e.code).toBe("ERR_CAPTURE_ACTION_NOT_PROPOSABLE");
+    expect(store.get(ID)?.state).toBe("proposed");
+    expect(consent.prompts).toEqual([]);
+    expect(writesOf()).toEqual([]);
+    const accepted = db
+      .query("SELECT COUNT(*) AS n FROM audit_log WHERE action_type = 'capture.action.accept'")
+      .get() as { n: number };
+    expect(accepted.n).toBe(0);
+  });
+
+  test("the owner can still see it and decline it", async () => {
+    insertAction(ID);
+    db.run("UPDATE capture SET legacy = 1 WHERE id = ?", [ID]);
+    const c = refusingCtx();
+    const list = (await call("approvals.list", {}, OWNER, undefined, c)) as {
+      proposals: Array<{ id: string }>;
+    };
+    expect(list.proposals.map((p) => p.id)).toEqual([ID]);
+    expect(list.proposals[0]).not.toHaveProperty("legacy");
+    expect(await call("approvals.decline", { id: ID }, OWNER, undefined, c)).toMatchObject({
+      state: "rejected",
+    });
   });
 });

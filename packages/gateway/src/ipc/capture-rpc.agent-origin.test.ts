@@ -1,34 +1,31 @@
 /**
  * Phase 28 AD1: the MCP act door runs on the door executor. What these tests pin is the DELTA and its
  * limits. The owner now sees the executor's own prompt with the target's current state, and the
- * proposer as an UNVERIFIED trailing block; what an outside agent can PROPOSE did not move: the 47
- * proposable types, the tool each routes to and the payload each dispatches are exactly what they
- * were before the executor was shared, no proposable type is Wave 4, and the agent origin gets no
- * delegate and no standing rule.
+ * proposer as an UNVERIFIED trailing block; the tool each type routes to and the payload it
+ * dispatches are exactly what they were before the executor was shared, and the agent origin gets
+ * no delegate and no standing rule. (AD3b: which types may be proposed is the owner's list alone.)
  */
 import type { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
+import { agentDoorRow } from "../connectors/connector-writes/agent-door.ts";
 import { CONNECTOR_WRITE_ROWS } from "../connectors/connector-writes/index.ts";
 import { KNOWLEDGE_BASE_CHILD_REFUSAL } from "../connectors/connector-writes/model-write-refusals.ts";
-import {
-  ACTION_PROPOSABILITY,
-  PROPOSABLE_WRITE_TOOLS,
-  proposableWriteTool,
-} from "../connectors/proposable-actions.ts";
+import { mcpClientToolKey } from "../connectors/lazy-mesh/tool-map.ts";
 import { appendAuditEntry } from "../db/audit-chain.ts";
 import { makeEgressSink } from "../egress/egress-ledger.ts";
 import { isBeforeReadActionType } from "../engine/before-state.ts";
 import { NO_POLICY_OVERLAY } from "../engine/executor.ts";
+import { serviceOf } from "../engine/service-of.ts";
 import type { PlannedAction } from "../engine/types.ts";
 import { openMigratedMemoryDb } from "../index/migrated-db-template.ts";
 import { buildActDeps, type CaptureActWiring } from "./capture-rpc.ts";
 import type { ConsentCoordinator } from "./consent.ts";
 
 /**
- * `PROPOSABLE_WRITE_TOOLS` as it stood on `main` BEFORE the act door moved onto the door executor
- * (generated once from that tree, 47 entries). AD1 changes no routing row; AD3b is the slice that
- * flips this table.
+ * The routing table as it stood on `main` BEFORE the act door moved onto the door executor (47
+ * entries, a pinned snapshot). AD3b deleted the table; the routing is now the write row's own tool,
+ * and this snapshot pins that every one of these types still routes to the same tool.
  */
 const PRE_AD1_ROUTING: Readonly<Record<string, string>> = {
   "slack.message.post": "slack_message_post",
@@ -91,6 +88,7 @@ const MAIL_SENDS = [
 ];
 
 const PROV = {
+  basis: "approved" as const,
   captureId: "cap_00a100a100a100a100a100a100a100a1",
   clientLabel: "agent",
   labelSource: "declared" as const,
@@ -111,6 +109,19 @@ beforeEach(() => {
 afterEach(() => {
   db.close();
 });
+
+/** Every reader and prepare tool of `service` as a connector would list it (so a before-read can run). */
+function readerListing(service: string): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const r of CONNECTOR_WRITE_ROWS) {
+    if (serviceOf(r.actionType) !== service) continue;
+    for (const t of [r.before?.tool, r.before?.also?.tool]) {
+      if (t !== undefined)
+        out[mcpClientToolKey(service, t)] = { description: "r", inputSchema: {} };
+    }
+  }
+  return out;
+}
 
 interface Harness {
   readonly act: ReturnType<typeof buildActDeps>;
@@ -147,40 +158,24 @@ function harness(
     audit: { recordAudit: (e) => appendAuditEntry(db, e) },
     policyHitl: NO_POLICY_OVERLAY,
     getTribalKbConfig: opts.kb ?? (() => undefined),
+    agentDoor: {
+      listServerTools: async (service) => readerListing(service),
+      verifyDefinition: async () => ({ ok: true }),
+    },
   };
   return { act: buildActDeps(w, coord, "c-cli"), dispatched, prompts };
 }
 
-describe("the legacy baseline (the deprecation window of AD3a-2a): the 47 proposable types are the 47 they were", () => {
-  const proposable = Object.entries(ACTION_PROPOSABILITY)
-    .filter(([, v]) => v.kind === "proposable")
-    .map(([t]) => t);
+describe("routing: the tool and payload an approved proposal dispatches", () => {
+  const routed = Object.entries(PRE_AD1_ROUTING).filter(([t]) => !MAIL_SENDS.includes(t));
 
-  test("the proposable set and the routing table are exactly the pre-AD1 snapshot", () => {
-    expect(proposable.sort()).toEqual(Object.keys(PRE_AD1_ROUTING).sort());
-    expect(proposable).toHaveLength(47);
-    expect({ ...PROPOSABLE_WRITE_TOOLS }).toEqual(PRE_AD1_ROUTING);
-    // The seven mail sends stay proposable in AD1 (AD3b is the slice that refuses them).
-    for (const t of MAIL_SENDS) expect(ACTION_PROPOSABILITY[t]?.kind, t).toBe("proposable");
+  test("every type of the pre-AD1 snapshot still routes to the same write row's tool; the seven mail sends are not in the snapshot's reach", () => {
+    for (const [type, tool] of routed) expect(agentDoorRow(type)?.toolId, type).toBe(tool);
+    expect(routed).toHaveLength(40);
   });
 
-  test("no baseline type is Wave 4 (a Wave 4 row is reachable only on the approved basis, I58)", () => {
-    for (const t of proposable) {
-      for (const row of CONNECTOR_WRITE_ROWS.filter((r) => r.actionType === t)) {
-        expect(row.wave, t).toBeLessThan(4);
-        expect(row.bound, t).toBeUndefined();
-      }
-    }
-  });
-
-  test("the denied and not-yet-offered types are still not proposable", () => {
-    for (const t of ["github.pr.merge", "jira.issue.transition", "iac.terraform.apply"]) {
-      expect(ACTION_PROPOSABILITY[t]?.kind, t).not.toBe("proposable");
-    }
-  });
-
-  test("for every proposable type: the dispatched tool and payload are the routing table's and the input, byte for byte", async () => {
-    for (const [type, tool] of Object.entries(PRE_AD1_ROUTING)) {
+  test("for every routed type: the dispatched tool and payload are the routing table's and the input, byte for byte", async () => {
+    for (const [type, tool] of routed) {
       const h = harness();
       const input = { marker: `in-${type}` };
       const out = await h.act.execute(type, input, PROV);
@@ -189,7 +184,6 @@ describe("the legacy baseline (the deprecation window of AD3a-2a): the 47 propos
       expect(writes, type).toHaveLength(1);
       expect(writes[0]?.type, type).toBe(type);
       expect(writes[0]?.payload, type).toEqual({ mcpToolId: tool, input });
-      expect(proposableWriteTool(type), type).toBe(tool);
       // One approval at the owner's session, per proposal.
       expect(h.prompts, type).toHaveLength(1);
       expect(writes[0]?.origin, type).toBe("agent");
@@ -310,6 +304,24 @@ describe("the act door now reads the target's current state (the model door's ru
       reason: "the model cannot change a page in the Nimbus knowledge base; use the capture flow",
       code: "ERR_ACTION_GUARD_REFUSED",
     });
+    expect(h.prompts).toEqual([]);
+    expect(h.dispatched.some((a) => a.type === "notion.page.update")).toBe(false);
+  });
+
+  test("an UNREADABLE [tribal] config refuses a page update at dispatch, before any prompt, on this door", async () => {
+    const h = harness({
+      kb: () => ({ unreadable: true }),
+      reply: (a) =>
+        isBeforeReadActionType(a.type)
+          ? { page: { parent: { type: "page_id", page_id: "p" } }, blockChildren: { results: [] } }
+          : { url: "https://x" },
+    });
+    const out = await h.act.execute(
+      "notion.page.update",
+      { pageId: "ffffffffffffffffffffffffffffffff", propertiesJson: "{}" },
+      PROV,
+    );
+    expect(out.status).toBe("rejected");
     expect(h.prompts).toEqual([]);
     expect(h.dispatched.some((a) => a.type === "notion.page.update")).toBe(false);
   });

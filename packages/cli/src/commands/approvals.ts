@@ -91,8 +91,6 @@ interface Proposal {
   summary: string;
   createdAt: number;
   expiresAt: number;
-  /** Accepted under the deprecation window (AD3a-2a): not approved for agents by name. */
-  legacy: boolean;
 }
 
 function rec(v: unknown, what: string): Record<string, unknown> {
@@ -123,7 +121,6 @@ function parseProposal(v: unknown): Proposal {
     summary: field(r, "summary", "string") as string,
     createdAt: field(r, "createdAt", "number") as number,
     expiresAt: field(r, "expiresAt", "number") as number,
-    legacy: r["legacy"] === true,
   };
 }
 
@@ -158,23 +155,14 @@ function labelCell(p: Pick<Proposal, "label" | "fromKit">): string {
   return `${shown}${source}`;
 }
 
-/** The gateway's own deprecation header (fixed text), control-stripped, as a first block; or nothing. */
-function deprecationBlock(raw: unknown): string {
-  const d =
-    typeof raw === "object" && raw !== null
-      ? (raw as Record<string, unknown>)["deprecation"]
-      : undefined;
-  return typeof d === "string" && d !== "" ? `${stripControl(d)}\n\n` : "";
-}
-
-function formatQueue(rows: Proposal[], now: number, header = ""): string {
+function formatQueue(rows: Proposal[], now: number): string {
   if (rows.length === 0) return "No agent proposals are waiting.\n";
   const head = `${cell("ID", 42)} ${cell("FROM (unverified)", FROM_WIDTH)} ${cell("TYPE", 26)} ${cell("WAVE", 22)} ${cell("AGE", 8)} ${cell("EXPIRES", 8)} SUMMARY`;
   const lines = rows.map(
     (r) =>
-      `${cell(r.id, 42)} ${cell(labelCell(r), FROM_WIDTH)} ${cell(stripControl(r.actionType), 26)} ${cell(r.legacy ? `${waveCell(r)} deprecated` : waveCell(r), 22)} ${cell(ago(r.createdAt, now), 8)} ${cell(until(r.expiresAt, now), 8)} ${stripControl(r.summary).slice(0, 60)}`,
+      `${cell(r.id, 42)} ${cell(labelCell(r), FROM_WIDTH)} ${cell(stripControl(r.actionType), 26)} ${cell(waveCell(r), 22)} ${cell(ago(r.createdAt, now), 8)} ${cell(until(r.expiresAt, now), 8)} ${stripControl(r.summary).slice(0, 60)}`,
   );
-  return `${header}${[head, ...lines].join("\n")}\nApprove one with: nimbus approvals <id>   (read it first with: nimbus approvals show <id>)\n`;
+  return `${[head, ...lines].join("\n")}\nApprove one with: nimbus approvals <id>   (read it first with: nimbus approvals show <id>)\n`;
 }
 
 function formatDetail(raw: unknown, now: number): string {
@@ -182,7 +170,6 @@ function formatDetail(raw: unknown, now: number): string {
   const p = parseProposal(r);
   const input = r["inputLines"];
   const lines = [
-    ...(p.legacy ? [deprecationBlock(r).trimEnd(), ""] : []),
     `${p.id}  ${stripControl(p.actionType)}  wave ${waveCell(p)}`,
     `Proposed by ${stripControl(p.label ?? "an unnamed MCP client")} (${sourceWord(p)}, unverified) ${ago(p.createdAt, now)}; expires in ${until(p.expiresAt, now)}.`,
     `Agent's summary (UNVERIFIED): ${stripControl(p.summary)}`,
@@ -210,11 +197,7 @@ type Client = Pick<IPCClient, "call">;
 async function runList(c: Client, a: { json: boolean }, sink: Sink, now: number): Promise<number> {
   const raw = await c.call<unknown>("approvals.list", {});
   const rows = parseProposals(raw);
-  sink.out(
-    a.json
-      ? `${JSON.stringify(raw, undefined, 2)}\n`
-      : formatQueue(rows, now, deprecationBlock(raw)),
-  );
+  sink.out(a.json ? `${JSON.stringify(raw, undefined, 2)}\n` : formatQueue(rows, now));
   return 0;
 }
 

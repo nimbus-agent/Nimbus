@@ -1,12 +1,11 @@
 // Phase 9.7 C2: the refusals on the four pull request and merge request create and update rows,
-// on BOTH doors (the model door's `modelWriteRefusal` and the act door's `actDoorRefusal`, which
-// both run `messagingDestinationRefusal` first). Invisible characters are built with
+// on the door (`modelWriteRefusal`, which the agent door shares and which runs
+// `messagingDestinationRefusal` first). Invisible characters are built with
 // String.fromCodePoint: none is written literally.
 import { describe, expect, test } from "bun:test";
 
 import type { ChatopsPolicy } from "../../policy/types.ts";
 import {
-  actDoorRefusal,
   BROADCAST_MENTION_REFUSAL,
   GITLAB_QUICK_ACTION_REFUSAL,
   messagingDestinationRefusal,
@@ -23,15 +22,13 @@ const FW_AT = cp(0xff20);
 const FENCE = "\x60\x60\x60";
 
 const NO_CHATOPS: ChatopsPolicy = { channels: new Map(), ownership: new Map() };
-const ACT = { chatops: NO_CHATOPS, kb: undefined, kbUnreadable: false } as const;
 
-/** The verdict through the shared check, the model door and the act door; they must agree. */
+/** The verdict through the shared check and the door check; they must agree. */
 function verdict(toolId: string, input: Readonly<Record<string, unknown>>): string | undefined {
   const shared = messagingDestinationRefusal(toolId, input, { chatops: NO_CHATOPS });
   expect(modelWriteRefusal(toolId, input, { chatops: NO_CHATOPS, kb: undefined }), toolId).toBe(
     shared,
   );
-  expect(actDoorRefusal(toolId, input, ACT), toolId).toBe(shared);
   return shared;
 }
 
@@ -176,20 +173,6 @@ describe("C2: the tripwires name the new rows", () => {
     for (const id of ["github_branch_create", "gitlab_branch_create"]) {
       expect(scannedTextKeys(id), id).toEqual([]);
       expect(remoteContentScannedKeys(id), id).toEqual([]);
-    }
-  });
-
-  test("the act door adds nothing for these rows: it equals the shared check on a hostile input", () => {
-    for (const [id, base] of ALL_ROWS) {
-      const hostile = {
-        ...base,
-        title: "@all",
-        body: "/merge ![x](https://h/p)",
-        description: "/merge",
-      };
-      expect(actDoorRefusal(id, hostile, ACT), id).toBe(
-        messagingDestinationRefusal(id, hostile, { chatops: NO_CHATOPS }),
-      );
     }
   });
 });
