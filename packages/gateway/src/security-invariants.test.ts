@@ -16748,7 +16748,7 @@ describe("I57 (b) - an engine-proposed action reaches dispatch only as the local
     const rem = await read("packages/gateway/src/incident/remediation.ts");
     const start = rem.indexOf("function topProposal(");
     const body = rem.slice(start, rem.indexOf("\n  }\n", start));
-    expect(body).toContain("proposals(ref)");
+    expect(body).toContain("listAndStore(ref, false)");
     expect(body).not.toContain("makeExecutor");
     expect(body).not.toContain("buildRemediationAction");
     expect(body).not.toContain("claimProposal");

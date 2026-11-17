@@ -739,6 +739,30 @@ describe("the proposal a push carries (IC5b)", () => {
     expect(h.svc.topProposal(h.recordId)).toBeNull();
   });
 
+  test("a push never revives: a denied or expired proposal stays refused until the owner lists again", async () => {
+    const h = harness();
+    const ackId = pick(h, "acknowledge");
+    const rbId = pick(h, "rollback_deploy");
+    db.run("UPDATE incident_proposal SET status = 'denied' WHERE id = ?", [rbId]);
+    db.run("UPDATE incident_proposal SET expires_at_ms = ? WHERE id = ?", [NOW - 1, ackId]);
+    const top = h.svc.topProposal(h.recordId);
+    // The denied rollback and the expired acknowledge are not revived by the push-time derivation.
+    expect(getProposal(db, rbId)?.status).toBe("denied");
+    expect(getProposal(db, ackId)?.status).toBe("expired");
+    expect([rbId, ackId]).not.toContain(top?.id);
+    await expect(
+      h.svc.remediate({ ref: h.recordId, proposalId: rbId, clientId: "a" }),
+    ).rejects.toBeInstanceOf(RemediationError);
+    await expect(
+      h.svc.remediate({ ref: h.recordId, proposalId: ackId, clientId: "a" }),
+    ).rejects.toMatchObject({ code: "ERR_PROPOSAL_EXPIRED" });
+    expect(h.prompts).toEqual([]);
+    // Only the owner's explicit listing revives them.
+    h.svc.proposals(h.recordId);
+    expect(getProposal(db, rbId)?.status).toBe("proposed");
+    expect(getProposal(db, ackId)?.status).toBe("proposed");
+  });
+
   test("the pushed id goes through the same remediate path: claim, prompt, dispatch", async () => {
     const h = harness();
     const top = h.svc.topProposal(h.recordId);

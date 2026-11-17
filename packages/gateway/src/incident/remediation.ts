@@ -254,6 +254,15 @@ export function createRemediation(deps: RemediationDeps) {
 
   /** Derive, store (an explicit listing revives), and return every stored proposal of the record. */
   function proposals(ref: string): ProposalsResult {
+    return listAndStore(ref, true);
+  }
+
+  /**
+   * Derive and store. `revive` is true ONLY for the owner's explicit listing (`proposals`): it returns a derived
+   * `expired`, `superseded`, `denied` or `failed` proposal to `proposed` with a fresh TTL. Every other caller
+   * (the push, IC5b) stores new and open proposals and leaves the owner's earlier outcome as it is.
+   */
+  function listAndStore(ref: string, revive: boolean): ProposalsResult {
     const rec = requireRecord(ref);
     const derived = deriveFor(rec);
     syncProposals(db, {
@@ -261,7 +270,7 @@ export function createRemediation(deps: RemediationDeps) {
       version: rec.version,
       drafts: derived.drafts,
       nowMs: now(),
-      revive: true,
+      revive,
     });
     return {
       recordId: rec.recordId,
@@ -273,12 +282,13 @@ export function createRemediation(deps: RemediationDeps) {
   }
 
   /**
-   * The proposal a push carries (IC5b, approve-from-push): the normal owner listing (derive, store, revive), then
-   * the OPEN proposal with the highest confidence (no confidence ranks lowest; a tie keeps list order), or null.
-   * Builds no action and runs nothing: the push stores the id, and only `remediate` can act on it.
+   * The proposal a push carries (IC5b, approve-from-push): derive and store WITHOUT reviving (a push is not the
+   * owner's explicit listing, so a proposal the owner denied or let expire stays so), then the OPEN proposal with
+   * the highest confidence (no confidence ranks lowest; a tie keeps list order), or null. Builds no action and
+   * runs nothing: the push stores the id, and only `remediate` can act on it.
    */
   function topProposal(ref: string): TopProposal | null {
-    const listed = proposals(ref);
+    const listed = listAndStore(ref, false);
     let best: ProposalView | undefined;
     for (const p of listed.proposals) {
       if (p.status !== "proposed") continue;
