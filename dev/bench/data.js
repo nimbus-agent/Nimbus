@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794950780734,
+  "lastUpdate": 1794951210209,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
-            "name": "nimbus-release-bot[bot]",
-            "username": "nimbus-release-bot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "74773f6ef320b35e2848acd930bb8f27cfcd7778",
-          "message": "chore: release main (#1411)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>7.2.1</summary>\n\n##\n[7.2.1](https://github.com/nimbus-agent/Nimbus/compare/v7.2.0...v7.2.1)\n(2026-08-30)\n\n\n### Bug Fixes\n\n* **llm:** make llm.setDefault write the store the router actually reads\n([#1410](https://github.com/nimbus-agent/Nimbus/issues/1410))\n([9f69790](https://github.com/nimbus-agent/Nimbus/commit/9f69790ca0e29795997e614732539dce5792bfae))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
-          "timestamp": "2026-08-30T12:25:01Z",
-          "tree_id": "86c851c18e577f91e543df9341a1ed79117448cd",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/74773f6ef320b35e2848acd930bb8f27cfcd7778"
-        },
-        "date": 1788093501041,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 333.7131381499988,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 334.87112719999493,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 196.12631409999813,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
+            "name": "nimbus-release-bot[bot]",
+            "username": "nimbus-release-bot[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "e731c425964523193d30130c9c369f4fb9c06257",
+          "message": "chore: release main (#2050)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>11.3.0</summary>\n\n##\n[11.3.0](https://github.com/nimbus-agent/Nimbus/compare/v11.2.0...v11.3.0)\n(2026-11-17)\n\n\n### Features\n\n* **gateway:** add incident-record sections to nimbus oncall handoff and\nnimbus incident investigate (incident engine IC9a)\n([#2043](https://github.com/nimbus-agent/Nimbus/issues/2043))\n([fba462b](https://github.com/nimbus-agent/Nimbus/commit/fba462bbca841853a29f1df47a467ffc13a2e18f))\n* **gateway:** incident engine IC5a, remediation proposals with a\ndeclared reversibility, remediate, undo and advisory mode (I57 (b),\nD46(c), V102)\n([#2046](https://github.com/nimbus-agent/Nimbus/issues/2046))\n([a1f504d](https://github.com/nimbus-agent/Nimbus/commit/a1f504dc6fd217e691b7fab4d3554eba5158ca14))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
+          "timestamp": "2026-11-17T23:25:53+02:00",
+          "tree_id": "b8e6279b930b4d7d5180d3f1f873ea99cacd7faa",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/e731c425964523193d30130c9c369f4fb9c06257"
+        },
+        "date": 1794951207033,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 174.5217901999995,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 178.86839254999867,
             "unit": "ms"
           }
         ]
