@@ -5966,6 +5966,39 @@ nimbus workflow list
 
 ---
 
+### `nimbus workflow export <name> --out <file> [--author <label>] [--force]`
+
+Sign a saved workflow so a teammate can import it (I59). The gateway parses the stored steps with the import rules and signs a bundle with this install's share signing key (the one `nimbus share` uses; no new key). The CLI writes the file (convention: `<name>.nimbus-workflow.json`) and refuses to overwrite an existing file without `--force`. It prints the signer fingerprint (32 hex): send it to your team through another channel, since an importer compares it before approving.
+
+An export is refused, naming the step, when the workflow holds a model (`run`) step (a bundle holds deterministic `query` and `write` steps only), has more than 50 steps or 128 KiB of steps, has a name that is not 1 to 64 letters, digits, dot, dash or underscore, a description over 500 characters, or a step whose text looks like a credential (a heuristic). The workflow's schedule is never exported, and the bundle has no field for a schedule, a standing rule, a trigger or a credential. `--author` is a label of up to 64 characters that the importer sees marked UNVERIFIED. One `workflow.export` audit row records the hashes and the fingerprint. Owner kinds only; refused over the LAN and in a `--demo` root.
+
+```bash
+nimbus workflow export weekly-cleanup --out weekly-cleanup.nimbus-workflow.json --author "platform team"
+```
+
+---
+
+### `nimbus workflow import <file> [--replace] [--accept-signer-change] [--signer <fingerprint>] [--schedule "<cron>" [--tz <zone>]] [--dry-run]`
+
+Import a signed workflow bundle (I59). Nimbus verifies the signature, then shows you a prompt on this terminal with: the signer's fingerprint (and how often you imported from it), the bundle's author and description (both UNVERIFIED, written by the bundle), whether it creates a workflow or REPLACES yours (with the old content hash), the schedule you asked for (a bundle cannot carry one), what the steps can do (writes with their wave and action type, reads, which index values flow into which write) and then every step verbatim. The workflow is written only after you answer that prompt yourself: `--yes`, a script and an old client are refused, and a delegate is never asked. Nothing is stored before then, and a change to the target while you were being asked cancels the import (`ERR_WORKFLOW_IMPORT_CHANGED`).
+
+- `--dry-run` prints the prompt text and stops: nothing is written and nobody is asked.
+- `--signer <fingerprint>` (at least 12 hex characters) pins the key you expect; another key is refused before the prompt. Get the fingerprint through a channel the bundle does not travel on (a message from the author, not a note beside the file): anyone who can replace the file can replace a fingerprint published next to it.
+- `--replace` is required when a workflow of that name exists. When that workflow was last imported from a different signer you also need `--accept-signer-change`, and the prompt carries a line in capitals.
+- `--schedule "<cron>" [--tz <zone>]` schedules the imported workflow in the same approval (the rules of `workflow save` apply; a bundle never schedules itself). Without it the workflow is unscheduled, and replacing a scheduled workflow clears its schedule (the prompt says so). An unattended run still stops at a write no standing rule covers and notifies you.
+- A bundle older than one you already imported from the same signer (`ERR_WORKFLOW_IMPORT_STALE`, also after you delete the workflow) is refused; ask the author to export it again. Re-importing the exact bundle you imported before, after deleting the workflow, restores it through the same prompt.
+
+An import creates no standing rule and inherits none: every write still asks you, with its own preview, until you create a rule yourself with `nimbus approve add`. Runs of an imported workflow count toward approval learning like any other. `nimbus workflow list` shows each workflow's `source` (`local`, or `imported` with the signer fingerprint and whether it was edited since). Owner kinds only; refused over the LAN and in a `--demo` root.
+
+Stated bounds: the signature proves a key, not a person; there is no trusted-signer list and no revocation (each import is approved over its exact text); the replay floor and `issuedAt` are local and the exporter's clock; a very long valid workflow is still a lot to read (bundles are capped at 50 steps and 64 KiB of prompt).
+
+```bash
+nimbus workflow import weekly-cleanup.nimbus-workflow.json --signer 3fa91c0d5b7e --dry-run
+nimbus workflow import weekly-cleanup.nimbus-workflow.json --signer 3fa91c0d5b7e --schedule "0 6 * * 1-5" --tz Europe/Berlin
+```
+
+---
+
 ### `nimbus workflow unschedule <name>`
 
 Clear a workflow's schedule (Phase 10 SA4). The workflow, its runs and its standing rules are untouched.

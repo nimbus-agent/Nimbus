@@ -21,6 +21,7 @@ import {
   NO_POLICY_OVERLAY,
   ToolExecutor,
 } from "../../engine/executor.ts";
+import { createOwnerOnlyAsk } from "../../engine/owner-only-approval.ts";
 import type { ConnectorDispatcher } from "../../engine/types.ts";
 import { resolveRuntimeById } from "../../exec/exec-runtimes.ts";
 import {
@@ -125,6 +126,7 @@ import { dispatchTrustRpc } from "../trust-rpc.ts";
 import { dispatchUpdaterRpc, UpdaterRpcError } from "../updater-rpc.ts";
 import { dispatchVoiceRpc, VoiceRpcError } from "../voice-rpc.ts";
 import { createWorkflowCancelHandler } from "../workflow-cancel.ts";
+import { dispatchWorkflowImportRpc, isWorkflowImportMethod } from "../workflow-import-rpc.ts";
 import {
   automationRpcSkipped,
   connectorRpcSkipped,
@@ -2413,6 +2415,43 @@ async function dispatchExtensionAutomationRpc(
   throw new RpcMethodError(-32601, `Method not found: ${method}`);
 }
 
+/**
+ * `workflow.export` and `workflow.import` (I59): the owner's signed workflow bundles. Both answer only a
+ * connection that declared `cli` or `ui` (`getClientKind`, never a param), are LAN-forbidden and
+ * demo-refused, and the import asks the LOCAL owner through the gate-only executor with no delegation on
+ * THIS connection's consent channel (a human answer only).
+ */
+async function dispatchWorkflowImportRpcFor(
+  ctx: ServerCtx,
+  clientId: string,
+  method: string,
+  params: unknown,
+): Promise<unknown> {
+  const localIndex = ctx.options.localIndex;
+  if (localIndex === undefined) {
+    throw new RpcMethodError(-32603, "Local index is not available");
+  }
+  const out = await dispatchWorkflowImportRpc(method, params, {
+    db: localIndex.getDatabase(),
+    callerKind: ctx.getClientKind(clientId),
+    askOwner: createOwnerOnlyAsk({
+      consent: bindConsentChannel(ctx.consentImpl, clientId),
+      audit: localIndex,
+      policyHitl: ctx.options.policyHitl,
+    }),
+    vault: ctx.options.vault,
+    recordAudit: (actionType, actionJson) =>
+      localIndex.recordAudit({
+        actionType,
+        hitlStatus: "not_required",
+        actionJson,
+        timestamp: Date.now(),
+      }),
+  });
+  if (out.kind === "hit") return out.value;
+  throw new RpcMethodError(-32601, `Method not found: ${method}`);
+}
+
 export async function tryDispatchAutomationRpc(
   ctx: ServerCtx,
   clientId: string,
@@ -2420,6 +2459,10 @@ export async function tryDispatchAutomationRpc(
   method: string,
   params: unknown,
 ): Promise<unknown> {
+  if (isWorkflowImportMethod(method)) {
+    return dispatchWorkflowImportRpcFor(ctx, clientId, method, params);
+  }
+
   if (method === "workflow.run") {
     return dispatchWorkflowRunRpc(ctx, clientId, session, params);
   }

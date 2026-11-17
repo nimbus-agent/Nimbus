@@ -141,6 +141,8 @@ TEAM (multi-machine — optional)
 
 AUTOMATION & EXTENSIONS
   nimbus workflow …         List/save/run/resume/unschedule/delete saved workflows (agent steps)
+  nimbus workflow export <name> --out <file> | import <file>   Sign a saved workflow, or import a signed one
+                              (you approve the exact steps; query and write steps only)
   nimbus run <file>         Save + run workflow from JSON/YAML file
   nimbus extension …        Install/list/enable/disable/remove local extensions
   nimbus extension pack <dir> --out <file>  Pack a directory into the .tgz a registry publishes (no gateway)
