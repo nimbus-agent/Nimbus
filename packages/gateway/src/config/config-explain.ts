@@ -76,6 +76,7 @@ import { loadNimbusSessionFromConfigDir } from "./session-toml.ts";
 import { loadNimbusStandingFromConfigDir } from "./standing-toml.ts";
 import { loadNimbusTelemetryFromConfigDir } from "./telemetry-toml.ts";
 import { parseString } from "./toml-primitives.ts";
+import { loadNimbusWatcherChatopsFromConfigDir } from "./watcher-chatops-toml.ts";
 
 /**
  * Each section id (unbracketed, as `sectionFallback` keys it) mapped to the config-dir loader that
@@ -136,6 +137,7 @@ export const SECTION_LOADERS: Readonly<Record<string, (configDir: string) => unk
   user: loadNimbusUserFromConfigDir,
   voice: loadNimbusVoiceFromConfigDir,
   "watcher.anomaly": loadNimbusAnomalyFromConfigDir,
+  "watcher.chatops": loadNimbusWatcherChatopsFromConfigDir,
 };
 
 /**

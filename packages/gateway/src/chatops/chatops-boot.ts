@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite";
 import type { ChatopsAgentInvoker } from "../agent-runs/agent-chatops-invoke.ts";
 import type { NimbusChatopsToml } from "../config/nimbus-toml.ts";
+import { PINNED_CHANNEL_RE } from "../config/watcher-chatops-toml.ts";
 import { buildLedgeredChatPosts, buildLedgeredConfirmModal } from "../egress/chatops-egress.ts";
 import type { EgressSink } from "../egress/egress-ledger.ts";
 import { EgressAppendFailedError } from "../egress/model-egress.ts";
@@ -105,6 +106,19 @@ export interface ChatopsBootDeps {
   readonly cfg: NimbusChatopsToml;
   /** I22: enforcement reads only the gate's EnforcedPolicy, never raw policy TOML. */
   readonly policyGate: { enforced(): EnforcedPolicy };
+  /**
+   * The owner's pinned watcher-notice channel id from `[watcher.chatops].channel` (I23 amendment).
+   * Set ONLY by `platform/assemble.ts` from the boot-time config; never from a caller, a watcher, a
+   * pack or IPC (static D17(d)). Re-validated here: an id that is not a Slack channel id is absent.
+   */
+  readonly watcherPinnedChannel?: string;
+  /**
+   * Whether this install is under an org policy (`PolicyGate.governanceIntended()`: a verified policy,
+   * or a persisted policy or pinned org anchor that did not verify, so tampering never relaxes). The pin posts
+   * under an active policy only when that policy lists it as a `notify` channel, even a policy that
+   * declares no ChatOps channels at all. Absent means unknown, and unknown is governed (fail closed).
+   */
+  readonly orgPolicyActive?: () => boolean;
   /** Slice 3 identity seams (I18). Absent (identity disabled) → every user is unmapped. */
   readonly identity?: {
     readonly findScimByEmail: (email: string) => ScimMatch | undefined;
@@ -187,6 +201,22 @@ export interface ChatopsBoot {
    * server-derived (I23): the caller names a namespace from its own config, never a channel.
    */
   postPushedBrief(namespace: string, text: string): Promise<number>;
+  /**
+   * The watcher notice (I23, I29): the same shape as `postPushedBrief`, ledgered as
+   * `chatops.watcherNotice`. `platform/assemble.ts` binds it to the namespace the owner named in
+   * `[watcher.chatops]`; the text is the fixed template of `automation/watcher-chat-notifier.ts`.
+   * It resolves to the number of channels posted to (0 when the namespace has none) and rejects at
+   * the first failing channel, so a resolve of N means all N were posted.
+   */
+  postWatcherNotice(namespace: string, text: string): Promise<number>;
+  /**
+   * The watcher notice to the owner's PINNED channel (I23 amendment, `[watcher.chatops].channel`).
+   * It takes the text only: the channel is the `watcherPinnedChannel` this boot was built with, and
+   * it posts only when the signed org policy does not govern ChatOps or lists that channel as a
+   * `notify` channel (tighten-only, I22). Same ledgered kind as `postWatcherNotice`
+   * (`chatops.watcherNotice`); resolves 0 when the pin is absent, invalid or refused by policy.
+   */
+  postWatcherNoticePinned(text: string): Promise<number>;
   /**
    * Slice 6c: the chatops owner-consent channel (the same I2 fallback the chatops executor uses),
    * exposed so an in-chat tribal capture routes its HITL approval to the LOCAL owner.
@@ -320,6 +350,33 @@ export async function buildChatopsBoot(deps: ChatopsBootDeps): Promise<ChatopsBo
   const agentBriefDispatcher = new ReplyDispatcher({ post: posts.agentBrief, notifyChannelsFor });
   // I23: the pushed-brief counterpart. Same dispatcher shape, ledgered as `chatops.pushedBrief`.
   const pushedBriefDispatcher = new ReplyDispatcher({ post: posts.pushedBrief, notifyChannelsFor });
+  // I23: the watcher-notice counterpart, ledgered as `chatops.watcherNotice`.
+  // I23 amendment: this dispatcher alone may post to the owner's pinned channel. Tighten-only
+  // (I22): the pin stands on its own only while NO signed org policy is active; once one is, or
+  // once any channel binding exists, the pin posts only if that policy lists it as a `notify`
+  // channel. Read per post, so a policy that arrives later applies at once. A Slack-less ChatOps
+  // never posts it (the dispatcher posts as `slack`).
+  const pinnedChannel =
+    deps.watcherPinnedChannel !== undefined &&
+    PINNED_CHANNEL_RE.test(deps.watcherPinnedChannel) &&
+    cfg.slackEnabled
+      ? deps.watcherPinnedChannel
+      : undefined;
+  const pinnedChannelFor = (): readonly string[] => {
+    if (pinnedChannel === undefined) return [];
+    const bindings = chatopsPolicy().channels;
+    const governed = deps.orgPolicyActive === undefined || deps.orgPolicyActive();
+    if (!governed && bindings.size === 0) return [pinnedChannel];
+    for (const binding of bindings.values()) {
+      if (binding.notify.includes(pinnedChannel)) return [pinnedChannel];
+    }
+    return [];
+  };
+  const watcherNoticeDispatcher = new ReplyDispatcher({
+    post: posts.watcherNotice,
+    notifyChannelsFor,
+    pinnedChannelFor,
+  });
 
   const presenter: ApprovalPresenter = new ApprovalPresenter({
     post: async (channelId, text, card) => {
@@ -748,6 +805,13 @@ export async function buildChatopsBoot(deps: ChatopsBootDeps): Promise<ChatopsBo
     },
     postPushedBrief: (namespace, text) =>
       pushedBriefDispatcher.send({ kind: "namespaceNotify", namespace }, text),
+    // The dispatcher posts as slack, so a Teams-only ChatOps posts and ledgers nothing here.
+    postWatcherNotice: (namespace, text) =>
+      cfg.slackEnabled
+        ? watcherNoticeDispatcher.send({ kind: "namespaceNotify", namespace }, text)
+        : Promise.resolve(0),
+    postWatcherNoticePinned: (text) =>
+      watcherNoticeDispatcher.send({ kind: "watcherPinned" }, text),
     requestOwnerApproval: (prompt, details) => consent.requestApproval(prompt, details),
     isSenderMapped: async (platform, userId) =>
       (await mapper.resolve(platform, userId)).kind === "mapped",

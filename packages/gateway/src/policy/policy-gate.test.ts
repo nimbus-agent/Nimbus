@@ -278,6 +278,31 @@ describe("PolicyGate", () => {
     expect(gate.enforced().retentionDays).toBe(7);
   });
 
+  test("governanceIntended: false only when nothing is persisted and no anchor is pinned", () => {
+    expect(new PolicyGate(freshStore(), baseline).governanceIntended()).toBe(false);
+    const anchorOnly = freshStore();
+    anchorOnly.pinAnchorPubkey(encodeBase64(generateEd25519Keypair().pubkey), "manual", 1);
+    expect(new PolicyGate(anchorOnly, baseline).governanceIntended()).toBe(true);
+  });
+
+  test("governanceIntended stays true when the persisted policy was TAMPERED (the gate is ungoverned)", () => {
+    const store = freshStore();
+    const kp = generateEd25519Keypair();
+    const toml = `[policy]\nversion=2\norg="acme"\n[policy.retention]\nmin_days=30\n`;
+    store.pinAnchorPubkey(encodeBase64(kp.pubkey), "manual", 1);
+    store.persist({
+      toml: toml.replace("min_days=30", "min_days=1"),
+      sig: signPolicy(toml, encodeBase64(kp.privkey)),
+      org: "acme",
+      version: 2,
+      source: "peer",
+      fetchedAt: 5,
+    });
+    const gate = new PolicyGate(store, baseline);
+    expect(gate.status().signatureValid).toBe(false);
+    expect(gate.governanceIntended()).toBe(true);
+  });
+
   test("rehydrate applies a persisted+pinned valid policy; enforced reflects it", () => {
     const store = freshStore();
     const kp = generateEd25519Keypair();

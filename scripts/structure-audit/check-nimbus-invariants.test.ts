@@ -22,6 +22,8 @@ import {
   checkCaptureTableConfinement,
   checkChatopsReplySurfaceInvariant,
   checkChatopsUnwrappedPost,
+  checkChatopsWatcherNoticeCaller,
+  checkChatopsWatcherPinned,
   checkChatReadMarkerConfinement,
   checkConfigReaderConfinement,
   checkConfirmComparison,
@@ -7373,5 +7375,82 @@ describe("D44(g) — a workflow `when` guard stays out of the approval check and
       expect(rules([...GOOD, file(OTHER, `${fn}(x);`)]), fn).toEqual(["standing-guard-confined"]);
     }
     expect(rules([...GOOD, file(OTHER, "// evaluateGuard guardRequiresPresence")])).toEqual([]);
+  });
+});
+
+describe("D17(c) — postWatcherNotice is referenced only by chatops-boot and assemble", () => {
+  const call = "await chatopsBoot.postWatcherNotice(ns, text);\n";
+
+  test("rejects a reference in another production module", () => {
+    const v = checkChatopsWatcherNoticeCaller([
+      { relPath: "packages/gateway/src/automation/watcher-chat-notifier.ts", contents: call },
+      { relPath: "packages/gateway/src/engine/agent.ts", contents: call },
+    ]);
+    expect(v.map((x) => x.rule)).toEqual([
+      "D17-chatops-watcher-notice-caller",
+      "D17-chatops-watcher-notice-caller",
+    ]);
+  });
+
+  test("accepts the two allowed files and ignores comments and tests", () => {
+    const v = checkChatopsWatcherNoticeCaller([
+      { relPath: "packages/gateway/src/chatops/chatops-boot.ts", contents: call },
+      { relPath: "packages/gateway/src/platform/assemble.ts", contents: call },
+      {
+        relPath: "packages/gateway/src/automation/watcher-chat-notifier.ts",
+        contents: "// postWatcherNotice is bound by assemble\n",
+      },
+      { relPath: "packages/gateway/src/x.test.ts", contents: call },
+    ]);
+    expect(v).toEqual([]);
+  });
+});
+
+describe("D17(d) - the pinned watcher channel is built and passed only by the chatops boot wiring", () => {
+  const src = "packages/gateway/src/";
+  const uses = [
+    'const t = { kind: "watcherPinned" };\n',
+    "const t = { kind: `watcherPinned` as const };\n",
+    "const t = { kind: 'watcherPinned' };\n",
+    "const c = deps.watcherPinnedChannel;\n",
+    "await chatopsBoot.postWatcherNoticePinned(text);\n",
+  ];
+
+  test("rejects each identifier in another production module", () => {
+    for (const body of uses) {
+      const v = checkChatopsWatcherPinned([
+        { relPath: `${src}automation/watcher-chat-notifier.ts`, contents: body },
+        { relPath: `${src}engine/agent.ts`, contents: body },
+        { relPath: `${src}ipc/automation-rpc.ts`, contents: body },
+      ]);
+      expect(v.map((x) => x.rule)).toEqual([
+        "D17-chatops-watcher-pinned",
+        "D17-chatops-watcher-pinned",
+        "D17-chatops-watcher-pinned",
+      ]);
+    }
+  });
+
+  test("accepts the four allowed files and ignores comments and tests", () => {
+    const files = [
+      "chatops/types.ts",
+      "chatops/reply-dispatcher.ts",
+      "chatops/chatops-boot.ts",
+      "platform/assemble.ts",
+    ];
+    for (const body of uses) {
+      expect(
+        checkChatopsWatcherPinned(files.map((f) => ({ relPath: `${src}${f}`, contents: body }))),
+      ).toEqual([]);
+    }
+    expect(
+      checkChatopsWatcherPinned([
+        {
+          relPath: `${src}engine/agent.ts`,
+          contents: "// watcherPinnedChannel postWatcherNoticePinned\n",
+        },
+        { relPath: `${src}x.test.ts`, contents: uses.join("") },
+      ]),
+    ).toEqual([]);
   });
 });
