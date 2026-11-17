@@ -7556,6 +7556,7 @@ describe("D17(d) - the pinned watcher channel is built and passed only by the ch
       ]),
     ).toEqual([]);
   });
+});
 
 describe("D50 - the signed workflow import stays inside its confinement (I59)", () => {
   const file = (relPath: string, contents: string): FileEntry => ({ relPath, contents });

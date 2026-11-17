@@ -16466,6 +16466,8 @@ describe("I29 — the ChatOps watcher notice is ledgered before the post and fai
       EgressAppendFailedError,
     );
     expect(order).toEqual(["post-with-1-rows"]);
+  });
+});
 
 describe("I59 - a workflow from outside this install enters only through importWorkflowBundle, over the owner's human approval of the verbatim steps", () => {
   async function harness59() {
