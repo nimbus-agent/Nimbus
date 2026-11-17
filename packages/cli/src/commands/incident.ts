@@ -1,7 +1,7 @@
 import type { IPCClient } from "../ipc-client/index.ts";
 import { CliExit } from "../lib/cli-exit.ts";
 import { declareCliClientKind } from "../lib/declare-client-kind.ts";
-import { stripControlChars } from "../lib/strip-control-chars.ts";
+import { stripTerminalText } from "../lib/strip-terminal-text.ts";
 import { withGatewayIpc } from "../lib/with-gateway-ipc.ts";
 import { getCliPlatformPaths } from "../paths.ts";
 import {
@@ -20,7 +20,7 @@ import {
 } from "./incident-format.ts";
 
 /**
- * `nimbus incident list | show <id> | timeline <id>` (Phase 10 IC3, IC4): the incident records the gateway assembled from the local
+ * `nimbus incident list | show <id> | timeline <id> | investigate <id>` (Phase 10 IC3, IC4, IC9a): the incident records the gateway assembled from the local
  * index, with no model and nothing leaving the machine. The three `incident.*` methods answer only a connection
  * that DECLARED `cli` or `ui`, so every subcommand declares `cli` before its first call. The Markdown may carry
  * text from the index (a title, a chat message), so every line is stripped of control characters before it
@@ -36,7 +36,7 @@ export interface IncidentSink {
 export function cleanMarkdown(markdown: string): string {
   return markdown
     .split(/\r?\n/)
-    .map((line) => stripControlChars(line))
+    .map((line) => stripTerminalText(line))
     .join("\n");
 }
 
@@ -58,6 +58,8 @@ type GetReply = {
   reason?: "no_item" | "not_assembled";
   triggerItemId?: string;
 };
+
+type InvestigateReply = { investigation: unknown; markdown: string };
 
 type AssembleReply = { outcome: string; record: SummaryLike };
 
@@ -109,6 +111,18 @@ async function showTimeline(
   });
   if (a.json) sink.out(`${JSON.stringify(t)}\n`);
   else sink.out(`${formatTimeline(t)}\n`);
+  return 0;
+}
+
+async function investigateRecord(
+  c: IncidentIpc,
+  a: Extract<IncidentArgs, { verb: "investigate" }>,
+  sink: IncidentSink,
+): Promise<number> {
+  await declareCliClientKind(c);
+  const r = await c.call<InvestigateReply>("incident.investigate", { id: a.id });
+  if (a.json) sink.out(`${JSON.stringify(r)}\n`);
+  else sink.out(`${cleanMarkdown(r.markdown).trimEnd()}\n`);
   return 0;
 }
 
@@ -168,11 +182,12 @@ export async function runIncidentWith(
   try {
     if (a.verb === "list") return await listRecords(c, a, sink);
     if (a.verb === "timeline") return await showTimeline(c, a, sink);
+    if (a.verb === "investigate") return await investigateRecord(c, a, sink);
     return await showRecord(c, a, sink, nowMs);
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     if (a.json) sink.out(`${JSON.stringify({ error: msg })}\n`);
-    else sink.err(`${stripControlChars(msg)}\n`);
+    else sink.err(`${stripTerminalText(msg)}\n`);
     return 1;
   }
 }

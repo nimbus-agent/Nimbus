@@ -15,6 +15,7 @@ import {
   HANDOFF_LIST_CAP,
   HANDOFF_MAX_SHIFT_WINDOW_MS,
   type HandoffServiceBinding,
+  handoffServiceIds,
   queryOncallHandoff,
 } from "./oncall-handoff-query.ts";
 import { replaceWorkSnapshotRows } from "./work-snapshot-store.ts";
@@ -573,5 +574,22 @@ describe("queryOncallHandoff: edge cases", () => {
     expect(other.status).toBe("ok");
     expect(other.shift.mine).toHaveLength(1);
     expect(other.window.basis).toBe("own_shift");
+  });
+});
+
+describe("handoffServiceIds (IC9a)", () => {
+  const cfg = (serviceId: string, pagerdutyServices: string[]): HandoffServiceBinding => ({
+    serviceId,
+    pagerdutyServices,
+    jsmAlertTags: [],
+    incidentWindowMinutes: 60,
+  });
+  const configs = [cfg("checkout", ["P1"]), cfg("search", ["P2"])];
+
+  test("no service is no filter; an id, a PagerDuty id and an unknown name resolve like the item lanes", () => {
+    expect(handoffServiceIds(undefined, configs)).toBeNull();
+    expect([...(handoffServiceIds(" Checkout ", configs) as Set<string>)]).toEqual(["checkout"]);
+    expect([...(handoffServiceIds("p2", configs) as Set<string>)]).toEqual(["search"]);
+    expect(handoffServiceIds("billing", configs)).toBe("no_match");
   });
 });

@@ -1,4 +1,4 @@
-import { stripControlChars } from "../lib/strip-control-chars.ts";
+import { stripTerminalText } from "../lib/strip-terminal-text.ts";
 
 /**
  * Pure helpers for `nimbus incident` (Phase 10 IC3). The CLI cannot import the gateway's types (IPC-only rule),
@@ -10,6 +10,7 @@ export const INCIDENT_USAGE =
   "Usage: nimbus incident list [--open] [--service <id>] [--source <service>] [--limit <n>] [--cascade] [--json]\n" +
   "       nimbus incident show <id> [--json]\n" +
   "       nimbus incident timeline <id> [--version <n>] [--json]\n" +
+  "       nimbus incident investigate <id> [--json]\n" +
   "  <id> is a record id (inc_...), a trigger item id (pagerduty:...), or the provider's own id.";
 
 export const SOURCES = ["pagerduty", "jira", "sentry", "montecarlo", "bigeye"] as const;
@@ -25,6 +26,7 @@ export type IncidentArgs =
       readonly cascade: boolean;
     }
   | { readonly verb: "show"; readonly json: boolean; readonly id: string }
+  | { readonly verb: "investigate"; readonly json: boolean; readonly id: string }
   | {
       readonly verb: "timeline";
       readonly json: boolean;
@@ -98,14 +100,14 @@ export function parseIncidentArgs(argv: readonly string[]): IncidentArgs | undef
       ...(flags.limit === undefined ? {} : { limit: flags.limit }),
     };
   }
-  if (verb === "show") {
+  if (verb === "show" || verb === "investigate") {
     const json = rest.filter((a) => a === "--json");
     const ids = rest.filter((a) => a !== "--json");
     const [id] = ids;
     if (json.length > 1 || ids.length !== 1 || id === undefined || id.startsWith("--")) {
       return undefined;
     }
-    return { verb: "show", json: json.length === 1, id };
+    return { verb, json: json.length === 1, id };
   }
   if (verb === "timeline") return parseTimelineArgs(rest);
   return undefined;
@@ -169,7 +171,7 @@ export function ago(ms: number, nowMs: number): string {
   return `${String(Math.floor(s / 86_400))}d`;
 }
 
-const clean = (s: string): string => stripControlChars(s).replace(/\s+/g, " ").trim();
+const clean = (s: string): string => stripTerminalText(s).replace(/\s+/g, " ").trim();
 
 export function listLine(r: SummaryLike): string {
   const opened = r.openedAtMs === null ? "no open time    " : utc(r.openedAtMs);

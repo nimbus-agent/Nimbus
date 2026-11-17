@@ -4954,6 +4954,8 @@ export async function assemblePlatformServices(
     engine: incidentEngine,
     // A malformed block THROWS (not an empty map): the cascade then reads as unavailable.
     dependsOn: () => loadDependsOnMap(paths.configDir),
+    // IC9a: `incident.investigate` reads a service's declared `sentry_projects`; a malformed block reads as unreadable.
+    serviceConfigs: () => loadNimbusServiceConfigsFromConfigDir(paths.configDir),
   };
   // pre-S3 item E: notifications.status / notifications.test (CLI-only; LAN-forbidden, not Tauri).
   ipcOpts.notificationsRpcCtx = { runtime: notificationsRuntime };

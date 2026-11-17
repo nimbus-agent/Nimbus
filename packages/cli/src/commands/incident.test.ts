@@ -503,3 +503,71 @@ describe("incident timeline and the cascade (IC4)", () => {
     expect(un.out.join("")).toContain("could not be ranked");
   });
 });
+
+describe("incident investigate (IC9a)", () => {
+  const BIDI = String.fromCharCode(0x202e);
+  const ESC = String.fromCharCode(0x1b);
+
+  test("parses an id and --json, and refuses anything else", () => {
+    expect(parseIncidentArgs(["investigate", "inc_x"])).toEqual({
+      verb: "investigate",
+      json: false,
+      id: "inc_x",
+    });
+    expect(parseIncidentArgs(["investigate", "--json", "inc_x"])).toEqual({
+      verb: "investigate",
+      json: true,
+      id: "inc_x",
+    });
+    for (const bad of [
+      ["investigate"],
+      ["investigate", "a", "b"],
+      ["investigate", "a", "--json", "--json"],
+      ["investigate", "--bogus"],
+      ["investigate", "a", "--version", "2"],
+    ]) {
+      expect(parseIncidentArgs(bad)).toBeUndefined();
+    }
+    expect(INCIDENT_USAGE).toContain("incident investigate <id>");
+  });
+
+  test("declares cli first, calls incident.investigate, and prints the markdown stripped of controls and direction overrides", async () => {
+    const h = harness({
+      "incident.investigate": {
+        investigation: {},
+        markdown: `# Investigation: bad${ESC}[31m title${BIDI}\n\n## Gaps\n\n- a gap\n`,
+      },
+    });
+    const code = await runIncidentWith(
+      h.ipc,
+      { verb: "investigate", json: false, id: "inc_x" },
+      h.sink,
+    );
+    expect(code).toBe(0);
+    expect(h.calls.map((c) => c.method)).toEqual(["session.declareKind", "incident.investigate"]);
+    expect(h.calls[1]?.params).toEqual({ id: "inc_x" });
+    const text = h.out.join("");
+    expect(text).toContain("# Investigation: bad[31m title");
+    expect(text).toContain("## Gaps");
+    expect(text).not.toContain(ESC);
+    expect(text).not.toContain(BIDI);
+    expect(text.endsWith("\n")).toBe(true);
+  });
+
+  test("--json prints the reply verbatim; a gateway error exits 1", async () => {
+    const j = harness({
+      "incident.investigate": { investigation: { recordId: "r" }, markdown: "m" },
+    });
+    expect(await runIncidentWith(j.ipc, { verb: "investigate", json: true, id: "r" }, j.sink)).toBe(
+      0,
+    );
+    expect(JSON.parse(j.out.join(""))).toMatchObject({ investigation: { recordId: "r" } });
+    const e = harness({
+      "incident.investigate": new Error("ERR_INCIDENT_NOT_FOUND: nothing indexed has that id"),
+    });
+    expect(
+      await runIncidentWith(e.ipc, { verb: "investigate", json: false, id: "x" }, e.sink),
+    ).toBe(1);
+    expect(e.err.join("")).toContain("ERR_INCIDENT_NOT_FOUND");
+  });
+});

@@ -1,8 +1,10 @@
 import type { Database } from "bun:sqlite";
 
 import { loadServiceConfigsOrEmpty } from "../config/service-configs.ts";
+import { type HandoffRecords, readHandoffRecords } from "../incident/handoff-records.ts";
 import {
   HANDOFF_MAX_WINDOW_MS,
+  handoffServiceIds,
   type OncallHandoffResult,
   queryOncallHandoff,
 } from "../index/oncall-handoff-query.ts";
@@ -19,7 +21,15 @@ export interface OncallHandoffRpcCtx {
   readonly configDir?: string;
   readonly now?: () => number;
   readonly warn?: (message: string) => void;
+  /**
+   * Attach the incident-record sections (IC9a). Set by the dispatcher for a connection that DECLARED `cli` or
+   * `ui` only: a record holds titles of items from five services. Absent or false leaves the key out.
+   */
+  readonly includeRecords?: boolean;
 }
+
+/** The handoff result with the optional IC9a records section. */
+export type OncallHandoffReply = OncallHandoffResult & { records?: HandoffRecords };
 
 export const ONCALL_HANDOFF_MAX_SERVICE_CHARS = 128;
 const PARAMS = new Set(["since", "until", "service"]);
@@ -74,7 +84,7 @@ function parseTime(name: string, raw: string, nowMs: number): number {
   }
 }
 
-function handleHandoff(params: unknown, ctx: OncallHandoffRpcCtx): OncallHandoffResult {
+function handleHandoff(params: unknown, ctx: OncallHandoffRpcCtx): OncallHandoffReply {
   const p = parseParams(params);
   const nowMs = (ctx.now ?? Date.now)();
   const sinceMs = p.since === undefined ? undefined : parseTime("since", p.since, nowMs);
@@ -99,13 +109,25 @@ function handleHandoff(params: unknown, ctx: OncallHandoffRpcCtx): OncallHandoff
     jsmAlertTags: c.jsmAlertTags,
     incidentWindowMinutes: c.incidentWindowMinutes,
   }));
-  return queryOncallHandoff(ctx.db, {
+  const result = queryOncallHandoff(ctx.db, {
     nowMs,
     serviceConfigs,
     ...(sinceMs === undefined ? {} : { sinceMs }),
     ...(untilMs === undefined ? {} : { untilMs }),
     ...(p.service === undefined ? {} : { service: p.service }),
   });
+  if (ctx.includeRecords !== true || result.status !== "ok") return result;
+  const serviceIds = handoffServiceIds(p.service, serviceConfigs);
+  if (serviceIds === "no_match") return result;
+  return {
+    ...result,
+    records: readHandoffRecords(ctx.db, {
+      fromMs: result.window.fromMs,
+      toMs: result.window.toMs,
+      nowMs,
+      serviceIds,
+    }),
+  };
 }
 
 export async function dispatchOncallHandoffRpc(

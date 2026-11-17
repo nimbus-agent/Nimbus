@@ -10,10 +10,18 @@ import {
   serviceConfig,
   T0,
 } from "../incident/__fixtures__/index-writers.ts";
-import { writePagerdutyIncident } from "../incident/__fixtures__/trigger-writers.ts";
+import {
+  writePagerdutyIncident,
+  writeSentryIssue,
+} from "../incident/__fixtures__/trigger-writers.ts";
 import { createIncidentEngine, type IncidentEngine } from "../incident/incident-engine.ts";
 import * as store from "../incident/incident-store.ts";
-import { dispatchIncidentRpc, IncidentRpcError, requireOwnerKind } from "./incident-rpc.ts";
+import {
+  dispatchIncidentRpc,
+  type IncidentRpcCtx,
+  IncidentRpcError,
+  requireOwnerKind,
+} from "./incident-rpc.ts";
 import type { ClientKind } from "./server/client-kind.ts";
 
 const dbs: Database[] = [];
@@ -244,6 +252,7 @@ describe("owner kinds only (the spec, § 5.3)", () => {
     ["incident.get", { id: "pagerduty:A" }],
     ["incident.assemble", { id: "pagerduty:A" }],
     ["incident.timeline", { id: "pagerduty:A" }],
+    ["incident.investigate", { id: "pagerduty:A" }],
   ];
 
   test("list, get AND assemble refuse every other kind BEFORE any query or engine call, and serve cli and ui", async () => {
@@ -399,5 +408,104 @@ describe("Phase 10 IC4: incident.timeline and the cascade", () => {
     expect(listed.groups).toHaveLength(1);
     expect((await call(s, "incident.list", {})) as object).not.toHaveProperty("groups");
     expect((await rpcError(call(s, "incident.list", { cascade: "yes" }))).rpcCode).toBe(-32602);
+  });
+});
+
+describe("Phase 10 IC9a: incident.investigate", () => {
+  type InvOut = {
+    investigation: {
+      recordId: string;
+      sentry: { status: string; rows: { itemId: string }[] };
+    };
+    markdown: string;
+  };
+
+  async function inv(
+    s: ReturnType<typeof setup>,
+    params: unknown,
+    over: { serviceConfigs?: IncidentRpcCtx["serviceConfigs"]; kind?: ClientKind } = {},
+  ): Promise<InvOut> {
+    const out = await dispatchIncidentRpc(
+      "incident.investigate",
+      params,
+      {
+        db: s.db,
+        engine: s.engine,
+        dependsOn: () => new Map(),
+        now: () => NOW,
+        ...(over.serviceConfigs === undefined ? {} : { serviceConfigs: over.serviceConfigs }),
+      },
+      { kind: over.kind ?? "cli" },
+    );
+    if (out.kind === "miss") throw new Error("miss");
+    return out.value as InvOut;
+  }
+
+  test("investigates a stored record by record id, with the markdown and Sentry rows", async () => {
+    const s = setup();
+    const item = writePagerdutyIncident(
+      s.db,
+      { id: "I1", openedAtMs: T0, priority: "P1" },
+      resolver,
+    );
+    writeSentryIssue(s.db, { id: "S1", firstSeenMs: T0, lastSeenMs: T0 + 1 });
+    await s.engine.assembleNow(item);
+    const id = store.getByTriggerItem(s.db, item)?.id ?? "";
+    const out = await inv(s, { id }, { serviceConfigs: () => configMap(cfg) });
+    expect(out.investigation.recordId).toBe(id);
+    expect(out.investigation.sentry.rows.map((r) => r.itemId)).toEqual(["sentry:S1"]);
+    expect(out.markdown).toContain("## Sentry error issues");
+    expect(out.markdown.trimEnd().endsWith("sync_state")).toBe(false);
+  });
+
+  test("a trigger item with no record is assembled first", async () => {
+    const s = setup();
+    const item = writePagerdutyIncident(
+      s.db,
+      { id: "I2", openedAtMs: T0, priority: "P1" },
+      resolver,
+    );
+    expect(store.getByTriggerItem(s.db, item)).toBeNull();
+    const out = await inv(s, { id: item }, { serviceConfigs: () => configMap(cfg) });
+    expect(s.calls).toEqual([item]);
+    expect(out.investigation.recordId).toBe(store.getByTriggerItem(s.db, item)?.id ?? "x");
+  });
+
+  test("unreadable or absent service configs degrade to a gap, not an error", async () => {
+    const s = setup();
+    const item = writePagerdutyIncident(
+      s.db,
+      { id: "I3", openedAtMs: T0, priority: "P1" },
+      resolver,
+    );
+    await s.engine.assembleNow(item);
+    const none = await inv(s, { id: item });
+    expect(none.investigation.sentry.status).toBe("no_config");
+    const bad = await inv(
+      s,
+      { id: item },
+      {
+        serviceConfigs: () => {
+          throw new Error("malformed block");
+        },
+      },
+    );
+    expect(bad.investigation.sentry.status).toBe("no_config");
+  });
+
+  test("params and ids are validated with typed errors", async () => {
+    const s = setup();
+    for (const bad of [undefined, {}, { id: "" }, { id: 5 }, { id: "a", extra: 1 }, "x"]) {
+      expect((await rpcError(inv(s, bad))).rpcCode).toBe(-32602);
+    }
+    expect((await rpcError(inv(s, { id: "nothing:here" }))).message).toContain(
+      "ERR_INCIDENT_NOT_FOUND",
+    );
+    s.db.run(
+      "INSERT INTO item (id, service, type, external_id, title, modified_at, synced_at) VALUES ('github:1','github','issue','1','t',1,1)",
+    );
+    expect((await rpcError(inv(s, { id: "github:1" }))).message).toContain(
+      "ERR_INCIDENT_NOT_A_TRIGGER",
+    );
   });
 });
