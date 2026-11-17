@@ -1659,6 +1659,7 @@ export async function tryDispatchIncidentRpc(
   try {
     const out = await dispatchIncidentRpc(method, params, rpc, {
       kind: ctx.getClientKind(clientId),
+      clientId,
     });
     if (out.kind === "hit") return out.value;
   } catch (e) {

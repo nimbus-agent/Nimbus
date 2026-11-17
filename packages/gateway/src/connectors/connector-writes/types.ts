@@ -88,6 +88,50 @@ export interface ConnectorWriteRow {
    * plans are experimental, so there is nothing an apply could be bound to.
    */
   readonly refuse?: string;
+  /**
+   * Phase 10 IC5a (D-IC-4): whether the write can be undone through Nimbus. Declared in ONE table
+   * (`reversibility.ts`, applied by `index.ts`), never inferred; a row with none is `unknown`. A
+   * `reversible` declaration is accepted only when the row has a before reader whose `captures`
+   * supply every value the inverse needs (`checkReversibilityTable`).
+   */
+  readonly reversibility?: ReversibilityDecl;
+}
+
+/** The label shown for a write's reversibility: the declared class, or `unknown` when none is declared. */
+export type ReversibilityClass = "reversible" | "irreversible" | "unknown";
+
+/**
+ * A declared reversibility (D-IC-4). `reversible`: running `inverse` (a tool id of the row table) with
+ * `invert(input, captured)` undoes the write; `fromBefore` names the captured keys `invert` reads and
+ * `invert` returns `undefined` when this call changed nothing or cannot be undone from what was captured.
+ * `irreversible`: the write cannot be undone through Nimbus; `reason` is shown to the owner.
+ */
+export type ReversibilityDecl =
+  | {
+      readonly class: "reversible";
+      readonly inverse: string;
+      readonly fromBefore: readonly string[];
+      invert(
+        input: Readonly<Record<string, unknown>>,
+        captured: Readonly<Record<string, string>>,
+      ): Record<string, unknown> | undefined;
+    }
+  | { readonly class: "irreversible"; readonly reason: string };
+
+/**
+ * The values an inverse needs from the target's state BEFORE the write (D3): a strict extraction from
+ * the before reader's replies, separate from the display `select`. `pick` returns exactly `keys`, each a
+ * non-empty string of at most 512 characters (the runner validates; anything else captures nothing).
+ * The captured values are kept by the remediation executor for `nimbus incident undo` and are never shown
+ * to the model, written to the prompt or recorded in the audit row.
+ */
+export interface BeforeCaptures {
+  readonly keys: readonly string[];
+  pick(
+    reply: unknown,
+    picked: Readonly<Record<string, unknown>>,
+    alsoReply: unknown,
+  ): Readonly<Record<string, string>>;
 }
 
 /**
@@ -310,6 +354,8 @@ export interface BeforeStateReader extends BeforeStateRead {
   readonly also?: BeforeStateRead;
   /** Refuses the write before the prompt unless the reads prove it allowed (B2a). */
   readonly guard?: BeforeStateGuard;
+  /** IC5a: the machine values an inverse needs (see {@link BeforeCaptures}); absent on almost every row. */
+  readonly captures?: BeforeCaptures;
   /** The labelled current values from the replies. */
   select(
     reply: unknown,

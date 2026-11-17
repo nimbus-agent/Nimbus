@@ -121,7 +121,11 @@ import {
 import { loadNimbusWorkdayFromConfigDir } from "../config/nimbus-toml-workday.ts";
 import { resolvePersona } from "../config/persona.ts";
 import { ProfileManager } from "../config/profiles.ts";
-import { loadDependsOnMap, loadServiceConfigsOrEmpty } from "../config/service-configs.ts";
+import {
+  loadDependsOnMap,
+  loadServiceBindings,
+  loadServiceConfigsOrEmpty,
+} from "../config/service-configs.ts";
 import { loadNimbusSessionFromConfigDir } from "../config/session-toml.ts";
 import {
   loadNimbusWatcherChatopsFromConfigDir,
@@ -269,6 +273,7 @@ import { buildTeamsBotJwtValidator } from "../identity/teams-bot-jwt.ts";
 import { isOperatorValid } from "../identity/verifier.ts";
 import { createIncidentEngine, type IncidentEngine } from "../incident/incident-engine.ts";
 import { startIncidentRetention } from "../incident/incident-retention.ts";
+import { createRemediation, type MakeExecutor } from "../incident/remediation.ts";
 import { readUnreadChatThreads } from "../index/chat-unread-query.ts";
 import { startItemHistoryRetention } from "../index/item-history-retention.ts";
 import {
@@ -4949,11 +4954,32 @@ export async function assemblePlatformServices(
   ipcOpts.briefingRpcCtx = { runtime: briefing };
   // Incident records (Phase 10 IC3): incident.list / get / assemble. cli/ui connections only (checked per
   // call from the connection's declared kind); LAN-forbidden (I5), not Tauri-exposed (I7).
+  // IC5a: the remediation service. The executor factory is bound by `gateway-main.ts` (it owns the connector
+  // dispatcher and the egress sink); until then, and on a demo gateway (I41), remediate and undo refuse.
+  let incidentExecutorFactory: MakeExecutor | undefined;
+  const remediation = createRemediation({
+    db,
+    makeExecutor: (o) => {
+      if (incidentExecutorFactory === undefined) throw new Error("no remediation executor");
+      return incidentExecutorFactory(o);
+    },
+    ready: () => incidentExecutorFactory !== undefined,
+    bindingsFor: (service) => loadServiceBindings(paths.configDir, service),
+    // A malformed block degrades to an empty blast radius here (the listing must still work).
+    dependsOn: () => {
+      try {
+        return loadDependsOnMap(paths.configDir);
+      } catch {
+        return new Map();
+      }
+    },
+  });
   ipcOpts.incidentRpcCtx = {
     db,
     engine: incidentEngine,
     // A malformed block THROWS (not an empty map): the cascade then reads as unavailable.
     dependsOn: () => loadDependsOnMap(paths.configDir),
+    remediation,
     // `incident.debt` (IC7b): the same git-aware roots the ownership pass binds (`[[filesystem.roots]]` plus
     // the CLI-registered ones), re-read per call; git runs only from `debt/`.
     debt: {
@@ -5404,6 +5430,9 @@ export async function assemblePlatformServices(
     agentLatencyRecorder,
     oncallPush,
     incidentEngine,
+    bindIncidentExecutor: (make: MakeExecutor): void => {
+      incidentExecutorFactory = make;
+    },
     briefing,
     policyHitl,
     // A GETTER, not `policyGate.enforced()` evaluated here: a signed policy applied after boot

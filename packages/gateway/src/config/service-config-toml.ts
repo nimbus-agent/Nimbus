@@ -31,6 +31,7 @@ const SERVICE_CONFIG_KNOWN_KEYS: ReadonlySet<string> = new Set([
   "data_models",
   "depends_on",
   "chat_aliases",
+  "argocd_apps",
 ]);
 
 function materializeDeployWorkflowPattern(
@@ -107,6 +108,8 @@ function hasControlCharacter(text: string): boolean {
 }
 const SENTRY_SLUG_PATTERN = /^[a-z0-9][a-z0-9_-]{0,99}$/;
 const WHITESPACE_PATTERN = /\s/;
+/** An Argo CD application name is a Kubernetes object name: lower-case alphanumerics, `-` and `.`. */
+const ARGOCD_APP_PATTERN = /^[a-z0-9][a-z0-9.-]{0,252}$/;
 
 /**
  * One binding list (`jsm_alert_tags`, `sentry_projects`, `data_models`, `depends_on`): an array of
@@ -144,7 +147,7 @@ function materializeBindings(
   serviceId: string,
 ): Pick<
   ServiceConfig,
-  "jsmAlertTags" | "sentryProjects" | "dataModels" | "dependsOn" | "chatAliases"
+  "jsmAlertTags" | "sentryProjects" | "dataModels" | "dependsOn" | "chatAliases" | "argocdApps"
 > {
   const label = `[${blockLabel}.${serviceId}]`;
   return {
@@ -181,6 +184,15 @@ function materializeBindings(
       if (dep === serviceId)
         throw new Error(`${label}.depends_on must not name the service itself`);
       return dep;
+    }),
+    argocdApps: materializeBindingList(kv, "argocd_apps", label, (app) => {
+      if (!ARGOCD_APP_PATTERN.test(app)) {
+        throw new Error(
+          `${label}.argocd_apps entry '${app}' is not an Argo CD application name: ` +
+            `must match ${String(ARGOCD_APP_PATTERN)}`,
+        );
+      }
+      return app;
     }),
     chatAliases: materializeBindingList(kv, "chat_aliases", label, (alias) => {
       if (alias.length < MIN_CHAT_ALIAS_CHARS || alias.length > MAX_CHAT_ALIAS_CHARS) {

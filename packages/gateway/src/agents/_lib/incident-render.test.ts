@@ -215,6 +215,37 @@ describe("incident brief render", () => {
     expect(md).not.toContain("_No earlier incident on this service._");
   });
 
+  test("a prior incident Nimbus acted on says how many actions ran on it (IC5a); none says nothing", () => {
+    const base = rich();
+    const one = {
+      id: "pagerduty:OLD",
+      service: "pagerduty",
+      type: "incident",
+      title: "Earlier outage",
+      url: null,
+      openedAtMs: T - 86_400_000,
+      status: "closed" as const,
+      closedAtMs: T - 80_000_000,
+      closedBasis: "provider" as const,
+      actions: 0,
+      rule: "same_service_prior" as const,
+    };
+    const withActions = (n: number): string =>
+      renderIncident(
+        brief({
+          ...base,
+          prior: {
+            ...base.prior,
+            total: 1,
+            incidents: [{ ...one, actions: n }],
+          },
+        }),
+      );
+    expect(withActions(1)).toContain(", 1 Nimbus action run on it");
+    expect(withActions(3)).toContain(", 3 Nimbus actions run on it");
+    expect(withActions(0)).not.toContain("Nimbus action");
+  });
+
   test("omitReserved withholds Gaps and Data freshness", () => {
     const b = brief(rich(), [{ category: "missing_connector", detail: "GAP-ONE" }]);
     const body = renderIncident(b, { omitReserved: true });

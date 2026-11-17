@@ -1,0 +1,711 @@
+// Phase 10 IC5a: the remediation service over the REAL ToolExecutor (`buildRemediationExecutor`), real SQLite
+// and a fake dispatcher. The owner approves through the real gate; the audit rows carry the incident link;
+// `audit replay` reads them back. Advisory mode refuses before any claim, read or prompt.
+import { Database } from "bun:sqlite";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+
+import { chainVerifiers, replayIncident } from "../audit/incident-replay.ts";
+import type { EgressEntry } from "../egress/egress-record.ts";
+import { buildRemediationExecutor } from "../engine/run-ask.ts";
+import type { ConnectorDispatcher, PlannedAction } from "../engine/types.ts";
+import { LocalIndex } from "../index/local-index.ts";
+import type { ConsentCoordinator } from "../ipc/consent.ts";
+import { buildRecord } from "./__fixtures__/record-builder.ts";
+import type { DeploymentView } from "./incident-record-types.ts";
+import { upsertIncidentRecord } from "./incident-store.ts";
+import { getProposal, getProposalByAction, setAdvisory } from "./proposal-store.ts";
+import { createRemediation, type MakeExecutor, RemediationError } from "./remediation.ts";
+
+function must<T>(x: T | undefined): T {
+  if (x === undefined) throw new Error("expected a value");
+  return x;
+}
+
+const SHA = "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678";
+const NOW = 5_000_000;
+const OPENED = NOW - 60_000;
+
+let db: Database;
+let localIndex: LocalIndex;
+beforeEach(() => {
+  db = new Database(":memory:");
+  LocalIndex.ensureSchema(db);
+  localIndex = new LocalIndex(db);
+});
+afterEach(() => db.close());
+
+const DEPLOYMENT: DeploymentView = {
+  id: "deployment:d1",
+  title: "Deploy",
+  url: null,
+  provider: "github_actions",
+  environment: "prod",
+  sha: SHA,
+  ref: "main",
+  startedAtMs: OPENED - 1000,
+  finishedAtMs: null,
+  conclusion: "success",
+  minutesBeforeOpen: 1,
+  rule: "last_deployment_before_open",
+};
+
+const ARGO_REPLY = {
+  metadata: { name: "pay-app" },
+  spec: { destination: { server: "https://k", namespace: "pay" } },
+  status: {
+    sync: { status: "Synced", revision: SHA },
+    health: { status: "Healthy" },
+    history: [
+      { id: 7, revision: SHA, deployedAt: "2026-11-10T10:00:00Z" },
+      { id: 6, revision: "b".repeat(40), deployedAt: "2026-11-09T10:00:00Z" },
+      { id: 5, revision: "c".repeat(40) },
+    ],
+  },
+};
+
+type Harness = {
+  readonly svc: ReturnType<typeof createRemediation>;
+  readonly prompts: string[];
+  readonly confirms: string[];
+  readonly dispatched: PlannedAction[];
+  readonly egress: EgressEntry[];
+  readonly recordId: string;
+  setAnswer(a: { approved: boolean; source?: string }): void;
+  makeCalls(): number;
+};
+
+function harness(opts: { deployment?: boolean } = {}): Harness {
+  const prompts: string[] = [];
+  const confirms: string[] = [];
+  const dispatched: PlannedAction[] = [];
+  const egress: EgressEntry[] = [];
+  let answer: { approved: boolean; source: string } = { approved: true, source: "human" };
+  let makes = 0;
+  const coordinator: ConsentCoordinator = {
+    requestConsent: async (_c, p) => {
+      prompts.push(p.prompt);
+      return { approved: answer.approved, answerSource: answer.source as "human" };
+    },
+    requestConfirmedConsent: async (_c, p) => {
+      prompts.push(p.prompt);
+      confirms.push(p.confirmText);
+      return {
+        approved: answer.approved,
+        typed: p.confirmText,
+        answerSource: answer.source as "human",
+      };
+    },
+    rejectAllPending(): void {},
+    pendingCount: () => 0,
+  };
+  const dispatcher: ConnectorDispatcher = {
+    async dispatch(action) {
+      dispatched.push(action);
+      if (action.type === "argocd.before.read") return ARGO_REPLY;
+      return { status: "requested" };
+    },
+  };
+  const makeExecutor: MakeExecutor = ({ clientId, onCaptured, onNonHuman }) => {
+    makes += 1;
+    const wrapped: ConsentCoordinator = {
+      ...coordinator,
+      requestConsent: async (c, p) => {
+        const a = await coordinator.requestConsent(c, p);
+        if (a.approved && a.answerSource !== "human") {
+          onNonHuman();
+          return { approved: false, answerSource: a.answerSource };
+        }
+        return a;
+      },
+      requestConfirmedConsent: async (c, p) => {
+        const a = await coordinator.requestConfirmedConsent(c, p);
+        if (a.approved && a.answerSource !== "human") {
+          onNonHuman();
+          return { approved: false, typed: "", answerSource: a.answerSource };
+        }
+        return a;
+      },
+    };
+    return buildRemediationExecutor({
+      clientId,
+      consentCoordinator: wrapped,
+      localIndex,
+      dispatcher,
+      egressSink: { append: (e) => egress.push(e) },
+      getTribalKbConfig: () => undefined,
+      onCaptured,
+    });
+  };
+  const base = buildRecord({ boundService: "payments", openedAtMs: OPENED });
+  const record =
+    opts.deployment === false
+      ? base
+      : { ...base, change: { ...base.change, deployment: DEPLOYMENT } };
+  const up = upsertIncidentRecord(db, {
+    record,
+    markdown: "m",
+    recordSha256: "h",
+    citedServices: [],
+    nowMs: 1,
+  });
+  db.run(
+    `INSERT INTO item (id, service, type, external_id, title, modified_at, metadata, synced_at)
+     VALUES ('argocd:pay-app', 'argocd', 'application', 'pay-app', 'pay-app', 1, ?, 1)`,
+    [
+      JSON.stringify({
+        history: ARGO_REPLY.status.history.map((h) => ({ id: h.id, revision: h.revision })),
+      }),
+    ],
+  );
+  const svc = createRemediation({
+    db,
+    makeExecutor,
+    bindingsFor: () => ({ argocdApps: ["pay-app"], deployEnvironments: ["prod"] }),
+    dependsOn: () => new Map([["checkout", ["payments"]]]),
+    now: () => NOW,
+    newActionId: (() => {
+      let n = 0;
+      return () => `act_${String(++n).padStart(16, "0")}`;
+    })(),
+  });
+  return {
+    svc,
+    prompts,
+    confirms,
+    dispatched,
+    egress,
+    recordId: up.recordId,
+    setAnswer: (a) => {
+      answer = { approved: a.approved, source: a.source ?? "human" };
+    },
+    makeCalls: () => makes,
+  };
+}
+
+const pick = (h: Harness, kind: string): string => {
+  const p = h.svc.proposals(h.recordId).proposals.find((x) => x.kind === kind);
+  if (p === undefined) throw new Error(`no ${kind} proposal`);
+  return p.id;
+};
+
+describe("the bad-deploy rollback, end to end through the real gate", () => {
+  test("lists the rollback with its label, confidence and the fixed dry-run line", () => {
+    const h = harness();
+    const view = h.svc.proposals(h.recordId);
+    const rb = view.proposals.find((p) => p.kind === "rollback_deploy");
+    expect(rb).toMatchObject({
+      toolId: "argocd_app_rollback",
+      input: { name: "pay-app", id: 6 },
+      reversibility: "reversible",
+      status: "proposed",
+      confidence: 75,
+      undoable: false,
+    });
+    expect(rb?.evidence?.dryRun).toBe(
+      "no dry run available; the preview shows the target's current state",
+    );
+    expect(view.advisory).toBe(false);
+    expect(view.proposals.map((p) => p.kind)).toEqual(["rollback_deploy", "acknowledge", "close"]);
+  });
+
+  test("approving runs the before-state read, shows the proposer and label, types the confirm text and dispatches once", async () => {
+    const h = harness();
+    const id = pick(h, "rollback_deploy");
+    const out = await h.svc.remediate({ ref: h.recordId, proposalId: id, clientId: "cli-1" });
+    expect(out).toMatchObject({
+      proposalId: id,
+      status: "executed",
+      nonHuman: false,
+      undoable: true,
+    });
+    expect(h.confirms).toEqual(["argocd/rollback pay-app@6"]);
+    const prompt = h.prompts[0] ?? "";
+    expect(prompt).toContain("Proposed by: the incident engine");
+    expect(prompt).toContain("Reversibility: reversible - nimbus incident undo can reverse it");
+    expect(h.dispatched.map((a) => a.type)).toEqual(["argocd.before.read", "argocd.app.rollback"]);
+    expect(h.dispatched[1]?.payload).toMatchObject({ input: { name: "pay-app", id: 6 } });
+    const stored = getProposal(db, id);
+    expect(stored?.status).toBe("executed");
+    expect(JSON.parse(stored?.captured_json ?? "")).toEqual({ currentHistoryId: "7" });
+    expect(stored?.action_id).toBe(out.actionId);
+    // The write carries no origin and no caller-chosen tool: built from the stored row.
+    const writeRow = db
+      .query("SELECT action_json FROM audit_log WHERE action_type = 'argocd.app.rollback'")
+      .get() as { action_json: string };
+    expect(writeRow.action_json.startsWith(`{"incident":{"id":"${h.recordId}","version":1}`)).toBe(
+      true,
+    );
+    expect(writeRow.action_json).toContain(
+      `"engineProposal":{"proposalId":"${id}","reversibility":"reversible"}`,
+    );
+    expect(writeRow.action_json).not.toContain('"origin"');
+    expect(h.egress.length).toBeGreaterThanOrEqual(2);
+  });
+
+  test("undo builds the inverse from the recorded before-state, asks again, rolls back to the current id", async () => {
+    const h = harness();
+    const id = pick(h, "rollback_deploy");
+    const out = await h.svc.remediate({ ref: h.recordId, proposalId: id, clientId: "cli-1" });
+    const undone = await h.svc.undo({ actionId: out.actionId, clientId: "cli-1" });
+    expect(undone).toEqual({ actionId: out.actionId, status: "undone", nonHuman: false });
+    expect(h.confirms).toEqual(["argocd/rollback pay-app@6", "argocd/rollback pay-app@7"]);
+    const writes = h.dispatched.filter((a) => a.type === "argocd.app.rollback");
+    expect(writes.map((a) => (a.payload as { input: unknown }).input)).toEqual([
+      { name: "pay-app", id: 6 },
+      { name: "pay-app", id: 7 },
+    ]);
+    expect(getProposalByAction(db, out.actionId)).toMatchObject({ undo_status: "undone" });
+    // Undone once: a second undo is refused and dispatches nothing more.
+    const before = h.dispatched.length;
+    await expect(h.svc.undo({ actionId: out.actionId, clientId: "cli-1" })).rejects.toMatchObject({
+      code: "ERR_UNDO_REFUSED",
+      message: "that action was already undone",
+    });
+    expect(h.dispatched.length).toBe(before);
+  });
+
+  test("audit replay reads the proposal, the prompts, the decisions and the undo, byte-identical twice", async () => {
+    const h = harness();
+    const id = pick(h, "rollback_deploy");
+    const out = await h.svc.remediate({ ref: h.recordId, proposalId: id, clientId: "cli-1" });
+    await h.svc.undo({ actionId: out.actionId, clientId: "cli-1" });
+    const a = JSON.stringify(replayIncident(db, h.recordId, chainVerifiers(localIndex)));
+    const b = JSON.stringify(replayIncident(db, h.recordId, chainVerifiers(localIndex)));
+    expect(a).toBe(b);
+    const replay = JSON.parse(a) as {
+      proposals: {
+        items: Array<{ id: string; status: string; kind: string; undoStatus: string | null }>;
+      };
+      actions: unknown[];
+    };
+    const mine = replay.proposals.items.find((p) => p.id === id);
+    expect(mine).toMatchObject({
+      kind: "rollback_deploy",
+      status: "executed",
+      undoStatus: "undone",
+    });
+    expect(a).toContain("Proposed by: the incident engine");
+  });
+});
+
+describe("denial, failure, busy, stale, expired", () => {
+  test("the owner declining marks it denied and dispatches no write", async () => {
+    const h = harness();
+    h.setAnswer({ approved: false });
+    const id = pick(h, "acknowledge");
+    const out = await h.svc.remediate({ ref: h.recordId, proposalId: id, clientId: "cli-1" });
+    expect(out.status).toBe("denied");
+    expect(h.dispatched.some((a) => a.type === "pagerduty.incident.acknowledge")).toBe(false);
+    expect(getProposal(db, id)?.status).toBe("denied");
+    expect(out.undoable).toBe(false);
+  });
+
+  test("an approval that did not come from a person is a decline, flagged nonHuman", async () => {
+    const h = harness();
+    h.setAnswer({ approved: true, source: "auto" });
+    const out = await h.svc.remediate({
+      ref: h.recordId,
+      proposalId: pick(h, "acknowledge"),
+      clientId: "cli-1",
+    });
+    expect(out).toMatchObject({ status: "denied", nonHuman: true });
+  });
+
+  test("a throwing executor marks the proposal failed and reports a bounded, control-free reason", async () => {
+    const h = harness();
+    const throwing = createRemediation({
+      db,
+      makeExecutor: () => ({
+        execute: async () => {
+          throw new Error(`boom\n${"x".repeat(500)}`);
+        },
+      }),
+      bindingsFor: () => undefined,
+      dependsOn: () => new Map(),
+      now: () => NOW,
+    });
+    const id =
+      throwing.proposals(h.recordId).proposals.find((p) => p.kind === "acknowledge")?.id ?? "";
+    const out = await throwing.remediate({ ref: h.recordId, proposalId: id, clientId: "c" });
+    expect(out.status).toBe("failed");
+    expect(out.reason?.length).toBe(200);
+    expect(out.reason).not.toContain("\n");
+    expect(getProposal(db, id)?.status).toBe("failed");
+    expect(typeof new RemediationError("ERR_ADVISORY_MODE", "x").code).toBe("string");
+  });
+
+  test("a non-Error throw is reported as text", async () => {
+    const h = harness();
+    const svc = createRemediation({
+      db,
+      makeExecutor: () => ({
+        execute: async () => {
+          throw "plain";
+        },
+      }),
+      bindingsFor: () => undefined,
+      dependsOn: () => new Map(),
+      now: () => NOW,
+    });
+    const id = svc.proposals(h.recordId).proposals.find((p) => p.kind === "close")?.id ?? "";
+    expect((await svc.remediate({ ref: h.recordId, proposalId: id, clientId: "c" })).reason).toBe(
+      "plain",
+    );
+  });
+
+  test("two concurrent remediations of one proposal: exactly one runs, the other is ERR_PROPOSAL_BUSY", async () => {
+    const h = harness();
+    const id = pick(h, "acknowledge");
+    const settled = await Promise.allSettled([
+      h.svc.remediate({ ref: h.recordId, proposalId: id, clientId: "a" }),
+      h.svc.remediate({ ref: h.recordId, proposalId: id, clientId: "b" }),
+    ]);
+    const ok = settled.filter((s) => s.status === "fulfilled");
+    const rejected = settled.filter((s) => s.status === "rejected") as PromiseRejectedResult[];
+    expect(ok).toHaveLength(1);
+    expect(rejected).toHaveLength(1);
+    expect((must(rejected[0]).reason as RemediationError).code).toBe("ERR_PROPOSAL_BUSY");
+    expect(h.dispatched.filter((a) => a.type === "pagerduty.incident.acknowledge")).toHaveLength(1);
+  });
+
+  test("an executed proposal cannot run again (stale), and nothing is dispatched", async () => {
+    const h = harness();
+    const id = pick(h, "acknowledge");
+    await h.svc.remediate({ ref: h.recordId, proposalId: id, clientId: "a" });
+    const n = h.dispatched.length;
+    await expect(
+      h.svc.remediate({ ref: h.recordId, proposalId: id, clientId: "a" }),
+    ).rejects.toMatchObject({
+      code: "ERR_PROPOSAL_STALE",
+    });
+    expect(h.dispatched.length).toBe(n);
+  });
+
+  test("a proposal the record no longer offers is ERR_PROPOSAL_STALE and is marked superseded", async () => {
+    const h = harness();
+    const id = pick(h, "rollback_deploy");
+    db.run("DELETE FROM item WHERE id = 'argocd:pay-app'");
+    await expect(
+      h.svc.remediate({ ref: h.recordId, proposalId: id, clientId: "a" }),
+    ).rejects.toMatchObject({
+      code: "ERR_PROPOSAL_STALE",
+    });
+    expect(getProposal(db, id)?.status).toBe("superseded");
+    expect(h.makeCalls()).toBe(0);
+  });
+
+  test("an expired proposal is ERR_PROPOSAL_EXPIRED until the owner lists again", async () => {
+    const h = harness();
+    const id = pick(h, "acknowledge");
+    db.run("UPDATE incident_proposal SET expires_at_ms = ? WHERE id = ?", [NOW + 1, id]);
+    const later = createRemediation({
+      db,
+      makeExecutor: () => ({ execute: async () => ({ status: "ok", result: {} }) }),
+      bindingsFor: () => undefined,
+      dependsOn: () => new Map(),
+      now: () => NOW + 10,
+    });
+    await expect(
+      later.remediate({ ref: h.recordId, proposalId: id, clientId: "a" }),
+    ).rejects.toMatchObject({
+      code: "ERR_PROPOSAL_EXPIRED",
+    });
+    expect(getProposal(db, id)?.status).toBe("expired");
+    // An explicit listing revives it with a fresh TTL.
+    expect(later.proposals(h.recordId).proposals.find((p) => p.id === id)?.status).toBe("proposed");
+    const out = await later.remediate({ ref: h.recordId, proposalId: id, clientId: "a" });
+    expect(out.status).toBe("executed");
+  });
+
+  test("unknown ids, another record's proposal and a malformed id are refused before any claim", async () => {
+    const h = harness();
+    await expect(
+      h.svc.remediate({ ref: h.recordId, proposalId: "prp_x", clientId: "a" }),
+    ).rejects.toMatchObject({
+      code: "ERR_PROPOSAL_NOT_FOUND",
+    });
+    await expect(
+      h.svc.remediate({ ref: h.recordId, proposalId: "prp_0000000000000000", clientId: "a" }),
+    ).rejects.toMatchObject({ code: "ERR_PROPOSAL_NOT_FOUND" });
+    await expect(
+      h.svc.remediate({
+        ref: "inc_ffffffffffffffff",
+        proposalId: "prp_0000000000000000",
+        clientId: "a",
+      }),
+    ).rejects.toMatchObject({
+      code: "ERR_INCIDENT_NOT_FOUND",
+    });
+    const id = pick(h, "acknowledge");
+    const other = upsertIncidentRecord(db, {
+      record: buildRecord({
+        itemId: "pagerduty:OTHER",
+        boundService: "payments",
+        openedAtMs: OPENED,
+      }),
+      markdown: "m",
+      recordSha256: "h2",
+      citedServices: [],
+      nowMs: 1,
+    });
+    await expect(
+      h.svc.remediate({ ref: other.recordId, proposalId: id, clientId: "a" }),
+    ).rejects.toMatchObject({
+      code: "ERR_PROPOSAL_NOT_FOUND",
+    });
+    expect(h.makeCalls()).toBe(0);
+  });
+
+  test("a record that is gone before the call is ERR_INCIDENT_NOT_FOUND and the proposal is untouched", async () => {
+    const h = harness();
+    const id = pick(h, "acknowledge");
+    db.run("DELETE FROM incident_record_version");
+    db.run("DELETE FROM incident_record");
+    await expect(
+      h.svc.remediate({ ref: h.recordId, proposalId: id, clientId: "a" }),
+    ).rejects.toMatchObject({ code: "ERR_INCIDENT_NOT_FOUND" });
+    expect(getProposal(db, id)?.status).toBe("proposed");
+    expect(h.makeCalls()).toBe(0);
+  });
+
+  test("a record that vanishes AFTER the claim fails the claimed proposal and builds no executor", async () => {
+    const h = harness();
+    const id = pick(h, "acknowledge");
+    // The action id is minted right before the claim: the record disappears in that breath, so the claim
+    // (a write to the proposal table alone) succeeds and the link mint, after it, finds no record.
+    const svc = createRemediation({
+      db,
+      makeExecutor: () => {
+        throw new Error("never built");
+      },
+      bindingsFor: () => undefined,
+      dependsOn: () => new Map(),
+      now: () => NOW,
+      newActionId: () => {
+        db.run("DELETE FROM incident_record_version");
+        db.run("DELETE FROM incident_record");
+        return "act_0000000000000001";
+      },
+    });
+    const out = await svc.remediate({ ref: h.recordId, proposalId: id, clientId: "a" });
+    expect(out).toMatchObject({ status: "failed", nonHuman: false, undoable: false });
+    expect(out.reason).toContain("no incident record has that id");
+    expect(getProposal(db, id)?.status).toBe("failed");
+    expect(h.makeCalls()).toBe(0);
+    expect(h.dispatched).toEqual([]);
+  });
+
+  test("an executor that cannot be built fails the claimed proposal and dispatches nothing", async () => {
+    const h = harness();
+    const svc = createRemediation({
+      db,
+      makeExecutor: () => {
+        throw new Error("no executor");
+      },
+      bindingsFor: () => undefined,
+      dependsOn: () => new Map(),
+      now: () => NOW,
+    });
+    const id = svc.proposals(h.recordId).proposals.find((p) => p.kind === "acknowledge")?.id ?? "";
+    const out = await svc.remediate({ ref: h.recordId, proposalId: id, clientId: "a" });
+    expect(out).toMatchObject({ status: "failed", reason: "no executor" });
+    expect(getProposal(db, id)?.status).toBe("failed");
+    expect(h.dispatched).toEqual([]);
+  });
+
+  test("a gateway that cannot run remediations (ready() false) refuses after the advisory check and before any claim", async () => {
+    const h = harness();
+    const id = pick(h, "acknowledge");
+    const svc = createRemediation({
+      db,
+      makeExecutor: () => {
+        throw new Error("never");
+      },
+      ready: () => false,
+      bindingsFor: () => undefined,
+      dependsOn: () => new Map(),
+      now: () => NOW,
+    });
+    await expect(
+      svc.remediate({ ref: h.recordId, proposalId: id, clientId: "a" }),
+    ).rejects.toMatchObject({ code: "ERR_REMEDIATION_UNAVAILABLE" });
+    await expect(
+      svc.undo({ actionId: "act_0123456789abcdef", clientId: "a" }),
+    ).rejects.toMatchObject({ code: "ERR_REMEDIATION_UNAVAILABLE" });
+    expect(getProposal(db, id)?.status).toBe("proposed");
+    // Listing needs no executor.
+    expect(svc.proposals(h.recordId).proposals.length).toBeGreaterThan(0);
+  });
+});
+
+describe("advisory mode refuses BEFORE anything (I57 (b))", () => {
+  test("remediate: no record read, no derivation, no claim, no executor, no audit row, no prompt", async () => {
+    const h = harness();
+    const id = pick(h, "acknowledge");
+    setAdvisory(db, true, NOW);
+    const auditBefore = (db.query("SELECT count(*) AS n FROM audit_log").get() as { n: number }).n;
+    await expect(
+      h.svc.remediate({ ref: "no-such-record", proposalId: "garbage", clientId: "a" }),
+    ).rejects.toMatchObject({
+      code: "ERR_ADVISORY_MODE",
+    });
+    await expect(
+      h.svc.remediate({ ref: h.recordId, proposalId: id, clientId: "a" }),
+    ).rejects.toMatchObject({
+      code: "ERR_ADVISORY_MODE",
+    });
+    expect(h.makeCalls()).toBe(0);
+    expect(h.prompts).toEqual([]);
+    expect(h.dispatched).toEqual([]);
+    expect((db.query("SELECT count(*) AS n FROM audit_log").get() as { n: number }).n).toBe(
+      auditBefore,
+    );
+    expect(getProposal(db, id)?.status).toBe("proposed");
+    // Proposals are still listed, and say so.
+    expect(h.svc.proposals(h.recordId).advisory).toBe(true);
+    expect(h.svc.advisory()).toBe(true);
+  });
+
+  test("undo is refused the same way, and advisory off restores both", async () => {
+    const h = harness();
+    const out = await h.svc.remediate({
+      ref: h.recordId,
+      proposalId: pick(h, "rollback_deploy"),
+      clientId: "a",
+    });
+    expect(h.svc.setAdvisory(true)).toBe(true);
+    const before = h.dispatched.length;
+    await expect(h.svc.undo({ actionId: out.actionId, clientId: "a" })).rejects.toMatchObject({
+      code: "ERR_ADVISORY_MODE",
+    });
+    expect(h.dispatched.length).toBe(before);
+    expect(h.svc.setAdvisory(false)).toBe(false);
+    expect((await h.svc.undo({ actionId: out.actionId, clientId: "a" })).status).toBe("undone");
+  });
+});
+
+describe("undo refusals carry the label", () => {
+  test("an irreversible action names its reason; nothing is claimed or dispatched", async () => {
+    const h = harness();
+    const out = await h.svc.remediate({
+      ref: h.recordId,
+      proposalId: pick(h, "close"),
+      clientId: "a",
+    });
+    expect(out.status).toBe("executed");
+    expect(out.undoable).toBe(false);
+    const before = h.dispatched.length;
+    await expect(h.svc.undo({ actionId: out.actionId, clientId: "a" })).rejects.toMatchObject({
+      code: "ERR_UNDO_REFUSED",
+      message: "irreversible: a PagerDuty incident cannot be reopened through Nimbus",
+    });
+    expect(h.dispatched.length).toBe(before);
+    expect(getProposalByAction(db, out.actionId)?.undo_status).toBeNull();
+  });
+
+  test("not found, malformed, not executed, unknown class, no capture, nothing to undo", async () => {
+    const h = harness();
+    await expect(h.svc.undo({ actionId: "nope", clientId: "a" })).rejects.toMatchObject({
+      code: "ERR_PROPOSAL_NOT_FOUND",
+    });
+    await expect(
+      h.svc.undo({ actionId: "act_00000000000000ff", clientId: "a" }),
+    ).rejects.toMatchObject({ code: "ERR_PROPOSAL_NOT_FOUND" });
+    const id = pick(h, "rollback_deploy");
+    db.run("UPDATE incident_proposal SET action_id = 'act_00000000000000aa' WHERE id = ?", [id]);
+    await expect(
+      h.svc.undo({ actionId: "act_00000000000000aa", clientId: "a" }),
+    ).rejects.toMatchObject({
+      code: "ERR_UNDO_REFUSED",
+      message: "that action did not run (it is proposed)",
+    });
+    db.run(
+      "UPDATE incident_proposal SET status = 'executed', tool_id = 'github_pr_comment_x' WHERE id = ?",
+      [id],
+    );
+    await expect(
+      h.svc.undo({ actionId: "act_00000000000000aa", clientId: "a" }),
+    ).rejects.toMatchObject({
+      message: "unknown: Nimbus does not know whether this can be undone",
+    });
+    db.run("UPDATE incident_proposal SET tool_id = 'argocd_app_rollback' WHERE id = ?", [id]);
+    await expect(
+      h.svc.undo({ actionId: "act_00000000000000aa", clientId: "a" }),
+    ).rejects.toMatchObject({
+      message: "no before-state was recorded for it, so the inverse cannot be built",
+    });
+    db.run("UPDATE incident_proposal SET captured_json = ? WHERE id = ?", [
+      '{"currentHistoryId":"6"}',
+      id,
+    ]);
+    await expect(
+      h.svc.undo({ actionId: "act_00000000000000aa", clientId: "a" }),
+    ).rejects.toMatchObject({
+      message: "that call changed nothing, or cannot be reversed from what was recorded",
+    });
+    db.run("UPDATE incident_proposal SET undo_status = 'undoing' WHERE id = ?", [id]);
+    await expect(
+      h.svc.undo({ actionId: "act_00000000000000aa", clientId: "a" }),
+    ).rejects.toMatchObject({ code: "ERR_PROPOSAL_BUSY" });
+    expect(h.makeCalls()).toBe(0);
+  });
+
+  test("a denied undo is retryable; a failed one too", async () => {
+    const h = harness();
+    const out = await h.svc.remediate({
+      ref: h.recordId,
+      proposalId: pick(h, "rollback_deploy"),
+      clientId: "a",
+    });
+    h.setAnswer({ approved: false });
+    const denied = await h.svc.undo({ actionId: out.actionId, clientId: "a" });
+    expect(denied.status).toBe("denied");
+    expect(getProposalByAction(db, out.actionId)?.undo_status).toBeNull();
+    const failing = createRemediation({
+      db,
+      makeExecutor: () => ({
+        execute: async () => {
+          throw new Error("down");
+        },
+      }),
+      bindingsFor: () => undefined,
+      dependsOn: () => new Map(),
+      now: () => NOW,
+    });
+    expect(await failing.undo({ actionId: out.actionId, clientId: "a" })).toMatchObject({
+      status: "failed",
+      reason: "down",
+    });
+    expect(getProposalByAction(db, out.actionId)?.undo_status).toBeNull();
+    h.setAnswer({ approved: true });
+    expect((await h.svc.undo({ actionId: out.actionId, clientId: "a" })).status).toBe("undone");
+  });
+
+  test("an undo whose approval came from a script is declined and flagged", async () => {
+    const h = harness();
+    const out = await h.svc.remediate({
+      ref: h.recordId,
+      proposalId: pick(h, "rollback_deploy"),
+      clientId: "a",
+    });
+    h.setAnswer({ approved: true, source: "script" });
+    expect(await h.svc.undo({ actionId: out.actionId, clientId: "a" })).toMatchObject({
+      status: "denied",
+      nonHuman: true,
+    });
+  });
+});
+
+describe("the action is built from the stored row, never from the caller", () => {
+  test("the tool and input in the audit row are the stored ones whatever the proposal id names", async () => {
+    const h = harness();
+    const id = pick(h, "close");
+    await h.svc.remediate({ ref: h.recordId, proposalId: id, clientId: "a" });
+    const types = h.dispatched.map((a) => a.type);
+    expect(types).toContain("pagerduty.incident.resolve");
+    expect(types).not.toContain("pagerduty.incident.acknowledge");
+    const w = h.dispatched.find((a) => a.type === "pagerduty.incident.resolve");
+    expect((must(w).payload as { input: unknown }).input).toEqual({ incidentId: "PD1" });
+    expect(w).not.toHaveProperty("origin");
+  });
+});

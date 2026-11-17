@@ -136,7 +136,11 @@ function priorLines(p: PriorLane): string[] {
           ? ", closed, time not recorded"
           : `, closed ${utcLabel(i.closedAtMs)} (${i.closedBasis})`
         : `, ${i.status}`;
-    return `- ${hardenedTitleLink(i.title, i.url)} - ${plain(i.service)}, opened ${i.openedAtMs === null ? "at an unknown time" : utcLabel(i.openedAtMs)}${closed} (rule: ${i.rule})`;
+    const acted =
+      i.actions > 0
+        ? `, ${String(i.actions)} Nimbus action${i.actions === 1 ? "" : "s"} run on it`
+        : "";
+    return `- ${hardenedTitleLink(i.title, i.url)} - ${plain(i.service)}, opened ${i.openedAtMs === null ? "at an unknown time" : utcLabel(i.openedAtMs)}${closed}${acted} (rule: ${i.rule})`;
   });
   const more = p.total - p.incidents.length;
   return more > 0 ? [...rows, `_and ${String(more)} more_`] : rows;

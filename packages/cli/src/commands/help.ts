@@ -60,6 +60,7 @@ AGENTS — read-only briefs over the local index
   nimbus oncall handoff [--since ..]  Shift handoff brief: events, what is still open, watch-list (local index, no approval)
   nimbus briefing [now|list|status] [--json]  Your morning briefing, built from the local index (no model, nothing leaves the machine)
   nimbus incident list [--cascade]|show <id>|timeline <id> [--version N] [--json]  Incident records the gateway assembled from the local index, with the timeline and the live cascade (no model, nothing leaves the machine)
+  nimbus incident remediate <id> [--pick N]|undo <act_id>|advisory on|off|status  The engine proposes remediations with evidence and a reversibility label; YOU run one (needs a terminal), undo a reversible one, or switch advisory mode
   nimbus statuspage draft [--out <file>]   A static status page (incidents, on call, DORA) written locally for you to review and publish
 
 AGENTS THAT NEED PAIRED PEERS — see TEAM below; these query the federation mesh

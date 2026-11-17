@@ -44,6 +44,7 @@ import {
   checkIncidentConfinement,
   checkIncidentLinkMinting,
   checkIncidentRecordConfinement,
+  checkIncidentRemediationConfinement,
   checkItemHistoryConfinement,
   checkLanBoxPathConfinement,
   checkListenerRegistryConfinement,
@@ -7555,6 +7556,204 @@ describe("D17(d) - the pinned watcher channel is built and passed only by the ch
         { relPath: `${src}x.test.ts`, contents: uses.join("") },
       ]),
     ).toEqual([]);
+  });
+});
+
+describe("D46(c) - an engine-proposed action is built in one module (Phase 10 IC5a, I57 (b))", () => {
+  const file = (relPath: string, contents: string): FileEntry => ({ relPath, contents });
+  const SRC = "packages/gateway/src/";
+  const REMEDIATION = `${SRC}incident/remediation.ts`;
+  const STORE = `${SRC}incident/proposal-store.ts`;
+  const DDL = `${SRC}index/incident-proposal-v102-sql.ts`;
+  const TYPES = `${SRC}engine/types.ts`;
+  const RUN_ASK = `${SRC}engine/run-ask.ts`;
+  const MAIN = `${SRC}gateway-main.ts`;
+  const GOOD: FileEntry[] = [
+    file(
+      REMEDIATION,
+      "function buildRemediationAction() { return { type: 't', engineProposal: { proposalId: 'p' } }; }\n",
+    ),
+    file(
+      STORE,
+      "db.run(`UPDATE incident_proposal SET status = 'x'`); // DELETE FROM incident_engine_state\n",
+    ),
+    file(DDL, "CREATE TABLE IF NOT EXISTS incident_proposal (id TEXT);\n"),
+    file(TYPES, "export type PlannedAction = { engineProposal?: EngineProposal };\n"),
+    file(RUN_ASK, "export function buildRemediationExecutor(p) { return null; }\n"),
+    file(MAIN, "platform.bind(() => buildRemediationExecutor({}));\n"),
+    file(
+      `${SRC}engine/executor.ts`,
+      "const p = action.engineProposal;\nif (action.engineProposal !== undefined) {}\n",
+    ),
+    file(
+      `${SRC}incident/x.test.ts`,
+      "const a = { engineProposal: 1 }; buildRemediationAction(); db.run('DELETE FROM incident_proposal');\n",
+    ),
+    file(
+      `${SRC}incident/c.ts`,
+      "// engineProposal: x; buildRemediationAction(); INSERT INTO incident_proposal\nconst s = 'buildRemediationExecutor';\n",
+    ),
+    file(
+      `${SRC}incident/proposals.ts`,
+      "db.query('SELECT * FROM incident_proposal WHERE id = ?');\n",
+    ),
+  ];
+  const rules = (files: FileEntry[]): string[] =>
+    checkIncidentRemediationConfinement(files).map((v) => v.rule);
+  const bad = (path: string, contents: string): FileEntry[] => [...GOOD, file(path, contents)];
+
+  test("the control: the allowed shape is clean (reads, comments, strings and tests are not violations)", () => {
+    expect(checkIncidentRemediationConfinement(GOOD)).toEqual([]);
+  });
+
+  test("clause 1: the engineProposal key is set or declared only in remediation.ts and engine/types.ts", () => {
+    for (const text of [
+      "const a = { engineProposal: { proposalId: 'p' } };",
+      "const a = { 'engineProposal': 1 };",
+      "type X = { engineProposal?: Y };",
+      "a = { ...b, engineProposal : c };",
+    ]) {
+      expect(rules(bad(`${SRC}ipc/forge.ts`, `${text}\n`)), text).toEqual([
+        "engine-proposal-key-confined",
+      ]);
+      expect(rules(bad(`${SRC}mcp-sink/forge.ts`, `${text}\n`)), text).toEqual([
+        "engine-proposal-key-confined",
+      ]);
+    }
+    // The executor, the prompt and the audit row only READ it.
+    expect(rules(bad(`${SRC}engine/y.ts`, "const p = action.engineProposal;\n"))).toEqual([]);
+  });
+
+  test("clause 2: a write verb on either table outside the store and the DDL", () => {
+    for (const verb of [
+      "INSERT INTO incident_proposal (id) VALUES (1)",
+      "UPDATE incident_proposal SET status = 'executed'",
+      "DELETE FROM incident_proposal",
+      "UPDATE incident_engine_state SET value = 'off'",
+      "INSERT OR REPLACE INTO incident_engine_state (key) VALUES ('advisory')",
+      "DROP TABLE IF EXISTS incident_proposal",
+    ]) {
+      expect(rules(bad(`${SRC}incident/remediation-x.ts`, `db.run("${verb}");\n`)), verb).toEqual([
+        "incident-proposal-table-confined",
+      ]);
+      expect(rules(bad(`${SRC}ipc/incident-rpc.ts`, `db.run("${verb}");\n`)), verb).toEqual([
+        "incident-proposal-table-confined",
+      ]);
+    }
+    // remediation.ts itself must not write the tables either: only the store does.
+    expect(
+      rules([
+        ...GOOD.filter((f) => f.relPath !== REMEDIATION),
+        file(REMEDIATION, 'db.run("UPDATE incident_proposal SET a = 1");\n'),
+      ]),
+    ).toEqual(["incident-proposal-table-confined"]);
+  });
+
+  test("clause 3: buildRemediationAction is named only in remediation.ts", () => {
+    expect(rules(bad(`${SRC}ipc/x.ts`, "buildRemediationAction(a);\n"))).toEqual([
+      "remediation-action-builder-confined",
+    ]);
+    expect(
+      rules(
+        bad(
+          `${SRC}incident/proposals-x.ts`,
+          "import { buildRemediationAction as b } from './remediation.ts';\n",
+        ),
+      ),
+    ).toEqual(["remediation-action-builder-confined"]);
+  });
+
+  test("clause 4: buildRemediationExecutor is named only in run-ask.ts and gateway-main.ts", () => {
+    expect(rules(bad(`${SRC}ipc/x.ts`, "buildRemediationExecutor({});\n"))).toEqual([
+      "remediation-executor-confined",
+    ]);
+    expect(
+      rules(
+        bad(
+          `${SRC}platform/assemble.ts`,
+          "import { buildRemediationExecutor } from '../engine/run-ask.ts';\n",
+        ),
+      ),
+    ).toEqual(["remediation-executor-confined"]);
+  });
+
+  test("the real repository satisfies the rule and remediation.ts is an anchor that is scanned", async () => {
+    expect(RULE_ANCHORS).toContain(REMEDIATION);
+    const files: FileEntry[] = [];
+    for await (const f of iterateSourceFiles())
+      files.push({ relPath: f.relPath, contents: f.contents });
+    expect(files.some((f) => f.relPath === REMEDIATION)).toBe(true);
+    expect(checkIncidentRemediationConfinement(files)).toEqual([]);
+    expect(assertScanIsMeaningful(files)).toEqual([]);
+  });
+});
+
+describe("D46(a) carve-out and D46(e) / D40(b) for the remediation module (Phase 10 IC5a)", () => {
+  const file = (relPath: string, contents: string): FileEntry => ({ relPath, contents });
+  const SRC = "packages/gateway/src/";
+  const VALUE_IMPORT =
+    'import { CONNECTOR_WRITE_ROWS } from "../connectors/connector-writes/index.ts";\n';
+
+  test("D46(a): remediation.ts may import the write table as a value; proposals.ts and the store may not", () => {
+    expect(checkIncidentConfinement([file(`${SRC}incident/remediation.ts`, VALUE_IMPORT)])).toEqual(
+      [],
+    );
+    for (const where of [
+      "incident/proposals.ts",
+      "incident/proposal-store.ts",
+      "incident/other.ts",
+    ]) {
+      expect(
+        checkIncidentConfinement([file(`${SRC}${where}`, VALUE_IMPORT)]).map((v) => v.rule),
+      ).toEqual(["incident-forbidden-import"]);
+    }
+    // The carve-out is exactly one file: egress is still forbidden even there? No: it is carved out whole, so the
+    // rule for it is D46(c) alone. A near-miss name is NOT carved out.
+    expect(
+      checkIncidentConfinement([file(`${SRC}incident/remediation-x.ts`, VALUE_IMPORT)]).map(
+        (v) => v.rule,
+      ),
+    ).toEqual(["incident-forbidden-import"]);
+  });
+
+  test("D46(e): remediation.ts may call mintIncidentLink; nothing else but its own module may", () => {
+    expect(
+      checkIncidentLinkMinting([
+        file(`${SRC}incident/remediation.ts`, "mintIncidentLink(db, id);\n"),
+      ]),
+    ).toEqual([]);
+    expect(
+      checkIncidentLinkMinting([
+        file(`${SRC}incident/remediation-x.ts`, "mintIncidentLink(db, id);\n"),
+      ]).map((v) => v.rule),
+    ).toEqual(["incident-link-minted-in-incident"]);
+  });
+
+  test("D40(b): a runner built inside newRemediationExecutor is the third carrier; anywhere else in run-ask.ts is not", () => {
+    const BEFORE = file(
+      `${SRC}engine/before-state.ts`,
+      'const S = ".before.read";\nexport function createBeforeStateRunner() {}\nexport function isBeforeReadActionType() {}',
+    );
+    const EXEC = file(`${SRC}engine/executor.ts`, "if (isBeforeReadActionType(action.type)) {}");
+    const REG = file(
+      `${SRC}connectors/registry.ts`,
+      "if (!isBeforeReadActionType(t)) return; // .before.read",
+    );
+    const runAsk = (body: string) =>
+      file(
+        `${SRC}engine/run-ask.ts`,
+        `import { createBeforeStateRunner } from "./before-state.ts";\n${body}`,
+      );
+    const ok = runAsk(
+      "function newRemediationExecutor(p) {\n  return x(createBeforeStateRunner());\n}\n",
+    );
+    expect(checkBeforeStateRead([BEFORE, EXEC, REG, ok])).toEqual([]);
+    const stray = runAsk(
+      "export function buildRemediationExecutor(p) {\n  return x(createBeforeStateRunner());\n}\nfunction newRemediationExecutor(p) {\n  return x(createBeforeStateRunner());\n}\n",
+    );
+    expect(checkBeforeStateRead([BEFORE, EXEC, REG, stray]).map((v) => v.rule)).toEqual([
+      "before-state-runner-confined",
+    ]);
   });
 });
 

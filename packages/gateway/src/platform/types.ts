@@ -7,6 +7,7 @@ import type { EmbeddingReadiness } from "../embedding/embedding-readiness.ts";
 import type { AskExplainRecorder } from "../engine/ask-explain-recorder.ts";
 import type { ExecutorDelegationDep, ExecutorPolicyDep } from "../engine/executor.ts";
 import type { IncidentEngine } from "../incident/incident-engine.ts";
+import type { MakeExecutor } from "../incident/remediation.ts";
 import type { LocalIndex } from "../index/local-index.ts";
 import type { IPCServer } from "../ipc/index.ts";
 import type { LlmRegistry } from "../llm/registry.ts";
@@ -132,6 +133,11 @@ export interface PlatformServices {
   oncallPush: OncallPushRuntime;
   /** The incident engine (Phase 10 IC3). The IPC surface reaches it through `incidentRpcCtx`. */
   incidentEngine: IncidentEngine;
+  /**
+   * Phase 10 IC5a: hands the incident remediation its executor factory (`gateway-main.ts`, which owns the connector
+   * dispatcher and the egress sink). Never called on a demo-rooted gateway (I41), so remediate and undo refuse there.
+   */
+  bindIncidentExecutor(make: MakeExecutor): void;
   /**
    * The morning briefing runtime (Phase 10 MB5). `scheduler` is `undefined` on a demo-rooted gateway (I41);
    * `gateway-main.ts` starts it after the IPC server and retires it first on shutdown.

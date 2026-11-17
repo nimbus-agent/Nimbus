@@ -629,3 +629,110 @@ describe("3.9 the egress summary head", () => {
     ).toBe(true);
   });
 });
+
+describe("IC5a: an engine-proposed action names its proposer and its reversibility (I57 (b))", () => {
+  const PROPOSAL = (reversibility: "reversible" | "irreversible" | "unknown") => ({
+    proposalId: "prp_0123456789abcdef",
+    reversibility,
+  });
+  const proposed = (
+    a: PlannedAction,
+    reversibility: "reversible" | "irreversible" | "unknown" = "unknown",
+  ): PlannedAction => ({ ...linked(a), engineProposal: PROPOSAL(reversibility) });
+
+  test("the prompt carries both lines right after the type, for each label", async () => {
+    const expected: Record<string, string> = {
+      reversible: "Reversibility: reversible - nimbus incident undo can reverse it",
+      irreversible: "Reversibility: IRREVERSIBLE - this cannot be undone through Nimbus",
+      unknown: "Reversibility: unknown - Nimbus does not know whether this can be undone",
+    };
+    for (const label of ["reversible", "irreversible", "unknown"] as const) {
+      const h = harness();
+      await h.exec.execute(proposed(PLAIN, label));
+      const lines = (h.prompts[0] ?? "").split("\n");
+      const at = lines.indexOf("Type: email.send");
+      expect(lines.slice(at + 1, at + 3)).toEqual([
+        "Proposed by: the incident engine",
+        expected[label] ?? "",
+      ]);
+    }
+  });
+
+  test("the audit row records the proposal id beside the link, and the stored prompt carries the lines", async () => {
+    const h = harness();
+    await h.exec.execute(proposed(PLAIN, "irreversible"));
+    expect(rowOf(h).startsWith(PREFIX)).toBe(true);
+    expect(rowOf(h)).toContain(
+      '"engineProposal":{"proposalId":"prp_0123456789abcdef","reversibility":"irreversible"}',
+    );
+    expect(rowOf(h)).toContain("Proposed by: the incident engine");
+  });
+
+  test("an UNLINKED-engine action prompts exactly as before (no lines)", async () => {
+    const h = harness();
+    await h.exec.execute(linked(PLAIN));
+    expect(h.prompts[0]).not.toContain("Proposed by");
+    expect(h.prompts[0]).not.toContain("Reversibility");
+  });
+
+  test("an engine proposal without a link, or in another shape, throws before any row", async () => {
+    const h = harness();
+    const bad: unknown[] = [
+      PROPOSAL("unknown"),
+      { proposalId: "prp_bad", reversibility: "unknown" },
+      { proposalId: "prp_0123456789abcdef", reversibility: "sometimes" },
+      { proposalId: "prp_0123456789abcdef", reversibility: "unknown", extra: 1 },
+      "prp_0123456789abcdef",
+    ];
+    await expect(h.exec.execute({ ...PLAIN, engineProposal: PROPOSAL("unknown") })).rejects.toThrow(
+      IncidentLinkError,
+    );
+    for (const b of bad.slice(1)) {
+      await expect(
+        h.exec.execute({
+          ...linked(PLAIN),
+          engineProposal: b as unknown as NonNullable<PlannedAction["engineProposal"]>,
+        }),
+      ).rejects.toThrow(IncidentLinkError);
+    }
+    expect(h.audits).toHaveLength(0);
+    expect(h.egress).toHaveLength(0);
+    expect(h.dispatched).toHaveLength(0);
+    expect(h.prompts).toHaveLength(0);
+  });
+
+  test("an engine-proposed action is never delegated: a delegate that would approve is never asked", async () => {
+    const db = new Database(":memory:");
+    runIndexedSchemaMigrations(db, 35);
+    const store = new DelegationStore(db);
+    store.create({
+      delegatePeer: "peer:bob",
+      scopeKind: "action_type",
+      scopeValue: "email.send",
+      expiresAt: 9e15,
+      nowMs: 1,
+    });
+    let asked = 0;
+    const delegation: ExecutorDelegationDep = {
+      store,
+      isOperatorValid: () => true,
+      requestRemote: async (): Promise<RemoteApprovalOutcome> => {
+        asked += 1;
+        return { kind: "answered", peerId: "peer:bob", approved: true };
+      },
+    };
+    const h = harness({ delegation });
+    await h.exec.execute(proposed(PLAIN, "reversible"));
+    expect(asked).toBe(0);
+    expect(h.prompts).toHaveLength(1);
+  });
+
+  test("a payload-nested engineProposal is nothing", async () => {
+    const h = harness();
+    await h.exec.execute({
+      ...linked(PLAIN),
+      payload: { ...PLAIN.payload, engineProposal: PROPOSAL("reversible") },
+    });
+    expect(h.prompts[0]).not.toContain("Proposed by");
+  });
+});

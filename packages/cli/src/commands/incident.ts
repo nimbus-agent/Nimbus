@@ -1,6 +1,7 @@
 import type { IPCClient } from "../ipc-client/index.ts";
 import { CliExit } from "../lib/cli-exit.ts";
 import { declareCliClientKind } from "../lib/declare-client-kind.ts";
+import { BATCH_RPC_TIMEOUT_MS } from "../lib/rpc-timeouts.ts";
 import { stripControlChars } from "../lib/strip-control-chars.ts";
 import { withGatewayIpc } from "../lib/with-gateway-ipc.ts";
 import { getCliPlatformPaths } from "../paths.ts";
@@ -19,6 +20,7 @@ import {
   sourcesLine,
   type TimelineReplyLike,
 } from "./incident-format.ts";
+import { runRemediation } from "./incident-remediate.ts";
 
 /**
  * `nimbus incident list | show <id> | timeline <id>` (Phase 10 IC3, IC4): the incident records the gateway assembled from the local
@@ -183,15 +185,20 @@ export async function runIncidentWith(
   a: IncidentArgs,
   sink: IncidentSink,
   nowMs: number = Date.now(),
+  tty: { readonly stdin: boolean; readonly stdout: boolean } = { stdin: false, stdout: false },
 ): Promise<number> {
   try {
+    if (a.verb === "remediate" || a.verb === "undo" || a.verb === "advisory") {
+      await declareCliClientKind(c);
+      return await runRemediation(c, a, sink, tty);
+    }
     if (a.verb === "list") return await listRecords(c, a, sink);
     if (a.verb === "timeline") return await showTimeline(c, a, sink);
     if (a.verb === "debt") return await showDebt(c, a, sink);
     return await showRecord(c, a, sink, nowMs);
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    if (a.json) sink.out(`${JSON.stringify({ error: msg })}\n`);
+    if ("json" in a && a.json) sink.out(`${JSON.stringify({ error: msg })}\n`);
     else sink.err(`${stripControlChars(msg)}\n`);
     return 1;
   }
@@ -203,13 +210,23 @@ export async function runIncidentCommand(args: string[]): Promise<void> {
     process.stderr.write(`${INCIDENT_USAGE}\n`);
     throw new CliExit(1);
   }
+  // A run or an undo blocks on the executor's prompt, which only a person answers: the long budget and a
+  // consent choice that ignores NIMBUS_SCRIPT_CONSENT_SOURCE (as `nimbus approvals <id>`).
+  const asksOwner = (a.verb === "remediate" && a.pick !== undefined) || a.verb === "undo";
   const code = await withGatewayIpc(
     (c) =>
-      runIncidentWith(c, a, {
-        out: (s) => process.stdout.write(s),
-        err: (s) => process.stderr.write(s),
-      }),
+      runIncidentWith(
+        c,
+        a,
+        {
+          out: (s) => process.stdout.write(s),
+          err: (s) => process.stderr.write(s),
+        },
+        Date.now(),
+        { stdin: process.stdin.isTTY === true, stdout: process.stdout.isTTY === true },
+      ),
     getCliPlatformPaths(),
+    asksOwner ? { consent: { kind: "human" }, requestTimeoutMs: BATCH_RPC_TIMEOUT_MS } : undefined,
   );
   if (code !== 0) throw new CliExit(code);
 }

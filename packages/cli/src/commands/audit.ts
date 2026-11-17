@@ -381,7 +381,19 @@ export interface ReplayView {
     }[];
   };
   readonly actions: readonly ReplayStepView[];
-  readonly proposals: { readonly note: string };
+  readonly proposals: {
+    readonly note: string;
+    readonly items?: readonly {
+      readonly id: string;
+      readonly kind: string;
+      readonly toolId: string;
+      readonly status: string;
+      readonly reversibility: string;
+      readonly confidence: number | null;
+      readonly actionId: string | null;
+      readonly undoStatus: string | null;
+    }[];
+  };
   readonly verification: {
     readonly audit: ReplayRangeView | null;
     readonly egress: ReplayRangeView | null;
@@ -456,7 +468,16 @@ export function formatReplay(r: ReplayView): string {
     }
     for (const s of a.subSteps) lines.push(...replayRowLine(s, "    sub-step "));
   }
-  lines.push("", "Proposals:", `  ${oneLineClean(r.proposals.note)}`, "", "Verification:");
+  lines.push("", "Proposals:", `  ${oneLineClean(r.proposals.note)}`);
+  for (const p of r.proposals.items ?? []) {
+    const conf = p.confidence === null ? "not scored" : `confidence ${String(p.confidence)}`;
+    const ran = p.actionId === null ? "" : `, action ${oneLineClean(p.actionId)}`;
+    const undo = p.undoStatus === null ? "" : `, undo ${oneLineClean(p.undoStatus)}`;
+    lines.push(
+      `  ${oneLineClean(p.id)}  ${oneLineClean(p.kind)}  ${oneLineClean(p.toolId)}  [${oneLineClean(p.status)}]  ${oneLineClean(p.reversibility)}, ${conf}${ran}${undo}`,
+    );
+  }
+  lines.push("", "Verification:");
   lines.push(`  ${rangeLine("audit chain", r.verification.audit)}`);
   lines.push(`  ${rangeLine("egress chain", r.verification.egress)}`);
   for (const n of r.notes) lines.push(`Note: ${oneLineClean(n)}`);

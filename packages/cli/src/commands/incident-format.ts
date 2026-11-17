@@ -1,5 +1,10 @@
 import { stripControlChars } from "../lib/strip-control-chars.ts";
 import { DEBT_USAGE_LINE, type DebtArgs, parseDebtArgs } from "./incident-debt-format.ts";
+import {
+  parseRemediationArgs,
+  REMEDIATE_USAGE,
+  type RemediationArgs,
+} from "./incident-remediate.ts";
 
 /**
  * Pure helpers for `nimbus incident` (Phase 10 IC3). The CLI cannot import the gateway's types (IPC-only rule),
@@ -11,6 +16,8 @@ export const INCIDENT_USAGE =
   "Usage: nimbus incident list [--open] [--service <id>] [--source <service>] [--limit <n>] [--cascade] [--json]\n" +
   "       nimbus incident show <id> [--json]\n" +
   "       nimbus incident timeline <id> [--version <n>] [--json]\n" +
+  `${REMEDIATE_USAGE}
+` +
   `${DEBT_USAGE_LINE}\n` +
   "  <id> is a record id (inc_...), a trigger item id (pagerduty:...), or the provider's own id.";
 
@@ -33,6 +40,7 @@ export type IncidentArgs =
       readonly id: string;
       readonly version?: number;
     }
+  | RemediationArgs
   | DebtArgs;
 
 type ListFlags = {
@@ -112,7 +120,7 @@ export function parseIncidentArgs(argv: readonly string[]): IncidentArgs | undef
   }
   if (verb === "timeline") return parseTimelineArgs(rest);
   if (verb === "debt") return parseDebtArgs(rest);
-  return undefined;
+  return parseRemediationArgs(verb, rest);
 }
 
 function parseTimelineArgs(rest: readonly string[]): IncidentArgs | undefined {
