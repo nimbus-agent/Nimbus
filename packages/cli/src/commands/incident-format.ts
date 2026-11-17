@@ -1,10 +1,10 @@
 import { stripControlChars } from "../lib/strip-control-chars.ts";
+import { DEBT_USAGE_LINE, type DebtArgs, parseDebtArgs } from "./incident-debt-format.ts";
 import {
   parseRemediationArgs,
   REMEDIATE_USAGE,
   type RemediationArgs,
 } from "./incident-remediate.ts";
-import { DEBT_USAGE_LINE, type DebtArgs, parseDebtArgs } from "./incident-debt-format.ts";
 
 /**
  * Pure helpers for `nimbus incident` (Phase 10 IC3). The CLI cannot import the gateway's types (IPC-only rule),

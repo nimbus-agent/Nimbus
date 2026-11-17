@@ -580,7 +580,11 @@ describe("IC5a: remediate, undo, proposals and the advisory switch", () => {
     ).text();
     for (const m of ["proposals", "remediate", "undo", "advisory", "advisorySet"]) {
       expect(rust.split(`"incident.${m}"`).length - 1, m).toBe(1);
-      expect(rust, m).toContain(`assert!(!is_method_allowed("incident.${m}"));`);
+      // Named once, inside IC10a's negative list (each entry asserted `!is_method_allowed`).
+      const pinFn = rust.indexOf("fn allowlist_incident_reads_only()");
+      const pinEnd = rust.indexOf("must not be renderer-callable", pinFn);
+      const at = rust.indexOf(`"incident.${m}",`);
+      expect(pinFn > -1 && at > pinFn && at < pinEnd, m).toBe(true);
     }
   });
 });
