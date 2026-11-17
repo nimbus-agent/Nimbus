@@ -631,3 +631,84 @@ export interface FleetBriefsResult {
 export interface FleetShowResult {
   readonly brief: FleetBriefRow | null;
 }
+
+/** Wire shapes of `incident.list` / `incident.get` / `incident.timeline` (gateway `ipc/incident-rpc.ts`). Read-only. */
+export interface IncidentSummary {
+  readonly id: string;
+  readonly triggerItemId: string;
+  readonly triggerService: string;
+  readonly service: string | null;
+  readonly title: string;
+  readonly severity: string | null;
+  readonly status: string;
+  readonly openedAtMs: number | null;
+  readonly version: number;
+  readonly assembledAtMs: number;
+  readonly checkedAtMs: number;
+}
+
+export interface IncidentCascadeGroup {
+  readonly root: string;
+  readonly members: ReadonlyArray<{
+    readonly recordId: string;
+    readonly role?: string;
+    readonly title?: string;
+    readonly service?: string | null;
+  }>;
+}
+
+export interface IncidentListResult {
+  readonly status: "ok" | "none" | "no_data";
+  readonly records: readonly IncidentSummary[];
+  readonly sources: ReadonlyArray<{
+    readonly service: string;
+    readonly connected: boolean;
+    readonly lastSyncMs: number | null;
+  }>;
+  /** Present with `cascade: true`; `null` when the open records could not be read. */
+  readonly groups?: readonly IncidentCascadeGroup[] | null;
+}
+
+export type IncidentCascade =
+  | {
+      readonly status: "ok";
+      readonly role: string;
+      readonly rootRecordId: string;
+      readonly truncated: boolean;
+      readonly markdown: string;
+    }
+  | { readonly status: "unavailable" };
+
+export interface IncidentGetResult {
+  readonly record: {
+    readonly summary: IncidentSummary;
+    readonly markdown: string;
+    readonly versions: ReadonlyArray<{
+      readonly version: number;
+      readonly assembledAtMs: number;
+      readonly sha256: string;
+    }>;
+    readonly triggerStillIndexed: boolean;
+    /** `null`: the record is in no open group. */
+    readonly cascade: IncidentCascade | null;
+  } | null;
+  readonly reason?: string;
+}
+
+export interface IncidentTimelineEvent {
+  readonly atMs: number;
+  readonly atBasis: "source" | "observed";
+  readonly kind: string;
+  readonly source: string;
+  readonly itemId: string | null;
+  readonly text: string;
+  readonly rule: string | null;
+}
+
+export interface IncidentTimelineResult {
+  readonly recordId: string;
+  readonly version: number;
+  readonly currentVersion: number;
+  readonly events: readonly IncidentTimelineEvent[];
+  readonly notes: readonly string[];
+}

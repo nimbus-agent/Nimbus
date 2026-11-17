@@ -1359,6 +1359,34 @@ CREATE TABLE connector_write_enablement (
 
 **SQLite write boundary.** Every production write goes through `dbRun` / `dbExec` / `dbStmtRun` in `packages/gateway/src/db/write.ts` (invariant `I14`). The wrappers translate `SQLITE_FULL` into a typed `DiskFullError`; the static-audit gate `D12` (`bun run audit:invariants`) fails the build on any direct `db.run(` / `db.exec(` outside the wrapper.
 
+## V101 — signed workflow import provenance and the replay floor (S4 workflow import, I59, 2026-11-16)
+
+Authoritative source: `packages/gateway/src/index/workflow-import-v101-sql.ts`. V100 is incident records (IC3); V101 chains after it. Written ONLY by `automation/workflow-import-store.ts` (static D50(a)), whose `recordImport` is called only by `automation/workflow-import.ts` inside the import's one transaction. Every store function checks `user_version >= 101`, so `workflow list` works on an older database. Re-runnable (`CREATE ... IF NOT EXISTS` only); no backfill.
+
+```sql
+CREATE TABLE IF NOT EXISTS workflow_import (
+  signer_fingerprint TEXT NOT NULL,           -- 32 hex: the first 32 of SHA-256 of the signer's public key
+  bundle_name        TEXT NOT NULL,
+  issued_at          INTEGER NOT NULL,        -- the replay floor: only ever raised (the exporter's clock)
+  bundle_sha256      TEXT NOT NULL,           -- SHA-256 of the canonical signed body
+  steps_sha256       TEXT NOT NULL,           -- workflowStepsSha256 of what was stored (the hash rules and runs use)
+  signer_pubkey      TEXT NOT NULL,           -- base64, for display
+  author_label       TEXT,                    -- UNVERIFIED text the bundle wrote about itself, at most 64 characters
+  workflow_id        TEXT NOT NULL,           -- the workflow row it produced; NO foreign key (the floor outlives it)
+  imported_at        INTEGER NOT NULL,
+  import_count       INTEGER NOT NULL DEFAULT 1,
+  approval_audit_id  INTEGER NOT NULL,        -- the audit row of the owner's `workflow.import` approval
+  import_seq         INTEGER NOT NULL DEFAULT 0, -- transaction order of the last import that wrote the row (MAX + 1 on every insert and update)
+  PRIMARY KEY (signer_fingerprint, bundle_name),
+  CHECK (length(signer_fingerprint) = 32),
+  CHECK (length(steps_sha256) = 64 AND length(bundle_sha256) = 64)
+);
+CREATE INDEX IF NOT EXISTS workflow_import_workflow ON workflow_import (workflow_id);
+CREATE INDEX IF NOT EXISTS workflow_import_name ON workflow_import (bundle_name);
+```
+
+Why a table and not columns on `workflow`: the replay floor must survive `workflow.delete`; `workflow` is read by the runner, the scheduler, standing-rule derivation and approval learning, and a provenance column there would let every one of those reads drift; and a separate table keeps "nothing in the rule or run path reads provenance" greppable (static D50(d)). `workflow list` derives a `source` per workflow at read time, for the owner's own `cli` or `ui` connection only: `imported from <fp12>` (the newest row by `import_seq DESC`, the transaction order of imports, never the clock or the rowid an upsert keeps, whose `steps_sha256` equals the current content hash), `imported from <fp12>, edited since` (a different hash) or `local`. The label is a hash comparison and never an authority. The table holds no connector data, so `nimbus data delete`, `connector remove` and `data export` leave it alone.
+
 ## V100 — incident records and their versions (Phase 10 IC3, 2026-11-16)
 
 Authoritative source: `packages/gateway/src/index/incident-record-v100-sql.ts`. V97 to V99 are the agent door (`connector_write_door_approval`, the `capture` rebuild, `capture.label_source`); V100 chains after them. Written ONLY by `incident/incident-store.ts` (static D46(d)); the records of an erased service, with their versions and the pushed briefs built from them, are deleted by `incident/incident-erasure.ts` in the eraser's own transaction. Re-runnable (`CREATE ... IF NOT EXISTS` only); no backfill: the next engine pass, or `nimbus incident show`, assembles.
@@ -1400,9 +1428,9 @@ CREATE TABLE IF NOT EXISTS incident_record_version (
 
 Why the shape: there is NO foreign key to `item` (an upstream deletion must not erase the record that says the incident existed, as for `item_history`); every list query orders `opened_at_ms DESC, id` and each index ends in `id`, so SQLite sorts NULL last with no temporary B-tree (the migration test asserts the plans); the retention predicate is written as two arms (`opened_at_ms IS NOT NULL AND opened_at_ms < ?` OR `opened_at_ms IS NULL AND assembled_at_ms < ?`), never a `COALESCE`, which defeats the index; the engine's refresh selection reads `incident_record_checked` once per status, since an `IN (...)` of two statuses needs a sort; version N's `record_json` is immutable once written, the version table keeps no Markdown (re-rendered by the same pure renderer), and the store deletes versions itself before the record because `PRAGMA foreign_keys` is set per connection and the cascade is only a backstop. A pushed brief is tied to a record by `pushed_brief.incident_id = incident_record.trigger_item_id` (the V64 primary key), so the push needs no schema change.
 
-## V101 and V102 — reserved for workflow import, and the incident remediation proposals (Phase 10 IC5a, 2026-11-17)
+## V102 — the incident remediation proposals (Phase 10 IC5a, 2026-11-17)
 
-Authoritative source: `packages/gateway/src/index/incident-proposal-v102-sql.ts`. **V101** belongs to the signed workflow import (PR #2040, `workflow_import`); the branch that adds V102 registers a no-op step 100 to 101 so the chain stays contiguous, and whichever PR merges second replaces it with the real step (the V95 precedent). **V102** adds the two tables below. Re-runnable (`CREATE ... IF NOT EXISTS` only); no backfill. NO foreign key to `incident_record`, by design: a pruned record must not erase the fact that Nimbus acted. An OWNER erasure (`connector remove`, `nimbus data delete`) deletes the proposals of the records it erases (`incident/incident-erasure.ts`); retention pruning keeps them. Written ONLY by `incident/proposal-store.ts` (static D46(c)).
+Authoritative source: `packages/gateway/src/index/incident-proposal-v102-sql.ts`. It follows V101, the signed workflow import (above), and adds the two tables below. Re-runnable (`CREATE ... IF NOT EXISTS` only); no backfill. NO foreign key to `incident_record`, by design: a pruned record must not erase the fact that Nimbus acted. An OWNER erasure (`connector remove`, `nimbus data delete`) deletes the proposals of the records it erases (`incident/incident-erasure.ts`); retention pruning keeps them. Written ONLY by `incident/proposal-store.ts` (static D46(c)).
 
 ```sql
 CREATE TABLE IF NOT EXISTS incident_proposal (

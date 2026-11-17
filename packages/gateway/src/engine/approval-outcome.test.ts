@@ -68,11 +68,11 @@ describe("SA1 source pins", () => {
       "chatops/chatops-boot.ts",
       "engine/executor.ts",
       "engine/index.ts",
+      // I59: the shared owner-only ask (the standing-rule approvals and the signed workflow import).
+      "engine/owner-only-approval.ts",
       // SA4: the unattended workflow executor's consent channel, which denies and asks no one.
       "engine/run-ask.ts",
       "engine/types.ts",
-      // SA3: the standing-rule gate wraps the connection's channel so only a person's answer counts.
-      "ipc/standing-rpc.ts",
     ]);
   });
 });

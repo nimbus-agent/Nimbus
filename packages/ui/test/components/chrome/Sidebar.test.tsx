@@ -48,11 +48,12 @@ beforeEach(() => {
 });
 
 describe("Sidebar", () => {
-  it("renders all nine top-level nav entries", () => {
+  it("renders all ten top-level nav entries", () => {
     renderSidebar(null);
     expect(screen.getByRole("link", { name: /Dashboard/i })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /Briefs/i })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /On-call/i })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Incidents/i })).toHaveAttribute("href", "/incidents");
     expect(screen.getByRole("link", { name: /Captures/i })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /HITL/i })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /Marketplace/i })).toBeInTheDocument();
@@ -72,7 +73,7 @@ describe("Sidebar", () => {
   it("adds only Briefs when there are no pack sections", () => {
     renderSidebar(null);
     expect(screen.queryAllByRole("group")).toHaveLength(0);
-    expect(screen.getAllByRole("link")).toHaveLength(9);
+    expect(screen.getAllByRole("link")).toHaveLength(10);
   });
 
   it("lists a pack's agents in a labelled group", () => {

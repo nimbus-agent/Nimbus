@@ -283,6 +283,10 @@ const HITL_REQUIRED_BACKING = new Set<string>([
   // owner's own prompt answered (the handler checks `answerSource`).
   "standing.rule.create",
   "standing.rule.resume",
+  // Signed workflow import (I59): writing a workflow definition that came from outside this install
+  // into the saved-workflow store. Gate site: ipc/workflow-import-rpc.ts through
+  // `engine/owner-only-approval.ts` (no delegation, a human answer only). Never delegable (I20).
+  "workflow.import",
   "connector.addMcp",
   "data.export",
   "connector.reindex",
@@ -502,7 +506,7 @@ function otherDisplayPayload(action: PlannedAction): Record<string, unknown> | u
     // Only the extensions the owner is approving, plus the fixed fact that they run offline.
     return { extensions: action.payload["extensions"], network: "none" };
   }
-  if (action.type === "pack.install" || isStandingRuleActionType(action.type)) {
+  if (usesPromptText(action.type)) {
     // `promptText` is the prompt body itself (printed by formatConsentPrompt); repeating it as
     // structured details would show the owner the same text twice.
     const { promptText: _prompt, ...shown } = action.payload;
@@ -690,9 +694,33 @@ function evalPromptLines(action: PlannedAction): string[] | undefined {
 
 /** A pack install's or a standing-rule approval's prompt body: a purpose-built, escaped text. */
 function promptTextOf(action: PlannedAction): string | undefined {
-  if (action.type !== "pack.install" && !isStandingRuleActionType(action.type)) return undefined;
+  if (!usesPromptText(action.type)) return undefined;
   const text = action.payload?.["promptText"];
   return typeof text === "string" ? text : undefined;
+}
+
+/**
+ * The types whose prompt body is a purpose-built `payload.promptText`: it is printed by the prompt,
+ * not repeated in structured details, and not stored in the audit row (which keeps the identifying
+ * fields). One predicate for the three sites (`otherDisplayPayload`, `auditedBody`, `promptTextOf`).
+ */
+export function usesPromptText(type: string): boolean {
+  return type === "pack.install" || isStandingRuleActionType(type) || type === "workflow.import";
+}
+
+/**
+ * The types only the LOCAL owner may approve, whatever delegate is active (I20): a trust root, local
+ * code, a pack install, a connector write opt-in, a standing rule, a workflow import.
+ */
+export function isOwnerOnlyActionType(type: string): boolean {
+  return (
+    type === "registry.add" ||
+    type === "pack.install" ||
+    type === "connector.writes.enable" ||
+    type === "workflow.import" ||
+    isStandingRuleActionType(type) ||
+    type.startsWith("extension.")
+  );
 }
 
 /** The two owner approvals behind a standing rule (I55). */
@@ -773,7 +801,7 @@ function auditedBody(action: PlannedAction): PlannedAction {
   }
   if (action.payload === undefined) return action;
   // The prompt text can run to many lines of pack content; the row keeps the identifying fields.
-  if (action.type === "pack.install" || isStandingRuleActionType(action.type)) {
+  if (usesPromptText(action.type)) {
     return { ...action, payload: omitPromptText(action.payload) };
   }
   // The rendered plan repeats `plan`, which the row keeps.
@@ -1433,15 +1461,7 @@ export class ToolExecutor {
     // I20: a delegate never approves a trust root (`registry.add`), local code (`extension.*`) or a
     // pack install (`pack.install`, which writes the owner's config); only the local owner can.
     // Structural, not left to the gate's `delegation: undefined`.
-    if (
-      action.type === "registry.add" ||
-      action.type === "pack.install" ||
-      action.type === "connector.writes.enable" ||
-      isStandingRuleActionType(action.type) ||
-      action.type.startsWith("extension.")
-    ) {
-      return "fallback";
-    }
+    if (isOwnerOnlyActionType(action.type)) return "fallback";
     // I20/I54: a BOUND write's prepared facts reach only the local owner's prompt, so a delegate
     // (who would approve without seeing them) never answers it. Found by TYPE alone (I3). This stays
     // until a delegate channel carries the preview.
