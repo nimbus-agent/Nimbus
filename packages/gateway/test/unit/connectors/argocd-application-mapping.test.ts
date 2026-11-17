@@ -210,3 +210,44 @@ describe("applicationUrl", () => {
     );
   });
 });
+
+describe("deployment history in the indexed metadata (Phase 10 IC5a)", () => {
+  test("keeps id, revision and deploy time, newest id first, skipping malformed entries", () => {
+    const row = mapArgocdApplicationToItem(
+      makeApp({
+        status: {
+          history: [
+            { id: 3, revision: "ccc", deployedAt: "2026-11-10T10:00:00Z" },
+            { id: 5, revision: "eee" },
+            { id: "4", revision: "ddd" },
+            { id: 4.5, revision: "ddd" },
+            { id: -1, revision: "neg" },
+            { id: 6, revision: "" },
+            { id: 7 },
+            "text",
+            { id: 4, revision: "ddd", deployedAt: "not a date" },
+          ],
+        },
+      }),
+      ctx(),
+    );
+    expect(row?.metadata["history"]).toEqual([
+      { id: 5, revision: "eee", deployedAtMs: null },
+      { id: 4, revision: "ddd", deployedAtMs: null },
+      { id: 3, revision: "ccc", deployedAtMs: Date.parse("2026-11-10T10:00:00Z") },
+    ]);
+  });
+
+  test("no history, or a non-array one, is an empty list; more than 20 entries keep the newest 20", () => {
+    expect(mapArgocdApplicationToItem(makeApp(), ctx())?.metadata["history"]).toEqual([]);
+    expect(
+      mapArgocdApplicationToItem(makeApp({ status: { history: "x" } }), ctx())?.metadata["history"],
+    ).toEqual([]);
+    const many = Array.from({ length: 30 }, (_, i) => ({ id: i, revision: `r${String(i)}` }));
+    const kept = mapArgocdApplicationToItem(makeApp({ status: { history: many } }), ctx())
+      ?.metadata["history"] as Array<{ id: number }>;
+    expect(kept).toHaveLength(20);
+    expect(kept[0]?.id).toBe(29);
+    expect(kept[19]?.id).toBe(10);
+  });
+});

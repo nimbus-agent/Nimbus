@@ -1400,6 +1400,41 @@ CREATE TABLE IF NOT EXISTS incident_record_version (
 
 Why the shape: there is NO foreign key to `item` (an upstream deletion must not erase the record that says the incident existed, as for `item_history`); every list query orders `opened_at_ms DESC, id` and each index ends in `id`, so SQLite sorts NULL last with no temporary B-tree (the migration test asserts the plans); the retention predicate is written as two arms (`opened_at_ms IS NOT NULL AND opened_at_ms < ?` OR `opened_at_ms IS NULL AND assembled_at_ms < ?`), never a `COALESCE`, which defeats the index; the engine's refresh selection reads `incident_record_checked` once per status, since an `IN (...)` of two statuses needs a sort; version N's `record_json` is immutable once written, the version table keeps no Markdown (re-rendered by the same pure renderer), and the store deletes versions itself before the record because `PRAGMA foreign_keys` is set per connection and the cascade is only a backstop. A pushed brief is tied to a record by `pushed_brief.incident_id = incident_record.trigger_item_id` (the V64 primary key), so the push needs no schema change.
 
+## V101 and V102 — reserved for workflow import, and the incident remediation proposals (Phase 10 IC5a, 2026-11-17)
+
+Authoritative source: `packages/gateway/src/index/incident-proposal-v102-sql.ts`. **V101** belongs to the signed workflow import (PR #2040, `workflow_import`); the branch that adds V102 registers a no-op step 100 to 101 so the chain stays contiguous, and whichever PR merges second replaces it with the real step (the V95 precedent). **V102** adds the two tables below. Re-runnable (`CREATE ... IF NOT EXISTS` only); no backfill. NO foreign key to `incident_record`, by design: a pruned record must not erase the fact that Nimbus acted. An OWNER erasure (`connector remove`, `nimbus data delete`) deletes the proposals of the records it erases (`incident/incident-erasure.ts`); retention pruning keeps them. Written ONLY by `incident/proposal-store.ts` (static D46(c)).
+
+```sql
+CREATE TABLE IF NOT EXISTS incident_proposal (
+  id              TEXT PRIMARY KEY,   -- 'prp_' + 16 hex of SHA-256(record id, kind, tool id, canonical input): version-independent
+  record_id       TEXT NOT NULL,      -- the incident_record it was derived for
+  record_version  INTEGER NOT NULL CHECK (record_version >= 1),   -- the record version it was last derived from
+  kind            TEXT NOT NULL,      -- rollback_deploy | repeat_last | acknowledge | close
+  tool_id         TEXT NOT NULL,      -- the connector write tool (a row of the write table)
+  input_json      TEXT NOT NULL CHECK (length(CAST(input_json AS BLOB)) <= 8192),    -- the exact tool input the action is built from
+  evidence_json   TEXT NOT NULL CHECK (length(CAST(evidence_json AS BLOB)) <= 16384), -- item ids, the rule, blast radius, confidence terms, dry-run line
+  confidence      INTEGER CHECK (confidence IS NULL OR (confidence >= 0 AND confidence <= 100)),  -- NULL: not scored (acknowledge, close)
+  reversibility   TEXT NOT NULL CHECK (reversibility IN ('reversible', 'irreversible', 'unknown')), -- the DECLARED class
+  status          TEXT NOT NULL CHECK (status IN ('proposed', 'executing', 'executed', 'failed', 'denied', 'expired', 'superseded')),
+  created_at_ms   INTEGER NOT NULL,
+  expires_at_ms   INTEGER NOT NULL,   -- created + 2 hours (TTL)
+  updated_at_ms   INTEGER NOT NULL,
+  action_id       TEXT UNIQUE,        -- 'act_' + 16 hex, minted at the claim; what `nimbus incident undo` takes
+  captured_json   TEXT CHECK (captured_json IS NULL OR length(CAST(captured_json AS BLOB)) <= 4096), -- the before-state values the inverse needs
+  undo_status     TEXT CHECK (undo_status IS NULL OR undo_status IN ('undoing', 'undone')),            -- a declined or failed undo goes back to NULL
+  undone_at_ms    INTEGER
+);
+CREATE INDEX IF NOT EXISTS incident_proposal_record ON incident_proposal (record_id, status, id);
+
+CREATE TABLE IF NOT EXISTS incident_engine_state (
+  key           TEXT PRIMARY KEY,     -- 'advisory' (value 'on' or 'off'; absent = off)
+  value         TEXT NOT NULL,
+  updated_at_ms INTEGER NOT NULL
+);
+```
+
+Status moves are single conditional statements: `proposed` to `executing` (the claim, which also checks the TTL), then `executed`, `failed` or `denied`; `proposed` to `expired` (past its TTL) or `superseded` (a re-derivation no longer offers it). Only an explicit owner LISTING revives an `expired`, `superseded`, `denied` or `failed` proposal that is still derived; `executing` and `executed` are never revived; an `executing` row older than 30 minutes becomes `failed`, and an `undoing` one older than that is released to NULL (a crashed gateway). The engine's record JSON (`INCIDENT_ENGINE_VERSION` 2) gains `prior.incidents[].actions`, the count of `executed` proposals of that earlier incident.
+
 ## V97 — the agent door's approval list and the capture rebuild (Phase 28 AD3a-1, 2026-11-13)
 
 `connector_write_door_approval(service, door, tool_id, approved_at, definition_sha256, suspended_at, suspended_sha256, PRIMARY KEY (service, door, tool_id)) WITHOUT ROWID`: one row per write tool the owner approved by name for an outside agent (`door` is `'agent'`; no value CHECK, the store's type is the guard), with the SHA-256 of the tool's listed definition at approval (CHECK length 64). `suspended_at` is set once (sticky) when a later listing no longer matches; `suspended_sha256` is the hash observed then, or NULL when the tool was listed but its schema could not be read (since AD3a-2a a tool that a listing merely omits is not marked, owner ruling OR-AD-14); a hash without a time is refused by a CHECK. Written only by `connectors/connector-writes/door-approval-store.ts` (static D49(b)). No backfill: nothing is approved for any agent after an upgrade.

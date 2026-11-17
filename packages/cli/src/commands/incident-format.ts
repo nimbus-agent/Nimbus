@@ -1,4 +1,9 @@
 import { stripControlChars } from "../lib/strip-control-chars.ts";
+import {
+  parseRemediationArgs,
+  REMEDIATE_USAGE,
+  type RemediationArgs,
+} from "./incident-remediate.ts";
 
 /**
  * Pure helpers for `nimbus incident` (Phase 10 IC3). The CLI cannot import the gateway's types (IPC-only rule),
@@ -10,6 +15,8 @@ export const INCIDENT_USAGE =
   "Usage: nimbus incident list [--open] [--service <id>] [--source <service>] [--limit <n>] [--cascade] [--json]\n" +
   "       nimbus incident show <id> [--json]\n" +
   "       nimbus incident timeline <id> [--version <n>] [--json]\n" +
+  `${REMEDIATE_USAGE}
+` +
   "  <id> is a record id (inc_...), a trigger item id (pagerduty:...), or the provider's own id.";
 
 export const SOURCES = ["pagerduty", "jira", "sentry", "montecarlo", "bigeye"] as const;
@@ -30,7 +37,8 @@ export type IncidentArgs =
       readonly json: boolean;
       readonly id: string;
       readonly version?: number;
-    };
+    }
+  | RemediationArgs;
 
 type ListFlags = {
   open: boolean;
@@ -108,7 +116,7 @@ export function parseIncidentArgs(argv: readonly string[]): IncidentArgs | undef
     return { verb: "show", json: json.length === 1, id };
   }
   if (verb === "timeline") return parseTimelineArgs(rest);
-  return undefined;
+  return parseRemediationArgs(verb, rest);
 }
 
 function parseTimelineArgs(rest: readonly string[]): IncidentArgs | undefined {

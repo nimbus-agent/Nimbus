@@ -11,7 +11,7 @@
  */
 import { createHash } from "node:crypto";
 import { redactSensitiveValueString } from "../audit/format-audit-payload.ts";
-import type { PlannedAction } from "./types.ts";
+import type { EngineProposal, PlannedAction } from "./types.ts";
 
 export type IncidentLink = {
   readonly id: string;
@@ -66,6 +66,30 @@ export function assertIncidentLink(x: unknown): asserts x is IncidentLink {
   }
 }
 
+/** `prp_` plus 16 lower-case hex characters (`incident/proposal-store.ts` mints it). */
+export const ENGINE_PROPOSAL_ID_RE = /^prp_[0-9a-f]{16}$/;
+
+const REVERSIBILITY_LABELS: ReadonlySet<unknown> = new Set([
+  "reversible",
+  "irreversible",
+  "unknown",
+]);
+
+/** Throws unless `x` is exactly `{ proposalId: prp_<16 hex>, reversibility: <one of the three labels> }`. */
+export function assertEngineProposal(x: unknown): asserts x is EngineProposal {
+  const ok =
+    isPlainData(x) &&
+    Reflect.ownKeys(x).length === 2 &&
+    typeof x["proposalId"] === "string" &&
+    ENGINE_PROPOSAL_ID_RE.test(x["proposalId"]) &&
+    REVERSIBILITY_LABELS.has(x["reversibility"]);
+  if (!ok) {
+    throw new IncidentLinkError(
+      "an engine proposal must be exactly { proposalId: prp_<16 hex>, reversibility: reversible | irreversible | unknown }",
+    );
+  }
+}
+
 /** The most JSON-escaped characters of the shown prompt an audit row keeps (OR-IC4-2). */
 export const PROMPT_ROW_MAX_ESCAPED = 1_600;
 
@@ -111,10 +135,19 @@ export function promptForRow(shown: string): PromptForRow {
  * is the parent's link a sub-step carries. Throws {@link IncidentLinkError}.
  */
 export function assertLinkedActionAllowed(
-  action: Pick<PlannedAction, "incident" | "origin" | "proposer" | "provenance">,
+  action: Pick<PlannedAction, "incident" | "origin" | "proposer" | "provenance" | "engineProposal">,
   scopeLink: IncidentLink | undefined,
 ): void {
   const own = Object.hasOwn(action, "incident") ? action.incident : undefined;
+  if (Object.hasOwn(action, "engineProposal")) {
+    // IC5a: an engine proposal travels only with its incident link, in exactly its own shape.
+    if (own === undefined) {
+      throw new IncidentLinkError(
+        "an engine proposal is carried only by an incident-linked action",
+      );
+    }
+    assertEngineProposal(action.engineProposal);
+  }
   if (own === undefined && scopeLink === undefined) return;
   if (own !== undefined) assertIncidentLink(own);
   if (scopeLink !== undefined) assertIncidentLink(scopeLink);

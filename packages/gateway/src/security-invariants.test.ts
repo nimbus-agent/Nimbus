@@ -4700,7 +4700,10 @@ describe("I28 — MCP content enters only through the capture gate, in a fixed o
     );
     // AD3a-1 added the agent-door enable in the dispatcher; AD3a-2a moved the act door's use into
     // buildActDeps, so the flag and the wrapper it vouches for have ONE producer.
+    // Phase 10 IC5a: the incident remediation executor (gateway-main.ts) is the third user: its consent takes
+    // a human answer only, so `--yes`, a script and an old client cannot approve an engine-proposed action.
     expect(users.sort()).toEqual([
+      "packages/gateway/src/gateway-main.ts",
       "packages/gateway/src/ipc/capture-rpc.ts",
       "packages/gateway/src/ipc/server/dispatchers.ts",
     ]);
@@ -16463,5 +16466,145 @@ describe("I29 — the ChatOps watcher notice is ledgered before the post and fai
       EgressAppendFailedError,
     );
     expect(order).toEqual(["post-with-1-rows"]);
+  });
+});
+
+describe("I57 (b) - an engine-proposed action reaches dispatch only as the local owner's own action (Phase 10 IC5a)", () => {
+  const CATALOGUE_CALLERS = [
+    "packages/gateway/src/engine/connector-write-agent-tools.ts",
+    "packages/gateway/src/connectors/connector-writes/model-write-source.ts",
+    "packages/gateway/src/engine/agent.ts",
+    "packages/gateway/src/mcp-sink/capture-act.ts",
+    "packages/gateway/src/mcp-sink/capture-gate.ts",
+    "packages/gateway/src/automation/workflow-write-step.ts",
+  ];
+
+  test("1: static D46(c) holds over the real tree and remediation.ts is anchored", async () => {
+    const { checkIncidentRemediationConfinement, RULE_ANCHORS } = await import(
+      "../../../scripts/structure-audit/check-nimbus-invariants.ts"
+    );
+    const { iterateSourceFiles } = await import("../../../scripts/structure-audit/lib.ts");
+    const files: { relPath: string; contents: string }[] = [];
+    for await (const f of iterateSourceFiles())
+      files.push({ relPath: f.relPath, contents: f.contents });
+    expect(checkIncidentRemediationConfinement(files)).toEqual([]);
+    expect(files.some((f) => f.relPath === "packages/gateway/src/incident/remediation.ts")).toBe(
+      true,
+    );
+    expect(RULE_ANCHORS).toContain("packages/gateway/src/incident/remediation.ts");
+  });
+
+  test("2: never offered to the model, the agent door, a workflow or the ask turn: none of them reaches the remediation module or its builders", async () => {
+    for (const rel of CATALOGUE_CALLERS) {
+      const src = await read(rel);
+      expect(src, rel).not.toContain("remediation.ts");
+      expect(src, rel).not.toContain("engineProposal");
+      expect(src, rel).not.toContain("buildRemediationExecutor");
+      expect(src, rel).not.toContain("REMEDIATION_CATALOG");
+    }
+    // The model door builds its tools from the write table by `origin: "model"` only; the engine sets neither.
+    const rem = await read("packages/gateway/src/incident/remediation.ts");
+    expect(rem).not.toMatch(/origin\s*:/);
+    expect(rem).not.toMatch(/proposer\s*:/);
+    expect(rem).not.toMatch(/provenance\s*:/);
+  });
+
+  test("3: the executor refuses an engine proposal without a valid link, never delegates a linked action, and names the proposer and the label in the prompt", async () => {
+    const exec = await read("packages/gateway/src/engine/executor.ts");
+    expect(exec).toContain('if (action.incident !== undefined) return "fallback";');
+    expect(exec).toContain('"Proposed by: the incident engine"');
+    expect(exec).toContain("Reversibility: IRREVERSIBLE - this cannot be undone through Nimbus");
+    const link = await read("packages/gateway/src/engine/incident-link.ts");
+    expect(link).toContain("an engine proposal is carried only by an incident-linked action");
+    // The engineProposal check precedes the early return for an unlinked action.
+    expect(link.indexOf("assertEngineProposal(action.engineProposal)")).toBeGreaterThan(-1);
+    expect(link.indexOf("assertEngineProposal(action.engineProposal)")).toBeLessThan(
+      link.indexOf("if (own === undefined && scopeLink === undefined) return;"),
+    );
+  });
+
+  test("4: the remediation executor has no delegation, no standing rules and no unattended flag; its consent takes a human answer only", async () => {
+    const run = await read("packages/gateway/src/engine/run-ask.ts");
+    const at = run.indexOf("function newRemediationExecutor(");
+    expect(at).toBeGreaterThan(-1);
+    const body = run.slice(at, run.indexOf("\n}\n", at));
+    expect(body).toContain("readsEveryOrigin: true");
+    expect(body).toContain("undefined,");
+    expect(body).not.toContain("standingRules");
+    expect(body).not.toContain("unattended");
+    const main = await read("packages/gateway/src/gateway-main.ts");
+    expect(main).toContain("humanOnlyConsent(platform.ipc.consent, onNonHuman)");
+    const bind = main.indexOf("platform.bindIncidentExecutor(");
+    expect(bind).toBeGreaterThan(-1);
+    // A demo-rooted gateway never binds it (I41).
+    expect(main.slice(Math.max(0, bind - 80), bind)).toContain("platform.paths.demo !== true");
+  });
+
+  test("5: advisory mode refuses remediate and undo before any record read, derivation, claim, executor or prompt", async () => {
+    const { createMemoryIndexDb } = await import("./connectors/connector-sync-test-helpers.ts");
+    const { createRemediation } = await import("./incident/remediation.ts");
+    const { setAdvisory } = await import("./incident/proposal-store.ts");
+    const db = createMemoryIndexDb();
+    let built = 0;
+    const spyDb = new Proxy(db, {
+      get(target, prop) {
+        if (prop === "query" || prop === "prepare" || prop === "run") built += 1;
+        const v = Reflect.get(target, prop, target) as unknown;
+        return typeof v === "function" ? (v as (...a: unknown[]) => unknown).bind(target) : v;
+      },
+    });
+    setAdvisory(db, true, 1);
+    built = 0;
+    let executors = 0;
+    const rem = createRemediation({
+      db: spyDb,
+      makeExecutor: () => {
+        executors += 1;
+        throw new Error("never");
+      },
+      bindingsFor: () => undefined,
+      dependsOn: () => new Map(),
+      now: () => 2,
+    });
+    // `advisory` itself reads the switch (one query); the two actions must read it and stop.
+    await expect(
+      rem.remediate({ ref: "x", proposalId: "prp_0123456789abcdef", clientId: "c" }),
+    ).rejects.toMatchObject({ code: "ERR_ADVISORY_MODE" });
+    await expect(
+      rem.undo({ actionId: "act_0123456789abcdef", clientId: "c" }),
+    ).rejects.toMatchObject({
+      code: "ERR_ADVISORY_MODE",
+    });
+    expect(built).toBe(2);
+    expect(executors).toBe(0);
+    db.close();
+  });
+
+  test("6: remediate and undo, and the whole advisory surface, are not renderer-callable (I7) and the namespace is LAN-forbidden (I5)", async () => {
+    const rust = await read("packages/ui/src-tauri/src/gateway_bridge.rs");
+    for (const m of ["proposals", "remediate", "undo", "advisory", "advisorySet"]) {
+      // The method name appears in the Rust file exactly once: in the negative pin, never in the allowlist.
+      const hits = rust.split(`"incident.${m}"`).length - 1;
+      expect(hits, m).toBe(1);
+      expect(rust, m).toContain(`assert!(!is_method_allowed("incident.${m}"));`);
+    }
+    const lan = await read("packages/gateway/src/ipc/lan-rpc.ts");
+    expect(lan).toContain('"incident"');
+    const rpc = await read("packages/gateway/src/ipc/incident-rpc.ts");
+    for (const m of ["proposals", "remediate", "undo", "advisory", "advisorySet"]) {
+      const at = rpc.indexOf(`"incident.${m}": async (raw) => {`);
+      expect(at, m).toBeGreaterThan(-1);
+      expect(rpc.slice(at, at + 120), m).toContain("requireOwnerKind(caller.kind);");
+    }
+  });
+
+  test("7: the action is built from the stored row: the caller supplies a record and a proposal id and nothing else", async () => {
+    const rem = await read("packages/gateway/src/incident/remediation.ts");
+    expect(rem).toContain("readonly ref: string;");
+    expect(rem).toContain("readonly proposalId: string;");
+    const build = rem.indexOf("function buildRemediationAction(");
+    expect(rem.slice(build, build + 700)).toContain("incident: mintIncidentLink(db, recordId)");
+    expect(rem.slice(build, build + 700)).toContain("type: row.actionType");
+    expect(rem.slice(build, build + 700)).toContain("engineProposal: {");
   });
 });

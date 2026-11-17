@@ -82,6 +82,20 @@ export type PlannedAction = {
    * nothing.
    */
   incident?: IncidentLink;
+  /**
+   * Phase 10 IC5a (I57 (b)): set only by `incident/remediation.ts` on an action it builds from a stored
+   * remediation proposal, always beside `incident`. DISPLAY data for the owner's prompt (`Proposed by: the
+   * incident engine` and the reversibility label) and a join key for the audit row; it selects no tool, no
+   * credential and no confirm text, and no gate decision reads it. Top level only: a `payload.engineProposal`
+   * means nothing.
+   */
+  engineProposal?: EngineProposal;
+};
+
+/** What an engine-proposed action's prompt shows: which stored proposal it is and its declared reversibility. */
+export type EngineProposal = {
+  readonly proposalId: string;
+  readonly reversibility: "reversible" | "irreversible" | "unknown";
 };
 
 /**

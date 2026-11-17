@@ -8,6 +8,7 @@ import {
   writePagerdutyIncident,
   writeSentryIssue,
 } from "../__fixtures__/trigger-writers.ts";
+import { incidentIdFor } from "../incident-id.ts";
 import { priorLane, priorOrder, skippedPrior } from "./prior.ts";
 
 const dbs: Database[] = [];
@@ -154,5 +155,34 @@ describe("priorOrder", () => {
       0,
     );
     expect(priorOrder({ id: "a", openedAtMs: 5 }, { id: "b", openedAtMs: null })).toBeLessThan(0);
+  });
+});
+
+describe("lane 4 counts what Nimbus executed for an earlier incident (IC5a)", () => {
+  test("actions is the number of executed proposals of that earlier incident's record, else 0", () => {
+    const d = db();
+    const trig = writePagerdutyIncident(d, { id: "NOW", openedAtMs: OPEN }, resolver);
+    const pd = writePagerdutyIncident(d, { id: "OLD1", openedAtMs: T0 + HOUR }, resolver);
+    const pd2 = writePagerdutyIncident(d, { id: "OLD2", openedAtMs: T0 + 2 * HOUR }, resolver);
+    const recordId = incidentIdFor(pd);
+    const insert = (id: string, status: string, rec: string): void => {
+      d.run(
+        `INSERT INTO incident_proposal (id, record_id, record_version, kind, tool_id, input_json, evidence_json,
+           confidence, reversibility, status, created_at_ms, expires_at_ms, updated_at_ms)
+         VALUES (?, ?, 1, 'close', 't', '{}', '{}', NULL, 'unknown', ?, 1, 2, 1)`,
+        [id, rec, status],
+      );
+    };
+    insert("prp_0000000000000001", "executed", recordId);
+    insert("prp_0000000000000002", "executed", recordId);
+    insert("prp_0000000000000003", "denied", recordId);
+    const r = priorLane(d, {
+      service: "payment-service",
+      triggerItemId: trig,
+      openedAtMs: OPEN,
+    });
+    const byId = new Map(r.lane.incidents.map((i) => [i.id, i.actions]));
+    expect(byId.get(pd)).toBe(2);
+    expect(byId.get(pd2)).toBe(0);
   });
 });

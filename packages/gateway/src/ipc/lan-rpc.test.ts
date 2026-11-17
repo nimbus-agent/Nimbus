@@ -139,16 +139,23 @@ describe("checkLanMethodAllowed", () => {
     }
   });
 
-  test.each(["incident.list", "incident.get", "incident.assemble", "incident.timeline"])(
-    "%s is not callable over LAN regardless of grant-write (Phase 10 IC3)",
-    (method) => {
-      for (const writeAllowed of [true, false]) {
-        expect(() => checkLanMethodAllowed(method, { peerId: "p", writeAllowed })).toThrow(
-          /not callable over LAN/,
-        );
-      }
-    },
-  );
+  test.each([
+    "incident.list",
+    "incident.get",
+    "incident.assemble",
+    "incident.timeline",
+    "incident.proposals",
+    "incident.remediate",
+    "incident.undo",
+    "incident.advisory",
+    "incident.advisorySet",
+  ])("%s is not callable over LAN regardless of grant-write (Phase 10 IC3)", (method) => {
+    for (const writeAllowed of [true, false]) {
+      expect(() => checkLanMethodAllowed(method, { peerId: "p", writeAllowed })).toThrow(
+        /not callable over LAN/,
+      );
+    }
+  });
 
   test("negative controls: agents.incident and federation.query are NOT refused by the `incident` entry", () => {
     for (const writeAllowed of [true, false]) {

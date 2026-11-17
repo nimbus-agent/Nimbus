@@ -1220,8 +1220,8 @@ export function checkIncidentRecordConfinement(files: readonly FileEntry[]): Vio
 // `incident/`. Rule `incident-link-minted-in-incident`. Three clauses over every non-test file of
 // `packages/gateway/src/`, comments stripped:
 //   (1) the identifier `mintIncidentLink` (a call, an import, aliased or not) only in its own module,
-//       `incident/incident-link-mint.ts` (IC5 adds its remediation module to this list in the commit that
-//       creates it; until then it is empty but for tests, which are not scanned);
+//       `incident/incident-link-mint.ts`, and in `incident/remediation.ts` (Phase 10 IC5a: the one module that
+//       runs a stored proposal as an incident-linked action);
 //   (2) `type IncidentLink`, `interface IncidentLink` and `function assertIncidentLink` are declared only in
 //       `engine/incident-link.ts`, the one module the executor validates a link through;
 //   (3) a QUOTED `"incident":{` key (a string or template literal that spells a link into a JSON row) appears
@@ -1233,6 +1233,7 @@ export function checkIncidentRecordConfinement(files: readonly FileEntry[]): Vio
 // object literal that names the key unquoted is not matched by clause (3).
 const D46E_SRC = "packages/gateway/src/";
 const D46E_MINT = `${D46E_SRC}incident/incident-link-mint.ts`;
+const D46E_MINT_USERS: readonly string[] = [D46E_MINT, `${D46E_SRC}incident/remediation.ts`];
 const D46E_LINK = `${D46E_SRC}engine/incident-link.ts`;
 const D46E_READERS: readonly string[] = [
   `${D46E_SRC}incident/action-links.ts`,
@@ -1259,7 +1260,7 @@ export function checkIncidentLinkMinting(files: readonly FileEntry[]): Violation
     if (!f.relPath.startsWith(D46E_SRC)) continue;
     const commentFree = stripComments(f.contents);
     const code = stripStringLiterals(commentFree);
-    if (f.relPath !== D46E_MINT) {
+    if (!D46E_MINT_USERS.includes(f.relPath)) {
       for (const m of code.matchAll(D46E_MINT_RE)) add(f, code, m.index);
     }
     if (f.relPath !== D46E_LINK) {
@@ -1267,6 +1268,77 @@ export function checkIncidentLinkMinting(files: readonly FileEntry[]): Violation
     }
     if (!D46E_READERS.includes(f.relPath)) {
       for (const m of commentFree.matchAll(D46E_KEY_RE)) add(f, commentFree, m.index);
+    }
+  }
+  return out;
+}
+
+// D46(c) (Phase 10 IC5a, incident-engine spec § 5.5, invariant I57 (b)): an engine-proposed action is built in ONE
+// module. Rule ids, over every non-test file of `packages/gateway/src/`, comments stripped:
+//   `engine-proposal-key-confined`: the property key `engineProposal` (declared or assigned, quoted or not) only in
+//       `incident/remediation.ts` (which sets it) and `engine/types.ts` (which declares it); the executor, the
+//       prompt and the audit row only READ `action.engineProposal`;
+//   `incident-proposal-table-confined`: a write verb on `incident_proposal` or `incident_engine_state` only in
+//       `incident/proposal-store.ts` and the V102 DDL file;
+//   `remediation-action-builder-confined`: the identifier `buildRemediationAction` only in `incident/remediation.ts`;
+//   `remediation-executor-confined`: the identifier `buildRemediationExecutor` only in `engine/run-ask.ts` (its
+//       definition) and `gateway-main.ts` (its one caller).
+// Stated bounds: a text scan, so a dynamically composed key or name evades it (the executor refuses an engine proposal
+// that is not beside a valid link, and `security-invariants.test.ts` pins the behaviour: never delegated, never
+// standing-approved, refused in advisory mode, never offered to the model); a write verb spelled in a template
+// literal assembled from parts evades the table clause.
+const D46C_SRC = "packages/gateway/src/";
+const D46C_KEY_ALLOWED: readonly string[] = [
+  `${D46C_SRC}incident/remediation.ts`,
+  `${D46C_SRC}engine/types.ts`,
+];
+const D46C_STORE = `${D46C_SRC}incident/proposal-store.ts`;
+const D46C_DDL = `${D46C_SRC}index/incident-proposal-v102-sql.ts`;
+const D46C_BUILDER = `${D46C_SRC}incident/remediation.ts`;
+const D46C_EXECUTOR_ALLOWED: readonly string[] = [
+  `${D46C_SRC}engine/run-ask.ts`,
+  `${D46C_SRC}gateway-main.ts`,
+];
+const D46C_KEY_RE = /\bengineProposal\s*\??\s*:|["']engineProposal["']\s*:/g;
+const D46C_TABLE_WRITE_RE = d46dWriteRe("incident_(?:proposal|engine_state)");
+const D46C_BUILDER_RE = /\bbuildRemediationAction\b/g;
+const D46C_EXECUTOR_RE = /\bbuildRemediationExecutor\b/g;
+
+export function checkIncidentRemediationConfinement(files: readonly FileEntry[]): Violation[] {
+  const out: Violation[] = [];
+  const add = (rule: string, f: FileEntry, src: string, index: number | undefined): void => {
+    const line = src.slice(0, index).split("\n").length;
+    out.push({
+      rule,
+      file: f.relPath,
+      line,
+      snippet: (f.contents.split("\n")[line - 1] ?? "").trim(),
+    });
+  };
+  for (const f of files) {
+    if (/\.test(?:-helpers)?\.ts$/.test(f.relPath)) continue;
+    if (!f.relPath.startsWith(D46C_SRC)) continue;
+    const commentFree = stripComments(f.contents);
+    const code = stripStringLiterals(commentFree);
+    if (!D46C_KEY_ALLOWED.includes(f.relPath)) {
+      for (const m of commentFree.matchAll(D46C_KEY_RE)) {
+        add("engine-proposal-key-confined", f, commentFree, m.index);
+      }
+    }
+    if (f.relPath !== D46C_STORE && f.relPath !== D46C_DDL) {
+      for (const m of commentFree.matchAll(D46C_TABLE_WRITE_RE)) {
+        add("incident-proposal-table-confined", f, commentFree, m.index);
+      }
+    }
+    if (f.relPath !== D46C_BUILDER) {
+      for (const m of code.matchAll(D46C_BUILDER_RE)) {
+        add("remediation-action-builder-confined", f, code, m.index);
+      }
+    }
+    if (!D46C_EXECUTOR_ALLOWED.includes(f.relPath)) {
+      for (const m of code.matchAll(D46C_EXECUTOR_RE)) {
+        add("remediation-executor-confined", f, code, m.index);
+      }
     }
   }
   return out;
@@ -3411,8 +3483,14 @@ export function checkFinopsConfinement(files: readonly FileEntry[]): Violation[]
 const D46A_DIR = "packages/gateway/src/incident/";
 const D46A_LIB_RE = /^packages\/gateway\/src\/agents\/_lib\/incident[\w.-]*\.ts$/;
 
+// Phase 10 IC5a carves out ONE file: `incident/remediation.ts` builds and runs the owner remediation actions, so it
+// imports the connector write table as a value and the executor types. It is governed instead by D46(c) below.
+// Everything else under `incident/` (including the pure derivation `proposals.ts` and the store) stays in scope.
+const D46A_ACTION_BUILDER = "packages/gateway/src/incident/remediation.ts";
+
 function inIncidentScope(relPath: string): boolean {
   if (relPath.endsWith(".test.ts")) return false;
+  if (relPath === D46A_ACTION_BUILDER) return false;
   return relPath.startsWith(D46A_DIR) || D46A_LIB_RE.test(relPath);
 }
 
@@ -3530,7 +3608,8 @@ export function checkModelWriteDoor(files: readonly FileEntry[]): Violation[] {
 //     `buildAgentWriteExecutor` both call, so the model door and the MCP act door cannot drift) or
 //     `newWorkflowWriteExecutor` (SA2: the owner's own workflow
 //     write step is the second carrier; it offers nothing to the model; SA4: the private function
-//     both workflow builders call, so the attended and the unattended executor share it), and it is never imported
+//     both workflow builders call, so the attended and the unattended executor share it) or `newRemediationExecutor`
+//     (Phase 10 IC5a: the incident engine remediation, the owner own action with a capture observer), and it is never imported
 //     under an `as` alias (an alias would let
 //     run-ask.ts call it outside that body unseen); a runner handed around as a value (an object
 //     literal, a re-export under another name in another module) is outside a text scan;
@@ -3557,7 +3636,7 @@ const D40_GUARD_SITES: readonly string[] = [
 /** `[start, end)` of each permitted carrier's body (the door's and the workflow write step's). */
 function d40CarrierSpans(code: string): readonly (readonly [number, number])[] {
   const spans: (readonly [number, number])[] = [];
-  for (const name of ["newDoorExecutor", "newWorkflowWriteExecutor"]) {
+  for (const name of ["newDoorExecutor", "newWorkflowWriteExecutor", "newRemediationExecutor"]) {
     const at = code.search(new RegExp(`\\bfunction\\s+${name}\\s*\\(`));
     if (at === -1) continue;
     const end = code.indexOf("\n}\n", at);
@@ -5699,6 +5778,7 @@ export const RULE_ANCHORS: readonly string[] = [
   // the scan (a move, a glob change) would leave half the rule passing over nothing.
   "packages/gateway/src/incident/assemble.ts",
   "packages/gateway/src/agents/_lib/incident-render.ts",
+  "packages/gateway/src/incident/remediation.ts", // D46(c) -- the one builder of an engine-proposed action; the D46(a) carve-out
   "packages/gateway/src/finops/cost-series.ts", // D48 — FinOps cost code is inert
   "packages/gateway/src/ipc/lan-legacy.ts", // D47 — the only home of the v1 static-box LAN path
   "packages/gateway/src/platform/sandbox/write-grant-check.ts", // D10 user-write — a file the rule reads and then permits
@@ -6118,6 +6198,13 @@ async function run(): Promise<void> {
       );
     }
     if (incidentRecordViolations.length > 0) exit = 1;
+    const remediationViolations = checkIncidentRemediationConfinement(files);
+    for (const e of remediationViolations) {
+      console.error(
+        `::error file=${e.file},line=${e.line}::D46(c) an engine-proposed action built or its tables written outside incident/remediation.ts and incident/proposal-store.ts (rule ${e.rule}): ${e.snippet}`,
+      );
+    }
+    if (remediationViolations.length > 0) exit = 1;
     const incidentLinkViolations = checkIncidentLinkMinting(files);
     for (const e of incidentLinkViolations) {
       console.error(

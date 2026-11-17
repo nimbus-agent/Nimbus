@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite";
-
+import { incidentIdFor } from "../incident-id.ts";
 import type { GapNote, PriorLane, PriorView } from "../incident-record-types.ts";
+import { executedCount } from "../proposal-store.ts";
 import { type TriggerFacts, triggerFacts } from "../trigger-facts.ts";
 import { TRIGGER_SOURCES, type TriggerService } from "../trigger-sources.ts";
 import { codeUnitCompare, gap, oneLine, PRIOR_CAP } from "./caps.ts";
@@ -9,7 +10,8 @@ import { codeUnitCompare, gap, oneLine, PRIOR_CAP } from "./caps.ts";
  * Lane 4, prior incidents (Phase 10 IC3, design C step 6): earlier triggers of ANY of the four trigger kinds
  * bound to the same service by the graph (`graph_entity.metadata.affectedService`), opened earlier than this
  * record, newest first, the trigger itself excluded. SAME SERVICE, not "similar": the index holds no alert-rule
- * id or fingerprint. How an earlier incident was resolved is not in the index (a gap says so).
+ * id or fingerprint. How an earlier incident was resolved is not in the index (a gap says so). Since IC5a each
+ * entry also counts the remediations Nimbus EXECUTED for it (`actions`, from `incident_proposal`).
  */
 
 export type PriorResult = { readonly lane: PriorLane; readonly gaps: readonly GapNote[] };
@@ -37,7 +39,7 @@ type Row = {
   occurred: number | null;
 };
 
-function view(r: Row): PriorView {
+function view(r: Row, actions: number): PriorView {
   const facts: TriggerFacts = triggerFacts({
     service: r.service as TriggerService,
     metadata: r.metadata,
@@ -52,6 +54,7 @@ function view(r: Row): PriorView {
     status: facts.status,
     closedAtMs: facts.closedAtMs,
     closedBasis: facts.closedAtBasis,
+    actions,
     rule: "same_service_prior",
   };
 }
@@ -98,7 +101,9 @@ export function priorLane(
         LIMIT ?`,
     )
     .all(...params, PRIOR_CAP) as Row[];
-  const incidents = rows.map(view).sort(priorOrder);
+  const incidents = rows
+    .map((r) => view(r, executedCount(db, incidentIdFor(r.id))))
+    .sort(priorOrder);
   const gaps: GapNote[] = [
     gap(
       "missing_entity_type",

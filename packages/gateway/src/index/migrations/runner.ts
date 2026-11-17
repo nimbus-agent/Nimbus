@@ -74,6 +74,7 @@ import { GRAPH_V7_MIGRATION_SQL } from "../graph-v7-sql.ts";
 import { rebuildHitlStatusTables } from "../hitl-status-v87-sql.ts";
 import { V34_IDENTITY_SQL } from "../identity-v34-sql.ts";
 import { INCIDENT_ALERT_SOURCES_V96_SQL } from "../incident-alert-sources-v96-sql.ts";
+import { INCIDENT_PROPOSAL_V102_SQL } from "../incident-proposal-v102-sql.ts";
 import { INCIDENT_RECORD_V100_SQL } from "../incident-record-v100-sql.ts";
 import { ITEM_HISTORY_V94_SQL } from "../item-history-v94-sql.ts";
 import { KNOWN_NAMESPACES_V38_SQL } from "../known-namespaces-v38-sql.ts";
@@ -904,6 +905,15 @@ const INDEXED_SCHEMA_STEPS: readonly IndexedSchemaStep[] = [
     100,
     "incident records and their versions (Phase 10 IC3)",
     INCIDENT_RECORD_V100_SQL,
+  ),
+  // V101 is held by PR #2040 (workflow import). This no-op keeps the chain contiguous until it merges
+  // (the V95 precedent); whichever PR merges second replaces it with the real step.
+  simpleStep(100, 101, "reserved for workflow import (PR #2040)", []),
+  simpleStep(
+    101,
+    102,
+    "incident remediation proposals and engine state (Phase 10 IC5a)",
+    INCIDENT_PROPOSAL_V102_SQL,
   ),
 ];
 

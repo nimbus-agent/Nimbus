@@ -74,6 +74,7 @@ import type {
   ConfirmedApprovalResult,
   ConnectorDispatcher,
   ConsentChannel,
+  EngineProposal,
   PlannedAction,
   WorkflowProvenance,
 } from "./types.ts";
@@ -573,6 +574,15 @@ export function formatConsentPrompt(
   return [body, "", ...formatProposerBlock(action.proposer)].join("\n");
 }
 
+function reversibilityPromptLine(p: EngineProposal): string {
+  if (p.reversibility === "irreversible") {
+    return "Reversibility: IRREVERSIBLE - this cannot be undone through Nimbus";
+  }
+  return p.reversibility === "reversible"
+    ? "Reversibility: reversible - nimbus incident undo can reverse it"
+    : "Reversibility: unknown - Nimbus does not know whether this can be undone";
+}
+
 function formatConsentPromptBody(
   action: PlannedAction,
   credentialFor?: PreviewCredentialResolver,
@@ -583,6 +593,11 @@ function formatConsentPromptBody(
   // One fixed line on every prompt shape below; the origin is gateway-set, never payload text.
   if (isModelOrigin(action)) lines.push("Requested by: the model");
   if (isAgentOrigin(action)) lines.push("Requested by: an outside agent (unverified)");
+  // IC5a (I57 (b)): the incident engine's proposal names itself and its declared reversibility, the
+  // irreversible label first and in capitals. Gateway-set, never payload text.
+  if (action.engineProposal !== undefined) {
+    lines.push("Proposed by: the incident engine", reversibilityPromptLine(action.engineProposal));
+  }
   const promptText = promptTextOf(action);
   if (promptText !== undefined) {
     // The pack prompt is a purpose-built, escaped rendering; a JSON Details line would only add noise.

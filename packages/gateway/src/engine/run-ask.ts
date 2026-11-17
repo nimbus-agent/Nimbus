@@ -867,6 +867,51 @@ function newWorkflowWriteExecutor(
   );
 }
 
+/**
+ * What the incident engine's remediation builds its executor from (Phase 10 IC5a, I57 (b)): the shared
+ * executor arguments, the before-state rows and KB accessor the guards read, and the observer told what a
+ * reversible row's reader captured. `consentCoordinator` is the coordinator the CALLER already wrapped to
+ * accept a human answer only.
+ */
+export type RemediationExecutorParams = ExecutorBuildParams &
+  Pick<RunAskParams, "beforeStateRows" | "getTribalKbConfig"> & {
+    readonly onCaptured: (
+      action: PlannedAction,
+      captured: Readonly<Record<string, string>>,
+    ) => void;
+  };
+
+/**
+ * The incident remediation executor (static D46(c), D40(b)): consent bound to the CLI client that asked, NO
+ * delegation (I20), the before-state runner reading for every origin (the action carries none, it is the
+ * owner's own) with the capture observer, and NO standing-rule dependencies and no unattended flag (I55:
+ * an engine proposal is never approved by a rule). Called only from `gateway-main.ts`.
+ */
+export function buildRemediationExecutor(p: RemediationExecutorParams): ToolExecutor {
+  return newRemediationExecutor(p, bindConsentChannel(p.consentCoordinator, p.clientId));
+}
+
+/** The ONE place the remediation executor is made; a carrier of the before-state runner (static D40(b)). */
+function newRemediationExecutor(
+  p: RemediationExecutorParams,
+  consent: ConsentChannel,
+): ToolExecutor {
+  return newExecutorOnChannel(
+    p,
+    consent,
+    undefined,
+    {
+      beforeState: createBeforeStateRunner({
+        readsEveryOrigin: true,
+        onCaptured: p.onCaptured,
+        ...(p.beforeStateRows === undefined ? {} : { rows: p.beforeStateRows }),
+        guardContext: () => ({ kb: p.getTribalKbConfig() }),
+      }),
+    },
+    p.localIndex,
+  );
+}
+
 async function runActionsPlan(
   p: RunAskParams,
   actions: PlannedAction[],

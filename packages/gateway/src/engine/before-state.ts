@@ -177,6 +177,13 @@ export interface BeforeStateRunnerOptions {
    * model door. Absent (the door runner): only a model- or agent-origin action is read.
    */
   readonly readsEveryOrigin?: boolean;
+  /**
+   * Phase 10 IC5a: told the machine values a row's reader `captures` (the before-state an inverse needs),
+   * once per SUCCESSFUL read of a row that declares captures, with the action the read ran for. Set only by
+   * the remediation executor (`buildRemediationExecutor`). The values never enter the preview, the prompt,
+   * the model's result or the audit row. An invalid capture (see {@link validCapture}) is never reported.
+   */
+  readonly onCaptured?: (action: PlannedAction, captured: Readonly<Record<string, string>>) => void;
   readonly timeoutMs?: number;
   readonly timers?: {
     set(fn: () => void, ms: number): unknown;
@@ -241,6 +248,40 @@ function selectFields(
   const shown = fields.slice(0, BEFORE_STATE_MAX_FIELDS);
   const notShown = fields.length - shown.length;
   return notShown > 0 ? { status: "ok", fields: shown, notShown } : { status: "ok", fields: shown };
+}
+
+/** The longest captured value (the store caps the whole record far below the table's own limit). */
+export const CAPTURE_VALUE_MAX = 512;
+
+/**
+ * The reader's capture when it is exactly its declared keys, each a non-empty string of at most
+ * {@link CAPTURE_VALUE_MAX} characters, else `undefined` (nothing is reported: an undo of this action is then
+ * refused for want of a recorded before-state). A throwing `pick` captures nothing and never fails the read.
+ */
+function validCapture(
+  reader: BeforeStateReader,
+  replies: Replies,
+): Readonly<Record<string, string>> | undefined {
+  const spec = reader.captures;
+  if (spec === undefined) return undefined;
+  let raw: unknown;
+  try {
+    raw = spec.pick(replies.reply, replies.picked, replies.alsoReply);
+  } catch {
+    return undefined;
+  }
+  if (!isPlainObject(raw)) return undefined;
+  const keys = Object.keys(raw);
+  if (keys.length !== spec.keys.length || !spec.keys.every((k) => keys.includes(k))) {
+    return undefined;
+  }
+  const out: Record<string, string> = {};
+  for (const k of spec.keys) {
+    const v = raw[k];
+    if (typeof v !== "string" || v === "" || v.length > CAPTURE_VALUE_MAX) return undefined;
+    out[k] = v;
+  }
+  return Object.freeze(out);
 }
 
 /** One read's input from its OWN `argKeys` only; `undefined` when it cannot be built. */
@@ -483,7 +524,13 @@ export function createBeforeStateRunner(options: BeforeStateRunnerOptions = {}):
       if (outcome.kind === "unavailable") return fail(outcome.reason);
       const replies: Replies = { reply: outcome.reply, alsoReply: outcome.alsoReply, picked };
       if (guarded && !guardAllows(reader, replies, ctx)) return refusal;
-      return selectFields(row, reader, replies) ?? fail("failed");
+      const shown = selectFields(row, reader, replies);
+      if (shown === undefined) return fail("failed");
+      if (options.onCaptured !== undefined) {
+        const captured = validCapture(reader, replies);
+        if (captured !== undefined) options.onCaptured(action, captured);
+      }
+      return shown;
     },
   };
 }
