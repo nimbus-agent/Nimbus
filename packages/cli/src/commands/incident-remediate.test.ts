@@ -247,7 +247,7 @@ describe("formatProposals", () => {
   });
 
   test("provider text and control characters never reach the terminal raw", () => {
-    const evil = `x\u001b[31m\nINJECT‮${"\u0007"}`;
+    const evil = `x\u001b[31m\nINJECT\u202e${"\u0007"}`;
     const text = formatProposals(
       reply({
         recordId: `inc_${evil}`,
@@ -273,7 +273,7 @@ describe("formatProposals", () => {
       }),
     );
     expect(text).not.toContain("\u001b");
-    expect(text).not.toContain("‮");
+    expect(text).not.toContain("\u202e");
     expect(text).not.toContain("\u0007");
     expect(text.split("\n").some((l) => l.trim() === "INJECT")).toBe(false);
     expect(text).toContain("nothing met");
