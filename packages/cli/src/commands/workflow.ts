@@ -1,4 +1,4 @@
-import { readFileSync, statSync, writeFileSync } from "node:fs";
+import { closeSync, fstatSync, openSync, readFileSync, writeFileSync } from "node:fs";
 
 import type { IPCClient } from "../ipc-client/index.ts";
 import { declareCliClientKind } from "../lib/declare-client-kind.ts";
@@ -219,10 +219,17 @@ export async function runWorkflowImport(client: IPCClient, rest: string[]): Prom
   if (tz !== undefined && schedule === undefined) throw new Error("--tz needs --schedule");
   const file = tail.find((a) => !a.startsWith("--"))?.trim() ?? "";
   if (file === "") throw new Error(WORKFLOW_IMPORT_USAGE);
-  if (statSync(file).size > IMPORT_FILE_MAX_BYTES) {
-    throw new Error("the bundle file is far larger than a workflow bundle can be (256 KiB)");
+  // One descriptor for the size check and the read, so the file cannot change between them.
+  const fd = openSync(file, "r");
+  let bundle: string;
+  try {
+    if (fstatSync(fd).size > IMPORT_FILE_MAX_BYTES) {
+      throw new Error("the bundle file is far larger than a workflow bundle can be (256 KiB)");
+    }
+    bundle = readFileSync(fd, "utf8");
+  } finally {
+    closeSync(fd);
   }
-  const bundle = readFileSync(file, "utf8");
   // The approval prompt reaches this terminal, exactly as `workflow run`'s does.
   registerInteractiveCliIpcHandlers(client);
   // The gateway imports only for a connection that declared the owner's CLI.
