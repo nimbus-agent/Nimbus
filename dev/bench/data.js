@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794934096225,
+  "lastUpdate": 1794939568239,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "1f32b2676509c09d1a6e93f474a921a8588a7c26",
-          "message": "test(cli): make tui fallback tests hermetic (#1398)\n\n## Root cause\n\nThe three tests in `nimbus tui fallback behavior`\n(`packages/cli/src/tui/dumb-terminal.test.ts`) spawn `bun run\n<cli-entry> tui` and merge the child's environment as `{ ...process.env,\n...env }`, never touching `APPDATA`/`LOCALAPPDATA`/`HOME`/`XDG_*`.\n\n`runTui` (`packages/cli/src/commands/tui.tsx`) calls\n`readGatewayState(paths)` — which reads `<dataDir>/gateway.json` —\n**before it ever inspects the terminal** (`detectFallbackReason`).\n`dataDir` has no env-var override: unlike `configDir`\n(`NIMBUS_CONFIG_DIR`) and `socketPath` (`NIMBUS_GATEWAY_SOCKET`), it's\nderived straight from `APPDATA`/`LOCALAPPDATA` (win32) or\n`homedir()`/`XDG_*` (darwin/linux) in `packages/cli/src/paths.ts`,\ndeliberately — the comment there says exactly why: \"this cannot silently\nrepoint a live gateway's database or socket.\"\n\nSo a spawned test CLI always resolves the developer's **real** Nimbus\nprofile:\n\n- **No real gateway running:** `gateway.json` doesn't exist →\n`readGatewayState` returns `undefined` → `runTui` prints `Gateway is not\nrunning...` and exits immediately. Fast, and happens to satisfy the\ntests' assertions.\n- **A real gateway running:** `gateway.json` exists with a real,\nconnectable socket → `readGatewayState` returns a real state → `runTui`\nproceeds past the early-return, detects the fallback reason\n(`TERM=dumb`/non-TTY/`CI=true`), prints the fallback notice, and calls\n`runRepl()`, which connects to the **real** gateway's socket and then\nblocks on `rl.question(\"nimbus> \")` reading from the spawned child's\nempty/closed stdin — which never resolves. The test hangs until bun's\ndefault per-test timeout fires.\n\nRoot cause: **the tests dial whatever gateway.json happens to exist in\nthe developer's real profile**, instead of an isolated one. CI never\ncatches this because no user gateway runs there.\n\n## Fix\n\n`packages/cli/src/tui/dumb-terminal.test.ts` now creates one\n`mkdtempSync` scratch directory per test file and points **every** env\nvar `getCliPlatformPaths()` can derive a profile root from — `APPDATA`,\n`LOCALAPPDATA` (win32), `HOME`, `XDG_CONFIG_HOME`, `XDG_DATA_HOME`\n(darwin/linux), plus `NIMBUS_GATEWAY_SOCKET` as a belt-and-braces\ndefault-socket override — at that scratch directory before spawning the\nCLI. A real `gateway.json` is then **structurally unreachable**, not\nmerely absent by chance, regardless of what's running on the host. The\ndirectory is removed in `afterAll`.\n\nThis follows the \"write the guard as what CANNOT happen\" principle:\nrather than tolerating a real gateway (e.g. by tightening timeouts or\nretry logic), the fix makes it impossible for the spawned CLI to ever\nsee one.\n\n## Red-prove\n\n1. **Reproduced the exact reported symptom safely**, without starting a\nreal gateway or touching the real profile: a throwaway script plants a\n`gateway.json` (valid shape: numeric `pid`, string `socketPath`)\npointing at a stub named-pipe listener (not the nimbus-gateway binary —\njust accepts a connection and does nothing), inside a scratch\n`mkdtempSync` dir, and points `APPDATA`/`LOCALAPPDATA` there.\n2. With the **original** (unfixed) test file (`git stash` to revert),\nrunning `bun test packages/cli/src/tui/dumb-terminal.test.ts` with those\nenv vars ambient (simulating \"developer has a real gateway running\")\nreproduces the bug exactly:\n   ```\n(fail) nimbus tui fallback behavior > TERM=dumb prints fallback notice\nand does not attempt Ink render [5014.92ms]\n     ^ this test timed out after 5000ms.\n(fail) nimbus tui fallback behavior > non-TTY stdout falls back\ngracefully [5016.86ms]\n     ^ this test timed out after 5000ms.\n(fail) nimbus tui fallback behavior > CI=true prints fallback notice\n[5017.33ms]\n     ^ this test timed out after 5000ms.\n   0 pass / 3 fail\n   ```\n   — matching the issue's reported \"~5000ms\" timeout precisely.\n3. With the **fixed** test file, in the exact same ambient environment\n(same fake \"live gateway\" `APPDATA`/`LOCALAPPDATA` still set from\noutside), all 3 tests pass in ~1.2s:\n   ```\n   3 pass\n   0 fail\n   Ran 3 tests across 1 file. [1210.00ms]\n   ```\nproving the fix's internal override neutralizes whatever the ambient\nenvironment claims, not just that it happens to work when nothing is set\nexternally.\n4. `bun run preflight:fast` passes clean on the branch.\n\n## Not verified\n\n- I did not start a real Nimbus gateway process (per the task's hard\nconstraint) to reproduce the *original* bug 1:1 — the red-proof above\nuses a safe stand-in (a stub pipe listener + a synthetic `gateway.json`)\nthat reproduces the same code path (`readGatewayState` finds a live,\nconnectable state → `runRepl` → `rl.question()` hang) and the same\nobserved timeout value, which I'm confident is the real mechanism, but I\ncan't claim byte-for-byte confirmation against an actual\n`nimbus-gateway` binary.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-08-29T21:13:05+03:00",
-          "tree_id": "dedd8f33b82073a0d1e923fea03b534189e6dcf0",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/1f32b2676509c09d1a6e93f474a921a8588a7c26"
-        },
-        "date": 1788028509397,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 245.61132789999974,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 244.4451733000031,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 177.27778534999888,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "fd40ac1929a0ec80ee430e35b55710b256d967ce",
+          "message": "fix(deps): accept picomatch GHSA-fc5q-39xc-vjpf until a fix ships (no patched release; unreachable in what ships) (#2044)\n\nA HIGH advisory published 2026-11-17 against `picomatch` <=4.0.7 (ReDoS\nthrough single-branch repeated extglobs) turned the required `Dependency\naudit` check red on every open PR. 4.0.7 is the latest published\nversion, so no override resolves it. The owner approved accepting it\n(2026-11-17).\n\n**Reachability.** The flaw needs an attacker-chosen glob pattern. `bun\npm why picomatch`: dependency-cruiser, knip and the docs site's\nastro/starlight chain are dev or docs tooling that never ships, run on\nthis repository's own patterns. The one shipped chain is\n`@nimbus/gateway > @mastra/core`: in @mastra/core 1.74.0 picomatch is\nimported only by its Workspace/Skills glob matcher\n(`createGlobMatcher`). The gateway imports only `@mastra/core`,\n`/agent`, `/llm`, `/schema` and `/tools` and configures no `workspace`\nor `skills` on any Agent, so that matcher is never built.\n\n**Change.** One row in `scripts/structure-audit/accepted-advisories.ts`\nwith the no-fix reason, the reachability proof, the unblocking\ncondition, and a 30-day recheck (2026-12-17). `audit:advisories` OK (5\nlive, 5 accepted); `bun audit --audit-level high` with the registry's\nignores exits 0.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **Chores**\n* Updated internal security advisory records. No end-user behavior\nchanges are included.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-17T18:11:27Z",
+          "tree_id": "5f8755c6194e5e0a6cc3f7755da0deb6f7aa6b3e",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/fd40ac1929a0ec80ee430e35b55710b256d967ce"
+        },
+        "date": 1794939564453,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 176.5860408499988,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 179.13830904999958,
             "unit": "ms"
           }
         ]
