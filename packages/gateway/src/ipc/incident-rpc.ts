@@ -2,6 +2,9 @@ import type { Database } from "bun:sqlite";
 
 import { serviceFreshness } from "../agents/_lib/briefing-queries.ts";
 import { renderCascadeSection } from "../agents/_lib/incident-render.ts";
+import { scanDebt } from "../debt/debt-scan.ts";
+import { type ConfiguredRoot, DEBT_DEFAULTS } from "../debt/debt-types.ts";
+import { type GitHistoryReader, readGitHistory } from "../debt/git-history.ts";
 import { IncidentError } from "../incident/assemble.ts";
 import { type CascadeGroup, groupOf } from "../incident/cascade.ts";
 import { type CascadeInfo, readCascade } from "../incident/cascade-read.ts";
@@ -33,6 +36,7 @@ import type { ClientKind } from "./server/client-kind.ts";
  *   incident.undo { actionId }                         -> { actionId, status, reason?, nonHuman }  (IC5a)
  *   incident.advisory {}                               -> { advisory }  (IC5a)
  *   incident.advisorySet { on }                        -> { advisory }  (IC5a)
+ *   incident.debt { since?, untouched?, minIncidents?, limit? } -> DebtResult   (IC7b; runs `git log` under debt/, never from incident/)
  *
  * `incident.get` also answers a live `cascade` (IC4: where this record stands among the open records of the
  * same 30-minute window) and `incident.list { cascade: true }` also answers the open `groups`; both are derived
@@ -63,6 +67,15 @@ export interface IncidentRpcCtx {
   readonly dependsOn: () => ReadonlyMap<string, readonly string[]>;
   /** IC5a: the remediation service (proposals, remediate, undo, the advisory switch). Absent: those methods refuse. */
   readonly remediation?: Remediation;
+  /**
+   * `incident.debt` (IC7b): the owner's own `[[filesystem.roots]]`, read fresh per call, and the git reader
+   * (default: the real one in `debt/git-history.ts`). Absent: the method answers `ERR_DEBT_UNAVAILABLE`.
+   */
+  readonly debt?: {
+    readonly roots: () => readonly ConfiguredRoot[];
+    readonly git?: GitHistoryReader;
+    readonly now?: () => number;
+  };
 }
 
 export type IncidentRpcCaller = { readonly kind: ClientKind; readonly clientId?: string };
@@ -343,6 +356,46 @@ function timeline(ctx: IncidentRpcCtx, raw: unknown): unknown {
   }
 }
 
+function boundedInt(
+  method: string,
+  p: Record<string, unknown>,
+  key: string,
+  fallback: number,
+  max: number,
+): number {
+  const v = p[key];
+  if (v === undefined) return fallback;
+  if (typeof v !== "number" || !Number.isInteger(v) || v < 1 || v > max) {
+    throw new IncidentRpcError(-32602, `${method}: ${key} must be an integer 1..${String(max)}`);
+  }
+  return v;
+}
+
+/** `incident.debt` (IC7b): never reaches git with a param; the integers only filter in TypeScript. */
+async function debt(ctx: IncidentRpcCtx, raw: unknown): Promise<unknown> {
+  const m = "incident.debt";
+  const p = requireKeys(m, raw, ["since", "untouched", "minIncidents", "limit"]);
+  const input = {
+    sinceDays: boundedInt(m, p, "since", DEBT_DEFAULTS.sinceDays, 3650),
+    untouchedDays: boundedInt(m, p, "untouched", DEBT_DEFAULTS.untouchedDays, 3650),
+    minIncidents: boundedInt(m, p, "minIncidents", DEBT_DEFAULTS.minIncidents, 50),
+    limit: boundedInt(m, p, "limit", DEBT_DEFAULTS.limit, INCIDENT_LIST_MAX),
+  };
+  const d = ctx.debt;
+  if (d === undefined) {
+    throw new IncidentRpcError(
+      -32000,
+      "ERR_DEBT_UNAVAILABLE: the debt scan is not wired on this gateway",
+    );
+  }
+  return scanDebt(
+    ctx.db,
+    { ...input, nowMs: (d.now ?? Date.now)() },
+    d.roots(),
+    d.git ?? ((root) => readGitHistory(root)),
+  );
+}
+
 async function assemble(ctx: IncidentRpcCtx, raw: unknown): Promise<unknown> {
   const ref = resolveIncidentRef(
     ctx.db,
@@ -438,6 +491,10 @@ export async function dispatchIncidentRpc(
     "incident.timeline": (raw) => {
       requireOwnerKind(caller.kind);
       return timeline(ctx, raw);
+    },
+    "incident.debt": async (raw) => {
+      requireOwnerKind(caller.kind);
+      return debt(ctx, raw);
     },
     "incident.assemble": async (raw) => {
       requireOwnerKind(caller.kind);

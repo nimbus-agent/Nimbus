@@ -5,6 +5,7 @@ import { BATCH_RPC_TIMEOUT_MS } from "../lib/rpc-timeouts.ts";
 import { stripControlChars } from "../lib/strip-control-chars.ts";
 import { withGatewayIpc } from "../lib/with-gateway-ipc.ts";
 import { getCliPlatformPaths } from "../paths.ts";
+import { type DebtReplyLike, formatDebt } from "./incident-debt-format.ts";
 import {
   type CascadeGroupLike,
   formatCascadeGroups,
@@ -114,6 +115,24 @@ async function showTimeline(
   return 0;
 }
 
+async function showDebt(
+  c: IncidentIpc,
+  a: Extract<IncidentArgs, { verb: "debt" }>,
+  sink: IncidentSink,
+): Promise<number> {
+  await declareCliClientKind(c);
+  const r = await c.call<DebtReplyLike>("incident.debt", {
+    ...(a.since === undefined ? {} : { since: a.since }),
+    ...(a.untouched === undefined ? {} : { untouched: a.untouched }),
+    ...(a.minIncidents === undefined ? {} : { minIncidents: a.minIncidents }),
+    ...(a.limit === undefined ? {} : { limit: a.limit }),
+  });
+  if (a.json) sink.out(`${JSON.stringify(r)}\n`);
+  else sink.out(`${formatDebt(r)}\n`);
+  // A missing configuration is exit 1; no incident is a healthy state (the text never says "no debt").
+  return r.status === "no_roots" ? 1 : 0;
+}
+
 function printRecord(
   got: NonNullable<GetReply["record"]>,
   sink: IncidentSink,
@@ -175,6 +194,7 @@ export async function runIncidentWith(
     }
     if (a.verb === "list") return await listRecords(c, a, sink);
     if (a.verb === "timeline") return await showTimeline(c, a, sink);
+    if (a.verb === "debt") return await showDebt(c, a, sink);
     return await showRecord(c, a, sink, nowMs);
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
