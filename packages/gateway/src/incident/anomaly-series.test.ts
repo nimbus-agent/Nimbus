@@ -105,6 +105,30 @@ describe("countIndexBuckets", () => {
     );
   });
 
+  test("malformed, non-object, missing or time-less metadata is skipped, never counted", () => {
+    const raw = (id: string, service: string, type: string, metadata: string | null): void => {
+      db.run(
+        `INSERT INTO item (id, service, type, external_id, title, modified_at, synced_at, metadata)
+         VALUES (?, ?, ?, ?, 't', ?, ?, ?)`,
+        [id, service, type, id, FROM + 10, FROM + 10, metadata],
+      );
+    };
+    raw("sentry:a", "sentry", "error_issue", null);
+    raw("sentry:b", "sentry", "error_issue", "{not json");
+    raw("sentry:c", "sentry", "error_issue", "[1,2]");
+    raw("sentry:d", "sentry", "error_issue", JSON.stringify({ project: "payments-api" }));
+    raw("github_actions:e", "github_actions", "ci_run", null);
+    raw(
+      "github_actions:f",
+      "github_actions",
+      "ci_run",
+      JSON.stringify({ conclusion: "failure", repo: "acme/other" }),
+    );
+    const out = countIndexBuckets(db, configMap(cfg), FROM, FROM + HOUR);
+    if (out.kind !== "ok") throw new Error("capped");
+    expect(out.buckets.every((b) => b.value === 0)).toBe(true);
+  });
+
   test("no configured service means no series", () => {
     const out = countIndexBuckets(db, new Map(), FROM, FROM + HOUR);
     expect(out).toEqual({ kind: "ok", buckets: [] });

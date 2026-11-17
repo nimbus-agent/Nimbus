@@ -38,11 +38,10 @@ function parseMeta(raw: string | null): Record<string, unknown> | null {
   }
 }
 
-const METRIC_OF_TRIGGER: Readonly<Record<string, IndexMetric>> = {
-  "sentry/error_issue": "errors",
-  "pagerduty/incident": "alerts",
-  "jira/alert": "alerts",
-};
+/** The query selects only the three trigger pairs: Sentry error issues are errors, the other two are alerts. */
+function metricOfTrigger(service: string): IndexMetric {
+  return service === "sentry" ? "errors" : "alerts";
+}
 
 export function countIndexBuckets(
   db: Database,
@@ -80,16 +79,15 @@ export function countIndexBuckets(
     if (atMs < fromMs || atMs >= toMs) return;
     const b = fromMs + Math.floor((atMs - fromMs) / BUCKET_MS) * BUCKET_MS;
     const key = `${indexSeriesId(metric, serviceId)}\u0000${String(b)}`;
-    const prev = counts.get(key);
-    if (prev !== undefined) counts.set(key, prev + 1);
+    // The resolver binds only configured services, and the range check above keeps the hour inside the map.
+    counts.set(key, (counts.get(key) as number) + 1);
   };
   for (const r of triggers) {
-    const metric = METRIC_OF_TRIGGER[`${r.service}/${r.type}`];
-    if (metric === undefined) continue;
-    const facts = triggerFacts({ service: r.service as TriggerService, metadata: r.metadata });
-    if (facts.openedAtMs === null) continue;
     const meta = parseMeta(r.metadata);
     if (meta === null) continue;
+    const facts = triggerFacts({ service: r.service as TriggerService, metadata: r.metadata });
+    if (facts.openedAtMs === null) continue;
+    const metric = metricOfTrigger(r.service);
     const res = resolve({ service: r.service, type: r.type, metadata: meta });
     if (res.kind === "bound") bump(metric, res.serviceId, facts.openedAtMs);
   }

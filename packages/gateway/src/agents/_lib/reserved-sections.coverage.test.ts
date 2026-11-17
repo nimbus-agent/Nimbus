@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { buildPostmortemFixture } from "../../incident/__fixtures__/postmortem-brief.ts";
 import { buildRecord } from "../../incident/__fixtures__/record-builder.ts";
 import type { SynthInput } from "./brief-kinds.ts";
 import type { BriefingBrief } from "./briefing-types.ts";
@@ -511,6 +512,7 @@ const BY_KIND: Readonly<Record<SynthInput["kind"], SynthInput>> = {
   standup: STANDUP,
   briefing: BRIEFING,
   incident: INCIDENT,
+  incident_postmortem: buildPostmortemFixture(),
 };
 
 const ALL_KINDS: readonly SynthInput[] = Object.values(BY_KIND);

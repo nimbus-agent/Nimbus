@@ -26,6 +26,7 @@ export const INCIDENT_USAGE =
 ` +
   `${DEBT_USAGE_LINE}\n` +
   `${FINDINGS_USAGE_LINE}\n` +
+  "       nimbus incident postmortem <id> [--out <file>] [--template <file>] [--synthesize] | --push notion|confluence ...\n" +
   "  <id> is a record id (inc_...), a trigger item id (pagerduty:...), or the provider's own id.";
 
 export const SOURCES = ["pagerduty", "jira", "sentry", "montecarlo", "bigeye"] as const;
