@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794887262782,
+  "lastUpdate": 1794887721227,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "78751d2f54ab9898f7e1a0fc77ec3df226003357",
-          "message": "fix(index): extract `export default` symbols in the code indexer (#1391)\n\nCloses #1388.\n\n## Root cause\n\nEvery regex in `extractExportedSymbols` requires `export` to be followed\n**directly** by a declaration keyword:\n\n```js\n/export\\s+async\\s+function\\s+(\\w+)/   /export\\s+function\\s+(\\w+)/\n/export\\s+const\\s+(\\w+)/              /export\\s+class\\s+(\\w+)/\n/export\\s+type\\s+(\\w+)/\n```\n\nSo the entire `export default` family matches none of them, and a module\nwhose whole public surface is a default export indexes **zero** code\nsymbols.\n\n## How it was found\n\nPerforming the Gate 1 Windows runbook against a real third-party repo —\n`sindresorhus/is-plain-obj`, whose `index.js` is exactly `export default\nfunction isPlainObject(value) {`. On a fresh profile it indexed 29\ncommits, 3 dependencies, and no symbols at all. Verified directly\nagainst that file: **0 symbols before, 1 after**.\n\n## Why it matters\n\nNot an edge case — it is the ordinary shape of a small npm package, a\nReact component, and most config modules. And it lands on the wedge\npath. With no symbols:\n\n- `nimbus init` prints \"no symbol to suggest yet\", while the README\npromises it \"prints a real `file:line` from your own repo to try first\"\n- `nimbus why` reports \"No indexed code symbols for this file — **enable\ncode_index on the root and sync**\", advising the user to turn on a\nsetting that is already `true` in the config `init` just generated\n\nThat is the first command a new user runs, and the advice it gives them\nis unactionable.\n\n## The change\n\nAdds the three **named** default forms: `export default function`,\n`export default async function`, `export default class`.\n\nThey cannot double-count against the existing five — an intervening\n`default`, and for the async form an intervening `async`, means only one\npattern can match any given site. Pinned by a test that a file mixing a\nnamed export and a default export yields both, exactly once.\n\n## Deliberately not done\n\n- **Anonymous defaults** stay unnamed and yield nothing, pinned by test.\nNaming one from the filename is a design question, not a bug fix. Worth\nnoting the dead `if (out.length === 0 && filePath !== \"\") return []`\nbranch takes `filePath` and does nothing with it, which suggests that\nfallback was once intended and never implemented — left alone here.\n- Still invisible to the indexer, and unchanged by this PR: `export { a,\nb }` lists, `export * from`, and CommonJS `module.exports`.\n\n## Verification\n\n- **Red-proved by reverting the source: 3 tests fail without the fix, 0\nwith it.**\n- 4 new tests: the reproducing case, the class/async forms, the\nnamed-alongside-default bound, and the anonymous-default bound.\n- `bun test packages/gateway/src/connectors` → 3020 pass, 0 fail.\n- `bun run preflight:fast` → 32/32 green.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01J6qbQmiRqJcxDc6ENA8LFc\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n- **New Features**\n- Code indexing now recognizes named default exports for functions,\nasynchronous functions, and classes.\n- Named exports in files that also contain a default export are\npreserved and indexed correctly.\n\n- **Bug Fixes**\n- Anonymous default expressions continue to be excluded from indexing,\npreventing unsupported or unclear symbols from appearing in search\nresults.\n\n- **Tests**\n- Added coverage for named default exports, mixed export files, and\nanonymous default expressions.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->",
-          "timestamp": "2026-08-29T18:53:31+03:00",
-          "tree_id": "a38747796d056957878a115a22951ce1825a3133",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/78751d2f54ab9898f7e1a0fc77ec3df226003357"
-        },
-        "date": 1788019689081,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 303.4027204999955,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 305.30324494999877,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 244.19066285000227,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "86d356303bc2761db03505ae2ce5bc24b0ddcfd7",
+          "message": "feat(gateway)!: the agent door enforces; an outside agent proposes only what the owner approved by name (Phase 28 AD3b) (#2035)\n\nAD3a first shipped in **v10.59.0**. AD3a-2a made the owner's per-door\nlist decide what an outside MCP agent may propose, but kept a\none-release window in which the 47 types the earlier act door accepted\nstill worked with no approval, flagged `legacy`. This PR ends that\nwindow.\n\n## What changes\n- An agent can propose a first-party write only when the owner enabled\nits service to the row's wave AND approved the tool for agents by name,\nand its listed definition still hashes to the approved value (I58).\n- The 47 earlier types are refused like any unapproved type\n(`ERR_CAPTURE_ACTION_NOT_PROPOSABLE`, class `agent_not_approved`). The\nseven mail sends can never be approved (`agent_never_offered`); an agent\nproposes a draft instead.\n- An unapproved tool of a `--model` user MCP server is refused\n(`legacy_user_mcp` is gone, OR-AD-26).\n- A proposal queued before the upgrade for an unapproved type is refused\nat `approvals.approve` and left to expire or be declined.\n- An agent proposal now gets the model door's refusal\n(`modelWriteRefusal`). The act door's own `actDoorRefusal` is deleted;\nthe executor's before-state guards decide a Linear `assigneeId` and a\npage update under the KB, as on the model door. An agent proposal also\nnow meets the model-door-only rules (commit CI/credential paths,\nCloudFormation IAM capabilities, privileged/RBAC Kubernetes manifests,\nNetlify branch-xor-production, Firebase tester emails).\n- Deleted: `connectors/proposable-actions.ts`, `agent-door-legacy.ts`,\nthe `legacy_*` bases and every deprecation line on the CLI, the MCP\nadapter, `approvals.*`, `capture.*` and `connector.writesStatus`.\n- Reach: 125 write rows; 108 reachable by an agent once approved by name\n(the Slack DM row never is).\n- No migration (the V97 `capture.legacy` column stays, unused), no Tauri\nallowlist change, no new invariant. I28 and I58 text amended; static\nD49(a) now bans the window's names from all production source; D49(f)\nretired.\n\n## What a user must do\n**Before upgrading**, approve each type your agents use:\n\n```\nnimbus connector writes enable <service> --door agent --approve <tool-id>\n```\n\nOtherwise their proposals of those types are refused after the upgrade.\nTo see which types they used, run `nimbus connector writes status` on\nv10.59.0 or later: its `legacy:` line counts the last 30 days of\nproposals per type (the line is gone after this release). Mail sends\ncannot be approved; propose a draft instead.\n\n## Not built (stated)\nThe spec's one-time `status` notice needs stored state (a migration or a\nconfig write); `status` instead says that outside agents can propose\nnothing while nothing is approved.\n\n## Verification\nRed-proofs (each defence reverted, tests red, restored byte-for-byte):\nlegacy type refused at submit; refused again at approval for a\npre-upgrade row; an approved type with a matching hash still accepted; a\nchanged definition suspended; never-offered rows and the Slack DM row\nunreachable. `preflight:fast`, `typecheck`, `typecheck:tests` (0 new),\nbiome and the static invariants pass; the gateway/CLI/scripts suites\npass (two load-timeout flakes that pass alone). Antigravity reviewed the\nplan (2 rounds); code review in progress before merge.\n\n## Docs\nThis PR updates its own roadmap row, `docs/SECURITY-INVARIANTS.md`,\n`docs/architecture.md`, `docs/cli-reference.md`,\n`docs/schema-reference.md`, the I28/I58 bullets in CLAUDE.md and\nGEMINI.md, and four skills. The status paragraph, the top of\n`docs/CHANGELOG.md` and `docs/README.md` are batched into this batch's\nfinal docs PR (owner-approved exception).\n\nBREAKING CHANGE: an outside MCP agent's proposal of a connector write\nthe owner has not approved for agents by name (including the 47 types\nthe earlier door accepted, the seven mail sends and an unapproved tool\nof a `--model` user MCP server) is now refused. Approve each with\n`nimbus connector writes enable <service> --door agent --approve\n<tool-id>`; mail sends cannot be approved, propose a draft instead.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **Security & Permissions**\n* Outside agents can propose connector actions only when each tool is\napproved by name and permitted by policy. Unapproved actions—including\npreviously queued proposals—are refused at approval.\n* Unapproved tools on user-registered MCP servers are not eligible for\nagent proposals, even on model-enabled servers.\n* Mail-send actions cannot be approved. Writes to knowledge-base-capable\ndestinations are refused when the relevant configuration cannot be read.\n* **Interface Updates**\n* Legacy and deprecation notices, flags, and counts no longer appear in\nproposal listings, details, status, or capture responses.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-17T03:44:43Z",
+          "tree_id": "50ace6e76348978faaec743b9cd8072cdd400dec",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/86d356303bc2761db03505ae2ce5bc24b0ddcfd7"
+        },
+        "date": 1794887717682,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 175.46253990000167,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 175.76523109999943,
             "unit": "ms"
           }
         ]
