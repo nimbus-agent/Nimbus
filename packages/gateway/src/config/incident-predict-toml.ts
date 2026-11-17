@@ -83,6 +83,25 @@ function stringValue(raw: string): string | undefined {
   }
 }
 
+/** The expectation a draft describes, or the reason it is skipped. */
+function toExpectation(d: Draft, seen: ReadonlySet<string>): Expectation | string {
+  const kind = KINDS.find((k) => k === d.kind);
+  if (kind === undefined) return `kind must be one of ${KINDS.join(", ")}`;
+  if (d.service === undefined || !NAME_RE.test(d.service)) return "service is missing or invalid";
+  let type: string | null = null;
+  if (kind === "item") {
+    if (d.type === undefined || !NAME_RE.test(d.type)) return "an item expectation needs a type";
+    type = d.type;
+  } else if (d.type !== undefined) {
+    return 'type is only for kind = "item"';
+  }
+  const maxGapMs = d.maxGap === undefined ? undefined : parseMaxGap(d.maxGap);
+  if (maxGapMs === undefined) return "max_gap must be <n>m, <n>h or <n>d, 15m to 30d";
+  const key = type === null ? `${kind}:${d.service}` : `item:${d.service}:${type}`;
+  if (seen.has(key)) return `duplicate of an earlier ${key}`;
+  return Object.freeze({ key, kind, service: d.service, type, maxGapMs });
+}
+
 function finish(
   d: Draft,
   index: number,
@@ -90,27 +109,19 @@ function finish(
   out: Expectation[],
   onFallback: SectionFallbackSink | undefined,
 ): void {
-  const where = `[[incident.expect]] #${String(index)}`;
-  const skip = (why: string): void => onFallback?.(`${where} skipped: ${why}`);
-  const kind = KINDS.find((k) => k === d.kind);
-  if (kind === undefined) return skip(`kind must be one of ${KINDS.join(", ")}`);
-  if (d.service === undefined || !NAME_RE.test(d.service))
-    return skip("service is missing or invalid");
-  let type: string | null = null;
-  if (kind === "item") {
-    if (d.type === undefined || !NAME_RE.test(d.type))
-      return skip("an item expectation needs a type");
-    type = d.type;
-  } else if (d.type !== undefined) {
-    return skip('type is only for kind = "item"');
+  const e = toExpectation(d, seen);
+  const why =
+    typeof e === "string"
+      ? e
+      : out.length >= MAX_EXPECTATIONS
+        ? `more than ${String(MAX_EXPECTATIONS)} entries`
+        : undefined;
+  if (why !== undefined || typeof e === "string") {
+    onFallback?.(`[[incident.expect]] #${String(index)} skipped: ${why ?? ""}`);
+    return;
   }
-  const maxGapMs = d.maxGap === undefined ? undefined : parseMaxGap(d.maxGap);
-  if (maxGapMs === undefined) return skip("max_gap must be <n>m, <n>h or <n>d, 15m to 30d");
-  const key = type === null ? `${kind}:${d.service}` : `item:${d.service}:${type}`;
-  if (seen.has(key)) return skip(`duplicate of an earlier ${key}`);
-  if (out.length >= MAX_EXPECTATIONS) return skip(`more than ${String(MAX_EXPECTATIONS)} entries`);
-  seen.add(key);
-  out.push(Object.freeze({ key, kind, service: d.service, type, maxGapMs }));
+  seen.add(e.key);
+  out.push(e);
 }
 
 function anomalyZOf(raw: string, onFallback: SectionFallbackSink | undefined): number {

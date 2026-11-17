@@ -275,8 +275,8 @@ import { isOperatorValid } from "../identity/verifier.ts";
 import { createIncidentEngine, type IncidentEngine } from "../incident/incident-engine.ts";
 import { startIncidentRetention } from "../incident/incident-retention.ts";
 import { startPredictScheduler } from "../incident/predict-pass.ts";
-import { readSyncTelemetrySeed, recordSyncScore } from "../incident/sync-anomaly-findings.ts";
 import { createRemediation, type MakeExecutor } from "../incident/remediation.ts";
+import { readSyncTelemetrySeed, recordSyncScore } from "../incident/sync-anomaly-findings.ts";
 import { readUnreadChatThreads } from "../index/chat-unread-query.ts";
 import { startItemHistoryRetention } from "../index/item-history-retention.ts";
 import {

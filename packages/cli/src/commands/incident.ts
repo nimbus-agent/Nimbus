@@ -6,6 +6,7 @@ import { stripControlChars } from "../lib/strip-control-chars.ts";
 import { withGatewayIpc } from "../lib/with-gateway-ipc.ts";
 import { getCliPlatformPaths } from "../paths.ts";
 import { type DebtReplyLike, formatDebt } from "./incident-debt-format.ts";
+import { type FindingsReplyLike, formatFindings } from "./incident-findings-format.ts";
 import {
   type CascadeGroupLike,
   formatCascadeGroups,
@@ -133,6 +134,21 @@ async function showDebt(
   return r.status === "no_roots" ? 1 : 0;
 }
 
+async function showFindings(
+  c: IncidentIpc,
+  a: Extract<IncidentArgs, { verb: "findings" }>,
+  sink: IncidentSink,
+): Promise<number> {
+  await declareCliClientKind(c);
+  const r = await c.call<FindingsReplyLike>("incident.findings", {
+    ...(a.all ? { all: true } : {}),
+    ...(a.limit === undefined ? {} : { limit: a.limit }),
+  });
+  if (a.json) sink.out(`${JSON.stringify(r)}\n`);
+  else sink.out(`${formatFindings(r, a.all)}\n`);
+  return 0;
+}
+
 function printRecord(
   got: NonNullable<GetReply["record"]>,
   sink: IncidentSink,
@@ -195,6 +211,7 @@ export async function runIncidentWith(
     if (a.verb === "list") return await listRecords(c, a, sink);
     if (a.verb === "timeline") return await showTimeline(c, a, sink);
     if (a.verb === "debt") return await showDebt(c, a, sink);
+    if (a.verb === "findings") return await showFindings(c, a, sink);
     return await showRecord(c, a, sink, nowMs);
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
