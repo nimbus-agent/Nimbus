@@ -97,18 +97,26 @@ deploy_environments = ["production"]
   });
 
   test("an unbound service, a null service and no config dir return undefined", () => {
-    writeFileSync(join(dir, "nimbus.toml"), `[ci.service.web]
+    writeFileSync(
+      join(dir, "nimbus.toml"),
+      `[ci.service.web]
 repos = ["github:acme/web"]
-`, "utf8");
+`,
+      "utf8",
+    );
     expect(loadServiceBindings(dir, "api")).toBeUndefined();
     expect(loadServiceBindings(dir, null)).toBeUndefined();
     expect(loadServiceBindings(undefined, "web")).toBeUndefined();
   });
 
   test("a malformed block returns undefined instead of throwing", () => {
-    writeFileSync(join(dir, "nimbus.toml"), `[ci.service.]
+    writeFileSync(
+      join(dir, "nimbus.toml"),
+      `[ci.service.]
 repos = []
-`, "utf8");
+`,
+      "utf8",
+    );
     expect(loadServiceBindings(dir, "web")).toBeUndefined();
   });
 });
