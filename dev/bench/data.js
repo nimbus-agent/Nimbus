@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794948088392,
+  "lastUpdate": 1794949047911,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "d32c8468b93ce7d5c7d40cb7016761f10007376a",
-          "message": "ci: gate PRs on the ONNX clean-room check (#1407)\n\nThe follow-up #1405 asked for. Without it, nothing stops the regression\nthat shipped twice from shipping a third time.\n\n## Why this gate\n\nThe **same bug** was fixed twice and verified twice in environments that\nmasked the failure:\n\n- **#1399** — verified in the source tree, which has `dist/bin/`. Users\ndon't.\n- **#1402** — verified on a Windows box carrying `onnxruntime.dll` in\nSystem32. Users may not.\n\nBoth reported success. Neither worked for a user.\n`verify-onnx-cleanroom.sh` **refuses to report a pass** unless it first\nproves the run image is clean (`system-onnx-libs=0`), so a green here\ncannot come from a preinstalled runtime the way those two did.\n\n## Scoped, not universal\n\nThe harness pulls two container images, so running it on every PR would\ntax changes that cannot affect the payload. A new `embedding-native`\nfilter output fires on:\n\n- `scripts/onnx-binding-plugin.ts`, `scripts/build-workers.ts`,\n`scripts/verify-onnx-cleanroom.sh`\n- `packages/gateway/src/{workers,embedding}/`\n- `packages/gateway/package.json`\n- **`bun.lock`** — a dependency bump can swap the onnxruntime version\nout from under us, which is precisely the change that would break this\nsilently\n- `.github/workflows/ci.yml`\n\nIt carries the same fail-safe as `code-changed`: an unresolvable diff\n**runs** the gate rather than skipping it.\n\nAdded to the `required gates` aggregator, so it blocks rather than\nmerely reporting.\n\n## Filter verified, not eyeballed\n\n```\nMATCH  scripts/onnx-binding-plugin.ts\nMATCH  packages/gateway/src/workers/sharp-stub.ts\nMATCH  bun.lock\nMATCH  packages/gateway/package.json\nskip   docs/README.md\nskip   packages/cli/src/index.ts\n```\n\n`audit:workflow-lint` OK across 25 workflows; `preflight:fast` 32/32.\n\n## Note for review\n\nThis PR touches `ci.yml`, which its own filter matches — so the gate\nshould run on this PR itself. That is the intended first proof that it\nworks in CI rather than only on my machine.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01J6qbQmiRqJcxDc6ENA8LFc\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **Tests**\n* Added clean-environment validation for the embedded ONNX runtime in\npull requests.\n* Expanded required pull-request checks to include the new runtime\nvalidation gate.\n* **Chores**\n* Improved change detection for ONNX-related updates, including source,\nbuild, dependency, lockfile, and workflow changes.\n  * Added safe handling for empty diffs.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->",
-          "timestamp": "2026-08-30T10:58:44+03:00",
-          "tree_id": "16ad740e1521937fa80c6e87513e9cbf49bfe035",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/d32c8468b93ce7d5c7d40cb7016761f10007376a"
-        },
-        "date": 1788077448141,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 315.4145425999981,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 315.9918580999976,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 191.79186669999945,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "a1f504dc6fd217e691b7fab4d3554eba5158ca14",
+          "message": "feat(gateway): incident engine IC5a, remediation proposals with a declared reversibility, remediate, undo and advisory mode (I57 (b), D46(c), V102) (#2046)\n\nIncident engine slice IC5a: the engine proposes remediations with a\ndeclared reversibility, and the owner runs or undoes one. The first\nproducer of incident links. Migration **V102**, invariant **I57 (b)**,\nstatic **D46(c)**.\n\n## What it adds\n- **Reversibility table**\n(`connectors/connector-writes/reversibility.ts`): 6 reversible rows\n(LaunchDarkly toggle, Flagsmith state set, EC2 stop and start, ECS\nupdate, Argo CD rollback), each with a per-row proof that builds the\ninverse from a recorded before-state; 21 irreversible; the rest\n`unknown`. A reversible row's before reader captures the values its\ninverse needs, and a load-time check refuses a missing inverse row or an\nuncaptured `fromBefore` key (the gateway fails at import).\n- **Proposals** (`incident_proposal`, derived by the pure\n`incident/proposals.ts`): roll back the correlated deploy via Argo CD,\nrepeat what was executed last time on the same service, acknowledge or\nclose the alert; each with evidence, blast radius, a printed confidence\n(acknowledge/close are not scored), the fixed \"no dry run\" line and the\nreversibility first. ECS and feature-flag reverts are listed\n`unavailable` with a reason.\n- **Lifecycle:** every transition is one conditional UPDATE; claim, 2 h\nTTL, supersession; a stale `executing`/`undoing` row is released; only\nan explicit listing revives a proposal.\n- **Commands:** `nimbus incident remediate <id> [--pick n|prp_…]` (lists\nwithout `--pick`), `nimbus incident undo <act_id>`, `nimbus incident\nadvisory on|off|status` (default off). The action is built only in\n`incident/remediation.ts` from the stored row; the gateway re-derives,\nclaims, then runs it through `execute()` as an incident-linked action\nwith a gateway-set `engineProposal` (the prompt reads `Proposed by: the\nincident engine` plus the reversibility). The executor\n(`buildRemediationExecutor`, the third before-state carrier, static\nD40(b)) has no delegation, no standing rules and a human-only consent\nchannel (`--yes`, scripts and old clients decline). Advisory mode\nrefuses before any read, claim or prompt. The five RPCs are owner-kind\nonly, off the LAN and not renderer-callable.\n- The prior-incident lane counts executed actions (engine version 2);\n`audit replay` lists proposals; the Argo CD sync indexes\n`status.history`; `[ci.service.X] argocd_apps` is a new key.\n- Static D46(c) confines the `engineProposal` key, the two proposal\ntables, `buildRemediationAction` and `buildRemediationExecutor` to their\nowners.\n\n## Counts\nSchema V102 (`incident_proposal`, `incident_engine_state`), chained\nafter #2040's V101 (the no-op placeholder this branch carried was\nreplaced by the real step on merge). HITL types unchanged (185 on main),\nno egress class, `ALLOWED_METHODS` unchanged (5 new gateway methods,\nnone renderer-callable). Write rows unchanged (125).\n\n## Verification\nRed-proofs: capture validation, the atomic claim, advisory ordering, the\nbuilt action's `engineProposal`, the delegation fallback, the\nengine-proposal shape check, revival only by listing, the reversibility\nload checks (missing capture key, missing inverse tool), D46(c).\n`preflight:fast`, `typecheck:tests`, `biome ci` pass; gateway incident,\nengine, connectors, ipc, audit, agents, config, index, platform,\noncall-push, metrics, automation, standing,\n`security-invariants.test.ts`, test/unit, the CLI and structure-audit\nsuites pass. Not run locally: the Rust assertions added to\n`gateway_bridge.rs`, the integration and e2e trees, and the coverage\ngates (CI is their first run). Antigravity: plan APPROVE (round 3), code\nAPPROVE (round 2).\n\n## Stated bounds\n\"Reversible\" means the declared inverse can be run, not that the world\nis as before: Argo CD refuses a rollback while auto-sync is on, a\nFlagsmith call that also set a value cannot be undone, and the ECS undo\nrestores the task definition, not the desired count. Derivation is\nindex-only; Argo history is what Argo kept (at most 20 entries stored),\nand the history id is proved against live history only by the row's own\nguard at the prompt. Confidence is a fixed-weight score, not a\nprobability. `answerSource` is client-reported. Approve-from-push is\nIC5b.\n\n## Docs\n`docs/architecture.md`, `docs/SECURITY-INVARIANTS.md` (I57 (b), D46(c)),\n`docs/schema-reference.md`, `docs/cli-reference.md`, the roadmap,\nskills, and the I57 bullet in CLAUDE.md/GEMINI.md (identical) plus the\n`schema V102` status spots `audit:status-drift` checks. The rest of the\nstatus paragraph, the CHANGELOG top and README are batched into the\nbatch docs PR (owner-approved exception).\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-17T20:46:27Z",
+          "tree_id": "3802a0c8fe2294457cd4cae5b310eeea5fa4f1b3",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/a1f504dc6fd217e691b7fab4d3554eba5158ca14"
+        },
+        "date": 1794949042861,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 256.3394998000025,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 254.27438244999865,
             "unit": "ms"
           }
         ]
