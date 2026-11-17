@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794944943327,
+  "lastUpdate": 1794948088392,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
-            "name": "nimbus-release-bot[bot]",
-            "username": "nimbus-release-bot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "508fb03579509fbf4a42e66440c2563dd2c085ac",
-          "message": "chore: release main (#1408)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>7.2.0</summary>\n\n##\n[7.2.0](https://github.com/nimbus-agent/Nimbus/compare/v7.1.2...v7.2.0)\n(2026-08-30)\n\n\n### Features\n\n* **doctor:** report embedding runtime state\n([#1397](https://github.com/nimbus-agent/Nimbus/issues/1397))\n([9b3ed09](https://github.com/nimbus-agent/Nimbus/commit/9b3ed09d5e2f5677d812715234d8821b5de9eda2))\n* **egress:** ledger every outbound ChatOps post\n([#1403](https://github.com/nimbus-agent/Nimbus/issues/1403))\n([fcef76f](https://github.com/nimbus-agent/Nimbus/commit/fcef76f46e0e6a07f6028e91fb3ba2e6d6c1953e))\n\n\n### Bug Fixes\n\n* **embedding:** embed the onnx addon so the compiled binary can load it\n([#1402](https://github.com/nimbus-agent/Nimbus/issues/1402))\n([7ca8379](https://github.com/nimbus-agent/Nimbus/commit/7ca83798c1c2d40e91ab6839e5c94cf54646a88d))\n* **embedding:** embed the onnxruntime runtime library, not just the\naddon ([#1405](https://github.com/nimbus-agent/Nimbus/issues/1405))\n([7d38e79](https://github.com/nimbus-agent/Nimbus/commit/7d38e79f5bdcf68b9a58763cc7267ab34f1843b5))\n* **embedding:** ship the onnx binding and stub sharp so the worker can\nstart ([#1399](https://github.com/nimbus-agent/Nimbus/issues/1399))\n([2356e6a](https://github.com/nimbus-agent/Nimbus/commit/2356e6a7e4d25aab4baf954ce8a2e1d17df604f6))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
-          "timestamp": "2026-08-30T10:37:29+03:00",
-          "tree_id": "b15d32142ed1e7a1ae51b7333026fe81f9f62ad3",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/508fb03579509fbf4a42e66440c2563dd2c085ac"
-        },
-        "date": 1788076185045,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 313.4091671500013,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 312.347693049999,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 175.95207910000244,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
+            "name": "nimbus-release-bot[bot]",
+            "username": "nimbus-release-bot[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "63e97271a51686d80438c8aca87b361f47adf6e9",
+          "message": "chore: release main (#2049)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>11.2.0</summary>\n\n##\n[11.2.0](https://github.com/nimbus-agent/Nimbus/compare/v11.1.1...v11.2.0)\n(2026-11-17)\n\n\n### Features\n\n* **gateway:** add nimbus incident debt, symbols that incidents keep\npointing at and nobody has touched (incident engine IC7b)\n([#2045](https://github.com/nimbus-agent/Nimbus/issues/2045))\n([0269ea1](https://github.com/nimbus-agent/Nimbus/commit/0269ea1aebfeda198d806b9fd9616e7a30464b04))\n* **gateway:** signed workflow import and export, the owner approves the\nexact steps (I59, D50, V101)\n([#2040](https://github.com/nimbus-agent/Nimbus/issues/2040))\n([02eb872](https://github.com/nimbus-agent/Nimbus/commit/02eb87255ce4ecd83eaa1da44719753e41e3abea))\n* **ui:** a read-only Incidents page lists incident records, shows a\nrecord with its cascade and its timeline (IC10a)\n([#2042](https://github.com/nimbus-agent/Nimbus/issues/2042))\n([362a147](https://github.com/nimbus-agent/Nimbus/commit/362a147f02b95f1d4f40cb52e243ff0b61ef5e49))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
+          "timestamp": "2026-11-17T22:32:56+02:00",
+          "tree_id": "699cc98fae253b61570afe4bcc3fcad1a2d7ca60",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/63e97271a51686d80438c8aca87b361f47adf6e9"
+        },
+        "date": 1794948084413,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 191.09272374999782,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 191.79186669999945,
             "unit": "ms"
           }
         ]
