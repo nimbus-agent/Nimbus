@@ -227,7 +227,10 @@ export async function scanDebt(
     }
   }
   if (notLocal.size > 0) {
-    const names = [...notLocal].sort().slice(0, REPOS_NAMED).join(", ");
+    const names = [...notLocal]
+      .sort((a, b) => Number(a > b) - Number(a < b))
+      .slice(0, REPOS_NAMED)
+      .join(", ");
     gaps.push(
       gap(
         "repo_not_local",
