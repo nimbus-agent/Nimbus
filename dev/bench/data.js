@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794942272515,
+  "lastUpdate": 1794944111007,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "7d38e79f5bdcf68b9a58763cc7267ab34f1843b5",
-          "message": "fix(embedding): embed the onnxruntime runtime library, not just the addon (#1405)\n\nCloses the rest of #1396. **#1402 was incomplete, and my verification of\nit was a false positive.** The second point matters more than the first.\n\n## Why #1402 looked fine\n\n`C:\\WINDOWS\\system32\\onnxruntime.dll` exists on my machine. Windows' DLL\nsearch includes System32, so the extracted addon found its dependency\n**there** — nothing to do with the fix.\n\nEvery `Embeddings: ready` I reported on Windows was\nenvironment-dependent, **including the run I made from a directory\nisolated from the repo and treated as a clean-room check**. It was not\nclean: System32 is global.\n\nA bare Linux container failed immediately:\n\n```\nlibonnxruntime.so.1.14.0: cannot open shared object file: No such file or directory\n```\n\n## What was missing\n\nEvery platform ships a large runtime library beside the addon:\n\n| Platform | addon | runtime library |\n| --- | --- | --- |\n| linux/x64 | 278 KB | `libonnxruntime.so.1.14.0` — 16 MB |\n| win32/x64 | 215 KB | `onnxruntime.dll` — 8.9 MB, +\n`onnxruntime_providers_shared.dll` |\n| darwin | — | `libonnxruntime.1.14.0.dylib` |\n\n`readelf` shows the addon declares `NEEDED libonnxruntime.so.1.14.0`\nwith **`RPATH: [$ORIGIN/]`** — it looks in its own directory. So the\nwhole directory is embedded and extracted together.\n\nFiles keep their **original names**, because `$ORIGIN` resolution\nmatches on soname; the **directory** carries the content hash instead.\nStaleness protection without renaming a file whose name is load-bearing.\nPer-file hash verification, `lstat` and the O_EXCL write from #1402 are\npreserved and now applied to every payload file.\n\n**Cost:** the worker bundle grows to 14.3 MB on win32, more on linux.\nThat is the price of the native backend, stated here rather than\ndiscovered at release.\n\n## The real fix is the harness\n\n`scripts/verify-onnx-cleanroom.sh` builds a standalone probe in one\ncontainer and runs it in a **bare** image — no repo, no `node_modules`,\nno bun, no system onnxruntime. The only thing mounted is the binary\nunder test.\n\nIt **refuses to report a pass** unless it first proves the image is\nclean (`system-onnx-libs=0`), so a green result cannot come from a\nmasked environment the way the last two did.\n\n```\n[cleanroom] running in a bare image with NOTHING of ours mounted...\n  system-onnx-libs=0\n  ONNX_OK exports,InferenceSession\n[cleanroom] PASS — addon and its runtime library load with nothing preinstalled.\n```\n\n**Mutation-tested, not assumed:** reverting the payload to addon-only —\nexactly what #1402 shipped — makes it exit 1 with the dlopen error. It\nalso *prints* that error, because an earlier draft died under `set -e`\nbefore saying why, and a harness that fails silently is precisely what\nit exists to prevent.\n\nThis is the piece I should have built first. Two fixes for this bug were\nverified in environments that could not fail; this one cannot be\nverified that way.\n\n## Suggested follow-up\n\nWire the harness into CI so this cannot regress silently. It is also the\nnatural automated counterpart to the Gate 1 \"foreign machine\" runbook.\n\n1626 script tests pass; `preflight:fast` 32/32.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01J6qbQmiRqJcxDc6ENA8LFc",
-          "timestamp": "2026-08-30T08:46:07+03:00",
-          "tree_id": "3bf58698e52f4367ead1c5b3054af62905c42990",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/7d38e79f5bdcf68b9a58763cc7267ab34f1843b5"
-        },
-        "date": 1788069525943,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 340.11578670000017,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 338.5761175000036,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 207.3120697999995,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "02eb87255ce4ecd83eaa1da44719753e41e3abea",
+          "message": "feat(gateway): signed workflow import and export, the owner approves the exact steps (I59, D50, V101) (#2040)\n\nTeam-owned workflow pipelines, Reading A (owner decision 2026-11-16;\nrulings OR-WFI-1 to OR-WFI-3). A teammate signs a saved workflow with\nthe share key; each member imports it, reads the exact steps at the\nprompt, and runs it locally with their own credentials and their own\nprompts. Remote execution and any federation path stay Phase 29 (Reading\nB).\n\n## What is new\n- `automation/workflow-bundle.ts` (pure): a signed bundle `{body, sig}`\nover `\"nimbus-workflow-bundle/v1\\n\" + canonicalJson(body)`; a strict\nenvelope (a `schedule`, `standingRule`, trigger, credential, policy or\nconnector key is refused by name); only deterministic `query` and\n`write` steps, already canonical (a `run` step is refused, OR-WFI-3);\ncaps (256 KiB file, 50 steps, 128 KiB of steps, 64 KiB of prompt);\nvalidated name, description, author and `issuedAt` (at most now + 24 h).\nExport refuses a credential-looking step, naming it.\n- `automation/workflow-import-prompt.ts`: the approval text is rendered\nfrom the stored structure, every bundle string (object keys included)\nthrough one injective escaper (source pin and a hostile-corpus test).\n- Migration **V101** `workflow_import` (`workflow-import-store.ts`): the\nper-(signer, name) replay floor and provenance; every read and write is\nversion-gated.\n- `importWorkflowBundle()`: owner kind, signature, an optional\n`--signer` pin, the replay floor (re-importing the exact recorded bundle\nis a restore; older, or equal time with different bytes, is stale), the\ncollision rule (`--replace`), the signer-change rule (`--replace` +\n`--accept-signer-change`), the owner's own `--schedule`, the prompt,\n`--dry-run`, the human-only approval, then ONE transaction that\nre-checks the target, its schedule and the floor and writes the workflow\nand its provenance together.\n- `workflow.export` / `workflow.import` (`ipc/workflow-import-rpc.ts`):\n`cli` and `ui` connections only (a `clientKind` or unknown param is\n-32602), in `FORBIDDEN_OVER_LAN` and the demo gate, not on the renderer\nallowlist. HITL type `workflow.import`: in the frozen set, owner-only\n(never a delegate), never proposable on the MCP act door (no write row\nnames it), and not stored as long prompt text in the audit row.\n`workflow list` shows `source` to `cli`/`ui` only; the standing-rule\ncreate prompt gains an `imported from` line.\n- CLI: `nimbus workflow export <name> --out <file> [--author] [--force]`\nand `nimbus workflow import <file> [--replace] [--accept-signer-change]\n[--signer] [--schedule --tz] [--dry-run]`; `--yes`/`-y` are refused\nbefore any call.\n- Signer trust is per import, by fingerprint (OR-WFI-1): no persistent\ntrusted-signer list. Imported workflows count toward approval learning,\nwhich only suggests (OR-WFI-2). An import creates no standing rule and\ninherits none, and a replace changes the content hash, so an existing\nrule stops firing.\n- Invariant **I59** and static rule **D50**. Shared pieces:\n`security/credential-text.ts`, `engine/owner-only-approval.ts`\n(`createOwnerOnlyAsk`; `createStandingOwnerAsk` is now its alias),\n`signBytesWithShareKey`. Builds on #2036 (the audit append returns its\nrow id).\n\n## Counts\nSchema V101; 186 HITL types; `ALLOWED_METHODS` unchanged (132). Since\nAD3b (#2035) the MCP act door proposes only write rows the owner\napproved for agents by name; no row names `workflow.import`, so it is\nnever proposable (pinned in the I59 tests). This PR also moves the three\nstatus surfaces `audit:status-drift` checks (CLAUDE.md and GEMINI.md\n\"schema V101\", docs/README.md \"I1–I59\"); the rest of the status text is\nbatched into this batch's final docs PR (owner-approved exception).\n\n## Deviations from the plan\n1. `when` guards are normalised by the parser, so the canonical fixpoint\nis checked in the parser's INPUT form; stored text equals signed text,\nand the printed hash is always `workflowStepsSha256(parse(stored))`.\n2. `getWorkflowByName` also selects `schedule` and `schedule_tz` at\nV89+.\n3. New `automation/workflow-write-info.ts` (wave and action type by tool\nid), so the D50(e) modules import nothing from `connectors/`.\n4. A test helper lives under `connectors/connector-writes/` because D20\nconfines tool ids there.\n5. The dispatcher calls `isWorkflowImportMethod`, so D50(b)'s literal\nallow-list stays exact.\n\n## Verification\n26 red-proofs (signature, domain tag, canonical form, `run` step, body\n`schedule` key, human-only answer, frozen HITL set, delegate,\n`--replace`, signer change, `--signer` pin, replay floor, equal-time\nbytes, post-approval target and floor re-checks, replace drops the old\nhash, RPC and core kind checks, LAN, demo gate, act door, escaper, LF\nwrapper, object keys, `workflow list` source, the store version gate;\nD50 clauses each have a synthetic violation). `preflight:fast` passes;\nthe automation, ipc, standing, share, security, index, engine and\nconnectors suites, `security-invariants.test.ts`, the CLI and\nstructure-audit: 26,438 pass, 0 fail.\n\n## Stated bounds\nThe signature proves a key, not a person; there is no trusted-signer\nlist and no revocation. The replay floor is local and `issuedAt` is the\nexporter's clock. The share key signs both shares and bundles\n(domain-separated). Credential detection on export is a heuristic. D50\nis a text scan; the I59 tests are authoritative.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Added workflow export and import for signed bundles containing\nsupported query and write steps.\n* Imports show the exact steps and any requested schedule for local\nhuman approval. Signer checks and replay protection help prevent\nunauthorized or outdated imports.\n* Added dry-run previews and workflow-list details showing import source\nand whether imported steps have changed.\n* **Documentation**\n* Updated command help, CLI reference, architecture, and security\ndocumentation for workflow sharing and its safeguards.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-17T19:23:51Z",
+          "tree_id": "0ff44ad6651451a6dc71941abab3c8ca564e1f05",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/02eb87255ce4ecd83eaa1da44719753e41e3abea"
+        },
+        "date": 1794944105493,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 252.81110615000324,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 256.7570461000003,
             "unit": "ms"
           }
         ]
