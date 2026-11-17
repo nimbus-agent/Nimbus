@@ -268,7 +268,9 @@ function cascadeReasonText(m: CascadeMember): string {
     case "time_only":
       return m.role === "root"
         ? "ranked by open time (no declared dependency decides it)"
-        : `no declared path to the root; opened ${String(r.minutesAfterRoot)} min after it`;
+        : r.minutesAfterRoot < 0
+          ? `no declared path to the root; opened ${String(-r.minutesAfterRoot)} min before it`
+          : `no declared path to the root; opened ${String(r.minutesAfterRoot)} min after it`;
   }
 }
 
@@ -292,6 +294,8 @@ export function renderCascadeSection(
   group: CascadeGroup,
   thisRecordId: string,
   info: ReadonlyMap<string, CascadeInfo>,
+  /** True when more records are open than the ranking reads: the group and its root may be incomplete. */
+  truncated = false,
 ): string {
   const me = group.members.find((m) => m.recordId === thisRecordId);
   const root = group.members.find((m) => m.role === "root");
@@ -310,6 +314,11 @@ export function renderCascadeSection(
     ...(group.reachCapped
       ? [
           "- The dependency graph was too large to search completely; some relations were treated as absent.",
+        ]
+      : []),
+    ...(truncated
+      ? [
+          "- More than 500 records are open; the oldest were left out of this ranking, so this group and its root may be incomplete.",
         ]
       : []),
     ...group.members.map((m) => cascadeMemberLine(m, info)),

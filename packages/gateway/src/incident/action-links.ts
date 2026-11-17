@@ -26,13 +26,14 @@ const PREFIX_LEN = 40;
 
 const STR = String.raw`(?:[^"\\]|\\.)*`;
 const LINK_HEAD = String.raw`^\{"incident":\{"id":"(inc_[0-9a-f]{16})","version":(\d{1,7})\}`;
+const STEP_PART = `(?:,"step":"([0-9a-f]{16})")?`;
 const SUBSTEP_PART = `(,"subStep":true)?`;
 const PROMPT_PART = `(?:,"promptSha256":"([0-9a-f]{64})","prompt":"(${STR})")?`;
 const CUT_PART = `(,"promptCut":true)?`;
-const ROW_RE = new RegExp(`${LINK_HEAD}${SUBSTEP_PART}${PROMPT_PART}${CUT_PART}`);
+const ROW_RE = new RegExp(`${LINK_HEAD}${STEP_PART}${SUBSTEP_PART}${PROMPT_PART}${CUT_PART}`);
 /** A prompt string that was itself cut by the row cap (no closing quote). */
 const OPEN_PROMPT_RE = new RegExp(
-  `${LINK_HEAD}${SUBSTEP_PART},"promptSha256":"([0-9a-f]{64})","prompt":"(${STR})$`,
+  `${LINK_HEAD}${STEP_PART}${SUBSTEP_PART},"promptSha256":"([0-9a-f]{64})","prompt":"(${STR})$`,
 );
 
 const TRUNCATED_MARK = "…[truncated]";
@@ -40,6 +41,8 @@ const TRUNCATED_MARK = "…[truncated]";
 export type ParsedLink = {
   readonly id: string;
   readonly version: number;
+  /** The run identity the executor gave the action and its reads; undefined on a row written without one. */
+  readonly step: string | undefined;
   /** The row is a before-state read or a prepare read the executor ran FOR a linked action. */
   readonly subStep: boolean;
   readonly prompt:
@@ -69,31 +72,34 @@ function decodeJsonString(body: string): string | undefined {
 export function parseLinkPrefix(actionJson: string): ParsedLink | undefined {
   const m = ROW_RE.exec(actionJson);
   // A prompt string the row cap cut has no closing quote, so the optional prompt group did not match.
-  if (m === null || (m[4] === undefined && actionJson.startsWith(',"promptSha256"', m[0].length))) {
+  if (m === null || (m[5] === undefined && actionJson.startsWith(',"promptSha256"', m[0].length))) {
     const open = OPEN_PROMPT_RE.exec(actionJson);
     if (open === null) return undefined;
     const version = Number(open[2]);
     if (!Number.isInteger(version) || version < 1 || version > 1_000_000) return undefined;
-    const body = (open[5] ?? "").replace(TRUNCATED_MARK, "");
+    const body = (open[6] ?? "").replace(TRUNCATED_MARK, "");
     return {
       id: open[1] ?? "",
       version,
-      subStep: open[3] !== undefined,
-      prompt: { sha256: open[4] ?? "", text: decodeJsonString(body) ?? "", cut: true },
+      step: open[3],
+      subStep: open[4] !== undefined,
+      prompt: { sha256: open[5] ?? "", text: decodeJsonString(body) ?? "", cut: true },
     };
   }
   const id = m[1] ?? "";
   const version = Number(m[2]);
   if (!INCIDENT_LINK_ID_RE.test(id) || !Number.isInteger(version)) return undefined;
   if (version < 1 || version > 1_000_000) return undefined;
-  const subStep = m[3] !== undefined;
-  if (m[4] === undefined) return { id, version, subStep, prompt: undefined };
-  const text = decodeJsonString(m[5] ?? "");
+  const step = m[3];
+  const subStep = m[4] !== undefined;
+  if (m[5] === undefined) return { id, version, step, subStep, prompt: undefined };
+  const text = decodeJsonString(m[6] ?? "");
   return {
     id,
     version,
+    step,
     subStep,
-    prompt: { sha256: m[4], text: text ?? "", cut: m[6] !== undefined || text === undefined },
+    prompt: { sha256: m[5], text: text ?? "", cut: m[7] !== undefined || text === undefined },
   };
 }
 
@@ -106,6 +112,8 @@ export type LinkedActionRow = {
   readonly timestamp: number;
   readonly rowHash: string;
   readonly link: { readonly id: string; readonly version: number };
+  /** The run identity shared by an action's gate row and its reads (see `ParsedLink.step`). */
+  readonly step: string | undefined;
   readonly prompt: ParsedLink["prompt"];
   /** True when the audit row cap cut the row, so `answerSource` and `confirm` may be unknown. */
   readonly rowTruncated: boolean;
@@ -180,6 +188,7 @@ export function readLinkedActions(db: Database, recordId: string): LinkedActions
       timestamp: r.timestamp,
       rowHash: r.row_hash,
       link: { id: parsed.id, version: parsed.version },
+      step: parsed.step,
       prompt: parsed.prompt,
       rowTruncated,
       answerSource: tail.answerSource,
@@ -209,21 +218,36 @@ export type ActionStep = {
 
 /**
  * Group rows into steps. A before-state read and a prepare read are recorded BEFORE the action's own gate row
- * (the gate records after its phases), so a run of sub-step rows attaches to the gate row that follows it. A
- * sub-step row with no gate row after it (the gate threw before its row) is returned alone, as its own step with
- * `gate` set to that row.
+ * (the gate records after its phases). A row carries the `step` identity of the action it ran for, so a read
+ * attaches to the gate row with the SAME `step`, whatever other action's rows lie between them (two linked
+ * actions can be in flight together). A row with no `step` (written without the identity) falls back to
+ * attaching to the next gate row in id order. A sub-step row whose gate row never arrives (the gate threw before
+ * its row, or the scan cap cut it) is returned alone, as its own step with `gate` set to that row.
  */
 export function groupSteps(rows: readonly LinkedActionRow[]): ActionStep[] {
+  const byStep = new Map<string, LinkedActionRow[]>();
+  for (const r of rows) {
+    if (r.role !== "sub_step" || r.step === undefined) continue;
+    const list = byStep.get(r.step) ?? [];
+    list.push(r);
+    byStep.set(r.step, list);
+  }
+  const claimed = new Set<LinkedActionRow>();
   const steps: { gate: LinkedActionRow; subSteps: LinkedActionRow[] }[] = [];
   let pending: LinkedActionRow[] = [];
   for (const r of rows) {
     if (r.role === "sub_step") {
-      pending.push(r);
+      if (r.step === undefined) pending.push(r);
       continue;
     }
-    steps.push({ gate: r, subSteps: pending });
+    const own = r.step === undefined ? [] : (byStep.get(r.step) ?? []);
+    for (const s of own) claimed.add(s);
+    steps.push({ gate: r, subSteps: [...pending, ...own].sort((a, b) => a.auditId - b.auditId) });
     pending = [];
   }
-  for (const r of pending) steps.push({ gate: r, subSteps: [] });
+  const orphans = rows.filter(
+    (r) => r.role === "sub_step" && (r.step === undefined ? pending.includes(r) : !claimed.has(r)),
+  );
+  for (const r of orphans) steps.push({ gate: r, subSteps: [] });
   return steps;
 }

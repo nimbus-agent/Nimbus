@@ -237,7 +237,8 @@ function cascadeOf(ctx: IncidentRpcCtx, recordId: string): unknown {
       role: me?.role ?? "downstream",
       rootRecordId: group.root,
       group: groupOut(group, view.info),
-      markdown: renderCascadeSection(group, recordId, view.info),
+      truncated: view.truncated,
+      markdown: renderCascadeSection(group, recordId, view.info, view.truncated),
     };
   } catch {
     return { status: "unavailable" };

@@ -47,6 +47,7 @@ describe("5.1 the anchored, truncation-safe parser", () => {
     expect(parseLinkPrefix(row())).toEqual({
       id: ID,
       version: 2,
+      step: undefined,
       subStep: false,
       prompt: undefined,
     });
@@ -164,6 +165,57 @@ describe("5.3 event mapping and steps", () => {
     });
     // a marker spelled later in the row (inside the action) is no marker
     expect(parseLinkPrefix(`${head()},"action":{"subStep":true}}`)?.subStep).toBe(false);
+  });
+
+  test("the step identity parses right after the link, with and without a sub-step marker and a prompt, and cut", () => {
+    const S1 = "0123456789abcdef";
+    const stepRow = (extra: string): string => `${head()},"step":"${S1}"${extra},"action":{}}`;
+    expect(parseLinkPrefix(stepRow(""))).toMatchObject({ step: S1, subStep: false });
+    expect(parseLinkPrefix(stepRow(',"subStep":true'))).toMatchObject({ step: S1, subStep: true });
+    const withPrompt = `${head()},"step":"${S1}","promptSha256":"${SHA}","prompt":"hi","action":{}}`;
+    expect(parseLinkPrefix(withPrompt)).toMatchObject({ step: S1, prompt: { text: "hi" } });
+    const open = `${head()},"step":"${S1}","subStep":true,"promptSha256":"${SHA}","prompt":"abc…[truncated]`;
+    expect(parseLinkPrefix(open)).toMatchObject({
+      step: S1,
+      subStep: true,
+      prompt: { sha256: SHA, cut: true },
+    });
+    // a malformed step is no step: the row then has no well-formed prefix at all
+    expect(parseLinkPrefix(`${head()},"step":"XYZ","action":{}}`)?.step).toBeUndefined();
+  });
+
+  test("reads attach to the action that owns them by step, not to the next gate row (two actions in flight)", () => {
+    const d = db();
+    const A = "aaaaaaaaaaaaaaaa";
+    const B = "bbbbbbbbbbbbbbbb";
+    const r = (step: string, sub: boolean): string =>
+      `${head()},"step":"${step}"${sub ? ',"subStep":true' : ""},"action":{}}`;
+    // order of writing: A read, B read, B gate, A gate
+    insert(d, r(A, true), "jira.before.read", "not_required");
+    insert(d, r(B, true), "github.before.read", "not_required");
+    insert(d, r(B, false), "github.issue.update");
+    insert(d, r(A, false), "jira.issue.update");
+    const steps = groupSteps(readLinkedActions(d, ID).rows);
+    expect(steps.map((s) => s.gate.actionType)).toEqual([
+      "github.issue.update",
+      "jira.issue.update",
+    ]);
+    expect(steps[0]?.subSteps.map((s) => s.actionType)).toEqual(["github.before.read"]);
+    expect(steps[1]?.subSteps.map((s) => s.actionType)).toEqual(["jira.before.read"]);
+  });
+
+  test("a read whose gate row never arrives is returned alone, a keyed one and an unkeyed one alike", () => {
+    const d = db();
+    insert(
+      d,
+      `${head()},"step":"cccccccccccccccc","subStep":true,"action":{}}`,
+      "x.before.read",
+      "not_required",
+    );
+    insert(d, row(ID, ',"subStep":true'), "y.before.read", "not_required");
+    const steps = groupSteps(readLinkedActions(d, ID).rows);
+    expect(steps.map((s) => s.gate.actionType)).toEqual(["x.before.read", "y.before.read"]);
+    expect(steps.every((s) => s.gate.role === "sub_step" && s.subSteps.length === 0)).toBe(true);
   });
 
   test("a row cut by the row cap has no answer source (it is not JSON)", () => {

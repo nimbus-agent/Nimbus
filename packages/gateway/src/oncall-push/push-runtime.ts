@@ -14,7 +14,7 @@ import {
   loadNimbusOncallPushFromConfigDir,
   type NimbusOncallPushToml,
 } from "../config/oncall-push-toml.ts";
-import { loadServiceConfigsOrEmpty } from "../config/service-configs.ts";
+import { loadDependsOnMap, loadServiceConfigsOrEmpty } from "../config/service-configs.ts";
 import { emitGatewayEvent } from "../ipc/gateway-events.ts";
 import { createLiveEnabled } from "./push-live-enabled.ts";
 import {
@@ -192,13 +192,8 @@ export function assembleOncallPushRuntime(deps: OncallPushBootDeps): OncallPushR
         (c) => c.serviceId === serviceId,
       ),
     // Read fresh on every use, like `serviceConfig`: an edit of `depends_on` applies to the next brief.
-    dependsOn: () =>
-      new Map(
-        loadServiceConfigsOrEmpty(deps.configDir, (m) => deps.logger.warn?.({}, m)).map((c) => [
-          c.serviceId,
-          c.dependsOn,
-        ]),
-      ),
+    // A malformed block THROWS here (not an empty map): the push then says the ranking is unavailable.
+    dependsOn: () => loadDependsOnMap(deps.configDir),
     resolveSelf,
     deliver: createPushDeliverer({
       store,

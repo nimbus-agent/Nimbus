@@ -290,7 +290,11 @@ function compareEvents(a: TimelineEvent, b: TimelineEvent): number {
   const rank = RANK[a.kind] - RANK[b.kind];
   if (rank !== 0) return rank;
   const byItem = codeUnitCompare(a.itemId ?? "", b.itemId ?? "");
-  return byItem !== 0 ? byItem : codeUnitCompare(a.text, b.text);
+  if (byItem !== 0) return byItem;
+  const byText = codeUnitCompare(a.text, b.text);
+  if (byText !== 0) return byText;
+  // Same time, kind, item and text: the clock basis decides, so the order never follows the input order.
+  return codeUnitCompare(a.atBasis, b.atBasis);
 }
 
 function notesOf(input: TimelineInput): string[] {

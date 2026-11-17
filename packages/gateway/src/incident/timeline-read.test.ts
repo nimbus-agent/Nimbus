@@ -98,6 +98,42 @@ describe("6.6 / 6.7 readTimeline", () => {
     expect(v2.timeline.events.map((e) => e.kind)).toContain("action_approved");
   });
 
+  test("asking for the CURRENT version applies the same assembly-time cutoff as an older one", async () => {
+    const { d, recordId, item } = await seeded();
+    const current = d.query("SELECT version, assembled_at_ms FROM incident_record").get() as {
+      version: number;
+      assembled_at_ms: number;
+    };
+    // history observed AFTER the current version was assembled
+    d.run(
+      "INSERT INTO item_history (item_id, service, type, key, old_value, new_value, observed_at_ms) VALUES (?, 'pagerduty', 'incident', 'urgency', 'low', 'later-state', ?)",
+      [item, current.assembled_at_ms + 1_000],
+    );
+    const text = (r: ReturnType<typeof readTimeline>): string =>
+      r.timeline.events.map((e) => e.text).join("\n");
+    expect(text(readTimeline(d, recordId, current.version))).not.toContain("later-state");
+    // with no version the unrestricted read still shows it
+    expect(text(readTimeline(d, recordId))).toContain("later-state");
+  });
+
+  test("a read with no gate row after it is no approval: the timeline leaves it out", async () => {
+    const { d, recordId } = await seeded();
+    d.run(
+      "INSERT INTO audit_log (action_type, hitl_status, action_json, timestamp, row_hash, prev_hash) VALUES (?,?,?,?,?,?)",
+      [
+        "jira.before.read",
+        "not_required",
+        `${link(recordId, 1)},"step":"0123456789abcdef","subStep":true,"action":{"type":"jira.before.read"}}`,
+        NOW + 1,
+        "h",
+        "p",
+      ],
+    );
+    const kinds = readTimeline(d, recordId).timeline.events.map((e) => e.kind);
+    expect(kinds).not.toContain("action_approved");
+    expect(kinds).not.toContain("action_denied");
+  });
+
   test("an unknown record or a pruned or unknown version is a typed error", async () => {
     const { d, recordId } = await seeded();
     expect(() => readTimeline(d, "inc_ffffffffffffffff")).toThrow(/no incident record/);

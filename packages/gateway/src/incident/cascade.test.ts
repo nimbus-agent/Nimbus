@@ -122,6 +122,37 @@ describe("7.2 root by declared dependency", () => {
     });
   });
 
+  test("the fallback label says shared deployment comes before open time", () => {
+    const g = only(
+      rankCascades(
+        [rec("x", "a", T), rec("y", "b", T + MIN, "deployment:d")],
+        deps({ a: [], b: [] }),
+      ),
+    );
+    expect(g.relationLabel).toBe(
+      "no depends_on is declared among these services; ranked by shared deployment, then open time",
+    );
+  });
+
+  test("a member that opened BEFORE the root keeps a negative offset (never clamped to 0)", () => {
+    // A opens first with no deployment; B and C share one, so B is the root although A is earlier
+    const g = only(
+      rankCascades(
+        [
+          rec("a", "sa", T),
+          rec("b", "sb", T + 5 * MIN, "deployment:d"),
+          rec("c", "sc", T + 6 * MIN, "deployment:d"),
+        ],
+        deps({ sa: [], sb: [], sc: [] }),
+      ),
+    );
+    expect(g.root).toBe("b");
+    expect(g.members.find((m) => m.recordId === "a")?.reason).toEqual({
+      kind: "time_only",
+      minutesAfterRoot: -5,
+    });
+  });
+
   test("a depends_on target that is not configured is ignored", () => {
     const dangling = deps({ web: ["ghost"], api: [] });
     const g = only(rankCascades([rec("w", "web", T), rec("a", "api", T + MIN)], dangling));

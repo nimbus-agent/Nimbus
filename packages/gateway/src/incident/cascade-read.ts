@@ -13,6 +13,12 @@ export type CascadeInfo = {
 export type CascadeView = {
   readonly groups: readonly CascadeGroup[];
   readonly info: ReadonlyMap<string, CascadeInfo>;
+  /**
+   * True when more than {@link CASCADE_OPEN_CAP} records are open, so the OLDEST ones were left out: a group's
+   * membership and root can then be incomplete (a left-out upstream record leaves its dependents ranked under
+   * another root). A consumer that renders a group says so.
+   */
+  readonly truncated: boolean;
 };
 
 /**
@@ -45,6 +51,14 @@ type Row = {
 export type OpenCascadeRecord = CascadeRecord & { readonly title: string };
 
 export function readOpenCascadeRecords(db: Database): OpenCascadeRecord[] {
+  return readOpenCascadeSet(db).records;
+}
+
+/** The records {@link readOpenCascadeRecords} returns, and whether more were open than the cap read. */
+export function readOpenCascadeSet(db: Database): {
+  readonly records: OpenCascadeRecord[];
+  readonly truncated: boolean;
+} {
   try {
     const rows = db
       .query(
@@ -55,8 +69,8 @@ export function readOpenCascadeRecords(db: Database): OpenCascadeRecord[] {
           WHERE status = 'open' AND opened_at_ms IS NOT NULL
           ORDER BY opened_at_ms DESC, id ASC LIMIT ?`,
       )
-      .all(CASCADE_OPEN_CAP) as Row[];
-    return rows.map((r) => ({
+      .all(CASCADE_OPEN_CAP + 1) as Row[];
+    const records = rows.slice(0, CASCADE_OPEN_CAP).map((r) => ({
       id: r.id,
       title: r.title,
       service: r.service,
@@ -64,6 +78,7 @@ export function readOpenCascadeRecords(db: Database): OpenCascadeRecord[] {
       openedAtMs: r.opened_at_ms,
       deploymentId: typeof r.deployment_id === "string" ? r.deployment_id : null,
     }));
+    return { records, truncated: rows.length > CASCADE_OPEN_CAP };
   } catch (e) {
     throw new CascadeReadError(e);
   }
@@ -71,8 +86,9 @@ export function readOpenCascadeRecords(db: Database): OpenCascadeRecord[] {
 
 /** The cascade groups of the open records, from the index and the declared `depends_on` map, with what to say of each. */
 export function readCascade(db: Database, dependsOn: DependsOn): CascadeView {
-  const records = readOpenCascadeRecords(db);
+  const { records, truncated } = readOpenCascadeSet(db);
   return {
+    truncated,
     groups: rankCascades(records, dependsOn),
     info: new Map(
       records.map((r) => [

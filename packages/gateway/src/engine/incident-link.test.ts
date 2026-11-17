@@ -1,6 +1,11 @@
 import { describe, expect, test } from "bun:test";
 
-import { assertIncidentLink, isIncidentLink } from "./incident-link.ts";
+import {
+  assertIncidentLink,
+  isIncidentLink,
+  PROMPT_ROW_MAX_ESCAPED,
+  promptForRow,
+} from "./incident-link.ts";
 
 const ID = "inc_0123456789abcdef";
 
@@ -44,4 +49,23 @@ describe("incident link shape (IC4 2.1)", () => {
       expect(() => assertIncidentLink(value)).toThrow();
     });
   }
+});
+
+describe("promptForRow redacts BEFORE it cuts (review: a credential across the cut)", () => {
+  const secret = "ghp_abcdefghijklmnopqrstuvwxyz0123456789";
+
+  test("a credential that crosses the cut leaves no prefix of itself; the hash is over the whole shown text", () => {
+    // 1,590 ordinary characters, then the credential: the 1,600-character cut falls inside it
+    const shown = `${"x".repeat(PROMPT_ROW_MAX_ESCAPED - 13)} ${secret}`;
+    const p = promptForRow(shown);
+    expect(p.prompt).not.toContain("ghp_");
+    expect(p.prompt).not.toContain("ghp");
+    expect(p.prompt).toContain("[REDACTED]");
+    expect(p.promptSha256).toBe(new Bun.CryptoHasher("sha256").update(shown).digest("hex"));
+  });
+
+  test("a credential fully inside the cut is still redacted and an uncut text is untouched", () => {
+    expect(promptForRow(`a ${secret} b`).prompt).toBe("a [REDACTED] b");
+    expect(promptForRow("plain").promptCut).toBe(false);
+  });
 });

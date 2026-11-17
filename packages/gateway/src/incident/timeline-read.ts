@@ -49,8 +49,12 @@ export function readTimeline(db: Database, recordId: string, version?: number): 
   }
   let record: IncidentRecordV1;
   let asOfMs: number | null = null;
-  if (version === undefined || version === row.version) {
+  if (version === undefined) {
     record = parseRecord(row.record_json);
+  } else if (version === row.version) {
+    record = parseRecord(row.record_json);
+    // A requested version shows what was known when it was assembled, current or not.
+    asOfMs = row.assembled_at_ms;
   } else {
     const json = versionJson(db, recordId, version);
     const meta = versionsOf(db, recordId).find((v) => v.version === version);
@@ -87,15 +91,19 @@ export function readTimeline(db: Database, recordId: string, version?: number): 
   const linked = readLinkedActions(db, recordId);
   const actions: TimelineActionInput[] = groupSteps(
     linked.rows.filter((r) => r.link.version <= shown),
-  ).map((s) => ({
-    auditId: s.gate.auditId,
-    timestamp: s.gate.timestamp,
-    actionType: s.gate.actionType,
-    kind: eventKindOf(s.gate),
-    answerSource: s.gate.answerSource,
-    linkVersion: s.gate.link.version,
-    subSteps: s.subSteps.length,
-  }));
+  )
+    // A read with no gate row after it never reached its gate (the scan cap dropped the gate row, or the
+    // read threw): it is no approval, so the timeline leaves it out.
+    .filter((s) => s.gate.role === "gate")
+    .map((s) => ({
+      auditId: s.gate.auditId,
+      timestamp: s.gate.timestamp,
+      actionType: s.gate.actionType,
+      kind: eventKindOf(s.gate),
+      answerSource: s.gate.answerSource,
+      linkVersion: s.gate.link.version,
+      subSteps: s.subSteps.length,
+    }));
 
   return {
     recordId,

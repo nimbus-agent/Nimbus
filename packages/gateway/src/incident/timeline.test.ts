@@ -274,6 +274,25 @@ describe("6.3 the order is a function of the inputs", () => {
     }
   });
 
+  test("two history rows equal in time, kind, item and text but of different clock bases keep one order whatever the input order", () => {
+    const row = (sourceAtMs: number | null, observedAtMs: number) => ({
+      key: "severity",
+      oldValue: "p2",
+      newValue: "p1",
+      observedAtMs,
+      sourceAtMs,
+    });
+    const a = row(T, T + 1);
+    const b = row(null, T);
+    const fwd = buildTimeline(input({ history: [a, b] }));
+    const rev = buildTimeline(input({ history: [b, a] }));
+    expect(rev).toEqual(fwd);
+    const sameTime = fwd.events.filter(
+      (e) => e.kind === "state_change" && e.text.startsWith("severity: p2 -> p1") && e.atMs === T,
+    );
+    expect(sameTime.map((e) => e.atBasis)).toEqual(["observed", "source"]);
+  });
+
   test("events at one instant come out in kind rank, then item id", () => {
     const r = rich();
     const t = buildTimeline(

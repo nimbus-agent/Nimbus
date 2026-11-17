@@ -10,6 +10,7 @@
  * (static D46(e) confines it). This module imports `node:crypto` and one TYPE.
  */
 import { createHash } from "node:crypto";
+import { redactSensitiveValueString } from "../audit/format-audit-payload.ts";
 import type { PlannedAction } from "./types.ts";
 
 export type IncidentLink = {
@@ -82,15 +83,17 @@ export type PromptForRow = {
  * whole shown text and a prefix of it whose JSON-escaped length (quotes included) is at most
  * {@link PROMPT_ROW_MAX_ESCAPED}. The cap is on the ESCAPED length: one control character becomes up
  * to six, and the row's own 4,096-character cap must never reach the keys that come before the action.
- * The cut never splits a surrogate pair. The caller redacts the row (credential-shaped substrings become
- * `[REDACTED]`), so the stored text can differ from the shown text while the hash is of the shown text.
+ * The cut never splits a surrogate pair. The text is redacted (credential-shaped substrings become
+ * `[REDACTED]`) BEFORE the cut, so a credential that crosses the cut point cannot leave its first characters
+ * behind; the stored text can differ from the shown text while the hash is of the whole shown text.
  */
 export function promptForRow(shown: string): PromptForRow {
   const promptSha256 = createHash("sha256").update(shown, "utf8").digest("hex");
+  const text = redactSensitiveValueString(shown);
   let escaped = 2;
   let end = 0;
   let cut = false;
-  for (const ch of shown) {
+  for (const ch of text) {
     const cost = JSON.stringify(ch).length - 2;
     if (escaped + cost > PROMPT_ROW_MAX_ESCAPED) {
       cut = true;
@@ -99,7 +102,7 @@ export function promptForRow(shown: string): PromptForRow {
     escaped += cost;
     end += ch.length;
   }
-  return { promptSha256, prompt: shown.slice(0, end), promptCut: cut };
+  return { promptSha256, prompt: text.slice(0, end), promptCut: cut };
 }
 
 /**

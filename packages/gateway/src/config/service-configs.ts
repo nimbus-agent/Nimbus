@@ -22,3 +22,19 @@ export function loadServiceConfigsOrEmpty(
     return [];
   }
 }
+
+/**
+ * The declared `depends_on` map (service id to its dependencies), read fresh. Unlike
+ * {@link loadServiceConfigsOrEmpty} a malformed `[ci.service.*]` block THROWS: the cascade ranks open records
+ * from this map, and a map read as empty would rank them as if no dependency were declared. The cascade's
+ * callers catch the throw and say the ranking is unavailable.
+ */
+export function loadDependsOnMap(configDir: string | undefined): Map<string, readonly string[]> {
+  if (configDir === undefined) return new Map();
+  return new Map(
+    [...loadNimbusServiceConfigsFromConfigDir(configDir).values()].map((c) => [
+      c.serviceId,
+      c.dependsOn,
+    ]),
+  );
+}

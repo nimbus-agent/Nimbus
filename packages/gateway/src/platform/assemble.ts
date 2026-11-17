@@ -121,7 +121,7 @@ import {
 import { loadNimbusWorkdayFromConfigDir } from "../config/nimbus-toml-workday.ts";
 import { resolvePersona } from "../config/persona.ts";
 import { ProfileManager } from "../config/profiles.ts";
-import { loadServiceConfigsOrEmpty } from "../config/service-configs.ts";
+import { loadDependsOnMap, loadServiceConfigsOrEmpty } from "../config/service-configs.ts";
 import { loadNimbusSessionFromConfigDir } from "../config/session-toml.ts";
 import {
   loadNimbusWatcherChatopsFromConfigDir,
@@ -4952,13 +4952,8 @@ export async function assemblePlatformServices(
   ipcOpts.incidentRpcCtx = {
     db,
     engine: incidentEngine,
-    dependsOn: () =>
-      new Map(
-        loadServiceConfigsOrEmpty(paths.configDir, (m) => syncLogger.warn(m)).map((c) => [
-          c.serviceId,
-          c.dependsOn,
-        ]),
-      ),
+    // A malformed block THROWS (not an empty map): the cascade then reads as unavailable.
+    dependsOn: () => loadDependsOnMap(paths.configDir),
   };
   // pre-S3 item E: notifications.status / notifications.test (CLI-only; LAN-forbidden, not Tauri).
   ipcOpts.notificationsRpcCtx = { runtime: notificationsRuntime };

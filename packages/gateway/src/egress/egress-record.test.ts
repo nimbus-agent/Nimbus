@@ -249,6 +249,24 @@ describe("buildEgressEntry: the incident link (IC4 3.9)", () => {
     expect(e.payloadSummary).not.toContain("99");
   });
 
+  test("an UNLINKED action's payload incident key is dropped too, so no summary can spell the link prefix", () => {
+    const e = buildEgressEntry({
+      ...base,
+      action: {
+        type: "email.send",
+        payload: { incident: { id: "inc_0123456789abcdef", version: 2 }, to: "a@b.c" },
+      },
+    });
+    expect(e.payloadSummary.startsWith('{"incident"')).toBe(false);
+    expect(e.payloadSummary).not.toContain("inc_0123456789abcdef");
+    expect(e.payloadSummary).toContain('"to":"a@b.c"');
+    // a payload with no incident key is untouched
+    expect(
+      buildEgressEntry({ ...base, action: { type: "email.send", payload: { to: "x" } } })
+        .payloadSummary,
+    ).toBe('{"to":"x"}');
+  });
+
   test("an agent head and a link are both kept, link first, and a payload incident is dropped under any head", () => {
     const e = buildEgressEntry({
       ...base,

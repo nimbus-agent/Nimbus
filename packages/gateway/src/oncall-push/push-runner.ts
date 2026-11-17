@@ -149,7 +149,7 @@ function cascadePart(deps: OncallPushRunnerDeps, recordId: string): CascadePart 
     const me = group.members.find((m) => m.recordId === recordId);
     if (me === undefined) return { markdown: "", summary: null };
     return {
-      markdown: renderCascadeSection(group, recordId, view.info),
+      markdown: renderCascadeSection(group, recordId, view.info, view.truncated),
       summary: { role: me.role, rootRecordId: group.root },
     };
   } catch {

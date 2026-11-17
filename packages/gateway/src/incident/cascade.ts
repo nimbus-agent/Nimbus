@@ -45,6 +45,7 @@ export type CascadeReason =
   /** The root: how many other records of the cluster run on a service that depends on the root's. */
   | { readonly kind: "declared_dependency"; readonly dependents: number; readonly path?: never }
   | { readonly kind: "shared_deployment"; readonly deploymentId: string }
+  /** `minutesAfterRoot` is negative for a member that opened BEFORE the root. */
   | { readonly kind: "time_only"; readonly minutesAfterRoot: number };
 
 export type CascadeMember = {
@@ -64,7 +65,8 @@ export type CascadeGroup = {
 };
 
 const LABEL_DECLARED = "ranked by declared depends_on, then shared deployment, then open time";
-const LABEL_NONE = "no depends_on is declared among these services; ranked by open time";
+const LABEL_NONE =
+  "no depends_on is declared among these services; ranked by shared deployment, then open time";
 
 type Reach = { readonly path: readonly string[] | null; readonly capped: boolean };
 
@@ -175,9 +177,10 @@ function downstreamReason(m: CascadeRecord, root: CascadeRecord, rel: Relations)
   if (m.deploymentId !== null && m.deploymentId === root.deploymentId) {
     return { kind: "shared_deployment", deploymentId: m.deploymentId };
   }
+  // The sign is kept: the root can rank ahead of a member that opened EARLIER (a shared deployment, a dependent).
   return {
     kind: "time_only",
-    minutesAfterRoot: Math.max(0, Math.round((m.openedAtMs - root.openedAtMs) / 60_000)),
+    minutesAfterRoot: Math.round((m.openedAtMs - root.openedAtMs) / 60_000),
   };
 }
 

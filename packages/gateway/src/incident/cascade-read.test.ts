@@ -2,7 +2,12 @@ import type { Database } from "bun:sqlite";
 import { afterEach, describe, expect, test } from "bun:test";
 
 import { createMemoryIndexDb } from "../connectors/connector-sync-test-helpers.ts";
-import { CascadeReadError, readCascade, readOpenCascadeRecords } from "./cascade-read.ts";
+import {
+  CASCADE_OPEN_CAP,
+  CascadeReadError,
+  readCascade,
+  readOpenCascadeRecords,
+} from "./cascade-read.ts";
 
 const dbs: Database[] = [];
 afterEach(() => {
@@ -78,6 +83,25 @@ describe("7.8 readOpenCascadeRecords / readCascade over a real incident_record t
       source: "pagerduty",
       service: "api",
     });
+  });
+
+  test("more open records than the cap reads the newest cap and says the view is truncated", () => {
+    const d = db();
+    d.exec("BEGIN");
+    for (let i = 0; i < CASCADE_OPEN_CAP + 3; i += 1) {
+      insert(d, {
+        id: `inc_${i.toString(16).padStart(16, "0")}`,
+        service: "api",
+        openedAtMs: T + i * 1000,
+      });
+    }
+    d.exec("COMMIT");
+    const view = readCascade(d, new Map());
+    expect(view.truncated).toBe(true);
+    expect(view.info.size).toBe(CASCADE_OPEN_CAP);
+    // the OLDEST were left out
+    expect(view.info.has(`inc_${(0).toString(16).padStart(16, "0")}`)).toBe(false);
+    expect(readCascade(db(), new Map()).truncated).toBe(false);
   });
 
   test("a stored row whose JSON is not valid reads as no deployment (never throws); a failed SQL read is a typed error", () => {

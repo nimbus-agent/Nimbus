@@ -124,6 +124,10 @@ const linked = (
   incident: link,
 });
 
+/** A read row: the link, the owning action's step identity, then the sub-step marker and the action. */
+const SUB_STEP_HEAD = /^{"incident":{[^}]*},"step":"[0-9a-f]{16}","subStep":true,"action"/;
+const stepOf = (json: string): string | undefined => /"step":"([0-9a-f]{16})"/.exec(json)?.[1];
+
 const rowOf = (h: Harness, i = h.audits.length - 1): string => h.audits[i]?.actionJson ?? "";
 
 describe("2.4 a linked action is the owner's own (refused before any row)", () => {
@@ -364,7 +368,8 @@ describe("3.2 / 2.7 a sub-step carries the parent's link and no prompt keys", ()
     const reads = h.audits.filter((a) => a.actionType === "email.before.read");
     expect(reads.length).toBeGreaterThan(0);
     for (const r of reads) {
-      expect(r.actionJson.startsWith(`${PREFIX},"subStep":true,"action"`)).toBe(true);
+      expect(r.actionJson.startsWith(PREFIX)).toBe(true);
+      expect(r.actionJson).toMatch(SUB_STEP_HEAD);
       expect(r.actionJson).not.toContain("promptSha256");
     }
     const u = harness({ runner: readOnce });
@@ -387,7 +392,8 @@ describe("3.2 / 2.7 a sub-step carries the parent's link and no prompt keys", ()
     const prepare = h.audits.filter((a) => a.actionType.endsWith(".write.prepare"));
     expect(prepare.length).toBeGreaterThan(0);
     for (const p of prepare) {
-      expect(p.actionJson.startsWith(`${PREFIX},"subStep":true,"action"`)).toBe(true);
+      expect(p.actionJson.startsWith(PREFIX)).toBe(true);
+      expect(p.actionJson).toMatch(SUB_STEP_HEAD);
       expect(p.actionJson).not.toContain("promptSha256");
     }
     const write = h.audits.find((a) => a.actionType === "iac.terraform.apply");
@@ -399,6 +405,43 @@ describe("3.2 / 2.7 a sub-step carries the parent's link and no prompt keys", ()
     const ledger = h.egress.filter((e) => e.method.endsWith(".write.prepare"));
     expect(ledger.length).toBeGreaterThan(0);
     for (const e of ledger) expect(e.payloadSummary.startsWith('{"incident"')).toBe(true);
+  });
+});
+
+describe("3.2b every row of one linked action shares its step identity; two actions never do", () => {
+  const readOnce: BeforeStateRunner = {
+    rows: CONNECTOR_WRITE_ROWS,
+    read: async (_action, ops) => {
+      const read: PlannedAction = {
+        type: "email.before.read",
+        payload: { mcpToolId: "email_get" },
+      };
+      const g = await ops.gate(read);
+      if (g === "proceed") await ops.dispatch(read);
+      return undefined;
+    },
+  };
+  const create: PlannedAction = {
+    type: "jira.issue.create",
+    payload: { mcpToolId: "jira_issue_create", input: { projectKey: "ENG", summary: "s" } },
+  };
+
+  test("the read rows and the gate row carry one step; a second action gets another", async () => {
+    const h = harness({ runner: readOnce });
+    await h.exec.execute(linked(create));
+    const first = h.audits.map((a) => stepOf(a.actionJson));
+    expect(first.length).toBeGreaterThan(1);
+    expect(first[0]).toBeDefined();
+    expect(new Set(first).size).toBe(1);
+    await h.exec.execute(linked(create));
+    const all = h.audits.map((a) => stepOf(a.actionJson));
+    expect(new Set(all).size).toBe(2);
+  });
+
+  test("an UNLINKED action's rows carry no step", async () => {
+    const h = harness({ runner: readOnce });
+    await h.exec.execute(create);
+    for (const a of h.audits) expect(a.actionJson).not.toContain('"step"');
   });
 });
 
@@ -432,6 +475,30 @@ describe("3.7 the prompt the owner was shown is what the row hashes", () => {
     const h = harness({ approve: false });
     await h.exec.execute(linked(PLAIN));
     expect(parse(h)["promptSha256"]).toBe(sha(h.prompts[0] ?? ""));
+  });
+
+  test("a Wave 4 action on a channel that cannot take typed text records no prompt: nothing was shown", async () => {
+    const audits: string[] = [];
+    const consent: ConsentChannel = {
+      requestApproval: async () => ({ approved: true, answerSource: "human" as const }),
+    };
+    const exec = new ToolExecutor(
+      consent,
+      { recordAudit: (e) => audits.push(e.actionJson) },
+      { dispatch: async () => ({ ok: true }) },
+      undefined,
+      { append: () => {} },
+      NO_POLICY_OVERLAY,
+      undefined,
+      { userMcpWriteGrants: () => [] },
+    );
+    const r = await exec.execute(linked(MERGE));
+    expect(r.status).toBe("rejected");
+    const row = audits.at(-1) ?? "";
+    expect(row.startsWith(PREFIX)).toBe(true);
+    expect(row).toContain('"confirm":"unsupported_channel"');
+    expect(row).not.toContain("promptSha256");
+    expect(row).not.toContain('"prompt"');
   });
 
   test("an UNLINKED Wave 4 action: the channel gets the same bytes as before, and the row has no prompt keys", async () => {

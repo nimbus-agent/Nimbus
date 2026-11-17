@@ -305,6 +305,8 @@ function fakeVault(seed: Record<string, string> = {}): NimbusVault {
 }
 
 const SRC_ROOT = import.meta.dir;
+/** An `"incident.` literal that is not the argument of a NEGATED `!is_method_allowed(` pin. */
+const INCIDENT_LITERAL_OUTSIDE_NEGATION = /(?<!!\s*is_method_allowed\()"incident\./;
 const REPO_ROOT = resolve(SRC_ROOT, "..", "..", "..");
 
 async function read(relPathFromRepoRoot: string): Promise<string> {
@@ -917,7 +919,14 @@ describe("I5 — LAN method allowlist is intrinsic to LanServer", () => {
   test("I7: no incident.* method is renderer-callable at IC3, and the allowlist size is the one IC3 found (IC10 changes it deliberately)", async () => {
     const rust = await read("packages/ui/src-tauri/src/gateway_bridge.rs");
     // only a NEGATIVE pin (`!is_method_allowed("incident.timeline")`) may name an incident method
-    expect(rust).not.toMatch(/(?<!is_method_allowed\()"incident\./);
+    expect(rust).not.toMatch(INCIDENT_LITERAL_OUTSIDE_NEGATION);
+    // the exception is for the NEGATED call only: a positive call and a bare literal are caught
+    expect(
+      INCIDENT_LITERAL_OUTSIDE_NEGATION.test('assert!(is_method_allowed("incident.timeline"));'),
+    ).toBe(true);
+    expect(
+      INCIDENT_LITERAL_OUTSIDE_NEGATION.test('assert!(!is_method_allowed("incident.timeline"));'),
+    ).toBe(false);
     // IC3 adds no renderer-callable method. The slice that exposes incident.list and incident.get to the
     // desktop (IC10) must change this number in the same commit as its `ALLOWED_METHODS` entries.
     expect(rust).toMatch(/assert_eq!\s*\(\s*ALLOWED_METHODS\.len\(\),\s*132\s*\)/);

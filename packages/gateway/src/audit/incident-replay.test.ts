@@ -188,6 +188,20 @@ describe("10.4 egress pairing by order within (timestamp, method)", () => {
     expect(r.actions[0]?.egress).toMatchObject({ id: a.egressId, paired: "ambiguous" });
   });
 
+  test("an UNLINKED pair before the linked one in the same millisecond does not take the linked action's egress row", () => {
+    const first = write(50, "email.send", "approved", '{"action":{"type":"email.send"}}');
+    const a = write(50, "email.send", "approved", linkedJson(2), head(2));
+    const r = replayIncident(db, recordId, verify());
+    expect(first.egressId).toBeLessThan(a.egressId);
+    // the whole audit bucket (two rows) is aligned with the egress bucket (two rows): the linked row is second
+    expect(r.actions[0]?.egress).toMatchObject({
+      id: a.egressId,
+      paired: "paired",
+      summaryMismatch: false,
+    });
+    expect(r.ok).toBe(true);
+  });
+
   test("a tampered egress summary head is reported summary_mismatch; a flipped status statusDiffers", () => {
     const a = write(50, "email.send", "approved", linkedJson(2), head(2));
     db.run("UPDATE egress_ledger SET payload_summary = ? WHERE id = ?", [

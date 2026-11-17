@@ -104,7 +104,9 @@ describe("8.1 renderCascadeSection", () => {
     );
     const group = rankCascades(records, new Map())[0] as never;
     const md = renderCascadeSection(group, "inc_bbbbbbbbbbbbbbbb", info);
-    expect(md).toContain("no depends_on is declared among these services; ranked by open time");
+    expect(md).toContain(
+      "no depends_on is declared among these services; ranked by shared deployment, then open time",
+    );
     expect(md).toContain("no declared path to the root; opened 4 min after it");
     expect(md).toContain("ranked by open time (no declared dependency decides it)");
   });
@@ -144,5 +146,45 @@ describe("8.3 a hostile title renders inert", () => {
       expect(md.split("\n").filter((l) => l.startsWith("## "))).toEqual(["## Cascade"]);
       expect(md).not.toMatch(/(?<!\\)\]\(javascript:/);
     }
+  });
+});
+
+describe("8.3 an earlier member and a truncated read", () => {
+  const rec = (id: string, openedAtMs: number, deploymentId: string | null) => ({
+    id,
+    service: id,
+    source: "pagerduty",
+    openedAtMs,
+    deploymentId,
+  });
+  const infoOf = (rs: { id: string; service: string; source: string; openedAtMs: number }[]) =>
+    new Map<string, CascadeInfo>(
+      rs.map((r) => [
+        r.id,
+        { title: r.id, source: r.source, service: r.service, openedAtMs: r.openedAtMs },
+      ]),
+    );
+
+  test("a member that opened before the root reads before, never 0 min after", () => {
+    const rs = [
+      rec("inc_aaaaaaaaaaaaaaaa", T, null),
+      rec("inc_bbbbbbbbbbbbbbbb", T + 5 * MIN, "deployment:d"),
+      rec("inc_cccccccccccccccc", T + 6 * MIN, "deployment:d"),
+    ];
+    const group = rankCascades(rs, new Map())[0] as never;
+    const md = renderCascadeSection(group, "inc_aaaaaaaaaaaaaaaa", infoOf(rs));
+    expect(md).toContain("no declared path to the root; opened 5 min before it");
+    expect(md).not.toContain("0 min after");
+  });
+
+  test("a truncated read says the group and its root may be incomplete; a complete one does not", () => {
+    const rs = [rec("inc_aaaaaaaaaaaaaaaa", T, null), rec("inc_bbbbbbbbbbbbbbbb", T + MIN, null)];
+    const group = rankCascades(rs, new Map())[0] as never;
+    expect(renderCascadeSection(group, "inc_aaaaaaaaaaaaaaaa", infoOf(rs), true)).toContain(
+      "may be incomplete",
+    );
+    expect(renderCascadeSection(group, "inc_aaaaaaaaaaaaaaaa", infoOf(rs))).not.toContain(
+      "may be incomplete",
+    );
   });
 });

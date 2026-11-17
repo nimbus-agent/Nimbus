@@ -101,6 +101,16 @@ function withoutReservedKeys(payload: PlannedAction["payload"]): Record<string, 
 }
 
 /**
+ * The payload with an `incident` key removed even when the entry has no head: replay finds a linked row by
+ * that key written first in the summary, so no payload may spell it.
+ */
+function withoutIncidentKey(payload: PlannedAction["payload"]): PlannedAction["payload"] {
+  if (payload === undefined || !Object.hasOwn(payload, "incident")) return payload;
+  const { incident: _incident, ...rest } = payload;
+  return rest;
+}
+
+/**
  * Build a ledger entry from a gated action. `now` is injected (DI; the clock seam).
  *
  * AD4: for an outside agent's action (`agent`), `source_id` is `agent:<captureId>`, the one hashed
@@ -146,7 +156,7 @@ export function buildEgressEntry(args: {
     method: args.action.type,
     payloadSummary: redactEgressSummary(
       Object.keys(head).length === 0
-        ? args.action.payload
+        ? withoutIncidentKey(args.action.payload)
         : { ...head, ...withoutReservedKeys(args.action.payload) },
     ),
     hitlStatus: args.hitlStatus,

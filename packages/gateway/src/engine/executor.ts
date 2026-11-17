@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import pino from "pino";
 import { redactAuditPayload } from "../audit/format-audit-payload.ts";
 import {
@@ -979,6 +979,7 @@ function auditPayload(
     ...(incident === undefined
       ? {}
       : { incident: { id: incident.link.id, version: incident.link.version } }),
+    ...(incident?.step === undefined ? {} : { step: incident.step }),
     // A before-state read or a prepare read of a linked action is marked, so a replay groups it with the
     // action it ran for without naming any sub-step type.
     ...(incident?.subStep === true ? { subStep: true } : {}),
@@ -1002,6 +1003,8 @@ function auditPayload(
 interface IncidentRowLink {
   readonly link: IncidentLink;
   readonly subStep: boolean;
+  /** The run identity shared by an action's gate row and its read rows (undefined for the gateway's own discard). */
+  readonly step: string | undefined;
 }
 
 /** The prompt keys of a linked row, in order: the hash, the (cut) text, and `promptCut` only when cut. */
@@ -1129,6 +1132,12 @@ interface GateScope {
   readonly incident?: IncidentLink;
   /** IC4: true on the scope of a before-state read or a prepare read of a linked action (not the discard). */
   readonly incidentSubStep?: boolean;
+  /**
+   * IC4: the identity of one linked action's run, minted at the start of its own gate run and inherited by the
+   * before-state and prepare reads it runs, so every row of one action carries the same `step` and a replay
+   * groups reads by their owner even when two linked actions are in flight together.
+   */
+  step?: string | undefined;
   prepared?: PreparedWrite;
   /** Written by `preflightPhase` (D2): frees the per-workdir lock; `execute()` calls it when the run ends. */
   release?: () => void;
@@ -1189,10 +1198,14 @@ function subStepIncident(
   action: PlannedAction,
   scope: GateScope,
   read: boolean,
-): { readonly incident?: IncidentLink; readonly incidentSubStep?: boolean } {
+): {
+  readonly incident?: IncidentLink;
+  readonly incidentSubStep?: boolean;
+  readonly step?: string | undefined;
+} {
   const link = incidentOf(action, scope);
   if (link === undefined) return {};
-  return read ? { incident: link, incidentSubStep: true } : { incident: link };
+  return read ? { incident: link, incidentSubStep: true, step: scope.step } : { incident: link };
 }
 
 /** Writes `directory` as the working directory of the action's tool input (nested or flat). */
@@ -1748,8 +1761,8 @@ export class ToolExecutor {
     // before the channel is awaited, so the audit row holds exactly what the owner was shown.
     const shown =
       confirm.kind === "none" ? prompt : `${prompt}\n\n${confirmPromptLine(confirm.text)}`;
-    record.shownPrompt = shown;
     if (confirm.kind === "none") {
+      record.shownPrompt = shown;
       const answer = await this.consent.requestApproval(shown, details, action.type);
       return ownerOutcome(answer, record.rejectReason);
     }
@@ -1774,7 +1787,9 @@ export class ToolExecutor {
       record.rejectReason = CONFIRM_UNSUPPORTED_REASON;
       return { kind: "rejected", reason: CONFIRM_UNSUPPORTED_REASON, answerSource: "none" };
     }
-    // `req.prompt` is the text shown, typed-confirm line included (built once in `approvalPhase`).
+    // `req.prompt` is the text shown, typed-confirm line included (built once in `approvalPhase`). It is
+    // recorded only now: a channel that cannot take typed text was never shown anything.
+    record.shownPrompt = req.prompt;
     const answer = await channel.requestConfirmedApproval(req);
     if (!answer.approved) return ownerOutcome(answer, record.rejectReason);
     const matched = answer.typed === req.confirmText;
@@ -1945,6 +1960,9 @@ export class ToolExecutor {
     if (attributed !== undefined) assertAgentCaptureId(attributed.captureId);
     // IC4: the incident link, if any, is checked in the same breath (shape, and that it is the owner's own).
     assertLinkedActionAllowed(action, scope.incident);
+    if (action.incident !== undefined && scope.step === undefined) {
+      scope.step = randomBytes(8).toString("hex");
+    }
 
     // I2 first, the I42 user-MCP floor second, policy third, joined by OR — never by assignment,
     // and never the other way round. The frozen set and the user-MCP rule are both floors: either
@@ -2018,6 +2036,7 @@ export class ToolExecutor {
           : {
               link: incident,
               subStep: action.incident === undefined && scope.incidentSubStep === true,
+              step: scope.step,
             },
       ),
       timestamp: at,

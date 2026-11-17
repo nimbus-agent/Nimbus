@@ -202,7 +202,12 @@ type EgressRow = {
   payload_summary: string;
 };
 
-/** Pair each linked audit row with the egress row written beside it: by order within `(timestamp, method)`. */
+/**
+ * Pair each linked audit row with the egress row written beside it: by order within `(timestamp, method)`.
+ * The order is taken over the WHOLE audit bucket (every row of that instant and type, linked or not), because
+ * the egress bucket holds the egress row of every one of them: aligning only the linked rows would hand an
+ * unlinked action's egress row to a linked one written after it.
+ */
 function pairEgress(db: Database, rows: readonly LinkedActionRow[]): Map<number, ReplayEgress> {
   const out = new Map<number, ReplayEgress>();
   const byKey = new Map<string, LinkedActionRow[]>();
@@ -216,14 +221,20 @@ function pairEgress(db: Database, rows: readonly LinkedActionRow[]): Map<number,
     `SELECT id, timestamp, method, hitl_status, result_status, payload_summary
        FROM egress_ledger WHERE timestamp = ? AND method = ? ORDER BY id ASC`,
   );
+  const bucket = db.query(
+    "SELECT id FROM audit_log WHERE timestamp = ? AND action_type = ? ORDER BY id ASC",
+  );
   for (const list of byKey.values()) {
     const first = list[0];
     if (first === undefined) continue;
     const egress = read.all(first.timestamp, first.actionType) as EgressRow[];
-    const ambiguous = egress.length !== list.length;
-    list.forEach((audit, i) => {
-      const e = egress[i];
-      if (e === undefined) return;
+    const auditBucket = (bucket.all(first.timestamp, first.actionType) as { id: number }[]).map(
+      (r) => r.id,
+    );
+    const ambiguous = egress.length !== auditBucket.length;
+    for (const audit of list) {
+      const e = egress[auditBucket.indexOf(audit.auditId)];
+      if (e === undefined) continue;
       const head = `{"incident":{"id":"${audit.link.id}","version":${String(audit.link.version)}}`;
       const expected = audit.hitlStatus === "rejected" ? "blocked" : "authorized";
       out.set(audit.auditId, {
@@ -234,7 +245,7 @@ function pairEgress(db: Database, rows: readonly LinkedActionRow[]): Map<number,
         summaryMismatch: !e.payload_summary.startsWith(head),
         statusDiffers: e.result_status !== expected,
       });
-    });
+    }
   }
   return out;
 }
