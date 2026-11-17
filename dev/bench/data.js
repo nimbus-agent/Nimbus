@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794954638594,
+  "lastUpdate": 1794955605063,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "461cebd634a96762b49270ba2dbb4b1d31d8aa9a",
-          "message": "feat(computer-use): I35 gate + D26 confinement for local computer-use actuation (browser lane, driver not yet wired) (#1415)\n\n## Summary\n\nShips **invariant I35** + static rule **D26** and a new `computer-use/`\nsubsystem: the local-first, HITL-gated envelope that will confine every\nfuture computer-use actuation (browser, terminal, screen). This is the\ngate, the classifier, the consent round-trip, the audit trail, the IPC\nsurface, and the CLI surface — **not** a working browser-driving\ncapability yet.\n\nAn actuation reaches the host only through `cu-gate.ts`'s\n`openSession()`/`runAction()`, inside a live session envelope the local\nowner approved up front:\n- refuses **before** consent when disabled by `[computer_use] enabled` /\norg policy (I22), or when the lane isn't in `allowed_lanes`\n- asserts `SandboxRunner.canConfine(policy)` — never the\npolicy-independent `degradedReason()`/`isFullyActive()` probes (I33's\nidentical reasoning)\n- refuses, never prompts, an out-of-envelope `navigate`\n- derives the HITL class **structurally** from the gateway-observed\ntarget (`cu-classify.ts`), never the model's own description (I3\ntransplanted)\n- requires single-use owner approval for every `actuating` verdict\nbefore `performActuation` runs\n- appends one `computer.action` audit row on every outcome, fail-closed\n- screenshot bytes are BLAKE3-digested and discarded in the same\nexpression that captures them — never written to disk\n\nNew IPC namespace `computer.*` (whole-namespace LAN-forbidden per I5,\nabsent from the Tauri allowlist per I7) and CLI surface `nimbus computer\nbrowser|sessions|close`. Schema V57 (`cu_session`/`cu_action`). Static\nD26 confines `performActuation` to the gate (mirrors D23) and confines\nany `playwright`-family browser-driver import to\n`computer-use/cu-lanes/`, in both static and dynamic form (mirrors\nD22(d)).\n\n## What did NOT ship (by design, fully disclosed)\n\nThe browser **driver does not exist**. `playwright-core@1.62.1` fails\n`bun build --compile` (an eager, unconditional\n`require(\"chromium-bidi/...\")` the bundler can't satisfy), so it's\nre-planned against raw CDP over a WebSocket. Consequently:\n- `platform/assemble.ts` wires `resolveBrowserPath: () => null`;\n`cu-gate.ts` refuses every session before consent with\n`ERR_CU_NO_BROWSER` — though with shipped defaults (`enabled=false`,\n`allowed_lanes=[]`) a real user hits `ERR_CU_DISABLED` and\n`ERR_CU_LANE_NOT_ALLOWED` first\n- `nimbus computer browser` is a **passive listener**, not a driver —\n`computer.act` has no production caller\n- the `browser` egress coverage class stays `\"none\"`, not `per-run`,\nuntil a driver constructs a real `BrowserContext` through\n`wrapLedgeredBrowserContext`\n- `terminal`/`screen` lanes are named in config for forward\ncompatibility only and ship no gate-side implementation at all (deferred\nto slices 2/3)\n\nFull delivery + scope-bound writeup: `docs/CHANGELOG.md` (\"2026-08-30 —\nThe local computer-use loop's gate shipped; nothing can drive it yet\").\nFull invariant statement, anti-patterns, and re-verify checklist:\n`docs/SECURITY-INVARIANTS.md` § I35.\n\n## Review history (in-branch, all fixed and re-verified)\n\nThis branch went through several fix rounds against its own review\nfindings, each red-proved before and after:\n- I35 gate hardening rounds 1–4 (guaranteed audit rows on every path,\nlive policy re-check, default-deny classification,\nteardown-runs-even-on-audit-failure)\n- I35/D26 fix rounds 1–3: an orphaned egress-appender claim corrected to\nmatch reality (`browser` coverage stays `none`); a\nscreenshot-no-disk-write test that couldn't fail, rewritten to a\nwhole-file scan over `stripStringLiterals(stripComments(src))`; and the\n`BrowserActionInput` model-field scan rewritten three times (naive\n`indexOf` → raw-source brace-depth → comment-stripped brace-depth →\nfinally an **allowlist** of the five permitted fields over\nboth-strippers-composed source), since each prior version had a\ndifferent quoting-construct blind spot\n- a whole-branch final review closing 7 remaining doc/test honesty gaps\n(stale counts, an unenforced \"taint latch\" oversold as an invariant, an\noverclaimed \"only reachable error\" claim, a stale coverage-label\nfixture)\n\n## Verification\n\n- `bun test packages/gateway/src/` — 12835 pass, 0 fail\n- `bun test packages/cli/src/commands/` — 1965 pass, 0 fail\n- `bun run typecheck`, `bun run audit:structure`, `bun run\npreflight:fast` — all green (32/32 gates)\n- Pre-push hook (`preflight:fast`) ran clean on this push\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n## Summary by CodeRabbit\n\n- **New Features**\n- Added HITL-gated browser computer-use commands for opening, listing,\nand closing sessions.\n- Added bounded browser actions for navigation, clicking, typing,\nreading, and screenshot digests.\n- Added secure origin, sandbox, budget, audit, and fail-closed policy\ncontrols.\n- Added browser egress tracking, session/action history, and\nconfigurable retention.\n\n- **Documentation**\n- Updated security, architecture, CLI, schema, roadmap, and changelog\ndocumentation through invariant I35 and schema V57.\n  - Documented current browser-driver limitations and refusal behavior.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-08-31T18:05:06Z",
-          "tree_id": "ba0834bf82f850d6f45dfd7da2dfe9290d136ff8",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/461cebd634a96762b49270ba2dbb4b1d31d8aa9a"
-        },
-        "date": 1788200174769,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 312.14123145000156,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 312.33126704999233,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 270.30639004999466,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "585a2832b7c562a2d205047e3b0332265445f8d8",
+          "message": "feat(gateway): incident engine IC8, an expectation radar and an anomaly baseline that record findings and never act (V103, D46(f)) (#2053)\n\nIncident engine slice IC8 (spec § 5.8, reduced scope): the engine now\n**notices** things. Two new detectors run every 15 minutes and at boot.\nWhat they find goes into a findings table and is **never acted on**\n(D-IC-5, I57 (a)).\n\n## What it does\n\n- **Expectation radar.** You add `[[incident.expect]]` entries to\n`nimbus.toml`. Each has a `kind` (`deploy`, `ci_success`, `sync` or\n`item`), a `service`, a `type` (for `item` only) and a `max_gap` (15m to\n30d).\n  - The radar reads the last matching event from the local index:\n    - `deploy`: the newest successful `deployment_items` row.\n- `ci_success`: the newest successful `ci_run` bound to the service by\nthe identity resolver. It scans at most 5,000 runs; if the cap is\nreached with no match, the answer is `unknown`.\n    - `sync`: the newest error-free `sync_telemetry` row.\n    - `item`: `MAX(modified_at)` for the service and type.\n- When that event is older than `max_gap`, the radar opens a `radar`\nfinding. When the event happens again, it clears. An `unknown` answer\nchanges nothing. Removing an expectation from the config clears its\nfinding.\n- **Index anomaly baseline.** For each `[ci.service.*]` service there\nare three hourly series: new error issues, new alerts (both counted by\nthe trigger's opened time), and failed CI runs.\n- Every hour that ended at least an hour ago is written to\n`anomaly_baseline`, zeros included. Backfill and retention are both 14\ndays.\n- A scan cut by its cap writes nothing for that range: a gap, never a\nfalse zero.\n- The newest bucket is scored once 7 days of buckets exist: z = (x −\nmean) / max(sd, 1), increases only, compared with `[incident] anomaly_z`\n(default 3).\n- **Sync telemetry.** The existing detector's scoring and its\n`[watcher.anomaly]` toast are unchanged. Its window is now seeded at\nboot from the persisted `sync_telemetry` rows, so a restart no longer\nforgets it. Every scored sample opens or clears a sync anomaly finding.\n- **Notifications** carry counts only, go through `showIgnoringFailure`,\nand never fire on a demo gateway (I41):\n  - one toast per pass that opened a radar finding;\n- one toast per pass that opened an anomaly finding on a service the\nowner is **on call for now** (MB3's indexed shifts). Other findings are\nrecorded without a toast.\n- A new `incident.finding` gateway event carries `{ opened, cleared }`,\nand `nimbus tail` renders it.\n- **Reads:**\n- `incident.findings { all?, limit? }`: owner kinds only, LAN-forbidden\nthrough the `incident` root, not renderer-callable. IC10b adds it to the\ndesktop; the Rust test already lists it as forbidden.\n  - `nimbus incident findings [--all] [--limit <n>] [--json]`.\n- **Deploy risk.** The `system_state` factor gains\n`open_record_other_source` (elevated): an open Sentry, Monte Carlo or\nBigeye incident record on the service or one of its dependencies.\n\n## Security and structure\n\n- **Schema V103:** `incident_finding` (one open row per kind and key;\ndetail holds ids and numbers only, at most 4 KiB) and\n`anomaly_baseline`.\n- **Static D46(f):** only `incident/finding-store.ts` and the DDL file\nwrite those two tables. It is anchored in `RULE_ANCHORS`.\n- **I57 (a):** text extended, with a new enforcement test (11). It\nchecks that a predict pass appends zero `egress_ledger` and `audit_log`\nrows, makes zero `fetch` calls, and raises toasts that name no title,\nservice or connector.\n- All new engine code is under `incident/`, so D46(a)'s no-network,\nno-egress confinement applies to it.\n- No allowlist change, no new HITL type, no new egress class.\n\n## Deviations from the spec (recorded)\n\n- `[incident] quiet_windows` is dropped: `[preflight.risk]` (#2023)\nalready owns the time-of-week windows.\n- The two sync series are not stored in `anomaly_baseline`. Their\nsamples are already persisted in `sync_telemetry`, which seeds the\nexisting per-sample detector.\n- The spec's V96 is V103 here.\n\n## Stated bounds\n\n- No seasonality.\n- A trigger indexed more than an hour after it opened is missed by its\nbucket.\n- A newly added service, or a newly connected source, has no baseline at\nfirst.\n- The on-call heads-up depends on MB3's `is_me`, which needs a\nuser-level PagerDuty token or `pagerduty.from_email`.\n- Findings hold no indexed text. An owner erasure therefore leaves them\n(a service id and counts) until they clear and age out.\n\n## Docs\n\n- Updated here: `SECURITY-INVARIANTS.md` (I57 (a), D46(f)),\n`architecture.md`, `cli-reference.md`, `roadmap.md` (Phase 17\n*Silent-degradation radar* and *Anomaly → proactive heads-up* ticked,\nplus an IC8 row under Phase 10), and the `nimbus-ipc` and\n`nimbus-file-map` skills.\n- **Hot docs are batched** into the last PR of this parallel batch, per\nthe owner's rule. The only hot-doc change here is the schema token\n(`V102` → `V103`) in the CLAUDE.md/GEMINI.md status line, which\n`audit:status-drift` requires.\n\n## Verification\n\n- `bun run preflight:fast` passes.\n- `bun run typecheck` passes.\n- Targeted suites pass: incident, ipc, cli incident and tail, config,\nwatcher, preflight, the structure audit, and `security-invariants` IC8.\n- A whole-repo `--parallel` run on Windows showed only timeouts under\nload, plus Windows-environment ps1 and secret-tool tests in files this\nPR does not touch. Re-run on their own, the timed-out suites pass.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JmSjrCk6NpLauKU2yYCwva\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-17T22:40:51Z",
+          "tree_id": "d6c7e99f1bf4a56bea747226f7168d57dc25d440",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/585a2832b7c562a2d205047e3b0332265445f8d8"
+        },
+        "date": 1794955600819,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 165.71795860000003,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 160.89840694999947,
             "unit": "ms"
           }
         ]
