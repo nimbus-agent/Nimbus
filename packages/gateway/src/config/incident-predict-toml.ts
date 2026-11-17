@@ -3,7 +3,13 @@ import {
   type SectionFallbackSink,
   sectionFallbackSink,
 } from "./layered-config.ts";
-import { isTableHeader, parseIntDec, parseString, splitKeyValue, stripComment } from "./toml-primitives.ts";
+import {
+  isTableHeader,
+  parseIntDec,
+  parseString,
+  splitKeyValue,
+  stripComment,
+} from "./toml-primitives.ts";
 
 /**
  * The incident engine's predictions (Phase 10 IC8, incident-engine spec § 5.8): `[incident] anomaly_z` and the
@@ -88,13 +94,15 @@ function finish(
   const skip = (why: string): void => onFallback?.(`${where} skipped: ${why}`);
   const kind = KINDS.find((k) => k === d.kind);
   if (kind === undefined) return skip(`kind must be one of ${KINDS.join(", ")}`);
-  if (d.service === undefined || !NAME_RE.test(d.service)) return skip("service is missing or invalid");
+  if (d.service === undefined || !NAME_RE.test(d.service))
+    return skip("service is missing or invalid");
   let type: string | null = null;
   if (kind === "item") {
-    if (d.type === undefined || !NAME_RE.test(d.type)) return skip("an item expectation needs a type");
+    if (d.type === undefined || !NAME_RE.test(d.type))
+      return skip("an item expectation needs a type");
     type = d.type;
   } else if (d.type !== undefined) {
-    return skip("type is only for kind = \"item\"");
+    return skip('type is only for kind = "item"');
   }
   const maxGapMs = d.maxGap === undefined ? undefined : parseMaxGap(d.maxGap);
   if (maxGapMs === undefined) return skip("max_gap must be <n>m, <n>h or <n>d, 15m to 30d");
@@ -160,7 +168,9 @@ export function parseNimbusTomlIncidentPredict(
 }
 
 /** Over the layered snapshot (packs, base, active profile); read per call so an edit applies without a restart. */
-export function loadNimbusIncidentPredictFromConfigDir(configDir: string): NimbusIncidentPredictToml {
+export function loadNimbusIncidentPredictFromConfigDir(
+  configDir: string,
+): NimbusIncidentPredictToml {
   const raw = layeredConfigText(configDir);
   if (raw === null) return DEFAULT_INCIDENT_PREDICT;
   return parseNimbusTomlIncidentPredict(raw, sectionFallbackSink(configDir, "incident.expect"));

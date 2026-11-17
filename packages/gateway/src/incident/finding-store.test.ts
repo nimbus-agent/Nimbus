@@ -63,7 +63,10 @@ describe("findings", () => {
     openFinding(db, { ...base, key: "a", detail: {}, nowMs: 1 });
     clearFinding(db, "radar", "a", 2);
     openFinding(db, { ...base, key: "b", detail: {}, nowMs: 3 });
-    expect(listFindings(db, { all: true, limit: 10 }).map((r) => r.finding_key)).toEqual(["b", "a"]);
+    expect(listFindings(db, { all: true, limit: 10 }).map((r) => r.finding_key)).toEqual([
+      "b",
+      "a",
+    ]);
     expect(pruneClearedFindings(db, 2)).toBe(0);
     expect(pruneClearedFindings(db, 3)).toBe(1);
     expect(listFindings(db, { all: true, limit: 10 }).map((r) => r.finding_key)).toEqual(["b"]);

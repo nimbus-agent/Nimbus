@@ -42,7 +42,9 @@ beforeEach(() => {
 });
 afterEach(() => db.close());
 
-function deps(over: Partial<PredictPassDeps> & { cfg?: NimbusIncidentPredictToml } = {}): PredictPassDeps {
+function deps(
+  over: Partial<PredictPassDeps> & { cfg?: NimbusIncidentPredictToml } = {},
+): PredictPassDeps {
   const c = over.cfg ?? { ...DEFAULT_INCIDENT_PREDICT, expectations: [syncExp] };
   return {
     db,

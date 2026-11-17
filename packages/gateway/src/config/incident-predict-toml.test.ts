@@ -7,7 +7,10 @@ import {
   parseNimbusTomlIncidentPredict,
 } from "./incident-predict-toml.ts";
 
-function parse(src: string): { cfg: ReturnType<typeof parseNimbusTomlIncidentPredict>; warns: string[] } {
+function parse(src: string): {
+  cfg: ReturnType<typeof parseNimbusTomlIncidentPredict>;
+  warns: string[];
+} {
   const warns: string[] = [];
   return { cfg: parseNimbusTomlIncidentPredict(src, (m) => warns.push(m)), warns };
 }

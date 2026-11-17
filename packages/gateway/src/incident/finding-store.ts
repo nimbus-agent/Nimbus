@@ -113,7 +113,11 @@ export function pruneClearedFindings(db: Database, beforeMs: number): number {
   ).changes;
 }
 
-export type BaselineBucket = { readonly seriesId: string; readonly bucketStartMs: number; readonly value: number };
+export type BaselineBucket = {
+  readonly seriesId: string;
+  readonly bucketStartMs: number;
+  readonly value: number;
+};
 
 /** Write buckets (an existing bucket is replaced), in ONE transaction. */
 export function writeBaselineBuckets(db: Database, buckets: readonly BaselineBucket[]): void {

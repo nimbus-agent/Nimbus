@@ -71,7 +71,10 @@ describe("radarReader (the index)", () => {
     writeCiRun(db, r, { runId: 3, repo: "acme/other", conclusion: "success", atMs: T0 });
     const read = radarReader(db, configMap(cfg));
     expect(read(exp({ kind: "ci_success" }))).toEqual({ known: true, atMs: T0 - 5 * HOUR });
-    expect(read(exp({ kind: "ci_success", service: "other" }))).toEqual({ known: true, atMs: null });
+    expect(read(exp({ kind: "ci_success", service: "other" }))).toEqual({
+      known: true,
+      atMs: null,
+    });
   });
 
   test("ci_success is unknown when the scan cap is hit with no match", () => {

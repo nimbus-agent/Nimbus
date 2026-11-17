@@ -122,7 +122,10 @@ function runBaseline(
 ): { anomaly: PredictPassResult["anomaly"]; bucketsWritten: number; gap: boolean } {
   const end = bucketStart(now - SETTLE_MS);
   const newest = newestBucketMs(deps.db, "index:");
-  const start = Math.max(newest === null ? end - BASELINE_WINDOW_MS : newest + BUCKET_MS, end - BASELINE_WINDOW_MS);
+  const start = Math.max(
+    newest === null ? end - BASELINE_WINDOW_MS : newest + BUCKET_MS,
+    end - BASELINE_WINDOW_MS,
+  );
   let bucketsWritten = 0;
   let gap = false;
   if (start < end) {

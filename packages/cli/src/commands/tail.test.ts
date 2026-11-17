@@ -511,10 +511,16 @@ describe("runTailCommand lifecycle", () => {
     const h = harness();
     const done = runTailCommand(["--filter", "incident"], h.deps);
     await nextMacrotask();
-    h.handlers["gateway.event"]?.({ kind: "incident.finding", ts: 1, payload: { opened: 2, cleared: 0 } });
+    h.handlers["gateway.event"]?.({
+      kind: "incident.finding",
+      ts: 1,
+      payload: { opened: 2, cleared: 0 },
+    });
     h.handlers["gateway.event"]?.({ kind: "incident.finding", ts: 1, payload: { opened: "2" } });
     expect(h.out).toHaveLength(2);
-    expect(h.out[0]).toContain("[incident] findings: 2 opened, 0 cleared - nimbus incident findings");
+    expect(h.out[0]).toContain(
+      "[incident] findings: 2 opened, 0 cleared - nimbus incident findings",
+    );
     expect(h.out[1]).toContain("[unknown: incident.finding]");
     process.emit("SIGINT");
     await done;

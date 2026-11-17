@@ -13,7 +13,13 @@ beforeEach(() => {
 });
 afterEach(() => db.close());
 
-function tele(service: string, at: number, dur: number, up: number, err: string | null = null): void {
+function tele(
+  service: string,
+  at: number,
+  dur: number,
+  up: number,
+  err: string | null = null,
+): void {
   db.run(
     "INSERT INTO sync_telemetry (service, started_at, duration_ms, items_upserted, error_msg) VALUES (?, ?, ?, ?, ?)",
     [service, at, dur, up, err],
@@ -55,7 +61,12 @@ describe("recordSyncScore", () => {
     expect(open.map((f) => [f.kind, f.finding_key, f.service])).toEqual([
       ["anomaly", "sync:duration_ms:github", "github"],
     ]);
-    expect(JSON.parse(open[0]?.detail_json ?? "")).toEqual({ value: 500, z: 4.3, samples: 10, atMs: 10 });
+    expect(JSON.parse(open[0]?.detail_json ?? "")).toEqual({
+      value: 500,
+      z: 4.3,
+      samples: 10,
+      atMs: 10,
+    });
     recordSyncScore(db, ev(1, 11, 20), 3);
     expect(listFindings(db, { all: false, limit: 5 })).toHaveLength(0);
     expect(listFindings(db, { all: true, limit: 5 })[0]?.cleared_at_ms).toBe(20);
@@ -63,6 +74,8 @@ describe("recordSyncScore", () => {
 
   test("an infinite score is stored as a null z", () => {
     recordSyncScore(db, ev(Number.POSITIVE_INFINITY, 5), 3);
-    expect(JSON.parse(listFindings(db, { all: false, limit: 5 })[0]?.detail_json ?? "").z).toBeNull();
+    expect(
+      JSON.parse(listFindings(db, { all: false, limit: 5 })[0]?.detail_json ?? "").z,
+    ).toBeNull();
   });
 });

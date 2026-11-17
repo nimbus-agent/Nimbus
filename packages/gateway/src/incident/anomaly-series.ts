@@ -71,7 +71,8 @@ export function countIndexBuckets(
   const counts = new Map<string, number>();
   for (const serviceId of configs.keys()) {
     for (const metric of INDEX_METRICS) {
-      for (let b = fromMs; b < toMs; b += BUCKET_MS) counts.set(`${indexSeriesId(metric, serviceId)}\u0000${String(b)}`, 0);
+      for (let b = fromMs; b < toMs; b += BUCKET_MS)
+        counts.set(`${indexSeriesId(metric, serviceId)}\u0000${String(b)}`, 0);
     }
   }
   const resolve = buildServiceIdentityResolver(configs);

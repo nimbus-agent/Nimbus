@@ -7965,10 +7965,19 @@ describe("D46(f) - the IC8 finding and baseline tables are written only by their
   test("the store, the DDL, tests, comments and reads pass", () => {
     expect(
       rules([
-        file(`${SRC}incident/finding-store.ts`, "dbRun(db, `INSERT INTO incident_finding (id) VALUES (?)`);\n"),
-        file(`${SRC}index/incident-predict-v103-sql.ts`, "CREATE TABLE IF NOT EXISTS anomaly_baseline (x);\n"),
+        file(
+          `${SRC}incident/finding-store.ts`,
+          "dbRun(db, `INSERT INTO incident_finding (id) VALUES (?)`);\n",
+        ),
+        file(
+          `${SRC}index/incident-predict-v103-sql.ts`,
+          "CREATE TABLE IF NOT EXISTS anomaly_baseline (x);\n",
+        ),
         file(`${SRC}incident/x.test.ts`, "db.run('DELETE FROM anomaly_baseline');\n"),
-        file(`${SRC}incident/predict-pass.ts`, "// UPDATE incident_finding SET x\nconst q = 'SELECT * FROM incident_finding';\n"),
+        file(
+          `${SRC}incident/predict-pass.ts`,
+          "// UPDATE incident_finding SET x\nconst q = 'SELECT * FROM incident_finding';\n",
+        ),
       ]),
     ).toEqual([]);
   });
@@ -7976,9 +7985,15 @@ describe("D46(f) - the IC8 finding and baseline tables are written only by their
   test("a write anywhere else is a violation, for each verb and both tables", () => {
     expect(
       rules([
-        file(`${SRC}incident/predict-pass.ts`, "db.run('UPDATE incident_finding SET cleared_at_ms = 1');\n"),
-        file(`${SRC}watcher/anomaly-notifier.ts`, 'db.run("INSERT OR REPLACE INTO anomaly_baseline VALUES (1)");\n'),
-        file(`${SRC}ipc/incident-rpc.ts`, "db.run(`DELETE FROM \"incident_finding\"`);\n"),
+        file(
+          `${SRC}incident/predict-pass.ts`,
+          "db.run('UPDATE incident_finding SET cleared_at_ms = 1');\n",
+        ),
+        file(
+          `${SRC}watcher/anomaly-notifier.ts`,
+          'db.run("INSERT OR REPLACE INTO anomaly_baseline VALUES (1)");\n',
+        ),
+        file(`${SRC}ipc/incident-rpc.ts`, 'db.run(`DELETE FROM "incident_finding"`);\n'),
       ]),
     ).toEqual([
       "incident-finding-table-confined",

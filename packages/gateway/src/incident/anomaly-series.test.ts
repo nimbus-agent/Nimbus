@@ -3,7 +3,13 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
 import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
-import { configMap, HOUR, resolverFor, serviceConfig, writeCiRun } from "./__fixtures__/index-writers.ts";
+import {
+  configMap,
+  HOUR,
+  resolverFor,
+  serviceConfig,
+  writeCiRun,
+} from "./__fixtures__/index-writers.ts";
 import {
   writeJsmAlert,
   writePagerdutyIncident,
@@ -49,8 +55,11 @@ describe("countIndexBuckets", () => {
   let db: Database;
   const cfg = serviceConfig();
   const FROM = Date.parse("2026-11-10T00:00:00.000Z");
-  const value = (buckets: { seriesId: string; bucketStartMs: number; value: number }[], s: string, b: number) =>
-    buckets.find((x) => x.seriesId === s && x.bucketStartMs === b)?.value;
+  const value = (
+    buckets: { seriesId: string; bucketStartMs: number; value: number }[],
+    s: string,
+    b: number,
+  ) => buckets.find((x) => x.seriesId === s && x.bucketStartMs === b)?.value;
 
   beforeEach(() => {
     db = new Database(":memory:");
@@ -91,7 +100,9 @@ describe("countIndexBuckets", () => {
     expect(countIndexBuckets(db, configMap(cfg), FROM, FROM + HOUR, 1)).toEqual({ kind: "capped" });
     writeSentryIssue(db, { id: "x1", firstSeenMs: FROM }, r);
     writeSentryIssue(db, { id: "x2", firstSeenMs: FROM }, r);
-    expect(countIndexBuckets(db, configMap(cfg), FROM + 2 * HOUR, FROM + 3 * HOUR, 1).kind).toBe("ok");
+    expect(countIndexBuckets(db, configMap(cfg), FROM + 2 * HOUR, FROM + 3 * HOUR, 1).kind).toBe(
+      "ok",
+    );
   });
 
   test("no configured service means no series", () => {
