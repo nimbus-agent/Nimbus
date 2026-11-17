@@ -1221,8 +1221,9 @@ export function checkIncidentRecordConfinement(files: readonly FileEntry[]): Vio
 // `packages/gateway/src/`, comments stripped:
 //   (1) the identifier `mintIncidentLink` (a call, an import, aliased or not) only in its own module,
 //       `incident/incident-link-mint.ts`, in `incident/remediation.ts` (Phase 10 IC5a: the one module that
-//       runs a stored proposal as an incident-linked action) and in `incident-update/update-send.ts` (Phase 10
-//       IC9b: the owner's update post as an incident-linked action);
+//       runs a stored proposal as an incident-linked action), in `postmortem/postmortem-push.ts` (Phase 10
+//       IC7a: the owner's post-mortem push) and in `incident-update/update-send.ts` (Phase 10 IC9b: the owner's
+//       update post as an incident-linked action);
 //   (2) `type IncidentLink`, `interface IncidentLink` and `function assertIncidentLink` are declared only in
 //       `engine/incident-link.ts`, the one module the executor validates a link through;
 //   (3) a QUOTED `"incident":{` key (a string or template literal that spells a link into a JSON row) appears
@@ -1235,10 +1236,11 @@ export function checkIncidentRecordConfinement(files: readonly FileEntry[]): Vio
 const D46E_SRC = "packages/gateway/src/";
 const D46E_MINT = `${D46E_SRC}incident/incident-link-mint.ts`;
 // The files that may NAME the minter: its own module and each module that runs a linked owner action (IC5a's
-// remediation; IC9b's incident update send).
+// remediation, IC7a's post-mortem push, IC9b's incident update send).
 const D46E_MINT_USERS: readonly string[] = [
   D46E_MINT,
   `${D46E_SRC}incident/remediation.ts`,
+  `${D46E_SRC}postmortem/postmortem-push.ts`,
   `${D46E_SRC}incident-update/update-send.ts`,
 ];
 const D46E_LINK = `${D46E_SRC}engine/incident-link.ts`;
@@ -3266,10 +3268,15 @@ const D39_BUILDERS: ReadonlyArray<readonly [RegExp, readonly string[]]> = [
   ],
   [/\bbuildModelWriteExecutor\b/g, ["packages/gateway/src/engine/run-ask.ts"]],
   // Phase 10 IC7a / IC9b: the owner's push executor (no delegation, no before-state runner, no standing rule),
-  // built per call around the asking connection's consent channel by the incident update send.
+  // built per call around the asking connection's consent channel by the post-mortem push and the incident
+  // update send.
   [
     /\bbuildOwnerPushExecutor\b/g,
-    ["packages/gateway/src/engine/run-ask.ts", "packages/gateway/src/ipc/incident-update-rpc.ts"],
+    [
+      "packages/gateway/src/engine/run-ask.ts",
+      "packages/gateway/src/ipc/postmortem-rpc.ts",
+      "packages/gateway/src/ipc/incident-update-rpc.ts",
+    ],
   ],
   // Phase 28 AD1: the MCP act door's door executor. The wiring site is `buildActDeps`, which holds
   // the accepting client and the consent coordinator; `platform/assemble.ts` builds only the

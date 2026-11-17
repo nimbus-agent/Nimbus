@@ -4287,6 +4287,28 @@ describe("D39 — the model's connector-write door is the only builder of write 
     ).toEqual([]);
   });
 
+  test("(e) buildOwnerPushExecutor is allowed in run-ask.ts and ipc/postmortem-rpc.ts only (Phase 10 IC7a)", () => {
+    expect(
+      rules([
+        file(
+          "packages/gateway/src/engine/run-ask.ts",
+          "export function buildOwnerPushExecutor(p) {}",
+        ),
+        file("packages/gateway/src/ipc/postmortem-rpc.ts", "const ex = buildOwnerPushExecutor(p);"),
+      ]),
+    ).toEqual([]);
+    for (const rogue of [
+      "packages/gateway/src/ipc/capture-rpc.ts",
+      "packages/gateway/src/ipc/server/dispatchers.ts",
+      "packages/gateway/src/postmortem/postmortem-push.ts",
+      "packages/gateway/src/engine/agent.ts",
+    ]) {
+      expect(rules([file(rogue, "const ex = buildOwnerPushExecutor(p);")]), rogue).toEqual([
+        "connector-write-builders-confined",
+      ]);
+    }
+  });
+
   test("(e) buildAgentWriteExecutor is allowed in run-ask.ts and ipc/capture-rpc.ts only (Phase 28 AD1)", () => {
     expect(
       rules([
@@ -7340,6 +7362,15 @@ describe("D46(e) - the incident link is minted only inside incident/ (incident e
         ),
       ),
     ).toEqual(["incident-link-minted-in-incident"]);
+  });
+
+  test("IC7a: only the push module is added; a sibling in postmortem/ still fails", () => {
+    for (const sibling of ["postmortem-draft.ts", "postmortem-push-x.ts", "other.ts"]) {
+      expect(
+        rules(withBad(`${SRC}postmortem/${sibling}`, "mintIncidentLink(db, id);\n")),
+        sibling,
+      ).toEqual(["incident-link-minted-in-incident"]);
+    }
   });
 
   test("a fixture outside incident/ that names mintIncidentLink fails the rule", () => {

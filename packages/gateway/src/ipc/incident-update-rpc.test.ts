@@ -204,3 +204,79 @@ describe("incident.update / updateSend / updateQueue", () => {
     expect(out.kind).toBe("miss");
   });
 });
+
+describe("incident update RPC edges", () => {
+  test("a non-object payload is -32602; an absent one is an empty one", async () => {
+    const r = rig();
+    for (const params of [null, [], "x", 3]) {
+      await expect(call(r, "incident.update", params)).rejects.toThrow(/object payload/);
+    }
+    expect(await call(r, "incident.updateQueue", undefined)).toEqual({ entries: [] });
+  });
+
+  test("with no data directory the queue lists nothing", async () => {
+    const r = rig();
+    const ctx: IncidentUpdateRpcCtx = { ...r.ctx, dataDir: undefined };
+    const out = await dispatchIncidentUpdateRpc(
+      "incident.updateQueue",
+      {},
+      ctx,
+      { clientId: "c1", kind: "cli" },
+      consent,
+    );
+    expect(out).toEqual({ kind: "hit", value: { entries: [] } });
+  });
+
+  test("a Teams send posts a text body; an older version and the engineer audience draft", async () => {
+    const r = rig();
+    expect(
+      await call(r, "incident.updateSend", {
+        id: r.recordId,
+        platform: "teams",
+        teamId: "team-1",
+        channelId: "19:abc@thread.tacv2",
+        text: "hello",
+      }),
+    ).toEqual({ outcome: "sent" });
+    expect(r.dispatched[0]?.type).toBe("teams.message.post");
+    const out = (await call(r, "incident.update", {
+      id: r.recordId,
+      audience: "engineers",
+      version: 1,
+    })) as { audience: string; version: number };
+    expect(out).toMatchObject({ audience: "engineers", version: 1 });
+    await expect(call(r, "incident.update", { id: r.recordId, version: 7 })).rejects.toThrow(
+      /ERR_INCIDENT_VERSION_NOT_FOUND/,
+    );
+  });
+
+  test("a send whose text is too long by one is refused as a value; longer is -32602", async () => {
+    const r = rig();
+    const out = await call(r, "incident.updateSend", {
+      id: r.recordId,
+      platform: "slack",
+      channel: "C0STATUS",
+      text: "x".repeat(12_001),
+    });
+    expect(out).toMatchObject({ outcome: "refused", code: "ERR_INCIDENT_UPDATE_TOO_LONG" });
+    await expect(
+      call(r, "incident.updateSend", {
+        id: r.recordId,
+        platform: "slack",
+        channel: "C0STATUS",
+        text: "x".repeat(12_002),
+      }),
+    ).rejects.toThrow(IncidentRpcError);
+    expect(r.dispatched).toHaveLength(0);
+  });
+
+  test("an id that is an indexed item but not an incident source is refused", async () => {
+    const r = rig();
+    r.db.run(
+      "INSERT INTO item (id, service, type, external_id, title, modified_at, synced_at) VALUES ('github:pr:1','github','pr','1','x',1,1)",
+    );
+    await expect(call(r, "incident.update", { id: "github:pr:1" })).rejects.toThrow(
+      /ERR_INCIDENT_NOT_A_TRIGGER|ERR_INCIDENT_NOT_FOUND/,
+    );
+  });
+});

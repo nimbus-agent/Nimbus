@@ -97,3 +97,25 @@ describe("draftIncidentUpdate", () => {
     );
   });
 });
+
+describe("draftIncidentUpdate: a record erased between the two reads", () => {
+  test("is the typed not-found error, never a render of nothing", async () => {
+    const { d, recordId } = await seededTwoVersions();
+    // The timeline read succeeds; the record_json read then finds nothing (a concurrent owner erasure).
+    const racing = new Proxy(d, {
+      get(target, prop, receiver) {
+        const v = Reflect.get(target, prop, receiver);
+        if (prop === "query") {
+          return (sql: string) =>
+            sql.startsWith("SELECT record_json FROM incident_record")
+              ? { get: () => null }
+              : (v as (s: string) => unknown).call(target, sql);
+        }
+        return typeof v === "function" ? v.bind(target) : v;
+      },
+    });
+    expect(() =>
+      draftIncidentUpdate(racing, recordId, { audience: "stakeholders", nowMs: NOW }),
+    ).toThrow(IncidentError);
+  });
+});

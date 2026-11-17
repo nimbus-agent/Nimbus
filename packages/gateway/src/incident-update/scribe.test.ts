@@ -157,3 +157,44 @@ describe("listQueuedDrafts", () => {
     expect(listQueuedDrafts(db, join(tmpdir(), "nimbus-no-such-dir-ic9b"))).toEqual([]);
   });
 });
+
+describe("the queue reader is defensive", () => {
+  test("ignores foreign and malformed files, falls back to the file time, and survives an emit that throws", () => {
+    const h = harness({
+      emit: () => {
+        throw new Error("observer failed");
+      },
+    });
+    h.scribe.onAssembled({ recordId: ID_A, version: 1 });
+    expect(h.toasts).toHaveLength(1); // the throwing emit did not stop the toast
+    const dir = join(h.dataDir, SCRIBE_DIR);
+    writeFileSync(join(dir, "notes.txt"), "x");
+    writeFileSync(join(dir, `${ID_B}.v1.json`), "{not json");
+    writeFileSync(join(dir, `${ID_B}.v2.json`), JSON.stringify({ recordId: ID_B, version: 2 }));
+    const db = createMemoryIndexDb();
+    dbs.push(db);
+    // Nothing is stored, so every well-formed entry is dropped; the foreign and malformed files are left alone.
+    expect(listQueuedDrafts(db, h.dataDir)).toEqual([]);
+    expect(readdirSync(dir).sort()).toEqual([`${ID_B}.v1.json`, "notes.txt"]);
+  });
+
+  test("entries order newest first, then by id and version", () => {
+    const h = harness();
+    const db = createMemoryIndexDb();
+    dbs.push(db);
+    const ids: string[] = [];
+    for (const item of ["pagerduty:Q1", "pagerduty:Q2"]) {
+      const s = upsertIncidentRecord(db, {
+        record: buildRecord({ itemId: item }),
+        markdown: "# x",
+        recordSha256: "e".repeat(64),
+        citedServices: ["pagerduty"],
+        nowMs: 1,
+      });
+      ids.push(s.recordId);
+      h.scribe.onAssembled({ recordId: s.recordId, version: 1 }); // same clock: a tie on time
+    }
+    const listed = listQueuedDrafts(db, h.dataDir).map((e) => e.recordId);
+    expect(listed).toEqual([...ids].sort());
+  });
+});

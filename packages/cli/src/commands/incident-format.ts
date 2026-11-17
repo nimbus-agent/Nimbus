@@ -20,6 +20,7 @@ export const INCIDENT_USAGE =
   `${REMEDIATE_USAGE}
 ` +
   `${DEBT_USAGE_LINE}\n` +
+  "       nimbus incident postmortem <id> [--out <file>] [--template <file>] [--synthesize] | --push notion|confluence ...\n" +
   "       nimbus incident update <id> [--audience stakeholders|engineers] [--out <file>] | --send slack:<c>|teams:<t>/<c> | --queued\n" +
   "  <id> is a record id (inc_...), a trigger item id (pagerduty:...), or the provider's own id.";
 

@@ -20,6 +20,7 @@ import {
   sourcesLine,
   type TimelineReplyLike,
 } from "./incident-format.ts";
+import { runPostmortemCommand } from "./incident-postmortem.ts";
 import { runRemediation } from "./incident-remediate.ts";
 import { runUpdateCommand } from "./incident-update.ts";
 
@@ -221,6 +222,8 @@ export async function runIncidentWith(
 }
 
 export async function runIncidentCommand(args: string[]): Promise<void> {
+  // IC7a: the post-mortem draft and push have their own flags, exit codes and (for the push) approval timeout.
+  if (args[0] === "postmortem") return runPostmortemCommand(args.slice(1));
   // IC9b: the update draft, send and queue have their own flags and (for the send) approval timeout.
   if (args[0] === "update") return runUpdateCommand(args.slice(1));
   const a = parseIncidentArgs(args);

@@ -1,9 +1,13 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { INCIDENT_USAGE } from "./incident-format.ts";
 import {
   parseDest,
   parseUpdateArgs,
+  realUpdateFs,
   runUpdateWith,
   type UpdateArgs,
   type UpdateFs,
@@ -228,5 +232,68 @@ describe("runUpdateWith", () => {
     const out2 = sink();
     await runUpdateWith(none.c, { mode: "queue", json: false }, out2.s, memFs());
     expect(out2.out.join("")).toContain("No update drafts are waiting");
+  });
+});
+
+describe("runUpdateWith: other outcomes", () => {
+  test("--json prints the draft reply; an older version says the current one", async () => {
+    const older = { ...DRAFT, version: 1, currentVersion: 3 };
+    const j = client({ "session.declareKind": {}, "incident.update": older });
+    const out = sink();
+    await runUpdateWith(j.c, parseUpdateArgs([REC, "--json"]) as UpdateArgs, out.s, memFs());
+    expect(JSON.parse(out.out.join(""))).toEqual(older);
+    const t = client({ "session.declareKind": {}, "incident.update": older });
+    const out2 = sink();
+    await runUpdateWith(
+      t.c,
+      parseUpdateArgs([REC, "--version", "1"]) as UpdateArgs,
+      out2.s,
+      memFs(),
+    );
+    expect(out2.err.join("")).toContain("This is version 1; the record is now at version 3.");
+  });
+
+  test("a declined send says nothing was posted; a gateway error exits 1 with the message", async () => {
+    const d = client({
+      "session.declareKind": {},
+      "incident.updateSend": { outcome: "denied", reason: "the owner declined" },
+    });
+    const out = sink();
+    const code = await runUpdateWith(
+      d.c,
+      parseUpdateArgs([REC, "--send", "slack:C0STATUS", "--from", "u.txt"]) as UpdateArgs,
+      out.s,
+      memFs({ "u.txt": "x" }),
+    );
+    expect(code).toBe(1);
+    expect(out.err.join("")).toBe("Not sent: the owner declined. Nothing was posted.\n");
+    const e = client({ "session.declareKind": {} });
+    const out2 = sink();
+    expect(await runUpdateWith(e.c, parseUpdateArgs([REC]) as UpdateArgs, out2.s, memFs())).toBe(1);
+    expect(out2.err.join("")).toContain("unexpected incident.update");
+  });
+
+  test("--queued --json prints the reply", async () => {
+    const q = client({ "session.declareKind": {}, "incident.updateQueue": { entries: [] } });
+    const out = sink();
+    await runUpdateWith(q.c, { mode: "queue", json: true }, out.s, memFs());
+    expect(JSON.parse(out.out.join(""))).toEqual({ entries: [] });
+  });
+});
+
+describe("realUpdateFs", () => {
+  test("writes 0600 files under a created directory, refuses an existing one when exclusive, caps reads", () => {
+    const dir = mkdtempSync(join(tmpdir(), "nimbus-update-fs-"));
+    try {
+      const p = join(dir, "sub", "u.txt");
+      realUpdateFs.writeText(p, "hello", true);
+      expect(realUpdateFs.readText(p, 100)).toBe("hello");
+      expect(() => realUpdateFs.writeText(p, "again", true)).toThrow();
+      realUpdateFs.writeText(p, "again", false);
+      expect(realUpdateFs.readText(p, 100)).toBe("again");
+      expect(() => realUpdateFs.readText(p, 2)).toThrow(/larger than 2 bytes/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
