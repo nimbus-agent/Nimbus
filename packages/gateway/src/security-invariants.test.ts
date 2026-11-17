@@ -305,8 +305,6 @@ function fakeVault(seed: Record<string, string> = {}): NimbusVault {
 }
 
 const SRC_ROOT = import.meta.dir;
-/** An `"incident.` literal that is not the argument of a NEGATED `!is_method_allowed(` pin. */
-const INCIDENT_LITERAL_OUTSIDE_NEGATION = /(?<!!\s*is_method_allowed\()"incident\./;
 const REPO_ROOT = resolve(SRC_ROOT, "..", "..", "..");
 
 async function read(relPathFromRepoRoot: string): Promise<string> {
@@ -916,20 +914,70 @@ describe("I5 — LAN method allowlist is intrinsic to LanServer", () => {
     }
   });
 
-  test("I7: no incident.* method is renderer-callable at IC3, and the allowlist size is the one IC3 found (IC10 changes it deliberately)", async () => {
+  test("I7 (IC10a): exactly incident.get, incident.list and incident.timeline are renderer-callable; the allowlist is 135", async () => {
     const rust = await read("packages/ui/src-tauri/src/gateway_bridge.rs");
-    // only a NEGATIVE pin (`!is_method_allowed("incident.timeline")`) may name an incident method
-    expect(rust).not.toMatch(INCIDENT_LITERAL_OUTSIDE_NEGATION);
-    // the exception is for the NEGATED call only: a positive call and a bare literal are caught
-    expect(
-      INCIDENT_LITERAL_OUTSIDE_NEGATION.test('assert!(is_method_allowed("incident.timeline"));'),
-    ).toBe(true);
-    expect(
-      INCIDENT_LITERAL_OUTSIDE_NEGATION.test('assert!(!is_method_allowed("incident.timeline"));'),
-    ).toBe(false);
-    // IC3 adds no renderer-callable method. The slice that exposes incident.list and incident.get to the
-    // desktop (IC10) must change this number in the same commit as its `ALLOWED_METHODS` entries.
-    expect(rust).toMatch(/assert_eq!\s*\(\s*ALLOWED_METHODS\.len\(\),\s*132\s*\)/);
+    const start = rust.indexOf("pub const ALLOWED_METHODS: &[&str] = &[");
+    const end = rust.indexOf("];", start);
+    const list = rust.slice(start, end);
+    // by NAME: a one-for-one swap (assemble for timeline) would keep the count
+    expect([...list.matchAll(/"(incident\.[A-Za-z]+)"/g)].map((m) => m[1])).toEqual([
+      "incident.get",
+      "incident.list",
+      "incident.timeline",
+    ]);
+    // outside the list, only a NEGATIVE pin (`!is_method_allowed("incident.assemble")`) or a positive pin
+    // of one of the three reads may name an incident method
+    const rest = rust.slice(0, start) + rust.slice(end);
+    for (const m of rest.matchAll(/"(incident\.[A-Za-z]+)"/g)) {
+      const at = m.index ?? 0;
+      const ctx = rest.slice(Math.max(0, at - 40), at);
+      const negated = /!\s*is_method_allowed\($/.test(ctx);
+      const positiveRead = ["incident.get", "incident.list", "incident.timeline"].includes(
+        m[1] as string,
+      );
+      // the Rust test's denial array lists one refused method per line
+      const denialLine = /^\s*$/.test(
+        rest.slice(rest.lastIndexOf(String.fromCharCode(10), at - 1) + 1, at),
+      );
+      expect(negated || positiveRead || denialLine).toBe(true);
+    }
+    expect(rust).toMatch(/^\s*"incident\.assemble",\s*$/m); // the Rust denial list names it
+    expect(rust).toMatch(/assert_eq!\s*\(\s*ALLOWED_METHODS\.len\(\),\s*135\s*\)/);
+    // the Rust denial list names the methods that must stay off the renderer
+    for (const m of ["assemble", "advisory", "remediate", "undo"]) {
+      expect(rust).toMatch(new RegExp(String.raw`^\s*"incident\.${m}",\s*$`, "m"));
+    }
+  });
+
+  test("I7/I5 (IC10a): each renderer-callable incident read still gates on the DECLARED kind first, the bridge declares ui, and the namespace is off the LAN", async () => {
+    const rpc = await read("packages/gateway/src/ipc/incident-rpc.ts");
+    for (const m of ["incident.list", "incident.get", "incident.timeline", "incident.assemble"]) {
+      const at = rpc.indexOf(`"${m}": `);
+      expect(at).toBeGreaterThan(0);
+      expect(rpc.slice(at, at + 140)).toContain("requireOwnerKind(caller.kind);");
+    }
+    const rust = await read("packages/ui/src-tauri/src/gateway_bridge.rs");
+    expect(rust).toMatch(/"method": "session\.declareKind",\s*"params": \{ "kind": "ui" \}/);
+    const lan = await read("packages/gateway/src/ipc/lan-rpc.ts");
+    expect(lan).toMatch(/^\s*"incident",\s*$/m);
+  });
+
+  test("I8 (IC10a): the Incidents page renders gateway text only as React text or through Markdown, and calls only the three reads", async () => {
+    const files = [
+      "packages/ui/src/pages/Incidents.tsx",
+      ...(await readdir(resolve(REPO_ROOT, "packages/ui/src/components/incidents"))).map(
+        (f) => `packages/ui/src/components/incidents/${f}`,
+      ),
+    ];
+    for (const f of files) {
+      const src = await read(f);
+      expect(src).not.toContain("dangerouslySetInnerHTML");
+      expect(src).not.toContain("innerHTML");
+      expect(src).not.toContain("incident.assemble");
+      for (const m of src.matchAll(/"(incident\.[A-Za-z]+)"/g)) {
+        expect(["incident.list", "incident.get", "incident.timeline"]).toContain(m[1] as string);
+      }
+    }
   });
 
   test("I29/MB3: the JSM on-call step names its fixed host once and sends every request with redirect manual", async () => {
@@ -2328,9 +2376,9 @@ describe("I7 — Tauri ALLOWED_METHODS surface for T2 PR 3", () => {
     expect(rust).not.toContain("toolgen.");
   });
 
-  test("allowlist_exact_size assertion is 132", async () => {
+  test("allowlist_exact_size assertion is 135", async () => {
     const rust = await read("packages/ui/src-tauri/src/gateway_bridge.rs");
-    expect(rust).toMatch(/assert_eq!\s*\(\s*ALLOWED_METHODS\.len\(\),\s*132\s*\)/);
+    expect(rust).toMatch(/assert_eq!\s*\(\s*ALLOWED_METHODS\.len\(\),\s*135\s*\)/);
   });
 
   // Role packs Project 4: 111 + 7 - 2 = 116; Project 5 (onboarding): + pack.install, decisions.status
@@ -11096,7 +11144,7 @@ describe("I46 — a renderer can create an extension run grant only through migr
     }
     expect(rust).toContain('assert!(is_method_allowed("migration.list"));');
     expect(rust).toContain('assert!(is_method_allowed("migration.accept"));');
-    expect(rust).toMatch(/assert_eq!\s*\(\s*ALLOWED_METHODS\.len\(\),\s*132\s*\)/);
+    expect(rust).toMatch(/assert_eq!\s*\(\s*ALLOWED_METHODS\.len\(\),\s*135\s*\)/);
   });
 
   // ---- the positive control ------------------------------------------------------------------
