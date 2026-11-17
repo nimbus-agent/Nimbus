@@ -106,6 +106,27 @@ describe("tryDispatchOncallNowRpc", () => {
     expect((err as RpcMethodError).rpcCode).toBe(-32602);
   });
 
+  test("oncall.handoff carries the incident records only for a connection that declared cli or ui", async () => {
+    const kinds = new Map<string, string>([
+      ["c-cli", "cli"],
+      ["c-ui", "ui"],
+      ["c-mcp", "mcp"],
+      ["c-unknown", "unknown"],
+    ]);
+    const ctx = makeCtx(true, {});
+    (ctx as unknown as { getClientKind: (id: string) => string }).getClientKind = (id) =>
+      kinds.get(id) ?? "unknown";
+    const has = async (clientId: string | undefined): Promise<boolean> => {
+      const out = (await tryDispatchOncallNowRpc(ctx, "oncall.handoff", {}, clientId)) as object;
+      return "records" in out;
+    };
+    expect(await has("c-cli")).toBe(true);
+    expect(await has("c-ui")).toBe(true);
+    expect(await has("c-mcp")).toBe(false);
+    expect(await has("c-unknown")).toBe(false);
+    expect(await has(undefined)).toBe(false);
+  });
+
   test("a demo gateway serves oncall.handoff: the demo gate does not refuse it", () => {
     expect(demoRefusal("oncall.handoff")).toBeUndefined();
   });

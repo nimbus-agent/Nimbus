@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { closeSync, fstatSync, mkdirSync, openSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 
 import type { IPCClient } from "../ipc-client/index.ts";
@@ -163,9 +163,15 @@ export interface UpdateFs {
 
 export const realUpdateFs: UpdateFs = {
   readText(path, maxBytes) {
-    const size = statSync(path).size;
-    if (size > maxBytes) throw new Error(`${path} is larger than ${String(maxBytes)} bytes`);
-    return readFileSync(path, "utf8");
+    // One open file descriptor for the size check and the read, so the file cannot change in between.
+    const fd = openSync(path, "r");
+    try {
+      const size = fstatSync(fd).size;
+      if (size > maxBytes) throw new Error(`${path} is larger than ${String(maxBytes)} bytes`);
+      return readFileSync(fd, "utf8");
+    } finally {
+      closeSync(fd);
+    }
   },
   writeText(path, text, exclusive) {
     mkdirSync(dirname(path), { recursive: true, mode: 0o700 });

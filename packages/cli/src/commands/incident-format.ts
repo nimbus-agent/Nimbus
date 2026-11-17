@@ -1,4 +1,4 @@
-import { stripControlChars } from "../lib/strip-control-chars.ts";
+import { stripTerminalText } from "../lib/strip-terminal-text.ts";
 import { DEBT_USAGE_LINE, type DebtArgs, parseDebtArgs } from "./incident-debt-format.ts";
 import {
   parseRemediationArgs,
@@ -16,6 +16,7 @@ export const INCIDENT_USAGE =
   "Usage: nimbus incident list [--open] [--service <id>] [--source <service>] [--limit <n>] [--cascade] [--json]\n" +
   "       nimbus incident show <id> [--json]\n" +
   "       nimbus incident timeline <id> [--version <n>] [--json]\n" +
+  "       nimbus incident investigate <id> [--json]\n" +
   `${REMEDIATE_USAGE}
 ` +
   `${DEBT_USAGE_LINE}\n` +
@@ -35,6 +36,7 @@ export type IncidentArgs =
       readonly cascade: boolean;
     }
   | { readonly verb: "show"; readonly json: boolean; readonly id: string }
+  | { readonly verb: "investigate"; readonly json: boolean; readonly id: string }
   | {
       readonly verb: "timeline";
       readonly json: boolean;
@@ -110,14 +112,14 @@ export function parseIncidentArgs(argv: readonly string[]): IncidentArgs | undef
       ...(flags.limit === undefined ? {} : { limit: flags.limit }),
     };
   }
-  if (verb === "show") {
+  if (verb === "show" || verb === "investigate") {
     const json = rest.filter((a) => a === "--json");
     const ids = rest.filter((a) => a !== "--json");
     const [id] = ids;
     if (json.length > 1 || ids.length !== 1 || id === undefined || id.startsWith("--")) {
       return undefined;
     }
-    return { verb: "show", json: json.length === 1, id };
+    return { verb, json: json.length === 1, id };
   }
   if (verb === "timeline") return parseTimelineArgs(rest);
   if (verb === "debt") return parseDebtArgs(rest);
@@ -182,7 +184,7 @@ export function ago(ms: number, nowMs: number): string {
   return `${String(Math.floor(s / 86_400))}d`;
 }
 
-const clean = (s: string): string => stripControlChars(s).replace(/\s+/g, " ").trim();
+const clean = (s: string): string => stripTerminalText(s).replace(/\s+/g, " ").trim();
 
 export function listLine(r: SummaryLike): string {
   const opened = r.openedAtMs === null ? "no open time    " : utc(r.openedAtMs);
