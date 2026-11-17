@@ -26,7 +26,7 @@ import {
  * - `retention_days` (default 365, `7..3650`) and `lookback_days` (default 7, `1..90`): out of range is a
  *   section fallback to the default, recorded through `sectionFallbackSink`, never clamped.
  *
- * `[incident.*]` sub-tables and `[[incident.expect]]` are ignored here (a later slice reads them).
+ * `[incident.*]` sub-tables, `[[incident.expect]]` and `anomaly_z` are ignored here: `incident-predict-toml.ts` reads them (IC8).
  */
 export type NimbusIncidentToml = {
   readonly enabled: boolean;

@@ -16964,3 +16964,85 @@ describe("I59 - a workflow from outside this install enters only through importW
     expect(core).not.toMatch(/standing_rule|insertRule|claimFire|standingRuleStep/);
   });
 });
+
+describe("I57 (a) - IC8: the radar and the anomaly baseline are inert (detection never acts)", () => {
+  test("12: D46(f) holds over the real tree with its anchor; a predict pass appends no egress or audit row, makes no fetch, and its toast carries counts only", async () => {
+    const { checkIncidentFindingConfinement, RULE_ANCHORS } = await import(
+      "../../../scripts/structure-audit/check-nimbus-invariants.ts"
+    );
+    const { iterateSourceFiles } = await import("../../../scripts/structure-audit/lib.ts");
+    const files: { relPath: string; contents: string }[] = [];
+    for await (const f of iterateSourceFiles())
+      files.push({ relPath: f.relPath, contents: f.contents });
+    expect(checkIncidentFindingConfinement(files)).toEqual([]);
+    expect(RULE_ANCHORS).toContain("packages/gateway/src/incident/finding-store.ts");
+    expect(files.some((f) => f.relPath === "packages/gateway/src/incident/predict-pass.ts")).toBe(
+      true,
+    );
+
+    const { createMemoryIndexDb } = await import("./connectors/connector-sync-test-helpers.ts");
+    const writers = await import("./incident/__fixtures__/trigger-writers.ts");
+    const idx = await import("./incident/__fixtures__/index-writers.ts");
+    const { runPredictPass, SETTLE_MS } = await import("./incident/predict-pass.ts");
+    const { bucketStart } = await import("./incident/anomaly-baseline.ts");
+    const db = createMemoryIndexDb();
+    try {
+      const api = idx.serviceConfig();
+      const resolver = idx.resolverFor(api);
+      const now = Date.parse("2026-11-17T12:20:00.000Z");
+      const scored = bucketStart(now - SETTLE_MS) - 3_600_000;
+      for (let i = 0; i < 6; i++) {
+        writers.writeSentryIssue(
+          db,
+          { id: `x${String(i)}`, firstSeenMs: scored + i, title: "\u001b[31mSECRET title" },
+          resolver,
+        );
+      }
+      const toasts: string[] = [];
+      const realFetch = globalThis.fetch;
+      let fetches = 0;
+      globalThis.fetch = (() => {
+        fetches += 1;
+        return Promise.reject(new Error("no network from a predict pass"));
+      }) as unknown as typeof fetch;
+      let r: ReturnType<typeof runPredictPass>;
+      try {
+        r = runPredictPass({
+          db,
+          config: () => ({
+            anomalyZ: 3,
+            expectations: [
+              {
+                key: "sync:github",
+                kind: "sync",
+                service: "github",
+                type: null,
+                maxGapMs: 3_600_000,
+              },
+            ],
+          }),
+          serviceConfigs: () => idx.configMap(api),
+          nowMs: () => now,
+          notify: (t, b) => toasts.push(`${t} ${b}`),
+          isOwnerOnCallFor: () => true,
+        });
+      } finally {
+        globalThis.fetch = realFetch;
+      }
+      expect(r.radar.opened).toBe(1);
+      expect(r.anomaly.opened).toBe(1);
+      expect(fetches).toBe(0);
+      expect((db.query("SELECT count(*) AS n FROM egress_ledger").get() as { n: number }).n).toBe(
+        0,
+      );
+      expect((db.query("SELECT count(*) AS n FROM audit_log").get() as { n: number }).n).toBe(0);
+      expect(toasts).toHaveLength(2);
+      for (const t of toasts) {
+        for (const leak of ["SECRET", "github", "payment-service", "sentry"])
+          expect(t).not.toContain(leak);
+      }
+    } finally {
+      db.close();
+    }
+  });
+});

@@ -60,6 +60,11 @@ export const RISK_SCORING = {
   open_incident_dependency: { factor: "system_state", level: "elevated" },
   /** An open JSM alert (P1 or P2) bound to this service or a dependency. Lower priorities are listed but not scored. */
   open_alert_p1_p2: { factor: "system_state", level: "elevated" },
+  /**
+   * An OPEN incident record (Phase 10 IC3) from Sentry, Monte Carlo or Bigeye whose service is this one or a
+   * dependency (Phase 10 IC8). PagerDuty and JSM are read from their items above, so they are not counted twice.
+   */
+  open_record_other_source: { factor: "system_state", level: "elevated" },
   /** The latest deployment of this service in a deploy environment failed within the last 24 hours. */
   recent_failed_deploy: { factor: "system_state", level: "elevated" },
   /** Incident and alert sources are bound and fresh, and none of the above holds. */
@@ -225,6 +230,24 @@ function alertHits(
   return { hits, unscored };
 }
 
+// The open incident records of the sources the item reads above do not cover (Phase 10 IC8). Only the record's
+// stored service and status are read; a record whose service is unbound never counts.
+function openRecordHits(db: Database, targets: ReadonlySet<string>): Hit[] {
+  const rows = db
+    .query(
+      `SELECT id, trigger_service, service FROM incident_record
+        WHERE status = 'open' AND trigger_service IN ('sentry', 'montecarlo', 'bigeye') AND service IS NOT NULL
+        ORDER BY opened_at_ms DESC, id`,
+    )
+    .all() as { id: string; trigger_service: string; service: string }[];
+  return rows
+    .filter((r) => targets.has(r.service))
+    .map((r) => ({
+      row: "open_record_other_source" as const,
+      text: `open ${r.trigger_service} incident record ${r.id} on ${r.service}`,
+    }));
+}
+
 function recentFailedDeploy(inputs: RiskInputs): Hit | null {
   const { db, cfg, nowMs } = inputs;
   const last = selectLastDeploymentBefore(db, cfg.serviceId, cfg.deployEnvironments, nowMs + 1);
@@ -271,6 +294,7 @@ export function systemStateFactor(inputs: RiskInputs): RiskFactor {
     hits.push(...a.hits);
     unscoredAlerts = a.unscored;
   }
+  hits.push(...openRecordHits(db, targets));
   const failed = recentFailedDeploy(inputs);
   if (failed !== null) hits.push(failed);
 
