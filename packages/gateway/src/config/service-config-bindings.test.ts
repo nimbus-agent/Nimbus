@@ -45,6 +45,17 @@ for (const { header, parse } of BLOCKS) {
       expect(parse(table(header, "")).get("payments")?.chatAliases).toEqual([]);
     });
 
+    test("argocd_apps parses (IC5a), absent reads empty, and a bad name is refused", () => {
+      const cfg = parse(table(header, 'argocd_apps = ["payments-api", "payments.worker"]')).get(
+        "payments",
+      );
+      expect(cfg?.argocdApps).toEqual(["payments-api", "payments.worker"]);
+      expect(parse(table(header, "")).get("payments")?.argocdApps).toEqual([]);
+      expect(() => parse(table(header, 'argocd_apps = ["Payments API"]'))).toThrow(
+        /argocd_apps entry 'Payments API' is not an Argo CD application name/,
+      );
+    });
+
     test("a comma inside a quoted chat alias is part of the alias", () => {
       const cfg = parse(table(header, 'chat_aliases = ["checkout,prod", "web"]')).get("payments");
       expect(cfg?.chatAliases).toEqual(["checkout,prod", "web"]);

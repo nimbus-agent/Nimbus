@@ -20,6 +20,7 @@ import {
   versionsOf,
 } from "../incident/incident-store.ts";
 import { investigateRecord } from "../incident/investigate.ts";
+import { type Remediation, RemediationError } from "../incident/remediation.ts";
 import { readTimeline } from "../incident/timeline-read.ts";
 import { TRIGGER_SERVICES } from "../incident/trigger-sources.ts";
 import type { ServiceConfig } from "../metrics/dora-config.ts";
@@ -34,16 +35,25 @@ import type { ClientKind } from "./server/client-kind.ts";
  *   incident.assemble { id }                           -> { outcome, record }
  *   incident.timeline { id, version? }                 -> { recordId, version, currentVersion, events, notes }   (IC4)
  *   incident.investigate { id }                        -> { investigation, markdown }                            (IC9a)
+ *   incident.proposals { id }                          -> { recordId, version, advisory, proposals, unavailable }  (IC5a)
+ *   incident.remediate { id, proposalId }              -> { proposalId, actionId, status, reason?, nonHuman, undoable }  (IC5a)
+ *   incident.undo { actionId }                         -> { actionId, status, reason?, nonHuman }  (IC5a)
+ *   incident.advisory {}                               -> { advisory }  (IC5a)
+ *   incident.advisorySet { on }                        -> { advisory }  (IC5a)
  *   incident.debt { since?, untouched?, minIncidents?, limit? } -> DebtResult   (IC7b; runs `git log` under debt/, never from incident/)
  *
  * `incident.get` also answers a live `cascade` (IC4: where this record stands among the open records of the
  * same 30-minute window) and `incident.list { cascade: true }` also answers the open `groups`; both are derived
  * at call time from the open records and the declared `depends_on`, never stored.
  *
- * ALL FIVE serve only a connection whose DECLARED kind is `cli` or `ui` (`requireOwnerKind`, called first by
+ * ALL ELEVEN serve only a connection whose DECLARED kind is `cli` or `ui` (`requireOwnerKind`, called first by
  * every handler, before any query runs): a record holds capped titles of items from several services, and the
  * kind is the connection's (`ctx.getClientKind`), never a param. The whole namespace is LAN-forbidden (I5) and
- * is NOT renderer-callable (I7): the desktop gets `list` and `get` at a later slice, `assemble` never.
+ * is NOT renderer-callable (I7): the desktop gets `list`, `get` and `timeline` at a later slice, `assemble` never.
+ * The five IC5a methods (`proposals`, `remediate`, `undo`, `advisory`, `advisorySet`) can START an action or flip the
+ * advisory switch, so they are never renderer-callable (the renderer can already answer a consent prompt): `proposals`
+ * becomes readable at IC10b, the other four never. `remediate` and `undo` run the stored proposal through the LOCAL
+ * owner execute() on THIS connection (`caller.clientId`), human answers only; advisory mode refuses them first.
  */
 export class IncidentRpcError extends Error {
   constructor(
@@ -63,6 +73,8 @@ export interface IncidentRpcCtx {
   readonly serviceConfigs?: () => ReadonlyMap<string, ServiceConfig>;
   /** A clock for tests; the gateway uses `Date.now`. */
   readonly now?: () => number;
+  /** IC5a: the remediation service (proposals, remediate, undo, the advisory switch). Absent: those methods refuse. */
+  readonly remediation?: Remediation;
   /**
    * `incident.debt` (IC7b): the owner's own `[[filesystem.roots]]`, read fresh per call, and the git reader
    * (default: the real one in `debt/git-history.ts`). Absent: the method answers `ERR_DEBT_UNAVAILABLE`.
@@ -74,7 +86,7 @@ export interface IncidentRpcCtx {
   };
 }
 
-export type IncidentRpcCaller = { readonly kind: ClientKind };
+export type IncidentRpcCaller = { readonly kind: ClientKind; readonly clientId?: string };
 
 export const INCIDENT_LIST_DEFAULT = 50;
 export const INCIDENT_LIST_MAX = 200;
@@ -478,6 +490,52 @@ async function assemble(ctx: IncidentRpcCtx, raw: unknown): Promise<unknown> {
   }
 }
 
+function remediationOf(ctx: IncidentRpcCtx): Remediation {
+  if (ctx.remediation === undefined) {
+    throw new IncidentRpcError(
+      -32000,
+      "ERR_REMEDIATION_UNAVAILABLE: this gateway has no remediation service",
+    );
+  }
+  return ctx.remediation;
+}
+
+/** A remediation refusal as the owner reads it: `<CODE>: <message>`, a params error. */
+async function remediationCall<T>(run: () => T | Promise<T>): Promise<T> {
+  try {
+    return await run();
+  } catch (e) {
+    if (e instanceof RemediationError) {
+      throw new IncidentRpcError(-32602, `${e.code}: ${e.message}`);
+    }
+    if (e instanceof IncidentError) throw new IncidentRpcError(-32602, `${e.code}: ${e.message}`);
+    throw e;
+  }
+}
+
+function parseProposalId(method: string, p: Record<string, unknown>): string {
+  const raw = p["proposalId"];
+  if (typeof raw !== "string" || raw === "" || raw.length > 64) {
+    throw new IncidentRpcError(-32602, `${method}: proposalId must be a non-empty string`);
+  }
+  return raw;
+}
+
+function parseActionId(p: Record<string, unknown>): string {
+  const raw = p["actionId"];
+  if (typeof raw !== "string" || raw === "" || raw.length > 64) {
+    throw new IncidentRpcError(-32602, "incident.undo: actionId must be a non-empty string");
+  }
+  return raw;
+}
+
+function callerClient(method: string, caller: IncidentRpcCaller): string {
+  if (caller.clientId === undefined || caller.clientId === "") {
+    throw new IncidentRpcError(-32602, `${method}: no connection to ask the owner on`);
+  }
+  return caller.clientId;
+}
+
 export async function dispatchIncidentRpc(
   method: string,
   params: unknown,
@@ -508,6 +566,39 @@ export async function dispatchIncidentRpc(
     "incident.assemble": async (raw) => {
       requireOwnerKind(caller.kind);
       return assemble(ctx, raw);
+    },
+    "incident.proposals": async (raw) => {
+      requireOwnerKind(caller.kind);
+      const id = parseId("incident.proposals", requireKeys("incident.proposals", raw, ["id"]));
+      return remediationCall(() => remediationOf(ctx).proposals(id));
+    },
+    "incident.remediate": async (raw) => {
+      requireOwnerKind(caller.kind);
+      const p = requireKeys("incident.remediate", raw, ["id", "proposalId"]);
+      const id = parseId("incident.remediate", p);
+      const proposalId = parseProposalId("incident.remediate", p);
+      const clientId = callerClient("incident.remediate", caller);
+      return remediationCall(() => remediationOf(ctx).remediate({ ref: id, proposalId, clientId }));
+    },
+    "incident.undo": async (raw) => {
+      requireOwnerKind(caller.kind);
+      const p = requireKeys("incident.undo", raw, ["actionId"]);
+      const actionId = parseActionId(p);
+      const clientId = callerClient("incident.undo", caller);
+      return remediationCall(() => remediationOf(ctx).undo({ actionId, clientId }));
+    },
+    "incident.advisory": async (raw) => {
+      requireOwnerKind(caller.kind);
+      requireKeys("incident.advisory", raw, []);
+      return { advisory: remediationOf(ctx).advisory() };
+    },
+    "incident.advisorySet": async (raw) => {
+      requireOwnerKind(caller.kind);
+      const p = requireKeys("incident.advisorySet", raw, ["on"]);
+      if (typeof p["on"] !== "boolean") {
+        throw new IncidentRpcError(-32602, "incident.advisorySet: on must be a boolean");
+      }
+      return { advisory: remediationOf(ctx).setAdvisory(p["on"]) };
     },
   });
 }

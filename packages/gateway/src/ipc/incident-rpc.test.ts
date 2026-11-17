@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { afterEach, describe, expect, test } from "bun:test";
+import { fileURLToPath } from "node:url";
 import { DEFAULT_INCIDENT_CONFIG } from "../config/incident-toml.ts";
 import { createMemoryIndexDb } from "../connectors/connector-sync-test-helpers.ts";
 import {
@@ -14,8 +15,10 @@ import {
   writePagerdutyIncident,
   writeSentryIssue,
 } from "../incident/__fixtures__/trigger-writers.ts";
+import { IncidentError } from "../incident/assemble.ts";
 import { createIncidentEngine, type IncidentEngine } from "../incident/incident-engine.ts";
 import * as store from "../incident/incident-store.ts";
+import { type Remediation, RemediationError } from "../incident/remediation.ts";
 import {
   dispatchIncidentRpc,
   type IncidentRpcCtx,
@@ -253,20 +256,28 @@ describe("owner kinds only (the spec, § 5.3)", () => {
     ["incident.assemble", { id: "pagerduty:A" }],
     ["incident.timeline", { id: "pagerduty:A" }],
     ["incident.investigate", { id: "pagerduty:A" }],
+    ["incident.proposals", { id: "pagerduty:A" }],
+    ["incident.remediate", { id: "pagerduty:A", proposalId: "prp_0123456789abcdef" }],
+    ["incident.undo", { actionId: "act_0123456789abcdef" }],
+    ["incident.advisory", {}],
+    ["incident.advisorySet", { on: true }],
   ];
 
   test("list, get AND assemble refuse every other kind BEFORE any query or engine call, and serve cli and ui", async () => {
+    // ONE database for every pair: a refused call must touch neither it nor the engine, which the spy and
+    // `s.calls` prove per pair (`ran` is reset each time). A fresh migrated DB per pair ran past 5 s on CI.
+    const s = setup();
+    const ran: string[] = [];
+    const spyDb = new Proxy(s.db, {
+      get(target, prop) {
+        if (prop === "query" || prop === "prepare" || prop === "run") ran.push(String(prop));
+        const v = Reflect.get(target, prop, target) as unknown;
+        return typeof v === "function" ? (v as (...a: unknown[]) => unknown).bind(target) : v;
+      },
+    });
     for (const kind of FORBIDDEN) {
       for (const [method, params] of METHODS) {
-        const s = setup();
-        const ran: string[] = [];
-        const spyDb = new Proxy(s.db, {
-          get(target, prop) {
-            if (prop === "query" || prop === "prepare" || prop === "run") ran.push(String(prop));
-            const v = Reflect.get(target, prop, target) as unknown;
-            return typeof v === "function" ? (v as (...a: unknown[]) => unknown).bind(target) : v;
-          },
-        });
+        ran.length = 0;
         const e = await rpcError(
           dispatchIncidentRpc(
             method,
@@ -282,8 +293,8 @@ describe("owner kinds only (the spec, § 5.3)", () => {
       }
     }
     for (const kind of ["cli", "ui"] as const) {
-      const s = setup();
-      expect(((await call(s, "incident.list", {}, kind)) as ListOut).status).toBe("no_data");
+      const fresh = setup();
+      expect(((await call(fresh, "incident.list", {}, kind)) as ListOut).status).toBe("no_data");
     }
   });
 
@@ -408,6 +419,185 @@ describe("Phase 10 IC4: incident.timeline and the cascade", () => {
     expect(listed.groups).toHaveLength(1);
     expect((await call(s, "incident.list", {})) as object).not.toHaveProperty("groups");
     expect((await rpcError(call(s, "incident.list", { cascade: "yes" }))).rpcCode).toBe(-32602);
+  });
+});
+
+describe("IC5a: remediate, undo, proposals and the advisory switch", () => {
+  type Calls = string[];
+  function fakeRemediation(calls: Calls): Remediation {
+    return {
+      proposals: (ref: string) => {
+        calls.push(`proposals ${ref}`);
+        return { recordId: "inc_x", version: 1, advisory: false, proposals: [], unavailable: [] };
+      },
+      remediate: async (p: { ref: string; proposalId: string; clientId: string }) => {
+        calls.push(`remediate ${p.ref} ${p.proposalId} ${p.clientId}`);
+        if (p.proposalId === "prp_ffffffffffffffff") {
+          throw new RemediationError("ERR_PROPOSAL_STALE", "stale");
+        }
+        if (p.proposalId === "prp_eeeeeeeeeeeeeeee") {
+          throw new IncidentError("ERR_INCIDENT_NOT_FOUND", "gone");
+        }
+        if (p.proposalId === "prp_dddddddddddddddd") throw new Error("boom");
+        return {
+          proposalId: p.proposalId,
+          actionId: "act_1",
+          status: "executed",
+          nonHuman: false,
+          undoable: false,
+        };
+      },
+      undo: async (p: { actionId: string; clientId: string }) => {
+        calls.push(`undo ${p.actionId} ${p.clientId}`);
+        return { actionId: p.actionId, status: "undone", nonHuman: false };
+      },
+      advisory: () => {
+        calls.push("advisory");
+        return true;
+      },
+      setAdvisory: (on: boolean) => {
+        calls.push(`set ${String(on)}`);
+        return on;
+      },
+    } as unknown as Remediation;
+  }
+
+  async function act(
+    method: string,
+    params: unknown,
+    over: {
+      kind?: ClientKind;
+      clientId?: string | undefined;
+      remediation?: Remediation | undefined;
+    } = {},
+  ): Promise<unknown> {
+    const s = setup();
+    const out = await dispatchIncidentRpc(
+      method,
+      params,
+      {
+        db: s.db,
+        engine: s.engine,
+        dependsOn: () => new Map(),
+        ...(over.remediation === undefined ? {} : { remediation: over.remediation }),
+      },
+      {
+        kind: over.kind ?? "cli",
+        ...("clientId" in over
+          ? over.clientId === undefined
+            ? {}
+            : { clientId: over.clientId }
+          : { clientId: "client-1" }),
+      },
+    );
+    if (out.kind === "miss") throw new Error(`miss ${method}`);
+    return out.value;
+  }
+
+  test("each method reaches the service with THIS connection's client id and nothing else", async () => {
+    const calls: Calls = [];
+    const r = fakeRemediation(calls);
+    await act("incident.proposals", { id: "inc_a" }, { remediation: r });
+    await act(
+      "incident.remediate",
+      { id: "inc_a", proposalId: "prp_0123456789abcdef" },
+      { remediation: r },
+    );
+    await act("incident.undo", { actionId: "act_0123456789abcdef" }, { remediation: r });
+    expect(await act("incident.advisory", {}, { remediation: r })).toEqual({ advisory: true });
+    expect(await act("incident.advisorySet", { on: false }, { remediation: r })).toEqual({
+      advisory: false,
+    });
+    expect(calls).toEqual([
+      "proposals inc_a",
+      "remediate inc_a prp_0123456789abcdef client-1",
+      "undo act_0123456789abcdef client-1",
+      "advisory",
+      "set false",
+    ]);
+  });
+
+  test("a remediation refusal is a params error `<CODE>: <message>`; other errors propagate", async () => {
+    const r = fakeRemediation([]);
+    const e = await rpcError(
+      act(
+        "incident.remediate",
+        { id: "a", proposalId: "prp_ffffffffffffffff" },
+        { remediation: r },
+      ),
+    );
+    expect(e.rpcCode).toBe(-32602);
+    expect(e.message).toBe("ERR_PROPOSAL_STALE: stale");
+    const e2 = await rpcError(
+      act(
+        "incident.remediate",
+        { id: "a", proposalId: "prp_eeeeeeeeeeeeeeee" },
+        { remediation: r },
+      ),
+    );
+    expect(e2.message).toBe("ERR_INCIDENT_NOT_FOUND: gone");
+    await expect(
+      act(
+        "incident.remediate",
+        { id: "a", proposalId: "prp_dddddddddddddddd" },
+        { remediation: r },
+      ),
+    ).rejects.toThrow("boom");
+  });
+
+  test("no remediation service, or no connection to ask: refused before anything runs", async () => {
+    const none = await rpcError(act("incident.advisory", {}));
+    expect(none.message).toContain("ERR_REMEDIATION_UNAVAILABLE");
+    const r = fakeRemediation([]);
+    for (const [method, params] of [
+      ["incident.remediate", { id: "a", proposalId: "prp_0123456789abcdef" }],
+      ["incident.undo", { actionId: "act_0123456789abcdef" }],
+    ] as const) {
+      for (const clientId of [undefined, ""]) {
+        const e = await rpcError(act(method, params, { remediation: r, clientId }));
+        expect(e.message).toContain("no connection to ask the owner on");
+      }
+    }
+  });
+
+  test("parameters are validated: unknown keys, wrong types, empty and over-long ids", async () => {
+    const r = fakeRemediation([]);
+    const bad: [string, unknown, RegExp][] = [
+      ["incident.proposals", {}, /id must be a non-empty string/],
+      ["incident.proposals", { id: "a", extra: 1 }, /unknown parameter "extra"/],
+      ["incident.remediate", { id: "a" }, /proposalId must be a non-empty string/],
+      ["incident.remediate", { id: "a", proposalId: "p".repeat(65) }, /proposalId/],
+      [
+        "incident.remediate",
+        { id: "a", proposalId: "prp_0123456789abcdef", amount: 1 },
+        /unknown parameter/,
+      ],
+      ["incident.undo", {}, /actionId must be a non-empty string/],
+      ["incident.undo", { actionId: "" }, /actionId/],
+      ["incident.undo", { actionId: "a", id: "b" }, /unknown parameter "id"/],
+      ["incident.advisory", { on: true }, /unknown parameter "on"/],
+      ["incident.advisorySet", {}, /on must be a boolean/],
+      ["incident.advisorySet", { on: "yes" }, /on must be a boolean/],
+    ];
+    for (const [method, params, re] of bad) {
+      const e = await rpcError(act(method, params, { remediation: r }));
+      expect(e.rpcCode).toBe(-32602);
+      expect(e.message).toMatch(re);
+    }
+  });
+
+  test("the IC5a surface stays off the renderer (I7); the LAN refusal is pinned per method in lan-rpc.test.ts", async () => {
+    const rust = await Bun.file(
+      fileURLToPath(new URL("../../../ui/src-tauri/src/gateway_bridge.rs", import.meta.url)),
+    ).text();
+    for (const m of ["proposals", "remediate", "undo", "advisory", "advisorySet"]) {
+      expect(rust.split(`"incident.${m}"`).length - 1, m).toBe(1);
+      // Named once, inside IC10a's negative list (each entry asserted `!is_method_allowed`).
+      const pinFn = rust.indexOf("fn allowlist_incident_reads_only()");
+      const pinEnd = rust.indexOf("must not be renderer-callable", pinFn);
+      const at = rust.indexOf(`"incident.${m}",`);
+      expect(pinFn > -1 && at > pinFn && at < pinEnd, m).toBe(true);
+    }
   });
 });
 

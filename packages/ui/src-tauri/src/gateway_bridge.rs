@@ -841,7 +841,10 @@ mod tests {
         assert!(is_method_allowed("incident.timeline"));
         for m in [
             "incident.assemble",
+            // Phase 10 IC5a (I57 (b)): the renderer can already answer a consent prompt, so it must not
+            // also START an engine action or flip advisory mode.
             "incident.advisory",
+            "incident.advisorySet",
             "incident.proposals",
             "incident.findings",
             "incident.remediate",

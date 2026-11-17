@@ -106,7 +106,7 @@ describe("parseIncidentArgs", () => {
   test.each([
     [[]],
     [["timeline"]],
-    [["remediate", "x"]],
+    [["frobnicate", "x"]],
     [["list", "--open", "--open"]],
     [["list", "--json", "--json"]],
     [["list", "--service"]],

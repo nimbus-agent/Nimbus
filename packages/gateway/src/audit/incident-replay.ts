@@ -12,6 +12,7 @@ import {
 import { IncidentError } from "../incident/assemble.ts";
 import { resolveIncidentRef } from "../incident/incident-id.ts";
 import { getById, versionJson, versionsOf } from "../incident/incident-store.ts";
+import { listProposals } from "../incident/proposal-store.ts";
 import type { LocalIndex } from "../index/local-index.ts";
 import { canonicalJson } from "../util/canonical-json.ts";
 
@@ -35,7 +36,9 @@ import { canonicalJson } from "../util/canonical-json.ts";
  * row itself is outside it.
  */
 
-export const REPLAY_PROPOSALS_NOTE = "No proposals are recorded before IC5.";
+export const REPLAY_PROPOSALS_NOTE = "No proposals were recorded for this incident.";
+export const REPLAY_PROPOSALS_LISTED_NOTE =
+  "Proposals are the engine's offers; what ran is under Nimbus actions.";
 export const REPLAY_PROMPT_NOTE =
   "The stored prompt text is credential-redacted and may be cut; its hash is of the text as shown to the owner.";
 
@@ -98,6 +101,51 @@ export type ReplayStepOut = ReplayRow & {
   readonly subSteps: readonly ReplayRow[];
 };
 
+/** One stored remediation proposal with the evidence it was derived from (IC5a), in creation order. */
+export type ReplayProposal = {
+  readonly id: string;
+  readonly kind: string;
+  readonly toolId: string;
+  readonly status: string;
+  readonly recordVersion: number;
+  readonly confidence: number | null;
+  readonly reversibility: string;
+  readonly createdAtMs: number;
+  readonly expiresAtMs: number;
+  readonly actionId: string | null;
+  readonly undoStatus: string | null;
+  readonly undoneAtMs: number | null;
+  readonly input: unknown;
+  readonly evidence: unknown;
+};
+
+function parseJsonOrNull(text: string): unknown {
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    return null;
+  }
+}
+
+function replayProposals(db: Database, recordId: string): ReplayProposal[] {
+  return listProposals(db, recordId).map((p) => ({
+    id: p.id,
+    kind: p.kind,
+    toolId: p.tool_id,
+    status: p.status,
+    recordVersion: p.record_version,
+    confidence: p.confidence,
+    reversibility: p.reversibility,
+    createdAtMs: p.created_at_ms,
+    expiresAtMs: p.expires_at_ms,
+    actionId: p.action_id,
+    undoStatus: p.undo_status,
+    undoneAtMs: p.undone_at_ms,
+    input: parseJsonOrNull(p.input_json),
+    evidence: parseJsonOrNull(p.evidence_json),
+  }));
+}
+
 export type ReplayRange = {
   /** The row before the first one read (its stored hash anchors the walk); 0 when there is none. */
   readonly anchorId: number;
@@ -120,7 +168,7 @@ export type ReplayResult = {
   };
   readonly actions: readonly ReplayStepOut[];
   readonly actionsTruncated: boolean;
-  readonly proposals: { readonly items: readonly never[]; readonly note: string };
+  readonly proposals: { readonly items: readonly ReplayProposal[]; readonly note: string };
   readonly verification: {
     readonly audit: ReplayRange | null;
     readonly egress: ReplayRange | null;
@@ -355,6 +403,7 @@ export function replayIncident(
     }
   }
   const egress = pairEgress(db, linked.rows);
+  const proposals = replayProposals(db, row.id);
   const actions = groupSteps(linked.rows).map((s) => stepOut(s, storedById, known, egress));
 
   const auditIds = linked.rows.map((r) => r.auditId);
@@ -385,7 +434,10 @@ export function replayIncident(
     },
     actions,
     actionsTruncated: linked.truncated,
-    proposals: { items: [], note: REPLAY_PROPOSALS_NOTE },
+    proposals: {
+      items: proposals,
+      note: proposals.length === 0 ? REPLAY_PROPOSALS_NOTE : REPLAY_PROPOSALS_LISTED_NOTE,
+    },
     verification: { audit: auditRange, egress: egressRange },
     notes,
   };

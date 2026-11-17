@@ -18,11 +18,13 @@ import type { EmbeddingReadiness } from "./embedding/embedding-readiness.ts";
 import { createNimbusEngineAgent } from "./engine/agent.ts";
 import { agentRequestContext } from "./engine/agent-request-context.ts";
 import {
+  buildRemediationExecutor,
   buildUnattendedWorkflowWriteExecutor,
   buildWorkflowWriteExecutor,
   type RunAskParams,
   runAsk,
 } from "./engine/run-ask.ts";
+import { humanOnlyConsent } from "./ipc/consent.ts";
 import { armGatewayLifecycleDiagnostics } from "./platform/exit-diagnostics.ts";
 import { removeGatewayStateFile, writeGatewayStateFile } from "./platform/gateway-state-file.ts";
 import { createPlatformServices } from "./platform/index.ts";
@@ -403,6 +405,29 @@ export async function main(): Promise<void> {
       ...(ctx.signal !== undefined && { signal: ctx.signal }),
     });
   });
+
+  // Phase 10 IC5a (I57 (b)): the incident engine runs a stored remediation proposal, or undoes one, through the
+  // local owner's executor on the asking CLI connection: no delegation, no standing rules, and a consent channel
+  // that takes a human answer only (`--yes`, a script and an old client become a decline). Built per call, so the
+  // capture observer is that call's own. A demo-rooted gateway never binds it (I41): remediate and undo refuse.
+  if (platform.paths.demo !== true) {
+    platform.bindIncidentExecutor(({ clientId, onCaptured, onNonHuman }) =>
+      buildRemediationExecutor({
+        clientId,
+        consentCoordinator: humanOnlyConsent(platform.ipc.consent, onNonHuman),
+        localIndex: platform.localIndex,
+        dispatcher,
+        egressSink: askEgressSink,
+        policyHitl: platform.policyHitl,
+        previewCredentialFor: previewCredentialResolver(
+          platform.connectorWriteDeps,
+          platform.connectorMesh,
+        ),
+        getTribalKbConfig: () => platform.tribalKbConfig(),
+        onCaptured,
+      }),
+    );
+  }
 
   // SA4: scheduled workflows. A demo-rooted gateway never schedules (I41). The scheduler is handed a
   // FACTORY for an unattended write executor and a notifier; it holds no client and no consent

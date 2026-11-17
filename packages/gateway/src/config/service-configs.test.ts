@@ -3,7 +3,11 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { loadDependsOnMap, loadServiceConfigsOrEmpty } from "./service-configs.ts";
+import {
+  loadDependsOnMap,
+  loadServiceBindings,
+  loadServiceConfigsOrEmpty,
+} from "./service-configs.ts";
 
 describe("loadServiceConfigsOrEmpty", () => {
   let dir: string;
@@ -64,5 +68,55 @@ describe("loadDependsOnMap (the cascade's map: a malformed block throws, it is n
   test("a malformed block throws", () => {
     writeFileSync(join(dir, "nimbus.toml"), `[ci.service.]\nrepos = []\n`, "utf8");
     expect(() => loadDependsOnMap(dir)).toThrow();
+  });
+});
+
+describe("loadServiceBindings (the remediation proposals' bindings: never throws)", () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "nimbus-svc-bind-"));
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("a bound service returns its Argo CD applications and deploy environments", () => {
+    writeFileSync(
+      join(dir, "nimbus.toml"),
+      `[ci.service.web]
+repos = ["github:acme/web"]
+argocd_apps = ["web-prod"]
+deploy_environments = ["production"]
+`,
+      "utf8",
+    );
+    expect(loadServiceBindings(dir, "web")).toEqual({
+      argocdApps: ["web-prod"],
+      deployEnvironments: ["production"],
+    });
+  });
+
+  test("an unbound service, a null service and no config dir return undefined", () => {
+    writeFileSync(
+      join(dir, "nimbus.toml"),
+      `[ci.service.web]
+repos = ["github:acme/web"]
+`,
+      "utf8",
+    );
+    expect(loadServiceBindings(dir, "api")).toBeUndefined();
+    expect(loadServiceBindings(dir, null)).toBeUndefined();
+    expect(loadServiceBindings(undefined, "web")).toBeUndefined();
+  });
+
+  test("a malformed block returns undefined instead of throwing", () => {
+    writeFileSync(
+      join(dir, "nimbus.toml"),
+      `[ci.service.]
+repos = []
+`,
+      "utf8",
+    );
+    expect(loadServiceBindings(dir, "web")).toBeUndefined();
   });
 });

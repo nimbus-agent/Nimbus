@@ -10,6 +10,7 @@ import {
   pruneIncidentRecords,
   recordsCitingService,
 } from "./incident-store.ts";
+import { deleteProposalsForRecords } from "./proposal-store.ts";
 
 /**
  * The one place that deletes incident records and the pushed briefs built from them (Phase 10 IC3, design I,
@@ -22,6 +23,8 @@ import {
 export type IncidentErasure = {
   readonly recordsDeleted: number;
   readonly pushedBriefsDeleted: number;
+  /** Remediation proposals of the erased records (IC5a); an OWNER erasure deletes them, retention keeps them. */
+  readonly proposalsDeleted?: number;
 };
 
 /**
@@ -37,7 +40,8 @@ export function eraseIncidentDataForService(db: Database, service: string): Inci
       triggerItemIds: erased.triggerItemIds,
       service,
     });
-    return { recordsDeleted: erased.recordIds.length, pushedBriefsDeleted };
+    const proposalsDeleted = deleteProposalsForRecords(db, erased.recordIds);
+    return { recordsDeleted: erased.recordIds.length, pushedBriefsDeleted, proposalsDeleted };
   });
   return tx();
 }
