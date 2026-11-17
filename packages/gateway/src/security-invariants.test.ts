@@ -16681,7 +16681,9 @@ describe("I57 (b) - an engine-proposed action reaches dispatch only as the local
     }
     // The one wiring site hands the push the listing and nothing else.
     const asm = await read("packages/gateway/src/platform/assemble.ts");
-    expect(asm).toContain("pushTopProposal = (recordId) => remediation.topProposal(recordId);");
+    expect(asm).toContain(
+      "oncallPush.bindTopProposal((recordId) => remediation.topProposal(recordId));",
+    );
     // `topProposal` lists (derive, store, revive) and picks; it builds no action and builds no executor.
     const rem = await read("packages/gateway/src/incident/remediation.ts");
     const start = rem.indexOf("function topProposal(");

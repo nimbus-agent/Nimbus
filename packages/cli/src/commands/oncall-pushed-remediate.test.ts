@@ -49,7 +49,14 @@ function sink() {
   const s = { out: "", err: "" };
   return {
     s,
-    sink: { out: (x: string) => void (s.out += x), err: (x: string) => void (s.err += x) },
+    sink: {
+      out: (x: string) => {
+        s.out += x;
+      },
+      err: (x: string) => {
+        s.err += x;
+      },
+    },
   };
 }
 const ARGS = {

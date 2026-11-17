@@ -60,6 +60,11 @@ export interface OncallPushRuntime {
   settleChatopsPoster(post: ChatopsPoster | undefined): void;
   /** `pending` until settled, then `bound` (a poster) or `none`. */
   chatopsSinkState(): "pending" | "bound" | "none";
+  /**
+   * Bind the incident engine's read-only top-proposal listing (Phase 10 IC5b). Once, at boot, after the
+   * remediation service exists; the push stores the id it returns and approves nothing.
+   */
+  bindTopProposal(read: (recordId: string) => PushedProposal | null): void;
 }
 
 export interface OncallPushBootDeps {
@@ -67,8 +72,6 @@ export interface OncallPushBootDeps {
   readonly configDir: string;
   /** The incident engine's `assembleNow`: the push pushes the record it assembles (Phase 10 IC3). */
   readonly records: PushRecords;
-  /** The record's top remediation proposal, carried by the push (IC5b); the push approves nothing. */
-  readonly topProposal?: (recordId: string) => PushedProposal | null;
   /**
    * Structurally `NotificationService`: `delivers: false` makes every toast record `skipped`. Read
    * at delivery time — pass the service itself (whose `delivers` may be a getter), never a copy.
@@ -171,6 +174,7 @@ export function assembleOncallPushRuntime(deps: OncallPushBootDeps): OncallPushR
   // So nothing starts until the poster is settled; early runs wait rather than drop.
   let settled = deps.settleImmediately === true;
   let chatopsPoster: ChatopsPoster | undefined;
+  let topProposal: ((recordId: string) => PushedProposal | null) | undefined;
   let release: () => void = () => {};
   const gate: Promise<void> = settled
     ? Promise.resolve()
@@ -189,7 +193,8 @@ export function assembleOncallPushRuntime(deps: OncallPushBootDeps): OncallPushR
     isEnabled,
     pagerdutyAliases: loadNimbusPagerdutyFromConfigDir(deps.configDir).severityP1Aliases,
     records: deps.records,
-    ...(deps.topProposal === undefined ? {} : { topProposal: deps.topProposal }),
+    // IC5b: null until the incident engine's listing is bound (a push before that carries no proposal).
+    topProposal: (recordId) => (topProposal === undefined ? null : topProposal(recordId)),
     // Read fresh on every use: the configured services (and their PagerDuty ids) can change at any time.
     serviceConfig: (serviceId) =>
       loadServiceConfigsOrEmpty(deps.configDir, (m) => deps.logger.warn?.({}, m)).find(
@@ -239,6 +244,11 @@ export function assembleOncallPushRuntime(deps: OncallPushBootDeps): OncallPushR
       settled = true;
       chatopsPoster = post;
       release();
+    },
+    bindTopProposal(read) {
+      if (topProposal !== undefined)
+        throw new Error("[oncall.push] bindTopProposal: already bound");
+      topProposal = read;
     },
     chatopsSinkState() {
       if (!settled) return "pending";

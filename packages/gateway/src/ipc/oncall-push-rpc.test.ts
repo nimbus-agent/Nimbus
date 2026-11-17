@@ -33,6 +33,7 @@ const runtime = (over: Partial<OncallPushRuntime> = {}): OncallPushRuntime => ({
   identityResolved: async () => true,
   settleChatopsPoster: () => {},
   chatopsSinkState: () => "none",
+  bindTopProposal: () => {},
   ...over,
 });
 beforeEach(() => {

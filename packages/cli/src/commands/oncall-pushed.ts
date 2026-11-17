@@ -10,7 +10,6 @@ function terminalSafe(s: string): string {
   return stripControlChars(s).replace(/[\p{Cf}\p{Zl}\p{Zp}]/gu, "");
 }
 
-import { declareCliClientKind } from "../lib/declare-client-kind.ts";
 import { BATCH_RPC_TIMEOUT_MS } from "../lib/rpc-timeouts.ts";
 import { withGatewayIpc } from "../lib/with-gateway-ipc.ts";
 import { getCliPlatformPaths } from "../paths.ts";
@@ -223,7 +222,13 @@ async function runPushedRemediate(
     );
     return 1;
   }
-  await declareCliClientKind(c);
+  // Declare this connection as the owner's CLI (as `declareCliClientKind` does): the gateway serves
+  // `incident.remediate` only to a declared `cli` or `ui` connection. Best effort, like that helper.
+  try {
+    await c.call("session.declareKind", { kind: "cli" });
+  } catch {
+    // An older gateway: `incident.remediate` then refuses with its own message.
+  }
   const label = p.reversibility === "irreversible" ? "IRREVERSIBLE" : terminalSafe(p.reversibility);
   sink.out(
     `Running the proposal pushed for ${terminalSafe(incidentId)}: [${label}] ${terminalSafe(p.kind)} - ${terminalSafe(p.toolId)} (${terminalSafe(p.proposalId)})\n`,

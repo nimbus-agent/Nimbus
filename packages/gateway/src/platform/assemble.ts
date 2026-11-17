@@ -326,7 +326,6 @@ import { CaptureStore, FINISHED_RETENTION_MS } from "../mcp-sink/capture-store.t
 import { proposalsWaitingToast } from "../mcp-sink/capture-toast.ts";
 import { SessionMemoryStore } from "../memory/session-memory-store.ts";
 import { buildServiceIdentityResolver } from "../metrics/service-identity.ts";
-import type { PushedProposal } from "../oncall-push/push-runner.ts";
 import { assembleOncallPushRuntime, type OncallPushRuntime } from "../oncall-push/push-runtime.ts";
 import { runOwnershipPass } from "../ownership/ownership-pass.ts";
 import {
@@ -1067,15 +1066,11 @@ async function createSchedulerWithMesh(opts: SchedulerWithMeshOpts): Promise<{
     logger: syncLogger,
   });
 
-  // IC5b: the push carries its record's top remediation proposal. The remediation service is built further down,
-  // so the push reads it through this late-bound reference (null until then: a push carries no proposal).
-  let pushTopProposal: ((recordId: string) => PushedProposal | null) | undefined;
   const oncallPush = assembleOncallPushRuntime({
     db,
     configDir: paths.configDir,
     // The push pushes the record the engine assembled, assembling a candidate's on demand (Phase 10 IC3).
     records: incidentEngine,
-    topProposal: (recordId) => (pushTopProposal === undefined ? null : pushTopProposal(recordId)),
     // Passed WHOLE so the push sinks read `delivers` LIVE at delivery time (the OS service's probe
     // can flip it after boot) and record "skipped" rather than attempting a toast that cannot show.
     notifications,
@@ -4979,7 +4974,8 @@ export async function assemblePlatformServices(
       }
     },
   });
-  pushTopProposal = (recordId) => remediation.topProposal(recordId);
+  // IC5b (approve-from-push): the push carries its record's top proposal, read through the owner listing only.
+  oncallPush.bindTopProposal((recordId) => remediation.topProposal(recordId));
   ipcOpts.incidentRpcCtx = {
     db,
     engine: incidentEngine,
