@@ -43,6 +43,18 @@ export type ReadTimeline = {
 };
 
 export function readTimeline(db: Database, recordId: string, version?: number): ReadTimeline {
+  return readTimelineWithCaps(db, recordId, version).read;
+}
+
+/**
+ * `readTimeline` plus whether the linked-action scan hit its audit-row cap, for an in-gateway reader that must
+ * report the cut as a gap of its own (IC9a's investigation). The IPC reply stays `ReadTimeline`.
+ */
+export function readTimelineWithCaps(
+  db: Database,
+  recordId: string,
+  version?: number,
+): { read: ReadTimeline; actionsTruncated: boolean } {
   const row = getById(db, recordId);
   if (row === null) {
     throw new IncidentError("ERR_INCIDENT_NOT_FOUND", "no incident record has that id");
@@ -106,15 +118,18 @@ export function readTimeline(db: Database, recordId: string, version?: number): 
     }));
 
   return {
-    recordId,
-    version: shown,
-    currentVersion: row.version,
-    timeline: buildTimeline({
-      record,
-      history,
-      historyTruncated: rows.length > TIMELINE_HISTORY_CAP,
-      actions,
-      actionsTruncated: linked.truncated,
-    }),
+    read: {
+      recordId,
+      version: shown,
+      currentVersion: row.version,
+      timeline: buildTimeline({
+        record,
+        history,
+        historyTruncated: rows.length > TIMELINE_HISTORY_CAP,
+        actions,
+        actionsTruncated: linked.truncated,
+      }),
+    },
+    actionsTruncated: linked.truncated,
   };
 }

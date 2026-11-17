@@ -2,6 +2,7 @@ import type { Database } from "bun:sqlite";
 
 import { serviceFreshness } from "../agents/_lib/briefing-queries.ts";
 import { renderCascadeSection } from "../agents/_lib/incident-render.ts";
+import { renderInvestigation } from "../agents/_lib/investigation-render.ts";
 import { scanDebt } from "../debt/debt-scan.ts";
 import { type ConfiguredRoot, DEBT_DEFAULTS } from "../debt/debt-types.ts";
 import { type GitHistoryReader, readGitHistory } from "../debt/git-history.ts";
@@ -19,9 +20,11 @@ import {
   type RecordRow,
   versionsOf,
 } from "../incident/incident-store.ts";
+import { investigateRecord } from "../incident/investigate.ts";
 import { type Remediation, RemediationError } from "../incident/remediation.ts";
 import { readTimeline } from "../incident/timeline-read.ts";
 import { TRIGGER_SERVICES } from "../incident/trigger-sources.ts";
+import type { ServiceConfig } from "../metrics/dora-config.ts";
 import { dispatchByMethod, type RpcMissOrHit } from "./_lib/dispatch-by-method.ts";
 import type { ClientKind } from "./server/client-kind.ts";
 
@@ -32,6 +35,7 @@ import type { ClientKind } from "./server/client-kind.ts";
  *   incident.get { id }                                -> { record, reason? }
  *   incident.assemble { id }                           -> { outcome, record }
  *   incident.timeline { id, version? }                 -> { recordId, version, currentVersion, events, notes }   (IC4)
+ *   incident.investigate { id }                        -> { investigation, markdown }                            (IC9a)
  *   incident.proposals { id }                          -> { recordId, version, advisory, proposals, unavailable }  (IC5a)
  *   incident.remediate { id, proposalId }              -> { proposalId, actionId, status, reason?, nonHuman, undoable }  (IC5a)
  *   incident.undo { actionId }                         -> { actionId, status, reason?, nonHuman }  (IC5a)
@@ -44,7 +48,7 @@ import type { ClientKind } from "./server/client-kind.ts";
  * same 30-minute window) and `incident.list { cascade: true }` also answers the open `groups`; both are derived
  * at call time from the open records and the declared `depends_on`, never stored.
  *
- * ALL TEN serve only a connection whose DECLARED kind is `cli` or `ui` (`requireOwnerKind`, called first by
+ * ALL TWELVE serve only a connection whose DECLARED kind is `cli` or `ui` (`requireOwnerKind`, called first by
  * every handler, before any query runs): a record holds capped titles of items from several services, and the
  * kind is the connection's (`ctx.getClientKind`), never a param. The whole namespace is LAN-forbidden (I5) and
  * is NOT renderer-callable (I7): the desktop gets `list`, `get` and `timeline` at a later slice, `assemble` never.
@@ -67,6 +71,10 @@ export interface IncidentRpcCtx {
   readonly engine: Pick<IncidentEngine, "assembleNow">;
   /** The declared `depends_on` of every configured service, read fresh per call (the cascade, IC4). */
   readonly dependsOn: () => ReadonlyMap<string, readonly string[]>;
+  /** The declared service configs (IC9a: a service's `sentry_projects`), read fresh per call; absent = unreadable. */
+  readonly serviceConfigs?: () => ReadonlyMap<string, ServiceConfig>;
+  /** A clock for tests; the gateway uses `Date.now`. */
+  readonly now?: () => number;
   /** IC5a: the remediation service (proposals, remediate, undo, the advisory switch). Absent: those methods refuse. */
   readonly remediation?: Remediation;
   /**
@@ -86,9 +94,14 @@ export const INCIDENT_LIST_DEFAULT = 50;
 export const INCIDENT_LIST_MAX = 200;
 const OWNER_KINDS: ReadonlySet<ClientKind> = new Set<ClientKind>(["cli", "ui"]);
 
+/** True for a connection that declared `cli` or `ui`. The ONE owner-kind test (also used by `oncall.handoff`'s records). */
+export function isOwnerKind(kind: ClientKind): boolean {
+  return OWNER_KINDS.has(kind);
+}
+
 /** The ONE owner-kind check; loosening the reads later is a change to this function alone. */
 export function requireOwnerKind(kind: ClientKind): void {
-  if (!OWNER_KINDS.has(kind)) {
+  if (!isOwnerKind(kind)) {
     throw new IncidentRpcError(
       -32000,
       "ERR_INCIDENT_FORBIDDEN_CLIENT: incident records are served only to the owner's own surfaces (the CLI and the desktop), on a connection that declared its kind",
@@ -358,6 +371,56 @@ function timeline(ctx: IncidentRpcCtx, raw: unknown): unknown {
   }
 }
 
+function readServiceConfigs(ctx: IncidentRpcCtx): ReadonlyMap<string, ServiceConfig> | null {
+  try {
+    return ctx.serviceConfigs === undefined ? null : ctx.serviceConfigs();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * `incident.investigate` (IC9a): reads the index for what surrounds one record (Sentry issues of the service,
+ * other open records, linked Nimbus actions). A trigger item with no stored record is assembled first, as
+ * `incident.assemble` does (an index-only pass). Makes no live call; see `incident/investigate.ts`.
+ */
+async function investigate(ctx: IncidentRpcCtx, raw: unknown): Promise<unknown> {
+  const ref = resolveIncidentRef(
+    ctx.db,
+    parseId("incident.investigate", requireKeys("incident.investigate", raw, ["id"])),
+  );
+  if (ref.kind === "ambiguous") throw ambiguous(ref.candidates);
+  if (ref.kind === "not_a_trigger") throw notATrigger(ref.itemId);
+  if (ref.kind === "none") {
+    throw new IncidentRpcError(-32602, "ERR_INCIDENT_NOT_FOUND: nothing indexed has that id");
+  }
+  let recordId: string;
+  if (ref.kind === "record") {
+    recordId = ref.recordId;
+  } else {
+    try {
+      await ctx.engine.assembleNow(ref.triggerItemId);
+    } catch (e) {
+      if (e instanceof IncidentError) throw new IncidentRpcError(-32602, `${e.code}: ${e.message}`);
+      throw e;
+    }
+    const row = getByTriggerItem(ctx.db, ref.triggerItemId);
+    if (row === null) {
+      throw new IncidentRpcError(-32602, "ERR_INCIDENT_NOT_FOUND: no record was stored");
+    }
+    recordId = row.id;
+  }
+  const investigation = investigateRecord(ctx.db, {
+    recordId,
+    nowMs: (ctx.now ?? Date.now)(),
+    serviceConfigs: readServiceConfigs(ctx),
+  });
+  if (investigation === null) {
+    throw new IncidentRpcError(-32602, "ERR_INCIDENT_NOT_FOUND: no record is stored for that id");
+  }
+  return { investigation, markdown: renderInvestigation(investigation) };
+}
+
 function boundedInt(
   method: string,
   p: Record<string, unknown>,
@@ -530,6 +593,10 @@ export async function dispatchIncidentRpc(
     "incident.timeline": (raw) => {
       requireOwnerKind(caller.kind);
       return timeline(ctx, raw);
+    },
+    "incident.investigate": async (raw) => {
+      requireOwnerKind(caller.kind);
+      return investigate(ctx, raw);
     },
     "incident.debt": async (raw) => {
       requireOwnerKind(caller.kind);

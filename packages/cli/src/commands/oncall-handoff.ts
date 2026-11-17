@@ -1,5 +1,6 @@
 import { CliExit } from "../lib/cli-exit.ts";
-import { stripControlChars } from "../lib/strip-control-chars.ts";
+import { declareCliClientKind } from "../lib/declare-client-kind.ts";
+import { stripTerminalText } from "../lib/strip-terminal-text.ts";
 import { withGatewayIpc } from "../lib/with-gateway-ipc.ts";
 import { getCliPlatformPaths } from "../paths.ts";
 
@@ -82,7 +83,30 @@ type Correlation = {
   }>;
 };
 type Due = { service: string; itemId: string; title: string; dueMs: number; overdue: boolean };
+type RecordRef = {
+  recordId: string;
+  triggerItemId: string;
+  triggerService: string;
+  service: string | null;
+  title: string;
+  severity: string | null;
+  status: string;
+  openedAtMs: number | null;
+  closedAtMs: number | null;
+  reason?: string;
+};
+/** The IC9a incident-record sections; absent from an older gateway and for a non-owner connection. */
+type Records = {
+  status: "ok" | "no_records";
+  opened: Counted<RecordRef>;
+  resolved: Counted<RecordRef>;
+  stillOpen: Counted<RecordRef>;
+  smouldering: Counted<RecordRef>;
+  freshness: Array<{ service: string; connected: boolean; lastSyncMs: number | null }>;
+  gaps: Array<{ code: string; detail: string }>;
+};
 type Result = {
+  records?: Records;
   status: "ok" | "no_match";
   asOfMs: number;
   window: { fromMs: number; toMs: number; basis: string; reason: string };
@@ -109,7 +133,7 @@ type Result = {
 };
 
 const DURATION = /^(\d{1,9})\s*([smhdw])$/i;
-const clean = (s: string): string => stripControlChars(s);
+const clean = (s: string): string => stripTerminalText(s);
 
 /** A bare duration means "that long ago"; the gateway's time parser takes it as `-<duration>`. */
 export function toTimeParam(raw: string): string {
@@ -164,6 +188,9 @@ const SOURCE_LABEL: Record<string, string> = {
   pagerduty: "PagerDuty",
   jsm: "Jira Service Management",
   jira: "Jira",
+  sentry: "Sentry",
+  montecarlo: "Monte Carlo",
+  bigeye: "Bigeye",
 };
 const label = (s: string): string => SOURCE_LABEL[s] ?? clean(s);
 
@@ -251,6 +278,47 @@ function renderOpen(r: Result): string {
   return out;
 }
 
+const SMOULDERING_REASON: Record<string, string> = {
+  open_over_4h: "open over 4 hours",
+  retriggered: "re-triggered",
+};
+
+function recordLine(x: RecordRef, extra?: string): string {
+  const parts = [x.severity, x.status].filter((v): v is string => v !== null).map(clean);
+  if (extra !== undefined) parts.push(extra);
+  const when = x.openedAtMs === null ? "opened time unknown" : `opened ${utc(x.openedAtMs)}`;
+  const svc = x.service === null ? "" : ` ${clean(x.service)}`;
+  return `- ${label(x.triggerService)}${svc}: ${clean(x.title)} [${clean(x.recordId)}] ${when} (${parts.join(", ")})\n`;
+}
+
+function renderRecordList(heading: string, c: Counted<RecordRef>): string {
+  let out = `${heading}\n`;
+  if (c.items.length === 0) out += "- none\n";
+  for (const x of c.items) {
+    const reason =
+      x.reason === undefined ? undefined : (SMOULDERING_REASON[x.reason] ?? clean(x.reason));
+    out += recordLine(x, reason);
+  }
+  out += more(c);
+  return out;
+}
+
+function renderRecords(r: Result): string {
+  const rec = r.records;
+  if (rec === undefined) return "";
+  const head = "## Incident records\n";
+  if (rec.status === "no_records") {
+    return `${head}No incident record has been assembled yet; see Gaps.\n`;
+  }
+  return (
+    head +
+    renderRecordList("Opened in the window:", rec.opened) +
+    renderRecordList("Resolved in the window:", rec.resolved) +
+    renderRecordList("Still open at the end of the window:", rec.stillOpen) +
+    renderRecordList("Smouldering (open over 4 hours, or re-triggered):", rec.smouldering)
+  );
+}
+
 function renderWatch(r: Result): string {
   let out = "## Watch-list\n";
   const w = r.watch;
@@ -280,6 +348,7 @@ function renderWatch(r: Result): string {
 function renderTail(r: Result): string {
   let out = "## Gaps\n";
   for (const g of r.gaps) out += `- ${clean(g.detail)}\n`;
+  for (const g of r.records?.gaps ?? []) out += `- ${clean(g.detail)}\n`;
   out += "## Data freshness\n";
   for (const f of r.freshness) {
     out += `- ${label(f.source)} last synced: ${f.lastSyncMs === null ? "never recorded" : `${utc(f.lastSyncMs)} (${String(Math.max(0, Math.round((r.asOfMs - f.lastSyncMs) / 60_000)))} min ago)`}\n`;
@@ -290,6 +359,15 @@ function renderTail(r: Result): string {
         ? "age unknown"
         : `${String(Math.max(0, Math.round((r.asOfMs - s.oldestFetchedMs) / 60_000)))} min old`;
     out += `- ${label(s.source)} shifts: ${age}${s.stale ? " (older than 1 h; the shift may have changed)" : ""}\n`;
+  }
+  for (const f of r.records?.freshness ?? []) {
+    if (f.service === "pagerduty" || f.service === "jira") continue;
+    const when = !f.connected
+      ? "not connected"
+      : f.lastSyncMs === null
+        ? "never recorded"
+        : utc(f.lastSyncMs);
+    out += `- ${label(f.service)} last synced: ${when}\n`;
   }
   out +=
     r.historyStartsMs === null
@@ -304,6 +382,7 @@ export function renderHandoff(r: Result): string {
     head + renderShift(r),
     renderEvents(r),
     renderOpen(r),
+    ...(r.records === undefined ? [] : [renderRecords(r)]),
     renderWatch(r),
     renderTail(r),
   ].join("\n");
@@ -315,6 +394,8 @@ export async function runOncallHandoffWith(
   sink: OncallHandoffSink,
 ): Promise<number> {
   try {
+    // The incident-record sections are served only to a connection that declared `cli` or `ui` (IC9a).
+    await declareCliClientKind({ call: <T>(m: string, p?: unknown) => c.call(m, p) as Promise<T> });
     const params: Record<string, string> = {};
     if (a.since !== undefined) params["since"] = a.since;
     if (a.until !== undefined) params["until"] = a.until;
