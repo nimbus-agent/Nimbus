@@ -13,6 +13,7 @@ import {
   writeDeployment,
 } from "./__fixtures__/index-writers.ts";
 import { writePagerdutyIncident, writeSentryIssue } from "./__fixtures__/trigger-writers.ts";
+import { LINK_SCAN_CAP } from "./action-links.ts";
 import { createIncidentEngine } from "./incident-engine.ts";
 import {
   INVESTIGATE_LEAD_CAP,
@@ -253,6 +254,39 @@ describe("investigateRecord", () => {
     const inv = run(d, recordId);
     expect(inv?.actions.map((a) => a.kind)).toEqual(["action_approved"]);
     expect(inv?.actions[0]?.atMs).toBe(T0 + 10 * 60_000);
+  });
+
+  test("more linked audit rows than the scan reads is a gap, never a silently partial list", async () => {
+    const { d, recordId } = await seed();
+    expect(run(d, recordId)?.gaps.map((g) => g.code)).not.toContain("actions_scan_capped");
+    const json = `{"incident":{"id":"${recordId}","version":1},"action":{"type":"slack.message.post"},"answerSource":"human"}`;
+    d.run("BEGIN");
+    for (let i = 0; i <= LINK_SCAN_CAP; i += 1) {
+      d.run(
+        "INSERT INTO audit_log (action_type, hitl_status, action_json, timestamp, row_hash, prev_hash) VALUES (?,?,?,?,?,?)",
+        ["slack.message.post", "approved", json, T0 + i, "h", "p"],
+      );
+    }
+    d.run("COMMIT");
+    expect(run(d, recordId)?.gaps.map((g) => g.code)).toContain("actions_scan_capped");
+  });
+
+  test("the project filter runs before the scan cap, so other projects' newer issues cannot crowd this service's out", async () => {
+    const { d, recordId } = await seed();
+    writeSentryIssue(d, { id: "MINE", firstSeenMs: T0 - HOUR, lastSeenMs: T0 - HOUR });
+    d.run("BEGIN");
+    for (let i = 0; i < INVESTIGATE_SENTRY_SCAN_CAP; i += 1) {
+      writeSentryIssue(d, {
+        id: `X${String(i)}`,
+        firstSeenMs: T0,
+        lastSeenMs: T0 + i,
+        project: "billing-web",
+      });
+    }
+    d.run("COMMIT");
+    const inv = run(d, recordId);
+    expect(inv?.sentry.rows.map((r) => r.itemId)).toEqual(["sentry:MINE"]);
+    expect(inv?.gaps.map((g) => g.code)).not.toContain("sentry_scan_capped");
   });
 
   test("the unindexed backends are gaps that say whether the connector is connected", async () => {

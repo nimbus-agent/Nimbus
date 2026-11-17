@@ -5,7 +5,7 @@ import type { ActionEventKind } from "./action-links.ts";
 import type { IncidentRecordV1 } from "./incident-record-types.ts";
 import { getById, type RecordRow } from "./incident-store.ts";
 import { oneLine } from "./lanes/caps.ts";
-import { readTimeline } from "./timeline-read.ts";
+import { readTimelineWithCaps } from "./timeline-read.ts";
 import { TRIGGER_SERVICES } from "./trigger-sources.ts";
 
 /**
@@ -165,7 +165,7 @@ const numOrNull = (v: unknown): number | null =>
   typeof v === "number" && Number.isFinite(v) ? v : null;
 /** Sentry reports `count` as a decimal string. */
 const countOf = (v: unknown): number | null =>
-  typeof v === "string" && /^[0-9]{1,15}$/.test(v) ? Number(v) : numOrNull(v);
+  typeof v === "string" && /^\d{1,15}$/.test(v) ? Number(v) : numOrNull(v);
 
 function readSentry(
   db: Database,
@@ -177,13 +177,19 @@ function readSentry(
     readonly deployStartMs: number | null;
   },
 ): { rows: SentryIssueRow[]; scanCapped: boolean } {
+  if (input.projects.length === 0) return { rows: [], scanCapped: false };
+  // The project filter runs in SQL, before the cap, so other projects' newer issues cannot crowd this
+  // service's out of the scan. `json_extract` runs only on valid JSON (a CASE, not AND order); a malformed
+  // or project-less row reads NULL and fails the IN test.
+  const marks = input.projects.map(() => "?").join(", ");
   const scanned = db
     .query(
       `SELECT id, title, url, modified_at, metadata FROM item
         WHERE service = 'sentry' AND type = 'error_issue' AND modified_at >= ? AND modified_at <= ?
+          AND CASE WHEN json_valid(metadata) THEN json_extract(metadata, '$.project') END IN (${marks})
         ORDER BY modified_at DESC, id ASC LIMIT ?`,
     )
-    .all(input.fromMs, input.toMs, INVESTIGATE_SENTRY_SCAN_CAP) as ItemRow[];
+    .all(input.fromMs, input.toMs, ...input.projects, INVESTIGATE_SENTRY_SCAN_CAP) as ItemRow[];
   const projects = new Set(input.projects);
   const rows: SentryIssueRow[] = [];
   for (const r of scanned) {
@@ -268,6 +274,7 @@ function gapsFor(
   bound: boolean,
   freshness: Investigation["freshness"],
   record: IncidentRecordV1,
+  actionsTruncated: boolean,
 ): { code: string; detail: string }[] {
   const gaps: { code: string; detail: string }[] = [];
   if (sentry.status === "not_scoped") {
@@ -290,7 +297,7 @@ function gapsFor(
   } else if (sentry.scanCapped) {
     gaps.push({
       code: "sentry_scan_capped",
-      detail: `Only the ${String(INVESTIGATE_SENTRY_SCAN_CAP)} most recently seen Sentry issues in the window were scanned; older ones may be missing.`,
+      detail: `Only the ${String(INVESTIGATE_SENTRY_SCAN_CAP)} most recently seen Sentry issues of this service's projects in the window were scanned; older ones may be missing.`,
     });
   }
   if (sentry.total > sentry.rows.length) {
@@ -304,6 +311,13 @@ function gapsFor(
     gaps.push({
       code: `live_${b.connector}`,
       detail: `${b.label} are not read: their state is not in the local index and this command makes no live call (${f?.connected === true ? "the connector is connected" : "the connector is not connected"}).`,
+    });
+  }
+  if (actionsTruncated) {
+    gaps.push({
+      code: "actions_scan_capped",
+      detail:
+        "More audit rows link to this record than were read, so the linked Nimbus actions listed may be incomplete.",
     });
   }
   if (!bound) {
@@ -419,7 +433,7 @@ export function investigateRecord(db: Database, input: InvestigateInput): Invest
   const sentry = sentryBlock(db, record, input, span);
   const related = relatedOf(db, row);
   const freshness = freshnessOf(db);
-  const timeline = readTimeline(db, row.id);
+  const { read: timeline, actionsTruncated } = readTimelineWithCaps(db, row.id);
   const actions: LinkedAction[] = timeline.timeline.events
     .filter(
       (e): e is typeof e & { kind: ActionEventKind } =>
@@ -452,7 +466,7 @@ export function investigateRecord(db: Database, input: InvestigateInput): Invest
     relatedOpen: related,
     actions,
     leads: buildLeads(record, sentry.rows, related.items),
-    gaps: gapsFor(sentry, record.binding.bound, freshness, record),
+    gaps: gapsFor(sentry, record.binding.bound, freshness, record, actionsTruncated),
     freshness,
     recordAssembledAtMs: row.assembled_at_ms,
   };
