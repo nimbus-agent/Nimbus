@@ -381,7 +381,7 @@ describe("the real file system", () => {
 
 describe("safeText and the entry point", () => {
   test("removes control, bidi and separator characters", () => {
-    expect(safeText("a\u001b[0m\u202eb\u2028c\u200bd")).toBe("a [0m b c d".replace(/ /g, " "));
+    expect(safeText("a\u001b[0m\u202eb\u2028c\u200bd")).toBe("a [0m b c d");
   });
 
   test("a usage error prints the usage and exits 1", async () => {
