@@ -395,6 +395,18 @@ function resolveScope(
   return "no_match";
 }
 
+/**
+ * The configured service ids a `service` argument resolves to (the same rule the item lanes use), `null` for no
+ * filter, `"no_match"` when it names nothing configured. The incident-record sections (IC9a) filter on it.
+ */
+export function handoffServiceIds(
+  service: string | undefined,
+  configs: readonly HandoffServiceBinding[],
+): ReadonlySet<string> | null | "no_match" {
+  const scope = resolveScope(service, configs);
+  return scope === "no_match" ? "no_match" : scope.serviceIds;
+}
+
 function inScope(t: Tracked, scope: Scope): boolean {
   if (scope.pdIds === null) return true;
   if (t.source === "pagerduty") {
