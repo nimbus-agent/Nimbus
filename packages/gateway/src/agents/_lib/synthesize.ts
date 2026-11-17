@@ -4,6 +4,7 @@ import { wrapToolOutput } from "../../engine/tool-output-envelope.ts";
 import { contractViolations } from "./brief-contract.ts";
 import { assertNeverBrief, type SynthInput } from "./brief-kinds.ts";
 import { renderBriefing } from "./briefing-render.ts";
+import { renderIncidentPostmortem } from "./incident-postmortem-render.ts";
 import { renderIncident } from "./incident-render.ts";
 import {
   stripMetaPreamble,
@@ -144,6 +145,8 @@ function deterministicRender(brief: SynthInput, opts?: RenderOpts): string {
       return renderBriefing(brief, opts);
     case brief.kind === "incident":
       return renderIncident(brief, opts);
+    case brief.kind === "incident_postmortem":
+      return renderIncidentPostmortem(brief, opts);
     default:
       return assertNeverBrief(brief);
   }
@@ -184,6 +187,8 @@ const TOOL_NAME_BY_KIND: Readonly<Record<SynthInput["kind"], string>> = {
   briefing: "agents.briefing",
   // Never sent anywhere either: an incident record is rendered with no runner (OR-10-8, I57 (a)).
   incident: "agents.incident",
+  // The one record brief a model may rewrite (IC7a): only in a command the owner runs, never unattended.
+  incident_postmortem: "agents.incident_postmortem",
 };
 
 function toolNameFor(brief: SynthInput): string {

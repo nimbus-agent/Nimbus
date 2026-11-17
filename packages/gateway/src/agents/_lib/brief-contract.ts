@@ -153,7 +153,9 @@ export function requiredPhrases(brief: SynthInput): readonly Disclosure[] {
     // The briefing is never handed to a model (OR-10-8); its disclosures are reserved blocks.
     brief.kind === "briefing" ||
     // Nor is an incident record (OR-10-8, I57 (a)); its disclosures are reserved blocks.
-    brief.kind === "incident"
+    brief.kind === "incident" ||
+    // The post-mortem draft's disclosures are all reserved blocks (IC7a); a rewrite cannot drop them.
+    brief.kind === "incident_postmortem"
   ) {
     return [];
   }
