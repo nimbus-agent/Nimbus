@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794949047911,
+  "lastUpdate": 1794950780734,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "9f69790ca0e29795997e614732539dce5792bfae",
-          "message": "fix(llm): make llm.setDefault write the store the router actually reads (#1410)\n\nCloses #1383.\n\n`llm.setDefault` was **write-only**: it persisted to `llm_task_defaults`\n(V20) and nothing read that table. The desktop control appeared to work\nand changed nothing about routing.\n\n## The change\n\nIt now writes **`[llm.tasks]`** — the same store `nimbus llm use`\nwrites, that `parseLlmTaskPins` reads at boot and `LlmRouter` honours at\nruntime.\n\nThe **wire shape is unchanged**, because the method is renderer-exposed\nand the desktop UI calls it. Only the destination moved. `provider` +\n`modelName` are joined by `makeRouteId` — the same function\n`registerRoute` uses to mint the id — so the two cannot drift apart.\n\n## Which option, and why\n\nOf the three the issue lists, this is **#3**.\n\n- **#1 (delete the endpoint)** is a user-visible surface change that\nneeds the desktop app updated in step.\n- **#2 (wire the table into routing)** was already rejected for\nreintroducing two sources of truth for one setting — which is what made\nthese accessors dead in the first place.\n\n## The question it was blocked on\n\n> what should the UI do when the gateway has no writable config path?\n\nAnswered the way `handleLlmUse` already answers it: **refuse**, with\n`-32603`. A silent success that persists nothing is precisely the bug\nbeing removed here, so inventing a quieter failure would recreate it in\na new place.\n\nBoth handlers now fail closed on all three: an unknown task, an\nunregistered route, and a missing config path.\n\n## Cleanup\n\n`LlmRegistry.setDefault` is deleted — its last caller is gone.\n`getDefault` went the same way on 2026-08-29, so `llm_task_defaults` now\nhas **neither a reader nor a writer**; it survives only because\nmigrations are append-only and forward-only. The comment there records\nthat, and why re-wiring either accessor would be the wrong fix.\n\nIts two registry tests are **removed rather than adapted**. They\nasserted the UPSERT landed — proving the write happened while the\nsetting it represented did nothing. That is a test passing for a\nbehaviour that had no effect, and adapting it would have carried that\nshape forward. The replacement behaviour is covered where it now lives,\nin `ipc/llm-rpc.test.ts`.\n\n## Verification\n\n- **Red-proved by reverting the handler with the tests in place: 3 fail\nwithout it, 0 with it.**\n- New tests cover the round trip through the *same parser boot uses*,\nthe live router honouring it without a restart, refusal of an\nunregistered route with nothing written, and refusal with no config\npath.\n- 325 llm + llm-rpc tests pass; `preflight:fast` 32/32.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01J6qbQmiRqJcxDc6ENA8LFc\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n## Summary by CodeRabbit\n\n* **New Features**\n* Default language-model selections are now saved in configured settings\nunder task-specific defaults.\n  * Changes take effect immediately in the active routing configuration.\n* **Bug Fixes**\n* Invalid, unregistered, or malformed routes are rejected without\nmodifying configuration.\n* Default-setting requests now fail clearly when configuration is\nunavailable or task types are invalid.\n* **Refactor**\n* Removed the legacy database-based default-setting flow in favor of\nsettings-backed configuration.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->",
-          "timestamp": "2026-08-30T15:04:52+03:00",
-          "tree_id": "900f91178b2657558a0f19e3b378af1ee00e827d",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/9f69790ca0e29795997e614732539dce5792bfae"
-        },
-        "date": 1788092235058,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 323.5426671500005,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 327.03334710000235,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 254.27438244999865,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "fba462bbca841853a29f1df47a467ffc13a2e18f",
+          "message": "feat(gateway): add incident-record sections to nimbus oncall handoff and nimbus incident investigate (incident engine IC9a) (#2043)\n\nIncident engine slice IC9a, on top of IC3 and IC4. No migration, no\nallowlist change (132), no new invariant, static rule, HITL type or\negress class.\n\n- **Handoff.** `oncall.handoff` returns an optional `records` key\n(`incident/handoff-records.ts`, pure) with the incident records opened,\nresolved, still open and smouldering (open over 4 h at the window end,\nor re-triggered from `resolved`/`closed` in the window) across all five\nincident sources, 50 per list with true totals. It is served only to a\nconnection that declared `cli` or `ui` (for other kinds the key is\nabsent). The shift window, lanes and flags are unchanged. The CLI now\ndeclares its kind before the call and renders `## Incident records`, its\ngaps and freshness lines. A malformed closed-time value is guarded by\n`json_valid` and cannot fail the brief.\n- **Investigate.** `incident.investigate` / `nimbus incident investigate\n<id> [--json]` (owner kinds only, off the LAN and the Tauri allowlist)\nreads the local index only: the Sentry issues of the service's\n`sentry_projects` from 6 h before the alert (each flagged when first\nseen at or after the deployment, timing only), the other open records of\nthe service, the data lane, the Nimbus actions IC4 linked to the record,\nand at most 10 candidate leads. Every backend whose state is not indexed\n(Datadog, Grafana, New Relic, CloudWatch) is a Gap line. No model and no\nlive call; output ends with `## Gaps` and `## Data freshness`.\n- **Deliberately not built:** the spec's live fan-out through the\nexecutor (backend reply shapes unverified; no latency bound inside an\nRPC handler), `--synthesize`, and any AgentCoordinator use. The \"Deep\nautomated investigation\" roadmap row stays open with the cuts recorded.\n- **Terminal safety:** a new `cli/src/lib/strip-terminal-text.ts` strips\nbidirectional controls as well as C0/C1 controls for the handoff and\nincident commands.\n\n**Verification.** Red-proofs for the `json_valid` guard, the 4-hour\nboundary, the service and Sentry-project filters, self-exclusions, the\ndeployment boundary, the owner-kind gate (dispatcher and order), the CLI\nkind declaration, terminal stripping, and the hardened title rendering.\n`preflight:fast` passes; incident 269, agents/_lib 739, ipc/server 726,\n`security-invariants.test.ts` 621, CLI commands 5,116 and lib 614 tests\npass. Antigravity: plan APPROVE (round 2), code APPROVE (round 1; its\none low finding, related-record totals beyond 101, is fixed with a\ntest).\n\n**Stated bounds.** Sentry data is as fresh as the last sync (shown);\nrecord lists cover only assembled records; open/resolved are as of each\nrecord's last refresh; re-trigger detection uses only the words\n`resolved` and `closed`; proposals, runbook steps and findings are not\nread (a fixed Gap); the Sentry scan is capped at the 5,000 newest rows\nin the window (shown); live reply shapes are unverified.\n\n**Docs.** `docs/architecture.md`, `docs/cli-reference.md`, roadmap\nnotes. The status paragraph, CHANGELOG top and README are batched into\nthe batch docs PR (owner-approved exception).\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Added `nimbus incident investigate <id> [--json]` to show an\ninvestigation brief with indexed Sentry issues, related incidents,\nlinked actions, candidate leads, data freshness, and known gaps. The\ninvestigation uses indexed data and does not include live backend\nsearches.\n* On-call handoffs for CLI and desktop clients can include incident\nrecords opened, resolved, still open, or smouldering during the selected\ntime window. Record sections include freshness and known gaps, and can\nbe filtered by service.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-17T21:17:59Z",
+          "tree_id": "252876bbdb5ab57745c7918230dd6bdf084f38cb",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/fba462bbca841853a29f1df47a467ffc13a2e18f"
+        },
+        "date": 1794950776002,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 196.23482094999818,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 196.12631409999813,
             "unit": "ms"
           }
         ]
