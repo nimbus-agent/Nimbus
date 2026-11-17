@@ -738,13 +738,6 @@ mod tests {
         assert!(!is_method_allowed("audit.listByDoor"));
         // The audit replay (which carries the prompt shown to the owner) is owner-terminal only.
         assert!(!is_method_allowed("audit.replay"));
-        // Phase 10 IC5a (I57 (b)): the renderer can already answer a consent prompt, so it must not also START
-        // an engine action or flip advisory mode. `incident.proposals` joins it at IC10b; the rest never.
-        assert!(!is_method_allowed("incident.proposals"));
-        assert!(!is_method_allowed("incident.remediate"));
-        assert!(!is_method_allowed("incident.undo"));
-        assert!(!is_method_allowed("incident.advisory"));
-        assert!(!is_method_allowed("incident.advisorySet"));
         // The audit reads the renderer already had are unchanged.
         assert!(is_method_allowed("audit.list"));
         assert!(is_method_allowed("audit.verify"));
@@ -848,7 +841,10 @@ mod tests {
         assert!(is_method_allowed("incident.timeline"));
         for m in [
             "incident.assemble",
+            // Phase 10 IC5a (I57 (b)): the renderer can already answer a consent prompt, so it must not
+            // also START an engine action or flip advisory mode.
             "incident.advisory",
+            "incident.advisorySet",
             "incident.proposals",
             "incident.findings",
             "incident.remediate",

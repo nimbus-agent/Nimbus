@@ -16634,10 +16634,15 @@ describe("I57 (b) - an engine-proposed action reaches dispatch only as the local
   test("6: remediate and undo, and the whole advisory surface, are not renderer-callable (I7) and the namespace is LAN-forbidden (I5)", async () => {
     const rust = await read("packages/ui/src-tauri/src/gateway_bridge.rs");
     for (const m of ["proposals", "remediate", "undo", "advisory", "advisorySet"]) {
-      // The method name appears in the Rust file exactly once: in the negative pin, never in the allowlist.
+      // The method name appears in the Rust file exactly once: in the IC10a negative list (each entry asserted
+      // `!is_method_allowed`), never in the allowlist.
       const hits = rust.split(`"incident.${m}"`).length - 1;
       expect(hits, m).toBe(1);
-      expect(rust, m).toContain(`assert!(!is_method_allowed("incident.${m}"));`);
+      const pinFn = rust.indexOf("fn allowlist_incident_reads_only()");
+      const pinEnd = rust.indexOf("must not be renderer-callable", pinFn);
+      expect(pinFn, m).toBeGreaterThan(-1);
+      const at = rust.indexOf(`"incident.${m}",`);
+      expect(at > pinFn && at < pinEnd, m).toBe(true);
     }
     const lan = await read("packages/gateway/src/ipc/lan-rpc.ts");
     expect(lan).toContain('"incident"');
