@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { closeSync, fstatSync, openSync, readFileSync, writeFileSync } from "node:fs";
 
 import type { IPCClient } from "../ipc-client/index.ts";
 import { declareCliClientKind } from "../lib/declare-client-kind.ts";
@@ -153,6 +153,119 @@ export async function runWorkflowResume(client: IPCClient, rest: string[]): Prom
 ${JSON.stringify(out, undefined, 2)}`);
 }
 
+export const WORKFLOW_EXPORT_USAGE =
+  "Usage: nimbus workflow export <name> --out <file> [--author <label>] [--force]";
+
+export const WORKFLOW_IMPORT_USAGE =
+  'Usage: nimbus workflow import <file> [--replace] [--accept-signer-change] [--signer <fingerprint>] [--schedule "<cron>" [--tz <IANA zone>]] [--dry-run]';
+
+/** The message `import` gives for `--yes`: a workflow from outside is approved by a person. */
+export const WORKFLOW_IMPORT_YES_REFUSAL =
+  "nimbus workflow import cannot take --yes: a workflow bundle is approved by you, at the prompt, over its exact text, never automatically.";
+
+/** A bundle is at most 256 KiB; refuse a far larger file before reading it. */
+const IMPORT_FILE_MAX_BYTES = 1024 * 1024;
+
+/**
+ * `nimbus workflow export <name> --out <file> [--author <label>] [--force]` (I59): the gateway signs the
+ * saved workflow with the share key (a bundle holds deterministic query and write steps only, no
+ * schedule, rule or credential) and this command writes the file, refusing to overwrite without `--force`.
+ */
+export async function runWorkflowExport(client: IPCClient, rest: string[]): Promise<void> {
+  const tail = [...rest];
+  const out = shiftRequiredValue(tail, "--out");
+  const author = shiftRequiredValue(tail, "--author");
+  const force = hasFlag(tail, "--force");
+  const name = tail.find((a) => !a.startsWith("--"))?.trim() ?? "";
+  if (name === "" || out === undefined || out === "") throw new Error(WORKFLOW_EXPORT_USAGE);
+  await declareCliClientKind(client);
+  const res = await client.call<{
+    bundle: string;
+    fingerprint: string;
+    stepsSha256: string;
+    issuedAt: number;
+  }>("workflow.export", { name, ...(author === undefined ? {} : { author }) });
+  try {
+    // `wx` refuses to replace an existing file; `--force` opts in.
+    writeFileSync(out, res.bundle, { encoding: "utf8", flag: force ? "w" : "wx" });
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === "EEXIST") {
+      throw new Error(`${out} already exists; pass --force to overwrite it`);
+    }
+    throw e;
+  }
+  console.log(
+    `Wrote ${out}
+Signer fingerprint: ${res.fingerprint}
+Content hash: ${res.stepsSha256}
+Share the fingerprint with your team through another channel: an importer compares it before approving.`,
+  );
+}
+
+/**
+ * A value-taking option that was supplied must carry a value: a trailing `--signer` (or one followed by
+ * another option) is an error, never a silent omission of the pin it asked for. An absent option stays
+ * `undefined`.
+ */
+function shiftRequiredValue(tail: string[], flag: string): string | undefined {
+  const i = tail.indexOf(flag);
+  if (i < 0) return undefined;
+  const v = tail[i + 1];
+  if (v === undefined || v.startsWith("--")) throw new Error(`${flag} needs a value`);
+  tail.splice(i, 2);
+  return v;
+}
+
+/**
+ * `nimbus workflow import <file> ...` (I59): reads the bundle and asks the gateway, which verifies the
+ * signature, shows the exact steps at a prompt on this terminal and writes only after you answer it as a
+ * person. `--yes` is refused here and, whatever a client sends, at the gateway.
+ */
+export async function runWorkflowImport(client: IPCClient, rest: string[]): Promise<void> {
+  const tail = [...rest];
+  if (tail.includes("--yes") || tail.includes("-y")) throw new Error(WORKFLOW_IMPORT_YES_REFUSAL);
+  const replace = hasFlag(tail, "--replace");
+  const acceptSignerChange = hasFlag(tail, "--accept-signer-change");
+  const dryRun = hasFlag(tail, "--dry-run");
+  const signer = shiftRequiredValue(tail, "--signer");
+  const schedule = shiftRequiredValue(tail, "--schedule");
+  const tz = shiftRequiredValue(tail, "--tz");
+  if (tz !== undefined && schedule === undefined) throw new Error("--tz needs --schedule");
+  const file = tail.find((a) => !a.startsWith("--"))?.trim() ?? "";
+  if (file === "") throw new Error(WORKFLOW_IMPORT_USAGE);
+  // One descriptor for the size check and the read, so the file cannot change between them.
+  const fd = openSync(file, "r");
+  let bundle: string;
+  try {
+    if (fstatSync(fd).size > IMPORT_FILE_MAX_BYTES) {
+      throw new Error("the bundle file is far larger than a workflow bundle can be (256 KiB)");
+    }
+    bundle = readFileSync(fd, "utf8");
+  } finally {
+    closeSync(fd);
+  }
+  // The approval prompt reaches this terminal, exactly as `workflow run`'s does.
+  registerInteractiveCliIpcHandlers(client);
+  // The gateway imports only for a connection that declared the owner's CLI.
+  await declareCliClientKind(client);
+  const res = await client.call<{ promptText?: string }>("workflow.import", {
+    bundle,
+    ...(replace ? { replace: true } : {}),
+    ...(acceptSignerChange ? { acceptSignerChange: true } : {}),
+    ...(dryRun ? { dryRun: true } : {}),
+    ...(signer === undefined ? {} : { signer }),
+    ...(schedule === undefined ? {} : { schedule }),
+    ...(tz === undefined ? {} : { scheduleTz: tz }),
+  });
+  if (dryRun && typeof res.promptText === "string") {
+    console.log(`${res.promptText}
+
+(dry run: nothing was written and nobody was asked)`);
+    return;
+  }
+  console.log(JSON.stringify(res, undefined, 2));
+}
+
 export async function runWorkflowCli(args: string[]): Promise<void> {
   const sub = args[0]?.trim() ?? "";
   const rest = args.slice(1);
@@ -167,6 +280,16 @@ export async function runWorkflowCli(args: string[]): Promise<void> {
   }
   if (sub === "save") {
     await withGatewayIpc((c) => runWorkflowSave(c, rest));
+    return;
+  }
+  if (sub === "export") {
+    await withGatewayIpc((c) => runWorkflowExport(c, rest));
+    return;
+  }
+  if (sub === "import") {
+    await withGatewayIpc((c) => runWorkflowImport(c, rest), undefined, {
+      requestTimeoutMs: INTERACTIVE_RPC_TIMEOUT_MS,
+    });
     return;
   }
   if (sub === "unschedule") {
@@ -192,6 +315,6 @@ export async function runWorkflowCli(args: string[]): Promise<void> {
   }
 
   throw new Error(
-    "Usage: nimbus workflow list | save <name> --file <path> [--schedule <cron>] | unschedule <name> | run <name> | resume <runId> [--discard] | delete <name>",
+    "Usage: nimbus workflow list | save <name> --file <path> [--schedule <cron>] | export <name> --out <file> | import <file> | unschedule <name> | run <name> | resume <runId> [--discard] | delete <name>",
   );
 }

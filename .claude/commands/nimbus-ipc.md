@@ -174,6 +174,8 @@ broadcast as `watcher.fired` on the `gateway.event` envelope.
 | `workflow.scheduleList` | request | Scheduled workflows: cron, zone, next and last fire, last run status, any blocked run (Phase 10 SA4; renderer-safe read) |
 | `workflow.unschedule` | request | Clear a workflow's schedule (LAN write method; not on the renderer allowlist) |
 | `workflow.resume` | request | Continue a run blocked on an approval, `{ runId, discard? }`; local `cli`/`ui` only, LAN-forbidden (Phase 10 SA4) |
+| `workflow.export` | request | `{ name, author? }` -> `{ bundle, fingerprint, stepsSha256, issuedAt }`: sign a saved workflow with the share key (I59). `cli`/`ui` only, LAN-forbidden, demo-refused, not on the renderer allowlist |
+| `workflow.import` | request | `{ bundle, replace?, acceptSignerChange?, signer?, schedule?, scheduleTz?, dryRun? }`: import a signed workflow bundle after the owner's human approval of the verbatim steps (I59, HITL type `workflow.import`, never delegable, never an MCP proposal). `cli`/`ui` only, LAN-forbidden, demo-refused, not on the renderer allowlist; `workflow.list` adds `source` for those kinds only |
 
 ---
 
@@ -299,6 +301,7 @@ An approved extension runs as a lazy, sandboxed MCP stdio server (`mesh:ext:<ser
 | `agents.huddle` | request | Slice 6a — team-scoped morning briefing across paired peers |
 | `briefing.latest` / `list` / `get` / `status` | request | Phase 10 MB5 — the morning briefing runs the gateway stored. Renderer-callable (I7); the whole `briefing` namespace is LAN-forbidden (I5); served on a demo gateway. |
 | `incident.timeline` | request | Phase 10 IC4 — one record version's timeline (`{ id, version? }`), events with their clock. Same owner-kind rule, LAN-forbidden by the `incident` namespace entry and renderer-callable since IC10a (Tauri allowlist 132 -> 135 with `incident.list` and `incident.get`; the renderer declares kind `ui`). `incident.get` also answers a live `cascade`; `incident.list { cascade: true }` also answers `groups`. |
+| `incident.debt` | request | Phase 10 IC7b — code symbols in files incidents keep pointing at that nobody has touched (`{ since?, untouched?, minIncidents?, limit? }`, strict integer ranges). Same owner-kind rule, LAN-forbidden by the `incident` namespace entry, NOT on the Tauri allowlist. Runs `git` only through `debt/git-history.ts` (never from `incident/`). |
 | `audit.replay` | request | Phase 10 IC4 — `nimbus audit replay <incident-id>`: a record's versions, its linked actions with the prompt shown to the owner, and both chains verified over the range read. `requireProofCaller` first (cli or ui only), LAN-forbidden with the whole `audit` namespace, never renderer-callable. |
 | `incident.list` / `get` / `assemble` | request | Phase 10 IC3 — the incident records the engine assembled. Served ONLY to a connection that declared `cli` or `ui` (`ERR_INCIDENT_FORBIDDEN_CLIENT` otherwise, before any query; the kind is the connection's, never a param); the whole `incident` namespace is LAN-forbidden (I5) `list` and `get` renderer-callable since IC10a (the allowlist is 135), `assemble` never; served on a demo gateway. `incident.assembled` is a `gateway.event` kind carrying `{ recordId, version, status }`. |
 | `briefing.runNow` | request | Composes a briefing now (CLI-only: not on the Tauri allowlist), `-32000 ERR_BRIEFING_BUSY` while one runs. |

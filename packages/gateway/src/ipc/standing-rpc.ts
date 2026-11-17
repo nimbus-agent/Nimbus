@@ -20,15 +20,10 @@
 // names only `{ workflow, step, days?, max?, window? }`. A bad request never reaches the prompt.
 import type { Database } from "bun:sqlite";
 import { guardRequiresPresence, guardRuleLines } from "../automation/workflow-guard.ts";
+import { readImportSource } from "../automation/workflow-import-store.ts";
 import { parseWorkflowSteps, workflowStepsSha256 } from "../automation/workflow-steps.ts";
-import { NULL_EGRESS_SINK } from "../egress/egress-ledger.ts";
-import { type ExecutorPolicyDep, NO_POLICY_OVERLAY, ToolExecutor } from "../engine/executor.ts";
-import type {
-  AuditSink,
-  ConnectorDispatcher,
-  ConsentChannel,
-  PlannedAction,
-} from "../engine/types.ts";
+import { createOwnerOnlyAsk, type OwnerApproval } from "../engine/owner-only-approval.ts";
+import type { PlannedAction } from "../engine/types.ts";
 import { STANDING_APPROVALS_DISABLED_MESSAGE } from "../standing/standing-rule-capability.ts";
 import { deriveRule, GUARD_ABSENCE_REASON } from "../standing/standing-rule-derive.ts";
 import {
@@ -61,10 +56,7 @@ import { dispatchByMethod, type RpcMissOrHit } from "./_lib/dispatch-by-method.t
 import type { ClientKind } from "./server/client-kind.ts";
 import { RpcMethodError } from "./server/rpc-error.ts";
 
-/** The result of asking the local owner to approve one standing-rule action. */
-export type OwnerApproval =
-  | { readonly approved: true; readonly auditId: number }
-  | { readonly approved: false; readonly reason: "declined" | "not_human" };
+export type { OwnerApproval };
 
 export interface StandingRpcCtx {
   readonly db: Database;
@@ -192,6 +184,23 @@ async function createRule(ctx: StandingRpcCtx, params: unknown): Promise<Record<
   });
 }
 
+/**
+ * One added display line (I59): when the workflow's CURRENT content is what a signed bundle imported, the
+ * rule prompt says where it came from. A display read only: eligibility never consults it (static D50(d)).
+ */
+function importedFromLine(
+  db: Database,
+  rule: { readonly workflowId: string; readonly workflowSha256: string },
+): string[] {
+  const src = readImportSource(db, rule.workflowId);
+  if (src === null || !sha256HexEqualConstantTime(src.stepsSha256, rule.workflowSha256)) return [];
+  const issued = new Date(src.issuedAt).toISOString();
+  return [
+    `This workflow was imported from ${src.signerFingerprint.slice(0, 12)}, issued ${issued}`,
+    "",
+  ];
+}
+
 /** The one path every rule takes: derive from the stored workflow, ask the owner, store. */
 async function createFromRequest(
   ctx: StandingRpcCtx,
@@ -210,7 +219,7 @@ async function createFromRequest(
   } catch (e) {
     throw asRpcError(e);
   }
-  const lines = renderRuleText(derived.text, now);
+  const lines = [...importedFromLine(ctx.db, derived.rule), ...renderRuleText(derived.text, now)];
   const approval = await ctx.askOwner({
     type: "standing.rule.create",
     payload: {
@@ -516,55 +525,7 @@ export async function dispatchStandingRpc(
 }
 
 /**
- * The owner's approval of one standing-rule action: a gate-only executor (its dispatcher rejects,
- * so nothing reaches a connector through it) with NO delegation (I20) around THIS connection's
- * consent channel. The channel is wrapped so that an approval whose source is not `human` (`--yes`
- * is `auto`, a script is `script`, an old client is `unknown`) is turned into a decline BEFORE the
- * executor records it: the audit row says rejected, and the caller is told why. The audit id of an
- * approved action is the id the sink returns for the row it appended (fail closed when it returns none).
+ * The owner's approval of one standing-rule action: the shared owner-only ask (`engine/owner-only-approval.ts`,
+ * a gate-only executor with no delegation, a human answer only), kept under its old name.
  */
-export function createStandingOwnerAsk(deps: {
-  readonly consent: ConsentChannel;
-  readonly audit: AuditSink;
-  readonly policyHitl?: ExecutorPolicyDep | undefined;
-}): (action: PlannedAction) => Promise<OwnerApproval> {
-  return async (action) => {
-    let refusedNonHuman = false;
-    let auditId: number | undefined;
-    const humanOnly: ConsentChannel = {
-      async requestApproval(prompt, details, actionType) {
-        const answer = await deps.consent.requestApproval(prompt, details, actionType);
-        if (answer.approved && answer.answerSource !== "human") {
-          refusedNonHuman = true;
-          return { approved: false, answerSource: answer.answerSource };
-        }
-        return answer;
-      },
-    };
-    const stubDispatcher: ConnectorDispatcher = {
-      dispatch(): Promise<unknown> {
-        return Promise.reject(new Error("the standing-rule gate does not dispatch"));
-      },
-    };
-    const capturing: AuditSink = {
-      recordAudit(entry) {
-        const id = deps.audit.recordAudit(entry);
-        // The id comes from the sink's own return value (the inserted row), never from a re-read of
-        // the table: a sink that returns none leaves the approval undecided and it is declined.
-        auditId = typeof id === "number" ? id : undefined;
-        return id;
-      },
-    };
-    const executor = new ToolExecutor(
-      humanOnly,
-      capturing,
-      stubDispatcher,
-      undefined,
-      NULL_EGRESS_SINK,
-      deps.policyHitl ?? NO_POLICY_OVERLAY,
-    );
-    const outcome = await executor.gate(action);
-    if (outcome === "proceed" && auditId !== undefined) return { approved: true, auditId };
-    return { approved: false, reason: refusedNonHuman ? "not_human" : "declined" };
-  };
-}
+export const createStandingOwnerAsk = createOwnerOnlyAsk;

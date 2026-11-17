@@ -1,9 +1,11 @@
 import { describe, expect, test } from "bun:test";
+import nacl from "tweetnacl";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
 import {
   ensureShareKeypair,
   SHARE_SIGNING_PRIVKEY,
   SHARE_SIGNING_PUBKEY,
+  signBytesWithShareKey,
 } from "./share-keypair.ts";
 
 function fakeVault() {
@@ -42,5 +44,32 @@ describe("ensureShareKeypair", () => {
     expect(b.privkeyB64).not.toBe(a.privkeyB64);
     expect(v.store.get(SHARE_SIGNING_PRIVKEY)).toBe(b.privkeyB64);
     expect(v.store.get(SHARE_SIGNING_PUBKEY)).toBe(b.pubkeyB64);
+  });
+});
+
+describe("signBytesWithShareKey", () => {
+  test("the signature verifies with the returned public key and the seed is not in the result", async () => {
+    const v = fakeVault();
+    const bytes = new TextEncoder().encode("some bytes to sign");
+    const out = await signBytesWithShareKey(v.vault, bytes);
+    expect(Object.keys(out).sort()).toEqual(["pubkeyB64", "sigB64"]);
+    const ok = nacl.sign.detached.verify(
+      bytes,
+      new Uint8Array(Buffer.from(out.sigB64, "base64")),
+      new Uint8Array(Buffer.from(out.pubkeyB64, "base64")),
+    );
+    expect(ok).toBe(true);
+    const seed = v.store.get(SHARE_SIGNING_PRIVKEY) ?? "";
+    expect(JSON.stringify(out)).not.toContain(seed);
+  });
+  test("a different message does not verify under the same signature", async () => {
+    const v = fakeVault();
+    const out = await signBytesWithShareKey(v.vault, new TextEncoder().encode("a"));
+    const ok = nacl.sign.detached.verify(
+      new TextEncoder().encode("b"),
+      new Uint8Array(Buffer.from(out.sigB64, "base64")),
+      new Uint8Array(Buffer.from(out.pubkeyB64, "base64")),
+    );
+    expect(ok).toBe(false);
   });
 });

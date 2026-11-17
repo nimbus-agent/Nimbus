@@ -260,6 +260,10 @@ const FORBIDDEN_OVER_LAN = new Set([
   // the owner's socket, so no paired peer may name it, whatever its `writeAllowed` (not in
   // WRITE_METHODS on purpose: a write grant must not be enough).
   "workflow.resume",
+  // Signed workflow import and export (I59): minting a signed bundle with the owner's key and writing a
+  // workflow from one are the local owner's acts. Not in WRITE_METHODS on purpose.
+  "workflow.import",
+  "workflow.export",
   // NOTE: egress.prune is deliberately NOT forbidden here — like federation.purge above, it is
   // HITL-gated inside its own handler (handlePrune in egress-rpc.ts calls
   // ctx.requestPruneApproval(beforeTs) and returns { approved: false, prunedCount: 0 } on denial),

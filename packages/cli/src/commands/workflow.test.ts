@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -24,6 +24,9 @@ const {
   runWorkflowRun,
   runWorkflowUnschedule,
   runWorkflowResume,
+  runWorkflowExport,
+  runWorkflowImport,
+  WORKFLOW_IMPORT_YES_REFUSAL,
 } = mod;
 
 /** Yield a macrotask so every pending microtask chain (connect → call → handler) settles. */
@@ -509,6 +512,160 @@ describe("scheduling and resuming a workflow (Phase 10 SA4)", () => {
       },
     });
     await runWorkflowCli(["resume", "run-1"]);
+    expect(constructions[0]?.opts).toEqual({ requestTimeoutMs: INTERACTIVE_RPC_TIMEOUT_MS });
+    await flush();
+  });
+});
+
+describe("runWorkflowExport and runWorkflowImport (I59)", () => {
+  const dirs: string[] = [];
+  const tmp = (): string => {
+    const d = mkdtempSync(join(tmpdir(), "nimbus-wfi-"));
+    dirs.push(d);
+    return d;
+  };
+  beforeEach(() => {
+    out.reset();
+  });
+  afterEach(() => {
+    clearFixture();
+    for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
+  });
+
+  const EXPORTED = {
+    bundle: '{"body":{},"sig":{}}',
+    fingerprint: "a".repeat(32),
+    stepsSha256: "b".repeat(64),
+    issuedAt: 1,
+  };
+
+  it("export declares the cli kind, sends name and author, writes the file and prints the fingerprint", async () => {
+    const ipc = createDeclaringMockIpcClient([EXPORTED]);
+    const file = join(tmp(), "w.nimbus-workflow.json");
+    await runWorkflowExport(ipc.client, ["weekly", "--out", file, "--author", "lead"]);
+    expect(ipc.allCalls.map((c) => c.method)).toEqual(["session.declareKind", "workflow.export"]);
+    expect(ipc.calls[0]?.params).toEqual({ name: "weekly", author: "lead" });
+    expect(readFileSync(file, "utf8")).toBe(EXPORTED.bundle);
+    expect(out.stdout).toContain(`Signer fingerprint: ${EXPORTED.fingerprint}`);
+  });
+
+  it("export refuses to overwrite a file without --force and overwrites with it", async () => {
+    const file = join(tmp(), "w.json");
+    writeFileSync(file, "old");
+    const first = createDeclaringMockIpcClient([EXPORTED]);
+    await expect(runWorkflowExport(first.client, ["weekly", "--out", file])).rejects.toThrow(
+      "already exists",
+    );
+    expect(readFileSync(file, "utf8")).toBe("old");
+    const second = createDeclaringMockIpcClient([EXPORTED]);
+    await runWorkflowExport(second.client, ["weekly", "--out", file, "--force"]);
+    expect(readFileSync(file, "utf8")).toBe(EXPORTED.bundle);
+  });
+
+  it("export needs a name and --out", async () => {
+    const ipc = createDeclaringMockIpcClient([]);
+    await expect(runWorkflowExport(ipc.client, ["weekly"])).rejects.toThrow("workflow export");
+    await expect(runWorkflowExport(ipc.client, ["--out", "x"])).rejects.toThrow("workflow export");
+  });
+
+  it("import declares the cli kind and sends the bundle with the flags", async () => {
+    const file = join(tmp(), "b.json");
+    writeFileSync(file, "BUNDLE-TEXT");
+    const ipc = createDeclaringMockIpcClient([{ id: "w1", replaced: false }]);
+    await runWorkflowImport(ipc.client, [
+      file,
+      "--replace",
+      "--accept-signer-change",
+      "--signer",
+      "abcdef123456",
+      "--schedule",
+      "0 6 * * *",
+      "--tz",
+      "UTC",
+    ]);
+    expect(ipc.allCalls.map((c) => c.method)).toEqual(["session.declareKind", "workflow.import"]);
+    expect(ipc.calls[0]?.params).toEqual({
+      bundle: "BUNDLE-TEXT",
+      replace: true,
+      acceptSignerChange: true,
+      signer: "abcdef123456",
+      schedule: "0 6 * * *",
+      scheduleTz: "UTC",
+    });
+    expect(out.stdout).toContain('"id": "w1"');
+  });
+
+  it("import sends nothing optional by default, and --dry-run prints the text", async () => {
+    const file = join(tmp(), "b.json");
+    writeFileSync(file, "B");
+    const ipc = createDeclaringMockIpcClient([{ promptText: "Import the workflow" }]);
+    await runWorkflowImport(ipc.client, [file, "--dry-run"]);
+    expect(ipc.calls[0]?.params).toEqual({ bundle: "B", dryRun: true });
+    expect(out.stdout).toContain("Import the workflow");
+    expect(out.stdout).toContain("nothing was written");
+  });
+
+  it("import refuses --yes and -y before any call, and --tz without --schedule", async () => {
+    const file = join(tmp(), "b.json");
+    writeFileSync(file, "B");
+    const ipc = createDeclaringMockIpcClient([]);
+    await expect(runWorkflowImport(ipc.client, [file, "--yes"])).rejects.toThrow(
+      WORKFLOW_IMPORT_YES_REFUSAL,
+    );
+    await expect(runWorkflowImport(ipc.client, ["-y", file])).rejects.toThrow("cannot take --yes");
+    await expect(runWorkflowImport(ipc.client, [file, "--tz", "UTC"])).rejects.toThrow(
+      "--tz needs --schedule",
+    );
+    await expect(runWorkflowImport(ipc.client, [])).rejects.toThrow("workflow import");
+    expect(ipc.allCalls).toHaveLength(0);
+  });
+
+  it("import and export refuse a value-taking option given with no value, before any call", async () => {
+    const file = join(tmp(), "b.json");
+    writeFileSync(file, "B");
+    const ipc = createDeclaringMockIpcClient([]);
+    await expect(runWorkflowImport(ipc.client, [file, "--signer"])).rejects.toThrow(
+      "--signer needs a value",
+    );
+    await expect(runWorkflowImport(ipc.client, [file, "--schedule", "--replace"])).rejects.toThrow(
+      "--schedule needs a value",
+    );
+    await expect(
+      runWorkflowImport(ipc.client, [file, "--schedule", "0 6 * * *", "--tz"]),
+    ).rejects.toThrow("--tz needs a value");
+    await expect(runWorkflowExport(ipc.client, ["weekly", "--out"])).rejects.toThrow(
+      "--out needs a value",
+    );
+    await expect(
+      runWorkflowExport(ipc.client, ["weekly", "--out", "f.json", "--author"]),
+    ).rejects.toThrow("--author needs a value");
+    expect(ipc.allCalls).toHaveLength(0);
+  });
+
+  it("import refuses a file far larger than a bundle without reading it", async () => {
+    const file = join(tmp(), "big.json");
+    writeFileSync(file, "x".repeat(1024 * 1024 + 1));
+    const ipc = createDeclaringMockIpcClient([]);
+    await expect(runWorkflowImport(ipc.client, [file])).rejects.toThrow("256 KiB");
+    expect(ipc.allCalls).toHaveLength(0);
+  });
+
+  it("import gets the interactive budget through the dispatcher", async () => {
+    const constructions: RecordedClientConstruction[] = [];
+    const file = join(tmp(), "b.json");
+    writeFileSync(file, "B");
+    const ipc = createDeclaringMockIpcClient([{ id: "w1" }]);
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      clientConstructions: constructions,
+      ipcClient: {
+        call: ipc.client.call,
+        connect: () => {},
+        disconnect: () => {},
+        onNotification: ipc.client.onNotification,
+      },
+    });
+    await runWorkflowCli(["import", file]);
     expect(constructions[0]?.opts).toEqual({ requestTimeoutMs: INTERACTIVE_RPC_TIMEOUT_MS });
     await flush();
   });

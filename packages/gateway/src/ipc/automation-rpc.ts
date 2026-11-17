@@ -25,10 +25,15 @@ import {
   listWatchers,
   setWatcherEnabled,
 } from "../automation/watcher-store.ts";
+import { listSources } from "../automation/workflow-import-store.ts";
 import { listWorkflowRuns } from "../automation/workflow-run-history.ts";
 import { resolveSaveSchedule, ScheduleSaveError } from "../automation/workflow-schedule.ts";
 import { listScheduleView } from "../automation/workflow-schedule-view.ts";
-import { stepsSaveRefusal } from "../automation/workflow-steps.ts";
+import {
+  parseWorkflowSteps,
+  stepsSaveRefusal,
+  workflowStepsSha256,
+} from "../automation/workflow-steps.ts";
 import {
   clearScheduleByName,
   deleteWorkflowByName,
@@ -130,6 +135,7 @@ import {
 import { verifyOneExtensionStrict } from "../extensions/verify-extensions.ts";
 import type { SignatureDisableReason } from "../extensions/verify-signature.ts";
 import { newestPrevVersion, removeExtensionVersionStore } from "../extensions/version-store.ts";
+import { constantTimeStringEqual } from "../util/timing-safe-compare.ts";
 import type { NimbusVault } from "../vault/index.ts";
 import { asRecord } from "./connector-rpc-shared.ts";
 import { readAuditEntries } from "./extension-audit-rpc.ts";
@@ -162,6 +168,53 @@ function requireNumber(rec: Record<string, unknown> | undefined, key: string): n
     throw new AutomationRpcError(-32602, `Missing or invalid ${key}`);
   }
   return v;
+}
+
+/** What `workflow list` says about where a workflow's content came from (a hash comparison, never stored). */
+type WorkflowSourceView =
+  | { readonly kind: "local" }
+  | {
+      readonly kind: "imported";
+      readonly signerFingerprint: string;
+      readonly issuedAt: number;
+      readonly edited: boolean;
+    };
+
+function currentContentHash(stepsJson: string): string | null {
+  try {
+    return workflowStepsSha256(parseWorkflowSteps(stepsJson));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * `workflow.list` (I59): the saved workflows, each with a `source` ONLY for the owner's own connection
+ * (`cli` or `ui`). Any other connection (a paired LAN peer, an unidentified local process) gets the rows as
+ * before, with NO `source` key, so a peer learns no signer fingerprint. One `listSources` read, never a
+ * query per row.
+ */
+function listWithSource(
+  ctx: AutomationCtx,
+): Array<ReturnType<typeof listWorkflows>[number] & { source?: WorkflowSourceView }> {
+  const rows = listWorkflows(ctx.db);
+  if (ctx.clientKind !== "cli" && ctx.clientKind !== "ui") return rows;
+  const sources = listSources(ctx.db);
+  return rows.map((w) => {
+    const src = sources.get(w.id);
+    if (src === undefined) return { ...w, source: { kind: "local" } as const };
+    // An unknown current hash (steps that no longer parse) is always "edited"; otherwise I10.
+    const current = currentContentHash(w.steps_json);
+    return {
+      ...w,
+      source: {
+        kind: "imported",
+        signerFingerprint: src.signerFingerprint,
+        issuedAt: src.issuedAt,
+        edited: current === null || !constantTimeStringEqual(current, src.stepsSha256),
+      } as const,
+    };
+  });
 }
 
 /** A `clientKind` key in the params would be a caller naming its own kind: refused, not ignored. */
@@ -557,7 +610,7 @@ const AUTOMATION_HANDLERS: Readonly<Record<string, AutomationHandler>> = {
 
   "workflow.list": (_rec, ctx) => ({
     kind: "hit",
-    value: { workflows: listWorkflows(ctx.db) },
+    value: { workflows: listWithSource(ctx) },
   }),
 
   "workflow.save": (rec, ctx) => {

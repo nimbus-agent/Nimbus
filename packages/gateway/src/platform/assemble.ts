@@ -4956,6 +4956,15 @@ export async function assemblePlatformServices(
     dependsOn: () => loadDependsOnMap(paths.configDir),
     // IC9a: `incident.investigate` reads a service's declared `sentry_projects`; a malformed block reads as unreadable.
     serviceConfigs: () => loadNimbusServiceConfigsFromConfigDir(paths.configDir),
+    // `incident.debt` (IC7b): the same git-aware roots the ownership pass binds (`[[filesystem.roots]]` plus
+    // the CLI-registered ones), re-read per call; git runs only from `debt/`.
+    debt: {
+      roots: () =>
+        gitAwareRootPaths(
+          loadNimbusFilesystemRootsFromConfigDir(paths.configDir),
+          loadRegisteredRoots(paths.configDir),
+        ).map((path) => ({ path, gitAware: true })),
+    },
   };
   // pre-S3 item E: notifications.status / notifications.test (CLI-only; LAN-forbidden, not Tauri).
   ipcOpts.notificationsRpcCtx = { runtime: notificationsRuntime };
