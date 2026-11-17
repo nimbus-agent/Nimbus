@@ -119,6 +119,22 @@ export const ACCEPTED_ADVISORIES: readonly AcceptedAdvisory[] = [
     recheckBy: "2026-11-28",
     owner: "asafgolombek",
   },
+  // HIGH advisory that turned `Dependency audit` red on every PR on 2026-11-17, with no change to
+  // the repo and no patched release (picomatch 4.0.7 is the latest published version).
+  {
+    ghsa: "GHSA-fc5q-39xc-vjpf",
+    package: "picomatch",
+    severity: "high",
+    noFixReason:
+      "The advisory (ReDoS through single-branch repeated extglobs) covers <=4.0.7, and 4.0.7 is the latest version published on npm, so no override or upgrade resolves it. Checked against the npm registry on 2026-11-17.",
+    reachability:
+      "The flaw needs an attacker-chosen GLOB PATTERN. `bun pm why picomatch`: dependency-cruiser, knip and the docs site's astro/starlight chain are dev or docs tooling that never ships, and their patterns are this repository's own config. The one shipped chain is @nimbus/gateway > @mastra/core (and @mastra/mcp > @mastra/core): in @mastra/core 1.74.0 picomatch is imported only by `workspace-skills-*.js` (`createGlobMatcher`, reached from Mastra's Workspace and Skills features). The gateway imports only `@mastra/core`, `/agent`, `/llm`, `/schema` and `/tools`, never `/workspace` or `/skills`, and configures no `workspace` or `skills` on any Agent, so that matcher is never constructed and no pattern reaches it.",
+    unblockedBy:
+      "picomatch publishes a release above 4.0.7 that fixes GHSA-fc5q-39xc-vjpf; a root `overrides` pin (or the dependents' own ranges, all ^4.0.x or exact 4.0.7 for dependency-cruiser) then takes it, `bun audit` stops reporting it, and audit:advisories fails on this row as stale until it is deleted. Also re-check if the gateway ever adopts Mastra Workspace or Skills.",
+    acceptedOn: "2026-11-17",
+    recheckBy: "2026-12-17",
+    owner: "asafgolombek",
+  },
   // Two MODERATE advisories that turned `Dependency audit` red on `main` on 2026-10-31, with
   // no change to the repo (#1833). Both sit only under developer tools, and nothing that ships
   // contains either package.
