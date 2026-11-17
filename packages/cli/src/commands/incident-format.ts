@@ -10,6 +10,7 @@ export const INCIDENT_USAGE =
   "Usage: nimbus incident list [--open] [--service <id>] [--source <service>] [--limit <n>] [--cascade] [--json]\n" +
   "       nimbus incident show <id> [--json]\n" +
   "       nimbus incident timeline <id> [--version <n>] [--json]\n" +
+  "       nimbus incident postmortem <id> [--out <file>] [--template <file>] [--synthesize] | --push notion|confluence ...\n" +
   "  <id> is a record id (inc_...), a trigger item id (pagerduty:...), or the provider's own id.";
 
 export const SOURCES = ["pagerduty", "jira", "sentry", "montecarlo", "bigeye"] as const;

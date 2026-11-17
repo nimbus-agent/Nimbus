@@ -44,7 +44,7 @@ function section(title: string, lines: readonly string[]): string {
   return [`## ${title}`, "", ...lines].join("\n");
 }
 
-function summaryLines(t: TriggerBlock): string[] {
+export function summaryLines(t: TriggerBlock): string[] {
   const lines = [
     `- Source: ${t.service} (${t.type}), id \`${plain(t.providerId)}\``,
     `- Severity: ${t.severity === null ? "not reported" : `${plain(t.severity)}${t.severityRaw !== null && t.severityRaw !== t.severity ? ` (as reported: ${plain(t.severityRaw)})` : ""}`}`,
@@ -62,14 +62,14 @@ function summaryLines(t: TriggerBlock): string[] {
   return lines;
 }
 
-function serviceLines(r: IncidentRecordV1): string[] {
+export function serviceLines(r: IncidentRecordV1): string[] {
   const b = r.binding;
   if (b.bound)
     return [`- Bound to \`${plain(b.service ?? "")}\` (through ${b.via ?? "a binding"})`];
   return [`- Not bound to a configured service (${b.unboundReason ?? "unknown"}).`];
 }
 
-function changeLines(c: ChangeLane): string[] {
+export function changeLines(c: ChangeLane): string[] {
   if (c.skipped !== null)
     return [`_Skipped: ${c.skipped === "unbound" ? "no bound service" : "no open time"}._`];
   const lines: string[] = [];
@@ -123,7 +123,7 @@ function chatLines(c: ChatLane): string[] {
   return more > 0 ? [...rows, `_and ${String(more)} more_`] : rows;
 }
 
-function priorLines(p: PriorLane): string[] {
+export function priorLines(p: PriorLane): string[] {
   if (p.skipped !== null)
     return [`_Skipped: ${p.skipped === "unbound" ? "no bound service" : "no open time"}._`];
   if (p.incidents.length === 0) {
@@ -171,7 +171,7 @@ function onCallLines(o: OnCallLane): string[] {
   }
 }
 
-function concurrentLines(c: ConcurrentLane): string[] {
+export function concurrentLines(c: ConcurrentLane): string[] {
   if (c.skipped !== null) return ["_Skipped: no open time._"];
   if (c.records.length === 0) {
     return c.total > 0 ? [omittedForSize(c.total)] : ["_No other open record within 30 minutes._"];

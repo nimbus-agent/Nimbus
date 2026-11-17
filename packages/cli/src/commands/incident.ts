@@ -18,6 +18,7 @@ import {
   sourcesLine,
   type TimelineReplyLike,
 } from "./incident-format.ts";
+import { runPostmortemCommand } from "./incident-postmortem.ts";
 
 /**
  * `nimbus incident list | show <id> | timeline <id>` (Phase 10 IC3, IC4): the incident records the gateway assembled from the local
@@ -178,6 +179,8 @@ export async function runIncidentWith(
 }
 
 export async function runIncidentCommand(args: string[]): Promise<void> {
+  // IC7a: the post-mortem draft and push have their own flags, exit codes and (for the push) approval timeout.
+  if (args[0] === "postmortem") return runPostmortemCommand(args.slice(1));
   const a = parseIncidentArgs(args);
   if (a === undefined) {
     process.stderr.write(`${INCIDENT_USAGE}\n`);

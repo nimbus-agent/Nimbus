@@ -6512,7 +6512,7 @@ describe("I31 — disclosure integrity: a synthesized brief never says less than
     // synthesize dispatch handles.
     const { RESERVED_HEADINGS_BY_KIND } = await import("./agents/_lib/reserved-sections.ts");
     const src = await read("packages/gateway/src/agents/_lib/synthesize.ts");
-    const dispatched = [...src.matchAll(/brief\.kind === "([a-z]+)"/g)]
+    const dispatched = [...src.matchAll(/brief\.kind === "([a-z_]+)"/g)]
       .map((m) => m[1])
       .filter((kind): kind is string => kind !== undefined);
     const kinds = new Set(dispatched);
@@ -16169,6 +16169,66 @@ describe("I57 (a) - assembling an incident record is inert: it reads the local i
       ),
     );
     expect(writers.map((f) => f.rel)).toEqual(["incident/incident-store.ts"]);
+  });
+
+  test("11: IC7a - the post-mortem draft keeps incident/ inert; the push is the owner's own linked action and reaches no model", async () => {
+    const all = await readDirFiles("packages/gateway/src");
+    const code = (rel: string): string => {
+      const f = all.find((x) => x.rel === rel);
+      if (f === undefined) throw new Error(`missing ${rel}`);
+      return stripComments(f.contents);
+    };
+    // The draft's reads live in incident/ and the pure renderer in agents/_lib/incident*: neither names a
+    // runner, a synthesis call, the executor, the push or the row ids (static D46(a)).
+    for (const rel of [
+      "incident/postmortem-brief.ts",
+      "agents/_lib/incident-postmortem-render.ts",
+    ]) {
+      const c = code(rel);
+      expect(c, rel).not.toMatch(
+        /SynthesisRunner|\bsynthesize\(|buildOwnerPushExecutor|pushPostmortem|PAGE_PUSH_TOOL_IDS|\.execute\(/,
+      );
+    }
+    // Only the draft module meets a runner; it never meets an executor or a link.
+    const draft = code("postmortem/postmortem-draft.ts");
+    expect(draft).toContain("synthesize(brief, { runner: deps.runner })");
+    expect(draft).not.toMatch(/mintIncidentLink|buildOwnerPushExecutor|\.execute\(/);
+    // The push never builds an executor, dispatches or answers a prompt: it only calls the one it is given.
+    const push = code("postmortem/postmortem-push.ts");
+    expect(push).not.toMatch(
+      /buildOwnerPushExecutor|new ToolExecutor|\bdispatch\s*\(|requestApproval|requestConsent|SynthesisRunner|synthesize\(/,
+    );
+    expect(push.match(/\bmintIncidentLink\(/g)).toHaveLength(1);
+    // Each action the push builds carries the link and no outside-party field.
+    const build = push.slice(
+      push.indexOf("function buildAction"),
+      push.indexOf("async function run("),
+    );
+    expect(build).toContain("incident: link");
+    expect(build).not.toMatch(/origin|proposer|provenance/);
+    // The page rows are named in one place and imported by the push alone: no tool, door or workflow path.
+    const importers = all
+      .filter((f) => /\bPAGE_PUSH_TOOL_IDS\b/.test(stripComments(f.contents)))
+      .map((f) => f.rel)
+      .sort();
+    expect(importers).toEqual([
+      "connectors/connector-writes/page-push-rows.ts",
+      "postmortem/postmortem-push.ts",
+    ]);
+    // The owner's push executor has no delegation and EMPTY extras: no before-state runner, no standing rule.
+    const runAsk = code("engine/run-ask.ts");
+    const builder = runAsk.slice(
+      runAsk.indexOf("export function buildOwnerPushExecutor"),
+      runAsk.indexOf("function newDoorExecutor"),
+    );
+    expect(builder).toMatch(/undefined,\s*\{\},\s*p\.audit/);
+    expect(builder).not.toMatch(/standingRules|beforeState|unattended|delegation/);
+    // The model is offered no post-mortem tool, and the RPC serves owner kinds only, called first.
+    expect(code("engine/connector-write-agent-tools.ts")).not.toMatch(/postmortem/i);
+    const rpc = code("ipc/postmortem-rpc.ts");
+    expect(rpc.match(/requireOwnerKind\(caller\.kind\)/g)).toHaveLength(2);
+    // The model is reached only when the request says so.
+    expect(rpc).toContain("const runner = wantModel ? ctx.runner() : undefined;");
   });
 });
 

@@ -106,6 +106,7 @@ import { dispatchOwnershipRpc } from "../ownership-rpc.ts";
 import { buildPackDeps, dispatchPackRpc } from "../pack-rpc.ts";
 import { dispatchPeopleRpc, PeopleRpcError } from "../people-rpc.ts";
 import { dispatchPolicyRpc, PolicyRpcError } from "../policy-rpc.ts";
+import { dispatchPostmortemRpc } from "../postmortem-rpc.ts";
 import { dispatchPreflightRpc, PreflightRpcError } from "../preflight-rpc.ts";
 import { dispatchPremortemRpc, PremortemRpcError } from "../premortem-rpc.ts";
 import { dispatchProfileRpc, ProfileRpcError } from "../profile-rpc.ts";
@@ -1666,6 +1667,65 @@ export async function tryDispatchIncidentRpc(
   return phase4RpcSkipped;
 }
 
+/**
+ * `incident.postmortem` and `incident.postmortemPush` (Phase 10 IC7a): the post-mortem draft and the owner's
+ * HITL-gated page push. Owner kinds only (`requireOwnerKind`, before any query); the incident namespace is
+ * LAN-forbidden (I5) and absent from the Tauri allowlist (I7). The push asks THIS connection's consent
+ * channel; the draft reaches a model only when the request says `synthesize` (OR-10-8).
+ */
+export async function tryDispatchPostmortemRpc(
+  ctx: ServerCtx,
+  method: string,
+  params: unknown,
+  clientId: string,
+): Promise<unknown> {
+  if (method !== "incident.postmortem" && method !== "incident.postmortemPush") {
+    return phase4RpcSkipped;
+  }
+  const localIndex = ctx.options.localIndex;
+  if (localIndex === undefined) return phase4RpcSkipped;
+  const db = localIndex.getDatabase();
+  const act = ctx.options.captureRpcCtx?.act;
+  try {
+    const out = await dispatchPostmortemRpc(
+      method,
+      params,
+      {
+        db,
+        now: () => Date.now(),
+        runner: () =>
+          buildAgentSynthesisRunner({
+            configDir: ctx.options.configDir,
+            db,
+            router: ctx.options.llmRegistry?.llmRouter,
+            method: "agents.incident_postmortem",
+          }),
+        ...(act === undefined
+          ? {}
+          : {
+              act: {
+                dispatcher: act.dispatcher,
+                egressSink: act.egressSink,
+                audit: act.audit,
+                policyHitl: act.policyHitl,
+                getTribalKbConfig: act.getTribalKbConfig,
+                ...(act.previewCredentialFor === undefined
+                  ? {}
+                  : { previewCredentialFor: act.previewCredentialFor }),
+              },
+            }),
+      },
+      { clientId, kind: ctx.getClientKind(clientId) },
+      ctx.consentImpl,
+    );
+    if (out.kind === "hit") return out.value;
+  } catch (e) {
+    if (e instanceof IncidentRpcError) throw new RpcMethodError(e.rpcCode, e.message);
+    throw e;
+  }
+  return phase4RpcSkipped;
+}
+
 export async function tryDispatchOncallPushRpc(
   ctx: ServerCtx,
   method: string,
@@ -2130,6 +2190,7 @@ const PHASE4_PLATFORM_DISPATCHERS: ReadonlyArray<
   tryDispatchOncallPushRpc,
   tryDispatchBriefingRpc,
   tryDispatchIncidentRpc,
+  tryDispatchPostmortemRpc,
   tryDispatchNotificationsRpc,
   tryDispatchCaptureRpc,
   tryDispatchApprovalsRpc,

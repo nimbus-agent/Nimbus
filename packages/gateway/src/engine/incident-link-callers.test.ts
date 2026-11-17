@@ -48,7 +48,7 @@ describe("4.3 the doors never build an action with an incident link", () => {
   }
 });
 
-describe("4.1 census: only four files touch an action's incident link", () => {
+describe("4.1 census: only five files touch an action's incident link", () => {
   test("a non-test source file that mentions both PlannedAction and an incident link is on the list", () => {
     const hits = walk(SRC)
       .filter((f) => {
@@ -64,6 +64,8 @@ describe("4.1 census: only four files touch an action's incident link", () => {
       "engine/executor.ts",
       "engine/incident-link.ts",
       "engine/types.ts",
+      // Phase 10 IC7a: the owner's post-mortem push, the first producer of a linked action (static D46(e)).
+      "postmortem/postmortem-push.ts",
     ]);
   });
 });
