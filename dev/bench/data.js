@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794862712012,
+  "lastUpdate": 1794887262782,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
-            "name": "nimbus-release-bot[bot]",
-            "username": "nimbus-release-bot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "6eae77e2ceb91882f0dd0ced961466fea42568e9",
-          "message": "chore: release main (#1392)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>7.1.1</summary>\n\n##\n[7.1.1](https://github.com/nimbus-agent/Nimbus/compare/v7.1.0...v7.1.1)\n(2026-08-29)\n\n\n### Bug Fixes\n\n* **cli:** refuse a nested-table key in nimbus config set/get\n([#1387](https://github.com/nimbus-agent/Nimbus/issues/1387))\n([1a4338c](https://github.com/nimbus-agent/Nimbus/commit/1a4338c32582ae578dacc3babb34671b07b155f9))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
-          "timestamp": "2026-08-29T15:41:37Z",
-          "tree_id": "77a88c00513755a24f2731e11cf2738487c9b1be",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/6eae77e2ceb91882f0dd0ced961466fea42568e9"
-        },
-        "date": 1788018872881,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 234.28723565000328,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 215.21326175000212,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 200.5794388500013,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "31201176+speculaas@users.noreply.github.com",
+            "name": "speculaas",
+            "username": "speculaas"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "5fcba87e0179ce4a29ffa6ae3b305529860ffc0d",
+          "message": "feat(gateway): index Zotero notes as zotero:note (#952) (#1965)\n\n## Summary\n\nZotero child notes and standalone notes are now indexed as read-only\n`zotero:note` items instead of being skipped.\n\n- New `zotero-note-mapping.ts`: the note HTML in `data.note` becomes a\nplain-text `body` (tags removed with the existing html-plain-text\nhelpers, common entities decoded). The title is the first non-empty\nline, truncated to 120 chars (`Note <key>` if the note has no text).\n`externalId` is the item `key`; rows with a missing or empty key are\nskipped. `metadata.parent_key` holds `data.parentItem`, or `null` for a\nstandalone note.\n- `zotero-sync.ts` routes each raw item by `data.itemType` to the note\nmapper or the reference mapper. Attachments are still skipped.\n- `zotero-reference-mapping.ts` still returns null for a note, so a note\ncan never be indexed as a `reference` row. The existing test for that is\nunchanged.\n- `docs/roadmap.md`: Zotero row updated.\n\n**Embedding / body decision:** `zotero:note` is added to\n`LOCAL_ONLY_PROSE_TYPES`. Notes get the long body cap (16 KB) but are\nembedded with the local MiniLM model only. They are never sent to a\nremote embedder, because a note is the user's own thinking, not public\nbibliographic metadata. `routing.test.ts` still pins that the local-only\nand prose-heavy sets are disjoint.\n\n**Shared page cap:** pagination is still the offset walk with `MAX_PAGES\n= 20`, so notes and references now share the same 2,000-item cap per\nsync.\n\n## Related Issue\n\nCloses #952\n\n## Linked Discussion\n\nN/A\n\n## Type of Change\n\n- [x] New feature (non-breaking change that adds functionality)\n- [x] Test improvement\n\n## Non-Negotiables Checklist\n\n- [x] `bun run typecheck` passes with zero errors\n- [ ] `bun run lint` passes (Biome — format + lint)\n- [ ] All existing tests pass (`bun test`)\n- [x] New behaviour is covered by tests\n- [x] No `any` types introduced — `unknown` is used for external data\n- [x] No credentials, tokens, or secret values appear in logs, IPC\nmessages, config, or test fixtures\n- [x] Platform-specific code is behind the `PlatformServices`\nabstraction (no OS checks in business logic)\n- [x] The HITL consent gate has not been weakened, bypassed, or made\nconfigurable\n- [x] If this PR touches `docs/README.md`, a screenshot ... (N/A, not\ntouched)\n\n## Coverage\n\n- [x] New or changed source files are covered by tests\n(`zotero-note-mapping.test.ts` plus the updated fake-server sync test)\n\n## Testing\n\nDeveloped on macOS with Bun.\n- `bun run typecheck`: clean.\n- Biome check: clean on every changed file.\n- `bun test` on the Zotero unit tests,\n`zotero-sync-fake-server.test.ts`, `embedding/routing.test.ts` and\n`index/body-caps.test.ts`: 74 pass, 0 fail.\n- New unit tests cover a child note, a standalone note, an HTML body\nwhose derived title has no markup, a long first line, an empty note, a\nmissing or empty key, and non-note items.\n- Updated test: `skips attachment + note item types` is now `indexes\nnotes as zotero:note, still skips attachments`. NOTE1 is indexed and\nATT1 is not, so `itemsUpserted` goes from 1 to 2.\n\n## Screenshots / Output\n\nN/A\n\n## Notes for Reviewers\n\n- Not included: a `belongs_to` graph edge from a child note to its\nparent reference. `metadata.parent_key` is stored for it, so it can be a\nsmall follow-up PR.\n- The nimbus-mcp-servers Zotero README and manifest still describe notes\nas skipped. That can be a separate follow-up PR there.\n- The embedding choice (local-only) is deliberate. Happy to change it if\nyou'd rather notes use the remote embedder.\n- AI assistance: I used an AI coding assistant to help write and test\nthis change, and I reviewed the diff myself.\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Zotero notes are now indexed alongside references, with readable\ntitles and plain-text content. Notes retain parent-reference details and\nrelevant metadata.\n  * Notes use local processing and are limited to 16 KB of content.\n* **Documentation**\n* Updated the Zotero roadmap to reflect note indexing and clarify that\nattachments and collection filtering remain deferred.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\nCo-authored-by: speculaas <speculaas@users.noreply.github.com>\nCo-authored-by: Asaf <asafgolombek@gmail.com>",
+          "timestamp": "2026-11-17T03:37:50Z",
+          "tree_id": "d27255cf005f9fcd3a051c43bf4f58df002ec5d8",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/5fcba87e0179ce4a29ffa6ae3b305529860ffc0d"
+        },
+        "date": 1794887257828,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 245.32067424999948,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 244.19066285000227,
             "unit": "ms"
           }
         ]
