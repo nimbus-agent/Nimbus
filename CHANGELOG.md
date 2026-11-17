@@ -2,6 +2,19 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [11.0.0](https://github.com/nimbus-agent/Nimbus/compare/v10.69.0...v11.0.0) (2026-11-17)
+
+
+### ⚠ BREAKING CHANGES
+
+* **gateway:** an outside MCP agent's proposal of a connector write the owner has not approved for agents by name (including the 47 types the earlier door accepted, the seven mail sends and an unapproved tool of a `--model` user MCP server) is now refused. Approve each with `nimbus connector writes enable <service> --door agent --approve <tool-id>`; mail sends cannot be approved, propose a draft instead.
+
+### Features
+
+* **gateway:** index Zotero notes as zotero:note ([#952](https://github.com/nimbus-agent/Nimbus/issues/952)) ([#1965](https://github.com/nimbus-agent/Nimbus/issues/1965)) ([5fcba87](https://github.com/nimbus-agent/Nimbus/commit/5fcba87e0179ce4a29ffa6ae3b305529860ffc0d))
+* **gateway:** post a notice to your ChatOps namespace when a watcher fires, off by default ([#2031](https://github.com/nimbus-agent/Nimbus/issues/2031)) ([734cbf9](https://github.com/nimbus-agent/Nimbus/commit/734cbf9f61ffa1d073aa41ede2a630b8189af87c))
+* **gateway:** the agent door enforces; an outside agent proposes only what the owner approved by name (Phase 28 AD3b) ([#2035](https://github.com/nimbus-agent/Nimbus/issues/2035)) ([86d3563](https://github.com/nimbus-agent/Nimbus/commit/86d356303bc2761db03505ae2ce5bc24b0ddcfd7))
+
 ## [10.69.0](https://github.com/nimbus-agent/Nimbus/compare/v10.68.0...v10.69.0) (2026-11-16)
 
 
