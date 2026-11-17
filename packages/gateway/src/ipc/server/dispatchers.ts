@@ -88,7 +88,7 @@ import { dispatchFleetRpc, FleetRpcError } from "../fleet-rpc.ts";
 import { dispatchGlossaryRpc, GlossaryRpcError } from "../glossary-rpc.ts";
 import { dispatchHitlRpc, HitlRpcError } from "../hitl-rpc.ts";
 import { dispatchIdentityRpc, type IdentityRpcContext, IdentityRpcError } from "../identity-rpc.ts";
-import { dispatchIncidentRpc, IncidentRpcError } from "../incident-rpc.ts";
+import { dispatchIncidentRpc, IncidentRpcError, isOwnerKind } from "../incident-rpc.ts";
 import { dispatchIndexDemoSymbolRpc, IndexDemoSymbolRpcError } from "../index-demo-symbol-rpc.ts";
 import { dispatchIndexRebodyRpc, IndexRebodyRpcError } from "../index-rebody-rpc.ts";
 import { dispatchIndexReembedRpc, IndexReembedRpcError } from "../index-reembed-rpc.ts";
@@ -1543,6 +1543,7 @@ export async function tryDispatchOncallNowRpc(
   ctx: ServerCtx,
   method: string,
   params: unknown,
+  clientId?: string,
 ): Promise<unknown> {
   if (
     (method !== "oncall.now" && method !== "oncall.handoff") ||
@@ -1554,6 +1555,8 @@ export async function tryDispatchOncallNowRpc(
     const rpcCtx = {
       db: ctx.options.localIndex.getDatabase(),
       ...(ctx.options.configDir === undefined ? {} : { configDir: ctx.options.configDir }),
+      // IC9a: the incident-record sections of the handoff, for a connection that declared cli or ui only.
+      includeRecords: clientId !== undefined && isOwnerKind(ctx.getClientKind(clientId)),
     };
     const out =
       method === "oncall.now"
