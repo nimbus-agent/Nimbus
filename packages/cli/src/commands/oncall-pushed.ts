@@ -10,8 +10,11 @@ function terminalSafe(s: string): string {
   return stripControlChars(s).replace(/[\p{Cf}\p{Zl}\p{Zp}]/gu, "");
 }
 
+import { declareCliClientKind } from "../lib/declare-client-kind.ts";
+import { BATCH_RPC_TIMEOUT_MS } from "../lib/rpc-timeouts.ts";
 import { withGatewayIpc } from "../lib/with-gateway-ipc.ts";
 import { getCliPlatformPaths } from "../paths.ts";
+import { type RemediateReply, reportRemediateOutcome, TTY_REFUSAL } from "./incident-remediate.ts";
 
 export type OncallPushedArgs =
   | { readonly mode: "newest"; readonly json: boolean }
@@ -21,6 +24,8 @@ export type OncallPushedArgs =
       readonly incidentId: string;
       readonly retry: boolean;
       readonly json: boolean;
+      /** Run the proposal this push carried (IC5b): the same path as `incident remediate --pick`. */
+      readonly remediate?: boolean;
     };
 export interface OncallPushedIpc {
   call(method: string, params?: unknown): Promise<unknown>;
@@ -31,7 +36,7 @@ export interface OncallPushedSink {
 }
 
 export const ONCALL_PUSHED_USAGE =
-  "Usage: nimbus oncall pushed [--json] | nimbus oncall pushed list [--json] | nimbus oncall pushed <incident-id> [--retry] [--json]";
+  "Usage: nimbus oncall pushed [--json] | nimbus oncall pushed list [--json] | nimbus oncall pushed <incident-id> [--retry] [--json] | nimbus oncall pushed <incident-id> --remediate";
 
 const PUSH_OFF_HINT = "On-call push is off. Set [oncall.push] enabled = true in nimbus.toml.\n";
 
@@ -43,6 +48,17 @@ type Brief = {
   briefMarkdown: string | null;
   failureCode: string | null;
   service?: string | null;
+  /** The top remediation proposal the push carried (IC5b); absent on an older gateway. */
+  proposal?: PushedProposal | null;
+};
+type PushedProposal = {
+  recordId: string;
+  proposalId: string;
+  kind: string;
+  toolId: string;
+  reversibility: string;
+  confidence: number | null;
+  expiresAtMs: number;
 };
 type ListResult = {
   enabled: boolean;
@@ -74,14 +90,27 @@ function recordDiagnostics(r: ListResult): string[] {
 export function parseOncallPushedArgs(argv: readonly string[]): OncallPushedArgs | undefined {
   let json = false;
   let retry = false;
+  let remediate = false;
   const pos: string[] = [];
   for (const a of argv) {
     if (a === "--json") json = true;
     else if (a === "--retry") retry = true;
+    else if (a === "--remediate") remediate = true;
     else if (a.startsWith("-")) return undefined;
     else pos.push(a);
   }
   if (pos.length > 1) return undefined;
+  // A run holds the terminal for the owner's prompt: it names one push, and has no --retry or --json form.
+  if (remediate) {
+    if (pos.length !== 1 || pos[0] === "list" || retry || json) return undefined;
+    return {
+      mode: "one",
+      incidentId: pos[0] as string,
+      retry: false,
+      json: false,
+      remediate: true,
+    };
+  }
   if (pos.length === 0) return retry ? undefined : { mode: "newest", json };
   if (pos[0] === "list") return retry ? undefined : { mode: "list", json };
   return { mode: "one", incidentId: pos[0] as string, retry, json };
@@ -162,13 +191,72 @@ async function renderNoBrief(
   return 0;
 }
 
+const REMEDIATE_REFUSALS = ["ERR_PROPOSAL_STALE", "ERR_PROPOSAL_EXPIRED", "ERR_PROPOSAL_NOT_FOUND"];
+
+/**
+ * `nimbus oncall pushed <id> --remediate` (Phase 10 IC5b, approve-from-push). Reads the push and asks the gateway
+ * to run the proposal it carried through `incident.remediate` on THIS connection: the gateway re-derives it from
+ * the record as it is now (refusing a stale or expired one), claims it, and the executor's own prompt (the typed
+ * preview, the target's current state, `Proposed by: the incident engine`, the reversibility label, and for a
+ * Wave 4 write the typed confirmation) appears here. The push itself approved nothing.
+ */
+async function runPushedRemediate(
+  c: OncallPushedIpc,
+  incidentId: string,
+  sink: OncallPushedSink,
+  tty: { readonly stdin: boolean; readonly stdout: boolean },
+): Promise<number> {
+  if (!(tty.stdin && tty.stdout)) {
+    sink.err(`${TTY_REFUSAL}\n`);
+    return 2;
+  }
+  const raw = await c.call("oncall.pushedGet", { incidentId });
+  const brief = (raw as { brief: Brief | null }).brief;
+  if (brief === null) {
+    sink.err(`No pushed brief for ${terminalSafe(incidentId)}.\n`);
+    return 1;
+  }
+  const p = brief.proposal ?? null;
+  if (p === null) {
+    sink.err(
+      "This push carried no remediation proposal. List the current ones with: nimbus incident remediate <incident-id>\n",
+    );
+    return 1;
+  }
+  await declareCliClientKind(c);
+  const label = p.reversibility === "irreversible" ? "IRREVERSIBLE" : terminalSafe(p.reversibility);
+  sink.out(
+    `Running the proposal pushed for ${terminalSafe(incidentId)}: [${label}] ${terminalSafe(p.kind)} - ${terminalSafe(p.toolId)} (${terminalSafe(p.proposalId)})\n`,
+  );
+  try {
+    const out = (await c.call("incident.remediate", {
+      id: p.recordId,
+      proposalId: p.proposalId,
+    })) as RemediateReply;
+    return reportRemediateOutcome(out, sink);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    sink.err(`${stripControlChars(msg)}\n`);
+    if (REMEDIATE_REFUSALS.some((code) => msg.includes(code))) {
+      sink.err(
+        `List the current proposals with: nimbus incident remediate ${terminalSafe(p.recordId)}\n`,
+      );
+    }
+    return 1;
+  }
+}
+
 export async function runOncallPushedWith(
   c: OncallPushedIpc,
   a: OncallPushedArgs,
   sink: OncallPushedSink,
   demo: boolean,
+  tty: { readonly stdin: boolean; readonly stdout: boolean } = { stdin: false, stdout: false },
 ): Promise<number> {
   try {
+    if (a.mode === "one" && a.remediate === true) {
+      return await runPushedRemediate(c, a.incidentId, sink, tty);
+    }
     if (a.mode === "list") return await runList(c, a.json, sink);
     const raw = await requestBrief(c, a);
     const brief = (raw as { brief: Brief | null }).brief;
@@ -201,6 +289,9 @@ export async function runOncallPushed(argv: string[]): Promise<void> {
     throw new CliExit(1);
   }
   const paths = getCliPlatformPaths();
+  // A run blocks on the executor's prompt, which only a person answers: the long budget and a consent choice
+  // that ignores NIMBUS_SCRIPT_CONSENT_SOURCE (as `nimbus incident remediate --pick`).
+  const asksOwner = a.mode === "one" && a.remediate === true;
   const code = await withGatewayIpc(
     (c) =>
       runOncallPushedWith(
@@ -208,8 +299,10 @@ export async function runOncallPushed(argv: string[]): Promise<void> {
         a,
         { out: (s) => process.stdout.write(s), err: (s) => process.stderr.write(s) },
         paths.demo === true,
+        { stdin: process.stdin.isTTY === true, stdout: process.stdout.isTTY === true },
       ),
     paths,
+    asksOwner ? { consent: { kind: "human" }, requestTimeoutMs: BATCH_RPC_TIMEOUT_MS } : undefined,
   );
   if (code !== 0) throw new CliExit(code);
 }

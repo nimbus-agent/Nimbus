@@ -19,6 +19,7 @@ import { emitGatewayEvent } from "../ipc/gateway-events.ts";
 import { createLiveEnabled } from "./push-live-enabled.ts";
 import {
   createOncallPushRunner,
+  type PushedProposal,
   type PushRecords,
   type PushRetryResult,
   type PushRunSummary,
@@ -66,6 +67,8 @@ export interface OncallPushBootDeps {
   readonly configDir: string;
   /** The incident engine's `assembleNow`: the push pushes the record it assembles (Phase 10 IC3). */
   readonly records: PushRecords;
+  /** The record's top remediation proposal, carried by the push (IC5b); the push approves nothing. */
+  readonly topProposal?: (recordId: string) => PushedProposal | null;
   /**
    * Structurally `NotificationService`: `delivers: false` makes every toast record `skipped`. Read
    * at delivery time — pass the service itself (whose `delivers` may be a getter), never a copy.
@@ -186,6 +189,7 @@ export function assembleOncallPushRuntime(deps: OncallPushBootDeps): OncallPushR
     isEnabled,
     pagerdutyAliases: loadNimbusPagerdutyFromConfigDir(deps.configDir).severityP1Aliases,
     records: deps.records,
+    ...(deps.topProposal === undefined ? {} : { topProposal: deps.topProposal }),
     // Read fresh on every use: the configured services (and their PagerDuty ids) can change at any time.
     serviceConfig: (serviceId) =>
       loadServiceConfigsOrEmpty(deps.configDir, (m) => deps.logger.warn?.({}, m)).find(

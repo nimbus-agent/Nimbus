@@ -709,3 +709,46 @@ describe("the action is built from the stored row, never from the caller", () =>
     expect(w).not.toHaveProperty("origin");
   });
 });
+
+describe("the proposal a push carries (IC5b)", () => {
+  test("topProposal is the open proposal with the highest confidence, labels and ids only", () => {
+    const h = harness();
+    const top = h.svc.topProposal(h.recordId);
+    expect(top).toMatchObject({
+      recordId: h.recordId,
+      kind: "rollback_deploy",
+      toolId: "argocd_app_rollback",
+      reversibility: "reversible",
+      confidence: 75,
+    });
+    expect(top?.id).toMatch(/^prp_[0-9a-f]{16}$/);
+    expect(Object.keys(top ?? {})).not.toContain("input");
+    // Naming the top proposal runs nothing: no executor, no prompt, the proposal stays open.
+    expect(h.makeCalls()).toBe(0);
+    expect(h.prompts).toEqual([]);
+    expect(getProposal(db, top?.id ?? "")?.status).toBe("proposed");
+  });
+
+  test("a proposal that is no longer open is skipped; none open is null", async () => {
+    const h = harness();
+    const first = h.svc.topProposal(h.recordId);
+    db.run("UPDATE incident_proposal SET status = 'executed' WHERE id = ?", [first?.id ?? ""]);
+    const second = h.svc.topProposal(h.recordId);
+    expect(second?.id).not.toBe(first?.id);
+    db.run("UPDATE incident_proposal SET status = 'executed' WHERE record_id = ?", [h.recordId]);
+    expect(h.svc.topProposal(h.recordId)).toBeNull();
+  });
+
+  test("the pushed id goes through the same remediate path: claim, prompt, dispatch", async () => {
+    const h = harness();
+    const top = h.svc.topProposal(h.recordId);
+    const out = await h.svc.remediate({
+      ref: top?.recordId ?? "",
+      proposalId: top?.id ?? "",
+      clientId: "cli-1",
+    });
+    expect(out.status).toBe("executed");
+    expect(h.prompts.length).toBe(1);
+    expect(h.prompts[0]).toContain("Proposed by: the incident engine");
+  });
+});

@@ -228,7 +228,7 @@ export function formatProposals(r: ProposalsReply): string {
   return lines.join("\n");
 }
 
-type RemediateReply = {
+export type RemediateReply = {
   proposalId: string;
   actionId: string;
   status: "executed" | "denied" | "failed";
@@ -281,6 +281,11 @@ async function runRemediate(
     id: a.id,
     proposalId: chosen.id,
   });
+  return reportRemediateOutcome(out, sink);
+}
+
+/** How a run's outcome reads, for `incident remediate --pick` and `oncall pushed --remediate` alike. */
+export function reportRemediateOutcome(out: RemediateReply, sink: Sink): number {
   if (out.status === "executed") {
     sink.out(
       `Done. Action ${clean(out.actionId)}.${out.undoable ? ` Undo with: nimbus incident undo ${clean(out.actionId)}` : ""}\n`,

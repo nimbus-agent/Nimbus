@@ -127,6 +127,17 @@ export type ProposalsResult = {
   readonly unavailable: readonly Unavailable[];
 };
 
+/** What a push carries of its record's top proposal (IC5b): labels and ids only, never the input. */
+export type TopProposal = {
+  readonly recordId: string;
+  readonly id: string;
+  readonly kind: string;
+  readonly toolId: string;
+  readonly reversibility: string;
+  readonly confidence: number | null;
+  readonly expiresAtMs: number;
+};
+
 export type RemediateOutcome = {
   readonly proposalId: string;
   readonly actionId: string;
@@ -258,6 +269,30 @@ export function createRemediation(deps: RemediationDeps) {
       advisory: isAdvisory(db),
       proposals: listProposals(db, rec.recordId).map(view),
       unavailable: derived.unavailable,
+    };
+  }
+
+  /**
+   * The proposal a push carries (IC5b, approve-from-push): the normal owner listing (derive, store, revive), then
+   * the OPEN proposal with the highest confidence (no confidence ranks lowest; a tie keeps list order), or null.
+   * Builds no action and runs nothing: the push stores the id, and only `remediate` can act on it.
+   */
+  function topProposal(ref: string): TopProposal | null {
+    const listed = proposals(ref);
+    let best: ProposalView | undefined;
+    for (const p of listed.proposals) {
+      if (p.status !== "proposed") continue;
+      if (best === undefined || (p.confidence ?? -1) > (best.confidence ?? -1)) best = p;
+    }
+    if (best === undefined) return null;
+    return {
+      recordId: listed.recordId,
+      id: best.id,
+      kind: best.kind,
+      toolId: best.toolId,
+      reversibility: best.reversibility,
+      confidence: best.confidence,
+      expiresAtMs: best.expiresAtMs,
     };
   }
 
@@ -476,6 +511,7 @@ export function createRemediation(deps: RemediationDeps) {
 
   return {
     proposals,
+    topProposal,
     remediate,
     undo,
     advisory: (): boolean => isAdvisory(db),

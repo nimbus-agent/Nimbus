@@ -49,7 +49,8 @@
           "outcome": "delivered",
           "at": 1790000000000
         }
-      }
+      },
+      "proposal": null
     }
   },
   "getFailed": {
@@ -72,7 +73,8 @@
           "reason": "no brief to show",
           "at": 1790000121000
         }
-      }
+      },
+      "proposal": null
     }
   },
   "getMissing": {

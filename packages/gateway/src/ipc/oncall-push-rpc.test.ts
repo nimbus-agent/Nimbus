@@ -155,6 +155,7 @@ test("pushedRetry retries the trimmed id and returns the row in full", async () 
       briefMarkdown: "# A",
       failureCode: null,
       delivery: {},
+      proposal: null,
     },
   });
   expect(asked).toEqual(["pagerduty:A"]);
