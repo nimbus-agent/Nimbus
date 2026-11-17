@@ -2,6 +2,13 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [11.1.0](https://github.com/nimbus-agent/Nimbus/compare/v11.0.0...v11.1.0) (2026-11-17)
+
+
+### Features
+
+* **gateway:** add nimbus incident timeline, cascade ranking in the pushed brief, and nimbus audit replay (incident engine IC4) ([#2038](https://github.com/nimbus-agent/Nimbus/issues/2038)) ([9a6ad22](https://github.com/nimbus-agent/Nimbus/commit/9a6ad2239b74acdabf7b91a18278b45ec7d57260))
+
 ## [11.0.0](https://github.com/nimbus-agent/Nimbus/compare/v10.69.0...v11.0.0) (2026-11-17)
 
 
