@@ -377,3 +377,25 @@ describe("countOutboundEgress — marker parity with isMarkerSourceType", () => 
     expect(countOutboundEgress(db, {})).toBe(1);
   });
 });
+
+describe("verifyEgressChain: the inclusive upper bound (IC4 10.1)", () => {
+  test("with no toId the result is exactly what it was", () => {
+    for (let i = 1; i <= 5; i += 1) appendEgressEntry(db, e({ timestamp: i }));
+    expect(verifyEgressChain(db)).toEqual({ ok: true, verifiedRows: 5 });
+    expect(verifyEgressChain(db, 2)).toEqual({ ok: true, verifiedRows: 3 });
+  });
+
+  test("a break after toId is not reported; a break inside the range is", () => {
+    for (let i = 1; i <= 6; i += 1) appendEgressEntry(db, e({ timestamp: i }));
+    db.run("UPDATE egress_ledger SET method = 'tampered' WHERE id = 5");
+    expect(verifyEgressChain(db, 1, 4)).toEqual({ ok: true, verifiedRows: 3 });
+    const bad = verifyEgressChain(db, 1, 5);
+    expect(bad.ok).toBe(false);
+    expect(bad.brokenAt).toBe(5);
+  });
+
+  test("toId below fromId throws", () => {
+    for (let i = 1; i <= 3; i += 1) appendEgressEntry(db, e({ timestamp: i }));
+    expect(() => verifyEgressChain(db, 3, 2)).toThrow(RangeError);
+  });
+});

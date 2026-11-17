@@ -1,7 +1,10 @@
 import type { Database } from "bun:sqlite";
+import { renderCascadeSection } from "../agents/_lib/incident-render.ts";
 import type { OncallIncident } from "../agents/_lib/oncall-types.ts";
 import type { NimbusOncallPushToml } from "../config/oncall-push-toml.ts";
 import type { AssembleOutcome } from "../incident/assemble.ts";
+import { groupOf } from "../incident/cascade.ts";
+import { readCascade } from "../incident/cascade-read.ts";
 import { getByTriggerItem } from "../incident/incident-store.ts";
 import { isTriggerService } from "../incident/trigger-sources.ts";
 import {
@@ -62,6 +65,11 @@ export interface OncallPushRunnerDeps {
   readonly serviceConfig: (
     serviceId: string,
   ) => { readonly pagerdutyServices: readonly string[] } | undefined;
+  /**
+   * The declared `depends_on` of every configured service (service id to the service ids it depends on), read
+   * fresh on each call. REQUIRED, not optional: an optional dependency would silently drop the cascade (IC4).
+   */
+  readonly dependsOn: () => ReadonlyMap<string, readonly string[]>;
   readonly now?: () => number;
 }
 
@@ -86,6 +94,7 @@ function compatibilityJson(
   recordJson: string,
   id: string,
   version: number,
+  cascade: PushedCascade | null,
 ): string {
   let deployment: { title: string; startedAtMs: number; finishedAtMs: number | null } | null = null;
   try {
@@ -115,7 +124,37 @@ function compatibilityJson(
     deployment,
     recordId: id,
     version,
+    cascade,
   });
+}
+
+/** Where a pushed record stands in its cascade, for the compatibility JSON. */
+type PushedCascade = { readonly role: "root" | "downstream"; readonly rootRecordId: string };
+
+/** The cascade block appended to the PUSHED copy of a brief (never to the stored record), and its JSON summary. */
+type CascadePart = { readonly markdown: string; readonly summary: PushedCascade | null };
+
+const CASCADE_UNAVAILABLE =
+  "## Cascade\n\n_The other open records could not be ranked this time; `nimbus incident show` has the live view._";
+
+/**
+ * The record's cascade, computed NOW from the open records and the declared `depends_on`. A record in no cluster
+ * of two or more has none. A failed read degrades to a one-line gap: a cascade problem never fails a push.
+ */
+function cascadePart(deps: OncallPushRunnerDeps, recordId: string): CascadePart {
+  try {
+    const view = readCascade(deps.db, deps.dependsOn());
+    const group = groupOf(view.groups, recordId);
+    if (group === null) return { markdown: "", summary: null };
+    const me = group.members.find((m) => m.recordId === recordId);
+    if (me === undefined) return { markdown: "", summary: null };
+    return {
+      markdown: renderCascadeSection(group, recordId, view.info, view.truncated),
+      summary: { role: me.role, rootRecordId: group.root },
+    };
+  } catch {
+    return { markdown: CASCADE_UNAVAILABLE, summary: null };
+  }
 }
 
 /**
@@ -129,11 +168,22 @@ async function briefFromRecord(deps: OncallPushRunnerDeps, itemId: string): Prom
     if (out.outcome === "missing") return failed("assembly: the item is no longer indexed");
     const row = getByTriggerItem(deps.db, itemId);
     if (row === null) return failed("assembly: no record was stored");
+    // OR-IC4-1: the block is the cascade AS OF THIS PUSH. A record pushed before its siblings exist says
+    // nothing about them and is never pushed again when a later record becomes its root (one page per outage;
+    // `nimbus incident show` is the live view). The stored `incident_record.markdown` is not touched.
+    const cascade = cascadePart(deps, row.id);
     return {
       status: "ok",
       sessionId: `incident:${row.id}:v${String(row.version)}`,
-      briefMarkdown: row.markdown,
-      briefJson: compatibilityJson(row.service, row.record_json, row.id, row.version),
+      briefMarkdown:
+        cascade.markdown === "" ? row.markdown : `${row.markdown}\n\n${cascade.markdown}`,
+      briefJson: compatibilityJson(
+        row.service,
+        row.record_json,
+        row.id,
+        row.version,
+        cascade.summary,
+      ),
     };
   } catch (e) {
     return failed(`assembly: ${clip(e instanceof Error ? e.message : String(e))}`);

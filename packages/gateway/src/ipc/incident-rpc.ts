@@ -1,7 +1,10 @@
 import type { Database } from "bun:sqlite";
 
 import { serviceFreshness } from "../agents/_lib/briefing-queries.ts";
+import { renderCascadeSection } from "../agents/_lib/incident-render.ts";
 import { IncidentError } from "../incident/assemble.ts";
+import { type CascadeGroup, groupOf } from "../incident/cascade.ts";
+import { type CascadeInfo, readCascade } from "../incident/cascade-read.ts";
 import type { IncidentEngine } from "../incident/incident-engine.ts";
 import { resolveIncidentRef } from "../incident/incident-id.ts";
 import type { IncidentRecordV1 } from "../incident/incident-record-types.ts";
@@ -12,6 +15,7 @@ import {
   type RecordRow,
   versionsOf,
 } from "../incident/incident-store.ts";
+import { readTimeline } from "../incident/timeline-read.ts";
 import { TRIGGER_SERVICES } from "../incident/trigger-sources.ts";
 import { dispatchByMethod, type RpcMissOrHit } from "./_lib/dispatch-by-method.ts";
 import type { ClientKind } from "./server/client-kind.ts";
@@ -22,8 +26,13 @@ import type { ClientKind } from "./server/client-kind.ts";
  *   incident.list { open?, service?, source?, limit? } -> { status, records, sources }
  *   incident.get { id }                                -> { record, reason? }
  *   incident.assemble { id }                           -> { outcome, record }
+ *   incident.timeline { id, version? }                 -> { recordId, version, currentVersion, events, notes }   (IC4)
  *
- * ALL THREE serve only a connection whose DECLARED kind is `cli` or `ui` (`requireOwnerKind`, called first by
+ * `incident.get` also answers a live `cascade` (IC4: where this record stands among the open records of the
+ * same 30-minute window) and `incident.list { cascade: true }` also answers the open `groups`; both are derived
+ * at call time from the open records and the declared `depends_on`, never stored.
+ *
+ * ALL FOUR serve only a connection whose DECLARED kind is `cli` or `ui` (`requireOwnerKind`, called first by
  * every handler, before any query runs): a record holds capped titles of items from several services, and the
  * kind is the connection's (`ctx.getClientKind`), never a param. The whole namespace is LAN-forbidden (I5) and
  * is NOT renderer-callable (I7): the desktop gets `list` and `get` at a later slice, `assemble` never.
@@ -40,6 +49,8 @@ export class IncidentRpcError extends Error {
 export interface IncidentRpcCtx {
   readonly db: Database;
   readonly engine: Pick<IncidentEngine, "assembleNow">;
+  /** The declared `depends_on` of every configured service, read fresh per call (the cascade, IC4). */
+  readonly dependsOn: () => ReadonlyMap<string, readonly string[]>;
 }
 
 export type IncidentRpcCaller = { readonly kind: ClientKind };
@@ -115,6 +126,7 @@ function parseId(method: string, p: Record<string, unknown>): string {
 }
 
 type ListParams = {
+  readonly cascade: boolean;
   readonly open: boolean;
   readonly service: string | undefined;
   readonly source: string | undefined;
@@ -122,7 +134,11 @@ type ListParams = {
 };
 
 function parseList(raw: unknown): ListParams {
-  const p = requireKeys("incident.list", raw, ["open", "service", "source", "limit"]);
+  const p = requireKeys("incident.list", raw, ["open", "service", "source", "limit", "cascade"]);
+  const cascade = p["cascade"];
+  if (cascade !== undefined && typeof cascade !== "boolean") {
+    throw new IncidentRpcError(-32602, "incident.list: cascade must be a boolean");
+  }
   const open = p["open"];
   if (open !== undefined && typeof open !== "boolean") {
     throw new IncidentRpcError(-32602, "incident.list: open must be a boolean");
@@ -157,6 +173,7 @@ function parseList(raw: unknown): ListParams {
     );
   }
   return {
+    cascade: cascade === true,
     open: open === true,
     service: service as string | undefined,
     source: source as string | undefined,
@@ -182,7 +199,50 @@ function list(ctx: IncidentRpcCtx, raw: unknown): unknown {
     const hasRecords = ctx.db.query("SELECT 1 AS n FROM incident_record LIMIT 1").get() !== null;
     status = !hasRecords && !sources.some((s) => s.connected) ? "no_data" : "none";
   }
-  return { status, records: records.map(summaryOf), sources };
+  const base = { status, records: records.map(summaryOf), sources };
+  return f.cascade ? { ...base, groups: cascadeGroups(ctx) } : base;
+}
+
+type CascadeMemberOut = CascadeGroup["members"][number] & Partial<CascadeInfo>;
+
+function groupOut(
+  g: CascadeGroup,
+  info: ReadonlyMap<string, CascadeInfo>,
+): Omit<CascadeGroup, "members"> & { readonly members: readonly CascadeMemberOut[] } {
+  return {
+    ...g,
+    members: g.members.map((m) => ({ ...m, ...(info.get(m.recordId) ?? {}) })),
+  };
+}
+
+/** The open cascade groups, or `null` when the open records could not be read (the caller says so). */
+function cascadeGroups(ctx: IncidentRpcCtx): unknown {
+  try {
+    const view = readCascade(ctx.db, ctx.dependsOn());
+    return view.groups.map((g) => groupOut(g, view.info));
+  } catch {
+    return null;
+  }
+}
+
+/** Where one record stands in the live cascade, with the block as `incident show` prints it. */
+function cascadeOf(ctx: IncidentRpcCtx, recordId: string): unknown {
+  try {
+    const view = readCascade(ctx.db, ctx.dependsOn());
+    const group = groupOf(view.groups, recordId);
+    if (group === null) return null;
+    const me = group.members.find((m) => m.recordId === recordId);
+    return {
+      status: "ok",
+      role: me?.role ?? "downstream",
+      rootRecordId: group.root,
+      group: groupOut(group, view.info),
+      truncated: view.truncated,
+      markdown: renderCascadeSection(group, recordId, view.info, view.truncated),
+    };
+  } catch {
+    return { status: "unavailable" };
+  }
 }
 
 function ambiguous(candidates: readonly string[]): IncidentRpcError {
@@ -233,8 +293,42 @@ function get(ctx: IncidentRpcCtx, raw: unknown): unknown {
         sha256: v.record_sha256,
       })),
       triggerStillIndexed: stillIndexed,
+      cascade: cascadeOf(ctx, row.id),
     },
   };
+}
+
+function timeline(ctx: IncidentRpcCtx, raw: unknown): unknown {
+  const p = requireKeys("incident.timeline", raw, ["id", "version"]);
+  const version = p["version"];
+  if (
+    version !== undefined &&
+    (typeof version !== "number" ||
+      !Number.isInteger(version) ||
+      version < 1 ||
+      version > 1_000_000)
+  ) {
+    throw new IncidentRpcError(-32602, "incident.timeline: version must be a positive integer");
+  }
+  const ref = resolveIncidentRef(ctx.db, parseId("incident.timeline", p));
+  if (ref.kind === "ambiguous") throw ambiguous(ref.candidates);
+  if (ref.kind === "not_a_trigger") throw notATrigger(ref.itemId);
+  if (ref.kind !== "record") {
+    throw new IncidentRpcError(-32602, "ERR_INCIDENT_NOT_FOUND: no record is stored for that id");
+  }
+  try {
+    const out = readTimeline(ctx.db, ref.recordId, version);
+    return {
+      recordId: out.recordId,
+      version: out.version,
+      currentVersion: out.currentVersion,
+      events: out.timeline.events,
+      notes: out.timeline.notes,
+    };
+  } catch (e) {
+    if (e instanceof IncidentError) throw new IncidentRpcError(-32602, `${e.code}: ${e.message}`);
+    throw e;
+  }
 }
 
 async function assemble(ctx: IncidentRpcCtx, raw: unknown): Promise<unknown> {
@@ -282,6 +376,10 @@ export async function dispatchIncidentRpc(
     "incident.get": (raw) => {
       requireOwnerKind(caller.kind);
       return get(ctx, raw);
+    },
+    "incident.timeline": (raw) => {
+      requireOwnerKind(caller.kind);
+      return timeline(ctx, raw);
     },
     "incident.assemble": async (raw) => {
       requireOwnerKind(caller.kind);

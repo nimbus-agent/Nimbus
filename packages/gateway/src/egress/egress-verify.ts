@@ -91,8 +91,12 @@ export type EgressVerifyResult = {
  * the mismatched `prev_hash` is one of those attested boundaries. A mid-chain mismatch is still
  * a real break and fails closed.
  */
-export function verifyEgressChain(db: Database, fromId = 0): EgressVerifyResult {
+export function verifyEgressChain(db: Database, fromId = 0, toId?: number): EgressVerifyResult {
   const start = Math.max(0, Math.floor(fromId));
+  // Phase 10 IC4: an optional inclusive upper bound, so `nimbus audit replay` verifies only the range it read.
+  // Absent: to the end of the ledger, exactly as before. A bound below `fromId` throws.
+  const end = toId === undefined ? Number.MAX_SAFE_INTEGER : Math.floor(toId);
+  if (end < start) throw new RangeError("verifyEgressChain: toId is below fromId");
 
   // Pre-scan: collect every boundary hash attested by a prune tombstone (source_id on prune rows).
   const attestedBoundaries = new Set<string>(
@@ -117,10 +121,10 @@ export function verifyEgressChain(db: Database, fromId = 0): EgressVerifyResult 
   // caller at compile time.
   // Read in id-ordered pages so memory is bounded by one page, not by the table; the walk and its
   // result are the same as one read of every row.
-  const page = db.query<VerifyRow, [number, number]>(
+  const page = db.query<VerifyRow, [number, number, number]>(
     `SELECT id, timestamp, source_type, source_id, destination, method,
               hitl_status, result_status, row_hash, prev_hash
-       FROM egress_ledger WHERE id > ? ORDER BY id ASC LIMIT ?`,
+       FROM egress_ledger WHERE id > ? AND id <= ? ORDER BY id ASC LIMIT ?`,
   );
 
   let prev =
@@ -136,7 +140,7 @@ export function verifyEgressChain(db: Database, fromId = 0): EgressVerifyResult 
   let isFirst = true;
   let after = start;
   for (;;) {
-    const rows = page.all(after, VERIFY_PAGE_ROWS);
+    const rows = page.all(after, end, VERIFY_PAGE_ROWS);
     for (const r of rows) {
       if (!sha256HexEqualConstantTime(r.prev_hash, prev)) {
         // Accept a boundary mismatch only at the very first row of the walk when the prev_hash is

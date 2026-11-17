@@ -1216,6 +1216,62 @@ export function checkIncidentRecordConfinement(files: readonly FileEntry[]): Vio
   return out;
 }
 
+// D46(e) (Phase 10 IC4, incident-engine spec § 5.4): the incident link on an action is minted only inside
+// `incident/`. Rule `incident-link-minted-in-incident`. Three clauses over every non-test file of
+// `packages/gateway/src/`, comments stripped:
+//   (1) the identifier `mintIncidentLink` (a call, an import, aliased or not) only in its own module,
+//       `incident/incident-link-mint.ts` (IC5 adds its remediation module to this list in the commit that
+//       creates it; until then it is empty but for tests, which are not scanned);
+//   (2) `type IncidentLink`, `interface IncidentLink` and `function assertIncidentLink` are declared only in
+//       `engine/incident-link.ts`, the one module the executor validates a link through;
+//   (3) a QUOTED `"incident":{` key (a string or template literal that spells a link into a JSON row) appears
+//       only in the two readers that parse or compare a row's first characters, `incident/action-links.ts`
+//       and `audit/incident-replay.ts`. The executor writes the key as an object property, so no other file
+//       has a reason to spell one; a hand-built forged row is what this catches.
+// Stated bounds: a text scan, so a dynamically composed name or key evades it (the executor's runtime
+// refusals (shape, origin, delegation) and the replay's anchored prefix read are the other half), and an
+// object literal that names the key unquoted is not matched by clause (3).
+const D46E_SRC = "packages/gateway/src/";
+const D46E_MINT = `${D46E_SRC}incident/incident-link-mint.ts`;
+const D46E_LINK = `${D46E_SRC}engine/incident-link.ts`;
+const D46E_READERS: readonly string[] = [
+  `${D46E_SRC}incident/action-links.ts`,
+  `${D46E_SRC}audit/incident-replay.ts`,
+];
+const D46E_MINT_RE = /\bmintIncidentLink\b/g;
+const D46E_DECL_RE =
+  /\b(?:type\s+IncidentLink\s*=|interface\s+IncidentLink\b|function\s+assertIncidentLink\b)/g;
+const D46E_KEY_RE = /\\?["']incident\\?["']\s*:\s*\{/g;
+
+export function checkIncidentLinkMinting(files: readonly FileEntry[]): Violation[] {
+  const out: Violation[] = [];
+  const add = (f: FileEntry, src: string, index: number | undefined): void => {
+    const line = src.slice(0, index).split("\n").length;
+    out.push({
+      rule: "incident-link-minted-in-incident",
+      file: f.relPath,
+      line,
+      snippet: (f.contents.split("\n")[line - 1] ?? "").trim(),
+    });
+  };
+  for (const f of files) {
+    if (/\.test(?:-helpers)?\.ts$/.test(f.relPath)) continue;
+    if (!f.relPath.startsWith(D46E_SRC)) continue;
+    const commentFree = stripComments(f.contents);
+    const code = stripStringLiterals(commentFree);
+    if (f.relPath !== D46E_MINT) {
+      for (const m of code.matchAll(D46E_MINT_RE)) add(f, code, m.index);
+    }
+    if (f.relPath !== D46E_LINK) {
+      for (const m of code.matchAll(D46E_DECL_RE)) add(f, code, m.index);
+    }
+    if (!D46E_READERS.includes(f.relPath)) {
+      for (const m of commentFree.matchAll(D46E_KEY_RE)) add(f, commentFree, m.index);
+    }
+  }
+  return out;
+}
+
 // D25: a CONNECTOR SYNCABLE may not call `Bun.spawn` — it must go through
 // `platform/spawn-capture.ts`, which spawns with `windowsHide`.
 //
@@ -5783,6 +5839,10 @@ export const RULE_ANCHORS: readonly string[] = [
   "packages/gateway/src/index/item-history-retention.ts",
   // D46(d) (incident-record-confined, Phase 10 IC3) -- the only writer of the record tables.
   "packages/gateway/src/incident/incident-store.ts",
+  // D46(e) (incident-link-minted-in-incident, Phase 10 IC4) -- the only constructor of a link and the one
+  // module that declares and validates it; either moving out of the scan would leave the rule passing over nothing.
+  "packages/gateway/src/incident/incident-link-mint.ts",
+  "packages/gateway/src/engine/incident-link.ts",
   // D49(b) (door-approval-confined, Phase 28 AD3a-1) — the only store of the per-door approval table;
   // it moving out of the scan would leave the rule passing over nothing.
   "packages/gateway/src/connectors/connector-writes/door-approval-store.ts",
@@ -6058,6 +6118,13 @@ async function run(): Promise<void> {
       );
     }
     if (incidentRecordViolations.length > 0) exit = 1;
+    const incidentLinkViolations = checkIncidentLinkMinting(files);
+    for (const e of incidentLinkViolations) {
+      console.error(
+        `::error file=${e.file},line=${e.line}::D46(e) the incident link minted, declared or spelled into a row outside its owners (rule ${e.rule}) - incident/incident-link-mint.ts is the only constructor, engine/incident-link.ts the only declaration, and only incident/action-links.ts and audit/incident-replay.ts read a quoted "incident": key: ${e.snippet}`,
+      );
+    }
+    if (incidentLinkViolations.length > 0) exit = 1;
     const doorApprovalViolations = checkDoorApprovalConfinement(files);
     for (const e of doorApprovalViolations) {
       console.error(

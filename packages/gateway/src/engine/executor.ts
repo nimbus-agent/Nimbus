@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import pino from "pino";
 import { redactAuditPayload } from "../audit/format-audit-payload.ts";
 import {
@@ -46,6 +46,7 @@ import {
 import type { BoundWriteCapabilities, SettleContext } from "./bound-write-capabilities.ts";
 import { type RemoteApprovalOutcome, resolveDelegatedApproval } from "./delegated-approval.ts";
 import type { DelegationReader } from "./delegation-store.ts";
+import { assertLinkedActionAllowed, type IncidentLink, promptForRow } from "./incident-link.ts";
 import { isAgentOrigin, isModelOrigin, isOutsideOrigin } from "./outside-origin.ts";
 import {
   boundInputRefusal,
@@ -790,6 +791,11 @@ interface GateRecord {
   discard?: "unused_changeset";
   /** Set only by an approval a standing rule gave (I55): the rule, the fire and the scope matched. */
   standingRule?: StandingRuleAudit;
+  /**
+   * IC4 (OR-IC4-2): the exact string handed to the consent channel, set BEFORE the channel is awaited so
+   * a timeout or a denial still records what was shown. Read only for an incident-linked action.
+   */
+  shownPrompt?: string;
 }
 
 /** The audit row's and the egress row's link to a standing-rule fire (I55). */
@@ -919,6 +925,7 @@ function auditExtrasOf(record: GateRecord): AuditExtras {
     ...(record.filesSha256 === undefined ? {} : { filesSha256: record.filesSha256 }),
     ...(record.discard === undefined ? {} : { discard: record.discard }),
     ...(record.standingRule === undefined ? {} : { standingRule: record.standingRule }),
+    ...(record.shownPrompt === undefined ? {} : { shownPrompt: record.shownPrompt }),
   };
 }
 
@@ -940,6 +947,8 @@ export function gateResultOf(outcome: ApprovalOutcome): { status: HitlStatus; re
 }
 
 interface AuditExtras {
+  /** IC4: the shown prompt of an incident-linked action (the link itself is the action's own). */
+  shownPrompt?: string;
   /** Where each prompted decision came from (SA1, spec 6.1). */
   answerSource?: AnswerSource;
   hitlRejectReason?: string;
@@ -959,9 +968,22 @@ function auditPayload(
   action: PlannedAction,
   extras: AuditExtras,
   onBehalfOf: AgentAttribution | undefined,
+  incident: IncidentRowLink | undefined,
 ): string {
-  const { boundValuesSha256, diffSha256, filesSha256, standingRule, ...rest } = extras;
+  const { boundValuesSha256, diffSha256, filesSha256, standingRule, shownPrompt, ...rest } = extras;
+  // IC4: the link is its own first key, so `action` must not repeat it.
+  const { incident: _own, ...actionBody } = action;
   return redactAuditPayload({
+    // IC4: the incident link is FIRST (replay finds a row by its first 40 characters), then, for a
+    // prompted linked action, what the owner was shown. Both come before the payload the cap may cut.
+    ...(incident === undefined
+      ? {}
+      : { incident: { id: incident.link.id, version: incident.link.version } }),
+    ...(incident?.step === undefined ? {} : { step: incident.step }),
+    // A before-state read or a prepare read of a linked action is marked, so a replay groups it with the
+    // action it ran for without naming any sub-step type.
+    ...(incident?.subStep === true ? { subStep: true } : {}),
+    ...(incident === undefined || shownPrompt === undefined ? {} : promptRowKeys(shownPrompt)),
     // AD4: a sub-step (before-state read, prepare read, change-set discard) of an outside agent's
     // action names the capture it ran for, first in the row so the size cap cannot cut it.
     ...(onBehalfOf === undefined
@@ -972,9 +994,27 @@ function auditPayload(
     ...(boundValuesSha256 === undefined ? {} : { boundValuesSha256 }),
     ...(diffSha256 === undefined ? {} : { diffSha256 }),
     ...(filesSha256 === undefined ? {} : { filesSha256 }),
-    action: auditedAction(action),
+    action: auditedAction(actionBody),
     ...rest,
   });
+}
+
+/** What an audit row records of the link: the link, and whether the row is a read the executor ran FOR a linked action. */
+interface IncidentRowLink {
+  readonly link: IncidentLink;
+  readonly subStep: boolean;
+  /** The run identity shared by an action's gate row and its read rows (undefined for the gateway's own discard). */
+  readonly step: string | undefined;
+}
+
+/** The prompt keys of a linked row, in order: the hash, the (cut) text, and `promptCut` only when cut. */
+function promptRowKeys(shown: string): Record<string, unknown> {
+  const p = promptForRow(shown);
+  return {
+    promptSha256: p.promptSha256,
+    prompt: p.prompt,
+    ...(p.promptCut ? { promptCut: true } : {}),
+  };
 }
 
 /**
@@ -1085,6 +1125,19 @@ interface GateScope {
    * (`onBehalfOf`) and the egress row carries `agent:<captureId>`.
    */
   readonly onBehalfOf?: AgentAttribution;
+  /**
+   * IC4: set only on the scope of a sub-step the executor runs for an incident-linked action, so the
+   * sub-step's own audit and egress rows carry the parent's link (`subStepIncident`).
+   */
+  readonly incident?: IncidentLink;
+  /** IC4: true on the scope of a before-state read or a prepare read of a linked action (not the discard). */
+  readonly incidentSubStep?: boolean;
+  /**
+   * IC4: the identity of one linked action's run, minted at the start of its own gate run and inherited by the
+   * before-state and prepare reads it runs, so every row of one action carries the same `step` and a replay
+   * groups reads by their owner even when two linked actions are in flight together.
+   */
+  step?: string | undefined;
   prepared?: PreparedWrite;
   /** Written by `preflightPhase` (D2): frees the per-workdir lock; `execute()` calls it when the run ends. */
   release?: () => void;
@@ -1129,6 +1182,30 @@ function subStepAttribution(
 ): { readonly onBehalfOf?: AgentAttribution } {
   const agent = attributionOf(action, scope);
   return agent === undefined ? {} : { onBehalfOf: agent };
+}
+
+/** The incident link a gate run records: the action's own, or the parent's a sub-step's scope carries. */
+function incidentOf(action: PlannedAction, scope: GateScope): IncidentLink | undefined {
+  return action.incident ?? scope.incident;
+}
+
+/**
+ * The scope fields a sub-step of `action` carries: its parent's incident link, or nothing. `read` is true for a
+ * before-state read and a prepare read (rows a replay groups with the action), false for the gateway's own
+ * change-set discard, which is a step of its own.
+ */
+function subStepIncident(
+  action: PlannedAction,
+  scope: GateScope,
+  read: boolean,
+): {
+  readonly incident?: IncidentLink;
+  readonly incidentSubStep?: boolean;
+  readonly step?: string | undefined;
+} {
+  const link = incidentOf(action, scope);
+  if (link === undefined) return {};
+  return read ? { incident: link, incidentSubStep: true, step: scope.step } : { incident: link };
 }
 
 /** Writes `directory` as the working directory of the action's tool input (nested or flat). */
@@ -1336,6 +1413,8 @@ export class ToolExecutor {
     if (this.delegation === undefined || isUserMcpActionType(action.type)) return "fallback";
     // I20: a delegate never approves an action an outside party proposed (`origin` "model" or "agent", top level only).
     if (isOutsideOrigin(action)) return "fallback";
+    // I20 (IC4): a delegate never approves an incident-linked action; only the local owner answers it.
+    if (action.incident !== undefined) return "fallback";
     // I20: a delegate never approves a trust root (`registry.add`), local code (`extension.*`) or a
     // pack install (`pack.install`, which writes the owner's config); only the local owner can.
     // Structural, not left to the gate's `delegation: undefined`.
@@ -1537,6 +1616,7 @@ export class ToolExecutor {
               bind: false,
               prepareStep: true,
               ...subStepAttribution(action, scope),
+              ...subStepIncident(action, scope, true),
             }),
           dispatch: (a) => this.connectors.dispatch(a),
           ...(capabilities === undefined
@@ -1677,12 +1757,17 @@ export class ToolExecutor {
       return { kind: "rejected", reason: USER_MCP_WRITE_UNKNOWN_REASON, answerSource: "none" };
     }
     const prompt = formatConsentPrompt(action, this.previewCredentialFor, preview, writeDirs);
+    // IC4: the string handed to the channel is built ONCE, typed-confirm line included, and recorded
+    // before the channel is awaited, so the audit row holds exactly what the owner was shown.
+    const shown =
+      confirm.kind === "none" ? prompt : `${prompt}\n\n${confirmPromptLine(confirm.text)}`;
     if (confirm.kind === "none") {
-      const answer = await this.consent.requestApproval(prompt, details, action.type);
+      record.shownPrompt = shown;
+      const answer = await this.consent.requestApproval(shown, details, action.type);
       return ownerOutcome(answer, record.rejectReason);
     }
     return this.confirmedOwnerPrompt(
-      { prompt, details, actionType: action.type, confirmText: confirm.text },
+      { prompt: shown, details, actionType: action.type, confirmText: confirm.text },
       record,
     );
   }
@@ -1702,10 +1787,10 @@ export class ToolExecutor {
       record.rejectReason = CONFIRM_UNSUPPORTED_REASON;
       return { kind: "rejected", reason: CONFIRM_UNSUPPORTED_REASON, answerSource: "none" };
     }
-    const answer = await channel.requestConfirmedApproval({
-      ...req,
-      prompt: `${req.prompt}\n\n${confirmPromptLine(req.confirmText)}`,
-    });
+    // `req.prompt` is the text shown, typed-confirm line included (built once in `approvalPhase`). It is
+    // recorded only now: a channel that cannot take typed text was never shown anything.
+    record.shownPrompt = req.prompt;
+    const answer = await channel.requestConfirmedApproval(req);
     if (!answer.approved) return ownerOutcome(answer, record.rejectReason);
     const matched = answer.typed === req.confirmText;
     record.confirm = matched ? "matched" : "mismatched";
@@ -1757,7 +1842,11 @@ export class ToolExecutor {
       action,
       {
         gate: (a) =>
-          this.gateWithin(a, undefined, { bind: false, ...subStepAttribution(action, scope) }),
+          this.gateWithin(a, undefined, {
+            bind: false,
+            ...subStepAttribution(action, scope),
+            ...subStepIncident(action, scope, true),
+          }),
         dispatch: (a) => this.connectors.dispatch(a),
       },
       opts?.beforeReaderUnlisted === true ? { readerUnlisted: true } : {},
@@ -1869,6 +1958,11 @@ export class ToolExecutor {
     // prepare step, the owner's prompt), so a malformed one records and dispatches nothing at all.
     const attributed = attributionOf(action, scope);
     if (attributed !== undefined) assertAgentCaptureId(attributed.captureId);
+    // IC4: the incident link, if any, is checked in the same breath (shape, and that it is the owner's own).
+    assertLinkedActionAllowed(action, scope.incident);
+    if (action.incident !== undefined && scope.step === undefined) {
+      scope.step = randomBytes(8).toString("hex");
+    }
 
     // I2 first, the I42 user-MCP floor second, policy third, joined by OR — never by assignment,
     // and never the other way round. The frozen set and the user-MCP rule are both floors: either
@@ -1905,6 +1999,7 @@ export class ToolExecutor {
 
     const sessionId = getAgentRequestSessionId();
     const agent = attributionOf(action, scope);
+    const incident = incidentOf(action, scope);
     // One instant for both rows: the egress prune deletes by timestamp, and the proof compares the
     // two ledgers row for row, so a gate row and its ledger row must never straddle a cutoff.
     const at = Date.now();
@@ -1923,6 +2018,7 @@ export class ToolExecutor {
             },
           }),
       ...(agent === undefined ? {} : { agent: { captureId: agent.captureId, label: agent.label } }),
+      ...(incident === undefined ? {} : { incident }),
       hitlStatus,
       resultStatus: hitlStatus === "rejected" ? "blocked" : "authorized",
       sessionId,
@@ -1931,7 +2027,18 @@ export class ToolExecutor {
     this.audit.recordAudit({
       actionType: action.type,
       hitlStatus,
-      actionJson: auditPayload(action, auditExtrasOf(record), scope.onBehalfOf),
+      actionJson: auditPayload(
+        action,
+        auditExtrasOf(record),
+        scope.onBehalfOf,
+        incident === undefined
+          ? undefined
+          : {
+              link: incident,
+              subStep: action.incident === undefined && scope.incidentSubStep === true,
+              step: scope.step,
+            },
+      ),
       timestamp: at,
       ...(sessionId === undefined ? {} : { sessionId }),
     });
@@ -2013,6 +2120,7 @@ export class ToolExecutor {
         bind: false,
         discardStep: target,
         ...subStepAttribution(action, scope),
+        ...subStepIncident(action, scope, false),
       });
       if (gated === "proceed") await this.connectors.dispatch(discard);
     } catch (e) {

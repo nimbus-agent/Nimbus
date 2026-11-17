@@ -148,7 +148,7 @@ describe("seedDemoCorpus", () => {
     const got = (await dispatchIncidentRpc(
       "incident.get",
       { id: "pagerduty:PDEMO412" },
-      { db, engine },
+      { db, engine, dependsOn: () => new Map() },
       { kind: "ui" },
     )) as { kind: "hit"; value: { record: { markdown: string } | null } };
     expect(got.value.record?.markdown).toContain("payment-service");

@@ -361,6 +361,8 @@ describe("trigger", () => {
     expect(selectRefreshItemIds(d, "pagerduty", 5)).toEqual([b, a]);
     d.run("UPDATE incident_record SET status = 'closed'");
     d.run("UPDATE item SET modified_at = ?", [NOW + DAY]);
+    // IC4: a tracked state change observed since the check also reselects, so the fixture has none
+    d.run("DELETE FROM item_history");
     expect(selectChangedItemIds(d, "pagerduty", NOW)).toEqual([]);
     expect(selectChangedItemIds(d, "pagerduty", NOW + 2 * DAY)).toHaveLength(2);
   });

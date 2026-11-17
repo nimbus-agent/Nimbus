@@ -53,8 +53,14 @@ async function call(
   method: string,
   params: unknown,
   kind: ClientKind = "cli",
+  dependsOn: () => ReadonlyMap<string, readonly string[]> = () => new Map(),
 ): Promise<unknown> {
-  const out = await dispatchIncidentRpc(method, params, { db: s.db, engine: s.engine }, { kind });
+  const out = await dispatchIncidentRpc(
+    method,
+    params,
+    { db: s.db, engine: s.engine, dependsOn },
+    { kind },
+  );
   if (out.kind === "miss") throw new Error(`miss ${method}`);
   return out.value;
 }
@@ -237,6 +243,7 @@ describe("owner kinds only (the spec, § 5.3)", () => {
     ["incident.list", {}],
     ["incident.get", { id: "pagerduty:A" }],
     ["incident.assemble", { id: "pagerduty:A" }],
+    ["incident.timeline", { id: "pagerduty:A" }],
   ];
 
   test("list, get AND assemble refuse every other kind BEFORE any query or engine call, and serve cli and ui", async () => {
@@ -252,9 +259,12 @@ describe("owner kinds only (the spec, § 5.3)", () => {
           },
         });
         const e = await rpcError(
-          dispatchIncidentRpc(method, params, { db: spyDb, engine: s.engine }, { kind }).then(
-            (o) => o.kind,
-          ),
+          dispatchIncidentRpc(
+            method,
+            params,
+            { db: spyDb, engine: s.engine, dependsOn: () => new Map() },
+            { kind },
+          ).then((o) => o.kind),
         );
         expect(e.rpcCode, `${kind} ${method}`).toBe(-32000);
         expect(e.message).toContain("ERR_INCIDENT_FORBIDDEN_CLIENT");
@@ -279,9 +289,115 @@ describe("owner kinds only (the spec, § 5.3)", () => {
       await dispatchIncidentRpc(
         "incident.zzz",
         {},
-        { db: s.db, engine: s.engine },
+        { db: s.db, engine: s.engine, dependsOn: () => new Map() },
         { kind: "cli" },
       ),
     ).toEqual({ kind: "miss" });
+  });
+});
+
+describe("Phase 10 IC4: incident.timeline and the cascade", () => {
+  const dep = (): ReadonlyMap<string, readonly string[]> =>
+    new Map([
+      ["payment-service", ["db"]],
+      ["db", []],
+    ]);
+
+  async function twoRecords(s: ReturnType<typeof setup>): Promise<{ a: string; b: string }> {
+    const dbCfg = serviceConfig({
+      serviceId: "db",
+      pagerdutyServices: ["PSVC_DB"],
+      jsmAlertTags: [],
+      sentryProjects: [],
+      dataModels: [],
+    });
+    const r2 = resolverFor(cfg, dbCfg);
+    const a = writePagerdutyIncident(
+      s.db,
+      { id: "CA", openedAtMs: NOW - 20 * 60_000, priority: "P1" },
+      r2,
+    );
+    const b = writePagerdutyIncident(
+      s.db,
+      { id: "CB", openedAtMs: NOW - 15 * 60_000, priority: "P1", pagerdutyServiceId: "PSVC_DB" },
+      r2,
+    );
+    const engine = createIncidentEngine({
+      db: s.db,
+      now: () => NOW,
+      emit: () => {},
+      loadServiceConfigs: () => configMap(cfg, dbCfg),
+      readConfig: () => ({ incident: DEFAULT_INCIDENT_CONFIG, pagerdutyP1Aliases: [] }),
+      demo: false,
+      logger: { warn: () => {} },
+    });
+    await engine.assembleNow(a);
+    await engine.assembleNow(b);
+    return { a, b };
+  }
+
+  test("timeline: params are validated and an unknown id or version is a typed error", async () => {
+    const s = setup();
+    const { a } = await twoRecords(s);
+    for (const p of [
+      {},
+      { id: "" },
+      { id: a, version: 0 },
+      { id: a, version: 1.5 },
+      { id: a, extra: 1 },
+    ]) {
+      expect((await rpcError(call(s, "incident.timeline", p))).rpcCode).toBe(-32602);
+    }
+    expect(
+      (await rpcError(call(s, "incident.timeline", { id: "nothing:here" }))).message,
+    ).toContain("ERR_INCIDENT_NOT_FOUND");
+    expect((await rpcError(call(s, "incident.timeline", { id: a, version: 9 }))).message).toContain(
+      "ERR_INCIDENT_VERSION_NOT_FOUND",
+    );
+    const ok = (await call(s, "incident.timeline", { id: a })) as {
+      events: { kind: string }[];
+      version: number;
+    };
+    expect(ok.events.map((e) => e.kind)).toContain("opened");
+    expect(ok.version).toBe(1);
+  });
+
+  test("get answers the live cascade of a record, and null for a record alone", async () => {
+    const s = setup();
+    const { a, b } = await twoRecords(s);
+    const got = (await call(s, "incident.get", { id: a }, "cli", dep)) as {
+      record: {
+        cascade: { status: string; role: string; rootRecordId: string; markdown: string } | null;
+      };
+    };
+    expect(got.record.cascade?.status).toBe("ok");
+    expect(got.record.cascade?.role).toBe("downstream");
+    expect(got.record.cascade?.markdown).toContain("## Cascade");
+    const bId = (await call(s, "incident.list", {})) as ListOut;
+    expect(bId.records.map((r) => r.triggerItemId)).toContain(b);
+    // no depends_on declared: still a cluster, ranked by time and labelled so
+    const none = (await call(s, "incident.get", { id: a })) as {
+      record: { cascade: { markdown: string } };
+    };
+    expect(none.record.cascade.markdown).toContain("no depends_on is declared");
+    // closed records are not part of a cascade
+    s.db.run("UPDATE incident_record SET status = 'closed'");
+    const alone = (await call(s, "incident.get", { id: a })) as { record: { cascade: unknown } };
+    expect(alone.record.cascade).toBeNull();
+  });
+
+  test("get degrades to cascade unavailable when the depends_on read throws; list { cascade: true } returns groups", async () => {
+    const s = setup();
+    const { a } = await twoRecords(s);
+    const bad = (await call(s, "incident.get", { id: a }, "cli", () => {
+      throw new Error("x");
+    })) as { record: { cascade: { status: string } } };
+    expect(bad.record.cascade).toEqual({ status: "unavailable" });
+    const listed = (await call(s, "incident.list", { cascade: true }, "cli", dep)) as ListOut & {
+      groups: unknown[];
+    };
+    expect(listed.groups).toHaveLength(1);
+    expect((await call(s, "incident.list", {})) as object).not.toHaveProperty("groups");
+    expect((await rpcError(call(s, "incident.list", { cascade: "yes" }))).rpcCode).toBe(-32602);
   });
 });

@@ -236,6 +236,16 @@ describe("classifyAuditRow - the anchored match", () => {
     expect(classifyAuditRow("x", nested).door).toBe("other");
   });
 
+  test("an incident-linked row (IC4) is neither an agent, a model nor a workflow row", () => {
+    // The link is the row's first key; whatever follows, the classifier's anchors do not match it.
+    const link = '{"incident":{"id":"inc_0123456789abcdef","version":2}';
+    const owner = `${link},"action":{"type":"slack.message.post","payload":{}},"answerSource":"human"}`;
+    expect(classifyAuditRow("slack.message.post", owner).door).toBe("other");
+    // even a linked row that spells out an agent action after the link is not an agent row
+    const spelled = `${link},"action":{"type":"slack.message.post","proposer":{"door":"agent","captureId":"${ID}","label":"x","labelSource":"declared"},"origin":"agent"}}`;
+    expect(classifyAuditRow("slack.message.post", spelled).door).toBe("other");
+  });
+
   test("a row cut by the audit cap is still classified from its prefix", () => {
     const cut = `${gate(`{"body":"${"y".repeat(5000)}"}`).slice(0, 4096)}…[truncated]`;
     expect(classifyAuditRow("slack.message.post", cut)).toMatchObject({

@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { resolveSelfPerson } from "../agents/_lib/self-person.ts";
@@ -463,4 +463,15 @@ test("a run settled with a poster posts the headline through it and records deli
   // Real writer: PSVC is unmapped to a Nimbus service, so the PagerDuty id is the service label.
   expect(texts[0]?.split("\n")[0]).toBe("P1 · PSVC — inc PCHAT");
   expect(rt.store.get("pagerduty:PCHAT")?.delivery["chatops"]?.outcome).toBe("delivered");
+});
+
+test("the cascade's depends_on provider THROWS on a malformed block (never an empty map): the push then says the ranking is unavailable", () => {
+  for (const rel of ["push-runtime.ts", "../platform/assemble.ts"]) {
+    const src = readFileSync(join(import.meta.dir, rel), "utf8");
+    const at = src.indexOf("dependsOn: () =>");
+    expect(at).toBeGreaterThan(-1);
+    const clause = src.slice(at, at + 200);
+    expect(clause).toContain("loadDependsOnMap(");
+    expect(clause).not.toContain("loadServiceConfigsOrEmpty");
+  }
 });

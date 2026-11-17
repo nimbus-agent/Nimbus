@@ -42,6 +42,7 @@ import {
   checkGeneratedManifestConfinement,
   checkIacDiscard,
   checkIncidentConfinement,
+  checkIncidentLinkMinting,
   checkIncidentRecordConfinement,
   checkItemHistoryConfinement,
   checkLanBoxPathConfinement,
@@ -7278,6 +7279,121 @@ describe("D46(d) - the incident record tables are written only by their store (P
     for await (const f of iterateSourceFiles())
       files.push({ relPath: f.relPath, contents: f.contents });
     expect(checkIncidentRecordConfinement(files)).toEqual([]);
+    expect(assertScanIsMeaningful(files)).toEqual([]);
+  });
+});
+
+describe("D46(e) - the incident link is minted only inside incident/ (incident engine IC4)", () => {
+  const file = (relPath: string, contents: string): FileEntry => ({ relPath, contents });
+  const SRC = "packages/gateway/src/";
+  const MINT = `${SRC}incident/incident-link-mint.ts`;
+  const LINK = `${SRC}engine/incident-link.ts`;
+  const READERS = [`${SRC}incident/action-links.ts`, `${SRC}audit/incident-replay.ts`];
+  const GOOD: FileEntry[] = [
+    file(MINT, "export function mintIncidentLink() {}\n"),
+    file(
+      LINK,
+      "export type IncidentLink = { id: string };\nexport function assertIncidentLink() {}\n",
+    ),
+    file(
+      READERS[0] as string,
+      'const RE = /^\\{"incident":\\{"id":"/; const p = `{"incident":{"id":"x"`;\n',
+    ),
+    file(READERS[1] as string, 'const head = `{"incident":{"id":"x"`;\n'),
+    file(
+      `${SRC}engine/executor.ts`,
+      "import { type IncidentLink } from './incident-link.ts';\nconst row = { incident: { id: 1 } };\n",
+    ),
+    file(`${SRC}incident/incident-link-mint.test.ts`, "mintIncidentLink(db, id);\n"),
+    file(
+      `${SRC}ipc/x.ts`,
+      'const t = x ? "incident" : "alert";\n// mintIncidentLink in a comment\n',
+    ),
+  ];
+  const rules = (files: FileEntry[]): string[] =>
+    checkIncidentLinkMinting(files).map((v) => v.rule);
+  const withBad = (path: string, contents: string): FileEntry[] => [...GOOD, file(path, contents)];
+
+  test("the good set is clean (comments, tests, a ternary 'incident' and an imported type are not violations)", () => {
+    expect(checkIncidentLinkMinting(GOOD)).toEqual([]);
+  });
+
+  test("clause (1): mintIncidentLink outside its own module is refused, aliased or called, in every other directory", () => {
+    for (const where of [
+      `${SRC}incident/incident-engine.ts`,
+      `${SRC}engine/executor.ts`,
+      `${SRC}ipc/incident-rpc.ts`,
+      `${SRC}mcp-sink/capture-act.ts`,
+      `${SRC}automation/workflow-write-step.ts`,
+    ]) {
+      expect(
+        rules(withBad(where.replace(".ts", "-x.ts"), "const l = mintIncidentLink(db, id);\n")),
+      ).toEqual(["incident-link-minted-in-incident"]);
+    }
+    expect(
+      rules(
+        withBad(
+          `${SRC}ipc/y.ts`,
+          'import { mintIncidentLink as m } from "../incident/incident-link-mint.ts";\n',
+        ),
+      ),
+    ).toEqual(["incident-link-minted-in-incident"]);
+  });
+
+  test("a fixture outside incident/ that names mintIncidentLink fails the rule", () => {
+    expect(
+      rules([...GOOD, file(`${SRC}ipc/evil.ts`, "mintIncidentLink(db, 'inc_x');\n")]),
+    ).toHaveLength(1);
+  });
+
+  test("clause (2): the link type and its assert are declared only in engine/incident-link.ts", () => {
+    for (const decl of [
+      "type IncidentLink = { id: string };",
+      "interface IncidentLink { id: string }",
+      "function assertIncidentLink(x: unknown) {}",
+    ]) {
+      expect(rules(withBad(`${SRC}engine/other.ts`, `${decl}\n`)), decl).toEqual([
+        "incident-link-minted-in-incident",
+      ]);
+    }
+    // naming or importing the type is fine anywhere
+    expect(
+      rules(
+        withBad(
+          `${SRC}engine/other.ts`,
+          "import type { IncidentLink } from './incident-link.ts';\nconst a: IncidentLink = x;\n",
+        ),
+      ),
+    ).toEqual([]);
+  });
+
+  test('clause (3): a quoted "incident":{ key spelled into a row is refused outside the two readers', () => {
+    for (const text of [
+      'const row = \'{"incident":{"id":"inc_x","version":1}\';',
+      'const row = `{"incident":{"id":"x"`;',
+      "const row = '{\\\"incident\\\":{';",
+    ]) {
+      expect(rules(withBad(`${SRC}audit/forged.ts`, `${text}\n`)), text).toEqual([
+        "incident-link-minted-in-incident",
+      ]);
+      expect(rules(withBad(`${SRC}ipc/forged.ts`, `${text}\n`)), text).toEqual([
+        "incident-link-minted-in-incident",
+      ]);
+    }
+    // the two readers are allowed to spell it; a comment is not scanned; test files are not scanned
+    expect(rules(withBad(`${SRC}audit/ok.ts`, '// {"incident":{"id"\n'))).toEqual([]);
+    expect(rules(withBad(`${SRC}audit/ok.test.ts`, 'const r = \'{"incident":{"id"\';\n'))).toEqual(
+      [],
+    );
+  });
+
+  test("the real repository satisfies the rule and both anchors are scanned", async () => {
+    expect(RULE_ANCHORS).toContain(MINT);
+    expect(RULE_ANCHORS).toContain(LINK);
+    const files: FileEntry[] = [];
+    for await (const f of iterateSourceFiles())
+      files.push({ relPath: f.relPath, contents: f.contents });
+    expect(checkIncidentLinkMinting(files)).toEqual([]);
     expect(assertScanIsMeaningful(files)).toEqual([]);
   });
 });

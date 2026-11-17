@@ -1,4 +1,5 @@
 import { redactAuditPayload } from "../audit/format-audit-payload.ts";
+import type { IncidentLink } from "../engine/incident-link.ts";
 import { serviceOf } from "../engine/service-of.ts";
 import type { PlannedAction } from "../engine/types.ts";
 import { isCaptureId } from "../mcp-sink/capture-id.ts";
@@ -95,7 +96,17 @@ export function assertAgentCaptureId(captureId: string): void {
 /** The payload with the keys this module writes at the front removed, so a payload cannot overwrite them. */
 function withoutReservedKeys(payload: PlannedAction["payload"]): Record<string, unknown> {
   if (payload === undefined) return {};
-  const { agent: _agent, standingFire: _fire, ...rest } = payload;
+  const { agent: _agent, standingFire: _fire, incident: _incident, ...rest } = payload;
+  return rest;
+}
+
+/**
+ * The payload with an `incident` key removed even when the entry has no head: replay finds a linked row by
+ * that key written first in the summary, so no payload may spell it.
+ */
+function withoutIncidentKey(payload: PlannedAction["payload"]): PlannedAction["payload"] {
+  if (payload === undefined || !Object.hasOwn(payload, "incident")) return payload;
+  const { incident: _incident, ...rest } = payload;
   return rest;
 }
 
@@ -119,9 +130,18 @@ export function buildEgressEntry(args: {
   readonly standingFire?: { readonly ruleId: string; readonly fireId: string };
   /** AD4: the outside agent this action (or a sub-step of it) ran for. */
   readonly agent?: EgressAgent;
+  /**
+   * IC4: the incident link of an incident-linked action (or a sub-step of one), written FIRST in the
+   * summary head. Gateway-minted and validated by the executor; a payload key of the same name is
+   * stripped, so a caller cannot replace it.
+   */
+  readonly incident?: IncidentLink;
 }): EgressEntry {
   if (args.agent !== undefined) assertAgentCaptureId(args.agent.captureId);
   const head: Record<string, unknown> = {
+    ...(args.incident === undefined
+      ? {}
+      : { incident: { id: args.incident.id, version: args.incident.version } }),
     ...(args.agent === undefined ? {} : { agent: { label: clampAgentLabel(args.agent.label) } }),
     ...(args.standingFire === undefined ? {} : { standingFire: args.standingFire }),
   };
@@ -136,7 +156,7 @@ export function buildEgressEntry(args: {
     method: args.action.type,
     payloadSummary: redactEgressSummary(
       Object.keys(head).length === 0
-        ? args.action.payload
+        ? withoutIncidentKey(args.action.payload)
         : { ...head, ...withoutReservedKeys(args.action.payload) },
     ),
     hitlStatus: args.hitlStatus,

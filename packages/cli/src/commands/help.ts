@@ -59,7 +59,7 @@ AGENTS — read-only briefs over the local index
   nimbus oncall now [--service <id>] Who is on call right now, from the index (PagerDuty, Jira Service Management)
   nimbus oncall handoff [--since ..]  Shift handoff brief: events, what is still open, watch-list (local index, no approval)
   nimbus briefing [now|list|status] [--json]  Your morning briefing, built from the local index (no model, nothing leaves the machine)
-  nimbus incident list|show <id> [--json]  Incident records the gateway assembled from the local index (no model, nothing leaves the machine)
+  nimbus incident list [--cascade]|show <id>|timeline <id> [--version N] [--json]  Incident records the gateway assembled from the local index, with the timeline and the live cascade (no model, nothing leaves the machine)
   nimbus statuspage draft [--out <file>]   A static status page (incidents, on call, DORA) written locally for you to review and publish
 
 AGENTS THAT NEED PAIRED PEERS — see TEAM below; these query the federation mesh
@@ -92,6 +92,7 @@ PRIVACY & AUDIT
   nimbus audit [--limit N]    Recent HITL audit rows
   nimbus audit --door <agent|model|workflow|other> [--proposer <label>] [--since 7d] [--limit N] [--json]
                               Audit rows by the door the action came through
+  nimbus audit replay <incident-id> [--json]   Rebuild what happened for an incident record: its versions, the actions Nimbus took, the prompts shown, both chains verified
   nimbus exec --code <src> | --file <path>   Run code in the sandbox, behind an approval prompt
                               (off by default; enable with [code_execution] enabled = true)
   nimbus tool create --description <d> --host <h> [--credential <h>=<tok>]   Owner-approved

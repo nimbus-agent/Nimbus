@@ -121,7 +121,7 @@ import {
 import { loadNimbusWorkdayFromConfigDir } from "../config/nimbus-toml-workday.ts";
 import { resolvePersona } from "../config/persona.ts";
 import { ProfileManager } from "../config/profiles.ts";
-import { loadServiceConfigsOrEmpty } from "../config/service-configs.ts";
+import { loadDependsOnMap, loadServiceConfigsOrEmpty } from "../config/service-configs.ts";
 import { loadNimbusSessionFromConfigDir } from "../config/session-toml.ts";
 import {
   loadNimbusWatcherChatopsFromConfigDir,
@@ -4949,7 +4949,12 @@ export async function assemblePlatformServices(
   ipcOpts.briefingRpcCtx = { runtime: briefing };
   // Incident records (Phase 10 IC3): incident.list / get / assemble. cli/ui connections only (checked per
   // call from the connection's declared kind); LAN-forbidden (I5), not Tauri-exposed (I7).
-  ipcOpts.incidentRpcCtx = { db, engine: incidentEngine };
+  ipcOpts.incidentRpcCtx = {
+    db,
+    engine: incidentEngine,
+    // A malformed block THROWS (not an empty map): the cascade then reads as unavailable.
+    dependsOn: () => loadDependsOnMap(paths.configDir),
+  };
   // pre-S3 item E: notifications.status / notifications.test (CLI-only; LAN-forbidden, not Tauri).
   ipcOpts.notificationsRpcCtx = { runtime: notificationsRuntime };
   // MCP capture sink (I28): capture.* / captures.* (LAN-forbidden by namespace, not Tauri, no HTTP).

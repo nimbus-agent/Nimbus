@@ -5,6 +5,9 @@ import { stripControlChars } from "../lib/strip-control-chars.ts";
 import { withGatewayIpc } from "../lib/with-gateway-ipc.ts";
 import { getCliPlatformPaths } from "../paths.ts";
 import {
+  type CascadeGroupLike,
+  formatCascadeGroups,
+  formatTimeline,
   INCIDENT_USAGE,
   type IncidentArgs,
   listLine,
@@ -13,10 +16,11 @@ import {
   type SourceLike,
   type SummaryLike,
   sourcesLine,
+  type TimelineReplyLike,
 } from "./incident-format.ts";
 
 /**
- * `nimbus incident list | show <id>` (Phase 10 IC3): the incident records the gateway assembled from the local
+ * `nimbus incident list | show <id> | timeline <id>` (Phase 10 IC3, IC4): the incident records the gateway assembled from the local
  * index, with no model and nothing leaving the machine. The three `incident.*` methods answer only a connection
  * that DECLARED `cli` or `ui`, so every subcommand declares `cli` before its first call. The Markdown may carry
  * text from the index (a title, a chat message), so every line is stripped of control characters before it
@@ -40,6 +44,7 @@ type ListReply = {
   status: "ok" | "none" | "no_data";
   records: SummaryLike[];
   sources: SourceLike[];
+  groups?: CascadeGroupLike[] | null;
 };
 
 type GetReply = {
@@ -47,6 +52,8 @@ type GetReply = {
     summary: SummaryLike;
     markdown: string;
     versions: unknown[];
+    /** IC4: where this record stands in the live cascade (a rendered block), absent on an older gateway. */
+    cascade?: { status: "ok"; markdown: string } | { status: "unavailable" } | null;
   } | null;
   reason?: "no_item" | "not_assembled";
   triggerItemId?: string;
@@ -68,6 +75,7 @@ async function listRecords(
     ...(a.service === undefined ? {} : { service: a.service }),
     ...(a.source === undefined ? {} : { source: a.source }),
     ...(a.limit === undefined ? {} : { limit: a.limit }),
+    ...(a.cascade ? { cascade: true } : {}),
   });
   if (a.json) {
     sink.out(`${JSON.stringify(r)}\n`);
@@ -82,6 +90,25 @@ async function listRecords(
     return 0;
   }
   for (const rec of r.records) sink.out(`${listLine(rec)}\n`);
+  if (a.cascade) {
+    sink.out("\n");
+    for (const line of formatCascadeGroups(r.groups ?? null)) sink.out(`${line}\n`);
+  }
+  return 0;
+}
+
+async function showTimeline(
+  c: IncidentIpc,
+  a: Extract<IncidentArgs, { verb: "timeline" }>,
+  sink: IncidentSink,
+): Promise<number> {
+  await declareCliClientKind(c);
+  const t = await c.call<TimelineReplyLike>("incident.timeline", {
+    id: a.id,
+    ...(a.version === undefined ? {} : { version: a.version }),
+  });
+  if (a.json) sink.out(`${JSON.stringify(t)}\n`);
+  else sink.out(`${formatTimeline(t)}\n`);
   return 0;
 }
 
@@ -94,8 +121,15 @@ function printRecord(
   const note = assembledNow
     ? "\nAssembled on demand just now (it was below the automatic severity rule or not yet assembled).\n"
     : "\n";
+  // IC4: the LIVE cascade, after the stored Markdown (the stored record never holds it).
+  const cascade =
+    got.cascade?.status === "ok"
+      ? `\n${cleanMarkdown(got.cascade.markdown).trimEnd()}\n`
+      : got.cascade?.status === "unavailable"
+        ? "\nThe other open records could not be ranked this time.\n"
+        : "";
   sink.out(
-    `${cleanMarkdown(got.markdown).trimEnd()}\n${note}${recordFooter(got.summary, nowMs)}\n`,
+    `${cleanMarkdown(got.markdown).trimEnd()}\n${cascade}${note}${recordFooter(got.summary, nowMs)}\n`,
   );
 }
 
@@ -132,7 +166,9 @@ export async function runIncidentWith(
   nowMs: number = Date.now(),
 ): Promise<number> {
   try {
-    return a.verb === "list" ? await listRecords(c, a, sink) : await showRecord(c, a, sink, nowMs);
+    if (a.verb === "list") return await listRecords(c, a, sink);
+    if (a.verb === "timeline") return await showTimeline(c, a, sink);
+    return await showRecord(c, a, sink, nowMs);
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     if (a.json) sink.out(`${JSON.stringify({ error: msg })}\n`);

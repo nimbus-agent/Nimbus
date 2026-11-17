@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { loadServiceConfigsOrEmpty } from "./service-configs.ts";
+import { loadDependsOnMap, loadServiceConfigsOrEmpty } from "./service-configs.ts";
 
 describe("loadServiceConfigsOrEmpty", () => {
   let dir: string;
@@ -37,5 +37,32 @@ describe("loadServiceConfigsOrEmpty", () => {
 
   test("no config dir returns []", () => {
     expect(loadServiceConfigsOrEmpty(undefined, () => {})).toEqual([]);
+  });
+});
+
+describe("loadDependsOnMap (the cascade's map: a malformed block throws, it is never an empty map)", () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "nimbus-dep-map-"));
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("a valid dir returns service id to its depends_on; no config dir returns an empty map", () => {
+    writeFileSync(
+      join(dir, "nimbus.toml"),
+      `[ci.service.web]\nrepos = ["github:acme/web"]\ndepends_on = ["api"]\n[ci.service.api]\nrepos = ["github:acme/api"]\n`,
+      "utf8",
+    );
+    const m = loadDependsOnMap(dir);
+    expect(m.get("web")).toEqual(["api"]);
+    expect(m.get("api")).toEqual([]);
+    expect(loadDependsOnMap(undefined).size).toBe(0);
+  });
+
+  test("a malformed block throws", () => {
+    writeFileSync(join(dir, "nimbus.toml"), `[ci.service.]\nrepos = []\n`, "utf8");
+    expect(() => loadDependsOnMap(dir)).toThrow();
   });
 });

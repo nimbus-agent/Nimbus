@@ -7,8 +7,9 @@ import { stripControlChars } from "../lib/strip-control-chars.ts";
  */
 
 export const INCIDENT_USAGE =
-  "Usage: nimbus incident list [--open] [--service <id>] [--source <service>] [--limit <n>] [--json]\n" +
+  "Usage: nimbus incident list [--open] [--service <id>] [--source <service>] [--limit <n>] [--cascade] [--json]\n" +
   "       nimbus incident show <id> [--json]\n" +
+  "       nimbus incident timeline <id> [--version <n>] [--json]\n" +
   "  <id> is a record id (inc_...), a trigger item id (pagerduty:...), or the provider's own id.";
 
 export const SOURCES = ["pagerduty", "jira", "sentry", "montecarlo", "bigeye"] as const;
@@ -21,10 +22,23 @@ export type IncidentArgs =
       readonly service?: string;
       readonly source?: string;
       readonly limit?: number;
+      readonly cascade: boolean;
     }
-  | { readonly verb: "show"; readonly json: boolean; readonly id: string };
+  | { readonly verb: "show"; readonly json: boolean; readonly id: string }
+  | {
+      readonly verb: "timeline";
+      readonly json: boolean;
+      readonly id: string;
+      readonly version?: number;
+    };
 
-type ListFlags = { open: boolean; service?: string; source?: string; limit?: number };
+type ListFlags = {
+  open: boolean;
+  cascade: boolean;
+  service?: string;
+  source?: string;
+  limit?: number;
+};
 
 function takeValue(argv: readonly string[], i: number): string | undefined {
   const v = argv[i + 1];
@@ -32,7 +46,7 @@ function takeValue(argv: readonly string[], i: number): string | undefined {
 }
 
 function parseListFlags(argv: readonly string[]): { json: boolean; flags: ListFlags } | undefined {
-  const flags: ListFlags = { open: false };
+  const flags: ListFlags = { open: false, cascade: false };
   let json = false;
   let seenJson = false;
   for (let i = 0; i < argv.length; i += 1) {
@@ -44,6 +58,9 @@ function parseListFlags(argv: readonly string[]): { json: boolean; flags: ListFl
     } else if (a === "--open") {
       if (flags.open) return undefined;
       flags.open = true;
+    } else if (a === "--cascade") {
+      if (flags.cascade) return undefined;
+      flags.cascade = true;
     } else if (a === "--service" || a === "--source" || a === "--limit") {
       const v = takeValue(argv, i);
       const dup = a === "--service" ? flags.service : a === "--source" ? flags.source : flags.limit;
@@ -75,6 +92,7 @@ export function parseIncidentArgs(argv: readonly string[]): IncidentArgs | undef
       verb: "list",
       json: parsed.json,
       open: flags.open,
+      cascade: flags.cascade,
       ...(flags.service === undefined ? {} : { service: flags.service }),
       ...(flags.source === undefined ? {} : { source: flags.source }),
       ...(flags.limit === undefined ? {} : { limit: flags.limit }),
@@ -89,7 +107,34 @@ export function parseIncidentArgs(argv: readonly string[]): IncidentArgs | undef
     }
     return { verb: "show", json: json.length === 1, id };
   }
+  if (verb === "timeline") return parseTimelineArgs(rest);
   return undefined;
+}
+
+function parseTimelineArgs(rest: readonly string[]): IncidentArgs | undefined {
+  let json = false;
+  let version: number | undefined;
+  let id: string | undefined;
+  for (let i = 0; i < rest.length; i += 1) {
+    const a = rest[i] as string;
+    if (a === "--json") {
+      if (json) return undefined;
+      json = true;
+    } else if (a === "--version") {
+      const v = takeValue(rest, i);
+      if (v === undefined || version !== undefined || !/^\d{1,7}$/.test(v)) return undefined;
+      const n = Number(v);
+      if (n < 1 || n > 1_000_000) return undefined;
+      version = n;
+      i += 1;
+    } else if (a.startsWith("--") || id !== undefined) {
+      return undefined;
+    } else {
+      id = a;
+    }
+  }
+  if (id === undefined) return undefined;
+  return { verb: "timeline", json, id, ...(version === undefined ? {} : { version }) };
 }
 
 export interface SummaryLike {
@@ -144,6 +189,67 @@ export function sourcesLine(sources: readonly SourceLike[]): string {
   const on = sources.filter((s) => s.connected).map((s) => s.service);
   const off = sources.filter((s) => !s.connected).map((s) => s.service);
   return `Connected: ${on.length === 0 ? "none" : on.join(", ")}. Not connected: ${off.length === 0 ? "none" : off.join(", ")}.`;
+}
+
+/** `YYYY-MM-DD HH:MM:SS UTC`: a timeline keeps seconds, so events a minute apart keep their order. */
+export function utcSeconds(ms: number): string {
+  return `${new Date(ms).toISOString().slice(0, 19).replace("T", " ")} UTC`;
+}
+
+export interface TimelineEventLike {
+  readonly atMs: number;
+  readonly atBasis: string;
+  readonly kind: string;
+  readonly text: string;
+}
+
+export interface TimelineReplyLike {
+  readonly recordId: string;
+  readonly version: number;
+  readonly currentVersion: number;
+  readonly events: readonly TimelineEventLike[];
+  readonly notes: readonly string[];
+}
+
+/** The timeline as terminal text: every provider-influenced field passes through `stripControlChars`. */
+export function formatTimeline(t: TimelineReplyLike): string {
+  const older = t.version === t.currentVersion ? "" : " (an older version: what was known then)";
+  const head = `Timeline of ${clean(t.recordId)}, version ${String(t.version)} of ${String(t.currentVersion)}${older}`;
+  const lines =
+    t.events.length === 0
+      ? ["No event to show."]
+      : t.events.map(
+          (e) => `${utcSeconds(e.atMs)} (${clean(e.atBasis)}) ${clean(e.kind)}: ${clean(e.text)}`,
+        );
+  return [head, ...lines, ...t.notes.map((n) => `Note: ${clean(n)}`)].join("\n");
+}
+
+export interface CascadeGroupLike {
+  readonly relationLabel: string;
+  readonly reachCapped: boolean;
+  readonly members: readonly {
+    readonly recordId: string;
+    readonly role: string;
+    readonly title?: string;
+    readonly service?: string | null;
+  }[];
+}
+
+/** `incident list --cascade`: each open group, the root first. */
+export function formatCascadeGroups(groups: readonly CascadeGroupLike[] | null): string[] {
+  if (groups === null) return ["The open records could not be ranked this time."];
+  if (groups.length === 0) return ["No cascade: no two open records opened within 30 minutes."];
+  const out: string[] = [];
+  groups.forEach((g, i) => {
+    const capped = g.reachCapped ? " (dependency graph too large to search completely)" : "";
+    out.push(`Cascade ${String(i + 1)}: ${clean(g.relationLabel)}${capped}`);
+    for (const m of g.members) {
+      const role = m.role === "root" ? "root candidate" : "downstream    ";
+      const svc = m.service === null || m.service === undefined ? "(unbound)" : clean(m.service);
+      out.push(`  ${role}  ${clean(m.recordId)}  ${svc}  ${clean(m.title ?? "")}`.trimEnd());
+    }
+  });
+  return out;
 }
 
 /** `Record <id> v<N>, assembled <UTC> (<age> ago), last checked <UTC>`. */

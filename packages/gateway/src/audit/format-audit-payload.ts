@@ -33,7 +33,7 @@ export const SENSITIVE_VALUE_PATTERNS: ReadonlyMap<string, RegExp> = new Map([
   ["aws", /(?<![A-Za-z0-9])(?:AKIA|ASIA)[A-Z0-9]{16}(?![A-Z0-9])/g],
 ]);
 
-function redactSensitiveValueString(s: string): string {
+export function redactSensitiveValueString(s: string): string {
   let out = s;
   for (const pat of SENSITIVE_VALUE_PATTERNS.values()) {
     out = out.replace(pat, "[REDACTED]");
