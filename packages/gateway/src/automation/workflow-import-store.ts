@@ -99,8 +99,9 @@ export function floorFor(db: Database, signer: string, bundleName: string): Impo
 }
 
 /**
- * Where a workflow's content last came from: the newest (`imported_at DESC, rowid DESC`) row naming it.
- * A signer change leaves several rows with one `workflow_id`, so the order decides, never the key.
+ * Where a workflow's content last came from: the row naming it with the highest `import_seq` (the
+ * transaction order of imports; never `imported_at`, which a clock correction can reverse, nor rowid,
+ * which an upsert keeps). A signer change leaves several rows with one `workflow_id`, so the order decides.
  * A display read: nothing in the rule or run path calls it (static D50(d)).
  */
 export function readImportSource(db: Database, workflowId: string): ImportSource | null {
@@ -108,7 +109,7 @@ export function readImportSource(db: Database, workflowId: string): ImportSource
   const row = db
     .query(
       `SELECT ${COLUMNS} FROM workflow_import WHERE workflow_id = ?
-       ORDER BY imported_at DESC, rowid DESC LIMIT 1`,
+       ORDER BY import_seq DESC LIMIT 1`,
     )
     .get(workflowId) as Row | null | undefined;
   return row === null || row === undefined ? null : sourceOf(row);
@@ -119,7 +120,7 @@ export function listSources(db: Database): Map<string, ImportSource> {
   const out = new Map<string, ImportSource>();
   if (!available(db)) return out;
   const rows = db
-    .query(`SELECT ${COLUMNS} FROM workflow_import ORDER BY imported_at DESC, rowid DESC`)
+    .query(`SELECT ${COLUMNS} FROM workflow_import ORDER BY import_seq DESC`)
     .all() as Row[];
   for (const r of rows) {
     if (!out.has(r.workflow_id)) out.set(r.workflow_id, sourceOf(r));
@@ -133,7 +134,7 @@ export function signersForName(db: Database, bundleName: string): ImportFloor[] 
   const rows = db
     .query(
       `SELECT ${COLUMNS} FROM workflow_import WHERE bundle_name = ?
-       ORDER BY imported_at DESC, rowid DESC`,
+       ORDER BY import_seq DESC`,
     )
     .all(bundleName) as Row[];
   return rows.map(floorOf);
@@ -166,8 +167,9 @@ export function recordImport(db: Database, r: RecordImportInput): boolean {
     db,
     `INSERT INTO workflow_import
        (signer_fingerprint, bundle_name, issued_at, bundle_sha256, steps_sha256, signer_pubkey,
-        author_label, workflow_id, imported_at, import_count, approval_audit_id)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+        author_label, workflow_id, imported_at, import_count, approval_audit_id, import_seq)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?,
+             (SELECT COALESCE(MAX(import_seq), 0) + 1 FROM workflow_import))
      ON CONFLICT (signer_fingerprint, bundle_name) DO UPDATE SET
        issued_at = excluded.issued_at,
        bundle_sha256 = excluded.bundle_sha256,
@@ -177,7 +179,8 @@ export function recordImport(db: Database, r: RecordImportInput): boolean {
        workflow_id = excluded.workflow_id,
        imported_at = excluded.imported_at,
        import_count = workflow_import.import_count + 1,
-       approval_audit_id = excluded.approval_audit_id
+       approval_audit_id = excluded.approval_audit_id,
+       import_seq = excluded.import_seq
      WHERE excluded.issued_at >= workflow_import.issued_at`,
     [
       r.signerFingerprint,

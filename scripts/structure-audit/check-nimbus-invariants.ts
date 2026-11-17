@@ -3226,8 +3226,9 @@ function specifierNamesWriteTable(importerRel: string, spec: string): boolean {
   return D39_ROWS_SPECIFIER_RE.test(spec);
 }
 // `import <clause> from "x"` (static, comment-stripped); `export … from` re-exports count as values.
+// Anchored at a line start OR after a `;`, so a second import on the same line is read too.
 const D39_STATIC_IMPORT_RE =
-  /^[ \t]*(?:import|export)\s+(type\s+)?([^;"']*?)\s*from\s*["']([^"']+)["']/gm;
+  /(?:^|;)[ \t]*(?:import|export)\s+(type\s+)?([^;"']*?)\s*from\s*["']([^"']+)["']/gm;
 const D39_DYNAMIC_IMPORT_RE = /\bimport\s*\(\s*["']([^"']+)["']\s*\)/g;
 
 /** True when an import clause names at least one value (not `type X` / `import type`). */

@@ -10,6 +10,10 @@
  * "newest provenance of this workflow" read, and `workflow_import_name` serves `signersForName` (which
  * signers ever imported a bundle with this name), whose leading column is `bundle_name`.
  *
+ * `import_seq` is the transaction order of the last import that wrote the row (one more than the table's
+ * maximum, set on every insert AND update). "Which signer supplied the current content" orders by it,
+ * never by `imported_at` (a clock can step back) or by rowid (an upsert keeps its rowid).
+ *
  * Written ONLY by `automation/workflow-import-store.ts` (static D50(a)). Backfill: none. Re-runnable
  * (IF NOT EXISTS only).
  */
@@ -26,6 +30,7 @@ export const WORKFLOW_IMPORT_V101_SQL = [
   imported_at        INTEGER NOT NULL,
   import_count       INTEGER NOT NULL DEFAULT 1,
   approval_audit_id  INTEGER NOT NULL,
+  import_seq         INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (signer_fingerprint, bundle_name),
   CHECK (length(signer_fingerprint) = 32),
   CHECK (length(steps_sha256) = 64 AND length(bundle_sha256) = 64)

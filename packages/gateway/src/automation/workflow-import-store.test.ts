@@ -101,6 +101,24 @@ describe("workflow-import-store", () => {
     expect(readImportSource(db, "nope")).toBeNull();
   });
 
+  test("A -> B -> A: the LAST import supplies the source, with a decreasing or an equal clock", () => {
+    for (const thirdAt of [1500, 2000]) {
+      const db = dbAt(CURRENT_SCHEMA_VERSION);
+      recordImport(db, rec({ signerFingerprint: A, workflowId: "w1", importedAt: 1000 }));
+      recordImport(db, rec({ signerFingerprint: B, workflowId: "w1", importedAt: 2000 }));
+      // A again (an upsert of A's row: same rowid) after a clock correction, or at an equal time.
+      expect(
+        recordImport(
+          db,
+          rec({ signerFingerprint: A, workflowId: "w1", issuedAt: 300, importedAt: thirdAt }),
+        ),
+      ).toBe(true);
+      expect(readImportSource(db, "w1")?.signerFingerprint).toBe(A);
+      expect(listSources(db).get("w1")?.signerFingerprint).toBe(A);
+      expect(signersForName(db, "weekly")[0]?.signerFingerprint).toBe(A);
+    }
+  });
+
   test("signersForName lists every signer that imported the name, and uses the name index", () => {
     const db = dbAt(CURRENT_SCHEMA_VERSION);
     recordImport(db, rec());

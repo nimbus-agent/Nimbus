@@ -1376,6 +1376,7 @@ CREATE TABLE IF NOT EXISTS workflow_import (
   imported_at        INTEGER NOT NULL,
   import_count       INTEGER NOT NULL DEFAULT 1,
   approval_audit_id  INTEGER NOT NULL,        -- the audit row of the owner's `workflow.import` approval
+  import_seq         INTEGER NOT NULL DEFAULT 0, -- transaction order of the last import that wrote the row (MAX + 1 on every insert and update)
   PRIMARY KEY (signer_fingerprint, bundle_name),
   CHECK (length(signer_fingerprint) = 32),
   CHECK (length(steps_sha256) = 64 AND length(bundle_sha256) = 64)
@@ -1384,7 +1385,7 @@ CREATE INDEX IF NOT EXISTS workflow_import_workflow ON workflow_import (workflow
 CREATE INDEX IF NOT EXISTS workflow_import_name ON workflow_import (bundle_name);
 ```
 
-Why a table and not columns on `workflow`: the replay floor must survive `workflow.delete`; `workflow` is read by the runner, the scheduler, standing-rule derivation and approval learning, and a provenance column there would let every one of those reads drift; and a separate table keeps "nothing in the rule or run path reads provenance" greppable (static D50(d)). `workflow list` derives a `source` per workflow at read time, for the owner's own `cli` or `ui` connection only: `imported from <fp12>` (the newest row by `imported_at DESC, rowid DESC` whose `steps_sha256` equals the current content hash), `imported from <fp12>, edited since` (a different hash) or `local`. The label is a hash comparison and never an authority. The table holds no connector data, so `nimbus data delete`, `connector remove` and `data export` leave it alone.
+Why a table and not columns on `workflow`: the replay floor must survive `workflow.delete`; `workflow` is read by the runner, the scheduler, standing-rule derivation and approval learning, and a provenance column there would let every one of those reads drift; and a separate table keeps "nothing in the rule or run path reads provenance" greppable (static D50(d)). `workflow list` derives a `source` per workflow at read time, for the owner's own `cli` or `ui` connection only: `imported from <fp12>` (the newest row by `import_seq DESC`, the transaction order of imports, never the clock or the rowid an upsert keeps, whose `steps_sha256` equals the current content hash), `imported from <fp12>, edited since` (a different hash) or `local`. The label is a hash comparison and never an authority. The table holds no connector data, so `nimbus data delete`, `connector remove` and `data export` leave it alone.
 
 ## V100 — incident records and their versions (Phase 10 IC3, 2026-11-16)
 

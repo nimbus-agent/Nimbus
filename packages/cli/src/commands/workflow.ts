@@ -173,8 +173,8 @@ const IMPORT_FILE_MAX_BYTES = 1024 * 1024;
  */
 export async function runWorkflowExport(client: IPCClient, rest: string[]): Promise<void> {
   const tail = [...rest];
-  const out = shiftFlag(tail, "--out");
-  const author = shiftFlag(tail, "--author");
+  const out = shiftRequiredValue(tail, "--out");
+  const author = shiftRequiredValue(tail, "--author");
   const force = hasFlag(tail, "--force");
   const name = tail.find((a) => !a.startsWith("--"))?.trim() ?? "";
   if (name === "" || out === undefined || out === "") throw new Error(WORKFLOW_EXPORT_USAGE);
@@ -203,6 +203,20 @@ Share the fingerprint with your team through another channel: an importer compar
 }
 
 /**
+ * A value-taking option that was supplied must carry a value: a trailing `--signer` (or one followed by
+ * another option) is an error, never a silent omission of the pin it asked for. An absent option stays
+ * `undefined`.
+ */
+function shiftRequiredValue(tail: string[], flag: string): string | undefined {
+  const i = tail.indexOf(flag);
+  if (i < 0) return undefined;
+  const v = tail[i + 1];
+  if (v === undefined || v.startsWith("--")) throw new Error(`${flag} needs a value`);
+  tail.splice(i, 2);
+  return v;
+}
+
+/**
  * `nimbus workflow import <file> ...` (I59): reads the bundle and asks the gateway, which verifies the
  * signature, shows the exact steps at a prompt on this terminal and writes only after you answer it as a
  * person. `--yes` is refused here and, whatever a client sends, at the gateway.
@@ -213,9 +227,9 @@ export async function runWorkflowImport(client: IPCClient, rest: string[]): Prom
   const replace = hasFlag(tail, "--replace");
   const acceptSignerChange = hasFlag(tail, "--accept-signer-change");
   const dryRun = hasFlag(tail, "--dry-run");
-  const signer = shiftFlag(tail, "--signer");
-  const schedule = shiftFlag(tail, "--schedule");
-  const tz = shiftFlag(tail, "--tz");
+  const signer = shiftRequiredValue(tail, "--signer");
+  const schedule = shiftRequiredValue(tail, "--schedule");
+  const tz = shiftRequiredValue(tail, "--tz");
   if (tz !== undefined && schedule === undefined) throw new Error("--tz needs --schedule");
   const file = tail.find((a) => !a.startsWith("--"))?.trim() ?? "";
   if (file === "") throw new Error(WORKFLOW_IMPORT_USAGE);

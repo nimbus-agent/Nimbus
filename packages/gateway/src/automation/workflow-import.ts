@@ -22,6 +22,7 @@ import { createHash } from "node:crypto";
 import type { OwnerApproval } from "../engine/owner-only-approval.ts";
 import type { PlannedAction } from "../engine/types.ts";
 import type { ClientKind } from "../ipc/server/client-kind.ts";
+import { constantTimeStringEqual } from "../util/timing-safe-compare.ts";
 import { verifyBundle } from "./workflow-bundle.ts";
 import {
   type ImportPromptInput,
@@ -159,6 +160,11 @@ function contentHashOf(stepsJson: string): string | null {
   }
 }
 
+/** I10: digests are compared in constant time; an unknown hash never equals anything. */
+function sameContentHash(a: string | null, b: string): boolean {
+  return a !== null && constantTimeStringEqual(a, b);
+}
+
 function checkPin(pin: string | undefined, fingerprint: string): void {
   if (pin === undefined) return;
   if (!PIN_PATTERN.test(pin)) {
@@ -188,7 +194,7 @@ function floorVerdict(
   if (seen === null) return { restore: false, restoreAt: null };
   if (
     issuedAt < seen.issuedAt ||
-    (issuedAt === seen.issuedAt && bundleSha256 !== seen.bundleSha256)
+    (issuedAt === seen.issuedAt && !constantTimeStringEqual(bundleSha256, seen.bundleSha256))
   ) {
     throw new ImportError(
       IMPORT_ERR.STALE,
@@ -249,7 +255,7 @@ function commit(
         ? floorNow === null
         : floorNow !== null &&
           floorNow.issuedAt === p.floorSeen.issuedAt &&
-          floorNow.bundleSha256 === p.floorSeen.bundleSha256;
+          constantTimeStringEqual(floorNow.bundleSha256, p.floorSeen.bundleSha256);
     if (!floorSame) {
       throw new ImportError(
         IMPORT_ERR.CHANGED,
@@ -299,7 +305,16 @@ export async function importWorkflowBundle(
   );
   const existing = getWorkflowByName(db, body.name);
   const stepsSha = body.stepsSha256;
-  if (restore && existing !== null && contentHashOf(existing.steps_json) === stepsSha) {
+  // A repeat of the recorded bundle with no schedule request and no dry run changes nothing. A dry
+  // run still renders its preview, and a schedule request still goes through scheduleOf and approval.
+  const noScheduleRequest = params.schedule === undefined && params.scheduleTz === undefined;
+  if (
+    restore &&
+    params.dryRun !== true &&
+    noScheduleRequest &&
+    existing !== null &&
+    sameContentHash(contentHashOf(existing.steps_json), stepsSha)
+  ) {
     return {
       dryRun: false,
       id: existing.id,
@@ -365,7 +380,7 @@ export async function importWorkflowBundle(
             ),
             updatedAt: existing.updated_at,
             importedFromFp12,
-            identical: contentHashOf(existing.steps_json) === stepsSha,
+            identical: sameContentHash(contentHashOf(existing.steps_json), stepsSha),
             schedule:
               existing.schedule != null
                 ? { expr: existing.schedule, tz: existing.schedule_tz ?? "" }

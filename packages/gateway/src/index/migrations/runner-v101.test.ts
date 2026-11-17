@@ -54,6 +54,7 @@ describe("V101 migration - signed workflow import provenance", () => {
         "imported_at:INTEGER:1",
         "import_count:INTEGER:1",
         "approval_audit_id:INTEGER:1",
+        "import_seq:INTEGER:1",
       ]);
       expect(cols.filter((c) => c.pk > 0).map((c) => c.name)).toEqual([
         "signer_fingerprint",

@@ -620,6 +620,28 @@ describe("runWorkflowExport and runWorkflowImport (I59)", () => {
     expect(ipc.allCalls).toHaveLength(0);
   });
 
+  it("import and export refuse a value-taking option given with no value, before any call", async () => {
+    const file = join(tmp(), "b.json");
+    writeFileSync(file, "B");
+    const ipc = createDeclaringMockIpcClient([]);
+    await expect(runWorkflowImport(ipc.client, [file, "--signer"])).rejects.toThrow(
+      "--signer needs a value",
+    );
+    await expect(runWorkflowImport(ipc.client, [file, "--schedule", "--replace"])).rejects.toThrow(
+      "--schedule needs a value",
+    );
+    await expect(
+      runWorkflowImport(ipc.client, [file, "--schedule", "0 6 * * *", "--tz"]),
+    ).rejects.toThrow("--tz needs a value");
+    await expect(runWorkflowExport(ipc.client, ["weekly", "--out"])).rejects.toThrow(
+      "--out needs a value",
+    );
+    await expect(
+      runWorkflowExport(ipc.client, ["weekly", "--out", "f.json", "--author"]),
+    ).rejects.toThrow("--author needs a value");
+    expect(ipc.allCalls).toHaveLength(0);
+  });
+
   it("import refuses a file far larger than a bundle without reading it", async () => {
     const file = join(tmp(), "big.json");
     writeFileSync(file, "x".repeat(1024 * 1024 + 1));

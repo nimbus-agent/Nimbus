@@ -272,6 +272,34 @@ describe("buildBundleBody (export)", () => {
     expect(e.message).toContain("step 2");
     expect(e.message).toContain("post");
   });
+  test("never echoes a step label that itself looks like a credential", () => {
+    const token = `ghp_${"b".repeat(36)}`;
+    const steps = [
+      FIXTURE_STEPS[0],
+      {
+        kind: "write",
+        label: token,
+        tool: "gmail_thread_archive",
+        input: { threadId: { const: "t1" } },
+      },
+    ];
+    const e = refusal(() =>
+      buildBundleBody({ ...base, stepsJson: JSON.stringify(steps) }, FIXTURE_NOW),
+    );
+    expect(e.code).toBe("ERR_WORKFLOW_BUNDLE_CREDENTIAL");
+    expect(e.message).toContain("step 2");
+    expect(e.message).not.toContain("ghp_");
+  });
+  test("refuses a description or an author that looks like a credential, without echoing it", () => {
+    const stepsJson = JSON.stringify(FIXTURE_STEPS);
+    const token = `ghp_${"c".repeat(36)}`;
+    for (const over of [{ description: `use token ${token}` }, { author: token }]) {
+      const e = refusal(() => buildBundleBody({ ...base, ...over, stepsJson }, FIXTURE_NOW));
+      expect(e.code).toBe("ERR_WORKFLOW_BUNDLE_CREDENTIAL");
+      expect(e.message).toContain(Object.keys(over)[0] ?? "");
+      expect(e.message).not.toContain("ghp_");
+    }
+  });
   test("refuses a name a bundle cannot hold and a stored description over 500", () => {
     const stepsJson = JSON.stringify(FIXTURE_STEPS);
     expect(code(() => buildBundleBody({ ...base, name: "bad name", stepsJson }, FIXTURE_NOW))).toBe(

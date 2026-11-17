@@ -327,13 +327,30 @@ export function buildBundleBody(input: BuildBundleInput, now: number): BundleBod
   const canonical = canonicalBundleSteps(JSON.parse(canonicalStepsText(parsed)) as unknown);
   canonical.parsed.forEach((step, i) => {
     if (looksLikeCredential(canonicalJson(step))) {
-      const label = step.label === undefined ? "" : ` ("${step.label.slice(0, 40)}")`;
+      // Never echo a label that itself looks like a credential: the message reaches IPC.
+      const label =
+        step.label === undefined || looksLikeCredential(step.label)
+          ? ""
+          : ` ("${step.label.slice(0, 40)}")`;
       throw new BundleError(
         E.CREDENTIAL,
         `step ${String(i + 1)}${label} looks like it holds a credential; remove it before exporting`,
       );
     }
   });
+  // The description and the author label are signed into the bundle too; the refusal names the
+  // field and never echoes its text.
+  for (const [field, value] of [
+    ["description", input.description],
+    ["author", input.author],
+  ] as const) {
+    if (value !== null && looksLikeCredential(value)) {
+      throw new BundleError(
+        E.CREDENTIAL,
+        `the workflow's ${field} looks like it holds a credential; remove it before exporting`,
+      );
+    }
+  }
   const body: BundleBody = {
     format: BUNDLE_FORMAT,
     name: input.name,

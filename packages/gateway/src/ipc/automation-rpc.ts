@@ -135,6 +135,7 @@ import {
 import { verifyOneExtensionStrict } from "../extensions/verify-extensions.ts";
 import type { SignatureDisableReason } from "../extensions/verify-signature.ts";
 import { newestPrevVersion, removeExtensionVersionStore } from "../extensions/version-store.ts";
+import { constantTimeStringEqual } from "../util/timing-safe-compare.ts";
 import type { NimbusVault } from "../vault/index.ts";
 import { asRecord } from "./connector-rpc-shared.ts";
 import { readAuditEntries } from "./extension-audit-rpc.ts";
@@ -202,13 +203,15 @@ function listWithSource(
   return rows.map((w) => {
     const src = sources.get(w.id);
     if (src === undefined) return { ...w, source: { kind: "local" } as const };
+    // An unknown current hash (steps that no longer parse) is always "edited"; otherwise I10.
+    const current = currentContentHash(w.steps_json);
     return {
       ...w,
       source: {
         kind: "imported",
         signerFingerprint: src.signerFingerprint,
         issuedAt: src.issuedAt,
-        edited: currentContentHash(w.steps_json) !== src.stepsSha256,
+        edited: current === null || !constantTimeStringEqual(current, src.stepsSha256),
       } as const,
     };
   });

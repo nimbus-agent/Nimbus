@@ -7699,11 +7699,34 @@ describe("D50 - the signed workflow import stays inside its confinement (I59)", 
         );
       }
     }
-    // The two named exceptions stay allowed; a type-only connectors import is allowed too.
+    // A forbidden import that FOLLOWS another on the same line (after a `;`) is still read.
+    for (const path of [BUNDLE, IMPORT, PROMPT, STORE, RPC]) {
+      expect(
+        rules([
+          ...GOOD,
+          file(
+            path,
+            'import { a } from "../util/canonical-json.ts"; import { x } from "../share/share-gate.ts";',
+          ),
+        ]),
+        `${path} same-line`,
+      ).toContain("workflow-import-forbidden-import");
+    }
+    // The two named exceptions stay allowed; a type-only connectors import is allowed too, also
+    // when it follows another import on the same line.
     expect(
       rules([
         ...GOOD,
         file(BUNDLE, 'import type { X } from "../connectors/connector-write-registry.ts";'),
+      ]),
+    ).toEqual([]);
+    expect(
+      rules([
+        ...GOOD,
+        file(
+          PROMPT,
+          'import { a } from "../util/canonical-json.ts"; import { escapeDiffText } from "../connectors/connector-writes/sanitise.ts";',
+        ),
       ]),
     ).toEqual([]);
   });

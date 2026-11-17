@@ -328,6 +328,37 @@ describe("replace, restore and the replay floor", () => {
     expect(floorFor(h.db, FP_A, "weekly-cleanup")?.importCount).toBe(1);
   });
 
+  test("the same recorded bundle as a DRY RUN still renders its preview and writes nothing", async () => {
+    const h = harness();
+    const text = bundle();
+    await h.run({ bundleText: text });
+    h.asked.length = 0;
+    const r = await h.run({ bundleText: text, dryRun: true, replace: true });
+    expect(r).toMatchObject({ dryRun: true });
+    expect(String((r as { promptText?: string }).promptText)).toContain("weekly-cleanup");
+    expect(h.asked).toHaveLength(0);
+    expect(floorFor(h.db, FP_A, "weekly-cleanup")?.importCount).toBe(1);
+  });
+
+  test("the same recorded bundle with a NEW schedule goes through the approval and sets it", async () => {
+    const h = harness();
+    const text = bundle();
+    await h.run({ bundleText: text });
+    h.asked.length = 0;
+    const r = await h.run({
+      bundleText: text,
+      replace: true,
+      schedule: "0 6 * * *",
+      scheduleTz: "UTC",
+    });
+    expect(r).toMatchObject({ scheduled: true, alreadyImported: false });
+    expect(h.asked).toHaveLength(1);
+    expect(getWorkflowByName(h.db, "weekly-cleanup")).toMatchObject({
+      schedule: "0 6 * * *",
+      schedule_tz: "UTC",
+    });
+  });
+
   test("after the owner deletes the workflow, its own recorded bundle restores through the prompt", async () => {
     const h = harness();
     const text = bundle();
