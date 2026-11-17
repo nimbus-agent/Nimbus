@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794890535926,
+  "lastUpdate": 1794934096225,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "9b3ed09d5e2f5677d812715234d8821b5de9eda2",
-          "message": "feat(doctor): report embedding runtime state (#1397)\n\n## The gap\n\n`nimbus doctor` had **zero mentions of \"embedding\"**. The gateway knew\nsemantic search was dead and never said so — a real gateway logged\n`embeddings: \"unavailable\"` across **397 consecutive heartbeats** while\ndoctor reported nothing wrong.\n\nThat is the same blind spot #925 closed for the Vault, one subsystem\nover: doctor \"probed nothing but `Bun.which('secret-tool')` and so\nreported `[ok]` where the Vault could not work\". It is also why #1396\nwent unnoticed for so long.\n\n## The change\n\n`diag.snapshot` now carries `embedding` — the existing\n`EmbeddingReadiness`, already computed in `assemble.ts` and until now\nconsumed only by `index.searchRanked` — threaded through the diagnostics\ndispatcher. The CLI renders it with `doctorPrintEmbeddingFromSnapshot`.\n\n## Severity follows each state's documented lifetime\n\nDeliberately not \"anything that isn't ready is broken\":\n\n| State | Verdict | Why |\n| --- | --- | --- |\n| `ready` | `[ok]` | names the model |\n| `disabled` | `[ok]` | off **by design** — calling a deliberate setting\na fault is how a check trains people to ignore it |\n| `warming` | `[warn]` | **transient**, per `embedding-readiness.ts` — a\ncold first run must not read as broken |\n| `unavailable` | `[fail]` | names the **reason**, which is the whole\npoint |\n| unrecognised | `[fail]` | an unknown state is not evidence of health |\n| absent | *silent* | an older gateway reports no field — say nothing\nrather than invent a verdict about a capability we cannot observe |\n\nThe `reason` is the payload that matters. A bare \"unavailable\" is\nexactly what the log already said and what nobody could act on.\n\n## Verified across the real wire\n\nNot both ends faked — that is the failure mode where a test per side\nproves the ends and never the wire. A **source gateway** and a **source\nCLI** over real IPC:\n\n```\n[fail] Embeddings: unavailable — semantic search is disabled for this gateway run:\n       ResolveMessage: Cannot find module\n       '../bin/napi-v3/win32/x64/onnxruntime_binding.node'\n       from '...\\dist\\workers\\embedding-worker.js'\n```\n\nThat is #1396's root cause, surfaced by the tool a user actually runs.\n\n## Why now\n\nThis is the measuring instrument for #1396. Fix the meter before the\nengine: without it the three-platform sidecar fix would be verified by\ngrepping log files, and nothing would stop the capability going silently\ndead again.\n\n## Verification\n\n- Red-proved by reverting the source — the suite fails without it.\n- 6 new tests, one per state plus the absent-field and\nunrecognised-state bounds.\n- 138 tests pass across `doctor-core` and `diagnostics-rpc`;\n`preflight:fast` 32/32.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01J6qbQmiRqJcxDc6ENA8LFc\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n- **New Features**\n  - Added embedding readiness diagnostics to the CLI health check.\n- Reports whether embeddings are ready, warming up, disabled,\nunavailable, or in an unknown state.\n  - Displays relevant model and status details when available.\n- Overall diagnostic results now reflect embedding availability and\nseverity.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->",
-          "timestamp": "2026-08-29T21:12:52+03:00",
-          "tree_id": "9b1f8ddae3e76ca2757bb11861a521b3d225e691",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/9b3ed09d5e2f5677d812715234d8821b5de9eda2"
-        },
-        "date": 1788027986721,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 321.53028295,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 323.90726629999335,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 203.0001436500017,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
+            "name": "nimbus-release-bot[bot]",
+            "username": "nimbus-release-bot[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "9075545bfb1774293ee4810496e7fd6f9b2f123a",
+          "message": "chore: release main (#2041)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>11.1.0</summary>\n\n##\n[11.1.0](https://github.com/nimbus-agent/Nimbus/compare/v11.0.0...v11.1.0)\n(2026-11-17)\n\n\n### Features\n\n* **gateway:** add nimbus incident timeline, cascade ranking in the\npushed brief, and nimbus audit replay (incident engine IC4)\n([#2038](https://github.com/nimbus-agent/Nimbus/issues/2038))\n([9a6ad22](https://github.com/nimbus-agent/Nimbus/commit/9a6ad2239b74acdabf7b91a18278b45ec7d57260))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
+          "timestamp": "2026-11-17T18:41:46+02:00",
+          "tree_id": "018680ca51e30fefd0e457069f0974d975561a4c",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/9075545bfb1774293ee4810496e7fd6f9b2f123a"
+        },
+        "date": 1794934092454,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 173.69133000000403,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 177.27778534999888,
             "unit": "ms"
           }
         ]
