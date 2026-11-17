@@ -16511,10 +16511,9 @@ describe("I59 - a workflow from outside this install enters only through importW
 
   test("the type is in the frozen HITL set, is never an MCP proposal, and is refused over LAN, in the demo root and on the renderer allowlist", async () => {
     expect(HITL_REQUIRED.has("workflow.import")).toBe(true);
-    expect(ACTION_PROPOSABILITY["workflow.import"]).toEqual({
-      kind: "denied",
-      class: "gateway_internal",
-    });
+    // Since AD3b an outside agent can propose only a type a write row routes to (and the owner approved
+    // for agents by name); no row names `workflow.import`, so the agent door can never propose it.
+    expect(agentDoorRow("workflow.import")).toBeUndefined();
     const { checkLanMethodAllowed } = await import("./ipc/lan-rpc.ts");
     for (const m of ["workflow.import", "workflow.export"]) {
       expect(() => checkLanMethodAllowed(m, { peerId: "peer:x", writeAllowed: true }), m).toThrow(
