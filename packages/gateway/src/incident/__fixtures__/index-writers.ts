@@ -128,10 +128,17 @@ export function writeMergedPr(
 export function writeCiRun(
   db: Database,
   resolver: ServiceIdentityResolver,
-  over: { readonly runId?: number; readonly repo?: string; readonly sha?: string } = {},
+  over: {
+    readonly runId?: number;
+    readonly repo?: string;
+    readonly sha?: string;
+    readonly conclusion?: string;
+    readonly atMs?: number;
+  } = {},
 ): string {
   const repo = over.repo ?? "acme/payment-service";
   const id = over.runId ?? 7412;
+  const at = over.atMs ?? T0;
   upsertIndexedItem(
     db,
     {
@@ -140,18 +147,18 @@ export function writeCiRun(
       externalId: `${repo}#run-${String(id)}`,
       title: "Deploy run",
       bodyPreview: "",
-      modifiedAt: T0,
-      syncedAt: T0,
+      modifiedAt: at,
+      syncedAt: at,
       metadata: githubActionsRunMetadata(
         repo,
         {
           id,
           name: "Deploy",
           status: "completed",
-          conclusion: "success",
+          conclusion: over.conclusion ?? "success",
           head_sha: over.sha ?? SHA,
         },
-        T0,
+        at,
       ),
     },
     resolver,

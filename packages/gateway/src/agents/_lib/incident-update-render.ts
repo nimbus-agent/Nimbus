@@ -76,12 +76,19 @@ function httpsUrl(url: string | null): string | null {
   }
 }
 
+function statusLine(r: IncidentRecordV1, service: string | null): string {
+  const parts = [`Status: ${statusWord(r)}`];
+  if (service !== null) parts.push(`Service: ${service}`);
+  if (r.trigger.severity !== null) parts.push(`Severity: ${chatSafe(r.trigger.severity, 20)}`);
+  return parts.join(" | ");
+}
+
 function headerLines(r: IncidentRecordV1, recordId: string, version: number): string[] {
   const t = r.trigger;
   const service = r.binding.service === null ? null : chatSafe(r.binding.service, 60);
   return [
     `Incident update: ${chatSafe(t.title)}`,
-    `Status: ${statusWord(r)}${service === null ? "" : ` | Service: ${service}`}${t.severity === null ? "" : ` | Severity: ${chatSafe(t.severity, 20)}`}`,
+    statusLine(r, service),
     `Record: ${recordId} (version ${String(version)})`,
   ];
 }
@@ -137,7 +144,9 @@ function engineerLines(r: IncidentRecordV1, timeline: Timeline): string[] {
   if (r.change.pr !== null) lines.push(`Pull request: ${chatSafe(r.change.pr.title)}`);
   if (r.change.ci !== null) {
     lines.push(
-      `CI run: ${chatSafe(r.change.ci.title)}${r.change.ci.conclusion === null ? "" : ` (${chatSafe(r.change.ci.conclusion, 20)})`}`,
+      r.change.ci.conclusion === null
+        ? `CI run: ${chatSafe(r.change.ci.title)}`
+        : `CI run: ${chatSafe(r.change.ci.title)} (${chatSafe(r.change.ci.conclusion, 20)})`,
     );
   }
   const events = timeline.events.slice(-ENGINEER_EVENTS);

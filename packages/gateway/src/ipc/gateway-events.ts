@@ -20,6 +20,7 @@ export type GatewayEventKind =
   | "oncall.briefPushed"
   | "briefing.ready"
   | "incident.assembled"
+  | "incident.finding"
   | "incident.updateDrafted";
 
 export interface GatewayEventNotification<P = Record<string, unknown>> {

@@ -161,9 +161,47 @@ describe("production wiring", () => {
     const at = src.indexOf("createSyncAnomalyDetector({");
     expect(at).toBeGreaterThan(0);
     const block = src.slice(at, at + 600);
-    expect(block).toContain("loadNimbusAnomalyFromConfigDir(paths.configDir)");
+    expect(src).toContain("const anomalyConfig = loadNimbusAnomalyFromConfigDir(paths.configDir);");
+    expect(block).toContain("config: anomalyConfig,");
     expect(block).toContain("showIgnoringFailure(notifications, title, body)");
     expect(block).toContain("demo: !syncEnabled");
     expect(src).not.toContain("new AnomalyDetectorStub(");
+  });
+});
+
+describe("seed and onScore (Phase 10 IC8)", () => {
+  const base = {
+    config: { notify: false, minIntervalMinutes: 60, minScore: 3 },
+    demo: false,
+    notify: () => undefined,
+    now: () => 0,
+    logger: () => undefined,
+  };
+
+  test("seeds each series and forwards every score", () => {
+    const seen: string[] = [];
+    const d = createSyncAnomalyDetector({
+      ...base,
+      seed: () => new Map([["sync:duration_ms:github", [10, 10, 10, 10]]]),
+      onScore: (e) => seen.push(`${e.seriesId}:${String(e.samples)}`),
+    });
+    d.recordSample("sync:duration_ms:github", 10, 1);
+    expect(seen).toEqual(["sync:duration_ms:github:4"]);
+  });
+
+  test("a throwing seed or onScore is reported and the detector keeps working", () => {
+    const failures: unknown[] = [];
+    const d = createSyncAnomalyDetector({
+      ...base,
+      onFailure: (e) => failures.push(e),
+      seed: () => {
+        throw new Error("seed");
+      },
+      onScore: () => {
+        throw new Error("score");
+      },
+    });
+    expect(d.recordSample("s", 1, 1)).toBe(0);
+    expect(failures).toHaveLength(2);
   });
 });

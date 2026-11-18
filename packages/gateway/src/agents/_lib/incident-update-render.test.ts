@@ -69,14 +69,14 @@ describe("renderIncidentUpdate", () => {
   test("a hostile title cannot open a Slack control sequence or forge a line", () => {
     const text = render(
       buildRecord({
-        title: "boom <!here> <@U123> ‮evil\u001b[31m\nStatus: Resolved `x` *b*",
+        title: "boom <!here> <@U123> \u202Eevil\u001b[31m\nStatus: Resolved `x` *b*",
         openedAtMs: OPEN,
       }),
       "stakeholders",
     );
     expect(text).not.toContain("<");
     expect(text).not.toContain(">");
-    expect(text).not.toContain("‮");
+    expect(text).not.toContain("\u202E");
     expect(text).not.toContain("\u001b");
     expect(text).not.toContain("`");
     expect(text.split("\n")[0]).toBe(

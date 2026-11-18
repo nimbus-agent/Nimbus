@@ -1,6 +1,3 @@
-import { closeSync, fstatSync, mkdirSync, openSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
-
 import type { IPCClient } from "../ipc-client/index.ts";
 import { CliExit } from "../lib/cli-exit.ts";
 import { declareCliClientKind } from "../lib/declare-client-kind.ts";
@@ -8,6 +5,8 @@ import { INTERACTIVE_RPC_TIMEOUT_MS } from "../lib/rpc-timeouts.ts";
 import { stripControlChars } from "../lib/strip-control-chars.ts";
 import { withGatewayIpc } from "../lib/with-gateway-ipc.ts";
 import { getCliPlatformPaths } from "../paths.ts";
+import { scanFlags } from "./incident-flag-scan.ts";
+import { type PostmortemFs, realPostmortemFs, safeText } from "./incident-postmortem.ts";
 
 /**
  * `nimbus incident update ...` (Phase 10 IC9b): a stakeholder or engineer update drafted from an incident record,
@@ -47,33 +46,14 @@ export type UpdateArgs =
     })
   | (Common & { readonly mode: "send"; readonly dest: UpdateDest; readonly from?: string });
 
-const VALUE_FLAGS = ["--audience", "--version", "--out", "--send", "--from"];
-const BOOL_FLAGS = ["--force", "--json", "--queued"];
-
-type Flags = { values: Map<string, string>; bools: Set<string>; id: string | undefined };
-
-function scan(argv: readonly string[]): Flags | undefined {
-  const values = new Map<string, string>();
-  const bools = new Set<string>();
-  let id: string | undefined;
-  for (let i = 0; i < argv.length; i += 1) {
-    const a = argv[i] as string;
-    if (BOOL_FLAGS.includes(a)) {
-      if (bools.has(a)) return undefined;
-      bools.add(a);
-    } else if (VALUE_FLAGS.includes(a)) {
-      const v = argv[i + 1];
-      if (v === undefined || v === "" || v.startsWith("--") || values.has(a)) return undefined;
-      values.set(a, v);
-      i += 1;
-    } else if (a.startsWith("--") || id !== undefined) {
-      return undefined;
-    } else {
-      id = a;
-    }
-  }
-  return { values, bools, id };
-}
+const VALUE_FLAGS: ReadonlySet<string> = new Set([
+  "--audience",
+  "--version",
+  "--out",
+  "--send",
+  "--from",
+]);
+const BOOL_FLAGS: ReadonlySet<string> = new Set(["--force", "--json", "--queued"]);
 
 /** `slack:C0123` or `teams:<team-id>/<19:...thread id>`; `undefined` is a usage error. */
 export function parseDest(raw: string): UpdateDest | undefined {
@@ -95,7 +75,7 @@ export function parseDest(raw: string): UpdateDest | undefined {
 
 /** Parses the arguments after `update`; `undefined` is a usage error. */
 export function parseUpdateArgs(argv: readonly string[]): UpdateArgs | undefined {
-  const f = scan(argv);
+  const f = scanFlags(argv, VALUE_FLAGS, BOOL_FLAGS);
   if (f === undefined) return undefined;
   if (f.bools.has("--queued")) {
     if (f.id !== undefined || f.values.size > 0 || f.bools.has("--force")) return undefined;
@@ -109,7 +89,7 @@ export function parseUpdateArgs(argv: readonly string[]): UpdateArgs | undefined
   const versionRaw = f.values.get("--version");
   let version: number | undefined;
   if (versionRaw !== undefined) {
-    if (!/^[1-9][0-9]{0,8}$/.test(versionRaw)) return undefined;
+    if (!/^[1-9]\d{0,8}$/.test(versionRaw)) return undefined;
     version = Number(versionRaw);
   }
   const common: Common = {
@@ -136,11 +116,6 @@ export function parseUpdateArgs(argv: readonly string[]): UpdateArgs | undefined
   return { ...common, mode: "send", dest, ...(from === undefined ? {} : { from }) };
 }
 
-/** Control, format (bidi, zero-width) and line or paragraph separator characters out of third-party text. */
-function safeText(s: string): string {
-  return s.replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]+/gu, " ").trim();
-}
-
 /** Line by line, keeping the line structure. */
 function cleanLines(text: string): string {
   return text
@@ -154,30 +129,9 @@ export interface UpdateSink {
   err(s: string): void;
 }
 
-/** The file system the command touches, injected so tests use a temp directory and nothing else. */
-export interface UpdateFs {
-  readText(path: string, maxBytes: number): string;
-  /** Creates the parent directory (0700) and writes the file (0600); `exclusive` refuses an existing path. */
-  writeText(path: string, text: string, exclusive: boolean): void;
-}
-
-export const realUpdateFs: UpdateFs = {
-  readText(path, maxBytes) {
-    // One open file descriptor for the size check and the read, so the file cannot change in between.
-    const fd = openSync(path, "r");
-    try {
-      const size = fstatSync(fd).size;
-      if (size > maxBytes) throw new Error(`${path} is larger than ${String(maxBytes)} bytes`);
-      return readFileSync(fd, "utf8");
-    } finally {
-      closeSync(fd);
-    }
-  },
-  writeText(path, text, exclusive) {
-    mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
-    writeFileSync(path, text, { flag: exclusive ? "wx" : "w", mode: 0o600 });
-  },
-};
+/** The file system the command touches: the post-mortem command's (one descriptor per read; 0600 files). */
+export type UpdateFs = PostmortemFs;
+export const realUpdateFs: UpdateFs = realPostmortemFs;
 
 type DraftReply = {
   recordId: string;

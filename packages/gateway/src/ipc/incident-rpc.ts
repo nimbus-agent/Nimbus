@@ -9,6 +9,7 @@ import { type GitHistoryReader, readGitHistory } from "../debt/git-history.ts";
 import { IncidentError } from "../incident/assemble.ts";
 import { type CascadeGroup, groupOf } from "../incident/cascade.ts";
 import { type CascadeInfo, readCascade } from "../incident/cascade-read.ts";
+import { listFindings } from "../incident/finding-store.ts";
 import type { IncidentEngine } from "../incident/incident-engine.ts";
 import { resolveIncidentRef } from "../incident/incident-id.ts";
 import type { IncidentRecordV1 } from "../incident/incident-record-types.ts";
@@ -41,12 +42,13 @@ import type { ClientKind } from "./server/client-kind.ts";
  *   incident.advisory {}                               -> { advisory }  (IC5a)
  *   incident.advisorySet { on }                        -> { advisory }  (IC5a)
  *   incident.debt { since?, untouched?, minIncidents?, limit? } -> DebtResult   (IC7b; runs `git log` under debt/, never from incident/)
+ *   incident.findings { all?, limit? }                -> { findings }   (IC8; the radar's and the anomaly baseline's findings, read only)
  *
  * `incident.get` also answers a live `cascade` (IC4: where this record stands among the open records of the
  * same 30-minute window) and `incident.list { cascade: true }` also answers the open `groups`; both are derived
  * at call time from the open records and the declared `depends_on`, never stored.
  *
- * ALL ELEVEN serve only a connection whose DECLARED kind is `cli` or `ui` (`requireOwnerKind`, called first by
+ * ALL TWELVE serve only a connection whose DECLARED kind is `cli` or `ui` (`requireOwnerKind`, called first by
  * every handler, before any query runs): a record holds capped titles of items from several services, and the
  * kind is the connection's (`ctx.getClientKind`), never a param. The whole namespace is LAN-forbidden (I5) and
  * is NOT renderer-callable (I7): the desktop gets `list`, `get` and `timeline` at a later slice, `assemble` never.
@@ -490,6 +492,43 @@ async function assemble(ctx: IncidentRpcCtx, raw: unknown): Promise<unknown> {
   }
 }
 
+export const FINDINGS_LIST_DEFAULT = 50;
+export const FINDINGS_LIST_MAX = 500;
+
+/** `incident.findings`: open findings first (newest first), then with `all` the cleared ones. Read only. */
+function findings(ctx: IncidentRpcCtx, raw: unknown): unknown {
+  const p = requireKeys("incident.findings", raw, ["all", "limit"]);
+  const all = p["all"];
+  if (all !== undefined && typeof all !== "boolean") {
+    throw new IncidentRpcError(-32602, "incident.findings: all must be a boolean");
+  }
+  const limit = p["limit"] ?? FINDINGS_LIST_DEFAULT;
+  if (
+    typeof limit !== "number" ||
+    !Number.isInteger(limit) ||
+    limit < 1 ||
+    limit > FINDINGS_LIST_MAX
+  ) {
+    throw new IncidentRpcError(
+      -32602,
+      `incident.findings: limit must be an integer 1..${String(FINDINGS_LIST_MAX)}`,
+    );
+  }
+  const rows = listFindings(ctx.db, { all: all === true, limit });
+  return {
+    findings: rows.map((r) => ({
+      id: r.id,
+      kind: r.kind,
+      key: r.finding_key,
+      service: r.service,
+      detail: JSON.parse(r.detail_json) as unknown,
+      openedAtMs: r.opened_at_ms,
+      lastSeenAtMs: r.last_seen_at_ms,
+      clearedAtMs: r.cleared_at_ms,
+    })),
+  };
+}
+
 function remediationOf(ctx: IncidentRpcCtx): Remediation {
   if (ctx.remediation === undefined) {
     throw new IncidentRpcError(
@@ -562,6 +601,10 @@ export async function dispatchIncidentRpc(
     "incident.debt": async (raw) => {
       requireOwnerKind(caller.kind);
       return debt(ctx, raw);
+    },
+    "incident.findings": (raw) => {
+      requireOwnerKind(caller.kind);
+      return findings(ctx, raw);
     },
     "incident.assemble": async (raw) => {
       requireOwnerKind(caller.kind);

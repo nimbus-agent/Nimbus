@@ -14,7 +14,6 @@ import type { ExecutorPolicyDep } from "../engine/executor.ts";
 import { buildOwnerPushExecutor } from "../engine/run-ask.ts";
 import type { AuditSink, ConnectorDispatcher } from "../engine/types.ts";
 import { IncidentError } from "../incident/assemble.ts";
-import { resolveIncidentRef } from "../incident/incident-id.ts";
 import { PostmortemError } from "../incident/postmortem-brief.ts";
 import { PUSH_BODY_MAX_BYTES } from "../postmortem/postmortem-convert.ts";
 import { draftPostmortem } from "../postmortem/postmortem-draft.ts";
@@ -22,6 +21,7 @@ import { type PushTarget, pushPostmortem } from "../postmortem/postmortem-push.t
 import { dispatchByMethod, type RpcMissOrHit } from "./_lib/dispatch-by-method.ts";
 import type { ConsentCoordinator } from "./consent.ts";
 import { IncidentRpcError, requireOwnerKind } from "./incident-rpc.ts";
+import { recordIdFor, requireKeys, stringParam } from "./incident-rpc-params.ts";
 import type { ClientKind } from "./server/client-kind.ts";
 
 /**
@@ -66,37 +66,6 @@ const NOTION_ID_RE = /^[0-9a-fA-F-]{32,36}$/;
 const SPACE_KEY_RE = /^[~A-Za-z0-9_-]{1,255}$/;
 const CONFLUENCE_ID_RE = /^\d{1,20}$/;
 
-function requireKeys(
-  method: string,
-  params: unknown,
-  allowed: readonly string[],
-): Record<string, unknown> {
-  if (params === null || typeof params !== "object" || Array.isArray(params)) {
-    throw new IncidentRpcError(-32602, `${method} requires an object payload`);
-  }
-  const p = params as Record<string, unknown>;
-  for (const key of Object.keys(p)) {
-    if (!allowed.includes(key)) {
-      throw new IncidentRpcError(-32602, `${method}: unknown parameter "${key}"`);
-    }
-  }
-  return p;
-}
-
-function stringParam(
-  method: string,
-  p: Record<string, unknown>,
-  key: string,
-  max: number,
-): string | undefined {
-  const v = p[key];
-  if (v === undefined) return undefined;
-  if (typeof v !== "string" || v === "" || v.length > max) {
-    throw new IncidentRpcError(-32602, `${method}: ${key} must be a non-empty string`);
-  }
-  return v;
-}
-
 function booleanParam(method: string, p: Record<string, unknown>, key: string): boolean {
   const v = p[key];
   if (v === undefined) return false;
@@ -104,31 +73,6 @@ function booleanParam(method: string, p: Record<string, unknown>, key: string): 
     throw new IncidentRpcError(-32602, `${method}: ${key} must be a boolean`);
   }
   return v;
-}
-
-/** The record a person's reference names, or a typed error (never a draft of a record that is not stored). */
-function recordIdFor(db: Database, method: string, p: Record<string, unknown>): string {
-  const id = stringParam(method, p, "id", 256)?.trim();
-  if (id === undefined)
-    throw new IncidentRpcError(-32602, `${method}: id must be a non-empty string`);
-  const ref = resolveIncidentRef(db, id);
-  if (ref.kind === "record") return ref.recordId;
-  if (ref.kind === "ambiguous") {
-    throw new IncidentRpcError(
-      -32602,
-      `ERR_INCIDENT_AMBIGUOUS: that id names more than one item (${ref.candidates.join(", ")}); use the full item id`,
-    );
-  }
-  if (ref.kind === "not_a_trigger") {
-    throw new IncidentRpcError(
-      -32602,
-      `ERR_INCIDENT_NOT_A_TRIGGER: ${ref.itemId} is not a trigger`,
-    );
-  }
-  throw new IncidentRpcError(
-    -32602,
-    "ERR_INCIDENT_NOT_FOUND: no record is stored for that id (show the incident first so it is assembled)",
-  );
 }
 
 function domainError(e: unknown): never {

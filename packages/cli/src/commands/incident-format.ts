@@ -1,6 +1,11 @@
 import { stripTerminalText } from "../lib/strip-terminal-text.ts";
 import { DEBT_USAGE_LINE, type DebtArgs, parseDebtArgs } from "./incident-debt-format.ts";
 import {
+  FINDINGS_USAGE_LINE,
+  type FindingsArgs,
+  parseFindingsArgs,
+} from "./incident-findings-format.ts";
+import {
   parseRemediationArgs,
   REMEDIATE_USAGE,
   type RemediationArgs,
@@ -20,6 +25,7 @@ export const INCIDENT_USAGE =
   `${REMEDIATE_USAGE}
 ` +
   `${DEBT_USAGE_LINE}\n` +
+  `${FINDINGS_USAGE_LINE}\n` +
   "       nimbus incident postmortem <id> [--out <file>] [--template <file>] [--synthesize] | --push notion|confluence ...\n" +
   "       nimbus incident update <id> [--audience stakeholders|engineers] [--out <file>] | --send slack:<c>|teams:<t>/<c> | --queued\n" +
   "  <id> is a record id (inc_...), a trigger item id (pagerduty:...), or the provider's own id.";
@@ -45,7 +51,8 @@ export type IncidentArgs =
       readonly version?: number;
     }
   | RemediationArgs
-  | DebtArgs;
+  | DebtArgs
+  | FindingsArgs;
 
 type ListFlags = {
   open: boolean;
@@ -124,6 +131,7 @@ export function parseIncidentArgs(argv: readonly string[]): IncidentArgs | undef
   }
   if (verb === "timeline") return parseTimelineArgs(rest);
   if (verb === "debt") return parseDebtArgs(rest);
+  if (verb === "findings") return parseFindingsArgs(rest);
   return parseRemediationArgs(verb, rest);
 }
 

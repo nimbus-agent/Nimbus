@@ -34,7 +34,7 @@ export function parseNimbusTomlIncidentScribe(
     }
     if (!inSection) continue;
     const kv = splitKeyValue(trimmed);
-    if (kv === undefined || kv.key !== "enabled") continue;
+    if (kv?.key !== "enabled") continue;
     const b = parseBool(kv.valRaw);
     if (b === undefined) {
       onFallback?.(

@@ -29,7 +29,7 @@ export const SCRIBE_QUEUE_MAX = 200;
 export const SCRIBE_NOTIFY_INTERVAL_MS = 10 * 60_000;
 
 const RECORD_ID_RE = /^inc_[0-9a-f]{16}$/;
-const FILE_RE = /^(inc_[0-9a-f]{16})\.v([1-9][0-9]{0,8})\.json$/;
+const FILE_RE = /^(inc_[0-9a-f]{16})\.v([1-9]\d{0,8})\.json$/;
 
 export type QueuedDraft = {
   readonly recordId: string;
@@ -62,6 +62,12 @@ function fileName(recordId: string, version: number): string {
   return `${recordId}.v${String(version)}.json`;
 }
 
+/** Code-unit order, so the listing does not depend on the locale. */
+function compareIds(a: string, b: string): number {
+  if (a === b) return 0;
+  return a < b ? -1 : 1;
+}
+
 function readEntries(dir: string): QueuedDraft[] {
   let names: string[];
   try {
@@ -90,9 +96,7 @@ function readEntries(dir: string): QueuedDraft[] {
   // Newest first; ties broken by id and version so the order is total.
   out.sort(
     (a, b) =>
-      b.queuedAtMs - a.queuedAtMs ||
-      (a.recordId < b.recordId ? -1 : a.recordId > b.recordId ? 1 : 0) ||
-      b.version - a.version,
+      b.queuedAtMs - a.queuedAtMs || compareIds(a.recordId, b.recordId) || b.version - a.version,
   );
   return out;
 }

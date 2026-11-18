@@ -118,3 +118,16 @@ describe("AnomalyDetectorStub — window and guards", () => {
     expect(events[0]?.score).toBe(score);
   });
 });
+
+describe("seed and onScore (Phase 10 IC8)", () => {
+  test("a seeded window scores the first live sample", () => {
+    const scores: number[] = [];
+    const d = new AnomalyDetectorStub({ windowSize: 4, onScore: (e) => scores.push(e.samples) });
+    d.seed("x", [Number.NaN, 1, 2, 3, 4, 5]);
+    expect(d.deviationScore("x", 100)).toBeGreaterThan(3);
+    d.recordSample("x", 6, 1);
+    expect(scores).toEqual([4]);
+    d.seed("  ", [1]);
+    expect(d.deviationScore("  ", 1)).toBe(0);
+  });
+});

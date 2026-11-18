@@ -234,6 +234,14 @@ function renderGatewayEvent(o: Record<string, unknown>): string | null {
     }
   }
 
+  if (kind === "incident.finding") {
+    const opened = payload["opened"];
+    const cleared = payload["cleared"];
+    if (typeof opened === "number" && typeof cleared === "number") {
+      return `${at} [incident] findings: ${String(opened)} opened, ${String(cleared)} cleared - nimbus incident findings`;
+    }
+  }
+
   if (kind === "incident.updateDrafted") {
     const recordId = str(payload, "recordId");
     const version = payload["version"];
