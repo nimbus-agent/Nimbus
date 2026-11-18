@@ -255,9 +255,13 @@ export function createRemediation(deps: RemediationDeps) {
     };
   }
 
-  /** Derive, store (an explicit listing revives), and return every stored proposal of the record. */
-  function proposals(ref: string): ProposalsResult {
-    return listAndStore(ref, true);
+  /**
+   * Derive, store and return every stored proposal of the record. The owner's terminal listing revives
+   * (`revive` true, the default); the desktop's read (IC10b) passes false, so a renderer read never returns a
+   * denied, expired, superseded or failed proposal to `proposed` and never renews a TTL.
+   */
+  function proposals(ref: string, opts: { readonly revive?: boolean } = {}): ProposalsResult {
+    return listAndStore(ref, opts.revive !== false);
   }
 
   /**

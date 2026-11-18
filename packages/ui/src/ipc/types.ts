@@ -727,3 +727,69 @@ export interface IncidentTimelineResult {
   readonly events: readonly IncidentTimelineEvent[];
   readonly notes: readonly string[];
 }
+
+/** Wire shape of `incident.proposals` (gateway `incident/remediation.ts` `ProposalsResult`, IC5a). Read-only. */
+export interface IncidentProposal {
+  readonly id: string;
+  readonly kind: string;
+  readonly toolId: string;
+  readonly input: unknown;
+  readonly evidence: {
+    readonly rule: string;
+    readonly items: readonly string[];
+    readonly blast: {
+      readonly service: string | null;
+      readonly environment: string | null;
+      readonly dependents: readonly string[];
+      readonly dependentsTruncated: boolean;
+    };
+    readonly confidence: {
+      readonly terms: ReadonlyArray<{
+        readonly name: string;
+        readonly weight: number;
+        readonly met: boolean;
+      }>;
+      readonly total: number;
+    } | null;
+    readonly dryRun: string;
+    readonly target: string;
+  } | null;
+  readonly confidence: number | null;
+  readonly reversibility: string;
+  readonly irreversibleReason: string | null;
+  readonly status: string;
+  readonly createdAtMs: number;
+  readonly expiresAtMs: number;
+  readonly actionId: string | null;
+  readonly undoStatus: string | null;
+  readonly undoable: boolean;
+}
+
+export interface IncidentProposalsResult {
+  readonly recordId: string;
+  readonly version: number;
+  readonly advisory: boolean;
+  readonly proposals: readonly IncidentProposal[];
+  readonly unavailable: ReadonlyArray<{
+    readonly kind: string;
+    readonly code: string;
+    readonly reason: string;
+    readonly app?: string;
+  }>;
+}
+
+/** Wire shape of `incident.findings` (gateway `ipc/incident-rpc.ts`, IC8). Read-only. */
+export interface IncidentFinding {
+  readonly id: string;
+  readonly kind: string;
+  readonly key: string;
+  readonly service: string | null;
+  readonly detail: unknown;
+  readonly openedAtMs: number;
+  readonly lastSeenAtMs: number;
+  readonly clearedAtMs: number | null;
+}
+
+export interface IncidentFindingsResult {
+  readonly findings: readonly IncidentFinding[];
+}

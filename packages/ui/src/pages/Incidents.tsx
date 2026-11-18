@@ -3,6 +3,7 @@ import { useSearchParams } from "react-router";
 import { PageHeader } from "../components/chrome/PageHeader";
 import { asIncidentList } from "../components/incidents/guards";
 import { IncidentDetail } from "../components/incidents/IncidentDetail";
+import { IncidentFindings } from "../components/incidents/IncidentFindings";
 import { IncidentList } from "../components/incidents/IncidentList";
 import { safeText } from "../components/incidents/safe";
 import { useIpcQuery } from "../hooks/useIpcQuery";
@@ -10,7 +11,10 @@ import { useIpcQuery } from "../hooks/useIpcQuery";
 const NO_DATA =
   "No incident source is connected yet. Connect PagerDuty, Jira Service Management, Sentry, Monte Carlo or Bigeye, then sync.";
 
-/** Read-only (Phase 10 IC10a): `incident.list`, `incident.get` and `incident.timeline` and nothing else. */
+/**
+ * Read-only (Phase 10 IC10a, IC10b): `incident.list`, `incident.get`, `incident.timeline`,
+ * `incident.proposals` and `incident.findings`, and nothing else. Nothing here starts an action (§ 6).
+ */
 export function Incidents(): ReactNode {
   const [openOnly, setOpenOnly] = useState(true);
   const [params, setParams] = useSearchParams();
@@ -39,6 +43,7 @@ export function Incidents(): ReactNode {
           />
           Open only
         </label>
+        <IncidentFindings />
         {error !== null && list === null ? (
           <p role="alert" className="text-sm">
             {`Could not load incidents: ${safeText(error)}. From a terminal: nimbus incident list`}

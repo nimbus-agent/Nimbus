@@ -915,27 +915,32 @@ describe("I5 — LAN method allowlist is intrinsic to LanServer", () => {
     }
   });
 
-  test("I7 (IC10a): exactly incident.get, incident.list and incident.timeline are renderer-callable; the allowlist is 135", async () => {
+  /** The renderer-callable incident reads, in the Rust list's sorted order (IC10a + IC10b). */
+  const INCIDENT_RENDERER_READS = [
+    "incident.findings",
+    "incident.get",
+    "incident.list",
+    "incident.proposals",
+    "incident.timeline",
+  ];
+
+  test("I7 (IC10a, IC10b): exactly the five incident reads are renderer-callable; the allowlist is 137", async () => {
     const rust = await read("packages/ui/src-tauri/src/gateway_bridge.rs");
     const start = rust.indexOf("pub const ALLOWED_METHODS: &[&str] = &[");
     const end = rust.indexOf("];", start);
     const list = rust.slice(start, end);
     // by NAME: a one-for-one swap (assemble for timeline) would keep the count
-    expect([...list.matchAll(/"(incident\.[A-Za-z]+)"/g)].map((m) => m[1])).toEqual([
-      "incident.get",
-      "incident.list",
-      "incident.timeline",
-    ]);
+    expect([...list.matchAll(/"(incident\.[A-Za-z]+)"/g)].map((m) => m[1])).toEqual(
+      INCIDENT_RENDERER_READS,
+    );
     // outside the list, only a NEGATIVE pin (`!is_method_allowed("incident.assemble")`) or a positive pin
-    // of one of the three reads may name an incident method
+    // of one of the five reads may name an incident method
     const rest = rust.slice(0, start) + rust.slice(end);
     for (const m of rest.matchAll(/"(incident\.[A-Za-z]+)"/g)) {
       const at = m.index ?? 0;
       const ctx = rest.slice(Math.max(0, at - 40), at);
       const negated = /!\s*is_method_allowed\($/.test(ctx);
-      const positiveRead = ["incident.get", "incident.list", "incident.timeline"].includes(
-        m[1] as string,
-      );
+      const positiveRead = INCIDENT_RENDERER_READS.includes(m[1] as string);
       // the Rust test's denial array lists one refused method per line
       const denialLine = /^\s*$/.test(
         rest.slice(rest.lastIndexOf(String.fromCharCode(10), at - 1) + 1, at),
@@ -943,16 +948,16 @@ describe("I5 — LAN method allowlist is intrinsic to LanServer", () => {
       expect(negated || positiveRead || denialLine).toBe(true);
     }
     expect(rust).toMatch(/^\s*"incident\.assemble",\s*$/m); // the Rust denial list names it
-    expect(rust).toMatch(/assert_eq!\s*\(\s*ALLOWED_METHODS\.len\(\),\s*135\s*\)/);
+    expect(rust).toMatch(/assert_eq!\s*\(\s*ALLOWED_METHODS\.len\(\),\s*137\s*\)/);
     // the Rust denial list names the methods that must stay off the renderer
-    for (const m of ["assemble", "advisory", "remediate", "undo"]) {
+    for (const m of ["assemble", "advisory", "advisorySet", "remediate", "undo"]) {
       expect(rust).toMatch(new RegExp(String.raw`^\s*"incident\.${m}",\s*$`, "m"));
     }
   });
 
   test("I7/I5 (IC10a): each renderer-callable incident read still gates on the DECLARED kind first, the bridge declares ui, and the namespace is off the LAN", async () => {
     const rpc = await read("packages/gateway/src/ipc/incident-rpc.ts");
-    for (const m of ["incident.list", "incident.get", "incident.timeline", "incident.assemble"]) {
+    for (const m of [...INCIDENT_RENDERER_READS, "incident.assemble"]) {
       const at = rpc.indexOf(`"${m}": `);
       expect(at).toBeGreaterThan(0);
       expect(rpc.slice(at, at + 140)).toContain("requireOwnerKind(caller.kind);");
@@ -963,7 +968,7 @@ describe("I5 — LAN method allowlist is intrinsic to LanServer", () => {
     expect(lan).toMatch(/^\s*"incident",\s*$/m);
   });
 
-  test("I8 (IC10a): the Incidents page renders gateway text only as React text or through Markdown, and calls only the three reads", async () => {
+  test("I8 (IC10a, IC10b): the Incidents page renders gateway text only as React text or through Markdown, and calls only the five reads", async () => {
     const files = [
       "packages/ui/src/pages/Incidents.tsx",
       ...(await readdir(resolve(REPO_ROOT, "packages/ui/src/components/incidents"))).map(
@@ -976,7 +981,7 @@ describe("I5 — LAN method allowlist is intrinsic to LanServer", () => {
       expect(src).not.toContain("innerHTML");
       expect(src).not.toContain("incident.assemble");
       for (const m of src.matchAll(/"(incident\.[A-Za-z]+)"/g)) {
-        expect(["incident.list", "incident.get", "incident.timeline"]).toContain(m[1] as string);
+        expect(INCIDENT_RENDERER_READS).toContain(m[1] as string);
       }
     }
   });
@@ -2377,9 +2382,9 @@ describe("I7 — Tauri ALLOWED_METHODS surface for T2 PR 3", () => {
     expect(rust).not.toContain("toolgen.");
   });
 
-  test("allowlist_exact_size assertion is 135", async () => {
+  test("allowlist_exact_size assertion is 137", async () => {
     const rust = await read("packages/ui/src-tauri/src/gateway_bridge.rs");
-    expect(rust).toMatch(/assert_eq!\s*\(\s*ALLOWED_METHODS\.len\(\),\s*135\s*\)/);
+    expect(rust).toMatch(/assert_eq!\s*\(\s*ALLOWED_METHODS\.len\(\),\s*137\s*\)/);
   });
 
   // Role packs Project 4: 111 + 7 - 2 = 116; Project 5 (onboarding): + pack.install, decisions.status
@@ -11148,7 +11153,7 @@ describe("I46 — a renderer can create an extension run grant only through migr
     }
     expect(rust).toContain('assert!(is_method_allowed("migration.list"));');
     expect(rust).toContain('assert!(is_method_allowed("migration.accept"));');
-    expect(rust).toMatch(/assert_eq!\s*\(\s*ALLOWED_METHODS\.len\(\),\s*135\s*\)/);
+    expect(rust).toMatch(/assert_eq!\s*\(\s*ALLOWED_METHODS\.len\(\),\s*137\s*\)/);
   });
 
   // ---- the positive control ------------------------------------------------------------------
@@ -16693,8 +16698,10 @@ describe("I57 (b) - an engine-proposed action reaches dispatch only as the local
 
   test("6: remediate and undo, and the whole advisory surface, are not renderer-callable (I7) and the namespace is LAN-forbidden (I5)", async () => {
     const rust = await read("packages/ui/src-tauri/src/gateway_bridge.rs");
-    for (const m of ["proposals", "remediate", "undo", "advisory", "advisorySet"]) {
-      // The method name appears in the Rust file exactly once: in the IC10a negative list (each entry asserted
+    // `proposals` is the read the desktop gains at IC10b (pinned by the IC10a/IC10b I7 test); the four that
+    // START an action or flip the switch stay off.
+    for (const m of ["remediate", "undo", "advisory", "advisorySet"]) {
+      // The method name appears in the Rust file exactly once: in the incident negative list (each entry asserted
       // `!is_method_allowed`), never in the allowlist.
       const hits = rust.split(`"incident.${m}"`).length - 1;
       expect(hits, m).toBe(1);

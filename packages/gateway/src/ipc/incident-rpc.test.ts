@@ -429,8 +429,8 @@ describe("IC5a: remediate, undo, proposals and the advisory switch", () => {
   type Calls = string[];
   function fakeRemediation(calls: Calls): Remediation {
     return {
-      proposals: (ref: string) => {
-        calls.push(`proposals ${ref}`);
+      proposals: (ref: string, opts?: { readonly revive?: boolean }) => {
+        calls.push(`proposals ${ref}${opts?.revive === false ? " no-revive" : ""}`);
         return { recordId: "inc_x", version: 1, advisory: false, proposals: [], unavailable: [] };
       },
       remediate: async (p: { ref: string; proposalId: string; clientId: string }) => {
@@ -520,6 +520,14 @@ describe("IC5a: remediate, undo, proposals and the advisory switch", () => {
     ]);
   });
 
+  test("IC10b: only the terminal (cli) listing revives; a desktop (ui) read of proposals revives nothing", async () => {
+    const calls: Calls = [];
+    const r = fakeRemediation(calls);
+    await act("incident.proposals", { id: "inc_a" }, { remediation: r, kind: "cli" });
+    await act("incident.proposals", { id: "inc_a" }, { remediation: r, kind: "ui" });
+    expect(calls).toEqual(["proposals inc_a", "proposals inc_a no-revive"]);
+  });
+
   test("a remediation refusal is a params error `<CODE>: <message>`; other errors propagate", async () => {
     const r = fakeRemediation([]);
     const e = await rpcError(
@@ -589,13 +597,13 @@ describe("IC5a: remediate, undo, proposals and the advisory switch", () => {
     }
   });
 
-  test("the IC5a surface stays off the renderer (I7); the LAN refusal is pinned per method in lan-rpc.test.ts", async () => {
+  test("the IC5a actions stay off the renderer (I7; proposals is the IC10b read); the LAN refusal is pinned per method in lan-rpc.test.ts", async () => {
     const rust = await Bun.file(
       fileURLToPath(new URL("../../../ui/src-tauri/src/gateway_bridge.rs", import.meta.url)),
     ).text();
-    for (const m of ["proposals", "remediate", "undo", "advisory", "advisorySet"]) {
+    for (const m of ["remediate", "undo", "advisory", "advisorySet"]) {
       expect(rust.split(`"incident.${m}"`).length - 1, m).toBe(1);
-      // Named once, inside IC10a's negative list (each entry asserted `!is_method_allowed`).
+      // Named once, inside the incident negative list (each entry asserted `!is_method_allowed`).
       const pinFn = rust.indexOf("fn allowlist_incident_reads_only()");
       const pinEnd = rust.indexOf("must not be renderer-callable", pinFn);
       const at = rust.indexOf(`"incident.${m}",`);

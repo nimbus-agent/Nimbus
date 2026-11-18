@@ -1,6 +1,8 @@
 import type {
+  IncidentFindingsResult,
   IncidentGetResult,
   IncidentListResult,
+  IncidentProposalsResult,
   IncidentTimelineResult,
 } from "../../ipc/types";
 import { isRecord } from "./safe";
@@ -32,4 +34,21 @@ export function asIncidentTimeline(v: unknown): IncidentTimelineResult | null {
   )
     return null;
   return v as unknown as IncidentTimelineResult;
+}
+
+export function asIncidentProposals(v: unknown): IncidentProposalsResult | null {
+  if (
+    !isRecord(v) ||
+    typeof v["recordId"] !== "string" ||
+    typeof v["advisory"] !== "boolean" ||
+    !Array.isArray(v["proposals"]) ||
+    !Array.isArray(v["unavailable"])
+  )
+    return null;
+  return v as unknown as IncidentProposalsResult;
+}
+
+export function asIncidentFindings(v: unknown): IncidentFindingsResult | null {
+  if (!isRecord(v) || !Array.isArray(v["findings"])) return null;
+  return v as unknown as IncidentFindingsResult;
 }
