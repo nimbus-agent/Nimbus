@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794983731163,
+  "lastUpdate": 1794985008151,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "b5fabb2d176f67b8286b8cdf237231ce565d9f49",
-          "message": "feat(agents): why, expert and ownership answer about an indexed item (#1421)\n\nThe browser client recognises nine products across six surface kinds. It\ncan run\nan agent against **two** of them.\n\nThat is a supply problem on this side, not a client defect: reading the\nparam\nguards in `agents-rpc.ts` against what a browser page can hand over,\n**no agent\ntakes the URL of an indexed item that is not a pull request.** A Jira\nissue and a\nPagerDuty incident are first-class indexed items with graph entities,\nand none of\nthe fourteen built-in agents will accept one as a subject.\n\nThis adds a third input arm, `itemUrl`, to `why`, `expert` and\n`ownership`.\n\n**Requires `@nimbus-dev/sdk` 1.31.0** (nimbus-sdk#260, #261), which\npublishes\n`WhyItemSubject`, `WhyBrief.itemSubject` and `ExpertBrief.query.itemUrl`\n— all\nadditive. The dependency bump is the first commit here.\n\n## The arm does not generalise for free\n\nAn earlier draft assumed each agent could \"run the body that already\nexists\nagainst that entity\". It cannot, and this is the largest thing the PR\ngets right:\n\n`ticketRowsForPr` (`why.ts`) joins `pe.type = 'pr'` on `from_id`. Handed\nan\n**issue** entity it returns zero rows — not because the issue has no\ncontext, but\nbecause the query walks the edge in the wrong direction from the wrong\nentity\ntype. Shipped naively, `why` would have returned a **well-formed, empty\nbrief for\nevery issue in the index**.\n\n`prResolvingItem` walks `resolves` **inward** — the inverse traversal —\nto the PR\nthat closed the item, and populates the lane input with it. The four\nitem-applicable lanes then answer unchanged, because \"the change that\nclosed this\nissue\" is exactly what a `why` question about an issue is asking.\n`subAuthorship`\nand `subDownstream` stay silent (`arm !== \"ref\"`), the same suppression\nthe\n`prUrl` arm already gets and for the same stated reason: neither\nquestion ever had\na file subject, so a gap would report something missing that was never\nasked for.\n\n`LaneInput.arm` was already `\"ref\" | \"change\"`, passed explicitly rather\nthan\ninferred, with a comment explaining why. The item arm is a third member\nof that\nunion — which is why this is a smaller change to `why.ts` than the lane\ntable\nsuggests.\n\n## Deliberately not a Confluence page\n\nA page indexes as `type: \"page\"`, which appears in **neither**\n`ITEM_LINKED_ENTITY_TYPES` nor `GRAPH_SYNC_BY_TYPE` — so\n`syncGraphFromIndexedItem`\nreturns early twice and a page has **no `graph_entity` at all**. Every\nlane here\nanswers from graph edges.\n\nSo `resolveItemArm` treats \"resolved, but no entity\" as a **miss**.\nNaming an item\nthe lanes then say nothing about reads as \"no context exists\" rather\nthan \"this\nkind of item carries none\". A test seeds a real Confluence page, asserts\nit *is*\nindexed, and pins the miss — so the bound is a decision on record rather\nthan an\nomission someone later \"fixes\".\n\n`ci_run` has the same gap. `build` was never an item-lane surface, so\nnothing\nchanges for it.\n\n## Per agent\n\n- **`why`** — third arm, `itemSubject` threaded exactly as\n`changeSubject` is\n  (absent vs null preserved under `exactOptionalPropertyTypes`).\n- **`expert`** — had **no entity path at all**: five sub-agents, each a\n`LIKE '%' || ? || '%'` scan over one string. Two new edge-backed\nsub-agents\n(`person --opened--> item`, and the resolving PR's author). The arms do\n**not**\nboth run: mixing an edge-backed answer with a lexical one in one ranked\nlist\nwould let a title coincidence outrank someone the graph actually links\nto the\nitem. A test seeds a decoy issue with a near-identical title and a\ndifferent\n  author, and pins that the decoy's author does not appear.\n- **`ownership`** — no new target kind. The item maps to its service via\n`item --belongs_to--> repo --belongs_to--> service` and is answered by\nthe **same\nservice lane** a `{ service }` request takes, so item- and\nservice-scoped answers\ncannot drift apart. `serviceForItemEntity` type-scopes every endpoint\nfor the\nreason `serviceForRoot`'s doc already gives: `belongs_to` is shared, and\nan\n  unscoped walk would surface a channel as a service.\n\n## Every guard's exclusion is now a count\n\n`why`'s `hasRef === hasPrUrl` expresses \"exactly one\" only while there\nare exactly\ntwo arms. At three it silently means \"an odd number\" — `{ref, prUrl,\nitemUrl}`\ntogether would have been **accepted**, and the handler would have\nanswered the ref\narm while ignoring two other questions the caller asked. Counting says\nwhat it\nmeans at any arity, and that three-arm case is now a test. `ownership`'s\npairwise\n`path && service` had the same defect and gets the same fix.\n\n`requireUrlArm` extracts the `prUrl` arm's three checks — string, length\nbound,\nuserinfo rejection — so every URL arm inherits them rather than growing\ncopies to\nkeep in step.\n\n## Testing\n\n`bun test packages/gateway/src/agents/ packages/gateway/src/ipc/`:\n**2603 pass, 0\nfail.** `typecheck`, `lint` and `lint:markdown` clean.\n\nNew coverage: the item arm per entity type (findings **or** gaps, never\nneither);\nthe Confluence-page miss; the file/line lanes silent rather than gapped;\nan issue\nnever listed as its own ticket; `expert` answering from edges rather\nthan a title\nmatch; `ownership` mapping to its service and degrading when it reaches\nnone; and\n`why`'s arm count at every arity.\n\n## Not in this PR\n\n`resolveFileByRemote` and the forge-file arm are PR 2; `connections` and\n`currency` are PR 3. See\n`docs/superpowers/plans/2026-08-31-agents-for-items-and-files.md`.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01UsjPfu2BxDVUC7W8Wz8unL\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Added support for Jira issues, Linear issues, and PagerDuty incidents\nin “Why” queries through item URLs.\n* Added item-based expert searches for authors and pull requests that\nresolved an item.\n* Added item-based ownership lookups, mapping indexed items to their\nowning services.\n* Added validation, resolution, gap reporting, and query details for\nitem-based requests.\n\n* **Documentation**\n* Added design specifications, implementation plans, review notes, and\nchangelog coverage for item-based agents.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-09-01T17:58:35Z",
-          "tree_id": "4e349f3047a91caad6e22e48af8252b55dc8b8ea",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/b5fabb2d176f67b8286b8cdf237231ce565d9f49"
-        },
-        "date": 1788286263905,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 330.6265102999947,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 321.7001805,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 179.06112344999855,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "f83ba9a2971b4f26f2f5fa667adf3c106be3649c",
+          "message": "feat(gateway): approve-from-push, run a pushed brief's remediation proposal with nimbus oncall pushed --remediate (incident engine IC5b) (#2051)\n\nIncident engine IC5b, approve-from-push: the CLI door (spec § 5.5, owner\nruling OR-10-16's local substitute).\n\n## What it does\n\n- A pushed incident brief now carries its record's top OPEN remediation\nproposal (highest confidence). The push gets it from\n`remediation.topProposal`, the owner listing, which derives and stores\nproposals and builds no action. The pushed copy of the Markdown gains a\n`## Proposed remediation` block: the reversibility label first\n(`IRREVERSIBLE` in capitals), the kind, the tool, the confidence, the\nexpiry and the exact command. The brief JSON gains `proposal`, which\nholds ids and gateway-set labels and never the input. `oncall.pushedGet`\nreturns it re-validated as `proposal`, or null.\n- `nimbus oncall pushed <incident-id> --remediate` runs that proposal at\na terminal, with no other flag. It calls the SAME `incident.remediate`\nas `nimbus incident remediate --pick`, on this connection, with\nhuman-only consent and the long timeout. The proposal is re-derived and\nclaimed. The executor's own prompt (the typed preview, the target's\ncurrent state, `Proposed by: the incident engine`, the reversibility\nlabel, and the typed confirmation for a Wave 4 row) appears in this\nterminal. A carried id that is stale, or past its 2-hour TTL, is refused\nwith the hint to list again.\n- The push approves nothing.\n\n**No** migration, IPC method, HITL type, invariant, static rule or Tauri\nallowlist change. I57 (b)'s text gains the door.\n`security-invariants.test.ts` I57 (b) test 8 pins it: the push module\nnames no remediate call, executor, action builder or consent;\n`assemble.ts` hands it only `remediation.topProposal`; `topProposal`\nclaims nothing; the CLI calls `incident.remediate` with human-only\nconsent.\n\n## Not built (owner question)\n\nThe spec's ChatOps headline **Remediate** action uses \"the existing\napprove flow\". That flow is the executor's I20 delegation path\n(`answerSource: \"remote\"`), which I57 (b) and the IC4 executor check\nforbid for every incident-linked action, so it needs an owner ruling.\nThe options are:\n- amend I20 / I57 (b) for a ChatOps answer from the resource owner;\n- drop the ChatOps door and show the CLI command only;\n- defer to Phase 11's signed approval.\n\nThe desktop page does not show the proposal yet.\n\n## Docs\n\n- `docs/roadmap.md`: the Approve-from-push row's progress, and the IC5a\nrow.\n- `docs/architecture.md`\n- `docs/cli-reference.md`\n- `docs/SECURITY-INVARIANTS.md`: I57 (b).\n\nPer the batched hot-docs rule, the CLAUDE.md / GEMINI.md status\nsentence, the CHANGELOG top and the README are held for the batch's last\nPR.\n\n## Verification\n\n- `bun run preflight:fast` is green.\n- The touched suites pass: remediation, oncall-push, the oncall-push RPC\nand its contract fixture, `assemble`, and the CLI `oncall pushed` tests.\n- `security-invariants` I57 passes, 19 tests.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JmSjrCk6NpLauKU2yYCwva\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n- **New Features**\n- Pushed on-call briefs can include the highest-confidence open\nremediation proposal, with key details and human-approval instructions.\n- Added `nimbus oncall pushed <id> --remediate` to review and run a\nbrief’s proposal from a terminal. The command requires a terminal,\nrefuses expired or stale proposals, and does not approve proposals\nautomatically.\n- **Documentation**\n- Updated the CLI reference, architecture, security guidance, and\nroadmap to describe the approval flow and note that ChatOps remediation\nand desktop proposal display remain unavailable.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-18T06:43:38Z",
+          "tree_id": "98331d508ed1e5b36acb52278958747ea6132bf3",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/f83ba9a2971b4f26f2f5fa667adf3c106be3649c"
+        },
+        "date": 1794985004723,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 171.26590395000093,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 172.50287720000088,
             "unit": "ms"
           }
         ]
