@@ -348,6 +348,7 @@ describe("extension management over LAN (I5 — CLI-only)", () => {
       "extension.credentialStatus",
       "extension.eval",
       "extension.audit",
+      "extension.verifyProvenance",
     ]) {
       expect(() => checkLanMethodAllowed(m, { peerId: "p", writeAllowed: true })).toThrow(LanError);
       expect(() => checkLanMethodAllowed(m, { peerId: "p", writeAllowed: false })).toThrow(

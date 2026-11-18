@@ -51,6 +51,8 @@ const PUBLISHER_KEY_FINGERPRINT_SCHEMA_VERSION = 76;
 
 /** V79 added `kind`; below it every row is an extension. */
 const KIND_SCHEMA_VERSION = 79;
+/** V105: `provenance_json` / `provenance_bundle` (offline provenance re-verification, slice 2). */
+const PROVENANCE_SCHEMA_VERSION = 105;
 
 function hasKindColumn(db: Database): boolean {
   return readIndexedUserVersion(db) >= KIND_SCHEMA_VERSION;
@@ -199,10 +201,17 @@ export function updateExtensionRowVersion(
   // omitted, the digest is NULL.
   const hasDigest = hasTreeDigestColumn(db);
   const digestSet = hasDigest ? ", tree_digest = ?" : "";
+  // The same reasoning for the provenance a registry install recorded (V105): it describes the
+  // package that was installed then, so a version change drops it rather than let it describe other
+  // code (a downgrade back to that version included).
+  const provenanceClear =
+    readIndexedUserVersion(db) >= PROVENANCE_SCHEMA_VERSION
+      ? ", provenance_json = NULL, provenance_bundle = NULL"
+      : "";
   const r = dbRun(
     db,
     `UPDATE extension
-        SET version = ?, manifest_hash = ?, entry_hash = ?, last_verified_at = ?${digestSet}
+        SET version = ?, manifest_hash = ?, entry_hash = ?, last_verified_at = ?${digestSet}${provenanceClear}
       WHERE id = ?`,
     hasDigest
       ? [version, manifestHash, entryHash, lastVerifiedAt, treeDigest, id]

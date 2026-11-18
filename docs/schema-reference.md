@@ -1265,6 +1265,17 @@ ALTER TABLE builtin_registry_state ADD COLUMN last_index_sha256 TEXT;
 ALTER TABLE extension ADD COLUMN publisher_key_fingerprint TEXT;
 ALTER TABLE extension_run_grant ADD COLUMN trust_ack_json TEXT NOT NULL DEFAULT '[]';
 
+-- V105 -- installed copies carry their offline-verified build provenance (2026-11-18; offline
+-- provenance re-verification, slice 2; I51 bound 6). `provenance_json`: what a registry install showed
+-- ({ v: 1, version, registry, packageSha256, provenance, recheck?, checkedAt }); read only for the
+-- installed version it names, so an update's new code is never described by the old record.
+-- `provenance_bundle`: the Sigstore bundle (canonical JSON, at most 64 KiB), stored only when it was
+-- fetched and matched the signed index, for `nimbus extension verify-provenance`. Both NULL for a
+-- local install and every row from before V105. Written only by
+-- `extensions/registry/installed-provenance.ts` (a source pin).
+ALTER TABLE extension ADD COLUMN provenance_json TEXT;
+ALTER TABLE extension ADD COLUMN provenance_bundle TEXT;
+
 -- V77 -- every source a trust statement arrived from (2026-10-27; trust layer PR 3b).
 -- `trust_statement` keeps one row per statement with its first source; this table holds one row per
 -- (statement, source). A publisher-signed statement counts only for extensions installed from a

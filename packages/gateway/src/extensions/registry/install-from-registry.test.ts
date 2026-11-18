@@ -53,6 +53,7 @@ import {
   installFromRegistry,
   installVerifiedRegistryPackage,
 } from "./install-from-registry.ts";
+import { readInstalledProvenance } from "./installed-provenance.ts";
 import {
   createRegistryDependencyResolver,
   type RegistryDependencyResolver,
@@ -186,6 +187,8 @@ describe("installFromRegistry", () => {
   });
 
   test("a published Sigstore bundle is re-checked offline; every outcome is one line, never a refusal", async () => {
+    // The suite runs at V77; slice 2's columns arrive at V105.
+    runIndexedSchemaMigrations(db, 105);
     // The real cli/cli bundle: it verifies against the baked roots, but names cli/cli's tarball,
     // not this test package, so the most it can reach here is `subject_mismatch` (on a runtime
     // whose EC verify works; `signature_unverified` on Bun before 1.4). The verified outcome over
@@ -239,6 +242,11 @@ describe("installFromRegistry", () => {
       fetched?.provenanceRecheck?.status === "unverified" ? fetched.provenanceRecheck.reason : "",
     );
     expect(fetched?.provenanceNote?.startsWith(`${base}; not re-verified offline: `)).toBe(true);
+    // Slice 2: the installed copy keeps the same sentence, and the bundle (it matched the index).
+    expect(readInstalledProvenance(db, ID, "1.0.0")).toMatchObject({
+      note: fetched?.provenanceNote,
+      bundleStored: true,
+    });
 
     const tampered = await run({ sha256: "0".repeat(64) });
     expect(tampered?.provenanceRecheck).toEqual({
@@ -248,6 +256,8 @@ describe("installFromRegistry", () => {
     expect(tampered?.provenanceNote).toBe(
       `${base}; not re-verified offline: the attestation does not match the signed index`,
     );
+    // A bundle that did not match the index is never kept.
+    expect(readInstalledProvenance(db, ID, "1.0.0")?.bundleStored).toBe(false);
 
     const missing = await run({ file: "", sha256: "a".repeat(64) });
     expect(missing?.provenanceRecheck).toEqual({
@@ -259,6 +269,10 @@ describe("installFromRegistry", () => {
     const none = await run({ ref: false });
     expect(none?.provenanceNote).toBe(base);
     expect(none?.provenanceRecheck).toBeUndefined();
+    expect(readInstalledProvenance(db, ID, "1.0.0")).toMatchObject({
+      note: base,
+      bundleStored: false,
+    });
   });
 
   test("the approval states the evidence for the package, and it survives the consent redaction", async () => {

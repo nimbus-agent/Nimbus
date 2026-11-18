@@ -52,6 +52,7 @@ import {
 } from "./extension-observation-format.ts";
 import { runExtensionPack } from "./extension-pack.ts";
 import { type PostInstallIo, runConnectFix, runPostInstallWalk } from "./extension-post-install.ts";
+import { installedProvenanceLines, runExtensionVerifyProvenance } from "./extension-provenance.ts";
 import { runExtensionPublish } from "./extension-publish.ts";
 import {
   accessLines,
@@ -129,6 +130,8 @@ type ExtensionListEntry = {
   evidence?: unknown;
   /** The registry a registry-sourced install came from, whose index holds its evidence. */
   evidenceIn?: unknown;
+  /** What a registry install kept of this version's build provenance; absent otherwise. */
+  installedProvenance?: unknown;
   enabled?: number;
   needs_reinstall?: boolean;
   signature_disabled?: boolean;
@@ -509,6 +512,7 @@ function printExtensionInfo(
   for (const line of authorMetadataLines(e)) console.log(line);
   for (const line of accessLines(e.access)) console.log(line);
   for (const line of installedEvidenceLines(e)) console.log(line);
+  for (const line of installedProvenanceLines(e.installedProvenance)) console.log(line);
   console.log(formatNetworkIsolationLine(sandboxCap));
   console.log("  See: docs/sandbox.md#platform-asymmetry");
   // Any reason the gateway attached — pre-T2 or signature (I16) — is printed verbatim. The
@@ -1340,7 +1344,7 @@ export async function runExtensionSign(args: string[]): Promise<number> {
 }
 
 const EXTENSION_USAGE =
-  "Usage: nimbus extension list [--filter needs-reinstall] [--tree] [--json] | info <id> [--deps] [--registry <name> | --remote] [--json] | search <query> [--json] | install <path | id> [--registry <name>] [--version <v>] [--channel beta] [--accept-publisher-key <fingerprint>] [--publisher-key <path>] [--yes] | rehash <id> [--yes] | approve <id> [--model] | revoke <id> | credential set <id> <name> | credential status <id> | enable <id> | disable <id> | remove <id> [--yes] [--force] [--clean-deps] | update [<id>] [--check] [--to <version>] [--accept-publisher-key <fingerprint>] [--json] | downgrade <id> [--json] | report <id> | sponsor <id> [--registry <name>] [--index <n>] | clone <id> [--registry <name>] [--version <v>] [--into <dir>] [--publisher <id>] [--json] | audit [<id>] [--json] | pack <dir> --out <file> | publish <dir> --registry-repo <owner/repo> [--clone <path>] [--channel stable|beta] [--statement <file>]... [--no-pr] | key rotate --from <old key file> --to <new key file> --publisher <id> [--out <file>] [--force] | key revoke --key <key file> --publisher <id> --reason <text> [--out <file>] [--force]";
+  "Usage: nimbus extension list [--filter needs-reinstall] [--tree] [--json] | info <id> [--deps] [--registry <name> | --remote] [--json] | search <query> [--json] | install <path | id> [--registry <name>] [--version <v>] [--channel beta] [--accept-publisher-key <fingerprint>] [--publisher-key <path>] [--yes] | rehash <id> [--yes] | approve <id> [--model] | revoke <id> | credential set <id> <name> | credential status <id> | enable <id> | disable <id> | remove <id> [--yes] [--force] [--clean-deps] | update [<id>] [--check] [--to <version>] [--accept-publisher-key <fingerprint>] [--json] | downgrade <id> [--json] | report <id> | sponsor <id> [--registry <name>] [--index <n>] | clone <id> [--registry <name>] [--version <v>] [--into <dir>] [--publisher <id>] [--json] | audit [<id>] [--json] | verify-provenance <id> [--json] | pack <dir> --out <file> | publish <dir> --registry-repo <owner/repo> [--clone <path>] [--channel stable|beta] [--statement <file>]... [--no-pr] | key rotate --from <old key file> --to <new key file> --publisher <id> [--out <file>] [--force] | key revoke --key <key file> --publisher <id> --reason <text> [--out <file>] [--force]";
 
 /**
  * Subcommands that need no gateway. `publish`, `key` and `pack` get the RAW args: `stripFlags` drops
@@ -1423,6 +1427,11 @@ async function dispatchExtensionWithCode(
       }),
     downgrade: () => runExtensionDowngrade(client, args),
     audit: () => runExtensionAudit(args.slice(1), { client, out: (s) => process.stdout.write(s) }),
+    "verify-provenance": () =>
+      runExtensionVerifyProvenance(args.slice(1), {
+        client,
+        out: (s) => process.stdout.write(s),
+      }),
   };
   const handler = handlers[sub];
   if (handler === undefined) return false;

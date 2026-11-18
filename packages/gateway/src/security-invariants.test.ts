@@ -13372,6 +13372,24 @@ describe("I51 — liveness and baseline evidence is inert", () => {
     only(/\bverifyProvenanceBundle\b/, [
       "extensions/registry/provenance-verify.ts",
       "extensions/registry/provenance-recheck.ts",
+      "extensions/registry/installed-provenance.ts",
+    ]);
+    // Slice 2: the V105 columns have one writer and reader; the stored record is read for display
+    // (extension.info) and for the offline re-check (extension.verifyProvenance), nowhere else.
+    // (`provenance_json` alone is also a `share_records` column, so the pin names the bundle column.)
+    only(/\bprovenance_bundle\b/, [
+      "automation/extension-store.ts", // clears it on every version change, never reads it
+      "extensions/registry/installed-provenance.ts",
+      "index/extension-provenance-v105-sql.ts",
+      "index/migrations/runner.ts",
+    ]);
+    only(/\b(?:readInstalledProvenance|reverifyInstalledProvenance)\b/, [
+      "extensions/registry/installed-provenance.ts",
+      "ipc/automation-rpc.ts",
+    ]);
+    only(/\brecordInstalledProvenance\b/, [
+      "extensions/registry/installed-provenance.ts",
+      "extensions/registry/install-from-registry.ts",
     ]);
     only(/\breadProvenanceRecheck\b/, [
       "extensions/registry/provenance-recheck.ts",
