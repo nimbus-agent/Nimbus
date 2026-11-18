@@ -767,6 +767,21 @@ describe("the proposal a push carries (IC5b)", () => {
     expect(getProposal(db, ackId)?.status).toBe("proposed");
   });
 
+  test("a desktop read (revive false) stores but revives nothing; the terminal listing still revives (IC10b)", () => {
+    const h = harness();
+    const ackId = pick(h, "acknowledge");
+    const rbId = pick(h, "rollback_deploy");
+    db.run("UPDATE incident_proposal SET status = 'denied' WHERE id = ?", [rbId]);
+    db.run("UPDATE incident_proposal SET expires_at_ms = ? WHERE id = ?", [NOW - 1, ackId]);
+    const read = h.svc.proposals(h.recordId, { revive: false });
+    expect(read.proposals.find((p) => p.id === rbId)?.status).toBe("denied");
+    expect(getProposal(db, rbId)?.status).toBe("denied");
+    expect(getProposal(db, ackId)?.status).toBe("expired");
+    h.svc.proposals(h.recordId);
+    expect(getProposal(db, rbId)?.status).toBe("proposed");
+    expect(getProposal(db, ackId)?.status).toBe("proposed");
+  });
+
   test("the pushed id goes through the same remediate path: claim, prompt, dispatch", async () => {
     const h = harness();
     const top = h.svc.topProposal(h.recordId);

@@ -157,8 +157,10 @@ pub const ALLOWED_METHODS: &[&str] = &[
     "identity.login",
     "identity.logout",
     "identity.status",
+    "incident.findings",
     "incident.get",
     "incident.list",
+    "incident.proposals",
     "incident.timeline",
     "index.metrics",
     "llm.cancelPull",
@@ -832,21 +834,22 @@ mod tests {
 
     #[test]
     fn allowlist_incident_reads_only() {
-        // Phase 10 IC10a: the desktop reads incident records. Only the three reads join the renderer;
-        // `assemble` runs the engine, and the later write-class incident methods never will (I7).
-        // Named on both sides, and the exact set of `incident.` entries is pinned, because a
-        // one-for-one swap would keep allowlist_exact_size unchanged.
+        // Phase 10 IC10a and IC10b: the desktop reads incident records, their proposals and the
+        // findings. Only the five reads join the renderer; `assemble` runs the engine, and the
+        // write-class incident methods never will (I7). Named on both sides, and the exact set of
+        // `incident.` entries is pinned, because a one-for-one swap would keep allowlist_exact_size
+        // unchanged.
         assert!(is_method_allowed("incident.list"));
         assert!(is_method_allowed("incident.get"));
         assert!(is_method_allowed("incident.timeline"));
+        assert!(is_method_allowed("incident.proposals"));
+        assert!(is_method_allowed("incident.findings"));
         for m in [
             "incident.assemble",
             // Phase 10 IC5a (I57 (b)): the renderer can already answer a consent prompt, so it must not
             // also START an engine action or flip advisory mode.
             "incident.advisory",
             "incident.advisorySet",
-            "incident.proposals",
-            "incident.findings",
             "incident.remediate",
             "incident.undo",
             "incident.export",
@@ -865,9 +868,21 @@ mod tests {
             .collect();
         assert_eq!(
             incident,
-            vec![&"incident.get", &"incident.list", &"incident.timeline"]
+            vec![
+                &"incident.findings",
+                &"incident.get",
+                &"incident.list",
+                &"incident.proposals",
+                &"incident.timeline"
+            ]
         );
-        for m in ["incident.list", "incident.get", "incident.timeline"] {
+        for m in [
+            "incident.list",
+            "incident.get",
+            "incident.timeline",
+            "incident.proposals",
+            "incident.findings",
+        ] {
             assert!(!is_no_timeout_method(m));
         }
     }
@@ -1101,7 +1116,7 @@ mod tests {
 
     #[test]
     fn allowlist_exact_size() {
-        assert_eq!(ALLOWED_METHODS.len(), 135);
+        assert_eq!(ALLOWED_METHODS.len(), 137);
     }
 
     #[test]

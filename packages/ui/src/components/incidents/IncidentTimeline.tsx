@@ -1,13 +1,7 @@
 import type { ReactNode } from "react";
 import { useIpcQuery } from "../../hooks/useIpcQuery";
 import { asIncidentTimeline } from "./guards";
-import { safeText } from "./safe";
-
-function stamp(atMs: number): string {
-  return Number.isFinite(atMs) && Math.abs(atMs) < 8.64e15
-    ? `${new Date(atMs).toISOString().slice(0, 19)}Z`
-    : "unknown time";
-}
+import { safeText, stamp } from "./safe";
 
 export function IncidentTimeline({ recordId }: { readonly recordId: string }): ReactNode {
   const { data, error } = useIpcQuery<unknown>("incident.timeline", 60_000, { id: recordId });

@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { useIpcQuery } from "../../hooks/useIpcQuery";
 import { Markdown } from "../markdown/Markdown";
 import { asIncidentGet } from "./guards";
+import { IncidentProposals } from "./IncidentProposals";
 import { IncidentTimeline } from "./IncidentTimeline";
 import { safeText } from "./safe";
 
@@ -55,6 +56,7 @@ export function IncidentDetail({ id }: { readonly id: string }): ReactNode {
         {`Versions: ${rec.versions.map((v) => String(v.version)).join(", ")}`}
       </section>
       <IncidentTimeline recordId={s.id} />
+      <IncidentProposals recordId={s.id} />
     </article>
   );
 }
