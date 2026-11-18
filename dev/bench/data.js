@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794955605063,
+  "lastUpdate": 1794979121282,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
-            "name": "nimbus-release-bot[bot]",
-            "username": "nimbus-release-bot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "249e7a43fe1ceff9beea256f4436b5d66a2ef575",
-          "message": "chore: release main (#1417)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>7.4.0</summary>\n\n##\n[7.4.0](https://github.com/nimbus-agent/Nimbus/compare/v7.3.0...v7.4.0)\n(2026-08-31)\n\n\n### Features\n\n* **computer-use:** I35 gate + D26 confinement for local computer-use\nactuation (browser lane, driver not yet wired)\n([#1415](https://github.com/nimbus-agent/Nimbus/issues/1415))\n([461cebd](https://github.com/nimbus-agent/Nimbus/commit/461cebd634a96762b49270ba2dbb4b1d31d8aa9a))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
-          "timestamp": "2026-09-01T07:01:40+03:00",
-          "tree_id": "70c5f9b0dc6cbb1edefe482efdb46895769ca0c3",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/249e7a43fe1ceff9beea256f4436b5d66a2ef575"
-        },
-        "date": 1788236003335,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 262.5191367999938,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 261.10362119999627,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 160.89840694999947,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
+            "name": "nimbus-release-bot[bot]",
+            "username": "nimbus-release-bot[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "891c1da7137bda8089e7aa6632e879ede366660a",
+          "message": "chore: release main (#2055)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>11.5.0</summary>\n\n##\n[11.5.0](https://github.com/nimbus-agent/Nimbus/compare/v11.4.0...v11.5.0)\n(2026-11-17)\n\n\n### Features\n\n* **gateway:** incident engine IC8, an expectation radar and an anomaly\nbaseline that record findings and never act (V103, D46(f))\n([#2053](https://github.com/nimbus-agent/Nimbus/issues/2053))\n([585a283](https://github.com/nimbus-agent/Nimbus/commit/585a2832b7c562a2d205047e3b0332265445f8d8))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
+          "timestamp": "2026-11-18T07:10:21+02:00",
+          "tree_id": "8dcdfe258ad721676c40c923ecb2d9c5ebc8c06e",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/891c1da7137bda8089e7aa6632e879ede366660a"
+        },
+        "date": 1794979116463,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 190.3023072999982,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 189.8580560000024,
             "unit": "ms"
           }
         ]
