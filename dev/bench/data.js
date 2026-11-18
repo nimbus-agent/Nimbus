@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795030598424,
+  "lastUpdate": 1795030974345,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "19a371c3d9e6251a208e2c20655204b44d59e6cc",
-          "message": "fix(ci): the sdk release-train tagPattern never matched a real tag, and that only warned (#1445)\n\n`Release channel drift` has failed daily since 2026-09-01. Fixing the\nthree edges it reported surfaced a second defect that had never been\nreported at all — because it could not be.\n\n## 1. The sdk publish edge has never worked\n\n`.github/release-train.json` gave the sdk train:\n\n```\n\"tagPattern\": \"^sdk-v(\\d+\\.\\d+\\.\\d+)$\"\n```\n\nBut `nimbus-sdk` is a polyglot repo and tags its TypeScript releases\n**`typescript-v1.32.0`** — Go and Python tag their own. No release has\never matched, so `selectTaggedRelease` returned `null` and\n`sdk:publish`, the phantom-release detector for the SDK, has been inert\nfor the life of the gate.\n\nThe prefix is the **releasing component's** name, not the npm package's.\nThe `client` train's `^client-v(...)$` is correct and was unaffected.\n\n## 2. It was inert silently, which is the part worth fixing\n\n`readTaggedRelease` returned a bare `null` for three different\nsituations:\n\n- the `gh` call failed\n- the JSON was unparseable\n- **the pattern matched nothing in a perfectly readable list**\n\nThe third is a manifest bug. The other two are transient. Collapsed into\none `null` they all became `indeterminate`, which `decideExit` renders\nas a `::warning::` and exits 0 on. So the gate reported no failure for\nas long as it was broken, and the only reason it surfaced now was\nsomeone reading tag names by hand.\n\nThe module already draws exactly this distinction one type over —\n`ConsumerReading.status` has a `not-a-dependency` arm documented as *\"a\nMANIFEST bug\"*. This mirrors it: `readTaggedRelease` now reports\n`listRead` alongside the release, and a readable list that matched\nnothing is `stale`, not `indeterminate`. A caller that genuinely cannot\ntell passes `null` and keeps the old warning-only behaviour.\n\n### Why the tests did not catch it\n\nEvery fixture in `_release-train-dep.test.ts` supplies **both** the\npattern and the tags:\n\n```ts\nconst P = \"^sdk-v(\\d+\\.\\d+\\.\\d+)$\";\n// ... { tag: \"sdk-v1.6.0\" }\n```\n\nSo both sides agreed with each other and neither agreed with the repo. A\nfake cannot catch a contract mismatch when it defines both ends of the\ncontract. The doc comment on `selectTaggedRelease` cited `sdk-v1.6.0` as\nits example too, which made the wrong prefix look load-bearing.\n\n## 3. The dependency bump\n\n`@nimbus-dev/sdk` 1.31.0 to **1.32.0** — nimbus-sdk#265, additive.\n\nBoth `packages/gateway` and `packages/cli` were bumped, and both were\nnecessary: `resolvedFromBunLock` takes the **minimum** across the\nhoisted entry and every workspace-scoped copy, so bumping gateway alone\nmerely moved gateway to a nested 1.32.0 while cli's `^1.19.0` kept the\nhoisted copy at 1.31.0 — leaving the edge stale. A partial bump would\nhave looked done and changed nothing.\n\nNote that `bun update @nimbus-dev/sdk` is the wrong tool at the root of\na workspace repo: it adds the package to the **root** `package.json` as\na new direct dependency rather than bumping the workspace that declares\nit. The ranges are edited in the workspace manifests instead.\n\nSibling PRs for the other three edges: nimbus-agent/nimbus-vscode#124\nand nimbus-agent/nimbus-client#83.\n\n## Verification\n\nProved with the gate's own output rather than by inspection — running\n`bun scripts/structure-audit/check-release-staleness.ts` on this branch,\n`sdk:publish` no longer reports a manifest error, so the pattern now\nresolves `typescript-v1.32.0`.\n\n- New `stale` arm **red-proved** by reverting `evaluatePublishEdge` to\nits old unconditional `indeterminate`: exactly one test fails, and it is\nthe new one.\n- `bun run preflight:fast` — **33 gates green**\n- `bun test packages/gateway` — 16,391 pass, 42 skip, 0 fail\n- `bun test packages/cli/src` — 2,614 pass, 0 fail\n- `bun test scripts` — 1,701 pass, 27 skip, 0 fail\n\nOne local red herring worth recording: `bun run typecheck` failed on\n`packages/cli/src/mcp/adapter.ts` with a zod type mismatch that\nreproduced even on stashed-main, while CI was green on all three OSes.\nIt was stale `node_modules` left by the update-and-revert churn, cleared\nby `bun install --force` — not a real error, and not caused by this\nchange.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_011xDbS7PwHNDzLxDkaaH8o4\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **Updates**\n  * Updated the CLI and gateway packages to use SDK version 1.32.0.\n* Updated SDK release tag recognition to follow the current TypeScript\nrelease format.\n\n* **Bug Fixes**\n* Improved release-staleness checks by distinguishing unavailable\nrelease information from a readable release list with no matching\nrelease.\n* Reports now provide clearer status details when a package manifest is\noutdated.\n\n* **Tests**\n* Added coverage for release-list read failures, missing matching\nreleases, and warning-only scenarios.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-09-04T14:39:30+03:00",
-          "tree_id": "c5976d83ded0751fa2e682d61817158211981462",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/19a371c3d9e6251a208e2c20655204b44d59e6cc"
-        },
-        "date": 1788522773748,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 338.3388481999962,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 339.386614349993,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 195.23628924999576,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "4296aa26de2d977e5faa4ea4d7750900ef89ab57",
+          "message": "docs: record the slices that shipped on 2026-11-18 (drift, marketplace, offline provenance, model toolgen and computer-use) (#2075)\n\nThe batch-final docs PR for the parallel streams that shipped on\n2026-11-18. Each slice PR deferred the shared status docs to this one,\nunder the owner's batch rule.\n\nSlices recorded:\n\n- #2063 and #2068: IaC drift D1 and D2, `nimbus iac drift` (OR-DRIFT-1\nto OR-DRIFT-3).\n- #2064 and #2065: the desktop Marketplace tile (Tauri allowlist 137 →\n140) and the `/extensions/` docs catalog.\n- #2066 and #2073: offline provenance re-verification, slices 1 and 2\n(V105; OR-PROV-1 to OR-PROV-5).\n- #2067: model access to saved generated tools (I60, D51).\n- #2069: model-driven computer-use (I35 amended, D26(d); OR-MCU-1 and\nOR-MCU-2).\n- #2071: the stale picomatch accepted-advisory row deleted.\n\nWhat changed:\n\n- **CLAUDE.md and GEMINI.md:** one dated status sentence per slice. The\nI54 bullet gains the drift-check clause (D42(i)). The \"narrower than\ntheir names\" sentence no longer says the model cannot invoke a generated\ntool or drive a computer-use session; it now states the bounds instead.\n- **docs/CHANGELOG.md:** seven entries at the top.\n- **docs/README.md:** one new paragraph, and a correction to the S2\nsentence that said a generated tool is reachable only from the CLI.\n- **docs/roadmap.md:** these rows are ticked, each with its stated\nlimits:\n  - *Model access to generated tools and to computer-use*\n- *Marketplace page and desktop tile*, in both places, together with the\n*Manifest browser* row it absorbed\n  - *Offline provenance re-verification* was already ticked by #2073\n\nBoth drift rows stay open with their progress notes. The \"Last updated\"\nline now has a 2026-11-18 entry.\n\nCounts checked by `audit:status-drift`: schema V105, I1–I60, D10–D51.\n\nThe merge from main took #2073's V105 and I51 text.\n`audit:status-drift`, `audit:doc-refs`, `lint:markdown` and `bun run\npreflight:fast` passed.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JmSjrCk6NpLauKU2yYCwva\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-18T19:32:26Z",
+          "tree_id": "b8d4ead93c1c6d15c5fae4ceb3895233e7be438b",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/4296aa26de2d977e5faa4ea4d7750900ef89ab57"
+        },
+        "date": 1795030970400,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 165.91734974999943,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 167.03724529999744,
             "unit": "ms"
           }
         ]
