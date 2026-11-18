@@ -14,3 +14,10 @@ export function safeText(s: unknown, max = 300): string {
 export function isRecord(v: unknown): v is Record<string, unknown> {
   return v !== null && typeof v === "object" && !Array.isArray(v);
 }
+
+/** A UTC timestamp to the second, or `unknown time` for a value no Date can hold. */
+export function stamp(atMs: number): string {
+  return Number.isFinite(atMs) && Math.abs(atMs) < 8.64e15
+    ? `${new Date(atMs).toISOString().slice(0, 19)}Z`
+    : "unknown time";
+}

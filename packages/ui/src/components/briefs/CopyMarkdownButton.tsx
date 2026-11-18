@@ -3,8 +3,17 @@ import { type ReactNode, useEffect, useRef, useState } from "react";
 
 const COPIED_MS = 2_000;
 
-/** Copies the markdown source. A failed clipboard write leaves the label alone and never throws. */
-export function CopyMarkdownButton({ text }: { readonly text: string }): ReactNode {
+/**
+ * Copies `text` (the markdown source by default). A failed clipboard write leaves the label alone and
+ * never throws. `label` names what is copied (the Incidents page copies a terminal command).
+ */
+export function CopyMarkdownButton({
+  text,
+  label = "Copy as markdown",
+}: {
+  readonly text: string;
+  readonly label?: string;
+}): ReactNode {
   const [copied, setCopied] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -34,7 +43,7 @@ export function CopyMarkdownButton({ text }: { readonly text: string }): ReactNo
         onCopy().catch(() => undefined);
       }}
     >
-      {copied ? "Copied" : "Copy as markdown"}
+      {copied ? "Copied" : label}
     </button>
   );
 }

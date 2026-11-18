@@ -50,11 +50,12 @@ import type { ClientKind } from "./server/client-kind.ts";
  *
  * ALL TWELVE serve only a connection whose DECLARED kind is `cli` or `ui` (`requireOwnerKind`, called first by
  * every handler, before any query runs): a record holds capped titles of items from several services, and the
- * kind is the connection's (`ctx.getClientKind`), never a param. The whole namespace is LAN-forbidden (I5) and
- * is NOT renderer-callable (I7): the desktop gets `list`, `get` and `timeline` at a later slice, `assemble` never.
- * The five IC5a methods (`proposals`, `remediate`, `undo`, `advisory`, `advisorySet`) can START an action or flip the
- * advisory switch, so they are never renderer-callable (the renderer can already answer a consent prompt): `proposals`
- * becomes readable at IC10b, the other four never. `remediate` and `undo` run the stored proposal through the LOCAL
+ * kind is the connection's (`ctx.getClientKind`), never a param. The whole namespace is LAN-forbidden (I5). The
+ * renderer (I7) may call exactly five reads: `list`, `get`, `timeline` (IC10a), `proposals` and `findings` (IC10b);
+ * `assemble` never. Of the five IC5a methods (`proposals`, `remediate`, `undo`, `advisory`, `advisorySet`), four can
+ * START an action or flip the advisory switch and are never renderer-callable (the renderer can already answer a
+ * consent prompt); `proposals` is the read, and from a `ui` connection it stores new proposals but revives none
+ * (only the owner's terminal listing does). `remediate` and `undo` run the stored proposal through the LOCAL
  * owner execute() on THIS connection (`caller.clientId`), human answers only; advisory mode refuses them first.
  */
 export class IncidentRpcError extends Error {
@@ -613,7 +614,9 @@ export async function dispatchIncidentRpc(
     "incident.proposals": async (raw) => {
       requireOwnerKind(caller.kind);
       const id = parseId("incident.proposals", requireKeys("incident.proposals", raw, ["id"]));
-      return remediationCall(() => remediationOf(ctx).proposals(id));
+      // Only the owner's terminal listing revives a denied or expired proposal; the desktop's read does not.
+      const revive = caller.kind === "cli";
+      return remediationCall(() => remediationOf(ctx).proposals(id, { revive }));
     },
     "incident.remediate": async (raw) => {
       requireOwnerKind(caller.kind);

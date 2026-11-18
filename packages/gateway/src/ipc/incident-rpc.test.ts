@@ -426,8 +426,8 @@ describe("IC5a: remediate, undo, proposals and the advisory switch", () => {
   type Calls = string[];
   function fakeRemediation(calls: Calls): Remediation {
     return {
-      proposals: (ref: string) => {
-        calls.push(`proposals ${ref}`);
+      proposals: (ref: string, opts?: { readonly revive?: boolean }) => {
+        calls.push(`proposals ${ref}${opts?.revive === false ? " no-revive" : ""}`);
         return { recordId: "inc_x", version: 1, advisory: false, proposals: [], unavailable: [] };
       },
       remediate: async (p: { ref: string; proposalId: string; clientId: string }) => {
@@ -515,6 +515,14 @@ describe("IC5a: remediate, undo, proposals and the advisory switch", () => {
       "advisory",
       "set false",
     ]);
+  });
+
+  test("IC10b: only the terminal (cli) listing revives; a desktop (ui) read of proposals revives nothing", async () => {
+    const calls: Calls = [];
+    const r = fakeRemediation(calls);
+    await act("incident.proposals", { id: "inc_a" }, { remediation: r, kind: "cli" });
+    await act("incident.proposals", { id: "inc_a" }, { remediation: r, kind: "ui" });
+    expect(calls).toEqual(["proposals inc_a", "proposals inc_a no-revive"]);
   });
 
   test("a remediation refusal is a params error `<CODE>: <message>`; other errors propagate", async () => {
