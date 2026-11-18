@@ -7,6 +7,7 @@ import { declareCliClientKind } from "../lib/declare-client-kind.ts";
 import { INTERACTIVE_RPC_TIMEOUT_MS } from "../lib/rpc-timeouts.ts";
 import { withGatewayIpc } from "../lib/with-gateway-ipc.ts";
 import { getCliPlatformPaths } from "../paths.ts";
+import { scanFlags } from "./incident-flag-scan.ts";
 
 /**
  * `nimbus incident postmortem <id> ...` (Phase 10 IC7a): a post-mortem draft from an incident record, and the
@@ -47,32 +48,22 @@ export type PostmortemArgs =
       readonly title?: string;
     };
 
-const VALUE_FLAGS = ["--out", "--template", "--push", "--parent", "--space", "--file", "--title"];
-const BOOL_FLAGS = ["--force", "--synthesize", "--json"];
+const VALUE_FLAGS: ReadonlySet<string> = new Set([
+  "--out",
+  "--template",
+  "--push",
+  "--parent",
+  "--space",
+  "--file",
+  "--title",
+]);
+const BOOL_FLAGS: ReadonlySet<string> = new Set(["--force", "--synthesize", "--json"]);
 
 type Flags = { values: Map<string, string>; bools: Set<string>; id: string };
 
 function scan(argv: readonly string[]): Flags | undefined {
-  const values = new Map<string, string>();
-  const bools = new Set<string>();
-  let id: string | undefined;
-  for (let i = 0; i < argv.length; i += 1) {
-    const a = argv[i] as string;
-    if (BOOL_FLAGS.includes(a)) {
-      if (bools.has(a)) return undefined;
-      bools.add(a);
-    } else if (VALUE_FLAGS.includes(a)) {
-      const v = argv[i + 1];
-      if (v === undefined || v === "" || v.startsWith("--") || values.has(a)) return undefined;
-      values.set(a, v);
-      i += 1;
-    } else if (a.startsWith("--") || id !== undefined) {
-      return undefined;
-    } else {
-      id = a;
-    }
-  }
-  return id === undefined ? undefined : { values, bools, id };
+  const f = scanFlags(argv, VALUE_FLAGS, BOOL_FLAGS);
+  return f === undefined || f.id === undefined ? undefined : { ...f, id: f.id };
 }
 
 function onlyThese(f: Flags, values: readonly string[], bools: readonly string[]): boolean {
@@ -88,7 +79,7 @@ export function parsePostmortemArgs(argv: readonly string[]): PostmortemArgs | u
   if (f === undefined) return undefined;
   const push = f.values.get("--push");
   if (push === undefined) {
-    if (!onlyThese(f, ["--out", "--template"], BOOL_FLAGS)) return undefined;
+    if (!onlyThese(f, ["--out", "--template"], [...BOOL_FLAGS])) return undefined;
     const out = f.values.get("--out");
     const template = f.values.get("--template");
     return {

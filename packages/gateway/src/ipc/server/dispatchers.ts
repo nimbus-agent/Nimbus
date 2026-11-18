@@ -89,6 +89,7 @@ import { dispatchGlossaryRpc, GlossaryRpcError } from "../glossary-rpc.ts";
 import { dispatchHitlRpc, HitlRpcError } from "../hitl-rpc.ts";
 import { dispatchIdentityRpc, type IdentityRpcContext, IdentityRpcError } from "../identity-rpc.ts";
 import { dispatchIncidentRpc, IncidentRpcError, isOwnerKind } from "../incident-rpc.ts";
+import { dispatchIncidentUpdateRpc } from "../incident-update-rpc.ts";
 import { dispatchIndexDemoSymbolRpc, IndexDemoSymbolRpcError } from "../index-demo-symbol-rpc.ts";
 import { dispatchIndexRebodyRpc, IndexRebodyRpcError } from "../index-rebody-rpc.ts";
 import { dispatchIndexReembedRpc, IndexReembedRpcError } from "../index-reembed-rpc.ts";
@@ -1732,6 +1733,64 @@ export async function tryDispatchPostmortemRpc(
   return phase4RpcSkipped;
 }
 
+/**
+ * `incident.update`, `incident.updateSend` and `incident.updateQueue` (Phase 10 IC9b): the update draft, the
+ * owner's HITL-gated Slack or Teams post and the scribe's queue. Owner kinds only (`requireOwnerKind`, before any
+ * query); the incident namespace is LAN-forbidden (I5) and absent from the Tauri allowlist (I7). The send asks
+ * THIS connection's consent channel and reads the ChatOps bindings of the LIVE enforced policy.
+ */
+export async function tryDispatchIncidentUpdateRpc(
+  ctx: ServerCtx,
+  method: string,
+  params: unknown,
+  clientId: string,
+): Promise<unknown> {
+  if (
+    method !== "incident.update" &&
+    method !== "incident.updateSend" &&
+    method !== "incident.updateQueue"
+  ) {
+    return phase4RpcSkipped;
+  }
+  const localIndex = ctx.options.localIndex;
+  if (localIndex === undefined) return phase4RpcSkipped;
+  const db = localIndex.getDatabase();
+  const act = ctx.options.captureRpcCtx?.act;
+  const enforced = ctx.options.enforcedPolicy;
+  try {
+    const out = await dispatchIncidentUpdateRpc(
+      method,
+      params,
+      {
+        db,
+        now: () => Date.now(),
+        dataDir: ctx.options.dataDir,
+        chatops: () => enforced?.()?.chatops,
+        ...(act === undefined
+          ? {}
+          : {
+              act: {
+                dispatcher: act.dispatcher,
+                egressSink: act.egressSink,
+                audit: act.audit,
+                policyHitl: act.policyHitl,
+                ...(act.previewCredentialFor === undefined
+                  ? {}
+                  : { previewCredentialFor: act.previewCredentialFor }),
+              },
+            }),
+      },
+      { clientId, kind: ctx.getClientKind(clientId) },
+      ctx.consentImpl,
+    );
+    if (out.kind === "hit") return out.value;
+  } catch (e) {
+    if (e instanceof IncidentRpcError) throw new RpcMethodError(e.rpcCode, e.message);
+    throw e;
+  }
+  return phase4RpcSkipped;
+}
+
 export async function tryDispatchOncallPushRpc(
   ctx: ServerCtx,
   method: string,
@@ -2197,6 +2256,7 @@ const PHASE4_PLATFORM_DISPATCHERS: ReadonlyArray<
   tryDispatchBriefingRpc,
   tryDispatchIncidentRpc,
   tryDispatchPostmortemRpc,
+  tryDispatchIncidentUpdateRpc,
   tryDispatchNotificationsRpc,
   tryDispatchCaptureRpc,
   tryDispatchApprovalsRpc,

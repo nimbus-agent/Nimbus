@@ -526,6 +526,29 @@ describe("runTailCommand lifecycle", () => {
     await done;
   });
 
+  test("--filter incident renders incident.updateDrafted with its count and the queue command", async () => {
+    const h = harness();
+    const done = runTailCommand(["--filter", "incident"], h.deps);
+    await nextMacrotask();
+    h.handlers["gateway.event"]?.({
+      kind: "incident.updateDrafted",
+      ts: 1_789_300_000_000,
+      payload: { recordId: "inc_ab12\n[forged]", version: 3, queued: 2 },
+    });
+    h.handlers["gateway.event"]?.({
+      kind: "incident.updateDrafted",
+      ts: 1,
+      payload: { recordId: "x" },
+    });
+    expect(h.out).toHaveLength(2);
+    expect(h.out[0]).toContain(
+      "[incident] update drafted for inc_ab12 [forged] v3 (2 waiting) - nimbus incident update --queued",
+    );
+    expect(h.out[1]).toContain("[unknown: incident.updateDrafted]");
+    process.emit("SIGINT");
+    await done;
+  });
+
   test("incident.assembled is suppressed under --filter sync", async () => {
     const h = harness();
     const done = runTailCommand(["--filter", "sync"], h.deps);

@@ -242,6 +242,15 @@ function renderGatewayEvent(o: Record<string, unknown>): string | null {
     }
   }
 
+  if (kind === "incident.updateDrafted") {
+    const recordId = str(payload, "recordId");
+    const version = payload["version"];
+    const queued = payload["queued"];
+    if (recordId !== null && typeof version === "number" && typeof queued === "number") {
+      return `${at} [incident] update drafted for ${oneLine(recordId, 40)} v${String(version)} (${String(queued)} waiting) - nimbus incident update --queued`;
+    }
+  }
+
   // Never dropped: a stream that discards what it does not recognise is the same failure as a
   // brief that renders a missing section as empty.
   return `${at} [unknown: ${kind}] ${JSON.stringify(payload)}`;

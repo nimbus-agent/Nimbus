@@ -17046,3 +17046,112 @@ describe("I57 (a) - IC8: the radar and the anomaly baseline are inert (detection
     }
   });
 });
+
+describe("I57 (a) IC9b - the incident update draft and the scribe are inert; the send is the owner's own linked action (Phase 10 IC9b)", () => {
+  test("1: static D46(e) holds over the real tree with the send anchored, and the send names the minter", async () => {
+    const { checkIncidentLinkMinting, RULE_ANCHORS } = await import(
+      "../../../scripts/structure-audit/check-nimbus-invariants.ts"
+    );
+    const { iterateSourceFiles } = await import("../../../scripts/structure-audit/lib.ts");
+    const files: { relPath: string; contents: string }[] = [];
+    for await (const f of iterateSourceFiles())
+      files.push({ relPath: f.relPath, contents: f.contents });
+    expect(checkIncidentLinkMinting(files)).toEqual([]);
+    expect(RULE_ANCHORS).toContain("packages/gateway/src/incident-update/update-send.ts");
+    const send = await read("packages/gateway/src/incident-update/update-send.ts");
+    expect(send).toContain("mintIncidentLink(deps.db, recordId)");
+  });
+
+  test("2: the scribe is built only off a demo gateway and is told AFTER the incident.assembled event", async () => {
+    const src = await read("packages/gateway/src/platform/assemble.ts");
+    expect(src).toMatch(
+      /const incidentScribe = paths\.demo\s*\?\s*undefined\s*:\s*createIncidentScribe\(/,
+    );
+    const evt = src.indexOf('emitGatewayEvent("incident.assembled", { ...p });');
+    const told = src.indexOf("incidentScribe?.onAssembled(p);");
+    expect(evt).toBeGreaterThan(0);
+    expect(told).toBeGreaterThan(evt);
+    // the scribe's construction names nothing that can post, dispatch or ask a model
+    const from = src.indexOf("createIncidentScribe({");
+    const body = src.slice(from, src.indexOf("});", from));
+    expect(body).not.toMatch(/\b(?:egress|executor|connectors|dispatcher|vault|llm|chatops)\b/i);
+  });
+
+  test("3: a queued draft holds no indexed text on disk", async () => {
+    const { createIncidentScribe } = await import("./incident-update/scribe.ts");
+    const { mkdtempSync, readdirSync, readFileSync, rmSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const dir = mkdtempSync(join(tmpdir(), "nimbus-i57-ic9b-"));
+    try {
+      const scribe = createIncidentScribe({
+        dataDir: dir,
+        enabled: () => true,
+        now: () => 1,
+        emit: () => {},
+        notify: async () => {},
+        logger: { warn: () => {} },
+      });
+      scribe.onAssembled({ recordId: "inc_0123456789abcdef", version: 4 });
+      const qdir = join(dir, "incident-drafts");
+      const [name] = readdirSync(qdir);
+      expect(name).toBe("inc_0123456789abcdef.v4.json");
+      expect(JSON.parse(readFileSync(join(qdir, name as string), "utf8"))).toEqual({
+        recordId: "inc_0123456789abcdef",
+        version: 4,
+        queuedAtMs: 1,
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("4: a send whose ChatOps bindings cannot be read is refused before the executor is reached", async () => {
+    const { sendIncidentUpdate } = await import("./incident-update/update-send.ts");
+    const { createMemoryIndexDb } = await import("./connectors/connector-sync-test-helpers.ts");
+    const { buildRecord } = await import("./incident/__fixtures__/record-builder.ts");
+    const { upsertIncidentRecord } = await import("./incident/incident-store.ts");
+    const db = createMemoryIndexDb();
+    try {
+      const stored = upsertIncidentRecord(db, {
+        record: buildRecord({ itemId: "pagerduty:PDI57" }),
+        markdown: "# x",
+        recordSha256: "d".repeat(64),
+        citedServices: ["pagerduty"],
+        nowMs: 1,
+      });
+      let executed = 0;
+      const out = await sendIncidentUpdate(
+        {
+          db,
+          executor: {
+            execute: async () => {
+              executed += 1;
+              return { status: "ok", result: null };
+            },
+          },
+          chatops: () => undefined,
+        },
+        stored.recordId,
+        { platform: "slack", channel: "C0STATUS" },
+        "Incident update",
+      );
+      expect(out.outcome).toBe("refused");
+      expect(executed).toBe(0);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("5: the three methods answer owner kinds only and none is renderer-callable", async () => {
+    const rpc = await read("packages/gateway/src/ipc/incident-update-rpc.ts");
+    for (const m of ["incident.update", "incident.updateSend", "incident.updateQueue"]) {
+      const at = rpc.indexOf(`"${m}": (raw) => {`);
+      expect(at, m).toBeGreaterThan(0);
+      expect(rpc.slice(at, at + 120)).toContain("requireOwnerKind(caller.kind);");
+    }
+    const bridge = await read("packages/ui/src-tauri/src/gateway_bridge.rs");
+    const allow = bridge.slice(0, bridge.indexOf("#[cfg(test)]"));
+    expect(allow).not.toMatch(/"incident\.update/);
+  });
+});
