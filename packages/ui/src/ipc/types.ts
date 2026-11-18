@@ -501,6 +501,21 @@ export interface PushedBriefDetail extends PushedBriefSummary {
   readonly briefMarkdown: string | null;
   readonly failureCode: string | null;
   readonly delivery: Readonly<Record<string, PushSinkOutcome>>;
+  /**
+   * The remediation proposal the push carried (Phase 10 IC5b), run only from the CLI with
+   * `nimbus oncall pushed <id> --remediate`. The desktop does not start it. Optional: an older gateway omits it.
+   */
+  readonly proposal?: PushedBriefProposal | null;
+}
+
+export interface PushedBriefProposal {
+  readonly recordId: string;
+  readonly proposalId: string;
+  readonly kind: string;
+  readonly toolId: string;
+  readonly reversibility: "reversible" | "irreversible" | "unknown";
+  readonly confidence: number | null;
+  readonly expiresAtMs: number;
 }
 
 export interface PushedBriefList {

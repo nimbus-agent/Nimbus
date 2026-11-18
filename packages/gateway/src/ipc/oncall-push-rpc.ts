@@ -1,3 +1,4 @@
+import { ENGINE_PROPOSAL_ID_RE } from "../engine/incident-link.ts";
 import { parseHeadlineBrief, resolvePushService } from "../oncall-push/push-headline.ts";
 import { PushRetryRefusedError } from "../oncall-push/push-runner.ts";
 import type { OncallPushRuntime } from "../oncall-push/push-runtime.ts";
@@ -23,11 +24,63 @@ export type PushedBriefSummary = {
   title: string | null;
   service: string | null;
 };
+/** The top remediation proposal a push carried (IC5b): `nimbus oncall pushed <id> --remediate` acts on it. */
+export type PushedBriefProposal = {
+  recordId: string;
+  proposalId: string;
+  kind: string;
+  toolId: string;
+  reversibility: "reversible" | "irreversible" | "unknown";
+  confidence: number | null;
+  expiresAtMs: number;
+};
 export type PushedBriefDetail = PushedBriefSummary & {
   briefMarkdown: string | null;
   failureCode: string | null;
   delivery: Record<string, { outcome: string; reason?: string; at: number }>;
+  /** Null when the push carried none, or the stored JSON does not hold a well-formed one. */
+  proposal: PushedBriefProposal | null;
 };
+
+const LABEL_RE = /^[a-z0-9_]{1,64}$/;
+const RECORD_ID_RE = /^inc_[0-9a-f]{16}$/;
+const REVERSIBILITY = new Set(["reversible", "irreversible", "unknown"]);
+
+/**
+ * The proposal a stored brief carries, re-validated on every read: an id of the engine's own shape, a record id
+ * of the record shape, labels from the gateway's own vocabulary. Anything else is null (no proposal), never an
+ * error, so an older or damaged row still lists.
+ */
+export function pushedProposalOf(briefJson: string | null): PushedBriefProposal | null {
+  if (briefJson === null) return null;
+  let raw: unknown;
+  try {
+    raw = (JSON.parse(briefJson) as { proposal?: unknown }).proposal;
+  } catch {
+    return null;
+  }
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const p = raw as Record<string, unknown>;
+  const { recordId, id, kind, toolId, reversibility, confidence, expiresAtMs } = p;
+  if (typeof id !== "string" || !ENGINE_PROPOSAL_ID_RE.test(id)) return null;
+  if (typeof recordId !== "string" || !RECORD_ID_RE.test(recordId)) return null;
+  if (typeof kind !== "string" || !LABEL_RE.test(kind)) return null;
+  if (typeof toolId !== "string" || !LABEL_RE.test(toolId)) return null;
+  if (typeof reversibility !== "string" || !REVERSIBILITY.has(reversibility)) return null;
+  if (confidence !== null && (typeof confidence !== "number" || !Number.isFinite(confidence))) {
+    return null;
+  }
+  if (typeof expiresAtMs !== "number" || !Number.isSafeInteger(expiresAtMs)) return null;
+  return {
+    recordId,
+    proposalId: id,
+    kind,
+    toolId,
+    reversibility: reversibility as PushedBriefProposal["reversibility"],
+    confidence,
+    expiresAtMs,
+  };
+}
 
 const MAX_ID = 512;
 
@@ -81,6 +134,7 @@ function detail(ctx: OncallPushRpcCtx, r: PushedBriefRow): PushedBriefDetail {
     briefMarkdown: r.briefMarkdown,
     failureCode: r.failureCode,
     delivery: { ...r.delivery },
+    proposal: r.status === "ok" ? pushedProposalOf(r.briefJson) : null,
   };
 }
 

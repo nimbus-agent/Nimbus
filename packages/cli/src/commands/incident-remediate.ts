@@ -228,7 +228,7 @@ export function formatProposals(r: ProposalsReply): string {
   return lines.join("\n");
 }
 
-type RemediateReply = {
+export type RemediateReply = {
   proposalId: string;
   actionId: string;
   status: "executed" | "denied" | "failed";
@@ -281,10 +281,17 @@ async function runRemediate(
     id: a.id,
     proposalId: chosen.id,
   });
+  return reportRemediateOutcome(out, sink);
+}
+
+/** How a run's outcome reads, for `incident remediate --pick` and `oncall pushed --remediate` alike. */
+export function reportRemediateOutcome(out: RemediateReply, sink: Sink): number {
   if (out.status === "executed") {
     sink.out(
       `Done. Action ${clean(out.actionId)}.${out.undoable ? ` Undo with: nimbus incident undo ${clean(out.actionId)}` : ""}\n`,
     );
+    // The gateway ran it but could not record it (its proposal row changed meanwhile): say so, still exit 0.
+    if (out.reason !== undefined) sink.err(`Note: ${clean(out.reason)}\n`);
     return 0;
   }
   const why = out.nonHuman ? NON_HUMAN_NOTE : clean(out.reason ?? "no reason given");

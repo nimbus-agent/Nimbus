@@ -19,6 +19,7 @@ import { emitGatewayEvent } from "../ipc/gateway-events.ts";
 import { createLiveEnabled } from "./push-live-enabled.ts";
 import {
   createOncallPushRunner,
+  type PushedProposal,
   type PushRecords,
   type PushRetryResult,
   type PushRunSummary,
@@ -59,6 +60,11 @@ export interface OncallPushRuntime {
   settleChatopsPoster(post: ChatopsPoster | undefined): void;
   /** `pending` until settled, then `bound` (a poster) or `none`. */
   chatopsSinkState(): "pending" | "bound" | "none";
+  /**
+   * Bind the incident engine's read-only top-proposal listing (Phase 10 IC5b). Once, at boot, after the
+   * remediation service exists; the push stores the id it returns and approves nothing.
+   */
+  bindTopProposal(read: (recordId: string) => PushedProposal | null): void;
 }
 
 export interface OncallPushBootDeps {
@@ -168,6 +174,7 @@ export function assembleOncallPushRuntime(deps: OncallPushBootDeps): OncallPushR
   // So nothing starts until the poster is settled; early runs wait rather than drop.
   let settled = deps.settleImmediately === true;
   let chatopsPoster: ChatopsPoster | undefined;
+  let topProposal: ((recordId: string) => PushedProposal | null) | undefined;
   let release: () => void = () => {};
   const gate: Promise<void> = settled
     ? Promise.resolve()
@@ -186,6 +193,8 @@ export function assembleOncallPushRuntime(deps: OncallPushBootDeps): OncallPushR
     isEnabled,
     pagerdutyAliases: loadNimbusPagerdutyFromConfigDir(deps.configDir).severityP1Aliases,
     records: deps.records,
+    // IC5b: null until the incident engine's listing is bound (a push before that carries no proposal).
+    topProposal: (recordId) => (topProposal === undefined ? null : topProposal(recordId)),
     // Read fresh on every use: the configured services (and their PagerDuty ids) can change at any time.
     serviceConfig: (serviceId) =>
       loadServiceConfigsOrEmpty(deps.configDir, (m) => deps.logger.warn?.({}, m)).find(
@@ -235,6 +244,11 @@ export function assembleOncallPushRuntime(deps: OncallPushBootDeps): OncallPushR
       settled = true;
       chatopsPoster = post;
       release();
+    },
+    bindTopProposal(read) {
+      if (topProposal !== undefined)
+        throw new Error("[oncall.push] bindTopProposal: already bound");
+      topProposal = read;
     },
     chatopsSinkState() {
       if (!settled) return "pending";
