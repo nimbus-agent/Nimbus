@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795005770855,
+  "lastUpdate": 1795006289802,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "b995a96b2c135fa19614123df49c82033254065e",
-          "message": "feat(multimodal): local audio/video understanding, indexed and searchable (S2 PR 1 of 4) (#1429)\n\nFirst of four slices for Spine S2's Multimodal I/O row. Turns local\nrecordings — which the index has until now held as a title and an empty\nbody — into searchable transcripts, without any of the audio or anything\nderived from it leaving the machine.\n\nDesign: `docs/superpowers/specs/2026-09-02-s2-multimodal-io-design.md`\nPlan: `docs/superpowers/plans/2026-09-02-multimodal-pr1-local-av.md`\n\n## What ships\n\n`nimbus media understand [--service|--modality|--limit|--since|--json]`\n— a budgeted, resumable pass over media files under\n`[[filesystem.roots]]`, discovered behind a new per-root `media_index`\ntoggle. Transcription is local `whisper-cli` over an `ffmpeg` transcode.\nOutput is a derived `nimbus:video_understanding` item, embedded and\nsearchable like any other.\n\n**Default off twice over:** `[multimodal] enabled` and the per-root\n`media_index`, both false. Enabling the capability does not silently\nstart walking every configured root for large binaries.\n\nSchema **V58** adds `media_pass_cursor`. No new security invariant.\n\n## Two structural properties worth reading\n\n**Derived text is embedded locally, always.** Both understanding types\nare in `LOCAL_ONLY_PROSE_TYPES`, not `PROSE_HEAVY_TYPES`. Without that,\na fully local pass over private recordings would keep the audio on the\nmachine while shipping every word extracted from it to OpenAI's\nembedder, with no consent, through a completely different door than the\none guarding the media bytes. Set membership is the entire enforcement —\nthere is no second check downstream — and `routing.test.ts` pins the two\nsets disjoint.\n\n**The whole `media` namespace is denied over LAN**, alongside `exec` and\n`computer`. The method reads local files and spawns subprocesses; a\npaired peer must not be able to trigger that on the owner's machine.\nThis was found empirically during implementation: `FORBIDDEN_OVER_LAN`\nis a deny-list, so an unlisted namespace is reachable, and the method\nwas reachable by default the moment it was wired.\n\n## What did NOT ship\n\nStated rather than implied, because the roadmap row and `CLAUDE.md` now\nhave to be read alongside this:\n\n- **Image understanding.** No vision model exists. Image candidates are\nskipped as `unresolvable_modality`; `nimbus:image_understanding` is\nregistered in embedding routing but nothing writes one.\n- **Cloud artifacts.** No byte-fetch — local files only.\n- **Any remote model**, including remote STT. Transcription refuses\nrather than reaching for the cloud when no local model is available.\n- **Diarization.** `whisper-cli` cannot do it.\n- **Phase 14's Core acceptance criterion is therefore NOT met.** It\nrequires a `video_understanding` row with a transcript AND at least one\nframe caption. Frame captions need the vision model plus ffmpeg frame\nextraction — both PR 2.\n\n## Known bound: org policy is inert here\n\n`capabilityDisabled` is hardcoded `false` at the dispatcher because no\nIPC-reachable `EnforcedPolicy` accessor exists yet — that wiring lives\nin `platform/assemble.ts`. So an org policy disabling\n`multimodal_input`, a real `AI_V2_CAPABILITIES` member, does **not**\ndisable this capability today. Only the local `[multimodal] enabled`\nkill switch is real, and unlike the I33 and I35 paths there is no\nconsent gate behind it. Closing this is a prerequisite for PR 4.\n\nIt was disclosed only in a code comment; it is now in the roadmap row\nand the CLI reference.\n\n## Notable design decisions\n\n**The understanding item's external id carries no version.** `item` is\n`UNIQUE(service, external_id)` and upserts `ON CONFLICT(id)`, so\nembedding the version would create a second row per artifact per version\nrather than replacing — duplicate FTS hits and duplicate context in\nevery agent. The id is stable and `understandingVersion` lives in\nmetadata, which is what makes a future model upgrade a re-run rather\nthan a migration.\n\n**The scratch WAV is a narrowed rule, not an absolute one.** The design\noriginally said bytes are never written to disk. That is not\nimplementable: `WhisperSttProvider` takes a path and wants 16 kHz PCM.\nSo the rule is now per-arm — nothing is written for the image path, no\nnew bytes for local audio, and one 0600 gateway-owned scratch file for\ntranscodes, deleted in a `finally` and swept at pass start for files a\ndead process left behind. `finally` does not survive a SIGINT, and on\nWindows a SIGTERM is `TerminateProcess`.\n\n**The pass reports skips by reason.** A bare \"understood 42 of 108\"\ncannot tell you whether the other 66 were absent, too large, or refused.\n\n## Defects found during implementation\n\nRecorded because several were in the plan rather than the code, and the\npattern is worth seeing:\n\n- The byte cap trusted the **indexed** file size, so a file that was 1\nKB at index time and 2 GB now passed it. Now checks both the recorded\nsize as a cheap pre-filter and the live size before proceeding.\n- Discovery applied `LIMIT` in SQL and filtered modality afterwards in\nJS, so `--modality av` over a library whose first page is images\nreturned zero and looked like an empty queue. The filter is now in the\nSQL.\n- The subprocess timeout awaited `proc.exited` inside its own `finally`,\ndeadlocking the very call meant to bound a hang.\n- `media-pass-state.ts` wrote via `db.run()` directly, violating\ninvariant **I14** / static rule **D12**. Now uses `dbRun`.\n- Several tests passed whether or not the property they named held — the\ngate's ordering, the GPU lease on the success path, the cursor advancing\non skips. Each was red-proved by removing the property and confirming\nthe test fails.\n\n## Verification\n\n`bun run preflight` green, including `audit:coverage-floor` at 0\nviolations with no exclusions added. The zero-egress claim is tested\ncontrol-first: a positive control proves the pass genuinely reaches the\nunderstander and writes a row, so the zero-row assertion that follows\nmeans something rather than passing vacuously.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01H4jmnwjpSC516vdEBYFfZC\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n- **New Features**\n- Added `nimbus media understand` for resumable, budgeted local\naudio/video transcription.\n- Supports service, modality, date, and processing-limit filters, plus\nJSON output and skip-reason summaries.\n- Media indexing can be enabled per filesystem root and is disabled by\ndefault.\n- Successful results are stored as searchable derived items and embedded\nlocally.\n\n- **Security & Privacy**\n- Processing uses local models only; remote providers and LAN access are\nblocked.\n\n- **Documentation**\n- Added CLI guidance, architecture details, changelog entries, roadmap\nupdates, and documented limitations.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-09-03T08:39:51+03:00",
-          "tree_id": "3a1de073dc8c41512a3ed02e7b041c25eda59862",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/b995a96b2c135fa19614123df49c82033254065e"
-        },
-        "date": 1788414536779,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 245.50129174999893,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 245.94779374999197,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 175.67796435000182,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "5a35d295edfd2081d6aa63361100a487a3b352f8",
+          "message": "feat(gateway): the Terraform apply preview shows drift outside Terraform (IaC drift D1) (#2063)\n\nPhase 10 Stretch, Infrastructure-as-Agent: the first slice of\n**Autonomous drift detection** and **Remediation proposals** (slice D1).\n\n## What changes\n\n`renderPlanPreview` (`connectors/connector-writes/iac-plan-preview.ts`)\nnow reads `resource_drift` from the `terraform show -json` output the\nsettle step already holds, and the Terraform apply consent preview gains\na drift block after the `Reads:` line and before the first planned\nchange:\n\n- `Drift: N objects changed outside Terraform since the last refresh:`\nthen, per object, `[changed outside Terraform]` or `[deleted outside\nTerraform]` with its address, type and provider, and for an update one\n`changed: <attribute>` line per changed attribute NAME.\n- No value is ever printed for drift, sensitive or not. Sensitive\nattribute names are still listed (a name is not secret, and hiding it\nwould hide drift on a secret).\n- `Drift: none reported by terraform` when there is none (never \"no\ndrift\": a `-refresh=false` plan reports none), and `Drift: could not be\nread from this plan (not shown)` for a malformed field.\n- **Drift never refuses a plan.** The block has its own 16 KiB /\n100-object budget, separate from the plan's 64 KiB; past either it is\none summary line `(too many to list here)`. Every plan that renders\ntoday still renders, and the planned changes keep their whole budget.\n- Every name goes through `escapeOneLine` (the same injective escaping\nas the plan). `PlanPreview.driftCount: number | null`; counts,\n`changeCount`, `deleteCount` and the typed confirm text are unchanged.\n\nFor drift's revert-to-declared case, the existing plan-bound\n`iac_terraform_apply` (I54) is the remediation proposal: the owner\nreviews the drift and the plan together in the typed-confirm dialog.\n\n## What this is not (stated in the roadmap rows, which stay open)\n\n- No drift check that runs without an apply: that needs a second caller\nof the plan prepare tools (an I54 amendment), pending an owner ruling.\n- No schedule (\"continuously\"), pending an owner ruling.\n- No comparison against INDEXED live state: the index holds only Lambda\nfunctions, Azure subscriptions, GCP projects and Kubernetes deployments,\nso Terraform's own refresh is the only live-state source.\n- No `apply -refresh-only` (accept drift into state).\n\nNo schema change, invariant, static rule, IPC method or allowlist\nchange. Docs: roadmap progress notes on both rows and the architecture\nsettle paragraph. Per the owner's batching rule, the shared status docs\n(CLAUDE.md/GEMINI.md status paragraph, top of CHANGELOG, docs/README.md)\nare batched into the last PR of the batch.\n\n## Verification\n\n- `bun run preflight:fast` passed.\n- `connectors/connector-writes`, `engine` and `test/integration/iac`:\n5,905 pass, 0 fail.\n- 11 new renderer tests: placement, the none and unreadable wording,\nnames only, sensitive names listed and values absent, a delete lists no\nattributes, no-op drift not counted, counts unchanged, hostile names\nescaped (bidi, a newline forging a footer), the listing and byte caps\nsummarise without refusing, a plan exactly at its own cap still renders\nwith drift, and bytes and hash cover the block.\n- The iac prompt golden gains the `Drift:` line.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JmSjrCk6NpLauKU2yYCwva\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Terraform plan previews now show reported drift, including changed or\ndeleted resources. Updates list changed attribute names without\ndisplaying values.\n* Large drift reports are summarized, and unreadable drift data is\nidentified without preventing the plan from being displayed.\n* **Documentation**\n* Architecture and roadmap documentation now describe drift reporting\nand clarify which drift-checking and remediation capabilities are not\nyet available.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-18T12:37:04Z",
+          "tree_id": "79482a2d08253fa8a8ea96150e1fe2edc6eec573",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/5a35d295edfd2081d6aa63361100a487a3b352f8"
+        },
+        "date": 1795006285263,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 206.3502328000002,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 202.42695749999876,
             "unit": "ms"
           }
         ]
