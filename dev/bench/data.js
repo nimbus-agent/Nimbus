@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794995274175,
+  "lastUpdate": 1794996345162,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "d3ba71dd3d3513e828da301bd59472fdb2dfc456",
-          "message": "feat(agents): publish the gateway version on the roster response (#1428)\n\n## Summary\n\n`GET /v1/agents` now returns `{ agents, version }` instead of `{ agents\n}`. One additive field, and it unblocks a client feature that is already\nmerged and currently dark on every gateway.\n\n**A NAME does not imply an ARM, which is the whole reason this exists.**\n`why`, `expert` and `ownership` have been published for releases; the\n`itemUrl` arms #1421 added to them have not. So a client deciding\nwhether to offer an item-scoped lane cannot learn what it needs from the\nname list — it has to ask a version question, and nothing on the HTTP\nsurface answered one: `GET /v1/health` returns `{ status, gateway:\n\"read_only_http\" }`, and `HTTP_ROUTES` carried no version route at all.\n\n**Why it rides on the roster response**, rather than taking a route of\nits own or going on `/v1/health`:\n\n- It is the request such a client already makes at the moment it needs\nthe answer, so both facts arrive in one round trip.\n- It is bearer-authed under the `agents` scope the caller already holds;\n`/v1/health` is tokenless.\n- The alternative — read a version at pair time and cache it — goes\nstale the first time an owner upgrades their gateway without re-pairing,\nand the symptom is a client's lanes staying dark forever with nothing on\nscreen to explain it.\n\n**The consumer is [`nimbus-web-clipper`\n#96](https://github.com/nimbus-agent/nimbus-web-clipper/pull/96),\nmerged**, whose `meetsFloor` fails **closed** on an absent version.\nUntil this ships in a release, that client's three item lanes are\nwithheld on every gateway — its own developers included, since a local\nbuild reports no version rather than `0.0.0` and so never reaches the\ndevelopment-build allowance. That is why an additive field gets its own\ndelivery-log entry.\n\n**Publishing each agent's *arms* would retire the question** instead of\nproxying it through a release number, and is the better long-run shape.\nDeliberately not done here: the arms live inside each handler's param\ntypes, so deriving them honestly is real work, and hand-listing them is\nexactly the drift `EXTERNAL_AGENT_NAMES` is derived to prevent. Recorded\nas an addendum to §4.5 of\n`2026-08-31-agents-for-items-and-files-design.md` — that document owns\nthis wire and did not mention a version field — so the trade does not\nhave to be rediscovered.\n\n## Related Issue\n\nNo issue. Relates to nimbus-agent/nimbus-web-clipper#96, which is the\nconsumer and is already merged and waiting on this.\n\n## Type of Change\n\n- [x] New feature (non-breaking change that adds functionality)\n- [x] Documentation only *(partly — the design addendum and the\ndelivery-log entry)*\n\nAdditive: an existing response object gains a field. No route added, no\nauth change, no allowlist edit, no config key.\n\n## Non-Negotiables Checklist\n\n- [x] `bun run typecheck` passes with zero errors\n- [x] `bun run lint` passes (Biome — format + lint)\n- [x] All existing tests pass (`bun test`) — gateway **16080 pass / 0\nfail** across 1151 files; `scripts` **1660 pass / 0 fail**\n- [x] New behaviour is covered by tests\n- [x] No `any` types introduced\n- [x] No credentials, tokens, or secret values appear in logs, IPC\nmessages, config, or test fixtures\n- [x] Platform-specific code is behind the `PlatformServices`\nabstraction — n/a, no platform code touched\n- [x] The HITL consent gate has not been weakened, bypassed, or made\nconfigurable — untouched\n- [x] `docs/README.md` not touched\n\n## Coverage (if engine/ or vault/ was changed)\n\nNeither was changed.\n\n## Testing\n\nWritten test-first. The new case in\n`packages/gateway/src/agent-runs/agent-http-e2e.test.ts` failed before\nthe change:\n\n```\nerror: expect(received).toBe(expected)\nExpected: \"7.6.0\"\nReceived: undefined\n```\n\nand passes after. It asserts against the imported `GATEWAY_VERSION`\nrather than a literal, so the release-please bump cannot drift it.\n\nFull runs after the change:\n\n```\nbun run typecheck   →  clean\nbun run lint        →  exit 0\nbun run lint:markdown → 0 issues in 0 files\nbun test packages/gateway → 16080 pass, 56 skip, 0 fail (1151 files)\nbun test scripts    → 1660 pass, 27 skip, 0 fail (118 files)\n```\n\n## Notes for Reviewers\n\nThe existing test `GET /v1/agents publishes exactly the invokable set`\nis untouched and still asserts `toHaveLength(11)` and the four\nexclusions — destructuring `{ agents }` from a body that now has a\nsecond key is unaffected, which is the point of an additive change.\n\n`markdownlint-cli2` was run because two docs files changed; this repo's\ngate over `docs/` is easy to miss locally.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_015bqLXtgadH9pbDCDodmXb5\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n## Summary by CodeRabbit\n\n- **New Features**\n- The `GET /v1/agents` endpoint now includes the gateway version\nalongside the available agent roster.\n- Consumers can use the returned version information when processing\nagent roster responses and performing compatibility checks.\n\n- **Documentation**\n- Updated the changelog and design documentation to describe the new\nversion field and client behavior.\n\n- **Tests**\n- Added end-to-end coverage verifying that agent roster responses\ninclude the gateway version.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-09-03T04:15:59Z",
-          "tree_id": "d87af1bfbdbeb2628be7d1c223cf72dcec06ac97",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/d3ba71dd3d3513e828da301bd59472fdb2dfc456"
-        },
-        "date": 1788409718610,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 333.33206379999973,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 332.22340564999615,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 189.20392215000064,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "10551de3b5ce16083be702f91bf86a924aa7a3e5",
+          "message": "docs: record IC10b and IC6, which complete the incident engine (#2062)\n\nRecords the two slices that merged after #2057, under the batch rule\n(the shared status docs land in the batch's last PR):\n\n- **#2059, IC10b:** the desktop Incidents page shows a record's\nremediation proposals and the open findings. The allowlist goes from 135\nto 137 (`incident.proposals`, `incident.findings`). The desktop never\nruns, undoes or switches advisory mode, and a desktop listing revives no\nproposal.\n- **#2060, IC6:** owner-authored runbooks, run one approved step at a\ntime. Parameters come from typed record fields only. Adds schema V104,\nI57 (c) and D46(g).\n\nWith IC6, the incident engine (IC1 to IC10) is complete.\n\nFiles changed:\n- **CLAUDE.md and GEMINI.md:** a status-paragraph sentence for each\nslice, plus a line saying the incident engine is complete. IC6's\nsentence states the title match as a plain substring, which is what the\nmerged loader does, not the regex in the original handoff text.\n- **docs/CHANGELOG.md:** two entries at the top.\n- **docs/README.md:** one sentence added to the incident paragraph.\n- **docs/roadmap.md:** *Automatic incident assembly* gets a progress\nnote on what IC3 to IC10 deliver. It stays open: DAG-run logs, dbt test\nresults and warehouse schema deltas are not indexed, a PagerDuty event\ntagged `data` is not a data trigger, and there is no separate Data\nIncident Brief. No other incident row changed state.\n\nCounts checked against code:\n- `CURRENT_SCHEMA_VERSION` 104\n- `ALLOWED_METHODS.len()` 137\n- `HITL_REQUIRED.size` 186, unchanged\n- static rules D10 to D50\n- invariants I1 to I59\n\n`audit:doc-refs`, `audit:status-drift`, `lint:markdown` and\n`preflight:fast` pass.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JmSjrCk6NpLauKU2yYCwva\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **Documentation**\n* Updated project status and roadmap notes to reflect recent milestones,\ncompleted work, and remaining items.\n* Added changelog and README entries describing incident runbooks and\ndesktop incident proposals and findings, including available actions and\nlimitations.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-18T09:52:24Z",
+          "tree_id": "e8f11cc2283eb7bed29814ec8d81acbcd7a263a2",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/10551de3b5ce16083be702f91bf86a924aa7a3e5"
+        },
+        "date": 1794996341510,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 176.16495624999862,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 177.69172169999948,
             "unit": "ms"
           }
         ]
