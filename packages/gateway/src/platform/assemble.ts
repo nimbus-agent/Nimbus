@@ -410,8 +410,13 @@ import {
 } from "../toolgen/toolgen-draft-llm.ts";
 import type { ToolgenGateDeps } from "../toolgen/toolgen-gate.ts";
 import { createEndpointFinder } from "../toolgen/toolgen-grounding.ts";
-import type { ToolgenInvokeDeps } from "../toolgen/toolgen-invoke-gate.ts";
+import { invokeSavedTool, type ToolgenInvokeDeps } from "../toolgen/toolgen-invoke-gate.ts";
 import { TOOLGEN_SIGNING_PUBKEY } from "../toolgen/toolgen-keypair.ts";
+import {
+  pinReadVerified,
+  type ToolgenModelDoorSource,
+  type ToolgenModelPin,
+} from "../toolgen/toolgen-model-door.ts";
 import { ToolgenRegistry } from "../toolgen/toolgen-registry.ts";
 import type { ToolgenSaveDeps } from "../toolgen/toolgen-save-gate.ts";
 import { getSavedTool } from "../toolgen/toolgen-saved-repo.ts";
@@ -433,6 +438,7 @@ import {
 } from "../toolgen/toolgen-script-store.ts";
 import {
   CLI_TOOLGEN_SESSION_ID,
+  ERR_TOOLGEN_MODEL_ACCESS_WITHDRAWN,
   ERR_TOOLGEN_NOT_SAVED,
   ERR_TOOLGEN_PUBKEY_UNAVAILABLE,
   ToolgenError,
@@ -5317,12 +5323,49 @@ export async function assemblePlatformServices(
   };
 
   // Task 4's `toolgen.invoke` deps: everything `invokeSavedTool` (`toolgen-invoke-gate.ts`,
-  // Tasks 1-3) needs to spawn, call and audit a SAVED tool. CLI-only this release -- see
-  // `ToolgenRpcCtx.invokeDeps`'s docstring -- and deliberately NOT wired into
-  // `NimbusEngineAgentDeps.toolgen`, which stays unset, so the model cannot reach this path.
+  // Tasks 1-3) needs to spawn, call and audit a SAVED tool. The owner's `nimbus tool run` uses them
+  // as they are; the model's door (`toolgenModelDoor` below, I60) uses them with a pinned spawn,
+  // only after a person approved the call.
   //
   // Resolved once, matching `loadSavedToolsIntoRegistry`'s own read of the same runtime above.
   const runtimeReadPaths = resolveRuntimeById("bun").requiredReadPaths();
+  // One spawn path for both callers: `nimbus tool run` (no pin) and the model's door (pinned to the
+  // artifact digest the owner approved, I60), so the two can never diverge in what they verify.
+  const spawnSaved = async (toolId: string, pin?: ToolgenModelPin) => {
+    const pubkeyB64 = await vault.get(TOOLGEN_SIGNING_PUBKEY);
+    if (pubkeyB64 === null) {
+      throw new ToolgenError(ERR_TOOLGEN_PUBKEY_UNAVAILABLE, "toolgen signing pubkey unavailable");
+    }
+    const row = getSavedTool(db, toolId);
+    if (row === null) {
+      throw new ToolgenError(ERR_TOOLGEN_NOT_SAVED, `tool "${toolId}" is not saved`);
+    }
+    return spawnSavedTool(toolId, {
+      configDir: paths.configDir,
+      pubkeyB64,
+      sessionId: CLI_TOOLGEN_SESSION_ID,
+      row: { approvedAt: row.approvedAt },
+      runtime: { requiredReadPaths: () => runtimeReadPaths },
+      readVerifiedSavedTool:
+        pin === undefined
+          ? readVerifiedSavedTool
+          : pinReadVerified(readVerifiedSavedTool, pin.expectedDigest),
+      savedToolDir,
+      rewriteSavedToolScript,
+      spawn: (envelope) => {
+        // A model call re-checks its offer at the last moment before the child starts (I60), after
+        // every wait above: a lock-off or an opt-out set meanwhile refuses the spawn.
+        if (pin !== undefined && !pin.stillAllowed()) {
+          throw new ToolgenError(
+            ERR_TOOLGEN_MODEL_ACCESS_WITHDRAWN,
+            `model access to "${toolId}" was withdrawn before it started`,
+          );
+        }
+        return spawnGeneratedTool(envelope, toolgenBroker, dirname(envelope.scriptPath));
+      },
+    });
+  };
+
   const toolgenInvokeDeps: ToolgenInvokeDeps = {
     config: toolGenerationCfg,
     // A GETTER, not a snapshot: org policy is re-resolved per call, so a policy tightened after
@@ -5332,31 +5375,7 @@ export async function assemblePlatformServices(
       return policyGate.enforced();
     },
     registry: toolgenRegistry,
-    spawn: async (toolId) => {
-      const pubkeyB64 = await vault.get(TOOLGEN_SIGNING_PUBKEY);
-      if (pubkeyB64 === null) {
-        throw new ToolgenError(
-          ERR_TOOLGEN_PUBKEY_UNAVAILABLE,
-          "toolgen signing pubkey unavailable",
-        );
-      }
-      const row = getSavedTool(db, toolId);
-      if (row === null) {
-        throw new ToolgenError(ERR_TOOLGEN_NOT_SAVED, `tool "${toolId}" is not saved`);
-      }
-      return spawnSavedTool(toolId, {
-        configDir: paths.configDir,
-        pubkeyB64,
-        sessionId: CLI_TOOLGEN_SESSION_ID,
-        row: { approvedAt: row.approvedAt },
-        runtime: { requiredReadPaths: () => runtimeReadPaths },
-        readVerifiedSavedTool,
-        savedToolDir,
-        rewriteSavedToolScript,
-        spawn: (envelope) =>
-          spawnGeneratedTool(envelope, toolgenBroker, dirname(envelope.scriptPath)),
-      });
-    },
+    spawn: (toolId) => spawnSaved(toolId),
     audit: (entry) => appendAuditEntry(db, entry),
     // Refusal-path disambiguation only -- see `ToolgenInvokeDeps.disabledReasonFor`. The row is a
     // health-report CACHE (I40), never an authority: it is read here to explain a refusal the
@@ -5369,6 +5388,25 @@ export async function assemblePlatformServices(
         savedToolSpawnPolicy(toolId, savedToolDir(paths.configDir, toolId), runtimeReadPaths),
       ),
     now: () => Date.now(),
+  };
+
+  // The model's door to the owner's saved generated tools (S4, I60): every switch, the opt-in list
+  // and the policy read live per listing and per call; `invoke` is reached only after a person's
+  // approval of the call (`toolgen/toolgen-model-door.ts`), and its spawn is pinned to the artifact
+  // digest that approval showed.
+  const toolgenModelDoor: ToolgenModelDoorSource = {
+    config: () => loadNimbusToolGenerationFromConfigDir(paths.configDir),
+    enforced: () => policyGate.enforced(),
+    // A governed install whose policy did not verify offers nothing: its `enforced()` is only the baseline.
+    policyUnverified: () => policyGate.governanceIntended() && !policyGate.status().signatureValid,
+    registry: toolgenRegistry,
+    savedDigest: (toolId) => getSavedTool(db, toolId)?.artifactDigest ?? null,
+    invoke: (toolId, input, pin) =>
+      invokeSavedTool(
+        { toolId, input, sessionId: CLI_TOOLGEN_SESSION_ID, approvalAuditId: pin.approvalAuditId },
+        { ...toolgenInvokeDeps, spawn: (id) => spawnSaved(id, pin) },
+      ),
+    warn: (msg) => syncLogger.warn({ capability: "toolgen_model_access" }, msg),
   };
 
   ipcOpts.toolgenRpcCtx = {
@@ -5491,6 +5529,7 @@ export async function assemblePlatformServices(
     sandboxRunner,
     hostActivity,
     toolgenRegistry,
+    toolgenModelDoor,
     llmRegistry,
     connectorWriteDeps,
     embeddingReadiness,

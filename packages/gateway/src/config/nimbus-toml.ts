@@ -1209,6 +1209,12 @@ export type NimbusToolGenerationToml = {
   maxToolsPerSession: number;
   maxRequestsPerTool: number;
   requestTimeoutMs: number;
+  /**
+   * The SAVED tool ids the owner offers to the conversational model (S4, I60). Default empty: no
+   * generated tool is offered. Exact ids only (no glob); every call still asks the owner over its
+   * verbatim input (`toolgen/toolgen-model-door.ts`).
+   */
+  modelTools: readonly string[];
 };
 
 /**
@@ -1222,6 +1228,7 @@ export const DEFAULT_NIMBUS_TOOL_GENERATION_TOML: NimbusToolGenerationToml = {
   maxToolsPerSession: 3,
   maxRequestsPerTool: 50,
   requestTimeoutMs: 10_000,
+  modelTools: [],
 };
 
 function applyNimbusToolGenerationKey(
@@ -1254,6 +1261,9 @@ function applyNimbusToolGenerationKey(
         out.requestTimeoutMs = n;
       });
       break;
+    case "model_tools":
+      out.modelTools = parseModelToolIds(valRaw);
+      break;
     case "drafting": {
       // An unrecognised value leaves the default in place, matching the positive-number keys
       // above: a typo must never widen what may draft. Mirrors `setEmbeddingProvider`'s
@@ -1268,6 +1278,33 @@ function applyNimbusToolGenerationKey(
       break;
   }
 }
+
+/** A saved tool id the `model_tools` list may name: the id alphabet, nothing that could be a glob. */
+const MODEL_TOOL_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
+
+/**
+ * `model_tools`: exact ids, de-duplicated in the owner's order. Only a QUOTED entry counts: a bare
+ * token (`123`, `true`, a word) is dropped, never read as an id, so the list names only strings the
+ * owner wrote as strings. An entry that is not an id is dropped (never widened into a match), and a
+ * value that is not one bracketed array is the empty list.
+ */
+function parseModelToolIds(valRaw: string): string[] {
+  const v = valRaw.trim();
+  if (!v.startsWith("[") || !v.endsWith("]")) return [];
+  const out: string[] = [];
+  for (const raw of v.slice(1, -1).split(",")) {
+    const entry = raw.trim();
+    if (entry === "") continue;
+    const quoted = MODEL_TOOL_QUOTED.exec(entry);
+    if (quoted === null) continue;
+    const id = quoted[2] ?? "";
+    if (MODEL_TOOL_ID_PATTERN.test(id) && !out.includes(id)) out.push(id);
+  }
+  return out;
+}
+
+/** One quoted entry: double or single quotes, nothing outside them. */
+const MODEL_TOOL_QUOTED = /^(["'])([^"']*)\1$/;
 
 export function parseNimbusToolGenerationToml(
   raw: string,

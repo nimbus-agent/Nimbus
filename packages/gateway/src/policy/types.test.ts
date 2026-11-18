@@ -5,12 +5,12 @@ import { AI_V2_CAPABILITIES } from "./types.ts";
 describe("AI_V2_CAPABILITIES", () => {
   test("mcp_action is a lockoff-able ai_v2 capability", () => {
     expect([...AI_V2_CAPABILITIES]).toContain("mcp_action");
-    expect(AI_V2_CAPABILITIES).toHaveLength(11);
+    expect(AI_V2_CAPABILITIES).toHaveLength(12);
   });
 
   test("agent_fleet is a lockoff-able ai_v2 capability", () => {
     expect([...AI_V2_CAPABILITIES]).toContain("agent_fleet");
-    expect(AI_V2_CAPABILITIES).toHaveLength(11);
+    expect(AI_V2_CAPABILITIES).toHaveLength(12);
   });
 
   test("standing_approvals is a lockoff-able ai_v2 capability (Phase 10 SA3, I55)", () => {
@@ -60,5 +60,15 @@ standing_approvals=false
       `[policy]\nversion=1\norg="x"\n[policy.capabilities.ai_v2]\nagent_fleets=false\n`,
     );
     expect(parsed.capabilities.disabled).toEqual([]);
+  });
+});
+
+describe("toolgen_model_access (S4, I60)", () => {
+  test("is a lockoff-able ai_v2 capability", () => {
+    expect([...AI_V2_CAPABILITIES]).toContain("toolgen_model_access");
+    const parsed = parsePolicyToml(
+      `[policy]\nversion=1\norg="x"\n[policy.capabilities.ai_v2]\ntoolgen_model_access=false\n`,
+    );
+    expect(parsed.capabilities.disabled).toContain("toolgen_model_access");
   });
 });

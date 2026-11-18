@@ -83,6 +83,13 @@ export const AI_V2_CAPABILITIES = [
    * when the policy accessor is absent (`standing/standing-rule-capability.ts`).
    */
   "standing_approvals",
+  /**
+   * The engine agent being OFFERED the owner's saved generated tools (S4, I60), each listed in
+   * `[tool_generation] model_tools`. Locked off, none is listed and every call refuses. Fail-closed
+   * when the policy accessor is absent (`toolgen/toolgen-model-door.ts`). The owner's own
+   * `nimbus tool run` is owner-initiated and not affected.
+   */
+  "toolgen_model_access",
 ] as const;
 
 /** Where a persisted policy came from. */

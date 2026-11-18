@@ -17,6 +17,7 @@ import type { OncallPushRuntime } from "../oncall-push/push-runtime.ts";
 import type { EnforcedPolicy } from "../policy/policy-gate.ts";
 import type { SyncScheduler } from "../sync/scheduler.ts";
 import type { AgentLatencyRecorder } from "../telemetry/agent-latency.ts";
+import type { ToolgenModelDoorSource } from "../toolgen/toolgen-model-door.ts";
 import type { ToolgenRegistry } from "../toolgen/toolgen-registry.ts";
 import type { NimbusVault } from "../vault/index.ts";
 import type { AgentVendor } from "./assemble.ts";
@@ -80,6 +81,8 @@ export interface PlatformServices {
    * on-disk half of "ephemeral means ephemeral."
    */
   toolgenRegistry: ToolgenRegistry;
+  /** The model's door to the owner's saved generated tools (S4, I60); `gateway-main.ts` hands it to the agent. */
+  toolgenModelDoor: ToolgenModelDoorSource;
   /** Credential-aware deps for the connector write dispatcher (warehouse/BI ∪ GitOps/ML; wrapped in index.ts). */
   connectorWriteDeps: ConnectorWriteContext;
   // Owner-side delegated HITL (Slice 2, I20). Present when federation is enabled: the executor gate

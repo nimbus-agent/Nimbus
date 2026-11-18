@@ -55,6 +55,7 @@ import {
 } from "./executor.ts";
 import { GatewayAgentUnavailableError } from "./gateway-agent-error.ts";
 import { indexCountFor, indexCountLine } from "./index-count-question.ts";
+import { createOwnerOnlyAsk } from "./owner-only-approval.ts";
 import { type PlanResult, planFromIntent } from "./planner.ts";
 import { fallbackSearchTerms, questionSearchTerms } from "./question-search-terms.ts";
 import { type ClassifiedIntent, type ClassifierEgressPolicy, classifyIntent } from "./router.ts";
@@ -387,6 +388,7 @@ function withdrawOfferedExecutors(): void {
   if (store === undefined) return;
   delete store.userMcpExecutor;
   delete store.connectorWriteExecutor;
+  delete store.toolgenModelAsk;
 }
 
 function offerUserMcpExecutorIfOwner(p: RunAskParams): void {
@@ -409,8 +411,16 @@ function offerConnectorWriteExecutorIfOwner(p: RunAskParams): void {
   if (store === undefined) return;
   if (p.offerConnectorWriteTools === true && !isDemo(p)) {
     store.connectorWriteExecutor = buildModelWriteExecutor(p);
+    // I60: the same decision offers the owner's saved generated tools, each call behind a person's
+    // approval on THIS connection (no delegation, a non-human answer is a decline).
+    store.toolgenModelAsk = createOwnerOnlyAsk({
+      consent: bindConsentChannel(p.consentCoordinator, p.clientId),
+      audit: p.localIndex,
+      policyHitl: p.policyHitl,
+    });
   } else {
     delete store.connectorWriteExecutor;
+    delete store.toolgenModelAsk;
   }
 }
 

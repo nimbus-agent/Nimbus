@@ -211,12 +211,16 @@ export async function main(): Promise<void> {
           // request context carries the user-MCP executor (the local owner); every call runs
           // through that executor's I42 owner prompt, and every result through `wrapToolForLlm`
           // (I11).
-          // `deps.toolgen` and `deps.computerUse` stay UNWIRED here: the model still cannot invoke
-          // a generated tool or a computer-use lane.
+          // `deps.computerUse` stays UNWIRED here: the model still cannot drive a computer-use lane.
           // The org-policy lock-off (`[policy.capabilities.ai_v2] user_mcp_model_access = false`)
           // is enforced HERE, at the source, for both halves: locked off — or no policy accessor
           // (fail-closed) — nothing is listed, so the model is offered nothing on any path. Read per
           // call, so a policy applied after boot takes effect on the next turn.
+          // I60: the owner's saved generated tools, each listed in `[tool_generation] model_tools`,
+          // offered only on a turn whose request context carries the owner-only approval (the
+          // local owner's non-demo `cli`/`ui` turn); every call asks a person over its input first.
+          // Never on a demo-rooted gateway (I41), whatever the request context holds.
+          ...(platform.paths.demo === true ? {} : { toolgen: platform.toolgenModelDoor }),
           userMcp: {
             listModelAccessibleIds: () =>
               listPolicyGatedModelAccessibleOwnerCodeServerIds(

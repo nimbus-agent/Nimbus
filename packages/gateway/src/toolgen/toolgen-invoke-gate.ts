@@ -123,21 +123,31 @@ export async function invokeSavedTool(
     readonly toolId: string;
     readonly input?: Record<string, unknown>;
     readonly sessionId?: string;
+    /**
+     * The audit id of the owner's `tool.model.invoke` approval this call runs under (S4, I60), so
+     * the `tool.invoke` row names the approval it rests on. Absent for the owner's own `nimbus tool
+     * run`, whose registration is the approval.
+     */
+    readonly approvalAuditId?: number;
   },
   deps: ToolgenInvokeDeps,
 ): Promise<ToolgenInvokeOutcome> {
   const { toolId } = req;
+  const att: InvokeAttribution = {
+    ...(req.sessionId === undefined ? {} : { sessionId: req.sessionId }),
+    ...(req.approvalAuditId === undefined ? {} : { approvedBy: req.approvalAuditId }),
+  };
 
   // Check config first: a user who turned the feature off locally should not be told their org
   // policy forbids it. This check lets the two error codes stay distinguishable.
   if (!deps.config.enabled) {
-    return refuse(deps, toolId, ERR_TOOLGEN_INVOKE_DISABLED, undefined, req.sessionId);
+    return refuse(deps, toolId, ERR_TOOLGEN_INVOKE_DISABLED, undefined, att);
   }
 
   // Check org policy (fail-closed on absent accessor: "cannot tell" must never resolve to "allowed"
   // for a standing, unattended execution capability).
   if (!isToolgenCapabilityEnabled({ config: deps.config, enforced: deps.enforced })) {
-    return refuse(deps, toolId, ERR_TOOLGEN_INVOKE_POLICY_DISABLED, undefined, req.sessionId);
+    return refuse(deps, toolId, ERR_TOOLGEN_INVOKE_POLICY_DISABLED, undefined, att);
   }
 
   // Look up the saved tool. MUST use `savedTools()`, NOT `findArtifact()`. `findArtifact` reads the
@@ -156,7 +166,7 @@ export async function invokeSavedTool(
       toolId,
       ERR_TOOLGEN_NOT_SAVED,
       disabledReason === null ? undefined : `saved, but disabled: ${disabledReason}`,
-      req.sessionId,
+      att,
     );
   }
 
@@ -166,14 +176,14 @@ export async function invokeSavedTool(
   const input = req.input ?? {};
   const inputError = validateInput(input, artifact.inputSchema);
   if (inputError !== undefined) {
-    return refuse(deps, toolId, ERR_TOOLGEN_INPUT_INVALID, inputError, req.sessionId);
+    return refuse(deps, toolId, ERR_TOOLGEN_INPUT_INVALID, inputError, att);
   }
 
   // Ask the sandbox LAST among the refusals: it is the only check that reflects the machine rather
   // than the request, and a caller with a bad tool id or input should hear about that first.
   const unconfinable = deps.confinementUnavailable(toolId);
   if (unconfinable !== null) {
-    return refuse(deps, toolId, ERR_TOOLGEN_SANDBOX_DEGRADED, unconfinable, req.sessionId);
+    return refuse(deps, toolId, ERR_TOOLGEN_SANDBOX_DEGRADED, unconfinable, att);
   }
 
   return await serialise(toolId, async () => {
@@ -220,7 +230,7 @@ export async function invokeSavedTool(
     // propagates to the caller rather than being swallowed: the audit trail is the point of the
     // gate, and silently returning `executed` on a row that was never written would be the same
     // false claim in the other direction.
-    writeInvokeAudit(deps, req.sessionId, auditFieldsFor(outcome));
+    writeInvokeAudit(deps, att, auditFieldsFor(outcome));
     return outcome;
   });
 }
@@ -334,16 +344,24 @@ function auditFieldsFor(outcome: ToolgenInvokeOutcome): InvokeAuditFields {
  * `recordToolEgress` precedent applies here too: the tool's REGISTRATION was approved, not each
  * request, hence `hitlStatus: "not_required"`.
  */
+/** Who a `tool.invoke` row is attributed to: the session, and the owner approval it ran under. */
+interface InvokeAttribution {
+  readonly sessionId?: string;
+  readonly approvedBy?: number;
+}
+
 function writeInvokeAudit(
   deps: ToolgenInvokeDeps,
-  sessionId: string | undefined,
+  att: InvokeAttribution,
   fields: InvokeAuditFields,
 ): void {
+  const { sessionId, approvedBy } = att;
   // Cap the error text for the stored row only, never the returned outcome (which keeps the full message).
   // Use a spread to conditionally include the capped error, respecting exactOptionalPropertyTypes.
   const cappedFields = {
     ...fields,
     ...(fields.error === undefined ? {} : { error: capAuditError(fields.error) }),
+    ...(approvedBy === undefined ? {} : { approvedBy }),
   };
   deps.audit({
     actionType: "tool.invoke",
@@ -373,10 +391,10 @@ function refuse(
   deps: ToolgenInvokeDeps,
   toolId: string,
   code: string,
-  reason?: string,
-  sessionId?: string,
+  reason: string | undefined,
+  att: InvokeAttribution,
 ): ToolgenInvokeOutcome {
   const outcome = buildRefused(toolId, code, reason);
-  writeInvokeAudit(deps, sessionId, auditFieldsFor(outcome));
+  writeInvokeAudit(deps, att, auditFieldsFor(outcome));
   return outcome;
 }
