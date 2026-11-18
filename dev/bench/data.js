@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795023334030,
+  "lastUpdate": 1795024767540,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "d1900c6e5a679cf520053f33fd02e7fbbad280b4",
-          "message": "fix(sonar): specific matchers and named decisions, minus two arity assertions (#1436)\n\nThird Sonar pass: 17 S5906 assertion findings and 3 S3358 nested-ternary\nfindings. Takes this repo from 52 open to roughly 32.\n\n## Assertions\n\n`expect(x.length).toBe(n)` becomes `toHaveLength(n)`, plus one\n`toBe(null)` to\n`toBeNull()`. Not cosmetic: on failure `toHaveLength` prints the\ncollection,\nwhere the old form prints two integers and leaves you working out which\narray\nit was.\n\n## The two left alone\n\nTwo of the nineteen are untouched, and they are why this was not a blind\nrewrite. `classifyTerminalAction.length` in `cu-classify.test.ts` and\n`security-invariants.test.ts` is **not a collection length — it is\nfunction\narity**. The comment above one reads:\n\n> provable by SIGNATURE: the function takes ONE parameter, so a\nmodel-supplied\n> description cannot even be passed to it, let alone read. I3\ntransplanted,\n> enforced by arity.\n\nThat is the I35 property those tests exist to pin.\n`expect(classifyTerminalAction).toHaveLength(1)` is valid and would\nsatisfy the\nrule, but it reads as \"this function has one element\" and buries what is\nbeing\nproven. The suggestion improves the failure report and degrades the\nmeaning.\n\n## Named decisions\n\nThe three ternary changes name a decision rather than restructuring\nlogic:\n\n- `cu-gate.ts` — the mid-flight termination reason is now\n`policyRefusalReason`.\nThat string is what the audit row and the owner both see, and its arms\nare\nORDERED: local config, then org policy, then the lane. Guarded returns\nput\n  that ordering into the shape of the function.\n\n  Typing it turned up something worth keeping. My first version took\n`CuGateDeps` and failed to compile: the call site only holds `CuRunDeps`\n—\nthe I35 split that keeps lane construction out of the deps the\nmodel-facing\n  tool layer holds. The helper takes the narrower type and records why.\n\n- `why.ts` — three-arm subject resolution becomes `resolveArm`, with the\nordering documented as load-bearing: PR before item before the ref\nfallback,\n  so the fallback is genuinely a fallback and not a fourth case.\n\n- `cu-actuate.ts` — a ternary inside a template literal inside a\nternary; the\n  truncation suffix is a named const.\n\n## Not done\n\nThe remaining four S3358 findings are chained dispatch conditionals\nwhere the\n`const` binding is worth keeping and an `if`/`else` would cost it. They\nwant the\nsame extract-and-name treatment rather than a mechanical rewrite, and\ndeserve a\npass that can give each one that.\n\n## Verification\n\n`preflight:fast` 33/33, including the whole-repo test run.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01GZCGCkVMD9JaKuiKvqRdAb\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n- **Refactor**\n- Improved internal handling of input resolution, policy termination\nmessages, and terminal output formatting.\n  - Existing behavior remains unchanged.\n\n- **Tests**\n- Standardized collection-size assertions across gateway, ChatOps,\nbrowser, connector, egress, IPC, and security test coverage.\n- Preserved existing test expectations while improving assertion\nconsistency and readability.\n- Updated formatting in browser observation tests without changing\ncoverage or behavior.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-09-03T21:51:47+03:00",
-          "tree_id": "aded73d12af7eb0d734cda415e1d82faeb20908a",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/d1900c6e5a679cf520053f33fd02e7fbbad280b4"
-        },
-        "date": 1788462218260,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 316.27652569999884,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 315.5627446499966,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 173.71255944999902,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "e3ac7a87d70a08ee97a4a80f14ec6c68b85eb37d",
+          "message": "feat(gateway): the model drives a computer-use session the owner opened; computer-use prompts go only to that connection and count only a human answer (I35, D26(d)) (#2069)\n\nThe second half of the S4 carried-in row *Model access to generated\ntools and to computer-use* (the first half is #2067), built to the\nowner's rulings of 2026-11-18:\n\n- **OR-MCU-1:** a CLI-only first version. The model drives only a\nsession the owner opened; the desktop consent UX is a stated limit, and\n`computer.approvalRespond` stays off the Tauri allowlist (I7 unchanged).\n- **OR-MCU-2:** computer-use approvals go only to the requesting\nconnection and count only `answerSource: \"human\"`. I35's text and its\nenforcement test change in this commit.\n\n## What changes\n\n**Every computer-use prompt is unicast, human-only, on every path.**\n- The two brokers now extend `CuUnicastConsentBroker`\n(`computer-use/cu-unicast-broker.ts`), which has no broadcast arm and no\n`respond`.\n- `requestFor(clientId, ...)` writes to one connection\n(`IPCServer.notify`). A connection that is gone is a denial at once.\n- `respondFrom` matches only that connection and approves only for\n`approved === true && answerSource === \"human\"`.\n- A connection that goes away settles its open prompts as denials\n(`onClientDisconnected`).\n\n**The requesting connection is the one that OPENED the session.**\n- The envelope prompt goes to the opener, and every action prompt goes\nthrough the session's open-time channel (`approveThisAction` reads\n`openDeps.requestApproval`).\n- So whoever calls `computer.act`, or a model turn bound to the session,\ncan neither receive nor answer its own prompt. This came out of the\nAntigravity review (a P0): unicasting to the actor would let any local\nconnection approve its own action.\n- `nimbus computer` was already built as the passive listener that\nanswers those prompts. It now sends `answerSource: \"human\"`.\n\n**The model door: `nimbus ask --computer <session-id> \"<task>\"`.**\n- The IPC entry honours `computerSession` only for a `cli` connection\n(`COMPUTER_USE_OFFER_BY_KIND`) and refuses it with `at`.\n- `runAsk` binds the session only on a non-demo, non-point-in-time turn,\nand only to a session this process holds open (`liveSessionLane`, with\n`[computer_use] enabled`).\n- `engine/agent.ts` offers that lane's tools per request, over run deps\nonly (no lane spawner).\n- Every action still goes through `runAction` unchanged.\n- The ask terminal prints where to approve.\n\n**Rules and limits:** static **D26(d)** confines the binding. There is\nno migration, no IPC method, no allowlist change, no new HITL type and\nno new invariant number.\n\n## Stated limits\n\n- **Desktop:** the desktop cannot drive or approve computer-use.\n- **Concurrent turns:** two ask turns bound to one session interleave\ntheir actions; each action is still approved by the owner at the\nopener's terminal.\n- **Audit:** a computer-use audit row does not record the answer source.\nEvery approval is human by construction.\n- **Client claims:** the answer source and the client kind are the\nclient's own claims on the local socket.\n- **Older CLIs:** an older CLI that sends no answer source cannot\napprove.\n\n## Review\n\nAntigravity reviewed the design (changes requested: 2 P0, the\nopener-routing change above, and 5 P1) and then the code (approved); its\ntest gaps are added. Red-proved: reading the caller's channel instead of\nthe opener's fails the gate test and the I35 wiring test.\n\n## Docs\n\nUpdated in this PR:\n- SECURITY-INVARIANTS: I35 text.\n- architecture: § Computer use.\n- cli-reference: `nimbus ask --computer`, `nimbus computer`.\n- roadmap: progress note on the row.\n\nThe status paragraph, the CHANGELOG and docs/README prose are batched\ninto the last PR of this parallel batch (owner rule).\n\n## Verification\n\n`bun run preflight:fast` passes, and 16,234 tests in the touched suites\npass, plus the new RPC isolation tests.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JmSjrCk6NpLauKU2yYCwva\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* `nimbus ask --computer <session-id>` lets eligible CLI turns use a\nlive computer-use session held by the same process. Approve actions in\nthe terminal running `nimbus computer`.\n* **Security**\n* Approval prompts go only to the connection that opened the session.\nOnly that connection’s human approval can approve; pending prompts are\ndenied if it disconnects.\n* Desktop access cannot drive or approve computer-use sessions. The\noption is unavailable with `--at` and local-model turns, and in demo\ngateways.\n* **Documentation**\n* Updated CLI and architecture documentation to describe computer-use\naccess and its limitations.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-18T17:50:25Z",
+          "tree_id": "ff3713437571648a276633fe889af07fba4e8640",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/e3ac7a87d70a08ee97a4a80f14ec6c68b85eb37d"
+        },
+        "date": 1795024763928,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 175.5140729499999,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 176.1122562500008,
             "unit": "ms"
           }
         ]
