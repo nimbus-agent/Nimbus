@@ -62,7 +62,7 @@ describe("the drift runner", () => {
 
   test("checks one named workdir; an unapproved one is refused before any check", async () => {
     const h = runner({ "/b": [drift(0)] });
-    expect((await h.r.check({ workdir: "/b", startedBy: "owner_cli" })).length).toBe(1);
+    expect(await h.r.check({ workdir: "/b", startedBy: "owner_cli" })).toHaveLength(1);
     await expect(h.r.check({ workdir: "/etc", startedBy: "owner_cli" })).rejects.toBeInstanceOf(
       IacDriftNotApprovedError,
     );
@@ -141,7 +141,7 @@ describe("notification helpers", () => {
   });
 
   test("the body strips control and format characters from the workdir", () => {
-    expect(driftNotifyBody(f("drift", 4, "/a‮b\nc"))).toBe(
+    expect(driftNotifyBody(f("drift", 4, "/a\u202Eb\nc"))).toBe(
       "4 objects changed outside Terraform in /a?b?c",
     );
   });

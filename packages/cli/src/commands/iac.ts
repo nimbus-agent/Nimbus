@@ -85,12 +85,9 @@ export async function runIacWith(
 ): Promise<number> {
   try {
     await declareCliClientKind(c);
-    const { findings } = a.latest
-      ? await c.call<{ findings: IacDriftFinding[] }>("iac.driftLatest", {})
-      : await c.call<{ findings: IacDriftFinding[] }>(
-          "iac.driftCheck",
-          a.workdir === undefined ? {} : { workdir: a.workdir },
-        );
+    const method = a.latest ? "iac.driftLatest" : "iac.driftCheck";
+    const params = a.workdir === undefined ? {} : { workdir: a.workdir };
+    const { findings } = await c.call<{ findings: IacDriftFinding[] }>(method, params);
     sink.out(
       a.json
         ? `${JSON.stringify({ findings }, undefined, 2)}\n`

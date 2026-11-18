@@ -33,35 +33,45 @@ export function defaultIacDriftConfig(): NimbusIacDriftToml {
 
 type Draft = { -readonly [K in keyof NimbusIacDriftToml]: NimbusIacDriftToml[K] };
 
+/** The key-value pairs of the `[iac.drift]` table, in order. */
+function sectionPairs(source: string): Array<{ key: string; valRaw: string }> {
+  const pairs: Array<{ key: string; valRaw: string }> = [];
+  let inSection = false;
+  for (const line of source.split(/\r?\n/)) {
+    const trimmed = stripComment(line).trim();
+    if (isTableHeader(trimmed)) inSection = trimmed === "[iac.drift]";
+    else if (inSection && trimmed !== "") {
+      const kv = splitKeyValue(trimmed);
+      if (kv !== undefined) pairs.push(kv);
+    }
+  }
+  return pairs;
+}
+
+/** Applies `tz` or `notify` to `out`; a bad value keeps the default and is reported. */
+function applyKey(out: Draft, key: string, valRaw: string, report: (m: string) => void): void {
+  if (key === "tz") {
+    const tz = parseString(valRaw);
+    if (isValidTimeZone(tz)) out.tz = tz;
+    else report(`[iac.drift].tz is not a time zone (got: ${valRaw}); using ${out.tz}`);
+  } else if (key === "notify") {
+    const b = parseBool(valRaw);
+    if (b === undefined)
+      report(`[iac.drift].notify must be true or false (got: ${valRaw}); using true`);
+    else out.notify = b;
+  }
+}
+
 export function parseNimbusTomlIacDrift(
   source: string,
   onFallback?: SectionFallbackSink,
 ): NimbusIacDriftToml {
   const out: Draft = { ...defaultIacDriftConfig() };
   const report = (m: string): void => onFallback?.(m);
-  let inSection = false;
   let rawSchedule: string | undefined;
-  for (const line of source.split(/\r?\n/)) {
-    const trimmed = stripComment(line).trim();
-    if (trimmed === "") continue;
-    if (isTableHeader(trimmed)) {
-      inSection = trimmed === "[iac.drift]";
-      continue;
-    }
-    if (!inSection) continue;
-    const kv = splitKeyValue(trimmed);
-    if (kv === undefined) continue;
-    if (kv.key === "schedule") rawSchedule = parseString(kv.valRaw);
-    else if (kv.key === "tz") {
-      const tz = parseString(kv.valRaw);
-      if (isValidTimeZone(tz)) out.tz = tz;
-      else report(`[iac.drift].tz is not a time zone (got: ${kv.valRaw}); using ${out.tz}`);
-    } else if (kv.key === "notify") {
-      const b = parseBool(kv.valRaw);
-      if (b === undefined)
-        report(`[iac.drift].notify must be true or false (got: ${kv.valRaw}); using true`);
-      else out.notify = b;
-    }
+  for (const { key, valRaw } of sectionPairs(source)) {
+    if (key === "schedule") rawSchedule = parseString(valRaw);
+    else applyKey(out, key, valRaw, report);
   }
   if (rawSchedule !== undefined) {
     const refusal = scheduleRefusal(rawSchedule, out.tz);
