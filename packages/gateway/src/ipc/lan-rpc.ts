@@ -84,7 +84,8 @@ const FORBIDDEN_OVER_LAN = new Set([
   // which tools and which hosts the owner has approved. No read verb here is worth preserving.
   "toolgen",
   // Extension registries (PR 3): `registry.add` pins a trust root behind the LOCAL owner's HITL
-  // prompt, and the rest drive outbound fetches. The WHOLE namespace is CLI-only.
+  // prompt, and the rest drive outbound fetches. The WHOLE namespace is off the LAN (the desktop
+  // reaches only `list`, `search` and `info`, through the local bridge, S4 marketplace tile).
   "registry",
   // The trust layer's status and feed refresh: CLI-only, like the registries it guards.
   "trust",

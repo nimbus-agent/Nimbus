@@ -48,6 +48,7 @@ import {
 } from "../extensions/registry/registry-fetch.ts";
 import { readRegistryLiveness } from "../extensions/registry/registry-liveness.ts";
 import {
+  bareTargets,
   type ResolvedEntry,
   readIndexes,
   resolveRegistryEntry,
@@ -136,6 +137,14 @@ const FINGERPRINT_RE = /^[0-9a-f]{32}$/;
 
 function invalidParams(detail: string): RpcMethodError {
   return new RpcMethodError(-32602, `ERR_INVALID_PARAMS: ${detail}`);
+}
+
+/** An optional boolean param: absent is `false`; anything but a boolean is invalid. */
+function optionalBooleanParam(rec: Record<string, unknown> | undefined, key: string): boolean {
+  const v = rec?.[key];
+  if (v === undefined) return false;
+  if (typeof v !== "boolean") throw invalidParams(`${key} must be a boolean`);
+  return v;
 }
 
 function stringParam(rec: Record<string, unknown> | undefined, key: string): string {
@@ -582,7 +591,12 @@ async function handleSearch(
   o: RegistryRpcOptions,
 ): Promise<Hit> {
   const needle = stringParam(rec, "query").toLowerCase();
-  const read = await readIndexes({ ...requireFetch(o.fetch), db: o.db }, listRegistries(o.db));
+  const includeBuiltin = optionalBooleanParam(rec, "includeBuiltin");
+  const deps = { ...requireFetch(o.fetch), db: o.db };
+  // Without the flag: the owner's added registries only (the CLI's documented behaviour). With it:
+  // exactly what a bare `install <id>` resolves, the built-in registry included unless air gap skips it.
+  const bare = includeBuiltin ? bareTargets(deps) : undefined;
+  const read = await readIndexes(deps, bare?.targets ?? listRegistries(o.db));
   const results: Array<{
     registry: string;
     id: string;
@@ -629,7 +643,14 @@ async function handleSearch(
       });
     }
   }
-  return { kind: "hit", value: { results, errors: read.errors } };
+  return {
+    kind: "hit",
+    value: {
+      results,
+      errors: read.errors,
+      ...(bare === undefined ? {} : { builtinSkippedForAirGap: bare.builtinSkippedForAirGap }),
+    },
+  };
 }
 
 /**
@@ -743,6 +764,16 @@ async function handleInfo(
         channel: v.channel,
         publishedAt: v.publishedAt,
         packageSizeBytes: v.packageSizeBytes,
+        // I48, per version: the publisher key is revoked, or this version is taken down (the same
+        // check `search` makes for the offered version). Install refuses a blocked version.
+        blocked:
+          blocksFor(o.db, {
+            extensionId: id,
+            version,
+            publisherId: entry.publisher.id,
+            keyFingerprint: publisherKeyFingerprint(entry.publisher.key),
+            source: { registry: found.reg.name, rootFingerprint: found.reg.rootFingerprint },
+          }).length > 0,
         ...qualityOf(v),
         ...(i === 0
           ? {

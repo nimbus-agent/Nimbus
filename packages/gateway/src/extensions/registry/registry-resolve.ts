@@ -101,9 +101,10 @@ export function registryTargets(deps: RegistryFetchDeps, name: string | undefine
 
 /**
  * The bare targets, and whether air gap alone kept the built-in out of them (it would have been a
- * target otherwise). The air-gap switch is read ONCE, so the two answers cannot disagree.
+ * target otherwise). The air-gap switch is read ONCE, so the two answers cannot disagree. Exported for
+ * `registry.search { includeBuiltin: true }`, which searches exactly what a bare install resolves.
  */
-function bareTargets(deps: RegistryFetchDeps): {
+export function bareTargets(deps: RegistryFetchDeps): {
   targets: RegistryRow[];
   builtinSkippedForAirGap: boolean;
 } {

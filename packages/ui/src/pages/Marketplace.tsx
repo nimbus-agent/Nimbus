@@ -1,6 +1,6 @@
-import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { useState } from "react";
 import { PendingUpdates } from "../components/PendingUpdates";
+import { RegistryBrowse } from "../components/registry/RegistryBrowse";
 import { useIpcQuery } from "../hooks/useIpcQuery";
 import { createIpcClient } from "../ipc/client";
 import type { ExtensionListResult, ExtensionSummary } from "../ipc/types";
@@ -70,7 +70,6 @@ export function Marketplace() {
   );
 
   const [actionInFlight, setActionInFlight] = useState<string | null>(null);
-  const [installError, setInstallError] = useState<string | null>(null);
   const [orphanNotice, setOrphanNotice] = useState<string | null>(null);
 
   async function handleToggle(ext: ExtensionSummary) {
@@ -110,19 +109,6 @@ export function Marketplace() {
     }
   }
 
-  async function handleInstall() {
-    setInstallError(null);
-    setOrphanNotice(null);
-    const picked = await openDialog({ directory: true, multiple: false });
-    if (typeof picked !== "string" || picked.trim() === "") return;
-    try {
-      await createIpcClient().extensionInstall(picked);
-      refetch();
-    } catch (err) {
-      setInstallError(err instanceof Error ? err.message : String(err));
-    }
-  }
-
   return (
     <div className="p-6 flex flex-col gap-4">
       {orphanNotice !== null && (
@@ -142,19 +128,14 @@ export function Marketplace() {
       )}
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-semibold">Extensions</h1>
-        <button
-          type="button"
-          disabled={offline}
-          onClick={handleInstall}
-          className="px-3 py-1 rounded bg-blue-600 text-white text-sm disabled:opacity-40"
-        >
-          Install from directory
-        </button>
+        {/* The desktop never installs code (B1 chain C1): installing is a terminal act. */}
+        <p data-testid="install-hint" className="text-xs text-[var(--color-fg-muted)]">
+          To install from a folder: nimbus extension install &lt;path&gt;
+        </p>
       </div>
 
       {isLoading && <p className="text-neutral-500 text-sm">Loading…</p>}
       {error && <p className="text-red-600 text-sm">{error}</p>}
-      {installError && <p className="text-red-600 text-sm">{installError}</p>}
 
       <PendingUpdates offline={offline} />
 
@@ -182,6 +163,8 @@ export function Marketplace() {
           </tbody>
         </table>
       )}
+
+      <RegistryBrowse offline={offline} />
     </div>
   );
 }
