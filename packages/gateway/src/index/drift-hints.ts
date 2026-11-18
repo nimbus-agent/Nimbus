@@ -57,7 +57,7 @@ export function driftHintsFromIndex(db: Database): string[] {
   }
 
   lines.push(
-    "Full drift (Terraform state vs live resources) is not automated here; use IaC MCP tools and index search for evidence.",
+    "Terraform drift (state vs live resources): run `nimbus iac drift` for each approved workdir; these hints only compare indexed counts.",
   );
   return lines;
 }

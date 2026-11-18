@@ -16,6 +16,7 @@ import {
   loadNimbusFleetFromConfigDir,
   resolveFleetJobs,
 } from "./fleet-toml.ts";
+import { loadNimbusIacDriftFromConfigDir } from "./iac-drift-toml.ts";
 import { loadNimbusIncidentPredictFromConfigDir } from "./incident-predict-toml.ts";
 import { loadNimbusIncidentScribeFromConfigDir } from "./incident-scribe-toml.ts";
 import { loadNimbusIncidentFromConfigDir } from "./incident-toml.ts";
@@ -140,6 +141,7 @@ export const SECTION_LOADERS: Readonly<Record<string, (configDir: string) => unk
   updater: loadNimbusUpdaterFromConfigDir,
   user: loadNimbusUserFromConfigDir,
   voice: loadNimbusVoiceFromConfigDir,
+  "iac.drift": loadNimbusIacDriftFromConfigDir,
   "watcher.anomaly": loadNimbusAnomalyFromConfigDir,
   "watcher.chatops": loadNimbusWatcherChatopsFromConfigDir,
 };

@@ -30,6 +30,7 @@ import {
   checkConnectorSpawnIsHidden,
   checkConnectorWriteConfinement,
   checkDoorApprovalConfinement,
+  checkDriftCheckConfined,
   checkDriverImportConfinement,
   checkEgressChokepointConfinement,
   checkEmbeddingAppenderConfinement,
@@ -4754,6 +4755,10 @@ describe("D42 — a bound write is dispatched only with its own prepare step's v
     "    const gate = (a) => this.gateWithin(a, undefined, { bind: false, prepareStep: true });",
     "    return runPrepareStep(ops, row, row.bound, action, { prepareToolIds: this.prepareToolIds() });",
     "  }",
+    "  async checkTerraformDrift(workingDirectory) {",
+    "    const gate = (a) => this.gateWithin(a, undefined, { bind: false, prepareStep: true });",
+    "    return runPrepareStep(ops, row, row.bound, action, { prepareToolIds: this.prepareToolIds() });",
+    "  }",
     "  private async runGateChecks(action, opts, scope) {",
     "    if (isPrepareActionType(action.type) && scope.prepareStep !== true) return 1;",
     "    return this.resolveHitlApproval(action, opts, record, scope);",
@@ -5077,6 +5082,11 @@ describe("D42(h) — the bound IaC capabilities are reached only from the prefli
     "  private async preparePhase(action, opts, scope) {",
     "    const capabilities = this.connectors.boundWriteCapabilities;",
     "    return { settle: (id, ctx) => capabilities.settle(id, ctx) };",
+    "  }",
+    "  async checkTerraformDrift(workingDirectory) {",
+    "    const capabilities = this.connectors.boundWriteCapabilities;",
+    "    await capabilities.preflight(id, input);",
+    "    return { settle: (id, ctx) => capabilities.settle(id, { ...ctx, driftCheck: true }) };",
     "  }",
     "  private other() {}",
     "}",
@@ -8121,6 +8131,109 @@ describe("D46(f) - the IC8 finding and baseline tables are written only by their
 
   test("files outside the gateway source are not scanned", () => {
     expect(rules([file("packages/cli/src/x.ts", "DELETE FROM incident_finding")])).toEqual([]);
+  });
+});
+
+describe("D42(i) — the drift check's flag, builder and method stay in their one place (OR-DRIFT-1, I54)", () => {
+  const file = (relPath: string, contents: string): FileEntry => ({ relPath, contents });
+  const RUN_ASK = "packages/gateway/src/engine/run-ask.ts";
+  const EXECUTOR = "packages/gateway/src/engine/executor.ts";
+  const MAIN = "packages/gateway/src/gateway-main.ts";
+  const RUNNER = "packages/gateway/src/iac-drift/drift-runner.ts";
+  const OTHER = "packages/gateway/src/ipc/other.ts";
+  const GOOD = [
+    file(
+      RUN_ASK,
+      "export function buildIacDriftExecutor(p) {\n  return make(p, { driftCheck: true });\n}\n",
+    ),
+    file(
+      EXECUTOR,
+      "class T {\n  async checkTerraformDrift(w) {\n    return s({ ...ctx, driftCheck: true });\n  }\n}\n",
+    ),
+    file(MAIN, "const e = buildIacDriftExecutor(p);"),
+    file(RUNNER, "await deps.makeExecutor().checkTerraformDrift(dir);"),
+  ];
+  const rules = (files: FileEntry[]): string[] => checkDriftCheckConfined(files).map((v) => v.rule);
+
+  test("the control: the allowed shape is clean", () => {
+    expect(checkDriftCheckConfined(GOOD)).toEqual([]);
+  });
+
+  test("FAILS when the flag is set anywhere else", () => {
+    expect(rules([...GOOD, file(OTHER, "build({ driftCheck: true });")])).toEqual([
+      "bound-drift-confined",
+    ]);
+    expect(
+      rules(
+        GOOD.map((f) =>
+          f.relPath === RUN_ASK
+            ? file(
+                RUN_ASK,
+                `${f.contents}export function other() {\n  return { driftCheck: true };\n}\n`,
+              )
+            : f,
+        ),
+      ),
+    ).toEqual(["bound-drift-confined"]);
+  });
+
+  test("FAILS when a later sibling of the drift method sets the flag (each span ends at its own brace)", () => {
+    const executor = [
+      "class T {",
+      "  async checkTerraformDrift(w) {",
+      "    return s({ ...ctx, driftCheck: true });",
+      "  }",
+      "  other() {",
+      "    x({ driftCheck: true });",
+      "  }",
+      "}",
+      "",
+    ].join("\n");
+    expect(rules(GOOD.map((f) => (f.relPath === EXECUTOR ? file(EXECUTOR, executor) : f)))).toEqual(
+      ["bound-drift-confined"],
+    );
+  });
+
+  test("FAILS when the builder is called outside gateway-main, or twice in run-ask", () => {
+    expect(rules([...GOOD, file(OTHER, "buildIacDriftExecutor(p);")])).toEqual([
+      "bound-drift-confined",
+    ]);
+    expect(
+      rules(
+        GOOD.map((f) =>
+          f.relPath === RUN_ASK
+            ? file(RUN_ASK, `${f.contents}const x = buildIacDriftExecutor(q);\n`)
+            : f,
+        ),
+      ),
+    ).toEqual(["bound-drift-confined"]);
+  });
+
+  test("FAILS when the method is called outside the drift runner", () => {
+    expect(rules([...GOOD, file(OTHER, "exec.checkTerraformDrift(dir);")])).toEqual([
+      "bound-drift-confined",
+    ]);
+  });
+
+  test("comments, strings and test files are not code", () => {
+    expect(
+      rules([
+        ...GOOD,
+        file(
+          OTHER,
+          '// driftCheck: true buildIacDriftExecutor( x.checkTerraformDrift(\nconst s = "driftCheck: true";',
+        ),
+        file("packages/gateway/src/ipc/x.test.ts", "exec.checkTerraformDrift(dir);"),
+      ]),
+    ).toEqual([]);
+  });
+
+  test("is green on the repo", async () => {
+    const files: FileEntry[] = [];
+    for await (const f of iterateSourceFiles())
+      files.push({ relPath: f.relPath, contents: f.contents });
+    expect(files.some((f) => f.relPath === RUNNER)).toBe(true);
+    expect(checkDriftCheckConfined(files)).toEqual([]);
   });
 });
 

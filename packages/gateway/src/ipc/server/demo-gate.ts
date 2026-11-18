@@ -42,6 +42,8 @@ const DEMO_REFUSED_METHODS: ReadonlySet<string> = new Set([
 export function demoRefusal(method: string): RpcMethodError | undefined {
   const refused =
     method.startsWith("registry.") ||
+    // IaC drift D2 (I41): a drift check runs Terraform with real cloud credentials; never in the demo root.
+    method.startsWith("iac.") ||
     (method.startsWith("connector.") && !DEMO_CONNECTOR_READS.has(method)) ||
     DEMO_REFUSED_METHODS.has(method);
   if (!refused) return undefined;

@@ -1025,6 +1025,15 @@ describe("the bound-write capabilities of the production dispatcher (D2, D42(h))
         showPlan: async () => ({}),
       }),
     ).rejects.toThrow("does not carry a required value");
+    // A drift check (IaC drift D2) reaches the same settle, and a forged reply is refused there too.
+    await expect(
+      caps?.settle("iac_terraform_apply", {
+        ...base,
+        workingDirectory: "/w",
+        showPlan: async () => ({}),
+        driftCheck: true,
+      }),
+    ).rejects.toThrow("does not carry a required value");
   });
 
   test("a CloudFormation settle cross-checks the reply against the input (a stack mismatch is refused)", async () => {

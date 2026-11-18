@@ -36,6 +36,11 @@ export interface SettleContext {
   /** The gateway-resolved working directory the preflight pinned (absent for CloudFormation). */
   readonly workingDirectory?: string;
   readonly reply: unknown;
+  /**
+   * IaC drift D2 (OR-DRIFT-1): set only by `ToolExecutor.checkTerraformDrift`. A plan with no planned
+   * change is shown, not refused: drift can exist with none. Nothing settled under it is ever applied.
+   */
+  readonly driftCheck?: boolean;
   /** The gate's own `iac_terraform_show_json` call (an `iac.write.prepare` action, audited and ledgered). */
   readonly showPlan?: (args: {
     readonly workingDirectory: string;

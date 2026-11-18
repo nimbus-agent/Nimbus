@@ -62,6 +62,8 @@ export interface PlanPreview extends RenderedText {
    * refuses a plan.
    */
   readonly driftCount: number | null;
+  /** The drift block's own lines (escaped; names, never values), as spliced into `lines`. */
+  readonly driftLines: readonly string[];
 }
 
 export type PlanPreviewOutcome =
@@ -461,6 +463,7 @@ function build(plan: Obj, planSha256: string, limits: PlanPreviewLimits): PlanPr
     changeCount,
     deleteCount,
     driftCount: drift.count,
+    driftLines: drift.lines,
     lines: all,
     text,
     bytes: Buffer.byteLength(text, "utf8"),

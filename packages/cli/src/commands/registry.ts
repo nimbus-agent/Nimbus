@@ -35,6 +35,7 @@ export const COMMAND_NAMES = [
   "glossary",
   "help",
   "huddle",
+  "iac",
   "identity",
   "impact",
   "index",

@@ -909,6 +909,26 @@ export function buildUnattendedWorkflowWriteExecutor(
   return newWorkflowWriteExecutor(p, NEVER_ASKED_CONSENT, true);
 }
 
+/** What the IaC drift check's executor is built from: the shared arguments, with no client and no consent. */
+export type IacDriftExecutorParams = Omit<ExecutorBuildParams, "clientId" | "consentCoordinator">;
+
+/**
+ * The IaC drift check's executor (Phase 10 IaC drift D2, OR-DRIFT-1, static D42(h)): the ONE executor
+ * that may run `checkTerraformDrift`, the read-only plan and show of an approved Terraform workdir. Its
+ * consent channel denies every request without asking anyone (nothing in a drift check is ever asked),
+ * it has no delegation, no before-state runner and no standing rules, and it takes no client id. Called
+ * only from `gateway-main.ts`, which hands it to the drift runner (`iac-drift/drift-runner.ts`).
+ */
+export function buildIacDriftExecutor(p: IacDriftExecutorParams): ToolExecutor {
+  return newExecutorOnChannel(
+    p,
+    NEVER_ASKED_CONSENT,
+    undefined,
+    { driftCheck: true },
+    p.localIndex,
+  );
+}
+
 /** A consent channel that is never answered by a person: every request is denied, nobody is asked. */
 const NEVER_ASKED_CONSENT: ConsentChannel = {
   requestApproval: () => Promise.resolve({ approved: false, answerSource: "none" }),

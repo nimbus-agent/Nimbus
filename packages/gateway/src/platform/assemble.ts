@@ -272,6 +272,7 @@ import { rebuildGlossary, runGlossaryPass } from "../glossary/glossary-extract.t
 import { createGlossaryLlm } from "../glossary/glossary-llm-adapter.ts";
 import { createGlossaryRefresher, type GlossaryRefresher } from "../glossary/glossary-refresh.ts";
 import { runPendingRegraph } from "../graph/regraph-once.ts";
+import type { IacDriftRunner } from "../iac-drift/drift-runner.ts";
 import { buildIdentityBoot } from "../identity/identity-boot.ts";
 import { buildTeamsBotJwtValidator } from "../identity/teams-bot-jwt.ts";
 import { isOperatorValid } from "../identity/verifier.ts";
@@ -5092,6 +5093,10 @@ export async function assemblePlatformServices(
   };
   // pre-S3 item E: notifications.status / notifications.test (CLI-only; LAN-forbidden, not Tauri).
   ipcOpts.notificationsRpcCtx = { runtime: notificationsRuntime };
+  // IaC drift D2 (OR-DRIFT-1): iac.driftCheck / iac.driftLatest (CLI only; LAN-forbidden, not Tauri). The runner is
+  // bound by `gateway-main.ts`; until then, and on a demo gateway (I41), both refuse.
+  let iacDriftRunner: IacDriftRunner | undefined;
+  ipcOpts.iacDriftRpcCtx = { runner: () => iacDriftRunner };
   // MCP capture sink (I28): capture.* / captures.* (LAN-forbidden by namespace, not Tauri, no HTTP).
   // I28 act door: the SAME dispatcher composition runAsk (gateway-main.ts) and ChatOps use, the real
   // egress sink (I29) and the process's policy overlay (I22). Default off twice ([mcp_sink] kinds +
@@ -5567,6 +5572,9 @@ export async function assemblePlatformServices(
     incidentEngine,
     bindIncidentExecutor: (make: MakeExecutor): void => {
       incidentExecutorFactory = make;
+    },
+    bindIacDriftRunner: (runner: IacDriftRunner): void => {
+      iacDriftRunner = runner;
     },
     briefing,
     policyHitl,

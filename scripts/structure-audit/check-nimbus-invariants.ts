@@ -4347,6 +4347,12 @@ function d41OrderPin(f: FileEntry, code: string): Violation[] {
 //     `preparePhase`, and `runGateChecks` (the ordered checks `gateWithin` runs first) tests `isPrepareActionType(` together with
 //     `scope.prepareStep` before it reaches `resolveHitlApproval(`, so a caller's `<svc>.write.prepare`
 //     is refused whichever door sent it.
+// (i) the read-only Terraform drift check (Phase 10 IaC drift D2, owner ruling OR-DRIFT-1) is the ONE
+//     other caller of a prepare step: `runPrepareStep(` and `prepareStep: true` each appear once more,
+//     inside `checkTerraformDrift`; `driftCheck: true` is written only in `engine/run-ask.ts` (inside
+//     `buildIacDriftExecutor`) and in that method (the settle context); `buildIacDriftExecutor(` is
+//     called only by `gateway-main.ts`, and `checkTerraformDrift(` only by `iac-drift/drift-runner.ts`.
+//     The method never calls `injectBoundFields` or dispatches the apply (behavioural tests).
 // (g) the unified diff an approver is shown is rendered only by the prepare step (D1c): the
 //     `renderUnifiedDiff` name is confined to `engine/prepare-step.ts` and `connectors/connector-writes/
 //     diff.ts` itself, so no other module can put a diff of its own making in front of an approver.
@@ -4358,6 +4364,8 @@ function d41OrderPin(f: FileEntry, code: string): Violation[] {
 // behavioural tests are authoritative. The behaviour is pinned by
 // `engine/executor-bound.test.ts`, `engine/prepare-step.test.ts` and `connectors/registry.test.ts`.
 const D42_EXECUTOR = "packages/gateway/src/engine/executor.ts";
+/** D42(i): the drift check's own method, the one other caller of a prepare step. */
+const D42_DRIFT_SIG = /\basync\s+checkTerraformDrift\s*\(/;
 const D42_STEP = "packages/gateway/src/engine/prepare-step.ts";
 const D42_REGISTRY = "packages/gateway/src/connectors/registry.ts";
 const D42_TOOLS = "packages/gateway/src/connectors/connector-writes/prepare-tools.ts";
@@ -4488,7 +4496,12 @@ function d42PrepareScopePins(
   const scoped = /\bprepareStep\s*:\s*true\b/g;
   const total = [...code.matchAll(scoped)].length;
   const within = [...span(/\bprivate\s+async\s+preparePhase\s*\(/).matchAll(scoped)].length;
-  if (total !== 1 || within !== 1) fail("prepareStep: true must be written once, in preparePhase");
+  const drift = [...span(D42_DRIFT_SIG).matchAll(scoped)].length;
+  if (total !== 2 || within !== 1 || drift !== 1) {
+    fail(
+      "prepareStep: true must be written twice: once in preparePhase, once in checkTerraformDrift",
+    );
+  }
   const gate = span(/\bprivate\s+async\s+runGateChecks\s*\(/);
   const refusal = gate.search(/\bisPrepareActionType\s*\([^)]*\)\s*&&\s*scope\.prepareStep\b/);
   const hitl = gate.search(/\bthis\.resolveHitlApproval\s*\(/);
@@ -4528,11 +4541,15 @@ function d42ExecutorPins(f: FileEntry, code: string): Violation[] {
     const within = [...inside.matchAll(needle)].length;
     if (total !== 1 || within !== 1) fail(what);
   };
-  once(
-    /\brunPrepareStep\s*\(/g,
-    span(/\bprivate\s+async\s+preparePhase\s*\(/),
-    "runPrepareStep must be called once, in preparePhase",
-  );
+  // (b) and (i): the prepare step runs in preparePhase and, for the drift check alone, in checkTerraformDrift.
+  const prepareCalls = /\brunPrepareStep\s*\(/g;
+  if (
+    [...code.matchAll(prepareCalls)].length !== 2 ||
+    [...span(/\bprivate\s+async\s+preparePhase\s*\(/).matchAll(prepareCalls)].length !== 1 ||
+    [...span(D42_DRIFT_SIG).matchAll(prepareCalls)].length !== 1
+  ) {
+    fail("runPrepareStep must be called twice: once in preparePhase, once in checkTerraformDrift");
+  }
   once(
     /\binjectBoundFields\s*\(/g,
     span(/\bprivate\s+dispatchBoundPhase\s*\(/),
@@ -4590,9 +4607,10 @@ function d42ExecutorPins(f: FileEntry, code: string): Violation[] {
 //      `engine/types.ts` (the interface member) and `connectors/registry.ts` (the one place the
 //      production dispatcher sets it), and a `BoundWriteCapabilities` VALUE is built (a typed
 //      initialiser, a return type, `implements`, `as`/`satisfies`) only in `connectors/registry.ts`;
-// (h2) in the executor the member is read exactly twice, once in `preflightPhase` and once in
-//      `preparePhase`, `.preflight(` is called only in the first and `.settle(` only in the second,
-//      so no other phase or method can reach a capability.
+// (h2) in the executor the member is read exactly three times, once each in `preflightPhase`,
+//      `preparePhase` and `checkTerraformDrift` (D42(i)); `.preflight(` is called only in the first and
+//      the third and `.settle(` only in the second and the third, so no other phase or method can
+//      reach a capability.
 // Comments and string literals are stripped; test files are not scanned. STATED BOUND, as D42: a
 // dynamically composed name or an alias evades a text scan; the behavioural tests are authoritative.
 const D42H_PROP_RE = /\bboundWriteCapabilities\b/g;
@@ -4607,6 +4625,58 @@ const D42H_K8S_SETTLER_ALLOWED: readonly string[] = [
 ];
 const D42H_BUILD_RE =
   /:\s*BoundWriteCapabilities(?:\s*\|\s*undefined)?\s*(?:=|\{)|\bimplements\s+BoundWriteCapabilities\b|\b(?:as|satisfies)\s+BoundWriteCapabilities\b/g;
+
+const D42I_RUN_ASK = "packages/gateway/src/engine/run-ask.ts";
+const D42I_GATEWAY_MAIN = "packages/gateway/src/gateway-main.ts";
+const D42I_RUNNER = "packages/gateway/src/iac-drift/drift-runner.ts";
+const D42I_FLAG_RE = /\bdriftCheck\s*:\s*true\b/g;
+const D42I_BUILD_CALL_RE = /\bbuildIacDriftExecutor\s*\(/g;
+const D42I_METHOD_CALL_RE = /\.checkTerraformDrift\s*\(/g;
+
+/**
+ * D42(i): the drift check's flag is written only inside `buildIacDriftExecutor` (run-ask.ts) and inside
+ * `checkTerraformDrift` (executor.ts, the settle context); the builder is called only by gateway-main.ts;
+ * the method only by the drift runner. Comments and string literals are stripped; tests are not scanned.
+ */
+export function checkDriftCheckConfined(files: readonly FileEntry[]): Violation[] {
+  const out: Violation[] = [];
+  for (const f of files) {
+    if (f.relPath.endsWith(".test.ts")) continue;
+    if (!f.relPath.startsWith("packages/gateway/src/")) continue;
+    const code = stripStringLiterals(stripComments(f.contents));
+    const add = (index: number | undefined): void => {
+      const line = code.slice(0, index ?? 0).split("\n").length;
+      out.push({
+        rule: "bound-drift-confined",
+        file: f.relPath,
+        line,
+        snippet: (f.contents.split("\n")[line - 1] ?? "").trim(),
+      });
+    };
+    const inside = (index: number | undefined, s: readonly [number, number] | undefined): boolean =>
+      s !== undefined && index !== undefined && index >= s[0] && index < s[1];
+    // Each span ends at its own closing brace: a top-level function in run-ask.ts ("\n}\n"), a class
+    // method in the executor ("\n  }\n"), so a later sibling cannot ride inside the allowed span.
+    let flagSpan: readonly [number, number] | undefined;
+    if (f.relPath === D42I_RUN_ASK) {
+      flagSpan = d41Span(code, /\bexport\s+function\s+buildIacDriftExecutor\s*\(/, "\n}\n");
+    }
+    if (f.relPath === D42_EXECUTOR) flagSpan = d41Span(code, D42_DRIFT_SIG, "\n  }\n");
+    for (const m of code.matchAll(D42I_FLAG_RE)) if (!inside(m.index, flagSpan)) add(m.index);
+    if (f.relPath !== D42I_GATEWAY_MAIN && f.relPath !== D42I_RUN_ASK) {
+      for (const m of code.matchAll(D42I_BUILD_CALL_RE)) add(m.index);
+    }
+    if (f.relPath === D42I_RUN_ASK) {
+      // The definition is the one occurrence allowed here; any other is a call.
+      const n = [...code.matchAll(D42I_BUILD_CALL_RE)];
+      for (const m of n.slice(1)) add(m.index);
+    }
+    if (f.relPath !== D42I_RUNNER) {
+      for (const m of code.matchAll(D42I_METHOD_CALL_RE)) add(m.index);
+    }
+  }
+  return out;
+}
 
 export function checkBoundCapabilities(files: readonly FileEntry[]): Violation[] {
   const out: Violation[] = [];
@@ -4642,20 +4712,35 @@ export function checkBoundCapabilities(files: readonly FileEntry[]): Violation[]
     };
     const preflight = span(/\bprivate\s+async\s+preflightPhase\s*\(/);
     const prepare = span(/\bprivate\s+async\s+preparePhase\s*\(/);
+    const drift = span(D42_DRIFT_SIG);
     const reads = (src: string): number => [...src.matchAll(D42H_PROP_RE)].length;
     const calls = (src: string, name: string): number =>
       [...src.matchAll(new RegExp(`\\.${name}\\s*\\(`, "g"))].length;
     const fail = (what: string): void => {
       out.push({ rule: "bound-capability-calls", file: f.relPath, line: 1, snippet: what });
     };
-    if (reads(code) !== 2 || reads(preflight) !== 1 || reads(prepare) !== 1) {
-      fail("boundWriteCapabilities must be read once in preflightPhase and once in preparePhase");
+    if (reads(code) !== 3 || reads(preflight) !== 1 || reads(prepare) !== 1 || reads(drift) !== 1) {
+      fail(
+        "boundWriteCapabilities must be read once each in preflightPhase, preparePhase and checkTerraformDrift",
+      );
     }
-    if (calls(code, "preflight") !== 1 || calls(preflight, "preflight") !== 1) {
-      fail("a capability's preflight must be called once, in preflightPhase");
+    if (
+      calls(code, "preflight") !== 2 ||
+      calls(preflight, "preflight") !== 1 ||
+      calls(drift, "preflight") !== 1
+    ) {
+      fail(
+        "a capability's preflight must be called once in preflightPhase and once in checkTerraformDrift",
+      );
     }
-    if (calls(code, "settle") !== 1 || calls(prepare, "settle") !== 1) {
-      fail("a capability's settle must be called once, in preparePhase");
+    if (
+      calls(code, "settle") !== 2 ||
+      calls(prepare, "settle") !== 1 ||
+      calls(drift, "settle") !== 1
+    ) {
+      fail(
+        "a capability's settle must be called once in preparePhase and once in checkTerraformDrift",
+      );
     }
   }
   return out;
@@ -6216,6 +6301,9 @@ async function loadFiles(): Promise<FileEntry[]> {
  */
 export const RULE_ANCHORS: readonly string[] = [
   "packages/gateway/src/briefing/briefing-runner.ts", // D45 — the briefing delivers locally only
+  // D42(i) (the read-only drift check, OR-DRIFT-1): the one caller of the method and the one builder.
+  "packages/gateway/src/iac-drift/drift-runner.ts",
+  "packages/gateway/src/engine/run-ask.ts",
   "packages/gateway/src/agents/_lib/briefing-build.ts", // D45
   // D46(a) (incident-forbidden-import / incident-no-network, Phase 10 IC3) -- anchored on BOTH halves of its
   // scope, as D45 is: the assembler under `incident/` and the render under `agents/_lib/`. Either moving out of
@@ -6980,7 +7068,11 @@ async function run(): Promise<void> {
     if (v.length > 0) exit = 1;
   }
   if (mode === "binary-only" || mode === "all") {
-    const v = [...checkBoundWrites(files), ...checkBoundCapabilities(files)];
+    const v = [
+      ...checkBoundWrites(files),
+      ...checkBoundCapabilities(files),
+      ...checkDriftCheckConfined(files),
+    ];
     const D42_CLAUSE: Readonly<Record<string, string>> = {
       "bound-prepare-literal-confined":
         "(a) the .write.prepare action-type literal outside engine/prepare-step.ts",
@@ -6997,6 +7089,8 @@ async function run(): Promise<void> {
         "(h) the bound-write capabilities are named or built outside connectors/registry.ts and the executor",
       "bound-capability-calls":
         "(h) a bound-write capability is read or called outside the preflight and prepare phases",
+      "bound-drift-confined":
+        "(i) the drift check's flag, builder or method is set or called outside its one place",
     };
     for (const e of v) {
       console.error(

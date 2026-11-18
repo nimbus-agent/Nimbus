@@ -7,6 +7,7 @@ import type { EmbeddingReadiness } from "../embedding/embedding-readiness.ts";
 import type { ComputerUseBinding } from "../engine/agent-request-context.ts";
 import type { AskExplainRecorder } from "../engine/ask-explain-recorder.ts";
 import type { ExecutorDelegationDep, ExecutorPolicyDep } from "../engine/executor.ts";
+import type { IacDriftRunner } from "../iac-drift/drift-runner.ts";
 import type { IncidentEngine } from "../incident/incident-engine.ts";
 import type { MakeExecutor } from "../incident/remediation.ts";
 import type { LocalIndex } from "../index/local-index.ts";
@@ -147,6 +148,11 @@ export interface PlatformServices {
    * dispatcher and the egress sink). Never called on a demo-rooted gateway (I41), so remediate and undo refuse there.
    */
   bindIncidentExecutor(make: MakeExecutor): void;
+  /**
+   * IaC drift D2 (OR-DRIFT-1): hands `iac.driftCheck` / `iac.driftLatest` their runner (`gateway-main.ts`, which
+   * owns the dispatcher and the egress sink). Never called on a demo-rooted gateway (I41), so both refuse there.
+   */
+  bindIacDriftRunner(runner: IacDriftRunner): void;
   /**
    * The morning briefing runtime (Phase 10 MB5). `scheduler` is `undefined` on a demo-rooted gateway (I41);
    * `gateway-main.ts` starts it after the IPC server and retires it first on shutdown.

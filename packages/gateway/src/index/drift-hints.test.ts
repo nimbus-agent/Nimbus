@@ -188,10 +188,10 @@ describe("driftHintsFromIndex", () => {
   });
 
   // Ensure the trailing full-drift advisory line always appears
-  test("always includes the full-drift advisory line", () => {
+  test("always points at the drift check (nimbus iac drift)", () => {
     const db = new Database(":memory:");
     LocalIndex.ensureSchema(db);
     const lines = driftHintsFromIndex(db);
-    expect(lines.some((l) => l.includes("Full drift"))).toBe(true);
+    expect(lines.some((l) => l.includes("nimbus iac drift"))).toBe(true);
   });
 });

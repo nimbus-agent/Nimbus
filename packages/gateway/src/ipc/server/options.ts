@@ -46,6 +46,7 @@ import type { EgressRpcCtx } from "../egress-rpc.ts";
 import type { ExecRpcCtx } from "../exec-rpc.ts";
 import type { FederationRpcContext } from "../federation-rpc.ts";
 import type { FleetRpcCtx } from "../fleet-rpc.ts";
+import type { IacDriftRpcCtx } from "../iac-drift-rpc.ts";
 import type { IncidentRpcCtx } from "../incident-rpc.ts";
 import type { BoxKeypair } from "../lan-crypto.ts";
 import type { PairingWindow } from "../lan-pairing.ts";
@@ -252,6 +253,9 @@ export type CreateIpcServerOptions = {
   // LAN-forbidden (I5) and not Tauri-exposed (I7). Present once assembled at boot (a demo or an
   // unsupported platform still reports its inactive status); the dispatcher skips when unset.
   notificationsRpcCtx?: NotificationsRpcCtx;
+  // IaC drift D2 (OR-DRIFT-1). Backs iac.driftCheck / iac.driftLatest: served only to a `cli` connection;
+  // LAN-forbidden (I5), not Tauri-exposed (I7). Its runner is unbound on a demo gateway (I41).
+  iacDriftRpcCtx?: IacDriftRpcCtx;
   /** MCP capture sink (I28). LAN-forbidden (I5), not Tauri (I7); the dispatcher skips when unset. */
   captureRpcCtx?: CaptureRpcCtx;
   // S2 runtime tool generation (I39). toolgen.create gates through the owner consent broker

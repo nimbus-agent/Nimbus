@@ -33,6 +33,10 @@ const FORBIDDEN_OVER_LAN = new Set([
   // on the owner's machine, defeating the entire I33 gate. There are no read verbs here to
   // preserve, so the namespace forbid costs nothing.
   "exec",
+  // Phase 10 IaC drift D2 (OR-DRIFT-1) — the WHOLE namespace. `iac.driftCheck` runs a Terraform plan with
+  // the owner's cloud credentials in an approved workdir with no prompt; the ruling confines it to the
+  // owner's CLI, so a paired peer may neither start one nor read the findings (`iac.driftLatest`).
+  "iac",
   // S2 slice 2 — computer-use: the WHOLE namespace, matching exec. `computer.act` drives the
   // owner's browser, and `computer.approvalRespond` is the LOCAL owner answering an actuation
   // prompt — admitting it would let a paired peer approve actions on the owner's machine,

@@ -14779,6 +14779,120 @@ describe("I54 — a bound connector write is dispatched only with the values its
     return { exec, dispatched, prompts };
   }
 
+  test("IaC drift D2 (OR-DRIFT-1): the drift check is the ONE other prepare caller, asks nobody and never dispatches an apply", async () => {
+    // D42(i) exists, run() calls it, and the production tree is clean.
+    const audit = await read("scripts/structure-audit/check-nimbus-invariants.ts");
+    expect(audit).toContain('"bound-drift-confined"');
+    expect(audit).toMatch(/\.\.\.checkDriftCheckConfined\(files\)/);
+    const { checkDriftCheckConfined } = await import(
+      "../../../scripts/structure-audit/check-nimbus-invariants.ts"
+    );
+    const files = [];
+    for (const rel of [
+      "packages/gateway/src/engine/run-ask.ts",
+      "packages/gateway/src/engine/executor.ts",
+      "packages/gateway/src/gateway-main.ts",
+      "packages/gateway/src/iac-drift/drift-runner.ts",
+    ]) {
+      files.push({ relPath: rel, contents: await read(rel) });
+    }
+    expect(checkDriftCheckConfined(files)).toEqual([]);
+    expect(
+      checkDriftCheckConfined([
+        ...files,
+        { relPath: "packages/gateway/src/ipc/rogue.ts", contents: "exec.checkTerraformDrift(d);" },
+      ]),
+    ).toHaveLength(1);
+    // The builder's consent denies without asking; the only extra it sets is the drift flag.
+    const runAsk = stripComments(await read("packages/gateway/src/engine/run-ask.ts"));
+    const builder = runAsk.slice(runAsk.indexOf("export function buildIacDriftExecutor("));
+    expect(builder.slice(0, builder.indexOf("\n}\n"))).toMatch(
+      /newExecutorOnChannel\(\s*p,\s*NEVER_ASKED_CONSENT,\s*undefined,\s*\{ driftCheck: true \},\s*p\.localIndex,?\s*\)/,
+    );
+    // Behaviour: a drift executor over the real Terraform row never prompts and never dispatches the apply.
+    const dispatched: PlannedAction[] = [];
+    let asked = 0;
+    const exec = new ToolExecutor(
+      {
+        requestApproval: async () => {
+          asked += 1;
+          return { approved: true, answerSource: "human" as const };
+        },
+      },
+      { recordAudit: () => undefined },
+      {
+        dispatch: async (a) => {
+          dispatched.push(a);
+          return { planId: "a".repeat(32), planFile: "/x/plan.tfplan", hasChanges: true };
+        },
+        boundWriteCapabilities: {
+          preflight: async () => ({ ok: true, release: () => undefined }),
+          settle: async () => ({
+            values: { planFile: "/p", planSha256: "d".repeat(64) },
+            fields: [{ label: "Workdir", value: "/w" }],
+            plan: {
+              lines: ["Drift: none reported by terraform"],
+              text: "",
+              bytes: 0,
+              sha256: "e".repeat(64),
+            },
+            cleanup: async () => undefined,
+          }),
+        },
+      },
+      undefined,
+      { append: () => undefined },
+      NO_POLICY_OVERLAY,
+      undefined,
+      { driftCheck: true },
+    );
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const r = await exec.checkTerraformDrift(join(tmpdir(), "nimbus-i54-drift"));
+    expect(r.ok).toBe(true);
+    expect(asked).toBe(0);
+    expect(dispatched.map((a) => a.type)).toEqual(["iac.write.prepare"]);
+    // The namespace is the owner's CLI only: LAN-forbidden and not on the Tauri allowlist.
+    const { checkLanMethodAllowed } = await import("./ipc/lan-rpc.ts");
+    expect(() =>
+      checkLanMethodAllowed("iac.driftCheck", { peerId: "p", writeAllowed: true }),
+    ).toThrow(/not callable over LAN/);
+    const rust = await read("packages/ui/src-tauri/src/gateway_bridge.rs");
+    expect(rust).not.toMatch(/"iac\./);
+    // A demo gateway refuses the whole namespace at the demo gate, before any dispatcher (I41)...
+    const { demoRefusal } = await import("./ipc/server/demo-gate.ts");
+    expect(demoRefusal("iac.driftCheck")).toBeDefined();
+    expect(demoRefusal("iac.driftLatest")).toBeDefined();
+    expect(demoRefusal("connector.status")).toBeUndefined();
+    // ...an unbound runner refuses a check without running anything, while a bound one runs (the control)...
+    const { dispatchIacDriftRpc, IAC_DRIFT_UNAVAILABLE } = await import("./ipc/iac-drift-rpc.ts");
+    await expect(
+      dispatchIacDriftRpc("iac.driftCheck", {}, { runner: () => undefined }, { kind: "cli" }),
+    ).rejects.toThrow(IAC_DRIFT_UNAVAILABLE);
+    let ran = 0;
+    const bound = {
+      check: async () => {
+        ran += 1;
+        return [];
+      },
+      latest: () => [],
+      running: () => false,
+      wasRunningAt: () => false,
+    };
+    await dispatchIacDriftRpc("iac.driftCheck", {}, { runner: () => bound }, { kind: "cli" });
+    expect(ran).toBe(1);
+    // ...and gateway-main binds the runner only inside the non-demo branch.
+    const bindAt = stripComments(await read("packages/gateway/src/gateway-main.ts")).indexOf(
+      "platform.bindIacDriftRunner(",
+    );
+    // A demo gateway builds neither the runner nor the scheduler (I41).
+    const main = stripComments(await read("packages/gateway/src/gateway-main.ts"));
+    const at = main.indexOf("const iacDriftScheduler =");
+    expect(main.slice(at, at + 200)).toMatch(/platform\.paths\.demo === true\s*\?\s*undefined/);
+    expect(main.split("platform.bindIacDriftRunner(").length).toBe(2);
+    expect(bindAt).toBeGreaterThan(at);
+  });
+
   test("D42 exists with its clauses, run() calls it, and its files are anchors", async () => {
     const audit = await read("scripts/structure-audit/check-nimbus-invariants.ts");
     for (const id of [

@@ -373,6 +373,18 @@ describe("settleTerraformPlan: hasChanges is a strict boolean gate", () => {
     expect(existsSync(staging)).toBe(false);
   });
 
+  test("false with allowNoChanges (a drift check, IaC drift D2) is shown, not refused", async () => {
+    const p = writePlan();
+    const settled = await settleTerraformPlan(
+      ops(),
+      request(p, { reply: mkReply(p, { hasChanges: false }), allowNoChanges: true }),
+    );
+    // The fake show renders its fixed plan; the point is that the no-change reply reached the show.
+    expect(settled.plan?.lines[0]).toStartWith("Deletes: ");
+    expect(settled.plan?.driftCount).toBe(0);
+    await settled.cleanup();
+  });
+
   test.each([
     ["missing", undefined],
     ["the string true", "true"],

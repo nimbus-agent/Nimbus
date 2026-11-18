@@ -125,6 +125,18 @@ describe("checkLanMethodAllowed", () => {
     },
   );
 
+  // IaC drift D2 (OR-DRIFT-1): the owner's CLI only; a peer can neither start a plan nor read findings.
+  test.each(["iac.driftCheck", "iac.driftLatest", "iac.anything"])(
+    "%s is not callable over LAN regardless of grant-write",
+    (method) => {
+      for (const writeAllowed of [true, false]) {
+        expect(() => checkLanMethodAllowed(method, { peerId: "p", writeAllowed })).toThrow(
+          /not callable over LAN/,
+        );
+      }
+    },
+  );
+
   test.each([
     "briefing.latest",
     "briefing.list",

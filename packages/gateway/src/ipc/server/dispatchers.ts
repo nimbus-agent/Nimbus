@@ -87,6 +87,7 @@ import { dispatchFilesystemRpc, FilesystemRpcError } from "../filesystem-rpc.ts"
 import { dispatchFleetRpc, FleetRpcError } from "../fleet-rpc.ts";
 import { dispatchGlossaryRpc, GlossaryRpcError } from "../glossary-rpc.ts";
 import { dispatchHitlRpc, HitlRpcError } from "../hitl-rpc.ts";
+import { dispatchIacDriftRpc, IacDriftRpcError } from "../iac-drift-rpc.ts";
 import { dispatchIdentityRpc, type IdentityRpcContext, IdentityRpcError } from "../identity-rpc.ts";
 import { dispatchIncidentRpc, IncidentRpcError, isOwnerKind } from "../incident-rpc.ts";
 import { dispatchIncidentUpdateRpc } from "../incident-update-rpc.ts";
@@ -1829,6 +1830,31 @@ export async function tryDispatchNotificationsRpc(
 }
 
 /**
+ * `iac.*` (Phase 10 IaC drift D2, OR-DRIFT-1): the owner's read-only Terraform drift check. CLI only (the
+ * CONNECTION's declared kind, never a param); LAN-forbidden (I5) and absent from the Tauri allowlist (I7).
+ */
+export async function tryDispatchIacDriftRpc(
+  ctx: ServerCtx,
+  method: string,
+  params: unknown,
+  clientId: string,
+): Promise<unknown> {
+  if (!method.startsWith("iac.")) return phase4RpcSkipped;
+  const rpc = ctx.options.iacDriftRpcCtx;
+  if (rpc === undefined) return phase4RpcSkipped;
+  try {
+    const out = await dispatchIacDriftRpc(method, params, rpc, {
+      kind: ctx.getClientKind(clientId),
+    });
+    if (out.kind === "hit") return out.value;
+  } catch (e) {
+    if (e instanceof IacDriftRpcError) throw new RpcMethodError(e.rpcCode, e.message);
+    throw e;
+  }
+  return phase4RpcSkipped;
+}
+
+/**
  * `capture.*` / `captures.*` (MCP capture sink, I28). LAN-forbidden (I5); only `captures.list` and
  * `captures.get` are on the Tauri allowlist (I7), for the read-only desktop Captures page. The
  * caller's kind is the CONNECTION's, never a param.
@@ -2260,6 +2286,7 @@ const PHASE4_PLATFORM_DISPATCHERS: ReadonlyArray<
   tryDispatchPostmortemRpc,
   tryDispatchIncidentUpdateRpc,
   tryDispatchNotificationsRpc,
+  tryDispatchIacDriftRpc,
   tryDispatchCaptureRpc,
   tryDispatchApprovalsRpc,
   tryDispatchStandingRpc,
