@@ -10,6 +10,7 @@ import {
   REMEDIATE_USAGE,
   type RemediationArgs,
 } from "./incident-remediate.ts";
+import { RUNBOOK_USAGE_LINE } from "./incident-runbook.ts";
 
 /**
  * Pure helpers for `nimbus incident` (Phase 10 IC3). The CLI cannot import the gateway's types (IPC-only rule),
@@ -28,6 +29,7 @@ export const INCIDENT_USAGE =
   `${FINDINGS_USAGE_LINE}\n` +
   "       nimbus incident postmortem <id> [--out <file>] [--template <file>] [--synthesize] | --push notion|confluence ...\n" +
   "       nimbus incident update <id> [--audience stakeholders|engineers] [--out <file>] | --send slack:<c>|teams:<t>/<c> | --queued\n" +
+  `${RUNBOOK_USAGE_LINE}\n` +
   "  <id> is a record id (inc_...), a trigger item id (pagerduty:...), or the provider's own id.";
 
 export const SOURCES = ["pagerduty", "jira", "sentry", "montecarlo", "bigeye"] as const;

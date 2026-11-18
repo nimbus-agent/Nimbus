@@ -1236,12 +1236,13 @@ export function checkIncidentRecordConfinement(files: readonly FileEntry[]): Vio
 const D46E_SRC = "packages/gateway/src/";
 const D46E_MINT = `${D46E_SRC}incident/incident-link-mint.ts`;
 // The files that may NAME the minter: its own module and each module that runs a linked owner action (IC5a's
-// remediation, IC7a's post-mortem push, IC9b's incident update send).
+// remediation, IC7a's post-mortem push, IC9b's incident update send, IC6's runbook steps).
 const D46E_MINT_USERS: readonly string[] = [
   D46E_MINT,
   `${D46E_SRC}incident/remediation.ts`,
   `${D46E_SRC}postmortem/postmortem-push.ts`,
   `${D46E_SRC}incident-update/update-send.ts`,
+  `${D46E_SRC}runbook/runbook-run.ts`,
 ];
 const D46E_LINK = `${D46E_SRC}engine/incident-link.ts`;
 const D46E_READERS: readonly string[] = [
@@ -1379,6 +1380,74 @@ export function checkIncidentFindingConfinement(files: readonly FileEntry[]): Vi
         line,
         snippet: (f.contents.split("\n")[line - 1] ?? "").trim(),
       });
+    }
+  }
+  return out;
+}
+
+// D46(g) (Phase 10 IC6, incident-engine spec § 5.6, invariant I57 (c)): a runbook step is built in ONE module.
+// Rule ids, over every non-test file of `packages/gateway/src/`, comments stripped:
+//   `runbook-step-key-confined`: the property key `runbookStep` (declared or assigned, quoted or not) only in
+//       `runbook/runbook-run.ts` (which sets it) and `engine/types.ts` (which declares it); the executor, the
+//       prompt and the audit row only READ `action.runbookStep`;
+//   `incident-runbook-table-confined`: a write verb on `incident_runbook_step` only in
+//       `incident/runbook-step-store.ts` and the V104 DDL file;
+//   `runbook-read-type-confined`: the identifier `runbookReadActionType` only in `engine/runbook-read.ts` (its
+//       definition) and `runbook/runbook-run.ts` (its one caller), and the text `.runbook.read` only in
+//       `engine/runbook-read.ts`, so no other module can build an action the dispatcher treats as a runbook read;
+//   `runbook-dir-confined`: the identifier `loadRunbooks` only in `runbook/runbook-loader.ts` and
+//       `runbook/runbook-run.ts`, the one reader of the owner's runbook folder.
+// Stated bounds: a text scan, so a dynamically composed key, name or type evades it (the executor refuses a runbook
+// step that is not beside a valid link or that sits beside an engine proposal; the dispatcher lets a runbook read
+// resolve only to a read of its own service); a write verb spelled from parts evades the table clause.
+const D46G_SRC = "packages/gateway/src/";
+const D46G_RUN = `${D46G_SRC}runbook/runbook-run.ts`;
+const D46G_KEY_ALLOWED: readonly string[] = [D46G_RUN, `${D46G_SRC}engine/types.ts`];
+const D46G_STORE = `${D46G_SRC}incident/runbook-step-store.ts`;
+const D46G_DDL = `${D46G_SRC}index/incident-runbook-v104-sql.ts`;
+const D46G_READ_TYPE = `${D46G_SRC}engine/runbook-read.ts`;
+const D46G_LOADER_ALLOWED: readonly string[] = [`${D46G_SRC}runbook/runbook-loader.ts`, D46G_RUN];
+const D46G_KEY_RE = /\brunbookStep\s*\??\s*:|["']runbookStep["']\s*:/g;
+const D46G_TABLE_WRITE_RE = d46dWriteRe("incident_runbook_step");
+const D46G_TYPE_RE = /\brunbookReadActionType\b/g;
+const D46G_SUFFIX_RE = /\.runbook\.read\b/g;
+const D46G_LOADER_RE = /\bloadRunbooks\b/g;
+
+export function checkRunbookConfinement(files: readonly FileEntry[]): Violation[] {
+  const out: Violation[] = [];
+  const add = (rule: string, f: FileEntry, src: string, index: number | undefined): void => {
+    const line = src.slice(0, index).split("\n").length;
+    out.push({
+      rule,
+      file: f.relPath,
+      line,
+      snippet: (f.contents.split("\n")[line - 1] ?? "").trim(),
+    });
+  };
+  for (const f of files) {
+    if (/\.test(?:-helpers)?\.ts$/.test(f.relPath)) continue;
+    if (!f.relPath.startsWith(D46G_SRC)) continue;
+    const commentFree = stripComments(f.contents);
+    const code = stripStringLiterals(commentFree);
+    if (!D46G_KEY_ALLOWED.includes(f.relPath)) {
+      for (const m of commentFree.matchAll(D46G_KEY_RE))
+        add("runbook-step-key-confined", f, commentFree, m.index);
+    }
+    if (f.relPath !== D46G_STORE && f.relPath !== D46G_DDL) {
+      for (const m of commentFree.matchAll(D46G_TABLE_WRITE_RE)) {
+        add("incident-runbook-table-confined", f, commentFree, m.index);
+      }
+    }
+    if (f.relPath !== D46G_READ_TYPE) {
+      for (const m of commentFree.matchAll(D46G_SUFFIX_RE))
+        add("runbook-read-type-confined", f, commentFree, m.index);
+      if (f.relPath !== D46G_RUN) {
+        for (const m of code.matchAll(D46G_TYPE_RE))
+          add("runbook-read-type-confined", f, code, m.index);
+      }
+    }
+    if (!D46G_LOADER_ALLOWED.includes(f.relPath)) {
+      for (const m of code.matchAll(D46G_LOADER_RE)) add("runbook-dir-confined", f, code, m.index);
     }
   }
   return out;
@@ -6005,6 +6074,7 @@ export const RULE_ANCHORS: readonly string[] = [
   "packages/gateway/src/agents/_lib/incident-render.ts",
   "packages/gateway/src/incident/remediation.ts", // D46(c) -- the one builder of an engine-proposed action; the D46(a) carve-out
   "packages/gateway/src/incident/finding-store.ts", // D46(f) -- the one writer of the IC8 finding and baseline tables
+  "packages/gateway/src/runbook/runbook-run.ts", // D46(g) -- the one builder of a runbook step (IC6)
   "packages/gateway/src/incident-update/update-send.ts", // D46(e) -- the owner's incident update post, a linked owner action (IC9b)
   "packages/gateway/src/finops/cost-series.ts", // D48 — FinOps cost code is inert
   "packages/gateway/src/automation/workflow-import.ts", // D50 - the only way a workflow enters from outside
@@ -6440,6 +6510,13 @@ async function run(): Promise<void> {
       );
     }
     if (findingViolations.length > 0) exit = 1;
+    const runbookViolations = checkRunbookConfinement(files);
+    for (const e of runbookViolations) {
+      console.error(
+        `::error file=${e.file},line=${e.line}::D46(g) a runbook step built, its read type spelled, its table written or the runbook folder read outside runbook/runbook-run.ts, engine/runbook-read.ts, incident/runbook-step-store.ts and runbook/runbook-loader.ts (rule ${e.rule}): ${e.snippet}`,
+      );
+    }
+    if (runbookViolations.length > 0) exit = 1;
     const incidentLinkViolations = checkIncidentLinkMinting(files);
     for (const e of incidentLinkViolations) {
       console.error(

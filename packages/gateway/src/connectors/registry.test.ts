@@ -582,6 +582,28 @@ describe("createConnectorDispatcher — a before-state read dispatches only a re
     }
   });
 
+  test("IC6: a runbook read (<service>.runbook.read) is held to the same rule", async () => {
+    const { d, ran } = mapOf([
+      "jira_jira_issue_get",
+      "jira_jira_issue_update",
+      "jira_jira_issue_frobnicate",
+      "github_github_issue_get",
+    ]);
+    await expect(d.dispatch(read("jira.runbook.read", "jira_jira_issue_get"))).resolves.toEqual({
+      from: "jira_jira_issue_get",
+    });
+    await expect(d.dispatch(read("jira.runbook.read", "jira_jira_issue_update"))).rejects.toThrow(
+      `ERR_BEFORE_READ_NOT_A_READ: action type "jira.runbook.read" may not dispatch tool "jira_jira_issue_update"`,
+    );
+    await expect(
+      d.dispatch(read("jira.runbook.read", "jira_jira_issue_frobnicate")),
+    ).rejects.toThrow("ERR_BEFORE_READ_NOT_A_READ");
+    await expect(d.dispatch(read("jira.runbook.read", "github_github_issue_get"))).rejects.toThrow(
+      "ERR_BEFORE_READ_SERVICE_MISMATCH",
+    );
+    expect(ran).toEqual(["jira_jira_issue_get"]);
+  });
+
   test("the same keys under an ordinary type are untouched by the guard", async () => {
     const { d, ran } = mapOf(["jira_jira_issue_update"]);
     await d.dispatch(read("jira.issue.update", "jira_jira_issue_update"));

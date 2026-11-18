@@ -57,6 +57,7 @@ import {
   checkPushClientKindConfinement,
   checkRegistryAppenderConfinement,
   checkRemoteVlmConfinement,
+  checkRunbookConfinement,
   checkRunConfinedConfinement,
   checkRunGrantTableConfinement,
   checkRunGrantWriters,
@@ -7984,6 +7985,74 @@ describe("D50 - the signed workflow import stays inside its confinement (I59)", 
 
   test("workflow-import.ts is a rule anchor, so a scan that lost it is not meaningful", () => {
     expect(RULE_ANCHORS).toContain(IMPORT);
+  });
+});
+
+describe("D46(g) - a runbook step is built in one module (Phase 10 IC6, I57 (c))", () => {
+  const file = (relPath: string, contents: string): FileEntry => ({ relPath, contents });
+  const SRC = "packages/gateway/src/";
+  const rules = (files: FileEntry[]): string[] => checkRunbookConfinement(files).map((v) => v.rule);
+
+  test("the owners, tests, comments and reads pass", () => {
+    expect(
+      rules([
+        file(
+          `${SRC}runbook/runbook-run.ts`,
+          "const a = { runbookStep: { runbook } }; runbookReadActionType(s); loadRunbooks(d);",
+        ),
+        file(`${SRC}engine/types.ts`, "runbookStep?: RunbookStepRef;"),
+        file(
+          `${SRC}engine/runbook-read.ts`,
+          'const S = ".runbook.read"; export function runbookReadActionType() {}',
+        ),
+        file(`${SRC}runbook/runbook-loader.ts`, "export function loadRunbooks() {}"),
+        file(
+          `${SRC}incident/runbook-step-store.ts`,
+          "dbRun(db, `INSERT INTO incident_runbook_step (x) VALUES (?)`);",
+        ),
+        file(
+          `${SRC}index/incident-runbook-v104-sql.ts`,
+          "CREATE TABLE IF NOT EXISTS incident_runbook_step (x)",
+        ),
+        file(`${SRC}engine/executor.ts`, "if (action.runbookStep !== undefined) lines.push(x);"),
+        file(
+          `${SRC}runbook/x.test.ts`,
+          "const a = { runbookStep: 1 }; db.run('DELETE FROM incident_runbook_step');",
+        ),
+        file(
+          `${SRC}ipc/incident-rpc.ts`,
+          "// runbookStep: x; .runbook.read\nconst q = 'SELECT * FROM incident_runbook_step';",
+        ),
+      ]),
+    ).toEqual([]);
+  });
+
+  test("each clause outside its owners is a violation", () => {
+    expect(rules([file(`${SRC}incident/remediation.ts`, "const a = { runbookStep: x };")])).toEqual(
+      ["runbook-step-key-confined"],
+    );
+    expect(rules([file(`${SRC}ipc/x.ts`, 'const a = { "runbookStep": x };')])).toEqual([
+      "runbook-step-key-confined",
+    ]);
+    expect(
+      rules([file(`${SRC}ipc/x.ts`, "db.run('UPDATE incident_runbook_step SET status = 1');")]),
+    ).toEqual(["incident-runbook-table-confined"]);
+    expect(rules([file(`${SRC}engine/agent.ts`, 'const t = s + ".runbook.read";')])).toEqual([
+      "runbook-read-type-confined",
+    ]);
+    expect(rules([file(`${SRC}engine/agent.ts`, "const t = runbookReadActionType(s);")])).toEqual([
+      "runbook-read-type-confined",
+    ]);
+    expect(rules([file(`${SRC}ipc/x.ts`, "const r = loadRunbooks(dir);")])).toEqual([
+      "runbook-dir-confined",
+    ]);
+  });
+
+  test("files outside the gateway source are not scanned, and runbook-run.ts is an anchor", () => {
+    expect(
+      rules([file("packages/cli/src/x.ts", "const a = { runbookStep: 1 }; loadRunbooks();")]),
+    ).toEqual([]);
+    expect(RULE_ANCHORS).toContain(`${SRC}runbook/runbook-run.ts`);
   });
 });
 
