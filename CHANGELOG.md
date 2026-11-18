@@ -2,6 +2,18 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [11.8.0](https://github.com/nimbus-agent/Nimbus/compare/v11.7.0...v11.8.0) (2026-11-18)
+
+
+### Features
+
+* **docs:** a static catalog of the official registry at /extensions, written from a verified snapshot (S4 marketplace tile B3) ([#2065](https://github.com/nimbus-agent/Nimbus/issues/2065)) ([4618aba](https://github.com/nimbus-agent/Nimbus/commit/4618aba1a62dd5e73feebee42654086157f9e60a))
+* **gateway:** incident engine IC6, owner-authored runbooks run one approved step at a time with typed-only parameters (I57 (c), D46(g), V104) ([#2060](https://github.com/nimbus-agent/Nimbus/issues/2060)) ([3974b4a](https://github.com/nimbus-agent/Nimbus/commit/3974b4aa316bd9468958068981a3fc95979445d2))
+* **gateway:** re-verify a registry version's build provenance offline against Sigstore roots baked into the release ([#2066](https://github.com/nimbus-agent/Nimbus/issues/2066)) ([b0fb4fb](https://github.com/nimbus-agent/Nimbus/commit/b0fb4fbdbe8f00cd6e10b4c45d58ebc3437fa3d0))
+* **gateway:** the model can call a saved generated tool the owner lists, each call approved over its input (I60, D51) ([#2067](https://github.com/nimbus-agent/Nimbus/issues/2067)) ([a6f3a5e](https://github.com/nimbus-agent/Nimbus/commit/a6f3a5e2d038be9b9ca9b29f815f8f8a47b840af))
+* **gateway:** the Terraform apply preview shows drift outside Terraform (IaC drift D1) ([#2063](https://github.com/nimbus-agent/Nimbus/issues/2063)) ([5a35d29](https://github.com/nimbus-agent/Nimbus/commit/5a35d295edfd2081d6aa63361100a487a3b352f8))
+* **ui:** the desktop Marketplace page searches registries and shows an extension's signed evidence (S4 marketplace tile B1) ([#2064](https://github.com/nimbus-agent/Nimbus/issues/2064)) ([a9a491d](https://github.com/nimbus-agent/Nimbus/commit/a9a491da1d5058336688d0fcf938b8e7c5b4d7b9))
+
 ## [11.7.0](https://github.com/nimbus-agent/Nimbus/compare/v11.6.0...v11.7.0) (2026-11-18)
 
 
