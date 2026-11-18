@@ -4586,14 +4586,15 @@ export function checkDriftCheckConfined(files: readonly FileEntry[]): Violation[
         snippet: (f.contents.split("\n")[line - 1] ?? "").trim(),
       });
     };
-    const span = (sig: RegExp): readonly [number, number] | undefined =>
-      d41Span(code, sig, "\n}\n") ?? d41Span(code, sig, "\n  }\n");
     const inside = (index: number | undefined, s: readonly [number, number] | undefined): boolean =>
       s !== undefined && index !== undefined && index >= s[0] && index < s[1];
+    // Each span ends at its own closing brace: a top-level function in run-ask.ts ("\n}\n"), a class
+    // method in the executor ("\n  }\n"), so a later sibling cannot ride inside the allowed span.
     let flagSpan: readonly [number, number] | undefined;
-    if (f.relPath === D42I_RUN_ASK)
-      flagSpan = span(/\bexport\s+function\s+buildIacDriftExecutor\s*\(/);
-    if (f.relPath === D42_EXECUTOR) flagSpan = span(D42_DRIFT_SIG);
+    if (f.relPath === D42I_RUN_ASK) {
+      flagSpan = d41Span(code, /\bexport\s+function\s+buildIacDriftExecutor\s*\(/, "\n}\n");
+    }
+    if (f.relPath === D42_EXECUTOR) flagSpan = d41Span(code, D42_DRIFT_SIG, "\n  }\n");
     for (const m of code.matchAll(D42I_FLAG_RE)) if (!inside(m.index, flagSpan)) add(m.index);
     if (f.relPath !== D42I_GATEWAY_MAIN && f.relPath !== D42I_RUN_ASK) {
       for (const m of code.matchAll(D42I_BUILD_CALL_RE)) add(m.index);

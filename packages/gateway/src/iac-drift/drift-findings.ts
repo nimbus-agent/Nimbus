@@ -30,6 +30,19 @@ export interface DriftFinding {
   readonly lines: readonly string[];
   /** The fixed reason of a failed or busy check. */
   readonly reason?: string;
+  /**
+   * The drift count of the last check of this workdir that OBSERVED (`drift` or `clean`), carried across
+   * `busy` and `failed` checks, which observe nothing. The notification compares against it. Absent
+   * when no check has observed yet.
+   */
+  readonly observedDriftCount?: number;
+}
+
+/** What a finding says the workdir looked like: its own count when it observed, else the carried one. */
+export function observedDriftCount(f: DriftFinding | undefined): number | undefined {
+  if (f === undefined) return undefined;
+  if (f.status === "drift" || f.status === "clean") return f.driftCount ?? undefined;
+  return f.observedDriftCount;
 }
 
 /** The fixed reason a check whose drift report could not be read ends with. */
@@ -89,6 +102,7 @@ function parseFinding(v: unknown): DriftFinding | undefined {
   if (typeof v !== "object" || v === null || Array.isArray(v)) return undefined;
   const o = v as Record<string, unknown>;
   const { workdir, checkedAt, startedBy, status, driftCount, plannedChanges, lines, reason } = o;
+  const observed = o["observedDriftCount"];
   if (typeof workdir !== "string" || workdir === "") return undefined;
   if (typeof checkedAt !== "number" || !Number.isFinite(checkedAt)) return undefined;
   if (typeof startedBy !== "string" || !STARTERS.has(startedBy)) return undefined;
@@ -96,6 +110,7 @@ function parseFinding(v: unknown): DriftFinding | undefined {
   if (!isCount(driftCount) || !isCount(plannedChanges)) return undefined;
   if (!Array.isArray(lines) || !lines.every((l) => typeof l === "string")) return undefined;
   if (reason !== undefined && typeof reason !== "string") return undefined;
+  if (observed !== undefined && (!isCount(observed) || observed === null)) return undefined;
   return {
     workdir,
     checkedAt,
@@ -105,6 +120,7 @@ function parseFinding(v: unknown): DriftFinding | undefined {
     plannedChanges,
     lines: lines as string[],
     ...(reason === undefined ? {} : { reason }),
+    ...(observed === undefined ? {} : { observedDriftCount: observed }),
   };
 }
 
@@ -120,14 +136,7 @@ export function driftDir(dataDir: string): string {
   return join(dataDir, "iac-drift");
 }
 
-/** The latest finding per workdir, sorted by workdir. Never throws. */
-export function readLatestFindings(dataDir: string): DriftFinding[] {
-  let raw: unknown;
-  try {
-    raw = JSON.parse(readFileSync(join(driftDir(dataDir), FILE_NAME), "utf8"));
-  } catch {
-    return [];
-  }
+function findingsOf(raw: unknown): DriftFinding[] {
   if (!Array.isArray(raw)) return [];
   const byWorkdir = new Map<string, DriftFinding>();
   for (const entry of raw as unknown[]) {
@@ -137,10 +146,52 @@ export function readLatestFindings(dataDir: string): DriftFinding[] {
   return [...byWorkdir.values()].sort(compareWorkdir);
 }
 
-/** Replaces each given workdir's finding (others are kept), atomically. */
-export function writeLatestFindings(dataDir: string, findings: readonly DriftFinding[]): void {
-  const merged = new Map(readLatestFindings(dataDir).map((f) => [f.workdir, f] as const));
-  for (const f of findings) merged.set(f.workdir, f);
+/** The latest finding per workdir, sorted by workdir. Never throws (for display). */
+export function readLatestFindings(dataDir: string): DriftFinding[] {
+  try {
+    return findingsOf(JSON.parse(readFileSync(join(driftDir(dataDir), FILE_NAME), "utf8")));
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * The stored findings for a merge: a missing file is none, an unparsable one is none (nothing in it can
+ * be kept), but a file that exists and cannot be READ throws, so the write leaves it in place.
+ */
+function readForMerge(dataDir: string): DriftFinding[] {
+  let text: string;
+  try {
+    text = readFileSync(join(driftDir(dataDir), FILE_NAME), "utf8");
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw e;
+  }
+  try {
+    return findingsOf(JSON.parse(text));
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Replaces each given workdir's finding (others are kept), atomically, and returns the findings each
+ * replaced. A `busy` or `failed` finding carries its predecessor's observed count forward. The read and
+ * the write are synchronous, so no other check of this process can commit between them.
+ */
+export function writeLatestFindings(
+  dataDir: string,
+  findings: readonly DriftFinding[],
+): Map<string, DriftFinding> {
+  const previous = new Map(readForMerge(dataDir).map((f) => [f.workdir, f] as const));
+  const merged = new Map(previous);
+  for (const f of findings) {
+    const carried =
+      f.status === "busy" || f.status === "failed"
+        ? observedDriftCount(previous.get(f.workdir))
+        : undefined;
+    merged.set(f.workdir, carried === undefined ? f : { ...f, observedDriftCount: carried });
+  }
   const sorted = [...merged.values()].sort(compareWorkdir);
   const dir = driftDir(dataDir);
   mkdirSync(dir, { recursive: true, mode: 0o700 });
@@ -148,4 +199,5 @@ export function writeLatestFindings(dataDir: string, findings: readonly DriftFin
   const tmp = `${target}.${String(process.pid)}.tmp`;
   writeFileSync(tmp, `${JSON.stringify(sorted, null, 2)}\n`, { mode: 0o600 });
   renameSync(tmp, target);
+  return previous;
 }

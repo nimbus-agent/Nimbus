@@ -17,6 +17,7 @@ function makeCtx(o: { wired?: boolean; kind?: ClientKind; throws?: Error } = {})
     },
     latest: () => [],
     running: () => false,
+    wasRunningAt: () => false,
   };
   return {
     options: {

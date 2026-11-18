@@ -14,6 +14,7 @@ import {
   type DriftFinding,
   type DriftStarter,
   findingFromOutcome,
+  observedDriftCount,
   readLatestFindings,
   writeLatestFindings,
 } from "./drift-findings.ts";
@@ -58,11 +59,17 @@ export function driftNotifyBody(f: DriftFinding): string {
   return `${String(f.driftCount)} objects changed outside Terraform in ${plainText(f.workdir)}`;
 }
 
-/** Whether a scheduled finding is news: drift that was not there before, or a different count. */
-export function isNewDrift(prev: DriftFinding | undefined, next: DriftFinding): boolean {
-  if (next.status !== "drift") return false;
-  return prev?.status !== "drift" || prev.driftCount !== next.driftCount;
+/**
+ * Whether a scheduled finding is news: drift whose count differs from the last OBSERVED count of that
+ * workdir (`observedDriftCount` of the finding it replaced, so a `busy` or `failed` check in between,
+ * which observed nothing, is not mistaken for the drift having cleared). A clean observation is `0`.
+ */
+export function isNewDrift(prevObserved: number | undefined, next: DriftFinding): boolean {
+  return next.status === "drift" && prevObserved !== next.driftCount;
 }
+
+/** The fixed reason a workdir's check ends with when it threw instead of answering. */
+export const DRIFT_CHECK_ERROR_REASON = "drift: the check of this workdir did not complete";
 
 export interface IacDriftRunner {
   /** Checks `workdir` (an approved workdir, exact spelling) or, when absent, each approved workdir in turn. */
@@ -74,43 +81,67 @@ export interface IacDriftRunner {
   latest(): DriftFinding[];
   /** Whether a check is running now. */
   running(): boolean;
+  /** Whether a check was running at `atMs` (one still running that started by then, or the last finished one). */
+  wasRunningAt(atMs: number): boolean;
 }
 
 export function createIacDriftRunner(deps: IacDriftRunnerDeps): IacDriftRunner {
-  let inFlight = 0;
+  const inFlight = new Map<symbol, number>();
+  let lastRun: { start: number; end: number } | undefined;
+
+  async function checkOne(dir: string, startedBy: DriftStarter): Promise<DriftFinding> {
+    try {
+      const outcome = await deps.makeExecutor().checkTerraformDrift(dir);
+      return findingFromOutcome(dir, outcome, deps.now(), startedBy);
+    } catch {
+      return findingFromOutcome(
+        dir,
+        { ok: false, reason: DRIFT_CHECK_ERROR_REASON },
+        deps.now(),
+        startedBy,
+      );
+    }
+  }
+
+  function notifyNews(
+    previous: Map<string, DriftFinding>,
+    findings: readonly DriftFinding[],
+  ): void {
+    if (deps.notify === undefined || deps.notifyEnabled?.() === false) return;
+    for (const f of findings) {
+      if (isNewDrift(observedDriftCount(previous.get(f.workdir)), f)) {
+        deps.notify(DRIFT_NOTIFY_TITLE, driftNotifyBody(f));
+      }
+    }
+  }
+
   return {
     async check({ workdir, startedBy }) {
       const approved = deps.approvedWorkdirs();
-      if (workdir !== undefined && !approved.includes(workdir))
+      if (workdir !== undefined && !approved.includes(workdir)) {
         throw new IacDriftNotApprovedError();
+      }
       const targets = workdir === undefined ? [...approved] : [workdir];
-      inFlight++;
+      const id = Symbol("drift-check");
+      const startedAt = deps.now();
+      inFlight.set(id, startedAt);
       try {
-        const before = new Map(
-          readLatestFindings(deps.dataDir).map((f) => [f.workdir, f] as const),
-        );
         const findings: DriftFinding[] = [];
-        for (const dir of targets) {
-          const outcome = await deps.makeExecutor().checkTerraformDrift(dir);
-          findings.push(findingFromOutcome(dir, outcome, deps.now(), startedBy));
-        }
-        writeLatestFindings(deps.dataDir, findings);
-        if (
-          startedBy === "schedule" &&
-          deps.notify !== undefined &&
-          deps.notifyEnabled?.() !== false
-        ) {
-          for (const f of findings) {
-            if (isNewDrift(before.get(f.workdir), f))
-              deps.notify(DRIFT_NOTIFY_TITLE, driftNotifyBody(f));
-          }
-        }
+        // One workdir at a time: each plan holds that workdir's credentials and providers.
+        for (const dir of targets) findings.push(await checkOne(dir, startedBy));
+        // The baseline is read in the same synchronous step as the write (no check can commit between).
+        const previous = writeLatestFindings(deps.dataDir, findings);
+        if (startedBy === "schedule") notifyNews(previous, findings);
         return findings;
       } finally {
-        inFlight--;
+        lastRun = { start: startedAt, end: deps.now() };
+        inFlight.delete(id);
       }
     },
     latest: () => readLatestFindings(deps.dataDir),
-    running: () => inFlight > 0,
+    running: () => inFlight.size > 0,
+    wasRunningAt: (atMs) =>
+      [...inFlight.values()].some((s) => s <= atMs) ||
+      (lastRun !== undefined && lastRun.start <= atMs && lastRun.end >= atMs),
   };
 }

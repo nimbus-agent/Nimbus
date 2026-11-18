@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { NimbusIacDriftToml } from "../config/iac-drift-toml.ts";
-import { DRIFT_TICK_MS, IacDriftScheduler } from "./drift-scheduler.ts";
+import { DRIFT_LATE_MS, DRIFT_TICK_MS, IacDriftScheduler } from "./drift-scheduler.ts";
 
 const T0 = Date.UTC(2026, 10, 18, 5, 58);
 const SIX = Date.UTC(2026, 10, 18, 6, 0);
@@ -8,7 +8,7 @@ const DAY = 24 * 3_600_000;
 
 function harness(
   cfg: () => NimbusIacDriftToml,
-  opts: { running?: () => boolean; fail?: boolean } = {},
+  opts: { running?: () => boolean; fail?: boolean; wasRunningAt?: (t: number) => boolean } = {},
 ) {
   let now = T0;
   const runs: string[] = [];
@@ -21,6 +21,7 @@ function harness(
         return opts.fail === true ? Promise.reject(new Error("boom")) : Promise.resolve([]);
       },
       running: opts.running ?? (() => false),
+      wasRunningAt: opts.wasRunningAt ?? (() => false),
     },
     config: cfg,
     now: () => now,
@@ -80,6 +81,48 @@ describe("the scheduled drift check (OR-DRIFT-2)", () => {
     expect(h.s.nextFireAt()).toBe(SIX + DAY);
   });
 
+  test("start arms at once: a fire due before the first poll is not lost", async () => {
+    const h = harness(() => daily);
+    h.at(SIX - 30_000);
+    h.s.start();
+    await Promise.resolve();
+    expect(h.s.nextFireAt()).toBe(SIX);
+    h.at(SIX + 30_000);
+    await h.s.tick();
+    expect(h.runs).toEqual(["schedule"]);
+    await h.s.retire();
+  });
+
+  test("a fire more than the lateness window late (the host slept) is skipped and re-armed", async () => {
+    const h = harness(() => daily);
+    await h.s.tick();
+    h.at(SIX + 6 * 3_600_000);
+    await h.s.tick();
+    expect(h.runs).toEqual([]);
+    expect(h.s.nextFireAt()).toBe(SIX + DAY);
+    // Within the window it runs.
+    const g = harness(() => daily);
+    await g.s.tick();
+    g.at(SIX + DRIFT_LATE_MS);
+    await g.s.tick();
+    expect(g.runs).toEqual(["schedule"]);
+  });
+
+  test("a check that was running at the due time skips the fire, even if it finished before the poll", async () => {
+    const h = harness(() => daily, { wasRunningAt: (t) => t === SIX });
+    await h.s.tick();
+    h.at(SIX + 30_000);
+    await h.s.tick();
+    expect(h.runs).toEqual([]);
+  });
+
+  test("start after retire never arms a timer", async () => {
+    const h = harness(() => daily);
+    await h.s.retire();
+    h.s.start();
+    expect(h.timers.ms).toBeUndefined();
+  });
+
   test("turning the schedule off disarms it", async () => {
     let cfg: NimbusIacDriftToml = daily;
     const h = harness(() => cfg);
@@ -129,6 +172,7 @@ describe("the scheduled drift check (OR-DRIFT-2)", () => {
             };
           }),
         running: () => false,
+        wasRunningAt: () => false,
       },
       config: () => daily,
       now: () => now,

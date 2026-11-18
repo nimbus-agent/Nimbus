@@ -2,9 +2,11 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { IAC_PREFLIGHT_REFUSALS } from "../connectors/connector-writes/iac-limits.ts";
 import type { TerraformDriftOutcome } from "../engine/executor.ts";
 import {
   createIacDriftRunner,
+  DRIFT_CHECK_ERROR_REASON,
   DRIFT_NOTIFY_TITLE,
   driftNotifyBody,
   IacDriftNotApprovedError,
@@ -90,6 +92,97 @@ describe("the drift runner", () => {
     for (const [, body] of h.notes) expect(body).not.toContain("secret_name");
   });
 
+  test("a busy or failed check in between does not count as the drift clearing", async () => {
+    const busy: TerraformDriftOutcome = { ok: false, reason: IAC_PREFLIGHT_REFUSALS.busy };
+    const h = runner({
+      "/a": [drift(2), busy, { ok: false, reason: "x" }, drift(2)],
+      "/b": [drift(0), drift(0), drift(0), drift(0)],
+    });
+    for (let i = 0; i < 4; i++) await h.r.check({ startedBy: "schedule" });
+    expect(h.notes).toEqual([[DRIFT_NOTIFY_TITLE, "2 objects changed outside Terraform in /a"]]);
+    expect(h.r.latest().find((x) => x.workdir === "/a")?.observedDriftCount).toBeUndefined();
+  });
+
+  test("the baseline is the finding committed last, not the one read when the check started", async () => {
+    let release: () => void = () => {};
+    const outcomes: Record<string, TerraformDriftOutcome[]> = { "/b": [drift(2), drift(0)] };
+    const notes: string[] = [];
+    const r = createIacDriftRunner({
+      makeExecutor: () => ({
+        checkTerraformDrift: async (w) => {
+          if (w === "/a") {
+            await new Promise<void>((res) => {
+              release = res;
+            });
+            return drift(0);
+          }
+          return outcomes[w]?.shift() ?? drift(0);
+        },
+      }),
+      approvedWorkdirs: () => ["/a", "/b"],
+      dataDir: dir,
+      now: () => 1,
+      notify: (_t, b) => notes.push(b),
+    });
+    await r.check({ workdir: "/b", startedBy: "owner_cli" });
+    outcomes["/b"] = [drift(2)];
+    const scheduled = r.check({ startedBy: "schedule" });
+    await Promise.resolve();
+    // While the scheduled check waits on /a, the owner records /b as clean.
+    outcomes["/b"] = [drift(0)];
+    await r.check({ workdir: "/b", startedBy: "owner_cli" });
+    outcomes["/b"] = [drift(2)];
+    release();
+    await scheduled;
+    expect(notes).toEqual(["2 objects changed outside Terraform in /b"]);
+  });
+
+  test("one workdir's check that throws is a failed finding; the others are still checked and stored", async () => {
+    const r = createIacDriftRunner({
+      makeExecutor: () => ({
+        checkTerraformDrift: async (w) => {
+          if (w === "/a") throw new Error("secret detail");
+          return drift(0);
+        },
+      }),
+      approvedWorkdirs: () => ["/a", "/b"],
+      dataDir: dir,
+      now: () => 1,
+    });
+    const out = await r.check({ startedBy: "owner_cli" });
+    expect(out.map((x) => [x.workdir, x.status, x.reason])).toEqual([
+      ["/a", "failed", DRIFT_CHECK_ERROR_REASON],
+      ["/b", "clean", undefined],
+    ]);
+  });
+
+  test("wasRunningAt: a running check from its start, and the last finished one's interval", async () => {
+    let t = 10;
+    let finish: () => void = () => {};
+    const r = createIacDriftRunner({
+      makeExecutor: () => ({
+        checkTerraformDrift: () =>
+          new Promise<TerraformDriftOutcome>((res) => {
+            finish = () => res(drift(0));
+          }),
+      }),
+      approvedWorkdirs: () => ["/a"],
+      dataDir: dir,
+      now: () => t,
+    });
+    expect(r.wasRunningAt(10)).toBe(false);
+    const p = r.check({ startedBy: "owner_cli" });
+    await Promise.resolve();
+    expect(r.wasRunningAt(9)).toBe(false);
+    expect(r.wasRunningAt(11)).toBe(true);
+    t = 20;
+    finish();
+    await p;
+    expect(r.wasRunningAt(15)).toBe(true);
+    expect(r.wasRunningAt(21)).toBe(false);
+    expect(r.wasRunningAt(5)).toBe(false);
+  });
+
   test("notify off: a scheduled check notifies nothing", async () => {
     const h = runner({ "/a": [drift(2)], "/b": [drift(0)] }, false);
     await h.r.check({ startedBy: "schedule" });
@@ -107,7 +200,7 @@ describe("the drift runner", () => {
     expect(r.latest().map((f) => f.status)).toEqual(["drift"]);
   });
 
-  test("running() is true while a check is in flight and false after a failure", async () => {
+  test("running() is true while a check is in flight and false after one that threw", async () => {
     let fail: () => void = () => {};
     const r = createIacDriftRunner({
       makeExecutor: () => ({
@@ -124,7 +217,7 @@ describe("the drift runner", () => {
     await Promise.resolve();
     expect(r.running()).toBe(true);
     fail();
-    await expect(p).rejects.toThrow("x");
+    expect((await p)[0]?.status).toBe("failed");
     expect(r.running()).toBe(false);
   });
 });
@@ -149,8 +242,8 @@ describe("notification helpers", () => {
   test("isNewDrift: only drift is news, and only when it appears or its count changes", () => {
     expect(isNewDrift(undefined, f("clean", 0))).toBe(false);
     expect(isNewDrift(undefined, f("drift", 1))).toBe(true);
-    expect(isNewDrift(f("clean", 0), f("drift", 1))).toBe(true);
-    expect(isNewDrift(f("drift", 1), f("drift", 1))).toBe(false);
-    expect(isNewDrift(f("drift", 1), f("drift", 2))).toBe(true);
+    expect(isNewDrift(0, f("drift", 1))).toBe(true);
+    expect(isNewDrift(1, f("drift", 1))).toBe(false);
+    expect(isNewDrift(1, f("drift", 2))).toBe(true);
   });
 });

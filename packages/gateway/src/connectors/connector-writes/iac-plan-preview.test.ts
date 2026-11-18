@@ -768,6 +768,9 @@ describe("renderPlanPreview: drift outside Terraform (resource_drift)", () => {
         resource_drift: [deleted],
       }),
     );
+    expect(r.driftLines).toContain(
+      "  [deleted outside Terraform] aws_instance.gone (aws_s3_bucket, registry.terraform.io/hashicorp/aws)",
+    );
     expect(r.driftLines).toEqual(r.lines.slice(4, 4 + r.driftLines.length));
     expect(r.driftLines.join("\n")).not.toContain("value");
     expect(render(plan([])).driftLines).toEqual(["Drift: none reported by terraform"]);

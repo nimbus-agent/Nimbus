@@ -13,8 +13,14 @@ import type { IacDriftRunner } from "./drift-runner.ts";
 
 export const DRIFT_TICK_MS = 60_000;
 
+/**
+ * A fire later than this (the host slept, the process was stopped) is skipped and the schedule re-armed
+ * from now: an ordinary poll delay is at most one tick, so two ticks plus a margin covers it.
+ */
+export const DRIFT_LATE_MS = 2 * DRIFT_TICK_MS + 30_000;
+
 export interface IacDriftSchedulerDeps {
-  readonly runner: Pick<IacDriftRunner, "check" | "running">;
+  readonly runner: Pick<IacDriftRunner, "check" | "running" | "wasRunningAt">;
   readonly config: () => NimbusIacDriftToml;
   readonly now: () => number;
   readonly onError?: (err: unknown) => void;
@@ -34,12 +40,15 @@ export class IacDriftScheduler {
   private nextAt: number | undefined;
   private key: string | undefined;
   private current: Promise<void> | undefined;
+  private retired = false;
 
   constructor(private readonly deps: IacDriftSchedulerDeps) {}
 
+  /** Arms the next fire NOW (a fire due before the first poll is not lost), then polls. Never after retire. */
   start(): void {
-    if (this.handle !== undefined) return;
+    if (this.handle !== undefined || this.retired) return;
     const timers = this.deps.timers ?? REAL_TIMERS;
+    void this.tick();
     this.handle = timers.setInterval(() => {
       void this.tick();
     }, DRIFT_TICK_MS);
@@ -71,9 +80,18 @@ export class IacDriftScheduler {
       this.nextAt = this.next(cfg, now);
       return;
     }
-    if (now < this.nextAt) return;
+    const due = this.nextAt;
+    if (now < due) return;
     this.nextAt = this.next(cfg, now);
-    if (this.current !== undefined || this.deps.runner.running()) return;
+    // Skipped, never queued: too late (a pause), or a check was running at the due time or is now.
+    if (now - due > DRIFT_LATE_MS) return;
+    if (
+      this.current !== undefined ||
+      this.deps.runner.running() ||
+      this.deps.runner.wasRunningAt(due)
+    ) {
+      return;
+    }
     this.current = this.deps.runner
       .check({ startedBy: "schedule" })
       .then(() => undefined)
@@ -95,6 +113,7 @@ export class IacDriftScheduler {
 
   /** Stops ticking and waits for a running check. */
   async retire(): Promise<void> {
+    this.retired = true;
     if (this.handle !== undefined) {
       (this.deps.timers ?? REAL_TIMERS).clearInterval(this.handle);
       this.handle = undefined;

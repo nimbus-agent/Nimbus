@@ -8176,6 +8176,23 @@ describe("D42(i) — the drift check's flag, builder and method stay in their on
     ).toEqual(["bound-drift-confined"]);
   });
 
+  test("FAILS when a later sibling of the drift method sets the flag (each span ends at its own brace)", () => {
+    const executor = [
+      "class T {",
+      "  async checkTerraformDrift(w) {",
+      "    return s({ ...ctx, driftCheck: true });",
+      "  }",
+      "  other() {",
+      "    x({ driftCheck: true });",
+      "  }",
+      "}",
+      "",
+    ].join("\n");
+    expect(rules(GOOD.map((f) => (f.relPath === EXECUTOR ? file(EXECUTOR, executor) : f)))).toEqual(
+      ["bound-drift-confined"],
+    );
+  });
+
   test("FAILS when the builder is called outside gateway-main, or twice in run-ask", () => {
     expect(rules([...GOOD, file(OTHER, "buildIacDriftExecutor(p);")])).toEqual([
       "bound-drift-confined",

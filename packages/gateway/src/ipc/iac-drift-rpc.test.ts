@@ -29,6 +29,7 @@ function runner(o: { throws?: Error } = {}) {
     },
     latest: () => [F],
     running: () => false,
+    wasRunningAt: () => false,
   };
   return { r, calls };
 }
@@ -62,14 +63,22 @@ describe("iac.* (OR-DRIFT-1: the owner's CLI only)", () => {
     expect(latest).toEqual({ kind: "hit", value: { findings: [F] } });
   });
 
-  test("every other kind is refused before the runner is touched", async () => {
+  test("every other kind is refused before the runner is even looked up", async () => {
     const h = runner();
+    let lookups = 0;
+    const ctx = {
+      runner: () => {
+        lookups += 1;
+        return h.r;
+      },
+    };
     for (const kind of ["ui", "mcp", "chatops", "http", "fleet", "push", "unknown"] as const) {
       for (const m of ["iac.driftCheck", "iac.driftLatest"]) {
-        const e = await err(dispatchIacDriftRpc(m, {}, { runner: () => h.r }, { kind }));
+        const e = await err(dispatchIacDriftRpc(m, {}, ctx, { kind }));
         expect(e.message).toBe(IAC_DRIFT_CLI_ONLY);
       }
     }
+    expect(lookups).toBe(0);
     expect(h.calls).toEqual([]);
   });
 

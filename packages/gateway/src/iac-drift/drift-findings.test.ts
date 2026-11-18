@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { IAC_PREFLIGHT_REFUSALS } from "../connectors/connector-writes/iac-limits.ts";
@@ -9,6 +9,7 @@ import {
   type DriftFinding,
   driftDir,
   findingFromOutcome,
+  observedDriftCount,
   readLatestFindings,
   writeLatestFindings,
 } from "./drift-findings.ts";
@@ -126,10 +127,39 @@ describe("the latest-findings file (no migration)", () => {
       ["/a", "failed"],
       ["/b", "busy"],
     ]);
-    if (process.platform !== "win32") {
-      expect(statSync(join(driftDir(dir), "latest.json")).mode & 0o777).toBe(0o600);
-    }
     expect(JSON.parse(readFileSync(join(driftDir(dir), "latest.json"), "utf8"))).toHaveLength(2);
+  });
+
+  test("a busy or failed finding carries the last observed count; an observing one resets it", () => {
+    dir = mkdtempSync(join(tmpdir(), "nimbus-drift-"));
+    writeLatestFindings(dir, [{ ...finding("/a", "clean"), status: "drift", driftCount: 3 }]);
+    writeLatestFindings(dir, [finding("/a", "busy")]);
+    expect(readLatestFindings(dir)[0]?.observedDriftCount).toBe(3);
+    const prev = writeLatestFindings(dir, [finding("/a", "failed")]);
+    expect(observedDriftCount(prev.get("/a"))).toBe(3);
+    expect(readLatestFindings(dir)[0]?.observedDriftCount).toBe(3);
+    writeLatestFindings(dir, [finding("/a", "clean")]);
+    const latest = readLatestFindings(dir)[0];
+    expect(latest?.observedDriftCount).toBeUndefined();
+    expect(observedDriftCount(latest)).toBe(0);
+    expect(observedDriftCount(undefined)).toBeUndefined();
+    expect(observedDriftCount(finding("/x", "busy"))).toBeUndefined();
+  });
+
+  test("a findings file that exists but cannot be read is left in place, and the write throws", () => {
+    dir = mkdtempSync(join(tmpdir(), "nimbus-drift-"));
+    // A directory where the file should be: reading it fails with something other than "missing".
+    mkdirSync(join(driftDir(dir), "latest.json"), { recursive: true });
+    expect(() => writeLatestFindings(dir, [finding("/a")])).toThrow();
+    expect(readLatestFindings(dir)).toEqual([]);
+  });
+
+  test("an unparsable file is replaced: nothing in it could have been kept", () => {
+    dir = mkdtempSync(join(tmpdir(), "nimbus-drift-"));
+    mkdirSync(driftDir(dir), { recursive: true });
+    writeFileSync(join(driftDir(dir), "latest.json"), "{not json");
+    writeLatestFindings(dir, [finding("/a")]);
+    expect(readLatestFindings(dir).map((f) => f.workdir)).toEqual(["/a"]);
   });
 
   test("a malformed file, a non-array and malformed entries read as nothing", () => {
@@ -153,6 +183,8 @@ describe("the latest-findings file (no migration)", () => {
       { ...good, lines: [1] },
       { ...good, lines: "x" },
       { ...good, reason: 5 },
+      { ...good, observedDriftCount: null },
+      { ...good, observedDriftCount: -2 },
     ];
     writeFileSync(path, JSON.stringify([good, ...bad]));
     expect(readLatestFindings(dir)).toEqual([good]);

@@ -13,7 +13,15 @@ import { withGatewayIpc } from "../lib/with-gateway-ipc.ts";
 import { getCliPlatformPaths } from "../paths.ts";
 import { stripControl } from "./captures-format.ts";
 
-export const IAC_USAGE = "usage: nimbus iac drift [--workdir <dir>] [--latest] [--json]";
+export const IAC_USAGE = [
+  "usage: nimbus iac drift [--workdir <dir>] [--json]",
+  "       nimbus iac drift --latest [--json]",
+].join("\n");
+
+/** `--help` / `-h` anywhere after `iac`: print the usage and exit 0. */
+export function wantsIacHelp(argv: readonly string[]): boolean {
+  return argv.includes("--help") || argv.includes("-h");
+}
 
 export type IacDriftFinding = {
   workdir: string;
@@ -48,16 +56,20 @@ export function parseIacArgs(argv: readonly string[]): IacArgs | undefined {
 
 function statusLine(f: IacDriftFinding): string {
   const where = stripControl(f.workdir);
-  const at = new Date(f.checkedAt).toISOString().replace("T", " ").slice(0, 16);
+  const when = new Date(f.checkedAt);
+  // A stored time outside what a Date can hold reads as unknown, never a throw that hides every entry.
+  const at = Number.isNaN(when.getTime())
+    ? "at an unknown time"
+    : `${when.toISOString().replace("T", " ").slice(0, 16)} UTC`;
   const planned =
     f.plannedChanges === null ? "" : `; an apply would make ${String(f.plannedChanges)} changes`;
   if (f.status === "drift") {
-    return `DRIFT  ${where}: ${String(f.driftCount)} objects changed outside Terraform (checked ${at} UTC${planned})`;
+    return `DRIFT  ${where}: ${String(f.driftCount)} objects changed outside Terraform (checked ${at}${planned})`;
   }
   if (f.status === "clean")
-    return `CLEAN  ${where}: none reported by terraform (checked ${at} UTC${planned})`;
+    return `CLEAN  ${where}: none reported by terraform (checked ${at}${planned})`;
   const why = stripControl(f.reason ?? "unknown");
-  return `${f.status === "busy" ? "BUSY " : "FAILED"} ${where}: ${why} (checked ${at} UTC)`;
+  return `${f.status === "busy" ? "BUSY " : "FAILED"} ${where}: ${why} (checked ${at})`;
 }
 
 /** The human view: one status line per workdir, and for drift the renderer's own lines under it. */
@@ -100,12 +112,17 @@ export async function runIacWith(
   }
 }
 
-/** How the command reaches the gateway: one IPC client per run (a seam for tests). */
-export type IacIpc = (fn: (c: Pick<IPCClient, "call">) => Promise<number>) => Promise<number>;
+/**
+ * How the command reaches the gateway: one IPC client per run (a seam for tests). `long` is true for a
+ * check, which awaits a terraform plan per workdir; `--latest` reads a file and keeps the 30 s default.
+ */
+export type IacIpc = (
+  fn: (c: Pick<IPCClient, "call">) => Promise<number>,
+  long: boolean,
+) => Promise<number>;
 
-const GATEWAY_IPC: IacIpc = (fn) =>
-  // The handler awaits a terraform plan per workdir (each up to 10 minutes).
-  withGatewayIpc(fn, getCliPlatformPaths(), { requestTimeoutMs: BATCH_RPC_TIMEOUT_MS });
+const GATEWAY_IPC: IacIpc = (fn, long) =>
+  withGatewayIpc(fn, getCliPlatformPaths(), long ? { requestTimeoutMs: BATCH_RPC_TIMEOUT_MS } : {});
 
 const PROCESS_SINK: Sink = {
   out: (s) => process.stdout.write(s),
@@ -117,11 +134,15 @@ export async function runIacCmd(
   ipc: IacIpc = GATEWAY_IPC,
   sink: Sink = PROCESS_SINK,
 ): Promise<void> {
+  if (wantsIacHelp(argv)) {
+    sink.out(`${IAC_USAGE}\n`);
+    return;
+  }
   const a = parseIacArgs(argv);
   if (a === undefined) {
     sink.err(`${IAC_USAGE}\n`);
     throw new CliExit(2);
   }
-  const code = await ipc((c) => runIacWith(c, a, sink));
+  const code = await ipc((c) => runIacWith(c, a, sink), !a.latest);
   if (code !== 0) throw new CliExit(code);
 }

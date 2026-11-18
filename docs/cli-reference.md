@@ -1269,7 +1269,7 @@ Text from the index (a title, a sender) is stripped of control characters before
 
 **Bounds.** Outlook mail is counted per message (no thread key or sender is indexed); an empty work snapshot reads "not run yet", never "nothing assigned"; GitHub only for reviews; Slack unread needs the read markers the Slack sync records.
 
-### `nimbus iac drift [--workdir <dir>] [--latest] [--json]`
+### `nimbus iac drift [--workdir <dir>] [--json]` / `nimbus iac drift --latest [--json]`
 
 Phase 10 IaC drift D2 (owner rulings OR-DRIFT-1 and OR-DRIFT-2). A read-only Terraform drift check of the directories you approved with `nimbus connector writes enable iac --wave 4 --workdir <dir>`. For each one it runs `terraform plan` under the same sandbox profile as an apply's plan (that directory's granted cloud credentials and hosts), asks nothing and applies nothing, and prints what Terraform reports as changed or deleted outside Terraform: object addresses and attribute NAMES, never a value.
 
@@ -1281,10 +1281,10 @@ nimbus iac drift --json
 ```
 
 - One line per workdir: `DRIFT` with the number of objects changed outside Terraform and the objects under it, `CLEAN` (`none reported by terraform`, never "no drift"), `BUSY` (another run holds the workdir) or `FAILED` with a fixed reason. Each line also says how many changes an apply would make now; those are counted, never shown or applied.
-- Exit `0` when every workdir is clean, `1` when any shows drift, failed or was busy, `2` on a usage error.
+- Exit `0` when every workdir is clean, `1` when any shows drift, failed or was busy, `2` on a usage error; `--help` prints the usage and exits `0`. A workdir whose check could not complete is recorded `FAILED` and the others are still checked.
 - The latest finding per workdir is kept in `<dataDir>/iac-drift/latest.json` (no migration).
-- **Scheduled checks (off by default).** Set `[iac.drift] schedule = "<cron>"` (five fields, no schedule under five minutes) and optionally `tz = "<IANA zone>"` (default: this machine's) in `nimbus.toml`. A scheduled run checks every approved workdir; a fire due while a check is still running is skipped, and missed fires are not caught up. When a workdir's drift appears or its count changes, it raises one local OS notification, `<N> objects changed outside Terraform in <workdir>`, with no object names or values. `notify = false` turns the notification off. A demo gateway never schedules.
-- **Reach.** `iac.driftCheck` and `iac.driftLatest` answer only a connection that declared itself the CLI: never the desktop, an MCP agent, ChatOps, the local HTTP API or a LAN peer. The model and outside agents cannot start a check. Every plan and show read is audited and recorded in the egress ledger.
+- **Scheduled checks (off by default).** Set `[iac.drift] schedule = "<cron>"` (five fields, no schedule under five minutes) and optionally `tz = "<IANA zone>"` (default: this machine's) in `nimbus.toml`. A scheduled run checks every approved workdir. The schedule is armed when the gateway starts; a fire due while a check was running is skipped, a fire more than two and a half minutes late (the machine slept) is skipped, and missed fires are not caught up. When a workdir's drift appears or its count differs from the last check that observed it (a `BUSY` or `FAILED` check in between observes nothing), it raises one local OS notification, `<N> objects changed outside Terraform in <workdir>`, with no object names or values. `notify = false` turns the notification off. A demo gateway never schedules.
+- **Reach.** `iac.driftCheck` and `iac.driftLatest` answer only a connection that declared itself the CLI: never the desktop, an MCP agent, ChatOps, the local HTTP API or a LAN peer, and the demo root refuses both. The model and outside agents cannot start a check. Every plan and show read is audited and recorded in the egress ledger.
 - **Stated bounds.** The connector has no `terraform plan -refresh-only` tool, so the check runs a normal plan, which refreshes the same way and reports the same drift. A plan runs the directory's providers with the granted credentials, so the bound recorded for applies (a malicious provider or `local-exec` in an approved directory can send the credential out where the sandbox cannot confine the network) applies to a drift check too. Accepting drift into state (`terraform apply -refresh-only`) is not offered; reverting it is the ordinary apply, whose preview lists the drift.
 
 ### `nimbus incident`

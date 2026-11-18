@@ -14768,10 +14768,38 @@ describe("I54 — a bound connector write is dispatched only with the values its
     ).toThrow(/not callable over LAN/);
     const rust = await read("packages/ui/src-tauri/src/gateway_bridge.rs");
     expect(rust).not.toMatch(/"iac\./);
+    // A demo gateway refuses the whole namespace at the demo gate, before any dispatcher (I41)...
+    const { demoRefusal } = await import("./ipc/server/demo-gate.ts");
+    expect(demoRefusal("iac.driftCheck")).toBeDefined();
+    expect(demoRefusal("iac.driftLatest")).toBeDefined();
+    expect(demoRefusal("connector.status")).toBeUndefined();
+    // ...an unbound runner refuses a check without running anything, while a bound one runs (the control)...
+    const { dispatchIacDriftRpc, IAC_DRIFT_UNAVAILABLE } = await import("./ipc/iac-drift-rpc.ts");
+    await expect(
+      dispatchIacDriftRpc("iac.driftCheck", {}, { runner: () => undefined }, { kind: "cli" }),
+    ).rejects.toThrow(IAC_DRIFT_UNAVAILABLE);
+    let ran = 0;
+    const bound = {
+      check: async () => {
+        ran += 1;
+        return [];
+      },
+      latest: () => [],
+      running: () => false,
+      wasRunningAt: () => false,
+    };
+    await dispatchIacDriftRpc("iac.driftCheck", {}, { runner: () => bound }, { kind: "cli" });
+    expect(ran).toBe(1);
+    // ...and gateway-main binds the runner only inside the non-demo branch.
+    const bindAt = stripComments(await read("packages/gateway/src/gateway-main.ts")).indexOf(
+      "platform.bindIacDriftRunner(",
+    );
     // A demo gateway builds neither the runner nor the scheduler (I41).
     const main = stripComments(await read("packages/gateway/src/gateway-main.ts"));
     const at = main.indexOf("const iacDriftScheduler =");
     expect(main.slice(at, at + 200)).toMatch(/platform\.paths\.demo === true\s*\?\s*undefined/);
+    expect(main.split("platform.bindIacDriftRunner(").length).toBe(2);
+    expect(bindAt).toBeGreaterThan(at);
   });
 
   test("D42 exists with its clauses, run() calls it, and its files are anchors", async () => {
