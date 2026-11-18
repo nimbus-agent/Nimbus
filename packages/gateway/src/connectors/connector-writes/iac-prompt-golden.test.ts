@@ -100,6 +100,7 @@ describe("the consent prompt of a plan-bound write", () => {
         "Terraform 1.9.5",
         `Plan SHA-256: ${SHA}`,
         "Reads: 0",
+        "Drift: none reported by terraform",
         "[replace: delete, create] aws_instance.web (aws_instance, registry.terraform.io/hashicorp/aws)",
         "    reason: replace_because_cannot_update",
         '    ami: "ami-1" -> "ami-2"',
