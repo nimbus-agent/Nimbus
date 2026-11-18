@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795025376913,
+  "lastUpdate": 1795026893665,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
-            "name": "nimbus-release-bot[bot]",
-            "username": "nimbus-release-bot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "056259b2991d03a161a5f24bcb5689046a9b9096",
-          "message": "chore: release main (#1435)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>7.8.1</summary>\n\n##\n[7.8.1](https://github.com/nimbus-agent/Nimbus/compare/v7.8.0...v7.8.1)\n(2026-09-03)\n\n\n### Bug Fixes\n\n* **sonar:** clear 23 findings, and document five that should not be\napplied ([#1434](https://github.com/nimbus-agent/Nimbus/issues/1434))\n([64d50af](https://github.com/nimbus-agent/Nimbus/commit/64d50af67ddf196c742da5492e6005a7b745b9e0))\n* **sonar:** raw path literals, media flag validators, and the two\nfindings the last pass added\n([#1437](https://github.com/nimbus-agent/Nimbus/issues/1437))\n([6fe5240](https://github.com/nimbus-agent/Nimbus/commit/6fe52402b34a2be90dc86a6ab1dd0407246dca6e))\n* **sonar:** specific matchers and named decisions, minus two arity\nassertions ([#1436](https://github.com/nimbus-agent/Nimbus/issues/1436))\n([d1900c6](https://github.com/nimbus-agent/Nimbus/commit/d1900c6e5a679cf520053f33fd02e7fbbad280b4))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
-          "timestamp": "2026-09-04T06:54:24+03:00",
-          "tree_id": "193c8e61d2a64f4a411988cdc504bb69387c0f44",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/056259b2991d03a161a5f24bcb5689046a9b9096"
-        },
-        "date": 1788494938186,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 314.45056045000274,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 316.0010561000039,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 168.81352099999967,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "3085ec831e29f7a6dfeb115c23956c69fb7689fb",
+          "message": "feat(gateway): nimbus iac drift, a read-only Terraform drift check with an opt-in schedule (IaC drift D2) (#2068)\n\nPhase 10 Stretch, Infrastructure-as-Agent: slice D2 of **Autonomous\ndrift detection** (owner rulings OR-DRIFT-1 to OR-DRIFT-3, 2026-11-18).\nD1 (#2063) put drift into the apply preview; this adds a drift check\nthat runs without an apply, on demand and, opt-in, on a schedule.\n\n## What changes\n\n- **`nimbus iac drift [--workdir <dir>] [--latest] [--json]`** runs a\nread-only Terraform drift check of every directory approved with `nimbus\nconnector writes enable iac --workdir`. Nothing is asked and nothing is\napplied. It prints what Terraform reports as changed or deleted outside\nTerraform (addresses and attribute NAMES, never values), the\nplanned-change count, or a fixed reason (`busy`, `failed`). Exit 0 when\nevery workdir is clean, 1 otherwise. `--latest` prints the stored\nfindings.\n- **The executor step (I54's one other prepare caller, OR-DRIFT-1).**\n`ToolExecutor.checkTerraformDrift` runs, in order:\n  - the Terraform apply row's input shape rule;\n- its capability `preflight` (approved canonical workdir, granted cloud,\nper-workdir mutex, pinned real path, re-checked);\n- its prepare step, so the plan and show reads are `iac.write.prepare`\nactions through the gate, audited and I29-ledgered, under the existing\n`plan` and `show` profiles;\n- a settle that shows a no-change plan (`allowNoChanges`) instead of\nrefusing `nothingToApply`.\n\nThe bound values are dropped and the apply is never dispatched. Cleanup\nand the mutex release always run. It runs only on the executor\n`buildIacDriftExecutor` builds: a consent channel that denies without\nasking, no delegation, no before-state runner, no standing rules.\n- **Findings, with no migration:** the latest finding per workdir is\nkept in `<dataDir>/iac-drift/latest.json` (atomic write, mode 0600,\ntolerant read).\n- **IPC:**\n- `iac.driftCheck { workdir? }` and `iac.driftLatest` answer only a\nconnection that declared `cli`, so never the desktop, MCP, ChatOps, HTTP\nor fleet.\n  - The whole `iac` namespace is added to `FORBIDDEN_OVER_LAN`.\n  - Not on the Tauri allowlist.\n  - The runner is never bound on a demo gateway.\n- **Schedule (OR-DRIFT-2, off by default):** `[iac.drift] schedule =\n\"<cron>\"`, with optional `tz` and `notify`, reuses `automation/cron.ts`,\nso no schedule can be under 5 minutes.\n- It ticks every 60 s. A fire that comes due while a check is still\nrunning is skipped, and missed fires are not caught up.\n  - It is not built on a demo gateway (I41).\n- When a workdir's drift appears or its count changes, it sends one\nlocal OS notification through `showIgnoringFailure`: `<N> objects\nchanged outside Terraform in <workdir>`. No names or values.\n- **OR-DRIFT-3:** no `apply -refresh-only` row.\n\n## Invariants and static rules\n\n- **I54:** the text in `docs/SECURITY-INVARIANTS.md` gains the drift\ncheck as the ONE other prepare caller, with its stated bounds.\n- **Static rule D42:** clauses (b), (f) and (h2) are amended to allow\nexactly one more `runPrepareStep(`, one more `prepareStep: true`, and\none more capability read, `preflight` call and `settle` call, all inside\n`checkTerraformDrift`.\n- **New clause D42(i)** (`checkDriftCheckConfined`), with\n`iac-drift/drift-runner.ts` and `engine/run-ask.ts` added as rule\nanchors:\n- `driftCheck: true` is written only inside `buildIacDriftExecutor` and\n`checkTerraformDrift`;\n  - the builder is called only by `gateway-main.ts`;\n  - the method only by the drift runner.\n- **No new invariant**, no migration, no allowlist change.\n\n## Stated bounds\n\n- The connector (0.15.0) has no `plan -refresh-only` tool, so the check\nruns a normal `terraform plan`, which refreshes the same way and reports\nthe same `resource_drift`. Its planned changes are counted, never shown\nor applied. A refresh-only tool is a connectors follow-up.\n- A plan runs the workdir's providers with the granted credentials.\nOR-D2-1's bound, that a malicious provider or `local-exec` could send\nthe credential out where the sandbox cannot confine the network, now\nalso covers an owner-started or scheduled check.\n- No desktop view.\n- No comparison against indexed live state: the index holds no resource\nattributes.\n\nThe roadmap rows stay open with progress notes. Antigravity reviewed the\nspec (two rounds) and the implementation; it approved, with four\nadvisories, three of them fixed: the mutex is released even if cleanup\nthrows, D42(i) gained its anchors, and a test now covers `retire()`'s\ndrain. The fourth, that the rule scans only `packages/gateway/src`, is\nconsistent with every other rule.\n\nPer the owner's batching rule, the shared status docs\n(CLAUDE.md/GEMINI.md status paragraph and I54 bullet, top of CHANGELOG,\ndocs/README.md) are batched into the last PR of the batch. Roadmap,\narchitecture, cli-reference, SECURITY-INVARIANTS and the IPC skill are\nupdated here.\n\n## Verification\n\n- `bun run preflight:fast` passed, as did the static invariant checker.\n- New tests:\n  - the executor: 14, every branch;\n  - config, findings and store, runner and scheduler;\n  - RPC, the dispatcher and the LAN refusal;\n  - the CLI;\n  - D42(i), each part red-proved;\n  - an I54 security-invariants case.\n- Amended tests: settle `allowNoChanges`, the registry pass-through, and\nthe preview's `driftLines`.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JmSjrCk6NpLauKU2yYCwva\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Added `nimbus iac drift` to check approved Terraform work directories\nfor drift, with options to check a specific directory, view the latest\nresults, or output JSON.\n* Checks report clean, drift, busy, or failed results. Optional\nscheduled checks can notify when drift appears or its count changes.\n* **Documentation**\n* Added CLI guidance, configuration details, and information about\ndrift-check behavior and limitations.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-18T18:23:20Z",
+          "tree_id": "177c00fa8aecbf81bc03462c6f3ceea9b4adb519",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/3085ec831e29f7a6dfeb115c23956c69fb7689fb"
+        },
+        "date": 1795026888668,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 250.8571055999975,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 254.48532580000975,
             "unit": "ms"
           }
         ]
