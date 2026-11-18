@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794988905867,
+  "lastUpdate": 1794995274175,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
-            "name": "nimbus-release-bot[bot]",
-            "username": "nimbus-release-bot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "393e6ba41cc9f7e457382d0ebdeee2b0693e11be",
-          "message": "chore: release main (#1425)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>7.6.0</summary>\n\n##\n[7.6.0](https://github.com/nimbus-agent/Nimbus/compare/v7.5.0...v7.6.0)\n(2026-09-02)\n\n\n### Features\n\n* **agents:** resolve a forge file coordinate to the reader's checkout\n([#1424](https://github.com/nimbus-agent/Nimbus/issues/1424))\n([4770bdf](https://github.com/nimbus-agent/Nimbus/commit/4770bdffbcff9b7962f209e890d3b96f324dbb9b))\n* **computer-use:** the terminal lane — a confined shell where nothing\nruns before the owner approves the whole line\n([#1426](https://github.com/nimbus-agent/Nimbus/issues/1426))\n([9ad2be9](https://github.com/nimbus-agent/Nimbus/commit/9ad2be9c1d398c1eb1636115ae495e2869775d00))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
-          "timestamp": "2026-09-02T06:39:08+03:00",
-          "tree_id": "0b79df0f78aaef0e0127f55c6f0da6abc587a3ed",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/393e6ba41cc9f7e457382d0ebdeee2b0693e11be"
-        },
-        "date": 1788321074646,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 329.9330148499979,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 327.7653633499925,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 258.0327799500017,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "3974b4aa316bd9468958068981a3fc95979445d2",
+          "message": "feat(gateway): incident engine IC6, owner-authored runbooks run one approved step at a time with typed-only parameters (I57 (c), D46(g), V104) (#2060)\n\nIncident engine slice IC6 (spec § 5.6): runbooks you write yourself.\nNimbus lists the ones that match an incident and runs them one approved\nstep at a time.\n\n## What it adds\n\n- **Runbook files** live in `<configDir>/runbooks/*.toml`. They are\nnever fetched, and never come from a pack or an extension.\n- Each has a `[match]` (bound services, trigger sources, a title regex)\nand 1 to 50 `check`, `read` and `action` steps.\n- The loader (`runbook/runbook-loader.ts`) refuses a file, by name and\nwith its reason, when it:\n- has an unknown key, or a key that would set approval behaviour\n(`approve`, `auto`, `yes`, `standing`, `confirm`, `delegate`, ...);\n    - uses an untyped placeholder;\n- names an action that is not a connector write row, is a bound write,\nor is refused on every door;\n- names a read tool that is a write, is not a read by name, or belongs\nto another service;\n    - has a parameter that is not plain data.\n- **`nimbus incident runbook <id> [--runbook <name>] [--step N | --done\nN] [--json]`**\n  - Lists the matching runbooks, each step with its state.\n  - `--done N` marks a check step done.\n- `--step N` runs ONE read or action step on this connection, through\nthe remediation executor: human-only consent, no delegation, no standing\nrule, the before-state read, and a typed confirmation for a Wave 4 row.\nThe prompt shows `Proposed by: runbook <name>, step N` and the row's\nreversibility.\n  - Advisory mode refuses an action step before the record is read.\n- A read step is a `<service>.runbook.read` action, which the dispatcher\nlets resolve only to a read tool of that same service (the before-read\nrule, generalised). Its result is shown once and never stored.\n- **Typed-only interpolation (I57 (c)).** The only placeholders are\n`{service}`, `{trigger.source}`, `{trigger.provider_id}`, `{opened_at}`,\n`{opened_at_ms}`, `{deploy.sha}`, `{binding.argocd_app}` and\n`{binding.deploy_environment}`. Provider free text has no placeholder,\nso an alert can never write a parameter. Every value must match\n`^[A-Za-z0-9._:/@+-]{1,256}$`.\n- **IPC methods** `incident.runbooks`, `incident.runbookRun` and\n`incident.runbookDone`: owner kinds only (`requireOwnerKind` first),\nLAN-forbidden by the `incident` root, not renderer-callable.\n- **Migration V104**: `incident_runbook_step`, one row per (record,\nrunbook, step), kept per runbook content hash and written only by\n`incident/runbook-step-store.ts`. An owner erasure deletes the rows;\nretention keeps them.\n- **Invariant I57 (c)**: the wiring, `docs/SECURITY-INVARIANTS.md` and\n`security-invariants.test.ts` (\"I57 (c)\", 6 tests) land in the same\ncommit.\n- **Static rule D46(g)** (`checkRunbookConfinement`, four clauses):\n  - `runbookStep` is set only in `runbook/runbook-run.ts`;\n  - the table is written only by its store and the DDL;\n- the `.runbook.read` type is spelled only in `engine/runbook-read.ts`;\n  - only the loader and the runner read the runbook folder.\n\nIt is anchored in `RULE_ANCHORS`, and D46(e)'s list of modules that may\nmint an incident link gains `runbook/runbook-run.ts`.\n- **The gate's link check** (`assertLinkedActionAllowed`) refuses a\n`runbookStep` that has no valid link, that sits beside an\n`engineProposal`, or that has the wrong shape, before any row is\nwritten.\n\nThere is no allowlist change, no HITL type, no egress class and no new\nIPC namespace.\n\n## Stated bounds\n\n- Parameters are checked structurally at load, not against the\nconnector's input schema (the gateway holds none). The connector\nvalidates its input at the call, and the prompt shows every value before\nyou approve.\n- A read tool's existence is checked at the call, not at load.\n- `nimbus incident undo` does not undo a runbook action step; the\nprompt's reversibility line says so.\n- Bun's built-in TOML reader mis-reads an unquoted date or time, so\nthose and multi-line strings are refused; dates and times must be\nwritten as quoted strings.\n- No model reads or proposes a runbook.\n- The Phase 16 skill-pack runbooks are not built, so Phase 17's *Live\nrunbook driving* row gets a progress note and stays open. Phase 10's\n*Runbook automation* row is ticked with the narrower scope written into\nit.\n\n## Docs\n\n- Updated here: `docs/SECURITY-INVARIANTS.md` (I57 (c), D46(g), the\nceiling line), `docs/architecture.md` (a new *Runbooks* section),\n`docs/cli-reference.md` (three rows and a runbook file example),\n`docs/roadmap.md`, and the `nimbus-ipc` and `nimbus-file-map` skills.\n- Batched to the batch-final PR (owner rule): the hot shared docs (the\nCLAUDE.md/GEMINI.md status paragraph, the top of `docs/CHANGELOG.md`,\n`docs/README.md`).\n- One exception: `audit:status-drift` enforces the schema count, so\nCLAUDE.md and GEMINI.md now read \"schema V104\" and \"(I57 has sub-clauses\n(a), (b) and (c))\".\n- The IC8 heading in `architecture.md` now reads \"Migration V103\",\nbecause the drift gate matched its old \"Schema V103\".\n\n## Verification\n\n- `bun run preflight:fast` passes.\n- These suites pass: incident, runbook, the incident RPC tests, engine,\nmigrations, connector registry, `security-invariants`, the CLI incident\ntests and `scripts/structure-audit` (5,256 tests). The three erasure\nexpectations updated in this PR also pass.\n- One loader test (a symlinked runbook is not followed) skips on\nWindows, because creating a link there needs privileges.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JmSjrCk6NpLauKU2yYCwva\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Added incident runbooks that match incidents and show available steps\nand progress.\n* Runbooks support check, read, and action steps. You can complete\nchecks or execute one step at a time from the CLI.\n* Actions use the existing approval process, with runbook and step\ndetails shown in consent prompts.\n* Runbook progress is saved per incident. Runbook parameters are limited\nto supported incident fields and configured values.\n\n* **Documentation**\n* Added guidance for runbook setup, CLI commands, supported steps, and\nexecution limits.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->",
+          "timestamp": "2026-11-18T09:36:58Z",
+          "tree_id": "d7930d414546a6868d460bb256c3a90969065191",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/3974b4aa316bd9468958068981a3fc95979445d2"
+        },
+        "date": 1794995270550,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 185.26717200000058,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 189.20392215000064,
             "unit": "ms"
           }
         ]
