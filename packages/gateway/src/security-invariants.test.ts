@@ -13383,11 +13383,12 @@ describe("I51 — liveness and baseline evidence is inert", () => {
       "index/extension-provenance-v105-sql.ts",
       "index/migrations/runner.ts",
     ]);
-    only(/\b(?:readInstalledProvenance|reverifyInstalledProvenance)\b/, [
+    // Calls, not names: an import left behind after a call is removed must not satisfy the pin.
+    only(/\b(?:readInstalledProvenance|reverifyInstalledProvenance)\s*\(/, [
       "extensions/registry/installed-provenance.ts",
       "ipc/automation-rpc.ts",
     ]);
-    only(/\brecordInstalledProvenance\b/, [
+    only(/\brecordInstalledProvenance\s*\(/, [
       "extensions/registry/installed-provenance.ts",
       "extensions/registry/install-from-registry.ts",
     ]);

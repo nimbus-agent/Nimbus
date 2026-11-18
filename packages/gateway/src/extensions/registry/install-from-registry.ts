@@ -217,6 +217,8 @@ export interface VerifiedRegistryPackage {
   readonly provenanceRecheck?: ProvenanceRecheck;
   /** The bundle the re-check read, when it was fetched and matched the signed index (slice 2). */
   readonly provenanceBundle?: string;
+  /** When the install door ran that re-check (ms since epoch); set with `provenanceRecheck`. */
+  readonly provenanceCheckedAt?: number;
   /**
    * What the registry's signed entry says about this version (tested, history, checks), shown in
    * the install approval. Optional as `index` is: a package built elsewhere (a test fake, a
@@ -652,7 +654,7 @@ function keepInstalledProvenance(
       packageSha256: entry.packageSha256,
       provenance: pkg.provenance,
       ...(pkg.provenanceRecheck === undefined ? {} : { recheck: pkg.provenanceRecheck }),
-      checkedAt: deps.fetch.now(),
+      checkedAt: pkg.provenanceCheckedAt ?? deps.fetch.now(),
     },
     pkg.provenanceBundle ?? null,
   );
@@ -680,6 +682,8 @@ async function withProvenanceRecheck(
   return {
     ...pkg,
     provenanceRecheck: out.recheck,
+    // When the re-check ran, not when the install later committed (the owner may take a while).
+    provenanceCheckedAt: deps.fetch.now(),
     ...(out.bundle === undefined ? {} : { provenanceBundle: out.bundle }),
   };
 }
