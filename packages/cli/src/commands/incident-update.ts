@@ -59,7 +59,8 @@ const BOOL_FLAGS: ReadonlySet<string> = new Set(["--force", "--json", "--queued"
 export function parseDest(raw: string): UpdateDest | undefined {
   if (raw.startsWith("slack:")) {
     const channel = raw.slice("slack:".length);
-    return /^[A-Z0-9]{2,32}$/.test(channel) ? { platform: "slack", channel } : undefined;
+    // A channel (C) or private channel (G) id only, never a DM (D) or user (U) id.
+    return /^[CG][A-Z0-9]{1,31}$/.test(channel) ? { platform: "slack", channel } : undefined;
   }
   if (raw.startsWith("teams:")) {
     const rest = raw.slice("teams:".length);
@@ -144,7 +145,8 @@ type DraftReply = {
 type SendReply =
   | { outcome: "sent" }
   | { outcome: "refused"; code: string; reason: string }
-  | { outcome: "denied"; reason: string };
+  | { outcome: "denied"; reason: string }
+  | { outcome: "uncertain"; reason: string };
 
 type QueueReply = { entries: Array<{ recordId: string; version: number; queuedAtMs: number }> };
 
@@ -201,6 +203,11 @@ function sendMessage(r: SendReply): { code: number; text: string } {
       return { code: 0, text: "Sent.\n" };
     case "refused":
       return { code: 1, text: `Not sent (${safeText(r.code)}): ${safeText(r.reason)}\n` };
+    case "uncertain":
+      return {
+        code: 1,
+        text: `Delivery is uncertain: ${safeText(r.reason)}. The message may have been posted; check the channel before sending it again.\n`,
+      };
     default:
       return { code: 1, text: `Not sent: ${safeText(r.reason)}. Nothing was posted.\n` };
   }

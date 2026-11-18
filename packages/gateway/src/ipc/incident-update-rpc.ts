@@ -55,7 +55,8 @@ export interface IncidentUpdateRpcCtx {
 
 export type UpdateCaller = { readonly clientId: string; readonly kind: ClientKind };
 
-const SLACK_CHANNEL_RE = /^[A-Z0-9]{2,32}$/;
+// A channel (C) or private channel (G) id only: a DM (D) or user (U) id would post to a person (OR scope: no DM).
+const SLACK_CHANNEL_RE = /^[CG][A-Z0-9]{1,31}$/;
 const TEAMS_TEAM_RE = /^[0-9A-Za-z-]{1,64}$/;
 const TEAMS_CHANNEL_RE = /^19:[^\s]{1,200}$/;
 

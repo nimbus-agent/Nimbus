@@ -190,3 +190,32 @@ describe("sendIncidentUpdate", () => {
     expect(r.prompts).toHaveLength(0);
   });
 });
+
+describe("sendIncidentUpdate: a throw after the dispatch", () => {
+  test("is uncertain, never 'nothing was posted' (a timeout or an oversized reply can follow a real post)", async () => {
+    const db = createMemoryIndexDb();
+    dbs.push(db);
+    const stored = upsertIncidentRecord(db, {
+      record: buildRecord({ itemId: "pagerduty:PDT" }),
+      markdown: "# x",
+      recordSha256: "f".repeat(64),
+      citedServices: ["pagerduty"],
+      nowMs: 1,
+    });
+    const out = await sendIncidentUpdate(
+      {
+        db,
+        executor: {
+          execute: async () => {
+            throw new Error("tool call timed out after 60000 ms");
+          },
+        },
+        chatops: () => NO_CHATOPS,
+      },
+      stored.recordId,
+      SLACK,
+      TEXT,
+    );
+    expect(out).toEqual({ outcome: "uncertain", reason: "tool call timed out after 60000 ms" });
+  });
+});

@@ -14,8 +14,9 @@ const NETWORK = /\bfetch\s*\(|\bBun\.serve\b|\bnode:(?:http|https|net|dgram)\b|\
 const SPAWN =
   /\b(?:Bun\.spawn|Bun\.spawnSync|node:child_process|child_process|execFile|execSync)\b/;
 const FORBIDDEN_IMPORT =
-  /from\s+"(?:\.\.\/)+(?:egress|chatops|federation|share|connectors|engine|llm)\//;
-const ACTION_IMPORT = /from\s+"(?:\.\.\/)+(?:connectors\/|engine\/|incident\/incident-link-mint)/;
+  /(?:from\s+|import\s*\(\s*)"(?:\.\.\/)+(?:egress|chatops|federation|share|connectors|engine|llm)\//;
+const ACTION_IMPORT =
+  /(?:from\s+|import\s*\(\s*)"(?:\.\.\/)+(?:connectors\/|engine\/|incident\/incident-link-mint)/;
 
 const strip = (s: string): string =>
   s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
@@ -38,7 +39,9 @@ describe("IC9b confinement", () => {
   test("only update-send.ts imports the row table, the link minter or the engine", () => {
     for (const f of sources()) {
       if (f.name === "update-send.ts") {
-        expect(f.text).toMatch(ACTION_IMPORT);
+        // The calls, not a leftover import: the link minter and the row-table lookup are both reached.
+        expect(f.text).toMatch(/\bmintIncidentLink\(/);
+        expect(f.text).toMatch(/\bconnectorWriteRowByToolId\(/);
         continue;
       }
       expect(f.text, f.name).not.toMatch(FORBIDDEN_IMPORT);

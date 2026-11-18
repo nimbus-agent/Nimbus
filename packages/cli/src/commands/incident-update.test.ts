@@ -297,3 +297,29 @@ describe("realUpdateFs", () => {
     }
   });
 });
+
+describe("a send whose delivery is uncertain, and Slack destination shapes", () => {
+  test("says the message may have been posted and to check before sending again", async () => {
+    const u = client({
+      "session.declareKind": {},
+      "incident.updateSend": { outcome: "uncertain", reason: "tool call timed out" },
+    });
+    const out = sink();
+    const code = await runUpdateWith(
+      u.c,
+      parseUpdateArgs([REC, "--send", "slack:C0STATUS", "--from", "u.txt"]) as UpdateArgs,
+      out.s,
+      memFs({ "u.txt": "x" }),
+    );
+    expect(code).toBe(1);
+    expect(out.err.join("")).toContain("Delivery is uncertain: tool call timed out.");
+    expect(out.err.join("")).toContain("check the channel before sending it again");
+    expect(out.err.join("")).not.toContain("Nothing was posted");
+  });
+
+  test("a DM or user id is a usage error", () => {
+    expect(parseDest("slack:D0123ABC")).toBeUndefined();
+    expect(parseDest("slack:U0123ABC")).toBeUndefined();
+    expect(parseDest("slack:G0123ABC")).toEqual({ platform: "slack", channel: "G0123ABC" });
+  });
+});

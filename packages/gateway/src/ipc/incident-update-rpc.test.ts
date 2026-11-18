@@ -280,3 +280,25 @@ describe("incident update RPC edges", () => {
     );
   });
 });
+
+describe("incident.updateSend: Slack destinations", () => {
+  test("a DM (D) or user (U) id is refused; a channel (C) or private channel (G) id is accepted", async () => {
+    const r = rig();
+    for (const channel of ["D0123ABC", "U0123ABC", "W0123ABC"]) {
+      await expect(
+        call(r, "incident.updateSend", { id: r.recordId, platform: "slack", channel, text: "x" }),
+      ).rejects.toThrow(/channel id/);
+    }
+    expect(r.dispatched).toHaveLength(0);
+    for (const channel of ["C0123ABC", "G0123ABC"]) {
+      expect(
+        await call(r, "incident.updateSend", {
+          id: r.recordId,
+          platform: "slack",
+          channel,
+          text: "x",
+        }),
+      ).toEqual({ outcome: "sent" });
+    }
+  });
+});

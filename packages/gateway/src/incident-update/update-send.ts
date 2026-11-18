@@ -28,7 +28,13 @@ export type UpdateDestination =
 export type SendOutcome =
   | { readonly outcome: "sent" }
   | { readonly outcome: "refused"; readonly code: string; readonly reason: string }
-  | { readonly outcome: "denied"; readonly reason: string };
+  | { readonly outcome: "denied"; readonly reason: string }
+  /**
+   * `execute()` threw. It returns a `rejected` result for every refusal before the dispatch, so a throw may come
+   * AFTER it (the dispatcher's timeout while the tool call can still complete, an oversized reply): the message
+   * may have been posted, and a retry could post it twice.
+   */
+  | { readonly outcome: "uncertain"; readonly reason: string };
 
 export type SendDeps = {
   readonly db: Database;
@@ -103,6 +109,6 @@ export async function sendIncidentUpdate(
     if (out.status === "ok") return { outcome: "sent" };
     return { outcome: "denied", reason: failureReason(out.reason) };
   } catch (e) {
-    return { outcome: "denied", reason: failureReason(e) };
+    return { outcome: "uncertain", reason: failureReason(e) };
   }
 }
