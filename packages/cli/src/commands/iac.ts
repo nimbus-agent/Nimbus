@@ -103,21 +103,28 @@ export async function runIacWith(
   }
 }
 
-export async function runIacCmd(argv: string[]): Promise<void> {
+/** How the command reaches the gateway: one IPC client per run (a seam for tests). */
+export type IacIpc = (fn: (c: Pick<IPCClient, "call">) => Promise<number>) => Promise<number>;
+
+const GATEWAY_IPC: IacIpc = (fn) =>
+  // The handler awaits a terraform plan per workdir (each up to 10 minutes).
+  withGatewayIpc(fn, getCliPlatformPaths(), { requestTimeoutMs: BATCH_RPC_TIMEOUT_MS });
+
+const PROCESS_SINK: Sink = {
+  out: (s) => process.stdout.write(s),
+  err: (s) => process.stderr.write(s),
+};
+
+export async function runIacCmd(
+  argv: string[],
+  ipc: IacIpc = GATEWAY_IPC,
+  sink: Sink = PROCESS_SINK,
+): Promise<void> {
   const a = parseIacArgs(argv);
   if (a === undefined) {
-    process.stderr.write(`${IAC_USAGE}\n`);
+    sink.err(`${IAC_USAGE}\n`);
     throw new CliExit(2);
   }
-  const code = await withGatewayIpc(
-    (c) =>
-      runIacWith(c, a, {
-        out: (s) => process.stdout.write(s),
-        err: (s) => process.stderr.write(s),
-      }),
-    getCliPlatformPaths(),
-    // The handler awaits a terraform plan per workdir (each up to 10 minutes).
-    { requestTimeoutMs: BATCH_RPC_TIMEOUT_MS },
-  );
+  const code = await ipc((c) => runIacWith(c, a, sink));
   if (code !== 0) throw new CliExit(code);
 }

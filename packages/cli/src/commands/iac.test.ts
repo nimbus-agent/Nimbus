@@ -1,5 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { formatIacDrift, type IacDriftFinding, parseIacArgs, runIacWith } from "./iac.ts";
+import {
+  formatIacDrift,
+  type IacDriftFinding,
+  parseIacArgs,
+  runIacCmd,
+  runIacWith,
+} from "./iac.ts";
 
 const AT = Date.UTC(2026, 10, 18, 6, 0);
 const f = (o: Partial<IacDriftFinding>): IacDriftFinding => ({
@@ -134,5 +140,45 @@ describe("runIacWith", () => {
     const k = sink();
     expect(await runIacWith(c, { latest: true, json: false }, k.s)).toBe(1);
     expect(k.err.join("")).toContain("plain");
+  });
+});
+
+describe("runIacCmd", () => {
+  const sink = () => {
+    const out: string[] = [];
+    const err: string[] = [];
+    return { out, err, s: { out: (x: string) => out.push(x), err: (x: string) => err.push(x) } };
+  };
+  const fakeIpc =
+    (findings: IacDriftFinding[]) =>
+    async (fn: (c: { call: <T>(m: string) => Promise<T> }) => Promise<number>) =>
+      fn({ call: async <T>() => ({ findings }) as T });
+
+  test("a usage error prints the usage and exits 2, without reaching the gateway", async () => {
+    const k = sink();
+    let reached = false;
+    const err = await runIacCmd(
+      ["nope"],
+      async () => {
+        reached = true;
+        return 0;
+      },
+      k.s,
+    ).catch((e: unknown) => e);
+    expect((err as { code?: number }).code).toBe(2);
+    expect(k.err.join("")).toContain("usage: nimbus iac drift");
+    expect(reached).toBe(false);
+  });
+
+  test("a clean run returns; drift exits 1", async () => {
+    const k = sink();
+    await runIacCmd(["drift"], fakeIpc([f({})]), k.s);
+    expect(k.out.join("")).toContain("CLEAN");
+    const err = await runIacCmd(
+      ["drift", "--latest"],
+      fakeIpc([f({ status: "drift", driftCount: 1 })]),
+      sink().s,
+    ).catch((e: unknown) => e);
+    expect((err as { code?: number }).code).toBe(1);
   });
 });
