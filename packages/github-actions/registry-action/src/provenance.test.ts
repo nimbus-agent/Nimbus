@@ -181,6 +181,43 @@ describe("verifyProvenance", () => {
     expect(slept).toEqual([]);
   });
 
+  test("gh's full output carries the bundle through, also after a retry", async () => {
+    const full = readFileSync(
+      join(
+        import.meta.dir,
+        "..",
+        "..",
+        "..",
+        "registry-format",
+        "src",
+        "testdata",
+        "gh-attestation-verify-cli-cli-bundle.json",
+      ),
+      "utf8",
+    );
+    const bundle = JSON.stringify(
+      (JSON.parse(full) as Array<{ attestation: { bundle: unknown } }>)[0]?.attestation.bundle,
+    );
+    const once = await verifyProvenance(
+      "p",
+      "cli/cli",
+      AT,
+      deps([{ code: 0, stdout: full, stderr: "" }]).d,
+    );
+    expect(once.ok && once.bundle).toBe(bundle);
+    const timedOut: GhRun = { code: null, stdout: "", stderr: "", error: { killed: true } };
+    const retried = await verifyProvenance(
+      "p",
+      "cli/cli",
+      AT,
+      deps([timedOut, { code: 0, stdout: full, stderr: "" }]).d,
+    );
+    expect(retried.ok && retried.bundle).toBe(bundle);
+    // Trimmed output: provenance with no bundle key at all.
+    const trimmed = await verifyProvenance("p", "cli/cli", AT, deps([ok]).d);
+    expect(trimmed.ok && Object.hasOwn(trimmed, "bundle")).toBe(false);
+  });
+
   test("a timeout is retried once, then reported", async () => {
     const timedOut: GhRun = { code: null, stdout: "", stderr: "", error: { killed: true } };
     const { d, calls, slept } = deps([timedOut, timedOut]);

@@ -24,6 +24,7 @@
  * The root key is a secret. It is parsed in memory only, never written to disk, and never named in
  * a message: refusals name fingerprints of PUBLIC keys. `main.ts` masks the input before this runs.
  */
+import { createHash } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir as osTmpdir } from "node:os";
 import { join } from "node:path";
@@ -33,6 +34,7 @@ import {
   type EvalBaseline,
   type EvalQuality,
   judgeScoreEntry,
+  provenanceBundlePath,
   publicKeyFromSeed,
   publisherKeyFingerprint,
   RegistryError,
@@ -157,6 +159,8 @@ interface Attempt {
   sequence: number;
 }
 
+const sha256Hex = (b: Uint8Array): string => createHash("sha256").update(b).digest("hex");
+
 /** Provenance results by package digest: a push-race retry never asks `gh` twice. */
 type ProvenanceMemo = Map<string, ProvenanceResult>;
 
@@ -171,7 +175,7 @@ async function provenanceFor(
   at: { work: string; verifiedAt: string },
   deps: { io: ActionIo; verify: VerifyPackage },
   memo: ProvenanceMemo,
-): Promise<VersionProvenance | undefined> {
+): Promise<{ provenance: VersionProvenance; bundle?: string } | undefined> {
   if (v.repository === undefined) return undefined;
   let r = memo.get(v.packageSha256);
   if (r === undefined) {
@@ -190,7 +194,9 @@ async function provenanceFor(
     }
   }
   // A memo hit from an earlier attempt is re-stamped with THIS attempt's commit time.
-  return r.ok ? { ...r.provenance, verifiedAt: at.verifiedAt } : undefined;
+  if (!r.ok) return undefined;
+  const provenance = { ...r.provenance, verifiedAt: at.verifiedAt };
+  return r.bundle === undefined ? { provenance } : { provenance, bundle: r.bundle };
 }
 
 /** What every attempt of one run shares. */
@@ -235,13 +241,24 @@ async function takeCandidate(
     deps.io.annotate("warning", `${v.id}@${v.version}: ${q.baselineIgnored}`);
   }
   const base = `extensions/${v.id}/${v.version}`;
-  const provenance = await provenanceFor(
+  const proven = await provenanceFor(
     v,
     candidate.packageBytes,
     { work: b.work, verifiedAt: b.publishedAt },
     { io: deps.io, verify: deps.provenance ?? ghProvenance(opts.githubToken ?? "") },
     run.memo,
   );
+  // The attestation's Sigstore bundle is published beside the package and pinned by the signed
+  // entry, so a client can re-verify the provenance offline (it is never trusted here).
+  const bundleBytes =
+    proven?.bundle === undefined ? undefined : new TextEncoder().encode(proven.bundle);
+  const bundlePath = provenanceBundlePath(v.id, v.version);
+  const provenance =
+    proven === undefined
+      ? undefined
+      : bundleBytes === undefined
+        ? proven.provenance
+        : { ...proven.provenance, bundle: bundlePath, bundleSha256: sha256Hex(bundleBytes) };
   addVersion(b.extensions, v, b.publishedAt, {
     ...(provenance !== undefined && { provenance }),
     ...(q.quality !== undefined && { quality: q.quality }),
@@ -251,6 +268,7 @@ async function takeCandidate(
     { path: `${base}/manifest.json`, bytes: candidate.manifestBytes },
     { path: `${base}/package.tgz`, bytes: candidate.packageBytes },
   );
+  if (bundleBytes !== undefined) b.files.push({ path: bundlePath, bytes: bundleBytes });
   b.added.push({
     id: v.id,
     version: v.version,

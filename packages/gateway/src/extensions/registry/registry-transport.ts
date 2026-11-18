@@ -9,7 +9,7 @@ const SCHEME_RE = /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//;
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "[::1]", "::1"]);
 // `trust.json` is the Nimbus trust feed (trust layer), fetched through this same transport.
 const REL_PATH_RE =
-  /^(index\.json|trust\.json|liveness\.json|extensions\/.+\/(manifest\.json|package\.tgz))$/;
+  /^(index\.json|trust\.json|liveness\.json|extensions\/.+\/(manifest\.json|package\.tgz|provenance\.json))$/;
 
 function refuse(detail: string): never {
   throw new RegistryError("ERR_REGISTRY_TRANSPORT_REFUSED", detail);

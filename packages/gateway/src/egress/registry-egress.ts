@@ -24,6 +24,7 @@ export function recordRegistryEgress(
       | "registry.manifest"
       | "registry.package"
       | "registry.liveness"
+      | "registry.provenance"
       | "trust.feed";
     readonly extensionId?: string | undefined;
     readonly version?: string | undefined;

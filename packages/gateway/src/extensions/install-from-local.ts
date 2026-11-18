@@ -23,7 +23,6 @@ import {
   type VersionProvenance,
 } from "@nimbus-dev/registry-format";
 import type { Logger } from "pino";
-
 import {
   deleteExtensionById,
   type ExtensionRow,
@@ -72,6 +71,7 @@ import {
 import { rangesOf } from "./manifest-support.ts";
 import { extractPackage } from "./package-extract.ts";
 import { resolvePublisherKey, writePublisherKeyFor } from "./publisher-keys.ts";
+import type { ProvenanceRecheck } from "./registry/provenance-verify.ts";
 import type {
   RegistryDependencyResolver,
   StagedDependency,
@@ -383,6 +383,12 @@ export type ExtensionInstallApprovalRequest = {
    */
   readonly provenance?: VersionProvenance;
   readonly provenanceNote?: string;
+  /**
+   * A registry install only, with `provenance` and a published Sigstore bundle: what re-verifying
+   * that bundle offline against the roots baked into this release found (owner ruling OR-PROV-2:
+   * evidence shown in `provenanceNote`, never a decision).
+   */
+  readonly provenanceRecheck?: ProvenanceRecheck;
   /**
    * Set only when the install adds or reuses more than one package (or a package from another
    * registry than the root's): every plan node, in install (topological) order. A single-package

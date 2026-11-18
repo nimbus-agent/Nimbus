@@ -152,6 +152,14 @@ const FAST: readonly Gate[] = [
     cmd: ["bun", "run", "audit:trust-snapshot"],
     tier: "fast",
   },
+  {
+    // The baked Sigstore trusted roots (offline provenance re-verification, OR-PROV-5): the module
+    // is the refresh script's output and holds one root per instance. Offline; the live comparison
+    // runs daily in release-channel-drift.yml.
+    name: "audit:sigstore-roots",
+    cmd: ["bun", "run", "audit:sigstore-roots"],
+    tier: "fast",
+  },
   { name: "audit:status-drift", cmd: ["bun", "run", "audit:status-drift"], tier: "fast" },
   { name: "audit:action-sha-pins", cmd: ["bun", "run", "audit:action-sha-pins"], tier: "fast" },
   {

@@ -120,6 +120,20 @@ describe("resolveRegistryResource", () => {
     }
   });
 
+  test("resolves a version's provenance.json beside its package, and nowhere else", () => {
+    expect(resolveRegistryResource(remote, "extensions/acme/deploy/1.0.0/provenance.json")).toEqual(
+      {
+        kind: "remote",
+        url: "https://reg.example/sub/extensions/acme/deploy/1.0.0/provenance.json",
+      },
+    );
+    for (const loc of [remote, local]) {
+      for (const bad of ["provenance.json", "extensions/x/1.0.0/provenance.json.bak"]) {
+        expect(() => resolveRegistryResource(loc, bad)).toThrow("ERR_REGISTRY_TRANSPORT_REFUSED");
+      }
+    }
+  });
+
   test("rejects a ../ relPath and other shapes", () => {
     for (const loc of [remote, local]) {
       for (const bad of [

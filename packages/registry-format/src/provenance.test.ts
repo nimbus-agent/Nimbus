@@ -3,10 +3,13 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import {
+  MAX_PROVENANCE_BUNDLE_BYTES,
+  provenanceBundlePath,
   provenanceFromGhVerify,
   provenanceMatching,
   provenanceNote,
   readManifestRepository,
+  readProvenanceBundleRef,
   readVersionProvenance,
   type VersionProvenance,
 } from "./provenance.ts";
@@ -213,5 +216,104 @@ describe("provenanceNote", () => {
     expect(provenanceNote({ ...base, runner: "self-hosted" }, "r")).toEndWith(
       "release.yml@refs/tags/v1 on a self-hosted runner",
     );
+  });
+});
+
+/**
+ * Real `gh attestation verify gh_2.105.0_linux_amd64.tar.gz --repo cli/cli --format json` output
+ * (gh 2.96.0, 2026-11-18), untrimmed: each entry carries its full Sigstore bundle under
+ * `attestation.bundle`. Public data.
+ */
+const FULL: unknown = JSON.parse(
+  readFileSync(
+    join(import.meta.dir, "testdata", "gh-attestation-verify-cli-cli-bundle.json"),
+    "utf8",
+  ),
+);
+type FullEntry = { attestation: { bundle: Record<string, unknown> } };
+const fullBundle = (): Record<string, unknown> =>
+  structuredClone((FULL as FullEntry[])[0]?.attestation.bundle as Record<string, unknown>);
+
+describe("the bundle from gh's output", () => {
+  test("the qualifying entry's bundle comes back as its canonical JSON", () => {
+    const r = provenanceFromGhVerify(FULL, "cli/cli", AT);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.provenance.commit).toBe("e1219499a578b69e3437adaa31cd60614e23c802");
+    expect(r.bundle).toBe(JSON.stringify(fullBundle()));
+  });
+
+  test("trimmed output (no bundle) is still provenance, with no bundle", () => {
+    const r = provenanceFromGhVerify(SAMPLE, "cli/cli", AT);
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.bundle).toBeUndefined();
+  });
+
+  test("an unknown media type, a non-object or an oversized bundle is dropped, provenance kept", () => {
+    const withBundle = (b: unknown): unknown => {
+      const out = structuredClone(FULL) as Array<Record<string, unknown>>;
+      (out[0] as Record<string, unknown>)["attestation"] = { bundle: b };
+      return out;
+    };
+    const big = fullBundle();
+    big["pad"] = "x".repeat(MAX_PROVENANCE_BUNDLE_BYTES);
+    for (const b of [
+      { ...fullBundle(), mediaType: "application/vnd.dev.sigstore.bundle.v9+json" },
+      { ...fullBundle(), mediaType: 3 },
+      "a string",
+      null,
+      big,
+    ]) {
+      const r = provenanceFromGhVerify(withBundle(b), "cli/cli", AT);
+      expect(r.ok).toBe(true);
+      if (r.ok) expect(r.bundle).toBeUndefined();
+    }
+    const v02 = provenanceFromGhVerify(
+      withBundle({
+        ...fullBundle(),
+        mediaType: "application/vnd.dev.sigstore.bundle+json;version=0.2",
+      }),
+      "cli/cli",
+      AT,
+    );
+    expect(v02.ok && v02.bundle !== undefined).toBe(true);
+  });
+});
+
+describe("provenanceBundlePath / readProvenanceBundleRef", () => {
+  const SHA = "a".repeat(64);
+  const path = provenanceBundlePath("acme.tool", "1.2.3");
+
+  test("the canonical path sits beside the package", () => {
+    expect(path).toBe("extensions/acme.tool/1.2.3/provenance.json");
+  });
+
+  test("a well-formed reference is read; anything else is no bundle", () => {
+    const ref = (p: Record<string, unknown>): unknown =>
+      readProvenanceBundleRef({ provenance: { ...OK, ...p } }, "acme.tool", "1.2.3");
+    expect(ref({ bundle: path, bundleSha256: SHA })).toEqual({ path, sha256: SHA });
+    expect(ref({})).toBeUndefined();
+    expect(ref({ bundle: path })).toBeUndefined();
+    expect(ref({ bundleSha256: SHA })).toBeUndefined();
+    expect(ref({ bundle: path, bundleSha256: "A".repeat(64) })).toBeUndefined();
+    expect(
+      ref({ bundle: "extensions/other/1.2.3/provenance.json", bundleSha256: SHA }),
+    ).toBeUndefined();
+    expect(ref({ bundle: "../provenance.json", bundleSha256: SHA })).toBeUndefined();
+    // The five fields must still be well formed: a bundle never stands without provenance.
+    expect(
+      readProvenanceBundleRef(
+        { provenance: { ...OK, commit: "zz", bundle: path, bundleSha256: SHA } },
+        "acme.tool",
+        "1.2.3",
+      ),
+    ).toBeUndefined();
+    expect(readProvenanceBundleRef(null, "acme.tool", "1.2.3")).toBeUndefined();
+  });
+
+  test("readVersionProvenance ignores the bundle fields", () => {
+    expect(
+      readVersionProvenance({ provenance: { ...OK, bundle: path, bundleSha256: SHA } }),
+    ).toEqual(OK);
   });
 });

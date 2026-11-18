@@ -1,4 +1,4 @@
-// nimbus-action-dist bun=1.3.14 inputHash=sha256:d655fd783bf67ac7528e437390fd4fa9953a6a08d494a577f85a54b7bf346d13
+// nimbus-action-dist bun=1.3.14 inputHash=sha256:3f3de40a5f692717d7ae691bf75bfd3fc2991b4c15477c1cc6cb9856461be0a8
 import { createRequire } from "node:module";
 var __create = Object.create;
 var __getProtoOf = Object.getPrototypeOf;
@@ -9795,6 +9795,11 @@ var REPOSITORY_RE = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})\/[A-Za-z0-9._-]{1,100}$/
 var COMMIT_RE = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 var WORKFLOW_RE = /^[A-Za-z0-9._/@+-]{1,200}$/;
 var SLSA_V1 = "https://slsa.dev/provenance/v1";
+var MAX_PROVENANCE_BUNDLE_BYTES = 64 * 1024;
+var BUNDLE_MEDIA_TYPES = new Set([
+  "application/vnd.dev.sigstore.bundle+json;version=0.2",
+  "application/vnd.dev.sigstore.bundle.v0.3+json"
+]);
 var isObject4 = (v2) => v2 !== null && typeof v2 === "object" && !Array.isArray(v2);
 function readManifestRepository(rawManifest) {
   if (!isObject4(rawManifest))
@@ -9803,6 +9808,9 @@ function readManifestRepository(rawManifest) {
   return typeof v2 === "string" && REPOSITORY_RE.test(v2) ? v2 : undefined;
 }
 var sameRepository = (a, b2) => a.toLowerCase() === b2.toLowerCase();
+function provenanceBundlePath(id, version) {
+  return `extensions/${id}/${version}/provenance.json`;
+}
 function githubPath(uri) {
   if (typeof uri !== "string")
     return;
@@ -9823,6 +9831,17 @@ function githubPath(uri) {
   if (!REPOSITORY_RE.test(repository))
     return;
   return { repository, rest: rest.join("/") };
+}
+function bundleOf(entry) {
+  const attestation = entry["attestation"];
+  const bundle = isObject4(attestation) ? attestation["bundle"] : undefined;
+  if (!isObject4(bundle))
+    return;
+  const mediaType = bundle["mediaType"];
+  if (typeof mediaType !== "string" || !BUNDLE_MEDIA_TYPES.has(mediaType))
+    return;
+  const text = JSON.stringify(bundle);
+  return new TextEncoder().encode(text).length <= MAX_PROVENANCE_BUNDLE_BYTES ? text : undefined;
 }
 function fromEntry(entry, repository, verifiedAt) {
   if (!isObject4(entry))
@@ -9853,6 +9872,7 @@ function fromEntry(entry, repository, verifiedAt) {
     return { ok: false, reason: "the attestation's workflow path is not recognisable" };
   }
   const runner = cert["runnerEnvironment"] === "github-hosted" ? "github-hosted" : "self-hosted";
+  const bundle = bundleOf(entry);
   return {
     ok: true,
     provenance: {
@@ -9861,7 +9881,8 @@ function fromEntry(entry, repository, verifiedAt) {
       workflow,
       runner,
       verifiedAt
-    }
+    },
+    ...bundle !== undefined && { bundle }
   };
 }
 function provenanceFromGhVerify(output, repository, verifiedAt) {
@@ -11270,7 +11291,14 @@ function ghProvenance(token) {
   });
 }
 function strip(r) {
-  return r.ok ? { ok: true, provenance: r.provenance } : { ok: false, reason: r.reason };
+  return r.ok ? keepOk(r) : { ok: false, reason: r.reason };
+}
+function keepOk(r) {
+  return {
+    ok: true,
+    provenance: r.provenance,
+    ...r.bundle !== undefined && { bundle: r.bundle }
+  };
 }
 
 // src/registry-state.ts
@@ -13108,6 +13136,7 @@ async function runLivenessSign(opts, deps = SHARED5) {
 }
 
 // src/sign.ts
+import { createHash as createHash10 } from "node:crypto";
 import { mkdtempSync as mkdtempSync9, rmSync as rmSync8 } from "node:fs";
 import { tmpdir as osTmpdir6 } from "node:os";
 import { join as join10 } from "node:path";
@@ -13127,6 +13156,7 @@ function parseRootKey(raw) {
   }
   return new Uint8Array(Buffer.from(s3, "base64"));
 }
+var sha256Hex5 = (b2) => createHash10("sha256").update(b2).digest("hex");
 async function provenanceFor(v2, packageBytes, at2, deps, memo) {
   if (v2.repository === undefined)
     return;
@@ -13143,7 +13173,10 @@ async function provenanceFor(v2, packageBytes, at2, deps, memo) {
       deps.io.annotate("warning", `no provenance for ${v2.id}@${v2.version} (repository ${v2.repository}): ${r.reason}; signed without it`);
     }
   }
-  return r.ok ? { ...r.provenance, verifiedAt: at2.verifiedAt } : undefined;
+  if (!r.ok)
+    return;
+  const provenance = { ...r.provenance, verifiedAt: at2.verifiedAt };
+  return r.bundle === undefined ? { provenance } : { provenance, bundle: r.bundle };
 }
 async function takeCandidate(o, b2, run2, opts, deps) {
   const { candidate, verdict: v2 } = o;
@@ -13156,13 +13189,18 @@ async function takeCandidate(o, b2, run2, opts, deps) {
     deps.io.annotate("warning", `${v2.id}@${v2.version}: ${q2.baselineIgnored}`);
   }
   const base = `extensions/${v2.id}/${v2.version}`;
-  const provenance = await provenanceFor(v2, candidate.packageBytes, { work: b2.work, verifiedAt: b2.publishedAt }, { io: deps.io, verify: deps.provenance ?? ghProvenance(opts.githubToken ?? "") }, run2.memo);
+  const proven = await provenanceFor(v2, candidate.packageBytes, { work: b2.work, verifiedAt: b2.publishedAt }, { io: deps.io, verify: deps.provenance ?? ghProvenance(opts.githubToken ?? "") }, run2.memo);
+  const bundleBytes = proven?.bundle === undefined ? undefined : new TextEncoder().encode(proven.bundle);
+  const bundlePath = provenanceBundlePath(v2.id, v2.version);
+  const provenance = proven === undefined ? undefined : bundleBytes === undefined ? proven.provenance : { ...proven.provenance, bundle: bundlePath, bundleSha256: sha256Hex5(bundleBytes) };
   addVersion(b2.extensions, v2, b2.publishedAt, {
     ...provenance !== undefined && { provenance },
     ...q2.quality !== undefined && { quality: q2.quality },
     ...q2.baseline !== undefined && { baseline: q2.baseline }
   });
   b2.files.push({ path: `${base}/manifest.json`, bytes: candidate.manifestBytes }, { path: `${base}/package.tgz`, bytes: candidate.packageBytes });
+  if (bundleBytes !== undefined)
+    b2.files.push({ path: bundlePath, bytes: bundleBytes });
   b2.added.push({
     id: v2.id,
     version: v2.version,

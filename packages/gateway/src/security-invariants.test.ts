@@ -13246,6 +13246,43 @@ describe("I51 — liveness and baseline evidence is inert", () => {
     expect(fetchBody).toBeDefined();
     expect(fetchBody).not.toContain("readRegistryLiveness");
   });
+
+  test("source pins: the offline provenance re-check is evidence only (OR-PROV-2), at the install door only", async () => {
+    const files = await readDirFiles("packages/gateway/src");
+    const prod = files.map((f) => ({ rel: f.rel, code: stripComments(f.contents) }));
+    const only = (name: RegExp, allowed: string[]): void => {
+      const hits = prod.filter((f) => name.test(f.code)).map((f) => f.rel);
+      expect(hits.sort()).toEqual([...allowed].sort());
+    };
+    // The Sigstore library has one importer.
+    only(/from\s+["']@sigstore\//, ["extensions/registry/provenance-verify.ts"]);
+    only(/\bverifyProvenanceBundle\b/, [
+      "extensions/registry/provenance-verify.ts",
+      "extensions/registry/provenance-recheck.ts",
+    ]);
+    only(/\breadProvenanceRecheck\b/, [
+      "extensions/registry/provenance-recheck.ts",
+      "extensions/registry/install-from-registry.ts",
+    ]);
+    only(/registry\.provenance\b/, [
+      "egress/registry-egress.ts",
+      "extensions/registry/registry-fetch.ts",
+      "extensions/registry/provenance-recheck.ts",
+    ]);
+    // Nothing branches on the re-check's result: it is carried into the approval and rendered.
+    const readers = prod
+      .filter((f) => /\bprovenanceRecheck\b[^:]*\.status\b|\brecheck\.status\b/.test(f.code))
+      .map((f) => f.rel);
+    expect(readers).toEqual(["extensions/registry/provenance-recheck.ts"]);
+    // The package fetch (also the migration engine's door) makes no provenance request.
+    const install = prod.find((f) => f.rel === "extensions/registry/install-from-registry.ts");
+    const fetchBody = install?.code.slice(
+      install.code.indexOf("export async function fetchVerifiedRegistryPackage("),
+      install.code.indexOf("async function withLivenessEvidence("),
+    );
+    expect(fetchBody).toBeDefined();
+    expect(fetchBody).not.toMatch(/readProvenanceRecheck|registry\.provenance/);
+  });
 });
 
 describe("I52 — a stored run grant is equal to or narrower than its manifest, and only the owner's approval narrows it", () => {
