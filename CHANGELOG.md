@@ -2,6 +2,13 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [11.10.0](https://github.com/nimbus-agent/Nimbus/compare/v11.9.0...v11.10.0) (2026-11-18)
+
+
+### Features
+
+* **gateway:** installed extensions keep their offline-verified build provenance, with nimbus extension verify-provenance (V105) ([#2073](https://github.com/nimbus-agent/Nimbus/issues/2073)) ([f6fce1a](https://github.com/nimbus-agent/Nimbus/commit/f6fce1a380f6e61f37c77b01ff3317dade475db9))
+
 ## [11.9.0](https://github.com/nimbus-agent/Nimbus/compare/v11.8.0...v11.9.0) (2026-11-18)
 
 
