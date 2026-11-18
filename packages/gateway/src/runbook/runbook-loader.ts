@@ -1,5 +1,13 @@
 import { createHash } from "node:crypto";
-import { lstatSync, readdirSync, readFileSync } from "node:fs";
+import {
+  closeSync,
+  constants,
+  fstatSync,
+  lstatSync,
+  openSync,
+  readdirSync,
+  readFileSync,
+} from "node:fs";
 import { join } from "node:path";
 
 import { CONNECTOR_WRITE_ROWS } from "../connectors/connector-writes/index.ts";
@@ -251,6 +259,41 @@ export function parseRunbookText(
   };
 }
 
+const NOT_A_FILE = "not a regular file (a link or a directory is not read)";
+
+function errCode(e: unknown): string | undefined {
+  return typeof e === "object" && e !== null && "code" in e ? String(e.code) : undefined;
+}
+
+/**
+ * Read one runbook through ONE open file handle: the type and size checks and the read are of the same handle, so
+ * the file cannot be swapped between them. `O_NOFOLLOW` refuses a link on POSIX; the link check after the read covers
+ * a platform without it (the bytes already read are then discarded, never used).
+ */
+function readRunbookFile(path: string): string {
+  let fd: number;
+  try {
+    fd = openSync(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+  } catch (e) {
+    const code = errCode(e);
+    if (code === "ELOOP" || code === "EISDIR") refuse(NOT_A_FILE);
+    throw e;
+  }
+  let text: string;
+  try {
+    const st = fstatSync(fd);
+    if (!st.isFile()) refuse(NOT_A_FILE);
+    if (st.size > RUNBOOK_MAX_FILE_BYTES) {
+      refuse(`larger than ${String(RUNBOOK_MAX_FILE_BYTES)} bytes`);
+    }
+    text = readFileSync(fd, "utf8");
+  } finally {
+    closeSync(fd);
+  }
+  if (lstatSync(path).isSymbolicLink()) refuse(NOT_A_FILE);
+  return text;
+}
+
 /** Code-unit order, so the order of the files never depends on a locale. */
 function byCodeUnit(a: string, b: string): number {
   if (a < b) return -1;
@@ -287,12 +330,7 @@ export function loadRunbooks(
   for (const file of names) {
     const path = join(dir, file);
     try {
-      const st = lstatSync(path);
-      if (!st.isFile()) refuse("not a regular file (a link or a directory is not read)");
-      if (st.size > RUNBOOK_MAX_FILE_BYTES) {
-        refuse(`larger than ${String(RUNBOOK_MAX_FILE_BYTES)} bytes`);
-      }
-      const rb = parseRunbookText(file, readFileSync(path, "utf8"), rows);
+      const rb = parseRunbookText(file, readRunbookFile(path), rows);
       if (seen.has(rb.name)) refuse(`another runbook is already named ${rb.name}`);
       seen.add(rb.name);
       runbooks.push(rb);
