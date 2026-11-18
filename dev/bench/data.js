@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795024767540,
+  "lastUpdate": 1795025376913,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "6fe52402b34a2be90dc86a6ab1dd0407246dca6e",
-          "message": "fix(sonar): raw path literals, media flag validators, and the two findings the last pass added (#1437)\n\nFourth Sonar pass, and the first one that had to correct the previous\nones.\n\n## A correction to #1434's description\n\nChecking the board rather than my own tally showed #1434 removed **16**\nissues,\nnot the 23 it claimed. I had counted edits rather than resolved\nfindings: the\n`coerce` change alone cleared five S6571s, while several other edits\nshared one\nissue between them. Rule by rule: S6571 -5, S7786 -3, S6582 -2, and one\neach of\nS1854, S6551, S6557, S7763, S7776, S7781.\n\nIt also **added three**, which this PR repays.\n\n## Repaying them\n\n`cdp-session.ts` gained an S3776 at complexity 17, and that one was\nmine. The\n`CdpError` message fix in #1434 replaced a one-line `String(...)` with a\nbranching block inside `#onMessage` — a method already carrying the\nparse,\ndispatch and listener fan-out branches. The derivation is now\n`cdpErrorMessage`, whose docstring says outright that the extraction is\nthe fix\nfor what the inline version cost rather than a separate concern.\n\nThe two S1874s are `z.ZodTypeAny`, deprecated by the zod 4.5.4 bump in\n#1432.\nThey are now `z.core.$ZodType`.\n\nThat migration is worth a note, because it is the same edit attempted at\nthe\nvery start of this sweep and reverted. It failed then with TS2322 — but\nnot\nbecause the call site was wrong. `@modelcontextprotocol/sdk` still\nresolved\nzod 4.4.3 while the workspace had moved to 4.5.4, so the two `$ZodType`s\nwere\nstructurally distinct types and nothing crossing that seam could\ntypecheck.\nPinning zod in `overrides` collapsed the tree onto one copy, which is\nwhat makes\nthe migration correct now for exactly the reason it was wrong then.\nReverting it\nat the time was the right call.\n\n## Also in this PR\n\n- Ten S7780 findings: Windows path literals as `String.raw`. Already the\nidiom\nhere — 47 files use it — and none of these literals contains a backtick,\na\n`${`, or a trailing backslash, which are the three things that would\nmake a\n  raw template behave differently from the quoted form.\n- One S3776: `parseMediaArgs` had four flags' validation inline in one\nswitch.\n`parseModality`, `parseLimit` and `parseSinceDays` are named functions\nnow.\nNothing is lost by that split, which is why it was worth doing — there\nis no\n  ordering property and no invariant in the branch structure, just four\nvalidations that arrived one at a time. The `--modality image` refusal\nkeeps\nits reasoning and gains a sentence explaining why it is refused by name\nrather\n  than falling through to the generic message.\n\n## One attempted and reverted\n\n`connector-sync-test-helpers`' capability dispatch resists extraction:\n`buildSyncCapabilities` is generic over the service id and returns\n`SyncCapabilities<S>`, so the chained ternary's two casts express\nsomething a\nnon-generic helper cannot. Making the helper generic to satisfy a style\nrule, in\na test helper, would leave the code worse. That finding stays open on\npurpose.\n\n## Verification\n\n`preflight:fast` 33/33. 122 MCP tests, 18 cdp-session tests, 23\nmedia-cmd tests.\nBecause this ran on Windows, the platform-specific `chromium-path` and\n`terminal-shells` tests actually executed rather than skipping.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01GZCGCkVMD9JaKuiKvqRdAb\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-09-03T22:15:44+03:00",
-          "tree_id": "e3d08e9630178aa5643bbef68777baced53fb716",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/6fe52402b34a2be90dc86a6ab1dd0407246dca6e"
-        },
-        "date": 1788463537583,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 227.18145259999727,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 217.9071044999946,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 176.1122562500008,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "7901023f8f98210df404ab33773304e73783e2fb",
+          "message": "fix(deps): delete the stale picomatch GHSA-fc5q-39xc-vjpf accepted-advisory row (bun audit no longer reports it) (#2071)\n\n`Dependency audit` is red on every open PR (first seen on #2069):\n\n```\naudit:advisories stale picomatch@GHSA-fc5q-39xc-vjpf: no longer reported by bun audit — delete the row rather than leave drift\n```\n\nThe row was added by #2044 on 2026-11-17 when the advisory had no\npatched release. `bun audit` no longer reports it: the lockfile still\nresolves picomatch 4.0.7, so the advisory itself was withdrawn or\nre-scoped. As the row's own `unblockedBy` says, the gate now fails on\nthe stale row until it is deleted. This PR deletes it.\n\nVerified locally: `bun run audit:advisories` → `OK (4 live advisories,\nall accounted for by 4 accepted row(s))`; `bun run preflight:fast`\npassed.\n\nNo code, config or lockfile change. Core docs unchanged: nothing in\nCLAUDE.md, the roadmap, architecture, docs/README or cli-reference names\nthis advisory.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JmSjrCk6NpLauKU2yYCwva\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-18T17:51:41Z",
+          "tree_id": "ff3713437571648a276633fe889af07fba4e8640",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/7901023f8f98210df404ab33773304e73783e2fb"
+        },
+        "date": 1795025373295,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 168.22716784999994,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 168.81352099999967,
             "unit": "ms"
           }
         ]
