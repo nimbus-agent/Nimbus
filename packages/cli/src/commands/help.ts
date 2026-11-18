@@ -175,6 +175,9 @@ CONFIG & DIAGNOSTICS
                               (set: nimbus workflow save <name> --file <path> --schedule "<cron>" [--tz <zone>];
                               clear: nimbus workflow unschedule <name>; continue a blocked run:
                               nimbus workflow resume <runId> [--discard])
+  nimbus iac drift [--workdir <dir>] [--latest] [--json]   Read-only Terraform drift check of your
+                              approved workdirs: what changed outside Terraform (names, never values);
+                              no prompt, no apply; opt-in schedule: [iac.drift] schedule in nimbus.toml
   nimbus captures [list|show|accept|reject|revoke|purge <id>] [--json]   Review what MCP clients
                               captured or proposed ([mcp_sink] in nimbus.toml); accept --all takes
                               every proposed decision/term/link after one prompt; purge deletes a
