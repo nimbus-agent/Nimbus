@@ -1533,6 +1533,18 @@ A user registers it with `nimbus connector add --mcp <mcp_id> [--read <path>]...
 
 **Not shipped:** a write grant. A script-mode server (`bun src/server.ts`) cannot run on Windows (`CouldntReadCurrentDirectory` under AppContainer), so register a compiled binary.
 
+**Static catalog on the docs site (S4 marketplace tile B3, 2026-11-18).** `nimbus-agent.dev/extensions/` renders the official
+registry from a committed snapshot, `packages/docs/src/data/official-registry.json`. `scripts/docs/catalog-snapshot.ts`
+`buildCatalogSnapshot` builds it with the gateway's own install chain on an in-memory database: `fetchVerifiedIndex` against the
+baked root key, then for each newest version `fetchRegistryManifest` (hash, id, version, publisher id and key) and
+`verifyRegistryManifestSignature` (I16); the baked trust snapshot supplies `blocksFor` (per version) and `verifiedPublisherFor`, and
+`versionEvidence` the `Baseline`, `Tested` and `History` lines at snapshot time. `assertNoRollback` refuses a sequence below the
+committed snapshot's and different content (SHA-256 over the root-signed bytes) at an equal one; any failure writes nothing. The
+owner runs `bun scripts/docs/snapshot-official-registry.ts`; the Astro build reads the file through `packages/docs/src/lib/catalog.ts`
+`parseCatalog` (field by field from `unknown`, failing the build on a malformed file, keeping only `https:` funding links) and never
+touches the network. Pages: the catalog, `verified`, `scored` (80 or more), `kind/<kind>`, and `[...id]` per extension (an id whose
+first segment is a filter name gets no page). Search is Starlight's Pagefind index.
+
 ### Extension Auto-Update (T2 PR 3)
 
 The Gateway runs an in-process polling daemon (`ExtensionAutoUpdater` in `packages/gateway/src/extensions/auto-update.ts`) that periodically checks each registry-installed extension against its OWN source registry (`extensions/registry/registry-update-source.ts`). Cadence is `[extensions].update_check_interval_hours` (default 24, range 1..168) with a 30–300 s startup jitter. The daemon is constructed on every boot the boot policy allows (not on a demo-rooted gateway) unless `NIMBUS_EXTENSIONS_DISABLE_AUTO_UPDATE` is `1`. Each tick reads the CURRENT registry table, groups the enabled registry-sourced extensions by `source_registry`, fetches and verifies each registry's `index.json` ONCE, and fetches a `manifest.json` only for an extension whose index shows a newer version on its channel set (`stable`, or `stable ∪ beta` for a `beta` install). An extension is checked only while its registry's root fingerprint equals `source_root_fingerprint`; a local-path install is never polled, and the same id in another registry is ignored. Every remote request is a `registry`-class egress row through `registry-fetch.ts`, and the fetch deps are the SAME object `platform/assemble.ts` hands the `registry.*` methods, so one `[llm] enforce_air_gap` switch refuses every remote registry (a local-folder registry still answers).

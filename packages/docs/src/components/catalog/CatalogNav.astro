@@ -1,0 +1,27 @@
+---
+/** The filter links and the snapshot statement shared by every catalog page. */
+import { CATALOG_KINDS, type Catalog, SCORED_THRESHOLD } from "../../lib/catalog";
+
+interface Props {
+  catalog: Catalog;
+}
+const { catalog } = Astro.props;
+---
+
+<p>
+  A snapshot of the official registry (<code>{catalog.registry}</code>), index sequence {String(catalog.sequence)}
+  signed {catalog.generatedAt}, taken {catalog.snapshotAt}. Every install verifies the live registry again; this page
+  is a read-only view. The <code>Checked</code> line (signed liveness) and what the sandbox will allow on your machine
+  appear only in the desktop Marketplace page and <code>nimbus extension info &lt;id&gt; --registry nimbus-official</code>.
+</p>
+<p>
+  Filter: <a href="/extensions/">all</a> · <a href="/extensions/verified/">verified publishers</a> ·
+  <a href="/extensions/scored/">score {String(SCORED_THRESHOLD)} or more</a> ·
+  {CATALOG_KINDS.map((k, i) => (
+    <>
+      {i > 0 ? " · " : ""}
+      <a href={`/extensions/kind/${k}/`}>{k}</a>
+    </>
+  ))}
+  . Search with the site search above. No manifest field declares a category, so there is no category filter.
+</p>

@@ -1,0 +1,53 @@
+{
+  "format": 1,
+  "registry": "nimbus-official",
+  "sequence": 4,
+  "generatedAt": "2026-11-07T15:56:51.983Z",
+  "indexSha256": "8f74b6031a2c8f41e9610f0184510ebc833cfbbd3b975ec8d0896ce67c4a1196",
+  "snapshotAt": "2026-11-18T12:14:05.889Z",
+  "extensions": [
+    {
+      "id": "com.nimbus.readwise",
+      "displayName": "Readwise",
+      "description": "Readwise connector (read-only). Surfaces the user's saved book/article highlights as `readwise:highlight` items in the local index — the highlighted excerpt text, the user's note, the parent book/article id, the location + location type, the color, tags, and the source article URL (for web highlights) — plus their parent books/articles as `readwise:book` items (title, author, category, source, highlight count, document note, tags, ASIN, source + Readwise book-review URLs), so a highlight's `book_id` resolves to a real indexed record. Useful for answering reading questions (\"what did I highlight about retries?\", \"which book was that note in?\") without leaving Nimbus. Token API-token auth (`Authorization: Token <token>` — Django-REST-Framework token auth, NOT Bearer). The SaaS host (readwise.io) is fixed. Readwise paginates both `/api/v2/highlights/` and `/api/v2/books/` by page number (DRF `{ count, next, previous, results }` envelope, page_size=1000). `highlighted_at` / `last_highlight_at` / `updated` are ISO-8601 (converted to epoch-ms on index). Book `external_id`s are namespaced `book/<id>` because Readwise numbers books and highlights in separate sequences. Documents / daily-review and the Reader v3 API remain deferred follow-ups.",
+      "publisherId": "nimbus",
+      "publisherFingerprint": "89011f4999cab47c8b335f18613a59f1",
+      "verifiedPublisher": null,
+      "kind": "connector",
+      "newest": "0.2.1",
+      "network": [
+        "readwise.io"
+      ],
+      "filesRead": [],
+      "filesWrite": [],
+      "license": null,
+      "funding": [],
+      "provenance": null,
+      "baseline": "starts and lists 7 valid tools (checked by nimbus-official)",
+      "tested": "7 of 7 cases passed (100/100), tests by the publisher, measured by nimbus-official; tests ran with no network",
+      "history": "first published 2026-10-22 (27 days ago) · 2 versions (recorded by nimbus-official)",
+      "versions": [
+        {
+          "version": "0.2.1",
+          "channel": "stable",
+          "publishedAt": "2026-11-07T15:56:51.983Z",
+          "packageSizeBytes": 232730,
+          "blocked": false,
+          "quality": {
+            "score": 100,
+            "cases": 7,
+            "passed": 7
+          }
+        },
+        {
+          "version": "0.2.0",
+          "channel": "stable",
+          "publishedAt": "2026-10-22T09:07:13.425Z",
+          "packageSizeBytes": 231438,
+          "blocked": false,
+          "quality": null
+        }
+      ]
+    }
+  ]
+}

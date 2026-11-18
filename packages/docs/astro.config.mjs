@@ -47,6 +47,7 @@ export default defineConfig({
             { label: "VS Code extension", link: "/user-guide/vscode-extension/" },
             { label: "Nimbus Companion", link: "/user-guide/web-clipper/" },
             { label: "Connectors", link: "/user-guide/connectors/" },
+            { label: "Extensions catalog", link: "/extensions/" },
             { label: "Troubleshooting", link: "/user-guide/troubleshooting/" },
             { label: "FAQ", link: "/faq/" },
           ],

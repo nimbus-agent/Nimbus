@@ -1,0 +1,22 @@
+---
+import StarlightPage from "@astrojs/starlight/components/StarlightPage.astro";
+import CatalogNav from "../../../components/catalog/CatalogNav.astro";
+import ExtensionList from "../../../components/catalog/ExtensionList.astro";
+import raw from "../../../data/official-registry.json";
+import { CATALOG_KINDS, type CatalogKind, filterCatalog, parseCatalog } from "../../../lib/catalog";
+
+export function getStaticPaths() {
+  return CATALOG_KINDS.map((kind) => ({ params: { kind }, props: { kind } }));
+}
+
+interface Props {
+  kind: CatalogKind;
+}
+const { kind } = Astro.props;
+const catalog = parseCatalog(raw);
+---
+
+<StarlightPage frontmatter={{ title: `Extensions: ${kind}` }}>
+  <CatalogNav catalog={catalog} />
+  <ExtensionList extensions={filterCatalog(catalog, { kind })} />
+</StarlightPage>
